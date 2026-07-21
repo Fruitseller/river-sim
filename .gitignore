@@ -1,0 +1,12 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+
+# Godot (später)
+game/.godot/
+game/bin/*.dylib
+export/
+
+.DS_Store
