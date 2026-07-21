@@ -26,6 +26,7 @@ var ring_mi: MeshInstance3D
 var terrain_mesh := ArrayMesh.new()
 var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
+var sea_mat: ShaderMaterial
 
 # gecachte Felder (nach jedem Rebuild aktualisiert)
 var h_cache: PackedFloat32Array
@@ -121,14 +122,33 @@ func _diag() -> void:
 func _setup_scene() -> void:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
-	e.background_mode = Environment.BG_COLOR
-	e.background_color = Color(0.043, 0.055, 0.078)
-	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR # sonst Ambient = dunkler BG
-	e.ambient_light_color = Color(0.75, 0.83, 1.0)
-	e.ambient_light_energy = 0.6
+	# Prozeduraler Himmel → liefert realistisches Ambient UND Reflexionen fürs Wasser.
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.28, 0.50, 0.86)
+	sky_mat.sky_horizon_color = Color(0.72, 0.80, 0.90)
+	sky_mat.ground_bottom_color = Color(0.22, 0.26, 0.30)
+	sky_mat.ground_horizon_color = Color(0.65, 0.72, 0.80)
+	sky_mat.sun_angle_max = 8.0
+	sky_mat.energy_multiplier = 1.0
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	e.background_mode = Environment.BG_SKY
+	e.sky = sky
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	e.ambient_light_energy = 1.0
+	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	# Filmischer Look + Tiefe.
+	e.tonemap_mode = Environment.TONE_MAPPER_ACES
+	e.tonemap_exposure = 1.05
+	e.ssao_enabled = true
+	e.ssao_intensity = 1.5
+	e.glow_enabled = true
+	e.glow_intensity = 0.25
+	e.glow_bloom = 0.1
 	e.fog_enabled = true
-	e.fog_light_color = Color(0.043, 0.055, 0.078)
-	e.fog_density = 0.0015
+	e.fog_mode = Environment.FOG_MODE_DEPTH
+	e.fog_light_color = Color(0.72, 0.80, 0.90)
+	e.fog_density = 0.0008
 	env.environment = e
 	add_child(env)
 
@@ -158,13 +178,11 @@ func _setup_scene() -> void:
 
 	water_mi = MeshInstance3D.new()
 	var wp := PlaneMesh.new()
-	wp.size = Vector2(world_size * 1.02, world_size * 1.02)
+	wp.size = Vector2(world_size * 4.0, world_size * 4.0) # großes offenes Meer versteckt Kartenkanten
 	water_mi.mesh = wp
-	var wmat := StandardMaterial3D.new()
-	wmat.albedo_color = Color(0.11, 0.30, 0.54, 0.55)
-	wmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	wmat.roughness = 0.15
-	water_mi.material_override = wmat
+	sea_mat = ShaderMaterial.new()
+	sea_mat.shader = load("res://shaders/sea.gdshader")
+	water_mi.material_override = sea_mat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
 
@@ -262,6 +280,8 @@ func _process(delta: float) -> void:
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if river_mat:
 		river_mat.set_shader_parameter("u_time", u_time)
+	if sea_mat:
+		sea_mat.set_shader_parameter("u_time", u_time * 0.5)
 
 	if year_rate > 0.0:
 		var years := year_rate * delta
