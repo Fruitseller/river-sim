@@ -29,6 +29,7 @@ var river_mat: ShaderMaterial
 var sea_mat: ShaderMaterial
 
 # gecachte Felder (nach jedem Rebuild aktualisiert)
+var terrain_indices: PackedInt32Array # feste Gitter-Topologie, einmal gebaut
 var h_cache: PackedFloat32Array
 var hf_cache: PackedFloat32Array
 var sed_cache: PackedFloat32Array
@@ -57,21 +58,7 @@ var u_time := 0.0
 var year_label: Label
 var sim_seed := 1337
 
-# Höhen-Farbverlauf (Schwelle, Color) — portiert aus dem Prototyp
-var stops := []
-
 func _ready() -> void:
-	stops = [
-		[-0.3, Color(0.02, 0.07, 0.20)],
-		[0.00, Color(0.08, 0.22, 0.45)],
-		[0.15, Color(0.20, 0.42, 0.60)],
-		[0.17, Color(0.76, 0.70, 0.50)],
-		[0.28, Color(0.25, 0.48, 0.22)],
-		[0.45, Color(0.16, 0.34, 0.16)],
-		[0.58, Color(0.42, 0.38, 0.34)],
-		[0.70, Color(0.55, 0.53, 0.51)],
-		[0.80, Color(0.95, 0.96, 0.98)],
-	]
 	if not ClassDB.class_exists("SimNode"):
 		push_error("GDExtension 'SimNode' nicht geladen — .dylib/.gdextension prüfen.")
 		return
@@ -116,6 +103,15 @@ func _diag() -> void:
 		if h_cache[k] > sea + 0.05:
 			print("DIAG land-sample h=", h_cache[k], " col=", cols[k])
 			break
+	var t0 := Time.get_ticks_usec()
+	for r in 10:
+		_rebuild_terrain()
+	var t_terr := (Time.get_ticks_usec() - t0) / 10000.0
+	t0 = Time.get_ticks_usec()
+	for r in 10:
+		_rebuild_rivers()
+	var t_riv := (Time.get_ticks_usec() - t0) / 10000.0
+	print("DIAG PERF terrain_rebuild_ms=", t_terr, " river_rebuild_ms=", t_riv)
 
 # ---------------------------------------------------------------- Szene / UI
 
@@ -178,11 +174,16 @@ func _setup_scene() -> void:
 
 	water_mi = MeshInstance3D.new()
 	var wp := PlaneMesh.new()
-	wp.size = Vector2(world_size * 4.0, world_size * 4.0) # großes offenes Meer versteckt Kartenkanten
+	wp.size = Vector2(world_size * 1.05, world_size * 1.05)
 	water_mi.mesh = wp
-	sea_mat = ShaderMaterial.new()
-	sea_mat.shader = load("res://shaders/sea.gdshader")
-	water_mi.material_override = sea_mat
+	# Durchscheinend wie im Prototyp (Terrain scheint durch), aber mit dezenter
+	# Himmelsspiegelung durch niedrige Roughness + etwas Metallic.
+	var wmat := StandardMaterial3D.new()
+	wmat.albedo_color = Color(0.10, 0.28, 0.50, 0.5)
+	wmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	wmat.roughness = 0.08
+	wmat.metallic = 0.2
+	water_mi.material_override = wmat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
 
@@ -342,79 +343,35 @@ func _cells_upstream(k: int) -> float:
 # ---------------------------------------------------------------- Terrain-Mesh
 
 func _rebuild_terrain() -> void:
-	var verts := PackedVector3Array()
-	var normals := PackedVector3Array()
-	var colors := PackedColorArray()
-	var indices := PackedInt32Array()
-	verts.resize(N * N)
-	normals.resize(N * N)
-	colors.resize(N * N)
+	# Positionen/Normalen/Farben werden in Swift berechnet (schnell); GDScript
+	# setzt nur den Mesh zusammen. Farben kommen als interleaved RGB-Floats.
+	var verts: PackedVector3Array = sim.terrainVertices()
+	var normals: PackedVector3Array = sim.terrainNormals()
+	var colors: PackedColorArray = sim.terrainColors()
 
-	for j in N:
-		for i in N:
-			var k := j * N + i
-			var y: float = h_cache[k] * HSCALE
-			verts[k] = Vector3(-half + i * step, y, -half + j * step)
-			normals[k] = _terrain_normal(i, j)
-			colors[k] = _terrain_color(i, j, k)
-
-	for j in (N - 1):
-		for i in (N - 1):
-			var a := j * N + i
-			indices.append(a)
-			indices.append(a + N)
-			indices.append(a + 1)
-			indices.append(a + 1)
-			indices.append(a + N)
-			indices.append(a + N + 1)
+	if terrain_indices.is_empty():
+		terrain_indices = _build_grid_indices()
 
 	var arr := []
 	arr.resize(Mesh.ARRAY_MAX)
 	arr[Mesh.ARRAY_VERTEX] = verts
 	arr[Mesh.ARRAY_NORMAL] = normals
 	arr[Mesh.ARRAY_COLOR] = colors
-	arr[Mesh.ARRAY_INDEX] = indices
+	arr[Mesh.ARRAY_INDEX] = terrain_indices
 	terrain_mesh.clear_surfaces()
 	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 
-func _terrain_normal(i: int, j: int) -> Vector3:
-	var l := maxi(i - 1, 0)
-	var r := mini(i + 1, N - 1)
-	var d := maxi(j - 1, 0)
-	var u := mini(j + 1, N - 1)
-	var dhx: float = (h_cache[j * N + r] - h_cache[j * N + l]) * HSCALE
-	var dhz: float = (h_cache[u * N + i] - h_cache[d * N + i]) * HSCALE
-	return Vector3(-dhx, 2.0 * step, -dhz).normalized()
-
-func _grad_color(v: float) -> Color:
-	for k in range(stops.size() - 1):
-		if v <= stops[k + 1][0]:
-			var a: float = stops[k][0]
-			var b: float = stops[k + 1][0]
-			var t: float = clamp((v - a) / (b - a), 0.0, 1.0)
-			return (stops[k][1] as Color).lerp(stops[k + 1][1] as Color, t)
-	return stops[stops.size() - 1][1]
-
-func _terrain_color(i: int, j: int, k: int) -> Color:
-	var v: float = h_cache[k]
-	if v <= sea + 0.012:
-		return _grad_color(v)
-	# Biome: Steppe → Gras (Feuchte) → Wald (Vegetation), Fels nach Hang/Sediment.
-	var c := Color(0.66, 0.58, 0.40)
-	c = c.lerp(Color(0.36, 0.54, 0.26), clamp(rain_cache[k], 0.0, 1.0))
-	c = c.lerp(Color(0.11, 0.30, 0.13), veg_cache[k] * 0.85)
-	var rocky: float = 0.55 if sed_cache[k] < 0.004 else 0.0
-	if i > 0 and i < N - 1 and j > 0 and j < N - 1:
-		var slope: float = (abs(h_cache[k + 1] - h_cache[k - 1]) + abs(h_cache[k + N] - h_cache[k - N])) * 0.25
-		rocky = max(rocky, clamp(slope * 70.0 - 0.55, 0.0, 0.85))
-	c = c.lerp(Color(0.47, 0.45, 0.43), max(0.0, rocky))
-	if v > 0.60:
-		c = c.lerp(Color(0.95, 0.96, 0.98), clamp((v - 0.60) / 0.08, 0.0, 1.0))
-	var cu := _cells_upstream(k)
-	if cu >= CREEK_MIN_CELLS:
-		var t: float = clamp(log(cu / CREEK_MIN_CELLS + 1.0) / 2.5, 0.0, 1.0) * 0.85
-		c = c.lerp(Color(0.10, 0.32, 0.58), t)
-	return c
+func _build_grid_indices() -> PackedInt32Array:
+	var idx := PackedInt32Array()
+	idx.resize((N - 1) * (N - 1) * 6)
+	var t := 0
+	for j in (N - 1):
+		for i in (N - 1):
+			var a := j * N + i
+			idx[t] = a; idx[t + 1] = a + N; idx[t + 2] = a + 1
+			idx[t + 3] = a + 1; idx[t + 4] = a + N; idx[t + 5] = a + N + 1
+			t += 6
+	return idx
 
 # ---------------------------------------------------------------- Fluss-Mesh
 

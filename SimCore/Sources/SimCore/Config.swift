@@ -3,7 +3,7 @@ import Foundation
 /// Alle kalibrierbaren Konstanten des Simulationskerns an einem Ort.
 /// Höhen sind normiert (~ -0.3 .. 1.4). Weltkoordinaten in abstrakten Einheiten.
 public struct SimConfig: Sendable {
-    public var n: Int = 128          // Grid-Auflösung (n × n)
+    public var n: Int = 256          // Grid-Auflösung (n × n)
     public var world: Double = 100   // Kantenlänge in Welteinheiten
     public var sea: Double = 0.15     // Meeresspiegel (normiert)
     public var floor: Double = -0.3   // tiefster Punkt (Tiefseegraben)
