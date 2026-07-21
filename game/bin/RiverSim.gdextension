@@ -1,0 +1,9 @@
+[configuration]
+entry_symbol = "swift_entry_point"
+; Gegen SwiftGodots 4.6-Bindings gebaut; GDExtension ist abwärtskompatibel und
+; lädt in Godot 4.7.1. Minimum bewusst niedrig gehalten.
+compatibility_minimum = 4.2
+
+[libraries]
+macos.debug = "res://bin/libRiverSimGD.dylib"
+macos.release = "res://bin/libRiverSimGD.dylib"

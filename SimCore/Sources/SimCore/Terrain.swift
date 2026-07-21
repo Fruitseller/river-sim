@@ -332,6 +332,43 @@ public final class Terrain {
         }
     }
 
+    // MARK: - Sculpting (Spieler-Eingriff)
+
+    /// Hebt (`dir` > 0) bzw. senkt (`dir` < 0) das Terrain in einem weichen Pinsel
+    /// um das Gitterzentrum (`gx`, `gz`), Radius in Welteinheiten. Koppelt in die
+    /// Tektonik (angehobene Zonen werden Hebungszonen), damit Eingriffe langfristig
+    /// erhalten bleiben statt von der Erosion ausradiert zu werden.
+    public func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double) {
+        let rCells = radiusWorld / cfg.cellSize
+        if rCells <= 0 { return }
+        let rate = 0.006
+        let coupling = 1.5
+        let r = Int(rCells.rounded(.up))
+        let cx = Int(gx.rounded()), cz = Int(gz.rounded())
+        let jLo = max(0, cz - r), jHi = min(n - 1, cz + r)
+        let iLo = max(0, cx - r), iHi = min(n - 1, cx + r)
+        if jLo > jHi || iLo > iHi { return }
+        for j in jLo...jHi {
+            for i in iLo...iHi {
+                let d = (Double(i) - gx).magnitudeHypot(Double(j) - gz) / rCells
+                if d > 1 { continue }
+                let w = (1 - d * d) * (1 - d * d) // weicher Abfall
+                let k = idx(i, j)
+                let target = min(max(h[k] + dir * rate * w, cfg.floor), 1.4)
+                let dh = target - h[k]
+                if dh >= 0 {
+                    rock[k] += dh // Anheben schiebt Fels hoch
+                } else {
+                    let ds = min(-dh, sed[k]) // Absenken räumt erst Sediment, dann Fels
+                    sed[k] -= ds
+                    rock[k] -= (-dh - ds)
+                }
+                h[k] += dh
+                upliftBase[k] = min(max(upliftBase[k] + dir * rate * w * coupling, -2), 2)
+            }
+        }
+    }
+
     // MARK: - Zeitschritt
 
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist

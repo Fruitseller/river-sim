@@ -94,6 +94,31 @@ final class SimCoreTests: XCTestCase {
 
     // MARK: - Fluss-Stabilität
 
+    // MARK: - Sculpting
+
+    /// Anheben erhöht das Terrain lokal; die Tektonik-Kopplung sorgt dafür, dass
+    /// der Eingriff über lange Zeiträume erhalten bleibt (Prototyp-Invariante:
+    /// gesculpteter Berg bleibt der höchste Punkt der Karte).
+    func testSculptRaisesAndPersists() {
+        let t = Terrain(config: makeConfig(), seed: 4)
+        let n = t.cfg.n
+        let center = Double(n / 2)
+        let before = t.h[Int(center) * n + Int(center)]
+        // Kräftig anheben.
+        for _ in 0..<200 {
+            t.sculpt(gx: center, gz: center, radiusWorld: 12, dir: 1)
+        }
+        let after = t.h[Int(center) * n + Int(center)]
+        XCTAssertGreaterThan(after, before + 0.2, "Anheben muss das Terrain erhöhen")
+        t.computeFlow()
+        // Über lange Zeit erodieren lassen — Kopplung soll den Berg halten.
+        for _ in 0..<3 { t.step(dtYears: 10000) }
+        let peak = t.maxHeight()
+        let peakArea = t.h[Int(center) * n + Int(center)]
+        XCTAssertGreaterThan(peakArea, peak * 0.6,
+                             "gesculptete Region muss nach Erosion prominent bleiben")
+    }
+
     /// Zwischen aufeinanderfolgenden Schritten sollen die meisten Flusszellen
     /// ihren Lauf behalten (analog zur 71-%-Messung im Prototyp).
     func testRiverStability() {
