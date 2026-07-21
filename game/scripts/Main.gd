@@ -90,6 +90,31 @@ func _ready() -> void:
 	_pull_fields()
 	_rebuild_terrain()
 	_rebuild_rivers()
+	if OS.has_environment("RS_DIAG"):
+		_diag()
+
+func _diag() -> void:
+	var arrs := terrain_mesh.surface_get_arrays(0)
+	var cols: PackedColorArray = arrs[Mesh.ARRAY_COLOR]
+	var norms: PackedVector3Array = arrs[Mesh.ARRAY_NORMAL]
+	var land := 0
+	var csum := Vector3.ZERO
+	var nysum := 0.0
+	for k in cols.size():
+		csum += Vector3(cols[k].r, cols[k].g, cols[k].b)
+		nysum += norms[k].y
+		if h_cache[k] > sea + 0.012:
+			land += 1
+	print("DIAG verts=", cols.size(), " land=", land, " avg_col=", csum / cols.size(), " avg_ny=", nysum / cols.size())
+	var mat := terrain_mi.material_override as StandardMaterial3D
+	print("DIAG vertex_color_use_as_albedo=", mat.vertex_color_use_as_albedo)
+	var c := (N / 2) * N + (N / 2)
+	print("DIAG center h=", h_cache[c], " col=", cols[c], " veg=", veg_cache[c], " rain=", rain_cache[c])
+	# ein paar echte Landzellen
+	for k in cols.size():
+		if h_cache[k] > sea + 0.05:
+			print("DIAG land-sample h=", h_cache[k], " col=", cols[k])
+			break
 
 # ---------------------------------------------------------------- Szene / UI
 
@@ -98,8 +123,9 @@ func _setup_scene() -> void:
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
 	e.background_color = Color(0.043, 0.055, 0.078)
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR # sonst Ambient = dunkler BG
 	e.ambient_light_color = Color(0.75, 0.83, 1.0)
-	e.ambient_light_energy = 0.45
+	e.ambient_light_energy = 0.6
 	e.fog_enabled = true
 	e.fog_light_color = Color(0.043, 0.055, 0.078)
 	e.fog_density = 0.0015
@@ -109,9 +135,10 @@ func _setup_scene() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.light_color = Color(1.0, 0.95, 0.87)
 	sun.light_energy = 1.6
-	sun.rotation = Vector3(deg_to_rad(-50), deg_to_rad(-35), 0)
 	sun.shadow_enabled = true
 	add_child(sun)
+	# Eindeutig von schräg oben aufs Terrain scheinen lassen (statt mehrdeutiger Euler).
+	sun.look_at_from_position(Vector3(-60, 120, 60), Vector3.ZERO, Vector3.UP)
 
 	cam = Camera3D.new()
 	cam.far = 1000.0
