@@ -60,9 +60,9 @@ final class SimNode: Node {
                 if v <= sea + 0.012 {
                     (r, g, b) = gradColor(v)
                 } else {
-                    r = 0.66; g = 0.58; b = 0.40 // Steppe
-                    let wr = min(max(rain[k], 0), 1)              // → Gras (Feuchte)
-                    r += (0.36 - r) * wr; g += (0.54 - g) * wr; b += (0.26 - b) * wr
+                    r = 0.52; g = 0.55; b = 0.34 // Steppe (olivgrün statt beige)
+                    let wr = min(max(rain[k] * 1.2, 0), 1)        // → Gras (Feuchte)
+                    r += (0.30 - r) * wr; g += (0.52 - g) * wr; b += (0.22 - b) * wr
                     let wv = veg[k] * 0.85                        // → Wald (Vegetation)
                     r += (0.11 - r) * wv; g += (0.30 - g) * wv; b += (0.13 - b) * wv
                     var rocky = sed[k] < 0.004 ? 0.5 : 0.0

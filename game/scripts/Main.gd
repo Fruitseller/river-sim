@@ -77,7 +77,11 @@ func _ready() -> void:
 	_setup_scene()
 	_setup_ui()
 	if OS.has_environment("RS_STEP"): # für Screenshots: erodiertes Terrain zeigen
-		sim.step(float(OS.get_environment("RS_STEP")))
+		var total := float(OS.get_environment("RS_STEP"))
+		var done := 0.0
+		while done < total: # in Schritten wie der Zeitraffer (repräsentativ)
+			sim.step(1000.0)
+			done += 1000.0
 	sim.recomputeFlow()
 	_pull_fields()
 	_update_terrain_textures()

@@ -27,7 +27,7 @@ public struct SimConfig: Sendable {
 
     // ---- Tektonik / Isostasie ----
     public var upliftPer100y: Double = 0.004
-    public var isoHighClamp: Double = 0.75 // Hebung → 0 gegen diese Höhe (Isostasie)
+    public var isoHighClamp: Double = 0.6 // Hebung → 0 gegen diese Höhe (unter Schneelinie)
     public var isoLowRange: Double = 0.35   // Senkung → 0 gegen den Boden
 
     // ---- Küste ----

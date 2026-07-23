@@ -29,6 +29,7 @@ public final class Terrain {
 
     private var heap: MinHeap
     private var visited: [Bool]
+    private var scratch: [Double] // Arbeitspuffer für die Diffusion
     private var noise: SimplexNoise
 
     public private(set) var years: Double = 0
@@ -51,6 +52,7 @@ public final class Terrain {
         order = .init(repeating: 0, count: c)
         floodParent = .init(repeating: -1, count: c)
         visited = .init(repeating: false, count: c)
+        scratch = .init(repeating: 0, count: c)
         heap = MinHeap(capacity: c)
         noise = SimplexNoise(seed: seed)
         generate(seed: seed)
@@ -70,9 +72,13 @@ public final class Terrain {
         var uRnd = Mulberry32(seed: seed ^ 0x5eed)
         let uox = uRnd.next() * 1000, uoy = uRnd.next() * 1000
         let uFreq = cfg.upliftFreq / Double(n)
+        // Positiv vorgespannt: da detachment-limited Stream-Power Material ins Meer
+        // austrägt (nicht massenerhaltend), muss die Tektonik die Landmasse netto
+        // tragen — sonst erodiert/senkt die Insel über 100k+ Jahre zu Graten weg.
         for j in 0..<n {
             for i in 0..<n {
-                upliftBase[idx(i, j)] = uNoise.value(Double(i) * uFreq + uox, Double(j) * uFreq + uoy)
+                let raw = uNoise.value(Double(i) * uFreq + uox, Double(j) * uFreq + uoy)
+                upliftBase[idx(i, j)] = raw * 0.7 + 0.12
             }
         }
 
@@ -286,6 +292,55 @@ public final class Terrain {
         }
     }
 
+    // MARK: - Seen-Verfüllung
+
+    /// Füllt Senken (hf > h) langsam mit Sediment auf — Näherung an den
+    /// Sediment-Transport (den detachment-limited Stream-Power nicht leistet):
+    /// große geschlossene Becken werden über die Zeit zu flachen Schwemmebenen
+    /// statt riesiger Seen. Volle SPACE-Physik (Deltas/Mäander) folgt in M3.
+    private func fillLakes(dt: Double) {
+        let rate = min(0.5, dt / 3000.0) // Zeitkonstante ~3000 Jahre
+        for k in 0..<cfg.count where hf[k] > cfg.sea {
+            let deficit = hf[k] - h[k]
+            if deficit > 0.001 {
+                let add = deficit * rate
+                h[k] += add
+                sed[k] += add
+            }
+        }
+    }
+
+    // MARK: - Hangdiffusion (linear)
+
+    /// Lineare Diffusion dh/dt = D·∇²h — glatte, natürliche Hänge (konkav/konvex)
+    /// statt der planaren Facetten/Terrassen der Schwellen-Talus-Methode.
+    /// kappa fix bei 0.15 (< 0.25 → explizit stabil), mehrmals pro Sim-Schritt.
+    private func diffusionPass() {
+        let kappa = 0.03 // schwach: Fluss-Einschneidung + Hebung sollen Relief halten
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = idx(i, j)
+                let hl = i > 0 ? h[k - 1] : h[k]
+                let hr = i < n - 1 ? h[k + 1] : h[k]
+                let hd = j > 0 ? h[k - n] : h[k]
+                let hu = j < n - 1 ? h[k + n] : h[k]
+                scratch[k] = kappa * (hl + hr + hd + hu - 4 * h[k])
+            }
+        }
+        for k in 0..<cfg.count {
+            let dh = scratch[k]
+            if dh == 0 { continue }
+            if dh >= 0 {
+                sed[k] += dh
+            } else {
+                let ds = min(-dh, sed[k])
+                sed[k] -= ds
+                rock[k] -= (-dh - ds)
+            }
+            h[k] += dh
+        }
+    }
+
     // MARK: - Wellenerosion (Küstenzone)
 
     private func wavePass() {
@@ -377,10 +432,11 @@ public final class Terrain {
         applyUplift(dt: dt)
         computeFlow()
         streamPower(dt: dt)
+        fillLakes(dt: dt)
         // Hangprozesse ~ 1 Pass / 100 Jahre (wie im Prototyp kalibriert).
         let passes = max(1, Int((dt / 100).rounded()))
         for _ in 0..<passes {
-            thermalPass()
+            diffusionPass()
             wavePass()
         }
         updateVegetation(years: dt)
