@@ -396,32 +396,42 @@ func _sample_hf(gx: float, gz: float) -> float:
 ## sie entstehen aus den eingeschnittenen Tälern + blauer Terrain-Tönung (Swift)
 ## + dem Wasser, das die Talböden füllt (Lague-Prinzip: „Täler sind die Flüsse").
 func _rebuild_rivers() -> void:
-	var verts := PackedVector3Array()
-	var colors := PackedColorArray()
-	var indices := PackedInt32Array()
+	river_mesh.clear_surfaces()
 
+	# Surface 0: echtes Fluss-Netz (in Swift getract: glatt, variable Breite, Mäander).
+	sim.buildRivers(HSCALE)
+	var rv: PackedVector3Array = sim.riverVerts()
+	if rv.size() >= 3:
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = rv
+		arr[Mesh.ARRAY_COLOR] = sim.riverColors()
+		arr[Mesh.ARRAY_INDEX] = sim.riverIndices()
+		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+
+	# Surface 1: Seeflächen (flache Quads auf Füllhöhe).
+	var lv := PackedVector3Array()
+	var lc := PackedColorArray()
+	var li := PackedInt32Array()
 	for k in N * N:
 		if hf_cache[k] - h_cache[k] <= LAKE_EPS or hf_cache[k] <= sea:
 			continue
 		var ci := k % N
 		var cj := k / N
 		var y: float = hf_cache[k] * HSCALE + 0.1
-		var base := verts.size()
+		var base := lv.size()
 		for off in [Vector2(-0.5, -0.5), Vector2(0.5, -0.5), Vector2(-0.5, 0.5), Vector2(0.5, 0.5)]:
-			verts.append(Vector3(-half + (ci + off.x) * step, y, -half + (cj + off.y) * step))
-			colors.append(Color(0.5, 0.5, 1.0)) # dir=(0,0) → See kräuselt
-		indices.append(base); indices.append(base + 2); indices.append(base + 1)
-		indices.append(base + 1); indices.append(base + 2); indices.append(base + 3)
-
-	river_mesh.clear_surfaces()
-	if verts.size() == 0:
-		return
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = verts
-	arr[Mesh.ARRAY_COLOR] = colors
-	arr[Mesh.ARRAY_INDEX] = indices
-	river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+			lv.append(Vector3(-half + (ci + off.x) * step, y, -half + (cj + off.y) * step))
+			lc.append(Color(0.5, 0.5, 1.0)) # dir=(0,0) → See kräuselt
+		li.append(base); li.append(base + 2); li.append(base + 1)
+		li.append(base + 1); li.append(base + 2); li.append(base + 3)
+	if lv.size() >= 3:
+		var arr2 := []
+		arr2.resize(Mesh.ARRAY_MAX)
+		arr2[Mesh.ARRAY_VERTEX] = lv
+		arr2[Mesh.ARRAY_COLOR] = lc
+		arr2[Mesh.ARRAY_INDEX] = li
+		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr2)
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 
