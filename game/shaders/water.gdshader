@@ -21,21 +21,21 @@ float hash(vec2 p) {
 }
 
 void fragment() {
-	vec3 col = vec3(0.14, 0.44, 0.77);
+	vec3 col = vec3(0.09, 0.28, 0.5); // dunkleres, natürlicheres Flussblau
 	float dl = length(v_dir);
 	if (dl > 0.01) {
 		float along = dot(v_world.xz, v_dir / dl);
 		float stream = 0.5 * sin(along * 2.0 - u_time * 6.0)
 			+ 0.5 * sin(along * 4.7 - u_time * 9.0 + 1.7);
-		col += stream * vec3(0.06, 0.09, 0.12);
+		col += stream * vec3(0.035, 0.05, 0.07);
 	} else {
 		float ripple = sin(v_world.x * 2.1 + u_time * 1.2) * sin(v_world.z * 2.4 + u_time * 0.9);
-		col += ripple * vec3(0.04, 0.05, 0.06);
+		col += ripple * vec3(0.025, 0.03, 0.04);
 	}
 	vec2 cell = floor(v_world.xz * 5.0);
 	float r = hash(cell);
 	float tw = 0.5 + 0.5 * sin(u_time * (1.5 + r * 4.0) + r * 62.831);
-	col += pow(tw, 120.0) * step(0.9, r) * 0.18 * vec3(1.0, 1.0, 0.95);
+	col += pow(tw, 120.0) * step(0.92, r) * 0.12 * vec3(1.0, 1.0, 0.95);
 	ALBEDO = col;
-	ALPHA = 0.9;
+	ALPHA = 0.86;
 }

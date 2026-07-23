@@ -392,7 +392,7 @@ func _sample_hf(gx: float, gz: float) -> float:
 		+ hf_cache[i00 + N] * (1 - fx) * fy + hf_cache[i00 + N + 1] * fx * fy
 
 func _river_half_width(cells: float) -> float:
-	return min(0.9 + 0.9 * log(cells / RIVER_MIN_CELLS + 1.0), 4.4)
+	return min(1.2 + 1.0 * log(cells / RIVER_MIN_CELLS + 1.0), 5.0)
 
 func _rebuild_rivers() -> void:
 	var verts := PackedVector3Array()
@@ -428,10 +428,10 @@ func _rebuild_rivers() -> void:
 		var w0 := _river_half_width(_cells_upstream(c))
 		var w1 := _river_half_width(_cells_upstream(d))
 		var wm := (w0 + w1) * 0.5
-		var sx := ci - dirx * 0.35
-		var sz := cj - dirz * 0.35
-		var ex := di + dirx * 0.35
-		var ez := dj + dirz * 0.35
+		var sx := ci - dirx * 0.6 # größere Überlappung → durchgehende Läufe statt Lücken
+		var sz := cj - dirz * 0.6
+		var ex := di + dirx * 0.6
+		var ez := dj + dirz * 0.6
 		var mx := (sx + ex) * 0.5
 		var mz := (sz + ez) * 0.5
 		_push_quad(verts, colors, indices, sx, sz, w0, mx, mz, wm, px, pz, dirx, dirz)
@@ -443,7 +443,7 @@ func _rebuild_rivers() -> void:
 			continue
 		var ci := k % N
 		var cj := k / N
-		var y: float = hf_cache[k] * HSCALE + 0.06
+		var y: float = hf_cache[k] * HSCALE + 0.12 # klar über Terrain (kein Z-Fighting)
 		var base := verts.size()
 		for off in [Vector2(-0.5, -0.5), Vector2(0.5, -0.5), Vector2(-0.5, 0.5), Vector2(0.5, 0.5)]:
 			verts.append(Vector3(-half + (ci + off.x) * step, y, -half + (cj + off.y) * step))
