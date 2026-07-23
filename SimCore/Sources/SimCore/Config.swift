@@ -19,6 +19,7 @@ public struct SimConfig: Sendable {
     public var kRock: Double = 8.0e-5  // Erodierbarkeit Grundgestein
     public var kSed: Double = 2.5e-4   // Erodierbarkeit lockeres Sediment (weicher)
     public var sedCoverThresh: Double = 0.01 // ab so viel Sediment gilt "bedeckt"
+    public var transportCap: Double = 9.0  // Transportkapazität-Koeffizient (SPACE)
 
     // ---- Hangprozesse (thermische Erosion / Talus) ----
     public var talus: Double = 0.011   // kritische Höhendifferenz je Zelle

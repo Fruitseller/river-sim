@@ -29,8 +29,8 @@ void fragment() {
 			+ 0.5 * sin(along * 4.7 - u_time * 9.0 + 1.7);
 		col += stream * vec3(0.035, 0.05, 0.07);
 	} else {
-		float ripple = sin(v_world.x * 2.1 + u_time * 1.2) * sin(v_world.z * 2.4 + u_time * 0.9);
-		col += ripple * vec3(0.025, 0.03, 0.04);
+		float ripple = sin(v_world.x * 0.22 + u_time * 1.2) * sin(v_world.z * 0.26 + u_time * 0.9);
+		col += ripple * vec3(0.03, 0.035, 0.045); // niedrige Frequenz → glatte Seen, kein Gitter
 	}
 	vec2 cell = floor(v_world.xz * 5.0);
 	float r = hash(cell);

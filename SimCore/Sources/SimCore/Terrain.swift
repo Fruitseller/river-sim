@@ -30,6 +30,7 @@ public final class Terrain {
     private var heap: MinHeap
     private var visited: [Bool]
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
+    private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     private var noise: SimplexNoise
 
     public private(set) var years: Double = 0
@@ -53,6 +54,7 @@ public final class Terrain {
         floodParent = .init(repeating: -1, count: c)
         visited = .init(repeating: false, count: c)
         scratch = .init(repeating: 0, count: c)
+        qs = .init(repeating: 0, count: c)
         heap = MinHeap(capacity: c)
         noise = SimplexNoise(seed: seed)
         generate(seed: seed)
@@ -264,6 +266,63 @@ public final class Terrain {
         }
     }
 
+    // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig)
+
+    /// Massenerhaltender Sedimenttransport: der Fluss trägt eine Fracht `qs` und
+    /// gleicht sie an die Transportkapazität Qc = Kt·Aᵐ·S an. Über Kapazität →
+    /// Ablagerung (Deltas an Küsten, Schwemmebenen, Beckenfüllung); unter Kapazität
+    /// → Erosion (detachment-begrenzt). Ersetzt die detachment-limited Inzision +
+    /// den fillLakes-Hack. Verarbeitung stromauf→stromab (order rückwärts), sodass
+    /// die Fracht jeder Zelle bei ihren Zuflüssen schon angekommen ist.
+    private func transportLimited(dt: Double) {
+        let cs = cfg.cellSize
+        let sqrt2 = 2.0.squareRoot()
+        let kt = cfg.transportCap
+        let m = cfg.mExp
+        for k in 0..<cfg.count { qs[k] = 0 }
+        var oi = cfg.count - 1
+        while oi >= 0 {
+            let k = Int(order[oi]); oi -= 1
+            let r = receiver[k]
+            let qin = qs[k]
+            if r < 0 {
+                // Meer/Rand: Delta bis Meereshöhe aufbauen, Überschuss geht ins tiefe Meer.
+                let room = max(0, cfg.sea - h[k])
+                let dep = min(qin, room)
+                h[k] += dep; sed[k] += dep
+                continue
+            }
+            let ri = Int(r)
+            let ki = k % n, kj = k / n
+            let rii = ri % n, rjj = ri / n
+            let dist = (ki != rii && kj != rjj) ? cs * sqrt2 : cs
+            let a = area[k]
+            let s = max(0, (hf[k] - hf[ri]) / dist)
+            let qc = kt * pow(a, m) * s
+            if qin > qc {
+                // über Kapazität → ablagern (aber nicht über den Empfänger hinaus stauen)
+                var dep = qin - qc
+                let room = max(0, (hf[k] - h[k])) + 0.02 // bis Seespiegel/etwas darüber
+                dep = min(dep, room)
+                h[k] += dep; sed[k] += dep
+                qs[ri] += qin - dep
+            } else {
+                // unter Kapazität → erodieren (detachment-begrenzt, Fels widerstandsfähiger)
+                let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : cfg.kRock) * (1 - 0.6 * veg[k])
+                let want = min(qc - qin, kErode * pow(a, m) * s * dt)
+                let removable = max(0, h[k] - h[ri]) * 0.5
+                let er = min(want, removable)
+                if er > 0 {
+                    let ds = min(er, sed[k])
+                    sed[k] -= ds
+                    rock[k] -= (er - ds)
+                    h[k] -= er
+                }
+                qs[ri] += qin + er
+            }
+        }
+    }
+
     // MARK: - Thermische Erosion (Hang-Diffusion / Talus)
 
     private func thermalPass() {
@@ -431,8 +490,7 @@ public final class Terrain {
     public func step(dtYears dt: Double) {
         applyUplift(dt: dt)
         computeFlow()
-        streamPower(dt: dt)
-        fillLakes(dt: dt)
+        transportLimited(dt: dt) // massenerhaltend: Erosion + Sedimenttransport + Ablagerung
         // Hangprozesse ~ 1 Pass / 100 Jahre (wie im Prototyp kalibriert).
         let passes = max(1, Int((dt / 100).rounded()))
         for _ in 0..<passes {
