@@ -35,7 +35,7 @@ void fragment() {
 	vec2 cell = floor(v_world.xz * 5.0);
 	float r = hash(cell);
 	float tw = 0.5 + 0.5 * sin(u_time * (1.5 + r * 4.0) + r * 62.831);
-	col += pow(tw, 120.0) * step(0.82, r) * 0.5 * vec3(1.0, 1.0, 0.95);
+	col += pow(tw, 120.0) * step(0.9, r) * 0.18 * vec3(1.0, 1.0, 0.95);
 	ALBEDO = col;
 	ALPHA = 0.9;
 }

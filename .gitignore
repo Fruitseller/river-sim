@@ -10,3 +10,6 @@ game/bin/*.dylib
 export/
 
 .DS_Store
+
+# Scratch-Screenshots
+scratch_*.png

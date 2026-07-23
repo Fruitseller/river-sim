@@ -5,9 +5,9 @@ extends Node3D
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const HSCALE := 26.0          # Höhen-Skalierung fürs Mesh (h ist normiert)
-const LAKE_EPS := 0.015
-const RIVER_MIN_CELLS := 40.0 # ab so vielen Oberlieger-Zellen ein sichtbarer Fluss
-const CREEK_MIN_CELLS := 15.0 # kleinere Bäche nur als Tönung
+const LAKE_EPS := 0.035 # nur echte Seen rendern, keine Mini-Senken
+const RIVER_MIN_CELLS := 160.0 # ab so vielen Oberlieger-Zellen ein sichtbarer Fluss (256²)
+const CREEK_MIN_CELLS := 60.0 # kleinere Bäche nur als Tönung
 const RIVER_LIFT := 0.32
 
 var sim: Object
@@ -23,18 +23,20 @@ var terrain_mi: MeshInstance3D
 var water_mi: MeshInstance3D
 var river_mi: MeshInstance3D
 var ring_mi: MeshInstance3D
-var terrain_mesh := ArrayMesh.new()
 var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
-var sea_mat: ShaderMaterial
 
-# gecachte Felder (nach jedem Rebuild aktualisiert)
-var terrain_indices: PackedInt32Array # feste Gitter-Topologie, einmal gebaut
+# Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen/Farben
+# als Texturen (pro Tick nur Upload, kein Mesh-Rebuild).
+var terrain_mat: ShaderMaterial
+var height_img: Image
+var height_tex: ImageTexture
+var color_img: Image
+var color_tex: ImageTexture
+
+# gecachte Felder (nur render-/flussrelevant)
 var h_cache: PackedFloat32Array
 var hf_cache: PackedFloat32Array
-var sed_cache: PackedFloat32Array
-var rain_cache: PackedFloat32Array
-var veg_cache: PackedFloat32Array
 var area_cache: PackedFloat32Array
 var recv_cache: PackedInt32Array
 
@@ -74,44 +76,30 @@ func _ready() -> void:
 
 	_setup_scene()
 	_setup_ui()
+	if OS.has_environment("RS_STEP"): # für Screenshots: erodiertes Terrain zeigen
+		sim.step(float(OS.get_environment("RS_STEP")))
 	sim.recomputeFlow()
 	_pull_fields()
-	_rebuild_terrain()
+	_update_terrain_textures()
 	_rebuild_rivers()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
 
 func _diag() -> void:
-	var arrs := terrain_mesh.surface_get_arrays(0)
-	var cols: PackedColorArray = arrs[Mesh.ARRAY_COLOR]
-	var norms: PackedVector3Array = arrs[Mesh.ARRAY_NORMAL]
 	var land := 0
-	var csum := Vector3.ZERO
-	var nysum := 0.0
-	for k in cols.size():
-		csum += Vector3(cols[k].r, cols[k].g, cols[k].b)
-		nysum += norms[k].y
+	for k in h_cache.size():
 		if h_cache[k] > sea + 0.012:
 			land += 1
-	print("DIAG verts=", cols.size(), " land=", land, " avg_col=", csum / cols.size(), " avg_ny=", nysum / cols.size())
-	var mat := terrain_mi.material_override as StandardMaterial3D
-	print("DIAG vertex_color_use_as_albedo=", mat.vertex_color_use_as_albedo)
-	var c := (N / 2) * N + (N / 2)
-	print("DIAG center h=", h_cache[c], " col=", cols[c], " veg=", veg_cache[c], " rain=", rain_cache[c])
-	# ein paar echte Landzellen
-	for k in cols.size():
-		if h_cache[k] > sea + 0.05:
-			print("DIAG land-sample h=", h_cache[k], " col=", cols[k])
-			break
+	print("DIAG verts=", h_cache.size(), " land=", land)
 	var t0 := Time.get_ticks_usec()
 	for r in 10:
-		_rebuild_terrain()
+		_update_terrain_textures()
 	var t_terr := (Time.get_ticks_usec() - t0) / 10000.0
 	t0 = Time.get_ticks_usec()
 	for r in 10:
 		_rebuild_rivers()
 	var t_riv := (Time.get_ticks_usec() - t0) / 10000.0
-	print("DIAG PERF terrain_rebuild_ms=", t_terr, " river_rebuild_ms=", t_riv)
+	print("DIAG PERF terrain_texupload_ms=", t_terr, " river_rebuild_ms=", t_riv)
 
 # ---------------------------------------------------------------- Szene / UI
 
@@ -131,16 +119,18 @@ func _setup_scene() -> void:
 	e.background_mode = Environment.BG_SKY
 	e.sky = sky
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	e.ambient_light_energy = 1.0
+	e.ambient_light_energy = 0.45
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	# Filmischer Look + Tiefe.
 	e.tonemap_mode = Environment.TONE_MAPPER_ACES
-	e.tonemap_exposure = 1.05
+	e.tonemap_exposure = 0.9
 	e.ssao_enabled = true
 	e.ssao_intensity = 1.5
 	e.glow_enabled = true
 	e.glow_intensity = 0.25
 	e.glow_bloom = 0.1
+	e.adjustment_enabled = true # Farben satter (gegen den blassen Look)
+	e.adjustment_saturation = 1.25
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_DEPTH
 	e.fog_light_color = Color(0.72, 0.80, 0.90)
@@ -150,7 +140,7 @@ func _setup_scene() -> void:
 
 	var sun := DirectionalLight3D.new()
 	sun.light_color = Color(1.0, 0.95, 0.87)
-	sun.light_energy = 1.6
+	sun.light_energy = 1.1
 	sun.shadow_enabled = true
 	add_child(sun)
 	# Eindeutig von schräg oben aufs Terrain scheinen lassen (statt mehrdeutiger Euler).
@@ -163,13 +153,18 @@ func _setup_scene() -> void:
 	_update_camera()
 
 	terrain_mi = MeshInstance3D.new()
-	terrain_mi.mesh = terrain_mesh
-	var tmat := StandardMaterial3D.new()
-	tmat.vertex_color_use_as_albedo = true
-	tmat.roughness = 0.95
-	tmat.metallic = 0.0
-	tmat.cull_mode = BaseMaterial3D.CULL_DISABLED # Heightfield: Wicklung egal
-	terrain_mi.material_override = tmat
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(world_size, world_size)
+	pm.subdivide_width = N - 2  # → N Vertices je Kante
+	pm.subdivide_depth = N - 2
+	terrain_mi.mesh = pm
+	terrain_mi.extra_cull_margin = 1000.0 # Displacement sprengt die Plan-AABB
+	terrain_mat = ShaderMaterial.new()
+	terrain_mat.shader = load("res://shaders/terrain.gdshader")
+	terrain_mat.set_shader_parameter("hscale", HSCALE)
+	terrain_mat.set_shader_parameter("world_size", world_size)
+	terrain_mat.set_shader_parameter("grid_n", float(N))
+	terrain_mi.material_override = terrain_mat
 	add_child(terrain_mi)
 
 	water_mi = MeshInstance3D.new()
@@ -273,27 +268,46 @@ func _regen() -> void:
 
 func _after_sim() -> void:
 	_pull_fields()
-	_rebuild_terrain()
+	_update_terrain_textures()
 	_rebuild_rivers()
 	_update_year()
 
+var _shot_frame := 0
+var _fps_accum := 0.0
 func _process(delta: float) -> void:
+	# Selbst-Screenshot für autonome visuelle Verifikation (nur mit RS_SHOT-Env).
+	if OS.has_environment("RS_SHOT"):
+		_shot_frame += 1
+		if _shot_frame == 45:
+			var img := get_viewport().get_texture().get_image()
+			img.save_png(OS.get_environment("RS_SHOT"))
+			get_tree().quit()
+	# FPS-Messung im Zeitraffer (nur mit RS_FPS-Env).
+	if OS.has_environment("RS_FPS"):
+		year_rate = 60.0
+		_shot_frame += 1
+		if _shot_frame > 60:
+			_fps_accum += Engine.get_frames_per_second()
+		if _shot_frame == 260:
+			print("RS_FPS avg=", _fps_accum / 200.0)
+			get_tree().quit()
+
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if river_mat:
 		river_mat.set_shader_parameter("u_time", u_time)
-	if sea_mat:
-		sea_mat.set_shader_parameter("u_time", u_time * 0.5)
 
 	if year_rate > 0.0:
-		var years := year_rate * delta
+		# Jahre/Frame deckeln: verhindert die Todesspirale (langsam → großer dt →
+		# mehr Hangpässe → noch langsamer) und hält jeden Schritt billig.
+		var years := minf(year_rate * delta, 240.0)
 		sim.step(years)
 		flow_timer += delta
 		rebuild_timer += delta
 		# Flüsse & Mesh gedrosselt neu aufbauen (nicht jeden Frame, wäre zu teuer).
-		if rebuild_timer > 0.2:
+		if rebuild_timer > 0.15:
 			rebuild_timer = 0.0
 			_pull_fields()
-			_rebuild_terrain()
+			_update_terrain_textures()
 			_rebuild_rivers()
 			_update_year()
 
@@ -306,7 +320,7 @@ func _process(delta: float) -> void:
 			sim.sculpt(gx, gz, brush_radius, dir)
 			sim.recomputeFlow()
 			_pull_fields()
-			_rebuild_terrain()
+			_update_terrain_textures()
 			_rebuild_rivers()
 
 	_update_ring()
@@ -329,49 +343,38 @@ func _fmt(v: int) -> String:
 # ---------------------------------------------------------------- Felder
 
 func _pull_fields() -> void:
-	h_cache = sim.heights()
-	hf_cache = sim.filled()
-	sed_cache = sim.sediment()
-	rain_cache = sim.rainField()
-	veg_cache = sim.vegetation()
-	area_cache = sim.flowArea()
-	recv_cache = sim.receivers()
+	# Nur was Rendering/Flüsse/Raycast braucht — Farben werden in Swift berechnet,
+	# daher KEINE sed/rain/veg-Felder mehr über die FFI-Grenze ziehen.
+	h_cache = sim.heights()      # Höhentextur + Raycast
+	hf_cache = sim.filled()      # Seeflächen
+	area_cache = sim.flowArea()  # Flussbreite/-schwelle
+	recv_cache = sim.receivers() # Flussrichtung
 
 func _cells_upstream(k: int) -> float:
 	return area_cache[k] / cell_area
 
-# ---------------------------------------------------------------- Terrain-Mesh
+# ---------------------------------------------------------------- Terrain-Textur
 
-func _rebuild_terrain() -> void:
-	# Positionen/Normalen/Farben werden in Swift berechnet (schnell); GDScript
-	# setzt nur den Mesh zusammen. Farben kommen als interleaved RGB-Floats.
-	var verts: PackedVector3Array = sim.terrainVertices()
-	var normals: PackedVector3Array = sim.terrainNormals()
-	var colors: PackedColorArray = sim.terrainColors()
+## Lädt Höhen (R32F) und Farben (RGBA8) als Texturen hoch — GPU macht Displacement
+## und Färbung. Pro Tick nur ein Upload statt kompletter Mesh-Rebuild.
+func _update_terrain_textures() -> void:
+	var hbytes := h_cache.to_byte_array() # PackedFloat32Array → rohe float32-Bytes
+	if height_img == null:
+		height_img = Image.create_from_data(N, N, false, Image.FORMAT_RF, hbytes)
+		height_tex = ImageTexture.create_from_image(height_img)
+		terrain_mat.set_shader_parameter("height_tex", height_tex)
+	else:
+		height_img.set_data(N, N, false, Image.FORMAT_RF, hbytes)
+		height_tex.update(height_img)
 
-	if terrain_indices.is_empty():
-		terrain_indices = _build_grid_indices()
-
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = verts
-	arr[Mesh.ARRAY_NORMAL] = normals
-	arr[Mesh.ARRAY_COLOR] = colors
-	arr[Mesh.ARRAY_INDEX] = terrain_indices
-	terrain_mesh.clear_surfaces()
-	terrain_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-
-func _build_grid_indices() -> PackedInt32Array:
-	var idx := PackedInt32Array()
-	idx.resize((N - 1) * (N - 1) * 6)
-	var t := 0
-	for j in (N - 1):
-		for i in (N - 1):
-			var a := j * N + i
-			idx[t] = a; idx[t + 1] = a + N; idx[t + 2] = a + 1
-			idx[t + 3] = a + 1; idx[t + 4] = a + N; idx[t + 5] = a + N + 1
-			t += 6
-	return idx
+	var cbytes: PackedByteArray = sim.terrainColorBytes()
+	if color_img == null:
+		color_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
+		color_tex = ImageTexture.create_from_image(color_img)
+		terrain_mat.set_shader_parameter("color_tex", color_tex)
+	else:
+		color_img.set_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
+		color_tex.update(color_img)
 
 # ---------------------------------------------------------------- Fluss-Mesh
 

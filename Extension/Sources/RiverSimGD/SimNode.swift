@@ -43,54 +43,15 @@ final class SimNode: Node {
 
     // MARK: Render-Buffer (in Swift berechnet → GDScript setzt nur zusammen)
 
-    private let hscale: Double = 26 // Höhen-Skalierung fürs Mesh (Godot-seitig)
-
-    /// Vertex-Positionen in Weltkoordinaten (row-major, n*n).
-    @Callable func terrainVertices() -> PackedVector3Array {
-        let n = terrain.cfg.n
-        let half = terrain.cfg.world / 2
-        let step = terrain.cfg.world / Double(n - 1)
-        let h = terrain.h
-        var v = [Vector3](); v.reserveCapacity(n * n)
-        for j in 0..<n {
-            for i in 0..<n {
-                v.append(Vector3(x: Float(-half + Double(i) * step),
-                                 y: Float(h[j * n + i] * hscale),
-                                 z: Float(-half + Double(j) * step)))
-            }
-        }
-        return PackedVector3Array(v)
-    }
-
-    /// Glatte Vertex-Normalen (Zentraldifferenz auf dem Höhenfeld).
-    @Callable func terrainNormals() -> PackedVector3Array {
-        let n = terrain.cfg.n
-        let step = terrain.cfg.world / Double(n - 1)
-        let h = terrain.h
-        var out = [Vector3](); out.reserveCapacity(n * n)
-        for j in 0..<n {
-            for i in 0..<n {
-                let l = max(i - 1, 0), r = min(i + 1, n - 1)
-                let d = max(j - 1, 0), u = min(j + 1, n - 1)
-                let dhx = (h[j * n + r] - h[j * n + l]) * hscale
-                let dhz = (h[u * n + i] - h[d * n + i]) * hscale
-                let nx = -dhx, ny = 2 * step, nz = -dhz
-                let len = (nx * nx + ny * ny + nz * nz).squareRoot()
-                out.append(Vector3(x: Float(nx / len), y: Float(ny / len), z: Float(nz / len)))
-            }
-        }
-        return PackedVector3Array(out)
-    }
-
-    /// Vertex-Farben (Biom-/Höhen-Färbung aus dem Prototyp), direkt als
-    /// PackedColorArray → GDScript braucht keinen Pro-Zelle-Loop mehr.
-    @Callable func terrainColors() -> PackedColorArray {
+    /// Biom-/Höhen-Färbung (aus dem Prototyp) als RGBA8-Byte-Buffer (n*n*4) —
+    /// direkt als Farb-Textur hochladbar, kein GDScript-Loop nötig.
+    @Callable func terrainColorBytes() -> PackedByteArray {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let creek = 15.0
+        let creek = 60.0 // Bach-Tönung erst ab realem Einzugsgebiet (256²-kalibriert)
         let h = terrain.h, sed = terrain.sed, rain = terrain.rain, veg = terrain.veg, area = terrain.area
-        var out = [Color](); out.reserveCapacity(n * n)
+        var out = [UInt8](repeating: 255, count: n * n * 4)
         for j in 0..<n {
             for i in 0..<n {
                 let k = j * n + i
@@ -104,27 +65,31 @@ final class SimNode: Node {
                     r += (0.36 - r) * wr; g += (0.54 - g) * wr; b += (0.26 - b) * wr
                     let wv = veg[k] * 0.85                        // → Wald (Vegetation)
                     r += (0.11 - r) * wv; g += (0.30 - g) * wv; b += (0.13 - b) * wv
-                    var rocky = sed[k] < 0.004 ? 0.55 : 0.0
+                    var rocky = sed[k] < 0.004 ? 0.5 : 0.0
                     if i > 0 && i < n - 1 && j > 0 && j < n - 1 {
                         let slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
-                        rocky = max(rocky, min(0.85, max(0, slope * 70 - 0.55)))
+                        rocky = max(rocky, min(0.85, max(0, slope * 55 - 0.75))) // steiler nötig → mehr Grün
                     }
-                    let wf = max(0, rocky)                        // → Fels
-                    r += (0.47 - r) * wf; g += (0.45 - g) * wf; b += (0.43 - b) * wf
-                    if v > 0.60 {                                 // → Schnee
-                        let ws = min(max((v - 0.60) / 0.08, 0), 1)
+                    let wf = max(0, rocky)                        // → Fels (dunkler, bräunlich)
+                    r += (0.40 - r) * wf; g += (0.37 - g) * wf; b += (0.32 - b) * wf
+                    if v > 0.70 {                                 // → Schnee (nur hohe Gipfel)
+                        let ws = min(max((v - 0.70) / 0.10, 0), 1)
                         r += (0.95 - r) * ws; g += (0.96 - g) * ws; b += (0.98 - b) * ws
                     }
                     let cu = area[k] / cellArea                   // → Fluss-Tönung
                     if cu >= creek {
-                        let t = min(max(log(cu / creek + 1) / 2.5, 0), 1) * 0.85
+                        let t = min(max(log(cu / creek + 1) / 2.5, 0), 1) * 0.45
                         r += (0.10 - r) * t; g += (0.32 - g) * t; b += (0.58 - b) * t
                     }
                 }
-                out.append(Color(r: Float(r), g: Float(g), b: Float(b), a: 1.0))
+                let o = k * 4
+                out[o] = UInt8(min(max(r, 0), 1) * 255)
+                out[o + 1] = UInt8(min(max(g, 0), 1) * 255)
+                out[o + 2] = UInt8(min(max(b, 0), 1) * 255)
+                // out[o+3] bleibt 255 (Alpha)
             }
         }
-        return PackedColorArray(out)
+        return PackedByteArray(out)
     }
 
     // Höhen-Farbverlauf (Schwelle, r, g, b) — portiert aus dem Prototyp.
