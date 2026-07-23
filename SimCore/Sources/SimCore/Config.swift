@@ -27,7 +27,7 @@ public struct SimConfig: Sendable {
     public var rockCrumble: Double = 0.15 // Fels-Anteil beim Hangrutsch (Basis)
 
     // ---- Tektonik / Isostasie ----
-    public var upliftPer100y: Double = 0.004
+    public var upliftPer100y: Double = 0.0026 // niedriger → Gipfel erosions-begrenzt (spitz), nicht an der Kappe abgeflacht
     public var isoHighClamp: Double = 0.82 // Hebung → 0 gegen diese Höhe (hohe Gipfel)
     public var isoLowRange: Double = 0.35   // Senkung → 0 gegen den Boden
 

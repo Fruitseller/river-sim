@@ -49,9 +49,31 @@ final class SimNode: Node {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let creek = 35.0 // Fluss-Tönung ab diesem Einzugsgebiet (Flüsse = blaue Kanäle im Terrain)
+        let creek = 22.0 // Fluss-Tönung ab diesem Einzugsgebiet (nur Landzellen über Meer)
         let h = terrain.h, sed = terrain.sed, rain = terrain.rain, veg = terrain.veg, area = terrain.area
+        let hf = terrain.hf
         var out = [UInt8](repeating: 255, count: n * n * 4)
+
+        // Fluss-Stärke je Zelle, dann um 1 Zelle DILATIEREN → fette, verbundene
+        // Flusslinien statt haardünner Fäden (User: „zu klein/unscheinbar").
+        var riv = [Double](repeating: 0, count: n * n)
+        for k in 0..<(n * n) where hf[k] > sea {
+            let cu = area[k] / cellArea
+            if cu >= creek { riv[k] = min(max(log(cu / creek + 1) / 2.0, 0), 1) }
+        }
+        var rivD = [Double](repeating: 0, count: n * n)
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = j * n + i
+                var m = riv[k]
+                if i > 0 { m = max(m, riv[k - 1]) }
+                if i < n - 1 { m = max(m, riv[k + 1]) }
+                if j > 0 { m = max(m, riv[k - n]) }
+                if j < n - 1 { m = max(m, riv[k + n]) }
+                rivD[k] = m
+            }
+        }
+
         for j in 0..<n {
             for i in 0..<n {
                 let k = j * n + i
@@ -80,10 +102,10 @@ final class SimNode: Node {
                         let ws = min(max((v - 0.80) / 0.05, 0), 1)
                         r += (0.96 - r) * ws; g += (0.97 - g) * ws; b += (0.99 - b) * ws
                     }
-                    let cu = area[k] / cellArea                   // → Fluss als blauer Kanal
-                    if cu >= creek {
-                        let t = min(max(log(cu / creek + 1) / 2.2, 0), 1) * 0.85
-                        r += (0.13 - r) * t; g += (0.30 - g) * t; b += (0.52 - b) * t
+                    let t = rivD[k]                               // → fetter blauer Flusskanal (dilatiert)
+                    if t > 0.01 {
+                        let tw = min(1, t * 1.15)
+                        r += (0.10 - r) * tw; g += (0.28 - g) * tw; b += (0.55 - b) * tw
                     }
                 }
                 let o = k * 4

@@ -4,7 +4,7 @@ extends Node3D
 ## (Swift/SimCore, headless getestet). Dieses Skript macht nur Rendering, Kamera,
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
-const HSCALE := 34.0          # Höhen-Skalierung fürs Mesh (mehr vertikale Wucht)
+const HSCALE := 30.0          # Höhen-Skalierung fürs Mesh
 const LAKE_EPS := 0.035 # nur echte Seen rendern, keine Mini-Senken
 const RIVER_MIN_CELLS := 160.0 # ab so vielen Oberlieger-Zellen ein sichtbarer Fluss (256²)
 const CREEK_MIN_CELLS := 60.0 # kleinere Bäche nur als Tönung

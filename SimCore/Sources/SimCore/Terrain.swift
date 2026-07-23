@@ -82,7 +82,7 @@ public final class Terrain {
                 let raw = uNoise.value(Double(i) * uFreq + uox, Double(j) * uFreq + uoy)
                 // Hohe Varianz, ~nullsummig: dramatische Gipfel WO raw stark, grünes
                 // Tiefland sonst. Massenerhaltender Transport verhindert das Absaufen.
-                upliftBase[idx(i, j)] = raw * 0.9 + 0.03
+                upliftBase[idx(i, j)] = raw * 0.8 + 0.06
             }
         }
 
@@ -377,7 +377,7 @@ public final class Terrain {
     /// statt der planaren Facetten/Terrassen der Schwellen-Talus-Methode.
     /// kappa fix bei 0.15 (< 0.25 → explizit stabil), mehrmals pro Sim-Schritt.
     private func diffusionPass() {
-        let kappa = 0.015 // sehr schwach: Grate/Gipfel bleiben scharf
+        let kappa = 0.028 // moderate Glättung: natürliche Hänge, keine Tafelberg-Steilwände
         for j in 0..<n {
             for i in 0..<n {
                 let k = idx(i, j)
