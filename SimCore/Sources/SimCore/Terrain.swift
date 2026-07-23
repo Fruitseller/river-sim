@@ -80,7 +80,9 @@ public final class Terrain {
         for j in 0..<n {
             for i in 0..<n {
                 let raw = uNoise.value(Double(i) * uFreq + uox, Double(j) * uFreq + uoy)
-                upliftBase[idx(i, j)] = raw * 0.7 + 0.12
+                // Hohe Varianz, ~nullsummig: dramatische Gipfel WO raw stark, grünes
+                // Tiefland sonst. Massenerhaltender Transport verhindert das Absaufen.
+                upliftBase[idx(i, j)] = raw * 0.9 + 0.03
             }
         }
 
@@ -139,11 +141,11 @@ public final class Terrain {
                 let k = idx(i, j)
                 var target = 0.0
                 let v = h[k]
-                if v > cfg.sea + 0.005 && v < 0.58 && hf[k] - h[k] <= 0.015 {
+                if v > cfg.sea + 0.005 && v < 0.68 && hf[k] - h[k] <= 0.015 {
                     let slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
                     let slopeOk = max(0, 1 - slope * 40)
                     let wet = min(1, rain[k] * 1.3)
-                    let altOk = v < 0.45 ? 1 : max(0, 1 - (v - 0.45) / 0.13)
+                    let altOk = v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18) // Wald wächst höher
                     target = slopeOk * wet * altOk
                 }
                 veg[k] += (target - veg[k]) * f
@@ -375,7 +377,7 @@ public final class Terrain {
     /// statt der planaren Facetten/Terrassen der Schwellen-Talus-Methode.
     /// kappa fix bei 0.15 (< 0.25 → explizit stabil), mehrmals pro Sim-Schritt.
     private func diffusionPass() {
-        let kappa = 0.03 // schwach: Fluss-Einschneidung + Hebung sollen Relief halten
+        let kappa = 0.015 // sehr schwach: Grate/Gipfel bleiben scharf
         for j in 0..<n {
             for i in 0..<n {
                 let k = idx(i, j)

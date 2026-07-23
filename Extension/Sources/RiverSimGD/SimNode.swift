@@ -70,11 +70,15 @@ final class SimNode: Node {
                         let slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
                         rocky = max(rocky, min(0.85, max(0, slope * 55 - 0.75))) // steiler nötig → mehr Grün
                     }
-                    let wf = max(0, rocky)                        // → Fels (dunkler, bräunlich)
-                    r += (0.40 - r) * wf; g += (0.37 - g) * wf; b += (0.32 - b) * wf
-                    if v > 0.70 {                                 // → Schnee (nur hohe Gipfel)
-                        let ws = min(max((v - 0.70) / 0.10, 0), 1)
-                        r += (0.95 - r) * ws; g += (0.96 - g) * ws; b += (0.98 - b) * ws
+                    let wf = max(0, rocky)                        // → dunkle Felswände (Kontrast)
+                    r += (0.34 - r) * wf; g += (0.31 - g) * wf; b += (0.28 - b) * wf
+                    if v > 0.68 {                                 // → dunkles Hochgebirgs-Fels, dann Schnee
+                        let wg = min(max((v - 0.68) / 0.10, 0), 1)
+                        r += (0.40 - r) * wg; g += (0.39 - g) * wg; b += (0.38 - b) * wg
+                    }
+                    if v > 0.80 {                                 // → Schnee (nur höchste Gipfel)
+                        let ws = min(max((v - 0.80) / 0.05, 0), 1)
+                        r += (0.96 - r) * ws; g += (0.97 - g) * ws; b += (0.99 - b) * ws
                     }
                     let cu = area[k] / cellArea                   // → Fluss-Tönung
                     if cu >= creek {

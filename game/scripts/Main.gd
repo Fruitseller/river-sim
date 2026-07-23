@@ -4,7 +4,7 @@ extends Node3D
 ## (Swift/SimCore, headless getestet). Dieses Skript macht nur Rendering, Kamera,
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
-const HSCALE := 26.0          # Höhen-Skalierung fürs Mesh (h ist normiert)
+const HSCALE := 34.0          # Höhen-Skalierung fürs Mesh (mehr vertikale Wucht)
 const LAKE_EPS := 0.035 # nur echte Seen rendern, keine Mini-Senken
 const RIVER_MIN_CELLS := 160.0 # ab so vielen Oberlieger-Zellen ein sichtbarer Fluss (256²)
 const CREEK_MIN_CELLS := 60.0 # kleinere Bäche nur als Tönung
@@ -117,17 +117,17 @@ func _setup_scene() -> void:
 	sky_mat.ground_bottom_color = Color(0.22, 0.26, 0.30)
 	sky_mat.ground_horizon_color = Color(0.65, 0.72, 0.80)
 	sky_mat.sun_angle_max = 8.0
-	sky_mat.energy_multiplier = 1.0
+	sky_mat.energy_multiplier = 0.6
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	e.background_mode = Environment.BG_SKY
 	e.sky = sky
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	e.ambient_light_energy = 0.45
+	e.ambient_light_energy = 0.22 # weniger blaues Fülllicht → Albedo/Kontrast dominieren
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	# Filmischer Look + Tiefe.
 	e.tonemap_mode = Environment.TONE_MAPPER_ACES
-	e.tonemap_exposure = 0.9
+	e.tonemap_exposure = 0.82
 	e.ssao_enabled = true
 	e.ssao_intensity = 1.5
 	e.glow_enabled = true
@@ -143,8 +143,8 @@ func _setup_scene() -> void:
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
-	sun.light_color = Color(1.0, 0.95, 0.87)
-	sun.light_energy = 1.1
+	sun.light_color = Color(1.0, 0.94, 0.84)
+	sun.light_energy = 1.7
 	sun.shadow_enabled = true
 	add_child(sun)
 	# Eindeutig von schräg oben aufs Terrain scheinen lassen (statt mehrdeutiger Euler).

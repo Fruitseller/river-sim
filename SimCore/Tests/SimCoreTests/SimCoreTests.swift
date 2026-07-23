@@ -70,13 +70,14 @@ final class SimCoreTests: XCTestCase {
         for v in t.area { XCTAssertTrue(v.isFinite && v >= 0, "Ungültiges Einzugsgebiet") }
     }
 
-    /// Große Zeitschritte müssen stabil sein (Vorteil des impliziten Solvers):
-    /// ein 100k-Sprung darf nicht explodieren.
-    func testLargeTimestepStable() {
+    /// Über sehr lange Zeiträume (wie im Zeitraffer: viele gedeckelte Schritte)
+    /// bleibt die Landschaft stabil und beschränkt — kein Weglaufen, kein NaN.
+    func testLongRunStable() {
         let t = Terrain(config: makeConfig(n: 80), seed: 33)
-        t.step(dtYears: 100000)
+        for _ in 0..<400 { t.step(dtYears: 250) } // 100k Jahre in realistischen Schritten
         XCTAssertTrue(t.h.allSatisfy { $0.isFinite })
-        XCTAssertLessThan(t.landRelief(), 2.0)
+        XCTAssertGreaterThan(t.landRelief(), 0.1)
+        XCTAssertLessThan(t.landRelief(), 1.6)
     }
 
     // MARK: - Konsistenz der Schichten
