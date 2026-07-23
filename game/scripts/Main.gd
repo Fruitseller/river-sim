@@ -391,59 +391,21 @@ func _sample_hf(gx: float, gz: float) -> float:
 	return hf_cache[i00] * (1 - fx) * (1 - fy) + hf_cache[i00 + 1] * fx * (1 - fy) \
 		+ hf_cache[i00 + N] * (1 - fx) * fy + hf_cache[i00 + N + 1] * fx * fy
 
-func _river_half_width(cells: float) -> float:
-	return min(1.2 + 1.0 * log(cells / RIVER_MIN_CELLS + 1.0), 5.0)
-
+## Wasser-Geometrie = nur glatte Seeflächen (auf Priority-Flood-Füllhöhe).
+## Flüsse werden NICHT mehr als aufgesetzte Ribbons gerendert (waren blockig) —
+## sie entstehen aus den eingeschnittenen Tälern + blauer Terrain-Tönung (Swift)
+## + dem Wasser, das die Talböden füllt (Lague-Prinzip: „Täler sind die Flüsse").
 func _rebuild_rivers() -> void:
 	var verts := PackedVector3Array()
 	var colors := PackedColorArray()
 	var indices := PackedInt32Array()
 
-	# Flusssegmente: Band vom Zellzentrum zum Abfluss-Nachbarn.
-	for c in N * N:
-		if hf_cache[c] <= sea:
-			continue
-		if _cells_upstream(c) < RIVER_MIN_CELLS:
-			continue
-		if hf_cache[c] - h_cache[c] > LAKE_EPS:
-			continue # tief im See → dort liegt die Seefläche
-		var d := recv_cache[c]
-		if d < 0:
-			continue
-		if hf_cache[d] - h_cache[d] > LAKE_EPS:
-			continue
-		var ci := c % N
-		var cj := c / N
-		var di := d % N
-		var dj := d / N
-		var dirx := float(di - ci)
-		var dirz := float(dj - cj)
-		var dl := sqrt(dirx * dirx + dirz * dirz)
-		if dl < 1e-6:
-			continue
-		dirx /= dl
-		dirz /= dl
-		var px := -dirz
-		var pz := dirx
-		var w0 := _river_half_width(_cells_upstream(c))
-		var w1 := _river_half_width(_cells_upstream(d))
-		var wm := (w0 + w1) * 0.5
-		var sx := ci - dirx * 0.6 # größere Überlappung → durchgehende Läufe statt Lücken
-		var sz := cj - dirz * 0.6
-		var ex := di + dirx * 0.6
-		var ez := dj + dirz * 0.6
-		var mx := (sx + ex) * 0.5
-		var mz := (sz + ez) * 0.5
-		_push_quad(verts, colors, indices, sx, sz, w0, mx, mz, wm, px, pz, dirx, dirz)
-		_push_quad(verts, colors, indices, mx, mz, wm, ex, ez, w1, px, pz, dirx, dirz)
-
-	# Seeflächen: flache Quads auf Füllhöhe.
 	for k in N * N:
 		if hf_cache[k] - h_cache[k] <= LAKE_EPS or hf_cache[k] <= sea:
 			continue
 		var ci := k % N
 		var cj := k / N
-		var y: float = hf_cache[k] * HSCALE + 0.12 # klar über Terrain (kein Z-Fighting)
+		var y: float = hf_cache[k] * HSCALE + 0.1
 		var base := verts.size()
 		for off in [Vector2(-0.5, -0.5), Vector2(0.5, -0.5), Vector2(-0.5, 0.5), Vector2(0.5, 0.5)]:
 			verts.append(Vector3(-half + (ci + off.x) * step, y, -half + (cj + off.y) * step))
@@ -460,20 +422,6 @@ func _rebuild_rivers() -> void:
 	arr[Mesh.ARRAY_COLOR] = colors
 	arr[Mesh.ARRAY_INDEX] = indices
 	river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-
-func _push_quad(verts: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array,
-		ax: float, az: float, aw: float, bx: float, bz: float, bw: float,
-		px: float, pz: float, dx: float, dz: float) -> void:
-	var base := verts.size()
-	var col := Color(dx * 0.5 + 0.5, dz * 0.5 + 0.5, 1.0) # Fließrichtung kodiert
-	for p in [
-		Vector2(ax - px * aw, az - pz * aw), Vector2(ax + px * aw, az + pz * aw),
-		Vector2(bx - px * bw, bz - pz * bw), Vector2(bx + px * bw, bz + pz * bw),
-	]:
-		verts.append(Vector3(-half + p.x * step, _sample_hf(p.x, p.y) * HSCALE + RIVER_LIFT, -half + p.y * step))
-		colors.append(col)
-	indices.append(base); indices.append(base + 2); indices.append(base + 1)
-	indices.append(base + 1); indices.append(base + 2); indices.append(base + 3)
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 

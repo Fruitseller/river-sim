@@ -49,7 +49,7 @@ final class SimNode: Node {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let creek = 60.0 // Bach-Tönung erst ab realem Einzugsgebiet (256²-kalibriert)
+        let creek = 35.0 // Fluss-Tönung ab diesem Einzugsgebiet (Flüsse = blaue Kanäle im Terrain)
         let h = terrain.h, sed = terrain.sed, rain = terrain.rain, veg = terrain.veg, area = terrain.area
         var out = [UInt8](repeating: 255, count: n * n * 4)
         for j in 0..<n {
@@ -80,10 +80,10 @@ final class SimNode: Node {
                         let ws = min(max((v - 0.80) / 0.05, 0), 1)
                         r += (0.96 - r) * ws; g += (0.97 - g) * ws; b += (0.99 - b) * ws
                     }
-                    let cu = area[k] / cellArea                   // → Fluss-Tönung
+                    let cu = area[k] / cellArea                   // → Fluss als blauer Kanal
                     if cu >= creek {
-                        let t = min(max(log(cu / creek + 1) / 2.5, 0), 1) * 0.45
-                        r += (0.10 - r) * t; g += (0.32 - g) * t; b += (0.58 - b) * t
+                        let t = min(max(log(cu / creek + 1) / 2.2, 0), 1) * 0.85
+                        r += (0.13 - r) * t; g += (0.30 - g) * t; b += (0.52 - b) * t
                     }
                 }
                 let o = k * 4
