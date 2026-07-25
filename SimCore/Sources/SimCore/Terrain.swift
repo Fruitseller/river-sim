@@ -33,6 +33,11 @@ public final class Terrain {
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     private var noise: SimplexNoise
 
+    /// Wandernde Fluss-Zentrumslinien (Mäander-Migration). In M2 noch entkoppelt
+    /// vom Höhenfeld: sie evolvieren mit der Zeit, formen `h` aber noch nicht
+    /// (das macht `meanderStamp` ab M3).
+    public private(set) var meander = MeanderState()
+
     public private(set) var years: Double = 0
     private var seed: UInt32
 
@@ -103,6 +108,7 @@ public final class Terrain {
         computeFlow()
         // Vegetation im eingeschwungenen Zustand starten.
         updateVegetation(years: 10000)
+        seedMeander()
     }
 
     private func initLayers() {
@@ -485,6 +491,63 @@ public final class Terrain {
         }
     }
 
+    // MARK: - Mäander-Migration (Lagrange-Zentrumslinien)
+
+    private func seedMeander() {
+        meander.channels = MeanderState.traceChannels(config: cfg, h: h, hf: hf,
+                                                       area: area, receiver: receiver)
+        meander.oxbows.removeAll()
+        meander.oxbowAge.removeAll()
+    }
+
+    /// Einzugsgebiet an einer kontinuierlichen Grid-Position (bilinear).
+    @inline(__always) private func bilinearArea(_ gx: Double, _ gz: Double) -> Double {
+        let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
+        let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
+        let k = yi * n + xi
+        return area[k] * (1 - fx) * (1 - fy) + area[k + 1] * fx * (1 - fy)
+             + area[k + n] * (1 - fx) * fy + area[k + n + 1] * fx * fy
+    }
+
+    /// Lokale Hangneigung (Gradientbetrag von h) pro Zelle an der nächsten Zelle.
+    @inline(__always) private func slopeAt(_ gx: Double, _ gz: Double) -> Double {
+        let i = min(max(Int(gx.rounded()), 1), n - 2)
+        let j = min(max(Int(gz.rounded()), 1), n - 2)
+        let k = j * n + i
+        let dhx = (h[k + 1] - h[k - 1]) * 0.5
+        let dhz = (h[k + n] - h[k - n]) * 0.5
+        return (dhx * dhx + dhz * dhz).squareRoot()
+    }
+
+    /// Frischt den Abfluss entlang der Läufe aus dem aktuellen Einzugsgebiet auf
+    /// und migriert sie einen Zeitschritt. Mobilität aus der lokalen Steigung:
+    /// steile Oberläufe bleiben gerade, nur Flachland wandert. Degenerierte Läufe
+    /// werden verworfen; ist nichts mehr da, aus der Entwässerung neu säen.
+    private func migrateMeander(dt: Double) {
+        if meander.channels.isEmpty { seedMeander(); return }
+        let cellArea = cfg.cellSize * cfg.cellSize
+        for ci in meander.channels.indices {
+            for ni in meander.channels[ci].nodes.indices {
+                let nd = meander.channels[ci].nodes[ni]
+                meander.channels[ci].discharge[ni] = max(0, bilinearArea(nd.x, nd.z) / cellArea)
+            }
+        }
+        let flat = cfg.meanderFlatSlope
+        meander.migrate(dt: dt, config: cfg) { node in
+            max(0, min(1, 1 - self.slopeAt(node.x, node.z) / flat))
+        }
+        // Sicherheits-Clamp: Knoten dürfen die Welt nicht verlassen.
+        let maxc = Double(n - 1)
+        for ci in meander.channels.indices {
+            for ni in meander.channels[ci].nodes.indices {
+                meander.channels[ci].nodes[ni].x = min(max(meander.channels[ci].nodes[ni].x, 0), maxc)
+                meander.channels[ci].nodes[ni].z = min(max(meander.channels[ci].nodes[ni].z, 0), maxc)
+            }
+        }
+        meander.channels.removeAll { $0.nodes.count < 3 }
+        if meander.channels.isEmpty { seedMeander() }
+    }
+
     // MARK: - Zeitschritt
 
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist
@@ -500,6 +563,7 @@ public final class Terrain {
             wavePass()
         }
         updateVegetation(years: dt)
+        migrateMeander(dt: dt) // entkoppelt: evolviert die Läufe, formt h noch nicht
         years += dt
     }
 

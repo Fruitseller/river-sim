@@ -218,6 +218,37 @@ final class SimCoreTests: XCTestCase {
         }
     }
 
+    /// Mäander in Terrain integriert: gleicher Seed → identische Läufe, auch
+    /// nach vielen step()s.
+    func testMeanderTerrainDeterminism() {
+        let a = Terrain(config: makeConfig(), seed: 2024)
+        let b = Terrain(config: makeConfig(), seed: 2024)
+        for _ in 0..<20 { a.step(dtYears: 1000); b.step(dtYears: 1000) }
+        XCTAssertEqual(a.meander.channels.count, b.meander.channels.count)
+        for (ca, cb) in zip(a.meander.channels, b.meander.channels) {
+            XCTAssertEqual(ca.nodes, cb.nodes, "Mäander-Läufe müssen deterministisch sein")
+        }
+        XCTAssertEqual(a.meander.oxbows.count, b.meander.oxbows.count)
+    }
+
+    /// Langlauf mit Migration bleibt stabil: endliche Knoten, beschränkte
+    /// Kanalzahl und Sinuosität, Läufe bleiben in der Welt.
+    func testMeanderTerrainLongRunStable() {
+        let cfg = makeConfig(n: 80)
+        let t = Terrain(config: cfg, seed: 33)
+        for _ in 0..<200 { t.step(dtYears: 500) } // 100k Jahre
+        XCTAssertLessThan(t.meander.channels.count, 400, "Kanalzahl läuft weg")
+        let maxc = Double(cfg.n - 1)
+        for ch in t.meander.channels {
+            XCTAssertLessThan(ch.sinuosity, 8.0, "Sinuosität läuft weg: \(ch.sinuosity)")
+            for nd in ch.nodes {
+                XCTAssertTrue(nd.x.isFinite && nd.z.isFinite, "NaN/Inf in Knoten")
+                XCTAssertGreaterThanOrEqual(nd.x, 0); XCTAssertLessThanOrEqual(nd.x, maxc)
+                XCTAssertGreaterThanOrEqual(nd.z, 0); XCTAssertLessThanOrEqual(nd.z, maxc)
+            }
+        }
+    }
+
     /// Trace aus der echten D8-Entwässerung liefert plausible Läufe.
     func testMeanderTraceFromDrainage() {
         let t = Terrain(config: makeConfig(), seed: 111)
