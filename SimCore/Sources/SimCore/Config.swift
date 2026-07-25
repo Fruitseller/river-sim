@@ -39,6 +39,14 @@ public struct SimConfig: Sendable {
     // ---- Klima / Vegetation ----
     public var vegTimeConstant: Double = 250 // Jahre
 
+    // ---- Mäander-Migration (Lagrange-Zentrumslinien) ----
+    public var meanderMigration: Double = 6.0e-6 // kMig: laterale Rate ∝ Krümmung×Abfluss
+    public var meanderMinCells: Double = 85       // ab so viel Einzugsgebiet gilt "Hauptfluss"
+    public var meanderNodeSpacing: Double = 1.5   // Ziel-Knotenabstand (Zellen)
+    public var meanderNeckDist: Double = 1.2      // Halsbreite für Cutoff (Zellen)
+    public var meanderSmooth: Double = 0.12       // milde Laplace-Glättung je Schritt
+    public var meanderFlatSlope: Double = 0.02    // nur unter dieser Steigung mobil (Flachland)
+
     public init() {}
 
     public var cellSize: Double { world / Double(n - 1) }
