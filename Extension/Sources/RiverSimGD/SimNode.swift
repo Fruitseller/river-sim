@@ -214,10 +214,16 @@ final class SimNode: Node {
                 min(1.5 + 1.3 * log(max(ch.discharge[a], 0) / minCells + 1), 6.5)
             }
         }
-        // Altarme: dünnere, ruhige Wasserbänder (sichtbare river-history).
-        for loop in terrain.meander.oxbows {
+        // Altarme: dünnere, ruhige Wasserbänder (river-history), mit Alter
+        // ausblendend (Verlandung) → alte Schleifen verschwinden allmählich.
+        let maxAge = terrain.cfg.oxbowMaxAge
+        let ages = terrain.meander.oxbowAge
+        for (li, loop) in terrain.meander.oxbows.enumerated() {
+            let age = li < ages.count ? ages[li] : 0
+            let fade = max(0, 1 - age / maxAge)
+            if fade < 0.15 { continue }
             let px = loop.map { $0.x }, pz = loop.map { $0.z }
-            ribbon(px, pz, lift: 0.14, still: true) { _ in 1.3 }
+            ribbon(px, pz, lift: 0.14, still: true) { _ in 1.3 * fade }
         }
     }
 

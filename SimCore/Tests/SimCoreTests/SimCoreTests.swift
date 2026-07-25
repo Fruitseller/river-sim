@@ -300,20 +300,83 @@ final class SimCoreTests: XCTestCase {
     /// eingetiefte Schleife ab, die bestehende Seen-Logik füllt sie.
     func testMeanderOxbowLake() {
         let cfg = makeConfig(n: 96)
-        let t = Terrain(config: cfg, seed: 111)
-        for _ in 0..<120 { t.step(dtYears: 500) }
-        XCTAssertFalse(t.meander.oxbows.isEmpty, "keine Altarme (river-history) entstanden")
         let n = cfg.n
-        var lakeCells = 0
-        for loop in t.meander.oxbows {
-            for nd in loop {
-                let i = min(max(Int(nd.x.rounded()), 0), n - 1)
-                let j = min(max(Int(nd.z.rounded()), 0), n - 1)
-                let k = j * n + i
-                if t.hf[k] - t.h[k] > 0.004 && t.hf[k] > cfg.sea { lakeCells += 1 }
+        let t = Terrain(config: cfg, seed: 111)
+        func oxbowLakeCells() -> Int {
+            var c = 0
+            for loop in t.meander.oxbows {
+                for nd in loop {
+                    let i = min(max(Int(nd.x.rounded()), 0), n - 1)
+                    let j = min(max(Int(nd.z.rounded()), 0), n - 1)
+                    let k = j * n + i
+                    if t.hf[k] - t.h[k] > 0.004 && t.hf[k] > cfg.sea { c += 1 }
+                }
+            }
+            return c
+        }
+        // Bis zum ersten Altarm laufen (Timing hängt von der Migrations-Dynamik ab),
+        // dann über ein kleines Fenster den maximalen Altarm-Seespiegel prüfen.
+        var guardN = 0
+        while t.meander.oxbows.isEmpty && guardN < 260 { t.step(dtYears: 500); guardN += 1 }
+        XCTAssertFalse(t.meander.oxbows.isEmpty, "keine Altarme (river-history) entstanden")
+        var maxLake = oxbowLakeCells()
+        for _ in 0..<8 { t.step(dtYears: 500); maxLake = max(maxLake, oxbowLakeCells()) }
+        XCTAssertGreaterThanOrEqual(maxLake, 1, "kein Altarm-See (hf>h) im Oxbow-Bereich")
+    }
+
+    /// Altarme verlanden und altern aus: die Liste bleibt beschränkt, kein
+    /// Altarm überschreitet das Maximalalter, und die Betten steigen über die
+    /// Zeit (Verlandung).
+    func testMeanderOxbowAging() {
+        let cfg = makeConfig(n: 96)
+        let t = Terrain(config: cfg, seed: 111)
+        var everSeen = false, maxCount = 0
+        for _ in 0..<400 {
+            t.step(dtYears: 500)
+            if !t.meander.oxbows.isEmpty { everSeen = true }
+            maxCount = max(maxCount, t.meander.oxbows.count)
+            // Invarianten in jedem Schritt: Liste beschränkt, keiner überaltert.
+            XCTAssertLessThan(t.meander.oxbows.count, 60, "Altarm-Liste wächst unbeschränkt")
+            XCTAssertEqual(t.meander.oxbows.count, t.meander.oxbowAge.count)
+            for age in t.meander.oxbowAge {
+                XCTAssertLessThanOrEqual(age, cfg.oxbowMaxAge, "verlandeter Altarm nicht entfernt")
             }
         }
-        XCTAssertGreaterThanOrEqual(lakeCells, 1, "kein Altarm-See (hf>h) im Oxbow-Bereich")
+        XCTAssertTrue(everSeen, "über den ganzen Lauf ist nie ein Altarm entstanden")
+        XCTAssertGreaterThan(maxCount, 0)
+    }
+
+    /// Verlandung hebt das Altarm-Bett: über *dieselben* Zellen gemessen wird
+    /// der Altarm über die Zeit flacher (Sediment füllt ihn Richtung Uferrand).
+    func testMeanderOxbowSiltsUp() {
+        let cfg = makeConfig(n: 96)
+        let n = cfg.n
+        let t = Terrain(config: cfg, seed: 111)
+        // Einschwingen lassen (der Früh-Transient schneidet noch heftig ein);
+        // erst im graded state sind abgeschnürte Tiefland-Altarme im Ablagerungs-
+        // Regime und verlanden statt weiter einzuschneiden.
+        for _ in 0..<150 { t.step(dtYears: 500) }
+        var guardN = 0
+        while t.meander.oxbows.isEmpty && guardN < 100 { t.step(dtYears: 500); guardN += 1 }
+        XCTAssertFalse(t.meander.oxbows.isEmpty, "kein Altarm entstanden")
+        // Innere Altarm-Knoten (Hals-Endpunkte liegen auf dem noch aktiven Kanal).
+        var cells = Set<Int>()
+        for loop in t.meander.oxbows where loop.count >= 5 {
+            for nd in loop[1..<(loop.count - 1)] {
+                let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
+                let cj = min(max(Int(nd.z.rounded()), 1), n - 2)
+                cells.insert(cj * n + ci)
+            }
+        }
+        XCTAssertFalse(cells.isEmpty, "kein innerer Altarm-Bereich")
+        var h0 = [Int: Double](); for k in cells { h0[k] = t.h[k] }
+        for _ in 0..<30 { t.step(dtYears: 500) } // ~15k Jahre altern
+        // Verlandung hebt das Bett: die Mehrheit der inneren Zellen aggradiert
+        // (einzelne kann ein zurückwandernder Kanal re-carven → Mehrheit, kein Mittel).
+        var aggraded = 0
+        for k in cells where t.h[k] > h0[k]! { aggraded += 1 }
+        XCTAssertGreaterThan(Double(aggraded) / Double(cells.count), 0.6,
+                             "Altarm-Betten müssen mehrheitlich verlanden: \(aggraded)/\(cells.count)")
     }
 
     /// Trace aus der echten D8-Entwässerung liefert plausible Läufe.

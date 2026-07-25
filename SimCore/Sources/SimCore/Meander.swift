@@ -51,6 +51,15 @@ public final class MeanderState {
 
     public init() {}
 
+    /// Entfernt verlandete Altarme (Alter über `maxAge`) aus der river-history.
+    public func pruneOxbows(maxAge: Double) {
+        var no: [[MeanderNode]] = [], na: [Double] = []
+        for i in oxbows.indices where oxbowAge[i] <= maxAge {
+            no.append(oxbows[i]); na.append(oxbowAge[i])
+        }
+        oxbows = no; oxbowAge = na
+    }
+
     // MARK: - Migrations-Schritt
 
     /// Ein Migrations-Schritt über `dt` Jahre für alle Läufe:
@@ -88,32 +97,65 @@ public final class MeanderState {
         let flat = config.meanderFlatSlope
         let cs = config.cellSize
         let maxStep = 0.5 * config.meanderNodeSpacing // CFL: kein Knoten springt >½ Abstand
-        var out = nodes
+
+        // Pass 1: signierte Krümmung, linke Normale, Mobilität, Segmentlänge je Knoten.
+        var curv = [Double](repeating: 0, count: count)
+        var nlx = [Double](repeating: 0, count: count)
+        var nlz = [Double](repeating: 0, count: count)
+        var mob = [Double](repeating: 0, count: count)
+        var seg = [Double](repeating: config.meanderNodeSpacing, count: count)
         for i in 1..<(count - 1) {
             let a = nodes[i - 1], b = nodes[i], c = nodes[i + 1]
-            // signierte Krümmung aus dem Wendewinkel, normiert auf die Bogenlänge
             let v1x = b.x - a.x, v1z = b.z - a.z
             let v2x = c.x - b.x, v2z = c.z - b.z
             let l1 = (v1x * v1x + v1z * v1z).squareRoot()
             let l2 = (v2x * v2x + v2z * v2z).squareRoot()
             let ds = 0.5 * (l1 + l2)
             if ds < 1e-9 { continue }
+            seg[i] = ds
             let cross = v1x * v2z - v1z * v2x
             let dot = v1x * v2x + v1z * v2z
-            let curv = atan2(cross, dot) / ds
-            // linke Normale der Sehne a→c
+            curv[i] = atan2(cross, dot) / ds
             let tx = c.x - a.x, tz = c.z - a.z
             let tl = (tx * tx + tz * tz).squareRoot()
             if tl < 1e-9 { continue }
-            let nx = -tz / tl, nz = tx / tl
-            // Flachland-Gate über die Längsneigung a→c (nicht die Querneigung)
-            let arc = (l1 + l2) * cs
+            nlx[i] = -tz / tl; nlz[i] = tx / tl // linke Normale der Sehne a→c
+            let arc = (l1 + l2) * cs               // Flachland-Gate über die Längsneigung
             let longSlope = arc > 1e-9 ? abs(heightAt(a) - heightAt(c)) / arc : 0
-            let mob = max(0, min(1, 1 - longSlope / flat))
-            // −curv: zum Außenufer (weg vom Krümmungszentrum) → Schlinge verstärkt sich
-            var m = -k * ch.discharge[i] * curv * dt * mob
+            mob[i] = max(0, min(1, 1 - longSlope / flat))
+        }
+
+        // Pass 2: upstream-gewichtete Krümmung (Ikeda–Parker–Sawai). Die Bank­erosion
+        // hängt von der stromauf integrierten Krümmung ab (das near-bank-Geschwindig­
+        // keitsfeld lagt) → die Erosionsspitze verschiebt sich stromab, Schlingen
+        // werden asymmetrisch (downstream-geskewt) statt symmetrisch. EMA über
+        // steigendes i (= stromab), integriert also j<i (= stromauf).
+        let beta = config.meanderSkew
+        let lam = max(1e-6, config.meanderSkewLength)
+        var eff = curv
+        if beta > 0 {
+            var ema = 0.0
+            var sumC = 0.0, sumE = 0.0
+            for i in 0..<count {
+                eff[i] = (1 - beta) * curv[i] + beta * ema
+                let w = exp(-seg[i] / lam)
+                ema = ema * w + curv[i] * (1 - w)
+                sumC += abs(curv[i]); sumE += abs(eff[i])
+            }
+            // Auf gleiche Gesamt-Stärke normieren: die EMA ist ein Tiefpass und
+            // würde die Amplitude (und damit die Mäander-Rate) sonst dämpfen.
+            // Der Skew verschiebt so nur die Phase (Erosionsspitze stromab).
+            let sc = sumE > 1e-9 ? sumC / sumE : 1
+            for i in 0..<count { eff[i] *= sc }
+        }
+
+        // Pass 3: Knoten entlang lokaler Normale verschieben (Betrag aus eff).
+        var out = nodes
+        for i in 1..<(count - 1) {
+            // −eff: zum Außenufer (weg vom Krümmungszentrum) → Schlinge verstärkt sich
+            var m = -k * ch.discharge[i] * eff[i] * dt * mob[i]
             m = max(-maxStep, min(maxStep, m)) // Displacement-Clamp gegen Verheddern
-            out[i] = MeanderNode(x: b.x + m * nx, z: b.z + m * nz)
+            out[i] = MeanderNode(x: nodes[i].x + m * nlx[i], z: nodes[i].z + m * nlz[i])
         }
         ch.nodes = out
     }

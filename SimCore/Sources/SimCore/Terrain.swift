@@ -635,6 +635,26 @@ public final class Terrain {
             }
         }
         plugOxbows()
+        fillOxbows(dt: dt)
+    }
+
+    /// Altarm-Verlandung: hebt die Altarm-Betten langsam (Zeitkonstante
+    /// `oxbowFillYears`) Richtung Uferrand an (Sediment) — der See verschwindet
+    /// allmählich. Vollständig verlandete Altarme fallen aus der Liste.
+    private func fillOxbows(dt: Double) {
+        let rate = min(1.0, dt / cfg.oxbowFillYears)
+        for loop in meander.oxbows {
+            for nd in loop {
+                let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
+                let cj = min(max(Int(nd.z.rounded()), 1), n - 2)
+                let k = cj * n + ci
+                var rim = h[k]
+                for nb in [k - 1, k + 1, k - n, k + n] { rim = max(rim, h[nb]) }
+                let add = (rim - h[k]) * rate
+                if add > 0 { depositCell(k, add) }
+            }
+        }
+        meander.pruneOxbows(maxAge: cfg.oxbowMaxAge)
     }
 
     /// Verkorkt frisch abgeschnürte Schleifen (Alter 0) an ihren Enden mit
@@ -663,8 +683,10 @@ public final class Terrain {
     public func step(dtYears dt: Double) {
         applyUplift(dt: dt)
         computeFlow()
-        migrateMeander(dt: dt)   // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
-        meanderStamp(dt: dt)     // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
+        if cfg.meanderEnabled {
+            migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
+            meanderStamp(dt: dt)   // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
+        }
         transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
         // Hangprozesse ~ 1 Pass / 100 Jahre (wie im Prototyp kalibriert).
         let passes = max(1, Int((dt / 100).rounded()))

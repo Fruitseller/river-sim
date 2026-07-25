@@ -40,17 +40,22 @@ public struct SimConfig: Sendable {
     public var vegTimeConstant: Double = 250 // Jahre
 
     // ---- Mäander-Migration (Lagrange-Zentrumslinien) ----
+    public var meanderEnabled: Bool = true       // Mäander-Migration + Grid-Kopplung an/aus
     public var meanderMigration: Double = 5.0e-5 // kMig: laterale Rate ∝ Krümmung×Abfluss (sättigt Sinuosität ~2.3, bildet Altarme)
     public var meanderMinCells: Double = 85       // ab so viel Einzugsgebiet gilt "Hauptfluss"
     public var meanderNodeSpacing: Double = 1.5   // Ziel-Knotenabstand (Zellen)
     public var meanderNeckDist: Double = 1.2      // Halsbreite für Cutoff (Zellen)
     public var meanderSmooth: Double = 0.12       // milde Laplace-Glättung je Schritt
     public var meanderFlatSlope: Double = 0.02    // nur unter dieser Steigung mobil (Flachland)
+    public var meanderSkew: Double = 0.5          // Downstream-Skew: Anteil upstream-gewichteter Krümmung (0=symmetrisch)
+    public var meanderSkewLength: Double = 4.0     // Abkling-Länge der Upstream-Gewichtung (Zellen)
     // ---- Mäander-Grid-Kopplung (M3) ----
     public var meanderCarve: Double = 2.5e-4      // Bett-Inzision entlang der Linie (∝ kSed)
     public var meanderBankErode: Double = 1.2e-4  // Prallhang-Erosion (lateral, massenerhaltend)
     public var meanderBankWidth: Double = 1.6     // Halbbreite Ufer-Versatz (Zellen)
     public var channelErodeDamp: Double = 0.4     // Grid-Stream-Power auf Kanalzellen (Reconciliation)
+    public var oxbowFillYears: Double = 6000      // Zeitkonstante der Altarm-Verlandung (Bett steigt zum Rand)
+    public var oxbowMaxAge: Double = 25000        // ab diesem Alter gilt der Altarm als verlandet (aus der Liste)
 
     public init() {}
 
