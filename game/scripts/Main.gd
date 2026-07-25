@@ -6,9 +6,6 @@ extends Node3D
 
 const HSCALE := 30.0          # Höhen-Skalierung fürs Mesh
 const LAKE_EPS := 0.035 # nur echte Seen rendern, keine Mini-Senken
-const RIVER_MIN_CELLS := 160.0 # ab so vielen Oberlieger-Zellen ein sichtbarer Fluss (256²)
-const CREEK_MIN_CELLS := 60.0 # kleinere Bäche nur als Tönung
-const RIVER_LIFT := 0.32
 
 var sim: Object
 var N: int
