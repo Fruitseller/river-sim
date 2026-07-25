@@ -48,31 +48,10 @@ final class SimNode: Node {
     @Callable func terrainColorBytes() -> PackedByteArray {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
-        let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let creek = 22.0 // Fluss-Tönung ab diesem Einzugsgebiet (nur Landzellen über Meer)
-        let h = terrain.h, sed = terrain.sed, rain = terrain.rain, veg = terrain.veg, area = terrain.area
-        let hf = terrain.hf
+        let h = terrain.h, sed = terrain.sed, rain = terrain.rain, veg = terrain.veg
         var out = [UInt8](repeating: 255, count: n * n * 4)
-
-        // Fluss-Stärke je Zelle, dann um 1 Zelle DILATIEREN → fette, verbundene
-        // Flusslinien statt haardünner Fäden (User: „zu klein/unscheinbar").
-        var riv = [Double](repeating: 0, count: n * n)
-        for k in 0..<(n * n) where hf[k] > sea {
-            let cu = area[k] / cellArea
-            if cu >= creek { riv[k] = min(max(log(cu / creek + 1) / 2.0, 0), 1) }
-        }
-        var rivD = [Double](repeating: 0, count: n * n)
-        for j in 0..<n {
-            for i in 0..<n {
-                let k = j * n + i
-                var m = riv[k]
-                if i > 0 { m = max(m, riv[k - 1]) }
-                if i < n - 1 { m = max(m, riv[k + 1]) }
-                if j > 0 { m = max(m, riv[k - n]) }
-                if j < n - 1 { m = max(m, riv[k + n]) }
-                rivD[k] = m
-            }
-        }
+        // Wasser (Flüsse/Seen/Altarme) zeichnet das separate Wasser-Feld (waterFieldBytes)
+        // als glattes, geshadetes Overlay — hier nur Land-Biome + Meeresgrund.
 
         for j in 0..<n {
             for i in 0..<n {
@@ -101,11 +80,6 @@ final class SimNode: Node {
                     if v > 0.80 {                                 // → Schnee (nur höchste Gipfel)
                         let ws = min(max((v - 0.80) / 0.05, 0), 1)
                         r += (0.96 - r) * ws; g += (0.97 - g) * ws; b += (0.99 - b) * ws
-                    }
-                    let t = rivD[k]                               // dezente Tönung für kleine Bäche
-                    if t > 0.01 {                                 // (große Flüsse kriegen echte Geometrie)
-                        let tw = min(1, t * 0.55)
-                        r += (0.12 - r) * tw; g += (0.30 - g) * tw; b += (0.52 - b) * tw
                     }
                 }
                 let o = k * 4
@@ -147,89 +121,59 @@ final class SimNode: Node {
     /// Nach Sculpting/Änderungen Entwässerung neu berechnen (für Live-Flüsse).
     @Callable func recomputeFlow() { terrain.computeFlow() }
 
-    // MARK: Fluss-Netz-Geometrie (echtes Netz: variable Breite + Mäander)
+    // MARK: Wasser-Feld (glattes Overlay statt Geometrie — nickmcd-Stream/Pool-Map)
 
-    private var rvVerts: [Vector3] = []
-    private var rvCols: [Color] = []
-    private var rvIdx: [Int32] = []
-
-    /// Baut die Fluss-Geometrie aus den **echten wandernden Zentrumslinien**
-    /// (`terrain.meander`) — keine erfundenen Render-Mäander mehr: die Läufe sind
-    /// in SimCore simuliert (Migration, Bett-Carve, Cutoffs). Band variabler
-    /// Breite ∝ Abfluss; Altarme als ruhige Wasserbänder (river-history).
-    /// `hscale` = Godot-Höhenskalierung.
-    @Callable func buildRivers(hscale: Double) {
-        rvVerts.removeAll(keepingCapacity: true)
-        rvCols.removeAll(keepingCapacity: true)
-        rvIdx.removeAll(keepingCapacity: true)
+    /// Kontinuierliches Wasser-Feld als RGBA8-Textur (n×n), das der Terrain-Shader
+    /// linear gefiltert und geshadet als glattes Overlay rendert — statt blockiger
+    /// Pro-Zell-Quads und Ribbon-Meshes. Kanäle:
+    ///   R = Fluss-Intensität (Stream-Map: log-skalierter, dilatierter Abfluss)
+    ///   G = Seetiefe (Pool-Map: hf−h über Land; deckt Seen UND Altarme ab)
+    ///   B,A = Fließrichtung (aus dem Empfänger, kodiert *0.5+0.5) für die Animation
+    @Callable func waterFieldBytes() -> PackedByteArray {
         let n = terrain.cfg.n
-        let world = terrain.cfg.world
-        let half = world / 2
-        let step = world / Double(n - 1)
-        let minCells = terrain.cfg.meanderMinCells
-        let h = terrain.h
+        let sea = terrain.cfg.sea
+        let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
+        let creek = 22.0 // ab so viel Einzugsgebiet ein sichtbarer Wasserlauf
+        let h = terrain.h, hf = terrain.hf, area = terrain.area, rec = terrain.receiver
 
-        func sampleH(_ gx: Double, _ gz: Double) -> Double {
-            let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
-            let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
-            let i00 = yi * n + xi
-            return h[i00] * (1 - fx) * (1 - fy) + h[i00 + 1] * fx * (1 - fy)
-                 + h[i00 + n] * (1 - fx) * fy + h[i00 + n + 1] * fx * fy
+        // Stream-Map: log-skalierte Fluss-Intensität, dann 1 Zelle dilatiert →
+        // verbundene, nicht haardünne Läufe (linear-Filter macht sie glatt).
+        var s = [Double](repeating: 0, count: n * n)
+        for k in 0..<(n * n) where hf[k] > sea && h[k] > sea {
+            let cu = area[k] / cellArea
+            if cu >= creek { s[k] = min(1, log(cu / creek + 1) / 2.5) }
         }
-
-        /// Baut ein Band variabler Breite entlang einer Polylinie. `widthAt`
-        /// liefert die Halbbreite (Zellen) pro Knoten, `still` = ruhiges Wasser
-        /// (Farbe ohne Fließrichtung, für Altarme).
-        func ribbon(_ px: [Double], _ pz: [Double], lift: Double,
-                    still: Bool, widthAt: (Int) -> Double) {
-            let m = px.count
-            if m < 2 { return }
-            for a in 0..<m {
-                let a0 = max(0, a - 1), a1 = min(m - 1, a + 1)
-                var dx = px[a1] - px[a0], dz = pz[a1] - pz[a0]
-                let dl = (dx * dx + dz * dz).squareRoot()
-                if dl > 1e-6 { dx /= dl; dz /= dl }
-                let w = widthAt(a)
-                let perpx = -dz, perpz = dx
-                let y = Float(sampleH(px[a], pz[a]) * hscale + lift)
-                let col = still ? Color(r: 0.5, g: 0.5, b: 1.0, a: 1.0)
-                                : Color(r: Float(dx * 0.5 + 0.5), g: Float(dz * 0.5 + 0.5), b: 1.0, a: 1.0)
-                let lx = px[a] - perpx * w, lz = pz[a] - perpz * w
-                let rx = px[a] + perpx * w, rz = pz[a] + perpz * w
-                rvVerts.append(Vector3(x: Float(-half + lx * step), y: y, z: Float(-half + lz * step)))
-                rvVerts.append(Vector3(x: Float(-half + rx * step), y: y, z: Float(-half + rz * step)))
-                rvCols.append(col); rvCols.append(col)
-                if a > 0 {
-                    let base = Int32(rvVerts.count - 4)
-                    rvIdx.append(base); rvIdx.append(base + 2); rvIdx.append(base + 1)
-                    rvIdx.append(base + 1); rvIdx.append(base + 2); rvIdx.append(base + 3)
-                }
+        var sd = [Double](repeating: 0, count: n * n)
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = j * n + i
+                var m = s[k]
+                if i > 0 { m = max(m, s[k - 1]) }
+                if i < n - 1 { m = max(m, s[k + 1]) }
+                if j > 0 { m = max(m, s[k - n]) }
+                if j < n - 1 { m = max(m, s[k + n]) }
+                sd[k] = m
             }
         }
 
-        // Aktive Flüsse: Band ∝ Abfluss.
-        for ch in terrain.meander.channels {
-            let px = ch.nodes.map { $0.x }, pz = ch.nodes.map { $0.z }
-            ribbon(px, pz, lift: 0.18, still: false) { a in
-                min(1.5 + 1.3 * log(max(ch.discharge[a], 0) / minCells + 1), 6.5)
+        var out = [UInt8](repeating: 0, count: n * n * 4)
+        for k in 0..<(n * n) {
+            let lake = (hf[k] > sea && hf[k] > h[k]) ? min(1, (hf[k] - h[k]) / 0.08) : 0
+            var dx = 0.0, dz = 0.0
+            let r = rec[k]
+            if r >= 0 {
+                let ddx = Double(Int(r) % n - k % n), ddz = Double(Int(r) / n - k / n)
+                let dl = (ddx * ddx + ddz * ddz).squareRoot()
+                if dl > 1e-6 { dx = ddx / dl; dz = ddz / dl }
             }
+            let o = k * 4
+            out[o] = UInt8(min(max(sd[k], 0), 1) * 255)
+            out[o + 1] = UInt8(min(max(lake, 0), 1) * 255)
+            out[o + 2] = UInt8((dx * 0.5 + 0.5) * 255)
+            out[o + 3] = UInt8((dz * 0.5 + 0.5) * 255)
         }
-        // Altarme: dünnere, ruhige Wasserbänder (river-history), mit Alter
-        // ausblendend (Verlandung) → alte Schleifen verschwinden allmählich.
-        let maxAge = terrain.cfg.oxbowMaxAge
-        let ages = terrain.meander.oxbowAge
-        for (li, loop) in terrain.meander.oxbows.enumerated() {
-            let age = li < ages.count ? ages[li] : 0
-            let fade = max(0, 1 - age / maxAge)
-            if fade < 0.15 { continue }
-            let px = loop.map { $0.x }, pz = loop.map { $0.z }
-            ribbon(px, pz, lift: 0.14, still: true) { _ in 1.3 * fade }
-        }
+        return PackedByteArray(out)
     }
-
-    @Callable func riverVerts() -> PackedVector3Array { PackedVector3Array(rvVerts) }
-    @Callable func riverColors() -> PackedColorArray { PackedColorArray(rvCols) }
-    @Callable func riverIndices() -> PackedInt32Array { PackedInt32Array(rvIdx) }
 
     private func pack(_ a: [Double]) -> PackedFloat32Array {
         var f = [Float](repeating: 0, count: a.count)

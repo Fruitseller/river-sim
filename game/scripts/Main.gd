@@ -5,7 +5,6 @@ extends Node3D
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const HSCALE := 30.0          # Höhen-Skalierung fürs Mesh
-const LAKE_EPS := 0.035 # nur echte Seen rendern, keine Mini-Senken
 
 var sim: Object
 var N: int
@@ -18,18 +17,18 @@ var cell_area: float
 
 var terrain_mi: MeshInstance3D
 var water_mi: MeshInstance3D
-var river_mi: MeshInstance3D
 var ring_mi: MeshInstance3D
-var river_mesh := ArrayMesh.new()
-var river_mat: ShaderMaterial
 
-# Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen/Farben
-# als Texturen (pro Tick nur Upload, kein Mesh-Rebuild).
+# Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen/Farben/
+# Wasser als Texturen (pro Tick nur Upload, kein Mesh-Rebuild). Wasser ist ein
+# glattes Feld-Overlay im Terrain-Shader — keine Fluss-Geometrie mehr.
 var terrain_mat: ShaderMaterial
 var height_img: Image
 var height_tex: ImageTexture
 var color_img: Image
 var color_tex: ImageTexture
+var water_img: Image
+var water_tex: ImageTexture
 
 # gecachte Felder (nur render-/flussrelevant)
 var h_cache: PackedFloat32Array
@@ -82,7 +81,6 @@ func _ready() -> void:
 	sim.recomputeFlow()
 	_pull_fields()
 	_update_terrain_textures()
-	_rebuild_rivers()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
 
@@ -96,11 +94,7 @@ func _diag() -> void:
 	for r in 10:
 		_update_terrain_textures()
 	var t_terr := (Time.get_ticks_usec() - t0) / 10000.0
-	t0 = Time.get_ticks_usec()
-	for r in 10:
-		_rebuild_rivers()
-	var t_riv := (Time.get_ticks_usec() - t0) / 10000.0
-	print("DIAG PERF terrain_texupload_ms=", t_terr, " river_rebuild_ms=", t_riv)
+	print("DIAG PERF terrain_texupload_ms=", t_terr)
 
 # ---------------------------------------------------------------- Szene / UI
 
@@ -183,14 +177,6 @@ func _setup_scene() -> void:
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
 
-	river_mi = MeshInstance3D.new()
-	river_mi.mesh = river_mesh
-	river_mat = ShaderMaterial.new()
-	river_mat.shader = load("res://shaders/water.gdshader")
-	river_mi.material_override = river_mat
-	river_mi.extra_cull_margin = 16384.0 # Geometrie wird laufend neu gebaut
-	add_child(river_mi)
-
 	# Pinsel-Ring
 	ring_mi = MeshInstance3D.new()
 	var torus := TorusMesh.new()
@@ -270,7 +256,6 @@ func _regen() -> void:
 func _after_sim() -> void:
 	_pull_fields()
 	_update_terrain_textures()
-	_rebuild_rivers()
 	_update_year()
 
 var _shot_frame := 0
@@ -294,8 +279,8 @@ func _process(delta: float) -> void:
 			get_tree().quit()
 
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
-	if river_mat:
-		river_mat.set_shader_parameter("u_time", u_time)
+	if terrain_mat:
+		terrain_mat.set_shader_parameter("u_time", u_time)
 
 	if year_rate > 0.0:
 		# Jahre/Frame deckeln: verhindert die Todesspirale (langsam → großer dt →
@@ -309,7 +294,6 @@ func _process(delta: float) -> void:
 			rebuild_timer = 0.0
 			_pull_fields()
 			_update_terrain_textures()
-			_rebuild_rivers()
 			_update_year()
 
 	if sculpting:
@@ -322,7 +306,6 @@ func _process(delta: float) -> void:
 			sim.recomputeFlow()
 			_pull_fields()
 			_update_terrain_textures()
-			_rebuild_rivers()
 
 	_update_ring()
 	_update_camera()
@@ -377,58 +360,16 @@ func _update_terrain_textures() -> void:
 		color_img.set_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
 		color_tex.update(color_img)
 
-# ---------------------------------------------------------------- Fluss-Mesh
+	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
+	var wbytes: PackedByteArray = sim.waterFieldBytes()
+	if water_img == null:
+		water_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, wbytes)
+		water_tex = ImageTexture.create_from_image(water_img)
+		terrain_mat.set_shader_parameter("water_tex", water_tex)
+	else:
+		water_img.set_data(N, N, false, Image.FORMAT_RGBA8, wbytes)
+		water_tex.update(water_img)
 
-func _sample_hf(gx: float, gz: float) -> float:
-	var xi := clampi(int(floor(gx)), 0, N - 2)
-	var yi := clampi(int(floor(gz)), 0, N - 2)
-	var fx := clampf(gx - xi, 0.0, 1.0)
-	var fy := clampf(gz - yi, 0.0, 1.0)
-	var i00 := yi * N + xi
-	return hf_cache[i00] * (1 - fx) * (1 - fy) + hf_cache[i00 + 1] * fx * (1 - fy) \
-		+ hf_cache[i00 + N] * (1 - fx) * fy + hf_cache[i00 + N + 1] * fx * fy
-
-## Wasser-Geometrie = nur glatte Seeflächen (auf Priority-Flood-Füllhöhe).
-## Flüsse werden NICHT mehr als aufgesetzte Ribbons gerendert (waren blockig) —
-## sie entstehen aus den eingeschnittenen Tälern + blauer Terrain-Tönung (Swift)
-## + dem Wasser, das die Talböden füllt (Lague-Prinzip: „Täler sind die Flüsse").
-func _rebuild_rivers() -> void:
-	river_mesh.clear_surfaces()
-
-	# Surface 0: echtes Fluss-Netz (in Swift getract: glatt, variable Breite, Mäander).
-	sim.buildRivers(HSCALE)
-	var rv: PackedVector3Array = sim.riverVerts()
-	if rv.size() >= 3:
-		var arr := []
-		arr.resize(Mesh.ARRAY_MAX)
-		arr[Mesh.ARRAY_VERTEX] = rv
-		arr[Mesh.ARRAY_COLOR] = sim.riverColors()
-		arr[Mesh.ARRAY_INDEX] = sim.riverIndices()
-		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-
-	# Surface 1: Seeflächen (flache Quads auf Füllhöhe).
-	var lv := PackedVector3Array()
-	var lc := PackedColorArray()
-	var li := PackedInt32Array()
-	for k in N * N:
-		if hf_cache[k] - h_cache[k] <= LAKE_EPS or hf_cache[k] <= sea:
-			continue
-		var ci := k % N
-		var cj := k / N
-		var y: float = hf_cache[k] * HSCALE + 0.1
-		var base := lv.size()
-		for off in [Vector2(-0.5, -0.5), Vector2(0.5, -0.5), Vector2(-0.5, 0.5), Vector2(0.5, 0.5)]:
-			lv.append(Vector3(-half + (ci + off.x) * step, y, -half + (cj + off.y) * step))
-			lc.append(Color(0.5, 0.5, 1.0)) # dir=(0,0) → See kräuselt
-		li.append(base); li.append(base + 2); li.append(base + 1)
-		li.append(base + 1); li.append(base + 2); li.append(base + 3)
-	if lv.size() >= 3:
-		var arr2 := []
-		arr2.resize(Mesh.ARRAY_MAX)
-		arr2[Mesh.ARRAY_VERTEX] = lv
-		arr2[Mesh.ARRAY_COLOR] = lc
-		arr2[Mesh.ARRAY_INDEX] = li
-		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr2)
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 
