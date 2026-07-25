@@ -31,6 +31,7 @@ public final class Terrain {
     private var visited: [Bool]
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
+    private var isChannel: [Bool] // Zellen unter einer Mäander-Zentrumslinie (M3-Maske)
     private var noise: SimplexNoise
 
     /// Wandernde Fluss-Zentrumslinien (Mäander-Migration). In M2 noch entkoppelt
@@ -60,6 +61,7 @@ public final class Terrain {
         visited = .init(repeating: false, count: c)
         scratch = .init(repeating: 0, count: c)
         qs = .init(repeating: 0, count: c)
+        isChannel = .init(repeating: false, count: c)
         heap = MinHeap(capacity: c)
         noise = SimplexNoise(seed: seed)
         generate(seed: seed)
@@ -315,9 +317,11 @@ public final class Terrain {
                 h[k] += dep; sed[k] += dep
                 qs[ri] += qin - dep
             } else {
-                // unter Kapazität → erodieren (detachment-begrenzt, Fels widerstandsfähiger)
+                // unter Kapazität → erodieren (detachment-begrenzt, Fels widerstandsfähiger).
+                // Auf Kanalzellen gedämpft: dort inzidiert der Mäander-Carve (Reconciliation).
+                let damp = isChannel[k] ? cfg.channelErodeDamp : 1.0
                 let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : cfg.kRock) * (1 - 0.6 * veg[k])
-                let want = min(qc - qin, kErode * pow(a, m) * s * dt)
+                let want = min(qc - qin, kErode * pow(a, m) * s * dt) * damp
                 let removable = max(0, h[k] - h[ri]) * 0.5
                 let er = min(want, removable)
                 if er > 0 {
@@ -509,14 +513,13 @@ public final class Terrain {
              + area[k + n] * (1 - fx) * fy + area[k + n + 1] * fx * fy
     }
 
-    /// Lokale Hangneigung (Gradientbetrag von h) pro Zelle an der nächsten Zelle.
-    @inline(__always) private func slopeAt(_ gx: Double, _ gz: Double) -> Double {
-        let i = min(max(Int(gx.rounded()), 1), n - 2)
-        let j = min(max(Int(gz.rounded()), 1), n - 2)
-        let k = j * n + i
-        let dhx = (h[k + 1] - h[k - 1]) * 0.5
-        let dhz = (h[k + n] - h[k - n]) * 0.5
-        return (dhx * dhx + dhz * dhz).squareRoot()
+    /// Geländehöhe an einer kontinuierlichen Grid-Position (bilinear).
+    @inline(__always) private func bilinearH(_ gx: Double, _ gz: Double) -> Double {
+        let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
+        let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
+        let k = yi * n + xi
+        return h[k] * (1 - fx) * (1 - fy) + h[k + 1] * fx * (1 - fy)
+             + h[k + n] * (1 - fx) * fy + h[k + n + 1] * fx * fy
     }
 
     /// Frischt den Abfluss entlang der Läufe aus dem aktuellen Einzugsgebiet auf
@@ -532,10 +535,7 @@ public final class Terrain {
                 meander.channels[ci].discharge[ni] = max(0, bilinearArea(nd.x, nd.z) / cellArea)
             }
         }
-        let flat = cfg.meanderFlatSlope
-        meander.migrate(dt: dt, config: cfg) { node in
-            max(0, min(1, 1 - self.slopeAt(node.x, node.z) / flat))
-        }
+        meander.migrate(dt: dt, config: cfg) { self.bilinearH($0.x, $0.z) }
         // Sicherheits-Clamp: Knoten dürfen die Welt nicht verlassen.
         let maxc = Double(n - 1)
         for ci in meander.channels.indices {
@@ -548,6 +548,114 @@ public final class Terrain {
         if meander.channels.isEmpty { seedMeander() }
     }
 
+    // MARK: - Mäander-Kopplung ins Höhenfeld (M3)
+
+    /// Trägt an Zelle `k` `amount` ab (erst Sediment, dann Fels) — hält
+    /// h = rock + sed. Gibt den tatsächlich abgetragenen Betrag zurück.
+    @inline(__always) private func erodeCell(_ k: Int, _ amount: Double) -> Double {
+        let a = max(0, amount)
+        if a <= 0 { return 0 }
+        let ds = min(a, sed[k]); sed[k] -= ds
+        rock[k] -= (a - ds)
+        h[k] -= a
+        return a
+    }
+
+    /// Lagert `amount` als Sediment an Zelle `k` ab.
+    @inline(__always) private func depositCell(_ k: Int, _ amount: Double) {
+        if amount <= 0 { return }
+        sed[k] += amount; h[k] += amount
+    }
+
+    /// Stempelt die Mäander-Läufe ins Höhenfeld:
+    /// 1) **Bett-Carve** (Kanal carvt selbst) — senkt die überstrichenen Zellen
+    ///    Richtung stromab-Höhe, self-reinforcing mit D8 (nächstes computeFlow
+    ///    routet durchs Bett). Gedeckelt aufs halbe lokale Gefälle.
+    /// 2) **Laterale Ufer-Verschiebung** — Prallhang (Außenkurve) erodieren,
+    ///    Gleithang (Innenkurve) ablagern, massenerhaltend. So wandert das Bett.
+    /// 3) **isChannel-Maske** für die Reconciliation mit `transportLimited`.
+    private func meanderStamp(dt: Double) {
+        for k in 0..<cfg.count { isChannel[k] = false }
+        let m = cfg.mExp
+        let cs = cfg.cellSize
+        let cellArea = cs * cs
+        let width = cfg.meanderBankWidth
+        for ch in meander.channels {
+            let nodes = ch.nodes
+            guard nodes.count >= 2 else { continue }
+            // --- 1) Bett-Carve entlang der Segmente ---
+            for i in 0..<(nodes.count - 1) {
+                let a = nodes[i], b = nodes[i + 1]
+                let d = dist(a, b)
+                let hb = bilinearH(b.x, b.z)                      // stromab-Zielhöhe
+                let ha = bilinearH(a.x, a.z)
+                let segSlope = d > 1e-6 ? max(0, ha - hb) / (d * cs) : 0
+                let qA = 0.5 * (ch.discharge[i] + ch.discharge[i + 1]) * cellArea // echtes A
+                let carveRate = cfg.meanderCarve * pow(max(qA, 0), m) * segSlope * dt
+                let steps = max(1, Int(d.rounded(.up)))
+                for sIdx in 0...steps {
+                    let t = Double(sIdx) / Double(steps)
+                    let ci = min(max(Int((a.x + (b.x - a.x) * t).rounded()), 0), n - 1)
+                    let cj = min(max(Int((a.z + (b.z - a.z) * t).rounded()), 0), n - 1)
+                    let k = cj * n + ci
+                    isChannel[k] = true
+                    let cap = max(0, h[k] - hb) * 0.5             // nicht unter stromab graben
+                    _ = erodeCell(k, min(carveRate, cap))
+                }
+            }
+            // --- 2) laterale Ufer-Verschiebung pro innerem Knoten ---
+            for i in 1..<(nodes.count - 1) {
+                let a = nodes[i - 1], b = nodes[i], c = nodes[i + 1]
+                let v1x = b.x - a.x, v1z = b.z - a.z
+                let v2x = c.x - b.x, v2z = c.z - b.z
+                let ds = 0.5 * ((v1x * v1x + v1z * v1z).squareRoot()
+                              + (v2x * v2x + v2z * v2z).squareRoot())
+                if ds < 1e-9 { continue }
+                let cross = v1x * v2z - v1z * v2x
+                let dot = v1x * v2x + v1z * v2z
+                let curv = atan2(cross, dot) / ds
+                let tx = c.x - a.x, tz = c.z - a.z
+                let tl = (tx * tx + tz * tz).squareRoot()
+                if tl < 1e-9 { continue }
+                // Außen-Normale = weg vom Krümmungszentrum (−sign(curv) · linke Normale)
+                let sgn = curv > 0 ? -1.0 : 1.0
+                let ox = sgn * (-tz / tl), oz = sgn * (tx / tl)
+                let outI = min(max(Int((b.x + ox * width).rounded()), 0), n - 1)
+                let outJ = min(max(Int((b.z + oz * width).rounded()), 0), n - 1)
+                let inI = min(max(Int((b.x - ox * width).rounded()), 0), n - 1)
+                let inJ = min(max(Int((b.z - oz * width).rounded()), 0), n - 1)
+                let ko = outJ * n + outI, ki = inJ * n + inI
+                if ko == ki { continue }
+                let qA = ch.discharge[i] * cellArea
+                let want = cfg.meanderBankErode * pow(max(qA, 0), m) * abs(curv) * dt
+                // nur so viel, dass der Prallhang nicht unter den Innenhang fällt
+                let cap = max(0, h[ko] - h[ki]) * 0.5
+                let moved = erodeCell(ko, min(want, cap))
+                depositCell(ki, moved)
+            }
+        }
+        plugOxbows()
+    }
+
+    /// Verkorkt frisch abgeschnürte Schleifen (Alter 0) an ihren Enden mit
+    /// Sediment, sodass D8 nicht mehr hindurchroutet und die eingetiefte Schleife
+    /// über den bestehenden `hf>h`-Mechanismus zum Altarm-See wird.
+    private func plugOxbows() {
+        for oi in meander.oxbows.indices where meander.oxbowAge[oi] == 0 {
+            let loop = meander.oxbows[oi]
+            guard loop.count >= 4 else { continue }
+            for nd in [loop[1], loop[loop.count - 2]] {
+                let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
+                let cj = min(max(Int(nd.z.rounded()), 1), n - 2)
+                let k = cj * n + ci
+                // auf den umgebenden Uferlippen-Pegel anheben → Schleife abgetrennt
+                var lip = h[k]
+                for nb in [k - 1, k + 1, k - n, k + n] { lip = max(lip, h[nb]) }
+                depositCell(k, max(0, lip - h[k]))
+            }
+        }
+    }
+
     // MARK: - Zeitschritt
 
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist
@@ -555,7 +663,9 @@ public final class Terrain {
     public func step(dtYears dt: Double) {
         applyUplift(dt: dt)
         computeFlow()
-        transportLimited(dt: dt) // massenerhaltend: Erosion + Sedimenttransport + Ablagerung
+        migrateMeander(dt: dt)   // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
+        meanderStamp(dt: dt)     // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
+        transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
         // Hangprozesse ~ 1 Pass / 100 Jahre (wie im Prototyp kalibriert).
         let passes = max(1, Int((dt / 100).rounded()))
         for _ in 0..<passes {
@@ -563,7 +673,6 @@ public final class Terrain {
             wavePass()
         }
         updateVegetation(years: dt)
-        migrateMeander(dt: dt) // entkoppelt: evolviert die Läufe, formt h noch nicht
         years += dt
     }
 

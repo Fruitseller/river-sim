@@ -58,13 +58,17 @@ public final class MeanderState {
     /// uniformen Knotenabstand und Cutoff-Erkennung. `mobility` gated die
     /// Aktivität (0 = fixiert, z. B. steile Oberläufe; 1 = voll mobil, Flachland);
     /// im entkoppelten M1-Kern ist alles voll mobil.
+    /// `heightAt` liefert die Geländehöhe an einer Knotenposition (für das
+    /// Flachland-Gate über die *Längsneigung* entlang des Laufs — nicht die
+    /// Querneigung, die an eingetieften Kanälen immer steil ist). Default 0 →
+    /// überall voll mobil (entkoppelte Kernel-Tests).
     public func migrate(dt: Double, config: SimConfig,
-                        mobility: (MeanderNode) -> Double = { _ in 1 }) {
+                        heightAt: (MeanderNode) -> Double = { _ in 0 }) {
         let spacing = config.meanderNodeSpacing
         for age in oxbowAge.indices { oxbowAge[age] += dt }
         for ci in channels.indices {
             var ch = channels[ci]
-            lateralStep(&ch, dt: dt, config: config, mobility: mobility)
+            lateralStep(&ch, dt: dt, config: config, heightAt: heightAt)
             smooth(&ch.nodes, factor: config.meanderSmooth)
             applyCutoffs(&ch, config: config)
             ch = resample(ch, spacing: spacing) // Splice-Knick der Cutoffs glätten
@@ -76,11 +80,14 @@ public final class MeanderState {
     /// Positive Krümmung (Linksbogen) + linke Normale → weiter nach links: die
     /// bestehende Schlinge verstärkt sich (Howard–Knutson, lokale Variante).
     private func lateralStep(_ ch: inout RiverChannel, dt: Double, config: SimConfig,
-                             mobility: (MeanderNode) -> Double) {
+                             heightAt: (MeanderNode) -> Double) {
         let nodes = ch.nodes
         let count = nodes.count
         guard count >= 3 else { return }
         let k = config.meanderMigration
+        let flat = config.meanderFlatSlope
+        let cs = config.cellSize
+        let maxStep = 0.5 * config.meanderNodeSpacing // CFL: kein Knoten springt >½ Abstand
         var out = nodes
         for i in 1..<(count - 1) {
             let a = nodes[i - 1], b = nodes[i], c = nodes[i + 1]
@@ -99,8 +106,13 @@ public final class MeanderState {
             let tl = (tx * tx + tz * tz).squareRoot()
             if tl < 1e-9 { continue }
             let nx = -tz / tl, nz = tx / tl
+            // Flachland-Gate über die Längsneigung a→c (nicht die Querneigung)
+            let arc = (l1 + l2) * cs
+            let longSlope = arc > 1e-9 ? abs(heightAt(a) - heightAt(c)) / arc : 0
+            let mob = max(0, min(1, 1 - longSlope / flat))
             // −curv: zum Außenufer (weg vom Krümmungszentrum) → Schlinge verstärkt sich
-            let m = -k * ch.discharge[i] * curv * dt * mobility(b)
+            var m = -k * ch.discharge[i] * curv * dt * mob
+            m = max(-maxStep, min(maxStep, m)) // Displacement-Clamp gegen Verheddern
             out[i] = MeanderNode(x: b.x + m * nx, z: b.z + m * nz)
         }
         ch.nodes = out

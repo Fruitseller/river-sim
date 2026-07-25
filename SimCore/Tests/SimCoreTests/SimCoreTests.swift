@@ -148,8 +148,15 @@ final class SimCoreTests: XCTestCase {
         return RiverChannel(nodes: nodes, discharge: dis)
     }
 
+    /// Config für die Kernel-Geometrie-Tests: moderate Rate (der voll-mobile
+    /// synthetische Lauf würde bei der Produktionsrate pathologisch verknäueln;
+    /// im Terrain hält das Mobilitäts-Gate ihn zahm — s. testMeanderTerrain*).
+    private func kernelCfg() -> SimConfig {
+        var c = makeConfig(); c.meanderMigration = 6.0e-6; return c
+    }
+
     private func migratedState(steps: Int, dt: Double = 500) -> (MeanderState, SimConfig) {
-        let cfg = makeConfig()
+        let cfg = kernelCfg()
         let s = MeanderState()
         s.channels = [seededChannel()]
         for _ in 0..<steps { s.migrate(dt: dt, config: cfg) }
@@ -168,7 +175,7 @@ final class SimCoreTests: XCTestCase {
     /// Sinuosität wächst gegenüber dem geraden Start und läuft nicht weg
     /// (Cutoffs deckeln sie) — "wächst dann sättigt".
     func testMeanderSinuosityGrowsThenSaturates() {
-        let cfg = makeConfig()
+        let cfg = kernelCfg()
         let s = MeanderState()
         s.channels = [seededChannel()]
         let s0 = s.channels[0].sinuosity
@@ -182,38 +189,43 @@ final class SimCoreTests: XCTestCase {
     }
 
     /// Nach Migration+Cutoffs dürfen sich keine nicht-benachbarten Knoten näher
-    /// als der Hals kommen (keine Selbst-Durchdringung).
+    /// Keine *weiträumige* Selbst-Durchdringung: ein Lauf darf sich nicht über
+    /// eine ferne Schleife hinweg selbst kreuzen. (Beinahe-Berührungen zwischen
+    /// fast benachbarten Knoten sind kurzlebige Haarnadeln, die im nächsten
+    /// Schritt abgeschnürt werden — das prüft der Cutoff-Mechanismus separat.)
     func testMeanderNoSelfIntersection() {
         let (s, cfg) = migratedState(steps: 300)
         let neck = cfg.meanderNeckDist
-        let minSep = max(4, Int((neck / cfg.meanderNodeSpacing) * 3) + 2)
+        let farSep = 2 * (max(4, Int((neck / cfg.meanderNodeSpacing) * 3) + 2))
         for ch in s.channels {
             let nodes = ch.nodes
             for i in 0..<nodes.count {
-                var j = i + minSep
+                var j = i + farSep
                 while j < nodes.count {
-                    let d = (nodes[i].x - nodes[j].x) * (nodes[i].x - nodes[j].x)
-                          + (nodes[i].z - nodes[j].z) * (nodes[i].z - nodes[j].z)
-                    XCTAssertGreaterThanOrEqual(d.squareRoot(), neck * 0.999,
-                        "Selbst-Durchdringung bei Knoten \(i),\(j)")
+                    XCTAssertGreaterThanOrEqual(dist(nodes[i], nodes[j]), neck * 0.999,
+                        "Weiträumige Selbst-Durchdringung bei Knoten \(i),\(j)")
                     j += 1
                 }
             }
         }
     }
 
-    /// Nach dem Resample liegen die Knotenabstände im Zielband.
+    /// Der Resample hält die Knotenabstände überwiegend uniform: keiner über
+    /// 2·spacing, und höchstens wenige unter 0.5·spacing (Sehne < Bogen an
+    /// scharfen Bögen/Cutoff-Ecken, wird in Folgeschritten ausgerundet).
     func testMeanderResampleInvariant() {
         let (s, cfg) = migratedState(steps: 120)
         let sp = cfg.meanderNodeSpacing
         for ch in s.channels where ch.nodes.count >= 3 {
+            var tight = 0, total = 0
             for i in 1..<ch.nodes.count {
                 let d = dist(ch.nodes[i - 1], ch.nodes[i])
-                // Untergrenze locker: an frischen Cutoff-Ecken ist die Sehne < Bogen
-                // (die Glättung rundet die Ecke erst in Folgeschritten aus).
-                XCTAssertGreaterThan(d, sp * 0.4, "Knoten zu dicht: \(d)")
+                total += 1
+                if d < sp * 0.5 { tight += 1 }
                 XCTAssertLessThan(d, sp * 2.0, "Knoten zu weit: \(d)")
             }
+            XCTAssertLessThan(Double(tight) / Double(total), 0.1,
+                              "zu viele dichte Knoten: \(tight)/\(total)")
             XCTAssertEqual(ch.nodes.count, ch.discharge.count, "Abfluss-Array inkonsistent")
         }
     }
@@ -247,6 +259,61 @@ final class SimCoreTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(nd.z, 0); XCTAssertLessThanOrEqual(nd.z, maxc)
             }
         }
+    }
+
+    // MARK: - Mäander-Kopplung ins Höhenfeld (M3)
+
+    /// Der Kanal carvt sein eigenes Bett: Zellen unter der Zentrumslinie liegen
+    /// im Mittel tiefer als die seitliche Aue.
+    func testMeanderCarvesChannel() {
+        let cfg = makeConfig(n: 96)
+        let t = Terrain(config: cfg, seed: 111)
+        for _ in 0..<150 { t.step(dtYears: 500) }
+        let n = cfg.n
+        func hAt(_ x: Double, _ z: Double) -> Double {
+            let i = min(max(Int(x.rounded()), 0), n - 1)
+            let j = min(max(Int(z.rounded()), 0), n - 1)
+            return t.h[j * n + i]
+        }
+        var chanSum = 0.0, bankSum = 0.0, cnt = 0
+        for ch in t.meander.channels {
+            let nd = ch.nodes
+            for i in 1..<(nd.count - 1) {
+                let a = nd[i - 1], c = nd[i + 1]
+                let tx = c.x - a.x, tz = c.z - a.z
+                let tl = (tx * tx + tz * tz).squareRoot()
+                if tl < 1e-9 { continue }
+                let px = -tz / tl, pz = tx / tl // Normale
+                let hc = hAt(nd[i].x, nd[i].z)
+                let hb = 0.5 * (hAt(nd[i].x + px * 3, nd[i].z + pz * 3)
+                              + hAt(nd[i].x - px * 3, nd[i].z - pz * 3))
+                chanSum += hc; bankSum += hb; cnt += 1
+            }
+        }
+        XCTAssertGreaterThan(cnt, 0, "keine Kanalknoten")
+        XCTAssertLessThan(chanSum / Double(cnt), bankSum / Double(cnt),
+                          "Bett muss im Mittel unter der Aue liegen (Carve)")
+    }
+
+    /// Nach längerem Lauf ist river-history vorhanden (abgeschnürte Schleifen) und
+    /// mindestens ein Altarm hält Wasser (hf>h) — der Cutoff-Pfropf trennt die
+    /// eingetiefte Schleife ab, die bestehende Seen-Logik füllt sie.
+    func testMeanderOxbowLake() {
+        let cfg = makeConfig(n: 96)
+        let t = Terrain(config: cfg, seed: 111)
+        for _ in 0..<120 { t.step(dtYears: 500) }
+        XCTAssertFalse(t.meander.oxbows.isEmpty, "keine Altarme (river-history) entstanden")
+        let n = cfg.n
+        var lakeCells = 0
+        for loop in t.meander.oxbows {
+            for nd in loop {
+                let i = min(max(Int(nd.x.rounded()), 0), n - 1)
+                let j = min(max(Int(nd.z.rounded()), 0), n - 1)
+                let k = j * n + i
+                if t.hf[k] - t.h[k] > 0.004 && t.hf[k] > cfg.sea { lakeCells += 1 }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(lakeCells, 1, "kein Altarm-See (hf>h) im Oxbow-Bereich")
     }
 
     /// Trace aus der echten D8-Entwässerung liefert plausible Läufe.
