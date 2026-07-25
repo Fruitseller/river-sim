@@ -23,12 +23,18 @@ Simulations-Feature, gekoppelt ans Terrain (kein Render-Trick mehr).
 **Kalibrierung (Erkenntnisse):** Mobilitäts-Gate auf die *Längs*neigung (nicht Quer-, die an
 eingetieften Kanälen die Migration selbst abschaltet); kMig = 5e-5; Displacement-Clamp (CFL).
 
-**Offene Feinschliff-Punkte:**
-- Terrain wirkt bei ~80k Jahren stellenweise „ersäuft" (viel Wasser in den Tälern) — prüfen,
-  ob Carve/Damp die Talsohlen zu breit flutet.
-- Altarm-Verlandung über `oxbowAge` sichtbar machen (Rendering + langsames Zuwachsen).
-- Downstream-Skew via Upstream-gewichteter Krümmung (Ikeda–Parker–Sawai) für realistischere,
-  asymmetrische Schlingen — bewusst nach der lokalen Variante.
+**Feinschliff (erledigt):**
+- ✅ „Ersäufte" Talsohlen diagnostiziert — **kein** Kopplungs-Bug: nasse Land-Zellen (hf>h)
+  mit/ohne Mäander praktisch identisch. Wässrige Optik = Basis-Sim (Insel erodiert in
+  Meeresspiegel-Nähe) + bewusst fette Fluss-Bänder. (Flag `meanderEnabled` für Diagnose.)
+- ✅ Altarm-Verlandung: `fillOxbows` hebt Betten langsam (`oxbowFillYears`), verlandete fallen
+  aus der Liste (`pruneOxbows`), Rendering blendet Altarm-Bänder mit dem Alter aus.
+- ✅ Downstream-Skew (Ikeda–Parker–Sawai): upstream-gewichtete Krümmung (EMA), stärke-normiert
+  → asymmetrische Schlingen ohne die Mäander-Rate zu dämpfen.
+
+**Weiter offen (optional):**
+- Falls die wässrige Langzeit-Optik stört: Basis-Sim-Balance (Uplift/Meeresspiegel) über sehr
+  lange Läufe nachjustieren — betrifft das Grundterrain, nicht die Mäander.
 
 ## Kleinere offene Punkte (Politur)
 
