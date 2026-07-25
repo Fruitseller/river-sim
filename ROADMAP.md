@@ -3,25 +3,32 @@
 Stand: nach dem echten Fluss-Netz (variable Breite + Render-Mäander). Kern ist eine
 **Simulation** (Zeit vergeht → Erosion/Tektonik/Sediment formen die Welt), kein Generator.
 
-## Nächster großer Schritt (Vorschlag) — Mäander-Migration
+## ✅ Umgesetzt — Mäander-Migration (M1–M4)
 
-**Ziel:** Flüsse, die über die Zeit *wandern* wie in Gaea 3 — Prallhang (Außenkurve)
-erodiert, Gleithang (Innenkurve) lagert ab → die Schlingen verschieben sich, schnüren
-sich ab und hinterlassen **Altarme / „river history"**. Echtes Simulations-Feature,
-nicht bloß Render-Sinuosität.
+Flüsse *wandern* jetzt über die Zeit: Prallhang erodiert, Gleithang lagert ab, Schlingen
+schnüren sich ab und hinterlassen **Altarme / river-history** im Höhenfeld. Echtes
+Simulations-Feature, gekoppelt ans Terrain (kein Render-Trick mehr).
 
-**Warum:** Macht river-sim einzigartig (kaum ein Spiel simuliert das), passt exakt zur
-Simulations-Idee, und ist headless testbar (Sinuositäts-/Massen-Metriken).
+**Architektur:**
+- `Meander.swift`: Fluss als persistente Lagrange-Zentrumslinie (`MeanderState`), Migration
+  ∝ Krümmung × Abfluss (Howard–Knutson, zum Außenufer), Resample, Cutoff → Altarm.
+- `Terrain.step()`: `migrateMeander` (Abfluss/Mobilität aus D8) → `meanderStamp` (Bett-Carve,
+  der Kanal carvt sein eigenes Bett self-reinforcing mit D8; laterale Prallhang/Gleithang-
+  Bewegung; Cutoff-Pfropf → Altarm-See über den bestehenden `hf>h`-Mechanismus) →
+  `transportLimited` (auf Kanalzellen gedämpft, Reconciliation).
+- `SimNode.buildRivers`: Rendering aus den echten Zentrumslinien + Altarmen.
+- Golden-Tests: Sinuosität wächst→sättigt (~2.3), Masse/Relief erhalten, keine weiträumige
+  Selbst-Durchdringung, Bett unter Aue, Altarm-See nach Cutoff. Alle 18 grün.
 
-**Skizze der Umsetzung (SimCore, headless testbar):**
-- Flusslauf als Polylinie/Zentrumslinie mit Krümmung pro Segment führen (nicht nur D8).
-- Laterale Verschiebung ∝ Krümmung × Abfluss: Außenufer erodieren, Innenufer Sediment
-  ablagern (massenerhaltend, koppelt an das bestehende Transport-Modell `transportLimited`).
-- Abschnürung (cutoff), wenn zwei Schlingen sich zu nah kommen → Altarm-See.
-- Nur in flachen Abschnitten aktiv (Gefälle < Schwelle); steile Oberläufe bleiben gerade.
-- Golden-Tests: Sinuosität wächst dann sättigt, Masse erhalten, keine Selbst-Durchdringung.
+**Kalibrierung (Erkenntnisse):** Mobilitäts-Gate auf die *Längs*neigung (nicht Quer-, die an
+eingetieften Kanälen die Migration selbst abschaltet); kMig = 5e-5; Displacement-Clamp (CFL).
 
-**Aufwand:** groß (mehrere Iterationen), aber gut abgrenzbar.
+**Offene Feinschliff-Punkte:**
+- Terrain wirkt bei ~80k Jahren stellenweise „ersäuft" (viel Wasser in den Tälern) — prüfen,
+  ob Carve/Damp die Talsohlen zu breit flutet.
+- Altarm-Verlandung über `oxbowAge` sichtbar machen (Rendering + langsames Zuwachsen).
+- Downstream-Skew via Upstream-gewichteter Krümmung (Ikeda–Parker–Sawai) für realistischere,
+  asymmetrische Schlingen — bewusst nach der lokalen Variante.
 
 ## Kleinere offene Punkte (Politur)
 
