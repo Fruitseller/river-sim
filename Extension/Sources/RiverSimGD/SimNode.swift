@@ -61,25 +61,29 @@ final class SimNode: Node {
                 if v <= sea + 0.012 {
                     (r, g, b) = gradColor(v)
                 } else {
-                    r = 0.52; g = 0.55; b = 0.34 // Steppe (olivgrün statt beige)
-                    let wr = min(max(rain[k] * 1.2, 0), 1)        // → Gras (Feuchte)
-                    r += (0.30 - r) * wr; g += (0.52 - g) * wr; b += (0.22 - b) * wr
-                    let wv = veg[k] * 0.85                        // → Wald (Vegetation)
-                    r += (0.11 - r) * wv; g += (0.30 - g) * wv; b += (0.13 - b) * wv
-                    var rocky = sed[k] < 0.004 ? 0.5 : 0.0
+                    // Fels-first, naturalistisch entsättigt (Vorbild nickmcd): grauer
+                    // Fels dominiert, Grün nur in feuchten flachen Tälern, helle
+                    // Gipfel/Schnee. Die Zerklüftung/Schattierung macht das Licht.
+                    var slope = 0.0
                     if i > 0 && i < n - 1 && j > 0 && j < n - 1 {
-                        let slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
-                        rocky = max(rocky, min(0.85, max(0, slope * 55 - 0.75))) // steiler nötig → mehr Grün
+                        slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
                     }
-                    let wf = max(0, rocky)                        // → dunkle Felswände (Kontrast)
-                    r += (0.34 - r) * wf; g += (0.31 - g) * wf; b += (0.28 - b) * wf
-                    if v > 0.68 {                                 // → dunkles Hochgebirgs-Fels, dann Schnee
-                        let wg = min(max((v - 0.68) / 0.10, 0), 1)
-                        r += (0.40 - r) * wg; g += (0.39 - g) * wg; b += (0.38 - b) * wg
+                    let steep = min(1, slope * 45)                // 0 flach … 1 steil
+                    r = 0.46 + 0.11 * steep                       // grauer Fels, steiler → heller freiliegend
+                    g = 0.46 + 0.11 * steep
+                    b = 0.44 + 0.10 * steep
+                    let moist = min(1, rain[k] * 1.2)             // Vegetation: moosgrün in
+                    let gentle = max(0, 1 - steep * 1.1)          // Tälern + unteren Hängen
+                    let altVeg = v < 0.6 ? 1 : max(0, 1 - (v - 0.6) / 0.18)
+                    let vegAmt = min(1, (0.5 + 0.5 * veg[k]) * moist * gentle * altVeg)
+                    r += (0.22 - r) * vegAmt; g += (0.44 - g) * vegAmt; b += (0.15 - b) * vegAmt
+                    if v > 0.55 {                                 // Hochlagen: mittelgrauer Fels (nicht weiß)
+                        let wg = min(1, (v - 0.55) / 0.45)
+                        r += (0.50 - r) * wg; g += (0.50 - g) * wg; b += (0.51 - b) * wg
                     }
-                    if v > 0.80 {                                 // → Schnee (nur höchste Gipfel)
-                        let ws = min(max((v - 0.80) / 0.05, 0), 1)
-                        r += (0.96 - r) * ws; g += (0.97 - g) * ws; b += (0.99 - b) * ws
+                    if v > 1.05 {                                 // Schnee nur auf den allerhöchsten Gipfeln
+                        let ws = min(1, (v - 1.05) / 0.08)
+                        r += (0.93 - r) * ws; g += (0.94 - g) * ws; b += (0.96 - b) * ws
                     }
                 }
                 let o = k * 4

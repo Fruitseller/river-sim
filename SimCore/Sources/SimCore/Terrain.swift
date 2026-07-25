@@ -41,6 +41,7 @@ public final class Terrain {
 
     public private(set) var years: Double = 0
     private var seed: UInt32
+    private var stepCount: UInt32 = 0 // deterministischer Zähler für die Droplet-Seeds
 
     public init(config: SimConfig = SimConfig(), seed: UInt32 = 1337) {
         self.cfg = config
@@ -74,6 +75,7 @@ public final class Terrain {
     public func generate(seed: UInt32) {
         self.seed = seed
         self.years = 0
+        self.stepCount = 0
         noise = SimplexNoise(seed: seed)
 
         // Tektonik-Feld: fix je Terrain (reale Tektonik wechselt nicht alle 100 J).
@@ -86,24 +88,34 @@ public final class Terrain {
         // tragen — sonst erodiert/senkt die Insel über 100k+ Jahre zu Graten weg.
         for j in 0..<n {
             for i in 0..<n {
-                let raw = uNoise.value(Double(i) * uFreq + uox, Double(j) * uFreq + uoy)
-                // Hohe Varianz, ~nullsummig: dramatische Gipfel WO raw stark, grünes
-                // Tiefland sonst. Massenerhaltender Transport verhindert das Absaufen.
-                upliftBase[idx(i, j)] = raw * 0.8 + 0.06
+                // RIDGED Tektonik: Hebung konzentriert sich auf Gebirgs-GRATE (statt
+                // eines glatten Blobs). Entscheidend gegen die Langzeit-Degradation —
+                // die Erosion läuft sonst ins glatte Hebungsfeld (→ runde Kuppeln);
+                // ein gratiges Hebungsfeld trägt langfristig gratige Berge.
+                let ridge = uNoise.ridged01(Double(i) * uFreq + uox,
+                                            Double(j) * uFreq + uoy, octaves: 5)
+                upliftBase[idx(i, j)] = ridge * 1.15 - 0.22 // Grate → stark hoch, Täler → leicht runter
             }
         }
 
-        // Grundrelief: fBm mit Insel-Falloff → Rand fällt unter den Meeresspiegel,
-        // damit die Landschaft natürlich zum Rand entwässert.
+        // Grundrelief: RIDGED-Multifractal → scharfe Bergkämme/Grate (statt der
+        // rundlichen fBm-Blobs), moduliert von einem großräumigen fBm-Massiv-Feld
+        // (Gebirge vs. Tiefland), mit Insel-Falloff zum Rand hin unter den Meeresspiegel.
         let bf = cfg.baseFreq / Double(n)
         let cx = Double(n - 1) / 2
         for j in 0..<n {
             for i in 0..<n {
-                let v01 = noise.fbm01(Double(i) * bf, Double(j) * bf, octaves: cfg.baseOctaves)
+                let x = Double(i) * bf, y = Double(j) * bf
+                let ridge = noise.ridged01(x, y, octaves: cfg.baseOctaves)
+                // großräumige Maske → Grate klumpen zu Gebirgszügen, dazwischen Tiefland
+                let massif = noise.fbm01(x * 0.35, y * 0.35, octaves: 3)
+                let m = 0.52 + 0.48 * massif // höherer Boden → Täler bleiben Land (weniger Wasser)
                 let d = (Double(i) - cx).magnitudeHypot(Double(j) - cx) / cx
-                let t = min(max((d - 0.6) / 0.45, 0), 1)
+                let t = min(max((d - 0.72) / 0.30, 0), 1) // Falloff weiter außen → größere Landmasse
                 let falloff = 1 - t * t * (3 - 2 * t) // smoothstep
-                h[idx(i, j)] = pow(v01, 1.4) * 0.85 * falloff
+                // Talboden angehoben (Baseline) → Täler bleiben LAND statt Wasser; Grate ragen darüber auf.
+                let ridgeE = 0.38 + 0.62 * pow(ridge, 1.2)
+                h[idx(i, j)] = ridgeE * cfg.baseRelief * m * falloff
             }
         }
         initLayers()
@@ -387,7 +399,7 @@ public final class Terrain {
     /// statt der planaren Facetten/Terrassen der Schwellen-Talus-Methode.
     /// kappa fix bei 0.15 (< 0.25 → explizit stabil), mehrmals pro Sim-Schritt.
     private func diffusionPass() {
-        let kappa = 0.028 // moderate Glättung: natürliche Hänge, keine Tafelberg-Steilwände
+        let kappa = 0.0025 // fast keine Glättung: feine dendritische Rinnen bleiben erhalten
         for j in 0..<n {
             for i in 0..<n {
                 let k = idx(i, j)
@@ -687,12 +699,20 @@ public final class Terrain {
             migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
             meanderStamp(dt: dt)   // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
         }
-        transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
-        // Hangprozesse ~ 1 Pass / 100 Jahre (wie im Prototyp kalibriert).
         let passes = max(1, Int((dt / 100).rounded()))
-        for _ in 0..<passes {
-            diffusionPass()
-            wavePass()
+        if cfg.hydraulicEnabled {
+            // Droplet-Erosion carvt das feine dendritische Detail (nickmcd-Look).
+            stepCount &+= 1
+            // Tropfen ∝ Zeit × Fläche (Dichte kalibriert auf n = 640).
+            let density = Double(n * n) / (640.0 * 640.0)
+            let drops = max(1, Int(dt * cfg.hydraulicPerYear * density))
+            let dropSeed = seed &+ stepCount &* 2_654_435_761
+            Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
+                            seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic)
+            for _ in 0..<passes { wavePass() } // Küste bleibt vom Grid-Modell
+        } else {
+            transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
+            for _ in 0..<passes { diffusionPass(); wavePass() }
         }
         updateVegetation(years: dt)
         years += dt

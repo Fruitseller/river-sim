@@ -103,10 +103,12 @@ func _setup_scene() -> void:
 	var e := Environment.new()
 	# Prozeduraler Himmel → liefert realistisches Ambient UND Reflexionen fürs Wasser.
 	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.28, 0.50, 0.86)
-	sky_mat.sky_horizon_color = Color(0.72, 0.80, 0.90)
-	sky_mat.ground_bottom_color = Color(0.22, 0.26, 0.30)
-	sky_mat.ground_horizon_color = Color(0.65, 0.72, 0.80)
+	# Entsättigter, gedämpfter Himmel (grau-teal wie in der Referenz) → NEUTRALES
+	# Ambient statt kräftig blauem Fülllicht, das grauen Fels blau einfärbt.
+	sky_mat.sky_top_color = Color(0.50, 0.58, 0.66)
+	sky_mat.sky_horizon_color = Color(0.74, 0.78, 0.80)
+	sky_mat.ground_bottom_color = Color(0.30, 0.31, 0.31)
+	sky_mat.ground_horizon_color = Color(0.66, 0.68, 0.70)
 	sky_mat.sun_angle_max = 8.0
 	sky_mat.energy_multiplier = 0.6
 	var sky := Sky.new()
@@ -114,28 +116,29 @@ func _setup_scene() -> void:
 	e.background_mode = Environment.BG_SKY
 	e.sky = sky
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	e.ambient_light_energy = 0.22 # weniger blaues Fülllicht → Albedo/Kontrast dominieren
+	e.ambient_light_energy = 0.18
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	# Filmischer Look + Tiefe.
 	e.tonemap_mode = Environment.TONE_MAPPER_ACES
 	e.tonemap_exposure = 0.82
 	e.ssao_enabled = true
-	e.ssao_intensity = 1.5
+	e.ssao_intensity = 1.8 # kräftigere Ambient-Occlusion → Tiefe in den Rinnen
 	e.glow_enabled = true
-	e.glow_intensity = 0.25
-	e.glow_bloom = 0.1
-	e.adjustment_enabled = true # Farben satter (gegen den blassen Look)
-	e.adjustment_saturation = 1.25
+	e.glow_intensity = 0.2
+	e.glow_bloom = 0.08
+	e.adjustment_enabled = true
+	e.adjustment_saturation = 1.02 # kaum Sättigungs-Boost → kein Blaustich
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_DEPTH
-	e.fog_light_color = Color(0.72, 0.80, 0.90)
-	e.fog_density = 0.0008
+	e.fog_light_color = Color(0.76, 0.78, 0.79)
+	e.fog_density = 0.0006
 	env.environment = e
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
-	sun.light_color = Color(1.0, 0.94, 0.84)
-	sun.light_energy = 1.7
+	# warmes, kräftiges Sonnenlicht dominiert das neutrale Ambient → naturalistischer Fels
+	sun.light_color = Color(1.0, 0.96, 0.90)
+	sun.light_energy = 1.85
 	sun.shadow_enabled = true
 	add_child(sun)
 	# Eindeutig von schräg oben aufs Terrain scheinen lassen (statt mehrdeutiger Euler).
@@ -195,13 +198,19 @@ func _setup_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	var panel := PanelContainer.new()
-	panel.position = Vector2(12, 12)
+	panel.position = Vector2(16, 16)
+	# Größere Schrift für die ganze UI (war kaum lesbar).
+	var ui_theme := Theme.new()
+	ui_theme.default_font_size = 22
+	panel.theme = ui_theme
 	layer.add_child(panel)
 	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
 	panel.add_child(vb)
 
 	year_label = Label.new()
 	year_label.text = "Jahr 0"
+	year_label.add_theme_font_size_override("font_size", 32) # Jahr prominent
 	vb.add_child(year_label)
 
 	var speeds := HBoxContainer.new()
@@ -238,7 +247,8 @@ func _setup_ui() -> void:
 	tools.add_child(regen_b)
 
 	var hint := Label.new()
-	hint.text = "Links: formen (Shift kehrt um) · Rechts: drehen · Rad: Zoom"
+	hint.add_theme_font_size_override("font_size", 16)
+	hint.text = "Links: formen (Shift kehrt um) · Rechts: drehen\nZoom: +/− Tasten · Zwei-Finger-Wisch · Pinch"
 	vb.add_child(hint)
 
 # ---------------------------------------------------------------- Zeit
@@ -393,6 +403,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and orbiting:
 		cam_yaw -= event.relative.x * 0.005
 		cam_pitch = clamp(cam_pitch + event.relative.y * 0.005, 0.15, 1.5)
+	# Zoom ohne Maus: Trackpad-Zwei-Finger-Wisch …
+	elif event is InputEventPanGesture:
+		cam_dist = clamp(cam_dist + event.delta.y * 6.0, 30.0, 400.0)
+	# … Pinch-Geste …
+	elif event is InputEventMagnifyGesture:
+		cam_dist = clamp(cam_dist / event.factor, 30.0, 400.0)
+	# … und +/− auf der Tastatur.
+	elif event is InputEventKey and event.pressed:
+		match event.keycode:
+			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
+				cam_dist = max(30.0, cam_dist - 12.0)
+			KEY_MINUS, KEY_KP_SUBTRACT:
+				cam_dist = min(400.0, cam_dist + 12.0)
 
 func _update_ring() -> void:
 	if sculpting or year_rate == 0.0:

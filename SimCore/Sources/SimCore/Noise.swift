@@ -76,4 +76,23 @@ public struct SimplexNoise {
         }
         return (v / norm + 1) / 2
     }
+
+    /// Ridged-Multifractal (Musgrave): `1 − |noise|` je Oktave, quadriert und mit
+    /// der vorigen Oktave gewichtet → scharfe **Bergkämme** und Grate statt der
+    /// rundlichen Blobs von fBm. Ergebnis ~[0, 1] (hohe Werte = Grate).
+    public func ridged01(_ x: Double, _ y: Double, octaves: Int,
+                         lacunarity: Double = 2.0, gain: Double = 0.5) -> Double {
+        var sum = 0.0, freq = 1.0, amp = 0.5, prev = 1.0, norm = 0.0
+        for _ in 0..<octaves {
+            var n = 1.0 - abs(value(x * freq, y * freq)) // Rücken bei |noise|→0
+            n *= n                                        // Grate schärfen
+            n *= prev                                     // multifraktal: Grate auf Graten
+            prev = min(1, n * 2.0)
+            sum += n * amp
+            norm += amp
+            freq *= lacunarity
+            amp *= gain
+        }
+        return min(1, max(0, sum / norm))
+    }
 }

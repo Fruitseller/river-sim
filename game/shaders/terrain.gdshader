@@ -44,14 +44,14 @@ void fragment() {
 	vec2 dir = w.ba * 2.0 - 1.0;
 
 	// weiche Masken → glatte Ufer statt harter Kanten (linear-Filter + smoothstep)
-	float riverMask = smoothstep(0.08, 0.5, stream);
+	float riverMask = smoothstep(0.12, 0.55, stream);
 	float lakeMask = smoothstep(0.03, 0.16, lake);
 	float wet = max(riverMask, lakeMask);
 
-	// Wasserfarbe: tiefer → dunkler; Flüsse etwas heller/kräftiger als Seen
+	// Wasserfarbe: entsättigtes Teal (Vorbild nickmcd), tiefer → dunkler
 	float depth = clamp(max(lake * 2.5, riverMask * 0.6), 0.0, 1.0);
-	vec3 shallow = vec3(0.18, 0.44, 0.56);
-	vec3 deep = vec3(0.04, 0.19, 0.42);
+	vec3 shallow = vec3(0.34, 0.52, 0.53);
+	vec3 deep = vec3(0.13, 0.32, 0.40);
 	vec3 water = mix(shallow, deep, depth);
 
 	// Animation: Flüsse strömen entlang dir, Seen kräuseln nur (niedrige Frequenz)
