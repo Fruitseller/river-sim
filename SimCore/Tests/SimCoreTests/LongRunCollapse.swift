@@ -36,9 +36,11 @@ final class LongRunCollapse: XCTestCase {
         // Start (kleine Toleranz fürs erste Settling der frischen Noise-Oberfläche).
         XCTAssertLessThan(t.maxHeight(), maxH0 + 0.02,
                           "Berge wachsen (\(maxH0) → \(t.maxHeight())) — Hebung zu stark?")
-        // …aber sie kollabieren auch nicht: Relief bleibt eine echte Landschaft.
-        XCTAssertGreaterThan(relief1, 0.45,
-                             "Relief kollabiert (\(relief0) → \(relief1)) — Hebung zu schwach?")
+        // …aber sie kollabieren auch nicht zur Pfannkuchen-Ebene. Mit Hebung=0
+        // (reine Erosion, gewollt) sinkt das Relief über 100k deutlich — das ist
+        // KEIN Regress, sondern Alterung. Die Schwelle fängt nur echtes Einebnen ab.
+        XCTAssertGreaterThan(relief1, 0.30,
+                             "Relief eingeebnet (\(relief0) → \(relief1)) — Erosion zu stark?")
         // See-Anteil bleibt gedeckelt (vor dem Fix ~2× auf 39%).
         XCTAssertLessThan(water1, 0.30,
                           "See-Anteil wuchert (\(water0) → \(water1)) — Becken-Fill inaktiv?")

@@ -17,6 +17,10 @@ final class SimCoreTests: XCTestCase {
         var c = makeConfig(n: n)
         c.hydraulicEnabled = false
         c.meanderEnabled = true
+        // Mäander-Logik gegen aktive Tektonik testen (Produktion hat upliftPer100y=0,
+        // reine Erosion — die Mäander-Dynamik/Altarm-Alterung braucht aber Relief-
+        // Nachschub). Mäander ist in Produktion ohnehin deaktiviert; hier isoliert.
+        c.upliftPer100y = 0.0015
         return c
     }
 
