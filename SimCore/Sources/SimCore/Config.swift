@@ -27,7 +27,7 @@ public struct SimConfig: Sendable {
     public var hydraulicPerYear = 2.0       // Tropfen je Jahr (sanft → Makro-Grate überleben)
     public var outletIncision = true        // Flächen-Stream-Power auf dem Entwässerungsnetz: carvt Täler/Auslässe → Becken entwässern zum Meer, dendritische Rinnen + diskrete Seen (nickmcd-Look) statt einer blassen Flach-Ebene
     public var outletErode: Double = 3.0e-5 // Rate der Auslass-Inzision. 3e-5 gibt feine dendritische Rinnen „über die ganze Oberfläche" ohne Überkämmen (6e-5 überkarvt bei 100k)
-    public var basinFill = true             // ergänzt die Inzision: verlandet die Rest-Pools, die die Inzision nicht entwässert → hält See-Anteil bei ~18% (sonst ~37% diskrete Tümpel) statt ihn wuchern zu lassen
+    public var basinFill = false            // AUS seit die Hebung niedrig ist (0.0015): Auslass-Inzision + wenig Hebung halten den See-Anteil schon von allein bei ~15% als DISKRETE blaue Seen. basinFill würde sie zu ~1% überfüllen → blasse, trockene Flach-Ebenen (die das Stream-Overlay weiß übermalt). Nur bei hoher Hebung nötig.
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()
         h.inertia = 0.10 // mehr Trägheit → längere, verzweigende (dendritische) Rinnen

@@ -62,12 +62,23 @@ Fill säuft es voll, mit reinem `basinFill` verlandet es zu einer blassen Flach-
   - Wichtig gemessen: die **Ponding-gegatete** Erstfassung überkämmte (rugged →0.14,
     See →45%). Die **flächen-basierte** (reine A^m·S) Variante konzentriert sich auf
     Täler und bleibt dendritisch. 6e-5 überkarvt bei 100k → 3e-5.
-- `cfg.basinFill=true` bleibt AN als Ergänzung: verlandet die Rest-Tümpel, die die
-  Inzision nicht entwässert → See-Anteil ~18% statt ~37% (sonst zu viele Pools).
-- **Verbleibend = Palette (Aufgabe 3), NICHT Geometrie:** bei 100k wirkt die Optik
-  noch blass/weiß. Ursache: der Steilfels-Highlight (`terrainColorBytes`,
-  `r=0.46+0.11*steep`) überzieht die feinen Rinnen weiß, und das Wasser-Overlay malt
-  die flachen Pools zu hell teal. Die Grau-Fels/Moosgrün-Balance dort nachziehen.
+- `cfg.basinFill` ist jetzt AUS (s. Aufgabe 1c): bei niedriger Hebung würde er die
+  Seen zu ~1% überfüllen → blasse Flach-Ebenen. Aus → diskrete blaue Seen (~15%).
+
+### 1c. Berge wachsen nicht mehr + Palette (User-Feedback, umgesetzt) ✅
+- **Berge wuchsen pro 10k-Schritt hoch:** gemessen stockte die alte Hebung
+  (`upliftPer100y=0.009`) die gesamte Landmasse auf (meanLand 0.39→0.68 über 100k,
+  +73%) — auch mit Gipfel-Clamp. `0.0015` → Masse bleibt ~flach, Relief erodiert
+  sanft (0.76→0.65), Berge erodieren statt zu wachsen (real ohne aktive Tektonik).
+- **Folge für den Look:** mit wenig Hebung entstehen kaum noch geschlossene Becken;
+  Auslass-Inzision hält den See-Anteil bei ~15% als **diskrete blaue Seen** → daher
+  `basinFill=false`. Das behob die blasse Interior-Ebene bei 100k.
+- **Palette** (`terrainColorBytes` + `terrain.gdshader`): Steilfels-Highlight
+  halbiert (wusch die Rinnen weiß), Fels dunkler-grau, mehr Moosgrün, Wasser
+  gedämpfter + `lakeMask` höher (seichte Pfützen nicht mehr pastell).
+- **Rest-Weiß auf den Graten** ist Sonnenlicht auf der dissozierten Geometrie
+  (wie „weiße Gipfel" der Referenz) — akzeptabel. Wer es weiter drücken will:
+  Stream-Overlay-Intensität / dry-SPECULAR im Shader senken.
 - Das junge/mittlere Terrain (bis ~20k) ist weiterhin sehr nah an der Referenz.
 
 ### 2. Mäander mit Droplet-Erosion versöhnen
