@@ -69,17 +69,17 @@ final class SimNode: Node {
                         slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
                     }
                     let steep = min(1, slope * 45)                // 0 flach … 1 steil
-                    r = 0.46 + 0.11 * steep                       // grauer Fels, steiler → heller freiliegend
-                    g = 0.46 + 0.11 * steep
-                    b = 0.44 + 0.10 * steep
+                    r = 0.42 + 0.05 * steep                       // grauer Fels; steiler nur LEICHT heller
+                    g = 0.43 + 0.05 * steep                       // (0.11 wusch die dichten 100k-Rinnen weiß)
+                    b = 0.43 + 0.05 * steep
                     let moist = min(1, rain[k] * 1.2)             // Vegetation: moosgrün in
-                    let gentle = max(0, 1 - steep * 1.1)          // Tälern + unteren Hängen
+                    let gentle = max(0, 1 - steep * 0.9)          // Tälern + unteren Hängen (hält sich an Rinnen etwas länger)
                     let altVeg = v < 0.6 ? 1 : max(0, 1 - (v - 0.6) / 0.18)
                     let vegAmt = min(1, (0.5 + 0.5 * veg[k]) * moist * gentle * altVeg)
-                    r += (0.22 - r) * vegAmt; g += (0.44 - g) * vegAmt; b += (0.15 - b) * vegAmt
-                    if v > 0.55 {                                 // Hochlagen: mittelgrauer Fels (nicht weiß)
-                        let wg = min(1, (v - 0.55) / 0.45)
-                        r += (0.50 - r) * wg; g += (0.50 - g) * wg; b += (0.51 - b) * wg
+                    r += (0.19 - r) * vegAmt; g += (0.42 - g) * vegAmt; b += (0.14 - b) * vegAmt // kräftigeres Moosgrün
+                    if v > 0.58 {                                 // Hochlagen: neutral-grauer Fels (nicht pastell/weiß)
+                        let wg = min(1, (v - 0.58) / 0.40)
+                        r += (0.46 - r) * wg; g += (0.47 - g) * wg; b += (0.48 - b) * wg
                     }
                     if v > 1.05 {                                 // Schnee nur auf den allerhöchsten Gipfeln
                         let ws = min(1, (v - 1.05) / 0.08)

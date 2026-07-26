@@ -44,14 +44,16 @@ void fragment() {
 	vec2 dir = w.ba * 2.0 - 1.0;
 
 	// weiche Masken → glatte Ufer statt harter Kanten (linear-Filter + smoothstep)
+	// lakeMask höher angesetzt: seichte Verlandungs-Pfützen (basinFill) sollen NICHT
+	// als pastell-teal Fläche übermalen — nur echte Seen zeigen Wasser.
 	float riverMask = smoothstep(0.12, 0.55, stream);
-	float lakeMask = smoothstep(0.03, 0.16, lake);
+	float lakeMask = smoothstep(0.10, 0.30, lake);
 	float wet = max(riverMask, lakeMask);
 
-	// Wasserfarbe: entsättigtes Teal (Vorbild nickmcd), tiefer → dunkler
+	// Wasserfarbe: gedämpftes, dunkles Teal (Vorbild nickmcd), tiefer → dunkler
 	float depth = clamp(max(lake * 2.5, riverMask * 0.6), 0.0, 1.0);
-	vec3 shallow = vec3(0.34, 0.52, 0.53);
-	vec3 deep = vec3(0.13, 0.32, 0.40);
+	vec3 shallow = vec3(0.20, 0.38, 0.42);
+	vec3 deep = vec3(0.10, 0.26, 0.34);
 	vec3 water = mix(shallow, deep, depth);
 
 	// Animation: Flüsse strömen entlang dir, Seen kräuseln nur (niedrige Frequenz)
