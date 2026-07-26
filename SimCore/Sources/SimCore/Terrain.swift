@@ -375,6 +375,48 @@ public final class Terrain {
         }
     }
 
+    // MARK: - Auslass-Inzision (Seen entwässern zum Meer)
+
+    /// Tieft die **Auslass-Sille** abflussloser Becken ein, sodass der See zum Meer
+    /// entwässert statt vollzulaufen (Droplet-Pfad) oder zur Flach-Ebene zu verlanden
+    /// (basinFill). Der Priority-Flood liefert die Zutaten: an einer Sill-Zelle steht
+    /// gestautes Wasser an (hf>h in der Nachbarschaft), und ihr `receiver` zeigt über
+    /// den Rand aus dem Becken heraus bergab. Stream-Power-Inzision entlang dieser
+    /// Zellen senkt die Sill; der nächste computeFlow senkt den Seespiegel (hf) nach —
+    /// self-reinforcing, bis das Becken entwässert ist (dann kein Ponding → Stopp).
+    /// So entstehen dendritische Grau-Täler statt Kuppeln/Ebenen (nickmcd-Look).
+    private func outletIncision(dt: Double) {
+        let cs = cfg.cellSize
+        let sqrt2 = 2.0.squareRoot()
+        let m = cfg.mExp
+        // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
+        // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
+        for oi in 0..<cfg.count {
+            let k = Int(order[oi])
+            let r = receiver[k]
+            if r < 0 { continue }
+            if h[k] <= cfg.sea { continue }         // Meer nicht einschneiden
+            let ri = Int(r)
+            if h[k] <= h[ri] { continue }           // See/Ebene: kein Gefälle → keine Inzision
+            let i = k % n, j = k / n
+            let rii = ri % n, rjj = ri / n
+            let dist = (i != rii && j != rjj) ? cs * sqrt2 : cs
+            // Reine Flächen-Stream-Power: die Inzision konzentriert sich auf Zellen mit
+            // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
+            // statt verrauscht. Ein Becken-Auslass sammelt das ganze Becken → tieft zügig
+            // ein → See entwässert zum Meer.
+            let kErode = cfg.outletErode * (1 - 0.6 * veg[k]) // Vegetation bremst
+            let f = kErode * dt * pow(area[k], m) / dist
+            let hNew = (h[k] + f * h[ri]) / (1 + f)
+            var delta = h[k] - hNew                 // > 0
+            if delta <= 0 { continue }
+            let ds = min(delta, sed[k])             // erst Sediment, dann Fels
+            sed[k] -= ds; delta -= ds
+            rock[k] -= delta
+            h[k] = hNew
+        }
+    }
+
     // MARK: - Seen-Verfüllung
 
     /// Füllt Senken (hf > h) langsam mit Sediment auf — Näherung an den
@@ -709,6 +751,8 @@ public final class Terrain {
             let dropSeed = seed &+ stepCount &* 2_654_435_761
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
                             seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic)
+            if cfg.outletIncision { outletIncision(dt: dt) } // Auslässe eintiefen → Becken entwässern zum Meer (dendritisch)
+            if cfg.basinFill { fillLakes(dt: dt) }            // Rest-Senken verlanden (Rückfall gegen See-Wucherung)
             for _ in 0..<passes { wavePass() } // Küste bleibt vom Grid-Modell
         } else {
             transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)

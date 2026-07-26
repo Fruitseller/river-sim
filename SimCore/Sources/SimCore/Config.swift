@@ -25,6 +25,9 @@ public struct SimConfig: Sendable {
     // ---- Droplet-Hydraulik-Erosion (carvt feines dendritisches Detail) ----
     public var hydraulicEnabled = true      // Droplet-Erosion statt Grid-Stream-Power+Diffusion
     public var hydraulicPerYear = 2.0       // Tropfen je Jahr (sanft → Makro-Grate überleben)
+    public var outletIncision = true        // Flächen-Stream-Power auf dem Entwässerungsnetz: carvt Täler/Auslässe → Becken entwässern zum Meer, dendritische Rinnen + diskrete Seen (nickmcd-Look) statt einer blassen Flach-Ebene
+    public var outletErode: Double = 3.0e-5 // Rate der Auslass-Inzision. 3e-5 gibt feine dendritische Rinnen „über die ganze Oberfläche" ohne Überkämmen (6e-5 überkarvt bei 100k)
+    public var basinFill = true             // ergänzt die Inzision: verlandet die Rest-Pools, die die Inzision nicht entwässert → hält See-Anteil bei ~18% (sonst ~37% diskrete Tümpel) statt ihn wuchern zu lassen
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()
         h.inertia = 0.10 // mehr Trägheit → längere, verzweigende (dendritische) Rinnen
@@ -38,7 +41,7 @@ public struct SimConfig: Sendable {
 
     // ---- Tektonik / Isostasie ----
     public var upliftPer100y: Double = 0.009 // stärkere Tektonik → trägt hohes Relief gegen die Erosion (Berge bleiben)
-    public var isoHighClamp: Double = 1.25 // Hebung → 0 gegen diese Höhe (hohe, bleibende Gipfel)
+    public var isoHighClamp: Double = 0.90 // Hebung → 0 gegen diese Höhe: deckelt das Relief-Runaway (Berge wuchsen sonst über 100k Jahre bis 1.25, Makro-Form lief weg). 0.90 pinnt Relief/maxH über 100k Jahre aufs junge Niveau (~0.75/0.90) — gratiges Gleichgewicht statt Alterung, ohne dass die Erosion die Berge abträgt (0.85 würde bereits erodieren)
     public var isoLowRange: Double = 0.35   // Senkung → 0 gegen den Boden
 
     // ---- Küste ----

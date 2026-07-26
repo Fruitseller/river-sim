@@ -33,20 +33,42 @@ Belege wurden während der Session erzeugt.
 
 ## Offene Aufgaben (priorisiert)
 
-### 1. Langzeit-Kollaps beheben (KERNPROBLEM, höchste Prio)
-Über lange Zeitraffer-Läufe (~60–100k Jahre) kollabiert die Makro-Form zu
-glatten Kuppeln mit Wasserbecken — das ist der Ursprung von „wird beim Steppen
-schlechter". Das junge Terrain ist gut, der Langzeit-Zustand nicht.
+### 1. Langzeit-Kollaps — GEMESSEN & im Kern behoben ✅ (Rest s. Aufgabe 1b)
+**Messung zuerst** (headless, quantitativ statt geschraubt): das Terrain
+kollabierte NICHT zu glatten Kuppeln — es lief **weg** (Runaway). Über 100k Jahre
+(n=640, gemessen): Relief 0.82 → **1.10** (+34%), See-Anteil 21% → **39%**, maxH
+bis an den Clamp 1.25. Die Hebung (netto positiv) trug die Grate immer weiter
+hoch, und der **Droplet-Pfad hatte keine Becken-Entwässerung** → geschlossene
+Senken wucherten zu Seen.
 
-- Hypothese: das Erosions-Gleichgewicht ist zu glatt / die Hebung trägt die
-  Grate nicht. Ridged-Tektonik allein hat es nicht gelöst — evtl. Hebungs-
-  Frequenz (`cfg.upliftFreq`) zu niedrig, oder Droplet-Rate/Balance.
-- Idee: Sim auf einem **jung-gratigen Gleichgewicht** stabilisieren statt in
-  Kuppeln altern zu lassen. Hebel: `upliftFreq` höher (feinere Gebirgszüge),
-  `hydraulicPerYear`/`kRock`/`upliftPer100y` balancieren, Diffusion (`kappa` in
-  `diffusionPass`) minimal halten.
-- **Vorgehen: erst messen** — Screenshot-Serie Jahr 0 vs. gesteppt vergleichen
-  (siehe Verifikation unten), nicht blind schrauben.
+**Fix (zwei Hebel, beide gemessen):**
+- `cfg.basinFill = true` — geschlossene Becken verlanden langsam (das alte
+  `fillLakes`, jetzt auch im Droplet-Zweig von `step()`). Hält den See-Anteil bei
+  ~18% statt Richtung 39%.
+- `cfg.isoHighClamp = 0.90` (war 1.25) — deckelt das Relief-Runaway. Pinnt
+  Relief/maxH über 100k Jahre aufs junge Niveau (~0.77/0.92). 0.85 würde die Berge
+  bereits abtragen, 1.0 driftet leicht hoch — 0.90 ist das Plateau.
+- Ergebnis n=640 @100k: Relief 0.77 (stabil), See 18.7%, maxH 0.92. Festgehalten
+  in `SimCoreTests/LongRunCollapse.swift` (Regressions-Wächter).
+
+### 1b. Endorheisches Becken — GEOMETRIE behoben ✅ (Rest ist Palette, s. Aufgabe 3)
+Über die Zeit bildete sich ein **Ring aus Bergen um ein abflussloses Becken**; ohne
+Fill säuft es voll, mit reinem `basinFill` verlandet es zu einer blassen Flach-Ebene.
+- **Fix: Auslass-Inzision** (`Terrain.outletIncision`) — Flächen-Stream-Power auf dem
+  Entwässerungsnetz (Priority-Flood liefert `order`/`receiver`/`area`). Konzentriert
+  die Inzision auf Zellen mit großem Einzugsgebiet (Täler/Auslässe) → Becken
+  **entwässern zum Meer**, es entstehen dendritische Rinnen + diskrete Seen statt
+  einer Ebene. `cfg.outletIncision=true`, `cfg.outletErode=3e-5`.
+  - Wichtig gemessen: die **Ponding-gegatete** Erstfassung überkämmte (rugged →0.14,
+    See →45%). Die **flächen-basierte** (reine A^m·S) Variante konzentriert sich auf
+    Täler und bleibt dendritisch. 6e-5 überkarvt bei 100k → 3e-5.
+- `cfg.basinFill=true` bleibt AN als Ergänzung: verlandet die Rest-Tümpel, die die
+  Inzision nicht entwässert → See-Anteil ~18% statt ~37% (sonst zu viele Pools).
+- **Verbleibend = Palette (Aufgabe 3), NICHT Geometrie:** bei 100k wirkt die Optik
+  noch blass/weiß. Ursache: der Steilfels-Highlight (`terrainColorBytes`,
+  `r=0.46+0.11*steep`) überzieht die feinen Rinnen weiß, und das Wasser-Overlay malt
+  die flachen Pools zu hell teal. Die Grau-Fels/Moosgrün-Balance dort nachziehen.
+- Das junge/mittlere Terrain (bis ~20k) ist weiterhin sehr nah an der Referenz.
 
 ### 2. Mäander mit Droplet-Erosion versöhnen
 `cfg.meanderEnabled = false` in Produktion, weil die Migration unter der neuen
