@@ -485,11 +485,11 @@ public final class Terrain {
                 // Kriechen. Sediment/Vegetation heben das Kriechen wieder an.
                 let gx = (hr - hl) * 0.5, gy = (hu - hd) * 0.5
                 let slope = (gx * gx + gy * gy).squareRoot()
-                let steep = min(1, slope * 30)
-                let high = min(1, max(0, (h[k] - 0.5) / 0.35))
+                let steep = min(1, slope * 26)               // etwas früher „steil" → mehr Grate bleiben scharf
+                let high = min(1, max(0, (h[k] - 0.42) / 0.35)) // Schutz schon ab mittlerer Höhe
                 let soil = min(1, sed[k] / 0.02 + veg[k])   // Boden ODER Bewuchs → Kriechen
                 let bare = steep * high * max(0, 1 - soil)   // 1 = kahler steiler Hochfels
-                let localK = base * (1 - 0.85 * bare)        // dort bis auf 15% gedrosselt
+                let localK = base * (1 - 0.92 * bare)        // dort bis auf 8% gedrosselt (Gipfel bleiben spitz)
                 scratch[k] = localK * lap
             }
         }
