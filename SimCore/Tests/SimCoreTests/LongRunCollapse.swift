@@ -23,6 +23,7 @@ final class LongRunCollapse: XCTestCase {
         var c = SimConfig(); c.n = 160
         let t = Terrain(config: c, seed: 1337)
         let relief0 = t.landRelief()
+        let maxH0 = t.maxHeight()
         let water0 = fractionInBasins(t)
 
         while t.years < 100_000 { t.step(dtYears: 500) }
@@ -30,12 +31,14 @@ final class LongRunCollapse: XCTestCase {
         let relief1 = t.landRelief()
         let water1 = fractionInBasins(t)
 
-        // Relief bleibt in der Nähe des Startwerts (Runaway wäre +30% Richtung Clamp).
-        XCTAssertLessThan(relief1, relief0 * 1.15,
-                          "Relief läuft weg (\(relief0) → \(relief1)) — Runaway zurück?")
-        // maxH bleibt unter dem Clamp (Berge wachsen nicht ins Dach).
-        XCTAssertLessThan(t.maxHeight(), 1.0,
-                          "maxH \(t.maxHeight()) — Berge wachsen in den Clamp.")
+        // Berge WACHSEN NICHT (User-Anforderung): ohne aktive Tektonik erodiert das
+        // Terrain, es wächst nicht hoch. maxH darf am Ende nicht höher sein als am
+        // Start (kleine Toleranz fürs erste Settling der frischen Noise-Oberfläche).
+        XCTAssertLessThan(t.maxHeight(), maxH0 + 0.02,
+                          "Berge wachsen (\(maxH0) → \(t.maxHeight())) — Hebung zu stark?")
+        // …aber sie kollabieren auch nicht: Relief bleibt eine echte Landschaft.
+        XCTAssertGreaterThan(relief1, 0.45,
+                             "Relief kollabiert (\(relief0) → \(relief1)) — Hebung zu schwach?")
         // See-Anteil bleibt gedeckelt (vor dem Fix ~2× auf 39%).
         XCTAssertLessThan(water1, 0.30,
                           "See-Anteil wuchert (\(water0) → \(water1)) — Becken-Fill inaktiv?")

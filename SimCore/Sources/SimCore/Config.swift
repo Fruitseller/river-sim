@@ -40,7 +40,7 @@ public struct SimConfig: Sendable {
     public var rockCrumble: Double = 0.15 // Fels-Anteil beim Hangrutsch (Basis)
 
     // ---- Tektonik / Isostasie ----
-    public var upliftPer100y: Double = 0.009 // stärkere Tektonik → trägt hohes Relief gegen die Erosion (Berge bleiben)
+    public var upliftPer100y: Double = 0.0015 // schwache Rest-Tektonik: Berge ERODIEREN über die Zeit (wie real ohne aktive Plattengrenze/Vulkanismus) statt bei jedem 10k-Schritt hochzuwachsen. 0.009 stockte die Landmasse in 100k um +73% auf (meanLand 0.39→0.68 → sichtbares „Wachsen"); 0.0015 hält die Masse ~flach (0.39→0.42), Relief erodiert sanft (0.76→0.65). Nur so viel Hebung, dass die Insel nicht wegerodiert.
     public var isoHighClamp: Double = 0.90 // Hebung → 0 gegen diese Höhe: deckelt das Relief-Runaway (Berge wuchsen sonst über 100k Jahre bis 1.25, Makro-Form lief weg). 0.90 pinnt Relief/maxH über 100k Jahre aufs junge Niveau (~0.75/0.90) — gratiges Gleichgewicht statt Alterung, ohne dass die Erosion die Berge abträgt (0.85 würde bereits erodieren)
     public var isoLowRange: Double = 0.35   // Senkung → 0 gegen den Boden
 
