@@ -838,12 +838,19 @@ public final class Terrain {
                             seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic)
             // 3) Hangdiffusion (Bodenkriechen, D·∇²z): rundet Grate über die Zeit → altes
             // Terrain wird RUND statt immer spitzer (Appalachen-Signal, konvexe Kuppen).
-            // Zeit-integriert über passes. kappa auflösungs-unabhängig: cfg.hillDiffusion
-            // ist auf n=640 kalibriert (kappa=D·Δt/dx² ∝ 1/dx² ∝ (n−1)²), damit Tests
-            // (kleines n) und Produktion (n=640) dasselbe physikalische D erodieren.
+            // Gesamtwirkung ∝ dt (chunking-/framerate-UNABHÄNGIG!): Echtzeit-Zeitraffer
+            // (winziges dt/Frame) und große Sprünge (+10.000 J.) liefern dasselbe
+            // Ergebnis. Früher lief die Diffusion je „Pass" (passes=max(1,dt/100)) →
+            // bei dt≈0.2/Frame ~100× zu viel Rundung UND 100× zu viel Rechenzeit.
+            // kappa auch auflösungs-unabhängig (∝ 1/dx² ∝ (n−1)², auf n=640 kalibriert).
             let refN = 639.0, m1 = Double(n - 1)
-            let hk = cfg.hillDiffusion * (m1 * m1) / (refN * refN)
-            for _ in 0..<passes { hillslopeDiffusion(base: hk); wavePass() }
+            let kYear = cfg.hillDiffusion * (m1 * m1) / (refN * refN) / 100.0 // war „kappa je 100-Jahr-Pass"
+            let totalK = kYear * dt
+            let nSub = max(1, Int((totalK / 0.2).rounded(.up)))   // stabil: Teilschritt-kappa ≤ 0.2
+            let subK = totalK / Double(nSub)
+            for _ in 0..<nSub { hillslopeDiffusion(base: subK) }
+            let nWave = max(1, min(24, Int((dt / 100).rounded())))
+            for _ in 0..<nWave { wavePass() }
         } else {
             transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
             for _ in 0..<passes { diffusionPass(); wavePass() }

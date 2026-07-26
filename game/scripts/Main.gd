@@ -47,8 +47,8 @@ var orbiting := false
 # Zeit & Eingabe
 var year_rate := 0.0          # Jahre/Sekunde
 var droplet_carry := 0.0
-var flow_timer := 0.0
 var rebuild_timer := 0.0
+var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
 var sculpting := false
 var brush_dir := 1.0
 var brush_radius := 10.0
@@ -283,7 +283,7 @@ func _process(delta: float) -> void:
 			get_tree().quit()
 	# FPS-Messung im Zeitraffer (nur mit RS_FPS-Env).
 	if OS.has_environment("RS_FPS"):
-		year_rate = 60.0
+		if not OS.has_environment("RS_IDLE"): year_rate = 60.0
 		_shot_frame += 1
 		if _shot_frame > 60:
 			_fps_accum += Engine.get_frames_per_second()
@@ -296,15 +296,19 @@ func _process(delta: float) -> void:
 		terrain_mat.set_shader_parameter("u_time", u_time)
 
 	if year_rate > 0.0:
-		# Jahre/Frame deckeln: verhindert die Todesspirale (langsam → großer dt →
-		# mehr Hangpässe → noch langsamer) und hält jeden Schritt billig.
-		var years := minf(year_rate * delta, 240.0)
-		sim.step(years)
-		flow_timer += delta
+		# Jahre über das Render-Intervall AKKUMULIEREN und nur EINMAL pro Render
+		# steppen — statt jeden Frame (die Sim-Schritte enthalten mehrere O(n²)-
+		# Pässe: computeFlow, outletIncision, Hangdiffusion, wave). Zwischen zwei
+		# Renders ~9 Schritte à 1 Jahr wären 9× diese Pässe für dasselbe Ergebnis;
+		# ein Schritt à 9 Jahre ist gleichwertig und ~9× billiger.
+		pending_years += year_rate * delta
 		rebuild_timer += delta
-		# Flüsse & Mesh gedrosselt neu aufbauen (nicht jeden Frame, wäre zu teuer).
 		if rebuild_timer > 0.15:
 			rebuild_timer = 0.0
+			# Jahre/Schritt deckeln → hält jeden Schritt billig (keine Todesspirale).
+			var years := minf(pending_years, 240.0)
+			pending_years = 0.0
+			sim.step(years)
 			_pull_fields()
 			_update_terrain_textures()
 			_update_year()
