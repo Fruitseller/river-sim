@@ -98,24 +98,61 @@ public final class Terrain {
             }
         }
 
-        // Grundrelief: RIDGED-Multifractal → scharfe Bergkämme/Grate (statt der
-        // rundlichen fBm-Blobs), moduliert von einem großräumigen fBm-Massiv-Feld
-        // (Gebirge vs. Tiefland), mit Insel-Falloff zum Rand hin unter den Meeresspiegel.
-        let bf = cfg.baseFreq / Double(n)
+        // --- Per-Seed-Makro-Parameter: jeder Seed bekommt eine eigene Insel-Form,
+        // Reliefstärke, Grat/Rundhügel-Charakter und Küsten-Archetyp → echte Vielfalt
+        // statt immer derselben zentrierten Rund-Insel. Deterministisch (Mulberry32).
+        var gr = Mulberry32(seed: seed ^ 0x1234_abcd)
+        let box = gr.next() * 1000, boy = gr.next() * 1000        // Noise-Region (Seed sampelt anderswo)
         let cx = Double(n - 1) / 2
+        let ccx = cx + (gr.next() - 0.5) * 0.34 * Double(n)        // Insel-Zentrum versetzt
+        let ccy = cx + (gr.next() - 0.5) * 0.34 * Double(n)
+        let aAng = gr.next() * .pi                                  // Anisotropie-Achse
+        let aRatio = 0.55 + gr.next() * 1.05                        // Streckung: 0.55 langer Zug … 1.6 gestaucht
+        let fStart = 0.58 + gr.next() * 0.30                        // Landausdehnung (kleine Insel ↔ Kontinent)
+        let fWidth = 0.18 + gr.next() * 0.26                        // Küstensaum-Breite
+        let relief = cfg.baseRelief * (0.80 + gr.next() * 0.45)     // Reliefstärke variiert
+        let roll = gr.next() * gr.next() * 0.7                      // 0=schroffe Grate … Rundhügel (quadr.→meist schroff)
+        let mFreqK = 0.22 + gr.next() * 0.42                        // Massiv-Frequenz (Berg-Klumpung)
+        let mBias = 0.38 + gr.next() * 0.26                         // Tiefland-Grundhöhe
+        let bfMul = 0.72 + gr.next() * 0.75                         // Feature-Skala (grob ↔ fein)
+        let sharp = 1.0 + gr.next() * 0.9                           // Grat-Schärfe (pow-Exponent)
+        let archetype = Int(gr.next() * 3.0)                        // 0 Insel · 1 Küste · 2 Archipel
+        let coastAng = gr.next() * 2 * .pi                          // Küsten-Richtung (Archetyp 1)
+
+        @inline(__always) func smooth(_ a: Double, _ b: Double, _ v: Double) -> Double {
+            let t = min(max((v - a) / (b - a), 0), 1); return t * t * (3 - 2 * t)
+        }
+
+        // Grundrelief: RIDGED-Multifractal (scharfe Grate), optional mit fBm gemischt
+        // (Rundhügel), moduliert vom Massiv-Feld, mit per-Seed variierendem Insel-/
+        // Küsten-/Archipel-Falloff unter den Meeresspiegel.
+        let bf = cfg.baseFreq / Double(n)
+        let ca = cos(aAng), sa = sin(aAng)
         for j in 0..<n {
             for i in 0..<n {
-                let x = Double(i) * bf, y = Double(j) * bf
+                let x = Double(i) * bf * bfMul + box, y = Double(j) * bf * bfMul + boy
                 let ridge = noise.ridged01(x, y, octaves: cfg.baseOctaves)
-                // großräumige Maske → Grate klumpen zu Gebirgszügen, dazwischen Tiefland
-                let massif = noise.fbm01(x * 0.35, y * 0.35, octaves: 3)
-                let m = 0.52 + 0.48 * massif // höherer Boden → Täler bleiben Land (weniger Wasser)
-                let d = (Double(i) - cx).magnitudeHypot(Double(j) - cx) / cx
-                let t = min(max((d - 0.72) / 0.30, 0), 1) // Falloff weiter außen → größere Landmasse
-                let falloff = 1 - t * t * (3 - 2 * t) // smoothstep
-                // Talboden angehoben (Baseline) → Täler bleiben LAND statt Wasser; Grate ragen darüber auf.
-                let ridgeE = 0.38 + 0.62 * pow(ridge, 1.2)
-                h[idx(i, j)] = ridgeE * cfg.baseRelief * m * falloff
+                let rollv = noise.fbm01(x, y, octaves: 6)          // sanfte Alternative
+                let base = (1 - roll) * ridge + roll * rollv       // Grat ↔ Rundhügel
+                let massif = noise.fbm01(x * mFreqK, y * mFreqK, octaves: 3)
+                let m = mBias + (1 - mBias) * massif               // Gebirge vs. Tiefland
+                // Anisotroper, versetzter Falloff.
+                let dx = Double(i) - ccx, dy = Double(j) - ccy
+                let rx = dx * ca + dy * sa
+                let ry = (-dx * sa + dy * ca) * aRatio
+                let d = (rx * rx + ry * ry).squareRoot() / cx
+                var falloff = 1 - smooth(fStart, fStart + fWidth, d)
+                if archetype == 1 {                                // Küste: Land auf einer Seite
+                    let proj = (Double(i) - cx) * cos(coastAng) + (Double(j) - cx) * sin(coastAng)
+                    let wob = (noise.fbm01(x * 0.6 + 30, y * 0.6 + 30, octaves: 3) - 0.5) * 0.5
+                    let g = proj / Double(n) + wob
+                    falloff = min(falloff, 1 - smooth(0.0, 0.26, g))
+                } else if archetype == 2 {                         // Archipel: in Inseln zerlegen
+                    let isl = noise.fbm01(x * 0.7 + 50, y * 0.7 + 50, octaves: 4)
+                    falloff *= smooth(0.34, 0.52, isl)
+                }
+                let ridgeE = 0.38 + 0.62 * pow(base, sharp)        // Talboden angehoben → Täler bleiben Land
+                h[idx(i, j)] = ridgeE * relief * m * falloff
             }
         }
         initLayers()

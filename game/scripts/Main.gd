@@ -62,6 +62,9 @@ func _ready() -> void:
 		return
 	sim = ClassDB.instantiate("SimNode")
 	add_child(sim)
+	if OS.has_environment("RS_SEED"): # für Screenshot-Vergleiche verschiedener Terrains
+		sim_seed = int(OS.get_environment("RS_SEED"))
+		sim.generate(sim_seed)
 	N = sim.gridSize()
 	world_size = sim.worldSize()
 	sea = sim.seaLevel()
