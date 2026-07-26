@@ -137,44 +137,51 @@ final class SimNode: Node {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let creek = 22.0 // ab so viel Einzugsgebiet ein sichtbarer Wasserlauf
+        let creek = 30.0 // ab so viel Einzugsgebiet ein sichtbarer Wasserlauf
         let h = terrain.h, hf = terrain.hf, area = terrain.area, rec = terrain.receiver
 
-        // Stream-Map: log-skalierte Fluss-Intensität, dann 1 Zelle dilatiert →
-        // verbundene, nicht haardünne Läufe (linear-Filter macht sie glatt).
-        var s = [Double](repeating: 0, count: n * n)
+        // Stream-Map mit ABFLUSS-ABHÄNGIGER BREITE: ein Fluss wird stromab breiter &
+        // kräftiger (Hauptflüsse breit + tiefblau, Bäche dünn). Effizient über
+        // schwellen-gestufte Max-Dilatation: dünne Intensität ∝ log(Einzugsgebiet)
+        // je Fluss-Zelle, dann 3 Dilatations-Pässe, in denen höhere Pässe nur noch
+        // KRÄFTIGE Flüsse weiter verbreitern → Breiten-Hierarchie. Sequenziell,
+        // cache-freundlich (kein Scheiben-Stempeln mit verstreuten Zugriffen).
+        var sd = [Double](repeating: 0, count: n * n)
         for k in 0..<(n * n) where hf[k] > sea && h[k] > sea {
             let cu = area[k] / cellArea
-            if cu >= creek { s[k] = min(1, log(cu / creek + 1) / 2.5) }
+            if cu >= creek { sd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) }
         }
-        var sd = [Double](repeating: 0, count: n * n)
-        for j in 0..<n {
-            for i in 0..<n {
-                let k = j * n + i
-                var m = s[k]
-                if i > 0 { m = max(m, s[k - 1]) }
-                if i < n - 1 { m = max(m, s[k + 1]) }
-                if j > 0 { m = max(m, s[k - n]) }
-                if j < n - 1 { m = max(m, s[k + n]) }
-                sd[k] = m
+        let widenThresh = [0.0, 0.55, 0.80]  // Pass 0 alle, dann nur noch kräftige Läufe
+        var a = sd, b = [Double](repeating: 0, count: n * n)  // Ping-Pong: keine COW-Kopien
+        for thresh in widenThresh {
+            for j in 0..<n {
+                for i in 0..<n {
+                    let k = j * n + i
+                    var m = a[k]
+                    if i > 0 && a[k - 1] > thresh { m = max(m, a[k - 1] - 0.09) }
+                    if i < n - 1 && a[k + 1] > thresh { m = max(m, a[k + 1] - 0.09) }
+                    if j > 0 && a[k - n] > thresh { m = max(m, a[k - n] - 0.09) }
+                    if j < n - 1 && a[k + n] > thresh { m = max(m, a[k + n] - 0.09) }
+                    b[k] = m
+                }
             }
+            swap(&a, &b)
         }
+        sd = a
 
         var out = [UInt8](repeating: 0, count: n * n * 4)
         for k in 0..<(n * n) {
             let lake = (hf[k] > sea && hf[k] > h[k]) ? min(1, (hf[k] - h[k]) / 0.08) : 0
-            var dx = 0.0, dz = 0.0
+            // Richtung: rohe D8-Nachbardifferenz (∈ {-1,0,1}), der Shader normalisiert
+            // selbst → kein sqrt hier (spart 410k sqrt je Rebuild).
+            var dx = 0, dz = 0
             let r = rec[k]
-            if r >= 0 {
-                let ddx = Double(Int(r) % n - k % n), ddz = Double(Int(r) / n - k / n)
-                let dl = (ddx * ddx + ddz * ddz).squareRoot()
-                if dl > 1e-6 { dx = ddx / dl; dz = ddz / dl }
-            }
+            if r >= 0 { dx = Int(r) % n - k % n; dz = Int(r) / n - k / n }
             let o = k * 4
             out[o] = UInt8(min(max(sd[k], 0), 1) * 255)
             out[o + 1] = UInt8(min(max(lake, 0), 1) * 255)
-            out[o + 2] = UInt8((dx * 0.5 + 0.5) * 255)
-            out[o + 3] = UInt8((dz * 0.5 + 0.5) * 255)
+            out[o + 2] = UInt8((Double(dx) * 0.5 + 0.5) * 255)
+            out[o + 3] = UInt8((Double(dz) * 0.5 + 0.5) * 255)
         }
         return PackedByteArray(out)
     }
