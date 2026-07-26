@@ -440,8 +440,8 @@ public final class Terrain {
     /// Lineare Diffusion dh/dt = D·∇²h — glatte, natürliche Hänge (konkav/konvex)
     /// statt der planaren Facetten/Terrassen der Schwellen-Talus-Methode.
     /// kappa fix bei 0.15 (< 0.25 → explizit stabil), mehrmals pro Sim-Schritt.
-    private func diffusionPass() {
-        let kappa = 0.0025 // fast keine Glättung: feine dendritische Rinnen bleiben erhalten
+    private func diffusionPass(kappa: Double = 0.0025) {
+        if kappa <= 0 { return }
         for j in 0..<n {
             for i in 0..<n {
                 let k = idx(i, j)
@@ -450,6 +450,47 @@ public final class Terrain {
                 let hd = j > 0 ? h[k - n] : h[k]
                 let hu = j < n - 1 ? h[k + n] : h[k]
                 scratch[k] = kappa * (hl + hr + hd + hu - 4 * h[k])
+            }
+        }
+        for k in 0..<cfg.count {
+            let dh = scratch[k]
+            if dh == 0 { continue }
+            if dh >= 0 {
+                sed[k] += dh
+            } else {
+                let ds = min(-dh, sed[k])
+                sed[k] -= ds
+                rock[k] -= (-dh - ds)
+            }
+            h[k] += dh
+        }
+    }
+
+    /// Hangdiffusion mit RÄUMLICH VARIABLEM kappa. Bodenkriechen braucht Boden:
+    /// soil-mantled/sanfte/bewachsene Hänge runden voll aus, aber **hoher, steiler,
+    /// kahler Fels kriecht kaum** → dort bleiben spitze Gipfel/Grate stehen (die
+    /// Ausnahme, nicht die Regel). So altert die Landschaft ungleichmäßig-natürlich
+    /// statt uniform-rund. `base` = kappa auf voll diffundierenden Zellen.
+    private func hillslopeDiffusion(base: Double) {
+        if base <= 0 { return }
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = idx(i, j)
+                let hl = i > 0 ? h[k - 1] : h[k]
+                let hr = i < n - 1 ? h[k + 1] : h[k]
+                let hd = j > 0 ? h[k - n] : h[k]
+                let hu = j < n - 1 ? h[k + n] : h[k]
+                let lap = hl + hr + hd + hu - 4 * h[k]
+                // Kahler-Fels-Faktor: hoch (h>0.5), steil und unbewachsen → wenig
+                // Kriechen. Sediment/Vegetation heben das Kriechen wieder an.
+                let gx = (hr - hl) * 0.5, gy = (hu - hd) * 0.5
+                let slope = (gx * gx + gy * gy).squareRoot()
+                let steep = min(1, slope * 30)
+                let high = min(1, max(0, (h[k] - 0.5) / 0.35))
+                let soil = min(1, sed[k] / 0.02 + veg[k])   // Boden ODER Bewuchs → Kriechen
+                let bare = steep * high * max(0, 1 - soil)   // 1 = kahler steiler Hochfels
+                let localK = base * (1 - 0.85 * bare)        // dort bis auf 15% gedrosselt
+                scratch[k] = localK * lap
             }
         }
         for k in 0..<cfg.count {
@@ -743,17 +784,29 @@ public final class Terrain {
         }
         let passes = max(1, Int((dt / 100).rounded()))
         if cfg.hydraulicEnabled {
-            // Droplet-Erosion carvt das feine dendritische Detail (nickmcd-Look).
+            // Prozess-Reihenfolge (FastScape/LEM-Konvention, docs/research-terrain-aging.md §4):
+            // Uplift → Flow (oben) → Stream-Power/Auslass (Makro-Täler) → Droplet (Textur)
+            // → Hangdiffusion (Grate runden) → Wave.
             stepCount &+= 1
+            // 1) Fluviale Makro-Inzision zuerst: schneidet das kohärente Talnetz und
+            //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
+            if cfg.outletIncision { outletIncision(dt: dt) }
+            if cfg.basinFill { fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
+            // 2) Droplet-Erosion legt die feine dendritische Textur (nickmcd-Look) hinein.
             // Tropfen ∝ Zeit × Fläche (Dichte kalibriert auf n = 640).
             let density = Double(n * n) / (640.0 * 640.0)
             let drops = max(1, Int(dt * cfg.hydraulicPerYear * density))
             let dropSeed = seed &+ stepCount &* 2_654_435_761
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
                             seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic)
-            if cfg.outletIncision { outletIncision(dt: dt) } // Auslässe eintiefen → Becken entwässern zum Meer (dendritisch)
-            if cfg.basinFill { fillLakes(dt: dt) }            // Rest-Senken verlanden (Rückfall gegen See-Wucherung)
-            for _ in 0..<passes { wavePass() } // Küste bleibt vom Grid-Modell
+            // 3) Hangdiffusion (Bodenkriechen, D·∇²z): rundet Grate über die Zeit → altes
+            // Terrain wird RUND statt immer spitzer (Appalachen-Signal, konvexe Kuppen).
+            // Zeit-integriert über passes. kappa auflösungs-unabhängig: cfg.hillDiffusion
+            // ist auf n=640 kalibriert (kappa=D·Δt/dx² ∝ 1/dx² ∝ (n−1)²), damit Tests
+            // (kleines n) und Produktion (n=640) dasselbe physikalische D erodieren.
+            let refN = 639.0, m1 = Double(n - 1)
+            let hk = cfg.hillDiffusion * (m1 * m1) / (refN * refN)
+            for _ in 0..<passes { hillslopeDiffusion(base: hk); wavePass() }
         } else {
             transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
             for _ in 0..<passes { diffusionPass(); wavePass() }

@@ -92,6 +92,26 @@ Erosion/dem neuen Terrain instabil läuft (Sinuosität läuft weg).
 - Ziel: Migration/Cutoff/Verlandung aufs neue ridged-Terrain kalibrieren, dann
   `meanderEnabled` wieder an.
 
+### 1d. Realistisches Altern: Hangdiffusion (LEM-Recherche) ✅
+Der Droplet-Pfad hatte KEINEN grat-abtragenden Prozess → Terrain wurde über die
+Zeit *spitzer* statt runder (rugged 0.015→0.05 über 100k). Recherche in
+`docs/research-terrain-aging.md` (Primärquellen: Theodoratos 2018, Whipple&Tucker,
+Braun&Willett, nickmcd/SoilMachine). Umgesetzt:
+- **Lineare Hangdiffusion** (`hillslopeDiffusion`) im Droplet-Pfad — der Prozess,
+  der Grate rundet (konvexe Kuppen = Appalachen-Signal). RÄUMLICH VARIABEL: volle
+  Rundung auf soil-mantled/sanften/bewachsenen Hängen, gedrosselt (15%) auf hohem
+  steilem Kahlfels → **einzelne spitze Gipfel bleiben** (die Ausnahme, nicht die
+  Regel — User-Wunsch). `cfg.hillDiffusion=0.05`, auf n=640 kalibriert & auflösungs-
+  unabhängig skaliert (kappa=D·Δt/dx² ∝ (n−1)²).
+- **Prozess-Reihenfolge** LEM-konform: Uplift→Flow→SPL/Auslass→Droplet→Diffusion→Wave.
+- Kennzahl zum Weiterdrehen: `l_c=D/K` (klein=zerklüftet/jung, groß=rund/alt).
+- **OFFEN (optional, größer):** abklingende Hebung `U(t)=U_floor+(U₀−U_floor)e^(−t/τ)`
+  für noch dramatischeres „jung→alt" (Recherche §3). Bewusst NICHT gemacht, weil
+  U₀>heute einen Wachstums-Puls einführt (User will kein Wachsen). Diffusion + wenig
+  Hebung liefert das Altern schon ohne Wachstum.
+- `isoHighClamp` (0.90) bleibt vorerst als Sicherheitsnetz; laut Recherche mit
+  Diffusion überflüssig — kann später getestet/entfernt werden.
+
 ### 3. Optik-Feinschliff (nach 1 & 2)
 - Grün-Anteil in den Tälern feiner (Referenz hat deutlich sichtbares Moosgrün).
 - Gipfel-Gleißen / Schnee-Schwelle prüfen.
