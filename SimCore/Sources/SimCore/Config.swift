@@ -3,8 +3,8 @@ import Foundation
 /// Alle kalibrierbaren Konstanten des Simulationskerns an einem Ort.
 /// Höhen sind normiert (~ -0.3 .. 1.4). Weltkoordinaten in abstrakten Einheiten.
 public struct SimConfig: Sendable {
-    public var n: Int = 640          // Grid-Auflösung (n × n) — hoch für feines dendritisches Detail
-    public var world: Double = 100   // Kantenlänge in Welteinheiten
+    public var n: Int = 832          // Grid-Auflösung (n × n) — hoch für feines dendritisches Detail
+    public var world: Double = 130   // Kantenlänge in Welteinheiten. n und world ZUSAMMEN erhöht (von 640/100): cellSize bleibt ~0.156 → alle auf n=640 kalibrierten Per-Zell-Parameter (Braid-Gates, Droplet-Dichte, kappa-Skalierung) gelten unverändert; die Insel wird einfach ~1.7× größer.
     public var sea: Double = 0.15     // Meeresspiegel (normiert)
     public var floor: Double = -0.3   // tiefster Punkt (Tiefseegraben)
 
@@ -13,6 +13,14 @@ public struct SimConfig: Sendable {
     public var baseFreq: Double = 3.5  // Grundfrequenz (× 1/n)
     public var baseRelief: Double = 0.78 // vertikale Reliefstärke. Von 1.05 gesenkt (User: „zu extrem"): sanfteres Terrain → weniger Nadel-Gipfel UND flachere/breitere Talböden (niedrigere Slopes → mehr Reaches unter der Mäander-Schwelle) = Platz für Fluss-Dynamik. 0.72 ebnete über 100k knapp unter den LongRunCollapse-Wächter (0.30); 0.78 hält Marge.
     public var upliftFreq: Double = 2.5
+
+    // ---- Pre-Erosion (runevision-Erosionsfilter bei der Generierung) ----
+    // Carvt verzweigte Rinnen/Grate einmalig ins frische Basisrelief (stacked
+    // faded gullies, ErosionFilter.swift) → das Terrain startet mit erodiertem
+    // Look statt ihn über 10k+ Sim-Jahre einzucarven. Die Sim läuft danach
+    // normal weiter (Droplets folgen den vorgecarvten Rinnen).
+    public var preErodeEnabled = true
+    public var preErodeParams: ErosionFilter.Params = ErosionFilter.Params()
 
     // ---- Stream-Power-Inzision (detachment-limited, FastScape) ----
     // dz/dt = U − K·A^m·S^n ;  n = 1 (implizit, unbedingt stabil)
@@ -41,7 +49,8 @@ public struct SimConfig: Sendable {
     // unterversorgte/aufgespreizte Zellen ablagern → MITTELBÄNKE, um die sich der
     // Lauf teilt und wiedervereint.
     public var braidingEnabled: Bool = true
-    public var braidMinCells: Double = 120   // Reach-Gate: nur substanzielle Läufe (= creek-Render-Schwelle in SimNode)
+    public var braidMinCells: Double = 120   // Reach-Gate der Braiding-PHYSIK (Render-Schwelle ist separat: renderMinCells)
+    public var renderMinCells: Double = 320  // ab so viel Einzugsgebiet (Zellen) wird ein Lauf GEMALT. Bewusst über dem Physik-Gate (User: „zu viele Flüsse"): Braiding wirkt ab 120 weiter, sichtbar sind nur substanzielle Flüsse. Auf der 832er-Map qualifizieren sich sonst absolut mehr Läufe über dieselbe Schwelle.
     public var braidExponent: Double = 2.5   // Partitions-Exponent m (>1 ist die Bänke-bauende Instabilität)
     public var braidCapacity: Double = 1.0e-5 // Kb: Kapazität je Jahr (kalibriert via testBraidingBuildsBars)
     public var braidBarHeight: Double = 0.006 // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln
@@ -91,6 +100,18 @@ public struct SimConfig: Sendable {
     public var talus: Double = 0.011   // kritische Höhendifferenz je Zelle
     public var thermalRelax: Double = 0.3
     public var rockCrumble: Double = 0.15 // Fels-Anteil beim Hangrutsch (Basis)
+
+    // ---- Relief-Servo (Anti-Verflachung) ----
+    // Ohne Dauer-Tektonik (upliftPer100y = 0) erodiert das Relief über 10k+ Jahre
+    // monoton weg → „immer flacher" (User-Beobachtung bei 130k: Rollhügel-Ebene).
+    // Der Servo ist die Mitte zwischen beiden User-Anforderungen („Berge wachsen
+    // nicht" UND „nicht immer flacher"): Hebung springt NUR an, wenn das Land-
+    // Relief unter reliefTarget fällt, proportional zum Defizit (∝ deficit/0.1,
+    // gedeckelt bei reliefServoPer100y), entlang des fixen ridged-Tektonik-Felds
+    // (dieselben Gebirge wachsen nach, keine neuen). Am Ziel regelt er ab →
+    // dynamisches Gleichgewicht statt Runaway (isoHighClamp deckelt zusätzlich).
+    public var reliefTarget: Double = 0.55
+    public var reliefServoPer100y: Double = 0.0015
 
     // ---- Tektonik / Isostasie ----
     public var upliftPer100y: Double = 0.0 // KEINE Dauer-Tektonik → Berge wachsen NIRGENDS (auch keine lokalen Grate), sie erodieren nur — wie real ohne aktive Plattengrenze/Vulkanismus. Selbst 0.0015 schob mittlere Grate pro 10k-Klick noch sichtbar hoch (+0.03), obwohl der globale Gipfel erodierte. Hebung nur noch über Sculpting/Events. (War 0.009→0.0015→0.0.) (wie real ohne aktive Plattengrenze/Vulkanismus) statt bei jedem 10k-Schritt hochzuwachsen. 0.009 stockte die Landmasse in 100k um +73% auf (meanLand 0.39→0.68 → sichtbares „Wachsen"); 0.0015 hält die Masse ~flach (0.39→0.42), Relief erodiert sanft (0.76→0.65). Nur so viel Hebung, dass die Insel nicht wegerodiert.

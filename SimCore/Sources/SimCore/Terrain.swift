@@ -173,6 +173,13 @@ public final class Terrain {
                 h[idx(i, j)] = ridgeE * relief * m * falloff
             }
         }
+        // Pre-Erosion (runevision-Filter): verzweigte Rinnen/Grate einmalig ins
+        // Basisrelief carven — deterministisch je Seed (Rinnen-Muster wandert mit).
+        if cfg.preErodeEnabled {
+            ErosionFilter.apply(h: &h, n: n, sea: cfg.sea,
+                                seedOffsetX: box, seedOffsetY: boy,
+                                params: cfg.preErodeParams)
+        }
         initLayers()
         computeFlow()
         if cfg.breachEnabled { breachBasins() }
@@ -291,16 +298,26 @@ public final class Terrain {
     public func computeRain() {
         for j in 0..<n {
             var m = 1.0
+            var hs = h[idx(0, j)] <= cfg.sea ? cfg.sea : h[idx(0, j)]
             for i in 0..<n {
                 let k = idx(i, j)
                 if h[k] <= cfg.sea {
                     m = min(1, m + 0.015) // über Wasser auftanken
                     rain[k] = m
+                    hs = cfg.sea
                     continue
                 }
                 rain[k] = m
-                let uph = i > 0 ? max(0, h[k] - h[k - 1]) : 0
-                m = max(0.05, m - m * (0.0012 + uph * 1.5))
+                // Anstieg auf GEGLÄTTETER Höhe (EWMA ~4 Zellen): seit der Pre-
+                // Erosion trägt jeder Hang feine Rinnen — als Roh-Anstiege gezählt
+                // trockneten sie die ganze Insel aus (Regen ≈ 0 → kein Grün).
+                // Orographie = Makro-Relief, nicht Rinnen-Textur.
+                let hsNew = hs + 0.25 * (h[k] - hs)
+                let uph = max(0, hsNew - hs)
+                hs = hsNew
+                // Floor 0.18 (war 0.05): auch der Regenschatten-Osten bekommt
+                // Grundfeuchte → moosige Tiefland-Ebenen statt kahler Blässe.
+                m = max(0.18, m - m * (0.0012 + uph * 1.5))
             }
         }
     }
@@ -309,13 +326,16 @@ public final class Terrain {
 
     public func updateVegetation(years: Double) {
         let f = min(1, years / cfg.vegTimeConstant)
-        for j in 1..<(n - 1) {
-            for i in 1..<(n - 1) {
+        for j in 2..<(n - 2) {
+            for i in 2..<(n - 2) {
                 let k = idx(i, j)
                 var target = 0.0
                 let v = h[k]
                 if v > cfg.sea + 0.005 && v < 0.68 && hf[k] - h[k] <= 0.015 {
-                    let slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
+                    // Steigung grob (±2 Zellen): der Hang-Charakter entscheidet über
+                    // Bewuchs, nicht die feine Rinnen-Textur der Pre-Erosion (sonst
+                    // gilt jede Zelle als steil → kahle Täler).
+                    let slope = (abs(h[k + 2] - h[k - 2]) + abs(h[k + 2 * n] - h[k - 2 * n])) * 0.125
                     let slopeOk = max(0, 1 - slope * 40)
                     let wet = min(1, rain[k] * 1.3)
                     let altOk = v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18) // Wald wächst höher
@@ -952,11 +972,18 @@ public final class Terrain {
 
     // MARK: - Tektonik / Isostasie
 
-    private func applyUplift(dt: Double) {
+    private func applyUplift(dt: Double, servoPer100y: Double = 0) {
         let uf = cfg.upliftPer100y * dt / 100
-        if uf == 0 { return }
+        // Servo NUR über den POSITIVEN Teil des Tektonik-Felds und NUR auf LAND:
+        // er soll Grate nachwachsen lassen. Mit vollem upliftBase (Täler negativ)
+        // SENKTE er die Täler unter den Meeresspiegel (halbe Insel geflutet);
+        // ohne Land-Gate hob er den SCHELF in Tektonik-Ringen über die
+        // Wasserlinie (grüne Kratersäume vor der Küste — beides gemessen).
+        let us = servoPer100y * dt / 100
+        if uf == 0 && us == 0 { return }
         for k in 0..<cfg.count {
-            let du0 = upliftBase[k] * uf
+            let servoK = (us > 0 && h[k] > cfg.sea) ? max(0, upliftBase[k]) * us : 0
+            let du0 = upliftBase[k] * uf + servoK
             var du: Double
             if du0 > 0 {
                 du = du0 * max(0, 1 - h[k] / cfg.isoHighClamp)
@@ -1192,7 +1219,13 @@ public final class Terrain {
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist
     /// implizit stabil); die Hangprozesse werden intern anteilig getaktet.
     public func step(dtYears dt: Double) {
-        applyUplift(dt: dt)
+        // Relief-Servo: Hebung nur bei Relief-Defizit (Anti-Verflachung, s. Config).
+        var servo = 0.0
+        if cfg.reliefServoPer100y > 0 {
+            let deficit = cfg.reliefTarget - landRelief()
+            if deficit > 0 { servo = cfg.reliefServoPer100y * min(1, deficit / 0.1) }
+        }
+        applyUplift(dt: dt, servoPer100y: servo)
         computeFlow()
         if cfg.meanderEnabled {
             migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)

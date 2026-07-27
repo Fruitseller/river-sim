@@ -64,22 +64,26 @@ final class SimNode: Node {
                     // Fels-first, naturalistisch entsättigt (Vorbild nickmcd): grauer
                     // Fels dominiert, Grün nur in feuchten flachen Tälern, helle
                     // Gipfel/Schnee. Die Zerklüftung/Schattierung macht das Licht.
+                    // Steigung GROB (±2 Zellen): seit der Pre-Erosion trägt jede Zelle
+                    // feine Rinnen — die Per-Zell-Steigung wäre überall „steil" und
+                    // würde die Vegetation aus allen Tälern waschen. Für die Biom-
+                    // Färbung zählt der Hang-Charakter, nicht die Rinnen-Textur.
                     var slope = 0.0
-                    if i > 0 && i < n - 1 && j > 0 && j < n - 1 {
-                        slope = (abs(h[k + 1] - h[k - 1]) + abs(h[k + n] - h[k - n])) * 0.25
+                    if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
+                        slope = (abs(h[k + 2] - h[k - 2]) + abs(h[k + 2 * n] - h[k - 2 * n])) * 0.125
                     }
                     let steep = min(1, slope * 45)                // 0 flach … 1 steil
-                    r = 0.42 + 0.05 * steep                       // grauer Fels; steiler nur LEICHT heller
-                    g = 0.43 + 0.05 * steep                       // (0.11 wusch die dichten 100k-Rinnen weiß)
-                    b = 0.43 + 0.05 * steep
+                    r = 0.38 + 0.05 * steep                       // grauer Fels; steiler nur LEICHT heller
+                    g = 0.39 + 0.05 * steep                       // (0.11 wusch die dichten 100k-Rinnen weiß)
+                    b = 0.40 + 0.05 * steep
                     let moist = min(1, rain[k] * 1.2)             // Vegetation: moosgrün in
                     let gentle = max(0, 1 - steep * 0.9)          // Tälern + unteren Hängen (hält sich an Rinnen etwas länger)
                     let altVeg = v < 0.6 ? 1 : max(0, 1 - (v - 0.6) / 0.18)
-                    let vegAmt = min(1, (0.5 + 0.5 * veg[k]) * moist * gentle * altVeg)
+                    let vegAmt = min(1, (0.5 + 0.5 * veg[k]) * moist * gentle * altVeg * 1.3)
                     r += (0.19 - r) * vegAmt; g += (0.42 - g) * vegAmt; b += (0.14 - b) * vegAmt // kräftigeres Moosgrün
                     if v > 0.58 {                                 // Hochlagen: neutral-grauer Fels (nicht pastell/weiß)
                         let wg = min(1, (v - 0.58) / 0.40)
-                        r += (0.46 - r) * wg; g += (0.47 - g) * wg; b += (0.48 - b) * wg
+                        r += (0.43 - r) * wg; g += (0.44 - g) * wg; b += (0.45 - b) * wg
                     }
                     if v > 1.05 {                                 // Schnee nur auf den allerhöchsten Gipfeln
                         let ws = min(1, (v - 1.05) / 0.08)
@@ -146,7 +150,7 @@ final class SimNode: Node {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let creek = terrain.cfg.braidMinCells // ab so viel Einzugsgebiet ein sichtbarer Wasserlauf (= Braid-Reach-Gate, EINE Quelle). Von 30 auf 120 erhöht (User: „zu viele Flüsse"): nur substantielle Läufe zeigen. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
+        let creek = terrain.cfg.renderMinCells // Render-Schwelle sichtbarer Läufe — ENTKOPPELT vom Braid-Physik-Gate (braidMinCells): 30→120→280 erhöht (User: „zu viele Flüsse"), die Braiding-Physik behält ihr eigenes Gate. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
         // areaMFD (Multi-Flow): stetige Fluss-Intensität → Läufe gleiten statt zu
         // springen und können sich um Bänke teilen. Erosion nutzt weiter D8-`area`.
         let h = terrain.h, hf = terrain.hf, area = terrain.areaMFD, rec = terrain.receiver
@@ -168,7 +172,7 @@ final class SimNode: Node {
         for k in 0..<(n * n) where hf[k] > sea && h[k] > sea && hf[k] - h[k] <= 0.01 {
             let cu = area[k] / cellArea
             if cu < creek { continue }
-            let m = min(max((smap[k] - 0.12) / 0.23, 0), 1) // Track-Maske 0.12..0.35 (einmalige Zufallspfade bleiben drunter, konsistente Läufe drüber)
+            let m = min(max((smap[k] - 0.18) / 0.24, 0), 1) // Track-Maske 0.18..0.42 (von 0.12..0.35 angehoben: Zufallspfad-Speckle bleibt drunter, konsistente Läufe drüber)
             if m <= 0 { continue }
             sd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) * (0.35 + 0.65 * m)
         }
@@ -178,8 +182,29 @@ final class SimNode: Node {
         // bleiben trocken, statt von der Kosmetik-Breite übermalt zu werden —
         // flache Auen und geflutete Ebenen tragen weiter die volle Breiten-
         // Hierarchie (hf, nicht h: seichtes Ponding blockt die Breite nicht).
+        // KONTINUITÄT: Intensität dem D8-Empfänger entlang bergab propagieren
+        // (leichter Abfall je Zelle). Die Track-Maske lässt sonst Lücken — seit
+        // der Alle-Zellen-Dilatations-Pass weg ist (der überbrückte sie), zerfielen
+        // gealterte Läufe in Punktketten. Ein sichtbarer Fluss läuft jetzt
+        // garantiert durchgängig bis Mündung/See — 1 Zelle breit, Breite macht
+        // weiterhin nur die (schwellen-gestufte) Dilatation darunter.
+        for start in 0..<(n * n) where sd[start] > 0 {
+            var val = sd[start] - 0.015
+            var r = rec[start]
+            while r >= 0 && val > 0.3 {
+                let ri = Int(r)
+                if sd[ri] >= val { break }   // Kette ab hier schon (stärker) gemalt
+                sd[ri] = val
+                val -= 0.015
+                r = rec[ri]
+            }
+        }
         let barTol = 0.004
-        let widenThresh = [0.0, 0.55, 0.80]  // Pass 0 alle, dann nur noch kräftige Läufe
+        // NUR kräftige Läufe verbreitern (kein Alle-Läufe-Pass mehr): Bäche bleiben
+        // fadendünn (1 Zelle), Hauptflüsse verlieren ~1 Zelle Breite — die Breiten-
+        // Hierarchie bleibt, ihr Absolutniveau sinkt (User: „proportional zu dick";
+        // die alte Kalibrierung stammt von der kleineren 640er-Map).
+        let widenThresh = [0.55, 0.80]
         var a = sd, b = [Double](repeating: 0, count: n * n)  // Ping-Pong: keine COW-Kopien
         for thresh in widenThresh {
             for j in 0..<n {
@@ -207,13 +232,22 @@ final class SimNode: Node {
         var mdz = [Double](repeating: 0, count: cnt)
         var mstamp = [Bool](repeating: false, count: cnt)
         var oxb = [Double](repeating: 0, count: cnt)   // Altarm-See-Overlay (mit Alter ausgeblendet)
-        for ch in terrain.meander.channels {
+        let noMeanderPaint = ProcessInfo.processInfo.environment["RS_NO_MEANDER_PAINT"] != nil // Debug-Schalter
+        for ch in noMeanderPaint ? [] : terrain.meander.channels {
             let nodes = ch.nodes
             if nodes.count < 2 { continue }
             for i in 0..<(nodes.count - 1) {
                 let ax = nodes[i].x, az = nodes[i].z, bx = nodes[i + 1].x, bz = nodes[i + 1].z
                 let q = 0.5 * (ch.discharge[i] + ch.discharge[i + 1])   // Abfluss (Zellen) am Segment
-                let hw = max(0.0, min(3.0, 0.3 + log(max(q, 1) / creek + 1) / 2)) // Halbbreite ∝ log(Abfluss)
+                // Render-Gate wie beim Abfluss-Feld: Mäander-ENTITÄTEN existieren ab
+                // meanderMinCells (85) und migrieren weiter, GEMALT werden Segmente
+                // erst ab der Render-Schwelle — sonst stempeln hunderte Mini-Läufe
+                // an renderMinCells vorbei (User: „zu viele Flüsse").
+                if q < creek { continue }
+                // Halbbreite ∝ log(Abfluss), Deckel 1 Zelle (war 3): über 10k+ Jahre
+                // verknäulen die migrierten Linien auf den Ebenen — breite Stempel
+                // machten aus den Knäueln blaue Blob-Felder („zu viele Flüsse").
+                let hw = max(0.0, min(1.0, 0.3 + log(max(q, 1) / creek + 1) / 2.6))
                 let rad = Int(hw.rounded())
                 let intens = min(1.0, 0.6 + log(max(q, 1) / creek + 1) / 4)
                 var tx = bx - ax, tz = bz - az
@@ -230,7 +264,12 @@ final class SimNode: Node {
                             let dd = (ii - cx) * (ii - cx) + (jj - cy) * (jj - cy)
                             if dd > rad * rad { continue }
                             let kk = jj * n + ii
-                            if sd[kk] < intens { sd[kk] = intens }
+                            // Intensität mit der Stream-Map gewichten: wo dem gestempelten
+                            // Bett real kein Wasser folgt (verwaiste/verknäulte Linien),
+                            // verblasst der Stempel, statt voll zu leuchten.
+                            let mM = min(max((smap[kk] - 0.10) / 0.20, 0), 1)
+                            let iM = intens * (0.30 + 0.70 * mM)
+                            if sd[kk] < iM { sd[kk] = iM }
                             mstamp[kk] = true; mdx[kk] = tx; mdz[kk] = tz
                         }
                     }
@@ -238,7 +277,12 @@ final class SimNode: Node {
             }
         }
         // Altarme (abgeschnürte Schleifen) als See-Overlay — verblassen mit dem Alter.
+        // NUR substanzielle Schleifen (≥ 10 Knoten ≈ 15 Zellen Bogen): die Mäander-
+        // Migration schnürt auch winzige 2–4-Knoten-Schlingen ab, die als
+        // gestreute 3–6-Zell-Blobs die Ebenen sprenkelten („zu viele Flüsse/Seen"-
+        // Eindruck) — erst ab dieser Länge liest sich ein Altarm als Altarm.
         for li in terrain.meander.oxbows.indices {
+            if terrain.meander.oxbows[li].count < 10 { continue }
             let age = li < terrain.meander.oxbowAge.count ? terrain.meander.oxbowAge[li] : 0
             let fade = max(0, 1 - age / terrain.cfg.oxbowMaxAge)
             if fade <= 0 { continue }
@@ -255,10 +299,45 @@ final class SimNode: Node {
 
         // See-Feld (substanzielle Seen, Tiefe > 0.03 — seichte Flutungs-Pfützen
         // NICHT malen, User: „zu viele Seen") + Altarm-Overlay.
+        // KOHÄRENZ-FILTER über Fluss- UND See-Zellen GEMEINSAM: die rauen Braid-
+        // Ebenen tragen tausende isolierte Wasser-Fetzen (Pfützen-Cluster +
+        // Stream-Map-Patches, seit die Track-Maske Zufallspfade strenger schneidet),
+        // die als blaue Punktfelder dithern („zu viele Flüsse/Seen"-Eindruck im
+        // gealterten Terrain). Nur zusammenhängende Wasser-Komponenten ab
+        // `minWetCells` (4er-Nachbarschaft) werden gemalt: echte Flüsse sind dank
+        // der Downstream-Propagation immer LANGE Ketten bis Mündung/See, echte
+        // Seen große Flächen — isolierte Patches fliegen raus. Zubringer, die in
+        // einen See münden, überleben über die gemeinsame Komponente. Flood-Fill
+        // ist O(n²) und läuft eh nur je Render-Tick. Altarme separat via oxb.
+        let minWetCells = 25
+        var rawWet = [Bool](repeating: false, count: cnt)
+        for k in 0..<cnt { rawWet[k] = hf[k] > sea && hf[k] - h[k] > 0.03 }
+        var mask = [Bool](repeating: false, count: cnt)
+        for k in 0..<cnt { mask[k] = rawWet[k] || sd[k] >= 0.16 }
+        var keep = [Bool](repeating: false, count: cnt)
+        var seen = [Bool](repeating: false, count: cnt)
+        var comp = [Int]()
+        var stack = [Int]()
+        for start in 0..<cnt where mask[start] && !seen[start] {
+            comp.removeAll(keepingCapacity: true)
+            stack.removeAll(keepingCapacity: true)
+            stack.append(start); seen[start] = true
+            while let k = stack.popLast() {
+                comp.append(k)
+                let i = k % n, j = k / n
+                if i > 0 && mask[k - 1] && !seen[k - 1] { seen[k - 1] = true; stack.append(k - 1) }
+                if i < n - 1 && mask[k + 1] && !seen[k + 1] { seen[k + 1] = true; stack.append(k + 1) }
+                if j > 0 && mask[k - n] && !seen[k - n] { seen[k - n] = true; stack.append(k - n) }
+                if j < n - 1 && mask[k + n] && !seen[k + n] { seen[k + n] = true; stack.append(k + n) }
+            }
+            if comp.count >= minWetCells {
+                for k in comp { keep[k] = true }
+            }
+        }
         var lk = [Double](repeating: 0, count: cnt)
         for k in 0..<cnt {
-            let ld = hf[k] - h[k]
-            lk[k] = (hf[k] > sea && ld > 0.03) ? min(1, (ld - 0.03) / 0.10) : 0
+            if !keep[k] { sd[k] = 0 }
+            if keep[k] && rawWet[k] { lk[k] = min(1, (hf[k] - h[k] - 0.03) / 0.10) }
             if oxb[k] > lk[k] { lk[k] = oxb[k] }
         }
         // RÄUMLICH glätten: die Felder sind zell-binär geschwellt (creek/Tiefe) →

@@ -65,10 +65,11 @@ func _ready() -> void:
 	if OS.has_environment("RS_SEED"): # für Screenshot-Vergleiche verschiedener Terrains
 		sim_seed = int(OS.get_environment("RS_SEED"))
 		sim.generate(sim_seed)
-	if OS.has_environment("RS_DIST"): # Kamera-Distanz für Zoom-Screenshots
-		cam_dist = float(OS.get_environment("RS_DIST"))
 	N = sim.gridSize()
 	world_size = sim.worldSize()
+	cam_dist = world_size * 1.35 # Start-Zoom skaliert mit der Weltgröße
+	if OS.has_environment("RS_DIST"): # Kamera-Distanz für Zoom-Screenshots
+		cam_dist = float(OS.get_environment("RS_DIST"))
 	sea = sim.seaLevel()
 	floor_level = sim.floorLevel()
 	half = world_size / 2.0
@@ -125,14 +126,14 @@ func _setup_scene() -> void:
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	# Filmischer Look + Tiefe.
 	e.tonemap_mode = Environment.TONE_MAPPER_ACES
-	e.tonemap_exposure = 0.82
+	e.tonemap_exposure = 0.78
 	e.ssao_enabled = true
 	e.ssao_intensity = 1.8 # kräftigere Ambient-Occlusion → Tiefe in den Rinnen
 	e.glow_enabled = true
 	e.glow_intensity = 0.2
 	e.glow_bloom = 0.08
 	e.adjustment_enabled = true
-	e.adjustment_saturation = 1.02 # kaum Sättigungs-Boost → kein Blaustich
+	e.adjustment_saturation = 1.06 # dezenter Sättigungs-Boost (Moos/Wasser tragen mehr Farbe)
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_DEPTH
 	e.fog_light_color = Color(0.76, 0.78, 0.79)
@@ -143,7 +144,7 @@ func _setup_scene() -> void:
 	var sun := DirectionalLight3D.new()
 	# warmes, kräftiges Sonnenlicht dominiert das neutrale Ambient → naturalistischer Fels
 	sun.light_color = Color(1.0, 0.96, 0.90)
-	sun.light_energy = 1.85
+	sun.light_energy = 1.6
 	sun.shadow_enabled = true
 	add_child(sun)
 	# Eindeutig von schräg oben aufs Terrain scheinen lassen (statt mehrdeutiger Euler).
@@ -167,6 +168,7 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("hscale", HSCALE)
 	terrain_mat.set_shader_parameter("world_size", world_size)
 	terrain_mat.set_shader_parameter("grid_n", float(N))
+	terrain_mat.set_shader_parameter("sea_level", sea)
 	terrain_mi.material_override = terrain_mat
 	add_child(terrain_mi)
 
@@ -411,25 +413,28 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_WHEEL_UP:
 				cam_dist = max(30.0, cam_dist - 8.0)
 			MOUSE_BUTTON_WHEEL_DOWN:
-				cam_dist = min(400.0, cam_dist + 8.0)
+				cam_dist = min(world_size * 4.0, cam_dist + 8.0)
 	elif event is InputEventMouseMotion and orbiting:
 		cam_yaw -= event.relative.x * 0.005
 		cam_pitch = clamp(cam_pitch + event.relative.y * 0.005, 0.15, 1.5)
 	# Zoom ohne Maus: Trackpad-Zwei-Finger-Wisch …
 	elif event is InputEventPanGesture:
-		cam_dist = clamp(cam_dist + event.delta.y * 6.0, 30.0, 400.0)
+		cam_dist = clamp(cam_dist + event.delta.y * 6.0, 30.0, world_size * 4.0)
 	# … Pinch-Geste …
 	elif event is InputEventMagnifyGesture:
-		cam_dist = clamp(cam_dist / event.factor, 30.0, 400.0)
+		cam_dist = clamp(cam_dist / event.factor, 30.0, world_size * 4.0)
 	# … und +/− auf der Tastatur.
 	elif event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
 				cam_dist = max(30.0, cam_dist - 12.0)
 			KEY_MINUS, KEY_KP_SUBTRACT:
-				cam_dist = min(400.0, cam_dist + 12.0)
+				cam_dist = min(world_size * 4.0, cam_dist + 12.0)
 
 func _update_ring() -> void:
+	if OS.has_environment("RS_SHOT"): # autonome Screenshots: kein Pinsel-Ring
+		ring_mi.visible = false
+		return
 	if sculpting or year_rate == 0.0:
 		var hit := _raycast_terrain()
 		if hit != Vector3.INF:
@@ -446,7 +451,7 @@ func _raycast_terrain() -> Vector3:
 	var rd := cam.project_ray_normal(mpos)
 	var prev_t := 0.0
 	var t := 0.8
-	while t < 600.0:
+	while t < world_size * 6.0:
 		var p := ro + rd * t
 		var gx := (p.x + half) / step
 		var gz := (p.z + half) / step
