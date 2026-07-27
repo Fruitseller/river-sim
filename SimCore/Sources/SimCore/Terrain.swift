@@ -23,7 +23,8 @@ public final class Terrain {
     // Entwässerung
     public private(set) var hf: [Double]     // gefüllte Oberfläche (Priority-Flood)
     public private(set) var receiver: [Int32] // Abfluss-Nachbar (-1 = Senke/Meer)
-    public private(set) var area: [Double]   // Einzugsgebiet (Zellflächen)
+    public private(set) var area: [Double]   // Einzugsgebiet (Zellflächen, Single-Flow/D8 → Erosion)
+    public private(set) var areaMFD: [Double] // Multi-Flow-Einzugsgebiet (Freeman) → NUR Render/Braiding, nie Erosion
     private var order: [Int32]               // Pop-Reihenfolge (aufsteigende Füllhöhe)
     private var floodParent: [Int32]
 
@@ -57,6 +58,7 @@ public final class Terrain {
         hf = .init(repeating: 0, count: c)
         receiver = .init(repeating: -1, count: c)
         area = .init(repeating: 0, count: c)
+        areaMFD = .init(repeating: 0, count: c)
         order = .init(repeating: 0, count: c)
         floodParent = .init(repeating: -1, count: c)
         visited = .init(repeating: false, count: c)
@@ -218,6 +220,7 @@ public final class Terrain {
         computeRain()
         priorityFlood()
         computeReceiversAndArea()
+        computeMFDArea()
     }
 
     private func priorityFlood() {
@@ -287,6 +290,198 @@ public final class Terrain {
             let k = Int(order[oi]); oi -= 1
             let r = receiver[k]
             if r >= 0 { area[Int(r)] += area[k] }
+        }
+    }
+
+    // MARK: - Multi-Flow-Einzugsgebiet (Freeman/Holmgren) — nur Render/Braiding
+
+    /// Verteilt den Abfluss STETIG an ALLE tieferen Nachbarn (Freeman-1991-
+    /// Gewichte fᵢ = Sᵢᵖ/ΣSⱼᵖ, p = `cfg.mfdExponent`) statt komplett an den
+    /// steilsten wie D8. Ergebnis in `areaMFD`, ausschließlich fürs Rendering und
+    /// (später) Braiding — die Erosion nutzt weiter `area` (Single-Flow), damit der
+    /// kalibrierte Terrain-Look und die implizite Stabilität unangetastet bleiben.
+    ///
+    /// Zwei Wirkungen: (1) an einer Mittelbank (lokaler Hoch) bekommen BEIDE
+    /// Flanken S>0 → `areaMFD` bleibt links UND rechts hoch → der Lauf teilt sich
+    /// und vereint sich unten wieder (mit D8-argmax prinzipiell unmöglich). (2) Die
+    /// Gewichte sind stetig in der Topografie → der Lauf gleitet bei kleinen
+    /// Änderungen, statt schlagartig auf einen anderen Nachbarn zu kippen (die
+    /// gemessene ~27%-Churn je Flow-Update = das „Springen").
+    ///
+    /// `order` (aufsteigende Füllhöhe) ist auch für MFD ein gültiger topologischer
+    /// Order: jeder Ziel-Nachbar liegt tiefer in `hf` → beim Verarbeiten von hoch
+    /// nach tief ist `areaMFD[k]` vollständig eingesammelt, bevor es verteilt wird.
+    /// Lokale Exponenten-Wahl für die MFD-Verteilung (Quinn 1995: abfluss-
+    /// abhängig) — die EINE Stelle für Wasser (computeMFDArea), Sediment
+    /// (braidPass) und die Test-Metriken, damit die Fracht exakt dem Wasser
+    /// folgt und die Gates nicht auseinanderdriften. Dispersiv (braidDispersion)
+    /// nur auf GROSSEN, FLACHEN, SUBAERISCHEN Läufen (= Braid-Plains): Hänge
+    /// behalten die Konvergenz (mfdExponent, dendritischer Look), geflutete
+    /// Becken-Böden ebenso (Dispersion dort = Sheet-Flow-Konfetti im Render).
+    @inline(__always) func mfdLocalExponent(_ k: Int, sMax: Double) -> Double {
+        let minA = cfg.braidMinCells * cfg.cellSize * cfg.cellSize
+        let flatCell = cfg.meanderFlatSlope * cfg.cellSize // Weltslope in Zell-Einheiten
+        return (areaMFD[k] >= minA && sMax < flatCell && hf[k] - h[k] < 0.005)
+             ? cfg.braidDispersion : cfg.mfdExponent
+    }
+
+    private func computeMFDArea() {
+        let cellArea = cfg.cellSize * cfg.cellSize
+        let sqrt2 = 2.0.squareRoot()
+        for k in 0..<cfg.count { areaMFD[k] = cellArea }
+        var nbK = [Int](repeating: 0, count: 8) // wiederverwendete Nachbar-Puffer (keine Alloc je Zelle)
+        var nbW = [Double](repeating: 0, count: 8)
+        var oi = cfg.count - 1
+        while oi >= 0 {
+            let k = Int(order[oi]); oi -= 1
+            if hf[k] <= cfg.sea { continue } // Meer = Senke, reicht nicht weiter
+            let i = k % n, j = k / n
+            var cnt = 0
+            var sMax = 0.0
+            for dj in -1...1 {
+                for di in -1...1 {
+                    if di == 0 && dj == 0 { continue }
+                    let ni = i + di, nj = j + dj
+                    if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
+                    let nb = nj * n + ni
+                    let dist = (di != 0 && dj != 0) ? sqrt2 : 1.0
+                    let s = (hf[k] - hf[nb]) / dist
+                    if s > 0 { nbK[cnt] = nb; nbW[cnt] = s; sMax = max(sMax, s); cnt += 1 }
+                }
+            }
+            // areaMFD[k] ist beim Verarbeiten schon vollständig akkumuliert
+            // (alle Zuflüsse liegen höher in hf) → das Gate im Exponenten-
+            // Helfer ist gültig.
+            let p = mfdLocalExponent(k, sMax: sMax)
+            var wsum = 0.0
+            for t in 0..<cnt { nbW[t] = pow(nbW[t], p); wsum += nbW[t] }
+            if cnt == 0 || wsum <= 0 {
+                // flache Seespiegel-Zelle (kein tieferer Nachbar) → wie D8 über den
+                // Priority-Flood-Überlauf (floodParent) weiterreichen, damit die
+                // Fläche nicht am See versickert.
+                let fp = floodParent[k]
+                if fp >= 0 { areaMFD[Int(fp)] += areaMFD[k] }
+                continue
+            }
+            let a = areaMFD[k]
+            for t in 0..<cnt { areaMFD[nbK[t]] += a * (nbW[t] / wsum) }
+        }
+    }
+
+    // MARK: - Braiding (zellulärer Bänke-Bau, Murray & Paola 1994)
+
+    /// Baut Mittelbänke und Fäden auf den großen Läufen — die Verflechtung
+    /// (braiding). Minimal-Rezept nach Murray & Paola (Nature 371): (a) Wasser,
+    /// das sich lateral aufteilen kann (unser MFD-Feld), plus (b) Bedload-Transport
+    /// mit SUPER-LINEARER Kapazität qcᵢ = Kb·(fᵢ·Q·Sᵢ)^m, m≈2.5. Wegen m>1
+    /// transportiert der stärkere Faden überproportional viel → er scourt sich ein
+    /// und fängt beim nächsten computeFlow noch mehr Wasser (positive Rückkopplung),
+    /// während unterversorgte Zellen ihre Fracht ABLAGERN → Bänke wachsen bis knapp
+    /// über den Wasserspiegel (braidBarHeight) → der Lauf teilt sich sichtbar und
+    /// vereint sich stromab wieder. Fracht wird ∝ Kapazität an die MFD-Empfänger
+    /// weitergereicht (Sediment folgt dem starken Faden).
+    ///
+    /// Reach-gated: nur Zellen mit areaMFD ≥ braidMinCells (substanzielle Flüsse);
+    /// Vegetation dämpft den Scour wie überall ((1−0.6·veg), kohäsive Ufer
+    /// verflechten real nicht). Kapazität UND Fracht skalieren mit dt → das
+    /// Regime ist framerate-/chunking-unabhängig. Massenbilanz: bewegt wird nur,
+    /// was der Pass selbst scourt; Deckel wie in transportLimited (nicht unter den
+    /// tiefsten Empfänger graben, nicht über Seespiegel+barHeight schütten).
+    /// Der explizite laterale Sediment-Term aus M&P entfällt bewusst: die radiale
+    /// MFD-Verteilung (bis 8 tiefere Nachbarn) übernimmt die Quer-Streuung —
+    /// Bänke entstehen nachweislich (testBraidingBuildsBars).
+    private func braidPass(dt: Double) {
+        let cellArea = cfg.cellSize * cfg.cellSize
+        let minA = cfg.braidMinCells * cellArea
+        let mB = cfg.braidExponent
+        let kb = cfg.braidCapacity * dt
+        let sqrt2 = 2.0.squareRoot()
+        for k in 0..<cfg.count { qs[k] = 0 }
+        var nbK = [Int](repeating: 0, count: 8)
+        var nbW = [Double](repeating: 0, count: 8)
+        var nbS = [Double](repeating: 0, count: 8)
+        var nbQc = [Double](repeating: 0, count: 8) // wiederverwendet — keine Alloc je Zelle
+        var oi = cfg.count - 1
+        while oi >= 0 {
+            let k = Int(order[oi]); oi -= 1
+            let qin = qs[k]
+            // Seicht überströmte Reaches (< 0.015) sind aktiv — dort schütten
+            // Braid-Deltas Bänke bis über den Wasserspiegel. Tiefere Ponds/Seen
+            // NICHT: Bänke-Bau dort macht die Becken-Böden rau um die See-Render-
+            // Schwelle (0.03) herum → sichtbares Speckle statt Verflechtung.
+            let active = areaMFD[k] >= minA && hf[k] > cfg.sea && h[k] > cfg.sea
+                      && hf[k] - h[k] < 0.015
+            if !active {
+                // Kein Braid-Reach: Fracht landet hier ab (Delta/Seerand), Überschuss
+                // über den Stauraum hinaus gilt als exportiert (wie transportLimited).
+                if qin > 0 && hf[k] > cfg.sea {
+                    depositCell(k, min(qin, max(0, hf[k] - h[k]) + 0.005))
+                }
+                continue
+            }
+            // MFD-Empfänger, Gewichte und Gefälle (identisch zu computeMFDArea,
+            // inkl. abfluss-abhängigem Exponent — die Fracht folgt dem Wasser).
+            let i = k % n, j = k / n
+            var cnt = 0
+            var sMax = 0.0
+            for dj in -1...1 {
+                for di in -1...1 {
+                    if di == 0 && dj == 0 { continue }
+                    let ni = i + di, nj = j + dj
+                    if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
+                    let nb = nj * n + ni
+                    let dist = (di != 0 && dj != 0) ? sqrt2 : 1.0
+                    let s = (hf[k] - hf[nb]) / dist
+                    if s > 0 {
+                        nbK[cnt] = nb; nbS[cnt] = s; sMax = max(sMax, s)
+                        cnt += 1
+                    }
+                }
+            }
+            let p = mfdLocalExponent(k, sMax: sMax)
+            var wsum = 0.0
+            for t in 0..<cnt { nbW[t] = pow(nbS[t], p); wsum += nbW[t] }
+            if cnt == 0 || wsum <= 0 {
+                // Seespiegel-Fläche: Fracht sedimentiert im See (bis Spiegel), Rest
+                // wandert über den Überlauf weiter.
+                let dep = min(qin, max(0, hf[k] - h[k]))
+                depositCell(k, dep)
+                let fp = floodParent[k]
+                if fp >= 0 { qs[Int(fp)] += qin - dep }
+                continue
+            }
+            // Kapazität je Route: qcᵢ = Kb·dt · Q·Sᵢ · fᵢ^m  (Q in Zell-Einheiten).
+            // Die Super-Linearität liegt bewusst auf der lateralen PARTITION fᵢ
+            // (nicht auf dem absoluten Q, das über das Netz 3 Dekaden spannt): für
+            // festes Q trägt EIN Faden (f=1) mehr als zwei halbe (2·0.5^m ≈ 0.35) —
+            // die Konzentrations-Instabilität, die Fäden schärft. Und wo der Lauf
+            // sich aufspreizt (viele kleine fᵢ → Σfᵢ^m ≪ 1) KOLLABIERT die
+            // Kapazität → Deposition genau in den breiten, flachen Reaches → Bänke.
+            let q = areaMFD[k] / cellArea
+            var qcTot = 0.0
+            for t in 0..<cnt {
+                nbQc[t] = kb * q * nbS[t] * pow(nbW[t] / wsum, mB)
+                qcTot += nbQc[t]
+            }
+            var qout = qin
+            if qin > qcTot {
+                // Überlast → Bank bauen: bis knapp über den Wasserspiegel (Insel!).
+                let dep = min(qin - qcTot, max(0, hf[k] + cfg.braidBarHeight - h[k]))
+                depositCell(k, dep)
+                qout -= dep
+            } else {
+                // Unterlast → Faden scourt (Vegetation bremst, nie unter den
+                // tiefsten Empfänger — halber Weg wie transportLimited).
+                var lowest = h[k]
+                for t in 0..<cnt { lowest = min(lowest, h[nbK[t]]) }
+                let want = (qcTot - qin) * (1 - 0.6 * veg[k])
+                let er = erodeCell(k, min(want, max(0, h[k] - lowest) * 0.5))
+                qout += er
+            }
+            // Fracht folgt der Kapazität (∝ qcᵢ): der starke Faden trägt sie weiter.
+            if qout > 0 && qcTot > 1e-30 {
+                for t in 0..<cnt { qs[nbK[t]] += qout * (nbQc[t] / qcTot) }
+            }
         }
     }
 
@@ -468,6 +663,56 @@ public final class Terrain {
                 let add = deficit * rate
                 h[k] += add
                 sed[k] += add
+            }
+        }
+    }
+
+    // MARK: - Auen-Aggradation (Overbank-Deposition → flache Schwemmebenen)
+
+    /// Baut flache Auenböden entlang der Flüsse: für jede Fluss-Zelle (großes
+    /// Einzugsgebiet) werden die tal-nahen *tieferen* Zellen mit Sediment bis knapp
+    /// über das Bett-Niveau (bankfull) aufgefüllt. Ergebnis: breite Niedrig-Gradient-
+    /// Reaches, in denen ein Fluss lateral wandern kann (mäandern/verflechten) —
+    /// ohne sie sind die gecarvten V-Täler zu schmal dafür (gemessen: nur ~1500
+    /// Zellen größte zusammenhängende Aue).
+    ///
+    /// NUR tal-nahe Zellen UNTER `bett+Auenhöhe` werden gefüllt → steile Talwände
+    /// und Berge (darüber) bleiben unberührt. Deposition-only und auf die Auenhöhe
+    /// gedeckelt → konvergiert. Größere Flüsse → höhere & breitere Auen (∝ log
+    /// Abfluss). Physisch = Overbank-/Schwemm-Deposition.
+    ///
+    /// STABILITÄT (wichtig): die **Kanalzellen sind die Referenz und werden NIE
+    /// angehoben** — nur *Nicht*-Kanal-Zellen werden aggradiert. Sonst pumpen sich
+    /// auf flachen Reaches benachbarte Kanalzellen (Slope < depth) gegenseitig hoch
+    /// (A hebt B→A+depth, B hebt A→B+depth) → Runaway (gemessen: maxH 0.95→10.7).
+    /// Da Nicht-Kanal-Zellen ihrerseits nichts anheben, gibt es keine Rückkopplung:
+    /// jede Aue-Zelle konvergiert gegen max(Kanalbett+Auenhöhe) in ihrer Nähe.
+    private func floodplainAggradation(dt: Double) {
+        let cellArea = cfg.cellSize * cfg.cellSize
+        let minA = cfg.floodplainMinArea
+        let rate = min(0.6, dt / cfg.floodplainFillYears)
+        if rate <= 0 { return }
+        for k in 0..<cfg.count {
+            if hf[k] <= cfg.sea || h[k] <= cfg.sea { continue }
+            if h[k] > cfg.floodplainMaxElev { continue }      // nur Tiefland-Reaches (Auen sind Tiefland)
+            let cu = area[k] / cellArea
+            if cu < minA { continue }                         // nur Hauptflüsse bauen Auen
+            let mag = log(cu / minA + 1)
+            let level = h[k] + cfg.floodplainDepth + cfg.floodplainDepthK * mag // bankfull-Referenz
+            let w = min(9, max(1, Int((cfg.floodplainWidthK * mag).rounded())))
+            let i = k % n, j = k / n
+            let jLo = max(0, j - w), jHi = min(n - 1, j + w)
+            let iLo = max(0, i - w), iHi = min(n - 1, i + w)
+            for nj in jLo...jHi {
+                for ni in iLo...iHi {
+                    let nb = nj * n + ni
+                    if nb == k { continue }
+                    if area[nb] / cellArea >= minA { continue } // andere Kanalzelle = Referenz, NIE anheben
+                    if h[nb] <= cfg.sea { continue }            // Meer nicht auffüllen
+                    if h[nb] >= level { continue }              // Talwand/über Aue → unberührt
+                    let add = (level - h[nb]) * rate
+                    sed[nb] += add; h[nb] += add                // Aggradation (Sediment)
+                }
             }
         }
     }
@@ -829,6 +1074,9 @@ public final class Terrain {
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
             if cfg.outletIncision { outletIncision(dt: dt) }
             if cfg.basinFill { fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
+            // 1b) Braiding: super-linearer Bedload-Transport auf dem MFD-Netz baut
+            //     Mittelbänke/Fäden auf den großen Läufen (Verflechtung).
+            if cfg.braidingEnabled { braidPass(dt: dt) }
             // 2) Droplet-Erosion legt die feine dendritische Textur (nickmcd-Look) hinein.
             // Tropfen ∝ Zeit × Fläche (Dichte kalibriert auf n = 640).
             let density = Double(n * n) / (640.0 * 640.0)
@@ -836,6 +1084,10 @@ public final class Terrain {
             let dropSeed = seed &+ stepCount &* 2_654_435_761
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
                             seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic)
+            // 2b) Auen-Aggradation: Flüsse schütten seitlich flache Schwemmböden auf
+            //     (bankfull) → breite Niedrig-Gradient-Reaches für Mäander/Braiding.
+            //     Nach dem Carve (Bett steht), vor der Diffusion (glättet die Aue).
+            if cfg.floodplainEnabled { floodplainAggradation(dt: dt) }
             // 3) Hangdiffusion (Bodenkriechen, D·∇²z): rundet Grate über die Zeit → altes
             // Terrain wird RUND statt immer spitzer (Appalachen-Signal, konvexe Kuppen).
             // Gesamtwirkung ∝ dt (chunking-/framerate-UNABHÄNGIG!): Echtzeit-Zeitraffer

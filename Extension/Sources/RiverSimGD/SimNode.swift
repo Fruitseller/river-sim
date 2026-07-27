@@ -133,12 +133,23 @@ final class SimNode: Node {
     ///   R = Fluss-Intensität (Stream-Map: log-skalierter, dilatierter Abfluss)
     ///   G = Seetiefe (Pool-Map: hf−h über Land; deckt Seen UND Altarme ab)
     ///   B,A = Fließrichtung (aus dem Empfänger, kodiert *0.5+0.5) für die Animation
-    @Callable func waterFieldBytes() -> PackedByteArray {
+    // Persistente, zeitlich geglättete Wasserfelder (EWMA-Gedächtnis über Rebuilds).
+    // Ohne sie wird das Feld jeden Tick frisch aus `hf` berechnet und flackert/springt;
+    // mit ihnen BLENDET der Lauf zwischen Positionen (`blend` klein im Zeitraffer,
+    // 1.0 bei Sprüngen/Sculpting = sofort übernehmen). Reiner Render-Zustand.
+    private var sdS: [Double] = []
+    private var lakeS: [Double] = []
+    private var dxS: [Double] = []
+    private var dzS: [Double] = []
+
+    @Callable func waterFieldBytes(blend: Double) -> PackedByteArray {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let creek = 30.0 // ab so viel Einzugsgebiet ein sichtbarer Wasserlauf
-        let h = terrain.h, hf = terrain.hf, area = terrain.area, rec = terrain.receiver
+        let creek = terrain.cfg.braidMinCells // ab so viel Einzugsgebiet ein sichtbarer Wasserlauf (= Braid-Reach-Gate, EINE Quelle). Von 30 auf 120 erhöht (User: „zu viele Flüsse"): nur substantielle Läufe zeigen. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
+        // areaMFD (Multi-Flow): stetige Fluss-Intensität → Läufe gleiten statt zu
+        // springen und können sich um Bänke teilen. Erosion nutzt weiter D8-`area`.
+        let h = terrain.h, hf = terrain.hf, area = terrain.areaMFD, rec = terrain.receiver
 
         // Stream-Map mit ABFLUSS-ABHÄNGIGER BREITE: ein Fluss wird stromab breiter &
         // kräftiger (Hauptflüsse breit + tiefblau, Bäche dünn). Effizient über
@@ -147,10 +158,20 @@ final class SimNode: Node {
         // KRÄFTIGE Flüsse weiter verbreitern → Breiten-Hierarchie. Sequenziell,
         // cache-freundlich (kein Scheiben-Stempeln mit verstreuten Zugriffen).
         var sd = [Double](repeating: 0, count: n * n)
-        for k in 0..<(n * n) where hf[k] > sea && h[k] > sea {
+        // Nicht unter substanziellen Seen (Tiefe > 0.03 = See-Render-Schwelle)
+        // malen: die floodParent-Ketten routen areaMFD über den Seeboden und
+        // sprenkeln sonst Stream-Punkte auf die glatte Seefläche.
+        for k in 0..<(n * n) where hf[k] > sea && h[k] > sea && hf[k] - h[k] <= 0.03 {
             let cu = area[k] / cellArea
             if cu >= creek { sd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) }
         }
+        // WASSERSPIEGEL-BEWUSST dilatieren: Wasser verbreitert sich nur auf Zellen,
+        // die nicht nennenswert über dem WASSERSPIEGEL (hf) des Nachbarlaufs liegen
+        // (barTol < braidBarHeight). Mittelbänke (Braiding!) und Ufer-/Talkanten
+        // bleiben trocken, statt von der Kosmetik-Breite übermalt zu werden —
+        // flache Auen und geflutete Ebenen tragen weiter die volle Breiten-
+        // Hierarchie (hf, nicht h: seichtes Ponding blockt die Breite nicht).
+        let barTol = 0.004
         let widenThresh = [0.0, 0.55, 0.80]  // Pass 0 alle, dann nur noch kräftige Läufe
         var a = sd, b = [Double](repeating: 0, count: n * n)  // Ping-Pong: keine COW-Kopien
         for thresh in widenThresh {
@@ -158,30 +179,137 @@ final class SimNode: Node {
                 for i in 0..<n {
                     let k = j * n + i
                     var m = a[k]
-                    if i > 0 && a[k - 1] > thresh { m = max(m, a[k - 1] - 0.09) }
-                    if i < n - 1 && a[k + 1] > thresh { m = max(m, a[k + 1] - 0.09) }
-                    if j > 0 && a[k - n] > thresh { m = max(m, a[k - n] - 0.09) }
-                    if j < n - 1 && a[k + n] > thresh { m = max(m, a[k + n] - 0.09) }
+                    if i > 0 && a[k - 1] > thresh && h[k] - hf[k - 1] < barTol { m = max(m, a[k - 1] - 0.09) }
+                    if i < n - 1 && a[k + 1] > thresh && h[k] - hf[k + 1] < barTol { m = max(m, a[k + 1] - 0.09) }
+                    if j > 0 && a[k - n] > thresh && h[k] - hf[k - n] < barTol { m = max(m, a[k - n] - 0.09) }
+                    if j < n - 1 && a[k + n] > thresh && h[k] - hf[k + n] < barTol { m = max(m, a[k + n] - 0.09) }
                     b[k] = m
                 }
             }
             swap(&a, &b)
         }
         sd = a
+        let cnt = n * n
 
-        var out = [UInt8](repeating: 0, count: n * n * 4)
-        for k in 0..<(n * n) {
-            let lake = (hf[k] > sea && hf[k] > h[k]) ? min(1, (hf[k] - h[k]) / 0.08) : 0
-            // Richtung: rohe D8-Nachbardifferenz (∈ {-1,0,1}), der Shader normalisiert
-            // selbst → kein sqrt hier (spart 410k sqrt je Rebuild).
-            var dx = 0, dz = 0
-            let r = rec[k]
-            if r >= 0 { dx = Int(r) % n - k % n; dz = Int(r) / n - k / n }
+        // DIREKT-RENDERING der Mäander-Entitäten: die persistenten Zentrumslinien und
+        // Altarme werden GARANTIERT ins Feld gestempelt — unabhängig davon, ob die
+        // D8-Drainage dem gecarvten sinuosen Bett folgt. Erst so werden „Arme, die
+        // sich schlängeln und als Altarm-Seen abschnüren" wirklich sichtbar (der
+        // Mäander IST die Fluss-Entität, nicht ein Nebenprodukt der D8-Karte).
+        var mdx = [Double](repeating: 0, count: cnt)   // gestempelte Fließrichtung
+        var mdz = [Double](repeating: 0, count: cnt)
+        var mstamp = [Bool](repeating: false, count: cnt)
+        var oxb = [Double](repeating: 0, count: cnt)   // Altarm-See-Overlay (mit Alter ausgeblendet)
+        for ch in terrain.meander.channels {
+            let nodes = ch.nodes
+            if nodes.count < 2 { continue }
+            for i in 0..<(nodes.count - 1) {
+                let ax = nodes[i].x, az = nodes[i].z, bx = nodes[i + 1].x, bz = nodes[i + 1].z
+                let q = 0.5 * (ch.discharge[i] + ch.discharge[i + 1])   // Abfluss (Zellen) am Segment
+                let hw = max(0.0, min(3.0, 0.3 + log(max(q, 1) / creek + 1) / 2)) // Halbbreite ∝ log(Abfluss)
+                let rad = Int(hw.rounded())
+                let intens = min(1.0, 0.6 + log(max(q, 1) / creek + 1) / 4)
+                var tx = bx - ax, tz = bz - az
+                let tl = (tx * tx + tz * tz).squareRoot(); if tl > 1e-6 { tx /= tl; tz /= tl }
+                let steps = max(1, Int(tl.rounded()))
+                for s in 0...steps {
+                    let t = Double(s) / Double(steps)
+                    let cx = Int((ax + (bx - ax) * t).rounded()), cy = Int((az + (bz - az) * t).rounded())
+                    let jLo = max(0, cy - rad), jHi = min(n - 1, cy + rad)
+                    let iLo = max(0, cx - rad), iHi = min(n - 1, cx + rad)
+                    if jLo > jHi || iLo > iHi { continue }
+                    for jj in jLo...jHi {
+                        for ii in iLo...iHi {
+                            let dd = (ii - cx) * (ii - cx) + (jj - cy) * (jj - cy)
+                            if dd > rad * rad { continue }
+                            let kk = jj * n + ii
+                            if sd[kk] < intens { sd[kk] = intens }
+                            mstamp[kk] = true; mdx[kk] = tx; mdz[kk] = tz
+                        }
+                    }
+                }
+            }
+        }
+        // Altarme (abgeschnürte Schleifen) als See-Overlay — verblassen mit dem Alter.
+        for li in terrain.meander.oxbows.indices {
+            let age = li < terrain.meander.oxbowAge.count ? terrain.meander.oxbowAge[li] : 0
+            let fade = max(0, 1 - age / terrain.cfg.oxbowMaxAge)
+            if fade <= 0 { continue }
+            for nd in terrain.meander.oxbows[li] {
+                let cx = Int(nd.x.rounded()), cy = Int(nd.z.rounded())
+                for (ddx, ddy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let ii = cx + ddx, jj = cy + ddy
+                    if ii < 0 || ii >= n || jj < 0 || jj >= n { continue }
+                    let kk = jj * n + ii
+                    if oxb[kk] < 0.7 * fade { oxb[kk] = 0.7 * fade }
+                }
+            }
+        }
+
+        // See-Feld (substanzielle Seen, Tiefe > 0.03 — seichte Flutungs-Pfützen
+        // NICHT malen, User: „zu viele Seen") + Altarm-Overlay.
+        var lk = [Double](repeating: 0, count: cnt)
+        for k in 0..<cnt {
+            let ld = hf[k] - h[k]
+            lk[k] = (hf[k] > sea && ld > 0.03) ? min(1, (ld - 0.03) / 0.10) : 0
+            if oxb[k] > lk[k] { lk[k] = oxb[k] }
+        }
+        // RÄUMLICH glätten: die Felder sind zell-binär geschwellt (creek/Tiefe) →
+        // ohne Glättung wirken Flussränder und Seeufer als Pixel-Grieß. max(Kern,
+        // 3×3-Blur) statt reinem Blur: die Kern-Intensität bleibt voll (sonst
+        // verblassen dünne Läufe in der Übersicht), nur die Ränder bekommen einen
+        // weichen Saum, den der Shader sauber smoothstept.
+        func blur3(_ src: [Double]) -> [Double] {
+            var dst = [Double](repeating: 0, count: cnt)
+            for j in 0..<n {
+                for i in 0..<n {
+                    let k = j * n + i
+                    var s = 0.0, c = 0.0
+                    for dj in max(0, j-1)...min(n-1, j+1) {
+                        for di in max(0, i-1)...min(n-1, i+1) {
+                            s += src[dj * n + di]; c += 1
+                        }
+                    }
+                    dst[k] = s / c
+                }
+            }
+            return dst
+        }
+        let sdB = blur3(sd), lkB = blur3(lk)
+        for k in 0..<cnt {
+            sd[k] = max(sd[k], sdB[k])
+            lk[k] = max(lk[k], lkB[k])
+        }
+
+        // EWMA-Puffer bei Bedarf initialisieren (erstes Feld = sofort übernehmen).
+        if sdS.count != cnt {
+            sdS = [Double](repeating: 0, count: cnt); lakeS = sdS; dxS = sdS; dzS = sdS
+        }
+        let bl = min(max(blend, 0), 1) // 1 = Sprung sofort, klein = weiches Blenden
+
+        var out = [UInt8](repeating: 0, count: cnt * 4)
+        for k in 0..<cnt {
+            let lake = lk[k]
+            // Richtung: gestempelte Mäander-Tangente, sonst rohe D8-Nachbardifferenz
+            // (∈ {-1,0,1}; der Shader normalisiert selbst → kein sqrt hier). Wird
+            // mitgeglättet, damit die Strömungsrichtung nicht schlagartig kippt.
+            var dx = 0.0, dz = 0.0
+            if mstamp[k] {
+                dx = mdx[k]; dz = mdz[k]
+            } else {
+                let r = rec[k]
+                if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
+            }
+            // EWMA: geglättetes Feld Richtung frischem Wert ziehen (Gedächtnis über Rebuilds).
+            sdS[k]   += bl * (sd[k] - sdS[k])
+            lakeS[k] += bl * (lake  - lakeS[k])
+            dxS[k]   += bl * (dx    - dxS[k])
+            dzS[k]   += bl * (dz    - dzS[k])
             let o = k * 4
-            out[o] = UInt8(min(max(sd[k], 0), 1) * 255)
-            out[o + 1] = UInt8(min(max(lake, 0), 1) * 255)
-            out[o + 2] = UInt8((Double(dx) * 0.5 + 0.5) * 255)
-            out[o + 3] = UInt8((Double(dz) * 0.5 + 0.5) * 255)
+            out[o] = UInt8(min(max(sdS[k], 0), 1) * 255)
+            out[o + 1] = UInt8(min(max(lakeS[k], 0), 1) * 255)
+            out[o + 2] = UInt8((min(max(dxS[k], -1), 1) * 0.5 + 0.5) * 255)
+            out[o + 3] = UInt8((min(max(dzS[k], -1), 1) * 0.5 + 0.5) * 255)
         }
         return PackedByteArray(out)
     }

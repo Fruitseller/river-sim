@@ -11,16 +11,41 @@ public struct SimConfig: Sendable {
     // ---- Terrain-Generierung ----
     public var baseOctaves: Int = 9    // viele Oktaven → feine Grate bis zur Auflösungsgrenze
     public var baseFreq: Double = 3.5  // Grundfrequenz (× 1/n)
-    public var baseRelief: Double = 1.05 // vertikale Reliefstärke (höhere, schroffere Berge)
+    public var baseRelief: Double = 0.78 // vertikale Reliefstärke. Von 1.05 gesenkt (User: „zu extrem"): sanfteres Terrain → weniger Nadel-Gipfel UND flachere/breitere Talböden (niedrigere Slopes → mehr Reaches unter der Mäander-Schwelle) = Platz für Fluss-Dynamik. 0.72 ebnete über 100k knapp unter den LongRunCollapse-Wächter (0.30); 0.78 hält Marge.
     public var upliftFreq: Double = 2.5
 
     // ---- Stream-Power-Inzision (detachment-limited, FastScape) ----
     // dz/dt = U − K·A^m·S^n ;  n = 1 (implizit, unbedingt stabil)
     public var mExp: Double = 0.5      // Flächen-Exponent m
     public var kRock: Double = 3.5e-5  // Erodierbarkeit Grundgestein (niedriger → hohes Gleichgewichts-Relief, rugged bleibend)
+
+    // ---- Multi-Flow-Drainage (nur Render/Braiding, NICHT Erosion) ----
+    // Freeman(1991)/Holmgren(1994): der Abfluss wird STETIG an alle tieferen
+    // Nachbarn verteilt (fᵢ = Sᵢᵖ/ΣSⱼᵖ) statt komplett an den steilsten (D8-argmax).
+    // Das erlaubt (a) Aufspalten um Mittelbänke + Wiedervereinen (mit D8 unmöglich)
+    // und (b) stetiges Gleiten des Laufs statt Springen (D8 würfelt ~27% der
+    // Empfänger je Flow-Update neu — gemessen). Speist NUR `areaMFD` (Wasserfeld);
+    // die Inzision bleibt bewusst Single-Flow, damit der kalibrierte Terrain-Look
+    // und die implizite FastScape-Stabilität unangetastet bleiben.
+    public var mfdExponent: Double = 4.0 // p→∞ = D8, p=1.1 max dispersiv (Braiding-Regime), p≈4 hält den dendritischen Look. Auf flachen großen Läufen gilt stattdessen braidDispersion (Terrain.mfdLocalExponent).
     public var kSed: Double = 1.1e-4   // Erodierbarkeit lockeres Sediment (weicher)
     public var sedCoverThresh: Double = 0.01 // ab so viel Sediment gilt "bedeckt"
     public var transportCap: Double = 9.0  // Transportkapazität-Koeffizient (SPACE)
+
+    // ---- Braiding (Verflechtung: zelluläres Bänke-Bauen, Murray & Paola 1994) ----
+    // Die einzige Zutat, die dem MFD-Fundament noch fehlt: SUPER-LINEARER Sediment-
+    // Transport. Kapazität je MFD-Route qcᵢ = Kb·Q·Sᵢ·fᵢ^m mit m≈2.5 — die Super-
+    // Linearität liegt auf der lateralen PARTITION fᵢ (nicht auf Q·S, das übers Netz
+    // 3 Dekaden spannt): ein Faden trägt mehr als zwei halbe (2·0.5^m ≈ 0.35) → Fäden
+    // scouren sich ein und ziehen mehr Wasser (positive Rückkopplung), während
+    // unterversorgte/aufgespreizte Zellen ablagern → MITTELBÄNKE, um die sich der
+    // Lauf teilt und wiedervereint.
+    public var braidingEnabled: Bool = true
+    public var braidMinCells: Double = 120   // Reach-Gate: nur substanzielle Läufe (= creek-Render-Schwelle in SimNode)
+    public var braidExponent: Double = 2.5   // Partitions-Exponent m (>1 ist die Bänke-bauende Instabilität)
+    public var braidCapacity: Double = 3.0e-5 // Kb: Kapazität je Jahr (kalibriert via testBraidingBuildsBars)
+    public var braidBarHeight: Double = 0.006 // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln
+    public var braidDispersion: Double = 1.3 // dispersiver MFD-Exponent auf FLACHEN großen subaerischen Läufen (Quinn 1995: Exponent abfluss-abhängig, Terrain.mfdLocalExponent): Hänge konvergieren mit mfdExponent=4 (Look), Braid-Plains spreizen mit ~1.3 → Fäden können sich um Bänke teilen
 
     // ---- Droplet-Hydraulik-Erosion (carvt feines dendritisches Detail) ----
     public var hydraulicEnabled = true      // Droplet-Erosion statt Grid-Stream-Power+Diffusion
@@ -28,6 +53,20 @@ public struct SimConfig: Sendable {
     public var outletIncision = true        // Flächen-Stream-Power auf dem Entwässerungsnetz: carvt Täler/Auslässe → Becken entwässern zum Meer, dendritische Rinnen + diskrete Seen (nickmcd-Look) statt einer blassen Flach-Ebene
     public var outletErode: Double = 3.0e-5 // Rate der Auslass-Inzision. 3e-5 gibt feine dendritische Rinnen „über die ganze Oberfläche" ohne Überkämmen (6e-5 überkarvt bei 100k)
     public var hillDiffusion: Double = 0.012 // Hangdiffusion-Basis (Bodenkriechen, D·∇²z) im Droplet-Pfad, RÄUMLICH VARIABEL (hillslopeDiffusion): rundet soil-mantled/sanfte Hänge, lässt hohen steilen Kahlfels scharf → gerundete Landschaft mit einzelnen spitzen Gipfeln (die Ausnahme). Der fehlende Alterungs-Prozess laut LEM-Recherche (docs/research-terrain-aging.md). Auf n=640 kalibriert (auflösungs-skaliert in step()).
+    // ---- Auen/Schwemmebenen (Überflutungs-Aggradation) ----
+    // Flüsse lagern seitlich Sediment ab und bauen flache Auenböden — die breiten
+    // Niedrig-Gradient-Reaches, in denen sie mäandern/verflechten können. Ohne sie
+    // sind die Talböden zu schmal (V-Täler) für sichtbare Fluss-Dynamik. Füllt nur
+    // tal-nahe Zellen bis knapp über Bett-Niveau → steile Talwände bleiben unberührt
+    // (die Berge werden NICHT zugeschüttet). Physisch = Overbank-Deposition.
+    public var floodplainEnabled = false // AUS: die per-Zell-Aggradation fügt feine Krusten hinzu (gemessen 2.7× Zerklüftung bei 3000 J.) für unbestätigten Auen-Nutzen → zurückgenommen. Ein glatterer Auen-Ansatz (z. B. diffundierte Deposition oder Tiefland-Generierung) ist offen. Code bleibt als Referenz.
+    public var floodplainMinArea: Double = 500  // ab so viel Einzugsgebiet (Zellen): NUR Hauptflüsse bauen Auen. Niedrig (60) → jedes Rinnsal baut Levees → Krusten-Rauschen (verworfen). Bergbäche haben real keine Aue.
+    public var floodplainMaxElev: Double = 0.50 // NUR Tiefland-Reaches (Kanalbett unter dieser Höhe) bauen Auen — Schwemmebenen sind Tiefland-Features, nicht am Berg.
+    public var floodplainDepth: Double = 0.016  // Bett+Auenhöhe (bankfull): bis hierher wird tal-nah aufgefüllt (kleine Flüsse)
+    public var floodplainDepthK: Double = 0.020 // zusätzliche Auenhöhe ∝ log(Abfluss) → große Flüsse breitere/höhere Auen
+    public var floodplainWidthK: Double = 1.8   // Auen-Halbbreite (Zellen) ∝ floodplainWidthK·log(Abfluss)
+    public var floodplainFillYears: Double = 2500 // Zeitkonstante der Auen-Aggradation
+
     public var basinFill = false            // AUS seit die Hebung niedrig ist (0.0015): Auslass-Inzision + wenig Hebung halten den See-Anteil schon von allein bei ~15% als DISKRETE blaue Seen. basinFill würde sie zu ~1% überfüllen → blasse, trockene Flach-Ebenen (die das Stream-Overlay weiß übermalt). Nur bei hoher Hebung nötig.
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()
@@ -54,11 +93,12 @@ public struct SimConfig: Sendable {
     public var vegTimeConstant: Double = 250 // Jahre
 
     // ---- Mäander-Migration (Lagrange-Zentrumslinien) ----
-    public var meanderEnabled: Bool = false      // Mäander vorerst aus: mit der Droplet-Erosion noch nicht versöhnt (läuft sonst instabil). Grid-Erosion + Mäander bleibt testbar.
-    public var meanderMigration: Double = 5.0e-5 // kMig: laterale Rate ∝ Krümmung×Abfluss (sättigt Sinuosität ~2.3, bildet Altarme)
+    public var meanderEnabled: Bool = true       // AN: auf dem sanfteren Terrain (baseRelief 0.78) + mit gedeckelter Migration stabil. Läufe wandern, schnüren Altarme ab — der eigentliche Fluss-Dynamik-Wunsch.
+    public var meanderMigration: Double = 8.0e-6 // kMig (Produktion, n=640/kein Uplift): laterale Rate ∝ Krümmung×Abfluss. Von 5e-5 gesenkt — bei den großen Produktions-Einzugsgebieten tangelte 5e-5 die Läufe (Sinu-Max 7..26). 8e-6 → hübsche Mäander (Mittel ~2). Die Mäander-Kern-Tests pinnen ihren alten Wert in meanderCfg().
+    public var meanderMaxSinuosity: Double = 3.0 // Sinuositäts-Deckel: darüber migriert ein Lauf nicht weiter (Glättung/Cutoff holen ihn zurück) → keine Knäuel-Läufe, Max bleibt beschränkt.
     public var meanderMinCells: Double = 85       // ab so viel Einzugsgebiet gilt "Hauptfluss"
     public var meanderNodeSpacing: Double = 1.5   // Ziel-Knotenabstand (Zellen)
-    public var meanderNeckDist: Double = 1.2      // Halsbreite für Cutoff (Zellen)
+    public var meanderNeckDist: Double = 2.0      // Halsbreite für Cutoff (Zellen). Von 1.2 erhöht: Schlingen schnüren früher ab → Sinuosität wird niedriger gedeckelt (weniger Knäuel). Kern-Tests pinnen 1.2 in meanderCfg().
     public var meanderSmooth: Double = 0.12       // milde Laplace-Glättung je Schritt
     public var meanderFlatSlope: Double = 0.02    // nur unter dieser Steigung mobil (Flachland)
     public var meanderSkew: Double = 0.5          // Downstream-Skew: Anteil upstream-gewichteter Krümmung (0=symmetrisch)

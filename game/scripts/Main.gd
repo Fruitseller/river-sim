@@ -4,7 +4,7 @@ extends Node3D
 ## (Swift/SimCore, headless getestet). Dieses Skript macht nur Rendering, Kamera,
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
-const HSCALE := 30.0          # Höhen-Skalierung fürs Mesh
+const HSCALE := 24.0          # Höhen-Skalierung fürs Mesh (von 30 gesenkt: weniger vertikale Überhöhung → sanfterer Look, ergänzt das gesenkte baseRelief)
 
 var sim: Object
 var N: int
@@ -65,6 +65,8 @@ func _ready() -> void:
 	if OS.has_environment("RS_SEED"): # für Screenshot-Vergleiche verschiedener Terrains
 		sim_seed = int(OS.get_environment("RS_SEED"))
 		sim.generate(sim_seed)
+	if OS.has_environment("RS_DIST"): # Kamera-Distanz für Zoom-Screenshots
+		cam_dist = float(OS.get_environment("RS_DIST"))
 	N = sim.gridSize()
 	world_size = sim.worldSize()
 	sea = sim.seaLevel()
@@ -310,7 +312,9 @@ func _process(delta: float) -> void:
 			pending_years = 0.0
 			sim.step(years)
 			_pull_fields()
-			_update_terrain_textures()
+			# Zeitraffer: Wasserfeld weich blenden → kein Springen zwischen den
+			# diskreten D8-Netzen (die ~27% je Update umwürfeln).
+			_update_terrain_textures(0.35)
 			_update_year()
 
 	if sculpting:
@@ -358,7 +362,7 @@ func _cells_upstream(k: int) -> float:
 
 ## Lädt Höhen (R32F) und Farben (RGBA8) als Texturen hoch — GPU macht Displacement
 ## und Färbung. Pro Tick nur ein Upload statt kompletter Mesh-Rebuild.
-func _update_terrain_textures() -> void:
+func _update_terrain_textures(water_blend: float = 1.0) -> void:
 	var hbytes := h_cache.to_byte_array() # PackedFloat32Array → rohe float32-Bytes
 	if height_img == null:
 		height_img = Image.create_from_data(N, N, false, Image.FORMAT_RF, hbytes)
@@ -378,7 +382,8 @@ func _update_terrain_textures() -> void:
 		color_tex.update(color_img)
 
 	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
-	var wbytes: PackedByteArray = sim.waterFieldBytes()
+	# water_blend < 1 → zeitliche EWMA-Glättung (Läufe blenden statt zu springen).
+	var wbytes: PackedByteArray = sim.waterFieldBytes(water_blend)
 	if water_img == null:
 		water_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, wbytes)
 		water_tex = ImageTexture.create_from_image(water_img)

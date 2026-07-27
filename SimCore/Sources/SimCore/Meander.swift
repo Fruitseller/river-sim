@@ -77,7 +77,12 @@ public final class MeanderState {
         for age in oxbowAge.indices { oxbowAge[age] += dt }
         for ci in channels.indices {
             var ch = channels[ci]
-            lateralStep(&ch, dt: dt, config: config, heightAt: heightAt)
+            // Sinuositäts-Deckel: über der Schwelle migriert der Lauf NICHT weiter
+            // (sonst tangeln einzelne Läufe zu Knäueln, Sinu → 7..26). Glättung und
+            // Cutoff laufen weiter und holen ihn wieder unter die Schwelle → gedeckelt.
+            if ch.sinuosity <= config.meanderMaxSinuosity {
+                lateralStep(&ch, dt: dt, config: config, heightAt: heightAt)
+            }
             smooth(&ch.nodes, factor: config.meanderSmooth)
             applyCutoffs(&ch, config: config)
             ch = resample(ch, spacing: spacing) // Splice-Knick der Cutoffs glätten

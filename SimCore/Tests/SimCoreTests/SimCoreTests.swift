@@ -17,6 +17,11 @@ final class SimCoreTests: XCTestCase {
         var c = makeConfig(n: n)
         c.hydraulicEnabled = false
         c.meanderEnabled = true
+        // Die Mäander-Kern-Tests wurden gegen diese Werte kalibriert; Produktion nutzt
+        // inzwischen andere (kleinere Migration/größerer Cutoff-Hals für n=640). Hier
+        // pinnen, damit Test- und Produktions-Kalibrierung entkoppelt bleiben.
+        c.meanderMigration = 5.0e-5
+        c.meanderNeckDist = 1.2
         // Mäander-Logik gegen aktive Tektonik testen (Produktion hat upliftPer100y=0,
         // reine Erosion — die Mäander-Dynamik/Altarm-Alterung braucht aber Relief-
         // Nachschub). Mäander ist in Produktion ohnehin deaktiviert; hier isoliert.
