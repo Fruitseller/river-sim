@@ -33,6 +33,19 @@ public final class Terrain {
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     private var isChannel: [Bool] // Zellen unter einer Mäander-Zentrumslinie (M3-Maske)
+    /// nickmcd-Stream-Map: zeitgemittelte Tropfen-Pfade. Wo Wasser WIRKLICH
+    /// fließt — scharfe Fäden statt dispergierter Abflussfläche. Koppelt zurück
+    /// in die Droplets (weniger Verdunstung auf etablierten Läufen → River
+    /// Sharpening) und ist die Render-Maske für Flüsse. Werte 0..1.
+    ///
+    /// WICHTIG für dt-Invarianz: gemittelt wird die lineare Besuchs-RATE
+    /// (`streamRate`, Besuche/Jahr — Erwartungswert unabhängig von der
+    /// Schrittweite); die Sättigung auf 0..1 passiert erst NACH der Mittelung.
+    /// Sättigung vor der Mittelung machte die Map dt-abhängig (ein Einzelbesuch
+    /// saturierte bei kleinen Schritten sofort → Zufallspfade so hell wie Flüsse).
+    public private(set) var streamMap: [Double]
+    private var streamRate: [Double] // EWMA der Besuche/Jahr
+    private var trackBuf: [Double]   // je Schritt: Tropfen-Besuchszahl je Zelle
     private var noise: SimplexNoise
 
     /// Wandernde Fluss-Zentrumslinien (Mäander-Migration). In M2 noch entkoppelt
@@ -65,6 +78,9 @@ public final class Terrain {
         scratch = .init(repeating: 0, count: c)
         qs = .init(repeating: 0, count: c)
         isChannel = .init(repeating: false, count: c)
+        streamMap = .init(repeating: 0, count: c)
+        streamRate = .init(repeating: 0, count: c)
+        trackBuf = .init(repeating: 0, count: c)
         heap = MinHeap(capacity: c)
         noise = SimplexNoise(seed: seed)
         generate(seed: seed)
@@ -159,9 +175,107 @@ public final class Terrain {
         }
         initLayers()
         computeFlow()
+        if cfg.breachEnabled { breachBasins() }
+        spinUpStreamMap()
+        // Die Spin-up-Tropfen lagern Sediment ab und können frisch entwässerte
+        // Becken wieder andämmen → einmal nachbreachen (billig, fast alles offen).
+        if cfg.breachEnabled { breachBasins() }
         // Vegetation im eingeschwungenen Zustand starten.
         updateVegetation(years: 10000)
         seedMeander()
+    }
+
+    /// Initialisiert die Stream-Map bei der Generierung (sonst wären am Anfang
+    /// keine Flüsse sichtbar, bis genug Sim-Schritte Tracks akkumuliert haben):
+    /// ein paar Tropfen-Chargen laufen das frische Terrain hinab und hinterlassen
+    /// die ersten zeitgemittelten Pfade.
+    private func spinUpStreamMap() {
+        for k in 0..<cfg.count { streamRate[k] = 0; streamMap[k] = 0 }
+        guard cfg.hydraulicEnabled else { return }
+        let density = Double(n * n) / (640.0 * 640.0)
+        for round in 0..<4 {
+            for k in 0..<cfg.count { trackBuf[k] = 0 }
+            let drops = max(200, Int(2000 * density))
+            // Diese Charge entspricht so vielen Jahren Tropfen-Budget:
+            let dtEq = Double(drops) / max(1e-9, cfg.hydraulicPerYear * density)
+            Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
+                            seed: seed &+ UInt32(0x9e37 + round), floor: cfg.floor,
+                            p: cfg.hydraulic, hf: hf, receiver: receiver,
+                            stream: streamMap, track: &trackBuf)
+            for k in 0..<cfg.count {
+                streamRate[k] = 0.5 * streamRate[k] + 0.5 * (trackBuf[k] / dtEq)
+            }
+            deriveStreamMap()
+        }
+        computeFlow() // die Spin-up-Tropfen haben h leicht verändert
+    }
+
+    /// Spin-up der Becken-Entwässerung (nickmcd-Verhalten: Seen entwässern zum
+    /// Meer statt vollzulaufen). Lässt die Auslass-Inzision die Sillen der
+    /// geschlossenen Becken durchschneiden, BEVOR die Landschaft sichtbar wird —
+    /// physisch antezedente Täler. Nutzt bewusst denselben getesteten
+    /// `outletIncision`-Pass wie der Sim-Loop; MFD wird im Spin-up übersprungen
+    /// (nur fürs Rendering nötig) und am Ende einmal frisch berechnet.
+    private func breachBasins() {
+        for _ in 0..<cfg.breachMaxRounds {
+            let s = lakeStats()
+            let land = Double(landCellCount())
+            // Fertig, wenn der See-Anteil klein ist UND kein einzelner See mehr
+            // dominiert (diskrete nickmcd-Seen statt Zentralbecken).
+            if s.fraction < cfg.breachTargetLakeFrac && Double(s.largest) < 0.025 * land { break }
+            outletIncision(dt: cfg.breachDT, minAreaCells: 100)
+            priorityFlood()
+            computeReceiversAndArea()
+        }
+        computeFlow()
+    }
+
+    /// pow() ist im 3.3M-Aufrufe-Hot-Loop von computeFlow teuer; die MFD-
+    /// Exponenten sind aber Ganzzahlen (4 dendritisch, 2 dispersiv) →
+    /// Multiplikations-Schnellpfad, generischer pow nur als Fallback.
+    @inline(__always) private func powFast(_ s: Double, _ p: Double) -> Double {
+        if p == 4.0 { let s2 = s * s; return s2 * s2 }
+        if p == 2.0 { return s * s }
+        return pow(s, p)
+    }
+
+    /// Leitet die 0..1-Stream-Map aus der geglätteten Besuchs-Rate ab.
+    /// Rationale Sättigung rate/(rate+r0) statt 1−exp(−rate/r0): gleiche Form
+    /// (0.5 bei r0, →1 darüber), aber ohne 409k exp()-Aufrufe je Schritt.
+    private func deriveStreamMap() {
+        let r0 = cfg.streamRefRate
+        for k in 0..<cfg.count {
+            streamMap[k] = streamRate[k] / (streamRate[k] + r0)
+        }
+    }
+
+    /// See-Diagnostik: Anteil der Landzellen mit stehendem Wasser (hf−h > `depth`)
+    /// und größte zusammenhängende Seefläche (4er-Nachbarschaft, in Zellen).
+    /// depth 0.01 = jedes Ponding; 0.03 = nur Seen, die der Renderer auch zeigt.
+    public func lakeStats(depth: Double = 0.01) -> (fraction: Double, largest: Int) {
+        var wet = 0, land = 0
+        var isLake = [Bool](repeating: false, count: cfg.count)
+        for k in 0..<cfg.count where hf[k] > cfg.sea {
+            land += 1
+            if hf[k] - h[k] > depth { wet += 1; isLake[k] = true }
+        }
+        var seen = [Bool](repeating: false, count: cfg.count)
+        var largest = 0
+        var stack = [Int]()
+        for start in 0..<cfg.count where isLake[start] && !seen[start] {
+            stack.removeAll(keepingCapacity: true); stack.append(start); seen[start] = true
+            var size = 0
+            while let k = stack.popLast() {
+                size += 1
+                let i = k % n, j = k / n
+                if i > 0 && isLake[k-1] && !seen[k-1] { seen[k-1] = true; stack.append(k-1) }
+                if i < n-1 && isLake[k+1] && !seen[k+1] { seen[k+1] = true; stack.append(k+1) }
+                if j > 0 && isLake[k-n] && !seen[k-n] { seen[k-n] = true; stack.append(k-n) }
+                if j < n-1 && isLake[k+n] && !seen[k+n] { seen[k+n] = true; stack.append(k+n) }
+            }
+            largest = max(largest, size)
+        }
+        return (land == 0 ? 0 : Double(wet) / Double(land), largest)
     }
 
     private func initLayers() {
@@ -319,11 +433,13 @@ public final class Terrain {
     /// behalten die Konvergenz (mfdExponent, dendritischer Look), geflutete
     /// Becken-Böden ebenso (Dispersion dort = Sheet-Flow-Konfetti im Render).
     @inline(__always) func mfdLocalExponent(_ k: Int, sMax: Double) -> Double {
-        let minA = cfg.braidMinCells * cfg.cellSize * cfg.cellSize
-        let flatCell = cfg.meanderFlatSlope * cfg.cellSize // Weltslope in Zell-Einheiten
-        return (areaMFD[k] >= minA && sMax < flatCell && hf[k] - h[k] < 0.005)
+        // Hot-Loop (409k Aufrufe je computeFlow): Schwellen einmal je Terrain
+        // cachen statt je Zelle zu multiplizieren.
+        return (areaMFD[k] >= mfdMinA && sMax < mfdFlatCell && hf[k] - h[k] < 0.005)
              ? cfg.braidDispersion : cfg.mfdExponent
     }
+    private lazy var mfdMinA = cfg.braidMinCells * cfg.cellSize * cfg.cellSize
+    private lazy var mfdFlatCell = cfg.meanderFlatSlope * cfg.cellSize // Weltslope in Zell-Einheiten
 
     private func computeMFDArea() {
         let cellArea = cfg.cellSize * cfg.cellSize
@@ -354,7 +470,7 @@ public final class Terrain {
             // Helfer ist gültig.
             let p = mfdLocalExponent(k, sMax: sMax)
             var wsum = 0.0
-            for t in 0..<cnt { nbW[t] = pow(nbW[t], p); wsum += nbW[t] }
+            for t in 0..<cnt { nbW[t] = powFast(nbW[t], p); wsum += nbW[t] }
             if cnt == 0 || wsum <= 0 {
                 // flache Seespiegel-Zelle (kein tieferer Nachbar) → wie D8 über den
                 // Priority-Flood-Überlauf (floodParent) weiterreichen, damit die
@@ -440,7 +556,7 @@ public final class Terrain {
             }
             let p = mfdLocalExponent(k, sMax: sMax)
             var wsum = 0.0
-            for t in 0..<cnt { nbW[t] = pow(nbS[t], p); wsum += nbW[t] }
+            for t in 0..<cnt { nbW[t] = powFast(nbS[t], p); wsum += nbW[t] }
             if cnt == 0 || wsum <= 0 {
                 // Seespiegel-Fläche: Fracht sedimentiert im See (bis Spiegel), Rest
                 // wandert über den Überlauf weiter.
@@ -617,29 +733,47 @@ public final class Terrain {
     /// Zellen senkt die Sill; der nächste computeFlow senkt den Seespiegel (hf) nach —
     /// self-reinforcing, bis das Becken entwässert ist (dann kein Ponding → Stopp).
     /// So entstehen dendritische Grau-Täler statt Kuppeln/Ebenen (nickmcd-Look).
-    private func outletIncision(dt: Double) {
+    /// `minAreaCells > 0` beschränkt die Inzision aufs Trunk-Netz (Einzugsgebiet
+    /// ≥ so viele Zellen) — für den Generierungs-Breach: Becken-Sillen/Talwege
+    /// haben riesige Einzugsgebiete und werden durchschnitten, Hänge und Grate
+    /// bleiben unberührt (junges Relief bleibt erhalten).
+    private func outletIncision(dt: Double, minAreaCells: Double = 0) {
         let cs = cfg.cellSize
         let sqrt2 = 2.0.squareRoot()
+        let minA = minAreaCells * cs * cs
         let m = cfg.mExp
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
         for oi in 0..<cfg.count {
             let k = Int(order[oi])
             let r = receiver[k]
-            if r < 0 { continue }
             if h[k] <= cfg.sea { continue }         // Meer nicht einschneiden
-            let ri = Int(r)
-            if h[k] <= h[ri] { continue }           // See/Ebene: kein Gefälle → keine Inzision
-            let i = k % n, j = k / n
-            let rii = ri % n, rjj = ri / n
-            let dist = (i != rii && j != rjj) ? cs * sqrt2 : cs
+            if area[k] < minA { continue }          // Breach: nur das Trunk-Netz
+            let hr: Double
+            let dist: Double
+            if r < 0 {
+                // Land-Zelle ohne Empfänger = Weltrand (Priority-Flood-Seed):
+                // Wasser verlässt hier die Welt → virtuelles Basisniveau MEER.
+                // Ohne das wirkt der Rand als unerodierbarer Pegel und Becken,
+                // die über den Rand entwässern, können nie tiefer ausschneiden
+                // (gemessen: See blieb 28 Breach-Runden bei exakt 2656 Zellen).
+                hr = cfg.sea
+                dist = cs
+            } else {
+                let ri = Int(r)
+                if h[k] <= h[ri] { continue }       // See/Ebene: kein Gefälle → keine Inzision
+                let i = k % n, j = k / n
+                let rii = ri % n, rjj = ri / n
+                hr = h[ri]
+                dist = (i != rii && j != rjj) ? cs * sqrt2 : cs
+            }
             // Reine Flächen-Stream-Power: die Inzision konzentriert sich auf Zellen mit
             // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
             // statt verrauscht. Ein Becken-Auslass sammelt das ganze Becken → tieft zügig
             // ein → See entwässert zum Meer.
             let kErode = cfg.outletErode * (1 - 0.6 * veg[k]) // Vegetation bremst
             let f = kErode * dt * pow(area[k], m) / dist
-            let hNew = (h[k] + f * h[ri]) / (1 + f)
+            let hNew = (h[k] + f * hr) / (1 + f)
             var delta = h[k] - hNew                 // > 0
             if delta <= 0 { continue }
             let ds = min(delta, sed[k])             // erst Sediment, dann Fels
@@ -1082,8 +1216,19 @@ public final class Terrain {
             let density = Double(n * n) / (640.0 * 640.0)
             let drops = max(1, Int(dt * cfg.hydraulicPerYear * density))
             let dropSeed = seed &+ stepCount &* 2_654_435_761
+            for k in 0..<cfg.count { trackBuf[k] = 0 }
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
-                            seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic)
+                            seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic,
+                            hf: hf, receiver: receiver,
+                            stream: streamMap, track: &trackBuf)
+            // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
+            // Zeitkonstante ~1200 Jahre), dann sättigen: nur KONSISTENT befahrene
+            // Zellen hellen auf, einzelne Zufallspfade verblassen.
+            let lam = 1 - exp(-dt / 3000.0)
+            for k in 0..<cfg.count {
+                streamRate[k] = (1 - lam) * streamRate[k] + lam * (trackBuf[k] / dt)
+            }
+            deriveStreamMap()
             // 2b) Auen-Aggradation: Flüsse schütten seitlich flache Schwemmböden auf
             //     (bankfull) → breite Niedrig-Gradient-Reaches für Mäander/Braiding.
             //     Nach dem Carve (Bett steht), vor der Diffusion (glättet die Aue).

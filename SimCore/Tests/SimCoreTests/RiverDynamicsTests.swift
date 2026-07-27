@@ -255,6 +255,92 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertGreaterThan(tOn.landRelief(), 0.30, "Terrain eingeebnet unter Braiding")
     }
 
+    /// WÄCHTER Becken-Entwässerung (nickmcd-Verhalten): die Generierung liefert
+    /// Terrain, dessen Becken zum Meer entwässert sind — kleiner See-Anteil,
+    /// kein Zentralbecken-Mega-See — und das unter Simulation entwässert BLEIBT.
+    func testBasinsDrainToSea() {
+        for seed: UInt32 in [1337, 42, 2024] {
+            var c = SimConfig(); c.n = 256
+            let t = Terrain(config: c, seed: seed)
+            let s0 = t.lakeStats()
+            var cOff = c; cOff.breachEnabled = false
+            let tOff = Terrain(config: cOff, seed: seed)
+            let sOff = tOff.lakeStats()
+            var minDeepLargest = Int.max
+            while t.years < 10_000 - 1e-6 {
+                t.step(dtYears: 1000)
+                minDeepLargest = min(minDeepLargest, t.lakeStats(depth: 0.03).largest)
+                if ProcessInfo.processInfo.environment["RS_BREACH_DEBUG"] != nil {
+                    let s = t.lakeStats()
+                    let sd = t.lakeStats(depth: 0.03)
+                    print(String(format: "[sim] seed %u J%.0f: frac=%.3f largest=%d | tief(>0.03): frac=%.3f largest=%d",
+                                 seed, t.years, s.fraction, s.largest, sd.fraction, sd.largest))
+                }
+            }
+            let s1 = t.lakeStats()
+            let land = t.landCellCount()
+            print(String(format: "[BREACH] seed %u: ohne %.1f%%/%d → t0 %.1f%%/%d → 10k %.1f%%/%d (Land %d)",
+                         seed, sOff.fraction*100, sOff.largest,
+                         s0.fraction*100, s0.largest, s1.fraction*100, s1.largest, land))
+            // Frisch generiert: entwässert (gemessen 4–5%, ohne Breach 15–30%).
+            XCTAssertLessThan(s0.fraction, 0.08, "Becken nicht entwässert (seed \(seed))")
+            XCTAssertLessThan(Double(s0.largest), 0.03 * Double(land),
+                              "Zentralbecken-See überlebt die Generierung (seed \(seed))")
+            // …und BLEIBT unter Simulation im Griff: Seen dürfen sich füllen UND
+            // leeren (gewolltes nickmcd-Verhalten — der tiefe See oszilliert) —
+            // aber es darf kein PERMANENTER tiefer Mega-See entstehen. Deshalb
+            // wird das MINIMUM über den Lauf geprüft: es beweist, dass jeder
+            // große See zwischendurch wieder entwässert.
+            XCTAssertLessThan(s1.fraction, 0.14, "Becken laufen wieder voll (seed \(seed))")
+            XCTAssertLessThan(Double(minDeepLargest), 0.025 * Double(land),
+                              "Tiefer See entwässert nie mehr (seed \(seed), min=\(minDeepLargest))")
+        }
+    }
+
+    /// WÄCHTER Stream-Map (nickmcd): das GERENDERTE Flussnetz (Track-Maske ∩
+    /// Abfluss ≥ creek — genau die Schnittmenge, die waterFieldBytes malt)
+    /// (a) deckt nach der Generierung die großen Läufe ab (Recall: die Flüsse
+    /// SIND getrackt, keine Lücken) und (b) PERSISTIERT über die Zeit
+    /// (etablierte Läufe bleiben — Sharpening), statt jeden Schritt zu springen.
+    func testStreamMapMarksAndPersists() {
+        var c = SimConfig(); c.n = 256
+        let t = Terrain(config: c, seed: 1337)
+        func renderedSet() -> (set: Set<Int>, recall: Double) {
+            let chan = channelSet(t, area: t.areaMFD, creek: 120)
+            var s = Set<Int>()
+            for k in chan where t.streamMap[k] > 0.2 { s.insert(k) }
+            return (s, chan.isEmpty ? 0 : Double(s.count) / Double(chan.count))
+        }
+        func strongSmap() -> Set<Int> {
+            var s = Set<Int>()
+            for k in 0..<t.cfg.count where t.streamMap[k] > 0.2 && t.hf[k] > t.cfg.sea { s.insert(k) }
+            return s
+        }
+        let r0 = renderedSet()
+        let sm0 = strongSmap()
+        XCTAssertGreaterThan(r0.set.count, 200, "gerendertes Flussnetz nach Spin-up leer")
+        // KURZE Frist (+200 J.): die STREAM-MAP springt nicht (EWMA-Gedächtnis).
+        // (Der areaMFD-Anteil des Renders flackert roh weiter — das glättet die
+        // Render-EWMA in SimNode; hier wird die SimCore-Seite gesichert.)
+        t.step(dtYears: 100); t.step(dtYears: 100)
+        let jacShort = jaccard(sm0, strongSmap())
+        // LANGE Frist (+2000 J.): Flüsse WANDERN (gewollte Dynamik), aber das
+        // Netz bleibt verwandt statt komplett neu gewürfelt.
+        t.step(dtYears: 1000); t.step(dtYears: 1000)
+        let r1 = renderedSet()
+        let jacLong = jaccard(r0.set, r1.set)
+        print(String(format: "[SMAP] gerendert=%d Recall=%.2f→%.2f Jaccard +200J=%.2f +2kJ=%.2f",
+                     r0.set.count, r0.recall, r1.recall, jacShort, jacLong))
+        XCTAssertGreaterThan(r0.recall, 0.4,
+                             "große Läufe sind nicht getrackt (Flüsse hätten Render-Lücken)")
+        XCTAssertGreaterThan(r1.recall, 0.4,
+                             "Tracking der großen Läufe zerfällt unter Simulation")
+        XCTAssertGreaterThan(jacShort, 0.7,
+                             "gerendertes Flussnetz SPRINGT auf kurzer Frist")
+        XCTAssertGreaterThan(jacLong, 0.25,
+                             "Flussnetz nach 2k Jahren ohne jede Verwandtschaft (reines Würfeln)")
+    }
+
     /// STRUKTURELL: MFD lässt Zellen mit mehreren tieferen Nachbarn zu (Abfluss
     /// spaltet sich) — die Voraussetzung für Aufspalten+Wiedervereinen, die D8
     /// (genau ein Empfänger) prinzipiell fehlt. Muss > 0 sein.

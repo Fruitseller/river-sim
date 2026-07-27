@@ -43,12 +43,13 @@ public struct SimConfig: Sendable {
     public var braidingEnabled: Bool = true
     public var braidMinCells: Double = 120   // Reach-Gate: nur substanzielle Läufe (= creek-Render-Schwelle in SimNode)
     public var braidExponent: Double = 2.5   // Partitions-Exponent m (>1 ist die Bänke-bauende Instabilität)
-    public var braidCapacity: Double = 3.0e-5 // Kb: Kapazität je Jahr (kalibriert via testBraidingBuildsBars)
+    public var braidCapacity: Double = 1.0e-5 // Kb: Kapazität je Jahr (kalibriert via testBraidingBuildsBars)
     public var braidBarHeight: Double = 0.006 // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln
-    public var braidDispersion: Double = 1.3 // dispersiver MFD-Exponent auf FLACHEN großen subaerischen Läufen (Quinn 1995: Exponent abfluss-abhängig, Terrain.mfdLocalExponent): Hänge konvergieren mit mfdExponent=4 (Look), Braid-Plains spreizen mit ~1.3 → Fäden können sich um Bänke teilen
+    public var braidDispersion: Double = 2.0 // dispersiver MFD-Exponent auf FLACHEN großen subaerischen Läufen (Quinn 1995: Exponent abfluss-abhängig, Terrain.mfdLocalExponent): Hänge konvergieren mit mfdExponent=4 (Look), Braid-Plains spreizen mit 2.0 → Fäden können sich um Bänke teilen, ohne als Sheet-Flow zu zerlaufen (1.3 zerlief)
 
     // ---- Droplet-Hydraulik-Erosion (carvt feines dendritisches Detail) ----
     public var hydraulicEnabled = true      // Droplet-Erosion statt Grid-Stream-Power+Diffusion
+    public var streamRefRate: Double = 0.0025 // Stream-Map-Sättigung (nickmcd): ab dieser reife-gewichteten Tropfen-Besuchsrate (Besuche/Jahr, EWMA) gilt ein Lauf als etabliert (Map ≈ 0.63 bei r0, →1 darüber). Trunk-Raten gemessen ~0.003–0.007/J., Zufallspfade ≪0.001 (reife-gewichtet).
     public var hydraulicPerYear = 2.0       // Tropfen je Jahr (sanft → Makro-Grate überleben)
     public var outletIncision = true        // Flächen-Stream-Power auf dem Entwässerungsnetz: carvt Täler/Auslässe → Becken entwässern zum Meer, dendritische Rinnen + diskrete Seen (nickmcd-Look) statt einer blassen Flach-Ebene
     public var outletErode: Double = 3.0e-5 // Rate der Auslass-Inzision. 3e-5 gibt feine dendritische Rinnen „über die ganze Oberfläche" ohne Überkämmen (6e-5 überkarvt bei 100k)
@@ -67,6 +68,18 @@ public struct SimConfig: Sendable {
     public var floodplainWidthK: Double = 1.8   // Auen-Halbbreite (Zellen) ∝ floodplainWidthK·log(Abfluss)
     public var floodplainFillYears: Double = 2500 // Zeitkonstante der Auen-Aggradation
 
+    // ---- Becken-Entwässerung bei der Generierung (antezedente Täler) ----
+    // Die Makro-Generierung erzeugt Insel-Formen mit geschlossenen Becken, die
+    // vollaufen (ein Zentralsee verdeckt genau die flachen Auen, in denen Mäander/
+    // Braiding sichtbar wären). Vorbild nickmcd: diskrete Seen auf verschiedenen
+    // Ebenen, die ineinander und ZUM MEER entwässern. Der Spin-up lässt die
+    // Auslass-Inzision (dasselbe getestete outletIncision wie im Sim-Loop) die
+    // Becken-Sillen VOR Spielbeginn durchschneiden — physisch: antezedente Täler,
+    // die Entwässerung ist älter als die sichtbare Landschaft.
+    public var breachEnabled = true
+    public var breachMaxRounds = 30          // Spin-up-Deckel (Runden à breachDT)
+    public var breachDT: Double = 6000       // Jahre Auslass-Inzision je Runde
+    public var breachTargetLakeFrac = 0.05   // Ziel: See-Anteil am Land < 5% → Stopp
     public var basinFill = false            // AUS seit die Hebung niedrig ist (0.0015): Auslass-Inzision + wenig Hebung halten den See-Anteil schon von allein bei ~15% als DISKRETE blaue Seen. basinFill würde sie zu ~1% überfüllen → blasse, trockene Flach-Ebenen (die das Stream-Overlay weiß übermalt). Nur bei hoher Hebung nötig.
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()

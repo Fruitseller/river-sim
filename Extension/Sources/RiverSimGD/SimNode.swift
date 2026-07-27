@@ -158,12 +158,19 @@ final class SimNode: Node {
         // KRÄFTIGE Flüsse weiter verbreitern → Breiten-Hierarchie. Sequenziell,
         // cache-freundlich (kein Scheiben-Stempeln mit verstreuten Zugriffen).
         var sd = [Double](repeating: 0, count: n * n)
-        // Nicht unter substanziellen Seen (Tiefe > 0.03 = See-Render-Schwelle)
-        // malen: die floodParent-Ketten routen areaMFD über den Seeboden und
-        // sprenkeln sonst Stream-Punkte auf die glatte Seefläche.
-        for k in 0..<(n * n) where hf[k] > sea && h[k] > sea && hf[k] - h[k] <= 0.03 {
+        // nickmcd-Rendering: gemalt wird die STREAM-MAP (zeitgemittelte Tropfen-
+        // Pfade = wo Wasser wirklich fließt, scharfe Fäden), die Intensität/
+        // Breiten-Hierarchie kommt weiter aus dem Abfluss (areaMFD). Die reine
+        // Abflussfläche als Maske malte dispergierten Sheet-Flow auf frisch
+        // entwässerte Ebenen als flächigen Wash. Nicht unter substanziellen Seen
+        // (Tiefe > 0.03) malen: dort deckt die Seefläche.
+        let smap = terrain.streamMap
+        for k in 0..<(n * n) where hf[k] > sea && h[k] > sea && hf[k] - h[k] <= 0.01 {
             let cu = area[k] / cellArea
-            if cu >= creek { sd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) }
+            if cu < creek { continue }
+            let m = min(max((smap[k] - 0.12) / 0.23, 0), 1) // Track-Maske 0.12..0.35 (einmalige Zufallspfade bleiben drunter, konsistente Läufe drüber)
+            if m <= 0 { continue }
+            sd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) * (0.35 + 0.65 * m)
         }
         // WASSERSPIEGEL-BEWUSST dilatieren: Wasser verbreitert sich nur auf Zellen,
         // die nicht nennenswert über dem WASSERSPIEGEL (hf) des Nachbarlaufs liegen
