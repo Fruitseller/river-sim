@@ -32,7 +32,9 @@ public final class Terrain {
     private var visited: [Bool]
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
-    private var isChannel: [Bool] // Zellen unter einer Mäander-Zentrumslinie (M3-Maske)
+    /// Zellen unter einer Mäander-Zentrumslinie (M3-Maske). Reconciliation-Maske für
+    /// BEIDE Erosionspfade: `transportLimited` (Grid) und `Hydraulic.erode` (Droplet).
+    private(set) var isChannel: [Bool]
     /// nickmcd-Stream-Map: zeitgemittelte Tropfen-Pfade. Wo Wasser WIRKLICH
     /// fließt — scharfe Fäden statt dispergierter Abflussfläche. Koppelt zurück
     /// in die Droplets (weniger Verdunstung auf etablierten Läufen → River
@@ -1250,10 +1252,14 @@ public final class Terrain {
             let drops = max(1, Int(dt * cfg.hydraulicPerYear * density))
             let dropSeed = seed &+ stepCount &* 2_654_435_761
             for k in 0..<cfg.count { trackBuf[k] = 0 }
+            // Kanalmaske mit: auf Mäanderbetten ist die Tropfen-DEPOSITION gedämpft
+            // (Reconciliation — sonst schütten die Tropfen das gecarvte Bett wieder zu).
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
                             seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic,
                             hf: hf, receiver: receiver,
-                            stream: streamMap, track: &trackBuf)
+                            stream: streamMap,
+                            channel: cfg.meanderEnabled ? isChannel : [],
+                            track: &trackBuf)
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
             // Zeitkonstante ~1200 Jahre), dann sättigen: nur KONSISTENT befahrene
             // Zellen hellen auf, einzelne Zufallspfade verblassen.

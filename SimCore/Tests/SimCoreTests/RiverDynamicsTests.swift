@@ -90,6 +90,92 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertGreaterThan(t.landRelief(), 0.30, "Terrain eingeebnet unter Mäander")
     }
 
+    // MARK: - Mäander ↔ Droplet-Reconciliation
+
+    /// Bett-Statistik der Mäander-Kanalzellen gegen die umgebende Aue:
+    /// Referenzhöhe = Mittel der Nicht-Kanal-Landzellen im Ring (Chebyshev-Abstand 3,
+    /// also außerhalb der Bank-Zone meanderBankWidth=1.6). `depth` = Ref − h → positiv
+    /// heißt EINGETIEFT. `filled` = Anteil der Kanalzellen, die über ihrer Aue liegen
+    /// (= zugeschüttetes/aufgeschüttetes Bett — der Reconciliation-Fehlermodus).
+    private func bedStats(_ t: Terrain) -> (count: Int, depth: Double, filled: Double) {
+        let n = t.cfg.n
+        var sum = 0.0, cnt = 0, filled = 0
+        for k in 0..<t.cfg.count where t.isChannel[k] && t.h[k] > t.cfg.sea {
+            let i = k % n, j = k / n
+            if i < 3 || i >= n - 3 || j < 3 || j >= n - 3 { continue }
+            var refSum = 0.0, refN = 0
+            for dj in -3...3 {
+                for di in -3...3 {
+                    if max(abs(di), abs(dj)) != 3 { continue }
+                    let nb = (j + dj) * n + (i + di)
+                    if t.isChannel[nb] || t.h[nb] <= t.cfg.sea { continue }
+                    refSum += t.h[nb]; refN += 1
+                }
+            }
+            if refN < 6 { continue }
+            let d = refSum / Double(refN) - t.h[k]
+            sum += d; cnt += 1
+            if d < 0 { filled += 1 }
+        }
+        return (cnt, cnt == 0 ? 0 : sum / Double(cnt), cnt == 0 ? 0 : Double(filled) / Double(cnt))
+    }
+
+    /// WÄCHTER Reconciliation (Mäander ↔ Droplet): Die `isChannel`-Maske wirkt im
+    /// PRODUKTIONS-Pfad (hydraulicEnabled) — vorher kannte sie nur der Grid-Pfad
+    /// (`transportLimited`), sodass die Tropfen das gecarvte Mäanderbett wieder
+    /// zuschütteten. Vergleich gegen die ungedämpfte Referenz (channelDepositDamp
+    /// = 1.0 = Zustand vor der Kopplung), gleicher Seed.
+    /// Gemessen (n=256, seed 1337, 20k J.): Bett-Tiefe +0.0156 → +0.0222 (+43%),
+    /// verlandete Betten 7.3% → 3.5%. Über 3 Seeds × 150k J. konsistent
+    /// (Tiefe +25…+57%, Verlandung 13–15% → 7–10%), Relief/maxH unverändert.
+    func testChannelBedSurvivesDroplets() {
+        var cOn = SimConfig(); cOn.n = 256
+        var cOff = cOn
+        cOff.hydraulic.channelDepositDamp = 1.0 // = Zustand vor der Reconciliation
+        let tOn = Terrain(config: cOn, seed: 1337)
+        let tOff = Terrain(config: cOff, seed: 1337)
+        // Über die Zeit gemittelt (Betten wandern, Einzel-Schnappschüsse rauschen).
+        var dOn = 0.0, dOff = 0.0, fOn = 0.0, fOff = 0.0, samples = 0.0
+        while tOn.years < 20_000 - 1e-6 {
+            tOn.step(dtYears: 1000); tOff.step(dtYears: 1000)
+            if Int(tOn.years) % 4000 != 0 { continue }
+            let a = bedStats(tOn), b = bedStats(tOff)
+            dOn += a.depth; fOn += a.filled
+            dOff += b.depth; fOff += b.filled
+            samples += 1
+        }
+        dOn /= samples; dOff /= samples; fOn /= samples; fOff /= samples
+        print(String(format: "[RECON] Bett-Tiefe an=%+.5f aus=%+.5f | verlandete Betten an=%.1f%% aus=%.1f%%",
+                     dOn, dOff, fOn * 100, fOff * 100))
+        // 1) Das Bett ist überhaupt eingetieft (Referenzhöhe der Aue über dem Bett).
+        XCTAssertGreaterThan(dOn, 0.015, "Mäanderbett ist nicht eingetieft — Tropfen füllen es zu")
+        // 2) …und zwar deutlich tiefer als ohne die Kopplung (Marge zur Kalibrierung:
+        //    gemessen ×1.43 hier, ×1.25…1.57 über 3 Seeds/150k).
+        XCTAssertGreaterThan(dOn, dOff * 1.20, "Kanalmaske wirkt im Droplet-Pfad nicht")
+        // 3) Deutlich weniger verlandete Betten als ohne Kopplung (gemessen ×0.48).
+        XCTAssertLessThan(fOn, fOff * 0.75, "Kopplung verhindert das Zuschütten der Betten nicht")
+        // Terrain bleibt gesund (dieselben Schwellen wie LongRunCollapse).
+        XCTAssertLessThan(tOn.maxHeight(), 1.0, "Terrain-Runaway unter der Kanal-Dämpfung")
+        XCTAssertGreaterThan(tOn.landRelief(), 0.30, "Terrain eingeebnet unter der Kanal-Dämpfung")
+    }
+
+    /// Rückwärtskompatibilität: OHNE Maske (leeres Array) rechnet `Hydraulic.erode`
+    /// bit-identisch wie vor der Reconciliation — die Kopplung ist opt-in.
+    func testDropletUnchangedWithoutMask() {
+        var c = SimConfig(); c.n = 96
+        let t = Terrain(config: c, seed: 99)
+        var h = t.h, rock = t.rock, sed = t.sed
+        var h2 = h, rock2 = rock, sed2 = sed
+        var trk = [Double](repeating: 0, count: c.count)
+        var trk2 = trk
+        Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: c.n, count: 2000, seed: 7,
+                        floor: c.floor, p: c.hydraulic, track: &trk)
+        Hydraulic.erode(h: &h2, rock: &rock2, sed: &sed2, n: c.n, count: 2000, seed: 7,
+                        floor: c.floor, p: c.hydraulic,
+                        channel: [Bool](repeating: false, count: c.count), track: &trk2)
+        XCTAssertEqual(h, h2, "leere Maske und all-false-Maske müssen identisch rechnen")
+    }
+
     /// DIAGNOSE (print-only): Wie flach sind die Reaches, in denen Flüsse laufen?
     /// Mäander/Braiding brauchen Kanalzellen mit Längsslope < meanderFlatSlope
     /// (0.02). Misst die Slope-Verteilung der Kanalzellen + größte zusammenhängende

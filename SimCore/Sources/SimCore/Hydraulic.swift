@@ -21,6 +21,25 @@ public struct HydraulicParams: Sendable {
     public var streamEvapDamp = 0.5 // Verdunstung ×(1−damp·stream): auf etablierten Läufen leben Tropfen länger → Flüsse verlängern/schärfen sich selbst (sein „River Sharpening", effR = evap·(1−0.2·stream) sinngemäß)
     public var poolDepth = 0.03     // ab dieser Wassertiefe (hf−h) gilt eine Zelle als SEE (= See-Render-Schwelle): Tropfen deponiert dort sein Sediment (Delta) und läuft am Auslass weiter. Flacheres Ponding (Auen-Washes) behandeln Tropfen normal — sie sollen es CARVEN und damit entwässern, nicht überspringen (0.02 ließ Tropfen auf den Ebenen permanent teure Ketten-Sprünge machen → FPS-Einbruch)
     public var poolSedimentKeep = 0.1 // Sediment-Anteil, der den See überlebt (nickmcd: −90% beim Drain)
+    // ---- Mäander-Kanal-Reconciliation (isChannel-Maske) ----
+    // Der Mäander-Kanal carvt sein Bett selbst (Terrain.meanderStamp), der
+    // Droplet-Pfad kannte diese Maske bisher nicht (nur der Grid-Pfad, via
+    // cfg.channelErodeDamp) — in Produktion (hydraulicEnabled) arbeiteten
+    // Kanal und Tropfen also gegeneinander. GEMESSEN (n=256, 3 Seeds, 40k+150k J.,
+    // Bett-Tiefe der Kanalzellen gegen die Aue, testChannelBedSurvivesDroplets):
+    // Nur die DEPOSITION ist der Konflikt — sie schüttet das Bett zu (14–15% der
+    // Betten lagen über ihrer Aue). Die Tropfen-EROSION im Bett zieht dagegen in
+    // dieselbe Richtung wie der Carve (sie tieft ein); ihre Dämpfung machte das
+    // Bett flacher (+0.0147→+0.0116) und die Verlandung schlimmer (8.7%→12.7%) —
+    // deshalb gibt es hier bewusst KEIN Erosions-Pendant zu channelErodeDamp.
+    public var channelDepositDamp = 0.15 // Tropfen-Deposition auf Kanalzellen. Der nicht
+                                         // abgelegte Rest bleibt in Suspension (Massenbilanz)
+                                         // → der Kanal TRANSPORTIERT das Sediment weiter,
+                                         // statt zu verlanden. 0.0 (gar keine Ablagerung) ist
+                                         // instabil: der Tropfen dumpt seine Gesamtlast am
+                                         // ersten Nicht-Kanal-Hindernis → Halden, Relief-Runaway
+                                         // (150k J.: relief 1.22, maxH 1.37). 0.15/0.10 sind
+                                         // messgleich, 0.15 hält Abstand zu dieser Kante.
     public init() {}
 }
 
@@ -37,11 +56,16 @@ public enum Hydraulic {
     ///   deponiert sein Sediment als DELTA am Eintritt, springt der Empfänger-
     ///   Kette entlang zum See-Auslass und läuft dort mit 10% Sediment weiter
     ///   (sein Descend→Flood→Drain-Zyklus, ohne den See selbst zu carven).
+    /// - `channel`: Mäander-Kanalzellen (Terrain.isChannel). Dort ist die Tropfen-
+    ///   DEPOSITION gedämpft (channelDepositDamp) — das Bett gehört dem Kanal-Carve
+    ///   und darf nicht zugeschüttet werden. Leeres Array = Verhalten wie ohne Maske
+    ///   (bit-identisch).
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
                              n: Int, count: Int, seed: UInt32, floor: Double,
                              p: HydraulicParams,
                              hf: [Double] = [], receiver: [Int32] = [],
-                             stream: [Double] = [], track: inout [Double]) {
+                             stream: [Double] = [], channel: [Bool] = [],
+                             track: inout [Double]) {
         guard count > 0, n > 2 else { return }
         // Erosions-Pinsel einmal vorberechnen: Offsets + normierte Gewichte im Radius.
         var bx: [Int] = [], byv: [Int] = [], bw: [Double] = []
@@ -57,11 +81,14 @@ public enum Hydraulic {
         }
         for i in bw.indices { bw[i] /= wsum }
 
-        // Erosion gibt den tatsächlich abgetragenen Betrag zurück (am Boden gedeckelt),
-        // damit die Sedimentbilanz stimmt.
-        @inline(__always) func modify(_ k: Int, _ delta: Double) -> Double {
-            if delta >= 0 { sed[k] += delta; h[k] += delta; return delta }
-            var d = -delta
+        // Kanalmaske aktiv? (leeres Array → alle Kanal-Zweige fallen weg und die
+        // Arithmetik ist bit-identisch mit dem Zustand vor der Reconciliation)
+        let chanOn = channel.count == h.count
+
+        // Abtrag; gibt den tatsächlich abgetragenen Betrag zurück (am Tiefseeboden
+        // gedeckelt), damit die Sedimentbilanz stimmt.
+        @inline(__always) func dig(_ k: Int, _ amount: Double) -> Double {
+            var d = amount
             let room = h[k] - floor
             if room <= 0 { return 0 } // schon am Tiefseeboden
             if d > room { d = room }  // nicht unter den Boden graben
@@ -70,6 +97,21 @@ public enum Hydraulic {
             rock[k] -= (d - take)
             h[k] -= d
             return d
+        }
+
+        /// Ablagerung; gibt den NICHT abgelegten Rest zurück (auf Kanalzellen
+        /// gedämpft: ein Bett, das von Tropfen-Sediment zugeschüttet wird, ist
+        /// derselbe Reconciliation-Bug wie eins, das weggefressen wird). Der Rest
+        /// bleibt beim Tropfen in Suspension (Massenbilanz + physisch: der Kanal
+        /// TRANSPORTIERT das Sediment weiter). Ohne Maske exakt 0 → alte Arithmetik.
+        @inline(__always) func deposit(_ k: Int, _ amount: Double) -> Double {
+            if chanOn && channel[k] {
+                let put = amount * p.channelDepositDamp
+                sed[k] += put; h[k] += put
+                return amount - put
+            }
+            sed[k] += amount; h[k] += amount
+            return 0
         }
 
         var rnd = Mulberry32(seed: seed)
@@ -95,8 +137,7 @@ public enum Hydraulic {
                 // Delta am Eintritt abladen, zum Auslass springen, weiterlaufen.
                 if !hf.isEmpty && hf[k] - h[k] > p.poolDepth {
                     let dep = sediment * (1 - p.poolSedimentKeep)
-                    _ = modify(k, dep)
-                    sediment -= dep
+                    sediment -= dep - deposit(k, dep)
                     var c = k, guardN = 0
                     var exited = false
                     while guardN < 4 * n {
@@ -144,10 +185,11 @@ public enum Hydraulic {
                     let dep = (deltaH > 0) ? min(deltaH, sediment)
                                            : (sediment - capacity) * p.depositRate
                     sediment -= dep
-                    _ = modify(k, dep * (1 - fx) * (1 - fy))
-                    _ = modify(k + 1, dep * fx * (1 - fy))
-                    _ = modify(k + n, dep * (1 - fx) * fy)
-                    _ = modify(k + n + 1, dep * fx * fy)
+                    // Rest aus der Kanal-Dämpfung bleibt in Suspension (ohne Maske: 0).
+                    sediment += deposit(k, dep * (1 - fx) * (1 - fy))
+                             +  deposit(k + 1, dep * fx * (1 - fy))
+                             +  deposit(k + n, dep * (1 - fx) * fy)
+                             +  deposit(k + n + 1, dep * fx * fy)
                 } else {
                     // Unter Kapazität → erodieren, aber nicht mehr als das Gefälle
                     // (kein Löchergraben), über den Pinsel verteilt.
@@ -157,7 +199,7 @@ public enum Hydraulic {
                             let cx = nodeX + bx[i], cy = nodeY + byv[i]
                             if cx < 0 || cx >= n || cy < 0 || cy >= n { continue }
                             let ck = cy * n + cx
-                            sediment += modify(ck, -ero * bw[i])
+                            sediment += dig(ck, ero * bw[i])
                         }
                     }
                 }
