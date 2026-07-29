@@ -1,67 +1,125 @@
-# river-sim — Roadmap & offene Ideen
+# river-sim — Stand, Roadmap & offene Punkte
 
-Stand: nach dem echten Fluss-Netz (variable Breite + Render-Mäander). Kern ist eine
-**Simulation** (Zeit vergeht → Erosion/Tektonik/Sediment formen die Welt), kein Generator.
+Kern ist eine **Simulation** (Zeit vergeht → Erosion/Tektonik/Sediment formen die Welt),
+kein Generator. Architektur und Grundentscheidungen: `PLAN.md`.
 
-## ✅ Umgesetzt — Mäander-Migration (M1–M4)
+Ziel-Look: https://nickmcd.me/2020/04/15/procedural-hydrology/ — feine dendritische
+Erosions-Rinnen, grauer Fels, moosgrüne Täler, weiße Gipfel, dezentes teal-Wasser.
+Der Verhaltens-Abgleich mit dieser Referenz steht in
+`docs/nickmcd-behavior-verification.md`.
 
-Flüsse *wandern* jetzt über die Zeit: Prallhang erodiert, Gleithang lagert ab, Schlingen
-schnüren sich ab und hinterlassen **Altarme / river-history** im Höhenfeld. Echtes
-Simulations-Feature, gekoppelt ans Terrain (kein Render-Trick mehr).
+## Aktueller Stand (Kurzfassung)
 
-**Architektur:**
-- `Meander.swift`: Fluss als persistente Lagrange-Zentrumslinie (`MeanderState`), Migration
-  ∝ Krümmung × Abfluss (Howard–Knutson, zum Außenufer), Resample, Cutoff → Altarm.
-- `Terrain.step()`: `migrateMeander` (Abfluss/Mobilität aus D8) → `meanderStamp` (Bett-Carve,
-  der Kanal carvt sein eigenes Bett self-reinforcing mit D8; laterale Prallhang/Gleithang-
-  Bewegung; Cutoff-Pfropf → Altarm-See über den bestehenden `hf>h`-Mechanismus) →
-  `transportLimited` (auf Kanalzellen gedämpft, Reconciliation).
-- `SimNode.buildRivers`: Rendering aus den echten Zentrumslinien + Altarmen.
-- Golden-Tests: Sinuosität wächst→sättigt (~2.3), Masse/Relief erhalten, keine weiträumige
-  Selbst-Durchdringung, Bett unter Aue, Altarm-See nach Cutoff. Alle 18 grün.
+- **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
+  feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare
+  Hangdiffusion (`hillslopeDiffusion`) rundet die Grate. Prozess-Reihenfolge LEM-konform:
+  Uplift → Flow → SPL/Auslass → Braiding → Droplet → Diffusion → Wave.
+  Pre-Erosion + Shader-Detail-Layer nach runevision (`ErosionFilter.swift`).
+- **Anti-Runaway / Anti-Verflachung:** `isoHighClamp` deckelt das Relief, niedrige
+  Hebung (`upliftPer100y`) lässt Berge erodieren statt wachsen, der **Relief-Servo**
+  (`reliefServoPer100y`, nur bei Relief-Defizit und nur auf Land) verhindert das
+  „immer flacher" über 100k+ Jahre.
+- **Hydrologie:** Priority-Flood + D8 für Erosion, MFD (Freeman/Quinn) für Render und
+  Braiding, EWMA-geglättete Stream-Map, Pool-Kopplung (Descend→Flood→Drain),
+  Becken-Breach bei der Generierung (Becken entwässern zum Meer).
+- **Flüsse:** Mäander als persistente Lagrange-Zentrumslinie (`Meander.swift`, Migration
+  ∝ Krümmung × Abfluss, Cutoff → Altarm, Sinuositäts-Deckel), Braiding nach
+  Murray & Paola (`braidPass`), Wasser-Optik im Shader (eigene Wasser-Normale,
+  Fresnel, Tiefenfarbe, distanz-gefadet).
+- **Karte:** n = 832 bei worldSize 130 (cellSize ≈ 0.156 — Auflösung und Weltgröße
+  immer ZUSAMMEN ändern, sonst brechen alle per-Zell-Kalibrierungen).
 
-**Kalibrierung (Erkenntnisse):** Mobilitäts-Gate auf die *Längs*neigung (nicht Quer-, die an
-eingetieften Kanälen die Migration selbst abschaltet); kMig = 5e-5; Displacement-Clamp (CFL).
+## Offene Punkte
 
-**Feinschliff (erledigt):**
-- ✅ „Ersäufte" Talsohlen diagnostiziert — **kein** Kopplungs-Bug: nasse Land-Zellen (hf>h)
-  mit/ohne Mäander praktisch identisch. Wässrige Optik = Basis-Sim (Insel erodiert in
-  Meeresspiegel-Nähe) + bewusst fette Fluss-Bänder. (Flag `meanderEnabled` für Diagnose.)
-- ✅ Altarm-Verlandung: `fillOxbows` hebt Betten langsam (`oxbowFillYears`), verlandete fallen
-  aus der Liste (`pruneOxbows`), Rendering blendet Altarm-Bänder mit dem Alter aus.
-- ✅ Downstream-Skew (Ikeda–Parker–Sawai): upstream-gewichtete Krümmung (EMA), stärke-normiert
-  → asymmetrische Schlingen ohne die Mäander-Rate zu dämpfen.
+**Terrain-Alterung (aus `docs/research-terrain-aging.md` §6):**
+- `isoHighClamp` (0.90) testweise lockern/entfernen — laut Recherche mit der
+  Hangdiffusion überflüssig; aktuell pinnt der Deckel das Relief aufs junge Niveau
+  statt echte Alterung zuzulassen. Per Headless-Messung prüfen (LongRunCollapse).
+- Optional/größer: abklingende Hebung `U(t) = U_floor + (U₀−U_floor)·e^(−t/τ)` für ein
+  dramatischeres „jung → alt". Bewusst NICHT gemacht, weil U₀ > heute einen
+  Wachstums-Puls einführt (User will kein Wachsen).
+- Diagnose-Messgrößen fehlen: mittlere Grat-Krümmung (∇²z auf Gratzellen) und
+  hypsometrische Kurve. Sie trennen „spitz/jung" von „rund/alt" objektiv.
 
-**Weiter offen (optional):**
-- Falls die wässrige Langzeit-Optik stört: Basis-Sim-Balance (Uplift/Meeresspiegel) über sehr
-  lange Läufe nachjustieren — betrifft das Grundterrain, nicht die Mäander.
+**Politur / Rendering:**
+- **Deltas** an Fluss-Mündungen in Meer/Seen sichtbar machen (das Transport-Modell baut
+  sie schon, das Rendering hebt sie nicht hervor).
+- See-Ränder minimal gezackt (per-Zelle-Quads) — zu einer Kontur glätten.
+- Steile Oberläufe der Fluss-Geometrie leicht segmentiert — feinere Glättung oder
+  adaptive Unterteilung.
+- Optik-Feinschliff: Grün-Anteil in den Tälern, Schnee-Schwelle, Küstensaum-Breite.
 
-## Kleinere offene Punkte (Politur)
+**Toter/geparkter Code (aufräumen oder bewusst behalten):**
+- `thermalPass` (Talus) ist implementiert, wird aber nirgends aufgerufen — Talus macht
+  planare Facetten, keine Rundung; nur für Steilfels-Kappen sinnvoll.
+- `floodplainAggradation` liegt deaktiviert als Referenz herum (`floodplainEnabled=false`):
+  per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
+  jetzt über sanfteres Relief (`baseRelief` 0.78).
 
-- **Steile Oberläufe** der Fluss-Geometrie noch leicht segmentiert — feinere Glättung
-  oder adaptive Unterteilung.
-- **See-Ränder** minimal gezackt (per-Zelle-Quads) — könnte man zu einer Kontur glätten.
-- **Fluss-Übergang** ins Meer/in Seen: echte **Deltas** sichtbar machen (Transport-Modell
-  baut sie schon; Rendering hebt sie noch nicht hervor).
+**Backlog (nicht priorisiert):**
+- Gletscher / glaziale Erosion → U-Täler, Kare, Moränen.
+- Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
+- Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.
+- Speichern/Laden von Welten.
+- Gameplay (falls gewünscht): Ziele/Szenarien statt reinem Sandbox.
 
-## Weitere M3-Feature-Ideen (Backlog, nicht priorisiert)
+## Verifikation
 
-- **Gletscher / glaziale Erosion** → U-Täler, Kare, Moränen (Höhen-/Temperatur-gekoppelt).
-- **Größere / gekachelte Welt** mit LOD + **GPU-Compute** für die Grid-PDEs (1024²+ in Echtzeit).
-- **Klima-Jahreszeiten** → schwankender Abfluss, Schneedecke, Hochwasser-Ereignisse.
-- **Speichern/Laden** von Welten.
-- **Gameplay** (falls gewünscht): Ziele/Szenarien statt reinem Sandbox.
+- **Headless-Tests:** `cd SimCore && swift test -c release` (Debug ist bei n=832 zu
+  langsam). Beim Iterieren `--filter <methodName>` — **nicht** den Klassennamen, der
+  matcht 0 Tests. Wächter: `LongRunCollapse.swift` (kein Runaway/Kollaps),
+  `RiverDynamicsTests.swift` (MFD-Splits, Braiding-Bänke, Becken→Meer, Stream-Map,
+  Mäander in Produktion).
+- **Extension bauen** (~3,5 min): `./scripts/build.sh release` — **immer mit absolutem
+  Pfad aufrufen.** Relativ aus `game/` heraus schlägt es still fehl, und die Screenshots
+  laufen dann mit der ALTEN dylib (hat schon 3 „wirkungslose" Iterationen gekostet).
+  Auf die „gebaut + signiert"-Zeile prüfen.
+- **Screenshots headless** (Godot via Steam):
+  ```
+  GODOT="$HOME/Library/Application Support/Steam/steamapps/common/Godot Engine/Godot.app/Contents/MacOS/Godot"
+  RS_STEP=<jahre> RS_SHOT=/pfad/shot.png RS_DIST=<kameradistanz> "$GODOT" --path game
+  ```
+  `RS_STEP` steppt die Sim vor dem Shot (Jahr 0 vs. gesteppt vergleichen!). Das Jahr-Label
+  bleibt dabei auf „Jahr 0" (`_ready` ruft `_update_year` nicht) — kein Bug.
+  Springen/Dynamik sind nur in BEWEGUNG sichtbar, nicht im Standbild.
+- **App interaktiv:** `"$GODOT" --path game` (oder `--editor`).
+- **Shader-Debug-Rezept:** ALBEDO im Shader auf `(riverMask, lakeMask, stream)` legen;
+  `RS_NO_MEANDER_PAINT=1` schaltet die Mäander-Stempel für A/B ohne Rebuild ab.
 
-## Recherche-Quellen (gesichtet, in den Ansatz eingeflossen)
+## Wichtige Dateien
 
-- **Bremen CGI22** — „Procedural Generation of Landscapes with Water Bodies Using
-  Artificial Drainage Basins" (rivers-first, Breite ∝ Fluss-Stärke). Generierung, nicht Sim.
-- **Gaea 3** (QuadSpinner) — Mäander + river-history als visuelles Highlight (Vorbild fürs Ziel oben).
-- **nickmcd.me/2020/04/15/procedural-hydrology** — Partikel-Erosion, stream-map (EMA),
-  pool-flood, self-reinforcing Flüsse.
-- **SebLague/Hydraulic-Erosion & Elumenix/HydroErosion** — Droplet-Methode (= der
-  ursprüngliche Prototyp), GPU-Varianten. Algorithmisch nichts Neues für uns.
+- `SimCore/Sources/SimCore/Terrain.swift` — `generate()`, `step()`, `computeFlow`,
+  `outletIncision`, `braidPass`, `meanderStamp`, `diffusionPass`.
+- `SimCore/Sources/SimCore/Hydraulic.swift` — Droplet-Erosion (Textur + Stream-Map + Pools).
+- `SimCore/Sources/SimCore/Meander.swift` — Lagrange-Zentrumslinie, Migration, Cutoff.
+- `SimCore/Sources/SimCore/ErosionFilter.swift` — runevision-Pre-Erosion (Phacelle Noise).
+- `SimCore/Sources/SimCore/Config.swift` — **alle** Stellschrauben, jede mit Begründung.
+- `Extension/Sources/RiverSimGD/SimNode.swift` — `terrainColorBytes` (Palette),
+  `waterFieldBytes` (Wasser-Feld, EWMA, Render-Schwellen).
+- `game/shaders/terrain.gdshader` — Wasser-Overlay, Detail-Layer, Shading.
+- `game/scripts/Main.gd` — Licht/Environment, UI, Kamera/Zoom, RS_*-Env-Schalter.
 
-**Bewusste Entscheidung:** kein Rewrite auf Droplet oder „rivers-first"-Generierung —
-river-sim bleibt eine deterministische, headless-testbare Grid-Simulation
-(Stream-Power + transport-limitierter Sedimenttransport).
+## Arbeitsweise in diesem Projekt (ernst nehmen)
+
+- **Erst headless messen, dann schrauben.** Die visuelle Hypothese war mehrfach falsch
+  (der „Kuppel-Kollaps" war ein Runaway; die „Punktfeld-Blobs" waren Mäander-Stempel,
+  nicht Seen). Kennzahlen über die Zeit loggen (Relief, Ruggedness, See-Anteil, meanLand).
+- **Nicht zaghaft** („MVP vom MVP"), aber auch nicht blind an Details schrauben, wenn das
+  Gesamtbild nicht stimmt.
+- Bei „30 % besser statt 1 %" auf **echte Recherche mit Primärquellen** gehen (`docs/`),
+  nicht weiter am Symptom drehen.
+- **Kalibrier-Kaskade beachten:** Änderungen am Droplet-Pfad verschieben die
+  Braiding-Kalibrierung, Rinnen-Textur bricht Formeln, die Per-Zell-Steigung als „Hang"
+  lesen (Regen/Vegetation/Biom-Farbe brauchen Makro-Steigung über ±2 Zellen).
+
+## Recherche (in den Ansatz eingeflossen)
+
+- `docs/research-braided-meandering-rivers.md` — Freeman/Quinn MFD, Tarboton D-∞,
+  Murray & Paola (zelluläres Braiding), Ikeda/Howard (Mäander), Nicholas-Kontinuum.
+- `docs/research-terrain-aging.md` — Theodoratos 2018, Whipple & Tucker, Braun & Willett;
+  Kennzahl `l_c = D/K` (klein = jung/zerklüftet, groß = alt/rund).
+- `docs/river-baseline-metrics.md` — Baseline-Messung vor dem Fluss-Overhaul
+  (Churn 0.2725 bei jedem dt = Framerate-Kopplung des alten D8-argmax).
+- `docs/references/runevision-erosion/` — kompletter GLSL-Code des Erosionsfilters
+  (MPL-2.0), Grundlage von `ErosionFilter.swift` und des Shader-Detail-Layers.
+- nickmcd.me (Procedural Hydrology, Meandering Rivers), SebLague/Elumenix (Droplet).

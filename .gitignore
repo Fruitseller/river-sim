@@ -13,3 +13,6 @@ export/
 
 # Scratch-Screenshots
 scratch_*.png
+
+# Claude-Code-Worktrees (temporär, für parallele Agents)
+.claude/worktrees/
