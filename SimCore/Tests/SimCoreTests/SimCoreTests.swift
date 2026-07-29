@@ -9,24 +9,34 @@ final class SimCoreTests: XCTestCase {
         return c
     }
 
-    /// Config für die Mäander-Tests: Mäander AN + Grid-Erosion (kein Droplet). Die
-    /// Mäander-/Cutoff-Dynamik wurde gegen das Grid-Drainage-Modell entwickelt; die
-    /// Tests validieren die Mäander-Logik isoliert. In Produktion ist Mäander bis
-    /// zur Versöhnung mit der Droplet-Erosion deaktiviert.
+    /// Config für die ISOLIERTEN Mäander-Kopplungstests: Mäander AN + Grid-Erosion
+    /// (kein Droplet), alte Kalibrierung gepinnt. Prüft die Kopplungs-Mechanik
+    /// (Carve, Altarm-See, Altern) ohne Droplet-Rauschen. Die LANGLAUF-Wächter
+    /// laufen dagegen im Produktions-Pfad (s. prodMeanderCfg).
     private func meanderCfg(n: Int = 96) -> SimConfig {
         var c = makeConfig(n: n)
         c.hydraulicEnabled = false
         c.meanderEnabled = true
-        // Die Mäander-Kern-Tests wurden gegen diese Werte kalibriert; Produktion nutzt
-        // inzwischen andere (kleinere Migration/größerer Cutoff-Hals für n=640). Hier
-        // pinnen, damit Test- und Produktions-Kalibrierung entkoppelt bleiben.
+        // Diese Kopplungstests wurden gegen diese Werte kalibriert; Produktion nutzt
+        // inzwischen andere (kleinere Migration/größerer Cutoff-Hals). Hier pinnen,
+        // damit Test- und Produktions-Kalibrierung entkoppelt bleiben.
         c.meanderMigration = 5.0e-5
         c.meanderNeckDist = 1.2
-        // Mäander-Logik gegen aktive Tektonik testen (Produktion hat upliftPer100y=0,
-        // reine Erosion — die Mäander-Dynamik/Altarm-Alterung braucht aber Relief-
-        // Nachschub). Mäander ist in Produktion ohnehin deaktiviert; hier isoliert.
+        // Mäander-Logik gegen aktive Tektonik testen (Produktion hat upliftPer100y=0
+        // und regelt das Relief über den Servo — die isolierte Grid-Variante ohne
+        // Droplet braucht aber Relief-Nachschub für die Altarm-Alterung).
         c.upliftPer100y = 0.0015
         return c
+    }
+
+    /// Config für die Mäander-LANGLAUF-Wächter: reine Produktions-Defaults, nur n
+    /// gesenkt (n=192 statt 832 fürs Tempo; ~2.5 s je 100k Jahre in release).
+    /// Bewusst NICHT `meanderCfg()`: dessen gepinnte Alt-Werte (Migration 5e-5,
+    /// Hals 1.2, Grid-Erosion) sind seit `meanderEnabled = true` nicht mehr der
+    /// Pfad, der real läuft — Langzeit-Stabilität muss auf dem echten Pfad
+    /// (Droplet + Sinuositäts-Deckel + Hals 2.0) gemessen werden.
+    private func prodMeanderCfg(n: Int = 192) -> SimConfig {
+        var c = SimConfig(); c.n = n; return c
     }
 
     // MARK: - Determinismus
@@ -263,25 +273,64 @@ final class SimCoreTests: XCTestCase {
         XCTAssertEqual(a.meander.oxbows.count, b.meander.oxbows.count)
     }
 
-    /// Langlauf mit Migration bleibt stabil: endliche Knoten, beschränkte
-    /// Kanalzahl und Sinuosität, Läufe bleiben in der Welt.
-    func testMeanderTerrainLongRunStable() throws {
-        throw XCTSkip("Pending: Mäander-Kalibrierung ist noch aufs alte (glatte) Terrain "
-            + "abgestimmt; unter dem neuen ridged-Terrain + Droplet-Erosion läuft die "
-            + "Sinuosität weg. Mäander ist in Produktion deaktiviert, bis versöhnt.")
-        let cfg = meanderCfg(n: 80)
+    /// Langlauf im Produktions-Pfad (100k Jahre): die Läufe MÄANDERN wirklich, der
+    /// Sinuositäts-Deckel hält sie aber beschränkt (der alte Fehlermodus war
+    /// Sinu → 16..26 = Knäuel), Knoten bleiben endlich und in der Welt, keine
+    /// weiträumige Selbst-Durchdringung, Relief/Höhen bleiben plausibel.
+    /// Gemessen (n=192, seed 33): maxSinu 3.74 (Deckel 3.0 + Overshoot), Sinu-Mittel
+    /// der letzten 20k = 2.18, Kanäle max 93, 0 Durchdringungen (minFar 2.23 bei
+    /// Hals 2.0), Relief 0.479, maxH 0.629. Kaputte Mechanik → rot: Deckel aus
+    /// (meanderMaxSinuosity=∞) → maxSinu 16.5; Migration aus → Sinu-Mittel 1.04;
+    /// `applyCutoffs` stillgelegt → minFar 0.08 (Lauf faltet sich auf sich selbst).
+    func testMeanderTerrainLongRunStable() {
+        let cfg = prodMeanderCfg()
         let t = Terrain(config: cfg, seed: 33)
-        for _ in 0..<200 { t.step(dtYears: 500) } // 100k Jahre
-        XCTAssertLessThan(t.meander.channels.count, 400, "Kanalzahl läuft weg")
         let maxc = Double(cfg.n - 1)
-        for ch in t.meander.channels {
-            XCTAssertLessThan(ch.sinuosity, 8.0, "Sinuosität läuft weg: \(ch.sinuosity)")
-            for nd in ch.nodes {
-                XCTAssertTrue(nd.x.isFinite && nd.z.isFinite, "NaN/Inf in Knoten")
-                XCTAssertGreaterThanOrEqual(nd.x, 0); XCTAssertLessThanOrEqual(nd.x, maxc)
-                XCTAssertGreaterThanOrEqual(nd.z, 0); XCTAssertLessThanOrEqual(nd.z, maxc)
+        var maxSinu = 0.0, maxChannels = 0, badNodes = 0
+        var lateSum = 0.0, lateCount = 0
+        let steps = 200 // × 500 = 100k Jahre
+        for s in 0..<steps {
+            t.step(dtYears: 500)
+            maxChannels = max(maxChannels, t.meander.channels.count)
+            for ch in t.meander.channels {
+                maxSinu = max(maxSinu, ch.sinuosity)
+                if s >= steps - 40 { lateSum += ch.sinuosity; lateCount += 1 } // letzte 20k J.
+                // Asserts erst nach dem Lauf (pro Knoten × Schritt wäre zu langsam).
+                for nd in ch.nodes where !(nd.x.isFinite && nd.z.isFinite
+                    && nd.x >= 0 && nd.x <= maxc && nd.z >= 0 && nd.z <= maxc) { badNodes += 1 }
             }
         }
+        XCTAssertEqual(badNodes, 0, "Knoten mit NaN/Inf oder außerhalb der Welt")
+        XCTAssertGreaterThan(lateCount, 0, "am Ende existiert kein Lauf mehr")
+        // Der Deckel greift: die Sinuosität bleibt in JEDEM Schritt beschränkt.
+        // 4.5 = Deckel 3.0 + Luft für den Overshoot (Glättung/Cutoff greifen erst
+        // im Folgeschritt) — ohne Deckel liefe sie auf 16+.
+        XCTAssertLessThan(maxSinu, 4.5, "Sinuosität läuft weg (Deckel wirkt nicht): \(maxSinu)")
+        // …aber die Läufe sind auch wirklich gewunden (sonst wäre der Deckel-Assert
+        // trivial erfüllt: ohne Migration liegt das Mittel bei 1.04).
+        let lateMean = lateSum / Double(lateCount)
+        XCTAssertGreaterThan(lateMean, 1.4, "Läufe mäandern nicht mehr: Mittel \(lateMean)")
+        XCTAssertLessThan(maxChannels, 250, "Kanalzahl läuft weg: \(maxChannels)")
+        // Keine *weiträumige* Selbst-Durchdringung (Beinahe-Berührungen zwischen
+        // fast benachbarten Knoten sind kurzlebige Haarnadeln, s. Kernel-Test).
+        let neck = cfg.meanderNeckDist
+        let farSep = 2 * (max(4, Int((neck / cfg.meanderNodeSpacing) * 3) + 2))
+        var minFar = Double.infinity
+        for ch in t.meander.channels {
+            let nodes = ch.nodes
+            for i in 0..<nodes.count {
+                var j = i + farSep
+                while j < nodes.count { minFar = min(minFar, dist(nodes[i], nodes[j])); j += 1 }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(minFar, neck * 0.999,
+                                    "weiträumige Selbst-Durchdringung: minFar \(minFar)")
+        // Masse/Relief bleiben plausibel — Mäander frisst das Terrain nicht auf.
+        XCTAssertTrue(t.h.allSatisfy { $0.isFinite }, "NaN/Inf im Höhenfeld")
+        XCTAssertGreaterThan(t.landRelief(), 0.30, "Terrain eingeebnet unter Mäander")
+        XCTAssertLessThan(t.landRelief(), 0.80, "Relief läuft weg unter Mäander")
+        XCTAssertLessThan(t.maxHeight(), 1.0, "Terrain-Runaway unter Mäander")
+        XCTAssertGreaterThanOrEqual(t.minHeight(), cfg.floor - 1e-9)
     }
 
     // MARK: - Mäander-Kopplung ins Höhenfeld (M3)
@@ -369,40 +418,77 @@ final class SimCoreTests: XCTestCase {
         XCTAssertGreaterThan(maxCount, 0)
     }
 
-    /// Verlandung hebt das Altarm-Bett: über *dieselben* Zellen gemessen wird
-    /// der Altarm über die Zeit flacher (Sediment füllt ihn Richtung Uferrand).
-    func testMeanderOxbowSiltsUp() throws {
-        throw XCTSkip("Pending: Altarm-Verlandung ist aufs alte Terrain kalibriert; unter "
-            + "dem neuen ridged-Terrain silten die inneren Zellen nicht mehr mehrheitlich auf. "
-            + "Mäander ist in Produktion deaktiviert, bis mit der Droplet-Erosion versöhnt.")
-        let cfg = meanderCfg()
+    /// Verlandung im Produktions-Pfad: nach Cutoffs entstehen eingetiefte Altarm-
+    /// Betten, und die füllen sich über die Zeit wieder zu (`fillOxbows`), bis sie
+    /// ausaltern (`pruneOxbows` → die Altarm-Zahl geht vom Peak zurück).
+    ///
+    /// Metrik ist das **Bett-Defizit** (Tiefe unter dem höchsten 4er-Nachbarn) —
+    /// genau die Größe, die `fillOxbows` abbaut, und immun gegen den Relief-Servo
+    /// (der hebt Bett UND Uferrand). Die alte Metrik „h steigt absolut" ist unscharf
+    /// geworden: sie liefert mit *und ohne* Verlandung ~0.82..0.90 (Servo/Deposition
+    /// heben das Bett ohnehin) — gemessen, deshalb ersetzt.
+    ///
+    /// Gemessen (Produktions-Config, n=192, seed 33): 184 Kohorten-Zellen,
+    /// d0 = 0.0073, Defizit-Mittel über die 4 Fenster = 0.76·d0; Altarm-Peak 203 →
+    /// Ende 66 (0.33·Peak). Kaputte Mechanik → rot: Verlandung aus
+    /// (oxbowFillYears=∞) → 1.19·d0; Ausaltern aus (oxbowMaxAge=∞) → 458/458 =
+    /// 1.00·Peak; Cutoff aus (Hals 0 bzw. `applyCutoffs` stillgelegt) → 0 Zellen.
+    func testMeanderOxbowSiltsUp() {
+        let cfg = prodMeanderCfg()
         let n = cfg.n
-        let t = Terrain(config: cfg, seed: 111)
-        // Einschwingen lassen (der Früh-Transient schneidet noch heftig ein);
-        // erst im graded state sind abgeschnürte Tiefland-Altarme im Ablagerungs-
-        // Regime und verlanden statt weiter einzuschneiden.
-        for _ in 0..<150 { t.step(dtYears: 500) }
-        var guardN = 0
-        while t.meander.oxbows.isEmpty && guardN < 100 { t.step(dtYears: 500); guardN += 1 }
-        XCTAssertFalse(t.meander.oxbows.isEmpty, "kein Altarm entstanden")
-        // Innere Altarm-Knoten (Hals-Endpunkte liegen auf dem noch aktiven Kanal).
-        var cells = Set<Int>()
-        for loop in t.meander.oxbows where loop.count >= 5 {
-            for nd in loop[1..<(loop.count - 1)] {
-                let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
-                let cj = min(max(Int(nd.z.rounded()), 1), n - 2)
-                cells.insert(cj * n + ci)
+        let t = Terrain(config: cfg, seed: 33)
+        /// Mittlere Tiefe der Zellen unter ihrem höchsten 4er-Nachbarn.
+        func bedDeficit(_ cells: [Int]) -> Double {
+            var s = 0.0
+            for k in cells {
+                var rim = t.h[k]
+                for nb in [k - 1, k + 1, k - n, k + n] { rim = max(rim, t.h[nb]) }
+                s += rim - t.h[k]
+            }
+            return cells.isEmpty ? 0 : s / Double(cells.count)
+        }
+        for _ in 0..<40 { t.step(dtYears: 500) } // 20k Jahre einschwingen (graded state)
+        // Kohorte: die Betten aller über 5k Jahre FRISCH abgeschnürten Schleifen.
+        // Ohne die je zwei äußeren Knoten pro Ende — die verkorkt `plugOxbows`
+        // ohnehin und sie liegen am noch aktiven Kanal.
+        var cohort = Set<Int>()
+        for _ in 0..<10 {
+            t.step(dtYears: 500)
+            for oi in t.meander.oxbows.indices where t.meander.oxbowAge[oi] == 0 {
+                let loop = t.meander.oxbows[oi]
+                guard loop.count >= 6 else { continue }
+                for nd in loop[2..<(loop.count - 2)] {
+                    let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
+                    let cj = min(max(Int(nd.z.rounded()), 1), n - 2)
+                    cohort.insert(cj * n + ci)
+                }
             }
         }
-        XCTAssertFalse(cells.isEmpty, "kein innerer Altarm-Bereich")
-        var h0 = [Int: Double](); for k in cells { h0[k] = t.h[k] }
-        for _ in 0..<30 { t.step(dtYears: 500) } // ~15k Jahre altern
-        // Verlandung hebt das Bett: die Mehrheit der inneren Zellen aggradiert
-        // (einzelne kann ein zurückwandernder Kanal re-carven → Mehrheit, kein Mittel).
-        var aggraded = 0
-        for k in cells where t.h[k] > h0[k]! { aggraded += 1 }
-        XCTAssertGreaterThan(Double(aggraded) / Double(cells.count), 0.6,
-                             "Altarm-Betten müssen mehrheitlich verlanden: \(aggraded)/\(cells.count)")
+        let cells = cohort.sorted() // deterministische Summations-Reihenfolge
+        XCTAssertGreaterThan(cells.count, 20,
+                             "kaum frisch abgeschnürte Altarm-Betten: \(cells.count)")
+        let d0 = bedDeficit(cells)
+        XCTAssertGreaterThan(d0, 0.002, "frische Altarme sind nicht eingetieft: \(d0)")
+        // Über 12k Jahre (unter oxbowMaxAge, die Kohorte lebt noch) muss das Defizit
+        // deutlich schrumpfen. Mittel über 4 Fenster statt Einzelwert: einzelne
+        // Zellen re-carvt ein zurückwandernder Lauf, das rauscht.
+        var ratios: [Double] = []
+        for _ in 0..<4 {
+            for _ in 0..<6 { t.step(dtYears: 500) } // 3k Jahre je Fenster
+            ratios.append(bedDeficit(cells) / d0)
+        }
+        let meanRatio = ratios.reduce(0, +) / Double(ratios.count)
+        XCTAssertLessThan(meanRatio, 0.90,
+                          "Altarm-Betten verlanden nicht: Defizit \(ratios) × d0=\(d0)")
+        // Und die Altarme altern aus: die Liste geht vom Peak wieder zurück.
+        var peak = t.meander.oxbows.count
+        while t.years < 80_000 - 1e-6 {
+            t.step(dtYears: 500)
+            peak = max(peak, t.meander.oxbows.count)
+        }
+        XCTAssertGreaterThan(peak, 20, "kaum Altarme über den Lauf: \(peak)")
+        XCTAssertLessThan(Double(t.meander.oxbows.count), 0.7 * Double(peak),
+                          "Altarm-Zahl geht nicht zurück: \(t.meander.oxbows.count) von Peak \(peak)")
     }
 
     /// Trace aus der echten D8-Entwässerung liefert plausible Läufe.
