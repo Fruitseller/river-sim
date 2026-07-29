@@ -63,6 +63,8 @@ public final class Terrain {
         self.cfg = config
         self.n = config.n
         self.seed = seed
+        self.mfdMinA = config.braidMinCells * config.cellSize * config.cellSize
+        self.mfdFlatCell = config.meanderFlatSlope * config.cellSize
         let c = config.count
         h = .init(repeating: 0, count: c)
         rock = .init(repeating: 0, count: c)
@@ -298,23 +300,28 @@ public final class Terrain {
     // MARK: - Klima (orographischer Niederschlag, Wind von Westen)
 
     public func computeRain() {
-        for j in 0..<n {
+        let nn = n, sea = cfg.sea
+        h.withUnsafeBufferPointer { hb in
+        rain.withUnsafeMutableBufferPointer { rb in
+        let ph = hb.baseAddress!, prain = rb.baseAddress!
+        for j in 0..<nn {
             var m = 1.0
-            var hs = h[idx(0, j)] <= cfg.sea ? cfg.sea : h[idx(0, j)]
-            for i in 0..<n {
-                let k = idx(i, j)
-                if h[k] <= cfg.sea {
+            let k0 = j * nn
+            var hs = ph[k0] <= sea ? sea : ph[k0]
+            for i in 0..<nn {
+                let k = k0 + i
+                if ph[k] <= sea {
                     m = min(1, m + 0.015) // über Wasser auftanken
-                    rain[k] = m
-                    hs = cfg.sea
+                    prain[k] = m
+                    hs = sea
                     continue
                 }
-                rain[k] = m
+                prain[k] = m
                 // Anstieg auf GEGLÄTTETER Höhe (EWMA ~4 Zellen): seit der Pre-
                 // Erosion trägt jeder Hang feine Rinnen — als Roh-Anstiege gezählt
                 // trockneten sie die ganze Insel aus (Regen ≈ 0 → kein Grün).
                 // Orographie = Makro-Relief, nicht Rinnen-Textur.
-                let hsNew = hs + 0.25 * (h[k] - hs)
+                let hsNew = hs + 0.25 * (ph[k] - hs)
                 let uph = max(0, hsNew - hs)
                 hs = hsNew
                 // Floor 0.18 (war 0.05): auch der Regenschatten-Osten bekommt
@@ -322,6 +329,7 @@ public final class Terrain {
                 m = max(0.18, m - m * (0.0012 + uph * 1.5))
             }
         }
+        }}
     }
 
     // MARK: - Vegetation
@@ -359,74 +367,131 @@ public final class Terrain {
         computeMFDArea()
     }
 
+    /// PERF: der Hot-Loop läuft komplett auf Roh-Puffern (kein Bounds-/COW-Check
+    /// je Zugriff), innere Zellen nehmen den Zweig mit 8 FESTEN Offsets ohne
+    /// Rand-Checks, und der Spaltenindex reist im Heap-Eintrag mit (kein `c % n`
+    /// je Zelle). Nachbar-Reihenfolge und Vergleiche bleiben exakt die der alten
+    /// dj/di-Schleife — bei gleichen Füllhöhen hängt das Ergebnis daran.
     private func priorityFlood() {
         heap.removeAll()
-        for k in 0..<cfg.count { visited[k] = false }
-        // Ränder als Startpunkte (Meer/Weltrand = Basisniveau).
-        for i in 0..<n {
-            for b in [i, (n - 1) * n + i, i * n, i * n + n - 1] {
-                if !visited[b] {
-                    visited[b] = true
-                    hf[b] = h[b]
-                    floodParent[b] = -1
-                    heap.push(key: hf[b], cell: Int32(b))
+        let cnt = cfg.count, nn = n
+        h.withUnsafeBufferPointer { hb in
+        hf.withUnsafeMutableBufferPointer { hfb in
+        visited.withUnsafeMutableBufferPointer { vb in
+        floodParent.withUnsafeMutableBufferPointer { pb in
+        order.withUnsafeMutableBufferPointer { ob in
+        heap.withRaw { heap in
+            let ph = hb.baseAddress!, phf = hfb.baseAddress!
+            let pv = vb.baseAddress!, ppar = pb.baseAddress!, pord = ob.baseAddress!
+            pv.update(repeating: false, count: cnt)
+            // Ränder als Startpunkte (Meer/Weltrand = Basisniveau). Ohne das
+            // Array-Literal je i — das war eine Allokation pro Randzelle.
+            @inline(__always) func seed(_ b: Int, _ col: Int32) {
+                if pv[b] { return }
+                pv[b] = true
+                phf[b] = ph[b]
+                ppar[b] = -1
+                heap.push(key: ph[b], cell: Int32(b), col: col)
+            }
+            for i in 0..<nn {
+                seed(i, Int32(i))                      // Nordrand
+                seed((nn - 1) * nn + i, Int32(i))      // Südrand
+                seed(i * nn, 0)                        // Westrand
+                seed(i * nn + nn - 1, Int32(nn - 1))   // Ostrand
+            }
+            let lastRow = cnt - nn
+            var oi = 0
+            while heap.size > 0 {
+                let e = heap.pop()
+                let c = Int(e.cell), col = Int(e.col)
+                pord[oi] = e.cell; oi += 1
+                // e.key == hf[c]: die Füllhöhe wird beim Push gesetzt und danach
+                // nie mehr geändert → ein Random-Read gespart.
+                let hc = e.key
+                @inline(__always) func visit(_ nb: Int, _ ncol: Int32) {
+                    if pv[nb] { return }
+                    pv[nb] = true
+                    let v = max(ph[nb], hc)
+                    phf[nb] = v
+                    ppar[nb] = e.cell
+                    heap.push(key: v, cell: Int32(nb), col: ncol)
+                }
+                if col > 0 && col < nn - 1 && c >= nn && c < lastRow {
+                    let cm = e.col
+                    visit(c - nn - 1, cm - 1); visit(c - nn, cm); visit(c - nn + 1, cm + 1)
+                    visit(c - 1, cm - 1); /* Zentrum */         visit(c + 1, cm + 1)
+                    visit(c + nn - 1, cm - 1); visit(c + nn, cm); visit(c + nn + 1, cm + 1)
+                } else {
+                    let cj = c / nn
+                    for dj in -1...1 {
+                        for di in -1...1 {
+                            if di == 0 && dj == 0 { continue }
+                            let ni = col + di, nj = cj + dj
+                            if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                            visit(nj * nn + ni, Int32(ni))
+                        }
+                    }
                 }
             }
-        }
-        var oi = 0
-        while !heap.isEmpty {
-            let c = Int(heap.pop())
-            order[oi] = Int32(c); oi += 1
-            let ci = c % n, cj = c / n
-            for dj in -1...1 {
-                for di in -1...1 {
-                    if di == 0 && dj == 0 { continue }
-                    let ni = ci + di, nj = cj + dj
-                    if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
-                    let nb = nj * n + ni
-                    if visited[nb] { continue }
-                    visited[nb] = true
-                    hf[nb] = max(h[nb], hf[c])
-                    floodParent[nb] = Int32(c)
-                    heap.push(key: hf[nb], cell: Int32(nb))
-                }
-            }
-        }
+        }}}}}}
     }
 
+    /// PERF wie im Flood: Roh-Puffer, i/j aus der Schleife statt `%`/`/` je Zelle,
+    /// innere Zellen mit 8 festen Offsets ohne Rand-Checks. Vergleichsreihenfolge
+    /// und `/ dist` bleiben unverändert (strict `>` → der erste steilste gewinnt).
     private func computeReceiversAndArea() {
         let cellArea = cfg.cellSize * cfg.cellSize
-        for k in 0..<cfg.count {
-            receiver[k] = -1
-            area[k] = cellArea
-        }
-        // Empfänger: steilster Abstieg auf hf; auf Seespiegel-Flächen Richtung Überlauf.
-        for k in 0..<cfg.count {
-            if hf[k] <= cfg.sea { continue } // Meer = Senke
-            let i = k % n, j = k / n
-            var best: Int32 = -1
-            var bestSlope = 0.0
-            for dj in -1...1 {
-                for di in -1...1 {
-                    if di == 0 && dj == 0 { continue }
-                    let ni = i + di, nj = j + dj
-                    if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
-                    let nb = nj * n + ni
-                    let dist = (di != 0 && dj != 0) ? 2.0.squareRoot() : 1.0
-                    let s = (hf[k] - hf[nb]) / dist
-                    if s > bestSlope { bestSlope = s; best = Int32(nb) }
+        let cnt = cfg.count, nn = n, sea = cfg.sea
+        let sqrt2 = 2.0.squareRoot()
+        hf.withUnsafeBufferPointer { hfb in
+        receiver.withUnsafeMutableBufferPointer { rb in
+        area.withUnsafeMutableBufferPointer { ab in
+        floodParent.withUnsafeBufferPointer { pb in
+        order.withUnsafeBufferPointer { ob in
+            let phf = hfb.baseAddress!, prec = rb.baseAddress!, pa = ab.baseAddress!
+            let ppar = pb.baseAddress!, pord = ob.baseAddress!
+            prec.update(repeating: -1, count: cnt)
+            pa.update(repeating: cellArea, count: cnt)
+            // Empfänger: steilster Abstieg auf hf; auf Seespiegel-Flächen Richtung Überlauf.
+            for j in 0..<nn {
+                let row = j * nn
+                let innerRow = j > 0 && j < nn - 1
+                for i in 0..<nn {
+                    let k = row + i
+                    let hk = phf[k]
+                    if hk <= sea { continue } // Meer = Senke
+                    var best: Int32 = -1
+                    var bestSlope = 0.0
+                    @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                        let s = (hk - phf[nb]) / dist
+                        if s > bestSlope { bestSlope = s; best = Int32(nb) }
+                    }
+                    if innerRow && i > 0 && i < nn - 1 {
+                        consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
+                        consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
+                        consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+                    } else {
+                        for dj in -1...1 {
+                            for di in -1...1 {
+                                if di == 0 && dj == 0 { continue }
+                                let ni = i + di, nj = j + dj
+                                if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                                consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+                            }
+                        }
+                    }
+                    if best < 0 { best = ppar[k] } // flacher Seespiegel → Überlauf
+                    prec[k] = best
                 }
             }
-            if best < 0 { best = floodParent[k] } // flacher Seespiegel → Überlauf
-            receiver[k] = best
-        }
-        // Einzugsgebiet: von hoch nach tief (order rückwärts) an Empfänger weiterreichen.
-        var oi = cfg.count - 1
-        while oi >= 0 {
-            let k = Int(order[oi]); oi -= 1
-            let r = receiver[k]
-            if r >= 0 { area[Int(r)] += area[k] }
-        }
+            // Einzugsgebiet: von hoch nach tief (order rückwärts) an Empfänger weiterreichen.
+            var oi = cnt - 1
+            while oi >= 0 {
+                let k = Int(pord[oi]); oi -= 1
+                let r = prec[k]
+                if r >= 0 { pa[Int(r)] += pa[k] }
+            }
+        }}}}}
     }
 
     // MARK: - Multi-Flow-Einzugsgebiet (Freeman/Holmgren) — nur Render/Braiding
@@ -455,55 +520,79 @@ public final class Terrain {
     /// behalten die Konvergenz (mfdExponent, dendritischer Look), geflutete
     /// Becken-Böden ebenso (Dispersion dort = Sheet-Flow-Konfetti im Render).
     @inline(__always) func mfdLocalExponent(_ k: Int, sMax: Double) -> Double {
-        // Hot-Loop (409k Aufrufe je computeFlow): Schwellen einmal je Terrain
-        // cachen statt je Zelle zu multiplizieren.
-        return (areaMFD[k] >= mfdMinA && sMax < mfdFlatCell && hf[k] - h[k] < 0.005)
-             ? cfg.braidDispersion : cfg.mfdExponent
+        mfdLocalExponent(a: areaMFD[k], sMax: sMax, pond: hf[k] - h[k])
     }
-    private lazy var mfdMinA = cfg.braidMinCells * cfg.cellSize * cfg.cellSize
-    private lazy var mfdFlatCell = cfg.meanderFlatSlope * cfg.cellSize // Weltslope in Zell-Einheiten
+    /// Wert-Variante für die Hot-Loops (die dort auf Roh-Puffern arbeiten und
+    /// `self.areaMFD` nicht gleichzeitig lesen dürfen) — EINE Regel, zwei Aufrufer.
+    @inline(__always) func mfdLocalExponent(a: Double, sMax: Double, pond: Double) -> Double {
+        (a >= mfdMinA && sMax < mfdFlatCell && pond < 0.005)
+            ? cfg.braidDispersion : cfg.mfdExponent
+    }
+    // Schwellen einmal je Terrain (waren `lazy var`: das kostet im 700k-Loop je
+    // Zugriff eine Initialisierungs-Prüfung auf einer Klassen-Property).
+    private let mfdMinA: Double
+    private let mfdFlatCell: Double // Weltslope in Zell-Einheiten
 
     private func computeMFDArea() {
         let cellArea = cfg.cellSize * cfg.cellSize
+        let cnt = cfg.count, nn = n, sea = cfg.sea
         let sqrt2 = 2.0.squareRoot()
-        for k in 0..<cfg.count { areaMFD[k] = cellArea }
-        var nbK = [Int](repeating: 0, count: 8) // wiederverwendete Nachbar-Puffer (keine Alloc je Zelle)
-        var nbW = [Double](repeating: 0, count: 8)
-        var oi = cfg.count - 1
-        while oi >= 0 {
-            let k = Int(order[oi]); oi -= 1
-            if hf[k] <= cfg.sea { continue } // Meer = Senke, reicht nicht weiter
-            let i = k % n, j = k / n
-            var cnt = 0
-            var sMax = 0.0
-            for dj in -1...1 {
-                for di in -1...1 {
-                    if di == 0 && dj == 0 { continue }
-                    let ni = i + di, nj = j + dj
-                    if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
-                    let nb = nj * n + ni
-                    let dist = (di != 0 && dj != 0) ? sqrt2 : 1.0
-                    let s = (hf[k] - hf[nb]) / dist
-                    if s > 0 { nbK[cnt] = nb; nbW[cnt] = s; sMax = max(sMax, s); cnt += 1 }
+        hf.withUnsafeBufferPointer { hfb in
+        h.withUnsafeBufferPointer { hb in
+        areaMFD.withUnsafeMutableBufferPointer { ab in
+        floodParent.withUnsafeBufferPointer { pb in
+        order.withUnsafeBufferPointer { ob in
+        // Nachbar-Puffer auf dem Stack (die alten [Int]/[Double] kosteten je
+        // Zugriff Bounds- + COW-Prüfung).
+        withUnsafeTemporaryAllocation(of: Int32.self, capacity: 8) { nbK in
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
+            let phf = hfb.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
+            let ppar = pb.baseAddress!, pord = ob.baseAddress!
+            pa.update(repeating: cellArea, count: cnt)
+            var oi = cnt - 1
+            while oi >= 0 {
+                let k = Int(pord[oi]); oi -= 1
+                let hk = phf[k]
+                if hk <= sea { continue } // Meer = Senke, reicht nicht weiter
+                var c = 0
+                var sMax = 0.0
+                @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                    let s = (hk - phf[nb]) / dist
+                    if s > 0 { nbK[c] = Int32(nb); nbW[c] = s; sMax = max(sMax, s); c += 1 }
                 }
+                let j = k / nn, i = k - j * nn
+                if i > 0 && i < nn - 1 && j > 0 && j < nn - 1 {
+                    consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
+                    consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
+                    consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+                } else {
+                    for dj in -1...1 {
+                        for di in -1...1 {
+                            if di == 0 && dj == 0 { continue }
+                            let ni = i + di, nj = j + dj
+                            if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                            consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+                        }
+                    }
+                }
+                // areaMFD[k] ist beim Verarbeiten schon vollständig akkumuliert
+                // (alle Zuflüsse liegen höher in hf) → das Gate im Exponenten-
+                // Helfer ist gültig.
+                let a = pa[k]
+                let p = mfdLocalExponent(a: a, sMax: sMax, pond: hk - ph[k])
+                var wsum = 0.0
+                for t in 0..<c { nbW[t] = powFast(nbW[t], p); wsum += nbW[t] }
+                if c == 0 || wsum <= 0 {
+                    // flache Seespiegel-Zelle (kein tieferer Nachbar) → wie D8 über den
+                    // Priority-Flood-Überlauf (floodParent) weiterreichen, damit die
+                    // Fläche nicht am See versickert.
+                    let fp = ppar[k]
+                    if fp >= 0 { pa[Int(fp)] += a }
+                    continue
+                }
+                for t in 0..<c { pa[Int(nbK[t])] += a * (nbW[t] / wsum) }
             }
-            // areaMFD[k] ist beim Verarbeiten schon vollständig akkumuliert
-            // (alle Zuflüsse liegen höher in hf) → das Gate im Exponenten-
-            // Helfer ist gültig.
-            let p = mfdLocalExponent(k, sMax: sMax)
-            var wsum = 0.0
-            for t in 0..<cnt { nbW[t] = powFast(nbW[t], p); wsum += nbW[t] }
-            if cnt == 0 || wsum <= 0 {
-                // flache Seespiegel-Zelle (kein tieferer Nachbar) → wie D8 über den
-                // Priority-Flood-Überlauf (floodParent) weiterreichen, damit die
-                // Fläche nicht am See versickert.
-                let fp = floodParent[k]
-                if fp >= 0 { areaMFD[Int(fp)] += areaMFD[k] }
-                continue
-            }
-            let a = areaMFD[k]
-            for t in 0..<cnt { areaMFD[nbK[t]] += a * (nbW[t] / wsum) }
-        }
+        }}}}}}}
     }
 
     // MARK: - Braiding (zellulärer Bänke-Bau, Murray & Paola 1994)
