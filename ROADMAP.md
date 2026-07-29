@@ -31,6 +31,23 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Offene Punkte
 
+**Braiding baut kaum noch Mittelbänke (gemessen, offen):**
+Der Murray-&-Paola-`braidPass` ist wirkungslos bis kontraproduktiv geworden.
+Gemessen mit `testBraidingBuildsBars` (n=256, seed 1337): auf `78f4204` war es
+Insel-Summe an=4 vs. aus=1, auf `963974c` an=**2** vs. aus=**6** — der Pass
+unterdrückte die Inseln also mehr, als er sie baute. Ursache ist die
+Kalibrier-Kaskade aus der „Schönheits-Offensive" (Pre-Erosion, Relief-Servo,
+`baseRelief` 0.78 → andere Slope-Verteilung → die Gates `braidMinCells` 120 /
+Ponding-Fenster 0.015 / `braidDispersion` treffen andere Zellen).
+Wichtig: **die Insel-Metrik ist bei einstelligen Zählwerten rausch-dominiert** —
+eine unabhängige Droplet-Änderung schob sie von 2 auf 5, ohne dass Braiding
+gemeint war. Der Wächter ist damit derzeit grün, aber nicht aussagekräftig.
+Nächster Anlauf braucht **erst eine robuste Kenngröße** (Bank-Fläche innerhalb
+nasser Läufe, Splits pro Trunk-Länge, über mehrere Seeds und zeitaufgelöst —
+Bänke sind transient), **dann** die Kalibrierung. Ein abgebrochener
+Diagnose-Zwischenstand (ungeprüft) liegt auf dem Branch
+`worktree-agent-a24ee58eeb9d4d159`.
+
 **Terrain-Alterung (aus `docs/research-terrain-aging.md` §6):**
 - `isoHighClamp` (0.90) testweise lockern/entfernen — laut Recherche mit der
   Hangdiffusion überflüssig; aktuell pinnt der Deckel das Relief aufs junge Niveau
