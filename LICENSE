@@ -1,4 +1,4 @@
-BSD Zero Clause License (0BSD)
+BSD Zero Clause License
 
 Copyright (c) 2026 Piotr Großmann
 
@@ -12,15 +12,3 @@ INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
 LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
-
----
-
-Exceptions (Mozilla Public License 2.0, file-level):
-
-- SimCore/Sources/SimCore/ErosionFilter.swift
-  (Swift port of the erosion filter by Rune Skovbo Johansen)
-- docs/references/runevision-erosion/shader_buffer_Buffer_A.glsl
-  (original GLSL, copyright (c) 2025 Rune Skovbo Johansen)
-
-These files are subject to the terms of the Mozilla Public License, v. 2.0
-(https://mozilla.org/MPL/2.0/).

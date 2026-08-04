@@ -1,0 +1,8 @@
+river-sim is licensed under the BSD Zero Clause License (see LICENSE),
+with the following file-level exceptions under the Mozilla Public
+License 2.0 (https://mozilla.org/MPL/2.0/):
+
+- SimCore/Sources/SimCore/ErosionFilter.swift
+  (Swift port of the erosion filter by Rune Skovbo Johansen)
+- docs/references/runevision-erosion/shader_buffer_Buffer_A.glsl
+  (original GLSL, copyright (c) 2025 Rune Skovbo Johansen)

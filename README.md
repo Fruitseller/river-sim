@@ -53,4 +53,4 @@ swift test -c release --package-path SimCore
 ## Lizenz
 
 [0BSD](LICENSE). Ausnahme: `ErosionFilter.swift` und der Referenz-Shader sind
-MPL-2.0 (© Rune Skovbo Johansen), Details in der LICENSE-Datei.
+MPL-2.0 (© Rune Skovbo Johansen), Details in [NOTICE](NOTICE).
