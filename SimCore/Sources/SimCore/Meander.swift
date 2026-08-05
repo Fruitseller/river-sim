@@ -1,10 +1,5 @@
 import Foundation
 
-private struct MeanderGridKey: Hashable {
-    let x: Int
-    let z: Int
-}
-
 /// Lagrange-Zentrumslinien für die Mäander-Migration. Anders als die D8-
 /// Entwässerung (Euler-Grid) ist ein Fluss hier eine *persistente* Polylinie mit
 /// Gedächtnis: sie wandert über die Zeit (Prallhang erodiert → Außenkurve
@@ -53,6 +48,16 @@ public final class MeanderState {
     /// Abgeschnürte Schleifen (river-history). Alter in Jahren pro Altarm.
     public var oxbows: [[MeanderNode]] = []
     public var oxbowAge: [Double] = []
+
+    // Wiederverwendbare Puffer des räumlichen Cutoff-Index (Produktion,
+    // meanderSpatialCutoffIndex): flaches Bin-Gitter mit Linked-List statt
+    // Dictionary-of-Arrays — das Dictionary allokierte je Kanal & Schritt und
+    // war mit ~5% des Sim-Steps (n=832) der Mäander-Hotspot. `binHead` wird nur
+    // an den tatsächlich belegten Zellen (binTouched) zurückgesetzt.
+    private var binHead: [Int32] = []
+    private var binNext: [Int32] = []
+    private var binTouched: [Int32] = []
+    private var binW = 0
 
     public init() {}
 
@@ -202,29 +207,42 @@ public final class MeanderState {
             if config.meanderSpatialCutoffIndex {
                 // Nur Knoten aus den eigenen/nebenliegenden Zellen können einen
                 // Hals bilden. Das erhält das früheste (i, j) der Vollsuche.
-                var buckets: [MeanderGridKey: [Int]] = [:]
-                for (i, node) in ch.nodes.enumerated() {
-                    let key = MeanderGridKey(x: Int(floor(node.x / neck)),
-                                             z: Int(floor(node.z / neck)))
-                    buckets[key, default: []].append(i)
+                // Bin-Koordinaten werden ins Gitter GEKLEMMT (Knoten können während
+                // der Migration kurz aus der Welt driften): Klemmen ist monoton →
+                // Paare mit dist < neck bleiben in benachbarten Bins, und der exakte
+                // dist-Filter macht das Ergebnis identisch zur Dictionary-Variante.
+                let gw = max(1, Int(Double(config.n) / neck) + 2)
+                if binW != gw { binW = gw; binHead = [Int32](repeating: -1, count: gw * gw) }
+                let count = ch.nodes.count
+                if binNext.count < count { binNext = [Int32](repeating: -1, count: count) }
+                for c in binTouched { binHead[Int(c)] = -1 }
+                binTouched.removeAll(keepingCapacity: true)
+                @inline(__always) func binX(_ v: Double) -> Int {
+                    min(max(Int((v / neck).rounded(.down)), 0), gw - 1)
                 }
-                outer: for i in 0..<ch.nodes.count {
+                for i in 0..<count {
+                    let b = binX(ch.nodes[i].z) * gw + binX(ch.nodes[i].x)
+                    if binHead[b] < 0 { binTouched.append(Int32(b)) }
+                    binNext[i] = binHead[b]
+                    binHead[b] = Int32(i)
+                }
+                outer: for i in 0..<count {
                     let node = ch.nodes[i]
-                    let x = Int(floor(node.x / neck)), z = Int(floor(node.z / neck))
-                    var bestJ: Int? = nil
-                    for dz in -1...1 {
-                        for dx in -1...1 {
-                            let key = MeanderGridKey(x: x + dx, z: z + dz)
-                            guard let candidates = buckets[key] else { continue }
-                            for j in candidates where j >= i + minSep {
-                                if dist(node, ch.nodes[j]) < neck,
-                                   bestJ == nil || j < bestJ! {
+                    let x = binX(node.x), z = binX(node.z)
+                    var bestJ = Int.max
+                    for bz in max(0, z - 1)...min(gw - 1, z + 1) {
+                        for bx in max(0, x - 1)...min(gw - 1, x + 1) {
+                            var jj = binHead[bz * gw + bx]
+                            while jj >= 0 {
+                                let j = Int(jj)
+                                jj = binNext[j]
+                                if j >= i + minSep && j < bestJ && dist(node, ch.nodes[j]) < neck {
                                     bestJ = j
                                 }
                             }
                         }
                     }
-                    if let j = bestJ { cut = (i, j); break outer }
+                    if bestJ < Int.max { cut = (i, bestJ); break outer }
                 }
             } else {
                 outer: for i in 0..<ch.nodes.count {

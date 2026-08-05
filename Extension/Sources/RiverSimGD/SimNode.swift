@@ -2,6 +2,20 @@ import Foundation
 import SwiftGodot
 import SimCore
 
+/// Datenparallel über disjunkte Index-Bereiche — nur für Pässe, deren Zellen
+/// unabhängig sind (jede schreibt ausschließlich ihren eigenen Index): das
+/// Ergebnis ist BIT-IDENTISCH zur sequenziellen Schleife. Gleiche Idee wie
+/// `Terrain.parallel` in SimCore; die Render-Aufbereitung läuft sonst komplett
+/// auf dem Godot-Hauptthread.
+private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
+@inline(__always) private func parallelChunks(_ count: Int, _ body: (Int, Int) -> Void) {
+    let chunks = min(count, max(1, hostCoreCount * 4))
+    if chunks <= 1 { body(0, count); return }
+    DispatchQueue.concurrentPerform(iterations: chunks) { c in
+        body(count * c / chunks, count * (c + 1) / chunks)
+    }
+}
+
 /// GDExtension-Brücke: hält den reinen `SimCore.Terrain` und reicht seine Felder
 /// als Packed*Array an Godot. Alle @Callable-Methoden sind aus GDScript aufrufbar.
 ///
@@ -59,12 +73,19 @@ final class SimNode: Node {
         var out = [UInt8](repeating: 255, count: n * n * 4)
         // Wasser (Flüsse/Seen/Altarme) zeichnet das separate Wasser-Feld (waterFieldBytes)
         // als glattes, geshadetes Overlay — hier nur Land-Biome + Meeresgrund.
-
-        for j in 0..<n {
+        // Jede Zelle schreibt nur ihre 4 Bytes → zeilenparallel, bit-identisch.
+        h.withUnsafeBufferPointer { hb in
+        rain.withUnsafeBufferPointer { rnb in
+        veg.withUnsafeBufferPointer { vgb in
+        out.withUnsafeMutableBufferPointer { ob in
+        let ph = hb.baseAddress!, prain = rnb.baseAddress!
+        let pveg = vgb.baseAddress!, pout = ob.baseAddress!
+        parallelChunks(n) { jLo, jHi in
+        for j in jLo..<jHi {
             for i in 0..<n {
                 let k = j * n + i
                 var r = 0.0, g = 0.0, b = 0.0
-                let v = h[k]
+                let v = ph[k]
                 if v <= sea + 0.012 {
                     (r, g, b) = gradColor(v)
                 } else {
@@ -77,16 +98,16 @@ final class SimNode: Node {
                     // Färbung zählt der Hang-Charakter, nicht die Rinnen-Textur.
                     var slope = 0.0
                     if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
-                        slope = (abs(h[k + 2] - h[k - 2]) + abs(h[k + 2 * n] - h[k - 2 * n])) * 0.125
+                        slope = (abs(ph[k + 2] - ph[k - 2]) + abs(ph[k + 2 * n] - ph[k - 2 * n])) * 0.125
                     }
                     let steep = min(1, slope * 45)                // 0 flach … 1 steil
                     r = 0.38 + 0.05 * steep                       // grauer Fels; steiler nur LEICHT heller
                     g = 0.39 + 0.05 * steep                       // (0.11 wusch die dichten 100k-Rinnen weiß)
                     b = 0.40 + 0.05 * steep
-                    let moist = min(1, rain[k] * 1.2)             // Vegetation: moosgrün in
+                    let moist = min(1, prain[k] * 1.2)            // Vegetation: moosgrün in
                     let gentle = max(0, 1 - steep * 0.9)          // Tälern + unteren Hängen (hält sich an Rinnen etwas länger)
                     let altVeg = v < 0.6 ? 1 : max(0, 1 - (v - 0.6) / 0.18)
-                    let vegAmt = min(1, (0.5 + 0.5 * veg[k]) * moist * gentle * altVeg * 1.3)
+                    let vegAmt = min(1, (0.5 + 0.5 * pveg[k]) * moist * gentle * altVeg * 1.3)
                     r += (0.19 - r) * vegAmt; g += (0.42 - g) * vegAmt; b += (0.14 - b) * vegAmt // kräftigeres Moosgrün
                     if v > 0.58 {                                 // Hochlagen: neutral-grauer Fels (nicht pastell/weiß)
                         let wg = min(1, (v - 0.58) / 0.40)
@@ -98,12 +119,14 @@ final class SimNode: Node {
                     }
                 }
                 let o = k * 4
-                out[o] = UInt8(min(max(r, 0), 1) * 255)
-                out[o + 1] = UInt8(min(max(g, 0), 1) * 255)
-                out[o + 2] = UInt8(min(max(b, 0), 1) * 255)
-                // out[o+3] bleibt 255 (Alpha)
+                pout[o] = UInt8(min(max(r, 0), 1) * 255)
+                pout[o + 1] = UInt8(min(max(g, 0), 1) * 255)
+                pout[o + 2] = UInt8(min(max(b, 0), 1) * 255)
+                // pout[o+3] bleibt 255 (Alpha)
             }
         }
+        }
+        }}}}
         return PackedByteArray(out)
     }
 
@@ -237,13 +260,22 @@ final class SimNode: Node {
         // entwässerte Ebenen als flächigen Wash. Nicht unter substanziellen Seen
         // (Tiefe > 0.03) malen: dort deckt die Seefläche.
         let smap = terrain.streamMap
-        for k in 0..<(n * n) where hf[k] > sea && h[k] > sea && hf[k] - h[k] <= 0.01 {
-            let cu = area[k] / cellArea
-            if cu < creek { continue }
-            let m = min(max((smap[k] - 0.18) / 0.24, 0), 1) // Track-Maske 0.18..0.42 (von 0.12..0.35 angehoben: Zufallspfad-Speckle bleibt drunter, konsistente Läufe drüber)
-            if m <= 0 { continue }
-            sd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) * (0.35 + 0.65 * m)
-        }
+        // Per-Zelle unabhängig → parallel (bit-identisch zur sequenziellen Schleife).
+        sd.withUnsafeMutableBufferPointer { sdb in
+        h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
+        area.withUnsafeBufferPointer { ab in smap.withUnsafeBufferPointer { smb in
+            let psd = sdb.baseAddress!, ph = hb.baseAddress!, phf = hfb.baseAddress!
+            let pa = ab.baseAddress!, psm = smb.baseAddress!
+            parallelChunks(cnt) { lo, hi in
+                for k in lo..<hi where phf[k] > sea && ph[k] > sea && phf[k] - ph[k] <= 0.01 {
+                    let cu = pa[k] / cellArea
+                    if cu < creek { continue }
+                    let m = min(max((psm[k] - 0.18) / 0.24, 0), 1) // Track-Maske 0.18..0.42 (von 0.12..0.35 angehoben: Zufallspfad-Speckle bleibt drunter, konsistente Läufe drüber)
+                    if m <= 0 { continue }
+                    psd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) * (0.35 + 0.65 * m)
+                }
+            }
+        }}}}}
         // WASSERSPIEGEL-BEWUSST dilatieren: Wasser verbreitert sich nur auf Zellen,
         // die nicht nennenswert über dem WASSERSPIEGEL (hf) des Nachbarlaufs liegen
         // (barTol < braidBarHeight). Mittelbänke (Braiding!) und Ufer-/Talkanten
@@ -274,17 +306,26 @@ final class SimNode: Node {
         // die alte Kalibrierung stammt von der kleineren 640er-Map).
         let widenThresh = [0.55, 0.80]
         for thresh in widenThresh {
-            for j in 0..<n {
-                for i in 0..<n {
-                    let k = j * n + i
-                    var m = sd[k]
-                    if i > 0 && sd[k - 1] > thresh && h[k] - hf[k - 1] < barTol { m = max(m, sd[k - 1] - 0.09) }
-                    if i < n - 1 && sd[k + 1] > thresh && h[k] - hf[k + 1] < barTol { m = max(m, sd[k + 1] - 0.09) }
-                    if j > 0 && sd[k - n] > thresh && h[k] - hf[k - n] < barTol { m = max(m, sd[k - n] - 0.09) }
-                    if j < n - 1 && sd[k + n] > thresh && h[k] - hf[k + n] < barTol { m = max(m, sd[k + n] - 0.09) }
-                    b[k] = m
+            // Liest sd/h/hf, schreibt nur b[k] → zeilenparallel, bit-identisch.
+            sd.withUnsafeBufferPointer { sdb in
+            b.withUnsafeMutableBufferPointer { bb in
+            h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
+                let psd = sdb.baseAddress!, pb = bb.baseAddress!
+                let ph = hb.baseAddress!, phf = hfb.baseAddress!
+                parallelChunks(n) { jLo, jHi in
+                for j in jLo..<jHi {
+                    for i in 0..<n {
+                        let k = j * n + i
+                        var m = psd[k]
+                        if i > 0 && psd[k - 1] > thresh && ph[k] - phf[k - 1] < barTol { m = max(m, psd[k - 1] - 0.09) }
+                        if i < n - 1 && psd[k + 1] > thresh && ph[k] - phf[k + 1] < barTol { m = max(m, psd[k + 1] - 0.09) }
+                        if j > 0 && psd[k - n] > thresh && ph[k] - phf[k - n] < barTol { m = max(m, psd[k - n] - 0.09) }
+                        if j < n - 1 && psd[k + n] > thresh && ph[k] - phf[k + n] < barTol { m = max(m, psd[k + n] - 0.09) }
+                        pb[k] = m
+                    }
                 }
-            }
+                }
+            }}}}
             swap(&sd, &b)
         }
 
@@ -410,18 +451,25 @@ final class SimNode: Node {
         // verblassen dünne Läufe in der Übersicht), nur die Ränder bekommen einen
         // weichen Saum, den der Shader sauber smoothstept.
         func blur3(_ src: [Double], into dst: inout [Double]) {
-            for j in 0..<n {
-                for i in 0..<n {
-                    let k = j * n + i
-                    var s = 0.0, c = 0.0
-                    for dj in max(0, j-1)...min(n-1, j+1) {
-                        for di in max(0, i-1)...min(n-1, i+1) {
-                            s += src[dj * n + di]; c += 1
+            // Schreibt nur dst[k] → zeilenparallel, bit-identisch.
+            src.withUnsafeBufferPointer { sb in
+            dst.withUnsafeMutableBufferPointer { db in
+                let ps = sb.baseAddress!, pd = db.baseAddress!
+                parallelChunks(n) { jLo, jHi in
+                for j in jLo..<jHi {
+                    for i in 0..<n {
+                        let k = j * n + i
+                        var s = 0.0, c = 0.0
+                        for dj in max(0, j-1)...min(n-1, j+1) {
+                            for di in max(0, i-1)...min(n-1, i+1) {
+                                s += ps[dj * n + di]; c += 1
+                            }
                         }
+                        pd[k] = s / c
                     }
-                    dst[k] = s / c
                 }
-            }
+                }
+            }}
         }
         blur3(sd, into: &blur)
         for k in 0..<cnt {
@@ -441,35 +489,55 @@ final class SimNode: Node {
         }
         let bl = min(max(blend, 0), 1) // 1 = Sprung sofort, klein = weiches Blenden
 
-        for k in 0..<cnt {
-            let lake = lk[k]
-            // Richtung: gestempelte Mäander-Tangente, sonst rohe D8-Nachbardifferenz
-            // (∈ {-1,0,1}; der Shader normalisiert selbst → kein sqrt hier). Wird
-            // mitgeglättet, damit die Strömungsrichtung nicht schlagartig kippt.
-            var dx = 0.0, dz = 0.0
-            if mstamp[k] {
-                dx = mdx[k]; dz = mdz[k]
-            } else {
-                let r = rec[k]
-                if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
+        // Per-Zelle unabhängig (schreibt nur die eigenen EWMA-Felder + 4 Bytes)
+        // → parallel, bit-identisch.
+        sdS.withUnsafeMutableBufferPointer { s1 in
+        lakeS.withUnsafeMutableBufferPointer { s2 in
+        dxS.withUnsafeMutableBufferPointer { s3 in
+        dzS.withUnsafeMutableBufferPointer { s4 in
+        out.withUnsafeMutableBufferPointer { ob in
+        rec.withUnsafeBufferPointer { rcb in
+            let psdS = s1.baseAddress!, plakeS = s2.baseAddress!
+            let pdxS = s3.baseAddress!, pdzS = s4.baseAddress!
+            let pout = ob.baseAddress!, prec = rcb.baseAddress!
+            parallelChunks(cnt) { lo, hi in
+            for k in lo..<hi {
+                let lake = lk[k]
+                // Richtung: gestempelte Mäander-Tangente, sonst rohe D8-Nachbardifferenz
+                // (∈ {-1,0,1}; der Shader normalisiert selbst → kein sqrt hier). Wird
+                // mitgeglättet, damit die Strömungsrichtung nicht schlagartig kippt.
+                var dx = 0.0, dz = 0.0
+                if mstamp[k] {
+                    dx = mdx[k]; dz = mdz[k]
+                } else {
+                    let r = prec[k]
+                    if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
+                }
+                // EWMA: geglättetes Feld Richtung frischem Wert ziehen (Gedächtnis über Rebuilds).
+                psdS[k]   += bl * (sd[k] - psdS[k])
+                plakeS[k] += bl * (lake  - plakeS[k])
+                pdxS[k]   += bl * (dx    - pdxS[k])
+                pdzS[k]   += bl * (dz    - pdzS[k])
+                let o = k * 4
+                pout[o] = UInt8(min(max(psdS[k], 0), 1) * 255)
+                pout[o + 1] = UInt8(min(max(plakeS[k], 0), 1) * 255)
+                pout[o + 2] = UInt8((min(max(pdxS[k], -1), 1) * 0.5 + 0.5) * 255)
+                pout[o + 3] = UInt8((min(max(pdzS[k], -1), 1) * 0.5 + 0.5) * 255)
             }
-            // EWMA: geglättetes Feld Richtung frischem Wert ziehen (Gedächtnis über Rebuilds).
-            sdS[k]   += bl * (sd[k] - sdS[k])
-            lakeS[k] += bl * (lake  - lakeS[k])
-            dxS[k]   += bl * (dx    - dxS[k])
-            dzS[k]   += bl * (dz    - dzS[k])
-            let o = k * 4
-            out[o] = UInt8(min(max(sdS[k], 0), 1) * 255)
-            out[o + 1] = UInt8(min(max(lakeS[k], 0), 1) * 255)
-            out[o + 2] = UInt8((min(max(dxS[k], -1), 1) * 0.5 + 0.5) * 255)
-            out[o + 3] = UInt8((min(max(dzS[k], -1), 1) * 0.5 + 0.5) * 255)
-        }
+            }
+        }}}}}}
         return PackedByteArray(out)
     }
 
     private func pack(_ a: [Double]) -> PackedFloat32Array {
         var f = [Float](repeating: 0, count: a.count)
-        for i in 0..<a.count { f[i] = Float(a[i]) }
+        a.withUnsafeBufferPointer { ab in
+        f.withUnsafeMutableBufferPointer { fb in
+            let pa = ab.baseAddress!, pf = fb.baseAddress!
+            parallelChunks(a.count) { lo, hi in
+                for i in lo..<hi { pf[i] = Float(pa[i]) }
+            }
+        }}
         return PackedFloat32Array(f)
     }
 }

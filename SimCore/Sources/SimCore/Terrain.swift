@@ -93,6 +93,23 @@ public final class Terrain {
 
     @inline(__always) func idx(_ i: Int, _ j: Int) -> Int { j * n + i }
 
+    // MARK: - Datenparallelität
+
+    private static let coreCount = ProcessInfo.processInfo.activeProcessorCount
+
+    /// Führt `body(lo, hi)` über disjunkte Index-Bereiche parallel aus. Nur für
+    /// Pässe, deren Zellen unabhängig sind (jede schreibt ausschließlich ihren
+    /// eigenen Index) — das Ergebnis ist BIT-IDENTISCH zur sequenziellen Schleife.
+    /// Mehr Chunks als Kerne, damit concurrentPerform die ungleich schnellen
+    /// P-/E-Kerne auslasten kann.
+    @inline(__always) private func parallel(_ count: Int, _ body: (Int, Int) -> Void) {
+        let chunks = min(count, max(1, Terrain.coreCount * 4))
+        if chunks <= 1 { body(0, count); return }
+        DispatchQueue.concurrentPerform(iterations: chunks) { c in
+            body(count * c / chunks, count * (c + 1) / chunks)
+        }
+    }
+
     // MARK: - Terrain-Generierung
 
     public func generate(seed: UInt32) {
@@ -251,6 +268,10 @@ public final class Terrain {
     @inline(__always) private func powFast(_ s: Double, _ p: Double) -> Double {
         if p == 4.0 { let s2 = s * s; return s2 * s2 }
         if p == 2.0 { return s * s }
+        // KEIN 0.5→sqrt-Schnellpfad: libm-pow(x, 0.5) weicht bei Laufzeit-Exponent
+        // in ~0,14% der Fälle um 1 ulp von sqrt ab (gemessen; Literal-Tests täuschen,
+        // weil LLVM pow(x, 0.5) selbst zu sqrt faltet) → nicht bit-identisch, und
+        // die 1-ulp-Differenz divergiert übers chaotische System messbar.
         return pow(s, p)
     }
 
@@ -308,7 +329,9 @@ public final class Terrain {
         h.withUnsafeBufferPointer { hb in
         rain.withUnsafeMutableBufferPointer { rb in
         let ph = hb.baseAddress!, prain = rb.baseAddress!
-        for j in 0..<nn {
+        // Jede Zeile ist ein unabhängiger West→Ost-Sweep → zeilenparallel.
+        parallel(nn) { jLo, jHi in
+        for j in jLo..<jHi {
             var m = 1.0
             let k0 = j * nn
             var hs = ph[k0] <= sea ? sea : ph[k0]
@@ -333,6 +356,7 @@ public final class Terrain {
                 m = max(0.18, m - m * (0.0012 + uph * 1.5))
             }
         }
+        }
         }}
     }
 
@@ -340,24 +364,35 @@ public final class Terrain {
 
     public func updateVegetation(years: Double) {
         let f = min(1, years / cfg.vegTimeConstant)
-        for j in 2..<(n - 2) {
-            for i in 2..<(n - 2) {
-                let k = idx(i, j)
-                var target = 0.0
-                let v = h[k]
-                if v > cfg.sea + 0.005 && v < 0.68 && hf[k] - h[k] <= 0.015 {
-                    // Steigung grob (±2 Zellen): der Hang-Charakter entscheidet über
-                    // Bewuchs, nicht die feine Rinnen-Textur der Pre-Erosion (sonst
-                    // gilt jede Zelle als steil → kahle Täler).
-                    let slope = (abs(h[k + 2] - h[k - 2]) + abs(h[k + 2 * n] - h[k - 2 * n])) * 0.125
-                    let slopeOk = max(0, 1 - slope * 40)
-                    let wet = min(1, rain[k] * 1.3)
-                    let altOk = v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18) // Wald wächst höher
-                    target = slopeOk * wet * altOk
+        let nn = n, sea = cfg.sea
+        h.withUnsafeBufferPointer { hb in
+        hf.withUnsafeBufferPointer { hfb in
+        rain.withUnsafeBufferPointer { rnb in
+        veg.withUnsafeMutableBufferPointer { vb in
+            let ph = hb.baseAddress!, phf = hfb.baseAddress!
+            let prain = rnb.baseAddress!, pveg = vb.baseAddress!
+            // Schreibt nur veg[k] → zeilenparallel, bit-identisch.
+            parallel(nn - 4) { lo, hi in
+            for j in (lo + 2)..<(hi + 2) {
+                for i in 2..<(nn - 2) {
+                    let k = j * nn + i
+                    var target = 0.0
+                    let v = ph[k]
+                    if v > sea + 0.005 && v < 0.68 && phf[k] - ph[k] <= 0.015 {
+                        // Steigung grob (±2 Zellen): der Hang-Charakter entscheidet über
+                        // Bewuchs, nicht die feine Rinnen-Textur der Pre-Erosion (sonst
+                        // gilt jede Zelle als steil → kahle Täler).
+                        let slope = (abs(ph[k + 2] - ph[k - 2]) + abs(ph[k + 2 * nn] - ph[k - 2 * nn])) * 0.125
+                        let slopeOk = max(0, 1 - slope * 40)
+                        let wet = min(1, prain[k] * 1.3)
+                        let altOk = v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18) // Wald wächst höher
+                        target = slopeOk * wet * altOk
+                    }
+                    pveg[k] += (target - pveg[k]) * f
                 }
-                veg[k] += (target - veg[k]) * f
             }
-        }
+            }
+        }}}}
     }
 
     // MARK: - Priority-Flood + Entwässerung (D8)
@@ -457,7 +492,9 @@ public final class Terrain {
             prec.update(repeating: -1, count: cnt)
             pa.update(repeating: cellArea, count: cnt)
             // Empfänger: steilster Abstieg auf hf; auf Seespiegel-Flächen Richtung Überlauf.
-            for j in 0..<nn {
+            // Jede Zelle schreibt nur prec[k] → zeilenparallel, bit-identisch.
+            parallel(nn) { jLo, jHi in
+            for j in jLo..<jHi {
                 let row = j * nn
                 let innerRow = j > 0 && j < nn - 1
                 for i in 0..<nn {
@@ -487,6 +524,7 @@ public final class Terrain {
                     if best < 0 { best = ppar[k] } // flacher Seespiegel → Überlauf
                     prec[k] = best
                 }
+            }
             }
             // Einzugsgebiet: von hoch nach tief (order rückwärts) an Empfänger weiterreichen.
             var oi = cnt - 1
@@ -852,18 +890,34 @@ public final class Terrain {
     /// ≥ so viele Zellen) — für den Generierungs-Breach: Becken-Sillen/Talwege
     /// haben riesige Einzugsgebiete und werden durchschnitten, Hänge und Grate
     /// bleiben unberührt (junges Relief bleibt erhalten).
+    /// PERF wie in priorityFlood: der Hot-Loop läuft auf Roh-Puffern (kein
+    /// Bounds-/Exclusivity-Check je Zugriff). Sequenziell MUSS er bleiben: der
+    /// implizite Solver liest h[Empfänger], der weiter vorn in `order` schon
+    /// aktualisiert wurde. pow bleibt pow (s. powFast-Kommentar: 0.5→sqrt wäre
+    /// nicht bit-identisch).
     private func outletIncision(dt: Double, minAreaCells: Double = 0) {
         let cs = cfg.cellSize
         let sqrt2 = 2.0.squareRoot()
         let minA = minAreaCells * cs * cs
         let m = cfg.mExp
+        let cnt = cfg.count, nn = n, sea = cfg.sea, kOut = cfg.outletErode
+        h.withUnsafeMutableBufferPointer { hb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        rock.withUnsafeMutableBufferPointer { rkb in
+        veg.withUnsafeBufferPointer { vb in
+        area.withUnsafeBufferPointer { ab in
+        order.withUnsafeBufferPointer { ob in
+        receiver.withUnsafeBufferPointer { rb in
+            let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
+            let pveg = vb.baseAddress!, pa = ab.baseAddress!
+            let pord = ob.baseAddress!, prec = rb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
-        for oi in 0..<cfg.count {
-            let k = Int(order[oi])
-            let r = receiver[k]
-            if h[k] <= cfg.sea { continue }         // Meer nicht einschneiden
-            if area[k] < minA { continue }          // Breach: nur das Trunk-Netz
+        for oi in 0..<cnt {
+            let k = Int(pord[oi])
+            let r = prec[k]
+            if ph[k] <= sea { continue }            // Meer nicht einschneiden
+            if pa[k] < minA { continue }            // Breach: nur das Trunk-Netz
             let hr: Double
             let dist: Double
             if r < 0 {
@@ -872,30 +926,31 @@ public final class Terrain {
                 // Ohne das wirkt der Rand als unerodierbarer Pegel und Becken,
                 // die über den Rand entwässern, können nie tiefer ausschneiden
                 // (gemessen: See blieb 28 Breach-Runden bei exakt 2656 Zellen).
-                hr = cfg.sea
+                hr = sea
                 dist = cs
             } else {
                 let ri = Int(r)
-                if h[k] <= h[ri] { continue }       // See/Ebene: kein Gefälle → keine Inzision
-                let i = k % n, j = k / n
-                let rii = ri % n, rjj = ri / n
-                hr = h[ri]
+                if ph[k] <= ph[ri] { continue }     // See/Ebene: kein Gefälle → keine Inzision
+                let i = k % nn, j = k / nn
+                let rii = ri % nn, rjj = ri / nn
+                hr = ph[ri]
                 dist = (i != rii && j != rjj) ? cs * sqrt2 : cs
             }
             // Reine Flächen-Stream-Power: die Inzision konzentriert sich auf Zellen mit
             // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
             // statt verrauscht. Ein Becken-Auslass sammelt das ganze Becken → tieft zügig
             // ein → See entwässert zum Meer.
-            let kErode = cfg.outletErode * (1 - 0.6 * veg[k]) // Vegetation bremst
-            let f = kErode * dt * pow(area[k], m) / dist
-            let hNew = (h[k] + f * hr) / (1 + f)
-            var delta = h[k] - hNew                 // > 0
+            let kErode = kOut * (1 - 0.6 * pveg[k]) // Vegetation bremst
+            let f = kErode * dt * pow(pa[k], m) / dist
+            let hNew = (ph[k] + f * hr) / (1 + f)
+            var delta = ph[k] - hNew                // > 0
             if delta <= 0 { continue }
-            let ds = min(delta, sed[k])             // erst Sediment, dann Fels
-            sed[k] -= ds; delta -= ds
-            rock[k] -= delta
-            h[k] = hNew
+            let ds = min(delta, psed[k])            // erst Sediment, dann Fels
+            psed[k] -= ds; delta -= ds
+            prock[k] -= delta
+            ph[k] = hNew
         }
+        }}}}}}}
     }
 
     // MARK: - Seen-Verfüllung
@@ -1002,40 +1057,56 @@ public final class Terrain {
     /// kahler Fels kriecht kaum** → dort bleiben spitze Gipfel/Grate stehen (die
     /// Ausnahme, nicht die Regel). So altert die Landschaft ungleichmäßig-natürlich
     /// statt uniform-rund. `base` = kappa auf voll diffundierenden Zellen.
+    /// PERF: beide Pässe sind per-Zelle unabhängig (Pass 1 liest h/sed/veg,
+    /// schreibt nur scratch[k]; Pass 2 liest scratch, schreibt nur h/sed/rock[k])
+    /// → datenparallel auf Roh-Puffern, bit-identisch zur sequenziellen Schleife.
     private func hillslopeDiffusion(base: Double) {
         if base <= 0 { return }
-        for j in 0..<n {
-            for i in 0..<n {
-                let k = idx(i, j)
-                let hl = i > 0 ? h[k - 1] : h[k]
-                let hr = i < n - 1 ? h[k + 1] : h[k]
-                let hd = j > 0 ? h[k - n] : h[k]
-                let hu = j < n - 1 ? h[k + n] : h[k]
-                let lap = hl + hr + hd + hu - 4 * h[k]
-                // Kahler-Fels-Faktor: hoch (h>0.5), steil und unbewachsen → wenig
-                // Kriechen. Sediment/Vegetation heben das Kriechen wieder an.
-                let gx = (hr - hl) * 0.5, gy = (hu - hd) * 0.5
-                let slope = (gx * gx + gy * gy).squareRoot()
-                let steep = min(1, slope * 26)               // etwas früher „steil" → mehr Grate bleiben scharf
-                let high = min(1, max(0, (h[k] - 0.42) / 0.35)) // Schutz schon ab mittlerer Höhe
-                let soil = min(1, sed[k] / 0.02 + veg[k])   // Boden ODER Bewuchs → Kriechen
-                let bare = steep * high * max(0, 1 - soil)   // 1 = kahler steiler Hochfels
-                let localK = base * (1 - 0.92 * bare)        // dort bis auf 8% gedrosselt (Gipfel bleiben spitz)
-                scratch[k] = localK * lap
+        let nn = n, cnt = cfg.count
+        h.withUnsafeMutableBufferPointer { hb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        rock.withUnsafeMutableBufferPointer { rkb in
+        veg.withUnsafeBufferPointer { vb in
+        scratch.withUnsafeMutableBufferPointer { scb in
+            let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
+            let pveg = vb.baseAddress!, psc = scb.baseAddress!
+            parallel(nn) { jLo, jHi in
+            for j in jLo..<jHi {
+                for i in 0..<nn {
+                    let k = j * nn + i
+                    let hl = i > 0 ? ph[k - 1] : ph[k]
+                    let hr = i < nn - 1 ? ph[k + 1] : ph[k]
+                    let hd = j > 0 ? ph[k - nn] : ph[k]
+                    let hu = j < nn - 1 ? ph[k + nn] : ph[k]
+                    let lap = hl + hr + hd + hu - 4 * ph[k]
+                    // Kahler-Fels-Faktor: hoch (h>0.5), steil und unbewachsen → wenig
+                    // Kriechen. Sediment/Vegetation heben das Kriechen wieder an.
+                    let gx = (hr - hl) * 0.5, gy = (hu - hd) * 0.5
+                    let slope = (gx * gx + gy * gy).squareRoot()
+                    let steep = min(1, slope * 26)               // etwas früher „steil" → mehr Grate bleiben scharf
+                    let high = min(1, max(0, (ph[k] - 0.42) / 0.35)) // Schutz schon ab mittlerer Höhe
+                    let soil = min(1, psed[k] / 0.02 + pveg[k])  // Boden ODER Bewuchs → Kriechen
+                    let bare = steep * high * max(0, 1 - soil)   // 1 = kahler steiler Hochfels
+                    let localK = base * (1 - 0.92 * bare)        // dort bis auf 8% gedrosselt (Gipfel bleiben spitz)
+                    psc[k] = localK * lap
+                }
             }
-        }
-        for k in 0..<cfg.count {
-            let dh = scratch[k]
-            if dh == 0 { continue }
-            if dh >= 0 {
-                sed[k] += dh
-            } else {
-                let ds = min(-dh, sed[k])
-                sed[k] -= ds
-                rock[k] -= (-dh - ds)
             }
-            h[k] += dh
-        }
+            parallel(cnt) { lo, hi in
+            for k in lo..<hi {
+                let dh = psc[k]
+                if dh == 0 { continue }
+                if dh >= 0 {
+                    psed[k] += dh
+                } else {
+                    let ds = min(-dh, psed[k])
+                    psed[k] -= ds
+                    prock[k] -= (-dh - ds)
+                }
+                ph[k] += dh
+            }
+            }
+        }}}}}
     }
 
     // MARK: - Wellenerosion (Küstenzone)
@@ -1362,11 +1433,22 @@ public final class Terrain {
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
             // Zeitkonstante aus `streamMapMemoryYears`), dann sättigen: nur KONSISTENT befahrene
             // Zellen hellen auf, einzelne Zufallspfade verblassen.
+            // EWMA + Sättigung fusioniert und datenparallel (per-Zelle unabhängig,
+            // bit-identisch zu „erst EWMA-Loop, dann deriveStreamMap").
             let lam = 1 - exp(-dt / cfg.streamMapMemoryYears)
-            for k in 0..<cfg.count {
-                streamRate[k] = (1 - lam) * streamRate[k] + lam * (trackBuf[k] / dt)
-            }
-            deriveStreamMap()
+            let r0 = cfg.streamRefRate
+            streamRate.withUnsafeMutableBufferPointer { srb in
+            streamMap.withUnsafeMutableBufferPointer { smb in
+            trackBuf.withUnsafeBufferPointer { tbb in
+                let psr = srb.baseAddress!, psm = smb.baseAddress!, ptb = tbb.baseAddress!
+                parallel(cfg.count) { lo, hi in
+                    for k in lo..<hi {
+                        let v = (1 - lam) * psr[k] + lam * (ptb[k] / dt)
+                        psr[k] = v
+                        psm[k] = v / (v + r0)
+                    }
+                }
+            }}}
             // 2b) Auen-Aggradation: Flüsse schütten seitlich flache Schwemmböden auf
             //     (bankfull) → breite Niedrig-Gradient-Reaches für Mäander/Braiding.
             //     Nach dem Carve (Bett steht), vor der Diffusion (glättet die Aue).
