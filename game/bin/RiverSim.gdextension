@@ -7,3 +7,5 @@ compatibility_minimum = 4.2
 [libraries]
 macos.debug = "res://bin/libRiverSimGD.dylib"
 macos.release = "res://bin/libRiverSimGD.dylib"
+linux.debug.x86_64 = "res://bin/libRiverSimGD.so"
+linux.release.x86_64 = "res://bin/libRiverSimGD.so"

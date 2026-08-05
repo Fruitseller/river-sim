@@ -28,7 +28,9 @@ Rendering und Interaktion in Godot 4 (via GDExtension/SwiftGodot).
 
 Details: [SimCore/README.md](SimCore/README.md) und [docs/](docs/).
 
-## Bauen & Starten (macOS)
+## Bauen & Starten
+
+### macOS
 
 Voraussetzungen: Swift 6-Toolchain (Xcode), [Godot 4](https://godotengine.org)
 (getestet mit 4.7).
@@ -37,6 +39,21 @@ Voraussetzungen: Swift 6-Toolchain (Xcode), [Godot 4](https://godotengine.org)
 ./scripts/build.sh          # baut die GDExtension nach game/bin/ und signiert sie
 godot --path game           # oder game/project.godot im Godot-Editor öffnen
 ```
+
+### Debian / Linux
+
+Swift 6 und Godot 4.7.1 werden benötigt. Mit Swiftly für die Toolchain und
+einer lokalen Godot-Binärdatei unter `.tools/godot-4.7.1/`:
+
+```sh
+./scripts/build.sh
+./scripts/start.sh
+```
+
+`GODOT=/pfad/zu/godot ./scripts/start.sh` nutzt eine andere Godot-Installation.
+Auf einer Maschine ohne Vulkan-Unterstützung startet
+`./scripts/start.sh --rendering-method gl_compatibility`; ohne Display ist nur
+der headless Modus sinnvoll.
 
 Steuerung: Linksklick formt das Terrain (Shift kehrt um), Rechtsklick dreht,
 `+`/`−` oder Pinch zoomt. Die Zeitraffer-Knöpfe (10/30/60 J/s, +100 bis
