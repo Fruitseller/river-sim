@@ -5,6 +5,8 @@ extends Node3D
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const HSCALE := 24.0          # Höhen-Skalierung fürs Mesh (von 30 gesenkt: weniger vertikale Überhöhung → sanfterer Look, ergänzt das gesenkte baseRelief)
+const BALANCED_TERRAIN_GRID := 384
+const PERFORMANCE_TERRAIN_GRID := 256
 
 var sim: Object
 var N: int
@@ -14,6 +16,8 @@ var step: float
 var sea: float
 var floor_level: float
 var cell_area: float
+var terrain_grid: int
+var render_quality := "balanced"
 
 var terrain_mi: MeshInstance3D
 var water_mi: MeshInstance3D
@@ -30,11 +34,9 @@ var color_tex: ImageTexture
 var water_img: Image
 var water_tex: ImageTexture
 
-# gecachte Felder (nur render-/flussrelevant)
+# Nur die CPU-Höhen braucht GDScript: Raycasts lesen daraus, alle anderen
+# Renderfelder bleiben im nativen SimNode und vermeiden große FFI-Kopien.
 var h_cache: PackedFloat32Array
-var hf_cache: PackedFloat32Array
-var area_cache: PackedFloat32Array
-var recv_cache: PackedInt32Array
 
 # Kamera-Orbit
 var cam: Camera3D
@@ -49,6 +51,7 @@ var year_rate := 0.0          # Jahre/Sekunde
 var droplet_carry := 0.0
 var rebuild_timer := 0.0
 var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
+var overlay_timer := 0.0
 var sculpting := false
 var brush_dir := 1.0
 var brush_radius := 10.0
@@ -75,6 +78,16 @@ func _ready() -> void:
 	half = world_size / 2.0
 	step = world_size / float(N - 1)
 	cell_area = step * step
+	# Die Simulation bleibt immer bei N×N. Nur das GPU-Displacement nutzt eine
+	# adaptive Tessellation; per-pixel-Normalen und Heightmap bleiben unverändert.
+	render_quality = OS.get_environment("RS_QUALITY").to_lower()
+	if render_quality.is_empty():
+		render_quality = "balanced"
+	var requested_grid := N if render_quality == "quality" else (
+		PERFORMANCE_TERRAIN_GRID if render_quality == "performance" else BALANCED_TERRAIN_GRID)
+	if OS.has_environment("RS_RENDER_GRID"):
+		requested_grid = int(OS.get_environment("RS_RENDER_GRID"))
+	terrain_grid = clampi(requested_grid, 64, N)
 
 	_setup_scene()
 	_setup_ui()
@@ -95,7 +108,12 @@ func _diag() -> void:
 	for k in h_cache.size():
 		if h_cache[k] > sea + 0.012:
 			land += 1
-	print("DIAG verts=", h_cache.size(), " land=", land)
+	print("DIAG sim_cells=", h_cache.size(), " terrain_verts=", terrain_grid * terrain_grid, " land=", land)
+	var step_t0 := Time.get_ticks_usec()
+	sim.step(60.0)
+	var step_ms := (Time.get_ticks_usec() - step_t0) / 1000.0
+	_pull_fields()
+	print("DIAG PERF step_60y_ms=", step_ms)
 	var t0 := Time.get_ticks_usec()
 	for r in 10:
 		_update_terrain_textures()
@@ -127,9 +145,9 @@ func _setup_scene() -> void:
 	# Filmischer Look + Tiefe.
 	e.tonemap_mode = Environment.TONE_MAPPER_ACES
 	e.tonemap_exposure = 0.78
-	e.ssao_enabled = true
+	e.ssao_enabled = render_quality != "performance"
 	e.ssao_intensity = 1.8 # kräftigere Ambient-Occlusion → Tiefe in den Rinnen
-	e.glow_enabled = true
+	e.glow_enabled = render_quality != "performance"
 	e.glow_intensity = 0.2
 	e.glow_bloom = 0.08
 	e.adjustment_enabled = true
@@ -159,8 +177,8 @@ func _setup_scene() -> void:
 	terrain_mi = MeshInstance3D.new()
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(world_size, world_size)
-	pm.subdivide_width = N - 2  # → N Vertices je Kante
-	pm.subdivide_depth = N - 2
+	pm.subdivide_width = terrain_grid - 2
+	pm.subdivide_depth = terrain_grid - 2
 	terrain_mi.mesh = pm
 	terrain_mi.extra_cull_margin = 1000.0 # Displacement sprengt die Plan-AABB
 	terrain_mat = ShaderMaterial.new()
@@ -169,6 +187,7 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("world_size", world_size)
 	terrain_mat.set_shader_parameter("grid_n", float(N))
 	terrain_mat.set_shader_parameter("sea_level", sea)
+	terrain_mat.set_shader_parameter("detail_enabled", render_quality != "performance")
 	terrain_mi.material_override = terrain_mat
 	add_child(terrain_mi)
 
@@ -308,15 +327,20 @@ func _process(delta: float) -> void:
 		pending_years += year_rate * delta
 		rebuild_timer += delta
 		if rebuild_timer > 0.15:
+			var elapsed := rebuild_timer
 			rebuild_timer = 0.0
 			# Jahre/Schritt deckeln → hält jeden Schritt billig (keine Todesspirale).
 			var years := minf(pending_years, 240.0)
 			pending_years = 0.0
 			sim.step(years)
 			_pull_fields()
+			overlay_timer += elapsed
+			var update_overlays := overlay_timer >= 0.30
+			if update_overlays:
+				overlay_timer = 0.0
 			# Zeitraffer: Wasserfeld weich blenden → kein Springen zwischen den
 			# diskreten D8-Netzen (die ~27% je Update umwürfeln).
-			_update_terrain_textures(0.35)
+			_update_terrain_textures(0.35, update_overlays)
 			_update_year()
 
 	if sculpting:
@@ -350,21 +374,13 @@ func _fmt(v: int) -> String:
 # ---------------------------------------------------------------- Felder
 
 func _pull_fields() -> void:
-	# Nur was Rendering/Flüsse/Raycast braucht — Farben werden in Swift berechnet,
-	# daher KEINE sed/rain/veg-Felder mehr über die FFI-Grenze ziehen.
-	h_cache = sim.heights()      # Höhentextur + Raycast
-	hf_cache = sim.filled()      # Seeflächen
-	area_cache = sim.flowArea()  # Flussbreite/-schwelle
-	recv_cache = sim.receivers() # Flussrichtung
-
-func _cells_upstream(k: int) -> float:
-	return area_cache[k] / cell_area
+	h_cache = sim.heights() # Höhentextur + Raycast
 
 # ---------------------------------------------------------------- Terrain-Textur
 
 ## Lädt Höhen (R32F) und Farben (RGBA8) als Texturen hoch — GPU macht Displacement
 ## und Färbung. Pro Tick nur ein Upload statt kompletter Mesh-Rebuild.
-func _update_terrain_textures(water_blend: float = 1.0) -> void:
+func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = true) -> void:
 	var hbytes := h_cache.to_byte_array() # PackedFloat32Array → rohe float32-Bytes
 	if height_img == null:
 		height_img = Image.create_from_data(N, N, false, Image.FORMAT_RF, hbytes)
@@ -373,6 +389,8 @@ func _update_terrain_textures(water_blend: float = 1.0) -> void:
 	else:
 		height_img.set_data(N, N, false, Image.FORMAT_RF, hbytes)
 		height_tex.update(height_img)
+	if not update_overlays:
+		return
 
 	var cbytes: PackedByteArray = sim.terrainColorBytes()
 	if color_img == null:

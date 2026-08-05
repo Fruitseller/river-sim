@@ -59,6 +59,15 @@ Steuerung: Linksklick formt das Terrain (Shift kehrt um), Rechtsklick dreht,
 `+`/`−` oder Pinch zoomt. Die Zeitraffer-Knöpfe (10/30/60 J/s, +100 bis
 +10.000 Jahre) treiben die Simulation.
 
+### Leistung und Diagnose
+
+Standard ist `RS_QUALITY=balanced`: Die Simulation bleibt bei 832×832, das
+Terrain-Displacement nutzt aber ein 384×384-Gitter. `RS_QUALITY=quality` nutzt
+die volle Geometrie; `RS_QUALITY=performance` verwendet 256×256, deaktiviert
+SSAO, Glow und den kostspieligen Detail-Erosionsshader. `RS_RENDER_GRID=512`
+überschreibt nur die Gittergröße. `RS_DIAG=1` gibt die Zeit eines 60-Jahr-
+Simulationsschritts und zehn Texture-Updates aus.
+
 ## Tests
 
 Der Kern ist Godot-frei und headless verifizierbar:

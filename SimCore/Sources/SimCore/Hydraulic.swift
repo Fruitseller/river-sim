@@ -61,9 +61,10 @@ public enum Hydraulic {
     ///   und darf nicht zugeschüttet werden. Leeres Array = Verhalten wie ohne Maske
     ///   (bit-identisch).
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
-                             n: Int, count: Int, seed: UInt32, floor: Double,
-                             p: HydraulicParams,
-                             hf: [Double] = [], receiver: [Int32] = [],
+                              n: Int, count: Int, seed: UInt32, floor: Double,
+                              p: HydraulicParams,
+                              seaLevel: Double? = nil,
+                              hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
                              track: inout [Double]) {
         guard count > 0, n > 2 else { return }
@@ -118,6 +119,10 @@ public enum Hydraulic {
         for _ in 0..<count {
             var px = rnd.next() * Double(n - 1)
             var py = rnd.next() * Double(n - 1)
+            if let seaLevel {
+                let start = Int(py) * n + Int(px)
+                if h[start] <= seaLevel { continue }
+            }
             var dirX = 0.0, dirY = 0.0
             var speed = p.initialSpeed, water = p.initialWater, sediment = 0.0
 

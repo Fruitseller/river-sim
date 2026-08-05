@@ -27,6 +27,7 @@ uniform float detail_scale = 0.006;
 uniform float detail_strength = 0.30;
 uniform float detail_shade = 0.20;     // Albedo-Abdunkelung in Rinnenböden
 uniform float detail_normal = 1.0;     // Anteil der Normal-Perturbation
+uniform bool detail_enabled = true;
 
 varying vec2 v_uv;
 
@@ -190,7 +191,7 @@ void fragment() {
 	vec2 det_slope = vec2(0.0);
 	float det_shade = 0.0;
 	float det_ridge = 0.0;
-	if (dfade > 0.002) {
+	if (detail_enabled && dfade > 0.002) {
 		float fade_target = clamp((hval - sea_level) / 0.6 * 2.0 - 1.0, -1.0, 1.0);
 		float det_mag;
 		vec4 det = erosion_detail(v_uv, coarse_slope, fade_target, det_mag);

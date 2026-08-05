@@ -9,7 +9,14 @@ import SimCore
 /// passiert nur Marshalling Swift → Godot.
 @Godot
 final class SimNode: Node {
-    private let terrain = Terrain(config: SimConfig(), seed: 1337)
+    private static func productionConfig() -> SimConfig {
+        var config = SimConfig()
+        config.hydraulicSkipWaterSpawns = true
+        config.meanderSpatialCutoffIndex = true
+        return config
+    }
+
+    private let terrain = Terrain(config: SimNode.productionConfig(), seed: 1337)
 
     // MARK: Steuerung
 
@@ -48,7 +55,7 @@ final class SimNode: Node {
     @Callable func terrainColorBytes() -> PackedByteArray {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
-        let h = terrain.h, sed = terrain.sed, rain = terrain.rain, veg = terrain.veg
+        let h = terrain.h, rain = terrain.rain, veg = terrain.veg
         var out = [UInt8](repeating: 255, count: n * n * 4)
         // Wasser (Flüsse/Seen/Altarme) zeichnet das separate Wasser-Feld (waterFieldBytes)
         // als glattes, geshadetes Overlay — hier nur Land-Biome + Meeresgrund.
@@ -145,9 +152,27 @@ final class SimNode: Node {
     private var lakeS: [Double] = []
     private var dxS: [Double] = []
     private var dzS: [Double] = []
+    // Die Wasseraufbereitung läuft über viele Vollbild-Pässe. Diese temporären
+    // Felder gehören deshalb zum Node statt bei jedem Render-Tick neu zu allokieren.
+    private var waterStream: [Double] = []
+    private var waterWiden: [Double] = []
+    private var waterLake: [Double] = []
+    private var waterBlur: [Double] = []
+    private var waterRawWet: [Bool] = []
+    private var waterMask: [Bool] = []
+    private var waterKeep: [Bool] = []
+    private var waterSeen: [Bool] = []
+    private var waterMDX: [Double] = []
+    private var waterMDZ: [Double] = []
+    private var waterStamp: [Bool] = []
+    private var waterOxbow: [Double] = []
+    private var waterBytes: [UInt8] = []
+    private var waterComponent: [Int] = []
+    private var waterStack: [Int] = []
 
     @Callable func waterFieldBytes(blend: Double) -> PackedByteArray {
         let n = terrain.cfg.n
+        let cnt = n * n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
         let creek = terrain.cfg.renderMinCells // Render-Schwelle sichtbarer Läufe — ENTKOPPELT vom Braid-Physik-Gate (braidMinCells): 30→120→280 erhöht (User: „zu viele Flüsse"), die Braiding-Physik behält ihr eigenes Gate. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
@@ -155,13 +180,56 @@ final class SimNode: Node {
         // springen und können sich um Bänke teilen. Erosion nutzt weiter D8-`area`.
         let h = terrain.h, hf = terrain.hf, area = terrain.areaMFD, rec = terrain.receiver
 
+        if waterStream.count != cnt {
+            waterStream = [Double](repeating: 0, count: cnt)
+            waterWiden = [Double](repeating: 0, count: cnt)
+            waterLake = [Double](repeating: 0, count: cnt)
+            waterBlur = [Double](repeating: 0, count: cnt)
+            waterMDX = [Double](repeating: 0, count: cnt)
+            waterMDZ = [Double](repeating: 0, count: cnt)
+            waterOxbow = [Double](repeating: 0, count: cnt)
+            waterRawWet = [Bool](repeating: false, count: cnt)
+            waterMask = [Bool](repeating: false, count: cnt)
+            waterKeep = [Bool](repeating: false, count: cnt)
+            waterSeen = [Bool](repeating: false, count: cnt)
+            waterStamp = [Bool](repeating: false, count: cnt)
+            waterBytes = [UInt8](repeating: 0, count: cnt * 4)
+            waterComponent.removeAll(keepingCapacity: false)
+            waterStack.removeAll(keepingCapacity: false)
+        }
+
+        // Lokale Variablen halten die Hot-Loops schnell; durch das Tauschen mit
+        // persistentem Speicher bleiben sie dabei über Render-Ticks allokationsfrei.
+        var sd: [Double] = []; swap(&sd, &waterStream)
+        var b: [Double] = []; swap(&b, &waterWiden)
+        var lk: [Double] = []; swap(&lk, &waterLake)
+        var blur: [Double] = []; swap(&blur, &waterBlur)
+        var rawWet: [Bool] = []; swap(&rawWet, &waterRawWet)
+        var mask: [Bool] = []; swap(&mask, &waterMask)
+        var keep: [Bool] = []; swap(&keep, &waterKeep)
+        var seen: [Bool] = []; swap(&seen, &waterSeen)
+        var mdx: [Double] = []; swap(&mdx, &waterMDX)
+        var mdz: [Double] = []; swap(&mdz, &waterMDZ)
+        var mstamp: [Bool] = []; swap(&mstamp, &waterStamp)
+        var oxb: [Double] = []; swap(&oxb, &waterOxbow)
+        var out: [UInt8] = []; swap(&out, &waterBytes)
+        defer {
+            swap(&sd, &waterStream); swap(&b, &waterWiden)
+            swap(&lk, &waterLake); swap(&blur, &waterBlur)
+            swap(&rawWet, &waterRawWet); swap(&mask, &waterMask)
+            swap(&keep, &waterKeep); swap(&seen, &waterSeen)
+            swap(&mdx, &waterMDX); swap(&mdz, &waterMDZ)
+            swap(&mstamp, &waterStamp); swap(&oxb, &waterOxbow)
+            swap(&out, &waterBytes)
+        }
+
         // Stream-Map mit ABFLUSS-ABHÄNGIGER BREITE: ein Fluss wird stromab breiter &
         // kräftiger (Hauptflüsse breit + tiefblau, Bäche dünn). Effizient über
         // schwellen-gestufte Max-Dilatation: dünne Intensität ∝ log(Einzugsgebiet)
         // je Fluss-Zelle, dann 3 Dilatations-Pässe, in denen höhere Pässe nur noch
         // KRÄFTIGE Flüsse weiter verbreitern → Breiten-Hierarchie. Sequenziell,
         // cache-freundlich (kein Scheiben-Stempeln mit verstreuten Zugriffen).
-        var sd = [Double](repeating: 0, count: n * n)
+        sd.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         // nickmcd-Rendering: gemalt wird die STREAM-MAP (zeitgemittelte Tropfen-
         // Pfade = wo Wasser wirklich fließt, scharfe Fäden), die Intensität/
         // Breiten-Hierarchie kommt weiter aus dem Abfluss (areaMFD). Die reine
@@ -205,33 +273,30 @@ final class SimNode: Node {
         // Hierarchie bleibt, ihr Absolutniveau sinkt (User: „proportional zu dick";
         // die alte Kalibrierung stammt von der kleineren 640er-Map).
         let widenThresh = [0.55, 0.80]
-        var a = sd, b = [Double](repeating: 0, count: n * n)  // Ping-Pong: keine COW-Kopien
         for thresh in widenThresh {
             for j in 0..<n {
                 for i in 0..<n {
                     let k = j * n + i
-                    var m = a[k]
-                    if i > 0 && a[k - 1] > thresh && h[k] - hf[k - 1] < barTol { m = max(m, a[k - 1] - 0.09) }
-                    if i < n - 1 && a[k + 1] > thresh && h[k] - hf[k + 1] < barTol { m = max(m, a[k + 1] - 0.09) }
-                    if j > 0 && a[k - n] > thresh && h[k] - hf[k - n] < barTol { m = max(m, a[k - n] - 0.09) }
-                    if j < n - 1 && a[k + n] > thresh && h[k] - hf[k + n] < barTol { m = max(m, a[k + n] - 0.09) }
+                    var m = sd[k]
+                    if i > 0 && sd[k - 1] > thresh && h[k] - hf[k - 1] < barTol { m = max(m, sd[k - 1] - 0.09) }
+                    if i < n - 1 && sd[k + 1] > thresh && h[k] - hf[k + 1] < barTol { m = max(m, sd[k + 1] - 0.09) }
+                    if j > 0 && sd[k - n] > thresh && h[k] - hf[k - n] < barTol { m = max(m, sd[k - n] - 0.09) }
+                    if j < n - 1 && sd[k + n] > thresh && h[k] - hf[k + n] < barTol { m = max(m, sd[k + n] - 0.09) }
                     b[k] = m
                 }
             }
-            swap(&a, &b)
+            swap(&sd, &b)
         }
-        sd = a
-        let cnt = n * n
 
         // DIREKT-RENDERING der Mäander-Entitäten: die persistenten Zentrumslinien und
         // Altarme werden GARANTIERT ins Feld gestempelt — unabhängig davon, ob die
         // D8-Drainage dem gecarvten sinuosen Bett folgt. Erst so werden „Arme, die
         // sich schlängeln und als Altarm-Seen abschnüren" wirklich sichtbar (der
         // Mäander IST die Fluss-Entität, nicht ein Nebenprodukt der D8-Karte).
-        var mdx = [Double](repeating: 0, count: cnt)   // gestempelte Fließrichtung
-        var mdz = [Double](repeating: 0, count: cnt)
-        var mstamp = [Bool](repeating: false, count: cnt)
-        var oxb = [Double](repeating: 0, count: cnt)   // Altarm-See-Overlay (mit Alter ausgeblendet)
+        mdx.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+        mdz.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+        mstamp.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        oxb.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) } // Altarm-See-Overlay (mit Alter ausgeblendet)
         let noMeanderPaint = ProcessInfo.processInfo.environment["RS_NO_MEANDER_PAINT"] != nil // Debug-Schalter
         for ch in noMeanderPaint ? [] : terrain.meander.channels {
             let nodes = ch.nodes
@@ -310,31 +375,30 @@ final class SimNode: Node {
         // einen See münden, überleben über die gemeinsame Komponente. Flood-Fill
         // ist O(n²) und läuft eh nur je Render-Tick. Altarme separat via oxb.
         let minWetCells = 25
-        var rawWet = [Bool](repeating: false, count: cnt)
+        rawWet.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         for k in 0..<cnt { rawWet[k] = hf[k] > sea && hf[k] - h[k] > 0.03 }
-        var mask = [Bool](repeating: false, count: cnt)
         for k in 0..<cnt { mask[k] = rawWet[k] || sd[k] >= 0.16 }
-        var keep = [Bool](repeating: false, count: cnt)
-        var seen = [Bool](repeating: false, count: cnt)
-        var comp = [Int]()
-        var stack = [Int]()
+        keep.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        seen.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        waterComponent.removeAll(keepingCapacity: true)
+        waterStack.removeAll(keepingCapacity: true)
         for start in 0..<cnt where mask[start] && !seen[start] {
-            comp.removeAll(keepingCapacity: true)
-            stack.removeAll(keepingCapacity: true)
-            stack.append(start); seen[start] = true
-            while let k = stack.popLast() {
-                comp.append(k)
+            waterComponent.removeAll(keepingCapacity: true)
+            waterStack.removeAll(keepingCapacity: true)
+            waterStack.append(start); seen[start] = true
+            while let k = waterStack.popLast() {
+                waterComponent.append(k)
                 let i = k % n, j = k / n
-                if i > 0 && mask[k - 1] && !seen[k - 1] { seen[k - 1] = true; stack.append(k - 1) }
-                if i < n - 1 && mask[k + 1] && !seen[k + 1] { seen[k + 1] = true; stack.append(k + 1) }
-                if j > 0 && mask[k - n] && !seen[k - n] { seen[k - n] = true; stack.append(k - n) }
-                if j < n - 1 && mask[k + n] && !seen[k + n] { seen[k + n] = true; stack.append(k + n) }
+                if i > 0 && mask[k - 1] && !seen[k - 1] { seen[k - 1] = true; waterStack.append(k - 1) }
+                if i < n - 1 && mask[k + 1] && !seen[k + 1] { seen[k + 1] = true; waterStack.append(k + 1) }
+                if j > 0 && mask[k - n] && !seen[k - n] { seen[k - n] = true; waterStack.append(k - n) }
+                if j < n - 1 && mask[k + n] && !seen[k + n] { seen[k + n] = true; waterStack.append(k + n) }
             }
-            if comp.count >= minWetCells {
-                for k in comp { keep[k] = true }
+            if waterComponent.count >= minWetCells {
+                for k in waterComponent { keep[k] = true }
             }
         }
-        var lk = [Double](repeating: 0, count: cnt)
+        lk.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         for k in 0..<cnt {
             if !keep[k] { sd[k] = 0 }
             if keep[k] && rawWet[k] { lk[k] = min(1, (hf[k] - h[k] - 0.03) / 0.10) }
@@ -345,8 +409,7 @@ final class SimNode: Node {
         // 3×3-Blur) statt reinem Blur: die Kern-Intensität bleibt voll (sonst
         // verblassen dünne Läufe in der Übersicht), nur die Ränder bekommen einen
         // weichen Saum, den der Shader sauber smoothstept.
-        func blur3(_ src: [Double]) -> [Double] {
-            var dst = [Double](repeating: 0, count: cnt)
+        func blur3(_ src: [Double], into dst: inout [Double]) {
             for j in 0..<n {
                 for i in 0..<n {
                     let k = j * n + i
@@ -359,21 +422,25 @@ final class SimNode: Node {
                     dst[k] = s / c
                 }
             }
-            return dst
         }
-        let sdB = blur3(sd), lkB = blur3(lk)
+        blur3(sd, into: &blur)
         for k in 0..<cnt {
-            sd[k] = max(sd[k], sdB[k])
-            lk[k] = max(lk[k], lkB[k])
+            sd[k] = max(sd[k], blur[k])
+        }
+        blur3(lk, into: &blur)
+        for k in 0..<cnt {
+            lk[k] = max(lk[k], blur[k])
         }
 
         // EWMA-Puffer bei Bedarf initialisieren (erstes Feld = sofort übernehmen).
         if sdS.count != cnt {
-            sdS = [Double](repeating: 0, count: cnt); lakeS = sdS; dxS = sdS; dzS = sdS
+            sdS = [Double](repeating: 0, count: cnt)
+            lakeS = [Double](repeating: 0, count: cnt)
+            dxS = [Double](repeating: 0, count: cnt)
+            dzS = [Double](repeating: 0, count: cnt)
         }
         let bl = min(max(blend, 0), 1) // 1 = Sprung sofort, klein = weiches Blenden
 
-        var out = [UInt8](repeating: 0, count: cnt * 4)
         for k in 0..<cnt {
             let lake = lk[k]
             // Richtung: gestempelte Mäander-Tangente, sonst rohe D8-Nachbardifferenz

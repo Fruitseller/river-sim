@@ -1,5 +1,10 @@
 import Foundation
 
+private struct MeanderGridKey: Hashable {
+    let x: Int
+    let z: Int
+}
+
 /// Lagrange-Zentrumslinien für die Mäander-Migration. Anders als die D8-
 /// Entwässerung (Euler-Grid) ist ein Fluss hier eine *persistente* Polylinie mit
 /// Gedächtnis: sie wandert über die Zeit (Prallhang erodiert → Außenkurve
@@ -185,6 +190,7 @@ public final class MeanderState {
     /// kein Nachbar). Die herausgeschnittene Schleife wird ein Altarm.
     private func applyCutoffs(_ ch: inout RiverChannel, config: SimConfig) {
         let neck = config.meanderNeckDist
+        guard neck > 0 else { return }
         let spacing = config.meanderNodeSpacing
         // Mindest-Index-Abstand: die Schleife muss ein Vielfaches des Halses lang
         // sein, sonst sind es bloß Nachbarknoten.
@@ -193,11 +199,40 @@ public final class MeanderState {
         while guardN < 64 {
             guardN += 1
             var cut: (Int, Int)? = nil
-            outer: for i in 0..<ch.nodes.count {
-                var j = i + minSep
-                while j < ch.nodes.count {
-                    if dist(ch.nodes[i], ch.nodes[j]) < neck { cut = (i, j); break outer }
-                    j += 1
+            if config.meanderSpatialCutoffIndex {
+                // Nur Knoten aus den eigenen/nebenliegenden Zellen können einen
+                // Hals bilden. Das erhält das früheste (i, j) der Vollsuche.
+                var buckets: [MeanderGridKey: [Int]] = [:]
+                for (i, node) in ch.nodes.enumerated() {
+                    let key = MeanderGridKey(x: Int(floor(node.x / neck)),
+                                             z: Int(floor(node.z / neck)))
+                    buckets[key, default: []].append(i)
+                }
+                outer: for i in 0..<ch.nodes.count {
+                    let node = ch.nodes[i]
+                    let x = Int(floor(node.x / neck)), z = Int(floor(node.z / neck))
+                    var bestJ: Int? = nil
+                    for dz in -1...1 {
+                        for dx in -1...1 {
+                            let key = MeanderGridKey(x: x + dx, z: z + dz)
+                            guard let candidates = buckets[key] else { continue }
+                            for j in candidates where j >= i + minSep {
+                                if dist(node, ch.nodes[j]) < neck,
+                                   bestJ == nil || j < bestJ! {
+                                    bestJ = j
+                                }
+                            }
+                        }
+                    }
+                    if let j = bestJ { cut = (i, j); break outer }
+                }
+            } else {
+                outer: for i in 0..<ch.nodes.count {
+                    var j = i + minSep
+                    while j < ch.nodes.count {
+                        if dist(ch.nodes[i], ch.nodes[j]) < neck { cut = (i, j); break outer }
+                        j += 1
+                    }
                 }
             }
             guard let (i, j) = cut else { break }

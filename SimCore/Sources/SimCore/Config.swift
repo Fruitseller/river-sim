@@ -36,6 +36,10 @@ public struct SimConfig: Sendable {
     // die Inzision bleibt bewusst Single-Flow, damit der kalibrierte Terrain-Look
     // und die implizite FastScape-Stabilität unangetastet bleiben.
     public var mfdExponent: Double = 4.0 // p→∞ = D8, p=1.1 max dispersiv (Braiding-Regime), p≈4 hält den dendritischen Look. Auf flachen großen Läufen gilt stattdessen braidDispersion (Terrain.mfdLocalExponent).
+    /// Ohne Braiding darf das reine Render-MFD seltener aktualisiert werden. Mit
+    /// Braiding bleibt es immer frisch, weil es dort ein physikalisches Feld ist.
+    /// Core-Default bleibt 1 für eine frische API.
+    public var mfdUpdateInterval: Int = 1
     public var kSed: Double = 1.1e-4   // Erodierbarkeit lockeres Sediment (weicher)
     public var sedCoverThresh: Double = 0.01 // ab so viel Sediment gilt "bedeckt"
     public var transportCap: Double = 9.0  // Transportkapazität-Koeffizient (SPACE)
@@ -60,6 +64,10 @@ public struct SimConfig: Sendable {
     public var hydraulicEnabled = true      // Droplet-Erosion statt Grid-Stream-Power+Diffusion
     public var streamRefRate: Double = 0.0025 // Stream-Map-Sättigung (nickmcd): ab dieser reife-gewichteten Tropfen-Besuchsrate (Besuche/Jahr, EWMA) gilt ein Lauf als etabliert (Map ≈ 0.63 bei r0, →1 darüber). Trunk-Raten gemessen ~0.003–0.007/J., Zufallspfade ≪0.001 (reife-gewichtet).
     public var hydraulicPerYear = 2.0       // Tropfen je Jahr (sanft → Makro-Grate überleben)
+    /// Ozean-Starts haben keinen Anteil an der Landformung, können aber fast die
+    /// ganze Tropfen-Lebenszeit verbrauchen. Die Produktionskonfiguration lässt
+    /// sie aus; der Core-Default bleibt für bestehende Kalibrierungen unverändert.
+    public var hydraulicSkipWaterSpawns = false
     public var outletIncision = true        // Flächen-Stream-Power auf dem Entwässerungsnetz: carvt Täler/Auslässe → Becken entwässern zum Meer, dendritische Rinnen + diskrete Seen (nickmcd-Look) statt einer blassen Flach-Ebene
     public var outletErode: Double = 3.0e-5 // Rate der Auslass-Inzision. 3e-5 gibt feine dendritische Rinnen „über die ganze Oberfläche" ohne Überkämmen (6e-5 überkarvt bei 100k)
     public var hillDiffusion: Double = 0.012 // Hangdiffusion-Basis (Bodenkriechen, D·∇²z) im Droplet-Pfad, RÄUMLICH VARIABEL (hillslopeDiffusion): rundet soil-mantled/sanfte Hänge, lässt hohen steilen Kahlfels scharf → gerundete Landschaft mit einzelnen spitzen Gipfeln (die Ausnahme). Der fehlende Alterungs-Prozess laut LEM-Recherche (docs/research-terrain-aging.md). Auf n=640 kalibriert (auflösungs-skaliert in step()).
@@ -134,6 +142,10 @@ public struct SimConfig: Sendable {
     public var meanderNodeSpacing: Double = 1.5   // Ziel-Knotenabstand (Zellen)
     public var meanderNeckDist: Double = 2.0      // Halsbreite für Cutoff (Zellen). Von 1.2 erhöht: Schlingen schnüren früher ab → Sinuosität wird niedriger gedeckelt (weniger Knäuel). Kern-Tests pinnen 1.2 in meanderCfg().
     public var meanderSmooth: Double = 0.12       // milde Laplace-Glättung je Schritt
+    /// Der räumliche Cutoff-Index beschleunigt lange Produktionsläufe. Der
+    /// Referenzpfad bleibt Standard, weil seine exakte Cutoff-Reihenfolge die
+    /// bestehenden Terrain-Metriken kalibriert.
+    public var meanderSpatialCutoffIndex = false
     public var meanderFlatSlope: Double = 0.02    // nur unter dieser Steigung mobil (Flachland)
     public var meanderSkew: Double = 0.5          // Downstream-Skew: Anteil upstream-gewichteter Krümmung (0=symmetrisch)
     public var meanderSkewLength: Double = 4.0     // Abkling-Länge der Upstream-Gewichtung (Zellen)

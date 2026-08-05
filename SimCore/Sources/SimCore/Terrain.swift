@@ -58,6 +58,7 @@ public final class Terrain {
     public private(set) var years: Double = 0
     private var seed: UInt32
     private var stepCount: UInt32 = 0 // deterministischer Zähler für die Droplet-Seeds
+    private var flowStepCount: UInt32 = 0
 
     public init(config: SimConfig = SimConfig(), seed: UInt32 = 1337) {
         self.cfg = config
@@ -98,6 +99,7 @@ public final class Terrain {
         self.seed = seed
         self.years = 0
         self.stepCount = 0
+        self.flowStepCount = 0
         noise = SimplexNoise(seed: seed)
 
         // Tektonik-Feld: fix je Terrain (reale Tektonik wechselt nicht alle 100 J).
@@ -211,7 +213,9 @@ public final class Terrain {
             let dtEq = Double(drops) / max(1e-9, cfg.hydraulicPerYear * density)
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
                             seed: seed &+ UInt32(0x9e37 + round), floor: cfg.floor,
-                            p: cfg.hydraulic, hf: hf, receiver: receiver,
+                            p: cfg.hydraulic,
+                            seaLevel: cfg.hydraulicSkipWaterSpawns ? cfg.sea : nil,
+                            hf: hf, receiver: receiver,
                             stream: streamMap, track: &trackBuf)
             for k in 0..<cfg.count {
                 streamRate[k] = 0.5 * streamRate[k] + 0.5 * (trackBuf[k] / dtEq)
@@ -360,11 +364,11 @@ public final class Terrain {
 
     /// Füllt Senken (Barnes et al.), bestimmt Abfluss-Nachbarn (steilster Abstieg
     /// auf der gefüllten Oberfläche) und akkumuliert das Einzugsgebiet.
-    public func computeFlow() {
+    public func computeFlow(includeMFD: Bool = true) {
         computeRain()
         priorityFlood()
         computeReceiversAndArea()
-        computeMFDArea()
+        if includeMFD { computeMFDArea() }
     }
 
     /// PERF: der Hot-Loop läuft komplett auf Roh-Puffern (kein Bounds-/COW-Check
@@ -1317,7 +1321,12 @@ public final class Terrain {
             if deficit > 0 { servo = cfg.reliefServoPer100y * min(1, deficit / 0.1) }
         }
         applyUplift(dt: dt, servoPer100y: servo)
-        computeFlow()
+        flowStepCount &+= 1
+        let mfdInterval = max(1, cfg.mfdUpdateInterval)
+        // Braiding ist MFD-Physik, nicht bloß Rendering: dafür darf das Feld
+        // niemals hinter dem aktuellen Terrain zurückbleiben.
+        let updateMFD = cfg.braidingEnabled || Int(flowStepCount % UInt32(mfdInterval)) == 0
+        computeFlow(includeMFD: updateMFD)
         if cfg.meanderEnabled {
             migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
             meanderStamp(dt: dt)   // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
@@ -1345,6 +1354,7 @@ public final class Terrain {
             // (Reconciliation — sonst schütten die Tropfen das gecarvte Bett wieder zu).
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
                             seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic,
+                            seaLevel: cfg.hydraulicSkipWaterSpawns ? cfg.sea : nil,
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],

@@ -45,6 +45,51 @@ final class RiverDynamicsTests: XCTestCase {
         }
     }
 
+    func testMFDMayUseASlowerRenderCadence() {
+        var c = cfg(n: 64)
+        c.mfdUpdateInterval = 2
+        c.braidingEnabled = false
+        let t = Terrain(config: c, seed: 777)
+        let before = t.areaMFD
+
+        // Der erste Schritt lässt das reine Render-/Braiding-Feld stehen;
+        // D8/Seen werden trotzdem in jedem `step` neu berechnet.
+        t.step(dtYears: 1)
+        XCTAssertEqual(t.areaMFD, before)
+
+        t.step(dtYears: 1)
+        let cellArea = t.cfg.cellSize * t.cfg.cellSize
+        for k in 0..<t.cfg.count where t.hf[k] > t.cfg.sea {
+            XCTAssertGreaterThanOrEqual(t.areaMFD[k], cellArea - 1e-9)
+        }
+    }
+
+    func testSpatialCutoffIndexMatchesReferenceOrder() {
+        var reference = cfg(n: 32)
+        reference.meanderSmooth = 0
+        reference.meanderNodeSpacing = 1
+        reference.meanderNeckDist = 2
+        var indexed = reference
+        indexed.meanderSpatialCutoffIndex = true
+        let nodes = [
+            MeanderNode(x: 0, z: 0), MeanderNode(x: 1, z: 0),
+            MeanderNode(x: 2, z: 0), MeanderNode(x: 3, z: 0),
+            MeanderNode(x: 4, z: 0), MeanderNode(x: 4, z: 1),
+            MeanderNode(x: 3, z: 1), MeanderNode(x: 1, z: 1),
+            MeanderNode(x: 0, z: 1),
+        ]
+        let channel = RiverChannel(nodes: nodes, discharge: [Double](repeating: 100, count: nodes.count))
+        let a = MeanderState(); a.channels = [channel]
+        let b = MeanderState(); b.channels = [channel]
+
+        a.migrate(dt: 0, config: reference)
+        b.migrate(dt: 0, config: indexed)
+
+        XCTAssertEqual(b.channels[0].nodes, a.channels[0].nodes)
+        XCTAssertEqual(b.channels[0].discharge, a.channels[0].discharge)
+        XCTAssertEqual(b.oxbows, a.oxbows)
+    }
+
     /// KERN-METRIK gegen das „Springen": Über einen kleinen Zeitschritt bewegt sich
     /// die MFD-Kanalkarte WENIGER als die D8-Kanalkarte (stetige Gewichte statt
     /// argmax-Kippen). Baseline gemessen: D8 würfelt ~27% der Empfänger je Update.
