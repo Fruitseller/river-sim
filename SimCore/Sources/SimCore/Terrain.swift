@@ -1360,9 +1360,9 @@ public final class Terrain {
                             channel: cfg.meanderEnabled ? isChannel : [],
                             track: &trackBuf)
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
-            // Zeitkonstante ~1200 Jahre), dann sättigen: nur KONSISTENT befahrene
+            // Zeitkonstante aus `streamMapMemoryYears`), dann sättigen: nur KONSISTENT befahrene
             // Zellen hellen auf, einzelne Zufallspfade verblassen.
-            let lam = 1 - exp(-dt / 3000.0)
+            let lam = 1 - exp(-dt / cfg.streamMapMemoryYears)
             for k in 0..<cfg.count {
                 streamRate[k] = (1 - lam) * streamRate[k] + lam * (trackBuf[k] / dt)
             }

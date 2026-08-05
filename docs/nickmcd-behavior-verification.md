@@ -34,14 +34,14 @@ belegt ist (headless Test bzw. Screenshot). Stand: 2026-07-27.
   war bereits abgenommen und soll nicht kippen.
 - **Murray&Paola-braidPass** ist eine Ergänzung, die nickmcd nicht hat (User-
   Task #4 Verflechtung); seit der Pool-Kopplung liefern die Droplets einen Teil
-  der Bänke selbst, der Pass ist darauf herunterkalibriert (Kb 3e-5→1e-5).
+  der Bänke selbst, der Pass ist darauf herunterkalibriert (Kb 3e-5→5e-6).
 
 ## Messwerte (n=256, Seed 1337, Stand 2026-07-27)
 
 - See-Anteil bei Generierung: 4.3% (ohne Breach 26.5%), größter See 782 Zellen.
 - Unter Simulation: flaches Ponding oszilliert 7–12%, tiefer See min→0 (entwässert).
-- Braiding: Insel-Summe 7 (an) vs. 5 (aus), Splits-Max 433 vs. 325, transient.
-- Stream-Map: Recall große Läufe ~0.4+, Persistenz-Jaccard(+2k J.) > 0.35.
+- Braiding: Insel-Summe 9 (an) vs. 4 (aus), Splits-Max 336 vs. 260, transient.
+- Stream-Map: Recall große Läufe ~0.4+, Persistenz-Jaccard(+2k J.) 0.28.
 - FPS Zeitraffer 60 J/s: ~20 (Idle ~83) — Droplets (maxSteps 192) dominieren.
 
 Screenshots der Verifikation liegen im Session-Scratchpad (`final2_*`, `dyn_*`).

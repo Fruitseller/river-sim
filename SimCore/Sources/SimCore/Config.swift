@@ -56,13 +56,14 @@ public struct SimConfig: Sendable {
     public var braidMinCells: Double = 120   // Reach-Gate der Braiding-PHYSIK (Render-Schwelle ist separat: renderMinCells)
     public var renderMinCells: Double = 320  // ab so viel Einzugsgebiet (Zellen) wird ein Lauf GEMALT. Bewusst über dem Physik-Gate (User: „zu viele Flüsse"): Braiding wirkt ab 120 weiter, sichtbar sind nur substanzielle Flüsse. Auf der 832er-Map qualifizieren sich sonst absolut mehr Läufe über dieselbe Schwelle.
     public var braidExponent: Double = 2.5   // Partitions-Exponent m (>1 ist die Bänke-bauende Instabilität)
-    public var braidCapacity: Double = 1.0e-5 // Kb: Kapazität je Jahr (kalibriert via testBraidingBuildsBars)
+    public var braidCapacity: Double = 5.0e-6 // Kb: weniger Kapazität lässt überlastete Reaches Bänke ablagern (n=256: Insel-Summe 9 vs. 4 ohne Pass)
     public var braidBarHeight: Double = 0.006 // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln
     public var braidDispersion: Double = 2.0 // dispersiver MFD-Exponent auf FLACHEN großen subaerischen Läufen (Quinn 1995: Exponent abfluss-abhängig, Terrain.mfdLocalExponent): Hänge konvergieren mit mfdExponent=4 (Look), Braid-Plains spreizen mit 2.0 → Fäden können sich um Bänke teilen, ohne als Sheet-Flow zu zerlaufen (1.3 zerlief)
 
     // ---- Droplet-Hydraulik-Erosion (carvt feines dendritisches Detail) ----
     public var hydraulicEnabled = true      // Droplet-Erosion statt Grid-Stream-Power+Diffusion
     public var streamRefRate: Double = 0.0025 // Stream-Map-Sättigung (nickmcd): ab dieser reife-gewichteten Tropfen-Besuchsrate (Besuche/Jahr, EWMA) gilt ein Lauf als etabliert (Map ≈ 0.63 bei r0, →1 darüber). Trunk-Raten gemessen ~0.003–0.007/J., Zufallspfade ≪0.001 (reife-gewichtet).
+    public var streamMapMemoryYears: Double = 6000 // EWMA-Gedächtnis: bei +2k J. bleibt das etablierte Netz verwandt (Jaccard 0.28 statt 0.20 bei τ=3000), ohne Kurzfrist-Flackern.
     public var hydraulicPerYear = 2.0       // Tropfen je Jahr (sanft → Makro-Grate überleben)
     /// Ozean-Starts haben keinen Anteil an der Landformung, können aber fast die
     /// ganze Tropfen-Lebenszeit verbrauchen. Die Produktionskonfiguration lässt
@@ -154,7 +155,7 @@ public struct SimConfig: Sendable {
     public var meanderBankErode: Double = 1.2e-4  // Prallhang-Erosion (lateral, massenerhaltend)
     public var meanderBankWidth: Double = 1.6     // Halbbreite Ufer-Versatz (Zellen)
     public var channelErodeDamp: Double = 0.4     // Grid-Stream-Power auf Kanalzellen (Reconciliation)
-    public var oxbowFillYears: Double = 6000      // Zeitkonstante der Altarm-Verlandung (Bett steigt zum Rand)
+    public var oxbowFillYears: Double = 5500      // Zeitkonstante der Altarm-Verlandung (gleicht das längere Stream-Map-Gedächtnis aus; Bett steigt zum Rand)
     public var oxbowMaxAge: Double = 25000        // ab diesem Alter gilt der Altarm als verlandet (aus der Liste)
 
     public init() {}
