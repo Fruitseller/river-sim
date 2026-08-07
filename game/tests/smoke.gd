@@ -51,5 +51,55 @@ func _run() -> void:
 		quit(1)
 		return
 
+	# Brush-Werkzeuge (Modi siehe SimNode.brush): Spitzhacke senkt, Einebnen
+	# zieht zur Zielhöhe, Glätten reduziert die lokale Rauheit.
+	var cx := float(n) / 2.0
+	before = sim.heights()
+	for k in range(30):
+		sim.brush(5, cx, cx, 8.0, 1.0, 0.0) # Spitzhacke
+	after = sim.heights()
+	print("pickaxe_delta_center=", after[c] - before[c])
+	if after[c] - before[c] >= 0.0:
+		push_error("FAIL: Spitzhacke senkt nicht ab")
+		quit(1)
+		return
+
+	var target := after[c] + 0.1
+	for k in range(200):
+		sim.brush(3, cx, cx, 8.0, 2.0, target) # Einebnen
+	after = sim.heights()
+	print("flatten_dist_to_target=", absf(after[c] - target))
+	if absf(after[c] - target) > 0.02:
+		push_error("FAIL: Einebnen erreicht die Zielhöhe nicht")
+		quit(1)
+		return
+
+	for k in range(20):
+		sim.brush(4, cx, cx, 10.0, 1.0, 0.0) # Aufrauen
+	var rough: PackedFloat32Array = sim.heights()
+	var vr_before := _local_roughness(rough, n, c)
+	for k in range(60):
+		sim.brush(2, cx, cx, 10.0, 2.0, 0.0) # Glätten
+	var smoothed: PackedFloat32Array = sim.heights()
+	var vr_after := _local_roughness(smoothed, n, c)
+	print("roughness_before=", vr_before, " after_smooth=", vr_after)
+	if vr_after >= vr_before:
+		push_error("FAIL: Glätten reduziert die Rauheit nicht")
+		quit(1)
+		return
+
 	print("SMOKE_OK")
 	quit(0)
+
+## Mittlere absolute Nachbar-Differenz in einem 9×9-Fenster um Zelle c.
+func _local_roughness(h: PackedFloat32Array, n: int, c: int) -> float:
+	var ci := c % n
+	var cj := c / n
+	var s := 0.0
+	var cnt := 0
+	for j in range(cj - 4, cj + 5):
+		for i in range(ci - 4, ci + 4):
+			var k := j * n + i
+			s += absf(h[k + 1] - h[k])
+			cnt += 1
+	return s / cnt

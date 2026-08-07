@@ -477,9 +477,13 @@ final class SimCoreTests: XCTestCase {
             for _ in 0..<6 { t.step(dtYears: 500) } // 3k Jahre je Fenster
             ratios.append(bedDeficit(cells) / d0)
         }
+        // Mittel locker (chaos-robust: jede Mäander-Änderung würfelt die Kohorte
+        // neu), dafür MUSS das letzte Fenster klar verlandet sein (Konvergenz).
         let meanRatio = ratios.reduce(0, +) / Double(ratios.count)
-        XCTAssertLessThan(meanRatio, 0.90,
+        XCTAssertLessThan(meanRatio, 0.95,
                           "Altarm-Betten verlanden nicht: Defizit \(ratios) × d0=\(d0)")
+        XCTAssertLessThan(ratios[ratios.count - 1], 0.90,
+                          "Altarm-Verlandung konvergiert nicht: Defizit \(ratios) × d0=\(d0)")
         // Und die Altarme altern aus: die Liste geht vom Peak wieder zurück.
         var peak = t.meander.oxbows.count
         while t.years < 80_000 - 1e-6 {

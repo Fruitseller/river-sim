@@ -18,6 +18,7 @@ var floor_level: float
 var cell_area: float
 var terrain_grid: int
 var render_quality := "balanced"
+var pick_radius_cap := 0.5 # effektive Spitzhacken-Breite (aus SimNode, fürs Ring-Visual)
 
 var terrain_mi: MeshInstance3D
 var water_mi: MeshInstance3D
@@ -29,6 +30,8 @@ var ring_mi: MeshInstance3D
 var terrain_mat: ShaderMaterial
 var height_img: Image
 var height_tex: ImageTexture
+var hf_img: Image      # gefüllte Oberfläche (Seespiegel) → echte horizontale Seeflächen
+var hf_tex: ImageTexture
 var color_img: Image
 var color_tex: ImageTexture
 var water_img: Image
@@ -53,11 +56,28 @@ var rebuild_timer := 0.0
 var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
 var overlay_timer := 0.0
 var sculpting := false
-var brush_dir := 1.0
+var pick_struck := false      # Spitzhacke: genau EIN Hieb pro Klick (bis zum Loslassen)
 var brush_radius := 10.0
+var brush_strength := 1.0
+var current_tool := 0         # Brush-Modus (siehe SimNode.brush): 0 ⛰ 1 🕳 2 〰 3 ▭ 4 🌋 5 ⛏
+var flatten_target := 0.0     # Zielhöhe fürs Einebnen — beim Strich-Beginn gesampelt
+var last_rate := 30.0         # für Leertaste: Pause ↔ letztes Tempo
 var u_time := 0.0
 var year_label: Label
 var sim_seed := 1337
+
+# UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
+var speed_buttons: Array[Button] = []
+var tool_buttons: Array[Button] = []
+var radius_value: Label
+var strength_value: Label
+var radius_slider: HSlider
+
+const TOOLS := [
+	["⛰", "Anheben", "1"], ["🕳", "Absenken", "2"], ["〰", "Glätten", "3"],
+	["▭", "Einebnen", "4"], ["🌋", "Aufrauen", "5"], ["⛏", "Spitzhacke", "6"],
+]
+const SPEEDS := [["⏸ Pause", 0.0], ["10 J/s", 10.0], ["30 J/s", 30.0], ["60 J/s", 60.0]]
 
 func _ready() -> void:
 	if not ClassDB.class_exists("SimNode"):
@@ -75,6 +95,7 @@ func _ready() -> void:
 		cam_dist = float(OS.get_environment("RS_DIST"))
 	sea = sim.seaLevel()
 	floor_level = sim.floorLevel()
+	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	half = world_size / 2.0
 	step = world_size / float(N - 1)
 	cell_area = step * step
@@ -97,9 +118,13 @@ func _ready() -> void:
 		while done < total: # in Schritten wie der Zeitraffer (repräsentativ)
 			sim.step(1000.0)
 			done += 1000.0
+	if OS.has_environment("RS_FLATTEN"): # Debug: exakt flache Fläche (Shader-NaN-Repro)
+		for i in 300:
+			sim.brush(3, N * 0.5, N * 0.5, 30.0, 10.0, sea + 0.25)
 	sim.recomputeFlow()
 	_pull_fields()
 	_update_terrain_textures()
+	_update_year()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
 
@@ -225,57 +250,153 @@ func _setup_ui() -> void:
 	add_child(layer)
 	var panel := PanelContainer.new()
 	panel.position = Vector2(16, 16)
-	# Größere Schrift für die ganze UI (war kaum lesbar).
+	panel.custom_minimum_size = Vector2(340, 0)
 	var ui_theme := Theme.new()
-	ui_theme.default_font_size = 22
+	ui_theme.default_font_size = 20
 	panel.theme = ui_theme
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.09, 0.11, 0.9)
+	style.set_corner_radius_all(14)
+	style.set_content_margin_all(16)
+	panel.add_theme_stylebox_override("panel", style)
 	layer.add_child(panel)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 8)
+	vb.add_theme_constant_override("separation", 7)
 	panel.add_child(vb)
 
 	year_label = Label.new()
 	year_label.text = "Jahr 0"
-	year_label.add_theme_font_size_override("font_size", 32) # Jahr prominent
+	year_label.add_theme_font_size_override("font_size", 30) # Jahr prominent
 	vb.add_child(year_label)
 
+	_section(vb, "ZEIT")
 	var speeds := HBoxContainer.new()
+	speeds.add_theme_constant_override("separation", 6)
 	vb.add_child(speeds)
-	for pair in [["Pause", 0.0], ["10 J/s", 10.0], ["30 J/s", 30.0], ["60 J/s", 60.0]]:
-		var b := Button.new()
-		b.text = pair[0]
+	var speed_group := ButtonGroup.new()
+	for pair in SPEEDS:
 		var rate: float = pair[1]
-		b.pressed.connect(func(): year_rate = rate)
+		var b := _mk_button(pair[0], true, speed_group)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(func(): _set_rate(rate))
 		speeds.add_child(b)
+		speed_buttons.append(b)
+	speed_buttons[0].set_pressed_no_signal(true)
 
 	var jumps := HBoxContainer.new()
+	jumps.add_theme_constant_override("separation", 6)
 	vb.add_child(jumps)
 	for pair in [["+100 J.", 100.0], ["+1.000 J.", 1000.0], ["+10.000 J.", 10000.0]]:
-		var b := Button.new()
-		b.text = pair[0]
 		var yrs: float = pair[1]
+		var b := _mk_button(pair[0], false, null)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(func(): _jump(yrs))
 		jumps.add_child(b)
 
-	var tools := HBoxContainer.new()
-	vb.add_child(tools)
-	var raise_b := Button.new()
-	raise_b.text = "⛰ Anheben"
-	raise_b.pressed.connect(func(): brush_dir = 1.0)
-	tools.add_child(raise_b)
-	var lower_b := Button.new()
-	lower_b.text = "🕳 Absenken"
-	lower_b.pressed.connect(func(): brush_dir = -1.0)
-	tools.add_child(lower_b)
-	var regen_b := Button.new()
-	regen_b.text = "Neues Terrain"
+	_section(vb, "WERKZEUG")
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	vb.add_child(grid)
+	var tool_group := ButtonGroup.new()
+	for t in TOOLS.size():
+		var b := _mk_button("%s %s" % [TOOLS[t][0], TOOLS[t][1]], true, tool_group)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.tooltip_text = "Taste %s" % TOOLS[t][2]
+		b.pressed.connect(func(): current_tool = t)
+		grid.add_child(b)
+		tool_buttons.append(b)
+	tool_buttons[0].set_pressed_no_signal(true)
+
+	_section(vb, "PINSEL")
+	radius_slider = _mk_slider(vb, "Radius", 3.0, 30.0, 1.0, brush_radius,
+		func(v: float): brush_radius = v)
+	radius_value = _slider_value_label
+	_mk_slider(vb, "Stärke", 0.25, 3.0, 0.05, brush_strength,
+		func(v: float): brush_strength = v)
+	strength_value = _slider_value_label
+	_refresh_slider_labels()
+
+	_section(vb, "WELT")
+	var regen_b := _mk_button("🌍 Neues Terrain", false, null)
 	regen_b.pressed.connect(_regen)
-	tools.add_child(regen_b)
+	vb.add_child(regen_b)
 
 	var hint := Label.new()
-	hint.add_theme_font_size_override("font_size", 16)
-	hint.text = "Links: formen (Shift kehrt um) · Rechts: drehen\nZoom: +/− Tasten · Zwei-Finger-Wisch · Pinch"
+	hint.add_theme_font_size_override("font_size", 15)
+	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	hint.text = "Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nWerkzeug: 1–6 · Radius: [ ] · Pause: Leertaste\nZoom: +/− · Zwei-Finger-Wisch · Pinch"
 	vb.add_child(hint)
+
+# --- UI-Helfer -------------------------------------------------------------
+
+var _slider_value_label: Label # letzte von _mk_slider erzeugte Wertanzeige
+
+func _section(parent: VBoxContainer, title: String) -> void:
+	var sep := HSeparator.new()
+	sep.add_theme_constant_override("separation", 8)
+	parent.add_child(sep)
+	var l := Label.new()
+	l.text = title
+	l.add_theme_font_size_override("font_size", 13)
+	l.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	parent.add_child(l)
+
+func _mk_button(text: String, toggle: bool, group: ButtonGroup) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.toggle_mode = toggle
+	if group:
+		b.button_group = group
+	# Kein Fokus: Leertaste soll Pause togglen, nie den zuletzt geklickten Button.
+	b.focus_mode = Control.FOCUS_NONE
+	return b
+
+func _mk_slider(parent: VBoxContainer, title: String, minv: float, maxv: float,
+		stepv: float, value: float, on_change: Callable) -> HSlider:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	parent.add_child(row)
+	var name_l := Label.new()
+	name_l.text = title
+	name_l.custom_minimum_size = Vector2(88, 0)
+	name_l.add_theme_font_size_override("font_size", 18)
+	row.add_child(name_l)
+	var s := HSlider.new()
+	s.min_value = minv
+	s.max_value = maxv
+	s.step = stepv
+	s.value = value
+	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	s.focus_mode = Control.FOCUS_NONE
+	row.add_child(s)
+	var val_l := Label.new()
+	val_l.custom_minimum_size = Vector2(52, 0)
+	val_l.add_theme_font_size_override("font_size", 18)
+	val_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(val_l)
+	_slider_value_label = val_l
+	s.value_changed.connect(func(v: float):
+		on_change.call(v)
+		_refresh_slider_labels())
+	return s
+
+func _refresh_slider_labels() -> void:
+	if radius_value:
+		radius_value.text = str(int(brush_radius))
+	if strength_value:
+		strength_value.text = "%.2f" % brush_strength
+
+func _set_rate(rate: float) -> void:
+	year_rate = rate
+	if rate > 0.0:
+		last_rate = rate
+	# Toggle-Zustand der Tempo-Buttons nachziehen (auch bei Leertaste/Code-Aufruf).
+	for i in SPEEDS.size():
+		speed_buttons[i].set_pressed_no_signal(SPEEDS[i][1] == rate)
 
 # ---------------------------------------------------------------- Zeit
 
@@ -339,18 +460,33 @@ func _process(delta: float) -> void:
 			if update_overlays:
 				overlay_timer = 0.0
 			# Zeitraffer: Wasserfeld weich blenden → kein Springen zwischen den
-			# diskreten D8-Netzen (die ~27% je Update umwürfeln).
-			_update_terrain_textures(0.35, update_overlays)
+			# diskreten D8-Netzen (die ~27% je Update umwürfeln). 0.15 statt 0.35:
+			# bei 60 J/s sind 0.3 s schon 18 Sim-Jahre — mit 0.35 schnappten
+			# Läufe/Seeufer sichtbar um (User: „super schlimm"), mit 0.15 gleiten
+			# sie über ~2 s in die neue Lage.
+			_update_terrain_textures(0.15, update_overlays)
 			_update_year()
 
-	if sculpting:
+	if sculpting and not (current_tool == 5 and pick_struck):
 		var hit := _raycast_terrain()
 		if hit != Vector3.INF:
 			var gx := (hit.x + half) / step
 			var gz := (hit.z + half) / step
-			var dir := brush_dir * (-1.0 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
-			sim.sculpt(gx, gz, brush_radius, dir)
-			sim.recomputeFlow()
+			var mode := current_tool
+			if Input.is_key_pressed(KEY_SHIFT): # Shift kehrt Anheben/Absenken um
+				if mode == 0: mode = 1
+				elif mode == 1: mode = 0
+			if mode == 5:
+				# Spitzhacke: EIN kräftiger Hieb pro Klick — gedrückt halten gräbt
+				# nicht weiter; erst Loslassen + neuer Klick schlägt erneut zu.
+				sim.brush(5, gx, gz, brush_radius, brush_strength * 1.5, 0.0)
+				pick_struck = true
+			else:
+				# Framerate-unabhängig: Wirkung ∝ Zeit statt ∝ Frames (60-FPS-
+				# Referenz; delta-Deckel hält Ruckler-Frames von Riesen-Hieben ab).
+				var stroke := brush_strength * minf(delta, 0.05) * 60.0
+				sim.brush(mode, gx, gz, brush_radius, stroke, flatten_target)
+			sim.recomputeFlow() # Flüsse reagieren sofort auf den Eingriff
 			_pull_fields()
 			_update_terrain_textures()
 
@@ -392,6 +528,17 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 	if not update_overlays:
 		return
 
+	# Seespiegel-Feld (hf): der Vertex-Shader hebt See-Zellen auf diese Höhe →
+	# Seen liegen als horizontale Flächen im Becken statt den Hang anzumalen.
+	var fbytes: PackedByteArray = (sim.filled() as PackedFloat32Array).to_byte_array()
+	if hf_img == null:
+		hf_img = Image.create_from_data(N, N, false, Image.FORMAT_RF, fbytes)
+		hf_tex = ImageTexture.create_from_image(hf_img)
+		terrain_mat.set_shader_parameter("hf_tex", hf_tex)
+	else:
+		hf_img.set_data(N, N, false, Image.FORMAT_RF, fbytes)
+		hf_tex.update(hf_img)
+
 	var cbytes: PackedByteArray = sim.terrainColorBytes()
 	if color_img == null:
 		color_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
@@ -426,6 +573,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
 				sculpting = event.pressed
+				if not event.pressed:
+					pick_struck = false # Loslassen gibt den nächsten Hieb frei
+				if event.pressed and current_tool == 3:
+					# Einebnen: Zielhöhe = Terrainhöhe am Strich-Beginn
+					var hit := _raycast_terrain()
+					if hit != Vector3.INF:
+						flatten_target = _sample_h((hit.x + half) / step, (hit.z + half) / step)
 			MOUSE_BUTTON_RIGHT:
 				orbiting = event.pressed
 			MOUSE_BUTTON_WHEEL_UP:
@@ -448,6 +602,16 @@ func _unhandled_input(event: InputEvent) -> void:
 				cam_dist = max(30.0, cam_dist - 12.0)
 			KEY_MINUS, KEY_KP_SUBTRACT:
 				cam_dist = min(world_size * 4.0, cam_dist + 12.0)
+			KEY_SPACE: # Pause ↔ letztes Tempo
+				_set_rate(0.0 if year_rate > 0.0 else last_rate)
+			KEY_BRACKETLEFT:
+				radius_slider.value = max(radius_slider.min_value, brush_radius - 2.0)
+			KEY_BRACKETRIGHT:
+				radius_slider.value = min(radius_slider.max_value, brush_radius + 2.0)
+			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
+				var t: int = event.keycode - KEY_1
+				current_tool = t
+				tool_buttons[t].set_pressed_no_signal(true)
 
 func _update_ring() -> void:
 	if OS.has_environment("RS_SHOT"): # autonome Screenshots: kein Pinsel-Ring
@@ -458,7 +622,9 @@ func _update_ring() -> void:
 		if hit != Vector3.INF:
 			ring_mi.visible = true
 			ring_mi.position = hit + Vector3(0, 0.4, 0)
-			ring_mi.scale = Vector3(brush_radius, 1.0, brush_radius)
+			# Spitzhacke: Ring zeigt die echte (gedeckelte) Hieb-Breite.
+			var r := minf(brush_radius, pick_radius_cap) if current_tool == 5 else brush_radius
+			ring_mi.scale = Vector3(r, 1.0, r)
 			return
 	ring_mi.visible = false
 

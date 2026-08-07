@@ -156,8 +156,30 @@ final class SimNode: Node {
         terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: dir)
     }
 
+    /// Generisches Pinsel-Werkzeug mit Stärke. Modi: 0 Anheben, 1 Absenken,
+    /// 2 Glätten, 3 Einebnen (auf `target`-Höhe), 4 Aufrauen (fraktales Rauschen),
+    /// 5 Spitzhacke (tiefer, spitzer Hieb — leitet Flüsse um).
+    @Callable func brush(mode: Int, gx: Double, gz: Double, radiusWorld: Double,
+                         strength: Double, target: Double) {
+        switch mode {
+        case 0: terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: 1, strength: strength)
+        case 1: terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: -1, strength: strength)
+        case 2: terrain.smooth(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
+        case 3: terrain.flatten(gx: gx, gz: gz, radiusWorld: radiusWorld,
+                                targetHeight: target, strength: strength)
+        case 4: terrain.roughen(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
+        case 5: terrain.pickaxe(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
+        default: break
+        }
+    }
+
     /// Nach Sculpting/Änderungen Entwässerung neu berechnen (für Live-Flüsse).
     @Callable func recomputeFlow() { terrain.computeFlow() }
+
+    /// Effektive Maximal-Breite der Spitzhacke (Welteinheiten) — fürs Ring-Visual.
+    @Callable func pickaxeMaxRadiusWorld() -> Double {
+        Terrain.pickaxeMaxCells * terrain.cfg.cellSize
+    }
 
     // MARK: Wasser-Feld (glattes Overlay statt Geometrie — nickmcd-Stream/Pool-Map)
 

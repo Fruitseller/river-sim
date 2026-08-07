@@ -99,6 +99,8 @@ public struct SimConfig: Sendable {
     public var breachDT: Double = 6000       // Jahre Auslass-Inzision je Runde
     public var breachTargetLakeFrac = 0.05   // Ziel: See-Anteil am Land < 5% → Stopp
     public var basinFill = false            // AUS seit die Hebung niedrig ist (0.0015): Auslass-Inzision + wenig Hebung halten den See-Anteil schon von allein bei ~15% als DISKRETE blaue Seen. basinFill würde sie zu ~1% überfüllen → blasse, trockene Flach-Ebenen (die das Stream-Overlay weiß übermalt). Nur bei hoher Hebung nötig.
+    public var puddleFillDepth = 0.06       // NUR seichtes Ponding verlandet (anders als basinFill): geflutete Auen trugen sonst dauerhafte Flachwasser-Sprenkel („Blob-Fetzen", total unrealistisch). Echte Seen sind tiefer und bleiben.
+    public var puddleFillYears = 800.0      // Zeitkonstante der Pfützen-Verlandung (0 = aus)
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()
         h.inertia = 0.10 // mehr Trägheit → längere, verzweigende (dendritische) Rinnen

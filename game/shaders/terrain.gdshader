@@ -13,6 +13,7 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
+uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
 uniform sampler2D color_tex : filter_linear, repeat_disable;
 uniform sampler2D water_tex : filter_linear, repeat_disable;
 uniform float hscale = 26.0;
@@ -30,6 +31,7 @@ uniform float detail_normal = 1.0;     // Anteil der Normal-Perturbation
 uniform bool detail_enabled = true;
 
 varying vec2 v_uv;
+varying float v_pond; // Wassersäule (hf − h) am Vertex — > 0 unter Seen
 
 // UV aus der Weltposition ableiten (statt Mesh-UV) → deckungsgleich mit der
 // Zellindizierung des Sim-Kerns und damit mit Flüssen/Wasser.
@@ -61,6 +63,14 @@ float smooth_start(float t, float smoothing) {
 
 float pow_inv(float t, float power) {
 	return 1.0 - pow(1.0 - clamp(t, 0.0, 1.0), power);
+}
+
+// normalize() auf dem Null-Vektor ist undefiniert (GPU: NaN) — auf EXAKT flachem
+// Terrain (Einebnen-Werkzeug, Floor-Clamp) wurde daraus eine schwarze Fläche.
+// Degenerierte Richtungen bekommen einen festen Ersatz; die Detail-Masken blenden
+// bei Steigung ≈ 0 ohnehin auf null, der Ersatzwert ist also unsichtbar.
+vec2 safe_dir(vec2 v) {
+	return dot(v, v) > 1e-14 ? v * inversesqrt(dot(v, v)) : vec2(0.7071, 0.7071);
 }
 
 // Streifenmuster entlang normDir: cos/sin-Paare aus 4×4 zufällig versetzten
@@ -115,7 +125,7 @@ vec4 erosion_detail(vec2 p, vec2 slope, float fade_target_in, out float out_mag)
 	vec2 gully_slope = mix(slope, slope / slope_len * ASSUMED_SLOPE.x, ASSUMED_SLOPE.y);
 
 	for (int i = 0; i < OCTAVES; i++) {
-		vec4 ph = phacelle_noise(p * freq, normalize(gully_slope), CELL_SCALE, 0.25, NORMALIZATION);
+		vec4 ph = phacelle_noise(p * freq, safe_dir(gully_slope), CELL_SCALE, 0.25, NORMALIZATION);
 		ph.zw *= -freq;
 		float sloping = abs(ph.y);
 		gully_slope += sign(ph.y) * ph.zw * strength * GULLY_WEIGHT;
@@ -156,7 +166,15 @@ float vnoise(vec2 p) {
 void vertex() {
 	vec2 uv = world_uv(VERTEX);
 	v_uv = uv;
-	VERTEX.y = texture(height_tex, uv).r * hscale;
+	float hraw = texture(height_tex, uv).r;
+	// Seen als ECHTE horizontale Flächen: unter Wasser stehende Zellen (hf > h,
+	// über Meeresniveau — das Meer hat seine eigene Wasserebene) werden auf den
+	// Seespiegel hf gehoben. Der weiche Einstieg glättet die Uferlinie.
+	float hfv = texture(hf_tex, uv).r;
+	float pond = max(hfv - hraw, 0.0) * step(sea_level, hfv);
+	v_pond = pond;
+	float lift = smoothstep(0.015, 0.05, pond);
+	VERTEX.y = mix(hraw, hfv, lift) * hscale;
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
 	float hR = texture(height_tex, uv + vec2(texel, 0.0)).r;
@@ -230,6 +248,10 @@ void fragment() {
 	// als pastell-teal Fläche übermalen — nur echte Seen zeigen Wasser.
 	float riverMask = smoothstep(0.16, 0.45, stream);
 	float lakeMask = smoothstep(0.16, 0.36, lake);
+	// See-Zellen sind im Vertex-Shader auf den SEESPIEGEL (hf) gehoben — die
+	// Fläche liegt horizontal im Becken statt als Farbe am Unterwasser-Hang zu
+	// kleben („See am Berghang"). Auf der gehobenen Fläche voll nass zeichnen.
+	lakeMask = max(lakeMask, smoothstep(0.015, 0.05, v_pond));
 	float wet = max(riverMask, lakeMask);
 
 	// --- Ufer-Saum (Punkt „Shading-Tricks"): der Blur-Halo des Wasserfelds

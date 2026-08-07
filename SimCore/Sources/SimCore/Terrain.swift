@@ -971,6 +971,24 @@ public final class Terrain {
         }
     }
 
+    /// Pfützen-Verlandung: SEICHTES Ponding (≤ puddleFillDepth) auf Land füllt
+    /// sich mit Sediment auf — die Auen trugen sonst dauerhafte Flachwasser-
+    /// Sprenkel knapp über der Render-Schwelle (zerfetzte Blob-Felder). Anders
+    /// als `fillLakes` tiefen-GEDECKELT: echte Seen (tieferes Becken) bleiben,
+    /// nur ihr Sub-0.06-Ufersaum strafft sich. Mäander-Betten (isChannel) sind
+    /// ausgenommen (Reconciliation: das gecarvte Bett nicht zuschütten).
+    private func fillShallowPonds(dt: Double) {
+        let rate = min(0.5, dt / cfg.puddleFillYears)
+        for k in 0..<cfg.count where hf[k] > cfg.sea && !isChannel[k] {
+            let deficit = hf[k] - h[k]
+            if deficit > 0.001 && deficit <= cfg.puddleFillDepth {
+                let add = deficit * rate
+                h[k] += add
+                sed[k] += add
+            }
+        }
+    }
+
     // MARK: - Auen-Aggradation (Overbank-Deposition → flache Schwemmebenen)
 
     /// Baut flache Auenböden entlang der Flüsse: für jede Fluss-Zelle (großes
@@ -1168,11 +1186,79 @@ public final class Terrain {
     /// um das Gitterzentrum (`gx`, `gz`), Radius in Welteinheiten. Koppelt in die
     /// Tektonik (angehobene Zonen werden Hebungszonen), damit Eingriffe langfristig
     /// erhalten bleiben statt von der Erosion ausradiert zu werden.
-    public func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double) {
+    public func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double,
+                       strength: Double = 1.0) {
+        forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
+            applyDelta(k, dir * 0.006 * strength * w, asRock: true)
+            // Kopplung in die Tektonik: angehobene Zonen werden Hebungszonen,
+            // damit Eingriffe langfristig erhalten bleiben statt wegzuerodieren.
+            upliftBase[k] = min(max(upliftBase[k] + dir * 0.006 * strength * w * 1.5, -2), 2)
+        }
+    }
+
+    /// Glättet das Terrain im Pinsel Richtung 3×3-Mittel (aus einem Schnappschuss,
+    /// damit die Zellreihenfolge das Ergebnis nicht verfälscht).
+    public func smooth(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
+        let snap = h
+        let pull = min(1, 0.30 * strength)
+        forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
+            let i = k % n, j = k / n
+            var s = 0.0, c = 0.0
+            for dj in max(0, j - 1)...min(n - 1, j + 1) {
+                for di in max(0, i - 1)...min(n - 1, i + 1) {
+                    s += snap[dj * n + di]; c += 1
+                }
+            }
+            applyDelta(k, (s / c - snap[k]) * pull * w, asRock: false)
+        }
+    }
+
+    /// Zieht das Terrain im Pinsel Richtung Zielhöhe (Plateau/Terrasse) —
+    /// die Zielhöhe sampelt der Aufrufer beim Strich-Beginn.
+    public func flatten(gx: Double, gz: Double, radiusWorld: Double,
+                        targetHeight: Double, strength: Double = 1.0) {
+        let target = min(max(targetHeight, cfg.floor), 1.4)
+        let pull = min(1, 0.18 * strength)
+        forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
+            applyDelta(k, (target - h[k]) * pull * w, asRock: false)
+        }
+    }
+
+    /// Prägt fraktales Rauschen ins Terrain (zerklüftete Details). Nutzt das
+    /// terrain-eigene Noise-Feld → wiederholte Striche vertiefen dasselbe Muster.
+    public func roughen(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
+        forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
+            let i = k % n, j = k / n
+            let nz = noise.fbm01(Double(i) * 0.11, Double(j) * 0.11, octaves: 4) * 2 - 1
+            applyDelta(k, nz * 0.005 * strength * w, asRock: true)
+        }
+    }
+
+    /// Spitzhacke: schmaler, spitzer Hieb, der schnell durch Sediment UND Fels
+    /// schlägt — so lassen sich Flüsse gezielt umleiten (Durchbruchstal).
+    /// BEWUSST ohne Tektonik-Kopplung (anders als sculpt): nach dem Hieb übernimmt
+    /// die Natur — ein gekaperter Fluss hält sich die Rinne per Erosion selbst
+    /// offen, und übertiefte Löcher füllen sich über die Zeit mit Sediment.
+    /// Der Radius ist auf wenige Zellen GEDECKELT, unabhängig vom Pinsel-Slider:
+    /// mit dessen Standardbreite (~64 Zellen) riss der „spitze Hieb" in unter
+    /// einer Sekunde einen Krater bis unters Meer, statt eine Kerbe zu schlagen.
+    public func pickaxe(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
+        let radius = min(radiusWorld, Terrain.pickaxeMaxCells * cfg.cellSize)
+        forEachBrushCell(gx: gx, gz: gz, radiusWorld: radius) { k, w in
+            let spike = w * w // (1-d²)⁴ — deutlich spitzer als der weiche Pinsel
+            applyDelta(k, -0.02 * strength * spike, asRock: true)
+        }
+    }
+
+    /// Maximale Spitzhacken-Breite in Zellen (auch fürs Ring-Visual im Frontend).
+    public static let pickaxeMaxCells = 3.0
+
+    /// Gemeinsame Pinsel-Iteration: ruft `body(k, w)` für jede Zelle im Pinsel
+    /// mit weichem Abfall-Gewicht w ∈ (0..1] auf.
+    private func forEachBrushCell(gx: Double, gz: Double, radiusWorld: Double,
+                                  _ body: (Int, Double) -> Void) {
         let rCells = radiusWorld / cfg.cellSize
         if rCells <= 0 { return }
-        let rate = 0.006
-        let coupling = 1.5
         let r = Int(rCells.rounded(.up))
         let cx = Int(gx.rounded()), cz = Int(gz.rounded())
         let jLo = max(0, cz - r), jHi = min(n - 1, cz + r)
@@ -1182,21 +1268,24 @@ public final class Terrain {
             for i in iLo...iHi {
                 let d = (Double(i) - gx).magnitudeHypot(Double(j) - gz) / rCells
                 if d > 1 { continue }
-                let w = (1 - d * d) * (1 - d * d) // weicher Abfall
-                let k = idx(i, j)
-                let target = min(max(h[k] + dir * rate * w, cfg.floor), 1.4)
-                let dh = target - h[k]
-                if dh >= 0 {
-                    rock[k] += dh // Anheben schiebt Fels hoch
-                } else {
-                    let ds = min(-dh, sed[k]) // Absenken räumt erst Sediment, dann Fels
-                    sed[k] -= ds
-                    rock[k] -= (-dh - ds)
-                }
-                h[k] += dh
-                upliftBase[k] = min(max(upliftBase[k] + dir * rate * w * coupling, -2), 2)
+                body(idx(i, j), (1 - d * d) * (1 - d * d))
             }
         }
+    }
+
+    /// Höhenänderung mit Fels/Sediment-Buchhaltung (hält h = rock + sed):
+    /// Absenken räumt erst Sediment, dann Fels; Anheben schiebt Fels hoch
+    /// (`asRock`) oder lagert lockeres Sediment ab (Glätten/Einebnen).
+    private func applyDelta(_ k: Int, _ dhRaw: Double, asRock: Bool) {
+        let dh = min(max(h[k] + dhRaw, cfg.floor), 1.4) - h[k]
+        if dh >= 0 {
+            if asRock { rock[k] += dh } else { sed[k] += dh }
+        } else {
+            let ds = min(-dh, sed[k])
+            sed[k] -= ds
+            rock[k] -= (-dh - ds)
+        }
+        h[k] += dh
     }
 
     // MARK: - Mäander-Migration (Lagrange-Zentrumslinien)
@@ -1302,6 +1391,12 @@ public final class Terrain {
                     let ci = min(max(Int((a.x + (b.x - a.x) * t).rounded()), 0), n - 1)
                     let cj = min(max(Int((a.z + (b.z - a.z) * t).rounded()), 0), n - 1)
                     let k = cj * n + ci
+                    // Unter stehendem Wasser (See/geflutete Ebene) KEIN Bett-Carve und
+                    // KEINE Kanal-Maske: dort fließt nichts (Stillwasser), und die Maske
+                    // würde die Droplet-Deposition dämpfen — der Kanal grub sonst über
+                    // Jahrtausende dunkle Tiefen-Rinnen in Seeböden, die nie verlanden
+                    // (gemessen: hf−h > 0.16 nach 24k Jahren, „dunkle Stellen").
+                    if hf[k] - h[k] > 0.02 { continue }
                     isChannel[k] = true
                     let cap = max(0, h[k] - hb) * 0.5             // nicht unter stromab graben
                     _ = erodeCell(k, min(carveRate, cap))
@@ -1412,6 +1507,7 @@ public final class Terrain {
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
             if cfg.outletIncision { outletIncision(dt: dt) }
             if cfg.basinFill { fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
+            if cfg.puddleFillYears > 0 { fillShallowPonds(dt: dt) }
             // 1b) Braiding: super-linearer Bedload-Transport auf dem MFD-Netz baut
             //     Mittelbänke/Fäden auf den großen Läufen (Verflechtung).
             if cfg.braidingEnabled { braidPass(dt: dt) }
