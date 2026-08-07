@@ -56,7 +56,7 @@ var rebuild_timer := 0.0
 var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
 var overlay_timer := 0.0
 var sculpting := false
-var pick_struck := false      # Spitzhacke: genau EIN Hieb pro Klick (bis zum Loslassen)
+var pick_last := Vector2.INF  # Spitzhacke: Position des letzten Hiebs im Strich (INF = noch keiner)
 var brush_radius := 10.0
 var brush_strength := 1.0
 var current_tool := 0         # Brush-Modus (siehe SimNode.brush): 0 ⛰ 1 🕳 2 〰 3 ▭ 4 🌋 5 ⛏
@@ -283,10 +283,13 @@ func _setup_ui() -> void:
 		speed_buttons.append(b)
 	speed_buttons[0].set_pressed_no_signal(true)
 
-	var jumps := HBoxContainer.new()
-	jumps.add_theme_constant_override("separation", 6)
+	var jumps := GridContainer.new()
+	jumps.columns = 2
+	jumps.add_theme_constant_override("h_separation", 6)
+	jumps.add_theme_constant_override("v_separation", 6)
 	vb.add_child(jumps)
-	for pair in [["+100 J.", 100.0], ["+1.000 J.", 1000.0], ["+10.000 J.", 10000.0]]:
+	for pair in [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
+			["+10.000 J.", 10000.0], ["+100.000 J.", 100000.0]]:
 		var yrs: float = pair[1]
 		var b := _mk_button(pair[0], false, null)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -327,7 +330,7 @@ func _setup_ui() -> void:
 	var hint := Label.new()
 	hint.add_theme_font_size_override("font_size", 15)
 	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hint.text = "Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nWerkzeug: 1–6 · Radius: [ ] · Pause: Leertaste\nZoom: +/− · Zwei-Finger-Wisch · Pinch"
+	hint.text = "Links: formen (Shift: ⛰↔🕳) · Rechts: drehen · Zoom: +/−\nWerkzeug: 1–6 · Radius: [ ] · Pause: Leertaste"
 	vb.add_child(hint)
 
 # --- UI-Helfer -------------------------------------------------------------
@@ -400,9 +403,22 @@ func _set_rate(rate: float) -> void:
 
 # ---------------------------------------------------------------- Zeit
 
+var _jumping := false
 func _jump(years: float) -> void:
-	sim.step(years)
-	_after_sim()
+	if _jumping: # Doppelklicks während eines laufenden Sprungs schlucken
+		return
+	_jumping = true
+	# In Zeitraffer-großen Chunks steppen und zwischendurch rendern: bei
+	# +100.000 J. fräße EIN step() sonst ~1 Minute ohne jedes Feedback —
+	# so sieht man die Welt im Schnelldurchlauf altern.
+	var done := 0.0
+	while done < years:
+		var chunk := minf(2000.0, years - done)
+		sim.step(chunk)
+		done += chunk
+		_after_sim()
+		await get_tree().process_frame
+	_jumping = false
 
 func _regen() -> void:
 	sim_seed = (sim_seed * 16807 + 1) % 2147483647
@@ -467,7 +483,7 @@ func _process(delta: float) -> void:
 			_update_terrain_textures(0.15, update_overlays)
 			_update_year()
 
-	if sculpting and not (current_tool == 5 and pick_struck):
+	if sculpting:
 		var hit := _raycast_terrain()
 		if hit != Vector3.INF:
 			var gx := (hit.x + half) / step
@@ -477,10 +493,18 @@ func _process(delta: float) -> void:
 				if mode == 0: mode = 1
 				elif mode == 1: mode = 0
 			if mode == 5:
-				# Spitzhacke: EIN kräftiger Hieb pro Klick — gedrückt halten gräbt
-				# nicht weiter; erst Loslassen + neuer Klick schlägt erneut zu.
-				sim.brush(5, gx, gz, brush_radius, brush_strength * 1.5, 0.0)
-				pick_struck = true
+				# Spitzhacke: Kerben ZEICHNEN — ein Hieb pro neu überstrichener
+				# Position, das Segment zum letzten Hieb wird lückenlos aufgefüllt.
+				# Auf der Stelle verharren gräbt NICHT tiefer (kein Dauerbohren).
+				var p := Vector2(gx, gz)
+				if pick_last == Vector2.INF:
+					sim.brush(5, gx, gz, brush_radius, brush_strength * 1.5, 0.0)
+					pick_last = p
+				else:
+					var spacing := 1.5 # Zellen zwischen Hieben ≈ halbe Hieb-Breite
+					while pick_last.distance_to(p) >= spacing:
+						pick_last += (p - pick_last).normalized() * spacing
+						sim.brush(5, pick_last.x, pick_last.y, brush_radius, brush_strength * 1.5, 0.0)
 			else:
 				# Framerate-unabhängig: Wirkung ∝ Zeit statt ∝ Frames (60-FPS-
 				# Referenz; delta-Deckel hält Ruckler-Frames von Riesen-Hieben ab).
@@ -574,7 +598,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_LEFT:
 				sculpting = event.pressed
 				if not event.pressed:
-					pick_struck = false # Loslassen gibt den nächsten Hieb frei
+					pick_last = Vector2.INF # Strich beendet → nächster Klick beginnt neu
 				if event.pressed and current_tool == 3:
 					# Einebnen: Zielhöhe = Terrainhöhe am Strich-Beginn
 					var hit := _raycast_terrain()
