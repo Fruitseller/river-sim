@@ -50,6 +50,7 @@ var cam_pitch := 0.85
 var cam_dist := 135.0
 var cam_target := Vector3.ZERO
 var orbiting := false
+const PAN_SPEED_FACTOR := 0.4 # WASD-Geschwindigkeit relativ zur Zoom-Distanz
 
 # Zeit & Eingabe
 var year_rate := 0.0          # Jahre/Sekunde
@@ -367,7 +368,7 @@ func _setup_ui() -> void:
 	var hint := Label.new()
 	hint.add_theme_font_size_override("font_size", 15)
 	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hint.text = "Links: formen (Shift: ⛰↔🕳) · Rechts: drehen · Zoom: +/−\nWerkzeug: 1–6 · Radius: [ ] · Pause: Leertaste"
+	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Pause: Leertaste"
 	vb.add_child(hint)
 
 	# Diagnose bewusst als eigene Karte: Die Werkzeugleiste bleibt auch auf kleinen
@@ -615,8 +616,26 @@ func _process(delta: float) -> void:
 			debug_dirty = true
 			_update_terrain_textures()
 
+	_update_camera_pan(delta)
 	_update_ring()
 	_update_camera()
+
+func _update_camera_pan(delta: float) -> void:
+	# Bewegung bleibt auf der Terrain-Ebene und folgt der Blickrichtung statt den
+	# Weltachsen. Die Zoom-abhängige Geschwindigkeit hält sie in Nah- und Fernsicht
+	# gleich gut kontrollierbar.
+	var move := Vector2(
+		float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
+		float(Input.is_key_pressed(KEY_W)) - float(Input.is_key_pressed(KEY_S)))
+	if move == Vector2.ZERO:
+		return
+	var forward := Vector3(-sin(cam_yaw), 0.0, -cos(cam_yaw))
+	var right := Vector3(cos(cam_yaw), 0.0, -sin(cam_yaw))
+	var direction := (right * move.x + forward * -move.y).normalized()
+	var max_target := half * 0.92
+	cam_target += direction * cam_dist * PAN_SPEED_FACTOR * delta
+	cam_target.x = clampf(cam_target.x, -max_target, max_target)
+	cam_target.z = clampf(cam_target.z, -max_target, max_target)
 
 func _update_year() -> void:
 	year_label.text = "Jahr %s" % _fmt(int(sim.currentYear()))
