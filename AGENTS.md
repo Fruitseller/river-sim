@@ -1,0 +1,144 @@
+# AGENTS.md
+
+Leitfaden für Coding-Agents (und Menschen) in diesem Repository — werkzeug-unabhängig.
+`CLAUDE.md` ist ein Symlink auf diese Datei.
+
+Projektsprache ist **Deutsch**: Code-Kommentare, Doc-Kommentare und alle Dokumente
+(`PLAN.md`, `ROADMAP.md`, `docs/`) sind deutsch. Neue Kommentare/Dokumente ebenso.
+
+**Ausnahme: Git-Commit-Nachrichten werden auf Englisch geschrieben.** (Ältere Commits
+sind teils deutsch — das ist Altbestand, nicht die Konvention.)
+
+## Befehle
+
+Swift liegt auf diesem Linux-Host nicht im PATH und braucht einen ncurses-Shim.
+Vor jedem direkten `swift`-Aufruf:
+
+```sh
+source ~/.local/share/swiftly/env.sh
+export LD_LIBRARY_PATH="$PWD/.tools/swift-libs:${LD_LIBRARY_PATH:-}"   # aus Repo-Wurzel
+```
+
+`scripts/build.sh` erledigt beides selbst.
+
+**Tests** (Sim-Kern, headless, GPU-frei — die eigentliche Verifikationsebene):
+
+```sh
+swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+    --filter testBraidingBuildsBars       # einzelner Test
+```
+
+- `-c release` ist Pflicht: Debug ist bei diesen Grids zu langsam.
+- `-Xswiftc -swift-version -Xswiftc 5` ist Pflicht: `SimCore/Package.swift` deklariert
+  tools-version 6.0, der Code ist aber Swift-5-Concurrency (u. a. `Terrain.parallel`
+  mit nicht-`Sendable`-Closures). Ohne den Schalter bricht der Build mit
+  `SendableClosureCaptures` ab.
+- `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
+
+**Extension bauen** (~3,5 min) — **immer mit absolutem Pfad aufrufen**; relativ aus
+`game/` heraus schlägt es still fehl und Godot lädt weiter die ALTE Library:
+
+```sh
+"$(git rev-parse --show-toplevel)"/scripts/build.sh release  # auf die "gebaut"-Zeile am Ende prüfen
+```
+
+Baut `Extension` und kopiert `libRiverSimGD.so`/`libSwiftGodot.so` plus die komplette
+Swift-Runtime nach `game/bin/` (unter macOS `.dylib` + `codesign`).
+
+**App starten / Godot-Smoke-Tests:**
+
+```sh
+./scripts/start.sh                                   # GODOT=… überschreibt die Binärdatei
+./scripts/start.sh --rendering-method gl_compatibility # ohne Vulkan
+GODOT=…; "$GODOT" --headless --path game --script res://tests/smoke.gd
+"$GODOT" --headless --path game --script res://tests/pickaxe_repro.gd
+```
+
+**Headless-Screenshot** (visuelle Verifikation ohne Auge):
+
+```sh
+RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
+```
+
+`RS_*`-Schalter (alle in `game/scripts/Main.gd`, `RS_NO_MEANDER_PAINT` in `SimNode.swift`):
+`RS_SEED`, `RS_STEP`, `RS_SHOT`, `RS_DIST`, `RS_QUALITY` (`performance|balanced|quality`),
+`RS_RENDER_GRID`, `RS_DIAG`, `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`.
+
+## Architektur
+
+Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
+
+1. **`SimCore/`** — reines Swift-Package, **keine Godot-Abhängigkeit**. Die gesamte
+   Physik. Headless mit XCTest verifizierbar.
+2. **`Extension/`** — SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn: hält einen
+   `Terrain`, reicht Felder als `Packed*Array` an Godot, baut Farb-/Wasser-Byte-Puffer
+   fürs Rendering. Keine Physik.
+3. **`game/`** — Godot-4.7-Projekt: `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
+   `shaders/terrain.gdshader` + `water.gdshader`.
+
+Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach `heights()`,
+`waterFieldBytes()`, `terrainColorBytes()` etc. und schiebt sie als Texturen ins Mesh.
+Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
+
+### SimCore-Aufbau
+
+`Terrain.swift` (1600+ Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
+Tektonik, Küste, Braiding, Auslass-Inzision sind Pässe auf denselben Grids und ihre
+**Reihenfolge pro Zeitschritt muss zusammen lesbar sein**. Die Reihenfolge in `step()`
+ist LEM-Konvention und nicht beliebig:
+
+```
+Uplift (+ Relief-Servo) → computeFlow (Priority-Flood, D8, MFD)
+→ Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
+→ Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion → Wave
+→ Vegetation
+```
+
+Ausgelagert sind nur Dinge mit eigener Datenstruktur: `Hydraulic.swift` (Droplet-Erosion,
+Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, Cutoff),
+`ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0** — siehe `NOTICE`),
+`Noise.swift`, `MinHeap.swift`.
+
+Zwei Drainage-Netze mit strikt getrennten Rollen: **D8/`area`** speist die Erosion
+(kalibriert, implizit stabil), **MFD/`areaMFD`** (Freeman/Quinn) speist **nur** Render
+und Braiding. Diese Trennung nicht aufweichen.
+
+### Konfiguration
+
+`SimCore/Sources/SimCore/Config.swift` hält **alle** Stellschrauben, jede mit
+ausführlicher Begründung inkl. verworfener Werte und Messwerten. Beim Ändern eines
+Werts den Kommentar mitpflegen — er ist das Kalibrier-Logbuch.
+
+Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
+- `SimConfig()`-Defaults = kalibrierte Produktions-Physik.
+- `SimNode.productionConfig()` schaltet zusätzlich reine Performance-Optionen an
+  (`hydraulicSkipWaterSpawns`, `meanderSpatialCutoffIndex`) — Verhalten muss dabei
+  gleich bleiben, dafür gibt es Tests.
+- Testkonfigs (`meanderCfg()` in `SimCoreTests.swift`) **pinnen alte Werte**, damit
+  Kopplungs-Mechanik und Produktions-Kalibrierung entkoppelt bleiben. Nicht
+  „aufräumend" an die Produktionswerte angleichen.
+
+## Arbeitsweise in diesem Projekt
+
+- **Erst headless messen, dann schrauben.** Visuelle Hypothesen waren hier mehrfach
+  falsch. Kennzahlen über die Zeit loggen (Relief, Ruggedness, See-Anteil, meanLand,
+  Churn); Baseline-Beispiele in `docs/river-baseline-metrics.md`.
+- **Kalibrier-Kaskade:** Änderungen am Droplet-Pfad verschieben die Braiding-Kalibrierung;
+  Rinnen-Textur bricht Formeln, die die Per-Zell-Steigung als „Hang" lesen (Regen,
+  Vegetation, Biom-Farbe brauchen Makro-Steigung über ±2 Zellen).
+- **`n` und `world` nur ZUSAMMEN ändern** — sonst ändert sich `cellSize` und alle
+  per-Zell-Kalibrierungen (Braid-Gates, Droplet-Dichte, kappa-Skalierung) brechen.
+- **Determinismus ist eine getestete Invariante.** Parallelisierung (`Terrain.parallel`,
+  `parallelChunks` in `SimNode.swift`) ist nur über disjunkte Index-Bereiche erlaubt, wo
+  das Ergebnis **bit-identisch** zur sequenziellen Schleife bleibt.
+- **Framerate-Unabhängigkeit:** Gesamtwirkung eines Passes muss ∝ `dt` sein. Echtzeit-
+  Zeitraffer (winziges dt/Frame) und `+10.000 Jahre`-Sprünge müssen dasselbe Ergebnis
+  liefern (siehe Diffusions-Substepping in `step()`).
+- Masse-Erhaltung gilt **nicht** (detachment-limited Stream-Power trägt Material aus);
+  die Invariante ist beschränktes Relief / Fließgleichgewicht — Wächter:
+  `Tests/SimCoreTests/LongRunCollapse.swift`.
+- `ROADMAP.md` ist ein lebendes Dokument (Stand, offene Punkte, geparkter Code wie
+  `thermalPass`/`floodplainAggradation`) — bei Änderungen mitziehen.
+- Recherche-Belege in `docs/`; `docs/nickmcd-behavior-verification.md` hält je
+  Ziel-Verhalten fest, wie es umgesetzt und womit es belegt ist.
