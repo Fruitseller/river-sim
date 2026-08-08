@@ -374,8 +374,12 @@ func _setup_ui() -> void:
 	# Diagnose bewusst als eigene Karte: Die Werkzeugleiste bleibt auch auf kleinen
 	# Fenstern vollständig sichtbar, während die Entwicklungswerte oben im Blick sind.
 	var debug_panel := PanelContainer.new()
-	debug_panel.position = Vector2(470, 16)
+	debug_panel.position = Vector2(470, 16) # Platzhalter — dockt unten an die Werkzeug-Karte
 	debug_panel.custom_minimum_size = Vector2(340, 0)
+	# Rechts NEBEN der Werkzeug-Karte andocken statt festem x: deren Breite ist
+	# inhaltsgetrieben (~540px bei Font 20) und überlappte das feste 470.
+	panel.resized.connect(func() -> void:
+		debug_panel.position.x = panel.position.x + panel.size.x + 16)
 	debug_panel.theme = ui_theme
 	debug_panel.add_theme_stylebox_override("panel", style)
 	layer.add_child(debug_panel)
@@ -631,7 +635,7 @@ func _update_camera_pan(delta: float) -> void:
 		return
 	var forward := Vector3(-sin(cam_yaw), 0.0, -cos(cam_yaw))
 	var right := Vector3(cos(cam_yaw), 0.0, -sin(cam_yaw))
-	var direction := (right * move.x + forward * -move.y).normalized()
+	var direction := (right * move.x + forward * move.y).normalized()
 	var max_target := half * 0.92
 	cam_target += direction * cam_dist * PAN_SPEED_FACTOR * delta
 	cam_target.x = clampf(cam_target.x, -max_target, max_target)
