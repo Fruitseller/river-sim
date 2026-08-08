@@ -24,6 +24,14 @@ var terrain_mi: MeshInstance3D
 var water_mi: MeshInstance3D
 var ring_mi: MeshInstance3D
 
+# 3D-Bäume aus dem veg-Feld (Stufe 1, reine Optik): je Variante (Laub/Nadel/
+# Busch) EIN MultiMeshInstance3D → 3 Drawcalls für zehntausende Instanzen.
+# Die Instanz-Transforms baut SimNode.treeInstanceBuffer deterministisch
+# (Hash-Jitter, kein Frame-Random); GDScript setzt nur den Puffer.
+var tree_mmi: Array[MultiMeshInstance3D] = []
+const TREE_VARIANTS := 3
+const TREE_REBUILD_DELTA := 0.1 # Rebuild erst, wenn sich veg irgendwo um > 0.1 geändert hat
+
 # Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen/Farben/
 # Wasser als Texturen (pro Tick nur Upload, kein Mesh-Rebuild). Wasser ist ein
 # glattes Feld-Overlay im Terrain-Shader — keine Fluss-Geometrie mehr.
@@ -162,6 +170,7 @@ func _ready() -> void:
 	_pull_fields()
 	_update_year()
 	_update_terrain_textures()
+	_maybe_rebuild_trees()
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -268,6 +277,19 @@ func _setup_scene() -> void:
 	water_mi.material_override = wmat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
+
+	# Baum-MultiMeshes (Instanzen kommen später aus _rebuild_trees).
+	for v in TREE_VARIANTS:
+		var mmi := MultiMeshInstance3D.new()
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = _tree_mesh(v)
+		mmi.multimesh = mm
+		# Budget: zehntausende Schattenwerfer kosteten mehr als sie optisch
+		# bringen (Bäume sind aus der Orbit-Distanz wenige Pixel groß).
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mmi)
+		tree_mmi.append(mmi)
 
 	# Pinsel-Ring
 	ring_mi = MeshInstance3D.new()
@@ -525,6 +547,7 @@ func _after_sim() -> void:
 	_pull_fields()
 	_update_year()
 	_update_terrain_textures()
+	_maybe_rebuild_trees()
 	debug_dirty = true
 
 var _shot_frame := 0
@@ -583,6 +606,8 @@ func _process(delta: float) -> void:
 			# Läufe/Seeufer sichtbar um (User: „super schlimm"), mit 0.15 gleiten
 			# sie über ~2 s in die neue Lage.
 			_update_terrain_textures(0.15, update_overlays)
+			if update_overlays:
+				_maybe_rebuild_trees()
 
 	if sculpting:
 		var hit := _raycast_terrain()
@@ -745,6 +770,85 @@ func _update_debug_difference_texture() -> void:
 		debug_difference_img.set_data(N, N, false, Image.FORMAT_RGBA8, bytes)
 		debug_difference_tex.update(debug_difference_img)
 
+
+# ---------------------------------------------------------------- Bäume (Stufe 1)
+
+## Low-Poly-Baum je Variante als ArrayMesh: Stamm + Krone als getrennte
+## Surfaces mit eigenem Material (kein Vertex-Color-Umweg). Größen sind in die
+## Primitive gebacken (Transforms nur Translation → Normalen bleiben gültig).
+func _tree_mesh(variant: int) -> ArrayMesh:
+	var am := ArrayMesh.new()
+	var trunk_mat := _tree_material(Color(0.32, 0.23, 0.15))
+	match variant:
+		0: # Laubbaum: kurzer Stamm + gestauchte Kugel-Krone
+			var trunk := CylinderMesh.new()
+			trunk.top_radius = 0.05
+			trunk.bottom_radius = 0.09
+			trunk.height = 0.6
+			trunk.radial_segments = 5
+			trunk.rings = 1
+			_add_surface(am, trunk, Vector3(0, 0.3, 0), trunk_mat)
+			var crown := SphereMesh.new()
+			crown.radius = 0.52
+			crown.height = 0.9
+			crown.radial_segments = 7
+			crown.rings = 4
+			_add_surface(am, crown, Vector3(0, 0.95, 0), _tree_material(Color(0.20, 0.38, 0.14)))
+		1: # Nadelbaum: Stamm + Kegel
+			var trunk2 := CylinderMesh.new()
+			trunk2.top_radius = 0.05
+			trunk2.bottom_radius = 0.08
+			trunk2.height = 0.45
+			trunk2.radial_segments = 5
+			trunk2.rings = 1
+			_add_surface(am, trunk2, Vector3(0, 0.22, 0), trunk_mat)
+			var cone := CylinderMesh.new()
+			cone.top_radius = 0.0
+			cone.bottom_radius = 0.4
+			cone.height = 1.5
+			cone.radial_segments = 6
+			cone.rings = 1
+			_add_surface(am, cone, Vector3(0, 1.1, 0), _tree_material(Color(0.12, 0.29, 0.15)))
+		_: # Busch: flache Kugel, kein Stamm
+			var bush := SphereMesh.new()
+			bush.radius = 0.32
+			bush.height = 0.42
+			bush.radial_segments = 6
+			bush.rings = 3
+			_add_surface(am, bush, Vector3(0, 0.16, 0), _tree_material(Color(0.25, 0.40, 0.17)))
+	return am
+
+func _tree_material(c: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = 1.0
+	return m
+
+## Hängt die (nur verschobene) Surface 0 von `src` an `am` an.
+func _add_surface(am: ArrayMesh, src: Mesh, offset: Vector3, mat: Material) -> void:
+	var arr: Array = src.surface_get_arrays(0)
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	for vi in verts.size():
+		verts[vi] += offset
+	arr[Mesh.ARRAY_VERTEX] = verts
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	am.surface_set_material(am.get_surface_count() - 1, mat)
+
+## Rebuild-Heuristik: Bäume nur neu setzen, wenn sich das veg-Feld seit dem
+## letzten Build merklich geändert hat (Max-Delta > 0.1) — nicht jeden Frame.
+## Vor dem ersten Build liefert SimNode immer 1.0 → Initial-Build garantiert.
+func _maybe_rebuild_trees() -> void:
+	if sim.treeVegMaxDelta() > TREE_REBUILD_DELTA:
+		_rebuild_trees()
+
+func _rebuild_trees() -> void:
+	for v in tree_mmi.size():
+		var buf: PackedFloat32Array = sim.treeInstanceBuffer(v, HSCALE)
+		var mm: MultiMesh = tree_mmi[v].multimesh
+		mm.instance_count = buf.size() / 12
+		if buf.size() > 0:
+			mm.buffer = buf
+	sim.markTreesBuilt()
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 
