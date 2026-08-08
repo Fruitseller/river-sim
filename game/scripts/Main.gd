@@ -75,6 +75,8 @@ var debug_warning_label: Label
 var debug_legend_label: Label
 var debug_difference_enabled := false
 var debug_difference_scale := 0.01
+var debug_refresh_timer := 0.0
+var debug_dirty := true
 
 const DBG_MIN := 0
 const DBG_MEAN := 1
@@ -93,6 +95,7 @@ const DBG_RELIEF_TARGET := 13
 const DBG_REFERENCE_YEAR := 14
 const DBG_INVALID := 15
 const DEBUG_STATS_COUNT := 16
+const DEBUG_REFRESH_SECONDS := 1.0
 
 # UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
 var speed_buttons: Array[Button] = []
@@ -158,6 +161,7 @@ func _ready() -> void:
 	_pull_fields()
 	_update_year()
 	_update_terrain_textures()
+	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
 
@@ -507,22 +511,20 @@ func _regen() -> void:
 
 func _capture_debug_reference() -> void:
 	sim.captureDebugReference()
-	_update_debug_ui()
-	if debug_difference_enabled:
-		_update_debug_difference_texture()
+	_refresh_debug()
 
 func _set_debug_difference(enabled: bool) -> void:
 	debug_difference_enabled = enabled
 	debug_legend_label.visible = enabled
 	terrain_mat.set_shader_parameter("debug_difference", enabled)
 	if enabled:
-		_update_debug_ui()
-		_update_debug_difference_texture()
+		_refresh_debug()
 
 func _after_sim() -> void:
 	_pull_fields()
 	_update_year()
 	_update_terrain_textures()
+	debug_dirty = true
 
 var _shot_frame := 0
 var _fps_accum := 0.0
@@ -547,6 +549,10 @@ func _process(delta: float) -> void:
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
+	if debug_dirty:
+		debug_refresh_timer += delta
+		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS:
+			_refresh_debug()
 
 	if year_rate > 0.0:
 		# Jahre über das Render-Intervall AKKUMULIEREN und nur EINMAL pro Render
@@ -564,7 +570,8 @@ func _process(delta: float) -> void:
 			pending_years = 0.0
 			sim.step(years)
 			_pull_fields()
-			_update_year() # aktualisiert auch die Skala der Diagnose-Textur
+			_update_year()
+			debug_dirty = true
 			overlay_timer += elapsed
 			var update_overlays := overlay_timer >= 0.30
 			if update_overlays:
@@ -605,7 +612,7 @@ func _process(delta: float) -> void:
 				sim.brush(mode, gx, gz, brush_radius, stroke, flatten_target)
 			sim.recomputeFlow() # Flüsse reagieren sofort auf den Eingriff
 			_pull_fields()
-			_update_debug_ui()
+			debug_dirty = true
 			_update_terrain_textures()
 
 	_update_ring()
@@ -613,7 +620,13 @@ func _process(delta: float) -> void:
 
 func _update_year() -> void:
 	year_label.text = "Jahr %s" % _fmt(int(sim.currentYear()))
+
+func _refresh_debug() -> void:
 	_update_debug_ui()
+	if debug_difference_enabled:
+		_update_debug_difference_texture()
+	debug_dirty = false
+	debug_refresh_timer = 0.0
 
 func _update_debug_ui() -> void:
 	if debug_stats_label == null:
@@ -692,9 +705,6 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 	else:
 		color_img.set_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
 		color_tex.update(color_img)
-	if debug_difference_enabled:
-		_update_debug_difference_texture()
-
 	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
 	# water_blend < 1 → zeitliche EWMA-Glättung (Läufe blenden statt zu springen).
 	var wbytes: PackedByteArray = sim.waterFieldBytes(water_blend)
