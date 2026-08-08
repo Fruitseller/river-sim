@@ -82,8 +82,8 @@ const DBG_MAX := 2
 const DBG_RELIEF := 3
 const DBG_DELTA_MEAN := 4
 const DBG_DELTA_MAX := 5
-const DBG_REMOVED_VOLUME := 6
-const DBG_ADDED_VOLUME := 7
+const DBG_BELOW_REFERENCE_VOLUME := 6
+const DBG_ABOVE_REFERENCE_VOLUME := 7
 const DBG_NET_VOLUME := 8
 const DBG_MAX_REMOVED := 9
 const DBG_MAX_ADDED := 10
@@ -92,6 +92,7 @@ const DBG_UPLIFT := 12
 const DBG_RELIEF_TARGET := 13
 const DBG_REFERENCE_YEAR := 14
 const DBG_INVALID := 15
+const DEBUG_STATS_COUNT := 16
 
 # UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
 var speed_buttons: Array[Button] = []
@@ -155,8 +156,8 @@ func _ready() -> void:
 		sim.captureDebugReference()
 	sim.recomputeFlow()
 	_pull_fields()
-	_update_terrain_textures()
 	_update_year()
+	_update_terrain_textures()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
 
@@ -520,8 +521,8 @@ func _set_debug_difference(enabled: bool) -> void:
 
 func _after_sim() -> void:
 	_pull_fields()
-	_update_terrain_textures()
 	_update_year()
+	_update_terrain_textures()
 
 var _shot_frame := 0
 var _fps_accum := 0.0
@@ -563,6 +564,7 @@ func _process(delta: float) -> void:
 			pending_years = 0.0
 			sim.step(years)
 			_pull_fields()
+			_update_year() # aktualisiert auch die Skala der Diagnose-Textur
 			overlay_timer += elapsed
 			var update_overlays := overlay_timer >= 0.30
 			if update_overlays:
@@ -573,7 +575,6 @@ func _process(delta: float) -> void:
 			# Läufe/Seeufer sichtbar um (User: „super schlimm"), mit 0.15 gleiten
 			# sie über ~2 s in die neue Lage.
 			_update_terrain_textures(0.15, update_overlays)
-			_update_year()
 
 	if sculpting:
 		var hit := _raycast_terrain()
@@ -604,6 +605,7 @@ func _process(delta: float) -> void:
 				sim.brush(mode, gx, gz, brush_radius, stroke, flatten_target)
 			sim.recomputeFlow() # Flüsse reagieren sofort auf den Eingriff
 			_pull_fields()
+			_update_debug_ui()
 			_update_terrain_textures()
 
 	_update_ring()
@@ -617,16 +619,17 @@ func _update_debug_ui() -> void:
 	if debug_stats_label == null:
 		return
 	var stats: PackedFloat32Array = sim.debugTerrainStats()
-	if stats.size() <= DBG_INVALID:
+	if stats.size() != DEBUG_STATS_COUNT:
+		push_warning("Unerwartetes Diagnoseformat: %d statt %d Werte" % [stats.size(), DEBUG_STATS_COUNT])
 		return
 	debug_difference_scale = clampf(maxf(stats[DBG_MAX_REMOVED], stats[DBG_MAX_ADDED]), 0.005, 0.25)
 	debug_stats_label.text = (
 		"Höhe  min %.3f  Ø %.3f  max %.3f\n" % [stats[DBG_MIN], stats[DBG_MEAN], stats[DBG_MAX]]
 		+ "Relief %.3f  Δmax %+.3f  ΔØ %+.3f\n" % [stats[DBG_RELIEF], stats[DBG_DELTA_MAX], stats[DBG_DELTA_MEAN]]
-		+ "Abtrag/Aufbau %.1f / %.1f  ΔVol %+.1f" % [
-			stats[DBG_REMOVED_VOLUME], stats[DBG_ADDED_VOLUME], stats[DBG_NET_VOLUME]])
-	debug_legend_label.text = "Blau −  Grau 0  Rot +   Skala ±%.3f\nReferenz: Jahr %s" % [
-		debug_difference_scale, _fmt(int(stats[DBG_REFERENCE_YEAR]))]
+		+ "Unter/über Ref. %.1f / %.1f\n" % [
+			stats[DBG_BELOW_REFERENCE_VOLUME], stats[DBG_ABOVE_REFERENCE_VOLUME]]
+		+ "ΔVol %+.1f  ·  Ref. Jahr %s" % [stats[DBG_NET_VOLUME], _fmt(int(stats[DBG_REFERENCE_YEAR]))])
+	debug_legend_label.text = "Blau −  Grau 0  Rot +   Skala ±%.3f" % debug_difference_scale
 	if stats[DBG_INVALID] > 0:
 		debug_warning_label.text = "⚠ %d ungültige Höhenwerte (Magenta)" % int(stats[DBG_INVALID])
 		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.25, 0.8))

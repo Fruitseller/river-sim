@@ -77,8 +77,8 @@ final class SimNode: Node {
 
     /// Kompakter Diagnosevertrag für GDScript (alles Float32, damit kein Dictionary-
     /// Marshalling im Renderpfad anfällt):
-    /// min, mean, max, Landrelief, deltaMean, deltaMax, Abtragvolumen,
-    /// Aufbauvolumen, Nettovolumen, maxAbtrag, maxAufbau, Relief-Servo/100 J.,
+    /// min, mean, max, Landrelief, deltaMean, deltaMax, Volumen unter Referenz,
+    /// Volumen über Referenz, Nettovolumen, maxAbtrag, maxAufbau, Relief-Servo/100 J.,
     /// Dauerhebung/100 J., Reliefziel, Referenzjahr, ungültige Zellen.
     @Callable func debugTerrainStats() -> PackedFloat32Array {
         if debugReferenceHeights.count != terrain.h.count { captureDebugReference() }
@@ -90,7 +90,7 @@ final class SimNode: Node {
         var maximum = -Double.greatestFiniteMagnitude
         var referenceMaximum = -Double.greatestFiniteMagnitude
         var sum = 0.0, referenceSum = 0.0
-        var removed = 0.0, added = 0.0
+        var belowReference = 0.0, aboveReference = 0.0
         var maxRemoved = 0.0, maxAdded = 0.0
         var valid = 0, invalid = 0
         for k in h.indices {
@@ -104,10 +104,10 @@ final class SimNode: Node {
             valid += 1
             let delta = value - baseline
             if delta >= 0 {
-                added += delta
+                aboveReference += delta
                 maxAdded = max(maxAdded, delta)
             } else {
-                removed -= delta
+                belowReference -= delta
                 maxRemoved = max(maxRemoved, -delta)
             }
         }
@@ -124,8 +124,8 @@ final class SimNode: Node {
         return PackedFloat32Array([
             Float(minimum), Float(sum / divisor), Float(maximum), Float(relief),
             Float((sum - referenceSum) / divisor), Float(maximum - referenceMaximum),
-            Float(removed * cellArea), Float(added * cellArea),
-            Float((added - removed) * cellArea), Float(maxRemoved), Float(maxAdded),
+            Float(belowReference * cellArea), Float(aboveReference * cellArea),
+            Float((aboveReference - belowReference) * cellArea), Float(maxRemoved), Float(maxAdded),
             Float(servo), Float(terrain.cfg.upliftPer100y), Float(terrain.cfg.reliefTarget),
             Float(debugReferenceYear), Float(invalid),
         ])
