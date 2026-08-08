@@ -408,19 +408,46 @@ final class SimNode: Node {
         // NUR substanzielle Schleifen (≥ 10 Knoten ≈ 15 Zellen Bogen): die Mäander-
         // Migration schnürt auch winzige 2–4-Knoten-Schlingen ab, die als
         // gestreute 3–6-Zell-Blobs die Ebenen sprenkelten („zu viele Flüsse/Seen"-
-        // Eindruck) — erst ab dieser Länge liest sich ein Altarm als Altarm.
-        for li in terrain.meander.oxbows.indices {
-            if terrain.meander.oxbows[li].count < 10 { continue }
-            let age = li < terrain.meander.oxbowAge.count ? terrain.meander.oxbowAge[li] : 0
+        // Eindruck) — erst ab dieser Länge liest sich ein Altarm als Altarm. Die
+        // Cutoff-Enden liegen per Definition eng beieinander; würden wir sie beide
+        // breit stempeln, schlösse sich der Altarm zu einem unnatürlichen Wasserring.
+        // Deshalb Hals-Enden trimmen/ausblenden und nur Zellen mit echter Wassersäule
+        // markieren: sichtbar bleibt der offene, physisch gefüllte Hufeisenbogen.
+        let minimumOxbowNodes = 10
+        let maximumTrimmedNodes = 3
+        let fullEndFadeSteps = 3.0
+        let minimumPondDepth = 0.003
+        let fullPondFadeDepth = 0.02
+        let maximumOxbowOpacity = 0.7
+        for oxbowIndex in terrain.meander.oxbows.indices {
+            let oxbow = terrain.meander.oxbows[oxbowIndex]
+            if oxbow.count < minimumOxbowNodes { continue }
+            let age = oxbowIndex < terrain.meander.oxbowAge.count
+                ? terrain.meander.oxbowAge[oxbowIndex]
+                : 0
             let fade = max(0, 1 - age / terrain.cfg.oxbowMaxAge)
             if fade <= 0 { continue }
-            for nd in terrain.meander.oxbows[li] {
-                let cx = Int(nd.x.rounded()), cy = Int(nd.z.rounded())
-                for (ddx, ddy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    let ii = cx + ddx, jj = cy + ddy
-                    if ii < 0 || ii >= n || jj < 0 || jj >= n { continue }
-                    let kk = jj * n + ii
-                    if oxb[kk] < 0.7 * fade { oxb[kk] = 0.7 * fade }
+            let trim = min(maximumTrimmedNodes, max(1, oxbow.count / 8))
+            let first = trim, last = oxbow.count - trim - 1
+            if first > last { continue }
+            for nodeIndex in first...last {
+                let node = oxbow[nodeIndex]
+                let edgeSteps = min(nodeIndex - first, last - nodeIndex)
+                let endFade = min(1, Double(edgeSteps + 1) / fullEndFadeSteps)
+                let centerX = Int(node.x.rounded()), centerY = Int(node.z.rounded())
+                for (offsetX, offsetY) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let neighborX = centerX + offsetX, neighborY = centerY + offsetY
+                    if neighborX < 0 || neighborX >= n || neighborY < 0 || neighborY >= n {
+                        continue
+                    }
+                    let cellIndex = neighborY * n + neighborX
+                    let pondDepth = hf[cellIndex] - h[cellIndex]
+                    if hf[cellIndex] <= sea || h[cellIndex] <= sea || pondDepth <= minimumPondDepth {
+                        continue
+                    }
+                    let pondFade = min(1, (pondDepth - minimumPondDepth) / fullPondFadeDepth)
+                    let value = maximumOxbowOpacity * fade * endFade * pondFade
+                    if oxb[cellIndex] < value { oxb[cellIndex] = value }
                 }
             }
         }
