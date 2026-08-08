@@ -409,8 +409,7 @@ public final class Terrain {
     /// PERF: der Hot-Loop läuft komplett auf Roh-Puffern (kein Bounds-/COW-Check
     /// je Zugriff), innere Zellen nehmen den Zweig mit 8 FESTEN Offsets ohne
     /// Rand-Checks, und der Spaltenindex reist im Heap-Eintrag mit (kein `c % n`
-    /// je Zelle). Nachbar-Reihenfolge und Vergleiche bleiben exakt die der alten
-    /// dj/di-Schleife — bei gleichen Füllhöhen hängt das Ergebnis daran.
+    /// je Zelle).
     private func priorityFlood() {
         heap.removeAll()
         let cnt = cfg.count, nn = n

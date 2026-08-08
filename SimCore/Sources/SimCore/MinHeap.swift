@@ -1,6 +1,6 @@
 import Foundation
 
-/// Binärer Min-Heap für den Priority-Flood. Arbeitet auf einem vorallozierten
+/// 4-ärer Min-Heap für den Priority-Flood. Arbeitet auf einem vorallozierten
 /// Puffer, um GC-Druck im Sim-Loop zu vermeiden.
 ///
 /// PERF: der Flood pusht und poppt je Aufruf ~700k Zellen (n=832) → ~10M
@@ -13,13 +13,13 @@ import Foundation
 ///   Exclusivity-Enforcement aus → jetzt läuft der ganze Flood über `withRaw`
 ///   in EINEM Roh-Puffer-Zugriff (`MinHeap.Ref`),
 /// - Sift-up/-down swappten (2 Writes je Ebene) → jetzt wandert ein „Loch"
-///   (1 Write je Ebene).
+///   (1 Write je Ebene), und vier Kinder halbieren gegenüber einem Binär-Heap
+///   die Tiefe und damit die Zahl der zufälligen Speicherzugriffe beim Push.
 ///
-/// Die Loch-Variante ist bewusst BIT-IDENTISCH zur Swap-Variante (gleiche
-/// Vergleiche in gleicher Reihenfolge, gleicher Endzustand des Puffers). Das ist
-/// keine Kosmetik: bei Key-GLEICHSTAND (Seespiegel-Flächen haben exakt gleiche
-/// Füllhöhen) entscheidet die Heap-Reihenfolge, welche Zelle zuerst poppt, und
-/// davon hängen `order` und `floodParent` — also das Höhenfeld — ab.
+/// Die Loch-Variante erhält dieselbe Min-Heap-Semantik wie eine Swap-Variante.
+/// Unter gleichen Keys darf die 4-äre Struktur Zellen in einer anderen, aber
+/// weiterhin deterministischen Reihenfolge ausgeben; Priority-Flood benötigt
+/// für seine Korrektheit nur die nicht fallende Key-Reihenfolge.
 struct MinHeap {
     /// key + cell + col in 16 Byte: der Spaltenindex `col` reist im Padding
     /// gratis mit, damit `priorityFlood` je Zelle kein `c % n` braucht
@@ -40,10 +40,10 @@ struct MinHeap {
             var i = size
             size = i + 1
             while i > 0 {
-                let p = (i - 1) >> 1
-                if b[p].key <= key { break }
-                b[i] = b[p]
-                i = p
+                let parent = (i - 1) >> 2
+                if b[parent].key <= key { break }
+                b[i] = b[parent]
+                i = parent
             }
             b[i] = Entry(key: key, cell: cell, col: col)
         }
@@ -54,14 +54,22 @@ struct MinHeap {
             let last = b[size]
             var i = 0
             while true {
-                let l = 2 * i + 1, r = l + 1
-                var m = i
-                var mk = last.key
-                if l < size, b[l].key < mk { m = l; mk = b[l].key }
-                if r < size, b[r].key < mk { m = r; mk = b[r].key }
-                if m == i { break }
-                b[i] = b[m]
-                i = m
+                let firstChild = 4 * i + 1
+                if firstChild >= size { break }
+                var child = firstChild
+                var childKey = b[firstChild].key
+                let childrenEnd = min(firstChild + 4, size)
+                var candidate = firstChild + 1
+                while candidate < childrenEnd {
+                    if b[candidate].key < childKey {
+                        child = candidate
+                        childKey = b[candidate].key
+                    }
+                    candidate += 1
+                }
+                if last.key <= childKey { break }
+                b[i] = b[child]
+                i = child
             }
             b[i] = last
             return top
