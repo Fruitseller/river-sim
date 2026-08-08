@@ -22,6 +22,16 @@ public final class Terrain {
 
     // Entwässerung
     public private(set) var hf: [Double]     // gefüllte Oberfläche (Priority-Flood)
+    /// Darstellungs-SEESPIEGEL: folgt `hf` ratenbegrenzt (`lakeLevelResponseYears`).
+    /// Priority-Flood setzt `hf` INSTANTAN aufs Sill-Niveau — jede Deposition am
+    /// Becken-Auslass (Droplets, Braiding, Mäander; gemessen: keine Einzelquelle
+    /// dominiert) lässt sonst die GESAMTE Seefläche im Render schlagartig springen
+    /// und die Auslass-Inzision schneidet sie über ~100 J. wieder frei (Plug/
+    /// Breach-Sägezahn). Physisch: ein See füllt/leert sich mit endlicher Rate.
+    /// NUR fürs Rendering — die gesamte Physik (Pools, Verlandung, Tropfen)
+    /// liest weiter `hf` (ein träges Verlandungs-Ziel war messbar wirkungslos
+    /// und störte die Braid-Bänke, s. Kommentar in fillShallowPonds).
+    public private(set) var waterLevel: [Double]
     public private(set) var receiver: [Int32] // Abfluss-Nachbar (-1 = Senke/Meer)
     public private(set) var area: [Double]   // Einzugsgebiet (Zellflächen, Single-Flow/D8 → Erosion)
     public private(set) var areaMFD: [Double] // Multi-Flow-Einzugsgebiet (Freeman) → NUR Render/Braiding, nie Erosion
@@ -48,6 +58,7 @@ public final class Terrain {
     public private(set) var streamMap: [Double]
     private var streamRate: [Double] // EWMA der Besuche/Jahr
     private var trackBuf: [Double]   // je Schritt: Tropfen-Besuchszahl je Zelle
+    private var pondSeen: [Bool]     // Arbeitspuffer der Pfützen-Komponentensuche
     private var noise: SimplexNoise
 
     /// Wandernde Fluss-Zentrumslinien (Mäander-Migration). In M2 noch entkoppelt
@@ -74,6 +85,7 @@ public final class Terrain {
         rain = .init(repeating: 0, count: c)
         veg = .init(repeating: 0, count: c)
         hf = .init(repeating: 0, count: c)
+        waterLevel = .init(repeating: 0, count: c)
         receiver = .init(repeating: -1, count: c)
         area = .init(repeating: 0, count: c)
         areaMFD = .init(repeating: 0, count: c)
@@ -86,6 +98,7 @@ public final class Terrain {
         streamMap = .init(repeating: 0, count: c)
         streamRate = .init(repeating: 0, count: c)
         trackBuf = .init(repeating: 0, count: c)
+        pondSeen = .init(repeating: false, count: c)
         heap = MinHeap(capacity: c)
         noise = SimplexNoise(seed: seed)
         generate(seed: seed)
@@ -213,7 +226,13 @@ public final class Terrain {
         // Vegetation im eingeschwungenen Zustand starten.
         updateVegetation(years: 10000)
         seedMeander()
+        waterLevel = hf // Startzustand: Seespiegel = Füllstand (kein Einschwingen)
     }
+
+    /// Seespiegel sofort auf den Füllstand setzen — für Spieler-Eingriffe
+    /// (sculpt → recomputeFlow): deren Feedback soll instantan sein, nur die
+    /// Sim-Dynamik (Plug/Breach am Auslass) ist träge.
+    public func snapWaterLevel() { waterLevel = hf }
 
     /// Initialisiert die Stream-Map bei der Generierung (sonst wären am Anfang
     /// keine Flüsse sichtbar, bis genug Sim-Schritte Tracks akkumuliert haben):
@@ -973,18 +992,71 @@ public final class Terrain {
     /// Pfützen-Verlandung: SEICHTES Ponding (≤ puddleFillDepth) auf Land füllt
     /// sich mit Sediment auf — die Auen trugen sonst dauerhafte Flachwasser-
     /// Sprenkel knapp über der Render-Schwelle (zerfetzte Blob-Felder). Anders
-    /// als `fillLakes` tiefen-GEDECKELT: echte Seen (tieferes Becken) bleiben,
-    /// nur ihr Sub-0.06-Ufersaum strafft sich. Mäander-Betten (isChannel) sind
-    /// ausgenommen (Reconciliation: das gecarvte Bett nicht zuschütten).
+    /// als `fillLakes` tiefen-GEDECKELT: echte Seen (tieferes Becken) bleiben.
+    /// Mäander-Betten (isChannel) sind ausgenommen (Reconciliation: das
+    /// gecarvte Bett nicht zuschütten).
+    ///
+    /// NUR Komponenten OHNE SEE-KERN (4er-BFS über zusammenhängendes Ponding):
+    /// die Pauschal-Verfüllung hob sonst auch die kilometerbreiten Sub-0.06-
+    /// Ufersäume der großen Seen als Ganzes an — sichtbar „wachsender Boden
+    /// ohne Wasser" (User-Beobachtung; gemessen: 90% der Tiefland-Hebung,
+    /// +0.03/6000 J. auf den Säumen). Ein SEE ist eine Komponente mit tiefem
+    /// Kern (max-Tiefe > puddleFillDepth — dieselbe „echte Seen bleiben"-
+    /// Semantik wie der Tiefen-Deckel); sein Ufersaum verlandet nur noch
+    /// physisch über die Droplet-Deltas (Sediment-ZUFUHR von den Mündungen,
+    /// gerichtet). Braid-/Auen-Pfützennetze sind überall seicht → verlanden
+    /// weiter komplett, egal wie ausgedehnt (eine Größen-Schwelle traf je nach
+    /// Seed auch Bank-Pfützen: Braid-Insel-Guard kippte bei 64 UND 400 Zellen).
+    /// Ziel bewusst das volle hf, NICHT der geglättete waterLevel (über 3 Seeds
+    /// ohne messbaren Volumen-Effekt, drückte aber die Braid-Bänke 9→2).
     private func fillShallowPonds(dt: Double) {
         let rate = min(0.5, dt / cfg.puddleFillYears)
-        for k in 0..<cfg.count where hf[k] > cfg.sea && !isChannel[k] {
-            let deficit = hf[k] - h[k]
-            if deficit > 0.001 && deficit <= cfg.puddleFillDepth {
-                let add = deficit * rate
-                h[k] += add
-                sed[k] += add
+        let sea = cfg.sea, nn = n
+        // Persistente Puffer (Hot-Loop, keine Allokation je Schritt).
+        for k in 0..<cfg.count { pondSeen[k] = false }
+        var comp: [Int32] = []
+        var stack: [Int32] = []
+        for s in 0..<cfg.count where !pondSeen[s] && hf[s] > sea && hf[s] - h[s] > 0.001 {
+            comp.removeAll(keepingCapacity: true)
+            stack.removeAll(keepingCapacity: true)
+            stack.append(Int32(s)); pondSeen[s] = true
+            var deepCells = 0
+            while let kk = stack.popLast() {
+                let k = Int(kk)
+                comp.append(kk)
+                if hf[k] - h[k] > cfg.puddleFillDepth { deepCells += 1 }
+                let i = k % nn, j = k / nn
+                if i > 0 { pondPush(k - 1, &stack) }
+                if i < nn - 1 { pondPush(k + 1, &stack) }
+                if j > 0 { pondPush(k - nn, &stack) }
+                if j < nn - 1 { pondPush(k + nn, &stack) }
             }
+            // See = Komponente mit SUBSTANZIELLEM tiefen Kern (absolute Zellzahl):
+            // deren Ufersaum bleibt. Zwei verworfene Kriterien (beide gemessen):
+            // „berührt irgendeinen tiefen Pool" nahm auch Braid-/Auen-Netze aus,
+            // die fast immer an einem Einzelpool hängen (Braid-Insel-Guard kippte
+            // 3 vs 4); ein RELATIVER Kern-Anteil (≥20%) ließ genau den Problemfall
+            // durch — riesiger seichter Saum um kompakten tiefen Kern (Seed 1337:
+            // nur −45% Saum-Hebung statt −100%).
+            if deepCells >= cfg.puddleLakeCoreCells { continue }
+            for kk in comp {
+                let k = Int(kk)
+                if isChannel[k] { continue }
+                let deficit = hf[k] - h[k]
+                if deficit > 0.001 && deficit <= cfg.puddleFillDepth {
+                    let add = deficit * rate
+                    h[k] += add
+                    sed[k] += add
+                }
+            }
+        }
+    }
+
+    /// BFS-Schritt der Pfützen-Komponentensuche (4er-Nachbarschaft).
+    @inline(__always) private func pondPush(_ k: Int, _ stack: inout [Int32]) {
+        if !pondSeen[k] && hf[k] > cfg.sea && hf[k] - h[k] > 0.001 {
+            pondSeen[k] = true
+            stack.append(Int32(k))
         }
     }
 
@@ -1492,6 +1564,7 @@ public final class Terrain {
         // niemals hinter dem aktuellen Terrain zurückbleiben.
         let updateMFD = cfg.braidingEnabled || Int(flowStepCount % UInt32(mfdInterval)) == 0
         computeFlow(includeMFD: updateMFD)
+        relaxWaterLevel(dt: dt) // Seespiegel folgt dem frischen hf (s. Doku dort)
         if cfg.meanderEnabled {
             migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
             meanderStamp(dt: dt)   // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
@@ -1569,6 +1642,22 @@ public final class Terrain {
         }
         updateVegetation(years: dt)
         years += dt
+    }
+
+    /// Darstellungs-Seespiegel ratenbegrenzt Richtung Füllstand relaxieren
+    /// (s. waterLevel-Doku). Exponentiell in Sim-Zeit → dt-invariant: Zeitraffer
+    /// in Mini-Schritten und ein +10.000-J.-Sprung landen am selben Pegel.
+    /// Per-Zelle unabhängig → parallel, bit-identisch zur sequenziellen Schleife.
+    private func relaxWaterLevel(dt: Double) {
+        guard cfg.lakeLevelResponseYears > 0 else { waterLevel = hf; return }
+        let wlam = 1 - exp(-dt / cfg.lakeLevelResponseYears)
+        waterLevel.withUnsafeMutableBufferPointer { wlb in
+        hf.withUnsafeBufferPointer { hfb in
+            let pwl = wlb.baseAddress!, phf = hfb.baseAddress!
+            parallel(cfg.count) { lo, hi in
+                for k in lo..<hi { pwl[k] += (phf[k] - pwl[k]) * wlam }
+            }
+        }}
     }
 
     // MARK: - Diagnose (für Tests & UI)

@@ -351,39 +351,49 @@ final class RiverDynamicsTests: XCTestCase {
     /// WÄCHTER Braiding (Task 4): der Murray&Paola-Pass erzeugt auf dem
     /// Produktions-Pfad Verzweigungen und Mittelbänke — messbar MEHR als ohne ihn —
     /// und hält dabei das Terrain gesund (kein Runaway, kein Einebnen).
+    ///
+    /// MULTI-SEED (ehem. ROADMAP-Punkt „Metrik rauscht, Einzel-Seed"): die
+    /// Insel-Zahl je Seed streut 0..29 und FLIPPT unter jeder kleinen Physik-
+    /// Störung (gemessen: Pfützen-Verlandungs-Gate kippte 1337 von 9v3 auf 2v4,
+    /// während die 8-Seed-Summe stabil 53 vs 25 blieb). Ein Einzel-Seed-Vergleich
+    /// prüft Trajektorien-Glück, die Seed-Summe den Pass.
     func testBraidingBuildsBars() {
-        var cOn = SimConfig(); cOn.n = 256
-        var cOff = cOn; cOff.braidingEnabled = false
-        let tOn = Terrain(config: cOn, seed: 1337)
-        let tOff = Terrain(config: cOff, seed: 1337)
-        // Bänke sind TRANSIENT (Arme bilden und schließen sich) — deshalb über die
-        // Zeit gesammelt messen (alle 2k Jahre), nicht als Einzel-Schnappschuss.
-        var sumIslOn = 0, sumIslOff = 0, maxSplitsOn = 0, maxSplitsOff = 0
-        var prevIslOn = 0, everFormed = false, everClosed = false
-        while tOn.years < 30_000 - 1e-6 {
-            tOn.step(dtYears: 1000); tOff.step(dtYears: 1000)
-            if Int(tOn.years) % 2000 == 0 {
-                let mOn = braidMetrics(tOn), mOff = braidMetrics(tOff)
-                sumIslOn += mOn.islands; sumIslOff += mOff.islands
-                maxSplitsOn = max(maxSplitsOn, mOn.splits)
-                maxSplitsOff = max(maxSplitsOff, mOff.splits)
-                if mOn.islands > prevIslOn { everFormed = true }
-                if mOn.islands < prevIslOn { everClosed = true }
-                prevIslOn = mOn.islands
+        var sumIslOn = 0, sumIslOff = 0, sumSplitsOn = 0, sumSplitsOff = 0
+        var everFormed = false, everClosed = false
+        for seed: UInt32 in [1337, 90210, 7] {
+            var cOn = SimConfig(); cOn.n = 256
+            var cOff = cOn; cOff.braidingEnabled = false
+            let tOn = Terrain(config: cOn, seed: seed)
+            let tOff = Terrain(config: cOff, seed: seed)
+            // Bänke sind TRANSIENT (Arme bilden und schließen sich) — deshalb über
+            // die Zeit gesammelt messen (alle 2k Jahre), nicht als Schnappschuss.
+            var maxSplitsOn = 0, maxSplitsOff = 0, prevIslOn = 0
+            while tOn.years < 30_000 - 1e-6 {
+                tOn.step(dtYears: 1000); tOff.step(dtYears: 1000)
+                if Int(tOn.years) % 2000 == 0 {
+                    let mOn = braidMetrics(tOn), mOff = braidMetrics(tOff)
+                    sumIslOn += mOn.islands; sumIslOff += mOff.islands
+                    maxSplitsOn = max(maxSplitsOn, mOn.splits)
+                    maxSplitsOff = max(maxSplitsOff, mOff.splits)
+                    if mOn.islands > prevIslOn { everFormed = true }
+                    if mOn.islands < prevIslOn { everClosed = true }
+                    prevIslOn = mOn.islands
+                }
             }
+            sumSplitsOn += maxSplitsOn; sumSplitsOff += maxSplitsOff
+            print("[BRAID] seed \(seed): Inseln an bisher \(sumIslOn) / aus \(sumIslOff), Splits-Max an \(maxSplitsOn) / aus \(maxSplitsOff)")
+            // Terrain bleibt je Seed gesund (dieselben Schwellen wie LongRunCollapse).
+            XCTAssertLessThan(tOn.maxHeight(), 1.0, "Terrain-Runaway unter Braiding (seed \(seed))")
+            XCTAssertGreaterThan(tOn.landRelief(), 0.30, "Terrain eingeebnet unter Braiding (seed \(seed))")
         }
-        print("[BRAID] an:  Insel-Summe=\(sumIslOn) Splits-Max=\(maxSplitsOn) gebildet=\(everFormed) geschlossen=\(everClosed)")
-        print("[BRAID] aus: Insel-Summe=\(sumIslOff) Splits-Max=\(maxSplitsOff)")
+        print("[BRAID] Summe: Inseln an=\(sumIslOn) aus=\(sumIslOff), Splits an=\(sumSplitsOn) aus=\(sumSplitsOff)")
         XCTAssertGreaterThan(sumIslOn, sumIslOff,
                              "Braiding-Pass muss Mittelbänke (umschlossene Inseln) bauen")
-        XCTAssertGreaterThan(maxSplitsOn, maxSplitsOff,
+        XCTAssertGreaterThan(sumSplitsOn, sumSplitsOff,
                              "Braiding-Pass muss aktive Verzweigungen erzeugen")
         // Der eigentliche User-Wunsch: Arme bilden sich UND schließen sich wieder.
         XCTAssertTrue(everFormed && everClosed,
                       "Bänke müssen entstehen UND wieder verschwinden (transiente Dynamik)")
-        // Terrain bleibt gesund (dieselben Schwellen wie LongRunCollapse).
-        XCTAssertLessThan(tOn.maxHeight(), 1.0, "Terrain-Runaway unter Braiding")
-        XCTAssertGreaterThan(tOn.landRelief(), 0.30, "Terrain eingeebnet unter Braiding")
     }
 
     /// WÄCHTER Becken-Entwässerung (nickmcd-Verhalten): die Generierung liefert

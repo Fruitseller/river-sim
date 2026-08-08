@@ -33,11 +33,13 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 **Braiding-Kalibrierung (behoben, weiter beobachten):**
 Die Kapazität des Murray-&-Paola-`braidPass` wurde auf `5e-6` gesenkt. Damit
-lagern überlastete, flache Reaches wieder Bänke ab: `testBraidingBuildsBars`
-(n=256, seed 1337) misst Insel-Summe an=9 vs. aus=4 und Splits-Max 336 vs.
-260. Die Insel-Metrik bleibt bei einstelligen Zählwerten empfindlich; bei
-künftigen Änderungen zusätzlich Bank-Fläche innerhalb nasser Läufe und Splits
-pro Trunk-Länge über mehrere Seeds messen.
+lagern überlastete, flache Reaches wieder Bänke ab. `testBraidingBuildsBars`
+misst seit Aug 2026 MULTI-SEED (1337/90210/7, Summe Inseln an=16 vs. aus=8,
+Splits an=786 vs. aus=720): die Einzel-Seed-Zählung flippte unter jeder
+kleinen Physik-Störung (gemessen 9v3 → 2v4 durch das Verlandungs-Gate,
+während die 8-Seed-Summe stabil 53 vs 25 blieb). Optional weiter offen:
+Bank-Fläche innerhalb nasser Läufe / Splits pro Trunk-Länge als robustere
+Metriken.
 
 **Terrain-Alterung (aus `docs/research-terrain-aging.md` §6):**
 - `isoHighClamp` (0.90) testweise lockern/entfernen — laut Recherche mit der
@@ -50,6 +52,19 @@ pro Trunk-Länge über mehrere Seeds messen.
   hypsometrische Kurve. Sie trennen „spitz/jung" von „rund/alt" objektiv.
 
 **Politur / Rendering:**
+- ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass
+  (Droplets+Braiding+Mäander gemeinsam, keine Einzelquelle) schüttet den Sill zu,
+  Priority-Flood hebt `hf` instantan fürs ganze Becken, outletIncision schneidet in
+  ~100 J. zurück (Sägezahn). Fix: ratenbegrenzter Darstellungs-Seespiegel
+  `Terrain.waterLevel` (`lakeLevelResponseYears`, 250 J.), Physik bleibt auf `hf`;
+  Wächter: `LakeLevelStability`.
+- ERLEDIGT (Aug 2026): „Wachsender Boden ohne Wasser" — die Pfützen-Verlandung hob
+  die kilometerbreiten Sub-0.06-Ufersäume der großen Seen als Ganzes an (90% der
+  Tiefland-Hebung; ΔVol über 20k J. halbiert: +131→+68). Fix: `fillShallowPonds`
+  verlandet nur noch Wasser-Komponenten OHNE See-Kern (< `puddleLakeCoreCells`
+  tiefe Zellen); See-Ufer verlanden nur noch physisch über Droplet-Deltas.
+  Ein träges Verlandungs-Ziel (waterLevel) und Größen-Schwellen waren gemessene
+  Sackgassen (wirkungslos bzw. Braid-Bänke beschädigt, s. Config-Kommentare).
 - **Deltas** an Fluss-Mündungen in Meer/Seen sichtbar machen (das Transport-Modell baut
   sie schon, das Rendering hebt sie nicht hervor).
 - See-Ränder minimal gezackt (per-Zelle-Quads) — zu einer Kontur glätten.

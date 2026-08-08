@@ -56,7 +56,9 @@ final class SimNode: Node {
     // MARK: Felder (row-major, Länge n*n)
 
     @Callable func heights() -> PackedFloat32Array { pack(terrain.h) }
-    @Callable func filled() -> PackedFloat32Array { pack(terrain.hf) }
+    // Rendering bekommt den ratenbegrenzten SEESPIEGEL statt hf: Priority-Flood
+    // springt beim Sill-Zuschütten instantan → hüpfende Seeflächen (s. Terrain.waterLevel).
+    @Callable func filled() -> PackedFloat32Array { pack(terrain.waterLevel) }
     @Callable func sediment() -> PackedFloat32Array { pack(terrain.sed) }
     @Callable func rainField() -> PackedFloat32Array { pack(terrain.rain) }
     @Callable func vegetation() -> PackedFloat32Array { pack(terrain.veg) }
@@ -283,7 +285,12 @@ final class SimNode: Node {
     }
 
     /// Nach Sculpting/Änderungen Entwässerung neu berechnen (für Live-Flüsse).
-    @Callable func recomputeFlow() { terrain.computeFlow() }
+    /// Seespiegel snappt mit: Spieler-Feedback soll instantan sein, nur die
+    /// Sim-Dynamik (Plug/Breach am Auslass) ist träge.
+    @Callable func recomputeFlow() {
+        terrain.computeFlow()
+        terrain.snapWaterLevel()
+    }
 
     /// Effektive Maximal-Breite der Spitzhacke (Welteinheiten) — fürs Ring-Visual.
     @Callable func pickaxeMaxRadiusWorld() -> Double {
@@ -332,7 +339,10 @@ final class SimNode: Node {
         let creek = terrain.cfg.renderMinCells // Render-Schwelle sichtbarer Läufe — ENTKOPPELT vom Braid-Physik-Gate (braidMinCells): 30→120→280 erhöht (User: „zu viele Flüsse"), die Braiding-Physik behält ihr eigenes Gate. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
         // areaMFD (Multi-Flow): stetige Fluss-Intensität → Läufe gleiten statt zu
         // springen und können sich um Bänke teilen. Erosion nutzt weiter D8-`area`.
-        let h = terrain.h, hf = terrain.hf, area = terrain.areaMFD, rec = terrain.receiver
+        // Seetiefe/Nässe aus dem ratenbegrenzten Seespiegel statt hf — das Overlay
+        // muss zur (ebenfalls waterLevel-gehobenen) See-Geometrie passen und nicht
+        // mit jedem hf-Sprung flackern (s. Terrain.waterLevel).
+        let h = terrain.h, hf = terrain.waterLevel, area = terrain.areaMFD, rec = terrain.receiver
 
         if waterStream.count != cnt {
             waterStream = [Double](repeating: 0, count: cnt)
