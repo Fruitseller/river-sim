@@ -19,6 +19,18 @@ public final class Terrain {
     public private(set) var upliftBase: [Double] // tektonisches Feld (±, fix je Terrain)
     public private(set) var rain: [Double]   // Luftfeuchte/Niederschlag
     public private(set) var veg: [Double]    // Vegetationsdichte 0..1
+    /// Vegetations-Klasse je Zelle: 0 kahl · 1 Gras · 2 Wald · 3 Auwald.
+    /// ADDITIV zu `veg` (das bleibt Dichte 0..1 für alle bestehenden
+    /// Konsumenten): die Klasse differenziert nur den Erosionsschutz
+    /// (vegDamp) und die Mäander-Ufer-Kohäsion. Abgeleitet in updateVegClass.
+    public private(set) var vegClass: [UInt8]
+    /// Flussnähe 0..1 (gedämpfte Dilatation der Wasser-Maske) — Eingangsgröße
+    /// der Auwald-Klasse, geglättet, damit die Klassen-Grenzen weich bleiben.
+    private var riparian: [Double]
+    private var vegScratch: [Double] // Pingpong-Puffer der Riparian-Dilatation
+    /// Erosionsschutz-Faktoren je Klasse ([kahl, Gras, Wald, Auwald], aus cfg):
+    /// Schutz = 1 − 0.6·Faktor·veg — die 0.6-Basiskalibrierung bleibt fix.
+    private let vegTypeFactor: [Double]
 
     // Entwässerung
     public private(set) var hf: [Double]     // gefüllte Oberfläche (Priority-Flood)
@@ -73,6 +85,10 @@ public final class Terrain {
         upliftBase = .init(repeating: 0, count: c)
         rain = .init(repeating: 0, count: c)
         veg = .init(repeating: 0, count: c)
+        vegClass = .init(repeating: 0, count: c)
+        riparian = .init(repeating: 0, count: c)
+        vegScratch = .init(repeating: 0, count: c)
+        vegTypeFactor = [1, 1, config.vegTypeFactorForest, config.vegTypeFactorRiparian]
         hf = .init(repeating: 0, count: c)
         receiver = .init(repeating: -1, count: c)
         area = .init(repeating: 0, count: c)
@@ -393,6 +409,114 @@ public final class Terrain {
             }
             }
         }}}}
+        updateVegClass()
+    }
+
+    /// Vegetations-Schutzfaktor der Erosionspässe: (1 − 0.6·typFactor·veg).
+    /// Die 0.6-Basiskalibrierung bleibt unangetastet (Kalibrier-Kaskade); die
+    /// Klassen-Faktoren verstärken sie nur multiplikativ (Gras 1.0 = Status quo,
+    /// Wald/Auwald schützen stärker). Max-Produkt 0.6·1.3 = 0.78 < 1.
+    @inline(__always) func vegDamp(_ k: Int) -> Double {
+        max(0, 1 - 0.6 * vegTypeFactor[Int(vegClass[k])] * veg[k])
+    }
+
+    /// Leitet die Vegetations-Klasse je Zelle ab (0 kahl · 1 Gras · 2 Wald ·
+    /// 3 Auwald). Auwald = flussnah + flach + feucht: Flussnähe kommt aus einer
+    /// gedämpften 3×3-Max-Dilatation (3 Runden, Abfall 0.65/Ring → Werte 1.0 /
+    /// 0.65 / 0.42 / 0.27) der Wasser-Maske (substanzielle Läufe areaMFD ≥
+    /// braidMinCells ODER stehendes Wasser hf−h > 0.02). Alle Eingangsgrößen
+    /// sind glatt (veg relaxiert über τ=250a, riparian fällt über Ringe ab,
+    /// Steigung ±2 Zellen) → weiche Klassen-Übergänge statt Flickenteppich.
+    /// Determinismus: jeder Pass liest nur fremde Puffer und schreibt
+    /// ausschließlich seinen eigenen Index → parallel bit-identisch.
+    private func updateVegClass() {
+        let nn = n, sea = cfg.sea, cnt = cfg.count
+        let cellArea = cfg.cellSize * cfg.cellSize
+        let minA = cfg.braidMinCells * cellArea
+        // Pass 1: Wasser-Quellmaske → riparian.
+        h.withUnsafeBufferPointer { hb in
+        hf.withUnsafeBufferPointer { hfb in
+        areaMFD.withUnsafeBufferPointer { ab in
+        riparian.withUnsafeMutableBufferPointer { rb in
+            let ph = hb.baseAddress!, phf = hfb.baseAddress!
+            let pa = ab.baseAddress!, prip = rb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi {
+                    let water = phf[k] > sea
+                        && (pa[k] >= minA || phf[k] - ph[k] > 0.02)
+                    prip[k] = water ? 1.0 : 0.0
+                }
+            }
+        }}}}
+        // Pass 2: 3 Dilatationsrunden (riparian ↔ vegScratch).
+        for _ in 0..<3 {
+            dilateDamped(from: riparian, to: &vegScratch)
+            swap(&riparian, &vegScratch)
+        }
+        // Pass 3: Klassen. Der 2er-Rand bleibt kahl (wie in updateVegetation,
+        // die dort auch kein veg aufbaut).
+        h.withUnsafeBufferPointer { hb in
+        hf.withUnsafeBufferPointer { hfb in
+        veg.withUnsafeBufferPointer { vb in
+        riparian.withUnsafeBufferPointer { rb in
+        vegClass.withUnsafeMutableBufferPointer { cb in
+            let ph = hb.baseAddress!, phf = hfb.baseAddress!
+            let pveg = vb.baseAddress!, prip = rb.baseAddress!
+            let pcls = cb.baseAddress!
+            parallel(nn - 4) { lo, hi in
+            for j in (lo + 2)..<(hi + 2) {
+                for i in 2..<(nn - 2) {
+                    let k = j * nn + i
+                    var cls: UInt8 = 0
+                    let v = pveg[k]
+                    if ph[k] > sea + 0.005 && v >= 0.12 {
+                        let slope = (abs(ph[k + 2] - ph[k - 2]) + abs(ph[k + 2 * nn] - ph[k - 2 * nn])) * 0.125
+                        // Auwald: bis ~2 Zellen vom Wasser (riparian ≥ 0.4),
+                        // flach (etwas toleranter als die Baum-Maske) und nicht
+                        // selbst tief überflutet. Sonst: dichter Bewuchs = Wald,
+                        // Rest = Gras. Kahl nur bei v < 0.12 (steil/hoch/nass
+                        // drückt schon das veg-Ziel auf 0 — die Klasse folgt).
+                        if prip[k] >= 0.4 && slope * 40 < 0.6 && phf[k] - ph[k] <= 0.02 && v >= 0.25 {
+                            cls = 3
+                        } else if v > 0.45 {
+                            cls = 2
+                        } else {
+                            cls = 1
+                        }
+                    }
+                    pcls[k] = cls
+                }
+            }
+            }
+        }}}}}
+    }
+
+    /// Eine gedämpfte 3×3-Max-Dilatationsrunde: dst[k] = max(src[k],
+    /// 0.65·max(8 Nachbarn)). Liest nur src, schreibt nur dst[k] →
+    /// zeilenparallel bit-identisch.
+    private func dilateDamped(from src: [Double], to dst: inout [Double]) {
+        let nn = n
+        src.withUnsafeBufferPointer { sb in
+        dst.withUnsafeMutableBufferPointer { db in
+            let ps = sb.baseAddress!, pd = db.baseAddress!
+            parallel(nn) { jLo, jHi in
+                for j in jLo..<jHi {
+                    for i in 0..<nn {
+                        let k = j * nn + i
+                        var m = 0.0
+                        if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
+                        if j > 0 { m = max(m, ps[k - nn]) }
+                        if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
+                        if i > 0 { m = max(m, ps[k - 1]) }
+                        if i < nn - 1 { m = max(m, ps[k + 1]) }
+                        if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
+                        if j < nn - 1 { m = max(m, ps[k + nn]) }
+                        if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
+                        pd[k] = max(ps[k], 0.65 * m)
+                    }
+                }
+            }
+        }}
     }
 
     // MARK: - Priority-Flood + Entwässerung (D8)
@@ -742,7 +866,7 @@ public final class Terrain {
                 // tiefsten Empfänger — halber Weg wie transportLimited).
                 var lowest = h[k]
                 for t in 0..<cnt { lowest = min(lowest, h[nbK[t]]) }
-                let want = (qcTot - qin) * (1 - 0.6 * veg[k])
+                let want = (qcTot - qin) * vegDamp(k)
                 let er = erodeCell(k, min(want, max(0, h[k] - lowest) * 0.5))
                 qout += er
             }
@@ -774,7 +898,7 @@ public final class Terrain {
             let dist = (ki != rii && kj != rjj) ? cs * sqrt2 : cs
             // Erodierbarkeit von der Sedimentdecke abhängig (Cover-Effekt):
             let kErode = sed[k] > cfg.sedCoverThresh ? cfg.kSed : cfg.kRock
-            let kRed = kErode * (1 - 0.6 * veg[k]) // Vegetation schützt
+            let kRed = kErode * vegDamp(k) // Vegetation schützt (klassen-gewichtet)
             let f = kRed * dt * pow(area[k], cfg.mExp) / dist
             let hNew = (h[k] + f * hr) / (1 + f)
             var delta = h[k] - hNew // > 0
@@ -832,7 +956,7 @@ public final class Terrain {
                 // unter Kapazität → erodieren (detachment-begrenzt, Fels widerstandsfähiger).
                 // Auf Kanalzellen gedämpft: dort inzidiert der Mäander-Carve (Reconciliation).
                 let damp = isChannel[k] ? cfg.channelErodeDamp : 1.0
-                let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : cfg.kRock) * (1 - 0.6 * veg[k])
+                let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : cfg.kRock) * vegDamp(k)
                 let want = min(qc - qin, kErode * pow(a, m) * s * dt) * damp
                 let removable = max(0, h[k] - h[ri]) * 0.5
                 let er = min(want, removable)
@@ -904,11 +1028,14 @@ public final class Terrain {
         sed.withUnsafeMutableBufferPointer { sb in
         rock.withUnsafeMutableBufferPointer { rkb in
         veg.withUnsafeBufferPointer { vb in
+        vegClass.withUnsafeBufferPointer { vcb in
+        vegTypeFactor.withUnsafeBufferPointer { tfb in
         area.withUnsafeBufferPointer { ab in
         order.withUnsafeBufferPointer { ob in
         receiver.withUnsafeBufferPointer { rb in
             let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
             let pveg = vb.baseAddress!, pa = ab.baseAddress!
+            let pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
             let pord = ob.baseAddress!, prec = rb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
@@ -939,7 +1066,8 @@ public final class Terrain {
             // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
             // statt verrauscht. Ein Becken-Auslass sammelt das ganze Becken → tieft zügig
             // ein → See entwässert zum Meer.
-            let kErode = kOut * (1 - 0.6 * pveg[k]) // Vegetation bremst
+            // Vegetation bremst — klassen-gewichtet wie vegDamp (Roh-Puffer-Variante).
+            let kErode = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
             let f = kErode * dt * pow(pa[k], m) / dist
             let hNew = (ph[k] + f * hr) / (1 + f)
             var delta = ph[k] - hNew                // > 0
@@ -949,7 +1077,7 @@ public final class Terrain {
             prock[k] -= delta
             ph[k] = hNew
         }
-        }}}}}}}
+        }}}}}}}}}
     }
 
     // MARK: - Seen-Verfüllung
@@ -1305,6 +1433,26 @@ public final class Terrain {
              + area[k + n] * (1 - fx) * fy + area[k + n + 1] * fx * fy
     }
 
+    /// Mittleres Auwald-veg im Ufer-Streifen (±meanderBankWidth, gerundet) um
+    /// eine Knotenposition — Eingang der Mäander-Ufer-Kohäsion. Gemittelt wird
+    /// über ALLE Streifen-Zellen (Auwald-fremde zählen 0): eine einzelne
+    /// Auwald-Zelle bremst also kaum, ein voll bewachsener Streifen deutlich.
+    func riparianVegAt(_ gx: Double, _ gz: Double) -> Double {
+        let r = max(1, Int(cfg.meanderBankWidth.rounded()))
+        let ci = min(max(Int(gx.rounded()), 0), n - 1)
+        let cj = min(max(Int(gz.rounded()), 0), n - 1)
+        var s = 0.0
+        var cnt = 0
+        for dj in max(0, cj - r)...min(n - 1, cj + r) {
+            for di in max(0, ci - r)...min(n - 1, ci + r) {
+                let k = dj * n + di
+                cnt += 1
+                if vegClass[k] == 3 { s += veg[k] }
+            }
+        }
+        return cnt == 0 ? 0 : s / Double(cnt)
+    }
+
     /// Geländehöhe an einer kontinuierlichen Grid-Position (bilinear).
     @inline(__always) private func bilinearH(_ gx: Double, _ gz: Double) -> Double {
         let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
@@ -1327,7 +1475,9 @@ public final class Terrain {
                 meander.channels[ci].discharge[ni] = max(0, bilinearArea(nd.x, nd.z) / cellArea)
             }
         }
-        meander.migrate(dt: dt, config: cfg) { self.bilinearH($0.x, $0.z) }
+        meander.migrate(dt: dt, config: cfg,
+                        heightAt: { self.bilinearH($0.x, $0.z) },
+                        riparianAt: { self.riparianVegAt($0.x, $0.z) })
         // Sicherheits-Clamp: Knoten dürfen die Welt nicht verlassen.
         let maxc = Double(n - 1)
         for ci in meander.channels.indices {

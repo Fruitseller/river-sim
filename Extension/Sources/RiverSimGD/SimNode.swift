@@ -60,6 +60,10 @@ final class SimNode: Node {
     @Callable func sediment() -> PackedFloat32Array { pack(terrain.sed) }
     @Callable func rainField() -> PackedFloat32Array { pack(terrain.rain) }
     @Callable func vegetation() -> PackedFloat32Array { pack(terrain.veg) }
+
+    /// Vegetations-Klasse je Zelle (0 kahl · 1 Gras · 2 Wald · 3 Auwald) —
+    /// fürs Rendering (z. B. eigene Baum-Art auf Auwald).
+    @Callable func vegClasses() -> PackedByteArray { PackedByteArray(terrain.vegClass) }
     @Callable func flowArea() -> PackedFloat32Array { pack(terrain.area) }
 
     /// Abfluss-Nachbar je Zelle (-1 = Senke/Meer) — für Fluss-Geometrie.
