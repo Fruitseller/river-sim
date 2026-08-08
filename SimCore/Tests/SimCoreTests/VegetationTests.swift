@@ -103,4 +103,137 @@ final class VegetationTests: XCTestCase {
         }
         XCTAssertEqual(a.channels[0].nodes, b.channels[0].nodes)
     }
+
+    // MARK: - Stufe 3: Flood-Kill
+
+    /// Sucht eine dicht bewachsene Land-Zelle abseits des Rands.
+    private func pickVegetatedCell(_ t: Terrain) -> Int {
+        let n = t.cfg.n
+        for j in 10..<(n - 10) {
+            for i in 10..<(n - 10) {
+                let k = j * n + i
+                if t.veg[k] > 0.45 && t.h[k] > t.cfg.sea + 0.05 { return k }
+            }
+        }
+        return -1
+    }
+
+    /// Tief überflutete Zellen verlieren ihre Vegetation mit τ_kill (~3τ bis
+    /// praktisch kahl) — nicht mit der trägen 250a-Relaxation.
+    func testFloodKillClearsVegetation() {
+        var c = SimConfig(); c.n = 96
+        let t = Terrain(config: c, seed: 1337)
+        let pick = pickVegetatedCell(t)
+        XCTAssertGreaterThanOrEqual(pick, 0, "keine bewachsene Zelle gefunden — Test leer")
+        let n = c.n
+        let pi = pick % n, pj = pick / n
+        let vBefore = t.veg[pick]
+        // Senke graben → Priority-Flood pondet sie → Flood-Kill-Regime.
+        for _ in 0..<40 {
+            t.sculpt(gx: Double(pi), gz: Double(pj), radiusWorld: 5 * c.cellSize, dir: -1)
+        }
+        t.computeFlow()
+        XCTAssertGreaterThan(t.hf[pick] - t.h[pick], c.vegFloodKillDepth,
+                             "Senke pondet nicht — Test-Setup kaputt")
+        t.updateVegetation(years: 3 * c.vegFloodKillYears)
+        XCTAssertLessThan(t.veg[pick], vBefore * 0.1,
+                          "Flood-Kill wirkt nicht (\(vBefore) → \(t.veg[pick]))")
+    }
+
+    /// Nach dem Ende der Störung wächst die Fläche innerhalb ~3·τ wieder zu
+    /// (Sukzession: Samen-Druck der intakten Nachbarn + Relaxation).
+    func testRegrowthAfterKill() {
+        var c = SimConfig(); c.n = 96
+        let t = Terrain(config: c, seed: 1337)
+        let pick = pickVegetatedCell(t)
+        XCTAssertGreaterThanOrEqual(pick, 0)
+        let n = c.n
+        let pi = pick % n, pj = pick / n
+        let vBefore = t.veg[pick]
+        let hBefore = t.h[pick]
+        for _ in 0..<40 {
+            t.sculpt(gx: Double(pi), gz: Double(pj), radiusWorld: 5 * c.cellSize, dir: -1)
+        }
+        t.computeFlow()
+        t.updateVegetation(years: 3 * c.vegFloodKillYears) // Störung: Fläche stirbt
+        XCTAssertLessThan(t.veg[pick], 0.1)
+        // Störung beenden: Senke wieder auf die alte Höhe ziehen.
+        for _ in 0..<200 {
+            t.flatten(gx: Double(pi), gz: Double(pj), radiusWorld: 6 * c.cellSize,
+                      targetHeight: hBefore)
+        }
+        t.computeFlow()
+        XCTAssertLessThanOrEqual(t.hf[pick] - t.h[pick], 0.015, "Senke pondet noch — Setup")
+        // ~3τ in Teilschritten (f < 1, echte Relaxations-Dynamik statt Sprung).
+        for _ in 0..<6 { t.updateVegetation(years: 125) }
+        XCTAssertGreaterThan(t.veg[pick], vBefore * 0.5,
+                             "Regrünung zu langsam (\(vBefore) → \(t.veg[pick]))")
+    }
+
+    // MARK: - Stufe 3: kein Spontanwald
+
+    /// Geografisch kahle Standorte (Ziel ≈ 0: steil/hoch/nass) bleiben kahl,
+    /// auch wenn direkt daneben dichter Bewuchs steht — der Samen-Druck der
+    /// Sukzession ist auf bewohnbare Standorte gegated.
+    func testBareSitesStayBareDespiteSeeds() {
+        var c = SimConfig(); c.n = 96
+        let t = Terrain(config: c, seed: 1337)
+        let n = c.n
+        for _ in 0..<5 { t.updateVegetation(years: 250) }
+        var checked = 0
+        for j in 2..<(n - 2) {
+            for i in 2..<(n - 2) {
+                let k = j * n + i
+                // geografisches Ziel nachrechnen (Formel aus updateVegetation)
+                let v = t.h[k]
+                var target = 0.0
+                if v > c.sea + 0.005 && v < 0.68 && t.hf[k] - t.h[k] <= 0.015 {
+                    let slope = (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
+                    target = max(0, 1 - slope * 40) * min(1, t.rain[k] * 1.3)
+                           * (v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18))
+                }
+                guard target < 0.01 else { continue }
+                var seed = 0.0
+                for dj in -2...2 {
+                    for di in -2...2 { seed = max(seed, t.veg[(j + dj) * n + i + di]) }
+                }
+                guard seed > 0.3 else { continue }
+                checked += 1
+                XCTAssertLessThan(t.veg[k], 0.08, "Spontanwald auf kahlem Standort (\(i),\(j))")
+            }
+        }
+        XCTAssertGreaterThan(checked, 0, "keine kahle Zelle mit Samen-Druck gefunden — Test leer")
+    }
+
+    // MARK: - Stufe 3: Ufer-Kill
+
+    /// Frisch vom Mäander-Pass gestempelte Bett-Zellen verlieren ihre
+    /// Vegetation komplett (Wurzel-Wegriss); der Mini-Schritt danach lässt der
+    /// Regrünung keine Zeit (f ≈ 0.004) — veg muss dort ≈ 0 sein.
+    func testMeanderStampKillsBedVegetation() {
+        var c = SimConfig(); c.n = 96
+        let t = Terrain(config: c, seed: 1337)
+        for _ in 0..<6 { t.step(dtYears: 500) }
+        t.step(dtYears: 1)
+        var bed = 0
+        for k in 0..<c.count where t.isChannel[k] {
+            bed += 1
+            XCTAssertLessThan(t.veg[k], 0.02, "Bett-Zelle \(k) behielt Vegetation")
+        }
+        XCTAssertGreaterThan(bed, 0, "keine Kanal-Zellen gestempelt — Test leer")
+    }
+
+    // MARK: - Stufe 3: Determinismus
+
+    /// Gleicher Seed → bit-identische veg-/vegClass-Felder, auch nach
+    /// Simulation (Dispersal-/Kill-Pässe sind parallel, aber disjunkt).
+    func testVegetationDeterminism() {
+        var c = SimConfig(); c.n = 96
+        let a = Terrain(config: c, seed: 99)
+        let b = Terrain(config: c, seed: 99)
+        for _ in 0..<8 { a.step(dtYears: 500); b.step(dtYears: 500) }
+        XCTAssertEqual(a.h, b.h)
+        XCTAssertEqual(a.veg, b.veg)
+        XCTAssertEqual(a.vegClass, b.vegClass)
+    }
 }

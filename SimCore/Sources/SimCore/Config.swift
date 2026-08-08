@@ -154,6 +154,24 @@ public struct SimConfig: Sendable {
     // meanderCohesion = 0 (meanderCfg) und bleiben dadurch unberührt.
     public var meanderCohesion: Double = 0.5
 
+    // ---- Vegetations-Störung + Sukzession (Stufe 3) ----
+    // Flood-Kill: steht Wasser tiefer als vegFloodKillDepth, stirbt der Bewuchs
+    // mit eigener schneller Zeitkonstante (Wurzelfäule/Ertrinken) statt der
+    // trägen 250a-Relaxation. 0.03 = die See-Render-Schwelle (substanzielles
+    // stehendes Wasser); seichteres Ponding (überströmte Aue) tötet nicht —
+    // das drückt schon das veg-Ziel (hf−h > 0.015 → target 0) über τ=250.
+    public var vegFloodKillDepth: Double = 0.03
+    public var vegFloodKillYears: Double = 20 // τ_kill: nach ~60 J. (3τ) ist eine geflutete Fläche praktisch kahl. 250 (alte Relaxation) ließ Wälder Jahrhunderte „unter Wasser stehen".
+    // Sukzession/Dispersal: Regrünung braucht Samen-Druck — das veg-Ziel wird
+    // um max(veg im Umkreis)·Strength angehoben (nur auf BEWOHNBAREN Standorten,
+    // geografisches Ziel > 0.05: steile Hänge/Höhenwüste bleiben kahl, kein
+    // Spontanwald). Wirkung: Störungsflächen (Flut/Ufer-Kill) neben intaktem
+    // Bewuchs regenerieren mit dessen Dichte als Ziel; freistehende Maxima
+    // strahlen nur mit 0.75-Abfall je 2-Zellen-Ring aus → begrenzte Säume,
+    // keine uniforme Verwaldung (1.0 ließe Wald jede bewohnbare Zelle fluten).
+    public var vegDispersalRadius: Double = 2    // Zellen (Chebyshev) — Pass 1 sammelt das Nachbarschafts-Maximum
+    public var vegDispersalStrength: Double = 0.75
+
     // ---- Mäander-Migration (Lagrange-Zentrumslinien) ----
     public var meanderEnabled: Bool = true       // AN: auf dem sanfteren Terrain (baseRelief 0.78) + mit gedeckelter Migration stabil. Läufe wandern, schnüren Altarme ab — der eigentliche Fluss-Dynamik-Wunsch.
     public var meanderMigration: Double = 8.0e-6 // kMig (Produktion, n=640/kein Uplift): laterale Rate ∝ Krümmung×Abfluss. Von 5e-5 gesenkt — bei den großen Produktions-Einzugsgebieten tangelte 5e-5 die Läufe (Sinu-Max 7..26). 8e-6 → hübsche Mäander (Mittel ~2). Die Mäander-Kern-Tests pinnen ihren alten Wert in meanderCfg().

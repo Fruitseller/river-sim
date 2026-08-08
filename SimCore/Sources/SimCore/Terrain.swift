@@ -380,18 +380,57 @@ public final class Terrain {
 
     public func updateVegetation(years: Double) {
         let f = min(1, years / cfg.vegTimeConstant)
+        // Flood-Kill (Stufe 3): eigene, schnelle Zeitkonstante. Exponentiell
+        // exakt (1 − e^(−dt/τ)) statt linear gedeckelt: bei τ = 20a ist schon
+        // ein Zeitraffer-Schritt (dt ≈ 9..240 J.) fast vollständig — die
+        // exakte Form hält kleine und große Schritte konsistent.
+        let fKill = 1 - exp(-years / cfg.vegFloodKillYears)
+        let killDepth = cfg.vegFloodKillDepth
+        // Sukzession (Stufe 3), Pass 1: Samen-Druck = max(veg) im Dispersal-
+        // Umkreis → vegScratch. Liest nur veg, schreibt nur vegScratch[k]
+        // → parallel bit-identisch (Pass1/Pass2-Muster wie hillslopeDiffusion).
+        let dispersal = cfg.vegDispersalStrength
+        let dr = max(0, Int(cfg.vegDispersalRadius.rounded()))
         let nn = n, sea = cfg.sea
+        if dispersal > 0 && dr > 0 {
+            veg.withUnsafeBufferPointer { vb in
+            vegScratch.withUnsafeMutableBufferPointer { sb in
+                let pveg = vb.baseAddress!, psc = sb.baseAddress!
+                parallel(nn) { jLo, jHi in
+                    for j in jLo..<jHi {
+                        for i in 0..<nn {
+                            var m = 0.0
+                            for dj in max(0, j - dr)...min(nn - 1, j + dr) {
+                                for di in max(0, i - dr)...min(nn - 1, i + dr) {
+                                    m = max(m, pveg[dj * nn + di])
+                                }
+                            }
+                            psc[j * nn + i] = m
+                        }
+                    }
+                }
+            }}
+        }
         h.withUnsafeBufferPointer { hb in
         hf.withUnsafeBufferPointer { hfb in
         rain.withUnsafeBufferPointer { rnb in
+        vegScratch.withUnsafeBufferPointer { scb in
         veg.withUnsafeMutableBufferPointer { vb in
             let ph = hb.baseAddress!, phf = hfb.baseAddress!
-            let prain = rnb.baseAddress!, pveg = vb.baseAddress!
+            let prain = rnb.baseAddress!, pseed = scb.baseAddress!
+            let pveg = vb.baseAddress!
             // Schreibt nur veg[k] → zeilenparallel, bit-identisch.
             parallel(nn - 4) { lo, hi in
             for j in (lo + 2)..<(hi + 2) {
                 for i in 2..<(nn - 2) {
                     let k = j * nn + i
+                    // Flood-Kill: tief überflutet → schneller Absterbe-Pfad
+                    // statt Relaxation. Auwald steht am tiefsten und säuft
+                    // zuerst ab, dann Wald — emergent aus der Topografie.
+                    if phf[k] - ph[k] > killDepth {
+                        pveg[k] -= pveg[k] * fKill
+                        continue
+                    }
                     var target = 0.0
                     let v = ph[k]
                     if v > sea + 0.005 && v < 0.68 && phf[k] - ph[k] <= 0.015 {
@@ -403,12 +442,18 @@ public final class Terrain {
                         let wet = min(1, prain[k] * 1.3)
                         let altOk = v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18) // Wald wächst höher
                         target = slopeOk * wet * altOk
+                        // Sukzession: Samen-Druck hebt das Ziel NUR auf bewohnbaren
+                        // Standorten (geografisches Ziel > 0.05) — steile Hänge und
+                        // Höhenwüste bleiben kahl, kein Spontanwald auf kargen Inseln.
+                        if dispersal > 0 && target > 0.05 {
+                            target = max(target, pseed[k] * dispersal)
+                        }
                     }
                     pveg[k] += (target - pveg[k]) * f
                 }
             }
             }
-        }}}}
+        }}}}}
         updateVegClass()
     }
 
@@ -1547,6 +1592,11 @@ public final class Terrain {
                     // (gemessen: hf−h > 0.16 nach 24k Jahren, „dunkle Stellen").
                     if hf[k] - h[k] > 0.02 { continue }
                     isChannel[k] = true
+                    // Ufer-Kill (Stufe 3): das überstrichene Bett reißt die
+                    // Wurzeln weg — veg hart auf 0 (absorbierend, dt-frei).
+                    // Regrünung kommt per Sukzession von den Nachbarn zurück,
+                    // sobald der Lauf weiterwandert.
+                    veg[k] = 0
                     let cap = max(0, h[k] - hb) * 0.5             // nicht unter stromab graben
                     _ = erodeCell(k, min(carveRate, cap))
                 }
