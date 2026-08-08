@@ -216,7 +216,10 @@ final class SimNode: Node {
                     let moist = min(1, prain[k] * 1.2)            // Vegetation: moosgrün in
                     let gentle = max(0, 1 - steep * 0.9)          // Tälern + unteren Hängen (hält sich an Rinnen etwas länger)
                     let altVeg = v < 0.6 ? 1 : max(0, 1 - (v - 0.6) / 0.18)
-                    let vegAmt = min(1, (0.5 + 0.5 * pveg[k]) * moist * gentle * altVeg * 1.3)
+                    // 0.85-Dämpfung: das Boden-Grün leicht entsättigen, damit die
+                    // 3D-Bäume (MultiMesh, treeInstanceBuffer) sich vom Boden abheben —
+                    // vorher konkurrierte das satte Moosgrün mit den Baumkronen.
+                    let vegAmt = min(1, (0.5 + 0.5 * pveg[k]) * moist * gentle * altVeg * 1.3) * 0.85
                     r += (0.19 - r) * vegAmt; g += (0.42 - g) * vegAmt; b += (0.14 - b) * vegAmt // kräftigeres Moosgrün
                     if v > 0.58 {                                 // Hochlagen: neutral-grauer Fels (nicht pastell/weiß)
                         let wg = min(1, (v - 0.58) / 0.40)
@@ -685,6 +688,117 @@ final class SimNode: Node {
             }
         }}}}}}
         return PackedByteArray(out)
+    }
+
+    // MARK: Baum-Instanzen (MultiMesh-Puffer — reine Optik, NULL Sim-Rückwirkung)
+
+    /// veg-Feld beim letzten Baum-Rebuild — Grundlage der Rebuild-Heuristik
+    /// (Bäume nicht jeden Frame neu bauen, sondern nur wenn sich die Vegetation
+    /// merklich geändert hat). Reiner Render-Zustand.
+    private var treeVegSnapshot: [Double] = []
+
+    /// Maximale |Δveg| seit dem letzten `markTreesBuilt()` — GDScript rebuildet
+    /// die Baum-MultiMeshes erst ab einer Schwelle (Heuristik: 0.1). Vor dem
+    /// ersten Build (kein Snapshot) immer 1 → erzwingt den Initial-Build.
+    @Callable func treeVegMaxDelta() -> Double {
+        let veg = terrain.veg
+        if treeVegSnapshot.count != veg.count { return 1.0 }
+        var maxD = 0.0
+        for k in 0..<veg.count { maxD = max(maxD, abs(veg[k] - treeVegSnapshot[k])) }
+        return maxD
+    }
+
+    /// Setzt den Rebuild-Vergleichspunkt auf das aktuelle veg-Feld.
+    @Callable func markTreesBuilt() { treeVegSnapshot = terrain.veg }
+
+    /// FNV-1a über (i, j, salt) → deterministischer Per-Zelle-Zufall für Jitter/
+    /// Varianten/Verdünnung. KEIN Frame-Random: gleiche Zelle → gleicher Baum,
+    /// sonst flackert der Wald bei jedem Rebuild.
+    @inline(__always) private func treeHash01(_ i: Int, _ j: Int, _ salt: UInt32) -> Double {
+        var x: UInt32 = 2_166_136_261
+        x = (x ^ UInt32(truncatingIfNeeded: i)) &* 16_777_619
+        x = (x ^ UInt32(truncatingIfNeeded: j)) &* 16_777_619
+        x = (x ^ salt) &* 16_777_619
+        // Avalanche-Mix (fmix32): FNV allein korreliert auf Rastern sichtbar.
+        x ^= x >> 16; x = x &* 0x85eb_ca6b; x ^= x >> 13
+        return Double(x) / Double(UInt32.max)
+    }
+
+    /// Geländehöhe an kontinuierlicher Grid-Position (bilinear auf terrain.h).
+    @inline(__always) private func treeBilinearH(_ gx: Double, _ gz: Double) -> Double {
+        let n = terrain.cfg.n
+        let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
+        let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
+        let h = terrain.h
+        let k = yi * n + xi
+        return h[k] * (1 - fx) * (1 - fy) + h[k + 1] * fx * (1 - fy)
+             + h[k + n] * (1 - fx) * fy + h[k + n + 1] * fx * fy
+    }
+
+    /// MultiMesh-Transform-Puffer je Baum-Variante (0 Laubbaum, 1 Nadelbaum,
+    /// 2 Busch): 12 Floats pro Instanz im Godot-Buffer-Layout (3×4-Zeilen der
+    /// Basis + Origin) — GDScript setzt ihn direkt (`multimesh.buffer`), ohne
+    /// je Instanz ein Transform3D zu bauen. `hscale` = vertikale Render-
+    /// Überhöhung aus Main.gd (reine Render-Konstante, kennt SimCore nicht).
+    ///
+    /// Maske je Kandidat (jede 2. Zelle — Verdünnung auf ~20–60k Instanzen bei
+    /// n=832): bewachsen (veg > 0.45 Baum bzw. 0.32..0.45 Busch), trocken
+    /// (hf−h < 0.02, nicht im Flussbett/See), Grob-Steigung flach (±2 Zellen wie
+    /// in updateVegetation, slope·40 < 0.3) und über der Strandlinie. Jitter,
+    /// Varianten-Wahl, Größe und Drehung kommen aus dem (i,j)-Hash.
+    @Callable func treeInstanceBuffer(variant: Int, hscale: Double) -> PackedFloat32Array {
+        let n = terrain.cfg.n
+        let sea = terrain.cfg.sea
+        let cs = terrain.cfg.cellSize
+        let half = terrain.cfg.world / 2
+        let h = terrain.h, hf = terrain.hf, veg = terrain.veg
+        var out: [Float] = []
+        out.reserveCapacity(30_000 * 12)
+        for j in stride(from: 2, to: n - 2, by: 2) {
+            for i in stride(from: 2, to: n - 2, by: 2) {
+                let k = j * n + i
+                let v = veg[k]
+                if v <= 0.32 { continue }
+                if h[k] <= sea + 0.012 { continue }          // Strand/Meer
+                if hf[k] - h[k] >= 0.02 { continue }          // nass: Flussbett/See/Aue
+                // Grob-Steigung (±2 Zellen) wie in updateVegetation: der Hang-
+                // Charakter zählt, nicht die feine Rinnen-Textur.
+                let slope = (abs(h[k + 2] - h[k - 2]) + abs(h[k + 2 * n] - h[k - 2 * n])) * 0.125
+                if slope * 40 >= 0.3 { continue }
+                let isBush = v <= 0.45
+                // Verdünnung ∝ veg-Dichte: dichter Bewuchs → mehr Bäume; der
+                // Hash entscheidet deterministisch je Zelle.
+                let keep = isBush ? 0.35 : min(0.9, (v - 0.45) * 2.5 + 0.35)
+                if treeHash01(i, j, 0x51ed) >= keep { continue }
+                // Varianten-Wahl: Nadel wird mit der Höhe wahrscheinlicher
+                // (Vegetations-Stufen), unten dominiert Laub.
+                let wanted: Int
+                if isBush {
+                    wanted = 2
+                } else {
+                    let pConifer = min(0.9, max(0.1, (h[k] - 0.26) / 0.22))
+                    wanted = treeHash01(i, j, 0xc0f4) < pConifer ? 1 : 0
+                }
+                if wanted != variant { continue }
+                // Jitter ±1 Zelle (bricht das 2er-Raster), Höhe bilinear an der
+                // gejitterten Position, minimal versenkt (kein Schweben am Hang).
+                let jx = (treeHash01(i, j, 0x9e37) - 0.5) * 2.0
+                let jz = (treeHash01(i, j, 0x79b9) - 0.5) * 2.0
+                let gx = Double(i) + jx, gz = Double(j) + jz
+                let y = treeBilinearH(gx, gz) * hscale - 0.05
+                let x = gx * cs - half
+                let z = gz * cs - half
+                let s = (isBush ? 0.7 : 0.8) + 0.5 * treeHash01(i, j, 0x5ca1)
+                let ang = treeHash01(i, j, 0x2b2b) * 2 * Double.pi
+                let c = s * cos(ang), sn = s * sin(ang)
+                // Godot-MultiMesh-Layout (TRANSFORM_3D, ohne Color/CustomData):
+                // Zeile0(xx yx zx ox) Zeile1(xy yy zy oy) Zeile2(xz yz zz oz).
+                out.append(Float(c)); out.append(0); out.append(Float(sn)); out.append(Float(x))
+                out.append(0); out.append(Float(s)); out.append(0); out.append(Float(y))
+                out.append(Float(-sn)); out.append(0); out.append(Float(c)); out.append(Float(z))
+            }
+        }
+        return PackedFloat32Array(out)
     }
 
     private func pack(_ a: [Double]) -> PackedFloat32Array {
