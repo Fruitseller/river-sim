@@ -36,6 +36,8 @@ var color_img: Image
 var color_tex: ImageTexture
 var water_img: Image
 var water_tex: ImageTexture
+var debug_difference_img: Image
+var debug_difference_tex: ImageTexture
 
 # Nur die CPU-Höhen braucht GDScript: Raycasts lesen daraus, alle anderen
 # Renderfelder bleiben im nativen SimNode und vermeiden große FFI-Kopien.
@@ -65,6 +67,31 @@ var last_rate := 30.0         # für Leertaste: Pause ↔ letztes Tempo
 var u_time := 0.0
 var year_label: Label
 var sim_seed := 1337
+
+# Entwicklungsdiagnose: Referenzvergleich macht sichtbar, ob Relief durch
+# Abtragung nur freigelegt oder durch Hebung/Ablagerung tatsächlich aufgebaut wird.
+var debug_stats_label: Label
+var debug_warning_label: Label
+var debug_legend_label: Label
+var debug_difference_enabled := false
+var debug_difference_scale := 0.01
+
+const DBG_MIN := 0
+const DBG_MEAN := 1
+const DBG_MAX := 2
+const DBG_RELIEF := 3
+const DBG_DELTA_MEAN := 4
+const DBG_DELTA_MAX := 5
+const DBG_REMOVED_VOLUME := 6
+const DBG_ADDED_VOLUME := 7
+const DBG_NET_VOLUME := 8
+const DBG_MAX_REMOVED := 9
+const DBG_MAX_ADDED := 10
+const DBG_SERVO := 11
+const DBG_UPLIFT := 12
+const DBG_RELIEF_TARGET := 13
+const DBG_REFERENCE_YEAR := 14
+const DBG_INVALID := 15
 
 # UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
 var speed_buttons: Array[Button] = []
@@ -112,6 +139,9 @@ func _ready() -> void:
 
 	_setup_scene()
 	_setup_ui()
+	sim.captureDebugReference()
+	if OS.has_environment("RS_DEBUG_DIFF"): # automatisierte Diagnose-Screenshots
+		_set_debug_difference(true)
 	if OS.has_environment("RS_STEP"): # für Screenshots: erodiertes Terrain zeigen
 		var total := float(OS.get_environment("RS_STEP"))
 		var done := 0.0
@@ -121,6 +151,8 @@ func _ready() -> void:
 	if OS.has_environment("RS_FLATTEN"): # Debug: exakt flache Fläche (Shader-NaN-Repro)
 		for i in 300:
 			sim.brush(3, N * 0.5, N * 0.5, 30.0, 10.0, sea + 0.25)
+		# Bei diesem Repro interessiert nur die Entwicklung AB der flachen Fläche.
+		sim.captureDebugReference()
 	sim.recomputeFlow()
 	_pull_fields()
 	_update_terrain_textures()
@@ -333,6 +365,52 @@ func _setup_ui() -> void:
 	hint.text = "Links: formen (Shift: ⛰↔🕳) · Rechts: drehen · Zoom: +/−\nWerkzeug: 1–6 · Radius: [ ] · Pause: Leertaste"
 	vb.add_child(hint)
 
+	# Diagnose bewusst als eigene Karte: Die Werkzeugleiste bleibt auch auf kleinen
+	# Fenstern vollständig sichtbar, während die Entwicklungswerte oben im Blick sind.
+	var debug_panel := PanelContainer.new()
+	debug_panel.position = Vector2(470, 16)
+	debug_panel.custom_minimum_size = Vector2(340, 0)
+	debug_panel.theme = ui_theme
+	debug_panel.add_theme_stylebox_override("panel", style)
+	layer.add_child(debug_panel)
+	var debug_vb := VBoxContainer.new()
+	debug_vb.add_theme_constant_override("separation", 7)
+	debug_panel.add_child(debug_vb)
+	var debug_title := Label.new()
+	debug_title.text = "DIAGNOSE"
+	debug_title.add_theme_font_size_override("font_size", 13)
+	debug_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	debug_vb.add_child(debug_title)
+
+	debug_stats_label = Label.new()
+	debug_stats_label.add_theme_font_size_override("font_size", 15)
+	debug_stats_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.72))
+	debug_vb.add_child(debug_stats_label)
+	debug_warning_label = Label.new()
+	debug_warning_label.add_theme_font_size_override("font_size", 15)
+	debug_warning_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	debug_vb.add_child(debug_warning_label)
+
+	var debug_buttons := HBoxContainer.new()
+	debug_buttons.add_theme_constant_override("separation", 6)
+	debug_vb.add_child(debug_buttons)
+	var difference_b := _mk_button("Δ-Karte", true, null)
+	difference_b.tooltip_text = "Blau: abgetragen · Rot: aufgebaut"
+	difference_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	difference_b.toggled.connect(_set_debug_difference)
+	debug_buttons.add_child(difference_b)
+	var reference_b := _mk_button("Referenz setzen", false, null)
+	reference_b.tooltip_text = "Aktuelles Terrain als neuen Vergleichspunkt verwenden"
+	reference_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reference_b.pressed.connect(_capture_debug_reference)
+	debug_buttons.add_child(reference_b)
+
+	debug_legend_label = Label.new()
+	debug_legend_label.add_theme_font_size_override("font_size", 14)
+	debug_legend_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.58))
+	debug_legend_label.visible = false
+	debug_vb.add_child(debug_legend_label)
+
 # --- UI-Helfer -------------------------------------------------------------
 
 var _slider_value_label: Label # letzte von _mk_slider erzeugte Wertanzeige
@@ -425,6 +503,20 @@ func _regen() -> void:
 	sim.generate(sim_seed)
 	sim.recomputeFlow()
 	_after_sim()
+
+func _capture_debug_reference() -> void:
+	sim.captureDebugReference()
+	_update_debug_ui()
+	if debug_difference_enabled:
+		_update_debug_difference_texture()
+
+func _set_debug_difference(enabled: bool) -> void:
+	debug_difference_enabled = enabled
+	debug_legend_label.visible = enabled
+	terrain_mat.set_shader_parameter("debug_difference", enabled)
+	if enabled:
+		_update_debug_ui()
+		_update_debug_difference_texture()
 
 func _after_sim() -> void:
 	_pull_fields()
@@ -519,6 +611,32 @@ func _process(delta: float) -> void:
 
 func _update_year() -> void:
 	year_label.text = "Jahr %s" % _fmt(int(sim.currentYear()))
+	_update_debug_ui()
+
+func _update_debug_ui() -> void:
+	if debug_stats_label == null:
+		return
+	var stats: PackedFloat32Array = sim.debugTerrainStats()
+	if stats.size() <= DBG_INVALID:
+		return
+	debug_difference_scale = clampf(maxf(stats[DBG_MAX_REMOVED], stats[DBG_MAX_ADDED]), 0.005, 0.25)
+	debug_stats_label.text = (
+		"Höhe  min %.3f  Ø %.3f  max %.3f\n" % [stats[DBG_MIN], stats[DBG_MEAN], stats[DBG_MAX]]
+		+ "Relief %.3f  Δmax %+.3f  ΔØ %+.3f\n" % [stats[DBG_RELIEF], stats[DBG_DELTA_MAX], stats[DBG_DELTA_MEAN]]
+		+ "Abtrag/Aufbau %.1f / %.1f  ΔVol %+.1f" % [
+			stats[DBG_REMOVED_VOLUME], stats[DBG_ADDED_VOLUME], stats[DBG_NET_VOLUME]])
+	debug_legend_label.text = "Blau −  Grau 0  Rot +   Skala ±%.3f\nReferenz: Jahr %s" % [
+		debug_difference_scale, _fmt(int(stats[DBG_REFERENCE_YEAR]))]
+	if stats[DBG_INVALID] > 0:
+		debug_warning_label.text = "⚠ %d ungültige Höhenwerte (Magenta)" % int(stats[DBG_INVALID])
+		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.25, 0.8))
+	elif stats[DBG_SERVO] > 0.0:
+		debug_warning_label.text = "⚠ Gebirgs-Servo aktiv: +%.5f / 100 J.\nReliefziel %.3f (Dauerhebung %.5f)" % [
+			stats[DBG_SERVO], stats[DBG_RELIEF_TARGET], stats[DBG_UPLIFT]]
+		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.22))
+	else:
+		debug_warning_label.text = "Relief-Servo aus · Dauerhebung %.5f / 100 J." % stats[DBG_UPLIFT]
+		debug_warning_label.add_theme_color_override("font_color", Color(0.55, 0.82, 0.58))
 
 func _fmt(v: int) -> String:
 	var s := str(v)
@@ -571,6 +689,8 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 	else:
 		color_img.set_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
 		color_tex.update(color_img)
+	if debug_difference_enabled:
+		_update_debug_difference_texture()
 
 	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
 	# water_blend < 1 → zeitliche EWMA-Glättung (Läufe blenden statt zu springen).
@@ -582,6 +702,16 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 	else:
 		water_img.set_data(N, N, false, Image.FORMAT_RGBA8, wbytes)
 		water_tex.update(water_img)
+
+func _update_debug_difference_texture() -> void:
+	var bytes: PackedByteArray = sim.heightDifferenceBytes(debug_difference_scale)
+	if debug_difference_img == null:
+		debug_difference_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, bytes)
+		debug_difference_tex = ImageTexture.create_from_image(debug_difference_img)
+		terrain_mat.set_shader_parameter("debug_difference_tex", debug_difference_tex)
+	else:
+		debug_difference_img.set_data(N, N, false, Image.FORMAT_RGBA8, bytes)
+		debug_difference_tex.update(debug_difference_img)
 
 
 # ---------------------------------------------------------------- Kamera & Eingabe

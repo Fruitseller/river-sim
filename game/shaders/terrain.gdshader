@@ -15,6 +15,7 @@ render_mode cull_disabled;
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
 uniform sampler2D color_tex : filter_linear, repeat_disable;
+uniform sampler2D debug_difference_tex : filter_linear, repeat_disable;
 uniform sampler2D water_tex : filter_linear, repeat_disable;
 uniform float hscale = 26.0;
 uniform float world_size = 100.0;
@@ -29,6 +30,7 @@ uniform float detail_strength = 0.30;
 uniform float detail_shade = 0.20;     // Albedo-Abdunkelung in Rinnenböden
 uniform float detail_normal = 1.0;     // Anteil der Normal-Perturbation
 uniform bool detail_enabled = true;
+uniform bool debug_difference = false;
 
 varying vec2 v_uv;
 varying float v_pond; // Wassersäule (hf − h) am Vertex — > 0 unter Seen
@@ -186,6 +188,7 @@ void vertex() {
 
 void fragment() {
 	vec3 terr = texture(color_tex, v_uv).rgb;
+	vec3 debug_color = texture(debug_difference_tex, v_uv).rgb;
 	float hval = texture(height_tex, v_uv).r;
 
 	// grobe Steigung (dh/duv) aus Nachbar-Texeln — Eingang für den Detail-Filter
@@ -209,7 +212,7 @@ void fragment() {
 	vec2 det_slope = vec2(0.0);
 	float det_shade = 0.0;
 	float det_ridge = 0.0;
-	if (detail_enabled && dfade > 0.002) {
+	if (detail_enabled && !debug_difference && dfade > 0.002) {
 		float fade_target = clamp((hval - sea_level) / 0.6 * 2.0 - 1.0, -1.0, 1.0);
 		float det_mag;
 		vec4 det = erosion_detail(v_uv, coarse_slope, fade_target, det_mag);
@@ -237,6 +240,11 @@ void fragment() {
 	terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0), moist * 0.45);
 	// Breakup: großflächige Albedo-Variation gegen die Uniformität.
 	terr *= 0.94 + 0.12 * breakup;
+	// Diagnosefarben bleiben eindeutig; die grobe Terrain-Normale und das Wasser
+	// bleiben sichtbar, damit Auf-/Abbau räumlich eingeordnet werden kann.
+	if (debug_difference) {
+		terr = debug_color;
+	}
 
 	vec4 w = texture(water_tex, v_uv);
 	float stream = w.r;
