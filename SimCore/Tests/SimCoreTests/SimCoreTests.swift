@@ -22,6 +22,7 @@ final class SimCoreTests: XCTestCase {
         // damit Test- und Produktions-Kalibrierung entkoppelt bleiben.
         c.meanderMigration = 5.0e-5
         c.meanderNeckDist = 1.2
+        c.meanderCohesion = 0 // Stufe 2 (Ufer-Kohäsion) neutralisiert: diese Tests prüfen die reine Kopplungs-Mechanik
         // Mäander-Logik gegen aktive Tektonik testen (Produktion hat upliftPer100y=0
         // und regelt das Relief über den Servo — die isolierte Grid-Variante ohne
         // Droplet braucht aber Relief-Nachschub für die Altarm-Alterung).

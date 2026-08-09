@@ -81,8 +81,13 @@ public final class MeanderState {
     /// Flachland-Gate über die *Längsneigung* entlang des Laufs — nicht die
     /// Querneigung, die an eingetieften Kanälen immer steil ist). Default 0 →
     /// überall voll mobil (entkoppelte Kernel-Tests).
+    /// `riparianAt` liefert das mittlere Auwald-veg (0..1) im Ufer-Streifen um
+    /// einen Knoten (Terrain.riparianVegAt): bewachsene Ufer sind kohäsiv und
+    /// migrieren langsamer — Faktor (1 − meanderCohesion·riparianAt). Default 0
+    /// → keine Kohäsion (entkoppelte Kernel-Tests bleiben unverändert).
     public func migrate(dt: Double, config: SimConfig,
-                        heightAt: (MeanderNode) -> Double = { _ in 0 }) {
+                        heightAt: (MeanderNode) -> Double = { _ in 0 },
+                        riparianAt: (MeanderNode) -> Double = { _ in 0 }) {
         let spacing = config.meanderNodeSpacing
         for age in oxbowAge.indices { oxbowAge[age] += dt }
         for ci in channels.indices {
@@ -91,7 +96,8 @@ public final class MeanderState {
             // (sonst tangeln einzelne Läufe zu Knäueln, Sinu → 7..26). Glättung und
             // Cutoff laufen weiter und holen ihn wieder unter die Schwelle → gedeckelt.
             if ch.sinuosity <= config.meanderMaxSinuosity {
-                lateralStep(&ch, dt: dt, config: config, heightAt: heightAt)
+                lateralStep(&ch, dt: dt, config: config, heightAt: heightAt,
+                            riparianAt: riparianAt)
             }
             smooth(&ch.nodes, factor: config.meanderSmooth)
             applyCutoffs(&ch, config: config)
@@ -104,7 +110,8 @@ public final class MeanderState {
     /// Positive Krümmung (Linksbogen) + linke Normale → weiter nach links: die
     /// bestehende Schlinge verstärkt sich (Howard–Knutson, lokale Variante).
     private func lateralStep(_ ch: inout RiverChannel, dt: Double, config: SimConfig,
-                             heightAt: (MeanderNode) -> Double) {
+                             heightAt: (MeanderNode) -> Double,
+                             riparianAt: (MeanderNode) -> Double = { _ in 0 }) {
         let nodes = ch.nodes
         let count = nodes.count
         guard count >= 3 else { return }
@@ -165,10 +172,14 @@ public final class MeanderState {
         }
 
         // Pass 3: Knoten entlang lokaler Normale verschieben (Betrag aus eff).
+        let cohesion = config.meanderCohesion
         var out = nodes
         for i in 1..<(count - 1) {
-            // −eff: zum Außenufer (weg vom Krümmungszentrum) → Schlinge verstärkt sich
-            var m = -k * ch.discharge[i] * eff[i] * dt * mob[i]
+            // −eff: zum Außenufer (weg vom Krümmungszentrum) → Schlinge verstärkt sich.
+            // Ufer-Kohäsion: Auwald-bewachsene Ufer (riparianAt) bremsen die
+            // Migration — Wurzelwerk hält den Prallhang (Stufe 2).
+            let coh = cohesion > 0 ? max(0, min(1, riparianAt(nodes[i]))) : 0
+            var m = -k * ch.discharge[i] * eff[i] * dt * mob[i] * (1 - cohesion * coh)
             m = max(-maxStep, min(maxStep, m)) // Displacement-Clamp gegen Verheddern
             out[i] = MeanderNode(x: nodes[i].x + m * nlx[i], z: nodes[i].z + m * nlz[i])
         }

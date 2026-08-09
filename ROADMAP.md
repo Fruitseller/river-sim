@@ -28,6 +28,16 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Fresnel, Tiefenfarbe, distanz-gefadet).
 - **Karte:** n = 832 bei worldSize 130 (cellSize ≈ 0.156 — Auflösung und Weltgröße
   immer ZUSAMMEN ändern, sonst brechen alle per-Zell-Kalibrierungen).
+- **Vegetation:** `veg` (Dichte 0..1, τ=250a) + Klassen `vegClass` (kahl/Gras/Wald/
+  Auwald, aus veg + Flussnähe + Makro-Steigung; Flussnähe aus dem D8-Netz `area`,
+  nicht aus `areaMFD` — die Klassen gehen über `vegDamp` in die Erosion).
+  Klassen gewichten die 0.6-Erosions-
+  Dämpfung (Gras 1.0 = Alt-Verhalten, Wald 1.1, Auwald 1.3), Auwald bremst die
+  Mäander-Migration (`meanderCohesion`). Störung: Flood-Kill (τ_kill=20a) +
+  Ufer-Kill (Mäander-Bett → veg=0); Regrünung per Sukzessions-Samen-Druck
+  (Dispersal-Radius 2, nur bewohnbare Standorte). Rendering: 3D-Bäume als
+  MultiMesh (`treeInstanceBuffer`, deterministischer Hash-Jitter, ~26k Instanzen,
+  Rebuild nur bei Max-Δveg > 0.1).
 
 ## Offene Punkte
 

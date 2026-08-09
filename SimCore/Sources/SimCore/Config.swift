@@ -139,6 +139,41 @@ public struct SimConfig: Sendable {
     // ---- Klima / Vegetation ----
     public var vegTimeConstant: Double = 250 // Jahre
 
+    // ---- Vegetations-Typen (Stufe 2: Gras/Wald/Auwald) ----
+    // Die Klassen werden je Zelle aus veg + Flussnähe + Steigung abgeleitet
+    // (Terrain.updateVegClass) und verstärken die bestehende 0.6-Erosions-
+    // Dämpfung MULTIPLIKATIV: Schutz = 1 − 0.6·typFactor·veg. Gras = 1.0 hält
+    // das heutige Verhalten flächendeckend exakt (Kalibrier-Kaskade: die 0.6
+    // bleibt unangetastet); nur Wald/Auwald schützen stärker.
+    public var vegTypeFactorForest: Double = 1.1   // Wald: Wurzelwerk bindet etwas stärker als Gras. 1.25 drückte im 50k-Vergleichslauf die Ruggedness sichtbar (Rinnen wuchsen zu) → 1.1 als milde Differenzierung.
+    public var vegTypeFactorRiparian: Double = 1.3 // Auwald: dichtes Wurzelwerk + Feuchtboden = kohäsivste Ufer (0.6·1.3 = 0.78 < 1, kein Vorzeichenwechsel möglich). Bewusst spürbar über Wald, damit Ufer-Reaches sich von den Hängen abheben.
+    // Ufer-Kohäsion der Mäander-Migration: Verschiebung je Knoten × (1 −
+    // meanderCohesion · mittleres Auwald-veg im Ufer-Streifen ±meanderBankWidth).
+    // 0.5 → voll bewachsene Ufer (Streifen-Mittel ~0.5) migrieren ~25% langsamer,
+    // kahle Reaches exakt wie bisher (Faktor 1). 1.0 fror bewaldete Läufe im
+    // Kohäsions-Test fast ein (Faktor bis 0.5 auf dem ganzen Lauf) → zu starr,
+    // Mäander-Dynamik ist der Kern des Projekts. Die Mäander-Kern-Tests pinnen
+    // meanderCohesion = 0 (meanderCfg) und bleiben dadurch unberührt.
+    public var meanderCohesion: Double = 0.5
+
+    // ---- Vegetations-Störung + Sukzession (Stufe 3) ----
+    // Flood-Kill: steht Wasser tiefer als vegFloodKillDepth, stirbt der Bewuchs
+    // mit eigener schneller Zeitkonstante (Wurzelfäule/Ertrinken) statt der
+    // trägen 250a-Relaxation. 0.03 = die See-Render-Schwelle (substanzielles
+    // stehendes Wasser); seichteres Ponding (überströmte Aue) tötet nicht —
+    // das drückt schon das veg-Ziel (hf−h > 0.015 → target 0) über τ=250.
+    public var vegFloodKillDepth: Double = 0.03
+    public var vegFloodKillYears: Double = 20 // τ_kill: nach ~60 J. (3τ) ist eine geflutete Fläche praktisch kahl. 250 (alte Relaxation) ließ Wälder Jahrhunderte „unter Wasser stehen".
+    // Sukzession/Dispersal: Regrünung braucht Samen-Druck — das veg-Ziel wird
+    // um max(veg im Umkreis)·Strength angehoben (nur auf BEWOHNBAREN Standorten,
+    // geografisches Ziel > 0.05: steile Hänge/Höhenwüste bleiben kahl, kein
+    // Spontanwald). Wirkung: Störungsflächen (Flut/Ufer-Kill) neben intaktem
+    // Bewuchs regenerieren mit dessen Dichte als Ziel; freistehende Maxima
+    // strahlen nur mit 0.75-Abfall je 2-Zellen-Ring aus → begrenzte Säume,
+    // keine uniforme Verwaldung (1.0 ließe Wald jede bewohnbare Zelle fluten).
+    public var vegDispersalRadius: Double = 2    // Zellen (Chebyshev) — Pass 1 sammelt das Nachbarschafts-Maximum
+    public var vegDispersalStrength: Double = 0.75
+
     // ---- Mäander-Migration (Lagrange-Zentrumslinien) ----
     public var meanderEnabled: Bool = true       // AN: auf dem sanfteren Terrain (baseRelief 0.78) + mit gedeckelter Migration stabil. Läufe wandern, schnüren Altarme ab — der eigentliche Fluss-Dynamik-Wunsch.
     public var meanderMigration: Double = 8.0e-6 // kMig (Produktion, n=640/kein Uplift): laterale Rate ∝ Krümmung×Abfluss. Von 5e-5 gesenkt — bei den großen Produktions-Einzugsgebieten tangelte 5e-5 die Läufe (Sinu-Max 7..26). 8e-6 → hübsche Mäander (Mittel ~2). Die Mäander-Kern-Tests pinnen ihren alten Wert in meanderCfg().
