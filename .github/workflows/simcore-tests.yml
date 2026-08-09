@@ -10,12 +10,14 @@ name: SimCore-Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
 
-# Ohne Branch-Filter feuern push und pull_request pro Push doppelt (eigener Branch +
-# PR-Merge-Ref) — die Gruppe bündelt beide Events pro Ref und storniert den älteren Lauf.
+# push (nur main) und pull_request können pro Push doppelt feuern (eigener Branch +
+# PR-Merge-Ref). Die Gruppe bündelt alle Events eines PR (github.head_ref) bzw. eines
+# main-Pushes (github.ref) und storniert den älteren Lauf.
 concurrency:
-  group: simcore-tests-${{ github.ref }}
+  group: simcore-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # Least-Privilege: der Workflow liest nur den Checkout, braucht keine Schreibrechte.
