@@ -85,7 +85,8 @@ final class SimNode: Node {
     /// Marshalling im Renderpfad anfällt):
     /// min, mean, max, Landrelief, deltaMean, deltaMax, Volumen unter Referenz,
     /// Volumen über Referenz, Nettovolumen, maxAbtrag, maxAufbau, Relief-Servo/100 J.,
-    /// Dauerhebung/100 J., Reliefziel, Referenzjahr, ungültige Zellen.
+    /// Dauerhebung/100 J., Reliefziel, Referenzjahr, ungültige Zellen,
+    /// robustes Relief-Signal (das REGELSIGNAL des Servos, p95 − Median).
     @Callable func debugTerrainStats() -> PackedFloat32Array {
         if debugReferenceHeights.count != terrain.h.count { captureDebugReference() }
         let h = terrain.h
@@ -123,17 +124,17 @@ final class SimNode: Node {
         let divisor = Double(max(1, valid))
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
         let relief = terrain.landRelief()
-        let deficit = terrain.cfg.reliefTarget - relief
-        let servo = deficit > 0
-            ? terrain.cfg.reliefServoPer100y * min(1, deficit / 0.1)
-            : 0
+        // Regelsignal und Servo-Wert kommen aus SimCore selbst — die Anzeige darf
+        // die Formel nicht duplizieren, sonst zeigt sie etwas anderes als wirkt.
+        let reliefSignal = terrain.landReliefRobust()
+        let servo = terrain.reliefServoRate()
         return PackedFloat32Array([
             Float(minimum), Float(sum / divisor), Float(maximum), Float(relief),
             Float((sum - referenceSum) / divisor), Float(maximum - referenceMaximum),
             Float(belowReference * cellArea), Float(aboveReference * cellArea),
             Float((aboveReference - belowReference) * cellArea), Float(maxRemoved), Float(maxAdded),
             Float(servo), Float(terrain.cfg.upliftPer100y), Float(terrain.cfg.reliefTarget),
-            Float(debugReferenceYear), Float(invalid),
+            Float(debugReferenceYear), Float(invalid), Float(reliefSignal),
         ])
     }
 

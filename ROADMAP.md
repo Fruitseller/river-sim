@@ -18,7 +18,10 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 - **Anti-Runaway / Anti-Verflachung:** `isoHighClamp` deckelt das Relief, niedrige
   Hebung (`upliftPer100y`) lässt Berge erodieren statt wachsen, der **Relief-Servo**
   (`reliefServoPer100y`, nur bei Relief-Defizit und nur auf Land) verhindert das
-  „immer flacher" über 100k+ Jahre.
+  „immer flacher" über 100k+ Jahre. Sein Regelsignal ist `landReliefRobust()`
+  (95. Perzentil − Median der Landhöhen), nicht mehr `landRelief()` = max − min:
+  letzteres hing an einer einzigen Extremzelle (Nadelgipfel/Sculpt-Strich steuerte
+  die Hebung der ganzen Insel).
 - **Hydrologie:** Priority-Flood + D8 für Erosion, MFD (Freeman/Quinn) für Render und
   Braiding, EWMA-geglättete Stream-Map, Pool-Kopplung (Descend→Flood→Drain),
   Becken-Breach bei der Generierung (Becken entwässern zum Meer).

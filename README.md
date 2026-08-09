@@ -68,7 +68,8 @@ SSAO, Glow und den kostspieligen Detail-Erosionsshader. `RS_RENDER_GRID=512`
 überschreibt nur die Gittergröße. `RS_DIAG=1` gibt die Zeit eines 60-Jahr-
 Simulationsschritts und zehn Texture-Updates aus.
 
-Die Diagnosekarte im Spiel zeigt Höhenbereich, Landrelief sowie Höhen- und
+Die Diagnosekarte im Spiel zeigt Höhenbereich, Landrelief (Spanne max − min und
+daneben das robuste Servo-Regelsignal p95 − Median) sowie Höhen- und
 Netto-Volumenabweichungen gegenüber einer frei setzbaren Referenz und den Zustand der
 Relief-Servo. Die umschaltbare Δ-Karte färbt Abtrag blau und Aufbau rot. Nach
 dem Einebnen sollte **Referenz setzen** gedrückt werden; dadurch wird sichtbar,

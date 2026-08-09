@@ -433,7 +433,18 @@ final class RiverDynamicsTests: XCTestCase {
             print("[BRAID] seed \(seed): Bank-Fläche an \(barOn) / aus \(barOff), Inseln an \(islOn) / aus \(islOff), Splits-Max an \(maxSplitsOn) / aus \(maxSplitsOff)")
             // Terrain bleibt je Seed gesund (dieselben Schwellen wie LongRunCollapse).
             XCTAssertLessThan(tOn.maxHeight(), 1.0, "Terrain-Runaway unter Braiding (seed \(seed))")
-            XCTAssertGreaterThan(tOn.landRelief(), 0.30, "Terrain eingeebnet unter Braiding (seed \(seed))")
+            // „Eingeebnet" wird über das ROBUSTE Relief geprüft (p95 − Median der
+            // Landhöhen), nicht über max − min: über 16 Seeds variiert vor allem
+            // die Höhe des jeweils höchsten Gipfels, und genau die IST max − min
+            // (das Minimum liegt per Definition knapp über `sea`). Gemessen bei
+            // 30k: Seed 20250809 hat mit 0.296 das kleinste max − min, aber ein
+            // völlig gesundes robustes Relief (0.151) — nur eben keinen hohen
+            // Gipfel; umgekehrt hat Seed 31415 max − min 0.439 bei robust 0.098.
+            // Der alte 0.30-Wächter hing an dieser Einzelzelle (Seed 20250809 lag
+            // bei 0.3004 — vier Tausendstel Marge). Schwelle 0.07 = ~28 % unter
+            // dem schwächsten der 16 Seeds (0.098), Spanne insgesamt 0.098…0.163.
+            XCTAssertGreaterThan(tOn.landReliefRobust(), 0.07,
+                                 "Terrain eingeebnet unter Braiding (seed \(seed))")
         }
         print("[BRAID] Summe: Bank-Fläche an=\(sumBarOn) aus=\(sumBarOff) (Seeds dafür \(seedsFor) / dagegen \(seedsAgainst)), Inseln an=\(sumIslOn) aus=\(sumIslOff), Splits an=\(sumSplitsOn) aus=\(sumSplitsOff)")
         XCTAssertGreaterThan(sumBarOn, sumBarOff,
