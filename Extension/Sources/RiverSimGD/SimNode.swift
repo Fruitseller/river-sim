@@ -196,6 +196,11 @@ final class SimNode: Node {
         let sea = terrain.cfg.sea
         let h = terrain.h, rain = terrain.rain, veg = terrain.veg
         let salt = terrain.saltCrust
+        // Lithologie (Issue #12): Gesteinshärte je Zelle (−1 weich … +1 hart) für
+        // eine DEZENTE Färbung der Schichten. Leer, wenn das Feld aus ist → dann
+        // ein 1-Element-Dummy und Faktor 0 (identische Farben wie vorher).
+        let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
+        let lithOn = lith.count == n * n
         var out = [UInt8](repeating: 255, count: n * n * 4)
         // Wasser (Flüsse/Seen/Altarme) zeichnet das separate Wasser-Feld (waterFieldBytes)
         // als glattes, geshadetes Overlay — hier nur Land-Biome + Meeresgrund.
@@ -204,9 +209,11 @@ final class SimNode: Node {
         rain.withUnsafeBufferPointer { rnb in
         veg.withUnsafeBufferPointer { vgb in
         salt.withUnsafeBufferPointer { slb in
+        lith.withUnsafeBufferPointer { ltb in
         out.withUnsafeMutableBufferPointer { ob in
         let ph = hb.baseAddress!, prain = rnb.baseAddress!
         let pveg = vgb.baseAddress!, psalt = slb.baseAddress!, pout = ob.baseAddress!
+        let plith = ltb.baseAddress!
         parallelChunks(n) { jLo, jHi in
         for j in jLo..<jHi {
             for i in 0..<n {
@@ -260,6 +267,16 @@ final class SimNode: Node {
                     if sc > 0 {
                         r += (0.87 - r) * sc; g += (0.86 - g) * sc; b += (0.80 - b) * sc
                     }
+                    // Gesteinsbänder (Issue #12): hartes Gestein dunkler und
+                    // wärmer, weiches heller — damit Schichtstufen und Härtekanten
+                    // auch dort ablesbar sind, wo die Kante flach angeschnitten
+                    // ist. Amplitude bewusst klein (±0.05): das Biom-Signal
+                    // (Fels/Moos/Schnee) bleibt dominant, die Bänder sind Textur,
+                    // keine zweite Farbskala.
+                    if lithOn {
+                        let hard = min(1, max(-1, plith[k])) * 0.05
+                        r -= hard * 0.85; g -= hard; b -= hard * 1.25
+                    }
                 }
                 let o = k * 4
                 pout[o] = UInt8(min(max(r, 0), 1) * 255)
@@ -269,7 +286,7 @@ final class SimNode: Node {
             }
         }
         }
-        }}}}}
+        }}}}}}
         return PackedByteArray(out)
     }
 

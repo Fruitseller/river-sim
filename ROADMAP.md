@@ -182,6 +182,39 @@ Verdunstung noch aus dem Zufluss deckt. Messreihen:
   der Wasserfläche hängt (an=124/aus=84 statt 160/81, Seeds 6:5 statt 9:3 — der
   Pass bleibt stärker als ohne, aber die Seed-Mehrheit reißt).
 
+**Lithologie-Feld — ERLEDIGT (Aug 2026, Issue #12):** die Erodierbarkeit ist nicht
+mehr global. Ein deterministisches, seed-abhängiges Gesteinsfeld
+(`Terrain.buildLithologyField` fix je Seed, `Terrain.updateLithology` je Schritt)
+moduliert Erodierbarkeit UND Hangdiffusivität. Messreihe:
+`docs/lithology-measurements.md`, Wächter: `Lithology.swift`.
+- Aufbau: **geneigte, gefaltete Schichtpakete** (stratigraphische Koordinate
+  `s = (h − Schichtebene)/lithLayerThickness`, Streichen/Fallen je Seed) plus
+  großräumige **Härte-Provinzen** (Noise, `lithProvinceMix` = 0.35) →
+  `hard ∈ [−1,1]`, `K = 1 − 0.6·hard`, `D = 1 − 0.45·hard`.
+- Dass `s` an der aktuellen HÖHE hängt, ist der Mechanismus: die harte Bank bleibt
+  auf ihrem Niveau, während das weiche Gestein darunter ausgeräumt wird — die
+  Kante verlegt sich seitwärts (Schichtstufe/Mesa) statt mit der Oberfläche
+  abzusinken.
+- Gelesen wird das Feld von `outletIncision` (fluviale Makro-Rate), `Hydraulic.erode`
+  (nur der FELS-Anteil des Abtrags, Sediment bleibt Sediment), `hillslopeDiffusion`
+  und `transportLimited` (Testpfad). Sediment-/Ufer-/Küstenpässe (Braiding, Wave,
+  Mäander-Carve, Verlandung) bleiben bewusst unberührt.
+- Belegt: Hangknick-Signal (Steigung hart/weich, lokal gepaart, geometrisch
+  gepoolt) 0.999 → **1.163** über 20k Jahre gegen 1.004 → 1.052 im Referenzarm
+  (`lithContrast = 0`, bit-identisch zum Aus-Zustand). Beide Extreme halten den
+  Relief-Wächter: weichstes Gestein Relief 0.364, härtestes 0.441 nach 100k Jahren
+  (n=160, Schwelle 0.30).
+- Der Diffusions-Kontrast trägt zum Knick **nichts messbares** bei (1.163 gegen
+  1.180 ohne ihn) — er bleibt als physikalische Kopplung drin, ist aber als
+  unbelegt dokumentiert, nicht als Notwendigkeit behauptet.
+- Rückwirkung: die #11-Wächter und der Braiding-A/B **pinnen das Feld aus** (sie
+  hängen an einem konkreten Becken bzw. an einer Seed-Mehrheit); dass beide
+  Mechaniken MIT Feld intakt bleiben, ist eigens gemessen (Braiding-Kontrast steigt
+  sogar auf 1.67×). Details: `docs/lithology-measurements.md` §E.
+- Offen: Gegenprobe in Produktionsauflösung (n=832) und über mehrere Seeds,
+  Parameter-Sweeps (Paketdicke, Fallen, Kontrast), Rückverlegungsrate einer
+  Stufenkante als schärfere Kennzahl, härteabhängige Küstenklippen (`wavePass`).
+
 **Politur / Rendering:**
 - ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass
   (Droplets+Braiding+Mäander gemeinsam, keine Einzelquelle) schüttet den Sill zu,

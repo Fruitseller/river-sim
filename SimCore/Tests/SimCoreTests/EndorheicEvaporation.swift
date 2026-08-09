@@ -13,6 +13,27 @@ final class EndorheicEvaporation: XCTestCase {
         var c = SimConfig()
         c.n = n
         if let kappa { c.endorheicEvapRatio = kappa }
+        // Gesteinsfeld (Issue #12) AUSGEPINNT — dieselbe Doktrin wie κ=6 unten und
+        // wie `meanderCfg()` in SimCoreTests: diese Wächter prüfen die MECHANIK des
+        // Wasserhaushalts an EINEM konkreten Becken (dem größten von Seed 1337 bei
+        // n=256), und welches Becken das ist, entscheidet die Lithologie-Lotterie
+        // mit. GEMESSEN (n=256, κ=6, Seed 1337, 10×200 J., Lithologie an gegen aus):
+        // * Salzpfanne IM GRÖSSTEN Becken 10 gegen 1098 Krustenzellen — mit
+        //   Lithologie ist das größte gedeckelte Becken ein GESPEISTES, das gar
+        //   nicht trockenfällt. INSELWEIT crusten dagegen 510 Zellen (davon 469
+        //   voll, gegen 137 ohne Lithologie): die Playa-Bildung ist intakt, nur
+        //   nicht mehr im „largestEndorheicBasin" dieses Terrains.
+        // * Bilanz-Spiegel desselben Seeds: max Sprung τ=500 0.00429 gegen 0.00026
+        //   ohne Lithologie (Wächter-Schwelle 0.002), bei τ=0 0.00703. Die
+        //   Ratenbegrenzung wirkt also weiter (limitiert < instantan), aber das
+        //   ZIEL wandert schneller: mit variablem Gestein kippen mehr Becken
+        //   zwischen gedeckelt und offen, und ein Rollenwechsel setzt den Spiegel
+        //   per Konstruktion instantan (s. `capEndorheicBasins`). Das ist eine
+        //   bestehende Kante von #11, die die Lithologie nur häufiger trifft —
+        //   notiert in docs/lithology-measurements.md §E.
+        // Dass die #11-MECHANIK mit Lithologie intakt bleibt, ist eigens
+        // abgesichert: `Lithology.testEndorheicMechanicsSurviveLithology`.
+        c.lithologyEnabled = false
         return c
     }
 
