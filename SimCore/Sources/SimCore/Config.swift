@@ -715,7 +715,7 @@ public struct SimConfig: Sendable {
     // die echte flatten()-API auf sea+0.25 gezogen, Jahr 3.000):
     // Hochseitenrelief 0.0059, Talseitenrelief 0.0039, Makro-Steigung 0.00066,
     // 91,8 % Wald, 0 % Rinnen — die Waldtapete des Reports. Nach dem Fix:
-    // 0.062 / 0.099 / 0.0053 / 87,7 % / 32,0 % Rinnen.
+    // 0.062 / 0.099 / 0.0053 / 88,2 % / 31,6 % Rinnen.
     // Volle Messreihen: `docs/flatten-regeneration-measurements.md`.
     //
     // Die Antwort ist BEWUSST räumlich und zeitlich begrenzt: stark veränderte
@@ -728,9 +728,23 @@ public struct SimConfig: Sendable {
     public var disturbanceEnabled = true
     /// Höhenänderung durch das Werkzeug, ab der eine Zelle als VOLLSTÄNDIG
     /// gestört gilt (Störungsgrad 1). 0.04 ≈ 8 % der frischen Reliefspanne
-    /// (n=96, Seed 1337: max−min 0.526) — ein Einebnungs- oder Absenk-Strich
-    /// erreicht das in einem Zug, das Feinjustieren einer schon fast passenden
-    /// Fläche dagegen nicht (dort soll nichts zurückgesetzt werden).
+    /// (n=96, Seed 1337: max−min 0.526).
+    ///
+    /// Was die Werkzeuge je AUFRUF bewegen (Pinselgewicht w ∈ 0..1, Stärke am
+    /// UI-Maximum: der Slider deckelt bei 3, und `Main.gd` skaliert den
+    /// Zieh-Strich auf `Stärke · min(Δt, 0.05) · 60`, bei 60 fps also ≈ 3):
+    /// * **Einebnen** `(Ziel − h) · min(1, 0.18·Stärke) · w`, also
+    ///   0.54·(Ziel − h)·w. Ein Strich über einen Hang mit ≥ 0.074 Höhen-
+    ///   differenz (bei vollem w) erreicht die volle Störung SOFORT — genau der
+    ///   Fall aus Issue #26. Das Nachziehen einer schon fast passenden Fläche
+    ///   bleibt weit darunter; dort soll auch nichts zurückgesetzt werden.
+    /// * **Anheben/Absenken** `±0.006·Stärke·w`, also 0.018·w — das bleibt je
+    ///   Aufruf UNTER der vollen Störung (≈ 45 % bei w = 1) und summiert sich
+    ///   erst über mehrere gehaltene Frames auf. Antippen stört also nur
+    ///   teilweise, längeres Modellieren voll.
+    /// * **Spitzhacke** `−0.02·Stärke·w²` (Main.gd fährt hier Stärke ×1.5) und
+    ///   **Glätten** `(3×3-Mittel − h)·0.30·Stärke·w` liegen dazwischen und
+    ///   summieren sich ebenso über die Striche.
     public var disturbanceFullChange: Double = 0.04
     /// Zeitkonstante des Abklingens. 1200 Jahre: nach 3.000 Jahren (2,5 τ) sind
     /// 92 % der Regeneration eingetragen — die Wirkung liegt im beobachtbaren

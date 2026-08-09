@@ -1865,15 +1865,23 @@ public final class Terrain {
             for kk in comp {
                 let k = Int(kk)
                 if isChannel[k] { continue }
-                // Frische Baustelle (Issue #26): auf gestörten Zellen NICHT
-                // verlanden. Die Pfützen-Verlandung ist ein Aufräum-Pass gegen
-                // Flachwasser-Sprenkel in reifen Auen — auf einer eben erst
-                // planierten Fläche würde sie genau das Mikro-Relief wieder
-                // zuschütten, aus dem sich die neue Entwässerung organisiert
-                // (junge Grundmoränen-Landschaften sind Seen-Mosaike, keine
-                // trockenen Platten). Schwelle 5 % Reststörung ≈ 3 τ: danach ist
-                // die Fläche wieder ein normaler Auen-Standort.
-                if disturbActive && disturb[k] > 0.05 { continue }
+                // Frische Baustelle (Issue #26): solange an dieser Zelle noch
+                // Regeneration aussteht, NICHT verlanden. Die Pfützen-Verlandung
+                // ist ein Aufräum-Pass gegen Flachwasser-Sprenkel in reifen Auen
+                // — auf einer eben erst planierten Fläche würde sie genau das
+                // Mikro-Relief wieder zuschütten, aus dem sich die neue
+                // Entwässerung organisiert (junge Grundmoränen-Landschaften sind
+                // Seen-Mosaike, keine trockenen Platten).
+                //
+                // Kriterium ist bewusst das OFFENE BUDGET und keine eigene
+                // Störungs-Schwelle: eine Schwelle (probiert: 5 % Reststörung
+                // ≈ 3 τ) öffnet ein Fenster, in dem der Boden noch steigt/sinkt,
+                // die Verlandung aber schon wieder zuschüttet — und zwar mit bis
+                // zu `puddleFillDepth` (0.06) gegen einen Rest von wenigen
+                // Tausendsteln. So endet die Aussetzung exakt dann, wenn sich
+                // das Gelände nicht mehr bewegt (`regenerateDisturbed` schaltet
+                // ab und nullt das Budget).
+                if disturbActive && regenPending[k] != 0 { continue }
                 let deficit = hf[k] - h[k]
                 if deficit > 0.001 && deficit <= cfg.puddleFillDepth {
                     let add = deficit * rate

@@ -58,9 +58,9 @@ die Fläche zu 92 % Wald bei praktisch null Relief: die Waldtapete des Reports.
 | Jahr | `max-min` | p95-Med. | Med.-p05 | Makro-S. | Wald |
 |---:|---:|---:|---:|---:|---:|
 | 0 | 0.0000 | 0.00000 | 0.00049 | 0.00000 | 0.4 % |
-| 3.000 | 0.3392 | 0.06201 | 0.09863 | 0.00531 | 87.7 % |
-| 10.000 | 0.3265 | 0.06250 | 0.12256 | 0.00618 | 90.2 % |
-| 50.000 | 0.3449 | 0.09277 | 0.14990 | 0.00821 | 84.9 % |
+| 3.000 | 0.3329 | 0.06201 | 0.09863 | 0.00531 | 88.2 % |
+| 10.000 | 0.3252 | 0.06348 | 0.12402 | 0.00630 | 90.3 % |
+| 50.000 | 0.3431 | 0.09424 | 0.14648 | 0.00838 | 85.1 % |
 
 Bei Jahr 0 steht kein Wald mehr (0.4 % Restsaum am Kartenrand außerhalb des
 Pinsels): der Bestand der alten Topografie ist weg. Nach 3.000 Jahren ist das
@@ -75,7 +75,7 @@ erreicht.
 | aus | 1337 | 0.00488 | 0.00439 | 0.00051 | 0.0 % | 0.778 |
 | aus | 4242 | 0.00586 | 0.00293 | 0.00049 | 0.0 % | 0.716 |
 | aus | 777 | 0.00732 | 0.00195 | 0.00050 | 0.0 % | 0.741 |
-| **an** | 1337 | 0.05322 | 0.08008 | 0.00546 | 32.0 % | 0.864 |
+| **an** | 1337 | 0.05322 | 0.07959 | 0.00546 | 31.6 % | 0.873 |
 | **an** | 4242 | 0.07129 | 0.01514 | 0.00375 | 15.8 % | 0.869 |
 | **an** | 777 | 0.03320 | 0.03174 | 0.00331 | 19.5 % | 0.873 |
 
@@ -97,9 +97,9 @@ Diagnose sie ab jetzt getrennt an (Kriterium 6).
 | 0 | 0.00000 | 0.00049 | 0.00000 | 0.5 % | 44.5 / 27.8 / 13.5 / 14.3 | 0.0 % |
 | 500 | 0.02002 | 0.02979 | 0.00210 | 20.3 % | 0.0 / 59.7 / 16.3 / 24.0 | 8.9 % |
 | 1.000 | 0.03320 | 0.04932 | 0.00346 | 84.4 % | 0.0 / 17.0 / 58.8 / 24.2 | 20.1 % |
-| 2.000 | 0.04736 | 0.07080 | 0.00492 | 95.4 % | 2.0 / 6.1 / 65.4 / 26.5 | 29.3 % |
-| 3.000 | 0.05273 | 0.08008 | 0.00546 | 98.3 % | 1.4 / 3.9 / 70.3 / 24.4 | 31.4 % |
-| 10.000 | 0.05127 | 0.08789 | 0.00519 | 99.5 % | 0.5 / 3.6 / 72.9 / 23.0 | 29.4 % |
+| 2.000 | 0.04736 | 0.07129 | 0.00492 | 94.0 % | 3.3 / 5.7 / 66.2 / 24.8 | 29.4 % |
+| 3.000 | 0.05322 | 0.08008 | 0.00547 | 98.9 % | 0.7 / 4.3 / 68.6 / 26.4 | 31.4 % |
+| 10.000 | 0.05225 | 0.08691 | 0.00552 | 99.9 % | 0.1 / 3.5 / 74.8 / 21.6 | 31.7 % |
 
 Das ist die gewünschte **Sukzession**: kahler Rohboden → nach ~500 Jahren Gras
 (60 %) mit ersten Rinnen → nach ~1.000 Jahren Wald, während sich das Rinnennetz
@@ -121,9 +121,7 @@ neuen Entwässerung frisch getrasst (Sinuosität zurück auf Trassierungs-Niveau
 
 Gemessen wurde die Innenfläche bei Jahr 3.000, Seed 1337 (Auszüge; die volle
 Matrix ist mit `RS_SWEEP=1` reproduzierbar). Die Sweeps stammen aus der
-Kalibrier-Phase, also vor der letzten Feinjustage der Abschaltschwellen —
-Abweichungen zu den Tabellen oben liegen in der letzten Stelle (z. B. settle
-0.35: Talseitenrelief 0.0796 hier gegen 0.0801 final).
+Kalibrier-Phase; Abweichungen zu den Tabellen oben liegen in der letzten Stelle.
 
 **Setzungsanteil `disturbanceSettle`** (τ = 1200 J.):
 
@@ -198,7 +196,7 @@ ist weg.
 Links die Waldtapete des Reports: eine geschlossene Baumdecke ohne erkennbare
 Struktur, Diagnose `Relief 0.224 (hoch 0.007 / tal 0.002)` und aktive
 Relief-Untergrenze. Rechts eine differenzierte Fläche mit Tiefenlinien, offenen
-Hängen und Waldinseln, Diagnose `Relief 0.336 (hoch 0.070 / tal 0.096)`, die
+Hängen und Waldinseln, Diagnose `Relief 0.334 (hoch 0.070 / tal 0.096)`, die
 Untergrenze ist inaktiv.
 
 ## 8. Was NICHT betroffen ist
