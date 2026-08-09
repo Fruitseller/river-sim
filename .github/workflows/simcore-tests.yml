@@ -32,9 +32,9 @@ env:
 
 jobs:
   test:
-    # ubuntu-22.04 statt latest: swiftly unterstützt Ubuntu 24.04 noch nicht
-    # ("Unsupported platform: Ubuntu 24.04"), gemessen im ersten CI-Lauf (Aug 2026).
-    # 22.04 hat auch libncursesw.so.6 für den Swift-Shim.
+    # ubuntu-22.04 statt latest: die Swift.org-Toolchain (und swiftly) unterstützen
+    # Ubuntu 24.04 noch nicht ("Unsupported platform: Ubuntu 24.04"), gemessen im
+    # ersten CI-Lauf (Aug 2026). 22.04 hat auch libncursesw.so.6 für den Swift-Shim.
     runs-on: ubuntu-22.04
     steps:
       # Commit-SHA statt mutable Tag (Supply-Chain-Härtung, öffentliches Repo).
@@ -44,9 +44,10 @@ jobs:
 
       # Toolchain-Cache: die heruntergeladene Swift-Toolchain ist mehrere GB groß;
       # ohne Cache würde jeder Lauf am Download hängen (Abnahmekriterium
-      # "Laufzeit im Rahmen"). `swiftly install` überspringt den Download selbst,
-      # wenn die Toolchain schon im Cache liegt — deshalb läuft der Installer unten
-      # bei Cache-Hit UND -Miss, nur eben unterschiedlich schnell.
+      # "Laufzeit im Rahmen"). setup-swift installiert swiftly + Toolchain unter
+      # ~/.local/share/swiftly und erkennt eine vorhandene Installation — deshalb
+      # läuft der Schritt bei Cache-Hit UND -Miss durch, nur eben unterschiedlich
+      # schnell.
       - name: Swiftly-Cache
         id: swiftly-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -54,37 +55,18 @@ jobs:
           path: ~/.local/share/swiftly
           key: swiftly-${{ runner.os }}-${{ env.SWIFT_VERSION }}
 
-      - name: Swiftly installieren
-        # Bei Cache-Hit liegt ~/.local/share/swiftly (inkl. Installer-Marker) schon vor;
-        # der Installer selbst ist nicht idempotent gegenüber einer bestehenden
-        # Installation, deshalb überspringen wir ihn dann explizit statt uns auf einen
-        # zufällig durchlaufenden Exit-Code zu verlassen.
-        run: |
-          set -e
-          if [[ "${{ steps.swiftly-cache.outputs.cache-hit }}" == "true" ]]; then
-            echo "Swiftly-Cache-Hit — Installer wird übersprungen."
-          else
-            echo "Kein Swiftly-Cache — installiere Swiftly neu."
-            curl -fsSL https://swiftlang.github.io/swiftly/swiftly-install.sh -o /tmp/swiftly-install.sh
-            bash /tmp/swiftly-install.sh --disable-confirmation --no-modify-profile
-            echo "Swiftly installiert."
-          fi
-
-      - name: Swift-Toolchain aktivieren
-        run: |
-          . ~/.local/share/swiftly/env.sh
-          swiftly install "$SWIFT_VERSION" --use --assume-yes
-          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
-          echo "SWIFTLY_HOME_DIR=$SWIFTLY_HOME_DIR" >> "$GITHUB_ENV"
-          echo "SWIFTLY_BIN_DIR=$SWIFTLY_BIN_DIR" >> "$GITHUB_ENV"
-          echo "SWIFTLY_TOOLCHAINS_DIR=$SWIFTLY_TOOLCHAINS_DIR" >> "$GITHUB_ENV"
+      - name: Swift-Toolchain einrichten
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2.4.0
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
 
       - name: Ncurses-Kompat-Shim (Debian/Ubuntu-Runner)
-        # Swiftlys Toolchain erwartet libncurses.so.6; manche Ubuntu-Images stellen
-        # nur die Wide-Char-Variante bereit. Gleiche Verknüpfung wie scripts/build.sh.
-        # Schlägt der Shim still fehl, bricht der spätere `swift`-Aufruf mit einer
-        # kryptischen "cannot open shared object file"-Meldung ab — deshalb hier
-        # sichtbar loggen bzw. hart abbrechen, wenn keine passende Lib zu finden ist.
+        # Die Swift.org-Toolchain erwartet libncurses.so.6; manche Ubuntu-Images
+        # stellen nur die Wide-Char-Variante bereit. Gleiche Verknüpfung wie
+        # scripts/build.sh. Schlägt der Shim still fehl, bricht der spätere
+        # `swift`-Aufruf mit einer kryptischen "cannot open shared object file"-
+        # Meldung ab — deshalb hier sichtbar loggen bzw. hart abbrechen, wenn
+        # keine passende Lib zu finden ist.
         run: |
           COMPAT_LIBS="$PWD/.tools/swift-libs"
           if [[ -e "$COMPAT_LIBS/libncurses.so.6" ]]; then
