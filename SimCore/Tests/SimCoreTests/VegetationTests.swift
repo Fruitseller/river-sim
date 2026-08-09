@@ -25,12 +25,17 @@ final class VegetationTests: XCTestCase {
                 riparianCount += 1
                 // flussnah: Wasser-Quelle (substanzieller Lauf oder stehendes
                 // Wasser) im Dilatations-Umkreis (2 Ringe + 1 Toleranz).
+                // Erwartung auf `area` (D8) umgestellt: die Quellmaske in
+                // updateVegClass las früher `areaMFD`, womit das MFD-Netz über
+                // vegClass → vegDamp in die Erosion floss — das verletzt die
+                // Netz-Trennung aus AGENTS.md (MFD nur Render/Braiding). Der
+                // Test spiegelt jetzt dieselbe D8-Quelle wie die Ableitung.
                 var nearWater = false
                 for dj in max(0, j - 3)...min(n - 1, j + 3) {
                     for di in max(0, i - 3)...min(n - 1, i + 3) {
                         let kk = dj * n + di
                         if t.hf[kk] > c.sea
-                            && (t.areaMFD[kk] >= minA || t.hf[kk] - t.h[kk] > 0.015) {
+                            && (t.area[kk] >= minA || t.hf[kk] - t.h[kk] > 0.015) {
                             nearWater = true
                         }
                     }

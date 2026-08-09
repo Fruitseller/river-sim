@@ -468,8 +468,13 @@ public final class Terrain {
     /// Leitet die Vegetations-Klasse je Zelle ab (0 kahl · 1 Gras · 2 Wald ·
     /// 3 Auwald). Auwald = flussnah + flach + feucht: Flussnähe kommt aus einer
     /// gedämpften 3×3-Max-Dilatation (3 Runden, Abfall 0.65/Ring → Werte 1.0 /
-    /// 0.65 / 0.42 / 0.27) der Wasser-Maske (substanzielle Läufe areaMFD ≥
-    /// braidMinCells ODER stehendes Wasser hf−h > 0.02). Alle Eingangsgrößen
+    /// 0.65 / 0.42 / 0.27) der Wasser-Maske (substanzielle Läufe `area` ≥
+    /// braidMinCells ODER stehendes Wasser hf−h > 0.02). Die Maske liest
+    /// bewusst das D8-Netz (`area`), NICHT `areaMFD`: vegClass geht über
+    /// `vegDamp` in die Erosion ein, und MFD darf laut AGENTS.md nur Render und
+    /// Braiding speisen. D8 konzentriert den Abfluss auf eine Zellspur — die
+    /// Ufer-Breite kommt ohnehin aus der Dilatation, nicht aus der Maskenbreite.
+    /// Alle Eingangsgrößen
     /// sind glatt (veg relaxiert über τ=250a, riparian fällt über Ringe ab,
     /// Steigung ±2 Zellen) → weiche Klassen-Übergänge statt Flickenteppich.
     /// Determinismus: jeder Pass liest nur fremde Puffer und schreibt
@@ -481,7 +486,7 @@ public final class Terrain {
         // Pass 1: Wasser-Quellmaske → riparian.
         h.withUnsafeBufferPointer { hb in
         hf.withUnsafeBufferPointer { hfb in
-        areaMFD.withUnsafeBufferPointer { ab in
+        area.withUnsafeBufferPointer { ab in
         riparian.withUnsafeMutableBufferPointer { rb in
             let ph = hb.baseAddress!, phf = hfb.baseAddress!
             let pa = ab.baseAddress!, prip = rb.baseAddress!
