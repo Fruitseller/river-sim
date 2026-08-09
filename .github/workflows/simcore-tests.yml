@@ -12,6 +12,16 @@ on:
   push:
   pull_request:
 
+# Ohne Branch-Filter feuern push und pull_request pro Push doppelt (eigener Branch +
+# PR-Merge-Ref) — die Gruppe bündelt beide Events pro Ref und storniert den älteren Lauf.
+concurrency:
+  group: simcore-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-Privilege: der Workflow liest nur den Checkout, braucht keine Schreibrechte.
+permissions:
+  contents: read
+
 env:
   # Muss mit der lokal via Swiftly genutzten Toolchain-Version zusammenpassen
   # (SimCore/Package.swift verlangt tools-version 6.0 + Swift-5-Sprachmodus,
@@ -22,7 +32,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Commit-SHA statt mutable Tag (Supply-Chain-Härtung, öffentliches Repo).
+      # Versionsupdates laufen künftig über Dependabot (`.github/dependabot.yml`,
+      # `github-actions`-Ecosystem), nicht über manuelles Nachziehen der Pins.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Toolchain-Cache: die heruntergeladene Swift-Toolchain ist mehrere GB groß;
       # ohne Cache würde jeder Lauf am Download hängen (Abnahmekriterium
@@ -30,15 +43,27 @@ jobs:
       # wenn die Toolchain schon im Cache liegt — deshalb läuft der Installer unten
       # bei Cache-Hit UND -Miss, nur eben unterschiedlich schnell.
       - name: Swiftly-Cache
-        uses: actions/cache@v4
+        id: swiftly-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.local/share/swiftly
           key: swiftly-${{ runner.os }}-${{ env.SWIFT_VERSION }}
 
       - name: Swiftly installieren
+        # Bei Cache-Hit liegt ~/.local/share/swiftly (inkl. Installer-Marker) schon vor;
+        # der Installer selbst ist nicht idempotent gegenüber einer bestehenden
+        # Installation, deshalb überspringen wir ihn dann explizit statt uns auf einen
+        # zufällig durchlaufenden Exit-Code zu verlassen.
         run: |
-          curl -sSf https://swiftlang.github.io/swiftly/swiftly-install.sh -o /tmp/swiftly-install.sh
-          bash /tmp/swiftly-install.sh --disable-confirmation --no-modify-profile
+          set -e
+          if [[ "${{ steps.swiftly-cache.outputs.cache-hit }}" == "true" ]]; then
+            echo "Swiftly-Cache-Hit — Installer wird übersprungen."
+          else
+            echo "Kein Swiftly-Cache — installiere Swiftly neu."
+            curl -fsSL https://swiftlang.github.io/swiftly/swiftly-install.sh -o /tmp/swiftly-install.sh
+            bash /tmp/swiftly-install.sh --disable-confirmation --no-modify-profile
+            echo "Swiftly installiert."
+          fi
 
       - name: Swift-Toolchain aktivieren
         run: |
@@ -52,19 +77,26 @@ jobs:
       - name: Ncurses-Kompat-Shim (Debian/Ubuntu-Runner)
         # Swiftlys Toolchain erwartet libncurses.so.6; manche Ubuntu-Images stellen
         # nur die Wide-Char-Variante bereit. Gleiche Verknüpfung wie scripts/build.sh.
+        # Schlägt der Shim still fehl, bricht der spätere `swift`-Aufruf mit einer
+        # kryptischen "cannot open shared object file"-Meldung ab — deshalb hier
+        # sichtbar loggen bzw. hart abbrechen, wenn keine passende Lib zu finden ist.
         run: |
           COMPAT_LIBS="$PWD/.tools/swift-libs"
-          if [[ ! -e "$COMPAT_LIBS/libncurses.so.6" && -e /usr/lib/x86_64-linux-gnu/libncursesw.so.6 ]]; then
+          if [[ -e "$COMPAT_LIBS/libncurses.so.6" ]]; then
+            echo "Ncurses-Shim bereits vorhanden: $COMPAT_LIBS/libncurses.so.6"
+          elif [[ -e /usr/lib/x86_64-linux-gnu/libncursesw.so.6 ]]; then
             mkdir -p "$COMPAT_LIBS"
             ln -s /usr/lib/x86_64-linux-gnu/libncursesw.so.6 "$COMPAT_LIBS/libncurses.so.6"
+            echo "Ncurses-Shim angelegt: $COMPAT_LIBS/libncurses.so.6 -> libncursesw.so.6"
+          else
+            echo "::error::libncursesw.so.6 nicht gefunden — Swift-Toolchain kann libncurses.so.6 nicht laden. Runner-Image geändert?"
+            exit 1
           fi
-          if [[ -d "$COMPAT_LIBS" ]]; then
-            echo "LD_LIBRARY_PATH=$COMPAT_LIBS:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          fi
+          echo "LD_LIBRARY_PATH=$COMPAT_LIBS:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
       # SwiftPM-Build-Cache: verhindert, dass jeder Lauf komplett neu kompiliert.
       - name: SimCore-Build-Cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: SimCore/.build
           key: simcore-build-${{ runner.os }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('SimCore/Package.swift', 'SimCore/Sources/**', 'SimCore/Tests/**') }}
