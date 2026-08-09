@@ -4,6 +4,10 @@
 *.xcodeproj
 DerivedData/
 
+# Von scripts/build.sh generierter Build-Stempel (Bau-Artefakt, kein Quellcode —
+# er wird bei jedem Build aus dem Quellstand neu erzeugt, siehe scripts/build-stamp.sh)
+Extension/Sources/RiverSimGD/Generated/
+
 # Godot (später)
 game/.godot/
 game/bin/*.dylib

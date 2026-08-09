@@ -36,8 +36,11 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
   `SendableClosureCaptures` ab.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 
-**Extension bauen** (~3,5 min) — **immer mit absolutem Pfad aufrufen**; relativ aus
-`game/` heraus schlägt es still fehl und Godot lädt weiter die ALTE Library:
+**Extension bauen** (~3,5 min gilt für macOS mit warmem SwiftGodot-Cache; **auf Linux
+gemessen 21,5 min** aus leerem `.build`, auf einem 4-Kern-Host 27 min — SwiftGodots
+Codegen dominiert) — **immer mit absolutem Pfad aufrufen**;
+relativ aus `game/` heraus schlägt es still fehl und Godot lädt weiter die ALTE
+Library:
 
 ```sh
 "$(git rev-parse --show-toplevel)"/scripts/build.sh release  # auf die "gebaut"-Zeile am Ende prüfen
@@ -45,6 +48,20 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
 
 Baut `Extension` und kopiert `libRiverSimGD.so`/`libSwiftGodot.so` plus die komplette
 Swift-Runtime nach `game/bin/` (unter macOS `.dylib` + `codesign`).
+
+**Build-Stempel gegen veraltete Libraries:** `scripts/build.sh` hasht die Quellen
+unter `Extension/Sources` + `SimCore/Sources` und brennt den Stempel via
+`Extension/Sources/RiverSimGD/Generated/BuildStamp.swift` (generiert, gitignoriert) in
+die Library ein; `SimNode.buildStamp()` gibt ihn zurück. `scripts/start.sh` und
+`game/tests/smoke.gd` vergleichen ihn mit dem Arbeitsverzeichnis und brechen mit dem
+Rebuild-Befehl ab, statt still die alte `.so` zu benutzen. Manuell prüfen:
+
+```sh
+scripts/build-stamp.sh --check   # Exit 1 + Meldung, wenn game/bin/ veraltet ist
+```
+
+Beim Ändern des Verfahrens müssen `scripts/build-stamp.sh` und
+`game/scripts/BuildStamp.gd` bytegleich bleiben.
 
 **App starten / Godot-Smoke-Tests:**
 
