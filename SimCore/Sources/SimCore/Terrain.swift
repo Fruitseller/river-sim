@@ -1752,12 +1752,7 @@ public final class Terrain {
     /// implizit stabil); die Hangprozesse werden intern anteilig getaktet.
     public func step(dtYears dt: Double) {
         // Relief-Servo: Hebung nur bei Relief-Defizit (Anti-Verflachung, s. Config).
-        var servo = 0.0
-        if cfg.reliefServoPer100y > 0 {
-            let deficit = cfg.reliefTarget - landRelief()
-            if deficit > 0 { servo = cfg.reliefServoPer100y * min(1, deficit / 0.1) }
-        }
-        applyUplift(dt: dt, servoPer100y: servo)
+        applyUplift(dt: dt, servoPer100y: reliefServoRate())
         flowStepCount &+= 1
         let mfdInterval = max(1, cfg.mfdUpdateInterval)
         // Braiding ist MFD-Physik, nicht bloß Rendering: dafür darf das Feld
@@ -1862,7 +1857,11 @@ public final class Terrain {
 
     // MARK: - Diagnose (für Tests & UI)
 
-    /// Reliefspanne über Land (max − min der Landzellen).
+    /// Reliefspanne über Land (max − min der Landzellen). Reine ANZEIGE-/Test-
+    /// Kennzahl: sie hängt an genau zwei Extremzellen (das Minimum liegt per
+    /// Definition knapp über `sea`, also IST sie im Wesentlichen die Höhe des
+    /// höchsten Punkts). Als Regelsignal ist sie deshalb ungeeignet — dafür
+    /// `landReliefRobust()`.
     public func landRelief() -> Double {
         var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
         for k in 0..<cfg.count where h[k] > cfg.sea {
@@ -1870,6 +1869,67 @@ public final class Terrain {
         }
         if hi < lo { return 0 }
         return hi - lo
+    }
+
+    /// Robuste Relief-Kennzahl: **95. Perzentil − Median der Landhöhen**, also
+    /// die Spanne zwischen dem hohen und dem typischen Land. Sie ist
+    /// das Regelsignal des Relief-Servos (Begründung + Messwerte: `Config.swift`
+    /// bei `reliefTarget`): Einzelzellen (Nadelgipfel, Sculpt-Strich, tiefe
+    /// Rinne) können sie nicht verschieben, weil beide Quantile aus zehntausenden
+    /// Zellen kommen — gemessen (n=160, Seed 1337, 100k Jahre) verschiebt eine auf
+    /// 1.4 gezogene Einzelzelle `landRelief()` von 0.5097 auf 1.2500 (+145 %),
+    /// dieses Signal gar nicht (0.16211 → 0.16211): exakt gerechnet sind es
+    /// +0.019 % (0.161965 → 0.161995) und damit weniger als eine Bin-Breite.
+    public func landReliefRobust() -> Double {
+        Terrain.landReliefRobust(heights: h, sea: cfg.sea)
+    }
+
+    /// Freie Funktion auf einem beliebigen Höhenfeld, damit Tests synthetische
+    /// Felder (z. B. mit künstlichem Einzelgipfel) prüfen können, ohne das
+    /// Terrain zu mutieren.
+    public static func landReliefRobust(heights: [Double], sea: Double) -> Double {
+        // Histogramm statt Sortieren: die Kennzahl läuft in JEDEM Zeitschritt über
+        // ~500k Landzellen (Frame-Budget!) — ein Zählpass ist O(N) und dazu exakt
+        // deterministisch (Integer-Zählung, keine Reihenfolge-Effekte).
+        // Spanne ab `sea` großzügig bis sea+2.0: die Sim deckelt Hebung bei
+        // isoHighClamp (0.90), nur Sculpting kommt überhaupt in die Nähe. Höhere
+        // Werte landen im letzten Bin — das kann das Signal nur dann sättigen,
+        // wenn >5 % des Landes so hoch stehen (dann ist es real so hoch).
+        // Preis: das Ergebnis ist auf Bin-Mitten quantisiert, die Kennzahl also
+        // ein Vielfaches von span/bins = 0.000488. Das ist 1/140 der Regelspanne
+        // (reliefServoBand 0.07) — für den Servo bedeutungslos, aber beim
+        // Dokumentieren von Messwerten zu beachten: Unterschiede unterhalb einer
+        // Bin-Breite zeigt diese Funktion als 0 (s. Nadel-Messung oben).
+        let bins = 4096
+        let span = 2.0
+        var hist = [Int](repeating: 0, count: bins)
+        var total = 0
+        for v in heights where v > sea {
+            let b = min(bins - 1, max(0, Int((v - sea) / span * Double(bins))))
+            hist[b] += 1
+            total += 1
+        }
+        guard total >= 20 else { return 0 } // zu wenig Land für Quantile
+        func quantile(_ p: Double) -> Double {
+            let rank = Int((Double(total - 1) * p).rounded())
+            var cum = 0
+            for b in 0..<bins {
+                cum += hist[b]
+                if cum > rank { return sea + (Double(b) + 0.5) * span / Double(bins) }
+            }
+            return sea + span
+        }
+        return quantile(0.95) - quantile(0.5)
+    }
+
+    /// Aktuell wirkende Servo-Hebung (pro 100 Jahre) aus dem robusten Relief-
+    /// Signal. EINZIGE Quelle für `step()` und die Diagnose-Anzeige — beide
+    /// hatten die Formel früher dupliziert und konnten auseinanderlaufen.
+    public func reliefServoRate() -> Double {
+        guard cfg.reliefServoPer100y > 0, cfg.reliefServoBand > 0 else { return 0 }
+        let deficit = cfg.reliefTarget - landReliefRobust()
+        guard deficit > 0 else { return 0 }
+        return cfg.reliefServoPer100y * min(1, deficit / cfg.reliefServoBand)
     }
 
     public func maxHeight() -> Double { h.max() ?? 0 }

@@ -103,7 +103,8 @@ const DBG_UPLIFT := 12
 const DBG_RELIEF_TARGET := 13
 const DBG_REFERENCE_YEAR := 14
 const DBG_INVALID := 15
-const DEBUG_STATS_COUNT := 16
+const DBG_RELIEF_SIGNAL := 16   # robustes Regelsignal des Servos (p95 − Median der Landhöhen)
+const DEBUG_STATS_COUNT := 17
 const DEBUG_REFRESH_SECONDS := 1.0
 
 # UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
@@ -686,7 +687,8 @@ func _update_debug_ui() -> void:
 	debug_difference_scale = clampf(maxf(stats[DBG_MAX_REMOVED], stats[DBG_MAX_ADDED]), 0.005, 0.25)
 	debug_stats_label.text = (
 		"Höhe  min %.3f  Ø %.3f  max %.3f\n" % [stats[DBG_MIN], stats[DBG_MEAN], stats[DBG_MAX]]
-		+ "Relief %.3f  Δmax %+.3f  ΔØ %+.3f\n" % [stats[DBG_RELIEF], stats[DBG_DELTA_MAX], stats[DBG_DELTA_MEAN]]
+		+ "Relief %.3f (Signal %.3f)  Δmax %+.3f  ΔØ %+.3f\n" % [
+			stats[DBG_RELIEF], stats[DBG_RELIEF_SIGNAL], stats[DBG_DELTA_MAX], stats[DBG_DELTA_MEAN]]
 		+ "Unter/über Ref. %.1f / %.1f\n" % [
 			stats[DBG_BELOW_REFERENCE_VOLUME], stats[DBG_ABOVE_REFERENCE_VOLUME]]
 		+ "ΔVol %+.1f  ·  Ref. Jahr %s" % [stats[DBG_NET_VOLUME], _fmt(int(stats[DBG_REFERENCE_YEAR]))])
@@ -695,8 +697,10 @@ func _update_debug_ui() -> void:
 		debug_warning_label.text = "⚠ %d ungültige Höhenwerte (Magenta)" % int(stats[DBG_INVALID])
 		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.25, 0.8))
 	elif stats[DBG_SERVO] > 0.0:
-		debug_warning_label.text = "⚠ Gebirgs-Servo aktiv: +%.5f / 100 J.\nReliefziel %.3f (Dauerhebung %.5f)" % [
-			stats[DBG_SERVO], stats[DBG_RELIEF_TARGET], stats[DBG_UPLIFT]]
+		# Regelsignal (p95 − Median der Landhöhen) statt max − min: das ist der
+		# Wert, gegen den der Servo tatsächlich regelt.
+		debug_warning_label.text = "⚠ Gebirgs-Servo aktiv: +%.5f / 100 J.\nReliefsignal %.3f / Ziel %.3f (Dauerhebung %.5f)" % [
+			stats[DBG_SERVO], stats[DBG_RELIEF_SIGNAL], stats[DBG_RELIEF_TARGET], stats[DBG_UPLIFT]]
 		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.22))
 	else:
 		debug_warning_label.text = "Relief-Servo aus · Dauerhebung %.5f / 100 J." % stats[DBG_UPLIFT]

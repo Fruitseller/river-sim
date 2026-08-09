@@ -120,13 +120,64 @@ public struct SimConfig: Sendable {
     // Ohne Dauer-Tektonik (upliftPer100y = 0) erodiert das Relief über 10k+ Jahre
     // monoton weg → „immer flacher" (User-Beobachtung bei 130k: Rollhügel-Ebene).
     // Der Servo ist die Mitte zwischen beiden User-Anforderungen („Berge wachsen
-    // nicht" UND „nicht immer flacher"): Hebung springt NUR an, wenn das Land-
-    // Relief unter reliefTarget fällt, proportional zum Defizit (∝ deficit/0.1,
-    // gedeckelt bei reliefServoPer100y), entlang des fixen ridged-Tektonik-Felds
-    // (dieselben Gebirge wachsen nach, keine neuen). Am Ziel regelt er ab →
-    // dynamisches Gleichgewicht statt Runaway (isoHighClamp deckelt zusätzlich).
-    public var reliefTarget: Double = 0.55
+    // nicht" UND „nicht immer flacher"): Hebung springt NUR an, wenn das Relief-
+    // Signal unter reliefTarget fällt, proportional zum Defizit (∝ deficit/
+    // reliefServoBand, gedeckelt bei reliefServoPer100y), entlang des fixen
+    // ridged-Tektonik-Felds (dieselben Gebirge wachsen nach, keine neuen). Am
+    // Ziel regelt er ab → dynamisches Gleichgewicht statt Runaway (isoHighClamp
+    // deckelt zusätzlich).
+    //
+    // REGELSIGNAL ist `Terrain.landReliefRobust()` = **95. Perzentil − Median der
+    // Landhöhen** (war: `landRelief()` = max − min über Land). Grund: max − min
+    // hing an zwei Extremzellen — das Minimum liegt per Definition knapp über
+    // `sea`, das Signal WAR also die Höhe der höchsten Zelle und steuerte damit
+    // die Hebung von ~480k Landzellen. Messung (n=160, Seed 1337, 100k Jahre
+    // gealtert): eine einzige auf 1.4 gezogene Zelle verschiebt max − min von
+    // 0.5097 auf 1.2500 (+145 %), das Perzentil-Signal überhaupt nicht
+    // (0.16211 → 0.16211; exakt sortiert gerechnet +0.019 %, 0.161965 →
+    // 0.161995 — weniger als die Bin-Breite 0.000488 der Histogramm-Auswertung
+    // in `landReliefRobust`) — genau der Hebel, den ein Sculpt-Strich heute
+    // auslösen konnte (sculpt koppelt zusätzlich in upliftBase).
+    // Verworfene Alternative „mittleres lokales Relief im Fenster": auflösungs-
+    // abhängig, gemessen auf frischem Terrain (Seed 1337) ±1 Zelle: 0.113 (n=80)
+    // → 0.079 (160) → 0.051 (320) → 0.035 (640); auch mit weltfestem Fenster
+    // (±0.8 Welteinheiten) noch 0.113/0.079/0.092/0.106. Das Perzentil-Signal
+    // liegt dagegen bei 0.165 / 0.178 / 0.183 / 0.185 / 0.185 (n = 80 / 160 /
+    // 320 / 640 / 832 = Produktion) — praktisch auflösungsfrei (Spanne 11 %,
+    // ab n=160 nur noch 3.7 %), d. h. Testkonfigs mit kleinerem n regeln auf
+    // dasselbe Ziel wie die Produktion. Wächter: `ReliefSignal
+    // .testSignalIsResolutionStable` misst dieselbe Reihe bis n=832.
+    //
+    // reliefTarget umgerechnet: 0.55 (max − min) → 0.20. Umgerechnet wird über die
+    // gemessene SENSITIVITÄT, nicht über das Niveau-Verhältnis: das robuste Signal
+    // liegt zwar nur bei ~0.30 × (max − min), ändert sich aber fast parallel dazu
+    // (der Median der Landhöhen bleibt über den Lauf nahezu konstant). Steigung
+    // aus der ALTEN Trajektorie (Zeile „alt" unten, Servo noch auf max − min,
+    // n=160, Seed 1337): 10k → 30k fällt max − min um 0.0414 (0.4960 → 0.4546),
+    // das robuste Signal um 0.0290 (0.1600 → 0.1310) ⇒ Steigung 0.70. Damit wird
+    // die alte, hart codierte Defizit-Spanne 0.1 zu reliefServoBand = 0.07, und
+    // aus dem Servo-Anteil am Betriebspunkt (10k: 0.54) folgt reliefTarget =
+    // 0.16 + 0.54·0.07 ≈ 0.20. Kontrolle über den ganzen Lauf (Anteil alt → neu):
+    // 10k 0.54→0.57, 20k 0.78→0.83, 30k 0.95→0.99, 100k 0.55→0.62 — der Servo
+    // arbeitet am selben Betriebspunkt, minimal fester.
+    // Verworfen: reliefTarget 0.17 / Band 0.03 (aus dem NIVEAU-Verhältnis 0.30
+    // statt aus der Sensitivität gerechnet). Der Servo lief damit in der Frühphase
+    // zu schwach — Anteil 0.23 statt 0.54 bei 10k, Plateau-Relief 0.491 statt
+    // 0.495 (max − min).
+    // Gemessene 100k-Trajektorien (n=160, Seed 1337, alle 10k Jahre):
+    //   max − min   alt 0.533 0.496 0.472 0.455 0.468 0.480 0.482 0.488 0.491 0.495 0.495
+    //               neu 0.533 0.495 0.467 0.457 0.476 0.491 0.497 0.504 0.509 0.511 0.510
+    //   robust      alt 0.178 0.160 0.142 0.131 0.130 0.134 0.140 0.146 0.151 0.154 0.157
+    //               neu 0.178 0.155 0.140 0.131 0.130 0.139 0.146 0.153 0.157 0.159 0.162
+    // (robuste Werte auf 3 Stellen gerundet; die Kennzahl selbst ist auf Vielfache
+    // von 0.000488 quantisiert — s. `Terrain.landReliefRobust`.)
+    // Dieselbe Delle bei 30k, dasselbe Plateau (neu ~3 % höher) — das Relief läuft
+    // weder weg noch ebnet es ein.
+    public var reliefTarget: Double = 0.20
     public var reliefServoPer100y: Double = 0.0015
+    /// Defizit-Spanne, über die der Servo von 0 auf reliefServoPer100y hochfährt
+    /// (früher hart codierte 0.1 auf max − min; s. Umrechnung bei reliefTarget).
+    public var reliefServoBand: Double = 0.07
 
     // ---- Tektonik / Isostasie ----
     public var upliftPer100y: Double = 0.0 // KEINE Dauer-Tektonik → Berge wachsen NIRGENDS (auch keine lokalen Grate), sie erodieren nur — wie real ohne aktive Plattengrenze/Vulkanismus. Selbst 0.0015 schob mittlere Grate pro 10k-Klick noch sichtbar hoch (+0.03), obwohl der globale Gipfel erodierte. Hebung nur noch über Sculpting/Events. (War 0.009→0.0015→0.0.) (wie real ohne aktive Plattengrenze/Vulkanismus) statt bei jedem 10k-Schritt hochzuwachsen. 0.009 stockte die Landmasse in 100k um +73% auf (meanLand 0.39→0.68 → sichtbares „Wachsen"); 0.0015 hält die Masse ~flach (0.39→0.42), Relief erodiert sanft (0.76→0.65). Nur so viel Hebung, dass die Insel nicht wegerodiert.
