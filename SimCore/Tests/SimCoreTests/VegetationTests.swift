@@ -179,6 +179,12 @@ final class VegetationTests: XCTestCase {
     /// (Sukzession: Samen-Druck der intakten Nachbarn + Relaxation).
     func testRegrowthAfterKill() {
         var c = SimConfig(); c.n = 96
+        // Isoliert die VEGETATIONS-Relaxation: der Störungs-/Regenerationspfad
+        // (Issue #26) hält frisch umgegrabenen Boden bewusst über sein
+        // Abklingfenster kahl und wird über `step()` abgebaut — dieser Test
+        // ruft aber nur `updateVegetation` und würde sonst eine Störung messen,
+        // die er nie beenden kann. Eigene Wächter: `FlattenRegeneration`.
+        c.disturbanceEnabled = false
         let t = Terrain(config: c, seed: 1337)
         let pick = pickVegetatedCell(t)
         XCTAssertGreaterThanOrEqual(pick, 0)

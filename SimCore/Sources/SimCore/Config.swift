@@ -704,6 +704,95 @@ public struct SimConfig: Sendable {
     public var oxbowFillYears: Double = 5500      // Zeitkonstante der Altarm-Verlandung (gleicht das längere Stream-Map-Gedächtnis aus; Bett steigt zum Rand)
     public var oxbowMaxAge: Double = 25000        // ab diesem Alter gilt der Altarm als verlandet (aus der Liste)
 
+    // ---- Störung / Regeneration nach Spieler-Eingriffen (Issue #26) ----
+    //
+    // Ein Pinselstrich ändert `h`, aber die halbe Landschaft hängt an der
+    // TOPOGRAFIE, die es gerade noch gab: Vegetation, Stream-Map-EWMA,
+    // Mäanderlinien und Altarme. Ohne Behandlung laufen die einfach weiter, und
+    // eine exakt flache Platte kommt gar nicht erst ins Erodieren
+    // (`outletIncision` überspringt gefällelose Zellen, Tropfen enden bei
+    // verschwindendem Gradienten). Gemessen (Seed 1337, n=96, ganze Karte über
+    // die echte flatten()-API auf sea+0.25 gezogen, Jahr 3.000):
+    // Hochseitenrelief 0.0059, Talseitenrelief 0.0039, Makro-Steigung 0.00066,
+    // 91,8 % Wald, 0 % Rinnen — die Waldtapete des Reports. Nach dem Fix:
+    // 0.062 / 0.099 / 0.0053 / 87,7 % / 32,0 % Rinnen.
+    // Volle Messreihen: `docs/flatten-regeneration-measurements.md`.
+    //
+    // Die Antwort ist BEWUSST räumlich und zeitlich begrenzt: stark veränderte
+    // Zellen tragen einen abklingenden Störungsgrad `disturb` ∈ 0..1, und nur
+    // dort greifen die Regenerations-Effekte. Ohne Eingriff läuft alles
+    // bit-identisch wie vorher (Wächter `testUntouchedAgingIsBitIdentical`).
+    // VERWORFEN als Alternative: den Relief-Servo global stärker fahren — das
+    // macht exakt die Alterung aus Issue #13 rückgängig und wirkt auf der
+    // ganzen Karte statt auf der Baustelle.
+    public var disturbanceEnabled = true
+    /// Höhenänderung durch das Werkzeug, ab der eine Zelle als VOLLSTÄNDIG
+    /// gestört gilt (Störungsgrad 1). 0.04 ≈ 8 % der frischen Reliefspanne
+    /// (n=96, Seed 1337: max−min 0.526) — ein Einebnungs- oder Absenk-Strich
+    /// erreicht das in einem Zug, das Feinjustieren einer schon fast passenden
+    /// Fläche dagegen nicht (dort soll nichts zurückgesetzt werden).
+    public var disturbanceFullChange: Double = 0.04
+    /// Zeitkonstante des Abklingens. 1200 Jahre: nach 3.000 Jahren (2,5 τ) sind
+    /// 92 % der Regeneration eingetragen — die Wirkung liegt im beobachtbaren
+    /// Fenster, danach übernimmt die normale Physik. Gemessen (Innenfläche,
+    /// Jahr 3.000, settle 0.35): τ=800 → Hochseitenrelief 0.0562 / Makro-Steigung
+    /// 0.0058, τ=1200 → 0.0527 / 0.0055, τ=2000 → 0.0449 / 0.0047 (dort ist bei
+    /// Jahr 3.000 noch ein Viertel der Störung offen, die Fläche also unnötig
+    /// lange steril).
+    public var disturbanceRecoveryYears: Double = 1200
+    /// Anteil des bewegten Materials, der über das Abklingfenster als
+    /// **Setzung/Rebound** zurückkommt (0 = aus, 1 = der Eingriff verschwindet
+    /// wieder). Frisch aufgeschüttetes Material kompaktiert, entlastetes Gelände
+    /// hebt sich — und weil beides der Mächtigkeit der Auffüllung folgt,
+    /// schlägt die begrabene Struktur gedämpft wieder durch (differentielle
+    /// Kompaktion). Das ist der Haupthebel: die begrabenen Täler werden wieder
+    /// zu Tiefenlinien, und die neue Entwässerung hat etwas, dem sie folgen kann.
+    ///
+    /// Gemessen (Innenfläche, Jahr 3.000, τ=1200, Hochseitenrelief /
+    /// Talseitenrelief / Makro-Steigung):
+    /// 0.00 → 0.0073 / 0.0054 / 0.00065 · 0.10 → 0.0156 / 0.0230 / 0.0017 ·
+    /// 0.25 → 0.0381 / 0.0571 / 0.0039 · **0.35 → 0.0527 / 0.0796 / 0.0055** ·
+    /// 0.50 → 0.0767 / 0.1128 / 0.0078.
+    /// 0.5 differenziert am stärksten, nimmt dem Werkzeug aber die halbe
+    /// Wirkung zurück; 0.25 lässt die Fläche zu lange steril. Wiederholtes
+    /// Nachziehen konvergiert geometrisch (der zweite Strich bewegt nur noch
+    /// das gesetzte Material, also 35 % von 35 %).
+    public var disturbanceSettle: Double = 0.35
+    /// Amplitude des Mikro-Reliefs, das eine voll gestörte Zelle über das
+    /// Abklingfenster INSGESAMT einträgt (Höheneinheiten, ±).
+    ///
+    /// Der Symmetriebruch für Flächen, die schon VOR dem Eingriff eben waren —
+    /// dort ist die Setzung uniform und erzeugt kein Gefälle. Bewusst NICHT im
+    /// Werkzeug selbst: der Soforteffekt des Einebnens bleibt exakt flach
+    /// (Wächter `testFlattenIsExactlyFlatImmediately`), das Relief wächst erst
+    /// über die folgenden Jahrhunderte hinein.
+    ///
+    /// Als ALLEINIGER Hebel reicht er nicht — die Hangdiffusion räumt
+    /// kurzwelliges Rauschen wieder weg (gemessen ohne Setzung, ganze Karte,
+    /// Jahr 3.000: Amplitude 0.012 → Hochseitenrelief 0.0083, 0.030 → 0.0137,
+    /// 0.060 → 0.0249). Deshalb klein gehalten: ab ~0.02 wirkt die frische
+    /// Fläche körnig statt eben.
+    public var disturbanceReliefAmp: Double = 0.012
+    /// Grund-Ortsfrequenz des Mikro-Reliefs (1/Zellen), fBm mit 5 Oktaven
+    /// darüber. 0.02 gibt Wellenlängen von ~50 Zellen (Einzugsgebiete) bis
+    /// ~3 Zellen (Rillen) — beides braucht es: die langen Wellen organisieren
+    /// die Entwässerung, die kurzen geben den Tropfen etwas zum Anfassen.
+    public var disturbanceReliefFreq: Double = 0.02
+    /// Anteil, um den der Störungsgrad das Vegetations-ZIEL drückt (1 = frisch
+    /// aufgeschobener Rohboden ist kahl). Der zweite Hebel: kahler Boden
+    /// erodiert ohne `vegDamp`-Schutz rund 3× schneller, und der Spieler sieht
+    /// eine echte Sukzession statt sofortiger Waldtapete (gemessen,
+    /// Innenfläche: Jahr 0 kahl → Jahr 500 zu 60 % Gras → Jahr 1.000 zu 84 %
+    /// Wald).
+    public var disturbanceVegSuppress: Double = 1.0
+    /// Ab diesem Störungsgrad verlieren Mäanderlauf/Altarm ihren Zustand: die
+    /// Linien der alten Landschaft haben unter dem neuen Gelände keine
+    /// Grundlage mehr. Die Läufe werden danach normal aus der frischen
+    /// Entwässerung neu getrasst (`seedMeander`). Gemessen (15.000 J. gealtert,
+    /// dann eingeebnet): 14 → 0 Altarme, mittlere Sinuosität 1.665 → 1.274;
+    /// ohne den Pfad laufen 14 Altarme bei Sinuosität 1.622 einfach weiter.
+    public var disturbanceMeanderDrop: Double = 0.5
+
     public init() {}
 
     public var cellSize: Double { world / Double(n - 1) }

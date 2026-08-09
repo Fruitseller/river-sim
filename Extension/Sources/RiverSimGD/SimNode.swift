@@ -135,6 +135,11 @@ final class SimNode: Node {
         // Regelsignal und Servo-Wert kommen aus SimCore selbst — die Anzeige darf
         // die Formel nicht duplizieren, sonst zeigt sie etwas anderes als wirkt.
         let reliefSignal = terrain.landReliefRobust()
+        // Talseiten-Gegenprobe (Issue #26): das Regelsignal ist die HOCHseite
+        // (p95 − Median). Nach einer großflächigen Einebnung bleibt sie lange
+        // bei ~0, während sich die Fläche längst nach UNTEN differenziert —
+        // ohne die zweite Hälfte liest die Diagnose das als „keine Erholung".
+        let reliefLow = terrain.landReliefLow()
         let servo = terrain.reliefServoRate()
         return PackedFloat32Array([
             Float(minimum), Float(sum / divisor), Float(maximum), Float(relief),
@@ -143,7 +148,7 @@ final class SimNode: Node {
             Float((aboveReference - belowReference) * cellArea), Float(maxRemoved), Float(maxAdded),
             Float(servo), Float(terrain.upliftDecayRatePer100y()), Float(terrain.cfg.reliefTarget),
             Float(debugReferenceYear), Float(invalid), Float(reliefSignal),
-            Float(terrain.ridgeCurvature()),
+            Float(terrain.ridgeCurvature()), Float(reliefLow),
         ])
     }
 

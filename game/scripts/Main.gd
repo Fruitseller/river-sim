@@ -105,7 +105,8 @@ const DBG_REFERENCE_YEAR := 14
 const DBG_INVALID := 15
 const DBG_RELIEF_SIGNAL := 16   # robustes Regelsignal des Servo-Bodens (p95 − Median der Landhöhen)
 const DBG_RIDGE_CURVATURE := 17 # mittlere Grat-Krümmung: stark negativ = jung/spitz, → 0 = alt/rund
-const DEBUG_STATS_COUNT := 18
+const DBG_RELIEF_LOW := 18      # Talseitenrelief (Median − p05) — Gegenprobe zum Regelsignal
+const DEBUG_STATS_COUNT := 19
 const DEBUG_REFRESH_SECONDS := 1.0
 
 # UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
@@ -157,17 +158,34 @@ func _ready() -> void:
 	sim.captureDebugReference()
 	if OS.has_environment("RS_DEBUG_DIFF"): # automatisierte Diagnose-Screenshots
 		_set_debug_difference(true)
+	# REIHENFOLGE: erst einebnen, dann simulieren — nur so ist der Repro aus
+	# Issue #26 (großflächige Einebnung, dann Zeitraffer) überhaupt abbildbar.
+	if OS.has_environment("RS_FLATTEN"): # Debug: exakt flache Fläche
+		# Gekachelt über die GANZE Karte mit den UI-Grenzwerten (Radius 30,
+		# Stärke 3) — derselbe Aufbau wie `FlattenRegeneration` im SimCore-Test.
+		var fr := 30.0
+		var fstep := maxf(1.0, fr / (world_size / float(N - 1)) * 0.5)
+		var last := float(N - 1)
+		for round_i in 14:
+			var gz := 0.0
+			while gz <= last + fstep:
+				var gx := 0.0
+				while gx <= last + fstep:
+					sim.brush(3, minf(gx, last), minf(gz, last), fr, 3.0, sea + 0.25)
+					gx += fstep
+				gz += fstep
+		sim.recomputeFlow()
+		# Bei diesem Repro interessiert nur die Entwicklung AB der flachen Fläche.
+		sim.captureDebugReference()
 	if OS.has_environment("RS_STEP"): # für Screenshots: erodiertes Terrain zeigen
 		var total := float(OS.get_environment("RS_STEP"))
 		var done := 0.0
+		var chunk := 1000.0
+		if OS.has_environment("RS_STEP_CHUNK"):
+			chunk = maxf(1.0, float(OS.get_environment("RS_STEP_CHUNK")))
 		while done < total: # in Schritten wie der Zeitraffer (repräsentativ)
-			sim.step(1000.0)
-			done += 1000.0
-	if OS.has_environment("RS_FLATTEN"): # Debug: exakt flache Fläche (Shader-NaN-Repro)
-		for i in 300:
-			sim.brush(3, N * 0.5, N * 0.5, 30.0, 10.0, sea + 0.25)
-		# Bei diesem Repro interessiert nur die Entwicklung AB der flachen Fläche.
-		sim.captureDebugReference()
+			sim.step(chunk)
+			done += chunk
 	sim.recomputeFlow()
 	_pull_fields()
 	_update_year()
@@ -690,8 +708,9 @@ func _update_debug_ui() -> void:
 	# gegen 0 = alt/rund (SimCore: Terrain.ridgeCurvature).
 	debug_stats_label.text = (
 		"Höhe  min %.3f  Ø %.3f  max %.3f\n" % [stats[DBG_MIN], stats[DBG_MEAN], stats[DBG_MAX]]
-		+ "Relief %.3f (Signal %.3f)  Δmax %+.3f  ΔØ %+.3f\n" % [
-			stats[DBG_RELIEF], stats[DBG_RELIEF_SIGNAL], stats[DBG_DELTA_MAX], stats[DBG_DELTA_MEAN]]
+		+ "Relief %.3f (hoch %.3f / tal %.3f)  Δmax %+.3f  ΔØ %+.3f\n" % [
+			stats[DBG_RELIEF], stats[DBG_RELIEF_SIGNAL], stats[DBG_RELIEF_LOW],
+			stats[DBG_DELTA_MAX], stats[DBG_DELTA_MEAN]]
 		+ "Gratkrümmung %+.3f\n" % stats[DBG_RIDGE_CURVATURE]
 		+ "Unter/über Ref. %.1f / %.1f\n" % [
 			stats[DBG_BELOW_REFERENCE_VOLUME], stats[DBG_ABOVE_REFERENCE_VOLUME]]
@@ -704,8 +723,9 @@ func _update_debug_ui() -> void:
 		# Der Servo ist nur noch UNTERGRENZE: er übernimmt erst, wenn die
 		# abklingende Hebung U(t) das Relief nicht mehr über dem Ziel hält.
 		# Regelsignal ist p95 − Median der Landhöhen, nicht max − min.
-		debug_warning_label.text = "⚠ Relief-Untergrenze aktiv: +%.5f / 100 J.\nReliefsignal %.3f / Ziel %.3f (Hebung U(t) %.5f)" % [
-			stats[DBG_SERVO], stats[DBG_RELIEF_SIGNAL], stats[DBG_RELIEF_TARGET], stats[DBG_UPLIFT]]
+		debug_warning_label.text = "⚠ Relief-Untergrenze aktiv: +%.5f / 100 J.\nReliefsignal hoch %.3f / tal %.3f / Ziel %.3f (Hebung U(t) %.5f)" % [
+			stats[DBG_SERVO], stats[DBG_RELIEF_SIGNAL], stats[DBG_RELIEF_LOW],
+			stats[DBG_RELIEF_TARGET], stats[DBG_UPLIFT]]
 		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.22))
 	else:
 		debug_warning_label.text = "Abklingende Hebung U(t) %.5f / 100 J. · Untergrenze inaktiv" % stats[DBG_UPLIFT]
