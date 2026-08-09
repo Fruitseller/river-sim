@@ -41,6 +41,12 @@ final class VegetationTests: XCTestCase {
                     }
                 }
                 XCTAssertTrue(nearWater, "Auwald-Zelle (\(i),\(j)) ohne Wasser im Umkreis")
+                // …aber NIE die Wasser-Zelle selbst: Auwald ist eine Ufer-,
+                // keine Bett-Klasse. Sonst liegt die kohäsivste Erosions-
+                // Dämpfung (1.3) auf dem Gerinne und panzert den Talboden
+                // (s. updateVegClass — Braiding-Regression Aug 2026).
+                XCTAssertFalse(t.area[k] >= minA || t.hf[k] - t.h[k] > 0.02,
+                               "Auwald auf der Wasserlauf-Zelle selbst (\(i),\(j))")
                 // flach (Grob-Steigung wie in der Ableitung) + nicht tief geflutet
                 let slope = (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
                 XCTAssertLessThan(slope * 40, 0.6, "Auwald auf steilem Hang (\(i),\(j))")

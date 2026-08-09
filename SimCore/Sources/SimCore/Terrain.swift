@@ -493,6 +493,14 @@ public final class Terrain {
     /// `vegDamp` in die Erosion ein, und MFD darf laut AGENTS.md nur Render und
     /// Braiding speisen. D8 konzentriert den Abfluss auf eine Zellspur — die
     /// Ufer-Breite kommt ohnehin aus der Dilatation, nicht aus der Maskenbreite.
+    ///
+    /// Der Auwald sitzt am UFER, nicht im BETT: die Maskenzellen selbst (der
+    /// Wasserlauf) sind ausgenommen. Sie mit der kohäsivsten Klasse (1.3) zu
+    /// belegen hieß, die Ufer-Kohäsion auf das Gerinne und den Talboden zu
+    /// legen — der Talboden panzerte sich, stehen gebliebene Knubbel im
+    /// MFD-Lauf zählten als „Inseln" (Messung Aug 2026: `testBraidingBuildsBars`
+    /// zählte im Arm OHNE Braiding-Pass 19 → 31 Inseln über 12 Seeds, obwohl
+    /// dort nie ein Bänke-Pass lief; der Braiding-Arm blieb bei 36 → 37).
     /// Alle Eingangsgrößen
     /// sind glatt (veg relaxiert über τ=250a, riparian fällt über Ringe ab,
     /// Steigung ±2 Zellen) → weiche Klassen-Übergänge statt Flickenteppich.
@@ -545,7 +553,17 @@ public final class Terrain {
                         // selbst tief überflutet. Sonst: dichter Bewuchs = Wald,
                         // Rest = Gras. Kahl nur bei v < 0.12 (steil/hoch/nass
                         // drückt schon das veg-Ziel auf 0 — die Klasse folgt).
-                        if prip[k] >= 0.4 && slope * 40 < 0.6 && phf[k] - ph[k] <= 0.02 && v >= 0.25 {
+                        //
+                        // Auwald ist eine UFER-, keine BETT-Klasse (`< 1`): die
+                        // Quellmaske-Zellen SELBST sind der Wasserlauf, und ein
+                        // Flussbett trägt keinen Auwald. Nach der Dilatation gilt
+                        // `riparian == 1` exakt für die Maskenzellen (dst =
+                        // max(src, 0.65·maxNb) hält 1.0 und hebt Nicht-Masken-
+                        // Zellen auf höchstens 0.65) — deshalb identifiziert
+                        // `< 1` das Ufer ohne Zusatzpuffer. Dieselbe Doktrin wie
+                        // meanderStamp, das die Bett-Vegetation wegreißt
+                        // (testMeanderStampKillsBedVegetation).
+                        if prip[k] >= 0.4 && prip[k] < 1 && slope * 40 < 0.6 && phf[k] - ph[k] <= 0.02 && v >= 0.25 {
                             cls = 3
                         } else if v > 0.45 {
                             cls = 2
