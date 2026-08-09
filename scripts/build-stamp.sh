@@ -64,7 +64,11 @@ library_stamp() {
 	lib="$(library_path)"
 	[[ -n "$lib" ]] || return 0
 	# -a: die Library ist binär; grep soll sie trotzdem als Text durchsuchen.
-	grep -ao "$STAMP_MARKER:[0-9a-f]\{64\}" "$lib" 2>/dev/null |
+	# `|| true`: kein Treffer ist hier ein regulärer Fall (Library ohne Stempel) und
+	# muss als leere Ausgabe mit Exit 0 durchgehen. Ohne das bricht `set -e -o
+	# pipefail` schon an der Zuweisung `have="$(library_stamp)"` ab — dann fehlten
+	# genau in diesem Fall Meldung und Rebuild-Hinweis.
+	{ grep -ao "$STAMP_MARKER:[0-9a-f]\{64\}" "$lib" 2>/dev/null || true; } |
 		cut -d: -f2 | LC_ALL=C sort -u | head -1
 }
 
@@ -85,14 +89,17 @@ case "${1:---source}" in
 	{
 		if [[ -z "$lib" ]]; then
 			echo "FEHLER: game/bin/libRiverSimGD.so fehlt — die GDExtension wurde nie gebaut."
-		elif [[ -z "$have" ]]; then
-			echo "FEHLER: $lib enthält keinen Build-Stempel und ist damit älter als diese Prüfung."
+			echo "Godot würde ohne SimNode starten (\"SimNode nicht registriert\")."
 		else
-			echo "FEHLER: $lib ist VERALTET (Build-Stempel weicht vom Quellstand ab)."
-			echo "  Library:    $have"
-			echo "  Quellstand: $want"
+			if [[ -z "$have" ]]; then
+				echo "FEHLER: $lib enthält keinen Build-Stempel und ist damit älter als diese Prüfung."
+			else
+				echo "FEHLER: $lib ist VERALTET (Build-Stempel weicht vom Quellstand ab)."
+				echo "  Library:    $have"
+				echo "  Quellstand: $want"
+			fi
+			echo "Godot würde still die alte Library laden (z. B. \"Nonexistent function ...\")."
 		fi
-		echo "Godot würde still die alte Library laden (z. B. \"Nonexistent function ...\")."
 		echo "Neu bauen (Linux ~21,5 min):"
 		echo "  $REBUILD_HINT"
 	} >&2
