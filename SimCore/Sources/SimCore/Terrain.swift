@@ -164,6 +164,26 @@ public final class Terrain {
     private var pondSeen: [Bool]     // Arbeitspuffer der Pfützen-Komponentensuche
     private var noise: SimplexNoise
 
+    /// **Störungsgrad** je Zelle 0..1 (Issue #26): wie stark hat ein Werkzeug
+    /// diese Zelle zuletzt umgegraben — und wie viel Regeneration steht noch
+    /// aus. Wird von `applyDelta` (dem gemeinsamen Trichter ALLER Pinsel)
+    /// aufgebaut und in `regenerateDisturbed` exponentiell abgebaut. Solange er
+    /// > 0 ist, gilt die Zelle als frische Baustelle: kein Bewuchs-Standort,
+    /// Mikro-Relief wächst hinein, Mäanderzustand der alten Landschaft fällt weg.
+    public private(set) var disturb: [Double]
+    /// **Offenes Regenerations-Budget** je Zelle (Höheneinheiten, ±): die
+    /// Geländeänderung, die der Regenerations-Pfad noch eintragen wird. Gefüllt
+    /// beim Eingriff (Setzung/Rebound des bewegten Materials + Mikro-Relief),
+    /// abgearbeitet in `regenerateDisturbed` mit derselben Zeitkonstante wie
+    /// `disturb`. Ein einziges Budget-Feld statt „Effekt je Schritt neu
+    /// ausrechnen": so teleskopiert die Summe über beliebige Schrittweiten exakt
+    /// (Framerate-Invariante).
+    private var regenPending: [Double]
+    /// Schnell-Ausstieg: ohne je gesetzten Störungsgrad wird der gesamte
+    /// Regenerations-Pfad übersprungen → normale Alterung bit-identisch zum
+    /// Stand vor #26 (Wächter `testUntouchedAgingIsBitIdentical`).
+    private var disturbActive = false
+
     /// Wandernde Fluss-Zentrumslinien (Mäander-Migration). In M2 noch entkoppelt
     /// vom Höhenfeld: sie evolvieren mit der Zeit, formen `h` aber noch nicht
     /// (das macht `meanderStamp` ab M3).
@@ -188,6 +208,8 @@ public final class Terrain {
         rain = .init(repeating: 0, count: c)
         veg = .init(repeating: 0, count: c)
         vegClass = .init(repeating: 0, count: c)
+        disturb = .init(repeating: 0, count: c)
+        regenPending = .init(repeating: 0, count: c)
         riparian = .init(repeating: 0, count: c)
         vegScratch = .init(repeating: 0, count: c)
         vegTypeFactor = [1, 1, config.vegTypeFactorForest, config.vegTypeFactorRiparian]
@@ -346,7 +368,10 @@ public final class Terrain {
             lakeBalance[k] = h[k]
             endorheicBasin[k] = 0
             saltCrust[k] = 0
+            disturb[k] = 0 // frisches Terrain hat keine Baustellen (Issue #26)
+            regenPending[k] = 0
         }
+        disturbActive = false
         computeFlow()
         if cfg.breachEnabled { breachBasins() }
         spinUpStreamMap()
@@ -749,15 +774,20 @@ public final class Terrain {
                 }
             }}
         }
+        // Störungs-Unterdrückung (Issue #26): frisch umgegrabener Rohboden ist
+        // kein Standort. Ohne aktive Störung ist das Feld exakt 0 und der
+        // Faktor exakt 1.0 → bit-identische Arithmetik zum Stand vor #26.
+        let disturbSuppress = cfg.disturbanceEnabled ? cfg.disturbanceVegSuppress : 0
         h.withUnsafeBufferPointer { hb in
         hf.withUnsafeBufferPointer { hfb in
         rain.withUnsafeBufferPointer { rnb in
         vegScratch.withUnsafeBufferPointer { scb in
         saltCrust.withUnsafeBufferPointer { slb in
+        disturb.withUnsafeBufferPointer { dsb in
         veg.withUnsafeMutableBufferPointer { vb in
             let ph = hb.baseAddress!, phf = hfb.baseAddress!
             let prain = rnb.baseAddress!, pseed = scb.baseAddress!
-            let psalt = slb.baseAddress!
+            let psalt = slb.baseAddress!, pdist = dsb.baseAddress!
             let pveg = vb.baseAddress!
             // Schreibt nur veg[k] → zeilenparallel, bit-identisch.
             parallel(nn - 4) { lo, hi in
@@ -795,12 +825,19 @@ public final class Terrain {
                         // Wirkt NUR über saltCrust, das außerhalb solcher Becken
                         // exakt 0 ist → für alles andere unverändert.
                         target *= 1 - psalt[k]
+                        // Baustelle (Issue #26): der Störungsgrad drückt das Ziel
+                        // gegen 0 und klingt aus → sichtbare Sukzession auf der
+                        // frischen Fläche statt sofortiger Waldtapete. Außerhalb
+                        // von Eingriffen ist pdist exakt 0.
+                        if disturbSuppress > 0 && pdist[k] > 0 {
+                            target *= max(0, 1 - disturbSuppress * pdist[k])
+                        }
                     }
                     pveg[k] += (target - pveg[k]) * f
                 }
             }
             }
-        }}}}}}
+        }}}}}}}
         updateVegClass()
     }
 
@@ -1828,6 +1865,23 @@ public final class Terrain {
             for kk in comp {
                 let k = Int(kk)
                 if isChannel[k] { continue }
+                // Frische Baustelle (Issue #26): solange an dieser Zelle noch
+                // Regeneration aussteht, NICHT verlanden. Die Pfützen-Verlandung
+                // ist ein Aufräum-Pass gegen Flachwasser-Sprenkel in reifen Auen
+                // — auf einer eben erst planierten Fläche würde sie genau das
+                // Mikro-Relief wieder zuschütten, aus dem sich die neue
+                // Entwässerung organisiert (junge Grundmoränen-Landschaften sind
+                // Seen-Mosaike, keine trockenen Platten).
+                //
+                // Kriterium ist bewusst das OFFENE BUDGET und keine eigene
+                // Störungs-Schwelle: eine Schwelle (probiert: 5 % Reststörung
+                // ≈ 3 τ) öffnet ein Fenster, in dem der Boden noch steigt/sinkt,
+                // die Verlandung aber schon wieder zuschüttet — und zwar mit bis
+                // zu `puddleFillDepth` (0.06) gegen einen Rest von wenigen
+                // Tausendsteln. So endet die Aussetzung exakt dann, wenn sich
+                // das Gelände nicht mehr bewegt (`regenerateDisturbed` schaltet
+                // ab und nullt das Budget).
+                if disturbActive && regenPending[k] != 0 { continue }
                 let deficit = hf[k] - h[k]
                 if deficit > 0.001 && deficit <= cfg.puddleFillDepth {
                     let add = deficit * rate
@@ -2171,6 +2225,169 @@ public final class Terrain {
             rock[k] -= (-dh - ds)
         }
         h[k] += dh
+        // Lockeres Material setzt sich, Fels nicht (s. registerDisturbance).
+        registerDisturbance(k, dh, settles: !asRock)
+    }
+
+    // MARK: - Störung & Regeneration (Issue #26)
+
+    /// Bucht die Höhenänderung `dh` (mit Vorzeichen) als **Störung** der Zelle
+    /// `k`: nimmt ihr sofort den Zustand, der an der ALTEN Topografie hing, und
+    /// legt das Regenerations-Budget an, das die kommenden Jahrhunderte
+    /// eintragen.
+    ///
+    /// Warum hier und nicht je Werkzeug: `applyDelta` ist der gemeinsame
+    /// Trichter aller Pinsel (Anheben, Absenken, Glätten, Einebnen, Aufrauen,
+    /// Spitzhacke) — die Doktrin „ein Geländeeingriff stört den gekoppelten
+    /// Zustand" gilt für jeden davon, nicht nur fürs Einebnen.
+    ///
+    /// Zurückgesetzt wird ANTEILIG (`raw`), nicht hart: ein zaghafter Strich
+    /// lichtet den Wald, ein Bagger-Zug räumt ihn ab. `vegClass` und die
+    /// Baum-Instanzen im Frontend leiten sich aus `veg` ab und folgen von
+    /// selbst; Mäanderlinien/Altarme hängen an Geometrie und werden erst im
+    /// Schritt darauf gesäubert (`regenerateDisturbed`), weil das ein Sweep
+    /// über die Linien ist und kein Per-Zell-Effekt.
+    ///
+    /// Das Budget hat zwei Anteile:
+    /// * **Setzung/Rebound** `−dh·disturbanceSettle`: ein Teil des bewegten
+    ///   Materials kommt zurück. Frische Auffüllung setzt sich (differentielle
+    ///   Kompaktion — über begrabenen Hochlagen weniger als über begrabenen
+    ///   Tälern, weshalb die alte Struktur gedämpft wieder durchschlägt),
+    ///   entlastetes Gelände hebt sich. Genau dieser Anteil bringt die
+    ///   Entwässerung wieder in Gang: die begrabenen Täler werden wieder zu
+    ///   Tiefenlinien, statt dass die Fläche auf einen Zufallsgradienten warten
+    ///   muss. Er ist STRUKTURTREU (folgt der Eingriffs-Geometrie), nicht
+    ///   global — das Werkzeug bleibt wirksam, es bleibt nur nicht steril.
+    /// * **Mikro-Relief** `raw·disturbanceReliefAmp·fBm`: der Symmetriebruch
+    ///   für Flächen, die schon vorher eben waren (dort ist die Setzung
+    ///   uniform und erzeugt kein Gefälle).
+    ///
+    /// Beide Anteile landen im gleichen Budget und werden über das Abklingfenster
+    /// verteilt — der SOFORTeffekt des Werkzeugs bleibt exakt so, wie der Spieler
+    /// ihn gezogen hat (Wächter `testFlattenIsExactlyFlatImmediately`).
+    @inline(__always) private func registerDisturbance(_ k: Int, _ dh: Double, settles: Bool) {
+        guard cfg.disturbanceEnabled, cfg.disturbanceFullChange > 0, dh != 0 else { return }
+        let raw = min(1, abs(dh) / cfg.disturbanceFullChange)
+        // Nur der Zuwachs, der den Störungsgrad WIRKLICH hebt, darf Mikro-Relief
+        // nachlegen — sonst summierten 200 Striche auf derselben Zelle das
+        // 200-fache Rauschen auf.
+        let old = disturb[k]
+        let effInc = min(1, old + raw) - old
+        disturb[k] = old + effInc
+        disturbActive = true
+        if settles { regenPending[k] -= dh * cfg.disturbanceSettle }
+        if effInc > 0 && cfg.disturbanceReliefAmp > 0 {
+            let i = k % n, j = k / n
+            let f = cfg.disturbanceReliefFreq
+            // Ortsfestes fBm (terrain-eigener Seed → deterministisch und über
+            // wiederholte Eingriffe kohärent: derselbe Fleck bekommt dieselbe
+            // Rille, statt bei jedem Strich neu zu würfeln). Versatz 137/91
+            // gegen das Aufrau-Werkzeug, damit beide nicht dasselbe Muster prägen.
+            let u = noise.fbm01(Double(i) * f + 137, Double(j) * f + 91, octaves: 5) * 2 - 1
+            regenPending[k] += effInc * cfg.disturbanceReliefAmp * u
+        }
+        // Übrig bleibt vom alten Zustand exakt der Anteil `1 − Störungsgrad`
+        // (die Quotienten-Form teleskopiert über beliebig viele Striche: ein
+        // zaghafter Strich lichtet den Wald, ein Bagger-Zug räumt ihn ab).
+        let keep = disturb[k] >= 1 ? 0 : (1 - disturb[k]) / (1 - old)
+        veg[k] *= keep          // frisch bewegter Boden trägt keinen alten Bestand
+        streamRate[k] *= keep   // …und kein Gedächtnis an den alten Lauf
+        streamMap[k] *= keep
+    }
+
+    /// Regenerations-Pass für gestörte Zellen — der Kern von Issue #26.
+    ///
+    /// Drei Wirkungen, alle **räumlich** auf `disturb > 0` und **zeitlich** auf
+    /// das Abklingfenster `disturbanceRecoveryYears` begrenzt:
+    ///
+    /// 1. **Gelände**: je Schritt wird der Anteil `1 − e^(−dt/τ)` des offenen
+    ///    Budgets (`regenPending`: Setzung/Rebound + Mikro-Relief) eingetragen
+    ///    und abgezogen. Damit teleskopiert die Summe über beliebig viele
+    ///    Teilschritte exakt zum Ergebnis EINES Sprungs (Framerate-Invariante,
+    ///    Wächter `testRegenerationIsFramerateIndependent`), und die exakt
+    ///    flache Platte bekommt den Gradienten, den `outletIncision`
+    ///    (überspringt gefällelose Zellen) und die Tropfen (enden bei
+    ///    verschwindendem Gradienten) zum Arbeiten brauchen.
+    /// 2. **Mäander-/Altarm-Zustand** stark gestörter Zellen fällt weg; die
+    ///    Läufe werden aus der frischen Entwässerung neu getrasst.
+    /// 3. **Vegetation**: das Ziel wird in `updateVegetation` mit
+    ///    `1 − disturbanceVegSuppress·disturb` skaliert (Rohboden ist kein
+    ///    Standort) — dort, nicht hier, weil es ein Ziel-Effekt ist.
+    ///
+    /// Dazu kommt ein vierter Effekt, der schlicht ein ausgesetzter Aufräum-Pass
+    /// ist, solange die Baustelle offen ist: die Pfützen-Verlandung
+    /// (`fillShallowPonds`) schüttet das frische Mikro-Relief nicht wieder zu.
+    ///
+    /// Bewusst KEIN globaler Servo-Eingriff: die Alterung aus Issue #13 bleibt
+    /// unangetastet (`reliefServoPer100y` unverändert).
+    private func regenerateDisturbed(dt: Double) {
+        guard cfg.disturbanceEnabled, disturbActive, dt > 0 else { return }
+        let tau = max(1e-9, cfg.disturbanceRecoveryYears)
+        let f = 1 - exp(-dt / tau)          // Anteil des Budgets, der diesen Schritt fällig ist
+        var maxLeft = 0.0
+        for k in 0..<cfg.count {
+            let d = disturb[k]
+            if d <= 0 { continue }
+            let spend = regenPending[k] * f
+            if spend != 0 {
+                applyRegenDelta(k, spend)
+                regenPending[k] -= spend
+            }
+            let left = d - d * f
+            disturb[k] = left
+            maxLeft = max(maxLeft, left)
+        }
+        if cfg.disturbanceMeanderDrop > 0 { dropDisturbedMeanderState() }
+        // Ausgeklungen (< 1 % Reststörung ≈ 4.6 τ) → Pfad abschalten. Der Rest
+        // des Budgets wird dabei VOLLSTÄNDIG eingetragen statt verworfen: so ist
+        // die insgesamt eingetragene Geländeänderung exakt das gebuchte Budget,
+        // egal wann die Abschaltung in einen Zeitschritt fällt.
+        if maxLeft < 0.01 {
+            for k in 0..<cfg.count {
+                if regenPending[k] != 0 { applyRegenDelta(k, regenPending[k]) }
+                disturb[k] = 0
+                regenPending[k] = 0
+            }
+            disturbActive = false
+        }
+    }
+
+    /// Höhenänderung des Regenerations-Passes mit Fels/Sediment-Buchhaltung.
+    /// Wie `applyDelta`, aber OHNE erneute Störungs-Buchung (sonst hielte sich
+    /// der Pfad selbst am Leben) und ohne den Werkzeug-Deckel bei 1.4.
+    @inline(__always) private func applyRegenDelta(_ k: Int, _ dhRaw: Double) {
+        let dh = max(h[k] + dhRaw, cfg.floor) - h[k]
+        if dh >= 0 {
+            rock[k] += dh
+        } else {
+            let ds = min(-dh, sed[k])
+            sed[k] -= ds
+            rock[k] -= (-dh - ds)
+        }
+        h[k] += dh
+    }
+
+    /// Verwirft Mäanderläufe und Altarme, die über stark gestörtes Gelände
+    /// laufen: eine Zentrumslinie ist die Geschichte eines Betts, das es unter
+    /// dem neuen Gelände nicht mehr gibt. `migrateMeander` sät danach aus der
+    /// aktuellen Entwässerung neu — solange die Baustelle offen ist, wird also
+    /// je Schritt frisch getrasst statt alter Zustand fortgeschrieben.
+    private func dropDisturbedMeanderState() {
+        let thr = cfg.disturbanceMeanderDrop
+        func disturbed(_ nd: MeanderNode) -> Bool {
+            let i = min(max(Int(nd.x.rounded()), 0), n - 1)
+            let j = min(max(Int(nd.z.rounded()), 0), n - 1)
+            return disturb[j * n + i] >= thr
+        }
+        meander.channels.removeAll { $0.nodes.contains(where: disturbed) }
+        var keptOxbows: [[MeanderNode]] = []
+        var keptAges: [Double] = []
+        for (oi, ox) in meander.oxbows.enumerated() where !ox.contains(where: disturbed) {
+            keptOxbows.append(ox)
+            keptAges.append(oi < meander.oxbowAge.count ? meander.oxbowAge[oi] : 0)
+        }
+        meander.oxbows = keptOxbows
+        meander.oxbowAge = keptAges
     }
 
     // MARK: - Mäander-Migration (Lagrange-Zentrumslinien)
@@ -2399,6 +2616,11 @@ public final class Terrain {
         // Übergangsschritt an der Schrittweite.
         applyUplift(dt: dt, gatedAmount: upliftAmount(dt: dt,
                                                       floorPer100y: reliefServoRate()))
+        // Regeneration frisch umgegrabener Flächen (Issue #26): trägt das
+        // Mikro-Relief ein und räumt Mäander-/Altarmzustand ab, BEVOR der Flow
+        // läuft — die Entwässerung dieses Schritts sieht das neue Gelände.
+        // Ohne Störung (Normalfall) ein reiner Boolean-Test.
+        regenerateDisturbed(dt: dt)
         // Gesteinsfeld (Issue #12) auf die frische Höhe nachziehen, BEVOR ein
         // Erosionspass es liest: die freigelegte Schicht folgt aus h, und h hat
         // sich gerade durch die Hebung verschoben. Reine Ableitung, kein Zustand —
@@ -2542,6 +2764,30 @@ public final class Terrain {
     /// Felder (z. B. mit künstlichem Einzelgipfel) prüfen können, ohne das
     /// Terrain zu mutieren.
     public static func landReliefRobust(heights: [Double], sea: Double) -> Double {
+        landHeightQuantiles(heights: heights, sea: sea).high
+    }
+
+    /// **Hochseitenrelief** = p95 − Median: wie weit steht das hohe Land über dem
+    /// typischen? Identisch zu `landReliefRobust()` — das Regelsignal des Servos.
+    public func landReliefHigh() -> Double { landReliefRobust() }
+
+    /// **Talseitenrelief** = Median − p05: wie tief liegt das tiefe Land unter dem
+    /// typischen? Die Gegenprobe zum Hochseitenrelief (Issue #26): eine
+    /// eingeebnete Platte, in die sich Rinnen schneiden, differenziert sich
+    /// ZUERST nach UNTEN — das Hochseitenrelief bleibt dabei lange bei ~0 und
+    /// täuscht „keine Erholung" vor, während umgekehrt ein paar Rand- oder
+    /// Rinnenzellen `landRelief()` (max−min) groß aussehen lassen, ohne dass
+    /// sich die Fläche differenziert hätte. Erst BEIDE Seiten zusammen sagen,
+    /// ob die Landschaft wieder Struktur hat.
+    public func landReliefLow() -> Double {
+        let q = Terrain.landHeightQuantiles(heights: h, sea: cfg.sea)
+        return q.low
+    }
+
+    /// Beide robusten Relief-Halbseiten aus EINEM Histogramm-Pass:
+    /// `high` = p95 − Median, `low` = Median − p05.
+    public static func landHeightQuantiles(heights: [Double], sea: Double)
+        -> (high: Double, low: Double) {
         // Histogramm statt Sortieren: die Kennzahl läuft in JEDEM Zeitschritt über
         // ~500k Landzellen (Frame-Budget!) — ein Zählpass ist O(N) und dazu exakt
         // deterministisch (Integer-Zählung, keine Reihenfolge-Effekte).
@@ -2563,7 +2809,7 @@ public final class Terrain {
             hist[b] += 1
             total += 1
         }
-        guard total >= 20 else { return 0 } // zu wenig Land für Quantile
+        guard total >= 20 else { return (0, 0) } // zu wenig Land für Quantile
         func quantile(_ p: Double) -> Double {
             let rank = Int((Double(total - 1) * p).rounded())
             var cum = 0
@@ -2573,7 +2819,8 @@ public final class Terrain {
             }
             return sea + span
         }
-        return quantile(0.95) - quantile(0.5)
+        let med = quantile(0.5)
+        return (quantile(0.95) - med, med - quantile(0.05))
     }
 
     /// Aktuell wirkende Servo-Hebung (pro 100 Jahre) aus dem robusten Relief-

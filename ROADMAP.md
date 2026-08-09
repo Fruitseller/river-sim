@@ -54,6 +54,19 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   (Dispersal-Radius 2, nur bewohnbare Standorte). Rendering: 3D-Bäume als
   MultiMesh (`treeInstanceBuffer`, deterministischer Hash-Jitter, ~26k Instanzen,
   Rebuild nur bei Max-Δveg > 0.1).
+- **Spieler-Eingriffe als Störung (Issue #26):** ein Pinselstrich setzt auf den
+  betroffenen Zellen einen abklingenden **Störungsgrad** (`Terrain.disturb`,
+  τ = 1200 J.). Damit fällt der Zustand weg, der an der ALTEN Topografie hing
+  (Vegetation, Stream-Map-EWMA, Mäanderlinien/Altarme — die Baum-Instanzen
+  folgen `veg`), das Vegetations-Ziel bleibt über das Fenster gedrückt
+  (Sukzession statt Sofort-Wald), die Pfützen-Verlandung ist ausgesetzt, und ein
+  **Regenerations-Budget** (`regenPending`) trägt Setzung/Rebound des bewegten
+  Materials (35 %, differentielle Kompaktion → die begrabene Struktur schlägt
+  gedämpft durch) plus ein kleines fBm-Mikro-Relief über das Fenster ein.
+  Der SOFORT-Effekt des Werkzeugs bleibt exakt (die flache Fläche ist flach);
+  ohne Eingriff läuft alles bit-identisch wie vorher. Diagnose zeigt seitdem
+  Hochseitenrelief (p95−Median) UND Talseitenrelief (Median−p05) getrennt.
+  Messreihen: `docs/flatten-regeneration-measurements.md`.
 
 ## Offene Punkte
 
