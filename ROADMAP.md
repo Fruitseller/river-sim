@@ -28,6 +28,13 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 - **Hydrologie:** Priority-Flood + D8 für Erosion, MFD (Freeman/Quinn) für Render und
   Braiding, EWMA-geglättete Stream-Map, Pool-Kopplung (Descend→Flood→Drain),
   Becken-Breach bei der Generierung (Becken entwässern zum Meer).
+  **Becken-Wasserhaushalt (Issue #11):** ein geschlossenes Becken läuft nicht mehr
+  zwangsläufig bis zur Sill voll — Zufluss (der niederschlagsgewichtete Abfluss
+  aus #9/#10) gegen Verdunstung über der Seefläche deckelt den Spiegel
+  (`capEndorheicBasins`, κ = `endorheicEvapRatio` = Verhältnis
+  Einzugsgebiet:Seefläche). Verdunstungs-limitierte Becken sind TERMINAL (kein
+  Sill-Abfluss, keine Auslass-Inzision), ihr trockengefallener Boden salzt ein
+  (`saltCrust` → helle Playa im Rendering).
 - **Flüsse:** Mäander als persistente Lagrange-Zentrumslinie (`Meander.swift`, Migration
   ∝ Krümmung × Abfluss, Cutoff → Altarm, Sinuositäts-Deckel), Braiding nach
   Murray & Paola (`braidPass`), Wasser-Optik im Shader (eigene Wasser-Normale,
@@ -140,8 +147,40 @@ Fläche. Messreihe: `docs/rain-weighted-flow-measurements.md`; Wächter:
   Produktion ist `outletErode`.
 - Offen geblieben: `computeRain` ist nicht weltmaßstäblich (Abtrocknung je ZELLE
   statt ∝ `cellSize`), das rohe `rain` bleibt damit auflösungsabhängig für
-  Vegetation und Biom-Färbung. Ebenso offen: die Verdunstungsseite von
-  „Niederschlag − Verdunstung" (PLAN §3b).
+  Vegetation und Biom-Färbung. Die Verdunstungsseite von „Niederschlag −
+  Verdunstung" (PLAN §3b) ist mit #11 für SEEN erledigt, für Hang/Boden offen.
+
+**Verdunstung in abflusslosen Becken — ERLEDIGT (Aug 2026, Issue #11):**
+Becken-Wasserhaushalt `A_zu ≥ κ · Σ_Seezellen cellArea · aridity` je
+zusammenhängender Senke; der Spiegel ist der höchste Stand, dessen Seefläche die
+Verdunstung noch aus dem Zufluss deckt. Messreihen:
+`docs/endorheic-evaporation-measurements.md`, Wächter: `EndorheicEvaporation`.
+- **κ = 1.25** (Verhältnis Seeverdunstung : mittlere Abflusshöhe = nötiges
+  Einzugsgebiet:Seefläche). Kalibriert an der gemessenen RATIO-VERTEILUNG: die
+  tiefen Becken dieser Landschaft liegen dicht über 1 (1.63/1.93/2.2 bei n=832),
+  die Fluss-Pools bei 5…800 — ab κ=1.5 kippen alle tiefen Becken gleichzeitig
+  (sichtbare Seefläche 10.4 → 0.5 %), bei κ ≤ 0.5 ist der Pass ein No-op. κ=1.25
+  hält die Seen (sichtbar 10.04 gegen 10.36 % bei 20k) und macht 2 Becken
+  endorheisch (3625 Salzpfannen-Zellen). κ ist damit auch der KLIMA-Regler:
+  trockene Welt = größeres κ (die Mechanik-Wächter fahren κ=6).
+- Verdunstungs-limitierte Becken sind terminale Senken: `receiver` = −1, kein
+  MFD-Überlauf, keine Auslass-Inzision → ein endorheisches Becken entwässert sich
+  nicht selbst frei (real: Tarim, Death Valley bestehen über Jahrmillionen).
+- Der Generierungs-Breach bleibt verdunstungs-BLIND (er misst seinen Fortschritt
+  am See-Anteil und würde sonst nach der ersten Runde abbrechen: gemessen 87684
+  trockengefallene Zellen schon bei der Generierung). Zwei Zeitebenen:
+  antezedente Entwässerung vs. heutiges Klima.
+- Der Bilanz-Spiegel ist ratenbegrenzt (`endorheicResponseYears` = 500 J.,
+  dt-invariant), der Darstellungs-Spiegel hängt in Serie dahinter.
+- Rendering: `saltCrust` (EWMA, nur trockengefallener Boden mit Vollstand-Tiefe
+  > 0.03) malt die helle Playa in `terrainColorBytes`; Salzpfannen bleiben kahl
+  (Vegetations-Ziel × (1 − Kruste)).
+- Offen: Sediment-Haushalt der Playa (Evaporite/Schwemmfächer), seed-breite
+  Luv/Lee-Messreihe für `endorheicAridity`, Nachmessen der Spätphase nach dem
+  Zufluss-Fix (s. Doku §E) — und die **Wechselwirkung mit dem Braiding**:
+  `testBraidingBuildsBars` pinnt den Wasserhaushalt aus, weil die Bank-Fläche an
+  der Wasserfläche hängt (an=124/aus=84 statt 160/81, Seeds 6:5 statt 9:3 — der
+  Pass bleibt stärker als ohne, aber die Seed-Mehrheit reißt).
 
 **Politur / Rendering:**
 - ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass

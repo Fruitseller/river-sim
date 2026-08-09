@@ -414,6 +414,17 @@ final class RiverDynamicsTests: XCTestCase {
         var everFormed = false, everClosed = false
         for seed in Self.braidSeeds {
             var cOn = SimConfig(); cOn.n = 256
+            // Becken-Wasserhaushalt (Issue #11) AUSGEPINNT — wie `meanderCfg()`
+            // seine alten Werte pinnt: dieser Wächter misst den braidPass A/B,
+            // nicht das Klima. Mit Verdunstung fällt Ponding in den Braid-Plains
+            // je Seed unterschiedlich trocken, und die Bank-FLÄCHE hängt an der
+            // Wasserfläche (Bänke wachsen bis knapp über hf) — gemessen fällt der
+            // Kontrast damit von an=160/aus=81 (Seeds 9:3) auf an=124/aus=84
+            // (6:5), also unter die geforderte Seed-Mehrheit, OHNE dass der Pass
+            // schwächer wird (an > aus bleibt). Die Wechselwirkung
+            // Wasserhaushalt × Braiding ist als eigener Punkt offen
+            // (docs/endorheic-evaporation-measurements.md §E).
+            cOn.endorheicEvaporation = false
             var cOff = cOn; cOff.braidingEnabled = false
             let tOn = Terrain(config: cOn, seed: seed)
             let tOff = Terrain(config: cOff, seed: seed)

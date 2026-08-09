@@ -212,6 +212,127 @@ public struct SimConfig: Sendable {
     public var puddleFillDepth = 0.06       // NUR seichtes Ponding verlandet (anders als basinFill): geflutete Auen trugen sonst dauerhafte Flachwasser-Sprenkel („Blob-Fetzen", total unrealistisch). Echte Seen sind tiefer und bleiben.
     public var puddleFillYears = 800.0      // Zeitkonstante der Pfützen-Verlandung (0 = aus)
     public var puddleLakeCoreCells = 48     // See-Kern-Schwelle der Pfützen-Verlandung (s. fillShallowPonds): eine Wasser-Komponente mit ≥ so vielen TIEFEN Zellen (Tiefe > puddleFillDepth) ist ein SEE — ihr Ufersaum verlandet nicht mehr pauschal (die Säume hoben sich sonst als Ganzes sichtbar an: „wachsender Boden ohne Wasser", 90% der Tiefland-Hebung), sondern nur physisch über Droplet-Deltas. Braid-/Auen-Pfützennetze (Einzelpools ≪ 48 tiefe Zellen) verlanden unverändert — Komponentengrößen-Schwellen (64/400 Zellen) und „berührt einen Pool" kippten dagegen den Braid-Insel-Guard, ein relativer Kern-Anteil (20%) ließ den Problemfall (riesiger Saum, kompakter Kern) durch.
+    // ---- Verdunstung in abflusslosen Becken (endorheische Seen, Issue #11) ----
+    // Der Priority-Flood füllt jedes geschlossene Becken bis zur SILL, ohne
+    // Zufluss oder Verdunstung zu kennen — endorheische Becken, Playas und
+    // Salzseen sind damit strukturell unmöglich (die bewusste Abweichung von der
+    // nickmcd-Referenz, docs/nickmcd-behavior-verification.md). Dieser Schalter
+    // legt einen einfachen Wasserhaushalt je Becken darüber
+    // (`Terrain.capEndorheicBasins`):
+    //
+    //     Zufluss (Abfluss des Beckens)  gegen  Verdunstung über der Seefläche
+    //     A_zu  ≥  κ · Σ_Seezellen cellArea · aridity(k)
+    //
+    // Der Zufluss ist der niederschlagsgewichtete Abfluss aus #9/#10 (deshalb
+    // hängt #11 daran): `area` trägt seit #10 ABFLUSS statt Fläche, normiert auf
+    // das Regen-Landmittel. Genau diese Normierung macht κ interpretierbar:
+    //
+    //     κ = potenzielle Seeverdunstung / mittlere Abflusshöhe des Landes
+    //
+    // — das dimensionslose Verhältnis, das in der Seehydrologie als nötiges
+    // EINZUGSGEBIET-ZU-SEEFLÄCHE-Verhältnis eines abflusslosen Sees auftritt
+    // (Großer Salzsee ≈ 9:1, Kaspisches Meer ≈ 10:1, Tschadsee ≈ 100:1 in extrem
+    // arider Lage; humide geschlossene Seen liegen bei wenigen Einheiten).
+    //
+    // WICHTIG — κ IST der Klima-Regler dieses Modells: weil #10 den Abfluss auf
+    // sein Landmittel NORMIERT, fällt die absolute Nässe des Klimas aus `area`
+    // heraus (ein global doppelt so feuchtes Klima liefert dasselbe
+    // `rainWeight`). „Feucht" vs. „trocken" ist deshalb ein kleines vs. großes κ,
+    // und der Wächter `EndorheicEvaporation.testWetAndDryClimateDifferBasinLevel`
+    // fährt genau das (dasselbe Becken, κ feucht/trocken).
+    public var endorheicEvaporation = true
+    // κ. ZUERST GEMESSEN, was die Landschaft überhaupt für Verhältnisse hat
+    // (`EndorheicEvaporation.testBasinRatioMeasurementDiagnostic`, n=256, Zufluss
+    // in Zellen je Seezelle = genau das Verhältnis, gegen das κ antritt):
+    // die GROSSEN Becken liegen bei 1.7 … 5.1 (Seed 1337: 2194 Z → 3.02 bei der
+    // Generierung, 5172 Z → 1.74 bei 10k; Seed 42: 743 Z → 4.79; Seed 2024:
+    // 555/326/243 Z → 5.02/3.47/2.91), die kleinen Pools bei 10 … 400 — sie
+    // liegen IM Flusslauf und bekommen den ganzen Trunk-Abfluss.
+    // Daraus folgt die Kalibrierung: κ trennt nicht „groß gegen klein", sondern
+    // „überfüllt gegen gespeist", und der interessante Bereich ist einstellig.
+    // Sweep in PRODUKTIONSAUFLÖSUNG (n=832, Seed 1337, Produktionspfad; See-
+    // Anteil am Land / davon sichtbar (Tiefe > 0.03) / Zahl der verdunstungs-
+    // limitierten Becken / Salzpfannen-Zellen, bei Jahr 0 und 20k):
+    //   κ=0 (aus)  J0 4.99/2.61/0/0      J20k 13.89/10.36/0/0
+    //   κ=1.0      J0 4.99/2.61/4/0      J20k 13.28/ 9.66/1/3495
+    //   κ=1.25     J0 4.99/2.61/9/0      J20k 13.33/10.04/2/3625
+    //   κ=1.5      J0 4.88/2.77/12/0     J5k   2.43/ 0.51/9/44211   ← kippt
+    //   κ=2.0      J0 4.55/2.06/21/0     J5k   0.85/ 0.00/10/55154  ← kippt
+    //   κ=3.0      J0 2.68/0.81/27/0     J5k   0.76/ 0.00/15/54590
+    // GEWÄHLT κ=1.25. Der Sprung zwischen 1.25 und 1.5 ist keine Willkür der
+    // Kalibrierung, sondern die gemessene RATIO-VERTEILUNG dieser Landschaft: die
+    // tiefen Becken liegen dicht über 1 (1.63 / 1.93 / 2.2 bei n=832, 20429 /
+    // 39996 / 24863 Zellen), die flachen Fluss-Pools bei 5 … 800. Ab κ=1.5 kippen
+    // ALLE tiefen Becken gleichzeitig — Seeanteil 13.9 → 2.4 %, sichtbare
+    // Seefläche 10.4 → 0.5 %, ein Viertel des Landes Salzpfanne. Das wäre nicht
+    // „endorheische Becken sind möglich", sondern „es gibt keine Seen mehr", und
+    // widerspricht dem Ziel-Look (ROADMAP: diskrete blaue Seen auf verschiedenen
+    // Ebenen, nickmcd-Referenz).
+    // κ=1.25 trifft genau die überfüllten Becken (Ratio < 1.25) und lässt die
+    // gespeisten stehen: sichtbare Seefläche 10.04 gegen 10.36 % (−3 %), dabei 2
+    // abflusslose Becken mit 3625 Salzpfannen-Zellen (~1 % des Landes).
+    // Physisch ist κ = Seeverdunstung / mittlere Abflusshöhe, also
+    // (E − P)/(P · Abflussbeiwert) + 1: κ=1.25 heißt E ≈ 1.08 · P bei einem
+    // Abflussbeiwert von 0.3 — die feuchte, kühle Insel, die dieses Terrain
+    // darstellt. κ=2 wäre das semi-aride Ende (E ≈ 1.3 · P), κ ≤ 1 die
+    // Verdunstungs-freie Grenze: unter 0.75 ist der Pass auf diesem Terrain
+    // messbar ein NO-OP (n=256: bit-identisch zum abgeschalteten Feature,
+    // Wächter `testUncappedRunIsBitIdenticalToDisabled`).
+    // κ IST DER KLIMA-REGLER: für eine trockene Welt hochdrehen — die
+    // Mechanik-Wächter fahren bewusst κ=6 (`dryCfg()` in
+    // `EndorheicEvaporation`), damit sie an der Produktions-Kalibrierung nicht
+    // hängen.
+    // Relief bleibt über den ganzen Sweep im Band (n=832: 0.1831 aus → 0.1704 bei
+    // κ=1.25, −7 %), der LongRunCollapse-Wächter (0.30 bei n=160) behält Marge.
+    // MESS-STAND: die J5k/J20k-Zeilen sind VOR dem Zufluss-Fix in
+    // `floodAndRoute` entstanden (Becken-Rollen werden jetzt vor der
+    // Zufluss-Messung gelöscht, s. dort). Der Fix erhöht den gemessenen Zufluss,
+    // deckelt also WENIGER — die Auswahl von κ=1.25 liegt damit auf der sicheren
+    // Seite; die Jahr-0-Zeilen sind unberührt (bei der Generierung startet die
+    // Maske ohnehin leer). Nachmessen der Spätphase: offener Punkt in
+    // docs/endorheic-evaporation-measurements.md.
+    public var endorheicEvapRatio: Double = 1.25
+    // Klima-Kopplung der Verdunstung: aridity(k) = 1 + a·(1 − rainWeight[k]),
+    // gedeckelt auf [0.25, 4]. `rainWeight` ist der auf 1 normierte Regen (#10),
+    // also verdunstet der Regenschatten-Osten mehr als die Luvseite — dieselbe
+    // Orographie, die den Zufluss verteilt, verteilt auch die Verdunstung, nur
+    // mit umgekehrtem Vorzeichen. a=0.5: bei gemessener Gewichtsspanne 0.35…2.9
+    // liegt der Faktor real zwischen 0.75 (nasses Luv) und 1.33 (Lee).
+    // a=0 = klima-neutrale Verdunstung (Referenzarm der Messung: Wächter
+    // `testAridityLowersTheLeewardBasin` vergleicht a=0 gegen a=0.5).
+    public var endorheicAridity: Double = 0.5
+    // Becken kleiner als das werden nicht bilanziert (Rest-Pfützen einzelner
+    // Zellen). Bewusst KLEIN: das Größen-Gate ist nur ein Rechen-/Rausch-Deckel,
+    // die eigentliche Auswahl trifft die Bilanz selbst (eine Pfütze IM Flusslauf
+    // hat den ganzen Trunk-Abfluss als Zufluss und bleibt deshalb voll, egal wie
+    // klein sie ist).
+    public var endorheicMinBasinCells: Int = 12
+    // Ratenbegrenzung des Bilanz-Spiegels (Zeitkonstante, 0 = instantan). Der
+    // Zielstand springt, wenn ein Becken kippt (Sill zugeschüttet → andere
+    // Seefläche → anderes Budget); ohne Begrenzung flackerte der Spiegel dieses
+    // Beckens zwischen Sill und Bilanzstand. 500 J.: doppelt so träge wie der
+    // DARSTELLUNGS-Spiegel (lakeLevelResponseYears 250) — der bleibt in Serie
+    // dahinter und dämpft den Rest (Wächter: LakeLevelStability,
+    // EndorheicEvaporation.testBasinLevelIsRateLimited). Physisch ist das die
+    // Füll-/Leerzeit eines Sees; geologisch kurz, aber der Spielmaßstab sind
+    // 10k-Jahre-Sprünge.
+    public var endorheicResponseYears: Double = 500.0
+    // Salzkruste/Playa: Aufbau-/Abbau-Zeitkonstante des Verdunstungsrückstands
+    // auf trockengefallenem Beckenboden (Terrain.saltCrust, 0 = aus). NUR
+    // Rendering (helle Kruste in SimNode.terrainColorBytes) und Vegetations-Ziel
+    // (Salzpfannen sind kahl) — keine Erosionsphysik. 400 J.: die Kruste liegt
+    // nach ~1200 J. voll da, verschwindet aber nach dem Wiederfluten in derselben
+    // Zeit wieder (kein Geister-Weiß in einem vollen See).
+    public var endorheicSaltYears: Double = 400.0
+    // Mindest-Vollstand-Tiefe, ab der ein trockengefallener Beckenboden als
+    // SALZPFANNE gilt (Terrain.playaBed). 0.03 = die Render-Seetiefe (dieselbe
+    // Schwelle wie vegFloodKillDepth und HydraulicParams.poolDepth:
+    // „substanzielles stehendes Wasser"). Nötig, weil der Priority-Flood den
+    // ganzen flachen Beckenboden flutet: von den 9788 trockengefallenen Zellen
+    // des Seed-1337-Beckens (n=256, 10k J.) stand auf der großen Mehrheit nie
+    // mehr als ein Millimeter Wasser — als Salzweiß gemalt wäre das die halbe
+    // Insel, statt der Pfanne im Beckenkern.
+    public var endorheicSaltMinDepth: Double = 0.03
     public var lakeLevelResponseYears = 250.0 // Zeitkonstante des DARSTELLUNGS-Seespiegels (Terrain.waterLevel; 0 = aus, Spiegel = hf). Priority-Flood hebt hf beim Zuschütten des Auslass-Sills INSTANTAN fürs ganze Becken; die Auslass-Inzision schneidet in ~100 J. zurück → Sägezahn, sichtbar als periodisch hüpfende See-/Schwemmflächen (gemessen n=832 Seed 1337, 3000 J.: 17 hf-Sprünge > 0.0005, max 0.006; Quellen Droplets+Braiding+Mäander gemeinsam, Dämpfung einzelner Depositionspfade griff nicht und verschob nur die Kalibrierung). 250 J. drückt die sichtbare Restamplitude der ~100-J.-Sägezähne auf ~1/6 (gemessen via LakeLevelStability), lässt echte Pegeländerungen (Verlanden, neue Seen, +10.000-J.-Sprünge) aber praktisch ungebremst durch.
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()
