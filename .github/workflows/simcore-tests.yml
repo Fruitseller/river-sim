@@ -70,7 +70,7 @@ jobs:
 
       - name: Swift-Toolchain-Cache
         id: toolchain-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /opt/swift
           key: swift-${{ env.SWIFT_VERSION }}-ubuntu22.04
@@ -119,7 +119,7 @@ jobs:
 
       # SwiftPM-Build-Cache: verhindert, dass jeder Lauf komplett neu kompiliert.
       - name: SimCore-Build-Cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: SimCore/.build
           key: simcore-build-${{ runner.os }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('SimCore/Package.swift', 'SimCore/Sources/**', 'SimCore/Tests/**') }}
