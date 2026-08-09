@@ -172,7 +172,36 @@ Issue #13 rückgängig (dort gemessen: Relief lief nach 30k wieder hoch) und
 wirkt auf der ganzen Karte statt auf der Baustelle. Der Servo bleibt
 unverändert Notboden.
 
-## 7. Was NICHT betroffen ist
+## 7. Screenshots (Produktionsauflösung n = 832, Seed 1337)
+
+Erzeugt mit dem `RS_FLATTEN`-Debughaken, der die ganze Karte mit den
+UI-Grenzwerten kachelt (Radius 30, Stärke 3) und danach den Zeitraffer laufen
+lässt:
+
+```sh
+RS_SEED=1337 RS_FLATTEN=1 RS_STEP=3000 RS_STEP_CHUNK=250 \
+    RS_SHOT=/tmp/nachher.png RS_DIST=90 "$GODOT" --path game
+```
+
+| Sofort nach dem Einebnen (Jahr 0) |
+|---|
+| ![Jahr 0](screenshots/flatten-jahr0-eben.png) |
+
+`Relief 0.000 (hoch 0.000 / tal 0.000)`, `min = Ø = max = 0.400`, kein Baum: der
+Soforteffekt des Werkzeugs ist exakt eben, und der Bestand der alten Landschaft
+ist weg.
+
+| Jahr 3.000 — vorher (Pfad aus) | Jahr 3.000 — nachher |
+|---|---|
+| ![vorher](screenshots/flatten-vorher-3000.png) | ![nachher](screenshots/flatten-nachher-3000.png) |
+
+Links die Waldtapete des Reports: eine geschlossene Baumdecke ohne erkennbare
+Struktur, Diagnose `Relief 0.224 (hoch 0.007 / tal 0.002)` und aktive
+Relief-Untergrenze. Rechts eine differenzierte Fläche mit Tiefenlinien, offenen
+Hängen und Waldinseln, Diagnose `Relief 0.336 (hoch 0.070 / tal 0.096)`, die
+Untergrenze ist inaktiv.
+
+## 8. Was NICHT betroffen ist
 
 `testUntouchedAgingIsBitIdentical`: ohne Pinsel-Eingriff sind `h`, `veg` und
 `streamMap` nach 3.000 Jahren **bit-identisch** zum Lauf mit abgeschaltetem
