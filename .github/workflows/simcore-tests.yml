@@ -32,7 +32,10 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 statt latest: swiftly unterstützt Ubuntu 24.04 noch nicht
+    # ("Unsupported platform: Ubuntu 24.04"), gemessen im ersten CI-Lauf (Aug 2026).
+    # 22.04 hat auch libncursesw.so.6 für den Swift-Shim.
+    runs-on: ubuntu-22.04
     steps:
       # Commit-SHA statt mutable Tag (Supply-Chain-Härtung, öffentliches Repo).
       # Versionsupdates laufen künftig über Dependabot (`.github/dependabot.yml`,
