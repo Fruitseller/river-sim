@@ -13,9 +13,13 @@ measurement* of whether braiding emerges — before touching the tuned look.
 
 Sim facts this doc assumes (from `SimCore/Sources/SimCore/`):
 - FastScape implicit stream-power, n=1: `dz/dt = U − K·Aᵐ·S`, `mExp=0.5`,
-  `kRock=3.5e-5`, `kSed=1.1e-4` (`Terrain.streamPower`, `Config.swift`).
+  `kRock=3.5e-5`, `kSed=1.1e-4` — carried by `Terrain.outletIncision` (area-based
+  stream power over the whole drainage network, implicit solve in receiver order),
+  `Config.swift`. The fine dendritic texture on top comes from the droplets
+  (`Hydraulic.erode`). (A separate `Terrain.streamPower` existed when this doc was
+  written; it was dead code and has since been removed.)
 - SPACE-like transport-limited pass `Qc = Kt·Aᵐ·S`, `transportCap=9.0`
-  (`Terrain.transportLimited`).
+  (`Terrain.transportLimited`) — non-droplet TEST path only.
 - Priority-Flood depression filling (Barnes) → `hf`, plus `order[]` ascending
   fill-height (`Terrain.priorityFlood`).
 - **D8 single receiver** `computeReceiversAndArea()` — steepest of 8 on `hf`,
@@ -163,8 +167,9 @@ result; low `p` (~1.1) is where braiding lives but also where the terrain look i
 most at risk. This is the central tradeoff.
 
 **Maps onto our sim:** `computeReceiversAndArea()` becomes MFD; `order[]` is
-reused unchanged; `streamPower()` either uses `h̄_r`/`d̄` (option 1) or is left on
-D8 while only `area[]` goes MFD (option 2). `transportLimited()` (the SPACE pass)
+reused unchanged; the incision pass (`outletIncision()`) either uses `h̄_r`/`d̄`
+(option 1) or is left on D8 while only `area[]` goes MFD (option 2).
+`transportLimited()` (the SPACE pass)
 is where bars actually get built (§2), so MFD area feeding *that* pass is what
 produces visible islands.
 
@@ -421,7 +426,7 @@ MEMORY.md. **Risk: zero. Impact: unblocks everything.**
 In `computeReceiversAndArea()` store per-cell `(receiver,fraction)` via Freeman
 weights (start `p=4`, Holmgren, to stay near the current dendritic look), and
 accumulate `area[]` over multiple receivers in the same reverse-`order` loop.
-**Leave `streamPower()` / `outletIncision()` on the single steepest receiver** so
+**Leave the incision pass (`outletIncision()`) on the single steepest receiver** so
 the tuned terrain look and incision stability are untouched. Render channel
 wetness ∝ `Aᵖ` from the MFD area.
 - Expected: rivers **split around bars and rejoin**; teleport largely gone (area

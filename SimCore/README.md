@@ -11,11 +11,13 @@ Landschaftsentwicklung als Kombination aus:
   gefüllten Oberfläche, O(n)-Einzugsgebiets-Akkumulation. Seen = Füllhöhe > Gelände.
   Zusätzlich ein Multi-Flow-Netz (Freeman/Quinn, `areaMFD`) — das speist **nur**
   Rendering und Braiding, nie die Erosion.
-- **Fluviale Makro-Inzision** — `outletIncision`: Stream-Power `dz/dt = −K·Aᵐ·S`
-  (n = 1) auf dem D8-Entwässerungsnetz, impliziter Solver in Empfänger-Reihenfolge
-  → **unbedingt stabil**, auch bei 100k-Jahr-Schritten. Schneidet die Becken-Sillen
-  durch, sodass Seen zum Meer entwässern. Erodierbarkeit hängt von der Sedimentdecke
-  ab (Cover-Effekt: Sediment weicher als Fels).
+- **Fluviale Makro-Inzision** — `outletIncision`: flächenbasierte Stream-Power
+  `dz/dt = −K·Aᵐ·S` (n = 1) über das **gesamte** D8-Entwässerungsnetz (nicht nur an
+  den Auslässen — der Name ist historisch), impliziter Solver in Empfänger-Reihenfolge
+  → **unbedingt stabil**, auch bei 100k-Jahr-Schritten. Trägt damit das kohärente
+  Talnetz und schneidet nebenbei die Becken-Sillen durch, sodass Seen zum Meer
+  entwässern. Erodierbarkeit hängt von der Sedimentdecke ab (Cover-Effekt: Sediment
+  weicher als Fels).
 - **Droplet-Erosion** — partikelbasierte Hydraulik (`Hydraulic.erode`) legt die feine
   dendritische Textur in die Makro-Täler.
 - **Stream-Map** — zeitgemittelte Tropfen-Pfade (EWMA der Besuchs-RATE, dt-invariant):

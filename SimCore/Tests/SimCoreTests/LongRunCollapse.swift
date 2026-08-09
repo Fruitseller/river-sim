@@ -43,8 +43,9 @@ final class LongRunCollapse: XCTestCase {
         // KEIN Regress, sondern Alterung. Die Schwelle fängt nur echtes Einebnen ab.
         XCTAssertGreaterThan(relief1, 0.30,
                              "Relief eingeebnet (\(relief0) → \(relief1)) — Erosion zu stark?")
-        // See-Anteil bleibt gedeckelt (vor dem Fix ~2× auf 39%).
+        // See-Anteil bleibt gedeckelt (vor dem Fix ~2× auf 39%). Deckeln müssen das
+        // hier Auslass-Inzision und Diffusion — `basinFill` ist bewusst aus.
         XCTAssertLessThan(water1, 0.30,
-                          "See-Anteil wuchert (\(water0) → \(water1)) — Becken-Fill inaktiv?")
+                          "See-Anteil wuchert (\(water0) → \(water1)) — Becken entwässern nicht mehr (outletIncision/Hangdiffusion zu schwach)?")
     }
 }
