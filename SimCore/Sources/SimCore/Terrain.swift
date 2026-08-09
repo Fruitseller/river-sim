@@ -11,7 +11,8 @@ import Foundation
 /// Pass-Reihenfolge des Produktionspfads (`cfg.hydraulicEnabled`, LEM-Konvention
 /// — sie ist nicht beliebig, s. `step()` und docs/research-terrain-aging.md §4):
 ///
-///     Uplift (+ Relief-Servo) → computeFlow (Priority-Flood, D8, MFD)
+///     Uplift (abklingend U(t), Servo nur als Untergrenze)
+///     → computeFlow (Priority-Flood, D8, MFD)
 ///     → Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
 ///     → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion
 ///     → Wave → Vegetation
@@ -1400,18 +1401,21 @@ public final class Terrain {
 
     // MARK: - Tektonik / Isostasie
 
-    private func applyUplift(dt: Double, servoPer100y: Double = 0) {
+    /// `gatedAmount` ist die bereits über den Schritt INTEGRIERTE Hebung (Höhen-
+    /// einheiten bei `upliftBase == 1`) der abklingenden Tektonik bzw. des
+    /// Servo-Bodens; `cfg.upliftPer100y` ist die Alt-Konstante (Produktion 0, nur
+    /// noch von Testkonfigs gesetzt) und wirkt weiter über das VOLLE Feld.
+    private func applyUplift(dt: Double, gatedAmount us: Double = 0) {
         let uf = cfg.upliftPer100y * dt / 100
-        // Servo NUR über den POSITIVEN Teil des Tektonik-Felds und NUR auf LAND:
-        // er soll Grate nachwachsen lassen. Mit vollem upliftBase (Täler negativ)
-        // SENKTE er die Täler unter den Meeresspiegel (halbe Insel geflutet);
-        // ohne Land-Gate hob er den SCHELF in Tektonik-Ringen über die
-        // Wasserlinie (grüne Kratersäume vor der Küste — beides gemessen).
-        let us = servoPer100y * dt / 100
-        if uf == 0 && us == 0 { return }
+        // Die abklingende Hebung wirkt NUR über den POSITIVEN Teil des Tektonik-
+        // Felds und NUR auf LAND: sie soll Grate tragen. Mit vollem upliftBase
+        // (Täler negativ) SENKTE sie die Täler unter den Meeresspiegel (halbe
+        // Insel geflutet); ohne Land-Gate hob sie den SCHELF in Tektonik-Ringen
+        // über die Wasserlinie (grüne Kratersäume vor der Küste — beides gemessen).
+        if uf == 0 && us <= 0 { return }
         for k in 0..<cfg.count {
-            let servoK = (us > 0 && h[k] > cfg.sea) ? max(0, upliftBase[k]) * us : 0
-            let du0 = upliftBase[k] * uf + servoK
+            let gated = (us > 0 && h[k] > cfg.sea) ? max(0, upliftBase[k]) * us : 0
+            let du0 = upliftBase[k] * uf + gated
             var du: Double
             if du0 > 0 {
                 du = du0 * max(0, 1 - h[k] / cfg.isoHighClamp)
@@ -1751,8 +1755,13 @@ public final class Terrain {
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist
     /// implizit stabil); die Hangprozesse werden intern anteilig getaktet.
     public func step(dtYears dt: Double) {
-        // Relief-Servo: Hebung nur bei Relief-Defizit (Anti-Verflachung, s. Config).
-        applyUplift(dt: dt, servoPer100y: reliefServoRate())
+        // Abklingende Hebung (post-orogener Zerfall, s. Config). Der Relief-Servo
+        // ist nur noch UNTERGRENZE: er greift, wenn U(t) das Relief nicht mehr
+        // über `reliefTarget` hält — im normalen 100k-Fenster nie (gemessen). Das
+        // max steckt UNTER dem Integral (s. upliftAmount), sonst hinge der
+        // Übergangsschritt an der Schrittweite.
+        applyUplift(dt: dt, gatedAmount: upliftAmount(dt: dt,
+                                                      floorPer100y: reliefServoRate()))
         flowStepCount &+= 1
         let mfdInterval = max(1, cfg.mfdUpdateInterval)
         // Braiding ist MFD-Physik, nicht bloß Rendering: dafür darf das Feld
@@ -1930,6 +1939,119 @@ public final class Terrain {
         let deficit = cfg.reliefTarget - landReliefRobust()
         guard deficit > 0 else { return 0 }
         return cfg.reliefServoPer100y * min(1, deficit / cfg.reliefServoBand)
+    }
+
+    /// Aktuell wirkende Hebungsrate (pro 100 Jahre) der abklingenden Tektonik:
+    /// `U(t) = U_floor + (U₀ − U_floor)·e^(−t/τ)` (docs/research-terrain-aging.md §3).
+    /// Reine ANZEIGE-/Diagnose-Größe — `step()` integriert die Rate exakt über den
+    /// Zeitschritt (`upliftAmount`), statt sie am Schrittanfang zu sampeln.
+    public func upliftDecayRatePer100y() -> Double {
+        let u0 = cfg.upliftDecayStartPer100y, uFloor = cfg.upliftDecayFloorPer100y
+        guard cfg.upliftDecayYears > 0 else { return u0 }
+        return uFloor + (u0 - uFloor) * exp(-years / cfg.upliftDecayYears)
+    }
+
+    /// Über das ABSOLUTE Zeitintervall `[a, b]` (Sim-Jahre) exakt integrierte
+    /// abklingende Hebung, in Höheneinheiten bei `upliftBase == 1`:
+    ///
+    ///     ∫ U(t) dt / 100 = [U_floor·(b−a) + (U₀ − U_floor)·τ·(e^(−a/τ) − e^(−b/τ))] / 100
+    ///
+    /// Die geschlossene Form (statt „Rate am Schrittanfang × dt") ist die
+    /// Framerate-Unabhängigkeit dieses Passes: die Summe über viele Mini-Schritte
+    /// teleskopiert exakt zum Wert EINES großen Sprungs — Echtzeit-Zeitraffer und
+    /// „+10.000 Jahre" tragen dieselbe Hebung ein.
+    private func upliftDecayIntegral(from a: Double, to b: Double) -> Double {
+        let u0 = cfg.upliftDecayStartPer100y, uFloor = cfg.upliftDecayFloorPer100y
+        if u0 <= 0 && uFloor <= 0 { return 0 }
+        let tau = cfg.upliftDecayYears
+        guard tau > 0 else { return u0 * (b - a) / 100 } // τ = 0 → konstante Hebung
+        let decayed = (u0 - uFloor) * tau * (exp(-a / tau) - exp(-b / tau))
+        return (uFloor * (b - a) + decayed) / 100
+    }
+
+    /// Über `[years, years + dt]` integrierte abklingende Hebung — ohne
+    /// Untergrenze (s. `upliftAmount(dt:floorPer100y:)`).
+    func upliftDecayAmount(dt: Double) -> Double {
+        upliftDecayIntegral(from: years, to: years + dt)
+    }
+
+    /// Die Hebung EINES Zeitschritts inklusive Servo-Untergrenze:
+    ///
+    ///     ∫ max(U(t), U_servo) dt / 100
+    ///
+    /// Das punktweise `max` unter dem Integral ist der Punkt: `max(∫U, U_servo·dt)`
+    /// wäre schrittweiten-ABHÄNGIG. Schneidet U(t) die Untergrenze mitten in einem
+    /// großen Schritt, gewinnt dort noch das Integral von U — bei kleineren
+    /// Schritten übernähme im hinteren Teil bereits der Servo, und beide Wege
+    /// lieferten verschiedene Ergebnisse (verletzt die Framerate-Invariante aus
+    /// `AGENTS.md`). Der Schritt wird deshalb am SCHNITTPUNKT geteilt:
+    ///
+    ///     U(t*) = U_servo  ⇒  t* = −τ · ln((U_servo − U_floor) / (U₀ − U_floor))
+    ///
+    /// `t*` hängt nur von der Config ab, nicht von der Schrittweite — die Zerlegung
+    /// ist damit über beliebige Unterteilungen additiv. (Die Servo-Rate selbst wird
+    /// wie bei jedem Regler einmal pro Schritt aus dem aktuellen Relief gelesen;
+    /// im Produktionsbetrieb ist sie über das ganze Alterungsfenster 0.)
+    /// Wächter: `TerrainAging.testServoFloorCrossingIsFramerateIndependent`.
+    func upliftAmount(dt: Double, floorPer100y: Double) -> Double {
+        let a = years, b = years + dt
+        let s = max(0, floorPer100y)
+        if s <= 0 { return upliftDecayIntegral(from: a, to: b) }
+        let u0 = cfg.upliftDecayStartPer100y, uFloor = cfg.upliftDecayFloorPer100y
+        let tau = cfg.upliftDecayYears
+        // Kein Abklingen konfiguriert (τ ≤ 0 oder U₀ == U_floor) → die Rate ist über
+        // den Schritt konstant U₀, das punktweise max also trivial.
+        guard tau > 0, u0 != uFloor else { return max(u0, s) * (b - a) / 100 }
+        func rate(_ t: Double) -> Double { uFloor + (u0 - uFloor) * exp(-t / tau) }
+        let rA = rate(a), rB = rate(b)
+        if min(rA, rB) >= s { return upliftDecayIntegral(from: a, to: b) } // ganz über der Grenze
+        if max(rA, rB) <= s { return s * (b - a) / 100 }                   // ganz darunter
+        // Genau ein Schnittpunkt (U ist streng monoton), garantiert in (a, b).
+        let ratio = (s - uFloor) / (u0 - uFloor)
+        let tStar = min(max(-tau * log(ratio), a), b)
+        return u0 > uFloor
+            ? upliftDecayIntegral(from: a, to: tStar) + s * (b - tStar) / 100  // fallend: erst U, dann Boden
+            : s * (tStar - a) / 100 + upliftDecayIntegral(from: tStar, to: b)  // steigend: erst Boden, dann U
+    }
+
+    /// **Mittlere Grat-Krümmung** — die in `docs/research-terrain-aging.md` §6 als
+    /// fehlend benannte Alterungs-Diagnose. Mittelwert des diskreten Laplace
+    /// `∇²z = (z_l + z_r + z_o + z_u − 4z) / dx²` über die GRAT-Zellen, definiert
+    /// als Landzellen nahe der Wasserscheide: Einzugsgebiet ≤ `maxAreaCells`
+    /// Zellen (Default 2 — die Zelle selbst plus höchstens ein Zubringer).
+    ///
+    /// Das Vorzeichen trägt die Aussage: **negativ = konvex** (Material verlassend,
+    /// „Kuppe"). Ein junger, spitzer Kamm ist ein schmaler Knick → stark negativ;
+    /// die lineare Hangdiffusion arbeitet genau proportional zu dieser Größe und
+    /// treibt sie gegen 0 → **betragsmäßig kleiner = runder = älter**. Damit
+    /// trennt die Kennzahl „jung spitz" von „alt rund" objektiv, was `landRelief()`
+    /// allein nicht kann (ein flaches Terrain kann trotzdem spitze Grate haben).
+    ///
+    /// Auflösungs-Hinweis: `dx` folgt `cfg.cellSize`, die Feature-Skala des
+    /// Generators dagegen dem Grid (`baseFreq / n`) — der ABSOLUTE Wert ist
+    /// deshalb nur bei gleichem `n` vergleichbar. Als Alterungs-Signal wird sie
+    /// über die ZEIT bei festem `n` gelesen.
+    ///
+    /// Achtung beim FRISCH generierten Terrain (t = 0): dort dominiert die
+    /// Zell-Rauigkeit der Noise-Oberfläche, und ÷dx² verstärkt sie mit steigender
+    /// Auflösung (gemessen Seed 1337: −0.045 bei n=160, −0.143 bei n=320, −0.977
+    /// bei n=832; nach den ersten ~20k Sim-Jahren liegen alle drei bei −0.03 …
+    /// −0.05). Für Alterungs-Vergleiche deshalb erst NACH dem Einschwingen der
+    /// frischen Oberfläche ablesen.
+    public func ridgeCurvature(maxAreaCells: Double = 2) -> Double {
+        let cellArea = cfg.cellSize * cfg.cellSize
+        let limit = maxAreaCells * cellArea
+        var sum = 0.0
+        var count = 0
+        for j in 1..<(n - 1) {
+            for i in 1..<(n - 1) {
+                let k = j * n + i
+                guard h[k] > cfg.sea, area[k] <= limit else { continue }
+                sum += (h[k - 1] + h[k + 1] + h[k - n] + h[k + n] - 4 * h[k]) / cellArea
+                count += 1
+            }
+        }
+        return count == 0 ? 0 : sum / Double(count)
     }
 
     public func maxHeight() -> Double { h.max() ?? 0 }

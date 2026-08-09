@@ -23,10 +23,15 @@ final class SimCoreTests: XCTestCase {
         c.meanderMigration = 5.0e-5
         c.meanderNeckDist = 1.2
         c.meanderCohesion = 0 // Stufe 2 (Ufer-Kohäsion) neutralisiert: diese Tests prüfen die reine Kopplungs-Mechanik
-        // Mäander-Logik gegen aktive Tektonik testen (Produktion hat upliftPer100y=0
-        // und regelt das Relief über den Servo — die isolierte Grid-Variante ohne
-        // Droplet braucht aber Relief-Nachschub für die Altarm-Alterung).
+        // Mäander-Logik gegen KONSTANTE aktive Tektonik testen: die isolierte
+        // Grid-Variante ohne Droplet braucht dauerhaften Relief-Nachschub für die
+        // Altarm-Alterung. Die abklingende Produktions-Hebung (Issue #13) ist hier
+        // bewusst AUS — diese Tests pinnen ihre alte Kalibrierung (s. AGENTS.md
+        // „Drei Konfigurations-Ebenen"), sonst verschiebt jede Änderung an U₀/τ die
+        // Kopplungs-Mechanik mit.
         c.upliftPer100y = 0.0015
+        c.upliftDecayStartPer100y = 0
+        c.upliftDecayFloorPer100y = 0
         return c
     }
 

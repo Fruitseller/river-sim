@@ -285,11 +285,16 @@ Priorisiert; die ersten zwei sind die >30 %-Realismus-Hebel.
    Relief jetzt *von selbst* stabil bleibt statt am Deckel zu kleben.
    Erwartung: sichtbar gerundete Wasserscheiden über 20k–50k Jahre (`t_round`, §2).
 
-2. **[GROSS, mittlerer Aufwand] Abklingende Hebung für echtes Altern.**
-   `applyUplift` (`Terrain.swift:498`) auf `U(t)=U_floor+(U₀−U_floor)·e^(−t/τ)`
-   umstellen (τ≈40k yr, U₀≈2–4× heute, U_floor≈0.1·U₀). Ergibt die Sequenz
-   jung-spitz → alt-rund statt eines statischen Gleichgewichts. Zusammen mit (1)
-   ist das der Kern des „Appalachen vs. Alpen"-Effekts.
+2. **[GROSS, ERLEDIGT Aug 2026 — Issue #13] Abklingende Hebung für echtes Altern.**
+   `applyUplift` läuft auf `U(t)=U_floor+(U₀−U_floor)·e^(−t/τ)` (geschlossen über
+   den Zeitschritt integriert). Gesetzt: **τ = 40k yr, U₀ = 0.0008/100 J.,
+   U_floor = 0.1·U₀**. Abweichung von der Empfehlung „U₀ ≈ 2–4× heute": das
+   Repo startet bereits am Orogenese-Höhepunkt (die Generierung erzeugt den
+   fertigen Gebirgszustand), ein U₀ über dem heutigen Niveau wäre also ein
+   Wachstums-Puls — gemessen und verworfen. U₀ liegt deshalb bei ~½ des alten
+   Servo-Deckels, sodass die Erosion ab dem ersten Schritt überwiegt. Der
+   Relief-Servo ist dabei zur Untergrenze geworden. Messreihen:
+   `docs/terrain-aging-measurements.md`.
 
 3. **[MITTEL, gering] Prozess-Rollen/Reihenfolge sauber ziehen.**
    Reihenfolge pro Schritt auf Uplift→Flow→SPL(outletIncision)→Droplet→Diffusion→Wave
@@ -306,11 +311,16 @@ Priorisiert; die ersten zwei sind die >30 %-Realismus-Hebel.
    Die übrigen `Terrain.swift`-Zeilennummern in diesem Dokument sind historisch
    (Stand der Recherche) und stimmen nicht mehr.
 
-5. **[Diagnose] Messgrößen erweitern.** Für die Kalibrierung headless zusätzlich zur
-   `landRelief()` die **mittlere Grat-Krümmung** (∇²z auf Grat-Zellen) und die
-   **hypsometrische Kurve** loggen — sie unterscheiden „spitz/jung" (konkav, viel
-   hohe Fläche) von „rund/alt" (konvexe Kuppen, hypsometrisch ausgeglichen)
-   objektiv, wie vom User gefordert (erst messen, dann schrauben).
+5. **[Diagnose, TEILWEISE ERLEDIGT Aug 2026 — Issue #13] Messgrößen erweitern.**
+   Die **mittlere Grat-Krümmung** gibt es als `Terrain.ridgeCurvature()`
+   (mittleres ∇²z über Zellen mit Einzugsgebiet ≤ 2 Zellen = Wasserscheide;
+   negativ = konvex/spitz, gegen 0 = rund) — im Test und im Diagnosepanel
+   nutzbar. Sie trennt „spitz/jung" von „rund/alt" objektiv: über 100k Jahre
+   (n=832) rundet sie neu monoton von −0.0508 auf −0.0389, während sie im alten
+   Servo-Betrieb ab 40k wieder schärfer wurde. Achtung: auf der FRISCH
+   generierten Oberfläche dominiert Zell-Rauigkeit (÷dx² skaliert mit der
+   Auflösung) — erst nach ~20k Sim-Jahren ablesen.
+   Noch offen: die **hypsometrische Kurve** als zweite Kennzahl.
 
 ---
 

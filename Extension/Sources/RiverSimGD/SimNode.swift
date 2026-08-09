@@ -92,8 +92,9 @@ final class SimNode: Node {
     /// Marshalling im Renderpfad anfällt):
     /// min, mean, max, Landrelief, deltaMean, deltaMax, Volumen unter Referenz,
     /// Volumen über Referenz, Nettovolumen, maxAbtrag, maxAufbau, Relief-Servo/100 J.,
-    /// Dauerhebung/100 J., Reliefziel, Referenzjahr, ungültige Zellen,
-    /// robustes Relief-Signal (das REGELSIGNAL des Servos, p95 − Median).
+    /// abklingende Hebung U(t)/100 J., Reliefziel, Referenzjahr, ungültige Zellen,
+    /// robustes Relief-Signal (das REGELSIGNAL des Servo-Bodens, p95 − Median),
+    /// mittlere Grat-Krümmung (Alterungs-Kennzahl: negativ = spitz, → 0 = rund).
     @Callable func debugTerrainStats() -> PackedFloat32Array {
         if debugReferenceHeights.count != terrain.h.count { captureDebugReference() }
         let h = terrain.h
@@ -140,8 +141,9 @@ final class SimNode: Node {
             Float((sum - referenceSum) / divisor), Float(maximum - referenceMaximum),
             Float(belowReference * cellArea), Float(aboveReference * cellArea),
             Float((aboveReference - belowReference) * cellArea), Float(maxRemoved), Float(maxAdded),
-            Float(servo), Float(terrain.cfg.upliftPer100y), Float(terrain.cfg.reliefTarget),
+            Float(servo), Float(terrain.upliftDecayRatePer100y()), Float(terrain.cfg.reliefTarget),
             Float(debugReferenceYear), Float(invalid), Float(reliefSignal),
+            Float(terrain.ridgeCurvature()),
         ])
     }
 
