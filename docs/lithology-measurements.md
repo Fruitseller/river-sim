@@ -108,8 +108,8 @@ Schwellen wie `LongRunCollapse`: Relief > 0.30, See-Anteil < 0.30, maxH wächst 
 
 | Arm | Relief 0 → 100k | maxH 0 → 100k | See-Anteil | reliefRobust |
 | --- | --- | --- | --- | --- |
-| weichstes Gestein (`lithHardBias = −1`, K = 1.6 überall) | 0.5363 → **0.3643** | 0.6863 → 0.5143 | 0.053 | 0.1060 |
-| härtestes Gestein (`lithHardBias = +1`, K = 0.4 überall) | → **0.4407** | 0.6849 → 0.5907 | 0.045 | — |
+| weichstes Gestein (`lithHardBias = −1`, K ≥ 1.0 überall, bis 1.6) | 0.5363 → **0.3643** | 0.6863 → 0.5143 | 0.053 | 0.1060 |
+| härtestes Gestein (`lithHardBias = +1`, K ≤ 1.0 überall, ab 0.4) | → **0.4407** | 0.6849 → 0.5907 | 0.045 | — |
 
 Beide Extreme halten den Rahmen, in der erwarteten Richtung (weich erodiert mehr
 Relief weg, hart weniger) und ohne Runaway. Zum Vergleich: der Default-Lauf desselben

@@ -10,7 +10,7 @@ import XCTest
 /// 1. deterministisch je Seed → `testFieldIsDeterministicPerSeed`
 /// 2. Erodierbarkeit UND Diffusivität lesen daraus → `testBothRatesReadTheField`
 /// 3. Härtekontrast hält einen Hangknick ≥ 20k Jahre →
-///    `testHardnessContrastHoldsSlopeBreak` (+ `testDiffusionContrastKeepsTheEdge`)
+///    `testHardnessContrastHoldsSlopeBreak` (+ `testDiffusionContrastEffectIsMeasured`)
 /// 4. kein Einebnen/Runaway, auch im weichsten Gestein →
 ///    `testSoftestRockDoesNotFlatten`
 final class Lithology: XCTestCase {
@@ -263,9 +263,13 @@ final class Lithology: XCTestCase {
 
     // MARK: - Abnahme 4: kein Einebnen, auch im weichsten Gestein
 
-    /// Derselbe Langlauf wie `LongRunCollapse`, aber mit `lithHardBias = −1`:
-    /// die GANZE Karte ist das weichste Gestein des Modells (K = 1 + lithContrast
-    /// = 1.6 überall, Diffusivität 1.45). Relief darf nicht einebnen, die Berge
+    /// Derselbe Langlauf wie `LongRunCollapse`, aber mit `lithHardBias = −1`: die
+    /// Härte ist damit auf der GANZEN Karte in die weiche Hälfte verschoben. Genau
+    /// gerechnet: `hard` = Schichtwelle + Provinz − 1, geklemmt → `hard ∈ [−1, 0]`,
+    /// also **K ≥ 1.0 überall** (bis 1.6 an den weichsten Stellen) und
+    /// Diffusivität ≥ 1.0 (bis 1.45). Es gibt in diesem Arm also kein Gestein
+    /// mehr, das langsamer erodiert als das Referenzgestein — der Härtekontrast
+    /// bleibt, aber nur noch nach unten. Relief darf nicht einebnen, die Berge
     /// nicht wachsen, der See-Anteil nicht wuchern.
     func testSoftestRockDoesNotFlatten() {
         var c = SimConfig(); c.n = 160; c.lithHardBias = -1
@@ -350,9 +354,10 @@ final class Lithology: XCTestCase {
             "Ratenbegrenzung wirkt mit Gesteinsfeld nicht mehr (\(limited) gegen \(instant))")
     }
 
-    /// Gegenprobe zur Weich-Grenze: im HÄRTESTEN Gestein (Bias +1, K = 0.4)
-    /// darf die Landschaft nicht in die andere Richtung weglaufen (unerodierbare
-    /// Insel → Relief-Runaway, Becken entwässern nie).
+    /// Gegenprobe zur Weich-Grenze: mit Bias +1 liegt die Härte spiegelbildlich in
+    /// der harten Hälfte (`hard ∈ [0, 1]` → **K ≤ 1.0 überall**, bis 0.4 an den
+    /// härtesten Stellen). Die Landschaft darf dabei nicht in die andere Richtung
+    /// weglaufen (unerodierbare Insel → Relief-Runaway, Becken entwässern nie).
     func testHardestRockDoesNotRunAway() {
         var c = SimConfig(); c.n = 160; c.lithHardBias = 1
         let t = Terrain(config: c, seed: 1337)

@@ -197,8 +197,12 @@ final class SimNode: Node {
         let h = terrain.h, rain = terrain.rain, veg = terrain.veg
         let salt = terrain.saltCrust
         // Lithologie (Issue #12): Gesteinshärte je Zelle (−1 weich … +1 hart) für
-        // eine DEZENTE Färbung der Schichten. Leer, wenn das Feld aus ist → dann
-        // ein 1-Element-Dummy und Faktor 0 (identische Farben wie vorher).
+        // eine DEZENTE Färbung der Schichten. Nur `lithologyEnabled = false` lässt
+        // das Feld leer — dann greift der 1-Element-Dummy und die Farben sind exakt
+        // die von vorher. Der MESS-Referenzarm (`lithContrast = 0`) hat das Feld
+        // dagegen gefüllt: dort ist die Physik uniform, die Bänder werden aber
+        // trotzdem gemalt. Das ist gewollt — so lässt sich die Färbung gegen ein
+        // Terrain vergleichen, das die Härte nicht gespürt hat.
         let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
         let lithOn = lith.count == n * n
         var out = [UInt8](repeating: 255, count: n * n * 4)

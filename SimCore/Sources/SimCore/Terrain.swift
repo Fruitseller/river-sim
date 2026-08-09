@@ -1954,7 +1954,7 @@ public final class Terrain {
         // Lithologie (Issue #12): harte Bänke kriechen langsamer. OHNE das gibt es
         // keinen dauerhaften Hangknick — die Diffusion rundet die Kante der harten
         // Bank weg, egal wie langsam der Fluss sie einschneidet (Wächter:
-        // `Lithology.testDiffusionContrastKeepsTheEdge`). Faktor exakt 1.0, wenn
+        // `Lithology.testDiffusionContrastEffectIsMeasured`). Faktor exakt 1.0, wenn
         // das Feld fehlt oder der Kontrast 0 ist → bit-identische Arithmetik.
         let lithDC = lithHardness.count == cnt ? cfg.lithDiffusionContrast : 0
         let lithArr = lithDC != 0 ? lithHardness : [0.0]

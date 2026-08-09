@@ -205,7 +205,8 @@ public struct SimConfig: Sendable {
     /// `testFieldIsDeterministicPerSeed`). Reale Spannen sind größer
     /// (Granit:Schiefer ≈ 1:10); 0.6 ist bewusst konservativ gewählt, weil der
     /// weiche Arm die Erosion beschleunigt und der Relief-Wächter Marge braucht —
-    /// gemessen ist der EXTREMFALL („alles weichstes Gestein", K = 1.6 überall):
+    /// gemessen ist der EXTREMFALL (`lithHardBias = −1`, also K ≥ 1.0 auf der
+    /// ganzen Karte, bis 1.6 an den weichsten Stellen):
     /// Relief nach 100k Jahren 0.3643 gegen 0.30 Wächterschwelle. Ein Sweep
     /// 0.3/0.9 ist offen (docs/lithology-measurements.md §F).
     /// **lithContrast = 0 ist der REFERENZARM aller Messungen** (Feld wird
@@ -226,10 +227,12 @@ public struct SimConfig: Sendable {
     public var lithDiffusionContrast: Double = 0.45
     /// Globale Härte-Verschiebung (auf hard addiert, danach auf [−1, 1]
     /// geklemmt). Produktion 0 = die Bandbreite des Seeds. Der Regler existiert,
-    /// weil die EXTREME messbar sein müssen: `lithHardBias = −1` macht die ganze
-    /// Karte zum weichsten Gestein (K = 1 + lithContrast überall) — genau der
-    /// Fall, den Abnahmekriterium 4 verlangt (Wächter
-    /// `Lithology.testSoftestRockDoesNotFlatten`), und +1 die Gegenprobe.
+    /// weil die EXTREME messbar sein müssen: bei `lithHardBias = −1` liegt `hard`
+    /// nach der Klemmung überall in [−1, 0], die ganze Karte ist also mindestens so
+    /// weich wie das Referenzgestein (K ≥ 1.0, bis 1 + lithContrast an den
+    /// weichsten Stellen) — genau der Fall, den Abnahmekriterium 4 verlangt
+    /// (Wächter `Lithology.testSoftestRockDoesNotFlatten`). +1 ist die
+    /// spiegelbildliche Gegenprobe (K ≤ 1.0, bis 1 − lithContrast).
     public var lithHardBias: Double = 0.0
 
     // ---- Braiding (Verflechtung: zelluläres Bänke-Bauen, Murray & Paola 1994) ----
