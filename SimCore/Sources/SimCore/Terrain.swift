@@ -1757,9 +1757,11 @@ public final class Terrain {
     public func step(dtYears dt: Double) {
         // Abklingende Hebung (post-orogener Zerfall, s. Config). Der Relief-Servo
         // ist nur noch UNTERGRENZE: er greift, wenn U(t) das Relief nicht mehr
-        // über `reliefTarget` hält — im normalen 100k-Fenster nie (gemessen).
-        applyUplift(dt: dt, gatedAmount: max(upliftDecayAmount(dt: dt),
-                                             reliefServoRate() * dt / 100))
+        // über `reliefTarget` hält — im normalen 100k-Fenster nie (gemessen). Das
+        // max steckt UNTER dem Integral (s. upliftAmount), sonst hinge der
+        // Übergangsschritt an der Schrittweite.
+        applyUplift(dt: dt, gatedAmount: upliftAmount(dt: dt,
+                                                      floorPer100y: reliefServoRate()))
         flowStepCount &+= 1
         let mfdInterval = max(1, cfg.mfdUpdateInterval)
         // Braiding ist MFD-Physik, nicht bloß Rendering: dafür darf das Feld
@@ -1942,30 +1944,74 @@ public final class Terrain {
     /// Aktuell wirkende Hebungsrate (pro 100 Jahre) der abklingenden Tektonik:
     /// `U(t) = U_floor + (U₀ − U_floor)·e^(−t/τ)` (docs/research-terrain-aging.md §3).
     /// Reine ANZEIGE-/Diagnose-Größe — `step()` integriert die Rate exakt über den
-    /// Zeitschritt (`upliftDecayAmount`), statt sie am Schrittanfang zu sampeln.
+    /// Zeitschritt (`upliftAmount`), statt sie am Schrittanfang zu sampeln.
     public func upliftDecayRatePer100y() -> Double {
         let u0 = cfg.upliftDecayStartPer100y, uFloor = cfg.upliftDecayFloorPer100y
         guard cfg.upliftDecayYears > 0 else { return u0 }
         return uFloor + (u0 - uFloor) * exp(-years / cfg.upliftDecayYears)
     }
 
-    /// Über `[years, years + dt]` EXAKT integrierte abklingende Hebung, in
-    /// Höheneinheiten bei `upliftBase == 1`:
+    /// Über das ABSOLUTE Zeitintervall `[a, b]` (Sim-Jahre) exakt integrierte
+    /// abklingende Hebung, in Höheneinheiten bei `upliftBase == 1`:
     ///
-    ///     ∫ U(t) dt / 100 = [U_floor·dt + (U₀ − U_floor)·τ·(e^(−t/τ) − e^(−(t+dt)/τ))] / 100
+    ///     ∫ U(t) dt / 100 = [U_floor·(b−a) + (U₀ − U_floor)·τ·(e^(−a/τ) − e^(−b/τ))] / 100
     ///
     /// Die geschlossene Form (statt „Rate am Schrittanfang × dt") ist die
     /// Framerate-Unabhängigkeit dieses Passes: die Summe über viele Mini-Schritte
     /// teleskopiert exakt zum Wert EINES großen Sprungs — Echtzeit-Zeitraffer und
-    /// „+10.000 Jahre" tragen dieselbe Hebung ein (Wächter: `TerrainAging
-    /// .testDecayingUpliftIsFramerateIndependent`).
-    func upliftDecayAmount(dt: Double) -> Double {
+    /// „+10.000 Jahre" tragen dieselbe Hebung ein.
+    private func upliftDecayIntegral(from a: Double, to b: Double) -> Double {
         let u0 = cfg.upliftDecayStartPer100y, uFloor = cfg.upliftDecayFloorPer100y
         if u0 <= 0 && uFloor <= 0 { return 0 }
         let tau = cfg.upliftDecayYears
-        guard tau > 0 else { return u0 * dt / 100 } // τ = 0 → konstante Hebung
-        let decayed = (u0 - uFloor) * tau * (exp(-years / tau) - exp(-(years + dt) / tau))
-        return (uFloor * dt + decayed) / 100
+        guard tau > 0 else { return u0 * (b - a) / 100 } // τ = 0 → konstante Hebung
+        let decayed = (u0 - uFloor) * tau * (exp(-a / tau) - exp(-b / tau))
+        return (uFloor * (b - a) + decayed) / 100
+    }
+
+    /// Über `[years, years + dt]` integrierte abklingende Hebung — ohne
+    /// Untergrenze (s. `upliftAmount(dt:floorPer100y:)`).
+    func upliftDecayAmount(dt: Double) -> Double {
+        upliftDecayIntegral(from: years, to: years + dt)
+    }
+
+    /// Die Hebung EINES Zeitschritts inklusive Servo-Untergrenze:
+    ///
+    ///     ∫ max(U(t), U_servo) dt / 100
+    ///
+    /// Das punktweise `max` unter dem Integral ist der Punkt: `max(∫U, U_servo·dt)`
+    /// wäre schrittweiten-ABHÄNGIG. Schneidet U(t) die Untergrenze mitten in einem
+    /// großen Schritt, gewinnt dort noch das Integral von U — bei kleineren
+    /// Schritten übernähme im hinteren Teil bereits der Servo, und beide Wege
+    /// lieferten verschiedene Ergebnisse (verletzt die Framerate-Invariante aus
+    /// `AGENTS.md`). Der Schritt wird deshalb am SCHNITTPUNKT geteilt:
+    ///
+    ///     U(t*) = U_servo  ⇒  t* = −τ · ln((U_servo − U_floor) / (U₀ − U_floor))
+    ///
+    /// `t*` hängt nur von der Config ab, nicht von der Schrittweite — die Zerlegung
+    /// ist damit über beliebige Unterteilungen additiv. (Die Servo-Rate selbst wird
+    /// wie bei jedem Regler einmal pro Schritt aus dem aktuellen Relief gelesen;
+    /// im Produktionsbetrieb ist sie über das ganze Alterungsfenster 0.)
+    /// Wächter: `TerrainAging.testServoFloorCrossingIsFramerateIndependent`.
+    func upliftAmount(dt: Double, floorPer100y: Double) -> Double {
+        let a = years, b = years + dt
+        let s = max(0, floorPer100y)
+        if s <= 0 { return upliftDecayIntegral(from: a, to: b) }
+        let u0 = cfg.upliftDecayStartPer100y, uFloor = cfg.upliftDecayFloorPer100y
+        let tau = cfg.upliftDecayYears
+        // Kein Abklingen konfiguriert (τ ≤ 0 oder U₀ == U_floor) → die Rate ist über
+        // den Schritt konstant U₀, das punktweise max also trivial.
+        guard tau > 0, u0 != uFloor else { return max(u0, s) * (b - a) / 100 }
+        func rate(_ t: Double) -> Double { uFloor + (u0 - uFloor) * exp(-t / tau) }
+        let rA = rate(a), rB = rate(b)
+        if min(rA, rB) >= s { return upliftDecayIntegral(from: a, to: b) } // ganz über der Grenze
+        if max(rA, rB) <= s { return s * (b - a) / 100 }                   // ganz darunter
+        // Genau ein Schnittpunkt (U ist streng monoton), garantiert in (a, b).
+        let ratio = (s - uFloor) / (u0 - uFloor)
+        let tStar = min(max(-tau * log(ratio), a), b)
+        return u0 > uFloor
+            ? upliftDecayIntegral(from: a, to: tStar) + s * (b - tStar) / 100  // fallend: erst U, dann Boden
+            : s * (tStar - a) / 100 + upliftDecayIntegral(from: tStar, to: b)  // steigend: erst Boden, dann U
     }
 
     /// **Mittlere Grat-Krümmung** — die in `docs/research-terrain-aging.md` §6 als

@@ -94,4 +94,58 @@ final class TerrainAging: XCTestCase {
             "Hebungs-Eintrag hängt von der Schrittweite ab (\(coarse) vs \(fine))")
         XCTAssertGreaterThan(coarse, 0)
     }
+
+    /// Der Übergangsfall: U(t) SCHNEIDET die Servo-Untergrenze mitten im Schritt.
+    /// Genau hier wäre `max(∫U dt, U_servo·dt)` schrittweiten-abhängig — der große
+    /// Schritt liefe noch komplett auf der U-Kurve, viele kleine Schritte lägen im
+    /// hinteren Teil schon auf der Untergrenze. `upliftAmount` zieht das max unter
+    /// das Integral und teilt am Schnittpunkt, deshalb müssen beide Wege exakt
+    /// dasselbe ergeben. Größenordnung des alten Fehlers in genau diesem Aufbau:
+    /// der Sprung trug 0.09897 statt korrekt 0.10582 ein (−6.5 %).
+    func testServoFloorCrossingIsFramerateIndependent() {
+        var c = SimConfig(); c.n = 48
+        // Untergrenze so wählen, dass der Schnittpunkt MITTEN im groben Schritt
+        // liegt: U(t) = floor bei t = −τ·ln((s−U_floor)/(U₀−U_floor)).
+        let floorRate = c.upliftDecayFloorPer100y
+            + (c.upliftDecayStartPer100y - c.upliftDecayFloorPer100y) * exp(-1.5)
+        let tStar = 1.5 * c.upliftDecayYears // = 60.000 Jahre
+        let span = 40_000.0                  // Schritt(e) von 40k bis 80k → Schnitt bei 60k
+
+        func total(dt: Double) -> Double {
+            let t = Terrain(config: c, seed: 4242)
+            var sum = 0.0
+            while t.years < 40_000 { t.step(dtYears: 10_000) } // an den Startpunkt
+            let end = t.years + span
+            while t.years < end {
+                sum += t.upliftAmount(dt: dt, floorPer100y: floorRate)
+                t.step(dtYears: dt)
+            }
+            return sum
+        }
+        let oneJump = total(dt: span)
+        let manySteps = total(dt: 250)
+        XCTAssertEqual(manySteps, oneJump, accuracy: oneJump * 1e-9,
+            "Hebung am Servo-Schnittpunkt hängt von der Schrittweite ab (\(oneJump) vs \(manySteps))")
+
+        // Gegenprobe, dass der Fall wirklich ein Übergang ist: die Untergrenze
+        // liegt zwischen U(Start) und U(Ende) des Sprungs.
+        let t = Terrain(config: c, seed: 4242)
+        while t.years < 40_000 { t.step(dtYears: 10_000) }
+        let rate = { (y: Double) in
+            c.upliftDecayFloorPer100y + (c.upliftDecayStartPer100y - c.upliftDecayFloorPer100y)
+                * exp(-y / c.upliftDecayYears)
+        }
+        XCTAssertGreaterThan(rate(40_000), floorRate)
+        XCTAssertLessThan(rate(80_000), floorRate)
+        XCTAssertEqual(rate(tStar), floorRate, accuracy: floorRate * 1e-12)
+
+        // …und dass die Zerlegung im Übergangsschritt wirklich etwas ändert: das
+        // korrekte ∫max(U, Boden) ist STRIKT größer als beide Einzelzweige — genau
+        // die beiden Werte, zwischen denen die alte `max(…)`-Fassung gewählt hätte.
+        let pureDecay = t.upliftDecayAmount(dt: span)
+        let pureFloor = floorRate * span / 100
+        XCTAssertGreaterThan(oneJump, pureDecay)
+        XCTAssertGreaterThan(oneJump, pureFloor)
+        XCTAssertLessThan(oneJump, pureDecay + pureFloor)
+    }
 }
