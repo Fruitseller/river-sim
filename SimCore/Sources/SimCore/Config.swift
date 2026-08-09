@@ -40,6 +40,28 @@ public struct SimConfig: Sendable {
     /// Braiding bleibt es immer frisch, weil es dort ein physikalisches Feld ist.
     /// Core-Default bleibt 1 für eine frische API.
     public var mfdUpdateInterval: Int = 1
+    // ---- Niederschlagsgewichteter Abfluss (Issue #9) — Default AUS ----
+    // AUS (Default): `area`/`areaMFD` akkumulieren reine ZELLFLÄCHE — jede Zelle
+    // trägt `cellArea` bei, egal ob sie im Luv-Dauerregen oder im Regenschatten
+    // liegt; die Tropfen-Startpunkte sind gleichverteilt. Das `rain`-Feld
+    // (`computeRain`, orographisch, Wind aus Westen) las bis Issue #9 nur die
+    // Vegetation und die Biom-Färbung.
+    // AN: die Akkumulation startet je Zelle mit `cellArea · rain[k]` (D8 UND MFD,
+    // dieselbe Regel — die Rollentrennung bleibt: `area` speist die Erosion,
+    // `areaMFD` nur Render/Braiding), und die Tropfen starten
+    // niederschlagsgewichtet (Ablehnungs-Stichprobe in `Hydraulic.erode`).
+    // Aus `area` wird damit ABFLUSS statt Fläche — physikalisch Q = ∫ P dA
+    // (Stream-Power mit Abfluss statt Fläche, die Standard-Lesart von A^m).
+    //
+    // BEWUSST NICHT normiert (kein `rain/mittleres rain`): `rain` liegt zwischen
+    // 0.18 (Regenschatten-Floor) und 1.0, im Landmittel bei ~0.5 → eingeschaltet
+    // fällt der Gesamtabfluss auf ~die Hälfte, alle in ZELLEN kalibrierten Gates
+    // (braidMinCells, renderMinCells, meanderMinCells, floodplainMinArea) greifen
+    // entsprechend später und die Stream-Power-Raten (kRock, outletErode) sind zu
+    // schwach. Genau deshalb ist der Schalter per Default AUS: die Rekalibrierung
+    // ist Issue #10, hier wird nur der EFFEKT sauber gemessen
+    // (docs/rain-weighted-flow-measurements.md).
+    public var rainWeightedFlow = false
     public var kSed: Double = 1.1e-4   // Erodierbarkeit lockeres Sediment (weicher)
     public var sedCoverThresh: Double = 0.01 // ab so viel Sediment gilt "bedeckt"
     public var transportCap: Double = 9.0  // Transportkapazität-Koeffizient (SPACE)

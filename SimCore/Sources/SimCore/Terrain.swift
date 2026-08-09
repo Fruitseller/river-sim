@@ -63,8 +63,13 @@ public final class Terrain {
     /// und störte die Braid-Bänke, s. Kommentar in fillShallowPonds).
     public private(set) var waterLevel: [Double]
     public private(set) var receiver: [Int32] // Abfluss-Nachbar (-1 = Senke/Meer)
-    public private(set) var area: [Double]   // Einzugsgebiet (Zellflächen, Single-Flow/D8 → Erosion)
-    public private(set) var areaMFD: [Double] // Multi-Flow-Einzugsgebiet (Freeman) → NUR Render/Braiding, nie Erosion
+    /// Einzugsgebiet (Single-Flow/D8 → Erosion). Akkumuliert reine Zellflächen;
+    /// mit `cfg.rainWeightedFlow` stattdessen ABFLUSS (Fläche × Niederschlag,
+    /// s. `seedFlowAccumulator`).
+    public private(set) var area: [Double]
+    /// Multi-Flow-Einzugsgebiet (Freeman) → NUR Render/Braiding, nie Erosion.
+    /// Dieselbe Gewichtung wie `area` (s. `seedFlowAccumulator`).
+    public private(set) var areaMFD: [Double]
     private var order: [Int32]               // Pop-Reihenfolge (aufsteigende Füllhöhe)
     private var floodParent: [Int32]
 
@@ -286,7 +291,9 @@ public final class Terrain {
                             p: cfg.hydraulic,
                             seaLevel: cfg.hydraulicSkipWaterSpawns ? cfg.sea : nil,
                             hf: hf, receiver: receiver,
-                            stream: streamMap, track: &trackBuf)
+                            stream: streamMap,
+                            rainWeight: cfg.rainWeightedFlow ? rain : [],
+                            track: &trackBuf)
             for k in 0..<cfg.count {
                 streamRate[k] = 0.5 * streamRate[k] + 0.5 * (trackBuf[k] / dtEq)
             }
@@ -715,6 +722,31 @@ public final class Terrain {
         }}}}}}
     }
 
+    /// Startwert der Flächen-Akkumulation je Zelle — die EINE Stelle für beide
+    /// Netze (D8 in `computeReceiversAndArea`, MFD in `computeMFDArea`), damit sie
+    /// nicht auseinanderdriften.
+    ///
+    /// Default: reine Zellfläche (`cellArea` überall) — bit-identisch zum Zustand
+    /// vor Issue #9. Mit `cfg.rainWeightedFlow`: `cellArea · rain[k]`, d. h. die
+    /// Akkumulation trägt ABFLUSS statt Fläche (Q = ∫P dA). `rain` ist beim Aufruf
+    /// frisch (computeFlow ruft computeRain zuerst); nur der Breach-Spin-up
+    /// (`breachBasins`) rechnet bewusst auf dem Regen des letzten `computeFlow`
+    /// weiter — das Klima ändert sich über eine Breach-Runde nicht nennenswert.
+    /// Per-Zelle unabhängig → parallel bit-identisch zur sequenziellen Schleife.
+    private func seedFlowAccumulator(_ pa: UnsafeMutablePointer<Double>, cellArea: Double) {
+        let cnt = cfg.count
+        guard cfg.rainWeightedFlow else {
+            pa.update(repeating: cellArea, count: cnt)
+            return
+        }
+        rain.withUnsafeBufferPointer { rb in
+            let prain = rb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi { pa[k] = cellArea * prain[k] }
+            }
+        }
+    }
+
     /// PERF wie im Flood: Roh-Puffer, i/j aus der Schleife statt `%`/`/` je Zelle,
     /// innere Zellen mit 8 festen Offsets ohne Rand-Checks. Vergleichsreihenfolge
     /// und `/ dist` bleiben unverändert (strict `>` → der erste steilste gewinnt).
@@ -730,7 +762,7 @@ public final class Terrain {
             let phf = hfb.baseAddress!, prec = rb.baseAddress!, pa = ab.baseAddress!
             let ppar = pb.baseAddress!, pord = ob.baseAddress!
             prec.update(repeating: -1, count: cnt)
-            pa.update(repeating: cellArea, count: cnt)
+            seedFlowAccumulator(pa, cellArea: cellArea)
             // Empfänger: steilster Abstieg auf hf; auf Seespiegel-Flächen Richtung Überlauf.
             // Jede Zelle schreibt nur prec[k] → zeilenparallel, bit-identisch.
             parallel(nn) { jLo, jHi in
@@ -830,7 +862,7 @@ public final class Terrain {
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
             let phf = hfb.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
             let ppar = pb.baseAddress!, pord = ob.baseAddress!
-            pa.update(repeating: cellArea, count: cnt)
+            seedFlowAccumulator(pa, cellArea: cellArea)
             var oi = cnt - 1
             while oi >= 0 {
                 let k = Int(pord[oi]); oi -= 1
@@ -1801,6 +1833,7 @@ public final class Terrain {
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],
+                            rainWeight: cfg.rainWeightedFlow ? rain : [],
                             track: &trackBuf)
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
             // Zeitkonstante aus `streamMapMemoryYears`), dann sättigen: nur KONSISTENT befahrene
@@ -2060,6 +2093,8 @@ public final class Terrain {
     /// Gesamtes Einzugsgebiet, das an allen Senken (Meer + Ränder) ankommt.
     /// Muss der Gesamtzellzahl entsprechen: jede Zelle trägt genau ihre eigene
     /// Fläche bei und fließt zu genau einer Senke (Entwässerungs-Invariante).
+    /// Mit `cfg.rainWeightedFlow` lautet dieselbe Invariante Σ`rain` statt Zellzahl
+    /// (jede Zelle trägt ihren Niederschlag bei) — s. `seedFlowAccumulator`.
     public func totalOutletArea() -> Double {
         let cellArea = cfg.cellSize * cfg.cellSize
         var sum = 0.0
