@@ -195,6 +195,7 @@ final class SimNode: Node {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let h = terrain.h, rain = terrain.rain, veg = terrain.veg
+        let salt = terrain.saltCrust
         var out = [UInt8](repeating: 255, count: n * n * 4)
         // Wasser (Flüsse/Seen/Altarme) zeichnet das separate Wasser-Feld (waterFieldBytes)
         // als glattes, geshadetes Overlay — hier nur Land-Biome + Meeresgrund.
@@ -202,9 +203,10 @@ final class SimNode: Node {
         h.withUnsafeBufferPointer { hb in
         rain.withUnsafeBufferPointer { rnb in
         veg.withUnsafeBufferPointer { vgb in
+        salt.withUnsafeBufferPointer { slb in
         out.withUnsafeMutableBufferPointer { ob in
         let ph = hb.baseAddress!, prain = rnb.baseAddress!
-        let pveg = vgb.baseAddress!, pout = ob.baseAddress!
+        let pveg = vgb.baseAddress!, psalt = slb.baseAddress!, pout = ob.baseAddress!
         parallelChunks(n) { jLo, jHi in
         for j in jLo..<jHi {
             for i in 0..<n {
@@ -245,6 +247,19 @@ final class SimNode: Node {
                         let ws = min(1, (v - 1.05) / 0.08)
                         r += (0.93 - r) * ws; g += (0.94 - g) * ws; b += (0.96 - b) * ws
                     }
+                    // Salzpfanne/Playa (Issue #11): der trockengefallene Boden
+                    // eines abflusslosen Beckens ist NICHT mehr blau (das
+                    // Wasser-Overlay malt dort nichts mehr) — als graugrünes Land
+                    // wäre er aber auch nicht als das erkennbar, was er ist.
+                    // Deshalb der Verdunstungsrückstand: helle, leicht warme
+                    // Kruste (Terrain.saltCrust, 0 außerhalb solcher Becken).
+                    // Deckel 0.9: die Kruste bleibt unter dem Gipfel-Schnee
+                    // (0.93+) und liest sich als matter Salzboden, nicht als
+                    // Schneefeld im Tal.
+                    let sc = min(1, max(0, psalt[k])) * 0.9
+                    if sc > 0 {
+                        r += (0.87 - r) * sc; g += (0.86 - g) * sc; b += (0.80 - b) * sc
+                    }
                 }
                 let o = k * 4
                 pout[o] = UInt8(min(max(r, 0), 1) * 255)
@@ -254,7 +269,7 @@ final class SimNode: Node {
             }
         }
         }
-        }}}}
+        }}}}}
         return PackedByteArray(out)
     }
 

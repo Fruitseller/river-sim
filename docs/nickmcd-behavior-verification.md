@@ -28,6 +28,17 @@ belegt ist (headless Test bzw. Screenshot). Stand: 2026-07-27.
   (Dämme/Sillen), nicht volumetrisch. Sichtbares Verhalten ist äquivalent
   (Seen wachsen/schrumpfen), die Zeitskala ist geologisch statt hydrologisch —
   passend zum Zeitraffer-Spiel.
+  **Teilweise aufgehoben (Issue #11):** der Spiegel ist nicht mehr
+  bedingungslos das Sill-Niveau. Ein geschlossenes Becken bekommt einen
+  Wasserhaushalt — Zufluss (niederschlagsgewichteter Abfluss aus #9/#10) gegen
+  Verdunstung über der Seefläche (`Terrain.capEndorheicBasins`) — und steht unter
+  der Sill, wenn der Zufluss den Vollstand nicht trägt. Das ist keine
+  Volumen-Bilanz je Partikel, sondern ein Flächen-Gleichgewicht je Becken
+  (stationär, ohne Speicher), aber es macht endorheische Becken, Playas und
+  Salzseen erstmals möglich. Ein verdunstungs-limitiertes Becken ist eine
+  TERMINALE Senke: kein Sill-Abfluss, keine Auslass-Inzision — es entwässert sich
+  also nicht selbst frei. Belege: `docs/endorheic-evaporation-measurements.md`,
+  Wächter `EndorheicEvaporation`.
 - **Erosion zusätzlich über FastScape/outletIncision**: die Makro-Täler kommen
   weiter aus der (stabilen, kalibrierten) Grid-Inzision; nickmcds reine
   Partikel-Erosion übernimmt Textur + Hydrologie-Karten. Grund: Terrain-Look
