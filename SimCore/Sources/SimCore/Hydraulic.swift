@@ -108,6 +108,10 @@ public enum Hydraulic {
     ///   (verworfene Ozean-Starts) denselben Anteil verwirft wie ungewichtet und
     ///   der Tropfen-Etat auf Land unverändert bleibt. Leeres Array =
     ///   gleichverteilte Starts wie bisher (bit-identisch).
+    /// - `erodibility`: relative Gesteins-Erodierbarkeit (Terrain.lithErodeK,
+    ///   Issue #12; 1 = Referenzgestein). Skaliert den FELS-Anteil jedes Abtrags
+    ///   (s. `dig`) — das lockere Sediment darüber erodiert unverändert. Leeres
+    ///   Array = uniformes Gestein wie bisher (bit-identisch).
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
                               n: Int, count: Int, seed: UInt32, floor: Double,
                               p: HydraulicParams,
@@ -115,6 +119,7 @@ public enum Hydraulic {
                               hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
                              rainWeight: [Double] = [],
+                             erodibility: [Double] = [],
                              track: inout [Double]) {
         guard count > 0, n > 2 else { return }
         // Erosions-Pinsel einmal vorberechnen: Offsets + normierte Gewichte im Radius.
@@ -135,10 +140,33 @@ public enum Hydraulic {
         // Arithmetik ist bit-identisch mit dem Zustand vor der Reconciliation)
         let chanOn = channel.count == h.count
 
+        // Lithologie-Feld aktiv? (leeres/kaputtes Array → Faktor fällt weg und die
+        // Arithmetik ist bit-identisch zum Zustand vor Issue #12)
+        let lithOn = erodibility.count == h.count
+
         // Abtrag; gibt den tatsächlich abgetragenen Betrag zurück (am Tiefseeboden
         // gedeckelt), damit die Sedimentbilanz stimmt.
+        //
+        // Lithologie (Issue #12): der Härtefaktor wirkt NUR auf den Fels-Anteil.
+        // Das lockere Sediment darüber wird wie bisher abgeräumt (Regolith weiß
+        // nicht, welches Gestein darunter liegt); was darüber hinaus in den Fels
+        // greift, wird mit dessen Erodierbarkeit skaliert — auf einer harten Bank
+        // bleibt nach dem Abräumen der Auflage genau der Widerstand stehen, der
+        // die Kante hält.
+        //
+        // BIT-IDENTITÄT: der Faktor wird VOR dem restlichen (unveränderten) Ablauf
+        // auf `amount` gerechnet und nur angefasst, wenn er ≠ 1 ist. Sonst liefe
+        // auch bei uniformem Gestein eine andere Gleitkomma-Reihenfolge
+        // (`take + (d − take)` ist NICHT bit-genau `d`), und der 30k-Jahre-Lauf
+        // des Braiding-Wächters driftet messbar weg (gemessen: Bank-Fläche
+        // 185/104 statt 160/81) — chaotisches System, 1-ulp-Unterschiede wachsen.
         @inline(__always) func dig(_ k: Int, _ amount: Double) -> Double {
             var d = amount
+            let f = lithOn ? erodibility[k] : 1.0
+            if f != 1.0 {
+                let s = sed[k]
+                if d > s { d = s + (d - s) * f }
+            }
             let room = h[k] - floor
             if room <= 0 { return 0 } // schon am Tiefseeboden
             if d > room { d = room }  // nicht unter den Boden graben

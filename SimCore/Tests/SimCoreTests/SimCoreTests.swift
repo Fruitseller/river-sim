@@ -32,6 +32,13 @@ final class SimCoreTests: XCTestCase {
         c.upliftPer100y = 0.0015
         c.upliftDecayStartPer100y = 0
         c.upliftDecayFloorPer100y = 0
+        // Uniformes Gestein (dieselbe Doktrin): diese Tests prüfen die Kopplung
+        // Zentrumslinie ↔ Grid, nicht die Lithologie-Kalibrierung. Mit dem
+        // Gesteinsfeld (Issue #12) läuft `transportLimited` auf räumlich variablem
+        // kRock — die Härte des Streifens, in dem der Testlauf gerade liegt, würde
+        // Carve-Tiefen und Altarm-Alterung mitverschieben. Das Gesteinsfeld hat
+        // seine eigenen Wächter (`Lithology.swift`).
+        c.lithologyEnabled = false
         return c
     }
 

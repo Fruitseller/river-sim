@@ -425,6 +425,25 @@ final class RiverDynamicsTests: XCTestCase {
             // Wasserhaushalt × Braiding ist als eigener Punkt offen
             // (docs/endorheic-evaporation-measurements.md §E).
             cOn.endorheicEvaporation = false
+            // Gesteinsfeld (Issue #12) AUSGEPINNT, gleiche Begründung und gleiches
+            // Muster: dieser Wächter misst den braidPass A/B. Mit Lithologie liegen
+            // die Braid-Reaches je Seed in unterschiedlich hartem Gestein, und die
+            // Bank-Fläche hängt an der Bett-Tiefe des Reaches. GEMESSEN (16 Seeds,
+            // 30k J., Lithologie-Produktionswerte gegen uniformes Gestein):
+            //   uniform (= dieser Arm)  Bank-Fläche 132 / 119, Seeds 8:2,
+            //                           Inseln 61 / 42, Splits 3379 / 3132
+            //   mit Lithologie          Bank-Fläche 177 / 106, Seeds 7:6,
+            //                           Inseln 61 / 51, Splits 3570 / 3064
+            // Der Pass wird also NICHT schwächer — der Bank-Flächen-Kontrast
+            // steigt sogar von 1.11× auf 1.67×, der Splits-Kontrast ebenso. Was
+            // reißt, ist die geforderte SEED-Mehrheit (Abstand 1 statt 3):
+            // dieselbe schwerschwänzige Streuung wie beim Wasserhaushalt oben.
+            // Die Wechselwirkung Lithologie × Braiding ist als offener Punkt
+            // notiert (docs/lithology-measurements.md §E).
+            // (Nebenbefund: der oben dokumentierte ARBEITSPUNKT 160/81 bei 9:3 ist
+            // veraltet — auf dem heutigen Stand von `main` messen dieselben 16
+            // Seeds 132/119 bei 8:2, ohne jede Änderung dieses Tests.)
+            cOn.lithologyEnabled = false
             var cOff = cOn; cOff.braidingEnabled = false
             let tOn = Terrain(config: cOn, seed: seed)
             let tOff = Terrain(config: cOff, seed: seed)

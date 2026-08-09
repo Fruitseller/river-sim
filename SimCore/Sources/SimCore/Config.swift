@@ -109,6 +109,132 @@ public struct SimConfig: Sendable {
     public var sedCoverThresh: Double = 0.01 // ab so viel Sediment gilt "bedeckt"
     public var transportCap: Double = 9.0  // Transportkapazität-Koeffizient (SPACE)
 
+    // ---- Lithologie: räumlich variable Erodierbarkeit (Issue #12) ----
+    // Bis #12 war das Gestein ÜBERALL gleich weich (eine Konstante `kRock` bzw.
+    // `outletErode`) — damit sind Schichtstufen, Mesas, strukturkontrollierte
+    // Entwässerung und lithologische Knickpunkte strukturell unmöglich. Dieses
+    // Feld legt ein deterministisches, seed-abhängiges GESTEINSFELD unter die
+    // Landschaft (`Terrain.buildLithologyField` / `Terrain.updateLithology`):
+    //
+    //     Härte  hard[k] ∈ [−1, +1]  =  (1−Mix)·Schichtwelle + Mix·Provinz + Bias
+    //     Erodierbarkeit  K[k] = 1 − lithContrast · hard[k]      (Mittel ≈ 1)
+    //     Diffusivität    D[k] = 1 − lithDiffusionContrast · hard[k]
+    //
+    // Die Schichtwelle ist die STRATIGRAPHISCHE Koordinate s = (h − Schichtebene)
+    // / lithLayerThickness, durch ein glattes Wechselprofil geschickt. Weil sie an
+    // der aktuellen Höhe hängt, bleibt eine harte Bank auf IHREM Niveau, während
+    // die Erosion sie unterschneidet — genau der Mesa-/Schichtstufen-Mechanismus
+    // (die Bank wandert nicht mit der Oberfläche mit).
+    //
+    // WICHTIG — was das Feld liest und was nicht (Kalibrier-Kaskade):
+    // * `outletIncision` (die fluviale Makro-Rate der Produktion) skaliert `kOut`
+    //   mit K → lithologische Knickpunkte im Talnetz.
+    // * `Hydraulic.erode` skaliert den FELS-Anteil jedes Abtrags mit K; das
+    //   lockere Sediment darüber erodiert unverändert (Regolith ist Regolith,
+    //   egal was darunter liegt). Deshalb braucht der Droplet-Pfad keinen
+    //   zweiten Schwellwert.
+    // * `hillslopeDiffusion` skaliert kappa mit D → harte Bänke behalten ihre
+    //   steile Kante, statt zur Kuppe zu diffundieren (ohne das gibt es keinen
+    //   Hangknick, s. Wächter `Lithology.testHardnessContrastHoldsSlopeBreak`).
+    // * `transportLimited` (Nicht-Droplet-TESTPFAD) skaliert `kRock` mit K.
+    // * NICHT beteiligt: `braidPass`, `wavePass`, `meanderCarve`/-Bankerosion und
+    //   die Verlandungs-Pässe — das sind Sediment-/Ufer-/Küstenprozesse in
+    //   lockerem Material, nicht Fels-Abtrag. Bewusste Grenze, damit die
+    //   Braid-/Mäander-Kalibrierung unangetastet bleibt.
+    //
+    // GEMESSEN (Wächter `Lithology.swift`, Zahlen und Methode:
+    // docs/lithology-measurements.md):
+    // * **Hangknick-Signal** = mittlere Makro-Steigung auf hartem gegen weiches
+    //   Gestein, lokal gepaart in 16×16-Fenstern, geometrisch gepoolt (n=192,
+    //   Seed 1337): AN 0.999 (Jahr 0) → **1.163** (20k J.), Referenzarm
+    //   (lithContrast 0) 1.004 → 1.052. Der Knick entsteht also erst über die
+    //   Zeit und liegt 11 Punkte über dem Referenzarm.
+    // * **Abtragstiefe** hart/weich über 20k Jahre: AN 1.24, Referenzarm 5.03 —
+    //   dieselbe Aussage aus der anderen Richtung: ohne Härte trägt genau dort
+    //   am meisten ab, wo (zufällig) die harten Provinzen liegen; mit Härte wird
+    //   dieses Verhältnis um Faktor 4.4 zurückgedrückt.
+    // * **Langzeit-Wächter** (n=160, Seed 1337, 100k J., Produktionspfad):
+    //   weichstes Gestein (lithHardBias −1) Relief 0.5363 → 0.3643, maxH 0.6863
+    //   → 0.5143 (monoton), See-Anteil 0.053; härtestes (+1) Relief 0.4407, maxH
+    //   0.6849 → 0.5907, See-Anteil 0.045. Beide Extreme halten den
+    //   LongRunCollapse-Rahmen (Relief > 0.30, See < 0.30, keine wachsenden
+    //   Berge); die Alterung selbst bleibt intakt.
+    // RÜCKWIRKUNG auf bestehende Wächter (Details: die Kommentare an den
+    // gepinnten Stellen und docs/lithology-measurements.md §E): die
+    // Mechanik-Wächter von #11 (`EndorheicEvaporation`) und der Braiding-A/B
+    // (`testBraidingBuildsBars`) pinnen das Feld AUS — sie prüfen ihre Mechanik an
+    // einem konkreten Becken bzw. an einer Seed-Mehrheit, und beides entscheidet
+    // die Lithologie mit. Dass die Mechaniken MIT Feld intakt bleiben, ist eigens
+    // gemessen (`Lithology.testEndorheicMechanicsSurviveLithology`; Braiding mit
+    // Feld: Bank-Fläche 177/106 gegen 132/119 uniform, also stärkerer Kontrast).
+    // NICHT gemessen (offener Punkt, s. docs/lithology-measurements.md §F): die
+    // Gegenprobe in PRODUKTIONSAUFLÖSUNG (n=832) und über mehrere Seeds. Alle
+    // Zahlen hier stammen aus n=160/192/256.
+    public var lithologyEnabled = true
+    /// Höhen-PERIODE eines Schichtpakets (hart + weich). 0.06 bei einer
+    /// Landreliefspanne von ~0.5 = knapp 8 Bänke über den ganzen Hang.
+    /// NICHT durchkalibriert (offener Punkt): der Wert kommt aus der Geometrie
+    /// (Landreliefspanne / gewünschte Bankzahl), nicht aus einem Sweep. Er ist die
+    /// natürliche Stellschraube für „dickbankig gegen feinschichtig"; ein Sweep
+    /// 0.03/0.06/0.12 gegen das Hangknick-Signal steht in
+    /// docs/lithology-measurements.md §F als offene Messung.
+    public var lithLayerThickness: Double = 0.06
+    /// Fallen der Schichtebene: Höhenversatz über die ganze Kartenbreite
+    /// (Streichrichtung und Betrag variieren je Seed, s. buildLithologyField).
+    /// 0 wäre eine horizontale Bank auf gleicher Höhe über die ganze Insel (ein
+    /// Terrassen-Ring um jeden Berg — zu regelmäßig); 0.22 verschiebt die
+    /// Bankfolge über die Karte um gut 3 Pakete → Cuestas/Schichtkämme mit
+    /// wechselnder Höhe. Nicht gesweept (offener Punkt, s. lithLayerThickness).
+    public var lithDip: Double = 0.22
+    /// Amplitude der Schicht-VERBIEGUNG (Faltung) in Höheneinheiten, fBm über
+    /// ~halbe Karte. 0.05 ≈ eine Paketdicke → die Bankfolge wellt sich organisch,
+    /// ohne dass die Stapel-Reihenfolge zerfällt (Faltung ≫ Dicke heißt:
+    /// benachbarte Zellen liegen in verschiedenen Paketen → Flecken statt Bänke).
+    public var lithWarp: Double = 0.05
+    /// Anteil des PROVINZ-Rauschens (großräumige Härte-Provinzen ~ halbe Karte,
+    /// Batholith gegen Sedimentbecken) am Härtesignal; der Rest ist die
+    /// Schichtwelle. 0.35: genug, damit ganze Landstriche härter sind (die
+    /// strukturkontrollierte Entwässerung des Tickets), aber die Schichtstufen
+    /// bleiben das dominante Signal. 1.0 = reines Noise-Gestein (dann gibt es
+    /// keine Stufen), 0.0 = reine Schichtfolge.
+    public var lithProvinceMix: Double = 0.35
+    /// Erodierbarkeits-Spanne: K = 1 − lithContrast·hard, also K ∈ [0.4, 1.6] bei
+    /// 0.6 — Härteverhältnis weich:hart = 4:1. Das Mittel von K bleibt bei 1
+    /// (`hard` ist im Mittel ≈ 0), deshalb verschiebt der Kontrast die GLOBALE
+    /// Erosionsrate nicht (Härte-Mittel gemessen |mean| < 0.15, Wächter
+    /// `testFieldIsDeterministicPerSeed`). Reale Spannen sind größer
+    /// (Granit:Schiefer ≈ 1:10); 0.6 ist bewusst konservativ gewählt, weil der
+    /// weiche Arm die Erosion beschleunigt und der Relief-Wächter Marge braucht —
+    /// gemessen ist der EXTREMFALL (`lithHardBias = −1`, also K ≥ 1.0 auf der
+    /// ganzen Karte, bis 1.6 an den weichsten Stellen):
+    /// Relief nach 100k Jahren 0.3643 gegen 0.30 Wächterschwelle. Ein Sweep
+    /// 0.3/0.9 ist offen (docs/lithology-measurements.md §F).
+    /// **lithContrast = 0 ist der REFERENZARM aller Messungen** (Feld wird
+    /// gerechnet, wirkt aber nicht → bit-identisch zu lithologyEnabled = false,
+    /// Wächter `Lithology.testZeroContrastIsBitIdenticalToDisabled`).
+    public var lithContrast: Double = 0.6
+    /// Dieselbe Spanne für die HANGDIFFUSIVITÄT (D = 1 − c·hard). Bewusst
+    /// SCHWÄCHER als der fluviale Kontrast (0.45 gegen 0.6): das Kriechen hängt
+    /// real an Boden/Klima, nicht nur am Fels.
+    /// **Ehrliche Messung:** auf den Hangknick hat diese Kopplung KEINEN
+    /// messbaren Einfluss — Signal bei 20k mit 0.45 = 1.163, mit 0 = 1.180 (n=192,
+    /// Seed 1337, Wächter `Lithology.testDiffusionContrastEffectIsMeasured`, der
+    /// genau das festhält). Der Knick kommt aus der fluvialen Rate. Die Kopplung
+    /// bleibt, weil sie (a) Abnahmekriterium 2 des Tickets ist und (b)
+    /// physikalisch Standard: härteres Gestein liefert weniger Regolith, kriecht
+    /// also weniger. Sie ist damit ein Kandidat für eine spätere Kalibrierung,
+    /// keine belegte Notwendigkeit.
+    public var lithDiffusionContrast: Double = 0.45
+    /// Globale Härte-Verschiebung (auf hard addiert, danach auf [−1, 1]
+    /// geklemmt). Produktion 0 = die Bandbreite des Seeds. Der Regler existiert,
+    /// weil die EXTREME messbar sein müssen: bei `lithHardBias = −1` liegt `hard`
+    /// nach der Klemmung überall in [−1, 0], die ganze Karte ist also mindestens so
+    /// weich wie das Referenzgestein (K ≥ 1.0, bis 1 + lithContrast an den
+    /// weichsten Stellen) — genau der Fall, den Abnahmekriterium 4 verlangt
+    /// (Wächter `Lithology.testSoftestRockDoesNotFlatten`). +1 ist die
+    /// spiegelbildliche Gegenprobe (K ≤ 1.0, bis 1 − lithContrast).
+    public var lithHardBias: Double = 0.0
+
     // ---- Braiding (Verflechtung: zelluläres Bänke-Bauen, Murray & Paola 1994) ----
     // Die einzige Zutat, die dem MFD-Fundament noch fehlt: SUPER-LINEARER Sediment-
     // Transport. Kapazität je MFD-Route qcᵢ = Kb·Q·Sᵢ·fᵢ^m mit m≈2.5 — die Super-

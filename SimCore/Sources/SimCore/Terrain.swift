@@ -12,6 +12,7 @@ import Foundation
 /// — sie ist nicht beliebig, s. `step()` und docs/research-terrain-aging.md §4):
 ///
 ///     Uplift (abklingend U(t), Servo nur als Untergrenze)
+///     → Lithologie (Härte/Erodierbarkeit aus der frischen Höhe, Issue #12)
 ///     → computeFlow (Priority-Flood, D8, MFD)
 ///     → Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
 ///     → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion
@@ -22,7 +23,9 @@ import Foundation
 /// unbedingt stabil bei großen Zeitschritten); die feine dendritische Textur
 /// legen die Tropfen (`Hydraulic.erode`), gerundet wird über LINEARE
 /// Hangdiffusion mit räumlich variablem kappa (`hillslopeDiffusion`) — nicht
-/// über Schwellen-Talus.
+/// über Schwellen-Talus. Beide Raten (fluvial und Hang) werden zusätzlich vom
+/// **Gesteinsfeld** moduliert (`lithHardness`/`lithErodeK`, Issue #12): harte
+/// Bänke tragen Schichtstufen, Mesas und lithologische Knickpunkte.
 ///
 /// Der Nicht-Droplet-Zweig (`hydraulicEnabled = false`, `transportLimited` +
 /// `diffusionPass`) ist reiner TESTPFAD, s. Kommentare dort.
@@ -43,6 +46,24 @@ public final class Terrain {
     /// `seedFlowAccumulator` (beide Netze) und den Tropfen-Startpunkten
     /// (`Hydraulic.spawnPosition`). Herleitung: `SimConfig.rainWeightedFlow`.
     public private(set) var rainWeight: [Double] = []
+    /// **Lithologie** (Issue #12): Härte-Signal je Zelle, −1 = weichstes …
+    /// +1 = härtestes Gestein. Leer, solange `cfg.lithologyEnabled` aus ist (dann
+    /// laufen alle Pfade bit-identisch zum Stand vor #12). Zusammengesetzt aus
+    /// der stratigraphischen Schichtwelle (hängt an `h` — deshalb wird das Feld
+    /// je Schritt in `updateLithology` neu abgeleitet) und dem fixen
+    /// Provinz-Rauschen. Herleitung und Kalibrierung: `SimConfig.lithologyEnabled`.
+    public private(set) var lithHardness: [Double] = []
+    /// Relative Erodierbarkeit je Zelle = `1 − lithContrast · lithHardness`
+    /// (Mittel ≈ 1, damit die globale Kalibrierung stehen bleibt). Verbraucht von
+    /// `outletIncision`, `Hydraulic.erode` (Fels-Anteil) und `transportLimited`.
+    private(set) var lithErodeK: [Double] = []
+    /// Referenzhöhe der Schichtebene je Zelle — geneigte Ebene + Faltungs-
+    /// Verbiegung, **fix je Seed** (`buildLithologyField`). Die stratigraphische
+    /// Koordinate einer Zelle ist `(h − lithBed) / lithLayerThickness`.
+    private var lithBed: [Double] = []
+    /// Großräumige Härte-Provinzen (−1…1), fix je Seed: Batholith gegen
+    /// Sedimentbecken → strukturkontrollierte Entwässerung über ganze Landstriche.
+    private var lithProvince: [Double] = []
     public private(set) var veg: [Double]    // Vegetationsdichte 0..1
     /// Vegetations-Klasse je Zelle: 0 kahl · 1 Gras · 2 Wald · 3 Auwald.
     /// ADDITIV zu `veg` (das bleibt Dichte 0..1 für alle bestehenden
@@ -312,6 +333,11 @@ public final class Terrain {
                                 params: cfg.preErodeParams)
         }
         initLayers()
+        // Gesteinsfeld (Issue #12) VOR dem ersten Flow: der Becken-Breach und die
+        // Spin-up-Tropfen sollen die Härtekontraste schon sehen — die antezedente
+        // Entwässerung ist damit von Anfang an strukturkontrolliert.
+        buildLithologyField()
+        updateLithology()
         // Becken-Wasserhaushalt (Issue #11) im Gleichgewicht starten: die
         // Generierung ruft `computeFlow` mit dt = 0, der Bilanz-Spiegel snappt
         // also auf seinen Zielstand statt sich über die ersten Spieljahre
@@ -362,6 +388,7 @@ public final class Terrain {
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             rainWeight: rainWeight,
+                            erodibility: lithErodeK,
                             track: &trackBuf)
             for k in 0..<cfg.count {
                 streamRate[k] = 0.5 * streamRate[k] + 0.5 * (trackBuf[k] / dtEq)
@@ -489,6 +516,109 @@ public final class Terrain {
             largest = max(largest, size)
         }
         return (land == 0 ? 0 : Double(wet) / Double(land), largest)
+    }
+
+    // MARK: - Lithologie (räumlich variable Erodierbarkeit, Issue #12)
+
+    /// Baut die **fixen** Anteile des Gesteinsfelds: die geneigte, gefaltete
+    /// Schichtebene (`lithBed`) und die Härte-Provinzen (`lithProvince`). Beide
+    /// hängen ausschließlich am Seed → gleicher Seed, gleiches Feld (Wächter:
+    /// `Lithology.testFieldIsDeterministicPerSeed`).
+    ///
+    /// Eigener Noise-/PRNG-Zweig (`seed ^ 0x1170`), damit die Lithologie NICHT mit
+    /// Relief (`seed`) oder Tektonik (`seed ^ 0x5eed`) korreliert: sonst läge jede
+    /// harte Bank auf einem Grat und das Feld wäre nur eine zweite Lesart der
+    /// Topografie, statt sie zu formen. Streichrichtung und Fallen variieren je
+    /// Seed (wie die Makro-Parameter der Insel in `generate`).
+    ///
+    /// Sequenzielle Schleife: läuft einmal je Generierung, nicht je Schritt.
+    private func buildLithologyField() {
+        guard cfg.lithologyEnabled else {
+            lithBed = []; lithProvince = []; lithHardness = []; lithErodeK = []
+            return
+        }
+        let c = cfg.count
+        if lithBed.count != c {
+            lithBed = .init(repeating: 0, count: c)
+            lithProvince = .init(repeating: 0, count: c)
+            lithHardness = .init(repeating: 0, count: c)
+            lithErodeK = .init(repeating: 1, count: c)
+        }
+        let lNoise = SimplexNoise(seed: seed ^ 0x1170)
+        var lr = Mulberry32(seed: seed ^ 0x1170)
+        let lox = lr.next() * 1000, loy = lr.next() * 1000
+        let dipAng = lr.next() * 2 * .pi
+        // Fallen 0.4…1.6 × cfg.lithDip: manche Seeds sind fast flach gelagert
+        // (Tafelberge/Mesas), andere deutlich verkippt (Cuestas/Schichtkämme).
+        let dip = cfg.lithDip * (0.4 + 1.2 * lr.next())
+        let dx = cos(dipAng) * dip / Double(n - 1)
+        let dy = sin(dipAng) * dip / Double(n - 1)
+        let warpFreq = 2.2 / Double(n)   // Faltungs-Wellenlänge ~ halbe Karte
+        let provFreq = 1.6 / Double(n)   // Provinz-Wellenlänge ~ halbe Karte
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = idx(i, j)
+                let x = Double(i), y = Double(j)
+                let warp = lNoise.fbm01(x * warpFreq + lox, y * warpFreq + loy, octaves: 3) * 2 - 1
+                lithBed[k] = x * dx + y * dy + warp * cfg.lithWarp
+                // fBm nutzt seine [-1,1]-Spanne nie aus (Oktaven mitteln sich weg)
+                // → gedehnt und geklemmt, damit es echte Provinz-EXTREME gibt.
+                let prov = lNoise.fbm01(x * provFreq + lox + 500, y * provFreq + loy + 500,
+                                        octaves: 3) * 2 - 1
+                lithProvince[k] = min(1, max(-1, prov * 1.8))
+            }
+        }
+    }
+
+    /// Leitet Härte und Erodierbarkeit aus der **aktuellen** Höhe ab.
+    ///
+    ///     s     = (h − lithBed) / lithLayerThickness     stratigraphische Koordinate
+    ///     Welle = glattes Wechselprofil über s           −1 Bandmitte … +1 Bandgrenze
+    ///     hard  = (1−Mix)·Welle + Mix·Provinz + Bias     geklemmt auf [−1, 1]
+    ///     K     = 1 − lithContrast·hard                  Erodierbarkeit (Mittel ≈ 1)
+    ///
+    /// Dass `s` an `h` hängt, IST der Mechanismus: die harte Bank bleibt auf ihrem
+    /// Höhenniveau liegen, während die Erosion das weiche Gestein darunter
+    /// ausräumt — die Kante wandert seitwärts (Schichtstufen-Rückverlegung), nicht
+    /// nach unten. Ein an die Zelle geheftetes, höhen-UNABHÄNGIGES Feld kann das
+    /// nicht: dort erodiert die weiche Zelle einmal tief und ist fertig.
+    ///
+    /// Das Profil ist bewusst polynomial (Dreieck + Smoothstep) statt `sin`: der
+    /// Pass läuft je Zeitschritt über alle Zellen (n=832 → 692k), 692k `sin`
+    /// kosten pro Schritt ~14 ms Frame-Budget, die Polynom-Variante nichts
+    /// Messbares. Die Form ist dieselbe (Mittel 0, weiche Bandgrenzen).
+    /// Per-Zelle unabhängig (liest h/lithBed/lithProvince, schreibt nur
+    /// lithHardness/lithErodeK) → datenparallel bit-identisch.
+    private func updateLithology() {
+        guard cfg.lithologyEnabled, lithBed.count == cfg.count else { return }
+        let thick = max(1e-9, cfg.lithLayerThickness)
+        let mix = min(1, max(0, cfg.lithProvinceMix))
+        let bias = cfg.lithHardBias
+        let contrast = cfg.lithContrast
+        let cnt = cfg.count
+        h.withUnsafeBufferPointer { hb in
+        lithBed.withUnsafeBufferPointer { bb in
+        lithProvince.withUnsafeBufferPointer { pb in
+        lithHardness.withUnsafeMutableBufferPointer { hdb in
+        lithErodeK.withUnsafeMutableBufferPointer { kb in
+            let ph = hb.baseAddress!, pbed = bb.baseAddress!, pprov = pb.baseAddress!
+            let phard = hdb.baseAddress!, pk = kb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi {
+                    let s = (ph[k] - pbed[k]) / thick
+                    let frac = s - s.rounded(.down)          // Phase im Paket 0..1
+                    let tri = abs(2 * frac - 1)              // Dreieck: 1 an der Bandgrenze
+                    let sm = tri * tri * (3 - 2 * tri)       // Smoothstep → weiche Kontakte
+                    let wave = 2 * sm - 1                    // −1 … +1, Mittel 0
+                    var hard = (1 - mix) * wave + mix * pprov[k] + bias
+                    hard = min(1, max(-1, hard))
+                    phard[k] = hard
+                    // Untergrenze 0.05: kein Nullteiler-artiger „unerodierbarer"
+                    // Fels, auch wenn lithContrast > 1 gefahren wird.
+                    pk[k] = max(0.05, 1 - contrast * hard)
+                }
+            }
+        }}}}}
     }
 
     private func initLayers() {
@@ -1506,7 +1636,10 @@ public final class Terrain {
                 // unter Kapazität → erodieren (detachment-begrenzt, Fels widerstandsfähiger).
                 // Auf Kanalzellen gedämpft: dort inzidiert der Mäander-Carve (Reconciliation).
                 let damp = isChannel[k] ? cfg.channelErodeDamp : 1.0
-                let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : cfg.kRock) * vegDamp(k)
+                // Lithologie (Issue #12) skaliert NUR den Fels-Zweig: `kSed` ist
+                // lockeres Material und weiß nichts vom Gestein darunter.
+                let kBed = lithErodeK.count == cfg.count ? cfg.kRock * lithErodeK[k] : cfg.kRock
+                let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : kBed) * vegDamp(k)
                 let want = min(qc - qin, kErode * pow(a, m) * s * dt) * damp
                 let removable = max(0, h[k] - h[ri]) * 0.5
                 let er = min(want, removable)
@@ -1546,7 +1679,13 @@ public final class Terrain {
         let minA = minAreaCells * cs * cs
         let m = cfg.mExp
         let cnt = cfg.count, nn = n, sea = cfg.sea, kOut = cfg.outletErode
+        // Lithologie (Issue #12): die fluviale Makro-Rate der Produktion ist DIESE
+        // — hier entstehen die lithologischen Knickpunkte. Ohne Feld ein
+        // 1-Element-Dummy und Faktor exakt 1.0 → bit-identische Arithmetik.
+        let lithOn = lithErodeK.count == cnt
+        let lithArr = lithOn ? lithErodeK : [1.0]
         h.withUnsafeMutableBufferPointer { hb in
+        lithArr.withUnsafeBufferPointer { lkb in
         sed.withUnsafeMutableBufferPointer { sb in
         rock.withUnsafeMutableBufferPointer { rkb in
         veg.withUnsafeBufferPointer { vb in
@@ -1560,6 +1699,7 @@ public final class Terrain {
             let pveg = vb.baseAddress!, pa = ab.baseAddress!
             let pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
             let pord = ob.baseAddress!, prec = rb.baseAddress!, pend = eb.baseAddress!
+            let plith = lkb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
         for oi in 0..<cnt {
@@ -1603,6 +1743,7 @@ public final class Terrain {
             // ein → See entwässert zum Meer.
             // Vegetation bremst — klassen-gewichtet wie vegDamp (Roh-Puffer-Variante).
             let kErode = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
+                              * (lithOn ? plith[k] : 1.0)
             let f = kErode * dt * pow(pa[k], m) / dist
             let hNew = (ph[k] + f * hr) / (1 + f)
             var delta = ph[k] - hNew                // > 0
@@ -1612,7 +1753,7 @@ public final class Terrain {
             prock[k] -= delta
             ph[k] = hNew
         }
-        }}}}}}}}}}
+        }}}}}}}}}}}
     }
 
     // MARK: - Seen-Verfüllung
@@ -1810,13 +1951,22 @@ public final class Terrain {
     private func hillslopeDiffusion(base: Double) {
         if base <= 0 { return }
         let nn = n, cnt = cfg.count
+        // Lithologie (Issue #12): harte Bänke kriechen langsamer. OHNE das gibt es
+        // keinen dauerhaften Hangknick — die Diffusion rundet die Kante der harten
+        // Bank weg, egal wie langsam der Fluss sie einschneidet (Wächter:
+        // `Lithology.testDiffusionContrastEffectIsMeasured`). Faktor exakt 1.0, wenn
+        // das Feld fehlt oder der Kontrast 0 ist → bit-identische Arithmetik.
+        let lithDC = lithHardness.count == cnt ? cfg.lithDiffusionContrast : 0
+        let lithArr = lithDC != 0 ? lithHardness : [0.0]
         h.withUnsafeMutableBufferPointer { hb in
         sed.withUnsafeMutableBufferPointer { sb in
         rock.withUnsafeMutableBufferPointer { rkb in
         veg.withUnsafeBufferPointer { vb in
+        lithArr.withUnsafeBufferPointer { ldb in
         scratch.withUnsafeMutableBufferPointer { scb in
             let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
             let pveg = vb.baseAddress!, psc = scb.baseAddress!
+            let phard = ldb.baseAddress!
             parallel(nn) { jLo, jHi in
             for j in jLo..<jHi {
                 for i in 0..<nn {
@@ -1834,7 +1984,10 @@ public final class Terrain {
                     let high = min(1, max(0, (ph[k] - 0.42) / 0.35)) // Schutz schon ab mittlerer Höhe
                     let soil = min(1, psed[k] / 0.02 + pveg[k])  // Boden ODER Bewuchs → Kriechen
                     let bare = steep * high * max(0, 1 - soil)   // 1 = kahler steiler Hochfels
-                    let localK = base * (1 - 0.92 * bare)        // dort bis auf 8% gedrosselt (Gipfel bleiben spitz)
+                    var localK = base * (1 - 0.92 * bare)        // dort bis auf 8% gedrosselt (Gipfel bleiben spitz)
+                    // Gesteinshärte: D = 1 − c·hard, Untergrenze 0.05 (kein
+                    // vollständig eingefrorener Hang, auch bei c > 1).
+                    if lithDC != 0 { localK *= max(0.05, 1 - lithDC * phard[k]) }
                     psc[k] = localK * lap
                 }
             }
@@ -1853,7 +2006,7 @@ public final class Terrain {
                 ph[k] += dh
             }
             }
-        }}}}}
+        }}}}}}
     }
 
     // MARK: - Wellenerosion (Küstenzone)
@@ -2246,6 +2399,11 @@ public final class Terrain {
         // Übergangsschritt an der Schrittweite.
         applyUplift(dt: dt, gatedAmount: upliftAmount(dt: dt,
                                                       floorPer100y: reliefServoRate()))
+        // Gesteinsfeld (Issue #12) auf die frische Höhe nachziehen, BEVOR ein
+        // Erosionspass es liest: die freigelegte Schicht folgt aus h, und h hat
+        // sich gerade durch die Hebung verschoben. Reine Ableitung, kein Zustand —
+        // die Reihenfolge im Schritt ist damit unkritisch, nur „vor der Erosion".
+        updateLithology()
         flowStepCount &+= 1
         let mfdInterval = max(1, cfg.mfdUpdateInterval)
         // Braiding ist MFD-Physik, nicht bloß Rendering: dafür darf das Feld
@@ -2287,6 +2445,7 @@ public final class Terrain {
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],
                             rainWeight: rainWeight,
+                            erodibility: lithErodeK,
                             track: &trackBuf)
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
             // Zeitkonstante aus `streamMapMemoryYears`), dann sättigen: nur KONSISTENT befahrene
