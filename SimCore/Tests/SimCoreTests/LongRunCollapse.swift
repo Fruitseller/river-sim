@@ -4,8 +4,10 @@ import XCTest
 /// Regressions-Wächter gegen das Langzeit-Runaway (Handoff Aufgabe 1). Vor dem Fix
 /// wuchs das Produktions-Terrain über ~100k Jahre monoton weg: Relief 0.82→1.10,
 /// Wasseranteil 21%→39%, maxH bis an den Hebungs-Clamp — die Makro-Form „lief weg".
-/// `basinFill` (Becken-Verlandung im Droplet-Pfad) + `isoHighClamp = 0.90` pinnen
-/// das Terrain aufs junge, gratige Gleichgewicht. Dieser Test hält das fest.
+/// `isoHighClamp = 0.90` pinnt das Terrain aufs junge, gratige Gleichgewicht.
+/// Dieser Test hält das fest — auf reinen Produktions-Defaults (nur `n` gesenkt),
+/// d. h. OHNE `basinFill` (das stand hier historisch, ist aber seit `basinFill =
+/// false` nicht mehr Teil des gemessenen Pfads).
 final class LongRunCollapse: XCTestCase {
 
     private func fractionInBasins(_ t: Terrain) -> Double {

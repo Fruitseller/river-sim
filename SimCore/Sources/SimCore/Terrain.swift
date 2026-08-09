@@ -3,11 +3,28 @@ import Foundation
 /// Der Simulationskern: hält alle Felder und führt die Landschaftsentwicklung
 /// aus. Kennt bewusst KEIN Godot — dadurch headless mit XCTest testbar.
 ///
-/// Erosionsmodell: FastScape-Stream-Power (detachment-limited, impliziter
-/// n=1-Solver, unbedingt stabil bei großen Zeitschritten) für die fluviale
-/// Inzision, kombiniert mit thermischer Hang-Diffusion (Talus). Entwässerung
-/// über Priority-Flood (Barnes et al.) → füllt Senken, damit Flüsse bis zum
-/// Meer routen; Seen = Zellen mit Füllhöhe > Geländehöhe.
+/// Entwässerung über Priority-Flood (Barnes et al.) → füllt Senken, damit Flüsse
+/// bis zum Meer routen; Seen = Zellen mit Füllhöhe > Geländehöhe. Zwei Netze mit
+/// strikt getrennten Rollen: **D8/`area`** speist die Erosion, **MFD/`areaMFD`**
+/// (Freeman/Quinn) NUR Render und Braiding.
+///
+/// Pass-Reihenfolge des Produktionspfads (`cfg.hydraulicEnabled`, LEM-Konvention
+/// — sie ist nicht beliebig, s. `step()` und docs/research-terrain-aging.md §4):
+///
+///     Uplift (+ Relief-Servo) → computeFlow (Priority-Flood, D8, MFD)
+///     → Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
+///     → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion
+///     → Wave → Vegetation
+///
+/// Die fluviale Makro-Inzision ist damit `outletIncision` (Flächen-Stream-Power
+/// auf dem Entwässerungsnetz, impliziter n=1-Solver in Empfänger-Reihenfolge →
+/// unbedingt stabil bei großen Zeitschritten); die feine dendritische Textur
+/// legen die Tropfen (`Hydraulic.erode`), gerundet wird über LINEARE
+/// Hangdiffusion mit räumlich variablem kappa (`hillslopeDiffusion`) — nicht
+/// über Schwellen-Talus.
+///
+/// Der Nicht-Droplet-Zweig (`hydraulicEnabled = false`, `transportLimited` +
+/// `diffusionPass`) ist reiner TESTPFAD, s. Kommentare dort.
 public final class Terrain {
     public let cfg: SimConfig
     private let n: Int
@@ -976,48 +993,19 @@ public final class Terrain {
         }
     }
 
-    // MARK: - Stream-Power-Inzision (impliziter FastScape-Solver, n = 1)
+    // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig) — TESTPFAD
 
-    /// Löst dz/dt = −K·A^m·S über einen Zeitschritt `dt` (Jahre) implizit.
-    /// Verarbeitet Zellen stromabwärts→stromaufwärts (order = aufsteigende
-    /// Füllhöhe), sodass der Empfänger schon aktualisiert ist. Unbedingt stabil.
-    private func streamPower(dt: Double) {
-        let cs = cfg.cellSize
-        let sqrt2 = 2.0.squareRoot()
-        for oi in 0..<cfg.count {
-            let k = Int(order[oi])
-            let r = receiver[k]
-            if r < 0 { continue }
-            if h[k] <= cfg.sea { continue } // Meer nicht einschneiden
-            let ri = Int(r)
-            let hr = h[ri]
-            if h[k] <= hr { continue } // See/Ebene: keine Inzision (Ablagerungs-Regime)
-            let ki = k % n, kj = k / n
-            let rii = ri % n, rjj = ri / n
-            let dist = (ki != rii && kj != rjj) ? cs * sqrt2 : cs
-            // Erodierbarkeit von der Sedimentdecke abhängig (Cover-Effekt):
-            let kErode = sed[k] > cfg.sedCoverThresh ? cfg.kSed : cfg.kRock
-            let kRed = kErode * vegDamp(k) // Vegetation schützt (klassen-gewichtet)
-            let f = kRed * dt * pow(area[k], cfg.mExp) / dist
-            let hNew = (h[k] + f * hr) / (1 + f)
-            var delta = h[k] - hNew // > 0
-            if delta <= 0 { continue }
-            // Abtrag: erst Sediment, dann Fels (bleibt konsistent: h = rock + sed).
-            let ds = min(delta, sed[k])
-            sed[k] -= ds
-            delta -= ds
-            rock[k] -= delta
-            h[k] = hNew
-        }
-    }
-
-    // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig)
-
+    /// **Nur im Nicht-Droplet-Zweig** (`cfg.hydraulicEnabled = false`), den die
+    /// isolierten Mäander-Kopplungstests (`meanderCfg()` in `SimCoreTests.swift`)
+    /// bewusst nutzen: Carve/Altarm/Altern ohne Droplet-Rauschen. Produktion
+    /// erodiert fluvial über `outletIncision` + `Hydraulic.erode`.
+    ///
     /// Massenerhaltender Sedimenttransport: der Fluss trägt eine Fracht `qs` und
     /// gleicht sie an die Transportkapazität Qc = Kt·Aᵐ·S an. Über Kapazität →
     /// Ablagerung (Deltas an Küsten, Schwemmebenen, Beckenfüllung); unter Kapazität
-    /// → Erosion (detachment-begrenzt). Ersetzt die detachment-limited Inzision +
-    /// den fillLakes-Hack. Verarbeitung stromauf→stromab (order rückwärts), sodass
+    /// → Erosion (detachment-begrenzt). Löste seinerzeit die reine detachment-
+    /// limitierte Grid-Inzision ab (Commit „B (M3)").
+    /// Verarbeitung stromauf→stromab (order rückwärts), sodass
     /// die Fracht jeder Zelle bei ihren Zuflüssen schon angekommen ist.
     private func transportLimited(dt: Double) {
         let cs = cfg.cellSize
@@ -1066,34 +1054,6 @@ public final class Terrain {
                     h[k] -= er
                 }
                 qs[ri] += qin + er
-            }
-        }
-    }
-
-    // MARK: - Thermische Erosion (Hang-Diffusion / Talus)
-
-    private func thermalPass() {
-        for j in 0..<n {
-            for i in 0..<n {
-                let k = idx(i, j)
-                // Oberhalb der Baumgrenze rutschen Hänge früher (Frost, kein Bewuchs).
-                let tal = h[k] > 0.4 ? max(0.004, cfg.talus - (h[k] - 0.4) * 0.02) : cfg.talus
-                var bestIdx = -1
-                var bestDrop = tal
-                if i > 0 { let d = h[k] - h[k - 1]; if d > bestDrop { bestDrop = d; bestIdx = k - 1 } }
-                if i < n - 1 { let d = h[k] - h[k + 1]; if d > bestDrop { bestDrop = d; bestIdx = k + 1 } }
-                if j > 0 { let d = h[k] - h[k - n]; if d > bestDrop { bestDrop = d; bestIdx = k - n } }
-                if j < n - 1 { let d = h[k] - h[k + n]; if d > bestDrop { bestDrop = d; bestIdx = k + n } }
-                if bestIdx >= 0 {
-                    let move = (bestDrop - tal) * 0.5 * cfg.thermalRelax
-                    let ms = min(move, sed[k])
-                    let mr = (move - ms) * min(0.85, cfg.rockCrumble + 2.0 * max(0, h[k] - 0.45))
-                    sed[k] -= ms
-                    rock[k] -= mr
-                    h[k] -= ms + mr
-                    sed[bestIdx] += ms + mr
-                    h[bestIdx] += ms + mr
-                }
             }
         }
     }
@@ -1318,11 +1278,16 @@ public final class Terrain {
         }
     }
 
-    // MARK: - Hangdiffusion (linear)
+    // MARK: - Hangdiffusion (linear, uniformes kappa) — TESTPFAD
 
+    /// **Nur im Nicht-Droplet-Zweig** (`cfg.hydraulicEnabled = false`) — dort
+    /// zusammen mit `transportLimited` der Grid-Pfad der isolierten Mäander-
+    /// Kopplungstests. Der Produktionspfad diffundiert über
+    /// `hillslopeDiffusion` (räumlich variables kappa, dt-invariant sub-getaktet).
+    ///
     /// Lineare Diffusion dh/dt = D·∇²h — glatte, natürliche Hänge (konkav/konvex)
     /// statt der planaren Facetten/Terrassen der Schwellen-Talus-Methode.
-    /// kappa fix bei 0.15 (< 0.25 → explizit stabil), mehrmals pro Sim-Schritt.
+    /// kappa uniform und fix (≪ 0.25 → explizit stabil), `passes`-mal pro Sim-Schritt.
     private func diffusionPass(kappa: Double = 0.0025) {
         if kappa <= 0 { return }
         for j in 0..<n {

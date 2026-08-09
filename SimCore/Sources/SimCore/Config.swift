@@ -109,10 +109,12 @@ public struct SimConfig: Sendable {
         return h
     }()
 
-    // ---- Hangprozesse (thermische Erosion / Talus) ----
-    public var talus: Double = 0.011   // kritische Höhendifferenz je Zelle
-    public var thermalRelax: Double = 0.3
-    public var rockCrumble: Double = 0.15 // Fels-Anteil beim Hangrutsch (Basis)
+    // Hangprozesse laufen über LINEARE Diffusion (hillDiffusion oben, im
+    // Nicht-Droplet-Testpfad diffusionPass) — die Schwellen-Talus-Variante
+    // (`thermalPass` mit talus/thermalRelax/rockCrumble) ist entfernt: sie
+    // erzeugte planare Facetten statt konvexer Kuppen und war seit dem Wechsel
+    // auf lineare Diffusion nirgends mehr aufgerufen (s. ROADMAP „Toter Code").
+    // Küsten-Talus ist davon unberührt (waveTalus, wavePass).
 
     // ---- Relief-Servo (Anti-Verflachung) ----
     // Ohne Dauer-Tektonik (upliftPer100y = 0) erodiert das Relief über 10k+ Jahre

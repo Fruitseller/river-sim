@@ -139,6 +139,6 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   die Invariante ist beschränktes Relief / Fließgleichgewicht — Wächter:
   `Tests/SimCoreTests/LongRunCollapse.swift`.
 - `ROADMAP.md` ist ein lebendes Dokument (Stand, offene Punkte, geparkter Code wie
-  `thermalPass`/`floodplainAggradation`) — bei Änderungen mitziehen.
+  `fillLakes`/`floodplainAggradation`) — bei Änderungen mitziehen.
 - Recherche-Belege in `docs/`; `docs/nickmcd-behavior-verification.md` hält je
   Ziel-Verhalten fest, wie es umgesetzt und womit es belegt ist.

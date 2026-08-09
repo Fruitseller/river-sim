@@ -7,17 +7,35 @@ Godot-Abhängigkeit**, damit headless mit `swift test` verifizierbar.
 
 Landschaftsentwicklung als Kombination aus:
 
-- **Fluviale Inzision** — FastScape-Stream-Power `dz/dt = U − K·Aᵐ·Sⁿ` (n = 1),
-  impliziter Solver in Empfänger-Reihenfolge → **unbedingt stabil**, auch bei
-  100k-Jahr-Schritten. Detachment-limited; Erodierbarkeit hängt von der
-  Sedimentdecke ab (Cover-Effekt: Sediment weicher als Fels).
 - **Entwässerung** — Priority-Flood (Barnes et al.) füllt Senken, D8-Routing auf der
   gefüllten Oberfläche, O(n)-Einzugsgebiets-Akkumulation. Seen = Füllhöhe > Gelände.
-- **Hangprozesse** — thermische Erosion / Talus (höhenabhängig, Frostsprengung oben).
-- **Tektonik** — fixes Hebungsfeld je Terrain, mit Isostasie-Dämpfung gegen Weglaufen.
+  Zusätzlich ein Multi-Flow-Netz (Freeman/Quinn, `areaMFD`) — das speist **nur**
+  Rendering und Braiding, nie die Erosion.
+- **Fluviale Makro-Inzision** — `outletIncision`: Stream-Power `dz/dt = −K·Aᵐ·S`
+  (n = 1) auf dem D8-Entwässerungsnetz, impliziter Solver in Empfänger-Reihenfolge
+  → **unbedingt stabil**, auch bei 100k-Jahr-Schritten. Schneidet die Becken-Sillen
+  durch, sodass Seen zum Meer entwässern. Erodierbarkeit hängt von der Sedimentdecke
+  ab (Cover-Effekt: Sediment weicher als Fels).
+- **Droplet-Erosion** — partikelbasierte Hydraulik (`Hydraulic.erode`) legt die feine
+  dendritische Textur in die Makro-Täler.
+- **Stream-Map** — zeitgemittelte Tropfen-Pfade (EWMA der Besuchs-RATE, dt-invariant):
+  wo Wasser wirklich fließt. Koppelt in die Droplets zurück (River Sharpening) und ist
+  die Render-Maske für Flüsse.
+- **Mäander** — Lagrange-Zentrumslinien, die mit Krümmung × Abfluss lateral wandern,
+  ins Höhenfeld carven und sich zu Altarmen abschnüren (Cutoff).
+- **Braiding** — super-linearer Bedload-Transport auf dem MFD-Netz (Murray & Paola)
+  baut Mittelbänke/Inseln, um die sich der Lauf teilt und wiedervereint.
+- **Hangprozesse** — **lineare** Hangdiffusion `dh/dt = D·∇²h` (Bodenkriechen) mit
+  räumlich variablem kappa: soil-mantled Hänge runden aus, hoher steiler Kahlfels
+  bleibt scharf. Konvexe Kuppen statt der planaren Facetten der Talus-Methode.
+- **Tektonik** — fixes Hebungsfeld je Terrain, mit Isostasie-Dämpfung gegen Weglaufen;
+  Relief-Servo gegen langfristige Verflachung.
 - **Küste** — Wellenerosion in der Uferzone.
 - **Klima/Vegetation** — orographischer Niederschlag (Wind aus Westen), Vegetation als
   Erosionsschutz.
+
+Die Reihenfolge der Pässe pro Zeitschritt ist LEM-Konvention und nicht beliebig — sie
+steht im Klassenkopf von `Terrain` und in `AGENTS.md` (§ SimCore-Aufbau).
 
 ## Verwendung
 

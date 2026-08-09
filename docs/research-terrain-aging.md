@@ -291,10 +291,13 @@ Priorisiert; die ersten zwei sind die >30 %-Realismus-Hebel.
    (kleiner → zerklüfteter/jung, größer → glatter/alt) — das ist ein *einziger*
    physikalischer Regler für den „Alters"-Look.
 
-4. **[KLEIN] `thermalPass` bewusst einordnen.** Talus (`Terrain.swift:352`) erzeugt
-   planare Facetten, keine Rundung — nur für steile Fels-/Landslide-Kappen behalten,
-   NICHT als Ersatz für lineare Diffusion. Aktuell wird er nirgends aufgerufen; das
-   ist okay, solange (1) läuft.
+4. **[KLEIN, ERLEDIGT Aug 2026] `thermalPass` bewusst einordnen.** Talus erzeugt
+   planare Facetten, keine Rundung — NICHT als Ersatz für lineare Diffusion.
+   Entscheidung: (1) läuft (`hillslopeDiffusion`), `thermalPass` war seither
+   unreferenziert und wurde ENTFERNT (mitsamt `talus`/`thermalRelax`/`rockCrumble`).
+   Falls je wieder für steile Fels-/Landslide-Kappen gewünscht: aus `cf83874^` holen.
+   Die übrigen `Terrain.swift`-Zeilennummern in diesem Dokument sind historisch
+   (Stand der Recherche) und stimmen nicht mehr.
 
 5. **[Diagnose] Messgrößen erweitern.** Für die Kalibrierung headless zusätzlich zur
    `landRelief()` die **mittlere Grat-Krümmung** (∇²z auf Grat-Zellen) und die
