@@ -133,25 +133,31 @@ public struct SimConfig: Sendable {
     // `sea`, das Signal WAR also die Höhe der höchsten Zelle und steuerte damit
     // die Hebung von ~480k Landzellen. Messung (n=160, Seed 1337, 100k Jahre
     // gealtert): eine einzige auf 1.4 gezogene Zelle verschiebt max − min von
-    // 0.495 auf 1.250 (+152 %), das Perzentil-Signal von 0.15683 auf 0.15692
-    // (+0.006 %) — genau der Hebel, den ein Sculpt-Strich heute auslösen konnte
-    // (sculpt koppelt zusätzlich in upliftBase).
+    // 0.5097 auf 1.2500 (+145 %), das Perzentil-Signal überhaupt nicht
+    // (0.16211 → 0.16211; exakt sortiert gerechnet +0.019 %, 0.161965 →
+    // 0.161995 — weniger als die Bin-Breite 0.000488 der Histogramm-Auswertung
+    // in `landReliefRobust`) — genau der Hebel, den ein Sculpt-Strich heute
+    // auslösen konnte (sculpt koppelt zusätzlich in upliftBase).
     // Verworfene Alternative „mittleres lokales Relief im Fenster": auflösungs-
     // abhängig, gemessen auf frischem Terrain (Seed 1337) ±1 Zelle: 0.113 (n=80)
     // → 0.079 (160) → 0.051 (320) → 0.035 (640); auch mit weltfestem Fenster
     // (±0.8 Welteinheiten) noch 0.113/0.079/0.092/0.106. Das Perzentil-Signal
-    // liegt dagegen bei 0.165/0.178/0.183/0.185 — praktisch auflösungsfrei, d. h.
-    // Testkonfigs mit kleinerem n regeln auf dasselbe Ziel wie die Produktion.
+    // liegt dagegen bei 0.165 / 0.178 / 0.183 / 0.185 / 0.185 (n = 80 / 160 /
+    // 320 / 640 / 832 = Produktion) — praktisch auflösungsfrei (Spanne 11 %,
+    // ab n=160 nur noch 3.7 %), d. h. Testkonfigs mit kleinerem n regeln auf
+    // dasselbe Ziel wie die Produktion. Wächter: `ReliefSignal
+    // .testSignalIsResolutionStable` misst dieselbe Reihe bis n=832.
     //
     // reliefTarget umgerechnet: 0.55 (max − min) → 0.20. Umgerechnet wird über die
     // gemessene SENSITIVITÄT, nicht über das Niveau-Verhältnis: das robuste Signal
     // liegt zwar nur bei ~0.30 × (max − min), ändert sich aber fast parallel dazu
-    // (der Median der Landhöhen bleibt über den Lauf nahezu konstant). Über den
-    // Baseline-Lauf (n=160, Seed 1337) gemessen: 10k → 30k fällt max − min um
-    // 0.0414, das robuste Signal um 0.0290 ⇒ Steigung 0.70. Damit wird die alte,
-    // hart codierte Defizit-Spanne 0.1 zu reliefServoBand = 0.07, und aus dem
-    // Servo-Anteil am Betriebspunkt (10k: 0.54) folgt reliefTarget = 0.16 +
-    // 0.54·0.07 ≈ 0.20. Kontrolle über den ganzen Lauf (Anteil alt → neu):
+    // (der Median der Landhöhen bleibt über den Lauf nahezu konstant). Steigung
+    // aus der ALTEN Trajektorie (Zeile „alt" unten, Servo noch auf max − min,
+    // n=160, Seed 1337): 10k → 30k fällt max − min um 0.0414 (0.4960 → 0.4546),
+    // das robuste Signal um 0.0290 (0.1600 → 0.1310) ⇒ Steigung 0.70. Damit wird
+    // die alte, hart codierte Defizit-Spanne 0.1 zu reliefServoBand = 0.07, und
+    // aus dem Servo-Anteil am Betriebspunkt (10k: 0.54) folgt reliefTarget =
+    // 0.16 + 0.54·0.07 ≈ 0.20. Kontrolle über den ganzen Lauf (Anteil alt → neu):
     // 10k 0.54→0.57, 20k 0.78→0.83, 30k 0.95→0.99, 100k 0.55→0.62 — der Servo
     // arbeitet am selben Betriebspunkt, minimal fester.
     // Verworfen: reliefTarget 0.17 / Band 0.03 (aus dem NIVEAU-Verhältnis 0.30
@@ -163,6 +169,8 @@ public struct SimConfig: Sendable {
     //               neu 0.533 0.495 0.467 0.457 0.476 0.491 0.497 0.504 0.509 0.511 0.510
     //   robust      alt 0.178 0.160 0.142 0.131 0.130 0.134 0.140 0.146 0.151 0.154 0.157
     //               neu 0.178 0.155 0.140 0.131 0.130 0.139 0.146 0.153 0.157 0.159 0.162
+    // (robuste Werte auf 3 Stellen gerundet; die Kennzahl selbst ist auf Vielfache
+    // von 0.000488 quantisiert — s. `Terrain.landReliefRobust`.)
     // Dieselbe Delle bei 30k, dasselbe Plateau (neu ~3 % höher) — das Relief läuft
     // weder weg noch ebnet es ein.
     public var reliefTarget: Double = 0.20

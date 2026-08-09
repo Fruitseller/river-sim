@@ -33,10 +33,14 @@ final class ReliefSignal: XCTestCase {
         let spanAfter = maxMinusMin(spiked, sea: c.sea)
         let signalAfter = Terrain.landReliefRobust(heights: spiked, sea: c.sea)
 
-        // max − min springt voll mit (gemessen +152 %) …
+        // max − min springt voll mit (gemessen 0.5097 → 1.2500, +145 %) …
         XCTAssertGreaterThan(spanAfter, spanBefore * 1.5,
                              "max − min müsste durch die Nadel voll ausschlagen (\(spanBefore) → \(spanAfter))")
-        // … das Regelsignal praktisch gar nicht (gemessen +0.006 %).
+        // … das Regelsignal gar nicht: gemessen bleibt es bei 0.16211, weil die
+        // exakte Verschiebung (+0.019 %, sortiert gerechnet 0.161965 → 0.161995)
+        // unter der Bin-Breite 0.000488 der Histogramm-Auswertung liegt. Die
+        // Schranke steht trotzdem bei 1 %, damit der Test nicht an der
+        // Quantisierung klebt, sondern die Aussage prüft.
         let drift = abs(signalAfter - signalBefore) / signalBefore
         XCTAssertLessThan(drift, 0.01,
                           "Nadel verschiebt das Regelsignal um \(drift * 100) % (\(signalBefore) → \(signalAfter))")
@@ -83,17 +87,28 @@ final class ReliefSignal: XCTestCase {
                        "Servo muss bei reliefServoPer100y deckeln")
     }
 
-    /// Das Signal ist praktisch auflösungsunabhängig (max − min ebenso, aber die
-    /// verworfene Fenster-Variante NICHT — s. Config-Logbuch bei reliefTarget):
-    /// dieselbe reliefTarget-Kalibrierung gilt für Testkonfigs und Produktion.
+    /// Das Signal ist praktisch auflösungsunabhängig (die verworfene Fenster-
+    /// Variante NICHT — s. Config-Logbuch bei reliefTarget). Die Reihe geht
+    /// bewusst bis in die PRODUKTIONS-Auflösung (SimConfig().n = 832): genau
+    /// darauf stützt sich die Kalibrier-Behauptung, dass Testkonfigs mit
+    /// kleinerem n auf dasselbe reliefTarget regeln wie die Produktion.
+    /// Gemessen (Seed 1337, frisches Terrain): 0.16504 (n=80), 0.17822 (160),
+    /// 0.18311 (320), 0.18457 (640), 0.18506 (832) — Spanne 11 %, ab n=160 nur
+    /// noch 3.7 %.
     func testSignalIsResolutionStable() {
         var values: [Double] = []
-        for n in [80, 160, 320] {
+        for n in [80, 160, 320, 640, SimConfig().n] {
             var c = SimConfig(); c.n = n
             values.append(Terrain(config: c, seed: 1337).landReliefRobust())
         }
         let lo = values.min()!, hi = values.max()!
         XCTAssertLessThan((hi - lo) / hi, 0.15,
                           "Signal driftet mit der Auflösung: \(values)")
+        // Ab der ersten Testauflösung (n=160) aufwärts noch enger — die
+        // Produktionsauflösung darf nicht aus der Reihe tanzen.
+        let fromTestRes = Array(values.dropFirst())
+        let lo2 = fromTestRes.min()!, hi2 = fromTestRes.max()!
+        XCTAssertLessThan((hi2 - lo2) / hi2, 0.06,
+                          "Signal bei Produktionsauflösung weicht ab: \(values)")
     }
 }

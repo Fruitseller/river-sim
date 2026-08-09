@@ -1876,8 +1876,10 @@ public final class Terrain {
     /// das Regelsignal des Relief-Servos (Begründung + Messwerte: `Config.swift`
     /// bei `reliefTarget`): Einzelzellen (Nadelgipfel, Sculpt-Strich, tiefe
     /// Rinne) können sie nicht verschieben, weil beide Quantile aus zehntausenden
-    /// Zellen kommen — gemessen verschiebt eine auf 1.4 gezogene Einzelzelle
-    /// `landRelief()` um +152 %, dieses Signal um +0.006 %.
+    /// Zellen kommen — gemessen (n=160, Seed 1337, 100k Jahre) verschiebt eine auf
+    /// 1.4 gezogene Einzelzelle `landRelief()` von 0.5097 auf 1.2500 (+145 %),
+    /// dieses Signal gar nicht (0.16211 → 0.16211): exakt gerechnet sind es
+    /// +0.019 % (0.161965 → 0.161995) und damit weniger als eine Bin-Breite.
     public func landReliefRobust() -> Double {
         Terrain.landReliefRobust(heights: h, sea: cfg.sea)
     }
@@ -1893,6 +1895,11 @@ public final class Terrain {
         // isoHighClamp (0.90), nur Sculpting kommt überhaupt in die Nähe. Höhere
         // Werte landen im letzten Bin — das kann das Signal nur dann sättigen,
         // wenn >5 % des Landes so hoch stehen (dann ist es real so hoch).
+        // Preis: das Ergebnis ist auf Bin-Mitten quantisiert, die Kennzahl also
+        // ein Vielfaches von span/bins = 0.000488. Das ist 1/140 der Regelspanne
+        // (reliefServoBand 0.07) — für den Servo bedeutungslos, aber beim
+        // Dokumentieren von Messwerten zu beachten: Unterschiede unterhalb einer
+        // Bin-Breite zeigt diese Funktion als 0 (s. Nadel-Messung oben).
         let bins = 4096
         let span = 2.0
         var hist = [Int](repeating: 0, count: bins)
