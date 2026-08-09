@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Hält die auf Commit-SHA gepinnten Actions in simcore-tests.yml aktuell
+  # (siehe Kommentar dort zur Supply-Chain-Härtung).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
