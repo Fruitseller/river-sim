@@ -31,6 +31,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 - **Vegetation:** `veg` (Dichte 0..1, τ=250a) + Klassen `vegClass` (kahl/Gras/Wald/
   Auwald, aus veg + Flussnähe + Makro-Steigung; Flussnähe aus dem D8-Netz `area`,
   nicht aus `areaMFD` — die Klassen gehen über `vegDamp` in die Erosion).
+  Gehölz (Wald wie Auwald) sitzt am UFER, nicht im BETT: die Wasserlauf-Zellen
+  selbst bleiben Gras (sonst panzert die Wurzel-Kohäsion den Talboden —
+  s. Braiding unten).
   Klassen gewichten die 0.6-Erosions-
   Dämpfung (Gras 1.0 = Alt-Verhalten, Wald 1.1, Auwald 1.3), Auwald bremst die
   Mäander-Migration (`meanderCohesion`). Störung: Flood-Kill (τ_kill=20a) +
@@ -44,12 +47,33 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 **Braiding-Kalibrierung (behoben, weiter beobachten):**
 Die Kapazität des Murray-&-Paola-`braidPass` wurde auf `5e-6` gesenkt. Damit
 lagern überlastete, flache Reaches wieder Bänke ab. `testBraidingBuildsBars`
-misst seit Aug 2026 MULTI-SEED (1337/90210/7, Summe Inseln an=16 vs. aus=8,
-Splits an=786 vs. aus=720): die Einzel-Seed-Zählung flippte unter jeder
-kleinen Physik-Störung (gemessen 9v3 → 2v4 durch das Verlandungs-Gate,
-während die 8-Seed-Summe stabil 53 vs 25 blieb). Optional weiter offen:
-Bank-Fläche innerhalb nasser Läufe / Splits pro Trunk-Länge als robustere
-Metriken.
+misst seit Aug 2026 MULTI-SEED: die Einzel-Seed-Zählung flippte unter jeder
+kleinen Physik-Störung (gemessen 9v3 → 2v4 durch das Verlandungs-Gate).
+
+Nach dem Vegetations-Merge (PR #1) war der Wächter rot (Inseln an=7 vs. aus=14).
+Headless-Diagnose (12 Seeds, an/aus): der Pass war NICHT schwächer geworden
+(Braiding-Arm 36 → 37 Inseln), der KONTROLLARM ohne Braiding sammelte
+Fehlalarme (19 → 31), obwohl dort nie ein Bänke-Pass läuft. Ursache: die
+Auwald-Klasse landete auch auf den Wasserlauf-Zellen SELBST, womit die
+kohäsivste Erosions-Dämpfung (1.3) auf Gerinne und Talboden lag — der Talboden
+panzerte sich, stehen gebliebene Knubbel im breiten MFD-Lauf zählten als
+„Insel". Korrektur in `updateVegClass`: GEHÖLZ (Wald wie Auwald) ist Ufer-,
+keine Bett-Klasse — Bett-Zellen bleiben Gras (Faktor 1.0 = exakt die
+Vor-Merge-Dämpfung), dieselbe Doktrin wie der Bett-Kill in `meanderStamp`.
+Nur Auwald auszuschließen reichte nicht: dichte Bett-Zellen fielen dann auf
+Wald (1.1) und blieben teil-gepanzert (an 79 vs. aus 50, Seeds 6:3 — ein Flip
+von der Kante); erst die vollständige Entpanzerung gibt klaren Abstand.
+Verworfen (gemessen): die Klassen-Dämpfung im `braidPass` selbst zurückzunehmen
+— das machte den Kontrast SCHLECHTER (an 7→5 bei aus 14) und hätte einen realen
+Effekt gelöscht (Ufer-Vegetation stabilisiert Bänke, Tal & Paola 2007).
+
+Der ehemals offene Punkt „Bank-Fläche als robustere Metrik" ist damit erledigt:
+der Wächter misst Bank-FLÄCHE über 16 Seeds und fordert zusätzlich einen
+Mindestabstand von 3 Seeds (an 160 vs. aus 81 = 1.98×, Seeds dafür 9 /
+dagegen 3, Inseln 62 vs. 33, Splits 3352 vs. 3059, ~33 s). Am Regressions-Stand
+trennte die Insel-ZAHL nur 1.19×, die Fläche 1.77× — eine echte Mittelbank ist
+mehrzellig, ein Ufer-Knubbel ein bis zwei Zellen. Optional weiter offen:
+Splits pro Trunk-Länge als zusätzliche Metrik.
 
 **Terrain-Alterung (aus `docs/research-terrain-aging.md` §6):**
 - `isoHighClamp` (0.90) testweise lockern/entfernen — laut Recherche mit der

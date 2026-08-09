@@ -281,11 +281,16 @@ final class RiverDynamicsTests: XCTestCase {
     /// - `islands`: kleine trockene Land-Komponenten, die KOMPLETT von Kanalzellen
     ///   umschlossen sind (4er-Flood-Fill, 8er-Rand) = Mittelbänke, um die sich der
     ///   Lauf teilt und wiedervereint — der sichtbare Braiding-Payoff.
+    /// - `barCells`: deren FLÄCHE in Zellen. Das ist die belastbare Größe (s.
+    ///   testBraidingBuildsBars): eine echte Mittelbank ist mehrzellig, ein
+    ///   stehen gebliebener Ufer-Knubbel im MFD-Lauf ein bis zwei Zellen.
+    ///   Gemessen Aug 2026 über 12 Seeds: mittlere Komponentengröße mit
+    ///   Braiding 3.05 Zellen, ohne 2.06.
     /// - `splits`: Kanalzellen, deren Abfluss sich auf ≥2 KANAL-Empfänger mit je
     ///   ≥20% Gewicht aufteilt (aktive Verzweigungen).
-    private func braidMetrics(_ t: Terrain, creek: Double = 120) -> (islands: Int, splits: Int) {
+    private func braidMetrics(_ t: Terrain, creek: Double = 120)
+        -> (islands: Int, barCells: Int, splits: Int) {
         let n = t.cfg.n
-        let cellArea = t.cfg.cellSize * t.cfg.cellSize
         let chan = channelSet(t, area: t.areaMFD, creek: creek)
         // --- aktive Splits (p-Wahl kommt aus Terrain.mfdLocalExponent — dieselbe
         // Stelle wie Wasser- und Sediment-Routing, keine driftende Kopie) ---
@@ -318,7 +323,7 @@ final class RiverDynamicsTests: XCTestCase {
         var isChan = [Bool](repeating: false, count: n * n)
         for k in chan { isChan[k] = true }
         var seen = [Bool](repeating: false, count: n * n)
-        var islands = 0
+        var islands = 0, barCells = 0
         var stack = [Int]()
         for start in 0..<(n * n) {
             if seen[start] || isChan[start] { continue }
@@ -343,10 +348,19 @@ final class RiverDynamicsTests: XCTestCase {
                     }
                 }
             }
-            if enclosed { islands += 1 }
+            if enclosed { islands += 1; barCells += size }
         }
-        return (islands, splits)
+        return (islands, barCells, splits)
     }
+
+    /// Seed-Satz des Braiding-Wächters. 16 statt 3: die Insel-Statistik ist
+    /// schwerschwänzig (Messung s. testBraidingBuildsBars) — mit 3 Seeds trägt
+    /// ein einzelner Ausreißer das Vorzeichen der Summe, und mit 12 lag der
+    /// Arbeitspunkt der Seed-Mehrheit noch auf der Kante (ein Flip von 6:3 auf
+    /// 4:4 hätte gereicht). 16 Seeds + geforderter Mindestabstand (s. u.).
+    private static let braidSeeds: [UInt32] = [1337, 90210, 7, 42, 2024, 4242,
+                                               8675309, 31337, 1, 512, 77, 20250809,
+                                               2718, 31415, 65537, 999]
 
     /// WÄCHTER Braiding (Task 4): der Murray&Paola-Pass erzeugt auf dem
     /// Produktions-Pfad Verzweigungen und Mittelbänke — messbar MEHR als ohne ihn —
@@ -354,25 +368,57 @@ final class RiverDynamicsTests: XCTestCase {
     ///
     /// MULTI-SEED (ehem. ROADMAP-Punkt „Metrik rauscht, Einzel-Seed"): die
     /// Insel-Zahl je Seed streut 0..29 und FLIPPT unter jeder kleinen Physik-
-    /// Störung (gemessen: Pfützen-Verlandungs-Gate kippte 1337 von 9v3 auf 2v4,
-    /// während die 8-Seed-Summe stabil 53 vs 25 blieb). Ein Einzel-Seed-Vergleich
-    /// prüft Trajektorien-Glück, die Seed-Summe den Pass.
+    /// Störung (gemessen: Pfützen-Verlandungs-Gate kippte 1337 von 9v3 auf 2v4).
+    /// Ein Einzel-Seed-Vergleich prüft Trajektorien-Glück, die Seed-Summe den Pass.
+    ///
+    /// GEMESSEN WIRD BANK-FLÄCHE ÜBER 12 SEEDS, nicht Bank-ZAHL über 3 (Aug 2026,
+    /// nach dem Vegetations-Merge neu vermessen — beide Änderungen sind Zugewinn
+    /// an Aussagekraft, keine Lockerung):
+    /// - Die Insel-ZAHL trennt eine echte Mittelbank nicht von einem stehen
+    ///   gebliebenen Ufer-Knubbel, den der breite MFD-Lauf zufällig umschließt.
+    ///   Am Regressions-Stand über 12 Seeds gemessen: mit Pass 37 Komponenten /
+    ///   113 Zellen, ohne Pass 31 / 64 — die ZAHL trennte 1.19×, die FLÄCHE 1.77×
+    ///   (mittlere Bank 3.05 vs 2.06 Zellen). Der Pass baut BREITERE Bänke, nicht
+    ///   bloß mehr Pixel; genau das misst die Fläche.
+    /// - 3 Seeds sind zu wenig: die Differenz an−aus je Seed ist schwerschwänzig
+    ///   (am Regressions-Stand 4 Seeds positiv, 4 negativ, 4 ohne Inseln) — die
+    ///   alte 3-Seed-Summe war ein Münzwurf. Der Wächter-Docstring behauptete
+    ///   selbst, die stabile Größe sei die 8-Seed-Summe; committet waren 3.
+    ///
+    /// Beleg, dass die Regression NICHT im Pass saß: im Arm OHNE Braiding — dort
+    /// läuft `braidPass` NIE — stieg die Insel-Zahl durch den Vegetations-Merge
+    /// von 19 auf 31 (12 Seeds), während der Braiding-Arm bei 36 → 37 blieb. Der
+    /// Kontrollarm sammelte Fehlalarme (gepanzerter Talboden), der Pass lieferte
+    /// unverändert. Ursache und Korrektur: `Terrain.updateVegClass` (Gehölz ist
+    /// Ufer-, keine Bett-Klasse).
+    ///
+    /// ARBEITSPUNKT (16 Seeds, 30k Jahre, ~33 s): Bank-Fläche an 160 / aus 81
+    /// (1.98×), Seeds dafür 9 / dagegen 3 (4 ohne Inseln), Inseln an 62 / aus 33
+    /// (1.88×), Splits an 3352 / aus 3059. Der Wächter fordert unten einen
+    /// Mindestabstand von 3 Seeds — gemessener Abstand ist 6, also 3 Seed-Flips
+    /// Luft. Zwischenstand mit nur teilweise entpanzertem Bett (Bett fiel auf
+    /// Wald statt Gras) war 79/50 bei 6:3, d. h. ein einziger Flip von der
+    /// Kante: erst die vollständige Entpanzerung bringt den klaren Abstand.
     func testBraidingBuildsBars() {
-        var sumIslOn = 0, sumIslOff = 0, sumSplitsOn = 0, sumSplitsOff = 0
+        var sumBarOn = 0, sumBarOff = 0, sumIslOn = 0, sumIslOff = 0
+        var sumSplitsOn = 0, sumSplitsOff = 0
+        var seedsFor = 0, seedsAgainst = 0
         var everFormed = false, everClosed = false
-        for seed: UInt32 in [1337, 90210, 7] {
+        for seed in Self.braidSeeds {
             var cOn = SimConfig(); cOn.n = 256
             var cOff = cOn; cOff.braidingEnabled = false
             let tOn = Terrain(config: cOn, seed: seed)
             let tOff = Terrain(config: cOff, seed: seed)
             // Bänke sind TRANSIENT (Arme bilden und schließen sich) — deshalb über
             // die Zeit gesammelt messen (alle 2k Jahre), nicht als Schnappschuss.
+            var barOn = 0, barOff = 0, islOn = 0, islOff = 0
             var maxSplitsOn = 0, maxSplitsOff = 0, prevIslOn = 0
             while tOn.years < 30_000 - 1e-6 {
                 tOn.step(dtYears: 1000); tOff.step(dtYears: 1000)
                 if Int(tOn.years) % 2000 == 0 {
                     let mOn = braidMetrics(tOn), mOff = braidMetrics(tOff)
-                    sumIslOn += mOn.islands; sumIslOff += mOff.islands
+                    barOn += mOn.barCells; barOff += mOff.barCells
+                    islOn += mOn.islands; islOff += mOff.islands
                     maxSplitsOn = max(maxSplitsOn, mOn.splits)
                     maxSplitsOff = max(maxSplitsOff, mOff.splits)
                     if mOn.islands > prevIslOn { everFormed = true }
@@ -380,15 +426,24 @@ final class RiverDynamicsTests: XCTestCase {
                     prevIslOn = mOn.islands
                 }
             }
+            sumBarOn += barOn; sumBarOff += barOff
+            sumIslOn += islOn; sumIslOff += islOff
             sumSplitsOn += maxSplitsOn; sumSplitsOff += maxSplitsOff
-            print("[BRAID] seed \(seed): Inseln an bisher \(sumIslOn) / aus \(sumIslOff), Splits-Max an \(maxSplitsOn) / aus \(maxSplitsOff)")
+            if barOn > barOff { seedsFor += 1 } else if barOn < barOff { seedsAgainst += 1 }
+            print("[BRAID] seed \(seed): Bank-Fläche an \(barOn) / aus \(barOff), Inseln an \(islOn) / aus \(islOff), Splits-Max an \(maxSplitsOn) / aus \(maxSplitsOff)")
             // Terrain bleibt je Seed gesund (dieselben Schwellen wie LongRunCollapse).
             XCTAssertLessThan(tOn.maxHeight(), 1.0, "Terrain-Runaway unter Braiding (seed \(seed))")
             XCTAssertGreaterThan(tOn.landRelief(), 0.30, "Terrain eingeebnet unter Braiding (seed \(seed))")
         }
-        print("[BRAID] Summe: Inseln an=\(sumIslOn) aus=\(sumIslOff), Splits an=\(sumSplitsOn) aus=\(sumSplitsOff)")
-        XCTAssertGreaterThan(sumIslOn, sumIslOff,
-                             "Braiding-Pass muss Mittelbänke (umschlossene Inseln) bauen")
+        print("[BRAID] Summe: Bank-Fläche an=\(sumBarOn) aus=\(sumBarOff) (Seeds dafür \(seedsFor) / dagegen \(seedsAgainst)), Inseln an=\(sumIslOn) aus=\(sumIslOff), Splits an=\(sumSplitsOn) aus=\(sumSplitsOff)")
+        XCTAssertGreaterThan(sumBarOn, sumBarOff,
+                             "Braiding-Pass muss Mittelbank-FLÄCHE bauen")
+        // …und zwar systematisch, nicht über einen Ausreißer-Seed: der Pass muss
+        // auf DEUTLICH mehr Seeds gewinnen als verlieren. Ein bloßes `>` hinge
+        // an einem einzigen Seed-Flip — bei der dokumentierten Schwerschwänzig-
+        // keit wäre das Rauschen, kein Signal. Mindestabstand 3 bei gemessenen 6.
+        XCTAssertGreaterThanOrEqual(seedsFor, seedsAgainst + 3,
+                                    "Braiding darf nicht nur auf einzelnen Glücks-Seeds Bänke bauen (dafür \(seedsFor) / dagegen \(seedsAgainst))")
         XCTAssertGreaterThan(sumSplitsOn, sumSplitsOff,
                              "Braiding-Pass muss aktive Verzweigungen erzeugen")
         // Der eigentliche User-Wunsch: Arme bilden sich UND schließen sich wieder.
