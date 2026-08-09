@@ -47,18 +47,20 @@ public enum Hydraulic {
     /// Deckel der Ablehnungs-Stichprobe für niederschlagsgewichtete Startpunkte
     /// (s. `spawnPosition`): so viele NEUZIEHUNGEN sind je Tropfen erlaubt, danach
     /// wird der letzte Vorschlag angenommen — der Aufwand je Tropfen bleibt hart
-    /// beschränkt. Bei der Regen-Spanne des Kerns (0.18 … 1.0) liegt die
-    /// Annahmerate im Mittel über 50 %, im Erwartungswert kostet ein Start also
-    /// unter zwei Vorschläge. Rest-Verzerrung: eine Zelle im Regenschatten
-    /// (Annahmewahrscheinlichkeit 0.18) rutscht mit 0.82^25 ≈ 0.7 % trotzdem
-    /// durch — gegen die 5.6-fache Gewichtsspanne vernachlässigbar.
+    /// beschränkt. Die Annahmerate je Vorschlag ist Mittel(w)/max(w); mit dem auf
+    /// das Landmittel normierten Gewicht (Issue #10) ist Mittel(w) ≈ 1 und
+    /// max(w) gemessen 1.84 … 2.91 (n=832, Seeds 1337/7/99, über 50k Jahre
+    /// fallend) → 0.34 … 0.54, im Erwartungswert also 2–3 Vorschläge je Start.
+    /// Rest-Verzerrung durch den Deckel: mit dem ungünstigsten gemessenen max(w)
+    /// endet ein Start mit 0.66^24 ≈ 2·10⁻⁵ auf einem nicht angenommenen
+    /// Vorschlag — gegen die 5.6-fache Gewichtsspanne vernachlässigbar.
     static let spawnRejectionTries = 24
 
     /// Zieht einen Tropfen-Startpunkt in Zellkoordinaten.
     ///
     /// - `weight` leer → gleichverteilt über das Grid, mit exakt ZWEI Ziehungen aus
     ///   `rnd` (bit-identisch zum Zustand vor Issue #9).
-    /// - `weight` gesetzt (= `Terrain.rain`) → Ablehnungs-Stichprobe (von Neumann):
+    /// - `weight` gesetzt (= `Terrain.rainWeight`) → Ablehnungs-Stichprobe (von Neumann):
     ///   Vorschlag gleichverteilt, angenommen mit Wahrscheinlichkeit
     ///   `weight[k] / weightMax` → die Startdichte ist ∝ Niederschlag, ohne dass
     ///   eine 700k-Zellen-Verteilungstabelle je Charge gebaut werden muss.
@@ -99,10 +101,13 @@ public enum Hydraulic {
     ///   DEPOSITION gedämpft (channelDepositDamp) — das Bett gehört dem Kanal-Carve
     ///   und darf nicht zugeschüttet werden. Leeres Array = Verhalten wie ohne Maske
     ///   (bit-identisch).
-    /// - `rainWeight`: Niederschlagsfeld (Terrain.rain, Issue #9). Die Startpunkte
-    ///   werden damit gewichtet (s. `spawnPosition`) — es regnet im Luv häufiger,
-    ///   also starten dort auch mehr Tropfen. Leeres Array = gleichverteilte Starts
-    ///   wie bisher (bit-identisch).
+    /// - `rainWeight`: normiertes Niederschlags-Gewicht (Terrain.rainWeight,
+    ///   Issue #9/#10). Die Startpunkte werden damit gewichtet (s.
+    ///   `spawnPosition`) — es regnet im Luv häufiger, also starten dort auch mehr
+    ///   Tropfen. Über See trägt das Feld den neutralen Wert 1.0, damit `seaLevel`
+    ///   (verworfene Ozean-Starts) denselben Anteil verwirft wie ungewichtet und
+    ///   der Tropfen-Etat auf Land unverändert bleibt. Leeres Array =
+    ///   gleichverteilte Starts wie bisher (bit-identisch).
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
                               n: Int, count: Int, seed: UInt32, floor: Double,
                               p: HydraulicParams,

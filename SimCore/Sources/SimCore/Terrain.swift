@@ -36,6 +36,13 @@ public final class Terrain {
     public private(set) var sed: [Double]    // lockeres Sediment
     public private(set) var upliftBase: [Double] // tektonisches Feld (±, fix je Terrain)
     public private(set) var rain: [Double]   // Luftfeuchte/Niederschlag
+    /// Abfluss-GEWICHT je Zelle (Issue #10) — `rain`, normiert auf sein LANDMITTEL,
+    /// über See auf den neutralen Wert 1.0 gesetzt. Leer, solange
+    /// `cfg.rainWeightedFlow` aus ist (dann laufen alle Pfade bit-identisch zum
+    /// Stand vor Issue #9). Gefüllt am Ende von `computeRain`, verbraucht von
+    /// `seedFlowAccumulator` (beide Netze) und den Tropfen-Startpunkten
+    /// (`Hydraulic.spawnPosition`). Herleitung: `SimConfig.rainWeightedFlow`.
+    public private(set) var rainWeight: [Double] = []
     public private(set) var veg: [Double]    // Vegetationsdichte 0..1
     /// Vegetations-Klasse je Zelle: 0 kahl · 1 Gras · 2 Wald · 3 Auwald.
     /// ADDITIV zu `veg` (das bleibt Dichte 0..1 für alle bestehenden
@@ -63,9 +70,10 @@ public final class Terrain {
     /// und störte die Braid-Bänke, s. Kommentar in fillShallowPonds).
     public private(set) var waterLevel: [Double]
     public private(set) var receiver: [Int32] // Abfluss-Nachbar (-1 = Senke/Meer)
-    /// Einzugsgebiet (Single-Flow/D8 → Erosion). Akkumuliert reine Zellflächen;
-    /// mit `cfg.rainWeightedFlow` stattdessen ABFLUSS (Fläche × Niederschlag,
-    /// s. `seedFlowAccumulator`).
+    /// Einzugsgebiet (Single-Flow/D8 → Erosion). Ohne `cfg.rainWeightedFlow`
+    /// reine Zellflächen; mit Schalter (Produktion) ABFLUSS = Fläche ×
+    /// normiertes Regen-Gewicht (s. `seedFlowAccumulator`, `updateRainWeight`).
+    /// Die SKALA ist in beiden Fällen dieselbe — das Gewicht hat Landmittel 1.
     public private(set) var area: [Double]
     /// Multi-Flow-Einzugsgebiet (Freeman) → NUR Render/Braiding, nie Erosion.
     /// Dieselbe Gewichtung wie `area` (s. `seedFlowAccumulator`).
@@ -292,7 +300,7 @@ public final class Terrain {
                             seaLevel: cfg.hydraulicSkipWaterSpawns ? cfg.sea : nil,
                             hf: hf, receiver: receiver,
                             stream: streamMap,
-                            rainWeight: cfg.rainWeightedFlow ? rain : [],
+                            rainWeight: rainWeight,
                             track: &trackBuf)
             for k in 0..<cfg.count {
                 streamRate[k] = 0.5 * streamRate[k] + 0.5 * (trackBuf[k] / dtEq)
@@ -418,6 +426,53 @@ public final class Terrain {
         }
         }
         }}
+        updateRainWeight()
+    }
+
+    /// Baut `rainWeight` aus dem frischen `rain` (Issue #10).
+    ///
+    ///     w[k] = rain[k] / mittleres Land-rain   (Land)
+    ///     w[k] = 1.0                             (See)
+    ///
+    /// Zwei Eigenschaften, auf denen die ganze Rekalibrierung ruht:
+    /// 1. **Σw über Land = Zahl der Landzellen** (per Konstruktion des Mittels) —
+    ///    der Gesamtabfluss bleibt exakt der der ungewichteten Akkumulation, alle
+    ///    in ZELLEN kalibrierten Gates behalten ihre Bedeutung, und die
+    ///    Auflösungs-Abhängigkeit des Regen-Landmittels (0.563 bei n=192 …
+    ///    0.364 bei n=832) fällt heraus.
+    /// 2. **See = 1.0 = das Landmittel**, also der neutrale Wert: die
+    ///    Tropfen-Ablehnungs-Stichprobe zieht damit denselben Anteil Starts aufs
+    ///    Meer wie ungewichtet (bei `hydraulicSkipWaterSpawns` = derselbe
+    ///    Tropfen-Etat auf Land). Für die Akkumulation ist der See-Wert egal —
+    ///    Seezellen sind Senken und reichen nichts weiter.
+    ///
+    /// Das Landmittel wird SEQUENZIELL summiert (feste Reihenfolge → bit-genau
+    /// reproduzierbar); die Division je Zelle ist per-Zelle unabhängig und
+    /// deshalb parallel bit-identisch. Ohne Land (alles überflutet) bleibt das
+    /// Feld neutral bei 1.0.
+    private func updateRainWeight() {
+        guard cfg.rainWeightedFlow else {
+            if !rainWeight.isEmpty { rainWeight = [] }
+            return
+        }
+        let cnt = cfg.count, sea = cfg.sea
+        if rainWeight.count != cnt { rainWeight = .init(repeating: 1, count: cnt) }
+        var sum = 0.0, land = 0
+        for k in 0..<cnt where h[k] > sea { sum += rain[k]; land += 1 }
+        let mean = land == 0 ? 0 : sum / Double(land)
+        guard mean > 1e-9 else {
+            rainWeight.withUnsafeMutableBufferPointer { $0.update(repeating: 1) }
+            return
+        }
+        let inv = 1 / mean
+        h.withUnsafeBufferPointer { hb in
+        rain.withUnsafeBufferPointer { rb in
+        rainWeight.withUnsafeMutableBufferPointer { wb in
+            let ph = hb.baseAddress!, prain = rb.baseAddress!, pw = wb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi { pw[k] = ph[k] > sea ? prain[k] * inv : 1.0 }
+            }
+        }}}
     }
 
     // MARK: - Vegetation
@@ -726,23 +781,26 @@ public final class Terrain {
     /// Netze (D8 in `computeReceiversAndArea`, MFD in `computeMFDArea`), damit sie
     /// nicht auseinanderdriften.
     ///
-    /// Default: reine Zellfläche (`cellArea` überall) — bit-identisch zum Zustand
-    /// vor Issue #9. Mit `cfg.rainWeightedFlow`: `cellArea · rain[k]`, d. h. die
-    /// Akkumulation trägt ABFLUSS statt Fläche (Q = ∫P dA). `rain` ist beim Aufruf
-    /// frisch (computeFlow ruft computeRain zuerst); nur der Breach-Spin-up
-    /// (`breachBasins`) rechnet bewusst auf dem Regen des letzten `computeFlow`
-    /// weiter — das Klima ändert sich über eine Breach-Runde nicht nennenswert.
+    /// Ohne `cfg.rainWeightedFlow`: reine Zellfläche (`cellArea` überall) —
+    /// bit-identisch zum Zustand vor Issue #9. Mit Schalter: `cellArea ·
+    /// rainWeight[k]`, d. h. die Akkumulation trägt ABFLUSS statt Fläche
+    /// (Q = ∫P dA), auf das Regen-Landmittel normiert (s. `updateRainWeight`) —
+    /// Σ über Land bleibt damit exakt `Landzellen · cellArea`.
+    /// `rainWeight` ist beim Aufruf frisch (computeFlow ruft computeRain zuerst);
+    /// nur der Breach-Spin-up (`breachBasins`) rechnet bewusst auf dem Regen des
+    /// letzten `computeFlow` weiter — das Klima ändert sich über eine
+    /// Breach-Runde nicht nennenswert.
     /// Per-Zelle unabhängig → parallel bit-identisch zur sequenziellen Schleife.
     private func seedFlowAccumulator(_ pa: UnsafeMutablePointer<Double>, cellArea: Double) {
         let cnt = cfg.count
-        guard cfg.rainWeightedFlow else {
+        guard rainWeight.count == cnt else {
             pa.update(repeating: cellArea, count: cnt)
             return
         }
-        rain.withUnsafeBufferPointer { rb in
-            let prain = rb.baseAddress!
+        rainWeight.withUnsafeBufferPointer { rb in
+            let pw = rb.baseAddress!
             parallel(cnt) { lo, hi in
-                for k in lo..<hi { pa[k] = cellArea * prain[k] }
+                for k in lo..<hi { pa[k] = cellArea * pw[k] }
             }
         }
     }
@@ -1833,7 +1891,7 @@ public final class Terrain {
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],
-                            rainWeight: cfg.rainWeightedFlow ? rain : [],
+                            rainWeight: rainWeight,
                             track: &trackBuf)
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
             // Zeitkonstante aus `streamMapMemoryYears`), dann sättigen: nur KONSISTENT befahrene
@@ -2093,8 +2151,9 @@ public final class Terrain {
     /// Gesamtes Einzugsgebiet, das an allen Senken (Meer + Ränder) ankommt.
     /// Muss der Gesamtzellzahl entsprechen: jede Zelle trägt genau ihre eigene
     /// Fläche bei und fließt zu genau einer Senke (Entwässerungs-Invariante).
-    /// Mit `cfg.rainWeightedFlow` lautet dieselbe Invariante Σ`rain` statt Zellzahl
-    /// (jede Zelle trägt ihren Niederschlag bei) — s. `seedFlowAccumulator`.
+    /// Gilt mit `cfg.rainWeightedFlow` UNVERÄNDERT: das Gewicht hat auf Land das
+    /// Mittel 1 und über See exakt 1.0, Σ Startwerte bleibt also die Zellzahl
+    /// (s. `updateRainWeight`; Wächter `testWeightedFlowKeepsDrainageTotal`).
     public func totalOutletArea() -> Double {
         let cellArea = cfg.cellSize * cfg.cellSize
         var sum = 0.0

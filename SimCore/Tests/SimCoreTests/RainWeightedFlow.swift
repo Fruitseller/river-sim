@@ -1,17 +1,25 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter für den niederschlagsgewichteten Abfluss (Issue #9, `cfg.rainWeightedFlow`).
+/// Wächter für den niederschlagsgewichteten Abfluss (Issue #9, scharf geschaltet
+/// und kalibriert in Issue #10, `cfg.rainWeightedFlow`, Default AN).
 ///
-/// Zwei Fragen, getrennt geprüft:
-/// 1. **AUS ist der Status quo.** Der Schalter ist per Default aus, und die
-///    ungewichtete Akkumulation ist exakt „jede Zelle trägt ihre Fläche bei".
-///    Der Droplet-Sampler zieht ohne Gewichtsfeld dieselben zwei Zufallszahlen
-///    wie vorher — ein KONSTANTES Gewichtsfeld rechnet deshalb bit-identisch.
+/// Drei Fragen, getrennt geprüft:
+/// 1. **AUS bleibt der Referenzarm.** Ausgeschaltet ist die Akkumulation exakt
+///    „jede Zelle trägt ihre Fläche bei" (Zustand vor #9). Der Droplet-Sampler
+///    zieht ohne Gewichtsfeld dieselben zwei Zufallszahlen wie vorher — ein
+///    KONSTANTES Gewichtsfeld rechnet deshalb bit-identisch.
 /// 2. **AN zeigt in die erwartete Richtung.** Der Wind kommt aus Westen
 ///    (`computeRain`), also trägt die Luvseite (West) bei GLEICH GROSSEM
 ///    Einzugsgebiet mehr Abfluss als die Lee-Seite (Ost), und die Tropfen starten
 ///    dichter im Luv.
+/// 3. **AN verschiebt nur UM, es fügt nichts hinzu und nimmt nichts weg** — die
+///    Kalibrier-Entscheidung aus #10: das Gewicht ist auf das Landmittel des
+///    Regens normiert, über See neutral 1.0. Daraus folgen die drei Invarianten
+///    in `testRainWeightIsNormalizedToLandMean`,
+///    `testWeightedFlowKeepsDrainageTotal` und
+///    `testWeightedSpawnsKeepTheLandBudget` — sie sind der Grund, warum kein
+///    Zell-Gate und keine Erosionsrate nachgezogen werden musste.
 ///
 /// Messreihe an/aus: `docs/rain-weighted-flow-measurements.md`
 /// (erzeugt von `testRainWeightMeasurementDiagnostic`).
@@ -52,9 +60,99 @@ final class RainWeightedFlowTests: XCTestCase {
 
     // MARK: - 1) Ausgeschaltet = heutiges Verhalten
 
-    func testRainWeightedFlowIsOffByDefault() {
-        XCTAssertFalse(SimConfig().rainWeightedFlow,
-                       "Der Schalter muss per Default aus sein (Rekalibrierung erst in #10)")
+    func testRainWeightedFlowIsOnByDefault() {
+        XCTAssertTrue(SimConfig().rainWeightedFlow,
+                      "Der gewichtete Abfluss ist seit #10 die Produktions-Physik")
+    }
+
+    // MARK: - 1b) Die Normierung aus #10 (Basis der Rekalibrierung)
+
+    /// Das Gewicht ist `rain / Landmittel(rain)` auf Land und 1.0 über See.
+    /// Daraus folgt direkt: Σ Gewicht über Land = Zahl der Landzellen — der
+    /// Gesamtabfluss ist derselbe wie ungewichtet, der Schalter verteilt nur um.
+    /// Zusätzlich geprüft: das Landmittel des Gewichts ist AUFLÖSUNGSFREI 1.0,
+    /// während das Landmittel des rohen `rain` mit n wegläuft (0.56 → 0.36) —
+    /// genau der Grund, warum nicht das rohe Feld gewichtet.
+    func testRainWeightIsNormalizedToLandMean() {
+        for n in [96, 192, 320] {
+            let t = Terrain(config: cfg(n: n, rainWeighted: true), seed: 1337)
+            var wLand = 0.0, rawLand = 0.0, land = 0
+            for k in 0..<t.cfg.count {
+                if t.h[k] > t.cfg.sea {
+                    wLand += t.rainWeight[k]; rawLand += t.rain[k]; land += 1
+                } else {
+                    XCTAssertEqual(t.rainWeight[k], 1.0,
+                                   "über See muss das Gewicht neutral 1.0 sein")
+                }
+            }
+            XCTAssertGreaterThan(land, 0)
+            print(String(format: "[RAIN] n=%d Landmittel Gewicht=%.6f roh=%.4f",
+                         n, wLand / Double(land), rawLand / Double(land)))
+            XCTAssertEqual(wLand / Double(land), 1.0, accuracy: 1e-9,
+                           "Σ Gewicht über Land muss = Zahl der Landzellen sein (n=\(n))")
+        }
+    }
+
+    /// Die Entwässerungs-Invariante gilt EINGESCHALTET unverändert: Σ der
+    /// Einzugsgebiete an allen Senken = Gesamtzellzahl. Das ist die eigentliche
+    /// Aussage der Normierung — vor #10 (rohes Gewicht) fiel dieselbe Summe auf
+    /// das Landmittel des Regens (gemessen 0.53 bei n=832) und riss damit jedes
+    /// in Zellen kalibrierte Gate mit.
+    func testWeightedFlowKeepsDrainageTotal() {
+        let t = Terrain(config: cfg(n: 128, rainWeighted: true), seed: 777)
+        let total = Double(t.cfg.count)
+        XCTAssertEqual(t.totalOutletArea(), total, accuracy: total * 1e-6,
+                       "gewichtet darf die Entwässerungssumme nicht wegdriften")
+    }
+
+    /// Der Tropfen-Etat auf LAND bleibt erhalten: über See trägt das Gewichtsfeld
+    /// den neutralen Wert 1.0, also fällt derselbe Anteil der Startpunkte aufs
+    /// Land wie bei gleichverteilten Starts. Das ist die Antwort auf #9 §D.3
+    /// (rohes Gewicht verlor 21–28 % der Land-Tropfen an den Ozean, weil es über
+    /// dem Meer am meisten regnet) — ohne die Tropfenzahl anzufassen.
+    func testWeightedSpawnsKeepTheLandBudget() {
+        let t = Terrain(config: cfg(n: 128, rainWeighted: true), seed: 1337)
+        let c = t.cfg
+        // Erwartungswert über GENAU den Bereich, aus dem `spawnPosition` zieht:
+        // die Vorschläge sind gleichverteilt auf [0, n-1) × [0, n-1), die letzte
+        // Zeile/Spalte wird also nie getroffen (Randeffekt der Zellzuordnung
+        // `Int(py)*n + Int(px)`). Ohne diese Einschränkung verschiebt allein die
+        // Küstenlage des Randes den Sollwert um ~0.007.
+        var wLand = 0.0, wAll = 0.0
+        for j in 0..<(c.n - 1) {
+            for i in 0..<(c.n - 1) {
+                let k = j * c.n + i
+                wAll += t.rainWeight[k]
+                if t.h[k] > c.sea { wLand += t.rainWeight[k] }
+            }
+        }
+        let landShare = wLand / wAll
+        let wMax = t.rainWeight.max() ?? 0
+        var rnd = Mulberry32(seed: 4242)
+        var onLand = 0
+        let draws = 40_000
+        for _ in 0..<draws {
+            let s = Hydraulic.spawnPosition(&rnd, n: c.n, weight: t.rainWeight, weightMax: wMax)
+            if t.h[Int(s.y) * c.n + Int(s.x)] > c.sea { onLand += 1 }
+        }
+        let share = Double(onLand) / Double(draws)
+        print(String(format: "[RAIN] Starts auf Land=%.4f, erwartet (Gewichtsanteil)=%.4f",
+                     share, landShare))
+        // 3 σ der Stichprobe (p ≈ 0.7, N = 40000) sind ~0.007.
+        XCTAssertEqual(share, landShare, accuracy: 0.01,
+                       "gewichtete Starts dürfen den Land-Etat nicht verschieben")
+        // Und über das GANZE Gitter gilt die Aussage exakt: der Gewichtsanteil
+        // des Landes IST der Zellanteil des Landes (Gewicht über See = 1.0 = das
+        // Landmittel). Über dem Ziehbereich oben stimmt das nur bis auf die
+        // Randzeile/-spalte, deshalb hier getrennt geprüft.
+        var wLandAll = 0.0, wAllCells = 0.0
+        var landCells = 0
+        for k in 0..<c.count {
+            wAllCells += t.rainWeight[k]
+            if t.h[k] > c.sea { wLandAll += t.rainWeight[k]; landCells += 1 }
+        }
+        XCTAssertEqual(wLandAll / wAllCells, Double(landCells) / Double(c.count), accuracy: 1e-9,
+                       "der Land-Etat der Starts muss exakt der Zellanteil sein")
     }
 
     /// Ausgeschaltet trägt jede Zelle EXAKT ihre Zellfläche bei — `area` ist also
