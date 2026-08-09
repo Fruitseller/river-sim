@@ -116,6 +116,10 @@ Grate; ohne sie wird das Terrain über die Zeit spitzer statt runder).
 
 ### 3b. Hydrologie (Kern-Thema)
 - Abfluss aus **echtem Klima** (Niederschlag − Verdunstung), nicht nur Zellzahl.
+  *Teilweise da (Issue #9): `SimConfig.rainWeightedFlow` gewichtet D8- und
+  MFD-Akkumulation sowie die Tropfen-Starts mit `rain`, per Default AUS bis die
+  Kalibrierung nachgezogen ist (#10). Messung:
+  `docs/rain-weighted-flow-measurements.md`. Die Verdunstung fehlt weiterhin.*
 - Seen/Stauseen mit Volumen und Überlauf (Priority-Flood liefert das schon).
 - **Mäander, Auen, Deltas** über Sediment-Transport; Flussordnung (Strahler) für Rendering.
 - Optional: **Shallow-Water-Modus** für Hochwasser-Ereignisse (der Prototyp hat das

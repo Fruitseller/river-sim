@@ -110,6 +110,29 @@ werden. Belegtabellen: `docs/terrain-aging-measurements.md`, Kalibrier-Logbuch:
   neu −0.0508 → −0.0389 (rundet monoton), alt −0.0517 → −0.0476 mit Umkehr ab
   40k. Noch offen: die hypsometrische Kurve als zweite Alterungs-Kennzahl.
 
+**Niederschlagsgewichteter Abfluss — Schalter da, Kalibrierung offen (Issue #9,
+Kalibrierung = Issue #10):** `SimConfig.rainWeightedFlow` (Default **AUS**)
+gewichtet die Akkumulation beider Netze mit `rain` (`Terrain.seedFlowAccumulator`,
+D8 und MFD nach derselben Regel — die Rollentrennung bleibt) und startet die
+Erosions-Tropfen niederschlagsgewichtet (`Hydraulic.spawnPosition`,
+Ablehnungs-Stichprobe). Aus `area` wird damit Abfluss statt Fläche.
+Messreihe an/aus: `docs/rain-weighted-flow-measurements.md`; Wächter:
+`RainWeightedFlow.swift`.
+- Belegt: bei gleich großem Einzugsgebiet trägt die Luvseite ×1.38 (D8) bzw.
+  ×1.42 (MFD) mehr Abfluss; die Drainagedichte Luv/Lee verschiebt sich gepoolt
+  über 6 Seeds von 1.048 auf 1.362.
+- Warum AUS: ohne Normierung fällt der Gesamtabfluss aufs Landmittel des Regens
+  (0.36 bei n=832) → alle in ZELLEN kalibrierten Gates (`renderMinCells`,
+  `braidMinCells`, `meanderMinCells`, `floodplainMinArea`) greifen ~2× zu spät
+  (Kanalzellen bei n=832, Jahr 0: 17042 → 9409), und über dem Meer regnet es am
+  meisten → mit `hydraulicSkipWaterSpawns` kommen ~30 % weniger Tropfen aufs
+  Land. Relief/Alterung bleiben dagegen praktisch unverändert.
+- Offene Entscheidung für #10: Gewicht auf sein Landmittel normieren (hält den
+  Gesamtabfluss und die bestehende Kalibrierung, macht den Effekt zur reinen
+  Umverteilung) ODER Gates/Raten neu kalibrieren. Achtung: das Landmittel des
+  Regens ist auflösungsabhängig (0.563 bei n=192 → 0.364 bei n=832), weil
+  `computeRain` je ZELLE abtrocknet.
+
 **Politur / Rendering:**
 - ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass
   (Droplets+Braiding+Mäander gemeinsam, keine Einzelquelle) schüttet den Sill zu,
@@ -219,6 +242,9 @@ werden. Belegtabellen: `docs/terrain-aging-measurements.md`, Kalibrier-Logbuch:
   Kennzahl `l_c = D/K` (klein = jung/zerklüftet, groß = alt/rund).
 - `docs/river-baseline-metrics.md` — Baseline-Messung vor dem Fluss-Overhaul
   (Churn 0.2725 bei jedem dt = Framerate-Kopplung des alten D8-argmax).
+- `docs/rain-weighted-flow-measurements.md` — Messung an/aus zum
+  niederschlagsgewichteten Abfluss (Issue #9): Kanalzellen, Drainagedichte
+  Luv/Lee, Relief, Seeanteil; Kalibrier-Hinweise für #10.
 - `docs/references/runevision-erosion/` — kompletter GLSL-Code des Erosionsfilters
   (MPL-2.0), Grundlage von `ErosionFilter.swift` und des Shader-Detail-Layers.
 - nickmcd.me (Procedural Hydrology, Meandering Rivers), SebLague/Elumenix (Droplet).

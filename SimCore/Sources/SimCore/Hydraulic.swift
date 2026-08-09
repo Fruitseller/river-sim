@@ -44,6 +44,45 @@ public struct HydraulicParams: Sendable {
 }
 
 public enum Hydraulic {
+    /// Deckel der Ablehnungs-Stichprobe für niederschlagsgewichtete Startpunkte
+    /// (s. `spawnPosition`): so viele NEUZIEHUNGEN sind je Tropfen erlaubt, danach
+    /// wird der letzte Vorschlag angenommen — der Aufwand je Tropfen bleibt hart
+    /// beschränkt. Bei der Regen-Spanne des Kerns (0.18 … 1.0) liegt die
+    /// Annahmerate im Mittel über 50 %, im Erwartungswert kostet ein Start also
+    /// unter zwei Vorschläge. Rest-Verzerrung: eine Zelle im Regenschatten
+    /// (Annahmewahrscheinlichkeit 0.18) rutscht mit 0.82^25 ≈ 0.7 % trotzdem
+    /// durch — gegen die 5.6-fache Gewichtsspanne vernachlässigbar.
+    static let spawnRejectionTries = 24
+
+    /// Zieht einen Tropfen-Startpunkt in Zellkoordinaten.
+    ///
+    /// - `weight` leer → gleichverteilt über das Grid, mit exakt ZWEI Ziehungen aus
+    ///   `rnd` (bit-identisch zum Zustand vor Issue #9).
+    /// - `weight` gesetzt (= `Terrain.rain`) → Ablehnungs-Stichprobe (von Neumann):
+    ///   Vorschlag gleichverteilt, angenommen mit Wahrscheinlichkeit
+    ///   `weight[k] / weightMax` → die Startdichte ist ∝ Niederschlag, ohne dass
+    ///   eine 700k-Zellen-Verteilungstabelle je Charge gebaut werden muss.
+    ///   Zellen mit Maximalgewicht werden OHNE Ziehung angenommen — dadurch ist ein
+    ///   konstantes Gewichtsfeld bit-identisch zum ungewichteten Fall (Wächter:
+    ///   `testUniformRainWeightIsBitIdentical`).
+    static func spawnPosition(_ rnd: inout Mulberry32, n: Int,
+                              weight: [Double], weightMax: Double) -> (x: Double, y: Double) {
+        var px = rnd.next() * Double(n - 1)
+        var py = rnd.next() * Double(n - 1)
+        guard !weight.isEmpty, weightMax > 0 else { return (px, py) }
+        var tries = 0
+        while true {
+            let w = weight[Int(py) * n + Int(px)]
+            if w >= weightMax { break }              // Maximum → immer angenommen
+            if rnd.next() * weightMax <= w { break } // angenommen
+            if tries >= spawnRejectionTries { break }
+            tries += 1
+            px = rnd.next() * Double(n - 1)
+            py = rnd.next() * Double(n - 1)
+        }
+        return (px, py)
+    }
+
     /// Führt `count` Tropfen aus und modifiziert `h`/`rock`/`sed` massenkonsistent
     /// (h = rock + sed). `seed` steuert die (deterministischen) Startpositionen.
     ///
@@ -60,12 +99,17 @@ public enum Hydraulic {
     ///   DEPOSITION gedämpft (channelDepositDamp) — das Bett gehört dem Kanal-Carve
     ///   und darf nicht zugeschüttet werden. Leeres Array = Verhalten wie ohne Maske
     ///   (bit-identisch).
+    /// - `rainWeight`: Niederschlagsfeld (Terrain.rain, Issue #9). Die Startpunkte
+    ///   werden damit gewichtet (s. `spawnPosition`) — es regnet im Luv häufiger,
+    ///   also starten dort auch mehr Tropfen. Leeres Array = gleichverteilte Starts
+    ///   wie bisher (bit-identisch).
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
                               n: Int, count: Int, seed: UInt32, floor: Double,
                               p: HydraulicParams,
                               seaLevel: Double? = nil,
                               hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
+                             rainWeight: [Double] = [],
                              track: inout [Double]) {
         guard count > 0, n > 2 else { return }
         // Erosions-Pinsel einmal vorberechnen: Offsets + normierte Gewichte im Radius.
@@ -115,10 +159,15 @@ public enum Hydraulic {
             return 0
         }
 
+        // Gewichts-Maximum einmal je Charge (die Ablehnungs-Stichprobe normiert
+        // darauf); leeres/kaputtes Feld → gleichverteilte Starts wie bisher.
+        let rainOn = rainWeight.count == h.count
+        let rainMax = rainOn ? (rainWeight.max() ?? 0) : 0
+
         var rnd = Mulberry32(seed: seed)
         for _ in 0..<count {
-            var px = rnd.next() * Double(n - 1)
-            var py = rnd.next() * Double(n - 1)
+            var (px, py) = spawnPosition(&rnd, n: n,
+                                         weight: rainOn ? rainWeight : [], weightMax: rainMax)
             if let seaLevel {
                 let start = Int(py) * n + Int(px)
                 if h[start] <= seaLevel { continue }
