@@ -53,6 +53,13 @@ final class SimNode: Node {
     @Callable func floorLevel() -> Double { terrain.cfg.floor }
     @Callable func currentYear() -> Double { terrain.years }
 
+    /// Zur Bauzeit eingebrannter Stempel der Quellen (Extension/Sources +
+    /// SimCore/Sources, Verfahren: scripts/build-stamp.sh). Godot lädt die Library
+    /// aus game/bin/ blind; smoke.gd vergleicht diesen Stempel mit dem
+    /// Arbeitsverzeichnis und bricht bei einer veralteten .so laut ab, statt sie
+    /// still zu benutzen (real passiert: "Nonexistent function brush").
+    @Callable func buildStamp() -> String { BuildStamp.value }
+
     // MARK: Felder (row-major, Länge n*n)
 
     @Callable func heights() -> PackedFloat32Array { pack(terrain.h) }

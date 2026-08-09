@@ -29,6 +29,29 @@ if [[ "$(uname -s)" == "Linux" ]]; then
 	fi
 fi
 
+# Build-Stempel des Quellstands in die Library einbrennen: Godot lädt game/bin/
+# blind, eine veraltete .so fällt sonst erst als "Nonexistent function ..." auf
+# (Verfahren und Prüfung: scripts/build-stamp.sh).
+STAMP="$(scripts/build-stamp.sh --source)"
+STAMP_FILE="Extension/Sources/RiverSimGD/Generated/BuildStamp.swift"
+mkdir -p "$(dirname "$STAMP_FILE")"
+STAMP_SOURCE="// GENERIERT von scripts/build.sh — nicht bearbeiten, nicht einchecken.
+// Stempel der Quellen unter Extension/Sources und SimCore/Sources; Verfahren und
+// Gegenprüfung: scripts/build-stamp.sh, game/scripts/BuildStamp.gd.
+enum BuildStamp {
+    /// Marker und Hash stehen bewusst in EINEM Literal: so bleibt der Stempel in
+    /// der gebauten .so/.dylib greifbar (start.sh liest ihn ohne Godot-Start).
+    static let marked = \"RIVERSIM_BUILD_STAMP:$STAMP\"
+
+    /// Reiner Hash — SimNode.buildStamp() reicht ihn an Godot weiter.
+    static var value: String { String(marked.split(separator: \":\").last ?? \"\") }
+}"
+# Nur bei Abweichung schreiben, sonst kompiliert SwiftPM das Modul jedes Mal neu.
+if [[ ! -f "$STAMP_FILE" || "$(cat "$STAMP_FILE")" != "$STAMP_SOURCE" ]]; then
+	printf '%s\n' "$STAMP_SOURCE" >"$STAMP_FILE"
+fi
+echo "==> Build-Stempel $STAMP"
+
 echo "==> swift build ($CONFIG)"
 # SwiftGodot baut mit library-evolution; die Interface-Verifikation kann dessen
 # internes GDExtension-Modul nicht sehen. Swift 5-Sprachmodus hält den 5.9-Code
@@ -65,3 +88,7 @@ Linux)
 	exit 1
 	;;
 esac
+
+# Gegenprobe: der eingebrannte Stempel muss in der KOPIERTEN Library ankommen —
+# sonst wäre die Veraltet-Prüfung von start.sh/smoke.gd wirkungslos.
+scripts/build-stamp.sh --check

@@ -1,8 +1,11 @@
 extends SceneTree
 ## Headless-Smoke-Test der GDExtension — GPU-frei ausführbar mit:
 ##   godot --headless --path game --script res://tests/smoke.gd
-## Prüft: SimNode registriert, Felder haben n*n Einträge, step() verändert das
-## Terrain, Jahr läuft, Sculpting wirkt. Exit-Code != 0 bei Fehler.
+## Prüft: Library aktuell (Build-Stempel), SimNode registriert, Felder haben n*n
+## Einträge, step() verändert das Terrain, Jahr läuft, Sculpting wirkt.
+## Exit-Code != 0 bei Fehler.
+
+const BuildStamp = preload("res://scripts/BuildStamp.gd")
 
 var done := false
 
@@ -19,6 +22,14 @@ func _run() -> void:
 		quit(1)
 		return
 	var sim: Object = ClassDB.instantiate("SimNode")
+
+	# Zuerst prüfen, ob die geladene Library zum Quellstand passt: alles danach
+	# testet sonst eine alte .so, und Fehlschläge sind dann irreführend
+	# (historisch: "Nonexistent function brush" nach vergessenem Rebuild).
+	if not BuildStamp.check(sim):
+		quit(1)
+		return
+
 	var n: int = sim.gridSize()
 	var h0: PackedFloat32Array = sim.heights()
 	print("grid=", n, " sea=", sim.seaLevel(), " heights_len=", h0.size())

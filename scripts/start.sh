@@ -3,6 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Nicht gegen eine veraltete GDExtension starten: Godot lädt game/bin/ blind und
+# meldet fehlende Funktionen erst mitten im Spiel (siehe scripts/build-stamp.sh).
+scripts/build-stamp.sh --check
+
 GODOT="${GODOT:-$PWD/.tools/godot-4.7.1/Godot_v4.7.1-stable_linux.x86_64}"
 if [[ ! -x "$GODOT" ]]; then
 	echo "Godot nicht gefunden. Setze GODOT oder installiere die lokale Version." >&2
