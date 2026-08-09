@@ -15,13 +15,16 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Hangdiffusion (`hillslopeDiffusion`) rundet die Grate. Prozess-Reihenfolge LEM-konform:
   Uplift → Flow → SPL/Auslass → Braiding → Droplet → Diffusion → Wave.
   Pre-Erosion + Shader-Detail-Layer nach runevision (`ErosionFilter.swift`).
-- **Anti-Runaway / Anti-Verflachung:** `isoHighClamp` deckelt das Relief, niedrige
-  Hebung (`upliftPer100y`) lässt Berge erodieren statt wachsen, der **Relief-Servo**
-  (`reliefServoPer100y`, nur bei Relief-Defizit und nur auf Land) verhindert das
-  „immer flacher" über 100k+ Jahre. Sein Regelsignal ist `landReliefRobust()`
-  (95. Perzentil − Median der Landhöhen), nicht mehr `landRelief()` = max − min:
-  letzteres hing an einer einzigen Extremzelle (Nadelgipfel/Sculpt-Strich steuerte
-  die Hebung der ganzen Insel).
+- **Alterung statt Regler:** die Tektonik ist eine **abklingende Hebung**
+  `U(t) = U_floor + (U₀−U_floor)·e^(−t/τ)` (post-orogener Zerfall) — zusammen mit
+  der linearen Hangdiffusion ergibt das „jung spitz → alt rund" statt eines ewig
+  jungen Gleichgewichts. `isoHighClamp` verhindert, dass die Rest-Hebung die
+  höchsten Grate erneut anhebt. Der **Relief-Servo** ist nur noch Untergrenze
+  gegen echtes Einebnen (`reliefTarget = 0.05`, springt im 200k-Fenster nie an);
+  sein Regelsignal ist `landReliefRobust()` (95. Perzentil − Median der
+  Landhöhen), nicht `landRelief()` = max − min: letzteres hing an einer einzigen
+  Extremzelle (Nadelgipfel/Sculpt-Strich steuerte die Hebung der ganzen Insel).
+  Alterungs-Kennzahl ist `ridgeCurvature()` (∇²z auf Gratzellen).
 - **Hydrologie:** Priority-Flood + D8 für Erosion, MFD (Freeman/Quinn) für Render und
   Braiding, EWMA-geglättete Stream-Map, Pool-Kopplung (Descend→Flood→Drain),
   Becken-Breach bei der Generierung (Becken entwässern zum Meer).
@@ -78,15 +81,34 @@ trennte die Insel-ZAHL nur 1.19×, die Fläche 1.77× — eine echte Mittelbank 
 mehrzellig, ein Ufer-Knubbel ein bis zwei Zellen. Optional weiter offen:
 Splits pro Trunk-Länge als zusätzliche Metrik.
 
-**Terrain-Alterung (aus `docs/research-terrain-aging.md` §6):**
-- `isoHighClamp` (0.90) testweise lockern/entfernen — laut Recherche mit der
-  Hangdiffusion überflüssig; aktuell pinnt der Deckel das Relief aufs junge Niveau
-  statt echte Alterung zuzulassen. Per Headless-Messung prüfen (LongRunCollapse).
-- Optional/größer: abklingende Hebung `U(t) = U_floor + (U₀−U_floor)·e^(−t/τ)` für ein
-  dramatischeres „jung → alt". Bewusst NICHT gemacht, weil U₀ > heute einen
-  Wachstums-Puls einführt (User will kein Wachsen).
-- Diagnose-Messgrößen fehlen: mittlere Grat-Krümmung (∇²z auf Gratzellen) und
-  hypsometrische Kurve. Sie trennen „spitz/jung" von „rund/alt" objektiv.
+**Terrain-Alterung — ERLEDIGT (Aug 2026, Issue #13):** Die Landschaft altert
+jetzt von selbst, statt von einem Regler auf dem jungen Zustand gehalten zu
+werden. Belegtabellen: `docs/terrain-aging-measurements.md`, Kalibrier-Logbuch:
+`Config.swift` bei `upliftDecayStartPer100y`, Wächter: `TerrainAging`.
+- **Abklingende Hebung** `U(t) = U_floor + (U₀−U_floor)·e^(−t/τ)` mit
+  U₀ = 0.0008, U_floor = 0.00008, τ = 40.000 J. ersetzt den Servo als
+  Haupt-Tektonik. `step()` integriert U(t) über den Schritt geschlossen →
+  framerate-unabhängig.
+- **Die offene Entscheidung ist getroffen: Start am Orogenese-Höhepunkt.** Die
+  Generierung liefert den fertigen scharfen Gebirgszustand, es gibt keine
+  Aufbauphase — U(t) klingt ab t=0 ab, also gibt es per Konstruktion keinen
+  Wachstums-Puls. Gegenprobe gemessen: U₀ = 0.006 hebt maxH 0.6836 → 0.7647 und
+  meanLand +18 % (= „Berge wachsen", verworfen), U₀ = 0.003 dreht ab 20k wieder
+  hoch (verworfen). Bei U₀ = 0.0008 ist der maxH-Spitzenwert des Laufs über alle
+  5 gemessenen Seeds exakt der Startwert.
+- **Relief-Servo ist nur noch UNTERGRENZE** (`reliefTarget` 0.20 → 0.05): mit
+  dem alten Ziel lief er in JEDEM Schritt und löschte die Alterung komplett
+  (Relief bei 200k 0.4961 statt 0.3359). Bei 0.05 springt er im normalen
+  100k/200k-Fenster nie an und fängt nur noch echte Peneplanation ab.
+- **`isoHighClamp` (0.90) bleibt** — testweise auf 10 (praktisch aus) gemessen:
+  der Gipfel wächst dann zwischen 20k und 60k wieder (0.6334 → 0.6426) und das
+  Relief plateaut bei ~0.49 statt zu altern. Seine Rolle hat sich geändert: nicht
+  mehr Runaway-Deckel, sondern Bremse gegen erneutes Anheben der höchsten Grate.
+- **Diagnose-Kennzahl `Terrain.ridgeCurvature()`** (mittleres ∇²z auf
+  Gratzellen, negativ = spitz, gegen 0 = rund) gebaut und im Diagnosepanel
+  sichtbar. Sie trennt „jung spitz" von „alt rund" objektiv: n=832 über 100k
+  neu −0.0508 → −0.0389 (rundet monoton), alt −0.0517 → −0.0476 mit Umkehr ab
+  40k. Noch offen: die hypsometrische Kurve als zweite Alterungs-Kennzahl.
 
 **Politur / Rendering:**
 - ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass

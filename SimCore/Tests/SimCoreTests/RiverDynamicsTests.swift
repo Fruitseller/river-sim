@@ -441,9 +441,16 @@ final class RiverDynamicsTests: XCTestCase {
             // völlig gesundes robustes Relief (0.151) — nur eben keinen hohen
             // Gipfel; umgekehrt hat Seed 31415 max − min 0.439 bei robust 0.098.
             // Der alte 0.30-Wächter hing an dieser Einzelzelle (Seed 20250809 lag
-            // bei 0.3004 — vier Tausendstel Marge). Schwelle 0.07 = ~28 % unter
-            // dem schwächsten der 16 Seeds (0.098), Spanne insgesamt 0.098…0.163.
-            XCTAssertGreaterThan(tOn.landReliefRobust(), 0.07,
+            // bei 0.3004 — vier Tausendstel Marge). Die Schwelle war 0.07 = ~28 %
+            // unter dem schwächsten der 16 Seeds (0.098, Spanne 0.098…0.163).
+            // NACHGEZOGEN mit Issue #13 (abklingende Hebung): ohne den
+            // dauer-nachhebenden Relief-Servo altert das Terrain in den ersten 30k
+            // Jahren schneller, das schwächste Seed (8675309) liegt jetzt bei
+            // 0.0674 statt über 0.07 — alle übrigen 15 Seeds bleiben darüber.
+            // Neue Schwelle 0.05 = ~26 % unter diesem gemessenen Minimum, also
+            // dieselbe Marge wie zuvor, und deckungsgleich mit `reliefTarget`
+            // (0.05): darunter würde ohnehin die Relief-Untergrenze eingreifen.
+            XCTAssertGreaterThan(tOn.landReliefRobust(), 0.05,
                                  "Terrain eingeebnet unter Braiding (seed \(seed))")
         }
         print("[BRAID] Summe: Bank-Fläche an=\(sumBarOn) aus=\(sumBarOff) (Seeds dafür \(seedsFor) / dagegen \(seedsAgainst)), Inseln an=\(sumIslOn) aus=\(sumIslOff), Splits an=\(sumSplitsOn) aus=\(sumSplitsOff)")

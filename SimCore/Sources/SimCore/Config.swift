@@ -116,16 +116,33 @@ public struct SimConfig: Sendable {
     // auf lineare Diffusion nirgends mehr aufgerufen (s. ROADMAP „Toter Code").
     // Küsten-Talus ist davon unberührt (waveTalus, wavePass).
 
-    // ---- Relief-Servo (Anti-Verflachung) ----
-    // Ohne Dauer-Tektonik (upliftPer100y = 0) erodiert das Relief über 10k+ Jahre
-    // monoton weg → „immer flacher" (User-Beobachtung bei 130k: Rollhügel-Ebene).
-    // Der Servo ist die Mitte zwischen beiden User-Anforderungen („Berge wachsen
-    // nicht" UND „nicht immer flacher"): Hebung springt NUR an, wenn das Relief-
-    // Signal unter reliefTarget fällt, proportional zum Defizit (∝ deficit/
-    // reliefServoBand, gedeckelt bei reliefServoPer100y), entlang des fixen
-    // ridged-Tektonik-Felds (dieselben Gebirge wachsen nach, keine neuen). Am
-    // Ziel regelt er ab → dynamisches Gleichgewicht statt Runaway (isoHighClamp
-    // deckelt zusätzlich).
+    // ---- Relief-Servo — seit Issue #13 nur noch UNTERGRENZE ----
+    // Der Servo hebt nach, wenn das Relief-Signal unter reliefTarget fällt,
+    // proportional zum Defizit (∝ deficit/reliefServoBand, gedeckelt bei
+    // reliefServoPer100y), entlang des fixen ridged-Tektonik-Felds (dieselben
+    // Gebirge wachsen nach, keine neuen), nur über dessen POSITIVEN Teil und nur
+    // auf Land.
+    //
+    // ROLLENWECHSEL (Issue #13): Er war der Haupt-Hebungsmechanismus und hat damit
+    // die Alterung VERHINDERT — auf reliefTarget = 0.20 geregelt lief er dauerhaft
+    // (Signal real 0.09–0.18) und immer stärker, je flacher das Terrain wurde.
+    // Gemessen (n=160, Seed 1337, 100k, alle 20k): Relief fiel nur bis 30k
+    // (0.5335 → 0.4569) und wurde danach WIEDER HOCHGEREGELT (→ 0.5097), die
+    // Gratkrümmung blieb ab 10k flach bei ≈ −0.030. Genau das „ewig junge
+    // Gleichgewicht" aus dem Ticket. Die Alterung trägt jetzt die abklingende
+    // Hebung U(t) (s. oben); der Servo ist nur noch der NOTBODEN gegen echtes
+    // Einebnen.
+    //
+    // reliefTarget deshalb von 0.20 auf 0.05 GESENKT. Gemessener Anteil der
+    // Schritte, in denen der Servo überhaupt anspringt (Produktionspfad,
+    // n=160, Seed 1337, 200k Jahre): reliefTarget 0.20 → **1.000** (jeder
+    // Schritt, Relief endet bei 0.4961 statt 0.3359 = die Alterung ist gelöscht),
+    // 0.09 → 0.000, 0.07 → 0.000. Untergrenze gewählt aus dem MULTI-SEED-Minimum
+    // des Signals über 100k Jahre: 0.0962 (1337) / 0.1079 (7) / 0.0684 (99) /
+    // 0.0859 (2024) / 0.1255 (555). 0.07 läge über dem Minimum von Seed 99 — der
+    // Servo würde dort mitten in der normalen Alterung anspringen. 0.05 hält
+    // ~27 % Abstand unter das gemessene Minimum aller Seeds und fängt trotzdem
+    // eine echte Peneplanation (Signal → 0) ab.
     //
     // REGELSIGNAL ist `Terrain.landReliefRobust()` = **95. Perzentil − Median der
     // Landhöhen** (war: `landRelief()` = max − min über Land). Grund: max − min
@@ -148,6 +165,7 @@ public struct SimConfig: Sendable {
     // dasselbe Ziel wie die Produktion. Wächter: `ReliefSignal
     // .testSignalIsResolutionStable` misst dieselbe Reihe bis n=832.
     //
+    // ---- HISTORISCH (Herleitung des alten Ziels 0.20, gültig bis Issue #13) ----
     // reliefTarget umgerechnet: 0.55 (max − min) → 0.20. Umgerechnet wird über die
     // gemessene SENSITIVITÄT, nicht über das Niveau-Verhältnis: das robuste Signal
     // liegt zwar nur bei ~0.30 × (max − min), ändert sich aber fast parallel dazu
@@ -173,13 +191,87 @@ public struct SimConfig: Sendable {
     // von 0.000488 quantisiert — s. `Terrain.landReliefRobust`.)
     // Dieselbe Delle bei 30k, dasselbe Plateau (neu ~3 % höher) — das Relief läuft
     // weder weg noch ebnet es ein.
-    public var reliefTarget: Double = 0.20
+    // ---- Ende HISTORISCH ----
+    public var reliefTarget: Double = 0.05
     public var reliefServoPer100y: Double = 0.0015
     /// Defizit-Spanne, über die der Servo von 0 auf reliefServoPer100y hochfährt
     /// (früher hart codierte 0.1 auf max − min; s. Umrechnung bei reliefTarget).
     public var reliefServoBand: Double = 0.07
 
+    // ---- Abklingende Hebung (post-orogener Zerfall) — DER Alterungs-Mechanismus ----
+    //
+    //     U(t) = U_floor + (U₀ − U_floor) · e^(−t/τ)
+    //
+    // Baldwin/Whipple/Tucker 2003 über docs/research-terrain-aging.md §3: ein
+    // stationäres Gleichgewicht (konstantes U) altert NIE — es bleibt „ewig jung".
+    // Erst wenn die Tektonik abschaltet, zerfällt das Relief, während die
+    // (weiterlaufende) lineare Hangdiffusion die Grate rundet: „jung spitz → alt
+    // rund". `step()` integriert U(t) über den Zeitschritt geschlossen
+    // (`Terrain.upliftDecayAmount`) — Zeitraffer und +10.000-Jahre-Sprung tragen
+    // exakt dieselbe Hebung ein.
+    //
+    // ENTSCHEIDUNG „Orogenese-Höhepunkt vs. U₀ mit Erosion-überwiegt" (Issue #13):
+    // **Start am Orogenese-Höhepunkt.** Die Generierung liefert den fertigen,
+    // scharfen Gebirgszustand (ridged Multifraktal + Pre-Erosion, `generate`), es
+    // gibt keine Aufbauphase — U(t) klingt ab t=0 ab, U₀ ist der REST der
+    // Orogenese, kein Anschub. Damit gibt es per Konstruktion keinen
+    // Wachstums-Puls. Gegenprobe gemessen (n=160, Seed 1337, 100k):
+    //   U₀ = 0.006 → maxH 0.6836 → 0.7647 (Peak 0.7805), meanLand +18 % — die
+    //     Berge WACHSEN, verworfen.
+    //   U₀ = 0.003 → maxH endet mit 0.6739 zwar unter dem Start, dreht ab 20k aber
+    //     wieder hoch (0.6484 → 0.6831) — verworfen.
+    //   U₀ = 0.0008 (gewählt) → maxH über alle 5 gemessenen Seeds MONOTON fallend,
+    //     Spitzenwert des Laufs = Startwert (Multi-Seed-Tabelle unten).
+    //
+    // U₀ = 0.0008: das ist gut die Hälfte des alten Servo-Deckels (0.0015) und
+    // damit klein genug, dass die Erosion ab dem ersten Schritt überwiegt.
+    // Verworfen (alle n=160, Seed 1337, Servo aus, relief/ridgeCurv bei 100k;
+    // ridgeCurv = `Terrain.ridgeCurvature()`, negativ = spitz, gegen 0 = rund):
+    //   U₀ 0.0015 → relief 0.4336, curv −0.0279, See-Anteil 0.029 (bei 200k 0.002):
+    //     altert zu langsam UND die Auslass-Inzision räumt bei dem Gefälle jedes
+    //     Becken frei → die diskreten Seen des Ziel-Looks verschwinden.
+    //   U₀ 0.0012 → relief 0.4181, curv −0.0253, See-Anteil 0.033 — dasselbe milder.
+    //   U₀ 0.0004 → relief 0.3647, curv −0.0212, aber der Sockel trägt nicht mehr
+    //     (200k: relief 0.3135 gegen 0.3359 bei 0.0008).
+    // Gewählt U₀ 0.0008 → relief 0.3883, curv −0.0219, See-Anteil 0.052.
+    //
+    // U_floor = 0.1·U₀ (Rest-Tektonik, Recherche-Empfehlung 0.05–0.1·U₀): hält den
+    // „Appalachen-Sockel". Ohne Floor (U ≡ 0) fällt das Relief über 200k auf 0.2680
+    // — UNTER die Einebnungs-Schwelle 0.30 des LongRunCollapse-Wächters; mit Floor
+    // 0.3359 (+25 %). Im 100k-Fenster ist der Unterschied noch klein (0.3509 gegen
+    // 0.3883), der Floor zahlt sich erst in der Spätphase aus — genau seine Rolle.
+    //
+    // τ = 40000 Jahre = Mitte des Recherche-Bands 30k–60k. Bei 100k Jahren (2.5 τ)
+    // ist U(t) auf 8 % von U₀ abgefallen, der Zerfall also innerhalb des
+    // Spiel-Fensters praktisch abgeschlossen. Gemessen bei 100k (relief / curv /
+    // See-Anteil): τ=30k → 0.3817 / −0.0215 / 0.032 · τ=40k → 0.3883 / −0.0219 /
+    // 0.052 · τ=60k (floor 0) → 0.3994 / −0.0238 / 0.036. Die Alterung ist über das
+    // Band robust; 40k hält die Seen am besten.
+    //
+    // ALTERUNGSVERLAUF, Produktionspfad n=160, Seed 1337, alle 20k Jahre
+    // (Belegtabellen und die Vergleichsarme: docs/terrain-aging-measurements.md):
+    //   relief     0.5335 0.4706 0.4252 0.4138 0.4016 0.3883  (0 … 100k, −27 %)
+    //   ridgeCurv −0.0453 −0.0290 −0.0253 −0.0225 −0.0226 −0.0219  (−52 % Betrag)
+    //   maxH       0.6836 0.6206 0.5752 0.5639 0.5516 0.5383  (monoton)
+    // Zum Vergleich derselbe Lauf mit dem alten Servo: relief 0.5335 → 0.4569 (30k)
+    // → 0.5097 (100k), ridgeCurv ab 10k flach bei ≈ −0.030 — Plateau statt Alterung.
+    // Multi-Seed (n=160, 100k, Seeds 1337/7/99/2024/555): maxH-Spitzenwert des
+    // Laufs ist bei JEDEM Seed exakt der Startwert (keine Wachstumsphase), relief
+    // fällt bei jedem. Die Gratkrümmung rundet bei 4 von 5 Seeds (z. B. −0.0306 →
+    // −0.0169); Seed 7 startet als weiches Rollhügel-Terrain (curv0 −0.0173) und
+    // wird erst einmal ZERSCHNITTEN (−0.0253) — die Kennzahl misst Rundung
+    // relativ zum Startzustand, ein sehr junges glattes Terrain muss zuerst
+    // Täler bekommen. Der Wächter `TerrainAging` misst deshalb auf Seed 1337.
+    public var upliftDecayStartPer100y: Double = 0.0008   // U₀
+    public var upliftDecayFloorPer100y: Double = 0.00008  // U_floor
+    public var upliftDecayYears: Double = 40000           // τ
+
     // ---- Tektonik / Isostasie ----
+    // KONSTANTE Alt-Hebung über das VOLLE Tektonik-Feld (inkl. negativer Täler).
+    // Produktion 0 und bleibt 0 — die Tektonik läuft seit Issue #13 über die
+    // abklingende Hebung oben (positiver Feldanteil, nur Land). Nur noch von
+    // Testkonfigs gesetzt, die ihre alte Kalibrierung pinnen (`meanderCfg`).
+    // Historische Begründung der 0:
     public var upliftPer100y: Double = 0.0 // KEINE Dauer-Tektonik → Berge wachsen NIRGENDS (auch keine lokalen Grate), sie erodieren nur — wie real ohne aktive Plattengrenze/Vulkanismus. Selbst 0.0015 schob mittlere Grate pro 10k-Klick noch sichtbar hoch (+0.03), obwohl der globale Gipfel erodierte. Hebung nur noch über Sculpting/Events. (War 0.009→0.0015→0.0.) (wie real ohne aktive Plattengrenze/Vulkanismus) statt bei jedem 10k-Schritt hochzuwachsen. 0.009 stockte die Landmasse in 100k um +73% auf (meanLand 0.39→0.68 → sichtbares „Wachsen"); 0.0015 hält die Masse ~flach (0.39→0.42), Relief erodiert sanft (0.76→0.65). Nur so viel Hebung, dass die Insel nicht wegerodiert.
     public var isoHighClamp: Double = 0.90 // Hebung → 0 gegen diese Höhe: deckelt das Relief-Runaway (Berge wuchsen sonst über 100k Jahre bis 1.25, Makro-Form lief weg). 0.90 pinnt Relief/maxH über 100k Jahre aufs junge Niveau (~0.75/0.90) — gratiges Gleichgewicht statt Alterung, ohne dass die Erosion die Berge abträgt (0.85 würde bereits erodieren)
     public var isoLowRange: Double = 0.35   // Senkung → 0 gegen den Boden
