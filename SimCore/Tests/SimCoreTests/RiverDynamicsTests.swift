@@ -353,11 +353,14 @@ final class RiverDynamicsTests: XCTestCase {
         return (islands, barCells, splits)
     }
 
-    /// Seed-Satz des Braiding-Wächters. 12 statt 3: die Insel-Statistik ist
+    /// Seed-Satz des Braiding-Wächters. 16 statt 3: die Insel-Statistik ist
     /// schwerschwänzig (Messung s. testBraidingBuildsBars) — mit 3 Seeds trägt
-    /// ein einzelner Ausreißer das Vorzeichen der Summe.
+    /// ein einzelner Ausreißer das Vorzeichen der Summe, und mit 12 lag der
+    /// Arbeitspunkt der Seed-Mehrheit noch auf der Kante (ein Flip von 6:3 auf
+    /// 4:4 hätte gereicht). 16 Seeds + geforderter Mindestabstand (s. u.).
     private static let braidSeeds: [UInt32] = [1337, 90210, 7, 42, 2024, 4242,
-                                               8675309, 31337, 1, 512, 77, 20250809]
+                                               8675309, 31337, 1, 512, 77, 20250809,
+                                               2718, 31415, 65537, 999]
 
     /// WÄCHTER Braiding (Task 4): der Murray&Paola-Pass erzeugt auf dem
     /// Produktions-Pfad Verzweigungen und Mittelbänke — messbar MEHR als ohne ihn —
@@ -386,12 +389,16 @@ final class RiverDynamicsTests: XCTestCase {
     /// läuft `braidPass` NIE — stieg die Insel-Zahl durch den Vegetations-Merge
     /// von 19 auf 31 (12 Seeds), während der Braiding-Arm bei 36 → 37 blieb. Der
     /// Kontrollarm sammelte Fehlalarme (gepanzerter Talboden), der Pass lieferte
-    /// unverändert. Ursache und Korrektur: `Terrain.updateVegClass` (Auwald ist
+    /// unverändert. Ursache und Korrektur: `Terrain.updateVegClass` (Gehölz ist
     /// Ufer-, keine Bett-Klasse).
     ///
-    /// Stand nach der Korrektur (12 Seeds, 30k Jahre): Bank-Fläche an 79 / aus 50
-    /// (1.58×, Seeds dafür 6 / dagegen 3), Inseln an 38 / aus 28, Splits an 2508 /
-    /// aus 2275. Laufzeit ~25 s.
+    /// ARBEITSPUNKT (16 Seeds, 30k Jahre, ~33 s): Bank-Fläche an 160 / aus 81
+    /// (1.98×), Seeds dafür 9 / dagegen 3 (4 ohne Inseln), Inseln an 62 / aus 33
+    /// (1.88×), Splits an 3352 / aus 3059. Der Wächter fordert unten einen
+    /// Mindestabstand von 3 Seeds — gemessener Abstand ist 6, also 3 Seed-Flips
+    /// Luft. Zwischenstand mit nur teilweise entpanzertem Bett (Bett fiel auf
+    /// Wald statt Gras) war 79/50 bei 6:3, d. h. ein einziger Flip von der
+    /// Kante: erst die vollständige Entpanzerung bringt den klaren Abstand.
     func testBraidingBuildsBars() {
         var sumBarOn = 0, sumBarOff = 0, sumIslOn = 0, sumIslOff = 0
         var sumSplitsOn = 0, sumSplitsOff = 0
@@ -432,11 +439,11 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertGreaterThan(sumBarOn, sumBarOff,
                              "Braiding-Pass muss Mittelbank-FLÄCHE bauen")
         // …und zwar systematisch, nicht über einen Ausreißer-Seed: der Pass muss
-        // auf mehr Seeds gewinnen als verlieren. Genau diese Eigenschaft ging beim
-        // Vegetations-Merge verloren (4:4 statt 6:3) und wurde mit der Auwald-
-        // Ufer-Korrektur zurückgeholt.
-        XCTAssertGreaterThan(seedsFor, seedsAgainst,
-                             "Braiding darf nicht nur auf einzelnen Glücks-Seeds Bänke bauen")
+        // auf DEUTLICH mehr Seeds gewinnen als verlieren. Ein bloßes `>` hinge
+        // an einem einzigen Seed-Flip — bei der dokumentierten Schwerschwänzig-
+        // keit wäre das Rauschen, kein Signal. Mindestabstand 3 bei gemessenen 6.
+        XCTAssertGreaterThanOrEqual(seedsFor, seedsAgainst + 3,
+                                    "Braiding darf nicht nur auf einzelnen Glücks-Seeds Bänke bauen (dafür \(seedsFor) / dagegen \(seedsAgainst))")
         XCTAssertGreaterThan(sumSplitsOn, sumSplitsOff,
                              "Braiding-Pass muss aktive Verzweigungen erzeugen")
         // Der eigentliche User-Wunsch: Arme bilden sich UND schließen sich wieder.

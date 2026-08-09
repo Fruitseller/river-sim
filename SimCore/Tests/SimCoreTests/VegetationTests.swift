@@ -41,12 +41,6 @@ final class VegetationTests: XCTestCase {
                     }
                 }
                 XCTAssertTrue(nearWater, "Auwald-Zelle (\(i),\(j)) ohne Wasser im Umkreis")
-                // …aber NIE die Wasser-Zelle selbst: Auwald ist eine Ufer-,
-                // keine Bett-Klasse. Sonst liegt die kohäsivste Erosions-
-                // Dämpfung (1.3) auf dem Gerinne und panzert den Talboden
-                // (s. updateVegClass — Braiding-Regression Aug 2026).
-                XCTAssertFalse(t.area[k] >= minA || t.hf[k] - t.h[k] > 0.02,
-                               "Auwald auf der Wasserlauf-Zelle selbst (\(i),\(j))")
                 // flach (Grob-Steigung wie in der Ableitung) + nicht tief geflutet
                 let slope = (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
                 XCTAssertLessThan(slope * 40, 0.6, "Auwald auf steilem Hang (\(i),\(j))")
@@ -54,6 +48,36 @@ final class VegetationTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(riparianCount, 0, "kein Auwald entstanden")
+    }
+
+    /// Auf dem Wasserlauf SELBST wächst kein Gehölz — weder Auwald (3) noch
+    /// Wald (2). Sonst liegt eine Wurzel-Kohäsion (1.3 bzw. 1.1) auf dem
+    /// Gerinne und panzert den Talboden; die stehen gebliebenen Knubbel im
+    /// breiten MFD-Lauf hat `testBraidingBuildsBars` als „Inseln" gezählt
+    /// (Braiding-Regression Aug 2026, s. updateVegClass). Bett = Gras heißt
+    /// zugleich: dort gilt exakt die Vor-Merge-Dämpfung 1 − 0.6·veg.
+    func testNoWoodlandOnTheChannelBed() {
+        var c = SimConfig(); c.n = 192
+        let t = Terrain(config: c, seed: 1337)
+        for _ in 0..<10 { t.step(dtYears: 500) }
+        let n = c.n
+        let minA = c.braidMinCells * c.cellSize * c.cellSize
+        var bed = 0
+        for j in 2..<(n - 2) {
+            for i in 2..<(n - 2) {
+                let k = j * n + i
+                // Bett = die Quellmaske aus updateVegClass (D8-Lauf oder
+                // stehendes Wasser), nur über Meeresniveau.
+                guard t.hf[k] > c.sea,
+                      t.area[k] >= minA || t.hf[k] - t.h[k] > 0.02 else { continue }
+                bed += 1
+                XCTAssertLessThan(t.vegClass[k], 2,
+                                  "Gehölz-Klasse \(t.vegClass[k]) auf Bett-Zelle (\(i),\(j))")
+                // …und damit exakt die Alt-Dämpfung auf dem Gerinne.
+                XCTAssertEqual(t.vegDamp(k), max(0, 1 - 0.6 * t.veg[k]), accuracy: 1e-15)
+            }
+        }
+        XCTAssertGreaterThan(bed, 0, "keine Bett-Zelle gefunden — Test leer")
     }
 
     /// Alle bestehenden veg-Konsumenten bleiben mit Klassen {0, 1} (kahl/Gras)
