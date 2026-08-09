@@ -13,17 +13,22 @@ und der nickmcd-Blog inkl. seines Folge-Projekts SoilMachine. Code-Bezüge auf
 
 ## TL;DR — die geomorphologische Diagnose
 
-Der aktive Erosions-Pfad (`cfg.hydraulicEnabled = true`) ist:
+> **Stand-Hinweis (Aug 2026):** Dieser Abschnitt beschreibt den Zustand ZUM
+> ZEITPUNKT DER RECHERCHE. Die Diagnose ist inzwischen umgesetzt: die lineare
+> Hangdiffusion läuft als `hillslopeDiffusion` im Produktionspfad, `thermalPass`
+> (und `streamPower`) sind entfernt. Aktuelle Pass-Reihenfolge: Klassenkopf von
+> `Terrain` bzw. `AGENTS.md` § SimCore-Aufbau. Zeilennummern hier sind historisch.
+
+Der aktive Erosions-Pfad (`cfg.hydraulicEnabled = true`) war zum Recherche-Zeitpunkt:
 `applyUplift → computeFlow → Hydraulic.erode (Droplet) → outletIncision → wavePass`
-(`Terrain.step()`, `Terrain.swift:737-763`).
+(`Terrain.step()`).
 
 **Es fehlt der einzige Prozess, der Berge rund macht: lineare Hangdiffusion.**
 Droplets laufen in *Rinnen* — sie tragen an Wasserscheiden/Graten praktisch nichts
 ab. Ohne einen Prozess, der Material von den Graten selbst entfernt, kann das
 Terrain nur schärfer werden (Inzision vertieft die Täler, die Grate bleiben).
-`diffusionPass` existiert (`Terrain.swift:443`), wird aber **nur im nicht-Droplet-Zweig**
-aufgerufen (`Terrain.swift:759`), und `thermalPass` (`Terrain.swift:352`) wird
-**gar nicht** aufgerufen. Der Langzeit-Runaway (Relief 0.82 → 1.10, HANDOFF.md) und
+`diffusionPass` existiert, wurde aber **nur im nicht-Droplet-Zweig** aufgerufen, und
+`thermalPass` (Talus) wurde **gar nicht** aufgerufen. Der Langzeit-Runaway (Relief 0.82 → 1.10, HANDOFF.md) und
 der `isoHighClamp=0.90`-Deckel sind *Symptome* dieses fehlenden Grat-Prozesses —
 nicht die Wurzel.
 
@@ -53,11 +58,13 @@ Der Standard-LEM (FastScape, Landlab, CHILD) überlagert drei Prozesse:
 
 - **Stream-Power** `K·A^m·S^n` **zerschneidet** die Landschaft: Erosion ∝
   Einzugsgebiet A → konzentriert sich in Tälern, tieft sie ein, macht Grate
-  *relativ* schärfer. Das ist im Repo `streamPower`/`outletIncision`/`transportLimited`.
+  *relativ* schärfer. Das ist im Repo `outletIncision` (Produktionspfad; der frühere
+  `streamPower` ist entfernt) bzw. `transportLimited` im Testpfad.
 - **Lineare Diffusion** `D·∇²z` **rundet**: der Fluss ist ∝ Krümmung. Konvexe
   Kuppen (∇²z<0) verlieren Material, konkave Mulden gewinnen → Grate werden zu
   **glatten konvexen Kuppen** (genau das Appalachen-Signal). Das ist `diffusionPass`.
-  Die *nichtlineare* Talus-Methode (`thermalPass`) erzeugt dagegen nur **planare
+  Die *nichtlineare* Talus-Methode (damals `thermalPass`, seither entfernt) erzeugt
+  dagegen nur **planare
   Facetten** am kritischen Winkel — sie rundet Kuppen NICHT. Für den „alt runden"
   Look ist **lineare** Diffusion nötig, nicht die Talus-Schwelle.
 
@@ -235,8 +242,8 @@ Diffusion die Kanäle **nicht** wegwischt.
   `kappa≈0.12–0.15` und mehreren Pässen pro Schritt (jeder Pass <0.25) stabil.
   `diffusionPass` sub-taktet bereits über `passes = dt/100` (`Terrain.swift:744,759`).
 - **Impliziter Stream-Power (Braun & Willett 2013):** unbedingt stabil bei großem Δt,
-  weil stromabwärts→aufwärts in `order` gelöst (`streamPower`/`outletIncision`,
-  `Terrain.swift:261-289, 388-418`) — genau der O(n)-FastScape-Trick.
+  weil stromabwärts→aufwärts in `order` gelöst (`outletIncision`) — genau der
+  O(n)-FastScape-Trick.
   Quelle: [Braun & Willett 2013, Geomorphology](https://www.semanticscholar.org/paper/A-very-efficient-O(n),-implicit-and-parallel-method-Braun-Willett/7620ee44d1e31a198790b2d86979c5be62d528ed).
 
 ---
@@ -291,10 +298,13 @@ Priorisiert; die ersten zwei sind die >30 %-Realismus-Hebel.
    (kleiner → zerklüfteter/jung, größer → glatter/alt) — das ist ein *einziger*
    physikalischer Regler für den „Alters"-Look.
 
-4. **[KLEIN] `thermalPass` bewusst einordnen.** Talus (`Terrain.swift:352`) erzeugt
-   planare Facetten, keine Rundung — nur für steile Fels-/Landslide-Kappen behalten,
-   NICHT als Ersatz für lineare Diffusion. Aktuell wird er nirgends aufgerufen; das
-   ist okay, solange (1) läuft.
+4. **[KLEIN, ERLEDIGT Aug 2026] `thermalPass` bewusst einordnen.** Talus erzeugt
+   planare Facetten, keine Rundung — NICHT als Ersatz für lineare Diffusion.
+   Entscheidung: (1) läuft (`hillslopeDiffusion`), `thermalPass` war seither
+   unreferenziert und wurde ENTFERNT (mitsamt `talus`/`thermalRelax`/`rockCrumble`).
+   Falls je wieder für steile Fels-/Landslide-Kappen gewünscht: aus `cf83874^` holen.
+   Die übrigen `Terrain.swift`-Zeilennummern in diesem Dokument sind historisch
+   (Stand der Recherche) und stimmen nicht mehr.
 
 5. **[Diagnose] Messgrößen erweitern.** Für die Kalibrierung headless zusätzlich zur
    `landRelief()` die **mittlere Grat-Krümmung** (∇²z auf Grat-Zellen) und die
@@ -325,7 +335,8 @@ Priorisiert; die ersten zwei sind die >30 %-Realismus-Hebel.
   [SoilMachine (2022)](https://nickmcd.me/2022/04/15/soilmachine/) ·
   [GitHub weigert/SoilMachine](https://github.com/weigert/SoilMachine)
 
-Code-Bezüge: `SimCore/Sources/SimCore/Terrain.swift` (step 737, diffusionPass 443,
-thermalPass 352, streamPower 261, outletIncision 388, applyUplift 498),
+Code-Bezüge (Stand der Recherche — `thermalPass`/`streamPower` sind inzwischen
+entfernt, Zeilennummern historisch): `SimCore/Sources/SimCore/Terrain.swift`
+(`step`, `diffusionPass`, `hillslopeDiffusion`, `outletIncision`, `applyUplift`),
 `SimCore/Sources/SimCore/Config.swift` (K/D/U-Parameter),
 `SimCore/Sources/SimCore/Hydraulic.swift` (Droplet).

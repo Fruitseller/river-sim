@@ -107,8 +107,25 @@ Splits pro Trunk-Länge als zusätzliche Metrik.
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Schnee-Schwelle, Küstensaum-Breite.
 
 **Toter/geparkter Code (aufräumen oder bewusst behalten):**
-- `thermalPass` (Talus) ist implementiert, wird aber nirgends aufgerufen — Talus macht
-  planare Facetten, keine Rundung; nur für Steilfels-Kappen sinnvoll.
+- ERLEDIGT (Aug 2026): `streamPower` (detachment-limitierte Grid-Inzision) und
+  `thermalPass` (Schwellen-Talus) ENTFERNT — beide waren seit ihrer Ablösung
+  unreferenziert. Im Produktionspfad übernimmt die fluviale Makro-Inzision
+  `outletIncision` + `Hydraulic.erode` (Droplet); `transportLimited` ist NICHT
+  der Nachfolger, sondern ein Testpfad (siehe unten, Commit `eaa3425`).
+  `thermalPass` → lineare Diffusion, Commit `cf83874`. Mit `thermalPass` sind die
+  nur von ihm gelesenen Config-Schalter `talus`/`thermalRelax`/`rockCrumble`
+  entfallen (Küsten-Talus `waveTalus` bleibt). Talus machte planare Facetten statt
+  konvexer Kuppen — falls je wieder gewünscht (Steilfels-Kappen), aus `cf83874^`
+  holen.
+- `transportLimited` + `diffusionPass` laufen NUR im Nicht-Droplet-Zweig
+  (`hydraulicEnabled = false`). Kein toter Code: die isolierten Mäander-
+  Kopplungstests (`meanderCfg()` in `SimCoreTests.swift`) prüfen darauf Carve/
+  Altarm/Altern ohne Droplet-Rauschen. Als Testpfad im Code kenntlich gemacht.
+- `fillLakes` (Becken-Verlandung) hängt an `basinFill = false` und läuft damit derzeit
+  NIRGENDS (auch in keinem Test) — bewusst GEPARKT, nicht vergessen: AUS, seit die
+  Hebung niedrig ist (Auslass-Inzision hält den See-Anteil von allein bei ~15%
+  diskreten Seen), aber der dokumentierte Rückfall für Konfigurationen mit hoher
+  Hebung. Begründung im Config-Kommentar.
 - `floodplainAggradation` liegt deaktiviert als Referenz herum (`floodplainEnabled=false`):
   per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
   jetzt über sanfteres Relief (`baseRelief` 0.78).
