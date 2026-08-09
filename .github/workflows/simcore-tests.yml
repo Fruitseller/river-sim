@@ -47,13 +47,15 @@ jobs:
       # (https://www.swift.org/install/linux/). Die Toolchain-Binaries verlinken u. a.
       # gegen libz3 (Compiler-Constraint-Solver) und libcurl; auf dem Runner-Image
       # fehlen diese teils. apt-get ist idempotent — bereits installierte Pakete
-      # werden übersprungen.
+      # werden übersprungen. (libpython3 bewusst weggelassen: das Metapackage ist im
+      # Runner-Image-Index nicht auffindbar, und die Laufzeitlib ist über python3.10
+      # ohnehin vorhanden.)
       - name: System-Abhängigkeiten (swift.org-Doku)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 \
-            libgcc-9-dev libpython3 libsqlite3-0 libstdc++-9-dev libxml2-dev \
+            libgcc-9-dev libsqlite3-0 libstdc++-9-dev libxml2-dev \
             libz3-dev pkg-config tzdata unzip zlib1g-dev
 
       # Toolchain-Cache: die heruntergeladene Swift-Toolchain ist mehrere GB groß;
