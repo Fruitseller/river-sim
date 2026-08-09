@@ -110,28 +110,38 @@ werden. Belegtabellen: `docs/terrain-aging-measurements.md`, Kalibrier-Logbuch:
   neu −0.0508 → −0.0389 (rundet monoton), alt −0.0517 → −0.0476 mit Umkehr ab
   40k. Noch offen: die hypsometrische Kurve als zweite Alterungs-Kennzahl.
 
-**Niederschlagsgewichteter Abfluss — Schalter da, Kalibrierung offen (Issue #9,
-Kalibrierung = Issue #10):** `SimConfig.rainWeightedFlow` (Default **AUS**)
-gewichtet die Akkumulation beider Netze mit `rain` (`Terrain.seedFlowAccumulator`,
-D8 und MFD nach derselben Regel — die Rollentrennung bleibt) und startet die
-Erosions-Tropfen niederschlagsgewichtet (`Hydraulic.spawnPosition`,
-Ablehnungs-Stichprobe). Aus `area` wird damit Abfluss statt Fläche.
-Messreihe an/aus: `docs/rain-weighted-flow-measurements.md`; Wächter:
+**Niederschlagsgewichteter Abfluss — ERLEDIGT (Issue #9 Mechanik, Issue #10
+Kalibrierung, Aug 2026):** `SimConfig.rainWeightedFlow` ist **an** und gewichtet
+die Akkumulation beider Netze (`Terrain.seedFlowAccumulator`, D8 und MFD nach
+derselben Regel — die Rollentrennung bleibt) sowie die Erosions-Tropfen
+(`Hydraulic.spawnPosition`, Ablehnungs-Stichprobe). Aus `area` wird Abfluss statt
+Fläche. Messreihe: `docs/rain-weighted-flow-measurements.md`; Wächter:
 `RainWeightedFlow.swift`.
 - Belegt: bei gleich großem Einzugsgebiet trägt die Luvseite ×1.38 (D8) bzw.
   ×1.42 (MFD) mehr Abfluss; die Drainagedichte Luv/Lee verschiebt sich gepoolt
-  über 6 Seeds von 1.048 auf 1.362.
-- Warum AUS: ohne Normierung fällt der Gesamtabfluss aufs Landmittel des Regens
-  (0.36 bei n=832) → alle in ZELLEN kalibrierten Gates (`renderMinCells`,
-  `braidMinCells`, `meanderMinCells`, `floodplainMinArea`) greifen ~2× zu spät
-  (Kanalzellen bei n=832, Jahr 0: 17042 → 9409), und über dem Meer regnet es am
-  meisten → mit `hydraulicSkipWaterSpawns` kommen ~30 % weniger Tropfen aufs
-  Land. Relief/Alterung bleiben dagegen praktisch unverändert.
-- Offene Entscheidung für #10: Gewicht auf sein Landmittel normieren (hält den
-  Gesamtabfluss und die bestehende Kalibrierung, macht den Effekt zur reinen
-  Umverteilung) ODER Gates/Raten neu kalibrieren. Achtung: das Landmittel des
-  Regens ist auflösungsabhängig (0.563 bei n=192 → 0.364 bei n=832), weil
-  `computeRain` je ZELLE abtrocknet.
+  über 6 Seeds von 1.048 auf 1.362 und in Produktionsauflösung (n=832) in allen
+  12 gemessenen Zeitschnitten Richtung Luv (×1.20 … ×1.52).
+- **Die Rekalibrierung ist eine NORMIERUNG, keine Konstanten-Verschiebung**
+  (#10): Gewicht = `rain / Landmittel(rain)` auf Land, 1.0 über See
+  (`Terrain.updateRainWeight`). Damit ist Σ Gewicht über Land = Zahl der
+  Landzellen (`totalOutletArea/Zellzahl` = 1.0000 an wie aus), und der Anteil der
+  Tropfen-Starts auf Land ist gleich dem Anteil der Landzellen — der Schalter
+  verteilt nur um. Folge: KEIN Zell-Gate (`renderMinCells`, `braidMinCells`,
+  `meanderMinCells`, `floodplainMinArea`), keine Rate (`kRock`, `outletErode`)
+  und keine Tropfendichte (`hydraulicPerYear`) musste nachgezogen werden;
+  Kanalzellen bleiben in Produktionsauflösung im Band ±10 %, Relief ±5 %.
+- Warum nicht das rohe Feld gewichten: das Landmittel des Regens ist
+  auflösungs-, seed- UND zeitabhängig (0.563 bei n=192 → 0.357 bei n=832 Seed
+  1337, aber 0.544 bei Seed 7; +24 % Drift über 50k Jahre). Gegenprobe mit auf
+  einen Seed gerechnetem Gate: −13.6 % / +18.5 % / +5.8 % Kanalzellen über drei
+  Seeds (Details und weitere verworfene Wege: Doku §G).
+- Nebenbefund aus #10: `kRock` wirkt im Produktionspfad gar nicht — die Konstante
+  steht nur in `transportLimited` (Nicht-Droplet-Zweig). Die fluviale Rate der
+  Produktion ist `outletErode`.
+- Offen geblieben: `computeRain` ist nicht weltmaßstäblich (Abtrocknung je ZELLE
+  statt ∝ `cellSize`), das rohe `rain` bleibt damit auflösungsabhängig für
+  Vegetation und Biom-Färbung. Ebenso offen: die Verdunstungsseite von
+  „Niederschlag − Verdunstung" (PLAN §3b).
 
 **Politur / Rendering:**
 - ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass
@@ -243,8 +253,10 @@ Messreihe an/aus: `docs/rain-weighted-flow-measurements.md`; Wächter:
 - `docs/river-baseline-metrics.md` — Baseline-Messung vor dem Fluss-Overhaul
   (Churn 0.2725 bei jedem dt = Framerate-Kopplung des alten D8-argmax).
 - `docs/rain-weighted-flow-measurements.md` — Messung an/aus zum
-  niederschlagsgewichteten Abfluss (Issue #9): Kanalzellen, Drainagedichte
-  Luv/Lee, Relief, Seeanteil; Kalibrier-Hinweise für #10.
+  niederschlagsgewichteten Abfluss: Kanalzellen, Drainagedichte Luv/Lee, Relief,
+  Seeanteil. §A–§D = Issue #9 (roher Regen als Gewicht, der verworfene Arm),
+  §E–§G = Issue #10 (Normierung, Verlauf in Produktionsauflösung, verworfene
+  Alternativen).
 - `docs/references/runevision-erosion/` — kompletter GLSL-Code des Erosionsfilters
   (MPL-2.0), Grundlage von `ErosionFilter.swift` und des Shader-Detail-Layers.
 - nickmcd.me (Procedural Hydrology, Meandering Rivers), SebLague/Elumenix (Droplet).

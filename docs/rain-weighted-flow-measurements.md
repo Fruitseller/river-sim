@@ -1,27 +1,32 @@
-# Niederschlagsgewichteter Abfluss — Messung an/aus (Issue #9)
+# Niederschlagsgewichteter Abfluss — Messung an/aus (Issues #9 und #10)
 
-Der Schalter `SimConfig.rainWeightedFlow` (Default **aus**) gewichtet die
-Abfluss-Akkumulation beider Netze mit dem Niederschlagsfeld und startet die
-Erosions-Tropfen niederschlagsgewichtet:
+`SimConfig.rainWeightedFlow` gewichtet die Abfluss-Akkumulation beider Netze mit
+dem Niederschlagsfeld und startet die Erosions-Tropfen niederschlagsgewichtet:
 
 - **aus** — `area`/`areaMFD` akkumulieren reine Zellfläche (`cellArea` je Zelle),
-  Tropfen starten gleichverteilt. Das ist der Stand vor Issue #9.
-- **an** — die Akkumulation startet je Zelle mit `cellArea · rain[k]`
-  (`Terrain.seedFlowAccumulator`, dieselbe Regel für D8 **und** MFD; die
-  Rollentrennung bleibt: `area` erodiert, `areaMFD` rendert/braided), und die
-  Tropfen-Startpunkte werden per Ablehnungs-Stichprobe mit `rain` gewichtet
-  (`Hydraulic.spawnPosition`).
+  Tropfen starten gleichverteilt. Das ist der Stand vor Issue #9; der Arm bleibt
+  als Referenz/Gegenprobe erhalten.
+- **an** (Default seit #10) — die Akkumulation startet je Zelle mit
+  `cellArea · rainWeight[k]` (`Terrain.seedFlowAccumulator`, dieselbe Regel für
+  D8 **und** MFD; die Rollentrennung bleibt: `area` erodiert, `areaMFD`
+  rendert/braided), und die Tropfen-Startpunkte werden per Ablehnungs-Stichprobe
+  mit demselben Feld gewichtet (`Hydraulic.spawnPosition`).
 
-Die **Rekalibrierung ist bewusst NICHT Teil dieser Messung** (Issue #10) — hier
-wird nur der rohe Effekt festgehalten. Ohne Normierung (kein `rain / mittleres
-rain`) fällt der Gesamtabfluss auf das Landmittel des Regens (~0.40 … 0.48),
-alle in ZELLEN kalibrierten Gates greifen also später. Das ist der dominierende
-Effekt in den Tabellen unten und muss beim Lesen mitgedacht werden.
+**Dieses Dokument hat zwei Teile.** §0–§D sind die Messung aus Issue #9 mit dem
+ROHEN Regen als Gewicht (`rainWeight = rain`, Default damals aus). §E–§G sind
+Issue #10: die Kalibrier-Entscheidung, ihre Messung in Produktionsauflösung und
+die verworfenen Alternativen. Wer nur den heutigen Stand wissen will, liest §E
+und §F — die Tabellen in §A/§C2 zeigen den **verworfenen** unnormierten Arm.
+
+Der dominierende Effekt in §A–§D: ohne Normierung fällt der Gesamtabfluss auf das
+Landmittel des Regens (~0.36 … 0.48), alle in ZELLEN kalibrierten Gates greifen
+also später. Genau das behebt §E.
 
 ## Methode
 
 Alle Zahlen aus `SimCoreTests/RainWeightedFlow.swift` (Release-Lauf), Seed 1337,
-sonst Default-`SimConfig`:
+sonst Default-`SimConfig` (§A–§D: Stand Issue #9, dort war der Schalter der
+einzige Unterschied zwischen den Armen und das Gewicht das ROHE `rain`).
 
 ```sh
 RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test -c release --package-path SimCore \
@@ -162,6 +167,11 @@ sein Landmittel normiert.
 
 ## D) Was #10 aus dieser Messung mitnehmen sollte
 
+> **Nachtrag (#10, erledigt):** Punkt 4 (Normierung) ist gewählt und macht 1–3
+> gegenstandslos — die Gates zählen weiter Zellen, die Raten bleiben, die Tropfen
+> gehen nicht mehr verloren. Belege: §E (Entscheidung + Invarianten), §F (Verlauf
+> in Produktionsauflösung), §G (die verworfenen Wege 1–3 mit Messwerten).
+
 1. **Zell-Gates umrechnen.** `renderMinCells` (320), `braidMinCells` (120),
    `meanderMinCells` (85), `floodplainMinArea` (500) und die
    `outletIncision`-Gates zählen „Zellen"; eingeschaltet zählen sie
@@ -184,3 +194,165 @@ sein Landmittel normiert.
    entschieden, weil es eine Kalibrier-Entscheidung ist: das Landmittel des
    Regens driftet über den Lauf (0.398 → 0.482 bei n = 640) und hinge als
    globale Größe an jedem Schritt vom Gesamtzustand ab.
+
+---
+
+## E) Issue #10 — die Kalibrier-Entscheidung: Normierung auf das Landmittel
+
+Aus §D standen zwei Wege offen: (1) das rohe `rain` als Gewicht behalten und
+alle in Zellen kalibrierten Gates plus die Erosionsraten nachziehen, oder (2) das
+Gewicht auf sein Landmittel normieren. **Gewählt: (2).** Der Grund ist gemessen,
+nicht ästhetisch — der Umrechnungsfaktor von Weg (1) ist keine Konstante:
+
+| Landmittel `rain` | Wert |
+|---|---:|
+| n = 192, Seed 1337 | 0.563 |
+| n = 640, Seed 1337 | 0.398 |
+| n = 832, Seed 1337 | 0.357 |
+| n = 832, Seed 7 | 0.544 |
+| n = 832, Seed 99 | 0.488 |
+| n = 832, Seed 1337, nach 50k Jahren | 0.443 |
+
+`computeRain` trocknet je ZELLE ab, also hängt das Landmittel an der Auflösung;
+und weil es ein Mittel über die Landzellen ist, hängt es zusätzlich an Größe und
+Form der Insel — also am Seed — und driftet über den Lauf, während die Insel
+abflacht. Eine feste Gate-Umrechnung müsste für n = 96 (Testkonfigs), n = 832
+(Produktion) und jede Insel gleichzeitig stimmen. Sie kann es nicht (§G.1).
+
+**Das Gewicht** (`Terrain.updateRainWeight`):
+
+    w[k] = rain[k] / Landmittel(rain)    auf Land
+    w[k] = 1.0                           über See
+
+Zwei Invarianten, die alles Weitere tragen (Wächter:
+`testRainWeightIsNormalizedToLandMean`, `testWeightedFlowKeepsDrainageTotal`,
+`testWeightedSpawnsKeepTheLandBudget`):
+
+1. **Σ w über Land = Zahl der Landzellen.** Der Gesamtabfluss ist exakt der der
+   ungewichteten Akkumulation; der Schalter wirkt als reine Umverteilung Lee→Luv.
+   Gemessen: `totalOutletArea / Zellzahl` = 1.0000 an wie aus (n = 832, alle drei
+   Seeds, alle Zeitschnitte), Landmittel des Gewichts 1.0000 (Drift über 50k
+   Jahre: 0.9998 — das ist die Zelle-für-Zelle verschobene Küstenlinie zwischen
+   `computeRain` und der Messung, nicht die Normierung).
+2. **Über See ist das Gewicht neutral** (1.0 = das Landmittel). Damit verwirft
+   `hydraulicSkipWaterSpawns` denselben Anteil Ozean-Starts wie ungewichtet:
+   Anteil der Tropfen-Starts auf Land = Anteil der Landzellen, gemessen auf vier
+   Stellen gleich (0.6900 / 0.3277 / 0.4560 für Seed 1337 / 7 / 99). Der in §D.3
+   gemessene Verlust von 21–28 % Land-Tropfen ist damit gegenstandslos, ohne die
+   Tropfenzahl anzufassen.
+
+Die Auflösungs-Abhängigkeit fällt mit heraus: das Landmittel des Gewichts ist
+1.000000 bei n = 96, 192 und 320 (gemessen im Wächter).
+
+**Konsequenz:** kein Zell-Gate (`renderMinCells`, `braidMinCells`,
+`meanderMinCells`, `floodplainMinArea`), keine Erosionsrate (`kRock`,
+`outletErode`) und keine Tropfen-Startdichte (`hydraulicPerYear`) musste
+verschoben werden. Die Belege stehen einzeln am jeweiligen Wert in `Config.swift`
+und gesammelt in §F/§G.
+
+## F) Verlauf an/aus in PRODUKTIONSAUFLÖSUNG (n = 832, Produktionspfad)
+
+Produktionspfad = `hydraulicSkipWaterSpawns` + `meanderSpatialCutoffIndex` wie in
+`SimNode.productionConfig()`; „an" ist der normierte Stand aus §E. Erzeugt mit
+der temporären Messbank aus Issue #10 (`RecalMeasure.swift`, nach der Kalibrierung
+entfernt — dieselben Kennzahlen liefert `testRainWeightMeasurementDiagnostic`).
+
+### Seed 1337
+
+| Jahr | gew. | Kanalzellen | Dichte Luv | Dichte Lee | Luv/Lee | Relief | reliefRobust | Seeanteil | größter See |
+|-----:|:----:|------------:|-----------:|-----------:|--------:|-------:|-------------:|----------:|------------:|
+|     0 | aus | 17432 | 0.0363 | 0.0370 | 0.98 | 0.5954 | 0.1851 | 0.0246 |  5614 |
+|     0 | an  | 16329 | 0.0385 | 0.0258 | **1.49** | 0.5957 | 0.1855 | 0.0261 |  5397 |
+|  5000 | aus | 25555 | 0.0525 | 0.0550 | 0.95 | 0.5311 | 0.1816 | 0.0774 | 15043 |
+|  5000 | an  | 25258 | 0.0556 | 0.0471 | **1.18** | 0.5312 | 0.1831 | 0.0958 | 16592 |
+| 20000 | aus | 28386 | 0.0585 | 0.0602 | 0.97 | 0.4967 | 0.1685 | 0.0925 | 15732 |
+| 20000 | an  | 27184 | 0.0593 | 0.0512 | **1.16** | 0.4981 | 0.1714 | 0.1036 | 16853 |
+| 50000 | aus | 25076 | 0.0512 | 0.0535 | 0.96 | 0.4574 | 0.1484 | 0.0524 |  6698 |
+| 50000 | an  | 27465 | 0.0587 | 0.0538 | **1.09** | 0.4592 | 0.1558 | 0.0980 | 45684 |
+
+### Seed 7 (kleine trockene Insel) und Seed 99
+
+| Seed | Jahr | Kanalzellen aus → an | Luv/Lee aus → an | Relief aus → an | robust aus → an | Seeanteil aus → an |
+|-----:|-----:|---------------------:|-----------------:|----------------:|----------------:|-------------------:|
+| 7 |     0 |  7847 →  7605 (−3.1 %) | 1.44 → **1.90** | 0.3877 → 0.3862 | 0.1162 → 0.1167 | 0.0003 → 0.0004 |
+| 7 |  5000 |  8357 →  8303 (−0.6 %) | 1.16 → **1.58** | 0.3606 → 0.3596 | 0.1157 → 0.1162 | 0.0000 → 0.0000 |
+| 7 | 20000 |  9055 →  8794 (−2.9 %) | 0.97 → **1.24** | 0.3381 → 0.3380 | 0.1162 → 0.1182 | 0.0000 → 0.0000 |
+| 7 | 50000 |  8417 →  8083 (−4.0 %) | 1.12 → **1.43** | 0.3499 → 0.3521 | 0.1143 → 0.1167 | 0.0000 → 0.0000 |
+| 99 |     0 | 10331 →  9706 (−6.1 %) | 0.65 → **0.91** | 0.3720 → 0.3707 | 0.1060 → 0.1060 | 0.0073 → 0.0099 |
+| 99 |  5000 | 16850 → 16267 (−3.5 %) | 0.47 → **0.69** | 0.3242 → 0.3257 | 0.0942 → 0.0957 | 0.0000 → 0.0000 |
+| 99 | 20000 | 14326 → 14153 (−1.2 %) | 0.59 → **0.81** | 0.2925 → 0.2967 | 0.0791 → 0.0820 | 0.0000 → 0.0000 |
+| 99 | 50000 | 11788 → 11523 (−2.2 %) | 0.84 → **1.19** | 0.2858 → 0.2937 | 0.0781 → 0.0811 | 0.0000 → 0.0000 |
+
+**Bänder (Abnahmekriterium „Terrain-Look im Rahmen"):**
+
+- **Kanalzellen** −6.3 % … +9.5 % über 12 gemessene Zeitschnitte × Seeds, ohne
+  Richtung (unnormiert waren es −45 % bei Jahr 0). Band: ±10 %.
+- **Relief** −0.4 % … +2.8 %, `reliefRobust` 0.0 % … +5.0 % — beide leicht nach
+  oben, wie schon in #9: die Umverteilung nimmt der Lee-Seite Erosionsleistung ab,
+  ohne sie der Luv-Seite überproportional zuzuschlagen. Band: ±5 %.
+- **Seeanteil** unverändert bei den Seeds ohne Becken (7, 99: ≤ 0.0099 in beiden
+  Armen). Bei Seed 1337 an durchgehend etwas höher (0.0261/0.0958/0.1036/0.0980
+  gegen 0.0246/0.0774/0.0925/0.0524). Der 50k-Wert ist ein einzelnes noch nicht
+  durchgeschnittenes Becken — größter See 45684 gegen 6698 Zellen. Dieselbe
+  Einzelereignis-Streuung hat §A schon mit **umgekehrtem** Vorzeichen gemessen
+  (dort lag bei 20k der AUS-Arm höher: 0.1043 gegen 0.0441). Der ungewichtete Arm
+  durchläuft über seine eigene Trajektorie 0.0246 … 0.0925; alle An-Werte außer
+  dem 50k-Ausreißer liegen darin. Kein systematischer Effekt → keine
+  Ratenänderung (Gegenprobe: §G.2).
+- **Drainagedichte Luv/Lee** — die Zielgröße — verschiebt sich in **allen zwölf**
+  Zeitschnitten Richtung Luv, ×1.20 … ×1.52 (Seed 99 Jahr 50k: 0.84 → 1.19).
+
+## G) Verworfene Alternativen (mit Messwerten)
+
+### G.1 Rohes Gewicht + neu gerechnete Gates
+
+Rohes `rain` als Gewicht (Stand #9) und der Render-Schwelle den auf Seed 1337
+passenden Faktor gegeben (320 · 0.357 ≈ **114** statt 320). Kanalzellen bei
+n = 832, Jahr 0, gegen den ungewichteten Referenzarm:
+
+| Seed | ungewichtet | roh + Gate 114 | normiert + Gate 320 |
+|-----:|------------:|---------------:|--------------------:|
+| 1337 | 17432 | 15062 (**−13.6 %**) | 16329 (−6.3 %) |
+|    7 |  7847 |  9298 (**+18.5 %**) |  7605 (−3.1 %) |
+|   99 | 10331 | 10927 (**+5.8 %**)  |  9706 (−6.1 %) |
+
+Eine Konstante, drei Inseln, 32 Prozentpunkte Spanne — und die Testkonfigs
+(n = 96 … 256, Landmittel 0.563) lägen noch einmal woanders. Verworfen.
+
+### G.2 Erosionsraten nachziehen (#9 §D.2)
+
+- `kRock` 3.5e-5 → 4.9e-5 (×1.4): **wirkungslos**. Kanalzellen 16329/25258/27184
+  und Relief 0.5957/0.5312/0.4981 (Jahr 0/5k/20k, n = 832, Seed 1337) sind mit dem
+  Default-Lauf identisch — die Konstante steht nur in `transportLimited`, dem
+  Nicht-Droplet-Zweig, den die Produktion nicht fährt. Damit ist auch belegt, dass
+  #9 §D.2 an der falschen Stellschraube gerechnet hat.
+- `outletErode` 3.0e-5 → 4.2e-5 (×1.4): Kanalzellen 16293/24043/26283 statt
+  16329/25258/27184 — **weiter weg** vom ungewichteten Referenzarm
+  (17432/25555/28386); Relief bei 20k 0.4957 statt 0.4981; Seeanteil
+  0.0258/0.0728/0.0991 statt 0.0261/0.0958/0.1036 (ungewichtet
+  0.0246/0.0774/0.0925). Der Seeanteil kommt bei 5k näher, bei 20k praktisch
+  nicht, bezahlt wird es mit Kanalzellen und Relief. Für eine Ein-Seed-Becken-
+  streuung zu teuer → verworfen.
+
+### G.3 Tropfenzahl anheben (#9 §D.3)
+
+`hydraulicPerYear` 2.0 → 2.8 (×1.4): Kanalzellen 16299/25259/27345 — auf dem
+Kanalnetz wirkungslos —, `reliefRobust` bei 20k 0.1675 statt 0.1714. Die Prämisse
+(21–28 % weniger Land-Tropfen) gilt normiert ohnehin nicht mehr (§E.2), also reine
+Zusatz-Erosion ohne Nutzen → verworfen.
+
+### G.4 Feste Normierungskonstante / weltmaßstäblicher Regen
+
+- Normierung auf einen festen Zahlenwert (z. B. 0.40): dieselbe Auflösungs- und
+  Seed-Bindung wie G.1, nur unsichtbar gemacht.
+- `computeRain` weltmaßstäblich machen (Abtrocknung ∝ `cellSize`) statt zu
+  normieren: löst die Auflösungs-, nicht die Seed-Abhängigkeit, und zieht
+  Vegetation, Biom-Färbung und Auwald-Klassen mit (alle lesen `rain` roh) — also
+  die halbe Klima-Kalibrierung. Bleibt als eigenständige Verbesserung offen
+  (ROADMAP).
+
+**Bekannte Kosten der gewählten Lösung:** das Landmittel ist eine GLOBALE Größe,
+die je Schritt aus dem Gesamtzustand fällt. Genau diese Kopplung teilt aber die
+Drift heraus, die sonst der Kalibrierung davonliefe: das rohe Landmittel steigt
+über 50k Jahre um +24 % (0.357 → 0.443), während die Insel abflacht — der
+Gesamtabfluss bliebe also nicht einmal innerhalb eines Laufs konstant.

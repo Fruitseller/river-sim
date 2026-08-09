@@ -25,6 +25,20 @@ public struct SimConfig: Sendable {
     // ---- Stream-Power-Inzision (detachment-limited, FastScape) ----
     // dz/dt = U − K·A^m·S^n ;  n = 1 (implizit, unbedingt stabil)
     public var mExp: Double = 0.5      // Flächen-Exponent m
+    // #10 (gewichteter Abfluss): GEPRÜFT, unverändert — und dabei gemessen, dass
+    // kRock im PRODUKTIONSPFAD gar nicht wirkt: die Konstante steht nur in
+    // `transportLimited`, dem Nicht-Droplet-Zweig (`hydraulicEnabled = false`),
+    // den nur die Mäander-Kopplungstests fahren (die ihre eigene Konfiguration
+    // pinnen). Gegenprobe: kRock 3.5e-5 → 4.9e-5 (die aus #9 §D.2 gerechnete
+    // Kompensation ×1.4) ändert an n=832/Seed 1337 über 20k Jahre KEINE
+    // Kennzahl — Kanalzellen 16329/25258/27184, Relief 0.5957/0.5312/0.4981
+    // identisch mit dem Default-Lauf. Die fluviale Rate der Produktion ist
+    // `outletErode` (dort steht die #10-Messung).
+    // Was die Umverteilung mit dem Relief macht (die eigentliche Frage): 50k
+    // Jahre, n=832, Produktionspfad, aus → an — Seed 1337 0.4574 → 0.4592
+    // (robust 0.1484 → 0.1558), Seed 7 0.3499 → 0.3521, Seed 99 0.2858 → 0.2937.
+    // Durchweg unter +3 %: die Normierung hält Σ Abfluss = Σ Fläche, A^m sieht
+    // im Mittel dieselbe Größe wie vorher.
     public var kRock: Double = 3.5e-5  // Erodierbarkeit Grundgestein (niedriger → hohes Gleichgewichts-Relief, rugged bleibend)
 
     // ---- Multi-Flow-Drainage (nur Render/Braiding, NICHT Erosion) ----
@@ -40,28 +54,57 @@ public struct SimConfig: Sendable {
     /// Braiding bleibt es immer frisch, weil es dort ein physikalisches Feld ist.
     /// Core-Default bleibt 1 für eine frische API.
     public var mfdUpdateInterval: Int = 1
-    // ---- Niederschlagsgewichteter Abfluss (Issue #9) — Default AUS ----
-    // AUS (Default): `area`/`areaMFD` akkumulieren reine ZELLFLÄCHE — jede Zelle
-    // trägt `cellArea` bei, egal ob sie im Luv-Dauerregen oder im Regenschatten
-    // liegt; die Tropfen-Startpunkte sind gleichverteilt. Das `rain`-Feld
-    // (`computeRain`, orographisch, Wind aus Westen) las bis Issue #9 nur die
-    // Vegetation und die Biom-Färbung.
-    // AN: die Akkumulation startet je Zelle mit `cellArea · rain[k]` (D8 UND MFD,
-    // dieselbe Regel — die Rollentrennung bleibt: `area` speist die Erosion,
-    // `areaMFD` nur Render/Braiding), und die Tropfen starten
-    // niederschlagsgewichtet (Ablehnungs-Stichprobe in `Hydraulic.erode`).
-    // Aus `area` wird damit ABFLUSS statt Fläche — physikalisch Q = ∫ P dA
-    // (Stream-Power mit Abfluss statt Fläche, die Standard-Lesart von A^m).
+    // ---- Niederschlagsgewichteter Abfluss (Issue #9, kalibriert #10) — Default AN ----
+    // AN (Default seit #10): die Akkumulation beider Netze startet je Zelle mit
+    // `cellArea · rainWeight[k]` (D8 UND MFD, dieselbe Regel — die Rollentrennung
+    // bleibt: `area` speist die Erosion, `areaMFD` nur Render/Braiding), und die
+    // Tropfen starten niederschlagsgewichtet (Ablehnungs-Stichprobe in
+    // `Hydraulic.erode`). Aus `area` wird damit ABFLUSS statt Fläche —
+    // physikalisch Q = ∫ P dA, die Standard-Lesart von A^m in der Stream-Power.
+    // AUS: reine ZELLFLÄCHE wie vor #9 (bit-identisch, Wächter
+    // `testUnweightedAccumulationIsPureCellArea`). Der Schalter BLEIBT, obwohl er
+    // in Produktion nie aus ist: die ungewichtete Akkumulation ist der
+    // Referenzarm, mit dem alle Messungen hier belegt sind — ohne ihn ließe sich
+    // nicht mehr zeigen, dass die Luv-Richtung aus dem REGEN kommt und nicht aus
+    // der Insel-Geometrie (in `testRainWeightedFlowFavorsLuv` ist der Aus-Arm die
+    // Gegenprobe mit exakt 1.0).
     //
-    // BEWUSST NICHT normiert (kein `rain/mittleres rain`): `rain` liegt zwischen
-    // 0.18 (Regenschatten-Floor) und 1.0, im Landmittel bei ~0.5 → eingeschaltet
-    // fällt der Gesamtabfluss auf ~die Hälfte, alle in ZELLEN kalibrierten Gates
-    // (braidMinCells, renderMinCells, meanderMinCells, floodplainMinArea) greifen
-    // entsprechend später und die Stream-Power-Raten (kRock, outletErode) sind zu
-    // schwach. Genau deshalb ist der Schalter per Default AUS: die Rekalibrierung
-    // ist Issue #10, hier wird nur der EFFEKT sauber gemessen
-    // (docs/rain-weighted-flow-measurements.md).
-    public var rainWeightedFlow = false
+    // DIE REKALIBRIERUNG (#10) IST EINE NORMIERUNG, KEINE KONSTANTEN-VERSCHIEBUNG.
+    // Gewicht = `rain / Landmittel(rain)` auf Land, 1.0 über See
+    // (`Terrain.updateRainWeight`). Damit gilt Σ Gewicht über Land = Zahl der
+    // Landzellen: der GESAMTABFLUSS ist exakt der der ungewichteten Akkumulation,
+    // der Schalter wirkt als reine UMVERTEILUNG Lee→Luv. Gemessen (n=832,
+    // Produktionspfad, Seeds 1337/7/99): `totalOutletArea/Zellzahl` = 1.0000 an
+    // wie aus, Landmittel des Gewichts 1.0000, Anteil der Tropfen-Starts auf Land
+    // = Anteil der Landzellen auf 4 Stellen (0.3277/0.4560/0.6900) — der
+    // Tropfen-Etat auf Land bleibt trotz `hydraulicSkipWaterSpawns` erhalten.
+    // Konsequenz: KEIN in Zellen kalibriertes Gate und keine Erosionsrate musste
+    // nachgezogen werden (Einzelbelege an den jeweiligen Konstanten unten;
+    // Vollmessung: docs/rain-weighted-flow-measurements.md §E/§F).
+    //
+    // VERWORFEN 1 — rohes `rain` als Gewicht (Stand #9) + Gates/Raten neu
+    // kalibrieren. Der nötige Faktor ist das Landmittel des Regens, und das ist
+    // weder auflösungs- noch seed-fest: 0.563 (n=192) / 0.398 (n=640) / 0.357
+    // (n=832) bei Seed 1337, und bei n=832 allein über die Seeds 0.357 (1337) /
+    // 0.544 (7) / 0.488 (99) — `computeRain` trocknet je ZELLE ab, also hängt der
+    // Faktor an Auflösung UND Inselgröße. Gegenprobe gemessen: rohes Gewicht mit
+    // dem auf Seed 1337 passend gerechneten Render-Gate 114 statt 320 liefert
+    // Kanalzellen gegen den ungewichteten Arm (n=832, Jahr 0) −13.6 % (1337),
+    // +18.5 % (7), +5.8 % (99) — eine Konstante kann die Inseln nicht gemeinsam
+    // bedienen, und die Testkonfigs (n = 96…256) lägen noch einmal woanders.
+    // Normiert liegen dieselben drei Seeds bei −6.3 / −3.1 / −6.1 %.
+    // VERWORFEN 2 — Normierung auf einen festen Zahlenwert (z. B. 0.40): dieselbe
+    // Auflösungs-/Seed-Bindung wie oben, nur unsichtbar gemacht.
+    // VERWORFEN 3 — `computeRain` weltmaßstäblich machen (Abtrocknung ∝ cellSize)
+    // statt zu normieren: zieht Vegetation, Biom-Färbung und Auwald-Klassen mit
+    // (alle lesen `rain` roh) und hätte die Klima-Kalibrierung aufgemacht, ohne
+    // die Seed-Abhängigkeit zu lösen. Bleibt als eigenständige Verbesserung offen.
+    // Bekannte Kosten der Normierung: das Landmittel ist eine GLOBALE Größe, die
+    // je Schritt aus dem Gesamtzustand fällt (es driftet über den Lauf: 0.357 →
+    // 0.443 bei n=832/Seed 1337 über 50k Jahre). Genau diese Drift teilt die
+    // Normierung heraus — der Gesamtabfluss bleibt über den ganzen Lauf konstant,
+    // statt mit der abflachenden Insel um +24 % zu wachsen.
+    public var rainWeightedFlow = true
     public var kSed: Double = 1.1e-4   // Erodierbarkeit lockeres Sediment (weicher)
     public var sedCoverThresh: Double = 0.01 // ab so viel Sediment gilt "bedeckt"
     public var transportCap: Double = 9.0  // Transportkapazität-Koeffizient (SPACE)
@@ -75,7 +118,20 @@ public struct SimConfig: Sendable {
     // unterversorgte/aufgespreizte Zellen ablagern → MITTELBÄNKE, um die sich der
     // Lauf teilt und wiedervereint.
     public var braidingEnabled: Bool = true
+    // #10: GEPRÜFT, unverändert — das Gate zählt weiter „Zellen", weil der
+    // normierte Abfluss dieselbe Skala hat. MFD-Zellen über dem Gate (n=832,
+    // Seed 1337, Produktionspfad, aus → an): 27698 → 25805 (Jahr 0, −6.8 %),
+    // 35523 → 34638 (5k), 39609 → 38174 (20k), 38569 → 39257 (50k, +1.8 %).
     public var braidMinCells: Double = 120   // Reach-Gate der Braiding-PHYSIK (Render-Schwelle ist separat: renderMinCells)
+    // #10: GEPRÜFT, unverändert. Kanalzellen (= Zellen über DIESER Schwelle) in
+    // Produktionsauflösung n=832, Produktionspfad, aus → an: Seed 1337 17432 →
+    // 16329 / 25555 → 25258 / 28386 → 27184 / 25076 → 27465 (Jahr 0 / 5k / 20k /
+    // 50k), Seed 7 −3.1 / −0.6 / −2.9 / −4.0 %, Seed 99 −6.1 / −3.5 / −1.2 /
+    // −2.2 % — alles im Band ±10 %, ohne Richtung. Verworfen: die Schwelle auf
+    // ~114 zu senken (die #9-Rechnung „Gates sind faktisch 2× zu hoch") — die
+    // galt für das UNNORMIERTE Gewicht; mit Normierung würde sie die Zahl der
+    // gemalten Läufe um gut die Hälfte anheben (Gate 120 gemessen: 25805 statt
+    // 16329 Zellen bei Jahr 0).
     public var renderMinCells: Double = 320  // ab so viel Einzugsgebiet (Zellen) wird ein Lauf GEMALT. Bewusst über dem Physik-Gate (User: „zu viele Flüsse"): Braiding wirkt ab 120 weiter, sichtbar sind nur substanzielle Flüsse. Auf der 832er-Map qualifizieren sich sonst absolut mehr Läufe über dieselbe Schwelle.
     public var braidExponent: Double = 2.5   // Partitions-Exponent m (>1 ist die Bänke-bauende Instabilität)
     public var braidCapacity: Double = 5.0e-6 // Kb: weniger Kapazität lässt überlastete Reaches Bänke ablagern (n=256: Insel-Summe 9 vs. 4 ohne Pass)
@@ -86,12 +142,42 @@ public struct SimConfig: Sendable {
     public var hydraulicEnabled = true      // Droplet-Erosion statt Grid-Stream-Power+Diffusion
     public var streamRefRate: Double = 0.0025 // Stream-Map-Sättigung (nickmcd): ab dieser reife-gewichteten Tropfen-Besuchsrate (Besuche/Jahr, EWMA) gilt ein Lauf als etabliert (Map ≈ 0.63 bei r0, →1 darüber). Trunk-Raten gemessen ~0.003–0.007/J., Zufallspfade ≪0.001 (reife-gewichtet).
     public var streamMapMemoryYears: Double = 6000 // EWMA-Gedächtnis: bei +2k J. bleibt das etablierte Netz verwandt (Jaccard 0.28 statt 0.20 bei τ=3000), ohne Kurzfrist-Flackern.
+    // #10: GEPRÜFT, unverändert. Über See trägt das Gewichtsfeld bewusst den
+    // NEUTRALEN Wert 1.0 (= das Landmittel), deshalb landet exakt derselbe Anteil
+    // der Tropfen-Starts auf Land wie ungewichtet — gemessen n=832 Jahr 0…50k:
+    // Start-Anteil Land = Zell-Anteil Land auf 4 Stellen (0.6900/0.3277/0.4560).
+    // Der in #9 §D.3 gemessene Verlust von 21–28 % (rohes Gewicht: über dem Meer
+    // regnet es am meisten) ist damit gegenstandslos; die dort erwogene Anhebung
+    // der Tropfenzahl ist verworfen (sie wäre land-anteils- und seed-abhängig).
+    // Trotzdem gemessen: 2.8 Tropfen/Jahr (×1.4) an n=832/Seed 1337 gegen den
+    // Default-Lauf (Jahr 0 / 5k / 20k) — Kanalzellen 16299/25259/27345 (statt
+    // 16329/25258/27184, also wirkungslos auf das Kanalnetz), reliefRobust bei
+    // 20k 0.1675 statt 0.1714. Reine Zusatz-Erosion ohne Nutzen → verworfen.
     public var hydraulicPerYear = 2.0       // Tropfen je Jahr (sanft → Makro-Grate überleben)
     /// Ozean-Starts haben keinen Anteil an der Landformung, können aber fast die
     /// ganze Tropfen-Lebenszeit verbrauchen. Die Produktionskonfiguration lässt
     /// sie aus; der Core-Default bleibt für bestehende Kalibrierungen unverändert.
     public var hydraulicSkipWaterSpawns = false
     public var outletIncision = true        // Flächen-Stream-Power auf dem Entwässerungsnetz: carvt Täler/Auslässe → Becken entwässern zum Meer, dendritische Rinnen + diskrete Seen (nickmcd-Look) statt einer blassen Flach-Ebene
+    // #10: GEPRÜFT, unverändert. Die in #9 §D.2 gerechnete Kompensation (~×1.4
+    // gegen den halbierten Abfluss) hat ihre Grundlage verloren: normiert ist der
+    // Gesamtabfluss identisch (totalOutletArea/Zellzahl = 1.0000 an wie aus).
+    // VERWORFEN, weil trotzdem probiert: outletErode 4.2e-5 (×1.4), n=832,
+    // Seed 1337, Produktionspfad, gegen den Default-Lauf (Jahr 0 / 5k / 20k) —
+    // Kanalzellen 16293/24043/26283 statt 16329/25258/27184 (der ungewichtete
+    // Referenzarm liegt bei 17432/25555/28386, die höhere Rate entfernt sich
+    // also), Relief 0.4957 statt 0.4981 bei 20k, Seeanteil 0.0258/0.0728/0.0991
+    // statt 0.0261/0.0958/0.1036 gegen 0.0246/0.0774/0.0925 ungewichtet: der
+    // Seeanteil kommt bei 5k näher, bei 20k praktisch nicht, und bezahlt wird es
+    // mit Kanalzellen und Relief. Für eine Ein-Seed-Beckenstreuung zu teuer.
+    // Seeanteil n=832, Produktionspfad, aus → an: Seed 1337 0.0246 → 0.0261
+    // (Jahr 0), 0.0774 → 0.0958 (5k), 0.0925 → 0.1036 (20k), 0.0524 → 0.0980
+    // (50k); Seeds 7 und 99 haben in BEIDEN Armen praktisch keine Seen
+    // (≤ 0.0099). Der 50k-Ausreißer ist ein einzelnes noch nicht durchgeschnittenes
+    // Becken (größter See 6698 gegen 45684 Zellen) — dieselbe Einzelereignis-
+    // Streuung, die #9 §A schon mit umgekehrtem Vorzeichen gemessen hat (dort lag
+    // der AUS-Arm bei 20k höher: 0.1043 gegen 0.0441). Kein systematischer Effekt,
+    // also keine Ratenänderung.
     public var outletErode: Double = 3.0e-5 // Rate der Auslass-Inzision. 3e-5 gibt feine dendritische Rinnen „über die ganze Oberfläche" ohne Überkämmen (6e-5 überkarvt bei 100k)
     public var hillDiffusion: Double = 0.012 // Hangdiffusion-Basis (Bodenkriechen, D·∇²z) im Droplet-Pfad, RÄUMLICH VARIABEL (hillslopeDiffusion): rundet soil-mantled/sanfte Hänge, lässt hohen steilen Kahlfels scharf → gerundete Landschaft mit einzelnen spitzen Gipfeln (die Ausnahme). Der fehlende Alterungs-Prozess laut LEM-Recherche (docs/research-terrain-aging.md). Auf n=640 kalibriert (auflösungs-skaliert in step()).
     // ---- Auen/Schwemmebenen (Überflutungs-Aggradation) ----
@@ -101,6 +187,8 @@ public struct SimConfig: Sendable {
     // tal-nahe Zellen bis knapp über Bett-Niveau → steile Talwände bleiben unberührt
     // (die Berge werden NICHT zugeschüttet). Physisch = Overbank-Deposition.
     public var floodplainEnabled = false // AUS: die per-Zell-Aggradation fügt feine Krusten hinzu (gemessen 2.7× Zerklüftung bei 3000 J.) für unbestätigten Auen-Nutzen → zurückgenommen. Ein glatterer Auen-Ansatz (z. B. diffundierte Deposition oder Tiefland-Generierung) ist offen. Code bleibt als Referenz.
+    // #10: unverändert (Pass ist ohnehin aus) — dieselbe Begründung wie bei
+    // braidMinCells: der normierte Abfluss zählt weiter in Zellen.
     public var floodplainMinArea: Double = 500  // ab so viel Einzugsgebiet (Zellen): NUR Hauptflüsse bauen Auen. Niedrig (60) → jedes Rinnsal baut Levees → Krusten-Rauschen (verworfen). Bergbäche haben real keine Aue.
     public var floodplainMaxElev: Double = 0.50 // NUR Tiefland-Reaches (Kanalbett unter dieser Höhe) bauen Auen — Schwemmebenen sind Tiefland-Features, nicht am Berg.
     public var floodplainDepth: Double = 0.016  // Bett+Auenhöhe (bankfull): bis hierher wird tal-nah aufgefüllt (kleine Flüsse)
@@ -345,6 +433,11 @@ public struct SimConfig: Sendable {
     public var meanderEnabled: Bool = true       // AN: auf dem sanfteren Terrain (baseRelief 0.78) + mit gedeckelter Migration stabil. Läufe wandern, schnüren Altarme ab — der eigentliche Fluss-Dynamik-Wunsch.
     public var meanderMigration: Double = 8.0e-6 // kMig (Produktion, n=640/kein Uplift): laterale Rate ∝ Krümmung×Abfluss. Von 5e-5 gesenkt — bei den großen Produktions-Einzugsgebieten tangelte 5e-5 die Läufe (Sinu-Max 7..26). 8e-6 → hübsche Mäander (Mittel ~2). Die Mäander-Kern-Tests pinnen ihren alten Wert in meanderCfg().
     public var meanderMaxSinuosity: Double = 3.0 // Sinuositäts-Deckel: darüber migriert ein Lauf nicht weiter (Glättung/Cutoff holen ihn zurück) → keine Knäuel-Läufe, Max bleibt beschränkt.
+    // #10: GEPRÜFT, unverändert. D8-Zellen über dieser Schwelle (n=832, Seed
+    // 1337, aus → an): 31588 → 29439 (Jahr 0, −6.8 %), 36324 → 35326 (5k),
+    // 37922 → 36683 (20k), 36244 → 36982 (50k); die daraus gezogenen
+    // Zentrumslinien bleiben damit im selben Umfang. Wächter der Mäander-Mechanik
+    // pinnen ihre eigene Konfiguration (meanderCfg) und sind unberührt.
     public var meanderMinCells: Double = 85       // ab so viel Einzugsgebiet gilt "Hauptfluss"
     public var meanderNodeSpacing: Double = 1.5   // Ziel-Knotenabstand (Zellen)
     public var meanderNeckDist: Double = 2.0      // Halsbreite für Cutoff (Zellen). Von 1.2 erhöht: Schlingen schnüren früher ab → Sinuosität wird niedriger gedeckelt (weniger Knäuel). Kern-Tests pinnen 1.2 in meanderCfg().

@@ -35,14 +35,23 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertEqual(a.areaMFD, b.areaMFD, "areaMFD muss deterministisch sein")
     }
 
-    /// Jede Landzelle trägt mindestens ihre eigene Fläche (untere Schranke).
+    /// Jede Landzelle trägt mindestens ihren eigenen Startwert (untere Schranke).
+    /// Mit gewichtetem Abfluss (Issue #9/#10) ist das `cellArea · rainWeight[k]`
+    /// statt `cellArea` — eine Zelle im Regenschatten trägt weniger als ihre
+    /// Fläche bei. Die Schranke selbst ist unverändert: was eine Zelle einspeist,
+    /// muss sie auch führen.
     func testMFDCarriesSelf() {
         let t = Terrain(config: cfg(n: 96), seed: 777)
-        let cellArea = t.cfg.cellSize * t.cfg.cellSize
         for k in 0..<t.cfg.count where t.hf[k] > t.cfg.sea {
-            XCTAssertGreaterThanOrEqual(t.areaMFD[k], cellArea - 1e-9,
-                                        "areaMFD darf nie unter die eigene Zellfläche fallen")
+            XCTAssertGreaterThanOrEqual(t.areaMFD[k], ownContribution(t, k) - 1e-9,
+                                        "areaMFD darf nie unter den eigenen Startwert fallen")
         }
+    }
+
+    /// Startwert der Akkumulation für Zelle `k` (s. `Terrain.seedFlowAccumulator`).
+    private func ownContribution(_ t: Terrain, _ k: Int) -> Double {
+        let cellArea = t.cfg.cellSize * t.cfg.cellSize
+        return t.rainWeight.isEmpty ? cellArea : cellArea * t.rainWeight[k]
     }
 
     func testMFDMayUseASlowerRenderCadence() {
@@ -58,9 +67,8 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertEqual(t.areaMFD, before)
 
         t.step(dtYears: 1)
-        let cellArea = t.cfg.cellSize * t.cfg.cellSize
         for k in 0..<t.cfg.count where t.hf[k] > t.cfg.sea {
-            XCTAssertGreaterThanOrEqual(t.areaMFD[k], cellArea - 1e-9)
+            XCTAssertGreaterThanOrEqual(t.areaMFD[k], ownContribution(t, k) - 1e-9)
         }
     }
 
