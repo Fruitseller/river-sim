@@ -41,7 +41,7 @@ jobs:
       # Commit-SHA statt mutable Tag (Supply-Chain-Härtung, öffentliches Repo).
       # Versionsupdates laufen künftig über Dependabot (`.github/dependabot.yml`,
       # `github-actions`-Ecosystem), nicht über manuelles Nachziehen der Pins.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # System-Abhängigkeiten laut Swift.org-Installationsanleitung für Ubuntu 22.04
       # (https://www.swift.org/install/linux/). Die Toolchain-Binaries verlinken u. a.
