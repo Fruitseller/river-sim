@@ -25,7 +25,9 @@ import Foundation
 /// derselben Höhen-/Hang-/Feuchte-Logik mit auseinanderlaufenden Konstanten
 /// (Höhenabfall ab 0.5 bzw. 0.6, Regenfaktor 1.3 bzw. 1.2). Beide lesen jetzt
 /// `Terrain.heightBands` und `Terrain.vegetationSuitability`.
-public struct HeightBands: Equatable, Sendable {
+/// `Codable`: die Bänder reisen im Spielstand mit (Issue #8) — nach dem Laden
+/// muss die Färbung sofort stimmen, ohne auf den nächsten Sim-Schritt zu warten.
+public struct HeightBands: Equatable, Sendable, Codable {
     /// Bis hier ist die Höhe für Bewuchs voll geeignet (Perzentil `bandVegFullPercentile`).
     public var vegFull: Double
     /// BREITE der Vegetations-Rampe, `bandVegRampSpanFactor · (p95 − p50)` —

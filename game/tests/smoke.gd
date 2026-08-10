@@ -99,8 +99,74 @@ func _run() -> void:
 		quit(1)
 		return
 
+	# Speichern/Laden über die Brücke (Issue #8). Die Bit-Identität des
+	# Weiterlaufs prüft SimCore (`WorldSnapshotTests`); hier geht es um den
+	# GDExtension-Vertrag: Datei entsteht, Zustand kommt zurück, eine Datei mit
+	# fremder Formatversion wird ABGELEHNT, ohne die laufende Welt anzutasten.
+	var save_path := "user://tests/smoke.%s" % sim.worldFileExtension()
+	var abs_save := ProjectSettings.globalize_path(save_path)
+	var saved_year: float = sim.currentYear()
+	var saved_sum := _height_sum(sim.heights())
+	var save_err: String = sim.saveWorld(abs_save)
+	if not save_err.is_empty():
+		push_error("FAIL: saveWorld: %s" % save_err)
+		quit(1)
+		return
+	var bytes: int = sim.lastWorldFileBytes()
+	print("world_saved_bytes=", bytes, " grid_from_file=", sim.worldFileGridSize(abs_save))
+	if bytes <= 0 or not FileAccess.file_exists(save_path):
+		push_error("FAIL: Welt-Datei fehlt")
+		quit(1)
+		return
+	if sim.worldFileGridSize(abs_save) != n:
+		push_error("FAIL: Gitterauflösung der Datei stimmt nicht")
+		quit(1)
+		return
+
+	sim.step(500.0) # Welt verändern, damit das Laden etwas zurückholen MUSS
+	var load_err: String = sim.loadWorld(abs_save)
+	if not load_err.is_empty():
+		push_error("FAIL: loadWorld: %s" % load_err)
+		quit(1)
+		return
+	var loaded_sum := _height_sum(sim.heights())
+	print("year_after_load=", sim.currentYear(), " height_sum_delta=", loaded_sum - saved_sum)
+	if absf(sim.currentYear() - saved_year) > 0.0 or loaded_sum != saved_sum:
+		push_error("FAIL: geladener Zustand weicht vom gespeicherten ab")
+		quit(1)
+		return
+
+	# Datei auf eine andere Formatversion umbiegen (Byte 8..11 = 0) → muss
+	# abgelehnt werden, statt falsch geladen zu werden.
+	var raw := FileAccess.get_file_as_bytes(save_path)
+	for i in range(8, 12):
+		raw[i] = 0
+	var old_path := "user://tests/smoke_v0.%s" % sim.worldFileExtension()
+	var f := FileAccess.open(old_path, FileAccess.WRITE)
+	f.store_buffer(raw)
+	f.close()
+	var reject: String = sim.loadWorld(ProjectSettings.globalize_path(old_path))
+	print("old_version_error=", reject)
+	if reject.is_empty() or not reject.contains("Version"):
+		push_error("FAIL: alte Formatversion wurde nicht abgelehnt")
+		quit(1)
+		return
+	if absf(sim.currentYear() - saved_year) > 0.0:
+		push_error("FAIL: abgelehntes Laden hat die Welt verändert")
+		quit(1)
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(old_path))
+
 	print("SMOKE_OK")
 	quit(0)
+
+## Summe der Höhen — kompakter Vergleichswert für „derselbe Zustand".
+func _height_sum(h: PackedFloat32Array) -> float:
+	var s := 0.0
+	for v in h:
+		s += v
+	return s
 
 ## Mittlere absolute Nachbar-Differenz in einem 9×9-Fenster um Zelle c.
 func _local_roughness(h: PackedFloat32Array, n: int, c: int) -> float:

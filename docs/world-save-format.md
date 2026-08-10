@@ -1,0 +1,183 @@
+# Welt speichern und laden (Issue #8)
+
+Stand: August 2026 · Format **Version 1** · Code: `SimCore/Sources/SimCore/WorldSnapshot.swift`,
+Inventar (`TerrainState`) am Ende von `SimCore/Sources/SimCore/Terrain.swift`,
+Wächter: `SimCore/Tests/SimCoreTests/WorldSnapshotTests.swift`.
+
+## Die Invariante, an der alles hängt
+
+Eine Welt ist gespeichert, wenn sie **bit-identisch weiterläuft**. Nicht „sieht
+gleich aus": das System ist chaotisch (Tropfenpfade, Becken-Rollenwechsel,
+Mäander-Cutoffs), ein einziges fehlendes Feld oder ein verlorenes ULP driftet
+über wenige Schritte in eine sichtbar andere Landschaft. Der Wächter
+`testRoundTripContinuesBitIdentically` vergleicht deshalb nach
+`speichern → laden → n Schritte` **jedes** Feld bitweise gegen eine durchgehend
+simulierte Welt. Gegenprobe zur Empfindlichkeit: setzt man in `Terrain.restore`
+z. B. `stepCount = 0` (der Zähler speist den Droplet-Seed), schlägt der Test in
+allen Höhenfeldern fehl — genau so soll er sich verhalten.
+
+Die **Mäander-Historie** hat einen eigenen Round-Trip
+(`testMeanderHistorySurvivesRoundTrip`): im Produktionspfad entsteht bei
+Testauflösung so schnell kein Cutoff (gemessen n=256, 800 Jahre: 60 Läufe,
+0 Altarme), also läuft dieser Wächter auf der gepinnten Kopplungs-Config der
+Mäander-Kerntests, bis mindestens zwei Altarme MIT Alter existieren — und prüft
+dann Datei-Identität und Weiterlauf.
+
+## Was eine Welt ist (Inventar)
+
+`TerrainState` ist die eine Stelle, an der das steht. Aufnahmekriterium: alles,
+was ein `step()` LIEST, bevor es es schreibt — plus alles, was Rendering und
+Diagnose sofort nach dem Laden brauchen.
+
+| Gruppe | Felder |
+| --- | --- |
+| Gelände | `h`, `rock`, `sed`, `upliftBase` |
+| Klima | `rain`, `rainWeight` |
+| Lithologie (#12) | `lithHardness`, `lithErodeK`, `lithBed`, `lithProvince` |
+| Vegetation (#4/#7) | `veg`, `vegClass`, `riparian`, `heightBands` |
+| Entwässerung | `hf`, `receiver`, `order`, `floodParent`, `area`, `areaMFD` |
+| Seen/Wasserhaushalt (#11) | `waterLevel`, `lakeBalance`, `saltCrust`, `endorheicBasin`, `endorheicInflow`, `playaBed` |
+| Fluss-Gedächtnis | `streamMap`, `streamRate`, `isChannel` |
+| Mäander (#7) | Zentrumslinien (Knoten + Abfluss je Knoten), Altarme, Altarm-Alter |
+| Störung/Regeneration (#26) | `disturb`, `regenPending`, `disturbActive` |
+| Zähler | `years`, `seed`, `stepCount`, `flowStepCount` |
+
+**Nicht** gespeichert werden reine Arbeitspuffer, die ihr Pass vor dem ersten
+Lesen vollständig überschreibt (geprüft: `vegScratch`, `basinSeen`, `basinCells`,
+`basinSlots`, `orderPos`, `visited`, `scratch`, `qs`, `trackBuf`, `pondSeen`,
+`heap`, die Bin-Puffer des Mäander-Cutoff-Index) sowie alles, was rein aus Seed
+oder Config folgt (`noise`-Permutationstabelle, `vegTypeFactor`, `mfdMinA`,
+`mfdFlatCell`).
+
+Bewusst großzügig aufgenommen sind die Felder, die `computeFlow` im nächsten
+Schritt ohnehin neu ableitet (`hf`, `receiver`, `area`, `areaMFD`, `order`,
+`floodParent`, `rain`, `rainWeight`, `lithHardness`, `lithErodeK`,
+`endorheicBasin`, `endorheicInflow`, `playaBed`). Zwei Gründe:
+
+1. Der erste gerenderte Frame nach dem Laden ist damit korrekt, ohne einen
+   Sim-Schritt zu erzwingen (Flüsse, Farben, Diagnose).
+2. „Geladener Zustand == gespeicherter Zustand" wird feldweise prüfbar statt nur
+   „läuft gleich weiter". Ein Neu-Ableiten beim Laden wäre außerdem gefährlich:
+   `computeFlow()` mit dt = 0 SNAPPT den Bilanz-Seespiegel abflussloser Becken
+   auf seinen Zielstand (so startet die Generierung) — genau das darf beim Laden
+   nicht passieren.
+
+### Warum `waterLevel` und `lakeBalance` echter Zustand sind
+
+Beide folgen ihrem Ziel nur ratenbegrenzt (`lakeLevelResponseYears`,
+`endorheicResponseYears`). Fehlten sie in der Datei, würden die Seespiegel nach
+dem Laden über hunderte Jahre einschwingen oder im ersten Frame springen — das
+ist Abnahmepunkt 5 und hat seinen eigenen Wächter
+(`testWaterLevelIsImmediatelyCorrectAfterLoad`, prüft auch, dass der ABSTAND
+`waterLevel − hf` erhalten bleibt: das ist das Gedächtnis).
+
+## Kodierung
+
+Eigenes Binärformat, Little-Endian, Zahlenfelder als Blocktransfer.
+
+* **Bit-genau:** gespeichert wird das IEEE-754-Bitmuster jedes `Double`, keine
+  Dezimaldarstellung. Determinismus verträgt keine Textkonversion.
+* **Größe/Zeit:** eine Welt sind ~25 Felder à n² Werte (n = 832 → 692 224 Zellen,
+  5,5 MB je `Double`-Feld). JSON oder XML-Plist bräuchten das Drei- bis Vierfache
+  und einen Parser je Zahl; binäres Plist ist bit-genau, verpackt aber jedes
+  Element als eigenes Objekt — bei 17 Mio. Zahlen unbrauchbar.
+* **Konstante Felder** (überall derselbe Wert — der Normalfall für `disturb`,
+  `regenPending`, `isChannel` … in einer unangetasteten Welt) stehen als EIN Wert
+  in der Datei. Verlustfrei, nur weniger Bytes.
+
+Die **Config** liegt dagegen als binäres Plist (Codable-synthetisiert) im
+Container: sie ist klein, und die Synthese nimmt automatisch jede neue
+Stellschraube aus `Config.swift` mit. Eine vergessene Stellschraube wäre ein
+stiller Determinismus-Bruch — deshalb steht die Konformität `Codable, Equatable`
+direkt an `SimConfig` (Swift synthetisiert nur in der Ursprungsdatei) und der
+Wächter `testConfigSurvivesEncodingExactly` vergleicht die GANZE Config, nicht
+einzelne Felder. `ErosionFilter.Params` braucht eine handgeschriebene Kodierung,
+weil es Tupel führt (Tupel sind nicht `Codable`).
+
+Dateigröße gemessen (`testConstantFieldsAreStoredCompactly` gibt den Wert aus):
+n = 128 (16 384 Zellen) = 2 716 781 Byte, also **165,8 Byte je Zelle** → n = 832
+ergibt **≈ 109 MB**. Das ist der Preis der Vollständigkeit; Kompression wäre
+möglich (zlib), würde aber eine System-Abhängigkeit ins reine Swift-Package
+holen — bewusst nicht getan, in der ROADMAP notiert.
+
+### Aufbau
+
+```text
+Kopf (28 Byte):
+  [0..8)   Magic "RIVERSIM"
+  [8..12)  u32 Formatversion
+  [12..20) u64 Länge der Nutzdaten
+  [20..28) u64 FNV-1a-64 der Nutzdaten
+Nutzdaten:
+  u32 Länge + Bytes   binäres Plist der SimConfig
+  u32 seed · f64 years · u32 stepCount · u32 flowStepCount · u8 disturbActive
+  8 × f64             Höhenbänder
+  u32 Feldzahl, je Feld:
+    u32 Länge + Name · u8 Typ (0 f64 · 1 i32 · 2 u8 · 3 bool)
+    u8 Kodierung (0 roh · 1 konstant) · u32 Elementzahl · Nutzdaten
+  u32 Kanalzahl, je Kanal: u32 Knotenzahl · Knoten (f64 x, f64 z) · f64 Abfluss
+  u32 Altarmzahl, je Altarm: u32 Knotenzahl · Knoten; danach f64 Alter je Altarm
+```
+
+Feldnamen reisen mit: Umbenennen oder Umsortieren im Inventar ist damit ein
+erkennbarer Fehler und kein stiller Feldversatz.
+
+## Versionierung und Ablehnung (Abnahmepunkt 2)
+
+`WorldSnapshot.version` wird bei **jeder** Änderung an Inventar, Reihenfolge oder
+Kodierung erhöht. Es gibt bewusst keine Aufwärts-Migration: eine Datei mit
+abweichender Version wird abgelehnt (`SnapshotError.unsupportedVersion`), nicht
+irgendwie interpretiert. Die Version wird **vor** der Prüfsumme geprüft, damit
+eine alte Datei „andere Programmversion" meldet und nicht „defekt".
+
+Weitere kontrollierte Ablehnungen, alle mit deutscher Meldung für den Dialog:
+
+| Fall | Fehler |
+| --- | --- |
+| fremde/leere Datei | `badMagic` |
+| abgebrochen geschrieben | `truncated` |
+| gekipptes Bit | `checksumMismatch` (FNV-1a-64 über die Nutzdaten) |
+| Config-Feld fehlt | `configDecodingFailed` |
+| Feld umbenannt/vertauscht | `fieldNameMismatch` / `fieldCountMismatch` |
+| Feldlänge passt nicht zu `n` | `fieldLengthMismatch` |
+
+Geschrieben wird **atomar** (`Data.write(options: .atomic)` → temporäre Datei +
+`rename`): ein Absturz mitten im Speichern lässt den vorherigen Spielstand
+intakt.
+
+## Config und Seed (Abnahmepunkt 4)
+
+Beides reist mit; die **Datei-Config ist autoritativ**. Eine geladene Welt läuft
+mit exakt der Config, mit der sie gespeichert wurde — auch wenn `SimConfig()`
+seither andere Defaults hat.
+
+*Begründung:* Feldlängen (`n`), Kalibrierung und Bit-Determinismus hängen
+zusammen. Ein Merge aus Datei- und Programm-Config wäre eine dritte, nirgends
+getestete Konfiguration — und würde die Abnahme-Invariante genau dann brechen,
+wenn jemand eine Stellschraube gedreht hat. *Folge:* Änderungen an
+`SimConfig()`-Defaults wirken nur auf NEUE Welten. Wer eine alte Welt mit neuer
+Physik weiterlaufen lassen will, braucht eine bewusste Migration.
+
+`Terrain` wird beim Laden deshalb ERSETZT (nicht überschrieben): `SimNode.terrain`
+ist `var`, und der Konstruktor `Terrain(allocating:seed:)` legt nur Puffer an,
+ohne zu generieren (der Snapshot bringt jedes Feld mit).
+
+**Eine Grenze zieht das Frontend:** Texturen, Mesh-Tessellation und Raycast einer
+laufenden Godot-Sitzung stehen auf EINEM `n`. `Main.gd` fragt vor dem Laden
+`SimNode.worldFileGridSize()` (liest nur Kopf + Config, nicht die 100 MB Felder)
+und lehnt eine Welt mit abweichender Auflösung ab, BEVOR die laufende Welt
+ersetzt ist. `world` wird nicht eigens geprüft, weil `n` und `world` in diesem
+Projekt nur zusammen geändert werden. Der Sim-Kern selbst kann jede Auflösung
+laden (`testDeviatingConfigAndSeedTravelWithTheWorld` tut das).
+
+## Bedienung
+
+* Knopf **💾 Speichern** / Taste **F5** → `user://saves/welt.rsworld`
+* Knopf **📂 Laden** / Taste **F9**; nach dem Laden ist die Sim **pausiert**.
+* Fehler erscheinen als Dialog mit der wörtlichen Meldung aus SimCore.
+* Ein fester Speicherplatz statt Dateidialog: das Spiel führt genau eine Welt.
+  Mehrere Slots sind eine eigene UI-Frage (ROADMAP).
+
+Der Godot-Smoke-Test (`game/tests/smoke.gd`) deckt die Brücke ab: Datei
+entsteht, Zustand kommt zurück (Jahr + Höhensumme), eine Datei mit fremder
+Formatversion wird abgelehnt, ohne die laufende Welt anzutasten.

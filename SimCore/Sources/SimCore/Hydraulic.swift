@@ -5,7 +5,8 @@ import Foundation
 /// Wassertropfen laufen bergab, erodieren am steilen Hang (über einen Pinsel
 /// verteilt → weiche Kerben) und lagern Sediment in flacheren Abschnitten/Senken
 /// wieder ab. Deterministisch (Mulberry32-Seed) und headless-testbar.
-public struct HydraulicParams: Sendable {
+/// `Codable`/`Equatable`: Teil der Config im Weltformat (s. `SimConfig`).
+public struct HydraulicParams: Sendable, Codable, Equatable {
     public var inertia = 0.05       // 0 = folgt dem Gradienten, 1 = Richtung bleibt
     public var capacity = 4.0       // Sedimentkapazität ∝ Steigung·Speed·Wasser
     public var minSlope = 0.01      // Mindest-Steigung für Kapazität (kein Stagnieren)

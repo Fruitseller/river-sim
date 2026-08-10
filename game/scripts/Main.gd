@@ -116,6 +116,14 @@ var radius_value: Label
 var strength_value: Label
 var radius_slider: HSlider
 
+# --- Speichern/Laden (Issue #8) ---------------------------------------------
+## EIN fester Speicherplatz statt Dateidialog: das Spiel führt genau eine Welt,
+## und eine Welt ist groß (n=832 → ~109 MB, das ganze Zustands-Inventar). Mehrere
+## Slots/Namen sind eine eigene UI-Frage (ROADMAP), nicht Teil von #8.
+const SAVE_PATH := "user://saves/welt.rsworld"
+var world_status_label: Label
+var world_dialog: AcceptDialog
+
 const TOOLS := [
 	["⛰", "Anheben", "1"], ["🕳", "Absenken", "2"], ["〰", "Glätten", "3"],
 	["▭", "Einebnen", "4"], ["🌋", "Aufrauen", "5"], ["⛏", "Spitzhacke", "6"],
@@ -407,10 +415,39 @@ func _setup_ui() -> void:
 	regen_b.pressed.connect(_regen)
 	vb.add_child(regen_b)
 
+	var world_io := HBoxContainer.new()
+	world_io.add_theme_constant_override("separation", 6)
+	vb.add_child(world_io)
+	var save_b := _mk_button("💾 Speichern", false, null)
+	save_b.tooltip_text = "Welt nach %s schreiben (F5)" % SAVE_PATH
+	save_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_b.pressed.connect(_save_world)
+	world_io.add_child(save_b)
+	var load_b := _mk_button("📂 Laden", false, null)
+	load_b.tooltip_text = "Gespeicherte Welt zurückholen (F9)"
+	load_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	load_b.pressed.connect(_load_world)
+	world_io.add_child(load_b)
+
+	world_status_label = Label.new()
+	world_status_label.add_theme_font_size_override("font_size", 15)
+	world_status_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	world_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(world_status_label)
+
+	# Fehlerdialog: Speichern/Laden kann echt scheitern (alte Formatversion,
+	# beschädigte oder fremde Datei, volle Platte). Die Meldung kommt wörtlich aus
+	# SimCore (`SnapshotError`) — kein zweiter Text, der auseinanderlaufen kann.
+	world_dialog = AcceptDialog.new()
+	world_dialog.title = "Welt"
+	world_dialog.dialog_autowrap = true
+	world_dialog.theme = ui_theme
+	layer.add_child(world_dialog)
+
 	var hint := Label.new()
 	hint.add_theme_font_size_override("font_size", 15)
 	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Pause: Leertaste"
+	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Pause: Leertaste\nSpeichern: F5 · Laden: F9"
 	vb.add_child(hint)
 
 	# Diagnose bewusst als eigene Karte: Die Werkzeugleiste bleibt auch auf kleinen
@@ -555,6 +592,71 @@ func _regen() -> void:
 	sim.generate(sim_seed)
 	sim.recomputeFlow()
 	_after_sim()
+
+# ------------------------------------------------- Speichern / Laden (Issue #8)
+
+## Schreibt die laufende Welt. SimNode arbeitet auf BETRIEBSSYSTEM-Pfaden (SimCore
+## kennt Godots `user://` nicht), deshalb `globalize_path`.
+func _save_world() -> void:
+	if _jumping: # mitten in einem Zeitsprung ist der Zustand noch in Bewegung
+		world_status_label.text = "Zeitsprung läuft — später speichern"
+		return
+	var abs_path := ProjectSettings.globalize_path(SAVE_PATH)
+	var err: String = sim.saveWorld(abs_path)
+	if not err.is_empty():
+		_show_world_error("Speichern fehlgeschlagen", err)
+		return
+	var mb := float(sim.lastWorldFileBytes()) / (1024.0 * 1024.0)
+	world_status_label.text = "Gespeichert: Jahr %s · %.1f MB" % [
+		_fmt(int(sim.currentYear())), mb]
+
+## Holt die gespeicherte Welt zurück. Danach ist der Zustand vollständig (der
+## Seespiegel kommt aus der Datei und schwingt NICHT ein, Issue #8) — es genügt,
+## die Texturen neu zu ziehen; ein Sim-Schritt ist ausdrücklich nicht nötig.
+func _load_world() -> void:
+	if _jumping: # der laufende Sprung würde sofort auf die geladene Welt steppen
+		world_status_label.text = "Zeitsprung läuft — später laden"
+		return
+	if not FileAccess.file_exists(SAVE_PATH):
+		_show_world_error("Kein Spielstand",
+			"Unter %s liegt noch keine Welt. Erst speichern (F5)." % SAVE_PATH)
+		return
+	var abs_path := ProjectSettings.globalize_path(SAVE_PATH)
+	# Texturen, Mesh-Tessellation und Raycast dieser Sitzung stehen auf EINEM N
+	# (aus `_ready`). Eine Welt mit anderer Auflösung wird deshalb abgelehnt,
+	# BEVOR die laufende Welt ersetzt ist. Andere Config-Abweichungen übernimmt
+	# der Kern (die Datei-Config ist autoritativ, s. WorldSnapshot); `world` muss
+	# hier nicht eigens geprüft werden, weil n und world laut Projektregel nur
+	# ZUSAMMEN geändert werden.
+	var file_grid: int = sim.worldFileGridSize(abs_path)
+	if file_grid > 0 and file_grid != N:
+		_show_world_error("Welt nicht darstellbar",
+			("Diese Welt hat die Gitterauflösung %d × %d, die laufende Sitzung "
+			+ "rendert %d × %d. Sie wurde NICHT geladen.") % [file_grid, file_grid, N, N])
+		return
+	var err: String = sim.loadWorld(abs_path)
+	if not err.is_empty():
+		_show_world_error("Laden fehlgeschlagen", err)
+		return
+	# Pausieren: nach dem Laden soll die zurückgeholte Welt stehen, nicht sofort
+	# im zuletzt eingestellten Tempo weiterlaufen.
+	_set_rate(0.0)
+	# Konstanten, die aus der Datei-Config kommen können, nachziehen.
+	sea = sim.seaLevel()
+	floor_level = sim.floorLevel()
+	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
+	terrain_mat.set_shader_parameter("sea_level", sea)
+	water_mi.position.y = sea * HSCALE
+	_after_sim() # water_blend = 1.0 → kein Überblenden aus der alten Welt
+	_refresh_debug()
+	world_status_label.text = "Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear()))
+
+func _show_world_error(title: String, message: String) -> void:
+	world_status_label.text = title
+	push_warning("%s: %s" % [title, message])
+	world_dialog.title = title
+	world_dialog.dialog_text = message
+	world_dialog.popup_centered(Vector2i(560, 0))
 
 func _capture_debug_reference() -> void:
 	sim.captureDebugReference()
@@ -939,6 +1041,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				radius_slider.value = max(radius_slider.min_value, brush_radius - 2.0)
 			KEY_BRACKETRIGHT:
 				radius_slider.value = min(radius_slider.max_value, brush_radius + 2.0)
+			KEY_F5: # Welt speichern (Issue #8)
+				_save_world()
+			KEY_F9: # Welt laden
+				_load_world()
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
 				var t: int = event.keycode - KEY_1
 				current_tool = t

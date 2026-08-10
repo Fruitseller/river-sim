@@ -2,7 +2,13 @@ import Foundation
 
 /// Alle kalibrierbaren Konstanten des Simulationskerns an einem Ort.
 /// Höhen sind normiert (~ -0.3 .. 1.4). Weltkoordinaten in abstrakten Einheiten.
-public struct SimConfig: Sendable {
+///
+/// `Codable`/`Equatable` sind Codable-SYNTHESE für das Weltformat (Issue #8,
+/// `WorldSnapshot.swift`): die Config reist vollständig im Spielstand mit, und
+/// zwar automatisch — eine neue Stellschraube hier braucht keinen Eintrag im
+/// Serialisierer. Die Konformität steht deshalb absichtlich HIER (Swift
+/// synthetisiert nur in der Ursprungsdatei) und nicht als Extension dort.
+public struct SimConfig: Sendable, Codable, Equatable {
     public var n: Int = 832          // Grid-Auflösung (n × n) — hoch für feines dendritisches Detail
     public var world: Double = 130   // Kantenlänge in Welteinheiten. n und world ZUSAMMEN erhöht (von 640/100): cellSize bleibt ~0.156 → alle auf n=640 kalibrierten Per-Zell-Parameter (Braid-Gates, Droplet-Dichte, kappa-Skalierung) gelten unverändert; die Insel wird einfach ~1.7× größer.
     public var sea: Double = 0.15     // Meeresspiegel (normiert)
