@@ -3307,7 +3307,16 @@ struct TerrainState {
     // Zähler
     var years: Double = 0
     var seed: UInt32 = 0
-    var stepCount: UInt32 = 0            // speist den Droplet-Seed → gehört zum Determinismus
+    // Tropfen-Strom (Issue #2): BEIDE Zähler speisen die Droplet-Erosion und
+    // gehören damit zum Determinismus. `dropsEmitted` ist die laufende Nummer
+    // des nächsten Tropfens (legt über `Hydraulic.dropRNG` seinen Startpunkt
+    // fest), `dropCarry` der angebrochene Tropfen aus dem letzten Schritt.
+    // Ohne beide würde eine geladene Welt mit einem anderen Tropfen (bzw. bei
+    // Frame-Schritten mit einer anderen Tropfenzahl) weiterlaufen als die
+    // durchgehend simulierte — genau die Invariante, die WorldSnapshotTests
+    // bit-genau prüft. (Ersetzt den früheren Schritt-Zähler `stepCount`.)
+    var dropsEmitted: UInt64 = 0
+    var dropCarry: Double = 0
     var flowStepCount: UInt32 = 0        // taktet das MFD-Intervall
 }
 
@@ -3333,7 +3342,8 @@ extension Terrain {
         s.oxbows = meander.oxbows
         s.oxbowAge = meander.oxbowAge
         s.years = years; s.seed = seed
-        s.stepCount = stepCount; s.flowStepCount = flowStepCount
+        s.dropsEmitted = dropsEmitted; s.dropCarry = dropCarry
+        s.flowStepCount = flowStepCount
         return s
     }
 
@@ -3365,7 +3375,8 @@ extension Terrain {
         years = s.years
         seed = s.seed
         noise = SimplexNoise(seed: s.seed) // Permutationstabelle rein aus dem Seed
-        stepCount = s.stepCount
+        dropsEmitted = s.dropsEmitted
+        dropCarry = s.dropCarry
         flowStepCount = s.flowStepCount
     }
 }

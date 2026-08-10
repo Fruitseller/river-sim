@@ -38,7 +38,8 @@ import Foundation
 ///   [20..28) u64 FNV-1a-64 der Nutzdaten
 /// Nutzdaten:
 ///   u32 Länge + Bytes  binäres Plist der SimConfig
-///   u32 seed · f64 years · u32 stepCount · u32 flowStepCount · u8 disturbActive
+///   u32 seed · f64 years · u64 dropsEmitted · f64 dropCarry
+///   u32 flowStepCount · u8 disturbActive
 ///   8 × f64            Höhenbänder (Issue #4)
 ///   u32 Feldzahl, je Feld:
 ///     u32 Länge + Name (ASCII) · u8 Typ (0 f64 · 1 i32 · 2 u8 · 3 bool)
@@ -73,7 +74,7 @@ public enum WorldSnapshot {
     /// **Formatversion.** Bei jeder Änderung an Inventar, Reihenfolge oder
     /// Kodierung um 1 erhöhen — alte Dateien werden dann abgelehnt (es gibt
     /// bewusst keine Aufwärts-Migration, s. Typ-Doku).
-    public static let version: UInt32 = 1
+    public static let version: UInt32 = 2
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
@@ -176,7 +177,8 @@ public enum WorldSnapshot {
 
         body.u32(state.seed)
         body.f64(state.years)
-        body.u32(state.stepCount)
+        body.u64(state.dropsEmitted)
+        body.f64(state.dropCarry)
         body.u32(state.flowStepCount)
         body.u8(state.disturbActive ? 1 : 0)
 
@@ -245,7 +247,8 @@ public enum WorldSnapshot {
         var state = TerrainState()
         state.seed = try body.u32()
         state.years = try body.f64()
-        state.stepCount = try body.u32()
+        state.dropsEmitted = try body.u64()
+        state.dropCarry = try body.f64()
         state.flowStepCount = try body.u32()
         state.disturbActive = try body.u8() != 0
         state.heightBands = HeightBands(vegFull: try body.f64(), vegRamp: try body.f64(),
