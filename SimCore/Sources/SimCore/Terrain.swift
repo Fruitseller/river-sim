@@ -200,7 +200,17 @@ public final class Terrain {
     private var stepCount: UInt32 = 0 // deterministischer Zähler für die Droplet-Seeds
     private var flowStepCount: UInt32 = 0
 
-    public init(config: SimConfig = SimConfig(), seed: UInt32 = 1337) {
+    /// Frisches Terrain: Puffer anlegen UND generieren.
+    public convenience init(config: SimConfig = SimConfig(), seed: UInt32 = 1337) {
+        self.init(allocating: config, seed: seed)
+        generate(seed: seed)
+    }
+
+    /// Legt alle Puffer an, generiert aber NICHT — der Weg für die
+    /// Wiederherstellung aus einem `WorldSnapshot` (Issue #8): dort kommt jedes
+    /// Feld aus der Datei, ein `generate` davor wäre reine Rechenzeit (Breach +
+    /// Spin-up) und würde nur überschrieben.
+    init(allocating config: SimConfig, seed: UInt32) {
         self.cfg = config
         self.n = config.n
         self.seed = seed
@@ -248,7 +258,6 @@ public final class Terrain {
         pondSeen = .init(repeating: false, count: c)
         heap = MinHeap(capacity: c)
         noise = SimplexNoise(seed: seed)
-        generate(seed: seed)
     }
 
     @inline(__always) func idx(_ i: Int, _ j: Int) -> Int { j * n + i }
@@ -3068,6 +3077,142 @@ public final class Terrain {
     }
 
     public func snapshotReceivers() -> [Int32] { receiver }
+}
+
+// MARK: - Zustands-Inventar (Speichern/Laden, Issue #8)
+
+/// **Vollständiges Inventar** des Terrain-Zustands — die eine Stelle, an der
+/// steht, WAS eine Welt ist. Die Kodierung (Magic, Version, Datei) macht
+/// separat `WorldSnapshot.swift`; hier geht es nur um Vollständigkeit.
+///
+/// Aufnahmekriterium: jedes Feld, das ein `step()` LIEST, bevor es es schreibt,
+/// plus alles, was Rendering/Diagnose sofort nach dem Laden brauchen (Issue #8,
+/// Abnahmepunkt 5: kein Einschwingen des Seespiegels). Bewusst großzügig: auch
+/// Felder, die `computeFlow` im nächsten Schritt neu ableitet (`hf`, `receiver`,
+/// `area`, `areaMFD`, `order`, `floodParent`, `rain`, `rainWeight`,
+/// `lithHardness`, `lithErodeK`, `playaBed`, `endorheicBasin`,
+/// `endorheicInflow`) reisen mit — dann ist „geladener Zustand == gespeicherter
+/// Zustand" feldweise prüfbar (`WorldSnapshotTests`) statt nur „läuft gleich
+/// weiter", und der erste gerenderte Frame ist korrekt, ohne einen Sim-Schritt
+/// zu erzwingen.
+///
+/// NICHT aufgenommen sind reine Arbeitspuffer, die ihr Pass vor dem ersten Lesen
+/// vollständig überschreibt (geprüft, Stand Issue #8): `vegScratch`,
+/// `basinSeen`, `basinCells`, `basinSlots`, `orderPos`, `visited`, `scratch`,
+/// `qs`, `trackBuf`, `pondSeen`, `heap` sowie die Bin-Puffer des
+/// Mäander-Cutoff-Index in `MeanderState`. Ebenfalls nicht: `noise`
+/// (Permutationstabelle, rein aus `seed` rekonstruiert), `vegTypeFactor`,
+/// `mfdMinA`, `mfdFlatCell` (aus der Config abgeleitet).
+///
+/// `upliftBase`, `lithBed` und `lithProvince` sind streng genommen fix je Seed,
+/// reisen aber mit: `sculpt` koppelt in die Tektonik (`upliftBase` ist damit NICHT
+/// mehr rein aus dem Seed ableitbar), und ein Nachbau per Noise-Code wäre eine
+/// zweite Wahrheit über „was ist eine Welt".
+struct TerrainState {
+    // Kernfelder
+    var h: [Double] = []
+    var rock: [Double] = []
+    var sed: [Double] = []
+    var upliftBase: [Double] = []
+    var rain: [Double] = []
+    var rainWeight: [Double] = []        // leer, wenn cfg.rainWeightedFlow aus ist
+    var lithHardness: [Double] = []      // leer, wenn cfg.lithologyEnabled aus ist
+    var lithErodeK: [Double] = []        // leer, wenn cfg.lithologyEnabled aus ist
+    var lithBed: [Double] = []           // leer, wenn cfg.lithologyEnabled aus ist
+    var lithProvince: [Double] = []      // leer, wenn cfg.lithologyEnabled aus ist
+    var veg: [Double] = []
+    var vegClass: [UInt8] = []
+    var riparian: [Double] = []          // Auwald-Nähe: liest der Mäander-Pass im NÄCHSTEN Schritt
+    var heightBands: HeightBands = .legacyAbsolute
+    // Entwässerung / Wasserhaushalt
+    var hf: [Double] = []
+    var waterLevel: [Double] = []        // Darstellungs-Seespiegel (ratenbegrenzt) — Abnahmepunkt 5
+    var lakeBalance: [Double] = []       // Bilanz-Seespiegel abflussloser Becken (Issue #11)
+    var saltCrust: [Double] = []
+    var endorheicInflow: [Double] = []
+    var endorheicBasin: [UInt8] = []
+    var playaBed: [Bool] = []
+    var receiver: [Int32] = []
+    var order: [Int32] = []
+    var floodParent: [Int32] = []
+    var area: [Double] = []
+    var areaMFD: [Double] = []
+    // Fluss-Gedächtnis
+    var isChannel: [Bool] = []
+    var streamMap: [Double] = []
+    var streamRate: [Double] = []
+    // Störung / Regeneration (Issue #26)
+    var disturb: [Double] = []
+    var regenPending: [Double] = []
+    var disturbActive = false
+    // Mäander (Issue #7): Zentrumslinien + Altarme mit Alter
+    var meanderChannels: [RiverChannel] = []
+    var oxbows: [[MeanderNode]] = []
+    var oxbowAge: [Double] = []
+    // Zähler
+    var years: Double = 0
+    var seed: UInt32 = 0
+    var stepCount: UInt32 = 0            // speist den Droplet-Seed → gehört zum Determinismus
+    var flowStepCount: UInt32 = 0        // taktet das MFD-Intervall
+}
+
+extension Terrain {
+    /// Kompletter Zustand als Wertkopie (Reihenfolge = Inventar oben).
+    var state: TerrainState {
+        var s = TerrainState()
+        s.h = h; s.rock = rock; s.sed = sed; s.upliftBase = upliftBase
+        s.rain = rain; s.rainWeight = rainWeight
+        s.lithHardness = lithHardness; s.lithErodeK = lithErodeK
+        s.lithBed = lithBed; s.lithProvince = lithProvince
+        s.veg = veg; s.vegClass = vegClass; s.riparian = riparian
+        s.heightBands = heightBands
+        s.hf = hf; s.waterLevel = waterLevel; s.lakeBalance = lakeBalance
+        s.saltCrust = saltCrust; s.endorheicInflow = endorheicInflow
+        s.endorheicBasin = endorheicBasin; s.playaBed = playaBed
+        s.receiver = receiver; s.order = order; s.floodParent = floodParent
+        s.area = area; s.areaMFD = areaMFD
+        s.isChannel = isChannel; s.streamMap = streamMap; s.streamRate = streamRate
+        s.disturb = disturb; s.regenPending = regenPending
+        s.disturbActive = disturbActive
+        s.meanderChannels = meander.channels
+        s.oxbows = meander.oxbows
+        s.oxbowAge = meander.oxbowAge
+        s.years = years; s.seed = seed
+        s.stepCount = stepCount; s.flowStepCount = flowStepCount
+        return s
+    }
+
+    /// Übernimmt einen Zustand vollständig. Erwartet Feldlängen, die zur Config
+    /// dieses Terrains passen — dafür sorgt der Leser in `WorldSnapshot.swift`
+    /// (`SnapshotError.fieldLengthMismatch`).
+    func restore(_ s: TerrainState) {
+        h = s.h; rock = s.rock; sed = s.sed; upliftBase = s.upliftBase
+        rain = s.rain; rainWeight = s.rainWeight
+        lithHardness = s.lithHardness; lithErodeK = s.lithErodeK
+        lithBed = s.lithBed; lithProvince = s.lithProvince
+        veg = s.veg; vegClass = s.vegClass; riparian = s.riparian
+        heightBands = s.heightBands
+        hf = s.hf; waterLevel = s.waterLevel; lakeBalance = s.lakeBalance
+        saltCrust = s.saltCrust; endorheicInflow = s.endorheicInflow
+        endorheicBasin = s.endorheicBasin; playaBed = s.playaBed
+        receiver = s.receiver; order = s.order; floodParent = s.floodParent
+        area = s.area; areaMFD = s.areaMFD
+        isChannel = s.isChannel; streamMap = s.streamMap; streamRate = s.streamRate
+        disturb = s.disturb; regenPending = s.regenPending
+        disturbActive = s.disturbActive
+        // Frischer MeanderState: die Bin-Puffer des Cutoff-Index sind Arbeits-
+        // speicher und werden je Aufruf neu aufgebaut.
+        let m = MeanderState()
+        m.channels = s.meanderChannels
+        m.oxbows = s.oxbows
+        m.oxbowAge = s.oxbowAge
+        meander = m
+        years = s.years
+        seed = s.seed
+        noise = SimplexNoise(seed: s.seed) // Permutationstabelle rein aus dem Seed
+        stepCount = s.stepCount
+        flowStepCount = s.flowStepCount
+    }
 }
 
 extension Double {

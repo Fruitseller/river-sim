@@ -18,7 +18,17 @@ func _process(_delta: float) -> bool:
 
 func _run() -> void:
 	if not ClassDB.class_exists("SimNode"):
-		push_error("FAIL: SimNode nicht registriert")
+		# Häufigste Ursache in einem frischen Arbeitsverzeichnis: Godot lädt
+		# GDExtensions NUR aus `.godot/extension_list.cfg`, und die entsteht erst
+		# beim Projekt-Import. `game/.godot/` ist gitignoriert, also fehlt sie in
+		# jedem neuen Klon/Worktree — die Library selbst ist dann völlig in
+		# Ordnung. Ohne diesen Hinweis zeigt die Meldung auf die falsche Stelle.
+		if not FileAccess.file_exists("res://.godot/extension_list.cfg"):
+			push_error("FAIL: Projekt nicht importiert (res://.godot/extension_list.cfg "
+				+ "fehlt) — GDExtension wurde nie geladen. Einmalig ausführen: "
+				+ "godot --headless --path game --import")
+		else:
+			push_error("FAIL: SimNode nicht registriert")
 		quit(1)
 		return
 	var sim: Object = ClassDB.instantiate("SimNode")
@@ -99,8 +109,112 @@ func _run() -> void:
 		quit(1)
 		return
 
+	# Speichern/Laden über die Brücke (Issue #8). Die Bit-Identität des
+	# Weiterlaufs prüft SimCore (`WorldSnapshotTests`); hier geht es um den
+	# GDExtension-Vertrag: Datei entsteht, Zustand kommt zurück, eine Datei mit
+	# fremder Formatversion wird ABGELEHNT, ohne die laufende Welt anzutasten.
+	var save_path := "user://tests/smoke.%s" % sim.worldFileExtension()
+	var abs_save := ProjectSettings.globalize_path(save_path)
+	var saved_year: float = sim.currentYear()
+	var saved_sum := _height_sum(sim.heights())
+	var save_err: String = sim.saveWorld(abs_save)
+	if not save_err.is_empty():
+		push_error("FAIL: saveWorld: %s" % save_err)
+		quit(1)
+		return
+	var bytes: int = sim.lastWorldFileBytes()
+	print("world_saved_bytes=", bytes, " grid_from_file=", sim.worldFileGridSize(abs_save),
+		" world_from_file=", sim.worldFileWorldSize(abs_save))
+	if bytes <= 0 or not FileAccess.file_exists(save_path):
+		push_error("FAIL: Welt-Datei fehlt")
+		quit(1)
+		return
+	# Die Vorprüfung der Geometrie liest Kopf + Config, nicht die Felder — beide
+	# Werte müssen zur laufenden Welt passen.
+	if sim.worldFileGridSize(abs_save) != n:
+		push_error("FAIL: Gitterauflösung der Datei stimmt nicht")
+		quit(1)
+		return
+	if not is_equal_approx(sim.worldFileWorldSize(abs_save), sim.worldSize()):
+		push_error("FAIL: Weltgröße der Datei stimmt nicht")
+		quit(1)
+		return
+	if not _check_geometry_guard(n, sim.worldSize()):
+		quit(1)
+		return
+
+	sim.step(500.0) # Welt verändern, damit das Laden etwas zurückholen MUSS
+	var load_err: String = sim.loadWorld(abs_save)
+	if not load_err.is_empty():
+		push_error("FAIL: loadWorld: %s" % load_err)
+		quit(1)
+		return
+	var loaded_sum := _height_sum(sim.heights())
+	print("year_after_load=", sim.currentYear(), " height_sum_delta=", loaded_sum - saved_sum)
+	if absf(sim.currentYear() - saved_year) > 0.0 or loaded_sum != saved_sum:
+		push_error("FAIL: geladener Zustand weicht vom gespeicherten ab")
+		quit(1)
+		return
+
+	# Datei auf eine andere Formatversion umbiegen (Byte 8..11 = 0) → muss
+	# abgelehnt werden, statt falsch geladen zu werden.
+	var raw := FileAccess.get_file_as_bytes(save_path)
+	for i in range(8, 12):
+		raw[i] = 0
+	var old_path := "user://tests/smoke_v0.%s" % sim.worldFileExtension()
+	var f := FileAccess.open(old_path, FileAccess.WRITE)
+	f.store_buffer(raw)
+	f.close()
+	var reject: String = sim.loadWorld(ProjectSettings.globalize_path(old_path))
+	print("old_version_error=", reject)
+	if reject.is_empty() or not reject.contains("Version"):
+		push_error("FAIL: alte Formatversion wurde nicht abgelehnt")
+		quit(1)
+		return
+	if absf(sim.currentYear() - saved_year) > 0.0:
+		push_error("FAIL: abgelehntes Laden hat die Welt verändert")
+		quit(1)
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(old_path))
+
 	print("SMOKE_OK")
 	quit(0)
+
+## Prüft die Geometrie-Sperre der UI (`Main.gd._world_geometry_mismatch`): eine
+## Welt-Datei darf nur geladen werden, wenn AUFLÖSUNG UND WELTGRÖSSE zur
+## laufenden Sitzung passen — sonst liefe die Simulation in anderen
+## Weltkoordinaten als Darstellung, Kamera und Werkzeuge. Die Funktion ist reine
+## Entscheidungslogik und deshalb ohne Szene/Renderer prüfbar: das Skript wird
+## instanziiert, aber nie in den Baum gehängt (kein `_ready`).
+func _check_geometry_guard(n: int, world: float) -> bool:
+	var main: Node = load("res://scripts/Main.gd").new()
+	main.N = n
+	main.world_size = world
+	var ok := true
+	if not (main._world_geometry_mismatch(n, world) as String).is_empty():
+		push_error("FAIL: passende Geometrie wurde abgelehnt")
+		ok = false
+	if (main._world_geometry_mismatch(n / 2, world) as String).is_empty():
+		push_error("FAIL: abweichende Gitterauflösung wurde NICHT abgelehnt")
+		ok = false
+	if (main._world_geometry_mismatch(n, world * 0.5) as String).is_empty():
+		push_error("FAIL: abweichende Weltgröße wurde NICHT abgelehnt")
+		ok = false
+	# −1 = Datei nicht lesbar: die Sperre schweigt, die Meldung kommt aus loadWorld.
+	if not (main._world_geometry_mismatch(-1, -1.0) as String).is_empty():
+		push_error("FAIL: unlesbare Datei sollte die Geometrie-Sperre nicht auslösen")
+		ok = false
+	print("geometry_guard_ok=", ok)
+	main.free()
+	return ok
+
+## Summe der Höhen — kompakter Vergleichswert für „derselbe Zustand".
+func _height_sum(h: PackedFloat32Array) -> float:
+	var s := 0.0
+	for v in h:
+		s += v
+	return s
 
 ## Mittlere absolute Nachbar-Differenz in einem 9×9-Fenster um Zelle c.
 func _local_roughness(h: PackedFloat32Array, n: int, c: int) -> float:
