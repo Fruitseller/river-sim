@@ -40,12 +40,30 @@ uniform bool detail_enabled = true;
 uniform bool debug_difference = false;
 
 varying vec2 v_uv;
-varying float v_pond; // Wassersäule (hf − h) am Vertex — > 0 unter Seen
 
 // UV aus der Weltposition ableiten (statt Mesh-UV) → deckungsgleich mit der
 // Zellindizierung des Sim-Kerns und damit mit Flüssen/Wasser.
 vec2 world_uv(vec3 vert) {
 	return (vert.xz + world_size * 0.5) / world_size;
+}
+
+// Wassersäule des ratenbegrenzten Seespiegels über dem Terrain (0 = trocken;
+// das Meer hat seine eigene Wasserebene). height_tex/hf_tex sind das VOLLE
+// Sim-Gitter, bilinear gefiltert — die Null-Linie dieses Felds ist damit eine
+// glatte Kontur auf dem Sim-Gitter (Shader-Äquivalent von Marching Squares),
+// nicht die Treppe des Render-Gitters (Issue #32). hf = waterLevel → die
+// Kontur erbt das Anti-Sägezahn-Verhalten.
+float pond_at(vec2 uv, float h_val) {
+	float hf_val = texture(hf_tex, uv).r;
+	return max(hf_val - h_val, 0.0) * step(sea_level, hf_val);
+}
+
+// Sichtbarkeits-Gate der Seen (water_tex.g: Komponenten-Fade, geblurt) — WO
+// Wasser gemalt/gehoben wird; die FORM macht pond_at. Fenster 0.04/0.35 lässt
+// den Blur-Halo am Ufer durch und schaltet ab Komponenten-Fade 0.35 voll
+// (Kalibrier-Herleitung: SimNode.waterFieldBytes, fadeLo/HiCells).
+float lake_gate_at(vec2 uv) {
+	return smoothstep(0.04, 0.35, texture(water_tex, uv).g);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,13 +194,15 @@ void vertex() {
 	vec2 uv = world_uv(VERTEX);
 	v_uv = uv;
 	float hraw = texture(height_tex, uv).r;
-	// Seen als ECHTE horizontale Flächen: unter Wasser stehende Zellen (hf > h,
-	// über Meeresniveau — das Meer hat seine eigene Wasserebene) werden auf den
-	// Seespiegel hf gehoben. Der weiche Einstieg glättet die Uferlinie.
+	// Seen als ECHTE horizontale Flächen: unter Wasser stehende Zellen werden
+	// auf den Seespiegel hf gehoben. Der weiche Einstieg glättet die Uferlinie.
+	// MIT dem See-Gate multipliziert: eine Komponente, die das Gate (noch) nicht
+	// sichtbar macht, darf auch nicht gehoben werden — sonst stünde eine
+	// horizontale Fläche in Terrain-Farbe im Becken („trockener Wasserspiegel").
+	// So faden kleine Seen als Ganzes ein: Geometrie und Farbe zusammen.
 	float hfv = texture(hf_tex, uv).r;
-	float pond = max(hfv - hraw, 0.0) * step(sea_level, hfv);
-	v_pond = pond;
-	float lift = smoothstep(0.015, 0.05, pond);
+	float pond = pond_at(uv, hraw);
+	float lift = smoothstep(0.015, 0.05, pond) * lake_gate_at(uv);
 	VERTEX.y = mix(hraw, hfv, lift) * hscale;
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
@@ -258,15 +278,19 @@ void fragment() {
 	float lake = w.g;
 	vec2 dir = w.ba * 2.0 - 1.0;
 
-	// weiche Masken → glatte Ufer statt harter Kanten (linear-Filter + smoothstep)
-	// lakeMask höher angesetzt: seichte Verlandungs-Pfützen (basinFill) sollen NICHT
-	// als pastell-teal Fläche übermalen — nur echte Seen zeigen Wasser.
 	float riverMask = smoothstep(0.16, 0.45, stream);
-	float lakeMask = smoothstep(0.16, 0.36, lake);
-	// See-Zellen sind im Vertex-Shader auf den SEESPIEGEL (hf) gehoben — die
-	// Fläche liegt horizontal im Becken statt als Farbe am Unterwasser-Hang zu
-	// kleben („See am Berghang"). Auf der gehobenen Fläche voll nass zeichnen.
-	lakeMask = max(lakeMask, smoothstep(0.015, 0.05, v_pond));
+	// Uferlinie PER PIXEL (pond_at, Issue #32) statt zell-/vertex-quantisiert.
+	// Der See-Kanal (w.g) ist nur noch das GATE: OHNE Gate wird nie Wasser
+	// gemalt — ein ungegateter Tiefen-Zweig malte jede isolierte tiefe Tasche,
+	// die vorher das grobe Render-Gitter und der Komponenten-Filter verschluckt
+	// haben (Sprenkel + geflutete Ebenen). Seichte Verlandungs-Pfützen
+	// (basinFill) bleiben trocken, weil sie nie ins Gate kommen (rawWet 0.03).
+	// Die Farb-Kontur setzt BEWUSST unter der Lift-Schwelle (0.015) ein: sie
+	// reicht bis fast an die echte Uferlinie (pond → 0), während die Geometrie
+	// erst später sanft hebt — das Band 0.006..0.015 liest sich als seichter,
+	// nasser Ufersaum auf dem Hang.
+	float pond = pond_at(v_uv, hval);
+	float lakeMask = smoothstep(0.006, 0.02, pond) * lake_gate_at(v_uv);
 	float wet = max(riverMask, lakeMask);
 
 	// --- Ufer-Saum (Punkt „Shading-Tricks"): der Blur-Halo des Wasserfelds
@@ -278,8 +302,11 @@ void fragment() {
 	terr *= 1.0 - shore * 0.22; // feuchtes Ufer ist dunkler
 
 	// Tiefe skaliert mit dem Abfluss (stream-Intensität) → Hauptflüsse tief-blau,
-	// Bäche seicht-teal. Erzeugt die sichtbare Fluss-Hierarchie.
-	float depth = clamp(max(lake * 2.5, stream), 0.0, 1.0);
+	// Bäche seicht-teal. Erzeugt die sichtbare Fluss-Hierarchie. See-Tiefe per
+	// Pixel aus der Wassersäule (der See-Kanal trägt keine Tiefe mehr): volle
+	// Sättigung ab ~0.054 Wassersäule (alte Kanal-Rampe: ~0.07).
+	float lake_depth = clamp((pond - 0.004) / 0.05, 0.0, 1.0) * lakeMask;
+	float depth = clamp(max(lake_depth, stream), 0.0, 1.0);
 
 	// --- „Echtes Wasser" statt angemalter Erde ---
 	// (1) Wasser hat eine EIGENE Oberfläche: flache Welt-Normale mit animierten

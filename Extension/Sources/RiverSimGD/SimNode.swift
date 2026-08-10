@@ -462,7 +462,9 @@ final class SimNode: Node {
     /// linear gefiltert und geshadet als glattes Overlay rendert — statt blockiger
     /// Pro-Zell-Quads und Ribbon-Meshes. Kanäle:
     ///   R = Fluss-Intensität (Stream-Map: log-skalierter, dilatierter Abfluss)
-    ///   G = Seetiefe (Pool-Map: hf−h über Land; deckt Seen UND Altarme ab)
+    ///   G = See-GATE (wo Seen/Altarme sichtbar sind: Komponenten-Fade, geblurt —
+    ///       die Ufer-KONTUR und die Tiefe zeichnet der Shader per Pixel aus
+    ///       waterLevel − h, Issue #32)
     ///   B,A = Fließrichtung (aus dem Empfänger, kodiert *0.5+0.5) für die Animation
     // Persistente, zeitlich geglättete Wasserfelder (EWMA-Gedächtnis über Rebuilds).
     // Ohne sie wird das Feld jeden Tick frisch aus `hf` berechnet und flackert/springt;
@@ -480,7 +482,7 @@ final class SimNode: Node {
     private var waterBlur: [Double] = []
     private var waterRawWet: [Bool] = []
     private var waterMask: [Bool] = []
-    private var waterKeep: [Bool] = []
+    private var waterComponentFade: [Double] = []
     private var waterSeen: [Bool] = []
     private var waterMDX: [Double] = []
     private var waterMDZ: [Double] = []
@@ -513,7 +515,7 @@ final class SimNode: Node {
             waterOxbow = [Double](repeating: 0, count: cnt)
             waterRawWet = [Bool](repeating: false, count: cnt)
             waterMask = [Bool](repeating: false, count: cnt)
-            waterKeep = [Bool](repeating: false, count: cnt)
+            waterComponentFade = [Double](repeating: 0, count: cnt)
             waterSeen = [Bool](repeating: false, count: cnt)
             waterStamp = [Bool](repeating: false, count: cnt)
             waterBytes = [UInt8](repeating: 0, count: cnt * 4)
@@ -529,7 +531,7 @@ final class SimNode: Node {
         var blur: [Double] = []; swap(&blur, &waterBlur)
         var rawWet: [Bool] = []; swap(&rawWet, &waterRawWet)
         var mask: [Bool] = []; swap(&mask, &waterMask)
-        var keep: [Bool] = []; swap(&keep, &waterKeep)
+        var componentFade: [Double] = []; swap(&componentFade, &waterComponentFade)
         var seen: [Bool] = []; swap(&seen, &waterSeen)
         var mdx: [Double] = []; swap(&mdx, &waterMDX)
         var mdz: [Double] = []; swap(&mdz, &waterMDZ)
@@ -540,7 +542,7 @@ final class SimNode: Node {
             swap(&sd, &waterStream); swap(&b, &waterWiden)
             swap(&lk, &waterLake); swap(&blur, &waterBlur)
             swap(&rawWet, &waterRawWet); swap(&mask, &waterMask)
-            swap(&keep, &waterKeep); swap(&seen, &waterSeen)
+            swap(&componentFade, &waterComponentFade); swap(&seen, &waterSeen)
             swap(&mdx, &waterMDX); swap(&mdz, &waterMDZ)
             swap(&mstamp, &waterStamp); swap(&oxb, &waterOxbow)
             swap(&out, &waterBytes)
@@ -760,17 +762,26 @@ final class SimNode: Node {
         // Ebenen tragen tausende isolierte Wasser-Fetzen (Pfützen-Cluster +
         // Stream-Map-Patches, seit die Track-Maske Zufallspfade strenger schneidet),
         // die als blaue Punktfelder dithern („zu viele Flüsse/Seen"-Eindruck im
-        // gealterten Terrain). Nur zusammenhängende Wasser-Komponenten ab
-        // `minWetCells` (4er-Nachbarschaft) werden gemalt: echte Flüsse sind dank
-        // der Downstream-Propagation immer LANGE Ketten bis Mündung/See, echte
-        // Seen große Flächen — isolierte Patches fliegen raus. Zubringer, die in
-        // einen See münden, überleben über die gemeinsame Komponente. Flood-Fill
-        // ist O(n²) und läuft eh nur je Render-Tick. Altarme separat via oxb.
-        let minWetCells = 25
+        // gealterten Terrain). Zusammenhängende Wasser-Komponenten (4er-Nachbar-
+        // schaft) unter `fadeLoCells` bleiben unsichtbar; bis `fadeHiCells` steigt
+        // die Deckkraft linear (Issue #32: FADE statt hartem Cutoff bei 25 — beim
+        // Überschreiten der Schwelle PLOPPTEN wachsende Seen). Echte Flüsse sind
+        // dank der Downstream-Propagation immer LANGE Ketten bis Mündung/See,
+        // echte Seen große Flächen — beide liegen weit über fadeHi. Zubringer,
+        // die in einen See münden, überleben über die gemeinsame Komponente.
+        // Flood-Fill ist O(n²) und läuft eh nur je Render-Tick. Altarme separat
+        // via oxb.
+        // Fenster so gelegt, dass VOLLE Sichtbarkeit bei der alten Schwelle bleibt:
+        // der Shader schaltet sein Gate über smoothstep(0.04, 0.35, ·) — voll ab
+        // Fade ≥ 0.35, also ab 10 + 0.35·40 = 24 Zellen (altes minWetCells: 25);
+        // unsichtbar unter Fade ≤ 0.04 ≈ 12 Zellen. Die „zu viele Seen"-
+        // Kalibrierung bleibt damit stehen, nur der Übergang 12→24 ist neu weich.
+        let fadeLoCells = 10.0
+        let fadeHiCells = 50.0
         rawWet.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         for k in 0..<cnt { rawWet[k] = hf[k] > sea && hf[k] - h[k] > 0.03 }
         for k in 0..<cnt { mask[k] = rawWet[k] || sd[k] >= 0.16 }
-        keep.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        componentFade.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         seen.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         waterComponent.removeAll(keepingCapacity: true)
         waterStack.removeAll(keepingCapacity: true)
@@ -786,17 +797,32 @@ final class SimNode: Node {
                 if j > 0 && mask[k - n] && !seen[k - n] { seen[k - n] = true; waterStack.append(k - n) }
                 if j < n - 1 && mask[k + n] && !seen[k + n] { seen[k + n] = true; waterStack.append(k + n) }
             }
-            if waterComponent.count >= minWetCells {
-                for k in waterComponent { keep[k] = true }
+            // Verschmelzen zweier Komponenten kann `fade` in einem Tick springen
+            // (Teich berührt Flusskette) — im Zeitraffer dämpft das die EWMA
+            // unten, bei Sprüngen (blend = 1) ist Sofort-Übernahme gewollt.
+            let fade = min(1, max(0, (Double(waterComponent.count) - fadeLoCells)
+                                      / (fadeHiCells - fadeLoCells)))
+            if fade > 0 {
+                for k in waterComponent { componentFade[k] = fade }
             }
         }
+        // G-Kanal = See-GATE statt Tiefen-Rampe (Issue #32): WO ein See sichtbar
+        // ist (inkl. Komponenten-Fade), sagt dieses Feld — die FORM der Uferlinie
+        // und die Tiefe fürs Shading rechnet der Shader per Pixel aus
+        // waterLevel − h (volle Sim-Auflösung, bilinear). Ein zell-binär
+        // geschwelltes Tiefenfeld kann nach Blur + Smoothstep nur Zell-Treppen
+        // liefern; das Gate darf grob sein, die pond-Kontur schneidet es
+        // pixelgenau zu.
         lk.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         for k in 0..<cnt {
-            // Der Ribbon-Saum liegt unter der Kohärenz-Schwelle (0.16) und würde
-            // hier weggefiltert — Korridor-Zellen sind aber per Definition Teil
-            // eines echten Laufs (Zentrumslinie), nicht Speckle: behalten.
-            if !keep[k] && !(ribbonMode && mstamp[k]) { sd[k] = 0 }
-            if keep[k] && rawWet[k] { lk[k] = min(1, (hf[k] - h[k] - 0.03) / 0.10) }
+            // Der Ribbon-Saum (haloIntensity) liegt unter der Kohärenz-Schwelle
+            // (0.16) und würde vom Fade gedämpft — Korridor-Zellen sind aber per
+            // Definition Teil eines echten Laufs (Zentrumslinie), nicht Speckle:
+            // sie behalten ihre Saum-Intensität ungedämpft (Issue #31).
+            if !(ribbonMode && mstamp[k]) { sd[k] *= componentFade[k] }
+            // See-Gate NICHT vom Korridor ausnehmen: ein Ribbon-Korridor darf
+            // keine Kleinst-Pfütze als See malen, deshalb bleibt lk am Fade.
+            if rawWet[k] { lk[k] = componentFade[k] }
             if oxb[k] > lk[k] { lk[k] = oxb[k] }
         }
         // RÄUMLICH glätten: die Felder sind zell-binär geschwellt (creek/Tiefe) →
@@ -825,14 +851,20 @@ final class SimNode: Node {
                 }
             }}
         }
-        blur3(sd, into: &blur)
-        for k in 0..<cnt {
-            sd[k] = max(sd[k], blur[k])
+        // max(Kern, Blur) statt reinem Blur: Kern-Intensität bleibt voll, nur die
+        // Ränder bekommen einen weichen Saum.
+        func blurMax(_ field: inout [Double], passes: Int) {
+            for _ in 0..<passes {
+                blur3(field, into: &blur)
+                for k in 0..<cnt { field[k] = max(field[k], blur[k]) }
+            }
         }
-        blur3(lk, into: &blur)
-        for k in 0..<cnt {
-            lk[k] = max(lk[k], blur[k])
-        }
+        blurMax(&sd, passes: 1)
+        // See-Gate ZWEIMAL bluren: es muss den seichten Ufersaum (Wassersäule
+        // unter der rawWet-Schwelle 0.03) überdecken, damit die per-Pixel-Kontur
+        // im Shader dort nicht vom Gate abgeschnitten wird — der Überstand aufs
+        // Trockene ist unsichtbar, weil pond dort 0 ist.
+        blurMax(&lk, passes: 2)
 
         // EWMA-Puffer bei Bedarf initialisieren (erstes Feld = sofort übernehmen).
         if sdS.count != cnt {
