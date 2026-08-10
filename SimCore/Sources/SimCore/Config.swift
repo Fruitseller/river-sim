@@ -261,13 +261,28 @@ public struct SimConfig: Sendable {
     public var renderMinCells: Double = 320  // ab so viel Einzugsgebiet (Zellen) wird ein Lauf GEMALT. Bewusst über dem Physik-Gate (User: „zu viele Flüsse"): Braiding wirkt ab 120 weiter, sichtbar sind nur substanzielle Flüsse. Auf der 832er-Map qualifizieren sich sonst absolut mehr Läufe über dieselbe Schwelle.
     public var braidExponent: Double = 2.5   // Partitions-Exponent m (>1 ist die Bänke-bauende Instabilität)
     public var braidCapacity: Double = 5.0e-6 // Kb: weniger Kapazität lässt überlastete Reaches Bänke ablagern (n=256: Insel-Summe 9 vs. 4 ohne Pass)
-    // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln. Seit
-    // Issue #2 deckelt derselbe Wert AUCH die Deposition der nicht-aktiven
-    // Reaches (Delta/Seerand) in `braidPass`; dort stand vorher ein fester
-    // Aufschlag von +0.005 JE SCHRITT, der sich im Zeitraffer aufaddierte. Als
-    // gemeinsame geometrische Obergrenze ist der Deckel schrittweiten-frei
-    // (Begründung ausführlich in `braidPass`).
-    public var braidBarHeight: Double = 0.006
+    public var braidBarHeight: Double = 0.006 // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln
+    // Obergrenze der Deposition an NICHT-aktiven Reaches (Delta/Seerand) in
+    // `braidPass`, gemessen über dem Wasserspiegel `hf`. Vor Issue #2 stand dort
+    // `max(0, hf−h) + 0.005`: das `max` INNEN, der Aufschlag also über dem
+    // aktuellen h statt über dem Spiegel — sobald die Schüttung den Spiegel
+    // erreicht hatte, durfte JEDER weitere Schritt nochmal 0.005 draufsetzen,
+    // der Uferaufbau wuchs also mit der SCHRITTZAHL statt mit der Zeit.
+    //
+    // 0.05 ist NICHT feinjustiert, sondern ein Wert aus dem gemessenen PLATEAU:
+    // im Becken-Testfall (#12-Setup, n=256, Seed 1337, τ=500, 200×20 J.) messen
+    // 0.02, 0.06 und 0.15 exakt identisch (größter Spiegelsprung 0.00011, keiner
+    // > 0.0015) — dort beschneidet der Deckel die Ablagerung gar nicht mehr, sie
+    // endet ohnehin am Sedimentangebot `qin`. Der Deckel kappt also nur den
+    // unbegrenzten Schwanz, ohne die Kalibrierung anzufassen. ZU ENG wird es
+    // darunter: mit 0.006 (= braidBarHeight) wird der Bilanz-Spiegel der
+    // abflusslosen Becken sprunghaft (0.00705, 4 Sprünge), mit 0.02 kippt die
+    // Bett-Reconciliation, ohne jede Zugabe die Konfundierung des
+    // Hangknick-Referenzarms (1.107 gegen die #12-Schranke 1.08). Die Becken
+    // reagieren so empfindlich, weil ihre Hypsometrie flach ist: ein Millimeter
+    // Pegel bewegt hunderte Zellen Wasserfläche (gemessen 1319 → 1908 in EINEM
+    // Schritt). Vollständige Messtabelle: docs/dt-invariance-measurements.md §2.4.
+    public var braidDeltaCeiling: Double = 0.05
     public var braidDispersion: Double = 2.0 // dispersiver MFD-Exponent auf FLACHEN großen subaerischen Läufen (Quinn 1995: Exponent abfluss-abhängig, Terrain.mfdLocalExponent): Hänge konvergieren mit mfdExponent=4 (Look), Braid-Plains spreizen mit 2.0 → Fäden können sich um Bänke teilen, ohne als Sheet-Flow zu zerlaufen (1.3 zerlief)
 
     // ---- Droplet-Hydraulik-Erosion (carvt feines dendritisches Detail) ----

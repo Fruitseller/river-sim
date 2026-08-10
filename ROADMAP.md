@@ -245,8 +245,15 @@ Messreihen `docs/dt-invariance-measurements.md`):
 - Schritt-Deckel („halbe lokale Höhendifferenz") in `meanderStamp`/`braidPass`
   galten je Schritt → `Terrain.stepCapFraction` (bei dt = 100 exakt die alten
   0.5); die Überfüll-Zugabe in `braidPass` ist jetzt eine geometrische
-  Obergrenze (`hf + braidBarHeight`) statt einer Zugabe je Schritt.
-- Kalibrier-Kaskade (wie erwartet): drei Wächter reagierten. Der Scour-Deckel in
+  Obergrenze — genau der Stauraum `hf − h` — statt einer Zugabe je Schritt
+  (der alte `+0.005` lag über dem aktuellen `h`, wuchs also mit der
+  SCHRITTZAHL weiter, sobald die Schüttung den Spiegel erreicht hatte).
+- Kalibrier-Kaskade (wie erwartet): vier Wächter reagierten. Der Depositions-
+  Deckel ist deshalb der reine Stauraum ohne Konstante: eine feste Obergrenze
+  `hf + X` verschiebt je nach X die Kalibrierung in verschiedene Richtungen
+  (X = 0.006 machte den Bilanz-Spiegel der abflusslosen Becken sprunghaft —
+  4 Sprünge > 0.0015 statt 0 —, X = 0.02 kippte die Bett-Reconciliation), und
+  keine dieser Höhen ist physikalisch begründet. Der Scour-Deckel in
   `braidPass` bleibt deshalb bei festen 0.5 (Erosionsseite, #2 nennt die
   Depositions-Deckel), der Anker von `stepCapFraction` liegt bei 500 J. statt
   100, und `testBraidingBuildsBars` taktet mit dt = 500 statt 1000 — bei 1000

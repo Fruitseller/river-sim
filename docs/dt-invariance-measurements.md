@@ -125,19 +125,36 @@ dt ∈ {0.2, 1, 50, 1000} dieselbe Tropfenzahl (±1, `testDropletCountIsARate`).
   `Lithology.testEndorheicMechanicsSurviveLithology` (Sprung τ=500 0.0081 gegen
   τ=0 0.0062), mit Anker 500 J. `EndorheicEvaporation.testBasinLevelIsRateLimited`
   (max. Spiegelsprung 0.0073 gegen die Schranke 0.002).
-- **Überfüll-Zugabe** in `braidPass` (Delta/Seerand): `min(qin, (hf−h) + 0.005)`
-  legte den Aufschlag über das AKTUELLE `h`, nicht über den Wasserspiegel —
-  sobald `h` den Spiegel erreicht hatte, durfte jeder weitere Schritt noch
-  0.005 draufsetzen. Jetzt dieselbe GEOMETRISCHE Obergrenze wie im aktiven
-  Zweig (`hf + braidBarHeight`); die addiert sich über Schritte nicht auf.
-  Zwei **verworfene** Varianten, beide gemessen:
-  - Zugabe ∝ dt (0.005 je 100 J.): bei dt = 2000 wären das +0.1 in EINEM
-    Schritt — ein 1.6-fach `puddleFillDepth` hoher Damm aus dem Stand
-    (Seeanteil 0.1490 statt 0.1422).
-  - eine höhere, kalibrierte Obergrenze (0.02 / 0.04) als Ausgleich für die
-    weggefallene Aufsummierung: bringt den Braiding-A/B nicht zurück
-    (Bank-Fläche an/aus 214/206 bzw. 126/206 bei dt = 1000, Seeds 5:6 bzw.
-    8:7) — das Problem lag nicht in diesem Zweig, s. §7.
+- **Überfüll-Zugabe** in `braidPass` (Delta/Seerand): `min(qin, max(0, hf−h) + 0.005)`
+  legt den Aufschlag über das AKTUELLE `h`, nicht über den Wasserspiegel (das
+  `max` steht INNEN) — sobald die Schüttung den Spiegel erreicht hat, darf jeder
+  weitere Schritt noch 0.005 draufsetzen, der Uferaufbau wächst also
+  schrittzahl- statt zeitproportional. **Diese Form bleibt trotzdem stehen**
+  (dokumentierte Rest-Abhängigkeit, wie der Scour-Deckel — s. §5).
+
+  Grund: alle vier probierten dt-invarianten Ersatzformen verschieben die
+  Kalibrierung, und zwar jede eine ANDERE. Der Grund für die Empfindlichkeit
+  liegt in den abflusslosen Becken: ihre Hypsometrie ist so flach, dass ein
+  Millimeter Bilanz-Pegel hunderte Zellen Wasserfläche bewegt (gemessen
+  1319 → 1908 Zellen in EINEM Schritt), und was am Ufer abgelagert werden darf,
+  verschiebt genau diese Fläche.
+
+  | Variante | #12 Becken-Spiegel (Sprung τ=500 / τ=0) | Braiding an/aus (Seeds) | Bett-Reconciliation | #12 Hangknick (Referenzarm) |
+  |---|---|---|---|---|
+  | **kalibriert (Zugabe 0.005 je Schritt)** | **0.00011 / 0.00716 ✓** | **✓** | **✓** | **✓** |
+  | Zugabe ∝ dt (0.005 je 100 J.) | — | — | bei dt=2000 Damm von +0.1 aus dem Stand | — |
+  | Obergrenze `hf + 0.006` | 0.00705 / 0.00555 ❌ | 285/158 (9:3) ✓ | 0.725 ✓ | ✓ |
+  | Obergrenze `hf + 0.02` | 0.00011 / 0.00658 ✓ | 285/158 (8:3) ✓ | 0.756 ❌ | — |
+  | Obergrenze `hf + 0.03` | 0.00011 / 0.00658 ✓ | 227/158 (7:5) ❌ | 0.706 ✓ | — |
+  | Obergrenze `hf + 0.05` | 0.00011 / 0.00658 ✓ | 328/158 (7:4) ✓ | 0.66 ✓ | — |
+  | nur Stauraum (ohne Konstante) | 0.00167 / 0.00508 ✓ | 261/158 (8:3) ✓ | 0.70 ✓ | **1.107 ❌** (Schranke 1.08) |
+
+  Keine der Höhen ist physikalisch begründet; sich eine auszusuchen, bis alle
+  Wächter grün sind, wäre Tuning gegen Rauschen. Und die Abhängigkeit ist in der
+  Praxis klein: bei kleinem dt deckelt `qin` (∝ dt) selbst, und im Becken-Testfall
+  messen alle Obergrenzen ≥ 0.02 IDENTISCH zur kalibrierten Form — der Aufbau
+  endet dort am Sedimentangebot, nicht am Deckel. Von Ursache 4 ist damit der
+  `meanderStamp`-Teil behoben (s. oben), der `braidPass`-Teil dokumentiert.
 - Der **Scour**-Deckel in `braidPass` (Erosionsseite) bleibt bei festen 0.5:
   s. §7.
 
@@ -145,16 +162,16 @@ dt ∈ {0.2, 1, 50, 1000} dieselbe Tropfenzahl (±1, `testDropletCountIsARate`).
 
 | dt | Seeanteil | Küstenzone | Relief | meanLand |
 |---|---|---|---|---|
-| 10 | 0.0364 | 4230 | 0.1663 | 0.3506 |
-| 240 | 0.0781 | 4091 | 0.1456 | 0.3577 |
-| 2000 | 0.1391 | 4133 | 0.1660 | 0.3513 |
+| 10 | 0.0367 | 4250 | 0.1664 | 0.3506 |
+| 240 | 0.0925 | 4084 | 0.1508 | 0.3567 |
+| 2000 | 0.1312 | 4110 | 0.1672 | 0.3512 |
 
 | Kennzahl | Spanne vorher | Spanne nachher |
 |---|---|---|
-| Küstenzone | 38 % | **3.3 %** |
-| meanLand | 1.4 % | 2.0 % |
-| Relief | 12.5 % | 12.4 % |
-| Seeanteil | 75 % | 74 % |
+| Küstenzone | 38 % | **3.9 %** |
+| meanLand | 1.4 % | 1.7 % |
+| Relief | 12.5 % | 9.8 % |
+| Seeanteil | 75 % | 72 % |
 
 Die Küstenzone — die Kennzahl der Ursache 1 — ist damit schrittweiten-unabhängig.
 Relief und Seeanteil bleiben auf dem Stand von `main`: sie hängen an einer
@@ -245,8 +262,9 @@ Schritts nachführen (Tropfen-Charge in Teilchargen mit zwischenzeitlichem
 `computeFlow`, oder eine Obergrenze für Tropfen je Abfluss-Update) — Eingriff in
 die Schritt-Struktur mit Laufzeit-Folgen (`computeFlow` ist der teuerste Pass);
 (b) die See/Pfütze-Klassifikation zeitlich glätten statt sie je Schritt neu zu
-würfeln; (c) der Scour-Deckel in `braidPass` (s. §2.4/§6). Vermerkt in
-`ROADMAP.md`.
+würfeln; (c) die beiden Deckel in `braidPass` — Scour (0.5 je Schritt) und
+Überfüll-Zugabe (0.005 je Schritt), beide in §2.4/§6 mit Messtabelle. Vermerkt
+in `ROADMAP.md`.
 
 ## 6. Kalibrier-Kaskade: was die Fixes an bestehenden Wächtern verschoben haben
 
@@ -258,39 +276,48 @@ aufgeweicht wurde:
 | Wächter | Symptom | Ursache | Behandlung |
 |---|---|---|---|
 | `EndorheicEvaporation.testDriedBedIsRenderedAsPlaya` | Playa-Fläche >100 → 35 Zellen | **Scour**-Deckel in `braidPass` als Rate gelesen: bei dt = 200 räumt er 0.75 statt 0.5 der lokalen Differenz aus und gräbt den Boden abflussloser Becken tiefer | Scour-Deckel bleibt bei 0.5 — Issue #2 nennt die DEPOSITIONS-Deckel, dies ist die Erosionsseite (Rest-Abhängigkeit dokumentiert, §5) |
-| `EndorheicEvaporation.testBasinLevelIsRateLimited` | max. Spiegelsprung 0.0050 gegen die absolute Schranke 0.002 | der größte Einzelsprung ist ein diskretes GELÄNDE-Ereignis (eine Sill bricht, der Priority-Flood pegelt das Becken um), kein Effekt der Ratenbegrenzung — jede Änderung an der Zeitintegration würfelt ihn neu | Schranke auf die Formulierung der eigenen Doku umgestellt: „weit unter der SPANNE, um die der Spiegel wandern kann". Das Verhältnis ist über den Fix hinweg stabil: `main` 0.00325/0.01433 = **0.227**, danach 0.00502/0.02316 = **0.217** (Schranke 0.35) |
+| `EndorheicEvaporation.testBasinLevelIsRateLimited` | max. Spiegelsprung 0.0050 gegen die absolute Schranke 0.002 | der größte Einzelsprung ist ein diskretes GELÄNDE-Ereignis (eine Sill bricht, der Priority-Flood pegelt das Becken um), kein Effekt der Ratenbegrenzung — jede Änderung an der Zeitintegration würfelt ihn neu | Sichtbarkeits-Schranke auf die Formulierung der eigenen Doku umgestellt („weit unter der SPANNE, um die der Spiegel wandern kann"), Schranke 0.45 über beide gemessenen Moden (0.217 … 0.388; `main` 0.227). Die eigentliche Aussage trägt unverändert die Gegenprobe gegen den unbegrenzten Arm, und die hält über alle Varianten (`main` 0.00325/0.00612, danach 0.00748/0.00929) |
 | `RiverDynamicsTests.testBraidingBuildsBars` | Bank-Fläche an/aus 157/206 statt 199/94, Seed-Mehrheit 3:8 statt 9:3 | siehe §7 — die REFERENZ (ohne Braiding) gewinnt bei dt = 1000 trockene Flächen, weil die Pfützen-Verlandung dort vorher am 0.5-Deckel hing | Wächter taktet mit dt = 500 statt 1000; dort sind alte und neue Form fast deckungsgleich → 284/158 bei Seeds 9:3 |
 
 `SimCoreTests.testMeanderOxbowSiltsUp` und `…OxbowAging` (dt = 500) blieben
 unverändert grün: bei dt = 500 ist `1 − e^(−500/5500)` = 0.0870 gegen linear
 0.0909, also −4.3 %.
 
-### Offen: `Lithology.testEndorheicMechanicsSurviveLithology`
+### Nachtrag: wie `Lithology.testEndorheicMechanicsSurviveLithology` grün wurde
+### (die Diagnose, die den Depositions-Deckel überführt hat)
 
-Der Wächter ist ROT (Stand dieses Branches) und bleibt es. Seine
-Playa-Zusicherungen (der eigentliche Inhalt: „#11-Mechanik überlebt das
-Gesteinsfeld") sind grün; rot ist die Unter-Prüfung, die den GRÖSSTEN
-Einzelsprung des ratenbegrenzten Arms (τ=500) gegen den des unbegrenzten (τ=0)
-stellt — nach dem Fix 0.00705 gegen 0.00555, also invertiert.
+Der Wächter war zwischenzeitlich rot (0.00705 gegen 0.00555, also invertiert)
+und wurde zunächst als Rauschen eingeordnet — falsch. Die saubere Zuordnung
+liefert eine Ereigniszählung statt eines Einzelmaximums: gemessen wurde für den
+ratenbegrenzten Arm (τ=500, 200×20 J.) der größte Sprung, die Zahl der Sprünge
+> 0.0015 und der mittlere Sprung, je einmal mit EINER zurückgenommenen
+Änderung:
 
-Warum das kein belegter Regress ist: die beiden Arme sind zwei UNABHÄNGIGE
-Läufe (τ verändert die Trajektorie), und verglichen wird das Maximum über 200
-Schritte, das in beiden Armen von einem diskreten Gelände-Ereignis kommt. In der
-Ursachen-Bisektion kippt die Prüfung bei fünf voneinander unabhängigen
-Einzel-Rücknahmen in BEIDE Richtungen (Wave-Takt zurück: 0.00615/0.00696 grün ·
-Überfüll-Deckel zurück: 0.00011/0.00716 grün · Vegetation zurück:
-0.00684/0.00837 grün · Pfützen zurück: 0.00574/0.00506 rot · Tropfenzahl
-zurück: 0.00602/0.00560 rot) — eine Münze, kein Signal. Robustere Formen wurden
-probiert und ändern nichts: spannen-relativ 0.308 gegen 0.261, mittlerer
-Sprung je Schritt 0.000181 gegen 0.000122 (letzteres ist sogar systematisch
-erwartbar: der ratenbegrenzte Arm bewegt sich JEDEN Schritt ein wenig, der
-instantane springt einmal und ruht dann).
+| Rücknahme | max | Sprünge > 0.0015 | Mittel |
+|---|---|---|---|
+| keine | 0.00705 | 4 | 0.000181 |
+| **Überfüll-Deckel** | **0.00011** | **0** | **0.000051** |
+| Pfützen-Relaxation | 0.00574 | 3 | 0.000133 |
+| Tropfenzahl | 0.00602 | 4 | 0.000162 |
+| Wave-Takt | 0.00615 | 2 | 0.000117 |
+| Schritt-Deckel | 0.00705 | 4 | 0.000181 |
+| Altarm-Relaxation | 0.00705 | 4 | 0.000181 |
 
-Die Eigenschaft selbst ist nachgewiesen — `EndorheicEvaporation.testBasinLevelIsRateLimited`
-misst sie ohne Gesteinsfeld und ist grün (Sprung/Spanne 0.217 gegen 0.393).
-Empfehlung fürs Folge-Issue: die Unter-Prüfung entweder streichen (sie
-dupliziert #11) oder auf eine gepaarte Größe umstellen, die nicht zwei
-chaotische Läufe gegeneinander stellt.
+Eindeutig: es war der Depositions-Deckel, nicht die Zeitintegration im
+Allgemeinen — jede andere Einzel-Rücknahme lässt 3–4 Sprünge stehen, diese eine
+bringt sie auf 0. Die Gegenprobe auf `main` bestätigt es: dort hat der
+ratenbegrenzte Arm EINEN Sprung > 0.0015 in 200 Schritten, der unbegrenzte
+sechs; auf dem Zwischenstand mit `hf + braidBarHeight` hatte der ratenbegrenzte
+vier — die Glättung war also real degradiert, kein Messrauschen. Mit der
+kalibrierten Deckel-Form (§2.4) steht der Wächter wieder mit Faktor 65 Marge:
+0.00011 gegen 0.00716.
+
+Der Mechanismus dahinter ist es wert, gemerkt zu werden: der Sprung ist KEIN
+Pegel-Effekt (die mittlere Geländehöhe im Becken ändert sich dabei um
++0.00004), sondern ein Rollen-Flip — die flache Becken-Hypsometrie macht aus
+einem Millimeter Bilanz-Pegel hunderte Zellen Wasserfläche (1319 → 1908 in
+EINEM Schritt). Was am Ufer abgelagert werden darf, verschiebt genau diese
+Fläche.
 
 ## 7. Was der Braiding-Wächter über dt = 1000 zeigte
 

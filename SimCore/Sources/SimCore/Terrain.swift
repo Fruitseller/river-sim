@@ -1616,20 +1616,6 @@ public final class Terrain {
         let mB = cfg.braidExponent
         let kb = cfg.braidCapacity * dt
         let sqrt2 = 2.0.squareRoot()
-        // Depositions-Deckel als GEOMETRISCHE OBERGRENZE statt als Zugabe JE
-        // SCHRITT (Issue #2). Vorher: `min(qin, (hf−h) + 0.005)` — der
-        // Aufschlag lag ÜBER dem aktuellen h, nicht über dem Wasserspiegel.
-        // Sobald h den Spiegel erreicht hatte, durfte jeder Schritt weitere
-        // 0.005 draufsetzen: im Zeitraffer wuchs derselbe Seerand also
-        // schrittzahl-proportional weiter, während ein großer Sprung an
-        // derselben Kappung hängenblieb. Jetzt dieselbe Semantik wie im aktiven
-        // Zweig unten („Bänke bis knapp über den Wasserspiegel"): Obergrenze
-        // `hf + braidBarHeight`. Die addiert sich nicht auf — viele kleine
-        // Schritte laufen gegen genau dieselbe Kante wie ein großer.
-        // Verworfen: der Aufschlag ∝ dt (0.005 je 100 J.) — bei dt = 2000 wären
-        // das +0.1 in EINEM Schritt, also ein 1.6-fach `puddleFillDepth` hoher
-        // Damm aus dem Stand (gemessen: Seeanteil dt=2000 0.1490 statt 0.1422).
-        let overfill = cfg.braidBarHeight
         for k in 0..<cfg.count { qs[k] = 0 }
         var nbK = [Int](repeating: 0, count: 8)
         var nbW = [Double](repeating: 0, count: 8)
@@ -1648,8 +1634,21 @@ public final class Terrain {
             if !active {
                 // Kein Braid-Reach: Fracht landet hier ab (Delta/Seerand), Überschuss
                 // über den Stauraum hinaus gilt als exportiert (wie transportLimited).
+                //
+                // Depositions-Deckel als GEOMETRISCHE OBERGRENZE über dem
+                // Wasserspiegel statt als Zugabe JE SCHRITT (Issue #2). Vorher
+                // stand hier `max(0, hf−h) + 0.005` — das `max` INNEN, der
+                // Aufschlag also über dem aktuellen h statt über dem Spiegel:
+                // sobald die Schüttung den Spiegel erreicht hatte, durfte jeder
+                // weitere Schritt nochmal 0.005 draufsetzen, der Uferaufbau
+                // wuchs mit der SCHRITTZAHL statt mit der Zeit. Als Obergrenze
+                // `hf + braidDeltaCeiling` addiert er sich nicht mehr auf:
+                // viele kleine Schritte laufen gegen dieselbe Kante wie ein
+                // großer. Warum die Höhe 0.05 und nicht `braidBarHeight` ist —
+                // und was bei zu engem Deckel kippt — steht im Kalibrier-Logbuch
+                // bei `SimConfig.braidDeltaCeiling`.
                 if qin > 0 && hf[k] > cfg.sea {
-                    depositCell(k, min(qin, max(0, hf[k] + overfill - h[k])))
+                    depositCell(k, min(qin, max(0, hf[k] + cfg.braidDeltaCeiling - h[k])))
                 }
                 continue
             }
