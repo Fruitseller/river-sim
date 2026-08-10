@@ -52,6 +52,44 @@ final class HeightBandTests: XCTestCase {
         }
     }
 
+    /// **Waldgrenze gegen Schneegrenze** (Review-Finding zu PR #28). Die beiden
+    /// Bänder ÜBERLAPPEN sich per Konstruktion — `vegNone` (vegFull + Rampenbreite)
+    /// liegt über `snowStart` (p98.5) —, die Sim hält also auch in der Schneezone
+    /// noch Bewuchs. Baum-GEOMETRIE darf dort trotzdem nicht stehen; die Regel
+    /// dafür ist `HeightBands.bearsTrees` (verbraucht von
+    /// `SimNode.treeInstanceBuffer`).
+    ///
+    /// Der Test prüft beides: dass die Überlappung wirklich existiert (sonst wäre
+    /// er stumm) und dass kein Standort in der Schneezone baumtragend ist.
+    /// Gemessen (n=832, Seed 1337, Generierung): snowStart 0.5697, vegNone 0.6844,
+    /// Höhenfaktor an der Schneegrenze 0.617 — 4 von 31995 Baum-Kandidaten lagen
+    /// vor dem Fix in der Schneezone, nach 30k Jahren 11 von 56994.
+    func testSnowZoneBearsNoTrees() {
+        var c = SimConfig(); c.n = 256
+        let t = Terrain(config: c, seed: 1337)
+        let b = t.heightBands
+        // Vorbedingung: die Bänder überlappen (sonst testet der Guard nichts).
+        XCTAssertGreaterThan(b.vegNone, b.snowStart,
+            "Bänder überlappen nicht mehr (vegNone \(b.vegNone) ≤ snowStart \(b.snowStart)) — Test stumm")
+        XCTAssertGreaterThan(b.vegetationAltitudeFactor(b.snowStart), 0,
+            "Vegetations-Höhenfaktor ist an der Schneegrenze schon 0 — Test stumm")
+        // …und in der Schneezone wächst real Bewuchs, den die Baum-Maske sonst nähme.
+        var vegetatedSnowCells = 0
+        for k in 0..<c.count where t.h[k] > c.sea && b.snowAmount(t.h[k]) > 0 {
+            if t.veg[k] > 0.32 { vegetatedSnowCells += 1 }
+        }
+        XCTAssertGreaterThan(vegetatedSnowCells, 0,
+            "keine bewachsene Schneezellen-Kandidaten — Test stumm")
+        // Kernaussage: kein Standort in der Schneezone ist baumtragend.
+        for k in 0..<c.count where t.h[k] > c.sea && b.snowAmount(t.h[k]) > 0 {
+            XCTAssertFalse(b.bearsTrees(t.h[k]),
+                "Schneezone trägt Bäume (h = \(t.h[k]), snowStart \(b.snowStart))")
+        }
+        // Unterhalb der Schneegrenze bleibt die Waldgrenze das Vegetationsband.
+        let belowSnow = b.snowStart - 1e-6
+        XCTAssertEqual(b.bearsTrees(belowSnow), b.vegetationAltitudeFactor(belowSnow) > 0)
+    }
+
     /// Die Bänder ZIEHEN MIT: sinkt das Terrain über einen langen Lauf, sinken
     /// Schnee- und Vegetationsgrenze mit — genau das, was absolute Schwellen nicht
     /// können. Gemessen (n=160, Seed 1337, 60k Jahre): snowStart 0.5658 → 0.5072,

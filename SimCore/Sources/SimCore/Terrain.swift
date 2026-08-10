@@ -754,8 +754,25 @@ public final class Terrain {
     /// Reine ABLEITUNG aus `h`, kein Pass mit Zustand — Aufrufstelle ist deshalb
     /// unkritisch, solange sie nach der letzten Höhenänderung des Schritts liegt
     /// (Anfang von `updateVegetation`, das in `step()` zuletzt läuft) und vor jedem
-    /// Konsumenten. Kosten: ein Zählpass über alle Zellen, dieselbe Größenordnung
-    /// wie `landReliefRobust()`, das der Servo ohnehin je Schritt zieht.
+    /// Konsumenten.
+    ///
+    /// **Kosten, gemessen statt geschätzt** (n=832, Mittel über 200 Durchläufe):
+    /// dieser Pass 1.38 ms, der Servo-Pass (`landReliefRobust`) 1.42 ms. Beide sind
+    /// ZUSÄTZLICH zueinander — sie laufen an verschiedenen Stellen des Schritts und
+    /// müssen es: der Servo liest die Höhen am SCHRITTBEGINN (`applyUplift` →
+    /// `reliefServoRate`), die Bänder die FINALEN Höhen des Schritts. Ein
+    /// gemeinsamer Pass wäre also keine Optimierung, sondern eine andere Physik.
+    /// Unterm Strich kostet Issue #4 damit ~1.4 ms je `step()` — bei 60 fps
+    /// Echtzeit-Zeitraffer (winziges dt/Frame, `step()` je Frame) rund 8 % des
+    /// 16.7-ms-Budgets.
+    ///
+    /// Verworfene Auswege: ein Dirty-Flag auf `h` müsste JEDE Mutation in jedem
+    /// Erosionspass mitziehen (fehleranfällig, und im Zeitraffer ist `h` ohnehin
+    /// jeden Frame schmutzig); ein Neuableiten nur alle N Jahre würde die getestete
+    /// dt-Invarianz brechen (Zeitraffer und +10.000-J.-Sprung müssen dasselbe
+    /// Ergebnis liefern). Offener, sauberer Weg wäre ein paralleler Histogramm-Fill
+    /// (Bins je Thread, Integer-Summen → bit-identisch); das ist eine eigene
+    /// Optimierung und nicht Teil dieses Tickets.
     public func updateHeightBands() {
         heightBands = cfg.heightBandsOverride ?? HeightBands.fromLandHeights(h, cfg: cfg)
     }

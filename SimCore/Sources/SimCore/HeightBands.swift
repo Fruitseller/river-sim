@@ -95,6 +95,29 @@ public struct HeightBands: Equatable, Sendable {
         min(0.9, max(0.1, (v - coniferLow) / max(1e-6, coniferHigh - coniferLow)))
     }
 
+    /// **Waldgrenze**: trägt diese Höhe Baum-GEOMETRIE? Das ist bewusst enger als
+    /// `vegetationAltitudeFactor > 0`, weil sich die beiden Bänder überlappen:
+    /// `vegNone` (vegFull + Rampenbreite) liegt ÜBER `snowStart` (p98.5): gemessen
+    /// n=832, Seed 1337 bei der Generierung 0.6844 gegen 0.5697, und der
+    /// Höhenfaktor beträgt an der Schneegrenze noch 0.617. Vor Issue #4 war das
+    /// unsichtbar — die Schneegrenze 1.05 wurde nie erreicht, es gab keine
+    /// Schneezone. Jetzt ist sie real besetzt, und ohne diese Grenze stellt
+    /// `SimNode.treeInstanceBuffer` Bäume auf verschneite Gipfel: gemessen 4 von
+    /// 31995 Baum-Kandidaten bei der Generierung und 11 von 56994 nach 30k Jahren
+    /// (22 bzw. 49 Schneezellen tragen dort veg > 0.32). Wenige Instanzen, aber
+    /// steigend — und jede einzelne steht sichtbar im Weiß.
+    ///
+    /// Warum die Grenze HIER und nicht in `vegNone`: `veg` geht über `vegDamp` in
+    /// die Erosion ein. `vegNone` auf `snowStart` zu ziehen würde die Rampe von
+    /// 0.1864 auf ~0.071 stauchen — genau die Änderungsklasse, die gemessen 1.1 %
+    /// Relief gekostet und zwei knapp gepinnte Wächter gekippt hat
+    /// (`docs/height-band-measurements.md` §5). Das wäre eine eigene, eigens zu
+    /// vermessende Kalibrierentscheidung; die Waldgrenze ist dagegen reine
+    /// Darstellung und darf sofort korrekt sein.
+    @inline(__always) public func bearsTrees(_ v: Double) -> Bool {
+        snowAmount(v) <= 0 && vegetationAltitudeFactor(v) > 0
+    }
+
     /// Leitet die Bänder aus den Landhöhen ab. `nil`-Rückgabe der Quantile
     /// (zu wenig Land) → `legacyAbsolute`.
     ///

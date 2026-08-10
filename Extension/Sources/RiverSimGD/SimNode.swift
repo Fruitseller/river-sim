@@ -854,6 +854,12 @@ final class SimNode: Node {
                 if v <= 0.32 { continue }
                 if h[k] <= sea + 0.012 { continue }          // Strand/Meer
                 if hf[k] - h[k] >= 0.02 { continue }          // nass: Flussbett/See/Aue
+                // WALDGRENZE an der Schneelinie (Issue #4): das Vegetationsband
+                // reicht höher als die Schneegrenze (vegNone ≈ 0.685 gegen
+                // snowStart ≈ 0.570), die Sim hält dort also noch veg — Bäume auf
+                // verschneiten Gipfeln wären aber sichtbar falsch. Regel und
+                // Messwerte: HeightBands.bearsTrees.
+                if !bands.bearsTrees(h[k]) { continue }
                 // Grob-Steigung (±2 Zellen) wie in updateVegetation — dieselbe
                 // Quelle (Terrain.macroSlope): der Hang-Charakter zählt, nicht die
                 // feine Rinnen-Textur.
