@@ -70,6 +70,18 @@ final class SimNode: Node {
     @Callable func rainField() -> PackedFloat32Array { pack(terrain.rain) }
     @Callable func vegetation() -> PackedFloat32Array { pack(terrain.veg) }
 
+    /// Aktuelle Höhenbänder (Issue #4) als
+    /// `[vegFull, vegNone, rockStart, rockFull, snowStart, snowFull, coniferLow, coniferHigh]`.
+    /// Sie kommen aus dem Sim-Kern (Perzentile der Landhöhen) — der Shader und die
+    /// Diagnose lesen sie hier ab, statt eigene absolute Schwellen zu führen.
+    @Callable func heightBands() -> PackedFloat32Array {
+        let b = terrain.heightBands
+        return PackedFloat32Array([
+            Float(b.vegFull), Float(b.vegNone), Float(b.rockStart), Float(b.rockFull),
+            Float(b.snowStart), Float(b.snowFull), Float(b.coniferLow), Float(b.coniferHigh),
+        ])
+    }
+
     /// Vegetations-Klasse je Zelle (0 kahl · 1 Gras · 2 Wald · 3 Auwald) —
     /// fürs Rendering (z. B. eigene Baum-Art auf Auwald).
     @Callable func vegClasses() -> PackedByteArray { PackedByteArray(terrain.vegClass) }
@@ -210,6 +222,9 @@ final class SimNode: Node {
         // Terrain vergleichen, das die Härte nicht gespürt hat.
         let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
         let lithOn = lith.count == n * n
+        // Höhenbänder (Issue #4): einmal je Puffer gelesen — sie kommen aus dem
+        // Sim-Kern (Perzentile der Landhöhen), nicht aus einer zweiten Kopie hier.
+        let bands = terrain.heightBands
         var out = [UInt8](repeating: 255, count: n * n * 4)
         // Wasser (Flüsse/Seen/Altarme) zeichnet das separate Wasser-Feld (waterFieldBytes)
         // als glattes, geshadetes Overlay — hier nur Land-Biome + Meeresgrund.
@@ -235,32 +250,41 @@ final class SimNode: Node {
                     // Fels-first, naturalistisch entsättigt (Vorbild nickmcd): grauer
                     // Fels dominiert, Grün nur in feuchten flachen Tälern, helle
                     // Gipfel/Schnee. Die Zerklüftung/Schattierung macht das Licht.
-                    // Steigung GROB (±2 Zellen): seit der Pre-Erosion trägt jede Zelle
-                    // feine Rinnen — die Per-Zell-Steigung wäre überall „steil" und
-                    // würde die Vegetation aus allen Tälern waschen. Für die Biom-
-                    // Färbung zählt der Hang-Charakter, nicht die Rinnen-Textur.
+                    // Steigung GROB (±2 Zellen, Terrain.macroSlope): seit der
+                    // Pre-Erosion trägt jede Zelle feine Rinnen — die Per-Zell-
+                    // Steigung wäre überall „steil" und würde die Vegetation aus
+                    // allen Tälern waschen. Für die Biom-Färbung zählt der
+                    // Hang-Charakter, nicht die Rinnen-Textur.
                     var slope = 0.0
                     if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
-                        slope = (abs(ph[k + 2] - ph[k - 2]) + abs(ph[k + 2 * n] - ph[k - 2 * n])) * 0.125
+                        slope = Terrain.macroSlope(ph, k, n)
                     }
                     let steep = min(1, slope * 45)                // 0 flach … 1 steil
                     r = 0.38 + 0.05 * steep                       // grauer Fels; steiler nur LEICHT heller
                     g = 0.39 + 0.05 * steep                       // (0.11 wusch die dichten 100k-Rinnen weiß)
                     b = 0.40 + 0.05 * steep
-                    let moist = min(1, prain[k] * 1.2)            // Vegetation: moosgrün in
-                    let gentle = max(0, 1 - steep * 0.9)          // Tälern + unteren Hängen (hält sich an Rinnen etwas länger)
-                    let altVeg = v < 0.6 ? 1 : max(0, 1 - (v - 0.6) / 0.18)
+                    // Grünanteil aus DERSELBEN Standort-Eignung, die auch das
+                    // veg-Ziel im Sim-Kern setzt (Issue #4) — vorher lagen hier
+                    // eigene Konstanten (Höhenabfall ab 0.6 statt 0.5, Regen 1.2
+                    // statt 1.3), die Färbung zeigte also nicht ganz das, was die
+                    // Sim rechnet. `pveg` bleibt der zeitliche Zustand darüber.
                     // 0.85-Dämpfung: das Boden-Grün leicht entsättigen, damit die
                     // 3D-Bäume (MultiMesh, treeInstanceBuffer) sich vom Boden abheben —
                     // vorher konkurrierte das satte Moosgrün mit den Baumkronen.
-                    let vegAmt = min(1, (0.5 + 0.5 * pveg[k]) * moist * gentle * altVeg * 1.3) * 0.85
+                    let habitat = Terrain.vegetationSuitability(height: v, slope: slope,
+                                                                rain: prain[k], bands: bands)
+                    let vegAmt = min(1, (0.5 + 0.5 * pveg[k]) * habitat * 1.3) * 0.85
                     r += (0.19 - r) * vegAmt; g += (0.42 - g) * vegAmt; b += (0.14 - b) * vegAmt // kräftigeres Moosgrün
-                    if v > 0.58 {                                 // Hochlagen: neutral-grauer Fels (nicht pastell/weiß)
-                        let wg = min(1, (v - 0.58) / 0.40)
+                    // Hochlagen: neutral-grauer Fels (nicht pastell/weiß), darüber
+                    // Schnee auf den Gipfeln. Beide Grenzen sind PERZENTILE der
+                    // aktuellen Landhöhen (Issue #4, Terrain.heightBands): die alten
+                    // absoluten 0.58/1.05 trafen 1.1 % bzw. 0 % des Landes.
+                    let wg = bands.rockAmount(v)
+                    if wg > 0 {
                         r += (0.43 - r) * wg; g += (0.44 - g) * wg; b += (0.45 - b) * wg
                     }
-                    if v > 1.05 {                                 // Schnee nur auf den allerhöchsten Gipfeln
-                        let ws = min(1, (v - 1.05) / 0.08)
+                    let ws = bands.snowAmount(v)
+                    if ws > 0 {
                         r += (0.93 - r) * ws; g += (0.94 - g) * ws; b += (0.96 - b) * ws
                     }
                     // Salzpfanne/Playa (Issue #11): der trockengefallene Boden
@@ -348,6 +372,9 @@ final class SimNode: Node {
     @Callable func recomputeFlow() {
         terrain.computeFlow()
         terrain.snapWaterLevel()
+        // Höhenbänder (Issue #4) mitziehen: ein Sculpt-Strich verschiebt die
+        // Landhöhen-Verteilung, und die Färbung liest sie im selben Frame.
+        terrain.updateHeightBands()
     }
 
     /// Effektive Maximal-Breite der Spitzhacke (Welteinheiten) — fürs Ring-Visual.
@@ -817,6 +844,7 @@ final class SimNode: Node {
         let cs = terrain.cfg.cellSize
         let half = terrain.cfg.world / 2
         let h = terrain.h, hf = terrain.hf, veg = terrain.veg
+        let bands = terrain.heightBands
         var out: [Float] = []
         out.reserveCapacity(30_000 * 12)
         for j in stride(from: 2, to: n - 2, by: 2) {
@@ -826,9 +854,10 @@ final class SimNode: Node {
                 if v <= 0.32 { continue }
                 if h[k] <= sea + 0.012 { continue }          // Strand/Meer
                 if hf[k] - h[k] >= 0.02 { continue }          // nass: Flussbett/See/Aue
-                // Grob-Steigung (±2 Zellen) wie in updateVegetation: der Hang-
-                // Charakter zählt, nicht die feine Rinnen-Textur.
-                let slope = (abs(h[k + 2] - h[k - 2]) + abs(h[k + 2 * n] - h[k - 2 * n])) * 0.125
+                // Grob-Steigung (±2 Zellen) wie in updateVegetation — dieselbe
+                // Quelle (Terrain.macroSlope): der Hang-Charakter zählt, nicht die
+                // feine Rinnen-Textur.
+                let slope = Terrain.macroSlope(h, k, n)
                 if slope * 40 >= 0.3 { continue }
                 let isBush = v <= 0.45
                 // Verdünnung ∝ veg-Dichte: dichter Bewuchs → mehr Bäume; der
@@ -836,13 +865,15 @@ final class SimNode: Node {
                 let keep = isBush ? 0.35 : min(0.9, (v - 0.45) * 2.5 + 0.35)
                 if treeHash01(i, j, 0x51ed) >= keep { continue }
                 // Varianten-Wahl: Nadel wird mit der Höhe wahrscheinlicher
-                // (Vegetations-Stufen), unten dominiert Laub.
+                // (Vegetations-Stufen), unten dominiert Laub. Höhenband aus dem
+                // Sim-Kern (Issue #4) statt der alten absoluten 0.26…0.48 — sonst
+                // kippt der Wald mit jeder Neukalibrierung des Höhenbereichs
+                // komplett auf eine Variante.
                 let wanted: Int
                 if isBush {
                     wanted = 2
                 } else {
-                    let pConifer = min(0.9, max(0.1, (h[k] - 0.26) / 0.22))
-                    wanted = treeHash01(i, j, 0xc0f4) < pConifer ? 1 : 0
+                    wanted = treeHash01(i, j, 0xc0f4) < bands.coniferShare(h[k]) ? 1 : 0
                 }
                 if wanted != variant { continue }
                 // Jitter ±1 Zelle (bricht das 2er-Raster), Höhe bilinear an der

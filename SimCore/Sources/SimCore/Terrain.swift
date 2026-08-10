@@ -77,6 +77,12 @@ public final class Terrain {
     /// Erosionsschutz-Faktoren je Klasse ([kahl, Gras, Wald, Auwald], aus cfg):
     /// Schutz = 1 − 0.6·Faktor·veg — die 0.6-Basiskalibrierung bleibt fix.
     private let vegTypeFactor: [Double]
+    /// **Höhenbänder** (Issue #4): Vegetations-, Fels- und Schneegrenzen als
+    /// Perzentile der aktuellen Landhöhen statt absoluter Werte. Wird in
+    /// `updateHeightBands()` (Anfang von `updateVegetation`, also einmal je
+    /// Zeitschritt) neu abgeleitet und ist die EINZIGE Quelle sowohl für die
+    /// Vegetation im Sim-Kern als auch für die Biom-Färbung in der GDExtension.
+    public private(set) var heightBands: HeightBands
 
     // Entwässerung
     public private(set) var hf: [Double]     // gefüllte Oberfläche (Priority-Flood)
@@ -213,6 +219,9 @@ public final class Terrain {
         riparian = .init(repeating: 0, count: c)
         vegScratch = .init(repeating: 0, count: c)
         vegTypeFactor = [1, 1, config.vegTypeFactorForest, config.vegTypeFactorRiparian]
+        // Vorbelegung, bis `generate` das erste Höhenfeld gelegt hat; danach
+        // leitet updateHeightBands() die Bänder aus den echten Landhöhen ab.
+        heightBands = config.heightBandsOverride ?? .legacyAbsolute
         hf = .init(repeating: 0, count: c)
         waterLevel = .init(repeating: 0, count: c)
         lakeBalance = .init(repeating: 0, count: c)
@@ -741,7 +750,51 @@ public final class Terrain {
 
     // MARK: - Vegetation
 
+    /// Leitet die Höhenbänder (Issue #4) aus der aktuellen Landhöhen-Verteilung ab.
+    /// Reine ABLEITUNG aus `h`, kein Pass mit Zustand — Aufrufstelle ist deshalb
+    /// unkritisch, solange sie nach der letzten Höhenänderung des Schritts liegt
+    /// (Anfang von `updateVegetation`, das in `step()` zuletzt läuft) und vor jedem
+    /// Konsumenten. Kosten: ein Zählpass über alle Zellen, dieselbe Größenordnung
+    /// wie `landReliefRobust()`, das der Servo ohnehin je Schritt zieht.
+    public func updateHeightBands() {
+        heightBands = cfg.heightBandsOverride ?? HeightBands.fromLandHeights(h, cfg: cfg)
+    }
+
+    /// Grob-Steigung um eine Zelle (±2 Zellen, Mittel über beide Achsen).
+    /// EINZIGE Quelle für alle „ist das ein Hang?"-Abfragen (Vegetation, Biom-
+    /// Färbung, Baum-Platzierung): seit der Pre-Erosion trägt jede Zelle feine
+    /// Rinnen — die Per-Zell-Steigung wäre überall „steil" und würde Bewuchs und
+    /// Farbe aus allen Tälern waschen. Nur für Zellen mit 2 ≤ i,j ≤ n−3 gültig
+    /// (der Aufrufer hält den Rand frei).
+    @inline(__always)
+    public static func macroSlope(_ p: UnsafePointer<Double>, _ k: Int, _ n: Int) -> Double {
+        (abs(p[k + 2] - p[k - 2]) + abs(p[k + 2 * n] - p[k - 2 * n])) * 0.125
+    }
+
+    /// Bequeme Variante auf dem Array — dieselbe Formel, nur ein Aufrufweg für
+    /// Stellen ohne bereits geöffneten Puffer (z. B. `treeInstanceBuffer`).
+    @inline(__always)
+    public static func macroSlope(_ a: [Double], _ k: Int, _ n: Int) -> Double {
+        a.withUnsafeBufferPointer { macroSlope($0.baseAddress!, k, n) }
+    }
+
+    /// Geografische Eignung eines Standorts für Bewuchs (0…1) aus Höhe, Grob-
+    /// Steigung und Feuchte. EINZIGE Quelle: der Sim-Kern (`updateVegetation`,
+    /// Relaxationsziel von `veg`) und die Biom-Färbung (`SimNode.terrainColorBytes`,
+    /// Grünanteil) lasen dieselbe Logik vorher aus zwei Kopien mit
+    /// auseinandergelaufenen Konstanten (Höhenabfall ab 0.5 bzw. 0.6, Regenfaktor
+    /// 1.3 bzw. 1.2) — die Färbung zeigte damit nicht ganz das, was die Sim rechnet.
+    @inline(__always)
+    public static func vegetationSuitability(height: Double, slope: Double, rain: Double,
+                                             bands: HeightBands) -> Double {
+        let slopeOk = max(0, 1 - slope * 40)
+        let wet = min(1, rain * 1.3)
+        return slopeOk * wet * bands.vegetationAltitudeFactor(height)
+    }
+
     public func updateVegetation(years: Double) {
+        updateHeightBands()
+        let bands = heightBands
         let f = min(1, years / cfg.vegTimeConstant)
         // Flood-Kill (Stufe 3): eigene, schnelle Zeitkonstante. Exponentiell
         // exakt (1 − e^(−dt/τ)) statt linear gedeckelt: bei τ = 20a ist schon
@@ -803,15 +856,13 @@ public final class Terrain {
                     }
                     var target = 0.0
                     let v = ph[k]
-                    if v > sea + 0.005 && v < 0.68 && phf[k] - ph[k] <= 0.015 {
-                        // Steigung grob (±2 Zellen): der Hang-Charakter entscheidet über
-                        // Bewuchs, nicht die feine Rinnen-Textur der Pre-Erosion (sonst
-                        // gilt jede Zelle als steil → kahle Täler).
-                        let slope = (abs(ph[k + 2] - ph[k - 2]) + abs(ph[k + 2 * nn] - ph[k - 2 * nn])) * 0.125
-                        let slopeOk = max(0, 1 - slope * 40)
-                        let wet = min(1, prain[k] * 1.3)
-                        let altOk = v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18) // Wald wächst höher
-                        target = slopeOk * wet * altOk
+                    // Obergrenze aus dem Höhenband (Issue #4): früher fest 0.68 —
+                    // ein Wert, der bei der aktuellen Kalibrierung über dem
+                    // 99,99-Perzentil des Landes lag und damit nie griff.
+                    if v > sea + 0.005 && v < bands.vegNone && phf[k] - ph[k] <= 0.015 {
+                        let slope = Terrain.macroSlope(ph, k, nn)
+                        target = Terrain.vegetationSuitability(height: v, slope: slope,
+                                                               rain: prain[k], bands: bands)
                         // Sukzession: Samen-Druck hebt das Ziel NUR auf bewohnbaren
                         // Standorten (geografisches Ziel > 0.05) — steile Hänge und
                         // Höhenwüste bleiben kahl, kein Spontanwald auf kargen Inseln.
@@ -2785,21 +2836,38 @@ public final class Terrain {
     }
 
     /// Beide robusten Relief-Halbseiten aus EINEM Histogramm-Pass:
-    /// `high` = p95 − Median, `low` = Median − p05.
+    /// `high` = p95 − Median, `low` = Median − p05. Dünne Hülle um die
+    /// allgemeine Quantil-Funktion darunter (Issue #4) — die drei Quantile
+    /// kommen weiterhin aus einem einzigen Zählpass.
     public static func landHeightQuantiles(heights: [Double], sea: Double)
         -> (high: Double, low: Double) {
-        // Histogramm statt Sortieren: die Kennzahl läuft in JEDEM Zeitschritt über
-        // ~500k Landzellen (Frame-Budget!) — ein Zählpass ist O(N) und dazu exakt
-        // deterministisch (Integer-Zählung, keine Reihenfolge-Effekte).
-        // Spanne ab `sea` großzügig bis sea+2.0: die Sim deckelt Hebung bei
-        // isoHighClamp (0.90), nur Sculpting kommt überhaupt in die Nähe. Höhere
-        // Werte landen im letzten Bin — das kann das Signal nur dann sättigen,
-        // wenn >5 % des Landes so hoch stehen (dann ist es real so hoch).
-        // Preis: das Ergebnis ist auf Bin-Mitten quantisiert, die Kennzahl also
-        // ein Vielfaches von span/bins = 0.000488. Das ist 1/140 der Regelspanne
-        // (reliefServoBand 0.07) — für den Servo bedeutungslos, aber beim
-        // Dokumentieren von Messwerten zu beachten: Unterschiede unterhalb einer
-        // Bin-Breite zeigt diese Funktion als 0 (s. Nadel-Messung oben).
+        guard let q = landHeightQuantiles(heights: heights, sea: sea,
+                                          probs: [0.05, 0.5, 0.95])
+        else { return (0, 0) } // zu wenig Land für Quantile
+        return (q[2] - q[1], q[1] - q[0])
+    }
+
+    /// Quantile der Landhöhen (`heights > sea`) — EINZIGE Quelle für alle
+    /// perzentil-gekoppelten Größen: die Relief-Halbseiten (oben, Issue #26) und
+    /// die Höhenbänder für Vegetation/Fels/Schnee (`HeightBands`, Issue #4).
+    /// `probs` muss AUFSTEIGEND sortiert sein (ein einziger Histogramm-Durchlauf
+    /// bedient alle). `nil` = weniger als 20 Landzellen, also keine belastbare
+    /// Verteilung.
+    ///
+    /// Histogramm statt Sortieren: die Kennzahlen laufen in JEDEM Zeitschritt über
+    /// ~500k Landzellen (Frame-Budget!) — ein Zählpass ist O(N) und dazu exakt
+    /// deterministisch (Integer-Zählung, keine Reihenfolge-Effekte).
+    /// Spanne ab `sea` großzügig bis sea+2.0: die Sim deckelt Hebung bei
+    /// isoHighClamp (0.90), nur Sculpting kommt überhaupt in die Nähe. Höhere
+    /// Werte landen im letzten Bin — das kann ein Quantil nur dann sättigen,
+    /// wenn so viel Land wirklich so hoch steht.
+    /// Preis: das Ergebnis ist auf Bin-Mitten quantisiert, jedes Quantil also
+    /// ein Vielfaches von span/bins = 0.000488. Das ist 1/140 der Regelspanne des
+    /// Servos (reliefServoBand 0.07) — dort bedeutungslos, aber beim Dokumentieren
+    /// von Messwerten zu beachten: Unterschiede unterhalb einer Bin-Breite zeigt
+    /// diese Funktion als 0 (s. Nadel-Messung oben).
+    public static func landHeightQuantiles(heights: [Double], sea: Double,
+                                           probs: [Double]) -> [Double]? {
         let bins = 4096
         let span = 2.0
         var hist = [Int](repeating: 0, count: bins)
@@ -2809,18 +2877,19 @@ public final class Terrain {
             hist[b] += 1
             total += 1
         }
-        guard total >= 20 else { return (0, 0) } // zu wenig Land für Quantile
-        func quantile(_ p: Double) -> Double {
-            let rank = Int((Double(total - 1) * p).rounded())
-            var cum = 0
-            for b in 0..<bins {
-                cum += hist[b]
-                if cum > rank { return sea + (Double(b) + 0.5) * span / Double(bins) }
+        guard total >= 20, !probs.isEmpty else { return nil }
+        var out = [Double](repeating: sea + span, count: probs.count)
+        var cum = 0, next = 0
+        for b in 0..<bins {
+            cum += hist[b]
+            while next < probs.count,
+                  cum > Int((Double(total - 1) * probs[next]).rounded()) {
+                out[next] = sea + (Double(b) + 0.5) * span / Double(bins)
+                next += 1
             }
-            return sea + span
+            if next == probs.count { break }
         }
-        let med = quantile(0.5)
-        return (quantile(0.95) - med, med - quantile(0.05))
+        return out
     }
 
     /// Aktuell wirkende Servo-Hebung (pro 100 Jahre) aus dem robusten Relief-

@@ -22,6 +22,13 @@ uniform float world_size = 100.0;
 uniform float grid_n = 256.0;
 uniform float u_time = 0.0;
 uniform float sea_level = 0.15;
+// Höhenband der Vegetation (Issue #4): kommt aus dem Sim-Kern (Perzentile der
+// aktuellen Landhöhen, SimNode.heightBands) — die feuchten Kerben blenden
+// zwischen diesen beiden Höhen aus. Vorher standen hier absolute 0.45/0.72; die
+// obere Grenze lag über dem höchsten je erreichten Punkt, der Ausblender kam
+// also nie an. Die Defaults sind nur der Stand ohne SimNode-Update.
+uniform float veg_alt_lo = 0.45;
+uniform float veg_alt_hi = 0.72;
 
 // Detail-Erosion: Skala in UV (0.006 ≈ 4 Sim-Zellen Wellenlänge der größten
 // Rinnen), Stärke = Höhenamplitude relativ zur Skala (wie im Original).
@@ -236,7 +243,7 @@ void fragment() {
 	// Feuchte Kerben (Ridge-Map < 0): dunkler, entsättigt-grünlich — die
 	// dendritischen Zubringer der Flüsse (Drainage-Optik aus dem Original).
 	float crease = clamp(-det_ridge, 0.0, 1.0);
-	float moist = crease * (1.0 - smoothstep(0.45, 0.72, hval));
+	float moist = crease * (1.0 - smoothstep(veg_alt_lo, veg_alt_hi, hval));
 	terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0), moist * 0.45);
 	// Breakup: großflächige Albedo-Variation gegen die Uniformität.
 	terr *= 0.94 + 0.12 * breakup;

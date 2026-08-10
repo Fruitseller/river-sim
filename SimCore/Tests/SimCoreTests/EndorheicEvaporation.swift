@@ -34,6 +34,25 @@ final class EndorheicEvaporation: XCTestCase {
         // Dass die #11-MECHANIK mit Lithologie intakt bleibt, ist eigens
         // abgesichert: `Lithology.testEndorheicMechanicsSurviveLithology`.
         c.lithologyEnabled = false
+        // Höhenbänder (Issue #4) AUSGEPINNT — exakt derselbe Grund und dieselbe
+        // Doktrin wie die Lithologie darüber: die perzentil-gekoppelte
+        // Vegetations-Höhengrenze ist Produktions-KALIBRIERUNG, dieser Wächter
+        // prüft die MECHANIK an EINEM konkreten Becken. GEMESSEN (n=256, κ=6,
+        // Seed 1337, 10×200 J.): mit abgeleiteten Bändern trägt das größte
+        // gedeckelte Becken 0 Krustenzellen — es ist wieder ein GESPEISTES, das
+        // nicht trockenfällt. Inselweit crusten in derselben Konfiguration 284
+        // Zellen (183 davon voll), die Playa-Bildung ist also intakt (Beleg:
+        // `Lithology.testEndorheicMechanicsSurviveLithology`, das die Bänder
+        // NICHT pinnt und über alle Seeds zählt). Mit `legacyAbsolute` läuft die
+        // Vegetation exakt wie vor #4, das Becken ist wieder das alte.
+        // WIE empfindlich diese Wächter sind, hat der erste Pin-Versuch gezeigt:
+        // er notierte die Bänder als Abstand über `sea`, wodurch die Rampenbreite
+        // 0.68 − 0.5 = 0.18000000000000005 statt 0.18 wurde. Diese EINE ulp auf
+        // ~9 % der Landzellen genügte, um `testBasinLevelIsRateLimited`
+        // (0.00319 gegen die 0.002-Schranke) und die Playa-Fläche (3 statt 1098
+        // Zellen) zu kippen. Deshalb hält `HeightBands.legacyAbsolute` die
+        // Rampenbreite als Literal — nicht als Differenz zweier Grenzen.
+        c.heightBandsOverride = .legacyAbsolute
         return c
     }
 

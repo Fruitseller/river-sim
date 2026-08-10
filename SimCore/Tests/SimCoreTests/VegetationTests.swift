@@ -225,13 +225,16 @@ final class VegetationTests: XCTestCase {
         for j in 2..<(n - 2) {
             for i in 2..<(n - 2) {
                 let k = j * n + i
-                // geografisches Ziel nachrechnen (Formel aus updateVegetation)
+                // Geografisches Ziel aus DERSELBEN Quelle wie updateVegetation
+                // (Issue #4) — der Test hielt vorher eine dritte Kopie der Formel
+                // und wäre bei jeder Änderung der Höhengrenzen still falsch geworden.
                 let v = t.h[k]
+                let bands = t.heightBands
                 var target = 0.0
-                if v > c.sea + 0.005 && v < 0.68 && t.hf[k] - t.h[k] <= 0.015 {
-                    let slope = (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
-                    target = max(0, 1 - slope * 40) * min(1, t.rain[k] * 1.3)
-                           * (v < 0.5 ? 1 : max(0, 1 - (v - 0.5) / 0.18))
+                if v > c.sea + 0.005 && v < bands.vegNone && t.hf[k] - t.h[k] <= 0.015 {
+                    target = Terrain.vegetationSuitability(
+                        height: v, slope: Terrain.macroSlope(t.h, k, n),
+                        rain: t.rain[k], bands: bands)
                 }
                 guard target < 0.01 else { continue }
                 var seed = 0.0
