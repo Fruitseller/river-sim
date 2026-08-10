@@ -1,6 +1,6 @@
 # Welt speichern und laden (Issue #8)
 
-Stand: August 2026 · Format **Version 1** · Code: `SimCore/Sources/SimCore/WorldSnapshot.swift`,
+Stand: August 2026 · Format **Version 2** · Code: `SimCore/Sources/SimCore/WorldSnapshot.swift`,
 Inventar (`TerrainState`) am Ende von `SimCore/Sources/SimCore/Terrain.swift`,
 Wächter: `SimCore/Tests/SimCoreTests/WorldSnapshotTests.swift`.
 
@@ -13,8 +13,9 @@ Mäander-Cutoffs), ein einziges fehlendes Feld oder ein verlorenes ULP driftet
 `testRoundTripContinuesBitIdentically` vergleicht deshalb nach
 `speichern → laden → n Schritte` **jedes** Feld bitweise gegen eine durchgehend
 simulierte Welt. Gegenprobe zur Empfindlichkeit: setzt man in `Terrain.restore`
-z. B. `stepCount = 0` (der Zähler speist den Droplet-Seed), schlägt der Test in
-allen Höhenfeldern fehl — genau so soll er sich verhalten.
+z. B. `dropsEmitted = 0` (der Zähler ist die laufende Nummer des nächsten
+Tropfens und legt damit seinen Startpunkt fest), schlägt der Test in allen
+Höhenfeldern fehl — genau so soll er sich verhalten.
 
 Die **Mäander-Historie** hat einen eigenen Round-Trip
 (`testMeanderHistorySurvivesRoundTrip`): im Produktionspfad entsteht bei
@@ -110,7 +111,8 @@ Kopf (28 Byte):
   [20..28) u64 FNV-1a-64 der Nutzdaten
 Nutzdaten:
   u32 Länge + Bytes   binäres Plist der SimConfig
-  u32 seed · f64 years · u32 stepCount · u32 flowStepCount · u8 disturbActive
+  u32 seed · f64 years · u64 dropsEmitted · f64 dropCarry
+  u32 flowStepCount · u8 disturbActive
   8 × f64             Höhenbänder
   u32 Feldzahl, je Feld:
     u32 Länge + Name · u8 Typ (0 f64 · 1 i32 · 2 u8 · 3 bool)

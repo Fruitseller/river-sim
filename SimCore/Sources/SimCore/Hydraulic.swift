@@ -57,6 +57,37 @@ public enum Hydraulic {
     /// Vorschlag — gegen die 5.6-fache Gewichtsspanne vernachlässigbar.
     static let spawnRejectionTries = 24
 
+    /// Zufallsstrom des Tropfens mit der laufenden Nummer `index` (Issue #2).
+    ///
+    /// Hier wird ein SEQUENZIELLER Generator als HASH über den Index benutzt —
+    /// und dafür muss der Index vorher richtig gemischt werden. Mulberry32 ist
+    /// darauf ausgelegt, aus einem laufenden Zustand gute FOLGEN zu liefern,
+    /// nicht darauf, aus benachbarten Startzuständen gute ERSTE Ausgaben zu
+    /// liefern. Genau das braucht der Tropfen aber: seine ersten beiden
+    /// Ausgaben sind der Startpunkt, die dritte ist der Annahme-Zug der
+    /// Ablehnungs-Stichprobe (`spawnPosition`) — sind die nicht unabhängig,
+    /// entscheidet nicht mehr das Niederschlagsgewicht über die Annahme,
+    /// sondern eine Eigenschaft des Startpunkts selbst.
+    ///
+    /// GEMESSEN, weil zuerst falsch gemacht: mit nur `index · 2654435761`
+    /// (goldener Schnitt, wie vorher für die Schrittnummer) fiel die gewichtete
+    /// Luv/Lee-Drainagedichte von ×1.14 (`main`) auf ×1.01 — die
+    /// Niederschlags-Gewichtung war praktisch wirkungslos, obwohl Randverteilung
+    /// (Chi² 67 gegen 63 df) und Serienkorrelation (lag-1 ~1e-3) der Startpunkte
+    /// unauffällig blieben. Der Fehler steckte allein in der Kopplung zwischen
+    /// Position und Annahme-Zug. Mit splitmix64-Finalizer und einem
+    /// Aufwärm-Zug steht sie bei ×1.21 (`RainWeightedFlow`-Wächter).
+    @inline(__always)
+    static func dropRNG(seed: UInt32, index: UInt64) -> Mulberry32 {
+        var z = index &+ 0x9E37_79B9_7F4A_7C15
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        z = z ^ (z >> 31)
+        var r = Mulberry32(seed: seed &+ UInt32(truncatingIfNeeded: z))
+        _ = r.next()
+        return r
+    }
+
     /// Zieht einen Tropfen-Startpunkt in Zellkoordinaten.
     ///
     /// - `weight` leer → gleichverteilt über das Grid, mit exakt ZWEI Ziehungen aus
@@ -113,10 +144,25 @@ public enum Hydraulic {
     ///   Issue #12; 1 = Referenzgestein). Skaliert den FELS-Anteil jedes Abtrags
     ///   (s. `dig`) — das lockere Sediment darüber erodiert unverändert. Leeres
     ///   Array = uniformes Gestein wie bisher (bit-identisch).
+    /// - `firstDrop`: laufende Nummer des ERSTEN Tropfens dieser Charge im
+    ///   fortlaufenden Tropfen-Strom des Terrains (`Terrain.dropsEmitted`).
+    ///   Dann zieht jeder Tropfen seinen Startpunkt aus einem EIGENEN, aus
+    ///   seiner Nummer abgeleiteten Strom (s. `dropRNG`) — Tropfen Nr. j ist
+    ///   damit derselbe Tropfen, egal ob er als Einzelner in einem Frame-Schritt
+    ///   fällt oder als einer von 360 in einem +10.000-Jahre-Sprung (Issue #2,
+    ///   Wächter `DtInvariance.testDropletStreamIsChunkingInvariant`).
+    ///
+    ///   `nil` = EINMAL-CHARGE: alle Tropfen kommen aus einem Strom ab `seed`,
+    ///   wie vor Issue #2. Das ist der richtige Modus für Chargen, die gar keine
+    ///   Zeit abbilden und deren Größe fest ist — den Stream-Map-Spin-up der
+    ///   Generierung (`Terrain.spinUpStreamMap`). Er behält damit exakt seine
+    ///   kalibrierte Realisierung: die erzeugte Welt hängt an dieser Charge, und
+    ///   sie hat kein dt-Problem, das zu beheben wäre.
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
                               n: Int, count: Int, seed: UInt32, floor: Double,
                               p: HydraulicParams,
                               seaLevel: Double? = nil,
+                              firstDrop: UInt64? = nil,
                               hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
                              rainWeight: [Double] = [],
@@ -198,10 +244,27 @@ public enum Hydraulic {
         let rainOn = rainWeight.count == h.count
         let rainMax = rainOn ? (rainWeight.max() ?? 0) : 0
 
-        var rnd = Mulberry32(seed: seed)
-        for _ in 0..<count {
-            var (px, py) = spawnPosition(&rnd, n: n,
+        // Zufallsstrom: EINER JE TROPFEN aus dessen laufender Nummer, wenn diese
+        // Charge Teil des fortlaufenden Stroms ist (Issue #2) — sonst einer je
+        // Charge wie bisher (s. `firstDrop`). Der gesamte Zufall eines Tropfens
+        // steckt in seinem Startpunkt (die Bahn danach ist deterministisch),
+        // also legt die Nummer den Tropfen vollständig fest: Tropfen Nr. j ist
+        // derselbe, ob er allein in einem 0.2-Jahr-Frame fällt oder als einer
+        // von 360 in einem Sprung. Vorher hing der Charge-Seed an der
+        // SCHRITT-Nummer: leere Frame-Schritte (Tropfenzahl 0) schoben ihn
+        // trotzdem weiter, und ein großer Schritt zog alle Tropfen aus einem
+        // einzigen Strom — der Droplet-Pass blieb damit schrittweiten-abhängig.
+        var batch = Mulberry32(seed: seed)
+        for i in 0..<count {
+            var px = 0.0, py = 0.0
+            if let firstDrop {
+                var rnd = dropRNG(seed: seed, index: firstDrop &+ UInt64(i))
+                (px, py) = spawnPosition(&rnd, n: n,
                                          weight: rainOn ? rainWeight : [], weightMax: rainMax)
+            } else {
+                (px, py) = spawnPosition(&batch, n: n,
+                                         weight: rainOn ? rainWeight : [], weightMax: rainMax)
+            }
             if let seaLevel {
                 let start = Int(py) * n + Int(px)
                 if h[start] <= seaLevel { continue }

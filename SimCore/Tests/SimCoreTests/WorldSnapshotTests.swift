@@ -69,7 +69,10 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertEqual(a.years.bitPattern, b.years.bitPattern, "\(ctx): years",
                        file: file, line: line)
         XCTAssertEqual(a.seed, b.seed, "\(ctx): seed", file: file, line: line)
-        XCTAssertEqual(a.stepCount, b.stepCount, "\(ctx): stepCount", file: file, line: line)
+        XCTAssertEqual(a.dropsEmitted, b.dropsEmitted, "\(ctx): dropsEmitted",
+                       file: file, line: line)
+        XCTAssertEqual(a.dropCarry.bitPattern, b.dropCarry.bitPattern,
+                       "\(ctx): dropCarry", file: file, line: line)
         XCTAssertEqual(a.flowStepCount, b.flowStepCount, "\(ctx): flowStepCount",
                        file: file, line: line)
         XCTAssertEqual(a.disturbActive, b.disturbActive, "\(ctx): disturbActive",

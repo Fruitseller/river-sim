@@ -158,7 +158,13 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   das Ergebnis **bit-identisch** zur sequenziellen Schleife bleibt.
 - **Framerate-Unabhängigkeit:** Gesamtwirkung eines Passes muss ∝ `dt` sein. Echtzeit-
   Zeitraffer (winziges dt/Frame) und `+10.000 Jahre`-Sprünge müssen dasselbe Ergebnis
-  liefern (siehe Diffusions-Substepping in `step()`).
+  liefern. Die drei Bauformen dafür: Sub-Takten mit fester Teilschritt-Stärke
+  (Hangdiffusion, `waveSchedule`), exponentielle Relaxation `1 − e^(−dt/τ)` statt
+  linear gedeckelter (`relaxWaterLevel`, Verlandungen, Vegetation) und Raten-Zähler
+  mit Übertrag statt `max(1, …)` (Tropfenzahl, `dropCarry`). Deckel „halbe lokale
+  Höhendifferenz" sind ebenfalls Raten (`stepCapFraction`). Wächter:
+  `SimCoreTests/DtInvariance.swift`, Messreihen `docs/dt-invariance-measurements.md`
+  (inkl. des benannten Rests: Abflussfeld wird nur einmal je Schritt bestimmt).
 - Masse-Erhaltung gilt **nicht** (detachment-limited Stream-Power trägt Material aus);
   die Invariante ist beschränktes Relief / Fließgleichgewicht — Wächter:
   `Tests/SimCoreTests/LongRunCollapse.swift`.
