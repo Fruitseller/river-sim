@@ -81,6 +81,8 @@ final class SimNode: Node {
             captureDebugReference()
             // Bäume neu bauen lassen (leerer Vergleichsstand ⇒ treeVegMaxDelta = 1).
             treeVegSnapshot = []
+            // Fluss-Ribbons ebenso (riversMaxDelta ⇒ „riesig").
+            riverSnapshot = []
             return ""
         } catch let error as SnapshotError {
             return error.description
@@ -637,6 +639,18 @@ final class SimNode: Node {
         mstamp.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         oxb.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) } // Altarm-See-Overlay (mit Alter ausgeblendet)
         let noMeanderPaint = ProcessInfo.processInfo.environment["RS_NO_MEANDER_PAINT"] != nil // Debug-Schalter
+        // RIBBON-MODUS (Issue #31, RS_RIVER_RIBBONS): das Wasser der Mäander rendert
+        // dann die Band-Geometrie (riverRibbon*-Puffer), NICHT mehr dieses Feld.
+        // Der Korridor wird trotzdem gestempelt — aber nur mit SAUM-Intensität:
+        // unter der Wasser-Schwelle des Terrain-Shaders (0.16, riverMask-smoothstep
+        // in terrain.gdshader — derselbe Wert ist unten die Kohärenz-Schwelle des
+        // keep-Filters), über seiner Ufer-Schwelle (0.09, shore-smoothstep ebd.).
+        // Wer eine der Shader-Schwellen ändert, muss haloIntensity mitziehen.
+        // Das Ribbon liegt so in einem weichen Nass-Halo aus dem bestehenden
+        // Ufer-Saum — adressiert die dokumentierte Rückbau-Ursache von f3556c8
+        // („harte Kanten am Ribbon↔Ufer-Übergang").
+        let ribbonMode = riverRibbonsEnabled
+        let haloIntensity = 0.14
         for ch in noMeanderPaint ? [] : terrain.meander.channels {
             let nodes = ch.nodes
             if nodes.count < 2 { continue }
@@ -651,9 +665,14 @@ final class SimNode: Node {
                 // Halbbreite ∝ log(Abfluss), Deckel 1 Zelle (war 3): über 10k+ Jahre
                 // verknäulen die migrierten Linien auf den Ebenen — breite Stempel
                 // machten aus den Knäueln blaue Blob-Felder („zu viele Flüsse").
-                let hw = max(0.0, min(1.0, 0.3 + log(max(q, 1) / creek + 1) / 2.6))
+                // Im Ribbon-Modus folgt der Saum-Radius stattdessen der Ribbon-
+                // Halbbreite (+1 Zelle Rand), damit der Halo das Band ganz umfasst.
+                let hw = ribbonMode
+                    ? ribbonHalfWidthCells(q) + 1.0
+                    : max(0.0, min(1.0, 0.3 + log(max(q, 1) / creek + 1) / 2.6))
                 let rad = Int(hw.rounded())
-                let intens = min(1.0, 0.6 + log(max(q, 1) / creek + 1) / 4)
+                let intens = ribbonMode ? haloIntensity
+                    : min(1.0, 0.6 + log(max(q, 1) / creek + 1) / 4)
                 var tx = bx - ax, tz = bz - az
                 let tl = (tx * tx + tz * tz).squareRoot(); if tl > 1e-6 { tx /= tl; tz /= tl }
                 let steps = max(1, Int(tl.rounded()))
@@ -680,6 +699,13 @@ final class SimNode: Node {
                 }
             }
         }
+        // Ribbon-Modus: im gestempelten Korridor darf auch das D8-Abflussfeld nur
+        // noch Saum-Intensität tragen — die D8-Drainage folgt dem gecarvten Bett
+        // und würde sonst die „sprenklige" Textur-Version UNTER dem Band rendern.
+        if ribbonMode {
+            for k in 0..<cnt where mstamp[k] && sd[k] > haloIntensity { sd[k] = haloIntensity }
+        }
+
         // Altarme (abgeschnürte Schleifen) als See-Overlay — verblassen mit dem Alter.
         // NUR substanzielle Schleifen (≥ 10 Knoten ≈ 15 Zellen Bogen): die Mäander-
         // Migration schnürt auch winzige 2–4-Knoten-Schlingen ab, die als
@@ -766,7 +792,10 @@ final class SimNode: Node {
         }
         lk.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         for k in 0..<cnt {
-            if !keep[k] { sd[k] = 0 }
+            // Der Ribbon-Saum liegt unter der Kohärenz-Schwelle (0.16) und würde
+            // hier weggefiltert — Korridor-Zellen sind aber per Definition Teil
+            // eines echten Laufs (Zentrumslinie), nicht Speckle: behalten.
+            if !keep[k] && !(ribbonMode && mstamp[k]) { sd[k] = 0 }
             if keep[k] && rawWet[k] { lk[k] = min(1, (hf[k] - h[k] - 0.03) / 0.10) }
             if oxb[k] > lk[k] { lk[k] = oxb[k] }
         }
@@ -888,15 +917,19 @@ final class SimNode: Node {
         return Double(x) / Double(UInt32.max)
     }
 
-    /// Geländehöhe an kontinuierlicher Grid-Position (bilinear auf terrain.h).
-    @inline(__always) private func treeBilinearH(_ gx: Double, _ gz: Double) -> Double {
+    /// Feldwert an kontinuierlicher Grid-Position (bilinear, randgeklemmt).
+    @inline(__always) private func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double) -> Double {
         let n = terrain.cfg.n
         let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
         let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
-        let h = terrain.h
         let k = yi * n + xi
-        return h[k] * (1 - fx) * (1 - fy) + h[k + 1] * fx * (1 - fy)
-             + h[k + n] * (1 - fx) * fy + h[k + n + 1] * fx * fy
+        return field[k] * (1 - fx) * (1 - fy) + field[k + 1] * fx * (1 - fy)
+             + field[k + n] * (1 - fx) * fy + field[k + n + 1] * fx * fy
+    }
+
+    /// Geländehöhe an kontinuierlicher Grid-Position (bilinear auf terrain.h).
+    @inline(__always) private func treeBilinearH(_ gx: Double, _ gz: Double) -> Double {
+        bilinearGrid(terrain.h, gx, gz)
     }
 
     /// MultiMesh-Transform-Puffer je Baum-Variante (0 Laubbaum, 1 Nadelbaum,
@@ -974,6 +1007,220 @@ final class SimNode: Node {
         }
         return PackedFloat32Array(out)
     }
+
+    // MARK: Fluss-Ribbons (Issue #31 — Band-Geometrie entlang der Mäander-
+    // Zentrumslinien statt Stempel→Raster→Render-Gitter-Doppelquantisierung).
+    // Reine Optik, NULL Sim-Rückwirkung; A/B-Schalter RS_RIVER_RIBBONS.
+
+    /// A/B-Schalter ohne Rebuild (Muster RS_NO_MEANDER_PAINT): gesetzt = Ribbons
+    /// rendern die Mäander, das Wasserfeld stempelt nur noch den Ufer-Saum.
+    private var riverRibbonsEnabled: Bool {
+        ProcessInfo.processInfo.environment["RS_RIVER_RIBBONS"] != nil
+    }
+
+    /// Halbbreite (Zellen) aus dem Abfluss `q` (Zellen Einzugsgebiet):
+    /// hydraulische Geometrie w ∝ √Q (Leopold/Maddock, Exponent b ≈ 0.5) statt
+    /// des 1-Zellen-Deckels des Stempels. Referenzpunkt renderMinCells → dort
+    /// 0.8 Zellen Halbbreite (≈ heutige Stempel-Optik); Boden 0.12 hält Oberläufe
+    /// als feine Fäden sichtbar, Deckel 3.2 verhindert Ströme-als-Seen auf den
+    /// verknäulten Ebenen (Lehre aus dem Blob-Felder-Rückbau des Stempels).
+    @inline(__always) private func ribbonHalfWidthCells(_ q: Double) -> Double {
+        let w = 0.8 * (max(q, 0) / terrain.cfg.renderMinCells).squareRoot()
+        return min(max(w, 0.12), 3.2)
+    }
+
+    /// Zentrumslinien-Stand beim letzten Ribbon-Build (Dirty-Vertrag wie
+    /// treeVegSnapshot): Knotenzahlen + Positionen, flach. Abfluss ändert sich
+    /// nur zusammen mit Positionen (Migration/computeFlow) — Positionen genügen.
+    private var riverSnapshot: [Double] = []
+    private var rrVerts: [Vector3] = []
+    private var rrCols: [Color] = []
+    private var rrUVs: [Vector2] = []
+    private var rrIdx: [Int32] = []
+
+    private func flattenedChannelPositions() -> [Double] {
+        var flat: [Double] = []
+        for ch in terrain.meander.channels {
+            flat.append(Double(ch.nodes.count))
+            for nd in ch.nodes { flat.append(nd.x); flat.append(nd.z) }
+        }
+        return flat
+    }
+
+    /// Maximale Knoten-Verschiebung (Zellen) seit `markRiversBuilt()`; bei
+    /// Struktur-Änderung (Cutoff, Resample, Neu-Saat, Laden) bewusst „riesig",
+    /// damit GDScript sofort rebuildet. Vor dem ersten Build ebenso.
+    /// EHRLICHE ERWARTUNG: während die Sim läuft, triggert das praktisch jeden
+    /// Schritt (Meander.migrate resampled unconditional → Knotenzahl ändert
+    /// sich). Der Vertrag spart im Pause-/Idle-/Sculpt-Zustand (kein Schritt →
+    /// Delta exakt 0 → kein Rebuild); im Zeitraffer deckelt Main.gd den Mesh-
+    /// Rebuild auf 1 Hz (gemessen: 0,30 s kosteten ~4 % FPS).
+    @Callable func riversMaxDelta() -> Double {
+        let flat = flattenedChannelPositions()
+        if flat.count != riverSnapshot.count { return 1e9 }
+        var maxD = 0.0
+        for i in 0..<flat.count { maxD = max(maxD, abs(flat[i] - riverSnapshot[i])) }
+        return maxD
+    }
+
+    /// Setzt den Rebuild-Vergleichspunkt auf die aktuellen Zentrumslinien.
+    @Callable func markRiversBuilt() { riverSnapshot = flattenedChannelPositions() }
+
+    /// Baut die Ribbon-Geometrie aus den Mäander-Zentrumslinien: Catmull-Rom-
+    /// geglättetes Band, Breite ∝ √Abfluss, Oberläufe laufen über Enden-Taper
+    /// fein aus. Vertex-Vertrag (konsumiert von water.gdshader):
+    ///   COLOR.rg = Fließrichtung (kodiert *0.5+0.5), COLOR.b = Strahler-Rang/6,
+    ///   COLOR.a = Deckkraft (Abfluss-Rampe × Kanal-Kohärenz × Taper),
+    ///   UV.x = Quer-Position 0..1 (Kanten-Feathering), UV.y = Bogenlänge (Welt).
+    /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y) —
+    /// deckt den Diskretisierungs-Fehler des gröberen Render-Gitters im Talgrund.
+    @Callable func buildRiverRibbons(hscale: Double, lift: Double) {
+        rrVerts.removeAll(keepingCapacity: true)
+        rrCols.removeAll(keepingCapacity: true)
+        rrUVs.removeAll(keepingCapacity: true)
+        rrIdx.removeAll(keepingCapacity: true)
+        let n = terrain.cfg.n
+        let cs = terrain.cfg.cellSize
+        let half = terrain.cfg.world / 2
+        let creek = terrain.cfg.renderMinCells
+        let smap = terrain.streamMap
+        // Strahler-Rang (D8-Netz ab Mäander-Schwelle): Rang-Maß für die
+        // Render-Hierarchie — hohe Ordnungen bleiben auch dort sichtbar, wo die
+        // Abfluss-Rampe allein sie ausblenden würde.
+        let orders = terrain.strahlerOrders(minCells: terrain.cfg.meanderMinCells)
+
+        let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
+        for ch in terrain.meander.channels {
+            let nodes = ch.nodes
+            let m = nodes.count
+            if m < 2 { continue }
+            // Catmull-Rom-Subdivision der Zentrumslinie; Abfluss linear je Segment.
+            var px: [Double] = [], pz: [Double] = [], pq: [Double] = []
+            px.reserveCapacity(m * subdivisions)
+            pz.reserveCapacity(m * subdivisions)
+            pq.reserveCapacity(m * subdivisions)
+            for i in 0..<(m - 1) {
+                let p0 = nodes[max(i - 1, 0)], p1 = nodes[i]
+                let p2 = nodes[i + 1], p3 = nodes[min(i + 2, m - 1)]
+                for s in 0..<subdivisions {
+                    let t = Double(s) / Double(subdivisions)
+                    let t2 = t * t, t3 = t2 * t
+                    px.append(0.5 * (2 * p1.x + (p2.x - p0.x) * t
+                        + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2
+                        + (3 * p1.x - p0.x - 3 * p2.x + p3.x) * t3))
+                    pz.append(0.5 * (2 * p1.z + (p2.z - p0.z) * t
+                        + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2
+                        + (3 * p1.z - p0.z - 3 * p2.z + p3.z) * t3))
+                    pq.append(ch.discharge[i] + (ch.discharge[i + 1] - ch.discharge[i]) * t)
+                }
+            }
+            px.append(nodes[m - 1].x); pz.append(nodes[m - 1].z); pq.append(ch.discharge[m - 1])
+            let cnt = px.count
+
+            // Deckkraft: Abfluss-Rampe je Sample (fein auslaufen statt harter
+            // renderMinCells-Kante) × Stream-Map-Kohärenz des ganzen Kanals
+            // (verwaiste/verknäulte Linien als Einheit ausblenden) × Strahler-Boden.
+            var alpha = [Double](repeating: 0, count: cnt)
+            var rank = [Double](repeating: 0, count: cnt)
+            var supportSum = 0.0, supportWeight = 0.0
+            for a in 0..<cnt {
+                let ci = min(max(Int(px[a].rounded()), 0), n - 1)
+                let cj = min(max(Int(pz[a].rounded()), 0), n - 1)
+                let k = cj * n + ci
+                let ord = Double(orders[k])
+                rank[a] = min(ord / 6.0, 1.0)
+                // Die Zentrumslinie ist kontinuierlich; die Sichtbarkeit ebenso
+                // bilinear aus der Stream-Map lesen. Nearest-Cell erzeugte bei
+                // Zellwechseln einzelne Alpha-Spitzen (sichtbare Dreiecksfächer).
+                let stream = bilinearGrid(smap, px[a], pz[a])
+                let mM = min(max((stream - 0.10) / 0.20, 0), 1)
+                let x = min(max(pq[a] / creek, 0), 1)
+                let ramp = x * x * (3 - 2 * x) // smoothstep(0, creek, q)
+                var aQ = ramp
+                if ord >= 3 { aQ = max(aQ, 0.5) }
+                alpha[a] = aQ
+                // Die Stream-Map entscheidet auf KANAL-Ebene: lokale
+                // Raster-Spitzen als Alpha zu übernehmen erzeugt isolierte
+                // Dreiecksfächer. Ein kohärent durchflossener Kanal bleibt
+                // stattdessen als ganzes Band sichtbar, inklusive Oberlauf.
+                let weight = max(ramp, 0.05)
+                supportSum += mM * weight
+                supportWeight += weight
+            }
+            let supportMean = supportSum / max(supportWeight, 1e-9)
+            let supportX = min(max((supportMean - 0.35) / 0.30, 0), 1)
+            let channelOpacity = supportX * supportX * (3 - 2 * supportX)
+            for a in 0..<cnt { alpha[a] *= channelOpacity }
+
+            // Diskrete Strahler-Zellen können an Netz-Kreuzungen verbleibende
+            // Sprünge erzeugen. Symmetrisch längs filtern: keine zeitliche
+            // Verzögerung, längere aktive Reaches bleiben unverändert.
+            let alphaRadius = 6 // Samples à ~0.5 Zellen → ±3 Zellen
+            var prefix = [Double](repeating: 0, count: cnt + 1)
+            for a in 0..<cnt { prefix[a + 1] = prefix[a] + alpha[a] }
+            for a in 0..<cnt {
+                let aLo = max(0, a - alphaRadius)
+                let aHi = min(cnt, a + alphaRadius + 1)
+                alpha[a] = (prefix[aHi] - prefix[aLo]) / Double(aHi - aLo)
+            }
+            // Unsichtbare Schwänze (Deckkraft ≈ 0) nicht emittieren; 2 Samples
+            // Vorlauf bleiben für den weichen Einstieg.
+            guard var lo = alpha.firstIndex(where: { $0 > 0.02 }),
+                  let hi = alpha.lastIndex(where: { $0 > 0.02 }) else { continue }
+            lo = max(0, lo - 2)
+            if hi - lo < 2 { continue }
+            // Kartografische Hierarchie: nur Zentrumslinien, die wenigstens
+            // Strahler 4 erreichen. Der feine Oberlauf DESSELBEN Bands bleibt
+            // vollständig erhalten; Ordnung 3 ließ im fokussierten 20k-A/B noch
+            // hunderte überlagerte Mäander auf der Ebene sichtbar werden.
+            if !rank[lo...hi].contains(where: { $0 >= 0.65 }) { continue }
+
+            // Bogenlängen (Welt) für Taper und UV.y.
+            var arc = [Double](repeating: 0, count: cnt)
+            for a in (lo + 1)...hi {
+                let dx = (px[a] - px[a - 1]) * cs, dz = (pz[a] - pz[a - 1]) * cs
+                arc[a] = arc[a - 1] + (dx * dx + dz * dz).squareRoot()
+            }
+            let total = arc[hi]
+
+            let base = rrVerts.count
+            for a in lo...hi {
+                let a0 = max(lo, a - 1), a1 = min(hi, a + 1)
+                var tx = px[a1] - px[a0], tz = pz[a1] - pz[a0]
+                let tl = (tx * tx + tz * tz).squareRoot()
+                if tl > 1e-9 { tx /= tl; tz /= tl }
+                // Enden-Taper: Quelle läuft über ~4 Zellen zur Spitze aus,
+                // Mündung über ~2 Zellen (dort übernimmt Meer/See).
+                let taper = min(1, min(arc[a] / (4 * cs), (total - arc[a]) / (2 * cs)))
+                let hw = ribbonHalfWidthCells(pq[a]) * cs * max(taper, 0.0)
+                let wx = px[a] * cs - half, wz = pz[a] * cs - half
+                let perpx = -tz * hw, perpz = tx * hw
+                // Jede Kante folgt ihrer eigenen lokalen Höhe. Eine gemeinsame
+                // Zentrumslinien-Höhe schneidet das Band an Quergefällen ins
+                // Terrain; sichtbar bleiben dann nur radiale Dreiecksfragmente.
+                let edgeGX = perpx / cs, edgeGZ = perpz / cs
+                let yLeft = Float(treeBilinearH(px[a] - edgeGX, pz[a] - edgeGZ) * hscale + lift)
+                let yRight = Float(treeBilinearH(px[a] + edgeGX, pz[a] + edgeGZ) * hscale + lift)
+                rrVerts.append(Vector3(x: Float(wx - perpx), y: yLeft, z: Float(wz - perpz)))
+                rrVerts.append(Vector3(x: Float(wx + perpx), y: yRight, z: Float(wz + perpz)))
+                let col = Color(r: Float(tx * 0.5 + 0.5), g: Float(tz * 0.5 + 0.5),
+                                b: Float(rank[a]), a: Float(alpha[a] * taper))
+                rrCols.append(col); rrCols.append(col)
+                rrUVs.append(Vector2(x: 0, y: Float(arc[a])))
+                rrUVs.append(Vector2(x: 1, y: Float(arc[a])))
+                if a > lo {
+                    let v = Int32(base + (a - lo - 1) * 2)
+                    rrIdx.append(v); rrIdx.append(v + 2); rrIdx.append(v + 1)
+                    rrIdx.append(v + 1); rrIdx.append(v + 2); rrIdx.append(v + 3)
+                }
+            }
+        }
+    }
+
+    @Callable func riverRibbonVerts() -> PackedVector3Array { PackedVector3Array(rrVerts) }
+    @Callable func riverRibbonColors() -> PackedColorArray { PackedColorArray(rrCols) }
+    @Callable func riverRibbonUVs() -> PackedVector2Array { PackedVector2Array(rrUVs) }
+    @Callable func riverRibbonIndices() -> PackedInt32Array { PackedInt32Array(rrIdx) }
 
     private func pack(_ a: [Double]) -> PackedFloat32Array {
         var f = [Float](repeating: 0, count: a.count)
