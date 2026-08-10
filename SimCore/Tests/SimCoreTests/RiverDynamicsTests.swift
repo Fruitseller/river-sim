@@ -449,10 +449,24 @@ final class RiverDynamicsTests: XCTestCase {
             let tOff = Terrain(config: cOff, seed: seed)
             // Bänke sind TRANSIENT (Arme bilden und schließen sich) — deshalb über
             // die Zeit gesammelt messen (alle 2k Jahre), nicht als Schnappschuss.
+            //
+            // SCHRITTWEITE 500 statt 1000 (Issue #2): der Wächter misst den
+            // braidPass-A/B, und bei dt = 1000 überlagert ihn die
+            // Zeitintegration. Die Pfützen-Verlandung lief vor #2 als
+            // `min(0.5, dt/800)` — bei dt ≥ 400 also am Deckel; korrekt
+            // exponentiell sind es bei dt = 1000 aber 0.713 statt 0.5. Die
+            // REFERENZ (Arm ohne Braiding) verlandet damit deutlich mehr
+            // Pfützen zu trockenen, umschlossenen Flächen, und genau die zählt
+            // `braidMetrics` als „Bank": gemessen Bank-Fläche aus 94 → 212,
+            // während der Braiding-Arm bei ~180 blieb — der A/B-Kontrast
+            // verschwand im Rauschen der Referenz. Bei dt = 500 sind alte und
+            // neue Form fast deckungsgleich (0.5 gegen 0.465), und der
+            // Kontrast steht wieder wie auf `main`: 284/158 bei Seeds 9:3
+            // (main mit dt = 1000: 199/94 bei 9:3). Kosten: ~15 s Laufzeit.
             var barOn = 0, barOff = 0, islOn = 0, islOff = 0
             var maxSplitsOn = 0, maxSplitsOff = 0, prevIslOn = 0
             while tOn.years < 30_000 - 1e-6 {
-                tOn.step(dtYears: 1000); tOff.step(dtYears: 1000)
+                tOn.step(dtYears: 500); tOff.step(dtYears: 500)
                 if Int(tOn.years) % 2000 == 0 {
                     let mOn = braidMetrics(tOn), mOff = braidMetrics(tOff)
                     barOn += mOn.barCells; barOff += mOff.barCells

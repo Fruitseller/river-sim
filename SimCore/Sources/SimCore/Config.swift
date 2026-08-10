@@ -261,7 +261,13 @@ public struct SimConfig: Sendable {
     public var renderMinCells: Double = 320  // ab so viel Einzugsgebiet (Zellen) wird ein Lauf GEMALT. Bewusst über dem Physik-Gate (User: „zu viele Flüsse"): Braiding wirkt ab 120 weiter, sichtbar sind nur substanzielle Flüsse. Auf der 832er-Map qualifizieren sich sonst absolut mehr Läufe über dieselbe Schwelle.
     public var braidExponent: Double = 2.5   // Partitions-Exponent m (>1 ist die Bänke-bauende Instabilität)
     public var braidCapacity: Double = 5.0e-6 // Kb: weniger Kapazität lässt überlastete Reaches Bänke ablagern (n=256: Insel-Summe 9 vs. 4 ohne Pass)
-    public var braidBarHeight: Double = 0.006 // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln
+    // Bänke dürfen so weit über den Wasserspiegel (hf) wachsen → Inseln. Seit
+    // Issue #2 deckelt derselbe Wert AUCH die Deposition der nicht-aktiven
+    // Reaches (Delta/Seerand) in `braidPass`; dort stand vorher ein fester
+    // Aufschlag von +0.005 JE SCHRITT, der sich im Zeitraffer aufaddierte. Als
+    // gemeinsame geometrische Obergrenze ist der Deckel schrittweiten-frei
+    // (Begründung ausführlich in `braidPass`).
+    public var braidBarHeight: Double = 0.006
     public var braidDispersion: Double = 2.0 // dispersiver MFD-Exponent auf FLACHEN großen subaerischen Läufen (Quinn 1995: Exponent abfluss-abhängig, Terrain.mfdLocalExponent): Hänge konvergieren mit mfdExponent=4 (Look), Braid-Plains spreizen mit 2.0 → Fäden können sich um Bänke teilen, ohne als Sheet-Flow zu zerlaufen (1.3 zerlief)
 
     // ---- Droplet-Hydraulik-Erosion (carvt feines dendritisches Detail) ----
@@ -336,7 +342,17 @@ public struct SimConfig: Sendable {
     public var breachTargetLakeFrac = 0.05   // Ziel: See-Anteil am Land < 5% → Stopp
     public var basinFill = false            // AUS seit die Hebung niedrig ist (0.0015): Auslass-Inzision + wenig Hebung halten den See-Anteil schon von allein bei ~15% als DISKRETE blaue Seen. basinFill würde sie zu ~1% überfüllen → blasse, trockene Flach-Ebenen (die das Stream-Overlay weiß übermalt). Nur bei hoher Hebung nötig.
     public var puddleFillDepth = 0.06       // NUR seichtes Ponding verlandet (anders als basinFill): geflutete Auen trugen sonst dauerhafte Flachwasser-Sprenkel („Blob-Fetzen", total unrealistisch). Echte Seen sind tiefer und bleiben.
-    public var puddleFillYears = 800.0      // Zeitkonstante der Pfützen-Verlandung (0 = aus)
+    // Zeitkonstante der Pfützen-Verlandung (0 = aus). Seit Issue #2 EXPONENTIELL
+    // gelesen (`1 − e^(−dt/τ)` statt `min(0.5, dt/τ)`) — der Wert selbst ist
+    // unverändert, aber er bedeutet jetzt wirklich eine Zeitkonstante: der
+    // Anteil, der in dt verlandet, teleskopiert über beliebig viele Teilschritte.
+    // Die alte lineare Form war ab dt = 400 J. am 0.5-Deckel und ließ große
+    // Schritte systematisch zu viel Ponding stehen (dt = 2000: 0.5 statt der
+    // korrekten 0.918). Gemessen an der Pfützen-Bilanz über 20k Jahre
+    // (n=192, Seed 1337): verlandetes Volumen 205 (dt=240) gegen 18 (dt=2000) —
+    // der Rest der Lücke ist die Operator-Splitting-Drift des Tropfen-Passes,
+    // s. docs/dt-invariance-measurements.md.
+    public var puddleFillYears = 800.0
     public var puddleLakeCoreCells = 48     // See-Kern-Schwelle der Pfützen-Verlandung (s. fillShallowPonds): eine Wasser-Komponente mit ≥ so vielen TIEFEN Zellen (Tiefe > puddleFillDepth) ist ein SEE — ihr Ufersaum verlandet nicht mehr pauschal (die Säume hoben sich sonst als Ganzes sichtbar an: „wachsender Boden ohne Wasser", 90% der Tiefland-Hebung), sondern nur physisch über Droplet-Deltas. Braid-/Auen-Pfützennetze (Einzelpools ≪ 48 tiefe Zellen) verlanden unverändert — Komponentengrößen-Schwellen (64/400 Zellen) und „berührt einen Pool" kippten dagegen den Braid-Insel-Guard, ein relativer Kern-Anteil (20%) ließ den Problemfall (riesiger Saum, kompakter Kern) durch.
     // ---- Verdunstung in abflusslosen Becken (endorheische Seen, Issue #11) ----
     // Der Priority-Flood füllt jedes geschlossene Becken bis zur SILL, ohne
@@ -636,6 +652,17 @@ public struct SimConfig: Sendable {
     // ---- Küste ----
     public var waveBand: Double = 0.06
     public var waveTalus: Double = 0.002
+    // Stärke der Wellen-Relaxation JE 100-JAHR-TEILSCHRITT (0 = Küstenerosion
+    // aus). Seit Issue #2 ist `wavePass` sub-getaktet wie die Hangdiffusion:
+    // feste Teilschritt-Stärke, Anzahl ∝ dt (`Terrain.waveSchedule`). Vorher war
+    // es eine Zählschleife `max(1, min(24, dt/100))` mit VOLLER Stärke je
+    // Durchlauf — ein Zeitraffer-Schritt (dt ≈ 9…240 J.) bekam damit die volle
+    // 100-Jahr-Relaxation, und ab dt > 2400 sättigte der Deckel. Gemessen
+    // (n=192, 20k Jahre, Seed 1337, zeitgemittelt): Küstenzone 5529 Zellen bei
+    // dt=10 gegen 4003 bei dt=240 und 4042 bei dt=2000 (Spanne 38 %) — nach dem
+    // Fix 4118 / 4095 / 4137 (Spanne 1.0 %). Der Wert 0.5 ist unverändert und
+    // bei dt = k·100 auch der Takt (k Teilschritte) — die Kalibrierung ist
+    // gepinnt, nur die Schrittweiten-Abhängigkeit fällt weg.
     public var waveRelax: Double = 0.5
 
     // ---- Höhenbänder (Issue #4): Perzentile statt absoluter Schwellen ----
@@ -691,7 +718,15 @@ public struct SimConfig: Sendable {
     public var heightBandsOverride: HeightBands? = nil
 
     // ---- Klima / Vegetation ----
-    public var vegTimeConstant: Double = 250 // Jahre
+    // Zeitkonstante der Vegetations-Relaxation, Jahre. Seit Issue #2
+    // EXPONENTIELL (`1 − e^(−dt/τ)`, wie der Flood-Kill daneben schon immer):
+    // die lineare Form `min(1, dt/τ)` war bei τ = 250 ab dt = 250 J. GESÄTTIGT,
+    // ein +2000-Jahre-Sprung setzte `veg` also instantan aufs geografische Ziel,
+    // derselbe Zeitraum in 240-Jahr-Schritten dagegen relaxierte (gemessen:
+    // Faktor 0.96 je Schritt linear gegen 0.62 exponentiell bei dt = 240).
+    // `veg` geht über `vegDamp` in JEDEN Erosionspass ein — der Unterschied
+    // wanderte damit direkt ins Relief. Der Wert selbst ist unverändert.
+    public var vegTimeConstant: Double = 250
 
     // ---- Vegetations-Typen (Stufe 2: Gras/Wald/Auwald) ----
     // Die Klassen werden je Zelle aus veg + Flussnähe + Steigung abgeleitet
@@ -753,7 +788,15 @@ public struct SimConfig: Sendable {
     public var meanderBankErode: Double = 1.2e-4  // Prallhang-Erosion (lateral, massenerhaltend)
     public var meanderBankWidth: Double = 1.6     // Halbbreite Ufer-Versatz (Zellen)
     public var channelErodeDamp: Double = 0.4     // Grid-Stream-Power auf Kanalzellen (Reconciliation)
-    public var oxbowFillYears: Double = 5500      // Zeitkonstante der Altarm-Verlandung (gleicht das längere Stream-Map-Gedächtnis aus; Bett steigt zum Rand)
+    // Zeitkonstante der Altarm-Verlandung (gleicht das längere Stream-Map-
+    // Gedächtnis aus; Bett steigt zum Rand). Seit Issue #2 EXPONENTIELL
+    // (`1 − e^(−dt/τ)` statt `min(1, dt/τ)`): die lineare Form verlandete einen
+    // Altarm bei einem +5500-Jahre-Sprung KOMPLETT in einem Schritt, dieselbe
+    // Zeit in kleinen Schritten dagegen nur zu 63 % (1 − 1/e). Der Wert ist
+    // unverändert — die Wächter `testMeanderOxbowSiltsUp`/`testMeanderOxbowAging`
+    // laufen mit dt = 500 (Faktor 0.0909 linear gegen 0.0870 exponentiell,
+    // −4.3 %) und bleiben damit im gepinnten Band.
+    public var oxbowFillYears: Double = 5500
     public var oxbowMaxAge: Double = 25000        // ab diesem Alter gilt der Altarm als verlandet (aus der Liste)
 
     // ---- Störung / Regeneration nach Spieler-Eingriffen (Issue #26) ----

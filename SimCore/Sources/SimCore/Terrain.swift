@@ -199,6 +199,14 @@ public final class Terrain {
     private var seed: UInt32
     private var stepCount: UInt32 = 0 // deterministischer Zähler für die Droplet-Seeds
     private var flowStepCount: UInt32 = 0
+    /// Angebrochener Tropfen aus dem letzten Schritt (Issue #2). Die Tropfenzahl
+    /// ist eine RATE (`hydraulicPerYear` · Fläche · dt); bei Frame-Zeitschritten
+    /// unter einem halben Jahr ist der Sollwert < 1, und ein `max(1, …)` je
+    /// Schritt hätte daraus dauerhaft aufgerundete Erosion gemacht. Der Rest
+    /// wird stattdessen mitgenommen und beim nächsten Schritt eingelöst → über
+    /// die Zeit ist die Tropfenzahl exakt ∝ Simulationszeit, egal wie fein
+    /// getaktet wird.
+    private var dropCarry: Double = 0
 
     public init(config: SimConfig = SimConfig(), seed: UInt32 = 1337) {
         self.cfg = config
@@ -277,6 +285,7 @@ public final class Terrain {
         self.years = 0
         self.stepCount = 0
         self.flowStepCount = 0
+        self.dropCarry = 0
         noise = SimplexNoise(seed: seed)
 
         // Tektonik-Feld: fix je Terrain (reale Tektonik wechselt nicht alle 100 J).
@@ -812,7 +821,12 @@ public final class Terrain {
     public func updateVegetation(years: Double) {
         updateHeightBands()
         let bands = heightBands
-        let f = min(1, years / cfg.vegTimeConstant)
+        // Exponentielle Relaxation (Issue #2) wie beim Flood-Kill darunter: die
+        // lineare Form war bei τ = 250 a schon ab dt = 250 gesättigt (ein
+        // 2000-Jahr-Sprung setzte `veg` INSTANTAN aufs Ziel, derselbe Zeitraum
+        // in 240-Jahr-Schritten nicht). `veg` geht über `vegDamp` in JEDEN
+        // Erosionspass ein — die Abweichung wanderte damit direkt ins Relief.
+        let f = 1 - exp(-years / cfg.vegTimeConstant)
         // Flood-Kill (Stufe 3): eigene, schnelle Zeitkonstante. Exponentiell
         // exakt (1 − e^(−dt/τ)) statt linear gedeckelt: bei τ = 20a ist schon
         // ein Zeitraffer-Schritt (dt ≈ 9..240 J.) fast vollständig — die
@@ -1602,6 +1616,20 @@ public final class Terrain {
         let mB = cfg.braidExponent
         let kb = cfg.braidCapacity * dt
         let sqrt2 = 2.0.squareRoot()
+        // Depositions-Deckel als GEOMETRISCHE OBERGRENZE statt als Zugabe JE
+        // SCHRITT (Issue #2). Vorher: `min(qin, (hf−h) + 0.005)` — der
+        // Aufschlag lag ÜBER dem aktuellen h, nicht über dem Wasserspiegel.
+        // Sobald h den Spiegel erreicht hatte, durfte jeder Schritt weitere
+        // 0.005 draufsetzen: im Zeitraffer wuchs derselbe Seerand also
+        // schrittzahl-proportional weiter, während ein großer Sprung an
+        // derselben Kappung hängenblieb. Jetzt dieselbe Semantik wie im aktiven
+        // Zweig unten („Bänke bis knapp über den Wasserspiegel"): Obergrenze
+        // `hf + braidBarHeight`. Die addiert sich nicht auf — viele kleine
+        // Schritte laufen gegen genau dieselbe Kante wie ein großer.
+        // Verworfen: der Aufschlag ∝ dt (0.005 je 100 J.) — bei dt = 2000 wären
+        // das +0.1 in EINEM Schritt, also ein 1.6-fach `puddleFillDepth` hoher
+        // Damm aus dem Stand (gemessen: Seeanteil dt=2000 0.1490 statt 0.1422).
+        let overfill = cfg.braidBarHeight
         for k in 0..<cfg.count { qs[k] = 0 }
         var nbK = [Int](repeating: 0, count: 8)
         var nbW = [Double](repeating: 0, count: 8)
@@ -1621,7 +1649,7 @@ public final class Terrain {
                 // Kein Braid-Reach: Fracht landet hier ab (Delta/Seerand), Überschuss
                 // über den Stauraum hinaus gilt als exportiert (wie transportLimited).
                 if qin > 0 && hf[k] > cfg.sea {
-                    depositCell(k, min(qin, max(0, hf[k] - h[k]) + 0.005))
+                    depositCell(k, min(qin, max(0, hf[k] + overfill - h[k])))
                 }
                 continue
             }
@@ -1680,6 +1708,17 @@ public final class Terrain {
                 // tiefsten Empfänger — halber Weg wie transportLimited).
                 var lowest = h[k]
                 for t in 0..<cnt { lowest = min(lowest, h[nbK[t]]) }
+                // Der SCOUR-Deckel bleibt bewusst bei festen 0.5 je Schritt und
+                // wird NICHT auf `stepCapFraction` umgestellt (Issue #2 nennt
+                // die DEPOSITIONS-Deckel; dies ist die Erosionsseite): mit der
+                // Rate darf ein 200-Jahr-Schritt 0.75 statt 0.5 der lokalen
+                // Differenz ausräumen, und der Braid-Scour gräbt damit den
+                // Boden der abflusslosen Becken tiefer — gemessen fiel die
+                // trockengefallene, verkrustete Playa-Fläche von >100 auf 35
+                // Zellen und die #11-Wächter `testDriedBedIsRenderedAsPlaya`
+                // und `testBasinLevelIsRateLimited` kippten. Damit bleibt hier
+                // eine bekannte (kleine) Schrittweiten-Abhängigkeit stehen;
+                // sie ist in docs/dt-invariance-measurements.md §5 vermerkt.
                 let want = (qcTot - qin) * vegDamp(k)
                 let er = erodeCell(k, min(want, max(0, h[k] - lowest) * 0.5))
                 qout += er
@@ -1868,7 +1907,10 @@ public final class Terrain {
     /// große geschlossene Becken werden über die Zeit zu flachen Schwemmebenen
     /// statt riesiger Seen. Volle SPACE-Physik (Deltas/Mäander) folgt in M3.
     private func fillLakes(dt: Double) {
-        let rate = min(0.5, dt / 3000.0) // Zeitkonstante ~3000 Jahre
+        // Exponentiell statt linear gedeckelt (Issue #2): 1 − e^(−dt/τ)
+        // teleskopiert über beliebig viele Teilschritte exakt zum Ergebnis EINES
+        // Sprungs (wie `relaxWaterLevel`), `min(0.5, dt/τ)` tat das nicht.
+        let rate = 1 - exp(-dt / 3000.0) // Zeitkonstante ~3000 Jahre
         for k in 0..<cfg.count where hf[k] > cfg.sea {
             let deficit = hf[k] - h[k]
             if deficit > 0.001 {
@@ -1900,7 +1942,12 @@ public final class Terrain {
     /// Ziel bewusst das volle hf, NICHT der geglättete waterLevel (über 3 Seeds
     /// ohne messbaren Volumen-Effekt, drückte aber die Braid-Bänke 9→2).
     private func fillShallowPonds(dt: Double) {
-        let rate = min(0.5, dt / cfg.puddleFillYears)
+        // Exponentielle Relaxation (Issue #2, s. fillLakes): die lineare Form
+        // verlandete den Zeitraffer (viele kleine dt) und den Sprung
+        // unterschiedlich schnell — mit `puddleFillYears = 800` deckelte
+        // `min(0.5, dt/τ)` schon ab dt = 400 und ließ große Schritte
+        // systematisch zu viel Ponding stehen.
+        let rate = 1 - exp(-dt / cfg.puddleFillYears)
         let sea = cfg.sea, nn = n
         // Persistente Puffer (Hot-Loop, keine Allokation je Schritt).
         for k in 0..<cfg.count { pondSeen[k] = false }
@@ -1999,7 +2046,10 @@ public final class Terrain {
     private func floodplainAggradation(dt: Double) {
         let cellArea = cfg.cellSize * cfg.cellSize
         let minA = cfg.floodplainMinArea
-        let rate = min(0.6, dt / cfg.floodplainFillYears)
+        // Exponentiell (Issue #2, s. fillLakes) — der Pass ist zwar geparkt
+        // (`floodplainEnabled = false`), soll aber nicht mit einer bekannt
+        // dt-abhängigen Relaxation als Referenz liegenbleiben.
+        let rate = 1 - exp(-dt / cfg.floodplainFillYears)
         if rate <= 0 { return }
         for k in 0..<cfg.count {
             if hf[k] <= cfg.sea || h[k] <= cfg.sea { continue }
@@ -2133,7 +2183,12 @@ public final class Terrain {
 
     // MARK: - Wellenerosion (Küstenzone)
 
-    private func wavePass() {
+    /// EIN Teilschritt der Küstenerosion. `relax` ist die Stärke DIESES
+    /// Teilschritts; wie viele Teilschritte ein Zeitschritt bekommt und wie stark
+    /// jeder ist, legt `waveSchedule(dt:)` fest — die Gesamtwirkung ist damit
+    /// ∝ dt (Issue #2), genau wie bei der Hangdiffusion.
+    private func wavePass(relax: Double) {
+        if relax <= 0 { return }
         for j in 1..<(n - 1) {
             for i in 1..<(n - 1) {
                 let k = idx(i, j)
@@ -2145,7 +2200,7 @@ public final class Terrain {
                     if d > bestDrop { bestDrop = d; best = nb }
                 }
                 if best >= 0 {
-                    let move = (bestDrop - cfg.waveTalus) * 0.5 * cfg.waveRelax
+                    let move = (bestDrop - cfg.waveTalus) * 0.5 * relax
                     let ms = min(move, sed[k])
                     let mr = (move - ms) * 0.5
                     sed[k] -= ms
@@ -2156,6 +2211,31 @@ public final class Terrain {
                 }
             }
         }
+    }
+
+    /// Teilschritt-Takt der Küstenerosion (Issue #2). Dieselbe Bauart wie beim
+    /// Diffusions-Substepping: die STÄRKE eines Teilschritts ist fest
+    /// (`waveRelax` je 100 Jahre — der kalibrierte Wert), die ANZAHL wächst
+    /// mit `dt`. Vorher war `wavePass` eine reine ZÄHLSCHLEIFE
+    /// (`max(1, min(24, dt/100))`) mit voller Stärke je Durchlauf: ein
+    /// Zeitraffer-Schritt (dt ≈ 9 J.) bekam damit die volle 100-Jahr-Relaxation
+    /// → bis zu 11× zu viel Küstenerosion, und ab dt > 2400 sättigte der Deckel
+    /// 24 → große Sprünge erodierten zu wenig. Gemessen (n=192, 20k J., Seed
+    /// 1337): Küstenzone 5943 Zellen bei dt=10 gegen 4314 bei dt=240.
+    /// Bei dt = k·100 ist der Takt identisch zu vorher (k Teilschritte voller
+    /// Stärke) — die Kalibrierung von `waveRelax` bleibt damit unangetastet.
+    ///
+    /// KOSTEN: der Wegfall des 24er-Deckels macht einen +10.000-Jahre-Sprung
+    /// zu 100 Küsten-Teilschritten (vorher 24). Das ist die minimale Zahl, mit
+    /// der die Teilschritt-Stärke unter `waveRelax` bleibt — und der Pass ist
+    /// ein reiner O(n²)-Scan über das Höhenfeld ohne Nachbarschafts-Suche,
+    /// also die billigste Sorte Pass in `step()`.
+    private func waveSchedule(dt: Double) -> (count: Int, relax: Double) {
+        let total = cfg.waveRelax * dt / 100          // Gesamt-Relaxation dieses Schritts
+        // Aufrunden, nicht runden: kein Teilschritt darf STÄRKER als der
+        // kalibrierte 100-Jahr-Schritt werden (Stabilität wie subK ≤ 0.2).
+        let count = max(1, Int((dt / 100).rounded(.up)))
+        return (count, total / Double(count))
     }
 
     // MARK: - Tektonik / Isostasie
@@ -2535,6 +2615,44 @@ public final class Terrain {
 
     // MARK: - Mäander-Kopplung ins Höhenfeld (M3)
 
+    /// **Schritt-Deckel als Rate** (Issue #2). Mehrere Pässe deckeln ihren
+    /// Eingriff auf einen Anteil der lokalen Höhendifferenz („nicht unter den
+    /// Empfänger graben", „nicht über den Innenhang schütten"). Dieser Anteil
+    /// war fest `0.5` JE SCHRITT — also dt-abhängig: viele kleine Schritte
+    /// nehmen jedes Mal die Hälfte des Rests und kommen der Grenze beliebig
+    /// nahe, ein einziger großer Schritt bleibt bei der Hälfte stehen.
+    ///
+    /// Wichtig ist dabei, WO der Fehler sitzt: bei KLEINEM dt ist der feste
+    /// Deckel richtig. Der Eingriff selbst ist dort ∝ dt und winzig, der Deckel
+    /// greift gar nicht, und über viele Schritte nähert sich das Gelände der
+    /// Grenze asymptotisch an — genau das Kontinuums-Verhalten. Falsch ist er
+    /// nur bei GROSSEM dt: dort bleibt ein einzelner Schritt bei der Hälfte
+    /// stehen, wo dieselbe Zeit in Teilschritten fast an die Grenze käme.
+    ///
+    /// Deshalb `max(0.5, 1 − e^(−dt·ln2/500))`:
+    /// - **dt ≤ 500 J. → exakt die alten 0.5.** Die gesamte bestehende
+    ///   Kalibrierung (Mäander-, Altarm-, Becken- und Langlauf-Wächter takten
+    ///   mit dt ≤ 500) bleibt damit bit-genau unangetastet.
+    /// - **dt > 500 J.** wächst der Deckel weiter, statt bei der Hälfte zu
+    ///   kleben: 0.75 bei 1000, 0.94 bei 2000, 0.999 bei 5000 — ein
+    ///   2000-Jahr-Sprung gibt also praktisch dasselbe frei wie vier
+    ///   500-Jahr-Schritte (1 − 0.5⁴ = 0.9375).
+    ///
+    /// Verworfen: die reine Exponentialform ohne Untergrenze. Sie drosselt
+    /// KLEINE Schritte künstlich (bei dt = 20 J. nur 0.027 statt 0.5) und
+    /// verschob damit genau die Wächter, die in 20-Jahr-Schritten messen —
+    /// `EndorheicEvaporation.testBasinLevelIsRateLimited` (max. Spiegelsprung
+    /// 0.0073 gegen die Schranke 0.002) bzw., mit dem zuerst probierten Anker
+    /// 100 J., `Lithology.testEndorheicMechanicsSurviveLithology`.
+    /// Der Deckel bleibt in jeder Variante ein Deckel: er gibt nie MEHR frei
+    /// als die volle Höhendifferenz, der Eingriff kann also nicht überschießen.
+    @inline(__always) private func stepCapFraction(_ dt: Double) -> Double {
+        max(0.5, 1 - exp(-dt * 0.6931471805599453 / 500))
+    }
+
+    /// Zugang für den dt-Wächter (`DtInvariance.testStepCapsAreRates`).
+    func stepCapFractionForTests(_ dt: Double) -> Double { stepCapFraction(dt) }
+
     /// Trägt an Zelle `k` `amount` ab (erst Sediment, dann Fels) — hält
     /// h = rock + sed. Gibt den tatsächlich abgetragenen Betrag zurück.
     @inline(__always) private func erodeCell(_ k: Int, _ amount: Double) -> Double {
@@ -2565,6 +2683,7 @@ public final class Terrain {
         let cs = cfg.cellSize
         let cellArea = cs * cs
         let width = cfg.meanderBankWidth
+        let capF = stepCapFraction(dt)  // war fest 0.5 je Schritt (Issue #2)
         for ch in meander.channels {
             let nodes = ch.nodes
             guard nodes.count >= 2 else { continue }
@@ -2595,7 +2714,7 @@ public final class Terrain {
                     // Regrünung kommt per Sukzession von den Nachbarn zurück,
                     // sobald der Lauf weiterwandert.
                     veg[k] = 0
-                    let cap = max(0, h[k] - hb) * 0.5             // nicht unter stromab graben
+                    let cap = max(0, h[k] - hb) * capF           // nicht unter stromab graben
                     _ = erodeCell(k, min(carveRate, cap))
                 }
             }
@@ -2625,7 +2744,8 @@ public final class Terrain {
                 let qA = ch.discharge[i] * cellArea
                 let want = cfg.meanderBankErode * pow(max(qA, 0), m) * abs(curv) * dt
                 // nur so viel, dass der Prallhang nicht unter den Innenhang fällt
-                let cap = max(0, h[ko] - h[ki]) * 0.5
+                // (Anteil je Schritt als RATE, s. stepCapFraction)
+                let cap = max(0, h[ko] - h[ki]) * capF
                 let moved = erodeCell(ko, min(want, cap))
                 depositCell(ki, moved)
             }
@@ -2638,7 +2758,10 @@ public final class Terrain {
     /// `oxbowFillYears`) Richtung Uferrand an (Sediment) — der See verschwindet
     /// allmählich. Vollständig verlandete Altarme fallen aus der Liste.
     private func fillOxbows(dt: Double) {
-        let rate = min(1.0, dt / cfg.oxbowFillYears)
+        // Exponentiell (Issue #2, s. fillLakes): `min(1, dt/τ)` verlandete einen
+        // 5500-Jahr-Sprung komplett in EINEM Schritt, dieselbe Zeit in kleinen
+        // Schritten dagegen nur zu 63 % (1 − 1/e).
+        let rate = 1 - exp(-dt / cfg.oxbowFillYears)
         for loop in meander.oxbows {
             for nd in loop {
                 let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
@@ -2673,6 +2796,21 @@ public final class Terrain {
     }
 
     // MARK: - Zeitschritt
+
+    /// Tropfenzahl dieses Zeitschritts. Die Dichte ist auf n = 640 kalibriert
+    /// (Tropfen ∝ Zeit × Fläche); der angebrochene Rest wandert über `dropCarry`
+    /// in den nächsten Schritt, statt je Schritt auf 1 aufgerundet zu werden
+    /// (Issue #2 Ursache 3 — bei dt = 0.2 J./Frame verlangte die Rate 0.09
+    /// Tropfen und `max(1, …)` lieferte 1, also über 11× zu viel
+    /// Droplet-Erosion gegenüber demselben Zeitraum als Sprung).
+    /// Nicht `private`, damit der Wächter die reine Zählung prüfen kann.
+    func dropletCount(dtYears dt: Double) -> Int {
+        let density = Double(n * n) / (640.0 * 640.0)
+        dropCarry += dt * cfg.hydraulicPerYear * density
+        let drops = Int(dropCarry)
+        dropCarry -= Double(drops)
+        return drops
+    }
 
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist
     /// implizit stabil); die Hangprozesse werden intern anteilig getaktet.
@@ -2722,8 +2860,7 @@ public final class Terrain {
             if cfg.braidingEnabled { braidPass(dt: dt) }
             // 2) Droplet-Erosion legt die feine dendritische Textur (nickmcd-Look) hinein.
             // Tropfen ∝ Zeit × Fläche (Dichte kalibriert auf n = 640).
-            let density = Double(n * n) / (640.0 * 640.0)
-            let drops = max(1, Int(dt * cfg.hydraulicPerYear * density))
+            let drops = dropletCount(dtYears: dt)
             let dropSeed = seed &+ stepCount &* 2_654_435_761
             for k in 0..<cfg.count { trackBuf[k] = 0 }
             // Kanalmaske mit: auf Mäanderbetten ist die Tropfen-DEPOSITION gedämpft
@@ -2773,11 +2910,18 @@ public final class Terrain {
             let nSub = max(1, Int((totalK / 0.2).rounded(.up)))   // stabil: Teilschritt-kappa ≤ 0.2
             let subK = totalK / Double(nSub)
             for _ in 0..<nSub { hillslopeDiffusion(base: subK) }
-            let nWave = max(1, min(24, Int((dt / 100).rounded())))
-            for _ in 0..<nWave { wavePass() }
+            // Küstenerosion ebenfalls sub-getaktet (Issue #2, s. waveSchedule).
+            let wave = waveSchedule(dt: dt)
+            for _ in 0..<wave.count { wavePass(relax: wave.relax) }
         } else {
             transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
-            for _ in 0..<passes { diffusionPass(); wavePass() }
+            // Testpfad: Diffusion und Wave bleiben verschränkt wie bisher. Beide
+            // Taktzahlen sind ~dt/100, bei dt = k·100 also identisch zu vorher.
+            let wave = waveSchedule(dt: dt)
+            for i in 0..<max(passes, wave.count) {
+                if i < passes { diffusionPass() }
+                if i < wave.count { wavePass(relax: wave.relax) }
+            }
         }
         updateVegetation(years: dt)
         years += dt

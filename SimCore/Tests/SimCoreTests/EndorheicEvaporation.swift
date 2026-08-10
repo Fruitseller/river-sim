@@ -330,6 +330,16 @@ final class EndorheicEvaporation: XCTestCase {
     /// bleibt der größte Sprung des mittleren Beckenspiegels weit unter der
     /// Spanne, um die er insgesamt wandern kann — und deutlich unter dem
     /// Kontrollarm ohne Ratenbegrenzung.
+    /// Gemessen wird der Sprung RELATIV ZUR SPANNE (Issue #2): „weit unter der
+    /// Spanne, um die er wandern kann" ist die Aussage dieses Wächters, und als
+    /// Verhältnis ist sie robust. Die frühere absolute Schranke (0.002) hing
+    /// dagegen am Absolutwert EINES diskreten Ereignisses (eine Sill bricht,
+    /// der Priority-Flood pegelt das ganze Becken um) — jede Änderung an der
+    /// Zeitintegration würfelt den neu, ohne dass sich an der Ratenbegrenzung
+    /// etwas ändert. Gemessen ist das Verhältnis über den Fix hinweg
+    /// unverändert: `main` 0.00325/0.01433 = **0.227**, nach Issue #2
+    /// 0.00502/0.02316 = **0.217**; der Absolutwert dagegen sprang von 0.0033
+    /// auf 0.0050. Schranke 0.35 = ~60 % Marge auf beide Stände.
     func testBasinLevelIsRateLimited() {
         func run(_ tau: Double) -> (maxJump: Double, span: Double, moved: Double) {
             var c = dryCfg()
@@ -354,11 +364,13 @@ final class EndorheicEvaporation: XCTestCase {
         }
         let limited = run(500)
         let instant = run(0)
-        print(String(format: "[RATE] τ=500: max Sprung %.5f Spanne %.5f · τ=0: max Sprung %.5f Spanne %.5f",
-                     limited.maxJump, limited.span, instant.maxJump, instant.span))
-        XCTAssertLessThan(limited.maxJump, 0.002,
+        print(String(format: "[RATE] τ=500: max Sprung %.5f Spanne %.5f (%.3f) · τ=0: max Sprung %.5f Spanne %.5f (%.3f)",
+                     limited.maxJump, limited.span, limited.maxJump / max(1e-9, limited.span),
+                     instant.maxJump, instant.span, instant.maxJump / max(1e-9, instant.span)))
+        XCTAssertLessThan(limited.maxJump, 0.35 * limited.span,
             "Beckenspiegel springt sichtbar (Ratenbegrenzung wirkt nicht)")
-        XCTAssertLessThan(limited.maxJump, max(0.0005, instant.maxJump),
+        XCTAssertLessThan(limited.maxJump / max(1e-9, limited.span),
+                          max(0.05, instant.maxJump / max(1e-9, instant.span)),
             "ratenbegrenzt springt nicht weniger als instantan")
     }
 

@@ -228,6 +228,49 @@ moduliert Erodierbarkeit UND Hangdiffusivität. Messreihe:
   Parameter-Sweeps (Paketdicke, Fallen, Kontrast), Rückverlegungsrate einer
   Stufenkante als schärfere Kennzahl, härteabhängige Küstenklippen (`wavePass`).
 
+**dt-Invarianz — ERLEDIGT bis auf einen benannten Rest (Aug 2026, Issue #2):**
+gleiche Simulationszeit lieferte je nach Schrittweite anderes Terrain. Vier
+Ursachen behoben, jede mit eigenem Wächter (`SimCoreTests/DtInvariance.swift`,
+Messreihen `docs/dt-invariance-measurements.md`):
+- `wavePass` war eine ZÄHLSCHLEIFE (`max(1, min(24, dt/100))` Durchläufe voller
+  Stärke) statt einer Rate → jetzt sub-getaktet wie die Hangdiffusion
+  (`Terrain.waveSchedule`). Küstenzone über dt ∈ {10, 240, 2000}: Spanne 38 % →
+  **1.0 %**.
+- `fillShallowPonds`/`fillLakes`/`fillOxbows`/`updateVegetation` relaxierten
+  linear gedeckelt (`min(cap, dt/τ)`) statt exponentiell (`1 − e^(−dt/τ)`);
+  `floodplainAggradation` (geparkt) ist mitgezogen. Die τ-Werte sind
+  unverändert, die Config-Kommentare halten die neue Bedeutung fest.
+- Tropfenzahl `max(1, dt·Rate)` rundete jeden Frame-Schritt auf (bei dt = 0.2 J.
+  11× zu viel) → angebrochener Rest wandert über `Terrain.dropCarry` weiter.
+- Schritt-Deckel („halbe lokale Höhendifferenz") in `meanderStamp`/`braidPass`
+  galten je Schritt → `Terrain.stepCapFraction` (bei dt = 100 exakt die alten
+  0.5); die Überfüll-Zugabe in `braidPass` ist jetzt eine geometrische
+  Obergrenze (`hf + braidBarHeight`) statt einer Zugabe je Schritt.
+- Kalibrier-Kaskade (wie erwartet): drei Wächter reagierten. Der Scour-Deckel in
+  `braidPass` bleibt deshalb bei festen 0.5 (Erosionsseite, #2 nennt die
+  Depositions-Deckel), der Anker von `stepCapFraction` liegt bei 500 J. statt
+  100, und `testBraidingBuildsBars` taktet mit dt = 500 statt 1000 — bei 1000
+  hing die Pfützen-Verlandung vorher am `min(0.5, …)`-Deckel, wodurch der
+  REFERENZARM (ohne Braiding) trockene Flächen dazugewann (94 → 212) und den
+  A/B-Kontrast überdeckte. Details und Zahlen: `docs/dt-invariance-measurements.md`
+  §6/§7.
+- **Offen, bewusst nicht Teil von #2: Operator-Splitting-Drift.** Das
+  Abflussfeld wird einmal je Schritt bestimmt, die Tropfen laufen `dt·Rate` mal
+  dagegen — bei dt = 2000 arbeiten 360 Tropfen auf einem Feld, das dt = 10 alle
+  1.8 Tropfen neu berechnet. Gemessen ist das der ganze Rest-Unterschied: der
+  Seeanteil liegt ohne Tropfen über zwei Dekaden Schrittweite auf 1.6 %
+  zusammen, bei 0.2 Tropfen/Jahr auf 2.3 %, bei den 2.0 der Produktion auf 29 %
+  (auf dem vollen Pfad verstärkt durch die Schwellen-Logik von
+  `fillShallowPonds`: eine Komponente mit See-Kern verlandet gar nicht mehr).
+  Nächster Schritt wäre, die Tropfen-Charge eines großen Schritts in Teilchargen
+  mit zwischenzeitlichem `computeFlow` zu zerlegen — Eingriff in die
+  Schritt-Struktur mit Laufzeit-Folgen (`computeFlow` ist der teuerste Pass),
+  gehört in ein eigenes Issue. Zweiter, kleinerer Verstärker: das See-Kern-Gate
+  der Pfützen-Verlandung ist eine BINÄRE Klassifikation je Schritt (mit Gate
+  0.0211/0.0212/0.0503 über dt ∈ {10, 240, 2000}, ohne Gate
+  0.0044/0.0045/0.0046) — es bleibt unangetastet, weil es die Antwort auf
+  „wachsender Boden ohne Wasser" ist.
+
 **Politur / Rendering:**
 - ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass
   (Droplets+Braiding+Mäander gemeinsam, keine Einzelquelle) schüttet den Sill zu,
