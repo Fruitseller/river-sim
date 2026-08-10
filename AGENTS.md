@@ -153,9 +153,13 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Vegetation, Biom-Farbe brauchen Makro-Steigung über ±2 Zellen).
 - **`n` und `world` nur ZUSAMMEN ändern** — sonst ändert sich `cellSize` und alle
   per-Zell-Kalibrierungen (Braid-Gates, Droplet-Dichte, kappa-Skalierung) brechen.
-- **Determinismus ist eine getestete Invariante.** Parallelisierung (`Terrain.parallel`,
-  `parallelChunks` in `SimNode.swift`) ist nur über disjunkte Index-Bereiche erlaubt, wo
-  das Ergebnis **bit-identisch** zur sequenziellen Schleife bleibt.
+- **Determinismus ist eine getestete Invariante — pro Maschine.** Gleicher Seed →
+  bit-gleiches Ergebnis; Parallelisierung (`Terrain.parallel`, `parallelChunks` in
+  `SimNode.swift`) nur über disjunkte Index-Bereiche, bit-identisch zur
+  sequenziellen Schleife. Plattformübergreifend gilt Bit-Gleichheit NICHT
+  (System-libm) und wird nicht getestet. Sim-Zustand deshalb nur auf der CPU;
+  GPU-Floats sind nicht bit-kompatibel (Rundung/FMA/Reassoziation treiberabhängig),
+  Shader/Compute nur für Render-Ableitungen — `docs/web-tech-refactor-evaluation.md` §5.
 - **Framerate-Unabhängigkeit:** Gesamtwirkung eines Passes muss ∝ `dt` sein. Echtzeit-
   Zeitraffer (winziges dt/Frame) und `+10.000 Jahre`-Sprünge müssen dasselbe Ergebnis
   liefern. Die drei Bauformen dafür: Sub-Takten mit fester Teilschritt-Stärke
