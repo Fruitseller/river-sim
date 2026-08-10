@@ -162,13 +162,34 @@ Physik weiterlaufen lassen will, braucht eine bewusste Migration.
 ist `var`, und der Konstruktor `Terrain(allocating:seed:)` legt nur Puffer an,
 ohne zu generieren (der Snapshot bringt jedes Feld mit).
 
-**Eine Grenze zieht das Frontend:** Texturen, Mesh-Tessellation und Raycast einer
-laufenden Godot-Sitzung stehen auf EINEM `n`. `Main.gd` fragt vor dem Laden
-`SimNode.worldFileGridSize()` (liest nur Kopf + Config, nicht die 100 MB Felder)
-und lehnt eine Welt mit abweichender Auflösung ab, BEVOR die laufende Welt
-ersetzt ist. `world` wird nicht eigens geprüft, weil `n` und `world` in diesem
-Projekt nur zusammen geändert werden. Der Sim-Kern selbst kann jede Auflösung
-laden (`testDeviatingConfigAndSeedTravelWithTheWorld` tut das).
+**Eine Grenze zieht das Frontend:** eine laufende Godot-Sitzung ist auf EINE
+Geometrie festgelegt — Höhen-/Farb-/Wasser-Texturen und der Höhen-Cache haben
+n × n Einträge; Mesh-Größe und -Tessellation, Kamera-Distanz, Wasserebene,
+Pinsel-Ring und die Welt→Zelle-Umrechnung von Raycast und Werkzeugen
+(`half`, `step`, `cell_area`) hängen an `world`. `Main.gd` prüft deshalb vor dem
+Laden BEIDE Werte über `SimNode.worldFileGridSize()` und
+`SimNode.worldFileWorldSize()` (lesen nur Kopf + Config, nicht die 100 MB
+Felder) und lehnt eine abweichende Welt ab, BEVOR die laufende ersetzt ist.
+
+`n` allein genügt nicht: bei gleicher Auflösung, aber anderer Weltgröße ändert
+sich die Zellgröße (`world/(n−1)`), und die geladene Simulation würde in anderen
+Weltkoordinaten laufen als Darstellung und Pinsel. Dass `n` und `world` in
+diesem Projekt nur zusammen geändert werden, ist eine Konvention für den
+QUELLCODE — die Datei kann jede Kombination mitbringen, weil ihre Config beim
+Laden autoritativ ist.
+
+*Ablehnen statt umbauen* ist bewusst gewählt: die abhängigen Render- und
+Interaktionsstrukturen nach dem Laden vollständig neu aufzubauen wäre ein
+zweiter, nur mit fremden Dateien überhaupt erreichbarer Aufbaupfad neben
+`_setup_scene` — mehr Code und mehr Bruchfläche als der Fall wert ist. Die
+Entscheidungslogik steckt in der reinen Funktion
+`Main.gd._world_geometry_mismatch()` und wird im Godot-Smoke-Test ohne Szene
+geprüft (passende Geometrie, abweichendes `n`, abweichendes `world`,
+unlesbare Datei).
+
+Der Sim-Kern selbst kann jede Geometrie laden
+(`testDeviatingConfigAndSeedTravelWithTheWorld` speichert mit abweichendem `n`
+UND `world` und lädt reproduzierbar).
 
 ## Bedienung
 

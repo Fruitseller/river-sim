@@ -98,6 +98,18 @@ final class SimNode: Node {
         (try? WorldSnapshot.peekConfig(at: path).n) ?? -1
     }
 
+    /// Kantenlänge der Welt in Welteinheiten aus `path`, ebenfalls ohne die
+    /// Felder zu laden (−1 = nicht lesbar). Zweite Hälfte der Geometrie-Prüfung
+    /// des Frontends: `n` ALLEIN genügt nicht — Mesh-Größe, Kamera-Distanz,
+    /// Raycast-Skala und die Welt→Zelle-Umrechnung der Werkzeuge hängen an
+    /// `world`. Bei gleicher Auflösung, aber anderer Weltgröße würde die
+    /// geladene Simulation in anderen Weltkoordinaten laufen als Darstellung und
+    /// Pinsel (`n` und `world` gehören in diesem Projekt zusammen, aber die
+    /// DATEI garantiert das nicht).
+    @Callable func worldFileWorldSize(path: String) -> Double {
+        (try? WorldSnapshot.peekConfig(at: path).world) ?? -1
+    }
+
     /// Größe der letzten geschriebenen Welt-Datei in Byte (0 = unbekannt) — für
     /// die Statusanzeige.
     @Callable func lastWorldFileBytes() -> Int { lastWorldBytes }

@@ -622,17 +622,11 @@ func _load_world() -> void:
 			"Unter %s liegt noch keine Welt. Erst speichern (F5)." % SAVE_PATH)
 		return
 	var abs_path := ProjectSettings.globalize_path(SAVE_PATH)
-	# Texturen, Mesh-Tessellation und Raycast dieser Sitzung stehen auf EINEM N
-	# (aus `_ready`). Eine Welt mit anderer Auflösung wird deshalb abgelehnt,
-	# BEVOR die laufende Welt ersetzt ist. Andere Config-Abweichungen übernimmt
-	# der Kern (die Datei-Config ist autoritativ, s. WorldSnapshot); `world` muss
-	# hier nicht eigens geprüft werden, weil n und world laut Projektregel nur
-	# ZUSAMMEN geändert werden.
-	var file_grid: int = sim.worldFileGridSize(abs_path)
-	if file_grid > 0 and file_grid != N:
-		_show_world_error("Welt nicht darstellbar",
-			("Diese Welt hat die Gitterauflösung %d × %d, die laufende Sitzung "
-			+ "rendert %d × %d. Sie wurde NICHT geladen.") % [file_grid, file_grid, N, N])
+	# Geometrie-Prüfung VOR dem Laden, solange die laufende Welt noch steht.
+	var mismatch := _world_geometry_mismatch(
+		sim.worldFileGridSize(abs_path), sim.worldFileWorldSize(abs_path))
+	if not mismatch.is_empty():
+		_show_world_error("Welt nicht darstellbar", mismatch)
 		return
 	var err: String = sim.loadWorld(abs_path)
 	if not err.is_empty():
@@ -650,6 +644,38 @@ func _load_world() -> void:
 	_after_sim() # water_blend = 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()
 	world_status_label.text = "Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear()))
+
+## Passt die GEOMETRIE einer Welt-Datei zu dieser Sitzung? Rückgabe: leerer
+## String = ja, sonst der Grund als fertige Meldung.
+##
+## Diese Sitzung ist in `_ready` auf EINE Geometrie festgelegt: Höhen-/Farb-/
+## Wasser-Texturen und `h_cache` haben N × N Einträge, Mesh-Größe und
+## -Tessellation, Kamera-Distanz, Wasserebene, Pinsel-Ring und die
+## Welt→Zelle-Umrechnung von Raycast/Werkzeugen (`half`, `step`, `cell_area`)
+## hängen an `world_size`. Beides muss deshalb geprüft werden — `n` allein
+## genügt NICHT: bei gleicher Auflösung, aber anderer Weltgröße liefe die
+## geladene Simulation in anderen Weltkoordinaten als Darstellung und Pinsel
+## (Zellgröße = world/(n−1)). Dass `n` und `world` in diesem Projekt nur
+## zusammen geändert werden, ist eine Konvention für den QUELLCODE; eine
+## Datei kann trotzdem jede Kombination mitbringen (die Datei-Config ist beim
+## Laden autoritativ, s. `WorldSnapshot`).
+##
+## Ablehnen statt umbauen ist die bewusste Entscheidung: die abhängigen Render-
+## und Interaktionsstrukturen komplett neu aufzubauen wäre ein zweiter, nur bei
+## fremden Dateien überhaupt erreichbarer Aufbaupfad neben `_setup_scene` —
+## mehr Code und mehr Bruchfläche als der Fall wert ist (Dokumentation:
+## docs/world-save-format.md). −1 heißt „nicht lesbar"; die passende Meldung
+## dazu liefert dann `loadWorld` selbst.
+func _world_geometry_mismatch(file_grid: int, file_world: float) -> String:
+	if file_grid > 0 and file_grid != N:
+		return ("Diese Welt hat die Gitterauflösung %d × %d, die laufende Sitzung "
+			+ "rendert %d × %d. Sie wurde NICHT geladen.") % [file_grid, file_grid, N, N]
+	if file_world > 0.0 and not is_equal_approx(file_world, world_size):
+		return ("Diese Welt ist %.3f Welteinheiten groß, die laufende Sitzung "
+			+ "rendert %.3f. Sie wurde NICHT geladen (Darstellung, Kamera und "
+			+ "Werkzeuge würden in anderen Koordinaten arbeiten als die Simulation)."
+			) % [file_world, world_size]
+	return ""
 
 func _show_world_error(title: String, message: String) -> void:
 	world_status_label.text = title

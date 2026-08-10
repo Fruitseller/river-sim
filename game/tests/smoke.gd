@@ -18,7 +18,17 @@ func _process(_delta: float) -> bool:
 
 func _run() -> void:
 	if not ClassDB.class_exists("SimNode"):
-		push_error("FAIL: SimNode nicht registriert")
+		# Häufigste Ursache in einem frischen Arbeitsverzeichnis: Godot lädt
+		# GDExtensions NUR aus `.godot/extension_list.cfg`, und die entsteht erst
+		# beim Projekt-Import. `game/.godot/` ist gitignoriert, also fehlt sie in
+		# jedem neuen Klon/Worktree — die Library selbst ist dann völlig in
+		# Ordnung. Ohne diesen Hinweis zeigt die Meldung auf die falsche Stelle.
+		if not FileAccess.file_exists("res://.godot/extension_list.cfg"):
+			push_error("FAIL: Projekt nicht importiert (res://.godot/extension_list.cfg "
+				+ "fehlt) — GDExtension wurde nie geladen. Einmalig ausführen: "
+				+ "godot --headless --path game --import")
+		else:
+			push_error("FAIL: SimNode nicht registriert")
 		quit(1)
 		return
 	var sim: Object = ClassDB.instantiate("SimNode")
@@ -113,13 +123,23 @@ func _run() -> void:
 		quit(1)
 		return
 	var bytes: int = sim.lastWorldFileBytes()
-	print("world_saved_bytes=", bytes, " grid_from_file=", sim.worldFileGridSize(abs_save))
+	print("world_saved_bytes=", bytes, " grid_from_file=", sim.worldFileGridSize(abs_save),
+		" world_from_file=", sim.worldFileWorldSize(abs_save))
 	if bytes <= 0 or not FileAccess.file_exists(save_path):
 		push_error("FAIL: Welt-Datei fehlt")
 		quit(1)
 		return
+	# Die Vorprüfung der Geometrie liest Kopf + Config, nicht die Felder — beide
+	# Werte müssen zur laufenden Welt passen.
 	if sim.worldFileGridSize(abs_save) != n:
 		push_error("FAIL: Gitterauflösung der Datei stimmt nicht")
+		quit(1)
+		return
+	if not is_equal_approx(sim.worldFileWorldSize(abs_save), sim.worldSize()):
+		push_error("FAIL: Weltgröße der Datei stimmt nicht")
+		quit(1)
+		return
+	if not _check_geometry_guard(n, sim.worldSize()):
 		quit(1)
 		return
 
@@ -160,6 +180,34 @@ func _run() -> void:
 
 	print("SMOKE_OK")
 	quit(0)
+
+## Prüft die Geometrie-Sperre der UI (`Main.gd._world_geometry_mismatch`): eine
+## Welt-Datei darf nur geladen werden, wenn AUFLÖSUNG UND WELTGRÖSSE zur
+## laufenden Sitzung passen — sonst liefe die Simulation in anderen
+## Weltkoordinaten als Darstellung, Kamera und Werkzeuge. Die Funktion ist reine
+## Entscheidungslogik und deshalb ohne Szene/Renderer prüfbar: das Skript wird
+## instanziiert, aber nie in den Baum gehängt (kein `_ready`).
+func _check_geometry_guard(n: int, world: float) -> bool:
+	var main: Node = load("res://scripts/Main.gd").new()
+	main.N = n
+	main.world_size = world
+	var ok := true
+	if not (main._world_geometry_mismatch(n, world) as String).is_empty():
+		push_error("FAIL: passende Geometrie wurde abgelehnt")
+		ok = false
+	if (main._world_geometry_mismatch(n / 2, world) as String).is_empty():
+		push_error("FAIL: abweichende Gitterauflösung wurde NICHT abgelehnt")
+		ok = false
+	if (main._world_geometry_mismatch(n, world * 0.5) as String).is_empty():
+		push_error("FAIL: abweichende Weltgröße wurde NICHT abgelehnt")
+		ok = false
+	# −1 = Datei nicht lesbar: die Sperre schweigt, die Meldung kommt aus loadWorld.
+	if not (main._world_geometry_mismatch(-1, -1.0) as String).is_empty():
+		push_error("FAIL: unlesbare Datei sollte die Geometrie-Sperre nicht auslösen")
+		ok = false
+	print("geometry_guard_ok=", ok)
+	main.free()
+	return ok
 
 ## Summe der Höhen — kompakter Vergleichswert für „derselbe Zustand".
 func _height_sum(h: PackedFloat32Array) -> float:
