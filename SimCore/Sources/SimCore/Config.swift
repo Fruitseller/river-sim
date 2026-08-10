@@ -638,6 +638,58 @@ public struct SimConfig: Sendable {
     public var waveTalus: Double = 0.002
     public var waveRelax: Double = 0.5
 
+    // ---- Höhenbänder (Issue #4): Perzentile statt absoluter Schwellen ----
+    // Schnee-, Hochfels- und Vegetations-Höhengrenzen kommen aus Perzentilen der
+    // AKTUELLEN Landhöhenverteilung (`HeightBands.fromLandHeights`, angewandt in
+    // `Terrain.heightBands`). Begründung und Mechanik: HeightBands.swift.
+    //
+    // Kalibrier-Messung (n=832, Seed 1337, Produktions-Defaults; Rohdaten und
+    // Verlauf: docs/height-band-measurements.md). Landhöhen-Quantile:
+    //             p10    p50    p88    p91    p92    p95    p98.5  p99.5  p99.9  max
+    //   Jahr 0  0.2346 0.3415 ~0.478 0.4986 0.5050 0.5279 0.5699 0.6018 0.6395 0.7457
+    //   30k     0.2520 0.3552 ~0.481 0.4900 0.4962 0.5196 0.5596 0.5833 0.6026 0.6372
+    // Die ALTEN absoluten Schwellen lagen damit bei:
+    //   0.50 (veg voll)  = p91.2 → p92.6     0.58 (Graurampe) = p98.9 → p99.4
+    //   0.68 (veg aus)   = p99.99 → p100     1.05 (Schnee)    = p100 (NIE erreicht)
+    //   0.26/0.48 (Nadelbaum-Band) = p17.1/p87.8 → p11.4/p89.1
+    // Die Perzentile unten sind genau darauf gesetzt: Vegetation und Nadelband
+    // bleiben (Kalibrier-Kaskade! veg geht über `vegDamp` in die Erosion ein)
+    // praktisch auf ihrer alten Höhe, während Fels und Schnee in den oberen
+    // Bereich rücken, der vorher leer war.
+    public var bandVegFullPercentile: Double = 0.91  // = die alte 0.50 (p91.2 bei der Generierung) — bewusst deckungsgleich gewählt, damit die Vegetations-Physik sich NICHT verschiebt.
+    // Obere Vegetationsgrenze = vegFull + Faktor · (p95 − p50), also eine
+    // ROBUSTE RELIEF-SPANNE breit (dasselbe Quantilpaar wie `landReliefRobust`).
+    // Warum kein zweites Perzentil: die alte Obergrenze 0.68 lag bei p99.99 —
+    // ein Perzentil dort hinge an den obersten paar Zellen (bei n=160 an 2), und
+    // jedes robustere Perzentil (p99.9 = 0.6395) macht die Rampe SCHMALER als
+    // bisher. Genau das ist keine Kosmetik: `veg` geht über `vegDamp` in die
+    // Erosion ein. Gemessen (n=192, Seed 1337, 20k Jahre) kostete die schmalere
+    // Rampe (p99.9) 2 % mittleres veg und 1.1 % Relief und kippte zwei
+    // knapp gepinnte #12-Wächter (`testHardnessContrastHoldsSlopeBreak`,
+    // `testEndorheicMechanicsSurviveLithology`) — auf `main` reicht dafür schon
+    // eine Rampe von 0.18 auf 0.17 (Referenzarm-Signal 1.0517 → 1.0791 gegen die
+    // 0.08-Schranke), die Kennzahl hängt also direkt an dieser Rampenbreite.
+    // Faktor 1.0: die Rampe ist bei der Generierung 0.1864 breit (n=832, Seed
+    // 1337) gegen die alten 0.18 — +3.6 %, und sie schrumpft mit der alternden
+    // Landschaft mit (0.1644 nach 30k), statt als fixe Höhe stehen zu bleiben.
+    public var bandVegRampSpanFactor: Double = 1.0
+    public var bandRockPercentile: Double = 0.92     // Beginn der Hochlagen-Graurampe. War p98.9 (1.1 % des Landes, Kern der Issue-Beobachtung „99 % im schmalen Farbband"); p92 gibt den obersten 8 % einen sichtbaren Fels-Verlauf, ohne unter die Vegetationsgrenze (p91) zu rutschen.
+    public var bandRockFullPercentile: Double = 0.995 // voll ausgegraut. Alt: 0.98 absolut = jenseits von maxH, die Rampe kam real nie über 41 %.
+    public var bandSnowPercentile: Double = 0.985    // Beginn Schnee: oberste 1.5 % des Landes (n=832: ~7200 Zellen in der Rampe). Alt 1.05 absolut = 0 Zellen. Der Wert ist gesetzt, nicht gemessen: die Perzentil-Konstruktion legt den Flächenanteil fest, gemessen ist nur, DASS er über den Lauf steht (1.51 % → 1.49 %, s. docs). Enger (p99.5 = 0.5 %) wäre Streusel, weiter (p95 = 5 %) würde ganze Kammlinien weißen.
+    public var bandSnowFullPercentile: Double = 0.9985 // voll weiß: oberste 0.15 % (~720 Zellen bei n=832) — die eigentlichen Gipfel.
+    public var bandConiferLowPercentile: Double = 0.15 // Baum-Variante Laub→Nadel: entspricht der alten 0.26 (p17.1 bei der Generierung, p11.4 nach 30k).
+    public var bandConiferHighPercentile: Double = 0.88 // entspricht der alten 0.48 (p87.8 → p89.1).
+    // Mindestbreite jeder Rampe: eine (fast) ebene Insel hat identische Quantile —
+    // ohne Untergrenze würde aus dem Verlauf eine harte Kante.
+    public var bandMinRampWidth: Double = 0.004
+    /// FESTE Bänder statt der Ableitung aus der Verteilung. In der Produktion
+    /// `nil` — gedacht für Wächter, die an EINEM konkreten Becken/Lauf hängen und
+    /// deshalb ihre alte Kalibrierung pinnen (dieselbe Doktrin wie `meanderCfg()`
+    /// in SimCoreTests und wie `lithologyEnabled = false` in den #11-Wächtern).
+    /// Mit `HeightBands.legacyAbsolute` läuft die Vegetation exakt wie vor
+    /// Issue #4.
+    public var heightBandsOverride: HeightBands? = nil
+
     // ---- Klima / Vegetation ----
     public var vegTimeConstant: Double = 250 // Jahre
 

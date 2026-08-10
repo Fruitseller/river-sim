@@ -247,7 +247,21 @@ moduliert Erodierbarkeit UND Hangdiffusivität. Messreihe:
 - See-Ränder minimal gezackt (per-Zelle-Quads) — zu einer Kontur glätten.
 - Steile Oberläufe der Fluss-Geometrie leicht segmentiert — feinere Glättung oder
   adaptive Unterteilung.
-- Optik-Feinschliff: Grün-Anteil in den Tälern, Schnee-Schwelle, Küstensaum-Breite.
+- ERLEDIGT (Aug 2026, Issue #4): Schnee-, Hochfels- und Vegetations-Höhengrenzen
+  kommen aus **Perzentilen der aktuellen Landhöhen** (`HeightBands`,
+  `SimConfig.band*Percentile`) statt aus absoluten Werten. Die alte Schneegrenze
+  1.05 lag über jedem je erreichten Gipfel (maxH 0.7457 bei der Generierung,
+  0.6372 nach 30k) und blieb dauerhaft leer. Ausnahme mit Begründung: die BREITE
+  der Vegetations-Rampe kommt aus der robusten Relief-Spanne (p95 − p50) statt
+  aus einem zweiten Perzentil — ein Perzentil dort hinge an den obersten paar
+  Zellen und verschob messbar die Erosion (`docs/height-band-measurements.md` §5).
+  Jetzt ist die Gipfelzone konstant
+  1.5 % des Landes (0.15 % voll weiß) und sinkt mit der alternden Landschaft mit.
+  Sim-Kern und Biom-Färbung lesen dieselbe Quelle
+  (`Terrain.vegetationSuitability` / `Terrain.heightBands`), statt zwei Kopien
+  derselben Höhen-/Hang-Logik zu pflegen. Messreihe:
+  `docs/height-band-measurements.md`.
+- Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Toter/geparkter Code (aufräumen oder bewusst behalten):**
 - ERLEDIGT (Aug 2026): `streamPower` (detachment-limitierte Grid-Inzision) und

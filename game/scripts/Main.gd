@@ -774,6 +774,14 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 		hf_img.set_data(N, N, false, Image.FORMAT_RF, fbytes)
 		hf_tex.update(hf_img)
 
+	# Höhenbänder (Issue #4) an den Shader durchreichen: die Vegetations-Grenzen
+	# sind Perzentile der aktuellen Landhöhen und wandern mit der alternden
+	# Landschaft — der Shader darf dafür keine eigenen absoluten Werte halten.
+	var bands: PackedFloat32Array = sim.heightBands()
+	if bands.size() >= 2:
+		terrain_mat.set_shader_parameter("veg_alt_lo", bands[0])
+		terrain_mat.set_shader_parameter("veg_alt_hi", bands[1])
+
 	var cbytes: PackedByteArray = sim.terrainColorBytes()
 	if color_img == null:
 		color_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
