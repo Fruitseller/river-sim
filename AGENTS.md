@@ -71,6 +71,7 @@ GODOT=…; "$GODOT" --headless --path game --import   # EINMALIG pro Arbeitsverz
 ./scripts/start.sh --rendering-method gl_compatibility # ohne Vulkan
 "$GODOT" --headless --path game --script res://tests/smoke.gd
 "$GODOT" --headless --path game --script res://tests/pickaxe_repro.gd
+"$GODOT" --headless --path game --script res://tests/river_ribbons.gd
 ```
 
 Der Import-Lauf ist Pflicht, bevor irgendetwas die GDExtension benutzt: Godot lädt
@@ -85,9 +86,12 @@ gefüllt ist. `smoke.gd` erkennt genau diesen Fall und nennt den Befehl.
 RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
 ```
 
-`RS_*`-Schalter (alle in `game/scripts/Main.gd`, `RS_NO_MEANDER_PAINT` in `SimNode.swift`):
+`RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_NO_MEANDER_PAINT` und
+`RS_RIVER_RIBBONS` zusätzlich in `SimNode.swift`):
 `RS_SEED`, `RS_STEP`, `RS_SHOT`, `RS_DIST`, `RS_QUALITY` (`performance|balanced|quality`),
-`RS_RENDER_GRID`, `RS_DIAG`, `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`.
+`RS_RENDER_GRID`, `RS_DIAG`, `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
+`RS_RIVER_RIBBONS` (Issue #31: Mäander als Band-Geometrie statt Textur-Stempel,
+A/B gegen den Stempel-Pfad ohne Rebuild).
 
 ## Architektur
 
@@ -126,7 +130,10 @@ Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, 
 
 Zwei Drainage-Netze mit strikt getrennten Rollen: **D8/`area`** speist die Erosion
 (kalibriert, implizit stabil), **MFD/`areaMFD`** (Freeman/Quinn) speist **nur** Render
-und Braiding. Diese Trennung nicht aufweichen.
+und Braiding. Diese Trennung nicht aufweichen. (Eine dokumentierte Ausnahme in der
+Gegenrichtung: die **Strahler-Ordnung** für die Ribbon-Render-Hierarchie, Issue #31,
+läuft auf D8 — sie braucht den Empfänger-*Baum*, den MFD als Mehrfach-Verteilung
+nicht hat.)
 
 ### Konfiguration
 

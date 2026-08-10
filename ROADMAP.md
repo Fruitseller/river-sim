@@ -39,6 +39,17 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   ∝ Krümmung × Abfluss, Cutoff → Altarm, Sinuositäts-Deckel), Braiding nach
   Murray & Paola (`braidPass`), Wasser-Optik im Shader (eigene Wasser-Normale,
   Fresnel, Tiefenfarbe, distanz-gefadet).
+  **Ribbon-Renderer (Issue #31, hinter `RS_RIVER_RIBBONS`):** Mäander zusätzlich
+  als geglättete Band-Geometrie direkt aus den Zentrumslinien
+  (`SimNode.buildRiverRibbons` → `water.gdshader`), Breite ∝ √Abfluss
+  (Leopold/Maddock), Strahler-Ordnung (`Strahler.swift`, headless getestet) als
+  Rang-Maß (nur an Ordnung 4 angeschlossene Bänder; deren feine Oberläufe bleiben),
+  kanalweise Stream-Map-Kohärenz gegen verknäulte Altpfade, lokale Geländehöhe je
+  Bandkante sowie Ufer-Übergang über Saum-Stempel + Kanten-Feathering (gegen die
+  Rückbau-Ursachen von `f3556c8`). Dirty-Vertrag wie bei den Bäumen
+  (`riversMaxDelta`/`markRiversBuilt`), im Zeitraffer auf 1 Hz gedeckelt.
+  Standard bleibt vorerst der
+  Textur-Stempel; Umschalten per Env-Variable, A/B im selben Build.
 - **Karte:** n = 832 bei worldSize 130 (cellSize ≈ 0.156 — Auflösung und Weltgröße
   immer ZUSAMMEN ändern, sonst brechen alle per-Zell-Kalibrierungen).
 - **Vegetation:** `veg` (Dichte 0..1, τ=250a) + Klassen `vegClass` (kahl/Gras/Wald/

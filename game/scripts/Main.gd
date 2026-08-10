@@ -32,6 +32,18 @@ var tree_mmi: Array[MultiMeshInstance3D] = []
 const TREE_VARIANTS := 3
 const TREE_REBUILD_DELTA := 0.1 # Rebuild erst, wenn sich veg irgendwo um > 0.1 geändert hat
 
+# Fluss-Ribbons (Issue #31, A/B-Schalter RS_RIVER_RIBBONS): Mäander als
+# geglättete Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel.
+# Dirty-Vertrag wie bei den Bäumen: Rebuild nur, wenn sich die Zentrumslinien
+# merklich bewegt haben (riversMaxDelta in Zellen).
+var river_ribbons := false
+var river_mi: MeshInstance3D
+var river_mesh := ArrayMesh.new()
+var river_mat: ShaderMaterial
+const RIVER_REBUILD_DELTA := 0.05  # Zellen Knoten-Verschiebung
+const RIVER_REBUILD_SECONDS := 1.0  # Strahler + Mesh sind CPU-seitig; 0,30 s kosteten im Zeitraffer messbar ~4 % FPS
+const RIVER_LIFT := 0.35  # Welt-Y über Gelände: deckt den Chord-Fehler des gröberen Render-Gitters im Talgrund (384er-Gitter auf 832er-Feld)
+
 # Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen/Farben/
 # Wasser als Texturen (pro Tick nur Upload, kein Mesh-Rebuild). Wasser ist ein
 # glattes Feld-Overlay im Terrain-Shader — keine Fluss-Geometrie mehr.
@@ -66,6 +78,7 @@ var droplet_carry := 0.0
 var rebuild_timer := 0.0
 var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
 var overlay_timer := 0.0
+var river_overlay_timer := 0.0
 var sculpting := false
 var pick_last := Vector2.INF  # Spitzhacke: Position des letzten Hiebs im Strich (INF = noch keiner)
 var brush_radius := 10.0
@@ -160,6 +173,9 @@ func _ready() -> void:
 	if OS.has_environment("RS_RENDER_GRID"):
 		requested_grid = int(OS.get_environment("RS_RENDER_GRID"))
 	terrain_grid = clampi(requested_grid, 64, N)
+	# A/B ohne Rebuild: SimNode liest dieselbe Env-Variable und stempelt die
+	# Mäander dann nur noch als Ufer-Saum ins Wasserfeld.
+	river_ribbons = OS.has_environment("RS_RIVER_RIBBONS")
 
 	_setup_scene()
 	_setup_ui()
@@ -199,6 +215,7 @@ func _ready() -> void:
 	_update_year()
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
+	_maybe_rebuild_rivers()
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -305,6 +322,18 @@ func _setup_scene() -> void:
 	water_mi.material_override = wmat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
+
+	# Fluss-Ribbons (nur im RS_RIVER_RIBBONS-Modus): EIN MeshInstance3D, dessen
+	# ArrayMesh _rebuild_rivers aus den SimNode-Puffern füllt.
+	if river_ribbons:
+		river_mi = MeshInstance3D.new()
+		river_mi.mesh = river_mesh
+		river_mat = ShaderMaterial.new()
+		river_mat.shader = load("res://shaders/water.gdshader")
+		river_mi.material_override = river_mat
+		river_mi.extra_cull_margin = 1000.0 # Geometrie ändert sich laufend
+		river_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(river_mi)
 
 	# Baum-MultiMeshes (Instanzen kommen später aus _rebuild_trees).
 	for v in TREE_VARIANTS:
@@ -700,6 +729,7 @@ func _after_sim() -> void:
 	_update_year()
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
+	_maybe_rebuild_rivers()
 	debug_dirty = true
 
 var _shot_frame := 0
@@ -725,6 +755,8 @@ func _process(delta: float) -> void:
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
+	if river_mat:
+		river_mat.set_shader_parameter("u_time", u_time)
 	if debug_dirty:
 		debug_refresh_timer += delta
 		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS:
@@ -749,6 +781,7 @@ func _process(delta: float) -> void:
 			_update_year()
 			debug_dirty = true
 			overlay_timer += elapsed
+			river_overlay_timer += elapsed
 			var update_overlays := overlay_timer >= 0.30
 			if update_overlays:
 				overlay_timer = 0.0
@@ -760,6 +793,9 @@ func _process(delta: float) -> void:
 			_update_terrain_textures(0.15, update_overlays)
 			if update_overlays:
 				_maybe_rebuild_trees()
+			if river_overlay_timer >= RIVER_REBUILD_SECONDS:
+				river_overlay_timer = 0.0
+				_maybe_rebuild_rivers()
 
 	if sculpting:
 		var hit := _raycast_terrain()
@@ -792,6 +828,7 @@ func _process(delta: float) -> void:
 			_pull_fields()
 			debug_dirty = true
 			_update_terrain_textures()
+			_maybe_rebuild_rivers() # Sculpting droppt gestörte Kanäle → Struktur-Delta
 
 	_update_camera_pan(delta)
 	_update_ring()
@@ -1018,6 +1055,29 @@ func _rebuild_trees() -> void:
 		if buf.size() > 0:
 			mm.buffer = buf
 	sim.markTreesBuilt()
+
+## Fluss-Ribbons: Rebuild nur, wenn sich die Mäander-Zentrumslinien seit dem
+## letzten Build bewegt haben (Dirty-Vertrag wie bei den Bäumen; Struktur-
+## Änderungen wie Cutoffs melden ein Riesen-Delta → sofortiger Rebuild).
+func _maybe_rebuild_rivers() -> void:
+	if not river_ribbons:
+		return
+	if sim.riversMaxDelta() > RIVER_REBUILD_DELTA:
+		_rebuild_rivers()
+
+func _rebuild_rivers() -> void:
+	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
+	river_mesh.clear_surfaces()
+	var verts: PackedVector3Array = sim.riverRibbonVerts()
+	if verts.size() >= 3:
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_COLOR] = sim.riverRibbonColors()
+		arrays[Mesh.ARRAY_TEX_UV] = sim.riverRibbonUVs()
+		arrays[Mesh.ARRAY_INDEX] = sim.riverRibbonIndices()
+		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	sim.markRiversBuilt()
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 
