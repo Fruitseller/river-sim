@@ -242,6 +242,11 @@ Messreihen `docs/dt-invariance-measurements.md`):
   unverändert, die Config-Kommentare halten die neue Bedeutung fest.
 - Tropfenzahl `max(1, dt·Rate)` rundete jeden Frame-Schritt auf (bei dt = 0.2 J.
   11× zu viel) → angebrochener Rest wandert über `Terrain.dropCarry` weiter.
+  Ebenso der Tropfen-STROM: sein Seed hing an einem Schritt-Zähler (leere
+  Schritte schoben ihn weiter, ein großer Schritt zog alle Tropfen aus EINEM
+  Strom) → jetzt an der laufenden Nummer des Tropfens
+  (`Terrain.dropsEmitted`/`Hydraulic.dropRNG`), Tropfen Nr. j ist damit
+  derselbe, egal wie die Charge geschnitten wird (bit-identisch geprüft).
 - Schritt-Deckel („halbe lokale Höhendifferenz") in `meanderStamp`/`braidPass`
   galten je Schritt → `Terrain.stepCapFraction` (bei dt = 100 exakt die alten
   0.5); die Überfüll-Zugabe in `braidPass` ist jetzt eine geometrische

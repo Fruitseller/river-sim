@@ -15,7 +15,9 @@ import XCTest
 ///    `fillLakes`, `fillOxbows`, `updateVegetation` →
 ///    `testRelaxationsTelescopeAcrossSubsteps`.
 /// 3. Tropfenzahl `max(1, dt·Rate)` rundete jeden Frame-Schritt auf →
-///    `testDropletCountIsARate`.
+///    `testDropletCountIsARate`; und der Tropfen-STROM hing an einem
+///    Schritt-Zähler statt an der Zahl emittierter Tropfen →
+///    `testDropletStreamIsChunkingInvariant`.
 /// 4. Depositions-Deckel in `meanderStamp` (Carve, Prallhang/Gleithang) galten
 ///    JE SCHRITT statt je Zeit → `testStepCapsAreRates`. Der Deckel in
 ///    `braidPass` bleibt dagegen in seiner kalibrierten Form (s. unten).
@@ -194,6 +196,64 @@ final class DtInvariance: XCTestCase {
             XCTAssertLessThanOrEqual(abs(Double(drops) - expected), 1.0,
                                      "dt \(dt): \(drops) Tropfen statt \(expected)")
         }
+    }
+
+    /// **Ursache 3, zweiter Teil**: nicht nur die ANZAHL der Tropfen ist eine
+    /// Rate, auch der Tropfen-STROM selbst ist schrittweiten-unabhängig.
+    ///
+    /// Der gesamte Zufall eines Tropfens steckt in seinem Startpunkt (die Bahn
+    /// danach ist deterministisch), und der Startpunkt kommt aus einem Strom,
+    /// der an der laufenden NUMMER des Tropfens hängt (`Hydraulic.dropRNG`,
+    /// `Terrain.dropsEmitted`). Also muss dieselbe Tropfenfolge, in beliebige
+    /// Chargen zerlegt, BIT-IDENTISCHES Terrain liefern. Vorher hing der Seed
+    /// an der Zahl der SCHRITTE: leere Frame-Schritte schoben ihn weiter, und
+    /// ein großer Schritt zog alle Tropfen aus einem einzigen Strom — die
+    /// Tropfenzahl stimmte dann zwar, die Tropfen selbst waren andere.
+    func testDropletStreamIsChunkingInvariant() {
+        var c = SimConfig(); c.n = 96
+        let ref = Terrain(config: c, seed: 1337)   // gemeinsames Ausgangsgelände
+        let p = c.hydraulic
+
+        /// Lässt `total` Tropfen in Chargen der Größe `chunk` auf eine Kopie des
+        /// Ausgangsgeländes los. Die Felder, die der Pass nur LIEST (hf,
+        /// receiver, stream), bleiben dabei bewusst eingefroren — geprüft wird
+        /// der Tropfen-Strom, nicht die Rückkopplung übers Abflussfeld.
+        func run(total: Int, chunk: Int) -> ([Double], [Double]) {
+            var h = ref.h, rock = ref.rock, sed = ref.sed
+            var track = [Double](repeating: 0, count: c.count)
+            var done = 0
+            while done < total {
+                let k = min(chunk, total - done)
+                Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: c.n, count: k,
+                                seed: 1337, floor: c.floor, p: p,
+                                seaLevel: nil, firstDrop: UInt64(done),
+                                hf: ref.hf, receiver: ref.receiver,
+                                stream: ref.streamMap,
+                                rainWeight: ref.rainWeight,
+                                erodibility: ref.lithErodeK,
+                                track: &track)
+                done += k
+            }
+            return (h, track)
+        }
+
+        let single = run(total: 120, chunk: 120)      // ein +10.000-Jahre-Sprung
+        for chunk in [1, 7, 40] {                     // Frame-Schritte verschiedener Größe
+            let split = run(total: 120, chunk: chunk)
+            XCTAssertEqual(split.0, single.0, "Höhenfeld hängt an der Chargengröße \(chunk)")
+            XCTAssertEqual(split.1, single.1, "Besuchszählung hängt an der Chargengröße \(chunk)")
+        }
+        // Gegenprobe, dass der Test überhaupt etwas sieht: ein verschobener
+        // Strom (andere Startnummer) MUSS ein anderes Feld liefern.
+        var h2 = ref.h, rock2 = ref.rock, sed2 = ref.sed
+        var track2 = [Double](repeating: 0, count: c.count)
+        Hydraulic.erode(h: &h2, rock: &rock2, sed: &sed2, n: c.n, count: 120,
+                        seed: 1337, floor: c.floor, p: p,
+                        seaLevel: nil, firstDrop: 1,
+                        hf: ref.hf, receiver: ref.receiver, stream: ref.streamMap,
+                        rainWeight: ref.rainWeight, erodibility: ref.lithErodeK,
+                        track: &track2)
+        XCTAssertNotEqual(h2, single.0, "verschobener Tropfen-Strom liefert dasselbe Feld?")
     }
 
     /// **Ursache 4**: der Schritt-Deckel (`stepCapFraction`) klebt bei großen

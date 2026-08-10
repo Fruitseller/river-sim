@@ -93,13 +93,43 @@ nicht:
 (links alt, rechts neu). `floodplainAggradation` (geparkt, `false`) ist
 mitgezogen, damit kein bekannt dt-abhängiger Pass als Referenz liegenbleibt.
 
-### 2.3 Tropfenzahl als Bruchteil
+### 2.3 Tropfenzahl als Bruchteil — und der Tropfen-STROM
 
 `max(1, Int(dt · hydraulicPerYear · Dichte))` rundete jeden Frame-Schritt auf:
 bei dt = 0.2 J. verlangt die Rate 0.09 Tropfen, es fielen 1 — über 11× zu viel
 Droplet-Erosion im Zeitraffer. Der angebrochene Rest wandert jetzt über
 `Terrain.dropCarry` in den nächsten Schritt; über 1000 Jahre fällt für
 dt ∈ {0.2, 1, 50, 1000} dieselbe Tropfenzahl (±1, `testDropletCountIsARate`).
+
+**Die Zahl allein reicht nicht** (Review-Befund zu PR #30): der Seed der Charge
+hing an einem SCHRITT-Zähler. Leere Frame-Schritte (Tropfenzahl 0) schoben ihn
+trotzdem weiter, und ein großer Schritt zog alle Tropfen aus einem einzigen
+Strom — dieselbe Zeit lieferte also je nach Taktung ANDERE Tropfen. Jetzt hängt
+der Zufall an der laufenden Nummer des Tropfens im fortlaufenden Strom
+(`Terrain.dropsEmitted`, `Hydraulic.dropRNG`): jeder Tropfen zieht seinen
+Startpunkt aus einem eigenen, aus seiner Nummer abgeleiteten Strom. Der ganze
+Zufall eines Tropfens steckt in diesem Startpunkt (die Bahn danach ist
+deterministisch), also ist Tropfen Nr. j derselbe Tropfen, egal wie die Charge
+geschnitten wird. Wächter `testDropletStreamIsChunkingInvariant`: dieselben 120
+Tropfen in Chargen zu 1, 7, 40 und 120 liefern **bit-identisches** Höhenfeld und
+identische Besuchszählung (Gegenprobe: ein um eins verschobener Strom liefert
+ein anderes Feld).
+
+Ausgenommen bleibt der Stream-Map-Spin-up der Generierung
+(`Terrain.spinUpStreamMap`): eine feste Charge ohne Zeitbezug, die kein
+dt-Problem hat. Sie behält ihren Charge-Strom und damit die kalibrierte Welt —
+sonst würde jede seed-abhängige Testkulisse neu ausgewürfelt.
+
+**Fallstrick, gemessen:** ein sequenzieller Generator als Hash über den Index
+braucht eine RICHTIGE Mischung. Mit nur `index · 2654435761` (goldener Schnitt)
+sind die ersten Ausgaben benachbarter Startzustände nicht unabhängig genug —
+und weil `spawnPosition` aus denselben ersten Ausgaben sowohl den Startpunkt
+(1./2.) als auch den Annahme-Zug der Ablehnungs-Stichprobe (3.) zieht, wurde
+die Niederschlags-Gewichtung dadurch praktisch wirkungslos: die gepoolte
+Luv/Lee-Drainagedichte fiel von ×1.14 (`main`) auf ×1.01. Randverteilung
+(Chi² 67 gegen 63 df) und Serienkorrelation (lag-1 ~1e-3) der Startpunkte waren
+dabei unauffällig — der Fehler saß allein in der Kopplung Position ↔ Annahme.
+Mit splitmix64-Finalizer und einem Aufwärm-Zug steht sie bei **×1.21**.
 
 ### 2.4 Deckel je Schritt statt je Zeit
 
@@ -283,7 +313,52 @@ aufgeweicht wurde:
 unverändert grün: bei dt = 500 ist `1 − e^(−500/5500)` = 0.0870 gegen linear
 0.0909, also −4.3 %.
 
-### Nachtrag: wie `Lithology.testEndorheicMechanicsSurviveLithology` grün wurde
+### Was der Tropfen-Strom-Fix noch verschoben hat
+
+Der fortlaufende Tropfen-Strom (§2.3) würfelt die Realisierung neu — Tropfen
+Nr. j ist ein anderer Tropfen als vorher. Zwei realisierungs-gepinnte Wächter
+haben darauf reagiert; beide Male ist die Kennzahl selbst das Problem, nicht die
+Physik:
+
+**`RiverDynamicsTests.testBasinsDrainToSea`** prüft den Seeanteil in EINEM
+Augenblick (Jahr 10.000). Gemessen alle 1000 Jahre, Seed 1337:
+
+| Jahr | 8k | 9k | **10k** | 11k | 12k | … | 16k |
+|---|---|---|---|---|---|---|---|
+| `main` | 0.093 | 0.101 | **0.129** | 0.118 | 0.119 | … | 0.130 |
+| nach #2 | 0.101 | 0.123 | **0.142** | 0.117 | 0.123 | … | 0.114 |
+
+Auf BEIDEN Ständen ist Jahr 10k das lokale Maximum (ein Becken läuft gerade
+voll); der Rest des Laufs liegt bei 0.10…0.12. Die Schranke 0.14 ließ `main`
+also 0.011 Luft auf einer Größe, die zwischen Realisierungen um ±0.02 wandert →
+0.16, mit unverändertem Minimum-Kriterium daneben (das die eigentliche Aussage
+trägt: jeder große See entwässert zwischendurch wieder).
+
+**`Lithology.testEndorheicMechanicsSurviveLithology`** verglich den größten
+Einzelsprung des ratenbegrenzten Arms (τ=500) mit dem des unbegrenzten (τ=0) —
+zwei UNABHÄNGIGE Läufe. Dieser Vergleich misst nicht die Ratenbegrenzung:
+
+| Kennzahl (Seed 1337, 200×20 J.) | `main` τ=500 / τ=0 | nach #2 τ=500 / τ=0 |
+|---|---|---|
+| größter Sprung | 0.00325 / 0.00612 | 0.01221 / 0.00485 |
+| … relativ zur Spanne | 0.206 / 0.285 | 0.474 / 0.350 |
+| größter Sprung über RUHIGE Schritte | **0.00132 / 0.00056** | **0.00046 / 0.00027** |
+| Mittel über ruhige Schritte | **0.000070 / 0.000041** | **0.000094 / 0.000043** |
+
+„Ruhig" = die Wasserfläche des Beckens hat sich im Schritt kaum verschoben, der
+Pegel bewegt sich also durch Relaxation statt durch ein Geometrie-Ereignis. Auf
+BEIDEN Ständen bewegt sich der ratenbegrenzte Arm dort MEHR als der instantane —
+und das ist auch richtig so: er relaxiert dauernd einem wandernden Ziel
+hinterher, während der Snap-Arm nach seinem Sprung stillsteht. Der große
+Einzelsprung kommt in beiden Armen von einer brechenden Sill; welcher Arm den
+größeren erwischt, ist Realisierungs-Glück (der Vergleich kippte in diesem
+Branch unter vier unabhängigen, je einzeln verifizierten Änderungen). Der
+Vergleich ist deshalb gestrichen; geprüft wird jetzt wie in #11 der Sprung
+RELATIV ZUR SPANNE (Schranke 0.6; `main` 0.206, Branch 0.474 — der Absolutwert
+hängt daran, ob in den 200 Schritten eine Sill bricht). Die Ratenbegrenzung
+selbst hat ihre gepinnten Wächter in `EndorheicEvaporation`.
+
+### Nachtrag: wie `Lithology.testEndorheicMechanicsSurviveLithology` schon einmal grün wurde
 ### (die Diagnose, die den Depositions-Deckel überführt hat)
 
 Der Wächter war zwischenzeitlich rot (0.00705 gegen 0.00555, also invertiert)

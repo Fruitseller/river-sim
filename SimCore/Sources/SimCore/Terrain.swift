@@ -197,8 +197,16 @@ public final class Terrain {
 
     public private(set) var years: Double = 0
     private var seed: UInt32
-    private var stepCount: UInt32 = 0 // deterministischer Zähler für die Droplet-Seeds
     private var flowStepCount: UInt32 = 0
+    /// Laufende Nummer des nächsten Tropfens im fortlaufenden Tropfen-Strom
+    /// (Issue #2). Jeder Tropfen zieht seinen Startpunkt aus einem eigenen, aus
+    /// dieser Nummer abgeleiteten Zufallsstrom (`Hydraulic.dropRNG`) — damit
+    /// hängt der Strom an der Zahl tatsächlich EMITTIERTER Tropfen und nicht an
+    /// der Zahl der Schritte. Vorher lief er über einen Schrittzähler: leere
+    /// Frame-Schritte (Tropfenzahl 0 wegen `dropCarry`) schoben ihn trotzdem
+    /// weiter, und ein großer Sprung zog alle Tropfen aus EINEM Strom — die
+    /// Tropfenzahl war damit zwar dt-invariant, die Tropfen selbst aber nicht.
+    private var dropsEmitted: UInt64 = 0
     /// Angebrochener Tropfen aus dem letzten Schritt (Issue #2). Die Tropfenzahl
     /// ist eine RATE (`hydraulicPerYear` · Fläche · dt); bei Frame-Zeitschritten
     /// unter einem halben Jahr ist der Sollwert < 1, und ein `max(1, …)` je
@@ -283,7 +291,7 @@ public final class Terrain {
     public func generate(seed: UInt32) {
         self.seed = seed
         self.years = 0
-        self.stepCount = 0
+        self.dropsEmitted = 0
         self.flowStepCount = 0
         self.dropCarry = 0
         noise = SimplexNoise(seed: seed)
@@ -2848,7 +2856,6 @@ public final class Terrain {
             // Prozess-Reihenfolge (FastScape/LEM-Konvention, docs/research-terrain-aging.md §4):
             // Uplift → Flow (oben) → Stream-Power/Auslass (Makro-Täler) → Droplet (Textur)
             // → Hangdiffusion (Grate runden) → Wave.
-            stepCount &+= 1
             // 1) Fluviale Makro-Inzision zuerst: schneidet das kohärente Talnetz und
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
             if cfg.outletIncision { outletIncision(dt: dt) }
@@ -2860,13 +2867,18 @@ public final class Terrain {
             // 2) Droplet-Erosion legt die feine dendritische Textur (nickmcd-Look) hinein.
             // Tropfen ∝ Zeit × Fläche (Dichte kalibriert auf n = 640).
             let drops = dropletCount(dtYears: dt)
-            let dropSeed = seed &+ stepCount &* 2_654_435_761
+            // Startnummer dieser Charge im fortlaufenden Tropfen-Strom
+            // (s. `dropsEmitted`): der Zufall hängt damit an den tatsächlich
+            // emittierten Tropfen, nicht an der Zahl der Schritte.
+            let firstDrop = dropsEmitted
+            dropsEmitted &+= UInt64(drops)
             for k in 0..<cfg.count { trackBuf[k] = 0 }
             // Kanalmaske mit: auf Mäanderbetten ist die Tropfen-DEPOSITION gedämpft
             // (Reconciliation — sonst schütten die Tropfen das gecarvte Bett wieder zu).
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
-                            seed: dropSeed, floor: cfg.floor, p: cfg.hydraulic,
+                            seed: seed, floor: cfg.floor, p: cfg.hydraulic,
                             seaLevel: cfg.hydraulicSkipWaterSpawns ? cfg.sea : nil,
+                            firstDrop: firstDrop,
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],

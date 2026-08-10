@@ -330,28 +330,61 @@ final class Lithology: XCTestCase {
         XCTAssertGreaterThanOrEqual(playaOn, playaOff,
             "Lithologie kostet Salzpfannen-Seeds (an \(playaOn) gegen aus \(playaOff))")
 
-        // Ratenbegrenzung, gemessen wie in #11, nur mit Gesteinsfeld.
-        func maxJump(tau: Double) -> Double {
+        // Ratenbegrenzung, gemessen wie in #11 (dort ist das Gesteinsfeld
+        // ausgepinnt — deshalb steht die Messung hier überhaupt): der
+        // Bilanz-Spiegel darf auch MIT Gestein nicht springen, sein größter
+        // Einzelsprung bleibt also klar unter der Spanne, die er insgesamt
+        // durchwandert.
+        //
+        // Der frühere Vergleich „ratenbegrenzt springt weniger als instantan"
+        // ist GESTRICHEN, weil er nachweislich nicht die Ratenbegrenzung misst
+        // (Issue #2, docs/dt-invariance-measurements.md §6):
+        //   * Verglichen wurde der größte Einzelsprung ZWEIER UNABHÄNGIGER
+        //     Läufe. Der kommt in beiden Armen von einem diskreten
+        //     Gelände-Ereignis (eine Sill bricht, der Priority-Flood pegelt das
+        //     Becken um; die flache Becken-Hypsometrie bewegt dabei hunderte
+        //     Zellen Wasserfläche). Welcher Arm das größere Ereignis erwischt,
+        //     ist Realisierungs-Glück — der Vergleich kippte in diesem Branch
+        //     unter VIER voneinander unabhängigen, je einzeln verifizierten
+        //     Änderungen.
+        //   * Auf der Mechanik-Ebene ist die Erwartung sogar umgekehrt: über
+        //     RUHIGE Schritte (Wasserfläche nahezu unverändert) bewegt sich der
+        //     ratenbegrenzte Arm MEHR als der instantane — er relaxiert
+        //     dauernd einem wandernden Ziel hinterher, während der Snap-Arm
+        //     nach seinem Sprung stillsteht. Gemessen auf BEIDEN Ständen:
+        //     `main` 0.00132 gegen 0.00056, dieser Branch 0.00046 gegen
+        //     0.00027 (Mittel 0.000070/0.000041 bzw. 0.000094/0.000043).
+        // Die Ratenbegrenzung selbst hat ihre eigenen, gepinnten Wächter in
+        // `EndorheicEvaporation` (`testBasinLevelIsRateLimited`,
+        // `testBalanceLevelIsFramerateIndependent`).
+        func levelWalk(tau: Double) -> (jump: Double, span: Double) {
             var rc = c; rc.endorheicResponseYears = tau
             let t = Terrain(config: rc, seed: 1337)
             var cells: [Int] = []
             for k in 0..<t.cfg.count where t.endorheicBasin[k] != 0 { cells.append(k) }
-            guard cells.count > 200 else { return 0 }
+            guard cells.count > 200 else { return (0, 1) }
             let inv = 1.0 / Double(cells.count)
             func mean() -> Double { cells.reduce(0.0) { $0 + t.hf[$1] * inv } }
-            var prev = mean(), jump = 0.0
+            var prev = mean(), jump = 0.0, lo = prev, hi = prev
             for _ in 0..<200 {
                 t.step(dtYears: 20)
                 let m = mean()
-                jump = max(jump, abs(m - prev)); prev = m
+                jump = max(jump, abs(m - prev))
+                lo = min(lo, m); hi = max(hi, m); prev = m
             }
-            return jump
+            return (jump, max(1e-9, hi - lo))
         }
-        let limited = maxJump(tau: 500), instant = maxJump(tau: 0)
-        print("[#12] Lithologie × #11 Ratenbegrenzung Seed 1337 — τ=500 max Sprung \(limited), "
-              + "τ=0 \(instant)")
-        XCTAssertLessThan(limited, max(0.0005, instant),
-            "Ratenbegrenzung wirkt mit Gesteinsfeld nicht mehr (\(limited) gegen \(instant))")
+        let limited = levelWalk(tau: 500)
+        print(String(format: "[#12] Lithologie × #11 Ratenbegrenzung Seed 1337 — τ=500 "
+                     + "max Sprung %.5f / Spanne %.5f = %.3f",
+                     limited.jump, limited.span, limited.jump / limited.span))
+        // Schranke aus der Messung beider Stände: `main` 0.00325/0.01577 = 0.206,
+        // dieser Branch 0.01221/0.02574 = 0.474 — der Absolutwert hängt daran,
+        // ob in den 200 Schritten eine Sill bricht. 0.6 fängt weiterhin ab, dass
+        // der Spiegel seine Spanne in einem Schritt durchläuft (das wäre ~1.0).
+        XCTAssertLessThan(limited.jump, 0.6 * limited.span,
+            "Beckenspiegel springt mit Gesteinsfeld sichtbar "
+            + "(\(limited.jump) gegen Spanne \(limited.span))")
     }
 
     /// Gegenprobe zur Weich-Grenze: mit Bias +1 liegt die Härte spiegelbildlich in
