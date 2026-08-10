@@ -30,9 +30,13 @@ final class SimNode: Node {
         return config
     }
 
-    private let terrain = Terrain(config: SimNode.productionConfig(), seed: 1337)
+    /// `var`, weil ein geladener Spielstand seine EIGENE Config mitbringt
+    /// (Issue #8): die Datei-Config ist autoritativ, also wird das Terrain beim
+    /// Laden ersetzt statt in-place überschrieben.
+    private var terrain = Terrain(config: SimNode.productionConfig(), seed: 1337)
     private var debugReferenceHeights: [Double] = []
     private var debugReferenceYear = 0.0
+    private var lastWorldBytes = 0
 
     // MARK: Steuerung
 
@@ -44,6 +48,74 @@ final class SimNode: Node {
     @Callable func step(years: Double) {
         terrain.step(dtYears: years)
     }
+
+    // MARK: Speichern / Laden (Issue #8)
+
+    /// Schreibt die ganze Welt nach `path` (BETRIEBSSYSTEM-Pfad — GDScript muss
+    /// `user://…` vorher durch `ProjectSettings.globalize_path()` schicken).
+    /// Rückgabe: leerer String = Erfolg, sonst die Fehlermeldung für den Dialog.
+    /// Godot kennt keine Swift-Fehler; ein String ist der ehrlichste Vertrag über
+    /// die Brücke (Alternative wäre ein Bool + separates `lastError()`).
+    @Callable func saveWorld(path: String) -> String {
+        do {
+            lastWorldBytes = try WorldSnapshot.write(terrain, to: path)
+            return ""
+        } catch let error as SnapshotError {
+            return error.description
+        } catch {
+            return "Speichern fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+
+    /// Lädt eine Welt aus `path`. Bei Erfolg ist der Zustand SOFORT vollständig
+    /// (Seespiegel, Höhenbänder, Flüsse) — der Aufrufer muss nur seine Texturen
+    /// neu ziehen, keinen Sim-Schritt erzwingen. Rückgabe wie `saveWorld`; im
+    /// Fehlerfall bleibt die aktuelle Welt unangetastet.
+    @Callable func loadWorld(path: String) -> String {
+        do {
+            let loaded = try WorldSnapshot.read(from: path)
+            terrain = loaded
+            lastWorldBytes = 0
+            // Diagnose-Referenz auf den geladenen Stand: die Δ-Karte soll zeigen,
+            // was die Sim AB JETZT tut, nicht die Differenz zur alten Welt.
+            captureDebugReference()
+            // Bäume neu bauen lassen (leerer Vergleichsstand ⇒ treeVegMaxDelta = 1).
+            treeVegSnapshot = []
+            return ""
+        } catch let error as SnapshotError {
+            return error.description
+        } catch {
+            return "Laden fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+
+    /// Gitterauflösung `n` der Welt in `path`, OHNE die Felder zu laden
+    /// (−1 = Datei nicht lesbar/kein Spielstand — die Meldung dazu liefert dann
+    /// `loadWorld`). Das Frontend baut seine Texturen und Meshes je Sitzung für
+    /// EIN `n`; eine Welt mit abweichender Auflösung muss es ablehnen können,
+    /// bevor die alte Welt ersetzt ist.
+    @Callable func worldFileGridSize(path: String) -> Int {
+        (try? WorldSnapshot.peekConfig(at: path).n) ?? -1
+    }
+
+    /// Kantenlänge der Welt in Welteinheiten aus `path`, ebenfalls ohne die
+    /// Felder zu laden (−1 = nicht lesbar). Zweite Hälfte der Geometrie-Prüfung
+    /// des Frontends: `n` ALLEIN genügt nicht — Mesh-Größe, Kamera-Distanz,
+    /// Raycast-Skala und die Welt→Zelle-Umrechnung der Werkzeuge hängen an
+    /// `world`. Bei gleicher Auflösung, aber anderer Weltgröße würde die
+    /// geladene Simulation in anderen Weltkoordinaten laufen als Darstellung und
+    /// Pinsel (`n` und `world` gehören in diesem Projekt zusammen, aber die
+    /// DATEI garantiert das nicht).
+    @Callable func worldFileWorldSize(path: String) -> Double {
+        (try? WorldSnapshot.peekConfig(at: path).world) ?? -1
+    }
+
+    /// Größe der letzten geschriebenen Welt-Datei in Byte (0 = unbekannt) — für
+    /// die Statusanzeige.
+    @Callable func lastWorldFileBytes() -> Int { lastWorldBytes }
+
+    /// Übliche Dateiendung für Welt-Dateien (ohne Punkt).
+    @Callable func worldFileExtension() -> String { WorldSnapshot.fileExtension }
 
     // MARK: Konstanten
 

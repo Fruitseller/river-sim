@@ -66,11 +66,18 @@ Beim Ändern des Verfahrens müssen `scripts/build-stamp.sh` und
 **App starten / Godot-Smoke-Tests:**
 
 ```sh
+GODOT=…; "$GODOT" --headless --path game --import   # EINMALIG pro Arbeitsverzeichnis
 ./scripts/start.sh                                   # GODOT=… überschreibt die Binärdatei
 ./scripts/start.sh --rendering-method gl_compatibility # ohne Vulkan
-GODOT=…; "$GODOT" --headless --path game --script res://tests/smoke.gd
+"$GODOT" --headless --path game --script res://tests/smoke.gd
 "$GODOT" --headless --path game --script res://tests/pickaxe_repro.gd
 ```
+
+Der Import-Lauf ist Pflicht, bevor irgendetwas die GDExtension benutzt: Godot lädt
+Extensions ausschließlich aus `game/.godot/extension_list.cfg`, und die entsteht erst
+beim Import. `game/.godot/` ist gitignoriert, fehlt also in jedem frischen Klon oder
+Worktree — ohne Import bleibt `SimNode` unregistriert, obwohl `game/bin/` korrekt
+gefüllt ist. `smoke.gd` erkennt genau diesen Fall und nennt den Befehl.
 
 **Headless-Screenshot** (visuelle Verifikation ohne Auge):
 

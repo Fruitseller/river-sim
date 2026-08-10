@@ -25,6 +25,9 @@ Rendering und Interaktion in Godot 4 (via GDExtension/SwiftGodot).
   damit das Terrain schon „gealtert" startet.
 - **Klima** — orographischer Niederschlag, Vegetation als Erosionsschutz,
   Hangprozesse, Küsten-Wellenerosion.
+- **Welten speichern und laden** — der vollständige Sim-Zustand in einer
+  versionierten Datei; ein geladener Spielstand läuft bit-identisch weiter
+  ([docs/world-save-format.md](docs/world-save-format.md)).
 
 Details: [SimCore/README.md](SimCore/README.md) und [docs/](docs/).
 
@@ -57,7 +60,9 @@ der headless Modus sinnvoll.
 
 Steuerung: Linksklick formt das Terrain (Shift kehrt um), Rechtsklick dreht,
 `+`/`−` oder Pinch zoomt. Die Zeitraffer-Knöpfe (10/30/60 J/s, +100 bis
-+10.000 Jahre) treiben die Simulation.
++10.000 Jahre) treiben die Simulation. **F5** speichert die Welt nach
+`user://saves/welt.rsworld`, **F9** holt sie zurück (Knöpfe 💾/📂 im Panel
+„WELT"); nach dem Laden ist die Simulation pausiert.
 
 ### Leistung und Diagnose
 

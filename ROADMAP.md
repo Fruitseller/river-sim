@@ -54,6 +54,15 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   (Dispersal-Radius 2, nur bewohnbare Standorte). Rendering: 3D-Bäume als
   MultiMesh (`treeInstanceBuffer`, deterministischer Hash-Jitter, ~26k Instanzen,
   Rebuild nur bei Max-Δveg > 0.1).
+- **Speichern/Laden (Issue #8):** eine Welt geht vollständig in EINE versionierte
+  Binärdatei (`WorldSnapshot.swift`) — das ganze Zustands-Inventar
+  (`TerrainState`, ~25 Felder à n²) plus Mäander-Zentrumslinien/Altarme, Seed und
+  **Config**. Abnahme-Invariante ist Bit-Determinismus: geladen weiterlaufen ==
+  durchgehend simuliert (`WorldSnapshotTests`). Ratenbegrenzte Zustände
+  (`waterLevel`, `lakeBalance`) reisen mit, damit die Seespiegel nach dem Laden
+  nicht einschwingen. Ältere Formatversionen werden abgelehnt, nicht
+  interpretiert; geschrieben wird atomar. UI: 💾/📂 bzw. F5/F9.
+  Details: `docs/world-save-format.md`.
 - **Spieler-Eingriffe als Störung (Issue #26):** ein Pinselstrich setzt auf den
   betroffenen Zellen einen abklingenden **Störungsgrad** (`Terrain.disturb`,
   τ = 1200 J.). Damit fällt der Zustand weg, der an der ALTEN Topografie hing
@@ -318,6 +327,21 @@ Messreihen `docs/dt-invariance-measurements.md`):
   `docs/height-band-measurements.md`.
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
+**Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**
+- **Ein Speicherplatz** (`user://saves/welt.rsworld`), kein Dateidialog und keine
+  Slots/Namen — eine eigene UI-Frage, nicht Teil von #8.
+- **Keine Kompression.** Eine Welt ist das vollständige Zustands-Inventar
+  (gemessen 166 Byte je Zelle, bei n=832 also ~109 MB). zlib würde das grob
+  halbieren,
+  bringt aber eine System-Bibliothek ins bewusst abhängigkeitsfreie SimCore-
+  Package. Erst machen, wenn die Dateigröße real stört.
+- **Keine Aufwärts-Migration.** Eine Datei aus einer anderen Formatversion wird
+  abgelehnt (nicht interpretiert), die Datei-Config ist beim Laden autoritativ —
+  Änderungen an `SimConfig()`-Defaults wirken damit nur auf NEUE Welten.
+  Begründung und Kanten: `docs/world-save-format.md`.
+- Speichern blockiert den Frame, in dem es passiert (bei n=832 spürbar). Ein
+  Hintergrund-Thread wäre möglich, braucht aber eine Kopie des Zustands.
+
 **Toter/geparkter Code (aufräumen oder bewusst behalten):**
 - ERLEDIGT (Aug 2026): `streamPower` (detachment-limitierte Grid-Inzision) und
   `thermalPass` (Schwellen-Talus) ENTFERNT — beide waren seit ihrer Ablösung
@@ -346,7 +370,6 @@ Messreihen `docs/dt-invariance-measurements.md`):
 - Gletscher / glaziale Erosion → U-Täler, Kare, Moränen.
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
 - Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.
-- Speichern/Laden von Welten.
 - Gameplay (falls gewünscht): Ziele/Szenarien statt reinem Sandbox.
 
 ## Verifikation
@@ -355,7 +378,8 @@ Messreihen `docs/dt-invariance-measurements.md`):
   langsam). Beim Iterieren `--filter <methodName>` — **nicht** den Klassennamen, der
   matcht 0 Tests. Wächter: `LongRunCollapse.swift` (kein Runaway/Kollaps),
   `RiverDynamicsTests.swift` (MFD-Splits, Braiding-Bänke, Becken→Meer, Stream-Map,
-  Mäander in Produktion).
+  Mäander in Produktion), `WorldSnapshotTests.swift` (Spielstand läuft
+  bit-identisch weiter, alte Formatversion wird abgelehnt).
 - **Extension bauen** (~3,5 min): `./scripts/build.sh release` — **immer mit absolutem
   Pfad aufrufen.** Relativ aus `game/` heraus schlägt es still fehl, und die Screenshots
   laufen dann mit der ALTEN dylib (hat schon 3 „wirkungslose" Iterationen gekostet).
@@ -380,6 +404,9 @@ Messreihen `docs/dt-invariance-measurements.md`):
 - `SimCore/Sources/SimCore/Meander.swift` — Lagrange-Zentrumslinie, Migration, Cutoff.
 - `SimCore/Sources/SimCore/ErosionFilter.swift` — runevision-Pre-Erosion (Phacelle Noise).
 - `SimCore/Sources/SimCore/Config.swift` — **alle** Stellschrauben, jede mit Begründung.
+- `SimCore/Sources/SimCore/WorldSnapshot.swift` — Welt-Speicherformat (Magic,
+  Version, Prüfsumme, atomares Schreiben); das Zustands-INVENTAR (`TerrainState`)
+  steht am Ende von `Terrain.swift`.
 - `Extension/Sources/RiverSimGD/SimNode.swift` — `terrainColorBytes` (Palette),
   `waterFieldBytes` (Wasser-Feld, EWMA, Render-Schwellen).
 - `game/shaders/terrain.gdshader` — Wasser-Overlay, Detail-Layer, Shading.
