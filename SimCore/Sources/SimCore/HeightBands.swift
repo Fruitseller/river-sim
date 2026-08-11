@@ -17,8 +17,18 @@ import Foundation
 /// **Warum das die Gipfelzone auch nach oben begrenzt.** Der Anteil über
 /// `snowStart` ist per Konstruktion `1 − bandSnowPercentile` — flacht das Terrain
 /// ab, wird der Schnee nicht großflächig (kein „halbe Insel weiß"), er wandert nur
-/// auf die dann höchsten Grate. Wächter:
-/// `HeightBandTests.testSnowZoneAtProductionResolution`.
+/// auf die dann höchsten Grate. (Für den Schnee gilt das seit Issue #33 nicht
+/// mehr — s. den nächsten Absatz.)
+///
+/// **Ausnahme SCHNEE seit Issue #33.** `snowStart`/`snowFull` sind die einzigen
+/// Bänder, die NICHT mehr aus einem konfigurierten Perzentil kommen: sie werden
+/// aus dem Schneefeld (`Terrain.snow`, Massenbilanz aus Temperatur und
+/// Niederschlag) zurückgerechnet. Der Flächenanteil ist damit GEMESSEN statt
+/// gesetzt und folgt dem Klima — flacht die Insel unter die 0-°C-Isotherme ab,
+/// verschwindet die Schneezone, statt auf die dann höchsten Grate zu wandern.
+/// `bandSnowPercentile`/`bandSnowFullPercentile` sind der Rückfall für
+/// `climateEnabled = false`. Wächter:
+/// `HeightBandTests.testSnowZoneFollowsTheClimateNotAFixedLandFraction`.
 ///
 /// **Eine Quelle für Sim und Färbung.** `updateVegetation` (SimCore) und die
 /// Biom-Färbung (`SimNode.terrainColorBytes`) hielten bis Issue #4 zwei Kopien
@@ -51,9 +61,12 @@ public struct HeightBands: Equatable, Sendable, Codable {
     public var rockStart: Double
     /// Ab hier ist der Fels voll ausgegraut.
     public var rockFull: Double
-    /// Beginn des Schnees.
+    /// Beginn des Schnees. Seit Issue #33 **aus dem Schneefeld zurückgerechnet**
+    /// (gemessener beschneiter Landanteil → Höhenquantil), nicht mehr aus
+    /// `bandSnowPercentile` — s. `fromLandHeights(_:cfg:snowFractions:)`. Ohne
+    /// Klima bleibt es das Perzentil.
     public var snowStart: Double
-    /// Ab hier voll weiß.
+    /// Ab hier voll weiß (dieselbe Quelle wie `snowStart`).
     public var snowFull: Double
     /// Höhenband, über das die Baum-Variante von Laub nach Nadel dreht.
     public var coniferLow: Double
@@ -127,14 +140,29 @@ public struct HeightBands: Equatable, Sendable, Codable {
     /// die Perzentile werden monoton sortiert entnommen, und jede Rampe bekommt
     /// mindestens `cfg.bandMinRampWidth` Breite (eine spiegelglatte Insel hätte
     /// sonst identische Quantile → Sprungfunktion statt Verlauf).
-    public static func fromLandHeights(_ heights: [Double], cfg: SimConfig) -> HeightBands {
+    ///
+    /// **`snowFractions` (Issue #33)** löst den Perzentil-Schnee ab: statt
+    /// `bandSnowPercentile` kommen die beiden Schnee-Quantile aus den GEMESSENEN
+    /// Landanteilen, die das Klima gerade beschneit
+    /// (`Terrain.snowAreaFractions()`). Das Band schneidet damit exakt so viel
+    /// Fläche ab wie das Schneefeld belegt — „Schneezone = Flächenanteil X" gilt
+    /// weiter, aber X ist gemessen statt konfiguriert und folgt dem Klima.
+    /// `nil` (Klima aus) = die Perzentile von vor #33, bit-identisch.
+    public static func fromLandHeights(_ heights: [Double], cfg: SimConfig,
+                                       snowFractions: (ramp: Double, full: Double)? = nil)
+        -> HeightBands {
         // Feste Slot-Reihenfolge; `landHeightQuantiles` will die Perzentile
         // AUFSTEIGEND (ein Histogramm-Durchlauf), deshalb hier sortieren und das
         // Ergebnis zurückverteilen — so darf die Config die Perzentile in jeder
         // Reihenfolge setzen, ohne dass die Bänder still auf `legacyAbsolute` kippen.
+        // Slots 4/5 (Schnee): mit Klima das KOMPLEMENT der gemessenen
+        // Schneeanteile — ein Anteil von 1.5 % beschneitem Land wird zum
+        // Quantil p98.5, das genau diese 1.5 % abschneidet.
+        let snowP = snowFractions.map { (1 - $0.ramp, 1 - $0.full) }
+            ?? (cfg.bandSnowPercentile, cfg.bandSnowFullPercentile)
         let raw = [cfg.bandVegFullPercentile, 0.5,
                    cfg.bandRockPercentile, cfg.bandRockFullPercentile,
-                   cfg.bandSnowPercentile, cfg.bandSnowFullPercentile,
+                   snowP.0, snowP.1,
                    cfg.bandConiferLowPercentile, cfg.bandConiferHighPercentile,
                    0.95] // Slots 1 und 8: das Quantilpaar der robusten Relief-Spanne
         let order = raw.indices.sorted { raw[$0] < raw[$1] }
@@ -146,9 +174,19 @@ public struct HeightBands: Equatable, Sendable, Codable {
         let w = max(1e-6, cfg.bandMinRampWidth)
         // Vegetations-Rampe: eine robuste Relief-Spanne (p95 − p50) breit.
         let reliefSpan = cfg.bandVegRampSpanFactor * (q[8] - q[1])
+        var snowStart = q[4]
+        if let f = snowFractions, f.ramp <= 0 {
+            // Ein SCHNEEFREIES Klima ist ein gültiger Zustand (warme Welt, flach
+            // erodierte Insel) — dann darf das Band nicht auf dem Gipfel liegen.
+            // Bei Anteil 0 liefert das Quantil p = 1 die Mitte des höchsten
+            // besetzten Histogramm-Bins (Breite 0.000488, s.
+            // `Terrain.landHeightQuantiles`); 2·`bandMinRampWidth` = 0.008 liegt
+            // sicher darüber, `snowAmount` ist damit auf ganz Land exakt 0.
+            snowStart = q[4] + 2 * w
+        }
         return HeightBands(vegFull: q[0], vegRamp: max(w, reliefSpan),
                            rockStart: q[2], rockFull: max(q[3], q[2] + w),
-                           snowStart: q[4], snowFull: max(q[5], q[4] + w),
+                           snowStart: snowStart, snowFull: max(q[5], snowStart + w),
                            coniferLow: q[6], coniferHigh: max(q[7], q[6] + w))
     }
 }
