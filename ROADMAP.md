@@ -387,6 +387,35 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Messreihe `docs/melt-runoff-measurements.md`.
   Reichweite (gemessen): nur ~40 % der Seeds haben bei n=192 überhaupt Schnee,
   ~12 % sind alpin — auf flachen Inseln ist das Feature stumm.
+- ERLEDIGT (Aug 2026, Issue #35): **Gletscher — Eisfluss und glaziale Erosion.**
+  `Terrain.ice` ist kein Platzhalter mehr: `updateIce` läuft zwischen Abflussfeld
+  und fluvialer Makro-Inzision und macht in EINEM sub-getakteten Takt drei
+  Dinge — Firn→Eis aus dem Schneevorrat (nur unter 0 °C), TRANSPORT auf der
+  Eis-Oberfläche `h + ice` (Zwei-Phasen-Scratch wie die Hangdiffusion,
+  Ausstrom ∝ Dicke × Gefälle, Positivitäts-Deckel je Säule) und ABRASION nach dem
+  Flux-Modell (`E = K·q^0.5·S`, Härtefaktor nur auf dem Fels-Anteil). Was
+  ausschmilzt, legt seine Schuttfracht als **Moräne** ab — im Zehrgebiet, unter
+  dem Nährgebiet per Konstruktion nicht. Die Maske `Terrain.underIce` legt BEIDE
+  fluvialen Abtragspfade (`outletIncision`, `Hydraulic.erode`) unter dem Eis
+  still; leer heißt aus, also bit-identisch wie bei `isChannel`.
+  * Der TRANSPORT ist bewusst ein linearer Diffusions-Pass mit KONSTANTEM kappa,
+    nicht die SIA — deren `H^{n+2}`-Zeitschritt-Deckel hat
+    `docs/research-climate-cryosphere.md` §4.1 verworfen. Ohne Transport gäbe es
+    aber gar keine ZUNGE (gemessen: 968 gegen 63 Zellen unter der Firn-Grenze),
+    deshalb reicht die reine Flux-Akkumulation der Recherche nicht.
+  * Die **V→U-Kennzahl** (Formexponent `b` des Querprofils, V = 1, U = 2) trennt
+    sich über den ganzen Lauf vom eisfreien Referenzarm: Δb +0.22 … +0.30 über
+    10k…50k Jahre. Nötig dafür war der lateral ausgestrichene Erosions-Streifen
+    (`iceErodeSwathRadius`), den §4.3 der Recherche vorhergesagt hat — die rein
+    lokale Flux-Rate schneidet im Thalweg eine Kerbe und machte das Profil
+    V-IGER.
+  * Kosten: +18 ms je 500-Jahr-Schritt und +0.84 s je `+10.000-Jahre`-Sprung bei
+    n = 640; im Echtzeit-Zeitraffer ein einziger Teilschritt.
+  * `iceEnabled = false` — und ebenso jede Welt ohne Eis — ist bit-identisch zum
+    Stand vor #35. Messreihe `docs/glacier-measurements.md`.
+  Offen geblieben: die Gleichgewichts-DICKE ist auflösungsabhängig
+  (∝ `1/(n−1)`, die Fließstrecke in Welteinheiten dagegen nicht) — beschränkt,
+  aber bei kleinem `n` dickeres Eis, s. Messreihe §B.
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**
@@ -429,11 +458,6 @@ Messreihen `docs/dt-invariance-measurements.md`):
   jetzt über sanfteres Relief (`baseRelief` 0.78).
 
 **Backlog (nicht priorisiert):**
-- Gletscher / glaziale Erosion → U-Täler, Kare, Moränen (Issue #35). Modellwahl
-  und Erosionsgesetz sind mit #33 schon recherchiert und entschieden
-  (Flux-/Stream-Power-Formulierung statt SIA-Diffusion,
-  `docs/research-climate-cryosphere.md` §4/§5); das Eisfeld (`Terrain.ice`) und
-  sein Platz im Speicherformat (Version 3) stehen bereits.
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
 - Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.
 - Gameplay (falls gewünscht): Ziele/Szenarien statt reinem Sandbox.

@@ -287,18 +287,49 @@ final class Glacier: XCTestCase {
         }
     }
 
+    /// Verhältnis **Moräne zu glazialem Abtrag**: wie viel von dem, was das Eis
+    /// abträgt, legt es als Ausschmelz-Schutt wieder ab? Gemessen über EINEN
+    /// Schritt aus DEMSELBEN Zustand in drei Armen (nichts / nur Abtrag / nur
+    /// Moräne), damit die Differenzen genau die beiden Terme isolieren.
+    /// Rohdaten für `docs/glacier-measurements.md` §F.
+    func testMoraineBudgetDiagnostic() {
+        var none = quietCfg(n: 256); none.iceErodeK = 0; none.iceMoraineK = 0
+        var eroOnly = quietCfg(n: 256); eroOnly.iceMoraineK = 0
+        var morOnly = quietCfg(n: 256); morOnly.iceErodeK = 0
+        let base = Terrain(config: none, seed: 1337)
+        run(base, to: 20_000)
+        for dt in [500.0, 5000.0] {
+            let a = Terrain(allocating: none, seed: 1337); a.restore(base.state)
+            let b = Terrain(allocating: eroOnly, seed: 1337); b.restore(base.state)
+            let c = Terrain(allocating: morOnly, seed: 1337); c.restore(base.state)
+            a.step(dtYears: dt); b.step(dtYears: dt); c.step(dtYears: dt)
+            var erosion = 0.0, moraine = 0.0
+            for k in 0..<none.count {
+                erosion += a.h[k] - b.h[k]
+                moraine += c.h[k] - a.h[k]
+            }
+            print(String(format: "dt %5.0f → glazialer Abtrag %.6f, Moräne %.6f (%.1f %%)",
+                         dt, erosion, moraine,
+                         erosion > 0 ? moraine / erosion * 100 : 0))
+        }
+    }
+
     /// Rechenzeit des Gletscher-Passes: Schrittzeit mit gegen ohne Eis, für den
     /// Frame-Fall (dt klein) und den `+10.000 Jahre`-Sprung. Rohdaten für
     /// `docs/glacier-measurements.md` §E.
     func testIcePassCostDiagnostic() {
         for n in [384, 640] {
+            let on = cfg(n: n)
+            var off = on; off.iceEnabled = false
+            // EINMAL Eis aufbauen und den Zustand danach je Messung
+            // zurückspielen (Zustands-Inventar, Issue #8) — sonst kostet der
+            // Vorlauf je Schrittweite erneut 20.000 Jahre.
+            let warm = Terrain(config: on, seed: 1337)
+            run(warm, to: 20_000)
+            let state = warm.state
             for dt in [0.2, 500.0, 10_000.0] {
-                var on = cfg(n: n); on.iceFlowK = 3.0
-                on.iceMeltPerKYear = 0.001; on.iceFirnPerSnowYear = 1e-4
-                var off = on; off.iceEnabled = false
-                let a = Terrain(config: on, seed: 1337)
-                let b = Terrain(config: off, seed: 1337)
-                run(a, to: 20_000); run(b, to: 20_000)   // Eis erst aufbauen
+                let a = Terrain(allocating: on, seed: 1337); a.restore(state)
+                let b = Terrain(allocating: off, seed: 1337); b.restore(state)
                 let reps = dt < 1 ? 20 : 3
                 var ta = 0.0, tb = 0.0
                 for _ in 0..<reps {

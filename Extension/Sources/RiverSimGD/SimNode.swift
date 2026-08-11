@@ -307,6 +307,12 @@ final class SimNode: Node {
         let snow = terrain.snow.count == n * n ? terrain.snow : [0.0]
         let snowOn = snow.count == n * n
         let snowRef = terrain.cfg.snowCoverRef
+        // Gletschereis (Issue #35): eigenes Feld, eigene Farbe. Ohne Klima oder
+        // mit `iceEnabled = false` ist es leer bzw. konstant 0 → der Zweig fällt
+        // weg und es bleibt beim Schnee-Bild von #33.
+        let ice = terrain.ice.count == n * n ? terrain.ice : [0.0]
+        let iceOn = ice.count == n * n
+        let iceRef = terrain.cfg.iceCoverRef
         // Höhenbänder (Issue #4): einmal je Puffer gelesen — sie kommen aus dem
         // Sim-Kern (Perzentile der Landhöhen), nicht aus einer zweiten Kopie hier.
         let bands = terrain.heightBands
@@ -320,10 +326,11 @@ final class SimNode: Node {
         salt.withUnsafeBufferPointer { slb in
         lith.withUnsafeBufferPointer { ltb in
         snow.withUnsafeBufferPointer { snb in
+        ice.withUnsafeBufferPointer { icb in
         out.withUnsafeMutableBufferPointer { ob in
         let ph = hb.baseAddress!, prain = rnb.baseAddress!
         let pveg = vgb.baseAddress!, psalt = slb.baseAddress!, pout = ob.baseAddress!
-        let plith = ltb.baseAddress!, psnow = snb.baseAddress!
+        let plith = ltb.baseAddress!, psnow = snb.baseAddress!, pice = icb.baseAddress!
         parallelChunks(n) { jLo, jHi in
         for j in jLo..<jHi {
             for i in 0..<n {
@@ -378,6 +385,20 @@ final class SimNode: Node {
                     if ws > 0 {
                         r += (0.93 - r) * ws; g += (0.94 - g) * ws; b += (0.96 - b) * ws
                     }
+                    // GLETSCHEREIS (Issue #35) liegt ÜBER dem Schnee — es ist die
+                    // obere Schicht, und es soll sich davon absetzen: kühleres,
+                    // deutlich blaueres Weiß (Firn/Gletschereis streut lange
+                    // Wellenlängen weg) statt des neutralen Schneeweiß. Nur so
+                    // ist im Bild ablesbar, wo eine ZUNGE liegt und wo bloß eine
+                    // Schneedecke — die beiden Felder haben verschiedene Physik
+                    // (die eine fließt und erodiert, die andere nicht).
+                    // Sättigungs-Formel wie beim Schnee im Sim-Kern
+                    // (Terrain.iceCoverage), hier nur der Aufruf über den rohen
+                    // Puffer — keine zweite Kopie.
+                    let wi = iceOn ? Terrain.iceCoverage(thickness: pice[k], ref: iceRef) : 0
+                    if wi > 0 {
+                        r += (0.74 - r) * wi; g += (0.85 - g) * wi; b += (0.94 - b) * wi
+                    }
                     // Salzpfanne/Playa (Issue #11): der trockengefallene Boden
                     // eines abflusslosen Beckens ist NICHT mehr blau (das
                     // Wasser-Overlay malt dort nichts mehr) — als graugrünes Land
@@ -410,7 +431,7 @@ final class SimNode: Node {
             }
         }
         }
-        }}}}}}}
+        }}}}}}}}
         return PackedByteArray(out)
     }
 
