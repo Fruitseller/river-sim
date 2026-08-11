@@ -68,3 +68,70 @@ Damit ist die Schwelle 0.09/0.16 **nicht** nachkalibrierungs-bedürftig: sie
 liefert am Gate erstmals das Verhalten, das dieser Block ohnehin beschreibt. Was
 fehlte, war nicht die Kalibrierung, sondern die Notiz, dass der Kanal seine
 Bedeutung gewechselt hat — die steht jetzt im Shader.
+
+## Altarm-Enden
+
+Zweite Sorge aus demselben Review: `lakeMask` ist von einem ODER
+(`max(Kanal, pond)`) zu einem UND (`Kontur · Gate`) geworden. Das Altarm-Overlay
+(`oxb` in `SimNode.waterFieldBytes`) setzt schon ab `pond > 0.003` ein, die neue
+Farb-Kontur erst ab `pond ≥ 0.006` und voll ab 0.02 — die flachen Enden eines
+Altarms müssten also blasser werden oder ganz verschwinden.
+
+### Seed-Suche
+
+Altarme brauchen Mäander-Cutoffs, und die sind stark seed-abhängig. Gezählt
+wurden die Zellen mit `oxb > 0` (temporäre Sonde `SimNode.debugOxbowField()`):
+
+| Seed | 10k | 20k | 30k |
+|------|-----|-----|-----|
+| 1337 | 1703 | 4292 | **6068** |
+| 1    | 102 | 101 | 2 |
+| 7    | 11 | 83 | 18 |
+| 42   | 64 | 200 | 599 |
+
+Nur Seed 1337 liefert Altarme mit nennenswerter Deckkraft (`oxb > 0.35`: 2635
+Zellen bei 30k; bei den anderen Seeds **null**). Gemessen wurde deshalb bei
+**Seed 1337, Jahr 30.000**, beschränkt auf die 6068 Zellen, die das Overlay
+tatsächlich anfasst.
+
+### Ergebnis
+
+Vorab bestätigt: Höhen und Seespiegel sind zwischen `main` und Branch
+**bitgleich** — das Abnahmekriterium „Sim-Physik bit-identisch" aus Issue #32
+ist damit gemessen, nicht nur behauptet.
+
+Verglichen wird das sichtbare Wasser `wet = max(riverMask, lakeMask)`, denn der
+Fluss-Kanal malt an denselben Stellen mit.
+
+| Zellen | `wet` main | `wet` Branch | Δ |
+|---|---|---|---|
+| alle 6068 Altarm-Zellen | 0,917 | 0,929 | +0,012 |
+| davon `pond ≤ 0.03` (2245) | 0,789 | 0,807 | +0,018 |
+| davon `pond ≤ 0.02` (1514) | 0,742 | 0,739 | −0,003 |
+
+Verteilung über alle 6068 Zellen: **5792 praktisch unverändert** (|Δ| ≤ 0,25),
+200 deutlich sichtbarer, 76 blasser. Ganz trockene Altarm-Zellen (`wet < 0.05`):
+**271 in `main`, 174 im Branch** — der Branch zeigt also *mehr* Altarm, nicht
+weniger.
+
+Nach Wassersäule aufgeschlüsselt zeigt sich der vermutete Effekt nur in einem
+schmalen Band und schwach:
+
+| `pond` | 0–0.006 | 0.006–0.010 | 0.010–0.015 | 0.015–0.020 | 0.020–0.030 | > 0.030 |
+|---|---|---|---|---|---|---|
+| n | 462 | 166 | 339 | 547 | 731 | 3823 |
+| Δ `wet` | −0,002 | +0,001 | **−0,054** | +0,027 | +0,062 | +0,007 |
+
+### Deutung
+
+Die Sorge war unbegründet, aus zwei Gründen:
+
+1. Altarme liegen auf oder neben ehemaligen Läufen, also dort, wo der
+   **Fluss-Kanal** ohnehin malt. `wet` nimmt das Maximum aus beiden — die
+   Änderung an `lakeMask` wird zum größten Teil verdeckt.
+2. 3823 der 6068 Zellen haben `pond > 0.03`, sind also echtes Wasser und
+   liegen weit über der Kontur-Rampe.
+
+Übrig bleibt eine leichte Abschwächung im Band `pond` 0,010–0,015 (−0,054 auf
+339 Zellen), die von den Zugewinnen in den Nachbarbändern mehr als aufgewogen
+wird. Kein Handlungsbedarf.
