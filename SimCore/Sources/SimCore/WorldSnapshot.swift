@@ -74,7 +74,13 @@ public enum WorldSnapshot {
     /// **Formatversion.** Bei jeder Änderung an Inventar, Reihenfolge oder
     /// Kodierung um 1 erhöhen — alte Dateien werden dann abgelehnt (es gibt
     /// bewusst keine Aufwärts-Migration, s. Typ-Doku).
-    public static let version: UInt32 = 2
+    /// Version 3 (Issue #33): die Kryo-Felder `temperature`, `snow` und `ice`
+    /// kommen GEMEINSAM hinein — auch `ice`, das erst Issue #35 beschreibt. Weil
+    /// es keine Migration gibt, wäre jeder weitere Sprung eine zweite Runde
+    /// ungültiger Spielstände; das vollständige Inventar der Klima-Vertikalen
+    /// steht deshalb in `docs/research-climate-cryosphere.md` §6 und ist mit
+    /// diesem Sprung abgeschlossen.
+    public static let version: UInt32 = 3
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
@@ -379,6 +385,10 @@ public enum WorldSnapshot {
         .init("lithErodeK", \.lithErodeK, mayBeEmpty: true),
         .init("lithBed", \.lithBed, mayBeEmpty: true),
         .init("lithProvince", \.lithProvince, mayBeEmpty: true),
+        // Klima-Vertikale (Issue #33) — leer, wenn cfg.climateEnabled aus ist.
+        .init("temperature", \.temperature, mayBeEmpty: true),
+        .init("snow", \.snow, mayBeEmpty: true),
+        .init("ice", \.ice, mayBeEmpty: true),
         .init("veg", \.veg), .init("riparian", \.riparian),
         .init("hf", \.hf), .init("waterLevel", \.waterLevel),
         .init("lakeBalance", \.lakeBalance), .init("saltCrust", \.saltCrust),
