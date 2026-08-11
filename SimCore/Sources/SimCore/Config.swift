@@ -910,6 +910,90 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// die Höhe, in der das Klima Dauerschnee trägt.
     public var snowBandCoverFull: Double = 0.8
 
+    // ---- Schmelzwasser speist den Abfluss (Issue #36) ----
+    //
+    // Bis #36 war die Schneedecke hydrologisch stumm: sie färbte und verschob die
+    // Waldgrenze, aber der Abfluss kannte nur den REGEN. Jetzt speist die
+    // Ablation die Abfluss-Akkumulation — und zwar über den EINEN Trichter
+    // `Terrain.seedFlowAccumulator`/`Terrain.flowWeight`, damit alle drei
+    // Konsumenten (D8-`area` → Erosion, MFD-`areaMFD` → Render/Braiding und die
+    // Tropfen-Startpunkte) derselben Gewichtungsregel folgen.
+    //
+    //     Schmelzfluss  m(k) = snowMeltPerKYear · max(0, T) · S      [SWE/Jahr]
+    //     Regen-Einheiten      m(k) / snowAccumPerYear
+    //     roh           w(k) = rain[k] + m(k)/snowAccumPerYear
+    //
+    // Die Umrechnung über `snowAccumPerYear` ist keine freie Konstante, sondern
+    // die Umkehrung der Akkumulation (`a = snowAccumPerYear · rain · f_schnee`):
+    // eine Zelle, die ihren gesamten Festniederschlag wieder abschmilzt, bekommt
+    // damit genau `rain · f_schnee` als Schmelzbeitrag zurück. Daraus folgt die
+    // OBERGRENZE des Beitrags im eingeschwungenen Zustand:
+    // `m/snowAccumPerYear = rain · f_schnee · (c·T)/(1/τ₀ + c·T) ≤ rain`.
+    // Das Gewicht kann sich also höchstens VERDOPPELN — wichtig für die
+    // Ablehnungs-Stichprobe der Tropfen-Starts, die mit dem Feld-Maximum
+    // normiert (ein Ausreißer-Maximum würde dort die Annahmequote erdrücken).
+    //
+    // NICHT dabei: der Grundumsatz-Sockel `1/snowTurnoverYears` der Ablation.
+    // Der ist bei `snowTurnoverYears` als Sublimation/Windverfrachtung und als
+    // Anschlusspunkt für die Firn→Eis-Umwandlung (#35) besetzt — beides fließt
+    // nicht ab. Konsequenz: oberhalb der 0-°C-Isotherme (T ≤ 0, kein
+    // Schmelzterm) liefert eine Zelle keinen Schmelzbeitrag, der Beitrag sitzt im
+    // ABLATIONSSAUM darunter. Genau dort will das Ticket das Wasser haben.
+    //
+    // DIE DESIGNENTSCHEIDUNG (gemessen, `docs/melt-runoff-measurements.md`):
+    // Renormierung (`meltRunoffNormalized = true`, gewählt) gegen Zusatzwasser.
+    // Renormiert wird das Landmittel des ROHEN Gewichts wieder auf 1 gezogen —
+    // Σ Gewicht über Land = Zahl der Landzellen bleibt exakt erhalten (dieselbe
+    // Invariante wie bei #10), der Schmelzbeitrag wirkt als UMVERTEILUNG in die
+    // schneegespeisten Einzugsgebiete. Kein in Zellen kalibriertes Gate
+    // (Braid-, Render-, Mäander-Schwellen, `minAreaCells` des Breach) musste
+    // angefasst werden, und `totalOutletArea()` bleibt auf die Zellzahl gepinnt.
+    // Physikalische Lesart der Renormierung: nicht der Niederschlag ist neu
+    // verteilt, sondern der ABFLUSSKOEFFIZIENT — schneegespeiste Einzugsgebiete
+    // führen je Einheit Niederschlag mehr Wasser (kaum Verdunstung, keine
+    // Vegetation, Schmelzspitzen) als warmes, bewachsenes Tiefland. Das ist der
+    // Effekt, den das Ticket beschreibt; die Gesamtwassermenge der Insel ist
+    // dagegen eine KALIBRIERTE Größe und kein Messergebnis dieses Tickets.
+    public var meltRunoffEnabled = true
+    /// Normierungs-Arm der Schmelz-Gewichtung. `true` (Default) = Renormierung:
+    /// das Landmittel des rohen Gewichts wird auf 1 gezogen, Σ über Land bleibt
+    /// exakt die Zahl der Landzellen.
+    ///
+    /// `false` = ZUSATZWASSER (verworfener Arm, bleibt als Referenz messbar): das
+    /// Gewicht wird mit demselben Divisor wie `rainWeight` normiert (Landmittel
+    /// des Regens), die Schmelze kommt also OBEN DRAUF und die Summe steigt.
+    /// Gemessen (n = 192, 20.000 Jahre, Produktionspfad, alpine Seeds
+    /// 1337/2/6/20/33): `totalOutletArea/Zellzahl` = 1.0000 renormiert gegen
+    /// 1.0078 … 1.0175 als Zusatzwasser — die 0.8 … 1.8 %, die die Ablationszone
+    /// dieser Inseln ausmacht. Der Preis wäre die volle Kalibrier-Kaskade (jedes
+    /// in Zellen kalibrierte Gate neu vermessen, Erosionsraten nachziehen), und
+    /// der Faktor hängt an Seed und Auflösung — genau der Fehler, den #10 mit der
+    /// Normierung abgestellt hat (dort: Landmittel des Regens 0.36 … 0.56 je
+    /// Seed/Auflösung). Der GEWINN wäre dabei null: die Richtung des Effekts ist
+    /// in beiden Armen dieselbe und praktisch gleich groß (gepoolter Abfluss
+    /// schneegespeist/schneefrei 0.959 renormiert gegen 0.965 als Zusatzwasser,
+    /// Aus-Arm 0.838), s. `docs/melt-runoff-measurements.md` §D.
+    public var meltRunoffNormalized = true
+    /// Anteil des FESTNIEDERSCHLAGS, der aus dem sofortigen Abfluss
+    /// herausgenommen und der Schneedecke zugeschlagen wird
+    /// (`rain · f_schnee · meltRunoffWithholdSolid`). 0 = aus (Default).
+    ///
+    /// VERWORFENER, weil ohne Eis (#35) falsch wirkender Arm — mit Messwerten
+    /// (`docs/melt-runoff-measurements.md` §E): 1.0 wäre die massenkonsistente
+    /// Buchung (was als Schnee fällt, fließt erst beim Schmelzen ab, kein
+    /// Wasser wird doppelt gezählt). Ohne EIStransport schmilzt der Schnee aber
+    /// genau dort, wo er fällt, und oberhalb der 0-°C-Isotherme schmilzt er nie:
+    /// die Dauerfrostzone verliert ihren gesamten Abflussbeitrag an einen Speicher,
+    /// der nie wieder ausschüttet (nur der Sublimations-Sockel zieht ab). Gemessen
+    /// wird damit genau das GEGENTEIL des Ticket-Ziels — der Abfluss unter den
+    /// schneereichsten Einzugsgebieten SINKT (Verhältnis schneegespeist/schneefrei
+    /// gepoolt über 5 alpine Seeds: 0.765 gegen 0.838 im Aus-Arm und 0.959
+    /// renormiert), und die Kammlinien-Quellflüsse trocknen aus. Der Arm bleibt
+    /// als Stellschraube
+    /// erhalten: mit #35 wandert das eingelagerte Wasser als Eis talwärts und
+    /// dann ist er die richtige Buchung.
+    public var meltRunoffWithholdSolid: Double = 0
+
     // ---- Klima / Vegetation ----
     // Zeitkonstante der Vegetations-Relaxation, Jahre. Seit Issue #2
     // EXPONENTIELL (`1 − e^(−dt/τ)`, wie der Flood-Kill daneben schon immer):

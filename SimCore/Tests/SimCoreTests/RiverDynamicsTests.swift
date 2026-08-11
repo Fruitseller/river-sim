@@ -49,9 +49,12 @@ final class RiverDynamicsTests: XCTestCase {
     }
 
     /// Startwert der Akkumulation für Zelle `k` (s. `Terrain.seedFlowAccumulator`).
+    /// Liest `flowWeight` und nicht `rainWeight`: seit Issue #36 trägt das Gewicht
+    /// zusätzlich das Schmelzwasser, und die Regel ist für beide Netze dieselbe.
     private func ownContribution(_ t: Terrain, _ k: Int) -> Double {
         let cellArea = t.cfg.cellSize * t.cfg.cellSize
-        return t.rainWeight.isEmpty ? cellArea : cellArea * t.rainWeight[k]
+        let w = t.flowWeight
+        return w.isEmpty ? cellArea : cellArea * w[k]
     }
 
     func testMFDMayUseASlowerRenderCadence() {

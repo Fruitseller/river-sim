@@ -46,6 +46,33 @@ public final class Terrain {
     /// `seedFlowAccumulator` (beide Netze) und den Tropfen-Startpunkten
     /// (`Hydraulic.spawnPosition`). Herleitung: `SimConfig.rainWeightedFlow`.
     public private(set) var rainWeight: [Double] = []
+    /// Abfluss-GEWICHT INKLUSIVE SCHMELZWASSER (Issue #36) — dieselbe Bauform wie
+    /// `rainWeight` (Landmittel 1, über See neutral 1.0), nur speist zusätzlich die
+    /// Ablation der Schneedecke ein. Gefüllt am Ende von `computeRain`
+    /// (`updateRunoffWeight`), verbraucht ausschließlich über `flowWeight`.
+    ///
+    /// **Leer** heißt „keine Schmelze im Spiel" — dann fällt `flowWeight` auf
+    /// `rainWeight` zurück und ALLE Pfade rechnen bit-identisch zum Stand vor #36.
+    /// Das gilt nicht nur bei `cfg.meltRunoffEnabled = false`, sondern auch, wenn
+    /// die Welt gerade nichts zu schmelzen hat (Klima aus, kein Schneefeld, oder
+    /// Schnee nur in Dauerfrostlagen): `updateRunoffWeight` prüft das und lässt das
+    /// Feld dann leer, statt eine Kopie von `rainWeight` zu halten.
+    ///
+    /// **Nicht im Zustands-Inventar** (`TerrainState`) und deshalb ohne
+    /// Snapshot-Versionssprung: das Feld ist eine reine Ableitung aus `rain`,
+    /// `temperature` und `snow` — alle drei reisen mit — und wird im nächsten
+    /// `computeFlow` neu gebaut, bevor irgendein Konsument es liest. Es geht auch
+    /// an kein Rendering (anders als `rainWeight`, das über die Aridität in die
+    /// Verdunstung koppelt).
+    public private(set) var runoffWeight: [Double] = []
+    /// **Die EINE Quelle der Abfluss-Gewichtung** (Issue #36): Schmelz-Gewicht,
+    /// wenn es eines gibt, sonst das Regen-Gewicht. Alle drei Konsumenten lesen
+    /// dieses Feld und keins der beiden Rohfelder — `seedFlowAccumulator` (D8
+    /// `area` UND MFD `areaMFD`) und die Tropfen-Startpunkte (`Hydraulic.erode`,
+    /// Parameter `rainWeight`). Leer = ungewichtet (Zellfläche/gleichverteilt).
+    ///
+    /// Kein Kopieren: die Property gibt eines der beiden Arrays zurück (COW).
+    public var flowWeight: [Double] { runoffWeight.isEmpty ? rainWeight : runoffWeight }
     /// **Lithologie** (Issue #12): Härte-Signal je Zelle, −1 = weichstes …
     /// +1 = härtestes Gestein. Leer, solange `cfg.lithologyEnabled` aus ist (dann
     /// laufen alle Pfade bit-identisch zum Stand vor #12). Zusammengesetzt aus
@@ -166,7 +193,8 @@ public final class Terrain {
     public private(set) var receiver: [Int32] // Abfluss-Nachbar (-1 = Senke/Meer)
     /// Einzugsgebiet (Single-Flow/D8 → Erosion). Ohne `cfg.rainWeightedFlow`
     /// reine Zellflächen; mit Schalter (Produktion) ABFLUSS = Fläche ×
-    /// normiertes Regen-Gewicht (s. `seedFlowAccumulator`, `updateRainWeight`).
+    /// normiertes Abfluss-Gewicht (s. `seedFlowAccumulator`, `flowWeight`) — also
+    /// Regen und, seit Issue #36, Schmelzwasser.
     /// Die SKALA ist in beiden Fällen dieselbe — das Gewicht hat Landmittel 1.
     public private(set) var area: [Double]
     /// Multi-Flow-Einzugsgebiet (Freeman) → NUR Render/Braiding, nie Erosion.
@@ -435,6 +463,13 @@ public final class Terrain {
             regenPending[k] = 0
         }
         disturbActive = false
+        // Kryo-Felder leeren, BEVOR der erste `computeFlow` läuft. Seit Issue #36
+        // speist die Schneedecke den Abfluss; ein `generate` auf einem BESTEHENDEN
+        // Terrain (im Spiel: neuer Seed auf demselben Node) würde sonst die neue
+        // Insel mit dem Schnee der alten entwässern — der Seed wäre nicht mehr
+        // allein bestimmend, und Determinismus ist eine getestete Invariante.
+        // `updateClimate(dt: 10000)` unten baut die Felder gleich frisch auf.
+        temperature = []; snow = []; ice = []
         computeFlow()
         if cfg.breachEnabled { breachBasins() }
         spinUpStreamMap()
@@ -483,7 +518,10 @@ public final class Terrain {
                             seaLevel: cfg.hydraulicSkipWaterSpawns ? cfg.sea : nil,
                             hf: hf, receiver: receiver,
                             stream: streamMap,
-                            rainWeight: rainWeight,
+                            // Dieselbe Quelle wie im Sim-Schritt (Issue #36). In der
+                            // Generierung gibt es noch kein Schneefeld, das Feld IST
+                            // hier `rainWeight` — der Spin-up bleibt bit-identisch.
+                            rainWeight: flowWeight,
                             erodibility: lithErodeK,
                             track: &trackBuf)
             for k in 0..<cfg.count {
@@ -762,6 +800,11 @@ public final class Terrain {
         }
         }}
         updateRainWeight()
+        // Schmelzwasser (Issue #36) sitzt AUF dem frischen Regen-Gewicht: eigener
+        // Pass, damit beide Gewichtsfelder aus demselben `rain` fallen und die
+        // Rückfall-Kette (`flowWeight`) eindeutig bleibt — auch auf den
+        // Abbruchpfaden von `updateRainWeight` (Schalter aus, Insel ohne Regen).
+        updateRunoffWeight()
     }
 
     /// Baut `rainWeight` aus dem frischen `rain` (Issue #10).
@@ -808,6 +851,104 @@ public final class Terrain {
                 for k in lo..<hi { pw[k] = ph[k] > sea ? prain[k] * inv : 1.0 }
             }
         }}}
+    }
+
+    /// Baut `runoffWeight` — Regen PLUS Schmelzwasser — aus dem frischen `rain` und
+    /// der Schneedecke des vorigen Schritts (Issue #36). Kalibrier-Logbuch und
+    /// Herleitung der Umrechnung: `SimConfig.meltRunoffEnabled`.
+    ///
+    /// ```
+    /// m(k)   = snowMeltPerKYear · max(0, T) · S        Schmelzfluss [SWE/Jahr]
+    /// roh(k) = rain[k] − withhold · rain[k] · f_schnee(T)   (Einlagerung, Default 0)
+    ///          + m(k) / snowAccumPerYear                    (Ablation, in Regen-Einheiten)
+    /// w(k)   = roh(k) / Landmittel     (Land) — Divisor s. `cfg.meltRunoffNormalized`
+    /// w(k)   = 1.0                     (See, neutral wie bei `rainWeight`)
+    /// ```
+    ///
+    /// **Operator-Splitting.** `rain` ist frisch (dieser Schritt), `temperature`
+    /// und `snow` stehen auf dem Stand des SCHRITTENDES vom letzten Mal
+    /// (`updateClimate` läuft dort). Dieselbe Kohärenz-Annahme wie im Rest des
+    /// Schritts: über einen Zeitschritt ändert sich die Schneedecke (τ ≥ 500 a)
+    /// nicht sprunghaft. Nach der Generierung ist das Klima bereits eingeschwungen
+    /// (`generate` ruft `updateClimate(dt: 10000)`), der erste Sim-Schritt sieht
+    /// also eine echte Schneedecke — der Abfluss der GENERIERUNG selbst bleibt
+    /// dagegen bewusst schmelzfrei (dort läuft `computeFlow`, bevor es Schnee gibt),
+    /// damit die kalibrierte Welt-Erzeugung bit-identisch bleibt.
+    ///
+    /// **dt-Invarianz.** Reine Ableitung ohne eigenen Zustand: kein Term hängt an
+    /// `dt`. Die Zeitabhängigkeit steckt komplett in `snow` (dort exakt gelöst).
+    ///
+    /// **Leeres Ergebnis = bit-identisch zum Stand vor #36.** Das Feld bleibt leer,
+    /// wenn der Schalter aus ist, das Klima aus ist, `rainWeight` fehlt (dann ist
+    /// der Abfluss ungewichtet und eine Schmelz-Gewichtung wäre ein Widerspruch)
+    /// — oder wenn keine einzige Zelle einen Schmelz- bzw. Einlagerungs-Beitrag
+    /// liefert. Letzteres ist der Normalfall einer schneefreien Welt und wird
+    /// GEMESSEN, nicht geraten: die sequenzielle Summenschleife merkt sich, ob
+    /// irgendein `roh` von `rain` abweicht.
+    ///
+    /// Die Land-Summen laufen SEQUENZIELL (feste Reihenfolge → bit-genau
+    /// reproduzierbar), die Skalierung je Zelle ist unabhängig und deshalb parallel
+    /// bit-identisch — dieselbe Aufteilung wie in `updateRainWeight`.
+    private func updateRunoffWeight() {
+        let cnt = cfg.count
+        guard cfg.meltRunoffEnabled, cfg.climateEnabled,
+              rainWeight.count == cnt, snow.count == cnt, temperature.count == cnt else {
+            if !runoffWeight.isEmpty { runoffWeight = [] }
+            return
+        }
+        if runoffWeight.count != cnt { runoffWeight = .init(repeating: 1, count: cnt) }
+        let sea = cfg.sea
+        let tFreeze = cfg.snowFreezeTemp
+        let phaseSpan = max(1e-9, cfg.snowRainTemp - tFreeze) // s. updateClimate
+        let tRain = cfg.snowRainTemp
+        let withhold = min(1, max(0, cfg.meltRunoffWithholdSolid))
+        // Schmelzfluss → Regen-Einheiten: die Umkehrung der Akkumulation
+        // (a = snowAccumPerYear · rain · f_schnee), s. SimConfig.meltRunoffEnabled.
+        let meltToRain = cfg.snowMeltPerKYear / max(1e-12, cfg.snowAccumPerYear)
+        var rawSum = 0.0, rainSum = 0.0, land = 0
+        var anyMelt = false
+        // Ein sequenzieller Pass baut das rohe Gewicht UND beide Land-Summen: die
+        // Formel ist billig (kein exp), ein zusätzlicher paralleler Bau-Pass würde
+        // nur ein zweites Mal über 700k Zellen laufen.
+        h.withUnsafeBufferPointer { hb in
+        rain.withUnsafeBufferPointer { rnb in
+        temperature.withUnsafeBufferPointer { tb in
+        snow.withUnsafeBufferPointer { sb in
+        runoffWeight.withUnsafeMutableBufferPointer { wb in
+            let ph = hb.baseAddress!, prain = rnb.baseAddress!
+            let pt = tb.baseAddress!, ps = sb.baseAddress!, pw = wb.baseAddress!
+            for k in 0..<cnt {
+                guard ph[k] > sea else { pw[k] = 1.0; continue }
+                let t = pt[k]
+                var raw = prain[k]
+                if withhold > 0 && t < tRain {
+                    let fSnow = min(1, max(0, (tRain - t) / phaseSpan))
+                    raw -= withhold * prain[k] * fSnow
+                    if raw < 0 { raw = 0 }
+                }
+                if t > 0 && ps[k] > 0 { raw += meltToRain * t * ps[k] }
+                if raw != prain[k] { anyMelt = true }
+                pw[k] = raw
+                rawSum += raw
+                rainSum += prain[k]
+                land += 1
+            }
+        }}}}}
+        // Keine Zelle trägt Schmelze oder Einlagerung bei → auf `rainWeight`
+        // zurückfallen (bit-identisch, und der Tropfen-Pfad spart die Kopie).
+        let mean = land == 0 ? 0 : (cfg.meltRunoffNormalized ? rawSum : rainSum) / Double(land)
+        guard anyMelt, mean > 1e-9 else {
+            runoffWeight = []
+            return
+        }
+        let inv = 1 / mean
+        h.withUnsafeBufferPointer { hb in
+        runoffWeight.withUnsafeMutableBufferPointer { wb in
+            let ph = hb.baseAddress!, pw = wb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi where ph[k] > sea { pw[k] *= inv }
+            }
+        }}
     }
 
     // MARK: - Klima-Vertikale: Temperatur und Schneedecke (Issue #33)
@@ -1379,21 +1520,25 @@ public final class Terrain {
     ///
     /// Ohne `cfg.rainWeightedFlow`: reine Zellfläche (`cellArea` überall) —
     /// bit-identisch zum Zustand vor Issue #9. Mit Schalter: `cellArea ·
-    /// rainWeight[k]`, d. h. die Akkumulation trägt ABFLUSS statt Fläche
-    /// (Q = ∫P dA), auf das Regen-Landmittel normiert (s. `updateRainWeight`) —
+    /// flowWeight[k]`, d. h. die Akkumulation trägt ABFLUSS statt Fläche
+    /// (Q = ∫P dA), auf das Landmittel normiert (s. `updateRainWeight`) —
     /// Σ über Land bleibt damit exakt `Landzellen · cellArea`.
-    /// `rainWeight` ist beim Aufruf frisch (computeFlow ruft computeRain zuerst);
+    /// `flowWeight` ist beim Aufruf frisch (computeFlow ruft computeRain zuerst);
     /// nur der Breach-Spin-up (`breachBasins`) rechnet bewusst auf dem Regen des
     /// letzten `computeFlow` weiter — das Klima ändert sich über eine
     /// Breach-Runde nicht nennenswert.
+    /// Seit Issue #36 trägt das Gewicht zusätzlich das SCHMELZWASSER, wenn es
+    /// eines gibt (`runoffWeight`); die Regel ist für beide Netze und die
+    /// Tropfen-Starts dieselbe — `flowWeight` ist die einzige Quelle.
     /// Per-Zelle unabhängig → parallel bit-identisch zur sequenziellen Schleife.
     private func seedFlowAccumulator(_ pa: UnsafeMutablePointer<Double>, cellArea: Double) {
         let cnt = cfg.count
-        guard rainWeight.count == cnt else {
+        let weight = flowWeight
+        guard weight.count == cnt else {
             pa.update(repeating: cellArea, count: cnt)
             return
         }
-        rainWeight.withUnsafeBufferPointer { rb in
+        weight.withUnsafeBufferPointer { rb in
             let pw = rb.baseAddress!
             parallel(cnt) { lo, hi in
                 for k in lo..<hi { pa[k] = cellArea * pw[k] }
@@ -3065,7 +3210,9 @@ public final class Terrain {
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],
-                            rainWeight: rainWeight,
+                            // Dieselbe Gewichtungsregel wie beide Netze (Issue #36):
+                            // wo Schmelzwasser abfließt, starten auch mehr Tropfen.
+                            rainWeight: flowWeight,
                             erodibility: lithErodeK,
                             track: &trackBuf)
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
@@ -3383,6 +3530,11 @@ public final class Terrain {
     /// Gilt mit `cfg.rainWeightedFlow` UNVERÄNDERT: das Gewicht hat auf Land das
     /// Mittel 1 und über See exakt 1.0, Σ Startwerte bleibt also die Zellzahl
     /// (s. `updateRainWeight`; Wächter `testWeightedFlowKeepsDrainageTotal`).
+    /// Auch mit Schmelzwasser (Issue #36) unverändert — genau DAS ist die
+    /// Renormierung (`cfg.meltRunoffNormalized`, Wächter
+    /// `MeltRunoff.testNormalizedMeltKeepsTheDrainageTotal`). Nur im verworfenen
+    /// Zusatzwasser-Arm steigt die Summe; dort ist sie die Messgröße für das
+    /// zusätzliche Wasser.
     public func totalOutletArea() -> Double {
         let cellArea = cfg.cellSize * cfg.cellSize
         var sum = 0.0
