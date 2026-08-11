@@ -1010,27 +1010,32 @@ final class SimNode: Node {
     /// je Instanz ein Transform3D zu bauen. `hscale` = vertikale Render-
     /// Überhöhung aus Main.gd (reine Render-Konstante, kennt SimCore nicht).
     ///
-    /// Maske je Kandidat (jede 2. Zelle — Verdünnung auf ~20–60k Instanzen bei
-    /// n=832): bewachsen (veg > 0.45 Baum bzw. 0.32..0.45 Busch), trocken
-    /// (hf−h < 0.02, nicht im Flussbett/See), Grob-Steigung flach (±2 Zellen wie
-    /// in updateVegetation, slope·40 < 0.3) und über der Strandlinie. Jitter,
-    /// Varianten-Wahl, Größe und Drehung kommen aus dem (i,j)-Hash.
-    @Callable func treeInstanceBuffer(variant: Int, hscale: Double) -> PackedFloat32Array {
+    /// Maske je Kandidat (jede 3. Zelle): nur Waldklasse, trocken, fern von
+    /// Strand und Aue, flach und innerhalb der Baumgrenze. Damit bleiben Gras,
+    /// Flusskorridore, Deltas, Küsten, steile Hänge und Gipfel als Terrain lesbar.
+    /// `coverage` ist reine Darstellung: 1 = reduziert, 2 = voll. Jitter,
+    /// Varianten-Wahl, Größe und Verdünnung kommen deterministisch aus dem
+    /// (i,j)-Hash; weder Sim-Zustand noch Rebuild-Reihenfolge beeinflussen ihn.
+    @Callable func treeInstanceBuffer(variant: Int, hscale: Double, coverage: Int) -> PackedFloat32Array {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cs = terrain.cfg.cellSize
         let half = terrain.cfg.world / 2
-        let h = terrain.h, hf = terrain.hf, veg = terrain.veg
+        let h = terrain.h, hf = terrain.hf, veg = terrain.veg, rain = terrain.rain
+        let vegClass = terrain.vegClass
         let bands = terrain.heightBands
         var out: [Float] = []
-        out.reserveCapacity(30_000 * 12)
-        for j in stride(from: 2, to: n - 2, by: 2) {
-            for i in stride(from: 2, to: n - 2, by: 2) {
+        out.reserveCapacity(10_000 * 12)
+        for j in stride(from: 6, to: n - 6, by: 3) {
+            for i in stride(from: 6, to: n - 6, by: 3) {
                 let k = j * n + i
                 let v = veg[k]
-                if v <= 0.32 { continue }
-                if h[k] <= sea + 0.012 { continue }          // Strand/Meer
-                if hf[k] - h[k] >= 0.02 { continue }          // nass: Flussbett/See/Aue
+                // Klasse 2 ist der vom Sim-Kern abgeleitete Wald. Gras (auch im
+                // Bett), Auwald und kahle Flächen bleiben bewusst ohne 3D-Gehölz:
+                // Auen/Deltas sollen den Flussverlauf statt einer Kronendecke zeigen.
+                if vegClass[k] != 2 || v <= 0.55 { continue }
+                if h[k] <= sea + 0.025 { continue }           // Strand/Meer
+                if hf[k] - h[k] >= 0.012 { continue }          // nass: Flussbett/See/Aue
                 // WALDGRENZE an der Schneelinie (Issue #4): das Vegetationsband
                 // reicht höher als die Schneegrenze (vegNone ≈ 0.685 gegen
                 // snowStart ≈ 0.570), die Sim hält dort also noch veg — Bäume auf
@@ -1041,11 +1046,28 @@ final class SimNode: Node {
                 // Quelle (Terrain.macroSlope): der Hang-Charakter zählt, nicht die
                 // feine Rinnen-Textur.
                 let slope = Terrain.macroSlope(h, k, n)
-                if slope * 40 >= 0.3 { continue }
-                let isBush = v <= 0.45
-                // Verdünnung ∝ veg-Dichte: dichter Bewuchs → mehr Bäume; der
-                // Hash entscheidet deterministisch je Zelle.
-                let keep = isBush ? 0.35 : min(0.9, (v - 0.45) * 2.5 + 0.35)
+                if slope * 40 >= 0.18 { continue }
+                let habitat = Terrain.vegetationSuitability(height: h[k], slope: slope,
+                                                             rain: rain[k], bands: bands)
+                if habitat < 0.55 { continue }                 // trocken/frisch karg
+                // Sechs Zellen Küstenabstand halten breite sichtbare Strände und
+                // flache Küstensedimente offen. Die kleine lokale Suche passiert
+                // nur beim seltenen Baum-Rebuild, nicht im Simulationsschritt.
+                var nearCoast = false
+                for dz in -6...6 where !nearCoast {
+                    for dx in -6...6 where h[(j + dz) * n + i + dx] <= sea + 0.012 {
+                        nearCoast = true
+                        break
+                    }
+                }
+                if nearCoast { continue }
+                let isBush = v < 0.72
+                // Verdünnung staffelt Biom-Dichte und Feuchte. Die volle Ansicht
+                // bleibt absichtlich unter einer geschlossenen Walddecke; reduziert
+                // halbiert die bereits selektive Belegung für die Geländelektüre.
+                let wetness = min(1, max(0, rain[k] * 1.3))
+                let fullKeep = min(0.58, 0.20 + (v - 0.55) * 0.85) * (0.35 + 0.65 * wetness)
+                let keep = coverage >= 2 ? fullKeep : fullKeep * 0.5
                 if treeHash01(i, j, 0x51ed) >= keep { continue }
                 // Varianten-Wahl: Nadel wird mit der Höhe wahrscheinlicher
                 // (Vegetations-Stufen), unten dominiert Laub. Höhenband aus dem

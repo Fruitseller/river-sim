@@ -31,6 +31,9 @@ var ring_mi: MeshInstance3D
 var tree_mmi: Array[MultiMeshInstance3D] = []
 const TREE_VARIANTS := 3
 const TREE_REBUILD_DELTA := 0.1 # Rebuild erst, wenn sich veg irgendwo um > 0.1 geändert hat
+enum TreeCoverage { NONE, REDUCED, FULL }
+var tree_coverage := TreeCoverage.REDUCED
+var tree_coverage_picker: OptionButton
 
 # Fluss-Ribbons (Issue #31, A/B-Schalter RS_RIVER_RIBBONS): Mäander als
 # geglättete Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel.
@@ -430,6 +433,17 @@ func _setup_ui() -> void:
 		tool_buttons.append(b)
 	tool_buttons[0].set_pressed_no_signal(true)
 
+	_section(vb, "VEGETATION")
+	tree_coverage_picker = OptionButton.new()
+	tree_coverage_picker.add_item("Keine", TreeCoverage.NONE)
+	tree_coverage_picker.add_item("Reduziert", TreeCoverage.REDUCED)
+	tree_coverage_picker.add_item("Voll", TreeCoverage.FULL)
+	tree_coverage_picker.select(TreeCoverage.REDUCED)
+	tree_coverage_picker.tooltip_text = "Bäume ausblenden oder für bessere Geländelesbarkeit reduzieren (V)"
+	tree_coverage_picker.focus_mode = Control.FOCUS_NONE
+	tree_coverage_picker.item_selected.connect(_set_tree_coverage)
+	vb.add_child(tree_coverage_picker)
+
 	_section(vb, "PINSEL")
 	radius_slider = _mk_slider(vb, "Radius", 3.0, 30.0, 1.0, brush_radius,
 		func(v: float): brush_radius = v)
@@ -476,7 +490,7 @@ func _setup_ui() -> void:
 	var hint := Label.new()
 	hint.add_theme_font_size_override("font_size", 15)
 	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Pause: Leertaste\nSpeichern: F5 · Laden: F9"
+	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Vegetation: V · Pause: Leertaste\nSpeichern: F5 · Laden: F9"
 	vb.add_child(hint)
 
 	# Diagnose bewusst als eigene Karte: Die Werkzeugleiste bleibt auch auf kleinen
@@ -596,6 +610,13 @@ func _set_rate(rate: float) -> void:
 	# Toggle-Zustand der Tempo-Buttons nachziehen (auch bei Leertaste/Code-Aufruf).
 	for i in SPEEDS.size():
 		speed_buttons[i].set_pressed_no_signal(SPEEDS[i][1] == rate)
+
+func _set_tree_coverage(coverage: int) -> void:
+	tree_coverage = coverage
+	for mmi in tree_mmi:
+		mmi.visible = coverage != TreeCoverage.NONE
+	if coverage != TreeCoverage.NONE:
+		_rebuild_trees()
 
 # ---------------------------------------------------------------- Zeit
 
@@ -1048,8 +1069,10 @@ func _maybe_rebuild_trees() -> void:
 		_rebuild_trees()
 
 func _rebuild_trees() -> void:
+	if tree_coverage == TreeCoverage.NONE:
+		return
 	for v in tree_mmi.size():
-		var buf: PackedFloat32Array = sim.treeInstanceBuffer(v, HSCALE)
+		var buf: PackedFloat32Array = sim.treeInstanceBuffer(v, HSCALE, tree_coverage)
 		var mm: MultiMesh = tree_mmi[v].multimesh
 		mm.instance_count = buf.size() / 12
 		if buf.size() > 0:
@@ -1147,6 +1170,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_save_world()
 			KEY_F9: # Welt laden
 				_load_world()
+			KEY_V:
+				if not event.echo:
+					_set_tree_coverage((tree_coverage + 1) % 3)
+					tree_coverage_picker.select(tree_coverage)
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
 				var t: int = event.keycode - KEY_1
 				current_tool = t

@@ -63,8 +63,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Mäander-Migration (`meanderCohesion`). Störung: Flood-Kill (τ_kill=20a) +
   Ufer-Kill (Mäander-Bett → veg=0); Regrünung per Sukzessions-Samen-Druck
   (Dispersal-Radius 2, nur bewohnbare Standorte). Rendering: 3D-Bäume als
-  MultiMesh (`treeInstanceBuffer`, deterministischer Hash-Jitter, ~26k Instanzen,
-  Rebuild nur bei Max-Δveg > 0.1).
+  MultiMesh (`treeInstanceBuffer`, deterministischer Hash-Jitter, Waldklasse statt
+  pauschal `veg`, Strand-/Auen-/Hang-Ausschluss, reduzierte Standardansicht;
+  Umschalten keine/reduziert/voll per UI oder Taste V, Rebuild nur bei Max-Δveg > 0.1).
 - **Speichern/Laden (Issue #8):** eine Welt geht vollständig in EINE versionierte
   Binärdatei (`WorldSnapshot.swift`) — das ganze Zustands-Inventar
   (`TerrainState`, ~25 Felder à n²) plus Mäander-Zentrumslinien/Altarme, Seed und
