@@ -129,20 +129,24 @@ final class WaterRenderTests: XCTestCase {
 
     // MARK: Uferkontur ↔ Altarm-Stempel
 
-    func testPondContourWindowStaysBelowGeometryLift() {
-        // Farb-Kontur setzt unter der Hebe-Schwelle der Wasser-Geometrie (0.015)
-        // ein, damit die Farbe bis fast an die echte Uferlinie reicht.
-        XCTAssertLessThan(WaterRender.pondContourLo, 0.015)
-        XCTAssertLessThan(WaterRender.pondContourLo, WaterRender.pondContourHi)
+    func testPondWindowsStayInOrder() {
+        // Drei Fenster lesen dieselbe Wassersäule; ihre Reihenfolge IST die
+        // Kalibrierung: erst Farb-Kontur (die Farbe reicht bis fast an die echte
+        // Uferlinie), dann der Geometrie-Hub, die Tiefen-Rampe füllt dazwischen.
         XCTAssertEqual(WaterRender.pondContourLo, 0.003)
         XCTAssertEqual(WaterRender.pondContourHi, 0.02)
+        XCTAssertLessThan(WaterRender.pondContourLo, WaterRender.pondContourHi)
+        XCTAssertLessThan(WaterRender.pondContourLo, WaterRender.geometryLiftLo)
+        XCTAssertLessThan(WaterRender.geometryLiftLo, WaterRender.geometryLiftHi)
+        XCTAssertLessThan(WaterRender.lakeDepthLo, WaterRender.geometryLiftLo)
+        XCTAssertGreaterThan(WaterRender.lakeDepthSpan, 0)
     }
 
     func testShaderMatchesCalibration() throws {
-        // Die Fenster stehen doppelt: hier als Zahl, im Shader als smoothstep. Ohne
-        // diesen Vergleich driften sie stumm auseinander — der Shader hat keine
-        // andere Testebene. Außerhalb des Repos (Package woanders ausgecheckt)
-        // wird der Test übersprungen statt falsch rot zu sein.
+        // Die Fenster stehen doppelt: hier als Zahl, im Shader als smoothstep/clamp.
+        // Ohne diesen Vergleich driften sie stumm auseinander — der Shader hat keine
+        // andere Testebene. Verglichen wird gegen den ECHTEN Quelltext von
+        // game/shaders/terrain.gdshader.
         let shader = try repoFile("game/shaders/terrain.gdshader")
         assertContains(shader, "smoothstep(\(WaterRender.pondContourLo), "
             + "\(WaterRender.pondContourHi), pond)",
@@ -153,18 +157,34 @@ final class WaterRenderTests: XCTestCase {
         assertContains(shader, "smoothstep(\(WaterRender.riverMaskLo), "
             + "\(WaterRender.riverMaskHi), stream)",
             hint: "Fluss-INTENSITÄT == WaterRender.riverMask*")
+        assertContains(shader, "smoothstep(\(WaterRender.shoreLo), "
+            + "\(WaterRender.shoreHi), max(stream, lake_gate))",
+            hint: "Ufer-Saum == WaterRender.shore*")
+        assertContains(shader, "smoothstep(\(WaterRender.geometryLiftLo), "
+            + "\(WaterRender.geometryLiftHi), pond)",
+            hint: "Hub der Wasser-Geometrie == WaterRender.geometryLift*")
+        assertContains(shader, "clamp((pond - \(WaterRender.lakeDepthLo)) "
+            + "/ \(WaterRender.lakeDepthSpan), 0.0, 1.0)",
+            hint: "See-Tiefenrampe == WaterRender.lakeDepth*")
     }
 
     func testExtensionUsesSharedCalibration() throws {
         // Gegenstück: die GDExtension darf die Werte nicht als lokale Literale
         // zurückkopieren (dann wäre die Kalibrierung wieder ungetestet). Vor allem
         // die Altarm-Präsenz-Schwelle MUSS der Kontur-Fuß sein, sonst sind die
-        // seichten Altarm-Enden unsichtbar (Doppel-Rampe: Stempel × Kontur).
+        // seichten Altarm-Enden unsichtbar (Doppel-Rampe: Stempel × Kontur), und
+        // der Ribbon-Halo (#31) MUSS im Saum-Fenster bleiben.
         let simNode = try repoFile("Extension/Sources/RiverSimGD/SimNode.swift")
         assertContains(simNode, "WaterRender.componentFade(cells:",
                        hint: "Komponenten-Fade aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.streamGate(componentFade:",
+                       hint: "Fluss-Kanal über das gemeinsame Gate schalten")
         assertContains(simNode, "let minimumPondDepth = WaterRender.pondContourLo",
                        hint: "Altarm-Präsenz-Schwelle == Kontur-Fuß")
+        assertContains(simNode, "let haloIntensity = WaterRender.ribbonHaloIntensity",
+                       hint: "Ribbon-Halo == WaterRender.ribbonHaloIntensity")
+        assertContains(simNode, "sd[k] >= WaterRender.riverMaskLo",
+                       hint: "Kohärenz-Maske == Wasser-Schwelle des Shaders")
     }
 
     // MARK: Hilfen

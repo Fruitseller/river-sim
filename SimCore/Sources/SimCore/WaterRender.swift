@@ -169,4 +169,23 @@ public enum WaterRender {
     public static let pondContourLo = 0.003
     /// Wassersäule, ab der die Farb-Kontur voll deckt.
     public static let pondContourHi = 0.02
+
+    // MARK: Weitere Fenster über derselben Wassersäule
+
+    // Drei Fenster lesen `pond` — Farb-Kontur, Geometrie-Hub und Tiefen-Rampe —
+    // und ihre REIHENFOLGE ist die Kalibrierung: erst Farbe (ab 0.003), dann
+    // Geometrie (ab 0.015), die Tiefe füllt dazwischen. Verschiebt man eines
+    // allein, löst sich die Farbe von der gehobenen Wasserfläche.
+
+    /// `lift` in `terrain.gdshader`: ab hier hebt die Wasser-Geometrie.
+    /// Bewusst ÜBER `pondContourLo` — die Farbe reicht bis fast an die echte
+    /// Uferlinie, die Geometrie hebt erst danach sanft.
+    public static let geometryLiftLo = 0.015
+    /// s. `geometryLiftLo` — ab hier hebt sie voll.
+    public static let geometryLiftHi = 0.05
+
+    /// `lake_depth` in `terrain.gdshader`: Fuß der Tiefen-Rampe fürs Blau.
+    public static let lakeDepthLo = 0.004
+    /// Spanne der Tiefen-Rampe: volle Sättigung bei `lakeDepthLo + lakeDepthSpan`.
+    public static let lakeDepthSpan = 0.05
 }
