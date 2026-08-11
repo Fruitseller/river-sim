@@ -12,6 +12,7 @@ extends SceneTree
 ## Exit-Code != 0 bei Fehler.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
+const Main = preload("res://scripts/Main.gd")
 
 var done := false
 
@@ -32,6 +33,22 @@ func _run() -> void:
 		quit(1)
 		return
 
+	# Derselbe Wallclock-Deckel gilt im Echtzeit- und `_jump`-Pfad: vor einer
+	# Sekunde kein Build, an der Grenze/bei Nutzeraktion sofort.
+	var main: Node3D = Main.new()
+	main.last_river_rebuild_msec = 1000
+	if main._river_rebuild_due(1999, false) or not main._river_rebuild_due(2000, false):
+		push_error("FAIL: 1-Hz-Ribbon-Deckel hat falsche Zeitgrenze")
+		main.free()
+		quit(1)
+		return
+	if not main._river_rebuild_due(1001, true):
+		push_error("FAIL: erzwungener Ribbon-Rebuild wird gedeckelt")
+		main.free()
+		quit(1)
+		return
+	main.free()
+
 	# Mäander brauchen etwas Laufzeit, bis Kanäle getraced und migriert sind.
 	sim.step(4000.0)
 
@@ -45,7 +62,7 @@ func _run() -> void:
 
 	# Physik-Neutralität: der Geometrie-Build darf die Höhen nicht anfassen.
 	var h_before: PackedFloat32Array = sim.heights()
-	sim.buildRiverRibbons(24.0, 0.35)
+	sim.buildRiverRibbons(Main.HSCALE, Main.RIVER_LIFT)
 	var h_after: PackedFloat32Array = sim.heights()
 	if h_before != h_after:
 		push_error("FAIL: buildRiverRibbons verändert die Sim-Höhen")
@@ -86,7 +103,8 @@ func _run() -> void:
 	var world: float = sim.worldSize()
 	var max_ground_error := 0.0
 	for v in verts:
-		var expected_y := _bilinear_height(heights, n, world, v.x, v.z) * 24.0 + 0.35
+		var expected_y := (_bilinear_height(heights, n, world, v.x, v.z)
+			* Main.HSCALE + Main.RIVER_LIFT)
 		max_ground_error = maxf(max_ground_error, absf(v.y - expected_y))
 	print("max_ground_error=", max_ground_error)
 	if max_ground_error > 0.002:

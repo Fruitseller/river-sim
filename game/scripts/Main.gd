@@ -78,7 +78,7 @@ var droplet_carry := 0.0
 var rebuild_timer := 0.0
 var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
 var overlay_timer := 0.0
-var river_overlay_timer := 0.0
+var last_river_rebuild_msec := -1
 var sculpting := false
 var pick_last := Vector2.INF  # Spitzhacke: Position des letzten Hiebs im Strich (INF = noch keiner)
 var brush_radius := 10.0
@@ -215,7 +215,7 @@ func _ready() -> void:
 	_update_year()
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
-	_maybe_rebuild_rivers()
+	_maybe_rebuild_rivers_throttled(true)
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -614,13 +614,16 @@ func _jump(years: float) -> void:
 		done += chunk
 		_after_sim()
 		await get_tree().process_frame
+	# Der Deckel darf den sichtbaren Endzustand nicht bis zum nächsten
+	# Zeitraffer-Tick verzögern (der Sprung endet typischerweise pausiert).
+	_maybe_rebuild_rivers_throttled(true)
 	_jumping = false
 
 func _regen() -> void:
 	sim_seed = (sim_seed * 16807 + 1) % 2147483647
 	sim.generate(sim_seed)
 	sim.recomputeFlow()
-	_after_sim()
+	_after_sim(true)
 
 # ------------------------------------------------- Speichern / Laden (Issue #8)
 
@@ -670,7 +673,7 @@ func _load_world() -> void:
 	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	terrain_mat.set_shader_parameter("sea_level", sea)
 	water_mi.position.y = sea * HSCALE
-	_after_sim() # water_blend = 1.0 → kein Überblenden aus der alten Welt
+	_after_sim(true) # water_blend = 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()
 	world_status_label.text = "Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear()))
 
@@ -724,12 +727,12 @@ func _set_debug_difference(enabled: bool) -> void:
 	if enabled:
 		_refresh_debug()
 
-func _after_sim() -> void:
+func _after_sim(force_rivers := false) -> void:
 	_pull_fields()
 	_update_year()
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
-	_maybe_rebuild_rivers()
+	_maybe_rebuild_rivers_throttled(force_rivers)
 	debug_dirty = true
 
 var _shot_frame := 0
@@ -781,7 +784,6 @@ func _process(delta: float) -> void:
 			_update_year()
 			debug_dirty = true
 			overlay_timer += elapsed
-			river_overlay_timer += elapsed
 			var update_overlays := overlay_timer >= 0.30
 			if update_overlays:
 				overlay_timer = 0.0
@@ -793,9 +795,7 @@ func _process(delta: float) -> void:
 			_update_terrain_textures(0.15, update_overlays)
 			if update_overlays:
 				_maybe_rebuild_trees()
-			if river_overlay_timer >= RIVER_REBUILD_SECONDS:
-				river_overlay_timer = 0.0
-				_maybe_rebuild_rivers()
+				_maybe_rebuild_rivers_throttled()
 
 	if sculpting:
 		var hit := _raycast_terrain()
@@ -828,7 +828,7 @@ func _process(delta: float) -> void:
 			_pull_fields()
 			debug_dirty = true
 			_update_terrain_textures()
-			_maybe_rebuild_rivers() # Sculpting droppt gestörte Kanäle → Struktur-Delta
+			_maybe_rebuild_rivers_throttled(true) # Sculpting droppt gestörte Kanäle → Struktur-Delta
 
 	_update_camera_pan(delta)
 	_update_ring()
@@ -1059,6 +1059,22 @@ func _rebuild_trees() -> void:
 ## Fluss-Ribbons: Rebuild nur, wenn sich die Mäander-Zentrumslinien seit dem
 ## letzten Build bewegt haben (Dirty-Vertrag wie bei den Bäumen; Struktur-
 ## Änderungen wie Cutoffs melden ein Riesen-Delta → sofortiger Rebuild).
+## Gemeinsamer 1-Hz-Deckel für Echtzeit UND `_jump`: der alte reine
+## `_process`-Timer ließ jeden 2000-Jahre-Sprung-Chunk ein Mesh bauen. `force`
+## gilt nur für diskrete Nutzeraktionen (Neu/Laden/Sculpt) und den Sprung-Endstand.
+func _maybe_rebuild_rivers_throttled(force := false) -> void:
+	if not river_ribbons:
+		return
+	var now := Time.get_ticks_msec()
+	if not _river_rebuild_due(now, force):
+		return
+	_maybe_rebuild_rivers()
+	last_river_rebuild_msec = now
+
+func _river_rebuild_due(now_msec: int, force: bool) -> bool:
+	return (force or last_river_rebuild_msec < 0
+		or now_msec - last_river_rebuild_msec >= int(RIVER_REBUILD_SECONDS * 1000.0))
+
 func _maybe_rebuild_rivers() -> void:
 	if not river_ribbons:
 		return
