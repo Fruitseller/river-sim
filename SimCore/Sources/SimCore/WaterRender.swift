@@ -59,6 +59,99 @@ public enum WaterRender {
     /// s. `riverMaskLo`.
     public static let riverMaskHi = 0.45
 
+    // Ufer-Saum: der Shader tönt den weichen Blur-Halo der Wasserfelder als
+    // nassen Sand-/Kies-Streifen. Sein Fenster liegt UNTER dem Wasser-Fenster des
+    // Fluss-Kanals (0.09..0.16 gegen 0.16..0.45) — genau deshalb entsteht rund um
+    // sichtbares Wasser ein Ufer statt einer harten Farbkante.
+    /// `shore` in `terrain.gdshader`: smoothstep über max(R-Kanal, G-Kanal).
+    public static let shoreLo = 0.09
+    /// s. `shoreLo` — ab hier deckt der Saum voll.
+    public static let shoreHi = 0.16
+
+    /// Saum-Intensität des Ribbon-Korridors (Issue #31, `SimNode.waterFieldBytes`):
+    /// im Ribbon-Modus rendert die Band-Geometrie das Wasser, das Feld stempelt den
+    /// Korridor nur noch als Nass-Halo. Der Wert MUSS zwischen `shoreLo` und
+    /// `riverMaskLo` liegen — darunter fiele der Halo aus, darüber malte das Feld
+    /// unter dem Band eine zweite, sprenklige Fluss-Version.
+    public static let ribbonHaloIntensity = 0.14
+
+    // MARK: Kohärenz-Gate des Fluss-Kanals
+
+    // Der Fluss-Kanal verträgt KEINEN weichen Fade. Der Shader liest ihn als
+    // Intensität, und sein Unter-Wasser-Bereich IST das Saum-Fenster: ein voller
+    // Lauf (sd ≈ 1) in einer Komponente mit Fade 0.15 landet bei stream = 0.15 —
+    // riverMask 0 (kein Wasser), shore aber ≈ 0.94 (voller Sandstreifen). Eine
+    // 14–16-Zell-Komponente malte damit einen sandbraunen Fleck ohne Wasser
+    // darin, wo der alte harte Cutoff exakt 0 lieferte. Deshalb bleibt der
+    // Fluss-Kanal ein GATE: unter `streamGateFade` trägt die Komponente nichts,
+    // darüber ihre volle Intensität.
+    //
+    // Das Gate liegt bei `riverMaskHi`, also bei der Fade-Höhe, ab der ein voller
+    // Lauf bereits deckendes Wasser ist (riverMask = 1 → shore = 0 im Kern) —
+    // beim Einschalten kann also per Konstruktion kein Saum ohne Wasser stehen.
+    // In Zellen: 10 + 0.45·40 = 28 (alter harter Cutoff: 25).
+    //
+    // Der SEE-Kanal behält den weichen Fade: dort lag der Auslöser von #32
+    // (wachsende Seen PLOPPTEN), und er wird über ein Gate gelesen, dessen
+    // Fenster (0.04..0.35) vor dem Saum-Fenster sättigt.
+    public static let streamGateFade = riverMaskHi
+
+    /// Faktor, mit dem der Fluss-Kanal einer Komponente skaliert wird: 1 ab
+    /// `streamGateFade`, sonst 0.
+    @inline(__always)
+    public static func streamGate(componentFade fade: Double) -> Double {
+        fade >= streamGateFade ? 1 : 0
+    }
+
+    /// Kleinste Komponente (Zellen), deren Fluss-Kanal überhaupt gemalt wird.
+    public static var streamGateCells: Int {
+        var cells = Int(componentFadeLoCells)
+        while Double(cells) <= componentFadeHiCells,
+              streamGate(componentFade: componentFade(cells: cells)) == 0 {
+            cells += 1
+        }
+        return cells
+    }
+
+    // MARK: Shader-Lesarten als reine Funktionen
+
+    // Nachbau der Stellen aus `terrain.gdshader`, die diese Kalibrierung lesen —
+    // damit die REGRESSION (Saum ohne Wasser) headless prüfbar ist statt nur auf
+    // der GPU. Der Textvergleich in `WaterRenderTests` hält beide Seiten synchron.
+
+    @inline(__always)
+    static func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
+        let t = min(1, max(0, (x - edge0) / (edge1 - edge0)))
+        return t * t * (3 - 2 * t)
+    }
+
+    /// `riverMask` — Wasserdeckung aus dem R-Kanal.
+    public static func riverMask(stream: Double) -> Double {
+        smoothstep(riverMaskLo, riverMaskHi, stream)
+    }
+
+    /// `lake_gate_at` — Sichtbarkeits-Gate aus dem G-Kanal.
+    public static func lakeGate(channel: Double) -> Double {
+        smoothstep(lakeGateLo, lakeGateHi, channel)
+    }
+
+    /// `lakeMask` — Gate × Per-Pixel-Uferkontur der Wassersäule.
+    public static func lakeMask(channel: Double, pond: Double) -> Double {
+        smoothstep(pondContourLo, pondContourHi, pond) * lakeGate(channel: channel)
+    }
+
+    /// `shore` — Ufer-Saum. Er ist ein LAND-Effekt: der Faktor über der
+    /// Wassersäule hält ihn aus allem heraus, wo real Wasser steht. Ohne ihn
+    /// tönte eine halb eingeblendete Seefläche (Gate 0.16 → lakeMask 0.29) ihren
+    /// eigenen Grund zu 71 % sandbraun, bevor das Wasser sichtbar wird. Auf dem
+    /// Uferring ist pond = 0, der gemessene Saum bleibt also unverändert
+    /// (docs/lake-shore-contour-measurements.md).
+    public static func shore(stream: Double, lakeGateChannel: Double, pond: Double) -> Double {
+        let wet = max(riverMask(stream: stream), lakeMask(channel: lakeGateChannel, pond: pond))
+        let dry = 1 - smoothstep(pondContourLo, pondContourHi, pond)
+        return smoothstep(shoreLo, shoreHi, max(stream, lakeGateChannel)) * (1 - wet) * dry
+    }
+
     // MARK: Per-Pixel-Uferkontur (Issue #32)
 
     // Die FORM der Uferlinie rechnet der Shader je Pixel aus der Wassersäule

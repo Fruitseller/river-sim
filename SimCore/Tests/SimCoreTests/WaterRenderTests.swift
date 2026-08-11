@@ -63,14 +63,49 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(WaterRender.componentFade(cells: 24), WaterRender.lakeGateHi)
     }
 
-    func testRiverIntensityThresholds() {
-        // Fluss-Kanal = INTENSITÄT (kein Gate): der Fade skaliert sd, der Shader
-        // schwellt mit smoothstep(0.16, 0.45, ·). Für einen kräftigen Lauf (sd ≈ 1)
-        // heißt das: unsichtbar bis 16, voll ab 28 Zellen.
-        XCTAssertLessThanOrEqual(WaterRender.componentFade(cells: 16), WaterRender.riverMaskLo)
-        XCTAssertGreaterThan(WaterRender.componentFade(cells: 17), WaterRender.riverMaskLo)
-        XCTAssertLessThan(WaterRender.componentFade(cells: 27), WaterRender.riverMaskHi)
-        XCTAssertGreaterThanOrEqual(WaterRender.componentFade(cells: 28), WaterRender.riverMaskHi)
+    func testStreamChannelIsGatedNotFaded() {
+        // Fluss-Kanal = GATE, kein weicher Fade: unter 28 Zellen trägt eine
+        // Komponente nichts, ab 28 ihre volle Intensität. Das Gate sitzt bei
+        // riverMaskHi — der Fade-Höhe, ab der ein voller Lauf schon deckt.
+        XCTAssertEqual(WaterRender.streamGateFade, WaterRender.riverMaskHi)
+        XCTAssertEqual(WaterRender.streamGateCells, 28)
+        XCTAssertEqual(WaterRender.streamGate(componentFade: WaterRender.componentFade(cells: 27)), 0)
+        XCTAssertEqual(WaterRender.streamGate(componentFade: WaterRender.componentFade(cells: 28)), 1)
+        // Am Gate deckt ein voller Lauf sofort — nur so kann beim Einschalten
+        // kein Saum ohne Wasser stehenbleiben.
+        XCTAssertEqual(WaterRender.riverMask(stream: WaterRender.streamGateFade), 1.0, accuracy: 1e-12)
+    }
+
+    func testSmallStreamComponentPaintsNeitherWaterNorShore() {
+        // REGRESSION (Review zu #32/#31): mit `sd *= fade` landete eine isolierte
+        // 16-Zell-Komponente mit voller Intensität bei stream = 0.15 — riverMask 0
+        // (kein Wasser), shore aber ≈ 0.94: ein sandbrauner Fleck, wo der alte
+        // harte Cutoff exakt 0 lieferte. Über den ganzen kritischen Bereich prüfen,
+        // nicht nur an einer Stelle.
+        for cells in 0...(WaterRender.streamGateCells - 1) {
+            let stream = 1.0 * WaterRender.streamGate(componentFade: WaterRender.componentFade(cells: cells))
+            XCTAssertEqual(stream, 0.0, "\(cells) Zellen dürfen den Fluss-Kanal nicht speisen")
+            XCTAssertEqual(WaterRender.riverMask(stream: stream), 0.0)
+            XCTAssertEqual(WaterRender.shore(stream: stream, lakeGateChannel: 0, pond: 0), 0.0,
+                           "\(cells) Zellen: kein Ufer-Saum ohne Wasser")
+        }
+    }
+
+    func testFadingLakeShowsWaterBeforeShore() {
+        // REGRESSION: der Saum sättigt bei Kanal 0.16, das See-Gate erst bei 0.35 —
+        // ohne den `dry`-Faktor im Shader tönte eine halb eingeblendete Seefläche
+        // ihren eigenen Grund sandbraun, bevor das Wasser sichtbar wird.
+        // Im Seeinneren (Wassersäule über der Kontur) gibt es NIE Saum …
+        let deepPond = WaterRender.pondContourHi + 0.01
+        for cells in 0...60 {
+            let gate = WaterRender.componentFade(cells: cells)
+            XCTAssertEqual(WaterRender.shore(stream: 0, lakeGateChannel: gate, pond: deepPond), 0.0,
+                           accuracy: 1e-12, "\(cells) Zellen: Saum im Wasser")
+        }
+        // … und auf dem trockenen Uferring bleibt der gemessene Saum erhalten
+        // (docs/lake-shore-contour-measurements.md: Ring-Kanalwert ≈ 0.11 → 0.27).
+        XCTAssertEqual(WaterRender.shore(stream: 0, lakeGateChannel: 0.1135, pond: 0), 0.27,
+                       accuracy: 0.02)
     }
 
     func testGateSaturatesBeforeRiverMask() {
@@ -79,6 +114,17 @@ final class WaterRenderTests: XCTestCase {
         // 18-Zell-Fetzen voll sichtbar, genau die Sprenkel, die der Fade abwehrt.
         XCTAssertLessThan(WaterRender.lakeGateHi, WaterRender.riverMaskHi)
         XCTAssertLessThan(WaterRender.lakeGateLo, WaterRender.riverMaskLo)
+    }
+
+    func testShoreWindowSitsUnderTheWaterWindow() {
+        // Der Grund, warum der Fluss-Kanal kein weiches Fade verträgt: sein
+        // Saum-Fenster liegt KOMPLETT unter seinem Wasser-Fenster.
+        XCTAssertLessThan(WaterRender.shoreLo, WaterRender.shoreHi)
+        XCTAssertLessThanOrEqual(WaterRender.shoreHi, WaterRender.riverMaskLo)
+        // Der Ribbon-Saum (#31) lebt genau in diesem Fenster: sichtbar als Nass-
+        // Halo, aber nie als eigener Fluss unter dem Band.
+        XCTAssertGreaterThan(WaterRender.ribbonHaloIntensity, WaterRender.shoreLo)
+        XCTAssertLessThan(WaterRender.ribbonHaloIntensity, WaterRender.riverMaskLo)
     }
 
     // MARK: Uferkontur ↔ Altarm-Stempel
