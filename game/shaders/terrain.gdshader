@@ -1,8 +1,16 @@
 // Textur-Displacement-Terrain: ein statisches Gitter wird in der GPU nach dem
 // Höhenfeld (height_tex, R32F) verschoben; Normalen aus Nachbar-Texeln; Farbe
 // aus color_tex. Wasser (Flüsse/Seen/Altarme) kommt als GLATTES Feld-Overlay aus
-// water_tex (R=Fluss-Intensität, G=Seetiefe, BA=Fließrichtung) — kein blockiges
-// Pro-Zell-Wasser, sondern linear gefiltert und geshadet (nasser Glanz).
+// water_tex (R=Fluss-Intensität, G=See-GATE + Altarm-Deckkraft, BA=Fließrichtung)
+// — kein blockiges Pro-Zell-Wasser, sondern linear gefiltert und geshadet (nasser
+// Glanz). Der G-Kanal trägt seit Issue #32 KEINE Tiefe mehr: er sagt nur noch WO
+// ein See sichtbar ist, die FORM der Uferlinie und die Tiefe rechnet dieser
+// Shader per Pixel aus der Wassersäule (pond_at).
+//
+// Alle Schwellen, mit denen dieser Shader die Wasser-Kanäle liest, stehen
+// zusätzlich in SimCore/WaterRender.swift und werden von
+// SimCoreTests/WaterRenderTests.swift gegen DIESEN Quelltext verglichen — wer
+// hier eine Zahl ändert, muss sie dort mitziehen (sonst wird der Test rot).
 //
 // DETAIL-LAYER (runevision-Erosionsfilter, Shadertoy wXcfWn, MPL-2.0): pro Pixel
 // werden Sub-Grid-Erosionsrinnen auf die Sim-Heightmap gerechnet (Phacelle-Noise
