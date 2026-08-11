@@ -1086,7 +1086,10 @@ final class SimNode: Node {
         let smap = terrain.streamMap
         // Strahler-Rang (D8-Netz ab Mäander-Schwelle): Rang-Maß für die
         // Render-Hierarchie — hohe Ordnungen bleiben auch dort sichtbar, wo die
-        // Abfluss-Rampe allein sie ausblenden würde.
+        // Abfluss-Rampe allein sie ausblenden würde. Bewusst je Build frisch:
+        // computeFlow ändert receiver UND die area-Netzmaske auch ohne
+        // Knoten-Cutoff; ein Cache nur nach Mäander-Struktur wäre fachlich alt.
+        // Die Allokationsrate deckelt Main.gd gemeinsam für Echtzeit/_jump auf 1 Hz.
         let orders = terrain.strahlerOrders(minCells: terrain.cfg.meanderMinCells)
 
         let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
@@ -1126,8 +1129,17 @@ final class SimNode: Node {
             for a in 0..<cnt {
                 let ci = min(max(Int(px[a].rounded()), 0), n - 1)
                 let cj = min(max(Int(pz[a].rounded()), 0), n - 1)
-                let k = cj * n + ci
-                let ord = Double(orders[k])
+                // D8 und Lagrange-Zentrumslinie liegen nicht zellgenau
+                // übereinander. Ein 1-Zellen-Stützsaum verhindert, dass ein
+                // Band beim Überqueren EINER Zellgrenze zwischen Ordnung 3/4
+                // komplett ein-/ausblendet (räumliche Hysterese ohne Zustand).
+                var localOrder: Int32 = 0
+                for oj in max(0, cj - 1)...min(n - 1, cj + 1) {
+                    for oi in max(0, ci - 1)...min(n - 1, ci + 1) {
+                        localOrder = max(localOrder, orders[oj * n + oi])
+                    }
+                }
+                let ord = Double(localOrder)
                 rank[a] = min(ord / 6.0, 1.0)
                 // Die Zentrumslinie ist kontinuierlich; die Sichtbarkeit ebenso
                 // bilinear aus der Stream-Map lesen. Nearest-Cell erzeugte bei
