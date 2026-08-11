@@ -143,7 +143,7 @@ final class WaterRenderTests: XCTestCase {
         // diesen Vergleich driften sie stumm auseinander — der Shader hat keine
         // andere Testebene. Außerhalb des Repos (Package woanders ausgecheckt)
         // wird der Test übersprungen statt falsch rot zu sein.
-        let shader = try shaderSource("game/shaders/terrain.gdshader")
+        let shader = try repoFile("game/shaders/terrain.gdshader")
         assertContains(shader, "smoothstep(\(WaterRender.pondContourLo), "
             + "\(WaterRender.pondContourHi), pond)",
             hint: "Kontur-Fuß/Sattel der Uferlinie == WaterRender.pondContour*")
@@ -160,7 +160,7 @@ final class WaterRenderTests: XCTestCase {
         // zurückkopieren (dann wäre die Kalibrierung wieder ungetestet). Vor allem
         // die Altarm-Präsenz-Schwelle MUSS der Kontur-Fuß sein, sonst sind die
         // seichten Altarm-Enden unsichtbar (Doppel-Rampe: Stempel × Kontur).
-        let simNode = try shaderSource("Extension/Sources/RiverSimGD/SimNode.swift")
+        let simNode = try repoFile("Extension/Sources/RiverSimGD/SimNode.swift")
         assertContains(simNode, "WaterRender.componentFade(cells:",
                        hint: "Komponenten-Fade aus WaterRender beziehen")
         assertContains(simNode, "let minimumPondDepth = WaterRender.pondContourLo",
@@ -169,16 +169,25 @@ final class WaterRenderTests: XCTestCase {
 
     // MARK: Hilfen
 
-    /// Datei relativ zur Repo-Wurzel lesen; `XCTSkip`, wenn sie fehlt.
-    private func shaderSource(_ relativePath: String) throws -> String {
+    /// Datei relativ zur Repo-Wurzel lesen.
+    ///
+    /// `XCTSkip` NUR, wenn die Repo-Wurzel selbst nicht erreichbar ist (das
+    /// Package woanders ausgecheckt) — dann kann der Vergleich prinzipiell nicht
+    /// laufen. Steht die Wurzel und fehlt die Datei, ist sie umbenannt oder
+    /// verschoben worden: dann MUSS der Test rot werden, sonst überspringt sich
+    /// genau die Drift weg, die er abfangen soll.
+    private func repoFile(_ relativePath: String) throws -> String {
         // #filePath = <repo>/SimCore/Tests/SimCoreTests/WaterRenderTests.swift
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { root.deleteLastPathComponent() }
-        let url = root.appendingPathComponent(relativePath)
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-            throw XCTSkip("\(relativePath) nicht erreichbar (außerhalb des Repos?)")
+        let marker = root.appendingPathComponent("AGENTS.md")
+        guard FileManager.default.fileExists(atPath: marker.path) else {
+            throw XCTSkip("Repo-Wurzel nicht erreichbar (\(root.path) ohne AGENTS.md)")
         }
-        return text
+        let url = root.appendingPathComponent(relativePath)
+        return try XCTUnwrap(try? String(contentsOf: url, encoding: .utf8),
+                             "\(relativePath) fehlt oder ist umbenannt — die "
+                             + "Kalibrierung wäre damit ungeprüft")
     }
 
     private func assertContains(_ haystack: String, _ needle: String, hint: String,
