@@ -1171,8 +1171,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F9: # Welt laden
 				_load_world()
 			KEY_V:
-				_set_tree_coverage((tree_coverage + 1) % 3)
-				tree_coverage_picker.select(tree_coverage)
+				if not event.echo:
+					_set_tree_coverage((tree_coverage + 1) % 3)
+					tree_coverage_picker.select(tree_coverage)
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
 				var t: int = event.keycode - KEY_1
 				current_tool = t
