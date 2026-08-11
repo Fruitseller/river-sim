@@ -20,10 +20,12 @@ func _run() -> void:
 	quit(0)
 
 func _report(sim: Object, label: String) -> void:
-	var total := 0
-	var counts := []
-	for v in 3:
-		var buf: PackedFloat32Array = sim.treeInstanceBuffer(v, 24.0)
-		counts.append(buf.size() / 12)
-		total += buf.size() / 12
-	print(label, ": laub=", counts[0], " nadel=", counts[1], " busch=", counts[2], " total=", total)
+	for coverage in [1, 2]:
+		var total := 0
+		var counts := []
+		for v in 3:
+			var buf: PackedFloat32Array = sim.treeInstanceBuffer(v, 24.0, coverage)
+			counts.append(buf.size() / 12)
+			total += buf.size() / 12
+		var mode := "reduziert" if coverage == 1 else "voll"
+		print(label, " ", mode, ": laub=", counts[0], " nadel=", counts[1], " busch=", counts[2], " total=", total)
