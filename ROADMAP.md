@@ -366,6 +366,27 @@ Messreihen `docs/dt-invariance-measurements.md`):
   `climateEnabled = false` ist bit-identisch zum Stand davor.
   Recherche `docs/research-climate-cryosphere.md`, Messreihe
   `docs/climate-snow-measurements.md`.
+  **Nachtrag Issue #36:** „kein Erosionspass liest das Klima" gilt nicht mehr —
+  die SCHMELZE speist den Abfluss, s. den nächsten Punkt.
+- ERLEDIGT (Aug 2026, Issue #36): **Schmelzwasser speist den Abfluss.** Die
+  Ablation der Schneedecke (`snowMeltPerKYear · max(0,T) · S`, in Regen-Einheiten
+  über `snowAccumPerYear` umgerechnet — der Grundumsatz-Sockel bleibt draußen, er
+  ist Sublimation bzw. Firn→Eis für #35) geht in das Abfluss-Gewicht ein. EIN
+  Trichter (`Terrain.flowWeight`, gebaut in `updateRunoffWeight`) speist beide
+  Netze (D8 `area` → Erosion, MFD `areaMFD` → Render/Braiding) und die
+  Tropfen-Startpunkte. Designentscheidung gemessen: **Renormierung** (Landmittel
+  des rohen Gewichts → 1) statt Zusatzwasser — Σ Abfluss bleibt exakt die
+  Zellzahl, kein in Zellen kalibriertes Gate musste nachgezogen werden, und die
+  Wirkung ist dieselbe (Abfluss je Einzugszelle schneegespeist/schneefrei gepoolt
+  über 5 alpine Seeds 0.838 → 0.959, also +14.5 %; Zusatzwasser-Arm 0.965 bei
+  Σ = 1.008 … 1.018). Verworfen mit Messwerten: die massenkonsistente Einlagerung
+  des Festniederschlags (`meltRunoffWithholdSolid`) dreht das Vorzeichen (0.765) —
+  ohne Eistransport schmilzt der Schnee, wo er fällt, und die Dauerfrostzone
+  verliert ihren Abfluss an einen Speicher ohne Ausgang. Mit #35 wird dieser Arm
+  richtig. `meltRunoffEnabled = false` ist bit-identisch zum Stand davor.
+  Messreihe `docs/melt-runoff-measurements.md`.
+  Reichweite (gemessen): nur ~40 % der Seeds haben bei n=192 überhaupt Schnee,
+  ~12 % sind alpin — auf flachen Inseln ist das Feature stumm.
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**

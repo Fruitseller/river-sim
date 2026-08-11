@@ -215,9 +215,24 @@ final class Lithology: XCTestCase {
     /// partitioniert dieselbe Härte dieselben Zellen und das Verhältnis bleibt
     /// bei 1: das Signal kommt also aus der WIRKUNG des Gesteins, nicht aus einer
     /// Korrelation zwischen Härtefeld und Topografie.
+    ///
+    /// **Schmelzwasser ausgepinnt (Issue #36)**, in BEIDEN Armen. Grund ist die
+    /// Kennzahl, nicht die Mechanik: die Härte enthält die stratigraphische
+    /// Schichtwelle und hängt damit per Konstruktion an `h` — jeder Prozess, der
+    /// gezielt das HOCHLAND steiler macht, hebt deshalb auch den Referenzarm, in
+    /// dem die Härte gar nicht wirkt. Genau das tut die Schmelze (sie sitzt im
+    /// Ablationssaum). Gemessen mit Schmelze (n=192, Seed 1337, 20k J.): an
+    /// 1.1950 gegen aus 1.0995 — die beiden inhaltlichen Zusicherungen (Signal
+    /// > 1.10, Abstand zum Referenzarm > 0.06) halten also weiter, nur die
+    /// REINHEIT des Referenzarms (|aus − 1| < 0.08) nicht mehr. Der Wächter läuft
+    /// deshalb auf dem schmelzfreien Arm (dieselbe Doktrin wie die Pins in
+    /// `EndorheicEvaporation`), und dass die Mechanik die Schmelze übersteht,
+    /// prüft `testSlopeBreakSurvivesMeltRunoff` daneben.
     func testHardnessContrastHoldsSlopeBreak() {
-        let on = Terrain(config: cfg(), seed: 1337)
-        let off = Terrain(config: uniformCfg(), seed: 1337)
+        var onCfg = cfg(); onCfg.meltRunoffEnabled = false
+        var offCfg = uniformCfg(); offCfg.meltRunoffEnabled = false
+        let on = Terrain(config: onCfg, seed: 1337)
+        let off = Terrain(config: offCfg, seed: 1337)
         let s0On = slopeBreakSignal(on).signal
         let s0Off = slopeBreakSignal(off).signal
         let h0On = on.h, hard0On = on.lithHardness
@@ -238,6 +253,24 @@ final class Lithology: XCTestCase {
             "Signal steckt im Referenzarm (an \(sOn.signal) gegen aus \(sOff.signal))")
         XCTAssertLessThan(abs(sOff.signal - 1), 0.08,
             "Referenzarm zeigt selbst ein Signal (\(sOff.signal)) — die Kennzahl misst nicht die Wirkung")
+    }
+
+    /// Gegenprobe zum Pin im Wächter darüber: mit **Schmelzwasser** (Issue #36,
+    /// Produktionsphysik) hält der Hangknick genauso. Geprüft werden die beiden
+    /// inhaltlichen Zusicherungen; die Reinheit des Referenzarms ist hier bewusst
+    /// KEINE Zusicherung — sie ist eine Eigenschaft der Kennzahl auf einer
+    /// schneefreien Bahn, s. die Begründung oben.
+    func testSlopeBreakSurvivesMeltRunoff() {
+        let on = Terrain(config: cfg(), seed: 1337)
+        let off = Terrain(config: uniformCfg(), seed: 1337)
+        XCTAssertTrue(on.cfg.meltRunoffEnabled, "Testaufbau: Schmelzwasser ist aus")
+        run(on, to: 20_000); run(off, to: 20_000)
+        let sOn = slopeBreakSignal(on).signal, sOff = slopeBreakSignal(off).signal
+        print("[#12] Hangknick-Signal MIT Schmelze (Issue #36) — an: \(sOn), aus: \(sOff)")
+        XCTAssertGreaterThan(sOn, 1.10,
+            "kein Hangknick mit Schmelzwasser (Signal \(sOn))")
+        XCTAssertGreaterThan(sOn, sOff + 0.06,
+            "Signal steckt im Referenzarm (an \(sOn) gegen aus \(sOff))")
     }
 
     /// Was der DIFFUSIONS-Kontrast zum Hangknick beiträgt — gemessen, nicht

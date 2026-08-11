@@ -304,12 +304,21 @@ final class ClimateSnow: XCTestCase {
     /// eingeschalteten Arm — das Klima koppelt in keinen Erosionspass und nicht in
     /// die Vegetation (bewusste Scope-Grenze, s. `SimConfig.climateEnabled`).
     ///
+    /// **Seit Issue #36 mit EINER Ausnahme:** die Schmelze speist den Abfluss.
+    /// Beide Arme laufen hier deshalb mit `meltRunoffEnabled = false` — die
+    /// Aussage des Wächters ist unverändert „das Klima SELBST rührt die Physik
+    /// nicht an", nur ist die Schmelz-Kopplung jetzt ein eigener, eigens
+    /// abschaltbarer Weg mit eigenem Aus-Wächter
+    /// (`MeltRunoff.testDisabledMeltRunoffIsBitIdentical`). Ohne diese Zeile
+    /// vergleicht der Test zwei verschiedene Physiken.
+    ///
     /// Verglichen wird ALLES außer den drei Kryo-Feldern und der Schneegrenze:
     /// beides ist per Konstruktion der Unterschied.
     func testDisabledClimateIsBitIdenticalPhysics() {
-        var off = cfg(n: 128); off.climateEnabled = false
+        var off = cfg(n: 128); off.climateEnabled = false; off.meltRunoffEnabled = false
+        var on = cfg(n: 128); on.meltRunoffEnabled = false
         let a = Terrain(config: off, seed: 1337)
-        let b = Terrain(config: cfg(n: 128), seed: 1337)
+        let b = Terrain(config: on, seed: 1337)
         XCTAssertTrue(a.temperature.isEmpty && a.snow.isEmpty && a.ice.isEmpty,
                       "abgeschaltet sind die Kryo-Felder nicht leer")
         XCTAssertFalse(b.snow.isEmpty, "eingeschaltet ist das Schneefeld leer")

@@ -45,6 +45,17 @@ final class EndorheicEvaporation: XCTestCase {
         // `Lithology.testEndorheicMechanicsSurviveLithology`, das die Bänder
         // NICHT pinnt und über alle Seeds zählt). Mit `legacyAbsolute` läuft die
         // Vegetation exakt wie vor #4, das Becken ist wieder das alte.
+        // Schmelzwasser (Issue #36) AUSGEPINNT — dritter Pin, gleiche Doktrin und
+        // gleiches Muster wie die zwei darüber: Seed 1337 ist bei n=256 eine
+        // ALPINE Insel, die Schmelze speist dort den Abfluss und verschiebt damit,
+        // WELCHES Becken das größte gedeckelte ist. GEMESSEN (n=256, κ=6, Seed
+        // 1337, 10×200 J., Schmelze an gegen aus): Salzpfanne im GRÖSSTEN Becken
+        // 0 gegen 1098 Krustenzellen — mit Schmelze ist das größte gedeckelte
+        // Becken wieder ein gespeistes, das nicht trockenfällt. Dass die
+        // Playa-Bildung selbst intakt bleibt (inselweit, über mehrere Seeds), hält
+        // `MeltRunoff.testEndorheicMechanicsSurviveMeltRunoff` fest — genau die
+        // Rolle, die `Lithology.testEndorheicMechanicsSurviveLithology` für #12 hat.
+        c.meltRunoffEnabled = false
         // WIE empfindlich diese Wächter sind, hat der erste Pin-Versuch gezeigt:
         // er notierte die Bänder als Abstand über `sea`, wodurch die Rampenbreite
         // 0.68 − 0.5 = 0.18000000000000005 statt 0.18 wurde. Diese EINE ulp auf

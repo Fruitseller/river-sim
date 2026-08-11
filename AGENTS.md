@@ -126,8 +126,20 @@ Uplift (+ Relief-Servo) → computeFlow (Priority-Flood, D8, MFD)
 Die Klima-Vertikale (Issue #33) steht **direkt vor** der Vegetation und damit am
 Schrittende: die Temperatur liest die FINALEN Höhen des Schritts, und
 `updateVegetation` leitet über `updateHeightBands` die Schneegrenze aus dem
-frischen Schneefeld ab. Sie koppelt bewusst in KEINEN Erosionspass — das kommt
-erst mit dem Eis (#35), Begründung bei `SimConfig.climateEnabled`.
+frischen Schneefeld ab.
+
+Seit Issue #36 koppelt das Klima über **einen** Weg in die Erosion: die
+Schmelze speist das Abfluss-Gewicht (`Terrain.flowWeight` = Regen + Ablation,
+gebaut in `updateRunoffWeight` am Anfang des Schritts aus dem Schneefeld vom
+Schrittende davor). Alles andere bleibt entkoppelt — das Eis (#35) bringt sein
+eigenes Erosionsgesetz mit, Begründung bei `SimConfig.climateEnabled` und
+`SimConfig.meltRunoffEnabled`.
+
+**Alle drei Abfluss-Konsumenten lesen `flowWeight`** und nie `rain`/`rainWeight`
+direkt: `seedFlowAccumulator` (D8 UND MFD) und die Tropfen-Startpunkte in
+`Hydraulic.erode`. Wer einen vierten Konsumenten hinzufügt, nimmt dieselbe
+Quelle — die Kalibrierung hängt daran, dass Σ Gewicht über Land = Zahl der
+Landzellen bleibt (`docs/melt-runoff-measurements.md` §D).
 
 Ausgelagert sind nur Dinge mit eigener Datenstruktur: `Hydraulic.swift` (Droplet-Erosion,
 Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, Cutoff),
