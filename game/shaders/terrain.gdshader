@@ -287,10 +287,15 @@ void fragment() {
 	// (basinFill) bleiben trocken, weil sie nie ins Gate kommen (rawWet 0.03).
 	// Die Farb-Kontur setzt BEWUSST unter der Lift-Schwelle (0.015) ein: sie
 	// reicht bis fast an die echte Uferlinie (pond → 0), während die Geometrie
-	// erst später sanft hebt — das Band 0.006..0.015 liest sich als seichter,
+	// erst später sanft hebt — das Band 0.003..0.015 liest sich als seichter,
 	// nasser Ufersaum auf dem Hang.
+	// Der Kontur-FUSS (0.003 = WaterRender.pondContourLo) ist zugleich die
+	// Präsenz-Schwelle des Altarm-Overlays: dessen Deckkraft im G-Kanal wird hier
+	// mit der Kontur multipliziert, ein höherer Fuß (0.006) hat die seichten
+	// Altarm-Enden also weggeschnitten und frische Altarme halbiert. Beide Zahlen
+	// gehören zusammen — Wächter: SimCoreTests/WaterRenderTests.swift.
 	float pond = pond_at(v_uv, hval);
-	float lakeMask = smoothstep(0.006, 0.02, pond) * lake_gate_at(v_uv);
+	float lakeMask = smoothstep(0.003, 0.02, pond) * lake_gate_at(v_uv);
 	float wet = max(riverMask, lakeMask);
 
 	// --- Ufer-Saum (Punkt „Shading-Tricks"): der Blur-Halo des Wasserfelds

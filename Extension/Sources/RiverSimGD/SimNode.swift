@@ -720,8 +720,20 @@ final class SimNode: Node {
         let minimumOxbowNodes = 10
         let maximumTrimmedNodes = 3
         let fullEndFadeSteps = 3.0
-        let minimumPondDepth = 0.003
-        let fullPondFadeDepth = 0.02
+        // KEINE eigene Tiefen-Rampe mehr (Issue #32): der Shader multipliziert den
+        // G-Kanal mit der per-Pixel-Uferkontur smoothstep(pondContourLo,
+        // pondContourHi, pond). Eine zweite Rampe hier hätte sie QUADRIERT — frische
+        // Altarme verloren so 40–60 % Deckkraft (bei 0.01 Wassersäule: 0,25 → 0,05).
+        // Die Kontur macht dasselbe besser: per Pixel statt zell-quantisiert.
+        // Gestempelt wird deshalb nur noch PRÄSENZ (echte Wassersäule über dem
+        // Kontur-Fuß) mit der Alters-/Rand-Deckkraft; die Ausblendung im seichten
+        // Bogen-Ende übernimmt die Kontur. Präsenz-Schwelle == Kontur-Fuß: was der
+        // Shader nicht mehr zeichnen kann, muss auch nicht gestempelt werden — und
+        // umgekehrt darf der Stempel nicht früher aufhören als die Kontur, sonst
+        // fehlen genau die seichten Enden. Im Ribbon-Modus (#31) ist das der EINZIGE
+        // Altarm-Pfad: der Zentrumslinien-Stempel trägt dort nur Saum-Intensität
+        // (0.14 < riverMaskLo), der Fluss-Kanal deckt Altarme also nicht mehr mit.
+        let minimumPondDepth = WaterRender.pondContourLo
         let maximumOxbowOpacity = 0.7
         for oxbowIndex in terrain.meander.oxbows.indices {
             let oxbow = terrain.meander.oxbows[oxbowIndex]
@@ -749,8 +761,7 @@ final class SimNode: Node {
                     if hf[cellIndex] <= sea || h[cellIndex] <= sea || pondDepth <= minimumPondDepth {
                         continue
                     }
-                    let pondFade = min(1, (pondDepth - minimumPondDepth) / fullPondFadeDepth)
-                    let value = maximumOxbowOpacity * fade * endFade * pondFade
+                    let value = maximumOxbowOpacity * fade * endFade
                     if oxb[cellIndex] < value { oxb[cellIndex] = value }
                 }
             }
@@ -763,31 +774,18 @@ final class SimNode: Node {
         // Stream-Map-Patches, seit die Track-Maske Zufallspfade strenger schneidet),
         // die als blaue Punktfelder dithern („zu viele Flüsse/Seen"-Eindruck im
         // gealterten Terrain). Zusammenhängende Wasser-Komponenten (4er-Nachbar-
-        // schaft) unter `fadeLoCells` bleiben unsichtbar; bis `fadeHiCells` steigt
-        // die Deckkraft linear (Issue #32: FADE statt hartem Cutoff bei 25 — beim
-        // Überschreiten der Schwelle PLOPPTEN wachsende Seen). Echte Flüsse sind
-        // dank der Downstream-Propagation immer LANGE Ketten bis Mündung/See,
-        // echte Seen große Flächen — beide liegen weit über fadeHi. Zubringer,
+        // schaft) unter `componentFadeLoCells` bleiben unsichtbar, bis
+        // `componentFadeHiCells` steigt die Deckkraft linear (Issue #32: FADE statt
+        // hartem Cutoff bei 25 — beim Überschreiten PLOPPTEN wachsende Seen).
+        // Echte Flüsse sind dank der Downstream-Propagation LANGE Ketten bis See/Meer,
+        // echte Seen große Flächen — beide liegen weit über dem Fenster. Zubringer,
         // die in einen See münden, überleben über die gemeinsame Komponente.
         // Flood-Fill ist O(n²) und läuft eh nur je Render-Tick. Altarme separat
         // via oxb.
-        // Fenster so gelegt, dass VOLLE Sichtbarkeit nahe der alten Schwelle bleibt.
-        // Die beiden Kanäle kommen dort auf verschiedenen Wegen hin, weil der Shader
-        // sie verschieden liest — das ist gewollt, aber leicht zu übersehen:
-        //   See:   der Shader gatet über smoothstep(0.04, 0.35, ·) → voll ab
-        //          Fade ≥ 0.35, also ab 10 + 0.35·40 = 24 Zellen; unsichtbar unter
-        //          Fade ≤ 0.04 ≈ 12 Zellen.
-        //   Fluss: KEIN Gate — riverMask = smoothstep(0.16, 0.45, ·) liest den Kanal
-        //          als INTENSITÄT, der Fade skaliert sie also nur. Für einen kräftigen
-        //          Lauf (sd ≈ 1) heißt das: unsichtbar bis ~17 Zellen, ~24% bei 20,
-        //          voll ab Fade ≥ 0.45 ≈ 28 Zellen.
-        // Beide Fenster liegen um die alte harte Schwelle 25 herum, der Fluss-Kanal
-        // etwas breiter. Die Kurve hier NICHT „symmetrisch" machen, indem man die
-        // Gate-Kurve auch auf sd legt: sie sättigt bei Fade 0.35, riverMask schon bei
-        // 0.45 — kombiniert wären 18-Zell-Fetzen VOLL sichtbar, also genau die
-        // Sprenkel, die der Kohärenz-Filter verhindern soll (nachgerechnet, verworfen).
-        let fadeLoCells = 10.0
-        let fadeHiCells = 50.0
+        // Fenster (`WaterRender.componentFadeLo/HiCells`) so gelegt, dass VOLLE
+        // Sichtbarkeit nahe der alten Schwelle bleibt — die Herleitung inkl. der
+        // Shader-Fenster und der verworfenen „symmetrischen" Variante steht dort,
+        // headless abgesichert durch `SimCoreTests/WaterRenderTests.swift`.
         rawWet.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         for k in 0..<cnt { rawWet[k] = hf[k] > sea && hf[k] - h[k] > 0.03 }
         for k in 0..<cnt { mask[k] = rawWet[k] || sd[k] >= 0.16 }
@@ -810,8 +808,7 @@ final class SimNode: Node {
             // Verschmelzen zweier Komponenten kann `fade` in einem Tick springen
             // (Teich berührt Flusskette) — im Zeitraffer dämpft das die EWMA
             // unten, bei Sprüngen (blend = 1) ist Sofort-Übernahme gewollt.
-            let fade = min(1, max(0, (Double(waterComponent.count) - fadeLoCells)
-                                      / (fadeHiCells - fadeLoCells)))
+            let fade = WaterRender.componentFade(cells: waterComponent.count)
             if fade > 0 {
                 for k in waterComponent { componentFade[k] = fade }
             }

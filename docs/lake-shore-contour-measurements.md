@@ -135,3 +135,35 @@ Die Sorge war unbegründet, aus zwei Gründen:
 Übrig bleibt eine leichte Abschwächung im Band `pond` 0,010–0,015 (−0,054 auf
 339 Zellen), die von den Zugewinnen in den Nachbarbändern mehr als aufgewogen
 wird. Kein Handlungsbedarf.
+
+### Nachtrag: Doppel-Rampe entfernt (Merge mit den Fluss-Ribbons, #31)
+
+Die Messung oben stützt sich auf Punkt 1 — „Altarme liegen dort, wo der
+FLUSS-Kanal ohnehin malt". Im **Ribbon-Modus** (#31) gilt das nicht mehr: der
+Zentrumslinien-Stempel trägt dort nur noch Saum-Intensität (0,14) und bleibt
+unter `riverMask` (0,16); das Wasser des Mäanders macht die Band-Geometrie. Damit
+ist das Altarm-Overlay der **einzige** Altarm-Pfad, und die verbleibende
+Abschwächung im seichten Band ist keine Randnotiz mehr, sondern der ganze Effekt.
+
+Ursache ist eine doppelte Tiefen-Rampe: `SimNode` fadete die Altarm-Deckkraft
+selbst über `pond` 0,003–0,023, der Shader multipliziert sie seit #32 zusätzlich
+mit der Kontur `smoothstep(0.006, 0.02, pond)`. Behoben, indem die Rampe genau
+EINMAL angewendet wird — der Stempel trägt nur noch Präsenz + Alters-/Rand-Fade,
+die Tiefen-Ausblendung macht die Kontur (per Pixel statt zell-quantisiert), und
+ihr Fuß liegt auf der Präsenz-Schwelle des Overlays (0,003 statt 0,006).
+
+Sichtbare Deckkraft des Overlays allein (frischer Altarm, Bogen-Mitte, also
+`fade = endFade = 1`; nachgerechnet, keine neue Messreihe):
+
+| `pond` | 0.004 | 0.006 | 0.010 | 0.015 | 0.020 | ≥ 0.023 |
+|---|---|---|---|---|---|---|
+| vor #32 | 0,04 | 0,11 | 0,25 | 0,42 | 0,60 | 0,70 |
+| #32 (Doppel-Rampe) | 0,00 | 0,00 | 0,05 | 0,30 | 0,60 | 0,70 |
+| jetzt | 0,01 | 0,06 | 0,31 | 0,58 | 0,70 | 0,70 |
+
+Für **Seen** verschiebt der niedrigere Kontur-Fuß nur den weichen Ufersaum um das
+Band 0,003–0,006 nach außen (mehr Farbe knapp vor der Uferlinie); die
+Hebe-Schwelle der Wasser-Geometrie (0,015) bleibt bewusst darüber, die
+Saum-Messung oben bleibt gültig. Die Kalibrier-Paarung Kontur-Fuß ↔
+Altarm-Präsenz ist jetzt in `SimCore/WaterRender.swift` zentral und wird von
+`SimCoreTests/WaterRenderTests.swift` gegen Shader und Extension geprüft.
