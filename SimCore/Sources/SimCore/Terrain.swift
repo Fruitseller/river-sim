@@ -64,6 +64,34 @@ public final class Terrain {
     /// Großräumige Härte-Provinzen (−1…1), fix je Seed: Batholith gegen
     /// Sedimentbecken → strukturkontrollierte Entwässerung über ganze Landstriche.
     private var lithProvince: [Double] = []
+    /// **Temperatur** je Zelle in °C (Issue #33): `T₀ − Γ·max(0, h − sea)`. Reine
+    /// Ableitung aus der Höhe — deshalb je Schritt in `updateClimate` neu
+    /// gerechnet, aber Teil des Inventars (dieselbe Doktrin wie `rain`/`hf`: der
+    /// erste Frame nach dem Laden soll korrekt sein). Über See ist die Höhe auf
+    /// `sea` geklemmt, das Meer trägt also überall `T₀`. Leer, solange
+    /// `cfg.climateEnabled` aus ist. Herleitung der Kopplung Höhe → Temperatur
+    /// (es gibt keinen vertikalen Meter-Maßstab!): `SimConfig.climateLapseRate`.
+    public private(set) var temperature: [Double] = []
+    /// **Schneedecke** als Schneewasser-Äquivalent (SWE) in abstrakten Einheiten
+    /// (Issue #33) — echter Bilanz-ZUSTAND, kein abgeleitetes Feld. Akkumulation
+    /// aus `rain` bei Frost, Ablation als Ratenkonstante über 0 °C; die
+    /// geschlossene Lösung `S* + (S−S*)·e^(−μdt)` macht den Pass exakt
+    /// dt-invariant. SWE 1.0 ≙ voll ausgebildete Dauerschneedecke
+    /// (s. `SimConfig.snowAccumPerYear`). Leer, solange das Klima aus ist.
+    /// Konsumenten: `snowCover(_:)` (Färbung je Zelle) und die Rückrechnung der
+    /// Schneegrenze in `updateHeightBands` (Waldgrenze). KEIN Erosionspass —
+    /// bewusste Scope-Grenze, s. `SimConfig.climateEnabled`.
+    public private(set) var snow: [Double] = []
+    /// **Eisdicke** in Höheneinheiten (Issue #33 legt das Feld an, Issue #35
+    /// beschreibt es). Es reist schon jetzt mit, weil das Speicherformat bewusst
+    /// keine Migration kennt: ALLE Kryo-Felder müssen in EINEN Versionssprung
+    /// (`WorldSnapshot.version` 2 → 3), sonst kostet der Eisfluss eine zweite
+    /// Ungültigkeits-Runde für alle Spielstände. In diesem Ticket schreibt kein
+    /// Pass hier — das Feld ist bei eingeschaltetem Klima konstant 0 (und wird
+    /// deshalb von der Konstant-Kodierung auf 5 Byte verdichtet). Warum es der
+    /// EINZIGE zusätzliche Zustand des gewählten Flux-Modells ist:
+    /// `docs/research-climate-cryosphere.md` §4/§6.
+    public private(set) var ice: [Double] = []
     public private(set) var veg: [Double]    // Vegetationsdichte 0..1
     /// Vegetations-Klasse je Zelle: 0 kahl · 1 Gras · 2 Wald · 3 Auwald.
     /// ADDITIV zu `veg` (das bleibt Dichte 0..1 für alle bestehenden
@@ -413,6 +441,14 @@ public final class Terrain {
         // Die Spin-up-Tropfen lagern Sediment ab und können frisch entwässerte
         // Becken wieder andämmen → einmal nachbreachen (billig, fast alles offen).
         if cfg.breachEnabled { breachBasins() }
+        // Klima im eingeschwungenen Zustand starten (Issue #33) — dieselbe
+        // Doktrin wie `waterLevel = hf` und `lakeBalance = h` oben: die
+        // Schneedecke ist ÄLTER als das Spieljahr 0 und soll nicht über die
+        // ersten Jahrhunderte einschwingen. 10.000 Jahre sind bei der trägsten
+        // Zeitkonstante (`snowTurnoverYears` 500) 20 τ — der Vorrat steht exakt
+        // auf S*. Muss VOR `updateVegetation` laufen: dessen
+        // `updateHeightBands` liest die Schneegrenze aus dem Feld.
+        updateClimate(dt: 10000)
         // Vegetation im eingeschwungenen Zustand starten.
         updateVegetation(years: 10000)
         seedMeander()
@@ -774,6 +810,136 @@ public final class Terrain {
         }}}
     }
 
+    // MARK: - Klima-Vertikale: Temperatur und Schneedecke (Issue #33)
+
+    /// Zieht Temperatur- und Schneefeld um `dt` Jahre nach. Kalibrier-Logbuch und
+    /// Modellherleitung: `SimConfig.climateEnabled` ff.,
+    /// `docs/research-climate-cryosphere.md`.
+    ///
+    /// ```
+    /// T      = T₀ − Γ·max(0, h − sea)                  (Meer trägt überall T₀)
+    /// f_s    = clamp((T_regen − T)/(T_regen − T_frost), 0, 1)
+    /// a      = c_akk · rain · f_s                      Akkumulation
+    /// μ      = 1/τ₀ + c_schmelz · max(0, T)            Ablations-Ratenkonstante
+    /// S      ← S* + (S − S*)·e^(−μ·dt),  S* = a/μ      exakte Lösung von Ṡ = a − μS
+    /// ```
+    ///
+    /// **dt-Invarianz.** Die Relaxationsform teleskopiert exakt: N Schritte à dt
+    /// liefern denselben Faktor wie EIN Schritt à N·dt, weil
+    /// `e^(−μdt)^N = e^(−μ·N·dt)` und `S*` je Schritt derselbe ist (μ und a hängen
+    /// nur an T und rain, nicht an dt). `dt = 0` lässt das Feld exakt unverändert
+    /// — genau das braucht der Sculpt-Pfad, der nur die Temperatur nachziehen
+    /// will; die Bilanz wird dafür ÜBERSPRUNGEN statt mit e⁰ = 1 gerechnet
+    /// (`target + (S − target)·1` rundet in Fließkomma nicht garantiert auf `S`
+    /// zurück, ein zeitloser Sculpt-Schritt dürfte die persistierte Bilanz aber
+    /// nicht um ein ULP verschieben). Die klassische degree-day-Form mit
+    /// `max(0, …)` wäre schon für dt > 0 nicht dt-invariant,
+    /// s. `SimConfig.snowMeltPerKYear`.
+    ///
+    /// **Operator-Splitting** wie im Rest des Schritts: `T` liest die FINALEN
+    /// Höhen des Zeitschritts, `rain` das Feld vom Schrittanfang (`computeFlow`
+    /// ruft `computeRain`). Beide sind über einen Zeitschritt kohärent genug —
+    /// die Feuchte ändert sich über Jahrhunderte nicht sprunghaft.
+    ///
+    /// Per-Zelle unabhängig (jede Zelle schreibt nur ihren Index) → parallel
+    /// bit-identisch zur sequenziellen Schleife.
+    public func updateClimate(dt: Double) {
+        guard cfg.climateEnabled else {
+            // AUS heißt LEER (Muster Lithologie/Regen-Gewichtung): kein Konsument
+            // findet ein Feld, alle rechnen mit dem Rückfall von vor #33.
+            if !temperature.isEmpty { temperature = [] }
+            if !snow.isEmpty { snow = [] }
+            if !ice.isEmpty { ice = [] }
+            return
+        }
+        let cnt = cfg.count
+        if temperature.count != cnt { temperature = .init(repeating: 0, count: cnt) }
+        if snow.count != cnt { snow = .init(repeating: 0, count: cnt) }
+        if ice.count != cnt { ice = .init(repeating: 0, count: cnt) }
+        let sea = cfg.sea
+        let t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
+        let tFreeze = cfg.snowFreezeTemp
+        // Spanne der Phasen-Rampe; bei entarteter Config (obere ≤ untere Schwelle)
+        // bleibt eine harte Kante bei `snowRainTemp` statt einer Division durch 0.
+        let phaseSpan = max(1e-9, cfg.snowRainTemp - tFreeze)
+        let tRain = cfg.snowRainTemp
+        let accum = cfg.snowAccumPerYear
+        let base = 1 / max(1e-9, cfg.snowTurnoverYears)
+        let melt = cfg.snowMeltPerKYear
+        // Zeitloser Aufruf (Sculpt-Pfad, `SimNode.recomputeFlow`): nur die
+        // Temperatur nachziehen, die Bilanz bleibt Byte für Byte stehen.
+        let holdSnow = (dt == 0)
+        h.withUnsafeBufferPointer { hb in
+        rain.withUnsafeBufferPointer { rnb in
+        temperature.withUnsafeMutableBufferPointer { tb in
+        snow.withUnsafeMutableBufferPointer { sb in
+            let ph = hb.baseAddress!, prain = rnb.baseAddress!
+            let pt = tb.baseAddress!, ps = sb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi {
+                    let t = t0 - gamma * max(0, ph[k] - sea)
+                    pt[k] = t
+                    if holdSnow { continue }
+                    let fSnow = min(1, max(0, (tRain - t) / phaseSpan))
+                    let a = accum * prain[k] * fSnow
+                    // Schneefreie Zelle ohne Zufuhr: Ziel 0, Vorrat 0 — die
+                    // Relaxation liefert dann exakt 0 (0 + (0−0)·e^… = 0), das
+                    // `exp` wäre reine Rechenzeit. BIT-IDENTISCH, nicht approximiert.
+                    // Der Zweig trägt die große Mehrheit der Zellen: das ganze Meer
+                    // und alles Land unter der Regen/Schnee-Grenze (bei
+                    // Produktionswerten h < 0.458, s. climateLapseRate). Gemessen
+                    // n=832: der Pass fällt damit von 3.12 ms auf unter 1 ms je
+                    // Schritt (docs/climate-snow-measurements.md §7).
+                    if a == 0 && ps[k] == 0 { continue }
+                    let mu = base + melt * max(0, t)
+                    let target = a / mu
+                    ps[k] = target + (ps[k] - target) * exp(-mu * dt)
+                }
+            }
+        }}}}
+    }
+
+    /// Sättigung eines Schneevorrats zur **Deckung** (0 … <1): `S/(S + ref)`, wie
+    /// bei der Stream-Map (`streamRefRate`). EINZIGE Quelle der Formel — der
+    /// Färbungs-Loop in `SimNode.terrainColorBytes` ruft sie über den rohen
+    /// Puffer auf, statt sie ein zweites Mal hinzuschreiben (dieselbe Doktrin wie
+    /// `vegetationSuitability` seit Issue #4). Wächter:
+    /// `ClimateSnow.testSnowCoverIsTheSingleSourceForColouring`.
+    @inline(__always) public static func snowCoverage(swe: Double, ref: Double) -> Double {
+        swe / (swe + ref)
+    }
+
+    /// **Schneedeckung** einer Zelle (0 … <1) — die EINE Quelle für die
+    /// Schnee-Färbung, s. `snowCoverage(swe:ref:)`.
+    ///
+    /// Ohne Klima (Feld leer) fällt die Antwort auf das HÖHENBAND zurück
+    /// (`HeightBands.snowAmount`) — also exakt auf das Verhalten vor #33.
+    @inline(__always) public func snowCover(_ k: Int) -> Double {
+        guard snow.count == cfg.count else { return heightBands.snowAmount(h[k]) }
+        return Terrain.snowCoverage(swe: snow[k], ref: cfg.snowCoverRef)
+    }
+
+    /// Landanteile mit Schneedeckung über den beiden Band-Schwellen — die
+    /// Rückprojektion des Schneefelds auf eine HÖHE für `HeightBands`
+    /// (Waldgrenze, Shader-Durchreichung). `nil` = Klima aus → Perzentil-Rückfall.
+    ///
+    /// Sequenzielle Integer-Zählung: das Ergebnis hängt an keiner Summationsreihen-
+    /// folge und ist damit bit-genau reproduzierbar.
+    private func snowAreaFractions() -> (ramp: Double, full: Double)? {
+        guard cfg.climateEnabled, snow.count == cfg.count else { return nil }
+        let sea = cfg.sea, ref = cfg.snowCoverRef
+        let cStart = cfg.snowBandCoverStart, cFull = cfg.snowBandCoverFull
+        var land = 0, ramp = 0, full = 0
+        for k in 0..<cfg.count where h[k] > sea {
+            land += 1
+            let c = Terrain.snowCoverage(swe: snow[k], ref: ref)
+            if c > cStart { ramp += 1 }
+            if c >= cFull { full += 1 }
+        }
+        guard land > 0 else { return nil }
+        return (Double(ramp) / Double(land), Double(full) / Double(land))
+    }
+
     // MARK: - Vegetation
 
     /// Leitet die Höhenbänder (Issue #4) aus der aktuellen Landhöhen-Verteilung ab.
@@ -799,8 +965,16 @@ public final class Terrain {
     /// Ergebnis liefern). Offener, sauberer Weg wäre ein paralleler Histogramm-Fill
     /// (Bins je Thread, Integer-Summen → bit-identisch); das ist eine eigene
     /// Optimierung und nicht Teil dieses Tickets.
+    ///
+    /// **Die Schneegrenze kommt seit Issue #33 aus dem Schneefeld**, nicht mehr
+    /// aus `bandSnowPercentile`: `snowAreaFractions()` misst, wie viel Land das
+    /// Klima gerade beschneit, und dieser Anteil wird zurück auf ein Höhenquantil
+    /// projiziert. Der Aufruf muss deshalb NACH `updateClimate` liegen (in
+    /// `step()` tut er das: Klima direkt vor `updateVegetation`). Ohne Klima
+    /// liefert `snowAreaFractions()` `nil` und die Perzentile greifen wie vorher.
     public func updateHeightBands() {
-        heightBands = cfg.heightBandsOverride ?? HeightBands.fromLandHeights(h, cfg: cfg)
+        heightBands = cfg.heightBandsOverride
+            ?? HeightBands.fromLandHeights(h, cfg: cfg, snowFractions: snowAreaFractions())
     }
 
     /// Grob-Steigung um eine Zelle (±2 Zellen, Mittel über beide Achsen).
@@ -2943,6 +3117,10 @@ public final class Terrain {
                 if i < wave.count { wavePass(relax: wave.relax) }
             }
         }
+        // Klima-Vertikale (Issue #33) am Schrittende: Temperatur liest die FINALEN
+        // Höhen, und die Schneebilanz muss vor `updateVegetation` stehen — dort
+        // leitet `updateHeightBands` die Schneegrenze aus dem frischen Feld ab.
+        updateClimate(dt: dt)
         updateVegetation(years: dt)
         years += dt
     }
@@ -3245,7 +3423,7 @@ public final class Terrain {
 /// Abnahmepunkt 5: kein Einschwingen des Seespiegels). Bewusst großzügig: auch
 /// Felder, die `computeFlow` im nächsten Schritt neu ableitet (`hf`, `receiver`,
 /// `area`, `areaMFD`, `order`, `floodParent`, `rain`, `rainWeight`,
-/// `lithHardness`, `lithErodeK`, `playaBed`, `endorheicBasin`,
+/// `lithHardness`, `lithErodeK`, `temperature`, `playaBed`, `endorheicBasin`,
 /// `endorheicInflow`) reisen mit — dann ist „geladener Zustand == gespeicherter
 /// Zustand" feldweise prüfbar (`WorldSnapshotTests`) statt nur „läuft gleich
 /// weiter", und der erste gerenderte Frame ist korrekt, ohne einen Sim-Schritt
@@ -3275,6 +3453,12 @@ struct TerrainState {
     var lithErodeK: [Double] = []        // leer, wenn cfg.lithologyEnabled aus ist
     var lithBed: [Double] = []           // leer, wenn cfg.lithologyEnabled aus ist
     var lithProvince: [Double] = []      // leer, wenn cfg.lithologyEnabled aus ist
+    // Klima-Vertikale (Issue #33) — alle drei leer, wenn cfg.climateEnabled aus
+    // ist. `ice` schreibt in diesem Ticket noch kein Pass; es reist trotzdem mit,
+    // damit #35 keinen zweiten Versionssprung braucht (s. Feld-Doku in Terrain).
+    var temperature: [Double] = []
+    var snow: [Double] = []
+    var ice: [Double] = []
     var veg: [Double] = []
     var vegClass: [UInt8] = []
     var riparian: [Double] = []          // Auwald-Nähe: liest der Mäander-Pass im NÄCHSTEN Schritt
@@ -3328,6 +3512,7 @@ extension Terrain {
         s.rain = rain; s.rainWeight = rainWeight
         s.lithHardness = lithHardness; s.lithErodeK = lithErodeK
         s.lithBed = lithBed; s.lithProvince = lithProvince
+        s.temperature = temperature; s.snow = snow; s.ice = ice
         s.veg = veg; s.vegClass = vegClass; s.riparian = riparian
         s.heightBands = heightBands
         s.hf = hf; s.waterLevel = waterLevel; s.lakeBalance = lakeBalance
@@ -3355,6 +3540,7 @@ extension Terrain {
         rain = s.rain; rainWeight = s.rainWeight
         lithHardness = s.lithHardness; lithErodeK = s.lithErodeK
         lithBed = s.lithBed; lithProvince = s.lithProvince
+        temperature = s.temperature; snow = s.snow; ice = s.ice
         veg = s.veg; vegClass = s.vegClass; riparian = s.riparian
         heightBands = s.heightBands
         hf = s.hf; waterLevel = s.waterLevel; lakeBalance = s.lakeBalance

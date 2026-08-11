@@ -10,6 +10,16 @@ Landhöhen sortiert, Quantile zieht und die Zonenanteile zählt; er ist nach der
 Messung wieder entfernt worden — die Werte sind hier und in den Doc-Kommentaren
 festgehalten.
 
+> **Stand-Hinweis (Aug 2026, Issue #33):** Alles zum **SCHNEE** in diesem Dokument
+> beschreibt den Zustand VOR der Klima-Vertikalen. Seither ist die Schneegrenze
+> kein Perzentil mehr, sondern wird aus dem Schneefeld (Massenbilanz aus
+> Temperatur und Niederschlag) zurückgerechnet: der Flächenanteil ist gemessen
+> statt gesetzt, und die Grenze bleibt als Temperatur an ihrer Höhe stehen,
+> statt mit der abflachenden Insel zu sinken. Die Zahlen hier bleiben als
+> Vergleichsarm gültig und werden in `docs/climate-snow-measurements.md`
+> gegenübergestellt. Vegetation, Fels und Nadelband sind unverändert
+> perzentil-gekoppelt.
+
 ## 1. Ausgangslage: die absoluten Schwellen lagen außerhalb des Höhenbands
 
 n=832, Seed 1337, Stand vor der Änderung (Landhöhen-Quantile):

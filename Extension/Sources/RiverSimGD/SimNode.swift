@@ -148,6 +148,9 @@ final class SimNode: Node {
     /// `[vegFull, vegNone, rockStart, rockFull, snowStart, snowFull, coniferLow, coniferHigh]`.
     /// Sie kommen aus dem Sim-Kern (Perzentile der Landhöhen) — der Shader und die
     /// Diagnose lesen sie hier ab, statt eigene absolute Schwellen zu führen.
+    /// **Ausnahme seit Issue #33:** `snowStart`/`snowFull` sind keine Perzentile
+    /// mehr, sondern aus dem Schneefeld zurückgerechnet (s. `HeightBands`). An der
+    /// Reihenfolge und Bedeutung der Werte ändert das nichts.
     @Callable func heightBands() -> PackedFloat32Array {
         let b = terrain.heightBands
         return PackedFloat32Array([
@@ -296,6 +299,14 @@ final class SimNode: Node {
         // Terrain vergleichen, das die Härte nicht gespürt hat.
         let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
         let lithOn = lith.count == n * n
+        // Schneedecke (Issue #33): die Färbung liest jetzt das FELD je Zelle statt
+        // eines Höhenbands — nur so wird das Luv/Lee-Signal der Akkumulation
+        // sichtbar (dieselbe Orographie, die `rain` verteilt). Ohne Klima ist das
+        // Feld leer, der 1-Element-Dummy greift und die Färbung fällt exakt auf
+        // `bands.snowAmount(h)` von vor #33 zurück.
+        let snow = terrain.snow.count == n * n ? terrain.snow : [0.0]
+        let snowOn = snow.count == n * n
+        let snowRef = terrain.cfg.snowCoverRef
         // Höhenbänder (Issue #4): einmal je Puffer gelesen — sie kommen aus dem
         // Sim-Kern (Perzentile der Landhöhen), nicht aus einer zweiten Kopie hier.
         let bands = terrain.heightBands
@@ -308,10 +319,11 @@ final class SimNode: Node {
         veg.withUnsafeBufferPointer { vgb in
         salt.withUnsafeBufferPointer { slb in
         lith.withUnsafeBufferPointer { ltb in
+        snow.withUnsafeBufferPointer { snb in
         out.withUnsafeMutableBufferPointer { ob in
         let ph = hb.baseAddress!, prain = rnb.baseAddress!
         let pveg = vgb.baseAddress!, psalt = slb.baseAddress!, pout = ob.baseAddress!
-        let plith = ltb.baseAddress!
+        let plith = ltb.baseAddress!, psnow = snb.baseAddress!
         parallelChunks(n) { jLo, jHi in
         for j in jLo..<jHi {
             for i in 0..<n {
@@ -350,14 +362,19 @@ final class SimNode: Node {
                     let vegAmt = min(1, (0.5 + 0.5 * pveg[k]) * habitat * 1.3) * 0.85
                     r += (0.19 - r) * vegAmt; g += (0.42 - g) * vegAmt; b += (0.14 - b) * vegAmt // kräftigeres Moosgrün
                     // Hochlagen: neutral-grauer Fels (nicht pastell/weiß), darüber
-                    // Schnee auf den Gipfeln. Beide Grenzen sind PERZENTILE der
+                    // Schnee auf den Gipfeln. Die FELS-Grenze ist ein PERZENTIL der
                     // aktuellen Landhöhen (Issue #4, Terrain.heightBands): die alten
                     // absoluten 0.58/1.05 trafen 1.1 % bzw. 0 % des Landes.
                     let wg = bands.rockAmount(v)
                     if wg > 0 {
                         r += (0.43 - r) * wg; g += (0.44 - g) * wg; b += (0.45 - b) * wg
                     }
-                    let ws = bands.snowAmount(v)
+                    // Der SCHNEE kommt dagegen aus der Massenbilanz (Issue #33).
+                    // Die Sättigungs-Formel steht im Sim-Kern
+                    // (Terrain.snowCoverage) — hier nur der Aufruf über den rohen
+                    // Puffer, keine zweite Kopie. Ohne Klima der Höhenband-Rückfall.
+                    let ws = snowOn ? Terrain.snowCoverage(swe: psnow[k], ref: snowRef)
+                                    : bands.snowAmount(v)
                     if ws > 0 {
                         r += (0.93 - r) * ws; g += (0.94 - g) * ws; b += (0.96 - b) * ws
                     }
@@ -393,7 +410,7 @@ final class SimNode: Node {
             }
         }
         }
-        }}}}}}
+        }}}}}}}
         return PackedByteArray(out)
     }
 
@@ -446,6 +463,11 @@ final class SimNode: Node {
     @Callable func recomputeFlow() {
         terrain.computeFlow()
         terrain.snapWaterLevel()
+        // Temperatur (Issue #33) mitziehen: sie hängt direkt an der Höhe, ein
+        // Strich muss sie im selben Frame verschieben. `dt = 0` lässt die
+        // Schnee-BILANZ exakt unverändert (e⁰ = 1) — die ist Zustand und darf
+        // nicht am Pinsel hängen, sondern nur an der Sim-Zeit.
+        terrain.updateClimate(dt: 0)
         // Höhenbänder (Issue #4) mitziehen: ein Sculpt-Strich verschiebt die
         // Landhöhen-Verteilung, und die Färbung liest sie im selben Frame.
         terrain.updateHeightBands()

@@ -348,6 +348,23 @@ Messreihen `docs/dt-invariance-measurements.md`):
   (`Terrain.vegetationSuitability` / `Terrain.heightBands`), statt zwei Kopien
   derselben Höhen-/Hang-Logik zu pflegen. Messreihe:
   `docs/height-band-measurements.md`.
+  **Nachtrag Issue #33:** der SCHNEE ist seither kein Perzentil mehr — s. den
+  nächsten Punkt. Die übrigen Bänder (Vegetation, Fels, Nadelbaum) bleiben
+  unverändert perzentil-gekoppelt.
+- ERLEDIGT (Aug 2026, Issue #33): **Klima-Vertikale als Prozess.** Temperaturfeld
+  aus der Höhe (`T₀ − Γ·(h − sea)`, Kalibrier-Entscheidung 1 Höheneinheit ≙
+  4000 m bei ICAO-Gradient 6,5 K/km → Γ = 26 K/Einheit) und Schneedecke als
+  Massenbilanz (Akkumulation aus `rain` bei Frost, Ablation als
+  degree-day-Ratenkonstante, exakt dt-invariant in der Form
+  `S* + (S−S*)e^(−μdt)`). Schnee-Färbung liest jetzt das FELD je Zelle
+  (Luv/Lee-Signal sichtbar), die Waldgrenze die daraus zurückgerechnete Höhe.
+  Der Flächenanteil ist damit GEMESSEN statt gesetzt: n=832/Seed 1337 1.39 %
+  (Jahr 0) → 0.90 % (30k), während `snowStart` bei 0.572 stehen bleibt (vorher:
+  Fläche konstant 1.5 %, Grenze wanderte nach unten). Kein Erosionspass liest das
+  Klima — bewusste Scope-Grenze, die Kopplung kommt mit dem Eis (#35).
+  `climateEnabled = false` ist bit-identisch zum Stand davor.
+  Recherche `docs/research-climate-cryosphere.md`, Messreihe
+  `docs/climate-snow-measurements.md`.
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**
@@ -390,7 +407,11 @@ Messreihen `docs/dt-invariance-measurements.md`):
   jetzt über sanfteres Relief (`baseRelief` 0.78).
 
 **Backlog (nicht priorisiert):**
-- Gletscher / glaziale Erosion → U-Täler, Kare, Moränen.
+- Gletscher / glaziale Erosion → U-Täler, Kare, Moränen (Issue #35). Modellwahl
+  und Erosionsgesetz sind mit #33 schon recherchiert und entschieden
+  (Flux-/Stream-Power-Formulierung statt SIA-Diffusion,
+  `docs/research-climate-cryosphere.md` §4/§5); das Eisfeld (`Terrain.ice`) und
+  sein Platz im Speicherformat (Version 3) stehen bereits.
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
 - Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.
 - Gameplay (falls gewünscht): Ziele/Szenarien statt reinem Sandbox.

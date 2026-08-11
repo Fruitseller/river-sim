@@ -127,6 +127,14 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertFalse(t.meander.channels.isEmpty, "keine Mäander-Zentrumslinien")
         XCTAssertTrue(t.streamMap.contains { $0 > 0.01 }, "Stream-Map ist leer")
         XCTAssertTrue(t.sed.contains { $0 > 0 }, "kein Sediment")
+        // Klima-Vertikale (Issue #33): die Schneedecke ist ein RATENBEGRENZTER
+        // Zustand wie `waterLevel` — sie muss beladen mitreisen, sonst schwingt
+        // sie nach dem Laden über Jahrhunderte ein. Ohne diese Vorbedingung wäre
+        // der Feldvergleich unten für `snow` stumm (leeres oder konstantes Feld).
+        XCTAssertTrue(t.snow.contains { $0 > 0.01 }, "Schneefeld ist leer")
+        XCTAssertNotEqual(t.snow.min(), t.snow.max(), "Schneefeld ist konstant")
+        XCTAssertNotEqual(t.temperature.min(), t.temperature.max(),
+                          "Temperaturfeld ist konstant")
 
         print("[SNAPSHOT] Kanäle=\(t.meander.channels.count) "
               + "Altarme=\(t.meander.oxbows.count)")
@@ -326,6 +334,7 @@ final class WorldSnapshotTests: XCTestCase {
         config.world = 40                  // cellSize weicht bewusst vom Default ab
         config.lithologyEnabled = false    // → lithHardness/lithErodeK/… bleiben leer
         config.rainWeightedFlow = false    // → rainWeight bleibt leer
+        config.climateEnabled = false      // → temperature/snow/ice bleiben leer (#33)
         config.meanderEnabled = false
         config.braidingEnabled = false
         config.outletErode = 7.5e-5
@@ -336,6 +345,8 @@ final class WorldSnapshotTests: XCTestCase {
         t.step(dtYears: 250)
         XCTAssertTrue(t.state.lithHardness.isEmpty, "Testaufbau: Lithologie ist nicht aus")
         XCTAssertTrue(t.state.rainWeight.isEmpty, "Testaufbau: Regen-Gewichtung ist nicht aus")
+        XCTAssertTrue(t.state.temperature.isEmpty && t.state.snow.isEmpty
+                      && t.state.ice.isEmpty, "Testaufbau: Klima ist nicht aus")
 
         let path = tempPath("config")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -350,6 +361,8 @@ final class WorldSnapshotTests: XCTestCase {
                        "optionale Config-Felder müssen mitreisen")
         XCTAssertTrue(a.state.lithHardness.isEmpty, "leeres Feld kam nicht leer zurück")
         XCTAssertTrue(a.state.rainWeight.isEmpty, "leeres Feld kam nicht leer zurück")
+        XCTAssertTrue(a.state.temperature.isEmpty && a.state.snow.isEmpty
+                      && a.state.ice.isEmpty, "leeres Kryo-Feld kam nicht leer zurück")
 
         // Reproduzierbar: zwei Ladungen derselben Datei laufen identisch weiter.
         a.step(dtYears: 400)
@@ -392,9 +405,14 @@ final class WorldSnapshotTests: XCTestCase {
                      + "→ n=832 ≈ %.0f MB",
                      config.n, size, Double(size) / Double(cells),
                      Double(size) / Double(cells) * 832 * 832 / (1024 * 1024)))
-        // 23 Double-Felder + 3 Int32 + 2 UInt8 + 2 Bool wären ~200 Byte/Zelle;
-        // die konstanten Felder (mind. disturb, regenPending) müssen fehlen.
-        XCTAssertLessThan(size, cells * 200, "konstante Felder wurden nicht verdichtet")
-        XCTAssertGreaterThan(size, cells * 100, "verdächtig klein — fehlen Felder?")
+        // 26 Double-Felder + 3 Int32 + 2 UInt8 + 2 Bool wären roh 224 Byte/Zelle;
+        // die konstanten Felder (mind. disturb, regenPending, ice) müssen fehlen.
+        // Gemessen 181,8 Byte/Zelle (Version 3, mit den Kryo-Feldern aus #33;
+        // Version 2 lag bei 165,8 — `temperature` und `snow` kommen roh dazu,
+        // `ice` ist konstant 0 und kostet 5 Byte). Die 210 fangen den Totalausfall
+        // der Verdichtung; für den Verlust EINZELNER Felder ist der Korridor zu
+        // grob, dafür ist der Messwert im Log da.
+        XCTAssertLessThan(size, cells * 210, "konstante Felder wurden nicht verdichtet")
+        XCTAssertGreaterThan(size, cells * 120, "verdächtig klein — fehlen Felder?")
     }
 }

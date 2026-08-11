@@ -6,8 +6,9 @@ import Foundation
 ///
 /// ## Warum ein eigenes Binärformat
 ///
-/// Der Zustand besteht aus ~25 Feldern à n² `Double` (n = 832 → 692 224 Zellen,
-/// 5,5 MB je Feld; eine Welt ≈ 109 MB, gemessen 166 Byte/Zelle). Zwei harte
+/// Der Zustand besteht aus ~30 Feldern à n² `Double` (n = 832 → 692 224 Zellen,
+/// 5,5 MB je Feld; eine Welt ≈ 120 MB, gemessen 182 Byte/Zelle — vor den
+/// Kryo-Feldern aus Issue #33 waren es 109 MB / 166 Byte). Zwei harte
 /// Anforderungen bestimmen die Kodierung:
 ///
 /// 1. **Bit-Genauigkeit.** Die Abnahme-Invariante ist Determinismus: ein
@@ -16,7 +17,7 @@ import Foundation
 ///    Erfahrung wie bei `powFast`). Gespeichert wird deshalb das
 ///    IEEE-754-Bitmuster jedes `Double`, nicht seine Dezimaldarstellung.
 /// 2. **Größe/Zeit.** JSON braucht für dieselben Zahlen ~3× so viele Bytes und
-///    einen Parser je Zahl (109 MB → ~350 MB Text). Plist-XML
+///    einen Parser je Zahl (120 MB → ~380 MB Text). Plist-XML
 ///    genauso. Binäres Plist wäre bit-genau, verpackt aber jedes Element als
 ///    eigenes Objekt — für 17 Mio. Zahlen unbrauchbar.
 ///
@@ -74,7 +75,13 @@ public enum WorldSnapshot {
     /// **Formatversion.** Bei jeder Änderung an Inventar, Reihenfolge oder
     /// Kodierung um 1 erhöhen — alte Dateien werden dann abgelehnt (es gibt
     /// bewusst keine Aufwärts-Migration, s. Typ-Doku).
-    public static let version: UInt32 = 2
+    /// Version 3 (Issue #33): die Kryo-Felder `temperature`, `snow` und `ice`
+    /// kommen GEMEINSAM hinein — auch `ice`, das erst Issue #35 beschreibt. Weil
+    /// es keine Migration gibt, wäre jeder weitere Sprung eine zweite Runde
+    /// ungültiger Spielstände; das vollständige Inventar der Klima-Vertikalen
+    /// steht deshalb in `docs/research-climate-cryosphere.md` §6 und ist mit
+    /// diesem Sprung abgeschlossen.
+    public static let version: UInt32 = 3
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
@@ -379,6 +386,10 @@ public enum WorldSnapshot {
         .init("lithErodeK", \.lithErodeK, mayBeEmpty: true),
         .init("lithBed", \.lithBed, mayBeEmpty: true),
         .init("lithProvince", \.lithProvince, mayBeEmpty: true),
+        // Klima-Vertikale (Issue #33) — leer, wenn cfg.climateEnabled aus ist.
+        .init("temperature", \.temperature, mayBeEmpty: true),
+        .init("snow", \.snow, mayBeEmpty: true),
+        .init("ice", \.ice, mayBeEmpty: true),
         .init("veg", \.veg), .init("riparian", \.riparian),
         .init("hf", \.hf), .init("waterLevel", \.waterLevel),
         .init("lakeBalance", \.lakeBalance), .init("saltCrust", \.saltCrust),

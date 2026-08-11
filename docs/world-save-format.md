@@ -1,6 +1,6 @@
 # Welt speichern und laden (Issue #8)
 
-Stand: August 2026 · Format **Version 2** · Code: `SimCore/Sources/SimCore/WorldSnapshot.swift`,
+Stand: August 2026 · Format **Version 3** · Code: `SimCore/Sources/SimCore/WorldSnapshot.swift`,
 Inventar (`TerrainState`) am Ende von `SimCore/Sources/SimCore/Terrain.swift`,
 Wächter: `SimCore/Tests/SimCoreTests/WorldSnapshotTests.swift`.
 
@@ -34,6 +34,7 @@ Diagnose sofort nach dem Laden brauchen.
 | --- | --- |
 | Gelände | `h`, `rock`, `sed`, `upliftBase` |
 | Klima | `rain`, `rainWeight` |
+| Klima-Vertikale (#33) | `temperature`, `snow`, `ice` |
 | Lithologie (#12) | `lithHardness`, `lithErodeK`, `lithBed`, `lithProvince` |
 | Vegetation (#4/#7) | `veg`, `vegClass`, `riparian`, `heightBands` |
 | Entwässerung | `hf`, `receiver`, `order`, `floodParent`, `area`, `areaMFD` |
@@ -53,7 +54,7 @@ oder Config folgt (`noise`-Permutationstabelle, `vegTypeFactor`, `mfdMinA`,
 Bewusst großzügig aufgenommen sind die Felder, die `computeFlow` im nächsten
 Schritt ohnehin neu ableitet (`hf`, `receiver`, `area`, `areaMFD`, `order`,
 `floodParent`, `rain`, `rainWeight`, `lithHardness`, `lithErodeK`,
-`endorheicBasin`, `endorheicInflow`, `playaBed`). Zwei Gründe:
+`temperature`, `endorheicBasin`, `endorheicInflow`, `playaBed`). Zwei Gründe:
 
 1. Der erste gerenderte Frame nach dem Laden ist damit korrekt, ohne einen
    Sim-Schritt zu erzwingen (Flüsse, Farben, Diagnose).
@@ -62,6 +63,19 @@ Schritt ohnehin neu ableitet (`hf`, `receiver`, `area`, `areaMFD`, `order`,
    `computeFlow()` mit dt = 0 SNAPPT den Bilanz-Seespiegel abflussloser Becken
    auf seinen Zielstand (so startet die Generierung) — genau das darf beim Laden
    nicht passieren.
+
+### Warum `ice` schon in Version 3 steht, obwohl es niemand schreibt
+
+Das Format kennt bewusst keine Migration — jeder Versionssprung macht alle
+vorhandenen Spielstände ungültig. Die Klima-Vertikale (#33) und der Eisfluss
+(#35) sind ein Vorhaben in zwei Tickets; sie zwei Sprünge kosten zu lassen wäre
+zweimal derselbe Preis für dieselbe Sache. Das vollständige Feldinventar der
+Kryosphäre ist deshalb VOR dem ersten Sprung recherchiert worden
+(`docs/research-climate-cryosphere.md` §6): Temperatur, Schnee, Eisdicke — mehr
+braucht auch das gewählte Flux-Eismodell nicht, weil der Eisfluss je Schritt aus
+`order` akkumuliert wird und damit Arbeitsspeicher ist.
+
+In #33 ist `ice` konstant 0 und kostet dank Konstant-Kodierung 5 Byte je Welt.
 
 ### Warum `waterLevel` und `lakeBalance` echter Zustand sind
 
@@ -78,7 +92,7 @@ Eigenes Binärformat, Little-Endian, Zahlenfelder als Blocktransfer.
 
 * **Bit-genau:** gespeichert wird das IEEE-754-Bitmuster jedes `Double`, keine
   Dezimaldarstellung. Determinismus verträgt keine Textkonversion.
-* **Größe/Zeit:** eine Welt sind ~25 Felder à n² Werte (n = 832 → 692 224 Zellen,
+* **Größe/Zeit:** eine Welt sind ~30 Felder à n² Werte (n = 832 → 692 224 Zellen,
   5,5 MB je `Double`-Feld). JSON oder XML-Plist bräuchten das Drei- bis Vierfache
   und einen Parser je Zahl; binäres Plist ist bit-genau, verpackt aber jedes
   Element als eigenes Objekt — bei 17 Mio. Zahlen unbrauchbar.
@@ -96,8 +110,10 @@ einzelne Felder. `ErosionFilter.Params` braucht eine handgeschriebene Kodierung,
 weil es Tupel führt (Tupel sind nicht `Codable`).
 
 Dateigröße gemessen (`testConstantFieldsAreStoredCompactly` gibt den Wert aus):
-n = 128 (16 384 Zellen) = 2 716 781 Byte, also **165,8 Byte je Zelle** → n = 832
-ergibt **≈ 109 MB**. Das ist der Preis der Vollständigkeit; Kompression wäre
+n = 128 (16 384 Zellen) = 2 979 301 Byte, also **181,8 Byte je Zelle** → n = 832
+ergibt **≈ 120 MB**. (Vor der Klima-Vertikalen, Version 2: 165,8 Byte/Zelle ≈
+109 MB — `temperature` und `snow` kommen roh dazu, `ice` ist konstant 0 und
+kostet 5 Byte.) Das ist der Preis der Vollständigkeit; Kompression wäre
 möglich (zlib), würde aber eine System-Abhängigkeit ins reine Swift-Package
 holen — bewusst nicht getan, in der ROADMAP notiert.
 

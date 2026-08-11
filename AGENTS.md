@@ -120,8 +120,14 @@ ist LEM-Konvention und nicht beliebig:
 Uplift (+ Relief-Servo) → computeFlow (Priority-Flood, D8, MFD)
 → Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
 → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion → Wave
-→ Vegetation
+→ Klima-Vertikale (Temperatur + Schneebilanz) → Vegetation
 ```
+
+Die Klima-Vertikale (Issue #33) steht **direkt vor** der Vegetation und damit am
+Schrittende: die Temperatur liest die FINALEN Höhen des Schritts, und
+`updateVegetation` leitet über `updateHeightBands` die Schneegrenze aus dem
+frischen Schneefeld ab. Sie koppelt bewusst in KEINEN Erosionspass — das kommt
+erst mit dem Eis (#35), Begründung bei `SimConfig.climateEnabled`.
 
 Ausgelagert sind nur Dinge mit eigener Datenstruktur: `Hydraulic.swift` (Droplet-Erosion,
 Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, Cutoff),

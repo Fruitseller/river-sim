@@ -723,6 +723,11 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var bandVegRampSpanFactor: Double = 1.0
     public var bandRockPercentile: Double = 0.92     // Beginn der Hochlagen-Graurampe. War p98.9 (1.1 % des Landes, Kern der Issue-Beobachtung „99 % im schmalen Farbband"); p92 gibt den obersten 8 % einen sichtbaren Fels-Verlauf, ohne unter die Vegetationsgrenze (p91) zu rutschen.
     public var bandRockFullPercentile: Double = 0.995 // voll ausgegraut. Alt: 0.98 absolut = jenseits von maxH, die Rampe kam real nie über 41 %.
+    // SEIT ISSUE #33 NUR NOCH RÜCKFALL: die Schneegrenze kommt aus dem Schneefeld
+    // (Massenbilanz, s. Abschnitt „Klima-Vertikale" unten). Diese beiden
+    // Perzentile greifen nur, wenn `climateEnabled = false` ist — dann rechnet
+    // alles bit-identisch wie vor #33. Die Herleitung darunter beschreibt also
+    // den Stand von #4.
     public var bandSnowPercentile: Double = 0.985    // Beginn Schnee: oberste 1.5 % des Landes (n=832: ~7200 Zellen in der Rampe). Alt 1.05 absolut = 0 Zellen. Der Wert ist gesetzt, nicht gemessen: die Perzentil-Konstruktion legt den Flächenanteil fest, gemessen ist nur, DASS er über den Lauf steht (1.51 % → 1.49 %, s. docs). Enger (p99.5 = 0.5 %) wäre Streusel, weiter (p95 = 5 %) würde ganze Kammlinien weißen.
     public var bandSnowFullPercentile: Double = 0.9985 // voll weiß: oberste 0.15 % (~720 Zellen bei n=832) — die eigentlichen Gipfel.
     public var bandConiferLowPercentile: Double = 0.15 // Baum-Variante Laub→Nadel: entspricht der alten 0.26 (p17.1 bei der Generierung, p11.4 nach 30k).
@@ -737,6 +742,173 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Mit `HeightBands.legacyAbsolute` läuft die Vegetation exakt wie vor
     /// Issue #4.
     public var heightBandsOverride: HeightBands? = nil
+
+    // ---- Klima-Vertikale: Temperaturfeld und Schneedecke (Issue #33) ----
+    //
+    // Bis #33 war Schnee reine FARBE: `bandSnowPercentile` malte die obersten
+    // 1,5 % des Landes weiß, kein Feld und kein Pass las das. Jetzt gibt es zwei
+    // Felder (`Terrain.temperature`, `Terrain.snow`) und eine Massenbilanz:
+    //
+    //     T(k)   = climateSeaLevelTemp − climateLapseRate · max(0, h[k] − sea)
+    //     a(k)   = snowAccumPerYear · rain[k] · f_schnee(T)          Akkumulation
+    //     μ(k)   = 1/snowTurnoverYears + snowMeltPerKYear · max(0, T) Ablationsrate
+    //     dS/dt  = a − μ·S      ⇒  S ← S* + (S − S*)·e^(−μ·dt),  S* = a/μ
+    //
+    // Herleitung, Primärquellen und die verworfenen Modellvarianten:
+    // `docs/research-climate-cryosphere.md`. Messreihen: `docs/climate-snow-measurements.md`.
+    //
+    // AUS (`climateEnabled = false`): alle drei Kryo-Felder bleiben LEER, die
+    // Schneegrenze fällt auf die Perzentile oben zurück und die Färbung rechnet
+    // exakt wie vor #33 (Muster wie Lithologie/Regen-Gewichtung; Wächter
+    // `ClimateSnow.testDisabledClimateIsBitIdenticalPhysics` und
+    // `testDisabledClimateFallsBackToThePercentileBands`).
+    //
+    // WAS DAS KLIMA (NOCH) NICHT TUT: es koppelt in KEINEN Erosionspass und nicht
+    // in die Vegetation. Bewusste Scope-Grenze — jede solche Kopplung liefe über
+    // `vegDamp` bzw. direkt in die Raten und würde die gesamte Kalibrier-Kaskade
+    // (Braiding-Gates, Relief-Wächter, Becken-Rollen) aufmachen. Die Kopplung an
+    // die Physik kommt mit dem EIS (#35), das dafür sein eigenes Erosionsgesetz
+    // mitbringt. Heute sind Temperatur und Schnee: persistenter Zustand,
+    // Schnee-Färbung und Waldgrenze.
+    public var climateEnabled = true
+    /// Temperatur auf Meereshöhe (°C) — der zweite Freiheitsgrad der
+    /// Höhen-Temperatur-Kopplung neben `climateLapseRate`.
+    ///
+    /// GEWÄHLT 11 °C aus der Anschluss-Bedingung an den bisherigen Look: die
+    /// 0-°C-Isotherme soll bei der Generierung dort liegen, wo der Perzentil-Schnee
+    /// begann. `h(T=0) = sea + T₀/Γ = 0.15 + 11/26 = 0.573` gegen den gemessenen
+    /// p98.5 = 0.5699 (n=832, Seed 1337, `docs/height-band-measurements.md`).
+    /// Das ist der EINZIGE Punkt, an dem die alte Perzentil-Kalibrierung noch
+    /// durchschlägt, und bewusst nur als Startwert: ab da bewegt das Klima die
+    /// Grenze, nicht mehr ein fixer Flächenanteil.
+    ///
+    /// 11 °C Jahresmittel auf Meereshöhe ist auch für sich plausibel (grob
+    /// Südnorwegen/Nordschottland) und passt zu der kühl-maritimen Insel, die
+    /// schon die Verdunstungs-Kalibrierung annimmt (κ = 1.25 ≙ E ≈ 1.08·P,
+    /// s. `endorheicEvapRatio`).
+    public var climateSeaLevelTemp: Double = 11.0
+    /// Temperaturgradient in **K je Höheneinheit** — die Kalibrier-Entscheidung
+    /// dieses Tickets, weil es KEINEN vertikalen Meter-Maßstab gibt (`h` ist
+    /// normiert, `world`/`cellSize` koppeln nur horizontal).
+    ///
+    ///     Γ = 6,5 K/km (ICAO-Standardatmosphäre bis 11 km) × H_ref
+    ///     H_ref = 4000 m je Höheneinheit  ⇒  Γ = 26 K/Einheit
+    ///
+    /// H_ref = 4000 m macht den höchsten Punkt der frischen Insel zu
+    /// `(0.7457 − 0.15)·4000 ≈ 2380 m` — ein alpines Mittelgebirge mit echter
+    /// Höhenstufung. VERWORFEN:
+    /// * H_ref = 2000 m (Γ = 13): Gipfel 1190 m. Bei jedem T₀, das die Küste
+    ///   eisfrei hält (> 5 °C), läge die 0-°C-Grenze ÜBER dem Gipfel — es gäbe nie
+    ///   Schnee, das Feature wäre stumm.
+    /// * H_ref = 8000 m (Γ = 52): Gipfel 4766 m. Das obere Drittel stünde
+    ///   dauerhaft unter Frost, und die alternde Insel (maxH 0.7457 → 0.6372 nach
+    ///   30k J.) würde die Schneezone kaum noch bewegen — genau die Trägheit, die
+    ///   das Ticket abschaffen will.
+    /// Der ISA-Wert (statt trocken- 9,8 oder feuchtadiabatisch 3,6–9,2 K/km) ist
+    /// der richtige Kompromiss für eine feuchte maritime Insel.
+    public var climateLapseRate: Double = 26.0
+    /// Niederschlagsphase, untere Schwelle (°C): darunter fällt ALLES als Schnee.
+    /// Zusammen mit `snowRainTemp` die Doppelschwellen-Rampe (Kienzle 2008,
+    /// USACE) statt einer harten Kante — eine harte Schwelle schnitte eine
+    /// Sprungkante ins Feld.
+    /// −1 / +3 legt den 50-%-Punkt auf +1 °C: exakt das Nordhemisphären-Mittel aus
+    /// Jennings et al. 2018 (17,8 Mio. Beobachtungen; 95 % der Stationen zwischen
+    /// −0,4 und +2,4 °C).
+    public var snowFreezeTemp: Double = -1.0
+    /// Niederschlagsphase, obere Schwelle (°C): darüber fällt alles als Regen.
+    public var snowRainTemp: Double = 3.0
+    /// Akkumulation je Jahr bei Regenrate 1 und reinem Schneefall
+    /// (SWE-Einheiten/Jahr). Legt zusammen mit `snowTurnoverYears` die EINHEIT des
+    /// Schneefelds fest: bei Dauerfrost (T ≤ `snowFreezeTemp`, also reiner
+    /// Schneefall UND keine Schmelze) ist μ = 1/τ₀ und damit
+    /// `S* = snowAccumPerYear · snowTurnoverYears · rain = 1.0 · rain` — SWE 1.0
+    /// heißt „voll ausgebildete Dauerschneedecke am feuchtesten Standort".
+    /// Eine absolute Kalibrierung in mm w.e. gibt es bewusst nicht: auch `rain`
+    /// ist eine abstrakte Feuchte (0,18 … 1,0), keine Niederschlagshöhe.
+    public var snowAccumPerYear: Double = 0.002
+    /// GRUNDUMSATZ der Schneedecke (Jahre): der additive Sockel `1/τ₀` in der
+    /// Ablationsrate μ. Drei Aufgaben, alle drei nötig:
+    /// 1. Er hält `S* = a/μ` BESCHRÄNKT. Ohne ihn ginge S* an der Frostgrenze
+    ///    (μ → 0) gegen unendlich, und eine 200k-Jahre-Welt bekäme numerisch
+    ///    entgleiste Schneetürme auf den Gipfeln.
+    /// 2. Er ist physikalisch besetzt: Sublimation und Windverfrachtung tragen
+    ///    auch bei Dauerfrost ab (auf antarktischen Blaueisfeldern ist Sublimation
+    ///    der einzige Ablationsterm).
+    /// 3. Er ist der Anschlusspunkt für das Eis (#35): was oberhalb der
+    ///    Gleichgewichtslinie aus dem Schneevorrat abfließt, ist real die
+    ///    Firn→Eis-Umwandlung; dort wird genau dieser Term in `Terrain.ice`
+    ///    gebucht statt verworfen.
+    /// 500 Jahre = die Antwortzeit eines Dauerschneefelds auf Klima-/Terrain-
+    /// änderung. Dieselbe Größenordnung wie die übrigen trägen Relaxationen des
+    /// Repos (`endorheicResponseYears` 500, `lakeLevelResponseYears` 250).
+    public var snowTurnoverYears: Double = 500
+    /// Zusätzliche Ablations-RATENKONSTANTE je K Jahresmittel über 0 °C
+    /// (1/(Jahr·K)) — das degree-day-Modell (Hock 2003) in Relaxationsform.
+    ///
+    /// WARUM RATENKONSTANTE statt fester Schmelzmenge: die klassische Form
+    /// `S ← max(0, S + (a − m)·dt)` ist NICHT dt-invariant — sie bricht genau am
+    /// Ausapern, weil das `max` in einem großen Schritt Schmelzguthaben verwirft,
+    /// das dieselbe Zeit in kleinen Schritten noch gegen frischen Schneefall
+    /// verrechnet hätte (dieselbe Fehlerklasse wie `max(1, …)` bei der
+    /// Tropfenzahl, AGENTS.md). `dS/dt = a − μ·S` hat dagegen die geschlossene
+    /// Lösung `S* + (S−S*)·e^(−μdt)`, teleskopiert exakt über beliebig viele
+    /// Teilschritte und braucht kein Clamping (aus S ≥ 0, a ≥ 0 folgt S ≥ 0).
+    /// Physikalische Lesart: anteilige Ablation — eine tiefe Decke apert später
+    /// aus als eine dünne. Für ein Modell OHNE Jahresgang ist das die richtige
+    /// Glättung; real verteilt die Schmelzsaison das Ausapern ebenso.
+    ///
+    /// Der Wert steuert die BREITE des Übergangs. Über der Frostgrenze gilt
+    /// `S*/S*(ΔT=0) = 1/(1 + c·τ₀·ΔT)`; der Vorrat fällt also auf 1/x bei
+    /// `ΔT = (x−1)/(c·τ₀)`. Für den SICHTBAREN SAUM (Deckung 0.5 → 0.05, also
+    /// Faktor 19 im Vorrat) sind das `18/(c·τ₀·Γ)` Höheneinheiten.
+    ///
+    /// Sweep (n=192, Seed 1337, Produktionspfad; Saumbreite / Landanteil bei
+    /// Jahr 0: sichtbar (Deckung > 0.05) / Rampe (> `snowBandCoverStart`) / voll
+    /// (≥ `snowBandCoverFull`); Rohdaten `docs/climate-snow-measurements.md` §2,
+    /// Wächter `ClimateSnow.testMeltRateSweepDiagnostic`):
+    ///   c = 0.02 → 0.0692 Einheiten · 9.08 % / 1.65 % / 0.74 %
+    ///   c = 0.06 → 0.0231 Einheiten · 4.98 % / 1.38 % / 0.73 %   ← gewählt
+    ///   c = 0.20 → 0.0069 Einheiten · 2.35 % / 1.30 % / 0.73 %
+    /// GEWÄHLT 0.06. Die substanzielle Schneefläche (1.38 %) trifft die alte
+    /// Perzentil-Kalibrierung (1.5 %, `bandSnowPercentile`) fast auf den Punkt —
+    /// der Look bleibt beim Umstieg erhalten. 0.02 verwäscht den Saum über 9 %
+    /// des Landes (Schleier statt Gipfelschnee); 0.20 drückt ihn auf 0.007
+    /// Höheneinheiten, also unter die Höhendifferenz einer einzelnen Zelle an
+    /// mittleren Hängen — eine harte, aliasende Kante.
+    public var snowMeltPerKYear: Double = 0.06
+    /// Sättigungs-Referenz der DECKUNG: `Deckung = S / (S + snowCoverRef)`.
+    /// Dieselbe Bauform wie die Stream-Map (`streamRefRate`): eine harte
+    /// SWE-Schwelle wäre eine Kante, eine lineare Rampe bräuchte ein zweites
+    /// Maximum. Bei S = snowCoverRef ist die Zelle halb bedeckt.
+    /// 0.10 gegen ein Maximum von S* ≈ rain ≤ 1.0: die Gipfel kommen auf Deckung
+    /// ~0.9 (nicht 1.0 — die Sättigung ist asymptotisch, das ist gewollt: „fast
+    /// ganz weiß" statt einer Volltonfläche), der Fuß der Zone fällt schnell ab.
+    public var snowCoverRef: Double = 0.10
+    /// Ab dieser DECKUNG zählt eine Zelle für das Höhenband als beschneit
+    /// (`HeightBands.snowStart`) — und damit für die WALDGRENZE.
+    /// Die Färbung liest das Feld je Zelle; die Waldgrenze bleibt eine HÖHE
+    /// (`HeightBands`-Vertrag, reist im Spielstand mit und geht an den Shader),
+    /// wird aber aus dem Feld zurückgerechnet: gemessener Landanteil mit Deckung
+    /// über dieser Schwelle → Höhenquantil, das genau diesen Anteil abschneidet.
+    /// „Schneezone = Flächenanteil X" gilt also weiter, aber X ist GEMESSEN statt
+    /// konfiguriert und folgt dem Klima.
+    /// 0.5 = halb bedeckt, also `S ≥ snowCoverRef`.
+    public var snowBandCoverStart: Double = 0.5
+    /// Ab dieser Deckung gilt eine Zelle als voll beschneit (`snowFull`).
+    /// Reiner BAND-Parameter: die Färbung liest seit #33 das Feld je Zelle, die
+    /// obere Bandgrenze hält nur noch `HeightBands` wohlgeformt und geht als
+    /// Zahl an Shader/Diagnose.
+    /// 0.8 ⇒ `S ≥ 4·snowCoverRef = 0.4`, knapp unter der asymptotischen
+    /// Obergrenze der Deckung (gemessen n=832, Seed 1337: Smax 0.660 bei der
+    /// Generierung → Deckung 0.87). VERWORFEN 0.85: das Voll-Band war schon bei
+    /// der Generierung praktisch leer (< 0.005 % des Landes) und `snowFull`
+    /// rutschte nach 30k Jahren ÜBER den Gipfel (0.6361 gegen maxH 0.6359) — das
+    /// Band existierte dann nicht mehr. Mit 0.8 bleibt es über den ganzen Lauf
+    /// unter dem Gipfel (0.6683 / 0.6424 / 0.6161 bei J0 / 10k / 30k).
+    /// Dass der Voll-Anteil mit der alternden Insel trotzdem winzig bleibt
+    /// (0.02 %, Smax 0.660 → 0.438), ist gewollt: die Insel wächst nicht mehr in
+    /// die Höhe, in der das Klima Dauerschnee trägt.
+    public var snowBandCoverFull: Double = 0.8
 
     // ---- Klima / Vegetation ----
     // Zeitkonstante der Vegetations-Relaxation, Jahre. Seit Issue #2
