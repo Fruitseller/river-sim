@@ -148,6 +148,9 @@ final class SimNode: Node {
     /// `[vegFull, vegNone, rockStart, rockFull, snowStart, snowFull, coniferLow, coniferHigh]`.
     /// Sie kommen aus dem Sim-Kern (Perzentile der Landhöhen) — der Shader und die
     /// Diagnose lesen sie hier ab, statt eigene absolute Schwellen zu führen.
+    /// **Ausnahme seit Issue #33:** `snowStart`/`snowFull` sind keine Perzentile
+    /// mehr, sondern aus dem Schneefeld zurückgerechnet (s. `HeightBands`). An der
+    /// Reihenfolge und Bedeutung der Werte ändert das nichts.
     @Callable func heightBands() -> PackedFloat32Array {
         let b = terrain.heightBands
         return PackedFloat32Array([
