@@ -77,7 +77,7 @@ echter Höhenstufung. Verworfene Alternativen:
 |---|---|---|---|
 | 2000 m | 13 | 1190 m | Bei jedem T₀, das die Küste eisfrei hält (> 5 °C), liegt die 0-°C-Grenze **über** dem Gipfel — es gäbe nie Schnee, das Feature wäre stumm. |
 | **4000 m** | **26** | **2380 m** | gewählt |
-| 8000 m | 52 | 4770 m | Die 0-°C-Grenze säße bei realistischem T₀ auf halber Flanke; die alternde Insel (maxH 0.7457 → 0.6372 nach 30k J.) würde die Schneezone kaum bewegen, weil das obere Drittel dauerhaft unter Frost stünde. |
+| 8000 m | 52 | 4766 m | Die 0-°C-Grenze säße bei realistischem T₀ auf halber Flanke; die alternde Insel (maxH 0.7457 → 0.6372 nach 30k J.) würde die Schneezone kaum bewegen, weil das obere Drittel dauerhaft unter Frost stünde. |
 
 **T₀ = 11 °C.** Gewählt aus der Anschluss-Bedingung an den heutigen Look: die
 0-°C-Isotherme soll bei der Generierung dort liegen, wo bisher der

@@ -32,7 +32,7 @@ Höhen der Insel unter dieser Skala (n=832, Seed 1337):
 | | Jahr 0 | 10k | 30k |
 | --- | --- | --- | --- |
 | `maxH` | 0.7457 | 0.6726 | 0.6359 |
-| Gipfelhöhe über See | 2383 m | 2290 m | 2244 m |
+| Gipfelhöhe über See | 2383 m | 2090 m | 1944 m |
 | Temperatur am Gipfel | −4,49 °C | −2,59 °C | −1,63 °C |
 
 Die verworfenen Maßstäbe (H_ref = 2000 / 8000 m) und warum, stehen bei
@@ -95,7 +95,7 @@ Gipfel (0.6361 gegen maxH 0.6359) — das Band war dann leer. Mit 0.8
 (`S ≥ 4·snowCoverRef = 0.4`) bleibt `snowFull` über den ganzen Lauf unter dem
 Gipfel (0.6683 / 0.6424 / 0.6161 gegen maxH 0.7457 / 0.6726 / 0.6359). Dass das
 Voll-Band mit der alternden Insel trotzdem ausdünnt (`Smax` 0.660 → 0.438), ist
-gewollt und nicht wegkalibrierbar: das Klima trägt auf 2244 m weniger
+gewollt und nicht wegkalibrierbar: das Klima trägt auf 1944 m weniger
 Dauerschnee als auf 2383 m.
 
 Das Voll-Band ist seit #33 ohnehin nur noch ein BAND-Parameter — die Färbung

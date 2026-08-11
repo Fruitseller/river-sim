@@ -795,7 +795,7 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// * H_ref = 2000 m (Γ = 13): Gipfel 1190 m. Bei jedem T₀, das die Küste
     ///   eisfrei hält (> 5 °C), läge die 0-°C-Grenze ÜBER dem Gipfel — es gäbe nie
     ///   Schnee, das Feature wäre stumm.
-    /// * H_ref = 8000 m (Γ = 52): Gipfel 4770 m. Das obere Drittel stünde
+    /// * H_ref = 8000 m (Γ = 52): Gipfel 4766 m. Das obere Drittel stünde
     ///   dauerhaft unter Frost, und die alternde Insel (maxH 0.7457 → 0.6372 nach
     ///   30k J.) würde die Schneezone kaum noch bewegen — genau die Trägheit, die
     ///   das Ticket abschaffen will.
