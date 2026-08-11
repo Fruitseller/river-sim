@@ -828,9 +828,13 @@ public final class Terrain {
     /// liefern denselben Faktor wie EIN Schritt à N·dt, weil
     /// `e^(−μdt)^N = e^(−μ·N·dt)` und `S*` je Schritt derselbe ist (μ und a hängen
     /// nur an T und rain, nicht an dt). `dt = 0` lässt das Feld exakt unverändert
-    /// (e⁰ = 1) — genau das braucht der Sculpt-Pfad, der nur die Temperatur
-    /// nachziehen will. Die klassische degree-day-Form mit `max(0, …)` täte das
-    /// nicht, s. `SimConfig.snowMeltPerKYear`.
+    /// — genau das braucht der Sculpt-Pfad, der nur die Temperatur nachziehen
+    /// will; die Bilanz wird dafür ÜBERSPRUNGEN statt mit e⁰ = 1 gerechnet
+    /// (`target + (S − target)·1` rundet in Fließkomma nicht garantiert auf `S`
+    /// zurück, ein zeitloser Sculpt-Schritt dürfte die persistierte Bilanz aber
+    /// nicht um ein ULP verschieben). Die klassische degree-day-Form mit
+    /// `max(0, …)` wäre schon für dt > 0 nicht dt-invariant,
+    /// s. `SimConfig.snowMeltPerKYear`.
     ///
     /// **Operator-Splitting** wie im Rest des Schritts: `T` liest die FINALEN
     /// Höhen des Zeitschritts, `rain` das Feld vom Schrittanfang (`computeFlow`
@@ -862,6 +866,9 @@ public final class Terrain {
         let accum = cfg.snowAccumPerYear
         let base = 1 / max(1e-9, cfg.snowTurnoverYears)
         let melt = cfg.snowMeltPerKYear
+        // Zeitloser Aufruf (Sculpt-Pfad, `SimNode.recomputeFlow`): nur die
+        // Temperatur nachziehen, die Bilanz bleibt Byte für Byte stehen.
+        let holdSnow = (dt == 0)
         h.withUnsafeBufferPointer { hb in
         rain.withUnsafeBufferPointer { rnb in
         temperature.withUnsafeMutableBufferPointer { tb in
@@ -872,6 +879,7 @@ public final class Terrain {
                 for k in lo..<hi {
                     let t = t0 - gamma * max(0, ph[k] - sea)
                     pt[k] = t
+                    if holdSnow { continue }
                     let fSnow = min(1, max(0, (tRain - t) / phaseSpan))
                     let a = accum * prain[k] * fSnow
                     // Schneefreie Zelle ohne Zufuhr: Ziel 0, Vorrat 0 — die
