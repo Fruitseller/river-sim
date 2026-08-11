@@ -140,6 +140,14 @@ public enum Hydraulic {
     ///   (verworfene Ozean-Starts) denselben Anteil verwirft wie ungewichtet und
     ///   der Tropfen-Etat auf Land unverändert bleibt. Leeres Array =
     ///   gleichverteilte Starts wie bisher (bit-identisch).
+    /// - `underIce`: Vergletscherungs-Maske (Terrain.underIce, Issue #35). Auf
+    ///   diesen Zellen rührt der Tropfen das BETT nicht an — weder erodierend
+    ///   (unter einem Gletscher gibt es keinen fluvialen Abtrag) noch ablagernd
+    ///   (Schutt auf einer Eisoberfläche ist kein Sediment im Bett). Der nicht
+    ///   abgelegte Anteil bleibt wie bei der Kanalmaske in Suspension und
+    ///   erreicht das Bett erst hinter der Zunge — physisch genau der
+    ///   Sander/Schwemmfächer am Gletschertor. Leeres Array = Verhalten wie ohne
+    ///   Maske (bit-identisch).
     /// - `erodibility`: relative Gesteins-Erodierbarkeit (Terrain.lithErodeK,
     ///   Issue #12; 1 = Referenzgestein). Skaliert den FELS-Anteil jedes Abtrags
     ///   (s. `dig`) — das lockere Sediment darüber erodiert unverändert. Leeres
@@ -165,6 +173,7 @@ public enum Hydraulic {
                               firstDrop: UInt64? = nil,
                               hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
+                             underIce: [Bool] = [],
                              rainWeight: [Double] = [],
                              erodibility: [Double] = [],
                              track: inout [Double]) {
@@ -191,6 +200,10 @@ public enum Hydraulic {
         // Arithmetik ist bit-identisch zum Zustand vor Issue #12)
         let lithOn = erodibility.count == h.count
 
+        // Eismaske aktiv? (leeres Array → beide Gletscher-Zweige fallen weg und
+        // die Arithmetik ist bit-identisch zum Zustand vor Issue #35)
+        let iceOn = underIce.count == h.count
+
         // Abtrag; gibt den tatsächlich abgetragenen Betrag zurück (am Tiefseeboden
         // gedeckelt), damit die Sedimentbilanz stimmt.
         //
@@ -208,6 +221,10 @@ public enum Hydraulic {
         // des Braiding-Wächters driftet messbar weg (gemessen: Bank-Fläche
         // 185/104 statt 160/81) — chaotisches System, 1-ulp-Unterschiede wachsen.
         @inline(__always) func dig(_ k: Int, _ amount: Double) -> Double {
+            // Unter Eis kein fluvialer Abtrag (Issue #35): das Bett gehört dem
+            // Gletscher. Vor jeder anderen Rechnung, damit auch die
+            // Lithologie-Arithmetik nicht anläuft.
+            if iceOn && underIce[k] { return 0 }
             var d = amount
             let f = lithOn ? erodibility[k] : 1.0
             if f != 1.0 {
@@ -230,6 +247,10 @@ public enum Hydraulic {
         /// bleibt beim Tropfen in Suspension (Massenbilanz + physisch: der Kanal
         /// TRANSPORTIERT das Sediment weiter). Ohne Maske exakt 0 → alte Arithmetik.
         @inline(__always) func deposit(_ k: Int, _ amount: Double) -> Double {
+            // Gletscherzelle: gar nichts ablegen, alles bleibt in Suspension
+            // (Issue #35) — der Tropfen trägt seine Fracht über das Eis hinweg
+            // und lädt sie hinter der Zunge ab (Sander am Gletschertor).
+            if iceOn && underIce[k] { return amount }
             if chanOn && channel[k] {
                 let put = amount * p.channelDepositDamp
                 sed[k] += put; h[k] += put

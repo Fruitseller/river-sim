@@ -1020,6 +1020,248 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// (derselbe Fall mit `meltRunoffWithholdSolid = 1`).
     public var meltRunoffCapPerRain: Double = 1.0
 
+    // ---- Gletscher: Eisfluss und glaziale Erosion (Issue #35) ----
+    //
+    // #33 hat das Feld `Terrain.ice` angelegt und konstant 0 gelassen; hier wird
+    // es beschrieben. Der Pass (`Terrain.updateIce`) hat drei Teile, alle in EINEM
+    // sub-getakteten Takt (Vorbild `hillslopeDiffusion`):
+    //
+    //     1. TRANSPORT   Eis fließt auf der EIS-OBERFLÄCHE s = h + ice bergab.
+    //                    Zwei-Phasen-Scratch, Fluss je Kante ∝ Dicke × Gefälle,
+    //                    Ausstrom je Zelle gedeckelt (`iceFlowMoveFraction`).
+    //     2. EROSION     E = iceErodeK · q^m · S      (Flux-Modell, m = iceErodeFluxExp,
+    //                    q = Dicke × Oberflächen-Gefälle, S = Gefälle; n = 1 fix).
+    //     3. BILANZ      dI/dt = a − μ·I  in Relaxationsform (exakt, wie beim Schnee):
+    //                    a = iceFirnPerSnowYear · snow · f_kalt(T)   Firn→Eis
+    //                    μ = 1/iceTurnoverYears + iceMeltPerKYear · max(0, T)
+    //                    Was über den SCHMELZ-Anteil von μ verschwindet, legt seine
+    //                    Schuttfracht als MORÄNE ab (`iceMoraineK`).
+    //
+    // MODELLWAHL: `docs/research-climate-cryosphere.md` §4.3 entscheidet für das
+    // FLUX-Modell (Hergarten 2021 / Liebl et al. 2023) und GEGEN die nichtlineare
+    // SIA-Diffusion — deren Zeitschritt-Deckel hängt an `H^{n+2}` und ist mit dem
+    // `+10.000 Jahre`-Sprung dieses Projekts nicht budgetierbar. Das
+    // Erosionsgesetz oben IST das Flux-Modell (§5, m = 0.5, n = 1). Der TRANSPORT
+    // ist dagegen ein linearer, sub-getakteter Diffusions-Pass: er hat ein
+    // KONSTANTES kappa und damit denselben, budgetierbaren Deckel wie die
+    // Hangdiffusion — nicht den `H^5`-Deckel der SIA. Warum überhaupt Transport,
+    // statt den Eisfluss wie Liebl et al. je Schritt auf dem D8-Baum zu
+    // akkumulieren: eine Gletscher-ZUNGE ist genau die Stelle, an der das Eis
+    // WEITER reicht als seine Massenbilanz — sie entsteht nur, wenn Eis als
+    // Vorrat talwärts wandert. Eine Akkumulation je Schritt hätte Eis exakt dort,
+    // wo es auch akkumuliert (Kare, keine Zungen).
+    //
+    // AUS (`iceEnabled = false`): der Pass läuft nicht, `ice` bleibt auf dem Wert
+    // aus `updateClimate` (konstant 0), die Maske `Terrain.underIce` bleibt leer
+    // und beide Gates fallen weg → bit-identisch zu #33/#36. Dasselbe gilt
+    // solange KEINE Zelle Eis trägt (Wächter `Glacier.testDisabledIceIsBitIdentical`,
+    // `testIcelessWorldIsBitIdentical`). Auch die GENERIERUNG bleibt eisfrei:
+    // `generate` schwingt nur das Klima ein (`updateClimate(dt: 10000)`), das Eis
+    // wächst ab Jahr 0 — dieselbe Begründung wie beim Schmelzwasser (#36), die
+    // kalibrierte Welt-Erzeugung darf sich nicht verschieben.
+    //
+    // Messreihen: `docs/glacier-measurements.md`.
+    public var iceEnabled = true
+    /// Umrechnung Schneevorrat → EISZUFUHR: Höheneinheiten Eis je Jahr und
+    /// SWE-Einheit Schnee (`a = iceFirnPerSnowYear · snow · f_kalt`).
+    ///
+    /// Das ist die zweite freie Maßstabs-Entscheidung der Kryosphäre — genau wie
+    /// H_ref bei `climateLapseRate`: `snow` ist ein abstraktes SWE, `ice` eine
+    /// Höhe, und es gibt keine physikalische Brücke zwischen beiden Einheiten.
+    /// Angesetzt ist der Firn→Eis-Umsatz aus `docs/research-climate-cryosphere.md`
+    /// §3 (der `1/snowTurnoverYears`-Sockel der Schneebilanz), also
+    /// `snow/snowTurnoverYears = snow · 0.002` je Jahr, mal dem Anteil, der
+    /// wirklich zu Gletschereis wird statt zu sublimieren.
+    ///
+    /// Die Dicke, die daraus wird, setzt NICHT `iceTurnoverYears`, sondern die
+    /// KONTINUITÄT: Eis stapelt sich, bis seine Oberfläche steil genug steht, um
+    /// die Zufuhr abzuführen (`kappa·I·ΣΔs⁺ = a`) — genauso wie eine echte
+    /// Eiskappe. Der Grundumsatz ist nur die Obergrenze für den Fall, dass gar
+    /// kein Gefälle mehr da ist (s. `iceTurnoverYears`).
+    ///
+    /// GEMESSEN statt hergeleitet (n = 384, Seed 1337, 50k Jahre, Zieldicke
+    /// 100–400 m ≙ 0.025 … 0.1 Höheneinheiten bei H_ref = 4000 m;
+    /// `docs/glacier-measurements.md` §B):
+    ///   2e-5 → max 0.038, Reichweite 0.003 — die Zunge kommt nicht aus dem Kar
+    ///   1e-4 → max 0.097, Reichweite 0.098
+    ///   1e-3 → max 0.106 … 0.215, Reichweite 0.042 … 0.105   ← gewählt
+    /// GEWÄHLT 1e-3: erst bei dieser Zufuhr FÜLLT das Eis die Täler (statt den
+    /// Fels nur zu drapieren), und nur gefülltes Eis hat eine glatte Oberfläche,
+    /// über die es quer zum Tal schleift — die V→U-Kennzahl trennt sich erst hier
+    /// sauber vom eisfreien Referenzarm (§D). Der Faktor gegen den vollen
+    /// Firn-Umsatz (`snow/snowTurnoverYears = snow·0.002`) ist damit 0.5: die
+    /// Hälfte des Schnee-Grundumsatzes wird Gletschereis, die andere bleibt
+    /// Sublimation/Windverfrachtung (die anderen zwei Aufgaben von
+    /// `snowTurnoverYears`).
+    public var iceFirnPerSnowYear: Double = 1e-3
+    /// Temperaturspanne (K) unter 0 °C, über die die Firn→Eis-Umwandlung
+    /// hochrampt: `f_kalt = clamp(−T / iceFirnColdSpan, 0, 1)`.
+    ///
+    /// Warum eine eigene, KÄLTERE Schwelle als die Niederschlagsphase
+    /// (`snowFreezeTemp`/`snowRainTemp`, 50 % bei +1 °C): dass Schnee FÄLLT, heißt
+    /// nicht, dass er den Sommer überdauert. Gletschereis entsteht nur oberhalb
+    /// der Gleichgewichtslinie, und die liegt im Jahresmittel unter 0 °C.
+    /// 2 K Rampe statt harter Kante aus demselben Grund wie bei der
+    /// Niederschlagsphase — eine Kante im Feld aliast über die Höhenlinie.
+    /// Bei Produktionswerten (Γ = 26) sind das die Höhen ab `h = 0.573` (Beginn)
+    /// bzw. `h = 0.65` (volle Umwandlung).
+    public var iceFirnColdSpan: Double = 2.0
+    /// GRUNDUMSATZ des Eises (Jahre) — der Sockel `1/τ` in μ, dieselbe Rolle wie
+    /// `snowTurnoverYears` beim Schnee: er hält die Dicke auch bei Dauerfrost
+    /// BESCHRÄNKT und ist physikalisch als Sublimation/Kalben besetzt.
+    ///
+    /// Was er deckelt, ist der ENTARTETE Fall: eine Zelle ohne jedes
+    /// Oberflächen-Gefälle kann ihre Zufuhr nicht abführen, und ohne diesen
+    /// Sockel wüchse sie unbeschränkt. Mit ihm endet sie bei
+    /// `I* = a/μ = iceFirnPerSnowYear · snow · iceTurnoverYears`. Das ist als
+    /// HARTE Grenze gedacht, nicht als Arbeitspunkt: der reguläre Lauf bleibt
+    /// über den Transport bei 0.07 … 0.26 (`docs/glacier-measurements.md` §B),
+    /// also eine Größenordnung darunter. Wächter gegen das Entgleisen über sehr
+    /// lange Läufe: `Glacier.testLongRunIceStaysBounded`.
+    ///
+    /// 4000 Jahre: acht mal träger als die Schneedecke (500) — Eis ist der
+    /// langsamere Speicher. GEMESSEN gegen 1000 (n = 384, 50k Jahre,
+    /// `docs/glacier-measurements.md` §B/§D): mit 1000 zehrt der Sockel die
+    /// Zunge zusätzlich zur Schmelze auf, das Eis fällt bis 50k auf 0.29 % der
+    /// Landfläche und die V→U-Kennzahl wird verrauscht (Δb +0.03 … +0.84 ohne
+    /// Trend); mit 4000 steht sie über den ganzen Lauf bei Δb +0.22 … +0.30 und
+    /// das Eis hält 0.45 %. Der Preis ist die schwächere Notbremse: die
+    /// Konstruktions-Grenze liegt damit bei 4.0 Höheneinheiten statt 1.0 — beide
+    /// weit über allem Gemessenen, der Wächter prüft deshalb ZUSÄTZLICH eine
+    /// empirische Schranke.
+    public var iceTurnoverYears: Double = 4000
+    /// Zusätzliche Ablations-RATENKONSTANTE des Eises je K über 0 °C
+    /// (1/(Jahr·K)) — dieselbe Bauform wie `snowMeltPerKYear` und aus demselben
+    /// Grund eine Ratenkonstante statt einer festen Schmelzmenge (dt-Invarianz,
+    /// s. dort). Sie setzt die REICHWEITE der Zunge: unterhalb der
+    /// Gleichgewichtslinie lebt Eis noch `1/(c·T)` Jahre, und in dieser Zeit
+    /// trägt der Transport es `v·τ` weit.
+    ///
+    /// 0.001 gegen die 0.06 des Schnees, also 60× träger. Das ist KEINE Aussage
+    /// über Gradtagsfaktoren (real schmilzt Eis SCHNELLER als Schnee, DDF 5–8
+    /// gegen 3–5, Hock 2003) — es ist die Konsequenz der Vorrats-Lesart: μ wirkt
+    /// auf den VORRAT, und eine 400-m-Eiszunge trägt ein Vielfaches des Wassers
+    /// einer Schneedecke. Dieselbe absolute Schmelzhöhe je Jahr ist damit eine
+    /// entsprechend kleinere Rate.
+    ///
+    /// Gemessen (n = 384, 30k Jahre, `docs/glacier-measurements.md` §C; Reichweite
+    /// = Höhenspanne, um die das Eis unter die Firn-Grenze reicht):
+    ///   0.004 → Reichweite 0.003 … 0.024, das Eis bleibt im Kar
+    ///   0.002 → Reichweite 0.094
+    ///   0.001 → Reichweite 0.098 … 0.133   ← gewählt
+    ///   0.0004 → Reichweite 0.139, aber die Zunge wird zur Eiskappe (6 % Landanteil)
+    public var iceMeltPerKYear: Double = 0.001
+    /// Fließ-Basis des Eises, auf n = 640 kalibriert und in `updateIce` mit
+    /// `(n−1)²` skaliert — GENAU die Konvention von `hillDiffusion` („kappa je
+    /// 100-Jahr-Pass"), damit der Transport wie die Hangdiffusion
+    /// auflösungs-unabhängig ist.
+    ///
+    /// Der Ausstrom einer Zelle je Teilschritt ist `kappa · I · Σ Δs⁺` — also
+    /// linear in der Eisdicke (dickeres Eis fließt schneller, Glen-Lesart) und
+    /// linear im Oberflächen-Gefälle. Ein KONSTANTES kappa ist die bewusste
+    /// Vereinfachung gegen die SIA (`D ∝ H^{n+2}|∇s|^{n−1}`): nur so bleibt der
+    /// Teilschritt-Deckel konstant und die Sub-Taktzahl budgetierbar
+    /// (`docs/research-climate-cryosphere.md` §4.1).
+    ///
+    /// 3.0 (250× `hillDiffusion`) — Eis kriecht um Größenordnungen schneller als
+    /// Boden. Nach OBEN begrenzt die Rechenzeit: die Sub-Taktzahl ist
+    /// `kappa·wMax·dt/iceFlowSubCap` (s. `updateIce`), gemessen kostet der Pass
+    /// bei 3.0 auf n = 640 rund +0.8 s für einen `+10.000 Jahre`-Sprung und
+    /// +18 ms für einen 500-Jahr-Schritt (`docs/glacier-measurements.md` §E).
+    /// Gemessen (30k J., n = 384; Landanteil Eis / Reichweite unter die
+    /// Firn-Grenze): 1.0 → 1.41 % / 0.068 · 3.0 → 1.71 % / 0.098 ·
+    /// 6.0 → 1.88 % / 0.120. Über 3.0 kauft die doppelte Rechenzeit nur noch
+    /// 20 % mehr Reichweite.
+    public var iceFlowK: Double = 3.0
+    /// Maximale Transport-Zahl EINES Teilschritts (dimensionslos). Legt zusammen
+    /// mit `iceFlowK · dt` die Sub-Taktzahl fest: `nSub = ⌈kappa·dt / cap⌉`,
+    /// Teilschritt-Stärke `kappa·dt/nSub ≤ cap`. Dieselbe Konstruktion wie die
+    /// 0.2 der Hangdiffusion in `step()`.
+    /// 0.25 ist der klassische explizite Deckel des 5-Punkt-Sterns in 2D: bei
+    /// `kappa·ΣΔs⁺ ≤ 0.25` verlässt höchstens ein Viertel der Säule die Zelle je
+    /// Teilschritt, und das Schema kann nicht überschwingen.
+    public var iceFlowSubCap: Double = 0.25
+    /// HARTE Untergrenze der Positivität: mehr als diesen Anteil der Eissäule
+    /// darf ein Teilschritt nie abgeben, egal wie steil die Oberfläche steht.
+    /// Im kalibrierten Lauf bindet der Deckel nicht (`iceFlowSubCap` hält
+    /// `kappa·ΣΔs⁺` darunter, solange die Oberfläche nicht steiler als 1.0 je
+    /// Zelle steht) — er ist der Wächter gegen negative Eisdicken an frisch
+    /// gesculpteten Kanten, dieselbe Rolle wie `meltRunoffCapPerRain`.
+    public var iceFlowMoveFraction: Double = 0.5
+    /// Glaziale Erosionsrate (Vorfaktor des Flux-Modells,
+    /// `E = iceErodeK · q^m · S`). Real erodieren Gletscher 1–2 Größenordnungen
+    /// schneller als Flüsse (`docs/research-climate-cryosphere.md` §5) — der
+    /// Vergleichswert im Repo ist `outletErode`.
+    ///
+    /// Die EINHEIT ist Höhe je Jahr (`q` und `S` sind dimensionslos bzw. eine
+    /// Höhe × Gefälle), der Wert also nicht mit `outletErode` vergleichbar — er
+    /// ist GEMESSEN (`docs/glacier-measurements.md` §D, V→U-Kennzahl `b` der
+    /// vergletscherten Talstücke gegen denselben eisfreien Referenzlauf,
+    /// n = 384, 50k Jahre):
+    ///   3e-5 → Δb −0.09 … +0.00   kein Signal: der Abtrag bleibt unter 20 % der
+    ///                             vorhandenen Taltiefe, das Eis formt nichts um
+    ///   1e-4 → Δb +0.22 … +0.30   ← gewählt, über alle Zeitpunkte gleichsinnig
+    ///   3e-4 → Eisfläche bricht auf 0.1 % ein (Gletscher-Buzzsaw: der Abtrag
+    ///                             sägt die Gipfel unter die Firn-Grenze und
+    ///                             entzieht sich selbst das Nährgebiet)
+    /// 1e-4 kostet auf 30k Jahre 0.024 Höheneinheiten Gipfelhöhe gegen den
+    /// eisfreien Arm — spürbar, aber genau die erwünschte glaziale Denudation.
+    public var iceErodeK: Double = 1e-4
+    /// Fluss-Exponent m des glazialen Stream-Power-Gesetzes
+    /// `E = K · q^m · S^n`. 0.5 wie bei Liebl et al. 2023 und wie `mExp` im
+    /// fluvialen Pendant (`outletIncision`) — die glaziale Rate ist damit ein
+    /// FAKTOR auf einer schon kalibrierten Maschinerie statt einer zweiten
+    /// Kalibrier-Achse. n = 1 steht fix im Code (dieselbe Wahl wie fluvial).
+    public var iceErodeFluxExp: Double = 0.5
+    /// Radius der **Schleifspur** in Zellen: über dieses Quadrat wird die
+    /// glaziale Erosionsrate gemittelt, bevor sie ins Gelände geht. 0 = aus
+    /// (rein lokale Rate, bit-identisch zur Rechnung ohne Ausstrich).
+    ///
+    /// Das ist die Gegenmaßnahme, die `docs/research-climate-cryosphere.md` §4.3
+    /// beim Kauf des Flux-Modells VORHERGESAGT hat — und die Messung hat sie
+    /// eingefordert: die lokale Flux-Rate ist im Thalweg am größten und schneidet
+    /// dort eine Kerbe, das Querprofil wurde damit V-IGER statt U-iger (V→U 1.447
+    /// gegen 1.352 im eisfreien Referenzarm, also die falsche Richtung —
+    /// `docs/glacier-measurements.md` §D). Ein Gletscher schleift über seine
+    /// ganze BREITE; Liebl et al. 2023 lösen dasselbe Problem im OpenLEM mit
+    /// derselben Maßnahme („artificially expanded erosion swath").
+    ///
+    /// 2 Zellen (5×5-Fenster) — s. Sweep in `docs/glacier-measurements.md` §D.
+    /// Fester ZELL-Radius wie `HydraulicParams.erodeRadius`: eine Breite in
+    /// Welteinheiten wäre für den Kernel die ehrlichere Größe, aber dann hinge
+    /// die Fenstergröße an `n` und mit ihr die Rechenzeit je Zelle.
+    public var iceErodeSwathRadius: Int = 2
+    /// MORÄNE: Höheneinheiten Sediment je Höheneinheit ausgeschmolzenen Eises.
+    /// Das Eis führt eine als konstant angenommene Schuttfracht mit; wo es
+    /// abschmilzt, bleibt sie liegen — Ausschmelz-Moräne an Zunge und Rand, dort
+    /// wo der Schmelz-Anteil von μ groß ist. Im Akkumulationsgebiet (T ≤ 0) ist
+    /// dieser Anteil exakt 0, es entsteht also keine Moräne unter dem Nährgebiet.
+    ///
+    /// Eine echte Fracht-Buchhaltung (erodiertes Material im Eis mitführen und
+    /// stromabwärts ablegen) wäre ein zweites Transportfeld für eine Wirkung, die
+    /// dieselbe Form hat: Masse-Erhaltung gilt in diesem Repo ohnehin nicht
+    /// (detachment-limited Stream-Power, AGENTS.md). GEMESSEN ist stattdessen das
+    /// VERHÄLTNIS Ablagerung zu glazialem Abtrag über den Lauf
+    /// (`docs/glacier-measurements.md` §F): bei 0.05 legt das Eis rund ein
+    /// Viertel dessen ab, was es abträgt — der Rest verlässt das System als
+    /// Schmelzwasserfracht, wie im fluvialen Pfad auch.
+    public var iceMoraineK: Double = 0.05
+    /// Ab dieser Eisdicke gilt eine Zelle als VERGLETSCHERT: sie kommt in
+    /// `Terrain.underIce` und beide fluvialen Gates greifen (Auslass-Inzision und
+    /// Tropfen — s. `Terrain.updateIce`).
+    /// 0.002 Höheneinheiten ≙ 8 m bei H_ref = 4000 m: unter einem Schneefeld
+    /// dieser Mächtigkeit fließt kein Eis und der Bach läuft normal weiter. Der
+    /// Wert hält den Saum der Gletscher schmal — ohne ihn wanderte die Maske mit
+    /// dem exponentiellen Ausläufer der Bilanz beliebig weit ins Tal.
+    public var iceMinThickness: Double = 0.002
+    /// Sättigungs-Referenz der EIS-Deckung fürs Rendering:
+    /// `Deckung = I / (I + iceCoverRef)`, dieselbe Bauform wie `snowCoverRef`.
+    /// 0.01 gegen eine Gleichgewichtsdicke von ~0.05: die Zunge ist über ihre
+    /// ganze Länge deutlich als Eis lesbar und blendet erst am dünnen Rand aus.
+    /// Reiner RENDER-Parameter (`Terrain.iceCover`, `SimNode.terrainColorBytes`)
+    /// — kein Pass liest ihn.
+    public var iceCoverRef: Double = 0.01
+
     // ---- Klima / Vegetation ----
     // Zeitkonstante der Vegetations-Relaxation, Jahre. Seit Issue #2
     // EXPONENTIELL (`1 − e^(−dt/τ)`, wie der Flood-Kill daneben schon immer):
