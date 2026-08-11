@@ -782,10 +782,10 @@ final class SimNode: Node {
         // die in einen See münden, überleben über die gemeinsame Komponente.
         // Flood-Fill ist O(n²) und läuft eh nur je Render-Tick. Altarme separat
         // via oxb.
-        // Fenster (`WaterRender.componentFadeLo/HiCells`) so gelegt, dass VOLLE
-        // Sichtbarkeit nahe der alten Schwelle bleibt — die Herleitung inkl. der
-        // Shader-Fenster und der verworfenen „symmetrischen" Variante steht dort,
-        // headless abgesichert durch `SimCoreTests/WaterRenderTests.swift`.
+        // Der Fade wirkt auf die beiden Kanäle VERSCHIEDEN: der See-Kanal blendet
+        // weich ein (dort lag die Ploppe), der Fluss-Kanal wird nur GEGATET —
+        // Herleitung und Fenster in `WaterRender`, headless abgesichert durch
+        // `SimCoreTests/WaterRenderTests.swift`.
         rawWet.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         for k in 0..<cnt { rawWet[k] = hf[k] > sea && hf[k] - h[k] > 0.03 }
         for k in 0..<cnt { mask[k] = rawWet[k] || sd[k] >= 0.16 }
@@ -822,13 +822,20 @@ final class SimNode: Node {
         // pixelgenau zu.
         lk.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         for k in 0..<cnt {
-            // Der Ribbon-Saum (haloIntensity) liegt unter der Kohärenz-Schwelle
-            // (0.16) und würde vom Fade gedämpft — Korridor-Zellen sind aber per
-            // Definition Teil eines echten Laufs (Zentrumslinie), nicht Speckle:
-            // sie behalten ihre Saum-Intensität ungedämpft (Issue #31).
-            if !(ribbonMode && mstamp[k]) { sd[k] *= componentFade[k] }
-            // See-Gate NICHT vom Korridor ausnehmen: ein Ribbon-Korridor darf
-            // keine Kleinst-Pfütze als See malen, deshalb bleibt lk am Fade.
+            // Fluss-Kanal: GATE, kein weicher Fade. Der Shader liest ihn als
+            // Intensität, und sein Unter-Wasser-Bereich IST das Saum-Fenster —
+            // ein skalierter voller Lauf (stream 0.15) malt sandbraunen Saum ohne
+            // Wasser darin. `WaterRender.streamGate` schaltet erst ab der Fade-
+            // Höhe, bei der ein voller Lauf schon deckt (28 Zellen).
+            // Der Ribbon-Saum (WaterRender.ribbonHaloIntensity) ist davon
+            // ausgenommen: Korridor-Zellen sind per Definition Teil eines echten
+            // Laufs (Zentrumslinie), nicht Speckle (Issue #31).
+            if !(ribbonMode && mstamp[k]) {
+                sd[k] *= WaterRender.streamGate(componentFade: componentFade[k])
+            }
+            // See-Kanal: weicher Fade (Issue #32) — und NICHT vom Korridor
+            // ausgenommen, ein Ribbon-Korridor darf keine Kleinst-Pfütze als See
+            // malen.
             if rawWet[k] { lk[k] = componentFade[k] }
             if oxb[k] > lk[k] { lk[k] = oxb[k] }
         }

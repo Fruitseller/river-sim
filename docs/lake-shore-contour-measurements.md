@@ -167,3 +167,43 @@ Hebe-Schwelle der Wasser-Geometrie (0,015) bleibt bewusst darüber, die
 Saum-Messung oben bleibt gültig. Die Kalibrier-Paarung Kontur-Fuß ↔
 Altarm-Präsenz ist jetzt in `SimCore/WaterRender.swift` zentral und wird von
 `SimCoreTests/WaterRenderTests.swift` gegen Shader und Extension geprüft.
+
+## Nachtrag: Saum ohne Wasser (Review-Befund)
+
+Die Tabelle oben nennt in Klammern beiläufig, dass der Branch „den Fluss-Kanal
+mit dem Komponenten-Fade skaliert". Genau daraus folgt ein Render-Fehler, den
+die Messreihe nicht abdeckt, weil sie nur reife Seen betrachtet.
+
+Der Shader liest den Fluss-Kanal an **zwei** Stellen mit verschiedenen Fenstern:
+
+| Kanalwert | `riverMask` = smoothstep(0.16, 0.45, ·) | `shore` = smoothstep(0.09, 0.16, ·) |
+|---|---|---|
+| 0,10 | 0,00 | 0,06 |
+| 0,15 | 0,00 | **0,94** |
+| 0,45 | 1,00 | 0 (von `1 − wet` gelöscht) |
+
+Der Unter-Wasser-Bereich des Kanals **ist** das Saum-Fenster. Ein voller Lauf
+(`sd ≈ 1`) in einer 14–16-Zell-Komponente landet nach `sd *= fade` bei 0,10–0,15
+— also kein Wasser, aber ein fast voll deckender Sandstreifen, wo der alte harte
+Cutoff exakt 0 lieferte. Nachgerechnet, nicht gemessen: der Fall entsteht nur in
+frisch entwässerten Braid-Ebenen, also genau dort, wo der Kohärenz-Filter wirkt.
+
+Behoben, indem die beiden Kanäle den Fade verschieden benutzen:
+
+- **Fluss-Kanal: GATE statt Fade.** Unter `WaterRender.streamGateFade`
+  (= `riverMaskHi` 0,45 → 28 Zellen) trägt eine Komponente nichts, darüber ihre
+  volle Intensität. Am Gate ist `riverMask` bereits 1 — beim Einschalten kann
+  also per Konstruktion kein Saum ohne Wasser stehen. Der alte harte Cutoff lag
+  bei 25 Zellen, die Ploppe kehrt für Flüsse damit zurück; sie war für Flüsse nie
+  das Problem (lange Ketten wachsen sprunghaft), Auslöser von #32 waren wachsende
+  **Seen**. Ribbon-Korridorzellen (#31) sind ausgenommen — ihr Saum von 0,14 ist
+  gewollt und liegt bewusst in diesem Fenster.
+- **See-Kanal: Fade bleibt** (12 → 24 Zellen), zusätzlich löscht der Shader den
+  Saum überall, wo real eine Wassersäule steht (`dry = 1 − smoothstep(0.003,
+  0.02, pond)`). Ohne diesen Faktor tönte eine halb eingeblendete Seefläche
+  (Gate 0,16 → `lakeMask` 0,29) ihren eigenen Grund zu 71 % sandbraun, bevor das
+  Wasser sichtbar wird. Auf dem Uferring ist `pond` = 0, die Messreihe oben
+  (Ring-Kanalwert ≈ 0,11 → `shore` 0,27) bleibt damit unverändert gültig.
+
+Wächter: `SimCoreTests/WaterRenderTests.swift` bildet beide Shader-Lesarten als
+reine Funktionen nach und prüft den ganzen kritischen Größenbereich.

@@ -309,7 +309,14 @@ void fragment() {
 	// am Ufer ist die Rampe ja ≈ 0); mit dem Gate entsteht er erstmals — als
 	// dünner Ring auf dem 2. Zellring vom Seerand (shore 0,27 statt 0,01, Ø 1,34 %).
 	// Das ist genau das, was dieser Block oben beschreibt, also NICHT zurückdrehen.
-	float shore = smoothstep(0.09, 0.16, max(stream, lake_gate)) * (1.0 - wet);
+	// Der Saum ist ein LAND-Effekt: `dry` hält ihn aus allem heraus, wo real eine
+	// Wassersäule steht. Ohne diesen Faktor tönt eine halb eingeblendete Seefläche
+	// (Gate 0.16 → lakeMask 0.29) ihren eigenen Grund zu 71 % sandbraun, BEVOR das
+	// Wasser sichtbar wird — der Saum sättigt bei Kanal 0.16, das Gate erst bei
+	// 0.35. Auf dem Uferring ist pond = 0, der gemessene Saum (s. o.) bleibt also
+	// unverändert. Fenster == WaterRender.pondContour* (Wächter: WaterRenderTests).
+	float dry = 1.0 - smoothstep(0.003, 0.02, pond);
+	float shore = smoothstep(0.09, 0.16, max(stream, lake_gate)) * (1.0 - wet) * dry;
 	vec3 shore_col = vec3(0.50, 0.46, 0.38) * (0.85 + 0.3 * breakup);
 	terr = mix(terr, shore_col, shore * 0.35);
 	terr *= 1.0 - shore * 0.22; // feuchtes Ufer ist dunkler
