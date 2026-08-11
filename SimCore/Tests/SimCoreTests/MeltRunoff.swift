@@ -185,7 +185,9 @@ final class MeltRunoff: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         let n = Int(env["RS_MEAS_N"] ?? "") ?? 192
         var snowy: [UInt32] = []
-        for seed in (1...40).map(UInt32.init) {
+        // 1…40 als unvoreingenommene Stichprobe, dazu die Standard-Seeds der
+        // übrigen Messreihen (1337/7/99/2024) — von denen sind drei schneefrei.
+        for seed in (1...40).map(UInt32.init) + [1337, 99, 2024] {
             let t = Terrain(config: cfg(n: n, arm: .off), seed: seed)
             let m0 = measure(t), maxH0 = t.maxHeight()
             run(t, to: 20_000)
@@ -419,6 +421,86 @@ final class MeltRunoff: XCTestCase {
                                         / (up.cells[k] * cellArea))
         }
         XCTAssertLessThan(maxRelErr, 1e-9, "area muss reine Zellzahl bleiben")
+    }
+
+    /// Der Schmelzbeitrag ist auf `meltRunoffCapPerRain · rain` gedeckelt — das
+    /// Gewicht einer Zelle kann sich also höchstens verdoppeln. Geprüft am
+    /// Ernstfall, für den der Deckel existiert (s.
+    /// `SimConfig.meltRunoffCapPerRain`): der Spieler trägt eine beschneite Kuppe
+    /// ab, die Temperatur springt auf Tieflandwert, der Schneevorrat steht noch.
+    func testMeltContributionIsCappedAtTheLocalRain() {
+        let t = Terrain(config: cfg(n: 192, arm: .renorm), seed: 1337)
+        t.step(dtYears: 1000)
+        // Höchste beschneite Zelle suchen und großflächig auf Küstenniveau
+        // einebnen — genau der Sculpt-Pfad aus dem Spiel.
+        var peak = 0
+        for k in 0..<t.cfg.count where t.snow[k] > t.snow[peak] { peak = k }
+        XCTAssertGreaterThan(t.snow[peak], 0.1, "Testaufbau: keine tragfähige Schneedecke")
+        let gx = Double(peak % t.cfg.n), gz = Double(peak / t.cfg.n)
+        // Ein Strich zieht nur 18 % Richtung Ziel (s. `flatten`) — der Spieler
+        // hält den Knopf, hier sind das 40 Striche.
+        for _ in 0..<40 {
+            t.flatten(gx: gx, gz: gz, radiusWorld: 0.1 * t.cfg.world,
+                      targetHeight: t.cfg.sea + 0.05)
+        }
+        // `SimNode.recomputeFlow`-Pfad: Temperatur nachziehen (dt = 0 hält die
+        // Bilanz), dann das Abflussfeld neu bestimmen.
+        t.updateClimate(dt: 0)
+        t.computeFlow(dtYears: 0)
+        XCTAssertGreaterThan(t.temperature[peak], 5,
+                             "Testaufbau: die Kuppe ist nicht im Warmen angekommen")
+        XCTAssertGreaterThan(t.snow[peak], 0.1, "Testaufbau: der Vorrat ist schon weg")
+        var maxRatio = 0.0
+        for k in 0..<t.cfg.count where t.h[k] > t.cfg.sea {
+            maxRatio = max(maxRatio, t.runoffWeight[k] / t.rainWeight[k])
+        }
+        print(String(format: "[#36] Deckel-Test: max runoffWeight/rainWeight=%.4f "
+                             + "(ungedeckelt wäre der Schmelzterm ×%.0f des Regens)",
+                     maxRatio,
+                     t.cfg.snowMeltPerKYear * t.temperature[peak] * t.snow[peak]
+                        / t.cfg.snowAccumPerYear / t.rain[peak]))
+        XCTAssertLessThanOrEqual(maxRatio, 1 + t.cfg.meltRunoffCapPerRain + 1e-9,
+                                 "der Schmelzbeitrag muss gedeckelt bleiben")
+    }
+
+    // MARK: - Rückwirkung auf bestehende Wächter
+
+    /// **Der Becken-Wasserhaushalt (#11) übersteht die Schmelze** — dieselbe
+    /// Rolle, die `Lithology.testEndorheicMechanicsSurviveLithology` für #12 hat,
+    /// und aus demselben Grund: die #11-Wächter pinnen ihre Physik auf EIN
+    /// konkretes Becken (das größte von Seed 1337 bei n=256), und die Schmelze
+    /// verschiebt, welches Becken das ist (`EndorheicEvaporation.cfg`). Hier wird
+    /// deshalb INSELWEIT und über mehrere Seeds gezählt: entstehen weiter
+    /// Salzpfannen?
+    func testEndorheicMechanicsSurviveMeltRunoff() {
+        var c = SimConfig(); c.n = 256; c.endorheicEvapRatio = 6   // dryCfg von #11
+        var ref = c; ref.meltRunoffEnabled = false                 // Arm der #11-Wächter
+
+        /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).
+        func playa(_ config: SimConfig, _ seed: UInt32) -> (bed: Int, crusted: Int, basins: Int) {
+            let t = Terrain(config: config, seed: seed)
+            for _ in 0..<10 { t.step(dtYears: 200) }
+            var bed = 0, crusted = 0
+            for k in 0..<t.cfg.count where t.endorheicBasin[k] == 1 {
+                if t.saltCrust[k] > 0.5 { bed += 1 }
+                if t.saltCrust[k] > 0.9 { crusted += 1 }
+            }
+            return (bed, crusted, t.endorheicStats().basins)
+        }
+
+        var playaOn = 0, playaOff = 0
+        for seed: UInt32 in [1337, 42, 2024, 7] {
+            let on = playa(c, seed), off = playa(ref, seed)
+            print("[#36] Schmelze × #11 Seed \(seed) — an: Kruste>0.5 \(on.bed) / >0.9 "
+                  + "\(on.crusted) / Becken \(on.basins); aus: \(off.bed) / \(off.crusted) "
+                  + "/ \(off.basins)")
+            if on.bed > 100 && on.crusted > 20 { playaOn += 1 }
+            if off.bed > 100 && off.crusted > 20 { playaOff += 1 }
+        }
+        XCTAssertGreaterThan(playaOn, 0,
+            "mit Schmelzwasser entsteht auf keinem Seed mehr eine Salzpfanne — #11 wäre kaputt")
+        XCTAssertGreaterThanOrEqual(playaOn, playaOff,
+            "Schmelzwasser kostet Salzpfannen-Seeds (an \(playaOn) gegen aus \(playaOff))")
     }
 
     // MARK: - Invarianten: Determinismus, dt, Kosten

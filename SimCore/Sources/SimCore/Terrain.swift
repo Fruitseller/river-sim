@@ -905,6 +905,11 @@ public final class Terrain {
         // Schmelzfluss → Regen-Einheiten: die Umkehrung der Akkumulation
         // (a = snowAccumPerYear · rain · f_schnee), s. SimConfig.meltRunoffEnabled.
         let meltToRain = cfg.snowMeltPerKYear / max(1e-12, cfg.snowAccumPerYear)
+        // Deckel des Schmelzbeitrags (Vielfaches des lokalen Regens): im Lauf
+        // nie bindend, aber nach einem Spieler-Eingriff auf beschneitem Gelände
+        // die Grenze zwischen „mehr Schmelze" und einer Punkt-Quelle.
+        // Herleitung: `SimConfig.meltRunoffCapPerRain`.
+        let cap = max(0, cfg.meltRunoffCapPerRain)
         var rawSum = 0.0, rainSum = 0.0, land = 0
         var anyMelt = false
         // Ein sequenzieller Pass baut das rohe Gewicht UND beide Land-Summen: die
@@ -926,7 +931,9 @@ public final class Terrain {
                     raw -= withhold * prain[k] * fSnow
                     if raw < 0 { raw = 0 }
                 }
-                if t > 0 && ps[k] > 0 { raw += meltToRain * t * ps[k] }
+                if t > 0 && ps[k] > 0 {
+                    raw += min(meltToRain * t * ps[k], cap * prain[k])
+                }
                 if raw != prain[k] { anyMelt = true }
                 pw[k] = raw
                 rawSum += raw

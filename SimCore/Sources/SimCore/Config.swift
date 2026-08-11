@@ -993,6 +993,25 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// erhalten: mit #35 wandert das eingelagerte Wasser als Eis talwärts und
     /// dann ist er die richtige Buchung.
     public var meltRunoffWithholdSolid: Double = 0
+    /// Deckel des Schmelzbeitrags als VIELFACHES des lokalen Niederschlags: das
+    /// Gewicht einer Zelle kann damit höchstens `(1 + Deckel)·rain` werden.
+    ///
+    /// 1.0 ist keine gewählte Zahl, sondern die eingeschwungene OBERGRENZE selbst
+    /// (`m/snowAccumPerYear = rain · f_schnee · (c·T)/(1/τ₀ + c·T) ≤ rain`, s.
+    /// oben) — im normalen Lauf bindet der Deckel deshalb nie. Er bindet in genau
+    /// einem Fall, und dafür ist er da: der SPIELER trägt eine beschneite Kuppe ab
+    /// (`sculpt`/`flatten` → `SimNode.recomputeFlow`). Dann steht die Temperatur
+    /// sofort auf Tieflandwert, die Schneebilanz aber noch auf dem alten Vorrat
+    /// (`updateClimate(dt: 0)` zieht bewusst nur die Temperatur nach) — der rohe
+    /// Schmelzterm wäre für einen Schritt `30·T·S`, bei T = 11 °C und S = 1.0 also
+    /// das 330-fache des Regens. Das wäre eine Punkt-Quelle im Abflussfeld und
+    /// würde zusätzlich die Ablehnungs-Stichprobe der Tropfen-Starts erdrücken
+    /// (sie normiert auf das FELD-Maximum, ein Ausreißer drückt die Annahmequote
+    /// aller anderen Zellen auf ~0). Mit dem Deckel bleibt der Eingriff eine
+    /// erhöhte Schmelze statt eines Ausreißers, und die Bilanz apert im nächsten
+    /// echten Schritt regulär aus.
+    /// Wächter: `MeltRunoff.testMeltContributionIsCappedAtTheLocalRain`.
+    public var meltRunoffCapPerRain: Double = 1.0
 
     // ---- Klima / Vegetation ----
     // Zeitkonstante der Vegetations-Relaxation, Jahre. Seit Issue #2
