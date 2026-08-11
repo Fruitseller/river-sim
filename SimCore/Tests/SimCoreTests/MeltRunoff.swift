@@ -25,7 +25,9 @@ import XCTest
 ///
 /// Dazu die Reichweite des Features (`testSnowyIslandScanDiagnostic`: nur alpine
 /// Inseln haben überhaupt Schmelze), der Deckel des Beitrags
-/// (`testMeltContributionIsCappedAtTheLocalRain`) und die Kosten
+/// (`testMeltContributionIsCappedAtTheLocalRain` und, für die Kombination aus
+/// Einlagerung und Renormierung,
+/// `testMeltContributionStaysCappedWithSolidWithholding`) und die Kosten
 /// (`testRunoffWeightCostDiagnostic`).
 final class MeltRunoff: XCTestCase {
 
@@ -432,13 +434,13 @@ final class MeltRunoff: XCTestCase {
         XCTAssertLessThan(maxRelErr, 1e-9, "area muss reine Zellzahl bleiben")
     }
 
-    /// Der Schmelzbeitrag ist auf `meltRunoffCapPerRain · rain` gedeckelt — das
-    /// Gewicht einer Zelle kann sich also höchstens verdoppeln. Geprüft am
-    /// Ernstfall, für den der Deckel existiert (s.
-    /// `SimConfig.meltRunoffCapPerRain`): der Spieler trägt eine beschneite Kuppe
-    /// ab, die Temperatur springt auf Tieflandwert, der Schneevorrat steht noch.
-    func testMeltContributionIsCappedAtTheLocalRain() {
-        let t = Terrain(config: cfg(n: 192, arm: .renorm), seed: 1337)
+    /// Der Ernstfall, für den der Deckel existiert (s.
+    /// `SimConfig.meltRunoffCapPerRain`): der Spieler trägt die schneereichste
+    /// Kuppe ab, die Temperatur springt auf Tieflandwert, der Schneevorrat steht
+    /// noch. Liefert das Terrain nach dem `SimNode.recomputeFlow`-Pfad und die
+    /// abgetragene Zelle.
+    private func sculptedSnowyPeak(_ arm: Arm) -> (t: Terrain, peak: Int) {
+        let t = Terrain(config: cfg(n: 192, arm: arm), seed: 1337)
         t.step(dtYears: 1000)
         // Höchste beschneite Zelle suchen und großflächig auf Küstenniveau
         // einebnen — genau der Sculpt-Pfad aus dem Spiel.
@@ -459,10 +461,25 @@ final class MeltRunoff: XCTestCase {
         XCTAssertGreaterThan(t.temperature[peak], 5,
                              "Testaufbau: die Kuppe ist nicht im Warmen angekommen")
         XCTAssertGreaterThan(t.snow[peak], 0.1, "Testaufbau: der Vorrat ist schon weg")
+        return (t, peak)
+    }
+
+    /// Größtes Verhältnis `runoffWeight/rainWeight` über Land — die Größe, die der
+    /// Deckel beschränkt (die Tropfen-Stichprobe normiert auf das FELD-Maximum).
+    private func maxWeightRatio(_ t: Terrain) -> Double {
         var maxRatio = 0.0
         for k in 0..<t.cfg.count where t.h[k] > t.cfg.sea {
             maxRatio = max(maxRatio, t.runoffWeight[k] / t.rainWeight[k])
         }
+        return maxRatio
+    }
+
+    /// Der Schmelzbeitrag ist auf `meltRunoffCapPerRain · rainWeight` gedeckelt —
+    /// das Gewicht einer Zelle kann sich also höchstens verdoppeln. Geprüft am
+    /// Sculpt-Ernstfall im Produktions-Arm.
+    func testMeltContributionIsCappedAtTheLocalRain() {
+        let (t, peak) = sculptedSnowyPeak(.renorm)
+        let maxRatio = maxWeightRatio(t)
         print(String(format: "[#36] Deckel-Test: max runoffWeight/rainWeight=%.4f "
                              + "(ungedeckelt wäre der Schmelzterm ×%.0f des Regens)",
                      maxRatio,
@@ -470,6 +487,37 @@ final class MeltRunoff: XCTestCase {
                         / t.cfg.snowAccumPerYear / t.rain[peak]))
         XCTAssertLessThanOrEqual(maxRatio, 1 + t.cfg.meltRunoffCapPerRain + 1e-9,
                                  "der Schmelzbeitrag muss gedeckelt bleiben")
+    }
+
+    /// Derselbe Ernstfall MIT Einlagerung (`meltRunoffWithholdSolid = 1`, Arm C).
+    /// Der Deckel muss auch in dieser Kombination halten: die Einlagerung senkt
+    /// das Landmittel des rohen Gewichts unter das Regenmittel, die Renormierung
+    /// hebt also alle Zellen an — ein am Roh-Wert gedeckelter Ausreißer läge nach
+    /// der Normierung trotzdem über `(1 + Deckel)·rainWeight`. Deshalb greift der
+    /// Deckel NACH der Normierung (s. `Terrain.updateRunoffWeight`).
+    func testMeltContributionStaysCappedWithSolidWithholding() {
+        let (t, _) = sculptedSnowyPeak(.withhold)
+        XCTAssertGreaterThan(t.cfg.meltRunoffWithholdSolid, 0, "Testaufbau: keine Einlagerung")
+        // Die Skew der Normierung wird an einer UNBERÜHRTEN Zelle abgelesen: warm
+        // genug für reinen Flüssigniederschlag (keine Einlagerung) und ohne
+        // Schneevorrat (keine Schmelze) — dort ist roh = rain, das Verhältnis
+        // `runoffWeight/rainWeight` ist also exakt Regenmittel/Rohmittel. Liegt es
+        // über 1, hebt die Renormierung alle Zellen an, und der Roh-Deckel allein
+        // würde die Zusage `≤ (1 + Deckel)·rainWeight` verfehlen.
+        var skew = 0.0
+        for k in 0..<t.cfg.count
+        where t.h[k] > t.cfg.sea && t.snow[k] == 0 && t.temperature[k] >= t.cfg.snowRainTemp {
+            skew = t.runoffWeight[k] / t.rainWeight[k]
+            break
+        }
+        let maxRatio = maxWeightRatio(t)
+        print(String(format: "[#36] Deckel-Test mit Einlagerung: max runoffWeight/"
+                             + "rainWeight=%.4f · Normierungs-Skew=%.4f", maxRatio, skew))
+        XCTAssertGreaterThan(skew, 1.0,
+                             "Testaufbau: keine unberührte Zelle gefunden oder die "
+                             + "Einlagerung hebt den Normierungsfaktor nicht")
+        XCTAssertLessThanOrEqual(maxRatio, 1 + t.cfg.meltRunoffCapPerRain + 1e-9,
+                                 "der Deckel muss auch mit Einlagerung halten")
     }
 
     // MARK: - Rückwirkung auf bestehende Wächter

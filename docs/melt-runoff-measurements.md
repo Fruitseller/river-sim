@@ -313,6 +313,28 @@ Ausreißer drückt also die Annahmequote aller anderen Zellen fast auf 0. Mit De
 bleibt der Eingriff „mehr Schmelze", und die Bilanz apert im nächsten echten
 Schritt regulär aus.
 
+**Der Deckel muss NACH der Normierung greifen** (PR-Review). Am Rohwert allein
+gedeckelt hält die Zusage `≤ (1 + Deckel)·rainWeight` nicht, sobald die
+Einlagerung mitläuft: `meltRunoffWithholdSolid > 0` nimmt kalten Zellen ihren
+Festniederschlag, das Landmittel des ROHEN Gewichts fällt unter das Regenmittel,
+und die Renormierung hebt danach jede Zelle um diesen Faktor an — auch die
+gedeckelte. Derselbe Sculpt-Fall mit `meltRunoffWithholdSolid = 1` gemessen:
+
+```
+nur Roh-Deckel   max runoffWeight/rainWeight = 2.0123   (Zusage: ≤ 2.0) — verletzt
+Deckel danach    max runoffWeight/rainWeight = 2.0000   Normierungs-Skew 1.0061
+```
+
+Der Roh-Deckel bleibt zusätzlich stehen (er hält den Normierungs-Divisor selbst
+ausreißerfrei). Ohne Einlagerung ist die zweite Klammer nachweislich schlaff —
+roh ≥ rain ⇒ Rohmittel ≥ Regenmittel ⇒ roh/Rohmittel ≤ (1 + Deckel)·rainWeight —,
+der Produktions-Arm rechnet also unverändert. Wenn sie greift, nimmt sie Wasser
+weg statt welches zu erfinden: Σ über Land bleibt ≤ Zellzahl. Im LAUF greift sie
+in keinem Arm — die Messreihen §B, §C und §G wurden mit dem nachgezogenen Deckel
+neu gefahren und sind Zeile für Zeile identisch (auch die C-Zeilen: ΣAbfluss
+weiter exakt 1.0000).
+Wächter: `testMeltContributionStaysCappedWithSolidWithholding`.
+
 ## I) Rückwirkung auf bestehende Wächter
 
 Drei Wächter hat die Schmelze angefasst; keiner davon ist Mechanik, alle drei sind

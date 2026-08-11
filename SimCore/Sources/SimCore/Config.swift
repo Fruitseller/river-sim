@@ -993,7 +993,13 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// talwärts und schmilzt am Gletschertor — dann ist er die richtige Buchung.
     public var meltRunoffWithholdSolid: Double = 0
     /// Deckel des Schmelzbeitrags als VIELFACHES des lokalen Niederschlags: das
-    /// Gewicht einer Zelle kann damit höchstens `(1 + Deckel)·rain` werden.
+    /// Gewicht einer Zelle kann damit höchstens `(1 + Deckel)·rainWeight` werden.
+    /// Er greift deshalb am NORMIERTEN Gewicht (und zusätzlich schon am Rohwert,
+    /// damit der Normierungs-Divisor selbst ausreißerfrei bleibt): bei
+    /// `meltRunoffWithholdSolid > 0` liegt das Landmittel des rohen Gewichts unter
+    /// dem Regenmittel, die Renormierung hebt also alle Zellen an und ein nur roh
+    /// gedeckelter Ausreißer läge danach über der Zusage — gemessen 2.0123 statt
+    /// ≤ 2.0 im Sculpt-Fall (`docs/melt-runoff-measurements.md` §H).
     ///
     /// 1.0 ist keine gewählte Zahl, sondern die eingeschwungene OBERGRENZE selbst
     /// (`m/snowAccumPerYear = rain · f_schnee · (c·T)/(1/τ₀ + c·T) ≤ rain`, s.
@@ -1009,7 +1015,9 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// aller anderen Zellen auf ~0). Mit dem Deckel bleibt der Eingriff eine
     /// erhöhte Schmelze statt eines Ausreißers, und die Bilanz apert im nächsten
     /// echten Schritt regulär aus.
-    /// Wächter: `MeltRunoff.testMeltContributionIsCappedAtTheLocalRain`.
+    /// Wächter: `MeltRunoff.testMeltContributionIsCappedAtTheLocalRain` und
+    /// `MeltRunoff.testMeltContributionStaysCappedWithSolidWithholding`
+    /// (derselbe Fall mit `meltRunoffWithholdSolid = 1`).
     public var meltRunoffCapPerRain: Double = 1.0
 
     // ---- Klima / Vegetation ----

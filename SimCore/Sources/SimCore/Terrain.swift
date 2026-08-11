@@ -864,8 +864,10 @@ public final class Terrain {
     /// ```
     /// m(k)   = snowMeltPerKYear · max(0, T) · S        Schmelzfluss [SWE/Jahr]
     /// roh(k) = rain[k] − withhold · rain[k] · f_schnee(T)   (Einlagerung, Default 0)
-    ///          + m(k) / snowAccumPerYear                    (Ablation, in Regen-Einheiten)
-    /// w(k)   = roh(k) / Landmittel     (Land) — Divisor s. `cfg.meltRunoffNormalized`
+    ///          + min(m(k) / snowAccumPerYear, cap · rain[k])   (Ablation, in Regen-Einheiten)
+    /// w(k)   = min(roh(k) / Landmittel, (1 + cap) · rainWeight[k])   (Land)
+    ///                                  Divisor s. `cfg.meltRunoffNormalized`,
+    ///                                  Deckel s. `cfg.meltRunoffCapPerRain`
     /// w(k)   = 1.0                     (See, neutral wie bei `rainWeight`)
     /// ```
     ///
@@ -953,13 +955,28 @@ public final class Terrain {
             return
         }
         let inv = 1 / mean
+        // Der Deckel gilt am NORMIERTEN Gewicht, denn das ist die Größe, die die
+        // Tropfen-Stichprobe sieht: bei `meltRunoffWithholdSolid > 0` liegt das
+        // Landmittel des rohen Gewichts UNTER dem Regenmittel, die Renormierung
+        // hebt also jede Zelle an — ein am Rohwert gedeckelter Ausreißer käme
+        // danach trotzdem über `(1 + Deckel)·rainWeight`. Der Roh-Deckel oben
+        // bleibt trotzdem stehen: er hält den Divisor selbst frei von Ausreißern.
+        // Ohne Einlagerung ist diese Klammer nachweislich schlaff (roh ≥ rain ⇒
+        // Rohmittel ≥ Regenmittel), der Produktions-Arm rechnet also unverändert.
+        // Wenn sie greift, nimmt sie Wasser weg statt welches zu erfinden: Σ über
+        // Land bleibt ≤ Zellzahl. Wächter:
+        // `MeltRunoff.testMeltContributionStaysCappedWithSolidWithholding`.
+        let ceiling = 1 + cap
         h.withUnsafeBufferPointer { hb in
+        rainWeight.withUnsafeBufferPointer { rwb in
         runoffWeight.withUnsafeMutableBufferPointer { wb in
-            let ph = hb.baseAddress!, pw = wb.baseAddress!
+            let ph = hb.baseAddress!, prw = rwb.baseAddress!, pw = wb.baseAddress!
             parallel(cnt) { lo, hi in
-                for k in lo..<hi where ph[k] > sea { pw[k] *= inv }
+                for k in lo..<hi where ph[k] > sea {
+                    pw[k] = min(pw[k] * inv, ceiling * prw[k])
+                }
             }
-        }}
+        }}}
     }
 
     // MARK: - Klima-Vertikale: Temperatur und Schneedecke (Issue #33)
