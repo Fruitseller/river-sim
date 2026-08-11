@@ -319,7 +319,19 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Sackgassen (wirkungslos bzw. Braid-Bänke beschädigt, s. Config-Kommentare).
 - **Deltas** an Fluss-Mündungen in Meer/Seen sichtbar machen (das Transport-Modell baut
   sie schon, das Rendering hebt sie nicht hervor).
-- See-Ränder minimal gezackt (per-Zelle-Quads) — zu einer Kontur glätten.
+- ERLEDIGT (Aug 2026, Issue #32): See-Ränder minimal gezackt (per-Zelle-Quads) — die
+  Uferlinie entsteht jetzt PRO PIXEL im Shader aus `waterLevel − h` auf dem vollen,
+  bilinear gefilterten Sim-Gitter (`pond_at` in `terrain.gdshader`, Shader-Äquivalent
+  zu Marching Squares) statt aus einer zell-quantisierten Maske. Der G-Kanal des
+  Wasserfelds trägt nur noch das Sichtbarkeits-GATE (Komponenten-Fade), nicht mehr
+  die Tiefe; kleine Wasserflächen faden über 12→24 Zellen ein, statt bei 25 hart zu
+  ploppen. Vertex-Lift und Farbe teilen sich das Gate, sonst bliebe eine trockene
+  horizontale Fläche im Becken stehen. OFFEN dabei geblieben: der Vertex-Lift selbst
+  läuft weiter auf dem RENDER-Gitter (384/256) — die Silhouette der Seefläche bleibt
+  dort gerastert, die per-Pixel-Kontur überdeckt sie nur. Nebenwirkung gemessen und
+  behalten: weil der G-Kanal jetzt ein gesättigtes Gate ist, bekommen Seen erstmals
+  einen Ufer-Saum (`shore`) — vorher fiel er an Seen aus, s.
+  `docs/lake-shore-contour-measurements.md`.
 - Steile Oberläufe der Fluss-Geometrie leicht segmentiert — feinere Glättung oder
   adaptive Unterteilung.
 - ERLEDIGT (Aug 2026, Issue #4): Schnee-, Hochfels- und Vegetations-Höhengrenzen

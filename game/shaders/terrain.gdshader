@@ -275,7 +275,7 @@ void fragment() {
 
 	vec4 w = texture(water_tex, v_uv);
 	float stream = w.r;
-	float lake = w.g;
+	float lake_gate = w.g; // Sichtbarkeits-GATE (Komponenten-Fade), KEINE Tiefe mehr
 	vec2 dir = w.ba * 2.0 - 1.0;
 
 	float riverMask = smoothstep(0.16, 0.45, stream);
@@ -296,7 +296,15 @@ void fragment() {
 	// --- Ufer-Saum (Punkt „Shading-Tricks"): der Blur-Halo des Wasserfelds
 	// (unterhalb der Sichtbarkeits-Schwelle) wird als nasser Sand-/Kies-Streifen
 	// getönt → Flüsse und Seen bekommen ein Ufer statt einer harten Farbkante.
-	float shore = smoothstep(0.09, 0.16, max(stream, lake)) * (1.0 - wet);
+	// Der See-Kanal trägt seit Issue #32 ein gesättigtes, ZWEIMAL geblurtes GATE
+	// statt der alten Tiefen-Rampe, die zum Ufer hin gegen 0 lief — die Schwelle
+	// 0.09/0.16 stammt noch aus der Rampen-Zeit. GEMESSEN (Seed 1337, Jahr 20.000,
+	// docs/lake-shore-contour-measurements.md): sie bleibt trotzdem richtig. Mit der
+	// Rampe fiel der Saum um SEEN faktisch aus (Ø Abdunklung 0,28 % im Uferband,
+	// am Ufer ist die Rampe ja ≈ 0); mit dem Gate entsteht er erstmals — als
+	// dünner Ring auf dem 2. Zellring vom Seerand (shore 0,27 statt 0,01, Ø 1,34 %).
+	// Das ist genau das, was dieser Block oben beschreibt, also NICHT zurückdrehen.
+	float shore = smoothstep(0.09, 0.16, max(stream, lake_gate)) * (1.0 - wet);
 	vec3 shore_col = vec3(0.50, 0.46, 0.38) * (0.85 + 0.3 * breakup);
 	terr = mix(terr, shore_col, shore * 0.35);
 	terr *= 1.0 - shore * 0.22; // feuchtes Ufer ist dunkler
