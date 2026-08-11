@@ -988,10 +988,9 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// wird damit genau das GEGENTEIL des Ticket-Ziels — der Abfluss unter den
     /// schneereichsten Einzugsgebieten SINKT (Verhältnis schneegespeist/schneefrei
     /// gepoolt über 5 alpine Seeds: 0.765 gegen 0.838 im Aus-Arm und 0.959
-    /// renormiert), und die Kammlinien-Quellflüsse trocknen aus. Der Arm bleibt
-    /// als Stellschraube
-    /// erhalten: mit #35 wandert das eingelagerte Wasser als Eis talwärts und
-    /// dann ist er die richtige Buchung.
+    /// renormiert), und die Kammlinien-Quellflüsse trocknen aus. Der Arm bleibt als
+    /// Stellschraube erhalten: mit #35 wandert das eingelagerte Wasser als Eis
+    /// talwärts und schmilzt am Gletschertor — dann ist er die richtige Buchung.
     public var meltRunoffWithholdSolid: Double = 0
     /// Deckel des Schmelzbeitrags als VIELFACHES des lokalen Niederschlags: das
     /// Gewicht einer Zelle kann damit höchstens `(1 + Deckel)·rain` werden.

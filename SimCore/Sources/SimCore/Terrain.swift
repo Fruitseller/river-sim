@@ -60,10 +60,14 @@ public final class Terrain {
     ///
     /// **Nicht im Zustands-Inventar** (`TerrainState`) und deshalb ohne
     /// Snapshot-Versionssprung: das Feld ist eine reine Ableitung aus `rain`,
-    /// `temperature` und `snow` — alle drei reisen mit — und wird im nächsten
-    /// `computeFlow` neu gebaut, bevor irgendein Konsument es liest. Es geht auch
-    /// an kein Rendering (anders als `rainWeight`, das über die Aridität in die
-    /// Verdunstung koppelt).
+    /// `temperature` und `snow` — alle drei reisen mit — und `computeRain` baut es
+    /// neu, bevor irgendein Konsument es liest (der erste Pass jedes `step()` und
+    /// jedes `computeFlow`). Damit erfüllt es das Aufnahmekriterium des Inventars
+    /// nicht: kein Pass liest es, bevor es geschrieben wird, und Rendering/Diagnose
+    /// fragen es nach dem Laden nicht ab. Dass `rainWeight` trotzdem mitreist, ist
+    /// die bewusste GROSSZÜGIGKEIT von Issue #8 (s. `TerrainState`) — sie hier
+    /// fortzusetzen würde die Formatversion auf 4 heben, ohne dass ein geladener
+    /// Zustand dadurch korrekter wäre.
     public private(set) var runoffWeight: [Double] = []
     /// **Die EINE Quelle der Abfluss-Gewichtung** (Issue #36): Schmelz-Gewicht,
     /// wenn es eines gibt, sonst das Regen-Gewicht. Alle drei Konsumenten lesen
