@@ -814,7 +814,8 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var snowRainTemp: Double = 3.0
     /// Akkumulation je Jahr bei Regenrate 1 und reinem Schneefall
     /// (SWE-Einheiten/Jahr). Legt zusammen mit `snowTurnoverYears` die EINHEIT des
-    /// Schneefelds fest: oberhalb der Frostgrenze ist μ = 1/τ₀, also
+    /// Schneefelds fest: bei Dauerfrost (T ≤ `snowFreezeTemp`, also reiner
+    /// Schneefall UND keine Schmelze) ist μ = 1/τ₀ und damit
     /// `S* = snowAccumPerYear · snowTurnoverYears · rain = 1.0 · rain` — SWE 1.0
     /// heißt „voll ausgebildete Dauerschneedecke am feuchtesten Standort".
     /// Eine absolute Kalibrierung in mm w.e. gibt es bewusst nicht: auch `rain`
