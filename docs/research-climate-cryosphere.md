@@ -383,6 +383,11 @@ vollständig: **#35 braucht keinen weiteren Versionssprung.**
 
 ## 7. Eine Quelle der Wahrheit: was den Perzentil-Schnee ablöst
 
+> **Stand-Hinweis:** Dieser Abschnitt ist VOR der Umsetzung geschrieben und
+> beschreibt im Präsens den Zustand von damals. Umgesetzt ist er wie hier
+> entschieden — Färbung je Zelle, Waldgrenze über die zurückgerechnete Höhe;
+> Messwerte in `docs/climate-snow-measurements.md`.
+
 Heute gibt es zwei Konsumenten der Schneegrenze:
 
 1. `SimNode.terrainColorBytes` malt `bands.snowAmount(h)` weiß.
