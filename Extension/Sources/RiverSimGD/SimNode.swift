@@ -366,10 +366,11 @@ final class SimNode: Node {
                     if wg > 0 {
                         r += (0.43 - r) * wg; g += (0.44 - g) * wg; b += (0.45 - b) * wg
                     }
-                    // Der SCHNEE kommt dagegen aus der Massenbilanz (Issue #33):
-                    // Sättigung S/(S+ref) wie bei der Stream-Map, s.
-                    // Terrain.snowCover. Ohne Klima der Höhenband-Rückfall.
-                    let ws = snowOn ? psnow[k] / (psnow[k] + snowRef)
+                    // Der SCHNEE kommt dagegen aus der Massenbilanz (Issue #33).
+                    // Die Sättigungs-Formel steht im Sim-Kern
+                    // (Terrain.snowCoverage) — hier nur der Aufruf über den rohen
+                    // Puffer, keine zweite Kopie. Ohne Klima der Höhenband-Rückfall.
+                    let ws = snowOn ? Terrain.snowCoverage(swe: psnow[k], ref: snowRef)
                                     : bands.snowAmount(v)
                     if ws > 0 {
                         r += (0.93 - r) * ws; g += (0.94 - g) * ws; b += (0.96 - b) * ws

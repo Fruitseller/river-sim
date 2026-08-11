@@ -265,7 +265,7 @@ Mahaffy.) Sie ist **die** Grundlage der meisten Eisschild-Modelle.
 ### 4.2 Das Flux-Modell
 
 Hergarten (2021) / Liebl, Hergarten & Egholm (2023, *Geosci. Model Dev.* 16,
-1315–1343, „Modeling large-scale landform evolution with a stream power law for
+1315, „Modeling large-scale landform evolution with a stream power law for
 glacial erosion (OpenLEM v37)") formulieren die glaziale Erosion detachment-limitiert
 exakt wie die fluviale Stream-Power:
 
@@ -431,7 +431,7 @@ Rückfall, wenn das Klima abgeschaltet ist (dann ist alles bit-identisch zu heut
 - **Liebl, M., Hergarten, S. & Egholm, D. (2023).** *Modeling large-scale landform
   evolution with a stream power law for glacial erosion (OpenLEM v37): benchmarking
   experiments against a more process-based description of ice flow (iSOSIA v3.4.3).*
-  Geosci. Model Dev. 16, 1315–1343.
+  Geosci. Model Dev. 16, 1315.
   [GMD](https://gmd.copernicus.org/articles/16/1315/2023/) ·
   doi:10.5194/gmd-16-1315-2023
 - **Egholm, D. et al. (2011/2012).** *Modeling the flow of glaciers in steep
@@ -447,7 +447,7 @@ Rückfall, wenn das Klima abgeschaltet ist (dann ist alles bit-identisch zu heut
   [PDF](https://web.gps.caltech.edu/~avouac/publications/Science-2015-Herman-193-5.pdf)
 - **Humphrey, N. & Raymond, C. (1994).** *Hydrology, erosion and sediment
   production in a surging glacier: Variegated Glacier, Alaska, 1982–83.*
-  J. Glaciology 40, 539–552. (Lineares Erosionsgesetz, l = 1.)
+  J. Glaciology 40(136). (Lineares Erosionsgesetz, l = 1.)
 - **OGGM (2020).** *Numerics in OGGM's ice dynamics model* — SIA-Geschwindigkeits-
   form (Deformation + Gleiten) und die numerischen Stabilitätsprobleme.
   [oggm.org](https://oggm.org/2020/07/08/numerics/)

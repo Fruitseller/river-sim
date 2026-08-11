@@ -882,16 +882,24 @@ public final class Terrain {
         }}}}
     }
 
+    /// Sättigung eines Schneevorrats zur **Deckung** (0 … <1): `S/(S + ref)`, wie
+    /// bei der Stream-Map (`streamRefRate`). EINZIGE Quelle der Formel — der
+    /// Färbungs-Loop in `SimNode.terrainColorBytes` ruft sie über den rohen
+    /// Puffer auf, statt sie ein zweites Mal hinzuschreiben (dieselbe Doktrin wie
+    /// `vegetationSuitability` seit Issue #4). Wächter:
+    /// `ClimateSnow.testSnowCoverIsTheSingleSourceForColouring`.
+    @inline(__always) public static func snowCoverage(swe: Double, ref: Double) -> Double {
+        swe / (swe + ref)
+    }
+
     /// **Schneedeckung** einer Zelle (0 … <1) — die EINE Quelle für die
-    /// Schnee-Färbung. Sättigung `S/(S + ref)` wie bei der Stream-Map, s.
-    /// `SimConfig.snowCoverRef`.
+    /// Schnee-Färbung, s. `snowCoverage(swe:ref:)`.
     ///
     /// Ohne Klima (Feld leer) fällt die Antwort auf das HÖHENBAND zurück
     /// (`HeightBands.snowAmount`) — also exakt auf das Verhalten vor #33.
     @inline(__always) public func snowCover(_ k: Int) -> Double {
         guard snow.count == cfg.count else { return heightBands.snowAmount(h[k]) }
-        let s = snow[k]
-        return s / (s + cfg.snowCoverRef)
+        return Terrain.snowCoverage(swe: snow[k], ref: cfg.snowCoverRef)
     }
 
     /// Landanteile mit Schneedeckung über den beiden Band-Schwellen — die
@@ -907,7 +915,7 @@ public final class Terrain {
         var land = 0, ramp = 0, full = 0
         for k in 0..<cfg.count where h[k] > sea {
             land += 1
-            let c = snow[k] / (snow[k] + ref)
+            let c = Terrain.snowCoverage(swe: snow[k], ref: ref)
             if c > cStart { ramp += 1 }
             if c >= cFull { full += 1 }
         }

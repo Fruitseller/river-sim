@@ -7,7 +7,15 @@ import XCTest
 ///
 /// Gemessen wird auf Produktions-Defaults (nur `n` gesenkt, wo die Laufzeit es
 /// verlangt); die Produktionsauflösung n=832 läuft in
-/// `testSnowZoneAtProductionResolution`. Rohdaten: `docs/height-band-measurements.md`.
+/// `testSnowZoneFollowsTheClimateNotAFixedLandFraction`. Rohdaten:
+/// `docs/height-band-measurements.md`.
+///
+/// **Stand Issue #33:** der SCHNEE ist kein Perzentil mehr — seine Grenze wird
+/// aus dem Schneefeld (Massenbilanz aus Temperatur und Niederschlag)
+/// zurückgerechnet. Die Wächter hier sind entsprechend umgeschrieben: sie prüfen
+/// jetzt, dass die Schneegrenze dem KLIMA folgt und NICHT der Höhenverteilung,
+/// während Vegetation/Fels/Nadelband unverändert perzentil-gekoppelt bleiben.
+/// Messreihen dazu: `docs/climate-snow-measurements.md`.
 final class HeightBandTests: XCTestCase {
 
     /// Anteil der Landzellen mit Schnee-Anteil > 0 bzw. voll weiß.
@@ -24,40 +32,71 @@ final class HeightBandTests: XCTestCase {
         return (Double(ramp) / Double(land), Double(full) / Double(land))
     }
 
-    /// **Abnahmekriterium 2 + 3.** In Produktionsauflösung (n=832, Seed 1337) ist
-    /// die Schneezone bei der Generierung UND nach 30.000 Jahren nicht leer — und
-    /// sie bleibt dabei in einem engen Flächenband (kein „halbe Insel weiß", wenn
-    /// das Terrain abflacht).
+    /// **Abnahmekriterium 3 von Issue #33 — bewusst umgeschriebener Wächter.**
     ///
-    /// Gemessen (Rampe/voll weiß, Anteil der Landzellen):
-    ///   Jahr 0: 0.0151 / 0.0015   ·   30k: 0.0149 / 0.0015
-    /// Zum Vergleich die alten absoluten Schwellen: 0 Zellen zu jedem Zeitpunkt
-    /// (maxH 0.7457 → 0.6372 gegen eine Schneegrenze bei 1.05).
-    func testSnowZoneAtProductionResolution() {
+    /// Bis #33 hieß die Zusicherung hier: „die Schneezone ist nie leer und bleibt
+    /// in einem engen FLÄCHENBAND" (Rampe/voll gemessen 0.0151/0.0015 bei Jahr 0
+    /// und 0.0149/0.0015 nach 30k — per Konstruktion konstant, weil
+    /// `bandSnowPercentile` einen Flächenanteil festschreibt). Genau das ist
+    /// jetzt FALSCH: die Schneegrenze kommt aus der Massenbilanz, also aus einer
+    /// Temperatur — und eine Temperatur ist eine HÖHE, keine Fläche. Die
+    /// umgekehrte Zusicherung ist die richtige:
+    ///
+    /// 1. `snowStart` bleibt über den Lauf praktisch KONSTANT (klima-gepinnt),
+    /// 2. der Flächenanteil SCHRUMPFT dafür, während die Insel abgetragen wird.
+    ///
+    /// Gemessen (n=832, Seed 1337, Produktionspfad; Rampe = Landanteil mit
+    /// Schnee-Anteil > 0, Rohdaten `docs/climate-snow-measurements.md` §3):
+    ///   Jahr 0  Rampe 0.0139  snowStart 0.5721  maxH 0.7457  T(Gipfel) −4.49 °C
+    ///   10k     0.0115        0.5716            0.6726       −2.59 °C
+    ///   30k     0.0090        0.5716            0.6359       −1.63 °C
+    /// Die 0-°C-Isotherme liegt rechnerisch bei `sea + T₀/Γ` = 0.5730 — genau
+    /// dort, wo `snowStart` steht.
+    func testSnowZoneFollowsTheClimateNotAFixedLandFraction() {
         var c = SimConfig(); c.n = 832
         let t = Terrain(config: c, seed: 1337)
         let atGen = snowFractions(t)
-        XCTAssertGreaterThan(atGen.full, 0, "Schneezone bei der Generierung leer")
+        let startGen = t.heightBands.snowStart
+        XCTAssertGreaterThan(atGen.ramp, 0, "Schneezone bei der Generierung leer")
         while t.years < 30_000 { t.step(dtYears: 500) }
         let at30k = snowFractions(t)
-        XCTAssertGreaterThan(at30k.full, 0, "Schneezone nach 30k Jahren leer")
-        // Band: die Rampe ist per Konstruktion 1 − bandSnowPercentile = 1.5 % des
-        // Landes. Die Grenzen lassen Histogramm-Quantisierung und Höhen-Bindungen
-        // Luft, schließen aber jede Größenordnungs-Abweichung aus.
-        for (label, f) in [("gen", atGen), ("30k", at30k)] {
-            XCTAssertTrue(f.ramp > 0.005 && f.ramp < 0.04,
-                          "Schnee-Rampenanteil (\(label)) außerhalb des Bands: \(f.ramp)")
-            XCTAssertTrue(f.full > 0.0002 && f.full < 0.01,
-                          "Voll-Schnee-Anteil (\(label)) außerhalb des Bands: \(f.full)")
-        }
+        let start30k = t.heightBands.snowStart
+        print(String(format: "[#33] n=832 Rampe %.4f → %.4f · snowStart %.4f → %.4f "
+                     + "· maxH %.4f", atGen.ramp, at30k.ramp, startGen, start30k,
+                     t.maxHeight()))
+
+        // 1) Die Grenze ist eine Temperatur, also eine Höhe: sie darf über 30k
+        //    Jahre praktisch nicht wandern (die Rest-Bewegung ist die
+        //    Histogramm-Quantisierung von 0.000488 plus die Luv/Lee-Streuung der
+        //    Akkumulation). Die Schranke ist bewusst eng — vor #33 fiel
+        //    `snowStart` im selben Lauf um über 0.01.
+        XCTAssertEqual(start30k, startGen, accuracy: 0.005,
+            "Schneegrenze ist nicht klima-gepinnt (\(startGen) → \(start30k))")
+        let isotherm = c.sea + c.climateSeaLevelTemp / c.climateLapseRate
+        XCTAssertEqual(startGen, isotherm, accuracy: 0.02,
+            "Schneegrenze liegt nicht auf der 0-°C-Isotherme (\(startGen) gegen \(isotherm))")
+
+        // 2) Dafür schrumpft die FLÄCHE, während die Gipfel abgetragen werden —
+        //    das ist die Ablösung des fixen Landanteils.
+        XCTAssertLessThan(t.maxHeight(), 0.70, "Vorbedingung: Insel trägt nicht ab")
+        XCTAssertLessThan(at30k.ramp, atGen.ramp * 0.85,
+            "Schneefläche folgt der abtragenden Insel nicht (\(atGen.ramp) → \(at30k.ramp))")
+        // …und verschwindet dabei nicht: die Gipfel bleiben über der Isotherme.
+        XCTAssertGreaterThan(at30k.ramp, 0.002,
+            "Schneezone nach 30k Jahren praktisch leer: \(at30k.ramp)")
     }
 
     /// **Waldgrenze gegen Schneegrenze** (Review-Finding zu PR #28). Die beiden
     /// Bänder ÜBERLAPPEN sich per Konstruktion — `vegNone` (vegFull + Rampenbreite)
-    /// liegt über `snowStart` (p98.5) —, die Sim hält also auch in der Schneezone
+    /// liegt über `snowStart` —, die Sim hält also auch in der Schneezone
     /// noch Bewuchs. Baum-GEOMETRIE darf dort trotzdem nicht stehen; die Regel
     /// dafür ist `HeightBands.bearsTrees` (verbraucht von
     /// `SimNode.treeInstanceBuffer`).
+    ///
+    /// **Seit Issue #33 ist das zugleich der Wächter dafür, dass die WALDGRENZE
+    /// am Schneefeld hängt:** `snowStart` kommt aus der Massenbilanz (früher
+    /// p98.5), `bearsTrees` liest es unverändert. Die Waldgrenze folgt damit dem
+    /// Klima, ohne dass ein Konsument der Höhenband-API etwas ändern musste.
     ///
     /// Der Test prüft beides: dass die Überlappung wirklich existiert (sonst wäre
     /// er stumm) und dass kein Standort in der Schneezone baumtragend ist.
@@ -90,12 +129,16 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(b.bearsTrees(belowSnow), b.vegetationAltitudeFactor(belowSnow) > 0)
     }
 
-    /// Die Bänder ZIEHEN MIT: sinkt das Terrain über einen langen Lauf, sinken
-    /// Schnee- und Vegetationsgrenze mit — genau das, was absolute Schwellen nicht
-    /// können. Gemessen (n=160, Seed 1337, 60k Jahre): snowStart 0.5658 → 0.5072,
-    /// vegFull 0.4945 → 0.4383, während maxH von 0.6864 auf 0.5807 fällt — der
-    /// Flächenanteil der Schneezone bleibt dabei bei 1.5 % (siehe Trajektorie in
+    /// Die PERZENTIL-Bänder ziehen mit: sinkt das Terrain über einen langen Lauf,
+    /// sinkt die Vegetationsgrenze mit — genau das, was absolute Schwellen nicht
+    /// können. Gemessen (n=160, Seed 1337, 60k Jahre): vegFull 0.4945 → 0.4383,
+    /// während maxH von 0.6864 auf 0.5807 fällt (Trajektorie in
     /// docs/height-band-measurements.md).
+    ///
+    /// **Der Schnee macht das seit Issue #33 bewusst NICHT mit** und ist deshalb
+    /// die Gegenprobe im selben Test: seine Grenze ist eine Temperatur und bleibt
+    /// stehen, wo sie ist — die Zone dünnt stattdessen aus. Vor #33 wanderte
+    /// `snowStart` hier von 0.5658 auf 0.5072 mit, weil sie ein Perzentil war.
     func testBandsFollowFlatteningTerrain() {
         var c = SimConfig(); c.n = 160
         let t = Terrain(config: c, seed: 1337)
@@ -103,13 +146,19 @@ final class HeightBandTests: XCTestCase {
         let max0 = t.maxHeight()
         while t.years < 60_000 { t.step(dtYears: 500) }
         let b1 = t.heightBands
+        print(String(format: "[#33] n=160 60k: vegFull %.4f → %.4f · snowStart %.4f → %.4f "
+                     + "· maxH %.4f → %.4f", b0.vegFull, b1.vegFull,
+                     b0.snowStart, b1.snowStart, max0, t.maxHeight()))
         XCTAssertLessThan(t.maxHeight(), max0, "Vorbedingung: Terrain flacht ab")
-        XCTAssertLessThan(b1.snowStart, b0.snowStart,
-            "Schneegrenze folgt dem sinkenden Terrain nicht (\(b0.snowStart) → \(b1.snowStart))")
         XCTAssertLessThan(b1.vegFull, b0.vegFull,
             "Vegetationsgrenze folgt nicht (\(b0.vegFull) → \(b1.vegFull))")
-        // …und sie bleibt UNTER dem Gipfel: sonst wäre die Zone wieder leer.
-        XCTAssertLessThan(b1.snowStart, t.maxHeight())
+        // Gegenprobe: die Klima-Grenze wandert nicht mit. Entweder sie steht
+        // (Gipfel noch über der Isotherme) oder die Zone ist leer und das Band
+        // liegt sauber ÜBER dem Land — beides ist „folgt dem Klima, nicht der
+        // Verteilung", und beides schließt ein Mitwandern nach unten aus.
+        XCTAssertGreaterThanOrEqual(b1.snowStart, b0.snowStart - 0.005,
+            "Schneegrenze wandert mit dem Terrain statt mit dem Klima "
+            + "(\(b0.snowStart) → \(b1.snowStart))")
     }
 
     /// Ordnung und Wohlgeformtheit der Bänder: monoton und mit echter Rampenbreite
@@ -145,6 +194,34 @@ final class HeightBandTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(plateau.vegNone - plateau.vegFull, c.bandMinRampWidth)
         XCTAssertTrue(plateau.snowAmount(c.sea + 0.3).isFinite)
         XCTAssertTrue(plateau.vegetationAltitudeFactor(c.sea + 0.3).isFinite)
+    }
+
+    /// **Schneefreies Klima** (Issue #33): ein Landanteil von 0 ist ein gültiger
+    /// Zustand — warme Welt oder flach erodierte Insel. Das Band muss dann
+    /// vollständig ÜBER dem Land liegen, sonst wären ausgerechnet die Gipfel
+    /// weiß, obwohl das Klima keinen Schnee trägt (und `bearsTrees` würde sie
+    /// grundlos entwalden).
+    func testEmptySnowFieldPutsTheBandAboveTheLand() {
+        var c = SimConfig(); c.n = 64
+        var heights = [Double](repeating: c.sea - 0.1, count: 4000)
+        for k in 0..<2000 { heights[k] = c.sea + 0.1 + Double(k) * 0.0002 } // bis 0.65
+        let maxLand = heights.max()!
+        let bands = HeightBands.fromLandHeights(heights, cfg: c, snowFractions: (0, 0))
+        XCTAssertGreaterThan(bands.snowStart, maxLand,
+            "leeres Schneefeld: Band liegt im Land (snowStart \(bands.snowStart) ≤ \(maxLand))")
+        XCTAssertGreaterThanOrEqual(bands.snowFull - bands.snowStart, c.bandMinRampWidth)
+        for v in heights where v > c.sea {
+            XCTAssertEqual(bands.snowAmount(v), 0, "Land trägt Schnee ohne Schneefeld")
+            XCTAssertEqual(bands.bearsTrees(v), bands.vegetationAltitudeFactor(v) > 0,
+                           "Waldgrenze wird ohne Schnee vom Schnee-Band beschnitten")
+        }
+
+        // Gegenprobe: mit Schnee schneidet das Band genau den gemessenen Anteil ab.
+        let snowy = HeightBands.fromLandHeights(heights, cfg: c, snowFractions: (0.10, 0.02))
+        let above = heights.filter { $0 > snowy.snowStart }.count
+        let land = heights.filter { $0 > c.sea }.count
+        XCTAssertEqual(Double(above) / Double(land), 0.10, accuracy: 0.01,
+                       "Band schneidet nicht den gemessenen Landanteil ab")
     }
 
     /// Die Perzentile kommen aus DERSELBEN Quantil-Funktion wie das Relief-Signal
