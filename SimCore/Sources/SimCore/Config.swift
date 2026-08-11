@@ -1173,20 +1173,25 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// 6.0 → 1.88 % / 0.120. Über 3.0 kauft die doppelte Rechenzeit nur noch
     /// 20 % mehr Reichweite.
     public var iceFlowK: Double = 3.0
-    /// Maximale Transport-Zahl EINES Teilschritts (dimensionslos). Legt zusammen
-    /// mit `iceFlowK · dt` die Sub-Taktzahl fest: `nSub = ⌈kappa·dt / cap⌉`,
-    /// Teilschritt-Stärke `kappa·dt/nSub ≤ cap`. Dieselbe Konstruktion wie die
-    /// 0.2 der Hangdiffusion in `step()`.
+    /// Maximale Transport-Zahl EINES Teilschritts (dimensionslos) — der Anteil
+    /// einer Eissäule, der sie am STEILSTEN Hang verlassen darf. Legt die
+    /// Sub-Taktzahl fest: `nSub = ⌈kappa·wMax·dt / cap⌉` mit `wMax` = größte
+    /// Summe positiver Oberflächen-Abfälle (einmal je Schritt gemessen,
+    /// s. `updateIce`). Dieselbe Konstruktion wie die 0.2 der Hangdiffusion in
+    /// `step()`, nur mit gemessenem statt angenommenem Gefälle.
     /// 0.25 ist der klassische explizite Deckel des 5-Punkt-Sterns in 2D: bei
     /// `kappa·ΣΔs⁺ ≤ 0.25` verlässt höchstens ein Viertel der Säule die Zelle je
     /// Teilschritt, und das Schema kann nicht überschwingen.
     public var iceFlowSubCap: Double = 0.25
     /// HARTE Untergrenze der Positivität: mehr als diesen Anteil der Eissäule
     /// darf ein Teilschritt nie abgeben, egal wie steil die Oberfläche steht.
-    /// Im kalibrierten Lauf bindet der Deckel nicht (`iceFlowSubCap` hält
-    /// `kappa·ΣΔs⁺` darunter, solange die Oberfläche nicht steiler als 1.0 je
-    /// Zelle steht) — er ist der Wächter gegen negative Eisdicken an frisch
-    /// gesculpteten Kanten, dieselbe Rolle wie `meltRunoffCapPerRain`.
+    ///
+    /// Im regulären Lauf bindet er NICHT: die Sub-Taktung misst den steilsten
+    /// Eis-Hang und hält `kappa·ΣΔs⁺ ≤ iceFlowSubCap = 0.25` (s. `updateIce`),
+    /// also unter diesen 0.5. Er bindet genau da, wo diese Messung veralten
+    /// kann — die Oberfläche versteilert sich WÄHREND der Teilschritte, etwa
+    /// durch einen Spieler-Eingriff. Dieselbe Rolle wie `meltRunoffCapPerRain`:
+    /// eine Notbremse für den Sculpt-Fall, nicht ein Regler der Physik.
     public var iceFlowMoveFraction: Double = 0.5
     /// Glaziale Erosionsrate (Vorfaktor des Flux-Modells,
     /// `E = iceErodeK · q^m · S`). Real erodieren Gletscher 1–2 Größenordnungen
