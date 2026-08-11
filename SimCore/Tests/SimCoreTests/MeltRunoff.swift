@@ -15,9 +15,9 @@ import XCTest
 ///    Einlagerungs-Arm), Erhaltung in `testNormalizedMeltKeepsTheDrainageTotal`
 /// 3. beide Netze und die Tropfen-Starts folgen derselben Regel →
 ///    `testBothNetworksSeedFromTheSameWeight`, `testMeltShiftsDropletSpawns`
-/// 4. abgeschaltet bit-identisch → `testDisabledMeltRunoffIsBitIdentical`,
-///    `testWithoutClimateThereIsNoRunoffWeight`,
-///    `testSnowFreeWorldFallsBackToTheRainWeight` (der Cross-Worktree-Beleg gegen
+/// 4. abgeschaltet bit-identisch → `testDisabledMeltRunoffIsBitIdentical` (Aus-Arm
+///    UND schneefreie Welt), `testWithoutClimateThereIsNoRunoffWeight`,
+///    `testUnweightedFlowIgnoresTheMelt` (der Cross-Worktree-Beleg gegen
 ///    `origin/main` steht in `docs/melt-runoff-measurements.md` §F)
 /// 5. bestehende Wächter bleiben grün → `testEndorheicMechanicsSurviveMeltRunoff`
 ///    (#11 inselweit) und `Lithology.testSlopeBreakSurvivesMeltRunoff` (#12);
@@ -415,7 +415,7 @@ final class MeltRunoff: XCTestCase {
     /// Und ohne gewichteten Abfluss (`rainWeightedFlow` aus, Referenzarm von #9)
     /// bleibt die Akkumulation reine Zellfläche — die Schmelze darf diesen
     /// Schalter nicht hintergehen.
-    func testSnowFreeWorldFallsBackToTheRainWeight() {
+    func testUnweightedFlowIgnoresTheMelt() {
         var c = cfg(n: 96, arm: .renorm)
         c.rainWeightedFlow = false
         let t = Terrain(config: c, seed: 1337)

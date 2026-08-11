@@ -36,7 +36,7 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
     --filter testMeltRunoffMeasurementDiagnostic       # §B (Arme über die Zeit)
     --filter testMeltRunoffIsSeedRobustDiagnostic      # §C/§D/§E (gepoolt)
     --filter testSnowyIslandScanDiagnostic             # §A (Reichweite)
-    --filter testRunoffWeightCostDiagnostic            # §H (Kosten)
+    --filter testRunoffWeightCostDiagnostic            # §J (Kosten)
 RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test … --filter testMeltRunoffMeasurementDiagnostic  # §G
 ```
 
@@ -253,7 +253,7 @@ Terrain, und dort ist sie eine Determinismus-Korrektur, s. §I).
 In-Suite-Wächter dazu: `testDisabledMeltRunoffIsBitIdentical` (Aus-Arm gegen eine
 Welt, in der es nichts zu schmelzen gibt: `snowAccumPerYear = 0` → identische
 Felder), `testWithoutClimateThereIsNoRunoffWeight`,
-`testSnowFreeWorldFallsBackToTheRainWeight`.
+`testUnweightedFlowIgnoresTheMelt`.
 
 ## G) Produktionsauflösung (n = 640, Seed 1337, 50.000 Jahre)
 
