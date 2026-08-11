@@ -500,9 +500,11 @@ final class SimNode: Node {
         let creek = terrain.cfg.renderMinCells // Render-Schwelle sichtbarer Läufe — ENTKOPPELT vom Braid-Physik-Gate (braidMinCells): 30→120→280 erhöht (User: „zu viele Flüsse"), die Braiding-Physik behält ihr eigenes Gate. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
         // areaMFD (Multi-Flow): stetige Fluss-Intensität → Läufe gleiten statt zu
         // springen und können sich um Bänke teilen. Erosion nutzt weiter D8-`area`.
-        // Seetiefe/Nässe aus dem ratenbegrenzten Seespiegel statt hf — das Overlay
+        // See-Nässe aus dem ratenbegrenzten Seespiegel statt hf — das Overlay
         // muss zur (ebenfalls waterLevel-gehobenen) See-Geometrie passen und nicht
-        // mit jedem hf-Sprung flackern (s. Terrain.waterLevel).
+        // mit jedem hf-Sprung flackern (s. Terrain.waterLevel). Seit Issue #32
+        // trägt der G-Kanal das Sichtbarkeits-GATE, keine Tiefe: die Tiefe rechnet
+        // der Shader per Pixel aus derselben Wassersäule.
         let h = terrain.h, hf = terrain.waterLevel, area = terrain.areaMFD, rec = terrain.receiver
 
         if waterStream.count != cnt {
