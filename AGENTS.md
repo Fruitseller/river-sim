@@ -128,6 +128,13 @@ Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, 
 `ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0** — siehe `NOTICE`),
 `Noise.swift`, `MinHeap.swift`.
 
+Zwei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand — sie
+liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:
+`Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31) und `WaterRender.swift`
+(Kalibrier-Paarungen des Wasserfelds: Komponenten-Fade ↔ Shader-Smoothstep ↔
+Altarm-Stempel, Issue #32). Beide sind aus `SimCoreTests` gepinnt; Werte dort
+ändern heißt Shader UND `SimNode` mitziehen (der Test sagt, wo).
+
 Zwei Drainage-Netze mit strikt getrennten Rollen: **D8/`area`** speist die Erosion
 (kalibriert, implizit stabil), **MFD/`areaMFD`** (Freeman/Quinn) speist **nur** Render
 und Braiding. Diese Trennung nicht aufweichen. (Eine dokumentierte Ausnahme in der
