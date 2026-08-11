@@ -644,15 +644,15 @@ final class SimNode: Node {
         // RIBBON-MODUS (Issue #31, RS_RIVER_RIBBONS): das Wasser der Mäander rendert
         // dann die Band-Geometrie (riverRibbon*-Puffer), NICHT mehr dieses Feld.
         // Der Korridor wird trotzdem gestempelt — aber nur mit SAUM-Intensität:
-        // unter der Wasser-Schwelle des Terrain-Shaders (0.16, riverMask-smoothstep
-        // in terrain.gdshader — derselbe Wert ist unten die Kohärenz-Schwelle des
-        // keep-Filters), über seiner Ufer-Schwelle (0.09, shore-smoothstep ebd.).
-        // Wer eine der Shader-Schwellen ändert, muss haloIntensity mitziehen.
+        // unter der Wasser-Schwelle des Terrain-Shaders (`riverMaskLo`, derselbe
+        // Wert ist unten die Kohärenz-Schwelle der Komponenten-Maske), über seiner
+        // Ufer-Schwelle (`shoreLo`). Beide Schwellen und der Halo stehen zusammen
+        // in `WaterRender`, damit man sie nicht einzeln verschieben kann.
         // Das Ribbon liegt so in einem weichen Nass-Halo aus dem bestehenden
         // Ufer-Saum — adressiert die dokumentierte Rückbau-Ursache von f3556c8
         // („harte Kanten am Ribbon↔Ufer-Übergang").
         let ribbonMode = riverRibbonsEnabled
-        let haloIntensity = 0.14
+        let haloIntensity = WaterRender.ribbonHaloIntensity
         for ch in noMeanderPaint ? [] : terrain.meander.channels {
             let nodes = ch.nodes
             if nodes.count < 2 { continue }
@@ -788,7 +788,9 @@ final class SimNode: Node {
         // `SimCoreTests/WaterRenderTests.swift`.
         rawWet.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         for k in 0..<cnt { rawWet[k] = hf[k] > sea && hf[k] - h[k] > 0.03 }
-        for k in 0..<cnt { mask[k] = rawWet[k] || sd[k] >= 0.16 }
+        // Kohärenz-Maske über die Wasser-Schwelle des Shaders: was er als Fluss
+        // malen WÜRDE, zählt für die Komponente.
+        for k in 0..<cnt { mask[k] = rawWet[k] || sd[k] >= WaterRender.riverMaskLo }
         componentFade.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         seen.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         waterComponent.removeAll(keepingCapacity: true)
