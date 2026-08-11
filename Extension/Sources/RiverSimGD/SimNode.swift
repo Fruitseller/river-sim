@@ -771,11 +771,21 @@ final class SimNode: Node {
         // die in einen See münden, überleben über die gemeinsame Komponente.
         // Flood-Fill ist O(n²) und läuft eh nur je Render-Tick. Altarme separat
         // via oxb.
-        // Fenster so gelegt, dass VOLLE Sichtbarkeit bei der alten Schwelle bleibt:
-        // der Shader schaltet sein Gate über smoothstep(0.04, 0.35, ·) — voll ab
-        // Fade ≥ 0.35, also ab 10 + 0.35·40 = 24 Zellen (altes minWetCells: 25);
-        // unsichtbar unter Fade ≤ 0.04 ≈ 12 Zellen. Die „zu viele Seen"-
-        // Kalibrierung bleibt damit stehen, nur der Übergang 12→24 ist neu weich.
+        // Fenster so gelegt, dass VOLLE Sichtbarkeit nahe der alten Schwelle bleibt.
+        // Die beiden Kanäle kommen dort auf verschiedenen Wegen hin, weil der Shader
+        // sie verschieden liest — das ist gewollt, aber leicht zu übersehen:
+        //   See:   der Shader gatet über smoothstep(0.04, 0.35, ·) → voll ab
+        //          Fade ≥ 0.35, also ab 10 + 0.35·40 = 24 Zellen; unsichtbar unter
+        //          Fade ≤ 0.04 ≈ 12 Zellen.
+        //   Fluss: KEIN Gate — riverMask = smoothstep(0.16, 0.45, ·) liest den Kanal
+        //          als INTENSITÄT, der Fade skaliert sie also nur. Für einen kräftigen
+        //          Lauf (sd ≈ 1) heißt das: unsichtbar bis ~17 Zellen, ~24% bei 20,
+        //          voll ab Fade ≥ 0.45 ≈ 28 Zellen.
+        // Beide Fenster liegen um die alte harte Schwelle 25 herum, der Fluss-Kanal
+        // etwas breiter. Die Kurve hier NICHT „symmetrisch" machen, indem man die
+        // Gate-Kurve auch auf sd legt: sie sättigt bei Fade 0.35, riverMask schon bei
+        // 0.45 — kombiniert wären 18-Zell-Fetzen VOLL sichtbar, also genau die
+        // Sprenkel, die der Kohärenz-Filter verhindern soll (nachgerechnet, verworfen).
         let fadeLoCells = 10.0
         let fadeHiCells = 50.0
         rawWet.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
