@@ -858,12 +858,12 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Faktor 19 im Vorrat) sind das `18/(c·τ₀·Γ)` Höheneinheiten.
     ///
     /// Sweep (n=192, Seed 1337, Produktionspfad; Saumbreite / Landanteil bei
-    /// Jahr 0: sichtbar (Deckung > 0.05) / Rampe (> 0.5) / voll (≥ 0.85);
-    /// Rohdaten `docs/climate-snow-measurements.md` §2, Wächter
-    /// `ClimateSnow.testMeltRateSweepDiagnostic`):
-    ///   c = 0.02 → 0.069 Einheiten · 9.08 % / 1.65 % / 0.17 %
-    ///   c = 0.06 → 0.023 Einheiten · 4.98 % / 1.38 % / 0.17 %   ← gewählt
-    ///   c = 0.20 → 0.007 Einheiten · 2.35 % / 1.30 % / 0.17 %
+    /// Jahr 0: sichtbar (Deckung > 0.05) / Rampe (> `snowBandCoverStart`) / voll
+    /// (≥ `snowBandCoverFull`); Rohdaten `docs/climate-snow-measurements.md` §2,
+    /// Wächter `ClimateSnow.testMeltRateSweepDiagnostic`):
+    ///   c = 0.02 → 0.0692 Einheiten · 9.08 % / 1.65 % / 0.74 %
+    ///   c = 0.06 → 0.0231 Einheiten · 4.98 % / 1.38 % / 0.73 %   ← gewählt
+    ///   c = 0.20 → 0.0069 Einheiten · 2.35 % / 1.30 % / 0.73 %
     /// GEWÄHLT 0.06. Die substanzielle Schneefläche (1.38 %) trifft die alte
     /// Perzentil-Kalibrierung (1.5 %, `bandSnowPercentile`) fast auf den Punkt —
     /// der Look bleibt beim Umstieg erhalten. 0.02 verwäscht den Saum über 9 %
@@ -895,11 +895,14 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Zahl an Shader/Diagnose.
     /// 0.8 ⇒ `S ≥ 4·snowCoverRef = 0.4`, knapp unter der asymptotischen
     /// Obergrenze der Deckung (gemessen n=832, Seed 1337: Smax 0.660 bei der
-    /// Generierung → Deckung 0.87). 0.85 ließ das Voll-Band schon bei der
-    /// Generierung praktisch leer (< 0.005 % des Landes). Dass es mit der
-    /// alternden Insel trotzdem ausdünnt (Smax 0.438 nach 30k J.), ist gewollt:
-    /// die Insel wächst nicht mehr in die Höhe, in der das Klima Dauerschnee
-    /// trägt.
+    /// Generierung → Deckung 0.87). VERWORFEN 0.85: das Voll-Band war schon bei
+    /// der Generierung praktisch leer (< 0.005 % des Landes) und `snowFull`
+    /// rutschte nach 30k Jahren ÜBER den Gipfel (0.6361 gegen maxH 0.6359) — das
+    /// Band existierte dann nicht mehr. Mit 0.8 bleibt es über den ganzen Lauf
+    /// unter dem Gipfel (0.6683 / 0.6424 / 0.6161 bei J0 / 10k / 30k).
+    /// Dass der Voll-Anteil mit der alternden Insel trotzdem winzig bleibt
+    /// (0.02 %, Smax 0.660 → 0.438), ist gewollt: die Insel wächst nicht mehr in
+    /// die Höhe, in der das Klima Dauerschnee trägt.
     public var snowBandCoverFull: Double = 0.8
 
     // ---- Klima / Vegetation ----

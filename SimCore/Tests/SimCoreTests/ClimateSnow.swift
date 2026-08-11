@@ -137,6 +137,62 @@ final class ClimateSnow: XCTestCase {
         XCTAssertEqual(a.temperature, b.temperature)
     }
 
+    /// **dt-Invarianz durch den VOLLEN Zeitschritt** — „Zeitraffer == Zeitsprung
+    /// für dieselbe Simulationszeit", so wie das Abnahmekriterium es formuliert.
+    /// Der Test darüber isoliert die Bilanz; dieser hier fährt dieselben 20.000
+    /// Jahre in dt = 50 / 500 / 2000 durch `step()` und vergleicht die
+    /// Schnee-Kennzahlen am Ende.
+    ///
+    /// Die Schranke ist hier notwendigerweise weiter als die 1e-12 oben, und zwar
+    /// aus einem Grund, der NICHT im Klimapass liegt: das Terrain selbst driftet
+    /// über die Schrittweite (Operator-Splitting des Tropfen-Passes, Klassen-Doku
+    /// von `DtInvariance` — Relief-Spanne 9.8 %, Seeanteil 72 % über dieselben
+    /// Schrittweiten). Der Schnee liest die Höhe, also erbt er diese Drift. Die
+    /// Schranke von 20 % liegt auf dem Niveau der Relief-Schranke dort und fängt
+    /// jede eigene dt-Abhängigkeit des Klimapasses ab.
+    ///
+    /// Gemessen (n=192, Seed 1337, 20k Jahre; mittlerer Vorrat über Land /
+    /// Rampen-Anteil / `snowStart`):
+    ///   dt   50 → 0.00247 / 0.0050 / 0.5702
+    ///   dt  500 → 0.00265 / 0.0052 / 0.5697
+    ///   dt 2000 → 0.00243 / 0.0050 / 0.5702
+    /// Spanne 8.3 % bzw. 3.8 %; die Grenze bewegt sich um 0.0005, also eine
+    /// Histogramm-Bin-Breite.
+    func testSnowThroughFullStepsIsDtInvariant() {
+        var conf = cfg(n: 192)
+        // Wie in DtInvariance: die Zufalls-Hebung des Servos aus dem Vergleich
+        // nehmen, damit nur die Pass-Drift übrig bleibt.
+        conf.upliftDecayFloorPer100y = 0
+        conf.reliefServoPer100y = 0
+        var arms: [(dt: Double, mean: Double, frac: Double, start: Double)] = []
+        for dt in [50.0, 500.0, 2000.0] {
+            let t = Terrain(config: conf, seed: 1337)
+            run(t, to: 20_000, dt: dt)
+            var sum = 0.0
+            var land = 0
+            for k in 0..<conf.count where t.h[k] > conf.sea { sum += t.snow[k]; land += 1 }
+            arms.append((dt, sum / Double(max(1, land)), fractions(t).ramp,
+                         t.heightBands.snowStart))
+        }
+        for a in arms {
+            print(String(format: "[#33] dt %6.0f: mittlerer Vorrat %.5f · Rampe %.4f "
+                         + "· snowStart %.4f", a.dt, a.mean, a.frac, a.start))
+        }
+        for a in arms {
+            for b in arms where b.dt > a.dt {
+                let tag = "dt \(Int(a.dt)) vs \(Int(b.dt))"
+                let devMean = abs(a.mean - b.mean) / max(abs(a.mean), abs(b.mean))
+                let devFrac = abs(a.frac - b.frac) / max(abs(a.frac), abs(b.frac))
+                XCTAssertLessThan(devMean, 0.20, "\(tag): Vorrat \(a.mean) vs \(b.mean)")
+                XCTAssertLessThan(devFrac, 0.20, "\(tag): Rampe \(a.frac) vs \(b.frac)")
+                // Die GRENZE ist eine Temperatur und darf gar nicht driften —
+                // sie hängt nur an der Höhenverteilung, nicht an der Schrittzahl.
+                XCTAssertEqual(a.start, b.start, accuracy: 0.01,
+                               "\(tag): snowStart \(a.start) vs \(b.start)")
+            }
+        }
+    }
+
     /// `dt = 0` ist ein exakter No-Op auf der Bilanz (der Sculpt-Pfad in
     /// `SimNode.recomputeFlow` verlässt sich darauf) — nur die Temperatur wird
     /// nachgezogen.

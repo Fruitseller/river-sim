@@ -874,6 +874,15 @@ public final class Terrain {
                     pt[k] = t
                     let fSnow = min(1, max(0, (tRain - t) / phaseSpan))
                     let a = accum * prain[k] * fSnow
+                    // Schneefreie Zelle ohne Zufuhr: Ziel 0, Vorrat 0 — die
+                    // Relaxation liefert dann exakt 0 (0 + (0−0)·e^… = 0), das
+                    // `exp` wäre reine Rechenzeit. BIT-IDENTISCH, nicht approximiert.
+                    // Der Zweig trägt die große Mehrheit der Zellen: das ganze Meer
+                    // und alles Land unter der Regen/Schnee-Grenze (bei
+                    // Produktionswerten h < 0.458, s. climateLapseRate). Gemessen
+                    // n=832: der Pass fällt damit von 3.12 ms auf unter 1 ms je
+                    // Schritt (docs/climate-snow-measurements.md §7).
+                    if a == 0 && ps[k] == 0 { continue }
                     let mu = base + melt * max(0, t)
                     let target = a / mu
                     ps[k] = target + (ps[k] - target) * exp(-mu * dt)
