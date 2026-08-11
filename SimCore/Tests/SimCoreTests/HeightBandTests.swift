@@ -100,9 +100,11 @@ final class HeightBandTests: XCTestCase {
     ///
     /// Der Test prüft beides: dass die Überlappung wirklich existiert (sonst wäre
     /// er stumm) und dass kein Standort in der Schneezone baumtragend ist.
-    /// Gemessen (n=832, Seed 1337, Generierung): snowStart 0.5697, vegNone 0.6844,
-    /// Höhenfaktor an der Schneegrenze 0.617 — 4 von 31995 Baum-Kandidaten lagen
-    /// vor dem Fix in der Schneezone, nach 30k Jahren 11 von 56994.
+    /// Gemessen (n=832, Seed 1337, Generierung, Stand #4): snowStart 0.5697,
+    /// vegNone 0.6844, Höhenfaktor an der Schneegrenze 0.617 — 4 von 31995
+    /// Baum-Kandidaten lagen vor dem Fix in der Schneezone, nach 30k Jahren 11
+    /// von 56994. Mit dem Klima (#33) liegt `snowStart` auf 0.5721, die
+    /// Überlappung ist also unverändert vorhanden.
     func testSnowZoneBearsNoTrees() {
         var c = SimConfig(); c.n = 256
         let t = Terrain(config: c, seed: 1337)
@@ -131,14 +133,18 @@ final class HeightBandTests: XCTestCase {
 
     /// Die PERZENTIL-Bänder ziehen mit: sinkt das Terrain über einen langen Lauf,
     /// sinkt die Vegetationsgrenze mit — genau das, was absolute Schwellen nicht
-    /// können. Gemessen (n=160, Seed 1337, 60k Jahre): vegFull 0.4945 → 0.4383,
-    /// während maxH von 0.6864 auf 0.5807 fällt (Trajektorie in
-    /// docs/height-band-measurements.md).
+    /// können. Nachgemessen (n=160, Seed 1337, 60k Jahre, Stand #33):
+    /// vegFull 0.4945 → 0.4378, während maxH von 0.6864 auf 0.5762 fällt. (Die
+    /// Trajektorie in docs/height-band-measurements.md stammt aus der #4-Zeit
+    /// und liegt bei 0.4383 / 0.5807 — die Differenz ist die Physik-Entwicklung
+    /// seit #11/#12/#13, nicht das Klima: das koppelt in keinen Pass, Wächter
+    /// `ClimateSnow.testDisabledClimateIsBitIdenticalPhysics`.)
     ///
     /// **Der Schnee macht das seit Issue #33 bewusst NICHT mit** und ist deshalb
     /// die Gegenprobe im selben Test: seine Grenze ist eine Temperatur und bleibt
     /// stehen, wo sie ist — die Zone dünnt stattdessen aus. Vor #33 wanderte
-    /// `snowStart` hier von 0.5658 auf 0.5072 mit, weil sie ein Perzentil war.
+    /// `snowStart` hier von 0.5658 auf 0.5072 mit, weil sie ein Perzentil war;
+    /// jetzt gemessen 0.5702 → 0.5687.
     func testBandsFollowFlatteningTerrain() {
         var c = SimConfig(); c.n = 160
         let t = Terrain(config: c, seed: 1337)

@@ -6,8 +6,9 @@ import Foundation
 ///
 /// ## Warum ein eigenes Binärformat
 ///
-/// Der Zustand besteht aus ~25 Feldern à n² `Double` (n = 832 → 692 224 Zellen,
-/// 5,5 MB je Feld; eine Welt ≈ 109 MB, gemessen 166 Byte/Zelle). Zwei harte
+/// Der Zustand besteht aus ~30 Feldern à n² `Double` (n = 832 → 692 224 Zellen,
+/// 5,5 MB je Feld; eine Welt ≈ 120 MB, gemessen 182 Byte/Zelle — vor den
+/// Kryo-Feldern aus Issue #33 waren es 109 MB / 166 Byte). Zwei harte
 /// Anforderungen bestimmen die Kodierung:
 ///
 /// 1. **Bit-Genauigkeit.** Die Abnahme-Invariante ist Determinismus: ein
@@ -16,7 +17,7 @@ import Foundation
 ///    Erfahrung wie bei `powFast`). Gespeichert wird deshalb das
 ///    IEEE-754-Bitmuster jedes `Double`, nicht seine Dezimaldarstellung.
 /// 2. **Größe/Zeit.** JSON braucht für dieselben Zahlen ~3× so viele Bytes und
-///    einen Parser je Zahl (109 MB → ~350 MB Text). Plist-XML
+///    einen Parser je Zahl (120 MB → ~380 MB Text). Plist-XML
 ///    genauso. Binäres Plist wäre bit-genau, verpackt aber jedes Element als
 ///    eigenes Objekt — für 17 Mio. Zahlen unbrauchbar.
 ///
