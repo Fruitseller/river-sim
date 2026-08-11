@@ -371,7 +371,7 @@ fester sequenzieller Endsumme. Bit-Identität wäre dann an die Chunk-Aufteilung
 gebunden (`Terrain.parallel` skaliert mit der Kernzahl) — das ist eine eigene
 Entscheidung über den Determinismus-Vertrag und nichts, was man beiläufig mitnimmt.
 
-Weltraum-Kosten: ein zusätzliches `[Double]` je Zelle, und nur solange die Welt
+Arbeitsspeicher: ein zusätzliches `[Double]` je Zelle, und nur solange die Welt
 etwas zu schmelzen hat (sonst bleibt das Feld leer). Der Spielstand wächst
 **nicht**: `runoffWeight` ist eine reine Ableitung aus `rain`/`temperature`/`snow`
 und steht deshalb nicht im Inventar (`TerrainState`) — das Snapshot-Format bleibt

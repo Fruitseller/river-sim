@@ -17,7 +17,16 @@ import XCTest
 ///    `testBothNetworksSeedFromTheSameWeight`, `testMeltShiftsDropletSpawns`
 /// 4. abgeschaltet bit-identisch → `testDisabledMeltRunoffIsBitIdentical`,
 ///    `testWithoutClimateThereIsNoRunoffWeight`,
-///    `testSnowFreeWorldFallsBackToTheRainWeight`
+///    `testSnowFreeWorldFallsBackToTheRainWeight` (der Cross-Worktree-Beleg gegen
+///    `origin/main` steht in `docs/melt-runoff-measurements.md` §F)
+/// 5. bestehende Wächter bleiben grün → `testEndorheicMechanicsSurviveMeltRunoff`
+///    (#11 inselweit) und `Lithology.testSlopeBreakSurvivesMeltRunoff` (#12);
+///    was dabei umgepinnt werden musste und warum: Messreihe §I
+///
+/// Dazu die Reichweite des Features (`testSnowyIslandScanDiagnostic`: nur alpine
+/// Inseln haben überhaupt Schmelze), der Deckel des Beitrags
+/// (`testMeltContributionIsCappedAtTheLocalRain`) und die Kosten
+/// (`testRunoffWeightCostDiagnostic`).
 final class MeltRunoff: XCTestCase {
 
     // MARK: - Konfigurationen der vier Arme
