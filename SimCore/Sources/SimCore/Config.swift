@@ -723,6 +723,11 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var bandVegRampSpanFactor: Double = 1.0
     public var bandRockPercentile: Double = 0.92     // Beginn der Hochlagen-Graurampe. War p98.9 (1.1 % des Landes, Kern der Issue-Beobachtung „99 % im schmalen Farbband"); p92 gibt den obersten 8 % einen sichtbaren Fels-Verlauf, ohne unter die Vegetationsgrenze (p91) zu rutschen.
     public var bandRockFullPercentile: Double = 0.995 // voll ausgegraut. Alt: 0.98 absolut = jenseits von maxH, die Rampe kam real nie über 41 %.
+    // SEIT ISSUE #33 NUR NOCH RÜCKFALL: die Schneegrenze kommt aus dem Schneefeld
+    // (Massenbilanz, s. Abschnitt „Klima-Vertikale" unten). Diese beiden
+    // Perzentile greifen nur, wenn `climateEnabled = false` ist — dann rechnet
+    // alles bit-identisch wie vor #33. Die Herleitung darunter beschreibt also
+    // den Stand von #4.
     public var bandSnowPercentile: Double = 0.985    // Beginn Schnee: oberste 1.5 % des Landes (n=832: ~7200 Zellen in der Rampe). Alt 1.05 absolut = 0 Zellen. Der Wert ist gesetzt, nicht gemessen: die Perzentil-Konstruktion legt den Flächenanteil fest, gemessen ist nur, DASS er über den Lauf steht (1.51 % → 1.49 %, s. docs). Enger (p99.5 = 0.5 %) wäre Streusel, weiter (p95 = 5 %) würde ganze Kammlinien weißen.
     public var bandSnowFullPercentile: Double = 0.9985 // voll weiß: oberste 0.15 % (~720 Zellen bei n=832) — die eigentlichen Gipfel.
     public var bandConiferLowPercentile: Double = 0.15 // Baum-Variante Laub→Nadel: entspricht der alten 0.26 (p17.1 bei der Generierung, p11.4 nach 30k).

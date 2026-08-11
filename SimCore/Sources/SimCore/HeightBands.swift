@@ -112,7 +112,9 @@ public struct HeightBands: Equatable, Sendable, Codable {
 
     /// **Waldgrenze**: trägt diese Höhe Baum-GEOMETRIE? Das ist bewusst enger als
     /// `vegetationAltitudeFactor > 0`, weil sich die beiden Bänder überlappen:
-    /// `vegNone` (vegFull + Rampenbreite) liegt ÜBER `snowStart` (p98.5): gemessen
+    /// `vegNone` (vegFull + Rampenbreite) liegt ÜBER `snowStart` (damals p98.5,
+    /// seit Issue #33 die Klima-Schneegrenze — die Überlappung besteht in beiden
+    /// Fällen, Wächter `HeightBandTests.testSnowZoneBearsNoTrees`): gemessen
     /// n=832, Seed 1337 bei der Generierung 0.6844 gegen 0.5697, und der
     /// Höhenfaktor beträgt an der Schneegrenze noch 0.617. Vor Issue #4 war das
     /// unsichtbar — die Schneegrenze 1.05 wurde nie erreicht, es gab keine
