@@ -39,6 +39,10 @@ public enum SimProfile {
             counts[open, default: 0] += 1
         }
         openName = name
+        // Zweiter Zeitstempel mit Absicht: der neue Span soll die eigene
+        // Buchhaltung oben NICHT mitzählen. Was dadurch zwischen den Spans
+        // liegt, taucht in `simperf` als „nicht zugeordnet" auf (gemessen
+        // < 0,1 % des Schritts).
         openStart = DispatchTime.now().uptimeNanoseconds
     }
 

@@ -36,6 +36,20 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
   `SendableClosureCaptures` ab.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 
+**Laufzeit messen** (Issue #43 — Mess-Harness für den Sim-Schritt, headless,
+Produktions-Config, n = 832):
+
+```sh
+swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+SimCore/.build/release/simperf --repeat 3   # ms/Schritt + Pass-Tabelle
+SimCore/.build/release/simperf --hash       # Fingerabdruck aller Zustandsfelder
+```
+
+`--hash` ist der Wächter für „Physik unverändert": gleicher Wert vor und nach
+einer Optimierung (auf DERSELBEN Maschine) heißt bit-identisch. Die Pass-Tabelle
+kommt aus `SimProfile` (Marken in `step()`, standardmäßig aus). Messprotokoll,
+Vorher/Nachher und die gemessenen Fehlschläge: `docs/perf-measurements.md`.
+
 **Extension bauen** (M4-Max-Referenz-Mac: No-Op ~1,3 s, SimCore-Edit ~9 s,
 Extension-Edit ~5 s, Kaltbau ~10 min in einem Aufruf; **auf Linux gemessen 21,5 min** Kaltbau,
 auf einem 4-Kern-Host 27 min — SwiftGodots Codegen dominiert, mehr Kerne helfen

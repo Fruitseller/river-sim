@@ -2815,8 +2815,8 @@ public final class Terrain {
                 // genau nn±1 sind die diagonalen Schritte (bei 1 ändert sich nur
                 // die Spalte, bei nn nur die Zeile). Ergebnis-identisch zum
                 // früheren `i != rii && j != rjj`.
-                let step = k > ri ? k - ri : ri - k
-                dist = (step == nn - 1 || step == nn + 1) ? cs * sqrt2 : cs
+                let dIdx = k > ri ? k - ri : ri - k
+                dist = (dIdx == nn - 1 || dIdx == nn + 1) ? cs * sqrt2 : cs
             }
             // Reine Flächen-Stream-Power: die Inzision konzentriert sich auf Zellen mit
             // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
@@ -3524,11 +3524,6 @@ public final class Terrain {
         let k = yi * n + xi
         return p[k] * (1 - fx) * (1 - fy) + p[k + 1] * fx * (1 - fy)
              + p[k + n] * (1 - fx) * fy + p[k + n + 1] * fx * fy
-    }
-
-    /// Einzugsgebiet an einer kontinuierlichen Grid-Position (bilinear).
-    @inline(__always) private func bilinearArea(_ gx: Double, _ gz: Double) -> Double {
-        area.withUnsafeBufferPointer { Terrain.bilinear($0.baseAddress!, n, gx, gz) }
     }
 
     /// Mittleres Auwald-veg im Ufer-Streifen (±`r` Zellen) um eine
@@ -4324,7 +4319,7 @@ public final class Terrain {
 /// NICHT aufgenommen sind reine Arbeitspuffer, die ihr Pass vor dem ersten Lesen
 /// vollständig überschreibt (geprüft, Stand Issue #8): `vegScratch`,
 /// `basinSeen`, `basinCells`, `basinSlots`, `orderPos`, `visited`, `scratch`,
-/// `qs`, `trackBuf`, `pondSeen`, `heap` sowie die Bin-Puffer des
+/// `vegScratchRow`, `areaPow`, `qs`, `trackBuf`, `pondSeen`, `heap` sowie die Bin-Puffer des
 /// Mäander-Cutoff-Index in `MeanderState`. Ebenfalls nicht: `noise`
 /// (Permutationstabelle, rein aus `seed` rekonstruiert), `vegTypeFactor`,
 /// `mfdMinA`, `mfdFlatCell` (aus der Config abgeleitet).

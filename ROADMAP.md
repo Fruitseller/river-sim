@@ -486,6 +486,40 @@ Messreihen `docs/dt-invariance-measurements.md`):
   per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
   jetzt über sanfteres Relief (`baseRelief` 0.78).
 
+**Sim-Schritt-Laufzeit — Runde 3 ERLEDIGT (Aug 2026, Issue #43), Rest benannt:**
+Der Sim-Schritt blockiert den Hauptthread und ist **Fixkosten**: gemessen kostet
+dt = 0,2 praktisch dasselbe wie dt = 100 (368,6 vs. 374,2 ms bei n = 832 auf der
+Linux-VM) — im Echtzeit-Zeitraffer zahlt also jeder Frame den vollen Schritt.
+Diese Runde hat ihn ohne jede Physik-Änderung (Wächter: `simperf --hash`,
+Fingerabdruck über alle Zustandsfelder) deutlich gesenkt; Messprotokoll,
+Werkzeug und die Liste der gemessenen **Fehlschläge** stehen in
+`docs/perf-measurements.md`.
+
+Der Befund war fast überall derselbe: die Zeit lag nicht in der Arithmetik,
+sondern in Bounds-, COW- und Exklusivitätsprüfungen bei Zugriffen auf
+KLASSEN-Properties im Zell-Loop (~40 Zyklen je Zugriff; eine Mehrfeld-Schleife
+über das Gitter kostet ~9 ms JE FELD und Schritt). Wer einen neuen Gitterpass
+schreibt, öffnet seine Felder einmal per `withUnsafe*BufferPointer` — die
+Helfer `Terrain.fill`/`Terrain.anyCell` decken die Memset-/Suchfälle ab.
+
+Was bewusst NICHT angetastet wurde:
+- **`priorityFlood`** (jetzt der größte Posten) ist unter der Bit-Identitäts-
+  Auflage ausgereizt. Die bekannten Beschleunigungen (Priority-Flood + FIFO nach
+  Barnes, cache-ausgerichteter/8-ärer Heap) ändern die Pop-Reihenfolge bei
+  gleichen Keys — und `order` ist die SUMMATIONSREIHENFOLGE der
+  Flächen-Akkumulation, also Rundung. Messdaten zum Heap in `docs/perf-…` §F.
+- **`mfdUpdateInterval`** steht auf 1; `computeMFDArea` läuft also auch ohne
+  Braiding jeden Schritt (die Vermutung aus Issue #43, `braidingEnabled` hebele
+  ein Intervall aus, trifft nicht zu). Ein größeres Intervall wäre eine
+  Physik-Änderung und braucht eine eigene Kalibrier-Runde.
+- Alles, was mit `dt` skaliert (`Hydraulic.erode`), ist für die Echtzeit-FPS
+  ohnehin nicht der Treiber.
+
+Nächste Hebel, wenn wieder Laufzeit gebraucht wird: Sim-Schritt vom
+Render-Thread entkoppeln (Doppelpuffer), oder die drei verbliebenen seriellen
+`order`-Pässe (`priorityFlood`, `computeMFDArea`, `outletIncision`) mit einer
+BEWUSSTEN Physik-Neukalibrierung angehen.
+
 **Backlog (nicht priorisiert):**
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
 - Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.
@@ -493,6 +527,10 @@ Messreihen `docs/dt-invariance-measurements.md`):
 
 ## Verifikation
 
+- **Laufzeit:** `SimCore/.build/release/simperf --repeat 3` (Mess-Harness aus
+  Issue #43: Produktions-Config, n = 832, Einlauf + Pass-Tabelle) und
+  `simperf --hash` als Bit-Identitäts-Wächter vor/nach einer Optimierung.
+  Protokoll und Messhygiene: `docs/perf-measurements.md`.
 - **Headless-Tests:** `cd SimCore && swift test -c release` (Debug ist bei n=832 zu
   langsam). Beim Iterieren `--filter <methodName>` — **nicht** den Klassennamen, der
   matcht 0 Tests. Wächter: `LongRunCollapse.swift` (kein Runaway/Kollaps),
