@@ -36,9 +36,10 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
   `SendableClosureCaptures` ab.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 
-**Extension bauen** (~3,5 min gilt für macOS mit warmem SwiftGodot-Cache; **auf Linux
-gemessen 21,5 min** aus leerem `.build`, auf einem 4-Kern-Host 27 min — SwiftGodots
-Codegen dominiert) — **immer mit absolutem Pfad aufrufen**;
+**Extension bauen** (M4-Max-Referenz-Mac: No-Op ~1,3 s, SimCore-Edit ~9 s,
+Extension-Edit ~5 s, Kaltbau ~10 min in einem Aufruf; **auf Linux gemessen 21,5 min** Kaltbau,
+auf einem 4-Kern-Host 27 min — SwiftGodots Codegen dominiert, mehr Kerne helfen
+nicht: serielle Modulkette + WMO) — **immer mit absolutem Pfad aufrufen**;
 relativ aus `game/` heraus schlägt es still fehl und Godot lädt weiter die ALTE
 Library:
 
@@ -48,6 +49,22 @@ Library:
 
 Baut `Extension` und kopiert `libRiverSimGD.so`/`libSwiftGodot.so` plus die komplette
 Swift-Runtime nach `game/bin/` (unter macOS `.dylib` + `codesign`).
+
+`build.sh` führt alle `swift`-Aufrufe unter einer festen Minimal-Umgebung aus:
+SwiftPM verschlüsselt sonst die komplette Prozessumgebung in die Plugin-/
+Tool-Build-Signaturen, und JEDER Kontextwechsel (anderes Terminal-Pane, Editor,
+Agent-Session) kostete real ~10 min Voll-Neubau bei unveränderten Quellen
+(Diagnose und Messreihe: `docs/build-invalidation-measurements.md`). Ein
+Toolchain-Wechsel wird laut gemeldet statt still neu zu bauen.
+
+**Worktrees** bauen automatisch in den geteilten Cache des Haupt-Repos
+(`--scratch-path`): erster Build im frischen Worktree ~3 min statt ~8 min
+Kaltbau, danach im selben Worktree Sekunden. Jeder Wechsel des bauenden
+Checkouts (Haupt ↔ Worktree) kostet einmalig ~3 min Neuplanung — build.sh
+räumt dabei die checkout-eigenen Artefakte selbst weg, der Build-Stempel-Check
+verifiziert jedes Ergebnis. Die frühere Handarbeit „`.build` kopieren,
+`ModuleCache`-Ordner löschen" entfällt. `RS_NO_SHARED_BUILD=1` erzwingt einen
+eigenständigen Build im Worktree.
 
 **Build-Stempel gegen veraltete Libraries:** `scripts/build.sh` hasht die Quellen
 unter `Extension/Sources` + `SimCore/Sources` und brennt den Stempel via
