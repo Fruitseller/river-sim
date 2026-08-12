@@ -29,6 +29,21 @@ final class RainWeightedFlowTests: XCTestCase {
         var c = SimConfig()
         c.n = n
         c.rainWeightedFlow = rainWeighted
+        // Gletscher (Issue #35) AUSGEPINNT — dieselbe Doktrin wie die Pins in
+        // `EndorheicEvaporation.cfg()`: dieser Wächter misst, was die GEWICHTUNG
+        // umverteilt, und das Eis setzt sich genau in den Weg. Schnee fällt, wo
+        // es hoch UND nass ist — also bevorzugt im LUV —, und unter dem Eis
+        // liegt der fluviale Abtrag still. Die Gletscher dünnen damit
+        // ausgerechnet die Luv-Kanäle aus, an denen die Kennzahl hängt.
+        // GEMESSEN (n=192, 6 Seeds, 20k Jahre, gepoolte Drainagedichte Luv/Lee,
+        // s. `testRainWeightLuvLeeIsSeedRobustDiagnostic`):
+        //   ohne Eis: aus 1.164 → an 1.315  (×1.130)
+        //   mit Eis:  aus 1.197 → an 1.230  (×1.027)
+        // Die RICHTUNG stimmt in der Produktion weiterhin (an > aus), aber der
+        // Hub schrumpft von +13 % auf +2.7 % und taugt dann nicht mehr als
+        // Signal-Wächter mit 5-%-Marge. Ausgepinnt misst der Test wieder die
+        // Mechanik von #9/#10 auf dem Stand, auf dem sie kalibriert wurde.
+        c.iceEnabled = false
         return c
     }
 

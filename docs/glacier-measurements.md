@@ -257,14 +257,20 @@ verschwindet im Rauschen; er kostet dort, wo er muss — im großen Sprung.
 20k Jahren Vorlauf, drei Arme (nichts / nur Abtrag / nur Moräne), damit die
 Differenzen genau die beiden Terme isolieren:
 
-| dt | glazialer Abtrag | Moräne | Anteil |
+| dt | glazialer Abtrag (Σ Δh) | Moräne (Σ Δh) | Anteil |
 |---|---|---|---|
-| 500 | s. Testausgabe | s. Testausgabe | s. Testausgabe |
-| 5.000 | s. Testausgabe | s. Testausgabe | s. Testausgabe |
+| 500 | 6.014 | 1.241 | **20.6 %** |
+| 5.000 | 57.747 | 13.076 | **22.6 %** |
 
-Der Rest verlässt das System als Schmelzwasserfracht — Masse-Erhaltung gilt in
-diesem Repo ohnehin nicht (detachment-limited Stream-Power, AGENTS.md), die
-Invariante ist beschränktes Relief.
+Bei `iceMoraineK = 0.05` legt das Eis also gut ein Fünftel dessen wieder ab, was
+es abträgt. Der Rest verlässt das System als Schmelzwasserfracht —
+Masse-Erhaltung gilt in diesem Repo ohnehin nicht (detachment-limited
+Stream-Power, AGENTS.md), die Invariante ist beschränktes Relief.
+
+Dass der Anteil zwischen dt = 500 und dt = 5000 nur um 2 Prozentpunkte wandert,
+ist der Nebenbefund: beide Terme sind Raten und skalieren zusammen (der Abtrag
+fast exakt ×9.6, die Moräne ×10.5 bei ×10 Zeit — die Abweichung ist der
+Operator-Splitting-Rest aus §G).
 
 **Wo die Moräne landet**, prüft `testMoraineBuildsAtTheTongue`: der Schutt
 schmilzt nur über den SCHMELZ-Anteil von μ aus, und der ist bei `T ≤ 0` exakt 0 —
@@ -306,3 +312,130 @@ geschlossene Lösung von `İ = a − μI` (teleskopiert über beliebig viele
 Teilschritte), und die ausgeschmolzene Menge ist das exakte Integral `∫μ·I dt`
 über den Teilschritt. `dt = 0` lässt das Feld Byte für Byte stehen
 (`testZeroStepLeavesIceUntouched`).
+
+---
+
+## §H — Kalibrier-Kaskade: was der Gletscher an bestehenden Wächtern verschiebt
+
+Der Pass ist eine neue Physik auf den Produktions-Defaults, also verschiebt er
+Kennzahlen, die andere Tickets gepinnt haben. Sechs Zusicherungen in sechs Tests
+wurden rot; keine davon war ein Fehler des Passes (seine eigenen Aus- und
+dt-Wächter blieben durchgehend grün, §G und `Glacier.swift`). Diese Reihe hält
+fest, was gemessen wurde und wie jeder Fall aufgelöst ist. Jede Zeile ist EIN
+Lauf mit `iceEnabled = true` gegen denselben Lauf mit `iceEnabled = false`.
+
+### H.1 — Aus-Wächter, die zwei verschiedene Welten verglichen
+
+`MeltRunoff.testDisabledMeltRunoffIsBitIdentical` und
+`ClimateSnow.testDisabledClimateIsBitIdenticalPhysics` bauen ihren
+Vergleichsarm über „es fällt nie Schnee" bzw. „kein Klima". Beides nimmt dem
+Gletscher sein Nährgebiet — der eine Arm vergletschert, der andere nicht, und
+die Bit-Gleichheit prüft dann zwei Physiken statt einer (gemessen:
+Höhendifferenzen bis 0.1 und konstante ~1.87 in `area`). Beide Arme laufen
+deshalb jetzt zusätzlich mit `iceEnabled = false`. Die Bit-Gleichheit des
+Gletscher-Pfades selbst steht unangetastet in `testDisabledIceIsBitIdentical`
+und `testIcelessWorldIsBitIdentical`: **jede Kopplung einzeln abschaltbar,
+jede einzeln bewacht.**
+
+`FlattenRegeneration.testRegenerationIsFramerateIndependent` gehört in dieselbe
+Klasse, mit einem lehrreichen Detail: die frisch eingeebnete Platte liegt bei
+`sea + 0.25` weit unter der Firn-Grenze, trotzdem entsteht dort Eis. Grund ist
+das Operator-Splitting — `updateIce` läuft am Schrittanfang auf dem Klima des
+vorigen Schrittendes, im ersten Schritt also auf der Temperatur der noch
+ungeebneten Gipfel. Dieses Eis schmilzt im zweiten Schritt aus und legt seine
+Moräne ab; die Menge hängt an der Länge dieses EINEN Fensters, also an dt
+(gemessen: max. Abweichung 0.0018 zwischen dt = 50 und dt = 1000). Der Test legt
+für seine 1e-9-Schranke ohnehin alle anderen `h`-Pässe stumm — der Gletscher ist
+jetzt einer davon.
+
+### H.2 — Alterungsverlauf: der Gipfel hängt an der Firn-Grenze
+
+`TerrainAging.testAgingTrajectoryOver100k`, n = 160, Seed 1337, alle 20k Jahre:
+
+| Kennzahl | 0k | 20k | 40k | 60k | 80k | 100k |
+|---|---|---|---|---|---|---|
+| `landRelief()` (max−min), Eis an | 0.5364 | 0.4509 | 0.4366 | 0.4320 | 0.4301 | 0.4289 |
+| `landRelief()`, Eis aus | 0.5364 | 0.4721 | 0.4316 | 0.4254 | 0.4180 | 0.3930 |
+| `landReliefRobust()` (p95−Median), Eis an | 0.1802 | 0.1504 | 0.1260 | 0.1152 | 0.1104 | 0.1084 |
+| `landReliefRobust()`, Eis aus | 0.1802 | 0.1479 | 0.1289 | 0.1182 | 0.1123 | 0.1069 |
+| `maxH`, Eis an | 0.6864 | 0.6010 | 0.5866 | 0.5821 | 0.5801 | 0.5789 |
+| `maxH`, Eis aus | 0.6864 | 0.6221 | 0.5816 | 0.5754 | 0.5680 | 0.5430 |
+| vergletscherte Zellen | 0 | 272 | 100 | 53 | 37 | 17 |
+
+Das ist der interessanteste Befund der ganzen Reihe: **der Gipfel sinkt bis auf
+die Firn-Grenze (0.5731) und bleibt dort stehen.** Er sinkt darauf zu, weil er
+erodiert; sobald er sie unterschreitet, verschwindet das Eis und die fluvialen
+Pässe greifen wieder — ein selbst-stabilisierendes Gleichgewicht bei 0.5789,
+gehalten von zuletzt 17 Zellen. Genau dieses Einpendeln knapp über der
+Schneegrenze beschreibt die Buzzsaw/Protection-Literatur
+(`docs/research-climate-cryosphere.md` §4).
+
+Für den Wächter heißt das: `landRelief()` ist max − min und damit per
+Konstruktion die Kennzahl, die eine einzelne Zelle bewegen kann (die Doku von
+`landReliefRobust` misst das aus: +145 % durch EINE Zelle). Die FLÄCHE altert
+dagegen unbeeindruckt weiter und praktisch gleich schnell wie ohne Eis — 0.1084
+gegen 0.1069 nach 100k, ein Unterschied von 1.4 %. Kriterium 3 („sinkt in der
+zweiten Hälfte weiter") misst deshalb jetzt das robuste Relief: 0.1191 (50k) →
+0.1084 (100k), also −9.0 % gegen eine Schwelle von −5 %. Die Kriterien 2 und 4
+(Gesamtabnahme, kein Einebnen) bleiben auf `landRelief()` — sie halten dort mit
+Reserve.
+
+### H.3 — Geerbte dt-Drift der Schneedecke
+
+`ClimateSnow.testSnowThroughFullStepsIsDtInvariant`, n = 192, 20k Jahre:
+
+| dt | Vorrat (Eis an) | Rampe (Eis an) | Eis-Zellen | Relief | Vorrat (aus) | Rampe (aus) |
+|---|---|---|---|---|---|---|
+| 50 | 0.00185 | 0.00367 | 321 | 0.4388 | 0.00224 | 0.00457 |
+| 500 | 0.00218 | 0.00466 | 395 | 0.4482 | 0.00251 | 0.00515 |
+| 2000 | 0.00173 | 0.00353 | 292 | 0.4385 | 0.00226 | 0.00456 |
+
+Spanne mit Eis 20.6 % (Vorrat) bzw. 24.2 % (Rampe), ohne Eis 10.8 % / 11.5 %.
+Die Schranke des Wächters steht deshalb auf 30 % statt 20 %. Dass das geerbte
+Drift ist und keine dt-Abhängigkeit der Schneebilanz, sagen drei Beobachtungen:
+
+1. Die Bilanz selbst bleibt bei 1e-12 (`testSnowBalanceIsDtInvariant`), und der
+   Gletscher schreibt `snow` überhaupt nicht — er liest es.
+2. Die Abweichung ist **nicht monoton in dt**: in beiden Armen ist dt = 500 der
+   Ausreißer nach oben. Das ist Streuung um die Maske herum (eine Zelle fällt
+   über oder unter die Firn-Grenze), kein Trend über die Schrittweite.
+3. Die Schneegrenze `snowStart` steht mit Eis über alle drei Schrittweiten
+   bit-gleich auf 0.5697 — sie hängt an der Höhenverteilung, und die driftet
+   nicht.
+
+### H.4 — Zwei Mechanik-Wächter, die jetzt ausgepinnt sind
+
+Beide Fälle folgen der Doktrin, die in `EndorheicEvaporation.cfg()` schon
+dreimal steht (Lithologie #12, Höhenbänder #4, Schmelzwasser #36): ein Wächter,
+der die MECHANIK an einem konkreten Objekt prüft, pinnt die
+Produktions-Kalibrierung aus, die dieses Objekt austauscht.
+
+**`EndorheicEvaporation` (n = 256, κ = 6, Seed 1337, 200×20 Jahre):**
+
+| Arm | max Sprung, Eis an | Eis aus |
+|---|---|---|
+| τ = 500 (ratenbegrenzt) | 0.00675 | 0.00654 |
+| τ = 0 (Kontrollarm) | 0.00493 | 0.00787 |
+
+Die Ratenbegrenzung selbst bewegt sich um 3 %; es ist der KONTROLLARM, der mit
+Eis um 37 % ruhiger wird und unter den ratenbegrenzten rutscht. Ursache ist
+dieselbe Kante, die schon die Lithologie traf: der Spiegel springt an
+DISKRETEN Ereignissen (eine Sill bricht, der Priority-Flood pegelt das Becken
+um), und unter dem Eis liegt der fluviale Abtrag still, der diese Sills
+durchsägt. Die Sichtbarkeits-Schranke maxJump/Spanne bleibt derweil auf ihrem
+Niveau (0.320 gegen 0.307).
+
+**`RainWeightedFlow` (n = 192, 6 Seeds, 20k Jahre, gepoolte Drainagedichte
+Luv/Lee):**
+
+| | ungewichtet | gewichtet | Hub |
+|---|---|---|---|
+| ohne Eis | 1.164 | 1.315 | ×1.130 |
+| mit Eis | 1.197 | 1.230 | ×1.027 |
+
+Die Richtung stimmt in der Produktion weiterhin (gewichtet > ungewichtet), aber
+der Hub schrumpft von +13 % auf +2.7 % und trägt die 5-%-Marge des Wächters
+nicht mehr. Der Grund ist systematisch und nicht zufällig: Schnee fällt, wo es
+hoch UND nass ist — also bevorzugt im LUV —, und unter dem Eis entstehen keine
+fluvialen Rinnen. Die Gletscher dünnen ausgerechnet die Luv-Kanäle aus, an denen
+die Kennzahl hängt.
