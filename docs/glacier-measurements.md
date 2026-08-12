@@ -495,3 +495,49 @@ sonst mit unbehandelten Kanten zurück. Für den Wächter heißt es: mit Diffusi
 misst er die Diffusion statt das Gate. Deshalb erbt der Produktions-Arm
 `hillDiffusion = 0` aus `quietCfg()` und schaltet nur `meanderEnabled` und
 `braidingEnabled` zu.
+
+---
+
+## §J — Das Hangknick-Signal der Lithologie (#12) unter Eis
+
+Nachgereicht, weil `Lithology.testHardnessContrastHoldsSlopeBreak` mit den
+Funnel-Gates aus §I knapp kippte. Der Wächter misst das Verhältnis der
+Makro-Steigung auf HARTEN gegen WEICHE Zellen (lokal gepaart, geometrisch
+gepoolt — Herleitung im Test) und hat drei Zusicherungen: Signal > 1.10,
+Abstand zum Referenzarm > 0.06, Reinheit des Referenzarms |aus − 1| < 0.08.
+Der Referenzarm rechnet dasselbe Feld mit `lithContrast = 0`, die Härte wirkt
+dort also auf keine Rate.
+
+**Aufbau** (n = 192, Seed 1337, 20k Jahre, dt = 500), 2×2 über die zwei
+Klima-Kopplungen:
+
+| | Eis aus | Eis an |
+|---|---|---|
+| Schmelze aus | an 1.1781 / aus **1.0282** / Δ 0.150 | an 1.1423 / aus **1.0843** / Δ 0.058 |
+| Schmelze an | an 1.1950 / aus **1.0995** / Δ 0.096 | an 1.1853 / aus **1.0710** / Δ 0.114 |
+
+Das Feld unten links ist die Messung, mit der #36 den Schmelze-Pin begründet hat
+(dort notiert als 1.1950 / 1.0995) — reproduziert, der Messaufbau ist also
+derselbe.
+
+**Befund:** Was das Eis anhebt, ist der REFERENZARM (1.0282 → 1.0843), nicht das
+Signal (1.1781 → 1.1423). Das ist dieselbe Mechanik, die #36 schon für die
+Schmelze notiert hat: die Härte enthält die stratigraphische Schichtwelle und
+hängt per Konstruktion an `h`, also hebt jeder Prozess, der gezielt das HOCHLAND
+steiler macht, auch den Arm, in dem die Härte gar nicht wirkt. Das Eis sitzt noch
+höher als der Ablationssaum und trifft die Kennzahl entsprechend härter. Von den
+412 vergletscherten Zellen kommt kein Beitrag zum Härte-Kontrast — sie tragen nur
+glaziale Steigung in die Paarung.
+
+Kein Fehler der Gates also, sondern eine bekannte Schwäche der KENNZAHL. Die
+beiden inhaltlichen Zusicherungen halten in allen vier Feldern; nur die
+Reinheits-Schranke hält allein im eis- und schmelzfreien Feld.
+
+**Konsequenz** (dieselbe Doktrin wie der Schmelze-Pin von #36, §3 in
+`docs/melt-runoff-measurements.md`): Der Wächter pinnt jetzt auch
+`iceEnabled = false` — beide Arme, damit weiter nur die WIRKUNG der Härte den
+Unterschied macht. Die Gegenprobe `testSlopeBreakSurvivesMeltRunoff` läuft auf
+`cfg()` und damit auf voller Produktionsphysik (Schmelze UND Eis, Feld unten
+rechts); sie prüft die zwei inhaltlichen Zusicherungen und hält jetzt zusätzlich
+fest, dass ihr Arm die vergletscherten Zellen wirklich hat (> 100), damit die
+Gegenprobe nicht still leer läuft.
