@@ -39,6 +39,11 @@ let steps = Int(arg("--steps", 30))
 let hashMode = flag("--hash")
 // Gegenprobe für die Instrumentierung selbst: derselbe Lauf ohne Marken.
 let noProfile = flag("--no-profile")
+// Mehrere Messblöcke hintereinander: die VM streut zwischen Prozessläufen
+// spürbar (CPU-Takt, Nachbarlast), innerhalb eines Laufs deutlich weniger.
+// Entschieden wird nach dem MINIMUM — das ist der Lauf mit der wenigsten
+// Fremdstörung, also die belastbarste Zahl für einen Vorher/Nachher-Vergleich.
+let repeats = Int(arg("--repeat", 1))
 
 // MARK: - Produktions-Config (Spiegel von SimNode.productionConfig())
 
@@ -94,14 +99,22 @@ if hashMode {
     exit(0)
 }
 
-SimProfile.reset()
+var blocks: [Double] = []
 SimProfile.enabled = !noProfile
-let clock = Date()
-for _ in 0..<steps { terrain.step(dtYears: dt) }
-let total = -clock.timeIntervalSinceNow
+for r in 0..<repeats {
+    if r == repeats - 1 { SimProfile.reset() } // Tabelle aus dem letzten Block
+    let clock = Date()
+    for _ in 0..<steps { terrain.step(dtYears: dt) }
+    blocks.append(-clock.timeIntervalSinceNow)
+}
 SimProfile.enabled = false
+let total = blocks.last!
 
-let perStep = total / Double(steps) * 1000
+let perStep = blocks.min()! / Double(steps) * 1000
+if repeats > 1 {
+    print("Blöcke (ms/Schritt): "
+          + blocks.map { String(format: "%.1f", $0 / Double(steps) * 1000) }.joined(separator: " "))
+}
 if noProfile {
     print("n=\(gridN) seed=\(seed) OHNE Profiling → \(String(format: "%.1f", perStep)) ms/Schritt")
     exit(0)
