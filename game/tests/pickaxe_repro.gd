@@ -124,19 +124,49 @@ func _run() -> void:
 	print("trench_band_max_area_cells=", mid_cells)
 	var physics_ok := mid_cells > 300.0 # > renderMinCells: müsste als Fluss zählen
 
-	# (b) RENDER: Wasser-Overlay entlang der Kerbe (R = Fluss, G = See).
+	# (b) RENDER: sieht man das Wasser in der Kerbe? Seit Issue #34 kann es aus
+	# DREI Quellen kommen, und die Frage ist die Vereinigung — nicht eine
+	# einzelne Quelle: Fluss-Kanal (R) und See-Kanal (G) des Rasterfelds sowie
+	# die Band-Geometrie. Eine tief gekaperte Kerbe füllt sich typischerweise bis
+	# über die See-Schwelle (rawWet 0.03) — dann malt sie per Definition NICHT
+	# mehr der Fluss-Kanal (der hält sich an `hf − h ≤ 0.01`), sondern der
+	# See-Kanal. Vor #34 verdeckte der Mäander-Stempel das: er malte den Lauf
+	# zusätzlich in R. Nur auf R zu prüfen hieße also, den Stempel zu testen und
+	# nicht die Sichtbarkeit.
 	var wb: PackedByteArray = sim.waterFieldBytes(1.0)
+	sim.buildRiverRibbons(24.0, 0.35)
+	var band_cells := {}
+	var rverts: PackedVector3Array = sim.riverRibbonVerts()
+	for v in rverts:
+		var rbi: int = clampi(int(round((v.x + world * 0.5) / cell)), 0, n - 1)
+		var rbj: int = clampi(int(round((v.z + world * 0.5) / cell)), 0, n - 1)
+		band_cells[rbj * n + rbi] = true
 	var painted := 0
+	var river_cells := 0
 	var lake_cells := 0
+	var banded := 0
 	var probe := 0
 	for idx in range(trench.size() / 4, trench.size() * 3 / 4): # mittlere Hälfte
 		var k: int = trench[idx]
 		probe += 1
-		if wb[k * 4] > 40:
-			painted += 1
-		if wb[k * 4 + 1] > 40:
+		var by_river := wb[k * 4] > 40
+		var by_lake := wb[k * 4 + 1] > 40
+		var by_band := false
+		for dj4 in range(-2, 3):
+			for di4 in range(-2, 3):
+				if band_cells.has((k / n + dj4) * n + (k % n + di4)):
+					by_band = true
+					break
+		if by_river:
+			river_cells += 1
+		if by_lake:
 			lake_cells += 1
-	print("render_painted=", painted, "/", probe, " lake_cells=", lake_cells)
+		if by_band:
+			banded += 1
+		if by_river or by_lake or by_band:
+			painted += 1
+	print("render_painted=", painted, "/", probe, " davon fluss=", river_cells,
+		" see=", lake_cells, " band=", banded)
 	var render_ok := painted > probe / 2
 
 	if not physics_ok:
