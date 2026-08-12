@@ -13,6 +13,8 @@ import XCTest
 /// 3. Moränen entstehen, Schichtbuchhaltung bleibt grün →
 ///    `testMoraineBuildsAtTheTongue`, `testLayersStayConsistent`
 /// 4. unter Eis kein fluvialer Abtrag → `testNoFluvialErosionUnderIce`
+///    (isoliert) und `testNoFluvialErosionUnderIceInProduction` (mit den
+///    Bett-Pässen Mäander und Braiding)
 /// 5. dt-invariant, deterministisch → `testIceIsFramerateIndependent`,
 ///    `testIceIsDeterministic`
 /// 6. abgeschaltet bit-identisch → `testDisabledIceIsBitIdentical`,
@@ -497,19 +499,65 @@ final class Glacier: XCTestCase {
 
     // MARK: - Abnahme 4: unter Eis kein fluvialer Abtrag
 
+    /// Der Wächter ohne die konkurrierenden Bett-Pässe: hier arbeiten NUR
+    /// Auslass-Inzision und Tropfen, die beiden Pfade, die `underIce` seit jeher
+    /// gatet. Der Arm isoliert damit genau diese zwei.
+    func testNoFluvialErosionUnderIce() {
+        assertNoFluvialErosionUnderIce(quietCfg())
+    }
+
+    /// Derselbe Wächter mit den BETT-PÄSSEN DER PRODUKTION: `meanderEnabled`
+    /// und `braidingEnabled` stehen wie in `SimConfig()` auf `true`. Nötig, weil
+    /// `quietCfg()` beide abschaltet und der Wächter oben damit eine
+    /// Konfiguration prüft, die es in Produktion nicht gibt: `meanderStamp`
+    /// carvt sein Bett selbst und `braidPass` bewegt Bettmaterial — beide folgen
+    /// denselben Tälern, in die die Zungen vorstoßen. Ungegatet bekam dasselbe
+    /// Tal unter dem Eis weiter fluviale Kerb-Carves (gemessen 9 Zellen in EINEM
+    /// Schritt: Bett-Carve 3, laterale Ufer 6, Braid-Fracht 1 —
+    /// `docs/glacier-measurements.md` §I).
+    ///
+    /// Die Hangdiffusion bleibt dabei aus (`quietCfg`), und das ist der Punkt
+    /// des Aufbaus: Bodenkriechen ist kein fluvialer Pass, trägt aber die
+    /// Änderungen der NACHBARZELLEN auf die Eiszelle. Mit `hillDiffusion` an
+    /// weichen 852 vergletscherte Zellen ab — davon 825 allein aus
+    /// `outletErode`, das laut derselben Messreihe keine einzige Eiszelle
+    /// anfasst (§I.1). Der Wächter würde dann die Diffusion messen statt das
+    /// Gate.
+    func testNoFluvialErosionUnderIceInProduction() {
+        var c = quietCfg()
+        c.meanderEnabled = true
+        c.braidingEnabled = true
+        assertNoFluvialErosionUnderIce(c)
+    }
+
     /// Zwei Arme, die sich NUR im fluvialen Abtrag unterscheiden:
-    /// * `gated` — Produktionspfad (Gletscher-Maske gatet Tropfen und Inzision),
-    /// * `noFluvial` — dieselbe Config, aber die beiden fluvialen Abtragspässe
-    ///   sind global abgeschaltet.
+    /// * `gated` — Produktionspfad (die Gletscher-Maske gatet die fluvialen
+    ///   Bett-Pässe),
+    /// * `noFluvial` — dieselbe Config, aber jede fluviale Bett-RATE steht auf 0.
+    ///   Bewusst über die Raten und nicht über die `…Enabled`-Schalter: so laufen
+    ///   in beiden Armen dieselben Pässe mit derselben Reihenfolge, demselben
+    ///   MFD-Takt und demselben Mäander-Zustand — der einzige Unterschied ist,
+    ///   dass in `noFluvial` nichts davon `h` anfasst.
     /// Auf den vergletscherten Zellen müssen beide BIT-IDENTISCH sein: wenn das
     /// Gate hält, hat dort ohnehin kein fluvialer Pass gearbeitet. Zugleich muss
     /// es abseits des Eises einen Unterschied geben — sonst prüft der Test nichts.
-    func testNoFluvialErosionUnderIce() {
-        var gated = quietCfg()
+    private func assertNoFluvialErosionUnderIce(_ base: SimConfig,
+                                                file: StaticString = #filePath,
+                                                line: UInt = #line) {
+        var gated = base
         gated.iceErodeK = 0; gated.iceMoraineK = 0   // das Eis selbst darf `h` nicht anfassen
         var noFluvial = gated
         noFluvial.outletErode = 0
         noFluvial.hydraulicPerYear = 0
+        // Mäander-Bett-Carve, laterale Ufer und Braid-Fracht (in `quietCfg()`
+        // ohnehin aus, in Produktion die dritte und vierte Bett-Bewegung).
+        // `braidCapacity = 0` legt `braidPass` still, OHNE `braidingEnabled` zu
+        // kippen: die Fracht `qs` bleibt überall 0, also deponiert und scourt
+        // nichts — und der MFD-Takt in `step()` bleibt derselbe wie im
+        // Vergleichsarm.
+        noFluvial.meanderCarve = 0
+        noFluvial.meanderBankErode = 0
+        noFluvial.braidCapacity = 0
 
         let a = Terrain(config: gated, seed: 1337)
         run(a, to: 20_000)
@@ -523,14 +571,16 @@ final class Glacier: XCTestCase {
         a.step(dtYears: 500)
         b.step(dtYears: 500)
         // Die MASKE DIESES SCHRITTS: `updateIce` läuft am Schrittanfang und baut
-        // sie neu, und genau diese neue Maske haben die beiden fluvialen Pässe
+        // sie neu, und genau diese neue Maske haben die fluvialen Pässe
         // danach gesehen. Die Maske von VOR dem Schritt wäre veraltet — Zellen,
         // die das Eis in diesem Schritt verlassen hat, sind zu Recht wieder
         // fluvial (gemessen: 6 solche Zellen).
         let mask = a.underIce
-        XCTAssertEqual(mask.count, gated.count, "keine Eismaske aufgebaut")
+        XCTAssertEqual(mask.count, gated.count, "keine Eismaske aufgebaut",
+                       file: file, line: line)
         let glaciated = (0..<gated.count).filter { mask[$0] }
-        XCTAssertGreaterThan(glaciated.count, 100, "Testaufbau: zu wenig Eis")
+        XCTAssertGreaterThan(glaciated.count, 100, "Testaufbau: zu wenig Eis",
+                             file: file, line: line)
 
         var differsOnIce = 0, differsOffIce = 0
         for k in 0..<gated.count {
@@ -542,9 +592,11 @@ final class Glacier: XCTestCase {
             }
         }
         XCTAssertEqual(differsOnIce, 0,
-                       "\(differsOnIce) vergletscherte Zellen wurden fluvial verändert")
+                       "\(differsOnIce) vergletscherte Zellen wurden fluvial verändert",
+                       file: file, line: line)
         XCTAssertGreaterThan(differsOffIce, 100,
-                             "Testaufbau: der fluviale Abtrag war nirgends aktiv")
+                             "Testaufbau: der fluviale Abtrag war nirgends aktiv",
+                             file: file, line: line)
         // Dass sich `h` unter dem Eis trotzdem BEWEGT, ist kein Widerspruch: die
         // Hebung bzw. der Relief-Servo (`applyUplift`) greifen flächendeckend und
         // sind kein fluvialer Abtrag. Gemessen bewegen sie hier 4031 der
