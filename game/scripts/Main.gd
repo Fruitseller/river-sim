@@ -35,11 +35,13 @@ enum TreeCoverage { NONE, REDUCED, FULL }
 var tree_coverage := TreeCoverage.REDUCED
 var tree_coverage_picker: OptionButton
 
-# Fluss-Ribbons (Issue #31, A/B-Schalter RS_RIVER_RIBBONS): Mäander als
-# geglättete Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel.
+# Wasser-Geometrie (Issues #31/#34): Mäander, Delta-Distributäre und Altarme als
+# Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel. Seit #34 der
+# STANDARD; `RS_WATER_STAMP` schaltet für den A/B-Vergleich auf den alten
+# Raster-Stempel-Pfad zurück (ohne Rebuild, SimNode liest dieselbe Variable).
 # Dirty-Vertrag wie bei den Bäumen: Rebuild nur, wenn sich die Zentrumslinien
 # merklich bewegt haben (riversMaxDelta in Zellen).
-var river_ribbons := false
+var river_ribbons := true
 var river_mi: MeshInstance3D
 var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
@@ -176,9 +178,20 @@ func _ready() -> void:
 	if OS.has_environment("RS_RENDER_GRID"):
 		requested_grid = int(OS.get_environment("RS_RENDER_GRID"))
 	terrain_grid = clampi(requested_grid, 64, N)
-	# A/B ohne Rebuild: SimNode liest dieselbe Env-Variable und stempelt die
-	# Mäander dann nur noch als Ufer-Saum ins Wasserfeld.
-	river_ribbons = OS.has_environment("RS_RIVER_RIBBONS")
+	# A/B ohne Rebuild: SimNode liest dieselbe Env-Variable. Gesetzt = alter
+	# Raster-Stempel (Mäander/Altarme ins Wasserfeld, keine Band-Geometrie).
+	river_ribbons = not OS.has_environment("RS_WATER_STAMP")
+	# Kamera für reproduzierbare A/B-Screenshots: Blickpunkt in WELT-Koordinaten
+	# ("x,z") und Orbit-Winkel. Ohne sie zeigt jeder Lauf die Kartenmitte — für
+	# eine Mündung/ein Delta ist das der falsche Ausschnitt.
+	if OS.has_environment("RS_TARGET"):
+		var parts := OS.get_environment("RS_TARGET").split(",")
+		if parts.size() == 2:
+			cam_target = Vector3(float(parts[0]), 0.0, float(parts[1]))
+	if OS.has_environment("RS_YAW"):
+		cam_yaw = float(OS.get_environment("RS_YAW"))
+	if OS.has_environment("RS_PITCH"):
+		cam_pitch = float(OS.get_environment("RS_PITCH"))
 
 	_setup_scene()
 	_setup_ui()
@@ -215,6 +228,11 @@ func _ready() -> void:
 			done += chunk
 	sim.recomputeFlow()
 	_pull_fields()
+	if OS.has_environment("RS_TARGET"):
+		# Blickpunkt auf die GELÄNDEHÖHE heben: mit y = 0 zielt die Kamera unter
+		# die Landschaft, und der Ausschnitt zeigt Himmel statt Mündung.
+		cam_target.y = _sample_h((cam_target.x + half) / step, (cam_target.z + half) / step) * HSCALE
+		_update_camera()
 	_update_year()
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
@@ -326,7 +344,7 @@ func _setup_scene() -> void:
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
 
-	# Fluss-Ribbons (nur im RS_RIVER_RIBBONS-Modus): EIN MeshInstance3D, dessen
+	# Wasser-Geometrie (außer im RS_WATER_STAMP-Modus): EIN MeshInstance3D, dessen
 	# ArrayMesh _rebuild_rivers aus den SimNode-Puffern füllt.
 	if river_ribbons:
 		river_mi = MeshInstance3D.new()
@@ -367,6 +385,10 @@ func _setup_scene() -> void:
 
 func _setup_ui() -> void:
 	var layer := CanvasLayer.new()
+	# Autonome Screenshots (RS_SHOT) zeigen die LANDSCHAFT: die Bedienleiste
+	# verdeckt sonst die halbe linke Bildhälfte, und genau dort liegen in der
+	# A/B-Serie die Mündungen. Die Diagnosewerte stehen ohnehin im Log.
+	layer.visible = not OS.has_environment("RS_SHOT")
 	add_child(layer)
 	var panel := PanelContainer.new()
 	panel.position = Vector2(16, 16)
@@ -1114,6 +1136,9 @@ func _rebuild_rivers() -> void:
 		arrays[Mesh.ARRAY_VERTEX] = verts
 		arrays[Mesh.ARRAY_COLOR] = sim.riverRibbonColors()
 		arrays[Mesh.ARRAY_TEX_UV] = sim.riverRibbonUVs()
+		# UV2.x = Typ (Fluss/Delta/Altarm, Issue #34) — der Shader färbt danach
+		# und schaltet für Altarme die Strömung ab.
+		arrays[Mesh.ARRAY_TEX_UV2] = sim.riverRibbonUV2s()
 		arrays[Mesh.ARRAY_INDEX] = sim.riverRibbonIndices()
 		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	sim.markRiversBuilt()
