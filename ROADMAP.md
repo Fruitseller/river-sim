@@ -486,9 +486,10 @@ Messreihen `docs/dt-invariance-measurements.md`):
   per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
   jetzt über sanfteres Relief (`baseRelief` 0.78).
 
-**Sim-Schritt-Laufzeit — Runde 3 ERLEDIGT (Aug 2026, Issue #43), Rest benannt:**
+**Sim-Schritt-Laufzeit — Runde 3 (Aug 2026, Issue #43): ~41 % schneller, Ziel
+knapp verfehlt, Rest benannt.**
 Der Sim-Schritt blockiert den Hauptthread und ist **Fixkosten**: gemessen kostet
-dt = 0,2 praktisch dasselbe wie dt = 100 (368,6 vs. 374,2 ms bei n = 832 auf der
+dt = 0,2 praktisch dasselbe wie dt = 100 (400,4 vs. 426,1 ms bei n = 832 auf der
 Linux-VM) — im Echtzeit-Zeitraffer zahlt also jeder Frame den vollen Schritt.
 Diese Runde hat ihn ohne jede Physik-Änderung (Wächter: `simperf --hash`,
 Fingerabdruck über alle Zustandsfelder) um **~41 %** gesenkt — A/B in einer

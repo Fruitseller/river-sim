@@ -116,7 +116,8 @@ der Harness misst dasselbe Bild, nur auf langsamerer Hardware.
 
 ### Die Fixkosten-Beobachtung (Hypothese 2 des Issues, bestätigt)
 
-**dt = 0,2 kostet praktisch dasselbe wie dt = 100** (368,6 vs. 374,2 ms). Genau
+**dt = 0,2 kostet praktisch dasselbe wie dt = 100** (368,6 vs. 374,2 ms; in der
+Abschluss-Sitzung 400,4 vs. 426,1 ms — dasselbe Bild). Genau
 ein Pass skaliert mit `dt`: `Hydraulic.erode` (10,4 → 0,6 ms; die Tropfenzahl
 ist ∝ dt), dazu ein Teil von `updateIce` (11,4 → 7,2, Sub-Taktung). **Alles
 andere ist Fixkosten pro Schritt.** Für den Echtzeit-Zeitraffer, der viele
