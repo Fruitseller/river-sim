@@ -476,7 +476,8 @@ ein fluvialer Kerb-Querschnitt im Trog, jeden Schritt aufs Neue.
 **Konsequenz:** Das Gate sitzt jetzt an `Terrain.erodeCell`/`depositCell`, den
 zwei Funneln, über die ALLE Bett-Bewegungen außer den Tropfen laufen
 (Bett-Carve, laterale Ufer, Altarm-Pfropf und -Verlandung, Braid-Fracht,
-Auen-Aggradation). `meanderStamp` überspringt vergletscherte Zellen zusätzlich
+Auen-Aggradation; seit I.2 auch `transportLimited`). `meanderStamp` überspringt
+vergletscherte Zellen zusätzlich
 schon vor der Kanalmaske — ein Lauf unter einer Zunge ist kein Kanal, und
 `isChannel`/`veg = 0` haben dort nichts zu suchen. Nach dem Gate: 0 Zellen in
 allen Zeilen. Wächter: `testNoFluvialErosionUnderIceInProduction`.
@@ -495,6 +496,39 @@ sonst mit unbehandelten Kanten zurück. Für den Wächter heißt es: mit Diffusi
 misst er die Diffusion statt das Gate. Deshalb erbt der Produktions-Arm
 `hillDiffusion = 0` aus `quietCfg()` und schaltet nur `meanderEnabled` und
 `braidingEnabled` zu.
+
+### I.2 — Der Grid-Pfad (`hydraulicEnabled = false`) war die letzte Lücke
+
+Zweite Review-Runde, dasselbe Thema: `Hydraulic.erode` ist nur der
+PRODUKTIONS-Zweig. Steht `hydraulicEnabled` auf `false` — was die isolierten
+Mäander-, Becken- und Snapshot-Tests bewusst tun (`meanderCfg()` in
+`SimCoreTests.swift`, `EndorheicEvaporation`, `WorldSnapshotTests`) — läuft an
+seiner Stelle `transportLimited`, und der schrieb `h`/`sed`/`rock` an drei
+Stellen direkt: Delta am Meer, Ablagerung über Kapazität, Inzision darunter.
+
+**Aufbau** (n = 384, Seed 1337, `quietCfg()` + `hydraulicEnabled = false`, 20k
+Jahre vorgelaufen): der Pass wird danach EINZELN aufgerufen (`dt` = 500) und
+`h` davor/danach bit-verglichen. Einzeln statt über `step()`, weil der Grid-Pfad
+fest mit `diffusionPass` zusammenläuft (kappa ist dort ein Default, kein
+Regler) — ein Zwei-Arm-Vergleich über den Schritt misst sonst wieder das
+Bodenkriechen aus §I.1.
+
+| | vergletscherte Zellen | davon bewegt | eisfreie bewegt |
+|---|---|---|---|
+| ungegatet | 651 | **651** | 82 414 |
+| über den Funnel gegatet | 1 385 | **0** | 81 738 |
+
+Der Pass traf also nicht ein paar Zellen am Zungenrand wie Mäander und Braiding,
+sondern **jede einzelne**: er läuft flächendeckend über `order`, nicht entlang
+der Läufe. Dass die Eisfläche mit Gate von 651 auf 1 385 Zellen steigt, ist die
+Rückkopplung dazu — 20k Jahre lang trug der ungegatete Grid-Pfad das Bett unter
+der Zunge ab und drückte das Nährgebiet unter die Firn-Grenze.
+
+**Konsequenz:** `transportLimited` bewegt das Bett jetzt ausschließlich über
+`erodeCell`/`depositCell`. Die Fracht `qs` verschwindet dabei nicht: was eine
+Eiszelle weder abgibt noch annimmt, zieht unverändert zum Empfänger weiter
+(`depositCell` gibt dafür den tatsächlich abgelegten Betrag zurück). Wächter:
+`testNoFluvialErosionUnderIceOnTheGridPath`.
 
 ---
 

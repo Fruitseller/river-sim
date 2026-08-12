@@ -398,7 +398,8 @@ Messreihen `docs/dt-invariance-measurements.md`):
   dem Nährgebiet per Konstruktion nicht. Die Maske `Terrain.underIce` legt den
   fluvialen Abtrag unter dem Eis still — `outletIncision` und `Hydraulic.erode`
   prüfen sie direkt, alle übrigen Bett-Bewegungen (Mäander-Carve und -Ufer,
-  Altarme, Braid-Fracht, Auen-Aggradation) über ihren gemeinsamen Funnel
+  Altarme, Braid-Fracht, Auen-Aggradation, im Testpfad auch `transportLimited`)
+  über ihren gemeinsamen Funnel
   `erodeCell`/`depositCell`; leer heißt aus, also bit-identisch wie bei
   `isChannel`. NICHT gegatet ist die Hangdiffusion — Bodenkriechen ist kein
   fluvialer Pass, trägt aber Nachbar-Änderungen auf die Eiszelle

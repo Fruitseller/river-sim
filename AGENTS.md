@@ -141,7 +141,8 @@ eigenes Erosionsgesetz mit (Flux-Modell `E = K·q^m·S`, nicht Stream-Power auf
 Höhenänderung**, weil seine Maske `Terrain.underIce` den fluvialen Abtrag
 gatet: `outletIncision` und `Hydraulic.erode` prüfen sie direkt, alle übrigen
 Bett-Bewegungen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
-Auen-Aggradation) über ihren gemeinsamen Funnel `erodeCell`/`depositCell`.
+Auen-Aggradation, im Testpfad auch `transportLimited`) über ihren gemeinsamen
+Funnel `erodeCell`/`depositCell`.
 Vergletscherte Zellen rührt damit kein fluvialer Pass an — die Hangdiffusion
 dagegen läuft weiter (kein fluvialer Pass, s. `docs/glacier-measurements.md`
 §I.1). Wie `isChannel` gilt: **leeres Feld heißt aus**,

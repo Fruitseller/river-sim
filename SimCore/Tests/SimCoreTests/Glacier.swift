@@ -13,8 +13,9 @@ import XCTest
 /// 3. Moränen entstehen, Schichtbuchhaltung bleibt grün →
 ///    `testMoraineBuildsAtTheTongue`, `testLayersStayConsistent`
 /// 4. unter Eis kein fluvialer Abtrag → `testNoFluvialErosionUnderIce`
-///    (isoliert) und `testNoFluvialErosionUnderIceInProduction` (mit den
-///    Bett-Pässen Mäander und Braiding)
+///    (isoliert), `testNoFluvialErosionUnderIceInProduction` (mit den
+///    Bett-Pässen Mäander und Braiding) und
+///    `testNoFluvialErosionUnderIceOnTheGridPath` (Nicht-Droplet-Zweig)
 /// 5. dt-invariant, deterministisch → `testIceIsFramerateIndependent`,
 ///    `testIceIsDeterministic`
 /// 6. abgeschaltet bit-identisch → `testDisabledIceIsBitIdentical`,
@@ -528,6 +529,47 @@ final class Glacier: XCTestCase {
         c.meanderEnabled = true
         c.braidingEnabled = true
         assertNoFluvialErosionUnderIce(c)
+    }
+
+    /// Derselbe Wächter für den **Grid-Pfad** (`hydraulicEnabled = false`), den
+    /// die isolierten Mäander- und Becken-Tests fahren: dort ersetzt
+    /// `transportLimited` die Tropfen und bewegt Bettmaterial an eigenen
+    /// Stellen (Delta am Meer, Ablagerung über Kapazität, Inzision darunter).
+    /// Ungegatet bewegte er im Messlauf JEDE vergletscherte Zelle in EINEM
+    /// Aufruf (651 von 651) — mehr als jeder andere Bett-Pass, weil er
+    /// flächendeckend über `order` läuft statt entlang der Läufe. Mit Gate: 0,
+    /// und das Eis hält doppelt so viel Fläche (1385 Zellen), weil ihm der
+    /// Grid-Pfad 20k Jahre lang nicht mehr das Bett unter der Zunge abträgt
+    /// (`docs/glacier-measurements.md` §I.2).
+    ///
+    /// Aufbau anders als bei den zwei Armen oben: der Grid-Pfad läuft in
+    /// `step()` fest mit `diffusionPass` zusammen (kappa ist dort ein Default,
+    /// kein Regler), und das Bodenkriechen würde die Änderungen der
+    /// Nachbarzellen im SELBEN Schritt auf die Eiszelle tragen — der Vergleich
+    /// zweier Arme über `step()` misst dann die Diffusion statt das Gate
+    /// (§I.1). Deshalb: einen Zustand mit Eis auslaufen lassen und den Pass
+    /// danach EINZELN aufrufen.
+    func testNoFluvialErosionUnderIceOnTheGridPath() {
+        var c = quietCfg()
+        c.hydraulicEnabled = false
+        let t = Terrain(config: c, seed: 1337)
+        run(t, to: 20_000)
+        let mask = t.underIce
+        XCTAssertEqual(mask.count, c.count, "keine Eismaske aufgebaut")
+        let glaciated = (0..<c.count).filter { mask[$0] }
+        XCTAssertGreaterThan(glaciated.count, 100, "Testaufbau: zu wenig Eis")
+
+        let before = t.h
+        t.transportLimitedForTests(dt: 500)
+        var differsOnIce = 0, differsOffIce = 0
+        for k in 0..<c.count where t.h[k].bitPattern != before[k].bitPattern {
+            if mask[k] { differsOnIce += 1 } else { differsOffIce += 1 }
+        }
+        print("[GATE] Grid-Pfad: \(glaciated.count) Eiszellen, \(differsOnIce) davon bewegt, \(differsOffIce) eisfreie bewegt")
+        XCTAssertEqual(differsOnIce, 0,
+                       "\(differsOnIce) vergletscherte Zellen wurden von transportLimited verändert")
+        XCTAssertGreaterThan(differsOffIce, 100,
+                             "Testaufbau: der Grid-Pfad war nirgends aktiv")
     }
 
     /// Zwei Arme, die sich NUR im fluvialen Abtrag unterscheiden:

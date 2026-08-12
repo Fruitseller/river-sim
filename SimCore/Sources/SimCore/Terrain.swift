@@ -23,8 +23,9 @@ import Foundation
 /// Makro-Inzision: er braucht das frische Bett, und seine Maske `underIce`
 /// legt den fluvialen Abtrag unter dem Eis still — `outletIncision` und
 /// `Hydraulic.erode` prüfen sie direkt, alle übrigen Bett-Bewegungen
-/// (Mäander-Carve und -Ufer, Altarme, Braid-Fracht, Auen-Aggradation) über
-/// ihren gemeinsamen Funnel `erodeCell`/`depositCell`.
+/// (Mäander-Carve und -Ufer, Altarme, Braid-Fracht, Auen-Aggradation, im
+/// Testpfad auch `transportLimited`) über ihren gemeinsamen Funnel
+/// `erodeCell`/`depositCell`.
 ///
 /// Die fluviale Makro-Inzision ist damit `outletIncision` (Flächen-Stream-Power
 /// auf dem Entwässerungsnetz, impliziter n=1-Solver in Empfänger-Reihenfolge →
@@ -2497,6 +2498,13 @@ public final class Terrain {
     /// limitierte Grid-Inzision ab (Commit „B (M3)").
     /// Verarbeitung stromauf→stromab (order rückwärts), sodass
     /// die Fracht jeder Zelle bei ihren Zuflüssen schon angekommen ist.
+    ///
+    /// Bewegt das Bett ausschließlich über `erodeCell`/`depositCell` und ist
+    /// damit unter Eis stillgelegt wie jeder andere fluviale Pass (#35) — der
+    /// Testpfad braucht dasselbe Gate wie die Produktion, sonst hinge die
+    /// Zusicherung „unter Eis kein fluvialer Abtrag" am Erosionszweig.
+    /// Vergletscherte Zellen halten ihre Fracht nicht auf: was sie weder
+    /// abgeben noch annehmen, zieht unverändert zum Empfänger weiter.
     private func transportLimited(dt: Double) {
         let cs = cfg.cellSize
         let sqrt2 = 2.0.squareRoot()
@@ -2511,8 +2519,7 @@ public final class Terrain {
             if r < 0 {
                 // Meer/Rand: Delta bis Meereshöhe aufbauen, Überschuss geht ins tiefe Meer.
                 let room = max(0, cfg.sea - h[k])
-                let dep = min(qin, room)
-                h[k] += dep; sed[k] += dep
+                depositCell(k, min(qin, room))
                 continue
             }
             let ri = Int(r)
@@ -2527,8 +2534,9 @@ public final class Terrain {
                 var dep = qin - qc
                 let room = max(0, (hf[k] - h[k])) + 0.02 // bis Seespiegel/etwas darüber
                 dep = min(dep, room)
-                h[k] += dep; sed[k] += dep
-                qs[ri] += qin - dep
+                // Unter Eis nimmt der Funnel nichts an (#35); die Fracht zieht
+                // dann ungeschmälert weiter talwärts.
+                qs[ri] += qin - depositCell(k, dep)
             } else {
                 // unter Kapazität → erodieren (detachment-begrenzt, Fels widerstandsfähiger).
                 // Auf Kanalzellen gedämpft: dort inzidiert der Mäander-Carve (Reconciliation).
@@ -2539,13 +2547,9 @@ public final class Terrain {
                 let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : kBed) * vegDamp(k)
                 let want = min(qc - qin, kErode * pow(a, m) * s * dt) * damp
                 let removable = max(0, h[k] - h[ri]) * 0.5
-                let er = min(want, removable)
-                if er > 0 {
-                    let ds = min(er, sed[k])
-                    sed[k] -= ds
-                    rock[k] -= (er - ds)
-                    h[k] -= er
-                }
+                // Unter Eis trägt der Funnel nichts ab (#35) und gibt 0 zurück —
+                // die Zelle liefert dann auch keine Fracht nach unten.
+                let er = erodeCell(k, min(want, removable))
                 qs[ri] += qin + er
             }
         }
@@ -3417,13 +3421,22 @@ public final class Terrain {
     /// Zugang für den dt-Wächter (`DtInvariance.testStepCapsAreRates`).
     func stepCapFractionForTests(_ dt: Double) -> Double { stepCapFraction(dt) }
 
+    /// Zugang für den Gletscher-Wächter
+    /// (`Glacier.testNoFluvialErosionUnderIceOnTheGridPath`). Der Grid-Pfad
+    /// läuft im Schritt zusammen mit `diffusionPass` (festes kappa, kein
+    /// Regler) — ein Zwei-Arm-Vergleich über `step()` würde deshalb das
+    /// Bodenkriechen messen statt das Gate (§I.1 derselben Messreihe). Der
+    /// Wächter ruft den Pass deshalb einzeln auf.
+    func transportLimitedForTests(dt: Double) { transportLimited(dt: dt) }
+
     /// Trägt an Zelle `k` `amount` ab (erst Sediment, dann Fels) — hält
     /// h = rock + sed. Gibt den tatsächlich abgetragenen Betrag zurück.
     ///
     /// **Gletscher-Gate (Issue #35).** Über diese beiden Funnel laufen alle
     /// fluvialen Bett-Bewegungen außer den zwei, die ihr Gate selbst tragen
     /// (`outletIncision`, `Hydraulic.erode`): Mäander-Bett-Carve, laterale Ufer,
-    /// Altarm-Pfropf und -Verlandung, Braid-Fracht und Auen-Aggradation. Unter
+    /// Altarm-Pfropf und -Verlandung, Braid-Fracht, Auen-Aggradation und — im
+    /// Nicht-Droplet-Zweig — `transportLimited`. Unter
     /// dem Eis gehört das Tal dem Gletscher — dieselbe Begründung wie dort.
     /// Das Gate sitzt am Funnel statt in jedem Pass einzeln, damit ein künftiger
     /// Bett-Pass es nicht vergessen kann. Leere Maske (keine Zelle
@@ -3439,14 +3452,18 @@ public final class Terrain {
         return a
     }
 
-    /// Lagert `amount` als Sediment an Zelle `k` ab. Vergletscherte Zellen
-    /// bleiben unangetastet (s. `erodeCell`); die Fracht, die dort abgelegt
-    /// worden wäre, gilt wie sonst auch als exportiert (Masse-Erhaltung ist in
-    /// diesem Repo keine Invariante, AGENTS.md).
-    @inline(__always) private func depositCell(_ k: Int, _ amount: Double) {
-        if amount <= 0 { return }
-        if !underIce.isEmpty && underIce[k] { return }
+    /// Lagert `amount` als Sediment an Zelle `k` ab und gibt den tatsächlich
+    /// abgelegten Betrag zurück. Vergletscherte Zellen bleiben unangetastet
+    /// (s. `erodeCell`); die Fracht, die dort abgelegt worden wäre, gilt wie
+    /// sonst auch als exportiert (Masse-Erhaltung ist in diesem Repo keine
+    /// Invariante, AGENTS.md) — der einzige Pass, der sie mitführt
+    /// (`transportLimited`), reicht sie stattdessen talwärts weiter.
+    @discardableResult
+    @inline(__always) private func depositCell(_ k: Int, _ amount: Double) -> Double {
+        if amount <= 0 { return 0 }
+        if !underIce.isEmpty && underIce[k] { return 0 }
         sed[k] += amount; h[k] += amount
+        return amount
     }
 
     /// Stempelt die Mäander-Läufe ins Höhenfeld:
