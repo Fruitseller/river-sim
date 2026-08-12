@@ -77,6 +77,18 @@ braucht auch das gewählte Flux-Eismodell nicht, weil der Eisfluss je Schritt au
 
 In #33 ist `ice` konstant 0 und kostet dank Konstant-Kodierung 5 Byte je Welt.
 
+**Seit #35 stimmt die Rechnung** — und der Versionssprung hat sich gelohnt: das
+Feld ist jetzt beschrieben (`Terrain.updateIce`), ein weiterer Sprung war dafür
+nicht nötig. Zwei Nachträge zur Prognose oben:
+* `ice` ist damit in einer vergletscherten Welt kein konstantes Feld mehr,
+  sondern kostet die vollen 8 Byte je Zelle (in einer eisfreien Welt bleibt es
+  bei 5 Byte je Welt).
+* Die **Vergletscherungs-Maske** `Terrain.underIce` ist BEWUSST nicht im
+  Inventar: sie ist eine reine Ableitung aus `ice` (`> iceMinThickness`), und
+  `updateIce` baut sie im nächsten Schritt neu, bevor irgendein Konsument sie
+  liest. `restore` leert sie deshalb, statt eine fremde Maske stehen zu lassen.
+  Dieselbe Begründung wie bei `runoffWeight` (#36).
+
 ### Warum `waterLevel` und `lakeBalance` echter Zustand sind
 
 Beide folgen ihrem Ziel nur ratenbegrenzt (`lakeLevelResponseYears`,

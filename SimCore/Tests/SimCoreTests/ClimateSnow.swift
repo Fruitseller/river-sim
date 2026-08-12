@@ -148,16 +148,35 @@ final class ClimateSnow: XCTestCase {
     /// über die Schrittweite (Operator-Splitting des Tropfen-Passes, Klassen-Doku
     /// von `DtInvariance` — Relief-Spanne 9.8 %, Seeanteil 72 % über dieselben
     /// Schrittweiten). Der Schnee liest die Höhe, also erbt er diese Drift. Die
-    /// Schranke von 20 % liegt auf dem Niveau der Relief-Schranke dort und fängt
-    /// jede eigene dt-Abhängigkeit des Klimapasses ab.
+    /// Schranke liegt auf dem Niveau der Relief-Schranke dort und fängt jede
+    /// eigene dt-Abhängigkeit des Klimapasses ab.
     ///
     /// Gemessen (n=192, Seed 1337, 20k Jahre; mittlerer Vorrat über Land /
-    /// Rampen-Anteil / `snowStart`):
+    /// Rampen-Anteil / `snowStart`), Stand vor Issue #35:
     ///   dt   50 → 0.00247 / 0.0050 / 0.5702
     ///   dt  500 → 0.00265 / 0.0052 / 0.5697
     ///   dt 2000 → 0.00243 / 0.0050 / 0.5702
     /// Spanne 8.3 % bzw. 3.8 %; die Grenze bewegt sich um 0.0005, also eine
     /// Histogramm-Bin-Breite.
+    ///
+    /// **Seit dem Gletscher (Issue #35) ist die geerbte Drift rund doppelt so
+    /// groß**, deshalb steht die Schranke auf 30 %. Derselbe Lauf, Eis an gegen
+    /// Eis aus (`docs/glacier-measurements.md` §H):
+    ///   Eis an : 0.00185/0.00218/0.00173 · Rampe 0.00367/0.00466/0.00353
+    ///   Eis aus: 0.00224/0.00251/0.00226 · Rampe 0.00457/0.00515/0.00456
+    /// also 20.6 % / 24.2 % gegen 10.8 % / 11.5 %. Drei Gründe, warum das eine
+    /// geerbte Drift ist und keine dt-Abhängigkeit des Klimapasses:
+    /// 1. Die Bilanz selbst bleibt bei 1e-12 (`testSnowBalanceIsDtInvariant`),
+    ///    und der Gletscher rührt `snow` gar nicht an — er LIEST es.
+    /// 2. Die Abweichung ist nicht monoton in dt: in BEIDEN Armen ist dt = 500
+    ///    der Ausreißer nach oben (Eis an: 395 vergletscherte Zellen und Relief
+    ///    0.4482 gegen 321/0.4388 bei dt = 50 und 292/0.4385 bei dt = 2000). Das
+    ///    ist Streuung um die Maske herum — eine Zelle fällt über oder unter die
+    ///    Firn-Grenze —, kein Trend über die Schrittweite.
+    /// 3. Der Gletscher hat seinen eigenen Framerate-Wächter mit eigenen
+    ///    Schranken (`Glacier.testIceIsFramerateIndependent`: Eismasse 15 %).
+    /// Die GRENZE (`snowStart`) driftet weiterhin gar nicht — sie steht mit Eis
+    /// über alle drei Schrittweiten bit-gleich auf 0.5697.
     func testSnowThroughFullStepsIsDtInvariant() {
         var conf = cfg(n: 192)
         // Wie in DtInvariance: die Zufalls-Hebung des Servos aus dem Vergleich
@@ -183,8 +202,8 @@ final class ClimateSnow: XCTestCase {
                 let tag = "dt \(Int(a.dt)) vs \(Int(b.dt))"
                 let devMean = abs(a.mean - b.mean) / max(abs(a.mean), abs(b.mean))
                 let devFrac = abs(a.frac - b.frac) / max(abs(a.frac), abs(b.frac))
-                XCTAssertLessThan(devMean, 0.20, "\(tag): Vorrat \(a.mean) vs \(b.mean)")
-                XCTAssertLessThan(devFrac, 0.20, "\(tag): Rampe \(a.frac) vs \(b.frac)")
+                XCTAssertLessThan(devMean, 0.30, "\(tag): Vorrat \(a.mean) vs \(b.mean)")
+                XCTAssertLessThan(devFrac, 0.30, "\(tag): Rampe \(a.frac) vs \(b.frac)")
                 // Die GRENZE ist eine Temperatur und darf gar nicht driften —
                 // sie hängt nur an der Höhenverteilung, nicht an der Schrittzahl.
                 XCTAssertEqual(a.start, b.start, accuracy: 0.01,
@@ -312,11 +331,24 @@ final class ClimateSnow: XCTestCase {
     /// (`MeltRunoff.testDisabledMeltRunoffIsBitIdentical`). Ohne diese Zeile
     /// vergleicht der Test zwei verschiedene Physiken.
     ///
+    /// **Seit Issue #35 mit einer ZWEITEN Ausnahme derselben Bauart:** aus dem
+    /// Schnee wird Eis, und das Eis fließt und erodiert. Beide Arme laufen
+    /// deshalb zusätzlich mit `iceEnabled = false`. Auch dieser Weg hat seinen
+    /// eigenen Aus-Wächter (`Glacier.testDisabledIceIsBitIdentical` und
+    /// `Glacier.testIcelessWorldIsBitIdentical`, letzterer prüft die Bit-Identität
+    /// an der scharfen Kante: eine Welt, die nie Eis bekommt, rechnet mit und
+    /// ohne Gletscher-Pass gleich).
+    ///
+    /// Der Wächter sagt damit weiterhin genau eine Sache — „das Klima SELBST
+    /// rührt die Physik nicht an" —, und jede EINZELNE Kopplung, die seither
+    /// dazugekommen ist, ist einzeln abschaltbar und einzeln bewacht.
+    ///
     /// Verglichen wird ALLES außer den drei Kryo-Feldern und der Schneegrenze:
     /// beides ist per Konstruktion der Unterschied.
     func testDisabledClimateIsBitIdenticalPhysics() {
-        var off = cfg(n: 128); off.climateEnabled = false; off.meltRunoffEnabled = false
-        var on = cfg(n: 128); on.meltRunoffEnabled = false
+        var off = cfg(n: 128)
+        off.climateEnabled = false; off.meltRunoffEnabled = false; off.iceEnabled = false
+        var on = cfg(n: 128); on.meltRunoffEnabled = false; on.iceEnabled = false
         let a = Terrain(config: off, seed: 1337)
         let b = Terrain(config: on, seed: 1337)
         XCTAssertTrue(a.temperature.isEmpty && a.snow.isEmpty && a.ice.isEmpty,

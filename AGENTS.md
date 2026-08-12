@@ -138,6 +138,7 @@ ist LEM-Konvention und nicht beliebig:
 
 ```
 Uplift (+ Relief-Servo) → computeFlow (Priority-Flood, D8, MFD)
+→ Gletscher (updateIce: Eisfluss, glaziale Erosion, Moränen)
 → Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
 → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion → Wave
 → Klima-Vertikale (Temperatur + Schneebilanz) → Vegetation
@@ -151,9 +152,25 @@ frischen Schneefeld ab.
 Seit Issue #36 koppelt das Klima über **einen** Weg in die Erosion: die
 Schmelze speist das Abfluss-Gewicht (`Terrain.flowWeight` = Regen + Ablation,
 gebaut in `updateRunoffWeight` am Anfang des Schritts aus dem Schneefeld vom
-Schrittende davor). Alles andere bleibt entkoppelt — das Eis (#35) bringt sein
-eigenes Erosionsgesetz mit, Begründung bei `SimConfig.climateEnabled` und
+Schrittende davor). Begründung bei `SimConfig.climateEnabled` und
 `SimConfig.meltRunoffEnabled`.
+
+Der **Gletscher** (Issue #35, `updateIce`) ist der zweite Weg und bringt sein
+eigenes Erosionsgesetz mit (Flux-Modell `E = K·q^m·S`, nicht Stream-Power auf
+`area`). Er steht **nach dem Abflussfeld und vor jeder fluvialen
+Höhenänderung**, weil seine Maske `Terrain.underIce` den fluvialen Abtrag
+gatet: `outletIncision` und `Hydraulic.erode` prüfen sie direkt, alle übrigen
+Bett-Bewegungen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
+Auen-Aggradation, im Testpfad auch `transportLimited`) über ihren gemeinsamen
+Funnel `erodeCell`/`depositCell`.
+Vergletscherte Zellen rührt damit kein fluvialer Pass an — die Hangdiffusion
+dagegen läuft weiter (kein fluvialer Pass, s. `docs/glacier-measurements.md`
+§I.1). Wie `isChannel` gilt: **leeres Feld heißt aus**,
+und ohne Eis wird es auch geleert; eine eisfreie Welt rechnet damit
+bit-identisch zum Stand vor #35. Das Eis liegt **nicht** in `h` (eigene
+Auflage über dem Bett), die Entwässerung läuft also unverändert auf dem Bett.
+Kalibrier-Logbuch: `SimConfig.iceEnabled` ff., Messreihe
+`docs/glacier-measurements.md`.
 
 **Alle drei Abfluss-Konsumenten lesen `flowWeight`** und nie `rain`/`rainWeight`
 direkt: `seedFlowAccumulator` (D8 UND MFD) und die Tropfen-Startpunkte in

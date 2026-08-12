@@ -387,11 +387,25 @@ final class MeltRunoff: XCTestCase {
     /// Cross-Worktree-Fingerabdruck in `docs/melt-runoff-measurements.md` §F:
     /// hier wird geprüft, dass der Aus-Arm dieselbe Welt liefert wie eine Welt,
     /// in der es (Klima aus) gar nichts zu schmelzen gibt.
+    ///
+    /// **Der Gletscher (Issue #35) muss dafür in BEIDEN Armen aus sein.** Der
+    /// Test konstruiert den Vergleichsarm über `snowAccumPerYear = 0` — der
+    /// hat damit nicht nur keine Schmelze, sondern auch kein Nährgebiet, also
+    /// gar kein Eis, während der Aus-Arm normal vergletschert. Ohne diese Zeile
+    /// verglichen die beiden Seiten eine vergletscherte mit einer eisfreien
+    /// Welt (gemessen: Höhendifferenzen bis 0.1, dazu konstante ~1.87 in
+    /// `area` — kein Rauschen, sondern zwei verschiedene Physiken). Dass der
+    /// Gletscher-Pfad SELBST abgeschaltet bit-identisch rechnet, hält
+    /// `Glacier.testDisabledIceIsBitIdentical` / `testIcelessWorldIsBitIdentical`
+    /// fest — dieselbe Aufteilung wie bei
+    /// `ClimateSnow.testDisabledClimateIsBitIdenticalPhysics`: jede Kopplung
+    /// wird EINZELN abgeschaltet und EINZELN bewacht.
     func testDisabledMeltRunoffIsBitIdentical() {
         var a = cfg(n: 96, arm: .off)
-        a.climateEnabled = true
+        a.climateEnabled = true; a.iceEnabled = false
         var b = cfg(n: 96, arm: .renorm)
         b.snowAccumPerYear = 0            // Klima an, aber es fällt nie Schnee
+        b.iceEnabled = false
         let ta = Terrain(config: a, seed: 1337), tb = Terrain(config: b, seed: 1337)
         for _ in 0..<4 { ta.step(dtYears: 1000); tb.step(dtYears: 1000) }
         XCTAssertTrue(ta.runoffWeight.isEmpty, "ausgeschaltet muss das Feld leer bleiben")

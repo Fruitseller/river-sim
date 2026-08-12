@@ -14,9 +14,18 @@ import Foundation
 ///     Uplift (abklingend U(t), Servo nur als Untergrenze)
 ///     → Lithologie (Härte/Erodierbarkeit aus der frischen Höhe, Issue #12)
 ///     → computeFlow (Priority-Flood, D8, MFD)
+///     → Gletscher (updateIce: Eisfluss, glaziale Erosion, Moränen, Issue #35)
 ///     → Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
 ///     → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion
-///     → Wave → Vegetation
+///     → Wave → Klima-Vertikale (Temperatur + Schnee) → Vegetation
+///
+/// Der Gletscher-Pass steht bewusst zwischen Abflussfeld und fluvialer
+/// Makro-Inzision: er braucht das frische Bett, und seine Maske `underIce`
+/// legt den fluvialen Abtrag unter dem Eis still — `outletIncision` und
+/// `Hydraulic.erode` prüfen sie direkt, alle übrigen Bett-Bewegungen
+/// (Mäander-Carve und -Ufer, Altarme, Braid-Fracht, Auen-Aggradation, im
+/// Testpfad auch `transportLimited`) über ihren gemeinsamen Funnel
+/// `erodeCell`/`depositCell`.
 ///
 /// Die fluviale Makro-Inzision ist damit `outletIncision` (Flächen-Stream-Power
 /// auf dem Entwässerungsnetz, impliziter n=1-Solver in Empfänger-Reihenfolge →
@@ -115,14 +124,48 @@ public final class Terrain {
     public private(set) var snow: [Double] = []
     /// **Eisdicke** in Höheneinheiten (Issue #33 legt das Feld an, Issue #35
     /// beschreibt es). Es reist schon jetzt mit, weil das Speicherformat bewusst
-    /// keine Migration kennt: ALLE Kryo-Felder müssen in EINEN Versionssprung
-    /// (`WorldSnapshot.version` 2 → 3), sonst kostet der Eisfluss eine zweite
-    /// Ungültigkeits-Runde für alle Spielstände. In diesem Ticket schreibt kein
-    /// Pass hier — das Feld ist bei eingeschaltetem Klima konstant 0 (und wird
-    /// deshalb von der Konstant-Kodierung auf 5 Byte verdichtet). Warum es der
-    /// EINZIGE zusätzliche Zustand des gewählten Flux-Modells ist:
-    /// `docs/research-climate-cryosphere.md` §4/§6.
+    /// keine Migration kennt: ALLE Kryo-Felder mussten in EINEN Versionssprung
+    /// (`WorldSnapshot.version` 2 → 3), sonst hätte der Eisfluss eine zweite
+    /// Ungültigkeits-Runde für alle Spielstände gekostet. Es ist der EINZIGE
+    /// zusätzliche ZUSTAND des Gletscher-Passes — Eisfluss, Gleit-Rate und
+    /// Vergletscherungs-Maske sind Ableitungen je Schritt
+    /// (`docs/research-climate-cryosphere.md` §4/§6).
+    ///
+    /// Beschrieben von `updateIce` (Issue #35): Firn→Eis aus `snow`, Transport
+    /// auf der Eis-Oberfläche `h + ice`, Ablation über `temperature`. Leer, wenn
+    /// das Klima aus ist; konstant 0, solange `cfg.iceEnabled` aus ist.
+    /// **`h` enthält das Eis NICHT** — es ist eine eigene Auflage über dem Bett.
+    /// Die Entwässerung (`computeFlow`) läuft deshalb unverändert auf dem Bett;
+    /// subglaziales Wasser folgt real ebenfalls dem Bettgefälle.
     public private(set) var ice: [Double] = []
+    /// **Vergletscherungs-Maske**: `ice[k] > cfg.iceMinThickness`. Gate für den
+    /// fluvialen Abtrag — unter einem Gletscher trägt kein Oberflächenwasser ab;
+    /// sonst carvt dasselbe Tal ein zweites Mal, mit fluvialem statt glazialem
+    /// Querschnitt. Drei Prüfstellen: `outletIncision`, `Hydraulic.erode` und
+    /// der Funnel `erodeCell`/`depositCell`, über den alle übrigen
+    /// Bett-Bewegungen laufen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
+    /// Auen-Aggradation). Nicht gegatet ist die Hangdiffusion: Bodenkriechen ist
+    /// kein fluvialer Pass, trägt aber Nachbar-Änderungen auf die Eiszelle —
+    /// gemessen in `docs/glacier-measurements.md` §I.1.
+    /// Dieselbe Bauform wie `isChannel`: **leer heißt aus**, und wenn keine Zelle
+    /// Eis trägt, wird das Feld auch geleert → die Gates sind dann
+    /// bit-identisch nicht vorhanden.
+    /// Die Schwelle ist dieselbe, an der in `iceFlowSubStep` Transport und
+    /// Abrasion einsetzen — der dünne Saum ist damit fluvial UND nur fluvial,
+    /// nie beides zugleich.
+    ///
+    /// Reine ABLEITUNG aus `ice` (kein Zustand, nicht im Snapshot-Inventar):
+    /// `updateIce` baut sie je Schritt neu, und zwar VOR jedem Konsumenten.
+    public private(set) var underIce: [Bool] = []
+    /// Arbeitspuffer des Eistransports (Zwei-Phasen-Scratch, s. `iceFlowSubStep`):
+    /// Ausstrom je Einheit Oberflächen-Abfall (`iceRate`), die eingefrorene
+    /// Eis-Oberfläche des Teilschritts (`iceSurf`) und die lokale glaziale
+    /// Erosionsrate, die Pass 2 über die Schleifspur mittelt (`iceEro`). Erst
+    /// beim ersten Gletscher-Pass angelegt — ohne Eis kostet das Feature keinen
+    /// Speicher.
+    private var iceRate: [Double] = []
+    private var iceSurf: [Double] = []
+    private var iceEro: [Double] = []
     public private(set) var veg: [Double]    // Vegetationsdichte 0..1
     /// Vegetations-Klasse je Zelle: 0 kahl · 1 Gras · 2 Wald · 3 Auwald.
     /// ADDITIV zu `veg` (das bleibt Dichte 0..1 für alle bestehenden
@@ -474,6 +517,9 @@ public final class Terrain {
         // allein bestimmend, und Determinismus ist eine getestete Invariante.
         // `updateClimate(dt: 10000)` unten baut die Felder gleich frisch auf.
         temperature = []; snow = []; ice = []
+        // Die Vergletscherungs-Maske ist eine Ableitung daraus (#35) — mit dem
+        // Eis muss sie weg, sonst gatet die alte Insel die Erosion der neuen.
+        underIce = []
         computeFlow()
         if cfg.breachEnabled { breachBasins() }
         spinUpStreamMap()
@@ -1107,6 +1153,362 @@ public final class Terrain {
         }
         guard land > 0 else { return nil }
         return (Double(ramp) / Double(land), Double(full) / Double(land))
+    }
+
+    // MARK: - Gletscher: Eisfluss, glaziale Erosion und Moränen (Issue #35)
+
+    /// Zieht das Eisfeld um `dt` Jahre nach: Transport, glaziale Erosion, Bilanz
+    /// und Moränen — und baut danach die Maske `underIce`, die die beiden
+    /// fluvialen Abtragspfade unter dem Gletscher stilllegt.
+    /// Kalibrier-Logbuch: `SimConfig.iceEnabled` ff.,
+    /// Modellwahl `docs/research-climate-cryosphere.md` §4/§5,
+    /// Messreihen `docs/glacier-measurements.md`.
+    ///
+    /// ```
+    /// s      = h + ice                                  Eis-OBERFLÄCHE (h ist das Bett)
+    /// out(k) = min(kappa·I·ΣΔs⁺, moveFrac·I)            Ausstrom je Teilschritt
+    /// I      ← I + Σ_nb out(nb)·Δs⁺(nb→k)/ΣΔs⁺(nb) − out(k)
+    /// E      = iceErodeK · (I·S)^m · S,  S = ΣΔs⁺/cellSize    (Flux-Modell, n = 1)
+    /// a      = iceFirnPerSnowYear · snow · clamp(−T/coldSpan, 0, 1)
+    /// μ      = 1/iceTurnoverYears + iceMeltPerKYear · max(0, T)
+    /// I      ← I* + (I − I*)·e^(−μ·dt),  I* = a/μ       exakte Lösung von İ = a − μI
+    /// Moräne = iceMoraineK · (Schmelz-Anteil von ∫μ·I dt)
+    /// ```
+    ///
+    /// **Sub-Taktung** exakt wie die Hangdiffusion in `step()`: die Transport-Zahl
+    /// des ganzen Schritts (`kappa_Jahr · dt`) wird auf so viele gleich starke
+    /// Teilschritte verteilt, dass jeder unter `iceFlowSubCap` bleibt. Damit ist
+    /// die Gesamtwirkung ∝ `dt` — ein `+10.000 Jahre`-Sprung transportiert
+    /// dasselbe wie 50.000 Frame-Schritte à 0,2 Jahre (Wächter
+    /// `Glacier.testIceIsFramerateIndependent`). Die Bilanz teleskopiert
+    /// ohnehin exakt (Relaxationsform), und der Erosionsterm ist eine RATE mal
+    /// `subDt`.
+    ///
+    /// **Operator-Splitting** wie im Rest des Schritts: `snow` und `temperature`
+    /// stehen auf dem Stand des vorigen Schrittendes (dieselbe Annahme wie in
+    /// `updateRunoffWeight`), `h` und `area` auf dem frischen Stand dieses
+    /// Schritts.
+    ///
+    /// **Schnell-Ausstieg.** Ohne Eis UND ohne Zufuhr (keine Zelle unter 0 °C mit
+    /// Schneevorrat) tut der Pass nichts und leert die Maske → alles rechnet
+    /// bit-identisch zum Stand vor #35. Das ist nicht nur eine Optimierung: der
+    /// Test dafür ist ein Abnahmekriterium des Tickets. Der EINE sequenzielle
+    /// Suchlauf ist gegen die bis zu 100 Teilschritte eines großen Sprungs
+    /// vernachlässigbar.
+    public func updateIce(dt: Double) {
+        let cnt = cfg.count
+        guard cfg.iceEnabled, cfg.climateEnabled, dt > 0,
+              ice.count == cnt, snow.count == cnt, temperature.count == cnt else {
+            if !underIce.isEmpty { underIce = [] }
+            return
+        }
+        // Gibt es überhaupt Eis oder eine Quelle dafür? (Reihenfolge-unabhängig,
+        // also bit-genau reproduzierbar.)
+        var active = false
+        for k in 0..<cnt where ice[k] > 0 { active = true; break }
+        if !active {
+            for k in 0..<cnt where temperature[k] < 0 && snow[k] > 0 { active = true; break }
+        }
+        guard active else {
+            if !underIce.isEmpty { underIce = [] }
+            return
+        }
+        if iceRate.count != cnt { iceRate = .init(repeating: 0, count: cnt) }
+        if iceSurf.count != cnt { iceSurf = .init(repeating: 0, count: cnt) }
+        if iceEro.count != cnt { iceEro = .init(repeating: 0, count: cnt) }
+        // kappa auflösungs-unabhängig (∝ 1/dx² ∝ (n−1)², auf n = 640 kalibriert) —
+        // dieselbe Umrechnung wie bei `hillDiffusion` in `step()`.
+        let refN = 639.0, m1 = Double(n - 1)
+        let kYear = cfg.iceFlowK * (m1 * m1) / (refN * refN) / 100.0
+        // Die Transport-ZAHL eines Teilschritts ist `kappa · ΣΔs⁺` (der Anteil der
+        // Säule, der die Zelle verlässt) — der Deckel gilt also am STEILSTEN
+        // Eis-Hang, nicht an kappa allein. Der wird hier EINMAL gemessen statt
+        // pessimistisch angenommen: mit `ΣΔs⁺ ≤ 1` als Annahme liefe die
+        // Sub-Taktung um den Faktor 1/wMax (gemessen 5…20) zu fein, und der Pass
+        // dominierte den Zeitschritt (`docs/glacier-measurements.md` §E).
+        // Der harte Positivitäts-Deckel `iceFlowMoveFraction` bleibt trotzdem
+        // stehen: wMax stammt vom Zustand VOR den Teilschritten, und ein
+        // Sculpt-Eingriff kann die Oberfläche dazwischen versteilern.
+        let wMax = steepestIceSurfaceDrop()
+        let totalK = kYear * dt * wMax
+        let nSub = max(1, Int((totalK / max(1e-9, cfg.iceFlowSubCap)).rounded(.up)))
+        let subK = kYear * dt / Double(nSub)
+        let subDt = dt / Double(nSub)
+        for _ in 0..<nSub { iceFlowSubStep(kappa: subK, dt: subDt) }
+        rebuildIceMask()
+    }
+
+    /// Größte Summe der positiven Oberflächen-Abfälle (`ΣΔs⁺`) über alle Zellen,
+    /// die Eis tragen — die Zahl, an der der explizite Deckel des Transports
+    /// hängt (s. `updateIce`). Sequenziell und als Maximum reihenfolge-unabhängig,
+    /// also bit-genau reproduzierbar. Kostet EINEN Gitter-Durchlauf und spart
+    /// dafür ein Vielfaches an Teilschritten.
+    private func steepestIceSurfaceDrop() -> Double {
+        let nn = n
+        var wMax = 0.0
+        for j in 0..<nn {
+            for i in 0..<nn {
+                let k = j * nn + i
+                if ice[k] <= 0 { continue }
+                let sk = h[k] + ice[k]
+                let sl = i > 0      ? h[k - 1]  + ice[k - 1]  : sk
+                let sr = i < nn - 1 ? h[k + 1]  + ice[k + 1]  : sk
+                let sd = j > 0      ? h[k - nn] + ice[k - nn] : sk
+                let su = j < nn - 1 ? h[k + nn] + ice[k + nn] : sk
+                var w = 0.0
+                if sk > sl { w += sk - sl }
+                if sk > sr { w += sk - sr }
+                if sk > sd { w += sk - sd }
+                if sk > su { w += sk - su }
+                if w > wMax { wMax = w }
+            }
+        }
+        return wMax
+    }
+
+    /// EIN Teilschritt des Gletschers. Zwei Pässe über das Gitter, beide
+    /// zeilenparallel und bit-identisch zur sequenziellen Schleife:
+    ///
+    /// * **Pass 1** liest `h`/`ice` (nur lesend) und schreibt je Zelle den
+    ///   Ausstrom PRO EINHEIT Oberflächen-Abfall (`iceRate`) sowie die
+    ///   eingefrorene Eis-Oberfläche (`iceSurf`). Der Deckel `moveFrac·I` sitzt
+    ///   hier — mehr als diesen Anteil gibt eine Säule nie ab, das Schema kann
+    ///   also keine negative Eisdicke erzeugen.
+    /// * **Pass 2** liest AUSSCHLIESSLICH die beiden eingefrorenen Puffer der
+    ///   Nachbarschaft und schreibt nur den eigenen Index (`ice`, `h`, `rock`,
+    ///   `sed`). Genau deshalb braucht es den Scratch: Pass 2 verändert `h`, und
+    ///   ohne die eingefrorene Oberfläche läse der Nachbar ein halb erodiertes
+    ///   Gefälle (und das Ergebnis hinge an der Thread-Aufteilung).
+    ///
+    /// Die Summe der Abfälle (`ΣΔs⁺`) wird in Pass 2 in derselben
+    /// Nachbar-Reihenfolge wie in Pass 1 gebildet — der Ausstrom, den eine Zelle
+    /// abzieht, ist damit dieselbe Zahl, die ihre Nachbarn als Zufluss
+    /// gutschreiben (bis auf die eine Division `out/ΣΔs⁺`, gegen die der
+    /// Nullpunkt-Wächter `if I < 0` steht).
+    private func iceFlowSubStep(kappa: Double, dt: Double) {
+        let nn = n, cnt = cfg.count
+        let sea = cfg.sea, cs = cfg.cellSize
+        let moveFrac = max(0, cfg.iceFlowMoveFraction)
+        // DIESELBE Schwelle, die `underIce` zieht (s. `rebuildIceMask`): unterhalb
+        // fließt kein Eis und es schleift auch keines. Sonst liefen in einer Zelle
+        // am dünnen Saum FLUVIALE und GLAZIALE Erosion gleichzeitig — die fluvialen
+        // Gates hängen an `underIce`, das Fließen und die Abrasion hingen vorher an
+        // „irgendeine positive Restdicke". Die BILANZ (Zufuhr, Schmelze, Moräne)
+        // läuft für dünnes Eis weiter: ein Schneefeld muss über die Schwelle
+        // wachsen können, sonst gäbe es nie einen Gletscher.
+        let thr = max(0, cfg.iceMinThickness)
+        let coldSpan = max(1e-9, cfg.iceFirnColdSpan)
+        let firn = cfg.iceFirnPerSnowYear
+        let baseMu = 1 / max(1e-9, cfg.iceTurnoverYears)
+        let meltC = max(0, cfg.iceMeltPerKYear)
+        let moraine = max(0, cfg.iceMoraineK)
+        let kEro = max(0, cfg.iceErodeK), mEro = cfg.iceErodeFluxExp
+        let swath = max(0, cfg.iceErodeSwathRadius)
+        let swathSide = 2 * swath + 1
+        let swathNorm = 1.0 / Double(swathSide * swathSide)
+        // Gesteinshärte (Issue #12): Abrasion ∝ Eisfluss × Erodierbarkeit. Der
+        // Faktor wirkt NUR auf den Fels-Anteil (Regolith weiß nicht, welches
+        // Gestein darunter liegt) und wird nur angefasst, wenn er ≠ 1 ist —
+        // sonst liefe eine andere Gleitkomma-Reihenfolge und der Lauf driftete um
+        // 1 ulp weg (dieselbe Falle wie in `Hydraulic.dig`, dort ausgemessen).
+        let lithOn = lithErodeK.count == cnt
+        let lithArr = lithOn ? lithErodeK : [1.0]
+        h.withUnsafeMutableBufferPointer { hb in
+        rock.withUnsafeMutableBufferPointer { rkb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        ice.withUnsafeMutableBufferPointer { ib in
+        snow.withUnsafeBufferPointer { snb in
+        temperature.withUnsafeBufferPointer { tb in
+        lithArr.withUnsafeBufferPointer { ldb in
+        iceRate.withUnsafeMutableBufferPointer { rtb in
+        iceSurf.withUnsafeMutableBufferPointer { sfb in
+        iceEro.withUnsafeMutableBufferPointer { erb in
+            let ph = hb.baseAddress!, prock = rkb.baseAddress!, psed = sb.baseAddress!
+            let pice = ib.baseAddress!, psnow = snb.baseAddress!, pt = tb.baseAddress!
+            let plith = ldb.baseAddress!
+            let prate = rtb.baseAddress!, psurf = sfb.baseAddress!, pero = erb.baseAddress!
+            // ---- Pass 1: Oberfläche einfrieren, Ausstrom je Zelle bestimmen ----
+            parallel(nn) { jLo, jHi in
+            for j in jLo..<jHi {
+                for i in 0..<nn {
+                    let k = j * nn + i
+                    let sk = ph[k] + pice[k]
+                    psurf[k] = sk
+                    let ik = pice[k]
+                    if ik <= thr { prate[k] = 0; pero[k] = 0; continue }
+                    // Rand gespiegelt (Abfall 0): Eis verlässt die Welt nicht.
+                    let sl = i > 0      ? ph[k - 1]  + pice[k - 1]  : sk
+                    let sr = i < nn - 1 ? ph[k + 1]  + pice[k + 1]  : sk
+                    let sd = j > 0      ? ph[k - nn] + pice[k - nn] : sk
+                    let su = j < nn - 1 ? ph[k + nn] + pice[k + nn] : sk
+                    var w = 0.0
+                    if sk > sl { w += sk - sl }
+                    if sk > sr { w += sk - sr }
+                    if sk > sd { w += sk - sd }
+                    if sk > su { w += sk - su }
+                    if w <= 0 { prate[k] = 0; pero[k] = 0; continue } // Mulde: Eis bleibt liegen
+                    var out = kappa * ik * w
+                    let cap = moveFrac * ik
+                    if out > cap { out = cap }
+                    prate[k] = out / w
+                    // Glaziale Erosions-RATE (je Jahr) am Ort ihrer Entstehung.
+                    // Sie wird in Pass 2 über die Schleifspur verteilt, deshalb
+                    // steht sie hier im Scratch statt direkt im Gelände.
+                    // q = Eisdicke × Oberflächen-Gefälle ist der Gleit-/Fluss-Proxy.
+                    if kEro > 0 && ph[k] > sea {
+                        let slope = w / cs
+                        pero[k] = kEro * pow(ik * slope, mEro) * slope
+                    } else {
+                        pero[k] = 0
+                    }
+                }
+            }
+            }
+            // ---- Pass 2: Zufluss sammeln, erodieren, Bilanz, Moräne ----
+            parallel(nn) { jLo, jHi in
+            for j in jLo..<jHi {
+                for i in 0..<nn {
+                    let k = j * nn + i
+                    let sk = psurf[k]
+                    var inflow = 0.0, w = 0.0
+                    // Dieselbe Reihenfolge wie Pass 1 (l, r, d, u): `w` ist damit
+                    // bit-genau dieselbe Summe.
+                    if i > 0      { let d = psurf[k - 1]  - sk
+                                    if d > 0 { inflow += prate[k - 1]  * d } else { w -= d } }
+                    if i < nn - 1 { let d = psurf[k + 1]  - sk
+                                    if d > 0 { inflow += prate[k + 1]  * d } else { w -= d } }
+                    if j > 0      { let d = psurf[k - nn] - sk
+                                    if d > 0 { inflow += prate[k - nn] * d } else { w -= d } }
+                    if j < nn - 1 { let d = psurf[k + nn] - sk
+                                    if d > 0 { inflow += prate[k + nn] * d } else { w -= d } }
+                    let i0 = pice[k]
+                    let t = pt[k]
+                    let fCold = min(1, max(0, -t / coldSpan))
+                    let a = firn * psnow[k] * fCold
+                    // Eisfreie Zelle ohne Zufluss und ohne Zufuhr: nichts zu
+                    // rechnen (das Meer und alles Land unterhalb der Firn-Grenze)
+                    // — BIT-IDENTISCH zur vollen Rechnung, nicht genähert
+                    // (0 + (0−0)·e^… = 0), und der Zweig trägt die große Mehrheit
+                    // der Zellen. Dieselbe Abkürzung wie in `updateClimate`.
+                    if i0 == 0 && inflow == 0 && a == 0 { continue }
+                    var iceNow = i0 + inflow - prate[k] * w
+                    if iceNow < 0 { iceNow = 0 }   // s. Doku: Rest der einen Division
+                    // ---- Glaziale Erosion (Flux-Modell + Schleifspur) ----
+                    // Die Rate steht aus Pass 1 im Scratch (auf der Dicke VOR dem
+                    // Transport — das ist das Eis, das diesen Teilschritt über das
+                    // Bett gescheuert hat). Hier wird sie über die SCHLEIFSPUR
+                    // gemittelt: `swath` Zellen im Quadrat, Gewichte gleich und
+                    // die Summe auf die volle Fenstergröße normiert.
+                    //
+                    // Warum der Ausstrich sein muss (`docs/research-climate-cryosphere.md`
+                    // §4.3 sagt es voraus, `docs/glacier-measurements.md` §D misst es):
+                    // die LOKALE Flux-Rate ist im Thalweg am größten und gräbt
+                    // dort eine Kerbe — das Querprofil wird V-IGER statt U-iger
+                    // (gemessen ohne Ausstrich: 1.447 gegen 1.352 im eisfreien
+                    // Referenzarm, also die falsche Richtung). Der Gletscher
+                    // schleift aber über seine ganze BREITE. Liebl et al. 2023
+                    // lösen dasselbe Problem im OpenLEM mit derselben Maßnahme
+                    // („artificially expanded erosion swath").
+                    //
+                    // GATHER statt Scatter: jede Zelle SAMMELT die Raten ihrer
+                    // Nachbarschaft, statt ihre eigene zu verteilen — nur so
+                    // schreibt Pass 2 weiterhin ausschließlich den eigenen Index
+                    // und bleibt parallel bit-identisch. Bei gleichen Gewichten
+                    // ist das dieselbe Gesamtmenge (Faltung ist symmetrisch).
+                    if kEro > 0 && i0 > thr && w > 0 && ph[k] > sea {
+                        var rate = pero[k]
+                        if swath > 0 {
+                            var sum = 0.0
+                            for dj in -swath...swath {
+                                let jj = j + dj
+                                if jj < 0 || jj >= nn { continue }
+                                for di in -swath...swath {
+                                    let ii = i + di
+                                    if ii < 0 || ii >= nn { continue }
+                                    sum += pero[jj * nn + ii]
+                                }
+                            }
+                            rate = sum * swathNorm
+                        }
+                        var d = rate * dt
+                        // Deckel als RATE gelesen (AGENTS.md): ein Teilschritt
+                        // nimmt höchstens ein Viertel der lokalen Oberflächen-
+                        // Abfälle mit. Bindet im kalibrierten Lauf nicht; er hält
+                        // den Trog davon ab, sich in EINEM Teilschritt unter seine
+                        // Nachbarn zu graben (dort staut sich sonst das Eis).
+                        let capD = 0.25 * w
+                        if d > capD { d = capD }
+                        let f = lithOn ? plith[k] : 1.0
+                        if f != 1.0 {
+                            let s = psed[k]
+                            if d > s { d = s + (d - s) * f }
+                        }
+                        if d > 0 {
+                            let take = min(d, psed[k])
+                            psed[k] -= take
+                            prock[k] -= (d - take)
+                            ph[k] -= d
+                        }
+                    }
+                    // ---- Massenbilanz (exakte Relaxationsform) ----
+                    let meltRate = meltC * max(0, t)
+                    let mu = baseMu + meltRate
+                    let target = a / mu
+                    let e = exp(-mu * dt)
+                    pice[k] = target + (iceNow - target) * e
+                    // ---- Moräne: was AUSSCHMILZT, legt seine Schuttfracht ab ----
+                    // ∫₀^dt μ·I dt = μ·I*·dt + (I₀−I*)·(1−e^(−μdt)) — exakt, und
+                    // davon zählt nur der Schmelz-Anteil von μ (der Grundumsatz ist
+                    // Sublimation/Kalben, der trägt keinen Schutt aus). Im
+                    // Akkumulationsgebiet (T ≤ 0) ist der Anteil exakt 0.
+                    if moraine > 0 && meltRate > 0 && ph[k] > sea {
+                        var ablated = mu * target * dt + (iceNow - target) * (1 - e)
+                        if ablated < 0 { ablated = 0 }
+                        let dep = moraine * ablated * (meltRate / mu)
+                        if dep > 0 { psed[k] += dep; ph[k] += dep }
+                    }
+                    // Kalben: was das Meer erreicht, geht verloren. (Ein
+                    // Schelfeis-Modell wäre eine eigene Physik; die Insel ist
+                    // dafür zu klein.)
+                    if ph[k] <= sea { pice[k] = 0 }
+                }
+            }
+            }
+        }}}}}}}}}}
+    }
+
+    /// Baut `underIce` aus der frischen Eisdicke. **Leer, wenn keine Zelle über
+    /// der Schwelle liegt** — dann greift keines der fluvialen Gates und die
+    /// Arithmetik ist bit-identisch zum Stand ohne Gletscher.
+    /// Sequenziell: das Ergebnis hängt an keiner Summationsreihenfolge, und der
+    /// Pass ist ein reiner Vergleich je Zelle.
+    private func rebuildIceMask() {
+        let cnt = cfg.count, thr = cfg.iceMinThickness
+        var any = false
+        for k in 0..<cnt where ice[k] > thr { any = true; break }
+        guard any else {
+            if !underIce.isEmpty { underIce = [] }
+            return
+        }
+        if underIce.count != cnt { underIce = .init(repeating: false, count: cnt) }
+        for k in 0..<cnt { underIce[k] = ice[k] > thr }
+    }
+
+    /// Sättigung einer Eisdicke zur **Deckung** (0 … <1): `I/(I + ref)` — dieselbe
+    /// Bauform wie `snowCoverage`. EINZIGE Quelle der Formel; der Färbungs-Loop in
+    /// `SimNode.terrainColorBytes` ruft sie über den rohen Puffer auf, statt sie
+    /// ein zweites Mal hinzuschreiben. Wächter:
+    /// `Glacier.testIceCoverIsTheSingleSourceForColouring`.
+    @inline(__always) public static func iceCoverage(thickness: Double, ref: Double) -> Double {
+        thickness / (thickness + ref)
+    }
+
+    /// **Eisdeckung** einer Zelle (0 … <1) — die EINE Quelle für die Eis-Färbung.
+    /// Ohne Eisfeld (Klima aus) exakt 0: dann malt der Renderer nur Schnee, also
+    /// genau das Bild von vor #35.
+    @inline(__always) public func iceCover(_ k: Int) -> Double {
+        guard ice.count == cfg.count else { return 0 }
+        return Terrain.iceCoverage(thickness: ice[k], ref: cfg.iceCoverRef)
     }
 
     // MARK: - Vegetation
@@ -2107,6 +2509,13 @@ public final class Terrain {
     /// limitierte Grid-Inzision ab (Commit „B (M3)").
     /// Verarbeitung stromauf→stromab (order rückwärts), sodass
     /// die Fracht jeder Zelle bei ihren Zuflüssen schon angekommen ist.
+    ///
+    /// Bewegt das Bett ausschließlich über `erodeCell`/`depositCell` und ist
+    /// damit unter Eis stillgelegt wie jeder andere fluviale Pass (#35) — der
+    /// Testpfad braucht dasselbe Gate wie die Produktion, sonst hinge die
+    /// Zusicherung „unter Eis kein fluvialer Abtrag" am Erosionszweig.
+    /// Vergletscherte Zellen halten ihre Fracht nicht auf: was sie weder
+    /// abgeben noch annehmen, zieht unverändert zum Empfänger weiter.
     private func transportLimited(dt: Double) {
         let cs = cfg.cellSize
         let sqrt2 = 2.0.squareRoot()
@@ -2121,8 +2530,7 @@ public final class Terrain {
             if r < 0 {
                 // Meer/Rand: Delta bis Meereshöhe aufbauen, Überschuss geht ins tiefe Meer.
                 let room = max(0, cfg.sea - h[k])
-                let dep = min(qin, room)
-                h[k] += dep; sed[k] += dep
+                depositCell(k, min(qin, room))
                 continue
             }
             let ri = Int(r)
@@ -2137,8 +2545,9 @@ public final class Terrain {
                 var dep = qin - qc
                 let room = max(0, (hf[k] - h[k])) + 0.02 // bis Seespiegel/etwas darüber
                 dep = min(dep, room)
-                h[k] += dep; sed[k] += dep
-                qs[ri] += qin - dep
+                // Unter Eis nimmt der Funnel nichts an (#35); die Fracht zieht
+                // dann ungeschmälert weiter talwärts.
+                qs[ri] += qin - depositCell(k, dep)
             } else {
                 // unter Kapazität → erodieren (detachment-begrenzt, Fels widerstandsfähiger).
                 // Auf Kanalzellen gedämpft: dort inzidiert der Mäander-Carve (Reconciliation).
@@ -2149,13 +2558,9 @@ public final class Terrain {
                 let kErode = (sed[k] > cfg.sedCoverThresh ? cfg.kSed : kBed) * vegDamp(k)
                 let want = min(qc - qin, kErode * pow(a, m) * s * dt) * damp
                 let removable = max(0, h[k] - h[ri]) * 0.5
-                let er = min(want, removable)
-                if er > 0 {
-                    let ds = min(er, sed[k])
-                    sed[k] -= ds
-                    rock[k] -= (er - ds)
-                    h[k] -= er
-                }
+                // Unter Eis trägt der Funnel nichts ab (#35) und gibt 0 zurück —
+                // die Zelle liefert dann auch keine Fracht nach unten.
+                let er = erodeCell(k, min(want, removable))
                 qs[ri] += qin + er
             }
         }
@@ -2191,7 +2596,14 @@ public final class Terrain {
         // 1-Element-Dummy und Faktor exakt 1.0 → bit-identische Arithmetik.
         let lithOn = lithErodeK.count == cnt
         let lithArr = lithOn ? lithErodeK : [1.0]
+        // Gletscher (Issue #35): unter Eis gibt es keinen fluvialen Abtrag — das
+        // Tal gehört dem Eis, und ein zweiter Carve mit fluvialem Querschnitt
+        // würde den Trog wieder zum Kerbtal machen. Dasselbe Gate-Muster wie beim
+        // abflusslosen Becken unten; leere Maske → Zweig fällt weg.
+        let iceOn = underIce.count == cnt
+        let iceArr = iceOn ? underIce : [false]
         h.withUnsafeMutableBufferPointer { hb in
+        iceArr.withUnsafeBufferPointer { icb in
         lithArr.withUnsafeBufferPointer { lkb in
         sed.withUnsafeMutableBufferPointer { sb in
         rock.withUnsafeMutableBufferPointer { rkb in
@@ -2206,13 +2618,14 @@ public final class Terrain {
             let pveg = vb.baseAddress!, pa = ab.baseAddress!
             let pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
             let pord = ob.baseAddress!, prec = rb.baseAddress!, pend = eb.baseAddress!
-            let plith = lkb.baseAddress!
+            let plith = lkb.baseAddress!, pice = icb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
         for oi in 0..<cnt {
             let k = Int(pord[oi])
             let r = prec[k]
             if ph[k] <= sea { continue }            // Meer nicht einschneiden
+            if iceOn && pice[k] { continue }        // unter Eis kein fluvialer Abtrag (#35)
             if pa[k] < minA { continue }            // Breach: nur das Trunk-Netz
             // Abflussloses Becken (Issue #11): die Seefläche hat keinen Auslass,
             // also gibt es dort nichts einzuschneiden. Die SILL bleibt dabei
@@ -2260,7 +2673,7 @@ public final class Terrain {
             prock[k] -= delta
             ph[k] = hNew
         }
-        }}}}}}}}}}}
+        }}}}}}}}}}}}
     }
 
     // MARK: - Seen-Verfüllung
@@ -2433,7 +2846,10 @@ public final class Terrain {
                     if h[nb] <= cfg.sea { continue }            // Meer nicht auffüllen
                     if h[nb] >= level { continue }              // Talwand/über Aue → unberührt
                     let add = (level - h[nb]) * rate
-                    sed[nb] += add; h[nb] += add                // Aggradation (Sediment)
+                    // Aggradation (Sediment) über den gemeinsamen Funnel — der
+                    // trägt das Gletscher-Gate (#35). `add` ist hier immer > 0
+                    // (h < level, rate > 0), der Pass rechnet also unverändert.
+                    depositCell(nb, add)
                 }
             }
         }
@@ -3016,21 +3432,49 @@ public final class Terrain {
     /// Zugang für den dt-Wächter (`DtInvariance.testStepCapsAreRates`).
     func stepCapFractionForTests(_ dt: Double) -> Double { stepCapFraction(dt) }
 
+    /// Zugang für den Gletscher-Wächter
+    /// (`Glacier.testNoFluvialErosionUnderIceOnTheGridPath`). Der Grid-Pfad
+    /// läuft im Schritt zusammen mit `diffusionPass` (festes kappa, kein
+    /// Regler) — ein Zwei-Arm-Vergleich über `step()` würde deshalb das
+    /// Bodenkriechen messen statt das Gate (§I.1 derselben Messreihe). Der
+    /// Wächter ruft den Pass deshalb einzeln auf.
+    func transportLimitedForTests(dt: Double) { transportLimited(dt: dt) }
+
     /// Trägt an Zelle `k` `amount` ab (erst Sediment, dann Fels) — hält
     /// h = rock + sed. Gibt den tatsächlich abgetragenen Betrag zurück.
+    ///
+    /// **Gletscher-Gate (Issue #35).** Über diese beiden Funnel laufen alle
+    /// fluvialen Bett-Bewegungen außer den zwei, die ihr Gate selbst tragen
+    /// (`outletIncision`, `Hydraulic.erode`): Mäander-Bett-Carve, laterale Ufer,
+    /// Altarm-Pfropf und -Verlandung, Braid-Fracht, Auen-Aggradation und — im
+    /// Nicht-Droplet-Zweig — `transportLimited`. Unter
+    /// dem Eis gehört das Tal dem Gletscher — dieselbe Begründung wie dort.
+    /// Das Gate sitzt am Funnel statt in jedem Pass einzeln, damit ein künftiger
+    /// Bett-Pass es nicht vergessen kann. Leere Maske (keine Zelle
+    /// vergletschert, oder `iceEnabled = false`) → der Zweig fällt weg und alles
+    /// rechnet bit-identisch zum Stand vor #35.
     @inline(__always) private func erodeCell(_ k: Int, _ amount: Double) -> Double {
         let a = max(0, amount)
         if a <= 0 { return 0 }
+        if !underIce.isEmpty && underIce[k] { return 0 }
         let ds = min(a, sed[k]); sed[k] -= ds
         rock[k] -= (a - ds)
         h[k] -= a
         return a
     }
 
-    /// Lagert `amount` als Sediment an Zelle `k` ab.
-    @inline(__always) private func depositCell(_ k: Int, _ amount: Double) {
-        if amount <= 0 { return }
+    /// Lagert `amount` als Sediment an Zelle `k` ab und gibt den tatsächlich
+    /// abgelegten Betrag zurück. Vergletscherte Zellen bleiben unangetastet
+    /// (s. `erodeCell`); die Fracht, die dort abgelegt worden wäre, gilt wie
+    /// sonst auch als exportiert (Masse-Erhaltung ist in diesem Repo keine
+    /// Invariante, AGENTS.md) — der einzige Pass, der sie mitführt
+    /// (`transportLimited`), reicht sie stattdessen talwärts weiter.
+    @discardableResult
+    @inline(__always) private func depositCell(_ k: Int, _ amount: Double) -> Double {
+        if amount <= 0 { return 0 }
+        if !underIce.isEmpty && underIce[k] { return 0 }
         sed[k] += amount; h[k] += amount
+        return amount
     }
 
     /// Stempelt die Mäander-Läufe ins Höhenfeld:
@@ -3071,6 +3515,13 @@ public final class Terrain {
                     // Jahrtausende dunkle Tiefen-Rinnen in Seeböden, die nie verlanden
                     // (gemessen: hf−h > 0.16 nach 24k Jahren, „dunkle Stellen").
                     if hf[k] - h[k] > 0.02 { continue }
+                    // Unter dem Eis (Issue #35) ebenso wenig — und zwar VOR der
+                    // Maske: `erodeCell` gatet zwar den Carve, aber ein Kanal,
+                    // der unter einer Zunge durchläuft, ist auch kein Kanal.
+                    // `isChannel` dämpft die Tropfen-Deposition und `veg = 0`
+                    // reißt die Ufer-Vegetation weg — beides hat auf einer
+                    // vergletscherten Zelle nichts zu suchen.
+                    if !underIce.isEmpty && underIce[k] { continue }
                     isChannel[k] = true
                     // Ufer-Kill (Stufe 3): das überstrichene Bett reißt die
                     // Wurzeln weg — veg hart auf 0 (absorbierend, dt-frei).
@@ -3203,6 +3654,14 @@ public final class Terrain {
         computeFlow(includeMFD: updateMFD, dtYears: dt)
         relaxWaterLevel(dt: dt) // Seespiegel folgt dem frischen hf (s. Doku dort)
         updateSaltCrust(dt: dt) // Playa-Kruste folgt der frischen Becken-Rolle
+        // Gletscher (Issue #35): NACH dem Abflussfeld — das Eis fließt auf dem
+        // Bett, das der frische Priority-Flood gesehen hat — und VOR jeder
+        // fluvialen Höhenänderung des Schritts, weil `underIce` die
+        // Auslass-Inzision, die Tropfen und (über `erodeCell`/`depositCell`) die
+        // Bett-Bewegungen von Mäander und Braiding gatet — auch den
+        // `meanderStamp` direkt darunter. Ohne Eis (Normalfall der ersten
+        // Schritte, oder `iceEnabled = false`) ein reiner Suchlauf, s. dort.
+        updateIce(dt: dt)
         if cfg.meanderEnabled {
             migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
             meanderStamp(dt: dt)   // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
@@ -3238,6 +3697,9 @@ public final class Terrain {
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],
+                            // Vergletscherte Zellen bleiben unangetastet (#35);
+                            // leer, solange nirgends Eis liegt.
+                            underIce: underIce,
                             // Dieselbe Gewichtungsregel wie beide Netze (Issue #36):
                             // wo Schmelzwasser abfließt, starten auch mehr Tropfen.
                             rainWeight: flowWeight,
@@ -3721,6 +4183,10 @@ extension Terrain {
         lithHardness = s.lithHardness; lithErodeK = s.lithErodeK
         lithBed = s.lithBed; lithProvince = s.lithProvince
         temperature = s.temperature; snow = s.snow; ice = s.ice
+        // Ableitung aus `ice` und deshalb NICHT im Inventar (#35): der erste
+        // `updateIce` des nächsten Schritts baut sie neu, und bis dahin darf
+        // keine Maske eines anderen Terrains stehen bleiben.
+        underIce = []
         veg = s.veg; vegClass = s.vegClass; riparian = s.riparian
         heightBands = s.heightBands
         hf = s.hf; waterLevel = s.waterLevel; lakeBalance = s.lakeBalance

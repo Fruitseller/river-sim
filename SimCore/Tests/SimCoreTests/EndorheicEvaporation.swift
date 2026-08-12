@@ -56,6 +56,25 @@ final class EndorheicEvaporation: XCTestCase {
         // `MeltRunoff.testEndorheicMechanicsSurviveMeltRunoff` fest — genau die
         // Rolle, die `Lithology.testEndorheicMechanicsSurviveLithology` für #12 hat.
         c.meltRunoffEnabled = false
+        // Gletscher (Issue #35) AUSGEPINNT — vierter Pin, gleiche Doktrin. Seed
+        // 1337 ist bei n=256 eine alpine Insel; unter dem Eis liegt der fluviale
+        // Abtrag still (`Terrain.underIce` gatet Auslass-Inzision und Tropfen),
+        // und damit brechen die SILLS dieses Beckens seltener durch. Genau diese
+        // diskreten Ereignisse sind es aber, an denen die Gegenprobe hängt.
+        // GEMESSEN (n=256, κ=6, Seed 1337, 200×20 J., Eis an gegen aus; 1603
+        // vergletscherte Zellen):
+        // * τ=500 (ratenbegrenzt): max Sprung 0.00675 gegen 0.00654 — die
+        //   Ratenbegrenzung selbst bewegt sich um 3 %.
+        // * τ=0 (Kontrollarm, instantan): 0.00493 gegen 0.00787 — der
+        //   KONTROLLARM fällt mit Eis um 37 % und rutscht unter den
+        //   ratenbegrenzten. `testBasinLevelIsRateLimited` kippt also an einem
+        //   ruhiger gewordenen Vergleichsarm, nicht an einer schwächeren
+        //   Ratenbegrenzung (die Sichtbarkeits-Schranke maxJump/Spanne bleibt
+        //   mit 0.320 gegen 0.307 auf ihrem Niveau).
+        // Dass die #11-MECHANIK mit Gletscher intakt bleibt, prüft der Pass an
+        // seiner eigenen Stelle: `Glacier.testLongRunIceStaysBounded` hält das
+        // Relief, und die inselweite Playa-Bildung hängt nicht am Eis.
+        c.iceEnabled = false
         // WIE empfindlich diese Wächter sind, hat der erste Pin-Versuch gezeigt:
         // er notierte die Bänder als Abstand über `sea`, wodurch die Rampenbreite
         // 0.68 − 0.5 = 0.18000000000000005 statt 0.18 wurde. Diese EINE ulp auf

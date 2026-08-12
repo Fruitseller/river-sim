@@ -472,6 +472,20 @@ final class FlattenRegeneration: XCTestCase {
         // Tropfen sind PRO SCHRITT gezogen (`max(1, …)`), also selbst nicht
         // schrittweiten-invariant — sie müssen hier raus.
         var c = flatCfg()
+        // Dazu gehört seit Issue #35 auch der Gletscher: die frisch gezogene
+        // Ebene liegt zwar mit `sea + 0.25` weit unter der Firn-Grenze (0.5731),
+        // aber `updateIce` läuft am SCHRITTANFANG auf dem Klima des vorigen
+        // Schrittendes — im ersten Schritt also auf der Temperatur der noch
+        // ungeebneten Gipfel. Dort entsteht einmalig Eis, das im zweiten Schritt
+        // auf der warmen Platte ausschmilzt und seine Moräne ablegt. Die Menge
+        // hängt an der Länge dieses EINEN Fensters, also an dt (gemessen: max.
+        // Abweichung 0.0018 zwischen dt = 50 und dt = 1000). Das ist dieselbe
+        // Operator-Splitting-Drift, wegen der auch `hillDiffusion` hier auf 0
+        // steht — kein Fehler des Gletschers, aber nichts, was ein Wächter mit
+        // 1e-9-Schranke messen kann. Der Gletscher hat seinen eigenen
+        // Framerate-Wächter (`Glacier.testIceIsFramerateIndependent`, mit
+        // Schranken statt Bit-Gleichheit).
+        c.iceEnabled = false
         c.upliftDecayStartPer100y = 0
         c.upliftDecayFloorPer100y = 0
         c.upliftPer100y = 0

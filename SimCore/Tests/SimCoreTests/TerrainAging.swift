@@ -15,10 +15,17 @@ final class TerrainAging: XCTestCase {
     /// Der Alterungsverlauf über 100.000 Jahre: Relief sinkt, die Grate runden
     /// aus, und der Gipfel wächst zu KEINEM Zeitpunkt über den Startwert.
     ///
-    /// Gemessene Referenz (n=160, Seed 1337, alle 20k Jahre):
+    /// Gemessene Referenz (n=160, Seed 1337, alle 20k Jahre), Stand vor #35:
     ///   relief     0.5335 0.4706 0.4252 0.4138 0.4016 0.3883
     ///   ridgeCurv −0.0453 −0.0290 −0.0253 −0.0225 −0.0226 −0.0219
     ///   maxH       0.6836 0.6206 0.5752 0.5639 0.5516 0.5383
+    /// Dieselbe Reihe mit dem Gletscher (Issue #35, Produktions-Default):
+    ///   relief     0.5364 0.4509 0.4366 0.4320 0.4301 0.4289
+    ///   robust     0.1802 0.1504 0.1260 0.1152 0.1104 0.1084
+    ///   maxH       0.6864 0.6010 0.5866 0.5821 0.5801 0.5789
+    /// `relief` (max − min) hängt am Gipfel, und den hält das Eis an der
+    /// Firn-Grenze fest — die Begründung steht bei Kriterium 3, die Messreihe in
+    /// `docs/glacier-measurements.md` §H.
     /// Derselbe Lauf mit dem alten Relief-Servo als Haupt-Hebung lief dagegen
     /// nach 30k WIEDER HOCH (relief 0.4569 → 0.5097) und die Gratkrümmung blieb
     /// ab 10k flach bei ≈ −0.030 — genau das Plateau, das dieser Test ausschließt.
@@ -27,6 +34,7 @@ final class TerrainAging: XCTestCase {
         let t = Terrain(config: c, seed: 1337)
 
         let relief0 = t.landRelief()
+        let robust0 = t.landReliefRobust()
         let maxH0 = t.maxHeight()
         var maxHPeak = maxH0
         var servoFired = 0
@@ -34,16 +42,21 @@ final class TerrainAging: XCTestCase {
         // Die Gratkrümmung wird NACH dem Einschwingen der frischen Noise-Ober-
         // fläche referenziert (s. `ridgeCurvature`-Doku): bei t=0 dominiert die
         // Zell-Rauigkeit, nicht die Grat-Form.
-        var curv20k = 0.0, relief50k = 0.0
+        var curv20k = 0.0, relief50k = 0.0, robust50k = 0.0
         while t.years < 100_000 {
             if t.reliefServoRate() > 0 { servoFired += 1 }
             t.step(dtYears: 500)
             maxHPeak = max(maxHPeak, t.maxHeight())
             if t.years == 20_000 { curv20k = t.ridgeCurvature() }
-            if t.years == 50_000 { relief50k = t.landRelief() }
+            if t.years == 50_000 { relief50k = t.landRelief(); robust50k = t.landReliefRobust() }
         }
         let relief1 = t.landRelief()
+        let robust1 = t.landReliefRobust()
         let curv1 = t.ridgeCurvature()
+        print(String(format: "[#13] 100k Jahre, n=160: Relief %.4f → %.4f (50k %.4f), "
+                     + "robust %.4f → %.4f (50k %.4f), maxH %.4f → %.4f",
+                     relief0, relief1, relief50k, robust0, robust1, robust50k,
+                     maxH0, t.maxHeight()))
 
         // 1) Berge wachsen NICHT — auch nicht vorübergehend. Über alle 5
         //    gemessenen Seeds ist der Spitzenwert des Laufs exakt der Startwert.
@@ -54,10 +67,33 @@ final class TerrainAging: XCTestCase {
         XCTAssertLessThan(relief1, relief0 * 0.85,
             "Relief altert nicht (\(relief0) → \(relief1)) — hebt etwas nach?")
 
-        // 3) …und es sinkt in der ZWEITEN Hälfte weiter (gemessen 0.415 → 0.388).
+        // 3) …und es sinkt in der ZWEITEN Hälfte weiter (gemessen 0.1191 → 0.1084,
+        //    also −9.0 %).
         //    Genau hier lief der alte Servo-Betrieb wieder hoch.
-        XCTAssertLessThan(relief1, relief50k - 0.01,
-            "Relief plateaut nach 50k (\(relief50k) → \(relief1)) statt weiter zu altern")
+        //
+        //    GEMESSEN auf dem ROBUSTEN Relief (p95 − Median), nicht auf
+        //    `landRelief()` (max − min). Grund ist der Gletscher (Issue #35), und
+        //    zwar als PHYSIK, nicht als Rauschen: das Eis legt den fluvialen
+        //    Abtrag auf den vergletscherten Zellen still, und vergletschert ist
+        //    genau das, was über der Firn-Grenze (h = 0.5731) steht — der
+        //    GIPFEL. Der sinkt bis dorthin und bleibt dann dort stehen (gemessen
+        //    n=160/Seed 1337 über 100k Jahre: maxH 0.6864 → 0.5789 mit Eis gegen
+        //    → 0.5430 ohne, bei zuletzt 17 vergletscherten Zellen). Das ist der
+        //    Buzzsaw/Protection-Gleichgewichtszustand aus der Literatur — Gipfel
+        //    pendeln sich knapp über der Schneegrenze ein —, und `landRelief()`
+        //    ist per Konstruktion die Kennzahl, die eine EINZELNE Zelle bewegen
+        //    kann (s. Doku von `landReliefRobust`). Die FLÄCHE altert davon
+        //    unbeeindruckt weiter, und praktisch gleich schnell wie ohne Eis
+        //    (`docs/glacier-measurements.md` §H):
+        //      robust, Eis an : 0.1802 → 0.1504 (20k) → 0.1260 (40k) → 0.1084
+        //      robust, Eis aus: 0.1802 → 0.1479 (20k) → 0.1289 (40k) → 0.1069
+        //    Deshalb misst dieses Kriterium die FLÄCHE. Die relative Schwelle
+        //    (−5 %) hat gegen die gemessenen −9.0 % knapp Faktor 2 Luft; sie ist
+        //    relativ statt absolut, weil das robuste Relief eine Größenordnung
+        //    kleiner ist als max − min und die alte 0.01 dort ein Fünftel des
+        //    Werts wären.
+        XCTAssertLessThan(robust1, robust50k * 0.95,
+            "Relief plateaut nach 50k (robust \(robust50k) → \(robust1)) statt weiter zu altern")
 
         // 4) …aber es ebnet nicht ein (gleiche Schwelle wie LongRunCollapse).
         XCTAssertGreaterThan(relief1, 0.30,
