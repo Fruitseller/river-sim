@@ -2742,10 +2742,20 @@ public final class Terrain {
             } else {
                 let ri = Int(r)
                 if ph[k] <= ph[ri] { continue }     // See/Ebene: kein Gefälle → keine Inzision
-                let i = k % nn, j = k / nn
-                let rii = ri % nn, rjj = ri / nn
                 hr = ph[ri]
-                dist = (i != rii && j != rjj) ? cs * sqrt2 : cs
+                // PERF (Issue #43): Diagonale über die INDEX-DIFFERENZ statt über
+                // zwei i/j-Paare — das spart zwei Integer-Divisionen je Zelle
+                // (692k Zellen/Schritt, gemessen der größte Posten des Passes).
+                // Der Empfänger ist immer einer der 8 Nachbarn:
+                // `computeReceiversAndArea` vergibt ausschließlich Nachbarn, und
+                // sein Rückfall `floodParent` ist die Zelle, von der aus der
+                // Priority-Flood die Senke besucht hat — ebenfalls ein Nachbar.
+                // Für einen 8-Nachbarn gilt |k − r| ∈ {1, nn−1, nn, nn+1}, und
+                // genau nn±1 sind die diagonalen Schritte (bei 1 ändert sich nur
+                // die Spalte, bei nn nur die Zeile). Ergebnis-identisch zum
+                // früheren `i != rii && j != rjj`.
+                let step = k > ri ? k - ri : ri - k
+                dist = (step == nn - 1 || step == nn + 1) ? cs * sqrt2 : cs
             }
             // Reine Flächen-Stream-Power: die Inzision konzentriert sich auf Zellen mit
             // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
