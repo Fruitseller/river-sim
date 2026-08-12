@@ -64,21 +64,27 @@ fi
 
 # Ein Build je Scratch: Bereinigung, swift build und Marker sind nicht
 # nebenläufigkeitsfest — ein paralleler Worktree-Build könnte sonst mitten im
-# Lauf die Planungs-Caches und Artefakte des anderen wegräumen. mkdir ist
-# atomar und funktioniert auf macOS wie Linux (flock(1) fehlt auf macOS).
-# Verwaiste Locks (abgestürzter Build) werden über die tote PID übernommen.
-LOCK="$SCRATCH.lock"
-until mkdir "$LOCK" 2>/dev/null; do
-	OTHER="$(cat "$LOCK/pid" 2>/dev/null || true)"
-	if [[ -n "$OTHER" ]] && ! kill -0 "$OTHER" 2>/dev/null; then
-		rm -rf "$LOCK" # Besitzer lebt nicht mehr — Lock übernehmen
+# Lauf die Planungs-Caches und Artefakte des anderen wegräumen. Der Lock ist
+# ein Symlink mit der PID als Ziel: Anlegen ist EIN atomarer Syscall (macOS
+# hat kein flock(1)), es gibt kein Fenster zwischen Lock und PID-Ablage. Er
+# liegt bewusst außerhalb des Repos (fester Pfad, je Scratch einer), damit
+# git clean -fdx ihn nicht einem LAUFENDEN Build unter den Füßen wegzieht.
+LOCK="/tmp/riversim-build-$(printf '%s' "$SCRATCH" | cksum | cut -d' ' -f1).lock"
+until ln -s "$$" "$LOCK" 2>/dev/null; do
+	OTHER="$(readlink "$LOCK" 2>/dev/null || true)"
+	# Besitzer-Verifikation über die Kommandozeile statt kill -0: eine an
+	# einen fremden Prozess wiedervergebene PID hielte den Lock sonst ewig.
+	if [[ -n "$OTHER" ]] && ! ps -p "$OTHER" -o command= 2>/dev/null | grep -q build.sh; then
+		# Übernahme per atomarem rename: genau EIN Wartender gewinnt das mv
+		# und räumt nur den beiseite geschobenen Link weg — niemand kann den
+		# frisch angelegten Lock eines anderen löschen.
+		mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null && rm -f "$LOCK.stale.$$" || true
 		continue
 	fi
-	echo "==> Scratch belegt (Build-PID ${OTHER:-unbekannt}) — warte … (falls verwaist: rm -rf $LOCK)"
+	echo "==> Scratch belegt (Build-PID ${OTHER:-unbekannt}) — warte …"
 	sleep 5
 done
-printf '%s\n' "$$" >"$LOCK/pid"
-trap 'rm -rf "$LOCK"' EXIT
+trap 'rm -f "$LOCK"' EXIT
 
 # SwiftPM cached die Build-Beschreibung mit ABSOLUTEN Pfaden des zuletzt
 # bauenden Checkouts. Beim Wechsel Haupt-Repo ↔ Worktree würde swift build
@@ -113,6 +119,9 @@ if [[ -f "$FPRINT_FILE" ]] && ! diff -q "$FPRINT_FILE" <(printf '%s\n' "$FPRINT"
 	echo "    vorher:  $(head -1 "$FPRINT_FILE")" >&2
 	echo "    nachher: $(printf '%s\n' "$FPRINT" | head -1)" >&2
 fi
+# Direkt nach dem Vergleich schreiben, nicht erst nach dem Build: ein
+# abgebrochener Build würde die Warnung sonst bei jedem Folgelauf wiederholen.
+mkdir -p "$SCRATCH" && printf '%s\n' "$FPRINT" >"$FPRINT_FILE"
 
 # Build-Stempel des Quellstands in die Library einbrennen: Godot lädt game/bin/
 # blind, eine veraltete .so fällt sonst erst als "Nonexistent function ..." auf
@@ -157,7 +166,6 @@ for _ in 1 2; do
 		-Xlinker -rpath -Xlinker '$ORIGIN'
 done
 
-printf '%s\n' "$FPRINT" >"$FPRINT_FILE"
 printf '%s\n' "$PWD" >"$ROOT_MARKER"
 
 mkdir -p game/bin
