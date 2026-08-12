@@ -3129,28 +3129,39 @@ public final class Terrain {
     /// ∝ dt (Issue #2), genau wie bei der Hangdiffusion.
     private func wavePass(relax: Double) {
         if relax <= 0 { return }
-        for j in 1..<(n - 1) {
-            for i in 1..<(n - 1) {
-                let k = idx(i, j)
-                if abs(h[k] - cfg.sea) > cfg.waveBand { continue }
+        // PERF (Issue #43): Roh-Puffer. Der Pass verschiebt Material zum
+        // NACHBARN, ist also nicht per-Zelle unabhängig und bleibt seriell —
+        // dafür läuft er bei großem dt vielfach (ein Teilschritt je 100 Jahre,
+        // s. `waveSchedule`), und jeder Durchlauf zahlte seine Zugriffe auf
+        // `h`/`sed`/`rock` über die Klassen-Property. Gemessen 5,7 → 1,6 ms.
+        let nn = n, sea = cfg.sea, band = cfg.waveBand, talus = cfg.waveTalus
+        h.withUnsafeMutableBufferPointer { hb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        rock.withUnsafeMutableBufferPointer { rb in
+        let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rb.baseAddress!
+        for j in 1..<(nn - 1) {
+            for i in 1..<(nn - 1) {
+                let k = j * nn + i
+                if abs(ph[k] - sea) > band { continue }
                 var best = -1
-                var bestDrop = cfg.waveTalus
-                for nb in [k - 1, k + 1, k - n, k + n] {
-                    let d = h[k] - h[nb]
+                var bestDrop = talus
+                for nb in [k - 1, k + 1, k - nn, k + nn] {
+                    let d = ph[k] - ph[nb]
                     if d > bestDrop { bestDrop = d; best = nb }
                 }
                 if best >= 0 {
-                    let move = (bestDrop - cfg.waveTalus) * 0.5 * relax
-                    let ms = min(move, sed[k])
+                    let move = (bestDrop - talus) * 0.5 * relax
+                    let ms = min(move, psed[k])
                     let mr = (move - ms) * 0.5
-                    sed[k] -= ms
-                    rock[k] -= mr
-                    h[k] -= ms + mr
-                    sed[best] += ms + mr
-                    h[best] += ms + mr
+                    psed[k] -= ms
+                    prock[k] -= mr
+                    ph[k] -= ms + mr
+                    psed[best] += ms + mr
+                    ph[best] += ms + mr
                 }
             }
         }
+        }}}
     }
 
     /// Teilschritt-Takt der Küstenerosion (Issue #2). Dieselbe Bauart wie beim
@@ -3699,6 +3710,21 @@ public final class Terrain {
         let cellArea = cs * cs
         let width = cfg.meanderBankWidth
         let capF = stepCapFraction(dt)  // war fest 0.5 je Schritt (Issue #2)
+        let nn = n
+        // PERF (Issue #43): die Felder, die der Stempel selbst liest bzw.
+        // schreibt, EINMAL öffnen statt je überstrichener Zelle. `h`, `sed` und
+        // `rock` bleiben bewusst draußen: sie gehören `erodeCell`/`depositCell`
+        // (dem gemeinsamen Funnel mit dem Gletscher-Gate) und `bilinearH` — ein
+        // Roh-Zeiger darauf wäre ein Exklusivitäts-Konflikt mit beiden.
+        // `underIce` liegt hier nur lesend offen, `erodeCell` liest es ebenfalls
+        // nur; zwei Lese-Zugriffe schließen sich nicht aus.
+        hf.withUnsafeBufferPointer { hfb in
+        underIce.withUnsafeBufferPointer { uib in
+        veg.withUnsafeMutableBufferPointer { vb in
+        isChannel.withUnsafeMutableBufferPointer { icb in
+        let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
+        let pice = uib.baseAddress
+        let iceOn = uib.count == cfg.count
         for ch in meander.channels {
             let nodes = ch.nodes
             guard nodes.count >= 2 else { continue }
@@ -3714,28 +3740,28 @@ public final class Terrain {
                 let steps = max(1, Int(d.rounded(.up)))
                 for sIdx in 0...steps {
                     let t = Double(sIdx) / Double(steps)
-                    let ci = min(max(Int((a.x + (b.x - a.x) * t).rounded()), 0), n - 1)
-                    let cj = min(max(Int((a.z + (b.z - a.z) * t).rounded()), 0), n - 1)
-                    let k = cj * n + ci
+                    let ci = min(max(Int((a.x + (b.x - a.x) * t).rounded()), 0), nn - 1)
+                    let cj = min(max(Int((a.z + (b.z - a.z) * t).rounded()), 0), nn - 1)
+                    let k = cj * nn + ci
                     // Unter stehendem Wasser (See/geflutete Ebene) KEIN Bett-Carve und
                     // KEINE Kanal-Maske: dort fließt nichts (Stillwasser), und die Maske
                     // würde die Droplet-Deposition dämpfen — der Kanal grub sonst über
                     // Jahrtausende dunkle Tiefen-Rinnen in Seeböden, die nie verlanden
                     // (gemessen: hf−h > 0.16 nach 24k Jahren, „dunkle Stellen").
-                    if hf[k] - h[k] > 0.02 { continue }
+                    if phf[k] - h[k] > 0.02 { continue }
                     // Unter dem Eis (Issue #35) ebenso wenig — und zwar VOR der
                     // Maske: `erodeCell` gatet zwar den Carve, aber ein Kanal,
                     // der unter einer Zunge durchläuft, ist auch kein Kanal.
                     // `isChannel` dämpft die Tropfen-Deposition und `veg = 0`
                     // reißt die Ufer-Vegetation weg — beides hat auf einer
                     // vergletscherten Zelle nichts zu suchen.
-                    if !underIce.isEmpty && underIce[k] { continue }
-                    isChannel[k] = true
+                    if iceOn && pice![k] { continue }
+                    pchan[k] = true
                     // Ufer-Kill (Stufe 3): das überstrichene Bett reißt die
                     // Wurzeln weg — veg hart auf 0 (absorbierend, dt-frei).
                     // Regrünung kommt per Sukzession von den Nachbarn zurück,
                     // sobald der Lauf weiterwandert.
-                    veg[k] = 0
+                    pveg[k] = 0
                     let cap = max(0, h[k] - hb) * capF           // nicht unter stromab graben
                     _ = erodeCell(k, min(carveRate, cap))
                 }
@@ -3757,11 +3783,11 @@ public final class Terrain {
                 // Außen-Normale = weg vom Krümmungszentrum (−sign(curv) · linke Normale)
                 let sgn = curv > 0 ? -1.0 : 1.0
                 let ox = sgn * (-tz / tl), oz = sgn * (tx / tl)
-                let outI = min(max(Int((b.x + ox * width).rounded()), 0), n - 1)
-                let outJ = min(max(Int((b.z + oz * width).rounded()), 0), n - 1)
-                let inI = min(max(Int((b.x - ox * width).rounded()), 0), n - 1)
-                let inJ = min(max(Int((b.z - oz * width).rounded()), 0), n - 1)
-                let ko = outJ * n + outI, ki = inJ * n + inI
+                let outI = min(max(Int((b.x + ox * width).rounded()), 0), nn - 1)
+                let outJ = min(max(Int((b.z + oz * width).rounded()), 0), nn - 1)
+                let inI = min(max(Int((b.x - ox * width).rounded()), 0), nn - 1)
+                let inJ = min(max(Int((b.z - oz * width).rounded()), 0), nn - 1)
+                let ko = outJ * nn + outI, ki = inJ * nn + inI
                 if ko == ki { continue }
                 let qA = ch.discharge[i] * cellArea
                 let want = cfg.meanderBankErode * pow(max(qA, 0), m) * abs(curv) * dt
@@ -3772,6 +3798,7 @@ public final class Terrain {
                 depositCell(ki, moved)
             }
         }
+        }}}}
         plugOxbows()
         fillOxbows(dt: dt)
     }
