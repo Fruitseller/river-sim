@@ -62,6 +62,24 @@ if [[ -z "${RS_NO_SHARED_BUILD:-}" && "$MAIN_ROOT" != "$PWD" && -d "$MAIN_ROOT/E
 	echo "==> Worktree: geteilter Build-Cache $SCRATCH"
 fi
 
+# Ein Build je Scratch: Bereinigung, swift build und Marker sind nicht
+# nebenläufigkeitsfest — ein paralleler Worktree-Build könnte sonst mitten im
+# Lauf die Planungs-Caches und Artefakte des anderen wegräumen. mkdir ist
+# atomar und funktioniert auf macOS wie Linux (flock(1) fehlt auf macOS).
+# Verwaiste Locks (abgestürzter Build) werden über die tote PID übernommen.
+LOCK="$SCRATCH.lock"
+until mkdir "$LOCK" 2>/dev/null; do
+	OTHER="$(cat "$LOCK/pid" 2>/dev/null || true)"
+	if [[ -n "$OTHER" ]] && ! kill -0 "$OTHER" 2>/dev/null; then
+		rm -rf "$LOCK" # Besitzer lebt nicht mehr — Lock übernehmen
+		continue
+	fi
+	echo "==> Scratch belegt (Build-PID ${OTHER:-unbekannt}) — warte … (falls verwaist: rm -rf $LOCK)"
+	sleep 5
+done
+printf '%s\n' "$$" >"$LOCK/pid"
+trap 'rm -rf "$LOCK"' EXIT
+
 # SwiftPM cached die Build-Beschreibung mit ABSOLUTEN Pfaden des zuletzt
 # bauenden Checkouts. Beim Wechsel Haupt-Repo ↔ Worktree würde swift build
 # sonst still die Quellen des ALTEN Checkouts weiterbenutzen (real passiert;
