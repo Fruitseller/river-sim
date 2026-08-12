@@ -138,9 +138,13 @@ Schrittende davor). Begründung bei `SimConfig.climateEnabled` und
 Der **Gletscher** (Issue #35, `updateIce`) ist der zweite Weg und bringt sein
 eigenes Erosionsgesetz mit (Flux-Modell `E = K·q^m·S`, nicht Stream-Power auf
 `area`). Er steht **nach dem Abflussfeld und vor jeder fluvialen
-Höhenänderung**, weil seine Maske `Terrain.underIce` beide fluvialen
-Abtragspfade gatet — `outletIncision` und `Hydraulic.erode` rühren
-vergletscherte Zellen nicht an. Wie `isChannel` gilt: **leeres Feld heißt aus**,
+Höhenänderung**, weil seine Maske `Terrain.underIce` den fluvialen Abtrag
+gatet: `outletIncision` und `Hydraulic.erode` prüfen sie direkt, alle übrigen
+Bett-Bewegungen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
+Auen-Aggradation) über ihren gemeinsamen Funnel `erodeCell`/`depositCell`.
+Vergletscherte Zellen rührt damit kein fluvialer Pass an — die Hangdiffusion
+dagegen läuft weiter (kein fluvialer Pass, s. `docs/glacier-measurements.md`
+§I.1). Wie `isChannel` gilt: **leeres Feld heißt aus**,
 und ohne Eis wird es auch geleert; eine eisfreie Welt rechnet damit
 bit-identisch zum Stand vor #35. Das Eis liegt **nicht** in `h` (eigene
 Auflage über dem Bett), die Entwässerung läuft also unverändert auf dem Bett.

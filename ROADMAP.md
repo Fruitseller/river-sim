@@ -395,9 +395,14 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Ausstrom ∝ Dicke × Gefälle, Positivitäts-Deckel je Säule) und ABRASION nach dem
   Flux-Modell (`E = K·q^0.5·S`, Härtefaktor nur auf dem Fels-Anteil). Was
   ausschmilzt, legt seine Schuttfracht als **Moräne** ab — im Zehrgebiet, unter
-  dem Nährgebiet per Konstruktion nicht. Die Maske `Terrain.underIce` legt BEIDE
-  fluvialen Abtragspfade (`outletIncision`, `Hydraulic.erode`) unter dem Eis
-  still; leer heißt aus, also bit-identisch wie bei `isChannel`.
+  dem Nährgebiet per Konstruktion nicht. Die Maske `Terrain.underIce` legt den
+  fluvialen Abtrag unter dem Eis still — `outletIncision` und `Hydraulic.erode`
+  prüfen sie direkt, alle übrigen Bett-Bewegungen (Mäander-Carve und -Ufer,
+  Altarme, Braid-Fracht, Auen-Aggradation) über ihren gemeinsamen Funnel
+  `erodeCell`/`depositCell`; leer heißt aus, also bit-identisch wie bei
+  `isChannel`. NICHT gegatet ist die Hangdiffusion — Bodenkriechen ist kein
+  fluvialer Pass, trägt aber Nachbar-Änderungen auf die Eiszelle
+  (`docs/glacier-measurements.md` §I.1).
   * Der TRANSPORT ist bewusst ein linearer Diffusions-Pass mit KONSTANTEM kappa,
     nicht die SIA — deren `H^{n+2}`-Zeitschritt-Deckel hat
     `docs/research-climate-cryosphere.md` §4.1 verworfen. Ohne Transport gäbe es

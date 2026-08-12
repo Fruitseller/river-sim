@@ -21,8 +21,10 @@ import Foundation
 ///
 /// Der Gletscher-Pass steht bewusst zwischen Abflussfeld und fluvialer
 /// Makro-Inzision: er braucht das frische Bett, und seine Maske `underIce`
-/// legt beide fluvialen Abtragspfade (`outletIncision`, `Hydraulic.erode`)
-/// unter dem Eis still.
+/// legt den fluvialen Abtrag unter dem Eis still — `outletIncision` und
+/// `Hydraulic.erode` prüfen sie direkt, alle übrigen Bett-Bewegungen
+/// (Mäander-Carve und -Ufer, Altarme, Braid-Fracht, Auen-Aggradation) über
+/// ihren gemeinsamen Funnel `erodeCell`/`depositCell`.
 ///
 /// Die fluviale Makro-Inzision ist damit `outletIncision` (Flächen-Stream-Power
 /// auf dem Entwässerungsnetz, impliziter n=1-Solver in Empfänger-Reihenfolge →
@@ -135,12 +137,17 @@ public final class Terrain {
     /// Die Entwässerung (`computeFlow`) läuft deshalb unverändert auf dem Bett;
     /// subglaziales Wasser folgt real ebenfalls dem Bettgefälle.
     public private(set) var ice: [Double] = []
-    /// **Vergletscherungs-Maske**: `ice[k] > cfg.iceMinThickness`. Gate für die
-    /// beiden fluvialen Abtragspfade — unter einem Gletscher trägt kein
-    /// Oberflächenwasser ab (`outletIncision` und `Hydraulic.erode`); sonst carvt
-    /// dasselbe Tal ein zweites Mal, mit fluvialem statt glazialem Querschnitt.
+    /// **Vergletscherungs-Maske**: `ice[k] > cfg.iceMinThickness`. Gate für den
+    /// fluvialen Abtrag — unter einem Gletscher trägt kein Oberflächenwasser ab;
+    /// sonst carvt dasselbe Tal ein zweites Mal, mit fluvialem statt glazialem
+    /// Querschnitt. Drei Prüfstellen: `outletIncision`, `Hydraulic.erode` und
+    /// der Funnel `erodeCell`/`depositCell`, über den alle übrigen
+    /// Bett-Bewegungen laufen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
+    /// Auen-Aggradation). Nicht gegatet ist die Hangdiffusion: Bodenkriechen ist
+    /// kein fluvialer Pass, trägt aber Nachbar-Änderungen auf die Eiszelle —
+    /// gemessen in `docs/glacier-measurements.md` §I.1.
     /// Dieselbe Bauform wie `isChannel`: **leer heißt aus**, und wenn keine Zelle
-    /// Eis trägt, wird das Feld auch geleert → beide Gates sind dann
+    /// Eis trägt, wird das Feld auch geleert → die Gates sind dann
     /// bit-identisch nicht vorhanden.
     ///
     /// Reine ABLEITUNG aus `ice` (kein Zustand, nicht im Snapshot-Inventar):
@@ -1459,8 +1466,8 @@ public final class Terrain {
     }
 
     /// Baut `underIce` aus der frischen Eisdicke. **Leer, wenn keine Zelle über
-    /// der Schwelle liegt** — dann greifen die beiden fluvialen Gates gar nicht
-    /// erst und die Arithmetik ist bit-identisch zum Stand ohne Gletscher.
+    /// der Schwelle liegt** — dann greift keines der fluvialen Gates und die
+    /// Arithmetik ist bit-identisch zum Stand ohne Gletscher.
     /// Sequenziell: das Ergebnis hängt an keiner Summationsreihenfolge, und der
     /// Pass ist ein reiner Vergleich je Zelle.
     private func rebuildIceMask() {
@@ -2824,7 +2831,10 @@ public final class Terrain {
                     if h[nb] <= cfg.sea { continue }            // Meer nicht auffüllen
                     if h[nb] >= level { continue }              // Talwand/über Aue → unberührt
                     let add = (level - h[nb]) * rate
-                    sed[nb] += add; h[nb] += add                // Aggradation (Sediment)
+                    // Aggradation (Sediment) über den gemeinsamen Funnel — der
+                    // trägt das Gletscher-Gate (#35). `add` ist hier immer > 0
+                    // (h < level, rate > 0), der Pass rechnet also unverändert.
+                    depositCell(nb, add)
                 }
             }
         }
@@ -3409,18 +3419,33 @@ public final class Terrain {
 
     /// Trägt an Zelle `k` `amount` ab (erst Sediment, dann Fels) — hält
     /// h = rock + sed. Gibt den tatsächlich abgetragenen Betrag zurück.
+    ///
+    /// **Gletscher-Gate (Issue #35).** Über diese beiden Funnel laufen alle
+    /// fluvialen Bett-Bewegungen außer den zwei, die ihr Gate selbst tragen
+    /// (`outletIncision`, `Hydraulic.erode`): Mäander-Bett-Carve, laterale Ufer,
+    /// Altarm-Pfropf und -Verlandung, Braid-Fracht und Auen-Aggradation. Unter
+    /// dem Eis gehört das Tal dem Gletscher — dieselbe Begründung wie dort.
+    /// Das Gate sitzt am Funnel statt in jedem Pass einzeln, damit ein künftiger
+    /// Bett-Pass es nicht vergessen kann. Leere Maske (keine Zelle
+    /// vergletschert, oder `iceEnabled = false`) → der Zweig fällt weg und alles
+    /// rechnet bit-identisch zum Stand vor #35.
     @inline(__always) private func erodeCell(_ k: Int, _ amount: Double) -> Double {
         let a = max(0, amount)
         if a <= 0 { return 0 }
+        if !underIce.isEmpty && underIce[k] { return 0 }
         let ds = min(a, sed[k]); sed[k] -= ds
         rock[k] -= (a - ds)
         h[k] -= a
         return a
     }
 
-    /// Lagert `amount` als Sediment an Zelle `k` ab.
+    /// Lagert `amount` als Sediment an Zelle `k` ab. Vergletscherte Zellen
+    /// bleiben unangetastet (s. `erodeCell`); die Fracht, die dort abgelegt
+    /// worden wäre, gilt wie sonst auch als exportiert (Masse-Erhaltung ist in
+    /// diesem Repo keine Invariante, AGENTS.md).
     @inline(__always) private func depositCell(_ k: Int, _ amount: Double) {
         if amount <= 0 { return }
+        if !underIce.isEmpty && underIce[k] { return }
         sed[k] += amount; h[k] += amount
     }
 
@@ -3462,6 +3487,13 @@ public final class Terrain {
                     // Jahrtausende dunkle Tiefen-Rinnen in Seeböden, die nie verlanden
                     // (gemessen: hf−h > 0.16 nach 24k Jahren, „dunkle Stellen").
                     if hf[k] - h[k] > 0.02 { continue }
+                    // Unter dem Eis (Issue #35) ebenso wenig — und zwar VOR der
+                    // Maske: `erodeCell` gatet zwar den Carve, aber ein Kanal,
+                    // der unter einer Zunge durchläuft, ist auch kein Kanal.
+                    // `isChannel` dämpft die Tropfen-Deposition und `veg = 0`
+                    // reißt die Ufer-Vegetation weg — beides hat auf einer
+                    // vergletscherten Zelle nichts zu suchen.
+                    if !underIce.isEmpty && underIce[k] { continue }
                     isChannel[k] = true
                     // Ufer-Kill (Stufe 3): das überstrichene Bett reißt die
                     // Wurzeln weg — veg hart auf 0 (absorbierend, dt-frei).
@@ -3597,7 +3629,9 @@ public final class Terrain {
         // Gletscher (Issue #35): NACH dem Abflussfeld — das Eis fließt auf dem
         // Bett, das der frische Priority-Flood gesehen hat — und VOR jeder
         // fluvialen Höhenänderung des Schritts, weil `underIce` die
-        // Auslass-Inzision und die Tropfen gatet. Ohne Eis (Normalfall der ersten
+        // Auslass-Inzision, die Tropfen und (über `erodeCell`/`depositCell`) die
+        // Bett-Bewegungen von Mäander und Braiding gatet — auch den
+        // `meanderStamp` direkt darunter. Ohne Eis (Normalfall der ersten
         // Schritte, oder `iceEnabled = false`) ein reiner Suchlauf, s. dort.
         updateIce(dt: dt)
         if cfg.meanderEnabled {

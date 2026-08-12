@@ -439,3 +439,59 @@ nicht mehr. Der Grund ist systematisch und nicht zufällig: Schnee fällt, wo es
 hoch UND nass ist — also bevorzugt im LUV —, und unter dem Eis entstehen keine
 fluvialen Rinnen. Die Gletscher dünnen ausgerechnet die Luv-Kanäle aus, an denen
 die Kennzahl hängt.
+
+---
+
+## §I — Wie viel fluvialer Abtrag lief unter dem Eis noch weiter?
+
+Nachgereicht zur PR-Review von #35. `underIce` gatete zunächst nur die zwei
+Pässe, die das Ticket nennt (`outletIncision`, `Hydraulic.erode`) — und der
+Abnahme-Wächter `testNoFluvialErosionUnderIce` lief mit `quietCfg()`, in der
+`meanderEnabled` und `braidingEnabled` AUS sind. In Produktion sind beide an,
+und beide bewegen Bettmaterial: `meanderStamp` carvt sein Bett selbst plus die
+lateralen Ufer, `braidPass` deponiert und scourt die Bedload-Fracht.
+
+**Aufbau** (n = 384, Seed 1337, `iceErodeK = iceMoraineK = 0`, 20k Jahre
+vorgelaufen, dann EIN Schritt à 500 Jahren aus demselben Zustandsinventar):
+gezählt werden die vergletscherten Zellen, deren `h` sich vom Kontrollarm
+unterscheidet, in dem alle fluvialen Bett-RATEN auf 0 stehen. Je Zeile ist
+genau eine Rate wieder aktiv.
+
+| aktive Rate | veränderte Zellen auf Eis | abseits des Eises |
+|---|---|---|
+| `meanderCarve` (Bett-Carve) | **3** | 4 963 |
+| `meanderBankErode` (laterale Ufer) | **6** | 6 811 |
+| `braidCapacity` (Braid-Fracht) | **1** | 5 395 |
+| `outletErode` (gegatet seit #35) | 0 | 92 962 |
+| `hydraulicPerYear` (gegatet seit #35) | 0 | 81 486 |
+| alle zusammen | **9** | 123 077 |
+
+Die zwei gegateten Pässe halten exakt (0 Zellen) — das Gate selbst war nie das
+Problem. Die 9 Zellen sind die drei ungegateten Bett-Bewegungen, und sie liegen
+dort, wo die Review sie vermutet hat: wo eine Zunge über einen Talboden
+vorstößt, aus dem `traceChannels` seine Läufe zieht. Neun Zellen JE SCHRITT
+sind wenig, aber es ist genau das Doppel-Carve, das die Maske verhindern soll —
+ein fluvialer Kerb-Querschnitt im Trog, jeden Schritt aufs Neue.
+
+**Konsequenz:** Das Gate sitzt jetzt an `Terrain.erodeCell`/`depositCell`, den
+zwei Funneln, über die ALLE Bett-Bewegungen außer den Tropfen laufen
+(Bett-Carve, laterale Ufer, Altarm-Pfropf und -Verlandung, Braid-Fracht,
+Auen-Aggradation). `meanderStamp` überspringt vergletscherte Zellen zusätzlich
+schon vor der Kanalmaske — ein Lauf unter einer Zunge ist kein Kanal, und
+`isChannel`/`veg = 0` haben dort nichts zu suchen. Nach dem Gate: 0 Zellen in
+allen Zeilen. Wächter: `testNoFluvialErosionUnderIceInProduction`.
+
+### I.1 — Warum der Wächter die Hangdiffusion ausschaltet
+
+Derselbe Aufbau mit `hillDiffusion` auf dem Produktionswert meldet **852**
+veränderte Zellen auf dem Eis, davon 825 allein aus `outletErode` und 235 aus
+`hydraulicPerYear` — also aus den beiden Pässen, die nachweislich (Tabelle oben)
+keine einzige Eiszelle anfassen. Es ist das Bodenkriechen: `hillslopeDiffusion`
+läuft flächendeckend und trägt die Höhenänderung der NACHBARN auf die Eiszelle.
+
+Das ist kein fluvialer Abtrag und wird bewusst nicht gegatet — Kriechen unter
+Eis abzuschalten wäre eine eigene physikalische Behauptung, und der Trog bliebe
+sonst mit unbehandelten Kanten zurück. Für den Wächter heißt es: mit Diffusion
+misst er die Diffusion statt das Gate. Deshalb erbt der Produktions-Arm
+`hillDiffusion = 0` aus `quietCfg()` und schaltet nur `meanderEnabled` und
+`braidingEnabled` zu.
