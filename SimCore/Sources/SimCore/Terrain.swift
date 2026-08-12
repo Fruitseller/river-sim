@@ -253,6 +253,8 @@ public final class Terrain {
     private var heap: MinHeap
     private var visited: [Bool]
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
+    /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
+    private var areaPow: [Double] = []
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     /// Zellen unter einer Mäander-Zentrumslinie (M3-Maske). Reconciliation-Maske für
     /// BEIDE Erosionspfade: `transportLimited` (Grid) und `Hydraulic.erode` (Droplet).
@@ -2692,6 +2694,21 @@ public final class Terrain {
         // abflusslosen Becken unten; leere Maske → Zweig fällt weg.
         let iceOn = underIce.count == cnt
         let iceArr = iceOn ? underIce : [false]
+        // PERF (Issue #43): `pow(A, m)` je Zelle war mit ~16 ms/Schritt der
+        // größte Einzelposten des Passes (Messung: mit einer Multiplikation
+        // statt pow fiel er von 41 auf 25 ms). `area` ändert sich WÄHREND des
+        // Passes nicht — nur `h`/`sed`/`rock` tun das —, also wird die Potenz
+        // vorab und PARALLEL berechnet (per-Zelle unabhängig, dieselben
+        // libm-Aufrufe mit denselben Argumenten ⇒ bit-identisch) und die
+        // serielle Schleife liest sie nur noch nach.
+        if areaPow.count != cnt { areaPow = .init(repeating: 0, count: cnt) }
+        areaPow.withUnsafeMutableBufferPointer { apb in
+        area.withUnsafeBufferPointer { ab in
+            let pap = apb.baseAddress!, pa = ab.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi { pap[k] = pow(pa[k], m) }
+            }
+        }}
         h.withUnsafeMutableBufferPointer { hb in
         iceArr.withUnsafeBufferPointer { icb in
         lithArr.withUnsafeBufferPointer { lkb in
@@ -2701,11 +2718,12 @@ public final class Terrain {
         vegClass.withUnsafeBufferPointer { vcb in
         vegTypeFactor.withUnsafeBufferPointer { tfb in
         area.withUnsafeBufferPointer { ab in
+        areaPow.withUnsafeBufferPointer { apb in
         order.withUnsafeBufferPointer { ob in
         receiver.withUnsafeBufferPointer { rb in
         endorheicBasin.withUnsafeBufferPointer { eb in
             let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
-            let pveg = vb.baseAddress!, pa = ab.baseAddress!
+            let pveg = vb.baseAddress!, pa = ab.baseAddress!, pap = apb.baseAddress!
             let pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
             let pord = ob.baseAddress!, prec = rb.baseAddress!, pend = eb.baseAddress!
             let plith = lkb.baseAddress!, pice = icb.baseAddress!
@@ -2764,7 +2782,7 @@ public final class Terrain {
             // Vegetation bremst — klassen-gewichtet wie vegDamp (Roh-Puffer-Variante).
             let kErode = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
                               * (lithOn ? plith[k] : 1.0)
-            let f = kErode * dt * pow(pa[k], m) / dist
+            let f = kErode * dt * pap[k] / dist
             let hNew = (ph[k] + f * hr) / (1 + f)
             var delta = ph[k] - hNew                // > 0
             if delta <= 0 { continue }
@@ -2773,7 +2791,7 @@ public final class Terrain {
             prock[k] -= delta
             ph[k] = hNew
         }
-        }}}}}}}}}}}}
+        }}}}}}}}}}}}}
     }
 
     // MARK: - Seen-Verfüllung

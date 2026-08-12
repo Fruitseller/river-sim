@@ -122,6 +122,11 @@ if noProfile {
 print("n=\(gridN) seed=\(seed) warmup=\(warmupSteps)x\(warmupDt)y (\(String(format: "%.1f", warmupSecs))s)")
 print("Messung: \(steps) Schritte à dt=\(dt) → \(String(format: "%.1f", perStep)) ms/Schritt "
       + "(gesamt \(String(format: "%.2f", total))s)")
+// Größenordnung der Lagrange-Läufe: der Mäander-Aufwand hängt an den KNOTEN,
+// nicht an der Gitterzelle — ohne die Zahl ist die Pass-Tabelle nicht deutbar.
+let nodeCount = terrain.meander.channels.reduce(0) { $0 + $1.nodes.count }
+print("Mäander: \(terrain.meander.channels.count) Läufe, \(nodeCount) Knoten, "
+      + "\(terrain.meander.oxbows.count) Altarme")
 print("")
 func pad(_ s: String, _ w: Int) -> String {
     s.count >= w ? s : s + String(repeating: " ", count: w - s.count)
