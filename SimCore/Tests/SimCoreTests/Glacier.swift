@@ -148,8 +148,8 @@ final class Glacier: XCTestCase {
     /// Bewusst OHNE Einzugsgebiets-Filter: Gletscher sitzen im Oberlauf, wo die
     /// Einzugsgebiete klein sind — ein `area`-Gate hätte die Stichprobe auf
     /// Einzelzellen zusammengestrichen (gemessen: n = 1). Die Auswahl der
-    /// TALBÖDEN erledigt `widthRatio` selbst: ein Profil, das nicht auf beiden
-    /// Seiten um `2d` ansteigt, liefert `nil`.
+    /// TALBÖDEN erledigt `shapeExponent` selbst: eine Zelle, die keine Mulde
+    /// ist, liefert `nil`.
     static func glacierCells(_ t: Terrain) -> [Int] {
         guard t.ice.count == t.cfg.count else { return [] }
         var out: [Int] = []

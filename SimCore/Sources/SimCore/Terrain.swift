@@ -147,9 +147,11 @@ public final class Terrain {
     /// `updateIce` baut sie je Schritt neu, und zwar VOR jedem Konsumenten.
     public private(set) var underIce: [Bool] = []
     /// Arbeitspuffer des Eistransports (Zwei-Phasen-Scratch, s. `iceFlowSubStep`):
-    /// Ausstrom je Einheit Oberflächen-Abfall und die eingefrorene Eis-Oberfläche
-    /// des Teilschritts. Erst beim ersten Gletscher-Pass angelegt — ohne Eis
-    /// kostet das Feature keinen Speicher.
+    /// Ausstrom je Einheit Oberflächen-Abfall (`iceRate`), die eingefrorene
+    /// Eis-Oberfläche des Teilschritts (`iceSurf`) und die lokale glaziale
+    /// Erosionsrate, die Pass 2 über die Schleifspur mittelt (`iceEro`). Erst
+    /// beim ersten Gletscher-Pass angelegt — ohne Eis kostet das Feature keinen
+    /// Speicher.
     private var iceRate: [Double] = []
     private var iceSurf: [Double] = []
     private var iceEro: [Double] = []
@@ -1167,7 +1169,7 @@ public final class Terrain {
     /// Teilschritte verteilt, dass jeder unter `iceFlowSubCap` bleibt. Damit ist
     /// die Gesamtwirkung ∝ `dt` — ein `+10.000 Jahre`-Sprung transportiert
     /// dasselbe wie 50.000 Frame-Schritte à 0,2 Jahre (Wächter
-    /// `Glacier.testIceFlowIsFramerateIndependent`). Die Bilanz teleskopiert
+    /// `Glacier.testIceIsFramerateIndependent`). Die Bilanz teleskopiert
     /// ohnehin exakt (Relaxationsform), und der Erosionsterm ist eine RATE mal
     /// `subDt`.
     ///

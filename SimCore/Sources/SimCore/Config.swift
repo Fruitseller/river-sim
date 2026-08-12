@@ -1246,10 +1246,11 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// stromabwärts ablegen) wäre ein zweites Transportfeld für eine Wirkung, die
     /// dieselbe Form hat: Masse-Erhaltung gilt in diesem Repo ohnehin nicht
     /// (detachment-limited Stream-Power, AGENTS.md). GEMESSEN ist stattdessen das
-    /// VERHÄLTNIS Ablagerung zu glazialem Abtrag über den Lauf
-    /// (`docs/glacier-measurements.md` §F): bei 0.05 legt das Eis rund ein
-    /// Viertel dessen ab, was es abträgt — der Rest verlässt das System als
-    /// Schmelzwasserfracht, wie im fluvialen Pfad auch.
+    /// VERHÄLTNIS Ablagerung zu glazialem Abtrag (`docs/glacier-measurements.md`
+    /// §F, n = 256, ein Schritt aus demselben Zustand): bei 0.05 legt das Eis
+    /// **20.6 % (dt = 500) bzw. 22.6 % (dt = 5000)** dessen ab, was es abträgt —
+    /// der Rest verlässt das System als Schmelzwasserfracht, wie im fluvialen
+    /// Pfad auch.
     public var iceMoraineK: Double = 0.05
     /// Ab dieser Eisdicke gilt eine Zelle als VERGLETSCHERT: sie kommt in
     /// `Terrain.underIce` und beide fluvialen Gates greifen (Auslass-Inzision und
