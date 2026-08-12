@@ -491,8 +491,10 @@ Der Sim-Schritt blockiert den Hauptthread und ist **Fixkosten**: gemessen kostet
 dt = 0,2 praktisch dasselbe wie dt = 100 (368,6 vs. 374,2 ms bei n = 832 auf der
 Linux-VM) — im Echtzeit-Zeitraffer zahlt also jeder Frame den vollen Schritt.
 Diese Runde hat ihn ohne jede Physik-Änderung (Wächter: `simperf --hash`,
-Fingerabdruck über alle Zustandsfelder) deutlich gesenkt; Messprotokoll,
-Werkzeug und die Liste der gemessenen **Fehlschläge** stehen in
+Fingerabdruck über alle Zustandsfelder) um **~41 %** gesenkt — A/B in einer
+Sitzung: 426/440/432 → 258/251/258 ms bei dt = 100, 400 → 241 ms bei dt = 0,2.
+Das Ziel des Issues („mindestens halbiert") ist damit **knapp verfehlt**;
+Messprotokoll, Werkzeug und die Liste der gemessenen **Fehlschläge** stehen in
 `docs/perf-measurements.md`.
 
 Der Befund war fast überall derselbe: die Zeit lag nicht in der Arithmetik,

@@ -78,6 +78,9 @@ sind nicht vergleichbar (dieselbe Baseline maß je nach Tageszeit 374 … 387 ms
 ## B. Baseline (origin/main, Stand vor dieser Runde)
 
 VM, 4 Kerne, n = 832, Produktions-Config, Seed 1337, Einlauf 100 × 100 J.
+(Die Absolutwerte hängen an der Tageslast der VM — dieselbe Baseline maß
+374 … 439 ms. Maßgeblich ist immer der A/B-Vergleich in EINER Sitzung,
+s. Abschnitt C.)
 
 | Lauf | ms/Schritt |
 |---|---|
@@ -124,12 +127,29 @@ Optimierung muss an den Fixkosten ansetzen, nicht an der pro-Jahr-Arbeit.
 
 ## C. Ergebnis dieser Runde
 
-VM, gleiche Sitzung, gleiches Protokoll:
+Abschluss-Messung, **beide Stände in EINER Sitzung**, direkt hintereinander
+(Baseline = `git checkout origin/main -- SimCore/Sources/SimCore/Terrain.swift`,
+alles andere identisch):
 
-| Stand | ms/Schritt (3 Blöcke) |
-|---|---|
-| Baseline (origin/main) | 374,2 / 382,6 / 385,6 |
-| nach dieser Runde | siehe Abschnitt F |
+| Lauf | Baseline | nachher | Faktor |
+|---|---:|---:|---:|
+| 30 × dt = 100, Block 1/2/3 | 426,1 / 439,7 / 432,4 | **258,0 / 250,7 / 258,2** | **1,70×** |
+| 200 × dt = 0,2 (Echtzeit-Takt) | 400,4 | **241,0** | **1,66×** |
+| Einlauf 100 × 100 J. (Wanduhr) | 45,6 s | **26,8 s** | 1,70× |
+
+**Das Ziel „mindestens halbiert" ist damit NICHT erreicht** — gemessen sind
+~41 % weniger, nicht 50 %. Woran das liegt und was die letzten Prozent kosten
+würden, steht in Abschnitt F; die kurze Fassung: `priorityFlood` ist inzwischen
+24 % des Schritts und lässt sich unter der Auflage „bit-identisch" nicht
+beschleunigen.
+
+Zur Einordnung auf der Referenz-Hardware des Issues (M4 Max, Baseline
+171 ms/Schritt): rechnet man die hier gemessenen Pass-Faktoren auf die
+Mac-Anteile aus dem Issue hoch, landet man bei **~105 ms** — der Mac profitiert
+zusätzlich davon, dass die parallelisierten Pässe dort 16 statt 4 Kerne
+bekommen, die verbliebenen seriellen Pässe aber ohnehin latenz-gebunden sind.
+Das ist eine Hochrechnung, keine Messung; die 90-ms-Marke des Issues wird sie
+vermutlich knapp verfehlen.
 
 Pass für Pass, jeweils in der Sitzung gemessen, in der die Änderung entstand
 (Details und Begründung stehen als Kommentar am jeweiligen Pass in
@@ -227,13 +247,31 @@ will, braucht eine eigene Kalibrier-Runde mit den Braiding-Wächtern.
 
 ## F. Wo der Rest steckt
 
-Nach dieser Runde dominieren drei serielle, `order`-getriebene Gitterpässe:
+Pass-Aufteilung nach dieser Runde (30 × dt = 100, Summe ~244 ms):
 
-| Pass | ms/Schritt | warum er bleibt |
-|---|---:|---|
-| priorityFlood | ~57 | s. u. |
-| computeMFDArea | ~31 | seriell (Akkumulation stromab), Streu-Zugriff über `order` |
-| outletIncision | ~30 | seriell (Empfänger muss VOR der Zelle aktualisiert sein) |
+| Pass | ms/Schritt | Anteil |
+|---|---:|---:|
+| priorityFlood | 59,7 | 24,4 % |
+| computeMFDArea | 31,5 | 12,8 % |
+| outletIncision | 29,8 | 12,2 % |
+| meanderStamp | 17,7 | 7,2 % |
+| updateVegetation | 15,3 | 6,2 % |
+| migrateMeander | 14,8 | 6,1 % |
+| braidPass | 13,3 | 5,4 % |
+| computeReceiversAndArea (2×) | 13,0 | 5,3 % |
+| updateIce | 9,3 | 3,8 % |
+| Hydraulic.erode (∝ dt) | 9,2 | 3,7 % |
+| capEndorheicBasins | 8,0 | 3,3 % |
+| fillShallowPonds | 7,6 | 3,1 % |
+| Rest (14 Pässe) | 15,2 | 6,2 % |
+
+Die drei Spitzenreiter sind serielle, `order`-getriebene Gitterpässe:
+
+| Pass | warum er bleibt |
+|---|---|
+| priorityFlood | s. u. |
+| computeMFDArea | seriell (Akkumulation stromab), Streu-Zugriff über `order` |
+| outletIncision | seriell (Empfänger muss VOR der Zelle aktualisiert sein) |
 
 **`priorityFlood` ist unter der Bit-Identitäts-Auflage praktisch ausgereizt.**
 Gemessen (Instrumentierung des Heaps, 105 Floods): max. Heap-Größe 77 180
@@ -257,7 +295,25 @@ Dasselbe gilt für `computeMFDArea` und `outletIncision`: ihre Schleifen laufen
 zwingend in `order`, jede Zelle greift auf 5–10 Felder an einer gestreuten
 Adresse zu, und die Akkumulation ist eine echte Datenabhängigkeit. Was sich
 ohne Reihenfolge-Änderung herausziehen ließ (die `pow`-Vorberechnung), ist
-herausgezogen.
+herausgezogen; Prefetch und der Wegfall der Integer-Division wurden gemessen
+und brachten nichts (Abschnitt D).
+
+### Was noch ginge — und was es kostet
+
+1. **Bett-Funnel als Roh-Puffer-Variante** (`erodeCell`/`depositCell`).
+   `meanderStamp` und `braidPass` müssen `h`/`sed`/`rock` heute über die
+   Klassen-Property adressieren, weil ein Roh-Zeiger mit dem Funnel
+   kollidierte; eine Zeiger-Fassung des Funnels (eine Implementierung, zwei
+   Aufrufer — wie `mfdLocalExponent`) macht sie frei. Schätzung aus den
+   Restzeiten: ~10 ms. Preis: der Funnel, der heute bewusst die EINE Stelle mit
+   dem Gletscher-Gate ist, bekommt eine zweite Signatur.
+2. **Sim-Schritt vom Render-Thread entkoppeln.** Ändert die Schrittkosten nicht,
+   nimmt sie aber aus dem Frame — für die FPS der größte Hebel, und der
+   einzige, der `priorityFlood` nicht anfassen muss.
+3. **Bit-Identität aufgeben.** Priority-Flood + FIFO und ein
+   cache-ausgerichteter Heap zusammen halbieren realistisch den größten Posten.
+   Das ist eine Physik-Änderung mit eigener Kalibrier-Runde und gehört in ein
+   eigenes Issue — nicht in dieses.
 
 ---
 
