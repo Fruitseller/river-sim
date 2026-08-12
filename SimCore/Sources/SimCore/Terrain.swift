@@ -176,6 +176,8 @@ public final class Terrain {
     /// der Auwald-Klasse, geglättet, damit die Klassen-Grenzen weich bleiben.
     private var riparian: [Double]
     private var vegScratch: [Double] // Pingpong-Puffer der Riparian-Dilatation
+    /// Zwischenstufe des separablen Samen-Druck-Maximums (s. `updateVegetation`).
+    private var vegScratchRow: [Double] = []
     /// Erosionsschutz-Faktoren je Klasse ([kahl, Gras, Wald, Auwald], aus cfg):
     /// Schutz = 1 − 0.6·Faktor·veg — die 0.6-Basiskalibrierung bleibt fix.
     private let vegTypeFactor: [Double]
@@ -1642,17 +1644,40 @@ public final class Terrain {
         let dr = max(0, Int(cfg.vegDispersalRadius.rounded()))
         let nn = n, sea = cfg.sea
         if dispersal > 0 && dr > 0 {
+            // PERF (Issue #43): das Box-Maximum ist SEPARABEL — Maximum ist
+            // assoziativ und kommutativ, und der Spalten-Ausschnitt hängt nur
+            // von `i` ab, der Zeilen-Ausschnitt nur von `j`. Erst zeilenweise,
+            // dann spaltenweise maximieren liefert also exakt dasselbe Ergebnis
+            // wie das (2dr+1)²-Fenster, kostet aber 2·(2dr+1) statt (2dr+1)²
+            // Vergleiche je Zelle (dr = 2: 10 statt 25).
+            if vegScratchRow.count != cfg.count {
+                vegScratchRow = .init(repeating: 0, count: cfg.count)
+            }
             veg.withUnsafeBufferPointer { vb in
+            vegScratchRow.withUnsafeMutableBufferPointer { rb in
+                let pveg = vb.baseAddress!, prow = rb.baseAddress!
+                parallel(nn) { jLo, jHi in
+                    for j in jLo..<jHi {
+                        let row = j * nn
+                        for i in 0..<nn {
+                            var m = 0.0
+                            for di in max(0, i - dr)...min(nn - 1, i + dr) {
+                                m = max(m, pveg[row + di])
+                            }
+                            prow[row + i] = m
+                        }
+                    }
+                }
+            }}
+            vegScratchRow.withUnsafeBufferPointer { rb in
             vegScratch.withUnsafeMutableBufferPointer { sb in
-                let pveg = vb.baseAddress!, psc = sb.baseAddress!
+                let prow = rb.baseAddress!, psc = sb.baseAddress!
                 parallel(nn) { jLo, jHi in
                     for j in jLo..<jHi {
                         for i in 0..<nn {
                             var m = 0.0
                             for dj in max(0, j - dr)...min(nn - 1, j + dr) {
-                                for di in max(0, i - dr)...min(nn - 1, i + dr) {
-                                    m = max(m, pveg[dj * nn + di])
-                                }
+                                m = max(m, prow[dj * nn + i])
                             }
                             psc[j * nn + i] = m
                         }
@@ -2474,21 +2499,38 @@ public final class Terrain {
         let mB = cfg.braidExponent
         let kb = cfg.braidCapacity * dt
         let sqrt2 = 2.0.squareRoot()
+        let sea = cfg.sea, nn = n
+        let barHeight = cfg.braidBarHeight, deltaCeiling = cfg.braidDeltaCeiling
         fill(&qs, 0)
-        var nbK = [Int](repeating: 0, count: 8)
-        var nbW = [Double](repeating: 0, count: 8)
-        var nbS = [Double](repeating: 0, count: 8)
-        var nbQc = [Double](repeating: 0, count: 8) // wiederverwendet — keine Alloc je Zelle
+        // PERF (Issue #43): der Pass läuft über ALLE Zellen (der Reihe nach durch
+        // `order`), auch wenn nur wenige ein Braid-Reach sind — der Vorfilter
+        // zahlte seine Klassen-Property-Zugriffe also 692k-fach, und die
+        // Nachbar-Puffer kosteten je Element Bounds- und COW-Prüfung.
+        // `h`/`sed`/`rock` bleiben bewusst Klassen-Properties: sie gehören
+        // `erodeCell`/`depositCell`, dem gemeinsamen Funnel mit dem
+        // Gletscher-Gate (AGENTS.md), und ein Roh-Zeiger darauf wäre ein
+        // Exklusivitäts-Konflikt mit ihm.
+        order.withUnsafeBufferPointer { ob in
+        qs.withUnsafeMutableBufferPointer { qb in
+        areaMFD.withUnsafeBufferPointer { amb in
+        hf.withUnsafeBufferPointer { hfb in
+        floodParent.withUnsafeBufferPointer { fpb in
+        withUnsafeTemporaryAllocation(of: Int.self, capacity: 8) { nbK in
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbS in
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbQc in
+        let pord = ob.baseAddress!, pqs = qb.baseAddress!, pamf = amb.baseAddress!
+        let phf = hfb.baseAddress!, pfp = fpb.baseAddress!
         var oi = cfg.count - 1
         while oi >= 0 {
-            let k = Int(order[oi]); oi -= 1
-            let qin = qs[k]
+            let k = Int(pord[oi]); oi -= 1
+            let qin = pqs[k]
             // Seicht überströmte Reaches (< 0.015) sind aktiv — dort schütten
             // Braid-Deltas Bänke bis über den Wasserspiegel. Tiefere Ponds/Seen
             // NICHT: Bänke-Bau dort macht die Becken-Böden rau um die See-Render-
             // Schwelle (0.03) herum → sichtbares Speckle statt Verflechtung.
-            let active = areaMFD[k] >= minA && hf[k] > cfg.sea && h[k] > cfg.sea
-                      && hf[k] - h[k] < 0.015
+            let active = pamf[k] >= minA && phf[k] > sea && h[k] > sea
+                      && phf[k] - h[k] < 0.015
             if !active {
                 // Kein Braid-Reach: Fracht landet hier ab (Delta/Seerand), Überschuss
                 // über den Stauraum hinaus gilt als exportiert (wie transportLimited).
@@ -2505,40 +2547,40 @@ public final class Terrain {
                 // großer. Warum die Höhe 0.05 und nicht `braidBarHeight` ist —
                 // und was bei zu engem Deckel kippt — steht im Kalibrier-Logbuch
                 // bei `SimConfig.braidDeltaCeiling`.
-                if qin > 0 && hf[k] > cfg.sea {
-                    depositCell(k, min(qin, max(0, hf[k] + cfg.braidDeltaCeiling - h[k])))
+                if qin > 0 && phf[k] > sea {
+                    depositCell(k, min(qin, max(0, phf[k] + deltaCeiling - h[k])))
                 }
                 continue
             }
             // MFD-Empfänger, Gewichte und Gefälle (identisch zu computeMFDArea,
             // inkl. abfluss-abhängigem Exponent — die Fracht folgt dem Wasser).
-            let i = k % n, j = k / n
+            let j = k / nn, i = k - j * nn
             var cnt = 0
             var sMax = 0.0
             for dj in -1...1 {
                 for di in -1...1 {
                     if di == 0 && dj == 0 { continue }
                     let ni = i + di, nj = j + dj
-                    if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
-                    let nb = nj * n + ni
+                    if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                    let nb = nj * nn + ni
                     let dist = (di != 0 && dj != 0) ? sqrt2 : 1.0
-                    let s = (hf[k] - hf[nb]) / dist
+                    let s = (phf[k] - phf[nb]) / dist
                     if s > 0 {
                         nbK[cnt] = nb; nbS[cnt] = s; sMax = max(sMax, s)
                         cnt += 1
                     }
                 }
             }
-            let p = mfdLocalExponent(k, sMax: sMax)
+            let p = mfdLocalExponent(a: pamf[k], sMax: sMax, pond: phf[k] - h[k])
             var wsum = 0.0
             for t in 0..<cnt { nbW[t] = powFast(nbS[t], p); wsum += nbW[t] }
             if cnt == 0 || wsum <= 0 {
                 // Seespiegel-Fläche: Fracht sedimentiert im See (bis Spiegel), Rest
                 // wandert über den Überlauf weiter.
-                let dep = min(qin, max(0, hf[k] - h[k]))
+                let dep = min(qin, max(0, phf[k] - h[k]))
                 depositCell(k, dep)
-                let fp = floodParent[k]
-                if fp >= 0 { qs[Int(fp)] += qin - dep }
+                let fp = pfp[k]
+                if fp >= 0 { pqs[Int(fp)] += qin - dep }
                 continue
             }
             // Kapazität je Route: qcᵢ = Kb·dt · Q·Sᵢ · fᵢ^m  (Q in Zell-Einheiten).
@@ -2548,7 +2590,7 @@ public final class Terrain {
             // die Konzentrations-Instabilität, die Fäden schärft. Und wo der Lauf
             // sich aufspreizt (viele kleine fᵢ → Σfᵢ^m ≪ 1) KOLLABIERT die
             // Kapazität → Deposition genau in den breiten, flachen Reaches → Bänke.
-            let q = areaMFD[k] / cellArea
+            let q = pamf[k] / cellArea
             var qcTot = 0.0
             for t in 0..<cnt {
                 nbQc[t] = kb * q * nbS[t] * pow(nbW[t] / wsum, mB)
@@ -2557,7 +2599,7 @@ public final class Terrain {
             var qout = qin
             if qin > qcTot {
                 // Überlast → Bank bauen: bis knapp über den Wasserspiegel (Insel!).
-                let dep = min(qin - qcTot, max(0, hf[k] + cfg.braidBarHeight - h[k]))
+                let dep = min(qin - qcTot, max(0, phf[k] + barHeight - h[k]))
                 depositCell(k, dep)
                 qout -= dep
             } else {
@@ -2582,9 +2624,10 @@ public final class Terrain {
             }
             // Fracht folgt der Kapazität (∝ qcᵢ): der starke Faden trägt sie weiter.
             if qout > 0 && qcTot > 1e-30 {
-                for t in 0..<cnt { qs[nbK[t]] += qout * (nbQc[t] / qcTot) }
+                for t in 0..<cnt { pqs[nbK[t]] += qout * (nbQc[t] / qcTot) }
             }
         }
+        }}}}}}}}}
     }
 
     // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig) — TESTPFAD
