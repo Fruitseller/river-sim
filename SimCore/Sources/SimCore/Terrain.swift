@@ -1885,9 +1885,23 @@ public final class Terrain {
     }
 
     /// Becken-Rollen (und damit alle #11-Sonderpfade) zurücksetzen.
+    ///
+    /// PERF (Issue #43): Suche und Löschen laufen auf Roh-Puffern. Als Schleife
+    /// über die Klassen-Properties kostete der Pass 36 ms/Schritt (9 % des
+    /// Schritts) — für drei Feld-Löschungen, die als `update(repeating:)` unter
+    /// 1 ms bleiben; die Zeit steckte komplett in Bounds-/COW-/Exclusivity-
+    /// Prüfungen je Zelle. Geschriebene WERTE unverändert.
     private func clearEndorheicBasins() {
-        guard endorheicBasin.contains(where: { $0 != 0 }) else { return }
-        for k in 0..<cfg.count { endorheicBasin[k] = 0; playaBed[k] = false; endorheicInflow[k] = 0 }
+        let cnt = cfg.count
+        let any = endorheicBasin.withUnsafeBufferPointer { eb -> Bool in
+            let p = eb.baseAddress!
+            for k in 0..<cnt where p[k] != 0 { return true }
+            return false
+        }
+        guard any else { return }
+        endorheicBasin.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+        playaBed.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        endorheicInflow.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
     }
 
     /// PERF: der Hot-Loop läuft komplett auf Roh-Puffern (kein Bounds-/COW-Check
@@ -2126,117 +2140,147 @@ public final class Terrain {
         let kappa = cfg.endorheicEvapRatio
         let aridA = cfg.endorheicAridity
         let weighted = rainWeight.count == cnt
-        /// Verdunstungs-Bedarf einer Zelle (Fläche × Klima-Faktor). Ohne
-        /// Gewichtsfeld (`rainWeightedFlow` aus) ist er klima-neutral — dann
-        /// bilanziert der Pass rein geometrisch.
-        @inline(__always) func demand(_ k: Int) -> Double {
-            guard weighted, aridA != 0 else { return cellArea * kappa }
-            let a = min(4.0, max(0.25, 1 + aridA * (1 - rainWeight[k])))
-            return cellArea * kappa * a
-        }
+        let minBasin = cfg.endorheicMinBasinCells
+        let saltMinDepth = cfg.endorheicSaltMinDepth
         // Ratenbegrenzung; dt = 0 (Generierung/Breach/Spieler-Eingriff) snappt.
         let lam = (dt > 0 && cfg.endorheicResponseYears > 0)
             ? 1 - exp(-dt / cfg.endorheicResponseYears) : 1.0
-        for k in 0..<cnt {
-            basinSeen[k] = false; endorheicBasin[k] = 0
-            playaBed[k] = false; endorheicInflow[k] = 0
-        }
+        // PERF (Issue #43): der Pass war mit 62 ms/Schritt (16 %) der teuerste
+        // überhaupt — nicht wegen seiner Arithmetik, sondern weil Initial-Löschung,
+        // Becken-Suchlauf und Flutfüllung über KLASSEN-Properties liefen (je
+        // Zugriff Bounds-, COW- und Exclusivity-Prüfung). Deshalb hier: alle
+        // Felder als Roh-Puffer, die Scratch-Arrays als LOKALE Variablen (aus der
+        // Klasse herausgenommen und am Ende zurückgegeben — so bleibt die
+        // Kapazität über Schritte erhalten, ohne dass der Hot-Loop auf eine
+        // Klassen-Property zugreift), und `k / nn` einmal statt `%` + `/`.
+        // Werte, Reihenfolge und Vergleiche sind unverändert.
+        var cells = basinCells; basinCells = []
+        var slots = basinSlots; basinSlots = []
+        defer { basinCells = cells; basinSlots = slots }
+        // Ohne Gewichtsfeld ein 1-Element-Dummy (nie indiziert, s. `demand`).
+        let rw = weighted ? rainWeight : [1.0]
         var capped = false
         var orderPosBuilt = false
-        for s in 0..<cnt where !basinSeen[s] && hf[s] > sea && hf[s] > h[s] {
-            let sill = hf[s] // Priority-Flood füllt die Senke flach auf ihr Sill-Niveau
-            basinCells.removeAll(keepingCapacity: true)
-            basinCells.append(Int32(s))
-            basinSeen[s] = true
-            var inflow = 0.0, full = 0.0
-            var qi = 0
-            while qi < basinCells.count {
-                let k = Int(basinCells[qi]); qi += 1
-                inflow = max(inflow, area[k])
-                full += demand(k)
-                let i = k % nn, j = k / nn
-                for dj in -1...1 {
-                    for di in -1...1 {
-                        if di == 0 && dj == 0 { continue }
-                        let ni = i + di, nj = j + dj
-                        if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                        let nb = nj * nn + ni
-                        if basinSeen[nb] || hf[nb] != sill || hf[nb] <= h[nb] { continue }
-                        basinSeen[nb] = true
-                        basinCells.append(Int32(nb))
+        hf.withUnsafeMutableBufferPointer { hfb in
+        h.withUnsafeBufferPointer { hb in
+        area.withUnsafeBufferPointer { ab in
+        rw.withUnsafeBufferPointer { rwb in
+        basinSeen.withUnsafeMutableBufferPointer { bsb in
+        endorheicBasin.withUnsafeMutableBufferPointer { ebb in
+        playaBed.withUnsafeMutableBufferPointer { pbb in
+        endorheicInflow.withUnsafeMutableBufferPointer { eib in
+        lakeBalance.withUnsafeMutableBufferPointer { lbb in
+            let phf = hfb.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
+            let prw = rwb.baseAddress!, pseen = bsb.baseAddress!
+            let pend = ebb.baseAddress!, pplaya = pbb.baseAddress!
+            let pinflow = eib.baseAddress!, plake = lbb.baseAddress!
+            /// Verdunstungs-Bedarf einer Zelle (Fläche × Klima-Faktor). Ohne
+            /// Gewichtsfeld (`rainWeightedFlow` aus) ist er klima-neutral — dann
+            /// bilanziert der Pass rein geometrisch.
+            @inline(__always) func demand(_ k: Int) -> Double {
+                guard weighted, aridA != 0 else { return cellArea * kappa }
+                let a = min(4.0, max(0.25, 1 + aridA * (1 - prw[k])))
+                return cellArea * kappa * a
+            }
+            pseen.update(repeating: false, count: cnt)
+            pend.update(repeating: 0, count: cnt)
+            pplaya.update(repeating: false, count: cnt)
+            pinflow.update(repeating: 0, count: cnt)
+            for s in 0..<cnt where !pseen[s] && phf[s] > sea && phf[s] > ph[s] {
+                let sill = phf[s] // Priority-Flood füllt die Senke flach auf ihr Sill-Niveau
+                cells.removeAll(keepingCapacity: true)
+                cells.append(Int32(s))
+                pseen[s] = true
+                var inflow = 0.0, full = 0.0
+                var qi = 0
+                while qi < cells.count {
+                    let k = Int(cells[qi]); qi += 1
+                    inflow = max(inflow, pa[k])
+                    full += demand(k)
+                    let j = k / nn, i = k - j * nn
+                    for dj in -1...1 {
+                        for di in -1...1 {
+                            if di == 0 && dj == 0 { continue }
+                            let ni = i + di, nj = j + dj
+                            if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                            let nb = nj * nn + ni
+                            if pseen[nb] || phf[nb] != sill || phf[nb] <= ph[nb] { continue }
+                            pseen[nb] = true
+                            cells.append(Int32(nb))
+                        }
                     }
                 }
-            }
-            // Vollstand getragen (oder Becken unter dem Rausch-Gate) → gar kein
-            // Eingriff. Der Bilanz-Stand wird trotzdem mitgeführt, damit ein
-            // später kippendes Becken beim Deckeln von der SILL aus absinkt und
-            // nicht von einem veralteten Wert (das wäre ein Sprung nach unten).
-            if full <= inflow || basinCells.count < cfg.endorheicMinBasinCells {
-                for kk in basinCells { lakeBalance[Int(kk)] = sill }
-                continue
-            }
-            // Zielstand: höchster Stand, dessen Seefläche die Verdunstung noch
-            // aus dem Zufluss deckt. Sortierung nach (h, Index) ist gleichzeitig
-            // die Sortierung nach dem NEUEN hf (= max(h, level), monoton in h) —
-            // die braucht das Umsortieren von `order` unten.
-            basinCells.sort { (h[Int($0)], $0) < (h[Int($1)], $1) }
-            var spent = 0.0, wet = 0
-            for kk in basinCells {
-                let d = demand(Int(kk))
-                if spent + d > inflow { break }
-                spent += d; wet += 1
-            }
-            let target = wet >= basinCells.count ? sill : h[Int(basinCells[wet])]
-            let anchor = Int(basinCells[0]) // tiefste Zelle = Gedächtnis des Beckens
-            var prev = lakeBalance[anchor]
-            if !prev.isFinite { prev = sill }
-            prev = min(max(prev, h[anchor]), sill)
-            let level = prev + (target - prev) * lam
-            for kk in basinCells {
-                let k = Int(kk)
-                lakeBalance[k] = level
-                endorheicInflow[k] = inflow
-                if level > h[k] {
-                    hf[k] = level
-                    endorheicBasin[k] = 2 // Wasserfläche, terminale Senke
-                } else {
-                    hf[k] = h[k]
-                    endorheicBasin[k] = 1 // trockengefallener Beckenboden
-                    // Salzpfanne nur, wo auch substanziell Wasser stand.
-                    playaBed[k] = sill - h[k] > cfg.endorheicSaltMinDepth
+                // Vollstand getragen (oder Becken unter dem Rausch-Gate) → gar kein
+                // Eingriff. Der Bilanz-Stand wird trotzdem mitgeführt, damit ein
+                // später kippendes Becken beim Deckeln von der SILL aus absinkt und
+                // nicht von einem veralteten Wert (das wäre ein Sprung nach unten).
+                if full <= inflow || cells.count < minBasin {
+                    for kk in cells { plake[Int(kk)] = sill }
+                    continue
                 }
-            }
-            capped = true
-            // `order` (aufsteigende Füllhöhe) muss der gesenkte Spiegel mitziehen:
-            // die Akkumulation läuft rückwärts durch `order` und setzt voraus,
-            // dass der Empfänger jeder Zelle FRÜHER darin steht. Innerhalb des
-            // Beckens stimmt das nach dem Deckeln nicht mehr (alle Zellen lagen
-            // auf dem gemeinsamen Sill-Niveau, jetzt liegt der trockene Boden
-            // ÜBER dem Restsee). Repariert wird nur lokal: die Plätze des Beckens
-            // in `order` bleiben dieselben, die Zellen ziehen darin nach dem
-            // neuen hf aufsteigend um. Global bleibt `order` damit nach hf
-            // sortiert — außerhalb des Beckens hat sich kein hf geändert, und
-            // eine fremde Zelle mit demselben hf kann nie Empfänger einer
-            // Beckenzelle sein, die jetzt HÖHER liegt (Empfänger gehen bergab).
-            if !orderPosBuilt {
-                order.withUnsafeBufferPointer { ob in
-                orderPos.withUnsafeMutableBufferPointer { pb in
-                    let pord = ob.baseAddress!, ppos = pb.baseAddress!
-                    parallel(cnt) { lo, hi in
-                        for t in lo..<hi { ppos[Int(pord[t])] = Int32(t) }
+                // Zielstand: höchster Stand, dessen Seefläche die Verdunstung noch
+                // aus dem Zufluss deckt. Sortierung nach (h, Index) ist gleichzeitig
+                // die Sortierung nach dem NEUEN hf (= max(h, level), monoton in h) —
+                // die braucht das Umsortieren von `order` unten.
+                cells.sort { (ph[Int($0)], $0) < (ph[Int($1)], $1) }
+                var spent = 0.0, wet = 0
+                for kk in cells {
+                    let d = demand(Int(kk))
+                    if spent + d > inflow { break }
+                    spent += d; wet += 1
+                }
+                let target = wet >= cells.count ? sill : ph[Int(cells[wet])]
+                let anchor = Int(cells[0]) // tiefste Zelle = Gedächtnis des Beckens
+                var prev = plake[anchor]
+                if !prev.isFinite { prev = sill }
+                prev = min(max(prev, ph[anchor]), sill)
+                let level = prev + (target - prev) * lam
+                for kk in cells {
+                    let k = Int(kk)
+                    plake[k] = level
+                    pinflow[k] = inflow
+                    if level > ph[k] {
+                        phf[k] = level
+                        pend[k] = 2 // Wasserfläche, terminale Senke
+                    } else {
+                        phf[k] = ph[k]
+                        pend[k] = 1 // trockengefallener Beckenboden
+                        // Salzpfanne nur, wo auch substanziell Wasser stand.
+                        pplaya[k] = sill - ph[k] > saltMinDepth
+                    }
+                }
+                capped = true
+                // `order` (aufsteigende Füllhöhe) muss der gesenkte Spiegel mitziehen:
+                // die Akkumulation läuft rückwärts durch `order` und setzt voraus,
+                // dass der Empfänger jeder Zelle FRÜHER darin steht. Innerhalb des
+                // Beckens stimmt das nach dem Deckeln nicht mehr (alle Zellen lagen
+                // auf dem gemeinsamen Sill-Niveau, jetzt liegt der trockene Boden
+                // ÜBER dem Restsee). Repariert wird nur lokal: die Plätze des Beckens
+                // in `order` bleiben dieselben, die Zellen ziehen darin nach dem
+                // neuen hf aufsteigend um. Global bleibt `order` damit nach hf
+                // sortiert — außerhalb des Beckens hat sich kein hf geändert, und
+                // eine fremde Zelle mit demselben hf kann nie Empfänger einer
+                // Beckenzelle sein, die jetzt HÖHER liegt (Empfänger gehen bergab).
+                order.withUnsafeMutableBufferPointer { ob in
+                orderPos.withUnsafeMutableBufferPointer { opb in
+                    let pord = ob.baseAddress!, ppos = opb.baseAddress!
+                    if !orderPosBuilt {
+                        parallel(cnt) { lo, hi in
+                            for t in lo..<hi { ppos[Int(pord[t])] = Int32(t) }
+                        }
+                        orderPosBuilt = true
+                    }
+                    slots.removeAll(keepingCapacity: true)
+                    for kk in cells { slots.append(ppos[Int(kk)]) }
+                    slots.sort()
+                    for t in slots.indices {
+                        let slot = Int(slots[t]), c = cells[t]
+                        pord[slot] = c
+                        ppos[Int(c)] = Int32(slot)
                     }
                 }}
-                orderPosBuilt = true
             }
-            basinSlots.removeAll(keepingCapacity: true)
-            for kk in basinCells { basinSlots.append(orderPos[Int(kk)]) }
-            basinSlots.sort()
-            for t in basinSlots.indices {
-                let slot = Int(basinSlots[t]), c = basinCells[t]
-                order[slot] = c
-                orderPos[Int(c)] = Int32(slot)
-            }
-        }
+        }}}}}}}}}
         return capped
     }
 
@@ -3045,19 +3089,34 @@ public final class Terrain {
         // Insel geflutet); ohne Land-Gate hob sie den SCHELF in Tektonik-Ringen
         // über die Wasserlinie (grüne Kratersäume vor der Küste — beides gemessen).
         if uf == 0 && us <= 0 { return }
-        for k in 0..<cfg.count {
-            let gated = (us > 0 && h[k] > cfg.sea) ? max(0, upliftBase[k]) * us : 0
-            let du0 = upliftBase[k] * uf + gated
-            var du: Double
-            if du0 > 0 {
-                du = du0 * max(0, 1 - h[k] / cfg.isoHighClamp)
-            } else {
-                du = du0 * min(1, (h[k] - cfg.floor) / cfg.isoLowRange)
+        // PERF (Issue #43): Roh-Puffer + zeilenweise Parallelität. Der Pass ist
+        // rein per-Zelle (jede Zelle liest und schreibt nur ihren eigenen Index)
+        // → bit-identisch zur sequenziellen Schleife, s. `parallel`. Als
+        // Klassen-Property-Schleife kostete er 27 ms/Schritt (7 %), fast alles
+        // Exclusivity-Enforcement auf `h`/`rock`/`upliftBase`. Arithmetik und
+        // Reihenfolge der Operationen unverändert.
+        let sea = cfg.sea, floor = cfg.floor
+        let isoHigh = cfg.isoHighClamp, isoLow = cfg.isoLowRange
+        h.withUnsafeMutableBufferPointer { hb in
+        rock.withUnsafeMutableBufferPointer { rb in
+        upliftBase.withUnsafeBufferPointer { ub in
+            let ph = hb.baseAddress!, prock = rb.baseAddress!, pu = ub.baseAddress!
+            parallel(cfg.count) { lo, hi in
+                for k in lo..<hi {
+                    let gated = (us > 0 && ph[k] > sea) ? max(0, pu[k]) * us : 0
+                    let du0 = pu[k] * uf + gated
+                    var du: Double
+                    if du0 > 0 {
+                        du = du0 * max(0, 1 - ph[k] / isoHigh)
+                    } else {
+                        du = du0 * min(1, (ph[k] - floor) / isoLow)
+                    }
+                    if ph[k] + du < floor { du = floor - ph[k] }
+                    prock[k] += du
+                    ph[k] += du
+                }
             }
-            if h[k] + du < cfg.floor { du = cfg.floor - h[k] }
-            rock[k] += du
-            h[k] += du
-        }
+        }}}
     }
 
     // MARK: - Sculpting (Spieler-Eingriff)
