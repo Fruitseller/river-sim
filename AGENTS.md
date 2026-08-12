@@ -104,11 +104,14 @@ RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
 ```
 
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_NO_MEANDER_PAINT` und
-`RS_RIVER_RIBBONS` zusätzlich in `SimNode.swift`):
-`RS_SEED`, `RS_STEP`, `RS_SHOT`, `RS_DIST`, `RS_QUALITY` (`performance|balanced|quality`),
-`RS_RENDER_GRID`, `RS_DIAG`, `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
-`RS_RIVER_RIBBONS` (Issue #31: Mäander als Band-Geometrie statt Textur-Stempel,
-A/B gegen den Stempel-Pfad ohne Rebuild).
+`RS_WATER_STAMP` zusätzlich in `SimNode.swift`):
+`RS_SEED`, `RS_STEP`, `RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"` — Blickpunkt in
+Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
+`RS_QUALITY` (`performance|balanced|quality`), `RS_RENDER_GRID`, `RS_DIAG`,
+`RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
+`RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
+der Wasser-Geometrie — A/B im selben Build; ohne den Schalter rendert die
+Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus.
 
 ## Architektur
 
@@ -167,8 +170,19 @@ Zwei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand —
 liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:
 `Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31) und `WaterRender.swift`
 (Kalibrier-Paarungen des Wasserfelds: Komponenten-Fade ↔ Shader-Smoothstep ↔
-Altarm-Stempel, Issue #32). Beide sind aus `SimCoreTests` gepinnt; Werte dort
-ändern heißt Shader UND `SimNode` mitziehen (der Test sagt, wo).
+Altarm-Stempel, Issue #32; seit #34 auch die Übergabe Band ↔ Raster:
+`deltaFrontDepth == lakeRawWetDepth`, `mouthOverlapCells`, Typ-Kanal der Bänder).
+Beide sind aus `SimCoreTests` gepinnt; Werte dort ändern heißt Shader UND
+`SimNode` mitziehen (der Test sagt, wo).
+
+**Wasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
+(Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
+Band-Geometrie (`buildRiverRibbons`) malt Mäander-Hauptläufe, Delta-Fächer und
+Altarme, das Raster-Feld (`waterFieldBytes` + `terrain.gdshader`) die
+dendritischen Zubringer, Seen und das Meer. Die Grenze ist die Wassersäule
+`WaterRender.lakeRawWetDepth`: darunter malt nur die Geometrie, darüber nur das
+Raster. Wer eine der beiden Seiten verschiebt, bekommt entweder einen Spalt oder
+doppeltes Wasser — beides zählt `game/tests/water_geometry.gd`.
 
 Zwei Drainage-Netze mit strikt getrennten Rollen: **D8/`area`** speist die Erosion
 (kalibriert, implizit stabil), **MFD/`areaMFD`** (Freeman/Quinn) speist **nur** Render

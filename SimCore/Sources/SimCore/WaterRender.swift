@@ -188,4 +188,107 @@ public enum WaterRender {
     public static let lakeDepthLo = 0.004
     /// Spanne der Tiefen-Rampe: volle Sättigung bei `lakeDepthLo + lakeDepthSpan`.
     public static let lakeDepthSpan = 0.05
+
+    // MARK: Geometrie-Wasser (Issue #34): Mündungen, Deltas, Altarme
+
+    // Mit #34 rendert die BAND-GEOMETRIE das bewegte Wasser (Mäander, Deltas,
+    // Altarme), das Raster-Feld nur noch das stehende (Seen/Meer über
+    // `pond`/Gate) plus die dendritischen Zubringer unterhalb der Mäander-
+    // Schwelle. Die drei Zahlen unten sind die NAHTSTELLE zwischen beiden:
+    // wo das Band endet, wo das Feld übernimmt, und was als Delta gilt.
+
+    /// Typ-Kennung im Vertex-Vertrag (`UV2.x`, gelesen von `water.gdshader`):
+    /// fließendes Fluss-Band.
+    public static let ribbonKindRiver = 0.0
+    /// s. `ribbonKindRiver` — Delta-Distributär (Flachwasser über dem
+    /// Ablagerungskörper, trüb statt tiefblau).
+    public static let ribbonKindDelta = 0.5
+    /// s. `ribbonKindRiver` — Altarm: STILLWASSER, keine Fließrichtung
+    /// (der Shader schaltet Strömungs-Schimmer aus und dämpft die Kräuselung).
+    public static let ribbonKindOxbow = 1.0
+
+    /// Mündung: so weit (Zellen) läuft ein Fluss-Band in die Wasserfläche
+    /// hinein, bevor seine Deckkraft auf 0 ist.
+    ///
+    /// Beide Enden dieses Werts sind ein Fehlerbild: 0 lässt zwischen Bandende
+    /// und Uferkontur einen SPALT (die Kontur liegt per-Pixel auf der
+    /// Wassersäule, das Band auf der zell-gerundeten Zentrumslinie — sie treffen
+    /// sich nie exakt), zu groß malt das Band eine zweite, hellere Wasserfläche
+    /// ÜBER den See (Overdraw). 2 Zellen ≈ 0,31 Welteinheiten decken den
+    /// Diskretisierungs-Versatz und sind bei Ribbon-Halbbreiten bis 3,2 Zellen
+    /// noch kürzer als das Band breit ist.
+    public static let mouthOverlapCells = 2.0
+
+    /// Wassersäule, ab der das RASTER-Feld eine Fläche überhaupt als See malt
+    /// (`rawWet` in `SimNode.waterFieldBytes`). Seichteres Ponding bleibt dort
+    /// bewusst trocken („zu viele Seen"), und genau darum ist dieser Wert die
+    /// NAHTSTELLE zur Geometrie: unterhalb malt niemand, oberhalb der Raster-See.
+    public static let lakeRawWetDepth = 0.03
+
+    /// Delta-Front: bis zu dieser Wassersäule gilt eine überflutete Zelle als
+    /// Delta-Apron (Ablagerungskörper knapp unter Wasser), darüber beginnt das
+    /// offene Becken — dort hören die Distributär-Arme auf.
+    ///
+    /// GEMESSEN (Seed 1337, Jahr 20.000, `docs/geometry-water-measurements.md`
+    /// §A): an den 14 größten Mündungen liegt die Wassersäule direkt vor der
+    /// Mündung entweder bei 0.002…0.02 (flacher Ablagerungskörper, der über
+    /// mehrere Zellen trägt) oder sofort bei 0.03…0.05 (Steilufer, der Lauf
+    /// stürzt ins Becken). Eine eigene Zahl dazwischen wäre eine dritte
+    /// Kalibrierung — stattdessen IST die Front die Raster-See-Schwelle:
+    /// die Geometrie malt exakt den Saum, den das Raster-Feld nicht malen
+    /// kann, und hört auf, wo es übernimmt. Kein Spalt, keine Doppelung.
+    public static let deltaFrontDepth = lakeRawWetDepth
+
+    /// Kürzester Distributär-Arm (Zellen Apron zwischen Uferlinie und Front),
+    /// der überhaupt gemalt wird — kürzere Aprons sind Steilufer ohne Delta.
+    public static let deltaMinArmCells = 3
+    /// Längster Distributär-Arm (Zellen). Der Arm endet normalerweise an der
+    /// Front; der Deckel begrenzt ihn auf ausgedehnt flachen Aprons — vor
+    /// flachen Schelfen lief er sonst über die ganze Bucht (A/B-Screenshot:
+    /// drei helle Strahlen ins Meer statt eines Fächers an der Mündung).
+    public static let deltaMaxArmCells = 10
+    /// Winkel-Aufweitung der äußeren Distributär-Arme gegen die Mündungs-
+    /// richtung (Bogenmaß ≈ 25°) — die Auffächerung des Fächers.
+    public static let deltaArmSpread = 0.44
+
+    // Höhen-Versatz eines Bands auf einer Wasserfläche, in GODOT-WELT-Y (wie
+    // `Main.RIVER_LIFT`, NICHT in Sim-Höhen). Auf Land trägt das Band den vollen
+    // `lift`, der den Chord-Fehler des gröberen Render-Gitters im Talgrund
+    // abdeckt; über Wasser hob genau der es sichtbar aus der Fläche heraus.
+    /// See: ein Hauch ÜBER dem Spiegel — im Apron liegt das Terrain-Gitter noch
+    /// unter dem Spiegel (der Vertex-Hub des Shaders greift erst ab
+    /// `geometryLiftLo`), das Band darf dort nicht im Grund verschwinden.
+    public static let ribbonLakeSurfaceLift = 0.04
+    /// Meer: knapp UNTER die Wasser-Ebene — dann liest sich das Band als Trübung
+    /// IM Wasser statt als Platte darauf (A/B-Befund, s.
+    /// `docs/geometry-water-measurements.md` §C).
+    public static let ribbonSeaSurfaceSink = -0.06
+
+    // Wie `water.gdshader` den Typ-Kanal (UV2.x) liest: zwei Smoothsteps statt
+    // einer if-Kaskade, damit der Wert über das Band interpoliert werden darf.
+    // Die Fenster liegen zwischen den Typ-Werten — wer `ribbonKind*` verschiebt,
+    // muss sie mitziehen (Wächter: `WaterRenderTests`).
+    public static let ribbonStillLo = 0.75
+    /// s. `ribbonStillLo`.
+    public static let ribbonStillHi = 1.0
+    /// s. `ribbonStillLo`.
+    public static let ribbonDeltaLo = 0.25
+    /// s. `ribbonStillLo`.
+    public static let ribbonDeltaHi = 0.5
+
+    /// `still` im Shader: 1 = Stillwasser (Altarm, keine Fließrichtung).
+    public static func ribbonStillWeight(kind: Double) -> Double {
+        smoothstep(ribbonStillLo, ribbonStillHi, kind)
+    }
+
+    /// `delta` im Shader: 1 = Distributär-Arm (Trübungsfahne, Flachwasser).
+    public static func ribbonDeltaWeight(kind: Double) -> Double {
+        (1 - ribbonStillWeight(kind: kind)) * smoothstep(ribbonDeltaLo, ribbonDeltaHi, kind)
+    }
+    /// Deckkraft-Deckel eines Delta-Arms. Bewusst klein: der Fächer liegt im
+    /// Wasser des Beckens (am Meer sogar UNTER dessen Wasser-Ebene) und soll als
+    /// Trübungsfahne über dem Ablagerungskörper lesen, nicht als zweite
+    /// Wasserfläche. 0.55 war messbar zu viel — die Arme standen als helle
+    /// Strahlen auf dem Meer.
+    public static let deltaArmOpacity = 0.35
 }

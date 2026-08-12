@@ -168,6 +168,75 @@ final class WaterRenderTests: XCTestCase {
             hint: "See-Tiefenrampe == WaterRender.lakeDepth*")
     }
 
+    // MARK: Geometrie-Wasser (Issue #34): Übergabe Band ↔ Raster
+
+    func testGeometryHandsOverExactlyWhereTheRasterStarts() {
+        // Der Kern von #34: das Band malt das Flachwasser, das der See-Kanal
+        // NICHT malen darf, und hört auf, wo dieser übernimmt. Genau EINE Zahl
+        // trennt beide — deshalb ist die Delta-Front die rawWet-Schwelle selbst
+        // und keine zweite Kalibrierung daneben.
+        XCTAssertEqual(WaterRender.lakeRawWetDepth, 0.03)
+        XCTAssertEqual(WaterRender.deltaFrontDepth, WaterRender.lakeRawWetDepth)
+        // Und sie liegt über dem Fuß der Uferkontur: dazwischen liegt das Band.
+        XCTAssertLessThan(WaterRender.pondContourLo, WaterRender.deltaFrontDepth)
+        // Kein Spalt: die Ausblende-Rampe des Bands beginnt am Kontur-Fuß, also
+        // dort, wo der Shader die Uferlinie überhaupt erst zeichnet.
+        XCTAssertLessThan(WaterRender.pondContourLo, WaterRender.pondContourHi)
+        XCTAssertLessThanOrEqual(WaterRender.pondContourHi, WaterRender.deltaFrontDepth)
+    }
+
+    func testDeltaArmGeometryStaysASubordinatePlume() {
+        // Ein Delta-Arm liegt IM Wasser des Beckens — er darf es tönen, nicht
+        // ersetzen. Deckkraft deutlich unter 1, Fächer-Winkel unter 45°, und
+        // eine sinnvolle Armlänge.
+        XCTAssertGreaterThan(WaterRender.deltaArmOpacity, 0)
+        XCTAssertLessThan(WaterRender.deltaArmOpacity, 0.5)
+        XCTAssertGreaterThan(WaterRender.deltaArmSpread, 0)
+        XCTAssertLessThan(WaterRender.deltaArmSpread, Double.pi / 4)
+        XCTAssertLessThan(WaterRender.deltaMinArmCells, WaterRender.deltaMaxArmCells)
+        XCTAssertGreaterThanOrEqual(WaterRender.deltaMinArmCells, 2)
+        XCTAssertGreaterThan(WaterRender.mouthOverlapCells, 0)
+    }
+
+    func testBandsSitOnTheWaterSurfaceNotAboveIt() {
+        // Das Meer ist eine eigene Ebene: darüber liegt nichts, sonst schwebt das
+        // Band als Platte. Der See wird vom Terrain-Gitter getragen, das im
+        // Apron noch UNTER dem Spiegel liegt: dort ein Hauch darüber.
+        XCTAssertLessThan(WaterRender.ribbonSeaSurfaceSink, 0)
+        XCTAssertGreaterThan(WaterRender.ribbonLakeSurfaceLift, 0)
+        // Beide deutlich kleiner als der Land-Lift (Main.RIVER_LIFT = 0.35),
+        // sonst wäre die Wasser-Sonderbehandlung wirkungslos.
+        XCTAssertLessThan(abs(WaterRender.ribbonSeaSurfaceSink), 0.35)
+        XCTAssertLessThan(WaterRender.ribbonLakeSurfaceLift, 0.35)
+    }
+
+    func testRibbonKindsMapToTheShaderWeights() {
+        // Der Typ-Kanal (UV2.x) trägt drei diskrete Werte, der Shader liest sie
+        // als weiche Gewichte. Jeder Typ muss GENAU sein Gewicht bekommen —
+        // sonst kräuselt ein Altarm wie ein Fluss oder ein Delta-Arm wird
+        // tiefblau statt trüb.
+        XCTAssertEqual(WaterRender.ribbonStillWeight(kind: WaterRender.ribbonKindRiver), 0)
+        XCTAssertEqual(WaterRender.ribbonDeltaWeight(kind: WaterRender.ribbonKindRiver), 0)
+        XCTAssertEqual(WaterRender.ribbonStillWeight(kind: WaterRender.ribbonKindDelta), 0)
+        XCTAssertEqual(WaterRender.ribbonDeltaWeight(kind: WaterRender.ribbonKindDelta), 1)
+        XCTAssertEqual(WaterRender.ribbonStillWeight(kind: WaterRender.ribbonKindOxbow), 1)
+        XCTAssertEqual(WaterRender.ribbonDeltaWeight(kind: WaterRender.ribbonKindOxbow), 0)
+    }
+
+    func testWaterShaderMatchesRibbonContract() throws {
+        // Wie beim Terrain-Shader: die Fenster stehen doppelt (hier als Zahl,
+        // dort als smoothstep). Ohne Vergleich driften sie stumm auseinander.
+        let shader = try repoFile("game/shaders/water.gdshader")
+        assertContains(shader, "smoothstep(\(WaterRender.ribbonStillLo), "
+            + "\(WaterRender.ribbonStillHi), v_kind)",
+            hint: "Stillwasser-Gewicht == WaterRender.ribbonStill*")
+        assertContains(shader, "smoothstep(\(WaterRender.ribbonDeltaLo), "
+            + "\(WaterRender.ribbonDeltaHi), v_kind)",
+            hint: "Delta-Gewicht == WaterRender.ribbonDelta*")
+        assertContains(shader, "v_kind = UV2.x",
+            hint: "Typ-Kanal des Vertex-Vertrags == UV2.x")
+    }
+
     func testExtensionUsesSharedCalibration() throws {
         // Gegenstück: die GDExtension darf die Werte nicht als lokale Literale
         // zurückkopieren (dann wäre die Kalibrierung wieder ungetestet). Vor allem
@@ -185,6 +254,22 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Ribbon-Halo == WaterRender.ribbonHaloIntensity")
         assertContains(simNode, "sd[k] >= WaterRender.riverMaskLo",
                        hint: "Kohärenz-Maske == Wasser-Schwelle des Shaders")
+        // Issue #34: die Geometrie-Übergabe darf ebenso wenig als Literal in der
+        // Extension liegen — sonst kann die Band-Ausblendung von der
+        // Raster-See-Schwelle wegdriften, und genau dazwischen entsteht wieder
+        // ein Spalt bzw. doppeltes Wasser.
+        assertContains(simNode, "hf[k] - h[k] > WaterRender.lakeRawWetDepth",
+                       hint: "Raster-See-Schwelle aus WaterRender beziehen")
+        assertContains(simNode, "1 - smoothstep(WaterRender.pondContourLo, WaterRender.deltaFrontDepth, pond)",
+                       hint: "See-Übergabe des Bands == Kontur-Fuß … Delta-Front")
+        assertContains(simNode, "1 - smoothstep(0, WaterRender.mouthOverlapCells, submergedCells)",
+                       hint: "Meer-Übergabe des Bands == mouthOverlapCells")
+        assertContains(simNode, "kind: WaterRender.ribbonKindOxbow",
+                       hint: "Altarm-Bänder tragen den Altarm-Typ")
+        assertContains(simNode, "kind: WaterRender.ribbonKindDelta",
+                       hint: "Delta-Arme tragen den Delta-Typ")
+        assertContains(simNode, "onSea ? WaterRender.ribbonSeaSurfaceSink",
+                       hint: "Höhen-Versatz auf Wasser aus WaterRender beziehen")
     }
 
     // MARK: Hilfen
