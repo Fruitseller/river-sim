@@ -39,17 +39,25 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   ∝ Krümmung × Abfluss, Cutoff → Altarm, Sinuositäts-Deckel), Braiding nach
   Murray & Paola (`braidPass`), Wasser-Optik im Shader (eigene Wasser-Normale,
   Fresnel, Tiefenfarbe, distanz-gefadet).
-  **Ribbon-Renderer (Issue #31, hinter `RS_RIVER_RIBBONS`):** Mäander zusätzlich
-  als geglättete Band-Geometrie direkt aus den Zentrumslinien
-  (`SimNode.buildRiverRibbons` → `water.gdshader`), Breite ∝ √Abfluss
-  (Leopold/Maddock), Strahler-Ordnung (`Strahler.swift`, headless getestet) als
-  Rang-Maß (nur an Ordnung 4 angeschlossene Bänder; deren feine Oberläufe bleiben),
-  kanalweise Stream-Map-Kohärenz gegen verknäulte Altpfade, lokale Geländehöhe je
-  Bandkante sowie Ufer-Übergang über Saum-Stempel + Kanten-Feathering (gegen die
-  Rückbau-Ursachen von `f3556c8`). Dirty-Vertrag wie bei den Bäumen
-  (`riversMaxDelta`/`markRiversBuilt`), im Zeitraffer auf 1 Hz gedeckelt.
-  Standard bleibt vorerst der
-  Textur-Stempel; Umschalten per Env-Variable, A/B im selben Build.
+  **Wasser-Geometrie (Issues #31/#34, STANDARD seit Aug 2026):** Mäander,
+  Delta-Distributäre und Altarme als Band-Geometrie direkt aus den
+  Zentrumslinien (`SimNode.buildRiverRibbons` → `water.gdshader`), Breite ∝
+  √Abfluss (Leopold/Maddock), Strahler-Ordnung (`Strahler.swift`, headless
+  getestet) als Rang-Maß (nur an Ordnung 4 angeschlossene Bänder; deren feine
+  Oberläufe bleiben), kanalweise Stream-Map-Kohärenz gegen verknäulte Altpfade,
+  lokale Geländehöhe je Bandkante sowie Ufer-Übergang über Saum-Stempel +
+  Kanten-Feathering (gegen die Rückbau-Ursachen von `f3556c8`). Dirty-Vertrag
+  wie bei den Bäumen (`riversMaxDelta`/`markRiversBuilt`), im Zeitraffer auf
+  1 Hz gedeckelt.
+  **Übergabe an das Raster-Feld (#34):** ein Band malt genau das Flachwasser,
+  das der See-Kanal nicht malen darf (Wassersäule unter `rawWet` = 0.03), und
+  blendet dort aus, wo dieser übernimmt — deshalb ist `deltaFrontDepth` DIESELBE
+  Zahl. Am Meer (eigene Wasser-Ebene, deckt ab der ersten Zelle) blendet es
+  stattdessen nach Strecke aus (`mouthOverlapCells`). Der Vertex-Vertrag trägt
+  den Typ in UV2.x (Fluss/Delta/Altarm); Altarme kodieren Fließrichtung 0 und
+  werden vom Shader als Stillwasser gemalt.
+  `RS_WATER_STAMP=1` schaltet auf den alten Raster-Stempel-Pfad zurück (A/B im
+  selben Build) — Messprotokoll: `docs/geometry-water-measurements.md`.
 - **Karte:** n = 832 bei worldSize 130 (cellSize ≈ 0.156 — Auflösung und Weltgröße
   immer ZUSAMMEN ändern, sonst brechen alle per-Zell-Kalibrierungen).
 - **Vegetation:** `veg` (Dichte 0..1, τ=250a) + Klassen `vegClass` (kahl/Gras/Wald/
@@ -318,8 +326,16 @@ Messreihen `docs/dt-invariance-measurements.md`):
   tiefe Zellen); See-Ufer verlanden nur noch physisch über Droplet-Deltas.
   Ein träges Verlandungs-Ziel (waterLevel) und Größen-Schwellen waren gemessene
   Sackgassen (wirkungslos bzw. Braid-Bänke beschädigt, s. Config-Kommentare).
-- **Deltas** an Fluss-Mündungen in Meer/Seen sichtbar machen (das Transport-Modell baut
-  sie schon, das Rendering hebt sie nicht hervor).
+- ERLEDIGT (Aug 2026, Issue #34): **Deltas** an Fluss-Mündungen in Meer/Seen sichtbar
+  — als Distributär-Fächer der Geometrie über dem Ablagerungskörper (Wassersäule
+  zwischen Uferlinie und `deltaFrontDepth`), Trübungsfahne statt zweiter
+  Wasserfläche. Gemessen wurde vorher, WORAN man ein Delta erkennt: an einer
+  Tiefen-Schwelle gar nicht (flache Buchten ohne Fluss sehen genauso aus), wohl
+  aber am Saum, den das Raster-Feld nicht malen kann
+  (`docs/geometry-water-measurements.md` §A). Im selben Zug geschlossen: der
+  Spalt zwischen Band-Ende und Uferkontur (Mündungs-Verlängerung dem
+  D8-Empfänger entlang, Wächter zählt 0 statt 8) und das doppelte Wasser über
+  Seeflächen.
 - ERLEDIGT (Aug 2026, Issue #32): See-Ränder minimal gezackt (per-Zelle-Quads) — die
   Uferlinie entsteht jetzt PRO PIXEL im Shader aus `waterLevel − h` auf dem vollen,
   bilinear gefilterten Sim-Gitter (`pond_at` in `terrain.gdshader`, Shader-Äquivalent
@@ -334,7 +350,14 @@ Messreihen `docs/dt-invariance-measurements.md`):
   einen Ufer-Saum (`shore`) — vorher fiel er an Seen aus, s.
   `docs/lake-shore-contour-measurements.md`.
 - Steile Oberläufe der Fluss-Geometrie leicht segmentiert — feinere Glättung oder
-  adaptive Unterteilung.
+  adaptive Unterteilung. (Stand #34: die Catmull-Rom-Unterteilung mit 3 Samples je
+  Knoten und der Alpha-Längsfilter aus #31 sind unverändert; die Segmentierung
+  fällt nur noch am steilen Oberlauf auf, wo die Bänder ohnehin fadendünn sind.)
+- OFFEN nach #34: der Delta-Fächer läuft in GERADEN Armen aus der Mündungs-
+  richtung — seine Form kommt aus der Länge des Ablagerungskörpers, nicht aus
+  einer eigenen Distributär-Dynamik. Ein echtes Verzweigungsmodell (Arme, die
+  sich beim Aufschütten selbst verlegen) wäre Sim-Arbeit, keine Render-Arbeit,
+  und gehört in ein eigenes Issue.
 - ERLEDIGT (Aug 2026, Issue #4): Schnee-, Hochfels- und Vegetations-Höhengrenzen
   kommen aus **Perzentilen der aktuellen Landhöhen** (`HeightBands`,
   `SimConfig.band*Percentile`) statt aus absoluten Werten. Die alte Schneegrenze
@@ -460,7 +483,12 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Springen/Dynamik sind nur in BEWEGUNG sichtbar, nicht im Standbild.
 - **App interaktiv:** `"$GODOT" --path game` (oder `--editor`).
 - **Shader-Debug-Rezept:** ALBEDO im Shader auf `(riverMask, lakeMask, stream)` legen;
-  `RS_NO_MEANDER_PAINT=1` schaltet die Mäander-Stempel für A/B ohne Rebuild ab.
+  `RS_NO_MEANDER_PAINT=1` schaltet die Mäander-Stempel für A/B ohne Rebuild ab,
+  `RS_WATER_STAMP=1` den ganzen Wasser-Renderpfad zurück auf das Raster (#34).
+- **Ausschnitt-Screenshots:** `RS_TARGET="x,z"` setzt den Blickpunkt in
+  Weltkoordinaten (Höhe wird auf das Gelände gehoben), `RS_YAW`/`RS_PITCH` den
+  Orbit — damit ist eine Mündung reproduzierbar im Bild. Mit `RS_SHOT` blendet
+  sich die Bedienleiste aus.
 
 ## Wichtige Dateien
 
