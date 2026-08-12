@@ -381,6 +381,12 @@ public final class Terrain {
 
     @inline(__always) func idx(_ i: Int, _ j: Int) -> Int { j * n + i }
 
+    /// Pass-Grenze fürs Profiling (Issue #43, s. `SimProfile`). `@autoclosure`,
+    /// damit im Normalfall (`enabled == false`) nicht einmal der Name entsteht.
+    @inline(__always) private func mark(_ name: @autoclosure () -> String?) {
+        if SimProfile.enabled { SimProfile.mark(name()) }
+    }
+
     // MARK: - Datenparallelität
 
     private static let coreCount = ProcessInfo.processInfo.activeProcessorCount
@@ -1837,9 +1843,10 @@ public final class Terrain {
     /// Spieler-Eingriff via `SimNode.recomputeFlow`) — alles andere ist
     /// dt-unabhängig.
     public func computeFlow(includeMFD: Bool = true, dtYears: Double = 0) {
+        mark("computeRain")
         computeRain()
         floodAndRoute(dt: dtYears)
-        if includeMFD { computeMFDArea() }
+        if includeMFD { mark("computeMFDArea"); computeMFDArea() }
     }
 
     /// Senkenfüllung + D8-Routing, dazwischen der Becken-Wasserhaushalt.
@@ -1857,6 +1864,7 @@ public final class Terrain {
     /// `applyBalance: false` schaltet den Wasserhaushalt für diesen Aufruf aus
     /// (Becken-Rollen werden gelöscht) — das braucht der Breach-Spin-up, s. dort.
     private func floodAndRoute(dt: Double, applyBalance: Bool = true) {
+        mark("priorityFlood")
         priorityFlood()
         // Becken-Rollen VOR der Zufluss-Messung löschen: mit den Rollen des
         // VORIGEN Schritts wären die Seeflächen schon terminal, die Akkumulation
@@ -1864,10 +1872,16 @@ public final class Terrain {
         // hinge an der eigenen Deckelung von gestern (Hysterese, die den Spiegel
         // Schritt für Schritt weiter absenken kann). Pass 1 ist deshalb immer die
         // vollständige, verdunstungs-freie Entwässerung.
+        mark("clearEndorheicBasins")
         clearEndorheicBasins()
+        mark("computeReceiversAndArea")
         computeReceiversAndArea()
         guard applyBalance else { return }
-        if capEndorheicBasins(dt: dt) { computeReceiversAndArea() }
+        mark("capEndorheicBasins")
+        if capEndorheicBasins(dt: dt) {
+            mark("computeReceiversAndArea")
+            computeReceiversAndArea()
+        }
     }
 
     /// Becken-Rollen (und damit alle #11-Sonderpfade) zurücksetzen.
@@ -3634,17 +3648,20 @@ public final class Terrain {
         // über `reliefTarget` hält — im normalen 100k-Fenster nie (gemessen). Das
         // max steckt UNTER dem Integral (s. upliftAmount), sonst hinge der
         // Übergangsschritt an der Schrittweite.
+        mark("applyUplift")
         applyUplift(dt: dt, gatedAmount: upliftAmount(dt: dt,
                                                       floorPer100y: reliefServoRate()))
         // Regeneration frisch umgegrabener Flächen (Issue #26): trägt das
         // Mikro-Relief ein und räumt Mäander-/Altarmzustand ab, BEVOR der Flow
         // läuft — die Entwässerung dieses Schritts sieht das neue Gelände.
         // Ohne Störung (Normalfall) ein reiner Boolean-Test.
+        mark("regenerateDisturbed")
         regenerateDisturbed(dt: dt)
         // Gesteinsfeld (Issue #12) auf die frische Höhe nachziehen, BEVOR ein
         // Erosionspass es liest: die freigelegte Schicht folgt aus h, und h hat
         // sich gerade durch die Hebung verschoben. Reine Ableitung, kein Zustand —
         // die Reihenfolge im Schritt ist damit unkritisch, nur „vor der Erosion".
+        mark("updateLithology")
         updateLithology()
         flowStepCount &+= 1
         let mfdInterval = max(1, cfg.mfdUpdateInterval)
@@ -3652,7 +3669,9 @@ public final class Terrain {
         // niemals hinter dem aktuellen Terrain zurückbleiben.
         let updateMFD = cfg.braidingEnabled || Int(flowStepCount % UInt32(mfdInterval)) == 0
         computeFlow(includeMFD: updateMFD, dtYears: dt)
+        mark("relaxWaterLevel")
         relaxWaterLevel(dt: dt) // Seespiegel folgt dem frischen hf (s. Doku dort)
+        mark("updateSaltCrust")
         updateSaltCrust(dt: dt) // Playa-Kruste folgt der frischen Becken-Rolle
         // Gletscher (Issue #35): NACH dem Abflussfeld — das Eis fließt auf dem
         // Bett, das der frische Priority-Flood gesehen hat — und VOR jeder
@@ -3661,9 +3680,12 @@ public final class Terrain {
         // Bett-Bewegungen von Mäander und Braiding gatet — auch den
         // `meanderStamp` direkt darunter. Ohne Eis (Normalfall der ersten
         // Schritte, oder `iceEnabled = false`) ein reiner Suchlauf, s. dort.
+        mark("updateIce")
         updateIce(dt: dt)
         if cfg.meanderEnabled {
+            mark("migrateMeander")
             migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
+            mark("meanderStamp")
             meanderStamp(dt: dt)   // Bett-Carve + laterale Ufer + Altarm-Pfropf, setzt isChannel
         }
         let passes = max(1, Int((dt / 100).rounded()))
@@ -3673,12 +3695,12 @@ public final class Terrain {
             // → Hangdiffusion (Grate runden) → Wave.
             // 1) Fluviale Makro-Inzision zuerst: schneidet das kohärente Talnetz und
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
-            if cfg.outletIncision { outletIncision(dt: dt) }
-            if cfg.basinFill { fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
-            if cfg.puddleFillYears > 0 { fillShallowPonds(dt: dt) }
+            if cfg.outletIncision { mark("outletIncision"); outletIncision(dt: dt) }
+            if cfg.basinFill { mark("fillLakes"); fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
+            if cfg.puddleFillYears > 0 { mark("fillShallowPonds"); fillShallowPonds(dt: dt) }
             // 1b) Braiding: super-linearer Bedload-Transport auf dem MFD-Netz baut
             //     Mittelbänke/Fäden auf den großen Läufen (Verflechtung).
-            if cfg.braidingEnabled { braidPass(dt: dt) }
+            if cfg.braidingEnabled { mark("braidPass"); braidPass(dt: dt) }
             // 2) Droplet-Erosion legt die feine dendritische Textur (nickmcd-Look) hinein.
             // Tropfen ∝ Zeit × Fläche (Dichte kalibriert auf n = 640).
             let drops = dropletCount(dtYears: dt)
@@ -3687,6 +3709,7 @@ public final class Terrain {
             // emittierten Tropfen, nicht an der Zahl der Schritte.
             let firstDrop = dropsEmitted
             dropsEmitted &+= UInt64(drops)
+            mark("Hydraulic.erode")
             for k in 0..<cfg.count { trackBuf[k] = 0 }
             // Kanalmaske mit: auf Mäanderbetten ist die Tropfen-DEPOSITION gedämpft
             // (Reconciliation — sonst schütten die Tropfen das gecarvte Bett wieder zu).
@@ -3710,6 +3733,7 @@ public final class Terrain {
             // Zellen hellen auf, einzelne Zufallspfade verblassen.
             // EWMA + Sättigung fusioniert und datenparallel (per-Zelle unabhängig,
             // bit-identisch zu „erst EWMA-Loop, dann deriveStreamMap").
+            mark("streamMapEWMA")
             let lam = 1 - exp(-dt / cfg.streamMapMemoryYears)
             let r0 = cfg.streamRefRate
             streamRate.withUnsafeMutableBufferPointer { srb in
@@ -3727,7 +3751,7 @@ public final class Terrain {
             // 2b) Auen-Aggradation: Flüsse schütten seitlich flache Schwemmböden auf
             //     (bankfull) → breite Niedrig-Gradient-Reaches für Mäander/Braiding.
             //     Nach dem Carve (Bett steht), vor der Diffusion (glättet die Aue).
-            if cfg.floodplainEnabled { floodplainAggradation(dt: dt) }
+            if cfg.floodplainEnabled { mark("floodplainAggradation"); floodplainAggradation(dt: dt) }
             // 3) Hangdiffusion (Bodenkriechen, D·∇²z): rundet Grate über die Zeit → altes
             // Terrain wird RUND statt immer spitzer (Appalachen-Signal, konvexe Kuppen).
             // Gesamtwirkung ∝ dt (chunking-/framerate-UNABHÄNGIG!): Echtzeit-Zeitraffer
@@ -3740,9 +3764,11 @@ public final class Terrain {
             let totalK = kYear * dt
             let nSub = max(1, Int((totalK / 0.2).rounded(.up)))   // stabil: Teilschritt-kappa ≤ 0.2
             let subK = totalK / Double(nSub)
+            mark("hillslopeDiffusion")
             for _ in 0..<nSub { hillslopeDiffusion(base: subK) }
             // Küstenerosion ebenfalls sub-getaktet (Issue #2, s. waveSchedule).
             let wave = waveSchedule(dt: dt)
+            mark("wavePass")
             for _ in 0..<wave.count { wavePass(relax: wave.relax) }
         } else {
             transportLimited(dt: dt) // massenerhaltend; auf Kanalzellen gedämpft (Reconciliation)
@@ -3757,8 +3783,11 @@ public final class Terrain {
         // Klima-Vertikale (Issue #33) am Schrittende: Temperatur liest die FINALEN
         // Höhen, und die Schneebilanz muss vor `updateVegetation` stehen — dort
         // leitet `updateHeightBands` die Schneegrenze aus dem frischen Feld ab.
+        mark("updateClimate")
         updateClimate(dt: dt)
+        mark("updateVegetation")
         updateVegetation(years: dt)
+        mark(nil)
         years += dt
     }
 
