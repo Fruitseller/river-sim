@@ -404,6 +404,31 @@ public final class Terrain {
         }
     }
 
+    /// Setzt ein ganzes Feld auf `value`.
+    ///
+    /// PERF (Issue #43): `for k in 0..<count { feld[k] = wert }` auf einer
+    /// KLASSEN-Property kostet je Zelle Bounds-, COW- und Exklusivitäts-Prüfung
+    /// — bei n = 832 gemessen ~9 ms JE FELD und Schritt, für einen Memset. Über
+    /// den Roh-Puffer ist es genau das: ein `memset`. Gleiche Werte, deshalb
+    /// überall mechanisch ersetzbar.
+    @inline(__always) private func fill<T>(_ array: inout [T], _ value: T) {
+        array.withUnsafeMutableBufferPointer { b in
+            guard let p = b.baseAddress else { return }
+            p.update(repeating: value, count: b.count)
+        }
+    }
+
+    /// „Enthält das Feld ein Element mit `predicate`?" auf dem Roh-Puffer —
+    /// dieselbe Abkürzung wie `fill` für die Such-Gegenstücke (Eis-/Becken-
+    /// Aktivitätsprüfungen), die ohne Treffer das ganze Gitter durchlaufen.
+    @inline(__always) private func anyCell<T>(_ array: [T], _ predicate: (T) -> Bool) -> Bool {
+        array.withUnsafeBufferPointer { b in
+            guard let p = b.baseAddress else { return false }
+            for k in 0..<b.count where predicate(p[k]) { return true }
+            return false
+        }
+    }
+
     // MARK: - Terrain-Generierung
 
     public func generate(seed: UInt32) {
@@ -560,11 +585,12 @@ public final class Terrain {
     /// ein paar Tropfen-Chargen laufen das frische Terrain hinab und hinterlassen
     /// die ersten zeitgemittelten Pfade.
     private func spinUpStreamMap() {
-        for k in 0..<cfg.count { streamRate[k] = 0; streamMap[k] = 0 }
+        fill(&streamRate, 0)
+        fill(&streamMap, 0)
         guard cfg.hydraulicEnabled else { return }
         let density = Double(n * n) / (640.0 * 640.0)
         for round in 0..<4 {
-            for k in 0..<cfg.count { trackBuf[k] = 0 }
+            fill(&trackBuf, 0)
             let drops = max(200, Int(2000 * density))
             // Diese Charge entspricht so vielen Jahren Tropfen-Budget:
             let dtEq = Double(drops) / max(1e-9, cfg.hydraulicPerYear * density)
@@ -1210,10 +1236,14 @@ public final class Terrain {
         }
         // Gibt es überhaupt Eis oder eine Quelle dafür? (Reihenfolge-unabhängig,
         // also bit-genau reproduzierbar.)
-        var active = false
-        for k in 0..<cnt where ice[k] > 0 { active = true; break }
+        var active = anyCell(ice) { $0 > 0 }
         if !active {
-            for k in 0..<cnt where temperature[k] < 0 && snow[k] > 0 { active = true; break }
+            active = temperature.withUnsafeBufferPointer { tb in
+            snow.withUnsafeBufferPointer { sb in
+                let pt = tb.baseAddress!, ps = sb.baseAddress!
+                for k in 0..<cnt where pt[k] < 0 && ps[k] > 0 { return true }
+                return false
+            }}
         }
         guard active else {
             if !underIce.isEmpty { underIce = [] }
@@ -1490,14 +1520,16 @@ public final class Terrain {
     /// Pass ist ein reiner Vergleich je Zelle.
     private func rebuildIceMask() {
         let cnt = cfg.count, thr = cfg.iceMinThickness
-        var any = false
-        for k in 0..<cnt where ice[k] > thr { any = true; break }
-        guard any else {
+        guard anyCell(ice, { $0 > thr }) else {
             if !underIce.isEmpty { underIce = [] }
             return
         }
         if underIce.count != cnt { underIce = .init(repeating: false, count: cnt) }
-        for k in 0..<cnt { underIce[k] = ice[k] > thr }
+        underIce.withUnsafeMutableBufferPointer { ub in
+        ice.withUnsafeBufferPointer { ib in
+            let pu = ub.baseAddress!, pi = ib.baseAddress!
+            for k in 0..<cnt { pu[k] = pi[k] > thr }
+        }}
     }
 
     /// Sättigung einer Eisdicke zur **Deckung** (0 … <1): `I/(I + ref)` — dieselbe
@@ -2440,7 +2472,7 @@ public final class Terrain {
         let mB = cfg.braidExponent
         let kb = cfg.braidCapacity * dt
         let sqrt2 = 2.0.squareRoot()
-        for k in 0..<cfg.count { qs[k] = 0 }
+        fill(&qs, 0)
         var nbK = [Int](repeating: 0, count: 8)
         var nbW = [Double](repeating: 0, count: 8)
         var nbS = [Double](repeating: 0, count: 8)
@@ -2579,7 +2611,7 @@ public final class Terrain {
         let sqrt2 = 2.0.squareRoot()
         let kt = cfg.transportCap
         let m = cfg.mExp
-        for k in 0..<cfg.count { qs[k] = 0 }
+        fill(&qs, 0)
         var oi = cfg.count - 1
         while oi >= 0 {
             let k = Int(order[oi]); oi -= 1
@@ -2784,7 +2816,7 @@ public final class Terrain {
         let rate = 1 - exp(-dt / cfg.puddleFillYears)
         let sea = cfg.sea, nn = n
         // Persistente Puffer (Hot-Loop, keine Allokation je Schritt).
-        for k in 0..<cfg.count { pondSeen[k] = false }
+        fill(&pondSeen, false)
         var comp: [Int32] = []
         var stack: [Int32] = []
         for s in 0..<cfg.count where !pondSeen[s] && hf[s] > sea && hf[s] - h[s] > 0.001
@@ -3558,7 +3590,7 @@ public final class Terrain {
     ///    Gleithang (Innenkurve) ablagern, massenerhaltend. So wandert das Bett.
     /// 3) **isChannel-Maske** für die Reconciliation mit `transportLimited`.
     private func meanderStamp(dt: Double) {
-        for k in 0..<cfg.count { isChannel[k] = false }
+        fill(&isChannel, false)
         let m = cfg.mExp
         let cs = cfg.cellSize
         let cellArea = cs * cs
@@ -3769,7 +3801,7 @@ public final class Terrain {
             let firstDrop = dropsEmitted
             dropsEmitted &+= UInt64(drops)
             mark("Hydraulic.erode")
-            for k in 0..<cfg.count { trackBuf[k] = 0 }
+            fill(&trackBuf, 0)
             // Kanalmaske mit: auf Mäanderbetten ist die Tropfen-DEPOSITION gedämpft
             // (Reconciliation — sonst schütten die Tropfen das gecarvte Bett wieder zu).
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
