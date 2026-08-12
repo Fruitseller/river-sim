@@ -3502,42 +3502,61 @@ public final class Terrain {
         meander.oxbowAge.removeAll()
     }
 
-    /// Einzugsgebiet an einer kontinuierlichen Grid-Position (bilinear).
-    @inline(__always) private func bilinearArea(_ gx: Double, _ gz: Double) -> Double {
+    /// Bilineare Abtastung eines Felds an einer kontinuierlichen Grid-Position.
+    /// EINE Formel für Höhe und Einzugsgebiet — und auf dem Roh-Puffer, damit
+    /// die Mäander-Pässe sie je Knoten aufrufen können, ohne dafür 28k-mal über
+    /// eine Klassen-Property zu gehen (Issue #43).
+    @inline(__always) static func bilinear(_ p: UnsafePointer<Double>, _ n: Int,
+                                           _ gx: Double, _ gz: Double) -> Double {
         let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
         let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
         let k = yi * n + xi
-        return area[k] * (1 - fx) * (1 - fy) + area[k + 1] * fx * (1 - fy)
-             + area[k + n] * (1 - fx) * fy + area[k + n + 1] * fx * fy
+        return p[k] * (1 - fx) * (1 - fy) + p[k + 1] * fx * (1 - fy)
+             + p[k + n] * (1 - fx) * fy + p[k + n + 1] * fx * fy
     }
 
-    /// Mittleres Auwald-veg im Ufer-Streifen (±meanderBankWidth, gerundet) um
-    /// eine Knotenposition — Eingang der Mäander-Ufer-Kohäsion. Gemittelt wird
+    /// Einzugsgebiet an einer kontinuierlichen Grid-Position (bilinear).
+    @inline(__always) private func bilinearArea(_ gx: Double, _ gz: Double) -> Double {
+        area.withUnsafeBufferPointer { Terrain.bilinear($0.baseAddress!, n, gx, gz) }
+    }
+
+    /// Mittleres Auwald-veg im Ufer-Streifen (±`r` Zellen) um eine
+    /// Knotenposition — Eingang der Mäander-Ufer-Kohäsion. Gemittelt wird
     /// über ALLE Streifen-Zellen (Auwald-fremde zählen 0): eine einzelne
     /// Auwald-Zelle bremst also kaum, ein voll bewachsener Streifen deutlich.
-    func riparianVegAt(_ gx: Double, _ gz: Double) -> Double {
-        let r = max(1, Int(cfg.meanderBankWidth.rounded()))
+    /// Roh-Puffer-Variante aus demselben Grund wie `bilinear`.
+    @inline(__always) static func riparianVeg(_ pveg: UnsafePointer<Double>,
+                                              _ pcls: UnsafePointer<UInt8>,
+                                              _ n: Int, _ r: Int,
+                                              _ gx: Double, _ gz: Double) -> Double {
         let ci = min(max(Int(gx.rounded()), 0), n - 1)
         let cj = min(max(Int(gz.rounded()), 0), n - 1)
         var s = 0.0
         var cnt = 0
         for dj in max(0, cj - r)...min(n - 1, cj + r) {
+            let row = dj * n
             for di in max(0, ci - r)...min(n - 1, ci + r) {
-                let k = dj * n + di
+                let k = row + di
                 cnt += 1
-                if vegClass[k] == 3 { s += veg[k] }
+                if pcls[k] == 3 { s += pveg[k] }
             }
         }
         return cnt == 0 ? 0 : s / Double(cnt)
     }
 
+    /// Halbbreite des Ufer-Streifens in Zellen (s. `riparianVeg`).
+    private var bankRadius: Int { max(1, Int(cfg.meanderBankWidth.rounded())) }
+
+    func riparianVegAt(_ gx: Double, _ gz: Double) -> Double {
+        veg.withUnsafeBufferPointer { vb in
+        vegClass.withUnsafeBufferPointer { cb in
+            Terrain.riparianVeg(vb.baseAddress!, cb.baseAddress!, n, bankRadius, gx, gz)
+        }}
+    }
+
     /// Geländehöhe an einer kontinuierlichen Grid-Position (bilinear).
     @inline(__always) private func bilinearH(_ gx: Double, _ gz: Double) -> Double {
-        let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
-        let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
-        let k = yi * n + xi
-        return h[k] * (1 - fx) * (1 - fy) + h[k + 1] * fx * (1 - fy)
-             + h[k + n] * (1 - fx) * fy + h[k + n + 1] * fx * fy
+        h.withUnsafeBufferPointer { Terrain.bilinear($0.baseAddress!, n, gx, gz) }
     }
 
     /// Frischt den Abfluss entlang der Läufe aus dem aktuellen Einzugsgebiet auf
@@ -3547,22 +3566,35 @@ public final class Terrain {
     private func migrateMeander(dt: Double) {
         if meander.channels.isEmpty { seedMeander(); return }
         let cellArea = cfg.cellSize * cfg.cellSize
-        for ci in meander.channels.indices {
-            for ni in meander.channels[ci].nodes.indices {
-                let nd = meander.channels[ci].nodes[ni]
-                meander.channels[ci].discharge[ni] = max(0, bilinearArea(nd.x, nd.z) / cellArea)
+        let nn = n, bankR = bankRadius
+        // PERF (Issue #43): `h`, `area`, `veg` und `vegClass` ändern sich
+        // während der Migration nicht (sie ist reine Knoten-Geometrie) — die
+        // Felder werden deshalb EINMAL geöffnet, statt sie über die Klassen-
+        // Property je Knoten und je Streifenzelle neu zu adressieren. Bei 28k
+        // Knoten × 25 Streifenzellen sind das ~700k Zugriffe je Schritt.
+        h.withUnsafeBufferPointer { hb in
+        area.withUnsafeBufferPointer { ab in
+        veg.withUnsafeBufferPointer { vb in
+        vegClass.withUnsafeBufferPointer { cb in
+            let ph = hb.baseAddress!, pa = ab.baseAddress!
+            let pveg = vb.baseAddress!, pcls = cb.baseAddress!
+            meander.channels.withUnsafeMutableBufferPointer { chs in
+                for ci in chs.indices {
+                    chs[ci].refreshDischarge { gx, gz in
+                        max(0, Terrain.bilinear(pa, nn, gx, gz) / cellArea)
+                    }
+                }
             }
-        }
-        meander.migrate(dt: dt, config: cfg,
-                        heightAt: { self.bilinearH($0.x, $0.z) },
-                        riparianAt: { self.riparianVegAt($0.x, $0.z) })
+            meander.migrate(dt: dt, config: cfg,
+                            heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) },
+                            riparianAt: {
+                                Terrain.riparianVeg(pveg, pcls, nn, bankR, $0.x, $0.z)
+                            })
+        }}}}
         // Sicherheits-Clamp: Knoten dürfen die Welt nicht verlassen.
         let maxc = Double(n - 1)
-        for ci in meander.channels.indices {
-            for ni in meander.channels[ci].nodes.indices {
-                meander.channels[ci].nodes[ni].x = min(max(meander.channels[ci].nodes[ni].x, 0), maxc)
-                meander.channels[ci].nodes[ni].z = min(max(meander.channels[ci].nodes[ni].z, 0), maxc)
-            }
+        meander.channels.withUnsafeMutableBufferPointer { chs in
+            for ci in chs.indices { chs[ci].clampToWorld(maxCoord: maxc) }
         }
         meander.channels.removeAll { $0.nodes.count < 3 }
         if meander.channels.isEmpty { seedMeander() }
