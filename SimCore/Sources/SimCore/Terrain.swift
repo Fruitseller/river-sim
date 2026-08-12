@@ -150,6 +150,9 @@ public final class Terrain {
     /// Dieselbe Bauform wie `isChannel`: **leer heißt aus**, und wenn keine Zelle
     /// Eis trägt, wird das Feld auch geleert → die Gates sind dann
     /// bit-identisch nicht vorhanden.
+    /// Die Schwelle ist dieselbe, an der in `iceFlowSubStep` Transport und
+    /// Abrasion einsetzen — der dünne Saum ist damit fluvial UND nur fluvial,
+    /// nie beides zugleich.
     ///
     /// Reine ABLEITUNG aus `ice` (kein Zustand, nicht im Snapshot-Inventar):
     /// `updateIce` baut sie je Schritt neu, und zwar VOR jedem Konsumenten.
@@ -1286,6 +1289,14 @@ public final class Terrain {
         let nn = n, cnt = cfg.count
         let sea = cfg.sea, cs = cfg.cellSize
         let moveFrac = max(0, cfg.iceFlowMoveFraction)
+        // DIESELBE Schwelle, die `underIce` zieht (s. `rebuildIceMask`): unterhalb
+        // fließt kein Eis und es schleift auch keines. Sonst liefen in einer Zelle
+        // am dünnen Saum FLUVIALE und GLAZIALE Erosion gleichzeitig — die fluvialen
+        // Gates hängen an `underIce`, das Fließen und die Abrasion hingen vorher an
+        // „irgendeine positive Restdicke". Die BILANZ (Zufuhr, Schmelze, Moräne)
+        // läuft für dünnes Eis weiter: ein Schneefeld muss über die Schwelle
+        // wachsen können, sonst gäbe es nie einen Gletscher.
+        let thr = max(0, cfg.iceMinThickness)
         let coldSpan = max(1e-9, cfg.iceFirnColdSpan)
         let firn = cfg.iceFirnPerSnowYear
         let baseMu = 1 / max(1e-9, cfg.iceTurnoverYears)
@@ -1324,7 +1335,7 @@ public final class Terrain {
                     let sk = ph[k] + pice[k]
                     psurf[k] = sk
                     let ik = pice[k]
-                    if ik <= 0 { prate[k] = 0; pero[k] = 0; continue }
+                    if ik <= thr { prate[k] = 0; pero[k] = 0; continue }
                     // Rand gespiegelt (Abfall 0): Eis verlässt die Welt nicht.
                     let sl = i > 0      ? ph[k - 1]  + pice[k - 1]  : sk
                     let sr = i < nn - 1 ? ph[k + 1]  + pice[k + 1]  : sk
@@ -1404,7 +1415,7 @@ public final class Terrain {
                     // schreibt Pass 2 weiterhin ausschließlich den eigenen Index
                     // und bleibt parallel bit-identisch. Bei gleichen Gewichten
                     // ist das dieselbe Gesamtmenge (Faltung ist symmetrisch).
-                    if kEro > 0 && i0 > 0 && w > 0 && ph[k] > sea {
+                    if kEro > 0 && i0 > thr && w > 0 && ph[k] > sea {
                         var rate = pero[k]
                         if swath > 0 {
                             var sum = 0.0

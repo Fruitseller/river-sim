@@ -575,3 +575,47 @@ Unterschied macht. Die Gegenprobe `testSlopeBreakSurvivesMeltRunoff` läuft auf
 rechts); sie prüft die zwei inhaltlichen Zusicherungen und hält jetzt zusätzlich
 fest, dass ihr Arm die vergletscherten Zellen wirklich hat (> 100), damit die
 Gegenprobe nicht still leer läuft.
+
+---
+
+## §K — Die Schwelle galt nur den fluvialen Pässen (Review-Fund)
+
+Dritte Review-Runde, Gegenrichtung zu §I: dort ging es darum, wo FLUVIAL unter
+dem Eis noch abgetragen wurde, hier darum, wo das EIS unterhalb seiner eigenen
+Schwelle noch gearbeitet hat. `SimConfig.iceMinThickness` ist als „unter einem
+Schneefeld dieser Mächtigkeit fließt kein Eis und der Bach läuft normal weiter"
+dokumentiert, gelesen hat sie aber nur `rebuildIceMask` (und damit die fluvialen
+Gates). `iceFlowSubStep` gatete den Ausstrom an `ice > 0` und die Abrasion an
+`i0 > 0` — jede positive Restdicke floss und schliff. Am Saum arbeiteten damit
+beide Erosionsgesetze gleichzeitig am selben Bett.
+
+**Aufbau** (n = 256, Seed 1337, `quietCfg()` + `hydraulicPerYear = 0` +
+`outletErode = 0`, damit im Vergleichsschritt AUSSCHLIESSLICH das Eis `h`
+anfasst; 20k Jahre vorgelaufen, dann EIN Schritt mit dt = 500 aus demselben
+Zustand). Verglichen wird ein Arm mit einer Schwelle oberhalb der größten
+Eisdicke gegen einen Arm mit „Transport-Deckel 0 + `iceErodeK = 0`". Sind
+Transport und Abrasion an die Schwelle gebunden, müssen beide bit-gleich sein.
+
+| | Saum (0 < Eis ≤ Schwelle) | Zellen geflossen | Zellen geschliffen |
+|---|---|---|---|
+| vorher | 18 870 | **20 168** | **15 319** |
+| Transport/Abrasion an der Schwelle | 1 798 | **0** | **0** |
+
+Der Saum schrumpft um den Faktor 10, weil er vorher sein eigener Motor war: das
+Eis unter der Schwelle floss weiter talwärts und legte dort neues Eis unter der
+Schwelle an. Der Rest von 1 798 Zellen ist der echte Rand — dort speist die
+Bilanz (Firn, Zufluss aus der Nachbarzelle), und die läuft bewusst weiter, sonst
+könnte ein Schneefeld nie über die Schwelle wachsen und es entstünde nie ein
+Gletscher.
+
+Die Gegenprobe im selben Lauf: mit der PRODUKTIONS-Schwelle bewegt der Gletscher
+in genau diesem Schritt 2 298 Zellen — vorher waren es 0, weil die Schwelle für
+das Eis gar keine Rolle spielte und die beiden Arme identisch liefen. Genau
+dieser Wert zeigt, dass der Vergleich nicht bloß einen stillstehenden Gletscher
+gegen einen stillstehenden hält.
+
+**Konsequenz:** `iceFlowSubStep` liest `iceMinThickness` an beiden Stellen
+(Pass 1: kein Ausstrom, keine Erosions-Rate; Pass 2: keine Abrasion). Die Zone
+unter der Schwelle ist damit fluvial UND nur fluvial, die Zone darüber glazial
+UND nur glazial — die Maske `underIce` teilt sie ohne Überlappung und ohne
+Lücke. Wächter: `Glacier.testThinIceNeitherFlowsNorGrinds`.

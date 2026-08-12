@@ -1260,6 +1260,15 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// dieser Mächtigkeit fließt kein Eis und der Bach läuft normal weiter. Der
     /// Wert hält den Saum der Gletscher schmal — ohne ihn wanderte die Maske mit
     /// dem exponentiellen Ausläufer der Bilanz beliebig weit ins Tal.
+    ///
+    /// **Eine Schwelle, drei Wirkungen:** Sie gatet nicht nur die fluvialen
+    /// Pässe, sondern in `iceFlowSubStep` auch den Eis-TRANSPORT und die
+    /// glaziale ABRASION. Sonst wäre der dünne Saum eine Zone, in der beide
+    /// Erosionsgesetze gleichzeitig am selben Bett arbeiten — die fluvialen
+    /// hängen an `underIce`, das Fließen und die Abrasion hingen anfangs an
+    /// „irgendeine positive Restdicke". Die BILANZ (Zufuhr, Schmelze, Moräne)
+    /// bleibt bewusst ungegatet: ein Schneefeld muss über die Schwelle wachsen
+    /// können. Wächter: `Glacier.testThinIceNeitherFlowsNorGrinds`.
     public var iceMinThickness: Double = 0.002
     /// Sättigungs-Referenz der EIS-Deckung fürs Rendering:
     /// `Deckung = I / (I + iceCoverRef)`, dieselbe Bauform wie `snowCoverRef`.

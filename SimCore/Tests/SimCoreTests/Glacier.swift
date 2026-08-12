@@ -15,7 +15,9 @@ import XCTest
 /// 4. unter Eis kein fluvialer Abtrag → `testNoFluvialErosionUnderIce`
 ///    (isoliert), `testNoFluvialErosionUnderIceInProduction` (mit den
 ///    Bett-Pässen Mäander und Braiding) und
-///    `testNoFluvialErosionUnderIceOnTheGridPath` (Nicht-Droplet-Zweig)
+///    `testNoFluvialErosionUnderIceOnTheGridPath` (Nicht-Droplet-Zweig);
+///    die Gegenrichtung — unter der Schwelle rührt das EIS nichts an —
+///    `testThinIceNeitherFlowsNorGrinds`
 /// 5. dt-invariant, deterministisch → `testIceIsFramerateIndependent`,
 ///    `testIceIsDeterministic`
 /// 6. abgeschaltet bit-identisch → `testDisabledIceIsBitIdentical`,
@@ -645,6 +647,64 @@ final class Glacier: XCTestCase {
         // vergletscherten Zellen — in BEIDEN Armen gleich, deshalb bleibt die
         // Bit-Gleichheit oben die richtige Zusicherung.
         _ = before
+    }
+
+    /// **Eine Schwelle für alles**: unterhalb `iceMinThickness` fließt kein Eis
+    /// und schleift auch keines — dieselbe Grenze, ab der `underIce` die
+    /// fluvialen Pässe wieder zulässt. Ohne diese Kopplung arbeiteten am dünnen
+    /// Saum BEIDE Erosionsgesetze gleichzeitig am selben Bett (PR-Review zu #35:
+    /// `iceFlowSubStep` gatete den Ausstrom an `ice > 0` und die Abrasion an
+    /// `i0 > 0`, während die fluvialen Gates erst über der Schwelle greifen).
+    ///
+    /// Geprüft als ÄQUIVALENZ zweier Arme über EINEN Schritt aus DEMSELBEN
+    /// Zustand: eine Schwelle oberhalb der größten Eisdicke muss dasselbe
+    /// liefern wie „Transport-Deckel 0 + `iceErodeK = 0`". Der Vergleichsarm
+    /// stellt bewusst `iceFlowMoveFraction` auf 0 statt `iceFlowK` — Letzteres
+    /// änderte über `totalK` auch die Zahl der Teilschritte, und die Bilanz
+    /// relaxierte dann in anderen Häppchen (bit-gleich wäre sie nur in exakter
+    /// Arithmetik).
+    ///
+    /// Die BILANZ läuft in beiden Armen weiter (Zufuhr, Schmelze, Moräne): ein
+    /// Schneefeld muss über die Schwelle wachsen können, sonst entstünde nie
+    /// ein Gletscher. Deshalb ist die Zusicherung „kein Transport, keine
+    /// Abrasion" und nicht „das Eis ist eingefroren".
+    func testThinIceNeitherFlowsNorGrinds() {
+        var base = quietCfg(n: 256)
+        base.hydraulicPerYear = 0     // nur das Eis darf `h` anfassen — sonst
+        base.outletErode = 0          // misst der Vergleich den fluvialen Abtrag
+        let t = Terrain(config: base, seed: 1337)
+        run(t, to: 20_000)
+        let thickest = t.ice.max() ?? 0
+        XCTAssertGreaterThan(thickest, base.iceMinThickness, "Testaufbau: gar kein Eis")
+        // Der dünne Saum ist in Produktion nicht leer — sonst prüfte der Wächter
+        // eine Zone, die es gar nicht gibt.
+        let rim = (0..<base.count).filter { t.ice[$0] > 0 && t.ice[$0] <= base.iceMinThickness }
+        print("[SAUM] \(rim.count) Zellen mit 0 < Eis ≤ iceMinThickness, dickstes Eis \(thickest)")
+        XCTAssertGreaterThan(rim.count, 0, "kein Saum unter der Schwelle im Zustand")
+
+        var raised = base; raised.iceMinThickness = 10 * thickest + 1
+        var stilled = base; stilled.iceFlowMoveFraction = 0; stilled.iceErodeK = 0
+        let a = Terrain(allocating: raised, seed: 1337);  a.restore(t.state)
+        let b = Terrain(allocating: stilled, seed: 1337); b.restore(t.state)
+        let c = Terrain(allocating: base, seed: 1337);    c.restore(t.state)
+        a.step(dtYears: 500); b.step(dtYears: 500); c.step(dtYears: 500)
+
+        var iceDiff = 0, bedDiff = 0
+        for k in 0..<base.count {
+            if a.ice[k].bitPattern != b.ice[k].bitPattern { iceDiff += 1 }
+            if a.h[k].bitPattern != b.h[k].bitPattern { bedDiff += 1 }
+        }
+        XCTAssertEqual(iceDiff, 0, "\(iceDiff) Zellen: Eis unter der Schwelle ist geflossen")
+        XCTAssertEqual(bedDiff, 0, "\(bedDiff) Zellen: Eis unter der Schwelle hat geschliffen")
+        // Gegenprobe: mit der PRODUKTIONS-Schwelle tun Transport und Abrasion in
+        // genau diesem Zustand sehr wohl etwas — der Vergleich oben ist also
+        // keine Aussage über einen stillstehenden Gletscher.
+        var active = 0
+        for k in 0..<base.count where c.h[k].bitPattern != a.h[k].bitPattern { active += 1 }
+        print("[SCHWELLE] geflossen \(iceDiff), geschliffen \(bedDiff), "
+              + "über der Schwelle bewegt \(active)")
+        XCTAssertGreaterThan(active, 100,
+                             "Testaufbau: der Gletscher war auch über der Schwelle untätig")
     }
 
     // MARK: - Abnahme 5: dt-Invarianz und Determinismus
