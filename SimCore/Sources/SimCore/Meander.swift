@@ -27,6 +27,22 @@ public struct RiverChannel: Sendable {
         self.discharge = discharge
     }
 
+    /// Frischt `discharge` je Knoten aus einem Feld-Sampler auf. Die Schleife
+    /// steht hier statt beim Aufrufer, damit sie auf den EIGENEN (eindeutig
+    /// referenzierten) Arrays läuft — über `terrain.meander.channels[ci]…`
+    /// kostete jeder Knoten COW- und Exklusivitätsprüfungen (Issue #43).
+    public mutating func refreshDischarge(_ sample: (Double, Double) -> Double) {
+        for i in nodes.indices { discharge[i] = sample(nodes[i].x, nodes[i].z) }
+    }
+
+    /// Hält alle Knoten im Gitter [0, `maxCoord`] (Sicherheits-Clamp).
+    public mutating func clampToWorld(maxCoord: Double) {
+        for i in nodes.indices {
+            nodes[i].x = min(max(nodes[i].x, 0), maxCoord)
+            nodes[i].z = min(max(nodes[i].z, 0), maxCoord)
+        }
+    }
+
     /// Lauflänge (Summe der Segmentlängen) in Zellen.
     public var length: Double {
         guard nodes.count > 1 else { return 0 }
