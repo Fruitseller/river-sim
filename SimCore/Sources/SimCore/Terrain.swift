@@ -3883,6 +3883,11 @@ public final class Terrain {
         let mfdInterval = max(1, cfg.mfdUpdateInterval)
         // Braiding ist MFD-Physik, nicht bloß Rendering: dafür darf das Feld
         // niemals hinter dem aktuellen Terrain zurückbleiben.
+        // In der Produktion ist dieser Zweig derzeit wirkungslos:
+        // `mfdUpdateInterval` steht auf 1, das Feld würde also auch ohne
+        // Braiding jeden Schritt gebaut (nachgemessen für Issue #43 —
+        // `computeMFDArea` ist deshalb NICHT über den Takt einsparbar,
+        // s. docs/perf-measurements.md §E).
         let updateMFD = cfg.braidingEnabled || Int(flowStepCount % UInt32(mfdInterval)) == 0
         computeFlow(includeMFD: updateMFD, dtYears: dt)
         mark("relaxWaterLevel")

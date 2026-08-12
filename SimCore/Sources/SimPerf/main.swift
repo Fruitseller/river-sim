@@ -11,9 +11,11 @@ import SimCore
 // Zwei Betriebsarten, beide mit Einlauf (`--warmup`), damit gemessen wird, was
 // die Sim im eingeschwungenen Zustand kostet und nicht der Kaltstart:
 //
-//   swift run -c release simperf                 # Zeiten, dt = 100
-//   swift run -c release simperf --dt 0.2 --steps 200
-//   swift run -c release simperf --hash          # Bit-Identitäts-Fingerabdruck
+//   swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+//   SimCore/.build/release/simperf                      # Zeiten, dt = 100
+//   SimCore/.build/release/simperf --repeat 3           # drei Messblöcke
+//   SimCore/.build/release/simperf --dt 0.2 --steps 200 # Echtzeit-Takt
+//   SimCore/.build/release/simperf --hash               # Bit-Identität
 //
 // `--hash` ist der Wächter für „Physik unverändert": ein FNV-1a über die
 // Bit-Muster aller Zustandsfelder. Vor und nach einer Optimierung derselbe
@@ -120,8 +122,11 @@ if noProfile {
     exit(0)
 }
 print("n=\(gridN) seed=\(seed) warmup=\(warmupSteps)x\(warmupDt)y (\(String(format: "%.1f", warmupSecs))s)")
-print("Messung: \(steps) Schritte à dt=\(dt) → \(String(format: "%.1f", perStep)) ms/Schritt "
-      + "(gesamt \(String(format: "%.2f", total))s)")
+// Kennzahl ist das Block-MINIMUM (s. o.); die Pass-Tabelle darunter stammt
+// dagegen aus dem LETZTEN Block — beide Zahlen also getrennt ausweisen.
+print("Messung: \(steps) Schritte à dt=\(dt) → \(String(format: "%.1f", perStep)) ms/Schritt"
+      + (repeats > 1 ? " (Minimum aus \(repeats) Blöcken)" : ""))
+print("Tabelle: letzter Block, \(String(format: "%.2f", total))s")
 // Größenordnung der Lagrange-Läufe: der Mäander-Aufwand hängt an den KNOTEN,
 // nicht an der Gitterzelle — ohne die Zahl ist die Pass-Tabelle nicht deutbar.
 let nodeCount = terrain.meander.channels.reduce(0) { $0 + $1.nodes.count }
