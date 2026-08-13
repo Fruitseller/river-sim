@@ -606,3 +606,5 @@ BEWUSSTEN Physik-Neukalibrierung angehen.
 - `docs/references/runevision-erosion/` — kompletter GLSL-Code des Erosionsfilters
   (MPL-2.0), Grundlage von `ErosionFilter.swift` und des Shader-Detail-Layers.
 - nickmcd.me (Procedural Hydrology, Meandering Rivers), SebLague/Elumenix (Droplet).
+
+<!-- orchestration test 2026-08-13: einheitliches Review-Signal, wird wieder entfernt -->
