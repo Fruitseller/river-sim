@@ -35,11 +35,14 @@ final class Lithology: XCTestCase {
 
     /// Makro-Steigung (±2 Zellen, wie Regen/Vegetation/Biom-Farbe sie lesen —
     /// die Per-Zell-Steigung wäre nach der Pre-Erosion überall „steil").
+    /// Rechnet NICHT selbst, sondern ruft die Produktions-Quelle
+    /// `Terrain.macroSlope`; hier steht nur die Rand-Bewachung dazu (die Formel
+    /// gilt erst ab 2 Zellen Abstand vom Rand).
     private func macroSlope(_ t: Terrain, _ k: Int) -> Double {
         let n = t.cfg.n
         let i = k % n, j = k / n
         guard i > 1, i < n - 2, j > 1, j < n - 2 else { return 0 }
-        return (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
+        return Terrain.macroSlope(t.h, k, n)
     }
 
     /// **Hangknick-Signal**: mittlere Makro-Steigung auf HARTEN gegen WEICHE

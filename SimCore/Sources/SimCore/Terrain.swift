@@ -1823,7 +1823,7 @@ public final class Terrain {
                     var cls: UInt8 = 0
                     let v = pveg[k]
                     if ph[k] > sea + 0.005 && v >= 0.12 {
-                        let slope = (abs(ph[k + 2] - ph[k - 2]) + abs(ph[k + 2 * nn] - ph[k - 2 * nn])) * 0.125
+                        let slope = Terrain.macroSlope(ph, k, nn)
                         // Auwald: bis ~2 Zellen vom Wasser (riparian ≥ 0.4),
                         // flach (etwas toleranter als die Baum-Maske) und nicht
                         // selbst tief überflutet. Sonst: dichter Bewuchs = Wald,
