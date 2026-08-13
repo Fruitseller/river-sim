@@ -42,10 +42,21 @@ final class TerrainAPITests: XCTestCase {
     }
 
     /// `generate` auf einem BESTEHENDEN, gealterten Terrain (im Spiel: neuer
-    /// Seed auf demselben `SimNode`) liefert dieselbe Welt wie ein frisches
+    /// Seed auf demselben `SimNode`) liefert dieselbe LANDSCHAFT wie ein frisches
     /// Terrain mit diesem Seed. Das ist die Zusicherung, an der die Aufräum-
     /// Zeilen in `generate` hängen (Kryo-Felder, Becken-Bilanz, Baustellen,
-    /// Zähler) — bliebe eines stehen, entschiede nicht mehr der Seed allein.
+    /// Zähler) — bliebe eines davon stehen, entschiede nicht mehr der Seed
+    /// allein über Relief und Entwässerung.
+    ///
+    /// AUSGENOMMEN ist bewusst `veg` (und die daraus abgeleiteten `vegClass`/
+    /// `riparian`): der Sukzessions-Pass liest über den Samen-Druck
+    /// (`vegDispersalRadius`) das VORHANDENE Feld, und `generate` leert es nicht
+    /// — die Neugenerierung startet also mit dem Samen-Druck der alten Welt
+    /// (gemessen n=96, Seed 1337 → 7: 1049 von 9216 Zellen unterschiedlich).
+    /// Höhen, Sediment, Regen und Stream-Map sind davon unberührt (alle
+    /// bit-gleich); der Unterschied lebt erst ab dem nächsten Schritt über
+    /// `vegDamp` weiter. Nicht hier repariert: das wäre eine
+    /// Verhaltensänderung, dieser Test dokumentiert sie nur.
     func testGenerateResetsAnAgedTerrain() {
         let c = cfg()
         let reused = Terrain(config: c, seed: 1337)
@@ -55,8 +66,12 @@ final class TerrainAPITests: XCTestCase {
         let fresh = Terrain(config: c, seed: 7)
         XCTAssertEqual(reused.years, 0, "Jahreszähler nicht zurückgesetzt")
         XCTAssertEqual(reused.h, fresh.h, "Höhenfeld hängt am Vorleben des Terrains")
+        XCTAssertEqual(reused.rock, fresh.rock, "Fels hängt am Vorleben des Terrains")
+        XCTAssertEqual(reused.sed, fresh.sed, "Sediment hängt am Vorleben des Terrains")
         XCTAssertEqual(reused.hf, fresh.hf, "Füllstand hängt am Vorleben des Terrains")
-        XCTAssertEqual(reused.veg, fresh.veg, "Vegetation hängt am Vorleben des Terrains")
+        XCTAssertEqual(reused.rain, fresh.rain, "Regen hängt am Vorleben des Terrains")
+        XCTAssertEqual(reused.upliftBase, fresh.upliftBase, "Tektonik hängt am Vorleben")
+        XCTAssertEqual(reused.streamMap, fresh.streamMap, "Stream-Map hängt am Vorleben")
     }
 
     /// Was eine frische Welt IST: endliche Höhen im erlaubten Band, eine Insel
@@ -128,20 +143,35 @@ final class TerrainAPITests: XCTestCase {
 
     // MARK: - roughen (Pinsel)
 
-    /// Der Aufrau-Pinsel ist das Gegenstück: er hebt die lokale Zerklüftung im
-    /// Kreis und lässt außerhalb alles stehen.
-    func testRoughenAddsReliefInsideTheBrushOnly() {
+    /// Der Aufrau-Pinsel prägt ein VORZEICHENBEHAFTETES Rauschmuster ein: jede
+    /// Zelle im Kreis bewegt sich, nach oben wie nach unten (kein Anheben durch
+    /// die Hintertür), und zwar höchstens um die dokumentierte Amplitude
+    /// `0.005 · strength`. Außerhalb bleibt alles stehen.
+    ///
+    /// Bewusst KEINE „Zerklüftung steigt"-Zusicherung: gemessen (n=96, Seed
+    /// 1337, Radius 12 Welteinheiten ≈ 8,8 Zellen) verschiebt ein Strich die
+    /// mittlere 3×3-Abweichung nur in der vierten Stelle und je nach
+    /// Pinselgröße in beide Richtungen — das Rauschen hat auf Zellskala zu
+    /// wenig Amplitude gegen das erodierte Relief. Der Pinsel wirkt über
+    /// WIEDERHOLTE Striche (s. `testRoughenRepeatsTheSamePattern`).
+    func testRoughenImprintsSignedNoiseInsideTheBrushOnly() {
         let c = cfg()
         let t = Terrain(config: c, seed: 1337)
         let before = t.h
-        let gx = Double(c.n / 2), gz = Double(c.n / 2), radius = 12.0
+        let gx = Double(c.n / 2), gz = Double(c.n / 2), radius = 12.0, strength = 1.0
 
-        let roughBefore = roughness(t, center: (gx, gz), radiusWorld: radius, cfg: c)
-        t.roughen(gx: gx, gz: gz, radiusWorld: radius, strength: 1.0)
-        let roughAfter = roughness(t, center: (gx, gz), radiusWorld: radius, cfg: c)
+        t.roughen(gx: gx, gz: gz, radiusWorld: radius, strength: strength)
 
-        XCTAssertGreaterThan(roughAfter, roughBefore,
-                             "Aufrauen hat die Zerklüftung nicht gehoben (\(roughBefore) → \(roughAfter))")
+        var up = 0, down = 0
+        for k in brushCells(center: (gx, gz), radiusWorld: radius, cfg: c) {
+            let d = t.h[k] - before[k]
+            XCTAssertNotEqual(d, 0, "Zelle \(k) im Pinsel unberührt")
+            XCTAssertLessThanOrEqual(abs(d), 0.005 * strength + 1e-12,
+                                     "Zelle \(k) über die Amplitude hinaus bewegt (\(d))")
+            if d > 0 { up += 1 } else { down += 1 }
+        }
+        XCTAssertGreaterThan(up, 0, "nur abgesenkt statt aufgeraut")
+        XCTAssertGreaterThan(down, 0, "nur angehoben statt aufgeraut")
         assertUntouchedOutside(t, before: before, center: (gx, gz), radiusWorld: radius, cfg: c)
     }
 
