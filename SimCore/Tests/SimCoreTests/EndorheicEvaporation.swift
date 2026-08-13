@@ -205,7 +205,7 @@ final class EndorheicEvaporation: XCTestCase {
         let inflow = basin.map { t.endorheicInflow[$0] }.max()!
         XCTAssertGreaterThan(inflow, 0, "kein Bilanz-Zufluss protokolliert")
         // Wasserfläche = genau die Menge, über die die Bilanz verdunstet
-        // (Becken-Rolle 2). Ein Tiefen-Filter wäre enger: der Deckel setzt hf =
+        // (Becken-Rolle `.water`). Ein Tiefen-Filter wäre enger: der Deckel setzt hf =
         // level auch dort, wo das nur ein halber Millimeter ist.
         let water = basin.filter { t.endorheicBasin[$0] == .water }
         let spent = water.reduce(0.0) { $0 + demand($1) }
@@ -315,7 +315,7 @@ final class EndorheicEvaporation: XCTestCase {
     }
 
     /// Ein gut gespeistes Becken (Zufluss-Ratio ≫ κ) bleibt unangetastet: seine
-    /// Zellen tragen die Becken-Rolle 0 und stehen weiter auf dem Sill-Niveau.
+    /// Zellen tragen die Becken-Rolle `.none` und stehen weiter auf dem Sill-Niveau.
     func testWellFedBasinIsUnchanged() {
         let t = Terrain(config: cfg(), seed: 2024) // Produktions-κ: hier ist die Aussage relevant
         let cellArea = t.cfg.cellSize * t.cfg.cellSize
