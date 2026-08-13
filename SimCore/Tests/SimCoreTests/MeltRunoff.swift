@@ -552,7 +552,7 @@ final class MeltRunoff: XCTestCase {
             let t = Terrain(config: config, seed: seed)
             for _ in 0..<10 { t.step(dtYears: 200) }
             var bed = 0, crusted = 0
-            for k in 0..<t.cfg.count where t.endorheicBasin[k] == 1 {
+            for k in 0..<t.cfg.count where t.endorheicBasin[k] == .dryBed {
                 if t.saltCrust[k] > 0.5 { bed += 1 }
                 if t.saltCrust[k] > 0.9 { crusted += 1 }
             }

@@ -366,7 +366,7 @@ final class Lithology: XCTestCase {
             let t = Terrain(config: config, seed: seed)
             for _ in 0..<10 { t.step(dtYears: 200) }
             var bed = 0, crusted = 0
-            for k in 0..<t.cfg.count where t.endorheicBasin[k] == 1 {
+            for k in 0..<t.cfg.count where t.endorheicBasin[k] == .dryBed {
                 if t.saltCrust[k] > 0.5 { bed += 1 }
                 if t.saltCrust[k] > 0.9 { crusted += 1 }
             }
@@ -417,7 +417,7 @@ final class Lithology: XCTestCase {
             var rc = c; rc.endorheicResponseYears = tau
             let t = Terrain(config: rc, seed: 1337)
             var cells: [Int] = []
-            for k in 0..<t.cfg.count where t.endorheicBasin[k] != 0 { cells.append(k) }
+            for k in 0..<t.cfg.count where t.endorheicBasin[k] != .none { cells.append(k) }
             guard cells.count > 200 else { return (0, 1) }
             let inv = 1.0 / Double(cells.count)
             func mean() -> Double { cells.reduce(0.0) { $0 + t.hf[$1] * inv } }

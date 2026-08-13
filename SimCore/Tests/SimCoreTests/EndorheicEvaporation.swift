@@ -95,13 +95,13 @@ final class EndorheicEvaporation: XCTestCase {
     private func dryCfg(n: Int = 256) -> SimConfig { cfg(n: n, kappa: 6) }
 
     /// Größtes verdunstungs-limitiertes Becken (Komponente von
-    /// `endorheicBasin != 0`, 8er — Wasserfläche UND trockener Boden gehören
+    /// `endorheicBasin != .none`, 8er — Wasserfläche UND trockener Boden gehören
     /// dazu) als Zell-Liste.
     private func largestEndorheicBasin(_ t: Terrain) -> [Int] {
         let n = t.cfg.n
         var seen = [Bool](repeating: false, count: t.cfg.count)
         var best = [Int]()
-        for s in 0..<t.cfg.count where t.endorheicBasin[s] != 0 && !seen[s] {
+        for s in 0..<t.cfg.count where t.endorheicBasin[s] != .none && !seen[s] {
             var stack = [s], comp = [Int]()
             seen[s] = true
             while let k = stack.popLast() {
@@ -112,7 +112,7 @@ final class EndorheicEvaporation: XCTestCase {
                         let ni = i + di, nj = j + dj
                         if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
                         let nb = nj * n + ni
-                        if t.endorheicBasin[nb] != 0 && !seen[nb] { seen[nb] = true; stack.append(nb) }
+                        if t.endorheicBasin[nb] != .none && !seen[nb] { seen[nb] = true; stack.append(nb) }
                     }
                 }
             }
@@ -140,7 +140,7 @@ final class EndorheicEvaporation: XCTestCase {
         let water = waterCells(t, basin)
         XCTAssertGreaterThan(water.count, 0, "Becken ganz ohne Wasserfläche")
         let level = water.map { t.hf[$0] }.max()!
-        let bed = basin.filter { t.endorheicBasin[$0] == 1 }
+        let bed = basin.filter { t.endorheicBasin[$0] == .dryBed }
         XCTAssertGreaterThan(bed.count, 0, "kein trockengefallener Beckenboden")
         let bedTop = bed.map { t.h[$0] }.max()!
         XCTAssertGreaterThan(bedTop, level + 0.005,
@@ -207,12 +207,12 @@ final class EndorheicEvaporation: XCTestCase {
         // Wasserfläche = genau die Menge, über die die Bilanz verdunstet
         // (Becken-Rolle 2). Ein Tiefen-Filter wäre enger: der Deckel setzt hf =
         // level auch dort, wo das nur ein halber Millimeter ist.
-        let water = basin.filter { t.endorheicBasin[$0] == 2 }
+        let water = basin.filter { t.endorheicBasin[$0] == .water }
         let spent = water.reduce(0.0) { $0 + demand($1) }
         XCTAssertLessThanOrEqual(spent, inflow * (1 + 1e-9),
             "Verdunstung über der Seefläche übersteigt den Zufluss")
         // Nächsthöhere Beckenzelle (erste trockene) würde das Budget reißen.
-        let dry = basin.filter { t.endorheicBasin[$0] == 1 }.sorted { t.h[$0] < t.h[$1] }
+        let dry = basin.filter { t.endorheicBasin[$0] == .dryBed }.sorted { t.h[$0] < t.h[$1] }
         if let next = dry.first {
             XCTAssertGreaterThan(spent + demand(next), inflow,
                 "der Spiegel liegt unnötig tief — Budget nicht ausgeschöpft")
@@ -305,7 +305,7 @@ final class EndorheicEvaporation: XCTestCase {
         let a = Terrain(config: on, seed: 1337)
         let b = Terrain(config: off, seed: 1337)
         for _ in 0..<5 { a.step(dtYears: 1000); b.step(dtYears: 1000) }
-        XCTAssertFalse(a.endorheicBasin.contains { $0 != 0 },
+        XCTAssertFalse(a.endorheicBasin.contains { $0 != .none },
                        "κ=0.5 deckelt doch ein Becken — Referenzarm ungültig")
         XCTAssertEqual(a.h, b.h, "Höhenfeld weicht ab, obwohl kein Becken gedeckelt wurde")
         XCTAssertEqual(a.hf, b.hf, "Füllstand weicht ab")
@@ -347,7 +347,7 @@ final class EndorheicEvaporation: XCTestCase {
             guard comp.count >= 100, ratio > 2 * t.cfg.endorheicEvapRatio else { continue }
             checked += 1
             for k in comp {
-                XCTAssertEqual(t.endorheicBasin[k], 0,
+                XCTAssertEqual(t.endorheicBasin[k], .none,
                                "gut gespeistes Becken (Ratio \(ratio)) wurde gedeckelt")
             }
         }
@@ -449,7 +449,7 @@ final class EndorheicEvaporation: XCTestCase {
         let t = Terrain(config: dryCfg(), seed: 1337)
         for _ in 0..<10 { t.step(dtYears: 200) } // Kruste/Spiegel einschwingen
         let basin = largestEndorheicBasin(t)
-        let bed = basin.filter { t.endorheicBasin[$0] == 1 && t.saltCrust[$0] > 0.5 }
+        let bed = basin.filter { t.endorheicBasin[$0] == .dryBed && t.saltCrust[$0] > 0.5 }
         XCTAssertGreaterThan(bed.count, 100, "keine Salzpfanne entstanden")
         for k in bed {
             // `hf` steht auf dem Beckenboden (Deckel setzt hf = h); die Droplets
@@ -468,7 +468,7 @@ final class EndorheicEvaporation: XCTestCase {
         // Wasserfläche liegt sie deutlich unter der der Pfanne (die EWMA braucht
         // dafür ~3·400 Jahre, ein einzelner Schritt reicht nicht — deshalb der
         // Vergleich der Mittelwerte, nicht eine Schwelle je Zelle).
-        let submerged = basin.filter { t.endorheicBasin[$0] == 2 }
+        let submerged = basin.filter { t.endorheicBasin[$0] == .water }
         if submerged.count > 20 {
             let crustWet = submerged.reduce(0.0) { $0 + t.saltCrust[$1] } / Double(submerged.count)
             let crustDry = bed.reduce(0.0) { $0 + t.saltCrust[$1] } / Double(bed.count)
