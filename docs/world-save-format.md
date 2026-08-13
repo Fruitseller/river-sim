@@ -44,6 +44,13 @@ Diagnose sofort nach dem Laden brauchen.
 | Störung/Regeneration (#26) | `disturb`, `regenPending`, `disturbActive` |
 | Zähler | `years`, `seed`, `stepCount`, `flowStepCount` |
 
+`endorheicBasin` liegt als **ein Byte je Zelle** in der Datei, obwohl der
+Sim-Kern es als `[BasinRole]` führt: die Rohwerte des Enums (0 kein Becken ·
+1 trockener Beckenboden · 2 Wasserfläche) SIND das Speicherformat, umgewandelt
+wird beim Erzeugen bzw. Übernehmen des Zustands (`Terrain.captureState` /
+`restore`). Ein unbekanntes Byte wird zu `.none` — dem neutralen Zustand, den
+der nächste Schritt ohnehin neu bestimmt.
+
 **Nicht** gespeichert werden reine Arbeitspuffer, die ihr Pass vor dem ersten
 Lesen vollständig überschreibt (geprüft: `vegScratch`, `basinSeen`, `basinCells`,
 `basinSlots`, `orderPos`, `visited`, `scratch`, `qs`, `trackBuf`, `pondSeen`,
