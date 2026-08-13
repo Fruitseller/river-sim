@@ -258,10 +258,13 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Zeitraffer (winziges dt/Frame) und `+10.000 Jahre`-Sprünge müssen dasselbe Ergebnis
   liefern. Die drei Bauformen dafür: Sub-Takten mit fester Teilschritt-Stärke
   (Hangdiffusion, `waveSchedule`), exponentielle Relaxation `1 − e^(−dt/τ)` statt
-  linear gedeckelter (`relaxWaterLevel`, Verlandungen, Vegetation) und Raten-Zähler
+  linear gedeckelter (`Terrain.relaxFraction` — EINZIGE Quelle dieser Form, gelesen
+  von `relaxWaterLevel`, Verlandungen, Vegetation) und Raten-Zähler
   mit Übertrag statt `max(1, …)` (Tropfenzahl, `dropCarry`). Deckel „halbe lokale
-  Höhendifferenz" sind ebenfalls Raten (`stepCapFraction`). Wächter:
-  `SimCoreTests/DtInvariance.swift`, Messreihen `docs/dt-invariance-measurements.md`
+  Höhendifferenz" sind ebenfalls Raten (`stepCapFraction` — Halbwertszeit statt τ,
+  deshalb bewusst nicht über den Helfer). Wächter:
+  `SimCoreTests/DtInvariance.swift` + `SimCoreTests/RelaxationTests.swift`,
+  Messreihen `docs/dt-invariance-measurements.md`
   (inkl. des benannten Rests: Abflussfeld wird nur einmal je Schritt bestimmt).
 - Masse-Erhaltung gilt **nicht** (detachment-limited Stream-Power trägt Material aus);
   die Invariante ist beschränktes Relief / Fließgleichgewicht — Wächter:
