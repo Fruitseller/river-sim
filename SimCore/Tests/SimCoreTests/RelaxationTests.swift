@@ -54,10 +54,13 @@ final class RelaxationTests: XCTestCase {
         }
     }
 
-    /// Anteil eines Anteils: streng in (0, 1) für dt > 0, monoton wachsend in
-    /// `dt`, monoton fallend in `tau`. Damit ist der Helfer als GEWICHT einer
-    /// Mischung `x += (ziel − x)·f` immer gutartig: kein Überschießen, kein
-    /// Vorzeichenwechsel.
+    /// Anteil eines Anteils: in (0, 1] für dt > 0, wachsend in `dt`, fallend in
+    /// `tau`. Damit ist der Helfer als GEWICHT einer Mischung
+    /// `x += (ziel − x)·f` immer gutartig: kein Überschießen, kein
+    /// Vorzeichenwechsel. Die Monotonie ist STRIKT, solange der Wert nicht auf
+    /// 1.0 gesättigt ist — ab ~36 τ ist `e^(−dt/τ)` in `Double` exakt 0
+    /// (τ = 20 J. gegen einen 10.000-Jahr-Sprung), und dort geht es nicht
+    /// weiter nach oben.
     func testFractionStaysAWeightBetweenZeroAndOne() {
         for tau in taus {
             var prev = 0.0
@@ -65,7 +68,11 @@ final class RelaxationTests: XCTestCase {
                 let f = Terrain.relaxFraction(dt: dt, tau: tau)
                 XCTAssertGreaterThan(f, 0, "τ=\(tau), dt=\(dt)")
                 XCTAssertLessThanOrEqual(f, 1, "τ=\(tau), dt=\(dt)")
-                XCTAssertGreaterThan(f, prev, "nicht monoton in dt (τ=\(tau), dt=\(dt))")
+                if prev < 1 {
+                    XCTAssertGreaterThan(f, prev, "nicht monoton in dt (τ=\(tau), dt=\(dt))")
+                } else {
+                    XCTAssertEqual(f, 1, "gesättigt und wieder gefallen (τ=\(tau), dt=\(dt))")
+                }
                 prev = f
             }
         }
@@ -73,7 +80,12 @@ final class RelaxationTests: XCTestCase {
             var prev = Double.infinity
             for tau in taus {
                 let f = Terrain.relaxFraction(dt: dt, tau: tau)
-                XCTAssertLessThan(f, prev, "nicht monoton fallend in τ (dt=\(dt), τ=\(tau))")
+                if prev <= 1 {
+                    XCTAssertLessThanOrEqual(f, prev, "nicht fallend in τ (dt=\(dt), τ=\(tau))")
+                    if prev < 1 {
+                        XCTAssertLessThan(f, prev, "nicht strikt fallend in τ (dt=\(dt), τ=\(tau))")
+                    }
+                }
                 prev = f
             }
         }
