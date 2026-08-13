@@ -539,7 +539,10 @@ BEWUSSTEN Physik-Neukalibrierung angehen.
   matcht 0 Tests. Wächter: `LongRunCollapse.swift` (kein Runaway/Kollaps),
   `RiverDynamicsTests.swift` (MFD-Splits, Braiding-Bänke, Becken→Meer, Stream-Map,
   Mäander in Produktion), `WorldSnapshotTests.swift` (Spielstand läuft
-  bit-identisch weiter, alte Formatversion wird abgelehnt).
+  bit-identisch weiter, alte Formatversion wird abgelehnt),
+  `TerrainAPITests.swift` (Generierung, Pinsel `smooth`/`roughen`,
+  Abkling-Rate der Hebung) und `RelaxationTests.swift` (der gemeinsame
+  Relaxations-Helfer `Terrain.relaxFraction`).
 - **Extension bauen** (~3,5 min): `./scripts/build.sh release` — **immer mit absolutem
   Pfad aufrufen.** Relativ aus `game/` heraus schlägt es still fehl, und die Screenshots
   laufen dann mit der ALTEN dylib (hat schon 3 „wirkungslose" Iterationen gekostet).
