@@ -433,6 +433,28 @@ public final class Terrain {
         }
     }
 
+    // MARK: - Exponentielle Relaxation
+
+    /// Anteil `1 − e^(−dt/τ)`, den eine exponentielle Relaxation mit
+    /// Zeitkonstante `tau` in der Zeitspanne `dt` zurücklegt — die
+    /// Framerate-Unabhängigkeit dieses Projekts in EINER Zeile (AGENTS.md,
+    /// „Framerate-Unabhängigkeit", Bauform 2): der Rest teleskopiert exakt,
+    /// `(1 − f(dt₁))·(1 − f(dt₂)) = 1 − f(dt₁ + dt₂)`, also landen viele
+    /// Mini-Schritte und EIN großer Sprung auf demselben Wert. Die früher
+    /// verwendete linear gedeckelte Form (`min(1, dt/τ)`) tat das nicht und
+    /// sättigte bei großen Schritten.
+    ///
+    /// EINZIGE Quelle für alle Relaxations-/Verlandungs-Raten (Seespiegel,
+    /// Salzkruste, Becken-Bilanz, Pfützen, Altarme, Vegetation, Stream-Map,
+    /// Regeneration). Bewusst OHNE Gültigkeitsprüfung von `tau`: die Aufrufer
+    /// bewachen ihre Zeitkonstante selbst (meist `guard τ > 0`), und ein
+    /// Deckel hier würde ihr dokumentiertes Randverhalten verschieben.
+    /// Wächter: `RelaxationTests`.
+    @inline(__always)
+    public static func relaxFraction(dt: Double, tau: Double) -> Double {
+        1 - exp(-dt / tau)
+    }
+
     // MARK: - Terrain-Generierung
 
     public func generate(seed: UInt32) {
@@ -1630,12 +1652,12 @@ public final class Terrain {
         // 2000-Jahr-Sprung setzte `veg` INSTANTAN aufs Ziel, derselbe Zeitraum
         // in 240-Jahr-Schritten nicht). `veg` geht über `vegDamp` in JEDEN
         // Erosionspass ein — die Abweichung wanderte damit direkt ins Relief.
-        let f = 1 - exp(-years / cfg.vegTimeConstant)
+        let f = Terrain.relaxFraction(dt: years, tau: cfg.vegTimeConstant)
         // Flood-Kill (Stufe 3): eigene, schnelle Zeitkonstante. Exponentiell
         // exakt (1 − e^(−dt/τ)) statt linear gedeckelt: bei τ = 20a ist schon
         // ein Zeitraffer-Schritt (dt ≈ 9..240 J.) fast vollständig — die
         // exakte Form hält kleine und große Schritte konsistent.
-        let fKill = 1 - exp(-years / cfg.vegFloodKillYears)
+        let fKill = Terrain.relaxFraction(dt: years, tau: cfg.vegFloodKillYears)
         let killDepth = cfg.vegFloodKillDepth
         // Sukzession (Stufe 3), Pass 1: Samen-Druck = max(veg) im Dispersal-
         // Umkreis → vegScratch. Liest nur veg, schreibt nur vegScratch[k]
@@ -2203,7 +2225,7 @@ public final class Terrain {
         let saltMinDepth = cfg.endorheicSaltMinDepth
         // Ratenbegrenzung; dt = 0 (Generierung/Breach/Spieler-Eingriff) snappt.
         let lam = (dt > 0 && cfg.endorheicResponseYears > 0)
-            ? 1 - exp(-dt / cfg.endorheicResponseYears) : 1.0
+            ? Terrain.relaxFraction(dt: dt, tau: cfg.endorheicResponseYears) : 1.0
         // PERF (Issue #43): der Pass war mit 62 ms/Schritt (16 %) der teuerste
         // überhaupt — nicht wegen seiner Arithmetik, sondern weil Initial-Löschung,
         // Becken-Suchlauf und Flutfüllung über KLASSEN-Properties liefen (je
@@ -2349,7 +2371,7 @@ public final class Terrain {
     /// Vegetations-Signal, keine Erosionsphysik (s. `saltCrust`).
     private func updateSaltCrust(dt: Double) {
         guard cfg.endorheicSaltYears > 0 else { return }
-        let lam = 1 - exp(-dt / cfg.endorheicSaltYears)
+        let lam = Terrain.relaxFraction(dt: dt, tau: cfg.endorheicSaltYears)
         saltCrust.withUnsafeMutableBufferPointer { sb in
         playaBed.withUnsafeBufferPointer { pb in
             let ps = sb.baseAddress!, pp = pb.baseAddress!
@@ -2847,7 +2869,7 @@ public final class Terrain {
         // Exponentiell statt linear gedeckelt (Issue #2): 1 − e^(−dt/τ)
         // teleskopiert über beliebig viele Teilschritte exakt zum Ergebnis EINES
         // Sprungs (wie `relaxWaterLevel`), `min(0.5, dt/τ)` tat das nicht.
-        let rate = 1 - exp(-dt / 3000.0) // Zeitkonstante ~3000 Jahre
+        let rate = Terrain.relaxFraction(dt: dt, tau: 3000.0) // Zeitkonstante ~3000 Jahre
         for k in 0..<cfg.count where hf[k] > cfg.sea {
             let deficit = hf[k] - h[k]
             if deficit > 0.001 {
@@ -2884,7 +2906,7 @@ public final class Terrain {
         // unterschiedlich schnell — mit `puddleFillYears = 800` deckelte
         // `min(0.5, dt/τ)` schon ab dt = 400 und ließ große Schritte
         // systematisch zu viel Ponding stehen.
-        let rate = 1 - exp(-dt / cfg.puddleFillYears)
+        let rate = Terrain.relaxFraction(dt: dt, tau: cfg.puddleFillYears)
         let sea = cfg.sea, nn = n
         // Persistente Puffer (Hot-Loop, keine Allokation je Schritt).
         fill(&pondSeen, false)
@@ -2986,7 +3008,7 @@ public final class Terrain {
         // Exponentiell (Issue #2, s. fillLakes) — der Pass ist zwar geparkt
         // (`floodplainEnabled = false`), soll aber nicht mit einer bekannt
         // dt-abhängigen Relaxation als Referenz liegenbleiben.
-        let rate = 1 - exp(-dt / cfg.floodplainFillYears)
+        let rate = Terrain.relaxFraction(dt: dt, tau: cfg.floodplainFillYears)
         if rate <= 0 { return }
         for k in 0..<cfg.count {
             if hf[k] <= cfg.sea || h[k] <= cfg.sea { continue }
@@ -3437,7 +3459,7 @@ public final class Terrain {
     private func regenerateDisturbed(dt: Double) {
         guard cfg.disturbanceEnabled, disturbActive, dt > 0 else { return }
         let tau = max(1e-9, cfg.disturbanceRecoveryYears)
-        let f = 1 - exp(-dt / tau)          // Anteil des Budgets, der diesen Schritt fällig ist
+        let f = Terrain.relaxFraction(dt: dt, tau: tau) // Anteil des Budgets, der diesen Schritt fällig ist
         var maxLeft = 0.0
         for k in 0..<cfg.count {
             let d = disturb[k]
@@ -3639,6 +3661,11 @@ public final class Terrain {
     /// 100 J., `Lithology.testEndorheicMechanicsSurviveLithology`.
     /// Der Deckel bleibt in jeder Variante ein Deckel: er gibt nie MEHR frei
     /// als die volle Höhendifferenz, der Eingriff kann also nicht überschießen.
+    ///
+    /// Bewusst NICHT über `Terrain.relaxFraction`: dort ist der Nenner die
+    /// Zeitkonstante τ, hier die HALBWERTSZEIT (500 J.). `relaxFraction(dt:,
+    /// tau: 500/ln2)` wäre dasselbe in Reellen, aber nicht bitgleich — und
+    /// diese Zahl ist auf 0.5 bei dt = 500 kalibriert (s. oben).
     @inline(__always) private func stepCapFraction(_ dt: Double) -> Double {
         max(0.5, 1 - exp(-dt * 0.6931471805599453 / 500))
     }
@@ -3805,7 +3832,7 @@ public final class Terrain {
         // Exponentiell (Issue #2, s. fillLakes): `min(1, dt/τ)` verlandete einen
         // 5500-Jahr-Sprung komplett in EINEM Schritt, dieselbe Zeit in kleinen
         // Schritten dagegen nur zu 63 % (1 − 1/e).
-        let rate = 1 - exp(-dt / cfg.oxbowFillYears)
+        let rate = Terrain.relaxFraction(dt: dt, tau: cfg.oxbowFillYears)
         for loop in meander.oxbows {
             for nd in loop {
                 let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
@@ -3955,7 +3982,7 @@ public final class Terrain {
             // EWMA + Sättigung fusioniert und datenparallel (per-Zelle unabhängig,
             // bit-identisch zu „erst EWMA-Loop, dann deriveStreamMap").
             mark("streamMapEWMA")
-            let lam = 1 - exp(-dt / cfg.streamMapMemoryYears)
+            let lam = Terrain.relaxFraction(dt: dt, tau: cfg.streamMapMemoryYears)
             let r0 = cfg.streamRefRate
             streamRate.withUnsafeMutableBufferPointer { srb in
             streamMap.withUnsafeMutableBufferPointer { smb in
@@ -4018,7 +4045,7 @@ public final class Terrain {
     /// Per-Zelle unabhängig → parallel, bit-identisch zur sequenziellen Schleife.
     private func relaxWaterLevel(dt: Double) {
         guard cfg.lakeLevelResponseYears > 0 else { waterLevel = hf; return }
-        let wlam = 1 - exp(-dt / cfg.lakeLevelResponseYears)
+        let wlam = Terrain.relaxFraction(dt: dt, tau: cfg.lakeLevelResponseYears)
         waterLevel.withUnsafeMutableBufferPointer { wlb in
         hf.withUnsafeBufferPointer { hfb in
             let pwl = wlb.baseAddress!, phf = hfb.baseAddress!
