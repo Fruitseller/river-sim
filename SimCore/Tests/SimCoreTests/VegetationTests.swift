@@ -42,7 +42,7 @@ final class VegetationTests: XCTestCase {
                 }
                 XCTAssertTrue(nearWater, "Auwald-Zelle (\(i),\(j)) ohne Wasser im Umkreis")
                 // flach (Grob-Steigung wie in der Ableitung) + nicht tief geflutet
-                let slope = (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
+                let slope = Terrain.macroSlope(t.h, k, n)
                 XCTAssertLessThan(slope * 40, 0.6, "Auwald auf steilem Hang (\(i),\(j))")
                 XCTAssertLessThanOrEqual(t.hf[k] - t.h[k], 0.02, "Auwald unter Wasser (\(i),\(j))")
             }

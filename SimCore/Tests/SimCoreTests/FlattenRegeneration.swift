@@ -77,9 +77,9 @@ final class FlattenRegeneration: XCTestCase {
         return land == 0 ? 0 : Double(forest) / Double(land)
     }
 
-    /// Mittlere MAKRO-Steigung über ±2 Zellen (dieselbe Ableitung, die
-    /// Vegetation und Biom-Farbe lesen) — misst die räumliche Differenzierung
-    /// der Fläche unabhängig von der Rinnen-Textur.
+    /// Mittlere MAKRO-Steigung über ±2 Zellen (`Terrain.macroSlope`, dieselbe
+    /// Ableitung, die Vegetation und Biom-Farbe lesen) — misst die räumliche
+    /// Differenzierung der Fläche unabhängig von der Rinnen-Textur.
     private func macroSlope(_ t: Terrain) -> Double {
         let n = t.cfg.n
         var sum = 0.0
@@ -88,7 +88,7 @@ final class FlattenRegeneration: XCTestCase {
             for i in 2..<(n - 2) {
                 let k = j * n + i
                 guard t.h[k] > t.cfg.sea else { continue }
-                sum += (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
+                sum += Terrain.macroSlope(t.h, k, n)
                 cnt += 1
             }
         }
@@ -170,7 +170,7 @@ final class FlattenRegeneration: XCTestCase {
             for i in margin..<(n - margin) {
                 let k = j * n + i
                 guard t.h[k] > t.cfg.sea else { continue }
-                sum += (abs(t.h[k + 2] - t.h[k - 2]) + abs(t.h[k + 2 * n] - t.h[k - 2 * n])) * 0.125
+                sum += Terrain.macroSlope(t.h, k, n)
                 cnt += 1
             }
         }
