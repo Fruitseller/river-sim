@@ -1,5 +1,34 @@
 import Foundation
 
+/// Rolle einer Zelle im Wasserhaushalt abflussloser Becken (Issue #11) —
+/// der Zustand hinter `Terrain.endorheicBasin`.
+///
+/// Die Rohwerte sind das Speicherformat: `endorheicBasin` liegt als ein Byte je
+/// Zelle im Schnappschuss (`WorldSnapshot.uint8Fields`), und diese Zuordnung
+/// 0/1/2 ist damit Teil des Dateiformats — beim Ändern bräuchte es eine neue
+/// Snapshot-Version.
+public enum BasinRole: UInt8, Sendable {
+    /// Kein verdunstungs-limitiertes Becken (Normalfall: der See läuft bis zur
+    /// Sill über — exakt das Verhalten vor Issue #11).
+    case none = 0
+    /// Trockengefallener Beckenboden (Playa: hier stand Wasser, bis die Bilanz
+    /// den Spiegel gesenkt hat).
+    case dryBed = 1
+    /// Wasserfläche eines abflusslosen Beckens = **terminale Senke**: das Wasser
+    /// verlässt sie nur über die Verdunstung, nicht über die Sill
+    /// (`receiver` = −1, kein MFD-Überlauf, keine Auslass-Inzision).
+    case water = 2
+
+    /// Rolle aus einem gespeicherten Byte. Unbekannte Werte (fremde/defekte
+    /// Datei, die Prüfsumme deckt nur Transportfehler ab) werden zu `.none` —
+    /// dem neutralen Zustand, den `capEndorheicBasins` im nächsten Schritt
+    /// ohnehin neu bestimmt; ein Absturz oder eine halb typisierte Welt wäre
+    /// die schlechtere Antwort.
+    public init(persisted byte: UInt8) {
+        self = BasinRole(rawValue: byte) ?? .none
+    }
+}
+
 /// Der Simulationskern: hält alle Felder und führt die Landschaftsentwicklung
 /// aus. Kennt bewusst KEIN Godot — dadurch headless mit XCTest testbar.
 ///
@@ -38,36 +67,6 @@ import Foundation
 ///
 /// Der Nicht-Droplet-Zweig (`hydraulicEnabled = false`, `transportLimited` +
 /// `diffusionPass`) ist reiner TESTPFAD, s. Kommentare dort.
-
-/// Rolle einer Zelle im Wasserhaushalt abflussloser Becken (Issue #11) —
-/// der Zustand hinter `Terrain.endorheicBasin`.
-///
-/// Die Rohwerte sind das Speicherformat: `endorheicBasin` liegt als ein Byte je
-/// Zelle im Schnappschuss (`WorldSnapshot.uint8Fields`), und diese Zuordnung
-/// 0/1/2 ist damit Teil des Dateiformats — beim Ändern bräuchte es eine neue
-/// Snapshot-Version.
-public enum BasinRole: UInt8, Sendable {
-    /// Kein verdunstungs-limitiertes Becken (Normalfall: der See läuft bis zur
-    /// Sill über — exakt das Verhalten vor Issue #11).
-    case none = 0
-    /// Trockengefallener Beckenboden (Playa: hier stand Wasser, bis die Bilanz
-    /// den Spiegel gesenkt hat).
-    case dryBed = 1
-    /// Wasserfläche eines abflusslosen Beckens = **terminale Senke**: das Wasser
-    /// verlässt sie nur über die Verdunstung, nicht über die Sill
-    /// (`receiver` = −1, kein MFD-Überlauf, keine Auslass-Inzision).
-    case water = 2
-
-    /// Rolle aus einem gespeicherten Byte. Unbekannte Werte (fremde/defekte
-    /// Datei, die Prüfsumme deckt nur Transportfehler ab) werden zu `.none` —
-    /// dem neutralen Zustand, den `capEndorheicBasins` im nächsten Schritt
-    /// ohnehin neu bestimmt; ein Absturz oder eine halb typisierte Welt wäre
-    /// die schlechtere Antwort.
-    public init(persisted byte: UInt8) {
-        self = BasinRole(rawValue: byte) ?? .none
-    }
-}
-
 public final class Terrain {
     public let cfg: SimConfig
     private let n: Int
