@@ -38,6 +38,36 @@ import Foundation
 ///
 /// Der Nicht-Droplet-Zweig (`hydraulicEnabled = false`, `transportLimited` +
 /// `diffusionPass`) ist reiner TESTPFAD, s. Kommentare dort.
+
+/// Rolle einer Zelle im Wasserhaushalt abflussloser Becken (Issue #11) —
+/// der Zustand hinter `Terrain.endorheicBasin`.
+///
+/// Die Rohwerte sind das Speicherformat: `endorheicBasin` liegt als ein Byte je
+/// Zelle im Schnappschuss (`WorldSnapshot.uint8Fields`), und diese Zuordnung
+/// 0/1/2 ist damit Teil des Dateiformats — beim Ändern bräuchte es eine neue
+/// Snapshot-Version.
+public enum BasinRole: UInt8, Sendable {
+    /// Kein verdunstungs-limitiertes Becken (Normalfall: der See läuft bis zur
+    /// Sill über — exakt das Verhalten vor Issue #11).
+    case none = 0
+    /// Trockengefallener Beckenboden (Playa: hier stand Wasser, bis die Bilanz
+    /// den Spiegel gesenkt hat).
+    case dryBed = 1
+    /// Wasserfläche eines abflusslosen Beckens = **terminale Senke**: das Wasser
+    /// verlässt sie nur über die Verdunstung, nicht über die Sill
+    /// (`receiver` = −1, kein MFD-Überlauf, keine Auslass-Inzision).
+    case water = 2
+
+    /// Rolle aus einem gespeicherten Byte. Unbekannte Werte (fremde/defekte
+    /// Datei, die Prüfsumme deckt nur Transportfehler ab) werden zu `.none` —
+    /// dem neutralen Zustand, den `capEndorheicBasins` im nächsten Schritt
+    /// ohnehin neu bestimmt; ein Absturz oder eine halb typisierte Welt wäre
+    /// die schlechtere Antwort.
+    public init(persisted byte: UInt8) {
+        self = BasinRole(rawValue: byte) ?? .none
+    }
+}
+
 public final class Terrain {
     public let cfg: SimConfig
     private let n: Int
@@ -208,15 +238,8 @@ public final class Terrain {
     /// limitiertes Becken ist es einfach der Füllstand `hf` (bzw. veraltet, s.
     /// `capEndorheicBasins`: der Wert wird beim Wiedereintritt geklemmt).
     private var lakeBalance: [Double]
-    /// Becken-Rolle je Zelle aus dem Wasserhaushalt (Issue #11):
-    /// * 0 — kein verdunstungs-limitiertes Becken (Normalfall: See läuft bis zur
-    ///   Sill über, exakt das Verhalten vor #11)
-    /// * 1 — trockengefallener Beckenboden (Playa: Wasser stand hier, bis die
-    ///   Bilanz den Spiegel gesenkt hat)
-    /// * 2 — Wasserfläche eines abflusslosen Beckens = **terminale Senke**: das
-    ///   Wasser verlässt sie nur über die Verdunstung, nicht über die Sill
-    ///   (`receiver` = −1, kein MFD-Überlauf, keine Auslass-Inzision)
-    public private(set) var endorheicBasin: [UInt8]
+    /// Becken-Rolle je Zelle aus dem Wasserhaushalt (Issue #11), s. `BasinRole`.
+    public private(set) var endorheicBasin: [BasinRole]
     /// Salzkruste 0..1 — Verdunstungsrückstand auf trockengefallenem
     /// Beckenboden, EWMA mit `endorheicSaltYears`. NUR Rendering
     /// (SimNode.terrainColorBytes malt die helle Kruste) und Vegetations-Ziel
@@ -230,7 +253,7 @@ public final class Terrain {
     public private(set) var endorheicInflow: [Double]
     /// Ziel-Maske der Salzkruste: trockengefallener Beckenboden, auf dem
     /// SUBSTANZIELL Wasser stand (Vollstand-Tiefe > `endorheicSaltMinDepth`).
-    /// Bewusst enger als `endorheicBasin == 1`: der Priority-Flood flutet den
+    /// Bewusst enger als `endorheicBasin == .dryBed`: der Priority-Flood flutet den
     /// ganzen flachen Beckenboden, ein Millimeter-Saum ist aber keine Salzpfanne
     /// (gemessen n=256/Seed 1337: 9788 trockengefallene Zellen, davon nur ein
     /// Bruchteil je über der Render-Seetiefe).
@@ -358,7 +381,7 @@ public final class Terrain {
         hf = .init(repeating: 0, count: c)
         waterLevel = .init(repeating: 0, count: c)
         lakeBalance = .init(repeating: 0, count: c)
-        endorheicBasin = .init(repeating: 0, count: c)
+        endorheicBasin = .init(repeating: .none, count: c)
         saltCrust = .init(repeating: 0, count: c)
         endorheicInflow = .init(repeating: 0, count: c)
         playaBed = .init(repeating: false, count: c)
@@ -561,7 +584,7 @@ public final class Terrain {
         // einzuschwingen (dieselbe Doktrin wie `waterLevel = hf` unten).
         for k in 0..<cfg.count {
             lakeBalance[k] = h[k]
-            endorheicBasin[k] = 0
+            endorheicBasin[k] = .none
             saltCrust[k] = 0
             disturb[k] = 0 // frisches Terrain hat keine Baustellen (Issue #26)
             regenPending[k] = 0
@@ -702,18 +725,19 @@ public final class Terrain {
     /// Diagnostik zum Becken-Wasserhaushalt (Issue #11): Zahl der verdunstungs-
     /// limitierten (abflusslosen) Becken sowie ihre Wasser- und Trockenfläche in
     /// Zellen. `basins` zählt zusammenhängende Komponenten (8er, wie die
-    /// Becken-Erkennung selbst) von `endorheicBasin != 0` — ein Becken mit
+    /// Becken-Erkennung selbst) von `endorheicBasin != .none` — ein Becken mit
     /// Restsee UND trockenem Saum ist EINS.
     public func endorheicStats() -> (basins: Int, water: Int, dryBed: Int) {
         var water = 0, dryBed = 0
         for k in 0..<cfg.count {
-            if endorheicBasin[k] == 2 { water += 1 } else if endorheicBasin[k] == 1 { dryBed += 1 }
+            if endorheicBasin[k] == .water { water += 1 }
+            else if endorheicBasin[k] == .dryBed { dryBed += 1 }
         }
         guard water + dryBed > 0 else { return (0, 0, 0) }
         var seen = [Bool](repeating: false, count: cfg.count)
         var stack = [Int]()
         var basins = 0
-        for start in 0..<cfg.count where endorheicBasin[start] != 0 && !seen[start] {
+        for start in 0..<cfg.count where endorheicBasin[start] != .none && !seen[start] {
             basins += 1
             stack.removeAll(keepingCapacity: true); stack.append(start); seen[start] = true
             while let k = stack.popLast() {
@@ -723,7 +747,7 @@ public final class Terrain {
                         let ni = i + di, nj = j + dj
                         if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
                         let nb = nj * n + ni
-                        if endorheicBasin[nb] != 0 && !seen[nb] { seen[nb] = true; stack.append(nb) }
+                        if endorheicBasin[nb] != .none && !seen[nb] { seen[nb] = true; stack.append(nb) }
                     }
                 }
             }
@@ -1976,11 +2000,11 @@ public final class Terrain {
         let cnt = cfg.count
         let any = endorheicBasin.withUnsafeBufferPointer { eb -> Bool in
             let p = eb.baseAddress!
-            for k in 0..<cnt where p[k] != 0 { return true }
+            for k in 0..<cnt where p[k] != .none { return true }
             return false
         }
         guard any else { return }
-        endorheicBasin.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+        endorheicBasin.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: .none, count: cnt) }
         playaBed.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         endorheicInflow.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
     }
@@ -2140,8 +2164,8 @@ public final class Terrain {
                     // eine flache Bodenzelle keinen Überlauf: der
                     // floodParent-Fallback zeigt zur Sill HINAUS, also genau
                     // dorthin, wo kein Wasser mehr hinkommt.
-                    if pend[k] != 0 {
-                        if pend[k] == 2 || best < 0 { best = -1 }
+                    if pend[k] != .none {
+                        if pend[k] == .water || best < 0 { best = -1 }
                     } else if best < 0 {
                         best = ppar[k] // flacher Seespiegel → Überlauf
                     }
@@ -2211,8 +2235,8 @@ public final class Terrain {
     /// dann muss das D8-Netz auf dem gedeckelten Spiegel neu bestimmt werden.
     private func capEndorheicBasins(dt: Double) -> Bool {
         guard cfg.endorheicEvaporation, cfg.endorheicEvapRatio > 0 else {
-            if endorheicBasin.contains(where: { $0 != 0 }) {
-                for k in 0..<cfg.count { endorheicBasin[k] = 0 }
+            if endorheicBasin.contains(where: { $0 != .none }) {
+                for k in 0..<cfg.count { endorheicBasin[k] = .none }
             }
             return false
         }
@@ -2264,7 +2288,7 @@ public final class Terrain {
                 return cellArea * kappa * a
             }
             pseen.update(repeating: false, count: cnt)
-            pend.update(repeating: 0, count: cnt)
+            pend.update(repeating: .none, count: cnt)
             pplaya.update(repeating: false, count: cnt)
             pinflow.update(repeating: 0, count: cnt)
             for s in 0..<cnt where !pseen[s] && phf[s] > sea && phf[s] > ph[s] {
@@ -2322,10 +2346,10 @@ public final class Terrain {
                     pinflow[k] = inflow
                     if level > ph[k] {
                         phf[k] = level
-                        pend[k] = 2 // Wasserfläche, terminale Senke
+                        pend[k] = .water
                     } else {
                         phf[k] = ph[k]
-                        pend[k] = 1 // trockengefallener Beckenboden
+                        pend[k] = .dryBed
                         // Salzpfanne nur, wo auch substanziell Wasser stand.
                         pplaya[k] = sill - ph[k] > saltMinDepth
                     }
@@ -2449,7 +2473,7 @@ public final class Terrain {
                 // (Verdunstung) — dieselbe Rolle wie das Meer. Das Render-Feld
                 // zeigt den Zufluss weiter BIS in den See, nur nicht darüber
                 // hinaus. Rollentrennung bleibt: hier wird nichts erodiert.
-                if pend[k] == 2 { continue }
+                if pend[k] == .water { continue }
                 var c = 0
                 var sMax = 0.0
                 @inline(__always) func consider(_ nb: Int, _ dist: Double) {
@@ -2483,7 +2507,7 @@ public final class Terrain {
                     // Priority-Flood-Überlauf (floodParent) weiterreichen, damit die
                     // Fläche nicht am See versickert. Im abflusslosen Becken NICHT:
                     // der Überlauf zeigt zur Sill hinaus, wo kein Wasser hinkommt.
-                    if pend[k] != 0 { continue }
+                    if pend[k] != .none { continue }
                     let fp = ppar[k]
                     if fp >= 0 { pa[Int(fp)] += a }
                     continue
@@ -2806,7 +2830,7 @@ public final class Terrain {
             // mehr ein (terminale Senke), ihr A^m ist winzig, die Inzision
             // versandet von selbst. Genau so hört ein endorheisches Becken auf,
             // sich selbst zu entwässern.
-            if pend[k] == 2 { continue }
+            if pend[k] == .water { continue }
             let hr: Double
             let dist: Double
             if r < 0 {
@@ -2814,7 +2838,7 @@ public final class Terrain {
                 // geschlossenen Becken): das virtuelle Basisniveau MEER unten
                 // gilt nur am Weltrand — im Becken würde es den Boden Richtung
                 // Meeresspiegel ausgraben.
-                if pend[k] != 0 { continue }
+                if pend[k] != .none { continue }
                 // Land-Zelle ohne Empfänger = Weltrand (Priority-Flood-Seed):
                 // Wasser verlässt hier die Welt → virtuelles Basisniveau MEER.
                 // Ohne das wirkt der Rand als unerodierbarer Pegel und Becken,
@@ -2913,7 +2937,7 @@ public final class Terrain {
         var comp: [Int32] = []
         var stack: [Int32] = []
         for s in 0..<cfg.count where !pondSeen[s] && hf[s] > sea && hf[s] - h[s] > 0.001
-                                     && endorheicBasin[s] != 2 {
+                                     && endorheicBasin[s] != .water {
             comp.removeAll(keepingCapacity: true)
             stack.removeAll(keepingCapacity: true)
             stack.append(Int32(s)); pondSeen[s] = true
@@ -2976,7 +3000,7 @@ public final class Terrain {
     /// Tiefen-Gate.
     @inline(__always) private func pondPush(_ k: Int, _ stack: inout [Int32]) {
         if !pondSeen[k] && hf[k] > cfg.sea && hf[k] - h[k] > 0.001
-            && endorheicBasin[k] != 2 {
+            && endorheicBasin[k] != .water {
             pondSeen[k] = true
             stack.append(Int32(k))
         }
@@ -4388,6 +4412,8 @@ struct TerrainState {
     var lakeBalance: [Double] = []       // Bilanz-Seespiegel abflussloser Becken (Issue #11)
     var saltCrust: [Double] = []
     var endorheicInflow: [Double] = []
+    /// ROHBYTES der Becken-Rolle (`BasinRole.rawValue`) — das Speicherformat:
+    /// so liegt das Feld im Schnappschuss (`WorldSnapshot.uint8Fields`).
     var endorheicBasin: [UInt8] = []
     var playaBed: [Bool] = []
     var receiver: [Int32] = []
@@ -4436,7 +4462,7 @@ extension Terrain {
         s.heightBands = heightBands
         s.hf = hf; s.waterLevel = waterLevel; s.lakeBalance = lakeBalance
         s.saltCrust = saltCrust; s.endorheicInflow = endorheicInflow
-        s.endorheicBasin = endorheicBasin; s.playaBed = playaBed
+        s.endorheicBasin = endorheicBasin.map(\.rawValue); s.playaBed = playaBed
         s.receiver = receiver; s.order = order; s.floodParent = floodParent
         s.area = area; s.areaMFD = areaMFD
         s.isChannel = isChannel; s.streamMap = streamMap; s.streamRate = streamRate
@@ -4468,7 +4494,7 @@ extension Terrain {
         heightBands = s.heightBands
         hf = s.hf; waterLevel = s.waterLevel; lakeBalance = s.lakeBalance
         saltCrust = s.saltCrust; endorheicInflow = s.endorheicInflow
-        endorheicBasin = s.endorheicBasin; playaBed = s.playaBed
+        endorheicBasin = s.endorheicBasin.map(BasinRole.init(persisted:)); playaBed = s.playaBed
         receiver = s.receiver; order = s.order; floodParent = s.floodParent
         area = s.area; areaMFD = s.areaMFD
         isChannel = s.isChannel; streamMap = s.streamMap; streamRate = s.streamRate
