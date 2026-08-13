@@ -58,8 +58,9 @@ final class RelaxationTests: XCTestCase {
     /// `tau`. Damit ist der Helfer als GEWICHT einer Mischung
     /// `x += (ziel − x)·f` immer gutartig: kein Überschießen, kein
     /// Vorzeichenwechsel. Die Monotonie ist STRIKT, solange der Wert nicht auf
-    /// 1.0 gesättigt ist — ab ~36 τ ist `e^(−dt/τ)` in `Double` exakt 0
-    /// (τ = 20 J. gegen einen 10.000-Jahr-Sprung), und dort geht es nicht
+    /// 1.0 gesättigt ist — ab ~37 τ liegt `e^(−dt/τ)` unter der halben
+    /// `Double`-Auflösung bei 1.0, `1 − …` rundet dann auf exakt 1 (τ = 20 J.
+    /// gegen einen 10.000-Jahr-Sprung sind 500 τ), und dort geht es nicht
     /// weiter nach oben.
     func testFractionStaysAWeightBetweenZeroAndOne() {
         for tau in taus {
