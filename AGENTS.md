@@ -80,6 +80,31 @@ verifiziert jedes Ergebnis. Die frühere Handarbeit „`.build` kopieren,
 `ModuleCache`-Ordner löschen" entfällt. `RS_NO_SHARED_BUILD=1` erzwingt einen
 eigenständigen Build im Worktree.
 
+**SwiftGodot-Pin** (Issue #49): `Extension/Package.swift` hängt an einer **exakten**
+Upstream-Version, aktuell `exact: "0.76.1"` (Revision
+`be57caa3e81b9ac510bc7cc2e277003c706ab0a5`, Tag `v0.76.1`); `Extension/Package.resolved`
+ist eingecheckt und die verbindliche Auflösung, auch für die transitiven Pins
+(`swift-syntax` 600.0.1, `swift-argument-parser` 1.8.2). Vorher stand hier
+`branch: "main"` — damit konnte jeder frische Klon eine andere Revision ziehen, und
+weil SwiftGodots Codegen die ganze Modulkette speist, kostet schon ein
+Revisionswechsel einen Voll-Neubau (Linux ~21,5 min, s. o.) und kann die Godot-API
+still verschieben.
+
+Der Pin wird **nur bewusst und in einem eigenen Commit** angehoben:
+
+```sh
+git ls-remote --tags https://github.com/migueldeicaza/SwiftGodot   # Zielversion wählen
+# Extension/Package.swift: exact: "<neue Version>" — Kommentar dort mitpflegen
+swift package resolve --package-path Extension        # Package.resolved neu schreiben
+git diff Extension/Package.resolved                  # Revisionen prüfen, auch transitive
+"$(git rev-parse --show-toplevel)"/scripts/build.sh release   # Voll-Neubau erwarten
+"$GODOT" --headless --path game --script res://tests/smoke.gd  # API-Bruch fällt hier auf
+```
+
+Ein Update gehört nicht in einen Commit mit Sim- oder Render-Änderungen: bricht die
+GDExtension danach, soll der Pin-Commit allein dastehen. `swift package update`
+(ohne Argument) hebt bei einem `exact`-Pin nichts an — genau das ist der Zweck.
+
 **Build-Stempel gegen veraltete Libraries:** `scripts/build.sh` hasht die Quellen
 unter `Extension/Sources` + `SimCore/Sources` und brennt den Stempel via
 `Extension/Sources/RiverSimGD/Generated/BuildStamp.swift` (generiert, gitignoriert) in
