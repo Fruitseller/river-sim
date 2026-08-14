@@ -517,6 +517,45 @@ final class WaterRenderTests: XCTestCase {
                                                             creekCells: creek), 1)
     }
 
+    // MARK: Gemeinsame Wasser-Optik beider Shader (Issue #51)
+
+    func testBothWaterShadersShareTheSameWater() throws {
+        // Raster-Wasser (terrain.gdshader) und Band-Geometrie (water.gdshader)
+        // malen DASSELBE Wasser. Driften Farben oder Fresnel, zerfällt eine
+        // Mündung sichtbar in zwei Wasser — deshalb dieselben Zahlen, gegen
+        // BEIDE Quelltexte geprüft.
+        let terrain = try repoFile("game/shaders/terrain.gdshader")
+        let water = try repoFile("game/shaders/water.gdshader")
+        for (name, shader) in [("terrain", terrain), ("water", water)] {
+            assertContains(shader, "vec3 shallow = \(glsl(WaterRender.waterShallowColor));",
+                           hint: "\(name): Seicht-Farbe == WaterRender.waterShallowColor")
+            assertContains(shader, "vec3 deep = \(glsl(WaterRender.waterDeepColor));",
+                           hint: "\(name): Tief-Farbe == WaterRender.waterDeepColor")
+            assertContains(shader, "vec3 sky = \(glsl(WaterRender.skyReflectColor));",
+                           hint: "\(name): Himmels-Ton == WaterRender.skyReflectColor")
+            assertContains(shader, "pow(1.0 - ndv, \(glsl(WaterRender.fresnelExponent)))",
+                           hint: "\(name): Fresnel-Exponent == WaterRender.fresnelExponent")
+            assertContains(shader, "mix(water, sky, fresnel * \(glsl(WaterRender.fresnelSkyMix)))",
+                           hint: "\(name): Himmels-Anteil == WaterRender.fresnelSkyMix")
+            assertContains(shader, "mix(\(glsl(WaterRender.waterOpacityShallow)), "
+                + "\(glsl(WaterRender.waterOpacityDeep)), depth)",
+                hint: "\(name): Deckkraft == WaterRender.waterOpacity*")
+            assertContains(shader, "mix(\(glsl(WaterRender.waterRoughnessSteep)), "
+                + "\(glsl(WaterRender.waterRoughnessGrazing)), fresnel)",
+                hint: "\(name): Rauheit == WaterRender.waterRoughness*")
+            assertContains(shader, "mix(\(glsl(WaterRender.waterSpecularSteep)), "
+                + "\(glsl(WaterRender.waterSpecularGrazing)), fresnel)",
+                hint: "\(name): Specular == WaterRender.waterSpecular*")
+            assertContains(shader, "flow * \(glsl(WaterRender.flowShimmerColor))",
+                           hint: "\(name): Strömungs-Schimmer == WaterRender.flowShimmerColor")
+        }
+        // Nur die Band-Geometrie kennt Typen: Delta-Fahne und Altarm-Wasser.
+        assertContains(water, glsl(WaterRender.deltaPlumeColor),
+                       hint: "Trübungsfahne == WaterRender.deltaPlumeColor")
+        assertContains(water, glsl(WaterRender.oxbowWaterColor),
+                       hint: "Altarm-Wasser == WaterRender.oxbowWaterColor")
+    }
+
     func testGodotGuardsPinTheSameContract() throws {
         // Die Godot-Wächter (GPU-frei, aber nur MIT gebauter Extension lauffähig)
         // tragen die Vertragswerte als eigene Konstanten. Driften sie, prüfen

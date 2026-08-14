@@ -532,4 +532,45 @@ public enum WaterRender {
         min(1.0, stampIntensityBase
                  + log(max(dischargeCells, 1) / creekCells + 1) / stampIntensityLogDivisor)
     }
+
+    // MARK: Gemeinsame Wasser-Optik beider Shader (Issue #51)
+
+    // `terrain.gdshader` (Raster-Wasser) und `water.gdshader` (Band-Geometrie)
+    // malen DASSELBE Wasser — Farben, Fresnel und Glanz müssen deshalb
+    // zusammenfallen, sonst zerfällt eine Mündung sichtbar in zwei Wasser.
+    // Beide Shader tragen die Werte als Literal; `WaterRenderTests` vergleicht
+    // BEIDE Quelltexte gegen diese Zahlen. Wer eine ändert, ändert sie hier und
+    // in beiden Shadern — der Test sagt, welche Stelle fehlt.
+
+    /// Farbe seichten Wassers (das Bett scheint grünlich getrübt durch).
+    public static let waterShallowColor = (r: 0.18, g: 0.37, b: 0.42)
+    /// Farbe tiefen Wassers (opak dunkelblau).
+    public static let waterDeepColor = (r: 0.03, g: 0.12, b: 0.26)
+    /// Himmels-Ton der Fresnel-Spiegelung (wie die Environment-Farbe).
+    public static let skyReflectColor = (r: 0.62, g: 0.7, b: 0.76)
+    /// Schlick-Näherung: `pow(1 − n·v, fresnelExponent)`.
+    public static let fresnelExponent = 5.0
+    /// Anteil, mit dem der Himmels-Ton bei streifendem Blick einmischt.
+    public static let fresnelSkyMix = 0.55
+    /// Deckkraft seichten Wassers (das Bett scheint durch) …
+    public static let waterOpacityShallow = 0.55
+    /// … und tiefen Wassers.
+    public static let waterOpacityDeep = 0.95
+    /// Rauheit bei steilem Blick — matter, sonst spiegelt der graue Himmel die
+    /// Farbe milchig weg …
+    public static let waterRoughnessSteep = 0.34
+    /// … und bei streifendem Blick (glasklar spiegelnd).
+    public static let waterRoughnessGrazing = 0.08
+    /// Specular bei steilem Blick …
+    public static let waterSpecularSteep = 0.55
+    /// … und bei streifendem Blick.
+    public static let waterSpecularGrazing = 1.0
+    /// Strömungs-Schimmer stromab (Bewegung im Zeitraffer ablesbar).
+    public static let flowShimmerColor = (r: 0.012, g: 0.018, b: 0.025)
+    /// Trübungsfahne eines Delta-Arms: heller und wärmer als das Becken, sonst
+    /// läse sich der Fächer als zweite Wasserfläche (`water.gdshader`).
+    public static let deltaPlumeColor = (r: 0.34, g: 0.38, b: 0.33)
+    /// Stehendes, trübes Auwasser eines Altarms — grünlicher als der klare Lauf
+    /// (`water.gdshader`).
+    public static let oxbowWaterColor = (r: 0.16, g: 0.28, b: 0.24)
 }
