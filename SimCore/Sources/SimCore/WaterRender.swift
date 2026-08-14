@@ -447,10 +447,16 @@ public enum WaterRender {
 
     /// Intensität des Fluss-Kanals aus dem Abfluss (Zellen Einzugsgebiet),
     /// bezogen auf die Render-Schwelle `creekCells` (= `SimConfig.renderMinCells`).
+    ///
+    /// Der Abfluss wird wie bei den Geschwister-Funktionen selbst geklemmt: ohne
+    /// `max(…, 0)` liefert `log` unter `−creekCells` NaN, und ein solcher Wert
+    /// wanderte als Byte ins Wasserfeld. Der heutige Aufrufer filtert vorher
+    /// (`cu < creek → continue`) — die Klemme hält den Vertrag aber auch für den
+    /// nächsten.
     @inline(__always)
     public static func streamIntensity(dischargeCells: Double, creekCells: Double) -> Double {
         min(1, streamIntensityBase
-               + log(dischargeCells / creekCells + 1) / streamIntensityLogDivisor)
+               + log(max(dischargeCells, 0) / creekCells + 1) / streamIntensityLogDivisor)
     }
 
     /// Kontinuität: die Intensität wird dem D8-Empfänger entlang bergab
