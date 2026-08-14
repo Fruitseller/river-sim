@@ -7,9 +7,12 @@ cd "$(dirname "$0")/.."
 # meldet fehlende Funktionen erst mitten im Spiel (siehe scripts/build-stamp.sh).
 scripts/build-stamp.sh --check
 
-GODOT="${GODOT:-$PWD/.tools/godot-4.7.1/Godot_v4.7.1-stable_linux.x86_64}"
+# Version und Pfad NICHT hier doppeln: scripts/fetch-godot.sh ist die einzige
+# Quelle der Godot-Version (CI benutzt dasselbe Skript, siehe dort).
+GODOT="${GODOT:-$(scripts/fetch-godot.sh --path)}"
 if [[ ! -x "$GODOT" ]]; then
-	echo "Godot nicht gefunden. Setze GODOT oder installiere die lokale Version." >&2
+	echo "Godot nicht gefunden: $GODOT" >&2
+	echo "Holen mit: scripts/fetch-godot.sh   (oder GODOT=/pfad/zu/godot setzen)" >&2
 	exit 1
 fi
 

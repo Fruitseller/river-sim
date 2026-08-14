@@ -45,10 +45,11 @@ godot --path game           # oder game/project.godot im Godot-Editor öffnen
 
 ### Debian / Linux
 
-Swift 6 und Godot 4.7.1 werden benötigt. Mit Swiftly für die Toolchain und
-einer lokalen Godot-Binärdatei unter `.tools/godot-4.7.1/`:
+Swift 6 wird benötigt (z. B. über Swiftly); Godot holt sich das Repo selbst in
+der gepinnten Version nach `.tools/`:
 
 ```sh
+./scripts/fetch-godot.sh    # Godot herunterladen und Prüfsumme verifizieren
 ./scripts/build.sh
 ./scripts/start.sh
 ```

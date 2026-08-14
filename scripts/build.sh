@@ -9,6 +9,17 @@ CONFIG="${1:-release}"
 # Toolchain auflösen — außerhalb der normalisierten Umgebung (siehe unten).
 # ---------------------------------------------------------------------------
 SWIFT_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Toolchains außerhalb von Swiftly/Xcode (CI installiert die swift.org-Toolchain
+# direkt nach /opt/swift, siehe .github/actions/swift-toolchain). Bewusst EINE
+# gezielte Variable statt „PATH des Aufrufers durchreichen": die normalisierte
+# Umgebung ist der ganze Zweck dieses Skripts — jeder durchgereichte PATH würde
+# die Build-Signaturen wieder an den Aufrufer koppeln
+# (docs/build-invalidation-measurements.md).
+if [[ -n "${RS_SWIFT_BIN:-}" ]]; then
+	SWIFT_PATH="$RS_SWIFT_BIN:$SWIFT_PATH"
+fi
+
 if [[ "$(uname -s)" == "Linux" ]]; then
 	# Swiftly stellt Swift auf Linux bereit; sein bin-Verzeichnis kommt VOR die
 	# Systempfade, damit der Swiftly-Shim gewinnt.
