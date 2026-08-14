@@ -494,8 +494,7 @@ final class EndorheicEvaporation: XCTestCase {
     /// über κ. Kein Assert — die Zahlen stehen im Config-Logbuch und in
     /// docs/endorheic-evaporation-measurements.md.
     func testEvapRatioMeasurementDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_EVAP_MEASURE"] != nil,
-                          "Messreihe nur mit RS_EVAP_MEASURE=1")
+        try skipUnlessMeasuring()
         for kappa: Double in [0, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
             for seed: UInt32 in [1337, 42, 2024] {
                 var c = cfg(kappa: kappa)
@@ -524,8 +523,7 @@ final class EndorheicEvaporation: XCTestCase {
     /// Gemessen mit ausgeschalteter Verdunstung, damit die Becken auf ihrem
     /// Vollstand stehen.
     func testBasinRatioMeasurementDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_EVAP_MEASURE"] != nil,
-                          "Messreihe nur mit RS_EVAP_MEASURE=1")
+        try skipUnlessMeasuring()
         let big = ProcessInfo.processInfo.environment["RS_EVAP_N"].flatMap { Int($0) }
         for seed: UInt32 in [1337, 42, 2024] {
             var c = cfg(n: big ?? 256); c.endorheicEvaporation = false
@@ -577,8 +575,7 @@ final class EndorheicEvaporation: XCTestCase {
     /// MESSREIHE: dasselbe in Produktionsauflösung (n=832) für einen Seed —
     /// die Becken-Größenverteilung hängt an der Auflösung.
     func testProductionResolutionMeasurementDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_EVAP_MEASURE"] != nil,
-                          "Messreihe nur mit RS_EVAP_MEASURE=1")
+        try skipUnlessMeasuring()
         for kappa: Double in [0, 1.0, 1.25, 1.5, 2.0, 3.0] {
             var c = cfg(n: 832, kappa: kappa)
             c.hydraulicSkipWaterSpawns = true

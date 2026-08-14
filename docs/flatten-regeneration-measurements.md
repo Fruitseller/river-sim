@@ -12,7 +12,7 @@ Reproduzieren:
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 --filter testFlattenMeasurementDiagnostic
-RS_SWEEP=1   swift test -c release --package-path SimCore \
+RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 \
     --filter 'testDisturbanceSweepDiagnostic|testRegenerationTrajectoryDiagnostic|testMeanderStateDiagnostic'
 ```
@@ -120,7 +120,7 @@ neuen Entwässerung frisch getrasst (Sinuosität zurück auf Trassierungs-Niveau
 ## 6. Kalibrierung
 
 Gemessen wurde die Innenfläche bei Jahr 3.000, Seed 1337 (Auszüge; die volle
-Matrix ist mit `RS_SWEEP=1` reproduzierbar). Die Sweeps stammen aus der
+Matrix ist mit `RS_MEASURE=1` reproduzierbar). Die Sweeps stammen aus der
 Kalibrier-Phase; Abweichungen zu den Tabellen oben liegen in der letzten Stelle.
 
 **Setzungsanteil `disturbanceSettle`** (τ = 1200 J.):

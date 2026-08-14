@@ -169,7 +169,8 @@ final class MeltRunoff: XCTestCase {
     ///     RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test -c release \
     ///       --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
     ///       --filter testMeltRunoffMeasurementDiagnostic
-    func testMeltRunoffMeasurementDiagnostic() {
+    func testMeltRunoffMeasurementDiagnostic() throws {
+        try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
         let n = Int(env["RS_MEAS_N"] ?? "") ?? 192
         let years = Int(env["RS_MEAS_YEARS"] ?? "") ?? 20_000
@@ -192,7 +193,8 @@ final class MeltRunoff: XCTestCase {
     /// liefert die Seed-Auswahl für die Mehr-Seed-Messung — ein Mittel über
     /// zufällige Seeds wäre sonst ein Mittel über meist schneefreie Inseln und
     /// würde den Effekt kleinrechnen.
-    func testSnowyIslandScanDiagnostic() {
+    func testSnowyIslandScanDiagnostic() throws {
+        try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
         let n = Int(env["RS_MEAS_N"] ?? "") ?? 192
         var snowy: [UInt32] = []
@@ -217,7 +219,8 @@ final class MeltRunoff: XCTestCase {
     /// Zufallslage der Gebirge. Gepoolt statt „Mittel der Verhältnisse" — kleine
     /// Inseln haben wenige schneegespeiste Läufe (dieselbe Begründung wie im
     /// Luv/Lee-Wächter von #10).
-    func testMeltRunoffIsSeedRobustDiagnostic() {
+    func testMeltRunoffIsSeedRobustDiagnostic() throws {
+        try skipUnlessMeasuring()
         // ALPINE Seeds, ausgewählt mit `testSnowyIslandScanDiagnostic` (Kämme über
         // der Schnee-Grenze, ≥ 44 schneegespeiste Läufe nach 20k Jahren). Die
         // Standard-Seeds der übrigen Messreihen (7/99/2024) sind bei n=192 flache,
@@ -607,7 +610,8 @@ final class MeltRunoff: XCTestCase {
     /// Kosten des neuen Passes je `step()` in Produktionsauflösung — gemessen
     /// statt geschätzt (dieselbe Doktrin wie bei `updateHeightBands` und
     /// `updateClimate`). Er hängt an `computeRain`, läuft also einmal je Schritt.
-    func testRunoffWeightCostDiagnostic() {
+    func testRunoffWeightCostDiagnostic() throws {
+        try skipUnlessMeasuring()
         var c = SimConfig(); c.n = 832
         let t = Terrain(config: c, seed: 1337)
         t.step(dtYears: 1000)

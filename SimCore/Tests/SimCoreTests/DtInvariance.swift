@@ -386,8 +386,7 @@ final class DtInvariance: XCTestCase {
     /// Relaxationsform oder an ihren SCHWELLEN (Tiefen-Gate, See-Kern-Gate)?
     /// Antwort (s. docs §5): am See-Kern-Gate.
     func testPuddleGateProbeDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_MEASURE"] != nil,
-                          "Messreihe nur mit RS_MEASURE=1 (Laufzeit)")
+        try skipUnlessMeasuring()
         let variants: [(String, (inout SimConfig) -> Void)] = [
             ("Pfütze aus     ", { $0.puddleFillYears = 0 }),
             ("Pfütze an      ", { _ in }),
@@ -416,8 +415,7 @@ final class DtInvariance: XCTestCase {
 
     /// Die Tabelle für `docs/`: momentan gemessen (Laufende) gegen zeitgemittelt.
     func testDtSpreadDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_MEASURE"] != nil,
-                          "Messreihe nur mit RS_MEASURE=1 (Laufzeit)")
+        try skipUnlessMeasuring()
         for seed in [UInt32(1337), 4242] {
             for dt in [10.0, 240.0, 2000.0] {
                 var c = SimConfig(); c.n = 192
@@ -436,8 +434,7 @@ final class DtInvariance: XCTestCase {
     /// Zeitreihe des Ponding-Aufbaus — der Beleg, dass der momentane Seeanteil
     /// innerhalb EINES Laufs um mehr als den Faktor 2 schwankt.
     func testLakeTrajectoryDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_MEASURE"] != nil,
-                          "Messreihe nur mit RS_MEASURE=1 (Laufzeit)")
+        try skipUnlessMeasuring()
         for dt in [250.0, 2000.0] {
             var c = SimConfig(); c.n = 192
             let t = Terrain(config: c, seed: 1337)
@@ -458,8 +455,7 @@ final class DtInvariance: XCTestCase {
     /// Der Rest-Unterschied skaliert mit den TROPFEN JE ABFLUSS-UPDATE — die
     /// Signatur der Operator-Splitting-Drift (bewusst nicht Teil von #2).
     func testSplittingScalesWithDropRateDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_MEASURE"] != nil,
-                          "Messreihe nur mit RS_MEASURE=1 (Laufzeit)")
+        try skipUnlessMeasuring()
         for rate in [0.0, 0.2, 2.0] {
             for dt in [10.0, 240.0, 2000.0] {
                 let m = DtInvariance.run(seed: 1337, dt: dt) { c in
@@ -477,8 +473,7 @@ final class DtInvariance: XCTestCase {
 
     /// Welcher Pass hält das Ponding in Schach? (Ablation, Seed 1337.)
     func testLakeAblationDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_MEASURE"] != nil,
-                          "Messreihe nur mit RS_MEASURE=1 (Laufzeit)")
+        try skipUnlessMeasuring()
         let variants: [(String, (inout SimConfig) -> Void)] = [
             ("default         ", { _ in }),
             ("ohne Braiding   ", { $0.braidingEnabled = false }),
