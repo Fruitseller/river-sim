@@ -222,14 +222,29 @@ Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, 
 `ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0** — siehe `NOTICE`),
 `Noise.swift`, `MinHeap.swift`.
 
-Zwei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand — sie
+Drei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand — sie
 liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:
-`Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31) und `WaterRender.swift`
+`Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31), `WaterRender.swift`
 (Kalibrier-Paarungen des Wasserfelds: Komponenten-Fade ↔ Shader-Smoothstep ↔
 Altarm-Stempel, Issue #32; seit #34 auch die Übergabe Band ↔ Raster:
-`deltaFrontDepth == lakeRawWetDepth`, `mouthOverlapCells`, Typ-Kanal der Bänder).
-Beide sind aus `SimCoreTests` gepinnt; Werte dort ändern heißt Shader UND
-`SimNode` mitziehen (der Test sagt, wo).
+`deltaFrontDepth == lakeRawWetDepth`, `mouthOverlapCells`, Typ-Kanal der Bänder)
+und `RenderContract.swift` (Issue #51: `heightScale`, `riverLift`, `defaultSeed` —
+Zahlen, die Godot-Schicht, GDExtension und Shader unabhängig voneinander
+festlegten). Alle drei sind aus `SimCoreTests` gepinnt; Werte dort ändern heißt
+Shader UND `SimNode` mitziehen (der Test sagt, wo).
+
+Seit **Issue #51** liegt die Render-Kalibrierung VOLLSTÄNDIG in diesem Vertrag —
+auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
+Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
+Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
+(`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK beider
+Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer). `SimNode` und die
+Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests` und
+`RenderContractTests` lesen die ECHTEN Quelltexte von `SimNode.swift`, beiden
+`.gdshader`, `Main.gd` und den Godot-Wächtern und vergleichen sie gegen diese
+Werte (gemeinsamer Helfer: `Tests/SimCoreTests/RepoSource.swift`). Zahlen im
+Shader deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`) — sonst
+greift der Textvergleich nicht.
 
 **Wasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
