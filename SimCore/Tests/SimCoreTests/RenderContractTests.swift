@@ -16,9 +16,30 @@ final class RenderContractTests: XCTestCase {
         let main = try RepoSource.file("game/scripts/Main.gd")
         assertContains(main, "const HSCALE := \(glsl(RenderContract.heightScale))",
                        hint: "Mesh-Überhöhung == RenderContract.heightScale")
+        assertContains(main, "set_shader_parameter(\"hscale\", HSCALE)",
+                       hint: "Shader-Uniform der Überhöhung == Main.gd HSCALE")
         let shader = try RepoSource.file("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform float hscale = \(glsl(RenderContract.heightScale));",
                        hint: "Shader-Default der Überhöhung == RenderContract.heightScale")
+        // Nicht nur die DEKLARATION pinnen, sondern jede ANWENDUNG: ein
+        // zusätzlicher Faktor am Displacement (`* hscale * 1.08`) oder eine
+        // eigene Konstante in den Normalen ließe den Vertrag grün und das
+        // gerenderte Terrain trotzdem von `HSCALE` abweichen — genau die
+        // Drift-Klasse, die #51 beendet. Die drei Zeilen sind alle Stellen, die
+        // den Uniform lesen (Vertex-Höhe, Vertex-Normale, per-Pixel-Normale).
+        for use in ["VERTEX.y = mix(hraw, hfv, lift) * hscale;",
+                    "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hD - hU) * hscale));",
+                    "vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0,"
+                        + " -s_uv.y * hscale / world_size));"] {
+            assertContains(shader, use,
+                           hint: "Überhöhung wird unskaliert angewandt (keine Zusatzfaktoren)")
+        }
+        // Und keine vierte, ungeprüfte Anwendung: die Zahl der `hscale`-Vorkommen
+        // im Shader ist gepinnt — 1 Deklaration + 1 Vertex-Höhe + 2 Vertex-Normale
+        // + 2 per-Pixel-Normale = 6, alle in den Zeilen oben abgedeckt.
+        XCTAssertEqual(shader.components(separatedBy: "hscale").count - 1, 6,
+                       "Neue oder entfernte `hscale`-Anwendung im Terrain-Shader —"
+                       + " Liste der geprüften Stellen mitziehen")
     }
 
     func testRiverLiftIsTheSameInEveryLayer() throws {
