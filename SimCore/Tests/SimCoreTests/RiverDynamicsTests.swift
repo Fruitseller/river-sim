@@ -236,7 +236,8 @@ final class RiverDynamicsTests: XCTestCase {
     /// Mäander/Braiding brauchen Kanalzellen mit Längsslope < meanderFlatSlope
     /// (0.02). Misst die Slope-Verteilung der Kanalzellen + größte zusammenhängende
     /// Flachfläche (Auen-Proxy). Kein Assert außer „Kanäle existieren".
-    func testTerrainFlatnessDiagnostic() {
+    func testTerrainFlatnessDiagnostic() throws {
+        try skipUnlessMeasuring()
         let t = Terrain(config: cfg(n: 256), seed: 1337)
         while t.years < 15_000 - 1e-6 { t.step(dtYears: 1000) }
         let n = t.cfg.n, cs = t.cfg.cellSize

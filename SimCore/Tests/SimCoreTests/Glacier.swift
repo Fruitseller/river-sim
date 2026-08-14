@@ -196,7 +196,8 @@ final class Glacier: XCTestCase {
 
     /// Wachstum und Reichweite des Eises über die Zeit — die Rohdaten für
     /// `docs/glacier-measurements.md` §B.
-    func testIceGrowthSeriesDiagnostic() {
+    func testIceGrowthSeriesDiagnostic() throws {
+        try skipUnlessMeasuring()
         let c = cfg()
         let t = Terrain(config: c, seed: 1337)
         print("Firn-Grenze h = \(String(format: "%.4f", Glacier.firnLine(c))), maxH = \(String(format: "%.4f", t.maxHeight()))")
@@ -209,7 +210,8 @@ final class Glacier: XCTestCase {
     /// Wie hoch bleibt die Insel ÜBERHAUPT? Die Firn-Grenze liegt fix bei
     /// `h = 0.5731`; wo `maxH` darunter fällt, kann es per Konstruktion kein Eis
     /// geben. Ohne Gletscher gerechnet (Referenzarm).
-    func testPeakHeightSeriesDiagnostic() {
+    func testPeakHeightSeriesDiagnostic() throws {
+        try skipUnlessMeasuring()
         for n in [192, 256, 384, 640] {
             var c = cfg(n: n); c.iceEnabled = false
             let t = Terrain(config: c, seed: 1337)
@@ -223,7 +225,8 @@ final class Glacier: XCTestCase {
     }
 
     /// Sweep über die Regler, die Dicke, Reichweite und Abtrag setzen.
-    func testIceParameterSweepDiagnostic() {
+    func testIceParameterSweepDiagnostic() throws {
+        try skipUnlessMeasuring()
         for (flow, melt, firn, ero) in [(3.0, 0.0010, 1e-4, 0.0),
                                         (3.0, 0.0010, 2e-4, 0.0),
                                         (3.0, 0.0004, 1e-4, 0.0),
@@ -244,7 +247,8 @@ final class Glacier: XCTestCase {
     /// V→U-Kennzahl wird auf DENSELBEN Talstücken auch im eisfreien Referenzarm
     /// gemessen: nur die Differenz zeigt, was das Eis geformt hat (die absolute
     /// Zahl hängt an Talgröße und Stichprobe).
-    func testGlacialErosionSweepDiagnostic() {
+    func testGlacialErosionSweepDiagnostic() throws {
+        try skipUnlessMeasuring()
         for (firn, ero, swath) in [(1e-4, 3e-5, 2), (4e-4, 3e-5, 2), (1e-3, 3e-5, 2),
                                    (4e-4, 1e-4, 2), (4e-4, 3e-5, 0), (4e-4, 3e-5, 4)] {
             var c = cfg(n: 384)
@@ -268,7 +272,8 @@ final class Glacier: XCTestCase {
     /// vergletschert sind), im Eis-Arm gegen den eisfreien Referenzarm mit
     /// demselben Seed. Erst die Differenz der beiden Verläufe trennt das Eis von
     /// der allgemeinen Alterung. Rohdaten für `docs/glacier-measurements.md` §D.
-    func testValleyShapeSeriesDiagnostic() {
+    func testValleyShapeSeriesDiagnostic() throws {
+        try skipUnlessMeasuring()
         for (turnover, ero) in [(1000.0, 1e-4), (1000.0, 3e-4), (4000.0, 1e-4)] {
             var c = cfg(n: 384)
             c.iceTurnoverYears = turnover; c.iceErodeK = ero
@@ -297,7 +302,8 @@ final class Glacier: XCTestCase {
     /// Schritt aus DEMSELBEN Zustand in drei Armen (nichts / nur Abtrag / nur
     /// Moräne), damit die Differenzen genau die beiden Terme isolieren.
     /// Rohdaten für `docs/glacier-measurements.md` §F.
-    func testMoraineBudgetDiagnostic() {
+    func testMoraineBudgetDiagnostic() throws {
+        try skipUnlessMeasuring()
         var none = quietCfg(n: 256); none.iceErodeK = 0; none.iceMoraineK = 0
         var eroOnly = quietCfg(n: 256); eroOnly.iceMoraineK = 0
         var morOnly = quietCfg(n: 256); morOnly.iceErodeK = 0
@@ -322,7 +328,8 @@ final class Glacier: XCTestCase {
     /// Rechenzeit des Gletscher-Passes: Schrittzeit mit gegen ohne Eis, für den
     /// Frame-Fall (dt klein) und den `+10.000 Jahre`-Sprung. Rohdaten für
     /// `docs/glacier-measurements.md` §E.
-    func testIcePassCostDiagnostic() {
+    func testIcePassCostDiagnostic() throws {
+        try skipUnlessMeasuring()
         for n in [384, 640] {
             let on = cfg(n: n)
             var off = on; off.iceEnabled = false

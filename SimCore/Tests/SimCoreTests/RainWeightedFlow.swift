@@ -316,7 +316,8 @@ final class RainWeightedFlowTests: XCTestCase {
     ///     RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test -c release \
     ///       --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
     ///       --filter testRainWeightMeasurementDiagnostic
-    func testRainWeightMeasurementDiagnostic() {
+    func testRainWeightMeasurementDiagnostic() throws {
+        try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
         let n = Int(env["RS_MEAS_N"] ?? "") ?? 192
         let years = Int(env["RS_MEAS_YEARS"] ?? "") ?? 20_000
@@ -346,7 +347,8 @@ final class RainWeightedFlowTests: XCTestCase {
     /// Richtung (Luv/Lee) muss über verschiedene Inselformen dieselbe sein, sonst
     /// misst man nur die Zufallslage der Gebirge. Print-only bis auf den Vergleich
     /// der MITTLEREN Verhältnisse.
-    func testRainWeightLuvLeeIsSeedRobustDiagnostic() {
+    func testRainWeightLuvLeeIsSeedRobustDiagnostic() throws {
+        try skipUnlessMeasuring()
         // GEPOOLT statt „Mittel der Verhältnisse": kleine, trockene Seeds haben
         // Hälften ganz ohne Kanalzellen (Seed 555: 47 bzw. 11 Kanalzellen auf der
         // ganzen Insel) — deren Einzel-Verhältnis ist 0 bzw. undefiniert und würde

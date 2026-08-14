@@ -47,7 +47,8 @@ final class ClimateSnow: XCTestCase {
     /// **Sweep über `snowMeltPerKYear`** — der Regler, der die BREITE des
     /// Übergangs setzt. Druckt die Landanteile bei der Generierung und nach
     /// 20.000 Jahren. Rohdaten für `docs/climate-snow-measurements.md`.
-    func testMeltRateSweepDiagnostic() {
+    func testMeltRateSweepDiagnostic() throws {
+        try skipUnlessMeasuring()
         for c in [0.02, 0.06, 0.20] {
             var conf = cfg()
             conf.snowMeltPerKYear = c
@@ -71,7 +72,8 @@ final class ClimateSnow: XCTestCase {
     /// Produktions-Kalibrierung in Produktionsauflösung: was die Verteilung
     /// wirklich macht, inklusive Temperatur-Spanne und dem Vergleich zum alten
     /// Perzentil-Schnee (1.5 % des Landes).
-    func testProductionResolutionDiagnostic() {
+    func testProductionResolutionDiagnostic() throws {
+        try skipUnlessMeasuring()
         var c = SimConfig(); c.n = 832
         let t = Terrain(config: c, seed: 1337)
         for label in ["J0", "J10k", "J30k"] {
@@ -92,7 +94,8 @@ final class ClimateSnow: XCTestCase {
     /// gemessen statt geschätzt (dieselbe Doktrin wie bei `updateHeightBands`).
     /// `updateClimate` ist parallel und per-Zelle, `snowAreaFractions` (im
     /// Höhenband-Pass) ist ein sequenzieller Zählpass über alle Zellen.
-    func testClimatePassCostDiagnostic() {
+    func testClimatePassCostDiagnostic() throws {
+        try skipUnlessMeasuring()
         var c = SimConfig(); c.n = 832
         let t = Terrain(config: c, seed: 1337)
         let rounds = 200

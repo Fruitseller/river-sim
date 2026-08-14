@@ -255,8 +255,7 @@ final class FlattenRegeneration: XCTestCase {
     /// Prüft nichts, sondern druckt die Tabelle für `docs/` — der eigentliche
     /// Wächter ist `testFlattenedPlateRegeneratesWithin3000Years`.
     func testFlattenMeasurementDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_MEASURE"] != nil,
-                          "Messreihe nur mit RS_MEASURE=1 (Laufzeit)")
+        try skipUnlessMeasuring()
         let t = flattenedTerrain()
         print("== Issue #26: Einebnung auf sea+0.25, Seed 1337, n=96 ==")
         print(FlattenRegeneration.header)
@@ -535,8 +534,7 @@ final class FlattenRegeneration: XCTestCase {
     /// Vorher/Nachher: Regenerations-Pfad aus gegen ein (beide Male derselbe
     /// Eingriff über die echte Pinsel-API).
     func testDisturbanceSweepDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_SWEEP"] != nil,
-                          "Sweep nur mit RS_SWEEP=1")
+        try skipUnlessMeasuring()
         print("Pfad  seed |  " + FlattenRegeneration.innerHeader + " | Netzstabilität")
         for on in [false, true] {
             for seed in [1337, 4242, 777] {
@@ -555,7 +553,7 @@ final class FlattenRegeneration: XCTestCase {
 
     /// Mäander-Zustand vor/nach dem Eingriff (Kalibrierung des Wächters).
     func testMeanderStateDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_SWEEP"] != nil, "nur mit RS_SWEEP=1")
+        try skipUnlessMeasuring()
         for on in [false, true] {
             var c = flatCfg(); c.disturbanceEnabled = on
             let t = Terrain(config: c, seed: 1337)
@@ -575,8 +573,7 @@ final class FlattenRegeneration: XCTestCase {
 
     /// Zeitverlauf der gewählten Kalibrierung (Innenfläche).
     func testRegenerationTrajectoryDiagnostic() throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["RS_SWEEP"] != nil,
-                          "Verlauf nur mit RS_SWEEP=1")
+        try skipUnlessMeasuring()
         for seed in [1337, 4242] {
             let t = flattenedTerrain(seed: UInt32(seed))
             print("== Verlauf, Seed \(seed) ==")
