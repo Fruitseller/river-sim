@@ -615,12 +615,18 @@ final class SimNode: Node {
             let psd = sdb.baseAddress!, ph = hb.baseAddress!, phf = hfb.baseAddress!
             let pa = ab.baseAddress!, psm = smb.baseAddress!
             parallelChunks(cnt) { lo, hi in
-                for k in lo..<hi where phf[k] > sea && ph[k] > sea && phf[k] - ph[k] <= 0.01 {
+                for k in lo..<hi where phf[k] > sea && ph[k] > sea
+                                       && phf[k] - ph[k] <= WaterRender.streamPondTolerance {
                     let cu = pa[k] / cellArea
                     if cu < creek { continue }
-                    let m = min(max((psm[k] - 0.18) / 0.24, 0), 1) // Track-Maske 0.18..0.42 (von 0.12..0.35 angehoben: Zufallspfad-Speckle bleibt drunter, konsistente Läufe drüber)
+                    // Track-Maske und Abfluss-Abstufung stehen im Kalibrier-
+                    // Vertrag (`WaterRender`) statt hier: dort sind sie headless
+                    // gepinnt, hier wären sie nur mit einem Extension-Build
+                    // prüfbar (Issue #51).
+                    let m = WaterRender.trackMask(streamMap: psm[k])
                     if m <= 0 { continue }
-                    psd[k] = min(1, 0.4 + log(cu / creek + 1) / 4) * (0.35 + 0.65 * m)
+                    psd[k] = WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
+                        * WaterRender.trackWeight(mask: m)
                 }
             }
         }}}}}
@@ -637,22 +643,23 @@ final class SimNode: Node {
         // garantiert durchgängig bis Mündung/See — 1 Zelle breit, Breite macht
         // weiterhin nur die (schwellen-gestufte) Dilatation darunter.
         for start in 0..<(n * n) where sd[start] > 0 {
-            var val = sd[start] - 0.015
+            var val = sd[start] - WaterRender.continuityDecayPerCell
             var r = rec[start]
-            while r >= 0 && val > 0.3 {
+            while r >= 0 && val > WaterRender.continuityFloor {
                 let ri = Int(r)
                 if sd[ri] >= val { break }   // Kette ab hier schon (stärker) gemalt
                 sd[ri] = val
-                val -= 0.015
+                val -= WaterRender.continuityDecayPerCell
                 r = rec[ri]
             }
         }
-        let barTol = 0.004
+        let barTol = WaterRender.widenBarTolerance
         // NUR kräftige Läufe verbreitern (kein Alle-Läufe-Pass mehr): Bäche bleiben
         // fadendünn (1 Zelle), Hauptflüsse verlieren ~1 Zelle Breite — die Breiten-
         // Hierarchie bleibt, ihr Absolutniveau sinkt (User: „proportional zu dick";
         // die alte Kalibrierung stammt von der kleineren 640er-Map).
-        let widenThresh = [0.55, 0.80]
+        let widenThresh = WaterRender.widenThresholds
+        let widenFalloff = WaterRender.widenFalloff
         for thresh in widenThresh {
             // Liest sd/h/hf, schreibt nur b[k] → zeilenparallel, bit-identisch.
             sd.withUnsafeBufferPointer { sdb in
@@ -665,10 +672,10 @@ final class SimNode: Node {
                     for i in 0..<n {
                         let k = j * n + i
                         var m = psd[k]
-                        if i > 0 && psd[k - 1] > thresh && ph[k] - phf[k - 1] < barTol { m = max(m, psd[k - 1] - 0.09) }
-                        if i < n - 1 && psd[k + 1] > thresh && ph[k] - phf[k + 1] < barTol { m = max(m, psd[k + 1] - 0.09) }
-                        if j > 0 && psd[k - n] > thresh && ph[k] - phf[k - n] < barTol { m = max(m, psd[k - n] - 0.09) }
-                        if j < n - 1 && psd[k + n] > thresh && ph[k] - phf[k + n] < barTol { m = max(m, psd[k + n] - 0.09) }
+                        if i > 0 && psd[k - 1] > thresh && ph[k] - phf[k - 1] < barTol { m = max(m, psd[k - 1] - widenFalloff) }
+                        if i < n - 1 && psd[k + 1] > thresh && ph[k] - phf[k + 1] < barTol { m = max(m, psd[k + 1] - widenFalloff) }
+                        if j > 0 && psd[k - n] > thresh && ph[k] - phf[k - n] < barTol { m = max(m, psd[k - n] - widenFalloff) }
+                        if j < n - 1 && psd[k + n] > thresh && ph[k] - phf[k + n] < barTol { m = max(m, psd[k + n] - widenFalloff) }
                         pb[k] = m
                     }
                 }
@@ -724,8 +731,8 @@ final class SimNode: Node {
                     // Intensität mit der Stream-Map gewichten: wo dem gestempelten
                     // Bett real kein Wasser folgt (verwaiste/verknäulte Linien),
                     // verblasst der Stempel, statt voll zu leuchten.
-                    let mM = min(max((smap[kk] - 0.10) / 0.20, 0), 1)
-                    let iM = intens * (0.30 + 0.70 * mM)
+                    let mM = WaterRender.corridorMask(streamMap: smap[kk])
+                    let iM = intens * WaterRender.corridorWeight(mask: mM)
                     if sd[kk] < iM { sd[kk] = iM }
                     mstamp[kk] = true; mdx[kk] = dirX; mdz[kk] = dirZ
                 }
@@ -742,17 +749,15 @@ final class SimNode: Node {
                 // erst ab der Render-Schwelle — sonst stempeln hunderte Mini-Läufe
                 // an renderMinCells vorbei (User: „zu viele Flüsse").
                 if q < creek { continue }
-                // Halbbreite ∝ log(Abfluss), Deckel 1 Zelle (war 3): über 10k+ Jahre
-                // verknäulen die migrierten Linien auf den Ebenen — breite Stempel
-                // machten aus den Knäueln blaue Blob-Felder („zu viele Flüsse").
-                // Im Ribbon-Modus folgt der Saum-Radius stattdessen der Ribbon-
-                // Halbbreite (+1 Zelle Rand), damit der Halo das Band ganz umfasst.
+                // Halbbreite ∝ log(Abfluss) mit 1-Zellen-Deckel (Stempel-Modus)
+                // bzw. Ribbon-Halbbreite + Rand (Geometrie-Modus, damit der Halo
+                // das Band ganz umfasst). Beide Kurven stehen in `WaterRender`.
                 let hw = geometryMode
-                    ? ribbonHalfWidthCells(q) + 1.0
-                    : max(0.0, min(1.0, 0.3 + log(max(q, 1) / creek + 1) / 2.6))
+                    ? ribbonHalfWidthCells(q) + WaterRender.ribbonHaloMarginCells
+                    : WaterRender.stampHalfWidthCells(dischargeCells: q, creekCells: creek)
                 let rad = Int(hw.rounded())
                 let intens = geometryMode ? haloIntensity
-                    : min(1.0, 0.6 + log(max(q, 1) / creek + 1) / 4)
+                    : WaterRender.stampIntensity(dischargeCells: q, creekCells: creek)
                 var tx = bx - ax, tz = bz - az
                 let tl = (tx * tx + tz * tz).squareRoot(); if tl > 1e-6 { tx /= tl; tz /= tl }
                 let steps = max(1, Int(tl.rounded()))
@@ -770,7 +775,8 @@ final class SimNode: Node {
                 let last = nodes[nodes.count - 1]
                 let q = ch.discharge[nodes.count - 1]
                 if q >= creek {
-                    let rad = Int((ribbonHalfWidthCells(q) + 1.0).rounded())
+                    let rad = Int((ribbonHalfWidthCells(q)
+                                   + WaterRender.ribbonHaloMarginCells).rounded())
                     var previousX = last.x, previousZ = last.z
                     for point in mouthPath(fromX: last.x, fromZ: last.z) {
                         var dirX = point.x - previousX, dirZ = point.z - previousZ
@@ -794,9 +800,9 @@ final class SimNode: Node {
         // markieren: sichtbar bleibt der offene, physisch gefüllte Hufeisenbogen.
         // Filter/Trimmung/Fade sind GEMEINSAME Konstanten mit der Geometrie
         // (`appendOxbowRibbons`) — beide Pfade müssen dieselben Schleifen meinen.
-        let minimumOxbowNodes = SimNode.minimumOxbowNodes
-        let maximumTrimmedNodes = SimNode.maximumTrimmedOxbowNodes
-        let fullEndFadeSteps = SimNode.oxbowEndFadeSteps
+        let minimumOxbowNodes = WaterRender.oxbowMinimumNodes
+        let maximumTrimmedNodes = WaterRender.oxbowMaximumTrimmedNodes
+        let fullEndFadeSteps = WaterRender.oxbowEndFadeSteps
         // KEINE eigene Tiefen-Rampe mehr (Issue #32): der Shader multipliziert den
         // G-Kanal mit der per-Pixel-Uferkontur smoothstep(pondContourLo,
         // pondContourHi, pond). Eine zweite Rampe hier hätte sie QUADRIERT — frische
@@ -820,7 +826,7 @@ final class SimNode: Node {
         //  - Stempel-Modus (`RS_WATER_STAMP`, Legacy-A/B): unverändert das
         //    See-Overlay von vor #34.
         let minimumPondDepth = WaterRender.pondContourLo
-        let maximumOxbowOpacity = SimNode.maximumOxbowOpacity
+        let maximumOxbowOpacity = WaterRender.oxbowMaximumOpacity
         for oxbowIndex in terrain.meander.oxbows.indices {
             let oxbow = terrain.meander.oxbows[oxbowIndex]
             if oxbow.count < minimumOxbowNodes { continue }
@@ -1224,37 +1230,20 @@ final class SimNode: Node {
         ProcessInfo.processInfo.environment["RS_WATER_STAMP"] == nil
     }
 
-    // Altarm-Parameter — GEMEINSAM für Geometrie (`appendOxbowRibbons`) und
-    // Raster-Pfad (`waterFieldBytes`). Sie müssen dieselben sein: im
-    // Geometrie-Modus nimmt das Wasserfeld genau die Zellen aus dem See-Kanal,
-    // die die Geometrie malt — driften die Filter, entsteht entweder doppeltes
-    // Wasser oder ein Loch.
-    /// Nur substanzielle Schleifen (≈ 15 Zellen Bogen) sind Altarme; die
-    /// Migration schnürt auch 2–4-Knoten-Schlingen ab, die als 3–6-Zell-Blobs
-    /// die Ebenen sprenkelten.
-    private static let minimumOxbowNodes = 10
-    /// Die Cutoff-Enden (Hals) liegen eng beieinander — ungetrimmt schlösse
-    /// sich der Altarm zu einem unnatürlichen Wasserring.
-    private static let maximumTrimmedOxbowNodes = 3
-    /// Knoten, über die die Deckkraft an den Bogen-Enden einblendet.
-    private static let oxbowEndFadeSteps = 3.0
-    /// Deckkraft eines frischen Altarms.
-    private static let maximumOxbowOpacity = 0.7
-    /// Halbbreite des Altarm-Bands (Zellen). Ein Altarm ist der verlassene
-    /// Bogen EINES Laufs — knapp unter dem Ribbon-Deckel (3.2) und über dem
-    /// Boden (0.12), also bewusst konstant statt abflussabhängig: Abfluss hat
-    /// ein Altarm per Definition keinen mehr.
-    private static let oxbowHalfWidthCells = 1.0
+    // Altarm-Parameter, Band-Breiten und Enden-Taper stehen seit Issue #51
+    // vollständig im Kalibrier-Vertrag `WaterRender` — GEMEINSAM für die
+    // Geometrie (`appendOxbowRibbons`) und den Raster-Pfad (`waterFieldBytes`).
+    // Sie müssen dieselben sein: im Geometrie-Modus nimmt das Wasserfeld genau
+    // die Zellen aus dem See-Kanal, die die Geometrie malt — driften die Filter,
+    // entsteht entweder doppeltes Wasser oder ein Loch. Hier stünden sie als
+    // Literal, das nur ein ~20-Minuten-Build prüfen könnte.
 
-    /// Halbbreite (Zellen) aus dem Abfluss `q` (Zellen Einzugsgebiet):
-    /// hydraulische Geometrie w ∝ √Q (Leopold/Maddock, Exponent b ≈ 0.5) statt
-    /// des 1-Zellen-Deckels des Stempels. Referenzpunkt renderMinCells → dort
-    /// 0.8 Zellen Halbbreite (≈ heutige Stempel-Optik); Boden 0.12 hält Oberläufe
-    /// als feine Fäden sichtbar, Deckel 3.2 verhindert Ströme-als-Seen auf den
-    /// verknäulten Ebenen (Lehre aus dem Blob-Felder-Rückbau des Stempels).
+    /// Halbbreite (Zellen) aus dem Abfluss `q` (Zellen Einzugsgebiet), bezogen
+    /// auf die Render-Schwelle der Config. Kurve und Grenzen:
+    /// `WaterRender.ribbonHalfWidthCells`.
     @inline(__always) private func ribbonHalfWidthCells(_ q: Double) -> Double {
-        let w = 0.8 * (max(q, 0) / terrain.cfg.renderMinCells).squareRoot()
-        return min(max(w, 0.12), 3.2)
+        WaterRender.ribbonHalfWidthCells(dischargeCells: q,
+                                         referenceCells: terrain.cfg.renderMinCells)
     }
 
     /// Zentrumslinien-Stand beim letzten Ribbon-Build (Dirty-Vertrag wie
@@ -1565,12 +1554,14 @@ final class SimNode: Node {
                     }
                 }
                 let ord = Double(localOrder)
-                rank[a] = min(ord / 6.0, 1.0)
+                rank[a] = min(ord / WaterRender.ribbonRankDivisor, 1.0)
                 // Die Zentrumslinie ist kontinuierlich; die Sichtbarkeit ebenso
                 // bilinear aus der Stream-Map lesen. Nearest-Cell erzeugte bei
                 // Zellwechseln einzelne Alpha-Spitzen (sichtbare Dreiecksfächer).
                 let stream = bilinearGrid(smap, px[a], pz[a])
-                let mM = min(max((stream - 0.10) / 0.20, 0), 1)
+                // Dasselbe Fenster wie der Korridor-Stempel: beide fragen, ob
+                // dem gestempelten Bett real Wasser folgt (Issue #51).
+                let mM = WaterRender.corridorMask(streamMap: stream)
                 let x = min(max(pq[a] / creek, 0), 1)
                 let ramp = x * x * (3 - 2 * x) // smoothstep(0, creek, q)
                 var aQ = ramp
@@ -1585,7 +1576,8 @@ final class SimNode: Node {
                 supportWeight += weight
             }
             let supportMean = supportSum / max(supportWeight, 1e-9)
-            let supportX = min(max((supportMean - 0.35) / 0.30, 0), 1)
+            let supportX = min(max((supportMean - WaterRender.ribbonSupportLo)
+                                   / WaterRender.ribbonSupportSpan, 0), 1)
             let channelOpacity = supportX * supportX * (3 - 2 * supportX)
             for a in 0..<cnt { alpha[a] *= channelOpacity }
 
@@ -1602,15 +1594,16 @@ final class SimNode: Node {
             }
             // Unsichtbare Schwänze (Deckkraft ≈ 0) nicht emittieren; 2 Samples
             // Vorlauf bleiben für den weichen Einstieg.
-            guard var lo = alpha.firstIndex(where: { $0 > 0.02 }),
-                  let hi = alpha.lastIndex(where: { $0 > 0.02 }) else { continue }
+            guard var lo = alpha.firstIndex(where: { $0 > WaterRender.ribbonMinimumAlpha }),
+                  let hi = alpha.lastIndex(where: { $0 > WaterRender.ribbonMinimumAlpha })
+            else { continue }
             lo = max(0, lo - 2)
             if hi - lo < 2 { continue }
             // Kartografische Hierarchie: nur Zentrumslinien, die wenigstens
             // Strahler 4 erreichen. Der feine Oberlauf DESSELBEN Bands bleibt
             // vollständig erhalten; Ordnung 3 ließ im fokussierten 20k-A/B noch
             // hunderte überlagerte Mäander auf der Ebene sichtbar werden.
-            if !rank[lo...hi].contains(where: { $0 >= 0.65 }) { continue }
+            if !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
 
             // Bogenlängen (Welt) für Taper und UV.y.
             var arc = [Double](repeating: 0, count: cnt)
@@ -1625,9 +1618,9 @@ final class SimNode: Node {
             // liegt das Band FLACH auf dem Spiegel und blendet mit der
             // Wassersäule aus (`submergedFade`).
             var samples: [RibbonSample] = []
-            samples.reserveCapacity(hi - lo + 1 + SimNode.mouthSearchCells)
+            samples.reserveCapacity(hi - lo + 1 + WaterRender.mouthSearchCells)
             for a in lo...hi {
-                let taper = min(1, arc[a] / (4 * cs))
+                let taper = min(1, arc[a] / (WaterRender.ribbonSourceTaperCells * cs))
                 samples.append(RibbonSample(x: px[a], z: pz[a],
                                             halfWidth: ribbonHalfWidthCells(pq[a]) * taper,
                                             alpha: alpha[a] * taper,
@@ -1646,7 +1639,7 @@ final class SimNode: Node {
                 // Kein Wasser in Reichweite: der Lauf versickert im Land — dort
                 // bleibt der weiche Enden-Taper von #31 richtig.
                 for a in samples.indices {
-                    let t = min(1, (total - arc[lo + a]) / (2 * cs))
+                    let t = min(1, (total - arc[lo + a]) / (WaterRender.ribbonTailTaperCells * cs))
                     samples[a].halfWidth *= t
                     samples[a].alpha *= t
                 }
@@ -1663,7 +1656,7 @@ final class SimNode: Node {
                 // (dort ist `submergedFade` noch > 0). Dann übernehmen die
                 // Delta-Arme — das Band selbst läuft über die letzten 2 Zellen
                 // weich aus, statt mit einer Kante zu enden.
-                SimNode.taperTail(&samples, cells: 2)
+                SimNode.taperTail(&samples, cells: WaterRender.ribbonTailTaperCells)
             }
 
             // Wasser-Übergabe in EINEM Pass über den fertigen Lauf (die
@@ -1693,14 +1686,10 @@ final class SimNode: Node {
         appendOxbowRibbons(hscale: hscale, lift: lift)
     }
 
-    /// Suchweite der Mündungs-Verlängerung (Zellen). Reicht das Wasser nicht so
-    /// weit, endet der Lauf im Land (Versickerung/Trockental) und bekommt seinen
-    /// weichen Enden-Taper statt einer Mündung.
-    private static let mouthSearchCells = 8
-
     /// Mündungs-Pfad: Zellzentren vom letzten Zentrumslinien-Knoten dem
     /// D8-Empfänger folgend, bis das Band `WaterRender.mouthOverlapCells` tief
-    /// in der Wasserfläche liegt. Leer = binnen `mouthSearchCells` kein Wasser.
+    /// in der Wasserfläche liegt. Leer = binnen `WaterRender.mouthSearchCells`
+    /// kein Wasser.
     ///
     /// Die D8-Kette läuft in Zell-Schritten und zickzackt entsprechend; ein
     /// 3-Punkt-Mittel glättet sie, ohne die Endpunkte zu verschieben.
@@ -1716,7 +1705,7 @@ final class SimNode: Node {
         var k = j0 * n + i0
         var path: [(x: Double, z: Double, surface: Double?)] = []
         var wetCells = 0.0
-        for _ in 0..<SimNode.mouthSearchCells {
+        for _ in 0..<WaterRender.mouthSearchCells {
             let r = rec[k]
             if r < 0 { break }
             k = Int(r)
@@ -1779,11 +1768,13 @@ final class SimNode: Node {
                 // Ein Mindestmaß hält den Fächer als Fläche lesbar — mit der
                 // reinen Lauf-Breite wurden aus schmalen Mündungen drei
                 // nadeldünne Strahlen (A/B-Screenshot).
-                let armWidth = max(halfWidth, 1.5)
+                let armWidth = max(halfWidth, WaterRender.deltaArmMinHalfWidthCells)
                 samples.append(RibbonSample(x: x, z: z,
-                                            halfWidth: armWidth * (1.2 - 0.6 * f),
+                                            halfWidth: armWidth * (WaterRender.deltaArmWidthAtMouth
+                                                - WaterRender.deltaArmWidthTaper * f),
                                             alpha: WaterRender.deltaArmOpacity * (1 - f * f),
-                                            rank: rank * 0.35, surface: surface))
+                                            rank: rank * WaterRender.deltaArmRankFactor,
+                                            surface: surface))
             }
             if samples.count < WaterRender.deltaMinArmCells { continue }
             // Der Fächer muss an SICHTBARES Wasser anschließen: entweder an die
@@ -1793,7 +1784,7 @@ final class SimNode: Node {
             // hintenherum doch tun.
             if !reachedFront && !onSea { continue }
             // Weich in die Wasserfläche auslaufen (letzte 2 Zellen).
-            SimNode.taperTail(&samples, cells: 2)
+            SimNode.taperTail(&samples, cells: WaterRender.ribbonTailTaperCells)
             emitRibbon(samples, kind: WaterRender.ribbonKindDelta, still: false,
                        hscale: hscale, lift: lift)
         }
@@ -1814,12 +1805,12 @@ final class SimNode: Node {
         let sea = terrain.cfg.sea
         for index in terrain.meander.oxbows.indices {
             let oxbow = terrain.meander.oxbows[index]
-            if oxbow.count < SimNode.minimumOxbowNodes { continue }
+            if oxbow.count < WaterRender.oxbowMinimumNodes { continue }
             let age = index < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[index] : 0
             let fade = max(0, 1 - age / terrain.cfg.oxbowMaxAge)
             if fade <= 0 { continue }
-            let trim = min(SimNode.maximumTrimmedOxbowNodes, max(1, oxbow.count / 8))
+            let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, oxbow.count / 8))
             let first = trim, last = oxbow.count - trim - 1
             if last - first < 2 { continue }
             var samples: [RibbonSample] = []
@@ -1830,7 +1821,7 @@ final class SimNode: Node {
                 let cj = min(max(Int(node.z.rounded()), 0), n - 1)
                 let k = cj * n + ci
                 let edgeSteps = min(nodeIndex - first, last - nodeIndex)
-                let endFade = min(1, Double(edgeSteps + 1) / SimNode.oxbowEndFadeSteps)
+                let endFade = min(1, Double(edgeSteps + 1) / WaterRender.oxbowEndFadeSteps)
                 var alpha = 0.0
                 var surface = wl[k]
                 if let s = SimNode.openWaterSurface(k, h: h, wl: wl, sea: sea), s > sea {
@@ -1840,14 +1831,14 @@ final class SimNode: Node {
                     // ohne diesen Faktor lagen dunkle Altarm-Haken ÜBER der
                     // Seefläche, wenn ein alter Bogen unter einem See liegt
                     // (gemessen: Seed 1337, Jahr 20.000, sichtbar im A/B).
-                    alpha = SimNode.maximumOxbowOpacity * fade * endFade
+                    alpha = WaterRender.oxbowMaximumOpacity * fade * endFade
                         * SimNode.lakeHandoverFade(pond: s - h[k])
                 }
                 samples.append(RibbonSample(x: node.x, z: node.z,
-                                            halfWidth: SimNode.oxbowHalfWidthCells,
+                                            halfWidth: WaterRender.oxbowHalfWidthCells,
                                             alpha: alpha, rank: 0, surface: surface))
             }
-            if !samples.contains(where: { $0.alpha > 0.02 }) { continue }
+            if !samples.contains(where: { $0.alpha > WaterRender.ribbonMinimumAlpha }) { continue }
             emitRibbon(samples, kind: WaterRender.ribbonKindOxbow, still: true,
                        hscale: hscale, lift: lift)
         }

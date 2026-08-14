@@ -19,7 +19,8 @@ extends SceneTree
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 
-# Vertragswerte aus SimCore/WaterRender.swift (dort begründet).
+# Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — gepinnt von
+# SimCoreTests/WaterRenderTests.swift gegen DIESE Datei (Issue #51).
 const KIND_RIVER := 0.0
 const KIND_DELTA := 0.5
 const KIND_OXBOW := 1.0

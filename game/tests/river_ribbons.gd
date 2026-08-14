@@ -14,9 +14,12 @@ extends SceneTree
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 
-# Vertragswerte aus SimCore/WaterRender.swift (dort begründet).
+# Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — gepinnt von
+# SimCoreTests/WaterRenderTests.swift gegen DIESE Datei (Issue #51).
 const LAKE_SURFACE_LIFT := 0.04
 const SEA_SURFACE_SINK := -0.06
+const MIN_RANK := 0.65
+const KIND_DELTA_LO := 0.25
 
 var done := false
 
@@ -155,7 +158,7 @@ func _run() -> void:
 	for s in starts.size():
 		var from: int = starts[s]
 		var to: int = (starts[s + 1] if s + 1 < starts.size() else verts.size())
-		if uv2s[from].x > 0.25:
+		if uv2s[from].x > KIND_DELTA_LO:
 			continue
 		river_strips += 1
 		var strip_max_rank := 0.0
@@ -166,7 +169,7 @@ func _run() -> void:
 			# `submergedFade`) — dort übernimmt die Seefläche im selben Pixel.
 			if a > from and not pair_on_water[a / 2] and not pair_on_water[a / 2 - 1]:
 				max_alpha_jump = maxf(max_alpha_jump, absf(cols[a].a - cols[a - 2].a))
-		if strip_max_rank < 0.65:
+		if strip_max_rank < MIN_RANK:
 			push_error("FAIL: Ribbon ohne Strahler-4-Anschluss emittiert")
 			quit(1)
 			return
@@ -189,7 +192,7 @@ func _run() -> void:
 	for s in starts.size():
 		var from: int = starts[s]
 		var to: int = (starts[s + 1] if s + 1 < starts.size() else verts.size())
-		if uv2s[from].x > 0.25:
+		if uv2s[from].x > KIND_DELTA_LO:
 			continue
 		for a in range(from, to, 2):
 			var left := Vector2(verts[a].x, verts[a].z)
