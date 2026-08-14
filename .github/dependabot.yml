@@ -1,7 +1,10 @@
 version: 2
 updates:
-  # Hält die auf Commit-SHA gepinnten Actions in simcore-tests.yml aktuell
-  # (siehe Kommentar dort zur Supply-Chain-Härtung).
+  # Hält die auf Commit-SHA gepinnten Actions in ci.yml und in
+  # .github/actions/swift-toolchain/action.yml aktuell (siehe Kommentar dort zur
+  # Supply-Chain-Härtung). `directory: "/"` deckt beide ab: für das
+  # github-actions-Ecosystem ist das Verzeichnis das Repo-Wurzelverzeichnis,
+  # Dependabot durchsucht darunter Workflows UND lokale Composite-Actions.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

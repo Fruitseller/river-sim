@@ -1,12 +1,21 @@
-name: SimCore-Tests
+name: CI
 
-# Headless-Verifikationsebene aus PLAN.md §5: die SimCore-Suite läuft bei jedem
-# Push/PR, damit Kalibrierungs-Verschiebungen sofort auffallen.
+# Zwei Verifikationsebenen, zwei Jobs (Issue #52):
 #
-# Bewusst NICHT Teil dieses Workflows: der Build der GDExtension (`scripts/build.sh`).
-# Der GDExtension-Build braucht Godot/SwiftGodot und dauert ~3,5 min zusätzlich —
-# das würde die CI-Laufzeit sprengen, ohne dass es zur eigentlichen Verifikation
-# (headless XCTest, GPU-frei) etwas beiträgt.
+#   test            — der Sim-Kern (SimCore, headless XCTest, GPU-frei). PLAN.md §5.
+#   godot-contract  — der Godot-Vertrag: GDExtension bauen, Projekt importieren,
+#                     Build-Stempel-Parität, Smoke-/Geometrie-/Ribbon-Tests.
+#
+# Warum getrennt und NICHT `needs:`-verkettet: die beiden Jobs teilen keinen
+# Build (SimCore/.build gegen Extension/.build — verschiedene Paketgraphen,
+# verschiedene Scratch-Pfade) und laufen deshalb parallel. Die Gesamtzeit des
+# Laufs ist damit die des langsameren Jobs, nicht die Summe. Messwerte und das
+# vereinbarte Laufzeitlimit: docs/ci-measurements.md.
+#
+# Bis Issue #52 lief hier NUR der Sim-Kern; der Godot-Vertrag war eine
+# Zusage im Review ("lokal ausgeführt"). Der Dateiname war entsprechend
+# `simcore-tests.yml` — der Job heißt weiterhin `test`, damit vorhandene
+# Verweise (Branch-Schutz, Badges) auf denselben Check zeigen.
 
 on:
   push:
@@ -17,7 +26,7 @@ on:
 # PR-Merge-Ref). Die Gruppe bündelt alle Events eines PR (github.head_ref) bzw. eines
 # main-Pushes (github.ref) und storniert den älteren Lauf.
 concurrency:
-  group: simcore-tests-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # Least-Privilege: der Workflow liest nur den Checkout, braucht keine Schreibrechte.
@@ -37,85 +46,20 @@ jobs:
     # "Unsupported platform: Ubuntu 24.04" (gemessen im ersten CI-Lauf, Aug 2026).
     # 22.04 hat auch libncursesw.so.6 für den Swift-Shim.
     runs-on: ubuntu-22.04
+    # Die Pflichtsuite liegt lokal bei ~7 min, das vereinbarte Budget bei 15 min
+    # (docs/ci-measurements.md). Der Deckel fängt den Hänger ab, nicht das
+    # langsame Wachstum — sonst verbrennt ein Endlos-Test sechs Stunden
+    # Runner-Zeit.
+    timeout-minutes: 40
     steps:
       # Commit-SHA statt mutable Tag (Supply-Chain-Härtung, öffentliches Repo).
       # Versionsupdates laufen künftig über Dependabot (`.github/dependabot.yml`,
       # `github-actions`-Ecosystem), nicht über manuelles Nachziehen der Pins.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # System-Abhängigkeiten laut Swift.org-Installationsanleitung für Ubuntu 22.04
-      # (https://www.swift.org/install/linux/). Die Toolchain-Binaries verlinken u. a.
-      # gegen libz3 (Compiler-Constraint-Solver) und libcurl; auf dem Runner-Image
-      # fehlen diese teils. apt-get ist idempotent — bereits installierte Pakete
-      # werden übersprungen. (libpython3 bewusst weggelassen: das Metapackage ist im
-      # Runner-Image-Index nicht auffindbar, und die Laufzeitlib ist über python3.10
-      # ohnehin vorhanden.)
-      - name: System-Abhängigkeiten (swift.org-Doku)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 \
-            libgcc-9-dev libsqlite3-0 libstdc++-9-dev libxml2-dev \
-            libz3-dev pkg-config tzdata unzip zlib1g-dev
-
-      # Toolchain-Cache: die heruntergeladene Swift-Toolchain ist mehrere GB groß;
-      # ohne Cache würde jeder Lauf am Download hängen (Abnahmekriterium
-      # "Laufzeit im Rahmen"). actions/cache extrahiert den Restore mit absoluten
-      # Pfaden (-P) direkt nach /opt/swift — deshalb muss das Verzeichnis dem
-      # Runner-User gehören, sonst bricht der Restore mit EACCES ab.
-      - name: Toolchain-Verzeichnis vorbereiten
-        run: |
-          sudo mkdir -p /opt/swift
-          sudo chown -R "$USER" /opt/swift
-
-      - name: Swift-Toolchain-Cache
-        id: toolchain-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/swift-toolchain
         with:
-          path: /opt/swift
-          key: swift-${{ env.SWIFT_VERSION }}-ubuntu22.04
-
-      - name: Swift-Toolchain einrichten
-        # Direkter Download der offiziellen Toolchain von swift.org statt swiftly/
-        # setup-swift: swiftly 0.3.0 scheiterte an Ubuntu 24.04, setup-swift v2.4.0
-        # kennt Swift 6.3.3 nicht ("Version 6.3.3 is not available") — beide gemessen
-        # in den ersten CI-Läufen (Aug 2026). URL-Schema:
-        # https://download.swift.org/swift-<VERSION>-release/ubuntu2204/
-        # Bei Cache-Hit ist /opt/swift bereits gefüllt, der Download entfällt.
-        run: |
-          if [[ -x /opt/swift/usr/bin/swift ]]; then
-            echo "Swift-Toolchain aus Cache: $(/opt/swift/usr/bin/swift --version | head -n1)"
-          else
-            echo "Lade Swift-${{ env.SWIFT_VERSION }}-Toolchain von swift.org herunter ..."
-            curl -fsSL --retry 3 \
-              "https://download.swift.org/swift-${{ env.SWIFT_VERSION }}-release/ubuntu2204/swift-${{ env.SWIFT_VERSION }}-RELEASE/swift-${{ env.SWIFT_VERSION }}-RELEASE-ubuntu22.04.tar.gz" \
-              -o /tmp/swift.tar.gz
-            sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
-            rm /tmp/swift.tar.gz
-            echo "Toolchain installiert unter /opt/swift: $(/opt/swift/usr/bin/swift --version | head -n1)"
-          fi
-          echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
-
-      - name: Ncurses-Kompat-Shim (Debian/Ubuntu-Runner)
-        # Die Swift.org-Toolchain erwartet libncurses.so.6; manche Ubuntu-Images
-        # stellen nur die Wide-Char-Variante bereit. Gleiche Verknüpfung wie
-        # scripts/build.sh. Schlägt der Shim still fehl, bricht der spätere
-        # `swift`-Aufruf mit einer kryptischen "cannot open shared object file"-
-        # Meldung ab — deshalb hier sichtbar loggen bzw. hart abbrechen, wenn
-        # keine passende Lib zu finden ist.
-        run: |
-          COMPAT_LIBS="$PWD/.tools/swift-libs"
-          if [[ -e "$COMPAT_LIBS/libncurses.so.6" ]]; then
-            echo "Ncurses-Shim bereits vorhanden: $COMPAT_LIBS/libncurses.so.6"
-          elif [[ -e /usr/lib/x86_64-linux-gnu/libncursesw.so.6 ]]; then
-            mkdir -p "$COMPAT_LIBS"
-            ln -s /usr/lib/x86_64-linux-gnu/libncursesw.so.6 "$COMPAT_LIBS/libncurses.so.6"
-            echo "Ncurses-Shim angelegt: $COMPAT_LIBS/libncurses.so.6 -> libncursesw.so.6"
-          else
-            echo "::error::libncursesw.so.6 nicht gefunden — Swift-Toolchain kann libncurses.so.6 nicht laden. Runner-Image geändert?"
-            exit 1
-          fi
-          echo "LD_LIBRARY_PATH=$COMPAT_LIBS:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          swift-version: ${{ env.SWIFT_VERSION }}
 
       # SwiftPM-Build-Cache: verhindert, dass jeder Lauf komplett neu kompiliert.
       - name: SimCore-Build-Cache
@@ -126,6 +70,93 @@ jobs:
           restore-keys: |
             simcore-build-${{ runner.os }}-${{ env.SWIFT_VERSION }}-
 
+      # RS_MEASURE bleibt UNGESETZT: die Mess-/Sweep-Läufe (Namensendung
+      # `Diagnostic`) drucken nur Tabellen für docs/ und können nicht rot werden,
+      # kosten aber den Großteil der Laufzeit. Siehe
+      # SimCore/Tests/SimCoreTests/MeasurementGate.swift.
       - name: SimCore-Suite ausführen
         run: |
           swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+
+  godot-contract:
+    # Der Godot-Vertrag: alles, was die GDExtension Godot zusagt. Lief bis
+    # Issue #52 nur lokal — und damit genau dann nicht, wenn es darauf ankam.
+    runs-on: ubuntu-22.04
+    # Kaltbau der Extension auf einem 4-Kern-Linux-Runner: ~27 min (AGENTS.md,
+    # SwiftGodots Codegen dominiert). Mit warmem Cache Minuten. Der Deckel lässt
+    # einen Kaltbau plus Godot-Läufe zu, ohne einen Hänger auszusitzen.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/swift-toolchain
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+
+      # Der teure Teil: SwiftGodots Codegen speist die ganze Modulkette. Der Key
+      # hängt an Package.resolved (der Pin aus Issue #49) und an den Quellen; der
+      # restore-key holt sonst den letzten Stand desselben Toolchain-Stands, aus
+      # dem SwiftPM inkrementell weiterbaut.
+      - name: Extension-Build-Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Extension/.build
+          key: extension-build-${{ runner.os }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('Extension/Package.resolved', 'Extension/Sources/**', 'SimCore/Sources/**') }}
+          restore-keys: |
+            extension-build-${{ runner.os }}-${{ env.SWIFT_VERSION }}-
+
+      # Godot-Binärdatei: Version und Prüfsumme stehen in scripts/fetch-godot.sh,
+      # damit CI und Arbeitsplatz dieselbe Binärdatei benutzen. Die Version steht
+      # deshalb auch hier NICHT im Klartext — `--path` liest sie aus dem Skript.
+      - name: Godot-Version auflösen
+        id: godot
+        run: |
+          BIN="$(scripts/fetch-godot.sh --path)"
+          echo "dir=$(dirname "$BIN")" >> "$GITHUB_OUTPUT"
+          echo "tag=$(basename "$(dirname "$BIN")")" >> "$GITHUB_OUTPUT"
+
+      - name: Godot-Cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.godot.outputs.dir }}
+          key: ${{ steps.godot.outputs.tag }}-linux-x86_64
+
+      - name: Godot bereitstellen
+        run: echo "GODOT=$(scripts/fetch-godot.sh)" >> "$GITHUB_ENV"
+
+      # build.sh baut die GDExtension und kopiert sie samt Swift-Runtime nach
+      # game/bin/. Es brennt dabei den Build-Stempel des Quellstands ein und
+      # prüft am Ende selbst, dass er in der KOPIERTEN Library ankommt.
+      - name: GDExtension bauen (release)
+        run: |
+          "$(git rev-parse --show-toplevel)"/scripts/build.sh release
+
+      # Godot lädt GDExtensions ausschließlich aus .godot/extension_list.cfg, und
+      # die entsteht erst beim Import. game/.godot/ ist gitignoriert, fehlt also
+      # in jedem frischen Checkout — ohne diesen Schritt bliebe SimNode
+      # unregistriert, obwohl game/bin/ korrekt gefüllt ist.
+      - name: Godot-Projekt importieren
+        run: |
+          "$GODOT" --headless --path game --import
+
+      # Parität der beiden Stempel-Verfahren (Shell in scripts/build-stamp.sh,
+      # GDScript in game/scripts/BuildStamp.gd). AGENTS.md verlangt Bytegleichheit;
+      # bis Issue #52 war das eine Review-Zusage. Läuft NACH dem Bau, damit die
+      # generierte BuildStamp.swift existiert und die Ausnahme mitgeprüft wird.
+      - name: Build-Stempel-Parität (Shell ↔ GDScript)
+        run: |
+          "$GODOT" --headless --path game --script res://tests/build_stamp_parity.gd
+
+      # Die drei Godot-Vertragstests. Getrennte Schritte statt einer Schleife:
+      # so zeigt die GitHub-Oberfläche direkt, WELCHER Vertrag gebrochen ist.
+      - name: Smoke-Test (SimNode-Registrierung, Felder, step, Sculpting)
+        run: |
+          "$GODOT" --headless --path game --script res://tests/smoke.gd
+
+      - name: Wasser-Geometrie (Issue #34)
+        run: |
+          "$GODOT" --headless --path game --script res://tests/water_geometry.gd
+
+      - name: Fluss-Ribbons (Issue #31)
+        run: |
+          "$GODOT" --headless --path game --script res://tests/river_ribbons.gd

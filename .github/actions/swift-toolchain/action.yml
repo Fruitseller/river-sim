@@ -1,0 +1,100 @@
+name: Swift-Toolchain
+description: >-
+  Installiert die Swift.org-Toolchain (mit Cache) und den ncurses-Shim, wie
+  AGENTS.md ("Befehle") es für dieses Repo verlangt.
+
+# Warum eine eigene Action und nicht zweimal dieselben Schritte: die
+# Toolchain-Einrichtung ist auf diesem Repo nicht generisch (feste Version,
+# swift.org-Direktdownload statt setup-swift, ncurses-Shim). Sie stand in
+# `simcore-tests.yml` einmal; mit dem Godot-Vertrags-Job aus Issue #52 stünde sie
+# zweimal da — und ein Toolchain-Wechsel, der nur einen der beiden Jobs erwischt,
+# ist genau die Sorte Fehler, die man erst nach 20 Minuten Build sieht.
+
+inputs:
+  swift-version:
+    description: Version der Swift.org-Toolchain (muss zur lokal genutzten passen).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # System-Abhängigkeiten laut Swift.org-Installationsanleitung für Ubuntu 22.04
+    # (https://www.swift.org/install/linux/). Die Toolchain-Binaries verlinken u. a.
+    # gegen libz3 (Compiler-Constraint-Solver) und libcurl; auf dem Runner-Image
+    # fehlen diese teils. apt-get ist idempotent — bereits installierte Pakete
+    # werden übersprungen. (libpython3 bewusst weggelassen: das Metapackage ist im
+    # Runner-Image-Index nicht auffindbar, und die Laufzeitlib ist über python3.10
+    # ohnehin vorhanden.)
+    - name: System-Abhängigkeiten (swift.org-Doku)
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq \
+          binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 \
+          libgcc-9-dev libsqlite3-0 libstdc++-9-dev libxml2-dev \
+          libz3-dev pkg-config tzdata unzip zlib1g-dev
+
+    # Toolchain-Cache: die heruntergeladene Swift-Toolchain ist mehrere GB groß;
+    # ohne Cache würde jeder Lauf am Download hängen (Abnahmekriterium
+    # "Laufzeit im Rahmen"). actions/cache extrahiert den Restore mit absoluten
+    # Pfaden (-P) direkt nach /opt/swift — deshalb muss das Verzeichnis dem
+    # Runner-User gehören, sonst bricht der Restore mit EACCES ab.
+    - name: Toolchain-Verzeichnis vorbereiten
+      shell: bash
+      run: |
+        sudo mkdir -p /opt/swift
+        sudo chown -R "$USER" /opt/swift
+
+    - name: Swift-Toolchain-Cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /opt/swift
+        key: swift-${{ inputs.swift-version }}-ubuntu22.04
+
+    - name: Swift-Toolchain einrichten
+      # Direkter Download der offiziellen Toolchain von swift.org statt swiftly/
+      # setup-swift: swiftly 0.3.0 scheiterte an Ubuntu 24.04, setup-swift v2.4.0
+      # kennt Swift 6.3.3 nicht ("Version 6.3.3 is not available") — beide gemessen
+      # in den ersten CI-Läufen (Aug 2026). URL-Schema:
+      # https://download.swift.org/swift-<VERSION>-release/ubuntu2204/
+      # Bei Cache-Hit ist /opt/swift bereits gefüllt, der Download entfällt.
+      shell: bash
+      run: |
+        if [[ -x /opt/swift/usr/bin/swift ]]; then
+          echo "Swift-Toolchain aus Cache: $(/opt/swift/usr/bin/swift --version | head -n1)"
+        else
+          echo "Lade Swift-${{ inputs.swift-version }}-Toolchain von swift.org herunter ..."
+          curl -fsSL --retry 3 \
+            "https://download.swift.org/swift-${{ inputs.swift-version }}-release/ubuntu2204/swift-${{ inputs.swift-version }}-RELEASE/swift-${{ inputs.swift-version }}-RELEASE-ubuntu22.04.tar.gz" \
+            -o /tmp/swift.tar.gz
+          sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
+          rm /tmp/swift.tar.gz
+          echo "Toolchain installiert unter /opt/swift: $(/opt/swift/usr/bin/swift --version | head -n1)"
+        fi
+        echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
+        # scripts/build.sh baut unter einer festen Minimal-Umgebung und sieht den
+        # PATH des Aufrufers absichtlich NICHT (docs/build-invalidation-measurements.md).
+        # RS_SWIFT_BIN ist der dafür vorgesehene, gezielte Weg zur Toolchain.
+        echo "RS_SWIFT_BIN=/opt/swift/usr/bin" >> "$GITHUB_ENV"
+
+    - name: Ncurses-Kompat-Shim (Debian/Ubuntu-Runner)
+      # Die Swift.org-Toolchain erwartet libncurses.so.6; manche Ubuntu-Images
+      # stellen nur die Wide-Char-Variante bereit. Gleiche Verknüpfung wie
+      # scripts/build.sh. Schlägt der Shim still fehl, bricht der spätere
+      # `swift`-Aufruf mit einer kryptischen "cannot open shared object file"-
+      # Meldung ab — deshalb hier sichtbar loggen bzw. hart abbrechen, wenn
+      # keine passende Lib zu finden ist.
+      shell: bash
+      run: |
+        COMPAT_LIBS="$PWD/.tools/swift-libs"
+        if [[ -e "$COMPAT_LIBS/libncurses.so.6" ]]; then
+          echo "Ncurses-Shim bereits vorhanden: $COMPAT_LIBS/libncurses.so.6"
+        elif [[ -e /usr/lib/x86_64-linux-gnu/libncursesw.so.6 ]]; then
+          mkdir -p "$COMPAT_LIBS"
+          ln -s /usr/lib/x86_64-linux-gnu/libncursesw.so.6 "$COMPAT_LIBS/libncurses.so.6"
+          echo "Ncurses-Shim angelegt: $COMPAT_LIBS/libncurses.so.6 -> libncursesw.so.6"
+        else
+          echo "::error::libncursesw.so.6 nicht gefunden — Swift-Toolchain kann libncurses.so.6 nicht laden. Runner-Image geändert?"
+          exit 1
+        fi
+        echo "LD_LIBRARY_PATH=$COMPAT_LIBS:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
