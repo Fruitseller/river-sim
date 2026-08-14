@@ -415,10 +415,10 @@ public enum WaterRender {
     /// Von 0.12..0.35 angehoben: Zufallspfad-Speckle bleibt drunter, konsistente
     /// Läufe drüber.
     public static let trackMaskLo = 0.18
-    /// Spanne der Track-Maske (Obergrenze = `trackMaskLo + trackMaskSpan`).
-    /// Als SPANNE statt als Obergrenze notiert: der Shader-Nachbau und die
-    /// Extension teilen sich damit exakt denselben Divisor (0.42 − 0.18 ist in
-    /// Double nicht exakt 0.24).
+    /// Spanne der Track-Maske (Obergrenze = `trackMaskLo + trackMaskSpan` = 0.42).
+    /// Als SPANNE notiert, nicht als Obergrenze: `0.42 − 0.18` ist in Double
+    /// nicht exakt `0.24`, ein aus lo/hi berechneter Divisor würde das Feld also
+    /// gegenüber dem Stand vor #51 verschieben (wie `lakeDepthSpan`).
     public static let trackMaskSpan = 0.24
     /// Grundanteil, den eine Zelle trägt, sobald sie die Track-Maske überhaupt
     /// passiert — der Rest skaliert linear mit der Maske.
