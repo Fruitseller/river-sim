@@ -36,6 +36,21 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
   `SendableClosureCaptures` ab.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 
+**Mess- und Sweep-Läufe gehören NICHT in die Pflichtsuite** (Issue #52). Jede
+Testmethode, deren Name auf `Diagnostic` endet, druckt nur die Tabellen für
+`docs/*-measurements.md` und läuft erst mit `RS_MEASURE=1`:
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testDtSpreadDiagnostic
+```
+
+Namensendung `Diagnostic` und Gate `try skipUnlessMeasuring()` gehören zusammen:
+`MeasurementGateTests` prüft **beide** Richtungen und wird rot, wenn ein Messlauf
+ungegatet in die Pflichtsuite rutscht oder ein echter Wächter still hinter dem
+Schalter verschwindet. Begründung: `SimCore/Tests/SimCoreTests/MeasurementGate.swift`,
+Laufzeiten: `docs/ci-measurements.md`.
+
 **Laufzeit messen** (Issue #43 — Mess-Harness für den Sim-Schritt, headless,
 Produktions-Config, n = 832):
 
@@ -69,7 +84,10 @@ SwiftPM verschlüsselt sonst die komplette Prozessumgebung in die Plugin-/
 Tool-Build-Signaturen, und JEDER Kontextwechsel (anderes Terminal-Pane, Editor,
 Agent-Session) kostete real ~10 min Voll-Neubau bei unveränderten Quellen
 (Diagnose und Messreihe: `docs/build-invalidation-measurements.md`). Ein
-Toolchain-Wechsel wird laut gemeldet statt still neu zu bauen.
+Toolchain-Wechsel wird laut gemeldet statt still neu zu bauen. Weil der PATH des
+Aufrufers damit bewusst nicht durchgereicht wird, findet `build.sh` nur Swiftly
+bzw. Xcode; Toolchains an anderer Stelle (CI installiert nach `/opt/swift`)
+zeigt man ihm mit **einer** Variablen: `RS_SWIFT_BIN=/pfad/zur/toolchain/bin`.
 
 **Worktrees** bauen automatisch in den geteilten Cache des Haupt-Repos
 (`--scratch-path`): erster Build im frischen Worktree ~3 min statt ~8 min
@@ -117,18 +135,31 @@ scripts/build-stamp.sh --check   # Exit 1 + Meldung, wenn game/bin/ veraltet ist
 ```
 
 Beim Ändern des Verfahrens müssen `scripts/build-stamp.sh` und
-`game/scripts/BuildStamp.gd` bytegleich bleiben.
+`game/scripts/BuildStamp.gd` bytegleich bleiben — das prüft seit Issue #52
+`game/tests/build_stamp_parity.gd` (führt die Shell-Seite selbst aus und
+vergleicht mit der GDScript-Seite; braucht die GDExtension nicht):
+
+```sh
+"$GODOT" --headless --path game --script res://tests/build_stamp_parity.gd
+```
 
 **App starten / Godot-Smoke-Tests:**
 
 ```sh
-GODOT=…; "$GODOT" --headless --path game --import   # EINMALIG pro Arbeitsverzeichnis
+scripts/fetch-godot.sh                               # holt die gepinnte Godot-Version nach .tools/
+GODOT="$(scripts/fetch-godot.sh)"
+"$GODOT" --headless --path game --import             # EINMALIG pro Arbeitsverzeichnis
 ./scripts/start.sh                                   # GODOT=… überschreibt die Binärdatei
 ./scripts/start.sh --rendering-method gl_compatibility # ohne Vulkan
 "$GODOT" --headless --path game --script res://tests/smoke.gd
 "$GODOT" --headless --path game --script res://tests/pickaxe_repro.gd
 "$GODOT" --headless --path game --script res://tests/river_ribbons.gd
 ```
+
+`scripts/fetch-godot.sh` ist die **einzige** Quelle der Godot-Version im Repo
+(Prüfsumme inklusive); `scripts/start.sh` und CI lesen sie von dort. Damit läuft
+CI garantiert gegen dieselbe Binärdatei wie der Arbeitsplatz — sonst beweist ein
+grüner Lauf nichts über den lokalen Stand.
 
 Der Import-Lauf ist Pflicht, bevor irgendetwas die GDExtension benutzt: Godot lädt
 Extensions ausschließlich aus `game/.godot/extension_list.cfg`, und die entsteht erst
@@ -151,6 +182,33 @@ Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
 der Wasser-Geometrie — A/B im selben Build; ohne den Schalter rendert die
 Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus.
+
+## CI
+
+`.github/workflows/ci.yml`, zwei Jobs auf `ubuntu-22.04`, bei jedem Push auf
+`main` und jedem PR. Sie laufen **parallel** — die Laufzeit eines CI-Laufs ist die
+des langsameren Jobs, nicht die Summe:
+
+| Job | Prüft | Lokal reproduzieren |
+| --- | --- | --- |
+| `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd` | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+
+Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
+(`.github/actions/swift-toolchain`) — die Einrichtung ist nicht generisch (feste
+Version, swift.org-Direktdownload, ncurses-Shim), und zweimal dieselbe Fassung zu
+pflegen war die absehbare Fehlerquelle. Ein „Doppel-Build" ist das trotzdem nicht:
+`SimCore/.build` und `Extension/.build` sind verschiedene Paketgraphen mit
+verschiedenen Scratch-Pfaden, jeder mit eigenem `actions/cache`-Eintrag.
+
+**Laufzeit-Budget, Messwerte und was bei Überschreitung zu tun ist:**
+`docs/ci-measurements.md`. Kurzfassung: Pflichtsuite ≤ 15 min (lokal gemessen
+7 min), Godot-Vertrag ≤ 15 min bei warmem Cache, Kaltbau der Extension ~30 min.
+Wer einen langen Testlauf hinzufügt, prüft die Zahlen dort mit.
+
+Bis Issue #52 lief in CI nur der Sim-Kern; der Godot-Vertrag war eine Zusage im
+Review („lokal ausgeführt"). Der Job heißt weiterhin `test`, damit vorhandene
+Verweise auf denselben Check zeigen.
 
 ## Architektur
 
