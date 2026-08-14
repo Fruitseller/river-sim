@@ -5,8 +5,12 @@
 //   COLOR.b = Strahler-Rang/6, COLOR.a = Deckkraft,
 //   UV.x = Quer-Position 0..1, UV.y = Bogenlänge (Welt),
 //   UV2.x = Typ (0 Fluss · 0.5 Delta-Arm · 1 Altarm) == WaterRender.ribbonKind*.
-// Farben/Glanz sind an das Feld-Wasser des Terrain-Shaders angelehnt, damit
-// Band-Wasser und Textur-Zubringer als EIN Wasser lesen. Der Übergang zum
+// Farben/Glanz sind DIESELBEN wie im Feld-Wasser des Terrain-Shaders, damit
+// Band-Wasser und Textur-Zubringer als EIN Wasser lesen: Wasserfarben, Fresnel,
+// Rauheit/Specular und der Strömungs-Schimmer stehen in SimCore/WaterRender.swift
+// und werden von SimCoreTests/WaterRenderTests.swift gegen BEIDE Shader-
+// Quelltexte verglichen (Issue #51) — wer hier eine Zahl ändert, ändert sie dort
+// und im Terrain-Shader mit, sonst wird der Test rot. Der Übergang zum
 // Ufer läuft doppelt weich: Kanten-Feathering hier (Alpha → 0 zur Bandkante)
 // + Nass-Halo des Terrain-Shaders (Saum-Stempel im Wasserfeld) darunter —
 // gegen die dokumentierte Rückbau-Ursache von f3556c8 (harte Ribbon-Kanten).
@@ -71,7 +75,8 @@ void fragment() {
 	// Fresnel: flacher Blick spiegelt Himmel (Ton wie terrain.gdshader).
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, 5.0);
-	water = mix(water, vec3(0.62, 0.70, 0.76), fresnel * 0.55);
+	vec3 sky = vec3(0.62, 0.7, 0.76);                   // Ton wie terrain.gdshader
+	water = mix(water, sky, fresnel * 0.55);
 
 	// Strömungs-Schimmer stromab (Bewegung im Zeitraffer ablesbar) — ein Altarm
 	// hat KEINE Fließrichtung mehr, genau daran soll man ihn erkennen.

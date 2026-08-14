@@ -11,6 +11,9 @@
 // zusätzlich in SimCore/WaterRender.swift und werden von
 // SimCoreTests/WaterRenderTests.swift gegen DIESEN Quelltext verglichen — wer
 // hier eine Zahl ändert, muss sie dort mitziehen (sonst wird der Test rot).
+// Dasselbe gilt seit Issue #51 für die Wasser-OPTIK (Farben, Fresnel, Rauheit/
+// Specular, Strömungs-Schimmer): sie ist mit game/shaders/water.gdshader
+// identisch, damit Raster-Wasser und Band-Geometrie als EIN Wasser lesen.
 //
 // DETAIL-LAYER (runevision-Erosionsfilter, Shadertoy wXcfWn, MPL-2.0): pro Pixel
 // werden Sub-Grid-Erosionsrinnen auf die Sim-Heightmap gerechnet (Phacelle-Noise
@@ -375,7 +378,7 @@ void fragment() {
 	// (3) Fresnel: flacher Blick → Himmel spiegelt, steiler Blick → ins Wasser.
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, 5.0);
-	vec3 sky = vec3(0.62, 0.70, 0.76);                     // Himmels-Ton (wie Env)
+	vec3 sky = vec3(0.62, 0.7, 0.76);                      // Himmels-Ton (wie Env)
 	water = mix(water, sky, fresnel * 0.55);
 
 	// (4) Strömungs-Schimmer entlang der Fließrichtung (dezent, Bewegung bleibt
