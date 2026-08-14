@@ -345,8 +345,11 @@ public final class Terrain {
     /// getaktet wird.
     private var dropCarry: Double = 0
 
-    /// Frisches Terrain: Puffer anlegen UND generieren.
-    public convenience init(config: SimConfig = SimConfig(), seed: UInt32 = 1337) {
+    /// Frisches Terrain: Puffer anlegen UND generieren. Der Default-Seed steht
+    /// in `RenderContract` — er ist dieselbe Zahl, die die Godot-Schicht anzeigt
+    /// und die GDExtension für ihr erstes Terrain nimmt (Issue #51).
+    public convenience init(config: SimConfig = SimConfig(),
+                            seed: UInt32 = RenderContract.defaultSeed) {
         self.init(allocating: config, seed: seed)
         generate(seed: seed)
     }

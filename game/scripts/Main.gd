@@ -4,7 +4,11 @@ extends Node3D
 ## (Swift/SimCore, headless getestet). Dieses Skript macht nur Rendering, Kamera,
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
-const HSCALE := 24.0          # Höhen-Skalierung fürs Mesh (von 30 gesenkt: weniger vertikale Überhöhung → sanfterer Look, ergänzt das gesenkte baseRelief)
+# Höhen-Skalierung fürs Mesh (von 30 gesenkt: weniger vertikale Überhöhung →
+# sanfterer Look, ergänzt das gesenkte baseRelief). DIESELBE Zahl steht als
+# RenderContract.heightScale in SimCore und als Default von `hscale` in
+# terrain.gdshader; Wächter: SimCoreTests/RenderContractTests.swift (Issue #51).
+const HSCALE := 24.0
 const BALANCED_TERRAIN_GRID := 384
 const PERFORMANCE_TERRAIN_GRID := 256
 
@@ -47,7 +51,10 @@ var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
 const RIVER_REBUILD_DELTA := 0.05  # Zellen Knoten-Verschiebung
 const RIVER_REBUILD_SECONDS := 1.0  # Strahler + Mesh sind CPU-seitig; 0,30 s kosteten im Zeitraffer messbar ~4 % FPS
-const RIVER_LIFT := 0.35  # Welt-Y über Gelände: deckt den Chord-Fehler des gröberen Render-Gitters im Talgrund (384er-Gitter auf 832er-Feld)
+# Welt-Y über Gelände: deckt den Chord-Fehler des gröberen Render-Gitters im
+# Talgrund (384er-Gitter auf 832er-Feld). == RenderContract.riverLift (SimCore);
+# über Wasser gilt stattdessen WaterRender.ribbonLakeSurfaceLift/-SeaSurfaceSink.
+const RIVER_LIFT := 0.35
 
 # Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen/Farben/
 # Wasser als Texturen (pro Tick nur Upload, kein Mesh-Rebuild). Wasser ist ein
@@ -93,6 +100,9 @@ var flatten_target := 0.0     # Zielhöhe fürs Einebnen — beim Strich-Beginn 
 var last_rate := 30.0         # für Leertaste: Pause ↔ letztes Tempo
 var u_time := 0.0
 var year_label: Label
+# Start-Seed == RenderContract.defaultSeed (SimCore): dieselbe Zahl baut das
+# erste Terrain in der GDExtension, sonst zeigte die Anzeige einen anderen Seed
+# als die sichtbare Welt (Issue #51).
 var sim_seed := 1337
 
 # Entwicklungsdiagnose: Referenzvergleich macht sichtbar, ob Relief durch

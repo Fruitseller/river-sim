@@ -25,7 +25,11 @@ uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläc
 uniform sampler2D color_tex : filter_linear, repeat_disable;
 uniform sampler2D debug_difference_tex : filter_linear, repeat_disable;
 uniform sampler2D water_tex : filter_linear, repeat_disable;
-uniform float hscale = 26.0;
+// Default == Main.gd HSCALE == RenderContract.heightScale (Issue #51). Im Spiel
+// setzt Main.gd den Uniform ohnehin; der Default zählt, wo das Material OHNE
+// SimNode läuft (Editor-Vorschau) — er stand auf 26.0 und zeigte dort ein 8 %
+// zu hohes Terrain. Wächter: SimCoreTests/RenderContractTests.swift.
+uniform float hscale = 24.0;
 uniform float world_size = 100.0;
 uniform float grid_n = 256.0;
 uniform float u_time = 0.0;

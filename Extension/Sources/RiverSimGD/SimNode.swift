@@ -33,7 +33,8 @@ final class SimNode: Node {
     /// `var`, weil ein geladener Spielstand seine EIGENE Config mitbringt
     /// (Issue #8): die Datei-Config ist autoritativ, also wird das Terrain beim
     /// Laden ersetzt statt in-place überschrieben.
-    private var terrain = Terrain(config: SimNode.productionConfig(), seed: 1337)
+    private var terrain = Terrain(config: SimNode.productionConfig(),
+                                  seed: RenderContract.defaultSeed)
     private var debugReferenceHeights: [Double] = []
     private var debugReferenceYear = 0.0
     private var lastWorldBytes = 0
