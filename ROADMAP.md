@@ -530,6 +530,12 @@ BEWUSSTEN Physik-Neukalibrierung angehen.
 
 ## Verifikation
 
+- **CI** (`.github/workflows/ci.yml`, Issue #52): bei jedem Push auf `main` und
+  jedem PR laufen parallel der Sim-Kern (Job `test`) und der Godot-Vertrag (Job
+  `godot-contract`: GDExtension-Build, Projekt-Import, Build-Stempel-Parität,
+  `smoke.gd`/`water_geometry.gd`/`river_ribbons.gd`). Mess-/Sweep-Tests
+  (Namensendung `Diagnostic`) sind aus der Pflichtsuite heraus und laufen nur mit
+  `RS_MEASURE=1`. Laufzeit-Budget und Zahlen: `docs/ci-measurements.md`.
 - **Laufzeit:** `SimCore/.build/release/simperf --repeat 3` (Mess-Harness aus
   Issue #43: Produktions-Config, n = 832, Einlauf + Pass-Tabelle) und
   `simperf --hash` als Bit-Identitäts-Wächter vor/nach einer Optimierung.
