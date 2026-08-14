@@ -204,10 +204,11 @@ final class WaterRenderTests: XCTestCase {
         // Apron noch UNTER dem Spiegel liegt: dort ein Hauch darüber.
         XCTAssertLessThan(WaterRender.ribbonSeaSurfaceSink, 0)
         XCTAssertGreaterThan(WaterRender.ribbonLakeSurfaceLift, 0)
-        // Beide deutlich kleiner als der Land-Lift (Main.RIVER_LIFT = 0.35),
-        // sonst wäre die Wasser-Sonderbehandlung wirkungslos.
-        XCTAssertLessThan(abs(WaterRender.ribbonSeaSurfaceSink), 0.35)
-        XCTAssertLessThan(WaterRender.ribbonLakeSurfaceLift, 0.35)
+        // Beide deutlich kleiner als der Land-Lift (`RenderContract.riverLift`,
+        // == Main.gd RIVER_LIFT), sonst wäre die Wasser-Sonderbehandlung
+        // wirkungslos. Die Schichten-Kopplung prüft `RenderContractTests`.
+        XCTAssertLessThan(abs(WaterRender.ribbonSeaSurfaceSink), RenderContract.riverLift)
+        XCTAssertLessThan(WaterRender.ribbonLakeSurfaceLift, RenderContract.riverLift)
     }
 
     func testRibbonKindsMapToTheShaderWeights() {
@@ -270,34 +271,287 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Delta-Arme tragen den Delta-Typ")
         assertContains(simNode, "onSea ? WaterRender.ribbonSeaSurfaceSink",
                        hint: "Höhen-Versatz auf Wasser aus WaterRender beziehen")
+        // Issue #51: Track-Maske, Abstufung, Verbreiterung und die Kanalbreiten
+        // lagen als Literale in `waterFieldBytes`/`buildRiverRibbons` — dort
+        // konnte sie nur ein ~20-Minuten-Build prüfen.
+        assertContains(simNode, "WaterRender.trackMask(streamMap:",
+                       hint: "Track-Maske des Abfluss-Felds aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.trackWeight(mask:",
+                       hint: "Gewicht der Track-Maske aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.streamIntensity(dischargeCells:",
+                       hint: "Abfluss-Abstufung aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.corridorMask(streamMap:",
+                       hint: "Korridor-/Band-Kohärenzmaske aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.corridorWeight(mask:",
+                       hint: "Gewicht der Korridor-Maske aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.continuityDecayPerCell",
+                       hint: "Kontinuitäts-Propagation aus WaterRender beziehen")
+        assertContains(simNode, "let widenThresh = WaterRender.widenThresholds",
+                       hint: "Verbreiterungs-Schwellen aus WaterRender beziehen")
+        assertContains(simNode, "let widenFalloff = WaterRender.widenFalloff",
+                       hint: "Verbreiterungs-Abfall aus WaterRender beziehen")
+        assertContains(simNode, "let barTol = WaterRender.widenBarTolerance",
+                       hint: "Bank-Toleranz der Verbreiterung aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonHalfWidthCells(dischargeCells:",
+                       hint: "Band-Halbbreite aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.stampHalfWidthCells(dischargeCells:",
+                       hint: "Stempel-Halbbreite (Legacy-A/B) aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.stampIntensity(dischargeCells:",
+                       hint: "Stempel-Intensität (Legacy-A/B) aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonHaloMarginCells",
+                       hint: "Halo-Rand um das Band aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.oxbowMinimumNodes",
+                       hint: "Altarm-Filter aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.oxbowHalfWidthCells",
+                       hint: "Altarm-Breite aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.mouthSearchCells",
+                       hint: "Mündungs-Suchweite aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonMinimumRank",
+                       hint: "Hierarchie-Gate der Bänder aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonRankDivisor",
+                       hint: "Rang-Normierung des Vertex-Vertrags aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonSupportLo",
+                       hint: "Band-Kohärenzfenster aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonSourceTaperCells",
+                       hint: "Quellen-Taper aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonTailTaperCells",
+                       hint: "Enden-Taper aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.ribbonMinimumAlpha",
+                       hint: "Sichtbarkeits-Schwelle der Bänder aus WaterRender beziehen")
+        assertContains(simNode, "WaterRender.deltaArmMinHalfWidthCells",
+                       hint: "Delta-Arm-Breite aus WaterRender beziehen")
+    }
+
+    // MARK: Kanalbreiten (Issue #51)
+
+    func testRibbonWidthFollowsDischarge() {
+        // w ∝ √Q (Leopold/Maddock): am Referenz-Abfluss genau die Stempel-Optik,
+        // darüber breiter, darunter schmaler — mit Boden und Deckel.
+        let reference = 280.0
+        XCTAssertEqual(WaterRender.ribbonHalfWidthAtReference, 0.8)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthFloorCells, 0.12)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCapCells, 3.2)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: reference,
+                                                        referenceCells: reference),
+                       WaterRender.ribbonHalfWidthAtReference, accuracy: 1e-12)
+        // Vierfacher Abfluss = doppelte Breite (der Exponent, nicht nur der Trend).
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: 4 * reference,
+                                                        referenceCells: reference),
+                       2 * WaterRender.ribbonHalfWidthAtReference, accuracy: 1e-12)
+        // Boden und Deckel greifen an beiden Enden — auch bei Unsinns-Eingaben.
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: -5,
+                                                        referenceCells: reference),
+                       WaterRender.ribbonHalfWidthFloorCells)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: 1e9,
+                                                        referenceCells: reference),
+                       WaterRender.ribbonHalfWidthCapCells)
+        // Der Altarm ist konstant breit und liegt im selben Fenster.
+        XCTAssertEqual(WaterRender.oxbowHalfWidthCells, 1.0)
+        XCTAssertGreaterThan(WaterRender.oxbowHalfWidthCells,
+                             WaterRender.ribbonHalfWidthFloorCells)
+        XCTAssertLessThan(WaterRender.oxbowHalfWidthCells,
+                          WaterRender.ribbonHalfWidthCapCells)
+    }
+
+    func testHaloAlwaysCoversTheBand() {
+        // Der Nass-Halo im Wasserfeld wird um die BAND-Halbbreite gestempelt.
+        // Ohne Rand endete er an der Bandkante — dann steht das Band auf einer
+        // harten Farbkante statt in einem Ufer (Rückbau-Ursache f3556c8).
+        XCTAssertEqual(WaterRender.ribbonHaloMarginCells, 1.0)
+        XCTAssertGreaterThan(WaterRender.ribbonHaloMarginCells, 0)
+        XCTAssertEqual(WaterRender.ribbonHaloIntensity, 0.14)
+    }
+
+    func testDeltaArmIsWiderThanTheChannelItComesFrom() {
+        // Der Strom verliert an der Mündung seine Tiefe, nicht sein Wasser.
+        XCTAssertEqual(WaterRender.deltaArmMinHalfWidthCells, 1.5)
+        XCTAssertGreaterThan(WaterRender.deltaArmWidthAtMouth, 1)
+        // … und läuft zur Front hin schmaler aus, ohne je auf 0 zu fallen (das
+        // macht der Taper am Ende, nicht das Breiten-Profil).
+        XCTAssertGreaterThan(WaterRender.deltaArmWidthAtMouth
+                             - WaterRender.deltaArmWidthTaper, 0)
+        XCTAssertLessThan(WaterRender.deltaArmWidthAtMouth
+                          - WaterRender.deltaArmWidthTaper, 1)
+        XCTAssertLessThan(WaterRender.deltaArmRankFactor, 1)
+        XCTAssertGreaterThan(WaterRender.deltaArmRankFactor, 0)
+    }
+
+    func testBandEndsAndGatesStayInOrder() {
+        XCTAssertEqual(WaterRender.ribbonSourceTaperCells, 4.0)
+        XCTAssertEqual(WaterRender.ribbonTailTaperCells, 2.0)
+        // Die Quelle blendet länger ein, als das Ende ausblendet: ein Oberlauf
+        // soll wachsen, ein Ende nur die Kante brechen.
+        XCTAssertGreaterThan(WaterRender.ribbonSourceTaperCells,
+                             WaterRender.ribbonTailTaperCells)
+        XCTAssertEqual(WaterRender.ribbonMinimumAlpha, 0.02)
+        // Strahler 4 rein, Strahler 3 raus — genau das ist die Hierarchie-Gate.
+        XCTAssertEqual(WaterRender.ribbonRankDivisor, 6.0)
+        XCTAssertLessThan(3 / WaterRender.ribbonRankDivisor, WaterRender.ribbonMinimumRank)
+        XCTAssertLessThan(WaterRender.ribbonMinimumRank, 4 / WaterRender.ribbonRankDivisor)
+        // Die Mündungs-Suche muss weiter reichen als die Überlappung, sonst
+        // findet sie das Wasser nie tief genug (Band endet vor der Uferlinie).
+        XCTAssertGreaterThan(Double(WaterRender.mouthSearchCells),
+                             WaterRender.mouthOverlapCells)
+    }
+
+    func testOxbowFilterIsSharedAndSelfConsistent() {
+        XCTAssertEqual(WaterRender.oxbowMinimumNodes, 10)
+        XCTAssertEqual(WaterRender.oxbowMaximumTrimmedNodes, 3)
+        XCTAssertEqual(WaterRender.oxbowEndFadeSteps, 3.0)
+        XCTAssertEqual(WaterRender.oxbowMaximumOpacity, 0.7)
+        // Eine gerade noch zugelassene Schleife muss nach dem Trimmen der
+        // Hals-Enden noch einen Bogen übrig haben — sonst emittieren beide
+        // Pfade (Geometrie und Stempel) nichts und der Filter wäre wirkungslos.
+        XCTAssertGreaterThan(WaterRender.oxbowMinimumNodes,
+                             2 * WaterRender.oxbowMaximumTrimmedNodes)
+        // Ein Altarm ist trübes Stillwasser, nie volle Deckkraft.
+        XCTAssertLessThan(WaterRender.oxbowMaximumOpacity, 1)
+    }
+
+    // MARK: Track-Maske, Abstufung, Verbreiterung (Issue #51)
+
+    func testTrackMaskWindow() {
+        XCTAssertEqual(WaterRender.trackMaskLo, 0.18)
+        XCTAssertEqual(WaterRender.trackMaskSpan, 0.24)
+        XCTAssertEqual(WaterRender.trackMask(streamMap: 0.18), 0)
+        XCTAssertEqual(WaterRender.trackMask(streamMap: 0.0), 0)
+        XCTAssertEqual(WaterRender.trackMask(streamMap: 0.3), 0.5, accuracy: 1e-12)
+        XCTAssertEqual(WaterRender.trackMask(streamMap: 0.42), 1, accuracy: 1e-12)
+        XCTAssertEqual(WaterRender.trackMask(streamMap: 9), 1)
+        // Wer die Maske passiert, ist ein echter Lauf: das Gewicht startet auf
+        // dem Sockel und erreicht bei voller Maske exakt 1.
+        XCTAssertEqual(WaterRender.trackWeight(mask: 0), WaterRender.trackWeightFloor)
+        XCTAssertEqual(WaterRender.trackWeight(mask: 1), 1, accuracy: 1e-12)
+    }
+
+    func testCorridorMaskSitsUnderTheTrackMask() {
+        // Der Korridor IST per Definition ein echter Lauf (Zentrumslinie) — sein
+        // Fenster liegt deshalb tiefer als das der freien Raster-Läufe, und sein
+        // Sockel ebenfalls (er darf verblassen, nicht verschwinden).
+        XCTAssertEqual(WaterRender.corridorTrackLo, 0.1)
+        XCTAssertEqual(WaterRender.corridorTrackSpan, 0.2)
+        XCTAssertLessThan(WaterRender.corridorTrackLo, WaterRender.trackMaskLo)
+        XCTAssertEqual(WaterRender.corridorMask(streamMap: 0.2), 0.5, accuracy: 1e-12)
+        XCTAssertEqual(WaterRender.corridorWeight(mask: 0), WaterRender.corridorWeightFloor)
+        XCTAssertEqual(WaterRender.corridorWeight(mask: 1), 1, accuracy: 1e-12)
+        XCTAssertLessThan(WaterRender.corridorWeightFloor, WaterRender.trackWeightFloor)
+        // Band-Kohärenz liest dieselbe Maske, gemittelt über den ganzen Kanal.
+        XCTAssertEqual(WaterRender.ribbonSupportLo, 0.35)
+        XCTAssertEqual(WaterRender.ribbonSupportSpan, 0.3)
+        XCTAssertLessThan(WaterRender.ribbonSupportLo + WaterRender.ribbonSupportSpan, 1)
+    }
+
+    func testStreamGradingIsMonotonicAndBounded() {
+        let creek = 280.0
+        XCTAssertEqual(WaterRender.streamIntensityBase, 0.4)
+        XCTAssertEqual(WaterRender.streamIntensityLogDivisor, 4.0)
+        var previous = 0.0
+        for q in stride(from: creek, through: 400 * creek, by: creek) {
+            let value = WaterRender.streamIntensity(dischargeCells: q, creekCells: creek)
+            XCTAssertGreaterThanOrEqual(value, previous)
+            XCTAssertLessThanOrEqual(value, 1)
+            previous = value
+        }
+        // An der Render-Schwelle trägt ein Lauf schon sichtbar — sonst begänne
+        // jeder Fluss als Saum-ohne-Wasser (s. `riverMaskLo`).
+        XCTAssertGreaterThan(WaterRender.streamIntensity(dischargeCells: creek,
+                                                         creekCells: creek),
+                             WaterRender.riverMaskLo)
+        XCTAssertEqual(WaterRender.streamPondTolerance, 0.01)
+        // Das Fluss-Feld hält sich an nahezu ungeflutete Zellen; alles Tiefere
+        // gehört dem See-Kanal.
+        XCTAssertLessThan(WaterRender.streamPondTolerance, WaterRender.lakeRawWetDepth)
+    }
+
+    func testWideningKeepsTheHierarchy() {
+        XCTAssertEqual(WaterRender.widenThresholds, [0.55, 0.8])
+        XCTAssertEqual(WaterRender.widenFalloff, 0.09)
+        XCTAssertEqual(WaterRender.widenBarTolerance, 0.004)
+        // Aufsteigend und unter 1: jeder Pass verbreitert nur noch kräftigere
+        // Läufe (Bäche bleiben fadendünn).
+        XCTAssertEqual(WaterRender.widenThresholds, WaterRender.widenThresholds.sorted())
+        for thresh in WaterRender.widenThresholds {
+            XCTAssertGreaterThan(thresh, WaterRender.riverMaskLo)
+            XCTAssertLessThan(thresh, 1)
+        }
+        // Ein verbreiterter Nachbar muss über der Wasser-Schwelle des Shaders
+        // landen, sonst malte die Dilatation nur unsichtbaren Saum.
+        XCTAssertGreaterThan(WaterRender.widenThresholds[0] - WaterRender.widenFalloff,
+                             WaterRender.riverMaskLo)
+        // Die Bank-Toleranz ist eine HÖHE (Wassersäule), kein Intensitätswert:
+        // sie muss unter dem Fuß der Uferkontur bleiben, sonst übermalte die
+        // Kosmetik-Breite echte Mittelbänke.
+        XCTAssertLessThan(WaterRender.widenBarTolerance, WaterRender.pondContourHi)
+    }
+
+    func testContinuityChainStaysVisible() {
+        XCTAssertEqual(WaterRender.continuityDecayPerCell, 0.015)
+        XCTAssertEqual(WaterRender.continuityFloor, 0.3)
+        // Die bergab propagierte Kette bricht ab, BEVOR sie unsichtbar wird —
+        // sonst liefe ein Faden unter der Wasser-Schwelle weiter und malte nur
+        // noch Saum ohne Wasser.
+        XCTAssertGreaterThan(WaterRender.continuityFloor, WaterRender.riverMaskLo)
+        // Und sie reicht über viele Zellen: der Zweck des Passes ist, dass ein
+        // sichtbarer Fluss durchgängig bis Mündung/See läuft.
+        XCTAssertGreaterThan(WaterRender.continuityDecayPerCell, 0)
+        XCTAssertGreaterThan((1 - WaterRender.continuityFloor)
+                             / WaterRender.continuityDecayPerCell, 30)
+    }
+
+    func testLegacyStampPathKeepsItsGrading() {
+        let creek = 280.0
+        XCTAssertEqual(WaterRender.stampHalfWidthCapCells, 1.0)
+        // Der Stempel deckelt bei 1 Zelle Halbbreite (war 3 — Blob-Felder auf
+        // den verknäulten Ebenen).
+        XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: 1e9,
+                                                       creekCells: creek),
+                       WaterRender.stampHalfWidthCapCells)
+        XCTAssertGreaterThan(WaterRender.stampHalfWidthCells(dischargeCells: 0,
+                                                             creekCells: creek), 0)
+        // Eine Zentrumslinie IST ein Fluss: höherer Sockel als das Abfluss-Feld,
+        // und über der Wasser-Schwelle des Shaders.
+        XCTAssertGreaterThan(WaterRender.stampIntensityBase, WaterRender.streamIntensityBase)
+        XCTAssertGreaterThan(WaterRender.stampIntensity(dischargeCells: 0, creekCells: creek),
+                             WaterRender.riverMaskLo)
+        XCTAssertLessThanOrEqual(WaterRender.stampIntensity(dischargeCells: 1e9,
+                                                            creekCells: creek), 1)
+    }
+
+    func testGodotGuardsPinTheSameContract() throws {
+        // Die Godot-Wächter (GPU-frei, aber nur MIT gebauter Extension lauffähig)
+        // tragen die Vertragswerte als eigene Konstanten. Driften sie, prüfen
+        // sie gegen eine Kalibrierung, die es nicht mehr gibt.
+        let geometry = try repoFile("game/tests/water_geometry.gd")
+        assertContains(geometry, "const KIND_RIVER := \(glsl(WaterRender.ribbonKindRiver))",
+                       hint: "Typ Fluss == WaterRender.ribbonKindRiver")
+        assertContains(geometry, "const KIND_DELTA := \(glsl(WaterRender.ribbonKindDelta))",
+                       hint: "Typ Delta == WaterRender.ribbonKindDelta")
+        assertContains(geometry, "const KIND_OXBOW := \(glsl(WaterRender.ribbonKindOxbow))",
+                       hint: "Typ Altarm == WaterRender.ribbonKindOxbow")
+        assertContains(geometry, "const POND_CONTOUR_LO := \(glsl(WaterRender.pondContourLo))",
+                       hint: "Kontur-Fuß == WaterRender.pondContourLo")
+        assertContains(geometry, "const LAKE_RAW_WET := \(glsl(WaterRender.lakeRawWetDepth))",
+                       hint: "Raster-See-Schwelle == WaterRender.lakeRawWetDepth")
+        assertContains(geometry, "const MAX_OXBOW_OPACITY := \(glsl(WaterRender.oxbowMaximumOpacity))",
+                       hint: "Altarm-Deckkraft == WaterRender.oxbowMaximumOpacity")
+        assertContains(geometry, "const MOUTH_SEARCH_CELLS := \(WaterRender.mouthSearchCells)",
+                       hint: "Mündungs-Suchweite == WaterRender.mouthSearchCells")
+        let ribbons = try repoFile("game/tests/river_ribbons.gd")
+        assertContains(ribbons, "const LAKE_SURFACE_LIFT := \(glsl(WaterRender.ribbonLakeSurfaceLift))",
+                       hint: "See-Versatz == WaterRender.ribbonLakeSurfaceLift")
+        assertContains(ribbons, "const SEA_SURFACE_SINK := \(glsl(WaterRender.ribbonSeaSurfaceSink))",
+                       hint: "Meer-Versatz == WaterRender.ribbonSeaSurfaceSink")
+        assertContains(ribbons, "const MIN_RANK := \(glsl(WaterRender.ribbonMinimumRank))",
+                       hint: "Hierarchie-Gate == WaterRender.ribbonMinimumRank")
+        assertContains(ribbons, "const KIND_DELTA_LO := \(glsl(WaterRender.ribbonDeltaLo))",
+                       hint: "Typ-Trennung Fluss/Delta == WaterRender.ribbonDeltaLo")
     }
 
     // MARK: Hilfen
 
-    /// Datei relativ zur Repo-Wurzel lesen.
-    ///
-    /// `XCTSkip` NUR, wenn die Repo-Wurzel selbst nicht erreichbar ist (das
-    /// Package woanders ausgecheckt) — dann kann der Vergleich prinzipiell nicht
-    /// laufen. Steht die Wurzel und fehlt die Datei, ist sie umbenannt oder
-    /// verschoben worden: dann MUSS der Test rot werden, sonst überspringt sich
-    /// genau die Drift weg, die er abfangen soll.
+    /// Quelltext einer anderen Schicht — s. `RepoSource` (gemeinsam mit
+    /// `RenderContractTests`).
     private func repoFile(_ relativePath: String) throws -> String {
-        // #filePath = <repo>/SimCore/Tests/SimCoreTests/WaterRenderTests.swift
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<4 { root.deleteLastPathComponent() }
-        let marker = root.appendingPathComponent("AGENTS.md")
-        guard FileManager.default.fileExists(atPath: marker.path) else {
-            throw XCTSkip("Repo-Wurzel nicht erreichbar (\(root.path) ohne AGENTS.md)")
-        }
-        let url = root.appendingPathComponent(relativePath)
-        return try XCTUnwrap(try? String(contentsOf: url, encoding: .utf8),
-                             "\(relativePath) fehlt oder ist umbenannt — die "
-                             + "Kalibrierung wäre damit ungeprüft")
-    }
-
-    private func assertContains(_ haystack: String, _ needle: String, hint: String,
-                                file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(haystack.contains(needle),
-                      "\(hint) — erwartet im Quelltext: \(needle)", file: file, line: line)
+        try RepoSource.file(relativePath)
     }
 }

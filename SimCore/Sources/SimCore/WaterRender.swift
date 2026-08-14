@@ -291,4 +291,245 @@ public enum WaterRender {
     /// Wasserfläche. 0.55 war messbar zu viel — die Arme standen als helle
     /// Strahlen auf dem Meer.
     public static let deltaArmOpacity = 0.35
+
+    // MARK: Kanalbreiten der Band-Geometrie (Issue #31, zentralisiert mit #51)
+
+    /// Halbbreite (Zellen) eines Fluss-Bands am Referenz-Abfluss
+    /// `SimConfig.renderMinCells`: dort ≈ die Optik des alten Raster-Stempels.
+    public static let ribbonHalfWidthAtReference = 0.8
+    /// Boden der Halbbreite — hält Oberläufe als feine Fäden sichtbar.
+    public static let ribbonHalfWidthFloorCells = 0.12
+    /// Deckel der Halbbreite: verhindert Ströme-als-Seen auf den verknäulten
+    /// Ebenen (Lehre aus dem Blob-Felder-Rückbau des Stempels).
+    public static let ribbonHalfWidthCapCells = 3.2
+
+    /// Halbbreite (Zellen) eines Fluss-Bands aus dem Abfluss `dischargeCells`
+    /// (Zellen Einzugsgebiet), bezogen auf `referenceCells`
+    /// (= `SimConfig.renderMinCells`).
+    ///
+    /// Hydraulische Geometrie w ∝ √Q (Leopold/Maddock, Exponent b ≈ 0.5) statt
+    /// des 1-Zellen-Deckels des Stempels — dieselbe Kurve speist die
+    /// Band-Geometrie UND den Radius des Nass-Halos im Wasserfeld, damit der
+    /// Halo das Band immer ganz umfasst.
+    @inline(__always)
+    public static func ribbonHalfWidthCells(dischargeCells: Double,
+                                            referenceCells: Double) -> Double {
+        let w = ribbonHalfWidthAtReference
+            * (max(dischargeCells, 0) / referenceCells).squareRoot()
+        return min(max(w, ribbonHalfWidthFloorCells), ribbonHalfWidthCapCells)
+    }
+
+    /// Rand (Zellen), den der Halo-Korridor im Wasserfeld über die Band-
+    /// Halbbreite hinaus stempelt — ohne ihn endete der Nass-Saum an der
+    /// Bandkante statt sie zu umfassen.
+    public static let ribbonHaloMarginCells = 1.0
+
+    /// Halbbreite des Altarm-Bands (Zellen). Ein Altarm ist der verlassene Bogen
+    /// EINES Laufs — knapp unter dem Ribbon-Deckel und über dem Boden, also
+    /// bewusst konstant statt abflussabhängig: Abfluss hat ein Altarm per
+    /// Definition keinen mehr.
+    public static let oxbowHalfWidthCells = 1.0
+
+    /// Mindest-Halbbreite eines Delta-Arms (Zellen): ein Delta-Arm ist BREITER
+    /// als der Lauf, aus dem er kommt (der Strom verliert an der Mündung seine
+    /// Tiefe, nicht sein Wasser). Ohne dieses Mindestmaß wurden aus schmalen
+    /// Mündungen drei nadeldünne Strahlen (A/B-Screenshot).
+    public static let deltaArmMinHalfWidthCells = 1.5
+    /// Breiten-Profil eines Delta-Arms über seine Länge f ∈ [0,1]:
+    /// `armWidth * (deltaArmWidthAtMouth − deltaArmWidthTaper · f)` — an der
+    /// Mündung etwas breiter als der Lauf, zur Front hin schmaler.
+    public static let deltaArmWidthAtMouth = 1.2
+    /// s. `deltaArmWidthAtMouth`.
+    public static let deltaArmWidthTaper = 0.6
+    /// Rang-Dämpfung eines Delta-Arms: der Fächer ist Flachwasser, seine
+    /// Tiefenfarbe darf nicht die des Hauptlaufs sein.
+    public static let deltaArmRankFactor = 0.35
+
+    // MARK: Enden, Taper und Sichtbarkeits-Gates der Bänder
+
+    /// Quellen-Taper eines Fluss-Bands (Zellen Bogenlänge): der Oberlauf wächst
+    /// aus dem Nichts, statt mit voller Breite anzufangen.
+    public static let ribbonSourceTaperCells = 4.0
+    /// Enden-Taper (Zellen Bogenlänge) — gilt für den im Land versickernden
+    /// Lauf, den Überlappungs-Deckel an der Mündung und die Delta-Arme.
+    public static let ribbonTailTaperCells = 2.0
+    /// Deckkraft, unter der ein Stützpunkt als unsichtbar gilt: Bänder ohne
+    /// einen einzigen Punkt darüber werden gar nicht erst emittiert.
+    public static let ribbonMinimumAlpha = 0.02
+    /// Normierung des Strahler-Rangs für den Farbkanal (`COLOR.b` des
+    /// Vertex-Vertrags, gelesen von `water.gdshader` als `v_rank`): Rang/6, auf
+    /// 1 geklemmt. Ändert sich der Divisor, verschiebt sich die Tiefenfarbe
+    /// ALLER Bänder — und `ribbonMinimumRank` mit.
+    public static let ribbonRankDivisor = 6.0
+    /// Kartografische Hierarchie: nur Zentrumslinien, die wenigstens Strahler 4
+    /// erreichen, bekommen ein Band (der Rang kommt als Rang/6 im Farbkanal, 4/6
+    /// ≈ 0.6667 > 0.65). Ordnung 3 ließ im fokussierten 20k-A/B noch hunderte
+    /// überlagerte Mäander auf der Ebene sichtbar werden.
+    public static let ribbonMinimumRank = 0.65
+
+    /// Kohärenz-Fenster eines ganzen Bands: gemittelte Track-Maske über den
+    /// Kanal (`corridorMask`, abfluss-gewichtet). Darunter ist die Zentrumslinie
+    /// verwaist/verknäult und das Band blendet als EINHEIT aus — lokale
+    /// Raster-Spitzen als Alpha zu übernehmen erzeugte isolierte Dreiecksfächer.
+    public static let ribbonSupportLo = 0.35
+    /// s. `ribbonSupportLo` (Spanne, s. Begründung bei `trackMaskSpan`).
+    public static let ribbonSupportSpan = 0.3
+
+    // MARK: Altarm-Filter (gemeinsam für Geometrie und Raster-Stempel)
+
+    // Beide Pfade müssen DIESELBEN Schleifen meinen: im Geometrie-Modus nimmt
+    // das Wasserfeld genau die Zellen aus dem See-Kanal, die die Geometrie malt
+    // — driften die Filter, entsteht doppeltes Wasser oder ein Loch.
+
+    /// Nur substanzielle Schleifen (≈ 15 Zellen Bogen) sind Altarme; die
+    /// Migration schnürt auch 2–4-Knoten-Schlingen ab, die als 3–6-Zell-Blobs
+    /// die Ebenen sprenkelten.
+    public static let oxbowMinimumNodes = 10
+    /// Die Cutoff-Enden (Hals) liegen eng beieinander — ungetrimmt schlösse sich
+    /// der Altarm zu einem unnatürlichen Wasserring.
+    public static let oxbowMaximumTrimmedNodes = 3
+    /// Knoten, über die die Deckkraft an den Bogen-Enden einblendet.
+    public static let oxbowEndFadeSteps = 3.0
+    /// Deckkraft eines frischen Altarms (blendet mit `SimConfig.oxbowMaxAge` aus).
+    public static let oxbowMaximumOpacity = 0.7
+
+    /// Suchweite der Mündungs-Verlängerung (Zellen). Reicht das Wasser nicht so
+    /// weit, endet der Lauf im Land (Versickerung/Trockental) und bekommt seinen
+    /// weichen Enden-Taper statt einer Mündung.
+    public static let mouthSearchCells = 8
+
+    // MARK: Raster-Feld: Track-Maske, Abstufung, Verbreiterung
+
+    // Der dendritische Teil des Wassers (alles unterhalb der Mäander-Entitäten)
+    // entsteht als Raster: Stream-Map × MFD-Abfluss → Intensität → Verbreiterung.
+    // Die Zahlen standen bis #51 als Literale in `SimNode.waterFieldBytes` und
+    // waren damit nur mit einem ~20-Minuten-Build prüfbar; hier sind sie
+    // headless gepinnt (`SimCoreTests/WaterRenderTests.swift`).
+
+    /// Ponding-Toleranz des Abfluss-Stempels: über echten Wasserflächen malt der
+    /// See-Kanal, das Fluss-Feld hält sich an nahezu ungeflutete Zellen.
+    public static let streamPondTolerance = 0.01
+
+    /// Track-Maske (Stream-Map = zeitgemittelte Tropfenpfade): unter `trackMaskLo`
+    /// bleibt eine Zelle trocken, ab `trackMaskLo + trackMaskSpan` zählt sie voll.
+    /// Von 0.12..0.35 angehoben: Zufallspfad-Speckle bleibt drunter, konsistente
+    /// Läufe drüber.
+    public static let trackMaskLo = 0.18
+    /// Spanne der Track-Maske (Obergrenze = `trackMaskLo + trackMaskSpan`).
+    /// Als SPANNE statt als Obergrenze notiert: der Shader-Nachbau und die
+    /// Extension teilen sich damit exakt denselben Divisor (0.42 − 0.18 ist in
+    /// Double nicht exakt 0.24).
+    public static let trackMaskSpan = 0.24
+    /// Grundanteil, den eine Zelle trägt, sobald sie die Track-Maske überhaupt
+    /// passiert — der Rest skaliert linear mit der Maske.
+    public static let trackWeightFloor = 0.35
+    /// s. `trackWeightFloor`.
+    public static let trackWeightSpan = 0.65
+
+    /// Abstufung der Fluss-Intensität mit dem Abfluss (Breiten-/Farbhierarchie):
+    /// `min(1, base + log(q/creek + 1) / divisor)`.
+    public static let streamIntensityBase = 0.4
+    /// s. `streamIntensityBase`.
+    public static let streamIntensityLogDivisor = 4.0
+
+    /// Track-Maske einer Zelle aus ihrem Stream-Map-Wert.
+    @inline(__always)
+    public static func trackMask(streamMap: Double) -> Double {
+        min(max((streamMap - trackMaskLo) / trackMaskSpan, 0), 1)
+    }
+
+    /// Gewicht der Track-Maske auf die Intensität (nie ganz 0: eine Zelle, die
+    /// die Maske passiert, ist ein echter Lauf).
+    @inline(__always)
+    public static func trackWeight(mask: Double) -> Double {
+        trackWeightFloor + trackWeightSpan * mask
+    }
+
+    /// Intensität des Fluss-Kanals aus dem Abfluss (Zellen Einzugsgebiet),
+    /// bezogen auf die Render-Schwelle `creekCells` (= `SimConfig.renderMinCells`).
+    @inline(__always)
+    public static func streamIntensity(dischargeCells: Double, creekCells: Double) -> Double {
+        min(1, streamIntensityBase
+               + log(dischargeCells / creekCells + 1) / streamIntensityLogDivisor)
+    }
+
+    /// Kontinuität: die Intensität wird dem D8-Empfänger entlang bergab
+    /// propagiert und verliert je Zelle diesen Betrag — ohne den Pass zerfielen
+    /// gealterte Läufe zu Punktketten, wo die Track-Maske Lücken lässt.
+    public static let continuityDecayPerCell = 0.015
+    /// Untergrenze der Propagation: darunter lohnt die Kette nicht mehr.
+    public static let continuityFloor = 0.3
+
+    /// Verbreiterung: je Schwelle EIN Dilatations-Pass, der nur Läufe ÜBER der
+    /// Schwelle weiter verbreitert → Breiten-Hierarchie (Bäche bleiben fadendünn).
+    public static let widenThresholds = [0.55, 0.8]
+    /// Intensitäts-Verlust je Dilatations-Schritt (die Breite bleibt sichtbar
+    /// gestuft statt als Fläche zu verlaufen).
+    public static let widenFalloff = 0.09
+    /// WASSERSPIEGEL-Toleranz der Dilatation: Wasser verbreitert sich nur auf
+    /// Zellen, die nicht nennenswert über dem Spiegel des Nachbarlaufs liegen —
+    /// Mittelbänke (Braiding!) und Ufer-/Talkanten bleiben trocken.
+    public static let widenBarTolerance = 0.004
+
+    /// Track-Maske des gestempelten Mäander-Korridors: wo dem gestempelten Bett
+    /// real kein Wasser folgt (verwaiste/verknäulte Linien), verblasst der
+    /// Stempel, statt voll zu leuchten. Eigenes, tieferes Fenster als
+    /// `trackMask` — der Korridor IST per Definition ein echter Lauf.
+    public static let corridorTrackLo = 0.1
+    /// s. `corridorTrackLo` (Spanne, s. Begründung bei `trackMaskSpan`).
+    public static let corridorTrackSpan = 0.2
+    /// s. `trackWeightFloor` — für den Korridor.
+    public static let corridorWeightFloor = 0.3
+    /// s. `corridorWeightFloor`.
+    public static let corridorWeightSpan = 0.7
+
+    /// Track-Maske des Korridor-Stempels.
+    @inline(__always)
+    public static func corridorMask(streamMap: Double) -> Double {
+        min(max((streamMap - corridorTrackLo) / corridorTrackSpan, 0), 1)
+    }
+
+    /// Gewicht der Korridor-Maske auf die Stempel-Intensität.
+    @inline(__always)
+    public static func corridorWeight(mask: Double) -> Double {
+        corridorWeightFloor + corridorWeightSpan * mask
+    }
+
+    // MARK: Legacy-Stempelpfad (`RS_WATER_STAMP`, A/B-Vergleich)
+
+    // Ohne Band-Geometrie malt das Wasserfeld die Mäander selbst. Der Pfad ist
+    // seit #34 nicht mehr Standard, aber der einzige A/B-Vergleich gegen die
+    // Geometrie — seine Kalibrierung gehört deshalb genauso in den Vertrag.
+
+    /// Halbbreite (Zellen) des Mäander-Stempels: `base + log(q/creek + 1)/divisor`,
+    /// gedeckelt auf `stampHalfWidthCapCells`. Der Deckel war 3 — über 10k+ Jahre
+    /// verknäulen die migrierten Linien auf den Ebenen, breite Stempel machten
+    /// aus den Knäueln blaue Blob-Felder („zu viele Flüsse").
+    public static let stampHalfWidthBase = 0.3
+    /// s. `stampHalfWidthBase`.
+    public static let stampHalfWidthLogDivisor = 2.6
+    /// s. `stampHalfWidthBase`.
+    public static let stampHalfWidthCapCells = 1.0
+    /// Intensität des Mäander-Stempels (Abstufung wie beim Abfluss-Feld, nur
+    /// höherer Sockel: eine Zentrumslinie IST ein Fluss).
+    public static let stampIntensityBase = 0.6
+    /// s. `stampIntensityBase`.
+    public static let stampIntensityLogDivisor = 4.0
+
+    /// Halbbreite (Zellen) des Mäander-Stempels aus dem Abfluss. Der Abfluss ist
+    /// hier auf ≥ 1 Zelle geklemmt: der Stempel folgt einer Zentrumslinie, und
+    /// die trägt auch am Oberlauf-Ende noch Wasser.
+    @inline(__always)
+    public static func stampHalfWidthCells(dischargeCells: Double, creekCells: Double) -> Double {
+        max(0.0, min(stampHalfWidthCapCells,
+                     stampHalfWidthBase
+                     + log(max(dischargeCells, 1) / creekCells + 1) / stampHalfWidthLogDivisor))
+    }
+
+    /// Intensität des Mäander-Stempels aus dem Abfluss (Klemmung s. o.).
+    @inline(__always)
+    public static func stampIntensity(dischargeCells: Double, creekCells: Double) -> Double {
+        min(1.0, stampIntensityBase
+                 + log(max(dischargeCells, 1) / creekCells + 1) / stampIntensityLogDivisor)
+    }
 }
