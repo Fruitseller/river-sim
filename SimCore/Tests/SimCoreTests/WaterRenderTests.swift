@@ -457,6 +457,11 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertGreaterThan(WaterRender.streamIntensity(dischargeCells: creek,
                                                          creekCells: creek),
                              WaterRender.riverMaskLo)
+        // Wie die Geschwister-Funktionen klemmt die Abstufung ihren Abfluss
+        // selbst: ein negativer Wert darf kein NaN ins Wasserfeld tragen.
+        XCTAssertEqual(WaterRender.streamIntensity(dischargeCells: -10 * creek,
+                                                   creekCells: creek),
+                       WaterRender.streamIntensityBase)
         XCTAssertEqual(WaterRender.streamPondTolerance, 0.01)
         // Das Fluss-Feld hält sich an nahezu ungeflutete Zellen; alles Tiefere
         // gehört dem See-Kanal.
