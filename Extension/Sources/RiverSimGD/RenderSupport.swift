@@ -1,14 +1,14 @@
 import Foundation
 import SimCore
 
-/// Gemeinsame Werkzeuge der Render-Aufbereitung in der GDExtension (Issue #53).
-///
-/// Hier steht, was MEHRERE Render-Module brauchen — sonst hätte jedes eine
-/// eigene Kopie, und die beiden Wasser-Pfade (Raster-Feld und Band-Geometrie)
-/// müssen sich exakt einig sein: sie teilen die Uferlinien-Definition
-/// (`openWaterSurface`), den Mündungs-Pfad (`mouthPath`) und die Band-Halbbreite.
-/// Die KALIBRIER-Zahlen dahinter liegen unverändert im getesteten Vertrag
-/// `SimCore.WaterRender` (Issue #51) — dieses Modul rechnet nur mit ihnen.
+// Gemeinsame Werkzeuge der Render-Aufbereitung in der GDExtension (Issue #53).
+//
+// Hier steht, was MEHRERE Render-Module brauchen — sonst hätte jedes eine
+// eigene Kopie, und die beiden Wasser-Pfade (Raster-Feld und Band-Geometrie)
+// müssen sich exakt einig sein: sie teilen die Uferlinien-Definition
+// (`openWaterSurface`), den Mündungs-Pfad (`mouthPath`) und die Band-Halbbreite.
+// Die KALIBRIER-Zahlen dahinter liegen unverändert im getesteten Vertrag
+// `SimCore.WaterRender` (Issue #51) — dieses Modul rechnet nur mit ihnen.
 
 /// Datenparallel über disjunkte Index-Bereiche — nur für Pässe, deren Zellen
 /// unabhängig sind (jede schreibt ausschließlich ihren eigenen Index): das
