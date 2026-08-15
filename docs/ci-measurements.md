@@ -123,7 +123,7 @@ speist die ganze Modulkette, mehr Kerne helfen nicht.
 
 ## Cache-Strategie
 
-Drei `actions/cache`-Einträge, jeder mit einem anderen Verfallsgrund:
+Vier `actions/cache`-Einträge, jeder mit einem anderen Verfallsgrund:
 
 | Cache | Key hängt an | Warum getrennt |
 | --- | --- | --- |
