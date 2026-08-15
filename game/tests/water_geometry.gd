@@ -199,7 +199,7 @@ func _cell_of(left: Vector3, right: Vector3, world: float, cs: float, n: int) ->
 	return gz * n + gx
 
 ## Wassersäule über der Zelle (Meer und See sind zwei verschiedene Flächen —
-## dieselbe Fallunterscheidung wie SimNode.openWaterSurface).
+## dieselbe Fallunterscheidung wie openWaterSurface in RenderSupport.swift).
 func _pond(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) -> float:
 	if h[k] <= sea:
 		return sea - h[k]

@@ -76,7 +76,7 @@ float pond_at(vec2 uv, float h_val) {
 // Sichtbarkeits-Gate der Seen (water_tex.g: Komponenten-Fade, geblurt) — WO
 // Wasser gemalt/gehoben wird; die FORM macht pond_at. Fenster 0.04/0.35 lässt
 // den Blur-Halo am Ufer durch und schaltet ab Komponenten-Fade 0.35 voll
-// (Kalibrier-Herleitung: SimNode.waterFieldBytes, fadeLo/HiCells).
+// (Kalibrier-Herleitung: WaterFieldRenderer, fadeLo/HiCells).
 float lake_gate_at(vec2 uv) {
 	return smoothstep(0.04, 0.35, texture(water_tex, uv).g);
 }

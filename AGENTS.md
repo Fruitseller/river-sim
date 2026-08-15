@@ -173,8 +173,8 @@ gefüllt ist. `smoke.gd` erkennt genau diesen Fall und nennt den Befehl.
 RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
 ```
 
-`RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_NO_MEANDER_PAINT` und
-`RS_WATER_STAMP` zusätzlich in `SimNode.swift`):
+`RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
+`SimNode.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
 `RS_SEED`, `RS_STEP`, `RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"` — Blickpunkt in
 Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
 `RS_QUALITY` (`performance|balanced|quality`), `RS_RENDER_GRID`, `RS_DIAG`,
@@ -217,14 +217,36 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
 1. **`SimCore/`** — reines Swift-Package, **keine Godot-Abhängigkeit**. Die gesamte
    Physik. Headless mit XCTest verifizierbar.
 2. **`Extension/`** — SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn: hält einen
-   `Terrain`, reicht Felder als `Packed*Array` an Godot, baut Farb-/Wasser-Byte-Puffer
-   fürs Rendering. Keine Physik.
+   `Terrain` und reicht seine Felder als `Packed*Array` an Godot. Keine Physik.
 3. **`game/`** — Godot-4.7-Projekt: `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` + `water.gdshader`.
 
-Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach `heights()`,
+Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach `heightsBytes()`,
 `waterFieldBytes()`, `terrainColorBytes()` etc. und schiebt sie als Texturen ins Mesh.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
+
+### Extension-Aufbau (Issue #53)
+
+`SimNode.swift` ist reines Marshalling: Aufruf weiterreichen, Ergebnis als
+`Packed*Array` zurückgeben. Die Render-AUFBEREITUNG liegt daneben, je Pfad ein
+Modul — sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer, Dirty-Snapshots),
+liest das Terrain und ändert es nie:
+
+- `WaterFieldRenderer` — Raster-Wasser (`waterFieldBytes`),
+- `RiverRibbonRenderer` — Band-Geometrie (`buildRiverRibbons` + Puffer),
+- `TerrainColorRenderer` — Biom-/Höhen-Färbung,
+- `TreeInstanceRenderer` — MultiMesh-Puffer der Bäume,
+- `TerrainDiagnostics` — Kennzahlen und Δ-Karte,
+- `RenderSupport.swift` — was mehrere brauchen (`parallelChunks`,
+  `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
+  müssen sich über die Uferlinie und die Mündung exakt einig sein,
+- `BrushTool` — Werkzeug-Modi; dieselbe Reihenfolge wie die Werkzeug-Tabelle in
+  `Main.gd` (Wächter: `SimCoreTests/ToolContractTests.swift`).
+
+Die KALIBRIER-Zahlen bleiben dabei in `SimCore` (`WaterRender`,
+`RenderContract`) — die Module rechnen nur mit ihnen. Die Wächter lesen die
+Extension als GANZES (`RepoSource.extensionSources()`), ein Umzug zwischen
+diesen Dateien bricht sie also nicht.
 
 ### SimCore-Aufbau
 
@@ -296,9 +318,9 @@ auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
 Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
 Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
 (`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK beider
-Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer). `SimNode` und die
-Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests` und
-`RenderContractTests` lesen die ECHTEN Quelltexte von `SimNode.swift`, beiden
+Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer). Die Extension und
+die Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests` und
+`RenderContractTests` lesen die ECHTEN Quelltexte der GDExtension, beiden
 `.gdshader`, `Main.gd` und den Godot-Wächtern und vergleichen sie gegen diese
 Werte (gemeinsamer Helfer: `Tests/SimCoreTests/RepoSource.swift`). Zahlen im
 Shader deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`) — sonst
@@ -306,8 +328,8 @@ greift der Textvergleich nicht.
 
 **Wasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
-Band-Geometrie (`buildRiverRibbons`) malt Mäander-Hauptläufe, Delta-Fächer und
-Altarme, das Raster-Feld (`waterFieldBytes` + `terrain.gdshader`) die
+Band-Geometrie (`RiverRibbonRenderer`) malt Mäander-Hauptläufe, Delta-Fächer und
+Altarme, das Raster-Feld (`WaterFieldRenderer` + `terrain.gdshader`) die
 dendritischen Zubringer, Seen und das Meer. Die Grenze ist die Wassersäule
 `WaterRender.lakeRawWetDepth`: darunter malt nur die Geometrie, darüber nur das
 Raster. Wer eine der beiden Seiten verschiebt, bekommt entweder einen Spalt oder
