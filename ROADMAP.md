@@ -13,7 +13,11 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare
   Hangdiffusion (`hillslopeDiffusion`) rundet die Grate. Prozess-Reihenfolge LEM-konform:
-  Uplift → Flow → SPL/Auslass → Braiding → Droplet → Diffusion → Wave.
+  Uplift → Lithologie → Flow (inkl. Becken-Wasserhaushalt) → Seespiegel/Playa →
+  Eis → Mäander → SPL/Auslass → Verlandung → Braiding → Droplet → Auen →
+  Diffusion → Wave → Klima → Vegetation. Das **vollständige** `step()`-Diagramm
+  mit der Begründung je Einhängepunkt steht in `AGENTS.md` § SimCore-Aufbau —
+  dort mitziehen, wenn ein Pass dazukommt.
   Pre-Erosion + Shader-Detail-Layer nach runevision (`ErosionFilter.swift`).
 - **Alterung statt Regler:** die Tektonik ist eine **abklingende Hebung**
   `U(t) = U_floor + (U₀−U_floor)·e^(−t/τ)` (post-orogener Zerfall) — zusammen mit
@@ -257,7 +261,7 @@ moduliert Erodierbarkeit UND Hangdiffusivität. Messreihe:
   Parameter-Sweeps (Paketdicke, Fallen, Kontrast), Rückverlegungsrate einer
   Stufenkante als schärfere Kennzahl, härteabhängige Küstenklippen (`wavePass`).
 
-**dt-Invarianz — ERLEDIGT bis auf einen benannten Rest (Aug 2026, Issue #2):**
+**dt-Invarianz — ERLEDIGT bis auf zwei benannte Reste (Aug 2026, Issue #2):**
 gleiche Simulationszeit lieferte je nach Schrittweite anderes Terrain. Vier
 Ursachen behoben, jede mit eigenem Wächter (`SimCoreTests/DtInvariance.swift`,
 Messreihen `docs/dt-invariance-measurements.md`):
@@ -295,7 +299,7 @@ Messreihen `docs/dt-invariance-measurements.md`):
   REFERENZARM (ohne Braiding) trockene Flächen dazugewann (94 → 212) und den
   A/B-Kontrast überdeckte. Details und Zahlen: `docs/dt-invariance-measurements.md`
   §6/§7.
-- **Offen, bewusst nicht Teil von #2: Operator-Splitting-Drift.** Das
+- **Rest 1 — offen, bewusst nicht Teil von #2: Operator-Splitting-Drift.** Das
   Abflussfeld wird einmal je Schritt bestimmt, die Tropfen laufen `dt·Rate` mal
   dagegen — bei dt = 2000 arbeiten 360 Tropfen auf einem Feld, das dt = 10 alle
   1.8 Tropfen neu berechnet. Gemessen ist das der ganze Rest-Unterschied: der
@@ -311,6 +315,18 @@ Messreihen `docs/dt-invariance-measurements.md`):
   0.0211/0.0212/0.0503 über dt ∈ {10, 240, 2000}, ohne Gate
   0.0044/0.0045/0.0046) — es bleibt unangetastet, weil es die Antwort auf
   „wachsender Boden ohne Wasser" ist.
+- **Rest 2 — bewusst stehen gelassen: der Scour-Deckel in `braidPass`.** Er
+  begrenzt den Braid-Abtrag auf feste 0.5 der lokalen Höhendifferenz JE SCHRITT
+  und ist als EINZIGER Deckel nicht auf `Terrain.stepCapFraction` umgestellt:
+  #2 hat die DEPOSITIONS-Deckel geradegezogen, dies ist die Erosionsseite. Als
+  Rate darf ein 200-Jahr-Schritt 0.75 statt 0.5 ausräumen; gemessen gräbt der
+  Scour damit die Böden der abflusslosen Becken tiefer, die trockengefallene
+  Playa-Fläche fiel von >100 auf 35 Zellen und die #11-Wächter
+  `testDriedBedIsRenderedAsPlaya`/`testBasinLevelIsRateLimited` kippten
+  (`docs/dt-invariance-measurements.md` §6, Zeile zum Scour-Deckel). Die
+  Schrittweiten-Abhängigkeit ist damit klein, bekannt und am Code kommentiert —
+  wer sie beseitigen will, braucht eine eigene Kalibrier-Runde für die
+  endorheischen Becken, kein reines Umstellen auf den Helfer.
 
 **Politur / Rendering:**
 - ERLEDIGT (Aug 2026): „Hüpfende" See-/Schwemmflächen — Deposition am Becken-Auslass
@@ -540,8 +556,10 @@ BEWUSSTEN Physik-Neukalibrierung angehen.
   Issue #43: Produktions-Config, n = 832, Einlauf + Pass-Tabelle) und
   `simperf --hash` als Bit-Identitäts-Wächter vor/nach einer Optimierung.
   Protokoll und Messhygiene: `docs/perf-measurements.md`.
-- **Headless-Tests:** `cd SimCore && swift test -c release` (Debug ist bei n=832 zu
-  langsam). Beim Iterieren `--filter <methodName>` — **nicht** den Klassennamen, der
+- **Headless-Tests:** `swift test -c release --package-path SimCore -Xswiftc
+  -swift-version -Xswiftc 5` (Debug ist bei n=832 zu langsam, der Swift-5-Schalter
+  Pflicht — Begründung in `AGENTS.md` § Befehle). Beim Iterieren
+  `--filter <methodName>` — **nicht** den Klassennamen, der
   matcht 0 Tests. Wächter: `LongRunCollapse.swift` (kein Runaway/Kollaps),
   `RiverDynamicsTests.swift` (MFD-Splits, Braiding-Bänke, Becken→Meer, Stream-Map,
   Mäander in Produktion), `WorldSnapshotTests.swift` (Spielstand läuft
@@ -549,13 +567,16 @@ BEWUSSTEN Physik-Neukalibrierung angehen.
   `TerrainAPITests.swift` (Generierung, Pinsel `smooth`/`roughen`,
   Abkling-Rate der Hebung) und `RelaxationTests.swift` (der gemeinsame
   Relaxations-Helfer `Terrain.relaxFraction`).
-- **Extension bauen** (~3,5 min): `./scripts/build.sh release` — **immer mit absolutem
-  Pfad aufrufen.** Relativ aus `game/` heraus schlägt es still fehl, und die Screenshots
-  laufen dann mit der ALTEN dylib (hat schon 3 „wirkungslose" Iterationen gekostet).
-  Auf die „gebaut + signiert"-Zeile prüfen.
-- **Screenshots headless** (Godot via Steam):
+- **Extension bauen:** `"$(git rev-parse --show-toplevel)"/scripts/build.sh release`
+  — **immer mit absolutem Pfad aufrufen.** Relativ aus `game/` heraus schlägt es
+  still fehl, und die Screenshots laufen dann mit der ALTEN Library (hat schon 3
+  „wirkungslose" Iterationen gekostet); dagegen steht seit Issue #52 zusätzlich der
+  Build-Stempel. Auf die „gebaut"-Zeile am Ende prüfen. Laufzeiten je Rechner und
+  Änderungsumfang: `AGENTS.md` § Befehle.
+- **Screenshots headless** (Godot-Binärdatei aus `scripts/fetch-godot.sh`, der
+  einzigen Quelle der gepinnten Version):
   ```
-  GODOT="$HOME/Library/Application Support/Steam/steamapps/common/Godot Engine/Godot.app/Contents/MacOS/Godot"
+  GODOT="$(scripts/fetch-godot.sh)"
   RS_STEP=<jahre> RS_SHOT=/pfad/shot.png RS_DIST=<kameradistanz> "$GODOT" --path game
   ```
   `RS_STEP` steppt die Sim vor dem Shot (Jahr 0 vs. gesteppt vergleichen!). Das Jahr-Label
@@ -572,19 +593,37 @@ BEWUSSTEN Physik-Neukalibrierung angehen.
 
 ## Wichtige Dateien
 
-- `SimCore/Sources/SimCore/Terrain.swift` — `generate()`, `step()`, `computeFlow`,
-  `outletIncision`, `braidPass`, `meanderStamp`, `diffusionPass`.
-- `SimCore/Sources/SimCore/Hydraulic.swift` — Droplet-Erosion (Textur + Stream-Map + Pools).
+- `SimCore/Sources/SimCore/Terrain.swift` (~4500 Zeilen) — `generate()`, `step()`,
+  `computeFlow`, `updateIce`, `outletIncision`, `braidPass`, `meanderStamp`,
+  `updateClimate`, `updateVegetation`, `diffusionPass` (Testpfad).
+- `SimCore/Sources/SimCore/Hydraulic.swift` — Droplet-Erosion (Textur + Stream-Map + Pools)
+  und `HydraulicParams`, die Tropfen-Stellschrauben.
 - `SimCore/Sources/SimCore/Meander.swift` — Lagrange-Zentrumslinie, Migration, Cutoff.
-- `SimCore/Sources/SimCore/ErosionFilter.swift` — runevision-Pre-Erosion (Phacelle Noise).
-- `SimCore/Sources/SimCore/Config.swift` — **alle** Stellschrauben, jede mit Begründung.
+- `SimCore/Sources/SimCore/ErosionFilter.swift` — runevision-Pre-Erosion (Phacelle
+  Noise) und `ErosionFilter.Params`.
+- `SimCore/Sources/SimCore/HeightBands.swift` — Perzentil-Höhenbänder (Issue #4).
+- `SimCore/Sources/SimCore/Config.swift` (~1500 Zeilen) — `SimConfig`, die
+  Stellschrauben mit Begründung. Zwei Gruppen liegen bewusst bei ihrem Code
+  (s. `AGENTS.md` § Konfiguration).
 - `SimCore/Sources/SimCore/WorldSnapshot.swift` — Welt-Speicherformat (Magic,
   Version, Prüfsumme, atomares Schreiben); das Zustands-INVENTAR (`TerrainState`)
   steht am Ende von `Terrain.swift`.
-- `Extension/Sources/RiverSimGD/SimNode.swift` — `terrainColorBytes` (Palette),
-  `waterFieldBytes` (Wasser-Feld, EWMA, Render-Schwellen).
-- `game/shaders/terrain.gdshader` — Wasser-Overlay, Detail-Layer, Shading.
-- `game/scripts/Main.gd` — Licht/Environment, UI, Kamera/Zoom, RS_*-Env-Schalter.
+- `SimCore/Sources/SimCore/WaterRender.swift` + `RenderContract.swift` +
+  `Strahler.swift` — Render-Ableitungen ohne Sim-Zustand; seit Issue #51 die
+  EINZIGE Quelle der Render-Kalibrierung, aus `SimCoreTests` gegen Shader,
+  GDExtension und `Main.gd` gepinnt.
+- `Extension/Sources/RiverSimGD/SimNode.swift` — die Brücke (`@Callable`s,
+  `Packed*Array`-Marshalling). Die Aufbereitung liegt seit Issue #53 daneben:
+  `WaterFieldRenderer` (Raster-Wasser), `RiverRibbonRenderer` (Band-Geometrie),
+  `TerrainColorRenderer` (Palette), `TreeInstanceRenderer`, `TerrainDiagnostics`,
+  `RenderSupport` (Gemeinsames beider Wasser-Pfade), `BrushTool` (Werkzeug-Modi).
+- `game/shaders/terrain.gdshader` — Wasser-Overlay, Detail-Layer, Shading;
+  `game/shaders/water.gdshader` — die Wasser-Geometrie der Bänder.
+- `game/scripts/Main.gd` (~1280 Zeilen) — Licht/Environment, UI, Kamera/Zoom,
+  Werkzeug-Tabelle, RS_*-Env-Schalter.
+- `game/tests/*.gd` — die Godot-seitigen Wächter (`smoke`, `water_geometry`,
+  `river_ribbons`, `build_stamp_parity`, `tree_count`, `water_rings`,
+  `pickaxe_repro`) plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter).
 
 ## Arbeitsweise in diesem Projekt (ernst nehmen)
 
