@@ -21,6 +21,10 @@ const SEA_SURFACE_SINK := -0.06
 const MIN_RANK := 0.65
 const KIND_DELTA_LO := 0.25
 
+# Wie nah an der Zellgrenze (in Zellen) die Zentrumslinie liegen darf, damit
+# auch die Nachbarzelle als gemeinter Spiegel zählt — s. `_lake_surface_err`.
+const CELL_BOUNDARY_EPS := 0.001
+
 var done := false
 
 func _process(_delta: float) -> bool:
@@ -142,7 +146,7 @@ func _run() -> void:
 			# See knapp über dem Spiegel, Meer knapp darunter — NICHT RIVER_LIFT,
 			# der gilt nur für Bänder auf dem Gelände.
 			var surface_err: float = minf(
-				absf(v.y - (level * Main.HSCALE + LAKE_SURFACE_LIFT)),
+				_lake_surface_err(levels, n, world, mid.x, mid.z, v.y),
 				absf(v.y - (sea * Main.HSCALE + SEA_SURFACE_SINK)))
 			if surface_err > 0.05:
 				stray += 1
@@ -248,6 +252,35 @@ func _run() -> void:
 
 	print("RIVER_RIBBONS_OK")
 	quit(0)
+
+## Abstand des Bands zum SEE-Spiegel unter ihm — tolerant NUR auf der Zellgrenze.
+##
+## Die Extension rundet die Zentrumslinie in `double` auf eine Zelle, dieser
+## Wächter rechnet aus dem Vertex-Puffer zurück, der `float32` trägt. Bei ±65
+## Welteinheiten trägt float32 rund 2,5e-5 Zellen Rundungsfehler — liegt die
+## Zentrumslinie zufällig auf x.5, meinen beide Seiten dieselbe Kante und
+## nennen verschiedene Zellen. Am Ufer unterscheiden sich deren Spiegel
+## beliebig weit, und der Wächter würde ohne Grund rot (Issue #61).
+## Die Toleranz ist deshalb bewusst eine ORTS-Toleranz von 0,001 Zellen und
+## keine Höhen-Toleranz: einen Meter daneben bleibt einen Meter daneben.
+func _lake_surface_err(levels: PackedFloat32Array, n: int, world: float,
+		x: float, z: float, y: float) -> float:
+	var cs := world / float(n - 1)
+	var best := INF
+	for i in _cell_candidates((x + world * 0.5) / cs, n):
+		for j in _cell_candidates((z + world * 0.5) / cs, n):
+			best = minf(best, absf(y - (levels[j * n + i] * Main.HSCALE + LAKE_SURFACE_LIFT)))
+	return best
+
+## Zellindex(e) einer kontinuierlichen Gitterposition: der gerundete — und auf
+## der Zellgrenze (innerhalb `CELL_BOUNDARY_EPS`) auch der Nachbar.
+func _cell_candidates(g: float, n: int) -> Array[int]:
+	var base := clampi(int(round(g)), 0, n - 1)
+	var out: Array[int] = [base]
+	var frac := g - floorf(g)
+	if absf(frac - 0.5) < CELL_BOUNDARY_EPS:
+		out.append(clampi(base - 1 if frac >= 0.5 else base + 1, 0, n - 1))
+	return out
 
 ## Feldwert in DER Zelle, die SimNode für diesen Punkt benutzt (Rundung, nicht
 ## Interpolation) — nur so ist der Vergleich exakt statt „ungefähr".
