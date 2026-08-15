@@ -110,12 +110,20 @@ func _run() -> void:
 	# kippte das Band am Ufer aus der Wasserfläche heraus.
 	var heights: PackedFloat32Array = sim.heights()
 	var levels: PackedFloat32Array = sim.filled()
+	var uv2s: PackedVector2Array = sim.riverRibbonUV2s()
 	var n: int = sim.gridSize()
 	var world: float = sim.worldSize()
 	var sea: float = sim.seaLevel()
+	var cs := world / float(n - 1)
 	var max_ground_error := 0.0
 	var on_water := 0
 	var pair_on_water: Array[bool] = []
+	# Alle Ausreißer sammeln statt beim ersten abzubrechen: dieser Wächter kann
+	# nur auf der Maschine rot werden, deren Welt ihn auslöst (Höhenfelder sind
+	# plattformabhängig, AGENTS.md), und dort steht meist kein Debugger zur
+	# Verfügung — dann ist die AUSGABE die Diagnose (Issue #61).
+	var stray := 0
+	var stray_report := ""
 	for a in range(0, verts.size(), 2):
 		var v: Vector3 = verts[a]
 		var ground := _bilinear_height(heights, n, world, v.x, v.z)
@@ -137,21 +145,35 @@ func _run() -> void:
 				absf(v.y - (level * Main.HSCALE + LAKE_SURFACE_LIFT)),
 				absf(v.y - (sea * Main.HSCALE + SEA_SURFACE_SINK)))
 			if surface_err > 0.05:
-				push_error("FAIL: Band-Kante liegt weder auf dem Gelände (%f) noch auf einem Wasserspiegel (%f)"
-					% [err, surface_err])
-				quit(1)
-				return
+				stray += 1
+				if stray <= 8:
+					# Gitterposition MIT Nachkommastellen: liegt sie dicht an
+					# x.5, hat die Kante nur die Nachbarzelle erwischt; sonst
+					# steht das Band wirklich auf einem fremden Spiegel.
+					stray_report += ("\n  paar=%d typ=%.2f alpha=%.3f y=%f gitter=(%.3f, %.3f)"
+						+ " gelände_links=%f wasserspiegel=%f meer=%f"
+						+ " ground_err=%f surface_err=%f") % [
+						a, uv2s[a].x, cols[a].a, v.y,
+						(mid.x + world * 0.5) / cs, (mid.z + world * 0.5) / cs,
+						ground * Main.HSCALE + Main.RIVER_LIFT,
+						level * Main.HSCALE + LAKE_SURFACE_LIFT,
+						sea * Main.HSCALE + SEA_SURFACE_SINK,
+						err, surface_err]
 			on_water += 2
 			continue
 		max_ground_error = maxf(max_ground_error, err)
 	print("max_ground_error=", max_ground_error, " vertices_auf_wasser=", on_water)
+	if stray > 0:
+		push_error("FAIL: %d Band-Kantenpaare liegen weder auf dem Gelände noch auf einem Wasserspiegel (erste %d):%s"
+			% [stray, mini(stray, 8), stray_report])
+		quit(1)
+		return
 
 	# Nur Läufe emittieren, die mindestens Strahler 4 erreichen. Ihr Oberlauf
 	# bleibt als feiner Taper am selben Band erhalten; niedrigere Mäander würden
 	# die alten verknäulten „zu viele Flüsse"-Felder nachzeichnen.
 	# Gilt für FLUSS-Bänder; Delta-Arme und Altarme (Issue #34) haben keine
 	# eigene Strahler-Ordnung, ihre Bänder werden hier also übersprungen.
-	var uv2s: PackedVector2Array = sim.riverRibbonUV2s()
 	var starts: PackedInt32Array = sim.riverRibbonStripStarts()
 	var max_alpha_jump := 0.0
 	var river_strips := 0
