@@ -233,7 +233,10 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    Physik. Headless mit XCTest verifizierbar.
 2. **`Extension/`** — SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn: hält einen
    `Terrain` und reicht seine Felder als `Packed*Array` an Godot. Keine Physik.
-3. **`game/`** — Godot-4.7-Projekt: `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
+   Seit Issue #53 ist `SimNode.swift` wieder eine BRÜCKE (~320 Zeilen, fast nur
+   `@Callable`-Einzeiler); die Render-Aufbereitung liegt daneben, s. u.
+3. **`game/`** — Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
+   derzeit 4.7.1): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` + `water.gdshader`.
 
 Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach `heightsBytes()`,
