@@ -11,6 +11,9 @@ import XCTest
 /// `RenderContract`.
 enum RepoSource {
 
+    /// Verzeichnis der GDExtension-Quellen (relativ zur Repo-Wurzel).
+    static let extensionDirectory = "Extension/Sources/RiverSimGD"
+
     /// Datei relativ zur Repo-Wurzel lesen.
     ///
     /// `XCTSkip` NUR, wenn die Repo-Wurzel selbst nicht erreichbar ist (das
@@ -19,6 +22,34 @@ enum RepoSource {
     /// verschoben worden: dann MUSS der Test rot werden, sonst überspringt sich
     /// genau die Drift weg, die er abfangen soll.
     static func file(_ relativePath: String) throws -> String {
+        let url = try root().appendingPathComponent(relativePath)
+        return try XCTUnwrap(try? String(contentsOf: url, encoding: .utf8),
+                             "\(relativePath) fehlt oder ist umbenannt — die "
+                             + "Kalibrierung wäre damit ungeprüft")
+    }
+
+    /// ALLE Swift-Quellen der GDExtension als ein Text.
+    ///
+    /// Die Verträge fragen „steht dieser Wert in der Brücke?", nicht „steht er in
+    /// DIESER Datei": seit Issue #53 liegt die Render-Aufbereitung in mehreren
+    /// Modulen neben `SimNode`, und ein Umzug zwischen ihnen darf den Wächter
+    /// weder brechen noch heimlich entschärfen. Der generierte Build-Stempel
+    /// (Unterordner `Generated/`) fällt weg, weil hier nicht rekursiv gesucht
+    /// wird — er enthält ohnehin nur einen Hash.
+    static func extensionSources() throws -> String {
+        let directory = try root().appendingPathComponent(extensionDirectory)
+        let names = try XCTUnwrap(
+            try? FileManager.default.contentsOfDirectory(atPath: directory.path),
+            "\(extensionDirectory) fehlt — die Kalibrierung wäre damit ungeprüft")
+            .filter { $0.hasSuffix(".swift") }
+            .sorted()
+        XCTAssertFalse(names.isEmpty, "Keine Swift-Quellen in \(extensionDirectory)")
+        return try names
+            .map { try file("\(extensionDirectory)/\($0)") }
+            .joined(separator: "\n")
+    }
+
+    private static func root() throws -> URL {
         // #filePath = <repo>/SimCore/Tests/SimCoreTests/RepoSource.swift
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { root.deleteLastPathComponent() }
@@ -26,10 +57,7 @@ enum RepoSource {
         guard FileManager.default.fileExists(atPath: marker.path) else {
             throw XCTSkip("Repo-Wurzel nicht erreichbar (\(root.path) ohne AGENTS.md)")
         }
-        let url = root.appendingPathComponent(relativePath)
-        return try XCTUnwrap(try? String(contentsOf: url, encoding: .utf8),
-                             "\(relativePath) fehlt oder ist umbenannt — die "
-                             + "Kalibrierung wäre damit ungeprüft")
+        return root
     }
 }
 

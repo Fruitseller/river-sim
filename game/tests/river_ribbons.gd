@@ -130,7 +130,7 @@ func _run() -> void:
 			# einer Zelle auf die Geländehöhe ab.
 			var mid: Vector3 = (verts[a] + verts[a + 1]) * 0.5
 			var level := _cell_value(levels, n, world, mid.x, mid.z)
-			# Versatz wie in SimNode.emitRibbon (WaterRender.ribbon*Surface*):
+			# Versatz wie in RiverRibbonRenderer.emitRibbon (WaterRender.ribbon*Surface*):
 			# See knapp über dem Spiegel, Meer knapp darunter — NICHT RIVER_LIFT,
 			# der gilt nur für Bänder auf dem Gelände.
 			var surface_err: float = minf(

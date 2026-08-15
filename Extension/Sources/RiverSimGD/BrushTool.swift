@@ -1,0 +1,46 @@
+import SimCore
+
+/// Werkzeug-Modi des Pinsels — der EINE Vertrag zwischen Game-Layer und Bridge
+/// (Issue #53).
+///
+/// Vorher stand die Zuordnung „Zahl → Terrain-Operation" als `switch` über nackte
+/// Ints in der Brücke und die Zahlen selbst verstreut im Game-Layer (Tool-Index
+/// der Button-Tabelle, `current_tool == 3` fürs Einebnen-Ziel, `mode == 5` für den
+/// Spitzhacken-Strich, Tastatur-Offset). Ein neues Werkzeug hieß: fünf Stellen
+/// finden. Jetzt ist es EINE Zeile in `Main.gd`s Werkzeug-Tabelle und EIN `case`
+/// hier — beide in derselben Reihenfolge, weil GDScript nur die Zahl übergeben
+/// kann. Wächter: `SimCoreTests/RenderContractTests.swift` vergleicht die
+/// Rohwerte hier gegen die Tabelle in `Main.gd`.
+enum BrushTool: Int, CaseIterable {
+    case raise = 0
+    case lower = 1
+    case smooth = 2
+    /// Einebnen auf `target` (die Höhe am Strich-Beginn).
+    case flatten = 3
+    /// Aufrauen mit fraktalem Rauschen.
+    case roughen = 4
+    /// Spitzhacke: tieferer, spitzer Hieb — leitet Flüsse um.
+    case pickaxe = 5
+
+    /// Führt den Hieb auf dem Terrain aus. `target` gilt nur fürs Einebnen; die
+    /// übrigen Werkzeuge ignorieren ihn (Godot kann keine optionalen Argumente
+    /// über die Brücke schicken, deshalb EIN Signatur-Satz für alle).
+    func apply(to terrain: Terrain, gx: Double, gz: Double, radiusWorld: Double,
+               strength: Double, target: Double) {
+        switch self {
+        case .raise:
+            terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: 1, strength: strength)
+        case .lower:
+            terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: -1, strength: strength)
+        case .smooth:
+            terrain.smooth(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
+        case .flatten:
+            terrain.flatten(gx: gx, gz: gz, radiusWorld: radiusWorld,
+                            targetHeight: target, strength: strength)
+        case .roughen:
+            terrain.roughen(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
+        case .pickaxe:
+            terrain.pickaxe(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
+        }
+    }
+}

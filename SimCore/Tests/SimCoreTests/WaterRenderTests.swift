@@ -244,7 +244,10 @@ final class WaterRenderTests: XCTestCase {
         // die Altarm-Präsenz-Schwelle MUSS der Kontur-Fuß sein, sonst sind die
         // seichten Altarm-Enden unsichtbar (Doppel-Rampe: Stempel × Kontur), und
         // der Ribbon-Halo (#31) MUSS im Saum-Fenster bleiben.
-        let simNode = try repoFile("Extension/Sources/RiverSimGD/SimNode.swift")
+        // Gelesen wird die GANZE Brücke, nicht eine Datei: seit Issue #53 liegt
+        // die Wasser-Aufbereitung in `WaterFieldRenderer`/`RiverRibbonRenderer`
+        // neben `SimNode`, und wo genau ein Wert steht, ist dem Vertrag egal.
+        let simNode = try RepoSource.extensionSources()
         assertContains(simNode, "WaterRender.componentFade(cells:",
                        hint: "Komponenten-Fade aus WaterRender beziehen")
         assertContains(simNode, "WaterRender.streamGate(componentFade:",
