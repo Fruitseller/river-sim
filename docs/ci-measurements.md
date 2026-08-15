@@ -151,6 +151,15 @@ deshalb bis zu dreimal, statt ihn zu übergehen: der Vertrag bleibt voll wirksam
 weil jeder folgende Schritt die Extension wirklich lädt. Schlagen alle drei
 Versuche fehl, ist der Job rot.
 
+Im grünen Lauf **31900912134** ist genau das eingetreten und damit belegt:
+Versuch 1 brach mit Exit 139 ab (Signal 6, wieder nach `loading_editor_layout |
+DONE`), **Versuch 2 lief sauber durch**, und alle vier Godot-Vertragstests
+danach waren grün (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK` mit
+`max_ground_error=0.00197`). Der Absturz ist also reproduzierbar auf den ersten
+Versuch beschränkt — die Wiederholung deckt ihn, ohne den Vertrag zu lockern.
+Job-Laufzeit dieses Laufs: **29 min 8 s** bei leerem Extension-Cache (Deckel
+`timeout-minutes: 75`).
+
 ## Cache-Strategie
 
 Vier `actions/cache`-Einträge, jeder mit einem anderen Verfallsgrund:
