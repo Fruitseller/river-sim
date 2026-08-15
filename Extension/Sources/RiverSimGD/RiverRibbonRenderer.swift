@@ -382,6 +382,16 @@ final class RiverRibbonRenderer {
             let k = cj * n + ci
             guard let surface = openWaterSurface(k, h: h, wl: wl, sea: sea) else {
                 submergedCells = 0
+                // Über TROCKENEM Boden folgt das Band dem Gelände — auch dann,
+                // wenn der Stützpunkt schon einen Spiegel MITBRINGT: die
+                // Mündungs-Kette (`mouthPath`) liest ihre Spiegel an den
+                // ZELLZENTREN der D8-Kette und glättet die Punkte danach über
+                // ihre Nachbarn. Ein geglätteter Punkt kann dadurch in der
+                // Nachbarzelle landen, und liegt die trocken, schwebte das Band
+                // dort auf dem Spiegel der Zelle nebenan (gemessen auf dem
+                // CI-Runner: 3,5 Welt-Einheiten über dem Boden, Issue #61).
+                // Es entscheidet die EIGENE Zelle des Stützpunkts.
+                samples[a].surface = nil
                 continue
             }
             if a > 0 {
@@ -564,7 +574,14 @@ final class RiverRibbonRenderer {
                 let edgeSteps = min(nodeIndex - first, last - nodeIndex)
                 let endFade = min(1, Double(edgeSteps + 1) / WaterRender.oxbowEndFadeSteps)
                 var alpha = 0.0
-                var surface = wl[k]
+                // Ohne offenes Seewasser in der EIGENEN Zelle liegt der
+                // Stützpunkt auf dem Gelände (`nil`) statt auf `waterLevel`:
+                // dort ist er ohnehin unsichtbar (Deckkraft 0), und
+                // `waterLevel` ist auf trockenem Boden nur der nachlaufende
+                // Darstellungsspiegel — unter der Meereshöhe hätte er das Band
+                // sogar unter die Meeresebene gelegt. Dieselbe Regel wie im
+                // Fluss-Band (s. `applyWaterHandover`, Issue #61).
+                var surface: Double? = nil
                 if let s = openWaterSurface(k, h: h, wl: wl, sea: sea), s > sea {
                     surface = s
                     // Dieselbe Übergabe wie beim Fluss-Band: sobald die

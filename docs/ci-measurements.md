@@ -126,6 +126,31 @@ ersten Lauf bzw. nach einem SwiftGodot-Pin-Wechsel (Issue #49) fällig: auf eine
 4-Kern-Linux-Host **27 min** (AGENTS.md, „Extension bauen"). SwiftGodots Codegen
 speist die ganze Modulkette, mehr Kerne helfen nicht.
 
+Auf dem Runner gemessen (`ubuntu-22.04`, Lauf 31898601044, Extension-Cache leer):
+Bau **28,6 min**, Import 6 s, Stempel-Parität < 1 s, `smoke.gd` 8 s,
+`water_geometry.gd` 13 s, `river_ribbons.gd` 4 s. Der Rest des Jobs (Toolchain,
+Godot-Download aus dem Cache) liegt zusammen unter 40 s. **Achtung beim
+Iterieren:** `actions/cache` schreibt seinen Eintrag nur bei ERFOLGREICHEM Job —
+solange `godot-contract` rot ist, kostet jede Runde den vollen Kaltbau.
+
+#### Erst-Import stürzt auf dem Runner ab (Issue #61)
+
+Der ERSTE `--import` in ein frisches `game/.godot` reißt Godot 4.7.1 auf diesem
+Image beim Herunterfahren ab (Signal 6/11, Exit 139) — nachdem alle Import-Phasen
+`DONE` gemeldet haben und `extension_list.cfg` geschrieben ist. Belegt in Lauf
+31898601044 (Diagnose-Schritte aus Commit db4f93a, danach wieder entfernt):
+
+- der `gdb`-Backtrace zeigt den Abort in Thread 1 **im Godot-Binary** (stripped,
+  keine Symbole; kein Frame der GDExtension, Worker-Threads in `futex`-Waits),
+- dieselbe Binärdatei importiert **ohne** `game/bin/*.so` sauber (Exit 0),
+- der **zweite** Import (warmes `.godot`) läuft sauber durch, ebenso jeder
+  folgende Skript-Lauf — `smoke.gd` meldete im selben Job `SMOKE_OK`.
+
+Lokal (Debian 13) tritt der Absturz nicht auf. Der Job wiederholt den Import
+deshalb bis zu dreimal, statt ihn zu übergehen: der Vertrag bleibt voll wirksam,
+weil jeder folgende Schritt die Extension wirklich lädt. Schlagen alle drei
+Versuche fehl, ist der Job rot.
+
 ## Cache-Strategie
 
 Vier `actions/cache`-Einträge, jeder mit einem anderen Verfallsgrund:
