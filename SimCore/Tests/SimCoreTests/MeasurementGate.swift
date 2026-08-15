@@ -24,10 +24,19 @@ import XCTest
 // hinter dem Schalter.
 
 extension XCTestCase {
-    /// Überspringt den Test, wenn `RS_MEASURE` nicht gesetzt ist.
+    /// Überspringt den Test, außer `RS_MEASURE` steht **exakt** auf `1`.
+    ///
+    /// Bewusst der Gleichheitsvergleich und nicht „gesetzt?": ein versehentlich
+    /// exportiertes `RS_MEASURE=0` (Shell-History, CI-Env-Default) würde sonst die
+    /// ~270 s teuren Messläufe zurück in die Pflichtsuite holen — genau der
+    /// Zustand, den das Gate abstellt. `1` ist der einzige Wert, den Doku und
+    /// Aufrufe im Repo nennen (AGENTS.md, docs/ci-measurements.md); jeder andere
+    /// Wert ist ein Versehen und zählt als „aus". Der Konventions-Wächter unten
+    /// prüft nur „Diagnostic ↔ skipUnlessMeasuring()", nie den Wert — der muss
+    /// hier stimmen.
     func skipUnlessMeasuring(file: StaticString = #filePath, line: UInt = #line) throws {
         try XCTSkipUnless(
-            ProcessInfo.processInfo.environment["RS_MEASURE"] != nil,
+            ProcessInfo.processInfo.environment["RS_MEASURE"] == "1",
             "Mess-/Sweep-Test — nur mit RS_MEASURE=1 (Laufzeit, Issue #52)",
             file: file, line: line)
     }
