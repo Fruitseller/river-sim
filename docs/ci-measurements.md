@@ -137,6 +137,13 @@ Vier `actions/cache`-Einträge, jeder mit einem anderen Verfallsgrund:
 | `Extension/.build` | `Package.resolved` + Sources | Der teure; `restore-keys` holt den letzten Stand desselben Toolchain-Stands, aus dem SwiftPM inkrementell weiterbaut |
 | `.tools/godot-<version>` | Version aus `scripts/fetch-godot.sh` | ~76 MB Download, wechselt nur mit dem Godot-Pin |
 
+Die beiden **Fremd-Downloads** (Swift-Toolchain, Godot-Binärdatei) hängen an einer
+gepinnten sha256, nicht nur an HTTPS. Beim Godot-Cache wird die Prüfsumme auch beim
+**Cache-Hit** gezogen (~0,1 s) — sonst hinge der Vertragstest an einem Cache-Key,
+der nur den Versions-Tag nennt. Version und Prüfsumme werden immer zusammen
+ausgetauscht: `SWIFT_VERSION`/`SWIFT_SHA256` in `ci.yml`, `GODOT_VERSION`/
+`GODOT_SHA256`/`GODOT_BIN_SHA256` in `scripts/fetch-godot.sh`.
+
 `SimCore/.build` und `Extension/.build` sind **kein** Doppel-Build derselben
 Sache: verschiedene Paketgraphen, verschiedene Scratch-Pfade. Der Extension-Build
 kompiliert SimCore als Abhängigkeit mit, kann aber die Testziele nicht ausführen —

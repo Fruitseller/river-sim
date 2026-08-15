@@ -14,6 +14,11 @@ inputs:
   swift-version:
     description: Version der Swift.org-Toolchain (muss zur lokal genutzten passen).
     required: true
+  swift-sha256:
+    description: >-
+      sha256 des Ubuntu-22.04-Toolchain-Archivs zu `swift-version`. Version und
+      Prüfsumme werden nur zusammen ausgetauscht — wie bei scripts/fetch-godot.sh.
+    required: true
 
 runs:
   using: composite
@@ -58,6 +63,24 @@ runs:
       # in den ersten CI-Läufen (Aug 2026). URL-Schema:
       # https://download.swift.org/swift-<VERSION>-release/ubuntu2204/
       # Bei Cache-Hit ist /opt/swift bereits gefüllt, der Download entfällt.
+      #
+      # Prüfsumme wie bei scripts/fetch-godot.sh: HTTPS sichert nur den Transport,
+      # nicht den Inhalt — ohne sha256 wäre das ein ungeprüftes ~1-GB-Fremdarchiv,
+      # aus dem anschließend jeder Compiler-Aufruf dieses Repos stammt. Der Wert
+      # unten stammt aus dem Archiv, dessen mitgelieferte Signatur gegen den
+      # „Swift 6.x Release Signing Key" (52BB 7E3D E28A 71BE 22EC  05FF EF80 A866
+      # B47A 981F) verifiziert wurde. Beim Anheben der Version neu ableiten:
+      #
+      #   B=https://download.swift.org/swift-<VER>-release/ubuntu2204/swift-<VER>-RELEASE/swift-<VER>-RELEASE-ubuntu22.04.tar.gz
+      #   curl -fsSLO "$B" -O "$B.sig"
+      #   curl -fsSL --compressed https://www.swift.org/keys/all-keys.asc | gpg --import -
+      #   gpg --verify swift-<VER>-RELEASE-ubuntu22.04.tar.gz{.sig,}
+      #   sha256sum swift-<VER>-RELEASE-ubuntu22.04.tar.gz
+      #
+      # Warum hier der Hash und nicht `gpg --verify` im Job: der Hash braucht im
+      # Lauf keinen zweiten Fremd-Download (den Schlüsselbund), er ist im Diff
+      # sichtbar gepinnt, und er passt zu dem Verfahren, das das Repo für die
+      # Godot-Binärdatei schon benutzt.
       shell: bash
       run: |
         if [[ -x /opt/swift/usr/bin/swift ]]; then
@@ -67,6 +90,10 @@ runs:
           curl -fsSL --retry 3 \
             "https://download.swift.org/swift-${{ inputs.swift-version }}-release/ubuntu2204/swift-${{ inputs.swift-version }}-RELEASE/swift-${{ inputs.swift-version }}-RELEASE-ubuntu22.04.tar.gz" \
             -o /tmp/swift.tar.gz
+          if ! echo "${{ inputs.swift-sha256 }}  /tmp/swift.tar.gz" | sha256sum -c --status; then
+            echo "::error::Prüfsumme der Swift-${{ inputs.swift-version }}-Toolchain stimmt nicht. erwartet: ${{ inputs.swift-sha256 }}, gelesen: $(sha256sum /tmp/swift.tar.gz | cut -d' ' -f1). Wurde SWIFT_VERSION ohne SWIFT_SHA256 angehoben?"
+            exit 1
+          fi
           sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
           rm /tmp/swift.tar.gz
           echo "Toolchain installiert unter /opt/swift: $(/opt/swift/usr/bin/swift --version | head -n1)"
