@@ -194,8 +194,8 @@ Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
 `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
 der Wasser-Geometrie — A/B im selben Build; ohne den Schalter rendert die
-Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus. Einzeln davon
-steht `RS_REPRO_YEARS` — das gehört nicht `Main.gd`, sondern kürzt den langen
+Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus. Getrennt davon
+steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab.
 
 ## CI
@@ -293,9 +293,10 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
 ```
 
 Der eingerahmte Block ist der `hydraulicEnabled`-Zweig; der Testpfad
-(`hydraulicEnabled = false`, s. unten) fährt an dieser Stelle stattdessen
-`transportLimited` und danach `diffusionPass`/`wavePass` verschränkt. Alles vor
-und nach dem Block läuft in BEIDEN Zweigen.
+(`hydraulicEnabled = false` — die isolierten Mäander-Kopplungstests, s.
+§ Konfiguration) fährt an dieser Stelle stattdessen `transportLimited` und danach
+`diffusionPass`/`wavePass` verschränkt. Alles vor und nach dem Block läuft in
+BEIDEN Zweigen.
 
 Die Klima-Vertikale (Issue #33) steht **direkt vor** der Vegetation und damit am
 Schrittende: die Temperatur liest die FINALEN Höhen des Schritts, und
@@ -345,7 +346,7 @@ oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4500 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
 Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen, die
-gesamte GDExtension ~2100 (davon `SimNode.swift` ~320 — s. u.).
+gesamte GDExtension ~2100 (davon `SimNode.swift` ~320 — s. o.).
 
 Drei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand — sie
 liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:
@@ -409,10 +410,11 @@ Spielstand mit (`Codable`):
   steht als handgeschriebene Extension in `WorldSnapshot.swift` — die Struktur
   führt Tupel, die der Compiler nicht synthetisieren kann.
 
-Keine Stellschraube ist dagegen `WaterRender`/`RenderContract`: das sind
-Render-KALIBRIERUNGEN mit Wächtern über Shader und GDExtension (s. o.), keine
-Physik-Regler. Auch die Extension und `Main.gd` halten keine eigenen Regler mehr
-— ihre Zahlen kommen aus dem Vertrag.
+KEINE Stellschrauben in diesem Sinn sind dagegen `WaterRender` und
+`RenderContract`: das sind Render-KALIBRIERUNGEN mit Wächtern über Shader und
+GDExtension (s. o.), keine Physik-Regler, und sie hängen nicht an `SimConfig`.
+Auch die Extension und `Main.gd` halten seit Issue #51 keine eigenen
+Render-Literale mehr — ihre Zahlen kommen aus dem Vertrag.
 
 Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - `SimConfig()`-Defaults = kalibrierte Produktions-Physik.
