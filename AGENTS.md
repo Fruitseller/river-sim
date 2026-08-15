@@ -458,8 +458,8 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Zwei **benannte Reste** bleiben bewusst stehen — wer eine dt-Abweichung misst,
   prüft zuerst gegen diese beiden, bevor er einen Fehler vermutet:
   1. **Operator-Splitting-Drift**: das Abflussfeld wird nur EINMAL je Schritt
-     bestimmt, die Tropfen laufen `dt·Rate` mal dagegen (`docs/dt-invariance-…`
-     §5). Das ist der Löwenanteil des Rests.
+     bestimmt, die Tropfen laufen `dt·Rate` mal dagegen
+     (`docs/dt-invariance-measurements.md` §5). Das ist der Löwenanteil des Rests.
   2. **Der Scour-Deckel in `braidPass`** steht bei festen 0.5 der lokalen
      Höhendifferenz JE SCHRITT und ist bewusst NICHT auf `stepCapFraction`
      umgestellt: Issue #2 hat die DEPOSITIONS-Deckel geradegezogen, dies ist die
