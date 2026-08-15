@@ -9,8 +9,9 @@ import SimCore
 /// Spitzhacken-Strich, Tastatur-Offset). Ein neues Werkzeug hieß: fünf Stellen
 /// finden. Jetzt ist es EINE Zeile in `Main.gd`s Werkzeug-Tabelle und EIN `case`
 /// hier — beide in derselben Reihenfolge, weil GDScript nur die Zahl übergeben
-/// kann. Wächter: `SimCoreTests/RenderContractTests.swift` vergleicht die
-/// Rohwerte hier gegen die Tabelle in `Main.gd`.
+/// kann. Wächter: `SimCoreTests/ToolContractTests.swift` vergleicht die Rohwerte
+/// hier gegen die Tabelle in `Main.gd` und pinnt zusätzlich, welche
+/// Terrain-Operation jeder `case` in `apply` auslöst.
 enum BrushTool: Int, CaseIterable {
     case raise = 0
     case lower = 1
