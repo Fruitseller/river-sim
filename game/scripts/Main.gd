@@ -18,8 +18,6 @@ var world_size: float
 var half: float
 var step: float
 var sea: float
-var floor_level: float
-var cell_area: float
 var terrain_grid: int
 var render_quality := "balanced"
 var pick_radius_cap := 0.5 # effektive Spitzhacken-Breite (aus SimNode, fürs Ring-Visual)
@@ -60,20 +58,44 @@ const RIVER_LIFT := 0.35
 # Wasser als Texturen (pro Tick nur Upload, kein Mesh-Rebuild). Wasser ist ein
 # glattes Feld-Overlay im Terrain-Shader — keine Fluss-Geometrie mehr.
 var terrain_mat: ShaderMaterial
-var height_img: Image
-var height_tex: ImageTexture
-var hf_img: Image      # gefüllte Oberfläche (Seespiegel) → echte horizontale Seeflächen
-var hf_tex: ImageTexture
-var color_img: Image
-var color_tex: ImageTexture
-var water_img: Image
-var water_tex: ImageTexture
-var debug_difference_img: Image
-var debug_difference_tex: ImageTexture
+
+## Ein Feld → EINE Shader-Textur: legt Image/ImageTexture beim ersten Upload an
+## (und hängt sie an ihren Shader-Parameter), danach nur noch `set_data` +
+## `update`. Ersetzt fünf wortgleiche Blöcke (Issue #53) — der Unterschied waren
+## nur Name und Pixelformat.
+class FieldTexture:
+	var _param: StringName
+	var _format: int
+	var _img: Image
+	var _tex: ImageTexture
+
+	func _init(param: StringName, format: int) -> void:
+		_param = param
+		_format = format
+
+	func upload(mat: ShaderMaterial, n: int, bytes: PackedByteArray) -> void:
+		if _img == null:
+			_img = Image.create_from_data(n, n, false, _format, bytes)
+			_tex = ImageTexture.create_from_image(_img)
+			mat.set_shader_parameter(_param, _tex)
+		else:
+			_img.set_data(n, n, false, _format, bytes)
+			_tex.update(_img)
+
+var height_field := FieldTexture.new("height_tex", Image.FORMAT_RF)
+# gefüllte Oberfläche (Seespiegel) → echte horizontale Seeflächen
+var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF)
+var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8)
+var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8)
+var debug_difference_field := FieldTexture.new("debug_difference_tex", Image.FORMAT_RGBA8)
 
 # Nur die CPU-Höhen braucht GDScript: Raycasts lesen daraus, alle anderen
 # Renderfelder bleiben im nativen SimNode und vermeiden große FFI-Kopien.
+# LAZY gezogen (Issue #53): die Höhen-TEXTUR kommt als rohe Bytes direkt aus
+# SimNode, dieses Array braucht nur der Raycast — im Zeitraffer ohne Eingriff
+# also gar nicht.
 var h_cache: PackedFloat32Array
+var h_cache_dirty := true
 
 # Kamera-Orbit
 var cam: Camera3D
@@ -86,7 +108,6 @@ const PAN_SPEED_FACTOR := 0.4 # WASD-Geschwindigkeit relativ zur Zoom-Distanz
 
 # Zeit & Eingabe
 var year_rate := 0.0          # Jahre/Sekunde
-var droplet_carry := 0.0
 var rebuild_timer := 0.0
 var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
 var overlay_timer := 0.0
@@ -95,7 +116,7 @@ var sculpting := false
 var pick_last := Vector2.INF  # Spitzhacke: Position des letzten Hiebs im Strich (INF = noch keiner)
 var brush_radius := 10.0
 var brush_strength := 1.0
-var current_tool := 0         # Brush-Modus (siehe SimNode.brush): 0 ⛰ 1 🕳 2 〰 3 ▭ 4 🌋 5 ⛏
+var current_tool := 0         # Index in TOOLS (die Tabelle hält den Brush-Modus)
 var flatten_target := 0.0     # Zielhöhe fürs Einebnen — beim Strich-Beginn gesampelt
 var last_rate := 30.0         # für Leertaste: Pause ↔ letztes Tempo
 var u_time := 0.0
@@ -152,9 +173,28 @@ const SAVE_PATH := "user://saves/welt.rsworld"
 var world_status_label: Label
 var world_dialog: AcceptDialog
 
+## Werkzeug-Vertrag (Issue #53): EINE Tabelle für Beschriftung, Brush-Modus und
+## Verhalten. `mode` ist der Rohwert von `BrushTool` in der GDExtension — über die
+## Brücke geht nur diese Zahl, also müssen beide Reihenfolgen übereinstimmen
+## (Wächter: SimCoreTests/ToolContractTests.swift). Die Taste ist die
+## Tabellen-Position (1…N), nicht noch eine dritte Kopie.
+##
+## Optionale Felder, jedes ersetzt eine vorher verstreute Magie-Zahl:
+##   shift           — Werkzeug, auf das Shift umschaltet (Anheben ↔ Absenken)
+##   samples_target  — braucht die Geländehöhe am Strich-Beginn (Einebnen)
+##   stroke_spacing  — zeichnet EINZELHIEBE entlang des Strichs, Abstand in Zellen
+##                     (Spitzhacke: auf der Stelle verharren gräbt nicht tiefer)
+##   strength_factor — Faktor auf die Pinselstärke (Spitzhacke schlägt kräftiger)
+##   radius_capped   — echte Breite ist auf `pick_radius_cap` gedeckelt (Ring-Visual)
+## Neues Werkzeug = eine Zeile hier plus ein `case` in BrushTool.
 const TOOLS := [
-	["⛰", "Anheben", "1"], ["🕳", "Absenken", "2"], ["〰", "Glätten", "3"],
-	["▭", "Einebnen", "4"], ["🌋", "Aufrauen", "5"], ["⛏", "Spitzhacke", "6"],
+	{"icon": "⛰", "name": "Anheben", "mode": 0, "shift": 1},
+	{"icon": "🕳", "name": "Absenken", "mode": 1, "shift": 0},
+	{"icon": "〰", "name": "Glätten", "mode": 2},
+	{"icon": "▭", "name": "Einebnen", "mode": 3, "samples_target": true},
+	{"icon": "🌋", "name": "Aufrauen", "mode": 4},
+	{"icon": "⛏", "name": "Spitzhacke", "mode": 5, "stroke_spacing": 1.5,
+		"strength_factor": 1.5, "radius_capped": true},
 ]
 const SPEEDS := [["⏸ Pause", 0.0], ["10 J/s", 10.0], ["30 J/s", 30.0], ["60 J/s", 60.0]]
 
@@ -173,11 +213,9 @@ func _ready() -> void:
 	if OS.has_environment("RS_DIST"): # Kamera-Distanz für Zoom-Screenshots
 		cam_dist = float(OS.get_environment("RS_DIST"))
 	sea = sim.seaLevel()
-	floor_level = sim.floorLevel()
 	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	half = world_size / 2.0
 	step = world_size / float(N - 1)
-	cell_area = step * step
 	# Die Simulation bleibt immer bei N×N. Nur das GPU-Displacement nutzt eine
 	# adaptive Tessellation; per-pixel-Normalen und Heightmap bleiben unverändert.
 	render_quality = OS.get_environment("RS_QUALITY").to_lower()
@@ -237,7 +275,7 @@ func _ready() -> void:
 			sim.step(chunk)
 			done += chunk
 	sim.recomputeFlow()
-	_pull_fields()
+	_invalidate_h_cache()
 	if OS.has_environment("RS_TARGET"):
 		# Blickpunkt auf die GELÄNDEHÖHE heben: mit y = 0 zielt die Kamera unter
 		# die Landschaft, und der Ausschnitt zeigt Himmel statt Mündung.
@@ -253,6 +291,7 @@ func _ready() -> void:
 
 func _diag() -> void:
 	var land := 0
+	_ensure_h_cache()
 	for k in h_cache.size():
 		if h_cache[k] > sea + 0.012:
 			land += 1
@@ -260,7 +299,7 @@ func _diag() -> void:
 	var step_t0 := Time.get_ticks_usec()
 	sim.step(60.0)
 	var step_ms := (Time.get_ticks_usec() - step_t0) / 1000.0
-	_pull_fields()
+	_invalidate_h_cache()
 	print("DIAG PERF step_60y_ms=", step_ms)
 	var t0 := Time.get_ticks_usec()
 	for r in 10:
@@ -456,10 +495,10 @@ func _setup_ui() -> void:
 	vb.add_child(grid)
 	var tool_group := ButtonGroup.new()
 	for t in TOOLS.size():
-		var b := _mk_button("%s %s" % [TOOLS[t][0], TOOLS[t][1]], true, tool_group)
+		var b := _mk_button("%s %s" % [TOOLS[t]["icon"], TOOLS[t]["name"]], true, tool_group)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.tooltip_text = "Taste %s" % TOOLS[t][2]
+		b.tooltip_text = "Taste %d" % (t + 1)
 		b.pressed.connect(func(): current_tool = t)
 		grid.add_child(b)
 		tool_buttons.append(b)
@@ -722,7 +761,6 @@ func _load_world() -> void:
 	_set_rate(0.0)
 	# Konstanten, die aus der Datei-Config kommen können, nachziehen.
 	sea = sim.seaLevel()
-	floor_level = sim.floorLevel()
 	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	terrain_mat.set_shader_parameter("sea_level", sea)
 	water_mi.position.y = sea * HSCALE
@@ -736,7 +774,7 @@ func _load_world() -> void:
 ## Diese Sitzung ist in `_ready` auf EINE Geometrie festgelegt: Höhen-/Farb-/
 ## Wasser-Texturen und `h_cache` haben N × N Einträge, Mesh-Größe und
 ## -Tessellation, Kamera-Distanz, Wasserebene, Pinsel-Ring und die
-## Welt→Zelle-Umrechnung von Raycast/Werkzeugen (`half`, `step`, `cell_area`)
+## Welt→Zelle-Umrechnung von Raycast/Werkzeugen (`half`, `step`)
 ## hängen an `world_size`. Beides muss deshalb geprüft werden — `n` allein
 ## genügt NICHT: bei gleicher Auflösung, aber anderer Weltgröße liefe die
 ## geladene Simulation in anderen Weltkoordinaten als Darstellung und Pinsel
@@ -781,7 +819,7 @@ func _set_debug_difference(enabled: bool) -> void:
 		_refresh_debug()
 
 func _after_sim(force_rivers := false) -> void:
-	_pull_fields()
+	_invalidate_h_cache()
 	_update_year()
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
@@ -833,7 +871,7 @@ func _process(delta: float) -> void:
 			var years := minf(pending_years, 240.0)
 			pending_years = 0.0
 			sim.step(years)
-			_pull_fields()
+			_invalidate_h_cache()
 			_update_year()
 			debug_dirty = true
 			overlay_timer += elapsed
@@ -855,30 +893,34 @@ func _process(delta: float) -> void:
 		if hit != Vector3.INF:
 			var gx := (hit.x + half) / step
 			var gz := (hit.z + half) / step
-			var mode := current_tool
-			if Input.is_key_pressed(KEY_SHIFT): # Shift kehrt Anheben/Absenken um
-				if mode == 0: mode = 1
-				elif mode == 1: mode = 0
-			if mode == 5:
-				# Spitzhacke: Kerben ZEICHNEN — ein Hieb pro neu überstrichener
-				# Position, das Segment zum letzten Hieb wird lückenlos aufgefüllt.
-				# Auf der Stelle verharren gräbt NICHT tiefer (kein Dauerbohren).
+			# Shift kehrt Anheben/Absenken um — welches Werkzeug das Gegenstück
+			# ist, sagt die Tabelle (`shift`), nicht eine Zahl hier.
+			var tool: Dictionary = TOOLS[current_tool]
+			if Input.is_key_pressed(KEY_SHIFT):
+				tool = TOOLS[tool.get("shift", current_tool)]
+			var mode: int = tool["mode"]
+			var strength: float = brush_strength * tool.get("strength_factor", 1.0)
+			var spacing: float = tool.get("stroke_spacing", 0.0)
+			if spacing > 0.0:
+				# Kerben ZEICHNEN — ein Hieb pro neu überstrichener Position, das
+				# Segment zum letzten Hieb wird lückenlos aufgefüllt (Abstand ≈
+				# halbe Hieb-Breite). Auf der Stelle verharren gräbt NICHT tiefer
+				# (kein Dauerbohren).
 				var p := Vector2(gx, gz)
 				if pick_last == Vector2.INF:
-					sim.brush(5, gx, gz, brush_radius, brush_strength * 1.5, 0.0)
+					sim.brush(mode, gx, gz, brush_radius, strength, 0.0)
 					pick_last = p
 				else:
-					var spacing := 1.5 # Zellen zwischen Hieben ≈ halbe Hieb-Breite
 					while pick_last.distance_to(p) >= spacing:
 						pick_last += (p - pick_last).normalized() * spacing
-						sim.brush(5, pick_last.x, pick_last.y, brush_radius, brush_strength * 1.5, 0.0)
+						sim.brush(mode, pick_last.x, pick_last.y, brush_radius, strength, 0.0)
 			else:
 				# Framerate-unabhängig: Wirkung ∝ Zeit statt ∝ Frames (60-FPS-
 				# Referenz; delta-Deckel hält Ruckler-Frames von Riesen-Hieben ab).
-				var stroke := brush_strength * minf(delta, 0.05) * 60.0
-				sim.brush(mode, gx, gz, brush_radius, stroke, flatten_target)
+				sim.brush(mode, gx, gz, brush_radius, strength * minf(delta, 0.05) * 60.0,
+					flatten_target)
 			sim.recomputeFlow() # Flüsse reagieren sofort auf den Eingriff
-			_pull_fields()
+			_invalidate_h_cache()
 			debug_dirty = true
 			_update_terrain_textures()
 			_maybe_rebuild_rivers_throttled(true) # Sculpting droppt gestörte Kanäle → Struktur-Delta
@@ -962,35 +1004,30 @@ func _fmt(v: int) -> String:
 
 # ---------------------------------------------------------------- Felder
 
-func _pull_fields() -> void:
-	h_cache = sim.heights() # Höhentextur + Raycast
+## Markiert die CPU-Höhen als veraltet. Gezogen werden sie erst, wenn ein
+## Raycast sie braucht (`_sample_h`) — die Textur liest SimNode direkt.
+func _invalidate_h_cache() -> void:
+	h_cache_dirty = true
+
+func _ensure_h_cache() -> void:
+	if h_cache_dirty:
+		h_cache = sim.heights()
+		h_cache_dirty = false
 
 # ---------------------------------------------------------------- Terrain-Textur
 
 ## Lädt Höhen (R32F) und Farben (RGBA8) als Texturen hoch — GPU macht Displacement
 ## und Färbung. Pro Tick nur ein Upload statt kompletter Mesh-Rebuild.
+## Alle Puffer kommen als ROHE Bytes aus SimNode (Issue #53): `heights()` +
+## `to_byte_array()` kostete je Update eine zusätzliche ~2,7-MB-Kopie.
 func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = true) -> void:
-	var hbytes := h_cache.to_byte_array() # PackedFloat32Array → rohe float32-Bytes
-	if height_img == null:
-		height_img = Image.create_from_data(N, N, false, Image.FORMAT_RF, hbytes)
-		height_tex = ImageTexture.create_from_image(height_img)
-		terrain_mat.set_shader_parameter("height_tex", height_tex)
-	else:
-		height_img.set_data(N, N, false, Image.FORMAT_RF, hbytes)
-		height_tex.update(height_img)
+	height_field.upload(terrain_mat, N, sim.heightsBytes())
 	if not update_overlays:
 		return
 
 	# Seespiegel-Feld (hf): der Vertex-Shader hebt See-Zellen auf diese Höhe →
 	# Seen liegen als horizontale Flächen im Becken statt den Hang anzumalen.
-	var fbytes: PackedByteArray = (sim.filled() as PackedFloat32Array).to_byte_array()
-	if hf_img == null:
-		hf_img = Image.create_from_data(N, N, false, Image.FORMAT_RF, fbytes)
-		hf_tex = ImageTexture.create_from_image(hf_img)
-		terrain_mat.set_shader_parameter("hf_tex", hf_tex)
-	else:
-		hf_img.set_data(N, N, false, Image.FORMAT_RF, fbytes)
-		hf_tex.update(hf_img)
+	hf_field.upload(terrain_mat, N, sim.filledBytes())
 
 	# Höhenbänder (Issue #4) an den Shader durchreichen: die Vegetations-Grenzen
 	# sind Perzentile der aktuellen Landhöhen und wandern mit der alternden
@@ -1000,34 +1037,14 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 		terrain_mat.set_shader_parameter("veg_alt_lo", bands[0])
 		terrain_mat.set_shader_parameter("veg_alt_hi", bands[1])
 
-	var cbytes: PackedByteArray = sim.terrainColorBytes()
-	if color_img == null:
-		color_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
-		color_tex = ImageTexture.create_from_image(color_img)
-		terrain_mat.set_shader_parameter("color_tex", color_tex)
-	else:
-		color_img.set_data(N, N, false, Image.FORMAT_RGBA8, cbytes)
-		color_tex.update(color_img)
+	color_field.upload(terrain_mat, N, sim.terrainColorBytes())
 	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
 	# water_blend < 1 → zeitliche EWMA-Glättung (Läufe blenden statt zu springen).
-	var wbytes: PackedByteArray = sim.waterFieldBytes(water_blend)
-	if water_img == null:
-		water_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, wbytes)
-		water_tex = ImageTexture.create_from_image(water_img)
-		terrain_mat.set_shader_parameter("water_tex", water_tex)
-	else:
-		water_img.set_data(N, N, false, Image.FORMAT_RGBA8, wbytes)
-		water_tex.update(water_img)
+	water_field.upload(terrain_mat, N, sim.waterFieldBytes(water_blend))
 
 func _update_debug_difference_texture() -> void:
-	var bytes: PackedByteArray = sim.heightDifferenceBytes(debug_difference_scale)
-	if debug_difference_img == null:
-		debug_difference_img = Image.create_from_data(N, N, false, Image.FORMAT_RGBA8, bytes)
-		debug_difference_tex = ImageTexture.create_from_image(debug_difference_img)
-		terrain_mat.set_shader_parameter("debug_difference_tex", debug_difference_tex)
-	else:
-		debug_difference_img.set_data(N, N, false, Image.FORMAT_RGBA8, bytes)
-		debug_difference_tex.update(debug_difference_img)
+	debug_difference_field.upload(terrain_mat, N,
+		sim.heightDifferenceBytes(debug_difference_scale))
 
 
 # ---------------------------------------------------------------- Bäume (Stufe 1)
@@ -1123,18 +1140,13 @@ func _maybe_rebuild_rivers_throttled(force := false) -> void:
 	var now := Time.get_ticks_msec()
 	if not _river_rebuild_due(now, force):
 		return
-	_maybe_rebuild_rivers()
+	if sim.riversMaxDelta() > RIVER_REBUILD_DELTA:
+		_rebuild_rivers()
 	last_river_rebuild_msec = now
 
 func _river_rebuild_due(now_msec: int, force: bool) -> bool:
 	return (force or last_river_rebuild_msec < 0
 		or now_msec - last_river_rebuild_msec >= int(RIVER_REBUILD_SECONDS * 1000.0))
-
-func _maybe_rebuild_rivers() -> void:
-	if not river_ribbons:
-		return
-	if sim.riversMaxDelta() > RIVER_REBUILD_DELTA:
-		_rebuild_rivers()
 
 func _rebuild_rivers() -> void:
 	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
@@ -1168,7 +1180,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				sculpting = event.pressed
 				if not event.pressed:
 					pick_last = Vector2.INF # Strich beendet → nächster Klick beginnt neu
-				if event.pressed and current_tool == 3:
+				if event.pressed and TOOLS[current_tool].get("samples_target", false):
 					# Einebnen: Zielhöhe = Terrainhöhe am Strich-Beginn
 					var hit := _raycast_terrain()
 					if hit != Vector3.INF:
@@ -1209,10 +1221,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				if not event.echo:
 					_set_tree_coverage((tree_coverage + 1) % 3)
 					tree_coverage_picker.select(tree_coverage)
-			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
+			_:
+				# Werkzeug-Tasten 1…N in Tabellen-Reihenfolge (Issue #53): ein
+				# neues Werkzeug braucht hier keine eigene Zeile mehr.
 				var t: int = event.keycode - KEY_1
-				current_tool = t
-				tool_buttons[t].set_pressed_no_signal(true)
+				if t >= 0 and t < TOOLS.size():
+					current_tool = t
+					tool_buttons[t].set_pressed_no_signal(true)
 
 func _update_ring() -> void:
 	if OS.has_environment("RS_SHOT"): # autonome Screenshots: kein Pinsel-Ring
@@ -1224,7 +1239,8 @@ func _update_ring() -> void:
 			ring_mi.visible = true
 			ring_mi.position = hit + Vector3(0, 0.4, 0)
 			# Spitzhacke: Ring zeigt die echte (gedeckelte) Hieb-Breite.
-			var r := minf(brush_radius, pick_radius_cap) if current_tool == 5 else brush_radius
+			var r := minf(brush_radius, pick_radius_cap) \
+				if TOOLS[current_tool].get("radius_capped", false) else brush_radius
 			ring_mi.scale = Vector3(r, 1.0, r)
 			return
 	ring_mi.visible = false
@@ -1256,6 +1272,7 @@ func _raycast_terrain() -> Vector3:
 	return Vector3.INF
 
 func _sample_h(gx: float, gz: float) -> float:
+	_ensure_h_cache()
 	var xi := clampi(int(floor(gx)), 0, N - 2)
 	var yi := clampi(int(floor(gz)), 0, N - 2)
 	var fx := clampf(gx - xi, 0.0, 1.0)
