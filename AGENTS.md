@@ -185,13 +185,18 @@ RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
 
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
 `SimNode.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
-`RS_SEED`, `RS_STEP`, `RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"` — Blickpunkt in
+`RS_SEED`, `RS_STEP`, `RS_STEP_CHUNK` (Schrittweite des `RS_STEP`-Vorlaufs,
+Standard 1000 J. — der Vorlauf taktet wie der Zeitraffer, nicht in EINEM Sprung),
+`RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"` — Blickpunkt in
 Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
 `RS_QUALITY` (`performance|balanced|quality`), `RS_RENDER_GRID`, `RS_DIAG`,
+`RS_DEBUG_DIFF` (Δ-Karte gleich an, für automatisierte Diagnose-Screenshots),
 `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
 der Wasser-Geometrie — A/B im selben Build; ohne den Schalter rendert die
-Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus.
+Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus. Einzeln davon
+steht `RS_REPRO_YEARS` — das gehört nicht `Main.gd`, sondern kürzt den langen
+Lauf von `game/tests/water_rings.gd` ab.
 
 ## CI
 
@@ -260,18 +265,34 @@ diesen Dateien bricht sie also nicht.
 
 ### SimCore-Aufbau
 
-`Terrain.swift` (1600+ Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
+`Terrain.swift` (~4500 Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
 Tektonik, Küste, Braiding, Auslass-Inzision sind Pässe auf denselben Grids und ihre
 **Reihenfolge pro Zeitschritt muss zusammen lesbar sein**. Die Reihenfolge in `step()`
-ist LEM-Konvention und nicht beliebig:
+ist LEM-Konvention und nicht beliebig — hier vollständig, weil jeder nachgerüstete
+Prozess sich an einer begründeten Stelle einhängt:
 
 ```
-Uplift (+ Relief-Servo) → computeFlow (Priority-Flood, D8, MFD)
-→ Gletscher (updateIce: Eisfluss, glaziale Erosion, Moränen)
-→ Mäander (migrate + stamp) → outletIncision → Pfützen/Seen → braidPass
-→ Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA → Hangdiffusion → Wave
-→ Klima-Vertikale (Temperatur + Schneebilanz) → Vegetation
+applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
+→ regenerateDisturbed (Störungs-Regeneration nach Pinselstrich, #26)
+→ updateLithology (Gesteinsfeld auf die frische Höhe nachziehen)
+→ computeFlow: computeRain (+ updateRainWeight/updateRunoffWeight → flowWeight)
+  → priorityFlood → D8-Empfänger/area → capEndorheicBasins → computeMFDArea
+→ relaxWaterLevel (Darstellungs-Seespiegel) → updateSaltCrust (Playa-Kruste)
+→ Gletscher (updateIce: Firn→Eis, Eisfluss, glaziale Erosion, Moränen)
+→ Mäander (migrateMeander + meanderStamp)
+──── ab hier der Produktionszweig `hydraulicEnabled` ────
+→ outletIncision → fillLakes (geparkt, `basinFill = false`) → fillShallowPonds
+→ braidPass → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA
+→ floodplainAggradation (geparkt, `floodplainEnabled = false`)
+→ Hangdiffusion (sub-getaktet) → wavePass (sub-getaktet)
+────────────────────────────────────────────────────────
+→ Klima-Vertikale (updateClimate: Temperatur + Schneebilanz) → updateVegetation
 ```
+
+Der eingerahmte Block ist der `hydraulicEnabled`-Zweig; der Testpfad
+(`hydraulicEnabled = false`, s. unten) fährt an dieser Stelle stattdessen
+`transportLimited` und danach `diffusionPass`/`wavePass` verschränkt. Alles vor
+und nach dem Block läuft in BEIDEN Zweigen.
 
 Die Klima-Vertikale (Issue #33) steht **direkt vor** der Vegetation und damit am
 Schrittende: die Temperatur liest die FINALEN Höhen des Schritts, und
@@ -280,8 +301,9 @@ frischen Schneefeld ab.
 
 Seit Issue #36 koppelt das Klima über **einen** Weg in die Erosion: die
 Schmelze speist das Abfluss-Gewicht (`Terrain.flowWeight` = Regen + Ablation,
-gebaut in `updateRunoffWeight` am Anfang des Schritts aus dem Schneefeld vom
-Schrittende davor). Begründung bei `SimConfig.climateEnabled` und
+gebaut in `updateRunoffWeight` am Ende von `computeRain` — also innerhalb von
+`computeFlow`, aus dem Schneefeld vom Schrittende davor). Begründung bei
+`SimConfig.climateEnabled` und
 `SimConfig.meltRunoffEnabled`.
 
 Der **Gletscher** (Issue #35, `updateIce`) ist der zweite Weg und bringt sein
@@ -310,7 +332,17 @@ Landzellen bleibt (`docs/melt-runoff-measurements.md` §D).
 Ausgelagert sind nur Dinge mit eigener Datenstruktur: `Hydraulic.swift` (Droplet-Erosion,
 Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, Cutoff),
 `ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0** — siehe `NOTICE`),
-`Noise.swift`, `MinHeap.swift`.
+`HeightBands.swift` (Perzentil-Höhenbänder, Issue #4), `WorldSnapshot.swift`
+(Speicherformat, Issue #8 — das Zustands-INVENTAR `TerrainState` steht dagegen am
+Ende von `Terrain.swift`), `Profile.swift` (`SimProfile`, die Pass-Marken des
+Mess-Harness), `Noise.swift`, `MinHeap.swift`.
+
+Größenordnung zur Orientierung (Stand Aug 2026, gerundet — wer eine Datei teilt
+oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4500 Zeilen,
+`Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
+`Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
+Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen, die
+gesamte GDExtension ~2100 (davon `SimNode.swift` ~320 — s. u.).
 
 Drei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand — sie
 liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:
@@ -354,9 +386,30 @@ nicht hat.)
 
 ### Konfiguration
 
-`SimCore/Sources/SimCore/Config.swift` hält **alle** Stellschrauben, jede mit
-ausführlicher Begründung inkl. verworfener Werte und Messwerten. Beim Ändern eines
-Werts den Kommentar mitpflegen — er ist das Kalibrier-Logbuch.
+`SimConfig` in `SimCore/Sources/SimCore/Config.swift` ist der **eine** Konfigurations-
+Wert, den ein `Terrain` bekommt, und trägt die große Mehrheit der Stellschrauben
+direkt — jede mit ausführlicher Begründung inkl. verworfener Werte und Messwerten.
+Beim Ändern eines Werts den Kommentar mitpflegen — er ist das Kalibrier-Logbuch.
+
+Zwei Gruppen sind bewusst NICHT in `Config.swift` deklariert, sondern neben ihrem
+Code — sie hängen als Feld in `SimConfig` und reisen damit vollständig im
+Spielstand mit (`Codable`):
+
+- `HydraulicParams` (`Hydraulic.swift`) — die Tropfen-Parameter, erreichbar als
+  `cfg.hydraulic`. `Config.swift` überschreibt davon nur, was hier anders
+  kalibriert ist (derzeit `inertia = 0.10`); der Rest steht kommentiert an der
+  Struktur. Wer einen Tropfen-Wert sucht, sucht in `Hydraulic.swift`.
+- `ErosionFilter.Params` (`ErosionFilter.swift`) — die Pre-Erosion bei der
+  Generierung, erreichbar als `cfg.preErodeParams`, unverändert übernommen. Sie
+  liegt beim Portierten-Code, weil ihre Werte gegen das GLSL-Original stehen
+  (`docs/references/runevision-erosion/`, MPL-2.0). Ihre `Codable`-Konformität
+  steht als handgeschriebene Extension in `WorldSnapshot.swift` — die Struktur
+  führt Tupel, die der Compiler nicht synthetisieren kann.
+
+Keine Stellschraube ist dagegen `WaterRender`/`RenderContract`: das sind
+Render-KALIBRIERUNGEN mit Wächtern über Shader und GDExtension (s. o.), keine
+Physik-Regler. Auch die Extension und `Main.gd` halten keine eigenen Regler mehr
+— ihre Zahlen kommen aus dem Vertrag.
 
 Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - `SimConfig()`-Defaults = kalibrierte Produktions-Physik.
@@ -374,7 +427,9 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Churn); Baseline-Beispiele in `docs/river-baseline-metrics.md`.
 - **Kalibrier-Kaskade:** Änderungen am Droplet-Pfad verschieben die Braiding-Kalibrierung;
   Rinnen-Textur bricht Formeln, die die Per-Zell-Steigung als „Hang" lesen (Regen,
-  Vegetation, Biom-Farbe brauchen Makro-Steigung über ±2 Zellen).
+  Vegetation, Biom-Farbe brauchen Makro-Steigung über ±2 Zellen). Diese
+  Makro-Steigung hat seit Issue #50 genau EINE Quelle — `Terrain.macroSlope`;
+  wer sie erneut lokal ausrechnet, baut die Kaskade wieder ein.
 - **`n` und `world` nur ZUSAMMEN ändern** — sonst ändert sich `cellSize` und alle
   per-Zell-Kalibrierungen (Braid-Gates, Droplet-Dichte, kappa-Skalierung) brechen.
 - **Determinismus ist eine getestete Invariante — pro Maschine.** Gleicher Seed →
@@ -394,8 +449,21 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Höhendifferenz" sind ebenfalls Raten (`stepCapFraction` — Halbwertszeit statt τ,
   deshalb bewusst nicht über den Helfer). Wächter:
   `SimCoreTests/DtInvariance.swift` + `SimCoreTests/RelaxationTests.swift`,
-  Messreihen `docs/dt-invariance-measurements.md`
-  (inkl. des benannten Rests: Abflussfeld wird nur einmal je Schritt bestimmt).
+  Messreihen `docs/dt-invariance-measurements.md`.
+  Zwei **benannte Reste** bleiben bewusst stehen — wer eine dt-Abweichung misst,
+  prüft zuerst gegen diese beiden, bevor er einen Fehler vermutet:
+  1. **Operator-Splitting-Drift**: das Abflussfeld wird nur EINMAL je Schritt
+     bestimmt, die Tropfen laufen `dt·Rate` mal dagegen (`docs/dt-invariance-…`
+     §5). Das ist der Löwenanteil des Rests.
+  2. **Der Scour-Deckel in `braidPass`** steht bei festen 0.5 der lokalen
+     Höhendifferenz JE SCHRITT und ist bewusst NICHT auf `stepCapFraction`
+     umgestellt: Issue #2 hat die DEPOSITIONS-Deckel geradegezogen, dies ist die
+     Erosionsseite. Als Rate darf ein 200-Jahr-Schritt 0.75 statt 0.5 ausräumen,
+     womit der Braid-Scour die Böden der abflusslosen Becken tiefer gräbt — die
+     Playa-Fläche fiel gemessen von >100 auf 35 Zellen und die #11-Wächter
+     `testDriedBedIsRenderedAsPlaya`/`testBasinLevelIsRateLimited` kippten
+     (`docs/dt-invariance-measurements.md` §6). Die Begründung steht auch am
+     Code, direkt über dem Deckel.
 - Masse-Erhaltung gilt **nicht** (detachment-limited Stream-Power trägt Material aus);
   die Invariante ist beschränktes Relief / Fließgleichgewicht — Wächter:
   `Tests/SimCoreTests/LongRunCollapse.swift`.
