@@ -59,8 +59,8 @@ final class RenderContractTests: XCTestCase {
         let main = try RepoSource.file("game/scripts/Main.gd")
         assertContains(main, "var sim_seed := \(RenderContract.defaultSeed)",
                        hint: "Start-Seed der Anzeige == RenderContract.defaultSeed")
-        let simNode = try RepoSource.extensionSources()
-        assertContains(simNode, "seed: RenderContract.defaultSeed",
+        let bridge = try RepoSource.extensionSources()
+        assertContains(bridge, "seed: RenderContract.defaultSeed",
                        hint: "Erstes Terrain der GDExtension == RenderContract.defaultSeed")
     }
 

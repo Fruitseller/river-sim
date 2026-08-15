@@ -247,81 +247,81 @@ final class WaterRenderTests: XCTestCase {
         // Gelesen wird die GANZE Brücke, nicht eine Datei: seit Issue #53 liegt
         // die Wasser-Aufbereitung in `WaterFieldRenderer`/`RiverRibbonRenderer`
         // neben `SimNode`, und wo genau ein Wert steht, ist dem Vertrag egal.
-        let simNode = try RepoSource.extensionSources()
-        assertContains(simNode, "WaterRender.componentFade(cells:",
+        let bridge = try RepoSource.extensionSources()
+        assertContains(bridge, "WaterRender.componentFade(cells:",
                        hint: "Komponenten-Fade aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.streamGate(componentFade:",
+        assertContains(bridge, "WaterRender.streamGate(componentFade:",
                        hint: "Fluss-Kanal über das gemeinsame Gate schalten")
-        assertContains(simNode, "let minimumPondDepth = WaterRender.pondContourLo",
+        assertContains(bridge, "let minimumPondDepth = WaterRender.pondContourLo",
                        hint: "Altarm-Präsenz-Schwelle == Kontur-Fuß")
-        assertContains(simNode, "let haloIntensity = WaterRender.ribbonHaloIntensity",
+        assertContains(bridge, "let haloIntensity = WaterRender.ribbonHaloIntensity",
                        hint: "Ribbon-Halo == WaterRender.ribbonHaloIntensity")
-        assertContains(simNode, "sd[k] >= WaterRender.riverMaskLo",
+        assertContains(bridge, "sd[k] >= WaterRender.riverMaskLo",
                        hint: "Kohärenz-Maske == Wasser-Schwelle des Shaders")
         // Issue #34: die Geometrie-Übergabe darf ebenso wenig als Literal in der
         // Extension liegen — sonst kann die Band-Ausblendung von der
         // Raster-See-Schwelle wegdriften, und genau dazwischen entsteht wieder
         // ein Spalt bzw. doppeltes Wasser.
-        assertContains(simNode, "hf[k] - h[k] > WaterRender.lakeRawWetDepth",
+        assertContains(bridge, "hf[k] - h[k] > WaterRender.lakeRawWetDepth",
                        hint: "Raster-See-Schwelle aus WaterRender beziehen")
-        assertContains(simNode, "1 - smoothstep(WaterRender.pondContourLo, WaterRender.deltaFrontDepth, pond)",
+        assertContains(bridge, "1 - smoothstep(WaterRender.pondContourLo, WaterRender.deltaFrontDepth, pond)",
                        hint: "See-Übergabe des Bands == Kontur-Fuß … Delta-Front")
-        assertContains(simNode, "1 - smoothstep(0, WaterRender.mouthOverlapCells, submergedCells)",
+        assertContains(bridge, "1 - smoothstep(0, WaterRender.mouthOverlapCells, submergedCells)",
                        hint: "Meer-Übergabe des Bands == mouthOverlapCells")
-        assertContains(simNode, "kind: WaterRender.ribbonKindOxbow",
+        assertContains(bridge, "kind: WaterRender.ribbonKindOxbow",
                        hint: "Altarm-Bänder tragen den Altarm-Typ")
-        assertContains(simNode, "kind: WaterRender.ribbonKindDelta",
+        assertContains(bridge, "kind: WaterRender.ribbonKindDelta",
                        hint: "Delta-Arme tragen den Delta-Typ")
-        assertContains(simNode, "onSea ? WaterRender.ribbonSeaSurfaceSink",
+        assertContains(bridge, "onSea ? WaterRender.ribbonSeaSurfaceSink",
                        hint: "Höhen-Versatz auf Wasser aus WaterRender beziehen")
         // Issue #51: Track-Maske, Abstufung, Verbreiterung und die Kanalbreiten
         // lagen als Literale in `waterFieldBytes`/`buildRiverRibbons` — dort
         // konnte sie nur ein ~20-Minuten-Build prüfen.
-        assertContains(simNode, "WaterRender.trackMask(streamMap:",
+        assertContains(bridge, "WaterRender.trackMask(streamMap:",
                        hint: "Track-Maske des Abfluss-Felds aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.trackWeight(mask:",
+        assertContains(bridge, "WaterRender.trackWeight(mask:",
                        hint: "Gewicht der Track-Maske aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.streamIntensity(dischargeCells:",
+        assertContains(bridge, "WaterRender.streamIntensity(dischargeCells:",
                        hint: "Abfluss-Abstufung aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.corridorMask(streamMap:",
+        assertContains(bridge, "WaterRender.corridorMask(streamMap:",
                        hint: "Korridor-/Band-Kohärenzmaske aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.corridorWeight(mask:",
+        assertContains(bridge, "WaterRender.corridorWeight(mask:",
                        hint: "Gewicht der Korridor-Maske aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.continuityDecayPerCell",
+        assertContains(bridge, "WaterRender.continuityDecayPerCell",
                        hint: "Kontinuitäts-Propagation aus WaterRender beziehen")
-        assertContains(simNode, "let widenThresh = WaterRender.widenThresholds",
+        assertContains(bridge, "let widenThresh = WaterRender.widenThresholds",
                        hint: "Verbreiterungs-Schwellen aus WaterRender beziehen")
-        assertContains(simNode, "let widenFalloff = WaterRender.widenFalloff",
+        assertContains(bridge, "let widenFalloff = WaterRender.widenFalloff",
                        hint: "Verbreiterungs-Abfall aus WaterRender beziehen")
-        assertContains(simNode, "let barTol = WaterRender.widenBarTolerance",
+        assertContains(bridge, "let barTol = WaterRender.widenBarTolerance",
                        hint: "Bank-Toleranz der Verbreiterung aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonHalfWidthCells(dischargeCells:",
+        assertContains(bridge, "WaterRender.ribbonHalfWidthCells(dischargeCells:",
                        hint: "Band-Halbbreite aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.stampHalfWidthCells(dischargeCells:",
+        assertContains(bridge, "WaterRender.stampHalfWidthCells(dischargeCells:",
                        hint: "Stempel-Halbbreite (Legacy-A/B) aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.stampIntensity(dischargeCells:",
+        assertContains(bridge, "WaterRender.stampIntensity(dischargeCells:",
                        hint: "Stempel-Intensität (Legacy-A/B) aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonHaloMarginCells",
+        assertContains(bridge, "WaterRender.ribbonHaloMarginCells",
                        hint: "Halo-Rand um das Band aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.oxbowMinimumNodes",
+        assertContains(bridge, "WaterRender.oxbowMinimumNodes",
                        hint: "Altarm-Filter aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.oxbowHalfWidthCells",
+        assertContains(bridge, "WaterRender.oxbowHalfWidthCells",
                        hint: "Altarm-Breite aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.mouthSearchCells",
+        assertContains(bridge, "WaterRender.mouthSearchCells",
                        hint: "Mündungs-Suchweite aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonMinimumRank",
+        assertContains(bridge, "WaterRender.ribbonMinimumRank",
                        hint: "Hierarchie-Gate der Bänder aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonRankDivisor",
+        assertContains(bridge, "WaterRender.ribbonRankDivisor",
                        hint: "Rang-Normierung des Vertex-Vertrags aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonSupportLo",
+        assertContains(bridge, "WaterRender.ribbonSupportLo",
                        hint: "Band-Kohärenzfenster aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonSourceTaperCells",
+        assertContains(bridge, "WaterRender.ribbonSourceTaperCells",
                        hint: "Quellen-Taper aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonTailTaperCells",
+        assertContains(bridge, "WaterRender.ribbonTailTaperCells",
                        hint: "Enden-Taper aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.ribbonMinimumAlpha",
+        assertContains(bridge, "WaterRender.ribbonMinimumAlpha",
                        hint: "Sichtbarkeits-Schwelle der Bänder aus WaterRender beziehen")
-        assertContains(simNode, "WaterRender.deltaArmMinHalfWidthCells",
+        assertContains(bridge, "WaterRender.deltaArmMinHalfWidthCells",
                        hint: "Delta-Arm-Breite aus WaterRender beziehen")
     }
 
