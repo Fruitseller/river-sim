@@ -145,11 +145,94 @@ jobs:
         run: |
           "$(git rev-parse --show-toplevel)"/scripts/build.sh release
 
+      # ======================= TEMPORÄR: Diagnose Issue #61 =======================
+      # Der Import crasht NUR auf dem Runner (lokal auf Debian 13 läuft er), und
+      # zwar erst NACHDEM alle Import-Phasen "DONE" gemeldet haben — also beim
+      # Herunterfahren. Diese Schritte sammeln in EINER CI-Runde alles, was die
+      # Stelle benennen kann; sie fliegen wieder raus, sobald die Ursache steht.
+      - name: Diagnose — Ladepfad und Bibliotheken
+        continue-on-error: true
+        run: |
+          set -x
+          uname -a
+          ldd --version | head -n1
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+          ls -la game/bin
+          ldd game/bin/libRiverSimGD.so || true
+          ldd game/bin/libSwiftGodot.so || true
+          ldd "$GODOT" || true
+
+      # Vier Import-Läufe, jeder aus demselben Ausgangszustand (game/.godot weg =
+      # Erst-Import wie im roten Lauf), jeder mit protokolliertem Exit-Code:
+      #   A: unverändert — die Referenz.
+      #   B: ohne die GDExtension — trennt "Godot allein" von "Godot + Extension".
+      #      (Die Gegenprobe aus Runde 1 lief gegen ein LEERES game/bin/ und war
+      #      damit wertlos; hier ist die Extension gebaut und wird nur beiseite
+      #      gelegt.)
+      #   C: ohne den Backtracer der Swift-Runtime — die installiert auf Linux
+      #      eigene Signal-Handler und rauft sich potenziell mit Godots
+      #      Crash-Handler.
+      #   D: ohne den ncurses-Shim im LD_LIBRARY_PATH (den setzt die
+      #      Toolchain-Action global; Godot erbt ihn).
+      - name: Diagnose — Import-Varianten (Exit-Codes)
+        continue-on-error: true
+        run: |
+          run_import() {
+            local label="$1"; shift
+            rm -rf game/.godot
+            set +e
+            env "$@" "$GODOT" --headless --path game --import >"/tmp/import-$label.log" 2>&1
+            local rc=$?
+            set -e
+            echo "=== $label: exit=$rc ==="
+            tail -n 25 "/tmp/import-$label.log"
+            echo "--- extension_list.cfg nach $label ---"
+            cat game/.godot/extension_list.cfg 2>&1 || true
+          }
+          run_import A
+          mkdir -p /tmp/bin-stash && mv game/bin/*.so /tmp/bin-stash/
+          run_import B
+          mv /tmp/bin-stash/*.so game/bin/
+          run_import C SWIFT_BACKTRACE=enable=no
+          run_import D LD_LIBRARY_PATH=
+
+      - name: Diagnose — Import unter gdb (Backtrace)
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdb
+          rm -rf game/.godot
+          gdb -batch -nx \
+            -ex "set confirm off" \
+            -ex "set pagination off" \
+            -ex run \
+            -ex "info program" \
+            -ex "thread apply all bt" \
+            --args "$GODOT" --headless --path game --import
+
+      # Crasht auch das SPÄTERE Laden der Extension (Skript-Lauf), oder nur der
+      # Erst-Import? Der rote Lauf kam nie so weit.
+      - name: Diagnose — zweiter Import und Smoke-Test (Exit-Codes)
+        continue-on-error: true
+        run: |
+          set +e
+          "$GODOT" --headless --path game --import >/tmp/import-2.log 2>&1
+          echo "=== zweiter Import: exit=$? ==="
+          tail -n 25 /tmp/import-2.log
+          "$GODOT" --headless --path game --script res://tests/smoke.gd >/tmp/smoke.log 2>&1
+          echo "=== smoke.gd: exit=$? ==="
+          tail -n 40 /tmp/smoke.log
+      # ===================== ENDE TEMPORÄR: Diagnose Issue #61 =====================
+
       # Godot lädt GDExtensions ausschließlich aus .godot/extension_list.cfg, und
       # die entsteht erst beim Import. game/.godot/ ist gitignoriert, fehlt also
       # in jedem frischen Checkout — ohne diesen Schritt bliebe SimNode
       # unregistriert, obwohl game/bin/ korrekt gefüllt ist.
+      #
+      # TEMPORÄR `continue-on-error`, solange Issue #61 offen ist: so laufen die
+      # Vertragsschritte danach trotzdem und zeigen, wie weit es überhaupt trägt.
       - name: Godot-Projekt importieren
+        continue-on-error: true
         run: |
           "$GODOT" --headless --path game --import
 
