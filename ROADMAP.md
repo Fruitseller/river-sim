@@ -539,6 +539,36 @@ Render-Thread entkoppeln (Doppelpuffer), oder die drei verbliebenen seriellen
 `order`-Pässe (`priorityFlood`, `computeMFDArea`, `outletIncision`) mit einer
 BEWUSSTEN Physik-Neukalibrierung angehen.
 
+**Struktur & Härtung — ERLEDIGT (Aug 2026, Issues #49–#53).** Fünf Tickets ohne
+Physik-Änderung; sie haben Einzelquellen hergestellt und die Zusagen, die vorher
+im Review standen, in Wächter überführt. Was seitdem gilt:
+- **#49 — SwiftGodot exakt gepinnt** (`exact: "0.76.1"`, `Package.resolved`
+  eingecheckt) statt `branch: "main"`. Der Pin wird nur bewusst und in einem
+  eigenen Commit angehoben; Prozedur in `AGENTS.md`.
+- **#50 — SimCore-Härtung:** `Terrain.relaxFraction` ist die EINZIGE Quelle der
+  exponentiellen Relaxation (`RelaxationTests`), `Terrain.macroSlope` die einzige
+  Quelle der Makro-Steigung, und die Becken-Rolle ist ein Typ (`BasinRole`) statt
+  roher Codes — inklusive Weg in den Spielstand. Neue Wächter für vorher
+  ungetestete API: `TerrainAPITests` (Generierung, Pinsel `smooth`/`roughen`,
+  Abkling-Rate der Hebung).
+- **#51 — Render-Kalibrierung zentralisiert:** jede Schwelle, Breite und
+  Wasser-Optik-Konstante steht in `WaterRender`/`RenderContract`; `WaterRenderTests`
+  und `RenderContractTests` lesen dazu die ECHTEN Quelltexte von GDExtension,
+  beiden `.gdshader`, `Main.gd` und den Godot-Wächtern (`RepoSource.swift`).
+  Folge fürs Schreiben von Shader-Code: Zahlen in **Swift-Schreibweise** notieren
+  (`0.7`, nicht `0.70`), sonst greift der Textvergleich nicht.
+- **#52 — CI verifiziert den Godot-Vertrag** (Job `godot-contract`) und nicht mehr
+  nur den Sim-Kern; Godot-Version und -Prüfsumme sind in `scripts/fetch-godot.sh`
+  gepinnt, Build-Stempel-Parität Shell ↔ GDScript ist getestet, und Mess-/Sweep-Läufe
+  (Namensendung `Diagnostic`) sind hinter `RS_MEASURE=1` aus der Pflichtsuite heraus
+  — beide Richtungen bewacht von `MeasurementGateTests`. Budget: `docs/ci-measurements.md`.
+- **#53 — dünne Bridge wiederhergestellt:** `SimNode.swift` ist wieder Marshalling,
+  die Render-Aufbereitung liegt je Pfad in einem eigenen Modul (s. „Wichtige
+  Dateien"), die Werkzeug-Tabelle hat mit `BrushTool` + `ToolContractTests` einen
+  Vertrag zwischen `Main.gd` und Swift. Für Umbauten daran ist
+  `res://tests/render_fingerprint.gd` das A/B-Werkzeug (SHA-256 je Render-Puffer,
+  vorher/nachher vergleichen) — kein Wächter, die Hashes gelten je Maschine.
+
 **Backlog (nicht priorisiert):**
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
 - Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.
