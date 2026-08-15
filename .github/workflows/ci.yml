@@ -121,7 +121,12 @@ jobs:
           path: ${{ steps.godot.outputs.dir }}
           key: ${{ steps.godot.outputs.tag }}-linux-x86_64
 
-      - name: Godot bereitstellen
+      # Der Cache-Hit ist hier der Normalfall — es wird also meistens NICHTS
+      # heruntergeladen. Deshalb prüft fetch-godot.sh die Binärdatei auch dann
+      # gegen ihre gepinnte sha256 (~0,1 s): der Cache-Key hängt nur am
+      # Versions-Tag, ein veralteter oder untergeschobener Eintrag ließe die
+      # Vertragstests sonst still gegen eine fremde Binärdatei laufen.
+      - name: Godot bereitstellen (inkl. Prüfsumme des Cache-Stands)
         run: echo "GODOT=$(scripts/fetch-godot.sh)" >> "$GITHUB_ENV"
 
       # build.sh baut die GDExtension und kopiert sie samt Swift-Runtime nach
