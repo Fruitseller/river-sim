@@ -10,16 +10,6 @@ CONFIG="${1:-release}"
 # ---------------------------------------------------------------------------
 SWIFT_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
-# Toolchains außerhalb von Swiftly/Xcode (CI installiert die swift.org-Toolchain
-# direkt nach /opt/swift, siehe .github/actions/swift-toolchain). Bewusst EINE
-# gezielte Variable statt „PATH des Aufrufers durchreichen": die normalisierte
-# Umgebung ist der ganze Zweck dieses Skripts — jeder durchgereichte PATH würde
-# die Build-Signaturen wieder an den Aufrufer koppeln
-# (docs/build-invalidation-measurements.md).
-if [[ -n "${RS_SWIFT_BIN:-}" ]]; then
-	SWIFT_PATH="$RS_SWIFT_BIN:$SWIFT_PATH"
-fi
-
 if [[ "$(uname -s)" == "Linux" ]]; then
 	# Swiftly stellt Swift auf Linux bereit; sein bin-Verzeichnis kommt VOR die
 	# Systempfade, damit der Swiftly-Shim gewinnt.
@@ -35,6 +25,19 @@ if [[ "$(uname -s)" == "Linux" ]]; then
 		mkdir -p "$COMPAT_LIBS"
 		ln -s /usr/lib/x86_64-linux-gnu/libncursesw.so.6 "$COMPAT_LIBS/libncurses.so.6"
 	fi
+fi
+
+# Toolchains außerhalb von Swiftly/Xcode (CI installiert die swift.org-Toolchain
+# direkt nach /opt/swift, siehe .github/actions/swift-toolchain). Bewusst EINE
+# gezielte Variable statt „PATH des Aufrufers durchreichen": die normalisierte
+# Umgebung ist der ganze Zweck dieses Skripts — jeder durchgereichte PATH würde
+# die Build-Signaturen wieder an den Aufrufer koppeln
+# (docs/build-invalidation-measurements.md).
+#
+# Steht ZULETZT und gewinnt damit auch gegen ein gefundenes Swiftly: eine gezielt
+# gesetzte Variable, die eine Autoerkennung still überstimmt, wäre keine.
+if [[ -n "${RS_SWIFT_BIN:-}" ]]; then
+	SWIFT_PATH="$RS_SWIFT_BIN:$SWIFT_PATH"
 fi
 
 # swift build verschlüsselt die KOMPLETTE Prozessumgebung in die Signaturen der
