@@ -37,7 +37,14 @@ env:
   # Muss mit der lokal via Swiftly genutzten Toolchain-Version zusammenpassen
   # (SimCore/Package.swift verlangt tools-version 6.0 + Swift-5-Sprachmodus,
   # siehe AGENTS.md "Befehle").
+  #
+  # Version und Prüfsumme werden NUR ZUSAMMEN ausgetauscht — dasselbe Verfahren
+  # wie bei der Godot-Binärdatei in scripts/fetch-godot.sh. Wie der Hash für eine
+  # neue Version abgeleitet (und gegen die swift.org-Signatur verifiziert) wird,
+  # steht in .github/actions/swift-toolchain/action.yml.
   SWIFT_VERSION: "6.3.3"
+  # sha256 von swift-6.3.3-RELEASE-ubuntu22.04.tar.gz
+  SWIFT_SHA256: "2c3ad7ad74ab7249d42f172ee3b40bc8a729893010b4a3384ba26f3c61e35008"
 
 jobs:
   test:
@@ -60,6 +67,7 @@ jobs:
       - uses: ./.github/actions/swift-toolchain
         with:
           swift-version: ${{ env.SWIFT_VERSION }}
+          swift-sha256: ${{ env.SWIFT_SHA256 }}
 
       # SwiftPM-Build-Cache: verhindert, dass jeder Lauf komplett neu kompiliert.
       - name: SimCore-Build-Cache
@@ -92,6 +100,7 @@ jobs:
       - uses: ./.github/actions/swift-toolchain
         with:
           swift-version: ${{ env.SWIFT_VERSION }}
+          swift-sha256: ${{ env.SWIFT_SHA256 }}
 
       # Der teure Teil: SwiftGodots Codegen speist die ganze Modulkette. Der Key
       # hängt an Package.resolved (der Pin aus Issue #49) und an den Quellen; der
