@@ -102,6 +102,11 @@ Das Gate ist ein Schalter für alle: `RS_MEASURE=1`. Vorher waren es drei
 Diagnose-Läufe. `MeasurementGateTests` hält die Konvention beidseitig fest
 (Details: `SimCore/Tests/SimCoreTests/MeasurementGate.swift`).
 
+Der Schalter prüft auf den **Wert `1`**, nicht auf „gesetzt": ein versehentlich
+exportiertes `RS_MEASURE=0` soll die Messläufe nicht wieder in die Pflichtsuite
+holen. Der Konventions-Wächter sieht diesen Fall nicht — er prüft nur die
+Paarung „`Diagnostic` ↔ `skipUnlessMeasuring()`".
+
 ### Godot-Vertrag (Job `godot-contract`)
 
 Lokal gemessen im Worktree gegen den geteilten Build-Cache des Haupt-Repos
