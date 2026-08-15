@@ -154,12 +154,22 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/smoke.gd
 "$GODOT" --headless --path game --script res://tests/pickaxe_repro.gd
 "$GODOT" --headless --path game --script res://tests/river_ribbons.gd
+"$GODOT" --headless --path game --script res://tests/water_geometry.gd
+"$GODOT" --headless --path game --script res://tests/tree_count.gd
+"$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
 ```
 
 `scripts/fetch-godot.sh` ist die **einzige** Quelle der Godot-Version im Repo
 (Prüfsumme inklusive); `scripts/start.sh` und CI lesen sie von dort. Damit läuft
 CI garantiert gegen dieselbe Binärdatei wie der Arbeitsplatz — sonst beweist ein
 grüner Lauf nichts über den lokalen Stand.
+
+`res://tests/render_fingerprint.gd` ist kein Wächter, sondern das A/B-WERKZEUG
+für Umbauten der Render-Aufbereitung (Issue #53): es druckt SHA-256 je
+Render-Puffer nach einem festen Lauf. Vorher laufen lassen, umbauen, nachher
+laufen lassen — gleiche Zeilen heißt bit-identisch. Die Hashes gelten je
+Maschine, nicht plattformübergreifend (System-libm), deshalb steht keine
+Erwartung im Skript.
 
 Der Import-Lauf ist Pflicht, bevor irgendetwas die GDExtension benutzt: Godot lädt
 Extensions ausschließlich aus `game/.godot/extension_list.cfg`, und die entsteht erst
