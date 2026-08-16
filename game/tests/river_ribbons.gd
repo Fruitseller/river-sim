@@ -4,7 +4,7 @@ extends SceneTree
 ## Prüft den GDExtension-Vertrag des Ribbon-Pfads:
 ##  - buildRiverRibbons liefert konsistente Puffer (Verts/Colors/UVs/Indices),
 ##    Breite folgt dem Abfluss (√Q-Gesetz), Bandkanten dem lokalen Gelände,
-##    Alpha bleibt längs kohärent und jedes Band erreicht Strahler-Ordnung 4
+##    Alpha bleibt längs kohärent und jedes Band erreicht Strahler-Ordnung 3
 ##  - Dirty-Vertrag: vor dem ersten Build „riesig", nach markRiversBuilt 0,
 ##    nach einem Sim-Schritt wieder > 0 (Migration bewegt die Zentrumslinien)
 ##  - Determinismus-Nachweis auf Extension-Ebene: buildRiverRibbons ändert die
@@ -18,7 +18,7 @@ const Main = preload("res://scripts/Main.gd")
 # SimCoreTests/WaterRenderTests.swift gegen DIESE Datei (Issue #51).
 const LAKE_SURFACE_LIFT := 0.04
 const SEA_SURFACE_SINK := -0.06
-const MIN_RANK := 0.65
+const MIN_RANK := 0.48
 const MAX_CROSS_SLOPE := 0.4
 const KIND_DELTA_LO := 0.25
 
@@ -192,7 +192,8 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Nur Läufe emittieren, die mindestens Strahler 4 erreichen. Ihr Oberlauf
+	# Nur Läufe emittieren, die mindestens Strahler 3 erreichen (MIN_RANK,
+	# Historie: WaterRender.ribbonMinimumRank). Ihr Oberlauf
 	# bleibt als feiner Taper am selben Band erhalten; niedrigere Mäander würden
 	# die alten verknäulten „zu viele Flüsse"-Felder nachzeichnen.
 	# Gilt für FLUSS-Bänder; Delta-Arme und Altarme (Issue #34) haben keine
@@ -215,7 +216,7 @@ func _run() -> void:
 			if a > from and not pair_on_water[a / 2] and not pair_on_water[a / 2 - 1]:
 				max_alpha_jump = maxf(max_alpha_jump, absf(cols[a].a - cols[a - 2].a))
 		if strip_max_rank < MIN_RANK:
-			push_error("FAIL: Ribbon ohne Strahler-4-Anschluss emittiert")
+			push_error("FAIL: Ribbon ohne Strahler-3-Anschluss emittiert")
 			quit(1)
 			return
 	print("fluss_bänder=", river_strips, " max_alpha_jump=", max_alpha_jump)

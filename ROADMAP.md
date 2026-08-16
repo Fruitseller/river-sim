@@ -47,7 +47,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Delta-Distributäre und Altarme als Band-Geometrie direkt aus den
   Zentrumslinien (`SimNode.buildRiverRibbons` → `water.gdshader`), Breite ∝
   √Abfluss (Leopold/Maddock), Strahler-Ordnung (`Strahler.swift`, headless
-  getestet) als Rang-Maß (nur an Ordnung 4 angeschlossene Bänder; deren feine
+  getestet) als Rang-Maß (nur an Ordnung 3 angeschlossene Bänder — bis Aug
+  2026 Ordnung 4, gesenkt mit dem Korridor-Umbau, s. `ribbonMinimumRank`;
+  deren feine
   Oberläufe bleiben), kanalweise Stream-Map-Kohärenz gegen verknäulte Altpfade,
   lokale Geländehöhe je Bandkante — seit Aug 2026 geklemmt auf eine maximale
   Quer-Neigung (`ribbonMaxCrossSlope`), damit ein Band, das breiter als die

@@ -393,10 +393,11 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertGreaterThan(WaterRender.ribbonSourceTaperCells,
                              WaterRender.ribbonTailTaperCells)
         XCTAssertEqual(WaterRender.ribbonMinimumAlpha, 0.02)
-        // Strahler 4 rein, Strahler 3 raus — genau das ist die Hierarchie-Gate.
+        // Strahler 3 rein, Strahler 2 raus — genau das ist die Hierarchie-Gate.
+        // (Von 4/3 gesenkt, Begründung und Messung: `ribbonMinimumRank`.)
         XCTAssertEqual(WaterRender.ribbonRankDivisor, 6.0)
-        XCTAssertLessThan(3 / WaterRender.ribbonRankDivisor, WaterRender.ribbonMinimumRank)
-        XCTAssertLessThan(WaterRender.ribbonMinimumRank, 4 / WaterRender.ribbonRankDivisor)
+        XCTAssertLessThan(2 / WaterRender.ribbonRankDivisor, WaterRender.ribbonMinimumRank)
+        XCTAssertLessThan(WaterRender.ribbonMinimumRank, 3 / WaterRender.ribbonRankDivisor)
         // Die Mündungs-Suche muss weiter reichen als die Überlappung, sonst
         // findet sie das Wasser nie tief genug (Band endet vor der Uferlinie).
         XCTAssertGreaterThan(Double(WaterRender.mouthSearchCells),

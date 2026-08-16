@@ -372,11 +372,20 @@ public enum WaterRender {
     /// 1 geklemmt. Ändert sich der Divisor, verschiebt sich die Tiefenfarbe
     /// ALLER Bänder — und `ribbonMinimumRank` mit.
     public static let ribbonRankDivisor = 6.0
-    /// Kartografische Hierarchie: nur Zentrumslinien, die wenigstens Strahler 4
-    /// erreichen, bekommen ein Band (der Rang kommt als Rang/6 im Farbkanal, 4/6
-    /// ≈ 0.6667 > 0.65). Ordnung 3 ließ im fokussierten 20k-A/B noch hunderte
-    /// überlagerte Mäander auf der Ebene sichtbar werden.
-    public static let ribbonMinimumRank = 0.65
+    /// Kartografische Hierarchie: nur Zentrumslinien, die wenigstens Strahler 3
+    /// erreichen, bekommen ein Band (der Rang kommt als Rang/6 im Farbkanal, 3/6
+    /// = 0.5 > 0.48). Von Strahler 4 gesenkt (Aug 2026): seit der Korridor nur
+    /// noch unter ECHTEN Bändern stempelt, fielen die Ordnung-3-Hauptläufe ins
+    /// Zell-Raster und zeichneten sich als Treppen-Zickzack (ein 1-Zellen-
+    /// Raster kann Diagonalen nicht glätten; gemessen Jahr 0/Seed 1337: 289
+    /// der 1036 sichtbaren Kanäle erreichen genau Ordnung 3). Das damalige
+    /// Gegenargument — „Ordnung 3 ließ im fokussierten 20k-A/B hunderte
+    /// überlagerte Mäander auf der Ebene sichtbar werden" — stammt von VOR dem
+    /// kanalweisen Kohärenz-Gate (`ribbonSupport*`): verknäulte Altpfade
+    /// blenden heute als Einheit aus. Das 20k-A/B wurde mit Ordnung 3 neu
+    /// gefahren (Aug 2026, Seed 1337, RS_STEP=20000, Ebenen-Ausschnitt
+    /// RS_TARGET="-40,-20") und blieb ruhig — Bänder bei Jahr 0: 229 → 434.
+    public static let ribbonMinimumRank = 0.48
 
     /// Kohärenz-Fenster eines ganzen Bands: gemittelte Track-Maske über den
     /// Kanal (`corridorMask`, abfluss-gewichtet). Darunter ist die Zentrumslinie

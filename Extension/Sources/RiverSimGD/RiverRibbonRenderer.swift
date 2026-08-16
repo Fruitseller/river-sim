@@ -243,9 +243,8 @@ final class RiverRibbonRenderer {
             lo = max(0, lo - 2)
             if hi - lo < 2 { continue }
             // Kartografische Hierarchie: nur Zentrumslinien, die wenigstens
-            // Strahler 4 erreichen. Der feine Oberlauf DESSELBEN Bands bleibt
-            // vollständig erhalten; Ordnung 3 ließ im fokussierten 20k-A/B noch
-            // hunderte überlagerte Mäander auf der Ebene sichtbar werden.
+            // Strahler 3 erreichen (Historie und Messung: `ribbonMinimumRank`).
+            // Der feine Oberlauf DESSELBEN Bands bleibt vollständig erhalten.
             if !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
             // Ab hier wird das Band sicher emittiert — das Wasserfeld darf den
             // Korridor dieses Kanals auf Saum-Intensität deckeln.
