@@ -463,7 +463,12 @@ public enum WaterRender {
     /// propagiert und verliert je Zelle diesen Betrag — ohne den Pass zerfielen
     /// gealterte Läufe zu Punktketten, wo die Track-Maske Lücken lässt.
     public static let continuityDecayPerCell = 0.015
-    /// Untergrenze der Propagation: darunter lohnt die Kette nicht mehr.
+    /// Boden-Intensität der Kette: der Abfall wird hierauf GEKLEMMT und die
+    /// Kette läuft bis zum offenen Wasser durch — vorher ENDETE sie an dieser
+    /// Grenze, womit eine Quelle knapp über dem Boden nur ≈ 7 Zellen weit trug
+    /// und sichtbare Läufe abrissen („kein zusammenhängender Lauf"). Muss über
+    /// `riverMaskLo` bleiben, sonst wird die garantierte Kette unsichtbar.
+    /// Quellen UNTER dem Boden propagieren nicht (kein Speckle-Verstärker).
     public static let continuityFloor = 0.3
 
     /// Verbreiterung: je Schwelle EIN Dilatations-Pass, der nur Läufe ÜBER der

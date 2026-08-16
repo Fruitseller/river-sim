@@ -170,19 +170,31 @@ final class WaterFieldRenderer {
         // flache Auen und geflutete Ebenen tragen weiter die volle Breiten-
         // Hierarchie (hf, nicht h: seichtes Ponding blockt die Breite nicht).
         // KONTINUITÄT: Intensität dem D8-Empfänger entlang bergab propagieren
-        // (leichter Abfall je Zelle). Die Track-Maske lässt sonst Lücken — seit
-        // der Alle-Zellen-Dilatations-Pass weg ist (der überbrückte sie), zerfielen
-        // gealterte Läufe in Punktketten. Ein sichtbarer Fluss läuft jetzt
-        // garantiert durchgängig bis Mündung/See — 1 Zelle breit, Breite macht
-        // weiterhin nur die (schwellen-gestufte) Dilatation darunter.
-        for start in 0..<(n * n) where sd[start] > 0 {
-            var val = sd[start] - WaterRender.continuityDecayPerCell
+        // (leichter Abfall je Zelle, GEKLEMMT auf `continuityFloor`). Die
+        // Track-Maske lässt sonst Lücken — seit der Alle-Zellen-Dilatations-Pass
+        // weg ist (der überbrückte sie), zerfielen gealterte Läufe in
+        // Punktketten. Die Kette endet erst am offenen Wasser (See-Kanal/Meer
+        // übernimmt) oder am Kettenende — NICHT mehr, wenn der Abfall die
+        // Untergrenze erreicht: mit dem Abbruch dort trug eine Quelle knapp
+        // über dem Boden nur (val − floor)/decay ≈ 7 Zellen weit, und der
+        // „garantiert durchgängige" Lauf riss in der Praxis genau dann ab, wenn
+        // die Track-Maske ohnehin dünn war (User: „kein zusammenhängender
+        // Lauf"). Quellen UNTER dem Boden propagieren weiterhin nicht — sonst
+        // würde die Klemme isolierten Speckle zu langen Fäden verstärken.
+        // 1 Zelle breit; Breite macht weiterhin nur die (schwellen-gestufte)
+        // Dilatation darunter.
+        for start in 0..<(n * n) where sd[start] > WaterRender.continuityFloor {
+            var val = max(sd[start] - WaterRender.continuityDecayPerCell,
+                          WaterRender.continuityFloor)
             var r = rec[start]
-            while r >= 0 && val > WaterRender.continuityFloor {
+            while r >= 0 {
                 let ri = Int(r)
                 if sd[ri] >= val { break }   // Kette ab hier schon (stärker) gemalt
+                // Offenes Wasser erreicht: ab hier malen See-Kanal bzw. Meer.
+                if h[ri] <= sea || hf[ri] - h[ri] > WaterRender.lakeRawWetDepth { break }
                 sd[ri] = val
-                val -= WaterRender.continuityDecayPerCell
+                val = max(val - WaterRender.continuityDecayPerCell,
+                          WaterRender.continuityFloor)
                 r = rec[ri]
             }
         }
