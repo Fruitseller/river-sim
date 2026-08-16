@@ -299,6 +299,11 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Band-Halbbreite aus WaterRender beziehen")
         assertContains(bridge, "hw * WaterRender.ribbonMaxCrossSlope",
                        hint: "Quergefälle-Klemme der Band-Kanten aus WaterRender beziehen")
+        // Die Kaskaden-Übergabe müssen BEIDE Pfade über dieselbe Funktion
+        // lesen (Band-Alpha und Raster-Deckel) — mindestens zwei Aufrufe.
+        XCTAssertGreaterThanOrEqual(
+            bridge.components(separatedBy: "WaterRender.cascadeWeight(slope:").count - 1, 2,
+            "Band-Alpha UND Raster-Deckel müssen die Kaskaden-Übergabe lesen")
         assertContains(bridge, "WaterRender.stampHalfWidthCells(dischargeCells:",
                        hint: "Stempel-Halbbreite (Legacy-A/B) aus WaterRender beziehen")
         assertContains(bridge, "WaterRender.stampIntensity(dischargeCells:",
@@ -402,6 +407,14 @@ final class WaterRenderTests: XCTestCase {
         // findet sie das Wasser nie tief genug (Band endet vor der Uferlinie).
         XCTAssertGreaterThan(Double(WaterRender.mouthSearchCells),
                              WaterRender.mouthOverlapCells)
+        // Kaskaden-Übergabe: unter Lo bleibt das Band voll, ab Lo + Span malt
+        // nur noch das Raster.
+        XCTAssertEqual(WaterRender.cascadeSlopeLo, 0.02)
+        XCTAssertEqual(WaterRender.cascadeSlopeSpan, 0.03)
+        XCTAssertEqual(WaterRender.cascadeWeight(slope: 0.01), 0)
+        XCTAssertEqual(WaterRender.cascadeWeight(slope: 0.05), 1)
+        XCTAssertEqual(WaterRender.cascadeWeight(slope: -0.05), 1,
+                       "Gefälle-Richtung darf die Übergabe nicht umgehen")
     }
 
     func testOxbowFilterIsSharedAndSelfConsistent() {

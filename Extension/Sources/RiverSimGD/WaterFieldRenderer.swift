@@ -71,6 +71,7 @@ final class WaterFieldRenderer {
         let cnt = n * n
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
+        let cellDiagonal = terrain.cfg.cellSize * (2.0).squareRoot()
         let creek = terrain.cfg.renderMinCells // Render-Schwelle sichtbarer Läufe — ENTKOPPELT vom Braid-Physik-Gate (braidMinCells): 30→120→280 erhöht (User: „zu viele Flüsse"), die Braiding-Physik behält ihr eigenes Gate. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
         // areaMFD (Multi-Flow): stetige Fluss-Intensität → Läufe gleiten statt zu
         // springen und können sich um Bänke teilen. Erosion nutzt weiter D8-`area`.
@@ -487,7 +488,30 @@ final class WaterFieldRenderer {
                     mstamp[k] = true
                     capStamp[k] = true
                 }
-                if capStamp[k] && sd[k] > haloIntensity { sd[k] = haloIntensity }
+                if capStamp[k] && sd[k] > haloIntensity {
+                    // Kaskaden-Zellen behalten ihr Raster-Wasser: dort blendet
+                    // das BAND über dieselbe Funktion aus (s.
+                    // WaterRender.cascadeWeight) — deckelte man sie trotzdem,
+                    // hätte die Steilstrecke weder Band noch Raster. Neigung
+                    // als MAX-Gefälle zur 8er-Nachbarschaft: die ebenen
+                    // STUFENBECKEN inmitten einer Kaskade zählen so mit
+                    // (spiegelbildlich zur ±2-Zellen-Dilatation der Band-Seite).
+                    var maxSlope = 0.0
+                    let ki = k % n, kj = k / n
+                    for dj in -1...1 {
+                        for di in -1...1 where di != 0 || dj != 0 {
+                            let ni = ki + di, nj = kj + dj
+                            if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
+                            let dist = (di * di + dj * dj == 2)
+                                ? cellDiagonal : terrain.cfg.cellSize
+                            maxSlope = max(maxSlope,
+                                           abs(h[k] - h[nj * n + ni]) / dist)
+                        }
+                    }
+                    if WaterRender.cascadeWeight(slope: maxSlope) < 0.5 {
+                        sd[k] = haloIntensity
+                    }
+                }
             }
             // Kohärenz-Maske über die Wasser-Schwelle des Shaders: was er als
             // Fluss malen WÜRDE, zählt für die Komponente.

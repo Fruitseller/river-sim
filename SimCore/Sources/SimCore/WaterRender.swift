@@ -387,6 +387,29 @@ public enum WaterRender {
     /// RS_TARGET="-40,-20") und blieb ruhig — Bänder bei Jahr 0: 229 → 434.
     public static let ribbonMinimumRank = 0.48
 
+    /// Kaskaden-Übergabe Band → Raster (Aug 2026): ein Band ist ein ruhender
+    /// Wasserspiegel — an Kaskaden gibt es keinen. Ab dieser LÄNGS-Neigung
+    /// (Sim-Höhe je Welt-Einheit; × heightScale 24 ≈ 26° sichtbare Neigung)
+    /// blendet das Band aus, und der Raster-Deckel unter dem Band entfällt,
+    /// damit das D8-Feld die Strecke malt. Grund: ein 3D-Band verliert an
+    /// Steilstrecken gegen das Render-Mesh (taucht ein, ragt an Dreieckskämmen
+    /// als blaue Zacken heraus — auf JEDER Gitterauflösung, gemessen im
+    /// Steillauf-A/B Seed 1337, RS_TARGET="-23,41"), während die aufgemalte
+    /// Textur der sichtbaren Oberfläche per Definition folgt.
+    public static let cascadeSlopeLo = 0.02
+    /// s. `cascadeSlopeLo` — volle Raster-Übergabe ab Lo + Span (≈ 50°
+    /// sichtbar). Als Spanne notiert wie `trackMaskSpan`.
+    public static let cascadeSlopeSpan = 0.03
+
+    /// Gewicht der Kaskaden-Übergabe: 0 = ruhiger Spiegel (Band malt),
+    /// 1 = Kaskade (Raster malt). BEIDE Seiten müssen dieselbe Funktion lesen
+    /// (Band-Alpha und Raster-Deckel), sonst entsteht im Übergang doppeltes
+    /// Wasser oder ein Loch.
+    @inline(__always)
+    public static func cascadeWeight(slope: Double) -> Double {
+        min(max((abs(slope) - cascadeSlopeLo) / cascadeSlopeSpan, 0), 1)
+    }
+
     /// Kohärenz-Fenster eines ganzen Bands: gemittelte Track-Maske über den
     /// Kanal (`corridorMask`, abfluss-gewichtet). Darunter ist die Zentrumslinie
     /// verwaist/verknäult und das Band blendet als EINHEIT aus — lokale

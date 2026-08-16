@@ -225,6 +225,36 @@ final class RiverRibbonRenderer {
                 supportSum += mM * weight
                 supportWeight += weight
             }
+            // KASKADEN-Übergabe (WaterRender.cascadeWeight): an Steilstrecken
+            // blendet das Band aus — dort malt das Raster, dessen Deckel im
+            // Wasserfeld über DIESELBE Funktion entfällt. Ein 3D-Band verliert
+            // an Kaskaden gegen das Render-Mesh (Zacken statt Lauf). Zwei
+            // Pässe: lokale Neigung (±2 Samples ≈ 1 Zelle), dann MAX-Dilatation
+            // ±4 Samples (~2 Zellen) — STUFENBECKEN sind selbst eben, gehören
+            // aber zur Kaskade; ohne die Dilatation blieben ihre flachen
+            // Band-Platten als Brocken zwischen den ausgeblendeten Abstürzen
+            // stehen (Steillauf-A/B). VOR der Glättung, damit der Übergang
+            // weich ausläuft.
+            let hgrid = terrain.h
+            let slopeWindow = 2
+            var cascade = [Double](repeating: 0, count: cnt)
+            for a in 0..<cnt {
+                let a0 = max(0, a - slopeWindow), a1 = min(cnt - 1, a + slopeWindow)
+                let dxs = (px[a1] - px[a0]) * cs, dzs = (pz[a1] - pz[a0]) * cs
+                let run = (dxs * dxs + dzs * dzs).squareRoot()
+                if run < 1e-9 { continue }
+                let drop = bilinearGrid(hgrid, px[a0], pz[a0], n: n)
+                         - bilinearGrid(hgrid, px[a1], pz[a1], n: n)
+                cascade[a] = WaterRender.cascadeWeight(slope: drop / run)
+            }
+            let cascadeReach = 4
+            for a in 0..<cnt {
+                var w = 0.0
+                for b in max(0, a - cascadeReach)...min(cnt - 1, a + cascadeReach) {
+                    w = max(w, cascade[b])
+                }
+                alpha[a] *= 1 - w
+            }
             let supportMean = supportSum / max(supportWeight, 1e-9)
             let supportX = min(max((supportMean - WaterRender.ribbonSupportLo)
                                    / WaterRender.ribbonSupportSpan, 0), 1)
