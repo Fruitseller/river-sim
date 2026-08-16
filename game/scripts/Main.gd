@@ -235,6 +235,10 @@ func _ready() -> void:
 	if OS.has_environment("RS_RENDER_GRID"):
 		requested_grid = int(OS.get_environment("RS_RENDER_GRID"))
 	terrain_grid = clampi(requested_grid, 64, N)
+	# Die Band-Geometrie sampelt ihre Höhen von der SICHTBAREN Oberfläche
+	# dieses Gitters (SimNode.setRenderGrid) — auf Sim-Höhen versank sie an
+	# Steilstrecken im gröberen Mesh und ragte als blaue Zacken heraus.
+	sim.setRenderGrid(terrain_grid)
 	# A/B ohne Rebuild: SimNode liest dieselbe Env-Variable. Gesetzt = alter
 	# Raster-Stempel (Mäander/Altarme ins Wasserfeld, keine Band-Geometrie).
 	river_ribbons = not OS.has_environment("RS_WATER_STAMP")

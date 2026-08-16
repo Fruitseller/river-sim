@@ -271,6 +271,14 @@ final class SimNode: Node {
         ribbons.build(terrain, hscale: hscale, lift: lift)
     }
 
+    /// Meldet die Auflösung des Terrain-Render-Gitters (Main.gd `terrain_grid`),
+    /// damit die Land-Bänder ihre Höhen von der SICHTBAREN Oberfläche sampeln
+    /// (`renderSurfaceHeight`) statt von den Sim-Höhen. Ohne Aufruf gilt volle
+    /// Auflösung — die Headless-Wächter bleiben damit unverändert.
+    @Callable func setRenderGrid(grid: Int) {
+        ribbons.renderGrid = grid
+    }
+
     @Callable func riverRibbonVerts() -> PackedVector3Array { ribbons.verts }
     @Callable func riverRibbonColors() -> PackedColorArray { ribbons.colors }
     @Callable func riverRibbonUVs() -> PackedVector2Array { ribbons.uvs }

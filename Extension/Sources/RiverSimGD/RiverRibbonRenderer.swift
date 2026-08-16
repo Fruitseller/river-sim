@@ -59,6 +59,13 @@ final class RiverRibbonRenderer {
     /// das ECHTE Bau-Ergebnis statt über eine duplizierte Gate-Formel, die
     /// wegdriften könnte.
     private(set) var bandChannelFlags: [Bool] = []
+    /// Auflösung des RENDER-Gitters (Main.gd `terrain_grid`, via
+    /// `SimNode.setRenderGrid`): die Land-Bänder sampeln ihre Höhen über
+    /// `renderSurfaceHeight` von der SICHTBAREN Oberfläche statt von den
+    /// Sim-Höhen — sonst versinken sie auf Steilstrecken im gröberen Mesh
+    /// (Begründung am Sampler in `RenderSupport.swift`). 0 = unbekannt =
+    /// volle Auflösung (Headless-Wächter: bit-identisch zu `bilinearGrid`).
+    var renderGrid = 0
 
     var verts: PackedVector3Array { PackedVector3Array(rrVerts) }
     var colors: PackedColorArray { PackedColorArray(rrCols) }
@@ -480,10 +487,13 @@ final class RiverRibbonRenderer {
                 // an Steilwänden). Die geklemmte Kante taucht in den Fels ein;
                 // sichtbar bleibt genau die Sohlenbreite.
                 let edgeGX = perpx / cs, edgeGZ = perpz / cs
-                let yCenter = bilinearGrid(h, s.x, s.z, n: n) * hscale
+                let yCenter = renderSurfaceHeight(h, s.x, s.z, n: n,
+                                                  renderGrid: renderGrid) * hscale
                 let crossTol = hw * WaterRender.ribbonMaxCrossSlope
-                let yL = bilinearGrid(h, s.x - edgeGX, s.z - edgeGZ, n: n) * hscale
-                let yR = bilinearGrid(h, s.x + edgeGX, s.z + edgeGZ, n: n) * hscale
+                let yL = renderSurfaceHeight(h, s.x - edgeGX, s.z - edgeGZ, n: n,
+                                             renderGrid: renderGrid) * hscale
+                let yR = renderSurfaceHeight(h, s.x + edgeGX, s.z + edgeGZ, n: n,
+                                             renderGrid: renderGrid) * hscale
                 yLeft = Float(min(max(yL, yCenter - crossTol), yCenter + crossTol) + lift)
                 yRight = Float(min(max(yR, yCenter - crossTol), yCenter + crossTol) + lift)
             }

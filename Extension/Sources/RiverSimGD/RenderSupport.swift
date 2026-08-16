@@ -40,6 +40,42 @@ func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Doub
          + field[k + n] * (1 - fx) * fy + field[k + n + 1] * fx * fy
 }
 
+/// Höhe der GERENDERTEN Oberfläche: bilinear zwischen den Render-Gitter-
+/// Vertices, die ihrerseits bilinear aus dem n²-Feld lesen (so sampelt der
+/// Terrain-Vertex-Shader). Bei `renderGrid >= n` (oder unbekannt, `<= 1`)
+/// identisch zu `bilinearGrid`.
+///
+/// Die Band-Geometrie muss der SICHTBAREN Oberfläche folgen, nicht den
+/// Sim-Höhen: auf Steilstrecken weicht das gröbere Render-Mesh um ein
+/// Vielfaches von `RenderContract.riverLift` von den Sim-Höhen ab — ein Band
+/// auf Sim-Höhen taucht dort abwechselnd unter das Mesh und ragt an
+/// Dreieckskämmen als blaue Zacken heraus (User-Screenshots, Steil-Läufe im
+/// „balanced"-Gitter 384 auf dem 832er-Feld).
+@inline(__always)
+func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
+                         n: Int, renderGrid: Int) -> Double {
+    if renderGrid <= 1 || renderGrid >= n { return bilinearGrid(field, gx, gz, n: n) }
+    let s = Double(n - 1) / Double(renderGrid - 1) // Render-Vertex-Abstand in Zellen
+    let rx = gx / s, rz = gz / s
+    let xi = min(max(Int(rx), 0), renderGrid - 2)
+    let zi = min(max(Int(rz), 0), renderGrid - 2)
+    let fx = min(max(rx - Double(xi), 0), 1), fz = min(max(rz - Double(zi), 0), 1)
+    let v00 = bilinearGrid(field, Double(xi) * s, Double(zi) * s, n: n)
+    let v10 = bilinearGrid(field, Double(xi + 1) * s, Double(zi) * s, n: n)
+    let v01 = bilinearGrid(field, Double(xi) * s, Double(zi + 1) * s, n: n)
+    let v11 = bilinearGrid(field, Double(xi + 1) * s, Double(zi + 1) * s, n: n)
+    // Innerhalb des Quads ist die sichtbare Fläche die TRIANGULIERUNG des
+    // Meshes, nicht die Bilinear-Fläche — auf steilen Quads weichen beide um
+    // den halben Quad-Twist voneinander ab, und das Band täuchte gegen die
+    // Bilinear-Annahme weiter ein/aus. Godots PlaneMesh teilt jedes Quad
+    // entlang der ANTI-Diagonale (prevrow+i → thisrow+i−1, also von (1,0)
+    // nach (0,1)): unter ihr das Dreieck (0,0)(1,0)(0,1), über ihr
+    // (1,1)(0,1)(1,0).
+    return fx + fz <= 1
+        ? v00 + fx * (v10 - v00) + fz * (v01 - v00)
+        : v11 + (1 - fx) * (v01 - v11) + (1 - fz) * (v10 - v11)
+}
+
 /// Wasseroberfläche über einer Zelle, falls sie unter offenem Wasser liegt —
 /// `nil` = trocken. Meer und See sind zwei verschiedene Flächen: das Meer
 /// liegt als eigene Ebene auf `cfg.sea` (Priority-Flood füllt es NICHT auf,
