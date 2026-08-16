@@ -297,6 +297,8 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Bank-Toleranz der Verbreiterung aus WaterRender beziehen")
         assertContains(bridge, "WaterRender.ribbonHalfWidthCells(dischargeCells:",
                        hint: "Band-Halbbreite aus WaterRender beziehen")
+        assertContains(bridge, "hw * WaterRender.ribbonMaxCrossSlope",
+                       hint: "Quergefälle-Klemme der Band-Kanten aus WaterRender beziehen")
         assertContains(bridge, "WaterRender.stampHalfWidthCells(dischargeCells:",
                        hint: "Stempel-Halbbreite (Legacy-A/B) aus WaterRender beziehen")
         assertContains(bridge, "WaterRender.stampIntensity(dischargeCells:",
@@ -334,6 +336,10 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertEqual(WaterRender.ribbonHalfWidthAtReference, 0.8)
         XCTAssertEqual(WaterRender.ribbonHalfWidthFloorCells, 0.12)
         XCTAssertEqual(WaterRender.ribbonHalfWidthCapCells, 3.2)
+        // Quergefälle-Klemme der Band-Kanten: quer zur Fließrichtung steht eine
+        // Wasserfläche praktisch eben — Kanten steiler als diese Neigung sind
+        // Schluchtwände, keine Ufer.
+        XCTAssertEqual(WaterRender.ribbonMaxCrossSlope, 0.4)
         XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: reference,
                                                         referenceCells: reference),
                        WaterRender.ribbonHalfWidthAtReference, accuracy: 1e-12)
@@ -588,6 +594,8 @@ final class WaterRenderTests: XCTestCase {
                        hint: "See-Versatz == WaterRender.ribbonLakeSurfaceLift")
         assertContains(ribbons, "const SEA_SURFACE_SINK := \(glsl(WaterRender.ribbonSeaSurfaceSink))",
                        hint: "Meer-Versatz == WaterRender.ribbonSeaSurfaceSink")
+        assertContains(ribbons, "const MAX_CROSS_SLOPE := \(glsl(WaterRender.ribbonMaxCrossSlope))",
+                       hint: "Quergefälle-Klemme des Wächters == WaterRender.ribbonMaxCrossSlope")
         assertContains(ribbons, "const MIN_RANK := \(glsl(WaterRender.ribbonMinimumRank))",
                        hint: "Hierarchie-Gate == WaterRender.ribbonMinimumRank")
         assertContains(ribbons, "const KIND_DELTA_LO := \(glsl(WaterRender.ribbonDeltaLo))",

@@ -303,6 +303,17 @@ public enum WaterRender {
     /// Ebenen (Lehre aus dem Blob-Felder-Rückbau des Stempels).
     public static let ribbonHalfWidthCapCells = 3.2
 
+    /// Maximale QUER-Neigung eines Land-Bands (Welt-Y je Welt-Breite): jede
+    /// Kante folgt ihrer eigenen Geländehöhe (sanfte Quergefälle schneiden das
+    /// Band sonst ins Terrain), aber nur bis zu dieser Neigung um die
+    /// Zentrums-Höhe. Ohne die Klemme drapierte sich ein Band, das breiter als
+    /// die Schluchtsohle ist, die WÄNDE hoch — aus der Nähe als große blaue
+    /// Platten/Dreiecke an den Felswänden sichtbar (User-Screenshots, frische
+    /// Steilwelt). Eine Wasserfläche steht quer zur Fließrichtung praktisch
+    /// eben; 0.4 (≈ 22°) lässt Auen-Schrägen durch und begräbt Wand-Kanten im
+    /// Fels — sichtbar bleibt die Sohlenbreite.
+    public static let ribbonMaxCrossSlope = 0.4
+
     /// Halbbreite (Zellen) eines Fluss-Bands aus dem Abfluss `dischargeCells`
     /// (Zellen Einzugsgebiet), bezogen auf `referenceCells`
     /// (= `SimConfig.renderMinCells`).

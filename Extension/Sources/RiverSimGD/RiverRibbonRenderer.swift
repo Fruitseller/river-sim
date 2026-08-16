@@ -474,9 +474,19 @@ final class RiverRibbonRenderer {
                 // Auf Land folgt jede Kante ihrer EIGENEN lokalen Höhe. Eine
                 // gemeinsame Zentrumslinien-Höhe schneidet das Band an
                 // Quergefällen ins Terrain (nur radiale Fragmente sichtbar).
+                // Aber nur bis zur maximalen QUER-Neigung um die Zentrums-Höhe
+                // (`WaterRender.ribbonMaxCrossSlope`): ist das Band breiter als
+                // die Schluchtsohle, liegt die Kante auf der WAND — ungeklemmt
+                // drapierte sich das Band die Wände hoch (große blaue Platten
+                // an Steilwänden). Die geklemmte Kante taucht in den Fels ein;
+                // sichtbar bleibt genau die Sohlenbreite.
                 let edgeGX = perpx / cs, edgeGZ = perpz / cs
-                yLeft = Float(bilinearGrid(h, s.x - edgeGX, s.z - edgeGZ, n: n) * hscale + lift)
-                yRight = Float(bilinearGrid(h, s.x + edgeGX, s.z + edgeGZ, n: n) * hscale + lift)
+                let yCenter = bilinearGrid(h, s.x, s.z, n: n) * hscale
+                let crossTol = hw * WaterRender.ribbonMaxCrossSlope
+                let yL = bilinearGrid(h, s.x - edgeGX, s.z - edgeGZ, n: n) * hscale
+                let yR = bilinearGrid(h, s.x + edgeGX, s.z + edgeGZ, n: n) * hscale
+                yLeft = Float(min(max(yL, yCenter - crossTol), yCenter + crossTol) + lift)
+                yRight = Float(min(max(yR, yCenter - crossTol), yCenter + crossTol) + lift)
             }
             rrVerts.append(Vector3(x: Float(wx - perpx), y: yLeft, z: Float(wz - perpz)))
             rrVerts.append(Vector3(x: Float(wx + perpx), y: yRight, z: Float(wz + perpz)))

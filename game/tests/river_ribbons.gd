@@ -19,6 +19,7 @@ const Main = preload("res://scripts/Main.gd")
 const LAKE_SURFACE_LIFT := 0.04
 const SEA_SURFACE_SINK := -0.06
 const MIN_RANK := 0.65
+const MAX_CROSS_SLOPE := 0.4
 const KIND_DELTA_LO := 0.25
 
 # Wie nah an der Zellgrenze (in Zellen) die Zentrumslinie liegen darf, damit
@@ -106,9 +107,12 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Jede Bandkante muss auf ihrer EIGENEN lokalen Geländehöhe liegen. Würden
-	# beide Kanten nur die Höhe der Zentrumslinie übernehmen, schneidet das Band
-	# an Quergefällen ins Terrain und erscheint als radiale blaue Fragmente.
+	# Jede Bandkante muss auf ihrer EIGENEN lokalen Geländehöhe liegen — GEKLEMMT
+	# auf die maximale Quer-Neigung um die Zentrums-Höhe (MAX_CROSS_SLOPE, s.
+	# WaterRender.ribbonMaxCrossSlope): sanfte Quergefälle folgen dem Gelände
+	# (eine reine Zentrums-Höhe schnitte das Band dort ins Terrain), Kanten auf
+	# Schluchtwänden tauchen stattdessen in den Fels ein, statt das Band die
+	# Wand hochzudrapieren.
 	# AUSNAHME seit Issue #34: Stützpunkte UNTER Wasser (Mündung, geflutete
 	# Senke, Delta-Arm, Altarm) liegen flach auf dem WASSERSPIEGEL — sonst
 	# kippte das Band am Ufer aus der Wasserfläche heraus.
@@ -130,25 +134,40 @@ func _run() -> void:
 	var stray_report := ""
 	for a in range(0, verts.size(), 2):
 		var v: Vector3 = verts[a]
-		var ground := _bilinear_height(heights, n, world, v.x, v.z)
-		var ground_r := _bilinear_height(heights, n, world, verts[a + 1].x, verts[a + 1].z)
-		var err := maxf(absf(v.y - (ground * Main.HSCALE + Main.RIVER_LIFT)),
-			absf(verts[a + 1].y - (ground_r * Main.HSCALE + Main.RIVER_LIFT)))
-		pair_on_water.append(err > 0.002)
+		var vr: Vector3 = verts[a + 1]
+		# Erwartete Kantenhöhe wie in RiverRibbonRenderer.emitRibbon: eigene
+		# Geländehöhe, geklemmt auf Zentrums-Höhe ± Halbbreite × MAX_CROSS_SLOPE.
+		# Die Halbbreite steckt in der Kantenpaar-Geometrie (halber XZ-Abstand),
+		# das Zentrum ist der Paar-Mittelpunkt.
+		var half_w := Vector2(v.x - vr.x, v.z - vr.z).length() * 0.5
+		var cross_tol := half_w * MAX_CROSS_SLOPE
+		var pair_mid := (v + vr) * 0.5
+		var ground_c := _bilinear_height(heights, n, world, pair_mid.x, pair_mid.z) * Main.HSCALE
+		var ground := _bilinear_height(heights, n, world, v.x, v.z) * Main.HSCALE
+		var ground_r := _bilinear_height(heights, n, world, vr.x, vr.z) * Main.HSCALE
+		var expect_l := clampf(ground, ground_c - cross_tol, ground_c + cross_tol) + Main.RIVER_LIFT
+		var expect_r := clampf(ground_r, ground_c - cross_tol, ground_c + cross_tol) + Main.RIVER_LIFT
+		var err := maxf(absf(v.y - expect_l), absf(vr.y - expect_r))
+		# Wasserspiegel wird an der ZENTRUMSLINIE und in DERSELBEN Zelle
+		# gelesen wie in SimNode (nächster Gitterpunkt): eine Bandkante liegt
+		# bis zu 3 Zellen daneben, und über dem Ufer fällt `filled` innerhalb
+		# einer Zelle auf die Geländehöhe ab.
+		var level := _cell_value(levels, n, world, pair_mid.x, pair_mid.z)
+		# Versatz wie in RiverRibbonRenderer.emitRibbon (WaterRender.ribbon*Surface*):
+		# See knapp über dem Spiegel, Meer knapp darunter — NICHT RIVER_LIFT,
+		# der gilt nur für Bänder auf dem Gelände.
+		var surface_err: float = minf(
+			_lake_surface_err(levels, n, world, pair_mid.x, pair_mid.z, v.y),
+			absf(v.y - (sea * Main.HSCALE + SEA_SURFACE_SINK)))
+		# Wasser-Nähe zählt als Wasser, AUCH wenn zufällig beides passt: im
+		# flachen Apron kann die geklemmte Land-Erwartung einer echten
+		# Wasser-Kante gleichen (Tiefe × HSCALE ≈ RIVER_LIFT − Spiegel-Versatz)
+		# — die Alpha-Glattheits-Prüfung unten muss solche Paare ausnehmen,
+		# denn am Wassereintritt blendet das Band bewusst hart aus.
+		var water_like := surface_err <= 0.05
+		pair_on_water.append(water_like)
 		if err > 0.002:
-			# Wasserspiegel wird an der ZENTRUMSLINIE und in DERSELBEN Zelle
-			# gelesen wie in SimNode (nächster Gitterpunkt): eine Bandkante liegt
-			# bis zu 3 Zellen daneben, und über dem Ufer fällt `filled` innerhalb
-			# einer Zelle auf die Geländehöhe ab.
-			var mid: Vector3 = (verts[a] + verts[a + 1]) * 0.5
-			var level := _cell_value(levels, n, world, mid.x, mid.z)
-			# Versatz wie in RiverRibbonRenderer.emitRibbon (WaterRender.ribbon*Surface*):
-			# See knapp über dem Spiegel, Meer knapp darunter — NICHT RIVER_LIFT,
-			# der gilt nur für Bänder auf dem Gelände.
-			var surface_err: float = minf(
-				_lake_surface_err(levels, n, world, mid.x, mid.z, v.y),
-				absf(v.y - (sea * Main.HSCALE + SEA_SURFACE_SINK)))
-			if surface_err > 0.05:
+			if not water_like:
 				stray += 1
 				if stray <= 8:
 					# Gitterposition MIT Nachkommastellen: liegt sie dicht an
@@ -158,8 +177,8 @@ func _run() -> void:
 						+ " gelände_links=%f wasserspiegel=%f meer=%f"
 						+ " ground_err=%f surface_err=%f") % [
 						a, uv2s[a].x, cols[a].a, v.y,
-						(mid.x + world * 0.5) / cs, (mid.z + world * 0.5) / cs,
-						ground * Main.HSCALE + Main.RIVER_LIFT,
+						(pair_mid.x + world * 0.5) / cs, (pair_mid.z + world * 0.5) / cs,
+						ground + Main.RIVER_LIFT,
 						level * Main.HSCALE + LAKE_SURFACE_LIFT,
 						sea * Main.HSCALE + SEA_SURFACE_SINK,
 						err, surface_err]
