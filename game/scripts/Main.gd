@@ -106,6 +106,15 @@ var cam_target := Vector3.ZERO
 var orbiting := false
 const PAN_SPEED_FACTOR := 0.4 # WASD-Geschwindigkeit relativ zur Zoom-Distanz
 
+# Leerlauf-Drossel (GPU): auch pausiert und ohne Eingabe zeichnet Godot die
+# Szene mit voller Display-Rate neu (Wasser-Schimmer, Schatten, Retina-
+# Viewport) und sättigt die GPU im Nichtstun. Nach IDLE_FPS_DELAY_MSEC ohne
+# Aktivität deckelt `Engine.max_fps`; jede Eingabe — auch gehaltene
+# WASD-Tasten, die nur gepollt werden — hebt den Deckel sofort wieder auf.
+const IDLE_FPS_CAP := 30
+const IDLE_FPS_DELAY_MSEC := 3000
+var last_activity_msec := 0
+
 # Zeit & Eingabe
 var year_rate := 0.0          # Jahre/Sekunde
 var rebuild_timer := 0.0
@@ -854,6 +863,13 @@ func _process(delta: float) -> void:
 			print("RS_FPS avg=", _fps_accum / 200.0)
 			get_tree().quit()
 
+	# Leerlauf-Drossel (s. IDLE_FPS_CAP): nur wenn wirklich nichts passiert —
+	# Zeitraffer, Sprung und Sculpting zählen als Aktivität.
+	if year_rate == 0.0 and not _jumping and not sculpting and Time.get_ticks_msec() - last_activity_msec > IDLE_FPS_DELAY_MSEC:
+		Engine.max_fps = IDLE_FPS_CAP
+	else:
+		Engine.max_fps = 0
+
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
@@ -946,6 +962,7 @@ func _update_camera_pan(delta: float) -> void:
 		float(Input.is_key_pressed(KEY_W)) - float(Input.is_key_pressed(KEY_S)))
 	if move == Vector2.ZERO:
 		return
+	last_activity_msec = Time.get_ticks_msec()
 	var forward := Vector3(-sin(cam_yaw), 0.0, -cos(cam_yaw))
 	var right := Vector3(cos(cam_yaw), 0.0, -sin(cam_yaw))
 	var direction := (right * move.x + forward * move.y).normalized()
@@ -1182,6 +1199,7 @@ func _update_camera() -> void:
 	cam.look_at(cam_target, Vector3.UP)
 
 func _unhandled_input(event: InputEvent) -> void:
+	last_activity_msec = Time.get_ticks_msec()
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
