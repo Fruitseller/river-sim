@@ -189,7 +189,10 @@ final class SimNode: Node {
     /// Kalibrierung: `WaterFieldRenderer`. `blend` glättet zeitlich (1 = Sprung
     /// sofort übernehmen).
     @Callable func waterFieldBytes(blend: Double) -> PackedByteArray {
-        waterField.bytes(terrain, blend: blend, geometryMode: SimNode.waterGeometryEnabled)
+        // `bandChannelFlags` koppelt die beiden Wasser-Pfade über das echte
+        // Bau-Ergebnis: nur Kanäle MIT Band werden im Feld zum Saum gedeckelt.
+        waterField.bytes(terrain, blend: blend, geometryMode: SimNode.waterGeometryEnabled,
+                         bandChannelFlags: ribbons.bandChannelFlags)
     }
 
     /// Legacy-A/B ohne Rebuild (Muster `RS_NO_MEANDER_PAINT`): gesetzt = der

@@ -41,6 +41,7 @@ final class WaterFieldRenderer {
     private var waterMDX: [Double] = []
     private var waterMDZ: [Double] = []
     private var waterStamp: [Bool] = []
+    private var waterCapStamp: [Bool] = []
     private var waterOxbow: [Double] = []
     private var waterBytes: [UInt8] = []
     private var waterComponent: [Int] = []
@@ -57,7 +58,15 @@ final class WaterFieldRenderer {
     ///
     /// `geometryMode` = die Mäander-Hauptläufe und Altarme malt die Band-Geometrie
     /// (Standard seit #34); dieses Feld trägt sie dann nur als Nass-Saum.
-    func bytes(_ terrain: Terrain, blend: Double, geometryMode: Bool) -> PackedByteArray {
+    /// `bandChannelFlags` = das ECHTE Bau-Ergebnis des letzten Ribbon-Builds je
+    /// Kanal-Index (`RiverRibbonRenderer.bandChannelFlags`): nur Kanäle, die
+    /// wirklich ein Band bekamen, stempeln einen Saum-Korridor samt Raster-
+    /// Deckel. Die vom Strahler-/Kohärenz-Gate verworfenen stempeln NICHTS —
+    /// ihr Wasser malt das D8/MFD-Raster wie bei den dendritischen Zubringern.
+    /// Vorher deckelte der Korridor ALLE Kanäle und die verworfenen renderten
+    /// als Saum ohne Wasser darin (52 % der sichtbaren Zentrumslinien-Zellen).
+    func bytes(_ terrain: Terrain, blend: Double, geometryMode: Bool,
+               bandChannelFlags: [Bool]) -> PackedByteArray {
         let n = terrain.cfg.n
         let cnt = n * n
         let sea = terrain.cfg.sea
@@ -85,6 +94,7 @@ final class WaterFieldRenderer {
             waterComponentFade = [Double](repeating: 0, count: cnt)
             waterSeen = [Bool](repeating: false, count: cnt)
             waterStamp = [Bool](repeating: false, count: cnt)
+            waterCapStamp = [Bool](repeating: false, count: cnt)
             waterBytes = [UInt8](repeating: 0, count: cnt * 4)
             waterComponent.removeAll(keepingCapacity: false)
             waterStack.removeAll(keepingCapacity: false)
@@ -103,6 +113,7 @@ final class WaterFieldRenderer {
         var mdx: [Double] = []; swap(&mdx, &waterMDX)
         var mdz: [Double] = []; swap(&mdz, &waterMDZ)
         var mstamp: [Bool] = []; swap(&mstamp, &waterStamp)
+        var capStamp: [Bool] = []; swap(&capStamp, &waterCapStamp)
         var oxb: [Double] = []; swap(&oxb, &waterOxbow)
         var out: [UInt8] = []; swap(&out, &waterBytes)
         defer {
@@ -111,7 +122,8 @@ final class WaterFieldRenderer {
             swap(&rawWet, &waterRawWet); swap(&mask, &waterMask)
             swap(&componentFade, &waterComponentFade); swap(&seen, &waterSeen)
             swap(&mdx, &waterMDX); swap(&mdz, &waterMDZ)
-            swap(&mstamp, &waterStamp); swap(&oxb, &waterOxbow)
+            swap(&mstamp, &waterStamp); swap(&capStamp, &waterCapStamp)
+            swap(&oxb, &waterOxbow)
             swap(&out, &waterBytes)
         }
 
@@ -213,6 +225,7 @@ final class WaterFieldRenderer {
         mdx.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         mdz.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         mstamp.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        capStamp.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         oxb.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) } // Altarm-See-Overlay (mit Alter ausgeblendet)
         let noMeanderPaint = ProcessInfo.processInfo.environment["RS_NO_MEANDER_PAINT"] != nil // Debug-Schalter
         // GEOMETRIE-MODUS (Issue #31, seit #34 Standard): das Wasser der Mäander
@@ -228,9 +241,11 @@ final class WaterFieldRenderer {
         let haloIntensity = WaterRender.ribbonHaloIntensity
         // Stempelt einen Korridor (Saum oder voller Lauf) um eine Rasterposition.
         // Als lokale Funktion, weil sie sd/mstamp/mdx/mdz schreibt — dieselbe
-        // Scheibe wie die Segment-Schleife darunter.
+        // Scheibe wie die Segment-Schleife darunter. `capToHalo` markiert die
+        // Zellen für den Raster-Deckel unten: nur unter einem ECHTEN Band darf
+        // das D8-Feld auf Saum-Intensität gedrückt werden.
         func stampCorridor(cx: Int, cy: Int, rad: Int, intens: Double,
-                           dirX: Double, dirZ: Double) {
+                           dirX: Double, dirZ: Double, capToHalo: Bool) {
             let jLo = max(0, cy - rad), jHi = min(n - 1, cy + rad)
             let iLo = max(0, cx - rad), iHi = min(n - 1, cx + rad)
             if jLo > jHi || iLo > iHi { return }
@@ -255,12 +270,27 @@ final class WaterFieldRenderer {
                     let iM = intens * WaterRender.corridorWeight(mask: mM)
                     if sd[kk] < iM { sd[kk] = iM }
                     mstamp[kk] = true; mdx[kk] = dirX; mdz[kk] = dirZ
+                    if capToHalo { capStamp[kk] = true }
                 }
             }
         }
-        for ch in noMeanderPaint ? [] : terrain.meander.channels {
+        for (chIndex, ch) in (noMeanderPaint ? [] : terrain.meander.channels).enumerated() {
             let nodes = ch.nodes
             if nodes.count < 2 { continue }
+            // Korridor nur unter einem ECHTEN Band (Bau-Ergebnis des letzten
+            // Ribbon-Builds, s. Doc-Kommentar von `bytes`): Saum + Raster-Deckel.
+            // Kanäle OHNE Band werden hier GAR NICHT gestempelt — ihr Wasser
+            // malt das D8/MFD-Raster oben mit derselben Track-Masken-Disziplin
+            // wie die dendritischen Zubringer. Ein voller Legacy-Stempel wäre
+            // die falsche Alternative: sein `corridorWeight`-Boden (0.3 × 0.6 =
+            // 0.18) liegt ÜBER der Wasser-Schwelle 0.16 und malte in frischen
+            // Welten (Stream-Map leer) jede getrasste Linie als blaue Splitter
+            // in die Canyonwände. Fallback für die Frames zwischen einer
+            // Struktur-Änderung der Kanalliste und dem (auf 1 Hz gedeckelten)
+            // Rebuild: Saum wie bisher — der nächste Build korrigiert.
+            let hasBand = geometryMode
+                && (chIndex < bandChannelFlags.count ? bandChannelFlags[chIndex] : true)
+            if geometryMode && !hasBand { continue }
             for i in 0..<(nodes.count - 1) {
                 let ax = nodes[i].x, az = nodes[i].z, bx = nodes[i + 1].x, bz = nodes[i + 1].z
                 let q = 0.5 * (ch.discharge[i] + ch.discharge[i + 1])   // Abfluss (Zellen) am Segment
@@ -272,11 +302,11 @@ final class WaterFieldRenderer {
                 // Halbbreite ∝ log(Abfluss) mit 1-Zellen-Deckel (Stempel-Modus)
                 // bzw. Ribbon-Halbbreite + Rand (Geometrie-Modus, damit der Halo
                 // das Band ganz umfasst). Beide Kurven stehen in `WaterRender`.
-                let hw = geometryMode
+                let hw = hasBand
                     ? ribbonHalfWidthCells(q, cfg: terrain.cfg) + WaterRender.ribbonHaloMarginCells
                     : WaterRender.stampHalfWidthCells(dischargeCells: q, creekCells: creek)
                 let rad = Int(hw.rounded())
-                let intens = geometryMode ? haloIntensity
+                let intens = hasBand ? haloIntensity
                     : WaterRender.stampIntensity(dischargeCells: q, creekCells: creek)
                 var tx = bx - ax, tz = bz - az
                 let tl = (tx * tx + tz * tz).squareRoot(); if tl > 1e-6 { tx /= tl; tz /= tl }
@@ -284,14 +314,16 @@ final class WaterFieldRenderer {
                 for s in 0...steps {
                     let t = Double(s) / Double(steps)
                     let cx = Int((ax + (bx - ax) * t).rounded()), cy = Int((az + (bz - az) * t).rounded())
-                    stampCorridor(cx: cx, cy: cy, rad: rad, intens: intens, dirX: tx, dirZ: tz)
+                    stampCorridor(cx: cx, cy: cy, rad: rad, intens: intens,
+                                  dirX: tx, dirZ: tz, capToHalo: hasBand)
                 }
             }
-            // MÜNDUNGS-KORRIDOR (Issue #34): im Geometrie-Modus läuft das Band
+            // MÜNDUNGS-KORRIDOR (Issue #34): unter einem echten Band läuft es
             // über die Zentrumslinie hinaus bis in die Wasserfläche. Ohne den
             // Saum-Stempel auf demselben Stück malte das D8-Raster dort unter
-            // dem Band die sprenklige Textur-Version des Laufs.
-            if geometryMode {
+            // dem Band die sprenklige Textur-Version des Laufs. Ohne Band gibt
+            // es nichts zu überlappen — der Stempel endet wie vor #34.
+            if hasBand {
                 let last = nodes[nodes.count - 1]
                 let q = ch.discharge[nodes.count - 1]
                 if q >= creek {
@@ -303,7 +335,8 @@ final class WaterFieldRenderer {
                         let dl = (dirX * dirX + dirZ * dirZ).squareRoot()
                         if dl > 1e-6 { dirX /= dl; dirZ /= dl }
                         stampCorridor(cx: Int(point.x.rounded()), cy: Int(point.z.rounded()),
-                                      rad: rad, intens: haloIntensity, dirX: dirX, dirZ: dirZ)
+                                      rad: rad, intens: haloIntensity,
+                                      dirX: dirX, dirZ: dirZ, capToHalo: true)
                         previousX = point.x; previousZ = point.z
                     }
                 }
@@ -406,10 +439,14 @@ final class WaterFieldRenderer {
         //     unverändert): sie ist seit #34 zugleich die Delta-FRONT der
         //     Geometrie — der Fächer malt den Apron davor, der See-Kanal die
         //     Fläche dahinter.
-        //  2. Korridor-Deckel (Geometrie-Modus): im gestempelten Korridor darf
+        //  2. Korridor-Deckel (Geometrie-Modus): unter einem ECHTEN Band darf
         //     auch das D8-Abflussfeld nur Saum-Intensität tragen — die
         //     D8-Drainage folgt dem gecarvten Bett und würde sonst die
-        //     „sprenklige" Textur-Version UNTER dem Band rendern.
+        //     „sprenklige" Textur-Version UNTER dem Band rendern. Der Deckel
+        //     gilt nur für `capStamp`-Zellen (Band- und Altarm-Korridore):
+        //     Kanäle OHNE Band (Strahler-/Kohärenz-Gate) stempeln keinen
+        //     Korridor, und ihr D8-Raster-Wasser zu deckeln hieße Saum ohne
+        //     Wasser darin.
         //  3. Altarm-Saum (Geometrie-Modus): Altarme malt dort das BAND, aber nur
         //     im Flachwasser (s. `lakeHandoverFade`). Ein Altarm, der tief genug
         //     gefüllt ist, dass der See-Kanal ihn malen kann, IST ein kleiner See
@@ -423,10 +460,13 @@ final class WaterFieldRenderer {
             rawWet[k] = hf[k] > sea && hf[k] - h[k] > WaterRender.lakeRawWetDepth
             if geometryMode {
                 if oxb[k] > 0 {
+                    // Altarm-Korridor: das Band malt sicher (Raster und
+                    // Geometrie teilen die Altarm-Filter, s. o.) → deckeln.
                     if sd[k] < haloIntensity { sd[k] = haloIntensity }
                     mstamp[k] = true
+                    capStamp[k] = true
                 }
-                if mstamp[k] && sd[k] > haloIntensity { sd[k] = haloIntensity }
+                if capStamp[k] && sd[k] > haloIntensity { sd[k] = haloIntensity }
             }
             // Kohärenz-Maske über die Wasser-Schwelle des Shaders: was er als
             // Fluss malen WÜRDE, zählt für die Komponente.

@@ -282,9 +282,13 @@ func _ready() -> void:
 		cam_target.y = _sample_h((cam_target.x + half) / step, (cam_target.z + half) / step) * HSCALE
 		_update_camera()
 	_update_year()
+	# Bänder VOR den Texturen: das Wasserfeld deckelt Korridore nur unter
+	# Kanälen, die im letzten Ribbon-Build wirklich ein Band bekamen
+	# (SimNode.waterFieldBytes liest bandChannelFlags) — andersherum malte es
+	# diesen einen Upload mit leeren/alten Flags.
+	_maybe_rebuild_rivers_throttled(true)
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
-	_maybe_rebuild_rivers_throttled(true)
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -708,7 +712,9 @@ func _jump(years: float) -> void:
 		await get_tree().process_frame
 	# Der Deckel darf den sichtbaren Endzustand nicht bis zum nächsten
 	# Zeitraffer-Tick verzögern (der Sprung endet typischerweise pausiert).
-	_maybe_rebuild_rivers_throttled(true)
+	# Voller _after_sim-Endstand statt nur Ribbon-Rebuild: die Wasser-Textur
+	# hängt am Bau-Ergebnis der Bänder und muss NACH ihnen entstehen.
+	_after_sim(true)
 	_jumping = false
 
 func _regen() -> void:
@@ -821,9 +827,11 @@ func _set_debug_difference(enabled: bool) -> void:
 func _after_sim(force_rivers := false) -> void:
 	_invalidate_h_cache()
 	_update_year()
+	# Bänder VOR den Texturen (s. _ready): das Wasserfeld liest das
+	# Bau-Ergebnis der Bänder (bandChannelFlags) für den Korridor-Deckel.
+	_maybe_rebuild_rivers_throttled(force_rivers)
 	_update_terrain_textures()
 	_maybe_rebuild_trees()
-	_maybe_rebuild_rivers_throttled(force_rivers)
 	debug_dirty = true
 
 var _shot_frame := 0

@@ -47,6 +47,18 @@ final class RiverRibbonRenderer {
     /// Puffern zu raten (Bogenlänge 0 als Startmarke) ist bei zwei
     /// zusammenfallenden Stützpunkten mehrdeutig.
     private var rrStripStarts: [Int32] = []
+    /// Je Kanal-Index in `terrain.meander.channels`: hat der letzte Build für
+    /// diesen Kanal ein Fluss-Band emittiert? `WaterFieldRenderer` liest das:
+    /// nur unter echten Bändern stempelt er den Saum-Korridor und deckelt das
+    /// D8-Raster darunter — Kanäle, die das Strahler-/Kohärenz-Gate hier
+    /// verwirft, überlässt er ganz dem D8/MFD-Raster (Zubringer-Optik). Ohne
+    /// diese Rückmeldung deckelte der Korridor ALLE Kanäle ab `renderMinCells`
+    /// und die verworfenen (gemessen 599 von 793, 52 % der sichtbaren
+    /// Zentrumslinien-Zellen, Jahr 2200/Seed 1337) rendersten als Nass-Saum
+    /// OHNE Wasser darin. Die Einigkeit der beiden Pfade entsteht bewusst über
+    /// das ECHTE Bau-Ergebnis statt über eine duplizierte Gate-Formel, die
+    /// wegdriften könnte.
+    private(set) var bandChannelFlags: [Bool] = []
 
     var verts: PackedVector3Array { PackedVector3Array(rrVerts) }
     var colors: PackedColorArray { PackedColorArray(rrCols) }
@@ -136,7 +148,9 @@ final class RiverRibbonRenderer {
         let orders = terrain.strahlerOrders(minCells: terrain.cfg.meanderMinCells)
 
         let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
-        for ch in terrain.meander.channels {
+        bandChannelFlags = [Bool](repeating: false,
+                                  count: terrain.meander.channels.count)
+        for (chIndex, ch) in terrain.meander.channels.enumerated() {
             let nodes = ch.nodes
             let m = nodes.count
             if m < 2 { continue }
@@ -233,6 +247,9 @@ final class RiverRibbonRenderer {
             // vollständig erhalten; Ordnung 3 ließ im fokussierten 20k-A/B noch
             // hunderte überlagerte Mäander auf der Ebene sichtbar werden.
             if !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
+            // Ab hier wird das Band sicher emittiert — das Wasserfeld darf den
+            // Korridor dieses Kanals auf Saum-Intensität deckeln.
+            bandChannelFlags[chIndex] = true
 
             // Bogenlängen (Welt) für Taper und UV.y.
             var arc = [Double](repeating: 0, count: cnt)
