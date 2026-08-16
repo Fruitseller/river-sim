@@ -164,8 +164,9 @@ final class WaterFieldRenderer {
             }
         }}}}}
         // WASSERSPIEGEL-BEWUSST dilatieren: Wasser verbreitert sich nur auf Zellen,
-        // die nicht nennenswert über dem WASSERSPIEGEL (hf) des Nachbarlaufs liegen
-        // (barTol < braidBarHeight). Mittelbänke (Braiding!) und Ufer-/Talkanten
+        // deren Bett NAHE am WASSERSPIEGEL (hf) des Nachbarlaufs liegt
+        // (|Δ| < barTol, barTol < braidBarHeight — Begründung der Symmetrie am
+        // Pass unten). Mittelbänke (Braiding!) und Ufer-/Talkanten
         // bleiben trocken, statt von der Kosmetik-Breite übermalt zu werden —
         // flache Auen und geflutete Ebenen tragen weiter die volle Breiten-
         // Hierarchie (hf, nicht h: seichtes Ponding blockt die Breite nicht).
@@ -203,6 +204,14 @@ final class WaterFieldRenderer {
         // fadendünn (1 Zelle), Hauptflüsse verlieren ~1 Zelle Breite — die Breiten-
         // Hierarchie bleibt, ihr Absolutniveau sinkt (User: „proportional zu dick";
         // die alte Kalibrierung stammt von der kleineren 640er-Map).
+        // Die Bank-Toleranz gilt SYMMETRISCH (|Bett − Nachbar-Spiegel| < barTol):
+        // einseitig („nicht nennenswert DARÜBER") durfte sich Wasser bergab
+        // unbegrenzt verbreitern — an Steilwänden liegt jede Zelle unter dem
+        // Spiegel des Laufs darüber, die Dilatation fächerte hangabwärts als
+        // Dreiecks-Federn aus, und das gröbere Render-Gitter streckt genau
+        // diese Zellen zu großen Splittern (User-Screenshot Jahr 0, steile
+        // Canyons). Physisch steht Wasser nie an einer Wand UNTER dem Fluss;
+        // auf Ebenen ändert die zweite Schranke nichts (Differenzen ≪ barTol).
         let widenThresh = WaterRender.widenThresholds
         let widenFalloff = WaterRender.widenFalloff
         for thresh in widenThresh {
@@ -217,10 +226,10 @@ final class WaterFieldRenderer {
                     for i in 0..<n {
                         let k = j * n + i
                         var m = psd[k]
-                        if i > 0 && psd[k - 1] > thresh && ph[k] - phf[k - 1] < barTol { m = max(m, psd[k - 1] - widenFalloff) }
-                        if i < n - 1 && psd[k + 1] > thresh && ph[k] - phf[k + 1] < barTol { m = max(m, psd[k + 1] - widenFalloff) }
-                        if j > 0 && psd[k - n] > thresh && ph[k] - phf[k - n] < barTol { m = max(m, psd[k - n] - widenFalloff) }
-                        if j < n - 1 && psd[k + n] > thresh && ph[k] - phf[k + n] < barTol { m = max(m, psd[k + n] - widenFalloff) }
+                        if i > 0 && psd[k - 1] > thresh && abs(ph[k] - phf[k - 1]) < barTol { m = max(m, psd[k - 1] - widenFalloff) }
+                        if i < n - 1 && psd[k + 1] > thresh && abs(ph[k] - phf[k + 1]) < barTol { m = max(m, psd[k + 1] - widenFalloff) }
+                        if j > 0 && psd[k - n] > thresh && abs(ph[k] - phf[k - n]) < barTol { m = max(m, psd[k - n] - widenFalloff) }
+                        if j < n - 1 && psd[k + n] > thresh && abs(ph[k] - phf[k + n]) < barTol { m = max(m, psd[k + n] - widenFalloff) }
                         pb[k] = m
                     }
                 }
