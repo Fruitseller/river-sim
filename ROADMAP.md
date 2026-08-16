@@ -49,10 +49,20 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   √Abfluss (Leopold/Maddock), Strahler-Ordnung (`Strahler.swift`, headless
   getestet) als Rang-Maß (nur an Ordnung 4 angeschlossene Bänder; deren feine
   Oberläufe bleiben), kanalweise Stream-Map-Kohärenz gegen verknäulte Altpfade,
-  lokale Geländehöhe je Bandkante sowie Ufer-Übergang über Saum-Stempel +
-  Kanten-Feathering (gegen die Rückbau-Ursachen von `f3556c8`). Dirty-Vertrag
-  wie bei den Bäumen (`riversMaxDelta`/`markRiversBuilt`), im Zeitraffer auf
-  1 Hz gedeckelt.
+  lokale Geländehöhe je Bandkante — seit Aug 2026 geklemmt auf eine maximale
+  Quer-Neigung (`ribbonMaxCrossSlope`), damit ein Band, das breiter als die
+  Schluchtsohle ist, nicht die Wände hochdrapiert — sowie Ufer-Übergang über
+  Saum-Stempel + Kanten-Feathering (gegen die Rückbau-Ursachen von `f3556c8`).
+  Dirty-Vertrag wie bei den Bäumen (`riversMaxDelta`/`markRiversBuilt`), im
+  Zeitraffer auf 1 Hz gedeckelt.
+  **Korridor nur unter echten Bändern (Aug 2026):** der Saum-Stempel des
+  Wasserfelds und sein Raster-Deckel folgen dem ECHTEN Bau-Ergebnis
+  (`RiverRibbonRenderer.bandChannelFlags`); vom Strahler-/Kohärenz-Gate
+  verworfene Kanäle gehören ganz dem D8/MFD-Raster (vorher: Saum ohne Wasser
+  auf 52 % der sichtbaren Zentrumslinien-Zellen). Das Raster zieht sichtbare
+  Läufe seither über die geklemmte Kontinuitäts-Kette bis zum offenen Wasser
+  durch, und die Verbreiterung prüft ihre Bank-Toleranz symmetrisch (kein
+  Bergab-Ausfächern an Steilwänden mehr).
   **Übergabe an das Raster-Feld (#34):** ein Band malt genau das Flachwasser,
   das der See-Kanal nicht malen darf (Wassersäule unter `rawWet` = 0.03), und
   blendet dort aus, wo dieser übernimmt — deshalb ist `deltaFrontDepth` DIESELBE
