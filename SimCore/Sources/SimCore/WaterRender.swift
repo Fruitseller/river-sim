@@ -424,17 +424,60 @@ public enum WaterRender {
     // das Wasserfeld genau die Zellen aus dem See-Kanal, die die Geometrie malt
     // — driften die Filter, entsteht doppeltes Wasser oder ein Loch.
 
-    /// Nur substanzielle Schleifen (≈ 15 Zellen Bogen) sind Altarme; die
-    /// Migration schnürt auch 2–4-Knoten-Schlingen ab, die als 3–6-Zell-Blobs
-    /// die Ebenen sprenkelten.
-    public static let oxbowMinimumNodes = 10
+    /// Nur substanzielle Schleifen sind Altarme; die Migration schnürt auch
+    /// kleine Schlingen ab, die als Blobs die Ebenen sprenkeln.
+    ///
+    /// 10 → 20 (Aug 2026, User: „Altarm-Teppich"): bei `meanderNodeSpacing`
+    /// 1.5 Zellen ist eine 10-Knoten-Schleife ~15 Zellen Bogen ≈ 2.3
+    /// Welt-Einheiten — kaum länger als das Band breit ist, also ein Kringel,
+    /// keine Schleife. GEMESSEN (Seed 1337, Jahr 20 000, n = 832): von 5946
+    /// Altarmen erreichen 1322 zehn Knoten, aber nur **204** zwanzig, 40
+    /// dreißig, 2 fünfzig. Die 1118 dazwischen waren der Teppich.
+    public static let oxbowMinimumNodes = 20
     /// Die Cutoff-Enden (Hals) liegen eng beieinander — ungetrimmt schlösse sich
     /// der Altarm zu einem unnatürlichen Wasserring.
     public static let oxbowMaximumTrimmedNodes = 3
     /// Knoten, über die die Deckkraft an den Bogen-Enden einblendet.
     public static let oxbowEndFadeSteps = 3.0
-    /// Deckkraft eines frischen Altarms (blendet mit `SimConfig.oxbowMaxAge` aus).
+    /// Deckkraft eines frischen Altarms (blendet über `oxbowVisibleYears` aus).
     public static let oxbowMaximumOpacity = 0.7
+
+    /// Sicht-Horizont eines Altarms als offene Wasserfläche (Jahre).
+    ///
+    /// Getrennt von `SimConfig.oxbowMaxAge` (25 000 = wann er aus der
+    /// Mäander-LISTE fällt) und bewusst viel kürzer: die Liste ist Sim-Zustand
+    /// für die Bett-Verlandung (`oxbowFillYears` = 5500), die Sichtbarkeit ist
+    /// Optik. Ein Altarm ist nur solange offenes Wasser, wie sein Bett noch
+    /// nicht zugesedimentet ist — mit dem Listen-Alter als Blende blieben
+    /// Altarme 25 000 Jahre als glänzende Flächen stehen und akkumulierten zum
+    /// Teppich. GEMESSEN (Seed 1337, Jahr 20 000): von 1322 gemalten Altarmen
+    /// sind 466 jünger als 6000 Jahre, 249 jünger als 3000, 102 jünger als
+    /// 1000. Zusammen mit `oxbowMinimumNodes` = 20 bleiben ~70 statt 1322.
+    ///
+    /// An `oxbowFillYears` orientiert (Bett verlandet exponentiell mit τ = 5500
+    /// → nach 6000 Jahren ist das Defizit auf ~1/e abgebaut): die Fläche
+    /// verschwindet, wenn die Senke weg ist, nicht vorher.
+    public static let oxbowVisibleYears = 6000.0
+
+    /// Deckel der Band-Halbbreite am lokalen KRÜMMUNGSRADIUS der Zentrumslinie
+    /// (Anteil des Radius, in denselben Einheiten — Zellen).
+    ///
+    /// Ein Band ist eine extrudierte Polylinie: wird es breiter als der Radius
+    /// der Kurve, auf der es liegt, überschlagen sich seine Quads an der
+    /// Kurveninnenseite. Sichtbar wurde das als FÄCHER spitzer Dreiecke in der
+    /// Tiefebene, wo die Läufe am engsten mäandern (User: „das Wasser der
+    /// Flüsse besteht teilweise aus hässlichen Dreiecken"; A/B-belegt gegen
+    /// `RS_DIAG_RIBBON=norivers`, Seed 1337 / Jahr 20 000). Die Zentrumslinie
+    /// ist Catmull-Rom-geglättet, ihre Stützpunkte stehen aber nur
+    /// `meanderNodeSpacing` = 1.5 Zellen auseinander, während die Halbbreite
+    /// bis `ribbonHalfWidthCapCells` = 3.2 Zellen geht — die Faltung ist damit
+    /// die Regel, nicht der Ausnahmefall.
+    ///
+    /// 0.5 = das Band darf höchstens so breit wie sein Krümmungsradius werden
+    /// (Halbbreite ≤ r/2). Das ist zugleich die konservative Seite der
+    /// Naturbeobachtung: bei Leopold/Wolman liegt der Krümmungsradius eines
+    /// Mäanders bei 2–3 Gerinne-BREITEN, hier fordern wir nur ≥ 1.
+    public static let ribbonCurvatureWidthFactor = 0.5
 
     /// Suchweite der Mündungs-Verlängerung (Zellen). Reicht das Wasser nicht so
     /// weit, endet der Lauf im Land (Versickerung/Trockental) und bekommt seinen

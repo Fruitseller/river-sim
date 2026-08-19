@@ -19,6 +19,7 @@ import SimCore
 /// Sim-Rückwirkung.
 final class WaterFieldRenderer {
 
+
     // Persistente, zeitlich geglättete Wasserfelder (EWMA-Gedächtnis über Rebuilds).
     // Ohne sie wird das Feld jeden Tick frisch aus `hf` berechnet und flackert/springt;
     // mit ihnen BLENDET der Lauf zwischen Positionen (`blend` klein im Zeitraffer,
@@ -66,7 +67,7 @@ final class WaterFieldRenderer {
     /// Vorher deckelte der Korridor ALLE Kanäle und die verworfenen renderten
     /// als Saum ohne Wasser darin (52 % der sichtbaren Zentrumslinien-Zellen).
     func bytes(_ terrain: Terrain, blend: Double, geometryMode: Bool,
-               bandChannelFlags: [Bool]) -> PackedByteArray {
+               bandChannelFlags: [Bool], bandCoverage: [Double]) -> PackedByteArray {
         let n = terrain.cfg.n
         let cnt = n * n
         let sea = terrain.cfg.sea
@@ -408,7 +409,7 @@ final class WaterFieldRenderer {
             let age = oxbowIndex < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[oxbowIndex]
                 : 0
-            let fade = max(0, 1 - age / terrain.cfg.oxbowMaxAge)
+            let fade = max(0, 1 - age / WaterRender.oxbowVisibleYears)
             if fade <= 0 { continue }
             let trim = min(maximumTrimmedNodes, max(1, oxbow.count / 8))
             let first = trim, last = oxbow.count - trim - 1
@@ -488,6 +489,10 @@ final class WaterFieldRenderer {
                     mstamp[k] = true
                     capStamp[k] = true
                 }
+                // Deckung des Bands an DIESER Zelle (echtes Bau-Ergebnis,
+                // s. RiverRibbonRenderer.bandCoverage). Fehlt das Feld (erster
+                // Frame vor dem ersten Ribbon-Build), gilt wie früher „voll".
+                let cover = k < bandCoverage.count ? bandCoverage[k] : 1.0
                 if capStamp[k] && sd[k] > haloIntensity {
                     // Kaskaden-Zellen behalten ihr Raster-Wasser: dort blendet
                     // das BAND über dieselbe Funktion aus (s.
@@ -509,7 +514,12 @@ final class WaterFieldRenderer {
                         }
                     }
                     if WaterRender.cascadeWeight(slope: maxSlope) < 0.5 {
-                        sd[k] = haloIntensity
+                        // ANTEILIG statt binär: nur so weit zurücknehmen, wie
+                        // das Band an dieser Stelle wirklich deckt. Wo sein
+                        // Alpha ausläuft (Enden-Taper, Abfluss-Rampe,
+                        // Kohärenz), behält das Raster sein Wasser — sonst
+                        // reißt der Lauf dort ab, wo beide Pfade schweigen.
+                        sd[k] += (haloIntensity - sd[k]) * cover
                     }
                 }
             }

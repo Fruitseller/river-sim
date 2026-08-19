@@ -192,7 +192,8 @@ final class SimNode: Node {
         // `bandChannelFlags` koppelt die beiden Wasser-Pfade über das echte
         // Bau-Ergebnis: nur Kanäle MIT Band werden im Feld zum Saum gedeckelt.
         waterField.bytes(terrain, blend: blend, geometryMode: SimNode.waterGeometryEnabled,
-                         bandChannelFlags: ribbons.bandChannelFlags)
+                         bandChannelFlags: ribbons.bandChannelFlags,
+                         bandCoverage: ribbons.bandCoverage)
     }
 
     /// Legacy-A/B ohne Rebuild (Muster `RS_NO_MEANDER_PAINT`): gesetzt = der

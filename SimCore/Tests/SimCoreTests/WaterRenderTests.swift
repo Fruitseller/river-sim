@@ -418,10 +418,11 @@ final class WaterRenderTests: XCTestCase {
     }
 
     func testOxbowFilterIsSharedAndSelfConsistent() {
-        XCTAssertEqual(WaterRender.oxbowMinimumNodes, 10)
+        XCTAssertEqual(WaterRender.oxbowMinimumNodes, 20)
         XCTAssertEqual(WaterRender.oxbowMaximumTrimmedNodes, 3)
         XCTAssertEqual(WaterRender.oxbowEndFadeSteps, 3.0)
         XCTAssertEqual(WaterRender.oxbowMaximumOpacity, 0.7)
+        XCTAssertEqual(WaterRender.oxbowVisibleYears, 6000.0)
         // Eine gerade noch zugelassene Schleife muss nach dem Trimmen der
         // Hals-Enden noch einen Bogen übrig haben — sonst emittieren beide
         // Pfade (Geometrie und Stempel) nichts und der Filter wäre wirkungslos.

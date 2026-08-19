@@ -59,6 +59,22 @@ final class RiverRibbonRenderer {
     /// das ECHTE Bau-Ergebnis statt über eine duplizierte Gate-Formel, die
     /// wegdriften könnte.
     private(set) var bandChannelFlags: [Bool] = []
+
+    /// Je Zelle: wie stark deckt die gebaute Band-Geometrie sie WIRKLICH ab
+    /// (0 = gar nicht, 1 = volle Deckkraft)? Gegenstück zu `bandChannelFlags`
+    /// eine Ebene feiner — und aus demselben Grund: das Raster-Feld muss sein
+    /// Wasser genau dort und genau so weit zurücknehmen, wie das Band es
+    /// ersetzt.
+    ///
+    /// Vorher war der Deckel BINÄR je Korridor-Zelle. Ein Band deckt aber über
+    /// seine Länge sehr unterschiedlich: Enden-Taper, Abfluss-Rampe,
+    /// Stream-Map-Kohärenz und die Kaskaden-Übergabe ziehen sein Alpha bis auf
+    /// 0. Der binäre Deckel nahm dem Raster trotzdem das volle Wasser weg —
+    /// GEMESSEN (Seed 1337, Jahr 20 000): 94 469 gedeckelte Korridor-Zellen
+    /// gegen 10 307 Zellen, die als Fluss übrig blieben. Sichtbar war das als
+    /// abreißende Läufe („keine durchgehenden Adern"): erst Band, dann eine
+    /// trockene Rinne, wo weder Band noch Raster malte.
+    private(set) var bandCoverage: [Double] = []
     /// Auflösung des RENDER-Gitters (Main.gd `terrain_grid`, via
     /// `SimNode.setRenderGrid`): die Land-Bänder sampeln ihre Höhen über
     /// `renderSurfaceHeight` von der SICHTBAREN Oberfläche statt von den
@@ -157,6 +173,13 @@ final class RiverRibbonRenderer {
         let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
         bandChannelFlags = [Bool](repeating: false,
                                   count: terrain.meander.channels.count)
+        if bandCoverage.count != n * n {
+            bandCoverage = [Double](repeating: 0, count: n * n)
+        } else {
+            bandCoverage.withUnsafeMutableBufferPointer {
+                $0.baseAddress!.update(repeating: 0, count: n * n)
+            }
+        }
         for (chIndex, ch) in terrain.meander.channels.enumerated() {
             let nodes = ch.nodes
             let m = nodes.count
@@ -483,10 +506,37 @@ final class RiverRibbonRenderer {
         for a in 0..<samples.count {
             let s = samples[a]
             let a0 = max(0, a - 1), a1 = min(samples.count - 1, a + 1)
+            // Tangente aus der zentralen Differenz — die glättet die Richtung
+            // über den Stützpunkt hinweg. Sie DEGENERIERT aber genau dort, wo
+            // die Zentrumslinie eine Haarnadel macht: dann liegen Vorgänger und
+            // Nachfolger fast aufeinander, die Differenz ist ~0 und mit ihr die
+            // Quer-Richtung. Beide Bandkanten fielen dann auf die Mittellinie,
+            // und die anschließenden Quads strahlten von diesem einen Punkt als
+            // FÄCHER aus spitzen Dreiecken weg (User: „das Wasser der Flüsse
+            // besteht teilweise aus hässlichen Dreiecken"; reproduziert an den
+            // verknäulten Läufen der Tiefebene, Seed 1337 / Jahr 20 000).
+            // Deshalb eine Rückfallkette auf die einseitigen Segmente: erst
+            // vorwärts, dann rückwärts, zuletzt eine feste Richtung. Ein Band
+            // hat IMMER eine Quer-Richtung.
             var tx = samples[a1].x - samples[a0].x, tz = samples[a1].z - samples[a0].z
-            let tl = (tx * tx + tz * tz).squareRoot()
-            if tl > 1e-9 { tx /= tl; tz /= tl }
-            let hw = max(s.halfWidth, 0) * cs
+            var tl = (tx * tx + tz * tz).squareRoot()
+            if tl <= 1e-6 {
+                tx = samples[a1].x - samples[a].x; tz = samples[a1].z - samples[a].z
+                tl = (tx * tx + tz * tz).squareRoot()
+            }
+            if tl <= 1e-6 {
+                tx = samples[a].x - samples[a0].x; tz = samples[a].z - samples[a0].z
+                tl = (tx * tx + tz * tz).squareRoot()
+            }
+            if tl > 1e-6 { tx /= tl; tz /= tl } else { tx = 1; tz = 0 }
+            // Breite am Krümmungsradius deckeln, sonst falten sich die Quads
+            // an engen Schlingen zu Dreiecks-Fächern
+            // (s. WaterRender.ribbonCurvatureWidthFactor).
+            let hwCells = min(max(s.halfWidth, 0),
+                              RiverRibbonRenderer.curvatureRadiusCells(
+                                  samples[a0], samples[a], samples[a1])
+                                  * WaterRender.ribbonCurvatureWidthFactor)
+            let hw = hwCells * cs
             let wx = s.x * cs - half, wz = s.z * cs - half
             let perpx = -tz * hw, perpz = tx * hw
             let yLeft: Float, yRight: Float
@@ -527,6 +577,12 @@ final class RiverRibbonRenderer {
                 yLeft = Float(min(max(yL, yCenter - crossTol), yCenter + crossTol) + lift)
                 yRight = Float(min(max(yR, yCenter - crossTol), yCenter + crossTol) + lift)
             }
+            // Deckung dieses Stützpunkts ins gemeinsame Feld: dieselbe Fläche,
+            // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem
+            // Alpha, mit dem sie wirklich malt. `WaterFieldRenderer` deckelt
+            // sein Raster genau um diesen Betrag.
+            stampCoverage(atX: s.x, atZ: s.z, halfWidthCells: max(s.halfWidth, 0),
+                          alpha: s.alpha, n: n)
             rrVerts.append(Vector3(x: Float(wx - perpx), y: yLeft, z: Float(wz - perpz)))
             rrVerts.append(Vector3(x: Float(wx + perpx), y: yRight, z: Float(wz + perpz)))
             let dirX = still ? 0.0 : tx, dirZ = still ? 0.0 : tz
@@ -542,6 +598,42 @@ final class RiverRibbonRenderer {
                 let v = Int32(base + (a - 1) * 2)
                 rrIdx.append(v); rrIdx.append(v + 2); rrIdx.append(v + 1)
                 rrIdx.append(v + 1); rrIdx.append(v + 2); rrIdx.append(v + 3)
+            }
+        }
+    }
+
+    /// Krümmungsradius (Zellen) durch drei Stützpunkte — Menger-Krümmung.
+    /// Kollineare oder zusammenfallende Punkte ergeben `.infinity` (Gerade),
+    /// der Breiten-Deckel greift dort also nicht.
+    private static func curvatureRadiusCells(_ a: RibbonSample, _ b: RibbonSample,
+                                             _ c: RibbonSample) -> Double {
+        let abx = b.x - a.x, abz = b.z - a.z
+        let bcx = c.x - b.x, bcz = c.z - b.z
+        let cax = a.x - c.x, caz = a.z - c.z
+        let ab = (abx * abx + abz * abz).squareRoot()
+        let bc = (bcx * bcx + bcz * bcz).squareRoot()
+        let ca = (cax * cax + caz * caz).squareRoot()
+        let cross = abs(abx * bcz - abz * bcx)      // = 2 · Dreiecksfläche
+        guard cross > 1e-9 else { return .infinity }
+        return ab * bc * ca / (2 * cross)
+    }
+
+    /// Trägt die Deckkraft eines Band-Stützpunkts in `bandCoverage` ein
+    /// (Maximum je Zelle — Bänder dürfen sich überlagern, doppelt gedeckelt
+    /// wird trotzdem nicht).
+    private func stampCoverage(atX: Double, atZ: Double, halfWidthCells: Double,
+                               alpha: Double, n: Int) {
+        guard alpha > 0 else { return }
+        let value = min(max(alpha, 0), 1)
+        let radius = Int(halfWidthCells.rounded(.up))
+        let ci = Int(atX.rounded()), cj = Int(atZ.rounded())
+        for j in max(0, cj - radius)...min(n - 1, cj + radius) {
+            for i in max(0, ci - radius)...min(n - 1, ci + radius) {
+                // Kreis statt Quadrat: das Band ist ein Streifen, kein Block.
+                let dx = Double(i) - atX, dz = Double(j) - atZ
+                if dx * dx + dz * dz > (halfWidthCells + 0.5) * (halfWidthCells + 0.5) { continue }
+                let k = j * n + i
+                if bandCoverage[k] < value { bandCoverage[k] = value }
             }
         }
     }
@@ -625,7 +717,7 @@ final class RiverRibbonRenderer {
             if oxbow.count < WaterRender.oxbowMinimumNodes { continue }
             let age = index < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[index] : 0
-            let fade = max(0, 1 - age / terrain.cfg.oxbowMaxAge)
+            let fade = max(0, 1 - age / WaterRender.oxbowVisibleYears)
             if fade <= 0 { continue }
             let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, oxbow.count / 8))
             let first = trim, last = oxbow.count - trim - 1
