@@ -1,13 +1,13 @@
 # AGENTS.md
 
-Leitfaden für Coding-Agents (und Menschen) in diesem Repository — werkzeug-unabhängig.
+Leitfaden für Coding-Agents (und Menschen) in diesem Repository, werkzeug-unabhängig.
 `CLAUDE.md` ist ein Symlink auf diese Datei.
 
 Projektsprache ist **Deutsch**: Code-Kommentare, Doc-Kommentare und alle Dokumente
 (`PLAN.md`, `ROADMAP.md`, `docs/`) sind deutsch. Neue Kommentare/Dokumente ebenso.
 
 **Ausnahme: Git-Commit-Nachrichten werden auf Englisch geschrieben.** (Ältere Commits
-sind teils deutsch — das ist Altbestand, nicht die Konvention.)
+sind teils deutsch, das ist Altbestand, nicht die Konvention.)
 
 ## Befehle
 
@@ -21,7 +21,7 @@ export LD_LIBRARY_PATH="$PWD/.tools/swift-libs:${LD_LIBRARY_PATH:-}"   # aus Rep
 
 `scripts/build.sh` erledigt beides selbst.
 
-**Tests** (Sim-Kern, headless, GPU-frei — die eigentliche Verifikationsebene):
+**Tests** (Sim-Kern, headless, GPU-frei, die eigentliche Verifikationsebene):
 
 ```sh
 swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
@@ -51,7 +51,7 @@ ungegatet in die Pflichtsuite rutscht oder ein echter Wächter still hinter dem
 Schalter verschwindet. Begründung: `SimCore/Tests/SimCoreTests/MeasurementGate.swift`,
 Laufzeiten: `docs/ci-measurements.md`.
 
-**Laufzeit messen** (Issue #43 — Mess-Harness für den Sim-Schritt, headless,
+**Laufzeit messen** (Issue #43, Mess-Harness für den Sim-Schritt, headless,
 Produktions-Config, n = 832):
 
 ```sh
@@ -67,8 +67,8 @@ Vorher/Nachher und die gemessenen Fehlschläge: `docs/perf-measurements.md`.
 
 **Extension bauen** (M4-Max-Referenz-Mac: No-Op ~1,3 s, SimCore-Edit ~9 s,
 Extension-Edit ~5 s, Kaltbau ~10 min in einem Aufruf; **auf Linux gemessen 21,5 min** Kaltbau,
-auf einem 4-Kern-Host 27 min — SwiftGodots Codegen dominiert, mehr Kerne helfen
-nicht: serielle Modulkette + WMO) — **immer mit absolutem Pfad aufrufen**;
+auf einem 4-Kern-Host 27 min, SwiftGodots Codegen dominiert, mehr Kerne helfen
+nicht: serielle Modulkette + WMO). **Immer mit absolutem Pfad aufrufen**;
 relativ aus `game/` heraus schlägt es still fehl und Godot lädt weiter die ALTE
 Library:
 
@@ -92,7 +92,7 @@ zeigt man ihm mit **einer** Variablen: `RS_SWIFT_BIN=/pfad/zur/toolchain/bin`.
 **Worktrees** bauen automatisch in den geteilten Cache des Haupt-Repos
 (`--scratch-path`): erster Build im frischen Worktree ~3 min statt ~8 min
 Kaltbau, danach im selben Worktree Sekunden. Jeder Wechsel des bauenden
-Checkouts (Haupt ↔ Worktree) kostet einmalig ~3 min Neuplanung — build.sh
+Checkouts (Haupt ↔ Worktree) kostet einmalig ~3 min Neuplanung, build.sh
 räumt dabei die checkout-eigenen Artefakte selbst weg, der Build-Stempel-Check
 verifiziert jedes Ergebnis. Die frühere Handarbeit „`.build` kopieren,
 `ModuleCache`-Ordner löschen" entfällt. `RS_NO_SHARED_BUILD=1` erzwingt einen
@@ -103,7 +103,7 @@ Upstream-Version, aktuell `exact: "0.76.1"` (Revision
 `be57caa3e81b9ac510bc7cc2e277003c706ab0a5`, Tag `v0.76.1`); `Extension/Package.resolved`
 ist eingecheckt und die verbindliche Auflösung, auch für die transitiven Pins
 (`swift-syntax` 600.0.1, `swift-argument-parser` 1.8.2). Vorher stand hier
-`branch: "main"` — damit konnte jeder frische Klon eine andere Revision ziehen, und
+`branch: "main"`, damit konnte jeder frische Klon eine andere Revision ziehen, und
 weil SwiftGodots Codegen die ganze Modulkette speist, kostet schon ein
 Revisionswechsel einen Voll-Neubau (Linux ~21,5 min, s. o.) und kann die Godot-API
 still verschieben.
@@ -121,7 +121,7 @@ git diff Extension/Package.resolved                  # Revisionen prüfen, auch 
 
 Ein Update gehört nicht in einen Commit mit Sim- oder Render-Änderungen: bricht die
 GDExtension danach, soll der Pin-Commit allein dastehen. `swift package update`
-(ohne Argument) hebt bei einem `exact`-Pin nichts an — genau das ist der Zweck.
+(ohne Argument) hebt bei einem `exact`-Pin nichts an. Genau das ist der Zweck.
 
 **Build-Stempel gegen veraltete Libraries:** `scripts/build.sh` hasht die Quellen
 unter `Extension/Sources` + `SimCore/Sources` und brennt den Stempel via
@@ -135,7 +135,7 @@ scripts/build-stamp.sh --check   # Exit 1 + Meldung, wenn game/bin/ veraltet ist
 ```
 
 Beim Ändern des Verfahrens müssen `scripts/build-stamp.sh` und
-`game/scripts/BuildStamp.gd` bytegleich bleiben — das prüft seit Issue #52
+`game/scripts/BuildStamp.gd` bytegleich bleiben. Das prüft seit Issue #52
 `game/tests/build_stamp_parity.gd` (führt die Shell-Seite selbst aus und
 vergleicht mit der GDScript-Seite; braucht die GDExtension nicht):
 
@@ -161,20 +161,20 @@ GODOT="$(scripts/fetch-godot.sh)"
 
 `scripts/fetch-godot.sh` ist die **einzige** Quelle der Godot-Version im Repo
 (Prüfsumme inklusive); `scripts/start.sh` und CI lesen sie von dort. Damit läuft
-CI garantiert gegen dieselbe Binärdatei wie der Arbeitsplatz — sonst beweist ein
+CI garantiert gegen dieselbe Binärdatei wie der Arbeitsplatz; sonst beweist ein
 grüner Lauf nichts über den lokalen Stand.
 
 `res://tests/render_fingerprint.gd` ist kein Wächter, sondern das A/B-WERKZEUG
 für Umbauten der Render-Aufbereitung (Issue #53): es druckt SHA-256 je
 Render-Puffer nach einem festen Lauf. Vorher laufen lassen, umbauen, nachher
-laufen lassen — gleiche Zeilen heißt bit-identisch. Die Hashes gelten je
+laufen lassen: gleiche Zeilen heißt bit-identisch. Die Hashes gelten je
 Maschine, nicht plattformübergreifend (System-libm), deshalb steht keine
 Erwartung im Skript.
 
 Der Import-Lauf ist Pflicht, bevor irgendetwas die GDExtension benutzt: Godot lädt
 Extensions ausschließlich aus `game/.godot/extension_list.cfg`, und die entsteht erst
 beim Import. `game/.godot/` ist gitignoriert, fehlt also in jedem frischen Klon oder
-Worktree — ohne Import bleibt `SimNode` unregistriert, obwohl `game/bin/` korrekt
+Worktree; ohne Import bleibt `SimNode` unregistriert, obwohl `game/bin/` korrekt
 gefüllt ist. `smoke.gd` erkennt genau diesen Fall und nennt den Befehl.
 
 **Headless-Screenshot** (visuelle Verifikation ohne Auge):
@@ -186,14 +186,14 @@ RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
 `SimNode.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
 `RS_SEED`, `RS_STEP`, `RS_STEP_CHUNK` (Schrittweite des `RS_STEP`-Vorlaufs,
-Standard 1000 J. — der Vorlauf taktet wie der Zeitraffer, nicht in EINEM Sprung),
-`RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"` — Blickpunkt in
+Standard 1000 J., der Vorlauf taktet wie der Zeitraffer, nicht in EINEM Sprung),
+`RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"`, Blickpunkt in
 Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
 `RS_QUALITY` (`performance|balanced|quality`), `RS_RENDER_GRID`, `RS_DIAG`,
 `RS_DEBUG_DIFF` (Δ-Karte gleich an, für automatisierte Diagnose-Screenshots),
 `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
-der Wasser-Geometrie — A/B im selben Build; ohne den Schalter rendert die
+der Wasser-Geometrie; A/B im selben Build; ohne den Schalter rendert die
 Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus. Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab.
@@ -201,7 +201,7 @@ Lauf von `game/tests/water_rings.gd` ab.
 ## CI
 
 `.github/workflows/ci.yml`, zwei Jobs auf `ubuntu-22.04`, bei jedem Push auf
-`main` und jedem PR. Sie laufen **parallel** — die Laufzeit eines CI-Laufs ist die
+`main` und jedem PR. Sie laufen **parallel**; die Laufzeit eines CI-Laufs ist die
 des langsameren Jobs, nicht die Summe:
 
 | Job | Prüft | Lokal reproduzieren |
@@ -210,7 +210,7 @@ des langsameren Jobs, nicht die Summe:
 | `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd` | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
-(`.github/actions/swift-toolchain`) — die Einrichtung ist nicht generisch (feste
+(`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
 Version, swift.org-Direktdownload, ncurses-Shim), und zweimal dieselbe Fassung zu
 pflegen war die absehbare Fehlerquelle. Ein „Doppel-Build" ist das trotzdem nicht:
 `SimCore/.build` und `Extension/.build` sind verschiedene Paketgraphen mit
@@ -233,13 +233,13 @@ sobald irgendetwas parallel läuft (real 2026-08-15, issue-61, zwei Versuche).
 Deshalb ist für Agenten der **CI-Build die Verifikationsebene**, nicht der
 lokale Host:
 
-- **Lokal bauen Agenten die Extension NICHT mehr** — weder direkt noch in
+- **Lokal bauen Agenten die Extension NICHT mehr**, weder direkt noch in
   Docker. Lokal erlaubt ist nur die SimCore-Suite (leicht, <2 GB).
 - Schwere Verifikation läuft im `godot-contract`-Job: Agenten committen und
   rufen `~/git/agentbox/bin/ci-verify.sh <task> --watch` auf (pusht den Branch,
   stellt den Draft-PR sicher, pollt die Pflicht-Checks `test` + `godot-contract`
   und druckt bei Rot das Log-Tail des fehlgeschlagenen Jobs).
-- **Merge-Gate:** `test` UND `godot-contract` müssen grün sein — der
+- **Merge-Gate:** `test` UND `godot-contract` müssen grün sein; der
   Auto-Merger (river-sim-watch.sh) prüft beide, nicht nur `test`.
 - Die Aufgabe- und Fix-Prompts (agentbox `verify-guide.sh`) schreiben das
   explizit vor; ohne die Projekt-Config (`etc/projects/Fruitseller-river-sim.env`)
@@ -252,13 +252,13 @@ oben); für Agenten ist das ab jetzt verbotenes Terrain.
 
 Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
 
-1. **`SimCore/`** — reines Swift-Package, **keine Godot-Abhängigkeit**. Die gesamte
+1. **`SimCore/`**: reines Swift-Package, **keine Godot-Abhängigkeit**. Die gesamte
    Physik. Headless mit XCTest verifizierbar.
-2. **`Extension/`** — SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn: hält einen
+2. **`Extension/`**: SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn: hält einen
    `Terrain` und reicht seine Felder als `Packed*Array` an Godot. Keine Physik.
    Seit Issue #53 ist `SimNode.swift` wieder eine BRÜCKE (~320 Zeilen, fast nur
    `@Callable`-Einzeiler); die Render-Aufbereitung liegt daneben, s. u.
-3. **`game/`** — Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
+3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.1): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` + `water.gdshader`.
 
@@ -270,22 +270,22 @@ Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
 `SimNode.swift` ist reines Marshalling: Aufruf weiterreichen, Ergebnis als
 `Packed*Array` zurückgeben. Die Render-AUFBEREITUNG liegt daneben, je Pfad ein
-Modul — sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer, Dirty-Snapshots),
+Modul; sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer, Dirty-Snapshots),
 liest das Terrain und ändert es nie:
 
-- `WaterFieldRenderer` — Raster-Wasser (`waterFieldBytes`),
-- `RiverRibbonRenderer` — Band-Geometrie (`buildRiverRibbons` + Puffer),
-- `TerrainColorRenderer` — Biom-/Höhen-Färbung,
-- `TreeInstanceRenderer` — MultiMesh-Puffer der Bäume,
-- `TerrainDiagnostics` — Kennzahlen und Δ-Karte,
-- `RenderSupport.swift` — was mehrere brauchen (`parallelChunks`,
+- `WaterFieldRenderer`: Raster-Wasser (`waterFieldBytes`),
+- `RiverRibbonRenderer`: Band-Geometrie (`buildRiverRibbons` + Puffer),
+- `TerrainColorRenderer`: Biom-/Höhen-Färbung,
+- `TreeInstanceRenderer`: MultiMesh-Puffer der Bäume,
+- `TerrainDiagnostics`: Kennzahlen und Δ-Karte,
+- `RenderSupport.swift`: was mehrere brauchen (`parallelChunks`,
   `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
   müssen sich über die Uferlinie und die Mündung exakt einig sein,
-- `BrushTool` — Werkzeug-Modi; dieselbe Reihenfolge wie die Werkzeug-Tabelle in
+- `BrushTool`: Werkzeug-Modi; dieselbe Reihenfolge wie die Werkzeug-Tabelle in
   `Main.gd` (Wächter: `SimCoreTests/ToolContractTests.swift`).
 
 Die KALIBRIER-Zahlen bleiben dabei in `SimCore` (`WaterRender`,
-`RenderContract`) — die Module rechnen nur mit ihnen. Die Wächter lesen die
+`RenderContract`); die Module rechnen nur mit ihnen. Die Wächter lesen die
 Extension als GANZES (`RepoSource.extensionSources()`), ein Umzug zwischen
 diesen Dateien bricht sie also nicht.
 
@@ -294,7 +294,7 @@ diesen Dateien bricht sie also nicht.
 `Terrain.swift` (~4500 Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
 Tektonik, Küste, Braiding, Auslass-Inzision sind Pässe auf denselben Grids und ihre
 **Reihenfolge pro Zeitschritt muss zusammen lesbar sein**. Die Reihenfolge in `step()`
-ist LEM-Konvention und nicht beliebig — hier vollständig, weil jeder nachgerüstete
+ist LEM-Konvention und nicht beliebig. Hier vollständig, weil jeder nachgerüstete
 Prozess sich an einer begründeten Stelle einhängt:
 
 ```
@@ -316,7 +316,7 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
 ```
 
 Der eingerahmte Block ist der `hydraulicEnabled`-Zweig; der Testpfad
-(`hydraulicEnabled = false` — die isolierten Mäander-Kopplungstests, s.
+(`hydraulicEnabled = false`, die isolierten Mäander-Kopplungstests, s.
 § Konfiguration) fährt an dieser Stelle stattdessen `transportLimited` und danach
 `diffusionPass`/`wavePass` verschränkt. Alles vor und nach dem Block läuft in
 BEIDEN Zweigen.
@@ -328,7 +328,7 @@ frischen Schneefeld ab.
 
 Seit Issue #36 koppelt das Klima über **einen** Weg in die Erosion: die
 Schmelze speist das Abfluss-Gewicht (`Terrain.flowWeight` = Regen + Ablation,
-gebaut in `updateRunoffWeight` am Ende von `computeRain` — also innerhalb von
+gebaut in `updateRunoffWeight` am Ende von `computeRain`, also innerhalb von
 `computeFlow`, aus dem Schneefeld vom Schrittende davor). Begründung bei
 `SimConfig.climateEnabled` und
 `SimConfig.meltRunoffEnabled`.
@@ -341,7 +341,7 @@ gatet: `outletIncision` und `Hydraulic.erode` prüfen sie direkt, alle übrigen
 Bett-Bewegungen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
 Auen-Aggradation, im Testpfad auch `transportLimited`) über ihren gemeinsamen
 Funnel `erodeCell`/`depositCell`.
-Vergletscherte Zellen rührt damit kein fluvialer Pass an — die Hangdiffusion
+Vergletscherte Zellen rührt damit kein fluvialer Pass an; die Hangdiffusion
 dagegen läuft weiter (kein fluvialer Pass, s. `docs/glacier-measurements.md`
 §I.1). Wie `isChannel` gilt: **leeres Feld heißt aus**,
 und ohne Eis wird es auch geleert; eine eisfreie Welt rechnet damit
@@ -353,36 +353,36 @@ Kalibrier-Logbuch: `SimConfig.iceEnabled` ff., Messreihe
 **Alle drei Abfluss-Konsumenten lesen `flowWeight`** und nie `rain`/`rainWeight`
 direkt: `seedFlowAccumulator` (D8 UND MFD) und die Tropfen-Startpunkte in
 `Hydraulic.erode`. Wer einen vierten Konsumenten hinzufügt, nimmt dieselbe
-Quelle — die Kalibrierung hängt daran, dass Σ Gewicht über Land = Zahl der
+Quelle; die Kalibrierung hängt daran, dass Σ Gewicht über Land = Zahl der
 Landzellen bleibt (`docs/melt-runoff-measurements.md` §D).
 
 Ausgelagert sind nur Dinge mit eigener Datenstruktur: `Hydraulic.swift` (Droplet-Erosion,
 Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, Cutoff),
-`ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0** — siehe `NOTICE`),
+`ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0**, siehe `NOTICE`),
 `HeightBands.swift` (Perzentil-Höhenbänder, Issue #4), `WorldSnapshot.swift`
-(Speicherformat, Issue #8 — das Zustands-INVENTAR `TerrainState` steht dagegen am
+(Speicherformat, Issue #8; das Zustands-INVENTAR `TerrainState` steht dagegen am
 Ende von `Terrain.swift`), `Profile.swift` (`SimProfile`, die Pass-Marken des
 Mess-Harness), `Noise.swift`, `MinHeap.swift`.
 
-Größenordnung zur Orientierung (Stand Aug 2026, gerundet — wer eine Datei teilt
+Größenordnung zur Orientierung (Stand Aug 2026, gerundet; wer eine Datei teilt
 oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4500 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
 Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen, die
-gesamte GDExtension ~2100 (davon `SimNode.swift` ~320 — s. o.).
+gesamte GDExtension ~2100 (davon `SimNode.swift` ~320, s. o.).
 
-Drei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand — sie
+Drei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand; sie
 liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:
 `Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31), `WaterRender.swift`
 (Kalibrier-Paarungen des Wasserfelds: Komponenten-Fade ↔ Shader-Smoothstep ↔
 Altarm-Stempel, Issue #32; seit #34 auch die Übergabe Band ↔ Raster:
 `deltaFrontDepth == lakeRawWetDepth`, `mouthOverlapCells`, Typ-Kanal der Bänder)
-und `RenderContract.swift` (Issue #51: `heightScale`, `riverLift`, `defaultSeed` —
+und `RenderContract.swift` (Issue #51: `heightScale`, `riverLift`, `defaultSeed`,
 Zahlen, die Godot-Schicht, GDExtension und Shader unabhängig voneinander
 festlegten). Alle drei sind aus `SimCoreTests` gepinnt; Werte dort ändern heißt
 Shader UND `SimNode` mitziehen (der Test sagt, wo).
 
-Seit **Issue #51** liegt die Render-Kalibrierung VOLLSTÄNDIG in diesem Vertrag —
+Seit **Issue #51** liegt die Render-Kalibrierung VOLLSTÄNDIG in diesem Vertrag:
 auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
 Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
 Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
@@ -392,7 +392,7 @@ die Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests` u
 `RenderContractTests` lesen die ECHTEN Quelltexte der GDExtension, beiden
 `.gdshader`, `Main.gd` und den Godot-Wächtern und vergleichen sie gegen diese
 Werte (gemeinsamer Helfer: `Tests/SimCoreTests/RepoSource.swift`). Zahlen im
-Shader deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`) — sonst
+Shader deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`); sonst
 greift der Textvergleich nicht.
 
 **Wasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
@@ -402,47 +402,47 @@ Altarme, das Raster-Feld (`WaterFieldRenderer` + `terrain.gdshader`) die
 dendritischen Zubringer, Seen und das Meer. Die Grenze ist die Wassersäule
 `WaterRender.lakeRawWetDepth`: darunter malt nur die Geometrie, darüber nur das
 Raster. Wer eine der beiden Seiten verschiebt, bekommt entweder einen Spalt oder
-doppeltes Wasser — beides zählt `game/tests/water_geometry.gd`.
+doppeltes Wasser; beides zählt `game/tests/water_geometry.gd`.
 
 Zwei Drainage-Netze mit strikt getrennten Rollen: **D8/`area`** speist die Erosion
 (kalibriert, implizit stabil), **MFD/`areaMFD`** (Freeman/Quinn) speist **nur** Render
 und Braiding. Diese Trennung nicht aufweichen. (Eine dokumentierte Ausnahme in der
 Gegenrichtung: die **Strahler-Ordnung** für die Ribbon-Render-Hierarchie, Issue #31,
-läuft auf D8 — sie braucht den Empfänger-*Baum*, den MFD als Mehrfach-Verteilung
+läuft auf D8, sie braucht den Empfänger-*Baum*, den MFD als Mehrfach-Verteilung
 nicht hat.)
 
 ### Konfiguration
 
 `SimConfig` in `SimCore/Sources/SimCore/Config.swift` ist der **eine** Konfigurations-
 Wert, den ein `Terrain` bekommt, und trägt die große Mehrheit der Stellschrauben
-direkt — jede mit ausführlicher Begründung inkl. verworfener Werte und Messwerten.
-Beim Ändern eines Werts den Kommentar mitpflegen — er ist das Kalibrier-Logbuch.
+direkt, jede mit ausführlicher Begründung inkl. verworfener Werte und Messwerten.
+Beim Ändern eines Werts den Kommentar mitpflegen; er ist das Kalibrier-Logbuch.
 
 Zwei Gruppen sind bewusst NICHT in `Config.swift` deklariert, sondern neben ihrem
-Code — sie hängen als Feld in `SimConfig` und reisen damit vollständig im
+Code; sie hängen als Feld in `SimConfig` und reisen damit vollständig im
 Spielstand mit (`Codable`):
 
-- `HydraulicParams` (`Hydraulic.swift`) — die Tropfen-Parameter, erreichbar als
+- `HydraulicParams` (`Hydraulic.swift`): die Tropfen-Parameter, erreichbar als
   `cfg.hydraulic`. `Config.swift` überschreibt davon nur, was hier anders
   kalibriert ist (derzeit `inertia = 0.10`); der Rest steht kommentiert an der
   Struktur. Wer einen Tropfen-Wert sucht, sucht in `Hydraulic.swift`.
-- `ErosionFilter.Params` (`ErosionFilter.swift`) — die Pre-Erosion bei der
+- `ErosionFilter.Params` (`ErosionFilter.swift`): die Pre-Erosion bei der
   Generierung, erreichbar als `cfg.preErodeParams`, unverändert übernommen. Sie
   liegt beim Portierten-Code, weil ihre Werte gegen das GLSL-Original stehen
   (`docs/references/runevision-erosion/`, MPL-2.0). Ihre `Codable`-Konformität
-  steht als handgeschriebene Extension in `WorldSnapshot.swift` — die Struktur
+  steht als handgeschriebene Extension in `WorldSnapshot.swift`; die Struktur
   führt Tupel, die der Compiler nicht synthetisieren kann.
 
 KEINE Stellschrauben in diesem Sinn sind dagegen `WaterRender` und
 `RenderContract`: das sind Render-KALIBRIERUNGEN mit Wächtern über Shader und
 GDExtension (s. o.), keine Physik-Regler, und sie hängen nicht an `SimConfig`.
 Auch die Extension und `Main.gd` halten seit Issue #51 keine eigenen
-Render-Literale mehr — ihre Zahlen kommen aus dem Vertrag.
+Render-Literale mehr; ihre Zahlen kommen aus dem Vertrag.
 
 Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - `SimConfig()`-Defaults = kalibrierte Produktions-Physik.
 - `SimNode.productionConfig()` schaltet zusätzlich reine Performance-Optionen an
-  (`hydraulicSkipWaterSpawns`, `meanderSpatialCutoffIndex`) — Verhalten muss dabei
+  (`hydraulicSkipWaterSpawns`, `meanderSpatialCutoffIndex`); Verhalten muss dabei
   gleich bleiben, dafür gibt es Tests.
 - Testkonfigs (`meanderCfg()` in `SimCoreTests.swift`) **pinnen alte Werte**, damit
   Kopplungs-Mechanik und Produktions-Kalibrierung entkoppelt bleiben. Nicht
@@ -456,29 +456,29 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - **Kalibrier-Kaskade:** Änderungen am Droplet-Pfad verschieben die Braiding-Kalibrierung;
   Rinnen-Textur bricht Formeln, die die Per-Zell-Steigung als „Hang" lesen (Regen,
   Vegetation, Biom-Farbe brauchen Makro-Steigung über ±2 Zellen). Diese
-  Makro-Steigung hat seit Issue #50 genau EINE Quelle — `Terrain.macroSlope`;
+  Makro-Steigung hat seit Issue #50 genau EINE Quelle: `Terrain.macroSlope`;
   wer sie erneut lokal ausrechnet, baut die Kaskade wieder ein.
-- **`n` und `world` nur ZUSAMMEN ändern** — sonst ändert sich `cellSize` und alle
+- **`n` und `world` nur ZUSAMMEN ändern**, sonst ändert sich `cellSize` und alle
   per-Zell-Kalibrierungen (Braid-Gates, Droplet-Dichte, kappa-Skalierung) brechen.
-- **Determinismus ist eine getestete Invariante — pro Maschine.** Gleicher Seed →
+- **Determinismus ist eine getestete Invariante (pro Maschine).** Gleicher Seed →
   bit-gleiches Ergebnis; Parallelisierung (`Terrain.parallel`, `parallelChunks` in
   `SimNode.swift`) nur über disjunkte Index-Bereiche, bit-identisch zur
   sequenziellen Schleife. Plattformübergreifend gilt Bit-Gleichheit NICHT
   (System-libm) und wird nicht getestet. Sim-Zustand deshalb nur auf der CPU;
   GPU-Floats sind nicht bit-kompatibel (Rundung/FMA/Reassoziation treiberabhängig),
-  Shader/Compute nur für Render-Ableitungen — `docs/web-tech-refactor-evaluation.md` §5.
+  Shader/Compute nur für Render-Ableitungen, s. `docs/web-tech-refactor-evaluation.md` §5.
 - **Framerate-Unabhängigkeit:** Gesamtwirkung eines Passes muss ∝ `dt` sein. Echtzeit-
   Zeitraffer (winziges dt/Frame) und `+10.000 Jahre`-Sprünge müssen dasselbe Ergebnis
   liefern. Die drei Bauformen dafür: Sub-Takten mit fester Teilschritt-Stärke
   (Hangdiffusion, `waveSchedule`), exponentielle Relaxation `1 − e^(−dt/τ)` statt
-  linear gedeckelter (`Terrain.relaxFraction` — EINZIGE Quelle dieser Form, gelesen
+  linear gedeckelter (`Terrain.relaxFraction`, EINZIGE Quelle dieser Form, gelesen
   von `relaxWaterLevel`, Verlandungen, Vegetation) und Raten-Zähler
   mit Übertrag statt `max(1, …)` (Tropfenzahl, `dropCarry`). Deckel „halbe lokale
-  Höhendifferenz" sind ebenfalls Raten (`stepCapFraction` — Halbwertszeit statt τ,
+  Höhendifferenz" sind ebenfalls Raten (`stepCapFraction`, Halbwertszeit statt τ,
   deshalb bewusst nicht über den Helfer). Wächter:
   `SimCoreTests/DtInvariance.swift` + `SimCoreTests/RelaxationTests.swift`,
   Messreihen `docs/dt-invariance-measurements.md`.
-  Zwei **benannte Reste** bleiben bewusst stehen — wer eine dt-Abweichung misst,
+  Zwei **benannte Reste** bleiben bewusst stehen; wer eine dt-Abweichung misst,
   prüft zuerst gegen diese beiden, bevor er einen Fehler vermutet:
   1. **Operator-Splitting-Drift**: das Abflussfeld wird nur EINMAL je Schritt
      bestimmt, die Tropfen laufen `dt·Rate` mal dagegen
@@ -487,15 +487,15 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
      Höhendifferenz JE SCHRITT und ist bewusst NICHT auf `stepCapFraction`
      umgestellt: Issue #2 hat die DEPOSITIONS-Deckel geradegezogen, dies ist die
      Erosionsseite. Als Rate darf ein 200-Jahr-Schritt 0.75 statt 0.5 ausräumen,
-     womit der Braid-Scour die Böden der abflusslosen Becken tiefer gräbt — die
+     womit der Braid-Scour die Böden der abflusslosen Becken tiefer gräbt; die
      Playa-Fläche fiel gemessen von >100 auf 35 Zellen und die #11-Wächter
      `testDriedBedIsRenderedAsPlaya`/`testBasinLevelIsRateLimited` kippten
      (`docs/dt-invariance-measurements.md` §6). Die Begründung steht auch am
      Code, direkt über dem Deckel.
 - Masse-Erhaltung gilt **nicht** (detachment-limited Stream-Power trägt Material aus);
-  die Invariante ist beschränktes Relief / Fließgleichgewicht — Wächter:
+  die Invariante ist beschränktes Relief / Fließgleichgewicht; Wächter:
   `Tests/SimCoreTests/LongRunCollapse.swift`.
 - `ROADMAP.md` ist ein lebendes Dokument (Stand, offene Punkte, geparkter Code wie
-  `fillLakes`/`floodplainAggradation`) — bei Änderungen mitziehen.
+  `fillLakes`/`floodplainAggradation`), bei Änderungen mitziehen.
 - Recherche-Belege in `docs/`; `docs/nickmcd-behavior-verification.md` hält je
   Ziel-Verhalten fest, wie es umgesetzt und womit es belegt ist.
