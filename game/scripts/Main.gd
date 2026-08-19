@@ -47,6 +47,27 @@ var river_ribbons := true
 var river_mi: MeshInstance3D
 var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
+# Pinsel-Strich: die HÖHE folgt jedem Frame (heightsBytes ≈ 0,2 ms), die teure
+# Aufbereitung dahinter nur in diesem Takt. Gemessen je Aufruf (n = 832, M4 Max):
+# recomputeFlow 41 ms + waterFieldBytes 17 ms + buildRiverRibbons 10 ms samt
+# 315k-Index-Mesh-Upload — pro Frame gerechnet sind das ~14 FPS, und genau das
+# war der gemeldete Lag beim Arbeiten mit den Werkzeugen (RS_QUALITY=quality).
+# 0,15 s hält den Strich flüssig und die Flüsse trotzdem sichtbar mitlaufend;
+# beim Loslassen zieht `_finish_stroke()` einmal alles vollständig nach, damit der
+# fertige Strich nie mit einem halb alten Flussnetz stehen bleibt.
+# Takt des Zeitraffer-Sim-Schritts. Ein Schritt kostet FAST FIX ~40 ms, egal wie
+# viele Jahre er trägt: computeFlow (priorityFlood 23 ms + computeMFDArea 11 ms +
+# Empfängerwahl 3 ms) hängt an der Gittergröße, nicht an dt. Der Takt ist damit
+# direkt Framerate: GEMESSEN (n = 832, RS_QUALITY=quality, RS_FPS, M4 Max)
+# 0,15 s → 38,8 FPS · 0,25 s → 44,3 FPS · 0,35 s → 48,1 FPS. Bezahlt wird das
+# mit gröberen Sprüngen je Update (bei 60 J/s trägt ein Schritt 15 statt 9
+# Jahre) — dt-invariant ist das Ergebnis ohnehin, sichtbar ist nur, wie fein die
+# Landschaft zwischen zwei Updates gleitet; die Wasser-Blend (0.15, s. u.)
+# überbrückt es. 0,25 s ist die Wahl des Nutzers (+14 % FPS); 0,35 s wäre
+# nochmal +10 %, ist aber nicht auf sein Zeitraffer-GEFÜHL geprüft worden —
+# gemessen sind hier nur die Bildraten.
+const SIM_TICK_SECONDS := 0.25
+const SCULPT_REFRESH_SECONDS := 0.15
 const RIVER_REBUILD_DELTA := 0.05  # Zellen Knoten-Verschiebung
 const RIVER_REBUILD_SECONDS := 1.0  # Strahler + Mesh sind CPU-seitig; 0,30 s kosteten im Zeitraffer messbar ~4 % FPS
 # Welt-Y über Gelände: deckt den Chord-Fehler des gröberen Render-Gitters im
@@ -122,6 +143,7 @@ var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
 var overlay_timer := 0.0
 var last_river_rebuild_msec := -1
 var sculpting := false
+var sculpt_refresh_timer := 0.0
 var pick_last := Vector2.INF  # Spitzhacke: Position des letzten Hiebs im Strich (INF = noch keiner)
 var brush_radius := 10.0
 var brush_strength := 1.0
@@ -892,7 +914,7 @@ func _process(delta: float) -> void:
 		# ein Schritt à 9 Jahre ist gleichwertig und ~9× billiger.
 		pending_years += year_rate * delta
 		rebuild_timer += delta
-		if rebuild_timer > 0.15:
+		if rebuild_timer > SIM_TICK_SECONDS:
 			var elapsed := rebuild_timer
 			rebuild_timer = 0.0
 			# Jahre/Schritt deckeln → hält jeden Schritt billig (keine Todesspirale).
@@ -947,15 +969,38 @@ func _process(delta: float) -> void:
 				# Referenz; delta-Deckel hält Ruckler-Frames von Riesen-Hieben ab).
 				sim.brush(mode, gx, gz, brush_radius, strength * minf(delta, 0.05) * 60.0,
 					flatten_target)
-			sim.recomputeFlow() # Flüsse reagieren sofort auf den Eingriff
 			_invalidate_h_cache()
 			debug_dirty = true
-			_update_terrain_textures()
-			_maybe_rebuild_rivers_throttled(true) # Sculpting droppt gestörte Kanäle → Struktur-Delta
+			# Höhe sofort (billig): der Strich muss dem Zeiger ohne Verzögerung
+			# folgen. Flussnetz, Overlays und Bänder laufen im gedrosselten Takt
+			# nach (s. SCULPT_REFRESH_SECONDS).
+			_update_terrain_textures(1.0, false)
+			sculpt_refresh_timer += delta
+			if sculpt_refresh_timer >= SCULPT_REFRESH_SECONDS:
+				sculpt_refresh_timer = 0.0
+				_refresh_after_stroke()
 
 	_update_camera_pan(delta)
 	_update_ring()
 	_update_camera()
+
+## Vollständige Aufbereitung nach einem Pinsel-Eingriff: Flussnetz neu rechnen,
+## Overlays hochladen, Bänder neu bauen. Teuer (~69 ms bei n = 832), deshalb
+## gedrosselt aufgerufen — nicht pro Frame.
+func _refresh_after_stroke() -> void:
+	sim.recomputeFlow() # Flüsse reagieren auf den Eingriff
+	_invalidate_h_cache()
+	_update_terrain_textures()
+	_maybe_rebuild_rivers_throttled(true) # Sculpting droppt gestörte Kanäle → Struktur-Delta
+
+## Strich beendet: einmal vollständig nachziehen, damit der fertige Eingriff nie
+## mit einem halb alten Flussnetz stehen bleibt (der gedrosselte Takt kann
+## mitten im Intervall aufgehört haben).
+func _finish_stroke() -> void:
+	sculpt_refresh_timer = 0.0
+	_refresh_after_stroke()
+	_maybe_rebuild_trees()
+	debug_dirty = true
 
 func _update_camera_pan(delta: float) -> void:
 	# Bewegung bleibt auf der Terrain-Ebene und folgt der Blickrichtung statt den
@@ -1207,9 +1252,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
+				var was_sculpting := sculpting
 				sculpting = event.pressed
 				if not event.pressed:
 					pick_last = Vector2.INF # Strich beendet → nächster Klick beginnt neu
+					if was_sculpting:
+						_finish_stroke()
 				if event.pressed and TOOLS[current_tool].get("samples_target", false):
 					# Einebnen: Zielhöhe = Terrainhöhe am Strich-Beginn
 					var hit := _raycast_terrain()
