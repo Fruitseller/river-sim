@@ -65,6 +65,24 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Läufe seither über die geklemmte Kontinuitäts-Kette bis zum offenen Wasser
   durch, und die Verbreiterung prüft ihre Bank-Toleranz symmetrisch (kein
   Bergab-Ausfächern an Steilwänden mehr).
+  **Deckel ANTEILIG statt binär (Aug 2026):** der Raster-Deckel nimmt nur so
+  viel Wasser zurück, wie das Band an dieser Zelle wirklich deckt
+  (`RiverRibbonRenderer.bandCoverage`, dieselbe Doktrin eine Ebene feiner als
+  `bandChannelFlags`). Der binäre Deckel entfernte 94 469 Korridor-Zellen
+  gegenüber 10 307 verbleibenden Fluss-Zellen — dort, wo das Band-Alpha
+  ausläuft (Enden-Taper, Abfluss-Rampe, Kohärenz, Kaskaden-Übergabe), malte
+  weder Band noch Raster und der Lauf riss ab (User: „keine durchgehenden
+  Adern"). Danach: sichtbares Fluss-Wasser 10 307 → 21 970 Zellen, größte
+  zusammenhängende Fluss-Komponente 454 → 4 102 Zellen (Seed 1337, Jahr 20 000).
+  **Band-Breite am Krümmungsradius gedeckelt** (`ribbonCurvatureWidthFactor`):
+  wo ein Band breiter war als der Radius seiner Schlinge, überschlugen sich
+  seine Quads zu Fächern spitzer Dreiecke (User: „hässliche Dreiecke");
+  zusätzlich hat die Tangenten-Berechnung jetzt eine Rückfallkette für
+  Haarnadeln (zentrale Differenz degeneriert dort zu 0).
+  **Altarme:** eigener Sicht-Horizont `WaterRender.oxbowVisibleYears` = 6000
+  statt des Listen-Alters `oxbowMaxAge` = 25 000, und Mindestgröße von 10 auf
+  20 Knoten — vorher standen 1322 Altarme gleichzeitig als glänzende Flächen in
+  der Ebene („Altarm-Teppich"), jetzt ~70.
   **Übergabe an das Raster-Feld (#34):** ein Band malt genau das Flachwasser,
   das der See-Kanal nicht malen darf (Wassersäule unter `rawWet` = 0.03), und
   blendet dort aus, wo dieser übernimmt — deshalb ist `deltaFrontDepth` DIESELBE
@@ -114,6 +132,28 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Messreihen: `docs/flatten-regeneration-measurements.md`.
 
 ## Offene Punkte
+
+**Seed 1337 ist ein See-Ausreißer (Aug 2026, gemessen — offen: Entscheidung).**
+Der Default-Seed (`RenderContract.defaultSeed`) erzeugt die mit Abstand
+nasseste Welt des Feldes. Anteil sichtbar nasser Landzellen nach 20 000 Jahren
+und größte Wasser-Komponente (n = 832, Produktions-Config):
+
+| Seed | Landzellen | nass | Anteil | größter See |
+| ---: | ---: | ---: | ---: | ---: |
+| **1337** | 479 778 | 79 689 | **16,6 %** | **46 853** |
+| 7 | 224 834 | 777 | 0,35 % | 35 |
+| 99 | 318 319 | 18 789 | 5,9 % | 5 755 |
+| 2024 | 226 121 | 13 907 | 6,2 % | 5 083 |
+| 4242 | 152 010 | 3 474 | 2,3 % | 3 164 |
+
+Damit ist „zu viel stehendes Wasser" beim Start KEINE Fehlkalibrierung der
+Physik, sondern die Eigenschaft dieser einen Welt: ein Riesenbecken fängt sie
+ab. Der naheliegende Physik-Hebel dagegen ist im Kalibrier-Logbuch bereits
+gemessen und verworfen (`SimConfig.outletErode` ×1.4 senkte den Seeanteil bei
+20k praktisch nicht und kostete Kanalzellen und Relief). Offen ist deshalb eine
+PRODUKT-Entscheidung, keine Kalibrierung: Default-Seed auf eine repräsentative
+Welt umstellen (die Tests pinnen ihre Seeds selbst) oder 1337 als bewusst
+seenreiche Startwelt behalten.
 
 **Braiding-Kalibrierung (behoben, weiter beobachten):**
 Die Kapazität des Murray-&-Paola-`braidPass` wurde auf `5e-6` gesenkt. Damit
