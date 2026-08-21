@@ -423,7 +423,22 @@ final class EndorheicEvaporation: XCTestCase {
         let fine = Terrain(config: c, seed: 1337)
         let coarse = Terrain(config: c, seed: 1337)
         let basin = largestEndorheicBasin(fine)
-        try? XCTSkipIf(basin.count < 50, "kein abflussloses Becken in dieser Konfiguration")
+        // Kein SKIP, sondern eine ZUSICHERUNG. Hier stand `try? XCTSkipIf(…)` —
+        // das `try?` verschluckte den geworfenen Skip, die Absicherung war also
+        // wirkungslos: bei einem zu kleinen Becken lief der Vergleich einfach
+        // weiter (bei 0 Zellen sogar auf NaN). Und ein Skip wäre auch der
+        // falsche Ausgang: Seed, Auflösung und κ sind gepinnt (`dryCfg`), das
+        // Becken ist damit keine Umgebungs-Eigenschaft, sondern Voraussetzung
+        // dieses Wächters — verschwindet es, muss er ROT werden statt still
+        // durchzulaufen (dieselbe Doktrin wie `MeasurementGate`: kein Wächter
+        // schaltet sich unbemerkt selbst ab). Die Schranke ist dabei WEIT vom
+        // Ist-Zustand entfernt und damit kein neues Pin: gemessen 765 Zellen
+        // gegen die 50 der Schranke (n=160, κ=6, Seed 1337, s. `[DT]`-Zeile).
+        guard basin.count >= 50 else {
+            XCTFail("kein abflussloses Becken in dieser Konfiguration "
+                    + "(\(basin.count) Zellen) — nichts zu vergleichen")
+            return
+        }
         for _ in 0..<50 { fine.step(dtYears: 20) }
         coarse.step(dtYears: 1000)
         let a = basin.reduce(0.0) { $0 + fine.hf[$1] } / Double(basin.count)
@@ -433,7 +448,8 @@ final class EndorheicEvaporation: XCTestCase {
         // Schritte folgen einem wandernden Ziel enger als ein großer). Geprüft
         // wird deshalb ein Band: kein Faktor-Unterschied wie bei einer
         // dt-abhängigen Rate (die 50 Schritte würden dann 50× so weit laufen).
-        print(String(format: "[DT] 50×20 J. %.5f · 1×1000 J. %.5f", a, b))
+        print(String(format: "[DT] Becken %d Zellen · 50×20 J. %.5f · 1×1000 J. %.5f",
+                     basin.count, a, b))
         XCTAssertEqual(a, b, accuracy: 0.02,
                        "Bilanz-Spiegel hängt an der Schrittweite (\(a) vs \(b))")
     }
