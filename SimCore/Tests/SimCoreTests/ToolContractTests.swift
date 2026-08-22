@@ -64,7 +64,7 @@ final class ToolContractTests: XCTestCase {
                                  + "gefunden — Routing wäre damit ungeprüft")
         let cases = body.components(separatedBy: "case .").dropFirst().map { segment -> (String, [String]) in
             let name = String(segment.prefix { $0.isLetter })
-            let calls = (try? strings(in: segment, pattern: "terrain\\.([a-zA-Z]+)\\(")) ?? []
+            let calls = (try? captures(in: segment, pattern: "terrain\\.([a-zA-Z]+)\\(")) ?? []
             return (name, calls)
         }
         XCTAssertEqual(cases.map(\.0), Self.expectedRouting.map(\.tool),
@@ -102,25 +102,5 @@ final class ToolContractTests: XCTestCase {
             index = text.index(after: index)
         }
         return nil
-    }
-
-    /// Alle Treffer der ersten Capture-Gruppe von `pattern`, in Vorkommens-Reihenfolge.
-    private func strings(in text: String, pattern: String) throws -> [String] {
-        let regex = try NSRegularExpression(pattern: pattern)
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return regex.matches(in: text, range: range).compactMap { match in
-            guard let group = Range(match.range(at: 1), in: text) else { return nil }
-            return String(text[group])
-        }
-    }
-
-    /// Alle Zahlen der ersten Capture-Gruppe von `pattern`, in Vorkommens-Reihenfolge.
-    private func integers(in text: String, pattern: String) throws -> [Int] {
-        let regex = try NSRegularExpression(pattern: pattern)
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return regex.matches(in: text, range: range).compactMap { match in
-            guard let group = Range(match.range(at: 1), in: text) else { return nil }
-            return Int(text[group])
-        }
     }
 }
