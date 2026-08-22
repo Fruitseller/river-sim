@@ -30,7 +30,11 @@ final class TerrainDiagnostics {
     /// Volumen über Referenz, Nettovolumen, maxAbtrag, maxAufbau, Relief-Servo/100 J.,
     /// abklingende Hebung U(t)/100 J., Reliefziel, Referenzjahr, ungültige Zellen,
     /// robustes Relief-Signal (das REGELSIGNAL des Servo-Bodens, p95 − Median),
-    /// mittlere Grat-Krümmung (Alterungs-Kennzahl: negativ = spitz, → 0 = rund).
+    /// mittlere Grat-Krümmung (Alterungs-Kennzahl: negativ = spitz, → 0 = rund),
+    /// Talseitenrelief (Median − p05, die Gegenprobe zum Regelsignal).
+    ///
+    /// Die Indizes dieser Reihenfolge stehen als `DBG_*` in `Main.gd`, ihre Zahl
+    /// als `DEBUG_STATS_COUNT`; Wächter: `SimCoreTests/DiagStatsContractTests.swift`.
     func stats(_ terrain: Terrain) -> PackedFloat32Array {
         if referenceHeights.count != terrain.h.count { capture(terrain) }
         let h = terrain.h
