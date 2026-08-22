@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 /// Zugriff auf die ECHTEN Quelltexte der anderen Schichten (Shader, GDScript,
@@ -67,6 +68,36 @@ func assertContains(_ haystack: String, _ needle: String, hint: String,
                     file: StaticString = #filePath, line: UInt = #line) {
     XCTAssertTrue(haystack.contains(needle),
                   "\(hint) — erwartet im Quelltext: \(needle)", file: file, line: line)
+}
+
+/// Alle Treffer der ersten Capture-Gruppe von `pattern`, in Vorkommens-Reihenfolge.
+///
+/// Die Quelltext-Verträge lesen ihre Gegenseite ausnahmslos so; die Hilfe liegt
+/// deshalb hier bei `RepoSource` und nicht als private Kopie in jedem Test
+/// (`ToolContractTests` und `DiagStatsContractTests` hatten sie doppelt).
+func captures(in text: String, pattern: String) throws -> [String] {
+    let regex = try NSRegularExpression(pattern: pattern)
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    return regex.matches(in: text, range: range).compactMap { match in
+        guard let group = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[group])
+    }
+}
+
+/// s. `captures(in:pattern:)` — als Zahl.
+func integers(in text: String, pattern: String) throws -> [Int] {
+    try captures(in: text, pattern: pattern).compactMap(Int.init)
+}
+
+/// s. `captures(in:pattern:)` — für Muster mit ZWEI Capture-Gruppen (Name + Wert).
+func pairs(in text: String, pattern: String) throws -> [(String, String)] {
+    let regex = try NSRegularExpression(pattern: pattern)
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    return regex.matches(in: text, range: range).compactMap { match in
+        guard let first = Range(match.range(at: 1), in: text),
+              let second = Range(match.range(at: 2), in: text) else { return nil }
+        return (String(text[first]), String(text[second]))
+    }
 }
 
 /// Double in der Schreibweise, in der er in Shader-/GDScript-Quelltext stehen
