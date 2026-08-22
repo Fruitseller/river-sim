@@ -277,7 +277,9 @@ liest das Terrain und ändert es nie:
 - `RiverRibbonRenderer`: Band-Geometrie (`buildRiverRibbons` + Puffer),
 - `TerrainColorRenderer`: Biom-/Höhen-Färbung,
 - `TreeInstanceRenderer`: MultiMesh-Puffer der Bäume,
-- `TerrainDiagnostics`: Kennzahlen und Δ-Karte,
+- `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
+  ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:
+  `SimCoreTests/DiagStatsContractTests.swift`),
 - `RenderSupport.swift`: was mehrere brauchen (`parallelChunks`,
   `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
   müssen sich über die Uferlinie und die Mündung exakt einig sein,
