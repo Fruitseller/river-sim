@@ -59,8 +59,10 @@ final class MeasurementGateTests: XCTestCase {
                 let gated = gatesOnMeasurement(body)
                 if named && !gated {
                     offenders.append("\(file): \(name) heißt „…Diagnostic“, ruft aber "
-                        + "kein wirksames `try skipUnlessMeasuring()` — der Messlauf "
-                        + "hinge in der Pflichtsuite")
+                        + "kein wirksames `try skipUnlessMeasuring()` als eigene Anweisung "
+                        + "am Zeilenanfang — der Messlauf hinge in der Pflichtsuite. "
+                        + "Nicht wirksam: `try?`, auskommentiert, in einer Zeichenkette, "
+                        + "geschachtelt in `if`/`XCTAssertNoThrow`")
                 } else if !named && gated {
                     offenders.append("\(file): \(name) ist gegatet, heißt aber nicht "
                         + "„…Diagnostic“ — ein echter Wächter würde hier still übersprungen")
@@ -83,18 +85,47 @@ final class MeasurementGateTests: XCTestCase {
     }
 
     /// Gegenprobe zum Erkenner unten: Schreibweisen, die WIE ein Gate aussehen und
-    /// keins sind, müssen als „ungegatet“ durchfallen. Ohne diesen Test wäre die
-    /// Verschärfung selbst ungeprüft — der alte `contains`-Scanner hätte jede der
-    /// fünf Zeilen hier als Gate gezählt.
+    /// keins sind, müssen als „ungegatet“ durchfallen; wirksame Varianten der
+    /// Schreibweise dagegen müssen zählen. Ohne diesen Test wäre die Verschärfung
+    /// selbst ungeprüft — der alte `contains`-Scanner hätte jede der Zeilen hier
+    /// als Gate gezählt.
     func testOnlyAnEffectiveGateCallCounts() {
         XCTAssertTrue(gatesOnMeasurement("        try skipUnlessMeasuring()\n"))
         XCTAssertTrue(gatesOnMeasurement("        try skipUnlessMeasuring() // Messlauf\n"))
+        XCTAssertTrue(gatesOnMeasurement("        try  skipUnlessMeasuring ()\n"),
+                      "Leerraum ändert die Wirkung nicht")
+        XCTAssertTrue(gatesOnMeasurement(
+            "        try skipUnlessMeasuring(file: #filePath, line: #line)\n"),
+                      "die Argumente haben Defaults, explizit ist genauso wirksam")
         XCTAssertFalse(gatesOnMeasurement("        try? skipUnlessMeasuring()\n"),
                        "`try?` verschluckt den geworfenen Skip — kein Gate")
         XCTAssertFalse(gatesOnMeasurement("        // try skipUnlessMeasuring()\n"),
                        "auskommentiert ist kein Gate")
         XCTAssertFalse(gatesOnMeasurement("        print(\"skipUnlessMeasuring()\")\n"),
                        "eine Zeichenkette ist kein Gate")
+        XCTAssertFalse(gatesOnMeasurement("        print(\"try skipUnlessMeasuring()\")\n"),
+                       "auch als vollständige Zeichenkette kein Gate")
+    }
+
+    /// Der Erkenner liest Zeichenketten und Kommentare als solche — beides hat
+    /// eine Richtung, in die es schiefgeht, und beide sind hier gepinnt:
+    ///
+    /// - `//` INNERHALB einer Zeichenkette (jede URL) ist kein Kommentarbeginn.
+    ///   Ein naives Abschneiden am ersten `//` würde ein danach stehendes Gate
+    ///   verschlucken und den Messlauf fälschlich als ungegatet melden.
+    /// - eine Gate-Zeile INNERHALB eines `"""`-Literals ist kein Aufruf. Sie
+    ///   naiv zu zählen wäre der gefährlichere Fehler: ein ungegateter Messlauf
+    ///   gälte als gegatet, also genau der False-Positive, den Issue #52 abstellt.
+    func testStringsAndCommentsAreToldApart() {
+        XCTAssertTrue(gatesOnMeasurement(
+            "        let u = \"https://example.org\"\n        try skipUnlessMeasuring()\n"),
+                      "`//` in einer URL beendet den Code nicht")
+        XCTAssertFalse(gatesOnMeasurement(
+            "        let s = \"\"\"\n        try skipUnlessMeasuring()\n        \"\"\"\n"),
+                       "im mehrzeiligen Literal steht Text, kein Aufruf")
+        XCTAssertTrue(gatesOnMeasurement(
+            "        let s = \"\"\"\n        egal\n        \"\"\"\n        try skipUnlessMeasuring()\n"),
+                      "nach dem Literal zählt der Aufruf wieder")
     }
 
     // MARK: - Hilfen
@@ -103,7 +134,7 @@ final class MeasurementGateTests: XCTestCase {
     ///
     /// Bewusst nicht `body.contains("skipUnlessMeasuring()")`: dieser Test ist der
     /// Wächter über „kein Messlauf hängt ungegatet in der Pflichtsuite“, und ein
-    /// Textfund allein belegt das nicht. Zwei Schreibweisen sahen für den
+    /// Textfund allein belegt das nicht. Drei Schreibweisen sahen für den
     /// `contains`-Scanner wie ein Gate aus und sind keins:
     ///
     /// - `try? skipUnlessMeasuring()` — `XCTSkipUnless` signalisiert den Skip durch
@@ -111,16 +142,70 @@ final class MeasurementGateTests: XCTestCase {
     ///   vollständig, obwohl `RS_MEASURE` aus ist, und der Wächter hier hätte ihn
     ///   als gegatet abgesegnet. Genau dieser Fehler stand real im Baum
     ///   (`try? XCTSkipIf` in `EndorheicEvaporation`).
-    /// - eine auskommentierte Zeile oder der Name in einer Zeichenkette.
+    /// - eine auskommentierte Zeile oder der Name in einer Zeichenkette,
+    /// - dieselbe Zeile innerhalb eines mehrzeiligen `"""`-Literals.
     ///
-    /// Verglichen wird deshalb je Zeile der CODE-Teil (vor `//`) gegen genau die
-    /// eine wirksame Schreibweise. Alle Aufrufstellen im Baum notieren sie so;
-    /// eine neue Variante fällt hier auf, statt still als Gate zu gelten.
+    /// Gelesen wird deshalb der CODE-Teil jeder Zeile (`codeLines`, kennt
+    /// Zeichenketten und Kommentare) und darin die Anweisung als Ganzes: `try`,
+    /// der Aufrufname, eine Argumentliste, Zeilenende. Leerraum und die explizit
+    /// gesetzten Default-Argumente (`file:`/`line:`) sind damit erlaubt — sie
+    /// ändern die Wirkung nicht, und ein Autor, der sie notiert, soll nicht an
+    /// einem CI-Bruch über eine Schreibweise rätseln. Am Zeilenanfang bleibt es
+    /// verankert: ein Gate in einem `if`-Zweig oder in `XCTAssertNoThrow(…)`
+    /// wirkt eben NICHT zuverlässig und soll auffallen.
     private func gatesOnMeasurement(_ body: String) -> Bool {
-        body.split(separator: "\n").contains { line in
-            let code = line.range(of: "//").map { line[line.startIndex..<$0.lowerBound] } ?? line
-            return code.trimmingCharacters(in: .whitespaces) == "try skipUnlessMeasuring()"
+        codeLines(of: body).contains { line in
+            line.trimmingCharacters(in: .whitespaces)
+                .range(of: #"^try\s+skipUnlessMeasuring\s*\([^()]*\)$"#,
+                       options: .regularExpression) != nil
         }
+    }
+
+    /// Jede Zeile ohne Zeichenketten-Inhalt und ohne Kommentar.
+    ///
+    /// Der kleine Zeichen-Scanner ersetzt `range(of: "//")`: der kannte keinen
+    /// String-Kontext, schnitt also an jedem `https://…` mitten in der Zeile ab
+    /// und zählte Gate-Zeilen in `"""`-Literalen mit. Raw Strings (`#"…"#`)
+    /// braucht er nicht zu kennen — ihre Anführungszeichen öffnen und schließen
+    /// hier genauso, der Inhalt fällt damit ebenfalls weg.
+    private func codeLines(of body: String) -> [String] {
+        var result: [String] = []
+        var inMultiline = false
+        for line in body.split(separator: "\n", omittingEmptySubsequences: false) {
+            let chars = Array(line)
+            var code = ""
+            var inString = false
+            var escaped = false
+            var i = 0
+            while i < chars.count {
+                let c = chars[i]
+                if inMultiline {
+                    if isTripleQuote(chars, i) { inMultiline = false; i += 3; continue }
+                    i += 1
+                } else if inString {
+                    if escaped { escaped = false } else if c == "\\" { escaped = true }
+                    else if c == "\"" { inString = false }
+                    i += 1
+                } else if isTripleQuote(chars, i) {
+                    inMultiline = true
+                    i += 3
+                } else if c == "\"" {
+                    inString = true
+                    i += 1
+                } else if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
+                    break
+                } else {
+                    code.append(c)
+                    i += 1
+                }
+            }
+            result.append(code)
+        }
+        return result
+    }
+
+    private func isTripleQuote(_ chars: [Character], _ i: Int) -> Bool {
+        i + 2 < chars.count && chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\""
     }
 
     /// Alle `*.swift` neben dieser Datei. `#filePath` zeigt auf die Quelle, nicht
