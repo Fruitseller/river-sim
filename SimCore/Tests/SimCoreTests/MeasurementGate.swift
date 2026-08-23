@@ -18,10 +18,11 @@ import XCTest
 //         -Xswiftc -swift-version -Xswiftc 5 --filter testDtSpreadDiagnostic
 //
 // Konvention, von `MeasurementGateTests` erzwungen: Der Methodenname endet auf
-// `Diagnostic` GENAU DANN, wenn die Methode `skipUnlessMeasuring()` aufruft.
+// `Diagnostic` GENAU DANN, wenn die Methode `try skipUnlessMeasuring()` aufruft.
 // Beide Richtungen sind nötig — sonst schleicht sich entweder ein ungegateter
 // Messlauf in die Pflichtsuite, oder ein echter Wächter verschwindet still
-// hinter dem Schalter.
+// hinter dem Schalter. Das `try` gehört zur Konvention: `try?` verschluckt den
+// geworfenen Skip (s. `gatesOnMeasurement`).
 
 extension XCTestCase {
     /// Überspringt den Test, außer `RS_MEASURE` steht **exakt** auf `1`.
@@ -55,10 +56,11 @@ final class MeasurementGateTests: XCTestCase {
         for (file, source) in try testSources() {
             for (name, body) in testMethods(in: source) {
                 let named = name.hasSuffix("Diagnostic")
-                let gated = body.contains("skipUnlessMeasuring()")
+                let gated = gatesOnMeasurement(body)
                 if named && !gated {
                     offenders.append("\(file): \(name) heißt „…Diagnostic“, ruft aber "
-                        + "kein skipUnlessMeasuring() — der Messlauf hinge in der Pflichtsuite")
+                        + "kein wirksames `try skipUnlessMeasuring()` — der Messlauf "
+                        + "hinge in der Pflichtsuite")
                 } else if !named && gated {
                     offenders.append("\(file): \(name) ist gegatet, heißt aber nicht "
                         + "„…Diagnostic“ — ein echter Wächter würde hier still übersprungen")
@@ -80,15 +82,54 @@ final class MeasurementGateTests: XCTestCase {
                       "kein einziger Messlauf erkannt — Scanner oder Konvention kaputt")
     }
 
+    /// Gegenprobe zum Erkenner unten: Schreibweisen, die WIE ein Gate aussehen und
+    /// keins sind, müssen als „ungegatet“ durchfallen. Ohne diesen Test wäre die
+    /// Verschärfung selbst ungeprüft — der alte `contains`-Scanner hätte jede der
+    /// fünf Zeilen hier als Gate gezählt.
+    func testOnlyAnEffectiveGateCallCounts() {
+        XCTAssertTrue(gatesOnMeasurement("        try skipUnlessMeasuring()\n"))
+        XCTAssertTrue(gatesOnMeasurement("        try skipUnlessMeasuring() // Messlauf\n"))
+        XCTAssertFalse(gatesOnMeasurement("        try? skipUnlessMeasuring()\n"),
+                       "`try?` verschluckt den geworfenen Skip — kein Gate")
+        XCTAssertFalse(gatesOnMeasurement("        // try skipUnlessMeasuring()\n"),
+                       "auskommentiert ist kein Gate")
+        XCTAssertFalse(gatesOnMeasurement("        print(\"skipUnlessMeasuring()\")\n"),
+                       "eine Zeichenkette ist kein Gate")
+    }
+
     // MARK: - Hilfen
+
+    /// Ruft dieser Methodenkörper das Gate WIRKSAM auf?
+    ///
+    /// Bewusst nicht `body.contains("skipUnlessMeasuring()")`: dieser Test ist der
+    /// Wächter über „kein Messlauf hängt ungegatet in der Pflichtsuite“, und ein
+    /// Textfund allein belegt das nicht. Zwei Schreibweisen sahen für den
+    /// `contains`-Scanner wie ein Gate aus und sind keins:
+    ///
+    /// - `try? skipUnlessMeasuring()` — `XCTSkipUnless` signalisiert den Skip durch
+    ///   WERFEN, `try?` verschluckt ihn. Der ~270 s teure Messlauf liefe dann
+    ///   vollständig, obwohl `RS_MEASURE` aus ist, und der Wächter hier hätte ihn
+    ///   als gegatet abgesegnet. Genau dieser Fehler stand real im Baum
+    ///   (`try? XCTSkipIf` in `EndorheicEvaporation`).
+    /// - eine auskommentierte Zeile oder der Name in einer Zeichenkette.
+    ///
+    /// Verglichen wird deshalb je Zeile der CODE-Teil (vor `//`) gegen genau die
+    /// eine wirksame Schreibweise. Alle Aufrufstellen im Baum notieren sie so;
+    /// eine neue Variante fällt hier auf, statt still als Gate zu gelten.
+    private func gatesOnMeasurement(_ body: String) -> Bool {
+        body.split(separator: "\n").contains { line in
+            let code = line.range(of: "//").map { line[line.startIndex..<$0.lowerBound] } ?? line
+            return code.trimmingCharacters(in: .whitespaces) == "try skipUnlessMeasuring()"
+        }
+    }
 
     /// Alle `*.swift` neben dieser Datei. `#filePath` zeigt auf die Quelle, nicht
     /// auf das Build-Verzeichnis — der Ordner ist damit direkt der Testbaum.
     ///
-    /// Diese Datei selbst ist ausgenommen: ihre Prüf-Methoden nennen
-    /// `skipUnlessMeasuring()` als Zeichenkette und wären für den Scanner sonst
-    /// gegatete Nicht-Diagnostics. Sie ist der Scanner, sie kann sich nicht selbst
-    /// prüfen.
+    /// Diese Datei selbst ist ausgenommen: ihre Prüf-Methoden führen den
+    /// Gate-Aufruf absichtlich in allen Schreibweisen als Zeichenkette
+    /// (`testOnlyAnEffectiveGateCallCounts`). Sie ist der Scanner, sie kann sich
+    /// nicht selbst prüfen.
     private func testSources() throws -> [(file: String, source: String)] {
         let own = URL(fileURLWithPath: #filePath).lastPathComponent
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
