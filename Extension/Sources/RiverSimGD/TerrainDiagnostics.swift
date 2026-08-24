@@ -72,15 +72,25 @@ final class TerrainDiagnostics {
         let divisor = Double(max(1, valid))
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
         let relief = terrain.landRelief()
-        // Regelsignal und Servo-Wert kommen aus SimCore selbst — die Anzeige darf
-        // die Formel nicht duplizieren, sonst zeigt sie etwas anderes als wirkt.
-        let reliefSignal = terrain.landReliefRobust()
+        // Regelsignal, Talseiten-Gegenprobe und Servo-Wert kommen aus SimCore
+        // selbst — die Anzeige darf die Formeln nicht duplizieren, sonst zeigt sie
+        // etwas anderes als wirkt.
+        //
+        // Alle drei hängen am SELBEN Quantil-Tripel der Landhöhen (p05, Median,
+        // p95), deshalb EIN Histogramm-Pass statt drei: `landReliefRobust()`,
+        // `landReliefLow()` und `reliefServoRate()` zählten je einen eigenen und
+        // warfen die andere Hälfte weg — dieselbe Verteilung dreimal für dieselbe
+        // Anzeige, gemessen ~1.4 ms je Pass bei n = 832 (`Terrain.updateHeightBands`).
+        // `Terrain.landHeightQuantiles` ist genau für diesen Fall gebaut; die
+        // angezeigten Werte sind unverändert.
+        let halves = Terrain.landHeightQuantiles(heights: h, sea: terrain.cfg.sea)
+        let reliefSignal = halves.high
         // Talseiten-Gegenprobe (Issue #26): das Regelsignal ist die HOCHseite
         // (p95 − Median). Nach einer großflächigen Einebnung bleibt sie lange
         // bei ~0, während sich die Fläche längst nach UNTEN differenziert —
         // ohne die zweite Hälfte liest die Diagnose das als „keine Erholung".
-        let reliefLow = terrain.landReliefLow()
-        let servo = terrain.reliefServoRate()
+        let reliefLow = halves.low
+        let servo = terrain.reliefServoRate(reliefSignal: reliefSignal)
         return PackedFloat32Array([
             Float(minimum), Float(sum / divisor), Float(maximum), Float(relief),
             Float((sum - referenceSum) / divisor), Float(maximum - referenceMaximum),
