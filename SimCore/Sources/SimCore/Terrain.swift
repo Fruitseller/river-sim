@@ -4195,8 +4195,19 @@ public final class Terrain {
     /// Signal. EINZIGE Quelle für `step()` und die Diagnose-Anzeige — beide
     /// hatten die Formel früher dupliziert und konnten auseinanderlaufen.
     public func reliefServoRate() -> Double {
+        reliefServoRate(reliefSignal: landReliefRobust())
+    }
+
+    /// Dieselbe Formel auf einem SCHON GEMESSENEN Regelsignal — für Aufrufer, die
+    /// `landReliefRobust()` ohnehin brauchen. Der Histogramm-Pass darunter kostet
+    /// bei n = 832 gemessen ~1.4 ms (Messwert und Begründung: `updateHeightBands`),
+    /// und die Diagnose-Anzeige zeigt Regelsignal, Talseite und Servo GEMEINSAM:
+    /// ohne diesen Einstieg zählte sie dieselbe Höhenverteilung dreimal. Das
+    /// Ergebnis ist identisch zur parameterlosen Variante, die Formel steht
+    /// weiterhin nur hier.
+    public func reliefServoRate(reliefSignal: Double) -> Double {
         guard cfg.reliefServoPer100y > 0, cfg.reliefServoBand > 0 else { return 0 }
-        let deficit = cfg.reliefTarget - landReliefRobust()
+        let deficit = cfg.reliefTarget - reliefSignal
         guard deficit > 0 else { return 0 }
         return cfg.reliefServoPer100y * min(1, deficit / cfg.reliefServoBand)
     }
