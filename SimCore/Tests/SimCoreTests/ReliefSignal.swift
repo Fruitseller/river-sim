@@ -87,6 +87,42 @@ final class ReliefSignal: XCTestCase {
                        "Servo muss bei reliefServoPer100y deckeln")
     }
 
+    /// Gegenstück zum Einstieg mit SCHON GEMESSENEM Regelsignal: die
+    /// Diagnose-Anzeige zieht Regelsignal, Talseite und Servo aus EINEM
+    /// Histogramm-Pass und reicht das Signal durch. Fällt die Delegation der
+    /// parameterlosen Variante auseinander, zeigt das Panel etwas anderes, als
+    /// in `step()` wirkt — genau der Duplikat-Fehler, den `reliefServoRate` als
+    /// einzige Quelle der Formel verhindern soll.
+    func testServoRateOnMeasuredSignalMatchesSelfMeasured() {
+        var c = SimConfig(); c.n = 96
+        let t = Terrain(config: c, seed: 4242)
+
+        // Der Punkt, an dem beide Wege übereinstimmen MÜSSEN: das Ist-Signal.
+        // Bit-Gleichheit (accuracy 0), nicht „ungefähr" — die Anzeige rechnet
+        // nichts nach, sie reicht denselben Wert durch.
+        XCTAssertEqual(t.reliefServoRate(reliefSignal: t.landReliefRobust()),
+                       t.reliefServoRate(), accuracy: 0,
+                       "Delegation weicht von der parameterlosen Variante ab")
+
+        // Die Rampe direkt am neuen Einstieg, inklusive der Ränder, die im
+        // Betrieb nicht vorkommen und deshalb sonst ungepinnt blieben.
+        // (testServoRateFollowsSignal prüft dieselbe Rampe von der anderen
+        // Seite, über reliefTarget-Varianten.)
+        let band = c.reliefServoBand, rate = c.reliefServoPer100y
+        let cases: [(signal: Double, expected: Double, why: String)] = [
+            (c.reliefTarget + 0.05, 0, "über Ziel → aus"),
+            (c.reliefTarget, 0, "genau auf Ziel → aus, Defizit 0 hebt nicht"),
+            (c.reliefTarget - band * 0.5, rate * 0.5, "halbes Band → halbe Rate"),
+            (c.reliefTarget - band * 10, rate, "weit unter Ziel → Deckel"),
+            (0, rate * (c.reliefTarget / band), "Signal 0 → Defizit ist reliefTarget"),
+            (-0.5, rate, "negatives Signal → Deckel, nicht darüber hinaus"),
+        ]
+        for k in cases {
+            XCTAssertEqual(t.reliefServoRate(reliefSignal: k.signal), k.expected,
+                           accuracy: rate * 1e-12, "Signal \(k.signal): \(k.why)")
+        }
+    }
+
     /// Das Signal ist praktisch auflösungsunabhängig (die verworfene Fenster-
     /// Variante NICHT — s. Config-Logbuch bei reliefTarget). Die Reihe geht
     /// bewusst bis in die PRODUKTIONS-Auflösung (SimConfig().n = 832): genau
