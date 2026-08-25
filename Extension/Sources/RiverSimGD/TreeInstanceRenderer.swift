@@ -93,17 +93,6 @@ final class TreeInstanceRenderer {
                 let habitat = Terrain.vegetationSuitability(height: h[k], slope: slope,
                                                              rain: rain[k], bands: bands)
                 if habitat < 0.55 { continue }                 // trocken/frisch karg
-                // Sechs Zellen Küstenabstand halten breite sichtbare Strände und
-                // flache Küstensedimente offen. Die kleine lokale Suche passiert
-                // nur beim seltenen Baum-Rebuild, nicht im Simulationsschritt.
-                var nearCoast = false
-                for dz in -6...6 where !nearCoast {
-                    for dx in -6...6 where h[(j + dz) * n + i + dx] <= sea + 0.012 {
-                        nearCoast = true
-                        break
-                    }
-                }
-                if nearCoast { continue }
                 let isBush = v < 0.72
                 // Verdünnung staffelt Biom-Dichte und Feuchte. Die volle Ansicht
                 // bleibt absichtlich unter einer geschlossenen Walddecke; reduziert
@@ -124,6 +113,22 @@ final class TreeInstanceRenderer {
                     wanted = treeHash01(i, j, 0xc0f4) < bands.coniferShare(h[k]) ? 1 : 0
                 }
                 if wanted != variant { continue }
+                // Sechs Zellen Küstenabstand halten breite sichtbare Strände und
+                // flache Küstensedimente offen. Der Scan liest bis zu 13×13
+                // verstreute Zellen und ist damit der teuerste Test der Maske —
+                // er steht deshalb ZULETZT, hinter Verdünnung und Varianten-Wahl:
+                // GDScript holt den Puffer je Variante einmal, davor lief er also
+                // auch für ausgedünnte und fremd-variantige Kandidaten, und das
+                // dreimal. Alle Tests sind reine Prädikate, und der Hash hängt nur
+                // an (i, j) — die Auswahl bleibt unverändert.
+                var nearCoast = false
+                coast: for dz in -6...6 {
+                    for dx in -6...6 where h[(j + dz) * n + i + dx] <= sea + 0.012 {
+                        nearCoast = true
+                        break coast
+                    }
+                }
+                if nearCoast { continue }
                 // Jitter ±1 Zelle (bricht das 2er-Raster), Höhe bilinear an der
                 // gejitterten Position, minimal versenkt (kein Schweben am Hang).
                 let jx = (treeHash01(i, j, 0x9e37) - 0.5) * 2.0
