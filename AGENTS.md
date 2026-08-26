@@ -342,7 +342,10 @@ Höhenänderung**, weil seine Maske `Terrain.underIce` den fluvialen Abtrag
 gatet: `outletIncision` und `Hydraulic.erode` prüfen sie direkt, alle übrigen
 Bett-Bewegungen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
 Auen-Aggradation, im Testpfad auch `transportLimited`) über ihren gemeinsamen
-Funnel `erodeCell`/`depositCell`.
+Funnel `erodeCell`/`depositCell`. Den gibt es seit der Perf-Runde 3 in ZWEI
+Fassungen — über die Klassen-Properties und über die Roh-Puffer-Sicht
+`Terrain.Bed` (die Hot-Loops); sie tragen dieselbe Regel und dasselbe Gate, wer
+eine ändert, ändert beide (`docs/perf-measurements.md` §I).
 Vergletscherte Zellen rührt damit kein fluvialer Pass an; die Hangdiffusion
 dagegen läuft weiter (kein fluvialer Pass, s. `docs/glacier-measurements.md`
 §I.1). Wie `isChannel` gilt: **leeres Feld heißt aus**,
@@ -367,7 +370,7 @@ Ende von `Terrain.swift`), `Profile.swift` (`SimProfile`, die Pass-Marken des
 Mess-Harness), `Noise.swift`, `MinHeap.swift`.
 
 Größenordnung zur Orientierung (Stand Aug 2026, gerundet; wer eine Datei teilt
-oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4500 Zeilen,
+oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4650 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
 Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen, die

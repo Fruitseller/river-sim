@@ -308,6 +308,8 @@ und brachten nichts (Abschnitt D).
    Aufrufer — wie `mfdLocalExponent`) macht sie frei. Schätzung aus den
    Restzeiten: ~10 ms. Preis: der Funnel, der heute bewusst die EINE Stelle mit
    dem Gletscher-Gate ist, bekommt eine zweite Signatur.
+   → **In Runde 3 gemacht** (Abschnitt I): als `Terrain.Bed` plus zweite
+   Signatur des Funnels, gemessen −3,3 ms.
 2. **Sim-Schritt vom Render-Thread entkoppeln.** Ändert die Schrittkosten nicht,
    nimmt sie aber aus dem Frame — für die FPS der größte Hebel, und der
    einzige, der `priorityFlood` nicht anfassen muss.
@@ -368,3 +370,112 @@ git stash pop
 Der Umweg über `git checkout <ref> -- …/Terrain.swift` (statt eines kompletten
 Checkouts) hält Harness und `SimProfile` im Baum — der alte `Terrain.swift`
 setzt dann keine Marken, die Gesamtzeit stimmt trotzdem.
+
+---
+
+## I. Runde 3 (August 2026) — 71,9 → 64,0 ms/Schritt, bit-identisch
+
+Anlass: „die Performance ist immer noch nicht gut genug", Ziel −10 %.
+Gemessen und geschraubt wurde diesmal auf einem **Apple-Silicon-Mac**, nicht auf
+der Linux-VM der Abschnitte B–G — die absoluten Zahlen sind deshalb NICHT mit
+denen dort vergleichbar, die Anteile schon.
+
+### Messhygiene (Lehre dieser Runde)
+
+Der Rechner lief unter Fremdlast (mehrere Agenten-Sitzungen, Lastmittel > 10).
+Ein einzelner Vorher/Nachher-Lauf war damit wertlos: dieselbe Binärdatei streute
+zwischen 69 und 108 ms, und eine Änderung wurde einmal als „langsamer"
+verworfen, die tatsächlich half. Belastbar war erst dieses Verfahren:
+
+1. beide Stände als **eigene Binärdateien** ablegen (`simperf.base`, `simperf.neu`),
+2. **abwechselnd** messen (base, neu, base, neu …), je `--repeat 3`,
+3. über 5 Paare vergleichen, Minimum UND Median ansehen.
+
+Für einen einzelnen Pass ist die Pass-Tabelle das schärfere Werkzeug als die
+Gesamtzeit: Fremdlast hebt alle Pässe gleichmäßig an, ein echter Gewinn zeigt
+sich nur in der einen Zeile.
+
+### Ergebnis
+
+| | base | Runde 3 |
+|---|---:|---:|
+| ms/Schritt (Median aus 5 Paaren) | 71,9 | **64,0** |
+| ms/Schritt (Minimum) | 71,6 | 63,8 |
+
+**−11,0 %**, `simperf --hash` vor und nach der Runde identisch
+(`330d5a1874eacd67`) — also bit-identische Physik.
+
+Pass-Tabelle (derselbe Messblock, ms/Schritt):
+
+| Pass | base | Runde 3 | |
+|---|---:|---:|---|
+| priorityFlood | 24,07 | 20,57 | Turnier-Auswahl im Heap-Pop |
+| computeMFDArea | 11,28 | 9,99 | Division nach Vorzeichen-Test, fastmod |
+| outletIncision | 6,14 | 5,40 | `area`-Zugriff nur bei `minAreaCells > 0` |
+| meanderStamp | 4,69 | 2,92 | `Bed`-Sicht statt Klassen-Property |
+| capEndorheicBasins | 3,11 | 2,84 | (Mitnahme) |
+| braidPass | 2,97 | 2,21 | `Bed`-Sicht |
+| fillShallowPonds | 2,65 | 1,29 | Roh-Puffer statt Klassen-Property |
+
+### Was gewirkt hat
+
+1. **`Terrain.Bed` — Roh-Puffer-Sicht auf `h`/`sed`/`rock` plus Eis-Maske**
+   (−3,3 ms). Das Sample-Profil zeigte **4,5 % des Schritts in der
+   Swift-Laufzeit selbst** (`swift_beginAccess`, `AccessSet::insert`,
+   `SwiftTLSContext::get`, `swift_isUniquelyReferenced`) — reine
+   Exklusivitäts- und COW-Buchhaltung. Sie steckte fast vollständig in
+   `meanderStamp`, `fillShallowPonds`, `fillOxbows` und `braidPass`, also genau
+   in den Pässen, die das Bett über die Klassen-Property adressieren mussten.
+   Der Funnel `erodeCell`/`depositCell` hat dafür eine zweite Signatur bekommen
+   (Abschnitt F, Punkt 1); `meanderStamp` ruft daneben `Terrain.bilinear` direkt
+   auf demselben Zeiger, weil `bilinearH` `h` sonst ein zweites Mal öffnen würde.
+   Mitgenommen: die `[k-1, k+1, k-n, k+n]`-Array-Literale in `fillOxbows` und
+   `plugOxbows` waren eine Allokation JE Altarm-Knoten.
+2. **Turnier statt serieller Kind-Abtastung im 4-ären Heap** (−3,5 ms auf
+   `priorityFlood`, der größte Einzelposten der Runde). Die alte Schleife über
+   die vier Kinder war eine reine Abhängigkeitskette aus drei Vergleichen; das
+   Turnier (zwei Paare, dann das Finale) ist zwei Ebenen tief und lädt die vier
+   Keys unabhängig. Weil alle Vergleiche strikt (`<`) bleiben, gewinnt bei
+   Gleichstand weiterhin der kleinste Index — die Pop-Reihenfolge und damit
+   `order` sind unverändert. **Das ist der Unterschied zu den in Abschnitt F
+   ausgeschlossenen Heap-Varianten**: ein 8-ärer Heap ändert die STRUKTUR, das
+   Turnier nur die Auswertungs-Reihenfolge derselben Vergleiche.
+3. **Cache-Zeilen-Ausrichtung der Kindergruppe** (−0,3 ms). Die vier Kinder von
+   `i` liegen auf 4i+1 … 4i+4, also auf Byte-Offset 64·i+16 — sie überspannten
+   immer zwei Cache-Zeilen. Drei Einträge Vorlauf schieben sie auf 64·i+64.
+   Ebenfalls reine Adress-Verschiebung, die Indizes bleiben dieselben.
+4. **Division erst nach dem Vorzeichen-Test** in `computeMFDArea`,
+   `computeReceiversAndArea` und `braidPass` (−0,6 ms). `s = (h − h_nb)/dist`
+   mit `dist > 0` hat das Vorzeichen des Zählers; höhere Nachbarn (die Mehrzahl)
+   brauchen die Fließkomma-Division also gar nicht. Der `s > 0`-Test bleibt für
+   den theoretischen Unterlauf stehen.
+5. **`fastmod` für den Spaltenindex in `computeMFDArea`** (−0,3 ms).
+   `k / nn` ist eine Division auf einem LAUFZEIT-Divisor, die der Compiler nicht
+   drehen kann; Lemires Verfahren macht daraus zwei Multiplikationen. Nur die
+   Randzellen rechnen noch mit `/`.
+6. **Kleinkram** (zusammen ~0,3 ms): `rainWeight.max()` in `Hydraulic.erode` lief
+   über den generischen Sequence-Pfad über 692k Zellen; `outletIncision` lud
+   `area[k]` für alle 692k Zellen, obwohl der Vergleich bei `minAreaCells = 0`
+   (dem Produktionsfall) nie zutreffen kann.
+
+### Was gemessen NICHT gewirkt hat
+
+- **Software-Prefetch in `computeMFDArea`** (Vorablesen von `hf`/`h`/`areaMFD`
+  24 Iterationen voraus, über eine Senke gegen Wegoptimierung gesichert):
+  10,8 → 11,3 ms. Die Schleife ist nicht so latenz-gebunden, wie sie aussieht;
+  die zusätzlichen Ladebefehle kosten mehr, als das Vorablesen einspart.
+- **Sortier-Schlüssel (Höhe, Zelle) inline in `capEndorheicBasins`** statt des
+  Nachschlagens im Höhenfeld je Vergleich: 2,99 → 3,08 ms. Der Aufbau des
+  Schlüssel-Arrays und die dickeren Elemente im Merge fressen den Gewinn.
+- **`landHeightQuantiles` auf Roh-Puffern**: 65,0 → 65,4 ms. Die
+  Array-Iteration mit `where` ist hier schon optimal; eine von außen
+  eingefangene Zählvariable macht es zusätzlich schlechter (sie landet auf dem
+  Stack statt im Register).
+
+### Wo der Rest jetzt steckt
+
+`priorityFlood` bleibt mit 31 % der größte Posten und ist nach dem Turnier im
+Wesentlichen die Latenz von 5,5 Heap-Ebenen je Pop. Alles Weitere dort ändert
+die Reihenfolge (Abschnitt F) und braucht eine Kalibrier-Freigabe.
+`computeMFDArea` (15 %) ist ein gestreuter Akkumulations-Pass in `order` mit
+echter Datenabhängigkeit — dieselbe Lage wie in Runde 2.

@@ -2140,8 +2140,13 @@ public final class Terrain {
                     if hk <= sea { continue } // Meer = Senke
                     var best: Int32 = -1
                     var bestSlope = 0.0
+                    // Division erst nach dem Vorzeichen-Test (Begründung s.
+                    // `computeMFDArea`): `bestSlope` startet bei 0 und wächst nur,
+                    // ein nicht-positives `s` konnte den Vergleich also nie gewinnen.
                     @inline(__always) func consider(_ nb: Int, _ dist: Double) {
-                        let s = (hk - phf[nb]) / dist
+                        let d = hk - phf[nb]
+                        if d <= 0 { return }
+                        let s = d / dist
                         if s > bestSlope { bestSlope = s; best = Int32(nb) }
                     }
                     if innerRow && i > 0 && i < nn - 1 {
@@ -2466,6 +2471,16 @@ public final class Terrain {
             let phf = hfb.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
             let ppar = pb.baseAddress!, pord = ob.baseAddress!, pend = eb.baseAddress!
             seedFlowAccumulator(pa, cellArea: cellArea)
+            // PERF: `k / nn` je Zelle ist eine echte Ganzzahl-Division auf einem
+            // LAUFZEIT-Divisor — der Compiler kann sie nicht in eine
+            // Multiplikation drehen. Gebraucht wird davon nur die SPALTE (der
+            // Rand-Test); die liefert Lemires „fastmod" mit zwei
+            // Multiplikationen: mit M = ⌊2⁶⁴/nn⌋ + 1 ist die obere Hälfte von
+            // (M·k)·nn exakt k % nn, solange k < 2³² (Lemire/Kaser/Kurz 2019,
+            // hier k < 692224). Ob die ZEILE am Rand liegt, sagt schon der
+            // Indexbereich. Nur die seltenen Randzellen rechnen `k / nn` noch.
+            let fastMod = UInt64.max / UInt64(nn) &+ 1
+            let lastRow = cnt - nn
             var oi = cnt - 1
             while oi >= 0 {
                 let k = Int(pord[oi]); oi -= 1
@@ -2478,16 +2493,26 @@ public final class Terrain {
                 if pend[k] == .water { continue }
                 var c = 0
                 var sMax = 0.0
+                // PERF: die Division erst NACH dem Vorzeichen-Test. `dist` ist
+                // positiv, `s` hat also dasselbe Vorzeichen wie der Zähler —
+                // höhere Nachbarn (die Mehrzahl) kosten damit keine
+                // Fließkomma-Division mehr, und die ist auf dieser Schleife der
+                // Taktgeber (gemessen −0,6 ms/Schritt). Der `s > 0`-Test bleibt
+                // stehen: er fängt den (theoretischen) Unterlauf eines winzigen
+                // positiven Zählers ab ⇒ bit-identisch.
                 @inline(__always) func consider(_ nb: Int, _ dist: Double) {
-                    let s = (hk - phf[nb]) / dist
+                    let d = hk - phf[nb]
+                    if d <= 0 { return }
+                    let s = d / dist
                     if s > 0 { nbK[c] = Int32(nb); nbW[c] = s; sMax = max(sMax, s); c += 1 }
                 }
-                let j = k / nn, i = k - j * nn
-                if i > 0 && i < nn - 1 && j > 0 && j < nn - 1 {
+                let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
+                if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
                     consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
                     consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
                     consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
                 } else {
+                    let j = k / nn
                     for dj in -1...1 {
                         for di in -1...1 {
                             if di == 0 && dj == 0 { continue }
@@ -2554,10 +2579,10 @@ public final class Terrain {
         // `order`), auch wenn nur wenige ein Braid-Reach sind — der Vorfilter
         // zahlte seine Klassen-Property-Zugriffe also 692k-fach, und die
         // Nachbar-Puffer kosteten je Element Bounds- und COW-Prüfung.
-        // `h`/`sed`/`rock` bleiben bewusst Klassen-Properties: sie gehören
-        // `erodeCell`/`depositCell`, dem gemeinsamen Funnel mit dem
-        // Gletscher-Gate (AGENTS.md), und ein Roh-Zeiger darauf wäre ein
-        // Exklusivitäts-Konflikt mit ihm.
+        // `h`/`sed`/`rock` laufen über `withBed`: dieselbe Roh-Puffer-Sicht,
+        // die auch der Funnel `erodeCell`/`depositCell` bekommt (er trägt das
+        // Gletscher-Gate, AGENTS.md) — damit adressiert der Pass sie nicht mehr
+        // je Zelle über die Klassen-Property.
         order.withUnsafeBufferPointer { ob in
         qs.withUnsafeMutableBufferPointer { qb in
         areaMFD.withUnsafeBufferPointer { amb in
@@ -2569,6 +2594,7 @@ public final class Terrain {
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbQc in
         let pord = ob.baseAddress!, pqs = qb.baseAddress!, pamf = amb.baseAddress!
         let phf = hfb.baseAddress!, pfp = fpb.baseAddress!
+        withBed { bed in
         var oi = cfg.count - 1
         while oi >= 0 {
             let k = Int(pord[oi]); oi -= 1
@@ -2577,8 +2603,8 @@ public final class Terrain {
             // Braid-Deltas Bänke bis über den Wasserspiegel. Tiefere Ponds/Seen
             // NICHT: Bänke-Bau dort macht die Becken-Böden rau um die See-Render-
             // Schwelle (0.03) herum → sichtbares Speckle statt Verflechtung.
-            let active = pamf[k] >= minA && phf[k] > sea && h[k] > sea
-                      && phf[k] - h[k] < 0.015
+            let active = pamf[k] >= minA && phf[k] > sea && bed.h[k] > sea
+                      && phf[k] - bed.h[k] < 0.015
             if !active {
                 // Kein Braid-Reach: Fracht landet hier ab (Delta/Seerand), Überschuss
                 // über den Stauraum hinaus gilt als exportiert (wie transportLimited).
@@ -2596,7 +2622,7 @@ public final class Terrain {
                 // und was bei zu engem Deckel kippt — steht im Kalibrier-Logbuch
                 // bei `SimConfig.braidDeltaCeiling`.
                 if qin > 0 && phf[k] > sea {
-                    depositCell(k, min(qin, max(0, phf[k] + deltaCeiling - h[k])))
+                    depositCell(k, min(qin, max(0, phf[k] + deltaCeiling - bed.h[k])), bed)
                 }
                 continue
             }
@@ -2612,21 +2638,23 @@ public final class Terrain {
                     if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
                     let nb = nj * nn + ni
                     let dist = (di != 0 && dj != 0) ? sqrt2 : 1.0
-                    let s = (phf[k] - phf[nb]) / dist
+                    let d = phf[k] - phf[nb]
+                    if d <= 0 { continue }   // Division erst nach dem Vorzeichen-
+                    let s = d / dist         // Test, Begründung s. computeMFDArea
                     if s > 0 {
                         nbK[cnt] = nb; nbS[cnt] = s; sMax = max(sMax, s)
                         cnt += 1
                     }
                 }
             }
-            let p = mfdLocalExponent(a: pamf[k], sMax: sMax, pond: phf[k] - h[k])
+            let p = mfdLocalExponent(a: pamf[k], sMax: sMax, pond: phf[k] - bed.h[k])
             var wsum = 0.0
             for t in 0..<cnt { nbW[t] = powFast(nbS[t], p); wsum += nbW[t] }
             if cnt == 0 || wsum <= 0 {
                 // Seespiegel-Fläche: Fracht sedimentiert im See (bis Spiegel), Rest
                 // wandert über den Überlauf weiter.
-                let dep = min(qin, max(0, phf[k] - h[k]))
-                depositCell(k, dep)
+                let dep = min(qin, max(0, phf[k] - bed.h[k]))
+                depositCell(k, dep, bed)
                 let fp = pfp[k]
                 if fp >= 0 { pqs[Int(fp)] += qin - dep }
                 continue
@@ -2647,14 +2675,14 @@ public final class Terrain {
             var qout = qin
             if qin > qcTot {
                 // Überlast → Bank bauen: bis knapp über den Wasserspiegel (Insel!).
-                let dep = min(qin - qcTot, max(0, phf[k] + barHeight - h[k]))
-                depositCell(k, dep)
+                let dep = min(qin - qcTot, max(0, phf[k] + barHeight - bed.h[k]))
+                depositCell(k, dep, bed)
                 qout -= dep
             } else {
                 // Unterlast → Faden scourt (Vegetation bremst, nie unter den
                 // tiefsten Empfänger — halber Weg wie transportLimited).
-                var lowest = h[k]
-                for t in 0..<cnt { lowest = min(lowest, h[nbK[t]]) }
+                var lowest = bed.h[k]
+                for t in 0..<cnt { lowest = min(lowest, bed.h[nbK[t]]) }
                 // Der SCOUR-Deckel bleibt bewusst bei festen 0.5 je Schritt und
                 // wird NICHT auf `stepCapFraction` umgestellt (Issue #2 nennt
                 // die DEPOSITIONS-Deckel; dies ist die Erosionsseite): mit der
@@ -2667,7 +2695,7 @@ public final class Terrain {
                 // eine bekannte (kleine) Schrittweiten-Abhängigkeit stehen;
                 // sie ist in docs/dt-invariance-measurements.md §5 vermerkt.
                 let want = (qcTot - qin) * vegDamp(k)
-                let er = erodeCell(k, min(want, max(0, h[k] - lowest) * 0.5))
+                let er = erodeCell(k, min(want, max(0, bed.h[k] - lowest) * 0.5), bed)
                 qout += er
             }
             // Fracht folgt der Kapazität (∝ qcᵢ): der starke Faden trägt sie weiter.
@@ -2675,7 +2703,7 @@ public final class Terrain {
                 for t in 0..<cnt { pqs[nbK[t]] += qout * (nbQc[t] / qcTot) }
             }
         }
-        }}}}}}}}}
+        }}}}}}}}}}
     }
 
     // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig) — TESTPFAD
@@ -2825,7 +2853,12 @@ public final class Terrain {
             let r = prec[k]
             if ph[k] <= sea { continue }            // Meer nicht einschneiden
             if iceOn && pice[k] { continue }        // unter Eis kein fluvialer Abtrag (#35)
-            if pa[k] < minA { continue }            // Breach: nur das Trunk-Netz
+            // Breach: nur das Trunk-Netz. Das `minA > 0` davor ist kein
+            // zusätzliches Kriterium, sondern spart im Produktionsfall
+            // (`minAreaCells = 0`) den zufälligen Zugriff ins 5,5-MB-Feld
+            // `area` für alle 692k Zellen — `area` ist nie negativ, der
+            // Vergleich konnte dort also nie zutreffen.
+            if minA > 0 && pa[k] < minA { continue }
             // Abflussloses Becken (Issue #11): die Seefläche hat keinen Auslass,
             // also gibt es dort nichts einzuschneiden. Die SILL bleibt dabei
             // ganz ohne Sonderfall stehen — sie sammelt den Beckenabfluss nicht
@@ -2933,26 +2966,61 @@ public final class Terrain {
         // `min(0.5, dt/τ)` schon ab dt = 400 und ließ große Schritte
         // systematisch zu viel Ponding stehen.
         let rate = Terrain.relaxFraction(dt: dt, tau: cfg.puddleFillYears)
-        let sea = cfg.sea, nn = n
+        let sea = cfg.sea, nn = n, cnt = cfg.count
+        let deepThresh = cfg.puddleFillDepth, coreCells = cfg.puddleLakeCoreCells
         // Persistente Puffer (Hot-Loop, keine Allokation je Schritt).
         fill(&pondSeen, false)
+        // PERF: der Suchlauf tastet ALLE 692k Zellen ab und las dabei
+        // `pondSeen`/`hf`/`h`/`endorheicBasin` über die Klassen-Property (je
+        // Zugriff Bounds-, COW- und Exklusivitäts-Prüfung — gemessen steckte
+        // rund ein Drittel des Passes in der Swift-Laufzeit). Jetzt liegen alle
+        // Felder als Roh-Puffer offen; der BFS-Schritt ist als lokales `push`
+        // darauf ausgeschrieben (er hatte keinen zweiten Aufrufer). Werte,
+        // Reihenfolge und Vergleiche unverändert;
+        // `h`/`sed` schreibt der Pass bewusst DIREKT (kein Gletscher-Gate — das
+        // war schon vorher so, die Verlandung ist kein fluvialer Bett-Pass).
         var comp: [Int32] = []
         var stack: [Int32] = []
-        for s in 0..<cfg.count where !pondSeen[s] && hf[s] > sea && hf[s] - h[s] > 0.001
-                                     && endorheicBasin[s] != .water {
+        hf.withUnsafeBufferPointer { hfb in
+        h.withUnsafeMutableBufferPointer { hb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        pondSeen.withUnsafeMutableBufferPointer { psb in
+        endorheicBasin.withUnsafeBufferPointer { ebb in
+        isChannel.withUnsafeBufferPointer { icb in
+        regenPending.withUnsafeBufferPointer { rpb in
+        let phf = hfb.baseAddress!, ph = hb.baseAddress!, psed = sb.baseAddress!
+        let pseen = psb.baseAddress!, pend = ebb.baseAddress!
+        let pchan = icb.baseAddress!, pregen = rpb.baseAddress!
+        /// BFS-Schritt der Pfützen-Komponentensuche (4er-Nachbarschaft).
+        /// Die Wasserfläche eines abflusslosen Beckens (Issue #11) ist hier
+        /// bewusst KEINE Pfütze: ihren Spiegel setzt der Wasserhaushalt, und
+        /// eine verdunstungs-gedeckelte Playa ist per Konstruktion seicht — die
+        /// Pfützen-Verlandung würde also genau die Fläche zuschütten, die #11
+        /// gerade freigelegt hat (und der Beckenboden trocknet ohnehin aus,
+        /// statt zu verlanden). Der trockengefallene Boden hat hf = h und fällt
+        /// schon durchs Tiefen-Gate.
+        @inline(__always) func push(_ k: Int, _ stack: inout [Int32]) {
+            if !pseen[k] && phf[k] > sea && phf[k] - ph[k] > 0.001
+                && pend[k] != .water {
+                pseen[k] = true
+                stack.append(Int32(k))
+            }
+        }
+        for s in 0..<cnt where !pseen[s] && phf[s] > sea && phf[s] - ph[s] > 0.001
+                                     && pend[s] != .water {
             comp.removeAll(keepingCapacity: true)
             stack.removeAll(keepingCapacity: true)
-            stack.append(Int32(s)); pondSeen[s] = true
+            stack.append(Int32(s)); pseen[s] = true
             var deepCells = 0
             while let kk = stack.popLast() {
                 let k = Int(kk)
                 comp.append(kk)
-                if hf[k] - h[k] > cfg.puddleFillDepth { deepCells += 1 }
+                if phf[k] - ph[k] > deepThresh { deepCells += 1 }
                 let i = k % nn, j = k / nn
-                if i > 0 { pondPush(k - 1, &stack) }
-                if i < nn - 1 { pondPush(k + 1, &stack) }
-                if j > 0 { pondPush(k - nn, &stack) }
-                if j < nn - 1 { pondPush(k + nn, &stack) }
+                if i > 0 { push(k - 1, &stack) }
+                if i < nn - 1 { push(k + 1, &stack) }
+                if j > 0 { push(k - nn, &stack) }
+                if j < nn - 1 { push(k + nn, &stack) }
             }
             // See = Komponente mit SUBSTANZIELLEM tiefen Kern (absolute Zellzahl):
             // deren Ufersaum bleibt. Zwei verworfene Kriterien (beide gemessen):
@@ -2961,10 +3029,10 @@ public final class Terrain {
             // 3 vs 4); ein RELATIVER Kern-Anteil (≥20%) ließ genau den Problemfall
             // durch — riesiger seichter Saum um kompakten tiefen Kern (Seed 1337:
             // nur −45% Saum-Hebung statt −100%).
-            if deepCells >= cfg.puddleLakeCoreCells { continue }
+            if deepCells >= coreCells { continue }
             for kk in comp {
                 let k = Int(kk)
-                if isChannel[k] { continue }
+                if pchan[k] { continue }
                 // Frische Baustelle (Issue #26): solange an dieser Zelle noch
                 // Regeneration aussteht, NICHT verlanden. Die Pfützen-Verlandung
                 // ist ein Aufräum-Pass gegen Flachwasser-Sprenkel in reifen Auen
@@ -2981,31 +3049,16 @@ public final class Terrain {
                 // Tausendsteln. So endet die Aussetzung exakt dann, wenn sich
                 // das Gelände nicht mehr bewegt (`regenerateDisturbed` schaltet
                 // ab und nullt das Budget).
-                if disturbActive && regenPending[k] != 0 { continue }
-                let deficit = hf[k] - h[k]
-                if deficit > 0.001 && deficit <= cfg.puddleFillDepth {
+                if disturbActive && pregen[k] != 0 { continue }
+                let deficit = phf[k] - ph[k]
+                if deficit > 0.001 && deficit <= deepThresh {
                     let add = deficit * rate
-                    h[k] += add
-                    sed[k] += add
+                    ph[k] += add
+                    psed[k] += add
                 }
             }
         }
-    }
-
-    /// BFS-Schritt der Pfützen-Komponentensuche (4er-Nachbarschaft).
-    /// Die Wasserfläche eines abflusslosen Beckens (Issue #11) ist hier bewusst
-    /// KEINE Pfütze: ihren Spiegel setzt der Wasserhaushalt, und eine
-    /// verdunstungs-gedeckelte Playa ist per Konstruktion seicht — die
-    /// Pfützen-Verlandung würde also genau die Fläche zuschütten, die #11 gerade
-    /// freigelegt hat (und der Beckenboden trocknet ohnehin aus, statt zu
-    /// verlanden). Der trockengefallene Boden hat hf = h und fällt schon durchs
-    /// Tiefen-Gate.
-    @inline(__always) private func pondPush(_ k: Int, _ stack: inout [Int32]) {
-        if !pondSeen[k] && hf[k] > cfg.sea && hf[k] - h[k] > 0.001
-            && endorheicBasin[k] != .water {
-            pondSeen[k] = true
-            stack.append(Int32(k))
-        }
+        }}}}}}}
     }
 
     // MARK: - Auen-Aggradation (Overbank-Deposition → flache Schwemmebenen)
@@ -3744,6 +3797,63 @@ public final class Terrain {
         return amount
     }
 
+    /// Roh-Puffer-Sicht auf das Bett: dieselben drei Felder, die der Funnel hält
+    /// (`h = rock + sed`), plus die Gletscher-Maske — `nil` heißt „keine Maske",
+    /// genau wie `underIce.isEmpty` oben.
+    ///
+    /// Warum es sie gibt: `meanderStamp`, `braidPass` und die Altarm-Pässe
+    /// laufen über 692k Zellen bzw. 30k Knoten und adressierten `h`/`sed`/`rock`
+    /// bisher über die KLASSEN-Property, weil ein Roh-Zeiger mit dem Funnel
+    /// kollidiert wäre. Das kostete je Zugriff Bounds-, COW- und Exklusivitäts-
+    /// Prüfung — gemessen ~4,5 % des Schritts allein in der Swift-Laufzeit
+    /// (`swift_beginAccess`/`AccessSet::insert`, s. docs/perf-measurements.md).
+    /// Mit der Sicht öffnet ein Pass die Felder EINMAL und reicht sie durch.
+    struct Bed {
+        let h: UnsafeMutablePointer<Double>
+        let sed: UnsafeMutablePointer<Double>
+        let rock: UnsafeMutablePointer<Double>
+        /// Gletscher-Maske oder `nil` (= keine Zelle vergletschert).
+        let ice: UnsafePointer<Bool>?
+    }
+
+    /// Öffnet `h`/`sed`/`rock`/`underIce` einmal für einen ganzen Pass. Solange
+    /// die Sicht offen ist, darf derselbe Pass diese vier Felder NICHT mehr über
+    /// die Klassen-Property anfassen — auch nicht lesend (`bilinearH`), das wäre
+    /// ein Exklusivitäts-Konflikt.
+    @inline(__always) private func withBed<R>(_ body: (Bed) -> R) -> R {
+        h.withUnsafeMutableBufferPointer { hb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        rock.withUnsafeMutableBufferPointer { rb in
+        underIce.withUnsafeBufferPointer { ib in
+            body(Bed(h: hb.baseAddress!, sed: sb.baseAddress!, rock: rb.baseAddress!,
+                     ice: ib.isEmpty ? nil : ib.baseAddress))
+        }}}}
+    }
+
+    /// Roh-Puffer-Fassung von `erodeCell` — GLEICHE REGEL, gleiche Reihenfolge
+    /// der Operationen, gleiches Gletscher-Gate. Zwei Fassungen statt einer,
+    /// weil die Property-Fassung (Testpfad `transportLimited`, geparkte
+    /// `floodplainAggradation`) die Felder je Aufruf öffnen müsste. Wer eine
+    /// ändert, ändert beide.
+    @inline(__always) private func erodeCell(_ k: Int, _ amount: Double, _ bed: Bed) -> Double {
+        let a = max(0, amount)
+        if a <= 0 { return 0 }
+        if let ice = bed.ice, ice[k] { return 0 }
+        let ds = min(a, bed.sed[k]); bed.sed[k] -= ds
+        bed.rock[k] -= (a - ds)
+        bed.h[k] -= a
+        return a
+    }
+
+    /// Roh-Puffer-Fassung von `depositCell` (s. `erodeCell(_:_:_:)`).
+    @discardableResult
+    @inline(__always) private func depositCell(_ k: Int, _ amount: Double, _ bed: Bed) -> Double {
+        if amount <= 0 { return 0 }
+        if let ice = bed.ice, ice[k] { return 0 }
+        bed.sed[k] += amount; bed.h[k] += amount
+        return amount
+    }
+
     /// Stempelt die Mäander-Läufe ins Höhenfeld:
     /// 1) **Bett-Carve** (Kanal carvt selbst) — senkt die überstrichenen Zellen
     ///    Richtung stromab-Höhe, self-reinforcing mit D8 (nächstes computeFlow
@@ -3761,15 +3871,18 @@ public final class Terrain {
         let nn = n
         // PERF (Issue #43): die Felder, die der Stempel selbst liest bzw.
         // schreibt, EINMAL öffnen statt je überstrichener Zelle. `h`, `sed` und
-        // `rock` bleiben bewusst draußen: sie gehören `erodeCell`/`depositCell`
-        // (dem gemeinsamen Funnel mit dem Gletscher-Gate) und `bilinearH` — ein
-        // Roh-Zeiger darauf wäre ein Exklusivitäts-Konflikt mit beiden.
-        // `underIce` liegt hier nur lesend offen, `erodeCell` liest es ebenfalls
+        // `rock` kommen über `withBed` dazu — dieselbe Sicht, die auch der
+        // Funnel `erodeCell`/`depositCell` mit seinem Gletscher-Gate bekommt.
+        // `bilinearH` darf daneben NICHT mehr laufen (es öffnet `h` selbst);
+        // der Stempel ruft deshalb direkt `Terrain.bilinear` auf demselben
+        // Zeiger — identische Rechnung, nur ohne zweiten Zugriff.
+        // `underIce` liegt hier nur lesend offen, der Funnel liest es ebenfalls
         // nur; zwei Lese-Zugriffe schließen sich nicht aus.
         hf.withUnsafeBufferPointer { hfb in
         underIce.withUnsafeBufferPointer { uib in
         veg.withUnsafeMutableBufferPointer { vb in
         isChannel.withUnsafeMutableBufferPointer { icb in
+        withBed { bed in
         let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
         let pice = uib.baseAddress
         let iceOn = uib.count == cfg.count
@@ -3780,8 +3893,8 @@ public final class Terrain {
             for i in 0..<(nodes.count - 1) {
                 let a = nodes[i], b = nodes[i + 1]
                 let d = dist(a, b)
-                let hb = bilinearH(b.x, b.z)                      // stromab-Zielhöhe
-                let ha = bilinearH(a.x, a.z)
+                let hb = Terrain.bilinear(bed.h, nn, b.x, b.z)                      // stromab-Zielhöhe
+                let ha = Terrain.bilinear(bed.h, nn, a.x, a.z)
                 let segSlope = d > 1e-6 ? max(0, ha - hb) / (d * cs) : 0
                 let qA = 0.5 * (ch.discharge[i] + ch.discharge[i + 1]) * cellArea // echtes A
                 let carveRate = cfg.meanderCarve * pow(max(qA, 0), m) * segSlope * dt
@@ -3796,7 +3909,7 @@ public final class Terrain {
                     // würde die Droplet-Deposition dämpfen — der Kanal grub sonst über
                     // Jahrtausende dunkle Tiefen-Rinnen in Seeböden, die nie verlanden
                     // (gemessen: hf−h > 0.16 nach 24k Jahren, „dunkle Stellen").
-                    if phf[k] - h[k] > 0.02 { continue }
+                    if phf[k] - bed.h[k] > 0.02 { continue }
                     // Unter dem Eis (Issue #35) ebenso wenig — und zwar VOR der
                     // Maske: `erodeCell` gatet zwar den Carve, aber ein Kanal,
                     // der unter einer Zunge durchläuft, ist auch kein Kanal.
@@ -3810,8 +3923,8 @@ public final class Terrain {
                     // Regrünung kommt per Sukzession von den Nachbarn zurück,
                     // sobald der Lauf weiterwandert.
                     pveg[k] = 0
-                    let cap = max(0, h[k] - hb) * capF           // nicht unter stromab graben
-                    _ = erodeCell(k, min(carveRate, cap))
+                    let cap = max(0, bed.h[k] - hb) * capF           // nicht unter stromab graben
+                    _ = erodeCell(k, min(carveRate, cap), bed)
                 }
             }
             // --- 2) laterale Ufer-Verschiebung pro innerem Knoten ---
@@ -3841,12 +3954,12 @@ public final class Terrain {
                 let want = cfg.meanderBankErode * pow(max(qA, 0), m) * abs(curv) * dt
                 // nur so viel, dass der Prallhang nicht unter den Innenhang fällt
                 // (Anteil je Schritt als RATE, s. stepCapFraction)
-                let cap = max(0, h[ko] - h[ki]) * capF
-                let moved = erodeCell(ko, min(want, cap))
-                depositCell(ki, moved)
+                let cap = max(0, bed.h[ko] - bed.h[ki]) * capF
+                let moved = erodeCell(ko, min(want, cap), bed)
+                depositCell(ki, moved, bed)
             }
         }
-        }}}}
+        }}}}}
         plugOxbows()
         fillOxbows(dt: dt)
     }
@@ -3859,16 +3972,25 @@ public final class Terrain {
         // 5500-Jahr-Sprung komplett in EINEM Schritt, dieselbe Zeit in kleinen
         // Schritten dagegen nur zu 63 % (1 − 1/e).
         let rate = Terrain.relaxFraction(dt: dt, tau: cfg.oxbowFillYears)
+        // PERF: das `[k-1, k+1, k-n, k+n]`-Literal war eine Array-ALLOKATION je
+        // Altarm-Knoten (Messung: der Pass steckte zu zwei Dritteln in der
+        // Swift-Laufzeit). Ausgeschriebene `max`-Kette in derselben Reihenfolge
+        // ⇒ bit-identisch. Bett über `withBed`, s. `meanderStamp`.
+        let nn = n
+        withBed { bed in
+        let ph = bed.h
         for loop in meander.oxbows {
             for nd in loop {
-                let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
-                let cj = min(max(Int(nd.z.rounded()), 1), n - 2)
-                let k = cj * n + ci
-                var rim = h[k]
-                for nb in [k - 1, k + 1, k - n, k + n] { rim = max(rim, h[nb]) }
-                let add = (rim - h[k]) * rate
-                if add > 0 { depositCell(k, add) }
+                let ci = min(max(Int(nd.x.rounded()), 1), nn - 2)
+                let cj = min(max(Int(nd.z.rounded()), 1), nn - 2)
+                let k = cj * nn + ci
+                var rim = ph[k]
+                rim = max(rim, ph[k - 1]); rim = max(rim, ph[k + 1])
+                rim = max(rim, ph[k - nn]); rim = max(rim, ph[k + nn])
+                let add = (rim - ph[k]) * rate
+                if add > 0 { depositCell(k, add, bed) }
             }
+        }
         }
         meander.pruneOxbows(maxAge: cfg.oxbowMaxAge)
     }
@@ -3877,18 +3999,24 @@ public final class Terrain {
     /// Sediment, sodass D8 nicht mehr hindurchroutet und die eingetiefte Schleife
     /// über den bestehenden `hf>h`-Mechanismus zum Altarm-See wird.
     private func plugOxbows() {
+        let nn = n
+        withBed { bed in
+        let ph = bed.h
         for oi in meander.oxbows.indices where meander.oxbowAge[oi] == 0 {
             let loop = meander.oxbows[oi]
             guard loop.count >= 4 else { continue }
             for nd in [loop[1], loop[loop.count - 2]] {
-                let ci = min(max(Int(nd.x.rounded()), 1), n - 2)
-                let cj = min(max(Int(nd.z.rounded()), 1), n - 2)
-                let k = cj * n + ci
+                let ci = min(max(Int(nd.x.rounded()), 1), nn - 2)
+                let cj = min(max(Int(nd.z.rounded()), 1), nn - 2)
+                let k = cj * nn + ci
                 // auf den umgebenden Uferlippen-Pegel anheben → Schleife abgetrennt
-                var lip = h[k]
-                for nb in [k - 1, k + 1, k - n, k + n] { lip = max(lip, h[nb]) }
-                depositCell(k, max(0, lip - h[k]))
+                // (`max`-Kette statt Array-Literal, s. `fillOxbows`)
+                var lip = ph[k]
+                lip = max(lip, ph[k - 1]); lip = max(lip, ph[k + 1])
+                lip = max(lip, ph[k - nn]); lip = max(lip, ph[k + nn])
+                depositCell(k, max(0, lip - ph[k]), bed)
             }
+        }
         }
     }
 
