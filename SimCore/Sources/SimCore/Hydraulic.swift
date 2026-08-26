@@ -263,7 +263,16 @@ public enum Hydraulic {
         // Gewichts-Maximum einmal je Charge (die Ablehnungs-Stichprobe normiert
         // darauf); leeres/kaputtes Feld → gleichverteilte Starts wie bisher.
         let rainOn = rainWeight.count == h.count
-        let rainMax = rainOn ? (rainWeight.max() ?? 0) : 0
+        // PERF: `Array.max()` nimmt den generischen Sequence-Pfad (Iterator plus
+        // Closure je Element) und tastet hier 692k Zellen ab. Die
+        // Roh-Puffer-Schleife vergleicht in derselben Reihenfolge und liefert
+        // denselben Wert.
+        let rainMax: Double = !rainOn ? 0 : rainWeight.withUnsafeBufferPointer { rb in
+            guard let pw = rb.baseAddress, rb.count > 0 else { return 0 }
+            var m = pw[0]
+            for k in 1..<rb.count where pw[k] > m { m = pw[k] }
+            return m
+        }
 
         // Zufallsstrom: EINER JE TROPFEN aus dessen laufender Nummer, wenn diese
         // Charge Teil des fortlaufenden Stroms ist (Issue #2) — sonst einer je
