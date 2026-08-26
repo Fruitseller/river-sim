@@ -65,6 +65,26 @@ final class RenderContractTests: XCTestCase {
                        hint: "Ozean-Shader verwendet Godot-4-Rendermodus")
     }
 
+    /// Das Ozean-Mesh reicht über die Kamera-Sichtweite und zeichnet innerhalb
+    /// der Terrainfläche nur über Meeresboden. Sonst sieht eine flache Kamera
+    /// gleichzeitig seine quadratische Kante und die Platte unter dem Land.
+    func testOceanClipsItsPlaneBelowLand() throws {
+        let ocean = try RepoSource.file("game/shaders/ocean.gdshader")
+        let main = try RepoSource.file("game/scripts/Main.gd")
+        assertContains(ocean, "uniform sampler2D height_tex",
+                       hint: "Ozean liest dasselbe Höhenfeld wie das Terrain")
+        assertContains(ocean, "texture(height_tex, terrain_uv).r > sea_level",
+                       hint: "Land schneidet die Ozeanplatte ab")
+        assertContains(main, "height_field.mirror_to(ocean_mat)",
+                       hint: "Main bindet die Höhentextur auch an den Ozean")
+        assertContains(main, "ocean_mat.set_shader_parameter(\"sea_level\", sea)",
+                       hint: "Ozean und Terrain verwenden denselben Meeresspiegel")
+        assertContains(main, "wp.size = Vector2(cam.far * 3.0, cam.far * 3.0)",
+                       hint: "Ozeanrand liegt bei jeder erlaubten Kamera hinter dem Far-Clip")
+        assertContains(ocean, "ALPHA = 1.0;",
+                       hint: "Offenes Meer verbirgt die rechteckige Terrain-Unterseite")
+    }
+
     func testDefaultSeedIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.defaultSeed, 1337)
         let main = try RepoSource.file("game/scripts/Main.gd")
