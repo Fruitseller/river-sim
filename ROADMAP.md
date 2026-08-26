@@ -697,10 +697,12 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
 - `Extension/Sources/RiverSimGD/SimNode.swift` — die Brücke (`@Callable`s,
   `Packed*Array`-Marshalling). Die Aufbereitung liegt seit Issue #53 daneben:
   `WaterFieldRenderer` (Raster-Wasser), `RiverRibbonRenderer` (Band-Geometrie),
-  `TerrainColorRenderer` (Palette), `TreeInstanceRenderer`, `TerrainDiagnostics`,
-  `RenderSupport` (Gemeinsames beider Wasser-Pfade), `BrushTool` (Werkzeug-Modi).
-- `game/shaders/terrain.gdshader` — Wasser-Overlay, Detail-Layer, Shading;
-  `game/shaders/water.gdshader` — die Wasser-Geometrie der Bänder.
+  `TerrainColorRenderer` (Makrofarbe + Materialgewichte), `TreeInstanceRenderer`,
+  `TerrainDiagnostics`, `RenderSupport` (Gemeinsames beider Wasser-Pfade),
+  `BrushTool` (Werkzeug-Modi).
+- `game/shaders/terrain.gdshader` — prozedurale Boden-/Fels-/Vegetations-/
+  Kältematerialien, Lithologieschichten, Wasser-Overlay und Detail-Layer;
+  `water.gdshader` — Band-Geometrie; `ocean.gdshader` — offenes Meer.
 - `game/scripts/Main.gd` (~1280 Zeilen) — Licht/Environment, UI, Kamera/Zoom,
   Werkzeug-Tabelle, RS_*-Env-Schalter.
 - `game/tests/*.gd` — die Godot-seitigen Wächter (`smoke`, `water_geometry`,

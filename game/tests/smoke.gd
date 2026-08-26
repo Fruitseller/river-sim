@@ -48,6 +48,25 @@ func _run() -> void:
 		quit(1)
 		return
 
+	# Render-Vertrag: Makrofarbe und Materialgewichte sind je ein RGBA8-Texel
+	# pro Sim-Zelle. Ein fehlender Kanal würde erst als schwarzes Terrain auf der
+	# GPU auffallen; deshalb Größe und tatsächliches Materialsignal hier prüfen.
+	var color_bytes: PackedByteArray = sim.terrainColorBytes()
+	var surface_bytes: PackedByteArray = sim.terrainSurfaceBytes()
+	if color_bytes.size() != n * n * 4 or surface_bytes.size() != n * n * 4:
+		push_error("FAIL: Terrain-Materialpuffer haben nicht n*n*4 Bytes")
+		quit(1)
+		return
+	var material_signal := false
+	for o in range(0, surface_bytes.size(), 4):
+		if surface_bytes[o] > 0 or surface_bytes[o + 1] > 0 or surface_bytes[o + 2] > 0:
+			material_signal = true
+			break
+	if not material_signal:
+		push_error("FAIL: Terrain-Materialpuffer enthält keine Oberflächengewichte")
+		quit(1)
+		return
+
 	sim.step(10000.0)
 	var h1: PackedFloat32Array = sim.heights()
 	var diff := 0.0

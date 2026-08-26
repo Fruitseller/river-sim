@@ -26,6 +26,7 @@ render_mode cull_disabled;
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
 uniform sampler2D color_tex : filter_linear, repeat_disable;
+uniform sampler2D surface_tex : filter_linear, repeat_disable; // R Vegetation, G Fels, B Schnee/Eis, A Lithologie
 uniform sampler2D debug_difference_tex : filter_linear, repeat_disable;
 uniform sampler2D water_tex : filter_linear, repeat_disable;
 // Default == Main.gd HSCALE == RenderContract.heightScale (Issue #51). Im Spiel
@@ -205,6 +206,25 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.5 + 0.5;
 }
 
+// Materialrauschen in Weltkoordinaten. Die triplanare Mischung hält die Körnung
+// auf Steilwänden rund statt die Draufsicht senkrecht über den Fels zu ziehen.
+float fbm(vec2 p) {
+	float value = 0.0;
+	float amplitude = 0.55;
+	for (int octave = 0; octave < 3; octave++) {
+		value += vnoise(p) * amplitude;
+		p = p * 2.03 + vec2(17.1, 9.2);
+		amplitude *= 0.48;
+	}
+	return value;
+}
+
+float triplanar_fbm(vec3 p, vec3 n) {
+	vec3 weight = pow(abs(n), vec3(4.0));
+	weight /= max(weight.x + weight.y + weight.z, 0.0001);
+	return fbm(p.yz) * weight.x + fbm(p.xz) * weight.y + fbm(p.xy) * weight.z;
+}
+
 void vertex() {
 	vec2 uv = world_uv(VERTEX);
 	v_uv = uv;
@@ -229,12 +249,13 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 terr = texture(color_tex, v_uv).rgb;
+	vec3 macro_color = texture(color_tex, v_uv).rgb;
+	vec4 surface = texture(surface_tex, v_uv);
 	vec3 debug_color = texture(debug_difference_tex, v_uv).rgb;
 	float hval = texture(height_tex, v_uv).r;
 
-	// grobe Steigung (dh/duv) aus Nachbar-Texeln — Eingang für den Detail-Filter
-	// und für die per-Pixel-Normale (glatter als die Vertex-Normale).
+	// Grobe Steigung aus dem Sim-Gitter. Sie bestimmt die Form, während die
+	// Material-Normale darunter nur Licht im Zentimetermaßstab bricht.
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, v_uv - vec2(texel, 0.0)).r;
 	float hR = texture(height_tex, v_uv + vec2(texel, 0.0)).r;
@@ -242,11 +263,6 @@ void fragment() {
 	float hU = texture(height_tex, v_uv + vec2(0.0, texel)).r;
 	vec2 coarse_slope = vec2(hR - hL, hU - hD) * 0.5 * grid_n;
 
-	// --- Detail-Erosion (Sub-Grid-Rinnen) ---
-	// Mit der Kameradistanz UND unterm Meer ausblenden; jenseits des Fades den
-	// Filter ganz überspringen (Kosten). fade_target aus der Höhenlage:
-	// Täler → −1 (Kerben verschmelzen), Gipfel → +1 (Grate bleiben spitz).
-	// Fade-Distanzen skalieren mit der Weltgröße (kalibriert auf world=100).
 	float ws = world_size / 100.0;
 	float view_dist = length(VERTEX);
 	float dfade = (1.0 - smoothstep(110.0 * ws, 280.0 * ws, view_dist))
@@ -259,130 +275,147 @@ void fragment() {
 		float det_mag;
 		vec4 det = erosion_detail(v_uv, coarse_slope, fade_target, det_mag);
 		det_slope = det.yz * dfade * detail_normal;
-		det_shade = det.x / det_mag * dfade;   // −1 Rinnenboden … 1 Grat
-		det_ridge = det.w * dfade;             // −1 Kerbe (Drainage) … 1 Grat
+		det_shade = det.x / det_mag * dfade;
+		det_ridge = det.w * dfade;
 	}
 
-	// per-Pixel-Normale aus grober + Detail-Steigung (Welt → View).
 	vec2 s_uv = coarse_slope + det_slope;
 	vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0, -s_uv.y * hscale / world_size));
+	vec2 wp = v_uv * world_size;
+	vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,
+	                         wp.y - world_size * 0.5);
+
+	// Vier physikalisch gebundene Grundmaterialien. Die CPU liefert nur ihre
+	// Gewichte; Körnung, Schichten und Rauheit entstehen hier kontinuierlich in
+	// Weltkoordinaten und bleiben damit unabhängig vom Render-Gitter.
+	float vegetation = clamp(surface.r, 0.0, 1.0);
+	float rock = clamp(surface.g, 0.0, 1.0);
+	float cold = clamp(surface.b, 0.0, 1.0);
+	float lith = surface.a * 2.0 - 1.0;
+	float material_fade = (1.0 - smoothstep(65.0 * ws, 210.0 * ws, view_dist))
+	                    * (detail_enabled ? 1.0 : 0.0);
+	float tri_large = triplanar_fbm(material_pos * 0.19, n_ws);
+	float top_large = fbm(wp * 0.16);
+	float tri_grain = 0.5;
+	float top_grain = 0.5;
+	if (material_fade > 0.002) {
+		tri_grain = triplanar_fbm(material_pos * 0.82 + vec3(7.0, 13.0, 3.0), n_ws);
+		top_grain = fbm(wp * 0.72 + vec2(31.0, 11.0));
+	}
+
+	vec3 soil_color = vec3(0.25, 0.20, 0.14)
+	                * mix(0.82, 1.12, top_large)
+	                * mix(0.93, 1.07, top_grain * material_fade);
+	vec3 vegetation_color = vec3(0.10, 0.24, 0.075)
+	                      * mix(0.76, 1.15, top_large)
+	                      * mix(0.90, 1.08, top_grain * material_fade);
+
+	// Die echte Lithologie steuert die Helligkeit der Schichtflächen. Harte
+	// Bänder sind dunkler, feinkörniger und rauer; weiche Bänder verwittern hell.
+	float strata_phase = abs(fract(material_pos.y * 1.65 + tri_large * 1.8) - 0.5) * 2.0;
+	float strata_edge = smoothstep(0.72, 0.96, strata_phase);
+	float lith_contrast = mix(1.09, 0.82, lith * 0.5 + 0.5);
+	vec3 rock_color = mix(vec3(0.28, 0.29, 0.30), vec3(0.37, 0.35, 0.32),
+	                      tri_large * 0.55)
+	                * mix(0.86, 1.08, tri_grain)
+	                * mix(1.0, lith_contrast, strata_edge * rock);
+
+	float wind_snow = fbm(wp * vec2(0.25, 0.55) + vec2(4.0, 19.0));
+	vec3 cold_color = vec3(0.79, 0.84, 0.89)
+	                * mix(0.91, 1.05, wind_snow * material_fade);
+
+	vec3 terr = mix(soil_color, rock_color, rock);
+	terr = mix(terr, vegetation_color, vegetation);
+	terr = mix(terr, cold_color, cold);
+	// Die Makrokarte bewahrt Salzkrusten, Gletschereis und Biom-Farbverschiebung,
+	// ohne wieder als alleinige, weichgefilterte Oberfläche sichtbar zu werden.
+	terr = mix(terr, macro_color, 0.28);
+	float salt_hint = smoothstep(0.48, 0.72, macro_color.r)
+	                * smoothstep(0.04, 0.12, macro_color.r - macro_color.b)
+	                * (1.0 - cold) * (1.0 - vegetation);
+	terr = mix(terr, macro_color, salt_hint * 0.72);
+	if (hval <= sea_level + 0.012) {
+		terr = macro_color;
+	}
+
+	// Mikro-Normale aus drei Weltachsen. Ein einfacher Noise-Sample pro Achse
+	// genügt hier; drei weitere vollständige triplanare FBMs kosteten pro Pixel
+	// 27 unnötige Noise-Auswertungen.
+	if (material_fade > 0.002 && hval > sea_level + 0.012) {
+		vec3 micro_pos = material_pos * 2.8;
+		vec3 micro = vec3(vnoise(micro_pos.xy + vec2(5.0, 17.0)),
+		                  vnoise(micro_pos.yz + vec2(23.0, 3.0)),
+		                  vnoise(micro_pos.xz + vec2(13.0, 31.0))) - vec3(0.5);
+		micro -= n_ws * dot(micro, n_ws);
+		float micro_strength = mix(0.055, 0.13, rock) * mix(1.0, 0.45, cold);
+		n_ws = normalize(n_ws + micro * micro_strength * material_fade);
+	}
 	NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
 
-	// --- Land-Shading: Rinnen-Licht, feuchte Kerben, Breakup ---
-	vec2 wp = v_uv * world_size;
 	float breakup = vnoise(wp * 0.9) * 0.6 + vnoise(wp * 3.7) * 0.4;
-	// Rinnenböden abdunkeln, Grate nur MINIMAL aufhellen (asymmetrisch — das
-	// Terrain ist sonnenseitig schon hell genug; symmetrisch kippte alles ins
-	// Kalk-Weiß) → die Erosion "liest" sich auch bei flach stehender Normale.
-	terr *= 1.0 + min(det_shade, 0.0) * detail_shade + max(det_shade, 0.0) * detail_shade * 0.3;
-	// Feuchte Kerben (Ridge-Map < 0): dunkler, entsättigt-grünlich — die
-	// dendritischen Zubringer der Flüsse (Drainage-Optik aus dem Original).
+	terr *= 1.0 + min(det_shade, 0.0) * detail_shade
+	      + max(det_shade, 0.0) * detail_shade * 0.3;
 	float crease = clamp(-det_ridge, 0.0, 1.0);
 	float moist = crease * (1.0 - smoothstep(veg_alt_lo, veg_alt_hi, hval));
-	terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0), moist * 0.45);
-	// Breakup: großflächige Albedo-Variation gegen die Uniformität.
-	terr *= 0.94 + 0.12 * breakup;
-	// Diagnosefarben bleiben eindeutig; die grobe Terrain-Normale und das Wasser
-	// bleiben sichtbar, damit Auf-/Abbau räumlich eingeordnet werden kann.
+	terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0),
+	           moist * 0.32);
+	terr *= 0.96 + 0.08 * breakup;
+
+	float ice_hint = smoothstep(0.04, 0.16, macro_color.b - macro_color.r) * cold;
+	float land_roughness = mix(0.90, 0.68, rock);
+	land_roughness = mix(land_roughness, 0.84, vegetation);
+	land_roughness = mix(land_roughness, 0.78, cold);
+	land_roughness = mix(land_roughness, 0.34, ice_hint);
+	land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
+
 	if (debug_difference) {
 		terr = debug_color;
+		land_roughness = 0.9;
 	}
 
 	vec4 w = texture(water_tex, v_uv);
 	float stream = w.r;
-	float lake_gate = w.g; // Sichtbarkeits-GATE (Komponenten-Fade), KEINE Tiefe mehr
+	float lake_gate = w.g;
 	vec2 dir = w.ba * 2.0 - 1.0;
-
 	float riverMask = smoothstep(0.16, 0.45, stream);
-	// Uferlinie PER PIXEL (pond_at, Issue #32) statt zell-/vertex-quantisiert.
-	// Der See-Kanal (w.g) ist nur noch das GATE: OHNE Gate wird nie Wasser
-	// gemalt — ein ungegateter Tiefen-Zweig malte jede isolierte tiefe Tasche,
-	// die vorher das grobe Render-Gitter und der Komponenten-Filter verschluckt
-	// haben (Sprenkel + geflutete Ebenen). Seichte Verlandungs-Pfützen
-	// (basinFill) bleiben trocken, weil sie nie ins Gate kommen (rawWet 0.03).
-	// Die Farb-Kontur setzt BEWUSST unter der Lift-Schwelle (0.015) ein: sie
-	// reicht bis fast an die echte Uferlinie (pond → 0), während die Geometrie
-	// erst später sanft hebt — das Band 0.003..0.015 liest sich als seichter,
-	// nasser Ufersaum auf dem Hang.
-	// Der Kontur-FUSS (0.003 = WaterRender.pondContourLo) ist zugleich die
-	// Präsenz-Schwelle des Altarm-Overlays: dessen Deckkraft im G-Kanal wird hier
-	// mit der Kontur multipliziert, ein höherer Fuß (0.006) hat die seichten
-	// Altarm-Enden also weggeschnitten und frische Altarme halbiert. Beide Zahlen
-	// gehören zusammen — Wächter: SimCoreTests/WaterRenderTests.swift.
 	float pond = pond_at(v_uv, hval);
 	float lakeMask = smoothstep(0.003, 0.02, pond) * lake_gate_at(v_uv);
 	float wet = max(riverMask, lakeMask);
 
-	// --- Ufer-Saum (Punkt „Shading-Tricks"): der Blur-Halo des Wasserfelds
-	// (unterhalb der Sichtbarkeits-Schwelle) wird als nasser Sand-/Kies-Streifen
-	// getönt → Flüsse und Seen bekommen ein Ufer statt einer harten Farbkante.
-	// Der See-Kanal trägt seit Issue #32 ein gesättigtes, ZWEIMAL geblurtes GATE
-	// statt der alten Tiefen-Rampe, die zum Ufer hin gegen 0 lief — die Schwelle
-	// 0.09/0.16 stammt noch aus der Rampen-Zeit. GEMESSEN (Seed 1337, Jahr 20.000,
-	// docs/lake-shore-contour-measurements.md): sie bleibt trotzdem richtig. Mit der
-	// Rampe fiel der Saum um SEEN faktisch aus (Ø Abdunklung 0,28 % im Uferband,
-	// am Ufer ist die Rampe ja ≈ 0); mit dem Gate entsteht er erstmals — als
-	// dünner Ring auf dem 2. Zellring vom Seerand (shore 0,27 statt 0,01, Ø 1,34 %).
-	// Das ist genau das, was dieser Block oben beschreibt, also NICHT zurückdrehen.
-	// Der Saum ist ein LAND-Effekt: `dry` hält ihn aus allem heraus, wo real eine
-	// Wassersäule steht. Ohne diesen Faktor tönt eine halb eingeblendete Seefläche
-	// (Gate 0.16 → lakeMask 0.29) ihren eigenen Grund zu 71 % sandbraun, BEVOR das
-	// Wasser sichtbar wird — der Saum sättigt bei Kanal 0.16, das Gate erst bei
-	// 0.35. Auf dem Uferring ist pond = 0, der gemessene Saum (s. o.) bleibt also
-	// unverändert. Fenster == WaterRender.pondContour* (Wächter: WaterRenderTests).
 	float dry = 1.0 - smoothstep(0.003, 0.02, pond);
 	float shore = smoothstep(0.09, 0.16, max(stream, lake_gate)) * (1.0 - wet) * dry;
-	vec3 shore_col = vec3(0.50, 0.46, 0.38) * (0.85 + 0.3 * breakup);
+	vec3 shore_col = vec3(0.42, 0.37, 0.29) * (0.85 + 0.3 * breakup);
 	terr = mix(terr, shore_col, shore * 0.35);
-	terr *= 1.0 - shore * 0.22; // feuchtes Ufer ist dunkler
+	terr *= 1.0 - shore * 0.22;
 
-	// Tiefe skaliert mit dem Abfluss (stream-Intensität) → Hauptflüsse tief-blau,
-	// Bäche seicht-teal. Erzeugt die sichtbare Fluss-Hierarchie. See-Tiefe per
-	// Pixel aus der Wassersäule (der See-Kanal trägt keine Tiefe mehr): volle
-	// Sättigung ab ~0.054 Wassersäule (alte Kanal-Rampe: ~0.07).
 	float lake_depth = clamp((pond - 0.004) / 0.05, 0.0, 1.0) * lakeMask;
 	float depth = clamp(max(lake_depth, stream), 0.0, 1.0);
-
-	// --- „Echtes Wasser" statt angemalter Erde ---
-	// (1) Wasser hat eine EIGENE Oberfläche: flache Welt-Normale mit animierten
-	// Kräusel-Wellen — nicht die Fels-Normale des Flussbetts darunter. Erst dadurch
-	// fängt es Sonne/Himmel wie eine Wasserfläche (Glints), statt wie nasser Stein.
-	float speed = riverMask >= lakeMask ? 1.0 : 0.25;      // Seen kräuseln nur träge
+	float speed = riverMask >= lakeMask ? 1.0 : 0.25;
 	vec2 d1 = normalize(length(dir) > 0.05 ? dir : vec2(0.7, 0.7));
-	vec2 d2 = vec2(-d1.y, d1.x);                            // quer zur Fließrichtung
-	// Wellen-Höhenfeld h = Σ aᵢ·sin(fᵢ·x − ωᵢ·t): Gradient analytisch → Normale.
+	vec2 d2 = vec2(-d1.y, d1.x);
 	float p1 = dot(wp, d1) * 2.3 - u_time * 5.0 * speed;
 	float p2 = dot(wp, d2) * 4.1 + dot(wp, d1) * 1.3 - u_time * 3.1 * speed;
-	float p3 = dot(wp, d1 + d2) * 6.3 - u_time * 7.3 * speed + 1.7;
-	// Kräuselung mit der Kameradistanz ausblenden: von weitem aliast die
-	// Wellen-Normale sonst zu weißem Specular-Glitzer (Konfetti auf den Seen).
+	float p3_wave = dot(wp, d1 + d2) * 6.3 - u_time * 7.3 * speed + 1.7;
 	float ripple_fade = 1.0 - smoothstep(50.0 * ws, 160.0 * ws, view_dist);
-	float amp = mix(0.015, 0.05, depth) * ripple_fade;      // große Flüsse wellen stärker
-	amp *= riverMask >= lakeMask ? 1.0 : 0.45;              // Seen: nur sanftes Kräuseln
+	float amp = mix(0.015, 0.05, depth) * ripple_fade;
+	amp *= riverMask >= lakeMask ? 1.0 : 0.45;
 	vec2 grad = d1 * (2.3 * cos(p1)) * amp
 	          + (d2 * 4.1 + d1 * 1.3) * (0.6 * cos(p2)) * amp
-	          + (d1 + d2) * (6.3 * cos(p3)) * (0.25 * amp);
+	          + (d1 + d2) * (6.3 * cos(p3_wave)) * (0.25 * amp);
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
 	NORMAL = normalize(mix(NORMAL, water_n_vs, wet));
 
-	// (2) Tiefen-Farbe + Transparenz: seichtes Wasser lässt das BETT durchscheinen
-	// (grünlich getrübt), tiefes Wasser wird opak dunkelblau. Das Bett unterm
-	// Wasser wird abgedunkelt (nass) → glaubwürdige Ufer-Übergänge.
 	vec3 shallow = vec3(0.18, 0.37, 0.42);
 	vec3 deep = vec3(0.03, 0.12, 0.26);
 	vec3 water = mix(shallow, deep, depth);
-	vec3 bed = terr * mix(1.0, 0.55, wet);                 // nasses, dunkles Bett
-	float opacity = mix(0.55, 0.95, depth);                // seicht = durchscheinend
-
-	// (3) Fresnel: flacher Blick → Himmel spiegelt, steiler Blick → ins Wasser.
+	vec3 bed = terr * mix(1.0, 0.55, wet);
+	float opacity = mix(0.55, 0.95, depth);
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, 5.0);
-	vec3 sky = vec3(0.62, 0.7, 0.76);                      // Himmels-Ton (wie Env)
+	vec3 sky = vec3(0.62, 0.7, 0.76);
 	water = mix(water, sky, fresnel * 0.55);
 
-	// (4) Strömungs-Schimmer entlang der Fließrichtung (dezent, Bewegung bleibt
-	// im Zeitraffer ablesbar; die Glints machen die Hauptarbeit).
 	if (riverMask >= lakeMask && length(dir) > 0.05) {
 		float along = dot(wp, normalize(dir));
 		float flow = sin(along * 1.4 - u_time * 4.0) * 0.5
@@ -390,19 +423,13 @@ void fragment() {
 		water += flow * vec3(0.012, 0.018, 0.025);
 	}
 
-	// (5) Schaum an der Wasserlinie: schmaler Streifen an der wet-Kante,
-	// von Breakup-Noise aufgebrochen und mit der Strömung driftend — nur nah
-	// (ripple_fade), von weitem würde er zu weißem Rauschen aliasen.
-	float edge = wet * (1.0 - wet) * 4.0;                  // 1 an der Uferlinie
+	float edge = wet * (1.0 - wet) * 4.0;
 	float foam_n = vnoise(wp * 7.0 - dir * u_time * 2.5 + vec2(0.0, u_time * 0.4));
 	float foam = smoothstep(0.55, 0.95, edge * (0.45 + 0.75 * foam_n)) * ripple_fade;
-
 	vec3 water_final = mix(bed, water, opacity);
 	water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * 0.45);
 	ALBEDO = mix(terr, water_final, wet);
-	// nasser Glanz: bei STEILEM Blick matter (sonst spiegelt der graue Himmel die
-	// Farbe milchig-weg), erst bei flachem Winkel (Fresnel) glasklar spiegelnd.
-	ROUGHNESS = mix(0.95, mix(0.34, 0.08, fresnel), wet);
+	ROUGHNESS = mix(land_roughness, mix(0.34, 0.08, fresnel), wet);
 	METALLIC = 0.0;
 	SPECULAR = mix(0.5, mix(0.55, 1.0, fresnel), wet);
 }
