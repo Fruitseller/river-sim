@@ -503,6 +503,10 @@ final class RiverRibbonRenderer {
         }
         let base = rrVerts.count
         rrStripStarts.append(Int32(base))
+        // Vorgänger-Stützpunkt für den Deckungs-Stempel: gestempelt wird das
+        // SEGMENT, nicht der Punkt (s. `stampCoverage`), und dafür braucht es
+        // die bereits GEDECKELTE Halbbreite der vorigen Runde.
+        var previous: (x: Double, z: Double, halfWidthCells: Double, alpha: Double)?
         for a in 0..<samples.count {
             let s = samples[a]
             let a0 = max(0, a - 1), a1 = min(samples.count - 1, a + 1)
@@ -577,7 +581,7 @@ final class RiverRibbonRenderer {
                 yLeft = Float(min(max(yL, yCenter - crossTol), yCenter + crossTol) + lift)
                 yRight = Float(min(max(yR, yCenter - crossTol), yCenter + crossTol) + lift)
             }
-            // Deckung dieses Stützpunkts ins gemeinsame Feld: dieselbe Fläche,
+            // Deckung dieses Bandstücks ins gemeinsame Feld: dieselbe Fläche,
             // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem
             // Alpha, mit dem sie wirklich malt. `WaterFieldRenderer` deckelt
             // sein Raster genau um diesen Betrag.
@@ -590,8 +594,13 @@ final class RiverRibbonRenderer {
             // Raster nahm sein Wasser zurück, das Band ersetzte es nicht, und
             // genau dort riss der Lauf wieder ab (dieselbe Lücke, gegen die der
             // anteilige Deckel eingeführt wurde).
-            stampCoverage(atX: s.x, atZ: s.z, halfWidthCells: hwCells,
-                          alpha: s.alpha, n: n)
+            if let p = previous {
+                stampCoverage(fromX: p.x, fromZ: p.z,
+                              fromHalfWidthCells: p.halfWidthCells, fromAlpha: p.alpha,
+                              toX: s.x, toZ: s.z,
+                              toHalfWidthCells: hwCells, toAlpha: s.alpha, n: n)
+            }
+            previous = (x: s.x, z: s.z, halfWidthCells: hwCells, alpha: s.alpha)
             rrVerts.append(Vector3(x: Float(wx - perpx), y: yLeft, z: Float(wz - perpz)))
             rrVerts.append(Vector3(x: Float(wx + perpx), y: yRight, z: Float(wz + perpz)))
             let dirX = still ? 0.0 : tx, dirZ = still ? 0.0 : tz
@@ -627,20 +636,45 @@ final class RiverRibbonRenderer {
         return ab * bc * ca / (2 * cross)
     }
 
-    /// Trägt die Deckkraft eines Band-Stützpunkts in `bandCoverage` ein
-    /// (Maximum je Zelle — Bänder dürfen sich überlagern, doppelt gedeckelt
-    /// wird trotzdem nicht).
-    private func stampCoverage(atX: Double, atZ: Double, halfWidthCells: Double,
-                               alpha: Double, n: Int) {
-        guard alpha > 0 else { return }
-        let value = min(max(alpha, 0), 1)
-        let radius = Int(halfWidthCells.rounded(.up))
-        let ci = Int(atX.rounded()), cj = Int(atZ.rounded())
-        for j in max(0, cj - radius)...min(n - 1, cj + radius) {
-            for i in max(0, ci - radius)...min(n - 1, ci + radius) {
-                // Kreis statt Quadrat: das Band ist ein Streifen, kein Block.
-                let dx = Double(i) - atX, dz = Double(j) - atZ
-                if dx * dx + dz * dz > (halfWidthCells + 0.5) * (halfWidthCells + 0.5) { continue }
+    /// Trägt die Deckkraft EINES BANDSTÜCKS (Stützpunkt → Stützpunkt) in
+    /// `bandCoverage` ein (Maximum je Zelle — Bänder dürfen sich überlagern,
+    /// doppelt gedeckelt wird trotzdem nicht).
+    ///
+    /// Gestempelt wird der Streifen, nicht ein Kreis um den Stützpunkt: das
+    /// Quad zwischen zwei Stützpunkten ist ein Streifen, die Stützpunkte liegen
+    /// aber bis zu ~1,5 Zellen auseinander. Kreise um die Punkte lassen die
+    /// Streifenkante dazwischen frei, sobald der Krümmungs-Deckel die Halbbreite
+    /// klein macht (ab ~0,3 Zellen); dort bliebe Raster-Wasser UNTER dem Band
+    /// stehen (Doppelung statt Lücke — harmlos, aber falsch gemeldet).
+    /// Deshalb Abstand zur STRECKE, mit entlang der Strecke interpolierter
+    /// Halbbreite und Alpha: beides läuft im Quad ebenso linear.
+    ///
+    /// `+ 0.5`: eine Zelle gilt als gedeckt, sobald ihr MITTELPUNKT höchstens
+    /// eine halbe Zelle neben der gemalten Fläche liegt.
+    private func stampCoverage(fromX: Double, fromZ: Double,
+                               fromHalfWidthCells: Double, fromAlpha: Double,
+                               toX: Double, toZ: Double,
+                               toHalfWidthCells: Double, toAlpha: Double,
+                               n: Int) {
+        guard fromAlpha > 0 || toAlpha > 0 else { return }
+        let hw0 = max(fromHalfWidthCells, 0), hw1 = max(toHalfWidthCells, 0)
+        let reach = max(hw0, hw1) + 0.5
+        let i0 = max(0, Int((min(fromX, toX) - reach).rounded(.down)))
+        let i1 = min(n - 1, Int((max(fromX, toX) + reach).rounded(.up)))
+        let j0 = max(0, Int((min(fromZ, toZ) - reach).rounded(.down)))
+        let j1 = min(n - 1, Int((max(fromZ, toZ) + reach).rounded(.up)))
+        guard i0 <= i1, j0 <= j1 else { return }
+        let dx = toX - fromX, dz = toZ - fromZ
+        let len2 = dx * dx + dz * dz
+        for j in j0...j1 {
+            for i in i0...i1 {
+                // Fußpunkt auf der Strecke (geklemmt: die Enden sind Kappen).
+                let px = Double(i) - fromX, pz = Double(j) - fromZ
+                let t = len2 > 1e-12 ? min(max((px * dx + pz * dz) / len2, 0), 1) : 0
+                let ex = px - dx * t, ez = pz - dz * t
+                let hw = hw0 + (hw1 - hw0) * t + 0.5
+                if ex * ex + ez * ez > hw * hw { continue }
+                let value = min(max(fromAlpha + (toAlpha - fromAlpha) * t, 0), 1)
                 let k = j * n + i
                 if bandCoverage[k] < value { bandCoverage[k] = value }
             }
