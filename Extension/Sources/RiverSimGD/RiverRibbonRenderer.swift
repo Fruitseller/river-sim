@@ -598,7 +598,11 @@ final class RiverRibbonRenderer {
                 stampCoverage(fromX: p.x, fromZ: p.z,
                               fromHalfWidthCells: p.halfWidthCells, fromAlpha: p.alpha,
                               toX: s.x, toZ: s.z,
-                              toHalfWidthCells: hwCells, toAlpha: s.alpha, n: n)
+                              toHalfWidthCells: hwCells, toAlpha: s.alpha,
+                              // Erstes/letztes Segment: dort endet das Band mit
+                              // einer geraden Quad-Kante, nicht an einer Naht.
+                              openStart: a == 1, openEnd: a == samples.count - 1,
+                              n: n)
             }
             previous = (x: s.x, z: s.z, halfWidthCells: hwCells, alpha: s.alpha)
             rrVerts.append(Vector3(x: Float(wx - perpx), y: yLeft, z: Float(wz - perpz)))
@@ -651,10 +655,23 @@ final class RiverRibbonRenderer {
     ///
     /// `+ 0.5`: eine Zelle gilt als gedeckt, sobald ihr MITTELPUNKT höchstens
     /// eine halbe Zelle neben der gemalten Fläche liegt.
+    ///
+    /// `openStart`/`openEnd` sagen, ob das Segment am ANFANG bzw. ENDE des Bands
+    /// liegt. An inneren Nähten läuft der Fußpunkt in eine Kugelkappe (Radius
+    /// `hw + 0.5` um den Stützpunkt) — die ist nötig, damit zwei aufeinander
+    /// folgende Segmente an der Naht lückenlos decken, auch wenn die
+    /// Zentrumslinie dort abknickt. An den zwei Band-ENDEN gibt es keine Naht:
+    /// das Quad endet mit einer GERADEN Kante quer zum letzten Segment (die
+    /// Tangente dort ist genau dessen Richtung, s. `emitRibbon`). Dort deckte
+    /// die Kappe bis zu `hw` Zellen HINTER dem Bandende Fläche, die kein Quad
+    /// malt — dieselbe Fehlerklasse wie die ungedeckelte Breite (Deckung melden,
+    /// wo kein Band entsteht), nur auf die Enden reduziert. Deshalb längs nur
+    /// die halbe Zelle Überhang aus der Regel oben, quer weiter `hw + 0.5`.
     private func stampCoverage(fromX: Double, fromZ: Double,
                                fromHalfWidthCells: Double, fromAlpha: Double,
                                toX: Double, toZ: Double,
                                toHalfWidthCells: Double, toAlpha: Double,
+                               openStart: Bool, openEnd: Bool,
                                n: Int) {
         guard fromAlpha > 0 || toAlpha > 0 else { return }
         let hw0 = max(fromHalfWidthCells, 0), hw1 = max(toHalfWidthCells, 0)
@@ -666,11 +683,20 @@ final class RiverRibbonRenderer {
         guard i0 <= i1, j0 <= j1 else { return }
         let dx = toX - fromX, dz = toZ - fromZ
         let len2 = dx * dx + dz * dz
+        // Zulässiger LÄNGS-Überhang an einem offenen Bandende, in
+        // Segment-Parametern: die halbe Zelle der Regel oben. Ein degeneriertes
+        // Segment (zusammenfallende Stützpunkte) hat keine Richtung, dort bleibt
+        // es beim Kreis um den Punkt.
+        let overhang = len2 > 1e-12 ? 0.5 / len2.squareRoot() : 0
         for j in j0...j1 {
             for i in i0...i1 {
-                // Fußpunkt auf der Strecke (geklemmt: die Enden sind Kappen).
+                // Fußpunkt auf der Strecke (geklemmt: die Nähte sind Kappen).
                 let px = Double(i) - fromX, pz = Double(j) - fromZ
-                let t = len2 > 1e-12 ? min(max((px * dx + pz * dz) / len2, 0), 1) : 0
+                let tRaw = len2 > 1e-12 ? (px * dx + pz * dz) / len2 : 0
+                // Hinter einem offenen Bandende hört die gemalte Fläche auf.
+                if openStart && tRaw < -overhang { continue }
+                if openEnd && tRaw > 1 + overhang { continue }
+                let t = min(max(tRaw, 0), 1)
                 let ex = px - dx * t, ez = pz - dz * t
                 let hw = hw0 + (hw1 - hw0) * t + 0.5
                 if ex * ex + ez * ez > hw * hw { continue }

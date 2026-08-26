@@ -363,6 +363,26 @@ final class WaterRenderTests: XCTestCase {
                        + "Stützpunkten nicht ab (Abstand bis ~1,5 Zellen)")
     }
 
+    func testCoverageStampStopsAtTheBandEnds() throws {
+        // Die Kugelkappe des Segment-Stempels gehört an die inneren NÄHTE: nur
+        // sie fügt zwei Segmente über einen Knick der Zentrumslinie lückenlos
+        // zusammen. An den zwei Band-ENDEN endet das Quad mit einer geraden
+        // Kante — dort meldete die Kappe bis zu einer Halbbreite HINTER dem Ende
+        // Deckung, wo kein Band malt, und das Raster nahm dafür sein Wasser
+        // zurück. Längs darf deshalb nur die halbe Zelle der Deckungs-Regel
+        // überhängen, quer weiter die Halbbreite + 0,5.
+        let bridge = try RepoSource.extensionSources()
+        assertContains(bridge, "openStart: a == 1, openEnd: a == samples.count - 1",
+                       hint: "erstes/letztes Segment als offenes Bandende stempeln")
+        assertContains(bridge, "if openStart && tRaw < -overhang { continue }",
+                       hint: "vor dem Bandanfang malt kein Quad — dort nichts decken")
+        assertContains(bridge, "if openEnd && tRaw > 1 + overhang { continue }",
+                       hint: "hinter dem Bandende malt kein Quad — dort nichts decken")
+        assertContains(bridge, "let overhang = len2 > 1e-12 ? 0.5 / len2.squareRoot() : 0",
+                       hint: "Längs-Überhang am offenen Ende ist die halbe Zelle "
+                           + "der Deckungs-Regel, in Segment-Parametern")
+    }
+
     // MARK: Kanalbreiten (Issue #51)
 
     func testRibbonWidthFollowsDischarge() {
