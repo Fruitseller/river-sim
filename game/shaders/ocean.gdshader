@@ -1,7 +1,7 @@
 // Offenes Meer mit derselben Wasseroptik wie Raster-Seen und Flussbänder.
 // Eigene Weltkoordinaten-Wellen statt eines metallischen StandardMaterials.
 shader_type spatial;
-render_mode blend_mix, depth_draw_alpha_prepass, cull_disabled;
+render_mode blend_mix, depth_prepass_alpha, cull_disabled;
 
 uniform float u_time = 0.0;
 uniform float world_size = 100.0;

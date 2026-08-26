@@ -55,6 +55,16 @@ final class RenderContractTests: XCTestCase {
         XCTAssertLessThan(abs(WaterRender.ribbonSeaSurfaceSink), RenderContract.riverLift)
     }
 
+    /// Godot 4 nennt den Alpha-Tiefenpass `depth_prepass_alpha`. Der ähnlich
+    /// klingende Vulkan-Begriff `depth_draw_alpha_prepass` kompiliert nicht und
+    /// ließ den neuen Ozean erst beim Start der echten Szene ausfallen.
+    func testOceanUsesAValidAlphaDepthPrepass() throws {
+        let ocean = try RepoSource.file("game/shaders/ocean.gdshader")
+        assertContains(ocean,
+                       "render_mode blend_mix, depth_prepass_alpha, cull_disabled;",
+                       hint: "Ozean-Shader verwendet Godot-4-Rendermodus")
+    }
+
     func testDefaultSeedIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.defaultSeed, 1337)
         let main = try RepoSource.file("game/scripts/Main.gd")
