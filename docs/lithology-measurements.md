@@ -124,10 +124,10 @@ Grundlage aller A/B-Messungen hier.
 
 ## D. Rendering
 
-`SimNode.terrainColorBytes` färbt die Bänder dezent (hart dunkler/wärmer, ±0.05 auf
-RGB), damit Schichtstufen und Härtekanten auch dort ablesbar sind, wo die Kante flach
-angeschnitten ist. Amplitude bewusst klein: das Biom-Signal (Fels/Moos/Schnee) bleibt
-dominant.
+`SimNode.terrainColorBytes` färbt die Bänder großräumig; der A-Kanal von
+`terrainSurfaceBytes` reicht dieselbe Härte zusätzlich an `terrain.gdshader`.
+Freier Fels zeigt sie dort als höhengebundene Schichtflächen mit eigener Körnung
+und Rauheit. Biom, Schnee und Eis überdecken die Geologie weiterhin.
 
 ## E. Rückwirkung auf bestehende Wächter
 

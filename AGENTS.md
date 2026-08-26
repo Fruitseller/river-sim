@@ -260,10 +260,12 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    `@Callable`-Einzeiler); die Render-Aufbereitung liegt daneben, s. u.
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.1): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
-   `shaders/terrain.gdshader` + `water.gdshader`.
+   `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
+   (Flussbänder) und `ocean.gdshader` (offenes Meer).
 
-Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach `heightsBytes()`,
-`waterFieldBytes()`, `terrainColorBytes()` etc. und schiebt sie als Texturen ins Mesh.
+Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach
+`heightsBytes()`, `waterFieldBytes()`, `terrainColorBytes()` und
+`terrainSurfaceBytes()` etc. und schiebt sie als Texturen ins Mesh.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
 ### Extension-Aufbau (Issue #53)
@@ -275,7 +277,8 @@ liest das Terrain und ändert es nie:
 
 - `WaterFieldRenderer`: Raster-Wasser (`waterFieldBytes`),
 - `RiverRibbonRenderer`: Band-Geometrie (`buildRiverRibbons` + Puffer),
-- `TerrainColorRenderer`: Biom-/Höhen-Färbung,
+- `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
+  Schnee/Eis und Lithologie in einem gemeinsamen Pass,
 - `TreeInstanceRenderer`: MultiMesh-Puffer der Bäume,
 - `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
   ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:

@@ -34,16 +34,22 @@ final class SimNode: Node {
     private let ribbons = RiverRibbonRenderer()
     private let trees = TreeInstanceRenderer()
     private let diagnostics = TerrainDiagnostics()
+    /// Farbe und Materialgewichte entstehen gemeinsam und bleiben bis zur
+    /// nächsten Terrain-Änderung gepuffert. Godot lädt sie als zwei Texturen,
+    /// die teure Standortauswertung läuft aber nur einmal.
+    private var cachedTerrainMaterials: TerrainColorRenderer.Buffers?
 
     // MARK: Steuerung
 
     @Callable func generate(seed: Int) {
         terrain.generate(seed: UInt32(truncatingIfNeeded: seed))
+        cachedTerrainMaterials = nil
         captureDebugReference()
     }
 
     @Callable func step(years: Double) {
         terrain.step(dtYears: years)
+        cachedTerrainMaterials = nil
     }
 
     // MARK: Speichern / Laden (Issue #8)
@@ -72,6 +78,7 @@ final class SimNode: Node {
         do {
             let loaded = try WorldSnapshot.read(from: path)
             terrain = loaded
+            cachedTerrainMaterials = nil
             lastWorldBytes = 0
             // Diagnose-Referenz auf den geladenen Stand: die Δ-Karte soll zeigen,
             // was die Sim AB JETZT tut, nicht die Differenz zur alten Welt.
@@ -182,8 +189,13 @@ final class SimNode: Node {
 
     // MARK: Render-Buffer (in Swift berechnet → GDScript setzt nur zusammen)
 
-    /// Biom-/Höhen-Färbung als RGBA8-Byte-Buffer (n*n*4) — s. `TerrainColorRenderer`.
-    @Callable func terrainColorBytes() -> PackedByteArray { TerrainColorRenderer.bytes(terrain) }
+    /// Großräumige Biom-/Höhen-Farbe als RGBA8-Puffer. Die eigentlichen
+    /// Materialgewichte kommen getrennt aus `terrainSurfaceBytes`.
+    @Callable func terrainColorBytes() -> PackedByteArray { terrainMaterials().colors }
+
+    /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
+    /// A = Lithologie-Härte. Beide Puffer werden gemeinsam berechnet.
+    @Callable func terrainSurfaceBytes() -> PackedByteArray { terrainMaterials().surfaces }
 
     /// Wasser-Feld (Flüsse/Seen/Altarme) als RGBA8-Byte-Buffer — Kanäle und
     /// Kalibrierung: `WaterFieldRenderer`. `blend` glättet zeitlich (1 = Sprung
@@ -211,6 +223,7 @@ final class SimNode: Node {
     /// Gitterzentrum (gx, gz) mit Radius in Welteinheiten. Koppelt in die Tektonik.
     @Callable func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double) {
         terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: dir)
+        cachedTerrainMaterials = nil
     }
 
     /// Pinsel-Werkzeug mit Stärke. `mode` ist der Rohwert von `BrushTool` — die
@@ -226,6 +239,7 @@ final class SimNode: Node {
         }
         tool.apply(to: terrain, gx: gx, gz: gz, radiusWorld: radiusWorld,
                    strength: strength, target: target)
+        cachedTerrainMaterials = nil
     }
 
     /// Nach Sculpting/Änderungen Entwässerung neu berechnen (für Live-Flüsse).
@@ -242,6 +256,7 @@ final class SimNode: Node {
         // Höhenbänder (Issue #4) mitziehen: ein Sculpt-Strich verschiebt die
         // Landhöhen-Verteilung, und die Färbung liest sie im selben Frame.
         terrain.updateHeightBands()
+        cachedTerrainMaterials = nil
     }
 
     /// Effektive Maximal-Breite der Spitzhacke (Welteinheiten) — fürs Ring-Visual.
@@ -291,6 +306,13 @@ final class SimNode: Node {
     @Callable func riverRibbonStripStarts() -> PackedInt32Array { ribbons.stripStarts }
 
     // MARK: Marshalling
+    private func terrainMaterials() -> TerrainColorRenderer.Buffers {
+        if let cachedTerrainMaterials { return cachedTerrainMaterials }
+        let buffers = TerrainColorRenderer.buffers(terrain)
+        cachedTerrainMaterials = buffers
+        return buffers
+    }
+
 
     private func pack(_ a: [Double]) -> PackedFloat32Array {
         var f = [Float](repeating: 0, count: a.count)

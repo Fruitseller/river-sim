@@ -56,6 +56,7 @@ func _run() -> void:
 	_hash("heights", hbytes)
 	_hash("filled", fbytes)
 	_hash("terrainColorBytes", sim.terrainColorBytes())
+	_hash("terrainSurfaceBytes", sim.terrainSurfaceBytes())
 	# Wasserfeld zweimal: der zweite Aufruf durchläuft die EWMA-Puffer aus dem
 	# ersten (persistenter Render-Zustand) — beide Hashes gehören zum Vertrag.
 	_hash("waterFieldBytes(1.0)", sim.waterFieldBytes(1.0))

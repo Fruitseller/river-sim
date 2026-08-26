@@ -630,14 +630,13 @@ public enum WaterRender {
                  + log(max(dischargeCells, 1) / creekCells + 1) / stampIntensityLogDivisor)
     }
 
-    // MARK: Gemeinsame Wasser-Optik beider Shader (Issue #51)
+    // MARK: Gemeinsame Wasser-Optik aller drei Shader (Issue #51)
 
-    // `terrain.gdshader` (Raster-Wasser) und `water.gdshader` (Band-Geometrie)
-    // malen DASSELBE Wasser — Farben, Fresnel und Glanz müssen deshalb
-    // zusammenfallen, sonst zerfällt eine Mündung sichtbar in zwei Wasser.
-    // Beide Shader tragen die Werte als Literal; `WaterRenderTests` vergleicht
-    // BEIDE Quelltexte gegen diese Zahlen. Wer eine ändert, ändert sie hier und
-    // in beiden Shadern — der Test sagt, welche Stelle fehlt.
+    // `terrain.gdshader` (Raster-Wasser), `water.gdshader` (Band-Geometrie) und
+    // `ocean.gdshader` malen DASSELBE Wasser. Farben, Fresnel und Glanz müssen
+    // zusammenfallen, sonst zerfallen Mündung und Küste sichtbar in verschiedene
+    // Materialien. Alle Shader tragen die Werte als Literal; `WaterRenderTests`
+    // vergleicht ihre Quelltexte gegen diese Zahlen.
 
     /// Farbe seichten Wassers (das Bett scheint grünlich getrübt durch).
     public static let waterShallowColor = (r: 0.18, g: 0.37, b: 0.42)

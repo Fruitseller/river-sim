@@ -75,10 +75,10 @@ const RIVER_REBUILD_SECONDS := 1.0  # Strahler + Mesh sind CPU-seitig; 0,30 s ko
 # über Wasser gilt stattdessen WaterRender.ribbonLakeSurfaceLift/-SeaSurfaceSink.
 const RIVER_LIFT := 0.35
 
-# Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen/Farben/
-# Wasser als Texturen (pro Tick nur Upload, kein Mesh-Rebuild). Wasser ist ein
-# glattes Feld-Overlay im Terrain-Shader — keine Fluss-Geometrie mehr.
+# Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen-,
+# Makrofarben-, Material- und Wasserfelder werden nur hochgeladen.
 var terrain_mat: ShaderMaterial
+var ocean_mat: ShaderMaterial
 
 ## Ein Feld → EINE Shader-Textur: legt Image/ImageTexture beim ersten Upload an
 ## (und hängt sie an ihren Shader-Parameter), danach nur noch `set_data` +
@@ -107,6 +107,7 @@ var height_field := FieldTexture.new("height_tex", Image.FORMAT_RF)
 # gefüllte Oberfläche (Seespiegel) → echte horizontale Seeflächen
 var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF)
 var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8)
+var surface_field := FieldTexture.new("surface_tex", Image.FORMAT_RGBA8)
 var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8)
 var debug_difference_field := FieldTexture.new("debug_difference_tex", Image.FORMAT_RGBA8)
 
@@ -366,18 +367,17 @@ func _setup_scene() -> void:
 	e.background_mode = Environment.BG_SKY
 	e.sky = sky
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	e.ambient_light_energy = 0.18
+	e.ambient_light_energy = 0.28
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	# Filmischer Look + Tiefe.
+	# ACES bleibt für die Spitzlichter, aber ohne ausgefressenen Schnee und den
+	# milchigen Glow des alten Materials.
 	e.tonemap_mode = Environment.TONE_MAPPER_ACES
-	e.tonemap_exposure = 0.78
+	e.tonemap_exposure = 0.68
 	e.ssao_enabled = render_quality != "performance"
-	e.ssao_intensity = 1.8 # kräftigere Ambient-Occlusion → Tiefe in den Rinnen
-	e.glow_enabled = render_quality != "performance"
-	e.glow_intensity = 0.2
-	e.glow_bloom = 0.08
+	e.ssao_intensity = 1.45
+	e.glow_enabled = false
 	e.adjustment_enabled = true
-	e.adjustment_saturation = 1.06 # dezenter Sättigungs-Boost (Moos/Wasser tragen mehr Farbe)
+	e.adjustment_saturation = 0.98
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_DEPTH
 	e.fog_light_color = Color(0.76, 0.78, 0.79)
@@ -386,12 +386,12 @@ func _setup_scene() -> void:
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
-	# warmes, kräftiges Sonnenlicht dominiert das neutrale Ambient → naturalistischer Fels
-	sun.light_color = Color(1.0, 0.96, 0.90)
-	sun.light_energy = 1.6
+	# Die Materialkontraste tragen das Gelände. Das Licht modelliert die Form,
+	# ohne Fels und Schnee wie im alten 1.6-Energy-Setup weiß auszubrennen.
+	sun.light_color = Color(1.0, 0.95, 0.88)
+	sun.light_energy = 1.15
 	sun.shadow_enabled = true
 	add_child(sun)
-	# Eindeutig von schräg oben aufs Terrain scheinen lassen (statt mehrdeutiger Euler).
 	sun.look_at_from_position(Vector3(-60, 120, 60), Vector3.ZERO, Vector3.UP)
 
 	cam = Camera3D.new()
@@ -421,14 +421,10 @@ func _setup_scene() -> void:
 	var wp := PlaneMesh.new()
 	wp.size = Vector2(world_size * 1.05, world_size * 1.05)
 	water_mi.mesh = wp
-	# Durchscheinend wie im Prototyp (Terrain scheint durch), aber mit dezenter
-	# Himmelsspiegelung durch niedrige Roughness + etwas Metallic.
-	var wmat := StandardMaterial3D.new()
-	wmat.albedo_color = Color(0.10, 0.28, 0.50, 0.5)
-	wmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	wmat.roughness = 0.08
-	wmat.metallic = 0.2
-	water_mi.material_override = wmat
+	ocean_mat = ShaderMaterial.new()
+	ocean_mat.shader = load("res://shaders/ocean.gdshader")
+	ocean_mat.set_shader_parameter("world_size", world_size)
+	water_mi.material_override = ocean_mat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
 
@@ -899,6 +895,8 @@ func _process(delta: float) -> void:
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
+	if ocean_mat:
+		ocean_mat.set_shader_parameter("u_time", u_time)
 	if river_mat:
 		river_mat.set_shader_parameter("u_time", u_time)
 	if debug_dirty:
@@ -1111,7 +1109,10 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 		terrain_mat.set_shader_parameter("veg_alt_lo", bands[0])
 		terrain_mat.set_shader_parameter("veg_alt_hi", bands[1])
 
+	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung; der
+	# SimNode-Cache verhindert doppelte slope-/Habitat-Arbeit.
 	color_field.upload(terrain_mat, N, sim.terrainColorBytes())
+	surface_field.upload(terrain_mat, N, sim.terrainSurfaceBytes())
 	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
 	# water_blend < 1 → zeitliche EWMA-Glättung (Läufe blenden statt zu springen).
 	water_field.upload(terrain_mat, N, sim.waterFieldBytes(water_blend))

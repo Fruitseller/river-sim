@@ -597,16 +597,16 @@ final class WaterRenderTests: XCTestCase {
                                                             creekCells: creek), 1)
     }
 
-    // MARK: Gemeinsame Wasser-Optik beider Shader (Issue #51)
+    // MARK: Gemeinsame Wasser-Optik aller drei Shader (Issue #51)
 
-    func testBothWaterShadersShareTheSameWater() throws {
-        // Raster-Wasser (terrain.gdshader) und Band-Geometrie (water.gdshader)
-        // malen DASSELBE Wasser. Driften Farben oder Fresnel, zerfällt eine
-        // Mündung sichtbar in zwei Wasser — deshalb dieselben Zahlen, gegen
-        // BEIDE Quelltexte geprüft.
+    func testAllWaterShadersShareTheSameWater() throws {
+        // Raster-Wasser, Band-Geometrie und offenes Meer malen dasselbe Wasser.
+        // Driften Farben oder Fresnel, zerfällt die Küste beziehungsweise eine
+        // Mündung sichtbar in verschiedene Materialien.
         let terrain = try repoFile("game/shaders/terrain.gdshader")
         let water = try repoFile("game/shaders/water.gdshader")
-        for (name, shader) in [("terrain", terrain), ("water", water)] {
+        let ocean = try repoFile("game/shaders/ocean.gdshader")
+        for (name, shader) in [("terrain", terrain), ("water", water), ("ocean", ocean)] {
             assertContains(shader, "vec3 shallow = \(glsl(WaterRender.waterShallowColor));",
                            hint: "\(name): Seicht-Farbe == WaterRender.waterShallowColor")
             assertContains(shader, "vec3 deep = \(glsl(WaterRender.waterDeepColor));",
