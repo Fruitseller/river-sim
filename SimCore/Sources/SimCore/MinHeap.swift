@@ -110,9 +110,9 @@ struct MinHeap {
     private var storage: [Entry]
     private(set) var size = 0
 
-    /// `+ 7` Reserve: bis zu 3 Einträge, um den Puffer-Anfang auf 64 Byte zu
-    /// bringen, plus die 3 Einträge Vorlauf der Ausrichtung (s. `withRaw`) und
-    /// einen Sicherheitsplatz. Sie kosten 112 Byte und nichts an Laufzeit.
+    /// `+ 7` Reserve: bis zu 4 Einträge, um den Puffer-Anfang auf 64 Byte zu
+    /// bringen, plus die 3 Einträge Vorlauf der Ausrichtung (s. `withRaw`).
+    /// Sie kosten 112 Byte und nichts an Laufzeit.
     init(capacity: Int) {
         storage = [Entry](repeating: Entry(key: 0, cell: 0, col: 0),
                           count: max(1, capacity) + 7)
@@ -131,15 +131,26 @@ struct MinHeap {
             // also auf Byte-Offset 64·i+16 — sie überspannen damit bei jedem
             // Sift-Schritt ZWEI Cache-Zeilen. Drei Einträge Vorlauf (nach dem
             // Ausrichten des Puffer-Anfangs auf 64 Byte) schieben sie auf
-            // 64·i+64: genau EINE Zeile je Ebene, und der Pop wandert im Mittel
-            // 5,5 Ebenen tief (gemessen, docs/perf-measurements.md).
+            // 64·i+64, also auf EINE Zeile je Ebene, und der Pop wandert im
+            // Mittel 5,5 Ebenen tief (gemessen, docs/perf-measurements.md).
             //
             // Die Heap-INDIZES ändern sich dabei nicht, nur wo Index 0 im
             // Speicher liegt. Struktur, Vergleiche und damit die Pop-Reihenfolge
             // bei GLEICHEN Keys bleiben exakt dieselben — die Verschiebung ist
             // ergebnis-neutral (`simperf --hash` unverändert).
+            //
+            // Die Ausrichtung ist BEST EFFORT und die Korrektheit hängt nicht an
+            // ihr, nur die Zahl der berührten Cache-Zeilen. Sie geht genau dann
+            // auf, wenn der Puffer-Anfang schon auf einem Vielfachen der
+            // EINTRAGSGRÖSSE (16 Byte) liegt: ein Versatz um ganze Einträge
+            // ändert `raw % 16` nicht, ein 8-Byte-Anfang bliebe also bei jedem
+            // Vorlauf um 8 Byte neben der Zeile. `Entry` verlangt nur 8 Byte
+            // Ausrichtung, Swift legt Array-Speicher aber mindestens auf 16 Byte
+            // — der reale Fall ist also der gute. Aufgerundet wird, damit der
+            // Versatz die Grenze nie unterschreitet.
             let raw = UInt(bitPattern: p.baseAddress!)
-            let pad = Int((64 &- (raw & 63)) & 63) / MemoryLayout<Entry>.stride
+            let stride = MemoryLayout<Entry>.stride
+            let pad = (Int((64 &- (raw & 63)) & 63) + stride - 1) / stride
             var ref = Ref(b: p.baseAddress! + pad + 3, size: start)
             result = body(&ref)
             end = ref.size
