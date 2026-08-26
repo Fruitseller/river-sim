@@ -5,6 +5,8 @@ render_mode blend_mix, depth_prepass_alpha, cull_disabled;
 
 uniform float u_time = 0.0;
 uniform float world_size = 100.0;
+uniform float sea_level = 0.15;
+uniform sampler2D height_tex : filter_linear, repeat_disable;
 varying vec2 v_world;
 
 float hash21(vec2 p) {
@@ -27,6 +29,12 @@ void vertex() {
 
 void fragment() {
 	vec2 p = v_world;
+	vec2 terrain_uv = p / world_size + vec2(0.5);
+	bool inside_terrain = all(greaterThanEqual(terrain_uv, vec2(0.0)))
+	                   && all(lessThanEqual(terrain_uv, vec2(1.0)));
+	if (inside_terrain && texture(height_tex, terrain_uv).r > sea_level) {
+		discard;
+	}
 	vec2 swell_dir = normalize(vec2(0.82, 0.57));
 	vec2 cross_dir = vec2(-swell_dir.y, swell_dir.x);
 	float phase1 = dot(p, swell_dir) * 0.72 - u_time * 1.35;
@@ -53,7 +61,7 @@ void fragment() {
 	water += flow * vec3(0.012, 0.018, 0.025);
 
 	ALBEDO = water;
-	ALPHA = mix(0.55, 0.95, depth);
+	ALPHA = 1.0;
 	ROUGHNESS = mix(0.34, 0.08, fresnel);
 	METALLIC = 0.0;
 	SPECULAR = mix(0.55, 1.0, fresnel);

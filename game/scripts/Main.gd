@@ -89,16 +89,26 @@ class FieldTexture:
 	var _format: int
 	var _img: Image
 	var _tex: ImageTexture
+	var _mirror_mat: ShaderMaterial
 
 	func _init(param: StringName, format: int) -> void:
 		_param = param
 		_format = format
+
+	## Bindet denselben GPU-Texturzustand an einen zweiten Shader. Die Höhenkarte
+	## schneidet damit auch die Ozeanplatte ab, ohne einen zweiten Image-Upload.
+	func mirror_to(mat: ShaderMaterial) -> void:
+		_mirror_mat = mat
+		if _tex != null:
+			_mirror_mat.set_shader_parameter(_param, _tex)
 
 	func upload(mat: ShaderMaterial, n: int, bytes: PackedByteArray) -> void:
 		if _img == null:
 			_img = Image.create_from_data(n, n, false, _format, bytes)
 			_tex = ImageTexture.create_from_image(_img)
 			mat.set_shader_parameter(_param, _tex)
+			if _mirror_mat != null:
+				_mirror_mat.set_shader_parameter(_param, _tex)
 		else:
 			_img.set_data(n, n, false, _format, bytes)
 			_tex.update(_img)
@@ -419,11 +429,15 @@ func _setup_scene() -> void:
 
 	water_mi = MeshInstance3D.new()
 	var wp := PlaneMesh.new()
-	wp.size = Vector2(world_size * 1.05, world_size * 1.05)
+	# Der Rand liegt selbst bei maximalem Zoom/Pan hinter `cam.far`; sichtbar
+	# bleibt nur die Wasseroberfläche, keine quadratische Modellplatte.
+	wp.size = Vector2(cam.far * 3.0, cam.far * 3.0)
 	water_mi.mesh = wp
 	ocean_mat = ShaderMaterial.new()
 	ocean_mat.shader = load("res://shaders/ocean.gdshader")
 	ocean_mat.set_shader_parameter("world_size", world_size)
+	ocean_mat.set_shader_parameter("sea_level", sea)
+	height_field.mirror_to(ocean_mat)
 	water_mi.material_override = ocean_mat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
@@ -800,6 +814,7 @@ func _load_world() -> void:
 	sea = sim.seaLevel()
 	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	terrain_mat.set_shader_parameter("sea_level", sea)
+	ocean_mat.set_shader_parameter("sea_level", sea)
 	water_mi.position.y = sea * HSCALE
 	_after_sim(true) # water_blend = 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()

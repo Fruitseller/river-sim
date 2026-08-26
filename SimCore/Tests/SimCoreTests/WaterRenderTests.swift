@@ -566,9 +566,6 @@ final class WaterRenderTests: XCTestCase {
                            hint: "\(name): Fresnel-Exponent == WaterRender.fresnelExponent")
             assertContains(shader, "mix(water, sky, fresnel * \(glsl(WaterRender.fresnelSkyMix)))",
                            hint: "\(name): Himmels-Anteil == WaterRender.fresnelSkyMix")
-            assertContains(shader, "mix(\(glsl(WaterRender.waterOpacityShallow)), "
-                + "\(glsl(WaterRender.waterOpacityDeep)), depth)",
-                hint: "\(name): Deckkraft == WaterRender.waterOpacity*")
             assertContains(shader, "mix(\(glsl(WaterRender.waterRoughnessSteep)), "
                 + "\(glsl(WaterRender.waterRoughnessGrazing)), fresnel)",
                 hint: "\(name): Rauheit == WaterRender.waterRoughness*")
@@ -578,6 +575,15 @@ final class WaterRenderTests: XCTestCase {
             assertContains(shader, "flow * \(glsl(WaterRender.flowShimmerColor))",
                            hint: "\(name): Strömungs-Schimmer == WaterRender.flowShimmerColor")
         }
+        // Flüsse und Seen lassen ihr lokales Bett durchscheinen. Das offene Meer
+        // bleibt opak, weil sonst bei flacher Kamera die rechteckige Unterseite
+        // des Terrain-Heightfields sichtbar wird.
+        for (name, shader) in [("terrain", terrain), ("water", water)] {
+            assertContains(shader, "mix(\(glsl(WaterRender.waterOpacityShallow)), "
+                + "\(glsl(WaterRender.waterOpacityDeep)), depth)",
+                hint: "\(name): Deckkraft == WaterRender.waterOpacity*")
+        }
+        assertContains(ocean, "ALPHA = 1.0;", hint: "Offenes Meer ist opak")
         // Nur die Band-Geometrie kennt Typen: Delta-Fahne und Altarm-Wasser.
         assertContains(water, glsl(WaterRender.deltaPlumeColor),
                        hint: "Trübungsfahne == WaterRender.deltaPlumeColor")
