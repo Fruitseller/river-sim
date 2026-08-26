@@ -78,7 +78,13 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   gestempelt, also nach dem Krümmungs-Deckel darunter — mit der ungedeckelten
   meldete das Band an engen Schlingen Deckung für einen Streifen, den es nicht
   malt, und der anteilige Deckel riss dort dieselbe Lücke wieder auf, die er
-  schließen soll.
+  schließen soll. Und gestempelt wird das SEGMENT zwischen zwei Stützpunkten
+  (Abstand zur Strecke, Halbbreite und Alpha entlang der Strecke interpoliert),
+  nicht ein Kreis um den Punkt: bei stark greifendem Deckel (Halbbreite ≲ 0,3
+  Zellen) fielen die Kreise auseinander und ließen die Streifenkante ungedeckt
+  — dort bliebe Raster-Wasser unter dem Band stehen. Wächter für beides:
+  `WaterRenderTests.testCoverageStampUsesTheWidthTheBandPaints` (Quelltext der
+  Brücke; die Geometrie selbst prüft `game/tests/river_ribbons.gd` in CI).
   **Band-Breite am Krümmungsradius gedeckelt** (`ribbonCurvatureWidthFactor`):
   wo ein Band breiter war als der Radius seiner Schlinge, überschlugen sich
   seine Quads zu Fächern spitzer Dreiecke (User: „hässliche Dreiecke");

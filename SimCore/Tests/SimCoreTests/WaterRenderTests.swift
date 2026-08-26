@@ -332,6 +332,37 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Delta-Arm-Breite aus WaterRender beziehen")
     }
 
+    /// Wächter gegen den Fehler von Aug 2026: die gemeldete Deckung
+    /// (`bandCoverage`, an der der Raster-Deckel hängt) muss die Fläche sein,
+    /// die das Band WIRKLICH malt.
+    ///
+    /// Was der Test sehen kann, ist der Quelltext, nicht das Ergebnis: die
+    /// Band-Emission läuft in der GDExtension und damit erst nach ~20 min Build
+    /// (die geometrische Seite prüft `game/tests/river_ribbons.gd` in CI). Er
+    /// pinnt deshalb die zwei Stellen, an denen der Fehler entstand:
+    /// die Breite muss DIESELBE Variable sein, aus der auch die Quad-Kante
+    /// entsteht (nach dem Krümmungs-Deckel, nicht `s.halfWidth` davor), und
+    /// gestempelt wird das SEGMENT zwischen zwei Stützpunkten, nicht ein Kreis
+    /// um den Punkt — Kreise lassen die Streifenkante frei, sobald der Deckel
+    /// die Halbbreite unter ~0,3 Zellen drückt.
+    func testCoverageStampUsesTheWidthTheBandPaints() throws {
+        let bridge = try RepoSource.extensionSources()
+        assertContains(bridge, "* WaterRender.ribbonCurvatureWidthFactor)",
+                       hint: "Krümmungs-Deckel der Band-Breite aus WaterRender beziehen")
+        assertContains(bridge, "let hw = hwCells * cs",
+                       hint: "Quad-Kante aus der gedeckelten Halbbreite bauen")
+        assertContains(bridge, "toHalfWidthCells: hwCells",
+                       hint: "Deckung mit der gedeckelten Halbbreite stempeln")
+        assertContains(bridge, "stampCoverage(fromX:",
+                       hint: "Deckung als Streifen zwischen zwei Stützpunkten stempeln")
+        XCTAssertFalse(bridge.contains("HalfWidthCells: s.halfWidth"),
+                       "Deckung darf nicht mit der UNGEDECKELTEN Breite gestempelt "
+                       + "werden — das Raster nähme Wasser zurück, das kein Band ersetzt")
+        XCTAssertFalse(bridge.contains("stampCoverage(atX:"),
+                       "Punkt-Stempel deckt die Streifenkante zwischen zwei "
+                       + "Stützpunkten nicht ab (Abstand bis ~1,5 Zellen)")
+    }
+
     // MARK: Kanalbreiten (Issue #51)
 
     func testRibbonWidthFollowsDischarge() {
