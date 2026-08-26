@@ -74,6 +74,11 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   weder Band noch Raster und der Lauf riss ab (User: „keine durchgehenden
   Adern"). Danach: sichtbares Fluss-Wasser 10 307 → 21 970 Zellen, größte
   zusammenhängende Fluss-Komponente 454 → 4 102 Zellen (Seed 1337, Jahr 20 000).
+  Nachtrag: die Deckung wird mit der TATSÄCHLICH emittierten Halbbreite
+  gestempelt, also nach dem Krümmungs-Deckel darunter — mit der ungedeckelten
+  meldete das Band an engen Schlingen Deckung für einen Streifen, den es nicht
+  malt, und der anteilige Deckel riss dort dieselbe Lücke wieder auf, die er
+  schließen soll.
   **Band-Breite am Krümmungsradius gedeckelt** (`ribbonCurvatureWidthFactor`):
   wo ein Band breiter war als der Radius seiner Schlinge, überschlugen sich
   seine Quads zu Fächern spitzer Dreiecke (User: „hässliche Dreiecke");

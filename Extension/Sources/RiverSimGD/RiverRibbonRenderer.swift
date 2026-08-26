@@ -581,7 +581,16 @@ final class RiverRibbonRenderer {
             // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem
             // Alpha, mit dem sie wirklich malt. `WaterFieldRenderer` deckelt
             // sein Raster genau um diesen Betrag.
-            stampCoverage(atX: s.x, atZ: s.z, halfWidthCells: max(s.halfWidth, 0),
+            //
+            // Deshalb `hwCells` und NICHT `s.halfWidth`: der Krümmungs-Deckel
+            // oben schneidet die Halbbreite an engen Schlingen auf r/2 zurück,
+            // und laut `WaterRender.ribbonCurvatureWidthFactor` ist das dort die
+            // Regel, nicht der Ausnahmefall. Mit der ungedeckelten Breite meldete
+            // das Band Deckung für einen Streifen, den es gar nicht malt — das
+            // Raster nahm sein Wasser zurück, das Band ersetzte es nicht, und
+            // genau dort riss der Lauf wieder ab (dieselbe Lücke, gegen die der
+            // anteilige Deckel eingeführt wurde).
+            stampCoverage(atX: s.x, atZ: s.z, halfWidthCells: hwCells,
                           alpha: s.alpha, n: n)
             rrVerts.append(Vector3(x: Float(wx - perpx), y: yLeft, z: Float(wz - perpz)))
             rrVerts.append(Vector3(x: Float(wx + perpx), y: yRight, z: Float(wz + perpz)))
