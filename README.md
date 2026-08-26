@@ -7,9 +7,9 @@ Rendering und Interaktion in Godot 4 (via GDExtension/SwiftGodot).
 
 ![Terrain nach 20.000 Jahren](docs/screenshots/terrain-20k.png)
 
-| 100.000 Jahre (gleicher Seed) | anderer Seed |
+| 100.000 Jahre (Seed 1337) | 20.000 Jahre (Seed 907) |
 | --- | --- |
-| ![100k Jahre](docs/screenshots/terrain-100k.png) | ![Seed 907](docs/screenshots/terrain-seed907.png) |
+| ![100.000 Jahre, Seed 1337](docs/screenshots/terrain-100k.png) | ![20.000 Jahre, Seed 907](docs/screenshots/terrain-seed907.png) |
 
 ## Was drinsteckt
 

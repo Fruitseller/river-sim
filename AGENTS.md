@@ -403,14 +403,21 @@ Werte (gemeinsamer Helfer: `Tests/SimCoreTests/RepoSource.swift`). Zahlen im
 Shader deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`); sonst
 greift der Textvergleich nicht.
 
-**Wasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
+**Binnenwasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
 Band-Geometrie (`RiverRibbonRenderer`) malt Mäander-Hauptläufe, Delta-Fächer und
 Altarme, das Raster-Feld (`WaterFieldRenderer` + `terrain.gdshader`) die
-dendritischen Zubringer, Seen und das Meer. Die Grenze ist die Wassersäule
+dendritischen Zubringer und Seen. Die Grenze ist die Wassersäule
 `WaterRender.lakeRawWetDepth`: darunter malt nur die Geometrie, darüber nur das
 Raster. Wer eine der beiden Seiten verschiebt, bekommt entweder einen Spalt oder
 doppeltes Wasser; beides zählt `game/tests/water_geometry.gd`.
+
+Das offene Meer ist eine dritte, rein visuelle Fläche (`ocean.gdshader`). Sie
+teilt Farben, Fresnel und Glanz mit beiden Binnenwasser-Pfaden, bleibt aber opak:
+sonst scheint bei flacher Kamera die rechteckige Unterseite des Terrain-
+Heightfields durch. Innerhalb des Terrain-Quadrats schneidet dieselbe
+`height_tex` alle Landzellen aus der Meeresfläche; ihr Meshrand liegt hinter
+`Camera3D.far`.
 
 Zwei Drainage-Netze mit strikt getrennten Rollen: **D8/`area`** speist die Erosion
 (kalibriert, implizit stabil), **MFD/`areaMFD`** (Freeman/Quinn) speist **nur** Render

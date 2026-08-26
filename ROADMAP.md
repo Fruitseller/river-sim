@@ -702,7 +702,8 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
   `BrushTool` (Werkzeug-Modi).
 - `game/shaders/terrain.gdshader` — prozedurale Boden-/Fels-/Vegetations-/
   Kältematerialien, Lithologieschichten, Wasser-Overlay und Detail-Layer;
-  `water.gdshader` — Band-Geometrie; `ocean.gdshader` — offenes Meer.
+  `water.gdshader` — Band-Geometrie; `ocean.gdshader` — opakes offenes Meer,
+  unter Land per gemeinsamer Höhenkarte ausgeschnitten.
 - `game/scripts/Main.gd` (~1280 Zeilen) — Licht/Environment, UI, Kamera/Zoom,
   Werkzeug-Tabelle, RS_*-Env-Schalter.
 - `game/tests/*.gd` — die Godot-seitigen Wächter (`smoke`, `water_geometry`,
