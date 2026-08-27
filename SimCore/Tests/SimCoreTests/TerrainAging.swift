@@ -30,7 +30,7 @@ final class TerrainAging: XCTestCase {
     /// nach 30k WIEDER HOCH (relief 0.4569 → 0.5097) und die Gratkrümmung blieb
     /// ab 10k flach bei ≈ −0.030 — genau das Plateau, das dieser Test ausschließt.
     func testAgingTrajectoryOver100k() {
-        var c = SimConfig(); c.n = 160
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
 
         let relief0 = t.landRelief()
@@ -117,7 +117,7 @@ final class TerrainAging: XCTestCase {
     /// e-Funktions-Differenzen teleskopiert), nicht ein „Rate × dt" am
     /// Schrittanfang — letzteres würde bei kleinem dt systematisch zu VIEL heben.
     func testDecayingUpliftIsFramerateIndependent() {
-        var c = SimConfig(); c.n = 48
+        var c = SimConfig(); c.n = 48; c.world = calibrationWorld
         func total(dt: Double, steps: Int) -> Double {
             let t = Terrain(config: c, seed: 4242)
             var sum = 0.0
@@ -139,7 +139,7 @@ final class TerrainAging: XCTestCase {
     /// dasselbe ergeben. Größenordnung des alten Fehlers in genau diesem Aufbau:
     /// der Sprung trug 0.09897 statt korrekt 0.10582 ein (−6.5 %).
     func testServoFloorCrossingIsFramerateIndependent() {
-        var c = SimConfig(); c.n = 48
+        var c = SimConfig(); c.n = 48; c.world = calibrationWorld
         // Untergrenze so wählen, dass der Schnittpunkt MITTEN im groben Schritt
         // liegt: U(t) = floor bei t = −τ·ln((s−U_floor)/(U₀−U_floor)).
         let floorRate = c.upliftDecayFloorPer100y

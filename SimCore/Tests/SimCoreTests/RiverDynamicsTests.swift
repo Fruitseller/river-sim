@@ -8,7 +8,7 @@ import XCTest
 /// die D8 prinzipiell nicht darstellen kann. Kalibriert bei n≤200 für Tempo.
 final class RiverDynamicsTests: XCTestCase {
 
-    private func cfg(n: Int) -> SimConfig { var c = SimConfig(); c.n = n; return c }
+    private func cfg(n: Int) -> SimConfig { var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c }
 
     /// Kanalzellen: Land mit Einzugsgebiet ≥ `creek` Zellen. (Der Renderer nutzt
     /// braidMinCells=120; das Default 30 hier hält die älteren MFD-Metriken stabil.)
@@ -129,7 +129,7 @@ final class RiverDynamicsTests: XCTestCase {
     /// gedeckelt statt weglaufend — der frühere Fehlermodus war Sinu → 26) und bildet
     /// dynamisch Altarme. Ersetzt die geparkten Skips, jetzt auf dem sanften Terrain.
     func testMeanderProductionStable() {
-        var c = SimConfig(); c.n = 256 // Produktions-Defaults (meanderEnabled/Migration/Deckel)
+        var c = SimConfig(); c.n = 256; c.world = calibrationWorld // Produktions-Defaults (meanderEnabled/Migration/Deckel)
         let t = Terrain(config: c, seed: 1337)
         var everOxbow = false
         var maxSinuEver = 0.0
@@ -185,7 +185,7 @@ final class RiverDynamicsTests: XCTestCase {
     /// verlandete Betten 7.3% → 3.5%. Über 3 Seeds × 150k J. konsistent
     /// (Tiefe +25…+57%, Verlandung 13–15% → 7–10%), Relief/maxH unverändert.
     func testChannelBedSurvivesDroplets() {
-        var cOn = SimConfig(); cOn.n = 256
+        var cOn = SimConfig(); cOn.n = 256; cOn.world = calibrationWorld
         var cOff = cOn
         cOff.hydraulic.channelDepositDamp = 1.0 // = Zustand vor der Reconciliation
         let tOn = Terrain(config: cOn, seed: 1337)
@@ -218,7 +218,7 @@ final class RiverDynamicsTests: XCTestCase {
     /// Rückwärtskompatibilität: OHNE Maske (leeres Array) rechnet `Hydraulic.erode`
     /// bit-identisch wie vor der Reconciliation — die Kopplung ist opt-in.
     func testDropletUnchangedWithoutMask() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 99)
         var h = t.h, rock = t.rock, sed = t.sed
         var h2 = h, rock2 = rock, sed2 = sed
@@ -417,7 +417,7 @@ final class RiverDynamicsTests: XCTestCase {
         var seedsFor = 0, seedsAgainst = 0
         var everFormed = false, everClosed = false
         for seed in Self.braidSeeds {
-            var cOn = SimConfig(); cOn.n = 256
+            var cOn = SimConfig(); cOn.n = 256; cOn.world = calibrationWorld
             // Becken-Wasserhaushalt (Issue #11) AUSGEPINNT — wie `meanderCfg()`
             // seine alten Werte pinnt: dieser Wächter misst den braidPass A/B,
             // nicht das Klima. Mit Verdunstung fällt Ponding in den Braid-Plains
@@ -530,7 +530,7 @@ final class RiverDynamicsTests: XCTestCase {
     /// kein Zentralbecken-Mega-See — und das unter Simulation entwässert BLEIBT.
     func testBasinsDrainToSea() {
         for seed: UInt32 in [1337, 42, 2024] {
-            var c = SimConfig(); c.n = 256
+            var c = SimConfig(); c.n = 256; c.world = calibrationWorld
             let t = Terrain(config: c, seed: seed)
             let s0 = t.lakeStats()
             var cOff = c; cOff.breachEnabled = false
@@ -589,7 +589,7 @@ final class RiverDynamicsTests: XCTestCase {
     /// SIND getrackt, keine Lücken) und (b) PERSISTIERT über die Zeit
     /// (etablierte Läufe bleiben — Sharpening), statt jeden Schritt zu springen.
     func testStreamMapMarksAndPersists() {
-        var c = SimConfig(); c.n = 256
+        var c = SimConfig(); c.n = 256; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         func renderedSet() -> (set: Set<Int>, recall: Double) {
             let chan = channelSet(t, area: t.areaMFD, creek: 120)

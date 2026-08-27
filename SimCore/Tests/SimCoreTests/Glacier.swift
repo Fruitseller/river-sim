@@ -31,7 +31,7 @@ final class Glacier: XCTestCase {
     /// (`docs/glacier-measurements.md` §A). n = 384 hält den Abstand zur
     /// Firn-Grenze über 50k Jahre und ist noch schnell genug für Wächter.
     private func cfg(n: Int = 384) -> SimConfig {
-        var c = SimConfig(); c.n = n; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
     }
 
     /// Konfiguration, in der AUSSER dem Eis nichts das Gelände anfasst — der

@@ -42,7 +42,7 @@ final class MeltRunoff: XCTestCase {
 
     private func cfg(n: Int, arm: Arm) -> SimConfig {
         var c = SimConfig()
-        c.n = n
+        c.n = n; c.world = calibrationWorld
         switch arm {
         case .off:      c.meltRunoffEnabled = false
         case .renorm:   break
@@ -547,7 +547,7 @@ final class MeltRunoff: XCTestCase {
     /// deshalb INSELWEIT und über mehrere Seeds gezählt: entstehen weiter
     /// Salzpfannen?
     func testEndorheicMechanicsSurviveMeltRunoff() {
-        var c = SimConfig(); c.n = 256; c.endorheicEvapRatio = 6   // dryCfg von #11
+        var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6   // dryCfg von #11
         var ref = c; ref.meltRunoffEnabled = false                 // Arm der #11-Wächter
 
         /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).
@@ -612,7 +612,7 @@ final class MeltRunoff: XCTestCase {
     /// `updateClimate`). Er hängt an `computeRain`, läuft also einmal je Schritt.
     func testRunoffWeightCostDiagnostic() throws {
         try skipUnlessMeasuring()
-        var c = SimConfig(); c.n = 832
+        var c = SimConfig(); c.n = 832; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         t.step(dtYears: 1000)
         let rounds = 100

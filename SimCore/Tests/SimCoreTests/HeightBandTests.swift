@@ -53,7 +53,7 @@ final class HeightBandTests: XCTestCase {
     /// Die 0-°C-Isotherme liegt rechnerisch bei `sea + T₀/Γ` = 0.5730 — genau
     /// dort, wo `snowStart` steht.
     func testSnowZoneFollowsTheClimateNotAFixedLandFraction() {
-        var c = SimConfig(); c.n = 832
+        var c = SimConfig(); c.n = 832; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let atGen = snowFractions(t)
         let startGen = t.heightBands.snowStart
@@ -106,7 +106,7 @@ final class HeightBandTests: XCTestCase {
     /// von 56994. Mit dem Klima (#33) liegt `snowStart` auf 0.5721, die
     /// Überlappung ist also unverändert vorhanden.
     func testSnowZoneBearsNoTrees() {
-        var c = SimConfig(); c.n = 256
+        var c = SimConfig(); c.n = 256; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let b = t.heightBands
         // Vorbedingung: die Bänder überlappen (sonst testet der Guard nichts).
@@ -146,7 +146,7 @@ final class HeightBandTests: XCTestCase {
     /// `snowStart` hier von 0.5658 auf 0.5072 mit, weil sie ein Perzentil war;
     /// jetzt gemessen 0.5702 → 0.5687.
     func testBandsFollowFlatteningTerrain() {
-        var c = SimConfig(); c.n = 160
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let b0 = t.heightBands
         let max0 = t.maxHeight()
@@ -170,7 +170,7 @@ final class HeightBandTests: XCTestCase {
     /// Ordnung und Wohlgeformtheit der Bänder: monoton und mit echter Rampenbreite
     /// (sonst harte Farbkante statt Verlauf).
     func testBandsAreWellOrdered() {
-        var c = SimConfig(); c.n = 160
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let b = t.heightBands
         XCTAssertLessThan(b.coniferLow, b.coniferHigh)
@@ -192,7 +192,7 @@ final class HeightBandTests: XCTestCase {
     /// ohne auswertbares Land greift der Rückfall, ein spiegelglattes Plateau
     /// bekommt Mindest-Rampenbreiten.
     func testDegenerateFields() {
-        var c = SimConfig(); c.n = 64
+        var c = SimConfig(); c.n = 64; c.world = calibrationWorld
         let flooded = HeightBands.fromLandHeights([Double](repeating: c.sea - 0.1, count: 100), cfg: c)
         XCTAssertEqual(flooded, HeightBands.legacyAbsolute)
         let plateau = HeightBands.fromLandHeights([Double](repeating: c.sea + 0.3, count: 1000), cfg: c)
@@ -208,7 +208,7 @@ final class HeightBandTests: XCTestCase {
     /// weiß, obwohl das Klima keinen Schnee trägt (und `bearsTrees` würde sie
     /// grundlos entwalden).
     func testEmptySnowFieldPutsTheBandAboveTheLand() {
-        var c = SimConfig(); c.n = 64
+        var c = SimConfig(); c.n = 64; c.world = calibrationWorld
         var heights = [Double](repeating: c.sea - 0.1, count: 4000)
         for k in 0..<2000 { heights[k] = c.sea + 0.1 + Double(k) * 0.0002 } // bis 0.65
         let maxLand = heights.max()!
@@ -234,7 +234,7 @@ final class HeightBandTests: XCTestCase {
     /// (`Terrain.landHeightQuantiles`) — und die liefert nach dem Umbau exakt das,
     /// was `landReliefRobust` vorher selbst gerechnet hat.
     func testQuantileSourceMatchesReliefSignal() {
-        var c = SimConfig(); c.n = 160
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let q = Terrain.landHeightQuantiles(heights: t.h, sea: c.sea, probs: [0.5, 0.95])
         XCTAssertNotNil(q)

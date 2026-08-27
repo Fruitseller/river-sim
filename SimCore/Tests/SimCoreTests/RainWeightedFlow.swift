@@ -27,7 +27,7 @@ final class RainWeightedFlowTests: XCTestCase {
 
     private func cfg(n: Int, rainWeighted: Bool) -> SimConfig {
         var c = SimConfig()
-        c.n = n
+        c.n = n; c.world = calibrationWorld
         c.rainWeightedFlow = rainWeighted
         // Gletscher (Issue #35) AUSGEPINNT — dieselbe Doktrin wie die Pins in
         // `EndorheicEvaporation.cfg()`: dieser Wächter misst, was die GEWICHTUNG
@@ -190,7 +190,7 @@ final class RainWeightedFlowTests: XCTestCase {
     /// Zufallsstrom bleibt also derselbe. Damit ist belegt, dass der Sampler die
     /// Startpunkte nur UMVERTEILT und den Pfad nicht anfasst.
     func testUniformRainWeightIsBitIdentical() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 99)
         var h = t.h, rock = t.rock, sed = t.sed
         var h2 = h, rock2 = rock, sed2 = sed

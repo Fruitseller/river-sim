@@ -11,7 +11,7 @@ final class VegetationTests: XCTestCase {
     /// Auwald (Klasse 3) entsteht auf dem Produktions-Pfad — und NUR flussnah,
     /// flach und nicht tief überflutet (die Ableitungs-Regeln halten).
     func testRiparianClassOnlyNearWater() {
-        var c = SimConfig(); c.n = 192
+        var c = SimConfig(); c.n = 192; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         for _ in 0..<10 { t.step(dtYears: 500) }
         let n = c.n
@@ -57,7 +57,7 @@ final class VegetationTests: XCTestCase {
     /// (Braiding-Regression Aug 2026, s. updateVegClass). Bett = Gras heißt
     /// zugleich: dort gilt exakt die Vor-Merge-Dämpfung 1 − 0.6·veg.
     func testNoWoodlandOnTheChannelBed() {
-        var c = SimConfig(); c.n = 192
+        var c = SimConfig(); c.n = 192; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         for _ in 0..<10 { t.step(dtYears: 500) }
         let n = c.n
@@ -83,7 +83,7 @@ final class VegetationTests: XCTestCase {
     /// Alle bestehenden veg-Konsumenten bleiben mit Klassen {0, 1} (kahl/Gras)
     /// unverändert: typFactor(Gras) = 1.0 ⇒ vegDamp == (1 − 0.6·veg).
     func testGrassFactorMatchesLegacyDamping() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 7)
         for k in 0..<c.count where t.vegClass[k] <= 1 {
             XCTAssertEqual(t.vegDamp(k), max(0, 1 - 0.6 * t.veg[k]), accuracy: 1e-15)
@@ -106,7 +106,7 @@ final class VegetationTests: XCTestCase {
     /// Migration mit voll bewachsenem Ufer-Streifen < ohne Bewuchs (gepinnte
     /// Test-Config: alte Migrations-Rate wie meanderCfg, Kohäsion 0.5).
     func testRiparianCohesionSlowsMigration() {
-        var cfg = SimConfig(); cfg.n = 96
+        var cfg = SimConfig(); cfg.n = 96; cfg.world = calibrationWorld
         cfg.meanderMigration = 5.0e-5
         cfg.meanderCohesion = 0.5
         func grownSinuosity(_ rip: @escaping (MeanderNode) -> Double) -> Double {
@@ -127,7 +127,7 @@ final class VegetationTests: XCTestCase {
     /// Kohäsion 0 (gepinnter Alt-Zustand) ist ein exakter No-Op: gleiche
     /// Trajektorie wie ganz ohne riparianAt-Callback.
     func testCohesionZeroIsNoOp() {
-        var cfg = SimConfig(); cfg.n = 96
+        var cfg = SimConfig(); cfg.n = 96; cfg.world = calibrationWorld
         cfg.meanderMigration = 5.0e-5
         cfg.meanderCohesion = 0
         let a = MeanderState(); a.channels = [sineChannel()]
@@ -156,7 +156,7 @@ final class VegetationTests: XCTestCase {
     /// Tief überflutete Zellen verlieren ihre Vegetation mit τ_kill (~3τ bis
     /// praktisch kahl) — nicht mit der trägen 250a-Relaxation.
     func testFloodKillClearsVegetation() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let pick = pickVegetatedCell(t)
         XCTAssertGreaterThanOrEqual(pick, 0, "keine bewachsene Zelle gefunden — Test leer")
@@ -178,7 +178,7 @@ final class VegetationTests: XCTestCase {
     /// Nach dem Ende der Störung wächst die Fläche innerhalb ~3·τ wieder zu
     /// (Sukzession: Samen-Druck der intakten Nachbarn + Relaxation).
     func testRegrowthAfterKill() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         // Isoliert die VEGETATIONS-Relaxation: der Störungs-/Regenerationspfad
         // (Issue #26) hält frisch umgegrabenen Boden bewusst über sein
         // Abklingfenster kahl und wird über `step()` abgebaut — dieser Test
@@ -217,7 +217,7 @@ final class VegetationTests: XCTestCase {
     /// auch wenn direkt daneben dichter Bewuchs steht — der Samen-Druck der
     /// Sukzession ist auf bewohnbare Standorte gegated.
     func testBareSitesStayBareDespiteSeeds() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let n = c.n
         for _ in 0..<5 { t.updateVegetation(years: 250) }
@@ -255,7 +255,7 @@ final class VegetationTests: XCTestCase {
     /// Vegetation komplett (Wurzel-Wegriss); der Mini-Schritt danach lässt der
     /// Regrünung keine Zeit (f ≈ 0.004) — veg muss dort ≈ 0 sein.
     func testMeanderStampKillsBedVegetation() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         for _ in 0..<6 { t.step(dtYears: 500) }
         t.step(dtYears: 1)
@@ -272,7 +272,7 @@ final class VegetationTests: XCTestCase {
     /// Gleicher Seed → bit-identische veg-/vegClass-Felder, auch nach
     /// Simulation (Dispersal-/Kill-Pässe sind parallel, aber disjunkt).
     func testVegetationDeterminism() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let a = Terrain(config: c, seed: 99)
         let b = Terrain(config: c, seed: 99)
         for _ in 0..<8 { a.step(dtYears: 500); b.step(dtYears: 500) }

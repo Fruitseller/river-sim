@@ -22,7 +22,7 @@ final class LongRunCollapse: XCTestCase {
     /// Über einen langen Zeitraffer dürfen Relief, Höhe und See-Anteil NICHT
     /// weglaufen — sie sollen nahe dem jungen Zustand plateauen.
     func testLongRunDoesNotRunAway() {
-        var c = SimConfig(); c.n = 160
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let relief0 = t.landRelief()
         let maxH0 = t.maxHeight()

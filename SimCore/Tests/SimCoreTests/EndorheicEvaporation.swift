@@ -11,7 +11,7 @@ final class EndorheicEvaporation: XCTestCase {
     /// Produktion sind verhaltensneutral, s. AGENTS.md).
     private func cfg(n: Int = 256, kappa: Double? = nil) -> SimConfig {
         var c = SimConfig()
-        c.n = n
+        c.n = n; c.world = calibrationWorld
         if let kappa { c.endorheicEvapRatio = kappa }
         // Gesteinsfeld (Issue #12) AUSGEPINNT — dieselbe Doktrin wie κ=6 unten und
         // wie `meanderCfg()` in SimCoreTests: diese Wächter prüfen die MECHANIK des
@@ -327,7 +327,7 @@ final class EndorheicEvaporation: XCTestCase {
     func testUncappedRunIsBitIdenticalToDisabled() {
         var on = cfg(kappa: 0.5)
         var off = cfg(); off.endorheicEvaporation = false
-        on.n = 160; off.n = 160
+        on.n = 160; on.world = calibrationWorld; off.n = 160
         let a = Terrain(config: on, seed: 1337)
         let b = Terrain(config: off, seed: 1337)
         for _ in 0..<5 { a.step(dtYears: 1000); b.step(dtYears: 1000) }

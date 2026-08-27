@@ -18,7 +18,7 @@ import XCTest
 final class ClimateSnow: XCTestCase {
 
     private func cfg(n: Int = 192) -> SimConfig {
-        var c = SimConfig(); c.n = n; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
     }
 
     /// Landanteile: Schnee-Rampe (Deckung > `snowBandCoverStart`), voll beschneit
@@ -74,7 +74,7 @@ final class ClimateSnow: XCTestCase {
     /// Perzentil-Schnee (1.5 % des Landes).
     func testProductionResolutionDiagnostic() throws {
         try skipUnlessMeasuring()
-        var c = SimConfig(); c.n = 832
+        var c = SimConfig(); c.n = 832; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         for label in ["J0", "J10k", "J30k"] {
             if label != "J0" { run(t, to: label == "J10k" ? 10_000 : 30_000) }
@@ -96,7 +96,7 @@ final class ClimateSnow: XCTestCase {
     /// Höhenband-Pass) ist ein sequenzieller Zählpass über alle Zellen.
     func testClimatePassCostDiagnostic() throws {
         try skipUnlessMeasuring()
-        var c = SimConfig(); c.n = 832
+        var c = SimConfig(); c.n = 832; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let rounds = 200
         var clock = Date()

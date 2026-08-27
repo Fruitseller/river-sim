@@ -16,7 +16,7 @@ final class ReliefSignal: XCTestCase {
     /// Kernaussage: ein künstlich hochgezogener Einzelgipfel verschiebt das
     /// Regelsignal nur marginal, max − min dagegen voll.
     func testSinglePeakBarelyMovesSignal() {
-        var c = SimConfig(); c.n = 160
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         for _ in 0..<40 { t.step(dtYears: 500) } // gealtertes, eingeschwungenes Terrain
 
@@ -49,7 +49,7 @@ final class ReliefSignal: XCTestCase {
     /// Gegenprobe: das Signal ist nicht einfach stur, sondern folgt ECHTER
     /// Einebnung — sonst könnte der Servo nie anspringen.
     func testSignalFollowsRealFlattening() {
-        var c = SimConfig(); c.n = 160
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let base = t.h
         let signal0 = Terrain.landReliefRobust(heights: base, sea: c.sea)
@@ -68,7 +68,7 @@ final class ReliefSignal: XCTestCase {
     /// `cfg` ist unveränderlich → je Betriebspunkt ein eigenes (identisch
     /// generiertes) Terrain, das sich nur im `reliefTarget` unterscheidet.
     func testServoRateFollowsSignal() {
-        var base = SimConfig(); base.n = 96
+        var base = SimConfig(); base.n = 96; base.world = calibrationWorld
         let signal = Terrain(config: base, seed: 4242).landReliefRobust()
         func servo(target: Double) -> Double {
             var c = base; c.reliefTarget = target
@@ -94,7 +94,7 @@ final class ReliefSignal: XCTestCase {
     /// in `step()` wirkt — genau der Duplikat-Fehler, den `reliefServoRate` als
     /// einzige Quelle der Formel verhindern soll.
     func testServoRateOnMeasuredSignalMatchesSelfMeasured() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 4242)
 
         // Der Punkt, an dem beide Wege übereinstimmen MÜSSEN: das Ist-Signal.
@@ -125,7 +125,8 @@ final class ReliefSignal: XCTestCase {
 
     /// Das Signal ist praktisch auflösungsunabhängig (die verworfene Fenster-
     /// Variante NICHT — s. Config-Logbuch bei reliefTarget). Die Reihe geht
-    /// bewusst bis in die PRODUKTIONS-Auflösung (SimConfig().n = 832): genau
+    /// bewusst bis in die PRODUKTIONS-Auflösung (`SimConfig().n`, gelesen statt
+    /// genannt — sie war 832, steht seit Aug 2026 auf 720): genau
     /// darauf stützt sich die Kalibrier-Behauptung, dass Testkonfigs mit
     /// kleinerem n auf dasselbe reliefTarget regeln wie die Produktion.
     /// Gemessen (Seed 1337, frisches Terrain): 0.16504 (n=80), 0.17822 (160),
@@ -134,7 +135,7 @@ final class ReliefSignal: XCTestCase {
     func testSignalIsResolutionStable() {
         var values: [Double] = []
         for n in [80, 160, 320, 640, SimConfig().n] {
-            var c = SimConfig(); c.n = n
+            var c = SimConfig(); c.n = n; c.world = calibrationWorld
             values.append(Terrain(config: c, seed: 1337).landReliefRobust())
         }
         let lo = values.min()!, hi = values.max()!
