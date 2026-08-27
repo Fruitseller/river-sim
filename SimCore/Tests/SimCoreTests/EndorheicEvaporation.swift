@@ -121,6 +121,40 @@ final class EndorheicEvaporation: XCTestCase {
         return best
     }
 
+    /// Alle verdunstungs-limitierten Becken als Komponenten-Liste (8er,
+    /// Wasserfläche UND trockener Boden). `largestEndorheicBasin` ist der
+    /// Sonderfall „größte Komponente" davon.
+    private func endorheicBasins(_ t: Terrain) -> [[Int]] {
+        let n = t.cfg.n
+        var seen = [Bool](repeating: false, count: t.cfg.count)
+        var comps = [[Int]]()
+        for s in 0..<t.cfg.count where t.endorheicBasin[s] != .none && !seen[s] {
+            var stack = [s], comp = [Int]()
+            seen[s] = true
+            while let k = stack.popLast() {
+                comp.append(k)
+                let i = k % n, j = k / n
+                for dj in -1...1 {
+                    for di in -1...1 {
+                        let ni = i + di, nj = j + dj
+                        if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
+                        let nb = nj * n + ni
+                        if t.endorheicBasin[nb] != .none && !seen[nb] { seen[nb] = true; stack.append(nb) }
+                    }
+                }
+            }
+            comps.append(comp)
+        }
+        return comps
+    }
+
+    /// Verkrustete Playa-Zellen einer Zell-Liste: trockengefallener Beckenboden
+    /// mit überwiegender Salzkruste — das, was das Rendering als helle Pfanne
+    /// malt (`SimNode.terrainColorBytes`).
+    private func playaCells(_ t: Terrain, _ cells: [Int]) -> [Int] {
+        cells.filter { t.endorheicBasin[$0] == .dryBed && t.saltCrust[$0] > 0.5 }
+    }
+
     /// Wasserkomponente (stehendes Wasser, 8er) um `start`.
     private func waterCells(_ t: Terrain, _ cells: [Int]) -> [Int] {
         cells.filter { t.hf[$0] - t.h[$0] > 0.001 }
@@ -358,8 +392,8 @@ final class EndorheicEvaporation: XCTestCase {
 
     /// Der Bilanz-Spiegel folgt ratenbegrenzt: über 200 Schritte à 20 Jahren
     /// bleibt der größte Sprung des mittleren Beckenspiegels weit unter der
-    /// Spanne, um die er insgesamt wandern kann — und deutlich unter dem
-    /// Kontrollarm ohne Ratenbegrenzung.
+    /// Spanne, um die er insgesamt wandern kann. Die Gegenprobe ohne
+    /// Ratenbegrenzung steht als eigene Stufenantwort daneben, s. unten.
     /// Der größte Sprung wird RELATIV ZUR SPANNE gemessen (Issue #2): „weit
     /// unter der Spanne, um die er wandern kann" ist die Aussage dieses
     /// Wächters. Die frühere absolute Schranke (0.002) hing am Absolutwert
@@ -371,13 +405,37 @@ final class EndorheicEvaporation: XCTestCase {
     ///
     /// Die beiden Zusicherungen tragen deshalb unterschiedlich viel:
     /// - Die **Gegenprobe** gegen den unbegrenzten Arm ist das eigentliche
-    ///   Signal und hält über alle im Rahmen von #2 gemessenen Varianten:
-    ///   `main` 0.00325 gegen 0.00612, danach 0.00748 gegen 0.00929.
-    /// - Die **Sichtbarkeits-Schranke** ist bimodal, weil das Becken je nach
-    ///   Störung in dem einen oder anderen Regime landet: gemessen 0.217 …
-    ///   0.388 über die Depositions-Varianten von #2 (`main` 0.227). 0.45 liegt
-    ///   über beiden Moden und fängt weiterhin ab, dass der Spiegel die volle
-    ///   Spanne in einem Schritt durchläuft (das wäre ~1.0).
+    ///   Signal. Sie lief früher als ZWEITER 200-Schritt-Lauf mit τ=0 und
+    ///   verglich die beiden maximalen Sprünge (`main` 0.00325 gegen 0.00612,
+    ///   danach 0.00748 gegen 0.00929). Dieser Vergleich ist AUFGEGEBEN: die
+    ///   zwei Arme durchlaufen verschiedene Landschaften (der Spiegel wirkt
+    ///   über `hf` auf Abfluss und Erosion zurück), und in beiden ist der
+    ///   größte Sprung nicht die EWMA, sondern ein diskretes Ereignis —
+    ///   Sill-Durchbruch, Becken-Teilung, Rollenwechsel —, das per Konstruktion
+    ///   instantan ist (s. `capEndorheicBasins`: der Vorstand wird auf
+    ///   `[h, sill]` geklemmt, bevor relaxiert wird). Welcher Arm dabei den
+    ///   größeren Ausschlag erwischt, ist Lotterie: auf diesem Repo-Stand
+    ///   springt der RATENBEGRENZTE Arm auf macOS mit 0.00878 weiter als der
+    ///   Kontrollarm mit 0.00761 (auf Linux ist es umgekehrt, CI war grün;
+    ///   dasselbe Becken zählt dort 2313 statt 2813 Zellen) —
+    ///   dieselbe Kante, die das Kalibrier-Logbuch oben schon für den
+    ///   Gletscher-Pin notiert („der KONTROLLARM fällt mit Eis um 37 % und
+    ///   rutscht unter den ratenbegrenzten"). Ein Wächter, der an einem
+    ///   libm-Unterschied kippt, prüft nicht mehr die Mechanik.
+    ///   Die Gegenprobe steht deshalb jetzt als **Stufenantwort** daneben
+    ///   (`testBasinLevelFollowsTargetRateLimited`): beide Arme starten aus
+    ///   DEMSELBEN Zustand, bekommen DIESELBE Ziel-Verschiebung und werden über
+    ///   EINEN Schritt verglichen. Das ist genau die Größe, um die es geht (λ),
+    ///   ohne diskrete Ereignisse im Weg.
+    /// - Die **Sichtbarkeits-Schranke** bleibt hier und ist bimodal, weil das
+    ///   Becken je nach Störung in dem einen oder anderen Regime landet:
+    ///   gemessen 0.217 … 0.388 über die Depositions-Varianten von #2
+    ///   (`main` 0.227), auf diesem Stand 0.307 unter Linux und 0.409 unter
+    ///   macOS. Sie fängt ab, dass der Spiegel die
+    ///   volle Spanne in einem Schritt durchläuft (das wäre ~1.0); weil ihr
+    ///   Maximum aus den diskreten Ereignissen oben kommt und nicht aus der
+    ///   Ratenbegrenzung, steht die Schranke auf 0.6 statt auf den früheren
+    ///   0.45, die über der macOS-Messung nur 9 % Luft hatten.
     func testBasinLevelIsRateLimited() {
         func run(_ tau: Double) -> (maxJump: Double, span: Double, moved: Double) {
             var c = dryCfg()
@@ -401,14 +459,69 @@ final class EndorheicEvaporation: XCTestCase {
             return (maxJump, hi - lo, abs(prev - first))
         }
         let limited = run(500)
-        let instant = run(0)
-        print(String(format: "[RATE] τ=500: max Sprung %.5f Spanne %.5f (%.3f) · τ=0: max Sprung %.5f Spanne %.5f (%.3f)",
-                     limited.maxJump, limited.span, limited.maxJump / max(1e-9, limited.span),
-                     instant.maxJump, instant.span, instant.maxJump / max(1e-9, instant.span)))
-        XCTAssertLessThan(limited.maxJump, 0.45 * limited.span,
+        print(String(format: "[RATE] τ=500: max Sprung %.5f Spanne %.5f (%.3f)",
+                     limited.maxJump, limited.span, limited.maxJump / max(1e-9, limited.span)))
+        XCTAssertGreaterThan(limited.span, 0.005,
+            "Beckenspiegel wandert kaum — es gibt nichts zu begrenzen")
+        XCTAssertLessThan(limited.maxJump, 0.6 * limited.span,
             "Beckenspiegel springt sichtbar (Ratenbegrenzung wirkt nicht)")
-        XCTAssertLessThan(limited.maxJump, max(0.0005, instant.maxJump),
-            "ratenbegrenzt springt nicht weniger als instantan")
+    }
+
+    /// Gegenprobe zur Ratenbegrenzung als STUFENANTWORT — der Teil von
+    /// `testBasinLevelIsRateLimited`, der früher als zweiter Langlauf mit τ=0
+    /// daneben stand (Begründung des Umbaus dort).
+    ///
+    /// Aufbau: einen Zustand einschwingen, ihn als `TerrainState` festhalten und
+    /// daraus ZWEI Terrains laden (derselbe Weg, den `WorldSnapshot.decode`
+    /// geht: `init(allocating:)` + `restore`). Beide starten damit
+    /// bit-identisch. Dann bekommen beide dieselbe Ziel-Verschiebung — κ von 6
+    /// auf 12, ein trockeneres Klima, also mehr Verdunstung pro Seefläche und
+    /// ein tieferer Zielstand — und laufen EINEN Schritt à 20 Jahren.
+    ///
+    /// Erwartung: der unbegrenzte Arm (τ=0) legt die ganze Strecke zum neuen
+    /// Ziel in diesem einen Schritt zurück, der begrenzte nur den EWMA-Anteil
+    /// λ = 1 − e^(−20/500) = 0.039. GEMESSEN (n=256, Seed 1337, 20×20 J.
+    /// Vorlauf): macOS 0.00264 gegen 0.00012, Verhältnis 0.045 (2813-Zellen-
+    /// Becken) · Linux 0.00285 gegen 0.00013, Verhältnis 0.047 (2313 Zellen).
+    /// Das ist λ plus die Eigen-Drift des Ziels innerhalb des Schritts — und
+    /// anders als der alte Langlauf-Vergleich liest die Stufenantwort auf
+    /// beiden Plattformen praktisch denselben Wert, obwohl es nicht dasselbe
+    /// Becken ist. Ohne die κ-Stufe (Kontrolle) bewegt sich der unbegrenzte Arm
+    /// 0.00128, weil der eingeschwungene Zustand seinem Ziel ohnehin nachläuft;
+    /// die Stufe verdoppelt das Signal und macht die Ursache benennbar.
+    ///
+    /// Warum eine Stufe im Klima und keine im Gelände: Sill-Eingriffe (Kerbe in
+    /// die Schwelle) verschieben nicht das Ziel, sondern den DECKEL, und der
+    /// klemmt per Konstruktion instantan — beide Arme sprängen gleich weit.
+    func testBasinLevelFollowsTargetRateLimited() {
+        var base = dryCfg()
+        base.endorheicResponseYears = 500
+        let src = Terrain(config: base, seed: 1337)
+        for _ in 0..<20 { src.step(dtYears: 20) }
+        let basin = largestEndorheicBasin(src)
+        XCTAssertGreaterThan(basin.count, 200, "kein abflussloses Becken")
+        let inv = 1.0 / Double(basin.count)
+        let snapshot = src.state
+        let start = basin.reduce(0.0) { $0 + src.hf[$1] * inv }
+
+        /// Ein Schritt aus dem festgehaltenen Zustand, mit verschobenem Ziel.
+        func stepResponse(tau: Double) -> Double {
+            var c = base
+            c.endorheicResponseYears = tau
+            c.endorheicEvapRatio = 12 // Ziel-Stufe: trockeneres Klima
+            let t = Terrain(allocating: c, seed: 1337)
+            t.restore(snapshot)
+            t.step(dtYears: 20)
+            return abs(basin.reduce(0.0) { $0 + t.hf[$1] * inv } - start)
+        }
+        let instant = stepResponse(tau: 0)
+        let limited = stepResponse(tau: 500)
+        print(String(format: "[STUFE] Becken %d Zellen · τ=0 %.5f · τ=500 %.5f (%.3f)",
+                     basin.count, instant, limited, limited / max(1e-9, instant)))
+        XCTAssertGreaterThan(instant, 0.001,
+            "das Ziel hat sich kaum verschoben — die Gegenprobe wäre leer")
+        XCTAssertLessThan(limited, 0.25 * instant,
+            "ratenbegrenzt folgt der Ziel-Stufe genauso schnell wie unbegrenzt")
     }
 
     /// Framerate-Unabhängigkeit (Projekt-Invariante): der ratenbegrenzte
@@ -461,11 +574,29 @@ final class EndorheicEvaporation: XCTestCase {
     /// Wasser-Overlay malt dort also nichts — und (b) eine Salzkruste, aus der
     /// das Rendering die helle Playa baut (SimNode.terrainColorBytes). Der
     /// Bewuchs bleibt aus (Salzpfannen sind kahl).
+    ///
+    /// Geprüft wird das Becken mit der GRÖSSTEN Pfanne, nicht das größte Becken.
+    /// Grund: welches Becken das größte ist, entscheidet sich zwischen den zwei
+    /// Kandidaten dieses Seeds an wenigen Prozent Fläche (gemessen 2079 gegen
+    /// 1836 Zellen), und nur der zweite fällt trocken — das größte ist ein
+    /// GESPEISTES. Diese Reihenfolge kippt bereits an einer ulp: das
+    /// Kalibrier-Logbuch oben notiert es für Lithologie, Höhenbänder, Schmelze
+    /// und Eis, auf macOS kippt sie gegenüber Linux allein an der System-libm
+    /// (plattformübergreifende Bit-Gleichheit gilt in diesem Projekt nicht,
+    /// s. AGENTS.md) — der Wächter war dort rot, während CI grün war, ohne dass
+    /// an der Mechanik etwas fehlte (inselweit crusteten 577 Zellen, 535 davon
+    /// voll). Die Auswahl über das Maximum ist trotzdem keine Selbstbestätigung:
+    /// bricht die Playa-Bildung, ist das Maximum 0 und die Zusicherung darunter
+    /// rot. Was sie NICHT aufgibt, ist die Lokalität — alle weiteren
+    /// Zusicherungen (Wasser, Bewuchs, Kruste unter Wasser) vergleichen
+    /// weiterhin innerhalb EINES Beckens.
     func testDriedBedIsRenderedAsPlaya() {
         let t = Terrain(config: dryCfg(), seed: 1337)
         for _ in 0..<10 { t.step(dtYears: 200) } // Kruste/Spiegel einschwingen
-        let basin = largestEndorheicBasin(t)
-        let bed = basin.filter { t.endorheicBasin[$0] == .dryBed && t.saltCrust[$0] > 0.5 }
+        let basins = endorheicBasins(t)
+        XCTAssertFalse(basins.isEmpty, "kein abflussloses Becken")
+        let basin = basins.max { playaCells(t, $0).count < playaCells(t, $1).count } ?? []
+        let bed = playaCells(t, basin)
         XCTAssertGreaterThan(bed.count, 100, "keine Salzpfanne entstanden")
         for k in bed {
             // `hf` steht auf dem Beckenboden (Deckel setzt hf = h); die Droplets
