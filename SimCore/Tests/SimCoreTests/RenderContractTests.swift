@@ -100,7 +100,7 @@ final class RenderContractTests: XCTestCase {
     /// bit-gleiches Feld (Determinismus-Invariante des Projekts).
     func testTerrainDefaultSeedMatchesTheContract() {
         var cfg = SimConfig()
-        cfg.n = 96
+        cfg.n = 96; cfg.world = calibrationWorld
         let implicitSeed = Terrain(config: cfg)
         let explicitSeed = Terrain(config: cfg, seed: RenderContract.defaultSeed)
         XCTAssertEqual(implicitSeed.h, explicitSeed.h,

@@ -5,7 +5,7 @@ final class SimCoreTests: XCTestCase {
 
     private func makeConfig(n: Int = 96) -> SimConfig {
         var c = SimConfig()
-        c.n = n
+        c.n = n; c.world = calibrationWorld
         return c
     }
 
@@ -49,7 +49,7 @@ final class SimCoreTests: XCTestCase {
     /// Pfad, der real läuft — Langzeit-Stabilität muss auf dem echten Pfad
     /// (Droplet + Sinuositäts-Deckel + Hals 2.0) gemessen werden.
     private func prodMeanderCfg(n: Int = 192) -> SimConfig {
-        var c = SimConfig(); c.n = n; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
     }
 
     // MARK: - Determinismus

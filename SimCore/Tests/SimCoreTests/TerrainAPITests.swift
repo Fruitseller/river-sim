@@ -14,7 +14,7 @@ final class TerrainAPITests: XCTestCase {
     /// Produktionsphysik, nur `n` gesenkt. `world` bleibt, damit Pinselradien
     /// in Welteinheiten dieselbe Bedeutung haben wie im Spiel.
     private func cfg(n: Int = 96) -> SimConfig {
-        var c = SimConfig(); c.n = n; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
     }
 
     // MARK: - generate(seed:)

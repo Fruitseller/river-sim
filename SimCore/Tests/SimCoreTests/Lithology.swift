@@ -18,7 +18,7 @@ final class Lithology: XCTestCase {
     /// Produktionsphysik in Testauflösung (die reinen Performance-Schalter der
     /// Produktion sind verhaltensneutral, s. AGENTS.md).
     private func cfg(n: Int = 192) -> SimConfig {
-        var c = SimConfig(); c.n = n; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
     }
 
     /// REFERENZARM: das Feld wird gerechnet, wirkt aber auf keine Rate. Damit
@@ -328,7 +328,7 @@ final class Lithology: XCTestCase {
     /// bleibt, aber nur noch nach unten. Relief darf nicht einebnen, die Berge
     /// nicht wachsen, der See-Anteil nicht wuchern.
     func testSoftestRockDoesNotFlatten() {
-        var c = SimConfig(); c.n = 160; c.lithHardBias = -1
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld; c.lithHardBias = -1
         let t = Terrain(config: c, seed: 1337)
         let maxH0 = t.maxHeight()
         let relief0 = t.landRelief()
@@ -358,7 +358,7 @@ final class Lithology: XCTestCase {
     /// Sprung-Schwelle (0.002) bleibt bewusst dem #11-Wächter auf uniformem
     /// Gestein: sie ist eine Eigenschaft des dort fixierten Beckens.
     func testEndorheicMechanicsSurviveLithology() {
-        var c = SimConfig(); c.n = 256; c.endorheicEvapRatio = 6   // dryCfg von #11, Lithologie AN
+        var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6   // dryCfg von #11, Lithologie AN
         var ref = c; ref.lithologyEnabled = false                  // derselbe Arm wie der #11-Wächter
 
         /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).
@@ -448,7 +448,7 @@ final class Lithology: XCTestCase {
     /// härtesten Stellen). Die Landschaft darf dabei nicht in die andere Richtung
     /// weglaufen (unerodierbare Insel → Relief-Runaway, Becken entwässern nie).
     func testHardestRockDoesNotRunAway() {
-        var c = SimConfig(); c.n = 160; c.lithHardBias = 1
+        var c = SimConfig(); c.n = 160; c.world = calibrationWorld; c.lithHardBias = 1
         let t = Terrain(config: c, seed: 1337)
         let maxH0 = t.maxHeight()
         run(t, to: 100_000)

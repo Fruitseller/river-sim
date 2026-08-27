@@ -66,7 +66,7 @@ final class StrahlerTests: XCTestCase {
 
     private func cfg(n: Int) -> SimConfig {
         var c = SimConfig()
-        c.n = n
+        c.n = n; c.world = calibrationWorld
         return c
     }
 

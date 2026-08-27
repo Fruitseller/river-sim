@@ -24,7 +24,7 @@ final class FlattenRegeneration: XCTestCase {
     /// der Pinselradius in Welteinheiten dieselbe Bedeutung hat wie im Spiel.
     private func flatCfg(n: Int = 96) -> SimConfig {
         var c = SimConfig()
-        c.n = n
+        c.n = n; c.world = calibrationWorld
         return c
     }
 

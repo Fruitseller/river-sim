@@ -108,7 +108,7 @@ final class DtInvariance: XCTestCase {
     static func run(seed: UInt32, n: Int = 192, years: Double = 20_000,
                     dt: Double, from: Double = 10_000, every: Double = 2_000,
                     configure: (inout SimConfig) -> Void = { _ in }) -> Metrics {
-        var c = SimConfig(); c.n = n; configure(&c)
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld; configure(&c)
         let t = Terrain(config: c, seed: seed)
         var acc = Metrics(), samples = 0.0, next = from
         while t.years < years - 1e-9 {
@@ -136,7 +136,7 @@ final class DtInvariance: XCTestCase {
     /// (volle 100-Jahr-Relaxation je 10-Jahr-Schritt).
     func testWaveErosionIsFramerateIndependent() {
         func waveOnly(dt: Double) -> (band: Int, mass: Double) {
-            var c = SimConfig(); c.n = 96
+            var c = SimConfig(); c.n = 96; c.world = calibrationWorld
             c.meanderEnabled = false; c.braidingEnabled = false
             c.outletIncision = false; c.puddleFillYears = 0; c.basinFill = false
             c.hydraulicPerYear = 0    // keine Tropfen
@@ -183,7 +183,7 @@ final class DtInvariance: XCTestCase {
     /// (dt < 1/Rate) sind der Fall, den `max(1, …)` aufrundete: bei dt = 0.2 J.
     /// verlangte die Rate 0.09 Tropfen und es fielen 1 (11× zu viel).
     func testDropletCountIsARate() {
-        var c = SimConfig(); c.n = 64
+        var c = SimConfig(); c.n = 64; c.world = calibrationWorld
         let expected = 1000.0 * c.hydraulicPerYear * Double(c.n * c.n) / (640.0 * 640.0)
         for dt in [0.2, 1.0, 50.0, 1000.0] {
             let t = Terrain(config: c, seed: 1337)
@@ -210,7 +210,7 @@ final class DtInvariance: XCTestCase {
     /// ein großer Schritt zog alle Tropfen aus einem einzigen Strom — die
     /// Tropfenzahl stimmte dann zwar, die Tropfen selbst waren andere.
     func testDropletStreamIsChunkingInvariant() {
-        var c = SimConfig(); c.n = 96
+        var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let ref = Terrain(config: c, seed: 1337)   // gemeinsames Ausgangsgelände
         let p = c.hydraulic
 
@@ -259,7 +259,7 @@ final class DtInvariance: XCTestCase {
     /// **Ursache 4**: der Schritt-Deckel (`stepCapFraction`) klebt bei großen
     /// Schritten nicht mehr bei der Hälfte.
     func testStepCapsAreRates() {
-        let t = Terrain(config: { var c = SimConfig(); c.n = 32; return c }(), seed: 1)
+        let t = Terrain(config: { var c = SimConfig(); c.n = 32; c.world = calibrationWorld; return c }(), seed: 1)
         // Bis 500 J. exakt der alte feste Deckel — die bestehende Kalibrierung
         // (alle Wächter takten mit dt ≤ 500) bleibt unangetastet…
         for dt in [1e-6, 1.0, 20.0, 250.0, 500.0] {
@@ -418,7 +418,7 @@ final class DtInvariance: XCTestCase {
         try skipUnlessMeasuring()
         for seed in [UInt32(1337), 4242] {
             for dt in [10.0, 240.0, 2000.0] {
-                var c = SimConfig(); c.n = 192
+                var c = SimConfig(); c.n = 192; c.world = calibrationWorld
                 let t = Terrain(config: c, seed: seed)
                 while t.years < 20_000 - 1e-9 { t.step(dtYears: min(dt, 20_000 - t.years)) }
                 let stale = t.lakeStats(depth: 0.01).fraction
@@ -436,7 +436,7 @@ final class DtInvariance: XCTestCase {
     func testLakeTrajectoryDiagnostic() throws {
         try skipUnlessMeasuring()
         for dt in [250.0, 2000.0] {
-            var c = SimConfig(); c.n = 192
+            var c = SimConfig(); c.n = 192; c.world = calibrationWorld
             let t = Terrain(config: c, seed: 1337)
             print(String(format: "== dt %.0f ==", dt))
             var next = 1000.0
@@ -484,7 +484,7 @@ final class DtInvariance: XCTestCase {
         for (name, apply) in variants {
             var line = name + "|"
             for dt in [240.0, 2000.0] {
-                var c = SimConfig(); c.n = 192; apply(&c)
+                var c = SimConfig(); c.n = 192; c.world = calibrationWorld; apply(&c)
                 let t = Terrain(config: c, seed: 1337)
                 while t.years < 20_000 - 1e-9 { t.step(dtYears: min(dt, 20_000 - t.years)) }
                 t.computeFlow()

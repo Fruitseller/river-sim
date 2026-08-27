@@ -18,7 +18,7 @@ final class WorldSnapshotTests: XCTestCase {
     /// mitreist, bleibt der Weiterlauf identisch.
     private func cfg(n: Int = 256) -> SimConfig {
         var c = SimConfig()
-        c.n = n
+        c.n = n; c.world = calibrationWorld
         return c
     }
 
