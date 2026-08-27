@@ -121,6 +121,14 @@ enum TerrainColorRenderer {
                         g -= hard * 0.075
                         b -= hard * 0.09
 
+                        // Die drei Gewichte werden hier hierarchisch
+                        // abgeschwächt (Kälte deckt alles, Vegetation wächst
+                        // nicht unter Schnee, Fels schaut nur zwischen beiden
+                        // durch) und summieren sich deshalb auf höchstens 1 —
+                        // der Rest ist Boden. `terrain.gdshader` mischt die
+                        // Materialien als GEWICHTSSUMME und verlässt sich
+                        // genau darauf; wer die Faktoren hier ändert, prüft
+                        // die Summe dort mit.
                         coldWeight = max(snowCover, iceCover)
                         vegWeight = vegAmount * (1 - coldWeight) * (1 - saltCover)
                         let cliff = smoothstep(0.004, 0.026, slope)
