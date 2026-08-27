@@ -67,7 +67,7 @@ Steuerung: Linksklick formt das Terrain (Shift kehrt um), Rechtsklick dreht,
 
 ### Leistung und Diagnose
 
-Standard ist `RS_QUALITY=balanced`: Die Simulation bleibt bei 832×832, das
+Standard ist `RS_QUALITY=balanced`: Die Simulation bleibt bei 720×720, das
 Terrain-Displacement nutzt aber ein 384×384-Gitter. `RS_QUALITY=quality` nutzt
 die volle Geometrie; `RS_QUALITY=performance` verwendet 256×256, deaktiviert
 SSAO, Glow und den kostspieligen Detail-Erosionsshader. `RS_RENDER_GRID=512`

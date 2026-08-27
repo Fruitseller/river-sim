@@ -9,8 +9,25 @@ import Foundation
 /// Serialisierer. Die Konformität steht deshalb absichtlich HIER (Swift
 /// synthetisiert nur in der Ursprungsdatei) und nicht als Extension dort.
 public struct SimConfig: Sendable, Codable, Equatable {
-    public var n: Int = 832          // Grid-Auflösung (n × n) — hoch für feines dendritisches Detail
-    public var world: Double = 130   // Kantenlänge in Welteinheiten. n und world ZUSAMMEN erhöht (von 640/100): cellSize bleibt ~0.156 → alle auf n=640 kalibrierten Per-Zell-Parameter (Braid-Gates, Droplet-Dichte, kappa-Skalierung) gelten unverändert; die Insel wird einfach ~1.7× größer.
+    // n und world ZUSAMMEN von 832/130 auf 720/112,4789 gesenkt (Aug 2026):
+    // cellSize 112,4789/719 = 0,156438 == 130/831 auf sechs Stellen, alle
+    // per-Zell-Kalibrierungen (Braid-Gates, Droplet-Dichte, kappa) gelten also
+    // unverändert weiter — was schrumpft, ist die INSEL (74,9 % der Fläche),
+    // nicht das Detail.
+    //
+    // Grund: Rechenzeit. GEMESSEN interleaved (simperf, M4 Max, Minimum aus je
+    // drei Läufen): 832 → 63,6 ms/Schritt, 720 → 47,6 (1,34×), 640 → 37,6
+    // (1,69×). Die Kosten folgen n² auf 0,1 ms. Sim-Speicher 243 → ~182 MB.
+    // 640/100 (die Paarung vor 832/130) war ebenfalls im Vergleich: dort
+    // verschwand die Seenkette im Inneren sichtbar, bei 720 bleibt sie —
+    // deshalb der Zwischenwert und nicht der schnellere.
+    //
+    // ACHTUNG bei weiteren Umstellungen: `world` allein verschiebt die
+    // ZELLGRÖSSE jedes Tests, der nur `n` pinnt. Deshalb pinnen die Testkonfigs
+    // seit dieser Runde `world` mit (s. SimCoreTests/TestCalibration.swift), und
+    // `lakeLevelResponseYears` musste mitgezogen werden (s. dort).
+    public var n: Int = 720          // Grid-Auflösung (n × n) — hoch für feines dendritisches Detail
+    public var world: Double = 112.4789   // Kantenlänge in Welteinheiten — gehört zu `n` (Begründung und Messreihe im Block darüber). Historie der Paarung: 640/100 → 832/130 (Insel ~1,7× größer) → 720/112,4789. cellSize blieb bei allen dreien ~0,1564; die auf n=640 kalibrierten Per-Zell-Parameter gelten seit damals unverändert.
     public var sea: Double = 0.15     // Meeresspiegel (normiert)
     public var floor: Double = -0.3   // tiefster Punkt (Tiefseegraben)
 
@@ -496,7 +513,7 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // mehr als ein Millimeter Wasser — als Salzweiß gemalt wäre das die halbe
     // Insel, statt der Pfanne im Beckenkern.
     public var endorheicSaltMinDepth: Double = 0.03
-    public var lakeLevelResponseYears = 250.0 // Zeitkonstante des DARSTELLUNGS-Seespiegels (Terrain.waterLevel; 0 = aus, Spiegel = hf). Priority-Flood hebt hf beim Zuschütten des Auslass-Sills INSTANTAN fürs ganze Becken; die Auslass-Inzision schneidet in ~100 J. zurück → Sägezahn, sichtbar als periodisch hüpfende See-/Schwemmflächen (gemessen n=832 Seed 1337, 3000 J.: 17 hf-Sprünge > 0.0005, max 0.006; Quellen Droplets+Braiding+Mäander gemeinsam, Dämpfung einzelner Depositionspfade griff nicht und verschob nur die Kalibrierung). 250 J. drückt die sichtbare Restamplitude der ~100-J.-Sägezähne auf ~1/6 (gemessen via LakeLevelStability), lässt echte Pegeländerungen (Verlanden, neue Seen, +10.000-J.-Sprünge) aber praktisch ungebremst durch.
+    public var lakeLevelResponseYears = 350.0 // Zeitkonstante des DARSTELLUNGS-Seespiegels (Terrain.waterLevel; 0 = aus, Spiegel = hf). Priority-Flood hebt hf beim Zuschütten des Auslass-Sills INSTANTAN fürs ganze Becken; die Auslass-Inzision schneidet in ~100 J. zurück → Sägezahn, sichtbar als periodisch hüpfende See-/Schwemmflächen (gemessen n=832 Seed 1337, 3000 J.: 17 hf-Sprünge > 0.0005, max 0.006; Quellen Droplets+Braiding+Mäander gemeinsam, Dämpfung einzelner Depositionspfade griff nicht und verschob nur die Kalibrierung). 250 J. drückt die sichtbare Restamplitude der ~100-J.-Sägezähne auf ~1/6 (gemessen via LakeLevelStability), lässt echte Pegeländerungen (Verlanden, neue Seen, +10.000-J.-Sprünge) aber praktisch ungebremst durch. 250 → 350 mit dem Umstieg auf 720/112,4789: die kleinere Welt schüttet ihren Auslass-Sill in 1,59× größeren Stufen zu (hf-Sprung 0,00755 → 0,01198 gemessen, Seed 1337, größtes Becken), und der gedämpfte REST stieg damit von 0,00067 auf 0,00181 — über die Sichtbarkeitsschwelle 0,0015, die LakeLevelStability prüft. Die Dämpfung selbst war intakt (1/6,6, die Zusage ist ~1/6; 832 lag mit 1/11 nur besser als versprochen). 350 stellt die Reserve wieder her (350 und 400 beide grün, 350 als kleinere Änderung gewählt); der Preis ist ein träger reagierender Darstellungsspiegel, echte Pegeländerungen bleiben ungebremst.
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()
         h.inertia = 0.10 // mehr Trägheit → längere, verzweigende (dendritische) Rinnen

@@ -103,8 +103,13 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   werden vom Shader als Stillwasser gemalt.
   `RS_WATER_STAMP=1` schaltet auf den alten Raster-Stempel-Pfad zurück (A/B im
   selben Build) — Messprotokoll: `docs/geometry-water-measurements.md`.
-- **Karte:** n = 832 bei worldSize 130 (cellSize ≈ 0.156 — Auflösung und Weltgröße
-  immer ZUSAMMEN ändern, sonst brechen alle per-Zell-Kalibrierungen).
+- **Karte:** n = 720 bei worldSize 112,4789 (cellSize ≈ 0.156 — Auflösung und
+  Weltgröße immer ZUSAMMEN ändern, sonst brechen alle per-Zell-Kalibrierungen).
+  Vorher 832/130; gesenkt für Rechenzeit (63,6 → 47,6 ms/Schritt, Insel 74,9 %
+  der Fläche, cellSize unverändert). Messreihe und die beiden Folgeänderungen
+  (`lakeLevelResponseYears`, `world`-Pin in den Testkonfigs) im Config-Logbuch.
+  Ältere Messwerte in diesem Dokument, die „n = 832" nennen, sind Protokolle
+  ihres Stands und bleiben so stehen.
 - **Vegetation:** `veg` (Dichte 0..1, τ=250a) + Klassen `vegClass` (kahl/Gras/Wald/
   Auwald, aus veg + Flussnähe + Makro-Steigung; Flussnähe aus dem D8-Netz `area`,
   nicht aus `areaMFD` — die Klassen gehen über `vegDamp` in die Erosion).

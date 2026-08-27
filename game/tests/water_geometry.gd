@@ -55,7 +55,15 @@ func _run() -> void:
 	# Welt gerade Altarme trägt, ist Physik, keine Render-Eigenschaft (Seed 907
 	# hat nach 60.000 Jahren keinen einzigen wassergefüllten Altarm mehr).
 	var strict := true
-	var years := 20000.0
+	# 30.000 statt 20.000 J. seit dem Umstieg auf n = 720 (Aug 2026): die
+	# kleinere Welt hat kürzere Läufe, ihre Mäander schnüren später ab.
+	# GEMESSEN über RS_STEP (Bänder mit Typ-Kanal KIND_OXBOW, Seed 1337):
+	# 15.000 J. → 0, 20.000 → 0, 25.000 → 4, 30.000 → 4, 40.000 → 1.
+	# 30.000 liegt auf dem Plateau, nicht an seiner Kante. Bei n = 832 trug
+	# dieselbe Welt schon nach 20.000 J. Altarm-Bänder — die Zusage ist also
+	# nicht schwächer geworden, sie braucht nur den Zeitpunkt, an dem DIESE
+	# Welt sie erfüllt (s. Kommentar über `strict`).
+	var years := 30000.0
 	if OS.has_environment("RS_STEP"):
 		years = float(OS.get_environment("RS_STEP"))
 		strict = false
