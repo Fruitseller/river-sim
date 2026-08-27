@@ -66,8 +66,23 @@ final class WaterFieldRenderer {
     /// ihr Wasser malt das D8/MFD-Raster wie bei den dendritischen Zubringern.
     /// Vorher deckelte der Korridor ALLE Kanäle und die verworfenen renderten
     /// als Saum ohne Wasser darin (52 % der sichtbaren Zentrumslinien-Zellen).
+    /// `deferTail` = die Schwanzstufen (räumlicher Blur, zeitliche EWMA,
+    /// Quantisierung) macht der GPU-Pass `game/shaders/water_field_*.gdshader`
+    /// statt dieser Funktion. Alles davor bleibt hier: die beiden teuren Stufen
+    /// des Pfads sind SEQUENZIELLE Graph-Algorithmen (Kontinuitäts-Kette entlang
+    /// der D8-Empfänger, Flood-Fill der Wasser-Komponenten) und passen in kein
+    /// Pixel-Programm; sie GPU-seitig zu wollen kostete Readbacks mitten in der
+    /// Kette. GEMESSEN in situ (n = 832, M4 Max, game/tests/sculpt_cost.gd):
+    /// 14,8 ms mit Schwanz, 13,0 ms ohne — 1,8 ms, und ohne messbare Wirkung auf
+    /// die Bildrate (Protokoll: docs/perf-measurements.md §J). Der GPU-Pfad in
+    /// Main.gd ist deshalb standardmäßig AUS; dieser Ausgang bleibt, weil er auf
+    /// schwacher CPU mit freier GPU gewinnen kann.
+    /// Das Kanal-Layout ist in BEIDEN Fällen dasselbe, die Kalibrier-Schwellen
+    /// bleiben vollständig hier (der Vertrag `WaterRender` wandert NICHT in den
+    /// Shader).
     func bytes(_ terrain: Terrain, blend: Double, geometryMode: Bool,
-               bandChannelFlags: [Bool], bandCoverage: [Double]) -> PackedByteArray {
+               bandChannelFlags: [Bool], bandCoverage: [Double],
+               deferTail: Bool = false) -> PackedByteArray {
         let n = terrain.cfg.n
         let cnt = n * n
         let sea = terrain.cfg.sea
@@ -614,6 +629,40 @@ final class WaterFieldRenderer {
                 for k in 0..<cnt { field[k] = max(field[k], blur[k]) }
             }
         }
+        if deferTail {
+            // Nur packen — dieselben vier Kanäle wie unten, aber UNGEBLURT und
+            // OHNE EWMA. Die EWMA-Felder (sdS…) bleiben unangetastet: schaltet
+            // man per RS_WATER_GPU zurück, blendet der CPU-Pfad aus seinem
+            // eigenen Gedächtnis weiter.
+            //
+            // 8 Bit sind hier kein Verlust gegenüber der CPU-Fassung: die
+            // quantisiert am Ende genauso. Nur der EWMA-ZUSTAND braucht mehr
+            // Auflösung, und der liegt GPU-seitig in einem Half-Float-Target
+            // (in 8 Bit bliebe die Blende bei kleinem `blend` stehen, weil das
+            // Inkrement unter 1/255 rundet).
+            out.withUnsafeMutableBufferPointer { ob in
+            rec.withUnsafeBufferPointer { rcb in
+                let pout = ob.baseAddress!, prec = rcb.baseAddress!
+                parallelChunks(cnt) { lo, hi in
+                for k in lo..<hi {
+                    var dx = 0.0, dz = 0.0
+                    if mstamp[k] {
+                        dx = mdx[k]; dz = mdz[k]
+                    } else {
+                        let r = prec[k]
+                        if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
+                    }
+                    let o = k * 4
+                    pout[o] = UInt8(min(max(sd[k], 0), 1) * 255)
+                    pout[o + 1] = UInt8(min(max(lk[k], 0), 1) * 255)
+                    pout[o + 2] = UInt8((min(max(dx, -1), 1) * 0.5 + 0.5) * 255)
+                    pout[o + 3] = UInt8((min(max(dz, -1), 1) * 0.5 + 0.5) * 255)
+                }
+                }
+            }}
+            return PackedByteArray(out)
+        }
+
         blurMax(&sd, passes: 1)
         // See-Gate ZWEIMAL bluren: es muss den seichten Ufersaum (Wassersäule
         // unter der rawWet-Schwelle 0.03) überdecken, damit die per-Pixel-Kontur

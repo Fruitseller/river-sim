@@ -194,7 +194,10 @@ Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
 `RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
 der Wasser-Geometrie; A/B im selben Build; ohne den Schalter rendert die
-Geometrie). `RS_SHOT` blendet zusätzlich die Bedienleiste aus. Getrennt davon
+Geometrie), `RS_WATER_GPU` (Schwanzstufen des Raster-Wasserfelds — Blur, EWMA,
+Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension;
+standardmäßig AUS, weil die Ersparnis gemessen 1,8 ms je Aufruf ist und keine
+Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet zusätzlich die Bedienleiste aus. Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab.
 
@@ -261,7 +264,12 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.1): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
-   (Flussbänder) und `ocean.gdshader` (offenes Meer).
+   (Flussbänder) und `ocean.gdshader` (offenes Meer). Dazu zwei Shader, die
+   nichts MALEN, sondern rechnen: `water_field_blur.gdshader` und
+   `water_field_ewma.gdshader` sind die abschaltbare GPU-Fassung der
+   Schwanzstufen des Wasserfelds (s. `RS_WATER_GPU`); sie enthalten bewusst
+   keine Kalibrier-Zahl — alle Schwellen bleiben im Vertrag
+   `SimCore.WaterRender` und wirken CPU-seitig, bevor das Feld entsteht.
 
 Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach
 `heightsBytes()`, `waterFieldBytes()`, `terrainColorBytes()` und

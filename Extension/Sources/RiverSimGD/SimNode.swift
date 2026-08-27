@@ -200,6 +200,18 @@ final class SimNode: Node {
     /// Wasser-Feld (Flüsse/Seen/Altarme) als RGBA8-Byte-Buffer — Kanäle und
     /// Kalibrierung: `WaterFieldRenderer`. `blend` glättet zeitlich (1 = Sprung
     /// sofort übernehmen).
+    /// Wie `waterFieldBytes`, aber ohne Blur/EWMA/Glättung: die erledigt der
+    /// GPU-Pass in `Main.gd` (`game/shaders/water_field_*.gdshader`). Gleiches
+    /// Kanal-Layout, gleiche Kalibrierung — nur die letzten 4,3 ms des Passes
+    /// bleiben liegen. Kein `blend`-Argument: der Mischfaktor ist GPU-seitig ein
+    /// Uniform.
+    @Callable func waterFieldRawBytes() -> PackedByteArray {
+        waterField.bytes(terrain, blend: 1.0, geometryMode: SimNode.waterGeometryEnabled,
+                         bandChannelFlags: ribbons.bandChannelFlags,
+                         bandCoverage: ribbons.bandCoverage,
+                         deferTail: true)
+    }
+
     @Callable func waterFieldBytes(blend: Double) -> PackedByteArray {
         // `bandChannelFlags` koppelt die beiden Wasser-Pfade über das echte
         // Bau-Ergebnis: nur Kanäle MIT Band werden im Feld zum Saum gedeckelt.

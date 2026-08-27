@@ -479,3 +479,86 @@ Wesentlichen die Latenz von 5,5 Heap-Ebenen je Pop. Alles Weitere dort ändert
 die Reihenfolge (Abschnitt F) und braucht eine Kalibrier-Freigabe.
 `computeMFDArea` (15 %) ist ein gestreuter Akkumulations-Pass in `order` mit
 echter Datenabhängigkeit — dieselbe Lage wie in Runde 2.
+
+## J. Wasser-Schwanzstufen auf die GPU (August 2026) — gebaut, gemessen, nicht eingeschaltet
+
+Frage: `waterFieldBytes` kostet 14,4 ms je Aufruf. Wie viel davon kann die GPU
+übernehmen, ohne die Physik zu berühren (Render-Ableitung, laut AGENTS.md
+erlaubt)?
+
+**Antwort auf die Form des Passes, nicht auf die Kosten.** Der Pass ist eine
+*Graph*-Pipeline, keine Pixel-Pipeline. Zwei seiner Stufen sind sequenziell und
+passen in kein Pixel-Programm:
+
+1. die Kontinuitäts-Kette entlang der D8-Empfänger (Pointer-Chasing mit
+   datenabhängigem `break`),
+2. der Flood-Fill der Wasser-Komponenten für den Kohärenz-Fade.
+
+Sie liegen in der MITTE der Kette. Die parallelen Stufen davor und dazwischen
+(Stream-Intensität, dreifache Verbreiterung) wären GPU-fähig, aber sie
+herüberzuholen bräuchte drei Readbacks je Tick — jeder ein GPU-Sync im Frame.
+Ohne Round-Trip bleibt genau der SCHWANZ: räumlicher Blur, zeitliche EWMA,
+Quantisierung.
+
+### Gemessen (n = 832, M4 Max)
+
+Standalone-Benchmark der Schwanzstufen (nachgebaute Schleifen, dichte
+Zufallsdaten) sagte 4,3 ms vorher:
+
+| Stufe | ms |
+| --- | --- |
+| `blurMax(sd, 1)` | 1,36 |
+| `blurMax(lk, 2)` | 2,52 |
+| EWMA + Packen | 0,44 |
+
+In situ (`game/tests/sculpt_cost.gd`, echte Felder, bester von drei Läufen)
+kam davon weniger an — die echten Felder sind spärlich und liegen warm im Cache:
+
+| Aufruf | ms |
+| --- | --- |
+| `waterFieldBytes(1.0)` | 14,81 |
+| `waterFieldRawBytes` (ohne Schwanz) | 12,98 |
+| **Ersparnis** | **1,83** |
+
+### Bildraten-Gegenprobe: nichts
+
+`RS_FPS`, interleaved (Lehre aus Runde 3), n = 832, `balanced`:
+
+| Runde | GPU-Kette | CPU-Pfad |
+| --- | --- | --- |
+| 1 | 67,92 | 69,29 |
+| 2 | 71,21 | 68,39 |
+
+Die Streuung innerhalb einer Variante (3,3 FPS) ist größer als der Unterschied
+zwischen den Varianten. Erwartbar: im Zeitraffer laufen die Overlays nur alle
+~0,5 s, 1,8 ms davon sind ~0,4 % der Wanduhr. Bezahlt würde es mit drei
+zusätzlichen 832²-Pässen und 22 MB Targets auf einer GPU, die im Zeitraffer
+nicht der leerlaufende Teil ist.
+
+### Was der Umbau trotzdem belegt
+
+- Der GPU-Pfad ist **korrekt**: Bildvergleich gegen den CPU-Pfad 1,09 von 255
+  mittlerer Abweichung (gegen das vertikal gespiegelte Bild 35,87 — keine
+  Y-Spiegelung, Viewport-Reihenfolge stimmt).
+- Der CPU-Pfad ist **unverändert**: `render_fingerprint.gd` bit-identisch gegen
+  den Stand vor der Änderung (gleiche Maschine, beide Libraries in derselben
+  Sitzung gebaut).
+- Die Kalibrierung wandert NICHT in den Shader: alle Schwellen des Wasserfelds
+  bleiben im getesteten Vertrag `SimCore.WaterRender` und wirken CPU-seitig,
+  bevor das Feld entsteht. Die beiden neuen Shader enthalten keine
+  Kalibrier-Zahl.
+
+Deshalb steht `water_gpu` in `Main.gd` auf `false`; `RS_WATER_GPU=1` schaltet
+ein. Aufheben lohnt, wenn eine Maschine mit schwacher CPU und freier GPU
+dazukommt — die iPad-Frage ist genau dieser Fall.
+
+### Reproduktion
+
+```sh
+GODOT=…   # 4.7.1
+"$GODOT" --headless --path game --script res://tests/sculpt_cost.gd   # Kostenaufschlüsselung
+RS_FPS=1 RS_WATER_GPU=1 "$GODOT" --path game                          # Bildrate GPU-Kette
+RS_FPS=1 "$GODOT" --path game                                         # Bildrate CPU-Pfad
+RS_STEP=20000 RS_DIST=90 RS_SHOT=/tmp/gpu.png RS_WATER_GPU=1 "$GODOT" --path game
+RS_STEP=20000 RS_DIST=90 RS_SHOT=/tmp/cpu.png "$GODOT" --path game    # Bildvergleich
+```

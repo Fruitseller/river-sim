@@ -56,6 +56,9 @@ func _process(_delta: float) -> bool:
 	measure.call("terrainColorBytes", func() -> void: sim.terrainColorBytes())
 	measure.call("terrainSurfaceBytes", func() -> void: sim.terrainSurfaceBytes())
 	measure.call("waterFieldBytes(1.0)", func() -> void: sim.waterFieldBytes(1.0))
+	# Ohne die Schwanzstufen (Blur/EWMA/Quantisierung) — die macht der GPU-Pass,
+	# s. water_gpu in Main.gd. Die Differenz zur Zeile darüber IST die Ersparnis.
+	measure.call("waterFieldRawBytes", func() -> void: sim.waterFieldRawBytes())
 	measure.call("buildRiverRibbons", func() -> void: sim.buildRiverRibbons(HSCALE, RIVER_LIFT))
 	quit(0)
 	return true
