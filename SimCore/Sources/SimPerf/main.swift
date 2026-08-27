@@ -33,6 +33,11 @@ func arg(_ name: String, _ fallback: Double) -> Double {
 let flag = { (name: String) in CommandLine.arguments.contains(name) }
 
 let gridN = Int(arg("--n", 832))
+// `n` und `world` gehören ZUSAMMEN (AGENTS.md): allein verstellt, ändert `--n`
+// die Zellgröße und damit jede per-Zell-Kalibrierung — der Lauf misst dann eine
+// andere Physik, nicht dasselbe Modell auf kleinerem Gitter. Standard hält
+// cellSize bei 130/831 ≈ 0,1564.
+let worldSize = arg("--world", 130)
 let seed = UInt32(arg("--seed", 1337))
 let warmupSteps = Int(arg("--warmup", 100))
 let warmupDt = arg("--warmup-dt", 100)
@@ -51,6 +56,7 @@ let repeats = Int(arg("--repeat", 1))
 
 var cfg = SimConfig()
 cfg.n = gridN
+cfg.world = worldSize
 cfg.hydraulicSkipWaterSpawns = true
 cfg.meanderSpatialCutoffIndex = true
 
