@@ -147,6 +147,23 @@ const IDLE_FPS_CAP := 30
 const IDLE_FPS_DELAY_MSEC := 3000
 var last_activity_msec := 0
 
+# Aktiv-Deckel (GPU): auch WÄHREND Zeitraffer und Sculpting ist die Bildrate
+# nicht die Rate, mit der sich etwas ändert. Ein Sim-Tick kommt alle
+# SIM_TICK_SECONDS (0,25 s), die Wasser-Blend gleitet über ~2 s; dazwischen
+# unterscheiden sich die Bilder nur im Schimmer (u_time). Ungedeckelt zeichnete
+# Godot in dieser Zeit mit voller Display-Rate — auf einem 120-Hz-Panel ~30
+# Bilder je Tick, von denen 29 praktisch dasselbe zeigen. Das war reine
+# Lüfterlast, keine sichtbare Flüssigkeit.
+#
+# 60 liegt bewusst ÜBER der gemessenen Zeitraffer-Rate bei RS_QUALITY=quality
+# (38,8–48,1 FPS, s. SIM_TICK_SECONDS): dort deckelt der Wert nichts, die Sim
+# ist das Limit. Er greift in `balanced`/`performance`, beim Kamerafahren und in
+# den ersten 3 s einer Pause, bevor IDLE_FPS_CAP übernimmt.
+const ACTIVE_FPS_CAP := 60
+# RS_FPS misst die Rate, die der Renderer HERGIBT — ein Deckel würde dort die
+# Zahl messen, die er selbst setzt. Deshalb hebt die Messung ihn auf (_ready).
+var active_fps_cap := ACTIVE_FPS_CAP
+
 # Zeit & Eingabe
 var year_rate := 0.0          # Jahre/Sekunde
 var rebuild_timer := 0.0
@@ -263,6 +280,8 @@ func _ready() -> void:
 	render_quality = OS.get_environment("RS_QUALITY").to_lower()
 	if render_quality.is_empty():
 		render_quality = "balanced"
+	if OS.has_environment("RS_FPS"):
+		active_fps_cap = 0  # s. ACTIVE_FPS_CAP
 	var requested_grid := N if render_quality == "quality" else (
 		PERFORMANCE_TERRAIN_GRID if render_quality == "performance" else BALANCED_TERRAIN_GRID)
 	if OS.has_environment("RS_RENDER_GRID"):
@@ -906,7 +925,7 @@ func _process(delta: float) -> void:
 	if year_rate == 0.0 and not _jumping and not sculpting and Time.get_ticks_msec() - last_activity_msec > IDLE_FPS_DELAY_MSEC:
 		Engine.max_fps = IDLE_FPS_CAP
 	else:
-		Engine.max_fps = 0
+		Engine.max_fps = active_fps_cap
 
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if terrain_mat:
