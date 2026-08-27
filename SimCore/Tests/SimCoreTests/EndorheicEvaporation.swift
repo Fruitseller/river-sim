@@ -94,36 +94,14 @@ final class EndorheicEvaporation: XCTestCase {
     /// ist — dieselbe Doktrin wie `meanderCfg()` in SimCoreTests.
     private func dryCfg(n: Int = 256) -> SimConfig { cfg(n: n, kappa: 6) }
 
-    /// Größtes verdunstungs-limitiertes Becken (Komponente von
-    /// `endorheicBasin != .none`, 8er — Wasserfläche UND trockener Boden gehören
-    /// dazu) als Zell-Liste.
-    private func largestEndorheicBasin(_ t: Terrain) -> [Int] {
-        let n = t.cfg.n
-        var seen = [Bool](repeating: false, count: t.cfg.count)
-        var best = [Int]()
-        for s in 0..<t.cfg.count where t.endorheicBasin[s] != .none && !seen[s] {
-            var stack = [s], comp = [Int]()
-            seen[s] = true
-            while let k = stack.popLast() {
-                comp.append(k)
-                let i = k % n, j = k / n
-                for dj in -1...1 {
-                    for di in -1...1 {
-                        let ni = i + di, nj = j + dj
-                        if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
-                        let nb = nj * n + ni
-                        if t.endorheicBasin[nb] != .none && !seen[nb] { seen[nb] = true; stack.append(nb) }
-                    }
-                }
-            }
-            if comp.count > best.count { best = comp }
-        }
-        return best
-    }
-
-    /// Alle verdunstungs-limitierten Becken als Komponenten-Liste (8er,
-    /// Wasserfläche UND trockener Boden). `largestEndorheicBasin` ist der
-    /// Sonderfall „größte Komponente" davon.
+    /// Alle verdunstungs-limitierten Becken als Komponenten-Listen
+    /// (`endorheicBasin != .none`, 8er-Nachbarschaft — Wasserfläche UND
+    /// trockener Boden gehören dazu). Jede Komponente hier ist per Konstruktion
+    /// ein GEDECKELTES Becken: `capEndorheicBasins` setzt die Rollen nur dort,
+    /// wo der Vollstand die Verdunstung nicht trägt (`full > inflow`) und das
+    /// Becken über dem Rausch-Gate liegt — ein Becken, das seinen Vollstand
+    /// hält, bleibt `.none`. Die Auswahl EINES Beckens daraus ist Sache des
+    /// jeweiligen Wächters; welche Auswahl plattformstabil ist, steht dort.
     private func endorheicBasins(_ t: Terrain) -> [[Int]] {
         let n = t.cfg.n
         var seen = [Bool](repeating: false, count: t.cfg.count)
@@ -148,11 +126,25 @@ final class EndorheicEvaporation: XCTestCase {
         return comps
     }
 
+    /// Größtes verdunstungs-limitiertes Becken — der Sonderfall „größte
+    /// Komponente" von `endorheicBasins`. EINE Quelle für die
+    /// Komponenten-Logik: die Nachbarschaftsregel stand hier zweimal, und die
+    /// nächste Änderung daran hätte beide Kopien finden müssen.
+    private func largestEndorheicBasin(_ t: Terrain) -> [Int] {
+        endorheicBasins(t).max { $0.count < $1.count } ?? []
+    }
+
     /// Verkrustete Playa-Zellen einer Zell-Liste: trockengefallener Beckenboden
     /// mit überwiegender Salzkruste — das, was das Rendering als helle Pfanne
     /// malt (`SimNode.terrainColorBytes`).
     private func playaCells(_ t: Terrain, _ cells: [Int]) -> [Int] {
         cells.filter { t.endorheicBasin[$0] == .dryBed && t.saltCrust[$0] > 0.5 }
+    }
+
+    /// Wasserfläche eines Beckens in Zellen (Rolle `.water`) — die Fläche, über
+    /// die das Becken verdunstet.
+    private func waterArea(_ t: Terrain, _ cells: [Int]) -> Int {
+        cells.reduce(0) { $0 + (t.endorheicBasin[$1] == .water ? 1 : 0) }
     }
 
     /// Wasserkomponente (stehendes Wasser, 8er) um `start`.
@@ -481,8 +473,13 @@ final class EndorheicEvaporation: XCTestCase {
     /// Erwartung: der unbegrenzte Arm (τ=0) legt die ganze Strecke zum neuen
     /// Ziel in diesem einen Schritt zurück, der begrenzte nur den EWMA-Anteil
     /// λ = 1 − e^(−20/500) = 0.039. GEMESSEN (n=256, Seed 1337, 20×20 J.
-    /// Vorlauf): macOS 0.00264 gegen 0.00012, Verhältnis 0.045 (2813-Zellen-
-    /// Becken) · Linux 0.00285 gegen 0.00013, Verhältnis 0.047 (2313 Zellen).
+    /// Vorlauf): macOS 0.00264 gegen 0.00012, Verhältnis 0.045 (2813 Zellen,
+    /// 1024 davon Wasser) · Linux 0.00285 gegen 0.00013, Verhältnis 0.047
+    /// (2313 Zellen, 941 Wasser). Das ist NICHT dasselbe Becken, und genau das
+    /// ist der Punkt: die Stufenantwort liest auf beiden Plattformen praktisch
+    /// denselben Wert, weil sie λ direkt misst statt es aus den Sprüngen zweier
+    /// auseinanderlaufender Läufe zu erschließen. Die Zeile des jeweiligen
+    /// Laufs steht als `[STUFE]` im Log.
     /// Das ist λ plus die Eigen-Drift des Ziels innerhalb des Schritts — und
     /// anders als der alte Langlauf-Vergleich liest die Stufenantwort auf
     /// beiden Plattformen praktisch denselben Wert, obwohl es nicht dasselbe
@@ -498,8 +495,28 @@ final class EndorheicEvaporation: XCTestCase {
         base.endorheicResponseYears = 500
         let src = Terrain(config: base, seed: 1337)
         for _ in 0..<20 { src.step(dtYears: 20) }
-        let basin = largestEndorheicBasin(src)
+        // Ausgewählt wird das Becken mit der GRÖSSTEN WASSERFLÄCHE, nicht das
+        // größte Becken: die Wasserfläche ist es, die verdunstet, also genau
+        // die Größe, an der die κ-Stufe zieht (Ziel = höchster Stand, dessen
+        // Seefläche der Zufluss noch trägt). Das größte Becken wäre wieder die
+        // Auswahl, deren ulp-Anfälligkeit dieser Commit im Playa-Wächter
+        // beseitigt — GEMESSEN kippt sie zwischen den Plattformen tatsächlich
+        // (2313 Zellen unter Linux gegen 2813 unter macOS). Anders als dort
+        // wäre die Folge hier kein stilles Grün, sondern Rot: ein Becken ohne
+        // nennenswerte Wasserfläche antwortet kaum auf κ, und genau das prüft
+        // die Vakuitäts-Zusicherung `instant > 0.001` unten. Trotzdem ist die
+        // sachliche Auswahl die richtige — sie macht den Wächter unabhängig
+        // davon, welches Becken gerade das größte ist.
+        let basins = endorheicBasins(src)
+        let basin = basins.max { waterArea(src, $0) < waterArea(src, $1) } ?? []
         XCTAssertGreaterThan(basin.count, 200, "kein abflussloses Becken")
+        // Jede Komponente ist per Konstruktion gedeckelt (s. `endorheicBasins`);
+        // die Wasserfläche ist die zusätzliche Voraussetzung dieses Wächters und
+        // steht deshalb als Zusicherung da, nicht als Filter. Die gemessenen
+        // Zahlen stehen in der `[STUFE]`-Zeile (s. Doc-Kommentar).
+        XCTAssertGreaterThan(waterArea(src, basin), 200,
+                             "gewähltes Becken hat kaum Wasserfläche — die κ-Stufe"
+                             + " hätte nichts, woran sie ziehen kann")
         let inv = 1.0 / Double(basin.count)
         let snapshot = src.state
         let start = basin.reduce(0.0) { $0 + src.hf[$1] * inv }
@@ -516,8 +533,9 @@ final class EndorheicEvaporation: XCTestCase {
         }
         let instant = stepResponse(tau: 0)
         let limited = stepResponse(tau: 500)
-        print(String(format: "[STUFE] Becken %d Zellen · τ=0 %.5f · τ=500 %.5f (%.3f)",
-                     basin.count, instant, limited, limited / max(1e-9, instant)))
+        print(String(format: "[STUFE] Becken %d Zellen (%d Wasser) · τ=0 %.5f · τ=500 %.5f (%.3f)",
+                     basin.count, waterArea(src, basin), instant, limited,
+                     limited / max(1e-9, instant)))
         XCTAssertGreaterThan(instant, 0.001,
             "das Ziel hat sich kaum verschoben — die Gegenprobe wäre leer")
         XCTAssertLessThan(limited, 0.25 * instant,
@@ -585,7 +603,12 @@ final class EndorheicEvaporation: XCTestCase {
     /// (plattformübergreifende Bit-Gleichheit gilt in diesem Projekt nicht,
     /// s. AGENTS.md) — der Wächter war dort rot, während CI grün war, ohne dass
     /// an der Mechanik etwas fehlte (inselweit crusteten 577 Zellen, 535 davon
-    /// voll). Die Auswahl über das Maximum ist trotzdem keine Selbstbestätigung:
+    /// voll). Die Pfanne des gewählten Beckens ist plattformabhängig
+    /// unterschiedlich GROSS — 577 Zellen unter macOS, 172 unter Linux gegen
+    /// die 100 der Schranke darunter. Die 100 stehen seit #11 und bleiben; wer
+    /// sie das nächste Mal reißen sieht, prüft zuerst, ob die Schranke oder das
+    /// Terrain gewandert ist (das Logbuch oben notiert für denselben Seed
+    /// einmal 1098 Krustenzellen, das war vor den Sim-Runden seither). Die Auswahl über das Maximum ist trotzdem keine Selbstbestätigung:
     /// bricht die Playa-Bildung, ist das Maximum 0 und die Zusicherung darunter
     /// rot. Was sie NICHT aufgibt, ist die Lokalität — alle weiteren
     /// Zusicherungen (Wasser, Bewuchs, Kruste unter Wasser) vergleichen
@@ -615,13 +638,34 @@ final class EndorheicEvaporation: XCTestCase {
         // Wasserfläche liegt sie deutlich unter der der Pfanne (die EWMA braucht
         // dafür ~3·400 Jahre, ein einzelner Schritt reicht nicht — deshalb der
         // Vergleich der Mittelwerte, nicht eine Schwelle je Zelle).
+        //
+        // Die Restwasserfläche ist eine ZUSICHERUNG, kein `if`. Hier stand
+        // `if submerged.count > 20 { … }`: mit der Auswahl über die größte
+        // Pfanne wählt der Wächter tendenziell das am stärksten ausgetrocknete
+        // Becken, und ein Becken ohne Restsee hätte diese Abnahme still
+        // übersprungen statt sie zu prüfen — dieselbe Doktrin wie bei
+        // `testBalanceLevelIsFramerateIndependent` und `MeasurementGate`: kein
+        // Wächter schaltet sich unbemerkt selbst ab. Dass die Pfanne NEBEN
+        // einem Restsee liegt, ist zudem genau der Sachverhalt, den die Abnahme
+        // braucht (trockene Pfanne gegen benetzten Boden IM SELBEN Becken).
+        // GEMESSEN (s. die `[KRUSTE]`-Zeile jedes Laufs): 669 Wasserzellen
+        // gegen 577 Pfannenzellen unter macOS, 1224 gegen 172 unter Linux —
+        // beide Plattformen führen die Abnahme also wirklich aus, an
+        // verschiedenen Becken.
         let submerged = basin.filter { t.endorheicBasin[$0] == .water }
-        if submerged.count > 20 {
-            let crustWet = submerged.reduce(0.0) { $0 + t.saltCrust[$1] } / Double(submerged.count)
-            let crustDry = bed.reduce(0.0) { $0 + t.saltCrust[$1] } / Double(bed.count)
-            XCTAssertLessThan(crustWet, 0.6 * crustDry,
-                              "Salzkruste unter Wasser so stark wie auf der Pfanne")
-        }
+        XCTAssertGreaterThan(submerged.count, 20,
+                             "kein Restsee im Pfannen-Becken — die Abnahme"
+                             + " „Kruste baut sich unter Wasser ab\" hätte nichts"
+                             + " zu vergleichen")
+        let crustWet = submerged.isEmpty ? 0
+            : submerged.reduce(0.0) { $0 + t.saltCrust[$1] } / Double(submerged.count)
+        let crustDry = bed.reduce(0.0) { $0 + t.saltCrust[$1] } / Double(bed.count)
+        print(String(format: "[KRUSTE] Becken %d Zellen · Pfanne %d (%d voll) ·"
+                     + " Restsee %d · Kruste nass %.4f gegen trocken %.4f",
+                     basin.count, bed.count, crusted.count, submerged.count,
+                     crustWet, crustDry))
+        XCTAssertLessThan(crustWet, 0.6 * crustDry,
+                          "Salzkruste unter Wasser so stark wie auf der Pfanne")
     }
 
     // MARK: - Determinismus
