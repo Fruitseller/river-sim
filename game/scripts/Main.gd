@@ -55,6 +55,9 @@ var river_mat: ShaderMaterial
 # 0,15 s hält den Strich flüssig und die Flüsse trotzdem sichtbar mitlaufend;
 # beim Loslassen zieht `_finish_stroke()` einmal alles vollständig nach, damit der
 # fertige Strich nie mit einem halb alten Flussnetz stehen bleibt.
+# Der Takt blieb bei 0,15 s; seit Aug 2026 verteilt sich der Nachzug stattdessen
+# auf ZWEI Frames (Flussnetz / Uploads) — Aufschlüsselung und Messwerkzeug am
+# Aufruf in `_process`.
 # Takt des Zeitraffer-Sim-Schritts. Ein Schritt kostet FAST FIX ~40 ms, egal wie
 # viele Jahre er trägt: computeFlow (priorityFlood 23 ms + computeMFDArea 11 ms +
 # Empfängerwahl 3 ms) hängt an der Gittergröße, nicht an dt. Der Takt ist damit
@@ -172,6 +175,7 @@ var overlay_timer := 0.0
 var last_river_rebuild_msec := -1
 var sculpting := false
 var sculpt_refresh_timer := 0.0
+var sculpt_refresh_pending := false  # Teil 2 des Nachzugs steht aus (s. _process)
 var pick_last := Vector2.INF  # Spitzhacke: Position des letzten Hiebs im Strich (INF = noch keiner)
 var brush_radius := 10.0
 var brush_strength := 1.0
@@ -1009,20 +1013,50 @@ func _process(delta: float) -> void:
 			# nach (s. SCULPT_REFRESH_SECONDS).
 			_update_terrain_textures(1.0, false)
 			sculpt_refresh_timer += delta
-			if sculpt_refresh_timer >= SCULPT_REFRESH_SECONDS:
+			# Nachzug auf ZWEI Frames verteilt. GEMESSEN je Aufruf (n = 832,
+			# M4 Max, Aug 2026, res://tests/sculpt_cost.gd):
+			#   Teil 1  recomputeFlow        34,6 ms
+			#   Teil 2  waterFieldBytes      14,4 ms
+			#           terrainColor/Surface  0,9 ms je, filled-/heightsBytes 0,15
+			#           buildRiverRibbons    11,6 ms — aber höchstens 1×/s,
+			#                                s. RIVER_REBUILD_SECONDS
+			# In EINEM Frame waren das 51 ms (mit Band-Rebuild 63) alle 0,15 s —
+			# genau das Stocken unter dem Pinsel. Getrennt bleibt die
+			# Gesamtarbeit gleich, die schlechteste Frame-Zeit sinkt auf die
+			# 35 ms von Teil 1, und das Wasserfeld hängt einen Frame hinter der
+			# Höhe: unsichtbar. Weiter zerlegen bringt nichts — recomputeFlow
+			# allein dominiert und ist von hier aus nicht teilbar (es ist EIN
+			# globaler Pass; ein lokaler Inkrement-Update wäre SimCore-Arbeit).
+			# Der Takt selbst bleibt bei SCULPT_REFRESH_SECONDS — der ist auf das
+			# Strich-GEFÜHL kalibriert, nicht auf die Frame-Zeit.
+			if sculpt_refresh_pending:
+				sculpt_refresh_pending = false
+				_refresh_stroke_upload()
+			elif sculpt_refresh_timer >= SCULPT_REFRESH_SECONDS:
 				sculpt_refresh_timer = 0.0
-				_refresh_after_stroke()
+				_refresh_stroke_flow()
+				sculpt_refresh_pending = true
 
 	_update_camera_pan(delta)
 	_update_ring()
 	_update_camera()
 
 ## Vollständige Aufbereitung nach einem Pinsel-Eingriff: Flussnetz neu rechnen,
-## Overlays hochladen, Bänder neu bauen. Teuer (~69 ms bei n = 832), deshalb
-## gedrosselt aufgerufen — nicht pro Frame.
+## Overlays hochladen, Bänder neu bauen. Teuer (~51 ms bei n = 832, Aufschlüsselung
+## am Aufruf im _process), deshalb gedrosselt aufgerufen — nicht pro Frame.
+## Beim LOSLASSEN läuft sie in einem Zug: dort darf nichts auf einen Folgeframe
+## warten, sonst bliebe ein beendeter Strich mit halb altem Flussnetz stehen.
 func _refresh_after_stroke() -> void:
-	sim.recomputeFlow() # Flüsse reagieren auf den Eingriff
+	_refresh_stroke_flow()
+	_refresh_stroke_upload()
+
+## Teil 1 des Nachzugs (teuer, ~35 ms): das Flussnetz reagiert auf den Eingriff.
+func _refresh_stroke_flow() -> void:
+	sim.recomputeFlow()
 	_invalidate_h_cache()
+
+## Teil 2 des Nachzugs (~17 ms): Overlays hochladen, Bänder nachziehen.
+func _refresh_stroke_upload() -> void:
 	_update_terrain_textures()
 	_maybe_rebuild_rivers_throttled(true) # Sculpting droppt gestörte Kanäle → Struktur-Delta
 
@@ -1031,6 +1065,7 @@ func _refresh_after_stroke() -> void:
 ## mitten im Intervall aufgehört haben).
 func _finish_stroke() -> void:
 	sculpt_refresh_timer = 0.0
+	sculpt_refresh_pending = false  # der vollständige Nachzug erledigt Teil 2 mit
 	_refresh_after_stroke()
 	_maybe_rebuild_trees()
 	debug_dirty = true
