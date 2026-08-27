@@ -424,6 +424,7 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("grid_n", float(N))
 	terrain_mat.set_shader_parameter("sea_level", sea)
 	terrain_mat.set_shader_parameter("detail_enabled", render_quality != "performance")
+	terrain_mat.set_shader_parameter("material_enabled", render_quality != "performance")
 	terrain_mi.material_override = terrain_mat
 	add_child(terrain_mi)
 

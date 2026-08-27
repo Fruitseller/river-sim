@@ -20,6 +20,12 @@
 // entlang des lokalen Gefälles, „stacked faded gullies") → Normal-Perturbation +
 // Rinnen-Schattierung + Ridge-Map (feuchte Kerben). Rein kosmetisch, die Physik
 // bleibt in SimCore; mit der Kameradistanz ausgeblendet (Aliasing + Kosten).
+//
+// MATERIAL-LAYER (davon UNABHÄNGIG): aus surface_tex werden Boden, Vegetation,
+// Fels und Schnee/Eis in Weltkoordinaten prozedural aufgebaut (Körnung,
+// Gesteinsschichten, Windverfrachtung, Mikro-Normale). Eigener Schalter
+// `material_enabled` — wer `detail_enabled` abschaltet, um die Erosionsrinnen
+// zu isolieren, behält damit die Materialien.
 shader_type spatial;
 render_mode cull_disabled;
 
@@ -53,6 +59,11 @@ uniform float detail_strength = 0.30;
 uniform float detail_shade = 0.20;     // Albedo-Abdunkelung in Rinnenböden
 uniform float detail_normal = 1.0;     // Anteil der Normal-Perturbation
 uniform bool detail_enabled = true;
+// Materialschicht: getrennt schaltbar vom Detail-Layer darüber, weil beides
+// verschiedene Dinge sind (Erosionsrinnen vs. Gesteins- und Bodenmaterial).
+// Main.gd hängt beide an `render_quality`; abgeschaltet entfällt der KOMPLETTE
+// Noise-Aufwand dieser Schicht, nicht nur der ausgeblendete Teil.
+uniform bool material_enabled = true;
 uniform bool debug_difference = false;
 
 varying vec2 v_uv;
@@ -292,15 +303,28 @@ void fragment() {
 	float rock = clamp(surface.g, 0.0, 1.0);
 	float cold = clamp(surface.b, 0.0, 1.0);
 	float lith = surface.a * 2.0 - 1.0;
-	float material_fade = (1.0 - smoothstep(65.0 * ws, 210.0 * ws, view_dist))
-	                    * (detail_enabled ? 1.0 : 0.0);
-	float tri_large = triplanar_fbm(material_pos * 0.19, n_ws);
-	float top_large = fbm(wp * 0.16);
+	// `material_fade` blendet NUR das Feingran aus: es aliast in der Distanz und
+	// liegt dort unter einem Pixel. Die GROSSEN Terme (tri_large, top_large)
+	// tragen die Makro-Variation der Grundfarben und laufen bis zum Horizont
+	// weiter — sie am Fade-Ende abzuschalten ergäbe eine sichtbare Kante quer
+	// durch die Landschaft. Gespart wird deshalb über `material_enabled`: ganze
+	// Schicht aus, ohne Kante, weil global.
+	float material_fade = material_enabled
+	                    ? 1.0 - smoothstep(65.0 * ws, 210.0 * ws, view_dist)
+	                    : 0.0;
+	float tri_large = 0.5;
+	float top_large = 0.5;
 	float tri_grain = 0.5;
 	float top_grain = 0.5;
-	if (material_fade > 0.002) {
-		tri_grain = triplanar_fbm(material_pos * 0.82 + vec3(7.0, 13.0, 3.0), n_ws);
-		top_grain = fbm(wp * 0.72 + vec2(31.0, 11.0));
+	float wind_snow = 0.5;
+	if (material_enabled) {
+		tri_large = triplanar_fbm(material_pos * 0.19, n_ws);
+		top_large = fbm(wp * 0.16);
+		if (material_fade > 0.002) {
+			tri_grain = triplanar_fbm(material_pos * 0.82 + vec3(7.0, 13.0, 3.0), n_ws);
+			top_grain = fbm(wp * 0.72 + vec2(31.0, 11.0));
+			wind_snow = fbm(wp * vec2(0.25, 0.55) + vec2(4.0, 19.0));
+		}
 	}
 
 	vec3 soil_color = vec3(0.25, 0.20, 0.14)
@@ -311,22 +335,35 @@ void fragment() {
 	                      * mix(0.90, 1.08, top_grain * material_fade);
 
 	// Die echte Lithologie steuert die Helligkeit der Schichtflächen. Harte
-	// Bänder sind dunkler, feinkörniger und rauer; weiche Bänder verwittern hell.
+	// Bänder sind dunkler, feinkörniger und rauer; weiche Bänder verwittern hell. Das
+	// Korn wird über `material_fade` auf seinen neutralen Mittelwert 0.5 gezogen,
+	// nicht am Gate hart auf ihn gesetzt: sonst stünde am Fade-Ende eine Kante
+	// von bis zu 11 % Helligkeit quer durch die Felsflächen.
 	float strata_phase = abs(fract(material_pos.y * 1.65 + tri_large * 1.8) - 0.5) * 2.0;
 	float strata_edge = smoothstep(0.72, 0.96, strata_phase);
 	float lith_contrast = mix(1.09, 0.82, lith * 0.5 + 0.5);
 	vec3 rock_color = mix(vec3(0.28, 0.29, 0.30), vec3(0.37, 0.35, 0.32),
 	                      tri_large * 0.55)
-	                * mix(0.86, 1.08, tri_grain)
+	                * mix(0.86, 1.08, mix(0.5, tri_grain, material_fade))
 	                * mix(1.0, lith_contrast, strata_edge * rock);
 
-	float wind_snow = fbm(wp * vec2(0.25, 0.55) + vec2(4.0, 19.0));
 	vec3 cold_color = vec3(0.79, 0.84, 0.89)
 	                * mix(0.91, 1.05, wind_snow * material_fade);
 
-	vec3 terr = mix(soil_color, rock_color, rock);
-	terr = mix(terr, vegetation_color, vegetation);
-	terr = mix(terr, cold_color, cold);
+	// Die CPU liefert die Gewichte schon hierarchisch abgeschwächt
+	// (TerrainColorRenderer: Kälte voll, Vegetation × (1−Kälte), Fels ×
+	// (1−Vegetation)(1−Kälte)); sie summieren sich damit auf höchstens 1, der
+	// Rest ist Boden. Als mix-KETTE gerechnet dämpfte jedes spätere Material das
+	// frühere ein ZWEITES Mal — auf einem bewaldeten Hang (veg 0.6, rock 0.2)
+	// blieben von der Felsfarbe 8 % statt 20 %, und das Ergebnis hing an der
+	// Blend-Reihenfolge. Als Gewichtssumme ist es reihenfolge-unabhängig und
+	// jedes Material genau mit seinem Anteil sichtbar. Normiert wird, weil die
+	// Byte-Quantisierung der Gewichte die Summe knapp über 1 heben kann.
+	float cover_w = vegetation + rock + cold;
+	float soil_w = max(0.0, 1.0 - cover_w);
+	vec3 terr = (soil_color * soil_w + rock_color * rock
+	          + vegetation_color * vegetation + cold_color * cold)
+	          / max(0.001, soil_w + cover_w);
 	// Die Makrokarte bewahrt Salzkrusten, Gletschereis und Biom-Farbverschiebung,
 	// ohne wieder als alleinige, weichgefilterte Oberfläche sichtbar zu werden.
 	terr = mix(terr, macro_color, 0.28);
