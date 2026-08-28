@@ -44,6 +44,22 @@ let flag = { (name: String) in CommandLine.arguments.contains(name) }
 // in `docs/perf-measurements.md` reproduziert man deshalb mit BEIDEN Schaltern
 // (die Paarung davor: `--n 832 --world 130`).
 let production = SimConfig()
+// Genau EINEN der beiden Schalter zu setzen ist nie Absicht, sondern immer der
+// Fehler „alte Gewohnheit, halb umgestellt": `--n 832` allein paart die alte
+// Auflösung mit der neuen Weltgröße. Der Lauf misst dann eine Zellgröße, die es
+// nirgends gibt, und die Kopfzeile sieht dabei völlig plausibel aus — der Fehler
+// wäre also wieder still. Deshalb hier hart abbrechen statt weiterzurechnen.
+if flag("--n") != flag("--world") {
+    FileHandle.standardError.write(Data("""
+        simperf: `--n` und `--world` gehören zusammen, gesetzt ist nur einer.
+        Sie legen gemeinsam die Zellgröße fest; allein verstellt misst der Lauf
+        eine andere Physik statt dasselbe Modell auf einem anderen Gitter.
+          Produktion (Standard, aus SimConfig()):  --n \(production.n) --world \(production.world)
+          Messreihen in docs/perf-measurements.md: --n 832 --world 130
+
+        """.utf8))
+    exit(2)
+}
 let gridN = Int(arg("--n", Double(production.n)))
 let worldSize = arg("--world", production.world)
 let seed = UInt32(arg("--seed", 1337))
