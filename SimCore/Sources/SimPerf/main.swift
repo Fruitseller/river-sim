@@ -32,12 +32,20 @@ func arg(_ name: String, _ fallback: Double) -> Double {
 }
 let flag = { (name: String) in CommandLine.arguments.contains(name) }
 
-let gridN = Int(arg("--n", 832))
+// Standard der Gitter-Paarung ist die PRODUKTIONS-Paarung aus `SimConfig()`
+// selbst, nicht ein Literal: sie wurde schon einmal gemeinsam verstellt
+// (832/130 → 720/112,4789, Aug 2026), und als Literal hätte der Harness danach
+// still die alte, größere Welt weitergemessen — während `--hash` und die
+// Pass-Tabelle behaupten, die Produktion zu spiegeln.
+//
 // `n` und `world` gehören ZUSAMMEN (AGENTS.md): allein verstellt, ändert `--n`
 // die Zellgröße und damit jede per-Zell-Kalibrierung — der Lauf misst dann eine
-// andere Physik, nicht dasselbe Modell auf kleinerem Gitter. Standard hält
-// cellSize bei 130/831 ≈ 0,1564.
-let worldSize = arg("--world", 130)
+// andere Physik, nicht dasselbe Modell auf kleinerem Gitter. Ältere Messreihen
+// in `docs/perf-measurements.md` reproduziert man deshalb mit BEIDEN Schaltern
+// (die Paarung davor: `--n 832 --world 130`).
+let production = SimConfig()
+let gridN = Int(arg("--n", Double(production.n)))
+let worldSize = arg("--world", production.world)
 let seed = UInt32(arg("--seed", 1337))
 let warmupSteps = Int(arg("--warmup", 100))
 let warmupDt = arg("--warmup-dt", 100)
@@ -54,7 +62,7 @@ let repeats = Int(arg("--repeat", 1))
 
 // MARK: - Produktions-Config (Spiegel von SimNode.productionConfig())
 
-var cfg = SimConfig()
+var cfg = production
 cfg.n = gridN
 cfg.world = worldSize
 cfg.hydraulicSkipWaterSpawns = true
@@ -102,7 +110,8 @@ if hashMode {
     // Pfad abdeckt wie der Zeitlauf (inkl. Mäander/Braiding im eingeschwungenen
     // Zustand).
     for _ in 0..<steps { terrain.step(dtYears: dt) }
-    print("n=\(gridN) seed=\(seed) warmup=\(warmupSteps)x\(warmupDt) steps=\(steps)x\(dt)")
+    print("n=\(gridN) world=\(worldSize) seed=\(seed) "
+          + "warmup=\(warmupSteps)x\(warmupDt) steps=\(steps)x\(dt)")
     print("fingerprint \(fingerprint(terrain))")
     exit(0)
 }
@@ -124,10 +133,12 @@ if repeats > 1 {
           + blocks.map { String(format: "%.1f", $0 / Double(steps) * 1000) }.joined(separator: " "))
 }
 if noProfile {
-    print("n=\(gridN) seed=\(seed) OHNE Profiling → \(String(format: "%.1f", perStep)) ms/Schritt")
+    print("n=\(gridN) world=\(worldSize) seed=\(seed) OHNE Profiling → "
+          + "\(String(format: "%.1f", perStep)) ms/Schritt")
     exit(0)
 }
-print("n=\(gridN) seed=\(seed) warmup=\(warmupSteps)x\(warmupDt)y (\(String(format: "%.1f", warmupSecs))s)")
+print("n=\(gridN) world=\(worldSize) seed=\(seed) "
+      + "warmup=\(warmupSteps)x\(warmupDt)y (\(String(format: "%.1f", warmupSecs))s)")
 // Kennzahl ist das Block-MINIMUM (s. o.); die Pass-Tabelle darunter stammt
 // dagegen aus dem LETZTEN Block — beide Zahlen also getrennt ausweisen.
 print("Messung: \(steps) Schritte à dt=\(dt) → \(String(format: "%.1f", perStep)) ms/Schritt"

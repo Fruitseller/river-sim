@@ -29,9 +29,21 @@ SimCore/.build/release/simperf --no-profile         # Gegenprobe ohne Instrument
 Der Harness fährt die **Produktions-Konfiguration** (`SimConfig()` plus
 `hydraulicSkipWaterSpawns` und `meanderSpatialCutoffIndex` — dieselben zwei
 Schalter, die `SimNode.productionConfig()` setzt; die Extension ist von SimCore
-aus nicht erreichbar, deshalb der Nachbau), n = 832, Seed 1337, **100 Schritte à
+aus nicht erreichbar, deshalb der Nachbau), Seed 1337, **100 Schritte à
 100 Jahre Einlauf**, danach die Messschritte. Gemessen wird also der
 eingeschwungene Zustand, nicht der Kaltstart.
+
+`n` und `world` sind dabei KEINE Literale im Harness, sondern die Werte aus
+`SimConfig()` selbst — derzeit 720/112,4789. Als Literal hätte er nach dem
+gemeinsamen Umstellen der Paarung (832/130 → 720/112,4789, Aug 2026) still die
+alte, größere Welt weitergemessen, obwohl Kopfzeile und `--hash` die
+Produktion behaupten. Jede Kopfzeile weist `n=` und `world=` deshalb zusammen
+aus. Alle Messreihen unterhalb dieses Abschnitts stammen von VOR der
+Umstellung; wer sie nachrechnet, setzt BEIDE Schalter:
+
+```sh
+SimCore/.build/release/simperf --n 832 --world 130 --repeat 3
+```
 
 ### `SimProfile` — Pass-Aufteilung
 

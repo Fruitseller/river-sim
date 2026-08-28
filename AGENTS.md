@@ -52,7 +52,8 @@ Schalter verschwindet. Begründung: `SimCore/Tests/SimCoreTests/MeasurementGate.
 Laufzeiten: `docs/ci-measurements.md`.
 
 **Laufzeit messen** (Issue #43, Mess-Harness für den Sim-Schritt, headless,
-Produktions-Config, n = 832):
+Produktions-Config; `n`/`world` kommen aus `SimConfig()` selbst, derzeit also
+720/112,4789):
 
 ```sh
 swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
@@ -64,6 +65,9 @@ SimCore/.build/release/simperf --hash       # Fingerabdruck aller Zustandsfelder
 einer Optimierung (auf DERSELBEN Maschine) heißt bit-identisch. Die Pass-Tabelle
 kommt aus `SimProfile` (Marken in `step()`, standardmäßig aus). Messprotokoll,
 Vorher/Nachher und die gemessenen Fehlschläge: `docs/perf-measurements.md`.
+Ältere Messreihen dort stehen auf der Paarung davor und werden mit BEIDEN
+Schaltern reproduziert (`--n 832 --world 130`) — `--n` allein verstellt die
+Zellgröße und misst eine andere Physik.
 
 **Extension bauen** (M4-Max-Referenz-Mac: No-Op ~1,3 s, SimCore-Edit ~9 s,
 Extension-Edit ~5 s, Kaltbau ~10 min in einem Aufruf; **auf Linux gemessen 21,5 min** Kaltbau,
