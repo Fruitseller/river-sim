@@ -1,35 +1,52 @@
 # river-sim
 
-Interaktive Landschafts-Evolution: ein prozedural erzeugtes Insel-Terrain, das
-über Jahrtausende im Zeitraffer erodiert — Flüsse schneiden Täler, Mäander
-wandern, Seen entstehen und verlanden. Simulationskern in reinem Swift,
-Rendering und Interaktion in Godot 4 (via GDExtension/SwiftGodot).
+Ein Landschafts-Sandkasten: Du siehst eine Insel und drehst die Zeit um das
+Tausendfache schneller. Flüsse graben Täler, schlängeln sich durchs Land,
+Seen entstehen und verschwinden wieder, Berge flachen ab. Wo du willst,
+greifst du ein und formst das Terrain selbst mit der Maus.
+
+Es ist keine vorgetäuschte Animation: Die Landschaft entsteht aus einer
+echten Erosions-Simulation: dieselbe Eingabe führt also immer zum selben
+Verlauf, und kleine Eingriffe können sich über Jahrtausende auswirken.
 
 ![Terrain nach 20.000 Jahren](docs/screenshots/terrain-20k.png)
 
-| 100.000 Jahre (Seed 1337) | 20.000 Jahre (Seed 907) |
+| 100.000 Jahre (gleicher Seed) | anderer Seed |
 | --- | --- |
-| ![100.000 Jahre, Seed 1337](docs/screenshots/terrain-100k.png) | ![20.000 Jahre, Seed 907](docs/screenshots/terrain-seed907.png) |
+| ![100k Jahre](docs/screenshots/terrain-100k.png) | ![Seed 907](docs/screenshots/terrain-seed907.png) |
 
-## Was drinsteckt
+## Was macht man da?
 
-- **Fluviale Inzision** — FastScape-Stream-Power mit implizitem Solver,
-  stabil auch bei 10.000-Jahr-Schritten.
-- **Droplet-Hydraulik-Erosion** (nickmcd/Lague) — carvt feines dendritisches
-  Detail; Stream-Map aus zeitgemittelten Tropfenpfaden.
-- **Entwässerung** — Priority-Flood, MFD-Einzugsgebiete, Becken entwässern
-  über Auslass-Inzision statt vollzulaufen.
-- **Mäander-Migration** — wandernde Zentrumslinien, die ihr eigenes Bett
-  carven; Altarm-Seen und Verlandung.
-- **Pre-Erosion** — Port des [runevision-Erosionsfilters](docs/references/runevision-erosion/README.md),
-  damit das Terrain schon „gealtert" startet.
-- **Klima** — orographischer Niederschlag, Vegetation als Erosionsschutz,
-  Hangprozesse, Küsten-Wellenerosion.
-- **Welten speichern und laden** — der vollständige Sim-Zustand in einer
-  versionierten Datei; ein geladener Spielstand läuft bit-identisch weiter
-  ([docs/world-save-format.md](docs/world-save-format.md)).
+- **Zeitraffer drücken** und zusehen, wie sich das Land selbst verändert:
+  Flüsse werden länger und schlängeln sich, Täler werden tiefer,
+  Flussbetten verlagern sich.
+- **Eingreifen:** Mit dem Linksklick-Pinsel formst du Berge oder senkst Land
+  ab (Shift dreht um). Der Fluss sucht sich danach seinen eigenen neuen Weg.
+- **Zeit springen:** Von langsam (10 Jahre pro Sekunde) bis +10.000 Jahre
+  auf einen Schlag.
+- **Welten aufheben:** **F5** speichert die Welt, **F9** lädt sie zurück
+  (Knöpfe 💾/📂 im Panel „WELT"). Eine gespeicherte Welt läuft exakt
+  dort weiter, wo sie aufgehört hat.
 
-Details: [SimCore/README.md](SimCore/README.md) und [docs/](docs/).
+Steuerung: Linksklick formt das Terrain, Rechtsklick dreht die Kamera,
+`+`/`−` oder Pinch zoomt.
+
+## Was steckt dahinter?
+
+Der Anspruch ist, dass die Landschaft nach den Regeln funktioniert, nach
+denen echte Flüsse und Berge sich formieren: Regen sammelt sich in
+Abflussrinnen, Wasser trägt Material ab, wo es schnell fließt und lagert es
+ab, wo es langsam wird, Vegetation bremst die Erosion, Schnee und Klima
+bestimmen, wie viel Wasser überhaupt fließt. Darauf aufbauend entstehen
+Schleifen von selbst: wandernde Flussschlingen, Altarme, Verlandungen,
+Küsten, die von Wellen geglättet werden.
+
+Wer es genauer wissen will: Der Simulationskern ist ein eigenes Swift-Paket
+ohne Abhängigkeit zur Engine ([SimCore/README.md](SimCore/README.md)), die
+Darstellung läuft in der [Godot](https://godotengine.org)-Engine (GDExtension
+via SwiftGodot). Die Physik-Methoden und deren Quellen sind in
+[docs/](docs/) dokumentiert, u. a. Stream-Power-Erosion (FastScape),
+Droplet-Hydraulik, Mäander-Migration, Gletscher und Klima.
 
 ## Bauen & Starten
 
@@ -59,12 +76,6 @@ Auf einer Maschine ohne Vulkan-Unterstützung startet
 `./scripts/start.sh --rendering-method gl_compatibility`; ohne Display ist nur
 der headless Modus sinnvoll.
 
-Steuerung: Linksklick formt das Terrain (Shift kehrt um), Rechtsklick dreht,
-`+`/`−` oder Pinch zoomt. Die Zeitraffer-Knöpfe (10/30/60 J/s, +100 bis
-+10.000 Jahre) treiben die Simulation. **F5** speichert die Welt nach
-`user://saves/welt.rsworld`, **F9** holt sie zurück (Knöpfe 💾/📂 im Panel
-„WELT"); nach dem Laden ist die Simulation pausiert.
-
 ### Leistung und Diagnose
 
 Standard ist `RS_QUALITY=balanced`: Die Simulation bleibt bei 720×720, das
@@ -84,7 +95,7 @@ ob anschließend Täler eingeschnitten oder tatsächlich Berge aufgebaut werden.
 
 ## Tests
 
-Der Kern ist Godot-frei und headless verifizierbar:
+Der Sim-Kern läuft ohne Godot und ohne Grafik, getestet wird headless:
 
 ```sh
 swift test -c release --package-path SimCore
