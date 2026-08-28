@@ -45,6 +45,11 @@ Umstellung; wer sie nachrechnet, setzt BEIDE Schalter:
 SimCore/.build/release/simperf --n 832 --world 130 --repeat 3
 ```
 
+Nur EINEN der beiden zu setzen lehnt der Harness ab (Exit 2, Hinweis auf
+stderr). Die halb umgestellte Paarung — alte Auflösung, neue Weltgröße — ergäbe
+eine Zellgröße, die weder das Spiel noch irgendeine Messreihe je gefahren hat,
+und sähe in der Kopfzeile trotzdem plausibel aus.
+
 ### `SimProfile` — Pass-Aufteilung
 
 Auf dem Linux-Host gibt es kein `perf` und kein Instruments. Statt zu sampeln
