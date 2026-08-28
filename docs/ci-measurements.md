@@ -191,7 +191,8 @@ In dieser Reihenfolge prüfen:
 1. **Ist der neue Test ein Messlauf?** Dann gehört er hinter `RS_MEASURE`
    (Namensendung `Diagnostic`, `try skipUnlessMeasuring()`).
 2. **Braucht er die Produktionsauflösung?** Die meisten Wächter der Suite laufen
-   auf `n = 96…256`; `n = 832` gehört in `simperf`, nicht in die Suite.
+   auf `n = 96…256`; die Produktionsauflösung (derzeit `n = 720`) gehört in
+   `simperf`, nicht in die Suite.
 3. **Ist der Cache kaputt statt der Test langsam?** Ein Kaltbau sieht in der
    Übersicht wie eine langsame Suite aus. Der Schritt „GDExtension bauen" im
    Log sagt es.

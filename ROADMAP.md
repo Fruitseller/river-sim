@@ -651,7 +651,8 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
   (Namensendung `Diagnostic`) sind aus der Pflichtsuite heraus und laufen nur mit
   `RS_MEASURE=1`. Laufzeit-Budget und Zahlen: `docs/ci-measurements.md`.
 - **Laufzeit:** `SimCore/.build/release/simperf --repeat 3` (Mess-Harness aus
-  Issue #43: Produktions-Config, n = 832, Einlauf + Pass-Tabelle) und
+  Issue #43: Produktions-Config — `n`/`world` aus `SimConfig()` selbst —,
+  Einlauf + Pass-Tabelle) und
   `simperf --hash` als Bit-Identitäts-Wächter vor/nach einer Optimierung.
   Protokoll und Messhygiene: `docs/perf-measurements.md`.
 - **Headless-Tests:** `swift test -c release --package-path SimCore -Xswiftc
