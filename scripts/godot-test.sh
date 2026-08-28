@@ -26,6 +26,14 @@
 # Aufräumen NACH dem bestandenen Test darf scheitern. Wiederholen statt werten
 # wäre die schwächere Antwort: es würde einen wirklich wackeligen Test verstecken
 # und den Lauf um dessen volle Laufzeit verlängern.
+#
+# Die Marke wird dabei irgendwo in der Ausgabe gesucht, nicht als letzte Zeile:
+# nach `quit(0)` schreibt die Engine noch selbst. Damit hinge die Wertung allein
+# an der Konvention „Marke erst NACH allen Prüfungen". Deshalb steht davor ein
+# zweiter Wächter: meldet das Log irgendwo einen Fehlschlag (`FAIL: …`,
+# `FAIL_PHYSICS: …`), ist der Lauf rot, auch wenn die Marke dasteht. Der
+# Vergleich ist bewusst ungeankert — die Skripte melden teils mit `print`, teils
+# über `push_error`, das Godot mit eigenem Präfix ausgibt.
 
 # Kein `set -e`: der Exit-Code der Engine wird hier ausgewertet, nicht befolgt.
 set -uo pipefail
@@ -54,6 +62,12 @@ trap 'rm -f "$LOG"' EXIT
 # PIPESTATUS, nicht aus tee.
 "$GODOT" --headless --path game --script "$SKRIPT" 2>&1 | tee "$LOG"
 RC=${PIPESTATUS[0]}
+
+if grep -qE "FAIL[_A-Z]*:" "$LOG"; then
+	echo "::error::$SKRIPT: Fehlschlag im Log gemeldet (Exit $RC) — der Test ist NICHT bestanden."
+	[[ "$RC" -eq 0 ]] && RC=1
+	exit "$RC"
+fi
 
 if grep -qF -- "$MARKE" "$LOG"; then
 	if [[ "$RC" -ne 0 ]]; then
