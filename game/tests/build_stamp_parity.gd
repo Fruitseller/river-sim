@@ -63,7 +63,11 @@ func _run() -> void:
 			+ "dasselbe Manifest-Format verwenden (Verfahren: Kopf beider Dateien).")
 		return
 
-	print("OK: Build-Stempel-Parität Shell <-> GDScript")
+	print("Build-Stempel-Parität Shell <-> GDScript")
+	# Erfolgsmarke als LETZTE Zeile vor quit(0), wortwörtlich und ohne
+	# Leerzeichen — genau wie SMOKE_OK/WATER_GEOMETRY_OK/RIVER_RIBBONS_OK:
+	# scripts/godot-test.sh wertet in CI diese Marke, nicht den Exit-Code.
+	print("BUILD_STAMP_PARITY_OK")
 	quit(0)
 
 func _fail(message: String) -> void:

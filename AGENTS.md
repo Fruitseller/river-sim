@@ -166,11 +166,15 @@ grüner Lauf nichts über den lokalen Stand.
 
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
-Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, …), nicht der
+Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`,
+`RIVER_RIBBONS_OK`, `BUILD_STAMP_PARITY_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
-Absturz mitten im Test also auch. Lokal genügt der direkte Aufruf oben.
+Absturz mitten im Test also auch; ebenso ein `FAIL:` irgendwo im Log, selbst
+wenn die Marke dasteht. Jedes Testskript druckt seine Marke deshalb wortwörtlich
+und ohne Leerzeichen als LETZTE Zeile vor `quit(0)`; wer ein Skript hinzufügt,
+hält beides ein. Lokal genügt der direkte Aufruf oben.
 
 `res://tests/render_fingerprint.gd` ist kein Wächter, sondern das A/B-WERKZEUG
 für Umbauten der Render-Aufbereitung (Issue #53): es druckt SHA-256 je
