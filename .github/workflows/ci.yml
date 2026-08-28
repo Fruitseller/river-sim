@@ -187,18 +187,24 @@ jobs:
       # generierte BuildStamp.swift existiert und die Ausnahme mitgeprüft wird.
       - name: Build-Stempel-Parität (Shell ↔ GDScript)
         run: |
-          "$GODOT" --headless --path game --script res://tests/build_stamp_parity.gd
+          scripts/godot-test.sh res://tests/build_stamp_parity.gd "OK: Build-Stempel-Parität"
 
       # Die drei Godot-Vertragstests. Getrennte Schritte statt einer Schleife:
       # so zeigt die GitHub-Oberfläche direkt, WELCHER Vertrag gebrochen ist.
+      #
+      # Alle vier laufen über scripts/godot-test.sh: gewertet wird die
+      # Erfolgsmarke des Skripts, nicht der Exit-Code der Engine. Grund ist
+      # derselbe Herunterfahr-Absturz wie beim Import oben (Issue #61) — er traf
+      # am 2026-08-27 erstmals einen Vertragstest, NACH dessen "…_OK". Ein
+      # Absturz vor der Marke bleibt rot; die Begründung steht im Skript.
       - name: Smoke-Test (SimNode-Registrierung, Felder, step, Sculpting)
         run: |
-          "$GODOT" --headless --path game --script res://tests/smoke.gd
+          scripts/godot-test.sh res://tests/smoke.gd SMOKE_OK
 
       - name: Wasser-Geometrie (Issue #34)
         run: |
-          "$GODOT" --headless --path game --script res://tests/water_geometry.gd
+          scripts/godot-test.sh res://tests/water_geometry.gd WATER_GEOMETRY_OK
 
       - name: Fluss-Ribbons (Issue #31)
         run: |
-          "$GODOT" --headless --path game --script res://tests/river_ribbons.gd
+          scripts/godot-test.sh res://tests/river_ribbons.gd RIVER_RIBBONS_OK
