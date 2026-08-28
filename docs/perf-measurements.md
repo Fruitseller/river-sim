@@ -68,10 +68,19 @@ FNV-1a über die Bit-Muster von `h`, `hf`, `area`, `areaMFD`, `sed`, `veg`,
 `snow`, `ice` nach Einlauf + Messschritten. **Jede** Optimierung dieser Runde
 wurde damit geprüft; der Wert ist über die gesamte Serie konstant:
 
+```sh
+SimCore/.build/release/simperf --hash --n 832 --world 130
 ```
-n=832 seed=1337 warmup=100x100 steps=30x100
+
+```
+n=832 world=130.0 seed=1337 warmup=100x100.0 steps=30x100.0
 fingerprint b145f5ba674c23d9
 ```
+
+Die beiden Schalter gehören zum Wert dazu: die Serie lief auf der Paarung
+832/130, der Standard des Harness ist seit August 2026 die Produktions-Paarung
+720/112,4789 (s. o.). Ohne sie rechnet `--hash` eine ANDERE Welt und meldet eine
+Abweichung, wo keine Physik-Änderung ist.
 
 Er ist maschinen-spezifisch (System-libm, s. AGENTS.md) — verglichen wird immer
 auf DERSELBEN Maschine, vor und nach der Änderung.
