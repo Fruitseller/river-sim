@@ -3911,6 +3911,14 @@ public final class Terrain {
     /// Sicht umzustellen wäre möglich, würde aber einen Testpfad-Pass umbauen,
     /// dessen Laufzeit niemanden interessiert.
     ///
+    /// Ein Unterschied bleibt und ist beabsichtigt: die Bed-Fassung schreibt
+    /// über Roh-Zeiger, die Property-Fassung tat es über `Array`-Subscripts.
+    /// Ein `k` außerhalb des Feldes trifft damit keine Bereichsprüfung mehr,
+    /// sondern fremden Speicher. Beide Aufrufer beziehen ihr `k` aus `order`
+    /// bzw. aus den eigenen Schleifengrenzen, und der Wächter prüft die
+    /// Feldlängen beim Aufbau — aber „dünner Adapter" heißt nicht „in jeder
+    /// Hinsicht dasselbe".
+    ///
     /// **Nur außerhalb von `withBed` aufrufen.** Innerhalb eines offenen Blocks
     /// ist das ein Doppelzugriff auf dieselben Felder (s. `withBed`); der
     /// Compiler wählt diese Überladung klaglos, die Laufzeit bricht ab. Wer eine

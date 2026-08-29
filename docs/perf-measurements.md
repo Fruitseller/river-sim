@@ -646,13 +646,34 @@ nur base gegen neu:
 (base streute 158,7 … 170,7). Erwartungsgemäß: der Produktionspfad ruft die
 geänderte Fassung nicht auf.
 
-`simperf --hash` vor und nach der Änderung identisch (`8a785727acabcd51`,
-dieselbe Maschine, beide Binärdateien in derselben Sitzung gebaut) — der volle
-State-Fingerprint aus Issue #78, also bit-identische Physik über das komplette
-Zustands-Inventar. Die Zahl steht hier als MESSWERT dieses Laufs, nicht als
-Erwartung: der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm), und
-genau deshalb liegt er nirgends im Repo als Sollwert (AGENTS.md, „Laufzeit
-messen").
+### Bit-Identität — und warum `simperf --hash` allein sie nicht belegt
+
+`simperf --hash` vor und nach der Änderung identisch: `8a785727acabcd51`.
+Das ist die halbe Antwort, und die unwichtigere. `simperf` fährt `SimConfig()`,
+also den Produktionspfad — und der ruft die geänderte Fassung gar nicht auf
+(`hydraulicEnabled = true` heißt Droplet statt `transportLimited`,
+`floodplainEnabled = false` heißt keine Aggradation). Sein Fingerprint KONNTE
+sich nicht ändern; er belegt „die Produktion ist nicht aus Versehen
+mitgewandert", nicht „der Umbau ist bit-neutral".
+
+Der eigentliche Beleg gehört auf die Konfiguration, in der beide Aufrufer
+laufen. Werkzeug dafür ist
+`BedFunnelTests.testChangedPathFingerprintDiagnostic` (gegatet wie jeder
+Messlauf, `RS_MEASURE=1`): `hydraulicEnabled = false`,
+`floodplainEnabled = true`, n = 96, Seed 1337, 20.000 Jahre, darüber
+`Terrain.fingerprint()` — derselbe volle State-Fingerprint aus Issue #78.
+
+| Stand | Fingerprint |
+|---|---|
+| base (zwei ausgeschriebene Regeln) | `fb91725969f21a54` |
+| Adapter | `fb91725969f21a54` |
+| Gegenprobe: Eis-Gate aus dem Funnel entfernt | `24afa4d4f96a3e39` |
+
+Die dritte Zeile ist der Grund, dem Gleichstand der ersten beiden zu glauben:
+das Instrument reagiert auf eine Änderung AM FUNNEL auf genau dieser
+Konfiguration. Alle Zahlen sind MESSWERTE dieser Maschine, keine Erwartungen —
+der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm), und genau deshalb
+liegt nirgends im Repo ein Sollwert (AGENTS.md, „Laufzeit messen").
 
 Für den Testpfad, den es wirklich betrifft (`transportLimited` läuft dort
 wirklich und öffnet die Sicht jetzt je Aufruf), ist die SimCore-Pflichtsuite
@@ -664,9 +685,15 @@ das Maß — 269 Tests, gleiche VM, nacheinander gelaufen:
 | Adapter, Lauf 1 | 367,7 s |
 | Adapter, Lauf 2 | 349,0 s |
 
-Alle drei Läufe fahren denselben Testbestand (269 Tests, `BedFunnel.swift`
-inklusive — getauscht wurde nur `Terrain.swift`), sind also vergleichbar. Die
-beiden Adapter-Läufe klammern den base-Lauf ein — **kein Signal über dem
+**base ist hier nicht `origin/main`**, sondern der Stand mit dem Wächter und
+den zwei ausgeschriebenen Regeln (Commit „test(sim): pin bed funnel parity");
+getauscht wurde genau eine Datei, `Terrain.swift`. Anders ginge es nicht: gegen
+ein `Terrain.swift` von vor dem Wächter compiliert `BedFunnel.swift` nicht,
+und ein Vergleich mit unterschiedlichem Testbestand misst den Testbestand. So
+fahren alle drei Läufe dieselben 269 ausgeführten Tests (plus 29
+übersprungene Messläufe).
+
+Die beiden Adapter-Läufe klammern den base-Lauf ein — **kein Signal über dem
 Rauschen dieser geteilten VM**. Der erste Lauf allein hätte „+1 %" gesagt; das
 ist genau der Fehlschluss, vor dem §I warnt. Alle drei liegen deutlich unter
 dem 15-min-Budget aus `docs/ci-measurements.md`.
@@ -687,5 +714,9 @@ Erosions-Paritäten rot.
 swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
 cp SimCore/.build/release/simperf /tmp/simperf.base    # bzw. .neu, je Stand
 for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; done
-/tmp/simperf.base --hash && /tmp/simperf.neu --hash    # muss gleich sein
+/tmp/simperf.base --hash && /tmp/simperf.neu --hash    # Produktionspfad unberührt
+
+# Der Beleg für den GEÄNDERTEN Pfad — je Stand einmal, Werte vergleichen:
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
 ```
