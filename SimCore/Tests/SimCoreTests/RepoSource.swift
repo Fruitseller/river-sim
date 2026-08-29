@@ -48,7 +48,7 @@ enum RepoSource {
         return SourceProbe(try file(relativePath), language: language)
     }
 
-    /// ALLE Swift-Quellen der GDExtension als ein Text.
+    /// ALLE Swift-Quellen der GDExtension als EINE Probe.
     ///
     /// Die Verträge fragen „steht dieser Wert in der Brücke?", nicht „steht er in
     /// DIESER Datei": seit Issue #53 liegt die Render-Aufbereitung in mehreren
@@ -56,7 +56,11 @@ enum RepoSource {
     /// weder brechen noch heimlich entschärfen. Der generierte Build-Stempel
     /// (Unterordner `Generated/`) fällt weg, weil hier nicht rekursiv gesucht
     /// wird — er enthält ohnehin nur einen Hash.
-    static func extensionSources() throws -> String {
+    ///
+    /// Die Dateien sind alphabetisch aneinandergefügt — Reihenfolge-sensible
+    /// Abfragen (`captures` & Co.) haben auf dieser Quelle nichts verloren,
+    /// s. `SourceProbe.captures(pattern:)`.
+    static func extensionSources() throws -> SourceProbe {
         let directory = try root().appendingPathComponent(extensionDirectory)
         let names = try XCTUnwrap(
             try? FileManager.default.contentsOfDirectory(atPath: directory.path),
@@ -64,9 +68,10 @@ enum RepoSource {
             .filter { $0.hasSuffix(".swift") }
             .sorted()
         XCTAssertFalse(names.isEmpty, "Keine Swift-Quellen in \(extensionDirectory)")
-        return try names
+        let joined = try names
             .map { try file("\(extensionDirectory)/\($0)") }
             .joined(separator: "\n")
+        return SourceProbe(joined, language: .swift)
     }
 
     private static func root() throws -> URL {
@@ -81,51 +86,14 @@ enum RepoSource {
     }
 }
 
-/// Enthält `haystack` den erwarteten Quelltext-Ausschnitt? `hint` sagt, WELCHE
-/// Kopplung bricht, wenn nicht.
-func assertContains(_ haystack: String, _ needle: String, hint: String,
-                    file: StaticString = #filePath, line: UInt = #line) {
-    XCTAssertTrue(haystack.contains(needle),
-                  "\(hint) — erwartet im Quelltext: \(needle)", file: file, line: line)
-}
-
-/// s. o. — auf der Code-Sicht der Probe: eine auskommentierte Zeile der
-/// Gegenseite erfüllt den Vertrag nicht.
+/// Enthält die Probe den erwarteten Quelltext-Ausschnitt? `hint` sagt, WELCHE
+/// Kopplung bricht, wenn nicht. Gematcht wird auf der Code-Sicht: eine
+/// auskommentierte Zeile der Gegenseite erfüllt den Vertrag nicht.
 func assertContains(_ haystack: SourceProbe, _ needle: String, hint: String,
                     file: StaticString = #filePath, line: UInt = #line) {
     XCTAssertTrue(haystack.contains(needle),
                   "\(hint) — erwartet im Quelltext (ohne Kommentare): \(needle)",
                   file: file, line: line)
-}
-
-/// Alle Treffer der ersten Capture-Gruppe von `pattern`, in Vorkommens-Reihenfolge.
-///
-/// Die Quelltext-Verträge lesen ihre Gegenseite ausnahmslos so; die Hilfe liegt
-/// deshalb hier bei `RepoSource` und nicht als private Kopie in jedem Test
-/// (`ToolContractTests` und `DiagStatsContractTests` hatten sie doppelt).
-func captures(in text: String, pattern: String) throws -> [String] {
-    let regex = try NSRegularExpression(pattern: pattern)
-    let range = NSRange(text.startIndex..<text.endIndex, in: text)
-    return regex.matches(in: text, range: range).compactMap { match in
-        guard let group = Range(match.range(at: 1), in: text) else { return nil }
-        return String(text[group])
-    }
-}
-
-/// s. `captures(in:pattern:)` — als Zahl.
-func integers(in text: String, pattern: String) throws -> [Int] {
-    try captures(in: text, pattern: pattern).compactMap(Int.init)
-}
-
-/// s. `captures(in:pattern:)` — für Muster mit ZWEI Capture-Gruppen (Name + Wert).
-func pairs(in text: String, pattern: String) throws -> [(String, String)] {
-    let regex = try NSRegularExpression(pattern: pattern)
-    let range = NSRange(text.startIndex..<text.endIndex, in: text)
-    return regex.matches(in: text, range: range).compactMap { match in
-        guard let first = Range(match.range(at: 1), in: text),
-              let second = Range(match.range(at: 2), in: text) else { return nil }
-        return (String(text[first]), String(text[second]))
-    }
 }
 
 /// Double in der Schreibweise, in der er in Shader-/GDScript-Quelltext stehen
