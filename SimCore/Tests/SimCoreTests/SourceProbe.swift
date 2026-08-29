@@ -41,9 +41,14 @@ struct SourceProbe {
     let code: String
     /// Kommentare UND Zeichenketten (samt Anführungszeichen) entfernt.
     let codeWithoutStrings: String
+    /// Mehrere Dateien zu EINEM Text gefügt (`RepoSource.extensionSources()`)?
+    /// Dann ist jede Vorkommens-Reihenfolge Sortier-Zufall und die
+    /// Reihenfolge-Abfragen unten verweigern sich.
+    let joinedFromMultipleFiles: Bool
 
-    init(_ source: String, language: Language) {
+    init(_ source: String, language: Language, joinedFromMultipleFiles: Bool = false) {
         raw = source
+        self.joinedFromMultipleFiles = joinedFromMultipleFiles
         (code, codeWithoutStrings) = Self.strip(source, language: language)
     }
 
@@ -58,10 +63,12 @@ struct SourceProbe {
     /// Alle Treffer der ersten Capture-Gruppe, in Vorkommens-Reihenfolge.
     /// Reihenfolge über MEHRERE Dateien wäre Sortier-Zufall — Verträge, die
     /// Reihenfolge prüfen, lesen deshalb genau EINE Datei (Werkzeug-Tabelle,
-    /// `DBG_*`-Tabelle), nie eine zusammengefügte Quelle wie
-    /// `RepoSource.extensionSources()`.
+    /// `DBG_*`-Tabelle). Auf einer zusammengefügten Quelle wie
+    /// `RepoSource.extensionSources()` verweigert sich der Aufruf laut,
+    /// statt eine Alphabetisierungs-Reihenfolge als Vertrag auszugeben.
     func captures(pattern: String) throws -> [String] {
-        try matches(pattern: pattern).map { String(code[$0[0]]) }
+        try refuseOrderQueryOnJoinedSource()
+        return try matches(pattern: pattern).map { String(code[$0[0]]) }
     }
 
     /// s. `captures(pattern:)` — als Zahl.
@@ -71,7 +78,20 @@ struct SourceProbe {
 
     /// s. `captures(pattern:)` — für Muster mit ZWEI Capture-Gruppen (Name + Wert).
     func pairs(pattern: String) throws -> [(String, String)] {
-        try matches(pattern: pattern).map { (String(code[$0[0]]), String(code[$0[1]])) }
+        try refuseOrderQueryOnJoinedSource()
+        return try matches(pattern: pattern).map { (String(code[$0[0]]), String(code[$0[1]])) }
+    }
+
+    /// Der geworfene Fehler lässt den aufrufenden Test laut fehlschlagen
+    /// (bewusst kein `XCTFail` hier: so bleibt die Verweigerung selbst pinbar).
+    struct OrderQueryOnJoinedSource: Error, CustomStringConvertible {
+        let description = "Reihenfolge-Abfrage auf einer aus mehreren Dateien "
+            + "gefügten Probe — die Treffer-Reihenfolge wäre alphabetischer "
+            + "Sortier-Zufall. Die eine Datei direkt proben."
+    }
+
+    private func refuseOrderQueryOnJoinedSource() throws {
+        if joinedFromMultipleFiles { throw OrderQueryOnJoinedSource() }
     }
 
     /// Zeilen der String-losen Sicht — für zeilen-verankerte Anweisungs-Suchen
@@ -178,6 +198,9 @@ struct SourceProbe {
                 while i < chars.count {
                     if chars[i] == "\\", i + 1 < chars.count {
                         code.append(chars[i]); code.append(chars[i + 1])
+                        // Auch ein maskiertes Zeilenende (Fortsetzung im
+                        // `"""`-Literal) zählt für die Zeilenstruktur.
+                        if chars[i + 1] == "\n" { sansStrings.append("\n") }
                         i += 2
                     } else if at(close) {
                         code += close
