@@ -613,9 +613,10 @@ SIGNATUR?**
 
 Bestätigt: die `Bed`-**Sicht** in den Hot-Loops ist der gemessene Gewinn
 (−3,3 ms, `meanderStamp` 4,69 → 2,92, `braidPass` 2,97 → 2,21). Daran ändert
-diese Runde nichts — `meanderStamp`, `braidPass`, `fillShallowPonds`,
-`fillOxbows` und `plugOxbows` öffnen die Sicht weiterhin EINMAL je Pass und
-reichen sie durch.
+diese Runde nichts — `meanderStamp`, `braidPass`, `fillOxbows` und `plugOxbows`
+öffnen die Sicht weiterhin EINMAL je Pass und reichen sie durch.
+(`fillShallowPonds` steht in §I daneben, benutzt aber eigene Roh-Puffer statt
+`Bed` und rührt den Funnel nicht an.)
 
 Nicht getragen hat §I dagegen die zweite ausgeschriebene Regel. Die
 Property-Fassung hat genau zwei Aufrufer, und **keiner davon läuft in der
@@ -624,7 +625,12 @@ Produktion**:
 | Aufrufer | Läuft wann |
 |---|---|
 | `transportLimited` | nur im Nicht-Droplet-Zweig (`hydraulicEnabled = false`), reiner Testpfad |
-| `floodplainAggradation` | geparkt (`floodplainEnabled = false`) |
+| `floodplainAggradation` | geparkt (`floodplainEnabled = false`) — und der Aufruf steht INNERHALB des `hydraulicEnabled`-Zweigs, braucht also zusätzlich `hydraulicEnabled = true` |
+
+Die zweite Zeile ist keine Fußnote: die beiden Aufrufer liegen in
+**gegenläufigen** Zweigen von `step()`. Keine einzelne Konfiguration fährt
+beide, ein einzelner Beleglauf deckt also immer nur einen ab — s. den
+Fingerprint-Abschnitt unten, der genau daran zuerst gescheitert ist.
 
 Damit kann das Öffnen der Sicht je Aufruf (`withBed { … }`) im Produktions-
 Schritt gar nichts kosten. Seit dieser Runde ist die Property-Fassung ein
@@ -656,24 +662,34 @@ also den Produktionspfad — und der ruft die geänderte Fassung gar nicht auf
 sich nicht ändern; er belegt „die Produktion ist nicht aus Versehen
 mitgewandert", nicht „der Umbau ist bit-neutral".
 
-Der eigentliche Beleg gehört auf die Konfiguration, in der beide Aufrufer
-laufen. Werkzeug dafür ist
-`BedFunnelTests.testChangedPathFingerprintDiagnostic` (gegatet wie jeder
-Messlauf, `RS_MEASURE=1`): `hydraulicEnabled = false`,
-`floodplainEnabled = true`, n = 96, Seed 1337, 20.000 Jahre, darüber
-`Terrain.fingerprint()` — derselbe volle State-Fingerprint aus Issue #78.
+Der eigentliche Beleg gehört auf die Konfigurationen, in denen die zwei
+Aufrufer laufen — **Plural**, und das war der erste Fehlversuch dieser Runde:
+ein Lauf mit `hydraulicEnabled = false, floodplainEnabled = true` sieht nach
+„beide an" aus, fährt aber nur `transportLimited`, weil der
+`floodplainAggradation`-Aufruf im abgeschalteten Zweig liegt (gemessen: 40
+Aufrufe `transportLimited`, 0 Aufrufe `floodplainAggradation`). Die zwei
+Aufrufer brauchen zwei Läufe.
 
-| Stand | Fingerprint |
-|---|---|
-| base (zwei ausgeschriebene Regeln) | `fb91725969f21a54` |
-| Adapter | `fb91725969f21a54` |
-| Gegenprobe: Eis-Gate aus dem Funnel entfernt | `24afa4d4f96a3e39` |
+Werkzeug: `BedFunnelTests.testChangedPathFingerprintDiagnostic` (gegatet wie
+jeder Messlauf, `RS_MEASURE=1`), n = 96, Seed 1337, 20.000 Jahre, darüber
+`Terrain.fingerprint()` — derselbe volle State-Fingerprint aus Issue #78:
 
-Die dritte Zeile ist der Grund, dem Gleichstand der ersten beiden zu glauben:
-das Instrument reagiert auf eine Änderung AM FUNNEL auf genau dieser
-Konfiguration. Alle Zahlen sind MESSWERTE dieser Maschine, keine Erwartungen —
-der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm), und genau deshalb
-liegt nirgends im Repo ein Sollwert (AGENTS.md, „Laufzeit messen").
+| Stand | Arm `transportLimited`<br>(`hydraulicEnabled = false`) | Arm `floodplainAggradation`<br>(`hydraulicEnabled = true`) |
+|---|---|---|
+| base (zwei ausgeschriebene Regeln) | `fb91725969f21a54` | `64d89c0982691f03` |
+| Adapter | `fb91725969f21a54` | `64d89c0982691f03` |
+| Gegenprobe: NUR der Adapter sabotiert | `464edcd82603df0c` | `3c9bb7c23b50f5ac` |
+
+Die dritte Zeile ist der Grund, den ersten beiden zu glauben. Sabotiert wurde
+dafür **nur der Adapter** (Regel zurück-inlined, Eis-Gate weg), nicht die
+Bed-Fassung: eine Änderung an der Bed-Fassung würde auch über `meanderStamp`
+und `braidPass` durchschlagen und damit gar nicht zeigen, dass der ADAPTER-Weg
+am Ergebnis beteiligt ist. Beide Arme wandern — beide Aufrufer laufen also
+wirklich durch die geänderte Stelle.
+
+Alle Zahlen sind MESSWERTE dieser Maschine, keine Erwartungen: der Fingerprint
+ist ein Pro-Maschine-Vergleich (System-libm), und genau deshalb liegt nirgends
+im Repo ein Sollwert (AGENTS.md, „Laufzeit messen").
 
 Für den Testpfad, den es wirklich betrifft (`transportLimited` läuft dort
 wirklich und öffnet die Sicht jetzt je Aufruf), ist die SimCore-Pflichtsuite
@@ -690,8 +706,8 @@ den zwei ausgeschriebenen Regeln (Commit „test(sim): pin bed funnel parity");
 getauscht wurde genau eine Datei, `Terrain.swift`. Anders ginge es nicht: gegen
 ein `Terrain.swift` von vor dem Wächter compiliert `BedFunnel.swift` nicht,
 und ein Vergleich mit unterschiedlichem Testbestand misst den Testbestand. So
-fahren alle drei Läufe dieselben 269 ausgeführten Tests (plus 29
-übersprungene Messläufe).
+fahren alle drei Läufe denselben Bestand: 269 Tests, davon 29 übersprungene
+Messläufe.
 
 Die beiden Adapter-Läufe klammern den base-Lauf ein — **kein Signal über dem
 Rauschen dieser geteilten VM**. Der erste Lauf allein hätte „+1 %" gesagt; das

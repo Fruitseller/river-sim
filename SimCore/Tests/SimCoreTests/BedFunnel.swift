@@ -84,79 +84,94 @@ final class BedFunnelTests: XCTestCase {
         [("h", t.h), ("sed", t.sed), ("rock", t.rock)]
     }
 
-    /// Die Rollen stehen in den Parameternamen, nicht in der Meldung: der
-    /// Vergleich soll auch dann noch das Richtige sagen, wenn jemand die beiden
-    /// Wege einmal andersherum einsetzt.
-    private func assertBedsAreBitEqual(byProperty: Terrain, byBed: Terrain, _ what: String,
+    /// Jede Seite bringt ihren eigenen Namen mit, statt dass die Meldung die
+    /// Rollen der Argumente errät — sonst stimmt sie nur so lange, wie der
+    /// Aufrufer sie in der erwarteten Reihenfolge übergibt.
+    private func assertBedsAreBitEqual(_ left: (shape: CallShape, terrain: Terrain),
+                                       _ right: (shape: CallShape, terrain: Terrain),
+                                       _ what: String,
                                        file: StaticString = #filePath, line: UInt = #line) {
-        for (left, right) in zip(namedFields(byProperty), namedFields(byBed)) {
-            for k in 0..<left.values.count
-            where left.values[k].bitPattern != right.values[k].bitPattern {
-                XCTFail("\(what): \(left.name)[\(k)] weicht ab — "
-                        + "\(Self.viaProperty.name) \(left.values[k]) "
-                        + "vs. \(Self.viaBed.name) \(right.values[k])",
+        for (a, b) in zip(namedFields(left.terrain), namedFields(right.terrain)) {
+            for k in 0..<a.values.count where a.values[k].bitPattern != b.values[k].bitPattern {
+                XCTFail("\(what): \(a.name)[\(k)] weicht ab — "
+                        + "\(left.shape.name) \(a.values[k]) "
+                        + "vs. \(right.shape.name) \(b.values[k])",
                         file: file, line: line)
                 return
             }
         }
     }
 
-    /// Parität der beiden Aufruf-Wege: gleiche Rückgabe, gleiches Bett.
-    private func checkParity(withIce: Bool, erode: Bool) {
+    /// Parität der beiden Aufruf-Wege: gleiche Rückgabe, gleiches Bett. Welche
+    /// Operation geprüft wird, sagt der KeyPath in `CallShape` — die Wahl ist
+    /// dort schon modelliert und wird hier nicht als Flag zweitverwaltet.
+    private func checkParity(withIce: Bool,
+                             _ op: KeyPath<CallShape, (Terrain, Int, Double) -> Double>,
+                             _ label: String) {
         let c = cfg()
         let byProperty = Terrain(config: c, seed: 4711)
         let byBed = Terrain(config: c, seed: 4711)
         fillSyntheticBed(byProperty, withIce: withIce)
         fillSyntheticBed(byBed, withIce: withIce)
-        let op: (CallShape) -> (Terrain, Int, Double) -> Double = erode ? \.erode : \.deposit
-
         var moved = 0
         for k in 0..<c.count {
             let amount = amounts[k % amounts.count]
-            let p = op(Self.viaProperty)(byProperty, k, amount)
-            let b = op(Self.viaBed)(byBed, k, amount)
+            let p = Self.viaProperty[keyPath: op](byProperty, k, amount)
+            let b = Self.viaBed[keyPath: op](byBed, k, amount)
             XCTAssertEqual(p.bitPattern, b.bitPattern,
                            "Rückgabe an Zelle \(k) (Betrag \(amount)) weicht ab: \(p) vs. \(b)")
             if p != 0 { moved += 1 }
         }
-        let what = "\(erode ? "erodeCell" : "depositCell")\(withIce ? " mit Eis" : " ohne Eis")"
-        assertBedsAreBitEqual(byProperty: byProperty, byBed: byBed, what)
+        let what = "\(label)\(withIce ? " mit Eis" : " ohne Eis")"
+        assertBedsAreBitEqual((Self.viaProperty, byProperty), (Self.viaBed, byBed), what)
         // Ein Wächter, der nichts bewegt, wäre auf beiden Wegen gleich grün.
         XCTAssertGreaterThan(moved, c.count / 4, "\(what): der Wächter hat kaum etwas bewegt")
     }
 
-    /// **Bit-Identitäts-Instrument für den Pfad, der sich wirklich geändert
-    /// hat** (Issue #81).
+    /// **Bit-Identitäts-Instrument für die Pfade, die sich wirklich geändert
+    /// haben** (Issue #81).
     ///
     /// `simperf --hash` fährt `SimConfig()` — den Produktionspfad, und genau der
     /// ruft die Adapter NICHT auf (`hydraulicEnabled = true` heißt Droplet statt
-    /// `transportLimited`, `floodplainEnabled = false` heißt gar keine
-    /// Aggradation). Sein Fingerprint KONNTE sich durch den Adapter-Umbau nicht
-    /// ändern; als Beleg für diesen Umbau ist er wertlos. Der Beleg gehört auf
-    /// die Konfiguration, in der beide Aufrufer laufen — die stellt dieser
-    /// Diagnose-Lauf her und druckt `Terrain.fingerprint()` darüber (voller
-    /// State-Fingerprint, Issue #78).
+    /// `transportLimited`, `floodplainEnabled = false` heißt keine Aggradation).
+    /// Sein Fingerprint KONNTE sich durch den Adapter-Umbau nicht ändern; als
+    /// Beleg für diesen Umbau ist er wertlos.
+    ///
+    /// Der Beleg gehört auf die Konfigurationen, in denen die zwei Aufrufer
+    /// wirklich laufen — und das sind ZWEI, nicht eine. `floodplainAggradation`
+    /// hängt zwar an `floodplainEnabled`, steht aber INNERHALB des
+    /// `hydraulicEnabled`-Zweigs; `transportLimited` steht im Gegenzweig. KEIN
+    /// Wert von `hydraulicEnabled` erreicht beide, ein einzelner Lauf belegt
+    /// also immer nur einen Aufrufer. Deshalb zwei Arme, jeder mit
+    /// `Terrain.fingerprint()` darüber (voller State-Fingerprint, Issue #78).
+    ///
+    /// `n = 96` ist die Kantenlänge der übrigen Kopplungstests dieser Suite
+    /// (`meanderCfg`), 20.000 Jahre dieselbe Marke, an der `Glacier.swift` den
+    /// Grid-Pfad prüft, Seed 1337 der Seed des Mess-Harness. Zusammen 0,5 s —
+    /// nicht die Laufzeit ist der Grund fürs Gate, sondern die Konvention
+    /// (`MeasurementGate.swift`).
     ///
     /// Ein Erwartungswert steht bewusst NICHT hier: der Fingerprint ist ein
     /// Pro-Maschine-Vergleich (System-libm, AGENTS.md „Laufzeit messen").
     /// Vorher/Nachher-Werte dieses Umbaus: `docs/perf-measurements.md` §K.
     func testChangedPathFingerprintDiagnostic() throws {
         try skipUnlessMeasuring()
-        var c = SimConfig()
-        c.n = 96; c.world = calibrationWorld
-        c.hydraulicEnabled = false   // → transportLimited statt Hydraulic.erode
-        c.floodplainEnabled = true   // → floodplainAggradation läuft mit
-        let t = Terrain(config: c, seed: 1337)
-        while t.years < 20_000 { t.step(dtYears: 500) }
-        print("[FUNNEL] geänderter Pfad (hydraulicEnabled=false, floodplainEnabled=true), "
-              + "n=96 seed=1337 20.000 J.: fingerprint "
-              + String(format: "%016llx", t.fingerprint()))
+        for (arm, hydraulic) in [("transportLimited", false), ("floodplainAggradation", true)] {
+            var c = SimConfig()
+            c.n = 96; c.world = calibrationWorld
+            c.hydraulicEnabled = hydraulic
+            c.floodplainEnabled = true
+            let t = Terrain(config: c, seed: 1337)
+            while t.years < 20_000 { t.step(dtYears: 500) }
+            print("[FUNNEL] Arm \(arm) (hydraulicEnabled=\(hydraulic)): fingerprint "
+                  + String(format: "%016llx", t.fingerprint()))
+        }
     }
 
-    func testErodeParityWithoutIce() { checkParity(withIce: false, erode: true) }
-    func testErodeParityUnderIce() { checkParity(withIce: true, erode: true) }
-    func testDepositParityWithoutIce() { checkParity(withIce: false, erode: false) }
-    func testDepositParityUnderIce() { checkParity(withIce: true, erode: false) }
+    func testErodeParityWithoutIce() { checkParity(withIce: false, \.erode, "erodeCell") }
+    func testErodeParityUnderIce() { checkParity(withIce: true, \.erode, "erodeCell") }
+    func testDepositParityWithoutIce() { checkParity(withIce: false, \.deposit, "depositCell") }
+    func testDepositParityUnderIce() { checkParity(withIce: true, \.deposit, "depositCell") }
 
     /// Die Regel, die der Funnel trägt — geprüft auf beiden Wegen, damit sie
     /// nicht gemeinsam abdriften können: erst Sediment, dann Fels,
