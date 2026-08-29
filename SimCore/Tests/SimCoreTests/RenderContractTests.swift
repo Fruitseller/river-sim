@@ -13,12 +13,12 @@ final class RenderContractTests: XCTestCase {
 
     func testHeightScaleIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.heightScale, 24.0)
-        let main = try RepoSource.file("game/scripts/Main.gd")
+        let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "const HSCALE := \(glsl(RenderContract.heightScale))",
                        hint: "Mesh-Überhöhung == RenderContract.heightScale")
         assertContains(main, "set_shader_parameter(\"hscale\", HSCALE)",
                        hint: "Shader-Uniform der Überhöhung == Main.gd HSCALE")
-        let shader = try RepoSource.file("game/shaders/terrain.gdshader")
+        let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform float hscale = \(glsl(RenderContract.heightScale));",
                        hint: "Shader-Default der Überhöhung == RenderContract.heightScale")
         // Nicht nur die DEKLARATION pinnen, sondern jede ANWENDUNG: ein
@@ -38,14 +38,14 @@ final class RenderContractTests: XCTestCase {
         }
         // Und keine fünfte, ungeprüfte Anwendung: 1 Deklaration + 1 Vertex-Höhe
         // + 2 Vertex-Normale + 2 Pixel-Normale + 1 Materialkoordinate = 7.
-        XCTAssertEqual(shader.components(separatedBy: "hscale").count - 1, 7,
+        XCTAssertEqual(shader.count(of: "hscale"), 7,
                        "Neue oder entfernte `hscale`-Anwendung im Terrain-Shader —"
                        + " Liste der geprüften Stellen mitziehen")
     }
 
     func testRiverLiftIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.riverLift, 0.35)
-        let main = try RepoSource.file("game/scripts/Main.gd")
+        let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "const RIVER_LIFT := \(glsl(RenderContract.riverLift))",
                        hint: "Band-Anhebung == RenderContract.riverLift")
         // Über Wasser gilt der Land-Lift NICHT — die beiden Wasser-Versätze
@@ -59,7 +59,7 @@ final class RenderContractTests: XCTestCase {
     /// klingende Vulkan-Begriff `depth_draw_alpha_prepass` kompiliert nicht und
     /// ließ den neuen Ozean erst beim Start der echten Szene ausfallen.
     func testOceanUsesAValidAlphaDepthPrepass() throws {
-        let ocean = try RepoSource.file("game/shaders/ocean.gdshader")
+        let ocean = try RepoSource.probe("game/shaders/ocean.gdshader")
         assertContains(ocean,
                        "render_mode blend_mix, depth_prepass_alpha, cull_disabled;",
                        hint: "Ozean-Shader verwendet Godot-4-Rendermodus")
@@ -69,8 +69,8 @@ final class RenderContractTests: XCTestCase {
     /// der Terrainfläche nur über Meeresboden. Sonst sieht eine flache Kamera
     /// gleichzeitig seine quadratische Kante und die Platte unter dem Land.
     func testOceanClipsItsPlaneBelowLand() throws {
-        let ocean = try RepoSource.file("game/shaders/ocean.gdshader")
-        let main = try RepoSource.file("game/scripts/Main.gd")
+        let ocean = try RepoSource.probe("game/shaders/ocean.gdshader")
+        let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(ocean, "uniform sampler2D height_tex",
                        hint: "Ozean liest dasselbe Höhenfeld wie das Terrain")
         assertContains(ocean, "texture(height_tex, terrain_uv).r > sea_level",
@@ -87,7 +87,7 @@ final class RenderContractTests: XCTestCase {
 
     func testDefaultSeedIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.defaultSeed, 1337)
-        let main = try RepoSource.file("game/scripts/Main.gd")
+        let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "var sim_seed := \(RenderContract.defaultSeed)",
                        hint: "Start-Seed der Anzeige == RenderContract.defaultSeed")
         let bridge = try RepoSource.extensionSources()

@@ -29,6 +29,25 @@ enum RepoSource {
                              + "Kalibrierung wäre damit ungeprüft")
     }
 
+    /// s. `file(_:)` — als `SourceProbe`, Sprache nach Dateiendung. Die Wächter
+    /// matchen damit auf der Code-Sicht: eine auskommentierte Zeile der
+    /// Gegenseite erfüllt keinen Vertrag mehr (Issue #83).
+    static func probe(_ relativePath: String) throws -> SourceProbe {
+        let language: SourceProbe.Language
+        switch (relativePath as NSString).pathExtension {
+        case "swift": language = .swift
+        case "gd": language = .gdscript
+        case "gdshader": language = .gdshader
+        default:
+            // Laut fehlschlagen, nie überspringen: ein Skip hier wäre genau die
+            // stille Entschärfung, die `file(_:)` oben ausschließt.
+            struct UnknownLanguage: Error {}
+            XCTFail("Keine Sprachregel für \(relativePath) — SourceProbe.Language erweitern")
+            throw UnknownLanguage()
+        }
+        return SourceProbe(try file(relativePath), language: language)
+    }
+
     /// ALLE Swift-Quellen der GDExtension als ein Text.
     ///
     /// Die Verträge fragen „steht dieser Wert in der Brücke?", nicht „steht er in
@@ -70,6 +89,15 @@ func assertContains(_ haystack: String, _ needle: String, hint: String,
                   "\(hint) — erwartet im Quelltext: \(needle)", file: file, line: line)
 }
 
+/// s. o. — auf der Code-Sicht der Probe: eine auskommentierte Zeile der
+/// Gegenseite erfüllt den Vertrag nicht.
+func assertContains(_ haystack: SourceProbe, _ needle: String, hint: String,
+                    file: StaticString = #filePath, line: UInt = #line) {
+    XCTAssertTrue(haystack.contains(needle),
+                  "\(hint) — erwartet im Quelltext (ohne Kommentare): \(needle)",
+                  file: file, line: line)
+}
+
 /// Alle Treffer der ersten Capture-Gruppe von `pattern`, in Vorkommens-Reihenfolge.
 ///
 /// Die Quelltext-Verträge lesen ihre Gegenseite ausnahmslos so; die Hilfe liegt
@@ -104,6 +132,13 @@ func pairs(in text: String, pattern: String) throws -> [(String, String)] {
 /// MUSS, damit der Vergleich greift: Swifts eigene Ausgabe (kürzeste
 /// rundreise-treue Form, immer mit Dezimalpunkt — also stets ein gültiges
 /// GLSL-Float). Praktische Folge: im Shader steht `0.7`, nicht `0.70`.
+///
+/// Die Auflage ist mit Issue #83 BEWUSST bestätigt statt wegnormalisiert:
+/// eine Zahlen-Normalisierung müsste jedes Float-Literal der Gegenseite
+/// umschreiben — auch in GDScript-Zeichenketten und Format-Strings — und
+/// kaufte damit eine eigene Fehlerklasse ein, um einen Fehlschlag zu sparen,
+/// der ohnehin laut ist: der Wächter nennt im Hinweis die erwartete
+/// Schreibweise wörtlich.
 func glsl(_ value: Double) -> String { "\(value)" }
 
 /// s. `glsl(_:)` — für Farb-Tripel.
