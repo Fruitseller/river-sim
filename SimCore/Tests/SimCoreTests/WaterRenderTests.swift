@@ -500,14 +500,11 @@ final class WaterRenderTests: XCTestCase {
 
 
     func testExtensionKeepsWaterCalibrationOutOfMarshalling() throws {
+        // Die Code-Sicht der Probe lässt Kommentare weg: ein Verweis „s.
+        // WaterRender.…" im Kommentar bleibt erlaubt, nur Code zählt.
         let bridge = try RepoSource.extensionSources()
-        let implementation = bridge.split(
-            separator: "\n", omittingEmptySubsequences: false
-        ).map {
-            $0.split(separator: "//", maxSplits: 1, omittingEmptySubsequences: false)[0]
-        }.joined(separator: "\n")
         XCTAssertFalse(
-            implementation.contains("WaterRender."),
+            bridge.contains("WaterRender."),
             "Die GDExtension darf keine Wasser-Kalibrierung zurückkopieren; "
                 + "sie gehört ausschließlich in SimCore/SimRender"
         )
@@ -517,7 +514,7 @@ final class WaterRenderTests: XCTestCase {
 
     /// Quelltext einer anderen Schicht — s. `RepoSource` (gemeinsam mit
     /// `RenderContractTests`).
-    private func repoFile(_ relativePath: String) throws -> String {
-        try RepoSource.file(relativePath)
+    private func repoFile(_ relativePath: String) throws -> SourceProbe {
+        try RepoSource.probe(relativePath)
     }
 }

@@ -43,14 +43,14 @@ final class DiagStatsContractTests: XCTestCase {
     config.n = 96
     config.world = calibrationWorld
     let stats = TerrainDiagnostics().stats(Terrain(config: config, seed: 1337))
-    let main = try RepoSource.file("game/scripts/Main.gd")
+    let main = try RepoSource.probe("game/scripts/Main.gd")
     let expected = Self.expectedLayout
 
     XCTAssertEqual(
       stats.count, expected.count,
       "Ausführbarer Diagnosepuffer und Vertragstabelle sind verschieden lang")
 
-    let named = try pairs(in: main, pattern: "const (DBG_[A-Z0-9_]+) := ([0-9]+)")
+    let named = try main.pairs(pattern: "const (DBG_[A-Z0-9_]+) := ([0-9]+)")
     XCTAssertEqual(
       named.map(\.0), expected,
       "Die DBG_*-Konstanten in Main.gd stehen in anderer Reihenfolge")
@@ -58,7 +58,7 @@ final class DiagStatsContractTests: XCTestCase {
       named.compactMap { Int($0.1) }, Array(0..<stats.count),
       "Die DBG_*-Indizes in Main.gd müssen lückenlos und doppelfrei sein")
 
-    let declared = try integers(in: main, pattern: "const DEBUG_STATS_COUNT := ([0-9]+)")
+    let declared = try main.integers(pattern: "const DEBUG_STATS_COUNT := ([0-9]+)")
     XCTAssertEqual(
       declared.count, 1,
       "DEBUG_STATS_COUNT in Main.gd nicht (oder mehrfach) gefunden")

@@ -441,10 +441,13 @@ Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer). Die Extension u
 die Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests`
 pinnen Swift-Kalibrierung und echte `.gdshader`, `WaterRendererTests` führen
 `SimRender` aus; `RenderContractTests` hält die verbleibenden Verträge zu
-`Main.gd`, Shader und `SimNode`. Gemeinsamer Quelltext-Helfer:
-`Tests/SimCoreTests/RepoSource.swift`. Zahlen im Shader deshalb in
-**Swift-Schreibweise** notieren (`0.7`, nicht `0.70`); sonst greift der
-Textvergleich nicht.
+`Main.gd`, Shader und `SimNode`. Gemeinsame Quelltext-Helfer (Issue #83):
+`Tests/SimCoreTests/RepoSource.swift` (Dateizugriff) und `SourceProbe.swift`
+(DER eine Lexer + Abfragen aller Text-Wächter; gematcht wird auf der
+Code-Sicht, eine auskommentierte Zeile der Gegenseite erfüllt keinen
+Vertrag). Zahlen im Shader deshalb in **Swift-Schreibweise** notieren
+(`0.7`, nicht `0.70`); sonst greift der Textvergleich nicht — mit #83
+bewusst so bestätigt statt wegnormalisiert, Begründung am `glsl(_:)`-Helfer.
 
 **Binnenwasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
