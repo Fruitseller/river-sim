@@ -54,7 +54,7 @@ final class MeasurementGateTests: XCTestCase {
     func testDiagnosticSuffixAndGateAgreeInEveryTestFile() throws {
         var offenders: [String] = []
         for (file, source) in try testSources() {
-            for (name, body) in testMethods(in: source) {
+            for (name, body) in SourceProbe(source, language: .swift).testMethods() {
                 let named = name.hasSuffix("Diagnostic")
                 let gated = gatesOnMeasurement(body)
                 if named && !gated {
@@ -78,7 +78,7 @@ final class MeasurementGateTests: XCTestCase {
     func testScannerSeesTheSuite() throws {
         let sources = try testSources()
         XCTAssertGreaterThan(sources.count, 10, "Testquellen nicht gefunden")
-        let methods = sources.flatMap { testMethods(in: $0.source) }
+        let methods = sources.flatMap { SourceProbe($0.source, language: .swift).testMethods() }
         XCTAssertGreaterThan(methods.count, 100, "Testmethoden nicht erkannt")
         XCTAssertTrue(methods.contains { $0.name.hasSuffix("Diagnostic") },
                       "kein einziger Messlauf erkannt — Scanner oder Konvention kaputt")
@@ -179,8 +179,4 @@ final class MeasurementGateTests: XCTestCase {
         }
     }
 
-    /// Zerlegt eine Quelldatei in Testmethoden — s. `SourceProbe.testMethods()`.
-    private func testMethods(in source: String) -> [(name: String, body: String)] {
-        SourceProbe(source, language: .swift).testMethods()
-    }
 }

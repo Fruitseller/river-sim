@@ -99,6 +99,27 @@ final class SourceProbeTests: XCTestCase {
                        "die Reihenfolge IST der Vertrag (Werkzeug-Tabelle)")
     }
 
+    func testProbeEscapedLineEndKeepsTheLineCount() {
+        // `\` am Zeilenende eines `"""`-Literals ist eine Zeilenfortsetzung —
+        // die Zeile muss auch in der String-losen Sicht gezählt werden, sonst
+        // verrutschen zeilen-verankerte Abfragen.
+        let source = "let s = \"\"\"\na\\\nb\n\"\"\"\nx()"
+        let probe = SourceProbe(source, language: .swift)
+        XCTAssertEqual(probe.codeWithoutStrings.components(separatedBy: "\n").count,
+                       source.components(separatedBy: "\n").count)
+    }
+
+    func testProbeRefusesOrderQueriesOnAJoinedSource() throws {
+        // Über mehrere Dateien gefügt (RepoSource.extensionSources) ist jede
+        // Vorkommens-Reihenfolge alphabetischer Sortier-Zufall — kein Vertrag.
+        let joined = SourceProbe("let a = 1", language: .swift,
+                                 joinedFromMultipleFiles: true)
+        XCTAssertTrue(joined.contains("let a"),
+                      "reihenfolge-unabhängige Abfragen bleiben erlaubt")
+        XCTAssertThrowsError(try joined.captures(pattern: "let ([a-z]+)"))
+        XCTAssertThrowsError(try joined.pairs(pattern: "let ([a-z]+) = ([0-9]+)"))
+    }
+
     // MARK: Testmethoden-Zerlegung (Swift, für das Mess-Gate)
 
     func testProbeSplitsTestMethodsAndClosesThemAtTheNextFunc() {

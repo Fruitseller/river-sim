@@ -58,8 +58,8 @@ enum RepoSource {
     /// wird — er enthält ohnehin nur einen Hash.
     ///
     /// Die Dateien sind alphabetisch aneinandergefügt — Reihenfolge-sensible
-    /// Abfragen (`captures` & Co.) haben auf dieser Quelle nichts verloren,
-    /// s. `SourceProbe.captures(pattern:)`.
+    /// Abfragen (`captures` & Co.) verweigern sich auf dieser Probe deshalb
+    /// laut, s. `SourceProbe.captures(pattern:)`.
     static func extensionSources() throws -> SourceProbe {
         let directory = try root().appendingPathComponent(extensionDirectory)
         let names = try XCTUnwrap(
@@ -71,7 +71,7 @@ enum RepoSource {
         let joined = try names
             .map { try file("\(extensionDirectory)/\($0)") }
             .joined(separator: "\n")
-        return SourceProbe(joined, language: .swift)
+        return SourceProbe(joined, language: .swift, joinedFromMultipleFiles: true)
     }
 
     private static func root() throws -> URL {
