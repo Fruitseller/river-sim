@@ -309,7 +309,9 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
 
 - `WaterFieldRenderer`: Raster-Wasser als `[UInt8]`,
 - `RiverRibbonRenderer`: Band-Geometrie als `RibbonMesh`
-  (`SIMD3<Float>`/`SIMD4<Float>`/`SIMD2<Float>` + Indizes),
+  (`SIMD3<Float>`/`SIMD4<Float>`/`SIMD2<Float>` + Indizes); das echte
+  Bauergebnis für den Raster-Deckel (`bandChannelFlags`/`bandCoverage`) reist
+  im selben Wert statt als impliziter Nebenkanal,
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie in einem gemeinsamen Pass,
 - `TreeInstanceRenderer`: MultiMesh-Puffer der Bäume,
