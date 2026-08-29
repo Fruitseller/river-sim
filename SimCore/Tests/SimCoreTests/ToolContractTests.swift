@@ -44,22 +44,20 @@ final class ToolContractTests: XCTestCase {
     // geprüft — auf seed-gleichen Terrains, damit nur das Werkzeug den
     // Unterschied macht.
 
-    /// Frisches Terrain mit fixem Seed; zwei Aufrufe liefern bit-gleiche Welten
-    /// (Determinismus-Invariante), also ist jede Differenz die Werkzeug-Wirkung.
     private let n = 64
 
-    private func makeTerrain() -> Terrain {
-        var c = SimConfig(); c.n = n; c.world = calibrationWorld
-        return Terrain(config: c, seed: 7)
+    private var cfg: SimConfig {
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
     }
 
-    /// Zellgröße dieser Test-Welt — Radien unten stehen in ZELLEN.
-    private var cell: Double { calibrationWorld / Double(n) }
+    /// Frisches Terrain mit fixem Seed; zwei Aufrufe liefern bit-gleiche Welten
+    /// (Determinismus-Invariante), also ist jede Differenz die Werkzeug-Wirkung.
+    private func makeTerrain() -> Terrain { Terrain(config: cfg, seed: 7) }
 
     /// Strich-Zentrum in Gitterkoordinaten und Pinselradius in Welteinheiten.
     private var gx: Double { Double(n) / 2 }
     private var gz: Double { Double(n) / 2 }
-    private var radius: Double { 6 * cell }   // 6 Zellen
+    private var radius: Double { 6 * cfg.cellSize }   // 6 Zellen
 
     /// Wendet `tool` auf ein frisches Terrain an und liefert (vorher, nachher).
     private func heights(after tool: BrushTool, strength: Double = 1.0,
@@ -74,60 +72,59 @@ final class ToolContractTests: XCTestCase {
 
     private var centerIndex: Int { Int(gz) * n + Int(gx) }
 
-    /// Mittlere lokale Rauheit im Pinsel: |h − 3×3-Mittel|, gemittelt.
-    private func roughness(_ h: [Double]) -> Double {
-        var sum = 0.0, count = 0.0
-        let lo = n / 2 - 4, hi = n / 2 + 4
-        for j in lo...hi { for i in lo...hi {
-            var s = 0.0, c = 0.0
-            for dj in (j - 1)...(j + 1) { for di in (i - 1)...(i + 1) {
-                s += h[dj * n + di]; c += 1
-            }}
-            sum += abs(h[j * n + i] - s / c); count += 1
-        }}
-        return sum / count
+    /// Rauheit im Pinselkreis dieses Strichs (geteilter Helfer, `BrushTestSupport.swift`).
+    private func brushRoughness(_ h: [Double]) -> Double {
+        roughness(h, center: (gx, gz), radiusWorld: radius, cfg: cfg)
+    }
+
+    /// Heben und Senken sind DERSELBE Aufruf mit gespiegeltem `dir`: ein Helfer,
+    /// zwei Tests — `sign` ist die erwartete Wirkrichtung auf Höhe UND Tektonik
+    /// (die Kopplung unterscheidet `sculpt` von jedem anderen Werkzeug und pinnt
+    /// das `dir`-Vorzeichen).
+    private func assertSculpt(_ tool: BrushTool, sign: Double,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        let t = makeTerrain()
+        let before = t.h, u0 = t.upliftBase[centerIndex]
+        tool.apply(to: t, gx: gx, gz: gz, radiusWorld: radius, strength: 1, target: 0)
+        XCTAssertGreaterThan((t.h[centerIndex] - before[centerIndex]) * sign, 0,
+                             "\(tool) muss das Zentrum in Richtung \(sign) bewegen",
+                             file: file, line: line)
+        XCTAssertGreaterThan((t.upliftBase[centerIndex] - u0) * sign, 0,
+                             "\(tool) muss in die Tektonik koppeln (sculpt, dir: \(sign))",
+                             file: file, line: line)
+        assertUntouchedOutside(t.h, before: before, center: (gx, gz),
+                               radiusWorld: radius, cfg: cfg, file: file, line: line)
     }
 
     func testRaiseLiftsTheCenterAndCouplesIntoTectonics() throws {
-        let t = makeTerrain()
-        let h0 = t.h[centerIndex], u0 = t.upliftBase[centerIndex]
-        BrushTool.raise.apply(to: t, gx: gx, gz: gz, radiusWorld: radius,
-                              strength: 1, target: 0)
-        XCTAssertGreaterThan(t.h[centerIndex], h0, "Anheben muss das Zentrum heben")
-        XCTAssertGreaterThan(t.upliftBase[centerIndex], u0,
-                             "Anheben muss in die Tektonik koppeln (sculpt, dir: 1)")
-        // Außerhalb des Pinsels bleibt alles unberührt.
-        XCTAssertEqual(t.h[0], makeTerrain().h[0], "Ecke liegt außerhalb des Pinsels")
+        assertSculpt(.raise, sign: 1)
     }
 
     func testLowerDigsTheCenterAndCouplesIntoTectonics() throws {
-        let t = makeTerrain()
-        let h0 = t.h[centerIndex], u0 = t.upliftBase[centerIndex]
-        BrushTool.lower.apply(to: t, gx: gx, gz: gz, radiusWorld: radius,
-                              strength: 1, target: 0)
-        XCTAssertLessThan(t.h[centerIndex], h0, "Absenken muss das Zentrum senken")
-        XCTAssertLessThan(t.upliftBase[centerIndex], u0,
-                          "Absenken muss in die Tektonik koppeln (sculpt, dir: -1)")
+        assertSculpt(.lower, sign: -1)
     }
 
     func testSmoothReducesLocalRoughness() throws {
         let (before, after) = heights(after: .smooth)
-        XCTAssertLessThan(roughness(after), roughness(before),
+        XCTAssertLessThan(brushRoughness(after), brushRoughness(before),
                           "Glätten muss die lokale Rauheit im Pinsel senken")
     }
 
     func testFlattenPullsTowardTheGivenTarget() throws {
-        // Ziel deutlich ÜBER dem Gelände: Einebnen hebt Richtung Ziel — das
-        // unterscheidet es von Glätten und beweist, dass `target` ankommt.
-        let (before, after) = heights(after: .flatten, target: 1.2)
-        XCTAssertGreaterThan(after[centerIndex], before[centerIndex],
+        // Ziele RELATIV zum Gelände statt absoluter Höhen: der Test überlebt so
+        // eine Rekalibrierung der Höhenskala. Ziel über dem Zentrum hebt, Ziel
+        // darunter senkt — das unterscheidet Einebnen von Glätten und beweist,
+        // dass `target` ankommt.
+        let h0 = makeTerrain().h[centerIndex]
+        let high = heights(after: .flatten, target: h0 + 0.5)
+        XCTAssertGreaterThan(high.after[centerIndex], h0,
                              "Einebnen mit hohem Ziel muss Richtung Ziel heben")
         // Zwei Ziele, zwei Ergebnisse: ein hartkodiertes oder mit `strength`
         // vertauschtes Ziel fällt hier auf.
-        let low = heights(after: .flatten, target: 0.1)
-        XCTAssertLessThan(low.after[centerIndex], after[centerIndex],
+        let low = heights(after: .flatten, target: h0 - 0.5)
+        XCTAssertLessThan(low.after[centerIndex], high.after[centerIndex],
                           "Verschiedene Ziele müssen verschieden einebnen")
-        XCTAssertLessThan(low.after[centerIndex], low.before[centerIndex],
+        XCTAssertLessThan(low.after[centerIndex], h0,
                           "Einebnen mit tiefem Ziel muss Richtung Ziel senken")
     }
 
@@ -141,7 +138,7 @@ final class ToolContractTests: XCTestCase {
         let smoothed = t.h
         BrushTool.roughen.apply(to: t, gx: gx, gz: gz, radiusWorld: radius,
                                 strength: 1, target: 0)
-        XCTAssertGreaterThan(roughness(t.h), roughness(smoothed),
+        XCTAssertGreaterThan(brushRoughness(t.h), brushRoughness(smoothed),
                              "Aufrauen muss die lokale Rauheit heben")
         let deltas = zip(t.h, smoothed).map { $0 - $1 }
         XCTAssertTrue(deltas.contains { $0 > 0 } && deltas.contains { $0 < 0 },
@@ -156,7 +153,7 @@ final class ToolContractTests: XCTestCase {
                           "Die Spitzhacke muss bei gleicher Stärke tiefer schlagen als Absenken")
         // Der Radius-Deckel (Terrain.pickaxeMaxCells): auch ein riesiger Pinsel
         // reißt keinen Krater — im doppelten Deckel-Abstand bleibt alles stehen.
-        let wide = heights(after: .pickaxe, radiusWorld: Double(n) * cell)
+        let wide = heights(after: .pickaxe, radiusWorld: Double(n) * cfg.cellSize)
         let sideIndex = centerIndex + Int(Terrain.pickaxeMaxCells) * 2
         XCTAssertEqual(wide.after[sideIndex], wide.before[sideIndex],
                        "Spitzhacken-Radius muss auf wenige Zellen gedeckelt bleiben")
@@ -165,6 +162,11 @@ final class ToolContractTests: XCTestCase {
     /// Sechs Werkzeuge, sechs verschiedene Wirkungen: kein `case` darf still auf
     /// die Operation eines anderen zeigen (z. B. Glätten ruft Aufrauen — die
     /// Failure-Mode, für die früher der Switch-Parser da war).
+    ///
+    /// BEWUSST redundant zu den Einzeltests oben: die pinnen je Werkzeug eine
+    /// charakteristische Wirkung, dieser Vergleich schließt die Lücke dazwischen
+    /// (zwei Cases auf DERSELBEN Operation erfüllen unter Umständen beide
+    /// Einzel-Zusicherungen und fallen erst hier auf).
     func testEachToolLeavesADistinctFootprint() throws {
         let results = BrushTool.allCases.map { tool in
             heights(after: tool, strength: 1, target: 1.2).after
