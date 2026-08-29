@@ -141,5 +141,13 @@ final class FingerprintTests: XCTestCase {
                           + "Skalar-/Mäander-Bestandteil erfasst — Fingerprint und "
                           + "Speicherformat wären blind dafür (s. WorldSnapshot.swift)")
         }
+        // `fingerprint()` hasht die Höhenbänder strukturell (Mirror) unter der
+        // Annahme, dass ALLE gespeicherten Eigenschaften Doubles sind — ein
+        // anders typisiertes Band würde dort still übersprungen.
+        for child in Mirror(reflecting: HeightBands.legacyAbsolute).children {
+            XCTAssertTrue(child.value is Double,
+                          "HeightBands.\(child.label ?? "?") ist kein Double — "
+                          + "fingerprint() würde das Band still überspringen")
+        }
     }
 }
