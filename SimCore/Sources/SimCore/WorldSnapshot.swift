@@ -493,9 +493,15 @@ extension TerrainState {
         f.mix(dropCarry)
         f.mix(UInt64(flowStepCount))
         f.mix(UInt64(disturbActive ? 1 : 0))
-        let b = heightBands
-        for v in [b.vegFull, b.vegRamp, b.rockStart, b.rockFull,
-                  b.snowStart, b.snowFull, b.coniferLow, b.coniferHigh] { f.mix(v) }
+        // Höhenbänder strukturell statt als Hand-Liste (Mirror liefert die
+        // gespeicherten Eigenschaften in Deklarationsreihenfolge): eine Liste
+        // könnte ein Band doppelt führen oder vergessen, ohne dass es auffällt.
+        // Annahme „alle gespeichert als Double" sichert
+        // FingerprintTests.testEveryStoredPropertyIsAccountedFor.
+        let bands = Mirror(reflecting: heightBands).children
+            .compactMap { $0.value as? Double }
+        f.mix(UInt64(bands.count))
+        for v in bands { f.mix(v) }
         // Feld-Inventar.
         for spec in WorldSnapshot.doubleFields { f.mix(self[keyPath: spec.path]) }
         for spec in WorldSnapshot.int32Fields { f.mix(self[keyPath: spec.path]) }
