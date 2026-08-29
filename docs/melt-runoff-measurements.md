@@ -244,7 +244,7 @@ seed=99   prod=1    h=36d64bb1eaa8ab17 area=8772af0e046ab218 mfd=f035ecdea756370
 (`prod=1` = produktionsnah mit `hydraulicSkipWaterSpawns` + `meanderSpatialCutoffIndex`.)
 
 Im Code gibt es genau vier Verzweigungen: `updateRunoffWeight` (leeres Feld →
-`flowWeight` IST `rainWeight`), `seedFlowAccumulator` und der `rainWeight:`-
+`flowWeight` IST `rainWeight`), `seedFlowAccumulator` und der `flowWeight:`-
 Parameter der beiden `Hydraulic.erode`-Aufrufe (beide lesen `flowWeight`) sowie
 das Leeren der Kryo-Felder am Anfang von `generate` (für ein frisches `Terrain`
 sind sie ohnehin leer — die Zeile greift nur beim `generate` auf einem BESTEHENDEN

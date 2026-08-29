@@ -229,7 +229,7 @@ final class DtInvariance: XCTestCase {
                                 seaLevel: nil, firstDrop: UInt64(done),
                                 hf: ref.hf, receiver: ref.receiver,
                                 stream: ref.streamMap,
-                                rainWeight: ref.rainWeight,
+                                flowWeight: ref.flowWeight,
                                 erodibility: ref.lithErodeK,
                                 track: &track)
                 done += k
@@ -251,7 +251,7 @@ final class DtInvariance: XCTestCase {
                         seed: 1337, floor: c.floor, p: p,
                         seaLevel: nil, firstDrop: 1,
                         hf: ref.hf, receiver: ref.receiver, stream: ref.streamMap,
-                        rainWeight: ref.rainWeight, erodibility: ref.lithErodeK,
+                        flowWeight: ref.flowWeight, erodibility: ref.lithErodeK,
                         track: &track2)
         XCTAssertNotEqual(h2, single.0, "verschobener Tropfen-Strom liefert dasselbe Feld?")
     }

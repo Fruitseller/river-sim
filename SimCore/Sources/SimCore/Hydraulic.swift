@@ -45,7 +45,7 @@ public struct HydraulicParams: Sendable, Codable, Equatable {
 }
 
 public enum Hydraulic {
-    /// Deckel der Ablehnungs-Stichprobe für niederschlagsgewichtete Startpunkte
+    /// Deckel der Ablehnungs-Stichprobe für abfluss-gewichtete Startpunkte
     /// (s. `spawnPosition`): so viele NEUZIEHUNGEN sind je Tropfen erlaubt, danach
     /// wird der letzte Vorschlag angenommen — der Aufwand je Tropfen bleibt hart
     /// beschränkt. Die Annahmerate je Vorschlag ist Mittel(w)/max(w); mit dem auf
@@ -92,9 +92,9 @@ public enum Hydraulic {
     ///
     /// - `weight` leer → gleichverteilt über das Grid, mit exakt ZWEI Ziehungen aus
     ///   `rnd` (bit-identisch zum Zustand vor Issue #9).
-    /// - `weight` gesetzt (= `Terrain.rainWeight`) → Ablehnungs-Stichprobe (von Neumann):
+    /// - `weight` gesetzt (= `Terrain.flowWeight`) → Ablehnungs-Stichprobe (von Neumann):
     ///   Vorschlag gleichverteilt, angenommen mit Wahrscheinlichkeit
-    ///   `weight[k] / weightMax` → die Startdichte ist ∝ Niederschlag, ohne dass
+    ///   `weight[k] / weightMax` → die Startdichte ist ∝ Abfluss, ohne dass
     ///   eine 700k-Zellen-Verteilungstabelle je Charge gebaut werden muss.
     ///   Zellen mit Maximalgewicht werden OHNE Ziehung angenommen — dadurch ist ein
     ///   konstantes Gewichtsfeld bit-identisch zum ungewichteten Fall (Wächter:
@@ -133,13 +133,18 @@ public enum Hydraulic {
     ///   DEPOSITION gedämpft (channelDepositDamp) — das Bett gehört dem Kanal-Carve
     ///   und darf nicht zugeschüttet werden. Leeres Array = Verhalten wie ohne Maske
     ///   (bit-identisch).
-    /// - `rainWeight`: normiertes Niederschlags-Gewicht (Terrain.rainWeight,
-    ///   Issue #9/#10). Die Startpunkte werden damit gewichtet (s.
-    ///   `spawnPosition`) — es regnet im Luv häufiger, also starten dort auch mehr
-    ///   Tropfen. Über See trägt das Feld den neutralen Wert 1.0, damit `seaLevel`
-    ///   (verworfene Ozean-Starts) denselben Anteil verwirft wie ungewichtet und
-    ///   der Tropfen-Etat auf Land unverändert bleibt. Leeres Array =
-    ///   gleichverteilte Starts wie bisher (bit-identisch).
+    /// - `flowWeight`: normiertes ABFLUSS-Gewicht (Terrain.flowWeight, Issue #9/#10).
+    ///   Die Startpunkte werden damit gewichtet (s. `spawnPosition`) — wo mehr
+    ///   abfließt, starten auch mehr Tropfen. Seit Issue #36 ist das Regen PLUS
+    ///   Schmelze und deshalb ausdrücklich NICHT `Terrain.rainWeight`: die
+    ///   Tropfen-Starts sind einer der drei Abfluss-Konsumenten, die alle aus
+    ///   derselben Quelle lesen müssen (AGENTS.md). Ohne Schmelzwasser liefert
+    ///   `flowWeight` das Regen-Gewicht unverändert zurück, der Wert ist dann
+    ///   also derselbe wie vor #36. Über See trägt das Feld den neutralen Wert
+    ///   1.0, damit `seaLevel` (verworfene Ozean-Starts) denselben Anteil
+    ///   verwirft wie ungewichtet und der Tropfen-Etat auf Land unverändert
+    ///   bleibt. Leeres Array = gleichverteilte Starts wie bisher
+    ///   (bit-identisch).
     /// - `underIce`: Vergletscherungs-Maske (Terrain.underIce, Issue #35). Auf
     ///   diesen Zellen rührt der Tropfen das BETT nicht an — weder erodierend
     ///   (unter einem Gletscher gibt es keinen fluvialen Abtrag) noch ablagernd
@@ -174,7 +179,7 @@ public enum Hydraulic {
                               hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
                              underIce: [Bool] = [],
-                             rainWeight: [Double] = [],
+                             flowWeight: [Double] = [],
                              erodibility: [Double] = [],
                              track: inout [Double]) {
         guard count > 0, n > 2 else { return }
@@ -262,12 +267,12 @@ public enum Hydraulic {
 
         // Gewichts-Maximum einmal je Charge (die Ablehnungs-Stichprobe normiert
         // darauf); leeres/kaputtes Feld → gleichverteilte Starts wie bisher.
-        let rainOn = rainWeight.count == h.count
+        let flowOn = flowWeight.count == h.count
         // PERF: `Array.max()` nimmt den generischen Sequence-Pfad (Iterator plus
         // Closure je Element) und tastet hier 692k Zellen ab. Die
         // Roh-Puffer-Schleife vergleicht in derselben Reihenfolge und liefert
         // denselben Wert.
-        let rainMax: Double = !rainOn ? 0 : rainWeight.withUnsafeBufferPointer { rb in
+        let flowMax: Double = !flowOn ? 0 : flowWeight.withUnsafeBufferPointer { rb in
             guard let pw = rb.baseAddress, rb.count > 0 else { return 0 }
             var m = pw[0]
             for k in 1..<rb.count where pw[k] > m { m = pw[k] }
@@ -290,10 +295,10 @@ public enum Hydraulic {
             if let firstDrop {
                 var rnd = dropRNG(seed: seed, index: firstDrop &+ UInt64(i))
                 (px, py) = spawnPosition(&rnd, n: n,
-                                         weight: rainOn ? rainWeight : [], weightMax: rainMax)
+                                         weight: flowOn ? flowWeight : [], weightMax: flowMax)
             } else {
                 (px, py) = spawnPosition(&batch, n: n,
-                                         weight: rainOn ? rainWeight : [], weightMax: rainMax)
+                                         weight: flowOn ? flowWeight : [], weightMax: flowMax)
             }
             if let seaLevel {
                 let start = Int(py) * n + Int(px)

@@ -200,7 +200,7 @@ final class RainWeightedFlowTests: XCTestCase {
                         floor: c.floor, p: c.hydraulic, track: &trk)
         Hydraulic.erode(h: &h2, rock: &rock2, sed: &sed2, n: c.n, count: 2000, seed: 7,
                         floor: c.floor, p: c.hydraulic,
-                        rainWeight: [Double](repeating: 0.42, count: c.count), track: &trk2)
+                        flowWeight: [Double](repeating: 0.42, count: c.count), track: &trk2)
         XCTAssertEqual(h, h2, "konstanter Regen darf die Tropfen nicht verschieben")
         XCTAssertEqual(trk, trk2, "konstanter Regen darf die Tracks nicht verschieben")
     }
