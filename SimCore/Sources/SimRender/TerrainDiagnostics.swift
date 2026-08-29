@@ -1,5 +1,4 @@
 import Foundation
-import SwiftGodot
 import SimCore
 
 /// Entwicklungs-Diagnose des Geländes (Issue #53 aus `SimNode` ausgelagert):
@@ -11,7 +10,9 @@ import SimCore
 /// aufgebaut wird. Die REGEL-Formeln (Relief-Signal, Servo, Gratkrümmung)
 /// kommen aus SimCore selbst: die Anzeige darf sie nicht duplizieren, sonst
 /// zeigt sie etwas anderes als wirkt.
-final class TerrainDiagnostics {
+public final class TerrainDiagnostics {
+    public init() {}
+
 
     private var referenceHeights: [Double] = []
     private var referenceYear = 0.0
@@ -19,7 +20,7 @@ final class TerrainDiagnostics {
     /// Setzt den Vergleichspunkt auf den aktuellen Zustand. Das ist besonders
     /// nach manuellem Einebnen nützlich: danach zeigt die Differenzkarte
     /// ausschließlich, was die Simulation selbst auf- oder abgebaut hat.
-    func capture(_ terrain: Terrain) {
+    public func capture(_ terrain: Terrain) {
         referenceHeights = terrain.h
         referenceYear = terrain.years
     }
@@ -35,11 +36,11 @@ final class TerrainDiagnostics {
     ///
     /// Die Indizes dieser Reihenfolge stehen als `DBG_*` in `Main.gd`, ihre Zahl
     /// als `DEBUG_STATS_COUNT`; Wächter: `SimCoreTests/DiagStatsContractTests.swift`.
-    func stats(_ terrain: Terrain) -> PackedFloat32Array {
+    public func stats(_ terrain: Terrain) -> [Float] {
         if referenceHeights.count != terrain.h.count { capture(terrain) }
         let h = terrain.h
         let reference = referenceHeights
-        guard !h.isEmpty else { return PackedFloat32Array() }
+        guard !h.isEmpty else { return [] }
 
         var minimum = Double.greatestFiniteMagnitude
         var maximum = -Double.greatestFiniteMagnitude
@@ -91,7 +92,7 @@ final class TerrainDiagnostics {
         // ohne die zweite Hälfte liest die Diagnose das als „keine Erholung".
         let reliefLow = halves.low
         let servo = terrain.reliefServoRate(reliefSignal: reliefSignal)
-        return PackedFloat32Array([
+        return [
             Float(minimum), Float(sum / divisor), Float(maximum), Float(relief),
             Float((sum - referenceSum) / divisor), Float(maximum - referenceMaximum),
             Float(belowReference * cellArea), Float(aboveReference * cellArea),
@@ -99,12 +100,12 @@ final class TerrainDiagnostics {
             Float(servo), Float(terrain.upliftDecayRatePer100y()), Float(terrain.cfg.reliefTarget),
             Float(referenceYear), Float(invalid), Float(reliefSignal),
             Float(terrain.ridgeCurvature()), Float(reliefLow),
-        ])
+        ]
     }
 
     /// Blau = unter der Referenz, hellgrau = unverändert, Rot = darüber. `scale`
     /// ist die Höhenänderung, bei der die Farbe voll gesättigt ist.
-    func differenceBytes(_ terrain: Terrain, scale: Double) -> PackedByteArray {
+    public func differenceBytes(_ terrain: Terrain, scale: Double) -> [UInt8] {
         if referenceHeights.count != terrain.h.count { capture(terrain) }
         let h = terrain.h, reference = referenceHeights
         let safeScale = max(scale, 1e-9)
@@ -139,6 +140,6 @@ final class TerrainDiagnostics {
                 }
             }
         }}}
-        return PackedByteArray(out)
+        return out
     }
 }

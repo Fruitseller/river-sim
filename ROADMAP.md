@@ -620,11 +620,11 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
   ungetestete API: `TerrainAPITests` (Generierung, Pinsel `smooth`/`roughen`,
   Abkling-Rate der Hebung).
 - **#51 — Render-Kalibrierung zentralisiert:** jede Schwelle, Breite und
-  Wasser-Optik-Konstante steht in `WaterRender`/`RenderContract`; `WaterRenderTests`
-  und `RenderContractTests` lesen dazu die ECHTEN Quelltexte von GDExtension,
-  beiden `.gdshader`, `Main.gd` und den Godot-Wächtern (`RepoSource.swift`).
-  Folge fürs Schreiben von Shader-Code: Zahlen in **Swift-Schreibweise** notieren
-  (`0.7`, nicht `0.70`), sonst greift der Textvergleich nicht.
+  Wasser-Optik-Konstante steht in `WaterRender`/`RenderContract`. Seit #80/#82
+  führen `WaterRenderTests` und `WaterRendererTests` die Swift-Seite direkt aus;
+  Quelltext-Vergleiche bleiben für `.gdshader` und `Main.gd`. Zahlen im Shader
+  deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`), sonst greift
+  der Textvergleich nicht.
 - **#52 — CI verifiziert den Godot-Vertrag** (Job `godot-contract`) und nicht mehr
   nur den Sim-Kern; Godot-Version und -Prüfsumme sind in `scripts/fetch-godot.sh`
   gepinnt, Build-Stempel-Parität Shell ↔ GDScript ist getestet, und Mess-/Sweep-Läufe
@@ -636,6 +636,17 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
   Vertrag zwischen `Main.gd` und Swift. Für Umbauten daran ist
   `res://tests/render_fingerprint.gd` das A/B-Werkzeug (SHA-256 je Render-Puffer,
   vorher/nachher vergleichen) — kein Wächter, die Hashes gelten je Maschine.
+
+**Godot-freie Render-Aufbereitung — ERLEDIGT (Aug 2026, Issues #80/#82).**
+`SimRender` ist ein eigenes Target im SimCore-Paket: Farbe, Bäume, Diagnostik,
+Raster-Wasser und Band-Geometrie laufen ohne SwiftGodot und werden in der
+Pflichtsuite als Verhalten getestet. Die Band-Geometrie liefert `RibbonMesh`
+aus SIMD-POD-Puffern; `SimNode` wrappt nur noch in `Packed*Array`. Die
+Band↔Raster-Verträge (kein Spalt, kein Doppel-Wasser, Ufer-/Mündungs-Einigkeit)
+laufen in `WaterRendererTests` und bleiben zusätzlich als Godot-End-to-End-Tests
+bestehen. `render_fingerprint.gd` baut die Bänder seit #80 vor den Texturen wie
+die Produktion; die dadurch einmalig geänderten Hashes bilden die neue
+Vorher-Baseline für den bit-identischen Umzug.
 
 **Backlog (nicht priorisiert):**
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
@@ -709,14 +720,15 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
   steht am Ende von `Terrain.swift`.
 - `SimCore/Sources/SimCore/WaterRender.swift` + `RenderContract.swift` +
   `Strahler.swift` — Render-Ableitungen ohne Sim-Zustand; seit Issue #51 die
-  EINZIGE Quelle der Render-Kalibrierung, aus `SimCoreTests` gegen Shader,
-  GDExtension und `Main.gd` gepinnt.
-- `Extension/Sources/RiverSimGD/SimNode.swift` — die Brücke (`@Callable`s,
-  `Packed*Array`-Marshalling). Die Aufbereitung liegt seit Issue #53 daneben:
-  `WaterFieldRenderer` (Raster-Wasser), `RiverRibbonRenderer` (Band-Geometrie),
-  `TerrainColorRenderer` (Makrofarbe + Materialgewichte), `TreeInstanceRenderer`,
-  `TerrainDiagnostics`, `RenderSupport` (Gemeinsames beider Wasser-Pfade),
-  `BrushTool` (Werkzeug-Modi).
+  EINZIGE Quelle der Render-Kalibrierung, aus `SimCoreTests` gegen das
+  ausführbare `SimRender`, Shader und `Main.gd` gepinnt.
+- `SimCore/Sources/SimRender/` — godot-freie Render-Aufbereitung:
+  `WaterFieldRenderer`, `RiverRibbonRenderer` + POD-`RibbonMesh`,
+  `TerrainColorRenderer`, `TreeInstanceRenderer`, `TerrainDiagnostics` und
+  `RenderSupport` als gemeinsame Ufer-/Mündungslogik.
+- `Extension/Sources/RiverSimGD/SimNode.swift` — dünne Brücke (`@Callable`s,
+  Aufrufweitergabe und `Packed*Array`-Marshalling); daneben bleibt nur
+  `BrushTool` als Routing der Godot-Werkzeugmodi.
 - `game/shaders/terrain.gdshader` — prozedurale Boden-/Fels-/Vegetations-/
   Kältematerialien, Lithologieschichten, Wasser-Overlay und Detail-Layer;
   `water.gdshader` — Band-Geometrie; `ocean.gdshader` — opakes offenes Meer,

@@ -1,7 +1,7 @@
 import Foundation
 import SimCore
 
-// Gemeinsame Werkzeuge der Render-Aufbereitung in der GDExtension (Issue #53).
+// Gemeinsame Werkzeuge der godot-freien Render-Aufbereitung (Issues #53/#80).
 //
 // Hier steht, was MEHRERE Render-Module brauchen — sonst hätte jedes eine
 // eigene Kopie, und die beiden Wasser-Pfade (Raster-Feld und Band-Geometrie)
@@ -13,10 +13,10 @@ import SimCore
 /// Datenparallel über disjunkte Index-Bereiche — nur für Pässe, deren Zellen
 /// unabhängig sind (jede schreibt ausschließlich ihren eigenen Index): das
 /// Ergebnis ist BIT-IDENTISCH zur sequenziellen Schleife. Gleiche Idee wie
-/// `Terrain.parallel` in SimCore; die Render-Aufbereitung läuft sonst komplett
-/// auf dem Godot-Hauptthread.
+/// `Terrain.parallel` in SimCore; die Render-Aufbereitung läuft sonst auf dem
+/// aufrufenden Thread.
 private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
-@inline(__always) func parallelChunks(_ count: Int, _ body: (Int, Int) -> Void) {
+@inline(__always) public func parallelChunks(_ count: Int, _ body: (Int, Int) -> Void) {
     let chunks = min(count, max(1, hostCoreCount * 4))
     if chunks <= 1 { body(0, count); return }
     DispatchQueue.concurrentPerform(iterations: chunks) { c in

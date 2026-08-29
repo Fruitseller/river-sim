@@ -1,5 +1,4 @@
 import Foundation
-import SwiftGodot
 import SimCore
 
 /// GEOMETRIE-Pfad des Wassers (Issues #31/#34, mit #53 aus `SimNode`
@@ -27,26 +26,39 @@ import SimCore
 /// vollständig im Kalibrier-Vertrag `WaterRender` — GEMEINSAM mit dem
 /// Raster-Pfad. Sie müssen dieselben sein: im Geometrie-Modus nimmt das
 /// Wasserfeld genau die Zellen aus dem See-Kanal, die die Geometrie malt —
-/// driften die Filter, entsteht entweder doppeltes Wasser oder ein Loch. Hier
-/// stünden sie als Literal, das nur ein ~20-Minuten-Build prüfen könnte.
-final class RiverRibbonRenderer {
+/// driften die Filter, entsteht entweder doppeltes Wasser oder ein Loch.
+public struct RibbonMesh: Equatable {
+    public var vertices: [SIMD3<Float>]
+    public var colors: [SIMD4<Float>]
+    public var uvs: [SIMD2<Float>]
+    public var uv2s: [SIMD2<Float>]
+    public var indices: [Int32]
+    public var stripStarts: [Int32]
+
+    public init(vertices: [SIMD3<Float>] = [], colors: [SIMD4<Float>] = [],
+                uvs: [SIMD2<Float>] = [], uv2s: [SIMD2<Float>] = [],
+                indices: [Int32] = [], stripStarts: [Int32] = []) {
+        self.vertices = vertices
+        self.colors = colors
+        self.uvs = uvs
+        self.uv2s = uv2s
+        self.indices = indices
+        self.stripStarts = stripStarts
+    }
+}
+
+public final class RiverRibbonRenderer {
+    public init() {}
 
     /// Zentrumslinien-Stand beim letzten Ribbon-Build (Dirty-Vertrag wie
     /// `TreeInstanceRenderer`): Knotenzahlen + Positionen, flach. Abfluss ändert
     /// sich nur zusammen mit Positionen (Migration/computeFlow) — Positionen
     /// genügen.
     private var riverSnapshot: [Double] = []
-    private var rrVerts: [Vector3] = []
-    private var rrCols: [Color] = []
-    private var rrUVs: [Vector2] = []
-    private var rrUV2s: [Vector2] = []
-    private var rrIdx: [Int32] = []
-    /// Vertex-Index, an dem jedes Band beginnt. Godot braucht ihn nicht (die
-    /// Bänder liegen in EINER Surface), die Wächter schon: „endet jedes
-    /// Fluss-Band im Wasser?" ist eine Frage über Band-ENDEN, und die aus den
-    /// Puffern zu raten (Bogenlänge 0 als Startmarke) ist bei zwei
-    /// zusammenfallenden Stützpunkten mehrdeutig.
-    private var rrStripStarts: [Int32] = []
+    /// Letztes Bau-Ergebnis als godot-freie POD-Puffer. `stripStarts` markiert
+    /// den Vertex-Index jedes Bands; damit prüfen die Wächter Band-Enden direkt,
+    /// ohne sie aus mehrdeutigen UV-Werten herzuleiten.
+    public private(set) var mesh = RibbonMesh()
     /// Je Kanal-Index in `terrain.meander.channels`: hat der letzte Build für
     /// diesen Kanal ein Fluss-Band emittiert? `WaterFieldRenderer` liest das:
     /// nur unter echten Bändern stempelt er den Saum-Korridor und deckelt das
@@ -58,7 +70,7 @@ final class RiverRibbonRenderer {
     /// OHNE Wasser darin. Die Einigkeit der beiden Pfade entsteht bewusst über
     /// das ECHTE Bau-Ergebnis statt über eine duplizierte Gate-Formel, die
     /// wegdriften könnte.
-    private(set) var bandChannelFlags: [Bool] = []
+    public private(set) var bandChannelFlags: [Bool] = []
 
     /// Je Zelle: wie stark deckt die gebaute Band-Geometrie sie WIRKLICH ab
     /// (0 = gar nicht, 1 = volle Deckkraft)? Gegenstück zu `bandChannelFlags`
@@ -74,21 +86,14 @@ final class RiverRibbonRenderer {
     /// gegen 10 307 Zellen, die als Fluss übrig blieben. Sichtbar war das als
     /// abreißende Läufe („keine durchgehenden Adern"): erst Band, dann eine
     /// trockene Rinne, wo weder Band noch Raster malte.
-    private(set) var bandCoverage: [Double] = []
+    public private(set) var bandCoverage: [Double] = []
     /// Auflösung des RENDER-Gitters (Main.gd `terrain_grid`, via
     /// `SimNode.setRenderGrid`): die Land-Bänder sampeln ihre Höhen über
     /// `renderSurfaceHeight` von der SICHTBAREN Oberfläche statt von den
     /// Sim-Höhen — sonst versinken sie auf Steilstrecken im gröberen Mesh
     /// (Begründung am Sampler in `RenderSupport.swift`). 0 = unbekannt =
     /// volle Auflösung (Headless-Wächter: bit-identisch zu `bilinearGrid`).
-    var renderGrid = 0
-
-    var verts: PackedVector3Array { PackedVector3Array(rrVerts) }
-    var colors: PackedColorArray { PackedColorArray(rrCols) }
-    var uvs: PackedVector2Array { PackedVector2Array(rrUVs) }
-    var uv2s: PackedVector2Array { PackedVector2Array(rrUV2s) }
-    var indices: PackedInt32Array { PackedInt32Array(rrIdx) }
-    var stripStarts: PackedInt32Array { PackedInt32Array(rrStripStarts) }
+    public var renderGrid = 0
 
     /// Stützpunkt eines Wasser-Bands in GITTER-Koordinaten (kontinuierlich).
     /// Fluss, Delta-Arm und Altarm teilen sich diese Form — sie unterscheiden
@@ -126,7 +131,7 @@ final class RiverRibbonRenderer {
     /// sich). Der Vertrag spart im Pause-/Idle-/Sculpt-Zustand (kein Schritt →
     /// Delta exakt 0 → kein Rebuild); im Zeitraffer deckelt Main.gd den Mesh-
     /// Rebuild auf 1 Hz (gemessen: 0,30 s kosteten ~4 % FPS).
-    func maxDelta(_ terrain: Terrain) -> Double {
+    public func maxDelta(_ terrain: Terrain) -> Double {
         let flat = flattenedChannelPositions(terrain)
         if flat.count != riverSnapshot.count { return 1e9 }
         var maxD = 0.0
@@ -135,11 +140,11 @@ final class RiverRibbonRenderer {
     }
 
     /// Setzt den Rebuild-Vergleichspunkt auf die aktuellen Zentrumslinien.
-    func markBuilt(_ terrain: Terrain) { riverSnapshot = flattenedChannelPositions(terrain) }
+    public func markBuilt(_ terrain: Terrain) { riverSnapshot = flattenedChannelPositions(terrain) }
 
     /// Verwirft den Vergleichspunkt (geladene Welt) → `maxDelta` meldet „riesig"
     /// und der nächste Frame baut die Bänder neu.
-    func invalidateSnapshot() { riverSnapshot = [] }
+    public func invalidateSnapshot() { riverSnapshot = [] }
 
     // MARK: Bau
 
@@ -151,13 +156,14 @@ final class RiverRibbonRenderer {
     ///   UV.x = Quer-Position 0..1 (Kanten-Feathering), UV.y = Bogenlänge (Welt).
     /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y) —
     /// deckt den Diskretisierungs-Fehler des gröberen Render-Gitters im Talgrund.
-    func build(_ terrain: Terrain, hscale: Double, lift: Double) {
-        rrVerts.removeAll(keepingCapacity: true)
-        rrCols.removeAll(keepingCapacity: true)
-        rrUVs.removeAll(keepingCapacity: true)
-        rrUV2s.removeAll(keepingCapacity: true)
-        rrIdx.removeAll(keepingCapacity: true)
-        rrStripStarts.removeAll(keepingCapacity: true)
+    @discardableResult
+    public func build(_ terrain: Terrain, hscale: Double, lift: Double) -> RibbonMesh {
+        mesh.vertices.removeAll(keepingCapacity: true)
+        mesh.colors.removeAll(keepingCapacity: true)
+        mesh.uvs.removeAll(keepingCapacity: true)
+        mesh.uv2s.removeAll(keepingCapacity: true)
+        mesh.indices.removeAll(keepingCapacity: true)
+        mesh.stripStarts.removeAll(keepingCapacity: true)
         let n = terrain.cfg.n
         let cs = terrain.cfg.cellSize
         let creek = terrain.cfg.renderMinCells
@@ -389,6 +395,7 @@ final class RiverRibbonRenderer {
 
         // ALTARME (Issue #34): vom Raster-Overlay in die Geometrie.
         appendOxbowRibbons(terrain, hscale: hscale, lift: lift)
+        return mesh
     }
 
     // MARK: Übergabe an die Raster-Wasserflächen
@@ -501,8 +508,8 @@ final class RiverRibbonRenderer {
             let dz = (samples[a].z - samples[a - 1].z) * cs
             arc[a] = arc[a - 1] + (dx * dx + dz * dz).squareRoot()
         }
-        let base = rrVerts.count
-        rrStripStarts.append(Int32(base))
+        let base = mesh.vertices.count
+        mesh.stripStarts.append(Int32(base))
         // Vorgänger-Stützpunkt für den Deckungs-Stempel: gestempelt wird das
         // SEGMENT, nicht der Punkt (s. `stampCoverage`), und dafür braucht es
         // die bereits GEDECKELTE Halbbreite der vorigen Runde.
@@ -605,21 +612,21 @@ final class RiverRibbonRenderer {
                               n: n)
             }
             previous = (x: s.x, z: s.z, halfWidthCells: hwCells, alpha: s.alpha)
-            rrVerts.append(Vector3(x: Float(wx - perpx), y: yLeft, z: Float(wz - perpz)))
-            rrVerts.append(Vector3(x: Float(wx + perpx), y: yRight, z: Float(wz + perpz)))
+            mesh.vertices.append(SIMD3(Float(wx - perpx), yLeft, Float(wz - perpz)))
+            mesh.vertices.append(SIMD3(Float(wx + perpx), yRight, Float(wz + perpz)))
             let dirX = still ? 0.0 : tx, dirZ = still ? 0.0 : tz
-            let col = Color(r: Float(dirX * 0.5 + 0.5), g: Float(dirZ * 0.5 + 0.5),
-                            b: Float(min(max(s.rank, 0), 1)),
-                            a: Float(min(max(s.alpha, 0), 1)))
-            rrCols.append(col); rrCols.append(col)
-            rrUVs.append(Vector2(x: 0, y: Float(arc[a])))
-            rrUVs.append(Vector2(x: 1, y: Float(arc[a])))
-            let kindUV = Vector2(x: Float(kind), y: 0)
-            rrUV2s.append(kindUV); rrUV2s.append(kindUV)
+            let col = SIMD4(Float(dirX * 0.5 + 0.5), Float(dirZ * 0.5 + 0.5),
+                            Float(min(max(s.rank, 0), 1)),
+                            Float(min(max(s.alpha, 0), 1)))
+            mesh.colors.append(col); mesh.colors.append(col)
+            mesh.uvs.append(SIMD2(0, Float(arc[a])))
+            mesh.uvs.append(SIMD2(1, Float(arc[a])))
+            let kindUV = SIMD2(Float(kind), Float(0))
+            mesh.uv2s.append(kindUV); mesh.uv2s.append(kindUV)
             if a > 0 {
                 let v = Int32(base + (a - 1) * 2)
-                rrIdx.append(v); rrIdx.append(v + 2); rrIdx.append(v + 1)
-                rrIdx.append(v + 1); rrIdx.append(v + 2); rrIdx.append(v + 3)
+                mesh.indices.append(v); mesh.indices.append(v + 2); mesh.indices.append(v + 1)
+                mesh.indices.append(v + 1); mesh.indices.append(v + 2); mesh.indices.append(v + 3)
             }
         }
     }

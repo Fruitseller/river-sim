@@ -1,5 +1,4 @@
 import Foundation
-import SwiftGodot
 import SimCore
 
 /// 3D-Bäume aus dem veg-Feld als MultiMesh-Transform-Puffer (Issue #53 aus
@@ -8,7 +7,9 @@ import SimCore
 /// Zustand hat der Renderer nur für den Dirty-Vertrag: GDScript soll die
 /// MultiMeshes nicht jeden Frame neu füllen, sondern erst wenn sich die
 /// Vegetation merklich geändert hat.
-final class TreeInstanceRenderer {
+public final class TreeInstanceRenderer {
+    public init() {}
+
 
     /// veg-Feld beim letzten Baum-Rebuild — Grundlage der Rebuild-Heuristik
     /// (Bäume nicht jeden Frame neu bauen, sondern nur wenn sich die Vegetation
@@ -18,7 +19,7 @@ final class TreeInstanceRenderer {
     /// Maximale |Δveg| seit dem letzten `markBuilt` — GDScript rebuildet die
     /// Baum-MultiMeshes erst ab einer Schwelle (Heuristik: 0.1). Vor dem
     /// ersten Build (kein Snapshot) immer 1 → erzwingt den Initial-Build.
-    func maxDelta(_ terrain: Terrain) -> Double {
+    public func maxDelta(_ terrain: Terrain) -> Double {
         let veg = terrain.veg
         if treeVegSnapshot.count != veg.count { return 1.0 }
         var maxD = 0.0
@@ -27,11 +28,11 @@ final class TreeInstanceRenderer {
     }
 
     /// Setzt den Rebuild-Vergleichspunkt auf das aktuelle veg-Feld.
-    func markBuilt(_ terrain: Terrain) { treeVegSnapshot = terrain.veg }
+    public func markBuilt(_ terrain: Terrain) { treeVegSnapshot = terrain.veg }
 
     /// Verwirft den Vergleichspunkt (geladene Welt) → `maxDelta` meldet 1 und
     /// der nächste Frame baut die Bäume neu.
-    func invalidateSnapshot() { treeVegSnapshot = [] }
+    public func invalidateSnapshot() { treeVegSnapshot = [] }
 
     /// FNV-1a über (i, j, salt) → deterministischer Per-Zelle-Zufall für Jitter/
     /// Varianten/Verdünnung. KEIN Frame-Random: gleiche Zelle → gleicher Baum,
@@ -58,8 +59,8 @@ final class TreeInstanceRenderer {
     /// `coverage` ist reine Darstellung: 1 = reduziert, 2 = voll. Jitter,
     /// Varianten-Wahl, Größe und Verdünnung kommen deterministisch aus dem
     /// (i,j)-Hash; weder Sim-Zustand noch Rebuild-Reihenfolge beeinflussen ihn.
-    func buffer(_ terrain: Terrain, variant: Int, hscale: Double,
-                coverage: Int) -> PackedFloat32Array {
+    public func buffer(_ terrain: Terrain, variant: Int, hscale: Double,
+                       coverage: Int) -> [Float] {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let cs = terrain.cfg.cellSize
@@ -147,6 +148,6 @@ final class TreeInstanceRenderer {
                 out.append(Float(-sn)); out.append(0); out.append(Float(c)); out.append(Float(z))
             }
         }
-        return PackedFloat32Array(out)
+        return out
     }
 }

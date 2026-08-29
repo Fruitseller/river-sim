@@ -2,7 +2,7 @@ shader_type canvas_item;
 render_mode unshaded, blend_disabled;
 
 // Räumliche Glättung des Raster-Wasserfelds — GPU-Fassung von `blurMax` in
-// WaterFieldRenderer (Extension). Der Rest jenes Passes bleibt auf der CPU: er
+// WaterFieldRenderer (SimRender). Der Rest jenes Passes bleibt auf der CPU: er
 // besteht in der Mitte aus zwei SEQUENZIELLEN Graph-Algorithmen (Kontinuitäts-
 // Kette entlang der D8-Empfänger, Flood-Fill der Wasser-Komponenten), die in
 // kein Pixel-Programm passen.

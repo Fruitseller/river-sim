@@ -1,5 +1,4 @@
 import Foundation
-import SwiftGodot
 import SimCore
 
 /// Makrofarbe und Materialgewichte des Geländes als zwei RGBA8-Puffer.
@@ -8,18 +7,18 @@ import SimCore
 /// Shader baut daraus zusammen mit `surfaces` die eigentliche Oberfläche. So
 /// bleiben Materialgrenzen an die Physik gebunden, ohne die 256er-Sim-Zellen als
 /// verwaschene "Textur" sichtbar zu machen.
-enum TerrainColorRenderer {
-    struct Buffers {
-        let colors: PackedByteArray
+public enum TerrainColorRenderer {
+    public struct Buffers {
+        public let colors: [UInt8]
         /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
         /// A = Lithologie-Härte von −1 ... +1 auf 0 ... 1 abgebildet.
-        let surfaces: PackedByteArray
+        public let surfaces: [UInt8]
     }
 
     /// Berechnet beide Puffer in EINEM Lauf. Farbe und Materialgewichte brauchen
     /// dieselben teuren Standortwerte (`macroSlope`, Habitat, Schnee/Eis); zwei
     /// getrennte Callables würden diese Arbeit pro Textur-Update verdoppeln.
-    static func buffers(_ terrain: Terrain) -> Buffers {
+    public static func buffers(_ terrain: Terrain) -> Buffers {
         let n = terrain.cfg.n
         let sea = terrain.cfg.sea
         let h = terrain.h, rain = terrain.rain, veg = terrain.veg
@@ -150,8 +149,7 @@ enum TerrainColorRenderer {
         }
         }}}}}}}}}
 
-        return Buffers(colors: PackedByteArray(colors),
-                       surfaces: PackedByteArray(surfaces))
+        return Buffers(colors: colors, surfaces: surfaces)
     }
 
     @inline(__always)

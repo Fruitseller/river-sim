@@ -3,13 +3,11 @@ import XCTest
 
 /// Wächter für die Render-Kalibrierung des Wasserfelds (Issue #32, `WaterRender`).
 ///
-/// Warum hier: die Kalibrierung wirkt in der GDExtension
-/// (`SimNode.waterFieldBytes`) und im Shader (`game/shaders/terrain.gdshader`) —
-/// beides ist headless nicht ausführbar (Extension-Build ~20 min, Shader läuft nur
-/// auf der GPU). Die Zahlen selbst sind aber reine Arithmetik, und genau ihre
-/// PAARUNGEN sind das Fragile: Komponenten-Fade ↔ Shader-Smoothstep ↔
-/// Altarm-Stempel. Diese Tests pinnen die Paarungen, damit spätere Änderungen die
-/// Kalibrierung nicht still verschieben.
+/// Die Zahlen selbst sind reine Arithmetik; genau ihre PAARUNGEN sind fragil:
+/// Komponenten-Fade ↔ Shader-Smoothstep ↔ Altarm-Stempel. Diese Tests pinnen
+/// die Kalibrierung und die nicht ausführbaren Shader-Literale.
+/// `WaterRendererTests` führt die Anwendung im godot-freien `SimRender`-Target
+/// aus und prüft insbesondere die Band↔Raster-Übergabe.
 final class WaterRenderTests: XCTestCase {
 
     // MARK: Kohärenz-Fade: reine Funktion der Komponentengröße
@@ -238,150 +236,8 @@ final class WaterRenderTests: XCTestCase {
             hint: "Typ-Kanal des Vertex-Vertrags == UV2.x")
     }
 
-    func testExtensionUsesSharedCalibration() throws {
-        // Gegenstück: die GDExtension darf die Werte nicht als lokale Literale
-        // zurückkopieren (dann wäre die Kalibrierung wieder ungetestet). Vor allem
-        // die Altarm-Präsenz-Schwelle MUSS der Kontur-Fuß sein, sonst sind die
-        // seichten Altarm-Enden unsichtbar (Doppel-Rampe: Stempel × Kontur), und
-        // der Ribbon-Halo (#31) MUSS im Saum-Fenster bleiben.
-        // Gelesen wird die GANZE Brücke, nicht eine Datei: seit Issue #53 liegt
-        // die Wasser-Aufbereitung in `WaterFieldRenderer`/`RiverRibbonRenderer`
-        // neben `SimNode`, und wo genau ein Wert steht, ist dem Vertrag egal.
-        let bridge = try RepoSource.extensionSources()
-        assertContains(bridge, "WaterRender.componentFade(cells:",
-                       hint: "Komponenten-Fade aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.streamGate(componentFade:",
-                       hint: "Fluss-Kanal über das gemeinsame Gate schalten")
-        assertContains(bridge, "let minimumPondDepth = WaterRender.pondContourLo",
-                       hint: "Altarm-Präsenz-Schwelle == Kontur-Fuß")
-        assertContains(bridge, "let haloIntensity = WaterRender.ribbonHaloIntensity",
-                       hint: "Ribbon-Halo == WaterRender.ribbonHaloIntensity")
-        assertContains(bridge, "sd[k] >= WaterRender.riverMaskLo",
-                       hint: "Kohärenz-Maske == Wasser-Schwelle des Shaders")
-        // Issue #34: die Geometrie-Übergabe darf ebenso wenig als Literal in der
-        // Extension liegen — sonst kann die Band-Ausblendung von der
-        // Raster-See-Schwelle wegdriften, und genau dazwischen entsteht wieder
-        // ein Spalt bzw. doppeltes Wasser.
-        assertContains(bridge, "hf[k] - h[k] > WaterRender.lakeRawWetDepth",
-                       hint: "Raster-See-Schwelle aus WaterRender beziehen")
-        assertContains(bridge, "1 - smoothstep(WaterRender.pondContourLo, WaterRender.deltaFrontDepth, pond)",
-                       hint: "See-Übergabe des Bands == Kontur-Fuß … Delta-Front")
-        assertContains(bridge, "1 - smoothstep(0, WaterRender.mouthOverlapCells, submergedCells)",
-                       hint: "Meer-Übergabe des Bands == mouthOverlapCells")
-        assertContains(bridge, "kind: WaterRender.ribbonKindOxbow",
-                       hint: "Altarm-Bänder tragen den Altarm-Typ")
-        assertContains(bridge, "kind: WaterRender.ribbonKindDelta",
-                       hint: "Delta-Arme tragen den Delta-Typ")
-        assertContains(bridge, "onSea ? WaterRender.ribbonSeaSurfaceSink",
-                       hint: "Höhen-Versatz auf Wasser aus WaterRender beziehen")
-        // Issue #51: Track-Maske, Abstufung, Verbreiterung und die Kanalbreiten
-        // lagen als Literale in `waterFieldBytes`/`buildRiverRibbons` — dort
-        // konnte sie nur ein ~20-Minuten-Build prüfen.
-        assertContains(bridge, "WaterRender.trackMask(streamMap:",
-                       hint: "Track-Maske des Abfluss-Felds aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.trackWeight(mask:",
-                       hint: "Gewicht der Track-Maske aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.streamIntensity(dischargeCells:",
-                       hint: "Abfluss-Abstufung aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.corridorMask(streamMap:",
-                       hint: "Korridor-/Band-Kohärenzmaske aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.corridorWeight(mask:",
-                       hint: "Gewicht der Korridor-Maske aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.continuityDecayPerCell",
-                       hint: "Kontinuitäts-Propagation aus WaterRender beziehen")
-        assertContains(bridge, "let widenThresh = WaterRender.widenThresholds",
-                       hint: "Verbreiterungs-Schwellen aus WaterRender beziehen")
-        assertContains(bridge, "let widenFalloff = WaterRender.widenFalloff",
-                       hint: "Verbreiterungs-Abfall aus WaterRender beziehen")
-        assertContains(bridge, "let barTol = WaterRender.widenBarTolerance",
-                       hint: "Bank-Toleranz der Verbreiterung aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonHalfWidthCells(dischargeCells:",
-                       hint: "Band-Halbbreite aus WaterRender beziehen")
-        assertContains(bridge, "hw * WaterRender.ribbonMaxCrossSlope",
-                       hint: "Quergefälle-Klemme der Band-Kanten aus WaterRender beziehen")
-        // Die Kaskaden-Übergabe müssen BEIDE Pfade über dieselbe Funktion
-        // lesen (Band-Alpha und Raster-Deckel) — mindestens zwei Aufrufe.
-        XCTAssertGreaterThanOrEqual(
-            bridge.components(separatedBy: "WaterRender.cascadeWeight(slope:").count - 1, 2,
-            "Band-Alpha UND Raster-Deckel müssen die Kaskaden-Übergabe lesen")
-        assertContains(bridge, "WaterRender.stampHalfWidthCells(dischargeCells:",
-                       hint: "Stempel-Halbbreite (Legacy-A/B) aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.stampIntensity(dischargeCells:",
-                       hint: "Stempel-Intensität (Legacy-A/B) aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonHaloMarginCells",
-                       hint: "Halo-Rand um das Band aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.oxbowMinimumNodes",
-                       hint: "Altarm-Filter aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.oxbowHalfWidthCells",
-                       hint: "Altarm-Breite aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.mouthSearchCells",
-                       hint: "Mündungs-Suchweite aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonMinimumRank",
-                       hint: "Hierarchie-Gate der Bänder aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonRankDivisor",
-                       hint: "Rang-Normierung des Vertex-Vertrags aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonSupportLo",
-                       hint: "Band-Kohärenzfenster aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonSourceTaperCells",
-                       hint: "Quellen-Taper aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonTailTaperCells",
-                       hint: "Enden-Taper aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.ribbonMinimumAlpha",
-                       hint: "Sichtbarkeits-Schwelle der Bänder aus WaterRender beziehen")
-        assertContains(bridge, "WaterRender.deltaArmMinHalfWidthCells",
-                       hint: "Delta-Arm-Breite aus WaterRender beziehen")
-    }
 
-    /// Wächter gegen den Fehler von Aug 2026: die gemeldete Deckung
-    /// (`bandCoverage`, an der der Raster-Deckel hängt) muss die Fläche sein,
-    /// die das Band WIRKLICH malt.
-    ///
-    /// Was der Test sehen kann, ist der Quelltext, nicht das Ergebnis: die
-    /// Band-Emission läuft in der GDExtension und damit erst nach ~20 min Build
-    /// (die geometrische Seite prüft `game/tests/river_ribbons.gd` in CI). Er
-    /// pinnt deshalb die zwei Stellen, an denen der Fehler entstand:
-    /// die Breite muss DIESELBE Variable sein, aus der auch die Quad-Kante
-    /// entsteht (nach dem Krümmungs-Deckel, nicht `s.halfWidth` davor), und
-    /// gestempelt wird das SEGMENT zwischen zwei Stützpunkten, nicht ein Kreis
-    /// um den Punkt — Kreise lassen die Streifenkante frei, sobald der Deckel
-    /// die Halbbreite unter ~0,3 Zellen drückt.
-    func testCoverageStampUsesTheWidthTheBandPaints() throws {
-        let bridge = try RepoSource.extensionSources()
-        assertContains(bridge, "* WaterRender.ribbonCurvatureWidthFactor)",
-                       hint: "Krümmungs-Deckel der Band-Breite aus WaterRender beziehen")
-        assertContains(bridge, "let hw = hwCells * cs",
-                       hint: "Quad-Kante aus der gedeckelten Halbbreite bauen")
-        assertContains(bridge, "toHalfWidthCells: hwCells",
-                       hint: "Deckung mit der gedeckelten Halbbreite stempeln")
-        assertContains(bridge, "stampCoverage(fromX:",
-                       hint: "Deckung als Streifen zwischen zwei Stützpunkten stempeln")
-        XCTAssertFalse(bridge.contains("HalfWidthCells: s.halfWidth"),
-                       "Deckung darf nicht mit der UNGEDECKELTEN Breite gestempelt "
-                       + "werden — das Raster nähme Wasser zurück, das kein Band ersetzt")
-        XCTAssertFalse(bridge.contains("stampCoverage(atX:"),
-                       "Punkt-Stempel deckt die Streifenkante zwischen zwei "
-                       + "Stützpunkten nicht ab (Abstand bis ~1,5 Zellen)")
-    }
 
-    func testCoverageStampStopsAtTheBandEnds() throws {
-        // Die Kugelkappe des Segment-Stempels gehört an die inneren NÄHTE: nur
-        // sie fügt zwei Segmente über einen Knick der Zentrumslinie lückenlos
-        // zusammen. An den zwei Band-ENDEN endet das Quad mit einer geraden
-        // Kante — dort meldete die Kappe bis zu einer Halbbreite HINTER dem Ende
-        // Deckung, wo kein Band malt, und das Raster nahm dafür sein Wasser
-        // zurück. Längs darf deshalb nur die halbe Zelle der Deckungs-Regel
-        // überhängen, quer weiter die Halbbreite + 0,5.
-        let bridge = try RepoSource.extensionSources()
-        assertContains(bridge, "openStart: a == 1, openEnd: a == samples.count - 1",
-                       hint: "erstes/letztes Segment als offenes Bandende stempeln")
-        assertContains(bridge, "if openStart && tRaw < -overhang { continue }",
-                       hint: "vor dem Bandanfang malt kein Quad — dort nichts decken")
-        assertContains(bridge, "if openEnd && tRaw > 1 + overhang { continue }",
-                       hint: "hinter dem Bandende malt kein Quad — dort nichts decken")
-        assertContains(bridge, "let overhang = len2 > 1e-12 ? 0.5 / len2.squareRoot() : 0",
-                       hint: "Längs-Überhang am offenen Ende ist die halbe Zelle "
-                           + "der Deckungs-Regel, in Segment-Parametern")
-    }
 
     // MARK: Kanalbreiten (Issue #51)
 
@@ -642,37 +498,6 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Altarm-Wasser == WaterRender.oxbowWaterColor")
     }
 
-    func testGodotGuardsPinTheSameContract() throws {
-        // Die Godot-Wächter (GPU-frei, aber nur MIT gebauter Extension lauffähig)
-        // tragen die Vertragswerte als eigene Konstanten. Driften sie, prüfen
-        // sie gegen eine Kalibrierung, die es nicht mehr gibt.
-        let geometry = try repoFile("game/tests/water_geometry.gd")
-        assertContains(geometry, "const KIND_RIVER := \(glsl(WaterRender.ribbonKindRiver))",
-                       hint: "Typ Fluss == WaterRender.ribbonKindRiver")
-        assertContains(geometry, "const KIND_DELTA := \(glsl(WaterRender.ribbonKindDelta))",
-                       hint: "Typ Delta == WaterRender.ribbonKindDelta")
-        assertContains(geometry, "const KIND_OXBOW := \(glsl(WaterRender.ribbonKindOxbow))",
-                       hint: "Typ Altarm == WaterRender.ribbonKindOxbow")
-        assertContains(geometry, "const POND_CONTOUR_LO := \(glsl(WaterRender.pondContourLo))",
-                       hint: "Kontur-Fuß == WaterRender.pondContourLo")
-        assertContains(geometry, "const LAKE_RAW_WET := \(glsl(WaterRender.lakeRawWetDepth))",
-                       hint: "Raster-See-Schwelle == WaterRender.lakeRawWetDepth")
-        assertContains(geometry, "const MAX_OXBOW_OPACITY := \(glsl(WaterRender.oxbowMaximumOpacity))",
-                       hint: "Altarm-Deckkraft == WaterRender.oxbowMaximumOpacity")
-        assertContains(geometry, "const MOUTH_SEARCH_CELLS := \(WaterRender.mouthSearchCells)",
-                       hint: "Mündungs-Suchweite == WaterRender.mouthSearchCells")
-        let ribbons = try repoFile("game/tests/river_ribbons.gd")
-        assertContains(ribbons, "const LAKE_SURFACE_LIFT := \(glsl(WaterRender.ribbonLakeSurfaceLift))",
-                       hint: "See-Versatz == WaterRender.ribbonLakeSurfaceLift")
-        assertContains(ribbons, "const SEA_SURFACE_SINK := \(glsl(WaterRender.ribbonSeaSurfaceSink))",
-                       hint: "Meer-Versatz == WaterRender.ribbonSeaSurfaceSink")
-        assertContains(ribbons, "const MAX_CROSS_SLOPE := \(glsl(WaterRender.ribbonMaxCrossSlope))",
-                       hint: "Quergefälle-Klemme des Wächters == WaterRender.ribbonMaxCrossSlope")
-        assertContains(ribbons, "const MIN_RANK := \(glsl(WaterRender.ribbonMinimumRank))",
-                       hint: "Hierarchie-Gate == WaterRender.ribbonMinimumRank")
-        assertContains(ribbons, "const KIND_DELTA_LO := \(glsl(WaterRender.ribbonDeltaLo))",
-                       hint: "Typ-Trennung Fluss/Delta == WaterRender.ribbonDeltaLo")
-    }
 
     // MARK: Hilfen
 
