@@ -3769,6 +3769,15 @@ public final class Terrain {
     /// SYNTHETISCHEN Zustand zu prüfen (Zellen ohne Sediment, Zellen mit knapp
     /// zu wenig davon, Eis auf einem Teil des Feldes) trifft die Randfälle, die
     /// ein ausgelaufener Sim-Zustand nur zufällig enthält.
+    ///
+    /// **Abgeleitete Felder werden NICHT mitgezogen**: `hf`, `area`, `receiver`,
+    /// `order`, `isChannel`, `ice`/`snow` und alles Übrige behalten den Stand aus
+    /// der Generierung und passen danach nicht mehr zum Bett. Für den Funnel-
+    /// Wächter ist das richtig — der Funnel liest ausschließlich `h`, `sed`,
+    /// `rock` und `underIce`. Wer hier einen Test aufhängt, der einen PASS
+    /// aufruft, baut sich einen inkonsistenten Zustand; solche Tests bauen ihren
+    /// Zustand über `Terrain`s eigene Läufe auf (s. `Glacier.swift`) oder über
+    /// `restore(_:)`.
     func setBedForTests(h nh: [Double], sed ns: [Double], rock nr: [Double], underIce nu: [Bool]) {
         // Der Funnel HÄLT `h = rock + sed`; ein Aufbau, der das schon verletzt,
         // würde eine Abweichung messen, die nicht vom Funnel kommt. Die Maske
