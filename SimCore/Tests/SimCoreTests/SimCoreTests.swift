@@ -58,10 +58,13 @@ final class SimCoreTests: XCTestCase {
     func testDeterminism() {
         let a = Terrain(config: makeConfig(), seed: 4242)
         let b = Terrain(config: makeConfig(), seed: 4242)
-        XCTAssertEqual(a.h, b.h, "Generierung muss deterministisch sein")
+        // Voller Zustands-Fingerabdruck (Issue #78) statt einzelner Felder:
+        // deckt das komplette TerrainState-Inventar ab, nicht nur h/receiver.
+        XCTAssertEqual(a.fingerprint(), b.fingerprint(),
+                       "Generierung muss deterministisch sein")
         for _ in 0..<10 { a.step(dtYears: 1000); b.step(dtYears: 1000) }
-        XCTAssertEqual(a.h, b.h, "Simulation muss deterministisch sein")
-        XCTAssertEqual(a.receiver, b.receiver)
+        XCTAssertEqual(a.fingerprint(), b.fingerprint(),
+                       "Simulation muss deterministisch sein")
     }
 
     /// Verschiedene Seeds → verschiedene Terrains.

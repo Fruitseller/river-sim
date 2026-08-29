@@ -17,10 +17,13 @@ import SimCore
 //   SimCore/.build/release/simperf --dt 0.2 --steps 200 # Echtzeit-Takt
 //   SimCore/.build/release/simperf --hash               # Bit-Identität
 //
-// `--hash` ist der Wächter für „Physik unverändert": ein FNV-1a über die
-// Bit-Muster aller Zustandsfelder. Vor und nach einer Optimierung derselbe
-// Wert ⇒ die Optimierung ist ergebnis-neutral. Er ist maschinen-spezifisch
-// (System-libm, s. AGENTS.md) — verglichen wird immer auf DERSELBEN Maschine.
+// `--hash` ist der Wächter für „Physik unverändert": `Terrain.fingerprint()`
+// (Issue #78), ein FNV-1a über die Roh-Bits des KOMPLETTEN Zustands-Inventars
+// (`TerrainState` via die WorldSnapshot-Feldtabellen plus Skalar-/Mäander-
+// Block). Vor und nach einer Optimierung derselbe Wert ⇒ die Optimierung ist
+// ergebnis-neutral. Er ist maschinen-spezifisch (System-libm, s. AGENTS.md) —
+// verglichen wird immer auf DERSELBEN Maschine. Werte von vor #78 (nur 8
+// Felder gehasht) sind mit heutigen nicht vergleichbar.
 
 // MARK: - Argumente
 
@@ -84,34 +87,6 @@ cfg.world = worldSize
 cfg.hydraulicSkipWaterSpawns = true
 cfg.meanderSpatialCutoffIndex = true
 
-// MARK: - Fingerabdruck
-
-/// FNV-1a über die Roh-Bits — empfindlich auf jedes einzelne ulp.
-func fnv(_ values: [Double], into hash: inout UInt64) {
-    for v in values {
-        var bits = v.bitPattern
-        for _ in 0..<8 {
-            hash = (hash ^ (bits & 0xFF)) &* 0x100_0000_01B3
-            bits >>= 8
-        }
-    }
-}
-
-func fingerprint(_ t: Terrain) -> String {
-    var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-    // Höhen, Füllhöhen, Abfluss (D8 + MFD), Sediment, Vegetation, Schnee, Eis:
-    // die Felder, an denen jede Physik-Abweichung sichtbar wird.
-    fnv(t.h, into: &hash)
-    fnv(t.hf, into: &hash)
-    fnv(t.area, into: &hash)
-    fnv(t.areaMFD, into: &hash)
-    fnv(t.sed, into: &hash)
-    fnv(t.veg, into: &hash)
-    fnv(t.snow, into: &hash)
-    fnv(t.ice, into: &hash)
-    return String(format: "%016llx", hash)
-}
-
 // MARK: - Lauf
 
 let terrain = Terrain(config: cfg, seed: seed)
@@ -128,7 +103,7 @@ if hashMode {
     for _ in 0..<steps { terrain.step(dtYears: dt) }
     print("n=\(gridN) world=\(worldSize) seed=\(seed) "
           + "warmup=\(warmupSteps)x\(warmupDt) steps=\(steps)x\(dt)")
-    print("fingerprint \(fingerprint(terrain))")
+    print("fingerprint \(String(format: "%016llx", terrain.fingerprint()))")
     exit(0)
 }
 

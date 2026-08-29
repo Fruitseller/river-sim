@@ -62,7 +62,13 @@ SimCore/.build/release/simperf --hash       # Fingerabdruck aller Zustandsfelder
 ```
 
 `--hash` ist der Wächter für „Physik unverändert": gleicher Wert vor und nach
-einer Optimierung (auf DERSELBEN Maschine) heißt bit-identisch. Die Pass-Tabelle
+einer Optimierung (auf DERSELBEN Maschine) heißt bit-identisch. Seit Issue #78
+ist der Wert `Terrain.fingerprint()` über das KOMPLETTE Zustands-Inventar
+(`TerrainState` via die WorldSnapshot-Feldtabellen plus Skalar-/Mäander-Block);
+ein neues Zustandsfeld ist automatisch abgedeckt, sobald es ins Inventar kommt
+(Wächter: `FingerprintTests`). Werte von vor #78 (nur 8 Felder gehasht) sind
+mit heutigen nicht vergleichbar. Ein Erwartungswert gehört nicht ins Repo:
+der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm). Die Pass-Tabelle
 kommt aus `SimProfile` (Marken in `step()`, standardmäßig aus). Messprotokoll,
 Vorher/Nachher und die gemessenen Fehlschläge: `docs/perf-measurements.md`.
 Ältere Messreihen dort stehen auf der Paarung davor und werden mit BEIDEN
