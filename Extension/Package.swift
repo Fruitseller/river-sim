@@ -1,8 +1,8 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// GDExtension-Brücke: linkt den reinen Sim-Kern (SimCore) an SwiftGodot und
-// erzeugt eine dynamische Library, die Godot als GDExtension lädt.
+// GDExtension-Brücke: linkt SimCore + die godot-freie Aufbereitung SimRender an
+// SwiftGodot und erzeugt die dynamische Library für Godot.
 let package = Package(
     name: "RiverSimGD",
     platforms: [.macOS(.v14)],
@@ -28,6 +28,7 @@ let package = Package(
             name: "RiverSimGD",
             dependencies: [
                 .product(name: "SimCore", package: "SimCore"),
+                .product(name: "SimRender", package: "SimCore"),
                 "SwiftGodot",
             ]
         ),

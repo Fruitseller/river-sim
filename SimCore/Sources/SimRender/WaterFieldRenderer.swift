@@ -1,5 +1,4 @@
 import Foundation
-import SwiftGodot
 import SimCore
 
 /// RASTER-Pfad des Wassers (Issue #53 aus `SimNode` ausgelagert): baut aus den
@@ -10,14 +9,16 @@ import SimCore
 /// Die andere Hälfte des Wassers malt `RiverRibbonRenderer` als Geometrie; die
 /// Grenze zwischen beiden ist die Wassersäule `WaterRender.lakeRawWetDepth`
 /// (Issue #34). Alle Schwellen dieses Pfads stehen im Kalibrier-Vertrag
-/// `SimCore.WaterRender` — headless gepinnt von `SimCoreTests`, hier wären sie
-/// nur mit einem ~20-Minuten-Extension-Build prüfbar (Issue #51).
+/// `SimCore.WaterRender`; sein Verhalten wird headless in `SimCoreTests`
+/// zusammen mit diesem Renderer ausgeführt.
 ///
 /// Eigene Klasse statt freier Funktion, weil der Pfad ZUSTAND hat: die
 /// zeitlich geglätteten Ausgabefelder (EWMA über Render-Ticks) und die
 /// Arbeitspuffer der vielen Vollbild-Pässe. Reiner Render-Zustand, keine
 /// Sim-Rückwirkung.
-final class WaterFieldRenderer {
+public final class WaterFieldRenderer {
+    public init() {}
+
 
 
     // Persistente, zeitlich geglättete Wasserfelder (EWMA-Gedächtnis über Rebuilds).
@@ -80,9 +81,9 @@ final class WaterFieldRenderer {
     /// Das Kanal-Layout ist in BEIDEN Fällen dasselbe, die Kalibrier-Schwellen
     /// bleiben vollständig hier (der Vertrag `WaterRender` wandert NICHT in den
     /// Shader).
-    func bytes(_ terrain: Terrain, blend: Double, geometryMode: Bool,
-               bandChannelFlags: [Bool], bandCoverage: [Double],
-               deferTail: Bool = false) -> PackedByteArray {
+    public func bytes(_ terrain: Terrain, blend: Double, geometryMode: Bool,
+                      bandChannelFlags: [Bool], bandCoverage: [Double],
+                      deferTail: Bool = false) -> [UInt8] {
         let n = terrain.cfg.n
         let cnt = n * n
         let sea = terrain.cfg.sea
@@ -170,9 +171,8 @@ final class WaterFieldRenderer {
                     let cu = pa[k] / cellArea
                     if cu < creek { continue }
                     // Track-Maske und Abfluss-Abstufung stehen im Kalibrier-
-                    // Vertrag (`WaterRender`) statt hier: dort sind sie headless
-                    // gepinnt, hier wären sie nur mit einem Extension-Build
-                    // prüfbar (Issue #51).
+                    // Vertrag (`WaterRender`) statt hier und werden zusammen mit
+                    // diesem ausführbaren Pfad headless geprüft (Issues #51/#82).
                     let m = WaterRender.trackMask(streamMap: psm[k])
                     if m <= 0 { continue }
                     psd[k] = WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
@@ -660,7 +660,7 @@ final class WaterFieldRenderer {
                 }
                 }
             }}
-            return PackedByteArray(out)
+            return out
         }
 
         blurMax(&sd, passes: 1)
@@ -716,9 +716,8 @@ final class WaterFieldRenderer {
             }
             }
         }}}}}}
-        // Die Godot-Umwandlung passiert VOR dem `defer`-Rücktausch: der
-        // Byte-Puffer bleibt damit im Renderer und wird über Render-Ticks
-        // wiederverwendet.
-        return PackedByteArray(out)
+        // Der Byte-Puffer bleibt über den `defer`-Rücktausch im Renderer und
+        // wird über Render-Ticks wiederverwendet; `[UInt8]` teilt ihn per CoW.
+        return out
     }
 }

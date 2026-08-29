@@ -278,12 +278,13 @@ oben); für Agenten ist das ab jetzt verbotenes Terrain.
 
 Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
 
-1. **`SimCore/`**: reines Swift-Package, **keine Godot-Abhängigkeit**. Die gesamte
-   Physik. Headless mit XCTest verifizierbar.
-2. **`Extension/`**: SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn: hält einen
-   `Terrain` und reicht seine Felder als `Packed*Array` an Godot. Keine Physik.
-   Seit Issue #53 ist `SimNode.swift` wieder eine BRÜCKE (~320 Zeilen, fast nur
-   `@Callable`-Einzeiler); die Render-Aufbereitung liegt daneben, s. u.
+1. **`SimCore/`**: Swift-Package ohne Godot. Das Target `SimCore` enthält die
+   gesamte Physik; `SimRender` bereitet daraus Farben, Bäume, Diagnostik,
+   Raster-Wasser und Band-Geometrie als POD-Puffer auf. Beide sind headless mit
+   XCTest verifizierbar.
+2. **`Extension/`**: SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn:
+   hält einen `Terrain`, ruft `SimRender` auf und wrappt `[UInt8]`, `[Float]`
+   sowie `RibbonMesh` in `Packed*Array`. Keine Physik oder Render-Berechnung.
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.1): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
@@ -299,15 +300,16 @@ Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach
 `terrainSurfaceBytes()` etc. und schiebt sie als Texturen ins Mesh.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
-### Extension-Aufbau (Issue #53)
+### SimRender- und Extension-Aufbau (Issues #53/#80/#82)
 
-`SimNode.swift` ist reines Marshalling: Aufruf weiterreichen, Ergebnis als
-`Packed*Array` zurückgeben. Die Render-AUFBEREITUNG liegt daneben, je Pfad ein
-Modul; sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer, Dirty-Snapshots),
-liest das Terrain und ändert es nie:
+`SimNode.swift` ist reines Marshalling: Aufruf weiterreichen, POD-Ergebnis als
+`Packed*Array` zurückgeben. Die Render-AUFBEREITUNG lebt im godot-freien Target
+`SimRender`; sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer,
+Dirty-Snapshots), liest das Terrain und ändert es nie:
 
-- `WaterFieldRenderer`: Raster-Wasser (`waterFieldBytes`),
-- `RiverRibbonRenderer`: Band-Geometrie (`buildRiverRibbons` + Puffer),
+- `WaterFieldRenderer`: Raster-Wasser als `[UInt8]`,
+- `RiverRibbonRenderer`: Band-Geometrie als `RibbonMesh`
+  (`SIMD3<Float>`/`SIMD4<Float>`/`SIMD2<Float>` + Indizes),
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie in einem gemeinsamen Pass,
 - `TreeInstanceRenderer`: MultiMesh-Puffer der Bäume,
@@ -321,10 +323,11 @@ liest das Terrain und ändert es nie:
 Die Werkzeug-Modi (`BrushTool`) liegen seit Issue #79 in SimCore (s. dort);
 `SimNode.brush` bleibt der dünne Adapter.
 
-Die KALIBRIER-Zahlen bleiben dabei in `SimCore` (`WaterRender`,
-`RenderContract`); die Module rechnen nur mit ihnen. Die Wächter lesen die
-Extension als GANZES (`RepoSource.extensionSources()`), ein Umzug zwischen
-diesen Dateien bricht sie also nicht.
+Nur `BrushTool` bleibt neben `SimNode`, weil es Terrain-Operationen aus der
+Godot-Werkzeugtabelle routet (Wächter: `SimCoreTests/ToolContractTests.swift`).
+Die KALIBRIER-Zahlen bleiben in `SimCore` (`WaterRender`, `RenderContract`);
+Verhaltens-XCTests führen die Renderer direkt aus. Quelltext-Vergleiche bleiben
+für die nicht ausführbaren Shader- und `Main.gd`-Verträge.
 
 ### SimCore-Aufbau
 
@@ -412,20 +415,20 @@ Größenordnung zur Orientierung (Stand Aug 2026, gerundet; wer eine Datei teilt
 oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4650 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
-Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen, die
-gesamte GDExtension ~2550 (davon `SimNode.swift` ~360, s. o.; Stand nach dem
-BrushTool-Auszug, #79).
+Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen,
+`SimRender` ~2200 Zeilen und die eigentliche GDExtension nur noch
+`SimNode.swift` mit ~390 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 
-Drei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand; sie
-liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:
-`Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31), `WaterRender.swift`
-(Kalibrier-Paarungen des Wasserfelds: Komponenten-Fade ↔ Shader-Smoothstep ↔
-Altarm-Stempel, Issue #32; seit #34 auch die Übergabe Band ↔ Raster:
-`deltaFrontDepth == lakeRawWetDepth`, `mouthOverlapCells`, Typ-Kanal der Bänder)
-und `RenderContract.swift` (Issue #51: `heightScale`, `riverLift`, `defaultSeed`,
-Zahlen, die Godot-Schicht, GDExtension und Shader unabhängig voneinander
-festlegten). Alle drei sind aus `SimCoreTests` gepinnt; Werte dort ändern heißt
-Shader UND `SimNode` mitziehen (der Test sagt, wo).
+Drei Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
+Sim-Zustand; sie bilden den gemeinsamen Vertrag für `SimRender`, Godot und
+Shader: `Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31),
+`WaterRender.swift` (Kalibrier-Paarungen des Wasserfelds:
+Komponenten-Fade ↔ Shader-Smoothstep ↔ Altarm-Stempel, Issue #32; seit #34 auch
+die Übergabe Band ↔ Raster: `deltaFrontDepth == lakeRawWetDepth`,
+`mouthOverlapCells`, Typ-Kanal der Bänder) und `RenderContract.swift`
+(Issue #51: `heightScale`, `riverLift`, `defaultSeed`). Alle drei sind aus
+`SimCoreTests` gepinnt; Werte dort ändern heißt `SimRender`, Shader und
+gegebenenfalls `SimNode`/`Main.gd` mitziehen (der Test sagt, wo).
 
 Seit **Issue #51** liegt die Render-Kalibrierung VOLLSTÄNDIG in diesem Vertrag:
 auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
@@ -433,12 +436,13 @@ Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
 Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
 (`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK beider
 Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer). Die Extension und
-die Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests` und
-`RenderContractTests` lesen die ECHTEN Quelltexte der GDExtension, beiden
-`.gdshader`, `Main.gd` und den Godot-Wächtern und vergleichen sie gegen diese
-Werte (gemeinsamer Helfer: `Tests/SimCoreTests/RepoSource.swift`). Zahlen im
-Shader deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`); sonst
-greift der Textvergleich nicht.
+die Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests`
+führen die Swift-Kalibrierung und `SimRender` aus und lesen nur noch die
+ECHTEN `.gdshader`; `RenderContractTests` hält die verbleibenden Verträge zu
+`Main.gd`, Shader und `SimNode`. Gemeinsamer Quelltext-Helfer:
+`Tests/SimCoreTests/RepoSource.swift`. Zahlen im Shader deshalb in
+**Swift-Schreibweise** notieren (`0.7`, nicht `0.70`); sonst greift der
+Textvergleich nicht.
 
 **Binnenwasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
@@ -447,7 +451,8 @@ Altarme, das Raster-Feld (`WaterFieldRenderer` + `terrain.gdshader`) die
 dendritischen Zubringer und Seen. Die Grenze ist die Wassersäule
 `WaterRender.lakeRawWetDepth`: darunter malt nur die Geometrie, darüber nur das
 Raster. Wer eine der beiden Seiten verschiebt, bekommt entweder einen Spalt oder
-doppeltes Wasser; beides zählt `game/tests/water_geometry.gd`.
+doppeltes Wasser; das prüfen `WaterRendererTests` headless und
+`game/tests/water_geometry.gd` weiter als End-to-End-Vertrag.
 
 Das offene Meer ist eine dritte, rein visuelle Fläche (`ocean.gdshader`). Sie
 teilt Farben, Fresnel und Glanz mit beiden Binnenwasser-Pfaden, bleibt aber opak:
@@ -486,10 +491,10 @@ Spielstand mit (`Codable`):
   führt Tupel, die der Compiler nicht synthetisieren kann.
 
 KEINE Stellschrauben in diesem Sinn sind dagegen `WaterRender` und
-`RenderContract`: das sind Render-KALIBRIERUNGEN mit Wächtern über Shader und
-GDExtension (s. o.), keine Physik-Regler, und sie hängen nicht an `SimConfig`.
-Auch die Extension und `Main.gd` halten seit Issue #51 keine eigenen
-Render-Literale mehr; ihre Zahlen kommen aus dem Vertrag.
+`RenderContract`: das sind Render-KALIBRIERUNGEN mit Verhaltenswächtern in
+`SimRenderTests`/`WaterRendererTests` und Quelltext-Wächtern über Shader,
+`Main.gd` sowie das verbleibende Marshalling (s. o.), keine Physik-Regler; sie
+hängen nicht an `SimConfig`.
 
 Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - `SimConfig()`-Defaults = kalibrierte Produktions-Physik.
