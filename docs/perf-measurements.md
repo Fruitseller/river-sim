@@ -69,9 +69,13 @@ Gegenprobe, dass die Instrumentierung nicht selbst misst, was sie messen soll
 
 ### `--hash` — der Wächter für „Physik unverändert"
 
-FNV-1a über die Bit-Muster von `h`, `hf`, `area`, `areaMFD`, `sed`, `veg`,
-`snow`, `ice` nach Einlauf + Messschritten. **Jede** Optimierung dieser Runde
-wurde damit geprüft; der Wert ist über die gesamte Serie konstant:
+Zum Zeitpunkt dieser Messreihe: FNV-1a über die Bit-Muster von `h`, `hf`,
+`area`, `areaMFD`, `sed`, `veg`, `snow`, `ice` nach Einlauf + Messschritten.
+(Seit Issue #78 hasht `--hash` stattdessen das komplette Zustands-Inventar via
+`Terrain.fingerprint()`; der unten festgehaltene Wert stammt vom alten
+8-Felder-Hash und ist mit heutigen Ausgaben nicht vergleichbar.) **Jede**
+Optimierung dieser Runde wurde damit geprüft; der Wert ist über die gesamte
+Serie konstant:
 
 ```sh
 SimCore/.build/release/simperf --hash --n 832 --world 130

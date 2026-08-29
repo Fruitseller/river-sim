@@ -438,6 +438,91 @@ public enum WorldSnapshot {
     }
 }
 
+// MARK: - Zustands-Fingerabdruck (Issue #78)
+
+/// FNV-1a-Mixer über Roh-Bits. Jedes Array geht mit LÄNGEN-Präfix ein, damit
+/// „Feld leer" (abgeschaltete Physik) und „Feld verschoben" nicht kollidieren
+/// können — dieselbe Rolle wie die Feld-Header im Speicherformat oben.
+private struct StateHasher {
+    var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+
+    mutating func mix(_ value: UInt64) {
+        var bits = value
+        for _ in 0..<8 {
+            hash = (hash ^ (bits & 0xFF)) &* 0x100_0000_01B3
+            bits >>= 8
+        }
+    }
+    mutating func mix(_ value: Double) { mix(value.bitPattern) }
+    mutating func mix(_ values: [Double]) {
+        mix(UInt64(values.count))
+        for v in values { mix(v.bitPattern) }
+    }
+    mutating func mix(_ values: [Int32]) {
+        mix(UInt64(values.count))
+        for v in values { mix(UInt64(UInt32(bitPattern: v))) }
+    }
+    mutating func mix(_ values: [UInt8]) {
+        mix(UInt64(values.count))
+        for v in values { mix(UInt64(v)) }
+    }
+    mutating func mix(_ values: [Bool]) {
+        mix(UInt64(values.count))
+        for v in values { mix(UInt64(v ? 1 : 0)) }
+    }
+}
+
+extension TerrainState {
+    /// Fingerabdruck des KOMPLETTEN Zustands: läuft über dieselben
+    /// Inventartabellen wie das Speicherformat (`doubleFields`/`int32Fields`/
+    /// `uint8Fields`/`boolFields`) plus den dort nicht tabellierten
+    /// Skalar- und Mäander-Block — dieselbe Abdeckung wie `encode()`. Ein neues
+    /// Feld ist damit automatisch erfasst, sobald es ins Inventar kommt;
+    /// `FingerprintTests` prüft die Abdeckung tabellen-getrieben.
+    ///
+    /// Empfindlich auf jedes einzelne ulp (Roh-Bitmuster, kein Runden). Der Wert
+    /// ist maschinen-spezifisch (System-libm): Vergleiche gelten nur auf
+    /// DERSELBEN Maschine, ein Erwartungswert gehört nicht ins Repo.
+    func fingerprint() -> UInt64 {
+        var f = StateHasher()
+        // Skalar-Block (Reihenfolge wie encode()).
+        f.mix(UInt64(seed))
+        f.mix(years)
+        f.mix(dropsEmitted)
+        f.mix(dropCarry)
+        f.mix(UInt64(flowStepCount))
+        f.mix(UInt64(disturbActive ? 1 : 0))
+        let b = heightBands
+        for v in [b.vegFull, b.vegRamp, b.rockStart, b.rockFull,
+                  b.snowStart, b.snowFull, b.coniferLow, b.coniferHigh] { f.mix(v) }
+        // Feld-Inventar.
+        for spec in WorldSnapshot.doubleFields { f.mix(self[keyPath: spec.path]) }
+        for spec in WorldSnapshot.int32Fields { f.mix(self[keyPath: spec.path]) }
+        for spec in WorldSnapshot.uint8Fields { f.mix(self[keyPath: spec.path]) }
+        for spec in WorldSnapshot.boolFields { f.mix(self[keyPath: spec.path]) }
+        // Mäander-Block.
+        f.mix(UInt64(meanderChannels.count))
+        for ch in meanderChannels {
+            f.mix(UInt64(ch.nodes.count))
+            for node in ch.nodes { f.mix(node.x); f.mix(node.z) }
+            f.mix(ch.discharge)
+        }
+        f.mix(UInt64(oxbows.count))
+        for ox in oxbows {
+            f.mix(UInt64(ox.count))
+            for node in ox { f.mix(node.x); f.mix(node.z) }
+        }
+        f.mix(oxbowAge)
+        return f.hash
+    }
+}
+
+extension Terrain {
+    /// Öffentlicher Zugang zum Zustands-Fingerabdruck (für `simperf --hash`);
+    /// Semantik s. `TerrainState.fingerprint()`.
+    public func fingerprint() -> UInt64 { state.fingerprint() }
+}
+
 // MARK: - Fehler
 
 public enum SnapshotError: Error, CustomStringConvertible {
