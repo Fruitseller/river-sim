@@ -425,16 +425,14 @@ public enum WorldSnapshot {
 
     /// FNV-1a (64 bit) — erkennt abgeschnittene/verfälschte Dateien. Bewusst
     /// keine Krypto-Hash: es geht um Datenintegrität, nicht um Manipulation.
+    /// Läuft über denselben Byte-Mixer wie der Zustands-Fingerabdruck unten —
+    /// Konstanten und Schleife existieren nur EINMAL.
     private static func fnv1a64(_ data: Data) -> UInt64 {
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        let prime: UInt64 = 0x100_0000_01b3
+        var h = StateHasher()
         data.withUnsafeBytes { raw in
-            let p = raw.bindMemory(to: UInt8.self)
-            for byte in p {
-                hash = (hash ^ UInt64(byte)) &* prime
-            }
+            for byte in raw.bindMemory(to: UInt8.self) { h.mix(byte: byte) }
         }
-        return hash
+        return h.hash
     }
 }
 
@@ -446,10 +444,13 @@ public enum WorldSnapshot {
 private struct StateHasher {
     var hash: UInt64 = 0xcbf2_9ce4_8422_2325
 
+    mutating func mix(byte: UInt8) {
+        hash = (hash ^ UInt64(byte)) &* 0x100_0000_01B3
+    }
     mutating func mix(_ value: UInt64) {
         var bits = value
         for _ in 0..<8 {
-            hash = (hash ^ (bits & 0xFF)) &* 0x100_0000_01B3
+            mix(byte: UInt8(truncatingIfNeeded: bits))
             bits >>= 8
         }
     }
