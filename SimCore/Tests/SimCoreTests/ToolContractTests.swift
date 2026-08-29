@@ -154,11 +154,13 @@ final class ToolContractTests: XCTestCase {
                           lower.after[centerIndex] - lower.before[centerIndex],
                           "Die Spitzhacke muss bei gleicher Stärke tiefer schlagen als Absenken")
         // Der Radius-Deckel (Terrain.pickaxeMaxCells): auch ein riesiger Pinsel
-        // reißt keinen Krater — im doppelten Deckel-Abstand bleibt alles stehen.
+        // reißt keinen Krater — außerhalb des Deckel-Radius bleibt alles stehen,
+        // und zwar in JEDER Gitterrichtung (Review-Finding PR #85: die frühere
+        // Ein-Index-Prüfung sah nur die horizontale Achse).
         let wide = heights(after: .pickaxe, radiusWorld: Double(n) * cfg.cellSize)
-        let sideIndex = centerIndex + Int(Terrain.pickaxeMaxCells) * 2
-        XCTAssertEqual(wide.after[sideIndex], wide.before[sideIndex],
-                       "Spitzhacken-Radius muss auf wenige Zellen gedeckelt bleiben")
+        assertUntouchedOutside(wide.after, before: wide.before, center: (gx, gz),
+                               radiusWorld: Terrain.pickaxeMaxCells * cfg.cellSize,
+                               cfg: cfg)
     }
 
     /// Sechs Werkzeuge, sechs verschiedene Wirkungen: kein `case` darf still auf
