@@ -382,10 +382,12 @@ Höhenänderung**, weil seine Maske `Terrain.underIce` den fluvialen Abtrag
 gatet: `outletIncision` und `Hydraulic.erode` prüfen sie direkt, alle übrigen
 Bett-Bewegungen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
 Auen-Aggradation, im Testpfad auch `transportLimited`) über ihren gemeinsamen
-Funnel `erodeCell`/`depositCell`. Den gibt es seit der Perf-Runde 3 in ZWEI
-Fassungen — über die Klassen-Properties und über die Roh-Puffer-Sicht
-`Terrain.Bed` (die Hot-Loops); sie tragen dieselbe Regel und dasselbe Gate, wer
-eine ändert, ändert beide (`docs/perf-measurements.md` §I).
+Funnel `erodeCell`/`depositCell`. Den ruft man seit der Perf-Runde 3 auf ZWEI
+Wegen — über die Klassen-Properties und über die Roh-Puffer-Sicht `Terrain.Bed`
+(die Hot-Loops) —, aber Regel und Gate stehen seit Issue #81 nur noch EINMAL,
+in der Bed-Fassung; der Property-Weg ist ein dünner Adapter darauf. Wer die
+Regel ändert, ändert genau diese eine Stelle (Wächter:
+`SimCoreTests/BedFunnel.swift`, Messung: `docs/perf-measurements.md` §I und §K).
 Vergletscherte Zellen rührt damit kein fluvialer Pass an; die Hangdiffusion
 dagegen läuft weiter (kein fluvialer Pass, s. `docs/glacier-measurements.md`
 §I.1). Wie `isChannel` gilt: **leeres Feld heißt aus**,
