@@ -214,8 +214,8 @@ final class SimNode: Node {
         PackedByteArray(
             waterField.bytes(terrain, blend: 1.0,
                              geometryMode: SimNode.waterGeometryEnabled,
-                             bandChannelFlags: ribbons.bandChannelFlags,
-                             bandCoverage: ribbons.bandCoverage,
+                             bandChannelFlags: ribbons.mesh.bandChannelFlags,
+                             bandCoverage: ribbons.mesh.bandCoverage,
                              deferTail: true)
         )
     }
@@ -226,8 +226,8 @@ final class SimNode: Node {
         return PackedByteArray(
             waterField.bytes(terrain, blend: blend,
                              geometryMode: SimNode.waterGeometryEnabled,
-                             bandChannelFlags: ribbons.bandChannelFlags,
-                             bandCoverage: ribbons.bandCoverage)
+                             bandChannelFlags: ribbons.mesh.bandChannelFlags,
+                             bandCoverage: ribbons.mesh.bandCoverage)
         )
     }
 

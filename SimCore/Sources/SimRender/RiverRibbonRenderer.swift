@@ -34,16 +34,23 @@ public struct RibbonMesh: Equatable {
     public var uv2s: [SIMD2<Float>]
     public var indices: [Int32]
     public var stripStarts: [Int32]
+    /// Je Kanal-Index: hat der Build tatsächlich ein Band emittiert?
+    public var bandChannelFlags: [Bool]
+    /// Je Rasterzelle die vom gebauten Band gemalte Deckkraft.
+    public var bandCoverage: [Double]
 
     public init(vertices: [SIMD3<Float>] = [], colors: [SIMD4<Float>] = [],
                 uvs: [SIMD2<Float>] = [], uv2s: [SIMD2<Float>] = [],
-                indices: [Int32] = [], stripStarts: [Int32] = []) {
+                indices: [Int32] = [], stripStarts: [Int32] = [],
+                bandChannelFlags: [Bool] = [], bandCoverage: [Double] = []) {
         self.vertices = vertices
         self.colors = colors
         self.uvs = uvs
         self.uv2s = uv2s
         self.indices = indices
         self.stripStarts = stripStarts
+        self.bandChannelFlags = bandChannelFlags
+        self.bandCoverage = bandCoverage
     }
 }
 
@@ -70,7 +77,7 @@ public final class RiverRibbonRenderer {
     /// OHNE Wasser darin. Die Einigkeit der beiden Pfade entsteht bewusst über
     /// das ECHTE Bau-Ergebnis statt über eine duplizierte Gate-Formel, die
     /// wegdriften könnte.
-    public private(set) var bandChannelFlags: [Bool] = []
+    public var bandChannelFlags: [Bool] { mesh.bandChannelFlags }
 
     /// Je Zelle: wie stark deckt die gebaute Band-Geometrie sie WIRKLICH ab
     /// (0 = gar nicht, 1 = volle Deckkraft)? Gegenstück zu `bandChannelFlags`
@@ -86,7 +93,7 @@ public final class RiverRibbonRenderer {
     /// gegen 10 307 Zellen, die als Fluss übrig blieben. Sichtbar war das als
     /// abreißende Läufe („keine durchgehenden Adern"): erst Band, dann eine
     /// trockene Rinne, wo weder Band noch Raster malte.
-    public private(set) var bandCoverage: [Double] = []
+    public var bandCoverage: [Double] { mesh.bandCoverage }
     /// Auflösung des RENDER-Gitters (Main.gd `terrain_grid`, via
     /// `SimNode.setRenderGrid`): die Land-Bänder sampeln ihre Höhen über
     /// `renderSurfaceHeight` von der SICHTBAREN Oberfläche statt von den
@@ -165,6 +172,15 @@ public final class RiverRibbonRenderer {
         mesh.indices.removeAll(keepingCapacity: true)
         mesh.stripStarts.removeAll(keepingCapacity: true)
         let n = terrain.cfg.n
+        mesh.bandChannelFlags = [Bool](repeating: false,
+                                       count: terrain.meander.channels.count)
+        if mesh.bandCoverage.count != n * n {
+            mesh.bandCoverage = [Double](repeating: 0, count: n * n)
+        } else {
+            mesh.bandCoverage.withUnsafeMutableBufferPointer {
+                $0.baseAddress!.update(repeating: 0, count: n * n)
+            }
+        }
         let cs = terrain.cfg.cellSize
         let creek = terrain.cfg.renderMinCells
         let smap = terrain.streamMap
@@ -177,15 +193,6 @@ public final class RiverRibbonRenderer {
         let orders = terrain.strahlerOrders(minCells: terrain.cfg.meanderMinCells)
 
         let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
-        bandChannelFlags = [Bool](repeating: false,
-                                  count: terrain.meander.channels.count)
-        if bandCoverage.count != n * n {
-            bandCoverage = [Double](repeating: 0, count: n * n)
-        } else {
-            bandCoverage.withUnsafeMutableBufferPointer {
-                $0.baseAddress!.update(repeating: 0, count: n * n)
-            }
-        }
         for (chIndex, ch) in terrain.meander.channels.enumerated() {
             let nodes = ch.nodes
             let m = nodes.count
@@ -314,7 +321,7 @@ public final class RiverRibbonRenderer {
             if !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
             // Ab hier wird das Band sicher emittiert — das Wasserfeld darf den
             // Korridor dieses Kanals auf Saum-Intensität deckeln.
-            bandChannelFlags[chIndex] = true
+            mesh.bandChannelFlags[chIndex] = true
 
             // Bogenlängen (Welt) für Taper und UV.y.
             var arc = [Double](repeating: 0, count: cnt)
@@ -709,7 +716,7 @@ public final class RiverRibbonRenderer {
                 if ex * ex + ez * ez > hw * hw { continue }
                 let value = min(max(fromAlpha + (toAlpha - fromAlpha) * t, 0), 1)
                 let k = j * n + i
-                if bandCoverage[k] < value { bandCoverage[k] = value }
+                if mesh.bandCoverage[k] < value { mesh.bandCoverage[k] = value }
             }
         }
     }

@@ -147,7 +147,10 @@ jobs:
       - name: Render-Fingerabdruck vor dem Umzug bauen
         run: |
           BASE="$RUNNER_TEMP/render-baseline"
-          git worktree add --detach "$BASE" d7a9b93
+          BASELINE_COMMIT="$(git log --format=%H --fixed-strings \
+            --grep='fix(render): fingerprint production water order (#80)' -1)"
+          test -n "$BASELINE_COMMIT"
+          git worktree add --detach "$BASE" "$BASELINE_COMMIT"
           (
             cd "$BASE"
             "$(git rev-parse --show-toplevel)"/scripts/build.sh release
@@ -243,4 +246,8 @@ jobs:
             RENDER_FINGERPRINT_OK | tee "$RUNNER_TEMP/render-after.log"
           grep ' sha256=' "$RUNNER_TEMP/render-before.log" > "$RUNNER_TEMP/render-before.hashes"
           grep ' sha256=' "$RUNNER_TEMP/render-after.log" > "$RUNNER_TEMP/render-after.hashes"
+          test -s "$RUNNER_TEMP/render-before.hashes"
+          test -s "$RUNNER_TEMP/render-after.hashes"
+          test "$(wc -l < "$RUNNER_TEMP/render-before.hashes")" -eq 16
+          test "$(wc -l < "$RUNNER_TEMP/render-after.hashes")" -eq 16
           diff -u "$RUNNER_TEMP/render-before.hashes" "$RUNNER_TEMP/render-after.hashes"

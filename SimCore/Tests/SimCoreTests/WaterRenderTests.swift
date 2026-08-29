@@ -499,6 +499,20 @@ final class WaterRenderTests: XCTestCase {
     }
 
 
+    func testExtensionKeepsWaterCalibrationOutOfMarshalling() throws {
+        let bridge = try RepoSource.extensionSources()
+        let implementation = bridge.split(
+            separator: "\n", omittingEmptySubsequences: false
+        ).map {
+            $0.split(separator: "//", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        }.joined(separator: "\n")
+        XCTAssertFalse(
+            implementation.contains("WaterRender."),
+            "Die GDExtension darf keine Wasser-Kalibrierung zurückkopieren; "
+                + "sie gehört ausschließlich in SimCore/SimRender"
+        )
+    }
+
     // MARK: Hilfen
 
     /// Quelltext einer anderen Schicht — s. `RepoSource` (gemeinsam mit
