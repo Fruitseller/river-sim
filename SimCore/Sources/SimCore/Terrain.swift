@@ -652,9 +652,10 @@ public final class Terrain {
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             // Dieselbe Quelle wie im Sim-Schritt (Issue #36). In der
-                            // Generierung gibt es noch kein Schneefeld, das Feld IST
-                            // hier `rainWeight` — der Spin-up bleibt bit-identisch.
-                            rainWeight: flowWeight,
+                            // Generierung gibt es noch kein Schneefeld, `flowWeight`
+                            // liefert hier also das reine Regen-Gewicht — der Spin-up
+                            // bleibt bit-identisch.
+                            flowWeight: flowWeight,
                             erodibility: lithErodeK,
                             track: &trackBuf)
             for k in 0..<cfg.count {
@@ -4127,7 +4128,7 @@ public final class Terrain {
                             underIce: underIce,
                             // Dieselbe Gewichtungsregel wie beide Netze (Issue #36):
                             // wo Schmelzwasser abfließt, starten auch mehr Tropfen.
-                            rainWeight: flowWeight,
+                            flowWeight: flowWeight,
                             erodibility: lithErodeK,
                             track: &trackBuf)
             // Besuchs-RATE (Besuche/Jahr) glätten (nickmcd lrate, dt-skaliert,
