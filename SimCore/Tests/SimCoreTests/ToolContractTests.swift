@@ -20,8 +20,8 @@ import XCTest
 final class ToolContractTests: XCTestCase {
 
     func testBrushToolCasesMatchTheGameToolTable() throws {
-        let main = try RepoSource.file("game/scripts/Main.gd")
-        let tableModes = try integers(in: main, pattern: "\"mode\": ([0-9]+)")
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        let tableModes = try main.integers(pattern: "\"mode\": ([0-9]+)")
         XCTAssertFalse(tableModes.isEmpty,
                        "Werkzeug-Tabelle in Main.gd nicht gefunden — trägt jede Zeile \"mode\"?")
         XCTAssertEqual(tableModes, BrushTool.allCases.map(\.rawValue),

@@ -145,8 +145,9 @@ final class MeasurementGateTests: XCTestCase {
     /// - eine auskommentierte Zeile oder der Name in einer Zeichenkette,
     /// - dieselbe Zeile innerhalb eines mehrzeiligen `"""`-Literals.
     ///
-    /// Gelesen wird deshalb der CODE-Teil jeder Zeile (`codeLines`, kennt
-    /// Zeichenketten und Kommentare) und darin die Anweisung als Ganzes: `try`,
+    /// Gelesen wird deshalb der CODE-Teil jeder Zeile (`SourceProbe`, kennt
+    /// Zeichenketten und Kommentare — dieser Lexer war die Vorlage der Probe,
+    /// seit Issue #83 liegt er dort) und darin die Anweisung als Ganzes: `try`,
     /// der Aufrufname, eine Argumentliste, Zeilenende. Leerraum und die explizit
     /// gesetzten Default-Argumente (`file:`/`line:`) sind damit erlaubt — sie
     /// ändern die Wirkung nicht, und ein Autor, der sie notiert, soll nicht an
@@ -154,58 +155,11 @@ final class MeasurementGateTests: XCTestCase {
     /// verankert: ein Gate in einem `if`-Zweig oder in `XCTAssertNoThrow(…)`
     /// wirkt eben NICHT zuverlässig und soll auffallen.
     private func gatesOnMeasurement(_ body: String) -> Bool {
-        codeLines(of: body).contains { line in
+        SourceProbe(body, language: .swift).codeLinesWithoutStrings.contains { line in
             line.trimmingCharacters(in: .whitespaces)
                 .range(of: #"^try\s+skipUnlessMeasuring\s*\([^()]*\)$"#,
                        options: .regularExpression) != nil
         }
-    }
-
-    /// Jede Zeile ohne Zeichenketten-Inhalt und ohne Kommentar.
-    ///
-    /// Der kleine Zeichen-Scanner ersetzt `range(of: "//")`: der kannte keinen
-    /// String-Kontext, schnitt also an jedem `https://…` mitten in der Zeile ab
-    /// und zählte Gate-Zeilen in `"""`-Literalen mit. Raw Strings (`#"…"#`)
-    /// braucht er nicht zu kennen — ihre Anführungszeichen öffnen und schließen
-    /// hier genauso, der Inhalt fällt damit ebenfalls weg.
-    private func codeLines(of body: String) -> [String] {
-        var result: [String] = []
-        var inMultiline = false
-        for line in body.split(separator: "\n", omittingEmptySubsequences: false) {
-            let chars = Array(line)
-            var code = ""
-            var inString = false
-            var escaped = false
-            var i = 0
-            while i < chars.count {
-                let c = chars[i]
-                if inMultiline {
-                    if isTripleQuote(chars, i) { inMultiline = false; i += 3; continue }
-                    i += 1
-                } else if inString {
-                    if escaped { escaped = false } else if c == "\\" { escaped = true }
-                    else if c == "\"" { inString = false }
-                    i += 1
-                } else if isTripleQuote(chars, i) {
-                    inMultiline = true
-                    i += 3
-                } else if c == "\"" {
-                    inString = true
-                    i += 1
-                } else if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                    break
-                } else {
-                    code.append(c)
-                    i += 1
-                }
-            }
-            result.append(code)
-        }
-        return result
-    }
-
-    private func isTripleQuote(_ chars: [Character], _ i: Int) -> Bool {
-        i + 2 < chars.count && chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\""
     }
 
     /// Alle `*.swift` neben dieser Datei. `#filePath` zeigt auf die Quelle, nicht
@@ -225,33 +179,8 @@ final class MeasurementGateTests: XCTestCase {
         }
     }
 
-    /// Zerlegt eine Quelldatei in Testmethoden. Eine Methode reicht bis zur
-    /// nächsten `func`-Zeile auf Methoden-Einrückung — das genügt, weil nur nach
-    /// EINEM Aufruf in der Methode gesucht wird.
+    /// Zerlegt eine Quelldatei in Testmethoden — s. `SourceProbe.testMethods()`.
     private func testMethods(in source: String) -> [(name: String, body: String)] {
-        var result: [(String, String)] = []
-        var current: String?
-        var body = ""
-        for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
-            if let name = testMethodName(line) {
-                if let open = current { result.append((open, body)) }
-                current = name
-                body = ""
-            } else if line.hasPrefix("    func ") || line.hasPrefix("    private func ") {
-                if let open = current { result.append((open, body)) }
-                current = nil
-            }
-            if current != nil { body += line + "\n" }
-        }
-        if let open = current { result.append((open, body)) }
-        return result
-    }
-
-    /// `    func testFoo(` → `testFoo`. Nur Methoden-Einrückung (vier Leerzeichen),
-    /// damit verschachtelte Hilfsfunktionen nicht als Test zählen.
-    private func testMethodName(_ line: Substring) -> String? {
-        let prefix = "    func test"
-        guard line.hasPrefix(prefix), let paren = line.firstIndex(of: "(") else { return nil }
-        return String(line[line.index(line.startIndex, offsetBy: 9)..<paren])
+        SourceProbe(source, language: .swift).testMethods()
     }
 }
