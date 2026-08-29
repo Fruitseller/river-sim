@@ -3906,7 +3906,10 @@ public final class Terrain {
     /// Aufrufer sind nur der Testpfad `transportLimited` und die geparkte
     /// `floodplainAggradation`; kein Produktionspass läuft hier durch, das
     /// Öffnen je Aufruf kostet die Produktion also nichts
-    /// (`docs/perf-measurements.md` §K). Beide Pässe adressieren `h`/`sed` rings
+    /// (`docs/perf-measurements.md` §K). Die zwei liegen in GEGENLÄUFIGEN
+    /// Zweigen von `step()` — `floodplainAggradation` steht innerhalb des
+    /// `hydraulicEnabled`-Zweigs, `transportLimited` im Gegenzweig —, ein
+    /// Beleglauf über beide braucht also zwei Konfigurationen. Beide Pässe adressieren `h`/`sed` rings
     /// um den Funnel weiter über die Klassen-Property — sie auf eine offene
     /// Sicht umzustellen wäre möglich, würde aber einen Testpfad-Pass umbauen,
     /// dessen Laufzeit niemanden interessiert.
