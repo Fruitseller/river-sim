@@ -112,13 +112,13 @@ final class TerrainAPITests: XCTestCase {
         let before = t.h
         let gx = Double(c.n / 2), gz = Double(c.n / 2), radius = 12.0
 
-        let roughBefore = roughness(t, center: (gx, gz), radiusWorld: radius, cfg: c)
+        let roughBefore = roughness(t.h, center: (gx, gz), radiusWorld: radius, cfg: c)
         t.smooth(gx: gx, gz: gz, radiusWorld: radius, strength: 1.0)
-        let roughAfter = roughness(t, center: (gx, gz), radiusWorld: radius, cfg: c)
+        let roughAfter = roughness(t.h, center: (gx, gz), radiusWorld: radius, cfg: c)
 
         XCTAssertLessThan(roughAfter, roughBefore,
                           "Glätten hat die Zerklüftung nicht gesenkt (\(roughBefore) → \(roughAfter))")
-        assertUntouchedOutside(t, before: before, center: (gx, gz), radiusWorld: radius, cfg: c)
+        assertUntouchedOutside(t.h, before: before, center: (gx, gz), radiusWorld: radius, cfg: c)
 
         // Kein Überschießen: der Pinsel zieht Richtung 3×3-Mittel, er darf im
         // Kreis weder ein neues Maximum noch ein neues Minimum erzeugen.
@@ -172,7 +172,7 @@ final class TerrainAPITests: XCTestCase {
         }
         XCTAssertGreaterThan(up, 0, "nur abgesenkt statt aufgeraut")
         XCTAssertGreaterThan(down, 0, "nur angehoben statt aufgeraut")
-        assertUntouchedOutside(t, before: before, center: (gx, gz), radiusWorld: radius, cfg: c)
+        assertUntouchedOutside(t.h, before: before, center: (gx, gz), radiusWorld: radius, cfg: c)
     }
 
     /// Aufrauen ist deterministisch UND vertieft dasselbe Muster: der Pinsel
@@ -269,60 +269,7 @@ final class TerrainAPITests: XCTestCase {
         }
     }
 
-    // MARK: - Helfer
-
-    /// Zellen im Pinselkreis — dieselbe Geometrie wie `forEachBrushCell`
-    /// (Radius in WELT-Einheiten, quadratischer Abstand ≤ 1 in Radius-Einheiten).
-    private func brushCells(center: (Double, Double), radiusWorld: Double,
-                            cfg c: SimConfig) -> [Int] {
-        let rCells = radiusWorld / c.cellSize
-        let n = c.n
-        var out: [Int] = []
-        for j in 0..<n {
-            for i in 0..<n {
-                let dx = Double(i) - center.0, dz = Double(j) - center.1
-                if (dx * dx + dz * dz) / (rCells * rCells) <= 1 { out.append(j * n + i) }
-            }
-        }
-        return out
-    }
-
-    /// Mittlere Abweichung vom 3×3-Mittel im Pinselkreis = „Zerklüftung".
-    private func roughness(_ t: Terrain, center: (Double, Double), radiusWorld: Double,
-                           cfg c: SimConfig) -> Double {
-        let n = c.n
-        var sum = 0.0, cnt = 0.0
-        for k in brushCells(center: center, radiusWorld: radiusWorld, cfg: c) {
-            let i = k % n, j = k / n
-            guard i > 0, i < n - 1, j > 0, j < n - 1 else { continue }
-            var mean = 0.0
-            for dj in -1...1 {
-                for di in -1...1 { mean += t.h[(j + dj) * n + i + di] }
-            }
-            sum += abs(t.h[k] - mean / 9); cnt += 1
-        }
-        return cnt == 0 ? 0 : sum / cnt
-    }
-
-    /// Außerhalb des Pinsels (plus eine Zelle Toleranz für die Rundung des
-    /// Radius) darf sich KEIN Bit geändert haben.
-    private func assertUntouchedOutside(_ t: Terrain, before: [Double],
-                                        center: (Double, Double), radiusWorld: Double,
-                                        cfg c: SimConfig,
-                                        file: StaticString = #filePath, line: UInt = #line) {
-        let rCells = radiusWorld / c.cellSize + 1
-        let n = c.n
-        for j in 0..<n {
-            for i in 0..<n {
-                let dx = Double(i) - center.0, dz = Double(j) - center.1
-                guard dx * dx + dz * dz > rCells * rCells else { continue }
-                let k = j * n + i
-                if t.h[k] != before[k] {
-                    XCTFail("Zelle (\(i),\(j)) außerhalb des Pinsels verändert: "
-                            + "\(before[k]) → \(t.h[k])", file: file, line: line)
-                    return
-                }
-            }
-        }
-    }
+    // Die Pinsel-Helfer (`brushCells`, `roughness`, `assertUntouchedOutside`)
+    // liegen seit #79 geteilt in `BrushTestSupport.swift` — `ToolContractTests`
+    // braucht dieselbe Kreisgeometrie.
 }

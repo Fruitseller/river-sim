@@ -1,5 +1,5 @@
-/// Werkzeug-Modi des Pinsels — der EINE Vertrag zwischen Game-Layer und Bridge
-/// (Issue #53).
+/// Werkzeug-Modi des Pinsels — der EINE Vertrag „Zahl → Terrain-Operation"
+/// zwischen Game-Layer und Sim (Issue #53; seit #79 hier in SimCore).
 ///
 /// Vorher stand die Zuordnung „Zahl → Terrain-Operation" als `switch` über nackte
 /// Ints in der Brücke und die Zahlen selbst verstreut im Game-Layer (Tool-Index

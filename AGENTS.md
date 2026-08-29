@@ -312,11 +312,8 @@ liest das Terrain und ändert es nie:
   `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
   müssen sich über die Uferlinie und die Mündung exakt einig sein.
 
-Die Werkzeug-Modi (`BrushTool`) liegen seit Issue #79 NICHT mehr hier, sondern
-in SimCore (der Typ hängt nur an `Terrain` und ist dort headless ausführbar);
-`SimNode.brush` bleibt der dünne Adapter. Dieselbe Reihenfolge wie die
-Werkzeug-Tabelle in `Main.gd` (Wächter: `SimCoreTests/ToolContractTests.swift`,
-Verhaltens-Tests je Modus statt Switch-Parsing).
+Die Werkzeug-Modi (`BrushTool`) liegen seit Issue #79 in SimCore (s. dort);
+`SimNode.brush` bleibt der dünne Adapter.
 
 Die KALIBRIER-Zahlen bleiben dabei in `SimCore` (`WaterRender`,
 `RenderContract`); die Module rechnen nur mit ihnen. Die Wächter lesen die
@@ -399,7 +396,11 @@ Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, 
 `HeightBands.swift` (Perzentil-Höhenbänder, Issue #4), `WorldSnapshot.swift`
 (Speicherformat, Issue #8; das Zustands-INVENTAR `TerrainState` steht dagegen am
 Ende von `Terrain.swift`), `Profile.swift` (`SimProfile`, die Pass-Marken des
-Mess-Harness), `Noise.swift`, `MinHeap.swift`.
+Mess-Harness), `Noise.swift`, `MinHeap.swift` — plus eine benannte Ausnahme ohne
+eigene Datenstruktur: `BrushTool.swift` (Werkzeug-Modi des Pinsels, seit #79 hier
+statt in der Extension, weil der Typ nur an `Terrain` hängt und so headless
+ausführbar ist; Vertrag mit der Werkzeug-Tabelle in `Main.gd`, Wächter:
+`SimCoreTests/ToolContractTests.swift` mit Verhaltens-Tests je Modus).
 
 Größenordnung zur Orientierung (Stand Aug 2026, gerundet; wer eine Datei teilt
 oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4650 Zeilen,
