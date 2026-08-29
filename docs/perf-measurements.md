@@ -339,7 +339,9 @@ und brachten nichts (Abschnitt D).
    Restzeiten: ~10 ms. Preis: der Funnel, der heute bewusst die EINE Stelle mit
    dem Gletscher-Gate ist, bekommt eine zweite Signatur.
    → **In Runde 3 gemacht** (Abschnitt I): als `Terrain.Bed` plus zweite
-   Signatur des Funnels, gemessen −3,3 ms.
+   Signatur des Funnels, gemessen −3,3 ms. Aus den „zwei Aufrufern, eine
+   Implementierung" wurden dabei allerdings zwei Implementierungen; Issue #81
+   hat das zurückgedreht, ohne Laufzeit zu kosten (Abschnitt K).
 2. **Sim-Schritt vom Render-Thread entkoppeln.** Ändert die Schrittkosten nicht,
    nimmt sie aber aus dem Frame — für die FPS der größte Hebel, und der
    einzige, der `priorityFlood` nicht anfassen muss.
@@ -457,7 +459,9 @@ Pass-Tabelle (derselbe Messblock, ms/Schritt):
    `meanderStamp`, `fillShallowPonds`, `fillOxbows` und `braidPass`, also genau
    in den Pässen, die das Bett über die Klassen-Property adressieren mussten.
    Der Funnel `erodeCell`/`depositCell` hat dafür eine zweite Signatur bekommen
-   (Abschnitt F, Punkt 1); `meanderStamp` ruft daneben `Terrain.bilinear` direkt
+   (Abschnitt F, Punkt 1) — die zweite ausgeschriebene REGEL, die dabei
+   entstand, war dagegen nie gemessen und ist seit Issue #81 wieder weg
+   (Abschnitt K); `meanderStamp` ruft daneben `Terrain.bilinear` direkt
    auf demselben Zeiger, weil `bilinearH` `h` sonst ein zweites Mal öffnen würde.
    Mitgenommen: die `[k-1, k+1, k-n, k+n]`-Array-Literale in `fillOxbows` und
    `plugOxbows` waren eine Allokation JE Altarm-Knoten.
@@ -591,4 +595,92 @@ RS_FPS=1 RS_WATER_GPU=1 "$GODOT" --path game                          # Bildrate
 RS_FPS=1 "$GODOT" --path game                                         # Bildrate CPU-Pfad
 RS_STEP=20000 RS_DIST=90 RS_SHOT=/tmp/gpu.png RS_WATER_GPU=1 "$GODOT" --path game
 RS_STEP=20000 RS_DIST=90 RS_SHOT=/tmp/cpu.png "$GODOT" --path game    # Bildvergleich
+```
+
+---
+
+## K. Ein Funnel statt zweier Fassungen (August 2026, Issue #81) — kostenlos
+
+Anlass: die Perf-Runde 3 (Abschnitt I) hat dem Bett-Funnel
+`erodeCell`/`depositCell` eine zweite Signatur auf der Roh-Puffer-Sicht
+`Terrain.Bed` gegeben. Beide Fassungen schrieben die Regel aus — erst Sediment,
+dann Fels, `h = rock + sed`, unter Eis gar nichts — und wurden nur durch einen
+Kommentar synchron gehalten („wer eine ändert, ändert beide"). Frage dieser
+Runde: **braucht die zweite AUSSCHREIBUNG eine Messung, oder reicht die zweite
+SIGNATUR?**
+
+### Was §I bestätigt und was es nicht trägt
+
+Bestätigt: die `Bed`-**Sicht** in den Hot-Loops ist der gemessene Gewinn
+(−3,3 ms, `meanderStamp` 4,69 → 2,92, `braidPass` 2,97 → 2,21). Daran ändert
+diese Runde nichts — `meanderStamp`, `braidPass`, `fillShallowPonds`,
+`fillOxbows` und `plugOxbows` öffnen die Sicht weiterhin EINMAL je Pass und
+reichen sie durch.
+
+Nicht getragen hat §I dagegen die zweite ausgeschriebene Regel. Die
+Property-Fassung hat genau zwei Aufrufer, und **keiner davon läuft in der
+Produktion**:
+
+| Aufrufer | Läuft wann |
+|---|---|
+| `transportLimited` | nur im Nicht-Droplet-Zweig (`hydraulicEnabled = false`), reiner Testpfad |
+| `floodplainAggradation` | geparkt (`floodplainEnabled = false`) |
+
+Damit kann das Öffnen der Sicht je Aufruf (`withBed { … }`) im Produktions-
+Schritt gar nichts kosten. Seit dieser Runde ist die Property-Fassung ein
+dünner Adapter, und Regel plus Gletscher-Gate stehen genau einmal.
+
+### Gemessen
+
+Interleaved nach der Hygiene aus §I (eigene Binärdateien `simperf.base` /
+`simperf.neu`, abwechselnd, je `--repeat 3`, 5 Paare), Linux-VM, 4 Kerne,
+Lastmittel 0,7 — also NICHT mit den Apple-Silicon-Zahlen aus §I vergleichbar,
+nur base gegen neu:
+
+| ms/Schritt | base | Adapter |
+|---|---:|---:|
+| Median aus 5 Paaren | 162,2 | 161,5 |
+| Minimum | 158,7 | 158,0 |
+
+**Kein Unterschied** — die 0,4 % liegen unter der Streuung der Einzelblöcke
+(base streute 158,7 … 170,7). Erwartungsgemäß: der Produktionspfad ruft die
+geänderte Fassung nicht auf.
+
+`simperf --hash` vor und nach der Änderung identisch (`8a785727acabcd51`,
+dieselbe Maschine, beide Binärdateien in derselben Sitzung gebaut) — der volle
+State-Fingerprint aus Issue #78, also bit-identische Physik über das komplette
+Zustands-Inventar.
+
+Für den Testpfad, den es wirklich betrifft (`transportLimited` läuft dort
+wirklich und öffnet die Sicht jetzt je Aufruf), ist die SimCore-Pflichtsuite
+das Maß — 269 Tests, gleiche VM, nacheinander gelaufen:
+
+| Lauf | Suite-Zeit |
+|---|---:|
+| base | 363,9 s |
+| Adapter, Lauf 1 | 367,7 s |
+| Adapter, Lauf 2 | 349,0 s |
+
+Die beiden Adapter-Läufe klammern den base-Lauf ein — **kein Signal über dem
+Rauschen dieser geteilten VM**. Der erste Lauf allein hätte „+1 %" gesagt; das
+ist genau der Fehlschluss, vor dem §I warnt. Alle drei liegen deutlich unter
+dem 15-min-Budget aus `docs/ci-measurements.md`.
+
+### Wächter statt Kommentar
+
+`SimCoreTests/BedFunnel.swift` prüft beide Aufruf-Formen über eine Matrix aus
+Bett-Zuständen und Beträgen auf bit-gleiche Rückgabe und bit-gleiche
+`h`/`sed`/`rock`, mit und ohne `underIce`, und pinnt zusätzlich die Regel
+selbst — sonst bliebe die Parität grün, wenn beide Formen gemeinsam abdriften.
+Gegenprobe beim Bau: das Gate aus der Property-Fassung entfernt →
+`testErodeParityUnderIce` rot; den Sediment-Anteil halbiert → beide
+Erosions-Paritäten rot.
+
+### Reproduktion
+
+```sh
+swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+cp SimCore/.build/release/simperf /tmp/simperf.base    # bzw. .neu, je Stand
+for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; done
+/tmp/simperf.base --hash && /tmp/simperf.neu --hash    # muss gleich sein
 ```

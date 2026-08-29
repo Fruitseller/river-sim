@@ -3793,53 +3793,17 @@ public final class Terrain {
         withBed { depositCell(k, amount, $0) }
     }
 
-    /// Trägt an Zelle `k` `amount` ab (erst Sediment, dann Fels) — hält
-    /// h = rock + sed. Gibt den tatsächlich abgetragenen Betrag zurück.
-    ///
-    /// **Gletscher-Gate (Issue #35).** Über diese beiden Funnel laufen alle
-    /// fluvialen Bett-Bewegungen außer den zwei, die ihr Gate selbst tragen
-    /// (`outletIncision`, `Hydraulic.erode`): Mäander-Bett-Carve, laterale Ufer,
-    /// Altarm-Pfropf und -Verlandung, Braid-Fracht, Auen-Aggradation und — im
-    /// Nicht-Droplet-Zweig — `transportLimited`. Unter
-    /// dem Eis gehört das Tal dem Gletscher — dieselbe Begründung wie dort.
-    /// Das Gate sitzt am Funnel statt in jedem Pass einzeln, damit ein künftiger
-    /// Bett-Pass es nicht vergessen kann. Leere Maske (keine Zelle
-    /// vergletschert, oder `iceEnabled = false`) → der Zweig fällt weg und alles
-    /// rechnet bit-identisch zum Stand vor #35.
-    @inline(__always) private func erodeCell(_ k: Int, _ amount: Double) -> Double {
-        let a = max(0, amount)
-        if a <= 0 { return 0 }
-        if !underIce.isEmpty && underIce[k] { return 0 }
-        let ds = min(a, sed[k]); sed[k] -= ds
-        rock[k] -= (a - ds)
-        h[k] -= a
-        return a
-    }
-
-    /// Lagert `amount` als Sediment an Zelle `k` ab und gibt den tatsächlich
-    /// abgelegten Betrag zurück. Vergletscherte Zellen bleiben unangetastet
-    /// (s. `erodeCell`); die Fracht, die dort abgelegt worden wäre, gilt wie
-    /// sonst auch als exportiert (Masse-Erhaltung ist in diesem Repo keine
-    /// Invariante, AGENTS.md) — der einzige Pass, der sie mitführt
-    /// (`transportLimited`), reicht sie stattdessen talwärts weiter.
-    @discardableResult
-    @inline(__always) private func depositCell(_ k: Int, _ amount: Double) -> Double {
-        if amount <= 0 { return 0 }
-        if !underIce.isEmpty && underIce[k] { return 0 }
-        sed[k] += amount; h[k] += amount
-        return amount
-    }
-
     /// Roh-Puffer-Sicht auf das Bett: dieselben drei Felder, die der Funnel hält
-    /// (`h = rock + sed`), plus die Gletscher-Maske — `nil` heißt „keine Maske",
-    /// genau wie `underIce.isEmpty` oben.
+    /// (`h = rock + sed`), plus die Gletscher-Maske — `nil` heißt „keine
+    /// Maske", genau wie `underIce.isEmpty` es im Feld selbst tut.
     ///
     /// Warum es sie gibt: `meanderStamp`, `braidPass` und die Altarm-Pässe
     /// laufen über 692k Zellen bzw. 30k Knoten und adressierten `h`/`sed`/`rock`
-    /// bisher über die KLASSEN-Property, weil ein Roh-Zeiger mit dem Funnel
-    /// kollidiert wäre. Das kostete je Zugriff Bounds-, COW- und Exklusivitäts-
-    /// Prüfung — gemessen ~4,5 % des Schritts allein in der Swift-Laufzeit
-    /// (`swift_beginAccess`/`AccessSet::insert`, s. docs/perf-measurements.md).
+    /// vor der Perf-Runde 3 über die KLASSEN-Property, weil ein Roh-Zeiger mit
+    /// dem Funnel kollidiert wäre. Das kostete je Zugriff Bounds-, COW- und
+    /// Exklusivitäts-Prüfung — gemessen ~4,5 % des Schritts allein in der
+    /// Swift-Laufzeit (`swift_beginAccess`/`AccessSet::insert`, s.
+    /// docs/perf-measurements.md).
     /// Mit der Sicht öffnet ein Pass die Felder EINMAL und reicht sie durch.
     struct Bed {
         let h: UnsafeMutablePointer<Double>
@@ -3863,11 +3827,22 @@ public final class Terrain {
         }}}}
     }
 
-    /// Roh-Puffer-Fassung von `erodeCell` — GLEICHE REGEL, gleiche Reihenfolge
-    /// der Operationen, gleiches Gletscher-Gate. Zwei Fassungen statt einer,
-    /// weil die Property-Fassung (Testpfad `transportLimited`, geparkte
-    /// `floodplainAggradation`) die Felder je Aufruf öffnen müsste. Wer eine
-    /// ändert, ändert beide.
+    /// **Der Bett-Funnel.** Trägt an Zelle `k` `amount` ab (erst Sediment, dann
+    /// Fels) — hält `h = rock + sed` — und gibt den tatsächlich abgetragenen
+    /// Betrag zurück. Dies ist die EINE Stelle, an der Regel und Gate stehen;
+    /// die Property-Fassung `erodeCell(_:_:)` ist seit Issue #81 nur noch ein
+    /// Adapter darauf. Wächter: `SimCoreTests/BedFunnel.swift`.
+    ///
+    /// **Gletscher-Gate (Issue #35).** Über den Funnel laufen alle fluvialen
+    /// Bett-Bewegungen außer den zwei, die ihr Gate selbst tragen
+    /// (`outletIncision`, `Hydraulic.erode`): Mäander-Bett-Carve, laterale Ufer,
+    /// Altarm-Pfropf und -Verlandung, Braid-Fracht, Auen-Aggradation und — im
+    /// Nicht-Droplet-Zweig — `transportLimited`. Unter
+    /// dem Eis gehört das Tal dem Gletscher — dieselbe Begründung wie dort.
+    /// Das Gate sitzt am Funnel statt in jedem Pass einzeln, damit ein künftiger
+    /// Bett-Pass es nicht vergessen kann. Leere Maske (keine Zelle
+    /// vergletschert, oder `iceEnabled = false`) → `bed.ice` ist `nil`, der
+    /// Zweig fällt weg und alles rechnet bit-identisch zum Stand vor #35.
     @inline(__always) private func erodeCell(_ k: Int, _ amount: Double, _ bed: Bed) -> Double {
         let a = max(0, amount)
         if a <= 0 { return 0 }
@@ -3878,13 +3853,43 @@ public final class Terrain {
         return a
     }
 
-    /// Roh-Puffer-Fassung von `depositCell` (s. `erodeCell(_:_:_:)`).
+    /// Lagert `amount` als Sediment an Zelle `k` ab und gibt den tatsächlich
+    /// abgelegten Betrag zurück — die Ablage-Hälfte des Funnels, gleiche
+    /// Zuständigkeit und gleiches Gate wie `erodeCell(_:_:_:)`. Vergletscherte
+    /// Zellen bleiben unangetastet; die Fracht, die dort abgelegt worden wäre,
+    /// gilt wie sonst auch als exportiert (Masse-Erhaltung ist in diesem Repo
+    /// keine Invariante, AGENTS.md) — der einzige Pass, der sie mitführt
+    /// (`transportLimited`), reicht sie stattdessen talwärts weiter.
     @discardableResult
     @inline(__always) private func depositCell(_ k: Int, _ amount: Double, _ bed: Bed) -> Double {
         if amount <= 0 { return 0 }
         if let ice = bed.ice, ice[k] { return 0 }
         bed.sed[k] += amount; bed.h[k] += amount
         return amount
+    }
+
+    /// Bequemlichkeits-Fassung des Funnels für Pässe, die keine `Bed`-Sicht
+    /// offen haben: öffnet sie je Aufruf und reicht durch.
+    ///
+    /// **Hier steht keine Regel** (Issue #81). Abtrags-Reihenfolge, `h = rock +
+    /// sed` und das Gletscher-Gate stehen genau einmal, in
+    /// `erodeCell(_:_:_:)`. Bis #81 war das hier eine zweite, von Hand
+    /// synchron gehaltene Ausschreibung derselben Regel.
+    ///
+    /// Aufrufer sind nur der Testpfad `transportLimited` und die geparkte
+    /// `floodplainAggradation`; kein Produktionspass läuft hier durch, das
+    /// Öffnen je Aufruf kostet die Produktion also nichts
+    /// (`docs/perf-measurements.md` §K). Wer einen HOT-Pass baut, öffnet die
+    /// Sicht einmal für den ganzen Pass (`withBed`) und ruft
+    /// `erodeCell(_:_:_:)` — genau dafür gibt es sie.
+    @inline(__always) private func erodeCell(_ k: Int, _ amount: Double) -> Double {
+        withBed { erodeCell(k, amount, $0) }
+    }
+
+    /// Bequemlichkeits-Fassung der Ablagerung, s. `erodeCell(_:_:)`.
+    @discardableResult
+    @inline(__always) private func depositCell(_ k: Int, _ amount: Double) -> Double {
+        withBed { depositCell(k, amount, $0) }
     }
 
     /// Stempelt die Mäander-Läufe ins Höhenfeld:
