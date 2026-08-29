@@ -18,12 +18,10 @@ import SimCore
 //   SimCore/.build/release/simperf --hash               # Bit-Identität
 //
 // `--hash` ist der Wächter für „Physik unverändert": `Terrain.fingerprint()`
-// (Issue #78), ein FNV-1a über die Roh-Bits des KOMPLETTEN Zustands-Inventars
-// (`TerrainState` via die WorldSnapshot-Feldtabellen plus Skalar-/Mäander-
-// Block). Vor und nach einer Optimierung derselbe Wert ⇒ die Optimierung ist
-// ergebnis-neutral. Er ist maschinen-spezifisch (System-libm, s. AGENTS.md) —
-// verglichen wird immer auf DERSELBEN Maschine. Werte von vor #78 (nur 8
-// Felder gehasht) sind mit heutigen nicht vergleichbar.
+// über das komplette Zustands-Inventar (Issue #78; Semantik, Abdeckung und
+// Grenzen: Doku an `TerrainState.fingerprint()` in WorldSnapshot.swift).
+// Vor und nach einer Optimierung derselbe Wert ⇒ ergebnis-neutral; Werte von
+// vor #78 (nur 8 Felder gehasht) sind mit heutigen nicht vergleichbar.
 
 // MARK: - Argumente
 
