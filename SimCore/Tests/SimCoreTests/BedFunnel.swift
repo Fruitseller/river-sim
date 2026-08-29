@@ -84,13 +84,17 @@ final class BedFunnelTests: XCTestCase {
         [("h", t.h), ("sed", t.sed), ("rock", t.rock)]
     }
 
-    private func assertBedsAreBitEqual(_ a: Terrain, _ b: Terrain, _ what: String,
+    /// Die Rollen stehen in den Parameternamen, nicht in der Meldung: der
+    /// Vergleich soll auch dann noch das Richtige sagen, wenn jemand die beiden
+    /// Wege einmal andersherum einsetzt.
+    private func assertBedsAreBitEqual(byProperty: Terrain, byBed: Terrain, _ what: String,
                                        file: StaticString = #filePath, line: UInt = #line) {
-        for (left, right) in zip(namedFields(a), namedFields(b)) {
+        for (left, right) in zip(namedFields(byProperty), namedFields(byBed)) {
             for k in 0..<left.values.count
             where left.values[k].bitPattern != right.values[k].bitPattern {
                 XCTFail("\(what): \(left.name)[\(k)] weicht ab — "
-                        + "Property \(left.values[k]) vs. Bed \(right.values[k])",
+                        + "\(Self.viaProperty.name) \(left.values[k]) "
+                        + "vs. \(Self.viaBed.name) \(right.values[k])",
                         file: file, line: line)
                 return
             }
@@ -116,9 +120,37 @@ final class BedFunnelTests: XCTestCase {
             if p != 0 { moved += 1 }
         }
         let what = "\(erode ? "erodeCell" : "depositCell")\(withIce ? " mit Eis" : " ohne Eis")"
-        assertBedsAreBitEqual(byProperty, byBed, what)
+        assertBedsAreBitEqual(byProperty: byProperty, byBed: byBed, what)
         // Ein Wächter, der nichts bewegt, wäre auf beiden Wegen gleich grün.
         XCTAssertGreaterThan(moved, c.count / 4, "\(what): der Wächter hat kaum etwas bewegt")
+    }
+
+    /// **Bit-Identitäts-Instrument für den Pfad, der sich wirklich geändert
+    /// hat** (Issue #81).
+    ///
+    /// `simperf --hash` fährt `SimConfig()` — den Produktionspfad, und genau der
+    /// ruft die Adapter NICHT auf (`hydraulicEnabled = true` heißt Droplet statt
+    /// `transportLimited`, `floodplainEnabled = false` heißt gar keine
+    /// Aggradation). Sein Fingerprint KONNTE sich durch den Adapter-Umbau nicht
+    /// ändern; als Beleg für diesen Umbau ist er wertlos. Der Beleg gehört auf
+    /// die Konfiguration, in der beide Aufrufer laufen — die stellt dieser
+    /// Diagnose-Lauf her und druckt `Terrain.fingerprint()` darüber (voller
+    /// State-Fingerprint, Issue #78).
+    ///
+    /// Ein Erwartungswert steht bewusst NICHT hier: der Fingerprint ist ein
+    /// Pro-Maschine-Vergleich (System-libm, AGENTS.md „Laufzeit messen").
+    /// Vorher/Nachher-Werte dieses Umbaus: `docs/perf-measurements.md` §K.
+    func testChangedPathFingerprintDiagnostic() throws {
+        try skipUnlessMeasuring()
+        var c = SimConfig()
+        c.n = 96; c.world = calibrationWorld
+        c.hydraulicEnabled = false   // → transportLimited statt Hydraulic.erode
+        c.floodplainEnabled = true   // → floodplainAggradation läuft mit
+        let t = Terrain(config: c, seed: 1337)
+        while t.years < 20_000 { t.step(dtYears: 500) }
+        print("[FUNNEL] geänderter Pfad (hydraulicEnabled=false, floodplainEnabled=true), "
+              + "n=96 seed=1337 20.000 J.: fingerprint "
+              + String(format: "%016llx", t.fingerprint()))
     }
 
     func testErodeParityWithoutIce() { checkParity(withIce: false, erode: true) }
