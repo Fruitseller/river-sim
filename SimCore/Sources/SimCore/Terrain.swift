@@ -3770,6 +3770,15 @@ public final class Terrain {
     /// zu wenig davon, Eis auf einem Teil des Feldes) trifft die Randfälle, die
     /// ein ausgelaufener Sim-Zustand nur zufällig enthält.
     func setBedForTests(h nh: [Double], sed ns: [Double], rock nr: [Double], underIce nu: [Bool]) {
+        // Der Funnel HÄLT `h = rock + sed`; ein Aufbau, der das schon verletzt,
+        // würde eine Abweichung messen, die nicht vom Funnel kommt. Die Maske
+        // darf leer sein (= kein Eis) oder volle Länge haben, nichts dazwischen —
+        // dieselbe Bauform wie im Feld selbst.
+        precondition(nh.count == cfg.count && ns.count == cfg.count && nr.count == cfg.count,
+                     "Bett-Felder passen nicht zur Config")
+        precondition(nu.isEmpty || nu.count == cfg.count, "Eismaske weder leer noch vollständig")
+        precondition(zip(nh, zip(nr, ns)).allSatisfy { abs($0 - ($1.0 + $1.1)) < 1e-12 },
+                     "h ≠ rock + sed im Testaufbau")
         h = nh; sed = ns; rock = nr; underIce = nu
     }
 
@@ -3817,6 +3826,15 @@ public final class Terrain {
     /// die Sicht offen ist, darf derselbe Pass diese vier Felder NICHT mehr über
     /// die Klassen-Property anfassen — auch nicht lesend (`bilinearH`), das wäre
     /// ein Exklusivitäts-Konflikt.
+    ///
+    /// Seit Issue #81 gilt das ausdrücklich auch für die Adapter
+    /// `erodeCell(_:_:)`/`depositCell(_:_:)`: sie öffnen die Sicht selbst, ein
+    /// Aufruf aus einem offenen `withBed` heraus ist also derselbe Doppelzugriff.
+    /// Der Compiler sagt dazu nichts (beide Überladungen sind hier sichtbar), die
+    /// LAUFZEIT schon: gemessen bricht ein verschachtelter Aufruf mit „Fatal
+    /// access conflict detected" ab, auch im `-O`-Build. Laut statt still — aber
+    /// nichts, worauf man sich verlässt: wer eine Sicht offen hat, ruft die
+    /// Drei-Argument-Fassung.
     @inline(__always) private func withBed<R>(_ body: (Bed) -> R) -> R {
         h.withUnsafeMutableBufferPointer { hb in
         sed.withUnsafeMutableBufferPointer { sb in
@@ -3879,9 +3897,15 @@ public final class Terrain {
     /// Aufrufer sind nur der Testpfad `transportLimited` und die geparkte
     /// `floodplainAggradation`; kein Produktionspass läuft hier durch, das
     /// Öffnen je Aufruf kostet die Produktion also nichts
-    /// (`docs/perf-measurements.md` §K). Wer einen HOT-Pass baut, öffnet die
-    /// Sicht einmal für den ganzen Pass (`withBed`) und ruft
-    /// `erodeCell(_:_:_:)` — genau dafür gibt es sie.
+    /// (`docs/perf-measurements.md` §K). Beide Pässe adressieren `h`/`sed` rings
+    /// um den Funnel weiter über die Klassen-Property — sie auf eine offene
+    /// Sicht umzustellen wäre möglich, würde aber einen Testpfad-Pass umbauen,
+    /// dessen Laufzeit niemanden interessiert.
+    ///
+    /// **Nur außerhalb von `withBed` aufrufen.** Innerhalb eines offenen Blocks
+    /// ist das ein Doppelzugriff auf dieselben Felder (s. `withBed`); der
+    /// Compiler wählt diese Überladung klaglos, die Laufzeit bricht ab. Wer eine
+    /// Sicht offen hat, ruft `erodeCell(_:_:_:)` — genau dafür gibt es sie.
     @inline(__always) private func erodeCell(_ k: Int, _ amount: Double) -> Double {
         withBed { erodeCell(k, amount, $0) }
     }
