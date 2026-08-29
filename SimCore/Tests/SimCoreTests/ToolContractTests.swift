@@ -44,6 +44,8 @@ final class ToolContractTests: XCTestCase {
     // geprüft — auf seed-gleichen Terrains, damit nur das Werkzeug den
     // Unterschied macht.
 
+    /// Klein genug für flinke Terrain-Bauten (jeder Test generiert frisch),
+    /// groß genug, dass der 6-Zellen-Pinsel samt Außenrand aufs Gitter passt.
     private let n = 64
 
     private var cfg: SimConfig {
