@@ -539,3 +539,22 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   `fillLakes`/`floodplainAggradation`), bei Änderungen mitziehen.
 - Recherche-Belege in `docs/`; `docs/nickmcd-behavior-verification.md` hält je
   Ziel-Verhalten fest, wie es umgesetzt und womit es belegt ist.
+
+## Agent skills
+
+### Issue tracker
+
+Issues leben in den GitHub Issues von `Fruitseller/river-sim` (via `gh`-CLI);
+externe PRs sind keine Triage-Oberfläche. Siehe `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Die fünf kanonischen Triage-Rollen tragen ihre Standardnamen (`needs-triage`,
+`needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`);
+`ready-for-agent` und `wontfix` existieren bereits im Repo.
+Siehe `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-Context: eine `CONTEXT.md` + `docs/adr/` an der Repo-Wurzel (beides wird
+bei Bedarf lazy angelegt, existiert noch nicht). Siehe `docs/agents/domain.md`.
