@@ -3761,6 +3761,38 @@ public final class Terrain {
     /// Wächter ruft den Pass deshalb einzeln auf.
     func transportLimitedForTests(dt: Double) { transportLimited(dt: dt) }
 
+    // MARK: - Testfenster auf den Bett-Funnel (Issue #81)
+
+    /// Setzt Bett und Eismaske direkt — ausschließlich für den Funnel-Wächter
+    /// (`SimCoreTests/BedFunnel.swift`). Der Funnel ist die eine Stelle, an der
+    /// `h`/`sed`/`rock` und das Gletscher-Gate zusammenkommen; ihn gegen einen
+    /// SYNTHETISCHEN Zustand zu prüfen (Zellen ohne Sediment, Zellen mit knapp
+    /// zu wenig davon, Eis auf einem Teil des Feldes) trifft die Randfälle, die
+    /// ein ausgelaufener Sim-Zustand nur zufällig enthält.
+    func setBedForTests(h nh: [Double], sed ns: [Double], rock nr: [Double], underIce nu: [Bool]) {
+        h = nh; sed = ns; rock = nr; underIce = nu
+    }
+
+    /// Ein Funnel-Aufruf über die Klassen-Property …
+    @discardableResult
+    func erodeCellViaPropertyForTests(_ k: Int, _ amount: Double) -> Double { erodeCell(k, amount) }
+
+    /// … derselbe Abtrag über die Roh-Puffer-Sicht `Bed`.
+    @discardableResult
+    func erodeCellViaBedForTests(_ k: Int, _ amount: Double) -> Double {
+        withBed { erodeCell(k, amount, $0) }
+    }
+
+    /// Ablagerung über die Klassen-Property …
+    @discardableResult
+    func depositCellViaPropertyForTests(_ k: Int, _ amount: Double) -> Double { depositCell(k, amount) }
+
+    /// … und über die Roh-Puffer-Sicht.
+    @discardableResult
+    func depositCellViaBedForTests(_ k: Int, _ amount: Double) -> Double {
+        withBed { depositCell(k, amount, $0) }
+    }
+
     /// Trägt an Zelle `k` `amount` ab (erst Sediment, dann Fels) — hält
     /// h = rock + sed. Gibt den tatsächlich abgetragenen Betrag zurück.
     ///
