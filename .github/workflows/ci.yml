@@ -208,3 +208,10 @@ jobs:
       - name: Fluss-Ribbons (Issue #31)
         run: |
           scripts/godot-test.sh res://tests/river_ribbons.gd RIVER_RIBBONS_OK
+
+      # Temporärer A/B-Messpunkt für Issues #80/#82; vor dem PR-Abschluss
+      # wieder entfernt. Der Lauf druckt nur Hashes, die zwei aufeinander-
+      # folgenden Commits werden über dieselbe CI-Maschine verglichen.
+      - name: Render-Fingerabdruck (A/B-Messung)
+        run: |
+          scripts/godot-test.sh res://tests/render_fingerprint.gd RENDER_FINGERPRINT_OK

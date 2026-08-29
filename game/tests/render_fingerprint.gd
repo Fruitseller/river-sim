@@ -55,6 +55,11 @@ func _run() -> void:
 		return
 	_hash("heights", hbytes)
 	_hash("filled", fbytes)
+	# Produktions-Reihenfolge seit Issue #34: zuerst die Bänder bauen, dann die
+	# Texturen aus ihren bandChannelFlags/bandCoverage ableiten. Bis Issue #80
+	# lief das Werkzeug umgekehrt und fingerprintete einmalig einen künstlichen
+	# Zustand mit leeren Banddaten; die korrigierten Hashes sind die neue Baseline.
+	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
 	_hash("terrainColorBytes", sim.terrainColorBytes())
 	_hash("terrainSurfaceBytes", sim.terrainSurfaceBytes())
 	# Wasserfeld zweimal: der zweite Aufruf durchläuft die EWMA-Puffer aus dem
@@ -66,7 +71,6 @@ func _run() -> void:
 	for v in 3:
 		_hash("treeInstanceBuffer(%d)" % v,
 			(sim.treeInstanceBuffer(v, HSCALE, 2) as PackedFloat32Array).to_byte_array())
-	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
 	_hash("ribbonVerts", (sim.riverRibbonVerts() as PackedVector3Array).to_byte_array())
 	_hash("ribbonColors", (sim.riverRibbonColors() as PackedColorArray).to_byte_array())
 	_hash("ribbonUVs", (sim.riverRibbonUVs() as PackedVector2Array).to_byte_array())
