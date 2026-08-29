@@ -39,6 +39,7 @@ final class WaterRendererTests: XCTestCase {
     var minimumWidth = Float.greatestFiniteMagnitude
     var maximumWidth: Float = 0
     var riverStrips = 0
+    var maximumLandAlphaJump: Float = 0
     for strip in first.stripStarts.indices {
       let start = Int(first.stripStarts[strip])
       let end =
@@ -47,6 +48,7 @@ final class WaterRendererTests: XCTestCase {
       guard first.uv2s[start].x < Float(WaterRender.ribbonDeltaLo) else { continue }
       riverStrips += 1
       var maximumRank: Float = 0
+      var previousLandAlpha: Float?
       for vertex in stride(from: start, to: end, by: 2) {
         let left = first.vertices[vertex]
         let right = first.vertices[vertex + 1]
@@ -56,6 +58,47 @@ final class WaterRendererTests: XCTestCase {
         minimumWidth = min(minimumWidth, width)
         maximumWidth = max(maximumWidth, width)
         maximumRank = max(maximumRank, first.colors[vertex].z)
+        let middle = (left + right) * 0.5
+        let half = terrain.cfg.world * 0.5
+        let cellSize = terrain.cfg.cellSize
+        let centerX = (Double(middle.x) + half) / cellSize
+        let centerZ = (Double(middle.z) + half) / cellSize
+        let leftX = (Double(left.x) + half) / cellSize
+        let leftZ = (Double(left.z) + half) / cellSize
+        let rightX = (Double(right.x) + half) / cellSize
+        let rightZ = (Double(right.z) + half) / cellSize
+        let centerHeight = bilinear(terrain.h, centerX, centerZ, n: terrain.cfg.n) * 24
+        let crossTolerance = Double(width) * 0.5 * WaterRender.ribbonMaxCrossSlope
+        let expectedLeft =
+          min(
+            max(
+              bilinear(terrain.h, leftX, leftZ, n: terrain.cfg.n) * 24,
+              centerHeight - crossTolerance),
+            centerHeight + crossTolerance) + 0.35
+        let expectedRight =
+          min(
+            max(
+              bilinear(terrain.h, rightX, rightZ, n: terrain.cfg.n) * 24,
+              centerHeight - crossTolerance),
+            centerHeight + crossTolerance) + 0.35
+        let landError = max(
+          abs(Double(left.y) - expectedLeft),
+          abs(Double(right.y) - expectedRight))
+        let waterError = waterSurfaceError(
+          terrain, gridX: centerX, gridZ: centerZ, renderedY: Double(left.y))
+        XCTAssertLessThanOrEqual(
+          min(landError, waterError), 0.002,
+          "Bandkante liegt weder auf Gelände noch Wasserspiegel")
+        if waterError <= 0.05 {
+          previousLandAlpha = nil
+        } else {
+          if let previousLandAlpha {
+            maximumLandAlphaJump = max(
+              maximumLandAlphaJump,
+              abs(first.colors[vertex].w - previousLandAlpha))
+          }
+          previousLandAlpha = first.colors[vertex].w
+        }
       }
       XCTAssertGreaterThanOrEqual(
         maximumRank, Float(WaterRender.ribbonMinimumRank),
@@ -65,6 +108,9 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertGreaterThan(
       maximumWidth / max(minimumWidth, 1e-6), 1.5,
       "Bandbreite folgt dem Abfluss nicht")
+    XCTAssertLessThanOrEqual(
+      maximumLandAlphaJump, 0.40,
+      "Segmentierte Alpha-Spitze im Land-Abschnitt eines Bands")
 
     let second = renderer.build(terrain, hscale: 24, lift: 0.35)
     XCTAssertEqual(first, second)
@@ -86,6 +132,18 @@ final class WaterRendererTests: XCTestCase {
       "Kein Kanal hat das Band-Gate passiert")
     XCTAssertEqual(ribbons.bandCoverage.count, terrain.cfg.count)
     XCTAssertTrue(ribbons.bandCoverage.allSatisfy { $0 >= 0 && $0 <= 1 })
+    let expectedCoverage = coveragePaintedBy(mesh, terrain)
+    var mismatchedCoverageCells = 0
+    var maximumCoverageError = 0.0
+    for index in expectedCoverage.indices {
+      let error = abs(ribbons.bandCoverage[index] - expectedCoverage[index])
+      maximumCoverageError = max(maximumCoverageError, error)
+      if error > 0.01 { mismatchedCoverageCells += 1 }
+    }
+    // Das Mesh trägt Float32, der Stempel rechnet vor dem POD-Wrap in Double.
+    // Nur Mittelpunkte exakt auf einer Zellgrenze dürfen dadurch abweichen.
+    XCTAssertLessThanOrEqual(mismatchedCoverageCells, 16)
+    XCTAssertLessThan(maximumCoverageError, 0.1)
 
     var deepestRiverAlpha: Float = 0
     var mouthGaps = 0
@@ -175,6 +233,111 @@ final class WaterRendererTests: XCTestCase {
       max(Int(((Double(middle.z) + half) / cellSize).rounded()), 0),
       terrain.cfg.n - 1)
     return j * terrain.cfg.n + i
+  }
+
+  private func coveragePaintedBy(_ mesh: RibbonMesh, _ terrain: Terrain) -> [Double] {
+    let n = terrain.cfg.n
+    let cellSize = terrain.cfg.cellSize
+    let half = terrain.cfg.world * 0.5
+    var coverage = [Double](repeating: 0, count: terrain.cfg.count)
+
+    func sample(at vertex: Int) -> (x: Double, z: Double, halfWidth: Double, alpha: Double) {
+      let left = mesh.vertices[vertex]
+      let right = mesh.vertices[vertex + 1]
+      let middle = (left + right) * 0.5
+      let dx = Double(left.x - right.x)
+      let dz = Double(left.z - right.z)
+      return (
+        x: (Double(middle.x) + half) / cellSize,
+        z: (Double(middle.z) + half) / cellSize,
+        halfWidth: (dx * dx + dz * dz).squareRoot() * 0.5 / cellSize,
+        alpha: Double(mesh.colors[vertex].w)
+      )
+    }
+
+    for strip in mesh.stripStarts.indices {
+      let start = Int(mesh.stripStarts[strip])
+      let end =
+        strip + 1 < mesh.stripStarts.count
+        ? Int(mesh.stripStarts[strip + 1]) : mesh.vertices.count
+      guard end - start >= 4 else { continue }
+      for vertex in stride(from: start, to: end - 2, by: 2) {
+        let from = sample(at: vertex)
+        let to = sample(at: vertex + 2)
+        let reach = max(from.halfWidth, to.halfWidth) + 0.5
+        let i0 = max(0, Int((min(from.x, to.x) - reach).rounded(.down)))
+        let i1 = min(n - 1, Int((max(from.x, to.x) + reach).rounded(.up)))
+        let j0 = max(0, Int((min(from.z, to.z) - reach).rounded(.down)))
+        let j1 = min(n - 1, Int((max(from.z, to.z) + reach).rounded(.up)))
+        let dx = to.x - from.x
+        let dz = to.z - from.z
+        let lengthSquared = dx * dx + dz * dz
+        let overhang = lengthSquared > 1e-12 ? 0.5 / lengthSquared.squareRoot() : 0
+        let openStart = vertex == start
+        let openEnd = vertex + 2 == end - 2
+
+        for j in j0...j1 {
+          for i in i0...i1 {
+            let px = Double(i) - from.x
+            let pz = Double(j) - from.z
+            let rawT =
+              lengthSquared > 1e-12 ? (px * dx + pz * dz) / lengthSquared : 0
+            if openStart && rawT < -overhang { continue }
+            if openEnd && rawT > 1 + overhang { continue }
+            let t = min(max(rawT, 0), 1)
+            let ex = px - dx * t
+            let ez = pz - dz * t
+            let halfWidth =
+              from.halfWidth + (to.halfWidth - from.halfWidth) * t + 0.5
+            if ex * ex + ez * ez > halfWidth * halfWidth { continue }
+            let alpha = min(max(from.alpha + (to.alpha - from.alpha) * t, 0), 1)
+            coverage[j * n + i] = max(coverage[j * n + i], alpha)
+          }
+        }
+      }
+    }
+    return coverage
+  }
+
+  private func waterSurfaceError(
+    _ terrain: Terrain, gridX: Double, gridZ: Double, renderedY: Double
+  ) -> Double {
+    var best = abs(
+      renderedY
+        - (terrain.cfg.sea * 24 + WaterRender.ribbonSeaSurfaceSink))
+    for i in cellCandidates(gridX, n: terrain.cfg.n) {
+      for j in cellCandidates(gridZ, n: terrain.cfg.n) {
+        let expected =
+          terrain.waterLevel[j * terrain.cfg.n + i] * 24
+          + WaterRender.ribbonLakeSurfaceLift
+        best = min(best, abs(renderedY - expected))
+      }
+    }
+    return best
+  }
+
+  private func cellCandidates(_ coordinate: Double, n: Int) -> [Int] {
+    let base = min(max(Int(coordinate.rounded()), 0), n - 1)
+    var candidates = [base]
+    let fraction = coordinate - floor(coordinate)
+    if abs(fraction - 0.5) < 0.001 {
+      candidates.append(min(max(base + (fraction >= 0.5 ? -1 : 1), 0), n - 1))
+    }
+    return candidates
+  }
+
+  private func bilinear(_ field: [Double], _ x: Double, _ z: Double, n: Int) -> Double {
+    let clampedX = min(max(x, 0), Double(n - 1))
+    let clampedZ = min(max(z, 0), Double(n - 1))
+    let i0 = min(Int(clampedX), n - 2)
+    let j0 = min(Int(clampedZ), n - 2)
+    let fx = clampedX - Double(i0)
+    let fz = clampedZ - Double(j0)
+    let index = j0 * n + i0
+    return field[index] * (1 - fx) * (1 - fz)
+      + field[index + 1] * fx * (1 - fz)
+      + field[index + n] * (1 - fx) * fz
+      + field[index + n + 1] * fx * fz
   }
 
   private func pondDepth(_ terrain: Terrain, _ index: Int) -> Double {
