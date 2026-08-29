@@ -316,9 +316,13 @@ liest das Terrain und ändert es nie:
   `SimCoreTests/DiagStatsContractTests.swift`),
 - `RenderSupport.swift`: was mehrere brauchen (`parallelChunks`,
   `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
-  müssen sich über die Uferlinie und die Mündung exakt einig sein,
-- `BrushTool`: Werkzeug-Modi; dieselbe Reihenfolge wie die Werkzeug-Tabelle in
-  `Main.gd` (Wächter: `SimCoreTests/ToolContractTests.swift`).
+  müssen sich über die Uferlinie und die Mündung exakt einig sein.
+
+Die Werkzeug-Modi (`BrushTool`) liegen seit Issue #79 NICHT mehr hier, sondern
+in SimCore (der Typ hängt nur an `Terrain` und ist dort headless ausführbar);
+`SimNode.brush` bleibt der dünne Adapter. Dieselbe Reihenfolge wie die
+Werkzeug-Tabelle in `Main.gd` (Wächter: `SimCoreTests/ToolContractTests.swift`,
+Verhaltens-Tests je Modus statt Switch-Parsing).
 
 Die KALIBRIER-Zahlen bleiben dabei in `SimCore` (`WaterRender`,
 `RenderContract`); die Module rechnen nur mit ihnen. Die Wächter lesen die
@@ -408,7 +412,8 @@ oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4650 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
 Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen, die
-gesamte GDExtension ~2100 (davon `SimNode.swift` ~320, s. o.).
+gesamte GDExtension ~2550 (davon `SimNode.swift` ~360, s. o.; Stand nach dem
+BrushTool-Auszug, #79).
 
 Drei Dateien in SimCore sind bewusst **Render**-Ableitungen ohne Sim-Zustand; sie
 liegen hier, weil sie in der GDExtension bzw. im Shader nicht testbar wären:

@@ -276,7 +276,7 @@ var world_status_label: Label
 var world_dialog: AcceptDialog
 
 ## Werkzeug-Vertrag (Issue #53): EINE Tabelle für Beschriftung, Brush-Modus und
-## Verhalten. `mode` ist der Rohwert von `BrushTool` in der GDExtension — über die
+## Verhalten. `mode` ist der Rohwert von `BrushTool` in SimCore (#79) — über die
 ## Brücke geht nur diese Zahl, also müssen beide Reihenfolgen übereinstimmen
 ## (Wächter: SimCoreTests/ToolContractTests.swift). Die Taste ist die
 ## Tabellen-Position (1…N), nicht noch eine dritte Kopie.

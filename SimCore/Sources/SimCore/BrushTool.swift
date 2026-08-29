@@ -1,5 +1,3 @@
-import SimCore
-
 /// Werkzeug-Modi des Pinsels — der EINE Vertrag zwischen Game-Layer und Bridge
 /// (Issue #53).
 ///
@@ -9,10 +7,14 @@ import SimCore
 /// Spitzhacken-Strich, Tastatur-Offset). Ein neues Werkzeug hieß: fünf Stellen
 /// finden. Jetzt ist es EINE Zeile in `Main.gd`s Werkzeug-Tabelle und EIN `case`
 /// hier — beide in derselben Reihenfolge, weil GDScript nur die Zahl übergeben
-/// kann. Wächter: `SimCoreTests/ToolContractTests.swift` vergleicht die Rohwerte
-/// hier gegen die Tabelle in `Main.gd` und pinnt zusätzlich, welche
-/// Terrain-Operation jeder `case` in `apply` auslöst.
-enum BrushTool: Int, CaseIterable {
+/// kann.
+///
+/// Liegt seit Issue #79 in SimCore, nicht in der Extension: der Typ hängt nur an
+/// `Terrain`, und hier ist er headless AUSFÜHRBAR — `ToolContractTests` prüft die
+/// Rohwerte gegen die Tabelle in `Main.gd` und das Routing jedes `case` als
+/// Verhaltens-Test auf einem echten Terrain (statt wie früher per
+/// Quelltext-Parsing des `switch` in der Brücke).
+public enum BrushTool: Int, CaseIterable {
     case raise = 0
     case lower = 1
     case smooth = 2
@@ -26,8 +28,8 @@ enum BrushTool: Int, CaseIterable {
     /// Führt den Hieb auf dem Terrain aus. `target` gilt nur fürs Einebnen; die
     /// übrigen Werkzeuge ignorieren ihn (Godot kann keine optionalen Argumente
     /// über die Brücke schicken, deshalb EIN Signatur-Satz für alle).
-    func apply(to terrain: Terrain, gx: Double, gz: Double, radiusWorld: Double,
-               strength: Double, target: Double) {
+    public func apply(to terrain: Terrain, gx: Double, gz: Double, radiusWorld: Double,
+                      strength: Double, target: Double) {
         switch self {
         case .raise:
             terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: 1, strength: strength)
