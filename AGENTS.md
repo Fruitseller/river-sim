@@ -437,8 +437,8 @@ Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
 (`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK beider
 Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer). Die Extension und
 die Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests`
-führen die Swift-Kalibrierung und `SimRender` aus und lesen nur noch die
-ECHTEN `.gdshader`; `RenderContractTests` hält die verbleibenden Verträge zu
+pinnen Swift-Kalibrierung und echte `.gdshader`, `WaterRendererTests` führen
+`SimRender` aus; `RenderContractTests` hält die verbleibenden Verträge zu
 `Main.gd`, Shader und `SimNode`. Gemeinsamer Quelltext-Helfer:
 `Tests/SimCoreTests/RepoSource.swift`. Zahlen im Shader deshalb in
 **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`); sonst greift der

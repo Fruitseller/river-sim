@@ -96,6 +96,8 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: ./.github/actions/swift-toolchain
         with:
@@ -137,6 +139,31 @@ jobs:
       # Vertragstests sonst still gegen eine fremde Binärdatei laufen.
       - name: Godot bereitstellen (inkl. Prüfsumme des Cache-Stands)
         run: echo "GODOT=$(scripts/fetch-godot.sh)" >> "$GITHUB_ENV"
+
+      # Einmaliger A/B-Beweis für Issues #80/#82. Derselbe Runner baut zuerst
+      # den korrigierten Vor-Umzug-Commit und später den aktuellen Stand; nur so
+      # sind die laut AGENTS.md maschinenlokalen Hashes vergleichbar. Der ganze
+      # Block wird nach dem belegten Lauf wieder entfernt.
+      - name: Render-Fingerabdruck vor dem Umzug bauen
+        run: |
+          BASE="$RUNNER_TEMP/render-baseline"
+          git worktree add --detach "$BASE" d7a9b93
+          (
+            cd "$BASE"
+            "$(git rev-parse --show-toplevel)"/scripts/build.sh release
+            imported=0
+            for versuch in 1 2 3; do
+              if "$GODOT" --headless --path game --import; then
+                imported=1
+                break
+              fi
+              echo "::warning::Baseline-Import: Versuch $versuch abgebrochen."
+            done
+            test "$imported" -eq 1
+            set -o pipefail
+            scripts/godot-test.sh res://tests/render_fingerprint.gd \
+              RENDER_FINGERPRINT_OK | tee "$RUNNER_TEMP/render-before.log"
+          )
 
       # build.sh baut die GDExtension und kopiert sie samt Swift-Runtime nach
       # game/bin/. Es brennt dabei den Build-Stempel des Quellstands ein und
@@ -209,9 +236,11 @@ jobs:
         run: |
           scripts/godot-test.sh res://tests/river_ribbons.gd RIVER_RIBBONS_OK
 
-      # Temporärer A/B-Messpunkt für Issues #80/#82; vor dem PR-Abschluss
-      # wieder entfernt. Der Lauf druckt nur Hashes, die zwei aufeinander-
-      # folgenden Commits werden über dieselbe CI-Maschine verglichen.
-      - name: Render-Fingerabdruck (A/B-Messung)
+      - name: Render-Fingerabdruck nach dem Umzug vergleichen
         run: |
-          scripts/godot-test.sh res://tests/render_fingerprint.gd RENDER_FINGERPRINT_OK
+          set -o pipefail
+          scripts/godot-test.sh res://tests/render_fingerprint.gd \
+            RENDER_FINGERPRINT_OK | tee "$RUNNER_TEMP/render-after.log"
+          grep ' sha256=' "$RUNNER_TEMP/render-before.log" > "$RUNNER_TEMP/render-before.hashes"
+          grep ' sha256=' "$RUNNER_TEMP/render-after.log" > "$RUNNER_TEMP/render-after.hashes"
+          diff -u "$RUNNER_TEMP/render-before.hashes" "$RUNNER_TEMP/render-after.hashes"
