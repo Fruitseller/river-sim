@@ -649,7 +649,10 @@ geänderte Fassung nicht auf.
 `simperf --hash` vor und nach der Änderung identisch (`8a785727acabcd51`,
 dieselbe Maschine, beide Binärdateien in derselben Sitzung gebaut) — der volle
 State-Fingerprint aus Issue #78, also bit-identische Physik über das komplette
-Zustands-Inventar.
+Zustands-Inventar. Die Zahl steht hier als MESSWERT dieses Laufs, nicht als
+Erwartung: der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm), und
+genau deshalb liegt er nirgends im Repo als Sollwert (AGENTS.md, „Laufzeit
+messen").
 
 Für den Testpfad, den es wirklich betrifft (`transportLimited` läuft dort
 wirklich und öffnet die Sicht jetzt je Aufruf), ist die SimCore-Pflichtsuite
@@ -661,7 +664,9 @@ das Maß — 269 Tests, gleiche VM, nacheinander gelaufen:
 | Adapter, Lauf 1 | 367,7 s |
 | Adapter, Lauf 2 | 349,0 s |
 
-Die beiden Adapter-Läufe klammern den base-Lauf ein — **kein Signal über dem
+Alle drei Läufe fahren denselben Testbestand (269 Tests, `BedFunnel.swift`
+inklusive — getauscht wurde nur `Terrain.swift`), sind also vergleichbar. Die
+beiden Adapter-Läufe klammern den base-Lauf ein — **kein Signal über dem
 Rauschen dieser geteilten VM**. Der erste Lauf allein hätte „+1 %" gesagt; das
 ist genau der Fehlschluss, vor dem §I warnt. Alle drei liegen deutlich unter
 dem 15-min-Budget aus `docs/ci-measurements.md`.

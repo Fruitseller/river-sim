@@ -416,7 +416,7 @@ ausführbar ist; Vertrag mit der Werkzeug-Tabelle in `Main.gd`, Wächter:
 `SimCoreTests/ToolContractTests.swift` mit Verhaltens-Tests je Modus).
 
 Größenordnung zur Orientierung (Stand Aug 2026, gerundet; wer eine Datei teilt
-oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4650 Zeilen,
+oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4700 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
 Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen,
