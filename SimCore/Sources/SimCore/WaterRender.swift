@@ -68,11 +68,12 @@ public enum WaterRender {
     /// s. `shoreLo` — ab hier deckt der Saum voll.
     public static let shoreHi = 0.16
 
-    /// Saum-Intensität des Ribbon-Korridors (Issue #31, `SimNode.waterFieldBytes`):
-    /// im Ribbon-Modus rendert die Band-Geometrie das Wasser, das Feld stempelt den
-    /// Korridor nur noch als Nass-Halo. Der Wert MUSS zwischen `shoreLo` und
-    /// `riverMaskLo` liegen — darunter fiele der Halo aus, darüber malte das Feld
-    /// unter dem Band eine zweite, sprenklige Fluss-Version.
+    /// Saum-Intensität des Ribbon-Korridors (Issue #31,
+    /// `SimRender.WaterFieldRenderer`): im Ribbon-Modus rendert die Band-Geometrie
+    /// das Wasser, das Feld stempelt den Korridor nur noch als Nass-Halo. Der Wert
+    /// MUSS zwischen `shoreLo` und `riverMaskLo` liegen — darunter fiele der Halo
+    /// aus, darüber malte das Feld unter dem Band eine zweite, sprenklige
+    /// Fluss-Version.
     public static let ribbonHaloIntensity = 0.14
 
     // MARK: Kohärenz-Gate des Fluss-Kanals
@@ -162,10 +163,10 @@ public enum WaterRender {
     // reicht, während die Geometrie erst später sanft hebt.
     //
     // Der Fuß ist zugleich die Präsenz-Schwelle des Altarm-Overlays
-    // (`SimNode.waterFieldBytes`): dessen Deckkraft wird im Shader mit dieser
-    // Kontur multipliziert, also darf das Overlay nur so tief stempeln, wie
-    // die Kontur noch zeichnet — sonst sind gerade die seichten Altarm-Enden
-    // unsichtbar. Wer den Fuß verschiebt, verschiebt beides.
+    // (`SimRender.WaterFieldRenderer`): dessen Deckkraft wird im Shader mit
+    // dieser Kontur multipliziert, also darf das Overlay nur so tief stempeln,
+    // wie die Kontur noch zeichnet — sonst sind gerade die seichten
+    // Altarm-Enden unsichtbar. Wer den Fuß verschiebt, verschiebt beides.
     public static let pondContourLo = 0.003
     /// Wassersäule, ab der die Farb-Kontur voll deckt.
     public static let pondContourHi = 0.02
@@ -220,8 +221,8 @@ public enum WaterRender {
     public static let mouthOverlapCells = 2.0
 
     /// Wassersäule, ab der das RASTER-Feld eine Fläche überhaupt als See malt
-    /// (`rawWet` in `SimNode.waterFieldBytes`). Seichteres Ponding bleibt dort
-    /// bewusst trocken („zu viele Seen"), und genau darum ist dieser Wert die
+    /// (`rawWet` in `SimRender.WaterFieldRenderer`). Seichteres Ponding bleibt
+    /// dort bewusst trocken („zu viele Seen"), und genau darum ist dieser Wert die
     /// NAHTSTELLE zur Geometrie: unterhalb malt niemand, oberhalb der Raster-See.
     public static let lakeRawWetDepth = 0.03
 
