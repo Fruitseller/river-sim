@@ -31,8 +31,9 @@ struct SourceProbe {
         /// `#`, `"…"`, `'…'`, `"""…"""`, `'''…'''` (Escape `\`), keine Blockkommentare.
         case gdscript
         /// `//`, `/* */` (GLSL schachtelt nicht — großzügig wie Swift gelesen,
-        /// das strippt im Zweifel MEHR und lässt den Wächter laut fehlschlagen
-        /// statt still grün werden). Keine Zeichenketten: `"` ist ein Zeichen.
+        /// daher kann ein verschachteltes `/*` in einem echten GLSL-Kommentar
+        /// zu viel nachfolgenden Code strippen und einen legitimen Vertragstreffer
+        /// verschwinden lassen). Keine Zeichenketten: `"` ist ein Zeichen.
         case gdshader
     }
 
@@ -56,8 +57,16 @@ struct SourceProbe {
 
     func contains(_ needle: String) -> Bool { code.contains(needle) }
 
+    /// Zählt nicht überlappende Vorkommen in der Code-Sicht.
     func count(of needle: String) -> Int {
-        code.components(separatedBy: needle).count - 1
+        guard !needle.isEmpty else { return 0 }
+        var count = 0
+        var remainder = code[...]
+        while let range = remainder.firstRange(of: needle) {
+            count += 1
+            remainder = remainder[range.upperBound...]
+        }
+        return count
     }
 
     /// Alle Treffer der ersten Capture-Gruppe, in Vorkommens-Reihenfolge.
@@ -104,13 +113,13 @@ struct SourceProbe {
     /// zur nächsten `func`-Zeile auf Methoden-Einrückung (vier Leerzeichen,
     /// damit verschachtelte Hilfsfunktionen nicht als Test zählen) — das
     /// genügt, weil nur nach EINEM Aufruf in der Methode gesucht wird.
-    /// Die Körper kommen aus `raw`: was darin Kommentar oder String ist,
-    /// entscheidet der Konsument mit einer eigenen Probe über dem Körper.
+    /// Die Zerlegung läuft bewusst auf `codeWithoutStrings`: Kommentare und
+    /// Literale dürfen weder eine Testmethode öffnen noch ihren Körper beenden.
     func testMethods() -> [(name: String, body: String)] {
         var result: [(String, String)] = []
         var current: String?
         var body = ""
-        for line in raw.split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in codeWithoutStrings.split(separator: "\n", omittingEmptySubsequences: false) {
             if let name = Self.testMethodName(line) {
                 if let open = current { result.append((open, body)) }
                 current = name
@@ -161,6 +170,18 @@ struct SourceProbe {
         }
         func emit(_ c: Character) { code.append(c); sansStrings.append(c) }
 
+        /// Swift und GDScript schließen einen String-Trenner nur nach einer
+        /// geraden Zahl unmittelbar vorangehender Backslashes.
+        func delimiterIsEscaped() -> Bool {
+            var backslashes = 0
+            var cursor = i
+            while cursor > 0, chars[cursor - 1] == "\\" {
+                backslashes += 1
+                cursor -= 1
+            }
+            return backslashes % 2 == 1
+        }
+
         /// Öffnet an `i` eine Zeichenkette? Liefert (Öffner, Schließer).
         /// Dreifach-Zitate VOR den einfachen prüfen, sie beginnen gleich.
         func stringDelimiter() -> (open: String, close: String)? {
@@ -196,13 +217,7 @@ struct SourceProbe {
                 i += open.count
                 let multiline = open.count == 3
                 while i < chars.count {
-                    if chars[i] == "\\", i + 1 < chars.count {
-                        code.append(chars[i]); code.append(chars[i + 1])
-                        // Auch ein maskiertes Zeilenende (Fortsetzung im
-                        // `"""`-Literal) zählt für die Zeilenstruktur.
-                        if chars[i + 1] == "\n" { sansStrings.append("\n") }
-                        i += 2
-                    } else if at(close) {
+                    if at(close), !delimiterIsEscaped() {
                         code += close
                         i += close.count
                         break
