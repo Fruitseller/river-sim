@@ -499,10 +499,11 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var endorheicResponseYears: Double = 500.0
     // Salzkruste/Playa: Aufbau-/Abbau-Zeitkonstante des Verdunstungsrückstands
     // auf trockengefallenem Beckenboden (Terrain.saltCrust, 0 = aus). NUR
-    // Rendering (helle Kruste in SimNode.terrainColorBytes) und Vegetations-Ziel
-    // (Salzpfannen sind kahl) — keine Erosionsphysik. 400 J.: die Kruste liegt
-    // nach ~1200 J. voll da, verschwindet aber nach dem Wiederfluten in derselben
-    // Zeit wieder (kein Geister-Weiß in einem vollen See).
+    // Rendering (helle Kruste in SimRender.TerrainColorRenderer) und
+    // Vegetations-Ziel (Salzpfannen sind kahl) — keine Erosionsphysik. 400 J.:
+    // die Kruste liegt nach ~1200 J. voll da, verschwindet aber nach dem
+    // Wiederfluten in derselben Zeit wieder (kein Geister-Weiß in einem vollen
+    // See).
     public var endorheicSaltYears: Double = 400.0
     // Mindest-Vollstand-Tiefe, ab der ein trockengefallener Beckenboden als
     // SALZPFANNE gilt (Terrain.playaBed). 0.03 = die Render-Seetiefe (dieselbe
@@ -1291,8 +1292,8 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// `Deckung = I / (I + iceCoverRef)`, dieselbe Bauform wie `snowCoverRef`.
     /// 0.01 gegen eine Gleichgewichtsdicke von ~0.05: die Zunge ist über ihre
     /// ganze Länge deutlich als Eis lesbar und blendet erst am dünnen Rand aus.
-    /// Reiner RENDER-Parameter (`Terrain.iceCover`, `SimNode.terrainColorBytes`)
-    /// — kein Pass liest ihn.
+    /// Reiner RENDER-Parameter (`Terrain.iceCover`,
+    /// `SimRender.TerrainColorRenderer`) — kein Pass liest ihn.
     public var iceCoverRef: Double = 0.01
 
     // ---- Klima / Vegetation ----

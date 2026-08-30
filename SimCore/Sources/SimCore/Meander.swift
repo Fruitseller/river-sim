@@ -326,7 +326,10 @@ public final class MeanderState {
 
     /// Tract die großen Läufe aus der Entwässerung (Quelle = große Zelle ohne
     /// großen Zufluss-Nachbarn; dann der Empfänger-Kette bis Meer/See folgen) und
-    /// resampled sie auf `spacing`. Teilt die Logik mit `SimNode.buildRivers`.
+    /// resampled sie auf `spacing`. EINZIGE Trasse im Projekt: die Render-Seite
+    /// (`SimRender.RiverRibbonRenderer`) baut ihre Bänder aus den fertigen
+    /// `terrain.meander.channels` und trasst nicht selbst — der frühere Zwilling
+    /// `SimNode.buildRivers` ist mit f3556c8 entfallen.
     public static func traceChannels(config: SimConfig, h: [Double], hf: [Double],
                                      area: [Double], receiver: [Int32]) -> [RiverChannel] {
         let n = config.n

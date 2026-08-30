@@ -241,7 +241,7 @@ public final class Terrain {
     public private(set) var endorheicBasin: [BasinRole]
     /// Salzkruste 0..1 — Verdunstungsrückstand auf trockengefallenem
     /// Beckenboden, EWMA mit `endorheicSaltYears`. NUR Rendering
-    /// (SimNode.terrainColorBytes malt die helle Kruste) und Vegetations-Ziel
+    /// (SimRender.TerrainColorRenderer malt die helle Kruste) und Vegetations-Ziel
     /// (Salzpfannen sind kahl); keine Erosionsphysik.
     public private(set) var saltCrust: [Double]
     /// Gemessener ZUFLUSS des Beckens je Zelle (Abfluss-Einheiten wie `area`) —
@@ -1201,7 +1201,7 @@ public final class Terrain {
 
     /// Sättigung eines Schneevorrats zur **Deckung** (0 … <1): `S/(S + ref)`, wie
     /// bei der Stream-Map (`streamRefRate`). EINZIGE Quelle der Formel — der
-    /// Färbungs-Loop in `SimNode.terrainColorBytes` ruft sie über den rohen
+    /// Färbungs-Loop in `SimRender.TerrainColorRenderer` ruft sie über den rohen
     /// Puffer auf, statt sie ein zweites Mal hinzuschreiben (dieselbe Doktrin wie
     /// `vegetationSuitability` seit Issue #4). Wächter:
     /// `ClimateSnow.testSnowCoverIsTheSingleSourceForColouring`.
@@ -1587,8 +1587,8 @@ public final class Terrain {
 
     /// Sättigung einer Eisdicke zur **Deckung** (0 … <1): `I/(I + ref)` — dieselbe
     /// Bauform wie `snowCoverage`. EINZIGE Quelle der Formel; der Färbungs-Loop in
-    /// `SimNode.terrainColorBytes` ruft sie über den rohen Puffer auf, statt sie
-    /// ein zweites Mal hinzuschreiben. Wächter:
+    /// `SimRender.TerrainColorRenderer` ruft sie über den rohen Puffer auf, statt
+    /// sie ein zweites Mal hinzuschreiben. Wächter:
     /// `Glacier.testIceCoverIsTheSingleSourceForColouring`.
     @inline(__always) public static func iceCoverage(thickness: Double, ref: Double) -> Double {
         thickness / (thickness + ref)
@@ -1659,10 +1659,11 @@ public final class Terrain {
 
     /// Geografische Eignung eines Standorts für Bewuchs (0…1) aus Höhe, Grob-
     /// Steigung und Feuchte. EINZIGE Quelle: der Sim-Kern (`updateVegetation`,
-    /// Relaxationsziel von `veg`) und die Biom-Färbung (`SimNode.terrainColorBytes`,
-    /// Grünanteil) lasen dieselbe Logik vorher aus zwei Kopien mit
-    /// auseinandergelaufenen Konstanten (Höhenabfall ab 0.5 bzw. 0.6, Regenfaktor
-    /// 1.3 bzw. 1.2) — die Färbung zeigte damit nicht ganz das, was die Sim rechnet.
+    /// Relaxationsziel von `veg`) und die Biom-Färbung
+    /// (`SimRender.TerrainColorRenderer`, Grünanteil) lasen dieselbe Logik vorher
+    /// aus zwei Kopien mit auseinandergelaufenen Konstanten (Höhenabfall ab 0.5
+    /// bzw. 0.6, Regenfaktor 1.3 bzw. 1.2) — die Färbung zeigte damit nicht ganz
+    /// das, was die Sim rechnet.
     @inline(__always)
     public static func vegetationSuitability(height: Double, slope: Double, rain: Double,
                                              bands: HeightBands) -> Double {

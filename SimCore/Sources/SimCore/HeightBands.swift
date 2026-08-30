@@ -31,10 +31,11 @@ import Foundation
 /// `HeightBandTests.testSnowZoneFollowsTheClimateNotAFixedLandFraction`.
 ///
 /// **Eine Quelle für Sim und Färbung.** `updateVegetation` (SimCore) und die
-/// Biom-Färbung (`SimNode.terrainColorBytes`) hielten bis Issue #4 zwei Kopien
-/// derselben Höhen-/Hang-/Feuchte-Logik mit auseinanderlaufenden Konstanten
-/// (Höhenabfall ab 0.5 bzw. 0.6, Regenfaktor 1.3 bzw. 1.2). Beide lesen jetzt
-/// `Terrain.heightBands` und `Terrain.vegetationSuitability`.
+/// Biom-Färbung (`SimRender.TerrainColorRenderer`, bis Issue #80 in der Brücke)
+/// hielten bis Issue #4 zwei Kopien derselben Höhen-/Hang-/Feuchte-Logik mit
+/// auseinanderlaufenden Konstanten (Höhenabfall ab 0.5 bzw. 0.6, Regenfaktor
+/// 1.3 bzw. 1.2). Beide lesen jetzt `Terrain.heightBands` und
+/// `Terrain.vegetationSuitability`.
 /// `Codable`: die Bänder reisen im Spielstand mit (Issue #8) — nach dem Laden
 /// muss die Färbung sofort stimmen, ohne auf den nächsten Sim-Schritt zu warten.
 public struct HeightBands: Equatable, Sendable, Codable {
@@ -119,10 +120,10 @@ public struct HeightBands: Equatable, Sendable, Codable {
     /// Höhenfaktor beträgt an der Schneegrenze noch 0.617. Vor Issue #4 war das
     /// unsichtbar — die Schneegrenze 1.05 wurde nie erreicht, es gab keine
     /// Schneezone. Jetzt ist sie real besetzt, und ohne diese Grenze stellt
-    /// `SimNode.treeInstanceBuffer` Bäume auf verschneite Gipfel: gemessen 4 von
-    /// 31995 Baum-Kandidaten bei der Generierung und 11 von 56994 nach 30k Jahren
-    /// (22 bzw. 49 Schneezellen tragen dort veg > 0.32). Wenige Instanzen, aber
-    /// steigend — und jede einzelne steht sichtbar im Weiß.
+    /// `SimRender.TreeInstanceRenderer` Bäume auf verschneite Gipfel: gemessen
+    /// 4 von 31995 Baum-Kandidaten bei der Generierung und 11 von 56994 nach
+    /// 30k Jahren (22 bzw. 49 Schneezellen tragen dort veg > 0.32). Wenige
+    /// Instanzen, aber steigend — und jede einzelne steht sichtbar im Weiß.
     ///
     /// Warum die Grenze HIER und nicht in `vegNone`: `veg` geht über `vegDamp` in
     /// die Erosion ein. `vegNone` auf `snowStart` zu ziehen würde die Rampe von
