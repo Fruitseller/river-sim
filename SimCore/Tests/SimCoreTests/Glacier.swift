@@ -803,8 +803,8 @@ final class Glacier: XCTestCase {
     }
 
     /// Die Färbung hat EINE Quelle (dieselbe Doktrin wie `snowCoverage`):
-    /// `SimNode.terrainColorBytes` ruft `Terrain.iceCoverage` über den rohen
-    /// Puffer auf, statt die Formel ein zweites Mal hinzuschreiben.
+    /// `SimRender.TerrainColorRenderer` ruft `Terrain.iceCoverage` über den
+    /// rohen Puffer auf, statt die Formel ein zweites Mal hinzuschreiben.
     func testIceCoverIsTheSingleSourceForColouring() {
         let c = cfg(n: 192)
         let t = Terrain(config: c, seed: 1337)

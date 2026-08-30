@@ -400,8 +400,8 @@ final class ClimateSnow: XCTestCase {
     // MARK: - Abnahme 2: eine Quelle für die Färbung
 
     /// `snowCover` IST `Terrain.snowCoverage` auf dem Feld — dieselbe Funktion,
-    /// die `SimNode.terrainColorBytes` über den rohen Puffer aufruft. Der Test
-    /// pinnt beide Enden: die FORMEL (hier nachgebaut) und dass der
+    /// die `SimRender.TerrainColorRenderer` über den rohen Puffer aufruft. Der
+    /// Test pinnt beide Enden: die FORMEL (hier nachgebaut) und dass der
     /// Feld-Zugriffsweg dasselbe liefert. Damit bekommt die Färbung keine zweite
     /// Wahrheit (dieselbe Doktrin wie `vegetationSuitability` seit Issue #4).
     func testSnowCoverIsTheSingleSourceForColouring() {

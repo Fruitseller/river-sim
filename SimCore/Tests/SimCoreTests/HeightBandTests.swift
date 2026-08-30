@@ -91,7 +91,7 @@ final class HeightBandTests: XCTestCase {
     /// liegt über `snowStart` —, die Sim hält also auch in der Schneezone
     /// noch Bewuchs. Baum-GEOMETRIE darf dort trotzdem nicht stehen; die Regel
     /// dafür ist `HeightBands.bearsTrees` (verbraucht von
-    /// `SimNode.treeInstanceBuffer`).
+    /// `SimRender.TreeInstanceRenderer`).
     ///
     /// **Seit Issue #33 ist das zugleich der Wächter dafür, dass die WALDGRENZE
     /// am Schneefeld hängt:** `snowStart` kommt aus der Massenbilanz (früher
