@@ -505,8 +505,8 @@ final class WaterRenderTests: XCTestCase {
         let bridge = try RepoSource.extensionSources()
         XCTAssertFalse(
             bridge.contains("WaterRender."),
-            "Die GDExtension darf keine Wasser-Kalibrierung zurückkopieren; "
-                + "sie gehört ausschließlich in SimCore/SimRender"
+            "Die GDExtension darf im Code nicht auf `WaterRender.` verweisen; "
+                + "Wasser-Kalibrierung und ihre Verwendung gehören nach SimRender"
         )
     }
 

@@ -31,6 +31,17 @@ final class SourceProbeTests: XCTestCase {
                       "die Code-Sicht behält Literal-Inhalte (Verträge matchen Strings)")
     }
 
+    func testProbeSwiftEscapedMultilineDelimiterDoesNotEndTheLiteral() {
+        let escapedDelimiter = "\\" + "\"\"\""
+        let source = "let s = \"\"\"\nvor " + escapedDelimiter
+            + "\nnach\n\"\"\"\nlet after = 1"
+        let probe = SourceProbe(source, language: .swift)
+        XCTAssertFalse(probe.codeWithoutStrings.contains("nach"),
+                       "ein mit ungerader Backslash-Zahl maskiertes `\"\"\"` bleibt im Literal")
+        XCTAssertTrue(probe.codeWithoutStrings.contains("let after = 1"),
+                      "erst der unmaskierte Multiline-Trenner beendet das Literal")
+    }
+
     func testProbeSwiftStripsNestedBlockComments() {
         let probe = SourceProbe("a /* x /* y */ z */ b", language: .swift)
         XCTAssertEqual(probe.code, "a  b",
@@ -93,6 +104,12 @@ final class SourceProbeTests: XCTestCase {
         XCTAssertEqual(probe.count(of: "const DBG_"), 2)
     }
 
+    func testProbeCountIsNonOverlapping() {
+        let probe = SourceProbe("aaa", language: .swift)
+        XCTAssertEqual(probe.count(of: "aa"), 1)
+        XCTAssertEqual(probe.count(of: ""), 0)
+    }
+
     func testProbeCapturesKeepOccurrenceOrder() throws {
         let probe = SourceProbe("\"mode\": 0\n\"mode\": 1\n\"mode\": 2", language: .gdscript)
         XCTAssertEqual(try probe.integers(pattern: "\"mode\": ([0-9]+)"), [0, 1, 2],
@@ -142,5 +159,23 @@ final class SourceProbeTests: XCTestCase {
         XCTAssertFalse(methods[0].body.contains("keinTest"),
                        "die nächste `func`-Zeile schließt den Körper")
         XCTAssertTrue(methods[1].body.contains("körperZwei"))
+    }
+
+    func testProbeTestMethodsIgnoreCommentsAndLiterals() {
+        let source = #"""
+        final class T: XCTestCase {
+            // func testKommentar() {}
+            let text = """
+            func testLiteral() {}
+            """
+            func testEcht() {
+                run()
+                // func helferImKommentar() {}
+            }
+        }
+        """#
+        let methods = SourceProbe(source, language: .swift).testMethods()
+        XCTAssertEqual(methods.map(\.name), ["testEcht"])
+        XCTAssertTrue(methods[0].body.contains("run()"))
     }
 }
