@@ -396,8 +396,9 @@ final class RainWeightedFlowTests: XCTestCase {
     }
 
     /// Kanalzelle = Landzelle mit `areaMFD / cellArea ≥ renderMinCells` (die
-    /// Render-Definition aus `SimNode.waterFieldBytes`). Drainagedichte = Anteil der
-    /// Kanalzellen an den Landzellen der jeweiligen Hälfte (Luv = West = Wind-Seite).
+    /// Render-Definition aus `SimRender.WaterFieldRenderer`). Drainagedichte =
+    /// Anteil der Kanalzellen an den Landzellen der jeweiligen Hälfte
+    /// (Luv = West = Wind-Seite).
     private func measure(_ t: Terrain) -> Metrics {
         let cellArea = t.cfg.cellSize * t.cfg.cellSize
         let creek = t.cfg.renderMinCells

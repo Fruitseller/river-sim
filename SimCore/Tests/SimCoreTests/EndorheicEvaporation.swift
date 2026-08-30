@@ -136,7 +136,7 @@ final class EndorheicEvaporation: XCTestCase {
 
     /// Verkrustete Playa-Zellen einer Zell-Liste: trockengefallener Beckenboden
     /// mit überwiegender Salzkruste — das, was das Rendering als helle Pfanne
-    /// malt (`SimNode.terrainColorBytes`).
+    /// malt (`SimRender.TerrainColorRenderer`).
     private func playaCells(_ t: Terrain, _ cells: [Int]) -> [Int] {
         cells.filter { t.endorheicBasin[$0] == .dryBed && t.saltCrust[$0] > 0.5 }
     }
@@ -590,7 +590,7 @@ final class EndorheicEvaporation: XCTestCase {
     /// Die trockengefallene Fläche trägt (a) KEIN Wasser mehr — der
     /// Darstellungs-Seespiegel läuft auf die Geländehöhe zurück, das
     /// Wasser-Overlay malt dort also nichts — und (b) eine Salzkruste, aus der
-    /// das Rendering die helle Playa baut (SimNode.terrainColorBytes). Der
+    /// das Rendering die helle Playa baut (SimRender.TerrainColorRenderer). Der
     /// Bewuchs bleibt aus (Salzpfannen sind kahl).
     ///
     /// Geprüft wird das Becken mit der GRÖSSTEN Pfanne, nicht das größte Becken.
