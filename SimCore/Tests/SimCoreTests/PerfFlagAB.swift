@@ -22,8 +22,9 @@ import XCTest
 /// AGENTS.md und das Kalibrier-Logbuch (`SimConfig.hydraulicSkipWaterSpawns`)
 /// sind mit #90 entsprechend korrigiert. Dieser Test pinnt BEIDE Richtungen
 /// des Befunds; er wird nicht zu einem Gleichheits-Test aufgeweicht, solange
-/// der Schalter Tropfen verwirft.
-final class PerfFlagEquivalence: XCTestCase {
+/// der Schalter Tropfen verwirft. Laufzeit in der Pflichtsuite: 0,5 s
+/// (n=256, release) — kein Fall für das Budget in `docs/ci-measurements.md`.
+final class PerfFlagAB: XCTestCase {
 
     func testSkipWaterSpawnsChangesTheRealizationNotTheCharacter() {
         var reference = SimConfig()

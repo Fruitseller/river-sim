@@ -331,7 +331,7 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// ist deshalb NICHT bit-neutral: über das veränderte Abflussfeld erreicht
     /// die Abweichung sofort das Land, es entsteht eine andere (statistisch
     /// gleichwertige) Welt-Realisierung — gemessen und gepinnt in
-    /// `SimCoreTests/PerfFlagEquivalence.swift` (Issue #90). Die
+    /// `SimCoreTests/PerfFlagAB.swift` (Issue #90). Die
     /// Produktionskonfiguration akzeptiert das für die gesparte Laufzeit; der
     /// Core-Default bleibt für bestehende Kalibrierungen unverändert `false`.
     public var hydraulicSkipWaterSpawns = false

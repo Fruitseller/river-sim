@@ -511,7 +511,7 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   ist es NICHT: der Schalter verwirft Ozean-Start-Tropfen ganz, schon der
   Spin-up der Generierung erzeugt damit eine andere — statistisch
   gleichwertige — Welt-Realisierung (gemessen und in beide Richtungen gepinnt:
-  `SimCoreTests/PerfFlagEquivalence.swift`, Issue #90). Produktions- und
+  `SimCoreTests/PerfFlagAB.swift`, Issue #90). Produktions- und
   Core-Default-Welten sind deshalb nicht bit-vergleichbar.
 - Testkonfigs (`meanderCfg()` in `SimCoreTests.swift`) **pinnen alte Werte**, damit
   Kopplungs-Mechanik und Produktions-Kalibrierung entkoppelt bleiben. Nicht
