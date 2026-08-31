@@ -3332,6 +3332,31 @@ public final class Terrain {
 
     // MARK: - Sculpting (Spieler-Eingriff)
 
+    /// Zieht nach einem Geländeeingriff alles nach, was UNMITTELBAR an der Höhe
+    /// hängt — die feste Reihenfolge dahinter (Issue #93: sie stand bis dahin in
+    /// der GDExtension, also bei einem Aufrufer statt beim Besitzer):
+    ///
+    /// 1. `computeFlow` — Entwässerung neu, damit Flüsse dem Strich folgen.
+    /// 2. `snapWaterLevel` — der Darstellungs-Seespiegel snappt mit:
+    ///    Spieler-Feedback soll instantan sein, nur die Sim-Dynamik (Plug/Breach
+    ///    am Auslass) ist träge.
+    /// 3. `updateClimate(dt: 0)` — die Temperatur hängt direkt an der Höhe und
+    ///    muss im selben Frame mitwandern. `dt = 0` lässt die Schnee-BILANZ
+    ///    exakt unverändert (e⁰ = 1): die ist Zustand und darf an der Sim-Zeit
+    ///    hängen, nicht am Pinsel.
+    /// 4. `updateHeightBands` — ein Strich verschiebt die Landhöhen-Verteilung,
+    ///    und die Färbung liest die Bänder im selben Frame.
+    ///
+    /// Kein Zeitschritt: `years` bleibt stehen. Wer einen fünften Pass anhängt,
+    /// tut es hier — nicht beim Aufrufer (Wächter:
+    /// `SimCoreTests/TerrainAPITests.swift`).
+    public func recomputeFlowAfterEdit() {
+        computeFlow()
+        snapWaterLevel()
+        updateClimate(dt: 0)
+        updateHeightBands()
+    }
+
     /// Hebt (`dir` > 0) bzw. senkt (`dir` < 0) das Terrain in einem weichen Pinsel
     /// um das Gitterzentrum (`gx`, `gz`), Radius in Welteinheiten. Koppelt in die
     /// Tektonik (angehobene Zonen werden Hebungszonen), damit Eingriffe langfristig

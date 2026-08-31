@@ -109,24 +109,21 @@ struct SourceProbe {
         codeWithoutStrings.components(separatedBy: "\n")
     }
 
-    /// Zerlegt eine Swift-Testquelle in Testmethoden. Eine Methode reicht bis
-    /// zur nächsten `func`-Zeile auf Methoden-Einrückung (vier Leerzeichen,
-    /// damit verschachtelte Hilfsfunktionen nicht als Test zählen) — das
-    /// genügt, weil nur nach EINEM Aufruf in der Methode gesucht wird.
+    /// Zerlegt eine Swift-Quelle in Methoden. Eine Methode reicht bis zur
+    /// nächsten Deklarations-Zeile auf Methoden-Einrückung (vier Leerzeichen,
+    /// damit verschachtelte Hilfsfunktionen nicht als eigene Methode zählen) —
+    /// das genügt, weil nur nach EINEM Aufruf im Körper gesucht wird.
     /// Die Zerlegung läuft bewusst auf `codeWithoutStrings`: Kommentare und
-    /// Literale dürfen weder eine Testmethode öffnen noch ihren Körper beenden.
-    func testMethods() -> [(name: String, body: String)] {
+    /// Literale dürfen weder eine Methode öffnen noch ihren Körper beenden.
+    func swiftMethods() -> [(name: String, body: String)] {
         var result: [(String, String)] = []
         var current: String?
         var body = ""
         for line in codeWithoutStrings.split(separator: "\n", omittingEmptySubsequences: false) {
-            if let name = Self.testMethodName(line) {
+            if let name = Self.methodName(line) {
                 if let open = current { result.append((open, body)) }
                 current = name
                 body = ""
-            } else if line.hasPrefix("    func ") || line.hasPrefix("    private func ") {
-                if let open = current { result.append((open, body)) }
-                current = nil
             }
             if current != nil { body += line + "\n" }
         }
@@ -134,11 +131,35 @@ struct SourceProbe {
         return result
     }
 
-    /// `    func testFoo(` → `testFoo`.
-    private static func testMethodName(_ line: Substring) -> String? {
-        guard line.hasPrefix("    func test"), let paren = line.firstIndex(of: "(") else { return nil }
-        return String(line[line.index(line.startIndex, offsetBy: "    func ".count)..<paren])
+    /// s. `swiftMethods()` — nur die XCTest-Methoden (Name beginnt mit `test`).
+    /// Das Mess-Gate fragt nach genau diesen.
+    func testMethods() -> [(name: String, body: String)] {
+        swiftMethods().filter { $0.name.hasPrefix("test") }
     }
+
+    /// `    func foo(`, `    private func foo(`, `    @Callable func foo(` → `foo`.
+    /// Vor `func` darf nur Deklarations-Vorspann stehen (Attribute,
+    /// Zugriffsschutz, `static` & Co.) — sonst wäre eine gewöhnliche Zeile mit
+    /// dem Teilwort `func` eine Methode, und die Zerlegung zerfiele.
+    private static func methodName(_ line: Substring) -> String? {
+        guard line.hasPrefix("    "), !line.hasPrefix("     ") else { return nil }
+        let tokens = line.dropFirst(4).split(separator: " ")
+        guard let keyword = tokens.firstIndex(of: "func"), keyword + 1 < tokens.count,
+              tokens[..<keyword].allSatisfy({
+                  $0.hasPrefix("@") || declarationModifiers.contains(String($0))
+              })
+        else { return nil }
+        let signature = tokens[keyword + 1]
+        return String(signature[signature.startIndex..<(signature.firstIndex(of: "(")
+                                                        ?? signature.endIndex)])
+    }
+
+    /// Was zwischen Einrückung und `func` stehen darf (Attribute zählt
+    /// `methodName` selbst über das führende `@`).
+    private static let declarationModifiers: Set<String> = [
+        "public", "private", "internal", "fileprivate", "open", "package",
+        "static", "class", "final", "override", "mutating", "nonisolated",
+    ]
 
     private func matches(pattern: String) throws -> [[Range<String.Index>]] {
         let regex = try NSRegularExpression(pattern: pattern)

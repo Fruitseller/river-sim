@@ -208,7 +208,7 @@ RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
 ```
 
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
-`SimNode.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
+`RenderState.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
 `RS_SEED`, `RS_STEP`, `RS_STEP_CHUNK` (Schrittweite des `RS_STEP`-Vorlaufs,
 Standard 1000 J., der Vorlauf taktet wie der Zeitraffer, nicht in EINEM Sprung),
 `RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"`, Blickpunkt in
@@ -284,8 +284,9 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    Raster-Wasser und Band-Geometrie als POD-Puffer auf. Beide sind headless mit
    XCTest verifizierbar.
 2. **`Extension/`**: SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn:
-   hält einen `Terrain`, ruft `SimRender` auf und wrappt `[UInt8]`, `[Float]`
-   sowie `RibbonMesh` in `Packed*Array`. Keine Physik oder Render-Berechnung.
+   hält einen `Terrain` und einen `SimRender.RenderState`, reicht Aufrufe an
+   beide weiter und wrappt `[UInt8]`, `[Float]` sowie `RibbonMesh` in
+   `Packed*Array`. Keine Physik, keine Render-Berechnung, kein Render-Zustand.
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.1): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
@@ -301,12 +302,22 @@ Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach
 `terrainSurfaceBytes()` etc. und schiebt sie als Texturen ins Mesh.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
-### SimRender- und Extension-Aufbau (Issues #53/#80/#82)
+### SimRender- und Extension-Aufbau (Issues #53/#80/#82/#93)
 
 `SimNode.swift` ist reines Marshalling: Aufruf weiterreichen, POD-Ergebnis als
 `Packed*Array` zurückgeben. Die Render-AUFBEREITUNG lebt im godot-freien Target
 `SimRender`; sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer,
 Dirty-Snapshots), liest das Terrain und ändert es nie:
+
+- `RenderState`: BESITZT die fünf Renderer darunter und den Material-Cache
+  (Issue #93). Die Brücke hält keinen Render-Zustand mehr; sie meldet jede
+  Terrain-Änderung an den EINEN Einstieg `invalidate(terrain,
+  worldReplaced:)`. `worldReplaced` ist der aufgelöste Unterschied zwischen
+  Neu-Generieren und Laden: eine ANDERE Welt verwirft zusätzlich die
+  Dirty-Snapshots von Bäumen und Bändern und setzt den Diagnose-Vergleichspunkt
+  neu (vorher tat das nur das Laden). Wächter:
+  `SimCoreTests/RenderStateTests.swift` — Verhalten plus Quelltext-Probe, dass
+  keine Terrain-Änderung in der Brücke ohne Invalidierung dasteht.
 
 - `WaterFieldRenderer`: Raster-Wasser als `[UInt8]`,
 - `RiverRibbonRenderer`: Band-Geometrie als `RibbonMesh`
@@ -324,7 +335,11 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   müssen sich über die Uferlinie und die Mündung exakt einig sein.
 
 Die Werkzeug-Modi (`BrushTool`) liegen seit Issue #79 in SimCore (s. dort);
-`SimNode.brush` bleibt der dünne Adapter.
+`SimNode.brush` bleibt der dünne Adapter. Ebenso die feste Pass-Reihenfolge nach
+einem Pinselstrich (Abfluss → Seespiegel → Klima mit `dt = 0` → Höhenbänder):
+sie stand bis #93 in der Brücke und liegt jetzt bei ihrem Besitzer als
+`Terrain.recomputeFlowAfterEdit()` (Wächter: `SimCoreTests/TerrainAPITests.swift`,
+bit-gleich zu den vier Aufrufen von Hand).
 
 Nur `BrushTool` bleibt neben `SimNode`, weil es Terrain-Operationen aus der
 Godot-Werkzeugtabelle routet (Wächter: `SimCoreTests/ToolContractTests.swift`).
@@ -421,8 +436,8 @@ oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4700 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
 Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen,
-`SimRender` ~2200 Zeilen und die eigentliche GDExtension nur noch
-`SimNode.swift` mit ~390 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
+`SimRender` ~2350 Zeilen und die eigentliche GDExtension nur noch
+`SimNode.swift` mit ~350 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 
 Drei Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
 Sim-Zustand; sie bilden den gemeinsamen Vertrag für `SimRender`, Godot und

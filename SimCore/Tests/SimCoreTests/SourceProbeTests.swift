@@ -178,4 +178,30 @@ final class SourceProbeTests: XCTestCase {
         XCTAssertEqual(methods.map(\.name), ["testEcht"])
         XCTAssertTrue(methods[0].body.contains("run()"))
     }
+
+    /// `swiftMethods()` zerlegt AUCH fremden Quelltext in Methoden — der
+    /// #93-Wächter fragt damit je `@Callable`-Methode der Brücke nach ihrer
+    /// Invalidierung. Geprüft: Attribute und Modifikatoren öffnen eine Methode,
+    /// eine gewöhnliche Zeile mit dem Teilwort `func` nicht.
+    func testProbeSwiftMethodsSeeAttributedAndModifiedDeclarations() {
+        let source = """
+        final class Bridge {
+            @Callable func generate(seed: Int) {
+                erste()
+            }
+            private static func helfer() -> Int {
+                let myfunc (x) = 1
+                zweite()
+            }
+                func zuTiefEingerückt() {}
+        }
+        """
+        let methods = SourceProbe(source, language: .swift).swiftMethods()
+        XCTAssertEqual(methods.map(\.name), ["generate", "helfer"])
+        XCTAssertTrue(methods[0].body.contains("erste()"))
+        XCTAssertFalse(methods[0].body.contains("zweite()"),
+                       "die nächste Deklaration schließt den Körper")
+        XCTAssertTrue(methods[1].body.contains("zuTiefEingerückt"),
+                      "tiefer eingerückte `func`-Zeilen zählen nicht als Methode")
+    }
 }

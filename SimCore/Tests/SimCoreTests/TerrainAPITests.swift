@@ -269,6 +269,60 @@ final class TerrainAPITests: XCTestCase {
         }
     }
 
+    // MARK: - recomputeFlowAfterEdit()
+
+    /// Der Nach-Strich-Auffrischer ist die feste Aufruf-Reihenfolge, die bis
+    /// Issue #93 in der GDExtension stand. Sie gehört hierher, weil sie
+    /// ausschließlich `Terrain`-Pässe taktet — und weil nur hier prüfbar ist,
+    /// dass sie GENAU diese Reihenfolge fährt: das Ergebnis muss bit-gleich zu
+    /// den vier Aufrufen von Hand sein (Fingerabdruck über das ganze
+    /// Zustands-Inventar, s. `Terrain.fingerprint`).
+    func testRecomputeFlowAfterEditMatchesTheHandWrittenSequence() {
+        let c = cfg()
+        let auto = Terrain(config: c, seed: 1337)
+        let byHand = Terrain(config: c, seed: 1337)
+        for t in [auto, byHand] {
+            t.step(dtYears: 500)
+            t.sculpt(gx: 48, gz: 48, radiusWorld: 12, dir: 1, strength: 20)
+        }
+        XCTAssertEqual(auto.fingerprint(), byHand.fingerprint(),
+                       "Vorbedingung: beide Welten stehen gleich")
+
+        auto.recomputeFlowAfterEdit()
+        byHand.computeFlow()
+        byHand.snapWaterLevel()
+        byHand.updateClimate(dt: 0)
+        byHand.updateHeightBands()
+
+        XCTAssertEqual(auto.fingerprint(), byHand.fingerprint(),
+                       "recomputeFlowAfterEdit fährt eine andere Reihenfolge als "
+                       + "die vier Pässe, die es bündelt")
+    }
+
+    /// Und die Zusicherungen einzeln, damit ein Fehlschlag sagt, WELCHER Pass
+    /// fehlt: Entwässerung neu, Seespiegel gesnappt, Höhenbänder nachgezogen —
+    /// aber Sim-Zeit und Schneebilanz unangetastet (der Strich ist kein
+    /// Zeitschritt, `dt = 0` lässt die Bilanz exakt stehen).
+    func testRecomputeFlowAfterEditLeavesTimeAndSnowBalanceAlone() {
+        let t = Terrain(config: cfg(), seed: 1337)
+        t.step(dtYears: 500)
+        let snowBefore = t.snow
+        let yearsBefore = t.years
+        // Ein Strich, der Entwässerung und Höhenverteilung sichtbar verstellt.
+        t.sculpt(gx: 48, gz: 48, radiusWorld: 14, dir: 1, strength: 30)
+        let areaBefore = t.area
+        let bandsBefore = t.heightBands
+
+        t.recomputeFlowAfterEdit()
+
+        XCTAssertNotEqual(t.area, areaBefore, "Entwässerung nicht neu berechnet")
+        XCTAssertEqual(t.waterLevel, t.hf, "Seespiegel nicht auf den Strich gesnappt")
+        XCTAssertNotEqual(t.heightBands.rockStart, bandsBefore.rockStart,
+                          "Höhenbänder nicht nachgezogen")
+        XCTAssertEqual(t.years, yearsBefore, "Ein Strich ist kein Zeitschritt")
+        XCTAssertEqual(t.snow, snowBefore, "Schneebilanz hängt am Pinsel")
+    }
+
     // Die Pinsel-Helfer (`brushCells`, `roughness`, `assertUntouchedOutside`)
     // liegen seit #79 geteilt in `BrushTestSupport.swift` — `ToolContractTests`
     // braucht dieselbe Kreisgeometrie.
