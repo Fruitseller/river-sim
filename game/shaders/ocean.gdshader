@@ -7,6 +7,24 @@ uniform float u_time = 0.0;
 uniform float world_size = 100.0;
 uniform float sea_level = 0.15;
 uniform sampler2D height_tex : filter_linear, repeat_disable;
+
+// Wasser-Kalibrierung über die Brücke (Issue #91, Expand-Schritt): dieselben
+// Zahlen wie die Literale im Body unten, als Uniform-Default. Main.gd
+// überschreibt sie beim Aufbau mit SimRender.WaterUniforms; der Body liest
+// vorerst weiter seine Literale — der Umstieg auf die Uniforms ist der
+// Contract-Schritt. Defaults gepinnt von SimCoreTests/WaterUniformsTests.swift,
+// End-to-End von game/tests/water_uniforms.gd.
+uniform float water_fresnel_exponent = 5.0;
+uniform float water_fresnel_sky_mix = 0.55;
+uniform float water_roughness_steep = 0.34;
+uniform float water_roughness_grazing = 0.08;
+uniform float water_specular_steep = 0.55;
+uniform float water_specular_grazing = 1.0;
+uniform vec3 water_shallow_color = vec3(0.18, 0.37, 0.42);
+uniform vec3 water_deep_color = vec3(0.03, 0.12, 0.26);
+uniform vec3 water_sky_reflect_color = vec3(0.62, 0.7, 0.76);
+uniform vec3 water_flow_shimmer_color = vec3(0.012, 0.018, 0.025);
+
 varying vec2 v_world;
 
 float hash21(vec2 p) {

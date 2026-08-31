@@ -421,6 +421,23 @@ func _diag() -> void:
 
 # ---------------------------------------------------------------- Szene / UI
 
+## Wasser-Kalibrierung über die Brücke (Issue #91, Expand-Schritt): setzt jeden
+## benannten Wert aus SimCore (SimRender.WaterUniforms) auf jedes übergebene
+## Material. Ein Shader, der den Namen deklariert, bekommt damit den Wert; einen
+## undeklarierten Namen ignoriert Godot. Statisch und ohne Szene, damit
+## game/tests/water_uniforms.gd genau diese Funktion headless prüfen kann.
+static func apply_water_calibration(sim_node: Object, mats: Array[ShaderMaterial]) -> void:
+	var scalar_names: PackedStringArray = sim_node.waterScalarUniformNames()
+	var scalar_values: PackedFloat32Array = sim_node.waterScalarUniformValues()
+	var color_names: PackedStringArray = sim_node.waterColorUniformNames()
+	var color_values: PackedVector3Array = sim_node.waterColorUniformValues()
+	for mat in mats:
+		for i in scalar_names.size():
+			mat.set_shader_parameter(scalar_names[i], scalar_values[i])
+		for i in color_names.size():
+			mat.set_shader_parameter(color_names[i], color_values[i])
+
+
 func _setup_scene() -> void:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
@@ -521,6 +538,13 @@ func _setup_scene() -> void:
 		river_mi.extra_cull_margin = 1000.0 # Geometrie ändert sich laufend
 		river_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(river_mi)
+
+	# Wasser-Kalibrierung aus SimCore (Issue #91) auf alle Wasser-Materialien;
+	# das Band-Material fehlt im RS_WATER_STAMP-Modus.
+	var water_mats: Array[ShaderMaterial] = [terrain_mat, ocean_mat]
+	if river_mat != null:
+		water_mats.append(river_mat)
+	apply_water_calibration(sim, water_mats)
 
 	# Baum-MultiMeshes (Instanzen kommen später aus _rebuild_trees).
 	for v in TREE_VARIANTS:

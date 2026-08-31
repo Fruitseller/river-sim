@@ -231,6 +231,31 @@ final class SimNode: Node {
         )
     }
 
+    // MARK: Wasser-Kalibrierung über die Brücke (Issue #91)
+
+    // Die Tabelle (Namen + Werte) lebt godot-frei in `SimRender.WaterUniforms`;
+    // hier wird sie nur als Packed*Arrays verpackt. `Main.gd` setzt die Werte
+    // beim Aufbau auf alle Wasser-Materialien — Namen und Werte sind paarweise
+    // über den Index verknüpft.
+
+    @Callable func waterScalarUniformNames() -> PackedStringArray {
+        PackedStringArray(WaterUniforms.scalars.map(\.name))
+    }
+
+    @Callable func waterScalarUniformValues() -> PackedFloat32Array {
+        PackedFloat32Array(WaterUniforms.scalars.map { Float($0.value) })
+    }
+
+    @Callable func waterColorUniformNames() -> PackedStringArray {
+        PackedStringArray(WaterUniforms.colors.map(\.name))
+    }
+
+    @Callable func waterColorUniformValues() -> PackedVector3Array {
+        PackedVector3Array(WaterUniforms.colors.map {
+            Vector3(x: Float($0.value.r), y: Float($0.value.g), z: Float($0.value.b))
+        })
+    }
+
     /// Legacy-A/B ohne Rebuild (Muster `RS_NO_MEANDER_PAINT`): gesetzt = der
     /// alte Stempel-Pfad malt Mäander und Altarme wieder voll ins Wasserfeld,
     /// und es entsteht keine Band-Geometrie. Standard ist seit #34 die
