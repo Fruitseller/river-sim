@@ -518,6 +518,8 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Raster-See-Schwelle == WaterRender.lakeRawWetDepth")
         assertContains(geometry, "const MAX_OXBOW_OPACITY := \(glsl(WaterRender.oxbowMaximumOpacity))",
                        hint: "Altarm-Deckkraft == WaterRender.oxbowMaximumOpacity")
+        // Die eine Int-Konstante bewusst roh interpoliert („8"): `glsl()` nimmt
+        // Double und erzeugte „8.0" — das träfe den GDScript-Int nicht.
         assertContains(geometry, "const MOUTH_SEARCH_CELLS := \(WaterRender.mouthSearchCells)",
                        hint: "Mündungs-Suchweite == WaterRender.mouthSearchCells")
         let ribbons = try repoFile("game/tests/river_ribbons.gd")
