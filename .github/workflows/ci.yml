@@ -189,10 +189,10 @@ jobs:
         run: |
           scripts/godot-test.sh res://tests/build_stamp_parity.gd BUILD_STAMP_PARITY_OK
 
-      # Die drei Godot-Vertragstests. Getrennte Schritte statt einer Schleife:
+      # Die vier Godot-Vertragstests. Getrennte Schritte statt einer Schleife:
       # so zeigt die GitHub-Oberfläche direkt, WELCHER Vertrag gebrochen ist.
       #
-      # Alle vier laufen über scripts/godot-test.sh: gewertet wird die
+      # Alle fünf laufen über scripts/godot-test.sh: gewertet wird die
       # Erfolgsmarke des Skripts, nicht der Exit-Code der Engine. Grund ist
       # derselbe Herunterfahr-Absturz wie beim Import oben (Issue #61) — er traf
       # am 2026-08-27 erstmals einen Vertragstest, NACH dessen "…_OK". Ein
@@ -208,3 +208,7 @@ jobs:
       - name: Fluss-Ribbons (Issue #31)
         run: |
           scripts/godot-test.sh res://tests/river_ribbons.gd RIVER_RIBBONS_OK
+
+      - name: Wasser-Kalibrierung über die Brücke (Issue #91)
+        run: |
+          scripts/godot-test.sh res://tests/water_uniforms.gd WATER_UNIFORMS_OK

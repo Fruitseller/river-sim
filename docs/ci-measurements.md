@@ -120,6 +120,7 @@ Lokal gemessen im Worktree gegen den geteilten Build-Cache des Haupt-Repos
 | `smoke.gd` | TBD |
 | `water_geometry.gd` | TBD |
 | `river_ribbons.gd` | TBD |
+| `water_uniforms.gd` (Issue #91; keine Sim-Schritte, nur Aufbau + Textabgleich) | TBD |
 
 Der **Kaltbau** der Extension ist der dominierende Posten und in CI nur beim
 ersten Lauf bzw. nach einem SwiftGodot-Pin-Wechsel (Issue #49) fällig: auf einem
