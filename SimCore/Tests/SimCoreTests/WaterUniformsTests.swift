@@ -69,21 +69,59 @@ final class WaterUniformsTests: XCTestCase {
 
     func testEveryTableValueComesFromWaterRender() {
         // Die Tabelle DARF keine eigenen Zahlen einführen — WaterRender bleibt
-        // die einzige Quelle. Stichproben über alle Wertegruppen; die
-        // vollständige Paarung Name ↔ Zahl pinnen die Shader-Deklarationen.
-        XCTAssertEqual(scalar("water_lake_gate_lo"), WaterRender.lakeGateLo)
-        XCTAssertEqual(scalar("water_river_mask_hi"), WaterRender.riverMaskHi)
-        XCTAssertEqual(scalar("water_lake_depth_span"), WaterRender.lakeDepthSpan)
-        XCTAssertEqual(scalar("water_ribbon_delta_hi"), WaterRender.ribbonDeltaHi)
-        XCTAssertEqual(scalar("water_fresnel_exponent"), WaterRender.fresnelExponent)
-        XCTAssertEqual(scalar("water_opacity_deep"), WaterRender.waterOpacityDeep)
-        XCTAssertEqual(scalar("water_specular_grazing"), WaterRender.waterSpecularGrazing)
-        let shallow = color("water_shallow_color")
-        XCTAssertEqual(shallow?.r, WaterRender.waterShallowColor.r)
-        XCTAssertEqual(shallow?.g, WaterRender.waterShallowColor.g)
-        XCTAssertEqual(shallow?.b, WaterRender.waterShallowColor.b)
-        let oxbow = color("water_oxbow_water_color")
-        XCTAssertEqual(oxbow?.b, WaterRender.oxbowWaterColor.b)
+        // die einzige Quelle. Der Spiegel hier pinnt die Paarung Name ↔
+        // Konstante VOLLSTÄNDIG und in beide Richtungen: ein Eintrag mit
+        // eigener Zahl (oder vertauschten Konstanten) fällt sofort auf, ebenso
+        // ein neuer Tabellen-Eintrag ohne Spiegel-Zeile (Review zu #91 — die
+        // frühere Stichprobe hätte genau das durchgelassen).
+        let expectedScalars: [String: Double] = [
+            "water_lake_gate_lo": WaterRender.lakeGateLo,
+            "water_lake_gate_hi": WaterRender.lakeGateHi,
+            "water_river_mask_lo": WaterRender.riverMaskLo,
+            "water_river_mask_hi": WaterRender.riverMaskHi,
+            "water_shore_lo": WaterRender.shoreLo,
+            "water_shore_hi": WaterRender.shoreHi,
+            "water_pond_contour_lo": WaterRender.pondContourLo,
+            "water_pond_contour_hi": WaterRender.pondContourHi,
+            "water_geometry_lift_lo": WaterRender.geometryLiftLo,
+            "water_geometry_lift_hi": WaterRender.geometryLiftHi,
+            "water_lake_depth_lo": WaterRender.lakeDepthLo,
+            "water_lake_depth_span": WaterRender.lakeDepthSpan,
+            "water_ribbon_still_lo": WaterRender.ribbonStillLo,
+            "water_ribbon_still_hi": WaterRender.ribbonStillHi,
+            "water_ribbon_delta_lo": WaterRender.ribbonDeltaLo,
+            "water_ribbon_delta_hi": WaterRender.ribbonDeltaHi,
+            "water_fresnel_exponent": WaterRender.fresnelExponent,
+            "water_fresnel_sky_mix": WaterRender.fresnelSkyMix,
+            "water_opacity_shallow": WaterRender.waterOpacityShallow,
+            "water_opacity_deep": WaterRender.waterOpacityDeep,
+            "water_roughness_steep": WaterRender.waterRoughnessSteep,
+            "water_roughness_grazing": WaterRender.waterRoughnessGrazing,
+            "water_specular_steep": WaterRender.waterSpecularSteep,
+            "water_specular_grazing": WaterRender.waterSpecularGrazing,
+        ]
+        let expectedColors: [String: (r: Double, g: Double, b: Double)] = [
+            "water_shallow_color": WaterRender.waterShallowColor,
+            "water_deep_color": WaterRender.waterDeepColor,
+            "water_sky_reflect_color": WaterRender.skyReflectColor,
+            "water_flow_shimmer_color": WaterRender.flowShimmerColor,
+            "water_delta_plume_color": WaterRender.deltaPlumeColor,
+            "water_oxbow_water_color": WaterRender.oxbowWaterColor,
+        ]
+        XCTAssertEqual(WaterUniforms.scalars.count, expectedScalars.count,
+                       "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
+        for entry in WaterUniforms.scalars {
+            XCTAssertEqual(entry.value, expectedScalars[entry.name],
+                           "\(entry.name) trägt nicht seine WaterRender-Konstante")
+        }
+        XCTAssertEqual(WaterUniforms.colors.count, expectedColors.count,
+                       "Farb-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
+        for entry in WaterUniforms.colors {
+            let expected = expectedColors[entry.name]
+            XCTAssertEqual(entry.value.r, expected?.r, "\(entry.name).r")
+            XCTAssertEqual(entry.value.g, expected?.g, "\(entry.name).g")
+            XCTAssertEqual(entry.value.b, expected?.b, "\(entry.name).b")
+        }
     }
 
     func testShadersDeclareTheUniformsWithTheTableDefaults() throws {
