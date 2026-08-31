@@ -780,6 +780,14 @@ private extension String {
 /// Handgeschrieben, weil `ErosionFilter.Params` Tupel führt (`rounding`,
 /// `onset`, `assumedSlope`) — Tupel sind nicht `Codable`. Sie werden als Arrays
 /// fester Länge geschrieben; eine falsche Länge ist ein Dekodier-Fehler.
+///
+/// Damit ist dies die EINZIGE Stelle im Config-Graphen ohne Synthese: die zwölf
+/// Felder stehen hier viermal von Hand (CodingKeys, `init(from:)`,
+/// `encode(to:)`, `==`). Ein dort vergessenes Feld reist nicht mit und
+/// entschärft zugleich den Config-Round-Trip-Test, dessen Vergleich für diesen
+/// Teilbaum an genau dieses `==` delegiert. Wer hier ein Feld ergänzt, ergänzt
+/// alle vier Listen; Wächter dafür:
+/// `WorldSnapshotTests.testEveryPreErosionParameterIsSerialisedAndCompared`.
 extension ErosionFilter.Params: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case strength, gullyWeight, detail, rounding, onset, assumedSlope

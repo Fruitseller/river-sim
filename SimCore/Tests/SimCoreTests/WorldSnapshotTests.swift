@@ -392,6 +392,70 @@ final class WorldSnapshotTests: XCTestCase {
                        config.preErodeParams.rounding.1.bitPattern)
     }
 
+    /// Vollständigkeits-Wächter für die HANDGESCHRIEBENE Serialisierung der
+    /// Pre-Erosions-Parameter (`ErosionFilter.Params`, Extension am Ende von
+    /// `WorldSnapshot.swift`). Sie ist die einzige Stelle im Config-Graphen ohne
+    /// Codable-Synthese und listet ihre zwölf Felder VIERMAL von Hand auf
+    /// (CodingKeys, `init(from:)`, `encode(to:)`, `==`).
+    ///
+    /// Ein dort vergessenes Feld reist still nicht mit UND entschärft
+    /// `testConfigSurvivesEncodingExactly`: dessen `XCTAssertEqual(back, config)`
+    /// delegiert für diesen Teilbaum an genau dieses `==`. Beide Hälften prüft
+    /// dieser Wächter deshalb gemeinsam — je Feld eine Störung, die
+    ///
+    /// 1. `==` sehen muss (sonst fehlt das Feld im Vergleich) und
+    /// 2. den Round-Trip überleben muss (sonst fehlt es in
+    ///    CodingKeys/`init(from:)`/`encode(to:)`).
+    ///
+    /// Die Störtabelle selbst wird gegen `Mirror` gespiegelt: ein neu
+    /// hinzugefügtes Feld ohne Eintrag macht den Test rot, statt ungedeckt zu
+    /// bleiben — dieselbe Bauform wie
+    /// `FingerprintTests.testEveryStoredPropertyIsAccountedFor`.
+    func testEveryPreErosionParameterIsSerialisedAndCompared() throws {
+        // Die Tupel-Felder werden VOLLSTÄNDIG ersetzt: eine Störung nur der
+        // ersten Komponente bliebe blind für eine halb geschriebene Tupel-Zeile.
+        let disturbances: [(field: String, apply: (inout ErosionFilter.Params) -> Void)] = [
+            ("strength", { $0.strength = 0.37 }),
+            ("gullyWeight", { $0.gullyWeight = 0.41 }),
+            ("detail", { $0.detail = 2.75 }),
+            ("rounding", { $0.rounding = (0.31, 0.43, 0.57, 3.25) }),
+            ("onset", { $0.onset = (2.25, 3.5, 4.75, 5.5) }),
+            ("assumedSlope", { $0.assumedSlope = (0.35, 0.65) }),
+            ("scale", { $0.scale = 0.135 }),
+            ("octaves", { $0.octaves = 7 }),
+            ("lacunarity", { $0.lacunarity = 2.75 }),
+            ("gain", { $0.gain = 0.375 }),
+            ("cellScale", { $0.cellScale = 0.45 }),
+            ("normalization", { $0.normalization = 0.875 }),
+        ]
+        let base = ErosionFilter.Params()
+        let fields = Mirror(reflecting: base).children.compactMap { $0.label }
+        let listed = Set(disturbances.map { $0.field })
+        for field in fields {
+            XCTAssertTrue(listed.contains(field),
+                          "ErosionFilter.Params.\(field) hat keine Störung in diesem "
+                          + "Wächter — die handgeschriebene Serialisierung wäre "
+                          + "dafür blind")
+        }
+        XCTAssertEqual(disturbances.count, fields.count,
+                       "Störtabelle und Feldbestand sind auseinandergelaufen")
+
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        for (field, apply) in disturbances {
+            var disturbed = base
+            apply(&disturbed)
+            XCTAssertNotEqual(disturbed, base,
+                              "\(field): `==` vergleicht das Feld nicht — ein Verlust "
+                              + "beim Speichern bliebe unsichtbar")
+            let back = try PropertyListDecoder().decode(
+                ErosionFilter.Params.self, from: try encoder.encode(disturbed))
+            XCTAssertEqual(back, disturbed,
+                           "\(field): überlebt den Round-Trip nicht — fehlt in "
+                           + "CodingKeys/`init(from:)`/`encode(to:)`")
+        }
+    }
+
     /// Die Datei bleibt auch für eine Welt ohne jeden Eingriff kompakt: Felder,
     /// die überall denselben Wert tragen (`disturb`, `regenPending` …), werden
     /// als EIN Wert gespeichert. Kein Rundungs-Kompromiss — nur weniger Bytes.
