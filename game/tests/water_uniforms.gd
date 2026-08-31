@@ -70,9 +70,10 @@ func _run() -> void:
 
 	# Deklarationen aus den echten Shader-Quelltexten. Zeilenanker genügt hier:
 	# die strengere, kommentarbereinigte Sicht hält SimCoreTests (SourceProbe).
+	# Der Typ wird BREIT gematcht und dann geprüft: eine künftige
+	# `uniform vec2 water_*` soll laut scheitern, nicht still am Wächter vorbei.
 	var decl_re := RegEx.new()
-	decl_re.compile("(?m)^uniform\\s+(float|vec3)\\s+(water_[A-Za-z0-9_]+)"
-		+ "\\s*(?:=\\s*(.+?))?\\s*;")
+	decl_re.compile("(?m)^uniform\\s+([A-Za-z0-9_]+)\\s+(water_[A-Za-z0-9_]+)([^;]*);")
 	var declared_anywhere := {}
 	for path in SHADERS:
 		var source := FileAccess.get_file_as_string(path)
@@ -83,13 +84,27 @@ func _run() -> void:
 		for m in decl_re.search_all(source):
 			var kind := m.get_string(1)
 			var name := m.get_string(2)
-			var default_text := m.get_string(3)
+			var rest := m.get_string(3)
+			if kind.begins_with("sampler"):
+				continue # Texturen (water_tex) sind keine Kalibrier-Werte.
+			if kind != "float" and kind != "vec3":
+				_fail("%s: %s hat Typ %s — die Brücke kennt nur float und vec3"
+					% [path, name, kind])
+				continue
 			declared[name] = true
 			declared_anywhere[name] = true
 			if not bridge.has(name):
 				_fail("%s deklariert %s an der Brücken-Tabelle vorbei — der Wert "
 					% [path, name] + "bliebe still auf seinem Default stehen")
 				continue
+			if (kind == "float") != (bridge[name] is float):
+				_fail("%s: %s ist als %s deklariert, die Brücke liefert aber %s"
+					% [path, name, kind, type_string(typeof(bridge[name]))])
+				continue
+			var default_text := ""
+			var eq := rest.find("=")
+			if eq >= 0:
+				default_text = rest.substr(eq + 1).strip_edges()
 			if not _default_matches(kind, default_text, bridge[name]):
 				_fail("%s: Default von %s (%s) != Brückenwert %s"
 					% [path, name, default_text, str(bridge[name])])

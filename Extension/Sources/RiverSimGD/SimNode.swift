@@ -236,7 +236,9 @@ final class SimNode: Node {
     // Die Tabelle (Namen + Werte) lebt godot-frei in `SimRender.WaterUniforms`;
     // hier wird sie nur als Packed*Arrays verpackt. `Main.gd` setzt die Werte
     // beim Aufbau auf alle Wasser-Materialien — Namen und Werte sind paarweise
-    // über den Index verknüpft.
+    // über den Index verknüpft. Die Double→Float32-Verengung ist verlustfrei
+    // genug: GLSL-Uniform-Floats sind ohnehin einfach genau, und der Vergleich
+    // Uniform-Default ↔ Brückenwert läuft in `water_uniforms.gd` mit Toleranz.
 
     @Callable func waterScalarUniformNames() -> PackedStringArray {
         PackedStringArray(WaterUniforms.scalars.map(\.name))

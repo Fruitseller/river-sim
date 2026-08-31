@@ -117,13 +117,25 @@ final class WaterUniformsTests: XCTestCase {
         var declared = Set<String>()
         for path in Self.expectedScalars.keys {
             let shader = try RepoSource.probe(path)
-            let found = try shader.captures(
-                pattern: "uniform\\s+(?:float|vec3)\\s+(water_[A-Za-z0-9_]+)")
-            for name in found {
-                XCTAssertTrue(scalar(name) != nil || color(name) != nil,
-                              "\(path) deklariert \(name) an WaterUniforms vorbei")
+            // Typ BREIT matchen und dann prüfen: eine künftige `uniform vec2
+            // water_*` soll laut scheitern, nicht still am Wächter vorbei.
+            let found = try shader.pairs(
+                pattern: "uniform\\s+([A-Za-z0-9_]+)\\s+(water_[A-Za-z0-9_]+)")
+            for (kind, name) in found {
+                if kind.hasPrefix("sampler") { continue } // water_tex: Textur.
+                switch kind {
+                case "float":
+                    XCTAssertNotNil(scalar(name),
+                                    "\(path) deklariert \(name) an WaterUniforms.scalars vorbei")
+                case "vec3":
+                    XCTAssertNotNil(color(name),
+                                    "\(path) deklariert \(name) an WaterUniforms.colors vorbei")
+                default:
+                    XCTFail("\(path): \(name) hat Typ \(kind) — die Brücke kennt "
+                            + "nur float und vec3")
+                }
+                declared.insert(name)
             }
-            declared.formUnion(found)
         }
         for entry in WaterUniforms.scalars {
             XCTAssertTrue(declared.contains(entry.name),
