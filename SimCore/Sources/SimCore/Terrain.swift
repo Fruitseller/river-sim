@@ -96,16 +96,9 @@ public final class Terrain {
     /// Schnee nur in Dauerfrostlagen): `updateRunoffWeight` prüft das und lässt das
     /// Feld dann leer, statt eine Kopie von `rainWeight` zu halten.
     ///
-    /// **Nicht im Zustands-Inventar** (`TerrainState`) und deshalb ohne
-    /// Snapshot-Versionssprung: das Feld ist eine reine Ableitung aus `rain`,
-    /// `temperature` und `snow` — alle drei reisen mit — und `computeRain` baut es
-    /// neu, bevor irgendein Konsument es liest (der erste Pass jedes `step()` und
-    /// jedes `computeFlow`). Damit erfüllt es das Aufnahmekriterium des Inventars
-    /// nicht: kein Pass liest es, bevor es geschrieben wird, und Rendering/Diagnose
-    /// fragen es nach dem Laden nicht ab. Dass `rainWeight` trotzdem mitreist, ist
-    /// die bewusste GROSSZÜGIGKEIT von Issue #8 (s. `TerrainState`) — sie hier
-    /// fortzusetzen würde die Formatversion auf 4 heben, ohne dass ein geladener
-    /// Zustand dadurch korrekter wäre.
+    /// **Nicht im Zustands-Inventar** (`TerrainState`) — abgeleitet; die
+    /// Begründung steht mit allen anderen an der Einordnung
+    /// (`SimCoreTests/StateInventoryTests.classification`, Issue #98).
     public private(set) var runoffWeight: [Double] = []
     /// **Die EINE Quelle der Abfluss-Gewichtung** (Issue #36): Schmelz-Gewicht,
     /// wenn es eines gibt, sonst das Regen-Gewicht. Alle drei Konsumenten lesen
@@ -183,8 +176,9 @@ public final class Terrain {
     /// Abrasion einsetzen — der dünne Saum ist damit fluvial UND nur fluvial,
     /// nie beides zugleich.
     ///
-    /// Reine ABLEITUNG aus `ice` (kein Zustand, nicht im Snapshot-Inventar):
-    /// `updateIce` baut sie je Schritt neu, und zwar VOR jedem Konsumenten.
+    /// Reine ABLEITUNG aus `ice` (kein Zustand, nicht im Snapshot-Inventar) —
+    /// Begründung und der nötige Handgriff beim Zurückspielen stehen an der
+    /// Einordnung (`SimCoreTests/StateInventoryTests.classification`, Issue #98).
     public private(set) var underIce: [Bool] = []
     /// Arbeitspuffer des Eistransports (Zwei-Phasen-Scratch, s. `iceFlowSubStep`):
     /// Ausstrom je Einheit Oberflächen-Abfall (`iceRate`), die eingefrorene
@@ -4597,12 +4591,14 @@ public final class Terrain {
 /// zu erzwingen.
 ///
 /// NICHT aufgenommen sind reine Arbeitspuffer, die ihr Pass vor dem ersten Lesen
-/// vollständig überschreibt (geprüft, Stand Issue #8): `vegScratch`,
-/// `basinSeen`, `basinCells`, `basinSlots`, `orderPos`, `visited`, `scratch`,
-/// `vegScratchRow`, `areaPow`, `qs`, `trackBuf`, `pondSeen`, `heap` sowie die Bin-Puffer des
-/// Mäander-Cutoff-Index in `MeanderState`. Ebenfalls nicht: `noise`
-/// (Permutationstabelle, rein aus `seed` rekonstruiert), `vegTypeFactor`,
-/// `mfdMinA`, `mfdFlatCell` (aus der Config abgeleitet).
+/// vollständig überschreibt, sowie abgeleitete Felder. WELCHE das sind und WARUM,
+/// steht seit Issue #98 an EINER Stelle: der Einordnung in
+/// `SimCoreTests/StateInventoryTests.classification`. Sie spiegelt `Terrain` und
+/// sortiert jede gespeicherte Eigenschaft als persistent, abgeleitet oder Scratch
+/// ein — eine neue, nirgends einsortierte Eigenschaft macht den Wächter rot,
+/// statt still an Inventar, Fingerprint und Spielstand vorbeizulaufen. (Nicht
+/// gespiegelt und deshalb hier benannt: die Bin-Puffer des Mäander-Cutoff-Index
+/// in `MeanderState` — auch sie sind Arbeitsspeicher.)
 ///
 /// `upliftBase`, `lithBed` und `lithProvince` sind streng genommen fix je Seed,
 /// reisen aber mit: `sculpt` koppelt in die Tektonik (`upliftBase` ist damit NICHT
