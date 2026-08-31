@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import SimCore
@@ -14,14 +15,6 @@ import XCTest
 ///    und keine Terrain-Änderung ohne Invalidierung fahren (`SourceProbe`; die
 ///    Extension ist headless nicht ausführbar, ihr Quelltext aber lesbar).
 final class RenderStateTests: XCTestCase {
-
-    /// Produktionsphysik, nur `n` gesenkt (wie in `SimRenderTests`).
-    private func renderConfig(n: Int = 96) -> SimConfig {
-        var config = SimConfig()
-        config.n = n
-        config.world = calibrationWorld
-        return config
-    }
 
     // MARK: - Verhalten: der eine Invalidierungs-Einstieg
 
@@ -65,15 +58,53 @@ final class RenderStateTests: XCTestCase {
 
             change(terrain, render)
 
-            let expected = TerrainColorRenderer.buffers(terrain)
-            XCTAssertEqual(render.terrainColorBytes(terrain), expected.colors,
-                           "\(name): Farb-Cache steht nach der Änderung noch auf dem alten Stand")
-            XCTAssertEqual(render.terrainSurfaceBytes(terrain), expected.surfaces,
-                           "\(name): Material-Cache steht nach der Änderung noch auf dem alten Stand")
-            XCTAssertNotEqual(expected.colors, stale,
-                              "\(name): Änderung wirkt nicht auf die Farbe — der Test "
-                              + "würde einen stehengebliebenen Cache nicht bemerken")
+            assertServesFreshMaterials(render, terrain, staleColors: stale, entry: name)
         }
+    }
+
+    /// `loadWorld` ist der sechste Einstieg — und der, an dem die Asymmetrie
+    /// lebte, die #93 auflöst. Er steht getrennt, weil er über eine echte Datei
+    /// geht (die Brücke ERSETZT das Terrain-Objekt, sie ändert es nicht).
+    func testLoadingAWorldLeavesFreshMaterialsBehind() throws {
+        let render = RenderState(geometryMode: true)
+        var terrain = Terrain(config: renderConfig(), seed: 1337)
+        let stale = render.terrainColorBytes(terrain)
+
+        let other = Terrain(config: renderConfig(), seed: 4711)
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("render-state-\(UUID().uuidString).\(WorldSnapshot.fileExtension)")
+            .path
+        _ = try WorldSnapshot.write(other, to: path)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        terrain = try WorldSnapshot.read(from: path)
+        render.invalidate(terrain, worldReplaced: true)
+
+        assertServesFreshMaterials(render, terrain, staleColors: stale, entry: "loadWorld")
+        XCTAssertGreaterThanOrEqual(render.treeVegMaxDelta(terrain), 1,
+                                    "loadWorld: Bäume müssen neu gebaut werden")
+        XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1,
+                                    "loadWorld: Bänder müssen neu gebaut werden")
+    }
+
+    /// Liefert der Cache den Stand des JETZIGEN Terrains — und war überhaupt
+    /// etwas zu invalidieren (`staleColors` muss sich unterscheiden, sonst
+    /// bemerkte die Prüfung einen stehengebliebenen Cache nicht)?
+    private func assertServesFreshMaterials(_ render: RenderState, _ terrain: Terrain,
+                                            staleColors: [UInt8], entry: String,
+                                            file: StaticString = #filePath,
+                                            line: UInt = #line) {
+        let expected = TerrainColorRenderer.buffers(terrain)
+        XCTAssertEqual(render.terrainColorBytes(terrain), expected.colors,
+                       "\(entry): Farb-Cache steht noch auf dem alten Stand",
+                       file: file, line: line)
+        XCTAssertEqual(render.terrainSurfaceBytes(terrain), expected.surfaces,
+                       "\(entry): Material-Cache steht noch auf dem alten Stand",
+                       file: file, line: line)
+        XCTAssertNotEqual(expected.colors, staleColors,
+                          "\(entry): Änderung wirkt nicht auf die Farbe — der Test würde "
+                          + "einen stehengebliebenen Cache nicht bemerken",
+                          file: file, line: line)
     }
 
     /// Der Cache ist einer: ohne Invalidierung bleibt der ALTE Puffer stehen.
@@ -175,24 +206,63 @@ final class RenderStateTests: XCTestCase {
     }
 
     /// Die Fehlerklasse, die #93 beendet: eine Terrain-Änderung in der Brücke
-    /// OHNE Invalidierung (sie stand sechsmal von Hand da). Geprüft je Methode
-    /// des Quelltexts — jede, die einen der Mutatoren aufruft, muss im selben
-    /// Körper invalidieren.
+    /// OHNE Invalidierung (sie stand sechsmal von Hand da).
+    ///
+    /// Geprüft je `@Callable` der Brücke, und zwar mit UMGEKEHRTER Beweislast:
+    /// nicht „diese bekannten Mutatoren müssen invalidieren" — dann wäre ein neu
+    /// hinzugefügter Mutator still ungeprüft —, sondern JEDER Umgang mit dem
+    /// Terrain gilt als ändernd, solange er nicht unten als lesend eingetragen
+    /// ist. Ein neuer Eingriff (auch über ein neues Werkzeug, nicht nur über
+    /// `terrain.…`) wird damit rot, bis er invalidiert oder sein Weg bewusst als
+    /// Leser deklariert wird.
     func testEveryTerrainMutationInTheBridgeInvalidates() throws {
         let bridge = try RepoSource.probe("\(RepoSource.extensionDirectory)/SimNode.swift")
-        let mutators = ["terrain.generate(", "terrain.step(", "terrain.sculpt(",
-                        "terrain.recomputeFlowAfterEdit(", "terrain = loaded",
-                        "tool.apply("]
-        for mutator in mutators {
-            XCTAssertTrue(bridge.contains(mutator),
-                          "`\(mutator)` steht nicht mehr in der Brücke — die Liste der "
-                          + "geprüften Mutatoren mitziehen, sonst prüft der Wächter nichts")
+        for reader in Self.readOnlyTerrainMembers {
+            XCTAssertTrue(bridge.contains("terrain.\(reader)"),
+                          "`terrain.\(reader)` steht nicht mehr in der Brücke — toten "
+                          + "Eintrag aus der Leser-Liste nehmen, sonst entschärft sie "
+                          + "irgendwann einen echten Mutator")
         }
+
+        var mutating: [String] = []
         for method in bridge.swiftMethods()
-        where mutators.contains(where: method.body.contains) {
+        where method.body.hasPrefix("    @Callable ") && changesTheWorld(method.body) {
+            mutating.append(method.name)
             XCTAssertTrue(method.body.contains("render.invalidate("),
                           "`\(method.name)` ändert das Terrain ohne `render.invalidate(` — "
-                          + "genau die Handarbeit, die Issue #93 beendet hat")
+                          + "genau die Handarbeit, die Issue #93 beendet hat. Ist der "
+                          + "Umgang nur lesend, gehört er in die Leser-Listen dieses "
+                          + "Wächters.")
         }
+        XCTAssertEqual(mutating.sorted(),
+                       ["brush", "generate", "loadWorld", "recomputeFlow", "sculpt", "step"],
+                       "Die ändernden Einstiege der Brücke haben sich verschoben — "
+                       + "Liste mitziehen (sie ist der Umfang dieses Wächters)")
+    }
+
+    /// Zugriffe, die das Terrain nur LESEN. Jeder Eintrag ist eine bewusste
+    /// Ausnahme von der Invalidierungs-Pflicht.
+    private static let readOnlyTerrainMembers: Set<String> = [
+        "cfg", "h", "years", "heightBands", "receiver", "waterLevel", "area",
+    ]
+
+    /// Fasst der Methodenkörper das Terrain auf einem Weg an, der es ändern
+    /// könnte? Alles Lesende wird vorher herausgestrichen; bleibt danach noch
+    /// eine Erwähnung stehen, gilt sie als Eingriff.
+    private func changesTheWorld(_ body: String) -> Bool {
+        var text = body
+        // Lesende Wege, auf denen das Terrain die Brücke verlässt: der
+        // Render-Zustand (liest, s. `RenderState`) und der Spielstand-Schreiber.
+        // Bis zum Zeilenende streichen, damit mehrzeilige Aufrufe mitgehen.
+        for reader in ["render\\.[A-Za-z]+\\([^\n]*", "WorldSnapshot\\.[A-Za-z]+\\([^\n]*"] {
+            text = text.replacingOccurrences(of: reader, with: "",
+                                             options: .regularExpression)
+        }
+        for member in Self.readOnlyTerrainMembers {
+            text = text.replacingOccurrences(of: "terrain.\(member)", with: "")
+        }
+        // Als Wort, nicht als Teilwort: `terrainColorBytes` im Methodennamen ist
+        // kein Zugriff auf die Welt.
+        return text.range(of: "\\bterrain\\b", options: .regularExpression) != nil
     }
 }

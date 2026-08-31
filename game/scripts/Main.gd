@@ -1248,7 +1248,8 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 		terrain_mat.set_shader_parameter("veg_alt_hi", bands[1])
 
 	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung; der
-	# SimNode-Cache verhindert doppelte slope-/Habitat-Arbeit.
+	# Material-Cache in SimRender.RenderState verhindert doppelte
+	# slope-/Habitat-Arbeit (bis Issue #93 lag er in SimNode).
 	color_field.upload(terrain_mat, N, sim.terrainColorBytes())
 	surface_field.upload(terrain_mat, N, sim.terrainSurfaceBytes())
 	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.

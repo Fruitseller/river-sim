@@ -309,8 +309,9 @@ Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 `SimRender`; sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer,
 Dirty-Snapshots), liest das Terrain und ändert es nie:
 
-- `RenderState`: BESITZT die fünf Renderer darunter und den Material-Cache
-  (Issue #93). Die Brücke hält keinen Render-Zustand mehr; sie meldet jede
+- `RenderState`: BESITZT die vier zustandstragenden Renderer darunter und den
+  Material-Cache (Issue #93; das Terrain gehört weiter der Brücke und reist als
+  Parameter). Die Brücke hält keinen Render-Zustand mehr; sie meldet jede
   Terrain-Änderung an den EINEN Einstieg `invalidate(terrain,
   worldReplaced:)`. `worldReplaced` ist der aufgelöste Unterschied zwischen
   Neu-Generieren und Laden: eine ANDERE Welt verwirft zusätzlich die

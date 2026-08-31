@@ -4,13 +4,6 @@ import XCTest
 @testable import SimRender
 
 final class SimRenderTests: XCTestCase {
-  private func renderConfig(n: Int = 96) -> SimConfig {
-    var config = SimConfig()
-    config.n = n
-    config.world = calibrationWorld
-    return config
-  }
-
   func testTerrainMaterialsAreDeterministicPODBuffers() {
     let terrain = Terrain(config: renderConfig(), seed: 1337)
 
