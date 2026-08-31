@@ -648,6 +648,17 @@ bestehen. `render_fingerprint.gd` baut die Bänder seit #80 vor den Texturen wie
 die Produktion; die dadurch einmalig geänderten Hashes bilden die neue
 Vorher-Baseline für den bit-identischen Umzug.
 
+**Render-Zustand bei seinem Besitzer — ERLEDIGT (Aug 2026, Issue #93).**
+`SimRender.RenderState` besitzt die fünf Renderer und den Material-Cache; die
+GDExtension hält keinen Render-Zustand mehr und meldet jede Terrain-Änderung an
+den EINEN Einstieg `invalidate(terrain, worldReplaced:)`. Damit ist die alte
+Asymmetrie aufgelöst — Neu-Generieren verwirft die Dirty-Snapshots jetzt wie das
+Laden, statt sich auf die Delta-Heuristik zu verlassen — und die feste
+Pass-Reihenfolge nach einem Pinselstrich liegt als
+`Terrain.recomputeFlowAfterEdit()` in SimCore. Wächter:
+`RenderStateTests` (Verhalten + Quelltext-Probe der Brücke) und
+`TerrainAPITests`. Prefactor für den Frame-Vertrag (#94).
+
 **Backlog (nicht priorisiert):**
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
 - Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.
@@ -723,12 +734,14 @@ Vorher-Baseline für den bit-identischen Umzug.
   EINZIGE Quelle der Render-Kalibrierung, aus `SimCoreTests` gegen das
   ausführbare `SimRender`, Shader und `Main.gd` gepinnt.
 - `SimCore/Sources/SimRender/` — godot-freie Render-Aufbereitung:
+  `RenderState` als Besitzer des Render-Zustands (Issue #93) über
   `WaterFieldRenderer`, `RiverRibbonRenderer` + POD-`RibbonMesh`,
   `TerrainColorRenderer`, `TreeInstanceRenderer`, `TerrainDiagnostics` und
   `RenderSupport` als gemeinsame Ufer-/Mündungslogik.
 - `Extension/Sources/RiverSimGD/SimNode.swift` — dünne Brücke (`@Callable`s,
-  Aufrufweitergabe und `Packed*Array`-Marshalling); daneben bleibt nur
-  `BrushTool` als Routing der Godot-Werkzeugmodi.
+  Aufrufweitergabe und `Packed*Array`-Marshalling), ohne eigenen
+  Render-Zustand; daneben bleibt nur `BrushTool` als Routing der
+  Godot-Werkzeugmodi.
 - `game/shaders/terrain.gdshader` — prozedurale Boden-/Fels-/Vegetations-/
   Kältematerialien, Lithologieschichten, Wasser-Overlay und Detail-Layer;
   `water.gdshader` — Band-Geometrie; `ocean.gdshader` — opakes offenes Meer,
