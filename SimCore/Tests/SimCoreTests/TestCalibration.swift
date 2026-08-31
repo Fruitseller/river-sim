@@ -1,5 +1,7 @@
 import Foundation
 
+@testable import SimCore
+
 /// Weltkantenlänge, gegen die die per-Zell-Erwartungen dieser Suite kalibriert
 /// sind.
 ///
@@ -27,3 +29,14 @@ import Foundation
 /// Tests, die BEWUSST von der Produktions-Zellgröße abweichen wollen, setzen
 /// `world` danach weiter selbst (s. `testDeviatingConfigAndSeedTravelWithTheWorld`).
 let calibrationWorld: Double = 130
+
+/// Produktionsphysik in kleiner Auflösung, mit der Kalibrier-Paarung dieser
+/// Suite: der Standard-Zuschnitt der Render-Wächter (`SimRenderTests`,
+/// `RenderStateTests`). Genau der Fall, für den `calibrationWorld` oben steht —
+/// `n` gesenkt, `world` bewusst mitgesetzt.
+func renderConfig(n: Int = 96) -> SimConfig {
+    var config = SimConfig()
+    config.n = n
+    config.world = calibrationWorld
+    return config
+}

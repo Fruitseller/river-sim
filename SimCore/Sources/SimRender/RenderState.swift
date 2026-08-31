@@ -1,8 +1,9 @@
 import Foundation
 import SimCore
 
-/// Der Render-Zustand EINER Welt: die fünf Renderer mit ihren EWMA-Feldern,
-/// Arbeitspuffern und Dirty-Snapshots plus der Material-Cache (Issue #93).
+/// Der Render-Zustand EINER Welt: die vier zustandstragenden Renderer mit ihren
+/// EWMA-Feldern, Arbeitspuffern und Dirty-Snapshots plus der Cache des
+/// zustandslosen `TerrainColorRenderer`-Passes (Issue #93).
 ///
 /// Warum als eigener Typ und warum hier: dieser Zustand gehörte bis #93 der
 /// GDExtension, obwohl die Brücke laut `AGENTS.md` §Architektur reines
@@ -15,7 +16,10 @@ import SimCore
 /// statt zweier Aufrufstellen.
 ///
 /// Wie die Renderer selbst liest der Typ das Terrain und ändert es nie; die
-/// Physik bleibt vollständig in `SimCore`.
+/// Physik bleibt vollständig in `SimCore`. Die WELT reist deshalb als Parameter
+/// durch jeden Einstieg und wohnt nicht hier: Besitzer des `Terrain` bleibt die
+/// Brücke — #93 verschiebt den Render-ZUSTAND, nicht die Sim-Ownership, und die
+/// Renderer darunter nehmen das Terrain ohnehin je Aufruf.
 public final class RenderState {
 
     /// `geometryMode` = malen die Mäander-Hauptläufe und Altarme als
@@ -26,7 +30,9 @@ public final class RenderState {
     public let geometryMode: Bool
 
     /// `geometryMode` ist injizierbar, damit die Wächter beide Pfade fahren
-    /// können, ohne die Prozess-Umgebung zu verstellen.
+    /// können, ohne die Prozess-Umgebung zu verstellen. Die Umgebung wird EINMAL
+    /// hier gelesen statt je Aufruf: sie ändert sich im laufenden Prozess nicht,
+    /// und der Schalter darf nicht mitten in einer Sitzung umspringen.
     public init(geometryMode: Bool = ProcessInfo.processInfo
                     .environment["RS_WATER_STAMP"] == nil) {
         self.geometryMode = geometryMode
@@ -60,6 +66,15 @@ public final class RenderState {
     /// Die Asymmetrie war keine Entscheidung, sondern Altbestand — eine frisch
     /// generierte Welt teilt mit der alten nichts, gegen das ein Snapshot noch
     /// etwas aussagen könnte.
+    ///
+    /// AUSGENOMMEN, bewusst: das EWMA-Gedächtnis des Wasserfelds
+    /// (`WaterFieldRenderer`). Es fällt auch bei `worldReplaced` nicht, weil es
+    /// keine Aussage über die alte Welt ist, sondern eine zeitliche Glättung mit
+    /// einem Mischfaktor, den der Aufrufer je Frame mitgibt — die erste Abfrage
+    /// nach einem Weltwechsel läuft in der Produktion ohnehin über
+    /// `waterFieldBytes(blend: 1.0)` (Textur-Neuaufbau), und ein Reset hier wäre
+    /// eine Verhaltensänderung, die dieser Prefactor nicht mitbringt. Wer die
+    /// Taktung anfasst, entscheidet sie mit (Issue #94).
     public func invalidate(_ terrain: Terrain, worldReplaced: Bool = false) {
         materials = nil
         guard worldReplaced else { return }

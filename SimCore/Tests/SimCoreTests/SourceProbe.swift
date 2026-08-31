@@ -158,7 +158,9 @@ struct SourceProbe {
     /// `methodName` selbst über das führende `@`).
     private static let declarationModifiers: Set<String> = [
         "public", "private", "internal", "fileprivate", "open", "package",
-        "static", "class", "final", "override", "mutating", "nonisolated",
+        "static", "class", "final", "override", "mutating", "nonmutating",
+        "nonisolated", "convenience", "required", "dynamic", "distributed",
+        "consuming", "borrowing", "isolated",
     ]
 
     private func matches(pattern: String) throws -> [[Range<String.Index>]] {
