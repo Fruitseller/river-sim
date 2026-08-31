@@ -324,9 +324,16 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // 16329/25258/27184, also wirkungslos auf das Kanalnetz), reliefRobust bei
     // 20k 0.1675 statt 0.1714. Reine Zusatz-Erosion ohne Nutzen → verworfen.
     public var hydraulicPerYear = 2.0       // Tropfen je Jahr (sanft → Makro-Grate überleben)
-    /// Ozean-Starts haben keinen Anteil an der Landformung, können aber fast die
-    /// ganze Tropfen-Lebenszeit verbrauchen. Die Produktionskonfiguration lässt
-    /// sie aus; der Core-Default bleibt für bestehende Kalibrierungen unverändert.
+    /// Ozean-Starts sind fast reine Laufzeit-Verschwendung — aber nicht ganz:
+    /// nur im TIEFEN Wasser (`hf−h > poolDepth`) stirbt ein solcher Tropfen
+    /// wirkungslos im Pool-Zweig, auf dem flachen Schelf läuft er los und
+    /// erodiert (sein Pinsel reicht bis auf Küstenzellen). Sie zu verwerfen
+    /// ist deshalb NICHT bit-neutral: über das veränderte Abflussfeld erreicht
+    /// die Abweichung sofort das Land, es entsteht eine andere (statistisch
+    /// gleichwertige) Welt-Realisierung — gemessen und gepinnt in
+    /// `SimCoreTests/PerfFlagEquivalence.swift` (Issue #90). Die
+    /// Produktionskonfiguration akzeptiert das für die gesparte Laufzeit; der
+    /// Core-Default bleibt für bestehende Kalibrierungen unverändert `false`.
     public var hydraulicSkipWaterSpawns = false
     public var outletIncision = true        // Flächen-Stream-Power auf dem Entwässerungsnetz: carvt Täler/Auslässe → Becken entwässern zum Meer, dendritische Rinnen + diskrete Seen (nickmcd-Look) statt einer blassen Flach-Ebene
     // #10: GEPRÜFT, unverändert. Die in #9 §D.2 gerechnete Kompensation (~×1.4

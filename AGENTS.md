@@ -505,9 +505,14 @@ hängen nicht an `SimConfig`.
 
 Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - `SimConfig()`-Defaults = kalibrierte Produktions-Physik.
-- `SimNode.productionConfig()` schaltet zusätzlich reine Performance-Optionen an
-  (`hydraulicSkipWaterSpawns`, `meanderSpatialCutoffIndex`); Verhalten muss dabei
-  gleich bleiben, dafür gibt es Tests.
+- `SimNode.productionConfig()` schaltet zusätzlich Performance-Optionen an.
+  `meanderSpatialCutoffIndex` ist verhaltensneutral (Wächter:
+  `testSpatialCutoffIndexMatchesReferenceOrder`). `hydraulicSkipWaterSpawns`
+  ist es NICHT: der Schalter verwirft Ozean-Start-Tropfen ganz, schon der
+  Spin-up der Generierung erzeugt damit eine andere — statistisch
+  gleichwertige — Welt-Realisierung (gemessen und in beide Richtungen gepinnt:
+  `SimCoreTests/PerfFlagEquivalence.swift`, Issue #90). Produktions- und
+  Core-Default-Welten sind deshalb nicht bit-vergleichbar.
 - Testkonfigs (`meanderCfg()` in `SimCoreTests.swift`) **pinnen alte Werte**, damit
   Kopplungs-Mechanik und Produktions-Kalibrierung entkoppelt bleiben. Nicht
   „aufräumend" an die Produktionswerte angleichen.
