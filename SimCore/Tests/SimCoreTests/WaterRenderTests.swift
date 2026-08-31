@@ -499,6 +499,40 @@ final class WaterRenderTests: XCTestCase {
     }
 
 
+    /// Die Godot-Wächter (GPU-frei, aber nur MIT gebauter Extension lauffähig)
+    /// tragen die Vertragswerte als eigene Konstanten. Driften sie, prüfen
+    /// sie gegen eine Kalibrierung, die es nicht mehr gibt — zwei CI-Verträge
+    /// wären dann still entwertet. Beim SimRender-Umzug (#80/#82) verloren
+    /// gegangen, mit Issue #90 wiederhergestellt.
+    func testGodotGuardsPinTheSameContract() throws {
+        let geometry = try repoFile("game/tests/water_geometry.gd")
+        assertContains(geometry, "const KIND_RIVER := \(glsl(WaterRender.ribbonKindRiver))",
+                       hint: "Typ Fluss == WaterRender.ribbonKindRiver")
+        assertContains(geometry, "const KIND_DELTA := \(glsl(WaterRender.ribbonKindDelta))",
+                       hint: "Typ Delta == WaterRender.ribbonKindDelta")
+        assertContains(geometry, "const KIND_OXBOW := \(glsl(WaterRender.ribbonKindOxbow))",
+                       hint: "Typ Altarm == WaterRender.ribbonKindOxbow")
+        assertContains(geometry, "const POND_CONTOUR_LO := \(glsl(WaterRender.pondContourLo))",
+                       hint: "Kontur-Fuß == WaterRender.pondContourLo")
+        assertContains(geometry, "const LAKE_RAW_WET := \(glsl(WaterRender.lakeRawWetDepth))",
+                       hint: "Raster-See-Schwelle == WaterRender.lakeRawWetDepth")
+        assertContains(geometry, "const MAX_OXBOW_OPACITY := \(glsl(WaterRender.oxbowMaximumOpacity))",
+                       hint: "Altarm-Deckkraft == WaterRender.oxbowMaximumOpacity")
+        assertContains(geometry, "const MOUTH_SEARCH_CELLS := \(WaterRender.mouthSearchCells)",
+                       hint: "Mündungs-Suchweite == WaterRender.mouthSearchCells")
+        let ribbons = try repoFile("game/tests/river_ribbons.gd")
+        assertContains(ribbons, "const LAKE_SURFACE_LIFT := \(glsl(WaterRender.ribbonLakeSurfaceLift))",
+                       hint: "See-Versatz == WaterRender.ribbonLakeSurfaceLift")
+        assertContains(ribbons, "const SEA_SURFACE_SINK := \(glsl(WaterRender.ribbonSeaSurfaceSink))",
+                       hint: "Meer-Versatz == WaterRender.ribbonSeaSurfaceSink")
+        assertContains(ribbons, "const MAX_CROSS_SLOPE := \(glsl(WaterRender.ribbonMaxCrossSlope))",
+                       hint: "Quergefälle-Klemme des Wächters == WaterRender.ribbonMaxCrossSlope")
+        assertContains(ribbons, "const MIN_RANK := \(glsl(WaterRender.ribbonMinimumRank))",
+                       hint: "Hierarchie-Gate == WaterRender.ribbonMinimumRank")
+        assertContains(ribbons, "const KIND_DELTA_LO := \(glsl(WaterRender.ribbonDeltaLo))",
+                       hint: "Typ-Trennung Fluss/Delta == WaterRender.ribbonDeltaLo")
+    }
+
     func testExtensionKeepsWaterCalibrationOutOfMarshalling() throws {
         // Die Code-Sicht der Probe lässt Kommentare weg: ein Verweis „s.
         // WaterRender.…" im Kommentar bleibt erlaubt, nur Code zählt.
