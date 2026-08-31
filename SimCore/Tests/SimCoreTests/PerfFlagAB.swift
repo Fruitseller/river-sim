@@ -22,8 +22,9 @@ import XCTest
 /// AGENTS.md und das Kalibrier-Logbuch (`SimConfig.hydraulicSkipWaterSpawns`)
 /// sind mit #90 entsprechend korrigiert. Dieser Test pinnt BEIDE Richtungen
 /// des Befunds; er wird nicht zu einem Gleichheits-Test aufgeweicht, solange
-/// der Schalter Tropfen verwirft. Laufzeit in der Pflichtsuite: 0,5 s
-/// (n=256, release) — kein Fall für das Budget in `docs/ci-measurements.md`.
+/// der Schalter Tropfen verwirft. Laufzeit in der Pflichtsuite: unter einer
+/// Sekunde (n=256, release, Referenz-Mac) — Größenordnungen unter dem
+/// Budget in `docs/ci-measurements.md`, dort ist nichts nachzuziehen.
 final class PerfFlagAB: XCTestCase {
 
     func testSkipWaterSpawnsChangesTheRealizationNotTheCharacter() {
@@ -54,12 +55,15 @@ final class PerfFlagAB: XCTestCase {
         // = eine Größenordnung über der gemessenen Abweichung (s. o.), weit
         // unter dem Effekt eines echten Etat-Fehlers (der Tropfen-Etat auf
         // Land ist die Kalibrier-Basis, s. `SimConfig`-Logbuch zu #10).
+        // Mit Absolutboden: ginge die Welt (fast) ganz unter, liefe `meanA`
+        // gegen 0 und eine rein relative Toleranz degenerierte zu `accuracy: 0`.
         let (meanA, landA) = landStats(a)
         let (meanB, landB) = landStats(b)
-        XCTAssertEqual(meanA, meanB, accuracy: 0.005 * meanA,
+        XCTAssertEqual(meanA, meanB, accuracy: max(0.005 * meanA, 1e-4),
                        "meanLand driftet — der Schalter verschiebt die Physik, "
                        + "nicht nur die Realisierung")
-        XCTAssertEqual(Double(landA), Double(landB), accuracy: 0.005 * Double(landA),
+        XCTAssertEqual(Double(landA), Double(landB),
+                       accuracy: max(0.005 * Double(landA), 1),
                        "Landzellenzahl driftet — der Schalter verschiebt die "
                        + "Küste, nicht nur die Realisierung")
     }
