@@ -192,7 +192,8 @@ jobs:
       # Die vier Godot-Vertragstests. Getrennte Schritte statt einer Schleife:
       # so zeigt die GitHub-Oberfläche direkt, WELCHER Vertrag gebrochen ist.
       #
-      # Alle fünf laufen über scripts/godot-test.sh: gewertet wird die
+      # Alle fünf Skript-Läufe des Jobs (die vier Vertragstests plus die
+      # Stempel-Parität oben) gehen über scripts/godot-test.sh: gewertet wird die
       # Erfolgsmarke des Skripts, nicht der Exit-Code der Engine. Grund ist
       # derselbe Herunterfahr-Absturz wie beim Import oben (Issue #61) — er traf
       # am 2026-08-27 erstmals einen Vertragstest, NACH dessen "…_OK". Ein
