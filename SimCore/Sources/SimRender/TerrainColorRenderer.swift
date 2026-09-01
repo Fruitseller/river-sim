@@ -135,26 +135,23 @@ public enum TerrainColorRenderer {
                             * (1 - vegWeight) * (1 - coldWeight) * (1 - saltCover)
                     }
 
+                    // Umrechnung 0…1 → Byte nur über `byte01` (RenderSupport):
+                    // ausgeschrieben klemmte sie NaN nicht weg, sondern brach ab.
                     let o = k * 4
-                    pcolor[o] = byte(r)
-                    pcolor[o + 1] = byte(g)
-                    pcolor[o + 2] = byte(b)
+                    pcolor[o] = byte01(r)
+                    pcolor[o + 1] = byte01(g)
+                    pcolor[o + 2] = byte01(b)
                     pcolor[o + 3] = 255
-                    psurface[o] = byte(vegWeight)
-                    psurface[o + 1] = byte(rockWeight)
-                    psurface[o + 2] = byte(coldWeight)
-                    psurface[o + 3] = byte(hard * 0.5 + 0.5)
+                    psurface[o] = byte01(vegWeight)
+                    psurface[o + 1] = byte01(rockWeight)
+                    psurface[o + 2] = byte01(coldWeight)
+                    psurface[o + 3] = byte01(hard * 0.5 + 0.5)
                 }
             }
         }
         }}}}}}}}}
 
         return Buffers(colors: colors, surfaces: surfaces)
-    }
-
-    @inline(__always)
-    private static func byte(_ value: Double) -> UInt8 {
-        UInt8(min(max(value, 0), 1) * 255)
     }
 
     @inline(__always)

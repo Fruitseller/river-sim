@@ -134,9 +134,9 @@ public final class TerrainDiagnostics {
                                      neutral + 0.17 * amount)
                     }
                     let o = k * 4
-                    pout[o] = UInt8(min(max(r, 0), 1) * 255)
-                    pout[o + 1] = UInt8(min(max(g, 0), 1) * 255)
-                    pout[o + 2] = UInt8(min(max(b, 0), 1) * 255)
+                    pout[o] = byte01(r)
+                    pout[o + 1] = byte01(g)
+                    pout[o + 2] = byte01(b)
                 }
             }
         }}}
