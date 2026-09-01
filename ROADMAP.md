@@ -649,7 +649,8 @@ die Produktion; die dadurch einmalig geänderten Hashes bilden die neue
 Vorher-Baseline für den bit-identischen Umzug.
 
 **Render-Zustand bei seinem Besitzer — ERLEDIGT (Aug 2026, Issue #93).**
-`SimRender.RenderState` besitzt die fünf Renderer und den Material-Cache; die
+`SimRender.RenderState` besitzt die vier zustandstragenden Renderer und den
+Material-Cache des zustandslosen `TerrainColorRenderer`; die
 GDExtension hält keinen Render-Zustand mehr und meldet jede Terrain-Änderung an
 den EINEN Einstieg `invalidate(terrain, worldReplaced:)`. Damit ist die alte
 Asymmetrie aufgelöst — Neu-Generieren verwirft die Dirty-Snapshots jetzt wie das

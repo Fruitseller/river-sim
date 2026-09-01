@@ -107,6 +107,14 @@ exportiertes `RS_MEASURE=0` soll die Messläufe nicht wieder in die Pflichtsuite
 holen. Der Konventions-Wächter sieht diesen Fall nicht — er prüft nur die
 Paarung „`Diagnostic` ↔ `skipUnlessMeasuring()`".
 
+**Nachtrag #93 (Render-Zustand in SimRender):** zehn neue Wächter — acht
+`RenderStateTests` plus die beiden `testRecomputeFlowAfterEdit…` in
+`TerrainAPITests` — laufen zusammen in **0,3 s** (release, M4-Max-Referenz-Mac);
+der teuerste Einzelposten ist `testEveryMutatingEntryLeavesFreshMaterialsBehind`
+mit 0,08 s. Kein Budget-Posten. Gegenprobe in CI: der Job `test` lag auf dem
+PR-Head bei **6:41 min** (Lauf vom 2026-08-31), weiter klar unter dem
+15-min-Budget.
+
 ### Godot-Vertrag (Job `godot-contract`)
 
 Lokal gemessen im Worktree gegen den geteilten Build-Cache des Haupt-Repos
