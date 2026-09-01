@@ -455,18 +455,31 @@ Seit **Issue #51** liegt die Render-Kalibrierung VOLLSTÄNDIG in diesem Vertrag:
 auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
 Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
 Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
-(`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK beider
-Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer). Die Extension und
-die Shader dürfen dazu keine eigenen Literale mehr halten: `WaterRenderTests`
-pinnen Swift-Kalibrierung und echte `.gdshader`, `WaterRendererTests` führen
-`SimRender` aus; `RenderContractTests` hält die verbleibenden Verträge zu
-`Main.gd`, Shader und `SimNode`. Gemeinsame Quelltext-Helfer (Issue #83):
+(`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK aller
+drei Wasser-Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer).
+Seit **Issue #92** stehen die Wasser-Werte nicht mehr als gepinnte Kopien im
+Shader, sondern reisen als `water_*`-Uniforms über die Brücke
+(`SimRender.WaterUniforms` → `SimNode` → `Main.gd`; Expand #91, Contract #92).
+Die Shader deklarieren sie default-frei (ein Literal-Default wäre wieder eine
+Kopie), und die beiden Godot-Vertragstests (`water_geometry.gd`,
+`river_ribbons.gd`) holen ihre Vertragswerte über denselben Weg
+(`waterContractNames/Values`). Wächter: `WaterUniformsTests`
+(Tabellen-Spiegel, default-freie Deklarationen, Verdrahtung),
+`WaterRenderTests` (Kalibrier-Paarungen headless; an Quelltext nur noch
+STRUKTUR: welche Shader-Stelle welche Uniform liest), `WaterRendererTests`
+(führen `SimRender` aus) und End-to-End `game/tests/water_uniforms.gd` (jede
+deklarierte Uniform wird gesetzt). `RenderContractTests` hält die
+verbleibenden Verträge zu `Main.gd`, Shader und `SimNode`; der
+`hscale`-Default im Terrain-Shader bleibt dort bewusst als EINZIGE gepinnte
+Shader-Zahl stehen (Editor-Vorschau ohne SimNode, Begründung am Uniform).
+Gemeinsame Quelltext-Helfer (Issue #83):
 `Tests/SimCoreTests/RepoSource.swift` (Dateizugriff) und `SourceProbe.swift`
 (DER eine Lexer + Abfragen aller Text-Wächter; gematcht wird auf der
 Code-Sicht, eine auskommentierte Zeile der Gegenseite erfüllt keinen
-Vertrag). Zahlen im Shader deshalb in **Swift-Schreibweise** notieren
-(`0.7`, nicht `0.70`); sonst greift der Textvergleich nicht — mit #83
-bewusst so bestätigt statt wegnormalisiert, Begründung am `glsl(_:)`-Helfer.
+Vertrag). Die frühere Regel „Zahlen im Shader in Swift-Schreibweise notieren"
+trug nur die mit #92 entfallenen Zahl-Wächter; sie gilt nur noch für die
+wenigen per `glsl(_:)` gepinnten Literale (`Main.gd`-Konstanten,
+`hscale`-Default — Begründung am Helfer).
 
 **Binnenwasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die

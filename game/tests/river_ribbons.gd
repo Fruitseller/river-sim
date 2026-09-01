@@ -14,13 +14,15 @@ extends SceneTree
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 
-# Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — gepinnt von
-# SimCoreTests/WaterRenderTests.swift gegen DIESE Datei (Issue #51).
-const LAKE_SURFACE_LIFT := 0.04
-const SEA_SURFACE_SINK := -0.06
-const MIN_RANK := 0.48
-const MAX_CROSS_SLOPE := 0.4
-const KIND_DELTA_LO := 0.25
+# Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
+# über die Brücke geholt (SimNode.waterContractNames/Values) statt als eigene
+# Konstanten kopiert; die Paarung Name ↔ Konstante pinnt
+# SimCoreTests/WaterUniformsTests.swift ausführbar.
+var lake_surface_lift: float
+var sea_surface_sink: float
+var min_rank: float
+var max_cross_slope: float
+var kind_delta_lo: float
 
 # Wie nah an der Zellgrenze (in Zellen) die Zentrumslinie liegen darf, damit
 # auch die Nachbarzelle als gemeinter Spiegel zählt — s. `_lake_surface_err`.
@@ -44,6 +46,12 @@ func _run() -> void:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
+	var contract := _water_contract(sim)
+	lake_surface_lift = contract["ribbonLakeSurfaceLift"]
+	sea_surface_sink = contract["ribbonSeaSurfaceSink"]
+	min_rank = contract["ribbonMinimumRank"]
+	max_cross_slope = contract["ribbonMaxCrossSlope"]
+	kind_delta_lo = contract["ribbonDeltaLo"]
 
 	# Derselbe Wallclock-Deckel gilt im Echtzeit- und `_jump`-Pfad: vor einer
 	# Sekunde kein Build, an der Grenze/bei Nutzeraktion sofort.
@@ -108,7 +116,7 @@ func _run() -> void:
 		return
 
 	# Jede Bandkante muss auf ihrer EIGENEN lokalen Geländehöhe liegen — GEKLEMMT
-	# auf die maximale Quer-Neigung um die Zentrums-Höhe (MAX_CROSS_SLOPE, s.
+	# auf die maximale Quer-Neigung um die Zentrums-Höhe (max_cross_slope, s.
 	# WaterRender.ribbonMaxCrossSlope): sanfte Quergefälle folgen dem Gelände
 	# (eine reine Zentrums-Höhe schnitte das Band dort ins Terrain), Kanten auf
 	# Schluchtwänden tauchen stattdessen in den Fels ein, statt das Band die
@@ -136,11 +144,11 @@ func _run() -> void:
 		var v: Vector3 = verts[a]
 		var vr: Vector3 = verts[a + 1]
 		# Erwartete Kantenhöhe wie in RiverRibbonRenderer.emitRibbon: eigene
-		# Geländehöhe, geklemmt auf Zentrums-Höhe ± Halbbreite × MAX_CROSS_SLOPE.
+		# Geländehöhe, geklemmt auf Zentrums-Höhe ± Halbbreite × max_cross_slope.
 		# Die Halbbreite steckt in der Kantenpaar-Geometrie (halber XZ-Abstand),
 		# das Zentrum ist der Paar-Mittelpunkt.
 		var half_w := Vector2(v.x - vr.x, v.z - vr.z).length() * 0.5
-		var cross_tol := half_w * MAX_CROSS_SLOPE
+		var cross_tol := half_w * max_cross_slope
 		var pair_mid := (v + vr) * 0.5
 		var ground_c := _bilinear_height(heights, n, world, pair_mid.x, pair_mid.z) * Main.HSCALE
 		var ground := _bilinear_height(heights, n, world, v.x, v.z) * Main.HSCALE
@@ -158,7 +166,7 @@ func _run() -> void:
 		# der gilt nur für Bänder auf dem Gelände.
 		var surface_err: float = minf(
 			_lake_surface_err(levels, n, world, pair_mid.x, pair_mid.z, v.y),
-			absf(v.y - (sea * Main.HSCALE + SEA_SURFACE_SINK)))
+			absf(v.y - (sea * Main.HSCALE + sea_surface_sink)))
 		# Wasser-Nähe zählt als Wasser, AUCH wenn zufällig beides passt: im
 		# flachen Apron kann die geklemmte Land-Erwartung einer echten
 		# Wasser-Kante gleichen (Tiefe × HSCALE ≈ RIVER_LIFT − Spiegel-Versatz)
@@ -179,8 +187,8 @@ func _run() -> void:
 						a, uv2s[a].x, cols[a].a, v.y,
 						(pair_mid.x + world * 0.5) / cs, (pair_mid.z + world * 0.5) / cs,
 						ground + Main.RIVER_LIFT,
-						level * Main.HSCALE + LAKE_SURFACE_LIFT,
-						sea * Main.HSCALE + SEA_SURFACE_SINK,
+						level * Main.HSCALE + lake_surface_lift,
+						sea * Main.HSCALE + sea_surface_sink,
 						err, surface_err]
 			on_water += 2
 			continue
@@ -192,7 +200,7 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Nur Läufe emittieren, die mindestens Strahler 3 erreichen (MIN_RANK,
+	# Nur Läufe emittieren, die mindestens Strahler 3 erreichen (min_rank,
 	# Historie: WaterRender.ribbonMinimumRank). Ihr Oberlauf
 	# bleibt als feiner Taper am selben Band erhalten; niedrigere Mäander würden
 	# die alten verknäulten „zu viele Flüsse"-Felder nachzeichnen.
@@ -204,7 +212,7 @@ func _run() -> void:
 	for s in starts.size():
 		var from: int = starts[s]
 		var to: int = (starts[s + 1] if s + 1 < starts.size() else verts.size())
-		if uv2s[from].x > KIND_DELTA_LO:
+		if uv2s[from].x > kind_delta_lo:
 			continue
 		river_strips += 1
 		var strip_max_rank := 0.0
@@ -215,7 +223,7 @@ func _run() -> void:
 			# `submergedFade`) — dort übernimmt die Seefläche im selben Pixel.
 			if a > from and not pair_on_water[a / 2] and not pair_on_water[a / 2 - 1]:
 				max_alpha_jump = maxf(max_alpha_jump, absf(cols[a].a - cols[a - 2].a))
-		if strip_max_rank < MIN_RANK:
+		if strip_max_rank < min_rank:
 			push_error("FAIL: Ribbon ohne Strahler-3-Anschluss emittiert")
 			quit(1)
 			return
@@ -238,7 +246,7 @@ func _run() -> void:
 	for s in starts.size():
 		var from: int = starts[s]
 		var to: int = (starts[s + 1] if s + 1 < starts.size() else verts.size())
-		if uv2s[from].x > KIND_DELTA_LO:
+		if uv2s[from].x > kind_delta_lo:
 			continue
 		for a in range(from, to, 2):
 			var left := Vector2(verts[a].x, verts[a].z)
@@ -289,7 +297,7 @@ func _lake_surface_err(levels: PackedFloat32Array, n: int, world: float,
 	var best := INF
 	for i in _cell_candidates((x + world * 0.5) / cs, n):
 		for j in _cell_candidates((z + world * 0.5) / cs, n):
-			best = minf(best, absf(y - (levels[j * n + i] * Main.HSCALE + LAKE_SURFACE_LIFT)))
+			best = minf(best, absf(y - (levels[j * n + i] * Main.HSCALE + lake_surface_lift)))
 	return best
 
 ## Zellindex(e) einer kontinuierlichen Gitterposition: der gerundete — und auf
@@ -309,6 +317,16 @@ func _cell_value(f: PackedFloat32Array, n: int, world: float, x: float, z: float
 	var i := clampi(int(round((x + world * 0.5) / cs)), 0, n - 1)
 	var j := clampi(int(round((z + world * 0.5) / cs)), 0, n - 1)
 	return f[j * n + i]
+
+## Vertragstabelle der Brücke als Dictionary (Name → Wert). Ein fehlender Name
+## fällt beim Zugriff oben laut auf (Dictionary-Fehler), nicht still.
+func _water_contract(sim: Object) -> Dictionary:
+	var names: PackedStringArray = sim.waterContractNames()
+	var values: PackedFloat64Array = sim.waterContractValues()
+	var out := {}
+	for i in names.size():
+		out[names[i]] = values[i]
+	return out
 
 func _bilinear_height(h: PackedFloat32Array, n: int, world: float, x: float, z: float) -> float:
 	var cs := world / float(n - 1)

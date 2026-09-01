@@ -19,15 +19,17 @@ extends SceneTree
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 
-# Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — gepinnt von
-# SimCoreTests/WaterRenderTests.swift gegen DIESE Datei (Issue #51).
-const KIND_RIVER := 0.0
-const KIND_DELTA := 0.5
-const KIND_OXBOW := 1.0
-const POND_CONTOUR_LO := 0.003
-const LAKE_RAW_WET := 0.03
-const MAX_OXBOW_OPACITY := 0.7
-const MOUTH_SEARCH_CELLS := 8
+# Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
+# über die Brücke geholt (SimNode.waterContractNames/Values) statt als eigene
+# Konstanten kopiert; die Paarung Name ↔ Konstante pinnt
+# SimCoreTests/WaterUniformsTests.swift ausführbar.
+var kind_river: float
+var kind_delta: float
+var kind_oxbow: float
+var pond_contour_lo: float
+var lake_raw_wet: float
+var max_oxbow_opacity: float
+var mouth_search_cells: int
 
 var done := false
 
@@ -47,6 +49,14 @@ func _run() -> void:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
+	var contract := _water_contract(sim)
+	kind_river = contract["ribbonKindRiver"]
+	kind_delta = contract["ribbonKindDelta"]
+	kind_oxbow = contract["ribbonKindOxbow"]
+	pond_contour_lo = contract["pondContourLo"]
+	lake_raw_wet = contract["lakeRawWetDepth"]
+	max_oxbow_opacity = contract["oxbowMaximumOpacity"]
+	mouth_search_cells = int(contract["mouthSearchCells"])
 
 	# Ohne Überschreibung ist dieser Lauf der WÄCHTER (feste Welt, feste
 	# Erwartungen). Mit RS_SEED/RS_STEP ist er ein MESSLAUF über eine andere Welt:
@@ -107,7 +117,7 @@ func _run() -> void:
 	var rec: PackedInt32Array = sim.receivers()
 
 	# --- Zählung je Typ + Deckkraft im vom Raster gemalten Tiefwasser ---------
-	var strip_kind := {KIND_RIVER: 0, KIND_DELTA: 0, KIND_OXBOW: 0}
+	var strip_kind := {kind_river: 0, kind_delta: 0, kind_oxbow: 0}
 	var deep_river_alpha := 0.0
 	var oxbow_alpha_max := 0.0
 	var oxbow_still := true
@@ -123,9 +133,9 @@ func _run() -> void:
 		for a in range(from, to, 2):
 			var k := _cell_of(verts[a], verts[a + 1], world, cs, n)
 			var pond: float = _pond(h, wl, sea, k)
-			if kind == KIND_RIVER and pond >= LAKE_RAW_WET:
+			if kind == kind_river and pond >= lake_raw_wet:
 				deep_river_alpha = maxf(deep_river_alpha, cols[a].a)
-			if kind == KIND_OXBOW:
+			if kind == kind_oxbow:
 				oxbow_alpha_max = maxf(oxbow_alpha_max, cols[a].a)
 				# Stillwasser-Kodierung: Richtung exakt 0 (COLOR.rg == 0.5).
 				if absf(cols[a].r - 0.5) > 0.002 or absf(cols[a].g - 0.5) > 0.002:
@@ -141,7 +151,7 @@ func _run() -> void:
 			% deep_river_alpha)
 		quit(1)
 		return
-	if strict and strip_kind[KIND_OXBOW] < 1:
+	if strict and strip_kind[kind_oxbow] < 1:
 		push_error("FAIL: keine Altarm-Bänder nach %d Jahren" % int(years))
 		quit(1)
 		return
@@ -149,11 +159,11 @@ func _run() -> void:
 		push_error("FAIL: Altarm-Band trägt eine Fließrichtung (kein Stillwasser)")
 		quit(1)
 		return
-	if oxbow_alpha_max > MAX_OXBOW_OPACITY + 0.001:
+	if oxbow_alpha_max > max_oxbow_opacity + 0.001:
 		push_error("FAIL: Altarm-Deckkraft über dem Maximum (%f)" % oxbow_alpha_max)
 		quit(1)
 		return
-	if strict and strip_kind[KIND_DELTA] < 1:
+	if strict and strip_kind[kind_delta] < 1:
 		push_error("FAIL: kein einziger Delta-Arm — Mündungen ohne Auffächerung")
 		quit(1)
 		return
@@ -164,7 +174,7 @@ func _run() -> void:
 	for s in starts.size():
 		var from: int = starts[s]
 		var to: int = (starts[s + 1] if s + 1 < starts.size() else verts.size())
-		if uv2s[from].x != KIND_RIVER:
+		if uv2s[from].x != kind_river:
 			continue
 		var last := to - 2
 		var k := _cell_of(verts[last], verts[last + 1], world, cs, n)
@@ -174,7 +184,7 @@ func _run() -> void:
 		# Trockenes Ende ist nur erlaubt, wenn in Reichweite gar kein Wasser liegt
 		# (der Lauf versickert im Land) — sonst fehlt die Mündung.
 		var c := k
-		for _i in MOUTH_SEARCH_CELLS:
+		for _i in mouth_search_cells:
 			var r := rec[c]
 			if r < 0:
 				break
@@ -182,7 +192,7 @@ func _run() -> void:
 			if _is_water(h, wl, sea, c):
 				gaps += 1
 				break
-	print("fluss_bänder=", strip_kind[KIND_RIVER], " mündungen_im_wasser=", closed,
+	print("fluss_bänder=", strip_kind[kind_river], " mündungen_im_wasser=", closed,
 		" mündungen_mit_spalt=", gaps)
 	if gaps > 0:
 		push_error("FAIL: %d Fluss-Band(-Enden) enden vor der Wasserfläche" % gaps)
@@ -216,4 +226,14 @@ func _pond(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) ->
 	return 0.0
 
 func _is_water(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) -> bool:
-	return _pond(h, wl, sea, k) > POND_CONTOUR_LO
+	return _pond(h, wl, sea, k) > pond_contour_lo
+
+## Vertragstabelle der Brücke als Dictionary (Name → Wert). Ein fehlender Name
+## fällt beim Zugriff oben laut auf (Dictionary-Fehler), nicht still.
+func _water_contract(sim: Object) -> Dictionary:
+	var names: PackedStringArray = sim.waterContractNames()
+	var values: PackedFloat64Array = sim.waterContractValues()
+	var out := {}
+	for i in names.size():
+		out[names[i]] = values[i]
+	return out

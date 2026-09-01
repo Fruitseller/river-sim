@@ -2,17 +2,19 @@ import XCTest
 @testable import SimCore
 import SimRender
 
-/// Wächter für den Uniform-Kanal der Wasser-Kalibrierung (Issue #91).
+/// Wächter für den Uniform-Kanal der Wasser-Kalibrierung (Issues #91/#92).
 ///
-/// Expand-Schritt: die Kalibrier-Werte reisen als benannte Werte über die
-/// Brücke (`SimRender.WaterUniforms` → `SimNode` → `Main.gd`) und überschreiben
-/// in den Shadern gleichnamige Uniforms, deren DEFAULT das bisherige Literal
-/// ist. Die Shader-Bodies lesen vorerst weiter ihre Literale — beide Wege
-/// müssen deshalb dieselben Zahlen tragen, und genau das pinnen diese Tests:
-///   - jede Uniform-Deklaration trägt den Tabellenwert als Default,
+/// Contract-Schritt (#92): die Kalibrier-Werte reisen NUR noch als benannte
+/// Werte über die Brücke (`SimRender.WaterUniforms` → `SimNode` → `Main.gd`).
+/// Die Shader deklarieren gleichnamige Uniforms OHNE Default und lesen sie im
+/// Body — ein Literal-Default wäre wieder genau die Kopie, die #92 abschafft
+/// (die Editor-Vorschau ohne SimNode ist damit bewusst unkalibriert). Gepinnt
+/// wird deshalb Struktur statt Zahlen:
+///   - jede Uniform-Deklaration ist default-frei und wird im Body gelesen,
 ///   - jeder Tabellenwert ist in mindestens einem Shader deklariert,
 ///   - kein Shader deklariert eine `water_*`-Uniform an der Tabelle vorbei,
-///   - Brücke und `Main.gd` sind verdrahtet.
+///   - Brücke und `Main.gd` sind verdrahtet,
+///   - die beiden Godot-Vertragstests holen ihre Vertragswerte über die Brücke.
 /// Dass die gesetzten Werte in Godot wirklich ankommen, prüft End-to-End
 /// `game/tests/water_uniforms.gd`.
 final class WaterUniformsTests: XCTestCase {
@@ -20,7 +22,7 @@ final class WaterUniformsTests: XCTestCase {
     /// Welcher Shader welche Werte konsumiert — der Verteilungs-Vertrag.
     /// `Main.gd` setzt zwar alle Werte auf alle Wasser-Materialien (undeklarierte
     /// Namen ignoriert Godot), aber WO ein Wert als Uniform deklariert sein muss,
-    /// entscheidet der Shader-Body, der das Literal heute liest.
+    /// entscheidet der Shader-Body, der ihn liest.
     private static let windowScalars = [
         "water_lake_gate_lo", "water_lake_gate_hi",
         "water_river_mask_lo", "water_river_mask_hi",
@@ -124,25 +126,57 @@ final class WaterUniformsTests: XCTestCase {
         }
     }
 
-    func testShadersDeclareTheUniformsWithTheTableDefaults() throws {
-        // Beide Wege — Literal im Body und Uniform-Default — müssen dieselbe
-        // Zahl tragen, sonst zeigt die Editor-Vorschau (Material ohne SimNode)
-        // anderes Wasser als das Spiel. Genau diese Drift-Klasse hat #51 beim
-        // `hscale`-Default schon einmal beendet.
+    func testEveryContractValueComesFromWaterRender() {
+        // Wie bei der Uniform-Tabelle: die Vertragstabelle der Godot-Wächter
+        // vergibt nur Namen, `WaterRender` bleibt die einzige Quelle — der
+        // Spiegel pinnt die Paarung vollständig und in beide Richtungen.
+        let expected: [String: Double] = [
+            "ribbonKindRiver": WaterRender.ribbonKindRiver,
+            "ribbonKindDelta": WaterRender.ribbonKindDelta,
+            "ribbonKindOxbow": WaterRender.ribbonKindOxbow,
+            "pondContourLo": WaterRender.pondContourLo,
+            "lakeRawWetDepth": WaterRender.lakeRawWetDepth,
+            "oxbowMaximumOpacity": WaterRender.oxbowMaximumOpacity,
+            "mouthSearchCells": Double(WaterRender.mouthSearchCells),
+            "ribbonLakeSurfaceLift": WaterRender.ribbonLakeSurfaceLift,
+            "ribbonSeaSurfaceSink": WaterRender.ribbonSeaSurfaceSink,
+            "ribbonMinimumRank": WaterRender.ribbonMinimumRank,
+            "ribbonMaxCrossSlope": WaterRender.ribbonMaxCrossSlope,
+            "ribbonDeltaLo": WaterRender.ribbonDeltaLo,
+        ]
+        XCTAssertEqual(WaterUniforms.contract.count, expected.count,
+                       "Vertrags-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
+        for entry in WaterUniforms.contract {
+            XCTAssertEqual(entry.value, expected[entry.name],
+                           "\(entry.name) trägt nicht seine WaterRender-Konstante")
+        }
+        let names = WaterUniforms.contract.map(\.name)
+        XCTAssertEqual(names.count, Set(names).count, "Vertragsnamen kollidieren")
+    }
+
+    func testShadersDeclareTheUniformsDefaultFreeAndReadThem() throws {
+        // Contract-Schritt (#92): ein Literal-Default wäre wieder eine Kopie
+        // der Kalibrierung — die Deklaration bleibt default-frei, den Wert
+        // setzt `Main.gd` aus der Brücke. Und eine deklarierte, aber nie
+        // gelesene Uniform wäre ein toter Kanal, den der End-to-End-Wächter
+        // (er prüft nur „wird gesetzt") nicht sehen kann: jeder Name muss im
+        // Quelltext deshalb mindestens zweimal stehen — Deklaration + Lesung.
         for (path, names) in Self.expectedScalars {
             let shader = try RepoSource.probe(path)
             for name in names {
-                let value = try XCTUnwrap(scalar(name), "\(name) fehlt in WaterUniforms.scalars")
-                assertContains(shader, "uniform float \(name) = \(glsl(value));",
-                               hint: "\(path): Uniform-Default von \(name) == WaterUniforms")
+                assertContains(shader, "uniform float \(name);",
+                               hint: "\(path): \(name) default-frei deklariert (#92)")
+                XCTAssertGreaterThanOrEqual(shader.count(of: name), 2,
+                                            "\(path): \(name) wird deklariert, aber nie gelesen")
             }
         }
         for (path, names) in Self.expectedColors {
             let shader = try RepoSource.probe(path)
             for name in names {
-                let value = try XCTUnwrap(color(name), "\(name) fehlt in WaterUniforms.colors")
-                assertContains(shader, "uniform vec3 \(name) = \(glsl(value));",
-                               hint: "\(path): Uniform-Default von \(name) == WaterUniforms")
+                assertContains(shader, "uniform vec3 \(name);",
+                               hint: "\(path): \(name) default-frei deklariert (#92)")
+                XCTAssertGreaterThanOrEqual(shader.count(of: name), 2,
+                                            "\(path): \(name) wird deklariert, aber nie gelesen")
             }
         }
     }
@@ -150,8 +184,8 @@ final class WaterUniformsTests: XCTestCase {
     func testEveryTableEntryIsDeclaredSomewhereAndNothingBeyondTheTable() throws {
         // Ein Tabellenwert ohne Deklaration würde von Main.gd gesetzt und von
         // keinem Shader gelesen (toter Kanal); eine `water_*`-Uniform außerhalb
-        // der Tabelle bliebe still auf ihrem Default stehen — beides ist genau
-        // das Fehlerbild, das der Godot-Vertragstest ausschließen soll.
+        // der Tabelle bliebe still auf ihrem Null-Default stehen — beides ist
+        // genau das Fehlerbild, das der Godot-Vertragstest ausschließen soll.
         var declared = Set<String>()
         for path in Self.expectedScalars.keys {
             let shader = try RepoSource.probe(path)
@@ -186,14 +220,16 @@ final class WaterUniformsTests: XCTestCase {
     }
 
     func testBridgeMarshalsTheTable() throws {
-        // Die GDExtension bleibt reines Marshalling: sie reicht die Tabelle
+        // Die GDExtension bleibt reines Marshalling: sie reicht die Tabellen
         // durch, ohne eigene Namen oder Zahlen zu halten.
         let bridge = try RepoSource.extensionSources()
         for needle in ["func waterScalarUniformNames", "func waterScalarUniformValues",
                        "func waterColorUniformNames", "func waterColorUniformValues",
-                       "WaterUniforms.scalars", "WaterUniforms.colors"] {
+                       "func waterContractNames", "func waterContractValues",
+                       "WaterUniforms.scalars", "WaterUniforms.colors",
+                       "WaterUniforms.contract"] {
             assertContains(bridge, needle,
-                           hint: "Brücke marshallt die Uniform-Tabelle (Issue #91)")
+                           hint: "Brücke marshallt die Uniform-/Vertragstabelle (#91/#92)")
         }
     }
 
@@ -213,6 +249,21 @@ final class WaterUniformsTests: XCTestCase {
                        hint: "Band-Material wird kalibriert, wenn es existiert")
         assertContains(main, "apply_water_calibration(sim, water_mats)",
                        hint: "Der Aufbau ruft die Anwendung mit der echten Brücke auf")
+    }
+
+    func testGodotGuardsReadTheContractOverTheBridge() throws {
+        // Bis #92 führten die beiden Godot-Vertragstests die Vertragswerte als
+        // eigene Konstanten (zuletzt gepinnt vom Zahl-Wächter aus #90). Jetzt
+        // holen sie sie über die Brücke — hier ist nur die VERDRAHTUNG zu
+        // prüfen; welchen Wert ein Name trägt, pinnt der ausführbare Spiegel
+        // `testEveryContractValueComesFromWaterRender`.
+        for path in ["game/tests/water_geometry.gd", "game/tests/river_ribbons.gd"] {
+            let guardScript = try RepoSource.probe(path)
+            assertContains(guardScript, "waterContractNames()",
+                           hint: "\(path) holt die Vertragsnamen über die Brücke")
+            assertContains(guardScript, "waterContractValues()",
+                           hint: "\(path) holt die Vertragswerte über die Brücke")
+        }
     }
 
     // MARK: Hilfen
