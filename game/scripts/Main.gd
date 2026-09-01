@@ -12,6 +12,15 @@ const HSCALE := 24.0
 const BALANCED_TERRAIN_GRID := 384
 const PERFORMANCE_TERRAIN_GRID := 256
 
+# Kosmetische Sub-Grid-Rinnen des Terrain-Shaders. Die Physik altert von einer
+# scharfen zu einer runden Landschaft; eine konstante Detailstärke überzeichnete
+# dadurch Jahr 0 und ließ 100k im Vergleich leer aussehen. Der Renderkontrast
+# läuft in der Gegenrichtung und hält beide Zustände als dieselbe Welt lesbar,
+# ohne Sim-Höhen, Wasser oder Spielstände zu verändern.
+const TERRAIN_DETAIL_YOUNG := 0.16
+const TERRAIN_DETAIL_OLD := 0.42
+const TERRAIN_DETAIL_AGE_YEARS := 100000.0
+
 var sim: Object
 var N: int
 var world_size: float
@@ -181,13 +190,15 @@ var orbiting := false
 const PAN_SPEED_FACTOR := 0.4 # WASD-Geschwindigkeit relativ zur Zoom-Distanz
 
 # Leerlauf-Drossel (GPU): auch pausiert und ohne Eingabe zeichnet Godot die
-# Szene mit voller Display-Rate neu (Wasser-Schimmer, Schatten, Retina-
-# Viewport) und sättigt die GPU im Nichtstun. Nach IDLE_FPS_DELAY_MSEC ohne
-# Aktivität deckelt `Engine.max_fps`; jede Eingabe — auch gehaltene
-# WASD-Tasten, die nur gepollt werden — hebt den Deckel sofort wieder auf.
+# Szene sonst weiter (Wasser-Schimmer, Schatten, Retina-Viewport). Nach
+# IDLE_FPS_DELAY_MSEC ohne Aktivität wird der Renderloop ganz abgeschaltet;
+# die Spiellogik und Eingaben laufen laut Godot-Vertrag weiter. Jede Eingabe
+# weckt ihn vor dem nächsten sichtbaren Frame wieder auf. Der FPS-Deckel bleibt
+# als Rückfall und für die letzten aktiven Frames vor der Frist bestehen.
 const IDLE_FPS_CAP := 30
 const IDLE_FPS_DELAY_MSEC := 3000
 var last_activity_msec := 0
+var render_loop_suspended := false
 
 # Aktiv-Deckel (GPU): auch WÄHREND Zeitraffer und Sculpting ist die Bildrate
 # nicht die Rate, mit der sich etwas ändert. Ein Sim-Tick kommt alle
@@ -974,6 +985,14 @@ func _after_sim(force_rivers := false) -> void:
 
 var _shot_frame := 0
 var _fps_accum := 0.0
+
+## Ein Werkzeugstrich besitzt die Höhen, bis die Maustaste losgelassen wird.
+## Sonst arbeitet der globale Sim-Schritt bei 60 J/s gleichzeitig gegen Brush,
+## Höhen-Upload und Fluss-Nachzug. Das gewählte Tempo bleibt dabei unverändert;
+## der nächste Prozess-Frame nach dem Loslassen setzt den Zeitraffer fort.
+static func _simulation_should_step(rate: float, tool_active: bool) -> bool:
+	return rate > 0.0 and not tool_active
+
 func _process(delta: float) -> void:
 	# Selbst-Screenshot für autonome visuelle Verifikation (nur mit RS_SHOT-Env).
 	if OS.has_environment("RS_SHOT"):
@@ -994,10 +1013,24 @@ func _process(delta: float) -> void:
 
 	# Leerlauf-Drossel (s. IDLE_FPS_CAP): nur wenn wirklich nichts passiert —
 	# Zeitraffer, Sprung und Sculpting zählen als Aktivität.
-	if year_rate == 0.0 and not _jumping and not sculpting and Time.get_ticks_msec() - last_activity_msec > IDLE_FPS_DELAY_MSEC:
+	var idle := year_rate == 0.0 and not _jumping and not sculpting \
+		and Time.get_ticks_msec() - last_activity_msec > IDLE_FPS_DELAY_MSEC
+	if idle:
 		Engine.max_fps = IDLE_FPS_CAP
 	else:
 		Engine.max_fps = active_fps_cap
+	if idle != render_loop_suspended:
+		render_loop_suspended = idle
+		if idle:
+			RenderingServer.render_loop_enabled = false
+		else:
+			RenderingServer.render_loop_enabled = true
+
+	# Ohne Bild gibt es auch keine unsichtbaren Shader-, Kamera- oder Raycast-
+	# Aktualisierungen. Eingaben laufen im Engine-Loop weiter und wecken Main
+	# über `_input`; danach setzt der nächste Prozess-Frame hier normal fort.
+	if idle:
+		return
 
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if terrain_mat:
@@ -1011,7 +1044,7 @@ func _process(delta: float) -> void:
 		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS:
 			_refresh_debug()
 
-	if year_rate > 0.0:
+	if _simulation_should_step(year_rate, sculpting):
 		# Jahre über das Render-Intervall AKKUMULIEREN und nur EINMAL pro Render
 		# steppen — statt jeden Frame (die Sim-Schritte enthalten mehrere O(n²)-
 		# Pässe: computeFlow, outletIncision, Hangdiffusion, wave). Zwischen zwei
@@ -1232,6 +1265,7 @@ func _ensure_h_cache() -> void:
 ## `to_byte_array()` kostete je Update eine zusätzliche ~2,7-MB-Kopie.
 func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = true) -> void:
 	height_field.upload(terrain_mat, N, sim.heightsBytes())
+	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(sim.currentYear()))
 	if not update_overlays:
 		return
 
@@ -1258,6 +1292,14 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 		_update_water_gpu(water_blend)
 	else:
 		water_field.upload(terrain_mat, N, sim.waterFieldBytes(water_blend))
+
+## Alterungsabhängige Stärke der rein kosmetischen Shader-Rinnen. Smoothstep
+## vermeidet einen sichtbaren Knick am Anfang und bei 100k; danach bleibt der
+## alte Zustand stabil, statt immer kontrastreicher zu werden.
+static func terrain_detail_strength(years: float) -> float:
+	var age := clampf(years / TERRAIN_DETAIL_AGE_YEARS, 0.0, 1.0)
+	age = age * age * (3.0 - 2.0 * age)
+	return lerpf(TERRAIN_DETAIL_YOUNG, TERRAIN_DETAIL_OLD, age)
 
 ## Baut die GPU-Kette des Wasserfelds auf (s. `water_gpu`). Vier SubViewports in
 ## Baum-Reihenfolge: zwei Blur-Pässe, dann zwei Zustands-Targets fürs Ping-Pong
@@ -1526,6 +1568,15 @@ func _unhandled_input(event: InputEvent) -> void:
 				if t >= 0 and t < TOOLS.size():
 					current_tool = t
 					tool_buttons[t].set_pressed_no_signal(true)
+
+## Auch von Controls konsumierte Ereignisse müssen den Renderer wecken. Nur in
+## `_unhandled_input` käme etwa ein Klick auf „10 J/s" hier nie an, solange das
+## letzte Pausebild eingefroren ist.
+func _input(_event: InputEvent) -> void:
+	last_activity_msec = Time.get_ticks_msec()
+	if render_loop_suspended:
+		render_loop_suspended = false
+		RenderingServer.render_loop_enabled = true
 
 func _update_ring() -> void:
 	if OS.has_environment("RS_SHOT"): # autonome Screenshots: kein Pinsel-Ring

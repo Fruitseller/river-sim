@@ -204,8 +204,18 @@ gefüllt ist. `smoke.gd` erkennt genau diesen Fall und nennt den Befehl.
 **Headless-Screenshot** (visuelle Verifikation ohne Auge):
 
 ```sh
-RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game
+RS_STEP=20000 RS_SHOT=/pfad/shot.png RS_DIST=90 "$GODOT" --path game --maximized
 ```
+
+**Fenstergröße ist Teil des Tests:** visuelle Prüfungen sowie Messungen von GPU-
+Last, Bildrate und Eingabelatenz laufen IMMER im maximierten Fenster auf dem
+Zielbildschirm (`--maximized`). Godots kleines CLI-Standardfenster ist dafür
+keine gültige Gegenprobe: auf dem M4-Max-Referenz-Mac waren 1152×648 nur rund
+ein Sechsundzwanzigstel der Pixel des echten 6016×3260-Viewports und verbargen
+die Last, die der Nutzer im normalen Fenster sieht. Wer eine konkrete Meldung
+reproduziert, übernimmt deren Fenstergröße; die gemessene Viewport-Größe gehört
+mit ins Protokoll. Kleine Fenster bleiben nur für logische Vertragsprüfungen
+zulässig, deren Ergebnis nicht vom Renderer oder von Interaktion abhängt.
 
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
 `RenderState.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):

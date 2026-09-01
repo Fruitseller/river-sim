@@ -11,6 +11,51 @@ import XCTest
 /// `Main.gd` mit 24.0 rechnete.
 final class RenderContractTests: XCTestCase {
 
+    /// Ein FPS-Deckel reicht im Pausezustand nicht: Auch 30 Retina-Frames pro
+    /// Sekunde lasten die GPU aus, obwohl sich die Welt nicht ändert. Nach der
+    /// Leerlauffrist muss Main deshalb den Renderloop ganz abschalten und ihn
+    /// bei der nächsten Eingabe wieder einschalten.
+    func testPausedIdleDisablesRenderLoop() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        assertContains(main, "RenderingServer.render_loop_enabled = false",
+                       hint: "Pause-Leerlauf zeichnet keine Frames")
+        assertContains(main, "RenderingServer.render_loop_enabled = true",
+                       hint: "Eingabe weckt den Renderloop wieder auf")
+        assertContains(main, "if idle:\n\t\treturn",
+                       hint: "Leerlauf überspringt auch Shader-, Kamera- und Raycast-Arbeit")
+    }
+
+    /// Der Brush lädt seine Höhe sofort hoch und zieht das globale Flussnetz
+    /// selbst nach. Ein paralleler `sim.step` würde dieselben Zellen davor
+    /// weiterentwickeln und bei 60 J/s Wirkung und Hauptthreadzeit streitig
+    /// machen. Die Tempowahl bleibt stehen; nur aktive Striche sperren Schritte.
+    func testSculptingOwnsTheSimulationClock() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        assertContains(main, "if _simulation_should_step(year_rate, sculpting):",
+                       hint: "Zeitraffer tritt während eines Werkzeugstrichs zurück")
+    }
+
+    /// Die zusätzlichen Shader-Rinnen gleichen den SICHTBAREN Alterungskontrast
+    /// aus, ohne die Sim-Höhen nachträglich umzuschreiben: jung schwächer als der
+    /// frühere konstante Wert 0.30, alt stärker, dazwischen glatt und gedeckelt.
+    func testTerrainDetailCounterbalancesVisualAging() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
+        assertContains(main, "const TERRAIN_DETAIL_YOUNG := 0.16",
+                       hint: "Jahr 0 überzeichnet die Rinnen nicht")
+        assertContains(main, "const TERRAIN_DETAIL_OLD := 0.42",
+                       hint: "100k behält sichtbare Reliefstruktur")
+        assertContains(main, "const TERRAIN_DETAIL_AGE_YEARS := 100000.0",
+                       hint: "Rampe endet am größten UI-Zeitsprung")
+        assertContains(main,
+                       "set_shader_parameter(\"detail_strength\", terrain_detail_strength(sim.currentYear()))",
+                       hint: "Shader-Kontrast folgt dem aktuellen Sim-Alter")
+        assertContains(main, "clampf(years / TERRAIN_DETAIL_AGE_YEARS, 0.0, 1.0)",
+                       hint: "Detailkontrast bleibt vor Jahr 0 und nach 100k gedeckelt")
+        assertContains(shader, "uniform float detail_strength = 0.16;",
+                       hint: "Editor- und Jahr-0-Default stimmen überein")
+    }
+
     func testHeightScaleIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.heightScale, 24.0)
         let main = try RepoSource.probe("game/scripts/Main.gd")
