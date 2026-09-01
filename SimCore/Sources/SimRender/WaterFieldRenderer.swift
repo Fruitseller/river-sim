@@ -653,10 +653,10 @@ public final class WaterFieldRenderer {
                         if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
                     }
                     let o = k * 4
-                    pout[o] = UInt8(min(max(sd[k], 0), 1) * 255)
-                    pout[o + 1] = UInt8(min(max(lk[k], 0), 1) * 255)
-                    pout[o + 2] = UInt8((min(max(dx, -1), 1) * 0.5 + 0.5) * 255)
-                    pout[o + 3] = UInt8((min(max(dz, -1), 1) * 0.5 + 0.5) * 255)
+                    pout[o] = byte01(sd[k])
+                    pout[o + 1] = byte01(lk[k])
+                    pout[o + 2] = byte01(min(max(dx, -1), 1) * 0.5 + 0.5)
+                    pout[o + 3] = byte01(min(max(dz, -1), 1) * 0.5 + 0.5)
                 }
                 }
             }}
@@ -709,10 +709,10 @@ public final class WaterFieldRenderer {
                 pdxS[k]   += bl * (dx    - pdxS[k])
                 pdzS[k]   += bl * (dz    - pdzS[k])
                 let o = k * 4
-                pout[o] = UInt8(min(max(psdS[k], 0), 1) * 255)
-                pout[o + 1] = UInt8(min(max(plakeS[k], 0), 1) * 255)
-                pout[o + 2] = UInt8((min(max(pdxS[k], -1), 1) * 0.5 + 0.5) * 255)
-                pout[o + 3] = UInt8((min(max(pdzS[k], -1), 1) * 0.5 + 0.5) * 255)
+                pout[o] = byte01(psdS[k])
+                pout[o + 1] = byte01(plakeS[k])
+                pout[o + 2] = byte01(min(max(pdxS[k], -1), 1) * 0.5 + 0.5)
+                pout[o + 3] = byte01(min(max(pdzS[k], -1), 1) * 0.5 + 0.5)
             }
             }
         }}}}}}

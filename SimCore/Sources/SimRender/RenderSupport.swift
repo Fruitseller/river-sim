@@ -30,6 +30,42 @@ func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
     return t * t * (3 - 2 * t)
 }
 
+/// Klemmt einen 0…1-Wert auf ein Byte — die EINE Umrechnung, mit der ALLE
+/// RGBA8-Puffer dieses Moduls enden (Makrofarbe, Materialgewichte, Wasserfeld,
+/// Δ-Karte). Vorher stand sie elfmal ausgeschrieben in `WaterFieldRenderer`
+/// und `TerrainDiagnostics`, dazu ein zwölftes Mal als privater Helfer in
+/// `TerrainColorRenderer`.
+///
+/// **Warum sie TOTAL ist und die alte Schreibweise es nicht war.**
+/// `UInt8(Double)` klemmt nicht, es BRICHT AB (Trap), sobald das Argument NaN
+/// oder ±∞ ist. Die vorgeschaltete Klemme fing das nicht: Swifts `min`/`max`
+/// sind als `y < x ? y : x` bzw. `y >= x ? y : x` definiert, geben bei einem
+/// NaN-Operanden also den ERSTEN zurück. Damit ist `max(NaN, 0)` wieder NaN
+/// und `min(NaN, 1)` ebenso — `UInt8(min(max(v, 0), 1) * 255)` war für NaN
+/// genau so tödlich wie `UInt8(v * 255)`.
+///
+/// Diese Asymmetrie ist der eigentliche Merksatz: **die Reihenfolge der
+/// Operanden entscheidet.** Die Rechen-Stufen davor schreiben durchweg die
+/// KONSTANTE zuerst (`min(1, …)`, `max(0, …)`) und wischen NaN damit beiläufig
+/// auf die Konstante weg; die Byte-Zeile schrieb den WERT zuerst und reichte
+/// ihn durch. Wer eine dieser Stufen umstellt, verliert diese unbeabsichtigte
+/// Absicherung — der letzte Schritt hält jetzt unabhängig davon.
+///
+/// Dass ungültige Zahlen hier nicht als „kann nicht passieren" gelten, steht im
+/// Modul selbst: `TerrainDiagnostics` zählt sie (Index `DBG_INVALID`), malt sie
+/// in der Δ-Karte magenta, und `Main.gd` warnt darüber. Ein Abbruch der
+/// Extension wäre die schlechtere Antwort als ein sichtbar falsches Pixel.
+/// NaN wird deshalb zu 0, ±∞ zu 0 bzw. 255.
+///
+/// Für ENDLICHE Werte ist das Ergebnis bit-identisch zur alten Schreibweise;
+/// an der Darstellung ändert sich also nichts (Wächter: `RenderByteTests`).
+@inline(__always)
+func byte01(_ value: Double) -> UInt8 {
+    guard value > 0 else { return 0 }   // NaN fällt hier heraus
+    guard value < 1 else { return 255 }
+    return UInt8(value * 255)
+}
+
 /// Feldwert an kontinuierlicher Grid-Position (bilinear, randgeklemmt).
 @inline(__always)
 func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Double {
