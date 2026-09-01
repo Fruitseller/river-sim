@@ -39,8 +39,12 @@ final class StateInventoryTests: XCTestCase {
     enum Storage {
         /// **persistent** — reist im Spielstand mit.
         case persistent(Persistence)
-        /// **abgeleitet** — bewusst NICHT im Inventar, weil ein Pass die
-        /// Eigenschaft neu ableitet, bevor irgendein Konsument sie liest.
+        /// **abgeleitet** — bewusst NICHT im Inventar, weil die Eigenschaft
+        /// deterministisch neu entsteht, bevor irgendein Konsument sie liest:
+        /// entweder leitet ein Pass sie je Schritt neu ab, oder
+        /// `init(allocating:)`/`restore` rekonstruieren sie aus Config bzw.
+        /// Seed (so bei `n`, `vegTypeFactor`, `noise`, `mfdMinA`,
+        /// `mfdFlatCell`).
         /// `clearedOnRestore`: muss `restore` sie zusätzlich von Hand leeren?
         case derived(reason: String, clearedOnRestore: Bool)
         /// **Scratch** — reiner Arbeitspuffer, den sein Pass vor dem ersten
@@ -345,16 +349,23 @@ final class StateInventoryTests: XCTestCase {
     private func restoreBody() throws -> String {
         let probe = try RepoSource.probe("SimCore/Sources/SimCore/Terrain.swift")
         let lines = probe.code.components(separatedBy: "\n")
+        struct NotFound: Error {}
         guard let start = lines.firstIndex(where: {
             $0.contains("func restore(_ s: TerrainState)")
         }) else {
             XCTFail("Terrain.restore(_:) nicht gefunden — Zurückspiel-Logik "
                     + "umbenannt? Der Wächter prüft sonst nichts.")
-            struct NotFound: Error {}
             throw NotFound()
         }
         let rest = lines[(start + 1)...]
-        let end = rest.firstIndex(where: { $0 == "    }" }) ?? rest.endIndex
+        // Fehlt die schließende Klammer (Klammerstil geändert?), laut
+        // fehlschlagen statt still den Datei-Rest als Körper zu prüfen.
+        guard let end = rest.firstIndex(where: { $0 == "    }" }) else {
+            XCTFail("Ende von Terrain.restore(_:) nicht gefunden (Marker "
+                    + "„    }\") — der Wächter prüfte sonst ein falsches "
+                    + "Intervall.")
+            throw NotFound()
+        }
         return rest[..<end].joined(separator: "\n")
     }
 }
