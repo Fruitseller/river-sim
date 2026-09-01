@@ -161,6 +161,9 @@ func _run() -> void:
 	if not _check_geometry_guard(n, sim.worldSize()):
 		quit(1)
 		return
+	if not _check_sculpt_owns_clock():
+		quit(1)
+		return
 
 	sim.step(500.0) # Welt verändern, damit das Laden etwas zurückholen MUSS
 	var load_err: String = sim.loadWorld(abs_save)
@@ -225,6 +228,25 @@ func _check_geometry_guard(n: int, world: float) -> bool:
 		push_error("FAIL: unlesbare Datei sollte die Geometrie-Sperre nicht auslösen")
 		ok = false
 	print("geometry_guard_ok=", ok)
+	main.free()
+	return ok
+
+## Während eines Werkzeugstrichs darf der globale Sim-Schritt nicht dieselben
+## Höhen gleichzeitig weiterentwickeln. Das gewählte Tempo bleibt erhalten und
+## läuft nach dem Loslassen weiter; nur die periodischen Schritte setzen aus.
+func _check_sculpt_owns_clock() -> bool:
+	var main: Node = load("res://scripts/Main.gd").new()
+	var ok := true
+	if not main._simulation_should_step(60.0, false):
+		push_error("FAIL: Zeitraffer läuft ohne Werkzeug nicht")
+		ok = false
+	if main._simulation_should_step(60.0, true):
+		push_error("FAIL: Zeitraffer konkurriert mit einem Werkzeugstrich")
+		ok = false
+	if main._simulation_should_step(0.0, false):
+		push_error("FAIL: Pause führt einen Sim-Schritt aus")
+		ok = false
+	print("sculpt_owns_clock_ok=", ok)
 	main.free()
 	return ok
 
