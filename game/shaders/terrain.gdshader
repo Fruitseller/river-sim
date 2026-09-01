@@ -7,13 +7,14 @@
 // ein See sichtbar ist, die FORM der Uferlinie und die Tiefe rechnet dieser
 // Shader per Pixel aus der Wassersäule (pond_at).
 //
-// Alle Schwellen, mit denen dieser Shader die Wasser-Kanäle liest, stehen
-// zusätzlich in SimCore/WaterRender.swift und werden von
-// SimCoreTests/WaterRenderTests.swift gegen DIESEN Quelltext verglichen — wer
-// hier eine Zahl ändert, muss sie dort mitziehen (sonst wird der Test rot).
-// Dasselbe gilt seit Issue #51 für die Wasser-OPTIK (Farben, Fresnel, Rauheit/
-// Specular, Strömungs-Schimmer): sie ist mit game/shaders/water.gdshader
-// identisch, damit Raster-Wasser und Band-Geometrie als EIN Wasser lesen.
+// Alle Schwellen, mit denen dieser Shader die Wasser-Kanäle liest, und die
+// Wasser-OPTIK (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer) kommen
+// als water_*-Uniforms über die Brücke (SimCore/WaterRender.swift →
+// SimRender.WaterUniforms → SimNode → Main.gd, Issues #91/#92) — hier steht
+// keine dieser Zahlen mehr. Die Optik ist mit game/shaders/water.gdshader
+// identisch (dieselben Uniforms), damit Raster-Wasser und Band-Geometrie als
+// EIN Wasser lesen; welcher Ausdruck welche Uniform liest, pinnt
+// SimCoreTests/WaterRenderTests.swift als Struktur-Vertrag.
 //
 // DETAIL-LAYER (runevision-Erosionsfilter, Shadertoy wXcfWn, MPL-2.0): pro Pixel
 // werden Sub-Grid-Erosionsrinnen auf die Sim-Heightmap gerechnet (Phacelle-Noise
@@ -39,6 +40,9 @@ uniform sampler2D water_tex : filter_linear, repeat_disable;
 // setzt Main.gd den Uniform ohnehin; der Default zählt, wo das Material OHNE
 // SimNode läuft (Editor-Vorschau) — er stand auf 26.0 und zeigte dort ein 8 %
 // zu hohes Terrain. Wächter: SimCoreTests/RenderContractTests.swift.
+// Bewusst MIT Literal-Default trotz #92 (das die water_*-Defaults abgeschafft
+// hat): ohne ihn wäre die Editor-Vorschau ein flaches Brett, während
+// unkalibriertes Wasser dort nur falsch getönt ist — der Wächter hält die Kopie.
 uniform float hscale = 24.0;
 uniform float world_size = 100.0;
 uniform float grid_n = 256.0;
@@ -66,36 +70,36 @@ uniform bool detail_enabled = true;
 uniform bool material_enabled = true;
 uniform bool debug_difference = false;
 
-// Wasser-Kalibrierung über die Brücke (Issue #91, Expand-Schritt): dieselben
-// Zahlen wie die Literale im Body unten, als Uniform-Default. Main.gd
-// überschreibt sie beim Aufbau mit SimRender.WaterUniforms; der Body liest
-// vorerst weiter seine Literale — der Umstieg auf die Uniforms ist der
-// Contract-Schritt. Defaults gepinnt von SimCoreTests/WaterUniformsTests.swift,
-// End-to-End von game/tests/water_uniforms.gd.
-uniform float water_lake_gate_lo = 0.04;
-uniform float water_lake_gate_hi = 0.35;
-uniform float water_river_mask_lo = 0.16;
-uniform float water_river_mask_hi = 0.45;
-uniform float water_shore_lo = 0.09;
-uniform float water_shore_hi = 0.16;
-uniform float water_pond_contour_lo = 0.003;
-uniform float water_pond_contour_hi = 0.02;
-uniform float water_geometry_lift_lo = 0.015;
-uniform float water_geometry_lift_hi = 0.05;
-uniform float water_lake_depth_lo = 0.004;
-uniform float water_lake_depth_span = 0.05;
-uniform float water_fresnel_exponent = 5.0;
-uniform float water_fresnel_sky_mix = 0.55;
-uniform float water_opacity_shallow = 0.55;
-uniform float water_opacity_deep = 0.95;
-uniform float water_roughness_steep = 0.34;
-uniform float water_roughness_grazing = 0.08;
-uniform float water_specular_steep = 0.55;
-uniform float water_specular_grazing = 1.0;
-uniform vec3 water_shallow_color = vec3(0.18, 0.37, 0.42);
-uniform vec3 water_deep_color = vec3(0.03, 0.12, 0.26);
-uniform vec3 water_sky_reflect_color = vec3(0.62, 0.7, 0.76);
-uniform vec3 water_flow_shimmer_color = vec3(0.012, 0.018, 0.025);
+// Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
+// Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
+// Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
+// die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null).
+// Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
+// game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
+uniform float water_lake_gate_lo;
+uniform float water_lake_gate_hi;
+uniform float water_river_mask_lo;
+uniform float water_river_mask_hi;
+uniform float water_shore_lo;
+uniform float water_shore_hi;
+uniform float water_pond_contour_lo;
+uniform float water_pond_contour_hi;
+uniform float water_geometry_lift_lo;
+uniform float water_geometry_lift_hi;
+uniform float water_lake_depth_lo;
+uniform float water_lake_depth_span;
+uniform float water_fresnel_exponent;
+uniform float water_fresnel_sky_mix;
+uniform float water_opacity_shallow;
+uniform float water_opacity_deep;
+uniform float water_roughness_steep;
+uniform float water_roughness_grazing;
+uniform float water_specular_steep;
+uniform float water_specular_grazing;
+uniform vec3 water_shallow_color;
+uniform vec3 water_deep_color;
+uniform vec3 water_sky_reflect_color;
+uniform vec3 water_flow_shimmer_color;
 
 varying vec2 v_uv;
 
@@ -117,11 +121,11 @@ float pond_at(vec2 uv, float h_val) {
 }
 
 // Sichtbarkeits-Gate der Seen (water_tex.g: Komponenten-Fade, geblurt) — WO
-// Wasser gemalt/gehoben wird; die FORM macht pond_at. Fenster 0.04/0.35 lässt
-// den Blur-Halo am Ufer durch und schaltet ab Komponenten-Fade 0.35 voll
+// Wasser gemalt/gehoben wird; die FORM macht pond_at. Das Fenster lässt den
+// Blur-Halo am Ufer durch und schaltet ab WaterRender.lakeGateHi voll
 // (Kalibrier-Herleitung: WaterFieldRenderer, fadeLo/HiCells).
 float lake_gate_at(vec2 uv) {
-	return smoothstep(0.04, 0.35, texture(water_tex, uv).g);
+	return smoothstep(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g);
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +283,7 @@ void vertex() {
 	// So faden kleine Seen als Ganzes ein: Geometrie und Farbe zusammen.
 	float hfv = texture(hf_tex, uv).r;
 	float pond = pond_at(uv, hraw);
-	float lift = smoothstep(0.015, 0.05, pond) * lake_gate_at(uv);
+	float lift = smoothstep(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
 	VERTEX.y = mix(hraw, hfv, lift) * hscale;
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
@@ -445,18 +449,18 @@ void fragment() {
 	float stream = w.r;
 	float lake_gate = w.g;
 	vec2 dir = w.ba * 2.0 - 1.0;
-	float riverMask = smoothstep(0.16, 0.45, stream);
+	float riverMask = smoothstep(water_river_mask_lo, water_river_mask_hi, stream);
 	float pond = pond_at(v_uv, hval);
-	float lakeMask = smoothstep(0.003, 0.02, pond) * lake_gate_at(v_uv);
+	float lakeMask = smoothstep(water_pond_contour_lo, water_pond_contour_hi, pond) * lake_gate_at(v_uv);
 	float wet = max(riverMask, lakeMask);
 
-	float dry = 1.0 - smoothstep(0.003, 0.02, pond);
-	float shore = smoothstep(0.09, 0.16, max(stream, lake_gate)) * (1.0 - wet) * dry;
+	float dry = 1.0 - smoothstep(water_pond_contour_lo, water_pond_contour_hi, pond);
+	float shore = smoothstep(water_shore_lo, water_shore_hi, max(stream, lake_gate)) * (1.0 - wet) * dry;
 	vec3 shore_col = vec3(0.42, 0.37, 0.29) * (0.85 + 0.3 * breakup);
 	terr = mix(terr, shore_col, shore * 0.35);
 	terr *= 1.0 - shore * 0.22;
 
-	float lake_depth = clamp((pond - 0.004) / 0.05, 0.0, 1.0) * lakeMask;
+	float lake_depth = clamp((pond - water_lake_depth_lo) / water_lake_depth_span, 0.0, 1.0) * lakeMask;
 	float depth = clamp(max(lake_depth, stream), 0.0, 1.0);
 	float speed = riverMask >= lakeMask ? 1.0 : 0.25;
 	vec2 d1 = normalize(length(dir) > 0.05 ? dir : vec2(0.7, 0.7));
@@ -465,6 +469,9 @@ void fragment() {
 	float p2 = dot(wp, d2) * 4.1 + dot(wp, d1) * 1.3 - u_time * 3.1 * speed;
 	float p3_wave = dot(wp, d1 + d2) * 6.3 - u_time * 7.3 * speed + 1.7;
 	float ripple_fade = 1.0 - smoothstep(50.0 * ws, 160.0 * ws, view_dist);
+	// Amplituden-Fenster der Kräusel: eigene Optik-Zahl dieses Shaders —
+	// numerisch zufällig gleich dem geometry_lift-Fenster, KEINE
+	// WaterRender-Konstante (das Band nutzt ein anderes Fenster, 0.02..0.05).
 	float amp = mix(0.015, 0.05, depth) * ripple_fade;
 	amp *= riverMask >= lakeMask ? 1.0 : 0.45;
 	vec2 grad = d1 * (2.3 * cos(p1)) * amp
@@ -474,30 +481,29 @@ void fragment() {
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
 	NORMAL = normalize(mix(NORMAL, water_n_vs, wet));
 
-	vec3 shallow = vec3(0.18, 0.37, 0.42);
-	vec3 deep = vec3(0.03, 0.12, 0.26);
-	vec3 water = mix(shallow, deep, depth);
+	vec3 water = mix(water_shallow_color, water_deep_color, depth);
 	vec3 bed = terr * mix(1.0, 0.55, wet);
-	float opacity = mix(0.55, 0.95, depth);
+	float opacity = mix(water_opacity_shallow, water_opacity_deep, depth);
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
-	float fresnel = pow(1.0 - ndv, 5.0);
-	vec3 sky = vec3(0.62, 0.7, 0.76);
-	water = mix(water, sky, fresnel * 0.55);
+	float fresnel = pow(1.0 - ndv, water_fresnel_exponent);
+	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
 
 	if (riverMask >= lakeMask && length(dir) > 0.05) {
 		float along = dot(wp, normalize(dir));
 		float flow = sin(along * 1.4 - u_time * 4.0) * 0.5
 			+ sin(along * 3.1 - u_time * 6.5 + 1.7) * 0.5;
-		water += flow * vec3(0.012, 0.018, 0.025);
+		water += flow * water_flow_shimmer_color;
 	}
 
 	float edge = wet * (1.0 - wet) * 4.0;
 	float foam_n = vnoise(wp * 7.0 - dir * u_time * 2.5 + vec2(0.0, u_time * 0.4));
+	// Schaum-Schwellen: eigene Optik-Zahl — numerisch zufällig gleich dem
+	// Deckkraft-Paar (water_opacity_*), KEINE WaterRender-Konstante.
 	float foam = smoothstep(0.55, 0.95, edge * (0.45 + 0.75 * foam_n)) * ripple_fade;
 	vec3 water_final = mix(bed, water, opacity);
 	water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * 0.45);
 	ALBEDO = mix(terr, water_final, wet);
-	ROUGHNESS = mix(land_roughness, mix(0.34, 0.08, fresnel), wet);
+	ROUGHNESS = mix(land_roughness, mix(water_roughness_steep, water_roughness_grazing, fresnel), wet);
 	METALLIC = 0.0;
-	SPECULAR = mix(0.5, mix(0.55, 1.0, fresnel), wet);
+	SPECULAR = mix(0.5, mix(water_specular_steep, water_specular_grazing, fresnel), wet);
 }

@@ -213,14 +213,13 @@ final class SimNode: Node {
         PackedByteArray(render.waterFieldBytes(terrain, blend: blend))
     }
 
-    // MARK: Wasser-Kalibrierung über die Brücke (Issue #91)
+    // MARK: Wasser-Kalibrierung über die Brücke (Issues #91/#92)
 
-    // Die Tabelle (Namen + Werte) lebt godot-frei in `SimRender.WaterUniforms`;
-    // hier wird sie nur als Packed*Arrays verpackt. `Main.gd` setzt die Werte
-    // beim Aufbau auf alle Wasser-Materialien — Namen und Werte sind paarweise
-    // über den Index verknüpft. Die Double→Float32-Verengung ist verlustfrei
-    // genug: GLSL-Uniform-Floats sind ohnehin einfach genau, und der Vergleich
-    // Uniform-Default ↔ Brückenwert läuft in `water_uniforms.gd` mit Toleranz.
+    // Die Tabellen (Namen + Werte) leben godot-frei in `SimRender.WaterUniforms`;
+    // hier werden sie nur als Packed*Arrays verpackt. `Main.gd` setzt die
+    // Uniform-Werte beim Aufbau auf alle Wasser-Materialien — Namen und Werte
+    // sind paarweise über den Index verknüpft. Die Double→Float32-Verengung ist
+    // verlustfrei genug: GLSL-Uniform-Floats sind ohnehin einfach genau.
 
     @Callable func waterScalarUniformNames() -> PackedStringArray {
         PackedStringArray(WaterUniforms.scalars.map(\.name))
@@ -238,6 +237,18 @@ final class SimNode: Node {
         PackedVector3Array(WaterUniforms.colors.map {
             Vector3(x: Float($0.value.r), y: Float($0.value.g), z: Float($0.value.b))
         })
+    }
+
+    // Vertragswerte der Godot-Wächter (`water_geometry.gd`, `river_ribbons.gd`,
+    // Issue #92) — als Float64, damit die GDScript-Seite exakt die Doubles der
+    // Kalibrierung vergleicht statt einer verengten Kopie.
+
+    @Callable func waterContractNames() -> PackedStringArray {
+        PackedStringArray(WaterUniforms.contract.map(\.name))
+    }
+
+    @Callable func waterContractValues() -> PackedFloat64Array {
+        PackedFloat64Array(WaterUniforms.contract.map(\.value))
     }
 
     // MARK: Sculpting

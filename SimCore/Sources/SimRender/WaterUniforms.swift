@@ -1,17 +1,16 @@
 import SimCore
 
-/// Wasser-Kalibrierung als benannte Uniform-Werte (Issue #91).
+/// Wasser-Kalibrierung als benannte Werte für die Brücke (Issues #91/#92).
 ///
-/// Expand-Schritt der Migration weg vom Substring-Vertrag: dieselben Zahlen,
-/// die die Shader heute als Literal tragen, reisen zusätzlich über die Brücke
-/// (`SimNode` → `Main.gd`) und überschreiben gleichnamige Shader-Uniforms,
-/// deren Default das bisherige Literal ist. Die Shader-Bodies lesen vorerst
-/// weiter ihre Literale; erst der Contract-Schritt stellt sie auf die Uniforms
-/// um und baut die Text-Wächter zurück.
+/// Contract-Schritt der Migration weg vom Substring-Vertrag: die Werte reisen
+/// NUR noch über die Brücke (`SimNode` → `Main.gd`) und setzen gleichnamige
+/// Shader-Uniforms; die Shader deklarieren sie ohne Default und lesen sie im
+/// Body. Ein Literal-Default wäre wieder eine Kopie — die Editor-Vorschau
+/// ohne SimNode ist damit bewusst unkalibriert (alles Null).
 ///
-/// Die einzige QUELLE der Zahlen bleibt `SimCore.WaterRender` — diese Tabelle
-/// vergibt nur Namen. Wächter: `SimCoreTests/WaterUniformsTests.swift` (Namen,
-/// Shader-Defaults, Brücke, `Main.gd`) und End-to-End
+/// Die einzige QUELLE der Zahlen bleibt `SimCore.WaterRender` — diese Tabellen
+/// vergeben nur Namen. Wächter: `SimCoreTests/WaterUniformsTests.swift`
+/// (Namen, default-freie Deklarationen, Brücke, `Main.gd`) und End-to-End
 /// `game/tests/water_uniforms.gd` (jede deklarierte Uniform wird gesetzt).
 public enum WaterUniforms {
 
@@ -54,5 +53,31 @@ public enum WaterUniforms {
         ("water_flow_shimmer_color", WaterRender.flowShimmerColor),
         ("water_delta_plume_color", WaterRender.deltaPlumeColor),
         ("water_oxbow_water_color", WaterRender.oxbowWaterColor),
+    ]
+
+    /// Vertragswerte der Godot-Wächter (Issue #92) — KEINE Shader-Uniforms,
+    /// sondern die Zahlen, gegen die `game/tests/water_geometry.gd` und
+    /// `game/tests/river_ribbons.gd` prüfen. Bis #92 führten die beiden Tests
+    /// sie als eigene Konstanten (gehalten von einem Substring-Wächter); jetzt
+    /// reisen sie denselben Weg wie die Uniforms. Die Namen sind die
+    /// `WaterRender`-Bezeichner selbst, damit die Paarung lesbar bleibt.
+    ///
+    /// `pondContourLo` und `ribbonDeltaLo` speisen ZUSÄTZLICH gleichnamige
+    /// Uniforms oben — beide Zeilen lesen dieselbe Konstante, es entsteht
+    /// keine zweite Zahl. `mouthSearchCells` ist ein Int und reist als Double;
+    /// die GDScript-Seite castet zurück.
+    public static let contract: [(name: String, value: Double)] = [
+        ("ribbonKindRiver", WaterRender.ribbonKindRiver),
+        ("ribbonKindDelta", WaterRender.ribbonKindDelta),
+        ("ribbonKindOxbow", WaterRender.ribbonKindOxbow),
+        ("pondContourLo", WaterRender.pondContourLo),
+        ("lakeRawWetDepth", WaterRender.lakeRawWetDepth),
+        ("oxbowMaximumOpacity", WaterRender.oxbowMaximumOpacity),
+        ("mouthSearchCells", Double(WaterRender.mouthSearchCells)),
+        ("ribbonLakeSurfaceLift", WaterRender.ribbonLakeSurfaceLift),
+        ("ribbonSeaSurfaceSink", WaterRender.ribbonSeaSurfaceSink),
+        ("ribbonMinimumRank", WaterRender.ribbonMinimumRank),
+        ("ribbonMaxCrossSlope", WaterRender.ribbonMaxCrossSlope),
+        ("ribbonDeltaLo", WaterRender.ribbonDeltaLo),
     ]
 }

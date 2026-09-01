@@ -118,7 +118,9 @@ public enum WaterRender {
 
     // Nachbau der Stellen aus `terrain.gdshader`, die diese Kalibrierung lesen —
     // damit die REGRESSION (Saum ohne Wasser) headless prüfbar ist statt nur auf
-    // der GPU. Der Textvergleich in `WaterRenderTests` hält beide Seiten synchron.
+    // der GPU. Die Zahlen reisen als Uniforms zum Shader (`SimRender.
+    // WaterUniforms`, #91/#92); der Struktur-Vertrag in `WaterRenderTests` hält
+    // fest, welche Shader-Stelle welches Fenster liest.
 
     @inline(__always)
     static func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
@@ -636,8 +638,9 @@ public enum WaterRender {
     // `terrain.gdshader` (Raster-Wasser), `water.gdshader` (Band-Geometrie) und
     // `ocean.gdshader` malen DASSELBE Wasser. Farben, Fresnel und Glanz müssen
     // zusammenfallen, sonst zerfallen Mündung und Küste sichtbar in verschiedene
-    // Materialien. Alle Shader tragen die Werte als Literal; `WaterRenderTests`
-    // vergleicht ihre Quelltexte gegen diese Zahlen.
+    // Materialien. Die Werte reisen als `water_*`-Uniforms über die Brücke zu
+    // allen drei Shadern (`SimRender.WaterUniforms`, #91/#92); `WaterRenderTests`
+    // pinnt als Struktur, dass alle drei dieselben Uniforms lesen.
 
     /// Farbe seichten Wassers (das Bett scheint grünlich getrübt durch).
     public static let waterShallowColor = (r: 0.18, g: 0.37, b: 0.42)

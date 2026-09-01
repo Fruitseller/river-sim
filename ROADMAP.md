@@ -622,9 +622,13 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
 - **#51 — Render-Kalibrierung zentralisiert:** jede Schwelle, Breite und
   Wasser-Optik-Konstante steht in `WaterRender`/`RenderContract`. Seit #80/#82
   führen `WaterRenderTests` und `WaterRendererTests` die Swift-Seite direkt aus;
-  Quelltext-Vergleiche bleiben für `.gdshader` und `Main.gd`. Zahlen im Shader
-  deshalb in **Swift-Schreibweise** notieren (`0.7`, nicht `0.70`), sonst greift
-  der Textvergleich nicht.
+  Quelltext-Vergleiche bleiben für `.gdshader` und `Main.gd`. Seit #91/#92
+  reisen die Wasser-Werte als `water_*`-Uniforms über die Brücke
+  (`SimRender.WaterUniforms` → `SimNode` → `Main.gd`), die Shader deklarieren
+  sie default-frei und an Shader-Quelltext wird nur noch STRUKTUR verglichen
+  (welche Stelle welche Uniform liest); die frühere Schreibweisen-Regel gilt
+  nur noch für die restlichen `glsl(_:)`-Pins (`Main.gd`-Konstanten,
+  `hscale`-Default).
 - **#52 — CI verifiziert den Godot-Vertrag** (Job `godot-contract`) und nicht mehr
   nur den Sim-Kern; Godot-Version und -Prüfsumme sind in `scripts/fetch-godot.sh`
   gepinnt, Build-Stempel-Parität Shell ↔ GDScript ist getestet, und Mess-/Sweep-Läufe

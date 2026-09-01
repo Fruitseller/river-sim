@@ -5,7 +5,11 @@ import XCTest
 ///
 /// Die Zahlen selbst sind reine Arithmetik; genau ihre PAARUNGEN sind fragil:
 /// Komponenten-Fade ↔ Shader-Smoothstep ↔ Altarm-Stempel. Diese Tests pinnen
-/// die Kalibrierung und die nicht ausführbaren Shader-Literale.
+/// die Kalibrierung. Die Shader tragen die Zahlen seit #92 nicht mehr selbst —
+/// sie reisen als `water_*`-Uniforms über die Brücke (`SimRender.WaterUniforms`,
+/// Wächter: `WaterUniformsTests` + `game/tests/water_uniforms.gd`); die
+/// Quelltext-Wächter hier prüfen nur noch STRUKTUR: welche Shader-Stelle
+/// welche Uniform liest.
 /// `WaterRendererTests` führt die Anwendung im godot-freien `SimRender`-Target
 /// aus und prüft insbesondere die Band↔Raster-Übergabe.
 final class WaterRenderTests: XCTestCase {
@@ -140,30 +144,30 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertGreaterThan(WaterRender.lakeDepthSpan, 0)
     }
 
-    func testShaderMatchesCalibration() throws {
-        // Die Fenster stehen doppelt: hier als Zahl, im Shader als smoothstep/clamp.
-        // Ohne diesen Vergleich driften sie stumm auseinander — der Shader hat keine
-        // andere Testebene. Verglichen wird gegen den ECHTEN Quelltext von
-        // game/shaders/terrain.gdshader.
+    func testShaderReadsEveryWindowFromItsUniform() throws {
+        // Die ZAHLEN reisen seit #92 über die Brücke; was hier bleibt, ist der
+        // Struktur-Vertrag: WELCHE Shader-Stelle WELCHES Fenster liest. Ein
+        // vertauschtes Fenster (etwa shore-Uniforms im See-Gate) käme durch
+        // jeden End-to-End-Setz-Test — nur dieser Vergleich sieht es.
         let shader = try repoFile("game/shaders/terrain.gdshader")
-        assertContains(shader, "smoothstep(\(WaterRender.pondContourLo), "
-            + "\(WaterRender.pondContourHi), pond)",
-            hint: "Kontur-Fuß/Sattel der Uferlinie == WaterRender.pondContour*")
-        assertContains(shader, "smoothstep(\(WaterRender.lakeGateLo), "
-            + "\(WaterRender.lakeGateHi), texture(water_tex, uv).g)",
-            hint: "See-GATE == WaterRender.lakeGate*")
-        assertContains(shader, "smoothstep(\(WaterRender.riverMaskLo), "
-            + "\(WaterRender.riverMaskHi), stream)",
-            hint: "Fluss-INTENSITÄT == WaterRender.riverMask*")
-        assertContains(shader, "smoothstep(\(WaterRender.shoreLo), "
-            + "\(WaterRender.shoreHi), max(stream, lake_gate))",
-            hint: "Ufer-Saum == WaterRender.shore*")
-        assertContains(shader, "smoothstep(\(WaterRender.geometryLiftLo), "
-            + "\(WaterRender.geometryLiftHi), pond)",
-            hint: "Hub der Wasser-Geometrie == WaterRender.geometryLift*")
-        assertContains(shader, "clamp((pond - \(WaterRender.lakeDepthLo)) "
-            + "/ \(WaterRender.lakeDepthSpan), 0.0, 1.0)",
-            hint: "See-Tiefenrampe == WaterRender.lakeDepth*")
+        assertContains(shader,
+            "smoothstep(water_pond_contour_lo, water_pond_contour_hi, pond)",
+            hint: "Kontur-Fuß/Sattel der Uferlinie liest WaterRender.pondContour*")
+        assertContains(shader,
+            "smoothstep(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g)",
+            hint: "See-GATE liest WaterRender.lakeGate*")
+        assertContains(shader,
+            "smoothstep(water_river_mask_lo, water_river_mask_hi, stream)",
+            hint: "Fluss-INTENSITÄT liest WaterRender.riverMask*")
+        assertContains(shader,
+            "smoothstep(water_shore_lo, water_shore_hi, max(stream, lake_gate))",
+            hint: "Ufer-Saum liest WaterRender.shore*")
+        assertContains(shader,
+            "smoothstep(water_geometry_lift_lo, water_geometry_lift_hi, pond)",
+            hint: "Hub der Wasser-Geometrie liest WaterRender.geometryLift*")
+        assertContains(shader,
+            "clamp((pond - water_lake_depth_lo) / water_lake_depth_span, 0.0, 1.0)",
+            hint: "See-Tiefenrampe liest WaterRender.lakeDepth*")
     }
 
     // MARK: Geometrie-Wasser (Issue #34): Übergabe Band ↔ Raster
@@ -223,15 +227,15 @@ final class WaterRenderTests: XCTestCase {
     }
 
     func testWaterShaderMatchesRibbonContract() throws {
-        // Wie beim Terrain-Shader: die Fenster stehen doppelt (hier als Zahl,
-        // dort als smoothstep). Ohne Vergleich driften sie stumm auseinander.
+        // Wie beim Terrain-Shader: die Zahlen reisen, die STRUKTUR (welches
+        // Fenster den Typ-Kanal liest) bleibt der Quelltext-Vertrag.
         let shader = try repoFile("game/shaders/water.gdshader")
-        assertContains(shader, "smoothstep(\(WaterRender.ribbonStillLo), "
-            + "\(WaterRender.ribbonStillHi), v_kind)",
-            hint: "Stillwasser-Gewicht == WaterRender.ribbonStill*")
-        assertContains(shader, "smoothstep(\(WaterRender.ribbonDeltaLo), "
-            + "\(WaterRender.ribbonDeltaHi), v_kind)",
-            hint: "Delta-Gewicht == WaterRender.ribbonDelta*")
+        assertContains(shader,
+            "smoothstep(water_ribbon_still_lo, water_ribbon_still_hi, v_kind)",
+            hint: "Stillwasser-Gewicht liest WaterRender.ribbonStill*")
+        assertContains(shader,
+            "smoothstep(water_ribbon_delta_lo, water_ribbon_delta_hi, v_kind)",
+            hint: "Delta-Gewicht liest WaterRender.ribbonDelta*")
         assertContains(shader, "v_kind = UV2.x",
             hint: "Typ-Kanal des Vertex-Vertrags == UV2.x")
     }
@@ -457,82 +461,43 @@ final class WaterRenderTests: XCTestCase {
 
     func testAllWaterShadersShareTheSameWater() throws {
         // Raster-Wasser, Band-Geometrie und offenes Meer malen dasselbe Wasser.
-        // Driften Farben oder Fresnel, zerfällt die Küste beziehungsweise eine
-        // Mündung sichtbar in verschiedene Materialien.
+        // Die Farb- und Glanzwerte reisen als Uniforms (#92); hier bleibt der
+        // Struktur-Vertrag, dass alle drei Shader DIESELBEN Uniforms an den
+        // gleichgeformten Stellen lesen — läse einer eine andere (oder gar
+        // keine), zerfielen Küste und Mündung sichtbar in Materialien.
         let terrain = try repoFile("game/shaders/terrain.gdshader")
         let water = try repoFile("game/shaders/water.gdshader")
         let ocean = try repoFile("game/shaders/ocean.gdshader")
         for (name, shader) in [("terrain", terrain), ("water", water), ("ocean", ocean)] {
-            assertContains(shader, "vec3 shallow = \(glsl(WaterRender.waterShallowColor));",
-                           hint: "\(name): Seicht-Farbe == WaterRender.waterShallowColor")
-            assertContains(shader, "vec3 deep = \(glsl(WaterRender.waterDeepColor));",
-                           hint: "\(name): Tief-Farbe == WaterRender.waterDeepColor")
-            assertContains(shader, "vec3 sky = \(glsl(WaterRender.skyReflectColor));",
-                           hint: "\(name): Himmels-Ton == WaterRender.skyReflectColor")
-            assertContains(shader, "pow(1.0 - ndv, \(glsl(WaterRender.fresnelExponent)))",
-                           hint: "\(name): Fresnel-Exponent == WaterRender.fresnelExponent")
-            assertContains(shader, "mix(water, sky, fresnel * \(glsl(WaterRender.fresnelSkyMix)))",
-                           hint: "\(name): Himmels-Anteil == WaterRender.fresnelSkyMix")
-            assertContains(shader, "mix(\(glsl(WaterRender.waterRoughnessSteep)), "
-                + "\(glsl(WaterRender.waterRoughnessGrazing)), fresnel)",
-                hint: "\(name): Rauheit == WaterRender.waterRoughness*")
-            assertContains(shader, "mix(\(glsl(WaterRender.waterSpecularSteep)), "
-                + "\(glsl(WaterRender.waterSpecularGrazing)), fresnel)",
-                hint: "\(name): Specular == WaterRender.waterSpecular*")
-            assertContains(shader, "flow * \(glsl(WaterRender.flowShimmerColor))",
-                           hint: "\(name): Strömungs-Schimmer == WaterRender.flowShimmerColor")
+            assertContains(shader, "mix(water_shallow_color, water_deep_color, depth)",
+                           hint: "\(name): Wasserfarbe liest WaterRender.water*Color")
+            assertContains(shader, "pow(1.0 - ndv, water_fresnel_exponent)",
+                           hint: "\(name): Fresnel liest WaterRender.fresnelExponent")
+            assertContains(shader,
+                "mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix)",
+                hint: "\(name): Himmels-Anteil liest WaterRender.fresnelSkyMix")
+            assertContains(shader,
+                "mix(water_roughness_steep, water_roughness_grazing, fresnel)",
+                hint: "\(name): Rauheit liest WaterRender.waterRoughness*")
+            assertContains(shader,
+                "mix(water_specular_steep, water_specular_grazing, fresnel)",
+                hint: "\(name): Specular liest WaterRender.waterSpecular*")
+            assertContains(shader, "flow * water_flow_shimmer_color",
+                           hint: "\(name): Strömungs-Schimmer liest WaterRender.flowShimmerColor")
         }
         // Flüsse und Seen lassen ihr lokales Bett durchscheinen. Das offene Meer
         // bleibt opak, weil sonst bei flacher Kamera die rechteckige Unterseite
         // des Terrain-Heightfields sichtbar wird.
         for (name, shader) in [("terrain", terrain), ("water", water)] {
-            assertContains(shader, "mix(\(glsl(WaterRender.waterOpacityShallow)), "
-                + "\(glsl(WaterRender.waterOpacityDeep)), depth)",
-                hint: "\(name): Deckkraft == WaterRender.waterOpacity*")
+            assertContains(shader, "mix(water_opacity_shallow, water_opacity_deep, depth)",
+                           hint: "\(name): Deckkraft liest WaterRender.waterOpacity*")
         }
         assertContains(ocean, "ALPHA = 1.0;", hint: "Offenes Meer ist opak")
         // Nur die Band-Geometrie kennt Typen: Delta-Fahne und Altarm-Wasser.
-        assertContains(water, glsl(WaterRender.deltaPlumeColor),
-                       hint: "Trübungsfahne == WaterRender.deltaPlumeColor")
-        assertContains(water, glsl(WaterRender.oxbowWaterColor),
-                       hint: "Altarm-Wasser == WaterRender.oxbowWaterColor")
-    }
-
-
-    /// Die Godot-Wächter (GPU-frei, aber nur MIT gebauter Extension lauffähig)
-    /// tragen die Vertragswerte als eigene Konstanten. Driften sie, prüfen
-    /// sie gegen eine Kalibrierung, die es nicht mehr gibt — zwei CI-Verträge
-    /// wären dann still entwertet. Beim SimRender-Umzug (#80/#82) verloren
-    /// gegangen, mit Issue #90 wiederhergestellt.
-    func testGodotGuardsPinTheSameContract() throws {
-        let geometry = try repoFile("game/tests/water_geometry.gd")
-        assertContains(geometry, "const KIND_RIVER := \(glsl(WaterRender.ribbonKindRiver))",
-                       hint: "Typ Fluss == WaterRender.ribbonKindRiver")
-        assertContains(geometry, "const KIND_DELTA := \(glsl(WaterRender.ribbonKindDelta))",
-                       hint: "Typ Delta == WaterRender.ribbonKindDelta")
-        assertContains(geometry, "const KIND_OXBOW := \(glsl(WaterRender.ribbonKindOxbow))",
-                       hint: "Typ Altarm == WaterRender.ribbonKindOxbow")
-        assertContains(geometry, "const POND_CONTOUR_LO := \(glsl(WaterRender.pondContourLo))",
-                       hint: "Kontur-Fuß == WaterRender.pondContourLo")
-        assertContains(geometry, "const LAKE_RAW_WET := \(glsl(WaterRender.lakeRawWetDepth))",
-                       hint: "Raster-See-Schwelle == WaterRender.lakeRawWetDepth")
-        assertContains(geometry, "const MAX_OXBOW_OPACITY := \(glsl(WaterRender.oxbowMaximumOpacity))",
-                       hint: "Altarm-Deckkraft == WaterRender.oxbowMaximumOpacity")
-        // Die eine Int-Konstante bewusst roh interpoliert („8"): `glsl()` nimmt
-        // Double und erzeugte „8.0" — das träfe den GDScript-Int nicht.
-        assertContains(geometry, "const MOUTH_SEARCH_CELLS := \(WaterRender.mouthSearchCells)",
-                       hint: "Mündungs-Suchweite == WaterRender.mouthSearchCells")
-        let ribbons = try repoFile("game/tests/river_ribbons.gd")
-        assertContains(ribbons, "const LAKE_SURFACE_LIFT := \(glsl(WaterRender.ribbonLakeSurfaceLift))",
-                       hint: "See-Versatz == WaterRender.ribbonLakeSurfaceLift")
-        assertContains(ribbons, "const SEA_SURFACE_SINK := \(glsl(WaterRender.ribbonSeaSurfaceSink))",
-                       hint: "Meer-Versatz == WaterRender.ribbonSeaSurfaceSink")
-        assertContains(ribbons, "const MAX_CROSS_SLOPE := \(glsl(WaterRender.ribbonMaxCrossSlope))",
-                       hint: "Quergefälle-Klemme des Wächters == WaterRender.ribbonMaxCrossSlope")
-        assertContains(ribbons, "const MIN_RANK := \(glsl(WaterRender.ribbonMinimumRank))",
-                       hint: "Hierarchie-Gate == WaterRender.ribbonMinimumRank")
-        assertContains(ribbons, "const KIND_DELTA_LO := \(glsl(WaterRender.ribbonDeltaLo))",
-                       hint: "Typ-Trennung Fluss/Delta == WaterRender.ribbonDeltaLo")
+        assertContains(water, "mix(water, water_delta_plume_color, delta * 0.5)",
+                       hint: "Trübungsfahne liest WaterRender.deltaPlumeColor")
+        assertContains(water, "mix(water, water_oxbow_water_color, still * 0.5)",
+                       hint: "Altarm-Wasser liest WaterRender.oxbowWaterColor")
     }
 
     func testExtensionKeepsWaterCalibrationOutOfMarshalling() throws {

@@ -1,13 +1,14 @@
 extends SceneTree
-## Headless-Wächter für den Uniform-Kanal der Wasser-Kalibrierung (Issue #91):
+## Headless-Wächter für den Uniform-Kanal der Wasser-Kalibrierung (#91/#92):
 ##   godot --headless --path game --script res://tests/water_uniforms.gd
 ##
-## Der Expand-Schritt verspricht: jede `water_*`-Uniform, die ein Shader
-## deklariert, wird beim Aufbau mit dem benannten Wert aus SimCore überschrieben
-## — keine bleibt still auf ihrem Default stehen. Geprüft wird:
+## Der Contract-Schritt verspricht: jede `water_*`-Uniform, die ein Shader
+## deklariert, bekommt ihren Wert AUSSCHLIESSLICH über die Brücke — keine
+## bleibt still auf ihrem Default stehen, und keine trägt einen Literal-Default
+## (das wäre wieder die Kopie der Kalibrierung, die #92 abschafft). Geprüft:
 ##  - die Brücke liefert die Tabelle konsistent (Namen ↔ Werte, eindeutig),
-##  - jede deklarierte `water_*`-Uniform steht in der Tabelle UND trägt den
-##    Tabellenwert als Default (beide Wege müssen dieselbe Zahl zeigen),
+##  - jede deklarierte `water_*`-Uniform steht in der Tabelle und ist
+##    default-frei deklariert,
 ##  - jeder Tabellenwert ist in mindestens einem Shader deklariert,
 ##  - Main.apply_water_calibration setzt jeden deklarierten Namen wirklich
 ##    (get_shader_parameter liefert den Brückenwert, nicht null).
@@ -101,13 +102,9 @@ func _run() -> void:
 				_fail("%s: %s ist als %s deklariert, die Brücke liefert aber %s"
 					% [path, name, kind, type_string(typeof(bridge[name]))])
 				continue
-			var default_text := ""
-			var eq := rest.find("=")
-			if eq >= 0:
-				default_text = rest.substr(eq + 1).strip_edges()
-			if not _default_matches(kind, default_text, bridge[name]):
-				_fail("%s: Default von %s (%s) != Brückenwert %s"
-					% [path, name, default_text, str(bridge[name])])
+			if rest.find("=") >= 0:
+				_fail("%s: %s trägt einen Literal-Default — der Wert reist über "
+					% [path, name] + "die Brücke, ein Default wäre eine Kopie (#92)")
 
 		# Anwendung auf ein echtes Material mit diesem Shader: jede deklarierte
 		# Uniform muss danach gesetzt sein (nicht null) und den Brückenwert tragen.
@@ -133,21 +130,6 @@ func _run() -> void:
 		return
 	print("WATER_UNIFORMS_OK")
 	quit(0)
-
-func _default_matches(kind: String, default_text: String, expected: Variant) -> bool:
-	if default_text.is_empty():
-		return false # Deklaration ohne Default — der zweite Weg fehlt.
-	if kind == "float":
-		return absf(float(default_text) - float(expected)) <= 1e-6
-	var inner := default_text.trim_prefix("vec3(").trim_suffix(")")
-	var parts := inner.split(",")
-	if parts.size() != 3:
-		return false
-	var v: Vector3 = expected
-	for i in 3:
-		if absf(float(parts[i].strip_edges()) - v[i]) > 1e-6:
-			return false
-	return true
 
 func _value_matches(got: Variant, expected: Variant) -> bool:
 	if got is Vector3 and expected is Vector3:

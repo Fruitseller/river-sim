@@ -8,22 +8,22 @@ uniform float world_size = 100.0;
 uniform float sea_level = 0.15;
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 
-// Wasser-Kalibrierung über die Brücke (Issue #91, Expand-Schritt): dieselben
-// Zahlen wie die Literale im Body unten, als Uniform-Default. Main.gd
-// überschreibt sie beim Aufbau mit SimRender.WaterUniforms; der Body liest
-// vorerst weiter seine Literale — der Umstieg auf die Uniforms ist der
-// Contract-Schritt. Defaults gepinnt von SimCoreTests/WaterUniformsTests.swift,
-// End-to-End von game/tests/water_uniforms.gd.
-uniform float water_fresnel_exponent = 5.0;
-uniform float water_fresnel_sky_mix = 0.55;
-uniform float water_roughness_steep = 0.34;
-uniform float water_roughness_grazing = 0.08;
-uniform float water_specular_steep = 0.55;
-uniform float water_specular_grazing = 1.0;
-uniform vec3 water_shallow_color = vec3(0.18, 0.37, 0.42);
-uniform vec3 water_deep_color = vec3(0.03, 0.12, 0.26);
-uniform vec3 water_sky_reflect_color = vec3(0.62, 0.7, 0.76);
-uniform vec3 water_flow_shimmer_color = vec3(0.012, 0.018, 0.025);
+// Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
+// Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
+// Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
+// die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null).
+// Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
+// game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
+uniform float water_fresnel_exponent;
+uniform float water_fresnel_sky_mix;
+uniform float water_roughness_steep;
+uniform float water_roughness_grazing;
+uniform float water_specular_steep;
+uniform float water_specular_grazing;
+uniform vec3 water_shallow_color;
+uniform vec3 water_deep_color;
+uniform vec3 water_sky_reflect_color;
+uniform vec3 water_flow_shimmer_color;
 
 varying vec2 v_world;
 
@@ -66,21 +66,18 @@ void fragment() {
 	NORMAL = water_n_vs;
 
 	float depth = clamp(0.82 + (noise2(p * 0.055) - 0.5) * 0.16, 0.0, 1.0);
-	vec3 shallow = vec3(0.18, 0.37, 0.42);
-	vec3 deep = vec3(0.03, 0.12, 0.26);
-	vec3 water = mix(shallow, deep, depth);
+	vec3 water = mix(water_shallow_color, water_deep_color, depth);
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
-	float fresnel = pow(1.0 - ndv, 5.0);
-	vec3 sky = vec3(0.62, 0.7, 0.76);
-	water = mix(water, sky, fresnel * 0.55);
+	float fresnel = pow(1.0 - ndv, water_fresnel_exponent);
+	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
 
 	float flow = sin(dot(p, swell_dir) * 1.4 - u_time * 4.0) * 0.5
 	           + sin(dot(p, swell_dir) * 3.1 - u_time * 6.5 + 1.7) * 0.5;
-	water += flow * vec3(0.012, 0.018, 0.025);
+	water += flow * water_flow_shimmer_color;
 
 	ALBEDO = water;
 	ALPHA = 1.0;
-	ROUGHNESS = mix(0.34, 0.08, fresnel);
+	ROUGHNESS = mix(water_roughness_steep, water_roughness_grazing, fresnel);
 	METALLIC = 0.0;
-	SPECULAR = mix(0.55, 1.0, fresnel);
+	SPECULAR = mix(water_specular_steep, water_specular_grazing, fresnel);
 }
