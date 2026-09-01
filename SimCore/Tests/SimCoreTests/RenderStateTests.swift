@@ -253,8 +253,11 @@ final class RenderStateTests: XCTestCase {
         var text = body
         // Lesende Wege, auf denen das Terrain die Brücke verlässt: der
         // Render-Zustand (liest, s. `RenderState`) und der Spielstand-Schreiber.
-        // Bis zum Zeilenende streichen, damit mehrzeilige Aufrufe mitgehen.
-        for reader in ["render\\.[A-Za-z]+\\([^\n]*", "WorldSnapshot\\.[A-Za-z]+\\([^\n]*"] {
+        // Bis zur ERSTEN schließenden Klammer streichen, auch über
+        // Zeilenumbrüche. Steht in einem Leser-Argument eine Klammer VOR dem
+        // `terrain`, bleibt es stehen und der Wächter wird laut rot — er kann
+        // dadurch fälschlich anschlagen, aber nie still grün werden.
+        for reader in ["render\\.[A-Za-z]+\\([^)]*", "WorldSnapshot\\.[A-Za-z]+\\([^)]*"] {
             text = text.replacingOccurrences(of: reader, with: "",
                                              options: .regularExpression)
         }
