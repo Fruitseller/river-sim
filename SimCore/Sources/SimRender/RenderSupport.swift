@@ -24,6 +24,17 @@ private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
     }
 }
 
+/// Weiche Stufe zwischen `edge0` und `edge1` — die EINE Fassung, die ALLE
+/// Render-Rampen dieses Moduls benutzen (Kaskaden-Übergabe und Mündungs-Fade
+/// der Bänder, Klippen-Gewicht der Materialien, Abfluss-Rampe der Deckkraft).
+/// Vorher stand sie zusätzlich als privater Zwilling in `TerrainColorRenderer`
+/// und einmal von Hand ausgeschrieben in `RiverRibbonRenderer`.
+///
+/// Wie bei `byte01` steht die KONSTANTE in beiden Klemmen zuerst
+/// (`min(1, max(0, …))`). Swifts `min`/`max` sind als `y < x ? y : x` bzw.
+/// `y >= x ? y : x` definiert und geben bei einem NaN-Operanden den ERSTEN
+/// zurück: so fällt ein NaN auf 0 statt durch die ganze Rampe zu wandern. Für
+/// ENDLICHE Werte ist das Ergebnis bit-identisch zur umgekehrten Schreibweise.
 @inline(__always)
 func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
     let t = min(1, max(0, (x - edge0) / (edge1 - edge0)))

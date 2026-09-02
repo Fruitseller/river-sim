@@ -248,8 +248,7 @@ public final class RiverRibbonRenderer {
                 // Dasselbe Fenster wie der Korridor-Stempel: beide fragen, ob
                 // dem gestempelten Bett real Wasser folgt (Issue #51).
                 let mM = WaterRender.corridorMask(streamMap: stream)
-                let x = min(max(pq[a] / creek, 0), 1)
-                let ramp = x * x * (3 - 2 * x) // smoothstep(0, creek, q)
+                let ramp = smoothstep(0, creek, pq[a])
                 var aQ = ramp
                 if ord >= 3 { aQ = max(aQ, 0.5) }
                 alpha[a] = aQ
