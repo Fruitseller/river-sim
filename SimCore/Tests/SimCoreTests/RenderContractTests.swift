@@ -68,7 +68,7 @@ final class RenderContractTests: XCTestCase {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(main, "const TERRAIN_DETAIL_YOUNG := 0.16",
                        hint: "Jahr 0 überzeichnet die Rinnen nicht")
-        assertContains(main, "const TERRAIN_DETAIL_OLD := 0.70",
+        assertContains(main, "const TERRAIN_DETAIL_OLD := 0.42",
                        hint: "100k behält sichtbare Reliefstruktur")
         assertContains(main, "const TERRAIN_DETAIL_AGE_YEARS := 100000.0",
                        hint: "Rampe endet am größten UI-Zeitsprung")

@@ -59,7 +59,7 @@ uniform float veg_alt_hi = 0.72;
 // Detail-Erosion: Skala in UV (0.006 ≈ 4 Sim-Zellen Wellenlänge der größten
 // Rinnen), Stärke = Höhenamplitude relativ zur Skala (wie im Original).
 uniform float detail_scale = 0.006;
-uniform float detail_strength = 0.16; // Jahr-0-Default; Main.gd fährt bis 0.7 bei 100k hoch
+uniform float detail_strength = 0.16; // Jahr-0-Default; Main.gd fährt bis 0.42 bei 100k hoch
 uniform float detail_shade = 0.20;     // Albedo-Abdunkelung in Rinnenböden
 uniform float detail_normal = 1.0;     // Anteil der Normal-Perturbation
 uniform bool detail_enabled = true;
