@@ -1573,6 +1573,18 @@ func _unhandled_input(event: InputEvent) -> void:
 ## `_unhandled_input` käme etwa ein Klick auf „10 J/s" hier nie an, solange das
 ## letzte Pausebild eingefroren ist.
 func _input(_event: InputEvent) -> void:
+	_wake_render_loop()
+
+## Fensterleisten-Aktionen — Maximieren, Wiederherstellen, Resize am Rand —
+## erzeugen KEIN InputEvent. Ohne eigenen Weckruf bliebe das eingefrorene
+## Pausebild danach skaliert im neuen Fenster stehen, ausgerechnet beim
+## Maximieren fürs Messprozedere (s. AGENTS.md, Fenstergröße ist Teil des
+## Tests). Größen- und Fokuswechsel wecken den Renderloop deshalb selbst.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_SIZE_CHANGED or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
+		_wake_render_loop()
+
+func _wake_render_loop() -> void:
 	last_activity_msec = Time.get_ticks_msec()
 	if render_loop_suspended:
 		render_loop_suspended = false

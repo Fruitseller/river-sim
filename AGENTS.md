@@ -225,7 +225,11 @@ Standard 1000 J., der Vorlauf taktet wie der Zeitraffer, nicht in EINEM Sprung),
 Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
 `RS_QUALITY` (`performance|balanced|quality`), `RS_RENDER_GRID`, `RS_DIAG`,
 `RS_DEBUG_DIFF` (Δ-Karte gleich an, für automatisierte Diagnose-Screenshots),
-`RS_FPS`, `RS_IDLE`, `RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
+`RS_FPS`, `RS_IDLE` (misst mit `RS_FPS` den Leerlauf statt des Zeitraffers;
+seit dem Renderloop-Abschalten bedeutet `RS_FPS avg` hier die
+Prozess-Iterationsrate unter dem `max_fps`-Deckel, nicht mehr gerenderte
+Frames — ältere Leerlauf-Messreihen sind damit nicht 1:1 vergleichbar),
+`RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
 der Wasser-Geometrie; A/B im selben Build; ohne den Schalter rendert die
 Geometrie), `RS_WATER_GPU` (Schwanzstufen des Raster-Wasserfelds — Blur, EWMA,
