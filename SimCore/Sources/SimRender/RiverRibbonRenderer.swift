@@ -364,11 +364,28 @@ public final class RiverRibbonRenderer {
             } else {
                 let mouthWidth = ribbonHalfWidthCells(pq[hi], cfg: terrain.cfg)
                 let mouthAlpha = alpha[hi]
+                // Die D8-Kette schreitet in GANZEN Zellen; der Enden-Taper
+                // (`taperTail`, 2 Zellen) fiele damit in ~0.5er-Alpha-Stufen je
+                // Segment — als Stufen sichtbar und Bruch des
+                // Glattheits-Vertrags (river_ribbons.gd: max 0.40 je Segment;
+                // gekippt auf eingelaufenen Welten, deren Läufe öfter über
+                // flache Aprons münden). Ein Mittelpunkt je Kettenglied
+                // halbiert die Schrittweite auf die der regulären Samples;
+                // den Spiegel bestimmt `applyWaterHandover` pro Stützpunkt
+                // ohnehin selbst.
+                var prevX = px[hi], prevZ = pz[hi]
                 for point in mouth {
+                    samples.append(RibbonSample(x: (prevX + point.x) * 0.5,
+                                                z: (prevZ + point.z) * 0.5,
+                                                halfWidth: mouthWidth,
+                                                alpha: mouthAlpha,
+                                                rank: rank[hi], surface: nil))
                     samples.append(RibbonSample(x: point.x, z: point.z,
                                                 halfWidth: mouthWidth,
                                                 alpha: mouthAlpha,
                                                 rank: rank[hi], surface: point.surface))
+                    prevX = point.x
+                    prevZ = point.z
                 }
                 // Der Überlappungs-Deckel kann mitten im flachen Apron greifen
                 // (dort ist die See-Übergabe noch > 0). Dann übernehmen die
@@ -470,6 +487,18 @@ public final class RiverRibbonRenderer {
             let ci = min(max(Int(samples[a].x.rounded()), 0), n - 1)
             let cj = min(max(Int(samples[a].z.rounded()), 0), n - 1)
             let k = cj * n + ci
+            // Der SEE-Fade liest die Wassersäule BILINEAR am Stützpunkt — wie
+            // der Alpha-Pass die Stream-Map: nearest-cell sprang an den
+            // Zellkanten des Ufersaums um bis zu ~0.5 Deckkraft in EINEM
+            // Segment (river_ribbons-Vertrag: max 0.40; auf eingelaufenen
+            // Welten mit vielen flachen Ponds entlang der Läufe kippte er).
+            // Er wirkt auch auf dem letzten TROCKENEN Stück vor dem Ufer
+            // (bilinearer Pond > 0 durch die Nachbarzelle): die Blende beginnt
+            // damit stetig VOR der nass/trocken-Zellkante statt auf ihr.
+            // `wlS > sea` hält das Meer draußen — dort gilt die Strecken-Regel.
+            let wlS = bilinearGrid(wl, samples[a].x, samples[a].z, n: n)
+            let lakePond = wlS > sea
+                ? max(wlS - bilinearGrid(h, samples[a].x, samples[a].z, n: n), 0) : 0
             guard let surface = openWaterSurface(k, h: h, wl: wl, sea: sea) else {
                 submergedCells = 0
                 // Über TROCKENEM Boden folgt das Band dem Gelände — auch dann,
@@ -482,6 +511,7 @@ public final class RiverRibbonRenderer {
                 // CI-Runner: 3,5 Welt-Einheiten über dem Boden, Issue #61).
                 // Es entscheidet die EIGENE Zelle des Stützpunkts.
                 samples[a].surface = nil
+                samples[a].alpha *= RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
                 continue
             }
             if a > 0 {
@@ -491,7 +521,7 @@ public final class RiverRibbonRenderer {
             samples[a].surface = surface
             samples[a].alpha *= surface <= sea
                 ? RiverRibbonRenderer.seaHandoverFade(submergedCells: submergedCells)
-                : RiverRibbonRenderer.lakeHandoverFade(pond: surface - h[k])
+                : RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
         }
     }
 
