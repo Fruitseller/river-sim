@@ -484,8 +484,10 @@ final class WaterRenderTests: XCTestCase {
         for (name, shader) in [("terrain", terrain), ("water", water), ("ocean", ocean)] {
             assertContains(shader, "mix(water_shallow_color, water_deep_color, depth)",
                            hint: "\(name): Wasserfarbe liest WaterRender.water*Color")
-            assertContains(shader, "pow(1.0 - ndv, water_fresnel_exponent)",
-                           hint: "\(name): Fresnel liest WaterRender.fresnelExponent")
+            assertContains(shader, "pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6))",
+                           hint: "\(name): Fresnel liest WaterRender.fresnelExponent "
+                               + "(max: pow(0.0, 0.0) ist GLSL-UB, Null-Uniform der "
+                               + "Editor-Vorschau)")
             assertContains(shader,
                 "mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix)",
                 hint: "\(name): Himmels-Anteil liest WaterRender.fresnelSkyMix")
