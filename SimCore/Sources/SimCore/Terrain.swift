@@ -342,10 +342,12 @@ public final class Terrain {
     /// Frisches Terrain: Puffer anlegen UND generieren. Der Default-Seed steht
     /// in `RenderContract` — er ist dieselbe Zahl, die die Godot-Schicht anzeigt
     /// und die GDExtension für ihr erstes Terrain nimmt (Issue #51).
+    /// `settleYears`: Einlauf der Generierung, s. `generate(seed:settleYears:)`.
     public convenience init(config: SimConfig = SimConfig(),
-                            seed: UInt32 = RenderContract.defaultSeed) {
+                            seed: UInt32 = RenderContract.defaultSeed,
+                            settleYears: Double = 0) {
         self.init(allocating: config, seed: seed)
-        generate(seed: seed)
+        generate(seed: seed, settleYears: settleYears)
     }
 
     /// Legt alle Puffer an, generiert aber NICHT — der Weg für die
@@ -476,7 +478,19 @@ public final class Terrain {
 
     // MARK: - Terrain-Generierung
 
-    public func generate(seed: UInt32) {
+    /// `settleYears` > 0 lässt die frische Welt so viele Jahre ECHTE Sim-Physik
+    /// einlaufen und stellt die Uhr danach auf Jahr 0 zurück — dieselbe Doktrin
+    /// wie `updateClimate(dt: 10000)` unten: der Einlauf ist ÄLTER als das
+    /// Spieljahr 0. Begründung (PR #106): das rohe Noise+Pre-Erosions-Relief
+    /// ist ein unphysikalischer Extremzustand (gestanzte Kerben-„Krater",
+    /// Nadel-Grate; auf dem 720er-Produktionsgrid Gratkrümmung ≈ −0.88 gegen
+    /// ≈ −0.03 bei 100k — Faktor 27, kalibriert war die Alterung auf n=160 mit
+    /// Faktor 2). Ein kurzer Lauf der Pässe, die danach ohnehin weiterlaufen,
+    /// entschärft genau diese Formen — junge und gealterte Welt sprechen
+    /// dieselbe Formensprache, die Jugend-Schärfe bleibt. Default 0: die
+    /// SimCore-Testwelten und alle Kalibrier-Messreihen bleiben unverändert;
+    /// den Produktionswert setzt die Brücke (`SimNode.generationSettleYears`).
+    public func generate(seed: UInt32, settleYears: Double = 0) {
         self.seed = seed
         self.years = 0
         self.dropsEmitted = 0
@@ -613,6 +627,18 @@ public final class Terrain {
         // Vegetation im eingeschwungenen Zustand starten.
         updateVegetation(years: 10000)
         seedMeander()
+        // Einlauf (s. Doc-Kommentar oben): VOR den Startzustands-Doktrinen
+        // darunter, damit Seespiegel und Playa-Kruste den EINGELAUFENEN Stand
+        // einfrieren. Getaktet wie der Zeitraffer (1000-Jahr-Chunks).
+        if settleYears > 0 {
+            var remaining = settleYears
+            while remaining > 0 {
+                let dt = min(1000, remaining)
+                step(dtYears: dt)
+                remaining -= dt
+            }
+            years = 0
+        }
         waterLevel = hf // Startzustand: Seespiegel = Füllstand (kein Einschwingen)
         // Playas starten mit ihrer Kruste (sie sind ÄLTER als das Spieljahr 0) —
         // sonst salzt eine seit der Generierung trockene Pfanne erst über die

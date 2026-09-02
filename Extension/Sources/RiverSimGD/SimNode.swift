@@ -23,8 +23,15 @@ final class SimNode: Node {
     /// `var`, weil ein geladener Spielstand seine EIGENE Config mitbringt
     /// (Issue #8): die Datei-Config ist autoritativ, also wird das Terrain beim
     /// Laden ersetzt statt in-place überschrieben.
+    /// Einlauf der Generierung (Jahre echte Sim-Physik, Uhr danach wieder auf 0;
+    /// Begründung und A/B-Bilder: `Terrain.generate(seed:settleYears:)`, PR #106).
+    /// Nur der Produktionspfad läuft ein — die SimCore-Testwelten (Default 0)
+    /// bleiben unverändert, wie bei den Perf-Flags in `productionConfig()`.
+    private static let generationSettleYears = 3000.0
+
     private var terrain = Terrain(config: SimNode.productionConfig(),
-                                  seed: RenderContract.defaultSeed)
+                                  seed: RenderContract.defaultSeed,
+                                  settleYears: SimNode.generationSettleYears)
     private var lastWorldBytes = 0
 
     /// Der gesamte Render-Zustand (die Renderer mit ihren EWMA-Feldern,
@@ -37,7 +44,8 @@ final class SimNode: Node {
     // MARK: Steuerung
 
     @Callable func generate(seed: Int) {
-        terrain.generate(seed: UInt32(truncatingIfNeeded: seed))
+        terrain.generate(seed: UInt32(truncatingIfNeeded: seed),
+                         settleYears: SimNode.generationSettleYears)
         render.invalidate(terrain, worldReplaced: true)
     }
 
