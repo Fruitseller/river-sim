@@ -154,12 +154,6 @@ public enum TerrainColorRenderer {
         return Buffers(colors: colors, surfaces: surfaces)
     }
 
-    @inline(__always)
-    private static func smoothstep(_ lo: Double, _ hi: Double, _ value: Double) -> Double {
-        let t = min(max((value - lo) / (hi - lo), 0), 1)
-        return t * t * (3 - 2 * t)
-    }
-
     // Meeresgrund und unmittelbarer Ufersaum. Landmaterialien entstehen im
     // Shader aus den Gewichten; diese Rampe muss dort keine Biompalette mehr
     // vortäuschen.
