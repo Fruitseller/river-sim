@@ -6,7 +6,11 @@ import SimCore
 /// NUR noch über die Brücke (`SimNode` → `Main.gd`) und setzen gleichnamige
 /// Shader-Uniforms; die Shader deklarieren sie ohne Default und lesen sie im
 /// Body. Ein Literal-Default wäre wieder eine Kopie — die Editor-Vorschau
-/// ohne SimNode ist damit bewusst unkalibriert (alles Null).
+/// ohne SimNode ist damit bewusst unkalibriert (alles Null). Damit „alles
+/// Null" dort nur unkalibriert heißt und nicht undefiniert (smoothstep mit
+/// edge0 >= edge1 ist GLSL-UB, die Tiefen-Rampe wäre 0/0 → NaN), klemmen die
+/// Shader ihre Fenster/Divisionen per Epsilon (`calib_window`, Review zu
+/// #105) — Totalität, keine Kalibrier-Kopie; gepinnt in `WaterRenderTests`.
 ///
 /// Die einzige QUELLE der Zahlen bleibt `SimCore.WaterRender` — diese Tabellen
 /// vergeben nur Namen. Wächter: `SimCoreTests/WaterUniformsTests.swift`

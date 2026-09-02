@@ -110,6 +110,16 @@ final class SourceProbeTests: XCTestCase {
         XCTAssertEqual(probe.count(of: ""), 0)
     }
 
+    func testProbeIdentifierCountIgnoresPrefixHits() {
+        // Review zu #105: `count(of:)` zählt Substrings — ein längerer Name
+        // mit gleichem Präfix erfüllte damit still den Vertrag des kürzeren.
+        let probe = SourceProbe("water_lo water_lo_scaled x_water_lo water_lo",
+                                language: .gdshader)
+        XCTAssertEqual(probe.count(of: "water_lo"), 4)
+        XCTAssertEqual(probe.count(ofIdentifier: "water_lo"), 2)
+        XCTAssertEqual(probe.count(ofIdentifier: ""), 0)
+    }
+
     func testProbeCapturesKeepOccurrenceOrder() throws {
         let probe = SourceProbe("\"mode\": 0\n\"mode\": 1\n\"mode\": 2", language: .gdscript)
         XCTAssertEqual(try probe.integers(pattern: "\"mode\": ([0-9]+)"), [0, 1, 2],

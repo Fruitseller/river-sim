@@ -13,6 +13,7 @@ extends SceneTree
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
+const WaterContract = preload("res://tests/water_contract.gd")
 
 # Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
 # über die Brücke geholt (SimNode.waterContractNames/Values) statt als eigene
@@ -46,7 +47,7 @@ func _run() -> void:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
-	var contract := _water_contract(sim)
+	var contract := WaterContract.fetch(sim)
 	lake_surface_lift = contract["ribbonLakeSurfaceLift"]
 	sea_surface_sink = contract["ribbonSeaSurfaceSink"]
 	min_rank = contract["ribbonMinimumRank"]
@@ -317,16 +318,6 @@ func _cell_value(f: PackedFloat32Array, n: int, world: float, x: float, z: float
 	var i := clampi(int(round((x + world * 0.5) / cs)), 0, n - 1)
 	var j := clampi(int(round((z + world * 0.5) / cs)), 0, n - 1)
 	return f[j * n + i]
-
-## Vertragstabelle der Brücke als Dictionary (Name → Wert). Ein fehlender Name
-## fällt beim Zugriff oben laut auf (Dictionary-Fehler), nicht still.
-func _water_contract(sim: Object) -> Dictionary:
-	var names: PackedStringArray = sim.waterContractNames()
-	var values: PackedFloat64Array = sim.waterContractValues()
-	var out := {}
-	for i in names.size():
-		out[names[i]] = values[i]
-	return out
 
 func _bilinear_height(h: PackedFloat32Array, n: int, world: float, x: float, z: float) -> float:
 	var cs := world / float(n - 1)

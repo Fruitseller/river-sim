@@ -73,7 +73,10 @@ uniform bool debug_difference = false;
 // Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
 // Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
 // Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
-// die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null).
+// die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null), aber
+// TOTAL: calib_window unten und max() an der Tiefen-Rampe sichern gegen die
+// Null-Uniforms ab (smoothstep mit edge0 >= edge1 ist laut GLSL-Spec
+// undefiniert, die Rampe wäre 0/0 → NaN bis in ALBEDO; Review zu #105).
 // Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
 // game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
 uniform float water_lake_gate_lo;
@@ -103,6 +106,14 @@ uniform vec3 water_flow_shimmer_color;
 
 varying vec2 v_uv;
 
+// Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
+// SimNode, s. Deklarationsblock oben): das Epsilon ist KEINE Kalibrier-Kopie,
+// nur eine Mindest-Fensterbreite gegen GLSL-undefiniertes smoothstep; mit
+// gesetzten Werten (hi > lo) ändert das max() nichts.
+float calib_window(float lo, float hi, float x) {
+	return smoothstep(lo, max(hi, lo + 1e-6), x);
+}
+
 // UV aus der Weltposition ableiten (statt Mesh-UV) → deckungsgleich mit der
 // Zellindizierung des Sim-Kerns und damit mit Flüssen/Wasser.
 vec2 world_uv(vec3 vert) {
@@ -125,7 +136,7 @@ float pond_at(vec2 uv, float h_val) {
 // Blur-Halo am Ufer durch und schaltet ab WaterRender.lakeGateHi voll
 // (Kalibrier-Herleitung: WaterFieldRenderer, fadeLo/HiCells).
 float lake_gate_at(vec2 uv) {
-	return smoothstep(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g);
+	return calib_window(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g);
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +294,7 @@ void vertex() {
 	// So faden kleine Seen als Ganzes ein: Geometrie und Farbe zusammen.
 	float hfv = texture(hf_tex, uv).r;
 	float pond = pond_at(uv, hraw);
-	float lift = smoothstep(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
+	float lift = calib_window(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
 	VERTEX.y = mix(hraw, hfv, lift) * hscale;
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
@@ -449,18 +460,18 @@ void fragment() {
 	float stream = w.r;
 	float lake_gate = w.g;
 	vec2 dir = w.ba * 2.0 - 1.0;
-	float riverMask = smoothstep(water_river_mask_lo, water_river_mask_hi, stream);
+	float riverMask = calib_window(water_river_mask_lo, water_river_mask_hi, stream);
 	float pond = pond_at(v_uv, hval);
-	float lakeMask = smoothstep(water_pond_contour_lo, water_pond_contour_hi, pond) * lake_gate_at(v_uv);
+	float lakeMask = calib_window(water_pond_contour_lo, water_pond_contour_hi, pond) * lake_gate_at(v_uv);
 	float wet = max(riverMask, lakeMask);
 
-	float dry = 1.0 - smoothstep(water_pond_contour_lo, water_pond_contour_hi, pond);
-	float shore = smoothstep(water_shore_lo, water_shore_hi, max(stream, lake_gate)) * (1.0 - wet) * dry;
+	float dry = 1.0 - calib_window(water_pond_contour_lo, water_pond_contour_hi, pond);
+	float shore = calib_window(water_shore_lo, water_shore_hi, max(stream, lake_gate)) * (1.0 - wet) * dry;
 	vec3 shore_col = vec3(0.42, 0.37, 0.29) * (0.85 + 0.3 * breakup);
 	terr = mix(terr, shore_col, shore * 0.35);
 	terr *= 1.0 - shore * 0.22;
 
-	float lake_depth = clamp((pond - water_lake_depth_lo) / water_lake_depth_span, 0.0, 1.0) * lakeMask;
+	float lake_depth = clamp((pond - water_lake_depth_lo) / max(water_lake_depth_span, 1e-6), 0.0, 1.0) * lakeMask;
 	float depth = clamp(max(lake_depth, stream), 0.0, 1.0);
 	float speed = riverMask >= lakeMask ? 1.0 : 0.25;
 	vec2 d1 = normalize(length(dir) > 0.05 ? dir : vec2(0.7, 0.7));
