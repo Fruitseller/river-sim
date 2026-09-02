@@ -28,13 +28,23 @@ private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
 /// Render-Rampen dieses Moduls benutzen (Kaskaden-Übergabe und Mündungs-Fade
 /// der Bänder, Klippen-Gewicht der Materialien, Abfluss-Rampe der Deckkraft).
 /// Vorher stand sie zusätzlich als privater Zwilling in `TerrainColorRenderer`
-/// und einmal von Hand ausgeschrieben in `RiverRibbonRenderer`.
+/// und zweimal von Hand ausgeschrieben in `RiverRibbonRenderer` (Abfluss-Rampe
+/// und Kanal-Deckkraft).
 ///
-/// Wie bei `byte01` steht die KONSTANTE in beiden Klemmen zuerst
-/// (`min(1, max(0, …))`). Swifts `min`/`max` sind als `y < x ? y : x` bzw.
-/// `y >= x ? y : x` definiert und geben bei einem NaN-Operanden den ERSTEN
-/// zurück: so fällt ein NaN auf 0 statt durch die ganze Rampe zu wandern. Für
-/// ENDLICHE Werte ist das Ergebnis bit-identisch zur umgekehrten Schreibweise.
+/// **Vorbedingung `edge0 < edge1`** — wie bei GLSLs `smoothstep`, und hier
+/// nicht erzwungen: bei `edge0 == edge1` teilt die Rampe durch 0, bei
+/// `edge0 > edge1` läuft sie rückwärts. Die Rampen dieses Moduls halten das
+/// ein; die einzige Kante, die nicht als Literal oder `WaterRender`-Konstante
+/// dasteht, ist `cfg.renderMinCells` (Default 320) in `RiverRibbonRenderer`
+/// und `WaterFieldRenderer`. Wer sie auf 0 oder negativ setzt, verlässt den
+/// Gültigkeitsbereich dieser Funktion.
+///
+/// INNERHALB dieser Vorbedingung steht — wie bei `byte01` — die KONSTANTE in
+/// beiden Klemmen zuerst (`min(1, max(0, …))`). Swifts `min`/`max` sind als
+/// `y < x ? y : x` bzw. `y >= x ? y : x` definiert und geben bei einem
+/// NaN-Operanden den ERSTEN zurück: so fällt ein NaN in `x` auf 0 statt durch
+/// die ganze Rampe zu wandern. Für ENDLICHE Werte ist das Ergebnis
+/// bit-identisch zur umgekehrten Schreibweise.
 @inline(__always)
 func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
     let t = min(1, max(0, (x - edge0) / (edge1 - edge0)))

@@ -291,9 +291,8 @@ public final class RiverRibbonRenderer {
                 alpha[a] *= 1 - w
             }
             let supportMean = supportSum / max(supportWeight, 1e-9)
-            let supportX = min(max((supportMean - WaterRender.ribbonSupportLo)
-                                   / WaterRender.ribbonSupportSpan, 0), 1)
-            let channelOpacity = supportX * supportX * (3 - 2 * supportX)
+            let channelOpacity = smoothstep(0, 1, (supportMean - WaterRender.ribbonSupportLo)
+                                                  / WaterRender.ribbonSupportSpan)
             for a in 0..<cnt { alpha[a] *= channelOpacity }
 
             // Diskrete Strahler-Zellen können an Netz-Kreuzungen verbleibende
