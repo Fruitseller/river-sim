@@ -17,8 +17,17 @@ const PERFORMANCE_TERRAIN_GRID := 256
 # dadurch Jahr 0 und ließ 100k im Vergleich leer aussehen. Der Renderkontrast
 # läuft in der Gegenrichtung und hält beide Zustände als dieselbe Welt lesbar,
 # ohne Sim-Höhen, Wasser oder Spielstände zu verändern.
+#
+# Kalibrierung per A/B-Screenshot (maximiert, RS_STEP=100000, Seed 1337):
+# 0.42 ließ die 100k-Hänge wellig und strukturlos — die eingebrannten
+# Pre-Erosions-Rinnen der Generierung sind dann weggeglättet, und der
+# Detail-Layer ersetzte sie nicht sichtbar. 0.70 stellt den Rinnen-Charakter
+# des jungen Zustands auf der alten Welt wieder her. Am jungen Ende ist der
+# Layer optisch fast unsichtbar (die ECHTEN Pre-Erosions-Rinnen dominieren,
+# A/B mit detail_enabled=false ununterscheidbar); YOUNG dient nur als
+# unaufdringlicher Sockel der Rampe.
 const TERRAIN_DETAIL_YOUNG := 0.16
-const TERRAIN_DETAIL_OLD := 0.42
+const TERRAIN_DETAIL_OLD := 0.70
 const TERRAIN_DETAIL_AGE_YEARS := 100000.0
 
 var sim: Object
