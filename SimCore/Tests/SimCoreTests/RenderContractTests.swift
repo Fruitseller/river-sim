@@ -14,15 +14,40 @@ final class RenderContractTests: XCTestCase {
     /// Ein FPS-Deckel reicht im Pausezustand nicht: Auch 30 Retina-Frames pro
     /// Sekunde lasten die GPU aus, obwohl sich die Welt nicht ändert. Nach der
     /// Leerlauffrist muss Main deshalb den Renderloop ganz abschalten und ihn
-    /// bei der nächsten Eingabe wieder einschalten.
+    /// bei der nächsten Eingabe wieder einschalten. Fensterleisten-Aktionen
+    /// (Maximieren, Resize) erzeugen kein InputEvent und brauchen einen eigenen
+    /// Weckruf — sonst steht das eingefrorene Pausebild skaliert im neuen
+    /// Fenster, ausgerechnet beim Maximieren fürs Messprozedere (AGENTS.md).
     func testPausedIdleDisablesRenderLoop() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "RenderingServer.render_loop_enabled = false",
                        hint: "Pause-Leerlauf zeichnet keine Frames")
         assertContains(main, "RenderingServer.render_loop_enabled = true",
                        hint: "Eingabe weckt den Renderloop wieder auf")
-        assertContains(main, "if idle:\n\t\treturn",
-                       hint: "Leerlauf überspringt auch Shader-, Kamera- und Raycast-Arbeit")
+        assertContains(main, "NOTIFICATION_WM_SIZE_CHANGED",
+                       hint: "Fenster-Resize/Maximieren weckt den Renderloop (kein InputEvent)")
+        assertContains(main, "NOTIFICATION_WM_WINDOW_FOCUS_IN",
+                       hint: "Fokuswechsel weckt den Renderloop (kein InputEvent)")
+
+        // Der Leerlauf-Ausstieg: whitespace-tolerant statt an exakte Tabs
+        // gebunden (eine kosmetische Umformatierung ist kein Vertragsbruch)
+        // — und POSITIONIERT: er muss NACH dem Renderloop-Umschalter stehen
+        // (sonst würde nie suspendiert) und VOR dem Sim-Schritt (sonst
+        // steppte die Pause weiter, nur unsichtbar).
+        let code = main.code
+        let exit = code.range(of: #"if idle:\s+return"#, options: .regularExpression)
+        XCTAssertNotNil(exit,
+                        "Leerlauf überspringt auch Shader-, Kamera- und Raycast-Arbeit")
+        let toggle = code.range(of: "render_loop_suspended = idle")
+        XCTAssertNotNil(toggle, "Leerlauf-Zustand schaltet den Renderloop um")
+        let simStep = code.range(of: "if _simulation_should_step(")
+        XCTAssertNotNil(simStep, "Sim-Schritt-Gate fehlt (s. testSculptingOwnsTheSimulationClock)")
+        if let exit, let toggle, let simStep {
+            XCTAssertLessThan(toggle.upperBound, exit.lowerBound,
+                              "Der Leerlauf-Ausstieg muss nach dem Renderloop-Umschalter stehen")
+            XCTAssertLessThan(exit.upperBound, simStep.lowerBound,
+                              "Der Leerlauf-Ausstieg muss vor dem Sim-Schritt stehen")
+        }
     }
 
     /// Der Brush lädt seine Höhe sofort hoch und zieht das globale Flussnetz
