@@ -11,7 +11,9 @@ uniform sampler2D height_tex : filter_linear, repeat_disable;
 // Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
 // Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
 // Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
-// die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null).
+// die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null), aber
+// TOTAL: max() am Fresnel-Exponenten sichert gegen die Null-Uniforms ab
+// (pow(0.0, 0.0) ist laut GLSL-Spec undefiniert; Review zu #105).
 // Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
 // game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
 uniform float water_fresnel_exponent;
@@ -68,7 +70,7 @@ void fragment() {
 	float depth = clamp(0.82 + (noise2(p * 0.055) - 0.5) * 0.16, 0.0, 1.0);
 	vec3 water = mix(water_shallow_color, water_deep_color, depth);
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
-	float fresnel = pow(1.0 - ndv, water_fresnel_exponent);
+	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
 	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
 
 	float flow = sin(dot(p, swell_dir) * 1.4 - u_time * 4.0) * 0.5

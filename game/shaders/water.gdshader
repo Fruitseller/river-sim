@@ -24,9 +24,10 @@ uniform float u_time = 0.0;
 // Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
 // Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
 // die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null), aber
-// TOTAL: calib_window unten sichert die Typ-Fenster gegen die Null-Uniforms
-// ab (smoothstep mit edge0 >= edge1 ist laut GLSL-Spec undefiniert; Review
-// zu #105).
+// TOTAL: calib_window unten sichert die Typ-Fenster, max() den
+// Fresnel-Exponenten gegen die Null-Uniforms ab (smoothstep mit
+// edge0 >= edge1 und pow(0.0, 0.0) sind laut GLSL-Spec undefiniert;
+// Review zu #105).
 // Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
 // game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
 uniform float water_ribbon_still_lo;
@@ -111,7 +112,7 @@ void fragment() {
 
 	// Fresnel: flacher Blick spiegelt Himmel (Ton wie terrain.gdshader).
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
-	float fresnel = pow(1.0 - ndv, water_fresnel_exponent);
+	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
 	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
 
 	// Strömungs-Schimmer stromab (Bewegung im Zeitraffer ablesbar) — ein Altarm
