@@ -161,12 +161,15 @@ final class WaterUniformsTests: XCTestCase {
         // gelesene Uniform wäre ein toter Kanal, den der End-to-End-Wächter
         // (er prüft nur „wird gesetzt") nicht sehen kann: jeder Name muss im
         // Quelltext deshalb mindestens zweimal stehen — Deklaration + Lesung.
+        // Gezählt wird als GANZER Bezeichner (Review zu #105): ein
+        // Substring-Zähler ließe eine Lesung von `water_shore_lo_scaled` als
+        // Lesung von `water_shore_lo` durchgehen.
         for (path, names) in Self.expectedScalars {
             let shader = try RepoSource.probe(path)
             for name in names {
                 assertContains(shader, "uniform float \(name);",
                                hint: "\(path): \(name) default-frei deklariert (#92)")
-                XCTAssertGreaterThanOrEqual(shader.count(of: name), 2,
+                XCTAssertGreaterThanOrEqual(shader.count(ofIdentifier: name), 2,
                                             "\(path): \(name) wird deklariert, aber nie gelesen")
             }
         }
@@ -175,7 +178,7 @@ final class WaterUniformsTests: XCTestCase {
             for name in names {
                 assertContains(shader, "uniform vec3 \(name);",
                                hint: "\(path): \(name) default-frei deklariert (#92)")
-                XCTAssertGreaterThanOrEqual(shader.count(of: name), 2,
+                XCTAssertGreaterThanOrEqual(shader.count(ofIdentifier: name), 2,
                                             "\(path): \(name) wird deklariert, aber nie gelesen")
             }
         }
@@ -256,13 +259,21 @@ final class WaterUniformsTests: XCTestCase {
         // eigene Konstanten (zuletzt gepinnt vom Zahl-Wächter aus #90). Jetzt
         // holen sie sie über die Brücke — hier ist nur die VERDRAHTUNG zu
         // prüfen; welchen Wert ein Name trägt, pinnt der ausführbare Spiegel
-        // `testEveryContractValueComesFromWaterRender`.
+        // `testEveryContractValueComesFromWaterRender`. Die Brücken-Aufrufe
+        // stehen seit dem Review zu #105 EINMAL im geteilten Helfer statt
+        // doppelt in beiden Skripten.
+        let helper = try RepoSource.probe("game/tests/water_contract.gd")
+        assertContains(helper, "waterContractNames()",
+                       hint: "der Helfer holt die Vertragsnamen über die Brücke")
+        assertContains(helper, "waterContractValues()",
+                       hint: "der Helfer holt die Vertragswerte über die Brücke")
         for path in ["game/tests/water_geometry.gd", "game/tests/river_ribbons.gd"] {
             let guardScript = try RepoSource.probe(path)
-            assertContains(guardScript, "waterContractNames()",
-                           hint: "\(path) holt die Vertragsnamen über die Brücke")
-            assertContains(guardScript, "waterContractValues()",
-                           hint: "\(path) holt die Vertragswerte über die Brücke")
+            assertContains(guardScript,
+                           "preload(\"res://tests/water_contract.gd\")",
+                           hint: "\(path) lädt den geteilten Vertrags-Helfer")
+            assertContains(guardScript, "WaterContract.fetch(sim)",
+                           hint: "\(path) holt die Vertragstabelle über den Helfer")
         }
     }
 

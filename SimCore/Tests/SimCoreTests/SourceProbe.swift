@@ -69,6 +69,29 @@ struct SourceProbe {
         return count
     }
 
+    /// Zählt Vorkommen als GANZER Bezeichner in der Code-Sicht: ein Treffer,
+    /// an dem links oder rechts ein Bezeichner-Zeichen anschließt, zählt
+    /// nicht. Für Namens-Verträge statt `count(of:)` nehmen (Review zu #105):
+    /// dort erfüllte sonst ein längerer Name mit gleichem Präfix
+    /// (`water_shore_lo_scaled`) den Vertrag des kürzeren still mit.
+    func count(ofIdentifier name: String) -> Int {
+        guard !name.isEmpty else { return 0 }
+        func isIdentChar(_ c: Character) -> Bool {
+            c.isLetter || c.isNumber || c == "_"
+        }
+        var count = 0
+        var searchStart = code.startIndex
+        while let range = code.range(of: name, range: searchStart..<code.endIndex) {
+            let boundedLeft = range.lowerBound == code.startIndex
+                || !isIdentChar(code[code.index(before: range.lowerBound)])
+            let boundedRight = range.upperBound == code.endIndex
+                || !isIdentChar(code[range.upperBound])
+            if boundedLeft && boundedRight { count += 1 }
+            searchStart = range.upperBound
+        }
+        return count
+    }
+
     /// Alle Treffer der ersten Capture-Gruppe, in Vorkommens-Reihenfolge.
     /// Reihenfolge über MEHRERE Dateien wäre Sortier-Zufall — Verträge, die
     /// Reihenfolge prüfen, lesen deshalb genau EINE Datei (Werkzeug-Tabelle,

@@ -149,25 +149,35 @@ final class WaterRenderTests: XCTestCase {
         // Struktur-Vertrag: WELCHE Shader-Stelle WELCHES Fenster liest. Ein
         // vertauschtes Fenster (etwa shore-Uniforms im See-Gate) käme durch
         // jeden End-to-End-Setz-Test — nur dieser Vergleich sieht es.
+        // Die Fenster laufen über `calib_window` (Review zu #105): ohne
+        // SimNode stehen die Uniforms auf 0, und smoothstep mit edge0 >= edge1
+        // ist laut GLSL-Spec undefiniert — das Epsilon dort ist Totalität,
+        // keine Kalibrier-Kopie.
         let shader = try repoFile("game/shaders/terrain.gdshader")
         assertContains(shader,
-            "smoothstep(water_pond_contour_lo, water_pond_contour_hi, pond)",
+            "float calib_window(float lo, float hi, float x)",
+            hint: "Fenster-Helfer existiert (Totalität der Editor-Vorschau)")
+        assertContains(shader,
+            "smoothstep(lo, max(hi, lo + 1e-6), x)",
+            hint: "Fenster-Helfer klemmt gegen edge0 >= edge1 (GLSL-UB)")
+        assertContains(shader,
+            "calib_window(water_pond_contour_lo, water_pond_contour_hi, pond)",
             hint: "Kontur-Fuß/Sattel der Uferlinie liest WaterRender.pondContour*")
         assertContains(shader,
-            "smoothstep(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g)",
+            "calib_window(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g)",
             hint: "See-GATE liest WaterRender.lakeGate*")
         assertContains(shader,
-            "smoothstep(water_river_mask_lo, water_river_mask_hi, stream)",
+            "calib_window(water_river_mask_lo, water_river_mask_hi, stream)",
             hint: "Fluss-INTENSITÄT liest WaterRender.riverMask*")
         assertContains(shader,
-            "smoothstep(water_shore_lo, water_shore_hi, max(stream, lake_gate))",
+            "calib_window(water_shore_lo, water_shore_hi, max(stream, lake_gate))",
             hint: "Ufer-Saum liest WaterRender.shore*")
         assertContains(shader,
-            "smoothstep(water_geometry_lift_lo, water_geometry_lift_hi, pond)",
+            "calib_window(water_geometry_lift_lo, water_geometry_lift_hi, pond)",
             hint: "Hub der Wasser-Geometrie liest WaterRender.geometryLift*")
         assertContains(shader,
-            "clamp((pond - water_lake_depth_lo) / water_lake_depth_span, 0.0, 1.0)",
-            hint: "See-Tiefenrampe liest WaterRender.lakeDepth*")
+            "clamp((pond - water_lake_depth_lo) / max(water_lake_depth_span, 1e-6), 0.0, 1.0)",
+            hint: "See-Tiefenrampe liest WaterRender.lakeDepth* (max: 0/0-NaN-Schutz)")
     }
 
     // MARK: Geometrie-Wasser (Issue #34): Übergabe Band ↔ Raster
@@ -231,10 +241,13 @@ final class WaterRenderTests: XCTestCase {
         // Fenster den Typ-Kanal liest) bleibt der Quelltext-Vertrag.
         let shader = try repoFile("game/shaders/water.gdshader")
         assertContains(shader,
-            "smoothstep(water_ribbon_still_lo, water_ribbon_still_hi, v_kind)",
+            "smoothstep(lo, max(hi, lo + 1e-6), x)",
+            hint: "Fenster-Helfer klemmt gegen edge0 >= edge1 (GLSL-UB, s. Terrain)")
+        assertContains(shader,
+            "calib_window(water_ribbon_still_lo, water_ribbon_still_hi, v_kind)",
             hint: "Stillwasser-Gewicht liest WaterRender.ribbonStill*")
         assertContains(shader,
-            "smoothstep(water_ribbon_delta_lo, water_ribbon_delta_hi, v_kind)",
+            "calib_window(water_ribbon_delta_lo, water_ribbon_delta_hi, v_kind)",
             hint: "Delta-Gewicht liest WaterRender.ribbonDelta*")
         assertContains(shader, "v_kind = UV2.x",
             hint: "Typ-Kanal des Vertex-Vertrags == UV2.x")
