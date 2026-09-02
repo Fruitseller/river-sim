@@ -124,6 +124,11 @@ public final class RenderState {
     // MARK: - Diagnose
 
     /// Setzt den Vergleichspunkt der Δ-Karte auf den aktuellen Zustand.
+    /// Abfluss-Dichte fürs Shader-Detail (R8) — s. `WaterFieldRenderer.flowDetailField`.
+    public func flowDetailBytes(_ terrain: Terrain) -> [UInt8] {
+        waterField.flowDetailField(terrain)
+    }
+
     public func captureDebugReference(_ terrain: Terrain) { diagnostics.capture(terrain) }
 
     /// Kennzahlen-Vertrag für GDScript — Reihenfolge: `TerrainDiagnostics.stats`.

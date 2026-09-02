@@ -213,6 +213,12 @@ final class SimNode: Node {
         PackedByteArray(render.waterFieldBytes(terrain, blend: blend))
     }
 
+    /// Abfluss-Dichte fürs Shader-Detail als R8-Byte-Buffer (n×n) — Kalibrierung
+    /// und Begründung: `WaterRender.flowDetailIntensity`.
+    @Callable func flowDetailBytes() -> PackedByteArray {
+        PackedByteArray(render.flowDetailBytes(terrain))
+    }
+
     // MARK: Wasser-Kalibrierung über die Brücke (Issues #91/#92)
 
     // Die Tabellen (Namen + Werte) leben godot-frei in `SimRender.WaterUniforms`;
