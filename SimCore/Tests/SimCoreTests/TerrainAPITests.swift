@@ -323,6 +323,28 @@ final class TerrainAPITests: XCTestCase {
         XCTAssertEqual(t.snow, snowBefore, "Schneebilanz hängt am Pinsel")
     }
 
+    // MARK: - generate(seed:settleYears:)
+
+    /// Einlauf der Generierung (PR #106): `settleYears` > 0 lässt echte
+    /// Sim-Physik laufen und stellt die Uhr auf Jahr 0 zurück — die Welt ist
+    /// eingelaufen (Kerben/Nadeln des rohen Reliefs entschärft), aber „neu".
+    /// Default 0 bleibt bit-identisch zum Stand ohne den Parameter.
+    func testGenerateSettleRunsRealPhysicsAndResetsTheClock() {
+        let c = cfg()
+        let raw = Terrain(config: c, seed: 1337)
+        let settled = Terrain(config: c, seed: 1337, settleYears: 200)
+        let settledAgain = Terrain(config: c, seed: 1337, settleYears: 200)
+
+        XCTAssertEqual(settled.years, 0, "Der Einlauf ist älter als das Spieljahr 0")
+        XCTAssertNotEqual(settled.h, raw.h, "200 Jahre Einlauf verändern die Welt")
+        XCTAssertEqual(settled.h, settledAgain.h, "Einlauf ist deterministisch je Seed")
+        XCTAssertEqual(settled.waterLevel, settled.hf,
+                       "Startzustands-Doktrin gilt auch nach dem Einlauf")
+
+        let explicitZero = Terrain(config: c, seed: 1337, settleYears: 0)
+        XCTAssertEqual(explicitZero.h, raw.h, "settleYears 0 == bisheriges Verhalten")
+    }
+
     // Die Pinsel-Helfer (`brushCells`, `roughness`, `assertUntouchedOutside`)
     // liegen seit #79 geteilt in `BrushTestSupport.swift` — `ToolContractTests`
     // braucht dieselbe Kreisgeometrie.

@@ -189,6 +189,18 @@ final class RenderContractTests: XCTestCase {
                        hint: "Erstes Terrain der GDExtension == RenderContract.defaultSeed")
     }
 
+    /// Der Produktions-Einlauf der Generierung (PR #106,
+    /// `Terrain.generate(seed:settleYears:)`) muss auf BEIDEN Brücken-Wegen
+    /// hängen — Start-Terrain und „Neues Terrain"-Knopf. Fehlte er auf einem,
+    /// bekämen Spieler zwei verschiedene Welt-Klassen aus demselben Seed.
+    func testBothBridgeGeneratePathsSettle() throws {
+        let bridge = try RepoSource.extensionSources()
+        assertContains(bridge, "settleYears: SimNode.generationSettleYears",
+                       hint: "Start-Terrain läuft ein")
+        XCTAssertEqual(bridge.count(of: "settleYears: SimNode.generationSettleYears"), 2,
+                       "Beide generate-Wege der Brücke (Init + @Callable) laufen ein")
+    }
+
     /// Der Default des `Terrain`-Initialisierers ist die dritte Kopie derselben
     /// Zahl — und die einzige, die sich hier AUSFÜHREN lässt: gleicher Seed →
     /// bit-gleiches Feld (Determinismus-Invariante des Projekts).
