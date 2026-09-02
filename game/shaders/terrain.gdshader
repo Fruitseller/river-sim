@@ -36,6 +36,12 @@ uniform sampler2D color_tex : filter_linear, repeat_disable;
 uniform sampler2D surface_tex : filter_linear, repeat_disable; // R Vegetation, G Fels, B Schnee/Eis, A Lithologie
 uniform sampler2D debug_difference_tex : filter_linear, repeat_disable;
 uniform sampler2D water_tex : filter_linear, repeat_disable;
+// Abfluss-Dichte fürs Erosions-Detail (R8, WaterFieldRenderer.flowDetailField):
+// log-normierte MFD-Abflussdichte unterhalb der Wasser-Sichtbarkeitsschwelle.
+// Bündelt die kosmetischen Rinnen in echten Abflussbahnen — ohne die Bindung
+// degeneriert der Layer auf gealterten, gleichförmig flachen Hängen zu einem
+// uniformen Tapeten-Muster (PR #106). Kalibrierung: WaterRender (SimCore).
+uniform sampler2D flow_tex : filter_linear, repeat_disable;
 // Default == Main.gd HSCALE == RenderContract.heightScale (Issue #51). Im Spiel
 // setzt Main.gd den Uniform ohnehin; der Default zählt, wo das Material OHNE
 // SimNode läuft (Editor-Vorschau) — er stand auf 26.0 und zeigte dort ein 8 %
@@ -332,8 +338,12 @@ void fragment() {
 		float fade_target = clamp((hval - sea_level) / 0.6 * 2.0 - 1.0, -1.0, 1.0);
 		float det_mag;
 		vec4 det = erosion_detail(v_uv, coarse_slope, fade_target, det_mag);
-		det_slope = det.yz * dfade * detail_normal;
-		det_shade = det.x / det_mag * dfade;
+		// Stärke folgt dem echten Abfluss (WaterRender.flowDetailGainLo/Hi):
+		// Rinnen bündeln sich in Abflussbahnen, abseits davon beruhigt sich
+		// der Layer unter den früheren Uniform-Look.
+		float flow_gain = mix(0.3, 1.8, texture(flow_tex, v_uv).r);
+		det_slope = det.yz * dfade * detail_normal * flow_gain;
+		det_shade = det.x / det_mag * dfade * flow_gain;
 		det_ridge = det.w * dfade;
 	}
 

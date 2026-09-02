@@ -81,6 +81,30 @@ final class RenderContractTests: XCTestCase {
                        hint: "Editor- und Jahr-0-Default stimmen überein")
     }
 
+    /// Der Detail-Layer allein degeneriert auf der gealterten Welt zu einem
+    /// uniformen Tapeten-Muster (Nutzer-Abnahme 2026-09-02): prozedurales Noise
+    /// bindet an keine echte Geländestruktur. Seit PR #106 bündelt die
+    /// Abfluss-Textur (`flow_tex`, R8 aus `WaterFieldRenderer.flowDetailField`)
+    /// die Rinnen dort, wo Wasser wirklich abfließt; das Stärke-Fenster des
+    /// Shaders muss dem Kalibrier-Vertrag in `WaterRender` folgen.
+    func testTerrainDetailFollowsRealDischarge() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
+        assertContains(main, "FieldTexture.new(\"flow_tex\", Image.FORMAT_R8)",
+                       hint: "Abfluss-Dichte reist als R8-Textur")
+        assertContains(main, "flow_field.upload(terrain_mat, N, sim.flowDetailBytes())",
+                       hint: "Main lädt das Abfluss-Feld mit den Overlays hoch")
+        assertContains(shader, "uniform sampler2D flow_tex",
+                       hint: "Terrain-Shader kennt die Abfluss-Textur")
+        assertContains(shader,
+                       "mix(\(glsl(WaterRender.flowDetailGainLo)), "
+                       + "\(glsl(WaterRender.flowDetailGainHi)), texture(flow_tex, v_uv).r)",
+                       hint: "Stärke-Fenster == WaterRender.flowDetailGainLo/Hi")
+        let bridge = try RepoSource.extensionSources()
+        assertContains(bridge, "render.flowDetailBytes(terrain)",
+                       hint: "SimNode marshallt das Abfluss-Feld nur durch")
+    }
+
     func testHeightScaleIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.heightScale, 24.0)
         let main = try RepoSource.probe("game/scripts/Main.gd")

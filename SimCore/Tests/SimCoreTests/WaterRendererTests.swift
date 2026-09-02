@@ -276,4 +276,40 @@ final class WaterRendererTests: XCTestCase {
     }
     return 0
   }
+
+  /// Abfluss-Feld fürs Shader-Detail (PR #106): die kosmetischen Rinnen des
+  /// Terrain-Shaders bündeln sich in ECHTEN Abflussbahnen; ohne die Bindung
+  /// degenerierte der Layer auf der gealterten Welt zu einem uniformen
+  /// Tapeten-Muster. Hier das Kalibrier-Verhalten plus die Feld-Eigenschaften.
+  func testFlowDetailFieldFollowsRealDischarge() {
+    let creek = SimConfig().renderMinCells
+    let floor = WaterRender.flowDetailFloorCells
+    // 0 unter dem Floor (Einzelzellen-Abfluss ist Rauschen) …
+    XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: 0, creekCells: creek), 0)
+    XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: floor, creekCells: creek), 0)
+    // … monoton dazwischen …
+    let mid = WaterRender.flowDetailIntensity(dischargeCells: 30, creekCells: creek)
+    XCTAssertGreaterThan(mid, 0)
+    XCTAssertLessThan(mid, WaterRender.flowDetailIntensity(dischargeCells: 100, creekCells: creek))
+    // … und gesättigt ab der Render-Schwelle (dort malt das sichtbare Wasser).
+    XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: creek, creekCells: creek), 1)
+    XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: creek * 50, creekCells: creek), 1)
+
+    let terrain = agedTerrain(years: 4000)
+    let renderer = WaterFieldRenderer()
+    let heights = terrain.h
+    let field = renderer.flowDetailField(terrain)
+    XCTAssertEqual(terrain.h, heights, "Render-Ableitung ändert die Physik nicht")
+    XCTAssertEqual(field.count, terrain.cfg.count)
+    var seaNonZero = 0
+    var levels = Set<UInt8>()
+    for k in 0..<field.count {
+      if terrain.h[k] <= terrain.cfg.sea, field[k] != 0 { seaNonZero += 1 }
+      levels.insert(field[k])
+    }
+    XCTAssertEqual(seaNonZero, 0, "Meer-Zellen tragen kein Detail-Gewicht")
+    XCTAssertGreaterThan(levels.count, 8,
+                         "Feld trägt eine Abfluss-HIERARCHIE, keine Binär-Maske")
+    XCTAssertEqual(field, renderer.flowDetailField(terrain), "deterministisch pro Zustand")
+  }
 }

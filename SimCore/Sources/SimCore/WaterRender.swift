@@ -560,6 +560,37 @@ public enum WaterRender {
     /// Quellen UNTER dem Boden propagieren nicht (kein Speckle-Verstärker).
     public static let continuityFloor = 0.3
 
+    // Abfluss-Modulation der kosmetischen Shader-Rinnen (Detail-Layer im
+    // terrain.gdshader): der Layer allein degeneriert auf der gealterten Welt
+    // zu einem uniformen Tapeten-Muster, weil er nirgends an echte Struktur
+    // gebunden ist (Nutzer-Abnahme 2026-09-02, PR #106). Das R8-Feld
+    // `WaterFieldRenderer.flowDetailField` trägt deshalb die log-normierte
+    // MFD-Abflussdichte UNTERHALB der Sichtbarkeits-Schwelle des Wassers, und
+    // der Shader konzentriert seine Rinnen dort, wo Wasser wirklich abfließt.
+
+    /// Untergrenze (Zellen Einzugsgebiet): darunter bleibt das Feld 0 —
+    /// Einzelzellen-Abfluss ist Rauschen, keine Rinne.
+    public static let flowDetailFloorCells = 3.0
+    /// Stärke-Fenster der Shader-Modulation: `mix(lo, hi, flow)` auf
+    /// `detail_strength`. Abseits der Abflussbahnen sinkt das Detail unter den
+    /// bisherigen Uniform-Look, in den Bahnen bündelt es sich. Die Literale im
+    /// Shader pinnt `RenderContractTests`.
+    public static let flowDetailGainLo = 0.3
+    /// s. `flowDetailGainLo`.
+    public static let flowDetailGainHi = 1.8
+
+    /// Intensität des Abfluss-Felds fürs Shader-Detail: 0 unter
+    /// `flowDetailFloorCells`, log-normiert bis 1 an der Render-Schwelle
+    /// `creekCells` (= `SimConfig.renderMinCells`) — ab dort malt das sichtbare
+    /// Wasser selbst, das Detail muss nicht weiter wachsen.
+    @inline(__always)
+    public static func flowDetailIntensity(dischargeCells: Double, creekCells: Double) -> Double {
+        guard dischargeCells > flowDetailFloorCells else { return 0 }
+        let ceiling = max(creekCells, flowDetailFloorCells * 2)
+        return min(1, log(dischargeCells / flowDetailFloorCells)
+                      / log(ceiling / flowDetailFloorCells))
+    }
+
     /// Verbreiterung: je Schwelle EIN Dilatations-Pass, der nur Läufe ÜBER der
     /// Schwelle weiter verbreitert → Breiten-Hierarchie (Bäche bleiben fadendünn).
     public static let widenThresholds = [0.55, 0.8]

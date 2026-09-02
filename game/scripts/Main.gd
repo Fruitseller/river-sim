@@ -140,6 +140,9 @@ var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF)
 var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8)
 var surface_field := FieldTexture.new("surface_tex", Image.FORMAT_RGBA8)
 var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8)
+# Abfluss-Dichte fürs Shader-Detail: bündelt die kosmetischen Erosionsrinnen in
+# echten Abflussbahnen statt als uniformes Muster (WaterRender.flowDetailIntensity).
+var flow_field := FieldTexture.new("flow_tex", Image.FORMAT_R8)
 
 # GPU-Schwanzstufen des Raster-Wasserfelds (siehe shaders/water_field_*.gdshader).
 # Die Aufbereitung des Felds bleibt in der Extension — ihre zwei teuren Stufen
@@ -1295,6 +1298,7 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 	# slope-/Habitat-Arbeit (bis Issue #93 lag er in SimNode).
 	color_field.upload(terrain_mat, N, sim.terrainColorBytes())
 	surface_field.upload(terrain_mat, N, sim.terrainSurfaceBytes())
+	flow_field.upload(terrain_mat, N, sim.flowDetailBytes())
 	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
 	# water_blend < 1 → zeitliche EWMA-Glättung (Läufe blenden statt zu springen).
 	if water_gpu:

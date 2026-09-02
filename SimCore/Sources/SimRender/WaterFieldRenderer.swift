@@ -48,6 +48,39 @@ public final class WaterFieldRenderer {
     private var waterBytes: [UInt8] = []
     private var waterComponent: [Int] = []
     private var waterStack: [Int] = []
+    // Persistenter Ausgabepuffer des Abfluss-Felds fürs Shader-Detail (R8).
+    private var flowDetail: [UInt8] = []
+
+    /// R8-Feld (n×n) der log-normierten MFD-Abflussdichte unterhalb der
+    /// Sichtbarkeits-Schwelle des Wassers — moduliert im Terrain-Shader die
+    /// Stärke der kosmetischen Erosionsrinnen (`flow_tex`), damit sie sich in
+    /// echten Abflussbahnen bündeln statt als uniformes Muster zu wiederholen.
+    /// Kalibrierung und Begründung: `WaterRender.flowDetailIntensity` ff.
+    /// Per-Zelle unabhängig → parallel, bit-identisch zur sequenziellen Schleife.
+    public func flowDetailField(_ terrain: Terrain) -> [UInt8] {
+        let n = terrain.cfg.n
+        let cnt = n * n
+        let sea = terrain.cfg.sea
+        let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
+        let creek = terrain.cfg.renderMinCells
+        if flowDetail.count != cnt { flowDetail = [UInt8](repeating: 0, count: cnt) }
+        var out: [UInt8] = []; swap(&out, &flowDetail)
+        defer { swap(&out, &flowDetail) }
+        let h = terrain.h, area = terrain.areaMFD
+        out.withUnsafeMutableBufferPointer { ob in
+        h.withUnsafeBufferPointer { hb in area.withUnsafeBufferPointer { ab in
+            let po = ob.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
+            parallelChunks(cnt) { lo, hi in
+                for k in lo..<hi {
+                    guard ph[k] > sea else { po[k] = 0; continue }
+                    let v = WaterRender.flowDetailIntensity(
+                        dischargeCells: pa[k] / cellArea, creekCells: creek)
+                    po[k] = UInt8(v * 255.0 + 0.5)
+                }
+            }
+        }}}
+        return out
+    }
 
     /// Kontinuierliches Wasser-Feld als RGBA8-Puffer (n×n), das der Terrain-Shader
     /// linear gefiltert und geshadet als glattes Overlay rendert — statt blockiger
