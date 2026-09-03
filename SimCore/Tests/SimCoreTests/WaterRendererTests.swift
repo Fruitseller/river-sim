@@ -191,8 +191,20 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertLessThanOrEqual(
       oxbowMaximumAlpha,
       Float(WaterRender.oxbowMaximumOpacity + 0.001))
+    // Schranke 0.03 (Issue #108): die beiden Regeln der Übergabe lesen die
+    // Wassersäule unterschiedlich — der Raster-Pfad ZELLWEISE (`rawWet[k]`,
+    // Schwelle `lakeRawWetDepth`), der Band-Fade BILINEAR am Stützpunkt
+    // (`lakeHandoverFade`, bewusst so: nearest-cell sprang an den Zellkanten um
+    // bis zu 0.5 Deckkraft, s. Kommentar dort). An der Uferkante weichen sie
+    // deshalb um einen Rest voneinander ab, und genau den deckelt diese Zahl.
+    // Mit den tieferen Betten aus #108 ist der Pond-Gradient über eine Zelle
+    // steiler und der Rest wuchs von ≤ 0.02 auf gemessen 0.0244 — ein einzelner
+    // Stützpunkt mit 2,4 % Deckkraft, kein doppeltes Wasser. Wie ein ECHTER
+    // Bruch aussieht, ist in derselben Runde gemessen: der (nicht ausgelieferte)
+    // Pfützen-Ausschluss in Flussbetten (`puddleFillSkipsFlowCells`) ließ
+    // stehendes Wasser im Bett stehen und trieb diesen Wert auf 0.243.
     XCTAssertLessThanOrEqual(
-      deepestRiverAlpha, 0.02,
+      deepestRiverAlpha, 0.03,
       "Band und Raster malen tiefes Wasser doppelt")
     XCTAssertEqual(mouthGaps, 0, "Flussband endet vor erreichbarem Wasser")
 

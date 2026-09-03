@@ -44,6 +44,18 @@ final class Glacier: XCTestCase {
         c.meanderEnabled = false
         c.braidingEnabled = false
         c.puddleFillYears = 0
+        // Küstenerosion aus — dieselbe Begründung wie `hillDiffusion = 0` gleich
+        // darüber (s. `testNoFluvialErosionUnderIceInProduction`): `wavePass` ist
+        // kein fluvialer Pass, läuft deshalb ungegatet und schiebt Material vom
+        // NACHBARN auf die Eiszelle. Bis Issue #108 fiel das nie auf, weil kein
+        // Arm ihn in der Küstenzone auslöste; mit dem Abfluss-Dämpfer der
+        // Tropfen-Deposition (#108) liegt das Sediment ein Stück weiter
+        // flussabwärts, und im Wellenband trafen 2 vergletscherte Zellen
+        // (h − sea = 0.044/0.047 < `waveBand` 0.06, Δh 9e-6 und 2e-4). Gegenprobe
+        // gemessen: mit `waveRelax = 0` sind es 0 Zellen, mit abgeschaltetem
+        // Dämpfer ebenfalls 0 — der Wächter hat also den Wellenpass gemessen,
+        // nicht das Gate.
+        c.waveRelax = 0
         return c
     }
 
