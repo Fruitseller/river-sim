@@ -145,6 +145,15 @@ public enum Hydraulic {
     ///   verwirft wie ungewichtet und der Tropfen-Etat auf Land unverändert
     ///   bleibt. Leeres Array = gleichverteilte Starts wie bisher
     ///   (bit-identisch).
+    /// - `depositDamp`: per-Zelle-Faktor der Tropfen-DEPOSITION (Issue #108,
+    ///   gebaut in `Terrain.buildDepositDamp` aus dem D8-Abfluss). Er ist die
+    ///   dendritische Verallgemeinerung von `channel`/`channelDepositDamp`: dort
+    ///   wo viel abfließt, TRÄGT der Fluss seine Fracht weiter, statt sein Bett
+    ///   auf Umgebungsniveau zuzuschütten. Wirksam ist der STÄRKERE der beiden
+    ///   Dämpfer (Minimum) — nicht ihr Produkt: das Produkt liefe auf den
+    ///   Mäanderbetten (hoher Abfluss UND Maske) in Richtung 0, und 0 ist als
+    ///   instabil belegt (s. `channelDepositDamp`). Leeres Array = kein
+    ///   Dämpfer (bit-identisch).
     /// - `underIce`: Vergletscherungs-Maske (Terrain.underIce, Issue #35). Auf
     ///   diesen Zellen rührt der Tropfen das BETT nicht an — weder erodierend
     ///   (unter einem Gletscher gibt es keinen fluvialen Abtrag) noch ablagernd
@@ -178,6 +187,7 @@ public enum Hydraulic {
                               firstDrop: UInt64? = nil,
                               hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
+                             depositDamp: [Double] = [],
                              underIce: [Bool] = [],
                              flowWeight: [Double] = [],
                              erodibility: [Double] = [],
@@ -200,6 +210,10 @@ public enum Hydraulic {
         // Kanalmaske aktiv? (leeres Array → alle Kanal-Zweige fallen weg und die
         // Arithmetik ist bit-identisch mit dem Zustand vor der Reconciliation)
         let chanOn = channel.count == h.count
+
+        // Abfluss-Dämpfer aktiv? (leeres Array → Faktor 1 und damit dieselbe
+        // Arithmetik wie vor Issue #108)
+        let ddOn = depositDamp.count == h.count
 
         // Lithologie-Feld aktiv? (leeres/kaputtes Array → Faktor fällt weg und die
         // Arithmetik ist bit-identisch zum Zustand vor Issue #12)
@@ -256,13 +270,17 @@ public enum Hydraulic {
             // (Issue #35) — der Tropfen trägt seine Fracht über das Eis hinweg
             // und lädt sie hinter der Zunge ab (Sander am Gletschertor).
             if iceOn && underIce[k] { return amount }
-            if chanOn && channel[k] {
-                let put = amount * p.channelDepositDamp
-                sed[k] += put; h[k] += put
-                return amount - put
+            // Der STÄRKERE der beiden Dämpfer gewinnt (s. `depositDamp` oben).
+            var f = 1.0
+            if chanOn && channel[k] { f = p.channelDepositDamp }
+            if ddOn && depositDamp[k] < f { f = depositDamp[k] }
+            if f >= 1 {
+                sed[k] += amount; h[k] += amount
+                return 0
             }
-            sed[k] += amount; h[k] += amount
-            return 0
+            let put = amount * f
+            sed[k] += put; h[k] += put
+            return amount - put
         }
 
         // Gewichts-Maximum einmal je Charge (die Ablehnungs-Stichprobe normiert

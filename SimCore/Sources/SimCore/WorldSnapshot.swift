@@ -81,7 +81,14 @@ public enum WorldSnapshot {
     /// ungültiger Spielstände; das vollständige Inventar der Klima-Vertikalen
     /// steht deshalb in `docs/research-climate-cryosphere.md` §6 und ist mit
     /// diesem Sprung abgeschlossen.
-    public static let version: UInt32 = 3
+    /// Version 4 (Issue #108): die vier neuen Stellschrauben der Kanal-Hebel
+    /// (`channelFlowMinCells`/`FullCells`, `channelDiffusionDamp`,
+    /// `flowDepositDamp`, `puddleFillSkipsFlowCells`) reisen über die
+    /// synthetisierte Config-Kodierung mit. Eine Version-3-Datei hat die Schlüssel
+    /// nicht und ist damit ohnehin nicht mehr dekodierbar — der Sprung sorgt nur
+    /// dafür, dass der Nutzer die klare Versions-Meldung sieht statt eines
+    /// Plist-Fehlers.
+    public static let version: UInt32 = 4
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
