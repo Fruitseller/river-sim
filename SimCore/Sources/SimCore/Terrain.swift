@@ -4229,8 +4229,15 @@ public final class Terrain {
     /// Tropfen in Suspension — die Massenbilanz stimmt, das Material erreicht das
     /// Bett erst weiter unten oder das Meer.
     ///
-    /// AUS (`channelDepositDamp` des Abfluss-Dämpfers = 1) → leeres Feld und
-    /// damit bit-identische Arithmetik zum Stand vor #108.
+    /// AUS (`cfg.flowDepositDamp` = 1) → leeres Feld und damit bit-identische
+    /// Arithmetik zum Stand vor #108.
+    ///
+    /// Der Dämpfer wirkt im SIM-SCHRITT, nicht im Tropfen-Spin-up der
+    /// Generierung (`spinUpStreamMap`): dessen Charge bildet keine Zeit ab,
+    /// sondern legt die erste Stream-Map auf das rohe Noise-Relief, in dem es
+    /// noch kein etabliertes Lauf-Netz gibt, das etwas durchtransportieren
+    /// könnte. Sie behält damit ihre kalibrierte Realisierung (dieselbe
+    /// Begründung wie `firstDrop: nil` dort).
     private func buildDepositDamp() {
         let damp = cfg.flowDepositDamp
         guard damp < 1 else {
