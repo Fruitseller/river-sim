@@ -61,7 +61,15 @@ public final class RiverRibbonRenderer {
     /// `TreeInstanceRenderer`): Knotenzahlen + Positionen, flach. Abfluss ändert
     /// sich nur zusammen mit Positionen (Migration/computeFlow) — Positionen
     /// genügen.
-    private var riverSnapshot: [Double] = []
+    ///
+    /// `nil` heißt „kein Vergleichspunkt" und ist bewusst NICHT das leere Array:
+    /// eine Welt OHNE Zentrumslinien flacht ebenfalls auf `[]` ab. Mit dem
+    /// leeren Array als Sentinel meldete `maxDelta` nach einem Weltwechsel auf
+    /// genau so eine Welt „0 = unverändert", und der Rebuild blieb aus — auf dem
+    /// Schirm standen die Bänder der VORIGEN Welt weiter, und `bandCoverage`
+    /// deckelte das Raster-Wasserfeld entlang ihrer Korridore (Löcher im Feld,
+    /// s. `WaterFieldRenderer`).
+    private var riverSnapshot: [Double]?
     /// Letztes Bau-Ergebnis als godot-freie POD-Puffer. `stripStarts` markiert
     /// den Vertex-Index jedes Bands; damit prüfen die Wächter Band-Enden direkt,
     /// ohne sie aus mehrdeutigen UV-Werten herzuleiten.
@@ -139,10 +147,11 @@ public final class RiverRibbonRenderer {
     /// Delta exakt 0 → kein Rebuild); im Zeitraffer deckelt Main.gd den Mesh-
     /// Rebuild auf 1 Hz (gemessen: 0,30 s kosteten ~4 % FPS).
     public func maxDelta(_ terrain: Terrain) -> Double {
+        guard let snapshot = riverSnapshot else { return 1e9 }
         let flat = flattenedChannelPositions(terrain)
-        if flat.count != riverSnapshot.count { return 1e9 }
+        if flat.count != snapshot.count { return 1e9 }
         var maxD = 0.0
-        for i in 0..<flat.count { maxD = max(maxD, abs(flat[i] - riverSnapshot[i])) }
+        for i in 0..<flat.count { maxD = max(maxD, abs(flat[i] - snapshot[i])) }
         return maxD
     }
 
@@ -151,7 +160,7 @@ public final class RiverRibbonRenderer {
 
     /// Verwirft den Vergleichspunkt (geladene Welt) → `maxDelta` meldet „riesig"
     /// und der nächste Frame baut die Bänder neu.
-    public func invalidateSnapshot() { riverSnapshot = [] }
+    public func invalidateSnapshot() { riverSnapshot = nil }
 
     // MARK: Bau
 

@@ -159,6 +159,36 @@ final class RenderStateTests: XCTestCase {
         XCTAssertEqual(stats[14], Float(terrain.years), "Referenzjahr nicht mitgezogen")
     }
 
+    /// Der Band-Vergleichsstand muss auch dann fallen, wenn die NEUE Welt gar
+    /// keine Zentrumslinien hat.
+    ///
+    /// Der Randfall, an dem der frühere Sentinel scheiterte: `maxDelta`
+    /// verglich Längen, und „kein Vergleichspunkt" war dasselbe leere Array wie
+    /// „Welt ohne Kanäle". Beides zusammen ergab „0 = unverändert" — der
+    /// Rebuild blieb aus, obwohl `_rebuild_rivers` in `Main.gd` genau der
+    /// Aufruf ist, der das alte Mesh leert. Sichtbar wären die Bänder der
+    /// VORIGEN Welt geblieben, und `bandCoverage` hätte das Raster-Wasserfeld
+    /// weiter entlang ihrer Korridore gedeckelt.
+    ///
+    /// `Terrain(allocating:seed:)` ist hier genau richtig: es legt die Puffer
+    /// an, generiert aber nicht — eine gültige Welt ohne Mäander-Kanäle, ohne
+    /// dass der Test einen Spin-up bezahlt.
+    func testWorldReplacedDropsTheRibbonSnapshotEvenWithoutChannels() {
+        let terrain = Terrain(config: renderConfig(), seed: 1337)
+        let render = RenderState(geometryMode: true)
+        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
+        render.markRiversBuilt(terrain)
+        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+
+        let ungenerated = Terrain(allocating: renderConfig(), seed: 4711)
+        XCTAssertTrue(ungenerated.meander.channels.isEmpty,
+                      "Testaufbau: diese Welt soll gerade KEINE Zentrumslinien haben")
+        render.invalidate(ungenerated, worldReplaced: true)
+        XCTAssertGreaterThanOrEqual(
+            render.riversMaxDelta(ungenerated), 1,
+            "Andere Welt ohne Kanäle: die Bänder der alten Welt bleiben sonst stehen")
+    }
+
     /// Die Kopplung der beiden Wasser-Pfade (Issue #34) liegt jetzt im
     /// Zustand, nicht beim Aufrufer: das Feld liest die Bandflags des LETZTEN
     /// Builds selbst. Ohne Band deckelt es nichts, mit Band entsteht der Saum —
