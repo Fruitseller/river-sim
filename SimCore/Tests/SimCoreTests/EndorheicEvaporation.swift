@@ -83,6 +83,14 @@ final class EndorheicEvaporation: XCTestCase {
         // Zellen) zu kippen. Deshalb hält `HeightBands.legacyAbsolute` die
         // Rampenbreite als Literal — nicht als Differenz zweier Grenzen.
         c.heightBandsOverride = .legacyAbsolute
+        // Kanal-Hebel (Issue #108) AUSGEPINNT — fünfter Pin, gleiche Doktrin:
+        // diese Wächter prüfen die #11-Mechanik an einem konkreten Becken. Die
+        // Drosselung der Deposition und Hangdiffusion carvt das Bett bis in die
+        // Beckensohle ein; auf manchen Plattformen (macOS) reicht der Eintiefungssprung,
+        // um den Playa-Wassersäulen-Rest über 0.005 zu heben. Mit Dämpfer aus (1.0)
+        // rechnet die Mechanik bit-identisch zum Stand vor #108.
+        c.channelDiffusionDamp = 1.0
+        c.flowDepositDamp = 1.0
         return c
     }
 
