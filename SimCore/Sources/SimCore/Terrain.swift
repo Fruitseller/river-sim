@@ -290,6 +290,11 @@ public final class Terrain {
     public private(set) var streamMap: [Double]
     private var streamRate: [Double] // EWMA der Besuche/Jahr
     private var trackBuf: [Double]   // je Schritt: Tropfen-Besuchszahl je Zelle
+    /// Je Schritt: Faktor der Tropfen-Deposition je Zelle (Issue #108, s.
+    /// `buildDepositDamp`). Reiner Arbeitspuffer wie `trackBuf`/`areaPow` —
+    /// leitet sich vollständig aus `area` und der Config ab und gehört deshalb
+    /// nicht ins Zustands-Inventar.
+    private var depositDampBuf: [Double] = []
     private var pondSeen: [Bool]     // Arbeitspuffer der Pfützen-Komponentensuche
     private var noise: SimplexNoise
 
@@ -3003,6 +3008,13 @@ public final class Terrain {
         // war schon vorher so, die Verlandung ist kein fluvialer Bett-Pass).
         var comp: [Int32] = []
         var stack: [Int32] = []
+        // Wasserführende Läufe bleiben aus der Verlandung heraus (Issue #108),
+        // dieselbe Regel wie für die Mäander-Betten (`isChannel`) darunter — nur
+        // über den Abfluss statt über eine Maske, weil die dendritischen Läufe
+        // keine haben. Begründung und Messwerte: `cfg.puddleFillSkipsFlowCells`.
+        let flowLimit = cfg.puddleFillSkipsFlowCells && area.count == cnt
+            ? cfg.channelFlowMinCells * cfg.cellSize * cfg.cellSize
+            : .infinity
         hf.withUnsafeBufferPointer { hfb in
         h.withUnsafeMutableBufferPointer { hb in
         sed.withUnsafeMutableBufferPointer { sb in
@@ -3010,9 +3022,11 @@ public final class Terrain {
         endorheicBasin.withUnsafeBufferPointer { ebb in
         isChannel.withUnsafeBufferPointer { icb in
         regenPending.withUnsafeBufferPointer { rpb in
+        area.withUnsafeBufferPointer { arb in
         let phf = hfb.baseAddress!, ph = hb.baseAddress!, psed = sb.baseAddress!
         let pseen = psb.baseAddress!, pend = ebb.baseAddress!
         let pchan = icb.baseAddress!, pregen = rpb.baseAddress!
+        let parea = arb.baseAddress!
         /// BFS-Schritt der Pfützen-Komponentensuche (4er-Nachbarschaft).
         /// Die Wasserfläche eines abflusslosen Beckens (Issue #11) ist hier
         /// bewusst KEINE Pfütze: ihren Spiegel setzt der Wasserhaushalt, und
@@ -3055,6 +3069,7 @@ public final class Terrain {
             for kk in comp {
                 let k = Int(kk)
                 if pchan[k] { continue }
+                if parea[k] > flowLimit { continue }  // Flussbett, keine Pfütze (#108)
                 // Frische Baustelle (Issue #26): solange an dieser Zelle noch
                 // Regeneration aussteht, NICHT verlanden. Die Pfützen-Verlandung
                 // ist ein Aufräum-Pass gegen Flachwasser-Sprenkel in reifen Auen
@@ -3080,7 +3095,7 @@ public final class Terrain {
                 }
             }
         }
-        }}}}}}}
+        }}}}}}}}
     }
 
     // MARK: - Auen-Aggradation (Overbank-Deposition → flache Schwemmebenen)
@@ -3193,15 +3208,30 @@ public final class Terrain {
         // das Feld fehlt oder der Kontrast 0 ist → bit-identische Arithmetik.
         let lithDC = lithHardness.count == cnt ? cfg.lithDiffusionContrast : 0
         let lithArr = lithDC != 0 ? lithHardness : [0.0]
+        // Kanal-Schutz (Issue #108): im aktiven Kanal räumt die Strömung das
+        // einkriechende Material ab, also kriecht dort effektiv weniger Boden
+        // ins Bett. Ohne das schmiert die Diffusion die Rinnen zu, in denen die
+        // Flüsse laufen — der gemeldete „Wasser liegt ohne Taleinschnitt auf dem
+        // Hang". Größe ist das D8-Einzugsgebiet in Zellen. AUS (damp ≥ 1) oder
+        // ohne `area`-Feld fällt der ganze Zweig weg → bit-identisch; und auch
+        // AN ist der Faktor unterhalb der Schwelle exakt 1.0, also nur die
+        // Kanalzellen rechnen anders (Kalibrierung: s. `channelDiffusionDamp`).
+        let chDamp = cfg.channelDiffusionDamp
+        let chOn = chDamp < 1 && area.count == cnt
+        let chCellArea = cfg.cellSize * cfg.cellSize
+        let chLo = cfg.channelFlowMinCells * chCellArea
+        let chHi = max(chLo + 1e-12, cfg.channelFlowFullCells * chCellArea)
+        let chArr = chOn ? area : [0.0]
         h.withUnsafeMutableBufferPointer { hb in
         sed.withUnsafeMutableBufferPointer { sb in
         rock.withUnsafeMutableBufferPointer { rkb in
         veg.withUnsafeBufferPointer { vb in
         lithArr.withUnsafeBufferPointer { ldb in
+        chArr.withUnsafeBufferPointer { cab in
         scratch.withUnsafeMutableBufferPointer { scb in
             let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
             let pveg = vb.baseAddress!, psc = scb.baseAddress!
-            let phard = ldb.baseAddress!
+            let phard = ldb.baseAddress!, parea = cab.baseAddress!
             parallel(nn) { jLo, jHi in
             for j in jLo..<jHi {
                 for i in 0..<nn {
@@ -3223,6 +3253,13 @@ public final class Terrain {
                     // Gesteinshärte: D = 1 − c·hard, Untergrenze 0.05 (kein
                     // vollständig eingefrorener Hang, auch bei c > 1).
                     if lithDC != 0 { localK *= max(0.05, 1 - lithDC * phard[k]) }
+                    // Kanal-Schutz: kappa → damp, sanft über das Einzugsgebiet
+                    // (smoothstep, damit im Gelände keine Kante entsteht).
+                    if chOn && parea[k] > chLo {
+                        let x = min(1, (parea[k] - chLo) / (chHi - chLo))
+                        let s = x * x * (3 - 2 * x)
+                        localK *= 1 - (1 - chDamp) * s
+                    }
                     psc[k] = localK * lap
                 }
             }
@@ -3241,7 +3278,7 @@ public final class Terrain {
                 ph[k] += dh
             }
             }
-        }}}}}}
+        }}}}}}}
     }
 
     // MARK: - Wellenerosion (Küstenzone)
@@ -4165,6 +4202,61 @@ public final class Terrain {
         return drops
     }
 
+    /// Baut den Faktor der Tropfen-DEPOSITION je Zelle (Issue #108) in
+    /// `depositDampBuf`.
+    ///
+    /// Das gemeldete Problem: auf gealterten Welten liegt das Bett der Flüsse auf
+    /// Umgebungsniveau — kein Taleinschnitt, das Wasser scheint auf dem Hang zu
+    /// kleben. Gemessen (Kennzahl `ChannelIncision`, Quereinschnitt senkrecht zur
+    /// Fließrichtung) kollabiert der Einschnitt in den ersten 25k Jahren um ~70 %,
+    /// und die Kanalzellen steigen dabei ABSOLUT schneller als ihre Flanken: die
+    /// Betten werden zugeschüttet. Ursache im Modell: im flachen Alters-Profil
+    /// verliert der Tropfen Kapazität (`capacity ∝ Steigung·Speed·Wasser`, Boden
+    /// `minSlope`) und lädt seine Fracht genau dort ab, wo er sie eben noch
+    /// getragen hat — im Bett.
+    ///
+    /// Physisch fehlt dem Modell an dieser Stelle, dass ein WASSERFÜHRENDER Lauf
+    /// Fracht durchtransportiert: Alluvialflüsse exportieren ihr Bettmaterial zur
+    /// Mündung, statt ihr eigenes Bett zu verfüllen. Genau dafür gibt es den
+    /// Präzedenzfall `HydraulicParams.channelDepositDamp` — nur kennt der bloß
+    /// die MÄANDER-Maske (`isChannel`), also die paar großen Hauptläufe. Die
+    /// dendritischen Läufe, aus denen der Look besteht, hatten keinen.
+    ///
+    /// Deshalb hier der Dämpfer über den D8-Abfluss (Erosions-Netz, nicht MFD —
+    /// AGENTS.md § Rollentrennung), in Zellen gemessen wie `braidMinCells`, mit
+    /// smoothstep-Übergang. Auf Mäanderzellen gewinnt der stärkere der beiden
+    /// Dämpfer (s. `Hydraulic.erode`). Der nicht abgelegte Rest bleibt beim
+    /// Tropfen in Suspension — die Massenbilanz stimmt, das Material erreicht das
+    /// Bett erst weiter unten oder das Meer.
+    ///
+    /// AUS (`channelDepositDamp` des Abfluss-Dämpfers = 1) → leeres Feld und
+    /// damit bit-identische Arithmetik zum Stand vor #108.
+    private func buildDepositDamp() {
+        let damp = cfg.flowDepositDamp
+        guard damp < 1 else {
+            if !depositDampBuf.isEmpty { depositDampBuf = [] }
+            return
+        }
+        if depositDampBuf.count != cfg.count {
+            depositDampBuf = .init(repeating: 1, count: cfg.count)
+        }
+        let cellArea = cfg.cellSize * cfg.cellSize
+        let lo = cfg.channelFlowMinCells * cellArea
+        let hi = max(lo + 1e-12, cfg.channelFlowFullCells * cellArea)
+        let cnt = cfg.count
+        area.withUnsafeBufferPointer { ab in
+        depositDampBuf.withUnsafeMutableBufferPointer { db in
+            let pa = ab.baseAddress!, pd = db.baseAddress!
+            parallel(cnt) { klo, khi in
+                for k in klo..<khi {
+                    if pa[k] <= lo { pd[k] = 1; continue }
+                    let x = min(1, (pa[k] - lo) / (hi - lo))
+                    pd[k] = 1 - (1 - damp) * (x * x * (3 - 2 * x))
+                }
+            }
+        }}
+    }
+
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist
     /// implizit stabil); die Hangprozesse werden intern anteilig getaktet.
     public func step(dtYears dt: Double) {
@@ -4241,6 +4333,7 @@ public final class Terrain {
             dropsEmitted &+= UInt64(drops)
             mark("Hydraulic.erode")
             fill(&trackBuf, 0)
+            buildDepositDamp()
             // Kanalmaske mit: auf Mäanderbetten ist die Tropfen-DEPOSITION gedämpft
             // (Reconciliation — sonst schütten die Tropfen das gecarvte Bett wieder zu).
             Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: n, count: drops,
@@ -4250,6 +4343,10 @@ public final class Terrain {
                             hf: hf, receiver: receiver,
                             stream: streamMap,
                             channel: cfg.meanderEnabled ? isChannel : [],
+                            // Abfluss-Dämpfer der Deposition (Issue #108): die
+                            // dendritischen Läufe halten ihre Rinne, statt sie
+                            // zuzuschütten. Leer, wenn der Dämpfer aus ist.
+                            depositDamp: depositDampBuf,
                             // Vergletscherte Zellen bleiben unangetastet (#35);
                             // leer, solange nirgends Eis liegt.
                             underIce: underIce,

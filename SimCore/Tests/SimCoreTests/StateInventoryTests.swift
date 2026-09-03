@@ -170,6 +170,10 @@ final class StateInventoryTests: XCTestCase {
         ("streamRate", .persistent(.sameName)),
         ("trackBuf", .scratch(reason:
             "Tropfen-Besuchszahl je Zelle, je Schritt neu gezählt.")),
+        ("depositDampBuf", .scratch(reason:
+            "Faktor der Tropfen-Deposition je Zelle (Issue #108) — `buildDepositDamp` "
+            + "leitet ihn je Schritt vollständig aus `area`/Config ab, direkt vor dem "
+            + "einzigen Leser (`Hydraulic.erode`).")),
         ("pondSeen", .scratch(reason:
             "Arbeitspuffer der Pfützen-Komponentensuche.")),
         ("noise", .derived(reason:
