@@ -448,6 +448,14 @@ final class RiverDynamicsTests: XCTestCase {
             // veraltet — auf dem heutigen Stand von `main` messen dieselben 16
             // Seeds 132/119 bei 8:2, ohne jede Änderung dieses Tests.)
             cOn.lithologyEnabled = false
+            // Kanal-Hebel (Issue #108): dieser Test prüft die reine Mechanik von
+            // `braidPass` auf dem 256er-Grid (Zellgröße 0.51). Der Schwellenwert
+            // der Hebel zählt in Zellen, sodass dieselbe Zellzahl auf diesem Grid
+            // eine unnatürlich große Fläche dämpft und die Seed-Mehrheit der
+            // Droplet-Bänke plattformabhängig schwankt (Gesamt-Bankfläche steigt,
+            // aber einzelne Seeds flippen).
+            cOn.channelDiffusionDamp = 1.0
+            cOn.flowDepositDamp = 1.0
             var cOff = cOn; cOff.braidingEnabled = false
             let tOn = Terrain(config: cOn, seed: seed)
             let tOff = Terrain(config: cOff, seed: seed)
