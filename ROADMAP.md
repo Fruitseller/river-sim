@@ -569,6 +569,14 @@ Messreihen `docs/dt-invariance-measurements.md`):
 - `floodplainAggradation` liegt deaktiviert als Referenz herum (`floodplainEnabled=false`):
   per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
   jetzt über sanfteres Relief (`baseRelief` 0.78).
+- `puddleFillSkipsFlowCells = false` (Issue #108, Sep 2026): der Pfützen-Ausschluss
+  in wasserführenden Flussbetten ist verdrahtet und GEPARKT. Er ist der stärkste
+  der drei Hebel gegen das zugeschüttete Bett (Quereinschnitt bei 100k 0.086 →
+  0.158 Welt-Y), lässt aber das Wasser in den Bett-Pits STEHEN: die Übergabe
+  Band ↔ Raster malt dann doppelt (Kennzahl 0.024 → 0.243) und die dt-Invarianz
+  des See-Anteils reißt. Offen ist der Pass, der die Pits ENTWÄSSERT statt sie
+  nur nicht mehr zu füllen; danach ist der Hebel nachzumessen
+  (`docs/channel-incision-measurements.md` §E).
 
 **Sim-Schritt-Laufzeit — Runde 3 (Aug 2026, Issue #43): ~41 % schneller, Ziel
 knapp verfehlt, Rest benannt.**
