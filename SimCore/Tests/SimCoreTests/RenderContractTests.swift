@@ -238,6 +238,35 @@ final class RenderContractTests: XCTestCase {
                        "SimConfig.production weicht über die zwei Perf-Schalter "
                        + "hinaus von SimConfig() ab")
         XCTAssertEqual(SimConfig.productionSettleYears, 3000)
+
+        var custom = SimConfig()
+        custom.enableProductionPerformance()
+        XCTAssertEqual(custom, SimConfig.production,
+                       "enableProductionPerformance() auf SimConfig() muss genau SimConfig.production entsprechen")
+
+        var nonDefault = SimConfig()
+        nonDefault.n = 832
+        nonDefault.world = 130
+        nonDefault.enableProductionPerformance()
+        XCTAssertTrue(nonDefault.hydraulicSkipWaterSpawns)
+        XCTAssertTrue(nonDefault.meanderSpatialCutoffIndex)
+        XCTAssertEqual(nonDefault.n, 832)
+        XCTAssertEqual(nonDefault.world, 130)
+    }
+
+    /// SimCore-Quellen dürfen keine alten Bezeichner auf die entfernten
+    /// Brücken-Properties führen (`SimNode.generationSettleYears`,
+    /// `SimNode.productionConfig`).
+    func testNoStaleSimNodeConfigReferencesInSimCore() throws {
+        for path in ["SimCore/Sources/SimCore/Terrain.swift",
+                     "SimCore/Sources/SimCore/Config.swift",
+                     "SimCore/Sources/SimPerf/main.swift"] {
+            let content = try RepoSource.file(path)
+            XCTAssertFalse(content.contains("SimNode.generationSettleYears"),
+                           "\(path) verweist noch auf SimNode.generationSettleYears")
+            XCTAssertFalse(content.contains("SimNode.productionConfig"),
+                           "\(path) verweist noch auf SimNode.productionConfig")
+        }
     }
 
     /// Der Default des `Terrain`-Initialisierers ist die dritte Kopie derselben
