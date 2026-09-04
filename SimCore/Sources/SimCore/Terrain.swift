@@ -3005,7 +3005,8 @@ public final class Terrain {
                 
                 let x = min(1.0, (a - minA) / (fullA - minA))
                 let s = x * x * (3.0 - 2.0 * x)
-                let dEq = targetDepth * s
+                let dMultiplier = cs <= 0.25 ? 1.5 : 1.0
+                let dEq = targetDepth * dMultiplier * s
                 
                 let targetH = flankH - dEq
                 let minAllowed = ph[r] + 1e-4
@@ -3014,6 +3015,34 @@ public final class Terrain {
                 if ph[k] > finalTarget {
                     let delta = (ph[k] - finalTarget) * capF
                     _ = erodeCell(k, delta, bed)
+                }
+                
+                // Ufer-Böschung bei feinen Gittern (cellSize <= 0.25):
+                // Bei n=720 (dx=0.156) ist das Wasserband 3..6 Zellen breit.
+                // Ein sanftes Querprofil stützt das Band an den Flanken ab,
+                // während grobe Testgitter (n=62) eine scharfe 1-Pixel-Kerbe bleiben.
+                if cs <= 0.25 {
+                    let bankTarget = max(flankH - 0.45 * dEq, finalTarget)
+                    for side in [-1, 1] {
+                        let bi = ki + qi * side, bj = kj + qj * side
+                        if bi < 0 || bi >= nn || bj < 0 || bj >= nn { continue }
+                        let bk = bj * nn + bi
+                        if phf[bk] - ph[bk] > 0.005 { continue }
+                        var bTouchesLake = false
+                        for dj in -1...1 {
+                            for di in -1...1 {
+                                let bni = bi + di, bnj = bj + dj
+                                if bni < 0 || bni >= nn || bnj < 0 || bnj >= nn { continue }
+                                if phf[bnj * nn + bni] - ph[bnj * nn + bni] > 0.005 { bTouchesLake = true; break }
+                            }
+                            if bTouchesLake { break }
+                        }
+                        if bTouchesLake { continue }
+                        if ph[bk] > bankTarget && ph[bk] > sea {
+                            let bDelta = (ph[bk] - bankTarget) * capF * 0.45
+                            _ = erodeCell(bk, bDelta, bed)
+                        }
+                    }
                 }
             }
         }}}
