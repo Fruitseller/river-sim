@@ -364,6 +364,9 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // die Pfützen-Verlandung. Die Schwelle steht deshalb EINMAL, sonst hängt an
     // drei Stellen dieselbe Kalibrier-Zahl und sie laufen auseinander. Größe = D8-`area` in ZELLEN (Erosions-Netz, nicht
     // MFD — AGENTS.md § Rollentrennung), wie `braidMinCells`/`floodplainMinArea`.
+    // Hinweis: „Zellen" meint hier äquivalente Zellen über die #10-Normierung der
+    // D8-Akkumulation auf das Landmittel des Regens (Σ über Land = Landzellen · cellArea;
+    // gesichert durch den Wächter `testWeightedFlowKeepsDrainageTotal`).
     public var channelFlowMinCells: Double = 320  // ab so viel Einzugsgebiet (Zellen) gilt eine Zelle als wasserführender Lauf. GEMESSEN (n=720, Seed 1337, Quereinschnitt bei 25k in Welt-Y, Kanal-Schutz der Diffusion auf 0.15): 1000 → 0.069, 320 → 0.081, 100 → 0.091, 40 → 0.081. Tiefer zu gehen kauft also fast nichts mehr, kostet aber die ALTERUNG: die mittlere Grat-Krümmung (`ridgeCurvature`, „rund = alt") wächst betragsmäßig von −0.044 (Schutz aus) über −0.058 (320) auf −0.065 (40) — je mehr Netz geschützt ist, desto weniger rundet die Landschaft überhaupt noch. 320 ist der Punkt, an dem der Einschnitt fast voll da und das Alterungs-Signal am wenigsten verschoben ist.
     public var channelFlowFullCells: Double = 3200 // ab so viel Einzugsgebiet gilt „Lauf" voll (smoothstep von MinCells bis hier, damit im Gelände keine Kante entsteht). Faktor 10 Spanne: der Effekt wächst mit der Fluss-Ordnung, statt an einer Kante zu schalten.
     // ---- Kanal-Schutz der Hangdiffusion (Issue #108) ----
@@ -1547,3 +1550,21 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var cellSize: Double { world / Double(n - 1) }
     public var count: Int { n * n }
 }
+
+// MARK: - Produktions-Standards (Issues #90, #106)
+
+extension SimConfig {
+    /// Einlauf der Generierung für die Produktionswelt (PR #106).
+    public static let productionSettleYears: Double = 3000.0
+
+    /// Produktions-Config mit aktiven Performance-Optionen (Issue #90).
+    /// `meanderSpatialCutoffIndex` ist verhaltensneutral; `hydraulicSkipWaterSpawns`
+    /// verwirft Ozean-Start-Tropfen (statistisch gleichwertig, aber andere Realisierung).
+    public static func productionDefaults() -> SimConfig {
+        var config = SimConfig()
+        config.hydraulicSkipWaterSpawns = true
+        config.meanderSpatialCutoffIndex = true
+        return config
+    }
+}
+

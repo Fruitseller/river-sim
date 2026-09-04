@@ -44,7 +44,7 @@ let flag = { (name: String) in CommandLine.arguments.contains(name) }
 // andere Physik, nicht dasselbe Modell auf kleinerem Gitter. Ältere Messreihen
 // in `docs/perf-measurements.md` reproduziert man deshalb mit BEIDEN Schaltern
 // (die Paarung davor: `--n 832 --world 130`).
-let production = SimConfig()
+let production = SimConfig.productionDefaults()
 // Genau EINEN der beiden Schalter zu setzen ist nie Absicht, sondern immer der
 // Fehler „alte Gewohnheit, halb umgestellt": `--n 832` allein paart die alte
 // Auflösung mit der neuen Weltgröße. Der Lauf misst dann eine Zellgröße, die es
@@ -77,13 +77,11 @@ let noProfile = flag("--no-profile")
 // Fremdstörung, also die belastbarste Zahl für einen Vorher/Nachher-Vergleich.
 let repeats = Int(arg("--repeat", 1))
 
-// MARK: - Produktions-Config (Spiegel von SimNode.productionConfig())
+// MARK: - Produktions-Config (SimConfig.productionDefaults())
 
 var cfg = production
 cfg.n = gridN
 cfg.world = worldSize
-cfg.hydraulicSkipWaterSpawns = true
-cfg.meanderSpatialCutoffIndex = true
 
 // MARK: - Lauf
 

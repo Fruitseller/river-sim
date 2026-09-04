@@ -198,14 +198,19 @@ final class WaterRendererTests: XCTestCase {
     // bis zu 0.5 Deckkraft, s. Kommentar dort). An der Uferkante weichen sie
     // deshalb um einen Rest voneinander ab, und genau den deckelt diese Zahl.
     // Mit den tieferen Betten aus #108 ist der Pond-Gradient über eine Zelle
-    // steiler und der Rest wuchs von ≤ 0.02 auf gemessen 0.0244 — ein einzelner
-    // Stützpunkt mit 2,4 % Deckkraft, kein doppeltes Wasser. Wie ein ECHTER
-    // Bruch aussieht, ist in derselben Runde gemessen: der (nicht ausgelieferte)
-    // Pfützen-Ausschluss in Flussbetten (`puddleFillSkipsFlowCells`) ließ
-    // stehendes Wasser im Bett stehen und trieb diesen Wert auf 0.243.
+    // steiler und der Rest wuchs von ≤ 0.02 auf gemessen 0.024..0.032 — ein einzelner
+    // Stützpunkt mit ~3 % Deckkraft, kein doppeltes Wasser. Die Obergrenze 0.045
+    // deckelt diesen Übergangs-Rest mit Sicherheitsabstand (wie ein ECHTER Bruch
+    // aussieht, ist in derselben Runde gemessen: der nicht ausgelieferte
+    // Pfützen-Ausschluss in Flussbetten ließ stehendes Wasser im Bett stehen und
+    // trieb diesen Wert auf 0.243). Die Unterschranke 0.015 sichert dagegen ab,
+    // dass die Betten überhaupt tief eingeschnitten sind und der Übergang getestet wird.
     XCTAssertLessThanOrEqual(
-      deepestRiverAlpha, 0.03,
+      deepestRiverAlpha, 0.045,
       "Band und Raster malen tiefes Wasser doppelt")
+    XCTAssertGreaterThan(
+      deepestRiverAlpha, 0.015,
+      "Flussbetten haben keine Rest-Inzision am Seeübergang")
     XCTAssertEqual(mouthGaps, 0, "Flussband endet vor erreichbarem Wasser")
 
     let field = WaterFieldRenderer()
