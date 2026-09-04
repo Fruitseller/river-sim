@@ -14,10 +14,7 @@ import SimRender
 @Godot
 final class SimNode: Node {
     private static func productionConfig() -> SimConfig {
-        var config = SimConfig()
-        config.hydraulicSkipWaterSpawns = true
-        config.meanderSpatialCutoffIndex = true
-        return config
+        SimConfig.productionDefaults()
     }
 
     /// `var`, weil ein geladener Spielstand seine EIGENE Config mitbringt
@@ -27,7 +24,7 @@ final class SimNode: Node {
     /// Begründung und A/B-Bilder: `Terrain.generate(seed:settleYears:)`, PR #106).
     /// Nur der Produktionspfad läuft ein — die SimCore-Testwelten (Default 0)
     /// bleiben unverändert, wie bei den Perf-Flags in `productionConfig()`.
-    private static let generationSettleYears = 3000.0
+    private static let generationSettleYears = SimConfig.productionSettleYears
 
     private var terrain = Terrain(config: SimNode.productionConfig(),
                                   seed: RenderContract.defaultSeed,

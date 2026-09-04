@@ -60,18 +60,14 @@ enum ChannelIncision {
         return Sample(cells: count, incision: sum / d, channelH: chSum / d, neighbourH: nbSum / d)
     }
 
-    /// Produktions-Config wie `SimNode.productionConfig()` (die Extension ist von
-    /// SimCore aus nicht importierbar — die zwei Perf-Schalter stehen hier von
-    /// Hand, `hydraulicSkipWaterSpawns` ist NICHT verhaltensneutral, s. #90).
+    /// Produktions-Config aus `SimConfig.productionDefaults()` (Single Source of Truth,
+    /// synchron mit `SimNode.productionConfig()`).
     static func productionConfig() -> SimConfig {
-        var c = SimConfig()
-        c.hydraulicSkipWaterSpawns = true
-        c.meanderSpatialCutoffIndex = true
-        return c
+        SimConfig.productionDefaults()
     }
 
-    /// Einlauf der Generierung wie `SimNode.generationSettleYears` (PR #106).
-    static let settleYears = 3000.0
+    /// Einlauf der Generierung aus `SimConfig.productionSettleYears` (PR #106).
+    static let settleYears = SimConfig.productionSettleYears
 }
 
 final class ChannelIncisionTests: XCTestCase {
