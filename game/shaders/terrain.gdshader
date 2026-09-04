@@ -478,9 +478,15 @@ void fragment() {
 
 	float dry = 1.0 - calib_window(water_pond_contour_lo, water_pond_contour_hi, pond);
 	float shore = calib_window(water_shore_lo, water_shore_hi, max(stream, lake_gate)) * (1.0 - wet) * dry;
-	vec3 shore_col = vec3(0.42, 0.37, 0.29) * (0.85 + 0.3 * breakup);
-	terr = mix(terr, shore_col, shore * 0.35);
-	terr *= 1.0 - shore * 0.22;
+	vec3 shore_col = mix(vec3(0.38, 0.34, 0.28), vec3(0.48, 0.42, 0.34), breakup);
+	terr = mix(terr, shore_col, shore * 0.55);
+	terr *= 1.0 - shore * 0.28;
+	land_roughness = mix(land_roughness, 0.36, shore * 0.55);
+
+	// Flussbett: Geröll, Kiesel und Schwemmsand statt Wiese unter dem Wasser
+	vec3 river_gravel = mix(vec3(0.33, 0.30, 0.26), vec3(0.46, 0.42, 0.36), breakup);
+	river_gravel *= mix(0.85, 1.15, vnoise(wp * 4.5));
+	terr = mix(terr, river_gravel, riverMask * 0.88);
 
 	float lake_depth = clamp((pond - water_lake_depth_lo) / max(water_lake_depth_span, 1e-6), 0.0, 1.0) * lakeMask;
 	float depth = clamp(max(lake_depth, stream), 0.0, 1.0);
