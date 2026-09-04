@@ -489,7 +489,7 @@ public final class Terrain {
     /// entschärft genau diese Formen — junge und gealterte Welt sprechen
     /// dieselbe Formensprache, die Jugend-Schärfe bleibt. Default 0: die
     /// SimCore-Testwelten und alle Kalibrier-Messreihen bleiben unverändert;
-    /// den Produktionswert setzt die Brücke (`SimNode.generationSettleYears`).
+    /// den Produktionswert setzt die Brücke (`SimConfig.productionSettleYears`).
     public func generate(seed: UInt32, settleYears: Double = 0) {
         self.seed = seed
         self.years = 0
