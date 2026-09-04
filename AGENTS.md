@@ -549,7 +549,12 @@ hängen nicht an `SimConfig`.
 
 Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - `SimConfig()`-Defaults = kalibrierte Produktions-Physik.
-- `SimNode.productionConfig()` schaltet zusätzlich Performance-Optionen an.
+- `SimConfig.production` (Config.swift) schaltet zusätzlich Performance-Optionen
+  an. Es ist der EINE benannte Wert dafür (Issue #97): Brücke, Mess-Harness und
+  die produktionsnahen Tests lesen ihn, keine Stelle setzt die Schalter mehr von
+  Hand (Wächter: `RenderContractTests.testBridgeReadsTheOneProductionConfig` über
+  den Brücken-Quelltext). Dazu gehört `SimConfig.productionSettleYears` — der
+  Einlauf der Generierung, den nur der Produktionspfad fährt.
   `meanderSpatialCutoffIndex` ist verhaltensneutral (Wächter:
   `testSpatialCutoffIndexMatchesReferenceOrder`). `hydraulicSkipWaterSpawns`
   ist es NICHT: der Schalter verwirft Ozean-Start-Tropfen ganz, schon der

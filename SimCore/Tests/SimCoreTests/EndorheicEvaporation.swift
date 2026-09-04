@@ -718,7 +718,7 @@ final class EndorheicEvaporation: XCTestCase {
         let big = ProcessInfo.processInfo.environment["RS_EVAP_N"].flatMap { Int($0) }
         for seed: UInt32 in [1337, 42, 2024] {
             var c = cfg(n: big ?? 256); c.endorheicEvaporation = false
-            if big != nil { c.hydraulicSkipWaterSpawns = true; c.meanderSpatialCutoffIndex = true }
+            if big != nil { c.enableProductionPerformance() }
             let t = Terrain(config: c, seed: seed)
             for target in (big != nil ? [0.0, 5000.0] : [0.0, 10_000.0]) {
                 while t.years < target - 1e-6 { t.step(dtYears: 1000) }
@@ -769,8 +769,7 @@ final class EndorheicEvaporation: XCTestCase {
         try skipUnlessMeasuring()
         for kappa: Double in [0, 1.0, 1.25, 1.5, 2.0, 3.0] {
             var c = cfg(n: 832, kappa: kappa)
-            c.hydraulicSkipWaterSpawns = true
-            c.meanderSpatialCutoffIndex = true
+            c.enableProductionPerformance()
             if kappa == 0 { c.endorheicEvaporation = false }
             let t = Terrain(config: c, seed: 1337)
             var log = ""

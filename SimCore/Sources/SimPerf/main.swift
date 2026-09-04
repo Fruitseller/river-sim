@@ -3,10 +3,15 @@ import SimCore
 
 // Mess-Harness für Issue #43 („erst messen, dann schrauben").
 //
-// Läuft die PRODUKTIONS-Konfiguration headless: dieselben Schalter, die
-// `SimNode.productionConfig()` setzt (die Extension ist von SimCore aus nicht
-// erreichbar, deshalb hier nachgebaut — die zwei Zeilen sind der ganze
-// Unterschied zu `SimConfig()`; s. AGENTS.md „Drei Konfigurations-Ebenen").
+// Läuft die PRODUKTIONS-Konfiguration headless — und zwar den benannten Wert
+// `SimConfig.production` selbst (Issue #97), nicht mehr einen Nachbau seiner
+// zwei Schalter. Der Nachbau war nötig, solange die Konfiguration in der
+// unerreichbaren Extension stand; er trug damit auch das Risiko, still gegen
+// die Produktion zu driften, während Kopfzeile und `--hash` behaupten, sie zu
+// spiegeln. Zu den Ebenen: AGENTS.md „Drei Konfigurations-Ebenen".
+//
+// NICHT von dort kommt der Einlauf: `SimConfig.productionSettleYears` gilt für
+// die Generierung im Spiel, hier ist der Einlauf die Messgröße `--warmup`.
 //
 // Zwei Betriebsarten, beide mit Einlauf (`--warmup`), damit gemessen wird, was
 // die Sim im eingeschwungenen Zustand kostet und nicht der Kaltstart:
@@ -33,18 +38,18 @@ func arg(_ name: String, _ fallback: Double) -> Double {
 }
 let flag = { (name: String) in CommandLine.arguments.contains(name) }
 
-// Standard der Gitter-Paarung ist die PRODUKTIONS-Paarung aus `SimConfig()`
-// selbst, nicht ein Literal: sie wurde schon einmal gemeinsam verstellt
-// (832/130 → 720/112,4789, Aug 2026), und als Literal hätte der Harness danach
-// still die alte, größere Welt weitergemessen — während `--hash` und die
-// Pass-Tabelle behaupten, die Produktion zu spiegeln.
+// Standard der Gitter-Paarung ist die PRODUKTIONS-Paarung aus der
+// Produktions-Config selbst, nicht ein Literal: sie wurde schon einmal
+// gemeinsam verstellt (832/130 → 720/112,4789, Aug 2026), und als Literal
+// hätte der Harness danach still die alte, größere Welt weitergemessen —
+// während `--hash` und die Pass-Tabelle behaupten, die Produktion zu spiegeln.
 //
 // `n` und `world` gehören ZUSAMMEN (AGENTS.md): allein verstellt, ändert `--n`
 // die Zellgröße und damit jede per-Zell-Kalibrierung — der Lauf misst dann eine
 // andere Physik, nicht dasselbe Modell auf kleinerem Gitter. Ältere Messreihen
 // in `docs/perf-measurements.md` reproduziert man deshalb mit BEIDEN Schaltern
 // (die Paarung davor: `--n 832 --world 130`).
-let production = SimConfig()
+let production = SimConfig.production
 // Genau EINEN der beiden Schalter zu setzen ist nie Absicht, sondern immer der
 // Fehler „alte Gewohnheit, halb umgestellt": `--n 832` allein paart die alte
 // Auflösung mit der neuen Weltgröße. Der Lauf misst dann eine Zellgröße, die es
@@ -55,7 +60,7 @@ if flag("--n") != flag("--world") {
         simperf: `--n` und `--world` gehören zusammen, gesetzt ist nur einer.
         Sie legen gemeinsam die Zellgröße fest; allein verstellt misst der Lauf
         eine andere Physik statt dasselbe Modell auf einem anderen Gitter.
-          Produktion (Standard, aus SimConfig()):  --n \(production.n) --world \(production.world)
+          Produktion (Standard, aus SimConfig.production):  --n \(production.n) --world \(production.world)
           Messreihen in docs/perf-measurements.md: --n 832 --world 130
 
         """.utf8))
@@ -77,13 +82,11 @@ let noProfile = flag("--no-profile")
 // Fremdstörung, also die belastbarste Zahl für einen Vorher/Nachher-Vergleich.
 let repeats = Int(arg("--repeat", 1))
 
-// MARK: - Produktions-Config (Spiegel von SimNode.productionConfig())
+// MARK: - Produktions-Config, nur mit der Gitter-Paarung der Kommandozeile
 
 var cfg = production
 cfg.n = gridN
 cfg.world = worldSize
-cfg.hydraulicSkipWaterSpawns = true
-cfg.meanderSpatialCutoffIndex = true
 
 // MARK: - Lauf
 
