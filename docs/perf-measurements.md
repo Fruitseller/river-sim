@@ -94,6 +94,16 @@ Abweichung, wo keine Physik-Änderung ist.
 Er ist maschinen-spezifisch (System-libm, s. AGENTS.md) — verglichen wird immer
 auf DERSELBEN Maschine, vor und nach der Änderung.
 
+**Zweiter Bruch der Vergleichbarkeit (September 2026):** der Harness generierte
+die Messwelt ZWEIMAL — `Terrain(config:seed:)` generiert schon selbst, danach
+stand noch ein `terrain.generate(seed:)`. `generate` leert `veg` nicht (der
+Sukzessions-Pass liest über den Samen-Druck das vorhandene Feld, gepinnt in
+`TerrainAPITests.testGenerateResetsAnAgedTerrain`), der zweite Lauf startete
+also mit dem Samen-Druck des ersten. Gemessen wurde damit eine Vegetation, die
+keine frisch generierte Produktionswelt hat — und `veg` hängt über `vegDamp` an
+der Erosion. Der Aufruf ist weg; Fingerabdrücke und Zeiten von davor sind mit
+heutigen nicht vergleichbar.
+
 ### Messhygiene auf der VM
 
 Die Messmaschine hat 4 Kerne und streut **zwischen Prozessläufen** um ~5 %.
