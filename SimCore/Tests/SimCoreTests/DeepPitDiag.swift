@@ -53,7 +53,6 @@ final class DeepPitDiag: XCTestCase {
         let t = Terrain(config: .production, seed: 1337)
         // Hohe Land-Zelle suchen und dort einen tiefen Krater graben (hält der
         // Spieler „Absenken" ein paar Sekunden, entspricht das ~200 Strichen).
-        let sea = t.cfg.sea
         var spot = -1
         for k in 0..<t.cfg.count where t.h[k] > 0.45 { spot = k; break }
         XCTAssertGreaterThanOrEqual(spot, 0)
