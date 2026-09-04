@@ -2947,19 +2947,26 @@ public final class Terrain {
 
     // MARK: - Hydraulische Bett-Inzision (Gleichgewichtstiefe)
 
-    /// Hält die Betten des Abflussnetzes auf hydraulischer Gleichgewichtstiefe (Issue #108, Ansatz 2).
-    /// Ein aktiver Fluss verlandet im Alter nicht, sondern räumt sein Bett gegenüber den
-    /// Talflanken auf eine definierte Tiefe (D_eq ∝ Q^0.35) aus, abgestimmt auf RIVER_LIFT
-    /// (0.35 Welt-Y).
+    /// Hält auf ausreichend feinen Gittern die Betten des Abflussnetzes auf
+    /// hydraulischer Gleichgewichtstiefe (Issue #108, Ansatz 2). Ein aktiver
+    /// Fluss verlandet im Alter nicht, sondern räumt sein Bett gegenüber den
+    /// Talflanken auf eine definierte Tiefe aus, abgestimmt auf RIVER_LIFT
+    /// (0.35 Welt-Y). Die Auflösungsgrenze steht bei `channelTargetDepth`.
     private func channelCarve(dt: Double) {
         let cs = cfg.cellSize
         let cellArea = cs * cs
         let minA = cfg.channelFlowMinCells * cellArea
         let fullA = cfg.channelFlowFullCells * cellArea
         let targetDepth = cfg.channelTargetDepth
-        guard targetDepth > 0, minA > 0, fullA > minA else { return }
+        guard cs <= 0.25, targetDepth > 0, minA > 0, fullA > minA else { return }
         let nn = n, cnt = cfg.count, sea = cfg.sea
         let capF = Terrain.relaxFraction(dt: dt, tau: 3000.0)
+        // Bis 0.026 darf der Lauf seinen flachen Anschluss an den See räumen.
+        // 0.020 ließ am Raster-Übergang nur 0.00482 Band-Deckkraft übrig,
+        // 0.025 noch 0.01241. 0.026 ergibt 0.02483 und liegt damit im
+        // gemessenen Übergangsband 0.015...0.045. 0.030 öffnete auch tiefe
+        // Seezellen und erzeugte mit 0.15744 echtes Doppelwasser.
+        let lakeMarginDepth = 0.026
         
         hf.withUnsafeBufferPointer { hfb in
         order.withUnsafeBufferPointer { ob in
@@ -2969,7 +2976,7 @@ public final class Terrain {
             for oi in 0..<cnt {
                 let k = Int(pord[oi])
                 if ph[k] <= sea { continue }
-                if phf[k] - ph[k] > 0.02 { continue }
+                if phf[k] - ph[k] > lakeMarginDepth { continue }
                 let a = pa[k]
                 if a < minA { continue }
                 let r = Int(prec[k])
@@ -2985,7 +2992,7 @@ public final class Terrain {
                     for di in -1...1 {
                         let ni = ki + di, nj = kj + dj
                         if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                        if phf[nj * nn + ni] - ph[nj * nn + ni] > 0.02 { touchesLake = true; break }
+                        if phf[nj * nn + ni] - ph[nj * nn + ni] > lakeMarginDepth { touchesLake = true; break }
                     }
                     if touchesLake { break }
                 }
