@@ -195,10 +195,49 @@ final class RenderContractTests: XCTestCase {
     /// bekämen Spieler zwei verschiedene Welt-Klassen aus demselben Seed.
     func testBothBridgeGeneratePathsSettle() throws {
         let bridge = try RepoSource.extensionSources()
-        assertContains(bridge, "settleYears: SimNode.generationSettleYears",
+        assertContains(bridge, "settleYears: SimConfig.productionSettleYears",
                        hint: "Start-Terrain läuft ein")
-        XCTAssertEqual(bridge.count(of: "settleYears: SimNode.generationSettleYears"), 2,
+        XCTAssertEqual(bridge.count(of: "settleYears: SimConfig.productionSettleYears"), 2,
                        "Beide generate-Wege der Brücke (Init + @Callable) laufen ein")
+    }
+
+    /// Die Produktions-Config ist EIN benannter Wert in SimCore (Issue #97) —
+    /// die Brücke liest ihn, statt ihn nachzubauen. Vorher stand dieselbe
+    /// Zwei-Zeilen-Abweichung in sechs handgepflegten Kopien; die Brücke war
+    /// die einzige davon, die headless nicht ausführbar ist, also die einzige,
+    /// die still driften konnte. Genau deshalb prüft dieser Wächter ihren
+    /// Quelltext auch auf die ABWESENHEIT einer eigenen Fassung: ein neuer
+    /// `config.hydraulicSkipWaterSpawns = …` in der Brücke wäre sonst wieder
+    /// unbemerkt.
+    func testBridgeReadsTheOneProductionConfig() throws {
+        let bridge = try RepoSource.extensionSources()
+        assertContains(bridge, "config: SimConfig.production",
+                       hint: "Start-Terrain der Brücke fährt SimConfig.production")
+        for flag in ["hydraulicSkipWaterSpawns", "meanderSpatialCutoffIndex"] {
+            XCTAssertEqual(bridge.count(ofIdentifier: flag), 0,
+                           "Die Brücke setzt \(flag) wieder von Hand — der Schalter "
+                           + "gehört in SimConfig.production")
+        }
+        XCTAssertEqual(bridge.count(ofIdentifier: "productionConfig"), 0,
+                       "Die Brücke baut wieder eine eigene Produktions-Config")
+        XCTAssertEqual(bridge.count(ofIdentifier: "generationSettleYears"), 0,
+                       "Die Brücke hält den Einlauf wieder selbst — er steht in "
+                       + "SimConfig.productionSettleYears")
+    }
+
+    /// Die Gegenseite desselben Vertrags, ausführbar: `production` ist genau
+    /// `SimConfig()` plus die zwei Laufzeit-Schalter. Rutscht eine dritte
+    /// Abweichung hinein, fährt die Produktion eine andere Physik als jede
+    /// Kalibrierung und jeder Test — und die Kopfzeile des Mess-Harness
+    /// behauptet weiter, sie zu spiegeln.
+    func testProductionConfigIsTheDefaultsPlusTheTwoPerformanceFlags() {
+        var expected = SimConfig()
+        expected.hydraulicSkipWaterSpawns = true
+        expected.meanderSpatialCutoffIndex = true
+        XCTAssertEqual(SimConfig.production, expected,
+                       "SimConfig.production weicht über die zwei Perf-Schalter "
+                       + "hinaus von SimConfig() ab")
+        XCTAssertEqual(SimConfig.productionSettleYears, 3000)
     }
 
     /// Der Default des `Terrain`-Initialisierers ist die dritte Kopie derselben
