@@ -2945,6 +2945,80 @@ public final class Terrain {
         }}}}}}}}}}}}}
     }
 
+    // MARK: - Hydraulische Bett-Inzision (Gleichgewichtstiefe)
+
+    /// Hält die Betten des Abflussnetzes auf hydraulischer Gleichgewichtstiefe (Issue #108, Ansatz 2).
+    /// Ein aktiver Fluss verlandet im Alter nicht, sondern räumt sein Bett gegenüber den
+    /// Talflanken auf eine definierte Tiefe (D_eq ∝ Q^0.35) aus, abgestimmt auf RIVER_LIFT
+    /// (0.35 Welt-Y).
+    private func channelCarve(dt: Double) {
+        let cs = cfg.cellSize
+        let cellArea = cs * cs
+        let minA = cfg.channelFlowMinCells * cellArea
+        let fullA = cfg.channelFlowFullCells * cellArea
+        let targetDepth = cfg.channelTargetDepth
+        guard targetDepth > 0, minA > 0, fullA > minA else { return }
+        let nn = n, cnt = cfg.count, sea = cfg.sea
+        let capF = Terrain.relaxFraction(dt: dt, tau: 3000.0)
+        
+        hf.withUnsafeBufferPointer { hfb in
+        order.withUnsafeBufferPointer { ob in
+        withBed { bed in
+            let ph = bed.h, prec = receiver, pa = area, pord = ob.baseAddress!
+            let phf = hfb.baseAddress!
+            for oi in 0..<cnt {
+                let k = Int(pord[oi])
+                if ph[k] <= sea { continue }
+                if phf[k] - ph[k] > 0.02 { continue }
+                let a = pa[k]
+                if a < minA { continue }
+                let r = Int(prec[k])
+                if r < 0 || r == k { continue }
+                if ph[r] <= sea { continue }
+                
+                let rj = r / nn, ri = r % nn
+                let kj = k / nn, ki = k % nn
+                
+                // Auslass-Schwelle eines Sees wird von outletIncision geschnitten, nicht hier
+                var touchesLake = false
+                for dj in -1...1 {
+                    for di in -1...1 {
+                        let ni = ki + di, nj = kj + dj
+                        if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                        if phf[nj * nn + ni] - ph[nj * nn + ni] > 0.02 { touchesLake = true; break }
+                    }
+                    if touchesLake { break }
+                }
+                if touchesLake { continue }
+                let qi = -(rj - kj)
+                let qj = ri - ki
+                
+                // Flanken-Sampling bei Distanz 2..3 (wie ChannelIncision.measure):
+                var acc = 0.0, m = 0
+                for s in [-3, -2, 2, 3] {
+                    let xi = ki + qi * s, xj = kj + qj * s
+                    if xi < 0 || xi >= nn || xj < 0 || xj >= nn { continue }
+                    acc += ph[xj * nn + xi]; m += 1
+                }
+                guard m >= 2 else { continue }
+                let flankH = acc / Double(m)
+                
+                let x = min(1.0, (a - minA) / (fullA - minA))
+                let s = x * x * (3.0 - 2.0 * x)
+                let dEq = targetDepth * s
+                
+                let targetH = flankH - dEq
+                let minAllowed = ph[r] + 1e-4
+                let finalTarget = max(targetH, minAllowed)
+                
+                if ph[k] > finalTarget {
+                    let delta = (ph[k] - finalTarget) * capF
+                    _ = erodeCell(k, delta, bed)
+                }
+            }
+        }}}
+    }
+
     // MARK: - Seen-Verfüllung
 
     /// Füllt Senken (hf > h) langsam mit Sediment auf — Näherung an den
@@ -4324,7 +4398,10 @@ public final class Terrain {
             // → Hangdiffusion (Grate runden) → Wave.
             // 1) Fluviale Makro-Inzision zuerst: schneidet das kohärente Talnetz und
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
-            if cfg.outletIncision { mark("outletIncision"); outletIncision(dt: dt) }
+            if cfg.outletIncision {
+                mark("outletIncision"); outletIncision(dt: dt)
+                mark("channelCarve"); channelCarve(dt: dt)
+            }
             if cfg.basinFill { mark("fillLakes"); fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
             if cfg.puddleFillYears > 0 { mark("fillShallowPonds"); fillShallowPonds(dt: dt) }
             // 1b) Braiding: super-linearer Bedload-Transport auf dem MFD-Netz baut
