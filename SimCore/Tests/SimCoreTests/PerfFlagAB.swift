@@ -2,7 +2,8 @@ import XCTest
 @testable import SimCore
 
 /// A/B-Wächter für den Produktions-Perf-Schalter `hydraulicSkipWaterSpawns`
-/// (Issue #90): `SimNode.productionConfig()` schaltet ihn an, und AGENTS.md
+/// (Issue #90): die Produktions-Config schaltet ihn an (`SimConfig.production`,
+/// bis Issue #97 `SimNode.productionConfig()`), und AGENTS.md
 /// sagte pauschal Verhaltensgleichheit der Perf-Schalter zu — belegt war sie
 /// nur für `meanderSpatialCutoffIndex` (`testSpatialCutoffIndexMatchesReferenceOrder`).
 ///

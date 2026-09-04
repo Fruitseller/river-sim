@@ -8,15 +8,8 @@ import XCTest
 /// deshalb ratenbegrenzt (`lakeLevelResponseYears`) — dieser Test stellt sicher,
 /// dass die Glättung wirkt und niemand das Rendering zurück auf `hf` verdrahtet.
 final class LakeLevelStability: XCTestCase {
-    private func prodConfig() -> SimConfig {
-        var c = SimConfig()
-        c.hydraulicSkipWaterSpawns = true
-        c.meanderSpatialCutoffIndex = true
-        return c
-    }
-
     func testWaterLevelDampsFillJumps() {
-        let t = Terrain(config: prodConfig(), seed: 1337)
+        let t = Terrain(config: .production, seed: 1337)
         // Warmup wie eine frühe Spielsession (kleine Echtzeit-Schritte).
         var years = 0.0
         while years < 2000 { t.step(dtYears: 20); years += 20 }

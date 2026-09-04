@@ -253,7 +253,8 @@ und gesammelt in §F/§G.
 ## F) Verlauf an/aus in PRODUKTIONSAUFLÖSUNG (n = 832, Produktionspfad)
 
 Produktionspfad = `hydraulicSkipWaterSpawns` + `meanderSpatialCutoffIndex` wie in
-`SimNode.productionConfig()`; „an" ist der normierte Stand aus §E. Erzeugt mit
+der Produktions-Config (damals `SimNode.productionConfig()`, seit Issue #97
+`SimConfig.production`); „an" ist der normierte Stand aus §E. Erzeugt mit
 der temporären Messbank aus Issue #10 (`RecalMeasure.swift`, nach der Kalibrierung
 entfernt — dieselben Kennzahlen liefert `testRainWeightMeasurementDiagnostic`).
 

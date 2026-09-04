@@ -60,10 +60,10 @@ enum ChannelIncision {
         return Sample(cells: count, incision: sum / d, channelH: chSum / d, neighbourH: nbSum / d)
     }
 
-    /// Produktions-Config aus `SimConfig.productionDefaults()` (Single Source of Truth,
-    /// synchron mit `SimNode.productionConfig()`).
+    /// Produktions-Config aus `SimConfig.production` (Single Source of Truth,
+    /// synchron mit der Brücke).
     static func productionConfig() -> SimConfig {
-        SimConfig.productionDefaults()
+        SimConfig.production
     }
 
     /// Einlauf der Generierung aus `SimConfig.productionSettleYears` (PR #106).
