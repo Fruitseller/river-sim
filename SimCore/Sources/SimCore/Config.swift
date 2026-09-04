@@ -386,6 +386,12 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // ---- Hydraulische Gleichgewichtstiefe des Betts (Issue #108, Ansatz 2) ----
     // Hält das Flussbett im gealterten Gelände auf einer stabilen Zieltiefe
     // unterhalb seiner Talflanken, abgestimmt auf RIVER_LIFT (0.35 Welt-Y / 24 ~ 0.0146 Sim-H).
+    // Der Pass läuft nur bei cellSize <= 0.25. Auf gröberen Kalibriergrids ist
+    // die Rinne schmaler als eine Zelle; eine ganze Zelle auf diese Render-Tiefe
+    // zu schneiden überprägt die Makroform. Gemessen auf n=384: Gletscher-V→U
+    // bei 50k b 1.275 gegen 1.296 ohne Eis mit dem Pass, b 1.388 gegen 1.234 ohne.
+    // Auf n=160 altert das robuste Relief ohne den groben Schnitt von 0.1260
+    // bei 50k auf 0.1074 bei 100k statt bei 0.1050 zu plateauieren.
     public var channelTargetDepth: Double = 0.0146
     // ---- Abfluss-Dämpfer der Tropfen-Deposition (Issue #108) ----
     // Der HAUPTHEBEL gegen „Flussbett auf Umgebungsniveau": ein wasserführender
@@ -1567,4 +1573,3 @@ extension SimConfig {
         return config
     }
 }
-
