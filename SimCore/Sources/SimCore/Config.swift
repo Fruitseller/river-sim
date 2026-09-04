@@ -379,8 +379,11 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // 0.155 auf 0.306 Welt-Y bei Jahr 0 und von 0.059 auf 0.092 bei 100k.
     // Unterhalb der Schwelle ist der Faktor exakt 1.0 → dort bit-identische
     // Arithmetik (dieselbe Bauform wie der Lithologie-Faktor darunter).
-    // Vollständige Messreihe: `docs/channel-incision-measurements.md`.
     public var channelDiffusionDamp: Double = 0.15  // kappa-Restanteil im voll geschützten Kanal. 1.0 = Schutz AUS (bit-identisch zum Stand vor #108). 0.0 verworfen: das Bett bekäme gar kein Kriechen mehr, seine Flanken bleiben aber vollständig diffusiv → die Kante Bett/Flanke wird künstlich scharf.
+    // ---- Hydraulische Gleichgewichtstiefe des Betts (Issue #108, Ansatz 2) ----
+    // Hält das Flussbett im gealterten Gelände auf einer stabilen Zieltiefe
+    // unterhalb seiner Talflanken, abgestimmt auf RIVER_LIFT (0.35 Welt-Y / 24 ~ 0.0146 Sim-H).
+    public var channelTargetDepth: Double = 0.0146
     // ---- Abfluss-Dämpfer der Tropfen-Deposition (Issue #108) ----
     // Der HAUPTHEBEL gegen „Flussbett auf Umgebungsniveau": ein wasserführender
     // Lauf transportiert Fracht durch, statt sein eigenes Bett zu verfüllen.
