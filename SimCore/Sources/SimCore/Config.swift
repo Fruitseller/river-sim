@@ -1493,3 +1493,49 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var cellSize: Double { world / Double(n - 1) }
     public var count: Int { n * n }
 }
+
+// MARK: - Produktions-Konfiguration (Issue #97)
+
+extension SimConfig {
+    /// Die Konfiguration, die in Produktion wirklich läuft: `SimConfig()` plus
+    /// die zwei reinen Laufzeit-Schalter. Sie steht als EIN benannter Wert hier,
+    /// weil sie vorher in sechs handgepflegten Kopien lag (Brücke,
+    /// Mess-Harness, vier Teststellen) — nichts verband sie, und `SimConfig()`
+    /// allein war damit eine Konfiguration, die nichts fährt.
+    ///
+    /// Warum die zwei Schalter nicht einfach Defaults werden: die drei
+    /// Konfigurations-Ebenen laufen absichtlich auseinander (AGENTS.md „Drei
+    /// Konfigurations-Ebenen"). `hydraulicSkipWaterSpawns` ist NICHT
+    /// bit-neutral — er verwirft Ozean-Start-Tropfen ganz und erzeugt damit eine
+    /// andere, statistisch gleichwertige Welt-Realisierung (gemessen und in
+    /// beide Richtungen gepinnt: `SimCoreTests/PerfFlagAB.swift`, Issue #90).
+    /// Die bestehenden Kalibrierungen und Testkonfigs stehen auf dem
+    /// Core-Default; als Default hier zöge der Schalter sie alle mit.
+    public static var production: SimConfig {
+        var config = SimConfig()
+        config.enableProductionPerformance()
+        return config
+    }
+
+    /// Dieselben Laufzeit-Schalter auf eine ANDERE Basis-Config — für
+    /// Messreihen, die produktionsnah, aber mit abweichender Auflösung oder
+    /// eigenem κ messen (`SimCoreTests/EndorheicEvaporation.swift`). Damit
+    /// bleibt das Delta zum Core-Default auch dort eine Ableitung statt einer
+    /// siebten Kopie.
+    public mutating func enableProductionPerformance() {
+        hydraulicSkipWaterSpawns = true
+        meanderSpatialCutoffIndex = true
+    }
+
+    /// Einlauf der Generierung im Produktionslauf: so viele Jahre echte
+    /// Sim-Physik direkt nach dem Aufbau, Uhr danach wieder auf 0 (Begründung
+    /// und A/B-Bilder: `Terrain.generate(seed:settleYears:)`, PR #106).
+    ///
+    /// Kein Config-FELD, weil der Einlauf einmalig zur Generierung wirkt und
+    /// nicht im Spielstand weiterlebt — er steht trotzdem HIER, damit die
+    /// gesamte Abweichung der Produktion vom Core-Default an einer Stelle
+    /// ablesbar ist (`generate`-Default 0: die SimCore-Testwelten bleiben
+    /// unverändert). Der Mess-Harness liest ihn bewusst nicht: er fährt seinen
+    /// eigenen, getrennt einstellbaren Einlauf über `--warmup`.
+    public static let productionSettleYears = 3000.0
+}

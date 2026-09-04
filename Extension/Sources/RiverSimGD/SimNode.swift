@@ -13,25 +13,19 @@ import SimRender
 /// zurückgeben.
 @Godot
 final class SimNode: Node {
-    private static func productionConfig() -> SimConfig {
-        var config = SimConfig()
-        config.hydraulicSkipWaterSpawns = true
-        config.meanderSpatialCutoffIndex = true
-        return config
-    }
-
     /// `var`, weil ein geladener Spielstand seine EIGENE Config mitbringt
     /// (Issue #8): die Datei-Config ist autoritativ, also wird das Terrain beim
     /// Laden ersetzt statt in-place überschrieben.
-    /// Einlauf der Generierung (Jahre echte Sim-Physik, Uhr danach wieder auf 0;
-    /// Begründung und A/B-Bilder: `Terrain.generate(seed:settleYears:)`, PR #106).
-    /// Nur der Produktionspfad läuft ein — die SimCore-Testwelten (Default 0)
-    /// bleiben unverändert, wie bei den Perf-Flags in `productionConfig()`.
-    private static let generationSettleYears = 3000.0
-
-    private var terrain = Terrain(config: SimNode.productionConfig(),
+    ///
+    /// Config UND Einlauf kommen als benannte Werte aus SimCore
+    /// (`SimConfig.production`, `SimConfig.productionSettleYears`, Issue #97);
+    /// die Brücke baut hier keine eigene Fassung mehr — sie stand sonst als
+    /// eine von sechs handgepflegten Kopien da, die nichts verband. Nur der
+    /// Produktionspfad läuft ein, die SimCore-Testwelten (`generate`-Default 0)
+    /// bleiben unverändert. Wächter: `SimCoreTests/RenderContractTests.swift`.
+    private var terrain = Terrain(config: SimConfig.production,
                                   seed: RenderContract.defaultSeed,
-                                  settleYears: SimNode.generationSettleYears)
+                                  settleYears: SimConfig.productionSettleYears)
     private var lastWorldBytes = 0
 
     /// Der gesamte Render-Zustand (die Renderer mit ihren EWMA-Feldern,
@@ -45,7 +39,7 @@ final class SimNode: Node {
 
     @Callable func generate(seed: Int) {
         terrain.generate(seed: UInt32(truncatingIfNeeded: seed),
-                         settleYears: SimNode.generationSettleYears)
+                         settleYears: SimConfig.productionSettleYears)
         render.invalidate(terrain, worldReplaced: true)
     }
 
