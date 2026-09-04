@@ -7,6 +7,8 @@ import SimCore
 // `SimNode.productionConfig()` setzt (die Extension ist von SimCore aus nicht
 // erreichbar, deshalb hier nachgebaut — die zwei Zeilen sind der ganze
 // Unterschied zu `SimConfig()`; s. AGENTS.md „Drei Konfigurations-Ebenen").
+// Die CONFIG ist damit die der Produktion, der EINLAUF bewusst nicht — s.
+// „Abweichung zur Produktion" unten am `Terrain`-Aufruf.
 //
 // Zwei Betriebsarten, beide mit Einlauf (`--warmup`), damit gemessen wird, was
 // die Sim im eingeschwungenen Zustand kostet und nicht der Kaltstart:
@@ -87,12 +89,36 @@ cfg.meanderSpatialCutoffIndex = true
 
 // MARK: - Lauf
 
+// `Terrain(config:seed:)` GENERIERT bereits — der reine Allokations-Weg ist
+// `init(allocating:)` und existiert nur für den Snapshot-Pfad. Der zusätzliche
+// `generate`-Aufruf, der hier stand, war deshalb nicht nur doppelte Arbeit,
+// sondern verstellte die Messwelt: `generate` leert `veg` NICHT, und der
+// Sukzessions-Pass liest über den Samen-Druck (`vegDispersalRadius`) das
+// VORHANDENE Feld. Ein zweiter Lauf startet also mit dem Samen-Druck des ersten
+// (gemessen und gepinnt in `TerrainAPITests.testGenerateResetsAnAgedTerrain`).
+// Der Harness misst damit eine Vegetation, die keine frisch generierte
+// Produktionswelt hat — und `veg` ist über `vegDamp` an die Erosion gekoppelt,
+// also nicht bloß Optik.
+//
+// ABWEICHUNG zur Produktion, bewusst: die Brücke generiert mit
+// `settleYears: SimNode.generationSettleYears` (3000 J. echte Physik in
+// 1000-Jahr-Chunks, Uhr danach zurück auf 0, danach die Startzustands-Doktrinen
+// für Seespiegel und Playa-Kruste; PR #106). Hier bleibt `settleYears` beim
+// Default 0, den Einlauf macht das `--warmup` — 100 × 100 J., also 10.000 Jahre
+// und damit weiter eingeschwungen als die Produktionswelt, nur über einen
+// anderen Pfad. Der Wert wird NICHT gespiegelt wie die zwei Perf-Flags: er
+// würde die Messwelt verschieben und damit jede Zahl in
+// `docs/perf-measurements.md` samt `--hash`-Fingerabdruck ein weiteres Mal
+// unvergleichbar machen — der Harness vergleicht Vorher/Nachher auf DERSELBEN
+// Maschine, und dafür zählt allein, dass beide Läufe dieselbe Welt fahren.
+// Praktische Folge, damit sie nicht wieder Rätsel aufgibt: ein Fingerabdruck
+// aus `--hash` und einer aus der Brücke gehören zu zwei verschiedenen Welten
+// und sind nie gleich.
 let terrain = Terrain(config: cfg, seed: seed)
-terrain.generate(seed: seed)
 
-let genClock = Date()
+let warmupClock = Date()
 for _ in 0..<warmupSteps { terrain.step(dtYears: warmupDt) }
-let warmupSecs = -genClock.timeIntervalSinceNow
+let warmupSecs = -warmupClock.timeIntervalSinceNow
 
 if hashMode {
     // Nach dem Einlauf noch die Messschritte, damit der Fingerabdruck denselben

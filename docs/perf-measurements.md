@@ -33,6 +33,19 @@ aus nicht erreichbar, deshalb der Nachbau), Seed 1337, **100 Schritte à
 100 Jahre Einlauf**, danach die Messschritte. Gemessen wird also der
 eingeschwungene Zustand, nicht der Kaltstart.
 
+**Produktions-Config ja, Produktions-Einlauf nein** — die eine bewusste
+Abweichung: die Brücke generiert seit PR #106 mit
+`settleYears: SimNode.generationSettleYears` (3000 Jahre echte Physik in
+1000-Jahr-Chunks, Uhr danach zurück auf 0, dann die Startzustands-Doktrinen für
+Seespiegel und Playa-Kruste). Der Harness lässt `settleYears` beim Default 0 und
+läuft stattdessen über `--warmup` ein: 100 × 100 Jahre, also 10.000 Jahre und
+damit weiter eingeschwungen als die Produktionswelt, nur über einen anderen
+Pfad. Gespiegelt wird der Wert nicht — er würde die Messwelt und damit jede Zahl
+in diesem Dokument samt `--hash`-Fingerabdruck erneut unvergleichbar machen,
+während der Harness genau für Vorher/Nachher auf DERSELBEN Maschine da ist.
+Folge fürs Debuggen: ein Fingerabdruck aus `--hash` und einer aus der Brücke
+gehören zu zwei verschiedenen Welten und stimmen nie überein.
+
 `n` und `world` sind dabei KEINE Literale im Harness, sondern die Werte aus
 `SimConfig()` selbst — derzeit 720/112,4789. Als Literal hätte er nach dem
 gemeinsamen Umstellen der Paarung (832/130 → 720/112,4789, Aug 2026) still die
@@ -93,6 +106,16 @@ Abweichung, wo keine Physik-Änderung ist.
 
 Er ist maschinen-spezifisch (System-libm, s. AGENTS.md) — verglichen wird immer
 auf DERSELBEN Maschine, vor und nach der Änderung.
+
+**Zweiter Bruch der Vergleichbarkeit (September 2026):** der Harness generierte
+die Messwelt ZWEIMAL — `Terrain(config:seed:)` generiert schon selbst, danach
+stand noch ein `terrain.generate(seed:)`. `generate` leert `veg` nicht (der
+Sukzessions-Pass liest über den Samen-Druck das vorhandene Feld, gepinnt in
+`TerrainAPITests.testGenerateResetsAnAgedTerrain`), der zweite Lauf startete
+also mit dem Samen-Druck des ersten. Gemessen wurde damit eine Vegetation, die
+keine frisch generierte Produktionswelt hat — und `veg` hängt über `vegDamp` an
+der Erosion. Der Aufruf ist weg; Fingerabdrücke und Zeiten von davor sind mit
+heutigen nicht vergleichbar.
 
 ### Messhygiene auf der VM
 

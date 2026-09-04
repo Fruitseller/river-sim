@@ -68,7 +68,12 @@ ist der Wert `Terrain.fingerprint()` über das KOMPLETTE Zustands-Inventar
 ein neues Zustandsfeld ist automatisch abgedeckt, sobald es ins Inventar kommt
 (Wächter: `FingerprintTests`). Werte von vor #78 (nur 8 Felder gehasht) sind
 mit heutigen nicht vergleichbar. Ein Erwartungswert gehört nicht ins Repo:
-der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm). Die Pass-Tabelle
+der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm). Vergleichbar sind
+außerdem nur `--hash`-Werte untereinander: der Harness fährt die
+Produktions-Config, aber bewusst nicht deren Einlauf (`settleYears` 0 plus
+`--warmup` statt der 3000 Jahre aus `SimNode.generationSettleYears`), eine Welt
+aus der Brücke trägt also nie denselben Wert — Begründung im Kopf von
+`SimPerf/main.swift` und in `docs/perf-measurements.md` §A. Die Pass-Tabelle
 kommt aus `SimProfile` (Marken in `step()`, standardmäßig aus). Messprotokoll,
 Vorher/Nachher und die gemessenen Fehlschläge: `docs/perf-measurements.md`.
 Ältere Messreihen dort stehen auf der Paarung davor und werden mit BEIDEN
