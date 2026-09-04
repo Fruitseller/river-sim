@@ -357,6 +357,69 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // also keine Ratenänderung.
     public var outletErode: Double = 3.0e-5 // Rate der Auslass-Inzision. 3e-5 gibt feine dendritische Rinnen „über die ganze Oberfläche" ohne Überkämmen (6e-5 überkarvt bei 100k)
     public var hillDiffusion: Double = 0.012 // Hangdiffusion-Basis (Bodenkriechen, D·∇²z) im Droplet-Pfad, RÄUMLICH VARIABEL (hillslopeDiffusion): rundet soil-mantled/sanfte Hänge, lässt hohen steilen Kahlfels scharf → gerundete Landschaft mit einzelnen spitzen Gipfeln (die Ausnahme). Der fehlende Alterungs-Prozess laut LEM-Recherche (docs/research-terrain-aging.md). Auf n=640 kalibriert (auflösungs-skaliert in step()).
+    // ---- Wasserführende Läufe: die EINE Schwelle (Issue #108) ----
+    // Drei Pässe müssen wissen, ab wann eine Zelle ein wasserführender LAUF ist
+    // und nicht mehr Hang: die Hangdiffusion (kriecht dort weniger ins Bett), die
+    // Tropfen-Deposition (der Lauf transportiert durch) und — geparkt, s. unten —
+    // die Pfützen-Verlandung. Die Schwelle steht deshalb EINMAL, sonst hängt an
+    // drei Stellen dieselbe Kalibrier-Zahl und sie laufen auseinander. Größe = D8-`area` in ZELLEN (Erosions-Netz, nicht
+    // MFD — AGENTS.md § Rollentrennung), wie `braidMinCells`/`floodplainMinArea`.
+    // Hinweis: „Zellen" meint hier äquivalente Zellen über die #10-Normierung der
+    // D8-Akkumulation auf das Landmittel des Regens (Σ über Land = Landzellen · cellArea;
+    // gesichert durch den Wächter `testWeightedFlowKeepsDrainageTotal`).
+    public var channelFlowMinCells: Double = 320  // ab so viel Einzugsgebiet (Zellen) gilt eine Zelle als wasserführender Lauf. GEMESSEN (n=720, Seed 1337, Quereinschnitt bei 25k in Welt-Y, Kanal-Schutz der Diffusion auf 0.15): 1000 → 0.069, 320 → 0.081, 100 → 0.091, 40 → 0.081. Tiefer zu gehen kauft also fast nichts mehr, kostet aber die ALTERUNG: die mittlere Grat-Krümmung (`ridgeCurvature`, „rund = alt") wächst betragsmäßig von −0.044 (Schutz aus) über −0.058 (320) auf −0.065 (40) — je mehr Netz geschützt ist, desto weniger rundet die Landschaft überhaupt noch. 320 ist der Punkt, an dem der Einschnitt fast voll da und das Alterungs-Signal am wenigsten verschoben ist.
+    public var channelFlowFullCells: Double = 3200 // ab so viel Einzugsgebiet gilt „Lauf" voll (smoothstep von MinCells bis hier, damit im Gelände keine Kante entsteht). Faktor 10 Spanne: der Effekt wächst mit der Fluss-Ordnung, statt an einer Kante zu schalten.
+    // ---- Kanal-Schutz der Hangdiffusion (Issue #108) ----
+    // Bodenkriechen schmiert die Rinnen zu, in denen die Flüsse laufen: die
+    // Diffusion sieht eine Rinne als Krümmung und füllt sie, während im aktiven
+    // Kanal die Strömung genau dieses einkriechende Material wieder abräumt
+    // (Hangfuß-Entfernung — der Grund, warum reale Kerbtäler ihre Form halten).
+    // Deshalb wird das lokale kappa auf Zellen mit großem Einzugsgebiet
+    // gedrosselt. Größe = D8-`area` in ZELLEN (wie `braidMinCells`,
+    // `floodplainMinArea`), Übergang als smoothstep → keine Kante im Gelände.
+    // Von den beiden Hebeln dieser Runde ist das der stärkere: er allein hebt
+    // den Quereinschnitt (Kennzahl `ChannelIncision`, n=720, Seed 1337) von
+    // 0.155 auf 0.306 Welt-Y bei Jahr 0 und von 0.059 auf 0.092 bei 100k.
+    // Unterhalb der Schwelle ist der Faktor exakt 1.0 → dort bit-identische
+    // Arithmetik (dieselbe Bauform wie der Lithologie-Faktor darunter).
+    public var channelDiffusionDamp: Double = 0.15  // kappa-Restanteil im voll geschützten Kanal. 1.0 = Schutz AUS (bit-identisch zum Stand vor #108). 0.0 verworfen: das Bett bekäme gar kein Kriechen mehr, seine Flanken bleiben aber vollständig diffusiv → die Kante Bett/Flanke wird künstlich scharf.
+    // ---- Hydraulische Gleichgewichtstiefe des Betts (Issue #108, Ansatz 2) ----
+    // Hält das Flussbett im gealterten Gelände auf einer stabilen Zieltiefe
+    // unterhalb seiner Talflanken, abgestimmt auf RIVER_LIFT (0.35 Welt-Y / 24 ~ 0.0146 Sim-H).
+    // Der Pass läuft nur bei cellSize <= 0.25. Auf gröberen Kalibriergrids ist
+    // die Rinne schmaler als eine Zelle; eine ganze Zelle auf diese Render-Tiefe
+    // zu schneiden überprägt die Makroform. Gemessen auf n=384: Gletscher-V→U
+    // bei 50k b 1.275 gegen 1.296 ohne Eis mit dem Pass, b 1.388 gegen 1.234 ohne.
+    // Auf n=160 altert das robuste Relief ohne den groben Schnitt von 0.1260
+    // bei 50k auf 0.1074 bei 100k statt bei 0.1050 zu plateauieren.
+    public var channelTargetDepth: Double = 0.0146
+    // ---- Abfluss-Dämpfer der Tropfen-Deposition (Issue #108) ----
+    // Der HAUPTHEBEL gegen „Flussbett auf Umgebungsniveau": ein wasserführender
+    // Lauf transportiert Fracht durch, statt sein eigenes Bett zu verfüllen.
+    // Herleitung, Kennzahl und Messwerte stehen bei `Terrain.buildDepositDamp`;
+    // der Präzedenzfall mit MÄANDER-Maske ist `HydraulicParams.channelDepositDamp`.
+    // Größe = D8-`area` in ZELLEN (Erosions-Netz, nicht MFD), Übergang smoothstep.
+    public var flowDepositDamp: Double = 0.15   // Depositions-Restanteil im voll wasserführenden Lauf. 1.0 = Dämpfer AUS (bit-identisch zum Stand vor #108). GEMESSEN (n=720, Seed 1337, Quereinschnitt in Welt-Y bei Jahr 0 / 100k, Kanal-Schutz der Diffusion an): 1.0 → 0.306/0.092, 0.30 → 0.429/0.076, 0.15 → 0.458/0.086, 0.05 → 0.502/0.082. Unter 0.15 kauft der Dämpfer nur noch den frischen Zustand, nicht mehr das Alter — und 0.0 ist am Präzedenzfall als instabil belegt (der Tropfen dumpt seine Gesamtlast am ersten Hindernis → Halden, Relief-Runaway). 0.15 hält denselben Abstand zu dieser Kante wie `channelDepositDamp`.
+    // ---- Pfützen-Ausschluss in Flussbetten (Issue #108) — GEPARKT ----
+    // Der DRITTE Hebel, gemessen der stärkste und trotzdem AUS. `fillShallowPonds`
+    // ist ein Aufräum-Pass gegen Flachwasser-Sprenkel in reifen Auen; im FLUSSBETT
+    // schüttet er mit `puddleFillDepth` (0.06 = 1.4 Welt-Y) und τ =
+    // `puddleFillYears` genau die Rinne zu, um die es hier geht. Die
+    // Mäander-Betten (`isChannel`) nimmt er längst aus; der Schalter ist dieselbe
+    // Regel für die dendritischen Läufe, die keine Maske haben.
+    // GEMESSEN (n=720, Seed 1337, Quereinschnitt bei 100k, mit beiden anderen
+    // Hebeln): 0.086 → 0.158 Welt-Y, fast eine Verdopplung.
+    // WARUM TROTZDEM AUS: die Pfützen im Bett BLEIBEN dann stehen, und stehendes
+    // Wasser im Bett ist genau die Sorte Wassersäule, an der die Render-Übergabe
+    // Band ↔ Raster hängt (`WaterRender.lakeRawWetDepth`). Gemessen sprang die
+    // Doppelmalungs-Kennzahl von `WaterRendererTests
+    // .testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater` von 0.024 auf
+    // 0.243 (Schranke 0.03), und die dt-Invarianz des Seeanteils riss ebenfalls
+    // (`DtInvariance`: dt 10 gegen 2000, 0.0040 gegen 0.107). Der Hebel taugt
+    // also, aber erst zusammen mit einem Pass, der die Pits im Bett
+    // ENTWÄSSERT statt sie nur nicht mehr zu füllen — offener Punkt in
+    // `docs/channel-incision-measurements.md` §E.
+    public var puddleFillSkipsFlowCells = false
     // ---- Auen/Schwemmebenen (Überflutungs-Aggradation) ----
     // Flüsse lagern seitlich Sediment ab und bauen flache Auenböden — die breiten
     // Niedrig-Gradient-Reaches, in denen sie mäandern/verflechten können. Ohne sie
@@ -1492,4 +1555,21 @@ public struct SimConfig: Sendable, Codable, Equatable {
 
     public var cellSize: Double { world / Double(n - 1) }
     public var count: Int { n * n }
+}
+
+// MARK: - Produktions-Standards (Issues #90, #106)
+
+extension SimConfig {
+    /// Einlauf der Generierung für die Produktionswelt (PR #106).
+    public static let productionSettleYears: Double = 3000.0
+
+    /// Produktions-Config mit aktiven Performance-Optionen (Issue #90).
+    /// `meanderSpatialCutoffIndex` ist verhaltensneutral; `hydraulicSkipWaterSpawns`
+    /// verwirft Ozean-Start-Tropfen (statistisch gleichwertig, aber andere Realisierung).
+    public static func productionDefaults() -> SimConfig {
+        var config = SimConfig()
+        config.hydraulicSkipWaterSpawns = true
+        config.meanderSpatialCutoffIndex = true
+        return config
+    }
 }
