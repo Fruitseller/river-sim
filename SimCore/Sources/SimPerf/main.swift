@@ -87,12 +87,21 @@ cfg.meanderSpatialCutoffIndex = true
 
 // MARK: - Lauf
 
+// `Terrain(config:seed:)` GENERIERT bereits — der reine Allokations-Weg ist
+// `init(allocating:)` und existiert nur für den Snapshot-Pfad. Der zusätzliche
+// `generate`-Aufruf, der hier stand, war deshalb nicht nur doppelte Arbeit,
+// sondern verstellte die Messwelt: `generate` leert `veg` NICHT, und der
+// Sukzessions-Pass liest über den Samen-Druck (`vegDispersalRadius`) das
+// VORHANDENE Feld. Ein zweiter Lauf startet also mit dem Samen-Druck des ersten
+// (gemessen und gepinnt in `TerrainAPITests.testGenerateResetsAnAgedTerrain`).
+// Der Harness misst damit eine Vegetation, die keine frisch generierte
+// Produktionswelt hat — und `veg` ist über `vegDamp` an die Erosion gekoppelt,
+// also nicht bloß Optik.
 let terrain = Terrain(config: cfg, seed: seed)
-terrain.generate(seed: seed)
 
-let genClock = Date()
+let warmupClock = Date()
 for _ in 0..<warmupSteps { terrain.step(dtYears: warmupDt) }
-let warmupSecs = -genClock.timeIntervalSinceNow
+let warmupSecs = -warmupClock.timeIntervalSinceNow
 
 if hashMode {
     // Nach dem Einlauf noch die Messschritte, damit der Fingerabdruck denselben
