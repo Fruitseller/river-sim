@@ -28,7 +28,7 @@ public final class TreeInstanceRenderer {
         if snapshot.count != veg.count { return 1.0 }
         return veg.withUnsafeBufferPointer { vb in
             snapshot.withUnsafeBufferPointer { sb in
-                guard let vp = vb.baseAddress, let sp = sb.baseAddress else { return 0.0 }
+                guard let vp = vb.baseAddress, let sp = sb.baseAddress else { return 1.0 }
                 var maxD = 0.0
                 for k in 0..<veg.count {
                     maxD = max(maxD, abs(vp[k] - sp[k]))
