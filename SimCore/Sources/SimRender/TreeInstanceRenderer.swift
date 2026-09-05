@@ -14,17 +14,28 @@ public final class TreeInstanceRenderer {
     /// veg-Feld beim letzten Baum-Rebuild — Grundlage der Rebuild-Heuristik
     /// (Bäume nicht jeden Frame neu bauen, sondern nur wenn sich die Vegetation
     /// merklich geändert hat). Reiner Render-Zustand.
-    private var treeVegSnapshot: [Double] = []
+    ///
+    /// `nil` heißt „kein Vergleichspunkt" (vor dem ersten Build und nach
+    /// `invalidateSnapshot`).
+    private var treeVegSnapshot: [Double]?
 
     /// Maximale |Δveg| seit dem letzten `markBuilt` — GDScript rebuildet die
     /// Baum-MultiMeshes erst ab einer Schwelle (Heuristik: 0.1). Vor dem
     /// ersten Build (kein Snapshot) immer 1 → erzwingt den Initial-Build.
     public func maxDelta(_ terrain: Terrain) -> Double {
+        guard let snapshot = treeVegSnapshot else { return 1.0 }
         let veg = terrain.veg
-        if treeVegSnapshot.count != veg.count { return 1.0 }
-        var maxD = 0.0
-        for k in 0..<veg.count { maxD = max(maxD, abs(veg[k] - treeVegSnapshot[k])) }
-        return maxD
+        if snapshot.count != veg.count { return 1.0 }
+        return veg.withUnsafeBufferPointer { vb in
+            snapshot.withUnsafeBufferPointer { sb in
+                guard let vp = vb.baseAddress, let sp = sb.baseAddress else { return 1.0 }
+                var maxD = 0.0
+                for k in 0..<veg.count {
+                    maxD = max(maxD, abs(vp[k] - sp[k]))
+                }
+                return maxD
+            }
+        }
     }
 
     /// Setzt den Rebuild-Vergleichspunkt auf das aktuelle veg-Feld.
@@ -32,7 +43,7 @@ public final class TreeInstanceRenderer {
 
     /// Verwirft den Vergleichspunkt (geladene Welt) → `maxDelta` meldet 1 und
     /// der nächste Frame baut die Bäume neu.
-    public func invalidateSnapshot() { treeVegSnapshot = [] }
+    public func invalidateSnapshot() { treeVegSnapshot = nil }
 
     /// FNV-1a über (i, j, salt) → deterministischer Per-Zelle-Zufall für Jitter/
     /// Varianten/Verdünnung. KEIN Frame-Random: gleiche Zelle → gleicher Baum,
@@ -130,7 +141,7 @@ public final class TreeInstanceRenderer {
                     }
                 }
                 if nearCoast { continue }
-                // Jitter ±1 Zelle (bricht das 2er-Raster), Höhe bilinear an der
+                // Jitter ±1 Zelle (bricht das 3er-Raster), Höhe bilinear an der
                 // gejitterten Position, minimal versenkt (kein Schweben am Hang).
                 let jx = (treeHash01(i, j, 0x9e37) - 0.5) * 2.0
                 let jz = (treeHash01(i, j, 0x79b9) - 0.5) * 2.0
