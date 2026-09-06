@@ -189,6 +189,47 @@ final class RenderStateTests: XCTestCase {
             "Andere Welt ohne Kanäle: die Bänder der alten Welt bleiben sonst stehen")
     }
 
+    /// `riversMaxDelta` misst die maximale Knotenverschiebung gegen den Snapshot
+    /// ohne Zwischen-Allokation und meldet bei Strukturänderungen (Knoten-
+    /// oder Kanalzahl geändert) 1e9.
+    func testRiversMaxDeltaMeasuresMovementAndDetectsStructuralChanges() {
+        let terrain = Terrain(config: renderConfig(), seed: 1337)
+        let render = RenderState(geometryMode: true)
+        terrain.meander.channels = [
+            RiverChannel(nodes: [MeanderNode(x: 10, z: 10), MeanderNode(x: 12, z: 12)],
+                         discharge: [100, 100]),
+            RiverChannel(nodes: [MeanderNode(x: 20, z: 20), MeanderNode(x: 25, z: 25)],
+                         discharge: [200, 200]),
+        ]
+        render.markRiversBuilt(terrain)
+        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+
+        // Bewegung eines einzelnen Knotens um exakt 0.04 Zellen:
+        terrain.meander.channels[0].nodes[1].x += 0.04
+        XCTAssertEqual(render.riversMaxDelta(terrain), 0.04, accuracy: 1e-9)
+
+        // Größere Verschiebung an anderem Knoten (Z-Richtung):
+        terrain.meander.channels[1].nodes[0].z -= 0.07
+        XCTAssertEqual(render.riversMaxDelta(terrain), 0.07, accuracy: 1e-9)
+
+        // Snapshot nachziehen:
+        render.markRiversBuilt(terrain)
+        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+
+        // Strukturänderung 1: Knoten hinzugefügt -> 1e9
+        terrain.meander.channels[0].nodes.append(MeanderNode(x: 14, z: 14))
+        terrain.meander.channels[0].discharge.append(100)
+        XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1e8)
+
+        // Snapshot nachziehen:
+        render.markRiversBuilt(terrain)
+        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+
+        // Strukturänderung 2: Kanal entfernt -> 1e9
+        terrain.meander.channels.removeLast()
+        XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1e8)
+    }
+
     /// Die Kopplung der beiden Wasser-Pfade (Issue #34) liegt jetzt im
     /// Zustand, nicht beim Aufrufer: das Feld liest die Bandflags des LETZTEN
     /// Builds selbst. Ohne Band deckelt es nichts, mit Band entsteht der Saum —
