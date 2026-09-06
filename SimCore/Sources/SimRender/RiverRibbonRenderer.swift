@@ -130,7 +130,9 @@ public final class RiverRibbonRenderer {
     // MARK: Dirty-Vertrag
 
     private func flattenedChannelPositions(_ terrain: Terrain) -> [Double] {
+        let totalCount = terrain.meander.channels.reduce(0) { $0 + 1 + $1.nodes.count * 2 }
         var flat: [Double] = []
+        flat.reserveCapacity(totalCount)
         for ch in terrain.meander.channels {
             flat.append(Double(ch.nodes.count))
             for nd in ch.nodes { flat.append(nd.x); flat.append(nd.z) }
@@ -146,12 +148,25 @@ public final class RiverRibbonRenderer {
     /// sich). Der Vertrag spart im Pause-/Idle-/Sculpt-Zustand (kein Schritt →
     /// Delta exakt 0 → kein Rebuild); im Zeitraffer deckelt Main.gd den Mesh-
     /// Rebuild auf 1 Hz (gemessen: 0,30 s kosteten ~4 % FPS).
+    ///
+    /// Vergleicht die Zentrumslinien direkt gegen den Snapshot ohne
+    /// Zwischen-Allokation eines flachen Arrays.
     public func maxDelta(_ terrain: Terrain) -> Double {
         guard let snapshot = riverSnapshot else { return 1e9 }
-        let flat = flattenedChannelPositions(terrain)
-        if flat.count != snapshot.count { return 1e9 }
+        var idx = 0
         var maxD = 0.0
-        for i in 0..<flat.count { maxD = max(maxD, abs(flat[i] - snapshot[i])) }
+        for ch in terrain.meander.channels {
+            let count = ch.nodes.count
+            guard idx < snapshot.count else { return 1e9 }
+            if snapshot[idx] != Double(count) { return 1e9 }
+            idx += 1
+            guard idx + count * 2 <= snapshot.count else { return 1e9 }
+            for nd in ch.nodes {
+                maxD = max(maxD, max(abs(nd.x - snapshot[idx]), abs(nd.z - snapshot[idx + 1])))
+                idx += 2
+            }
+        }
+        guard idx == snapshot.count else { return 1e9 }
         return maxD
     }
 
