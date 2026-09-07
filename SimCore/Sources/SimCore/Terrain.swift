@@ -3832,8 +3832,9 @@ public final class Terrain {
         precondition(nh.count == cfg.count && ns.count == cfg.count && nr.count == cfg.count,
                      "Bett-Felder passen nicht zur Config")
         precondition(nu.isEmpty || nu.count == cfg.count, "Eismaske weder leer noch vollständig")
-        precondition(zip(nh, zip(nr, ns)).allSatisfy { abs($0 - ($1.0 + $1.1)) < 1e-12 },
-                     "h ≠ rock + sed im Testaufbau")
+        precondition(zip(nh, zip(nr, ns)).allSatisfy {
+            $0.isNaN || ($1.0 + $1.1).isNaN || abs($0 - ($1.0 + $1.1)) < 1e-12
+        }, "h ≠ rock + sed im Testaufbau")
         h = nh; sed = ns; rock = nr; underIce = nu
     }
 
