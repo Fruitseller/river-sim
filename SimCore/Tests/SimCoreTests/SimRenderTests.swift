@@ -72,4 +72,22 @@ final class SimRenderTests: XCTestCase {
         Array(difference[$0...($0 + 3)]) == [198, 198, 198, 255]
       })
   }
+
+  func testDiagnosticStatsHandleInvalidHeightsAndNanScale() {
+    let terrain = Terrain(config: renderConfig(), seed: 1337)
+    let renderer = TerrainDiagnostics()
+    renderer.capture(terrain)
+
+    // Einen Wert ungültig machen: stats muss DBG_INVALID (Index 15) zählen.
+    terrain.h[10] = Double.nan
+    let stats = renderer.stats(terrain)
+    XCTAssertEqual(stats[15], 1.0, "Genau eine ungültige Zelle")
+
+    // NaN-Skala darf in differenceBytes nicht zu NaN/Absturz führen (wird per max(1e-9, scale) geklemmt).
+    let diff = renderer.differenceBytes(terrain, scale: Double.nan)
+    XCTAssertEqual(diff.count, terrain.cfg.count * 4)
+    // Zelle 10 muss Magenta (ungültig) sein: [255, 0, 255, 255]
+    let o = 10 * 4
+    XCTAssertEqual(Array(diff[o..<(o + 4)]), [255, 0, 255, 255])
+  }
 }

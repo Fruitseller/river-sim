@@ -49,24 +49,28 @@ public final class TerrainDiagnostics {
         var belowReference = 0.0, aboveReference = 0.0
         var maxRemoved = 0.0, maxAdded = 0.0
         var valid = 0, invalid = 0
-        for k in h.indices {
-            let value = h[k], baseline = reference[k]
-            guard value.isFinite && baseline.isFinite else { invalid += 1; continue }
-            minimum = min(minimum, value)
-            maximum = max(maximum, value)
-            referenceMaximum = max(referenceMaximum, baseline)
-            sum += value
-            referenceSum += baseline
-            valid += 1
-            let delta = value - baseline
-            if delta >= 0 {
-                aboveReference += delta
-                maxAdded = max(maxAdded, delta)
-            } else {
-                belowReference -= delta
-                maxRemoved = max(maxRemoved, -delta)
+        h.withUnsafeBufferPointer { hb in
+        reference.withUnsafeBufferPointer { rb in
+            let ph = hb.baseAddress!, pref = rb.baseAddress!
+            for k in 0..<h.count {
+                let value = ph[k], baseline = pref[k]
+                guard value.isFinite && baseline.isFinite else { invalid += 1; continue }
+                minimum = min(minimum, value)
+                maximum = max(maximum, value)
+                referenceMaximum = max(referenceMaximum, baseline)
+                sum += value
+                referenceSum += baseline
+                valid += 1
+                let delta = value - baseline
+                if delta >= 0 {
+                    aboveReference += delta
+                    maxAdded = max(maxAdded, delta)
+                } else {
+                    belowReference -= delta
+                    maxRemoved = max(maxRemoved, -delta)
+                }
             }
-        }
+        }}
         if valid == 0 {
             minimum = 0; maximum = 0; referenceMaximum = 0
         }
@@ -108,7 +112,7 @@ public final class TerrainDiagnostics {
     public func differenceBytes(_ terrain: Terrain, scale: Double) -> [UInt8] {
         if referenceHeights.count != terrain.h.count { capture(terrain) }
         let h = terrain.h, reference = referenceHeights
-        let safeScale = max(scale, 1e-9)
+        let safeScale = max(1e-9, scale)
         var out = [UInt8](repeating: 255, count: h.count * 4)
         h.withUnsafeBufferPointer { hb in
         reference.withUnsafeBufferPointer { rb in
