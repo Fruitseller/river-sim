@@ -38,6 +38,28 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(renderer.maxDelta(terrain), 1)
   }
 
+  func testTreeMaxDeltaMeasuresIntermediateVegetationDelta() {
+    let terrain = Terrain(config: renderConfig(), seed: 1337)
+    let renderer = TreeInstanceRenderer()
+    renderer.markBuilt(terrain)
+    XCTAssertEqual(renderer.maxDelta(terrain), 0)
+
+    var state = terrain.state
+    let first = 0
+    let middle = terrain.cfg.count / 2
+    let last = terrain.cfg.count - 1
+
+    state.veg[first] += 0.05
+    state.veg[middle] += 0.35
+    state.veg[last] += 0.15
+    terrain.restore(state)
+
+    let delta = renderer.maxDelta(terrain)
+    XCTAssertGreaterThan(delta, 0, "maxDelta muss echte Vegetationsänderungen erkennen")
+    XCTAssertLessThan(delta, 1, "maxDelta darf bei partieller Änderung nicht auf den Sentinel 1 springen")
+    XCTAssertEqual(delta, 0.35, "maxDelta muss das exakte Maximum der Abweichungen liefern")
+  }
+
   func testDiagnosticStatsKeepTheirExecutableIndexContract() {
     let terrain = Terrain(config: renderConfig(), seed: 1337)
     let renderer = TerrainDiagnostics()
