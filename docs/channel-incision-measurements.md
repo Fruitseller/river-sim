@@ -122,7 +122,7 @@ Wächter im Einzelnen:
 | `DtInvariance` | grün (nur mit dem geparkten Pfützen-Hebel riss sie, s. §E) |
 | Playa-Wächter (#11) | grün |
 | `Glacier.testNoFluvialErosionUnderIce*` | grün, nach einer Korrektur AM TEST (s. §E) |
-| `WaterRendererTests` Band↔Raster | grün, Schranke von 0.02 auf 0.03 angehoben (s. §E) |
+| `WaterRendererTests` Band↔Raster | grün, Schranke von 0.02 auf 0.045 angehoben (s. §E) |
 
 ## E. Was NICHT ausgeliefert wird, und die zwei Test-Korrekturen
 
@@ -133,7 +133,7 @@ Wassersäule, an der die Render-Übergabe Band ↔ Raster hängt
 (`WaterRender.lakeRawWetDepth`, Issue #34):
 
 - `WaterRendererTests.testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater`:
-  Doppelmalungs-Kennzahl 0.024 → **0.243** (Schranke 0.03),
+  Doppelmalungs-Kennzahl 0.024 → **0.243** (heutige Schranke 0.045),
 - `DtInvariance.testSameTimeSameResultAcrossStepSizes`: Seeanteil dt 10 gegen
   dt 2000 0.0040 gegen 0.107 (Schranke 0.8 relative Abweichung),
 - `DtInvariance.testDrainageIsFramerateIndependentWithoutDroplets`: 0.30 statt
@@ -151,12 +151,15 @@ Stück weiter flussabwärts, und im Wellenband trafen 2 vergletscherte Zellen
 gemessen: mit `waveRelax = 0` sind es 0 Zellen, mit abgeschaltetem Dämpfer
 ebenfalls 0 — der Wächter hat den Wellenpass gemessen, nicht das Gate.
 
-**Die Doppelmalungs-Schranke steht auf 0.03 statt 0.02.** Die beiden Regeln der
+**Die Doppelmalungs-Schranke steht auf 0.045 statt 0.02.** Die beiden Regeln der
 Übergabe lesen die Wassersäule unterschiedlich: der Raster-Pfad ZELLWEISE
 (`rawWet[k]`), der Band-Fade BILINEAR am Stützpunkt (bewusst so, s. Kommentar an
 `lakeHandoverFade`). Mit den tieferen Betten ist der Pond-Gradient über eine
-Zelle steiler, und der Rest wuchs auf gemessen 0.0244 — ein einzelner Stützpunkt
-mit 2,4 % Deckkraft. Wie ein echter Bruch aussieht, steht oben: 0.243.
+Zelle steiler. Die erste Messung ergab 0.0244; spätere Stände mit Bett-Carve
+lagen bei 0.024 bis 0.032. Die Obergrenze 0.045 lässt dafür Abstand.
+Ein echter Bruch liegt mit 0.243 deutlich darüber. Eine Unterschranke entfällt,
+weil weniger Rest-Deckkraft zulässig ist. `ChannelIncision` prüft die Bett-Tiefe
+separat über die Terrain-Höhen.
 
 ## F. Abnahme
 
@@ -174,3 +177,32 @@ Zu prüfen ist die BODEN-Geometrie unter den Läufen (Wasser-Shader ausblenden
 hilft: `RS_FLATTEN` nicht, sondern schlicht flach über das Tal blicken) und ob
 die Rinne im 720er-Mesh sichtbar ist — mit `RS_QUALITY=balanced` als Gegenprobe,
 dass die Rinne nicht am Render-Grid hängt.
+
+## G. Review-Nacharbeit zu PR #110
+
+`channelCarve` läuft im hydraulischen Zweig nach `outletIncision`, auch wenn
+die Auslass-Inzision abgeschaltet ist. `channelTargetDepth = 0` deaktiviert den
+Bett-Pass separat. Bei der Produktions-Config bleibt die Pass-Reihenfolge gleich.
+
+Die festen Werte im Pass sind jetzt benannt. Die Kalibrierung aus Commit
+`d7d5438` bleibt erhalten:
+
+| Wert | Bedeutung und bisherige Begründung |
+| --- | --- |
+| `maximumCellSize = 0.25` | Obergrenze für den gesamten Pass; gröbere Gitter überprägen die Makroform, Gegenproben in `SimConfig.channelTargetDepth` |
+| `depthMultiplier = 1.5` | Vertiefung auf dem feinen Grid, bei n=720 und dx≈0.156 |
+| `relaxationYears = 3000` | Zeitkonstante der exponentiellen Annäherung |
+| `bankDepthFraction = 0.45` | Zieltiefe der angrenzenden Ufer relativ zur Bett-Tiefe |
+| `bankRelaxationFraction = 0.45` | Langsamere Annäherung der Ufer |
+
+Die bisherige Verzweigung für grobe Gitter hinter dem Auflösungs-Gate war
+unerreichbar und ist entfernt. Die Werte sind lokale Konstanten; das
+Spielstand-Format ändert sich nicht. Die Kalibrierung gilt bei
+`RenderContract.heightScale = 24` und `riverLift = 0.35`. Die Physik behält ihren
+festen Wert auch bei Änderungen der Darstellung.
+
+Die See-Randtiefe bleibt bei 0.026. Die vorherige Kalibrierung maß für
+0.020 / 0.025 / 0.026 / 0.030 eine Rest-Deckkraft von
+0.00482 / 0.01241 / 0.02483 / 0.15744. Die ersten beiden Werte sind nach Wegfall
+der Alpha-Unterschranke kein Render-Fehler. Eine Neukalibrierung der Tiefe
+ist nicht Teil dieser Review-Korrektur.

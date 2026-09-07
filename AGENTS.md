@@ -380,7 +380,8 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
 → Gletscher (updateIce: Firn→Eis, Eisfluss, glaziale Erosion, Moränen)
 → Mäander (migrateMeander + meanderStamp)
 ──── ab hier der Produktionszweig `hydraulicEnabled` ────
-→ outletIncision → fillLakes (geparkt, `basinFill = false`) → fillShallowPonds
+→ outletIncision → channelCarve (separat über channelTargetDepth abschaltbar)
+→ fillLakes (geparkt, `basinFill = false`) → fillShallowPonds
 → braidPass → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA
 → floodplainAggradation (geparkt, `floodplainEnabled = false`)
 → Hangdiffusion (sub-getaktet) → wavePass (sub-getaktet)

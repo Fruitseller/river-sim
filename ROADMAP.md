@@ -569,6 +569,10 @@ Messreihen `docs/dt-invariance-measurements.md`):
 - `floodplainAggradation` liegt deaktiviert als Referenz herum (`floodplainEnabled=false`):
   per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
   jetzt über sanfteres Relief (`baseRelief` 0.78).
+- PR #110, Review-Nacharbeit: Bett-Inzision unabhängig von `outletIncision`,
+  separat über `channelTargetDepth = 0` abschaltbar. Render-Übergabe prüft nur
+  die Doppelmalungs-Obergrenze 0.045; Bett-Tiefe bleibt ein Sim-Wächter.
+  Kalibrierung und Begründung: `docs/channel-incision-measurements.md` §G.
 - `puddleFillSkipsFlowCells = false` (Issue #108, Sep 2026): der Pfützen-Ausschluss
   in wasserführenden Flussbetten ist verdrahtet und GEPARKT. Er ist der stärkste
   der drei Hebel gegen das zugeschüttete Bett (Quereinschnitt bei 100k 0.086 →

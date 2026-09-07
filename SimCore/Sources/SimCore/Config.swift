@@ -385,7 +385,12 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var channelDiffusionDamp: Double = 0.15  // kappa-Restanteil im voll geschützten Kanal. 1.0 = Schutz AUS (bit-identisch zum Stand vor #108). 0.0 verworfen: das Bett bekäme gar kein Kriechen mehr, seine Flanken bleiben aber vollständig diffusiv → die Kante Bett/Flanke wird künstlich scharf.
     // ---- Hydraulische Gleichgewichtstiefe des Betts (Issue #108, Ansatz 2) ----
     // Hält das Flussbett im gealterten Gelände auf einer stabilen Zieltiefe
-    // unterhalb seiner Talflanken, abgestimmt auf RIVER_LIFT (0.35 Welt-Y / 24 ~ 0.0146 Sim-H).
+    // unterhalb seiner Talflanken. Kalibriert bei RenderContract.heightScale = 24
+    // und riverLift = 0.35 Welt-Y, entsprechend rund 0.0146 Sim-H.
+    // Bewusst ein fester Physik-Wert: eine Render-Skalierung darf die Simulation
+    // nicht verändern. Bei Änderungen der Darstellung die sichtbare Tiefe neu prüfen.
+    // 0 schaltet nur diesen Pass aus, unabhängig von outletIncision.
+    // Er gehört wie die Tropfen zum hydraulicEnabled-Zweig.
     // Der Pass läuft nur bei cellSize <= 0.25. Auf gröberen Kalibriergrids ist
     // die Rinne schmaler als eine Zelle; eine ganze Zelle auf diese Render-Tiefe
     // zu schneiden überprägt die Makroform. Gemessen auf n=384: Gletscher-V→U
@@ -414,7 +419,7 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // Band ↔ Raster hängt (`WaterRender.lakeRawWetDepth`). Gemessen sprang die
     // Doppelmalungs-Kennzahl von `WaterRendererTests
     // .testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater` von 0.024 auf
-    // 0.243 (Schranke 0.03), und die dt-Invarianz des Seeanteils riss ebenfalls
+    // 0.243 (heutige Schranke 0.045), und die dt-Invarianz des Seeanteils riss ebenfalls
     // (`DtInvariance`: dt 10 gegen 2000, 0.0040 gegen 0.107). Der Hebel taugt
     // also, aber erst zusammen mit einem Pass, der die Pits im Bett
     // ENTWÄSSERT statt sie nur nicht mehr zu füllen — offener Punkt in
