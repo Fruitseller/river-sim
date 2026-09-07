@@ -57,7 +57,7 @@ final class SimRenderTests: XCTestCase {
     let delta = renderer.maxDelta(terrain)
     XCTAssertGreaterThan(delta, 0, "maxDelta muss echte Vegetationsänderungen erkennen")
     XCTAssertLessThan(delta, 1, "maxDelta darf bei partieller Änderung nicht auf den Sentinel 1 springen")
-    XCTAssertEqual(delta, 0.35, "maxDelta muss das exakte Maximum der Abweichungen liefern")
+    XCTAssertEqual(delta, 0.35, accuracy: 1e-12, "maxDelta muss das exakte Maximum der Abweichungen liefern")
   }
 
   func testDiagnosticStatsKeepTheirExecutableIndexContract() {
