@@ -257,6 +257,11 @@ final class RenderContractTests: XCTestCase {
     /// SimCore-Quellen dürfen keine alten Bezeichner auf die entfernten
     /// Brücken-Properties führen (`SimNode.generationSettleYears`,
     /// `SimNode.productionConfig`).
+    ///
+    /// Der Wächter prüft bewusst den Rohtext inkl. Doc-Kommentaren (`RepoSource.file`
+    /// statt `SourceProbe.code`): genau ein veralteter Kommentar in `Terrain.generate`
+    /// war der erste Drift-Fall dieses PRs. Historische Verweise in Tests werden nicht
+    /// erfasst, weil nur die SimCore-Quellen und der Mess-Harness geprüft werden.
     func testNoStaleSimNodeConfigReferencesInSimCore() throws {
         for path in ["SimCore/Sources/SimCore/Terrain.swift",
                      "SimCore/Sources/SimCore/Config.swift",
