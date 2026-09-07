@@ -71,6 +71,57 @@ enum ChannelIncision {
 }
 
 final class ChannelIncisionTests: XCTestCase {
+    /// Prüft die Verdrahtung über step auf einem geneigten Tal ohne andere
+    /// Höhenprozesse. Die D8-Schwellen bleiben auf Produktionswerten.
+    func testChannelCarveWorksWithoutOutletIncisionAndCanBeDisabled() {
+        func valley(targetDepth: Double) -> Terrain {
+            var c = SimConfig()
+            c.n = 128
+            c.world = SimConfig().cellSize * Double(c.n - 1)
+            c.channelTargetDepth = targetDepth
+            c.outletIncision = false
+            c.hydraulicPerYear = 0
+            c.hillDiffusion = 0
+            c.waveRelax = 0
+            c.meanderEnabled = false
+            c.braidingEnabled = false
+            c.basinFill = false
+            c.puddleFillYears = 0
+            c.iceEnabled = false
+            c.upliftPer100y = 0
+            c.upliftDecayStartPer100y = 0
+            c.upliftDecayFloorPer100y = 0
+            c.reliefServoPer100y = 0
+            let t = Terrain(allocating: c, seed: 1337)
+            var heights = [Double](repeating: 0, count: c.count)
+            for j in 0..<c.n {
+                for i in 0..<c.n {
+                    let k = j * c.n + i
+                    let h = c.sea + 0.1 + Double(c.n - 1 - j) * 0.002
+                        + Double(abs(i - c.n / 2)) * 0.001
+                    heights[k] = h
+                }
+            }
+            t.setBedForTests(h: heights, sed: [Double](repeating: 0, count: c.count),
+                             rock: heights, underIce: [])
+            return t
+        }
+        let on = valley(targetDepth: SimConfig().channelTargetDepth)
+        let off = valley(targetDepth: 0)
+        let initial = off.h
+        on.step(dtYears: 1000)
+        off.step(dtYears: 1000)
+        XCTAssertEqual(off.h, initial, "Abgeschalteter Bett-Pass verändert die Höhen")
+        XCTAssertTrue(zip(on.h, initial).contains { $0 < $1 },
+                      "Bett-Pass hängt noch an outletIncision")
+        let carved = ChannelIncision.measure(on)
+        let unchanged = ChannelIncision.measure(off)
+        XCTAssertGreaterThan(carved.cells, 0, "Testtal hat keinen messbaren Lauf")
+        XCTAssertEqual(carved.cells, unchanged.cells)
+        XCTAssertGreaterThan(carved.incision, unchanged.incision,
+                             "Bett-Pass vertieft das Querprofil nicht")
+    }
+
     /// WÄCHTER (Issue #108): die beiden Hebel halten die Rinne offen, in der der
     /// Fluss läuft — gegen denselben Seed ohne sie (= Stand vor #108).
     ///

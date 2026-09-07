@@ -2958,13 +2958,20 @@ public final class Terrain {
         let minA = cfg.channelFlowMinCells * cellArea
         let fullA = cfg.channelFlowFullCells * cellArea
         let targetDepth = cfg.channelTargetDepth
-        guard cs <= 0.25, targetDepth > 0, minA > 0, fullA > minA else { return }
+        // Feste Kalibrierung des feinen Querprofils, Messreihe und Grenzen:
+        // docs/channel-incision-measurements.md §G. Keine neuen Spielstand-Felder.
+        let maximumCellSize = 0.25
+        let depthMultiplier = 1.5
+        let relaxationYears = 3000.0
+        let bankDepthFraction = 0.45
+        let bankRelaxationFraction = 0.45
+        guard cs <= maximumCellSize, targetDepth > 0, minA > 0, fullA > minA else { return }
         let nn = n, cnt = cfg.count, sea = cfg.sea
-        let capF = Terrain.relaxFraction(dt: dt, tau: 3000.0)
+        let capF = Terrain.relaxFraction(dt: dt, tau: relaxationYears)
         // Bis 0.026 darf der Lauf seinen flachen Anschluss an den See räumen.
         // 0.020 ließ am Raster-Übergang nur 0.00482 Band-Deckkraft übrig,
         // 0.025 noch 0.01241. 0.026 ergibt 0.02483 und liegt damit im
-        // gemessenen Übergangsband 0.015...0.045. 0.030 öffnete auch tiefe
+        // gemessenen Bereich unter der Obergrenze 0.045. 0.030 öffnete auch tiefe
         // Seezellen und erzeugte mit 0.15744 echtes Doppelwasser.
         let lakeMarginDepth = 0.026
         
@@ -3012,8 +3019,7 @@ public final class Terrain {
                 
                 let x = min(1.0, (a - minA) / (fullA - minA))
                 let s = x * x * (3.0 - 2.0 * x)
-                let dMultiplier = cs <= 0.25 ? 1.5 : 1.0
-                let dEq = targetDepth * dMultiplier * s
+                let dEq = targetDepth * depthMultiplier * s
                 
                 let targetH = flankH - dEq
                 let minAllowed = ph[r] + 1e-4
@@ -3024,31 +3030,28 @@ public final class Terrain {
                     _ = erodeCell(k, delta, bed)
                 }
                 
-                // Ufer-Böschung bei feinen Gittern (cellSize <= 0.25):
                 // Bei n=720 (dx=0.156) ist das Wasserband 3..6 Zellen breit.
-                // Ein sanftes Querprofil stützt das Band an den Flanken ab,
-                // während grobe Testgitter (n=62) eine scharfe 1-Pixel-Kerbe bleiben.
-                if cs <= 0.25 {
-                    let bankTarget = max(flankH - 0.45 * dEq, finalTarget)
-                    for side in [-1, 1] {
-                        let bi = ki + qi * side, bj = kj + qj * side
-                        if bi < 0 || bi >= nn || bj < 0 || bj >= nn { continue }
-                        let bk = bj * nn + bi
-                        if phf[bk] - ph[bk] > 0.005 { continue }
-                        var bTouchesLake = false
-                        for dj in -1...1 {
-                            for di in -1...1 {
-                                let bni = bi + di, bnj = bj + dj
-                                if bni < 0 || bni >= nn || bnj < 0 || bnj >= nn { continue }
-                                if phf[bnj * nn + bni] - ph[bnj * nn + bni] > 0.005 { bTouchesLake = true; break }
-                            }
-                            if bTouchesLake { break }
+                // Das Querprofil stützt das Band an den Flanken ab. Grobe Gitter
+                // sind bereits am Einstieg ausgeschlossen.
+                let bankTarget = max(flankH - bankDepthFraction * dEq, finalTarget)
+                for side in [-1, 1] {
+                    let bi = ki + qi * side, bj = kj + qj * side
+                    if bi < 0 || bi >= nn || bj < 0 || bj >= nn { continue }
+                    let bk = bj * nn + bi
+                    if phf[bk] - ph[bk] > 0.005 { continue }
+                    var bTouchesLake = false
+                    for dj in -1...1 {
+                        for di in -1...1 {
+                            let bni = bi + di, bnj = bj + dj
+                            if bni < 0 || bni >= nn || bnj < 0 || bnj >= nn { continue }
+                            if phf[bnj * nn + bni] - ph[bnj * nn + bni] > 0.005 { bTouchesLake = true; break }
                         }
-                        if bTouchesLake { continue }
-                        if ph[bk] > bankTarget && ph[bk] > sea {
-                            let bDelta = (ph[bk] - bankTarget) * capF * 0.45
-                            _ = erodeCell(bk, bDelta, bed)
-                        }
+                        if bTouchesLake { break }
+                    }
+                    if bTouchesLake { continue }
+                    if ph[bk] > bankTarget && ph[bk] > sea {
+                        let bDelta = (ph[bk] - bankTarget) * capF * bankRelaxationFraction
+                        _ = erodeCell(bk, bDelta, bed)
                     }
                 }
             }
@@ -4436,8 +4439,9 @@ public final class Terrain {
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
             if cfg.outletIncision {
                 mark("outletIncision"); outletIncision(dt: dt)
-                mark("channelCarve"); channelCarve(dt: dt)
             }
+            // Eigener Bett-Pass; channelTargetDepth = 0 schaltet ihn aus.
+            mark("channelCarve"); channelCarve(dt: dt)
             if cfg.basinFill { mark("fillLakes"); fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
             if cfg.puddleFillYears > 0 { mark("fillShallowPonds"); fillShallowPonds(dt: dt) }
             // 1b) Braiding: super-linearer Bedload-Transport auf dem MFD-Netz baut
