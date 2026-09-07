@@ -32,11 +32,12 @@ public final class TreeInstanceRenderer {
         guard let snapshot = treeVegSnapshot else { return 1.0 }
         let veg = terrain.veg
         if snapshot.count != veg.count { return 1.0 }
+        if veg.isEmpty { return 0.0 }
         return veg.withUnsafeBufferPointer { vb in
             snapshot.withUnsafeBufferPointer { sb in
-                // Bei leeren Puffern oder fehlender Pufferadresse ist baseAddress nil.
-                // Dies wird konsistent als „kein Vergleichspunkt“ gewertet (Sentinel 1.0
-                // erzwingt Rebuild), statt fälschlich 0.0 (keine Änderung) anzunehmen.
+                // Bei fehlender Pufferadresse (Integritätsfehler bei nicht-leeren Arrays)
+                // ist baseAddress nil. Dies wird defensiv als „kein Vergleichspunkt“ gewertet
+                // (Sentinel 1.0 erzwingt Rebuild).
                 guard let vp = vb.baseAddress, let sp = sb.baseAddress else { return 1.0 }
                 var maxD = 0.0
                 for k in 0..<vb.count {
