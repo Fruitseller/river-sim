@@ -127,5 +127,11 @@ final class SimRenderTests: XCTestCase {
     // Zelle 10 muss Magenta (ungültig) sein: [255, 0, 255, 255]
     let o = 10 * 4
     XCTAssertEqual(Array(diff[o..<(o + 4)]), [255, 0, 255, 255])
+
+    // Gegenprobe für eine finite Zelle: Zelle 0 ist unverändert (hellgrau) und nicht Magenta;
+    // stats[15] bleibt bei 1.0 (wurde oben bereits auf genau 1 Zelle geprüft).
+    let o0 = 0 * 4
+    XCTAssertEqual(Array(diff[o0..<(o0 + 4)]), [198, 198, 198, 255])
+    XCTAssertNotEqual(Array(diff[o0..<(o0 + 4)]), [255, 0, 255, 255])
   }
 }
