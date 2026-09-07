@@ -34,6 +34,9 @@ public final class TreeInstanceRenderer {
         if snapshot.count != veg.count { return 1.0 }
         return veg.withUnsafeBufferPointer { vb in
             snapshot.withUnsafeBufferPointer { sb in
+                // Bei leeren Puffern oder fehlender Pufferadresse ist baseAddress nil.
+                // Dies wird konsistent als „kein Vergleichspunkt“ gewertet (Sentinel 1.0
+                // erzwingt Rebuild), statt fälschlich 0.0 (keine Änderung) anzunehmen.
                 guard let vp = vb.baseAddress, let sp = sb.baseAddress else { return 1.0 }
                 var maxD = 0.0
                 for k in 0..<vb.count {
