@@ -25,9 +25,13 @@ public final class TreeInstanceRenderer {
     ///
     /// Roh-Puffer-Schleife via `withUnsafeBufferPointer`: Traversiert die
     /// ~700k Zellen ohne 1,4 Mio. Array-Bounds-Checks (analog `TerrainDiagnostics.stats`).
-    /// Lokale Wertkopien (`let veg`, `let snapshot`) halten die zugrundeliegenden
-    /// Speicherpuffer via CoW fest; Mutationen an `terrain.veg` während des Laufs
-    /// reallozieren nur die Terrain-Kopie und lassen diesen Puffer unberührt.
+    /// Lokale Wertkopien (`let veg = terrain.veg`, `let snapshot`) ziehen bewusst
+    /// eigenständige Array-Werte (kein `inout`/Direktzugriff über `&terrain.veg`),
+    /// sodass Copy-on-Write die zugrundeliegenden Speicherpuffer während der gesamten
+    /// Ausführung sicher festhält. Künftige Refactorings dürfen hier keinen direkten
+    /// Zeiger auf das Terrain-Feld nutzen: Nur durch die Wertkopie führen etwaige
+    /// Mutationen an `terrain.veg` während des Laufs zu einer Reallozierung der
+    /// Terrain-Kopie und lassen diesen Puffer unberührt.
     public func maxDelta(_ terrain: Terrain) -> Double {
         guard let snapshot = treeVegSnapshot else { return 1.0 }
         let veg = terrain.veg
