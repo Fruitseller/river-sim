@@ -115,7 +115,9 @@ final class SimRenderTests: XCTestCase {
     renderer.capture(terrain)
 
     // Einen Wert ungültig machen: stats muss DBG_INVALID (Index 15) zählen.
-    terrain.h[10] = Double.nan
+    var h = terrain.h
+    h[10] = Double.nan
+    terrain.setBedForTests(h: h, sed: terrain.sed, rock: terrain.rock, underIce: terrain.underIce)
     let stats = renderer.stats(terrain)
     XCTAssertEqual(stats[15], 1.0, "Genau eine ungültige Zelle")
 
