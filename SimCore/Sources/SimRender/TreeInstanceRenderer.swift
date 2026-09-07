@@ -22,6 +22,12 @@ public final class TreeInstanceRenderer {
     /// Maximale |Δveg| seit dem letzten `markBuilt` — GDScript rebuildet die
     /// Baum-MultiMeshes erst ab einer Schwelle (Heuristik: 0.1). Vor dem
     /// ersten Build (kein Snapshot) immer 1 → erzwingt den Initial-Build.
+    ///
+    /// Roh-Puffer-Schleife via `withUnsafeBufferPointer`: Traversiert die
+    /// ~700k Zellen ohne 1,4 Mio. Array-Bounds-Checks (analog `TerrainDiagnostics.stats`).
+    /// Lokale Wertkopien (`let veg`, `let snapshot`) halten die zugrundeliegenden
+    /// Speicherpuffer via CoW fest; Mutationen an `terrain.veg` während des Laufs
+    /// reallozieren nur die Terrain-Kopie und lassen diesen Puffer unberührt.
     public func maxDelta(_ terrain: Terrain) -> Double {
         guard let snapshot = treeVegSnapshot else { return 1.0 }
         let veg = terrain.veg
@@ -30,7 +36,7 @@ public final class TreeInstanceRenderer {
             snapshot.withUnsafeBufferPointer { sb in
                 guard let vp = vb.baseAddress, let sp = sb.baseAddress else { return 1.0 }
                 var maxD = 0.0
-                for k in 0..<veg.count {
+                for k in 0..<vb.count {
                     maxD = max(maxD, abs(vp[k] - sp[k]))
                 }
                 return maxD
