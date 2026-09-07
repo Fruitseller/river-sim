@@ -3829,11 +3829,14 @@ public final class Terrain {
         // würde eine Abweichung messen, die nicht vom Funnel kommt. Die Maske
         // darf leer sein (= kein Eis) oder volle Länge haben, nichts dazwischen —
         // dieselbe Bauform wie im Feld selbst.
+        // Tests dürfen ungültige Höhenwerte in h simulieren ($0.isNaN); rock und sed
+        // müssen endlich und konsistent bleiben. Bei finite h und NaN in rock/sed schlägt
+        // die Precondition weiterhin an, da abs(finite - NaN) < 1e-12 false ergibt.
         precondition(nh.count == cfg.count && ns.count == cfg.count && nr.count == cfg.count,
                      "Bett-Felder passen nicht zur Config")
         precondition(nu.isEmpty || nu.count == cfg.count, "Eismaske weder leer noch vollständig")
         precondition(zip(nh, zip(nr, ns)).allSatisfy {
-            $0.isNaN || ($1.0 + $1.1).isNaN || abs($0 - ($1.0 + $1.1)) < 1e-12
+            $0.isNaN || abs($0 - ($1.0 + $1.1)) < 1e-12
         }, "h ≠ rock + sed im Testaufbau")
         h = nh; sed = ns; rock = nr; underIce = nu
     }
