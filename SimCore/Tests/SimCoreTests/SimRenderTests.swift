@@ -60,6 +60,20 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(delta, 0.35, accuracy: 1e-12, "maxDelta muss das exakte Maximum der Abweichungen liefern")
   }
 
+  func testTreeMaxDeltaHandlesEmptyVegetationBufferAsZeroDelta() {
+    let terrain = Terrain(config: renderConfig(), seed: 1337)
+    let renderer = TreeInstanceRenderer()
+    var state = terrain.state
+    state.veg = []
+    terrain.restore(state)
+
+    XCTAssertEqual(renderer.maxDelta(terrain), 1.0, "Ohne Snapshot stets Rebuild erzwingen")
+    renderer.markBuilt(terrain)
+    XCTAssertEqual(renderer.maxDelta(terrain), 0.0, "Leere Puffer weisen keine Differenz auf (kein Rebuild)")
+    renderer.invalidateSnapshot()
+    XCTAssertEqual(renderer.maxDelta(terrain), 1.0, "Nach Invalidation stets Rebuild erzwingen")
+  }
+
   func testDiagnosticStatsKeepTheirExecutableIndexContract() {
     let terrain = Terrain(config: renderConfig(), seed: 1337)
     let renderer = TerrainDiagnostics()
