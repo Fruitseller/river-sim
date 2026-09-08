@@ -326,4 +326,34 @@ final class WaterRendererTests: XCTestCase {
                          "Feld trägt eine Abfluss-HIERARCHIE, keine Binär-Maske")
     XCTAssertEqual(field, renderer.flowDetailField(terrain), "deterministisch pro Zustand")
   }
+
+  /// Prüft, dass `WaterFieldRenderer.bytes` deterministisch auswertet — sowohl
+  /// für den normalen EWMA-Pfad als auch für den ungefilterten Pfad (`deferTail: true`).
+  func testWaterFieldBytesIsDeterministicAndSupportsDeferTail() {
+    let terrain = agedTerrain(years: 4000)
+    let renderer = WaterFieldRenderer()
+    let heights = terrain.h
+
+    let normalFirst = renderer.bytes(
+      terrain, blend: 1.0, geometryMode: true,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(normalFirst.count, terrain.cfg.count * 4)
+    XCTAssertEqual(terrain.h, heights, "Render-Aufbereitung darf Terrain nicht verändern")
+
+    let normalSecond = renderer.bytes(
+      terrain, blend: 1.0, geometryMode: true,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(normalFirst, normalSecond, "Normaler Pfad muss bit-deterministisch sein")
+
+    let deferred = renderer.bytes(
+      terrain, blend: 1.0, geometryMode: true,
+      bandChannelFlags: [], bandCoverage: [], deferTail: true)
+    XCTAssertEqual(deferred.count, terrain.cfg.count * 4)
+    XCTAssertEqual(
+      deferred,
+      renderer.bytes(
+        terrain, blend: 1.0, geometryMode: true,
+        bandChannelFlags: [], bandCoverage: [], deferTail: true),
+      "deferTail-Pfad muss deterministisch sein")
+  }
 }

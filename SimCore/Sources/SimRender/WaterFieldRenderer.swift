@@ -606,28 +606,40 @@ public final class WaterFieldRenderer {
         // geschwelltes Tiefenfeld kann nach Blur + Smoothstep nur Zell-Treppen
         // liefern; das Gate darf grob sein, die pond-Kontur schneidet es
         // pixelgenau zu.
-        lk.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
-        for k in 0..<cnt {
-            // Fluss-Kanal: GATE, kein weicher Fade. Der Shader liest ihn als
-            // Intensität, und sein Unter-Wasser-Bereich IST das Saum-Fenster —
-            // ein skalierter voller Lauf (stream 0.15) malt sandbraunen Saum ohne
-            // Wasser darin. `WaterRender.streamGate` schaltet erst ab der Fade-
-            // Höhe, bei der ein voller Lauf schon deckt (28 Zellen).
-            // Der Ribbon-Saum (WaterRender.ribbonHaloIntensity) ist davon
-            // ausgenommen: Korridor-Zellen sind per Definition Teil eines echten
-            // Laufs (Zentrumslinie), nicht Speckle (Issue #31).
-            if !(geometryMode && mstamp[k]) {
-                sd[k] *= WaterRender.streamGate(componentFade: componentFade[k])
+        sd.withUnsafeMutableBufferPointer { sdb in
+        lk.withUnsafeMutableBufferPointer { lkb in
+        mstamp.withUnsafeBufferPointer { msb in
+        componentFade.withUnsafeBufferPointer { cfb in
+        rawWet.withUnsafeBufferPointer { rwb in
+        oxb.withUnsafeBufferPointer { oxbPtr in
+            let psd = sdb.baseAddress!, plk = lkb.baseAddress!
+            let pms = msb.baseAddress!, pcf = cfb.baseAddress!
+            let prw = rwb.baseAddress!, pox = oxbPtr.baseAddress!
+            plk.update(repeating: 0, count: cnt)
+            parallelChunks(cnt) { lo, hi in
+                for k in lo..<hi {
+                    // Fluss-Kanal: GATE, kein weicher Fade. Der Shader liest ihn als
+                    // Intensität, und sein Unter-Wasser-Bereich IST das Saum-Fenster —
+                    // ein skalierter voller Lauf (stream 0.15) malt sandbraunen Saum ohne
+                    // Wasser darin. `WaterRender.streamGate` schaltet erst ab der Fade-
+                    // Höhe, bei der ein voller Lauf schon deckt (28 Zellen).
+                    // Der Ribbon-Saum (WaterRender.ribbonHaloIntensity) ist davon
+                    // ausgenommen: Korridor-Zellen sind per Definition Teil eines echten
+                    // Laufs (Zentrumslinie), nicht Speckle (Issue #31).
+                    if !(geometryMode && pms[k]) {
+                        psd[k] *= WaterRender.streamGate(componentFade: pcf[k])
+                    }
+                    // See-Kanal: weicher Fade (Issue #32) — und NICHT vom Korridor
+                    // ausgenommen, ein Ribbon-Korridor darf keine Kleinst-Pfütze als See
+                    // malen.
+                    if prw[k] { plk[k] = pcf[k] }
+                    // Altarm-Overlay nur noch im Legacy-Stempel-Modus (Issue #34): im
+                    // Geometrie-Modus malt das Altarm-BAND, hier bliebe sonst eine
+                    // zweite, fließend schattierte Kopie derselben Schleife stehen.
+                    if !geometryMode && pox[k] > plk[k] { plk[k] = pox[k] }
+                }
             }
-            // See-Kanal: weicher Fade (Issue #32) — und NICHT vom Korridor
-            // ausgenommen, ein Ribbon-Korridor darf keine Kleinst-Pfütze als See
-            // malen.
-            if rawWet[k] { lk[k] = componentFade[k] }
-            // Altarm-Overlay nur noch im Legacy-Stempel-Modus (Issue #34): im
-            // Geometrie-Modus malt das Altarm-BAND, hier bliebe sonst eine
-            // zweite, fließend schattierte Kopie derselben Schleife stehen.
-            if !geometryMode && oxb[k] > lk[k] { lk[k] = oxb[k] }
-        }
+        }}}}}}
         // RÄUMLICH glätten: die Felder sind zell-binär geschwellt (creek/Tiefe) →
         // ohne Glättung wirken Flussränder und Seeufer als Pixel-Grieß. max(Kern,
         // 3×3-Blur) statt reinem Blur: die Kern-Intensität bleibt voll (sonst
@@ -659,7 +671,13 @@ public final class WaterFieldRenderer {
         func blurMax(_ field: inout [Double], passes: Int) {
             for _ in 0..<passes {
                 blur3(field, into: &blur)
-                for k in 0..<cnt { field[k] = max(field[k], blur[k]) }
+                field.withUnsafeMutableBufferPointer { fb in
+                blur.withUnsafeBufferPointer { bb in
+                    let pf = fb.baseAddress!, pb = bb.baseAddress!
+                    parallelChunks(cnt) { lo, hi in
+                        for k in lo..<hi { pf[k] = max(pf[k], pb[k]) }
+                    }
+                }}
             }
         }
         if deferTail {
@@ -675,24 +693,31 @@ public final class WaterFieldRenderer {
             // Inkrement unter 1/255 rundet).
             out.withUnsafeMutableBufferPointer { ob in
             rec.withUnsafeBufferPointer { rcb in
+            sd.withUnsafeBufferPointer { sdb in
+            lk.withUnsafeBufferPointer { lkb in
+            mstamp.withUnsafeBufferPointer { msb in
+            mdx.withUnsafeBufferPointer { mdxb in
+            mdz.withUnsafeBufferPointer { mdzb in
                 let pout = ob.baseAddress!, prec = rcb.baseAddress!
+                let psd = sdb.baseAddress!, plk = lkb.baseAddress!
+                let pms = msb.baseAddress!, pmdx = mdxb.baseAddress!, pmdz = mdzb.baseAddress!
                 parallelChunks(cnt) { lo, hi in
                 for k in lo..<hi {
                     var dx = 0.0, dz = 0.0
-                    if mstamp[k] {
-                        dx = mdx[k]; dz = mdz[k]
+                    if pms[k] {
+                        dx = pmdx[k]; dz = pmdz[k]
                     } else {
                         let r = prec[k]
                         if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
                     }
                     let o = k * 4
-                    pout[o] = byte01(sd[k])
-                    pout[o + 1] = byte01(lk[k])
-                    pout[o + 2] = byte01(min(max(dx, -1), 1) * 0.5 + 0.5)
-                    pout[o + 3] = byte01(min(max(dz, -1), 1) * 0.5 + 0.5)
+                    pout[o] = byte01(psd[k])
+                    pout[o + 1] = byte01(plk[k])
+                    pout[o + 2] = byte01(min(1, max(-1, dx)) * 0.5 + 0.5)
+                    pout[o + 3] = byte01(min(1, max(-1, dz)) * 0.5 + 0.5)
                 }
                 }
-            }}
+            }}}}}}}
             return out
         }
 
@@ -720,35 +745,42 @@ public final class WaterFieldRenderer {
         dzS.withUnsafeMutableBufferPointer { s4 in
         out.withUnsafeMutableBufferPointer { ob in
         rec.withUnsafeBufferPointer { rcb in
+        sd.withUnsafeBufferPointer { sdb in
+        lk.withUnsafeBufferPointer { lkb in
+        mstamp.withUnsafeBufferPointer { msb in
+        mdx.withUnsafeBufferPointer { mdxb in
+        mdz.withUnsafeBufferPointer { mdzb in
             let psdS = s1.baseAddress!, plakeS = s2.baseAddress!
             let pdxS = s3.baseAddress!, pdzS = s4.baseAddress!
             let pout = ob.baseAddress!, prec = rcb.baseAddress!
+            let psd = sdb.baseAddress!, plk = lkb.baseAddress!
+            let pms = msb.baseAddress!, pmdx = mdxb.baseAddress!, pmdz = mdzb.baseAddress!
             parallelChunks(cnt) { lo, hi in
             for k in lo..<hi {
-                let lake = lk[k]
+                let lake = plk[k]
                 // Richtung: gestempelte Mäander-Tangente, sonst rohe D8-Nachbardifferenz
                 // (∈ {-1,0,1}; der Shader normalisiert selbst → kein sqrt hier). Wird
                 // mitgeglättet, damit die Strömungsrichtung nicht schlagartig kippt.
                 var dx = 0.0, dz = 0.0
-                if mstamp[k] {
-                    dx = mdx[k]; dz = mdz[k]
+                if pms[k] {
+                    dx = pmdx[k]; dz = pmdz[k]
                 } else {
                     let r = prec[k]
                     if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
                 }
                 // EWMA: geglättetes Feld Richtung frischem Wert ziehen (Gedächtnis über Rebuilds).
-                psdS[k]   += bl * (sd[k] - psdS[k])
-                plakeS[k] += bl * (lake  - plakeS[k])
-                pdxS[k]   += bl * (dx    - pdxS[k])
-                pdzS[k]   += bl * (dz    - pdzS[k])
+                psdS[k]   += bl * (psd[k] - psdS[k])
+                plakeS[k] += bl * (lake   - plakeS[k])
+                pdxS[k]   += bl * (dx     - pdxS[k])
+                pdzS[k]   += bl * (dz     - pdzS[k])
                 let o = k * 4
                 pout[o] = byte01(psdS[k])
                 pout[o + 1] = byte01(plakeS[k])
-                pout[o + 2] = byte01(min(max(pdxS[k], -1), 1) * 0.5 + 0.5)
-                pout[o + 3] = byte01(min(max(pdzS[k], -1), 1) * 0.5 + 0.5)
+                pout[o + 2] = byte01(min(1, max(-1, pdxS[k])) * 0.5 + 0.5)
+                pout[o + 3] = byte01(min(1, max(-1, pdzS[k])) * 0.5 + 0.5)
             }
             }
-        }}}}}}
+        }}}}}}}}}}}
         // Der Byte-Puffer bleibt über den `defer`-Rücktausch im Renderer und
         // wird über Render-Ticks wiederverwendet; `[UInt8]` teilt ihn per CoW.
         return out
