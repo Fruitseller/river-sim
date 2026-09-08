@@ -328,7 +328,9 @@ final class WaterRendererTests: XCTestCase {
   }
 
   /// Prüft, dass `WaterFieldRenderer.bytes` deterministisch auswertet — sowohl
-  /// für den normalen EWMA-Pfad als auch für den ungefilterten Pfad (`deferTail: true`).
+  /// für den normalen EWMA-Pfad, den ungefilterten Pfad (`deferTail: true`) als
+  /// auch den Legacy-Stempelmodus (`geometryMode: false`), und pinnt den Inhalt
+  /// über eine Gegenprobe (Normal vs. deferTail sowie sequenzielle Referenz).
   func testWaterFieldBytesIsDeterministicAndSupportsDeferTail() {
     let terrain = agedTerrain(years: 4000)
     let renderer = WaterFieldRenderer()
@@ -355,5 +357,104 @@ final class WaterRendererTests: XCTestCase {
         terrain, blend: 1.0, geometryMode: true,
         bandChannelFlags: [], bandCoverage: [], deferTail: true),
       "deferTail-Pfad muss deterministisch sein")
+
+    // Finding 1: Abdeckungslücke für den Legacy-Pfad (geometryMode == false) schließen.
+    // Genau diese Schleife (u. a. Altarm-Overlay) wurde parallelisiert und muss
+    // bit-deterministisch sein.
+    let legacyFirst = renderer.bytes(
+      terrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(legacyFirst.count, terrain.cfg.count * 4)
+
+    let legacySecond = renderer.bytes(
+      terrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(legacyFirst, legacySecond, "Legacy-Pfad (geometryMode: false) muss bit-deterministisch sein")
+
+    // Finding 2: Gegenprobe auf Inhalt — Regressionen der Parallelisierung
+    // (z. B. fehlerhafte Chunk-Grenzen, doppelt oder gar nicht geschriebene Zellen)
+    // pinnen, anstatt nur Doppel-Läufe gegen sich selbst zu vergleichen.
+    //
+    // 1. Normal- vs deferTail-Pfad:
+    //    - Die Richtungsvektoren (Kanäle 2 & 3) werden bei blend == 1.0 weder durch EWMA
+    //      noch durch Blur verändert und müssen an jeder Zelle bit-identisch sein.
+    //    - Der Normal-Pfad wendet blurMax auf Fluss (Kanal 0) und See (Kanal 1) an;
+    //      dadurch muss an jeder Zelle normal >= deferred gelten.
+    //    - Durch die Weichzeichnung müssen an den Gewässerrändern Zellen existieren,
+    //      an denen der Normal-Pfad echt größer als der ungefilterte Pfad ist.
+    XCTAssertNotEqual(
+      normalFirst, deferred,
+      "deferTail-Pfad (ungefiltert) muss sich vom normalen Pfad (geblurrt) unterscheiden")
+
+    var firstMismatch: String?
+    var blurExpandedRiver = false
+    var blurExpandedLake = false
+    var nonZeroRiver = false
+    var nonZeroLake = false
+    var hasNonTrivialFlow = false
+    var verifiedDryCells = 0
+    var verifiedNonTrivialDrainage = 0
+
+    let n = terrain.cfg.n
+    for k in 0..<terrain.cfg.count {
+      let o = k * 4
+      let normRiver = normalFirst[o]
+      let defRiver = deferred[o]
+      let normLake = normalFirst[o + 1]
+      let defLake = deferred[o + 1]
+      let normDx = normalFirst[o + 2]
+      let defDx = deferred[o + 2]
+      let normDz = normalFirst[o + 3]
+      let defDz = deferred[o + 3]
+
+      if normRiver > 0 { nonZeroRiver = true }
+      if normLake > 0 { nonZeroLake = true }
+      if defDx != 127 || defDz != 127 { hasNonTrivialFlow = true }
+
+      if normDx != defDx || normDz != defDz {
+        firstMismatch = "Strömungsvektoren ungleich an Zelle \(k): norm=(\(normDx),\(normDz)) def=(\(defDx),\(defDz))"
+        break
+      }
+      if normRiver < defRiver {
+        firstMismatch = "Fluss-Intensität verringert an Zelle \(k): norm=\(normRiver) def=\(defRiver)"
+        break
+      }
+      if normLake < defLake {
+        firstMismatch = "See-Intensität verringert an Zelle \(k): norm=\(normLake) def=\(defLake)"
+        break
+      }
+
+      if normRiver > defRiver { blurExpandedRiver = true }
+      if normLake > defLake { blurExpandedLake = true }
+
+      // 2. Sequenzielle Referenzschleife: Wo kein Wasser vorliegt (Fluss == 0 und See == 0),
+      //    ist kein Stempel aktiv (mstamp == false). Hier muss die gepackte Richtung exakt
+      //    der D8-Nachbardifferenz zu terrain.receiver entsprechen.
+      if defRiver == 0 && defLake == 0 {
+        let r = terrain.receiver[k]
+        let expectedDx = r >= 0 ? Double(Int(r) % n - k % n) : 0.0
+        let expectedDz = r >= 0 ? Double(Int(r) / n - k / n) : 0.0
+        let expectedByteX = byte01(min(1, max(-1, expectedDx)) * 0.5 + 0.5)
+        let expectedByteZ = byte01(min(1, max(-1, expectedDz)) * 0.5 + 0.5)
+        if defDx != expectedByteX || defDz != expectedByteZ {
+          firstMismatch = "Strömungsrichtung an Zelle \(k) weicht von Referenz ab: def=(\(defDx),\(defDz)) exp=(\(expectedByteX),\(expectedByteZ))"
+          break
+        }
+        verifiedDryCells += 1
+        if expectedByteX != 127 || expectedByteZ != 127 {
+          verifiedNonTrivialDrainage += 1
+        }
+      }
+    }
+
+    XCTAssertNil(firstMismatch, firstMismatch ?? "")
+    XCTAssertTrue(nonZeroRiver, "Feld muss Flusszellen mit Intensität > 0 enthalten")
+    XCTAssertTrue(hasNonTrivialFlow, "Strömungsvektoren müssen echte Flussrichtungen enthalten")
+    XCTAssertTrue(blurExpandedRiver, "Normal-Pfad muss Flussränder durch Blur aufgeweitet haben")
+    if nonZeroLake {
+      XCTAssertTrue(blurExpandedLake, "Normal-Pfad muss Seeränder durch Blur aufgeweitet haben")
+    }
+    XCTAssertGreaterThan(verifiedDryCells, 1000, "Zu wenige trockene Zellen für Referenzvergleich gefunden")
+    XCTAssertGreaterThan(verifiedNonTrivialDrainage, 100, "Referenzvergleich muss echte Gefällerichtungen im Trockenen prüfen")
   }
 }
