@@ -101,6 +101,9 @@ func byte01(_ value: Double) -> UInt8 {
 /// Feldwert an kontinuierlicher Grid-Position (bilinear, randgeklemmt).
 @inline(__always)
 func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Double {
+    // Die Index-Klemme arbeitet auf Int-Gittergrenzen (0…n - 2) statt auf dem
+    // kontinuierlichen Einheitsintervall und bleibt daher bewusst eine Int-Klemme;
+    // nur die fraktionalen Interpolationsgewichte laufen über clamp01.
     let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
     let fx = clamp01(gx - Double(xi)), fy = clamp01(gz - Double(yi))
     let k = yi * n + xi
@@ -125,6 +128,7 @@ func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
     if renderGrid <= 1 || renderGrid >= n { return bilinearGrid(field, gx, gz, n: n) }
     let s = Double(n - 1) / Double(renderGrid - 1) // Render-Vertex-Abstand in Zellen
     let rx = gx / s, rz = gz / s
+    // Bewusst Int-Klemme auf Gittergrenzen (0…renderGrid - 2), kein clamp01.
     let xi = min(max(Int(rx), 0), renderGrid - 2)
     let zi = min(max(Int(rz), 0), renderGrid - 2)
     let fx = clamp01(rx - Double(xi)), fz = clamp01(rz - Double(zi))

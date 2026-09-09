@@ -165,6 +165,8 @@ public enum TerrainColorRenderer {
         (0.28, 0.24, 0.42, 0.19),
     ]
 
+    // Innerhalb der parallelen Pixelschleife aufgerufen; @inline(__always)
+    // vermeidet den Call-Overhead für jeden Meeresgrund-Punkt analog zu clamp01/smoothstep.
     @inline(__always)
     private static func gradColor(_ v: Double) -> (Double, Double, Double) {
         for k in 0..<(stops.count - 1) {
