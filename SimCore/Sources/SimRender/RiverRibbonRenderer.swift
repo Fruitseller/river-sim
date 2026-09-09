@@ -675,8 +675,8 @@ public final class RiverRibbonRenderer {
             mesh.vertices.append(SIMD3(Float(wx + perpx), yRight, Float(wz + perpz)))
             let dirX = still ? 0.0 : tx, dirZ = still ? 0.0 : tz
             let col = SIMD4(Float(dirX * 0.5 + 0.5), Float(dirZ * 0.5 + 0.5),
-                            Float(min(max(s.rank, 0), 1)),
-                            Float(min(max(s.alpha, 0), 1)))
+                            Float(clamp01(s.rank)),
+                            Float(clamp01(s.alpha)))
             mesh.colors.append(col); mesh.colors.append(col)
             mesh.uvs.append(SIMD2(0, Float(arc[a])))
             mesh.uvs.append(SIMD2(1, Float(arc[a])))
