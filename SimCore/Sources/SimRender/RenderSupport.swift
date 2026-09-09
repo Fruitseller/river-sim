@@ -24,6 +24,20 @@ private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
     }
 }
 
+/// Lineare Klemme auf das Einheitsintervall 0…1 — das Gegenstück zu `smoothstep`
+/// für lineare Verläufe und kontinuierliche Grid-Positionen.
+///
+/// Wie bei `byte01` und `smoothstep` steht die KONSTANTE in beiden Klemmen
+/// zuerst (`min(1, max(0, …))`). Swifts `min`/`max` sind als `y < x ? y : x`
+/// bzw. `y >= x ? y : x` definiert und geben bei einem NaN-Operanden den ERSTEN
+/// zurück: so fällt ein NaN in `value` auf 0 statt durch die Klemme zu wandern.
+/// Für ENDLICHE Werte ist das Ergebnis bit-identisch zur umgekehrten
+/// Schreibweise `min(max(…, 0), 1)`.
+@inline(__always)
+func clamp01(_ value: Double) -> Double {
+    min(1, max(0, value))
+}
+
 /// Weiche Stufe zwischen `edge0` und `edge1` — die EINE Fassung, die ALLE
 /// Render-Rampen dieses Moduls benutzen (Kaskaden-Übergabe und Mündungs-Fade
 /// der Bänder, Klippen-Gewicht der Materialien, Abfluss-Rampe der Deckkraft).
@@ -39,15 +53,12 @@ private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
 /// und `WaterFieldRenderer`. Wer sie auf 0 oder negativ setzt, verlässt den
 /// Gültigkeitsbereich dieser Funktion.
 ///
-/// INNERHALB dieser Vorbedingung steht — wie bei `byte01` — die KONSTANTE in
-/// beiden Klemmen zuerst (`min(1, max(0, …))`). Swifts `min`/`max` sind als
-/// `y < x ? y : x` bzw. `y >= x ? y : x` definiert und geben bei einem
-/// NaN-Operanden den ERSTEN zurück: so fällt ein NaN in `x` auf 0 statt durch
-/// die ganze Rampe zu wandern. Für ENDLICHE Werte ist das Ergebnis
+/// INNERHALB dieser Vorbedingung fällt ein NaN in `x` über `clamp01` auf 0,
+/// statt durch die ganze Rampe zu wandern. Für ENDLICHE Werte ist das Ergebnis
 /// bit-identisch zur umgekehrten Schreibweise.
 @inline(__always)
 func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
-    let t = min(1, max(0, (x - edge0) / (edge1 - edge0)))
+    let t = clamp01((x - edge0) / (edge1 - edge0))
     return t * t * (3 - 2 * t)
 }
 
@@ -91,7 +102,7 @@ func byte01(_ value: Double) -> UInt8 {
 @inline(__always)
 func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Double {
     let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
-    let fx = min(max(gx - Double(xi), 0), 1), fy = min(max(gz - Double(yi), 0), 1)
+    let fx = clamp01(gx - Double(xi)), fy = clamp01(gz - Double(yi))
     let k = yi * n + xi
     return field[k] * (1 - fx) * (1 - fy) + field[k + 1] * fx * (1 - fy)
          + field[k + n] * (1 - fx) * fy + field[k + n + 1] * fx * fy
@@ -116,7 +127,7 @@ func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
     let rx = gx / s, rz = gz / s
     let xi = min(max(Int(rx), 0), renderGrid - 2)
     let zi = min(max(Int(rz), 0), renderGrid - 2)
-    let fx = min(max(rx - Double(xi), 0), 1), fz = min(max(rz - Double(zi), 0), 1)
+    let fx = clamp01(rx - Double(xi)), fz = clamp01(rz - Double(zi))
     let v00 = bilinearGrid(field, Double(xi) * s, Double(zi) * s, n: n)
     let v10 = bilinearGrid(field, Double(xi + 1) * s, Double(zi) * s, n: n)
     let v01 = bilinearGrid(field, Double(xi) * s, Double(zi + 1) * s, n: n)

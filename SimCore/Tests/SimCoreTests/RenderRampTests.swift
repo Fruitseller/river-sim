@@ -2,10 +2,10 @@ import XCTest
 
 @testable import SimRender
 
-/// Wächter für `smoothstep` (`SimRender/RenderSupport.swift`) — die eine weiche
-/// Stufe, durch die seit dieser Vereinheitlichung ALLE Render-Rampen des Moduls
-/// laufen (Kaskaden-Übergabe und Mündungs-Fade der Bänder, Klippen-Gewicht der
-/// Materialien, Abfluss-Rampe und Kanal-Deckkraft).
+/// Wächter für `smoothstep` und `clamp01` (`SimRender/RenderSupport.swift`) —
+/// die gemeinsamen Klemmen und Rampen für das Render-Modul (Kaskaden-Übergabe
+/// und Mündungs-Fade der Bänder, Klippen-Gewicht der Materialien, Abfluss-Rampe,
+/// Kanal-Deckkraft, Bilinear-Gewichte und Meeresgrund-Rampe).
 ///
 /// Dieselben zwei Zusagen wie bei `byte01` (s. `RenderByteTests`): an der
 /// DARSTELLUNG ändert sich nichts (bit-identisch zu den Fassungen, die sie
@@ -22,6 +22,13 @@ final class RenderRampTests: XCTestCase {
     private func legacySmoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
         let t = min(max((x - edge0) / (edge1 - edge0), 0), 1)
         return t * t * (3 - 2 * t)
+    }
+
+    /// Die frühere Klemme `min(max(x, 0), 1)` mit dem Wert zuerst, wie sie vor
+    /// `clamp01` in `RenderSupport.swift`, `TerrainColorRenderer` und
+    /// `RiverRibbonRenderer` stand.
+    private func legacyClamp01(_ x: Double) -> Double {
+        min(max(x, 0), 1)
     }
 
     func testSmoothstepMatchesTheHandwrittenRampForFiniteValues() {
@@ -48,5 +55,22 @@ final class RenderRampTests: XCTestCase {
                       "die alte Rampe reichte NaN durch — genau deshalb steht die Konstante zuerst")
         XCTAssertEqual(smoothstep(0, 1, -Double.infinity), 0)
         XCTAssertEqual(smoothstep(0, 1, Double.infinity), 1)
+    }
+
+    func testClamp01MatchesTheHandwrittenClampForFiniteValues() {
+        var values: [Double] = [-1e9, -1, -1e-12, 0, 1, 1 + 1e-12, 2, 1e9]
+        for step in 0...2000 { values.append(Double(step) / 2000) }
+        for value in values {
+            XCTAssertEqual(clamp01(value), legacyClamp01(value),
+                           "clamp01 weicht bei \(value) von der alten Klemme ab")
+        }
+    }
+
+    func testClamp01WipesNaNInsteadOfPassingItThrough() {
+        XCTAssertEqual(clamp01(Double.nan), 0)
+        XCTAssertTrue(legacyClamp01(Double.nan).isNaN,
+                      "die alte Klemme reichte NaN durch — genau deshalb steht die Konstante zuerst")
+        XCTAssertEqual(clamp01(-Double.infinity), 0)
+        XCTAssertEqual(clamp01(Double.infinity), 1)
     }
 }

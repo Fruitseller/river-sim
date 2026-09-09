@@ -165,11 +165,12 @@ public enum TerrainColorRenderer {
         (0.28, 0.24, 0.42, 0.19),
     ]
 
+    @inline(__always)
     private static func gradColor(_ v: Double) -> (Double, Double, Double) {
         for k in 0..<(stops.count - 1) {
             if v <= stops[k + 1].0 {
                 let a = stops[k], c = stops[k + 1]
-                let t = min(max((v - a.0) / (c.0 - a.0), 0), 1)
+                let t = clamp01((v - a.0) / (c.0 - a.0))
                 return (a.1 + (c.1 - a.1) * t,
                         a.2 + (c.2 - a.2) * t,
                         a.3 + (c.3 - a.3) * t)

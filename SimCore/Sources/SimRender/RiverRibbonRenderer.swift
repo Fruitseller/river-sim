@@ -762,11 +762,11 @@ public final class RiverRibbonRenderer {
                 // Hinter einem offenen Bandende hört die gemalte Fläche auf.
                 if openStart && tRaw < -overhang { continue }
                 if openEnd && tRaw > 1 + overhang { continue }
-                let t = min(max(tRaw, 0), 1)
+                let t = clamp01(tRaw)
                 let ex = px - dx * t, ez = pz - dz * t
                 let hw = hw0 + (hw1 - hw0) * t + 0.5
                 if ex * ex + ez * ez > hw * hw { continue }
-                let value = min(max(fromAlpha + (toAlpha - fromAlpha) * t, 0), 1)
+                let value = clamp01(fromAlpha + (toAlpha - fromAlpha) * t)
                 let k = j * n + i
                 if mesh.bandCoverage[k] < value { mesh.bandCoverage[k] = value }
             }
