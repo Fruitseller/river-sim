@@ -735,7 +735,7 @@ public final class WaterFieldRenderer {
             dxS = [Double](repeating: 0, count: cnt)
             dzS = [Double](repeating: 0, count: cnt)
         }
-        let bl = min(max(blend, 0), 1) // 1 = Sprung sofort, klein = weiches Blenden
+        let bl = clamp01(blend) // 1 = Sprung sofort, klein = weiches Blenden
 
         // Per-Zelle unabhängig (schreibt nur die eigenen EWMA-Felder + 4 Bytes)
         // → parallel, bit-identisch.

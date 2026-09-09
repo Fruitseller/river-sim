@@ -106,7 +106,7 @@ public enum TerrainColorRenderer {
                             b += (0.92 - b) * iceCover
                         }
 
-                        let saltCover = min(1, max(0, psalt[k])) * 0.9
+                        let saltCover = clamp01(psalt[k]) * 0.9
                         if saltCover > 0 {
                             r += (0.78 - r) * saltCover
                             g += (0.74 - g) * saltCover

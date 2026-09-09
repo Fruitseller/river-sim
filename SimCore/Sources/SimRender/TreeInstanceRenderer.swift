@@ -123,7 +123,7 @@ public final class TreeInstanceRenderer {
                 // Verdünnung staffelt Biom-Dichte und Feuchte. Die volle Ansicht
                 // bleibt absichtlich unter einer geschlossenen Walddecke; reduziert
                 // halbiert die bereits selektive Belegung für die Geländelektüre.
-                let wetness = min(1, max(0, rain[k] * 1.3))
+                let wetness = clamp01(rain[k] * 1.3)
                 let fullKeep = min(0.58, 0.20 + (v - 0.55) * 0.85) * (0.35 + 0.65 * wetness)
                 let keep = coverage >= 2 ? fullKeep : fullKeep * 0.5
                 if treeHash01(i, j, 0x51ed) >= keep { continue }
