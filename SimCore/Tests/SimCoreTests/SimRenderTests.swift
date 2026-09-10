@@ -136,15 +136,28 @@ final class SimRenderTests: XCTestCase {
   }
 
   func testDiagnosticDifferenceBytesHandlesEmptyTerrain() {
-    let terrain = Terrain(config: renderConfig(), seed: 1337)
-    let renderer = TerrainDiagnostics()
-    var state = terrain.state
-    state.h = []
-    terrain.restore(state)
+    let empty = Terrain(allocating: renderConfig(n: 0), seed: 1337)
+    let uninitializedRenderer = TerrainDiagnostics()
 
-    XCTAssertEqual(renderer.differenceBytes(terrain, scale: 0.01), [],
+    XCTAssertEqual(uninitializedRenderer.differenceBytes(empty, scale: 0.01), [],
                    "Leeres Terrain muss leeren Differenzpuffer liefern")
-    XCTAssertEqual(renderer.stats(terrain), [],
+    XCTAssertEqual(uninitializedRenderer.stats(empty), [],
                    "Leeres Terrain muss leeren Statistikpuffer liefern")
+
+    let populated = Terrain(config: renderConfig(), seed: 1337)
+    let renderer = TerrainDiagnostics()
+    renderer.capture(populated)
+    let refStats = renderer.stats(populated)
+    XCTAssertFalse(refStats.isEmpty)
+
+    // Leeres Terrain liefert leere Puffer und überschreibt bestehenden Vergleichspunkt nicht
+    XCTAssertEqual(renderer.differenceBytes(empty, scale: 0.01), [],
+                   "Leeres Terrain muss leeren Differenzpuffer liefern")
+    XCTAssertEqual(renderer.stats(empty), [],
+                   "Leeres Terrain muss leeren Statistikpuffer liefern")
+
+    // Nach Rückkehr zur gefüllten Welt bleibt der Referenzpunkt intakt
+    let diffAfter = renderer.differenceBytes(populated, scale: 0.01)
+    XCTAssertEqual(diffAfter.count, populated.cfg.count * 4)
   }
 }
