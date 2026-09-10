@@ -37,10 +37,10 @@ public final class TerrainDiagnostics {
     /// Die Indizes dieser Reihenfolge stehen als `DBG_*` in `Main.gd`, ihre Zahl
     /// als `DEBUG_STATS_COUNT`; Wächter: `SimCoreTests/DiagStatsContractTests.swift`.
     public func stats(_ terrain: Terrain) -> [Float] {
-        if referenceHeights.count != terrain.h.count { capture(terrain) }
         let h = terrain.h
-        let reference = referenceHeights
         guard !h.isEmpty else { return [] }
+        if referenceHeights.count != h.count { capture(terrain) }
+        let reference = referenceHeights
 
         var minimum = Double.greatestFiniteMagnitude
         var maximum = -Double.greatestFiniteMagnitude
@@ -110,9 +110,10 @@ public final class TerrainDiagnostics {
     /// Blau = unter der Referenz, hellgrau = unverändert, Rot = darüber. `scale`
     /// ist die Höhenänderung, bei der die Farbe voll gesättigt ist.
     public func differenceBytes(_ terrain: Terrain, scale: Double) -> [UInt8] {
-        if referenceHeights.count != terrain.h.count { capture(terrain) }
-        let h = terrain.h, reference = referenceHeights
+        let h = terrain.h
         guard !h.isEmpty else { return [] }
+        if referenceHeights.count != h.count { capture(terrain) }
+        let reference = referenceHeights
         // Konstante zuerst: max(x, y) = y >= x ? y : x — bei scale = NaN greift so
         // der sichere Default statt dass NaN durchwischt.
         let safeScale = max(1e-9, scale)
