@@ -112,6 +112,7 @@ public final class TerrainDiagnostics {
     public func differenceBytes(_ terrain: Terrain, scale: Double) -> [UInt8] {
         if referenceHeights.count != terrain.h.count { capture(terrain) }
         let h = terrain.h, reference = referenceHeights
+        guard !h.isEmpty else { return [] }
         // Konstante zuerst: max(x, y) = y >= x ? y : x — bei scale = NaN greift so
         // der sichere Default statt dass NaN durchwischt.
         let safeScale = max(1e-9, scale)
@@ -119,12 +120,13 @@ public final class TerrainDiagnostics {
         h.withUnsafeBufferPointer { hb in
         reference.withUnsafeBufferPointer { rb in
         out.withUnsafeMutableBufferPointer { ob in
-            let ph = hb.baseAddress!, pref = rb.baseAddress!, pout = ob.baseAddress!
+            // Bei fehlender Pufferadresse defensiv abbrechen statt per Force-Unwrap zu trappen.
+            guard let ph = hb.baseAddress, let pref = rb.baseAddress, let pout = ob.baseAddress else { return }
             parallelChunks(h.count) { lo, hi in
                 for k in lo..<hi {
                     let delta = ph[k] - pref[k]
                     let amount = delta.isFinite
-                        ? sqrt(min(1, abs(delta) / safeScale))
+                        ? sqrt(clamp01(abs(delta) / safeScale))
                         : 1
                     let neutral = 0.78
                     let r: Double, g: Double, b: Double

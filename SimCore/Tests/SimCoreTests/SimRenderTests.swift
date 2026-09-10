@@ -134,4 +134,17 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(Array(diff[o0..<(o0 + 4)]), [198, 198, 198, 255])
     XCTAssertNotEqual(Array(diff[o0..<(o0 + 4)]), [255, 0, 255, 255])
   }
+
+  func testDiagnosticDifferenceBytesHandlesEmptyTerrain() {
+    let terrain = Terrain(config: renderConfig(), seed: 1337)
+    let renderer = TerrainDiagnostics()
+    var state = terrain.state
+    state.h = []
+    terrain.restore(state)
+
+    XCTAssertEqual(renderer.differenceBytes(terrain, scale: 0.01), [],
+                   "Leeres Terrain muss leeren Differenzpuffer liefern")
+    XCTAssertEqual(renderer.stats(terrain), [],
+                   "Leeres Terrain muss leeren Statistikpuffer liefern")
+  }
 }
