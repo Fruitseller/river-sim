@@ -14,6 +14,13 @@ config/name="river-sim"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 
+[display]
+
+; MovieWriter liest seine Größe vor dem Maximieren. Ziel der Bildstudie #116.
+; Der normale Fensterstart verwendet weiterhin die Engine-Defaults.
+window/size/viewport_width.movie=3456
+window/size/viewport_height.movie=2104
+
 [rendering]
 
 anti_aliasing/quality/msaa_3d=2
