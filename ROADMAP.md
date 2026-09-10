@@ -10,6 +10,11 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Aktueller Stand (Kurzfassung)
 
+- **Landschaftsqualität #116:** separate ausführbare Flusstal-Studie mit
+  PBR-Materialien, mehrteiligen Baumkronen und handgesetzten Wald-/Felsgruppen.
+  Reproduktion, A/B-Bilder und Grenzen in `docs/graphics-quality.md`.
+  Visuelle Abnahme offen; die allgemeine Übertragung #117 hat noch nicht begonnen.
+
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare
   Hangdiffusion (`hillslopeDiffusion`) rundet die Grate. Prozess-Reihenfolge LEM-konform:
