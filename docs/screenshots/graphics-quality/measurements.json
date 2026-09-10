@@ -1,0 +1,159 @@
+{
+  "date": "2026-09-10",
+  "machine": "Apple M4 Max, 40 GPU-Kerne, 64 GB RAM, internes Display",
+  "renderer": "Godot 4.7.1 Metal Forward+",
+  "baseline_commit": "9dece54ce0948e4d76ff0d59de5ba6ee0022a76e",
+  "budget_ms": 33.3,
+  "runs": [
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "still",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "baseline",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 9.331,
+        "mean_ms": 8.75323513986014,
+        "mode": "still",
+        "movie": false,
+        "over_budget_frames": 0,
+        "p95_ms": 8.996,
+        "p99_ms": 9.114,
+        "rendered_frames": 1144,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "orbit",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "baseline",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 9.158,
+        "mean_ms": 8.63711485319515,
+        "mode": "orbit",
+        "movie": false,
+        "over_budget_frames": 0,
+        "p95_ms": 8.912,
+        "p99_ms": 9.034,
+        "rendered_frames": 1158,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "simulation",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "baseline",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 77.927,
+        "mean_ms": 10.9365016393443,
+        "mode": "simulation",
+        "movie": false,
+        "over_budget_frames": 39,
+        "p95_ms": 11.165,
+        "p99_ms": 63.297,
+        "rendered_frames": 915,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "still",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "prototype",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 10.638,
+        "mean_ms": 9.91280594059405,
+        "mode": "still",
+        "movie": false,
+        "over_budget_frames": 0,
+        "p95_ms": 10.261,
+        "p99_ms": 10.375,
+        "rendered_frames": 1010,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "orbit",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "prototype",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 10.479,
+        "mean_ms": 9.70905237633365,
+        "mode": "orbit",
+        "movie": false,
+        "over_budget_frames": 0,
+        "p95_ms": 10.034,
+        "p99_ms": 10.153,
+        "rendered_frames": 1031,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "simulation",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "prototype",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 79.259,
+        "mean_ms": 11.7657752941176,
+        "mode": "simulation",
+        "movie": false,
+        "over_budget_frames": 39,
+        "p95_ms": 12.009,
+        "p99_ms": 63.574,
+        "rendered_frames": 850,
+        "viewport": "(3456, 2104)"
+      }
+    }
+  ]
+}
