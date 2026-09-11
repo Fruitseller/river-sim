@@ -21,7 +21,9 @@ public enum TerrainColorRenderer {
     public static func buffers(_ terrain: Terrain) -> Buffers {
         let n = terrain.cfg.n
         let h = terrain.h
-        guard n > 0, !h.isEmpty else {
+        // Prüft n > 0 und h.count == n * n, um bei fehlerhaft dimensionierten Höhenfeldern
+        // Out-of-Bounds-Zugriffe in der Pixelschleife sicher zu verhindern.
+        guard n > 0, h.count == n * n else {
             return Buffers(colors: [], surfaces: [])
         }
         let sea = terrain.cfg.sea
@@ -48,13 +50,13 @@ public enum TerrainColorRenderer {
         ice.withUnsafeBufferPointer { icb in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
-        // Bei fehlender Pufferadresse defensiv abbrechen statt per Force-Unwrap zu trappen.
-        guard let ph = hb.baseAddress, let prain = rnb.baseAddress, let pveg = vgb.baseAddress,
-              let psalt = slb.baseAddress, let plith = ltb.baseAddress,
-              let psnow = snb.baseAddress, let pice = icb.baseAddress,
-              let pcolor = cb.baseAddress, let psurface = sb.baseAddress else {
-            return
-        }
+        // Nach dem Guard oben hat jeder Puffer mindestens eine Zelle (Eingaben n*n bzw. [0.0],
+        // Ausgaben n*n*4 mit n > 0), baseAddress ist beweisbar ungleich nil.
+        // Force-Unwrap folgt dem Stil der Nachbar-Renderer (WaterFieldRenderer, RiverRibbonRenderer).
+        let ph = hb.baseAddress!, prain = rnb.baseAddress!, pveg = vgb.baseAddress!
+        let psalt = slb.baseAddress!, plith = ltb.baseAddress!
+        let psnow = snb.baseAddress!, pice = icb.baseAddress!
+        let pcolor = cb.baseAddress!, psurface = sb.baseAddress!
 
         parallelChunks(n) { jLo, jHi in
             for j in jLo..<jHi {
