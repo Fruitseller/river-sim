@@ -160,4 +160,21 @@ final class SimRenderTests: XCTestCase {
     let diffAfter = renderer.differenceBytes(populated, scale: 0.01)
     XCTAssertEqual(diffAfter.count, populated.cfg.count * 4)
   }
+
+  func testTerrainMaterialsHandleEmptyTerrain() {
+    let empty = Terrain(allocating: renderConfig(n: 0), seed: 1337)
+    let buffers = TerrainColorRenderer.buffers(empty)
+
+    XCTAssertEqual(buffers.colors, [], "Leeres Terrain muss leeren Farbpuffer liefern")
+    XCTAssertEqual(buffers.surfaces, [], "Leeres Terrain muss leeren Oberflächenpuffer liefern")
+
+    let renderState = RenderState()
+    XCTAssertEqual(renderState.terrainColorBytes(empty), [], "RenderState muss leeren Farbpuffer liefern")
+    XCTAssertEqual(renderState.terrainSurfaceBytes(empty), [], "RenderState muss leeren Oberflächenpuffer liefern")
+
+    let populated = Terrain(config: renderConfig(), seed: 1337)
+    let populatedBuffers = TerrainColorRenderer.buffers(populated)
+    XCTAssertEqual(populatedBuffers.colors.count, populated.cfg.count * 4)
+    XCTAssertEqual(populatedBuffers.surfaces.count, populated.cfg.count * 4)
+  }
 }

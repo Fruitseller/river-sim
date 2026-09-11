@@ -20,8 +20,12 @@ public enum TerrainColorRenderer {
     /// getrennte Callables würden diese Arbeit pro Textur-Update verdoppeln.
     public static func buffers(_ terrain: Terrain) -> Buffers {
         let n = terrain.cfg.n
+        let h = terrain.h
+        guard n > 0, !h.isEmpty else {
+            return Buffers(colors: [], surfaces: [])
+        }
         let sea = terrain.cfg.sea
-        let h = terrain.h, rain = terrain.rain, veg = terrain.veg
+        let rain = terrain.rain, veg = terrain.veg
         let salt = terrain.saltCrust
         let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
         let lithOn = lith.count == n * n
@@ -44,10 +48,13 @@ public enum TerrainColorRenderer {
         ice.withUnsafeBufferPointer { icb in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
-        let ph = hb.baseAddress!, prain = rnb.baseAddress!, pveg = vgb.baseAddress!
-        let psalt = slb.baseAddress!, plith = ltb.baseAddress!
-        let psnow = snb.baseAddress!, pice = icb.baseAddress!
-        let pcolor = cb.baseAddress!, psurface = sb.baseAddress!
+        // Bei fehlender Pufferadresse defensiv abbrechen statt per Force-Unwrap zu trappen.
+        guard let ph = hb.baseAddress, let prain = rnb.baseAddress, let pveg = vgb.baseAddress,
+              let psalt = slb.baseAddress, let plith = ltb.baseAddress,
+              let psnow = snb.baseAddress, let pice = icb.baseAddress,
+              let pcolor = cb.baseAddress, let psurface = sb.baseAddress else {
+            return
+        }
 
         parallelChunks(n) { jLo, jHi in
             for j in jLo..<jHi {
@@ -65,7 +72,7 @@ public enum TerrainColorRenderer {
                         if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
                             slope = Terrain.macroSlope(ph, k, n)
                         }
-                        let steep = min(1, slope * 45)
+                        let steep = clamp01(slope * 45)
 
                         // Dunkler Grundfels statt der bisherigen kreidigen
                         // 0.38...0.45-Fläche. Der Shader ergänzt Materialdetail
@@ -76,7 +83,7 @@ public enum TerrainColorRenderer {
 
                         let habitat = Terrain.vegetationSuitability(
                             height: v, slope: slope, rain: prain[k], bands: bands)
-                        let vegAmount = min(1, (0.5 + 0.5 * pveg[k]) * habitat * 1.3) * 0.78
+                        let vegAmount = clamp01((0.5 + 0.5 * pveg[k]) * habitat * 1.3) * 0.78
                         r += (0.15 - r) * vegAmount
                         g += (0.32 - g) * vegAmount
                         b += (0.10 - b) * vegAmount
