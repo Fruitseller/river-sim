@@ -20,9 +20,27 @@ public enum TerrainColorRenderer {
     /// getrennte Callables würden diese Arbeit pro Textur-Update verdoppeln.
     public static func buffers(_ terrain: Terrain) -> Buffers {
         let n = terrain.cfg.n
-        let sea = terrain.cfg.sea
-        let h = terrain.h, rain = terrain.rain, veg = terrain.veg
+        let h = terrain.h
+        let rain = terrain.rain, veg = terrain.veg
         let salt = terrain.saltCrust
+        // Prüft n > 0 sowie die exakte Größe (n * n) aller vier direkt in der Pixelschleife
+        // ohne Fallback gelesenen Felder (h, rain, veg, saltCrust), um Out-of-Bounds-Zugriffe
+        // sicher auszuschließen.
+        // lithHardness, snow und ice werden bewusst NICHT im Guard gefordert: Sie sind optionale
+        // Feature-Felder (leer, wenn Feature deaktiviert) und besitzen weiter unten einen
+        // [0.0]-Fallback mit bedingter Auswertung (lithOn, snowOn, iceOn).
+        // Bei Größen-Mismatch oder n == 0 liefert der Guard bewusst still leere Puffer zurück
+        // statt laut zu scheitern (preconditionFailure): Da dieser Code pro Textur-Update im
+        // Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash mitten im Frame schlechter
+        // als ein leeres Render-Ergebnis. Zudem ist n == 0 der etablierte Vertrag für leere Texturen.
+        guard n > 0,
+              h.count == n * n,
+              rain.count == n * n,
+              veg.count == n * n,
+              salt.count == n * n else {
+            return Buffers(colors: [], surfaces: [])
+        }
+        let sea = terrain.cfg.sea
         let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
         let lithOn = lith.count == n * n
         let snow = terrain.snow.count == n * n ? terrain.snow : [0.0]
@@ -44,6 +62,9 @@ public enum TerrainColorRenderer {
         ice.withUnsafeBufferPointer { icb in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
+        // Nach dem Guard oben hat jeder Puffer mindestens eine Zelle (Eingaben n*n bzw. [0.0],
+        // Ausgaben n*n*4 mit n > 0), baseAddress ist beweisbar ungleich nil.
+        // Force-Unwrap folgt dem Stil der Nachbar-Renderer (WaterFieldRenderer, RiverRibbonRenderer).
         let ph = hb.baseAddress!, prain = rnb.baseAddress!, pveg = vgb.baseAddress!
         let psalt = slb.baseAddress!, plith = ltb.baseAddress!
         let psnow = snb.baseAddress!, pice = icb.baseAddress!
@@ -65,7 +86,7 @@ public enum TerrainColorRenderer {
                         if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
                             slope = Terrain.macroSlope(ph, k, n)
                         }
-                        let steep = min(1, slope * 45)
+                        let steep = clamp01(slope * 45)
 
                         // Dunkler Grundfels statt der bisherigen kreidigen
                         // 0.38...0.45-Fläche. Der Shader ergänzt Materialdetail
@@ -76,7 +97,7 @@ public enum TerrainColorRenderer {
 
                         let habitat = Terrain.vegetationSuitability(
                             height: v, slope: slope, rain: prain[k], bands: bands)
-                        let vegAmount = min(1, (0.5 + 0.5 * pveg[k]) * habitat * 1.3) * 0.78
+                        let vegAmount = clamp01((0.5 + 0.5 * pveg[k]) * habitat * 1.3) * 0.78
                         r += (0.15 - r) * vegAmount
                         g += (0.32 - g) * vegAmount
                         b += (0.10 - b) * vegAmount
