@@ -21,14 +21,26 @@ public enum TerrainColorRenderer {
     public static func buffers(_ terrain: Terrain) -> Buffers {
         let n = terrain.cfg.n
         let h = terrain.h
-        // Prüft n > 0 und h.count == n * n, um bei fehlerhaft dimensionierten Höhenfeldern
-        // Out-of-Bounds-Zugriffe in der Pixelschleife sicher zu verhindern.
-        guard n > 0, h.count == n * n else {
+        let rain = terrain.rain, veg = terrain.veg
+        let salt = terrain.saltCrust
+        // Prüft n > 0 sowie die exakte Größe (n * n) aller vier direkt in der Pixelschleife
+        // ohne Fallback gelesenen Felder (h, rain, veg, saltCrust), um Out-of-Bounds-Zugriffe
+        // sicher auszuschließen.
+        // lithHardness, snow und ice werden bewusst NICHT im Guard gefordert: Sie sind optionale
+        // Feature-Felder (leer, wenn Feature deaktiviert) und besitzen weiter unten einen
+        // [0.0]-Fallback mit bedingter Auswertung (lithOn, snowOn, iceOn).
+        // Bei Größen-Mismatch oder n == 0 liefert der Guard bewusst still leere Puffer zurück
+        // statt laut zu scheitern (preconditionFailure): Da dieser Code pro Textur-Update im
+        // Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash mitten im Frame schlechter
+        // als ein leeres Render-Ergebnis. Zudem ist n == 0 der etablierte Vertrag für leere Texturen.
+        guard n > 0,
+              h.count == n * n,
+              rain.count == n * n,
+              veg.count == n * n,
+              salt.count == n * n else {
             return Buffers(colors: [], surfaces: [])
         }
         let sea = terrain.cfg.sea
-        let rain = terrain.rain, veg = terrain.veg
-        let salt = terrain.saltCrust
         let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
         let lithOn = lith.count == n * n
         let snow = terrain.snow.count == n * n ? terrain.snow : [0.0]
