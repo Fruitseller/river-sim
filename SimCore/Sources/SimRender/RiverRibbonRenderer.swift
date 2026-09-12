@@ -198,11 +198,18 @@ public final class RiverRibbonRenderer {
         let n = terrain.cfg.n
         mesh.bandChannelFlags = [Bool](repeating: false,
                                        count: terrain.meander.channels.count)
+        // Bei leerem Terrain defensiv abbrechen statt beim Zugriff auf Pufferzeiger
+        // 0-zähliger Arrays per Force-Unwrap zu trappen.
+        guard n > 0, !terrain.h.isEmpty else {
+            mesh.bandCoverage = []
+            return mesh
+        }
         if mesh.bandCoverage.count != n * n {
             mesh.bandCoverage = [Double](repeating: 0, count: n * n)
         } else {
             mesh.bandCoverage.withUnsafeMutableBufferPointer {
-                $0.baseAddress!.update(repeating: 0, count: n * n)
+                guard let base = $0.baseAddress else { return }
+                base.update(repeating: 0, count: n * n)
             }
         }
         let cs = terrain.cfg.cellSize
@@ -264,7 +271,7 @@ public final class RiverRibbonRenderer {
                     }
                 }
                 let ord = Double(localOrder)
-                rank[a] = min(ord / WaterRender.ribbonRankDivisor, 1.0)
+                rank[a] = clamp01(ord / WaterRender.ribbonRankDivisor)
                 // Die Zentrumslinie ist kontinuierlich; die Sichtbarkeit ebenso
                 // bilinear aus der Stream-Map lesen. Nearest-Cell erzeugte bei
                 // Zellwechseln einzelne Alpha-Spitzen (sichtbare Dreiecksfächer).
@@ -360,7 +367,7 @@ public final class RiverRibbonRenderer {
             var samples: [RibbonSample] = []
             samples.reserveCapacity(hi - lo + 1 + WaterRender.mouthSearchCells)
             for a in lo...hi {
-                let taper = min(1, arc[a] / (WaterRender.ribbonSourceTaperCells * cs))
+                let taper = clamp01(arc[a] / (WaterRender.ribbonSourceTaperCells * cs))
                 samples.append(RibbonSample(x: px[a], z: pz[a],
                                             halfWidth: ribbonHalfWidthCells(pq[a], cfg: terrain.cfg) * taper,
                                             alpha: alpha[a] * taper,
@@ -379,7 +386,7 @@ public final class RiverRibbonRenderer {
                 // Kein Wasser in Reichweite: der Lauf versickert im Land — dort
                 // bleibt der weiche Enden-Taper von #31 richtig.
                 for a in samples.indices {
-                    let t = min(1, (total - arc[lo + a]) / (WaterRender.ribbonTailTaperCells * cs))
+                    let t = clamp01((total - arc[lo + a]) / (WaterRender.ribbonTailTaperCells * cs))
                     samples[a].halfWidth *= t
                     samples[a].alpha *= t
                 }
@@ -459,7 +466,7 @@ public final class RiverRibbonRenderer {
                 let dz = samples[a + 1].z - samples[a].z
                 distance += (dx * dx + dz * dz).squareRoot()
             }
-            let t = min(1, distance / cells)
+            let t = clamp01(distance / cells)
             samples[a].alpha *= t
             if t >= 1 { break }
         }
@@ -865,7 +872,7 @@ public final class RiverRibbonRenderer {
                 let cj = min(max(Int(node.z.rounded()), 0), n - 1)
                 let k = cj * n + ci
                 let edgeSteps = min(nodeIndex - first, last - nodeIndex)
-                let endFade = min(1, Double(edgeSteps + 1) / WaterRender.oxbowEndFadeSteps)
+                let endFade = clamp01(Double(edgeSteps + 1) / WaterRender.oxbowEndFadeSteps)
                 var alpha = 0.0
                 // Ohne offenes Seewasser in der EIGENEN Zelle liegt der
                 // Stützpunkt auf dem Gelände (`nil`) statt auf `waterLevel`:
