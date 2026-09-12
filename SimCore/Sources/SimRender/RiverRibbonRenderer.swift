@@ -208,6 +208,8 @@ public final class RiverRibbonRenderer {
             mesh.bandCoverage = [Double](repeating: 0, count: n * n)
         } else {
             mesh.bandCoverage.withUnsafeMutableBufferPointer {
+                // Defensiver Guard statt Force-Unwrap/assertionFailure: Ein harter Trap
+                // mitten im Frame ist im GDExtension-Render-Pfad unakzeptabel (vgl. #122).
                 guard let base = $0.baseAddress else { return }
                 base.update(repeating: 0, count: n * n)
             }

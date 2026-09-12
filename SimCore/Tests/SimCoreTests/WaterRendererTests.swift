@@ -459,7 +459,9 @@ final class WaterRendererTests: XCTestCase {
   }
 
   func testRiverRibbonRendererHandlesEmptyTerrain() {
-    let empty = Terrain(allocating: renderConfig(n: 0), seed: 1337)
+    var config = renderConfig(n: 0)
+    config.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+    let empty = Terrain(allocating: config, seed: 1337)
     let renderer = RiverRibbonRenderer()
     let mesh = renderer.build(empty, hscale: 24, lift: 0.35)
     XCTAssertTrue(mesh.vertices.isEmpty, "Leeres Terrain darf keine Vertices emittieren")

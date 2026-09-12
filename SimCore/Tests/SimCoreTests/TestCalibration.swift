@@ -34,6 +34,9 @@ let calibrationWorld: Double = 130
 /// Suite: der Standard-Zuschnitt der Render-Wächter (`SimRenderTests`,
 /// `RenderStateTests`). Genau der Fall, für den `calibrationWorld` oben steht —
 /// `n` gesenkt, `world` bewusst mitgesetzt.
+///
+/// Hinweis: Für künstlich leere Test-Terrains (`n <= 1`) `config.world = 0` setzen,
+/// damit `cellSize = world / (n - 1)` nicht negativ wird.
 func renderConfig(n: Int = 96) -> SimConfig {
     var config = SimConfig()
     config.n = n
