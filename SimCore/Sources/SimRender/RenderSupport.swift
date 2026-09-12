@@ -185,6 +185,8 @@ func ribbonHalfWidthCells(_ q: Double, cfg: SimConfig) -> Double {
 func mouthPath(_ terrain: Terrain, fromX: Double,
                fromZ: Double) -> [(x: Double, z: Double, surface: Double?)] {
     let n = terrain.cfg.n
+    // Bei leerem Terrain defensiv abbrechen statt OOB im Empfängernetz zu trappen.
+    guard n > 0, !terrain.h.isEmpty else { return [] }
     let h = terrain.h, wl = terrain.waterLevel, rec = terrain.receiver
     let sea = terrain.cfg.sea
     let i0 = min(max(Int(fromX.rounded()), 0), n - 1)

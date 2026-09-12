@@ -457,4 +457,29 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertGreaterThan(verifiedDryCells, 1000, "Zu wenige trockene Zellen für Referenzvergleich gefunden")
     XCTAssertGreaterThan(verifiedNonTrivialDrainage, 100, "Referenzvergleich muss echte Gefällerichtungen im Trockenen prüfen")
   }
+
+  func testRiverRibbonRendererHandlesEmptyTerrain() {
+    var config = renderConfig(n: 0)
+    config.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+    let empty = Terrain(allocating: config, seed: 1337)
+    let renderer = RiverRibbonRenderer()
+    let mesh = renderer.build(empty, hscale: 24, lift: 0.35)
+    XCTAssertTrue(mesh.vertices.isEmpty, "Leeres Terrain darf keine Vertices emittieren")
+    XCTAssertTrue(mesh.colors.isEmpty)
+    XCTAssertTrue(mesh.uvs.isEmpty)
+    XCTAssertTrue(mesh.uv2s.isEmpty)
+    XCTAssertTrue(mesh.indices.isEmpty)
+    XCTAssertTrue(mesh.stripStarts.isEmpty)
+    XCTAssertTrue(mesh.bandChannelFlags.isEmpty)
+    XCTAssertTrue(mesh.bandCoverage.isEmpty)
+    XCTAssertEqual(renderer.maxDelta(empty), 1e9)
+    XCTAssertTrue(mouthPath(empty, fromX: 0, fromZ: 0).isEmpty)
+
+    // Auch über RenderState absichern
+    let render = RenderState(geometryMode: true)
+    render.buildRiverRibbons(empty, hscale: 24, lift: 0.35)
+    XCTAssertTrue(render.riverRibbonMesh.vertices.isEmpty)
+    XCTAssertTrue(render.riverRibbonMesh.bandCoverage.isEmpty)
+  }
 }
+
