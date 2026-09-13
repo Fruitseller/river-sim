@@ -59,14 +59,20 @@ public final class WaterFieldRenderer {
     /// Per-Zelle unabhängig → parallel, bit-identisch zur sequenziellen Schleife.
     public func flowDetailField(_ terrain: Terrain) -> [UInt8] {
         let n = terrain.cfg.n
+        // n == 0 ist der etablierte Vertrag für leere Texturen (vgl. #122, #123).
+        guard n > 0 else { return [] }
         let cnt = n * n
-        // Prüft n > 0 sowie die exakte Größe (n * n) aller direkt gelesenen Felder
-        // (h, areaMFD), um Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern
-        // auszuschließen (vgl. #122, #123).
-        guard n > 0,
-              cnt > 0,
-              terrain.h.count == cnt,
-              terrain.areaMFD.count == cnt else {
+        let h = terrain.h, area = terrain.areaMFD
+        // Prüft die exakte Größe (n * n) aller direkt gelesenen Felder (h, areaMFD),
+        // um Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher auszuschließen.
+        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption) und schlägt im Debug-Build
+        // per assertionFailure an. Im Release-Build liefert der Guard bewusst still einen
+        // leeren Puffer zurück statt laut zu scheitern (preconditionFailure): Da dieser Code
+        // pro Textur-Update im Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash
+        // mitten im Frame schlechter als ein leeres Render-Ergebnis.
+        guard h.count == cnt,
+              area.count == cnt else {
+            assertionFailure("Feldgrößen-Mismatch in flowDetailField: n=\(n), cnt=\(cnt), h=\(h.count), areaMFD=\(area.count)")
             return []
         }
         let sea = terrain.cfg.sea
@@ -75,7 +81,6 @@ public final class WaterFieldRenderer {
         if flowDetail.count != cnt { flowDetail = [UInt8](repeating: 0, count: cnt) }
         var out: [UInt8] = []; swap(&out, &flowDetail)
         defer { swap(&out, &flowDetail) }
-        let h = terrain.h, area = terrain.areaMFD
         out.withUnsafeMutableBufferPointer { ob in
         h.withUnsafeBufferPointer { hb in area.withUnsafeBufferPointer { ab in
             let po = ob.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
@@ -127,23 +132,24 @@ public final class WaterFieldRenderer {
                       bandChannelFlags: [Bool], bandCoverage: [Double],
                       deferTail: Bool = false) -> [UInt8] {
         let n = terrain.cfg.n
+        // n == 0 ist der etablierte Vertrag für leere Texturen (vgl. #122, #123).
+        guard n > 0 else { return [] }
         let cnt = n * n
         let h = terrain.h, hf = terrain.waterLevel, area = terrain.areaMFD, rec = terrain.receiver
-        // Prüft n > 0 sowie die exakte Größe (n * n) aller direkt in den Pixelschleifen
+        // Prüft die exakte Größe (n * n) aller direkt in den Pixelschleifen
         // gelesenen Felder (h, waterLevel, areaMFD, receiver, streamMap), um
         // Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher auszuschließen.
-        // Bei Größen-Mismatch oder n == 0 liefert der Guard bewusst still einen leeren
-        // Puffer zurück statt laut zu scheitern (preconditionFailure): Da dieser Code
+        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption) und schlägt im Debug-Build
+        // per assertionFailure an. Im Release-Build liefert der Guard bewusst still einen
+        // leeren Puffer zurück statt laut zu scheitern (preconditionFailure): Da dieser Code
         // pro Textur-Update im Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash
-        // mitten im Frame schlechter als ein leeres Render-Ergebnis. Zudem ist n == 0 der
-        // etablierte Vertrag für leere Texturen (vgl. #122, #123).
-        guard n > 0,
-              cnt > 0,
-              h.count == cnt,
+        // mitten im Frame schlechter als ein leeres Render-Ergebnis.
+        guard h.count == cnt,
               hf.count == cnt,
               area.count == cnt,
               rec.count == cnt,
               terrain.streamMap.count == cnt else {
+            assertionFailure("Feldgrößen-Mismatch in bytes: n=\(n), cnt=\(cnt), h=\(h.count), waterLevel=\(hf.count), areaMFD=\(area.count), receiver=\(rec.count), streamMap=\(terrain.streamMap.count)")
             return []
         }
         let sea = terrain.cfg.sea
