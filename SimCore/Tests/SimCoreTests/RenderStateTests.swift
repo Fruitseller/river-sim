@@ -263,6 +263,36 @@ final class RenderStateTests: XCTestCase {
         XCTAssertEqual(render.renderGrid, 256)
     }
 
+    /// Prüft, dass leere Terrains (n == 0) im Raster-Wasserfeld defensiv abgefangen
+    /// werden und leere Puffer liefern, statt auf 0-zähligen Pufferzeigern zu trappen.
+    func testWaterFieldRendererHandlesEmptyTerrain() {
+        var config = renderConfig(n: 0)
+        config.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+        let empty = Terrain(allocating: config, seed: 1337)
+        let waterRenderer = WaterFieldRenderer()
+
+        // Direkt auf WaterFieldRenderer: liefert leere Puffer statt auf nil-Pointern zu trappen
+        XCTAssertEqual(waterRenderer.flowDetailField(empty), [],
+                       "Leeres Terrain muss leeren flowDetailField-Puffer liefern")
+        XCTAssertEqual(waterRenderer.bytes(empty, blend: 1.0, geometryMode: true,
+                                           bandChannelFlags: [], bandCoverage: []), [],
+                       "Leeres Terrain muss leeren bytes-Puffer liefern")
+
+        // Auch über RenderState abgesichert
+        let renderState = RenderState(geometryMode: true)
+        XCTAssertEqual(renderState.flowDetailBytes(empty), [],
+                       "RenderState muss leeren flowDetailBytes-Puffer liefern")
+        XCTAssertEqual(renderState.waterFieldBytes(empty, blend: 1.0), [],
+                       "RenderState muss leeren waterFieldBytes-Puffer liefern")
+
+        // Nach Rückkehr zur gefüllten Welt bleibt die Funktionalität intakt
+        let populated = Terrain(config: renderConfig(), seed: 1337)
+        let populatedFlow = renderState.flowDetailBytes(populated)
+        let populatedWater = renderState.waterFieldBytes(populated, blend: 1.0)
+        XCTAssertEqual(populatedFlow.count, populated.cfg.count)
+        XCTAssertEqual(populatedWater.count, populated.cfg.count * 4)
+    }
+
     // MARK: - Quelltext: die Brücke hält keinen Render-Zustand mehr
 
     func testBridgeOwnsNoRenderState() throws {
