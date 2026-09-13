@@ -60,6 +60,15 @@ public final class WaterFieldRenderer {
     public func flowDetailField(_ terrain: Terrain) -> [UInt8] {
         let n = terrain.cfg.n
         let cnt = n * n
+        // Prüft n > 0 sowie die exakte Größe (n * n) aller direkt gelesenen Felder
+        // (h, areaMFD), um Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern
+        // auszuschließen (vgl. #122, #123).
+        guard n > 0,
+              cnt > 0,
+              terrain.h.count == cnt,
+              terrain.areaMFD.count == cnt else {
+            return []
+        }
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
         let creek = terrain.cfg.renderMinCells
@@ -119,6 +128,24 @@ public final class WaterFieldRenderer {
                       deferTail: Bool = false) -> [UInt8] {
         let n = terrain.cfg.n
         let cnt = n * n
+        let h = terrain.h, hf = terrain.waterLevel, area = terrain.areaMFD, rec = terrain.receiver
+        // Prüft n > 0 sowie die exakte Größe (n * n) aller direkt in den Pixelschleifen
+        // gelesenen Felder (h, waterLevel, areaMFD, receiver, streamMap), um
+        // Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher auszuschließen.
+        // Bei Größen-Mismatch oder n == 0 liefert der Guard bewusst still einen leeren
+        // Puffer zurück statt laut zu scheitern (preconditionFailure): Da dieser Code
+        // pro Textur-Update im Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash
+        // mitten im Frame schlechter als ein leeres Render-Ergebnis. Zudem ist n == 0 der
+        // etablierte Vertrag für leere Texturen (vgl. #122, #123).
+        guard n > 0,
+              cnt > 0,
+              h.count == cnt,
+              hf.count == cnt,
+              area.count == cnt,
+              rec.count == cnt,
+              terrain.streamMap.count == cnt else {
+            return []
+        }
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
         let cellDiagonal = terrain.cfg.cellSize * (2.0).squareRoot()
@@ -130,7 +157,6 @@ public final class WaterFieldRenderer {
         // mit jedem hf-Sprung flackern (s. Terrain.waterLevel). Seit Issue #32
         // trägt der G-Kanal das Sichtbarkeits-GATE, keine Tiefe: die Tiefe rechnet
         // der Shader per Pixel aus derselben Wassersäule.
-        let h = terrain.h, hf = terrain.waterLevel, area = terrain.areaMFD, rec = terrain.receiver
 
         if waterStream.count != cnt {
             waterStream = [Double](repeating: 0, count: cnt)
@@ -465,7 +491,7 @@ public final class WaterFieldRenderer {
             for nodeIndex in first...last {
                 let node = oxbow[nodeIndex]
                 let edgeSteps = min(nodeIndex - first, last - nodeIndex)
-                let endFade = min(1, Double(edgeSteps + 1) / fullEndFadeSteps)
+                let endFade = clamp01(Double(edgeSteps + 1) / fullEndFadeSteps)
                 let centerX = Int(node.x.rounded()), centerY = Int(node.z.rounded())
                 for (offsetX, offsetY) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
                     let neighborX = centerX + offsetX, neighborY = centerY + offsetY
