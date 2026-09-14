@@ -99,13 +99,15 @@ public final class TreeInstanceRenderer {
         // gelesenen Felder (h, hf, veg, rain, vegClass), um Out-of-Bounds-Zugriffe sicher auszuschließen.
         // Ein Größen-Mismatch ist ein Integritätsfehler und schlägt im Debug-Build per assertionFailure an.
         // Im Release-Build liefert der Guard defensiv einen leeren Puffer zurück, um Engine-Crashes
-        // mitten im Frame zu verhindern.
+        // mitten im Frame zu verhindern; die Log-Zeile macht den Fehler auch im Produktionsbuild beobachtbar.
         guard h.count == cnt,
               hf.count == cnt,
               veg.count == cnt,
               rain.count == cnt,
               vegClass.count == cnt else {
-            assertionFailure("Feldgrößen-Mismatch in TreeInstanceRenderer.buffer: n=\(n), cnt=\(cnt), h=\(h.count), hf=\(hf.count), veg=\(veg.count), rain=\(rain.count), vegClass=\(vegClass.count)")
+            let msg = "Feldgrößen-Mismatch in TreeInstanceRenderer.buffer: n=\(n), cnt=\(cnt), h=\(h.count), hf=\(hf.count), veg=\(veg.count), rain=\(rain.count), vegClass=\(vegClass.count)"
+            print(msg)
+            assertionFailure(msg)
             return []
         }
         let sea = terrain.cfg.sea

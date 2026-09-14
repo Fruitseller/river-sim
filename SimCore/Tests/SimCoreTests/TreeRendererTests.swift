@@ -12,7 +12,7 @@ final class TreeRendererTests: XCTestCase {
     /// unnötig zu reservieren oder auf ungültigen Gittergrenzen zu trappen.
     func testTreeBufferHandlesEmptyTerrain() {
         var config = renderConfig(n: 0)
-        config.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+        config.world = 0 // cellSize ist hier −0.0, wird aber nie gelesen
         let empty = Terrain(allocating: config, seed: 1337)
         let renderer = TreeInstanceRenderer()
 
