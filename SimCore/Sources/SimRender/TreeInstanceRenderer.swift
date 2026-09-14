@@ -86,12 +86,33 @@ public final class TreeInstanceRenderer {
     /// (i,j)-Hash; weder Sim-Zustand noch Rebuild-Reihenfolge beeinflussen ihn.
     public func buffer(_ terrain: Terrain, variant: Int, hscale: Double,
                        coverage: Int) -> [Float] {
+        guard variant >= 0 && variant <= 2 else { return [] }
         let n = terrain.cfg.n
+        // n <= 12 hat keinen Platz für den 6-Zellen-Küstenabstand (stride from: 6 to: n - 6 by: 3).
+        // n == 0 ist der etablierte Vertrag für leere Texturen/Puffer (vgl. #122, #123, #124).
+        // Der frühe Abbruch spart zudem die 480-KB-Heap-Allokation von reserveCapacity ein.
+        guard n > 12 else { return [] }
+        let cnt = n * n
+        let h = terrain.h, hf = terrain.hf, veg = terrain.veg, rain = terrain.rain
+        let vegClass = terrain.vegClass
+        // Prüft die exakte Größe (n * n) aller direkt in den Auswertungen und der Küstenmaske
+        // gelesenen Felder (h, hf, veg, rain, vegClass), um Out-of-Bounds-Zugriffe sicher auszuschließen.
+        // Ein Größen-Mismatch ist ein Integritätsfehler und schlägt im Debug-Build per assertionFailure an.
+        // Im Release-Build liefert der Guard defensiv einen leeren Puffer zurück, um Engine-Crashes
+        // mitten im Frame zu verhindern; die Log-Zeile macht den Fehler auch im Produktionsbuild beobachtbar.
+        guard h.count == cnt,
+              hf.count == cnt,
+              veg.count == cnt,
+              rain.count == cnt,
+              vegClass.count == cnt else {
+            let msg = "Feldgrößen-Mismatch in TreeInstanceRenderer.buffer: n=\(n), cnt=\(cnt), h=\(h.count), hf=\(hf.count), veg=\(veg.count), rain=\(rain.count), vegClass=\(vegClass.count)"
+            print(msg)
+            assertionFailure(msg)
+            return []
+        }
         let sea = terrain.cfg.sea
         let cs = terrain.cfg.cellSize
         let half = terrain.cfg.world / 2
-        let h = terrain.h, hf = terrain.hf, veg = terrain.veg, rain = terrain.rain
-        let vegClass = terrain.vegClass
         let bands = terrain.heightBands
         var out: [Float] = []
         out.reserveCapacity(10_000 * 12)
