@@ -3551,6 +3551,7 @@ public final class Terrain {
 
     /// Glättet das Terrain im Pinsel Richtung 3×3-Mittel (aus einem Schnappschuss,
     /// damit die Zellreihenfolge das Ergebnis nicht verfälscht).
+    /// Negativer oder Null-`strength` wird auf einen Pull von 0 geklemmt (No-op).
     public func smooth(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
         guard strength.isFinite, abs(strength) < 1e9 else { return }
         let snap = h
@@ -3569,6 +3570,7 @@ public final class Terrain {
 
     /// Zieht das Terrain im Pinsel Richtung Zielhöhe (Plateau/Terrasse) —
     /// die Zielhöhe sampelt der Aufrufer beim Strich-Beginn.
+    /// Negativer oder Null-`strength` wird auf einen Pull von 0 geklemmt (No-op).
     public func flatten(gx: Double, gz: Double, radiusWorld: Double,
                         targetHeight: Double, strength: Double = 1.0) {
         guard targetHeight.isFinite && strength.isFinite,

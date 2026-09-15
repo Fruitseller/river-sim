@@ -259,4 +259,32 @@ final class ToolContractTests: XCTestCase {
             XCTAssertEqual(t.upliftBase, u0, "upliftBase muss nach fehlerhaften Pinsel-Aufrufen unverändert sein")
         }
     }
+
+    /// Negativer oder Null-`strength` wird in `smooth` und `flatten` auf einen
+    /// Pull von 0 geklemmt (No-op); das Terrain bleibt unverändert (keine
+    /// Rauheitsverstärkung oder Wegbewegen vom Ziel).
+    func testSmoothAndFlattenWithNonPositiveStrengthAreNoOps() throws {
+        let h0Center = makeTerrain().h[centerIndex]
+        for nonPositive in [-1.0, -0.001, 0.0] {
+            let (beforeSmooth, afterSmooth) = heights(after: .smooth, strength: nonPositive)
+            XCTAssertEqual(afterSmooth, beforeSmooth,
+                           "Glätten mit strength <= 0 (\(nonPositive)) muss ein No-op sein")
+
+            let (beforeFlatten, afterFlatten) = heights(after: .flatten, strength: nonPositive, target: h0Center + 0.5)
+            XCTAssertEqual(afterFlatten, beforeFlatten,
+                           "Einebnen mit strength <= 0 (\(nonPositive)) muss ein No-op sein")
+
+            let t = makeTerrain()
+            let h0 = t.h
+            let u0 = t.upliftBase
+            t.smooth(gx: gx, gz: gz, radiusWorld: radius, strength: nonPositive)
+            XCTAssertEqual(t.h, h0, "Terrain.smooth mit strength <= 0 (\(nonPositive)) muss ein No-op sein")
+            XCTAssertEqual(t.upliftBase, u0, "Terrain.smooth darf upliftBase nicht verändern")
+
+            t.flatten(gx: gx, gz: gz, radiusWorld: radius, targetHeight: h0Center + 0.5, strength: nonPositive)
+            XCTAssertEqual(t.h, h0, "Terrain.flatten mit strength <= 0 (\(nonPositive)) muss ein No-op sein")
+            XCTAssertEqual(t.upliftBase, u0, "Terrain.flatten darf upliftBase nicht verändern")
+        }
+    }
 }
+
