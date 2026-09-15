@@ -27,10 +27,11 @@ public enum BrushTool: Int, CaseIterable {
 
     /// Führt den Hieb auf dem Terrain aus. `target` gilt nur fürs Einebnen; die
     /// übrigen Werkzeuge ignorieren ihn (Godot kann keine optionalen Argumente
-    /// über die Brücke schicken, deshalb EIN Signatur-Satz für alle).
+    /// über die Brücke schicken, deshalb EIN Signatur-Satz für alle). Nicht-endliche
+    /// Parameter führen bei allen Werkzeugen zum No-op.
     public func apply(to terrain: Terrain, gx: Double, gz: Double, radiusWorld: Double,
                       strength: Double, target: Double) {
-        guard gx.isFinite && gz.isFinite && radiusWorld.isFinite && strength.isFinite else { return }
+        guard gx.isFinite && gz.isFinite && radiusWorld.isFinite && strength.isFinite && target.isFinite else { return }
         switch self {
         case .raise:
             terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: 1, strength: strength)
@@ -39,7 +40,6 @@ public enum BrushTool: Int, CaseIterable {
         case .smooth:
             terrain.smooth(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
         case .flatten:
-            guard target.isFinite else { return }
             terrain.flatten(gx: gx, gz: gz, radiusWorld: radiusWorld,
                             targetHeight: target, strength: strength)
         case .roughen:
