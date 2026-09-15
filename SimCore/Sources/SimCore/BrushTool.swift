@@ -31,7 +31,9 @@ public enum BrushTool: Int, CaseIterable {
     /// Parameter führen bei allen Werkzeugen zum No-op.
     public func apply(to terrain: Terrain, gx: Double, gz: Double, radiusWorld: Double,
                       strength: Double, target: Double) {
-        guard gx.isFinite && gz.isFinite && radiusWorld.isFinite && strength.isFinite && target.isFinite else { return }
+        guard gx.isFinite && gz.isFinite && radiusWorld.isFinite && strength.isFinite && target.isFinite,
+              abs(gx) < 1e9, abs(gz) < 1e9, abs(strength) < 1e9, abs(target) < 1e9,
+              radiusWorld <= Double(terrain.cfg.n) * terrain.cfg.cellSize else { return }
         switch self {
         case .raise:
             terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: 1, strength: strength)
