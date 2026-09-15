@@ -183,4 +183,76 @@ final class ToolContractTests: XCTestCase {
             }
         }
     }
+
+    /// Nicht-endliche Pinsel-Parameter (NaN oder Unendlich bei Koordinaten, Radius,
+    /// Stärke oder Zielhöhe) dürfen nicht zu Abstürzen (z. B. Double-zu-Int-Trap)
+    /// oder ungültigen Zuständen führen; das Terrain bleibt unangetastet.
+    func testBrushToolsHandleNonFiniteInputsWithoutCrashing() throws {
+        let nonFiniteValues = [Double.nan, Double.infinity, -Double.infinity]
+        for tool in BrushTool.allCases {
+            for bad in nonFiniteValues {
+                let (b1, a1) = heights(after: tool, radiusWorld: bad)
+                XCTAssertEqual(a1, b1, "\(tool) mit fehlerhaftem radiusWorld darf Terrain nicht verändern")
+
+                let tX = makeTerrain()
+                let beforeX = tX.h
+                tool.apply(to: tX, gx: bad, gz: gz, radiusWorld: radius, strength: 1.0, target: 0.0)
+                XCTAssertEqual(tX.h, beforeX, "\(tool) mit fehlerhaftem gx darf Terrain nicht verändern")
+
+                let tZ = makeTerrain()
+                let beforeZ = tZ.h
+                tool.apply(to: tZ, gx: gx, gz: bad, radiusWorld: radius, strength: 1.0, target: 0.0)
+                XCTAssertEqual(tZ.h, beforeZ, "\(tool) mit fehlerhaftem gz darf Terrain nicht verändern")
+
+                let tStrength = makeTerrain()
+                let beforeStrength = tStrength.h
+                tool.apply(to: tStrength, gx: gx, gz: gz, radiusWorld: radius, strength: bad, target: 0.0)
+                XCTAssertEqual(tStrength.h, beforeStrength, "\(tool) mit fehlerhafter strength darf Terrain nicht verändern")
+
+                let tTarget = makeTerrain()
+                let beforeTarget = tTarget.h
+                tool.apply(to: tTarget, gx: gx, gz: gz, radiusWorld: radius, strength: 1.0, target: bad)
+                XCTAssertEqual(tTarget.h, beforeTarget, "\(tool) mit fehlerhaftem target darf Terrain nicht verändern")
+            }
+        }
+    }
+
+    /// Direkte Pinsel-Methoden auf `Terrain` weisen nicht-endliche Argumente
+    /// ebenfalls sicher ab und belassen Höhen und Tektonik unverändert.
+    func testTerrainBrushMethodsHandleNonFiniteInputsDirectly() throws {
+        let bad = Double.nan
+        let t = makeTerrain()
+        let h0 = t.h
+        let u0 = t.upliftBase
+
+        t.sculpt(gx: bad, gz: gz, radiusWorld: radius, dir: 1)
+        t.sculpt(gx: gx, gz: bad, radiusWorld: radius, dir: 1)
+        t.sculpt(gx: gx, gz: gz, radiusWorld: bad, dir: 1)
+        t.sculpt(gx: gx, gz: gz, radiusWorld: radius, dir: bad)
+        t.sculpt(gx: gx, gz: gz, radiusWorld: radius, dir: 1, strength: bad)
+
+        t.smooth(gx: bad, gz: gz, radiusWorld: radius)
+        t.smooth(gx: gx, gz: bad, radiusWorld: radius)
+        t.smooth(gx: gx, gz: gz, radiusWorld: bad)
+        t.smooth(gx: gx, gz: gz, radiusWorld: radius, strength: bad)
+
+        t.flatten(gx: bad, gz: gz, radiusWorld: radius, targetHeight: 0.5)
+        t.flatten(gx: gx, gz: bad, radiusWorld: radius, targetHeight: 0.5)
+        t.flatten(gx: gx, gz: gz, radiusWorld: bad, targetHeight: 0.5)
+        t.flatten(gx: gx, gz: gz, radiusWorld: radius, targetHeight: bad)
+        t.flatten(gx: gx, gz: gz, radiusWorld: radius, targetHeight: 0.5, strength: bad)
+
+        t.roughen(gx: bad, gz: gz, radiusWorld: radius)
+        t.roughen(gx: gx, gz: bad, radiusWorld: radius)
+        t.roughen(gx: gx, gz: gz, radiusWorld: bad)
+        t.roughen(gx: gx, gz: gz, radiusWorld: radius, strength: bad)
+
+        t.pickaxe(gx: bad, gz: gz, radiusWorld: radius)
+        t.pickaxe(gx: gx, gz: bad, radiusWorld: radius)
+        t.pickaxe(gx: gx, gz: gz, radiusWorld: bad)
+        t.pickaxe(gx: gx, gz: gz, radiusWorld: radius, strength: bad)
+
+        XCTAssertEqual(t.h, h0, "Terrain.h muss nach fehlerhaften Pinsel-Aufrufen unverändert sein")
+        XCTAssertEqual(t.upliftBase, u0, "upliftBase muss nach fehlerhaften Pinsel-Aufrufen unverändert sein")
+    }
 }

@@ -3539,19 +3539,21 @@ public final class Terrain {
     /// erhalten bleiben statt von der Erosion ausradiert zu werden.
     public func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double,
                        strength: Double = 1.0) {
+        guard dir.isFinite && strength.isFinite else { return }
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             applyDelta(k, dir * 0.006 * strength * w, asRock: true)
             // Kopplung in die Tektonik: angehobene Zonen werden Hebungszonen,
             // damit Eingriffe langfristig erhalten bleiben statt wegzuerodieren.
-            upliftBase[k] = min(max(upliftBase[k] + dir * 0.006 * strength * w * 1.5, -2), 2)
+            upliftBase[k] = min(2.0, max(-2.0, upliftBase[k] + dir * 0.006 * strength * w * 1.5))
         }
     }
 
     /// Glättet das Terrain im Pinsel Richtung 3×3-Mittel (aus einem Schnappschuss,
     /// damit die Zellreihenfolge das Ergebnis nicht verfälscht).
     public func smooth(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
+        guard strength.isFinite else { return }
         let snap = h
-        let pull = min(1, 0.30 * strength)
+        let pull = min(1.0, max(0.0, 0.30 * strength))
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             let i = k % n, j = k / n
             var s = 0.0, c = 0.0
@@ -3568,8 +3570,9 @@ public final class Terrain {
     /// die Zielhöhe sampelt der Aufrufer beim Strich-Beginn.
     public func flatten(gx: Double, gz: Double, radiusWorld: Double,
                         targetHeight: Double, strength: Double = 1.0) {
-        let target = min(max(targetHeight, cfg.floor), 1.4)
-        let pull = min(1, 0.18 * strength)
+        guard targetHeight.isFinite && strength.isFinite else { return }
+        let target = min(1.4, max(cfg.floor, targetHeight))
+        let pull = min(1.0, max(0.0, 0.18 * strength))
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             applyDelta(k, (target - h[k]) * pull * w, asRock: false)
         }
@@ -3578,6 +3581,7 @@ public final class Terrain {
     /// Prägt fraktales Rauschen ins Terrain (zerklüftete Details). Nutzt das
     /// terrain-eigene Noise-Feld → wiederholte Striche vertiefen dasselbe Muster.
     public func roughen(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
+        guard strength.isFinite else { return }
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             let i = k % n, j = k / n
             let nz = noise.fbm01(Double(i) * 0.11, Double(j) * 0.11, octaves: 4) * 2 - 1
@@ -3594,6 +3598,7 @@ public final class Terrain {
     /// mit dessen Standardbreite (~64 Zellen) riss der „spitze Hieb" in unter
     /// einer Sekunde einen Krater bis unters Meer, statt eine Kerbe zu schlagen.
     public func pickaxe(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
+        guard radiusWorld.isFinite && strength.isFinite else { return }
         let radius = min(radiusWorld, Terrain.pickaxeMaxCells * cfg.cellSize)
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radius) { k, w in
             let spike = w * w // (1-d²)⁴ — deutlich spitzer als der weiche Pinsel
@@ -3608,6 +3613,7 @@ public final class Terrain {
     /// mit weichem Abfall-Gewicht w ∈ (0..1] auf.
     private func forEachBrushCell(gx: Double, gz: Double, radiusWorld: Double,
                                   _ body: (Int, Double) -> Void) {
+        guard gx.isFinite && gz.isFinite && radiusWorld.isFinite else { return }
         let rCells = radiusWorld / cfg.cellSize
         if rCells <= 0 { return }
         let r = Int(rCells.rounded(.up))
@@ -3628,7 +3634,8 @@ public final class Terrain {
     /// Absenken räumt erst Sediment, dann Fels; Anheben schiebt Fels hoch
     /// (`asRock`) oder lagert lockeres Sediment ab (Glätten/Einebnen).
     private func applyDelta(_ k: Int, _ dhRaw: Double, asRock: Bool) {
-        let dh = min(max(h[k] + dhRaw, cfg.floor), 1.4) - h[k]
+        guard dhRaw.isFinite else { return }
+        let dh = min(1.4, max(cfg.floor, h[k] + dhRaw)) - h[k]
         if dh >= 0 {
             if asRock { rock[k] += dh } else { sed[k] += dh }
         } else {

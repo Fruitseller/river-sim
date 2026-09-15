@@ -30,6 +30,7 @@ public enum BrushTool: Int, CaseIterable {
     /// über die Brücke schicken, deshalb EIN Signatur-Satz für alle).
     public func apply(to terrain: Terrain, gx: Double, gz: Double, radiusWorld: Double,
                       strength: Double, target: Double) {
+        guard gx.isFinite && gz.isFinite && radiusWorld.isFinite && strength.isFinite else { return }
         switch self {
         case .raise:
             terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: 1, strength: strength)
@@ -38,6 +39,7 @@ public enum BrushTool: Int, CaseIterable {
         case .smooth:
             terrain.smooth(gx: gx, gz: gz, radiusWorld: radiusWorld, strength: strength)
         case .flatten:
+            guard target.isFinite else { return }
             terrain.flatten(gx: gx, gz: gz, radiusWorld: radiusWorld,
                             targetHeight: target, strength: strength)
         case .roughen:
