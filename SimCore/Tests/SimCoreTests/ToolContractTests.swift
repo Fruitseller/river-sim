@@ -287,9 +287,11 @@ final class ToolContractTests: XCTestCase {
         }
     }
 
-    /// Pinselstriche mit inaktiven Parametern (Stärke <= 0, Richtung 0 oder
-    /// nicht-positiver Radius) sind echte No-ops: weder Höhen noch Tektonik
-    /// werden berührt.
+    /// Pinselstriche mit inaktiven Parametern (Richtung 0, Stärke <= 0 bei Spitzhacke/Rauheit,
+    /// oder nicht-positiver Radius bei Glätten/Einebnen) sind echte No-ops: weder Höhen
+    /// noch Tektonik werden berührt.
+    /// (Hinweis: Stärke-Fälle `strength <= 0` für `smooth` und `flatten` werden bereits
+    /// in `testSmoothAndFlattenWithNonPositiveStrengthAreNoOps` abgedeckt.)
     func testBrushToolsWithInactiveParametersAreStrictNoOps() throws {
         let t = makeTerrain()
         let h0 = t.h

@@ -3537,6 +3537,7 @@ public final class Terrain {
     /// um das Gitterzentrum (`gx`, `gz`), Radius in Welteinheiten. Koppelt in die
     /// Tektonik (angehobene Zonen werden Hebungszonen), damit Eingriffe langfristig
     /// erhalten bleiben statt von der Erosion ausradiert zu werden.
+    /// Null-Richtung (`dir == 0`) oder Null-Stärke (`strength == 0`) führen zum sofortigen No-op.
     public func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double,
                        strength: Double = 1.0) {
         guard dir.isFinite && strength.isFinite,
@@ -3553,7 +3554,7 @@ public final class Terrain {
     /// Glättet das Terrain im Pinsel Richtung 3×3-Mittel (aus einem Schnappschuss,
     /// damit die Zellreihenfolge das Ergebnis nicht verfälscht).
     /// Negativer oder Null-`strength` sowie nicht-positiver Radius führen zum sofortigen
-    /// No-op ohne Allokation des Schnappschusses.
+    /// No-op (keine Zell-Iteration).
     public func smooth(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
         guard strength.isFinite, abs(strength) < 1e9 else { return }
         let pull = min(1.0, max(0.0, 0.30 * strength))
@@ -3590,6 +3591,7 @@ public final class Terrain {
 
     /// Prägt fraktales Rauschen ins Terrain (zerklüftete Details). Nutzt das
     /// terrain-eigene Noise-Feld → wiederholte Striche vertiefen dasselbe Muster.
+    /// Null-Stärke (`strength == 0`) führt zum sofortigen No-op.
     public func roughen(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
         guard strength.isFinite, abs(strength) < 1e9, strength != 0 else { return }
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
@@ -3607,6 +3609,7 @@ public final class Terrain {
     /// Der Radius ist auf wenige Zellen GEDECKELT, unabhängig vom Pinsel-Slider:
     /// mit dessen Standardbreite (~64 Zellen) riss der „spitze Hieb" in unter
     /// einer Sekunde einen Krater bis unters Meer, statt eine Kerbe zu schlagen.
+    /// Negativer oder Null-`strength` (`strength <= 0`) führt zum sofortigen No-op (keine Zell-Iteration).
     public func pickaxe(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
         guard radiusWorld.isFinite && strength.isFinite,
               abs(strength) < 1e9, strength > 0,
