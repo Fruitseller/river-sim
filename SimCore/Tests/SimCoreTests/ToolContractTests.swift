@@ -286,5 +286,42 @@ final class ToolContractTests: XCTestCase {
             XCTAssertEqual(t.upliftBase, u0, "Terrain.flatten darf upliftBase nicht verändern")
         }
     }
+
+    /// Pinselstriche mit inaktiven Parametern (Richtung 0, Stärke <= 0 bei Spitzhacke/Rauheit,
+    /// oder nicht-positiver Radius bei Glätten/Einebnen) sind echte No-ops: weder Höhen
+    /// noch Tektonik werden berührt.
+    /// (Hinweis: Stärke-Fälle `strength <= 0` für `smooth` und `flatten` werden bereits
+    /// in `testSmoothAndFlattenWithNonPositiveStrengthAreNoOps` abgedeckt.)
+    func testBrushToolsWithInactiveParametersAreStrictNoOps() throws {
+        let t = makeTerrain()
+        let h0 = t.h
+        let u0 = t.upliftBase
+
+        // smooth und flatten mit nicht-positivem Radius
+        for badRadius in [0.0, -1.0, -10.0] {
+            t.smooth(gx: gx, gz: gz, radiusWorld: badRadius, strength: 1.0)
+            t.flatten(gx: gx, gz: gz, radiusWorld: badRadius, targetHeight: 0.5, strength: 1.0)
+        }
+        XCTAssertEqual(t.h, h0, "Pinsel mit radiusWorld <= 0 darf Terrain.h nicht verändern")
+        XCTAssertEqual(t.upliftBase, u0, "Pinsel mit radiusWorld <= 0 darf upliftBase nicht verändern")
+
+        // sculpt mit dir == 0 oder strength == 0
+        t.sculpt(gx: gx, gz: gz, radiusWorld: radius, dir: 0, strength: 1.0)
+        t.sculpt(gx: gx, gz: gz, radiusWorld: radius, dir: 1, strength: 0.0)
+        XCTAssertEqual(t.h, h0, "sculpt mit dir == 0 oder strength == 0 darf Terrain.h nicht verändern")
+        XCTAssertEqual(t.upliftBase, u0, "sculpt mit dir == 0 oder strength == 0 darf upliftBase nicht verändern")
+
+        // roughen mit strength == 0
+        t.roughen(gx: gx, gz: gz, radiusWorld: radius, strength: 0.0)
+        XCTAssertEqual(t.h, h0, "roughen mit strength == 0 darf Terrain.h nicht verändern")
+
+        // pickaxe mit strength <= 0
+        for nonPositive in [0.0, -0.5, -1.0] {
+            t.pickaxe(gx: gx, gz: gz, radiusWorld: radius, strength: nonPositive)
+        }
+        XCTAssertEqual(t.h, h0, "pickaxe mit strength <= 0 darf Terrain.h nicht verändern")
+        XCTAssertEqual(t.upliftBase, u0, "pickaxe mit strength <= 0 darf upliftBase nicht verändern")
+    }
 }
+
 

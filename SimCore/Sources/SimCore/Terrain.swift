@@ -3537,10 +3537,12 @@ public final class Terrain {
     /// um das Gitterzentrum (`gx`, `gz`), Radius in Welteinheiten. Koppelt in die
     /// Tektonik (angehobene Zonen werden Hebungszonen), damit Eingriffe langfristig
     /// erhalten bleiben statt von der Erosion ausradiert zu werden.
+    /// Null-Richtung (`dir == 0`) oder Null-Stärke (`strength == 0`) führen zum sofortigen No-op.
     public func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double,
                        strength: Double = 1.0) {
         guard dir.isFinite && strength.isFinite,
-              abs(dir) < 1e9, abs(strength) < 1e9 else { return }
+              abs(dir) < 1e9, abs(strength) < 1e9,
+              dir != 0, strength != 0 else { return }
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             applyDelta(k, dir * 0.006 * strength * w, asRock: true)
             // Kopplung in die Tektonik: angehobene Zonen werden Hebungszonen,
@@ -3551,11 +3553,15 @@ public final class Terrain {
 
     /// Glättet das Terrain im Pinsel Richtung 3×3-Mittel (aus einem Schnappschuss,
     /// damit die Zellreihenfolge das Ergebnis nicht verfälscht).
-    /// Negativer oder Null-`strength` wird auf einen Pull von 0 geklemmt (No-op).
+    /// Negativer oder Null-`strength` sowie nicht-positiver Radius führen zum sofortigen
+    /// No-op (keine Zell-Iteration).
     public func smooth(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
         guard strength.isFinite, abs(strength) < 1e9 else { return }
-        let snap = h
         let pull = min(1.0, max(0.0, 0.30 * strength))
+        guard pull > 0 else { return }
+        guard radiusWorld.isFinite, radiusWorld > 0,
+              radiusWorld <= Double(n) * cfg.cellSize else { return }
+        let snap = h
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             let i = k % n, j = k / n
             var s = 0.0, c = 0.0
@@ -3570,13 +3576,14 @@ public final class Terrain {
 
     /// Zieht das Terrain im Pinsel Richtung Zielhöhe (Plateau/Terrasse) —
     /// die Zielhöhe sampelt der Aufrufer beim Strich-Beginn.
-    /// Negativer oder Null-`strength` wird auf einen Pull von 0 geklemmt (No-op).
+    /// Negativer oder Null-`strength` führt zum sofortigen No-op (keine Zell-Iteration).
     public func flatten(gx: Double, gz: Double, radiusWorld: Double,
                         targetHeight: Double, strength: Double = 1.0) {
         guard targetHeight.isFinite && strength.isFinite,
               abs(targetHeight) < 1e9, abs(strength) < 1e9 else { return }
-        let target = min(1.4, max(cfg.floor, targetHeight))
         let pull = min(1.0, max(0.0, 0.18 * strength))
+        guard pull > 0 else { return }
+        let target = min(1.4, max(cfg.floor, targetHeight))
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             applyDelta(k, (target - h[k]) * pull * w, asRock: false)
         }
@@ -3584,8 +3591,9 @@ public final class Terrain {
 
     /// Prägt fraktales Rauschen ins Terrain (zerklüftete Details). Nutzt das
     /// terrain-eigene Noise-Feld → wiederholte Striche vertiefen dasselbe Muster.
+    /// Null-Stärke (`strength == 0`) führt zum sofortigen No-op.
     public func roughen(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
-        guard strength.isFinite, abs(strength) < 1e9 else { return }
+        guard strength.isFinite, abs(strength) < 1e9, strength != 0 else { return }
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
             let i = k % n, j = k / n
             let nz = noise.fbm01(Double(i) * 0.11, Double(j) * 0.11, octaves: 4) * 2 - 1
@@ -3601,9 +3609,11 @@ public final class Terrain {
     /// Der Radius ist auf wenige Zellen GEDECKELT, unabhängig vom Pinsel-Slider:
     /// mit dessen Standardbreite (~64 Zellen) riss der „spitze Hieb" in unter
     /// einer Sekunde einen Krater bis unters Meer, statt eine Kerbe zu schlagen.
+    /// Negativer oder Null-`strength` (`strength <= 0`) führt zum sofortigen No-op (keine Zell-Iteration).
     public func pickaxe(gx: Double, gz: Double, radiusWorld: Double, strength: Double = 1.0) {
         guard radiusWorld.isFinite && strength.isFinite,
-              abs(strength) < 1e9, radiusWorld <= Double(n) * cfg.cellSize else { return }
+              abs(strength) < 1e9, strength > 0,
+              radiusWorld <= Double(n) * cfg.cellSize else { return }
         let radius = min(radiusWorld, Terrain.pickaxeMaxCells * cfg.cellSize)
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radius) { k, w in
             let spike = w * w // (1-d²)⁴ — deutlich spitzer als der weiche Pinsel
@@ -3640,7 +3650,7 @@ public final class Terrain {
     /// Absenken räumt erst Sediment, dann Fels; Anheben schiebt Fels hoch
     /// (`asRock`) oder lagert lockeres Sediment ab (Glätten/Einebnen).
     private func applyDelta(_ k: Int, _ dhRaw: Double, asRock: Bool) {
-        guard dhRaw.isFinite, abs(dhRaw) < 1e9 else { return }
+        guard dhRaw.isFinite, abs(dhRaw) < 1e9, dhRaw != 0 else { return }
         let dh = min(1.4, max(cfg.floor, h[k] + dhRaw)) - h[k]
         if dh >= 0 {
             if asRock { rock[k] += dh } else { sed[k] += dh }
