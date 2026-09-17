@@ -244,4 +244,34 @@ final class HeightBandTests: XCTestCase {
                                                probs: [0.1, 0.5, 0.9, 0.99])!
         XCTAssertEqual(many, many.sorted())
     }
+
+    /// Ungültige oder nicht-endliche Höhenwerte (NaN, ±inf) dürfen nicht zu
+    /// fehlerhafter Voll-Bedeckung (1.0 für Schnee/Fels) oder unbeschränktem
+    /// Vegetationsfaktor führen.
+    func testHeightBandEvaluationWithNonFiniteHeights() {
+        let b = HeightBands.legacyAbsolute
+
+        // Endliche Grenzwerte: Identität an den Rampen-Enden
+        XCTAssertEqual(b.rockAmount(b.rockStart), 0)
+        XCTAssertEqual(b.rockAmount(b.rockFull), 1)
+        XCTAssertEqual(b.snowAmount(b.snowStart), 0)
+        XCTAssertEqual(b.snowAmount(b.snowFull), 1)
+        XCTAssertEqual(b.vegetationAltitudeFactor(b.vegFull), 1)
+        XCTAssertEqual(b.vegetationAltitudeFactor(b.vegNone), 0, accuracy: 1e-12)
+
+        // NaN-Sicherheit: Konstante zuerst in min(1, max(0, ...)) faltet NaN auf 0
+        XCTAssertEqual(b.rockAmount(Double.nan), 0, "NaN-Höhe darf keinen Fels ausweisen")
+        XCTAssertEqual(b.snowAmount(Double.nan), 0, "NaN-Höhe darf keinen Schnee ausweisen")
+        XCTAssertEqual(b.vegetationAltitudeFactor(Double.nan), 0, "NaN-Höhe darf keine Vegetation tragen")
+        XCTAssertEqual(b.coniferShare(Double.nan), 0.1, "NaN-Höhe muss auf die Untergrenze fallen")
+        XCTAssertFalse(b.bearsTrees(Double.nan), "NaN-Höhe darf keine Bäume tragen")
+
+        // Unendlichkeiten
+        XCTAssertEqual(b.rockAmount(Double.infinity), 1)
+        XCTAssertEqual(b.rockAmount(-Double.infinity), 0)
+        XCTAssertEqual(b.snowAmount(Double.infinity), 1)
+        XCTAssertEqual(b.snowAmount(-Double.infinity), 0)
+        XCTAssertEqual(b.vegetationAltitudeFactor(Double.infinity), 0)
+        XCTAssertEqual(b.vegetationAltitudeFactor(-Double.infinity), 1)
+    }
 }
