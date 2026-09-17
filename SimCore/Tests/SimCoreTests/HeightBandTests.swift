@@ -273,5 +273,9 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(b.snowAmount(-Double.infinity), 0)
         XCTAssertEqual(b.vegetationAltitudeFactor(Double.infinity), 0)
         XCTAssertEqual(b.vegetationAltitudeFactor(-Double.infinity), 1)
+        XCTAssertEqual(b.coniferShare(Double.infinity), 0.9)
+        XCTAssertEqual(b.coniferShare(-Double.infinity), 0.1)
+        XCTAssertFalse(b.bearsTrees(Double.infinity))
+        XCTAssertTrue(b.bearsTrees(-Double.infinity))
     }
 }
