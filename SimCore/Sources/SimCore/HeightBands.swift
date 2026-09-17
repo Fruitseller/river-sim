@@ -90,8 +90,9 @@ public struct HeightBands: Equatable, Sendable, Codable {
 
     /// Höhen-Eignung für Bewuchs: 1 unterhalb `vegFull`, linear auf 0 bei `vegNone`.
     /// (Vor Issue #4: `v < 0.5 ? 1 : max(0, 1 − (v − 0.5)/0.18)` im Sim-Kern und
-    /// dieselbe Formel mit 0.6 in der Färbung.) Konstante zuerst in der Klemme,
-    /// damit NaN zu 0 gefaltet wird.
+    /// dieselbe Formel mit 0.6 in der Färbung.) Das bestehende `max(0, …)` faltet
+    /// NaN bereits zu 0; die obere Klemme `min(1, …)` ist rein defensiv (der
+    /// else-Zweig kann den Wert per Konstruktion nicht über 1 treiben).
     @inline(__always) public func vegetationAltitudeFactor(_ v: Double) -> Double {
         v < vegFull ? 1 : min(1, max(0, 1 - (v - vegFull) / max(1e-6, vegRamp)))
     }
