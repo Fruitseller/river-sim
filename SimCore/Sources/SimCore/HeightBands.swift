@@ -90,19 +90,25 @@ public struct HeightBands: Equatable, Sendable, Codable {
 
     /// Höhen-Eignung für Bewuchs: 1 unterhalb `vegFull`, linear auf 0 bei `vegNone`.
     /// (Vor Issue #4: `v < 0.5 ? 1 : max(0, 1 − (v − 0.5)/0.18)` im Sim-Kern und
-    /// dieselbe Formel mit 0.6 in der Färbung.)
+    /// dieselbe Formel mit 0.6 in der Färbung.) Das bestehende `max(0, …)` faltet
+    /// NaN bereits zu 0; die obere Klemme `min(1, …)` ist rein defensiv (der
+    /// else-Zweig kann den Wert per Konstruktion nicht über 1 treiben).
     @inline(__always) public func vegetationAltitudeFactor(_ v: Double) -> Double {
-        v < vegFull ? 1 : max(0, 1 - (v - vegFull) / max(1e-6, vegRamp))
+        v < vegFull ? 1 : min(1, max(0, 1 - (v - vegFull) / max(1e-6, vegRamp)))
     }
 
-    /// Anteil Hochlagen-Grau (0 … 1).
+    /// Anteil Hochlagen-Grau (0 … 1). Konstante zuerst (`min(1, max(0, …))`),
+    /// damit ungültige Höhenwerte (NaN) sicher zu 0 gefaltet werden, statt über
+    /// `min(1, NaN)` fälschlich 1.0 (voller Fels) zu liefern.
     @inline(__always) public func rockAmount(_ v: Double) -> Double {
-        v <= rockStart ? 0 : min(1, (v - rockStart) / max(1e-6, rockFull - rockStart))
+        min(1, max(0, (v - rockStart) / max(1e-6, rockFull - rockStart)))
     }
 
-    /// Anteil Schnee (0 … 1).
+    /// Anteil Schnee (0 … 1). Konstante zuerst (`min(1, max(0, …))`),
+    /// damit ungültige Höhenwerte (NaN) sicher zu 0 gefaltet werden, statt über
+    /// `min(1, NaN)` fälschlich 1.0 (voller Schnee) zu liefern.
     @inline(__always) public func snowAmount(_ v: Double) -> Double {
-        v <= snowStart ? 0 : min(1, (v - snowStart) / max(1e-6, snowFull - snowStart))
+        min(1, max(0, (v - snowStart) / max(1e-6, snowFull - snowStart)))
     }
 
     /// Wahrscheinlichkeit, dass ein Baum an dieser Höhe Nadel- statt Laubbaum ist
