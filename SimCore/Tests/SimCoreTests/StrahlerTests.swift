@@ -102,4 +102,43 @@ final class StrahlerTests: XCTestCase {
         for _ in 0..<3 { a.step(dtYears: 1000); b.step(dtYears: 1000) }
         XCTAssertEqual(a.strahlerOrders(minCells: 12), b.strahlerOrders(minCells: 12))
     }
+
+    /// Empfänger-Indizes außerhalb des Gitters (r >= n oder r < -1) dürfen
+    /// nicht zu Speicherzugriffsfehlern führen und werden wie Senken behandelt.
+    func testOrdersWithOutOfBoundsReceivers() {
+        // 0 zeigt auf 99 (außerhalb des Gitters), 1 zeigt auf 0, 2 zeigt auf -5 (ungültige negative Senke)
+        let receiver: [Int32] = [99, 0, -5]
+        let net = [true, true, true]
+        let o = Strahler.orders(receiver: receiver, isNetwork: net)
+        XCTAssertEqual(o.count, 3)
+        XCTAssertEqual(o[0], 1, "Zelle 0 empfängt von Zelle 1 und entwässert nach außerhalb")
+        XCTAssertEqual(o[1], 1, "Quelle mit Ordnung 1")
+        XCTAssertEqual(o[2], 1, "Isolierte Zelle mit Ordnung 1")
+
+        // Mismatch der Array-Längen liefert defensiv Nuller statt abzustürzen
+        let mismatched = Strahler.orders(receiver: [0, 1], isNetwork: [true])
+        XCTAssertEqual(mismatched, [0, 0])
+    }
+
+    /// Leeres Terrain sowie nicht-endliche oder nicht-positive Schwellen (NaN, <= 0)
+    /// müssen sicher abgefangen werden.
+    func testStrahlerOrdersWithEmptyTerrainAndNonFiniteOrNonPositiveMinCells() {
+        let empty = Terrain(allocating: cfg(n: 0), seed: 1234)
+        XCTAssertEqual(empty.strahlerOrders(minCells: 12), [], "Leeres Terrain muss leere Ordnungen liefern")
+
+        let normal = Terrain(config: cfg(n: 96), seed: 1234)
+        // Nicht-endliche oder nicht-positive minCells-Werte dürfen kein fehlerhaftes Vollnetz erzeugen
+        let nanOrders = normal.strahlerOrders(minCells: .nan)
+        XCTAssertEqual(nanOrders.count, 96 * 96)
+        XCTAssertTrue(nanOrders.allSatisfy { $0 == 0 }, "NaN-Schwelle darf kein Netz ausweisen")
+
+        let infOrders = normal.strahlerOrders(minCells: .infinity)
+        XCTAssertTrue(infOrders.allSatisfy { $0 == 0 }, "Unendliche Schwelle darf kein Netz ausweisen")
+
+        let zeroOrders = normal.strahlerOrders(minCells: 0)
+        XCTAssertTrue(zeroOrders.allSatisfy { $0 == 0 }, "Null-Schwelle darf kein Netz ausweisen")
+
+        let negOrders = normal.strahlerOrders(minCells: -10)
+        XCTAssertTrue(negOrders.allSatisfy { $0 == 0 }, "Negative Schwelle darf kein Netz ausweisen")
+    }
 }
