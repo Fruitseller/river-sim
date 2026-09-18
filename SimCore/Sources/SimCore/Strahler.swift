@@ -16,10 +16,14 @@ public enum Strahler {
     /// Läuft als Kahn-Topsort über den Donor-Grad — Ergebnis ist eindeutig
     /// (unabhängig von der Abarbeitungs-Reihenfolge), also deterministisch.
     /// Empfänger-Indizes außerhalb des Gitters (`r < 0 || r >= n`) werden
-    /// defensiv wie Senken behandelt und führen zu keinem Pufferüberlauf.
+    /// defensiv wie Senken behandelt und führen zu keinem Absturz.
     public static func orders(receiver: [Int32], isNetwork: [Bool]) -> [Int32] {
         let n = receiver.count
-        guard isNetwork.count == n, n > 0 else { return [Int32](repeating: 0, count: n) }
+        guard isNetwork.count == n else {
+            assertionFailure("Strahler.orders: isNetwork.count (\(isNetwork.count)) must match receiver.count (\(n))")
+            return [Int32](repeating: 0, count: n)
+        }
+        guard n > 0 else { return [] }
         var out = [Int32](repeating: 0, count: n)
         // Donor-Grad nur über Netz-Zellen: Nicht-Netz-Donoren beeinflussen
         // weder Grad noch Ordnung.
@@ -56,12 +60,17 @@ extension Terrain {
     /// mit Einzugsgebiet ≥ `minCells` Zellen. Für Render-Schwellen und
     /// Breiten-Hierarchie — ändert keinen Sim-Zustand.
     ///
-    /// Leere Terrains, Pufferlängen-Mismatch sowie nicht-endliche oder
-    /// nicht-positive Schwellen (`minCells <= 0`, `NaN`) werden defensiv
-    /// abgefangen.
+    /// Abweichend von der Formel (`minCells <= 0` wäre sonst „alle Landzellen“)
+    /// liefert `minCells <= 0` sowie nicht-endliche Werte (`NaN`, `infinity`)
+    /// defensiv ein leeres Netz (alle Ordnungen 0).
+    /// Leere Terrains und Pufferlängen-Mismatches werden ebenfalls defensiv abgefangen.
     public func strahlerOrders(minCells: Double) -> [Int32] {
         let n = area.count
-        guard n > 0, receiver.count == n, hf.count == n else { return [] }
+        guard receiver.count == n && hf.count == n else {
+            assertionFailure("Terrain.strahlerOrders: buffer length mismatch (area=\(n), receiver=\(receiver.count), hf=\(hf.count))")
+            return []
+        }
+        guard n > 0 else { return [] }
         guard minCells.isFinite && minCells > 0 else {
             return [Int32](repeating: 0, count: n)
         }
