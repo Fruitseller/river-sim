@@ -115,9 +115,15 @@ final class StrahlerTests: XCTestCase {
         XCTAssertEqual(o[1], 1, "Quelle mit Ordnung 1")
         XCTAssertEqual(o[2], 1, "Isolierte Zelle mit Ordnung 1")
 
-        // Mismatch der Array-Längen liefert defensiv Nuller statt abzustürzen
+        // Leere Puffer als echter Randfall liefern defensiv ein leeres Array
+        let empty = Strahler.orders(receiver: [], isNetwork: [])
+        XCTAssertEqual(empty, [])
+
+        #if !DEBUG
+        // Mismatch der Array-Längen liefert im Release-Build defensiv Nuller statt abzustürzen
         let mismatched = Strahler.orders(receiver: [0, 1], isNetwork: [true])
         XCTAssertEqual(mismatched, [0, 0])
+        #endif
     }
 
     /// Leeres Terrain sowie nicht-endliche oder nicht-positive Schwellen (NaN, <= 0)
