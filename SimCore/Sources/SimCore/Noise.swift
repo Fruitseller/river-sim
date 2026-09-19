@@ -37,7 +37,13 @@ public struct SimplexNoise {
         for k in 0..<512 { perm[k] = p[k & 255] }
     }
 
+    /// 2D-Simplex-Noise (nach Gustavson), deterministisch über eine Permutationstabelle.
+    /// Rückgabe ~[-1, 1]. Nicht-endliche (NaN, ±inf) oder extrem große Koordinaten
+    /// werden defensiv auf 0 gefaltet (neutraler Nullpunkt), um fatale
+    /// Double-to-Int-Konvertierungsfehler zu verhindern.
     public func value(_ xin: Double, _ yin: Double) -> Double {
+        guard xin.isFinite && yin.isFinite,
+              abs(xin) < 1e9, abs(yin) < 1e9 else { return 0 }
         let s = (xin + yin) * Self.F2
         var i = Int(floor(xin + s))
         var j = Int(floor(yin + s))
@@ -66,7 +72,10 @@ public struct SimplexNoise {
     }
 
     /// Fraktales Rauschen (fBm) mit `octaves` Oktaven, auf ~[0, 1] normiert.
+    /// Nicht-positive Oktaven (`octaves <= 0`) liefern defensiv den neutralen
+    /// Mittelwert 0.5, um eine Division durch Null (0/0 = NaN) zu verhindern.
     public func fbm01(_ x: Double, _ y: Double, octaves: Int) -> Double {
+        guard octaves > 0 else { return 0.5 }
         var amp = 1.0, freq = 1.0, v = 0.0, norm = 0.0
         for _ in 0..<octaves {
             v += amp * value(x * freq, y * freq)
@@ -80,8 +89,11 @@ public struct SimplexNoise {
     /// Ridged-Multifractal (Musgrave): `1 − |noise|` je Oktave, quadriert und mit
     /// der vorigen Oktave gewichtet → scharfe **Bergkämme** und Grate statt der
     /// rundlichen Blobs von fBm. Ergebnis ~[0, 1] (hohe Werte = Grate).
+    /// Nicht-positive Oktaven (`octaves <= 0`) oder ungültige Parameter liefern
+    /// defensiv 0 (kein Grat) statt einer Division durch Null.
     public func ridged01(_ x: Double, _ y: Double, octaves: Int,
                          lacunarity: Double = 2.0, gain: Double = 0.5) -> Double {
+        guard octaves > 0, lacunarity.isFinite, gain.isFinite else { return 0 }
         var sum = 0.0, freq = 1.0, amp = 0.5, prev = 1.0, norm = 0.0
         for _ in 0..<octaves {
             var n = 1.0 - abs(value(x * freq, y * freq)) // Rücken bei |noise|→0
@@ -93,6 +105,8 @@ public struct SimplexNoise {
             freq *= lacunarity
             amp *= gain
         }
+        // Defensive Absicherung gegen Division durch Null bei pathologischen/negativen gain-Werten (norm <= 0)
+        guard norm > 0 else { return 0 }
         return min(1, max(0, sum / norm))
     }
 }
