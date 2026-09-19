@@ -83,8 +83,7 @@ public struct SimplexNoise {
             amp *= 0.5
             freq *= 2
         }
-        guard norm > 0 else { return 0.5 }
-        return min(1, max(0, (v / norm + 1) / 2))
+        return (v / norm + 1) / 2
     }
 
     /// Ridged-Multifractal (Musgrave): `1 − |noise|` je Oktave, quadriert und mit
@@ -106,6 +105,7 @@ public struct SimplexNoise {
             freq *= lacunarity
             amp *= gain
         }
+        // Defensive Absicherung gegen Division durch Null bei pathologischen/negativen gain-Werten (norm <= 0)
         guard norm > 0 else { return 0 }
         return min(1, max(0, sum / norm))
     }

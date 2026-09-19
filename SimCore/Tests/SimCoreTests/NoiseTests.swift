@@ -93,5 +93,7 @@ final class NoiseTests: XCTestCase {
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: -2), 0.0)
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: 3, lacunarity: Double.nan), 0.0)
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: 3, gain: Double.infinity), 0.0)
+        // Negative gain-Werte können norm auf <= 0 drücken; guard norm > 0 fängt dies defensiv ab
+        XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: 2, gain: -1.0), 0.0)
     }
 }
