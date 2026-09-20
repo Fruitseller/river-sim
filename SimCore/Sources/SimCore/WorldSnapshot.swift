@@ -690,7 +690,9 @@ private struct ByteReader {
 
     private mutating func advance(_ n: Int) throws -> Range<Data.Index> {
         guard n >= 0, remaining >= n else {
-            throw SnapshotError.truncated(expected: offset + max(0, n), found: data.count)
+            let maxSafe = Int.max - offset
+            let exp = n > maxSafe ? Int.max : offset + max(0, n)
+            throw SnapshotError.truncated(expected: exp, found: data.count)
         }
         let start = data.startIndex + offset
         offset += n
@@ -707,7 +709,9 @@ private struct ByteReader {
     mutating func blob() throws -> Data {
         let raw = try u32()
         guard let len = Int(exactly: raw) else {
-            throw SnapshotError.truncated(expected: offset + 4, found: data.count)
+            let maxSafe = UInt64(Int.max) - UInt64(offset)
+            let exp = offset + Int(min(UInt64(raw), maxSafe))
+            throw SnapshotError.truncated(expected: exp, found: data.count)
         }
         return try take(len)
     }
@@ -717,7 +721,8 @@ private struct ByteReader {
     }
 
     private mutating func scalar<T>(_ type: T.Type) throws -> T {
-        let range = try advance(MemoryLayout<T>.size)
+        let size = MemoryLayout<T>.size
+        let range = try advance(size)
         var value: T?
         data.withUnsafeBytes { raw in
             guard let baseAddress = raw.baseAddress else { return }
@@ -725,7 +730,7 @@ private struct ByteReader {
             value = base.loadUnaligned(as: T.self)
         }
         guard let result = value else {
-            throw SnapshotError.truncated(expected: offset, found: data.count)
+            throw SnapshotError.truncated(expected: offset - size, found: data.count)
         }
         return result
     }
