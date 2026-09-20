@@ -22,15 +22,31 @@ public final class WaterFieldRenderer {
     /// Baut die Diagnose-Meldung für einen Feldgrößen-Mismatch (Bug: Feld-Korruption).
     /// Bewusst REIN (kein Trap, keine Assertion): Der Mismatch-Pfad ist unter
     /// `swift test` (Debug-Build) sonst nicht testbar — ein Guard mit `assertionFailure`
-    /// würde den Test-Runner mitten im Frame trappen, genau dort, wo der Text oben
-    /// das Release-Verhalten „stillschweigend leere Textur" beschreibt. Der Guard
-    /// ruft diesen Helfer; ein Test kann ihn direkt aufrufen und beide Verhalten
-    /// (Debug-Fall: Meldung ungleich nil; Release-Fall: `[]`) ohne Trap absichern.
-    public static func fieldSizeMismatchDetail(n: Int, cnt: Int,
-                                               fieldCounts: [(name: String, count: Int)]) -> String? {
+    /// würde den Test-Runner mitten im Frame trappen. Nur `internal` (Tests kommen
+    /// über `@testable` herein): reines Diagnose-Format für einen Pfad, der im
+    /// Betrieb eigentlich nie erreicht wird.
+    static func fieldSizeMismatchDetail(n: Int, cnt: Int,
+                                        fieldCounts: [(name: String, count: Int)]) -> String? {
         guard fieldCounts.contains(where: { $0.count != cnt }) else { return nil }
         let fields = fieldCounts.map { "\($0.name)=\($0.count)" }.joined(separator: ", ")
         return "Feldgrößen-Mismatch: n=\(n), cnt=\(cnt), \(fields)"
+    }
+
+    /// Prüft die Feldgrößen der direkt gelesenen Felder gegen `cnt`, um
+    /// Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher
+    /// auszuschließen. Rückgabe nil = alle stimmig, sonst die Diagnose-Meldung
+    /// aus `fieldSizeMismatchDetail`.
+    ///
+    /// Die Entscheidung steht HIER an EINER Stelle, weil sie beide Guards
+    /// (`flowDetailField` und `bytes`) betrifft: DEBUG bricht bewusst LAUT ab
+    /// (`assertionFailure` ist genau dort aktiv); der RELEASE-Pfad liefert still
+    /// einen leeren Puffer zurück statt laut zu scheitern (preconditionFailure) —
+    /// dieser Code läuft pro Textur-Update im Render-Pfad (Godot/GDExtension),
+    /// und ein harter Crash mitten im Frame ist dort ein größerer Schaden als
+    /// ein leeres Render-Ergebnis.
+    private static func validateFields(n: Int, cnt: Int,
+                                       fields: [(name: String, count: Int)]) -> String? {
+        fieldSizeMismatchDetail(n: n, cnt: cnt, fieldCounts: fields)
     }
 
 
@@ -77,20 +93,14 @@ public final class WaterFieldRenderer {
         guard n > 0 else { return [] }
         let cnt = n * n
         let h = terrain.h, area = terrain.areaMFD
-        // Prüft die exakte Größe (n * n) aller direkt gelesenen Felder (h, areaMFD),
-        // um Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher auszuschließen.
-        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption). DEBUG bricht bewusst
-        // LAUT ab (`assertionFailure` ist genau dort aktiv); der RELEASE-Pfad
-        // liefert still einen leeren Puffer zurück statt laut zu scheitern
-        // (preconditionFailure): Dieser Code läuft pro Textur-Update im Render-Pfad
-        // (Godot/GDExtension), und ein harter Crash mitten im Frame ist dort ein
-        // größerer Schaden als ein leeres Render-Ergebnis. Beide Verhalten sind
-        // über den trap-freien Helfer `fieldSizeMismatchDetail` headless testbar —
-        // der Guard selbst würde unter `swift test` (Debug) den Runner trappen.
-        guard h.count == cnt,
-              area.count == cnt else {
-            assertionFailure(Self.fieldSizeMismatchDetail(
-                n: n, cnt: cnt, fieldCounts: [("h", h.count), ("areaMFD", area.count)])!)
+        // Begründung der Entscheidung (Debug laut / Release still `[]`) steht am
+        // gemeinsamen Helfer `validateFields` — EINE Stelle statt driftender
+        // Doppel-Pflege. Der Guard selbst würde unter `swift test` (Debug) den
+        // Runner trappen, die Diagnose ist deshalb über den trap-freien Helfer
+        // `fieldSizeMismatchDetail` headless testbar.
+        if let mismatch = Self.validateFields(
+            n: n, cnt: cnt, fields: [("h", h.count), ("areaMFD", area.count)]) {
+            assertionFailure(mismatch)
             return []
         }
         let sea = terrain.cfg.sea
@@ -154,27 +164,14 @@ public final class WaterFieldRenderer {
         guard n > 0 else { return [] }
         let cnt = n * n
         let h = terrain.h, hf = terrain.waterLevel, area = terrain.areaMFD, rec = terrain.receiver
-        // Prüft die exakte Größe (n * n) aller direkt in den Pixelschleifen
-        // gelesenen Felder (h, waterLevel, areaMFD, receiver, streamMap), um
-        // Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher auszuschließen.
-        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption). DEBUG bricht bewusst
-        // LAUT ab (`assertionFailure` ist genau dort aktiv); der RELEASE-Pfad
-        // liefert still einen leeren Puffer zurück statt laut zu scheitern
-        // (preconditionFailure): Dieser Code läuft pro Textur-Update im Render-Pfad
-        // (Godot/GDExtension), und ein harter Crash mitten im Frame ist dort ein
-        // größerer Schaden als ein leeres Render-Ergebnis. Beide Verhalten sind
-        // über den trap-freien Helfer `fieldSizeMismatchDetail` headless testbar —
-        // der Guard selbst würde unter `swift test` (Debug) den Runner trappen.
-        guard h.count == cnt,
-              hf.count == cnt,
-              area.count == cnt,
-              rec.count == cnt,
-              terrain.streamMap.count == cnt else {
-            assertionFailure(Self.fieldSizeMismatchDetail(
-                n: n, cnt: cnt,
-                fieldCounts: [("h", h.count), ("waterLevel", hf.count),
-                              ("areaMFD", area.count), ("receiver", rec.count),
-                              ("streamMap", terrain.streamMap.count)])!)
+        // Derselbe gemeinsame Helfer wie in `flowDetailField` (Begründung und
+        // Diagnose an EINER Stelle, s. dort).
+        if let mismatch = Self.validateFields(
+            n: n, cnt: cnt,
+            fields: [("h", h.count), ("waterLevel", hf.count),
+                     ("areaMFD", area.count), ("receiver", rec.count),
+                     ("streamMap", terrain.streamMap.count)]) {
+            assertionFailure(mismatch)
             return []
         }
         let sea = terrain.cfg.sea
