@@ -287,6 +287,43 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertEqual(try WorldSnapshot.peekConfig(at: path), config)
     }
 
+    /// `peekConfig` darf bei gefälschten oder korrupten Config-Längen (größer als die
+    /// im Kopf deklarierte Nutzdatenlänge) keine Riesenpuffer anfordern, sondern wirft `truncated`.
+    func testPeekConfigGuardsCorruptedOrOversizedConfigLength() throws {
+        let t = Terrain(config: cfg(n: 96), seed: 7)
+        var data = try WorldSnapshot.encode(t)
+        // Config-Länge (Offset 28..32) auf einen Wert setzen, der payloadLength überschreitet.
+        let badLengthBytes: [UInt8] = [0xFF, 0xFF, 0xFF, 0x7F] // 0x7FFF_FFFF
+        data.replaceSubrange(28..<32, with: badLengthBytes)
+
+        let path = tempPath("badconfiglen")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try data.write(to: URL(fileURLWithPath: path))
+
+        XCTAssertThrowsError(try WorldSnapshot.peekConfig(at: path)) { error in
+            guard case SnapshotError.truncated = error else {
+                XCTFail("erwartet truncated bei übergroßer Config-Länge, bekam \(error)")
+                return
+            }
+        }
+    }
+
+    func testPeekRejectsNonExistentFile() {
+        let path = tempPath("nonexistent")
+        XCTAssertThrowsError(try WorldSnapshot.peekVersion(at: path)) { error in
+            guard case SnapshotError.readFailed = error else {
+                XCTFail("erwartet readFailed, bekam \(error)")
+                return
+            }
+        }
+        XCTAssertThrowsError(try WorldSnapshot.peekConfig(at: path)) { error in
+            guard case SnapshotError.readFailed = error else {
+                XCTFail("erwartet readFailed, bekam \(error)")
+                return
+            }
+        }
+    }
+
     func testForeignFileIsRejected() throws {
         let path = tempPath("foreign")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -307,6 +344,17 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertThrowsError(try WorldSnapshot.decode(data[0..<(data.count / 2)])) { error in
             guard case SnapshotError.truncated = error else {
                 XCTFail("erwartet truncated, bekam \(error)")
+                return
+            }
+        }
+
+        // Korrupte Nutzdatenlänge (UInt64.max): darf nicht trappen, sondern wirft truncated.
+        var corruptLength = data
+        let maxLenBytes: [UInt8] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        corruptLength.replaceSubrange(12..<20, with: maxLenBytes)
+        XCTAssertThrowsError(try WorldSnapshot.decode(corruptLength)) { error in
+            guard case SnapshotError.truncated = error else {
+                XCTFail("erwartet truncated bei UInt64.max Nutzdatenlänge, bekam \(error)")
                 return
             }
         }
