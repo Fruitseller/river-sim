@@ -19,6 +19,20 @@ import SimCore
 public final class WaterFieldRenderer {
     public init() {}
 
+    /// Baut die Diagnose-Meldung für einen Feldgrößen-Mismatch (Bug: Feld-Korruption).
+    /// Bewusst REIN (kein Trap, keine Assertion): Der Mismatch-Pfad ist unter
+    /// `swift test` (Debug-Build) sonst nicht testbar — ein Guard mit `assertionFailure`
+    /// würde den Test-Runner mitten im Frame trappen, genau dort, wo der Text oben
+    /// das Release-Verhalten „stillschweigend leere Textur" beschreibt. Der Guard
+    /// ruft diesen Helfer; ein Test kann ihn direkt aufrufen und beide Verhalten
+    /// (Debug-Fall: Meldung ungleich nil; Release-Fall: `[]`) ohne Trap absichern.
+    public static func fieldSizeMismatchDetail(n: Int, cnt: Int,
+                                               fieldCounts: [(name: String, count: Int)]) -> String? {
+        guard fieldCounts.contains(where: { $0.count != cnt }) else { return nil }
+        let fields = fieldCounts.map { "\($0.name)=\($0.count)" }.joined(separator: ", ")
+        return "Feldgrößen-Mismatch: n=\(n), cnt=\(cnt), \(fields)"
+    }
+
 
 
     // Persistente, zeitlich geglättete Wasserfelder (EWMA-Gedächtnis über Rebuilds).
@@ -65,14 +79,18 @@ public final class WaterFieldRenderer {
         let h = terrain.h, area = terrain.areaMFD
         // Prüft die exakte Größe (n * n) aller direkt gelesenen Felder (h, areaMFD),
         // um Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher auszuschließen.
-        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption) und schlägt im Debug-Build
-        // per assertionFailure an. Im Release-Build liefert der Guard bewusst still einen
-        // leeren Puffer zurück statt laut zu scheitern (preconditionFailure): Da dieser Code
-        // pro Textur-Update im Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash
-        // mitten im Frame schlechter als ein leeres Render-Ergebnis.
+        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption). DEBUG bricht bewusst
+        // LAUT ab (`assertionFailure` ist genau dort aktiv); der RELEASE-Pfad
+        // liefert still einen leeren Puffer zurück statt laut zu scheitern
+        // (preconditionFailure): Dieser Code läuft pro Textur-Update im Render-Pfad
+        // (Godot/GDExtension), und ein harter Crash mitten im Frame ist dort ein
+        // größerer Schaden als ein leeres Render-Ergebnis. Beide Verhalten sind
+        // über den trap-freien Helfer `fieldSizeMismatchDetail` headless testbar —
+        // der Guard selbst würde unter `swift test` (Debug) den Runner trappen.
         guard h.count == cnt,
               area.count == cnt else {
-            assertionFailure("Feldgrößen-Mismatch in flowDetailField: n=\(n), cnt=\(cnt), h=\(h.count), areaMFD=\(area.count)")
+            assertionFailure(Self.fieldSizeMismatchDetail(
+                n: n, cnt: cnt, fieldCounts: [("h", h.count), ("areaMFD", area.count)])!)
             return []
         }
         let sea = terrain.cfg.sea
@@ -139,17 +157,24 @@ public final class WaterFieldRenderer {
         // Prüft die exakte Größe (n * n) aller direkt in den Pixelschleifen
         // gelesenen Felder (h, waterLevel, areaMFD, receiver, streamMap), um
         // Out-of-Bounds-Zugriffe und Traps auf 0-zähligen Pufferzeigern sicher auszuschließen.
-        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption) und schlägt im Debug-Build
-        // per assertionFailure an. Im Release-Build liefert der Guard bewusst still einen
-        // leeren Puffer zurück statt laut zu scheitern (preconditionFailure): Da dieser Code
-        // pro Textur-Update im Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash
-        // mitten im Frame schlechter als ein leeres Render-Ergebnis.
+        // Ein Größen-Mismatch ist ein Bug (Feld-Korruption). DEBUG bricht bewusst
+        // LAUT ab (`assertionFailure` ist genau dort aktiv); der RELEASE-Pfad
+        // liefert still einen leeren Puffer zurück statt laut zu scheitern
+        // (preconditionFailure): Dieser Code läuft pro Textur-Update im Render-Pfad
+        // (Godot/GDExtension), und ein harter Crash mitten im Frame ist dort ein
+        // größerer Schaden als ein leeres Render-Ergebnis. Beide Verhalten sind
+        // über den trap-freien Helfer `fieldSizeMismatchDetail` headless testbar —
+        // der Guard selbst würde unter `swift test` (Debug) den Runner trappen.
         guard h.count == cnt,
               hf.count == cnt,
               area.count == cnt,
               rec.count == cnt,
               terrain.streamMap.count == cnt else {
-            assertionFailure("Feldgrößen-Mismatch in bytes: n=\(n), cnt=\(cnt), h=\(h.count), waterLevel=\(hf.count), areaMFD=\(area.count), receiver=\(rec.count), streamMap=\(terrain.streamMap.count)")
+            assertionFailure(Self.fieldSizeMismatchDetail(
+                n: n, cnt: cnt,
+                fieldCounts: [("h", h.count), ("waterLevel", hf.count),
+                              ("areaMFD", area.count), ("receiver", rec.count),
+                              ("streamMap", terrain.streamMap.count)])!)
             return []
         }
         let sea = terrain.cfg.sea

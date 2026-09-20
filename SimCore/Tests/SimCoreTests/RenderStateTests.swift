@@ -293,6 +293,26 @@ final class RenderStateTests: XCTestCase {
         XCTAssertEqual(populatedWater.count, populated.cfg.count * 4)
     }
 
+    /// Prüft den trap-freien Diagnose-Helfer für Feldgrößen-Mismatches
+    /// (`WaterFieldRenderer.fieldSizeMismatchDetail`): Er sichert die Meldung
+    /// ab, die der Guard im Debug-Build per `assertionFailure` ausgibt — der
+    /// Guard selbst würde unter `swift test` den Runner trappen, der
+    /// Release-Fallback (`[]`) ist darüber im Debug-Build mit abgesichert.
+    func testWaterFieldRendererFieldSizeMismatchDetailIsPureAndDiagnosesAllFields() {
+        // Stimmige Größen: keine Meldung.
+        XCTAssertNil(WaterFieldRenderer.fieldSizeMismatchDetail(
+            n: 4, cnt: 16, fieldCounts: [("h", 16), ("areaMFD", 16)]))
+        // Ein korruptes Feld: Meldung nennt n, cnt und ALLE Feldgrößen.
+        let message = WaterFieldRenderer.fieldSizeMismatchDetail(
+            n: 4, cnt: 16,
+            fieldCounts: [("h", 16), ("waterLevel", 15), ("areaMFD", 16),
+                          ("receiver", 16), ("streamMap", 16)])
+        XCTAssertNotNil(message, "Ein Größen-Mismatch muss eine Diagnose liefern")
+        XCTAssertEqual(message, "Feldgrößen-Mismatch: n=4, cnt=16, "
+                     + "h=16, waterLevel=15, areaMFD=16, receiver=16, streamMap=16",
+                       "Die Diagnose nennt ALLE geprüften Felder, nicht nur das erste")
+    }
+
     // MARK: - Quelltext: die Brücke hält keinen Render-Zustand mehr
 
     func testBridgeOwnsNoRenderState() throws {
