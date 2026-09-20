@@ -158,8 +158,18 @@ public enum WorldSnapshot {
         }
         defer { try? handle.close() }
         var head = ByteReader(handle.readData(ofLength: headerLength + 4))
-        _ = try readHeader(&head)
-        let length = Int(try head.u32())
+        let header = try readHeader(&head)
+        let rawLength = try head.u32()
+        // Schutz vor korrupten oder riesigen Config-Längen: die Config ist Teil der
+        // Nutzdaten (u32 Länge + Bytes), kann also zusammen mit den 4 Längenbytes
+        // nicht größer sein als die im Kopf deklarierte Nutzdatenlänge.
+        guard let length = Int(exactly: rawLength),
+              UInt64(length) + 4 <= header.payloadLength else {
+            let maxSafe = UInt64(Int.max) - UInt64(headerLength + 4)
+            let exp = headerLength + 4 + Int(min(UInt64(rawLength), maxSafe))
+            let found = headerLength + Int(min(header.payloadLength, UInt64(Int.max) - UInt64(headerLength)))
+            throw SnapshotError.truncated(expected: exp, found: found)
+        }
         let blob = handle.readData(ofLength: length)
         guard blob.count == length else {
             throw SnapshotError.truncated(expected: headerLength + 4 + length,
@@ -238,11 +248,15 @@ public enum WorldSnapshot {
         guard hostIsLittleEndian else { throw SnapshotError.unsupportedHostByteOrder }
         var reader = ByteReader(data)
         let header = try readHeader(&reader)
-        guard reader.remaining >= Int(header.payloadLength) else {
-            throw SnapshotError.truncated(expected: headerLength + Int(header.payloadLength),
-                                          found: data.count)
+        // Defensiv gegen Überlauf (UInt64.max etc.): eine ungültige oder überlange
+        // Nutzdatenlänge wirft sauber `truncated`, statt bei Int(...) zu trappen.
+        guard let payloadLength = Int(exactly: header.payloadLength),
+              reader.remaining >= payloadLength else {
+            let maxSafe = UInt64(Int.max) - UInt64(headerLength)
+            let exp = headerLength + Int(min(header.payloadLength, maxSafe))
+            throw SnapshotError.truncated(expected: exp, found: data.count)
         }
-        let payload = try reader.take(Int(header.payloadLength))
+        let payload = try reader.take(payloadLength)
         let sum = fnv1a64(payload)
         guard sum == header.checksum else {
             throw SnapshotError.checksumMismatch(expected: header.checksum, found: sum)
@@ -675,8 +689,8 @@ private struct ByteReader {
     var remaining: Int { data.count - offset }
 
     private mutating func advance(_ n: Int) throws -> Range<Data.Index> {
-        guard remaining >= n else {
-            throw SnapshotError.truncated(expected: offset + n, found: data.count)
+        guard n >= 0, remaining >= n else {
+            throw SnapshotError.truncated(expected: offset + max(0, n), found: data.count)
         }
         let start = data.startIndex + offset
         offset += n
@@ -690,7 +704,13 @@ private struct ByteReader {
     mutating func u64() throws -> UInt64 { UInt64(littleEndian: try scalar(UInt64.self)) }
     mutating func f64() throws -> Double { Double(bitPattern: try u64()) }
 
-    mutating func blob() throws -> Data { try take(Int(try u32())) }
+    mutating func blob() throws -> Data {
+        let raw = try u32()
+        guard let len = Int(exactly: raw) else {
+            throw SnapshotError.truncated(expected: offset + 4, found: data.count)
+        }
+        return try take(len)
+    }
 
     mutating func string() throws -> String {
         String(decoding: try blob())
@@ -700,10 +720,14 @@ private struct ByteReader {
         let range = try advance(MemoryLayout<T>.size)
         var value: T?
         data.withUnsafeBytes { raw in
-            let base = raw.baseAddress!.advanced(by: range.lowerBound - data.startIndex)
+            guard let baseAddress = raw.baseAddress else { return }
+            let base = baseAddress.advanced(by: range.lowerBound - data.startIndex)
             value = base.loadUnaligned(as: T.self)
         }
-        return value!
+        guard let result = value else {
+            throw SnapshotError.truncated(expected: offset, found: data.count)
+        }
+        return result
     }
 
     /// Blocktransfer in ein frisches Array (keine Zwischenkopie je Element).
