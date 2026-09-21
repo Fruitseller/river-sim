@@ -526,6 +526,72 @@ final class WaterRenderTests: XCTestCase {
         )
     }
 
+    // MARK: Nicht-endliche Werte und Grenzfälle (NaN-Sicherheit)
+
+    func testWaterRenderFunctionsHandleNonFiniteAndEdgeInputs() {
+        let creek = 280.0
+
+        // Kaskaden-Übergabe: NaN muss auf 0 (ruhig) fallen, Unendlich auf 1 (Kaskade)
+        XCTAssertEqual(WaterRender.cascadeWeight(slope: Double.nan), 0.0)
+        XCTAssertEqual(WaterRender.cascadeWeight(slope: Double.infinity), 1.0)
+        XCTAssertEqual(WaterRender.cascadeWeight(slope: -Double.infinity), 1.0)
+
+        // Track- und Korridor-Maske: NaN muss zu 0 (keine Maske) fallen
+        XCTAssertEqual(WaterRender.trackMask(streamMap: Double.nan), 0.0)
+        XCTAssertEqual(WaterRender.trackMask(streamMap: Double.infinity), 1.0)
+        XCTAssertEqual(WaterRender.trackMask(streamMap: -Double.infinity), 0.0)
+        XCTAssertEqual(WaterRender.corridorMask(streamMap: Double.nan), 0.0)
+        XCTAssertEqual(WaterRender.corridorMask(streamMap: Double.infinity), 1.0)
+        XCTAssertEqual(WaterRender.corridorMask(streamMap: -Double.infinity), 0.0)
+
+        // Band-Halbbreite: NaN oder ungültige Referenzzellen fallen auf den Bodenwert
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: Double.nan, referenceCells: creek),
+                       WaterRender.ribbonHalfWidthFloorCells)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: creek, referenceCells: 0),
+                       WaterRender.ribbonHalfWidthFloorCells)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: creek, referenceCells: -creek),
+                       WaterRender.ribbonHalfWidthFloorCells)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: creek, referenceCells: Double.nan),
+                       WaterRender.ribbonHalfWidthFloorCells)
+        XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: Double.infinity, referenceCells: creek),
+                       WaterRender.ribbonHalfWidthCapCells)
+
+        // Fluss-Intensität: NaN darf nicht über min(1, NaN) fälschlich 1.0 (Voll-Wasser) liefern
+        XCTAssertEqual(WaterRender.streamIntensity(dischargeCells: Double.nan, creekCells: creek),
+                       WaterRender.streamIntensityBase)
+        XCTAssertEqual(WaterRender.streamIntensity(dischargeCells: creek, creekCells: 0),
+                       WaterRender.streamIntensityBase)
+        XCTAssertEqual(WaterRender.streamIntensity(dischargeCells: creek, creekCells: -creek),
+                       WaterRender.streamIntensityBase)
+        XCTAssertEqual(WaterRender.streamIntensity(dischargeCells: creek, creekCells: Double.nan),
+                       WaterRender.streamIntensityBase)
+        XCTAssertEqual(WaterRender.streamIntensity(dischargeCells: Double.infinity, creekCells: creek), 1.0)
+
+        // Stempel-Halbbreite und -Intensität
+        XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: creek, creekCells: 0),
+                       WaterRender.stampHalfWidthBase)
+        XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: creek, creekCells: -creek),
+                       WaterRender.stampHalfWidthBase)
+        XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: creek, creekCells: Double.nan),
+                       WaterRender.stampHalfWidthBase)
+        XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: Double.infinity, creekCells: creek),
+                       WaterRender.stampHalfWidthCapCells)
+
+        XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: creek, creekCells: 0),
+                       WaterRender.stampIntensityBase)
+        XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: creek, creekCells: -creek),
+                       WaterRender.stampIntensityBase)
+        XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: creek, creekCells: Double.nan),
+                       WaterRender.stampIntensityBase)
+        XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: Double.infinity, creekCells: creek), 1.0)
+
+        // Shader-Detail-Intensität
+        XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: Double.nan, creekCells: creek), 0.0)
+        XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: 1.0, creekCells: creek), 0.0)
+        XCTAssertGreaterThan(WaterRender.flowDetailIntensity(dischargeCells: 10.0, creekCells: Double.nan), 0.0)
+        XCTAssertLessThanOrEqual(WaterRender.flowDetailIntensity(dischargeCells: 10.0, creekCells: Double.nan), 1.0)
+    }
+
     // MARK: Hilfen
 
     /// Quelltext einer anderen Schicht — s. `RepoSource` (gemeinsam mit
