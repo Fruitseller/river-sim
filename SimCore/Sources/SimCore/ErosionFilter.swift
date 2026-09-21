@@ -19,7 +19,7 @@ public enum ErosionFilter {
     // MARK: - Utility (GLSL-Semantik)
 
     @inline(__always) private static func fract(_ x: Double) -> Double { x - x.rounded(.down) }
-    @inline(__always) private static func clamp01(_ x: Double) -> Double { min(max(x, 0), 1) }
+    @inline(__always) private static func clamp01(_ x: Double) -> Double { min(1, max(0, x)) }
 
     /// hash() aus dem Shadertoy-Common-Tab (deterministisch, ohne Tabellen).
     @inline(__always) private static func hash(_ x0: Double, _ y0: Double) -> (Double, Double) {
