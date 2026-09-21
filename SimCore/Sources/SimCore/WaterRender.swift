@@ -588,6 +588,8 @@ public enum WaterRender {
     @inline(__always)
     public static func flowDetailIntensity(dischargeCells: Double, creekCells: Double) -> Double {
         guard dischargeCells > flowDetailFloorCells else { return 0 }
+        // Konstante zuerst: fängt NaN/nicht-endliche Werte in creekCells ab
+        // (in Swift liefert max(c, .nan) die Konstante c, während max(.nan, c) NaN propagieren würde).
         let ceiling = max(flowDetailFloorCells * 2, creekCells)
         return min(1, max(0, log(dischargeCells / flowDetailFloorCells)
                              / log(ceiling / flowDetailFloorCells)))
