@@ -328,9 +328,10 @@ public enum WaterRender {
     @inline(__always)
     public static func ribbonHalfWidthCells(dischargeCells: Double,
                                             referenceCells: Double) -> Double {
+        guard referenceCells > 0 else { return ribbonHalfWidthFloorCells }
         let w = ribbonHalfWidthAtReference
-            * (max(dischargeCells, 0) / referenceCells).squareRoot()
-        return min(max(w, ribbonHalfWidthFloorCells), ribbonHalfWidthCapCells)
+            * (max(0, dischargeCells) / referenceCells).squareRoot()
+        return min(ribbonHalfWidthCapCells, max(ribbonHalfWidthFloorCells, w))
     }
 
     /// Rand (Zellen), den der Halo-Korridor im Wasserfeld über die Band-
@@ -410,7 +411,7 @@ public enum WaterRender {
     /// Wasser oder ein Loch.
     @inline(__always)
     public static func cascadeWeight(slope: Double) -> Double {
-        min(max((abs(slope) - cascadeSlopeLo) / cascadeSlopeSpan, 0), 1)
+        min(1, max(0, (abs(slope) - cascadeSlopeLo) / cascadeSlopeSpan))
     }
 
     /// Kohärenz-Fenster eines ganzen Bands: gemittelte Track-Maske über den
@@ -524,7 +525,7 @@ public enum WaterRender {
     /// Track-Maske einer Zelle aus ihrem Stream-Map-Wert.
     @inline(__always)
     public static func trackMask(streamMap: Double) -> Double {
-        min(max((streamMap - trackMaskLo) / trackMaskSpan, 0), 1)
+        min(1, max(0, (streamMap - trackMaskLo) / trackMaskSpan))
     }
 
     /// Gewicht der Track-Maske auf die Intensität (nie ganz 0: eine Zelle, die
@@ -544,8 +545,9 @@ public enum WaterRender {
     /// nächsten.
     @inline(__always)
     public static func streamIntensity(dischargeCells: Double, creekCells: Double) -> Double {
-        min(1, streamIntensityBase
-               + log(max(dischargeCells, 0) / creekCells + 1) / streamIntensityLogDivisor)
+        guard creekCells > 0 else { return streamIntensityBase }
+        return min(1, streamIntensityBase
+                      + log(max(0, dischargeCells) / creekCells + 1) / streamIntensityLogDivisor)
     }
 
     /// Kontinuität: die Intensität wird dem D8-Empfänger entlang bergab
@@ -586,9 +588,9 @@ public enum WaterRender {
     @inline(__always)
     public static func flowDetailIntensity(dischargeCells: Double, creekCells: Double) -> Double {
         guard dischargeCells > flowDetailFloorCells else { return 0 }
-        let ceiling = max(creekCells, flowDetailFloorCells * 2)
-        return min(1, log(dischargeCells / flowDetailFloorCells)
-                      / log(ceiling / flowDetailFloorCells))
+        let ceiling = max(flowDetailFloorCells * 2, creekCells)
+        return min(1, max(0, log(dischargeCells / flowDetailFloorCells)
+                             / log(ceiling / flowDetailFloorCells)))
     }
 
     /// Verbreiterung: je Schwelle EIN Dilatations-Pass, der nur Läufe ÜBER der
@@ -617,7 +619,7 @@ public enum WaterRender {
     /// Track-Maske des Korridor-Stempels.
     @inline(__always)
     public static func corridorMask(streamMap: Double) -> Double {
-        min(max((streamMap - corridorTrackLo) / corridorTrackSpan, 0), 1)
+        min(1, max(0, (streamMap - corridorTrackLo) / corridorTrackSpan))
     }
 
     /// Gewicht der Korridor-Maske auf die Stempel-Intensität.
@@ -652,16 +654,19 @@ public enum WaterRender {
     /// die trägt auch am Oberlauf-Ende noch Wasser.
     @inline(__always)
     public static func stampHalfWidthCells(dischargeCells: Double, creekCells: Double) -> Double {
-        max(0.0, min(stampHalfWidthCapCells,
-                     stampHalfWidthBase
-                     + log(max(dischargeCells, 1) / creekCells + 1) / stampHalfWidthLogDivisor))
+        guard creekCells > 0 else { return stampHalfWidthBase }
+        return min(stampHalfWidthCapCells,
+                   max(0.0,
+                       stampHalfWidthBase
+                       + log(max(1.0, dischargeCells) / creekCells + 1) / stampHalfWidthLogDivisor))
     }
 
     /// Intensität des Mäander-Stempels aus dem Abfluss (Klemmung s. o.).
     @inline(__always)
     public static func stampIntensity(dischargeCells: Double, creekCells: Double) -> Double {
-        min(1.0, stampIntensityBase
-                 + log(max(dischargeCells, 1) / creekCells + 1) / stampIntensityLogDivisor)
+        guard creekCells > 0 else { return stampIntensityBase }
+        return min(1.0, max(0.0, stampIntensityBase
+                                 + log(max(1.0, dischargeCells) / creekCells + 1) / stampIntensityLogDivisor))
     }
 
     // MARK: Gemeinsame Wasser-Optik aller drei Shader (Issue #51)
