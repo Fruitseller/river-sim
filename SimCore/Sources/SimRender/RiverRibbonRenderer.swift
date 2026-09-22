@@ -554,6 +554,24 @@ public final class RiverRibbonRenderer {
                 ? RiverRibbonRenderer.seaHandoverFade(submergedCells: submergedCells)
                 : RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
         }
+        RiverRibbonRenderer.limitAlphaSteps(&samples)
+    }
+
+    /// Deckelt den Deckkraft-Sprung je Segment auf `WaterRender.ribbonMaxAlphaStep`,
+    /// indem er Stützpunkte nur ABSENKT (vorwärts und rückwärts je einmal:
+    /// danach gilt der Deckel überall). Die See-Übergabe fällt über einer
+    /// Pfütze, die tiefer als ihre Rampe ist, sonst in einem einzigen Segment
+    /// auf 0. Absenken hält die Übergabe dicht: das Band blendet vor der Pfütze
+    /// nur etwas früher aus, eine zweite Wasserfläche entsteht nie.
+    private static func limitAlphaSteps(_ samples: inout [RibbonSample]) {
+        guard samples.count >= 2 else { return }
+        let step = WaterRender.ribbonMaxAlphaStep
+        for a in 1..<samples.count {
+            samples[a].alpha = min(samples[a].alpha, samples[a - 1].alpha + step)
+        }
+        for a in stride(from: samples.count - 2, through: 0, by: -1) {
+            samples[a].alpha = min(samples[a].alpha, samples[a + 1].alpha + step)
+        }
     }
 
     // MARK: Band-Emission
