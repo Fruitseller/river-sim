@@ -236,4 +236,3 @@ func mouthPath(_ terrain: Terrain, fromX: Double,
     }
     return path
 }
-

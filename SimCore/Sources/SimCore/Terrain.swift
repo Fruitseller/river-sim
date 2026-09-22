@@ -4024,6 +4024,12 @@ public final class Terrain {
         withBed { depositCell(k, amount, $0) }
     }
 
+    /// Test-Helfer: setzt den Empfängerwert an einer Gitterzelle, um ungültige
+    /// Verweise (z. B. Empfänger außerhalb des Gitters) im Test gezielt prüfen zu können.
+    func setReceiverForTests(at index: Int, to value: Int32) {
+        receiver[index] = value
+    }
+
     /// Roh-Puffer-Sicht auf das Bett: dieselben drei Felder, die der Funnel hält
     /// (`h = rock + sed`), plus die Gletscher-Maske — `nil` heißt „keine
     /// Maske", genau wie `underIce.isEmpty` es im Feld selbst tut.
