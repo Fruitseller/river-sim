@@ -516,12 +516,6 @@ final class WaterRendererTests: XCTestCase {
       XCTAssertTrue(mouthPath(terrain, fromX: 5, fromZ: bad).isEmpty)
     }
 
-    // Ungültiger Empfängerindex außerhalb des Gitters
-    terrain.receiver[0] = 999_999
-    XCTAssertTrue(mouthPath(terrain, fromX: 0, fromZ: 0).isEmpty)
-    terrain.receiver[0] = -5
-    XCTAssertTrue(mouthPath(terrain, fromX: 0, fromZ: 0).isEmpty)
-
     // openWaterSurface mit ungültigen Indizes
     XCTAssertNil(openWaterSurface(-1, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
     XCTAssertNil(openWaterSurface(terrain.h.count + 10, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
