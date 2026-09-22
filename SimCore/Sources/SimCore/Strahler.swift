@@ -75,9 +75,6 @@ extension Terrain {
             return [Int32](repeating: 0, count: n)
         }
         let cellArea = cfg.cellSize * cfg.cellSize
-        guard cellArea.isFinite && cellArea > 0 else {
-            return [Int32](repeating: 0, count: n)
-        }
         var net = [Bool](repeating: false, count: n)
         for k in 0..<n {
             net[k] = hf[k] > cfg.sea && area[k] / cellArea >= minCells
