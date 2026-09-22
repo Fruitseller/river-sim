@@ -101,6 +101,14 @@ func byte01(_ value: Double) -> UInt8 {
 /// Feldwert an kontinuierlicher Grid-Position (bilinear, randgeklemmt).
 @inline(__always)
 func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Double {
+    // Bei unzureichender Gittergröße oder nicht-endlichen/übermäßigen Koordinaten
+    // defensiv abbrechen statt beim Index-Cast oder Pufferzugriff zu trappen.
+    guard n >= 2, field.count >= n * n,
+          gx.isFinite, gz.isFinite,
+          abs(gx) < 1e9, abs(gz) < 1e9 else {
+        if n == 1 && field.count >= 1 { return field[0] }
+        return 0
+    }
     // Die Index-Klemme arbeitet auf Int-Gittergrenzen (0…n - 2) statt auf dem
     // kontinuierlichen Einheitsintervall und bleibt daher bewusst eine Int-Klemme;
     // nur die fraktionalen Interpolationsgewichte laufen über clamp01.
@@ -125,6 +133,11 @@ func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Doub
 @inline(__always)
 func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
                          n: Int, renderGrid: Int) -> Double {
+    guard n >= 2, field.count >= n * n,
+          gx.isFinite, gz.isFinite,
+          abs(gx) < 1e9, abs(gz) < 1e9 else {
+        return bilinearGrid(field, gx, gz, n: n)
+    }
     if renderGrid <= 1 || renderGrid >= n { return bilinearGrid(field, gx, gz, n: n) }
     let s = Double(n - 1) / Double(renderGrid - 1) // Render-Vertex-Abstand in Zellen
     let rx = gx / s, rz = gz / s
@@ -157,6 +170,7 @@ func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
 /// Geometrie kein Wasser.
 @inline(__always)
 func openWaterSurface(_ k: Int, h: [Double], wl: [Double], sea: Double) -> Double? {
+    guard k >= 0, k < h.count, k < wl.count else { return nil }
     if h[k] <= sea { return sea }
     let pond = wl[k] - h[k]
     if wl[k] > sea && pond > WaterRender.pondContourLo { return wl[k] }
@@ -185,8 +199,12 @@ func ribbonHalfWidthCells(_ q: Double, cfg: SimConfig) -> Double {
 func mouthPath(_ terrain: Terrain, fromX: Double,
                fromZ: Double) -> [(x: Double, z: Double, surface: Double?)] {
     let n = terrain.cfg.n
-    // Bei leerem Terrain defensiv abbrechen statt OOB im Empfängernetz zu trappen.
-    guard n > 0, !terrain.h.isEmpty else { return [] }
+    // Bei leerem Terrain oder ungültigen Eingaben defensiv abbrechen statt OOB
+    // im Empfängernetz oder beim Double-zu-Int-Cast zu trappen.
+    guard n > 0, terrain.h.count >= n * n,
+          terrain.receiver.count >= n * n, terrain.waterLevel.count >= n * n,
+          fromX.isFinite, fromZ.isFinite,
+          abs(fromX) < 1e9, abs(fromZ) < 1e9 else { return [] }
     let h = terrain.h, wl = terrain.waterLevel, rec = terrain.receiver
     let sea = terrain.cfg.sea
     let i0 = min(max(Int(fromX.rounded()), 0), n - 1)
@@ -196,7 +214,7 @@ func mouthPath(_ terrain: Terrain, fromX: Double,
     var wetCells = 0.0
     for _ in 0..<WaterRender.mouthSearchCells {
         let r = rec[k]
-        if r < 0 { break }
+        if r < 0 || r >= n * n { break }
         k = Int(r)
         let surface = openWaterSurface(k, h: h, wl: wl, sea: sea)
         path.append((Double(k % n), Double(k / n), surface))
@@ -218,3 +236,4 @@ func mouthPath(_ terrain: Terrain, fromX: Double,
     }
     return path
 }
+
