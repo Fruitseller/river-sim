@@ -371,6 +371,14 @@ public enum WaterRender {
     /// Deckkraft, unter der ein Stützpunkt als unsichtbar gilt: Bänder ohne
     /// einen einzigen Punkt darüber werden gar nicht erst emittiert.
     public static let ribbonMinimumAlpha = 0.02
+    /// Größter Deckkraft-Sprung zwischen zwei benachbarten Stützpunkten eines
+    /// Bands. Der Glattheits-Vertrag (`river_ribbons.gd`,
+    /// `WaterRendererTests`) erlaubt 0.40 je Segment; der Deckel steht mit
+    /// Abstand darunter, damit Float-Rundung ihn nicht reißt. Er SENKT nur
+    /// (s. `RiverRibbonRenderer.limitAlphaSteps`): eine quer liegende
+    /// Ein-Zellen-Pfütze ließ die See-Übergabe sonst in EINEM halben
+    /// Zellschritt von 0.69 auf 0.25 fallen (Seed 1337, Jahr 4000, macOS).
+    public static let ribbonMaxAlphaStep = 0.35
     /// Normierung des Strahler-Rangs für den Farbkanal (`COLOR.b` des
     /// Vertex-Vertrags, gelesen von `water.gdshader` als `v_rank`): Rang/6, auf
     /// 1 geklemmt. Ändert sich der Divisor, verschiebt sich die Tiefenfarbe
