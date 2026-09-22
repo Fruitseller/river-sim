@@ -481,5 +481,51 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertTrue(render.riverRibbonMesh.vertices.isEmpty)
     XCTAssertTrue(render.riverRibbonMesh.bandCoverage.isEmpty)
   }
+
+  func testBilinearGridAndRenderSurfaceHeightHandleEmptyAndNonFiniteInputs() {
+    let emptyField: [Double] = []
+    XCTAssertEqual(bilinearGrid(emptyField, 0, 0, n: 0), 0)
+    XCTAssertEqual(bilinearGrid(emptyField, 0, 0, n: 1), 0)
+    XCTAssertEqual(bilinearGrid(emptyField, 0, 0, n: 2), 0)
+    XCTAssertEqual(renderSurfaceHeight(emptyField, 0, 0, n: 0, renderGrid: 0), 0)
+    XCTAssertEqual(renderSurfaceHeight(emptyField, 0, 0, n: 2, renderGrid: 2), 0)
+
+    let singleField = [42.0]
+    XCTAssertEqual(bilinearGrid(singleField, 0, 0, n: 1), 42.0)
+
+    // 2x2-Gitter: [10, 20, 30, 40]
+    let field = [10.0, 20.0, 30.0, 40.0]
+    // Mitte (0.5, 0.5) -> Bilinear-Mittelwert 25.0
+    XCTAssertEqual(bilinearGrid(field, 0.5, 0.5, n: 2), 25.0)
+    XCTAssertEqual(renderSurfaceHeight(field, 0.5, 0.5, n: 2, renderGrid: 2), 25.0)
+
+    let badInputs = [Double.nan, Double.infinity, -Double.infinity, 1e300, -1e300]
+    for bad in badInputs {
+      XCTAssertEqual(bilinearGrid(field, bad, 0.5, n: 2), 0)
+      XCTAssertEqual(bilinearGrid(field, 0.5, bad, n: 2), 0)
+      XCTAssertEqual(renderSurfaceHeight(field, bad, 0.5, n: 2, renderGrid: 2), 0)
+      XCTAssertEqual(renderSurfaceHeight(field, 0.5, bad, n: 2, renderGrid: 2), 0)
+    }
+  }
+
+  func testMouthPathAndOpenWaterSurfaceHandleNonFiniteAndOutOfBoundsInputs() {
+    let badInputs = [Double.nan, Double.infinity, -Double.infinity, 1e300, -1e300]
+    let terrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    for bad in badInputs {
+      XCTAssertTrue(mouthPath(terrain, fromX: bad, fromZ: 5).isEmpty)
+      XCTAssertTrue(mouthPath(terrain, fromX: 5, fromZ: bad).isEmpty)
+    }
+
+    // Ungültiger Empfängerindex außerhalb des Gitters
+    terrain.receiver[0] = 999_999
+    XCTAssertTrue(mouthPath(terrain, fromX: 0, fromZ: 0).isEmpty)
+    terrain.receiver[0] = -5
+    XCTAssertTrue(mouthPath(terrain, fromX: 0, fromZ: 0).isEmpty)
+
+    // openWaterSurface mit ungültigen Indizes
+    XCTAssertNil(openWaterSurface(-1, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
+    XCTAssertNil(openWaterSurface(terrain.h.count + 10, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
+  }
 }
+
 
