@@ -527,5 +527,3 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertNil(openWaterSurface(terrain.h.count + 10, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
   }
 }
-
-
