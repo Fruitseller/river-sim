@@ -560,12 +560,9 @@ final class WaterRendererTests: XCTestCase {
 
     // 3. Altarme mit nicht-endlichen Koordinaten überspringen
     let oxbowTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
-    oxbowTerrain.meander.oxbows = [[
-      MeanderNode(x: Double.infinity, z: 0),
-      MeanderNode(x: 5, z: 5),
-      MeanderNode(x: 6, z: 6),
-      MeanderNode(x: 7, z: 7),
-    ]]
+    var oxbowNodes = (0..<24).map { MeanderNode(x: Double($0 % 16), z: Double($0 % 16)) }
+    oxbowNodes[5] = MeanderNode(x: Double.infinity, z: 0)
+    oxbowTerrain.meander.oxbows = [oxbowNodes]
     oxbowTerrain.meander.oxbowAge = [10.0]
     let oxbowMesh = renderer.build(oxbowTerrain, hscale: 24, lift: 0.35)
     XCTAssertTrue(oxbowMesh.vertices.isEmpty, "Altarm mit inf-Knoten darf nicht trappen")
