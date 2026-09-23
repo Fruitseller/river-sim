@@ -198,20 +198,24 @@ public final class RiverRibbonRenderer {
         let n = terrain.cfg.n
         mesh.bandChannelFlags = [Bool](repeating: false,
                                        count: terrain.meander.channels.count)
-        // Bei leerem Terrain defensiv abbrechen statt beim Zugriff auf Pufferzeiger
-        // 0-zähliger Arrays per Force-Unwrap zu trappen.
-        guard n > 0, !terrain.h.isEmpty else {
+        let cnt = n * n
+        // Bei leerem Terrain oder fehlerhaften Puffergrößen defensiv abbrechen, um
+        // Out-of-Bounds-Zugriffe im Rendernetz und Traps auf 0-zähligen Pufferzeigern
+        // sicher auszuschließen (vgl. #122).
+        guard n > 0, terrain.h.count == cnt,
+              terrain.waterLevel.count == cnt,
+              terrain.streamMap.count == cnt else {
             mesh.bandCoverage = []
             return mesh
         }
-        if mesh.bandCoverage.count != n * n {
-            mesh.bandCoverage = [Double](repeating: 0, count: n * n)
+        if mesh.bandCoverage.count != cnt {
+            mesh.bandCoverage = [Double](repeating: 0, count: cnt)
         } else {
             mesh.bandCoverage.withUnsafeMutableBufferPointer {
                 // Defensiver Guard statt Force-Unwrap/assertionFailure: Ein harter Trap
                 // mitten im Frame ist im GDExtension-Render-Pfad unakzeptabel (vgl. #122).
                 guard let base = $0.baseAddress else { return }
-                base.update(repeating: 0, count: n * n)
+                base.update(repeating: 0, count: cnt)
             }
         }
         let cs = terrain.cfg.cellSize
@@ -224,12 +228,21 @@ public final class RiverRibbonRenderer {
         // Knoten-Cutoff; ein Cache nur nach Mäander-Struktur wäre fachlich alt.
         // Die Allokationsrate deckelt Main.gd gemeinsam für Echtzeit/_jump auf 1 Hz.
         let orders = terrain.strahlerOrders(minCells: terrain.cfg.meanderMinCells)
+        guard orders.count == cnt else {
+            mesh.bandCoverage = []
+            return mesh
+        }
 
         let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
         for (chIndex, ch) in terrain.meander.channels.enumerated() {
             let nodes = ch.nodes
             let m = nodes.count
             if m < 2 { continue }
+            // Kanäle mit nicht-endlichen oder extremen Koordinaten überspringen,
+            // um Double-to-Int-Konvertierungsfehler zu verhindern.
+            guard !nodes.contains(where: {
+                !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
+            }) else { continue }
             // Catmull-Rom-Subdivision der Zentrumslinie; Abfluss linear je Segment.
             var px: [Double] = [], pz: [Double] = [], pq: [Double] = []
             px.reserveCapacity(m * subdivisions)
@@ -629,10 +642,10 @@ public final class RiverRibbonRenderer {
             // Breite am Krümmungsradius deckeln, sonst falten sich die Quads
             // an engen Schlingen zu Dreiecks-Fächern
             // (s. WaterRender.ribbonCurvatureWidthFactor).
-            let hwCells = min(max(s.halfWidth, 0),
-                              RiverRibbonRenderer.curvatureRadiusCells(
-                                  samples[a0], samples[a], samples[a1])
-                                  * WaterRender.ribbonCurvatureWidthFactor)
+            let maxRadius = RiverRibbonRenderer.curvatureRadiusCells(
+                                samples[a0], samples[a], samples[a1])
+                            * WaterRender.ribbonCurvatureWidthFactor
+            let hwCells = min(maxRadius, max(0, s.halfWidth))
             let hw = hwCells * cs
             let wx = s.x * cs - half, wz = s.z * cs - half
             let perpx = -tz * hw, perpz = tx * hw
@@ -671,8 +684,9 @@ public final class RiverRibbonRenderer {
                                              renderGrid: renderGrid) * hscale
                 let yR = renderSurfaceHeight(h, s.x + edgeGX, s.z + edgeGZ, n: n,
                                              renderGrid: renderGrid) * hscale
-                yLeft = Float(min(max(yL, yCenter - crossTol), yCenter + crossTol) + lift)
-                yRight = Float(min(max(yR, yCenter - crossTol), yCenter + crossTol) + lift)
+                let yMin = yCenter - crossTol, yMax = yCenter + crossTol
+                yLeft = Float(min(yMax, max(yMin, yL)) + lift)
+                yRight = Float(min(yMax, max(yMin, yR)) + lift)
             }
             // Deckung dieses Bandstücks ins gemeinsame Feld: dieselbe Fläche,
             // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem
@@ -767,7 +781,7 @@ public final class RiverRibbonRenderer {
                                openStart: Bool, openEnd: Bool,
                                n: Int) {
         guard fromAlpha > 0 || toAlpha > 0 else { return }
-        let hw0 = max(fromHalfWidthCells, 0), hw1 = max(toHalfWidthCells, 0)
+        let hw0 = max(0, fromHalfWidthCells), hw1 = max(0, toHalfWidthCells)
         let reach = max(hw0, hw1) + 0.5
         let i0 = max(0, Int((min(fromX, toX) - reach).rounded(.down)))
         let i1 = min(n - 1, Int((max(fromX, toX) + reach).rounded(.up)))
@@ -879,7 +893,7 @@ public final class RiverRibbonRenderer {
             if oxbow.count < WaterRender.oxbowMinimumNodes { continue }
             let age = index < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[index] : 0
-            let fade = max(0, 1 - age / WaterRender.oxbowVisibleYears)
+            let fade = clamp01(1 - age / WaterRender.oxbowVisibleYears)
             if fade <= 0 { continue }
             let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, oxbow.count / 8))
             let first = trim, last = oxbow.count - trim - 1
@@ -888,6 +902,8 @@ public final class RiverRibbonRenderer {
             samples.reserveCapacity(last - first + 1)
             for nodeIndex in first...last {
                 let node = oxbow[nodeIndex]
+                guard node.x.isFinite, node.z.isFinite,
+                      abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }
                 let ci = min(max(Int(node.x.rounded()), 0), n - 1)
                 let cj = min(max(Int(node.z.rounded()), 0), n - 1)
                 let k = cj * n + ci

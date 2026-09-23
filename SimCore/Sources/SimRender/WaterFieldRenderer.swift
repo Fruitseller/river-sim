@@ -511,7 +511,7 @@ public final class WaterFieldRenderer {
             let age = oxbowIndex < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[oxbowIndex]
                 : 0
-            let fade = max(0, 1 - age / WaterRender.oxbowVisibleYears)
+            let fade = clamp01(1 - age / WaterRender.oxbowVisibleYears)
             if fade <= 0 { continue }
             let trim = min(maximumTrimmedNodes, max(1, oxbow.count / 8))
             let first = trim, last = oxbow.count - trim - 1
