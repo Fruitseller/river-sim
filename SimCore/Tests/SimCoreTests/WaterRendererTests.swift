@@ -526,4 +526,48 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertNil(openWaterSurface(-1, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
     XCTAssertNil(openWaterSurface(terrain.h.count + 10, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
   }
+
+  func testRiverRibbonRendererHandlesBufferMismatchAndCorruptedNodes() {
+    let renderer = RiverRibbonRenderer()
+
+    // 1. Puffergrößen-Mismatch liefert defensiv leeres Mesh statt OOB-Crash
+    let baseTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    var mismatchState = baseTerrain.state
+    mismatchState.h = [1.0, 2.0]
+    let mismatchTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    mismatchTerrain.restore(mismatchState)
+    let meshH = renderer.build(mismatchTerrain, hscale: 24, lift: 0.35)
+    XCTAssertTrue(meshH.vertices.isEmpty, "Mismatch in h muss leeres Mesh liefern")
+    XCTAssertTrue(meshH.bandCoverage.isEmpty)
+
+    var mismatchWlState = baseTerrain.state
+    mismatchWlState.waterLevel = []
+    let mismatchWlTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    mismatchWlTerrain.restore(mismatchWlState)
+    let meshWl = renderer.build(mismatchWlTerrain, hscale: 24, lift: 0.35)
+    XCTAssertTrue(meshWl.vertices.isEmpty, "Mismatch in waterLevel muss leeres Mesh liefern")
+    XCTAssertTrue(meshWl.bandCoverage.isEmpty)
+
+    // 2. Kanäle mit nicht-endlichen Koordinaten (NaN, ±inf) überspringen statt Int-Cast-Trap
+    let nanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    let badChannel = RiverChannel(
+      nodes: [MeanderNode(x: Double.nan, z: 0), MeanderNode(x: 10, z: 10)],
+      discharge: [100.0, 100.0]
+    )
+    nanTerrain.meander.channels = [badChannel]
+    let nanMesh = renderer.build(nanTerrain, hscale: 24, lift: 0.35)
+    XCTAssertTrue(nanMesh.vertices.isEmpty, "Kanal mit NaN-Knoten muss sicher übersprungen werden")
+
+    // 3. Altarme mit nicht-endlichen Koordinaten überspringen
+    let oxbowTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    oxbowTerrain.meander.oxbows = [[
+      MeanderNode(x: Double.infinity, z: 0),
+      MeanderNode(x: 5, z: 5),
+      MeanderNode(x: 6, z: 6),
+      MeanderNode(x: 7, z: 7),
+    ]]
+    oxbowTerrain.meander.oxbowAge = [10.0]
+    let oxbowMesh = renderer.build(oxbowTerrain, hscale: 24, lift: 0.35)
+    XCTAssertTrue(oxbowMesh.vertices.isEmpty, "Altarm mit inf-Knoten darf nicht trappen")
+  }
 }
