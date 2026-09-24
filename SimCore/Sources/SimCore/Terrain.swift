@@ -4599,7 +4599,8 @@ public final class Terrain {
     /// höchsten Punkts). Als Regelsignal ist sie deshalb ungeeignet — dafür
     /// `landReliefRobust()`.
     /// Nicht-endliche Höhenwerte (NaN, ±inf) werden ignoriert; bei fehlenden
-    /// Landzellen oder leerem Terrain wird defensiv 0 geliefert.
+    /// Landzellen oder leerem Terrain wird defensiv 0 geliefert (Differenzüberlauf
+    /// ist auf .greatestFiniteMagnitude gedeckelt).
     public func landRelief() -> Double {
         let count = min(cfg.count, h.count)
         guard count > 0, cfg.sea.isFinite else { return 0 }
@@ -4608,7 +4609,7 @@ public final class Terrain {
             lo = min(lo, h[k]); hi = max(hi, h[k])
         }
         if hi < lo { return 0 }
-        return hi - lo
+        return min(hi - lo, .greatestFiniteMagnitude)
     }
 
     /// Robuste Relief-Kennzahl: **95. Perzentil − Median der Landhöhen**, also
