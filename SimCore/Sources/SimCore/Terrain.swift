@@ -4598,9 +4598,13 @@ public final class Terrain {
     /// Definition knapp über `sea`, also IST sie im Wesentlichen die Höhe des
     /// höchsten Punkts). Als Regelsignal ist sie deshalb ungeeignet — dafür
     /// `landReliefRobust()`.
+    /// Nicht-endliche Höhenwerte (NaN, ±inf) werden ignoriert; bei fehlenden
+    /// Landzellen oder leerem Terrain wird defensiv 0 geliefert.
     public func landRelief() -> Double {
+        let count = min(cfg.count, h.count)
+        guard count > 0, cfg.sea.isFinite else { return 0 }
         var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
-        for k in 0..<cfg.count where h[k] > cfg.sea {
+        for k in 0..<count where h[k] > cfg.sea && h[k].isFinite {
             lo = min(lo, h[k]); hi = max(hi, h[k])
         }
         if hi < lo { return 0 }
@@ -4670,6 +4674,8 @@ public final class Terrain {
     /// isoHighClamp (0.90), nur Sculpting kommt überhaupt in die Nähe. Höhere
     /// Werte landen im letzten Bin — das kann ein Quantil nur dann sättigen,
     /// wenn so viel Land wirklich so hoch steht.
+    /// Nicht-endliche Höhenwerte (NaN, ±inf) werden ignoriert; extreme Höhen
+    /// (`>= sea + span`) landen sicher im obersten Bin ohne Int-Konvertierungsfehler.
     /// Preis: das Ergebnis ist auf Bin-Mitten quantisiert, jedes Quantil also
     /// ein Vielfaches von span/bins = 0.000488. Das ist 1/140 der Regelspanne des
     /// Servos (reliefServoBand 0.07) — dort bedeutungslos, aber beim Dokumentieren
@@ -4677,16 +4683,23 @@ public final class Terrain {
     /// diese Funktion als 0 (s. Nadel-Messung oben).
     public static func landHeightQuantiles(heights: [Double], sea: Double,
                                            probs: [Double]) -> [Double]? {
+        guard sea.isFinite, !probs.isEmpty else { return nil }
+        for i in 0..<probs.count {
+            let p = probs[i]
+            guard p.isFinite && p >= 0 && p <= 1, i == 0 || p >= probs[i - 1] else { return nil }
+        }
         let bins = 4096
         let span = 2.0
         var hist = [Int](repeating: 0, count: bins)
         var total = 0
-        for v in heights where v > sea {
-            let b = min(bins - 1, max(0, Int((v - sea) / span * Double(bins))))
+        for v in heights where v > sea && v.isFinite {
+            let b = v >= sea + span
+                ? bins - 1
+                : min(bins - 1, max(0, Int((v - sea) / span * Double(bins))))
             hist[b] += 1
             total += 1
         }
-        guard total >= 20, !probs.isEmpty else { return nil }
+        guard total >= 20 else { return nil }
         var out = [Double](repeating: sea + span, count: probs.count)
         var cum = 0, next = 0
         for b in 0..<bins {
