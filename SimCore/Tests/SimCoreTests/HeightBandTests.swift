@@ -278,4 +278,75 @@ final class HeightBandTests: XCTestCase {
         XCTAssertFalse(b.bearsTrees(Double.infinity))
         XCTAssertTrue(b.bearsTrees(-Double.infinity))
     }
+
+    /// Nicht-endliche (NaN, ±inf) oder extrem große Höhenwerte dürfen bei der
+    /// Quantilberechnung weder zu Speicherzugriffsfehlern noch zu fatalen
+    /// Int-Konvertierungsabbrüchen führen.
+    func testLandHeightQuantilesHandlesNonFiniteAndExtremeHeights() {
+        let sea = 0.2
+        var heights = [Double](repeating: 0.1, count: 50) // Meer
+        for i in 0..<30 {
+            heights.append(sea + 0.05 + Double(i) * 0.02) // Land (30 Zellen > sea)
+        }
+
+        // Reguläre Quantile
+        let baseline = Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: [0.5, 0.95])
+        XCTAssertNotNil(baseline)
+
+        // Nicht-endliche Werte hinzufügen
+        var noisy = heights
+        noisy.append(Double.nan)
+        noisy.append(Double.infinity)
+        noisy.append(-Double.infinity)
+
+        let quantilesNoisy = Terrain.landHeightQuantiles(heights: noisy, sea: sea, probs: [0.5, 0.95])
+        XCTAssertEqual(quantilesNoisy, baseline,
+                       "Nicht-endliche Werte müssen ignoriert werden und dürfen das Quantil nicht verzerren")
+
+        // Extrem große endliche Werte (>= sea + span und jenseits normaler Int-Bereiche)
+        var extreme = heights
+        extreme.append(100.0) // weit über sea + 2.0 (span)
+        extreme.append(1e12)
+        extreme.append(1e300)
+        let quantilesExtreme = Terrain.landHeightQuantiles(heights: extreme, sea: sea, probs: [0.5, 0.95])
+        XCTAssertNotNil(quantilesExtreme, "Extreme Werte dürfen nicht zum Int-Trap führen")
+
+        // Ungültige Parameter (nicht-endlicher Meeresspiegel oder ungültige Wahrscheinlichkeiten)
+        XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: Double.nan, probs: [0.5]))
+        XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: Double.infinity, probs: [0.5]))
+        XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: []))
+        XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: [Double.nan]))
+        XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: [-0.1]))
+        XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: [1.5]))
+        XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: [0.8, 0.2]),
+                     "Nicht-aufsteigende Wahrscheinlichkeiten müssen abgelehnt werden")
+    }
+
+    /// landRelief ignoriert nicht-endliche Werte und liefert auf leeren Terrains defensiv 0.
+    func testLandReliefHandlesNonFiniteHeightsAndEmptyTerrain() {
+        var c = SimConfig()
+        c.n = 16
+        c.world = calibrationWorld
+        let t = Terrain(config: c, seed: 1337)
+        let reliefBefore = t.landRelief()
+        XCTAssertGreaterThan(reliefBefore, 0)
+
+        // Nicht-endliche Werte einstreuen. setBedForTests erlaubt in h ausschließlich
+        // NaN ($0.isNaN), da ±inf die Konsistenz-Precondition `abs(h - (rock + sed)) < 1e-12`
+        // verletzen würde. landRelief ignoriert NaN (Guard h[k].isFinite) ebenso wie ±inf.
+        var h = t.h
+        h[0] = Double.nan
+        h[1] = Double.nan
+        h[2] = Double.nan
+        t.setBedForTests(h: h, sed: t.sed, rock: t.rock, underIce: t.underIce)
+
+        let reliefAfter = t.landRelief()
+        XCTAssertTrue(reliefAfter.isFinite, "landRelief muss endlich bleiben")
+        XCTAssertGreaterThan(reliefAfter, 0)
+
+        var emptyConfig = renderConfig(n: 0)
+        emptyConfig.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+        let empty = Terrain(allocating: emptyConfig, seed: 1337)
+        XCTAssertEqual(empty.landRelief(), 0, "Leeres Terrain muss Relief 0 liefern")
+    }
 }

@@ -114,22 +114,27 @@ final class SimRenderTests: XCTestCase {
     let renderer = TerrainDiagnostics()
     renderer.capture(terrain)
 
-    // Einen Wert ungültig machen: stats muss DBG_INVALID (Index 15) zählen.
+    // Ungültige Werte setzen: stats muss DBG_INVALID (Index 15) zählen.
+    // setBedForTests erlaubt in h ausschließlich NaN ($0.isNaN), keine Unendlichkeiten.
     var h = terrain.h
     h[10] = Double.nan
+    h[11] = Double.nan
     terrain.setBedForTests(h: h, sed: terrain.sed, rock: terrain.rock, underIce: terrain.underIce)
     let stats = renderer.stats(terrain)
-    XCTAssertEqual(stats[15], 1.0, "Genau eine ungültige Zelle")
+    XCTAssertEqual(stats[15], 2.0, "Zwei ungültige Zellen (NaN)")
+    XCTAssertTrue(stats[3].isFinite, "Landrelief muss trotz ungültiger Zellen endlich bleiben")
 
     // NaN-Skala darf in differenceBytes nicht zu NaN/Absturz führen (wird per max(1e-9, scale) geklemmt).
     let diff = renderer.differenceBytes(terrain, scale: Double.nan)
     XCTAssertEqual(diff.count, terrain.cfg.count * 4)
-    // Zelle 10 muss Magenta (ungültig) sein: [255, 0, 255, 255]
+    // Zellen 10 und 11 müssen Magenta (ungültig) sein: [255, 0, 255, 255]
     let o = 10 * 4
     XCTAssertEqual(Array(diff[o..<(o + 4)]), [255, 0, 255, 255])
+    let o11 = 11 * 4
+    XCTAssertEqual(Array(diff[o11..<(o11 + 4)]), [255, 0, 255, 255])
 
     // Gegenprobe für eine finite Zelle: Zelle 0 ist unverändert (hellgrau) und nicht Magenta;
-    // stats[15] bleibt bei 1.0 (wurde oben bereits auf genau 1 Zelle geprüft).
+    // stats[15] bleibt bei 2.0 (wurde oben bereits auf genau 2 Zellen geprüft).
     let o0 = 0 * 4
     XCTAssertEqual(Array(diff[o0..<(o0 + 4)]), [198, 198, 198, 255])
     XCTAssertNotEqual(Array(diff[o0..<(o0 + 4)]), [255, 0, 255, 255])
