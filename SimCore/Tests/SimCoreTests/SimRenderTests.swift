@@ -115,13 +115,14 @@ final class SimRenderTests: XCTestCase {
     renderer.capture(terrain)
 
     // Ungültige Werte setzen: stats muss DBG_INVALID (Index 15) zählen.
+    // setBedForTests erlaubt in h ausschließlich NaN ($0.isNaN), keine Unendlichkeiten.
     var h = terrain.h
     h[10] = Double.nan
-    h[11] = Double.infinity
+    h[11] = Double.nan
     terrain.setBedForTests(h: h, sed: terrain.sed, rock: terrain.rock, underIce: terrain.underIce)
     let stats = renderer.stats(terrain)
-    XCTAssertEqual(stats[15], 2.0, "Zwei ungültige Zellen (NaN und +inf)")
-    XCTAssertTrue(stats[3].isFinite, "Landrelief muss trotz unendlicher Zelle endlich bleiben")
+    XCTAssertEqual(stats[15], 2.0, "Zwei ungültige Zellen (NaN)")
+    XCTAssertTrue(stats[3].isFinite, "Landrelief muss trotz ungültiger Zellen endlich bleiben")
 
     // NaN-Skala darf in differenceBytes nicht zu NaN/Absturz führen (wird per max(1e-9, scale) geklemmt).
     let diff = renderer.differenceBytes(terrain, scale: Double.nan)
