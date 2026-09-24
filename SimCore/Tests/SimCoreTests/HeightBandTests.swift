@@ -344,7 +344,9 @@ final class HeightBandTests: XCTestCase {
         XCTAssertTrue(reliefAfter.isFinite, "landRelief muss endlich bleiben")
         XCTAssertGreaterThan(reliefAfter, 0)
 
-        let empty = Terrain(allocating: renderConfig(n: 0), seed: 1337)
+        var emptyConfig = renderConfig(n: 0)
+        emptyConfig.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+        let empty = Terrain(allocating: emptyConfig, seed: 1337)
         XCTAssertEqual(empty.landRelief(), 0, "Leeres Terrain muss Relief 0 liefern")
     }
 }
