@@ -344,7 +344,28 @@ final class HeightBandTests: XCTestCase {
         XCTAssertTrue(reliefAfter.isFinite, "landRelief muss endlich bleiben")
         XCTAssertGreaterThan(reliefAfter, 0)
 
-        let empty = Terrain(allocating: renderConfig(n: 0), seed: 1337)
+        var emptyConfig = renderConfig(n: 0)
+        emptyConfig.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+        let empty = Terrain(allocating: emptyConfig, seed: 1337)
         XCTAssertEqual(empty.landRelief(), 0, "Leeres Terrain muss Relief 0 liefern")
+
+        // Differenzüberlauf bei extremen, endlichen Werten (hi - lo > greatestFiniteMagnitude)
+        var extremeConfig = SimConfig()
+        extremeConfig.n = 16
+        extremeConfig.world = calibrationWorld
+        extremeConfig.sea = -1.5e308
+        let tExtreme = Terrain(allocating: extremeConfig, seed: 1337)
+        var hExt = [Double](repeating: 0, count: extremeConfig.count)
+        var rockExt = [Double](repeating: 0, count: extremeConfig.count)
+        let sedExt = [Double](repeating: 0, count: extremeConfig.count)
+        hExt[0] = 1e308
+        rockExt[0] = 1e308
+        hExt[1] = -1e308
+        rockExt[1] = -1e308
+        tExtreme.setBedForTests(h: hExt, sed: sedExt, rock: rockExt, underIce: [])
+        let reliefExtreme = tExtreme.landRelief()
+        XCTAssertTrue(reliefExtreme.isFinite, "landRelief muss auch bei Differenzüberlauf endlich bleiben")
+        XCTAssertEqual(reliefExtreme, Double.greatestFiniteMagnitude)
     }
 }
+
