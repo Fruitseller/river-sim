@@ -331,11 +331,13 @@ final class HeightBandTests: XCTestCase {
         let reliefBefore = t.landRelief()
         XCTAssertGreaterThan(reliefBefore, 0)
 
-        // Nicht-endliche Werte einstreuen
+        // Nicht-endliche Werte einstreuen. setBedForTests erlaubt in h ausschließlich
+        // NaN ($0.isNaN), da ±inf die Konsistenz-Precondition `abs(h - (rock + sed)) < 1e-12`
+        // verletzen würde. landRelief ignoriert NaN (Guard h[k].isFinite) ebenso wie ±inf.
         var h = t.h
         h[0] = Double.nan
-        h[1] = Double.infinity
-        h[2] = -Double.infinity
+        h[1] = Double.nan
+        h[2] = Double.nan
         t.setBedForTests(h: h, sed: t.sed, rock: t.rock, underIce: t.underIce)
 
         let reliefAfter = t.landRelief()
