@@ -63,4 +63,47 @@ final class TreeRendererTests: XCTestCase {
         XCTAssertEqual(direct, viaState, "Aufruf über RenderState muss identisch zum Renderer sein")
         XCTAssertTrue(direct.allSatisfy(\.isFinite), "Alle Floats im MultiMesh-Puffer müssen endlich sein")
     }
+
+    /// Nicht-positive Abdeckung (`coverage <= 0`, z. B. TreeCoverage.NONE)
+    /// liefert sofort einen leeren Puffer, ohne Instanzen zu erzeugen.
+    func testTreeBufferRejectsNonPositiveCoverage() {
+        let terrain = Terrain(config: renderConfig(), seed: 1337)
+        let renderer = TreeInstanceRenderer()
+
+        XCTAssertEqual(renderer.buffer(terrain, variant: 0, hscale: 24, coverage: 0), [],
+                       "coverage == 0 (TreeCoverage.NONE) muss leeren Puffer liefern")
+        XCTAssertEqual(renderer.buffer(terrain, variant: 0, hscale: 24, coverage: -1), [],
+                       "Negative Abdeckung muss leeren Puffer liefern")
+
+        let renderState = RenderState()
+        XCTAssertEqual(renderState.treeInstanceBuffer(terrain, variant: 0, hscale: 24, coverage: 0), [],
+                       "RenderState muss für coverage == 0 leeren Puffer liefern")
+    }
+
+    /// Nicht-endliche (NaN, ±inf) oder extrem große `hscale`-Werte werden defensiv
+    /// mit einem leeren Puffer abgewiesen, um ungültige Floats im MultiMesh zu verhindern.
+    func testTreeBufferRejectsNonFiniteAndExtremeHScale() {
+        let terrain = Terrain(config: renderConfig(), seed: 1337)
+        let renderer = TreeInstanceRenderer()
+
+        for badScale in [Double.nan, Double.infinity, -Double.infinity, 1e12, -1e12] {
+            XCTAssertEqual(renderer.buffer(terrain, variant: 0, hscale: badScale, coverage: 2), [],
+                           "Ungültiges hscale \(badScale) muss leeren Puffer liefern")
+        }
+    }
+
+    /// Nicht-endliche Werte (NaN, ±inf) im Vegetationsfeld müssen als maximale
+    /// Änderung (Sentinel 1.0) gewertet werden und einen Rebuild erzwingen.
+    func testTreeVegMaxDeltaHandlesNonFiniteValues() {
+        let terrain = Terrain(config: renderConfig(), seed: 1337)
+        let renderer = TreeInstanceRenderer()
+        renderer.markBuilt(terrain)
+        XCTAssertEqual(renderer.maxDelta(terrain), 0.0, "Unverändertes Terrain hat maxDelta 0")
+
+        var state = terrain.state
+        state.veg[0] = Double.nan
+        terrain.restore(state)
+        XCTAssertEqual(renderer.maxDelta(terrain), 1.0,
+                       "Nicht-endliche Werte in veg müssen Rebuild erzwingen (maxDelta 1.0)")
+    }
 }
