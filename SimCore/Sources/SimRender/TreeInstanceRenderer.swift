@@ -23,6 +23,9 @@ public final class TreeInstanceRenderer {
     /// Baum-MultiMeshes erst ab einer Schwelle (Heuristik: 0.1). Vor dem
     /// ersten Build (kein Snapshot) immer 1 → erzwingt den Initial-Build.
     /// Nicht-endliche Werte (NaN, ±inf) erzwingen defensiv ebenfalls den Rebuild (Sentinel 1.0).
+    /// Bei persistenter Nicht-Endlichkeit im Vegetationsfeld bleibt der Sentinel aktiv und
+    /// löst bewusst jeden Frame einen Rebuild aus, da bei korruptem Simulationszustand keine
+    /// verlässliche Delta-Aussage möglich ist und der Renderzustand dirty bleibt.
     ///
     /// Roh-Puffer-Schleife via `withUnsafeBufferPointer`: Traversiert die
     /// ~700k Zellen ohne 1,4 Mio. Array-Bounds-Checks (analog `TerrainDiagnostics.stats`).
@@ -87,13 +90,13 @@ public final class TreeInstanceRenderer {
     /// `coverage` ist reine Darstellung: 1 = reduziert, 2 = voll. Jitter,
     /// Varianten-Wahl, Größe und Verdünnung kommen deterministisch aus dem
     /// (i,j)-Hash; weder Sim-Zustand noch Rebuild-Reihenfolge beeinflussen ihn.
-    /// Nicht-positive Abdeckung (`coverage <= 0`) sowie nicht-endliche oder
-    /// extreme `hscale`-Werte liefern defensiv einen leeren Puffer.
+    /// Nicht-positive Abdeckung (`coverage <= 0`) sowie nicht-positive,
+    /// nicht-endliche oder extreme `hscale`-Werte liefern defensiv einen leeren Puffer.
     public func buffer(_ terrain: Terrain, variant: Int, hscale: Double,
                        coverage: Int) -> [Float] {
         guard variant >= 0 && variant <= 2 else { return [] }
         guard coverage > 0 else { return [] }
-        guard hscale.isFinite, abs(hscale) < 1e9 else { return [] }
+        guard hscale.isFinite, hscale > 0, hscale < 1e9 else { return [] }
         let n = terrain.cfg.n
         // n <= 12 hat keinen Platz für den 6-Zellen-Küstenabstand (stride from: 6 to: n - 6 by: 3).
         // n == 0 ist der etablierte Vertrag für leere Texturen/Puffer (vgl. #122, #123, #124).
