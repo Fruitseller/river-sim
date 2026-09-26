@@ -28,6 +28,7 @@
 // `material_enabled` — wer `detail_enabled` abschaltet, um die Erosionsrinnen
 // zu isolieren, behält damit die Materialien.
 shader_type spatial;
+#include "res://studies/flusstal/materials.gdshaderinc"
 render_mode cull_disabled;
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
@@ -461,6 +462,10 @@ void fragment() {
 	land_roughness = mix(land_roughness, 0.78, cold);
 	land_roughness = mix(land_roughness, 0.34, ice_hint);
 	land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
+	if (study_enabled) {
+		study_material(material_pos, cold, terr, n_ws, land_roughness);
+		NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
+	}
 
 	if (debug_difference) {
 		terr = debug_color;
