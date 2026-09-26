@@ -224,7 +224,8 @@ public enum Hydraulic {
         let lithOn = erodibility.count == h.count
         let iceOn = underIce.count == h.count
         let trackOn = track.count == h.count
-        let poolOn = hf.count == h.count && receiver.count == h.count
+        let poolOn = hf.count == h.count
+        let recOn = receiver.count == h.count
         let streamOn = stream.count == h.count
 
         // Abtrag; gibt den tatsächlich abgetragenen Betrag zurück (am Tiefseeboden
@@ -348,12 +349,14 @@ public enum Hydraulic {
                     sediment -= dep - deposit(k, dep)
                     var c = k, guardN = 0
                     var exited = false
-                    while guardN < 4 * n {
-                        guardN += 1
-                        let r = receiver[c]
-                        if r < 0 || r >= n * n { break }
-                        c = Int(r)
-                        if hf[c] - h[c] <= p.poolDepth { exited = true; break }
+                    if recOn {
+                        while guardN < 4 * n {
+                            guardN += 1
+                            let r = receiver[c]
+                            if r < 0 || r >= n * n { break }
+                            c = Int(r)
+                            if hf[c] - h[c] <= p.poolDepth { exited = true; break }
+                        }
                     }
                     if !exited { break } // See ohne Auslass (Meer/Rand) → Tropfen endet
                     px = Double(c % n); py = Double(c / n)
