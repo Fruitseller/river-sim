@@ -255,7 +255,9 @@ final class RiverDynamicsTests: XCTestCase {
         var hShort = Array(h.prefix(10))
         Hydraulic.erode(h: &hShort, rock: &rock, sed: &sed, n: c.n, count: 10, seed: 7,
                         floor: c.floor, p: c.hydraulic, track: &trk)
-        XCTAssertEqual(hShort.count, 10)
+        XCTAssertEqual(hShort, Array(hOrig.prefix(10)))
+        XCTAssertEqual(rock, rockOrig)
+        XCTAssertEqual(sed, sedOrig)
 
         // 3. Nicht-positive Erosionsradien (0 und -1) dürfen weder trappen noch NaNs erzeugen
         for badRadius in [0, -1] {
@@ -280,7 +282,7 @@ final class RiverDynamicsTests: XCTestCase {
                         stream: [Double](repeating: 0.5, count: 5),
                         track: &shortTrack)
         XCTAssertTrue(hMismatched.allSatisfy(\.isFinite))
-        XCTAssertEqual(shortTrack.count, 5, "Mismatched track-Puffer darf nicht modifiziert werden")
+        XCTAssertEqual(shortTrack, [Double](repeating: 0, count: 5), "Mismatched track-Puffer darf nicht modifiziert werden")
 
         // 5. Ungültige Empfänger-Indizes (r >= n * n) führen bei See-Traversierung nicht zum OOB-Crash
         var hLake = hOrig, rockLake = rockOrig, sedLake = sedOrig
@@ -291,6 +293,14 @@ final class RiverDynamicsTests: XCTestCase {
                         floor: c.floor, p: c.hydraulic,
                         hf: deepHf, receiver: badReceiver, track: &trkLake)
         XCTAssertTrue(hLake.allSatisfy(\.isFinite))
+
+        // 6. See-Interaktion mit gültigem hf aber leerem receiver (Kette fehlt): Tropfen endet sicher
+        var hLakeNoRec = hOrig, rockLakeNoRec = rockOrig, sedLakeNoRec = sedOrig
+        var trkLakeNoRec = trk
+        Hydraulic.erode(h: &hLakeNoRec, rock: &rockLakeNoRec, sed: &sedLakeNoRec, n: c.n, count: 50, seed: 7,
+                        floor: c.floor, p: c.hydraulic,
+                        hf: deepHf, receiver: [], track: &trkLakeNoRec)
+        XCTAssertTrue(hLakeNoRec.allSatisfy(\.isFinite))
     }
 
     /// DIAGNOSE (print-only): Wie flach sind die Reaches, in denen Flüsse laufen?
