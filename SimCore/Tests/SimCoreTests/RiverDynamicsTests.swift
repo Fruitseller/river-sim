@@ -232,6 +232,67 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertEqual(h, h2, "leere Maske und all-false-Maske müssen identisch rechnen")
     }
 
+    /// Randfälle und Puffer-Mismatches: `Hydraulic.erode` bricht bei ungültigen
+    /// Zellzahlen oder fehlerhaften Hauptpuffern sicher ab (keine Veränderung, kein Crash),
+    /// schützt vor nicht-positiven Erosionsradien (`erodeRadius <= 0`) ohne NaN/Trap
+    /// und ignoriert größen-inkompatible optionale Puffer sowie ungültige Empfänger-Indizes.
+    func testDropletHandlesEdgeCasesAndBufferMismatches() {
+        var c = SimConfig(); c.n = 32; c.world = calibrationWorld
+        let t = Terrain(config: c, seed: 99)
+        var h = t.h, rock = t.rock, sed = t.sed
+        let hOrig = h, rockOrig = rock, sedOrig = sed
+        var trk = [Double](repeating: 0, count: c.count)
+
+        // 1. Ungültige Tropfenzahl oder zu kleines Gitter: No-op
+        Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: c.n, count: 0, seed: 7,
+                        floor: c.floor, p: c.hydraulic, track: &trk)
+        XCTAssertEqual(h, hOrig)
+        Hydraulic.erode(h: &h, rock: &rock, sed: &sed, n: 2, count: 10, seed: 7,
+                        floor: c.floor, p: c.hydraulic, track: &trk)
+        XCTAssertEqual(h, hOrig)
+
+        // 2. Mismatch der Hauptpuffer (h, rock, sed): No-op statt Out-of-Bounds-Crash
+        var hShort = Array(h.prefix(10))
+        Hydraulic.erode(h: &hShort, rock: &rock, sed: &sed, n: c.n, count: 10, seed: 7,
+                        floor: c.floor, p: c.hydraulic, track: &trk)
+        XCTAssertEqual(hShort.count, 10)
+
+        // 3. Nicht-positive Erosionsradien (0 und -1) dürfen weder trappen noch NaNs erzeugen
+        for badRadius in [0, -1] {
+            var hBadR = hOrig, rockBadR = rockOrig, sedBadR = sedOrig
+            var trkBadR = trk
+            var pBadR = c.hydraulic
+            pBadR.erodeRadius = badRadius
+            Hydraulic.erode(h: &hBadR, rock: &rockBadR, sed: &sedBadR, n: c.n, count: 50, seed: 7,
+                            floor: c.floor, p: pBadR, track: &trkBadR)
+            XCTAssertTrue(hBadR.allSatisfy(\.isFinite), "Erosion mit erodeRadius \(badRadius) muss endlich bleiben")
+            XCTAssertTrue(rockBadR.allSatisfy(\.isFinite))
+            XCTAssertTrue(sedBadR.allSatisfy(\.isFinite))
+        }
+
+        // 4. Mismatch in optionalen Puffern (track, hf, receiver, stream) wird sicher ignoriert
+        var hMismatched = hOrig, rockMismatched = rockOrig, sedMismatched = sedOrig
+        var shortTrack = [Double](repeating: 0, count: 5)
+        Hydraulic.erode(h: &hMismatched, rock: &rockMismatched, sed: &sedMismatched, n: c.n, count: 50, seed: 7,
+                        floor: c.floor, p: c.hydraulic,
+                        hf: [Double](repeating: 1.0, count: 5),
+                        receiver: [Int32](repeating: 0, count: c.count),
+                        stream: [Double](repeating: 0.5, count: 5),
+                        track: &shortTrack)
+        XCTAssertTrue(hMismatched.allSatisfy(\.isFinite))
+        XCTAssertEqual(shortTrack.count, 5, "Mismatched track-Puffer darf nicht modifiziert werden")
+
+        // 5. Ungültige Empfänger-Indizes (r >= n * n) führen bei See-Traversierung nicht zum OOB-Crash
+        var hLake = hOrig, rockLake = rockOrig, sedLake = sedOrig
+        var trkLake = trk
+        let badReceiver = [Int32](repeating: Int32(c.count + 100), count: c.count)
+        let deepHf = hLake.map { $0 + 1.0 }
+        Hydraulic.erode(h: &hLake, rock: &rockLake, sed: &sedLake, n: c.n, count: 50, seed: 7,
+                        floor: c.floor, p: c.hydraulic,
+                        hf: deepHf, receiver: badReceiver, track: &trkLake)
+        XCTAssertTrue(hLake.allSatisfy(\.isFinite))
+    }
+
     /// DIAGNOSE (print-only): Wie flach sind die Reaches, in denen Flüsse laufen?
     /// Mäander/Braiding brauchen Kanalzellen mit Längsslope < meanderFlatSlope
     /// (0.02). Misst die Slope-Verteilung der Kanalzellen + größte zusammenhängende
