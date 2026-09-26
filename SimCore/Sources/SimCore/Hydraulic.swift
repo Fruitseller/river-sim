@@ -192,36 +192,40 @@ public enum Hydraulic {
                              flowWeight: [Double] = [],
                              erodibility: [Double] = [],
                              track: inout [Double]) {
-        guard count > 0, n > 2 else { return }
+        guard count > 0, n > 2,
+              h.count == n * n,
+              rock.count == n * n,
+              sed.count == n * n else { return }
         // Erosions-Pinsel einmal vorberechnen: Offsets + normierte Gewichte im Radius.
+        // Nicht-positive Radien (r <= 0) erodieren defensiv punktuell an der
+        // Tropfenposition (1 Zelle), um ungültige Bereiche (-r...r) und Divisionen
+        // durch Null (0/0 = NaN) zu verhindern.
         var bx: [Int] = [], byv: [Int] = [], bw: [Double] = []
         let r = p.erodeRadius
-        var wsum = 0.0
-        for dy in -r...r {
-            for dx in -r...r {
-                let d = (Double(dx * dx + dy * dy)).squareRoot()
-                if d > Double(r) { continue }
-                let w = 1 - d / Double(r)
-                bx.append(dx); byv.append(dy); bw.append(w); wsum += w
+        if r <= 0 {
+            bx = [0]; byv = [0]; bw = [1.0]
+        } else {
+            var wsum = 0.0
+            for dy in -r...r {
+                for dx in -r...r {
+                    let d = (Double(dx * dx + dy * dy)).squareRoot()
+                    if d > Double(r) { continue }
+                    let w = 1 - d / Double(r)
+                    bx.append(dx); byv.append(dy); bw.append(w); wsum += w
+                }
             }
+            for i in bw.indices { bw[i] /= wsum }
         }
-        for i in bw.indices { bw[i] /= wsum }
 
-        // Kanalmaske aktiv? (leeres Array → alle Kanal-Zweige fallen weg und die
-        // Arithmetik ist bit-identisch mit dem Zustand vor der Reconciliation)
+        // Optionale Puffer aktivieren, wenn ihre Länge exakt zur Zellzahl passt
+        // (verhindert Out-of-Bounds-Zugriffe bei fehlerhaften Puffergrößen).
         let chanOn = channel.count == h.count
-
-        // Abfluss-Dämpfer aktiv? (leeres Array → Faktor 1 und damit dieselbe
-        // Arithmetik wie vor Issue #108)
         let ddOn = depositDamp.count == h.count
-
-        // Lithologie-Feld aktiv? (leeres/kaputtes Array → Faktor fällt weg und die
-        // Arithmetik ist bit-identisch zum Zustand vor Issue #12)
         let lithOn = erodibility.count == h.count
-
-        // Eismaske aktiv? (leeres Array → beide Gletscher-Zweige fallen weg und
-        // die Arithmetik ist bit-identisch zum Zustand vor Issue #35)
         let iceOn = underIce.count == h.count
+        let trackOn = track.count == h.count
+        let poolOn = hf.count == h.count && receiver.count == h.count
+        let streamOn = stream.count == h.count
 
         // Abtrag; gibt den tatsächlich abgetragenen Betrag zurück (am Tiefseeboden
         // gedeckelt), damit die Sedimentbilanz stimmt.
@@ -335,19 +339,19 @@ public enum Hydraulic {
                 // Tropfen woanders → Rauschen), gereifte Tropfen sind ins Talnetz
                 // konvergiert (immer dieselben Zellen → Flüsse). Ohne Gewicht
                 // liegt das Rauschband nur ~5× unter den Trunk-Raten.
-                if !track.isEmpty { track[k] += min(1.0, Double(step) / 40) }
+                if trackOn { track[k] += min(1.0, Double(step) / 40) }
 
                 // See-Interaktion (nickmcd Descend→Flood→Drain): Sediment als
                 // Delta am Eintritt abladen, zum Auslass springen, weiterlaufen.
-                if !hf.isEmpty && hf[k] - h[k] > p.poolDepth {
+                if poolOn && hf[k] - h[k] > p.poolDepth {
                     let dep = sediment * (1 - p.poolSedimentKeep)
                     sediment -= dep - deposit(k, dep)
                     var c = k, guardN = 0
                     var exited = false
                     while guardN < 4 * n {
                         guardN += 1
-                        let r = receiver.isEmpty ? -1 : receiver[c]
-                        if r < 0 { break }
+                        let r = receiver[c]
+                        if r < 0 || r >= n * n { break }
                         c = Int(r)
                         if hf[c] - h[c] <= p.poolDepth { exited = true; break }
                     }
@@ -412,7 +416,7 @@ public enum Hydraulic {
                 // auf etablierten Läufen LANGSAMER (nickmcd-Sharpening: Tropfen
                 // im Fluss leben länger → der Fluss verlängert/verstärkt sich).
                 speed = (max(0, speed * speed - deltaH * p.gravity)).squareRoot()
-                let sv = stream.isEmpty ? 0.0 : min(1, max(0, stream[k]))
+                let sv = streamOn ? min(1, max(0, stream[k])) : 0.0
                 water *= (1 - p.evaporate * (1 - p.streamEvapDamp * sv))
                 px = npx; py = npy
                 if water < 1e-3 { break }
