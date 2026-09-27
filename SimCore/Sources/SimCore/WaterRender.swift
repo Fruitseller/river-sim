@@ -150,9 +150,11 @@ public enum WaterRender {
     /// Uferring ist pond = 0, der gemessene Saum bleibt also unverändert
     /// (docs/lake-shore-contour-measurements.md).
     public static func shore(stream: Double, lakeGateChannel: Double, pond: Double) -> Double {
-        let wet = max(riverMask(stream: stream), lakeMask(channel: lakeGateChannel, pond: pond))
+        let s = stream.isFinite ? stream : 0
+        let l = lakeGateChannel.isFinite ? lakeGateChannel : 0
+        let wet = max(riverMask(stream: s), lakeMask(channel: l, pond: pond))
         let dry = 1 - smoothstep(pondContourLo, pondContourHi, pond)
-        return smoothstep(shoreLo, shoreHi, max(stream, lakeGateChannel)) * (1 - wet) * dry
+        return smoothstep(shoreLo, shoreHi, max(s, l)) * (1 - wet) * dry
     }
 
     // MARK: Per-Pixel-Uferkontur (Issue #32)
@@ -537,10 +539,11 @@ public enum WaterRender {
     }
 
     /// Gewicht der Track-Maske auf die Intensität (nie ganz 0: eine Zelle, die
-    /// die Maske passiert, ist ein echter Lauf).
+    /// die Maske passiert, ist ein echter Lauf). Nicht-endliche (NaN) oder
+    /// negative Maskenwerte fallen defensiv auf den Bodenwert.
     @inline(__always)
     public static func trackWeight(mask: Double) -> Double {
-        trackWeightFloor + trackWeightSpan * mask
+        trackWeightFloor + trackWeightSpan * min(1, max(0, mask))
     }
 
     /// Intensität des Fluss-Kanals aus dem Abfluss (Zellen Einzugsgebiet),
@@ -632,10 +635,11 @@ public enum WaterRender {
         min(1, max(0, (streamMap - corridorTrackLo) / corridorTrackSpan))
     }
 
-    /// Gewicht der Korridor-Maske auf die Stempel-Intensität.
+    /// Gewicht der Korridor-Maske auf die Stempel-Intensität. Nicht-endliche (NaN)
+    /// oder negative Maskenwerte fallen defensiv auf den Bodenwert.
     @inline(__always)
     public static func corridorWeight(mask: Double) -> Double {
-        corridorWeightFloor + corridorWeightSpan * mask
+        corridorWeightFloor + corridorWeightSpan * min(1, max(0, mask))
     }
 
     // MARK: Legacy-Stempelpfad (`RS_WATER_STAMP`, A/B-Vergleich)
@@ -664,7 +668,7 @@ public enum WaterRender {
     /// die trägt auch am Oberlauf-Ende noch Wasser.
     @inline(__always)
     public static func stampHalfWidthCells(dischargeCells: Double, creekCells: Double) -> Double {
-        guard creekCells > 0 else { return stampHalfWidthBase }
+        guard creekCells > 0, dischargeCells.isFinite else { return stampHalfWidthBase }
         return min(stampHalfWidthCapCells,
                    max(0.0,
                        stampHalfWidthBase
@@ -674,7 +678,7 @@ public enum WaterRender {
     /// Intensität des Mäander-Stempels aus dem Abfluss (Klemmung s. o.).
     @inline(__always)
     public static func stampIntensity(dischargeCells: Double, creekCells: Double) -> Double {
-        guard creekCells > 0 else { return stampIntensityBase }
+        guard creekCells > 0, dischargeCells.isFinite else { return stampIntensityBase }
         return min(1.0, max(0.0, stampIntensityBase
                                  + log(max(1.0, dischargeCells) / creekCells + 1) / stampIntensityLogDivisor))
     }
