@@ -539,8 +539,8 @@ public enum WaterRender {
     }
 
     /// Gewicht der Track-Maske auf die Intensität (nie ganz 0: eine Zelle, die
-    /// die Maske passiert, ist ein echter Lauf). Nicht-endliche (NaN) oder
-    /// negative Maskenwerte fallen defensiv auf den Bodenwert.
+    /// die Maske passiert, ist ein echter Lauf). NaN oder negative Maskenwerte
+    /// fallen defensiv auf den Bodenwert, +∞ wird auf 1.0 geklemmt.
     @inline(__always)
     public static func trackWeight(mask: Double) -> Double {
         trackWeightFloor + trackWeightSpan * min(1, max(0, mask))
@@ -635,8 +635,8 @@ public enum WaterRender {
         min(1, max(0, (streamMap - corridorTrackLo) / corridorTrackSpan))
     }
 
-    /// Gewicht der Korridor-Maske auf die Stempel-Intensität. Nicht-endliche (NaN)
-    /// oder negative Maskenwerte fallen defensiv auf den Bodenwert.
+    /// Gewicht der Korridor-Maske auf die Stempel-Intensität. NaN oder negative
+    /// Maskenwerte fallen defensiv auf den Bodenwert, +∞ wird auf 1.0 geklemmt.
     @inline(__always)
     public static func corridorWeight(mask: Double) -> Double {
         corridorWeightFloor + corridorWeightSpan * min(1, max(0, mask))
