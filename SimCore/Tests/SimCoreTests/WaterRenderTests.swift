@@ -544,6 +544,29 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertEqual(WaterRender.corridorMask(streamMap: Double.infinity), 1.0)
         XCTAssertEqual(WaterRender.corridorMask(streamMap: -Double.infinity), 0.0)
 
+        // Track- und Korridor-Gewicht: NaN und negative Maskenwerte fallen auf den Bodenwert, Unendlich auf 1.0
+        XCTAssertEqual(WaterRender.trackWeight(mask: Double.nan), WaterRender.trackWeightFloor)
+        XCTAssertEqual(WaterRender.trackWeight(mask: -1.0), WaterRender.trackWeightFloor)
+        XCTAssertEqual(WaterRender.trackWeight(mask: -Double.infinity), WaterRender.trackWeightFloor)
+        XCTAssertEqual(WaterRender.trackWeight(mask: Double.infinity), 1.0, accuracy: 1e-12)
+        XCTAssertEqual(WaterRender.corridorWeight(mask: Double.nan), WaterRender.corridorWeightFloor)
+        XCTAssertEqual(WaterRender.corridorWeight(mask: -1.0), WaterRender.corridorWeightFloor)
+        XCTAssertEqual(WaterRender.corridorWeight(mask: -Double.infinity), WaterRender.corridorWeightFloor)
+        XCTAssertEqual(WaterRender.corridorWeight(mask: Double.infinity), 1.0, accuracy: 1e-12)
+
+        // Ufer-Saum: NaN in einem Kanal darf den anderen nicht auslöschen
+        XCTAssertGreaterThan(WaterRender.shore(stream: Double.nan, lakeGateChannel: 0.2, pond: 0.0), 0.0)
+        XCTAssertGreaterThan(WaterRender.shore(stream: 0.2, lakeGateChannel: Double.nan, pond: 0.0), 0.0)
+        XCTAssertEqual(WaterRender.shore(stream: Double.nan, lakeGateChannel: Double.nan, pond: 0.0), 0.0)
+
+        // Band-Typ-Gewichte: NaN fällt auf 0.0
+        XCTAssertEqual(WaterRender.ribbonStillWeight(kind: Double.nan), 0.0)
+        XCTAssertEqual(WaterRender.ribbonStillWeight(kind: Double.infinity), 1.0)
+        XCTAssertEqual(WaterRender.ribbonStillWeight(kind: -Double.infinity), 0.0)
+        XCTAssertEqual(WaterRender.ribbonDeltaWeight(kind: Double.nan), 0.0)
+        XCTAssertEqual(WaterRender.ribbonDeltaWeight(kind: Double.infinity), 0.0)
+        XCTAssertEqual(WaterRender.ribbonDeltaWeight(kind: -Double.infinity), 0.0)
+
         // Band-Halbbreite: NaN oder ungültige Referenzzellen fallen auf den Bodenwert
         XCTAssertEqual(WaterRender.ribbonHalfWidthCells(dischargeCells: Double.nan, referenceCells: creek),
                        WaterRender.ribbonHalfWidthFloorCells)
@@ -574,6 +597,8 @@ final class WaterRenderTests: XCTestCase {
                        WaterRender.stampHalfWidthBase)
         XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: creek, creekCells: Double.nan),
                        WaterRender.stampHalfWidthBase)
+        XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: Double.nan, creekCells: creek),
+                       WaterRender.stampHalfWidthBase)
         XCTAssertEqual(WaterRender.stampHalfWidthCells(dischargeCells: Double.infinity, creekCells: creek),
                        WaterRender.stampHalfWidthCapCells)
 
@@ -582,6 +607,8 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: creek, creekCells: -creek),
                        WaterRender.stampIntensityBase)
         XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: creek, creekCells: Double.nan),
+                       WaterRender.stampIntensityBase)
+        XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: Double.nan, creekCells: creek),
                        WaterRender.stampIntensityBase)
         XCTAssertEqual(WaterRender.stampIntensity(dischargeCells: Double.infinity, creekCells: creek), 1.0)
 
