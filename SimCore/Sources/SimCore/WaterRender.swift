@@ -665,20 +665,24 @@ public enum WaterRender {
 
     /// Halbbreite (Zellen) des Mäander-Stempels aus dem Abfluss. Der Abfluss ist
     /// hier auf ≥ 1 Zelle geklemmt: der Stempel folgt einer Zentrumslinie, und
-    /// die trägt auch am Oberlauf-Ende noch Wasser.
+    /// die trägt auch am Oberlauf-Ende noch Wasser. Nicht-endliche (NaN) Abflüsse
+    /// oder ungültige Schwellen (creekCells ≤ 0 oder NaN) fallen defensiv auf die
+    /// Basis-Halbbreite; unendlicher Abfluss sättigt auf den Deckel (`stampHalfWidthCapCells`).
     @inline(__always)
     public static func stampHalfWidthCells(dischargeCells: Double, creekCells: Double) -> Double {
-        guard creekCells > 0, dischargeCells.isFinite else { return stampHalfWidthBase }
+        guard creekCells > 0, !dischargeCells.isNaN else { return stampHalfWidthBase }
         return min(stampHalfWidthCapCells,
                    max(0.0,
                        stampHalfWidthBase
                        + log(max(1.0, dischargeCells) / creekCells + 1) / stampHalfWidthLogDivisor))
     }
 
-    /// Intensität des Mäander-Stempels aus dem Abfluss (Klemmung s. o.).
+    /// Intensität des Mäander-Stempels aus dem Abfluss (Klemmung s. o.). Nicht-endliche
+    /// (NaN) Abflüsse oder ungültige Schwellen (creekCells ≤ 0 oder NaN) fallen defensiv
+    /// auf die Basis-Intensität; unendlicher Abfluss sättigt auf 1.0.
     @inline(__always)
     public static func stampIntensity(dischargeCells: Double, creekCells: Double) -> Double {
-        guard creekCells > 0, dischargeCells.isFinite else { return stampIntensityBase }
+        guard creekCells > 0, !dischargeCells.isNaN else { return stampIntensityBase }
         return min(1.0, max(0.0, stampIntensityBase
                                  + log(max(1.0, dischargeCells) / creekCells + 1) / stampIntensityLogDivisor))
     }
