@@ -367,5 +367,61 @@ final class HeightBandTests: XCTestCase {
         XCTAssertTrue(reliefExtreme.isFinite, "landRelief muss auch bei Differenzüberlauf endlich bleiben")
         XCTAssertEqual(reliefExtreme, Double.greatestFiniteMagnitude)
     }
+
+    /// ridgeCurvature, totalOutletArea, landCellCount und receiverAgreement ignorieren nicht-endliche Werte
+    /// und liefern auf leeren/kleinen Terrains oder bei ungültigen Parametern/Mismatches defensiv 0 bzw. 1.
+    func testDiagnosticMetricsHandleNonFiniteValuesAndEmptyTerrain() {
+        var c = SimConfig()
+        c.n = 16
+        c.world = calibrationWorld
+        let t = Terrain(config: c, seed: 1337)
+        let curvBefore = t.ridgeCurvature()
+        XCTAssertTrue(curvBefore.isFinite)
+
+        // Nicht-endliche Werte in h einstreuen (NaN und ±inf via restore)
+        var state = t.state
+        state.h[0] = Double.nan
+        state.h[1] = Double.infinity
+        state.h[2] = -Double.infinity
+        t.restore(state)
+
+        let curvAfter = t.ridgeCurvature()
+        XCTAssertTrue(curvAfter.isFinite, "ridgeCurvature muss trotz nicht-endlicher Höhen endlich bleiben")
+
+        // Ungültige Parameter für ridgeCurvature
+        XCTAssertEqual(t.ridgeCurvature(maxAreaCells: 0), 0)
+        XCTAssertEqual(t.ridgeCurvature(maxAreaCells: -1), 0)
+        XCTAssertEqual(t.ridgeCurvature(maxAreaCells: Double.nan), 0)
+
+        // Leeres Terrain (n = 0)
+        var emptyConfig = renderConfig(n: 0)
+        emptyConfig.world = 0
+        let empty = Terrain(allocating: emptyConfig, seed: 1337)
+        XCTAssertEqual(empty.ridgeCurvature(), 0, "Leeres Terrain muss ridgeCurvature 0 liefern")
+        XCTAssertEqual(empty.totalOutletArea(), 0, "Leeres Terrain muss totalOutletArea 0 liefern")
+        XCTAssertEqual(empty.landCellCount(), 0, "Leeres Terrain muss landCellCount 0 liefern")
+        XCTAssertEqual(empty.receiverAgreement(with: []), 1, "Leeres Terrain muss receiverAgreement 1 liefern")
+
+        // Kleine Terrains (n = 1 und n = 2) dürfen nicht mit Range-Traps abbrechen
+        var c1 = renderConfig(n: 1)
+        c1.world = 0
+        let t1 = Terrain(allocating: c1, seed: 1337)
+        XCTAssertEqual(t1.ridgeCurvature(), 0, "Terrain mit n = 1 darf nicht trappen")
+
+        var c2 = renderConfig(n: 2)
+        c2.world = 0
+        let t2 = Terrain(allocating: c2, seed: 1337)
+        XCTAssertEqual(t2.ridgeCurvature(), 0, "Terrain mit n = 2 darf nicht trappen")
+
+        // Puffer-Mismatch in totalOutletArea, landCellCount und receiverAgreement
+        var mismatchState = t.state
+        mismatchState.receiver = [1, 2]
+        mismatchState.hf = [1.0]
+        let tMismatch = Terrain(allocating: c, seed: 1337)
+        tMismatch.restore(mismatchState)
+        XCTAssertEqual(tMismatch.totalOutletArea(), 0, "Mismatch in receiver/area muss 0 liefern")
+        XCTAssertEqual(tMismatch.landCellCount(), 0, "Mismatch in hf muss 0 liefern")
+        XCTAssertEqual(tMismatch.receiverAgreement(with: [1, 2, 3]), 1, "Mismatch in receiverAgreement muss 1 liefern")
+    }
 }
 
