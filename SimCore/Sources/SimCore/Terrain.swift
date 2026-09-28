@@ -4833,16 +4833,31 @@ public final class Terrain {
     /// bei n=832; nach den ersten ~20k Sim-Jahren liegen alle drei bei −0.03 …
     /// −0.05). Für Alterungs-Vergleiche deshalb erst NACH dem Einschwingen der
     /// frischen Oberfläche ablesen.
+    /// Nicht-endliche Höhenwerte (NaN, ±inf) werden ignoriert; bei fehlenden
+    /// Landzellen, ungültigen Parametern oder leerem Terrain (n < 3) wird defensiv 0
+    /// geliefert.
     public func ridgeCurvature(maxAreaCells: Double = 2) -> Double {
+        guard n >= 3,
+              h.count >= n * n,
+              area.count >= n * n,
+              cfg.sea.isFinite,
+              maxAreaCells > 0,
+              maxAreaCells.isFinite else { return 0 }
         let cellArea = cfg.cellSize * cfg.cellSize
+        guard cellArea > 0, cellArea.isFinite else { return 0 }
         let limit = maxAreaCells * cellArea
         var sum = 0.0
         var count = 0
         for j in 1..<(n - 1) {
             for i in 1..<(n - 1) {
                 let k = j * n + i
-                guard h[k] > cfg.sea, area[k] <= limit else { continue }
-                sum += (h[k - 1] + h[k + 1] + h[k - n] + h[k + n] - 4 * h[k]) / cellArea
+                let hk = h[k]
+                guard hk > cfg.sea, hk.isFinite, area[k] <= limit else { continue }
+                let hLeft = h[k - 1], hRight = h[k + 1], hUp = h[k - n], hDown = h[k + n]
+                guard hLeft.isFinite, hRight.isFinite, hUp.isFinite, hDown.isFinite else { continue }
+                let laplacian = (hLeft + hRight + hUp + hDown - 4 * hk) / cellArea
+                guard laplacian.isFinite else { continue }
+                sum += laplacian
                 count += 1
             }
         }
@@ -4863,26 +4878,36 @@ public final class Terrain {
     /// `MeltRunoff.testNormalizedMeltKeepsTheDrainageTotal`). Nur im verworfenen
     /// Zusatzwasser-Arm steigt die Summe; dort ist sie die Messgröße für das
     /// zusätzliche Wasser.
+    /// Bei Puffer-Mismatch oder ungültiger Zellfläche wird defensiv 0 geliefert.
     public func totalOutletArea() -> Double {
+        let count = min(cfg.count, min(receiver.count, area.count))
         let cellArea = cfg.cellSize * cfg.cellSize
+        guard count > 0, cellArea > 0, cellArea.isFinite else { return 0 }
         var sum = 0.0
-        for k in 0..<cfg.count where receiver[k] < 0 {
+        for k in 0..<count where receiver[k] < 0 && area[k].isFinite {
             sum += area[k]
         }
         return sum / cellArea
     }
 
+    /// Zahl der Landzellen (`hf > sea`).
+    /// Nicht-endliche Werte werden ignoriert; bei leerem Terrain wird defensiv 0 geliefert.
     public func landCellCount() -> Int {
+        let count = min(cfg.count, hf.count)
+        guard count > 0, cfg.sea.isFinite else { return 0 }
         var c = 0
-        for k in 0..<cfg.count where hf[k] > cfg.sea { c += 1 }
+        for k in 0..<count where hf[k] > cfg.sea && hf[k].isFinite { c += 1 }
         return c
     }
 
     /// Anteil der Zellen, deren Empfänger sich gegenüber `other` NICHT geändert
     /// hat — misst die Fluss-Stabilität zwischen zwei Zuständen.
+    /// Bei Puffer-Mismatch oder fehlenden Landzellen wird defensiv 1 geliefert.
     public func receiverAgreement(with other: [Int32]) -> Double {
+        let count = min(cfg.count, min(hf.count, min(receiver.count, other.count)))
+        guard count > 0, cfg.sea.isFinite else { return 1 }
         var same = 0, total = 0
-        for k in 0..<cfg.count where hf[k] > cfg.sea {
+        for k in 0..<count where hf[k] > cfg.sea && hf[k].isFinite {
             total += 1
             if receiver[k] == other[k] { same += 1 }
         }
