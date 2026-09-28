@@ -4880,23 +4880,26 @@ public final class Terrain {
     /// zusätzliche Wasser.
     /// Bei Puffer-Mismatch oder ungültiger Zellfläche wird defensiv 0 geliefert.
     public func totalOutletArea() -> Double {
-        let count = min(cfg.count, min(receiver.count, area.count))
+        guard cfg.count > 0,
+              receiver.count == cfg.count,
+              area.count == cfg.count else { return 0 }
         let cellArea = cfg.cellSize * cfg.cellSize
-        guard count > 0, cellArea > 0, cellArea.isFinite else { return 0 }
+        guard cellArea > 0, cellArea.isFinite else { return 0 }
         var sum = 0.0
-        for k in 0..<count where receiver[k] < 0 && area[k].isFinite {
+        for k in 0..<cfg.count where receiver[k] < 0 && area[k].isFinite {
             sum += area[k]
         }
         return sum / cellArea
     }
 
     /// Zahl der Landzellen (`hf > sea`).
-    /// Nicht-endliche Werte werden ignoriert; bei leerem Terrain wird defensiv 0 geliefert.
+    /// Nicht-endliche Werte werden ignoriert; bei Puffer-Mismatch oder leerem Terrain wird defensiv 0 geliefert.
     public func landCellCount() -> Int {
-        let count = min(cfg.count, hf.count)
-        guard count > 0, cfg.sea.isFinite else { return 0 }
+        guard cfg.count > 0,
+              hf.count == cfg.count,
+              cfg.sea.isFinite else { return 0 }
         var c = 0
-        for k in 0..<count where hf[k] > cfg.sea && hf[k].isFinite { c += 1 }
+        for k in 0..<cfg.count where hf[k] > cfg.sea && hf[k].isFinite { c += 1 }
         return c
     }
 
@@ -4904,10 +4907,13 @@ public final class Terrain {
     /// hat — misst die Fluss-Stabilität zwischen zwei Zuständen.
     /// Bei Puffer-Mismatch oder fehlenden Landzellen wird defensiv 1 geliefert.
     public func receiverAgreement(with other: [Int32]) -> Double {
-        let count = min(cfg.count, min(hf.count, min(receiver.count, other.count)))
-        guard count > 0, cfg.sea.isFinite else { return 1 }
+        guard cfg.count > 0,
+              hf.count == cfg.count,
+              receiver.count == cfg.count,
+              other.count == cfg.count,
+              cfg.sea.isFinite else { return 1 }
         var same = 0, total = 0
-        for k in 0..<count where hf[k] > cfg.sea && hf[k].isFinite {
+        for k in 0..<cfg.count where hf[k] > cfg.sea && hf[k].isFinite {
             total += 1
             if receiver[k] == other[k] { same += 1 }
         }
