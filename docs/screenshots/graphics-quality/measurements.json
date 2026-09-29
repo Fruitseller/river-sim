@@ -1,8 +1,9 @@
 {
-  "date": "2026-09-10",
+  "date": "2026-09-29",
   "machine": "Apple M4 Max, 40 GPU-Kerne, 64 GB RAM, internes Display",
-  "renderer": "Godot 4.7.1 Metal Forward+",
+  "renderer": "Godot 4.7.2 Metal Forward+ (lokale Arbeitsbinär; CI pinnt 4.7.1)",
   "baseline_commit": "9dece54ce0948e4d76ff0d59de5ba6ee0022a76e",
+  "review_rework_commit": "issue-116-flusstal-study, Review-Runde 2026-09-27",
   "budget_ms": 33.3,
   "runs": [
     {
@@ -19,14 +20,14 @@
         "year": 20000.0
       },
       "timing": {
-        "max_ms": 9.331,
-        "mean_ms": 8.75323513986014,
+        "max_ms": 10.995,
+        "mean_ms": 9.58344540229885,
         "mode": "still",
         "movie": false,
         "over_budget_frames": 0,
-        "p95_ms": 8.996,
-        "p99_ms": 9.114,
-        "rendered_frames": 1144,
+        "p95_ms": 10.465,
+        "p99_ms": 10.767,
+        "rendered_frames": 1044,
         "viewport": "(3456, 2104)"
       }
     },
@@ -44,89 +45,14 @@
         "year": 20000.0
       },
       "timing": {
-        "max_ms": 9.158,
-        "mean_ms": 8.63711485319515,
+        "max_ms": 12.175,
+        "mean_ms": 9.7804027370479,
         "mode": "orbit",
         "movie": false,
         "over_budget_frames": 0,
-        "p95_ms": 8.912,
-        "p99_ms": 9.034,
-        "rendered_frames": 1158,
-        "viewport": "(3456, 2104)"
-      }
-    },
-    {
-      "setup": {
-        "distance": 151.846515,
-        "mode": "simulation",
-        "pitch": 0.85,
-        "quality": "balanced",
-        "seed": 1337,
-        "target": "(0.0, 5.699582, 0.0)",
-        "variant": "baseline",
-        "viewport": "(3456, 2104)",
-        "yaw": 0.7,
-        "year": 20000.0
-      },
-      "timing": {
-        "max_ms": 77.927,
-        "mean_ms": 10.9365016393443,
-        "mode": "simulation",
-        "movie": false,
-        "over_budget_frames": 39,
         "p95_ms": 11.165,
-        "p99_ms": 63.297,
-        "rendered_frames": 915,
-        "viewport": "(3456, 2104)"
-      }
-    },
-    {
-      "setup": {
-        "distance": 151.846515,
-        "mode": "still",
-        "pitch": 0.85,
-        "quality": "balanced",
-        "seed": 1337,
-        "target": "(0.0, 5.699582, 0.0)",
-        "variant": "prototype",
-        "viewport": "(3456, 2104)",
-        "yaw": 0.7,
-        "year": 20000.0
-      },
-      "timing": {
-        "max_ms": 10.638,
-        "mean_ms": 9.91280594059405,
-        "mode": "still",
-        "movie": false,
-        "over_budget_frames": 0,
-        "p95_ms": 10.261,
-        "p99_ms": 10.375,
-        "rendered_frames": 1010,
-        "viewport": "(3456, 2104)"
-      }
-    },
-    {
-      "setup": {
-        "distance": 151.846515,
-        "mode": "orbit",
-        "pitch": 0.85,
-        "quality": "balanced",
-        "seed": 1337,
-        "target": "(0.0, 5.699582, 0.0)",
-        "variant": "prototype",
-        "viewport": "(3456, 2104)",
-        "yaw": 0.7,
-        "year": 20000.0
-      },
-      "timing": {
-        "max_ms": 10.479,
-        "mean_ms": 9.70905237633365,
-        "mode": "orbit",
-        "movie": false,
-        "over_budget_frames": 0,
-        "p95_ms": 10.034,
-        "p99_ms": 10.153,
-        "rendered_frames": 1031,
+        "p99_ms": 11.913,
+        "rendered_frames": 1023,
         "viewport": "(3456, 2104)"
       }
     },
@@ -138,20 +64,95 @@
         "quality": "balanced",
         "seed": 1337,
         "target": "(0.0, 5.699582, 0.0)",
-        "variant": "prototype",
+        "variant": "baseline",
         "viewport": "(3456, 2104)",
         "yaw": 0.7,
         "year": 20000.0
       },
       "timing": {
-        "max_ms": 79.259,
-        "mean_ms": 11.7657752941176,
+        "max_ms": 89.3,
+        "mean_ms": 13.203525,
         "mode": "simulation",
         "movie": false,
         "over_budget_frames": 39,
-        "p95_ms": 12.009,
-        "p99_ms": 63.574,
-        "rendered_frames": 850,
+        "p95_ms": 50.059,
+        "p99_ms": 74.884,
+        "rendered_frames": 760,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "still",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "prototype",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 11.848,
+        "mean_ms": 10.2390460122699,
+        "mode": "still",
+        "movie": false,
+        "over_budget_frames": 0,
+        "p95_ms": 11.119,
+        "p99_ms": 11.403,
+        "rendered_frames": 978,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "orbit",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "prototype",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 13.727,
+        "mean_ms": 11.6386364692218,
+        "mode": "orbit",
+        "movie": false,
+        "over_budget_frames": 0,
+        "p95_ms": 12.612,
+        "p99_ms": 12.995,
+        "rendered_frames": 861,
+        "viewport": "(3456, 2104)"
+      }
+    },
+    {
+      "setup": {
+        "distance": 151.846515,
+        "mode": "simulation",
+        "pitch": 0.85,
+        "quality": "balanced",
+        "seed": 1337,
+        "target": "(0.0, 5.699582, 0.0)",
+        "variant": "prototype",
+        "viewport": "(3456, 2104)",
+        "yaw": 0.7,
+        "year": 20000.0
+      },
+      "timing": {
+        "max_ms": 81.022,
+        "mean_ms": 12.5911899371069,
+        "mode": "simulation",
+        "movie": false,
+        "over_budget_frames": 39,
+        "p95_ms": 13.249,
+        "p99_ms": 75.879,
+        "rendered_frames": 795,
         "viewport": "(3456, 2104)"
       }
     }
