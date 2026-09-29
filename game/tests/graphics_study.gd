@@ -37,10 +37,24 @@ func _initialize() -> void:
 	var geometry := rock.surface_get_arrays(0)
 	var vertices: PackedVector3Array = geometry[Mesh.ARRAY_VERTEX]
 	var normals: PackedVector3Array = geometry[Mesh.ARRAY_NORMAL]
+	# Echte Außenseiten-Prüfung statt der früheren Rekonstruktion des gespeicherten
+	# Kreuzprodukts (die konnte nie fehlschlagen): die Windung jedes Dreiecks muss
+	# VOM Felszentrum NACH AUßEN zeigen. Referenz ist die Mitte der Bounding-Box
+	# des Meshes; der Fels ist konvex genug, dass jedes Außendreieck davon wegzeigt.
+	var bounds := rock.get_aabb()
+	var rock_center := bounds.get_center()
 	for i in range(0, vertices.size(), 3):
 		var clockwise := (vertices[i + 2] - vertices[i]).cross(vertices[i + 1] - vertices[i])
+		var centroid := (vertices[i] + vertices[i + 1] + vertices[i + 2]) / 3.0
+		_check(clockwise.dot(centroid - rock_center) > 0.0, "Fels-Dreieck muss nach außen gewunden sein")
 		_check(clockwise.dot(normals[i]) > 0.0, "Fels-Normale muss zur Godot-Frontseite zeigen")
 	_check(vertices == meshes.rock().surface_get_arrays(0)[Mesh.ARRAY_VERTEX], "Felsen müssen reproduzierbar sein")
+	# Kronen nutzen einen RNG mit festem Seed — zwei Aufrufe müssen identisch sein.
+	for variant in 2:
+		var a: ArrayMesh = meshes.tree(variant)
+		var b: ArrayMesh = meshes.tree(variant)
+		_check(a.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] == b.surface_get_arrays(0)[Mesh.ARRAY_VERTEX],
+			"Baumkrone muss reproduzierbar sein (Variante %d)" % variant)
 	study.free()
 	if failures > 0:
 		quit(1)
