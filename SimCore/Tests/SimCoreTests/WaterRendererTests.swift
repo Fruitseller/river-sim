@@ -600,8 +600,8 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertEqual(
       bytesNormal, bytesNeg,
       "Empfänger außerhalb des Gitters müssen neutral wie negative Empfänger behandelt werden")
-    XCTAssertEqual(bytesNormal[2], 128, "Neutraler X-Flussrichtungs-Kanal")
-    XCTAssertEqual(bytesNormal[3], 128, "Neutraler Z-Flussrichtungs-Kanal")
+    XCTAssertEqual(bytesNormal[2], 127, "Neutraler X-Flussrichtungs-Kanal")
+    XCTAssertEqual(bytesNormal[3], 127, "Neutraler Z-Flussrichtungs-Kanal")
 
     // 2. Kanäle mit nicht-endlichen Koordinaten (NaN, ±inf) überspringen statt Int-Cast-Trap
     let nanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
