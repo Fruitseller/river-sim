@@ -292,7 +292,7 @@ public final class WaterFieldRenderer {
             var val = max(sd[start] - WaterRender.continuityDecayPerCell,
                           WaterRender.continuityFloor)
             var r = rec[start]
-            while r >= 0 {
+            while r >= 0 && r < cnt {
                 let ri = Int(r)
                 if sd[ri] >= val { break }   // Kette ab hier schon (stärker) gemalt
                 // Offenes Wasser erreicht: ab hier malen See-Kanal bzw. Meer.
@@ -402,6 +402,11 @@ public final class WaterFieldRenderer {
         for (chIndex, ch) in (noMeanderPaint ? [] : terrain.meander.channels).enumerated() {
             let nodes = ch.nodes
             if nodes.count < 2 { continue }
+            // Kanäle mit nicht-endlichen oder extremen Koordinaten überspringen,
+            // um Double-to-Int-Konvertierungsfehler zu verhindern (analog RiverRibbonRenderer).
+            guard !nodes.contains(where: {
+                !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
+            }) else { continue }
             // Korridor nur unter einem ECHTEN Band (Bau-Ergebnis des letzten
             // Ribbon-Builds, s. Doc-Kommentar von `bytes`): Saum + Raster-Deckel.
             // Kanäle OHNE Band werden hier GAR NICHT gestempelt — ihr Wasser
@@ -518,6 +523,8 @@ public final class WaterFieldRenderer {
             if first > last { continue }
             for nodeIndex in first...last {
                 let node = oxbow[nodeIndex]
+                guard node.x.isFinite, node.z.isFinite,
+                      abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }
                 let edgeSteps = min(nodeIndex - first, last - nodeIndex)
                 let endFade = clamp01(Double(edgeSteps + 1) / fullEndFadeSteps)
                 let centerX = Int(node.x.rounded()), centerY = Int(node.z.rounded())
@@ -762,7 +769,7 @@ public final class WaterFieldRenderer {
                         dx = pmdx[k]; dz = pmdz[k]
                     } else {
                         let r = prec[k]
-                        if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
+                        if r >= 0 && r < cnt { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
                     }
                     let o = k * 4
                     pout[o] = byte01(psd[k])
@@ -820,7 +827,7 @@ public final class WaterFieldRenderer {
                     dx = pmdx[k]; dz = pmdz[k]
                 } else {
                     let r = prec[k]
-                    if r >= 0 { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
+                    if r >= 0 && r < cnt { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
                 }
                 // EWMA: geglättetes Feld Richtung frischem Wert ziehen (Gedächtnis über Rebuilds).
                 psdS[k]   += bl * (psd[k] - psdS[k])
