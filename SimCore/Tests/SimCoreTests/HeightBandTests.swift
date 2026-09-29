@@ -379,12 +379,15 @@ final class HeightBandTests: XCTestCase {
         XCTAssertTrue(curvBefore.isFinite)
 
         // Nicht-endliche Werte in h einstreuen (NaN und ±inf via restore).
-        // Index 17 (j=1, i=1) ist eine innere Zelle: NaN dort trifft den
-        // Zentrums-Guard der Schleife wirklich; h[1]/h[2] sind als obere
-        // Nachbarn der Innenzellen wirksam. Randzellen (Index 0) würde die
-        // Schleife nie besuchen.
+        // NaN auf Index 20 (j=1, i=4): die Vorläuferzellen 17–19 (j=1) lesen
+        // dabei h[1] (+inf) und h[2] (−inf) als obere Nachbarn, BEVOR der
+        // Zentrums-Guard an Zelle 20 das NaN verwirft — Zentrums- UND
+        // Nachbar-Guard sind je echt getroffen. NaN auf 17 würde die
+        // ±inf-Nachbarn kurzzuschließen (Zelle verlässt die Schleife im
+        // Zentrums-Guard, bevor Nachbarn gelesen werden); Randzellen (Index
+        // 0–15 und letzte Reihe) besucht die Schleife nie.
         var state = t.state
-        state.h[17] = Double.nan
+        state.h[20] = Double.nan
         state.h[1] = Double.infinity
         state.h[2] = -Double.infinity
         t.restore(state)
