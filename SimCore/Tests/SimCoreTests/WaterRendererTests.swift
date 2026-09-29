@@ -567,4 +567,58 @@ final class WaterRendererTests: XCTestCase {
     let oxbowMesh = renderer.build(oxbowTerrain, hscale: 24, lift: 0.35)
     XCTAssertTrue(oxbowMesh.vertices.isEmpty, "Altarm mit inf-Knoten darf nicht trappen")
   }
+
+  func testWaterFieldRendererHandlesReceiverOutOfBoundsAndCorruptedNodes() {
+    let renderer = WaterFieldRenderer()
+
+    // 1. Ungültige Empfängerindizes außerhalb des Gitters (r >= cnt oder r < 0)
+    let testTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    var state = testTerrain.state
+    state.streamMap = [Double](repeating: 0.5, count: 16 * 16)
+    state.areaMFD = [Double](repeating: 10_000.0, count: 16 * 16)
+    state.h = [Double](repeating: 0.5, count: 16 * 16)
+    state.waterLevel = [Double](repeating: 0.5, count: 16 * 16)
+    state.receiver = [Int32](repeating: 999_999, count: 16 * 16)
+    testTerrain.restore(state)
+
+    let bytesNormal = renderer.bytes(
+      testTerrain, blend: 1.0, geometryMode: true,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesNormal.count, 16 * 16 * 4)
+
+    let bytesDeferred = renderer.bytes(
+      testTerrain, blend: 1.0, geometryMode: true,
+      bandChannelFlags: [], bandCoverage: [], deferTail: true)
+    XCTAssertEqual(bytesDeferred.count, 16 * 16 * 4)
+
+    state.receiver = [Int32](repeating: -5, count: 16 * 16)
+    testTerrain.restore(state)
+    let bytesNeg = renderer.bytes(
+      testTerrain, blend: 1.0, geometryMode: true,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesNeg.count, 16 * 16 * 4)
+
+    // 2. Kanäle mit nicht-endlichen Koordinaten (NaN, ±inf) überspringen statt Int-Cast-Trap
+    let nanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    let badChannel = RiverChannel(
+      nodes: [MeanderNode(x: Double.nan, z: 0), MeanderNode(x: 10, z: 10)],
+      discharge: [500.0, 500.0]
+    )
+    nanTerrain.meander.channels = [badChannel]
+    let bytesNan = renderer.bytes(
+      nanTerrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesNan.count, nanTerrain.cfg.count * 4)
+
+    // 3. Altarme mit nicht-endlichen Koordinaten überspringen statt Int-Cast-Trap
+    let oxbowTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    var oxbowNodes = (0..<24).map { MeanderNode(x: Double($0 % 16), z: Double($0 % 16)) }
+    oxbowNodes[5] = MeanderNode(x: Double.infinity, z: 0)
+    oxbowTerrain.meander.oxbows = [oxbowNodes]
+    oxbowTerrain.meander.oxbowAge = [10.0]
+    let bytesOxbow = renderer.bytes(
+      oxbowTerrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesOxbow.count, oxbowTerrain.cfg.count * 4)
+  }
 }
