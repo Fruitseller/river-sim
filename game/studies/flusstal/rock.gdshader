@@ -10,7 +10,8 @@ void fragment() {
 	vec3 n = normalize(world_normal);
 	vec3 c = vec3(0.5);
 	float r = 0.9;
-	study_material(world_position, 0.0, c, n, r);
+	// Block-PBR: reines Felsmaterial (rock_w 1), keine Vegetation/Boden-Anteile.
+	study_material(world_position, 0.0, 1.0, 0.0, 0.0, n, c, n, r);
 	ALBEDO = c;
 	NORMAL = normalize(mat3(VIEW_MATRIX) * n);
 	ROUGHNESS = r;
