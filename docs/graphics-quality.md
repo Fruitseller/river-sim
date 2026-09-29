@@ -1,7 +1,8 @@
 # Landschaftsqualität: Flusstal-Studie #116
 
-Stand: 10. September 2026. Ausführbarer Prototyp, visuelle Abnahme noch offen.
-Teil 2, Issue #117, beginnt erst nach ausdrücklicher Bestätigung des Bildsprungs.
+Stand: 29. September 2026 (Review-Nacharbeitung). Ausführbarer Prototyp,
+visuelle Abnahme noch offen. Teil 2, Issue #117, beginnt erst nach
+ausdrücklicher Bestätigung des Bildsprungs.
 
 ## Abgestimmtes Ziel
 
@@ -33,9 +34,12 @@ Screenshots waren nicht die Grundlage des A/B-Vergleichs.
 
 Die Studie verändert folgende Darstellungsteile:
 
-- Farbe, Normalen und Rauheit aus zwei zusammen verwendeten PBR-Materialien.
+- Farbe, Normalen und Rauheit aus zwei zusammen verwendeten PBR-Materialien,
+  als Modulation INNERHALB der Sim-Gewichte: Fels-PBR trägt nur auf Felsflächen,
+  Boden-PBR unter Vegetation und auf freiem Boden, Schnee/Eis bleibt unberührt.
   Der Fels wird entsättigt und auf ein helles Kalksteinbild abgestimmt; dieselbe
-  Materialfunktion gilt für die zusätzlichen Blöcke. Waldgrund ist dunkler.
+  Materialfunktion gilt für die zusätzlichen Blöcke und — unter dem
+  Meeresspiegel-Gate — nicht für das Flussbett. Waldgrund ist dunkler.
 - Mehrteilige, deterministische Baumkronen statt einer Kugel oder eines Kegels.
   Die bestehenden SimRender-Transform-Puffer bleiben erhalten.
 - Sechs von Hand gewählte Waldgruppen und drei Felszüge im Ausschnitt.
@@ -99,7 +103,9 @@ scripts/graphics-study.sh prototype overview simulation /tmp/simulation
 Für die Baseline dieselben Messbefehle mit `baseline` ausführen. Währenddessen
 keine Builds oder andere Messungen parallel starten. `shot` friert die
 Wasser-Animationsphase ein und speichert nach 60 gerenderten Bildern.
-Ein normal gestartetes Spiel aktiviert die Studie nicht.
+Ein normal gestartetes Spiel aktiviert die Studie nicht. `Flusstal.tscn` ohne
+gültiges `RS_STUDY_VARIANT` (`prototype`|`baseline`) bricht mit Fehler ab;
+Mess- und Filmläufe setzen den Schalter immer über `scripts/graphics-study.sh`.
 
 ## Bildvergleich und Bewegung
 
@@ -130,9 +136,12 @@ Zeitraffer beginnt dann stattdessen die Simulation mit 60 Jahren/s. Beide Filme
 zeigen vorher den Ausgangsstand. In der Prototyp-Simulation ist das Ausblenden
 der Handplatzierungen sichtbar. Aufnahmen wurden nach dem Encoding auf
 Auflösung, Bildzahl und Stichproben während der Bewegung geprüft.
-Die `movie`-spezifischen Viewport-Einträge in `project.godot` legen die
-Encoderauflösung bereits vor dem Maximieren fest. Ohne sie blieb der Encoder
-trotz maximiertem Fenster bei 1152×648. Der normale Spielstart ist davon unberührt.
+Die Encoderauflösung legen die `movie`-Viewport-Einträge in `project.godot`
+fest: der MovieWriter öffnet den Encoder vor dem Maximieren und ignoriert
+`--resolution` dafür (an Godot 4.7.2 gemessen; das Studien-Skript setzt das
+Flag nur als Fenster-Vorabmaß). Der Review-Wunsch, die Einträge als redundant
+zu entfernen, wurde damit geprüft und widerlegt — sie bleiben. Film-Läufe
+schreiben kein zusätzliches PNG.
 
 ## Leistung und Grenzen
 
@@ -149,12 +158,12 @@ Builds. Alle Werte in Millisekunden, Rohdaten in
 
 | Variante / Betrieb | Mittel | p95 | p99 | Maximum | Frames über 33,3 ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Baseline, Standbild | 8,75 | 9,00 | 9,11 | 9,33 | 0 / 1144 |
-| Prototyp, Standbild | 9,91 | 10,26 | 10,38 | 10,64 | 0 / 1010 |
-| Baseline, Kamerafahrt | 8,64 | 8,91 | 9,03 | 9,16 | 0 / 1158 |
-| Prototyp, Kamerafahrt | 9,71 | 10,03 | 10,15 | 10,48 | 0 / 1031 |
-| Baseline, Zeitraffer | 10,94 | 11,17 | 63,30 | 77,93 | 39 / 915 |
-| Prototyp, Zeitraffer ohne Handplatzierung | 11,77 | 12,01 | 63,57 | 79,26 | 39 / 850 |
+| Baseline, Standbild | 9,58 | 10,47 | 10,77 | 11,00 | 0 / 1044 |
+| Prototyp, Standbild | 10,24 | 11,12 | 11,40 | 11,85 | 0 / 978 |
+| Baseline, Kamerafahrt | 9,78 | 11,17 | 11,91 | 12,18 | 0 / 1023 |
+| Prototyp, Kamerafahrt | 11,64 | 12,61 | 13,00 | 13,73 | 0 / 861 |
+| Baseline, Zeitraffer | 13,20 | 50,06 | 74,88 | 89,30 | 39 / 760 |
+| Prototyp, Zeitraffer ohne Handplatzierung | 12,59 | 13,25 | 75,88 | 81,02 | 39 / 795 |
 
 Standbild und Kamerafahrt bleiben in diesen Läufen vollständig unter dem Budget.
 Der Zeitraffer überschreitet es bei einzelnen Simulationsschritten in beiden
@@ -162,7 +171,9 @@ Varianten. Ein durchgehend eingehaltenes 33,3-ms-Budget ist damit **nicht**
 nachgewiesen. Die Mehrkosten der Studie sind klein gegenüber diesen bereits in
 der Baseline vorhandenen Spitzen. Die Messfenster werden über `_process(delta)`
 gesteuert; die Frameintervalle kommen aus der monotonen Uhr. Die Zahlen sind
-eine konkrete lokale Messreihe, keine garantierten Worst-Case-Grenzen.
+eine konkrete lokale Messreihe vom 29. September 2026 (Godot 4.7.2), keine
+garantierten Worst-Case-Grenzen. Die Kronen sind seit der Review-Nacharbeit
+indiziert (Variante 0: 1382 statt 3632 Vertices, −62 %).
 
 Handplatzierungen gelten nur für den eingefrorenen Stand. Vor dem ersten
 Terrain-Texturupdate nach Fortschritt, Pinselstrich oder Laden verschwinden diese
@@ -200,8 +211,10 @@ Repository-Lizenz. Es gibt keine extern benötigte Blender-Datei.
 
 - `graphics_study.gd` prüft trockene Standorte, Rasterwasser, Seen, Ozean,
   Weltgrenzen und reine Bänder ohne Rasterwasser. Außerdem prüft es, dass die
-  Sperrmaske das Renderfeld nicht verändert und dass Fels-Winding und Normalen
-  zusammenpassen. Es läuft im `godot-contract`-Job mit `GRAPHICS_STUDY_OK`.
+  Sperrmaske das Renderfeld nicht verändert, dass jedes Fels-Dreieck nach
+  außen gewunden ist (Winding gegen die Bounding-Box-Mitte statt gegen die
+  gespeicherte Normale) und dass Felsen wie Kronen reproduzierbar sind.
+  Es läuft im `godot-contract`-Job mit `GRAPHICS_STUDY_OK`.
   Lokal: `"$GODOT" --headless --path game --script res://tests/graphics_study.gd`.
 - Die lokale SimCore-Pflichtsuite lief mit 340 Tests, 32 übersprungenen Messläufen
   und drei Fehlern in zwei Tests. Die identischen drei Fehler wurden am
