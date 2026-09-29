@@ -3,7 +3,8 @@ extends "res://scripts/Main.gd"
 ## Die handgesetzten Waldgruppen sind keine allgemeine Biom-Verteilung.
 
 const StudyMeshes = preload("res://studies/flusstal/StudyMeshes.gd")
-var study_enabled := OS.get_environment("RS_STUDY_VARIANT") != "baseline"
+var study_variant := OS.get_environment("RS_STUDY_VARIANT")
+var study_enabled := study_variant == "prototype"
 var study_mode := OS.get_environment("RS_STUDY_MODE")
 var study_output := OS.get_environment("RS_STUDY_OUTPUT")
 var study_elapsed := 0.0
@@ -15,6 +16,13 @@ var study_start_year := 0.0
 var study_start_yaw := 0.0
 
 func _ready() -> void:
+	# Nur die zwei dokumentierten Varianten sind gültig: ein Tippfehler oder eine
+	# leere Umgebung landete vorher still im Prototyp (Review zu #121).
+	if study_variant != "prototype" and study_variant != "baseline":
+		push_error("RS_STUDY_VARIANT muss 'prototype' oder 'baseline' sein, ist: '"
+			+ study_variant + "'. Start über scripts/graphics-study.sh.")
+		get_tree().quit(1)
+		return
 	super._ready()
 	if sim == null:
 		get_tree().quit(1)
@@ -43,6 +51,15 @@ func _setup_scene() -> void:
 	super._setup_scene()
 	if not study_enabled:
 		return
+	# Studien-Shader: Godot 4.7 lehnt #include einer Datei mit shader_type ab,
+	# deshalb wird das Define zur Laufzeit vor die Quelle des Produktions-Shaders
+	# gestellt (Präprozessor läuft auf dem zusammengesetzten Code; alle Uniform-
+	# Namen bleiben gleich, Main.gd-Werte bleiben gesetzt, weil dasselbe Material
+	# nur den Shader tauscht). Produktion bindet die Studien-Sampler so NICHT ein.
+	var study_shader := Shader.new()
+	study_shader.code = "#define FLUSSTAL_STUDY\n" \
+		+ FileAccess.get_file_as_string("res://shaders/terrain.gdshader")
+	terrain_mat.shader = study_shader
 	terrain_mat.set_shader_parameter("study_enabled", true)
 	for kind in ["rock", "ground"]:
 		for channel in ["color", "normal", "roughness"]:
@@ -193,7 +210,9 @@ func _study_drawn() -> void:
 	if not finished:
 		return
 	RenderingServer.frame_post_draw.disconnect(_study_drawn)
-	if not study_output.is_empty():
+	# Bei Movie-Läufen schreibt Godot selbst den Film; kein zusätzliches PNG
+	# (Review zu #121, konsistent mit dem Timing-Zweig darunter).
+	if not study_output.is_empty() and Engine.get_write_movie_path().is_empty():
 		var err := get_viewport().get_texture().get_image().save_png(study_output + ".png")
 		if err != OK:
 			push_error("Studienaufnahme konnte nicht gespeichert werden")
