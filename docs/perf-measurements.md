@@ -612,7 +612,7 @@ dazukommt — die iPad-Frage ist genau dieser Fall.
 ### Reproduktion
 
 ```sh
-GODOT=…   # 4.7.1
+GODOT=…   # 4.7.2
 "$GODOT" --headless --path game --script res://tests/sculpt_cost.gd   # Kostenaufschlüsselung
 RS_FPS=1 RS_WATER_GPU=1 "$GODOT" --path game                          # Bildrate GPU-Kette
 RS_FPS=1 "$GODOT" --path game                                         # Bildrate CPU-Pfad

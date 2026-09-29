@@ -307,7 +307,7 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    beide weiter und wrappt `[UInt8]`, `[Float]` sowie `RibbonMesh` in
    `Packed*Array`. Keine Physik, keine Render-Berechnung, kein Render-Zustand.
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
-   derzeit 4.7.1): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
+   derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
    (Flussbänder) und `ocean.gdshader` (offenes Meer). Dazu zwei Shader, die
    nichts MALEN, sondern rechnen: `water_field_blur.gdshader` und
