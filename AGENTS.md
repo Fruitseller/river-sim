@@ -183,8 +183,8 @@ grüner Lauf nichts über den lokalen Stand.
 
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
-Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`,
-`RIVER_RIBBONS_OK`, `WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`), nicht der
+Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK`,
+`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
@@ -240,9 +240,14 @@ der Wasser-Geometrie; A/B im selben Build; ohne den Schalter rendert die
 Geometrie), `RS_WATER_GPU` (Schwanzstufen des Raster-Wasserfelds — Blur, EWMA,
 Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension;
 standardmäßig AUS, weil die Ersparnis gemessen 1,8 ms je Aufruf ist und keine
-Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet zusätzlich die Bedienleiste aus. Getrennt davon
+Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet
+zusätzlich die Bedienleiste aus. Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
-Lauf von `game/tests/water_rings.gd` ab.
+Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
+#116 (`RS_STUDY_VARIANT` `prototype|baseline`, `RS_STUDY_MODE`
+`orbit|simulation|shot|still`, `RS_STUDY_OUTPUT`, per Skript zusätzlich
+`RS_STUDY_MOVIE`) liegen in `game/studies/flusstal/Flusstal.gd` und werden über
+`scripts/graphics-study.sh` gesetzt; Direktstart ohne gültige Variante bricht ab.
 
 ## CI
 
@@ -253,7 +258,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
