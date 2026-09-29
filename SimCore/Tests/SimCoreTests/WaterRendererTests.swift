@@ -597,6 +597,11 @@ final class WaterRendererTests: XCTestCase {
       testTerrain, blend: 1.0, geometryMode: true,
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytesNeg.count, 16 * 16 * 4)
+    XCTAssertEqual(
+      bytesNormal, bytesNeg,
+      "Empfänger außerhalb des Gitters müssen neutral wie negative Empfänger behandelt werden")
+    XCTAssertEqual(bytesNormal[2], 128, "Neutraler X-Flussrichtungs-Kanal")
+    XCTAssertEqual(bytesNormal[3], 128, "Neutraler Z-Flussrichtungs-Kanal")
 
     // 2. Kanäle mit nicht-endlichen Koordinaten (NaN, ±inf) überspringen statt Int-Cast-Trap
     let nanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
@@ -605,20 +610,58 @@ final class WaterRendererTests: XCTestCase {
       discharge: [500.0, 500.0]
     )
     nanTerrain.meander.channels = [badChannel]
-    let bytesNan = renderer.bytes(
+    let bytesNan = WaterFieldRenderer().bytes(
       nanTerrain, blend: 1.0, geometryMode: false,
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytesNan.count, nanTerrain.cfg.count * 4)
 
+    // Byteweiser Vergleich gegen Terrain ohne Kanäle: zeigt, dass der korrupte Kanal
+    // nachweislich übersprungen und nicht (z. B. geklemmt) gestempelt wurde.
+    let cleanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    let bytesClean = WaterFieldRenderer().bytes(
+      cleanTerrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(
+      bytesNan, bytesClean,
+      "Kanal mit nicht-endlichen Koordinaten darf nachweislich nicht gestempelt werden")
+
     // 3. Altarme mit nicht-endlichen Koordinaten überspringen statt Int-Cast-Trap
     let oxbowTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
+    var oxState = oxbowTerrain.state
+    oxState.h = [Double](repeating: 0.5, count: 16 * 16)
+    oxState.waterLevel = [Double](repeating: 0.51, count: 16 * 16)
+    oxbowTerrain.restore(oxState)
+
     var oxbowNodes = (0..<24).map { MeanderNode(x: Double($0 % 16), z: Double($0 % 16)) }
     oxbowNodes[5] = MeanderNode(x: Double.infinity, z: 0)
     oxbowTerrain.meander.oxbows = [oxbowNodes]
     oxbowTerrain.meander.oxbowAge = [10.0]
+
+    let bytesOxbowDeferred = renderer.bytes(
+      oxbowTerrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [], deferTail: true)
+    XCTAssertEqual(bytesOxbowDeferred.count, oxbowTerrain.cfg.count * 4)
+
+    // Nachbarknoten 4 (4, 4) und 6 (6, 6) müssen im G-Kanal (See/Altarm) gestempelt sein
+    // (pinnt die continue-Semantik: Schleife bricht bei inf nicht ab).
+    let cell4 = 4 * 16 + 4
+    let cell6 = 6 * 16 + 6
+    XCTAssertGreaterThan(bytesOxbowDeferred[cell4 * 4 + 1], 0, "Knoten 4 vor inf-Knoten muss gestempelt werden")
+    XCTAssertGreaterThan(bytesOxbowDeferred[cell6 * 4 + 1], 0, "Knoten 6 nach inf-Knoten muss gestempelt werden")
+
+    // Der inf-Knoten selbst darf weder an seiner ursprünglichen Position (5, 5)
+    // noch an einer geklemmten Randposition (15, 0) gestempelt worden sein.
+    let cell5 = 5 * 16 + 5
+    let cellClamp = 0 * 16 + 15
+    XCTAssertEqual(bytesOxbowDeferred[cell5 * 4 + 1], 0, "inf-Knoten-Zelle darf ungestempelt bleiben")
+    XCTAssertEqual(bytesOxbowDeferred[cellClamp * 4 + 1], 0, "inf-Knoten darf nicht an den Rand geklemmt gestempelt werden")
+
     let bytesOxbow = renderer.bytes(
       oxbowTerrain, blend: 1.0, geometryMode: false,
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytesOxbow.count, oxbowTerrain.cfg.count * 4)
+    XCTAssertGreaterThan(bytesOxbow[cell4 * 4 + 1], 0)
+    XCTAssertGreaterThan(bytesOxbow[cell6 * 4 + 1], 0)
+    XCTAssertEqual(bytesOxbow[cellClamp * 4 + 1], 0)
   }
 }
