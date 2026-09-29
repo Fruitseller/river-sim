@@ -378,9 +378,13 @@ final class HeightBandTests: XCTestCase {
         let curvBefore = t.ridgeCurvature()
         XCTAssertTrue(curvBefore.isFinite)
 
-        // Nicht-endliche Werte in h einstreuen (NaN und ±inf via restore)
+        // Nicht-endliche Werte in h einstreuen (NaN und ±inf via restore).
+        // Index 17 (j=1, i=1) ist eine innere Zelle: NaN dort trifft den
+        // Zentrums-Guard der Schleife wirklich; h[1]/h[2] sind als obere
+        // Nachbarn der Innenzellen wirksam. Randzellen (Index 0) würde die
+        // Schleife nie besuchen.
         var state = t.state
-        state.h[0] = Double.nan
+        state.h[17] = Double.nan
         state.h[1] = Double.infinity
         state.h[2] = -Double.infinity
         t.restore(state)
