@@ -25,6 +25,9 @@ static func tree(variant: int) -> ArrayMesh:
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 0.92
 	st.set_material(mat)
+	# Indexiert committen: die Lappen teilen viele Punkte, der Vertex-Merge
+	# spart einen Großteil der Vertices, ohne Optik oder Normalen zu ändern.
+	st.index()
 	var mesh := st.commit()
 	var trunk := CylinderMesh.new()
 	trunk.top_radius = 0.018
@@ -79,8 +82,10 @@ static func rock() -> ArrayMesh:
 			_triangle(st, rings[level][segment], rings[level + 1][segment], rings[level + 1][next])
 			_triangle(st, rings[level][segment], rings[level + 1][next], rings[level][next])
 	for segment in 8:
-		_triangle(st, rings[3][segment], rings[3][(segment + 1) % 8], Vector3(0.24, 1.38, 0))
-		_triangle(st, rings[0][segment], Vector3.ZERO, rings[0][(segment + 1) % 8])
+		# Deckel und Boden: Windung so, dass die Frontseite nach außen zeigt
+		# (Normalen für cull-basierte Beleuchtung, vgl. graphics_study.gd).
+		_triangle(st, rings[3][segment], Vector3(0.24, 1.38, 0), rings[3][(segment + 1) % 8])
+		_triangle(st, rings[0][segment], rings[0][(segment + 1) % 8], Vector3.ZERO)
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://studies/flusstal/rock.gdshader")
 	for channel in ["color", "normal", "roughness"]:
