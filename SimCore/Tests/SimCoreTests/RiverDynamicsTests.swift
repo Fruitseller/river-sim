@@ -783,7 +783,10 @@ final class RiverDynamicsTests: XCTestCase {
         let count = 4 * 4
         let h = [Double](repeating: 0.5, count: count)
         let hf = [Double](repeating: 0.5, count: count)
-        let area = [Double](repeating: 1000.0, count: count)
+        // area muss cellArea * meanderMinCells überschreiten (bei n=4 ist cellArea ≈ 1878,
+        // meanderMinCells=85 → Schwelle ≈ 160.000), damit isBig/isSource anspringen
+        // und die Empfängerkette tatsächlich gelaufen wird.
+        let area = [Double](repeating: 200_000.0, count: count)
 
         // 1. Empfänger außerhalb des Gitters (r >= count oder r < 0) darf nicht trappen
         var badReceiver = [Int32](repeating: 999_999, count: count)
@@ -812,6 +815,13 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertTrue(MeanderState.traceChannels(
             config: nanConfig, h: h, hf: hf, area: area, receiver: badReceiver
         ).isEmpty)
+
+        // 4. Überlauf bei extrem großem n vor der Validierung abfangen
+        var overflowConfig = c
+        overflowConfig.n = Int.max
+        XCTAssertTrue(MeanderState.traceChannels(
+            config: overflowConfig, h: h, hf: hf, area: area, receiver: badReceiver
+        ).isEmpty)
     }
 
     func testMeanderSpatialCutoffAndResampleHandleNonFiniteCoordinates() {
@@ -831,5 +841,15 @@ final class RiverDynamicsTests: XCTestCase {
         indexedConfig.meanderSpatialCutoffIndex = true
         state.migrate(dt: 10, config: indexedConfig)
         XCTAssertFalse(state.channels.isEmpty)
+
+        // Extreme oder nicht-finite spacing-/neck-Werte dürfen in applyCutoffs/resample nicht trappen
+        var extremeConfig = indexedConfig
+        extremeConfig.meanderNeckDist = 1e-300
+        extremeConfig.meanderNodeSpacing = 1e-320
+        state.migrate(dt: 10, config: extremeConfig)
+
+        var nanSpacingConfig = indexedConfig
+        nanSpacingConfig.meanderNodeSpacing = Double.nan
+        state.migrate(dt: 10, config: nanSpacingConfig)
     }
 }
