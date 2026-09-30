@@ -226,11 +226,16 @@ public final class MeanderState {
     /// kein Nachbar). Die herausgeschnittene Schleife wird ein Altarm.
     private func applyCutoffs(_ ch: inout RiverChannel, config: SimConfig) {
         let neck = config.meanderNeckDist
-        guard neck > 0 else { return }
+        guard neck > 0, neck.isFinite else { return }
         let spacing = config.meanderNodeSpacing
+        guard spacing.isFinite else { return }
         // Mindest-Index-Abstand: die Schleife muss ein Vielfaches des Halses lang
         // sein, sonst sind es bloß Nachbarknoten.
-        let minSep = max(4, Int((neck / max(spacing, 1e-6)) * 3) + 2)
+        // Verhältnis vor der Konvertierung begrenzen, um Int-Überlauf bei extrem
+        // kleinem meanderNodeSpacing defensiv abzufangen.
+        let rawSep = (neck / max(1e-6, spacing)) * 3
+        let sepCount = (rawSep.isFinite && rawSep >= 0) ? Int(min(Double(ch.nodes.count + 2), rawSep)) : 0
+        let minSep = max(4, sepCount + 2)
         var guardN = 0
         while guardN < 64 {
             guardN += 1
@@ -242,7 +247,11 @@ public final class MeanderState {
                 // der Migration kurz aus der Welt driften): Klemmen ist monoton →
                 // Paare mit dist < neck bleiben in benachbarten Bins, und der exakte
                 // dist-Filter macht das Ergebnis identisch zur Dictionary-Variante.
-                let gw = max(1, Int(Double(config.n) / neck) + 2)
+                // gw vor der Konversion begrenzen, um Int-Überlauf bei extrem
+                // kleinem meanderNeckDist (z. B. 1e-300) und Speicher-Explosion
+                // im flachen Bin-Gitter (gw * gw) defensiv zu verhindern.
+                let rawGw = Double(config.n) / neck
+                let gw = (rawGw.isFinite && rawGw >= 0) ? max(1, Int(min(4096.0, rawGw)) + 2) : 1
                 if binW != gw { binW = gw; binHead = [Int32](repeating: -1, count: gw * gw) }
                 let count = ch.nodes.count
                 if binNext.count < count { binNext = [Int32](repeating: -1, count: count) }
@@ -315,7 +324,13 @@ public final class MeanderState {
             return RiverChannel(nodes: [nodes[0], nodes[nodes.count - 1]],
                                 discharge: [ch.discharge[0], ch.discharge[nodes.count - 1]])
         }
-        let count = max(2, Int((total / spacing).rounded()) + 1)
+        // Schrittzahl vor der Konvertierung deckeln, um Int(inf) bzw. Überlauf bei
+        // extrem kleinem spacing (z. B. meanderNodeSpacing = 1e-320) abzufangen.
+        let rawSteps = (total / spacing).rounded()
+        guard rawSteps.isFinite, rawSteps >= 0 else { return ch }
+        let maxSteps = 65_536
+        let steps = Int(min(Double(maxSteps), rawSteps))
+        let count = max(2, steps + 1)
         var outN = [MeanderNode](); outN.reserveCapacity(count)
         var outD = [Double](); outD.reserveCapacity(count)
         var seg = 0
@@ -345,8 +360,9 @@ public final class MeanderState {
     public static func traceChannels(config: SimConfig, h: [Double], hf: [Double],
                                      area: [Double], receiver: [Int32]) -> [RiverChannel] {
         let n = config.n
-        let count = n * n
-        guard n > 0, count > 0,
+        guard n > 0 else { return [] }
+        let (count, overflow) = n.multipliedReportingOverflow(by: n)
+        guard !overflow,
               h.count == count, hf.count == count,
               area.count == count, receiver.count == count else { return [] }
         let cellArea = config.cellSize * config.cellSize
