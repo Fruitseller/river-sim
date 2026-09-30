@@ -802,7 +802,7 @@ final class RiverDynamicsTests: XCTestCase {
 
         // 3. Nicht-positive oder nicht-finite Schwellen / Zellgrößen
         var zeroConfig = c
-        zeroConfig.cellSize = 0
+        zeroConfig.world = 0
         XCTAssertTrue(MeanderState.traceChannels(
             config: zeroConfig, h: h, hf: hf, area: area, receiver: badReceiver
         ).isEmpty)
