@@ -734,4 +734,102 @@ final class RiverDynamicsTests: XCTestCase {
         XCTAssertGreaterThan(splitCapable, 0,
                              "MFD muss strukturell Aufspaltungen zulassen (D8 kann das nie)")
     }
+
+    // MARK: - Meander-Randfälle und defensive Absicherungen
+
+    func testMeanderClampToWorldHandlesNonFiniteAndBounds() {
+        var channel = RiverChannel(
+            nodes: [
+                MeanderNode(x: Double.nan, z: -10),
+                MeanderNode(x: 5, z: 25),
+                MeanderNode(x: Double.infinity, z: -Double.infinity),
+            ],
+            discharge: [10, 20, 30]
+        )
+        // NaN wird sicher auf 0 gefaltet; negative Werte auf 0; Werte über maxCoord auf maxCoord
+        channel.clampToWorld(maxCoord: 20)
+        XCTAssertEqual(channel.nodes[0].x, 0)
+        XCTAssertEqual(channel.nodes[0].z, 0)
+        XCTAssertEqual(channel.nodes[1].x, 5)
+        XCTAssertEqual(channel.nodes[1].z, 20)
+        XCTAssertEqual(channel.nodes[2].x, 20)
+        XCTAssertEqual(channel.nodes[2].z, 0)
+
+        // Nicht-finite oder negative maxCoord führt zum No-op statt Korruption
+        let before = channel.nodes
+        channel.clampToWorld(maxCoord: -5)
+        XCTAssertEqual(channel.nodes, before)
+        channel.clampToWorld(maxCoord: Double.nan)
+        XCTAssertEqual(channel.nodes, before)
+    }
+
+    func testMeanderPruneOxbowsHandlesMismatchedLengths() {
+        let state = MeanderState()
+        state.oxbows = [
+            [MeanderNode(x: 1, z: 1), MeanderNode(x: 2, z: 2)],
+            [MeanderNode(x: 3, z: 3), MeanderNode(x: 4, z: 4)],
+            [MeanderNode(x: 5, z: 5), MeanderNode(x: 6, z: 6)],
+        ]
+        // oxbowAge kürzer als oxbows: darf nicht trappen
+        state.oxbowAge = [50.0]
+        state.pruneOxbows(maxAge: 100.0)
+        XCTAssertEqual(state.oxbows.count, 1)
+        XCTAssertEqual(state.oxbowAge.count, 1)
+        XCTAssertEqual(state.oxbowAge[0], 50.0)
+    }
+
+    func testMeanderTraceChannelsHandlesOutOfBoundsAndInvalidInputs() {
+        let c = cfg(n: 4)
+        let count = 4 * 4
+        let h = [Double](repeating: 0.5, count: count)
+        let hf = [Double](repeating: 0.5, count: count)
+        let area = [Double](repeating: 1000.0, count: count)
+
+        // 1. Empfänger außerhalb des Gitters (r >= count oder r < 0) darf nicht trappen
+        var badReceiver = [Int32](repeating: 999_999, count: count)
+        badReceiver[0] = -1
+        let chOutOfBounds = MeanderState.traceChannels(
+            config: c, h: h, hf: hf, area: area, receiver: badReceiver
+        )
+        // Läuft sicher durch ohne Speicherverletzung
+        _ = chOutOfBounds
+
+        // 2. Mismatch der Pufferlängen liefert defensiv leeres Ergebnis
+        let chMismatched = MeanderState.traceChannels(
+            config: c, h: [0.1], hf: hf, area: area, receiver: badReceiver
+        )
+        XCTAssertTrue(chMismatched.isEmpty)
+
+        // 3. Nicht-positive oder nicht-finite Schwellen / Zellgrößen
+        var zeroConfig = c
+        zeroConfig.cellSize = 0
+        XCTAssertTrue(MeanderState.traceChannels(
+            config: zeroConfig, h: h, hf: hf, area: area, receiver: badReceiver
+        ).isEmpty)
+
+        var nanConfig = c
+        nanConfig.meanderMinCells = Double.nan
+        XCTAssertTrue(MeanderState.traceChannels(
+            config: nanConfig, h: h, hf: hf, area: area, receiver: badReceiver
+        ).isEmpty)
+    }
+
+    func testMeanderSpatialCutoffAndResampleHandleNonFiniteCoordinates() {
+        let c = cfg(n: 16)
+        let badNodes = [
+            MeanderNode(x: Double.nan, z: 0),
+            MeanderNode(x: 1, z: 1),
+            MeanderNode(x: 2, z: 2),
+            MeanderNode(x: Double.infinity, z: 3),
+        ]
+        let channel = RiverChannel(nodes: badNodes, discharge: [10, 20, 30, 40])
+        let state = MeanderState()
+        state.channels = [channel]
+
+        // Migration mit räumlichem Cutoff-Index darf bei nicht-endlichen Koordinaten nicht trappen
+        var indexedConfig = c
+        indexedConfig.meanderSpatialCutoffIndex = true
+        state.migrate(dt: 10, config: indexedConfig)
+        XCTAssertFalse(state.channels.isEmpty)
+    }
 }
