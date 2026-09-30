@@ -36,10 +36,13 @@ public struct RiverChannel: Sendable {
     }
 
     /// Hält alle Knoten im Gitter [0, `maxCoord`] (Sicherheits-Clamp).
+    /// Konstante zuerst (`min(maxCoord, max(0, …))`), damit ungültige
+    /// Koordinaten (NaN) sicher zu 0 gefaltet werden.
     public mutating func clampToWorld(maxCoord: Double) {
+        guard maxCoord >= 0, maxCoord.isFinite else { return }
         for i in nodes.indices {
-            nodes[i].x = min(max(nodes[i].x, 0), maxCoord)
-            nodes[i].z = min(max(nodes[i].z, 0), maxCoord)
+            nodes[i].x = min(maxCoord, max(0, nodes[i].x))
+            nodes[i].z = min(maxCoord, max(0, nodes[i].z))
         }
     }
 
@@ -80,7 +83,8 @@ public final class MeanderState {
     /// Entfernt verlandete Altarme (Alter über `maxAge`) aus der river-history.
     public func pruneOxbows(maxAge: Double) {
         var no: [[MeanderNode]] = [], na: [Double] = []
-        for i in oxbows.indices where oxbowAge[i] <= maxAge {
+        let count = min(oxbows.count, oxbowAge.count)
+        for i in 0..<count where oxbowAge[i] <= maxAge {
             no.append(oxbows[i]); na.append(oxbowAge[i])
         }
         oxbows = no; oxbowAge = na
@@ -245,7 +249,11 @@ public final class MeanderState {
                 for c in binTouched { binHead[Int(c)] = -1 }
                 binTouched.removeAll(keepingCapacity: true)
                 @inline(__always) func binX(_ v: Double) -> Int {
-                    min(max(Int((v / neck).rounded(.down)), 0), gw - 1)
+                    guard v.isFinite else { return 0 }
+                    let cell = (v / neck).rounded(.down)
+                    guard cell >= 0 else { return 0 }
+                    guard cell < Double(gw) else { return gw - 1 }
+                    return Int(cell)
                 }
                 for i in 0..<count {
                     let b = binX(ch.nodes[i].z) * gw + binX(ch.nodes[i].x)
@@ -298,10 +306,11 @@ public final class MeanderState {
     /// entlang der Bogenlänge mitinterpoliert.
     private func resample(_ ch: RiverChannel, spacing: Double) -> RiverChannel {
         let nodes = ch.nodes
-        guard nodes.count >= 2, spacing > 0 else { return ch }
+        guard nodes.count >= 2, spacing > 0, spacing.isFinite else { return ch }
         var cum = [Double](repeating: 0, count: nodes.count)
         for i in 1..<nodes.count { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
         let total = cum[nodes.count - 1]
+        guard total.isFinite else { return ch }
         if total < spacing { // zu kurz → nur Endpunkte
             return RiverChannel(nodes: [nodes[0], nodes[nodes.count - 1]],
                                 discharge: [ch.discharge[0], ch.discharge[nodes.count - 1]])
@@ -330,16 +339,25 @@ public final class MeanderState {
     /// (`SimRender.RiverRibbonRenderer`) baut ihre Bänder aus den fertigen
     /// `terrain.meander.channels` und trasst nicht selbst — der frühere Zwilling
     /// `SimNode.buildRivers` ist mit f3556c8 entfallen.
+    ///
+    /// Mismatch der Pufferlängen, leere Terrains sowie Empfänger-Indizes außerhalb
+    /// des Gitters (`r < 0 || r >= n*n`) werden defensiv abgefangen.
     public static func traceChannels(config: SimConfig, h: [Double], hf: [Double],
                                      area: [Double], receiver: [Int32]) -> [RiverChannel] {
         let n = config.n
-        let sea = config.sea
+        let count = n * n
+        guard n > 0, count > 0,
+              h.count == count, hf.count == count,
+              area.count == count, receiver.count == count else { return [] }
         let cellArea = config.cellSize * config.cellSize
         let minCells = config.meanderMinCells
+        guard cellArea > 0, cellArea.isFinite,
+              minCells > 0, minCells.isFinite else { return [] }
+        let sea = config.sea
         let lakeEps = 0.035
 
-        var isBig = [Bool](repeating: false, count: n * n)
-        for k in 0..<(n * n) where hf[k] > sea && area[k] / cellArea >= minCells { isBig[k] = true }
+        var isBig = [Bool](repeating: false, count: count)
+        for k in 0..<count where hf[k] > sea && area[k] / cellArea >= minCells { isBig[k] = true }
 
         func isSource(_ k: Int) -> Bool {
             if !isBig[k] { return false }
@@ -357,21 +375,20 @@ public final class MeanderState {
         }
 
         let state = MeanderState() // nur für resample() wiederverwendet
-        var drawn = [Bool](repeating: false, count: n * n)
+        var drawn = [Bool](repeating: false, count: count)
         var result: [RiverChannel] = []
-        for s in 0..<(n * n) where isSource(s) {
+        for s in 0..<count where isSource(s) {
             var cells: [Int] = []
             var c = s, guardN = 0
-            while guardN < n * n {
+            while guardN < count {
                 guardN += 1
                 cells.append(c)
                 if drawn[c] && cells.count > 1 { break }
                 drawn[c] = true
-                let r = receiver[c]
-                if r < 0 { break }
-                let ri = Int(r)
-                if hf[ri] <= sea || hf[ri] - h[ri] > lakeEps { break }
-                c = ri
+                let r = Int(receiver[c])
+                if r < 0 || r >= count { break }
+                if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
+                c = r
             }
             if cells.count < 3 { continue }
             var nodes = [MeanderNode](); nodes.reserveCapacity(cells.count)
