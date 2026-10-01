@@ -459,8 +459,7 @@ final class WaterRendererTests: XCTestCase {
   }
 
   func testRiverRibbonRendererHandlesEmptyTerrain() {
-    var config = renderConfig(n: 0)
-    config.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+    let config = renderConfig(n: 0)
     let empty = Terrain(allocating: config, seed: 1337)
     let renderer = RiverRibbonRenderer()
     let mesh = renderer.build(empty, hscale: 24, lift: 0.35)

@@ -535,14 +535,22 @@ final class SimCoreTests: XCTestCase {
         c.n = 720
         c.world = 112.4789
         XCTAssertEqual(c.cellSize, 112.4789 / 719.0)
+        XCTAssertEqual(c.count, 720 * 720)
 
-        // n <= 1: leere oder 1-Punkt-Gitter haben keine Schrittweite
+        // n <= 1: leere oder 1-Punkt-Gitter haben keine Schrittweite und keine mehrzelligen Gitterpunkte
         c.n = 1
         XCTAssertEqual(c.cellSize, 0.0, "n = 1 darf nicht durch 0 teilen")
+        XCTAssertEqual(c.count, 0, "n = 1 liefert defensiv 0 Gitterpunkte")
         c.n = 0
         XCTAssertEqual(c.cellSize, 0.0, "n = 0 darf keine negative Zellgröße liefern")
+        XCTAssertEqual(c.count, 0, "n = 0 liefert 0 Gitterpunkte")
         c.n = -5
         XCTAssertEqual(c.cellSize, 0.0, "n < 0 muss defensiv 0 liefern")
+        XCTAssertEqual(c.count, 0, "n < 0 muss defensiv 0 Gitterpunkte liefern")
+        c.n = Int.min
+        XCTAssertEqual(c.count, 0, "Int.min darf nicht überlaufen und liefert 0 Gitterpunkte")
+        c.n = Int.max
+        XCTAssertEqual(c.count, 0, "Überlauf bei n * n liefert defensiv 0 Gitterpunkte")
 
         // Ungültige Weltkantenlängen
         c.n = 96

@@ -266,8 +266,7 @@ final class RenderStateTests: XCTestCase {
     /// Prüft, dass leere Terrains (n == 0) im Raster-Wasserfeld defensiv abgefangen
     /// werden und leere Puffer liefern, statt auf 0-zähligen Pufferzeigern zu trappen.
     func testWaterFieldRendererHandlesEmptyTerrain() {
-        var config = renderConfig(n: 0)
-        config.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+        let config = renderConfig(n: 0)
         let empty = Terrain(allocating: config, seed: 1337)
         let waterRenderer = WaterFieldRenderer()
 

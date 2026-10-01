@@ -1558,14 +1558,26 @@ public struct SimConfig: Sendable, Codable, Equatable {
 
     public init() {}
 
-    /// Zellgröße in Welteinheiten: `world / (n - 1)`. Für leere oder degenerierte
-    /// Gitter (`n <= 1`) sowie nicht-positive oder nicht-endliche Welten defensiv 0
-    /// (verhindert negative Zellgrößen und Division durch 0).
+    /// Zellgröße in Welteinheiten: `world / (n - 1)`.
+    ///
+    /// Für leere oder degenerierte Gitter (`n <= 1`) sowie nicht-positive oder
+    /// nicht-endliche Welten defensiv 0 (verhindert negative Zellgrößen und Division
+    /// durch 0). Der Rückgabewert 0 dient als Sentinel für „kein gültiges Gitter“;
+    /// solche Konfigurationen dürfen nicht bis zu den Divisionen der Konsumenten
+    /// (z. B. `Terrain.brush` oder `RiverRibbonRenderer`) durchlaufen.
     public var cellSize: Double {
         guard n > 1, world.isFinite, world > 0 else { return 0 }
         return world / Double(n - 1)
     }
-    public var count: Int { n * n }
+
+    /// Gesamtzahl der Gitterpunkte: `n * n`. Für leere oder degenerierte Gitter
+    /// (`n <= 1`) defensiv 0 (analog zu `cellSize`; verhindert positive Zellzahlen
+    /// bei negativen `n` sowie arithmetische Überläufe).
+    public var count: Int {
+        guard n > 1 else { return 0 }
+        let (prod, overflow) = n.multipliedReportingOverflow(by: n)
+        return overflow ? 0 : prod
+    }
 }
 
 // MARK: - Produktions-Konfiguration (Issue #97)
