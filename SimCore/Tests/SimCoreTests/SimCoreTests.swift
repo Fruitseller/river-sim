@@ -524,4 +524,37 @@ final class SimCoreTests: XCTestCase {
             XCTAssertTrue(ch.discharge.allSatisfy { $0 > 0 }, "Abfluss muss positiv sein")
         }
     }
+
+    // MARK: - SimConfig.cellSize
+
+    /// Zellgröße liefert für reguläre Gitter `world / (n - 1)` und fällt für leere
+    /// oder degenerierte Gitter (`n <= 1`) sowie nicht-endliche/nicht-positive Welten
+    /// defensiv auf 0 (verhindert negative Zellgrößen und Division durch 0).
+    func testSimConfigCellSizeHandlesDegenerateGridsAndNonFiniteWorlds() {
+        var c = SimConfig()
+        c.n = 720
+        c.world = 112.4789
+        XCTAssertEqual(c.cellSize, 112.4789 / 719.0)
+
+        // n <= 1: leere oder 1-Punkt-Gitter haben keine Schrittweite
+        c.n = 1
+        XCTAssertEqual(c.cellSize, 0.0, "n = 1 darf nicht durch 0 teilen")
+        c.n = 0
+        XCTAssertEqual(c.cellSize, 0.0, "n = 0 darf keine negative Zellgröße liefern")
+        c.n = -5
+        XCTAssertEqual(c.cellSize, 0.0, "n < 0 muss defensiv 0 liefern")
+
+        // Ungültige Weltkantenlängen
+        c.n = 96
+        c.world = 0.0
+        XCTAssertEqual(c.cellSize, 0.0)
+        c.world = -10.0
+        XCTAssertEqual(c.cellSize, 0.0)
+        c.world = Double.nan
+        XCTAssertEqual(c.cellSize, 0.0)
+        c.world = Double.infinity
+        XCTAssertEqual(c.cellSize, 0.0)
+        c.world = -Double.infinity
+        XCTAssertEqual(c.cellSize, 0.0)
+    }
 }
