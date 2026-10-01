@@ -1558,7 +1558,13 @@ public struct SimConfig: Sendable, Codable, Equatable {
 
     public init() {}
 
-    public var cellSize: Double { world / Double(n - 1) }
+    /// Zellgröße in Welteinheiten: `world / (n - 1)`. Für leere oder degenerierte
+    /// Gitter (`n <= 1`) sowie nicht-positive oder nicht-endliche Welten defensiv 0
+    /// (verhindert negative Zellgrößen und Division durch 0).
+    public var cellSize: Double {
+        guard n > 1, world.isFinite, world > 0 else { return 0 }
+        return world / Double(n - 1)
+    }
     public var count: Int { n * n }
 }
 
