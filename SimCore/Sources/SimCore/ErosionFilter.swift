@@ -49,10 +49,14 @@ public enum ErosionFilter {
     /// Streifenmuster entlang `dir` (normalisiert): interpoliert cos/sin-Paare aus
     /// 4×4 zufällig versetzten Zellpunkten und normalisiert die Magnitude.
     /// Rückgabe: (cos, sin, sideDirX, sideDirY) — sideDir · sin = Ableitung des cos.
+    /// Nicht-endliche Richtungs- oder Positionswerte liefern defensiv Nullen.
     @inline(__always) private static func phacelle(
         px: Double, py: Double, dirX: Double, dirY: Double,
         freq: Double, offset: Double, normalization: Double
     ) -> (c: Double, s: Double, dx: Double, dy: Double) {
+        guard px.isFinite && py.isFinite && dirX.isFinite && dirY.isFinite else {
+            return (0, 0, 0, 0)
+        }
         let tau = 2.0 * Double.pi
         let sideX = -dirY * freq * tau
         let sideY = dirX * freq * tau
@@ -73,9 +77,11 @@ public enum ErosionFilter {
                 phY += sin(wave) * w
             }
         }
+        guard wsum > 0 else { return (0, 0, sideX, sideY) }
         let iX = phX / wsum, iY = phY / wsum
         var mag = (iX * iX + iY * iY).squareRoot()
         mag = max(1.0 - normalization, mag)
+        guard mag > 0 else { return (0, 0, sideX, sideY) }
         return (iX / mag, iY / mag, sideX, sideY)
     }
 
@@ -106,17 +112,26 @@ public enum ErosionFilter {
     /// Eingangsfelds (dh/dp, p-Einheiten), `fadeTarget` ∈ [-1,1] (Tal → Gipfel).
     /// Rückgabe: Höhen-Delta, Steigungs-Delta, Gesamt-Magnitude, RidgeMap
     /// (-1 Kerbe … 1 Grat — dendritische Drainage-Linien bei -1).
+    ///
+    /// Nicht-endliche Koordinaten oder ungültige Skalierungs-Parameter (`scale <= 0`,
+    /// `cellScale <= 0`, `octaves <= 0`) liefern defensiv Null-Deltas.
     public static func evaluate(
         px: Double, py: Double, h: Double, sx: Double, sy: Double,
         fadeTarget fadeTargetIn: Double, p: Params
     ) -> (dh: Double, dsx: Double, dsy: Double, magnitude: Double, ridgeMap: Double) {
+        guard px.isFinite && py.isFinite && h.isFinite && sx.isFinite && sy.isFinite,
+              p.scale.isFinite && p.scale > 0,
+              p.cellScale.isFinite && p.cellScale > 0,
+              p.octaves > 0 else {
+            return (0, 0, 0, 0, 0)
+        }
         let strength0 = p.strength * p.scale
-        var fadeTarget = min(max(fadeTargetIn, -1), 1)
+        var fadeTarget = min(1, max(-1, fadeTargetIn))
 
         var hs = (h, sx, sy)
         let h0 = hs
         var freq = 1.0 / (p.scale * p.cellScale)
-        let slopeLength = max((sx * sx + sy * sy).squareRoot(), 1e-10)
+        let slopeLength = max(1e-10, (sx * sx + sy * sy).squareRoot())
         var magnitude = 0.0
         var roundingMult = 1.0
         var strength = strength0
@@ -132,7 +147,7 @@ public enum ErosionFilter {
         var gsy = sy + (sy / slopeLength * p.assumedSlope.0 - sy) * p.assumedSlope.1
 
         for _ in 0..<p.octaves {
-            let gl = max((gsx * gsx + gsy * gsy).squareRoot(), 1e-10)
+            let gl = max(1e-10, (gsx * gsx + gsy * gsy).squareRoot())
             let ph = phacelle(px: px * freq, py: py * freq,
                               dirX: gsx / gl, dirY: gsy / gl,
                               freq: p.cellScale, offset: 0.25,
@@ -183,24 +198,30 @@ public enum ErosionFilter {
     /// `sea` faden die Rinnen aus (Küste/Meeresboden bleiben unberührt).
     /// `heightOffset` (x: -1..1, y: 0..1 Ersetzung durch -fadeTarget) senkt das
     /// Feld ∝ magnitude — Rinnen CARVEN dann netto, statt Grate aufzuschütten.
+    ///
+    /// Leere oder zu kleine Gitter (`n <= 1`), Pufferlängen-Mismatches sowie
+    /// nicht-endliche Meereshöhen werden defensiv abgefangen (No-op).
     public static func apply(
         h: inout [Double], n: Int, sea: Double,
         seedOffsetX: Double, seedOffsetY: Double,
         params: Params, heightOffset: (Double, Double) = (-0.35, 0.5)
     ) {
+        guard n > 1, h.count == n * n, sea.isFinite else { return }
         let count = n * n
-        precondition(h.count == count)
         let src = h // Steigungen aus dem Eingangsfeld (Filter ist punkt-unabhängig)
         var peak = sea + 0.1
-        for k in 0..<count { peak = max(peak, src[k]) }
+        for k in 0..<count {
+            let v = src[k]
+            if v.isFinite { peak = max(peak, v) }
+        }
         let valley = sea
         let scaleUV = Double(n - 1) * 0.5 // zentrale Differenz → dh/duv
 
         var out = [Double](repeating: 0, count: count)
         out.withUnsafeMutableBufferPointer { outBuf in
             src.withUnsafeBufferPointer { s in
-                let outPtr = outBuf.baseAddress!
-                let sp = s.baseAddress!
+                guard let outPtr = outBuf.baseAddress,
+                      let sp = s.baseAddress else { return }
                 DispatchQueue.concurrentPerform(iterations: n) { j in
                     let inv = 1.0 / Double(n - 1)
                     for i in 0..<n {
@@ -214,7 +235,7 @@ public enum ErosionFilter {
                         let jD = max(j - 1, 0), jU = min(j + 1, n - 1)
                         let sx = (sp[j * n + iR] - sp[j * n + iL]) * scaleUV
                         let sy = (sp[jU * n + i] - sp[jD * n + i]) * scaleUV
-                        let fade = min(max((hv - valley) / (peak - valley) * 2 - 1, -1), 1)
+                        let fade = min(1, max(-1, (hv - valley) / (peak - valley) * 2 - 1))
                         let e = evaluate(px: Double(i) * inv + seedOffsetX,
                                          py: Double(j) * inv + seedOffsetY,
                                          h: hv, sx: sx, sy: sy,
