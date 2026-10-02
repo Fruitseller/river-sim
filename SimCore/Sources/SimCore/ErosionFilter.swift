@@ -104,6 +104,24 @@ public enum ErosionFilter {
         public var cellScale = 0.7      // Phacelle-Zellgröße relativ zur Streifenbreite
         public var normalization = 0.5
         public init() {}
+
+        /// Prüft, ob alle Parameter endlich und innerhalb gültiger Wertebereiche liegen.
+        public var isValid: Bool {
+            strength.isFinite &&
+            gullyWeight.isFinite &&
+            detail.isFinite &&
+            rounding.0.isFinite && rounding.1.isFinite && rounding.2.isFinite && rounding.3.isFinite &&
+            onset.0.isFinite && onset.1.isFinite && onset.2.isFinite && onset.3.isFinite &&
+            assumedSlope.0.isFinite && assumedSlope.1.isFinite &&
+            scale.isFinite && scale > 0 &&
+            octaves > 0 &&
+            lacunarity.isFinite &&
+            gain.isFinite &&
+            cellScale.isFinite && cellScale > 0 &&
+            normalization.isFinite &&
+            (scale * cellScale) > 0 &&
+            (1.0 / (scale * cellScale)).isFinite
+        }
     }
 
     // MARK: - Kern (Port von ErosionFilter aus Buffer A)
@@ -113,24 +131,27 @@ public enum ErosionFilter {
     /// Rückgabe: Höhen-Delta, Steigungs-Delta, Gesamt-Magnitude, RidgeMap
     /// (-1 Kerbe … 1 Grat — dendritische Drainage-Linien bei -1).
     ///
-    /// Nicht-endliche Koordinaten oder ungültige Skalierungs-Parameter (`scale <= 0`,
-    /// `cellScale <= 0`, `octaves <= 0`) liefern defensiv Null-Deltas.
+    /// Nicht-endliche Koordinaten oder Steigungen, ungültige Skalierungs-Parameter
+    /// (`scale <= 0`, `cellScale <= 0`, `octaves <= 0`, unterlaufendes `scale * cellScale`)
+    /// oder nicht-endliche Filterparameter liefern defensiv Null-Deltas.
     public static func evaluate(
         px: Double, py: Double, h: Double, sx: Double, sy: Double,
         fadeTarget fadeTargetIn: Double, p: Params
     ) -> (dh: Double, dsx: Double, dsy: Double, magnitude: Double, ridgeMap: Double) {
         guard px.isFinite && py.isFinite && h.isFinite && sx.isFinite && sy.isFinite,
-              p.scale.isFinite && p.scale > 0,
-              p.cellScale.isFinite && p.cellScale > 0,
-              p.octaves > 0 else {
+              p.isValid else {
             return (0, 0, 0, 0, 0)
         }
+        let denom = p.scale * p.cellScale
+        guard denom > 0 else { return (0, 0, 0, 0, 0) }
+        var freq = 1.0 / denom
+        guard freq.isFinite else { return (0, 0, 0, 0, 0) }
         let strength0 = p.strength * p.scale
+        guard strength0.isFinite else { return (0, 0, 0, 0, 0) }
         var fadeTarget = min(1, max(-1, fadeTargetIn))
 
         var hs = (h, sx, sy)
         let h0 = hs
-        var freq = 1.0 / (p.scale * p.cellScale)
         let slopeLength = max(1e-10, (sx * sx + sy * sy).squareRoot())
         var magnitude = 0.0
         var roundingMult = 1.0
@@ -147,6 +168,7 @@ public enum ErosionFilter {
         var gsy = sy + (sy / slopeLength * p.assumedSlope.0 - sy) * p.assumedSlope.1
 
         for _ in 0..<p.octaves {
+            guard freq.isFinite && strength.isFinite && roundingMult.isFinite else { break }
             let gl = max(1e-10, (gsx * gsx + gsy * gsy).squareRoot())
             let ph = phacelle(px: px * freq, py: py * freq,
                               dirX: gsx / gl, dirY: gsy / gl,
@@ -187,7 +209,13 @@ public enum ErosionFilter {
         }
 
         let ridgeMap = ridgeMapFadeTarget * (1.0 - ridgeMapCombiMask)
-        return (hs.0 - h0.0, hs.1 - h0.1, hs.2 - h0.2, magnitude, ridgeMap)
+        let dh = hs.0 - h0.0
+        let dsx = hs.1 - h0.1
+        let dsy = hs.2 - h0.2
+        guard dh.isFinite && dsx.isFinite && dsy.isFinite && magnitude.isFinite && ridgeMap.isFinite else {
+            return (0, 0, 0, 0, 0)
+        }
+        return (dh, dsx, dsy, magnitude, ridgeMap)
     }
 
     // MARK: - Anwendung aufs Höhenfeld (Pre-Erosion bei der Generierung)
@@ -199,14 +227,16 @@ public enum ErosionFilter {
     /// `heightOffset` (x: -1..1, y: 0..1 Ersetzung durch -fadeTarget) senkt das
     /// Feld ∝ magnitude — Rinnen CARVEN dann netto, statt Grate aufzuschütten.
     ///
-    /// Leere oder zu kleine Gitter (`n <= 1`), Pufferlängen-Mismatches sowie
-    /// nicht-endliche Meereshöhen werden defensiv abgefangen (No-op).
+    /// Degenerierte Gitter (`n <= 1`) sowie nicht-endliche Meereshöhen werden
+    /// defensiv abgefangen (No-op). Ein Pufferlängen-Mismatch (`h.count != n * n`)
+    /// bricht per `precondition` ab.
     public static func apply(
         h: inout [Double], n: Int, sea: Double,
         seedOffsetX: Double, seedOffsetY: Double,
         params: Params, heightOffset: (Double, Double) = (-0.35, 0.5)
     ) {
-        guard n > 1, h.count == n * n, sea.isFinite else { return }
+        precondition(h.count == n * n, "Höhenfeld muss exakt n*n Elemente haben")
+        guard n > 1, sea.isFinite else { return }
         let count = n * n
         let src = h // Steigungen aus dem Eingangsfeld (Filter ist punkt-unabhängig)
         var peak = sea + 0.1

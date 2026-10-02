@@ -27,9 +27,8 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(h1, h2, "apply muss deterministisch sein")
     }
 
-    /// Leere oder degenerierte Gitter (n <= 1), Puffer-Mismatches sowie
-    /// nicht-endliche Meereshöhen dürfen zu keinem Absturz führen und belassen
-    /// das Höhenfeld unverändert.
+    /// Leere oder degenerierte Gitter (n <= 1) sowie nicht-endliche Meereshöhen
+    /// dürfen zu keinem Absturz führen und belassen das Höhenfeld unverändert.
     func testApplyHandlesEmptyAndDegenerateGridsSafely() {
         let p = ErosionFilter.Params()
 
@@ -40,10 +39,6 @@ final class ErosionFilterTests: XCTestCase {
         var single = [0.42]
         ErosionFilter.apply(h: &single, n: 1, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0, params: p)
         XCTAssertEqual(single, [0.42], "n = 1 darf Höhenfeld nicht verändern")
-
-        var mismatch = [0.1, 0.2, 0.3]
-        ErosionFilter.apply(h: &mismatch, n: 4, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0, params: p)
-        XCTAssertEqual(mismatch, [0.1, 0.2, 0.3], "Mismatch der Arraygröße muss No-op sein")
 
         let n = 4
         var valid = [Double](repeating: 0.5, count: n * n)
@@ -91,6 +86,55 @@ final class ErosionFilterTests: XCTestCase {
         p.octaves = -3
         let negOctaves = ErosionFilter.evaluate(px: 0, py: 0, h: 0.5, sx: 0, sy: 0, fadeTarget: 0, p: p)
         XCTAssertEqual(negOctaves.dh, 0)
+
+        // scale * cellScale unterläuft auf 0 -> freq = inf darf kein NaN erzeugen
+        p = ErosionFilter.Params()
+        p.scale = 1e-300
+        p.cellScale = 1e-300
+        let underflow = ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p)
+        XCTAssertEqual(underflow.dh, 0)
+        XCTAssertEqual(underflow.dsx, 0)
+        XCTAssertEqual(underflow.dsy, 0)
+        XCTAssertEqual(underflow.magnitude, 0)
+        XCTAssertEqual(underflow.ridgeMap, 0)
+
+        // Nicht-endliche skalare Parameter
+        p = ErosionFilter.Params()
+        p.strength = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        p = ErosionFilter.Params()
+        p.gain = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        p = ErosionFilter.Params()
+        p.lacunarity = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        p = ErosionFilter.Params()
+        p.normalization = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        p = ErosionFilter.Params()
+        p.gullyWeight = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        p = ErosionFilter.Params()
+        p.detail = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        // Nicht-endliche Tupel-Parameter
+        p = ErosionFilter.Params()
+        p.rounding.0 = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        p = ErosionFilter.Params()
+        p.onset.2 = .infinity
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
+
+        p = ErosionFilter.Params()
+        p.assumedSlope.1 = .nan
+        XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
     }
 
     /// NaN-Werte in fadeTarget werden über die Klemme `min(1, max(-1, ...))`
@@ -106,7 +150,8 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertTrue(result.ridgeMap.isFinite, "ridgeMap muss endlich sein")
     }
 
-    /// Nicht-endliche Höhenwerte im Eingangsfeld führen bei `apply` zu keinem Abbruch.
+    /// Nicht-endliche Höhenwerte im Eingangsfeld führen bei `apply` zu keinem Abbruch
+    /// und vergiften benachbarte endliche Zellen nicht (Nicht-Kontagion).
     func testApplyWithNonFiniteHeightsDoesNotTrap() {
         let n = 4
         var h = [Double](repeating: 0.5, count: n * n)
@@ -116,5 +161,10 @@ final class ErosionFilterTests: XCTestCase {
 
         ErosionFilter.apply(h: &h, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0, params: p)
         XCTAssertEqual(h.count, n * n)
+        XCTAssertTrue(h[3].isNaN, "NaN-Zelle muss NaN bleiben")
+        XCTAssertEqual(h[7], Double.infinity, "inf-Zelle muss unendlich bleiben")
+        for k in 0..<(n * n) where k != 3 && k != 7 {
+            XCTAssertTrue(h[k].isFinite, "Endliche Nachbarzelle \(k) darf nicht vergiftet werden")
+        }
     }
 }
