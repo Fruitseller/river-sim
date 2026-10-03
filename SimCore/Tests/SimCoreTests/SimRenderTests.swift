@@ -188,14 +188,24 @@ final class SimRenderTests: XCTestCase {
     let ribbonRenderer = RiverRibbonRenderer()
     let waterRenderer = WaterFieldRenderer()
 
+    // Basis ohne Kanäle als Referenz: übersprungene Kanäle dürfen das Wasserfeld
+    // nicht verändern (bei geometryMode: false stempeln gültige Kanäle in das Feld).
+    let bytesOhneKanal = waterRenderer.bytes(
+      terrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesOhneKanal.count, terrain.cfg.count * 4)
+
     let nodes = [
       MeanderNode(x: 10, z: 10),
       MeanderNode(x: 15, z: 15),
       MeanderNode(x: 20, z: 20)
     ]
 
-    // 1. Kanal mit unvollständigem Abflusspuffer (discharge.count < nodes.count)
-    let truncatedChannel = RiverChannel(nodes: nodes, discharge: [500.0])
+    // 1. Kanal mit unvollständigem Abflusspuffer (discharge.count < nodes.count).
+    // Gültig konstruieren (RiverChannel.init erzwingt nodes.count == discharge.count),
+    // danach discharge verkürzen, um den Renderer-Guard zu testen.
+    var truncatedChannel = RiverChannel(nodes: nodes, discharge: [500.0, 500.0, 500.0])
+    truncatedChannel.discharge = [500.0]
     terrain.meander.channels = [truncatedChannel]
 
     let meshTruncated = ribbonRenderer.build(terrain, hscale: 24, lift: 0.35)
@@ -205,6 +215,7 @@ final class SimRenderTests: XCTestCase {
       terrain, blend: 1.0, geometryMode: false,
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytesTruncated.count, terrain.cfg.count * 4)
+    XCTAssertEqual(bytesTruncated, bytesOhneKanal, "Kanal mit zu kurzem Abflusspuffer darf nicht gestempelt werden")
 
     // 2. Kanal mit nicht-endlichem Abfluss (NaN / Unendlich)
     let nanChannel = RiverChannel(nodes: nodes, discharge: [500.0, Double.nan, 500.0])
@@ -217,6 +228,7 @@ final class SimRenderTests: XCTestCase {
       terrain, blend: 1.0, geometryMode: false,
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytesNan.count, terrain.cfg.count * 4)
+    XCTAssertEqual(bytesNan, bytesOhneKanal, "Kanal mit NaN-Abfluss darf nicht gestempelt werden")
 
     let infChannel = RiverChannel(nodes: nodes, discharge: [500.0, Double.infinity, 500.0])
     terrain.meander.channels = [infChannel]
@@ -228,5 +240,6 @@ final class SimRenderTests: XCTestCase {
       terrain, blend: 1.0, geometryMode: false,
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytesInf.count, terrain.cfg.count * 4)
+    XCTAssertEqual(bytesInf, bytesOhneKanal, "Kanal mit inf-Abfluss darf nicht gestempelt werden")
   }
 }
