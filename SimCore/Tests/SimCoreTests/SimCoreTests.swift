@@ -537,10 +537,11 @@ final class SimCoreTests: XCTestCase {
         XCTAssertEqual(c.cellSize, 112.4789 / 719.0)
         XCTAssertEqual(c.count, 720 * 720)
 
-        // n <= 1: leere oder 1-Punkt-Gitter haben keine Schrittweite und keine mehrzelligen Gitterpunkte
+        // n <= 1: leere oder 1-Punkt-Gitter haben keine Schrittweite; das 1×1-Gitter
+        // hat aber genau einen Punkt (Puffergröße muss zu idx(0,0) passen)
         c.n = 1
         XCTAssertEqual(c.cellSize, 0.0, "n = 1 darf nicht durch 0 teilen")
-        XCTAssertEqual(c.count, 0, "n = 1 liefert defensiv 0 Gitterpunkte")
+        XCTAssertEqual(c.count, 1, "n = 1 hat genau einen Gitterpunkt")
         c.n = 0
         XCTAssertEqual(c.cellSize, 0.0, "n = 0 darf keine negative Zellgröße liefern")
         XCTAssertEqual(c.count, 0, "n = 0 liefert 0 Gitterpunkte")
