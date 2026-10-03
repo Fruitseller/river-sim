@@ -137,6 +137,48 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
     }
 
+    /// Endliche, aber extreme Parameter passieren `Params.isValid` und laufen
+    /// erst in die Netze INNERHALB von `evaluate`: Stärke-Überlauf vor der
+    /// Schleife, Oktaven-Abbruch bei unendlicher Frequenz, Ausgangsprüfung.
+    func testEvaluateOverflowGuardsInsideTheFilter() {
+        // strength * scale läuft auf inf über -> Null-Deltas vor der Schleife.
+        var p = ErosionFilter.Params()
+        p.strength = 1e308
+        p.scale = 2
+        XCTAssertTrue(p.isValid)
+        let strengthOverflow = ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p)
+        XCTAssertEqual(strengthOverflow.dh, 0)
+        XCTAssertEqual(strengthOverflow.magnitude, 0)
+
+        // freq wird nach der ersten Oktave unendlich -> Abbruch; das Ergebnis
+        // ist damit exakt das einer einzigen Oktave und bleibt endlich.
+        p = ErosionFilter.Params()
+        p.lacunarity = .greatestFiniteMagnitude
+        XCTAssertTrue(p.isValid)
+        let broken = ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p)
+        p.octaves = 1
+        let single = ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p)
+        XCTAssertTrue(broken.dh.isFinite && broken.dsx.isFinite && broken.dsy.isFinite)
+        XCTAssertEqual(broken.magnitude, single.magnitude)
+        XCTAssertEqual(broken.dh, single.dh)
+        XCTAssertEqual(broken.dsx, single.dsx)
+        XCTAssertEqual(broken.dsy, single.dsy)
+        XCTAssertEqual(broken.ridgeMap, single.ridgeMap)
+
+        // strength0 bleibt endlich, die Summe über die Oktaven nicht ->
+        // die Ausgangsprüfung fällt auf Null-Deltas zurück.
+        p = ErosionFilter.Params()
+        p.strength = .greatestFiniteMagnitude
+        p.scale = 1
+        XCTAssertTrue(p.isValid)
+        let sumOverflow = ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p)
+        XCTAssertEqual(sumOverflow.dh, 0)
+        XCTAssertEqual(sumOverflow.dsx, 0)
+        XCTAssertEqual(sumOverflow.dsy, 0)
+        XCTAssertEqual(sumOverflow.magnitude, 0)
+        XCTAssertEqual(sumOverflow.ridgeMap, 0)
+    }
+
     /// NaN-Werte in fadeTarget werden über die Klemme `min(1, max(-1, ...))`
     /// sicher auf -1 gefaltet und führen zu keinen NaN-Rückgabewerten.
     func testFadeTargetClampOrderHandlesNanSafely() {
