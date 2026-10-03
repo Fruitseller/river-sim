@@ -1570,11 +1570,13 @@ public struct SimConfig: Sendable, Codable, Equatable {
         return world / Double(n - 1)
     }
 
-    /// Gesamtzahl der Gitterpunkte: `n * n`. Für leere oder degenerierte Gitter
-    /// (`n <= 1`) defensiv 0 (analog zu `cellSize`; verhindert positive Zellzahlen
-    /// bei negativen `n` sowie arithmetische Überläufe).
+    /// Gesamtzahl der Gitterpunkte: `n * n`. Für leere Gitter (`n <= 0`) und bei
+    /// Überlauf defensiv 0 (verhindert positive Zellzahlen bei negativen `n`).
+    /// Anders als `cellSize` bleibt `n == 1` gültig: ein 1×1-Gitter hat genau einen
+    /// Punkt, und die Puffer aus `Terrain(allocating:)` müssen zu `idx(i,j)` über
+    /// `0..<n` passen.
     public var count: Int {
-        guard n > 1 else { return 0 }
+        guard n > 0 else { return 0 }
         let (prod, overflow) = n.multipliedReportingOverflow(by: n)
         return overflow ? 0 : prod
     }
