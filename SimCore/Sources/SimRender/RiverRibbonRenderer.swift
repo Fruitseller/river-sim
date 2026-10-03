@@ -238,11 +238,13 @@ public final class RiverRibbonRenderer {
             let nodes = ch.nodes
             let m = nodes.count
             if m < 2 { continue }
-            // Kanäle mit nicht-endlichen oder extremen Koordinaten überspringen,
-            // um Double-to-Int-Konvertierungsfehler zu verhindern.
+            // Kanäle mit unvollständigem/nicht-endlichem Abfluss oder extremen Koordinaten
+            // überspringen, um OOB-Traps und Double-to-Int-Konvertierungsfehler zu verhindern.
+            guard ch.discharge.count >= m else { continue }
             guard !nodes.contains(where: {
                 !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
             }) else { continue }
+            guard !ch.discharge.prefix(m).contains(where: { !$0.isFinite || abs($0) > 1e9 }) else { continue }
             // Catmull-Rom-Subdivision der Zentrumslinie; Abfluss linear je Segment.
             var px: [Double] = [], pz: [Double] = [], pq: [Double] = []
             px.reserveCapacity(m * subdivisions)
@@ -841,6 +843,7 @@ public final class RiverRibbonRenderer {
             for stepIndex in 0...maxCells {
                 let t = Double(stepIndex)
                 let x = mouthX + ax * t, z = mouthZ + az * t
+                guard x.isFinite, z.isFinite, abs(x) < 1e9, abs(z) < 1e9 else { break }
                 let ci = Int(x.rounded()), cj = Int(z.rounded())
                 if ci < 0 || cj < 0 || ci >= n || cj >= n { break }
                 let k = cj * n + ci
