@@ -1469,7 +1469,8 @@ public final class Terrain {
                     // Sie wird in Pass 2 über die Schleifspur verteilt, deshalb
                     // steht sie hier im Scratch statt direkt im Gelände.
                     // q = Eisdicke × Oberflächen-Gefälle ist der Gleit-/Fluss-Proxy.
-                    if kEro > 0 && ph[k] > sea {
+                    // cellSize 0 (keine definierte Schrittweite): kein Gefälle, kein Schliff.
+                    if kEro > 0 && cs > 0 && ph[k] > sea {
                         let slope = w / cs
                         pero[k] = kEro * pow(ik * slope, mEro) * slope
                     } else {
