@@ -3628,8 +3628,9 @@ public final class Terrain {
     /// mit weichem Abfall-Gewicht w ∈ (0..1] auf.
     private func forEachBrushCell(gx: Double, gz: Double, radiusWorld: Double,
                                   _ body: (Int, Double) -> Void) {
+        // cellSize 0 (z. B. 1×1-Gitter): sonst 0/0 = NaN und Int(NaN) bricht ab.
         guard gx.isFinite && gz.isFinite && radiusWorld.isFinite,
-              abs(gx) < 1e9, abs(gz) < 1e9 else { return }
+              abs(gx) < 1e9, abs(gz) < 1e9, cfg.cellSize > 0 else { return }
         let rCells = radiusWorld / cfg.cellSize
         if rCells <= 0 || rCells > Double(n) { return }
         let r = Int(rCells.rounded(.up))
