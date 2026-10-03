@@ -186,13 +186,18 @@ final class SimRenderTests: XCTestCase {
   func testRenderersHandleChannelsWithMismatchedOrCorruptedDischarge() {
     let terrain = Terrain(config: renderConfig(n: 64), seed: 1337)
     let ribbonRenderer = RiverRibbonRenderer()
-    let waterRenderer = WaterFieldRenderer()
+    func renderWater() -> [UInt8] {
+      WaterFieldRenderer().bytes(
+        terrain, blend: 1.0, geometryMode: false,
+        bandChannelFlags: [], bandCoverage: [])
+    }
 
-    // Basis ohne Kanäle als Referenz: übersprungene Kanäle dürfen das Wasserfeld
-    // nicht verändern (bei geometryMode: false stempeln gültige Kanäle in das Feld).
-    let bytesOhneKanal = waterRenderer.bytes(
-      terrain, blend: 1.0, geometryMode: false,
-      bandChannelFlags: [], bandCoverage: [])
+    // Basis ohne Kanäle als Referenz: terrain.meander.channels explizit leeren,
+    // da Terrain(config:...) per seedMeander() bereits Kanäle anlegt.
+    // Übersprungene Kanäle dürfen das Wasserfeld nicht verändern
+    // (bei geometryMode: false stempeln gültige Kanäle in das Feld).
+    terrain.meander.channels = []
+    let bytesOhneKanal = renderWater()
     XCTAssertEqual(bytesOhneKanal.count, terrain.cfg.count * 4)
 
     let nodes = [
@@ -211,9 +216,7 @@ final class SimRenderTests: XCTestCase {
     let meshTruncated = ribbonRenderer.build(terrain, hscale: 24, lift: 0.35)
     XCTAssertTrue(meshTruncated.vertices.isEmpty, "Kanal mit zu kurzem Abflusspuffer muss übersprungen werden")
 
-    let bytesTruncated = waterRenderer.bytes(
-      terrain, blend: 1.0, geometryMode: false,
-      bandChannelFlags: [], bandCoverage: [])
+    let bytesTruncated = renderWater()
     XCTAssertEqual(bytesTruncated.count, terrain.cfg.count * 4)
     XCTAssertEqual(bytesTruncated, bytesOhneKanal, "Kanal mit zu kurzem Abflusspuffer darf nicht gestempelt werden")
 
@@ -224,9 +227,7 @@ final class SimRenderTests: XCTestCase {
     let meshNan = ribbonRenderer.build(terrain, hscale: 24, lift: 0.35)
     XCTAssertTrue(meshNan.vertices.isEmpty, "Kanal mit NaN-Abfluss muss übersprungen werden")
 
-    let bytesNan = waterRenderer.bytes(
-      terrain, blend: 1.0, geometryMode: false,
-      bandChannelFlags: [], bandCoverage: [])
+    let bytesNan = renderWater()
     XCTAssertEqual(bytesNan.count, terrain.cfg.count * 4)
     XCTAssertEqual(bytesNan, bytesOhneKanal, "Kanal mit NaN-Abfluss darf nicht gestempelt werden")
 
@@ -236,9 +237,7 @@ final class SimRenderTests: XCTestCase {
     let meshInf = ribbonRenderer.build(terrain, hscale: 24, lift: 0.35)
     XCTAssertTrue(meshInf.vertices.isEmpty, "Kanal mit inf-Abfluss muss übersprungen werden")
 
-    let bytesInf = waterRenderer.bytes(
-      terrain, blend: 1.0, geometryMode: false,
-      bandChannelFlags: [], bandCoverage: [])
+    let bytesInf = renderWater()
     XCTAssertEqual(bytesInf.count, terrain.cfg.count * 4)
     XCTAssertEqual(bytesInf, bytesOhneKanal, "Kanal mit inf-Abfluss darf nicht gestempelt werden")
   }
