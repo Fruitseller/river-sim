@@ -566,4 +566,19 @@ final class SimCoreTests: XCTestCase {
         c.world = -Double.infinity
         XCTAssertEqual(c.cellSize, 0.0)
     }
+
+    /// Regression: Pinsel auf einem 1×1-Gitter (`cellSize == 0`) mit Radius 0.
+    /// Ohne den `cellSize > 0`-Guard in `forEachBrushCell` ergab das
+    /// `0 / 0 = NaN`, und `Int(NaN)` brach den Prozess ab. Jetzt No-op.
+    func testBrushOnSinglePointGridIsNoOp() {
+        var c = SimConfig()
+        c.n = 1
+        XCTAssertEqual(c.cellSize, 0.0)
+        let t = Terrain(allocating: c, seed: 1)
+        let before = t.h
+        t.flatten(gx: 0, gz: 0, radiusWorld: 0, targetHeight: 0.5)
+        t.roughen(gx: 0, gz: 0, radiusWorld: 0)
+        t.sculpt(gx: 0, gz: 0, radiusWorld: 0, dir: 1)
+        XCTAssertEqual(t.h, before, "Pinsel ohne Schrittweite muss No-op sein")
+    }
 }
