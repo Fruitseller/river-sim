@@ -788,14 +788,19 @@ final class RiverDynamicsTests: XCTestCase {
         // und die Empfängerkette tatsächlich gelaufen wird.
         let area = [Double](repeating: 200_000.0, count: count)
 
-        // 1. Empfänger außerhalb des Gitters (r >= count oder r < 0) darf nicht trappen
+        // 1. Empfänger außerhalb des Gitters (r >= count oder r < 0) darf nicht trappen.
+        // Gültige Kette 0 → 1 → 2 → 999_999: nur Zelle 0 ist Quelle mit einer Spur von
+        // drei Zellen, die der Bounds-Guard beendet; alle übrigen Quellen enden nach
+        // einer Zelle (999_999 bzw. -1) und fallen als zu kurz heraus. Genau ein Lauf
+        // pinnt damit Flächen-Schwelle, Empfänger-Guard und das Verwerfen kurzer Spuren.
         var badReceiver = [Int32](repeating: 999_999, count: count)
-        badReceiver[0] = -1
+        badReceiver[0] = 1
+        badReceiver[1] = 2
+        badReceiver[count - 1] = -1
         let chOutOfBounds = MeanderState.traceChannels(
             config: c, h: h, hf: hf, area: area, receiver: badReceiver
         )
-        // Läuft sicher durch ohne Speicherverletzung
-        _ = chOutOfBounds
+        XCTAssertEqual(chOutOfBounds.count, 1)
 
         // 2. Mismatch der Pufferlängen liefert defensiv leeres Ergebnis
         let chMismatched = MeanderState.traceChannels(
