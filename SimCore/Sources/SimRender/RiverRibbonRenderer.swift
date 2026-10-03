@@ -595,7 +595,9 @@ public final class RiverRibbonRenderer {
     private func emitRibbon(_ samples: [RibbonSample], _ terrain: Terrain,
                             kind: Double, still: Bool,
                             hscale: Double, lift: Double) {
-        guard samples.count >= 2 else { return }
+        // cellSize 0 (keine definierte Schrittweite): kein Band, sonst 0/0 = NaN
+        // in den Kanten-Offsets.
+        guard samples.count >= 2, terrain.cfg.cellSize > 0 else { return }
         let n = terrain.cfg.n
         let cs = terrain.cfg.cellSize
         let half = terrain.cfg.world / 2
