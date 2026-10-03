@@ -1560,11 +1560,14 @@ public struct SimConfig: Sendable, Codable, Equatable {
 
     /// Zellgröße in Welteinheiten: `world / (n - 1)`.
     ///
-    /// Für leere oder degenerierte Gitter (`n <= 1`) sowie nicht-positive oder
-    /// nicht-endliche Welten defensiv 0 (verhindert negative Zellgrößen und Division
-    /// durch 0). Der Rückgabewert 0 dient als Sentinel für „kein gültiges Gitter“;
-    /// solche Konfigurationen dürfen nicht bis zu den Divisionen der Konsumenten
-    /// (z. B. `Terrain.brush` oder `RiverRibbonRenderer`) durchlaufen.
+    /// Der Rückgabewert 0 ist der Sentinel für „keine definierte Schrittweite“ und
+    /// deckt zwei getrennte Fälle ab (analog zu `count`):
+    /// - `n <= 0` sowie nicht-positive oder nicht-endliche Welten: ungültiges Gitter;
+    /// - `n == 1`: gültiges 1-Punkt-Gitter (`count == 1`), das nur keinen
+    ///   Punktabstand hat.
+    /// `cellSize == 0` ist deshalb KEIN Ungültig-Gate für die Config; wer durch
+    /// `cellSize` teilt (z. B. die Pinsel-Iteration in `Terrain`), prüft selbst auf
+    /// `> 0`.
     public var cellSize: Double {
         guard n > 1, world.isFinite, world > 0 else { return 0 }
         return world / Double(n - 1)
