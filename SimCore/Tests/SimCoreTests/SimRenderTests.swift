@@ -182,4 +182,51 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(populatedBuffers.colors.count, populated.cfg.count * 4)
     XCTAssertEqual(populatedBuffers.surfaces.count, populated.cfg.count * 4)
   }
+
+  func testRenderersHandleChannelsWithMismatchedOrCorruptedDischarge() {
+    let terrain = Terrain(config: renderConfig(n: 64), seed: 1337)
+    let ribbonRenderer = RiverRibbonRenderer()
+    let waterRenderer = WaterFieldRenderer()
+
+    let nodes = [
+      MeanderNode(x: 10, z: 10),
+      MeanderNode(x: 15, z: 15),
+      MeanderNode(x: 20, z: 20)
+    ]
+
+    // 1. Kanal mit unvollständigem Abflusspuffer (discharge.count < nodes.count)
+    let truncatedChannel = RiverChannel(nodes: nodes, discharge: [500.0])
+    terrain.meander.channels = [truncatedChannel]
+
+    let meshTruncated = ribbonRenderer.build(terrain, hscale: 24, lift: 0.35)
+    XCTAssertTrue(meshTruncated.vertices.isEmpty, "Kanal mit zu kurzem Abflusspuffer muss übersprungen werden")
+
+    let bytesTruncated = waterRenderer.bytes(
+      terrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesTruncated.count, terrain.cfg.count * 4)
+
+    // 2. Kanal mit nicht-endlichem Abfluss (NaN / Unendlich)
+    let nanChannel = RiverChannel(nodes: nodes, discharge: [500.0, Double.nan, 500.0])
+    terrain.meander.channels = [nanChannel]
+
+    let meshNan = ribbonRenderer.build(terrain, hscale: 24, lift: 0.35)
+    XCTAssertTrue(meshNan.vertices.isEmpty, "Kanal mit NaN-Abfluss muss übersprungen werden")
+
+    let bytesNan = waterRenderer.bytes(
+      terrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesNan.count, terrain.cfg.count * 4)
+
+    let infChannel = RiverChannel(nodes: nodes, discharge: [500.0, Double.infinity, 500.0])
+    terrain.meander.channels = [infChannel]
+
+    let meshInf = ribbonRenderer.build(terrain, hscale: 24, lift: 0.35)
+    XCTAssertTrue(meshInf.vertices.isEmpty, "Kanal mit inf-Abfluss muss übersprungen werden")
+
+    let bytesInf = waterRenderer.bytes(
+      terrain, blend: 1.0, geometryMode: false,
+      bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytesInf.count, terrain.cfg.count * 4)
+  }
 }

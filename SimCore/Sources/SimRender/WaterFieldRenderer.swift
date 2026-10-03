@@ -402,11 +402,13 @@ public final class WaterFieldRenderer {
         for (chIndex, ch) in (noMeanderPaint ? [] : terrain.meander.channels).enumerated() {
             let nodes = ch.nodes
             if nodes.count < 2 { continue }
-            // Kanäle mit nicht-endlichen oder extremen Koordinaten überspringen,
-            // um Double-to-Int-Konvertierungsfehler zu verhindern (analog RiverRibbonRenderer).
+            // Kanäle mit unvollständigem/nicht-endlichem Abfluss oder extremen Koordinaten
+            // überspringen, um OOB-Traps und Double-to-Int-Konvertierungsfehler zu verhindern (analog RiverRibbonRenderer).
+            guard ch.discharge.count >= nodes.count else { continue }
             guard !nodes.contains(where: {
                 !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
             }) else { continue }
+            guard !ch.discharge.prefix(nodes.count).contains(where: { !$0.isFinite || abs($0) > 1e9 }) else { continue }
             // Korridor nur unter einem ECHTEN Band (Bau-Ergebnis des letzten
             // Ribbon-Builds, s. Doc-Kommentar von `bytes`): Saum + Raster-Deckel.
             // Kanäle OHNE Band werden hier GAR NICHT gestempelt — ihr Wasser
