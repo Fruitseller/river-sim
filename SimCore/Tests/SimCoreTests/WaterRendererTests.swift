@@ -663,4 +663,29 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertGreaterThan(bytesOxbow[cell6 * 4 + 1], 0)
     XCTAssertEqual(bytesOxbow[cellClamp * 4 + 1], 0)
   }
+
+  /// Regression: ohne Schrittweite (`cellSize == 0`) gibt `emitRibbon` kein
+  /// Band aus. Ohne den `cellSize > 0`-Guard entstanden Kanten-Offsets aus
+  /// `0 / 0 = NaN`. Gegenprobe im selben Aufbau mit `world > 0`: derselbe
+  /// Altarm wird sehr wohl gebaut, das leere Mesh liegt also am Guard.
+  func testRibbonWithoutCellSpacingEmitsNothing() {
+    func oxbowMesh(world: Double) -> RibbonMesh {
+      var config = renderConfig(n: 16)
+      config.world = world
+      let terrain = Terrain(allocating: config, seed: 1337)
+      var state = terrain.state
+      state.h = [Double](repeating: 0.5, count: 16 * 16)
+      state.waterLevel = [Double](repeating: 0.51, count: 16 * 16)
+      terrain.restore(state)
+      terrain.meander.oxbows = [(0..<24).map { MeanderNode(x: Double($0 % 16), z: Double($0 % 16)) }]
+      terrain.meander.oxbowAge = [10.0]
+      return RiverRibbonRenderer().build(terrain, hscale: 24, lift: 0.35)
+    }
+    XCTAssertFalse(oxbowMesh(world: calibrationWorld).vertices.isEmpty,
+                   "Testaufbau: Altarm ergibt auch mit Schrittweite kein Band")
+    let mesh = oxbowMesh(world: 0)
+    XCTAssertTrue(mesh.vertices.isEmpty, "Band ohne Schrittweite emittiert")
+    XCTAssertTrue(mesh.indices.isEmpty)
+    XCTAssertTrue(mesh.stripStarts.isEmpty)
+  }
 }

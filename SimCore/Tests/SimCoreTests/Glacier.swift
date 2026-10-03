@@ -866,4 +866,38 @@ final class Glacier: XCTestCase {
         for k in 0..<c.count { worst = max(worst, abs(t.h[k] - (t.rock[k] + t.sed[k]))) }
         XCTAssertLessThan(worst, 1e-9, "Schichtbuchhaltung nach 200k Jahren kaputt")
     }
+
+    /// Regression: Schliff ohne Schrittweite (`cellSize == 0`, hier n = 3 mit
+    /// `world = 0`). Ohne den `cs > 0`-Guard in `iceFlowSubStep` wurde das
+    /// Gefälle `w / cs` unendlich und mit ihm die Schliff-Rate; das Bett fiel
+    /// dann um den vollen Teilschritt-Deckel. Jetzt schleift das Eis nicht:
+    /// das Bett ist bit-gleich zum Arm ganz ohne Erosion (`iceErodeK = 0`).
+    /// Ein 1×1-Gitter erreicht den Pfad nicht — am gespiegelten Rand ist das
+    /// Gefälle 0 und die Zelle eine Mulde —, deshalb n = 3. `iceEro` ist
+    /// `private`; geprüft wird seine einzige Wirkung, das Bett.
+    func testIceWithoutCellSpacingDoesNotGrind() {
+        func bedAfterIce(erodeK: Double) -> [Double] {
+            var c = SimConfig()
+            c.n = 3; c.world = 0
+            c.iceErodeK = erodeK
+            XCTAssertEqual(c.cellSize, 0.0)
+            let t = Terrain(allocating: c, seed: 1)
+            var s = t.state
+            // Gipfel mit Eis in der Mitte, Land ringsum, überall Frost (keine
+            // Schmelze, also keine Moräne, die das Bett ebenfalls anfasst).
+            s.h = [0.5, 0.5, 0.5, 0.5, 0.8, 0.5, 0.5, 0.5, 0.5]
+            s.rock = s.h
+            s.sed = .init(repeating: 0, count: 9)
+            s.ice = [0, 0, 0, 0, 0.1, 0, 0, 0, 0]
+            s.snow = .init(repeating: 0, count: 9)
+            s.temperature = .init(repeating: -5, count: 9)
+            t.restore(s)
+            t.updateIce(dt: 100)
+            return t.h
+        }
+        let ground = bedAfterIce(erodeK: 1e-4)
+        XCTAssertTrue(ground.allSatisfy(\.isFinite), "nicht-endliches Bett: \(ground)")
+        XCTAssertEqual(ground, bedAfterIce(erodeK: 0),
+                       "Eis ohne Schrittweite hat geschliffen")
+    }
 }
