@@ -28,6 +28,14 @@
 // `material_enabled` — wer `detail_enabled` abschaltet, um die Erosionsrinnen
 // zu isolieren, behält damit die Materialien.
 shader_type spatial;
+// Studien-PBR-Material: nur im FLUSSTAL_STUDY-Build eingebunden (Präprozessor).
+// Der normale Spiel-Shader überspringt Include UND Aufruf komplett — keine
+// Studien-Sampler in Produktion, und `studies/` darf verschoben werden, ohne
+// den Hauptshader zu brechen (Review zu #121). Flusstal.gd setzt das Define
+// zur Laufzeit vor diese Quelle (Godot 4.7 erlaubt #define vor shader_type).
+#ifdef FLUSSTAL_STUDY
+#include "res://studies/flusstal/materials.gdshaderinc"
+#endif
 render_mode cull_disabled;
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
@@ -431,7 +439,10 @@ void fragment() {
 	if (hval <= sea_level + 0.012) {
 		terr = macro_color;
 	}
-
+	// UNGESTÖRTE Makro-Normale sichern, bevor die Mikro-Normale sie verändert:
+	// die Studien-Materialfunktion braucht sie für Triplanar-Gewichte und
+	// Vorzeichenkorrektur ohne Mikro-Rauschen (Review zu #121).
+	vec3 macro_n = n_ws;
 	// Mikro-Normale aus drei Weltachsen. Ein einfacher Noise-Sample pro Achse
 	// genügt hier; drei weitere vollständige triplanare FBMs kosteten pro Pixel
 	// 27 unnötige Noise-Auswertungen.
@@ -461,6 +472,18 @@ void fragment() {
 	land_roughness = mix(land_roughness, 0.78, cold);
 	land_roughness = mix(land_roughness, 0.34, ice_hint);
 	land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
+	// Studien-Material nur im FLUSSTAL_STUDY-Build (Flusstal.gd setzt das
+	// Define zur Laufzeit) und NUR über Wasser: unterhalb der
+	// Meeresspiegel-Grenze bleibt das Flussbett bei der Standard-Optik, der
+	// helle mineralische FlussRAND über der Wasserlinie (Soča-Referenz,
+	// docs/graphics-quality.md) bleibt erhalten. Gate wie bei der Mikro-Normale.
+#ifdef FLUSSTAL_STUDY
+	if (study_enabled && hval > sea_level + 0.012) {
+		study_material(material_pos, cold, rock, vegetation, soil_w, macro_n,
+		               terr, n_ws, land_roughness);
+		NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
+	}
+#endif
 
 	if (debug_difference) {
 		terr = debug_color;
