@@ -63,6 +63,9 @@ extension Terrain {
     /// Abweichend von der Formel (`minCells <= 0` wäre sonst „alle Landzellen“)
     /// liefert `minCells <= 0` sowie nicht-endliche Werte (`NaN`, `infinity`)
     /// defensiv ein leeres Netz (alle Ordnungen 0).
+    /// Konfigurationen ohne definierte Schrittweite (`cellSize <= 0` bzw. nicht-endliche
+    /// Zellflächen) liefern analog ein leeres Netz (verhindert Division durch 0 und
+    /// fehlerhafte Vollnetze).
     /// Leere Terrains und Pufferlängen-Mismatches werden ebenfalls defensiv abgefangen.
     public func strahlerOrders(minCells: Double) -> [Int32] {
         let n = area.count
@@ -75,6 +78,11 @@ extension Terrain {
             return [Int32](repeating: 0, count: n)
         }
         let cellArea = cfg.cellSize * cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): kein Netz ohne Zellfläche,
+        // sonst area / 0 = inf >= minCells und fehlerhaftes Vollnetz.
+        guard cellArea > 0, cellArea.isFinite else {
+            return [Int32](repeating: 0, count: n)
+        }
         var net = [Bool](repeating: false, count: n)
         for k in 0..<n {
             net[k] = hf[k] > cfg.sea && area[k] / cellArea >= minCells
