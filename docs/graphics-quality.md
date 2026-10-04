@@ -222,6 +222,10 @@ Repository-Lizenz. Es gibt keine extern benötigte Blender-Datei.
   `.8557117403` und `.8033134284` gegen Grenze `.8` in
   `testSameTimeSameResultAcrossStepSizes`; Band-Alpha `.4450969` gegen `.4` in
   `testRibbonMeshIsPODDeterministicAndPhysicsNeutral`. Keine Toleranz wurde geändert.
+  Beide Tests laufen auf dem Stand von 2026-10-04 wieder grün (verifiziert, 0
+  failures). Die Lake-Schranke steht seit `b298fc8` bewusst bei 0.90 statt bei der
+  damals verletzten 0.8; dieser PR ändert SimCore nicht und damit keine dieser
+  Schranken.
 - Die Pflicht-Checks `test` und `godot-contract` in CI bleiben das Merge-Gate.
 - Die visuelle Bestätigung des Projekteigners steht noch aus.
 
