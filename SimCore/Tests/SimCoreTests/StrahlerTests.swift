@@ -147,4 +147,55 @@ final class StrahlerTests: XCTestCase {
         let negOrders = normal.strahlerOrders(minCells: -10)
         XCTAssertTrue(negOrders.allSatisfy { $0 == 0 }, "Negative Schwelle darf kein Netz ausweisen")
     }
+
+    /// Gitter ohne definierte Schrittweite (`cellSize == 0`, etwa bei `world <= 0`
+    /// oder 1×1-Gittern) dürfen kein fehlerhaftes Vollnetz durch Division durch 0
+    /// erzeugen, sondern liefern defensiv alle Ordnungen 0.
+    func testStrahlerOrdersWithoutCellSpacingReturnsZeroOrders() {
+        var c = cfg(n: 96)
+        c.world = 0
+        XCTAssertEqual(c.cellSize, 0.0)
+        let zeroWorld = Terrain(allocating: c, seed: 1234)
+        var s = zeroWorld.state
+        s.hf = [Double](repeating: c.sea + 0.1, count: c.count)
+        s.area = [Double](repeating: 100.0, count: c.count)
+        s.receiver = [Int32](repeating: -1, count: c.count)
+        zeroWorld.restore(s)
+        let zeroOrders = zeroWorld.strahlerOrders(minCells: 12)
+        XCTAssertEqual(zeroOrders.count, 96 * 96)
+        XCTAssertTrue(zeroOrders.allSatisfy { $0 == 0 },
+                      "Terrain mit world = 0 darf kein Netz ausweisen")
+
+        c.world = -10
+        XCTAssertEqual(c.cellSize, 0.0)
+        let negWorld = Terrain(allocating: c, seed: 1234)
+        negWorld.restore(s)
+        let negOrders = negWorld.strahlerOrders(minCells: 12)
+        XCTAssertEqual(negOrders.count, 96 * 96)
+        XCTAssertTrue(negOrders.allSatisfy { $0 == 0 },
+                      "Terrain mit world < 0 darf kein Netz ausweisen")
+
+        c.world = .nan
+        XCTAssertEqual(c.cellSize, 0.0)
+        let nanWorld = Terrain(allocating: c, seed: 1234)
+        nanWorld.restore(s)
+        let nanOrders = nanWorld.strahlerOrders(minCells: 12)
+        XCTAssertEqual(nanOrders.count, 96 * 96)
+        XCTAssertTrue(nanOrders.allSatisfy { $0 == 0 },
+                      "Terrain mit nicht-endlicher world darf kein Netz ausweisen")
+
+        var c1 = SimConfig()
+        c1.n = 1
+        XCTAssertEqual(c1.cellSize, 0.0)
+        let singlePoint = Terrain(allocating: c1, seed: 1234)
+        var s1 = singlePoint.state
+        s1.hf = [c1.sea + 0.1]
+        s1.area = [100.0]
+        s1.receiver = [-1]
+        singlePoint.restore(s1)
+        let singleOrders = singlePoint.strahlerOrders(minCells: 12)
+        XCTAssertEqual(singleOrders, [0],
+                      "1×1-Gitter ohne Schrittweite liefert Ordnung 0")
+    }
 }
+
