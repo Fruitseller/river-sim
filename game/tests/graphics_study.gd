@@ -55,6 +55,7 @@ func _initialize() -> void:
 		var b: ArrayMesh = meshes.tree(variant)
 		_check(a.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] == b.surface_get_arrays(0)[Mesh.ARRAY_VERTEX],
 			"Baumkrone muss reproduzierbar sein (Variante %d)" % variant)
+	_check_study_shader()
 	study.free()
 	if failures > 0:
 		quit(1)
@@ -66,3 +67,36 @@ func _check(value: bool, message: String) -> void:
 	if not value:
 		failures += 1
 		print("FAIL: ", message)
+
+## Der Studien-Shader wird zur Laufzeit aus der Produktionssource gebaut
+## (Flusstal.gd, #define FLUSSTAL_STUDY vor terrain.gdshader). Früher rutschte
+## ein stiller Include-Fehler durch, weil nichts den zusammengesetzten Code
+## kompilierte: das Material fiel auf Standard zurück und nur ein A/B-Bild
+## hätte es gezeigt. Diese Prüfung parst BEIDE Fassungen: der Produktions-
+## Shader darf die Studien-Sampler nicht kennen (er bindet studies/ nicht ein),
+## der Studien-Shader muss sie liefern. Ohne Uniforms = Kompilierungsfehler.
+func _check_study_shader() -> void:
+	var source: String = FileAccess.get_file_as_string("res://shaders/terrain.gdshader")
+	_check(not source.is_empty(), "terrain.gdshader muss lesbar sein")
+	var required := [
+		"study_enabled", "study_rock_color", "study_rock_normal", "study_rock_roughness",
+		"study_ground_color", "study_ground_normal", "study_ground_roughness",
+	]
+	var production := Shader.new()
+	production.code = source
+	var production_names := _uniform_names(production)
+	for name in required:
+		_check(not production_names.has(name),
+			"Produktions-Shader darf Studien-Uniform %s nicht binden" % name)
+	var study := Shader.new()
+	study.code = "#define FLUSSTAL_STUDY\n" + source
+	var study_names := _uniform_names(study)
+	for name in required:
+		_check(study_names.has(name),
+			"Studien-Shader muss Uniform %s liefern (Kompilierungsfehler?)" % name)
+
+func _uniform_names(shader: Shader) -> Dictionary:
+	var names := {}
+	for u in shader.get_shader_uniform_list():
+		names[u["name"]] = true
+	return names
