@@ -219,6 +219,9 @@ public final class RiverRibbonRenderer {
             }
         }
         let cs = terrain.cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): kein Band ohne Schrittweite,
+        // spart Catmull-Rom- und Stützpunkt-Interpolation mit NaN-Offsets ein.
+        guard cs > 0, cs.isFinite else { return mesh }
         let creek = terrain.cfg.renderMinCells
         let smap = terrain.streamMap
         // Strahler-Rang (D8-Netz ab Mäander-Schwelle): Rang-Maß für die

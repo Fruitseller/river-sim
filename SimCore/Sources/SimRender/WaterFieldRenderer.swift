@@ -109,6 +109,12 @@ public final class WaterFieldRenderer {
         if flowDetail.count != cnt { flowDetail = [UInt8](repeating: 0, count: cnt) }
         var out: [UInt8] = []; swap(&out, &flowDetail)
         defer { swap(&out, &flowDetail) }
+        // cellSize 0 (keine definierte Schrittweite): kein Detail-Overlay ohne Zellfläche,
+        // sonst pa[k] / 0 = inf und fehlerhafte Vollaussteuerung 255 auf allen Landzellen.
+        guard cellArea > 0, cellArea.isFinite else {
+            out.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+            return out
+        }
         out.withUnsafeMutableBufferPointer { ob in
         h.withUnsafeBufferPointer { hb in area.withUnsafeBufferPointer { ab in
             let po = ob.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
@@ -246,27 +252,31 @@ public final class WaterFieldRenderer {
         // entwässerte Ebenen als flächigen Wash. Nicht unter substanziellen Seen
         // (Tiefe > 0.03) malen: dort deckt die Seefläche.
         let smap = terrain.streamMap
-        // Per-Zelle unabhängig → parallel (bit-identisch zur sequenziellen Schleife).
-        sd.withUnsafeMutableBufferPointer { sdb in
-        h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
-        area.withUnsafeBufferPointer { ab in smap.withUnsafeBufferPointer { smb in
-            let psd = sdb.baseAddress!, ph = hb.baseAddress!, phf = hfb.baseAddress!
-            let pa = ab.baseAddress!, psm = smb.baseAddress!
-            parallelChunks(cnt) { lo, hi in
-                for k in lo..<hi where phf[k] > sea && ph[k] > sea
-                                       && phf[k] - ph[k] <= WaterRender.streamPondTolerance {
-                    let cu = pa[k] / cellArea
-                    if cu < creek { continue }
-                    // Track-Maske und Abfluss-Abstufung stehen im Kalibrier-
-                    // Vertrag (`WaterRender`) statt hier und werden zusammen mit
-                    // diesem ausführbaren Pfad headless geprüft (Issues #51/#82).
-                    let m = WaterRender.trackMask(streamMap: psm[k])
-                    if m <= 0 { continue }
-                    psd[k] = WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
-                        * WaterRender.trackWeight(mask: m)
+        // cellSize 0 (keine definierte Schrittweite): keine Fluss-Intensität ohne Zellfläche,
+        // sonst pa[k] / 0 = inf >= creek und fehlerhafte Vollaussteuerung auf allen Stream-Map-Zellen.
+        if cellArea > 0, cellArea.isFinite {
+            // Per-Zelle unabhängig → parallel (bit-identisch zur sequenziellen Schleife).
+            sd.withUnsafeMutableBufferPointer { sdb in
+            h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
+            area.withUnsafeBufferPointer { ab in smap.withUnsafeBufferPointer { smb in
+                let psd = sdb.baseAddress!, ph = hb.baseAddress!, phf = hfb.baseAddress!
+                let pa = ab.baseAddress!, psm = smb.baseAddress!
+                parallelChunks(cnt) { lo, hi in
+                    for k in lo..<hi where phf[k] > sea && ph[k] > sea
+                                           && phf[k] - ph[k] <= WaterRender.streamPondTolerance {
+                        let cu = pa[k] / cellArea
+                        if cu < creek { continue }
+                        // Track-Maske und Abfluss-Abstufung stehen im Kalibrier-
+                        // Vertrag (`WaterRender`) statt hier und werden zusammen mit
+                        // diesem ausführbaren Pfad headless geprüft (Issues #51/#82).
+                        let m = WaterRender.trackMask(streamMap: psm[k])
+                        if m <= 0 { continue }
+                        psd[k] = WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
+                            * WaterRender.trackWeight(mask: m)
+                    }
                 }
-            }
-        }}}}}
+            }}}}}
+        }
         // WASSERSPIEGEL-BEWUSST dilatieren: Wasser verbreitert sich nur auf Zellen,
         // deren Bett NAHE am WASSERSPIEGEL (hf) des Nachbarlaufs liegt
         // (|Δ| < barTol, barTol < braidBarHeight — Begründung der Symmetrie am
@@ -620,6 +630,7 @@ public final class WaterFieldRenderer {
                             if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
                             let dist = (di * di + dj * dj == 2)
                                 ? cellDiagonal : terrain.cfg.cellSize
+                            guard dist > 0 else { continue }
                             maxSlope = max(maxSlope,
                                            abs(h[k] - h[nj * n + ni]) / dist)
                         }

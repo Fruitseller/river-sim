@@ -688,4 +688,53 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertTrue(mesh.indices.isEmpty)
     XCTAssertTrue(mesh.stripStarts.isEmpty)
   }
+
+  /// Regression: ohne definierte Schrittweite (`cellSize == 0`, etwa bei `world <= 0`)
+  /// erzeugt `WaterFieldRenderer` weder Fluss-Intensität im R-Kanal des Wasserfelds
+  /// noch Voll-Aussteuerung (255) im Flow-Detail-Feld durch ungesicherte Division
+  /// durch 0 (`pa[k] / cellArea = +infinity`).
+  func testWaterFieldWithoutCellSpacingEmitsNoRiverFlow() {
+    var config = renderConfig(n: 16)
+    config.world = 0
+    XCTAssertEqual(config.cellSize, 0.0)
+    let terrain = Terrain(allocating: config, seed: 1337)
+    var state = terrain.state
+    state.h = [Double](repeating: config.sea + 0.5, count: 16 * 16)
+    state.waterLevel = state.h // trocken, kein See
+    state.areaMFD = [Double](repeating: 50_000.0, count: 16 * 16)
+    state.streamMap = [Double](repeating: 1.0, count: 16 * 16)
+    terrain.restore(state)
+
+    let renderer = WaterFieldRenderer()
+
+    // 1. flowDetailField muss komplett 0 sein (ohne Zellfläche kein Abfluss-Detail)
+    let detail = renderer.flowDetailField(terrain)
+    XCTAssertEqual(detail.count, 16 * 16)
+    XCTAssertTrue(detail.allSatisfy { $0 == 0 },
+                  "Ohne Schrittweite darf kein Flow-Detail ausgesteuert werden")
+
+    // 2. bytes() darf im R-Kanal (Fluss-Intensität) keine Flussbänder zeichnen
+    let bytes = renderer.bytes(terrain, blend: 1.0, geometryMode: false,
+                               bandChannelFlags: [], bandCoverage: [])
+    XCTAssertEqual(bytes.count, 16 * 16 * 4)
+    for k in 0..<(16 * 16) {
+      XCTAssertEqual(bytes[k * 4], 0,
+                     "Ohne Schrittweite darf im R-Kanal kein Fluss gezeichnet werden")
+    }
+
+    // Gegenprobe mit gültiger Weltgröße: Derselbe Zustand steuert Fluss-Intensität aus
+    var normalConfig = renderConfig(n: 16)
+    normalConfig.world = calibrationWorld
+    let normalTerrain = Terrain(allocating: normalConfig, seed: 1337)
+    normalTerrain.restore(state)
+    let normalDetail = renderer.flowDetailField(normalTerrain)
+    XCTAssertFalse(normalDetail.allSatisfy { $0 == 0 },
+                   "Gegenprobe: Mit gültiger Schrittweite muss Flow-Detail aktiv sein")
+    let normalBytes = renderer.bytes(normalTerrain, blend: 1.0, geometryMode: false,
+                                     bandChannelFlags: [], bandCoverage: [])
+    var hasStream = false
+    for k in 0..<(16 * 16) where normalBytes[k * 4] > 0 { hasStream = true; break }
+    XCTAssertTrue(hasStream,
+                  "Gegenprobe: Mit gültiger Schrittweite muss Fluss im R-Kanal gezeichnet werden")
+  }
 }
