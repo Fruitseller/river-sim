@@ -90,13 +90,18 @@ public final class TreeInstanceRenderer {
     /// `coverage` ist reine Darstellung: 1 = reduziert, 2 = voll. Jitter,
     /// Varianten-Wahl, Größe und Verdünnung kommen deterministisch aus dem
     /// (i,j)-Hash; weder Sim-Zustand noch Rebuild-Reihenfolge beeinflussen ihn.
-    /// Nicht-positive Abdeckung (`coverage <= 0`) sowie nicht-positive,
-    /// nicht-endliche oder extreme `hscale`-Werte liefern defensiv einen leeren Puffer.
+    /// Nicht-positive Abdeckung (`coverage <= 0`), nicht-positive,
+    /// nicht-endliche oder extreme `hscale`-Werte sowie Konfigurationen ohne definierte
+    /// Schrittweite (`cellSize <= 0`) liefern defensiv einen leeren Puffer.
     public func buffer(_ terrain: Terrain, variant: Int, hscale: Double,
                        coverage: Int) -> [Float] {
         guard variant >= 0 && variant <= 2 else { return [] }
         guard coverage > 0 else { return [] }
         guard hscale.isFinite, hscale > 0, hscale < 1e9 else { return [] }
+        // cellSize 0 (keine definierte Schrittweite): ohne Raumkoordinaten keine
+        // 3D-Bäume; verhindert Positionskollaps aller Instanzen auf (-half, -half)
+        // bzw. nicht-endliche Werte im MultiMesh bei ungültiger Weltgröße.
+        guard terrain.cfg.cellSize > 0 else { return [] }
         let n = terrain.cfg.n
         // n <= 12 hat keinen Platz für den 6-Zellen-Küstenabstand (stride from: 6 to: n - 6 by: 3).
         // n == 0 ist der etablierte Vertrag für leere Texturen/Puffer (vgl. #122, #123, #124).
