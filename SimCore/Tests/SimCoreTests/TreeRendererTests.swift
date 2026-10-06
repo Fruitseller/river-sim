@@ -97,6 +97,47 @@ final class TreeRendererTests: XCTestCase {
                        "RenderState muss für hscale == 0 leeren Puffer liefern")
     }
 
+    /// Gitter ohne definierte Schrittweite (`cellSize == 0`, etwa bei `world <= 0`
+    /// oder nicht-endlicher Weltgröße) liefern defensiv einen leeren Puffer,
+    /// um Positionskollaps oder NaN-Werte im MultiMesh zu verhindern.
+    func testTreeBufferWithoutCellSpacingReturnsEmptyBuffer() {
+        let normalTerrain = Terrain(config: renderConfig(), seed: 1337)
+        let populatedState = normalTerrain.state
+        let renderer = TreeInstanceRenderer()
+        let renderState = RenderState()
+
+        // Vorbedingung der Gegenprobe: mit normaler Weltgröße existieren Bäume
+        XCTAssertFalse(renderer.buffer(normalTerrain, variant: 0, hscale: 24, coverage: 2).isEmpty,
+                       "Vorbedingung: Normales Terrain muss Bäume erzeugen")
+
+        var c = renderConfig()
+        c.world = 0
+        XCTAssertEqual(c.cellSize, 0.0)
+        let zeroWorld = Terrain(allocating: c, seed: 1337)
+        zeroWorld.restore(populatedState)
+
+        for variant in 0...2 {
+            XCTAssertEqual(renderer.buffer(zeroWorld, variant: variant, hscale: 24, coverage: 2), [],
+                           "Terrain mit world = 0 muss für Variante \(variant) leeren Puffer liefern")
+        }
+        XCTAssertEqual(renderState.treeInstanceBuffer(zeroWorld, variant: 0, hscale: 24, coverage: 2), [],
+                       "RenderState muss für world = 0 leeren Puffer liefern")
+
+        c.world = -10
+        XCTAssertEqual(c.cellSize, 0.0)
+        let negWorld = Terrain(allocating: c, seed: 1337)
+        negWorld.restore(populatedState)
+        XCTAssertEqual(renderer.buffer(negWorld, variant: 0, hscale: 24, coverage: 2), [],
+                       "Terrain mit world < 0 muss leeren Puffer liefern")
+
+        c.world = .nan
+        XCTAssertEqual(c.cellSize, 0.0)
+        let nanWorld = Terrain(allocating: c, seed: 1337)
+        nanWorld.restore(populatedState)
+        XCTAssertEqual(renderer.buffer(nanWorld, variant: 0, hscale: 24, coverage: 2), [],
+                       "Terrain mit world = NaN muss leeren Puffer liefern")
+    }
+
     /// Nicht-endliche Werte (NaN, ±inf) im Vegetationsfeld müssen als maximale
     /// Änderung (Sentinel 1.0) gewertet werden und einen Rebuild erzwingen.
     /// Persistente Nicht-Endlichkeit erzwingt dauerhaft den Rebuild, bis der
