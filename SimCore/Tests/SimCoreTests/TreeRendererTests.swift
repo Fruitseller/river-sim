@@ -130,6 +130,13 @@ final class TreeRendererTests: XCTestCase {
         XCTAssertEqual(renderer.buffer(negWorld, variant: 0, hscale: 24, coverage: 2), [],
                        "Terrain mit world < 0 muss leeren Puffer liefern")
 
+        c.world = .infinity
+        XCTAssertEqual(c.cellSize, 0.0)
+        let infWorld = Terrain(allocating: c, seed: 1337)
+        infWorld.restore(populatedState)
+        XCTAssertEqual(renderer.buffer(infWorld, variant: 0, hscale: 24, coverage: 2), [],
+                       "Terrain mit world = .infinity muss leeren Puffer liefern")
+
         c.world = .nan
         XCTAssertEqual(c.cellSize, 0.0)
         let nanWorld = Terrain(allocating: c, seed: 1337)
