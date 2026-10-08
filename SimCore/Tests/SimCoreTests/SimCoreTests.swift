@@ -581,4 +581,75 @@ final class SimCoreTests: XCTestCase {
         t.sculpt(gx: 0, gz: 0, radiusWorld: 0, dir: 1)
         XCTAssertEqual(t.h, before, "Pinsel ohne Schrittweite muss No-op sein")
     }
+
+    /// Regression: Auslass-Inzision und fluviale Bettprozesse ohne definierte
+    /// Schrittweite (`cellSize == 0`, z. B. bei `world <= 0` oder nicht-endlicher Welt)
+    /// dürfen nicht durch 0 teilen und Höhen nicht mit NaN vergiften.
+    func testFluvialIncisionWithoutCellSpacingDoesNotPoisonHeightsWithNaN() {
+        var c = SimConfig()
+        c.n = 16
+        c.world = 0
+        XCTAssertEqual(c.cellSize, 0.0)
+        let t = Terrain(allocating: c, seed: 1337)
+        var s = t.state
+        for j in 0..<16 {
+            for i in 0..<16 {
+                let k = j * 16 + i
+                s.h[k] = c.sea + 0.1 + Double(16 - 1 - j) * 0.02
+                s.rock[k] = s.h[k]
+                s.sed[k] = 0.0
+                s.area[k] = Double(k + 1) * 100.0
+                s.receiver[k] = j < 15 ? Int32((j + 1) * 16 + i) : -1
+            }
+        }
+        s.hf = s.h
+        t.restore(s)
+
+        t.step(dtYears: 100)
+        XCTAssertTrue(t.h.allSatisfy { $0.isFinite },
+                      "Höhen dürfen nach step() ohne Schrittweite keine NaNs/Infs enthalten")
+        XCTAssertTrue(t.rock.allSatisfy { $0.isFinite },
+                      "Fels darf nach step() ohne Schrittweite keine NaNs/Infs enthalten")
+        XCTAssertTrue(t.sed.allSatisfy { $0.isFinite },
+                      "Sediment darf nach step() ohne Schrittweite keine NaNs/Infs enthalten")
+
+        for badWorld in [-10.0, Double.nan, Double.infinity] {
+            var cBad = c
+            cBad.world = badWorld
+            XCTAssertEqual(cBad.cellSize, 0.0)
+            let tBad = Terrain(allocating: cBad, seed: 1337)
+            tBad.restore(s)
+            tBad.step(dtYears: 100)
+            XCTAssertTrue(tBad.h.allSatisfy { $0.isFinite },
+                          "Ungültige Weltgröße \(badWorld) darf keine NaNs erzeugen")
+        }
+    }
+
+    /// Regression: transportLimited ohne definierte Schrittweite (`cellSize == 0`)
+    /// darf Gefälle nicht durch 0 teilen und Betthöhen nicht mit NaN vergiften.
+    func testTransportLimitedWithoutCellSpacingDoesNotPoisonHeightsWithNaN() {
+        var c = SimConfig()
+        c.n = 16
+        c.world = 0
+        c.hydraulicEnabled = false
+        XCTAssertEqual(c.cellSize, 0.0)
+        let t = Terrain(allocating: c, seed: 1337)
+        var s = t.state
+        for j in 0..<16 {
+            for i in 0..<16 {
+                let k = j * 16 + i
+                s.h[k] = c.sea + 0.1 + Double(16 - 1 - j) * 0.02
+                s.rock[k] = s.h[k]
+                s.sed[k] = 0.0
+                s.area[k] = Double(k + 1) * 100.0
+                s.receiver[k] = j < 15 ? Int32((j + 1) * 16 + i) : -1
+            }
+        }
+        s.hf = s.h
+        t.restore(s)
+
+        t.step(dtYears: 100)
+        XCTAssertTrue(t.h.allSatisfy { $0.isFinite },
+                      "transportLimited darf ohne Schrittweite keine NaNs/Infs erzeugen")
+    }
 }

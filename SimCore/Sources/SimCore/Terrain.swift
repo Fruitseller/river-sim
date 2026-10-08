@@ -2596,6 +2596,9 @@ public final class Terrain {
     /// Bänke entstehen nachweislich (testBraidingBuildsBars).
     private func braidPass(dt: Double) {
         let cellArea = cfg.cellSize * cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): keine Kapazität ohne Zellfläche,
+        // sonst Division durch 0 und NaN-Vergiftung im Frachtpuffer qs.
+        guard cellArea > 0, cellArea.isFinite else { return }
         let minA = cfg.braidMinCells * cellArea
         let mB = cfg.braidExponent
         let kb = cfg.braidCapacity * dt
@@ -2757,6 +2760,9 @@ public final class Terrain {
     /// abgeben noch annehmen, zieht unverändert zum Empfänger weiter.
     private func transportLimited(dt: Double) {
         let cs = cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): kein Gefälle ohne Distanz,
+        // sonst Division durch 0 und NaN-Vergiftung von Fracht und Betthöhen.
+        guard cs > 0, cs.isFinite else { return }
         let sqrt2 = 2.0.squareRoot()
         let kt = cfg.transportCap
         let m = cfg.mExp
@@ -2826,6 +2832,9 @@ public final class Terrain {
     /// nicht bit-identisch).
     private func outletIncision(dt: Double, minAreaCells: Double = 0) {
         let cs = cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): keine Inzision ohne Distanz,
+        // sonst Division durch 0 und NaN-Vergiftung der Höhen.
+        guard cs > 0, cs.isFinite else { return }
         let sqrt2 = 2.0.squareRoot()
         let minA = minAreaCells * cs * cs
         let m = cfg.mExp
@@ -3234,6 +3243,8 @@ public final class Terrain {
     /// jede Aue-Zelle konvergiert gegen max(Kanalbett+Auenhöhe) in ihrer Nähe.
     private func floodplainAggradation(dt: Double) {
         let cellArea = cfg.cellSize * cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): keine D8-Fläche ohne Zellfläche.
+        guard cellArea > 0, cellArea.isFinite else { return }
         let minA = cfg.floodplainMinArea
         // Exponentiell (Issue #2, s. fillLakes) — der Pass ist zwar geparkt
         // (`floodplainEnabled = false`), soll aber nicht mit einer bekannt
@@ -3895,6 +3906,8 @@ public final class Terrain {
     private func migrateMeander(dt: Double) {
         if meander.channels.isEmpty { seedMeander(); return }
         let cellArea = cfg.cellSize * cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): kein Abfluss ohne Zellfläche.
+        guard cellArea > 0, cellArea.isFinite else { return }
         let nn = n, bankR = bankRadius
         // PERF (Issue #43): `h`, `area`, `veg` und `vegClass` ändern sich
         // während der Migration nicht (sie ist reine Knoten-Geometrie) — die
@@ -4176,8 +4189,10 @@ public final class Terrain {
     /// 3) **isChannel-Maske** für die Reconciliation mit `transportLimited`.
     private func meanderStamp(dt: Double) {
         fill(&isChannel, false)
-        let m = cfg.mExp
         let cs = cfg.cellSize
+        // cellSize 0 (keine definierte Schrittweite): kein Bett-Gefälle entlang der Segmente.
+        guard cs > 0, cs.isFinite else { return }
+        let m = cfg.mExp
         let cellArea = cs * cs
         let width = cfg.meanderBankWidth
         let capF = stepCapFraction(dt)  // war fest 0.5 je Schritt (Issue #2)
