@@ -161,8 +161,8 @@ final class GraphicsMatrixTests: XCTestCase {
 
         // -------------------------------------------------------------
         // Seed 20: Hochalpines Massiv & Kaltklima
-        // Dokumentiert in melt-runoff-measurements.md für maximales Relief
-        // (> 0.75), höchste Schneebedeckung (306 Zellen) und glaziale Kare.
+        // Dokumentiert in melt-runoff-measurements.md für maximale Spitzenhöhe
+        // (maxH 0.75), die meisten schneegespeisten Läufe (306) und glaziale Kare.
         // -------------------------------------------------------------
         MatrixWorldSpec(
             seed: 20,
