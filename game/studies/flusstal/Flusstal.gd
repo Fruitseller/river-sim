@@ -35,7 +35,6 @@ var study_last_draw := 0
 var study_intervals: Array[float] = []
 var study_start_yaw := 0.0
 var study_protect_tex: ImageTexture
-var study_band_mask: Image # Band-Dreiecke, nur beim Fluss-Rebuild gerastert
 var study_relief_vp: SubViewport
 var study_relief_mat: ShaderMaterial
 
@@ -251,17 +250,15 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 
 func _rebuild_rivers() -> void:
 	super._rebuild_rivers()
-	study_band_mask = null
 	_update_study_protect()
 	_bake_relief()
 
-## Schutzmaske für Verschiebung und Kronendach: Rasterwasser plus jedes gebaute
-## Band-Dreieck. Die Mip-Kette (nativ erzeugt) dient dem Shader als billige
-## Ausdehnung um einige Zellen. Je Textur-Update läuft nur natives Kopieren
-## und Mischen; die Dreiecke werden nur nach einem Fluss-Rebuild neu gerastert
-## (im Zeitraffer sonst ~40 ms je Tick in GDScript).
+## Schutzmaske für Verschiebung und Kronendach (#154): godot-freie Render-Ableitung
+## aus SimRender (sichtbares Rasterwasser + gebaute Flussbänder + 2-Zellen-Saum).
+## Das frühere GDScript-Dreieck-Rastern entfällt; die Daten kommen direkt als R8.
+## Die Mip-Kette (nativ erzeugt) dient dem Shader für kontinuierliche Uferübergänge.
 func _update_study_protect() -> void:
-	if not (_lever("geometry") or _lever("canopy")) or water_field._img == null:
+	if not (_lever("geometry") or _lever("canopy")):
 		return
 	var img := _placement_water()
 	img.generate_mipmaps()
@@ -272,31 +269,11 @@ func _update_study_protect() -> void:
 		study_protect_tex.update(img)
 
 func _placement_water() -> Image:
-	var water: Image = water_field._img.duplicate()
-	if study_band_mask == null:
-		study_band_mask = _band_mask(water.get_size())
-	water.blend_rect(study_band_mask, Rect2i(Vector2i.ZERO, water.get_size()), Vector2i.ZERO)
-	return water
-
-## Der Raster-Deckel entfernt Wasser unter Bändern. Deshalb zusätzlich jedes
-## tatsächlich gebaute Dreieck sperren, konservativ über seine XZ-Boundingbox.
-## Transparent außerhalb der Bänder, damit `blend_rect` nur dort deckt.
-func _band_mask(size: Vector2i) -> Image:
-	var mask := Image.create(size.x, size.y, false, Image.FORMAT_RGBA8)
-	if river_mesh.get_surface_count() > 0:
-		var arrays := river_mesh.surface_get_arrays(0)
-		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-		for i in range(0, indices.size(), 3):
-			var a := Vector2(INF, INF)
-			var b := Vector2(-INF, -INF)
-			for corner in 3:
-				var p := vertices[indices[i + corner]]
-				var cell := Vector2((p.x + half) / step, (p.z + half) / step)
-				a = a.min(cell.floor())
-				b = b.max(cell.ceil())
-			mask.fill_rect(Rect2i(Vector2i(a), Vector2i(b - a) + Vector2i.ONE), Color.RED)
-	return mask
+	if sim != null and sim.has_method("protectMaskBytes"):
+		var bytes: PackedByteArray = sim.protectMaskBytes()
+		if bytes.size() == N * N:
+			return Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
+	return Image.create(maxi(1, N), maxi(1, N), false, Image.FORMAT_R8)
 
 func _process(delta: float) -> void:
 	if not study_mode.is_empty():
