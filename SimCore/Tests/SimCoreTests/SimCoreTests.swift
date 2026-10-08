@@ -598,8 +598,6 @@ final class SimCoreTests: XCTestCase {
                 s.h[k] = c.sea + 0.1 + Double(16 - 1 - j) * 0.02
                 s.rock[k] = s.h[k]
                 s.sed[k] = 0.0
-                s.area[k] = Double(k + 1) * 100.0
-                s.receiver[k] = j < 15 ? Int32((j + 1) * 16 + i) : -1
             }
         }
         s.hf = s.h
@@ -641,8 +639,6 @@ final class SimCoreTests: XCTestCase {
                 s.h[k] = c.sea + 0.1 + Double(16 - 1 - j) * 0.02
                 s.rock[k] = s.h[k]
                 s.sed[k] = 0.0
-                s.area[k] = Double(k + 1) * 100.0
-                s.receiver[k] = j < 15 ? Int32((j + 1) * 16 + i) : -1
             }
         }
         s.hf = s.h
