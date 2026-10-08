@@ -1,85 +1,118 @@
 # Landschaftsqualität: Flusstal-Studie #116
 
-Stand: 29. September 2026 (Review-Nacharbeitung). Ausführbarer Prototyp,
-visuelle Abnahme noch offen. Teil 2, Issue #117, beginnt erst nach
-ausdrücklicher Bestätigung des Bildsprungs.
+Stand: 8. Oktober 2026, zweite Runde. Ausführbarer Prototyp, visuelle Abnahme
+noch offen. Teil 2, Issue #117, beginnt erst nach ausdrücklicher Bestätigung
+des Bildsprungs.
 
 ## Abgestimmtes Ziel
 
-Der Projekteigner hat ein stärker felsiges, dramatisches Tal nach dem Vorbild
-der Soča gewählt. Helle gebrochene Felsflächen sollen sich von dunkleren
-Waldgruppen absetzen, der Fluss muss auch aus der normalen Übersicht lesbar sein.
-Das ist eine Bildstudie auf einer unveränderten Simulationswelt.
+Der Projekteigner hat ein felsiges, dramatisches Tal nach dem Vorbild der Soča
+gewählt. Helle gebrochene Felsflächen sollen sich von dunkleren Waldgruppen
+absetzen, der Fluss muss auch aus der normalen Übersicht lesbar sein. Das ist
+eine Bildstudie auf einer unveränderten Simulationswelt.
 
-Zielmaschine ist der Apple M4 Max mit 40 GPU-Kernen und 64 GB RAM. Die zunächst
-genannten 6016×3260 Pixel wurden vom Projekteigner auf das aktuell angeschlossene
-interne Display korrigiert. Verbindlich sind **3456×2104 Viewport-Pixel im
-maximierten Fenster**, bei höchstens **33,3 ms pro gerendertem Frame**.
-Die Panelauflösung ist 3456×2234; Fensterrahmen und Menüleiste gehören nicht zum Viewport.
+Zielmaschine ist der Apple M4 Max mit 40 GPU-Kernen und 64 GB RAM. Verbindlich
+sind **3456×2104 Viewport-Pixel im maximierten Fenster** (internes Display,
+Panel 3456×2234 abzüglich Fensterrahmen und Menüleiste), bei höchstens
+**33,3 ms pro gerendertem Frame**.
 
-## Referenzen und Bildentscheidungen
+## Warum eine zweite Runde
 
-| Bildquelle | Übernommene Eigenschaft |
+Die erste Runde (Commits bis `6c62e26`) tauschte im Wesentlichen die
+Oberflächenfarbe: zwei PBR-Texturen, mehrteilige Kronen, handgesetzte Wald- und
+Felsgruppen, etwas seitlicheres Licht. Der Projekteigner fand die Richtung gut,
+den Unterschied aber zu klein. Die Analyse der A/B-Bilder ergab drei Ursachen,
+die alle außerhalb der Oberflächenfarbe liegen:
+
+1. **Form.** Das Mesh verschob ein 384er-Gitter (`balanced`) bilinear aus dem
+   720er-Sim-Raster. Das feine Erosionsdetail wirkte nur auf Normalen, warf
+   weder Silhouette noch Schatten und blendete ab ~120 Einheiten Abstand aus,
+   in der Übersicht also fast ganz. Die Berge sahen aus wie Knete.
+2. **Maßstab.** Eine Baumkrone war ~1 Einheit breit, das sind 7 Sim-Zellen oder
+   bei einem Alpenrelief rund 90 m. Zusammen mit dem gestreiften Ozean las sich
+   die Insel als Modell auf einem Tisch.
+3. **Licht.** Hohe Sonne, kaum Luftperspektive, wenig Hell-Dunkel-Struktur.
+
+Die zweite Runde setzt genau dort an, mit vier einzeln schaltbaren Hebeln.
+Alle sind prozedural aus den Sim-Feldern abgeleitet. Die Handplatzierung der
+ersten Runde ist entfallen, deshalb gilt die Studie für jeden Seed und bleibt
+im Zeitraffer, nach Pinselstrichen und nach dem Laden aktiv.
+
+## Die vier Hebel
+
+`RS_STUDY_LEVERS` (Komma-Liste, Standard: alle) schaltet sie für die
+Wirkungsleiter einzeln.
+
+| Hebel | Was er tut | Wo |
+| --- | --- | --- |
+| `geometry` | Render-Gitter in Sim-Auflösung (720 statt 384). Grobe Erosionsrinnen (dieselbe runevision-Funktion wie das feine Detail, Skala 0.022 UV ≈ 2,5 km Wellenlänge) und einseitig geschärfte Grate als **echte Verschiebung**. Einmal je Terrain-Update in eine 1440²-Float-Textur gebacken; der Vertex-Shader liest die Höhe, der Fragment-Shader Steigung und Rinnen-Schattierung. | `relief_bake.gdshader`, `landscape.gdshaderinc` |
+| `canopy` | Weltmaßstab 1 Einheit ≈ 100 m. Wald als **Kronendach im Terrain-Shader**: ~20 m angehobenes Volumen (Waldkanten werfen Schatten), Voronoi-Kronen von ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel, Anteil nach Höhenband), dunkle Lücken, Selbstschatten zum Kronenrand. Lichtungen aus Rauschen, kein Wald in Wänden, auf Schnee oder an Wasser. Ersetzt die Instanzbäume. | `landscape.gdshaderinc` |
+| `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. | `Flusstal.gd`, `clouds.gdshaderinc` |
+| `frame` | Ozean ohne Streifenmuster: Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, statt drei Sinuswellen. Farbe aus der echten Wassertiefe über dem Sim-Schelf (türkis → tiefblau), gebrochener Brandungssaum. | `ocean.gdshaderinc` |
+
+Außerdem ist der Kalkstein der ersten Runde dunkler und strukturierter: er lag
+mit ~0,5–0,6 Albedo bei Schneeweiß und las sich unter Himmelslicht als Schnee.
+Jetzt zwei Texturskalen und Verwitterungsstreifen in Fallrichtung
+(`materials.gdshaderinc`).
+
+**Wasser bleibt unangetastet.** Verschiebung und Kronendach enden an einer
+Schutzmaske: Rasterwasser plus die Boundingbox jedes gebauten Band-Dreiecks
+(der Raster-Deckel entfernt Wasser unter Bändern), über eine Mip-Stufe um etwa
+zwei Zellen ausgedehnt. Die Gratschärfung hebt nur, senkt nie: kein Talboden
+sinkt unter ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel,
+dort gibt es keine Verschiebung. Die Bänder sampeln die sichtbare Oberfläche
+des vollen Sim-Gitters (`setRenderGrid(N)`). Die Sim-Felder und
+`SimCore` ändern sich nicht.
+
+**Produktion bleibt unverändert.** Alle Studien-Hooks in `terrain.gdshader`,
+`ocean.gdshader` und `water.gdshader` stehen hinter `#ifdef FLUSSTAL_STUDY`;
+`Flusstal.gd` stellt das Define zur Laufzeit vor die Quelle. Einzige
+Strukturänderung am Produktions-Shader: der runevision-Filter liegt jetzt in
+`game/shaders/erosion_filter.gdshaderinc` (gleicher Code, Skala als Parameter),
+damit der Back-Pass ihn mitbenutzt statt ihn zu kopieren. `NOTICE` führt die
+Datei als MPL-2.0.
+
+## Bildvergleich
+
+Wirkungsleiter, jeweils kumulativ (Ausgangsstand → + Geometrie → +
+Kronendach → + Licht/Atmosphäre → + Rahmen):
+
+![Leiter Übersicht](screenshots/graphics-quality/ladder-overview.jpg)
+
+![Leiter Ausschnitt](screenshots/graphics-quality/ladder-detail.jpg)
+
+| Ausgangsstand | Prototyp, alle Hebel |
 | --- | --- |
-| [Soča, Luftbild auf der Website des Tourismusverbands](https://www.soca-valley.com/en/accommodation/), [Bilddatei](https://www.soca-valley.com/images/backgrounds/vstopna-pomlad.webp) | Unregelmäßige dichte Kronen, dunkle Zwischenräume, heller mineralischer Flussrand. Hauptreferenz nach der Abstimmung. |
-| [Große Soča-Schlucht bei Pristava Lepena](https://pristava-lepena.com/en/attraction/velika-korita), [Bilddatei](https://lepena-admin.morozov.si/uploads/DJI_6695_min_593d817c7b.jpg) | Gebrochene Felsufer und deutlich unterschiedliche Maßstäbe von Felswand, Block und Baumkrone. |
-| [Isar im Vorkarwendel, LBV, Foto Dr. Olaf Broders](https://bad-toelz.lbv.de/unsere-arbeit/gebietsbetreuung-moore-und-isar/projektgebiet-isar/) | Offene Uferflächen und Waldgruppen als ursprünglicher Alternativvorschlag. Die breiten Kiesbänke sind nicht das gewählte Hauptmotiv. |
+| ![Übersicht vorher](screenshots/graphics-quality/baseline-overview.png) | ![Übersicht nachher](screenshots/graphics-quality/prototype-overview.png) |
+| ![Ausschnitt vorher](screenshots/graphics-quality/baseline-detail.png) | ![Ausschnitt nachher](screenshots/graphics-quality/prototype-detail.png) |
 
-Diese Fotos sind ausschließlich verlinkte Referenzen. Sie sind keine Spielassets;
-eine Erlaubnis zur Weiterverteilung der Fotos wird nicht behauptet.
+Verworfene Zwischenstände dieser Runde:
 
-Die erste aktuelle Aufnahme zeigte ähnlich texturierte große Hänge, einzelne
-kugelige Kronen und wenig Kontrast zwischen Talboden und Fels. Historische
-Screenshots waren nicht die Grundlage des A/B-Vergleichs.
-
-Die Studie verändert folgende Darstellungsteile:
-
-- Farbe, Normalen und Rauheit aus zwei zusammen verwendeten PBR-Materialien,
-  als Modulation INNERHALB der Sim-Gewichte: Fels-PBR trägt nur auf Felsflächen,
-  Boden-PBR unter Vegetation und auf freiem Boden, Schnee/Eis bleibt unberührt.
-  Der Fels wird entsättigt und auf ein helles Kalksteinbild abgestimmt; dieselbe
-  Materialfunktion gilt für die zusätzlichen Blöcke und — unter dem
-  Meeresspiegel-Gate — nicht für das Flussbett. Waldgrund ist dunkler.
-- Mehrteilige, deterministische Baumkronen statt einer Kugel oder eines Kegels.
-  Die bestehenden SimRender-Transform-Puffer bleiben erhalten.
-- Sechs von Hand gewählte Waldgruppen und drei Felszüge im Ausschnitt.
-  Der feste Zufallsseed 116 verteilt Instanzen nur innerhalb dieser Komposition.
-  Das ist keine allgemeine Verteilung für andere Welten.
-- Seitlicheres Licht: Sonnenposition von `(-60,120,60)` auf `(-80,105,50)`,
-  Lichtfarbe von `(1,.95,.88)` auf `(1,.97,.91)`, Belichtung von `.68` auf `.78`,
-  Umgebungsenergie von `.28` auf `.42`, Nebeldichte von `.0006` auf `.0012`.
-  ACES, die Sim-Höhen und sämtliche Wasser-Uniforms bleiben bestehen.
-
-Verworfene Zwischenstände: Die unmodifizierte orange Felsfarbe passte nicht zur
-Soča-Richtung. Gestapelte rundliche Felskörper wirkten wie aufgesetzte Türme.
-Die aktuelle Fassung verwendet niedrigere zusammenhängende gebrochene Blöcke.
+- **1440er-Render-Gitter.** Gleiche Bildwirkung wie 720, sobald Normalen und
+  Rinnen aus der Backtextur kommen, aber doppelte Framezeit (s. Leistung).
+- **Filter pro Vertex statt gebacken.** Tiefen-Vorpass, Farbpass und vier
+  Schattenkaskaden werteten ihn je erneut aus: 35,6 ms je Bild.
+- **Gegenlicht (Azimut −130°).** Dramatischer, mit Glanz auf dem Meer, legte
+  aber alle der Kamera zugewandten Wände in den Schatten; dort verschwand das
+  Relief.
+- **Breite Schutzmaske** (Mip 3,5, Faktor 6): sperrte ganze Talböden für
+  Verschiebung und Wald.
 
 ## Reproduktion
 
-Ausgangscommit: `9dece54ce0948e4d76ff0d59de5ba6ee0022a76e`.
-Godot: `4.7.1.stable.official.a13da4feb`, Metal Forward+.
-Die vorhandene macOS-Extension bestand den Build-Stempel-Check. Kein lokaler
-Extension-Build wurde ausgeführt. #94 und #95 waren bei Beginn noch offen;
-die Studie benutzt die bestehenden Puffer und ändert deren Frame-Protokoll nicht.
+Ausgangscommit (main): `e56fb18074e6faed0c3eb5a600a4188dfabdbe06`, der Branch
+ist darauf rebased. Godot 4.7.2 (Steam-Build, Metal Forward+); CI pinnt dieselbe
+Version über `scripts/fetch-godot.sh`. Extension lokal mit
+`scripts/build.sh release` gebaut, Build-Stempel geprüft.
 
 `scripts/graphics-study.sh` legt Seed 1337, 20.000 Vorlaufjahre in Schritten von
-1000 Jahren und `balanced` fest. Der Produktions-Einlauf bei der Generierung
-bleibt der bestehende Einlauf; die Ausgabe `currentYear()` ist anschließend 20.000.
-Beide Varianten starten eine neue, deterministisch identische Welt.
+1000 Jahren und `balanced` fest. Beide Varianten starten eine neue,
+deterministisch identische Welt.
 
 | Kamera | Ziel X/Z | Distanz | Yaw | Pitch |
 | --- | --- | ---: | ---: | ---: |
 | `overview` | 0 / 0 | 151.846515 | 0.7 | 0.85 |
 | `detail` | -12 / -25 | 42 | 0.7 | 0.85 |
-
-Die Zielhöhe wird in beiden Varianten aus derselben Sim-Höhe bestimmt. Für
-`detail` beträgt sie 10.81426. Die Übersicht benutzt die normale Startdistanz.
-
-Auf macOS `GODOT` auf die offizielle 4.7.1-App setzen. Das vorhandene
-`fetch-godot.sh` lädt eine Linux-Binärdatei und ist kein macOS-Installer.
-Für diese Studie wurde das offizielle macOS-Archiv zusammen mit `SHA512-SUMS.txt`
-aus dem [Godot-Release](https://github.com/godotengine/godot/releases/tag/4.7.1-stable)
-bezogen und vor dem Entpacken geprüft.
 
 ```sh
 export GODOT=/pfad/Godot.app/Contents/MacOS/Godot
@@ -91,8 +124,9 @@ scripts/graphics-study.sh baseline detail interactive
 # Der letzte Parameter ist ein absoluter Ausgabepfad ohne .png.
 scripts/graphics-study.sh baseline overview shot /tmp/baseline-overview
 scripts/graphics-study.sh prototype overview shot /tmp/prototype-overview
-scripts/graphics-study.sh baseline detail shot /tmp/baseline-detail
-scripts/graphics-study.sh prototype detail shot /tmp/prototype-detail
+
+# Wirkungsleiter: einzelne Hebel
+RS_STUDY_LEVERS=geometry,canopy scripts/graphics-study.sh prototype detail shot /tmp/gc
 
 # Getrennte Echtzeitmessungen, immer maximiert.
 scripts/graphics-study.sh prototype overview still /tmp/still
@@ -100,23 +134,19 @@ scripts/graphics-study.sh prototype overview orbit /tmp/orbit
 scripts/graphics-study.sh prototype overview simulation /tmp/simulation
 ```
 
-Für die Baseline dieselben Messbefehle mit `baseline` ausführen. Währenddessen
-keine Builds oder andere Messungen parallel starten. `shot` friert die
-Wasser-Animationsphase ein und speichert nach 60 gerenderten Bildern.
-Ein normal gestartetes Spiel aktiviert die Studie nicht. `Flusstal.tscn` ohne
-gültiges `RS_STUDY_VARIANT` (`prototype`|`baseline`) bricht mit Fehler ab;
-Mess- und Filmläufe setzen den Schalter immer über `scripts/graphics-study.sh`.
+Weitere Schalter, alle in `Flusstal.gd`: `RS_STUDY_SUN="azimut,höhe"` (Grad),
+`RS_STUDY_GRID` (Render-Gitter, für Messungen), `RS_STUDY_RELIEF="skala,stärke,schärfung"`
+(Kalibrierung der groben Verschiebung) und `RS_STUDY_DEBUG=protect|forest|cavity`
+(Schutzmaske, Waldmaske, Rinnen/Rippen als Falschfarbe). Ein unbekannter
+Hebelname bricht wie eine ungültige Variante mit Fehler ab.
 
-## Bildvergleich und Bewegung
+`shot` friert die Wasser-Animationsphase ein und speichert nach 60 gerenderten
+Bildern. Ein normal gestartetes Spiel aktiviert die Studie nicht.
 
-| Ausgangsstand | Prototyp |
-| --- | --- |
-| ![Übersicht vorher](screenshots/graphics-quality/baseline-overview.png) | ![Übersicht nachher](screenshots/graphics-quality/prototype-overview.png) |
-| ![Ausschnitt vorher](screenshots/graphics-quality/baseline-detail.png) | ![Ausschnitt nachher](screenshots/graphics-quality/prototype-detail.png) |
+## Bewegung
 
-Bewegungsaufnahmen werden mit Godots MovieWriter bei festen 30 Bildern pro
-Sekunde erstellt. Das sind reproduzierbare Bewegungsbelege, keine FPS-Messungen.
-Der Viewport bleibt auch dafür maximiert. Beispiel:
+Bewegungsaufnahmen mit Godots MovieWriter bei festen 30 Bildern pro Sekunde,
+maximiert. Reproduzierbare Bewegungsbelege, keine FPS-Messungen.
 
 ```sh
 RS_STUDY_MOVIE=/tmp/prototype-orbit.avi \
@@ -132,106 +162,110 @@ ffmpeg -i /tmp/prototype-orbit.avi -c:v libx264 -preset fast -crf 22 \
 | Simulationsfortschritt im Ausschnitt | [MP4](screenshots/graphics-quality/baseline-simulation.mp4) | [MP4](screenshots/graphics-quality/prototype-simulation.mp4) |
 
 Die Kamerafahrt beginnt nach zwei Sekunden und dreht mit 0,08 rad/s. Im
-Zeitraffer beginnt dann stattdessen die Simulation mit 60 Jahren/s. Beide Filme
-zeigen vorher den Ausgangsstand. In der Prototyp-Simulation ist das Ausblenden
-der Handplatzierungen sichtbar. Aufnahmen wurden nach dem Encoding auf
-Auflösung, Bildzahl und Stichproben während der Bewegung geprüft.
-Die Encoderauflösung legen die `movie`-Viewport-Einträge in `project.godot`
-fest: der MovieWriter öffnet den Encoder vor dem Maximieren und ignoriert
-`--resolution` dafür (an Godot 4.7.2 gemessen; das Studien-Skript setzt das
-Flag nur als Fenster-Vorabmaß). Der Review-Wunsch, die Einträge als redundant
-zu entfernen, wurde damit geprüft und widerlegt — sie bleiben. Film-Läufe
-schreiben kein zusätzliches PNG.
+Zeitraffer läuft stattdessen die Simulation mit 60 Jahren/s. Anders als in der
+ersten Runde bleibt der Prototyp im Zeitraffer vollständig: Verschiebung,
+Schutzmaske und Kronendach folgen jedem Terrain-Update. Die Encoderauflösung
+legen die `movie`-Viewport-Einträge in `project.godot` fest (der MovieWriter
+öffnet den Encoder vor dem Maximieren und ignoriert `--resolution` dafür).
 
-## Leistung und Grenzen
+## Leistung
 
-`STUDY_TIMING` misst Intervalle zwischen tatsächlichen `frame_post_draw`-Signalen,
-nach zwei Sekunden Einlauf für weitere zehn Sekunden. VSync und der aktive
-FPS-Deckel sind für diese Messung aus. Der Renderloop bleibt auch bei stehender
-Kamera an. Die sonstige Prozessrate im abgeschalteten Renderloop ist daher
-ausdrücklich nicht die Quelle der Zahlen. Mittelwert und p95 sind Frameintervalle
-einschließlich CPU-Arbeit, keine isolierten GPU-Zeitstempel.
+`STUDY_TIMING` misst Intervalle zwischen tatsächlichen `frame_post_draw`-
+Signalen, nach zwei Sekunden Einlauf für weitere zehn Sekunden, VSync und
+FPS-Deckel aus, Renderloop auch bei stehender Kamera an. Mittelwert und
+Perzentile sind Frameintervalle einschließlich CPU-Arbeit, keine
+GPU-Zeitstempel.
 
-Ergebnis für die normale Übersicht, je ein sequenzieller Lauf ohne parallele
-Builds. Alle Werte in Millisekunden, Rohdaten in
+Normale Übersicht, je ein sequenzieller Lauf ohne parallele Last, 8. Oktober
+2026. Millisekunden; Rohdaten in
 [measurements.json](screenshots/graphics-quality/measurements.json).
 
 | Variante / Betrieb | Mittel | p95 | p99 | Maximum | Frames über 33,3 ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Baseline, Standbild | 9,58 | 10,47 | 10,77 | 11,00 | 0 / 1044 |
-| Prototyp, Standbild | 10,24 | 11,12 | 11,40 | 11,85 | 0 / 978 |
-| Baseline, Kamerafahrt | 9,78 | 11,17 | 11,91 | 12,18 | 0 / 1023 |
-| Prototyp, Kamerafahrt | 11,64 | 12,61 | 13,00 | 13,73 | 0 / 861 |
-| Baseline, Zeitraffer | 13,20 | 50,06 | 74,88 | 89,30 | 39 / 760 |
-| Prototyp, Zeitraffer ohne Handplatzierung | 12,59 | 13,25 | 75,88 | 81,02 | 39 / 795 |
+| Baseline, Standbild | 8,73 | 9,12 | 9,39 | 10,49 | 0 / 1147 |
+| Prototyp, Standbild | 16,52 | 17,16 | 17,44 | 17,93 | 0 / 607 |
+| Baseline, Kamerafahrt | 8,70 | 9,12 | 9,29 | 9,83 | 0 / 1150 |
+| Prototyp, Kamerafahrt | 19,40 | 21,05 | 21,42 | 23,02 | 0 / 517 |
+| Baseline, Zeitraffer | 10,96 | 11,21 | 70,08 | 79,35 | 39 / 913 |
+| Prototyp, Zeitraffer | 22,11 | 51,86 | 98,49 | 105,90 | 38 / 453 |
 
-Standbild und Kamerafahrt bleiben in diesen Läufen vollständig unter dem Budget.
-Der Zeitraffer überschreitet es bei einzelnen Simulationsschritten in beiden
-Varianten. Ein durchgehend eingehaltenes 33,3-ms-Budget ist damit **nicht**
-nachgewiesen. Die Mehrkosten der Studie sind klein gegenüber diesen bereits in
-der Baseline vorhandenen Spitzen. Die Messfenster werden über `_process(delta)`
-gesteuert; die Frameintervalle kommen aus der monotonen Uhr. Die Zahlen sind
-eine konkrete lokale Messreihe vom 29. September 2026 (Godot 4.7.2), keine
-garantierten Worst-Case-Grenzen. Die Kronen sind seit der Review-Nacharbeit
-indiziert (Variante 0: 1382 statt 3632 Vertices, −62 %).
+Standbild und Kamerafahrt bleiben vollständig unter dem Budget, mit rund 40 %
+Reserve. Der Zeitraffer überschreitet es in beiden Varianten bei derselben
+Zahl von Frames (38 bzw. 39, die Simulationsschritte). Beim Prototyp sind diese
+Spitzen höher, und weil insgesamt weniger Frames entstehen, ist ihr Anteil
+doppelt so groß (p95 51,9 statt 11,2 ms). Ein durchgehend eingehaltenes
+33,3-ms-Budget ist im Zeitraffer damit **nicht** nachgewiesen, in keiner
+Variante.
 
-Handplatzierungen gelten nur für den eingefrorenen Stand. Vor dem ersten
-Terrain-Texturupdate nach Fortschritt, Pinselstrich oder Laden verschwinden diese
-zusätzlichen Bäume und Felsen. Material, Licht und die verbesserten Kronen des
-bestehenden Baum-Renderers bleiben aktiv. **Die Zeitraffermessung gilt deshalb
-ohne Handplatzierung.** Die Leistung der vollständigen Komposition belegen nur
-Standbild und Kamerafahrt. Der sichtbare Wechsel im Film ist eine Grenze dieses
-Prototyps und keine Lösung für #117.
+Woher die Mehrkosten kommen (gemessen):
 
-Die Platzierung sperrt Rasterwasser und zusätzlich die Boundingbox jedes
-tatsächlich gebauten Ribbon-Dreiecks. Sie prüft den gesamten Fußabdruck mit
-Sicherheitsabstand. Die Maske ist eine Kopie; sie verändert weder Wasserfeld noch
-Simulation. Zusätzliche sichtbare Formen liegen nicht auf Flussbetten.
+| Messung | ms/Bild, Standbild |
+| --- | ---: |
+| Render-Gitter 720 / 1080 / 1440, alle Hebel | 16,1 / 23,7 / 32,3 |
+| Filter pro Vertex statt gebacken, 1440er-Gitter | 35,6 |
+| nur `canopy` / nur `light` / nur `frame` (384er-Gitter) | 10,0 / 10,7 / 11,7 |
+
+Die Kosten folgen der Vertexzahl. Die Hebel `canopy`, `light` und `frame` sind
+im Vergleich billig. Im Zeitraffer kommen je Textur-Update ~1,4 ms
+GDScript für die Schutzmaske dazu, je Fluss-Rebuild (höchstens 1 Hz) ~20 ms für
+das Rastern der Band-Dreiecke. Für #117 ist das der erste Kandidat: die Maske
+gehört als Ableitung in SimRender oder als GPU-Pass.
+
+## Grenzen dieser Studie
+
+- Die Verschiebung ist kosmetisch und nicht Teil der Sim-Höhe: Pinsel-Picking,
+  Baum-Instanzen (hier ausgeschaltet) und alles, was `heightsBytes()` liest,
+  sehen die glatte Sim-Fläche. Gemessen reicht der Zuschlag von −0,25 bis
+  +1,0 Einheiten (Grate), meist deutlich weniger.
+- Das Kronendach ist eine Oberfläche, keine Geometrie. Bei sehr flachem Blick
+  fehlt ihm die Parallaxe einzelner Bäume. Für Nahsicht bräuchte #117
+  zusätzlich echte Instanzen an Waldrändern.
+- Wolkenschatten wirken als Albedo-Faktor und dunkeln damit auch etwas
+  Umgebungslicht ab.
+- Die Lichtstimmung ist auf die Studienkamera abgestimmt. In der normalen
+  Anwendung dreht der Nutzer die Kamera; welches Licht dort trägt, ist eine
+  eigene Entscheidung für #117.
+- Großräumige Geländeformen ändert die Studie nicht. Die Frage aus #116, ob sie
+  den Realismus begrenzen, beantwortet die Leiter teilweise: die gerenderte
+  Verfeinerung trägt bereits den größten Einzelschritt.
 
 ## Assets und Lizenzen
 
-Die sechs 1K-JPEGs liegen unverändert unter `game/studies/flusstal/assets/` im
-Repository. Nach einem Klon ist kein Assetdienst erforderlich. `manifest.json`
-enthält die Original-Downloadadressen, die vom Anbieter gelieferten MD5-Werte
-und zusätzlich SHA-256-Prüfsummen der eingecheckten Dateien. Alle sechs Texturen
-erhalten Mipmaps und anisotrope Filterung für die entfernte Ansicht.
+Die sechs 1K-JPEGs liegen unverändert unter `game/studies/flusstal/assets/`.
+Nach einem Klon ist kein Assetdienst erforderlich. `manifest.json` enthält die
+Original-Downloadadressen, die vom Anbieter gelieferten MD5-Werte und
+SHA-256-Prüfsummen der eingecheckten Dateien.
 
 | Asset | Urheber | Nutzung |
 | --- | --- | --- |
-| [Rock Boulder Cracked](https://polyhaven.com/a/rock_boulder_cracked) | Dario Barresi, Dimitrios Savva | Farbe, OpenGL-Normale, Rauheit; Entsättigung erst im Shader |
+| [Rock Boulder Cracked](https://polyhaven.com/a/rock_boulder_cracked) | Dario Barresi, Dimitrios Savva | Farbe, OpenGL-Normale, Rauheit; Entsättigung im Shader |
 | [Forest Ground 01](https://polyhaven.com/a/forrest_ground_01) | Rob Tuytel | Farbe, OpenGL-Normale, Rauheit |
 
-Beide Materialien stehen unter [CC0](https://polyhaven.com/license). Weitergabe
-und Bearbeitung sind erlaubt; eine Namensnennung ist laut Anbieter nicht
-vorgeschrieben. Die freiwillige Nennung steht hier. Eigene Kronen- und
-Blockgeometrie wird vollständig aus `StudyMeshes.gd` erzeugt und folgt der
-Repository-Lizenz. Es gibt keine extern benötigte Blender-Datei.
+Beide stehen unter [CC0](https://polyhaven.com/license); die freiwillige
+Nennung steht hier. Kronen, Wolken, Ozean und Verschiebung sind vollständig
+prozedural. Die Referenzfotos der Bildrichtung (Soča-Luftbild,
+[soca-valley.com](https://www.soca-valley.com/en/accommodation/); Große
+Soča-Schlucht, [pristava-lepena.com](https://pristava-lepena.com/en/attraction/velika-korita);
+Isar im Vorkarwendel, [LBV](https://bad-toelz.lbv.de/unsere-arbeit/gebietsbetreuung-moore-und-isar/projektgebiet-isar/))
+sind nur verlinkt, keine Spielassets.
 
 ## Verifikation und Übergabe
 
-- `graphics_study.gd` prüft trockene Standorte, Rasterwasser, Seen, Ozean,
-  Weltgrenzen und reine Bänder ohne Rasterwasser. Außerdem prüft es, dass die
-  Sperrmaske das Renderfeld nicht verändert, dass jedes Fels-Dreieck nach
-  außen gewunden ist (Winding gegen die Bounding-Box-Mitte statt gegen die
-  gespeicherte Normale) und dass Felsen wie Kronen reproduzierbar sind.
-  Es läuft im `godot-contract`-Job mit `GRAPHICS_STUDY_OK`.
-  Lokal: `"$GODOT" --headless --path game --script res://tests/graphics_study.gd`.
-- Die lokale SimCore-Pflichtsuite lief mit 340 Tests, 32 übersprungenen Messläufen
-  und drei Fehlern in zwei Tests. Die identischen drei Fehler wurden am
-  unveränderten Ausgangscommit separat reproduziert: Seeanteil-Abweichungen
-  `.8557117403` und `.8033134284` gegen Grenze `.8` in
-  `testSameTimeSameResultAcrossStepSizes`; Band-Alpha `.4450969` gegen `.4` in
-  `testRibbonMeshIsPODDeterministicAndPhysicsNeutral`. Keine Toleranz wurde geändert.
-  Beide Tests laufen auf dem Stand von 2026-10-04 wieder grün (verifiziert, 0
-  failures). Die Lake-Schranke steht seit `b298fc8` bewusst bei 0.90 statt bei der
-  damals verletzten 0.8; dieser PR ändert SimCore nicht und damit keine dieser
-  Schranken.
-- Die Pflicht-Checks `test` und `godot-contract` in CI bleiben das Merge-Gate.
+- `graphics_study.gd` (CI-Marke `GRAPHICS_STUDY_OK`) prüft: die Schutzmaske
+  übernimmt Raster-Fluss und See, sperrt die ganze Boundingbox jedes
+  Band-Dreiecks, lässt trockenes Land frei und verändert das Render-Wasserfeld
+  nicht; die Hebel-Liste schaltet einzeln und ein Tippfehler bricht ab; die
+  Studien-Fassungen von Terrain-, Ozean- und Band-Shader kompilieren und
+  liefern ihre Uniforms, die Produktionsfassungen kennen sie nicht; der
+  Back-Pass kompiliert.
+- Lokal grün (8. Oktober 2026, macOS): SimCore-Pflichtsuite (392 Tests, 32
+  übersprungene Messläufe, 0 Fehler), `smoke.gd`, `water_uniforms.gd`,
+  `water_geometry.gd`, `river_ribbons.gd`, `graphics_study.gd`.
+- Merge-Gate bleiben `test` und `godot-contract` in CI.
 - Die visuelle Bestätigung des Projekteigners steht noch aus.
 
-Für #117 zu untersuchen: standortgerechte Waldgruppen und Lichtungen aus
-Sim-Daten, aktualisierbare Felsplatzierungen, LOD für mehrteilige Kronen, ein
-gemeinsamer Materialmaßstab über unterschiedliche Welten und die Frage, ob die
-großen Geländeformen den gewünschten Realismus begrenzen. Die Studie verändert
-diese Geländeformen nicht. Bei unzureichender visueller Abnahme wird zuerst
-die Bildrichtung überarbeitet, nicht automatisch weiter ausgerollt.
+Für #117 übertragbar: Verschiebung als gebackene Render-Ableitung (gehört nach
+SimRender oder als GPU-Pass in die Brücke), Kronendach statt Einzelbäumen in
+der Übersicht, Schutzmaske aus Wasserfeld und Bändern, Ozean nach Wassertiefe.
+Offen: Kamera-unabhängige Lichtwahl, Instanzbäume an Waldrändern für Nahsicht,
+Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen 720er-Gitters.

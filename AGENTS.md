@@ -246,8 +246,10 @@ steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `prototype|baseline`, `RS_STUDY_MODE`
 `orbit|simulation|shot|still`, `RS_STUDY_OUTPUT`, per Skript zusätzlich
-`RS_STUDY_MOVIE`) liegen in `game/studies/flusstal/Flusstal.gd` und werden über
-`scripts/graphics-study.sh` gesetzt; Direktstart ohne gültige Variante bricht ab.
+`RS_STUDY_MOVIE`; für die Wirkungsleiter und Kalibrierung `RS_STUDY_LEVERS`,
+`RS_STUDY_SUN`, `RS_STUDY_GRID`, `RS_STUDY_RELIEF`, `RS_STUDY_DEBUG`) liegen in
+`game/studies/flusstal/Flusstal.gd` und werden über `scripts/graphics-study.sh`
+gesetzt; Direktstart ohne gültige Variante oder mit unbekanntem Hebel bricht ab.
 
 ## CI
 
