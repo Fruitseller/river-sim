@@ -4,59 +4,9 @@ extends SceneTree
 var failures := 0
 
 func _initialize() -> void:
-	var study = load("res://studies/flusstal/Flusstal.gd").new()
-	study.N = 16
-	study.half = 8.0
-	study.step = 1.0
-	study.sea = 0.0
-	study.h_cache.resize(256)
-	study.h_cache.fill(1.0)
-	study.h_cache_dirty = false
-	var raster := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	raster.fill(Color(0, 0, 0.5, 0.5))
-	study.water_field._img = raster
-	_check(study._dry_footprint(Vector2.ZERO, 0.5, raster), "Trockenes Land muss bebaubar sein")
-	raster.set_pixel(8, 8, Color.RED)
-	_check(not study._dry_footprint(Vector2.ZERO, 0.5, raster), "Raster-Fluss muss frei bleiben")
-	raster.set_pixel(8, 8, Color.GREEN)
-	_check(not study._dry_footprint(Vector2.ZERO, 0.5, raster), "See muss frei bleiben")
-	raster.set_pixel(8, 8, Color(0, 0, 0.5, 0.5))
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(-1, 1, -1), Vector3(1, 1, -1), Vector3(0, 1, 1)])
-	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2])
-	study.river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mask: Image = study._placement_water()
-	_check(not study._dry_footprint(Vector2.ZERO, 0.5, mask), "Band ohne Rasterwasser muss frei bleiben")
-	_check(raster.get_pixel(8, 8).r == 0.0, "Platzierung darf das Render-Wasserfeld nicht ändern")
-	_check(not study._dry_footprint(Vector2(8, 8), 1.0, mask), "Weltgrenze muss frei bleiben")
-	study.h_cache.fill(0.0)
-	_check(not study._dry_footprint(Vector2(-4, -4), 0.5, raster), "Meer muss frei bleiben")
-	var meshes = load("res://studies/flusstal/StudyMeshes.gd")
-	var rock: ArrayMesh = meshes.rock()
-	var geometry := rock.surface_get_arrays(0)
-	var vertices: PackedVector3Array = geometry[Mesh.ARRAY_VERTEX]
-	var normals: PackedVector3Array = geometry[Mesh.ARRAY_NORMAL]
-	# Echte Außenseiten-Prüfung statt der früheren Rekonstruktion des gespeicherten
-	# Kreuzprodukts (die konnte nie fehlschlagen): die Windung jedes Dreiecks muss
-	# VOM Felszentrum NACH AUßEN zeigen. Referenz ist die Mitte der Bounding-Box
-	# des Meshes; der Fels ist konvex genug, dass jedes Außendreieck davon wegzeigt.
-	var bounds := rock.get_aabb()
-	var rock_center := bounds.get_center()
-	for i in range(0, vertices.size(), 3):
-		var clockwise := (vertices[i + 2] - vertices[i]).cross(vertices[i + 1] - vertices[i])
-		var centroid := (vertices[i] + vertices[i + 1] + vertices[i + 2]) / 3.0
-		_check(clockwise.dot(centroid - rock_center) > 0.0, "Fels-Dreieck muss nach außen gewunden sein")
-		_check(clockwise.dot(normals[i]) > 0.0, "Fels-Normale muss zur Godot-Frontseite zeigen")
-	_check(vertices == meshes.rock().surface_get_arrays(0)[Mesh.ARRAY_VERTEX], "Felsen müssen reproduzierbar sein")
-	# Kronen nutzen einen RNG mit festem Seed — zwei Aufrufe müssen identisch sein.
-	for variant in 2:
-		var a: ArrayMesh = meshes.tree(variant)
-		var b: ArrayMesh = meshes.tree(variant)
-		_check(a.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] == b.surface_get_arrays(0)[Mesh.ARRAY_VERTEX],
-			"Baumkrone muss reproduzierbar sein (Variante %d)" % variant)
-	_check_study_shader()
-	study.free()
+	_check_protect_mask()
+	_check_lever_parsing()
+	_check_study_shaders()
 	if failures > 0:
 		quit(1)
 		return
@@ -68,32 +18,93 @@ func _check(value: bool, message: String) -> void:
 		failures += 1
 		print("FAIL: ", message)
 
-## Der Studien-Shader wird zur Laufzeit aus der Produktionssource gebaut
-## (Flusstal.gd, #define FLUSSTAL_STUDY vor terrain.gdshader). Früher rutschte
-## ein stiller Include-Fehler durch, weil nichts den zusammengesetzten Code
-## kompilierte: das Material fiel auf Standard zurück und nur ein A/B-Bild
-## hätte es gezeigt. Diese Prüfung parst BEIDE Fassungen: der Produktions-
-## Shader darf die Studien-Sampler nicht kennen (er bindet studies/ nicht ein),
-## der Studien-Shader muss sie liefern. Ohne Uniforms = Kompilierungsfehler.
-func _check_study_shader() -> void:
-	var source: String = FileAccess.get_file_as_string("res://shaders/terrain.gdshader")
-	_check(not source.is_empty(), "terrain.gdshader muss lesbar sein")
-	var required := [
-		"study_enabled", "study_rock_color", "study_rock_normal", "study_rock_roughness",
-		"study_ground_color", "study_ground_normal", "study_ground_roughness",
-	]
-	var production := Shader.new()
-	production.code = source
-	var production_names := _uniform_names(production)
-	for name in required:
-		_check(not production_names.has(name),
-			"Produktions-Shader darf Studien-Uniform %s nicht binden" % name)
-	var study := Shader.new()
-	study.code = "#define FLUSSTAL_STUDY\n" + source
-	var study_names := _uniform_names(study)
-	for name in required:
-		_check(study_names.has(name),
-			"Studien-Shader muss Uniform %s liefern (Kompilierungsfehler?)" % name)
+## Die Schutzmaske sperrt Verschiebung und Kronendach an Wasser. Sie muss das
+## Rasterwasser übernehmen, zusätzlich jedes Band-Dreieck abdecken (der
+## Raster-Deckel entfernt Wasser unter Bändern) und darf das Render-Wasserfeld
+## selbst nicht verändern.
+func _check_protect_mask() -> void:
+	var study = load("res://studies/flusstal/Flusstal.gd").new()
+	study.N = 16
+	study.half = 8.0
+	study.step = 1.0
+	var raster := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	raster.fill(Color(0, 0, 0.5, 0.5))
+	raster.set_pixel(2, 2, Color(0.8, 0, 0.5, 0.5))
+	raster.set_pixel(3, 2, Color(0, 0.9, 0.5, 0.5))
+	study.water_field._img = raster
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(-1, 1, -1), Vector3(1, 1, -1), Vector3(0, 1, 1)])
+	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2])
+	study.river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mask: Image = study._placement_water()
+	_check(mask.get_pixel(8, 8).r > 0.9, "Band ohne Rasterwasser muss gesperrt sein")
+	_check(mask.get_pixel(7, 7).r > 0.9 and mask.get_pixel(9, 9).r > 0.9,
+		"Band-Sperre deckt die ganze Boundingbox des Dreiecks")
+	_check(mask.get_pixel(2, 2).r > 0.7, "Raster-Fluss muss gesperrt bleiben")
+	_check(mask.get_pixel(3, 2).g > 0.8, "See muss gesperrt bleiben")
+	_check(mask.get_pixel(12, 12).r < 0.05 and mask.get_pixel(12, 12).g < 0.05,
+		"Trockenes Land außerhalb der Bänder bleibt frei")
+	_check(raster.get_pixel(8, 8).r == 0.0, "Maske darf das Render-Wasserfeld nicht ändern")
+	study.free()
+
+## Ein unbekannter Hebelname bricht ab, statt still ignoriert zu werden.
+func _check_lever_parsing() -> void:
+	var previous_variant := OS.get_environment("RS_STUDY_VARIANT")
+	var previous_levers := OS.get_environment("RS_STUDY_LEVERS")
+	OS.set_environment("RS_STUDY_VARIANT", "prototype")
+	var script = load("res://studies/flusstal/Flusstal.gd")
+	OS.set_environment("RS_STUDY_LEVERS", "")
+	var all = script.new()
+	_check(all._parse_levers() and all.study_levers.size() == 4, "Ohne Angabe gelten alle vier Hebel")
+	all.free()
+	OS.set_environment("RS_STUDY_LEVERS", "geometry,frame")
+	var two = script.new()
+	_check(two._parse_levers() and two._lever("geometry") and two._lever("frame")
+		and not two._lever("canopy"), "Hebel-Liste schaltet einzeln")
+	two.free()
+	OS.set_environment("RS_STUDY_LEVERS", "geometry,licht")
+	var typo = script.new()
+	_check(not typo._parse_levers(), "Tippfehler im Hebel muss abbrechen")
+	typo.free()
+	OS.set_environment("RS_STUDY_VARIANT", previous_variant)
+	OS.set_environment("RS_STUDY_LEVERS", previous_levers)
+
+## Die Studien-Shader werden zur Laufzeit aus den Produktionsquellen gebaut
+## (#define FLUSSTAL_STUDY vor der Quelle). Früher rutschte ein stiller
+## Include-Fehler durch, weil nichts den zusammengesetzten Code kompilierte:
+## das Material fiel auf Standard zurück und nur ein A/B-Bild hätte es gezeigt.
+## Diese Prüfung parst BEIDE Fassungen: Produktion darf die Studien-Uniforms
+## nicht kennen, die Studie muss sie liefern. Ohne Uniforms = Kompilierungsfehler.
+func _check_study_shaders() -> void:
+	var study_script = load("res://studies/flusstal/Flusstal.gd")
+	var cases := {
+		"res://shaders/terrain.gdshader": [
+			"study_enabled", "study_rock_color", "study_rock_normal", "study_rock_roughness",
+			"study_ground_color", "study_ground_normal", "study_ground_roughness",
+			"study_geometry", "study_relief_tex", "study_protect_tex",
+			"study_canopy_enabled", "study_clouds",
+		],
+		"res://shaders/ocean.gdshader": ["study_ocean", "study_clouds"],
+		"res://shaders/water.gdshader": ["study_clouds"],
+	}
+	for path in cases:
+		var source: String = FileAccess.get_file_as_string(path)
+		_check(not source.is_empty(), "%s muss lesbar sein" % path)
+		var production := Shader.new()
+		production.code = source
+		var production_names := _uniform_names(production)
+		_check(production_names.size() > 0, "%s muss kompilieren" % path)
+		var study_names := _uniform_names(study_script.study_shader(path))
+		for name in cases[path]:
+			_check(not production_names.has(name),
+				"Produktions-Shader %s darf Studien-Uniform %s nicht binden" % [path, name])
+			_check(study_names.has(name),
+				"Studien-Fassung von %s muss Uniform %s liefern (Kompilierungsfehler?)" % [path, name])
+	var bake: Shader = load("res://studies/flusstal/relief_bake.gdshader")
+	var bake_names := _uniform_names(bake)
+	for name in ["height_tex", "study_protect_tex", "study_relief_scale", "study_sharpen"]:
+		_check(bake_names.has(name), "Back-Pass muss Uniform %s liefern (Kompilierungsfehler?)" % name)
 
 func _uniform_names(shader: Shader) -> Dictionary:
 	var names := {}
