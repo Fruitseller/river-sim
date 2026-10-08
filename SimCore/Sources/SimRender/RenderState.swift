@@ -42,11 +42,17 @@ public final class RenderState {
     private let ribbons = RiverRibbonRenderer()
     private let trees = TreeInstanceRenderer()
     private let diagnostics = TerrainDiagnostics()
+    private let protectMaskRenderer = WaterProtectMaskRenderer()
 
     /// Farbe und Materialgewichte entstehen gemeinsam und bleiben bis zur
     /// nächsten Terrain-Änderung gepuffert. Godot lädt sie als zwei Texturen,
     /// die teure Standortauswertung läuft aber nur einmal.
     private var materials: TerrainColorRenderer.Buffers?
+
+    /// Schutzmaske für Kronendach und Verschiebung (R8, gepuffert bis zur
+    /// nächsten Terrain- oder Ribbon-Änderung).
+    private var protectMask: [UInt8]?
+    private var lastWaterBytes: [UInt8]?
 
     // MARK: - Invalidierung (DER eine Einstieg)
 
@@ -77,6 +83,8 @@ public final class RenderState {
     /// Taktung anfasst, entscheidet sie mit (Issue #94).
     public func invalidate(_ terrain: Terrain, worldReplaced: Bool = false) {
         materials = nil
+        protectMask = nil
+        lastWaterBytes = nil
         guard worldReplaced else { return }
         trees.invalidateSnapshot()
         ribbons.invalidateSnapshot()
@@ -115,10 +123,33 @@ public final class RenderState {
     /// gedeckelt (Issue #34).
     public func waterFieldBytes(_ terrain: Terrain, blend: Double,
                                 deferTail: Bool = false) -> [UInt8] {
-        waterField.bytes(terrain, blend: blend, geometryMode: geometryMode,
-                         bandChannelFlags: ribbons.bandChannelFlags,
-                         bandCoverage: ribbons.bandCoverage,
-                         deferTail: deferTail)
+        let bytes = waterField.bytes(terrain, blend: blend, geometryMode: geometryMode,
+                                     bandChannelFlags: ribbons.bandChannelFlags,
+                                     bandCoverage: ribbons.bandCoverage,
+                                     deferTail: deferTail)
+        lastWaterBytes = bytes
+        return bytes
+    }
+
+    // MARK: - Schutzmaske (Issue #154)
+
+    /// Schutzmaske für Kronendach und Verschiebung (R8-Puffer, n×n).
+    /// Vereint sichtbares Rasterwasser, gebaute Flussbänder und einen Saum (~2 Zellen).
+    public func protectMaskBytes(_ terrain: Terrain) -> [UInt8] {
+        if let protectMask { return protectMask }
+        let waterBytes = lastWaterBytes ?? waterField.bytes(
+            terrain, blend: 1.0, geometryMode: geometryMode,
+            bandChannelFlags: ribbons.bandChannelFlags,
+            bandCoverage: ribbons.bandCoverage,
+            deferTail: true
+        )
+        let mask = protectMaskRenderer.bytes(
+            terrain: terrain,
+            bandCoverage: ribbons.bandCoverage,
+            waterBytes: waterBytes
+        )
+        protectMask = mask
+        return mask
     }
 
     // MARK: - Diagnose
@@ -160,6 +191,7 @@ public final class RenderState {
     /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y).
     public func buildRiverRibbons(_ terrain: Terrain, hscale: Double, lift: Double) {
         ribbons.build(terrain, hscale: hscale, lift: lift)
+        protectMask = nil
     }
 
     /// Letztes Band-Bauergebnis als POD-Puffer (die Brücke wrappt sie in
