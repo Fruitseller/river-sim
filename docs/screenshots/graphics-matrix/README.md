@@ -29,12 +29,19 @@ scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline sh
 scripts/graphics-matrix.sh prototype docs/screenshots/graphics-matrix/prototype shot
 ```
 
-## Vorhandene Baseline-Aufnahmen (Zielmaschine M4 Max, 3456×2104)
+## Referenz-Aufnahmen und Namensbeispiele (Zielmaschine M4 Max, 3456×2104)
 
-- `baseline/seed1337_20k_overview.png`: M4-Max-Aufnahme aus der Referenzstudie (#116)
-- `baseline/seed1337_20k_detail.png`: M4-Max-Aufnahme aus der Referenzstudie (#116)
+Die beiden Aufnahmen der Referenzwelt (Seed 1337, 20k) liegen als Originale bereits
+in der Flusstal-Studie vor und entsprechen der Matrix-Kameradefinition:
+- `docs/screenshots/graphics-quality/baseline-overview.png` (entspricht `seed1337_20k_overview.png`)
+- `docs/screenshots/graphics-quality/baseline-detail.png` (entspricht `seed1337_20k_detail.png`)
+
+Um redundante Kopien derselben Binärdateien im Repository zu vermeiden, verweist die
+Matrix auf diese Originale. Bei einem frischen Matrix-Export via `scripts/graphics-matrix.sh`
+werden alle 54 Bilddateien direkt in den angegebenen Zielordner (z. B.
+`docs/screenshots/graphics-matrix/baseline/`) geschrieben.
 
 *Hinweis:* Gemäß Issue #150 und AGENTS.md werden auf dem Linux-Entwicklerhost keine
 Kaltbauten oder GPU-Renderings simuliert und keine erfundenen Pixel erzeugt.
-Die verbleibenden Matrixaufnahmen der Zielmaschine (M4 Max, 3456×2104 Viewport, maximiert)
-werden bei Zugriff auf die Referenzhardware über `scripts/graphics-matrix.sh` ausgeführt.
+Die vollständige Generierung aller Matrixaufnahmen der Zielmaschine (M4 Max, 3456×2104 Viewport, maximiert)
+erfolgt bei Zugriff auf die Referenzhardware über `scripts/graphics-matrix.sh`.

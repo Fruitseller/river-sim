@@ -379,10 +379,12 @@ scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline ti
 
 ### Baseline-Bilder und Messungen (Status)
 
-- **Vorhandene Baseline-Bilder:** Unter `docs/screenshots/graphics-matrix/baseline/`
-  liegen die M4-Max-Originalaufnahmen aus `main` für die Referenzwelt:
-  - `seed1337_20k_overview.png`
-  - `seed1337_20k_detail.png`
+- **Vorhandene Baseline-Bilder:** Die M4-Max-Originalaufnahmen aus `main` für die Referenzwelt
+  liegen unter `docs/screenshots/graphics-quality/` vor und entsprechen den Matrix-Kameras:
+  - `baseline-overview.png` (entspricht `seed1337_20k_overview.png`)
+  - `baseline-detail.png` (entspricht `seed1337_20k_detail.png`)
+  (Keine redundanten Binärduplikate im Repo; `scripts/graphics-matrix.sh` exportiert den
+  vollständigen 54-Bilder-Satz).
 - **Baseline-Messwerte der Referenzwelt (M4 Max, 3456×2104, Seed 1337, Jahr 20k):**
   - Standbild: Mittel 8,73 ms, p95 9,12 ms, p99 9,39 ms, Max 10,49 ms (0 Überschreitungen / 1147 Frames)
   - Kamerafahrt: Mittel 8,70 ms, p95 9,12 ms, p99 9,29 ms, Max 9,83 ms (0 Überschreitungen / 1150 Frames)
