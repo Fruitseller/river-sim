@@ -306,7 +306,7 @@ der in Flusslandschaften relevanten Geomorphologie und Biome abdecken:
 Jeder Seed wird in drei definierten Zeitschritten abgenommen:
 
 - **Jahr 0 (nach Einlauf):** Zustand direkt nach Abschluss der 3000
-  Einlaufjahre (`SimNode.generationSettleYears`). Zeigt das tektonisch frische,
+  Einlaufjahre (`SimConfig.productionSettleYears`). Zeigt das tektonisch frische,
   ungealterte Relief mit steilen Bruchkanten, initialem Flussnetz und beginnender
   Pflanzensukzession.
 - **Jahr 20.000 (mittlere Reife):** Ausgewogenes Stadium mit voll ausgebildeter
