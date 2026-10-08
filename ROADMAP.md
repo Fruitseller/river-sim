@@ -16,6 +16,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   mit Luftperspektive und Wolkenschatten, Ozean nach Wassertiefe. Keine
   Handplatzierung mehr. Reproduktion, Wirkungsleiter, Messreihe und Grenzen in
   `docs/graphics-quality.md`. Visuelle Abnahme offen; #117 hat noch nicht begonnen.
+  Die verbindliche Abnahmematrix für die Vorher/Nachher-Bewertung aller Folge-Tickets
+  ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, `scripts/graphics-matrix.sh`,
+  `GraphicsMatrixTests`).
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare

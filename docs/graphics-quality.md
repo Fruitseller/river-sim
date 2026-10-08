@@ -269,3 +269,126 @@ SimRender oder als GPU-Pass in die Brücke), Kronendach statt Einzelbäumen in
 der Übersicht, Schutzmaske aus Wasserfeld und Bändern, Ozean nach Wassertiefe.
 Offen: Kamera-unabhängige Lichtwahl, Instanzbäume an Waldrändern für Nahsicht,
 Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen 720er-Gitters.
+
+## Abnahmematrix für Folge-Tickets (#150, Spec #156, Parent #117)
+
+Als verbindliche Arbeits- und Vergleichsgrundlage für alle nachfolgenden Tickets
+von #117 („Landschaftsqualität") dient eine standardisierte Matrix aus drei
+Seeds, drei Entwicklungsstadien und sechs Kameraperspektiven (insgesamt 54
+Einzelansichten je Variante). Jedes Folge-Ticket erbringt seine Vorher/Nachher-Bilder
+und Leistungsmessungen reproduzierbar gegen diese Matrix.
+
+### Auswahl der Seeds und Begründung
+
+Die drei Seeds wurden so gewählt, dass sie in Kombination das gesamte Spektrum
+der in Flusslandschaften relevanten Geomorphologie und Biome abdecken:
+
+1. **Seed 1337 („Flusstal Soča", Referenzwelt aus #116):**
+   - *Charakter:* Felsiges Kerbtal mit tief eingeschnittenem Hauptfluss,
+     dendritischem Zuflussnetz, starkem Relief (~4,4 m) und Meeresmündung.
+   - *Fokus:* Bewaldete Talböden, steile Felswände, Fluss- und Auenstrukturen,
+     Schluchtgeometrie und Mündungsdelta ins offene Meer.
+2. **Seed 42 („Seen- und Beckenplateau"):**
+   - *Charakter:* Ausgeprägte Binnenbecken- und Seenlandschaft (dokumentiert in
+     `docs/nickmcd-behavior-verification.md` und `docs/endorheic-evaporation-measurements.md`).
+   - *Fokus:* Große stehende Gewässer, dynamische Seespiegel und Auslass-Inzision,
+     Verlandungszonen, Strand- und Uferlinien, Flachlandflüsse ohne extreme Steilwände,
+     niedrige Schneegrenzen-Aktivität.
+3. **Seed 20 („Hochalpines Massiv"):**
+   - *Charakter:* Hochgebirge mit maximalem Relief (Spitzenhöhe 16,7 m, robustes
+     Relief 4,9 m) und stärkstem Kaltklima (dokumentiert in `docs/melt-runoff-measurements.md` §A).
+   - *Fokus:* Großflächige ganzjährige Firn- und Schneefelder (über 4400 Zellen im
+     Frühstadium), scharfe kahle Felsgrate, Karenbecken, Moränen und eiszeitliche
+     Trogtäler, Übergang von spärlicher alpiner Vegetation zu ewigem Schnee.
+
+### Entwicklungsstadien (Jahre)
+
+Jeder Seed wird in drei definierten Zeitschritten abgenommen:
+
+- **Jahr 0 (nach Einlauf):** Zustand direkt nach Abschluss der 3000
+  Einlaufjahre (`SimNode.generationSettleYears`). Zeigt das tektonisch frische,
+  ungealterte Relief mit steilen Bruchkanten, initialem Flussnetz und beginnender
+  Pflanzensukzession.
+- **Jahr 20.000 (mittlere Reife):** Ausgewogenes Stadium mit voll ausgebildeter
+  Erosionsmorphologie, tief eingeschnittenen Haupttälern, stabilen Flussbetten
+  und reifem Vegetationssaum. Entspricht dem Referenzstadium der Flusstal-Studie.
+- **Jahr 100.000 (Altersstadium):** Gealterte Landschaft nach post-orogenem
+  Zerfall (`upliftDecay`). Grate durch lineare Hangdiffusion gerundet, Talböden
+  verbreitert, weitreichende Mäander- und Zopfstromsysteme, maximal dichter
+  Baumbestand durch langjährige Sukzession.
+
+### Kameraperspektiven je Welt
+
+Um optische Mängel nicht hinter gefälligen Schönansichten zu verbergen, umfasst
+jede Welt neben Übersicht und Nahansicht vier gezielte Stresstests:
+
+| Kamera-ID | Typ | Parameter (Target X/Z, Dist, Yaw, Pitch) | Prüfzweck / Stresstest |
+| :--- | :--- | :--- | :--- |
+| `overview` | Übersicht | `(0, 0)`, Dist 151.85, Yaw 0.70, Pitch 0.85 | Gesamtsilhouette der Insel, Großrelief, Maßstabslesbarkeit gegen Ozean und Himmel. |
+| `detail` | Nahansicht | Seed 1337: `(-12, -25)`, Dist 42, Yaw 0.70, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 45, Yaw 0.50, Pitch 0.80<br>Seed 20: `(-8, 10)`, Dist 42, Yaw 0.60, Pitch 0.80 | Charakteristisches Hauptmerkmal: Talsohle, Seebucht oder Karenbecken; Kronendach und Felsstrukturen. |
+| `grazing` | Flacher Blick | Seed 1337: `(-10, -20)`, Dist 38, Yaw 0.70, Pitch 1.35<br>Seed 42: `(6, -4)`, Dist 40, Yaw 0.40, Pitch 1.35<br>Seed 20: `(-6, 12)`, Dist 38, Yaw 0.50, Pitch 1.35 | **Stresstest Parallaxe:** Pitch 1.35 (~13° über Horizont). Deckt Flachheit von Kronendach, fehlende Baum-Parallaxe und Texturstreckung an Hangflanken auf. |
+| `backlight` | Gegenlicht | Seed 1337: `(-12, -25)`, Dist 45, Yaw -0.87, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 48, Yaw -0.87, Pitch 0.85<br>Seed 20: `(-8, 10)`, Dist 46, Yaw -0.87, Pitch 0.85<br>*(Sonne Azimut -50°, Höhe 28°)* | **Stresstest Beleuchtung:** Blick direkt gegen die Sonne. Alle kamerazugewandten Flanken liegen im Eigenschatten; prüft Relieflesbarkeit im Schatten, Tonemapping und Streulicht. |
+| `coast` | Küste / Ufer | Seed 1337: `(-36, -32)`, Dist 45, Yaw 0.90, Pitch 0.85<br>Seed 42: `(12, -10)`, Dist 38, Yaw 1.10, Pitch 0.85<br>Seed 20: `(30, -28)`, Dist 48, Yaw 0.80, Pitch 0.85 | **Stresstest Wasser-Land:** Mündungsdelta, Binnensee-Ufer oder Steilküste. Prüft Schutzmaske, Übergang von Flussband zu Ozean/See, Brandung und Tiefenfarbe. |
+| `snow` | Schnee / Grate | Seed 1337: `(18, 14)`, Dist 48, Yaw 0.60, Pitch 0.75<br>Seed 42: `(-22, 20)`, Dist 50, Yaw 0.70, Pitch 0.75<br>Seed 20: `(-10, 14)`, Dist 40, Yaw 0.60, Pitch 0.70 | **Stresstest Schneegrenze:** Felsrippen, Firnfelder und Gipfel. Prüft Gratschärfung, Schnee-Albedo und Übergang von Wald/Fels zu Schnee. |
+
+### Physikalische Baseline-Kennzahlen der Matrixwelten
+
+Gemessen mit dem headless SimCore-Harness (`GraphicsMatrixTests.testMatrixBaselineMetricsDiagnostic()`,
+Produktions-Grid $n = 720$, 112,48 m Weltbreite, $HSCALE = 24.0$):
+
+| Seed | Name | Stadium | max_y | Relief (p95-med) | See-Zellen | Ozean-Zellen | Schnee-Zellen | Wald-Zellen | Kanal-Knoten |
+| ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1337 | Flusstal Soča | Jahr 0 (Einlauf) | 16,28 m | 4,42 m | 29.587 | 159.754 | 4.233 | 197.057 | 17.465 |
+| 1337 | Flusstal Soča | Jahr 20k | 14,41 m | 4,07 m | 26.780 | 158.237 | 2.722 | 240.319 | 22.779 |
+| 1337 | Flusstal Soča | Jahr 100k | 13,89 m | 3,08 m | 31.079 | 157.412 | 793 | 287.707 | 27.426 |
+| 42 | Seen- und Beckenplateau | Jahr 0 (Einlauf) | 14,71 m | 4,12 m | 3.606 | 369.113 | 288 | 125.982 | 7.532 |
+| 42 | Seen- und Beckenplateau | Jahr 20k | 13,80 m | 3,93 m | 1.183 | 369.046 | 123 | 133.792 | 9.146 |
+| 42 | Seen- und Beckenplateau | Jahr 100k | 13,35 m | 3,06 m | 224 | 370.325 | 0 | 135.434 | 11.201 |
+| 20 | Hochalpines Massiv | Jahr 0 (Einlauf) | 16,67 m | 4,89 m | 18.533 | 260.497 | 4.410 | 158.644 | 13.343 |
+| 20 | Hochalpines Massiv | Jahr 20k | 14,38 m | 4,63 m | 11.188 | 259.669 | 3.311 | 189.860 | 16.184 |
+| 20 | Hochalpines Massiv | Jahr 100k | 13,86 m | 3,41 m | 173 | 260.287 | 1.430 | 220.397 | 19.511 |
+
+*Befund der Physik:*
+- Der post-orogene Zerfall senkt das Relief über 100.000 Jahre messbar von ~4,4–4,9 m
+  auf ~3,1–3,4 m.
+- Die Sukzession lässt das Waldfeld kontinuierlich anwachsen (Seed 1337 von 197k auf
+  288k Zellen).
+- Das hydrographische Netzwerk verzweigt sich stetig (Kanal-Knoten steigen auf allen
+  Seeds um 40–60 %).
+- Auf Seed 20 bleibt selbst nach 100k Jahren ein substanzielles Schneefeld (1.430
+  Zellen) erhalten, während Seed 42 weitgehend schneefrei altert.
+
+### Ausführung und Reproduktion
+
+Das Skript `scripts/graphics-matrix.sh` automatisiert den vollständigen Durchlauf:
+
+```sh
+# 1. Alle 54 Aufnahmen für eine Variante erzeugen:
+scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline shot
+scripts/graphics-matrix.sh prototype docs/screenshots/graphics-matrix/prototype shot
+
+# 2. Übersicht aller Permutationen auflisten:
+scripts/graphics-matrix.sh baseline "" list
+
+# 3. Einzelne Welten oder Kameras filtern:
+RS_MATRIX_SEED=1337 RS_MATRIX_YEAR=20000 scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline shot
+
+# 4. Leistungsmessungen (Standbild, Kamerafahrt, Zeitraffer) je Welt durchführen:
+scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline timing
+```
+
+### Baseline-Bilder und Messungen (Status)
+
+- **Vorhandene Baseline-Bilder:** Unter `docs/screenshots/graphics-matrix/baseline/`
+  liegen die M4-Max-Originalaufnahmen aus `main` für die Referenzwelt:
+  - `seed1337_20k_overview.png`
+  - `seed1337_20k_detail.png`
+- **Baseline-Messwerte der Referenzwelt (M4 Max, 3456×2104, Seed 1337, Jahr 20k):**
+  - Standbild: Mittel 8,73 ms, p95 9,12 ms, p99 9,39 ms, Max 10,49 ms (0 Überschreitungen / 1147 Frames)
+  - Kamerafahrt: Mittel 8,70 ms, p95 9,12 ms, p99 9,29 ms, Max 9,83 ms (0 Überschreitungen / 1150 Frames)
+  - Zeitraffer: Mittel 10,96 ms, p95 11,21 ms, p99 70,08 ms, Max 79,35 ms (39 Überschreitungen / 913 Frames)
+- **Offener Punkt:** Die Ausführung der verbleibenden Matrixaufnahmen und
+  Frameintervall-Messreihen im maximierten 3456×2104-Fenster erfordert Zugriff auf
+  die Zielmaschine (Apple M4 Max). Der Ablauf ist über `scripts/graphics-matrix.sh`
+  vollständig automatisiert und vorbereitet.
+
