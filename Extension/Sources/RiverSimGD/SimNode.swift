@@ -221,6 +221,12 @@ final class SimNode: Node {
         PackedByteArray(render.flowDetailBytes(terrain))
     }
 
+    /// Schutzmaske für Kronendach und Render-Verschiebung als R8-Byte-Buffer (n×n, Issue #154).
+    /// Sperrt Wasserflächen (sichtbares Rasterwasser + gebaute Flussbänder + Saum ~2 Zellen).
+    @Callable func protectMaskBytes() -> PackedByteArray {
+        PackedByteArray(render.protectMaskBytes(terrain))
+    }
+
     // MARK: Wasser-Kalibrierung über die Brücke (Issues #91/#92)
 
     // Die Tabellen (Namen + Werte) leben godot-frei in `SimRender.WaterUniforms`;
