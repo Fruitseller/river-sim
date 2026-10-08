@@ -76,6 +76,17 @@ public enum WaterRender {
     /// Fluss-Version.
     public static let ribbonHaloIntensity = 0.14
 
+    // MARK: Schutzmaske (Issue #154)
+
+    /// Untere Schwelle für sichtbaren Fluss im Wasserfeld (Stream-Kanal).
+    public static let protectRiverThreshold = riverMaskLo
+    /// Untere Schwelle für sichtbaren See im Wasserfeld (Lake-Gate).
+    public static let protectLakeThreshold = lakeGateLo
+    /// Untere Schwelle für gebaute Band-Abdeckung.
+    public static let protectBandThreshold = 0.01
+    /// Saum-Breite der Schutzmaske in Zellen (~2 Zellen).
+    public static let protectSeamCells = 2
+
     // MARK: Kohärenz-Gate des Fluss-Kanals
 
     // Der Fluss-Kanal verträgt KEINEN weichen Fade. Der Shader liest ihn als
