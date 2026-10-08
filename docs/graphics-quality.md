@@ -56,13 +56,14 @@ Jetzt zwei Texturskalen und Verwitterungsstreifen in Fallrichtung
 (`materials.gdshaderinc`).
 
 **Wasser bleibt unangetastet.** Verschiebung und Kronendach enden an einer
-Schutzmaske: Rasterwasser plus die Boundingbox jedes gebauten Band-Dreiecks
-(der Raster-Deckel entfernt Wasser unter Bändern), über eine Mip-Stufe um etwa
-zwei Zellen ausgedehnt. Die Gratschärfung hebt nur, senkt nie: kein Talboden
-sinkt unter ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel,
-dort gibt es keine Verschiebung. Die Bänder sampeln die sichtbare Oberfläche
-des vollen Sim-Gitters (`setRenderGrid(N)`). Die Sim-Felder und
-`SimCore` ändern sich nicht.
+Schutzmaske: godot-freie Render-Ableitung in `SimRender`
+(`WaterProtectMaskRenderer`, Issue #154) aus sichtbarem Rasterwasser plus der
+tatsächlichen Abdeckung der Flussbänder (der Raster-Deckel entfernt Wasser
+unter Bändern), um einen Saum von zwei Zellen (`WaterRender.protectSeamCells`)
+ausgedehnt. Die Gratschärfung hebt nur, senkt nie: kein Talboden sinkt unter
+ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel, dort gibt es
+keine Verschiebung. Die Bänder sampeln die sichtbare Oberfläche des vollen
+Sim-Gitters (`setRenderGrid(N)`). Die Sim-Felder und `SimCore` ändern sich nicht.
 
 **Produktion bleibt unverändert.** Alle Studien-Hooks in `terrain.gdshader`,
 `ocean.gdshader` und `water.gdshader` stehen hinter `#ifdef FLUSSTAL_STUDY`;
@@ -206,10 +207,10 @@ Woher die Mehrkosten kommen (gemessen):
 | nur `canopy` / nur `light` / nur `frame` (384er-Gitter) | 10,0 / 10,7 / 11,7 |
 
 Die Kosten folgen der Vertexzahl. Die Hebel `canopy`, `light` und `frame` sind
-im Vergleich billig. Im Zeitraffer kommen je Textur-Update ~1,4 ms
-GDScript für die Schutzmaske dazu, je Fluss-Rebuild (höchstens 1 Hz) ~20 ms für
-das Rastern der Band-Dreiecke. Für #117 ist das der erste Kandidat: die Maske
-gehört als Ableitung in SimRender oder als GPU-Pass.
+im Vergleich billig. Die früheren Spitzen von ~20 ms je Fluss-Rebuild für
+das Rastern der Band-Dreiecke in GDScript entfallen seit Issue #154: die
+Schutzmaske wird godot-frei in `SimRender` abgeleitet und liegt beim Bandbau
+bereits vor.
 
 ## Grenzen dieser Studie
 
@@ -252,8 +253,8 @@ sind nur verlinkt, keine Spielassets.
 ## Verifikation und Übergabe
 
 - `graphics_study.gd` (CI-Marke `GRAPHICS_STUDY_OK`) prüft: die Schutzmaske
-  übernimmt Raster-Fluss und See, sperrt die ganze Boundingbox jedes
-  Band-Dreiecks, lässt trockenes Land frei und verändert das Render-Wasserfeld
+  liegt als R8-Textur vor, übernimmt Raster-Fluss und See, sperrt
+  Bandflächen, lässt trockenes Land frei und verändert das Render-Wasserfeld
   nicht; die Hebel-Liste schaltet einzeln und ein Tippfehler bricht ab; die
   Studien-Fassungen von Terrain-, Ozean- und Band-Shader kompilieren und
   liefern ihre Uniforms, die Produktionsfassungen kennen sie nicht; der

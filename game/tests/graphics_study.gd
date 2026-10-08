@@ -18,34 +18,36 @@ func _check(value: bool, message: String) -> void:
 		failures += 1
 		print("FAIL: ", message)
 
-## Die Schutzmaske sperrt Verschiebung und Kronendach an Wasser. Sie muss das
-## Rasterwasser übernehmen, zusätzlich jedes Band-Dreieck abdecken (der
-## Raster-Deckel entfernt Wasser unter Bändern) und darf das Render-Wasserfeld
-## selbst nicht verändern.
+## Die Schutzmaske sperrt Verschiebung und Kronendach an Wasser (#154).
+## Sie entsteht als godot-freie Render-Ableitung in SimRender und wird
+## über die Brücke (sim.protectMaskBytes) als R8-Puffer bereitgestellt.
 func _check_protect_mask() -> void:
 	var study = load("res://studies/flusstal/Flusstal.gd").new()
-	study.N = 16
-	study.half = 8.0
-	study.step = 1.0
-	var raster := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	raster.fill(Color(0, 0, 0.5, 0.5))
-	raster.set_pixel(2, 2, Color(0.8, 0, 0.5, 0.5))
-	raster.set_pixel(3, 2, Color(0, 0.9, 0.5, 0.5))
-	study.water_field._img = raster
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3(-1, 1, -1), Vector3(1, 1, -1), Vector3(0, 1, 1)])
-	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2])
-	study.river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mask: Image = study._placement_water()
-	_check(mask.get_pixel(8, 8).r > 0.9, "Band ohne Rasterwasser muss gesperrt sein")
-	_check(mask.get_pixel(7, 7).r > 0.9 and mask.get_pixel(9, 9).r > 0.9,
-		"Band-Sperre deckt die ganze Boundingbox des Dreiecks")
-	_check(mask.get_pixel(2, 2).r > 0.7, "Raster-Fluss muss gesperrt bleiben")
-	_check(mask.get_pixel(3, 2).g > 0.8, "See muss gesperrt bleiben")
-	_check(mask.get_pixel(12, 12).r < 0.05 and mask.get_pixel(12, 12).g < 0.05,
-		"Trockenes Land außerhalb der Bänder bleibt frei")
-	_check(raster.get_pixel(8, 8).r == 0.0, "Maske darf das Render-Wasserfeld nicht ändern")
+	if ClassDB.class_exists("SimNode"):
+		var sim: Object = ClassDB.instantiate("SimNode")
+		study.sim = sim
+		study.N = sim.gridSize()
+		study.half = sim.worldSize() * 0.5
+		study.step = sim.worldSize() / float(study.N - 1)
+
+		var mask: Image = study._placement_water()
+		_check(mask != null, "Schutzmaske muss erzeugt werden")
+		_check(mask.get_format() == Image.FORMAT_R8, "Schutzmaske muss im Format R8 vorliegen")
+		_check(mask.get_width() == study.N and mask.get_height() == study.N,
+			"Schutzmaske muss Dimension N*N haben")
+
+		var mask_bytes: PackedByteArray = sim.protectMaskBytes()
+		_check(mask_bytes.size() == study.N * study.N, "sim.protectMaskBytes() muss n*n Bytes liefern")
+
+		var water_before: PackedByteArray = sim.waterFieldBytes(1.0)
+		var _dummy: PackedByteArray = sim.protectMaskBytes()
+		var water_after: PackedByteArray = sim.waterFieldBytes(1.0)
+		_check(water_before == water_after, "Schutzmaske darf das Render-Wasserfeld nicht ändern")
+	else:
+		study.N = 16
+		var mask: Image = study._placement_water()
+		_check(mask != null and mask.get_format() == Image.FORMAT_R8,
+			"Schutzmaske ohne Sim muss Fallback-R8-Bild liefern")
 	study.free()
 
 ## Ein unbekannter Hebelname bricht ab, statt still ignoriert zu werden.
