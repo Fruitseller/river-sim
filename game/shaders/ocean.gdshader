@@ -29,6 +29,13 @@ uniform vec3 water_flow_shimmer_color;
 
 varying vec2 v_world;
 
+// Flusstal-Studie (#116): nur im FLUSSTAL_STUDY-Build, Flusstal.gd setzt das
+// Define zur Laufzeit. Produktion kompiliert ohne diese Uniforms.
+#ifdef FLUSSTAL_STUDY
+#include "res://studies/flusstal/clouds.gdshaderinc"
+#include "res://studies/flusstal/ocean.gdshaderinc"
+#endif
+
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 345.45));
 	p += dot(p, p + 34.345);
@@ -63,6 +70,11 @@ void fragment() {
 	vec2 grad = swell_dir * cos(phase1) * 0.052
 	          + cross_dir * cos(phase2) * 0.026
 	          + normalize(swell_dir + cross_dir) * cos(phase3) * 0.012;
+#ifdef FLUSSTAL_STUDY
+	if (study_ocean) {
+		grad = study_ocean_grad(p, u_time);
+	}
+#endif
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
 	NORMAL = water_n_vs;
@@ -77,6 +89,13 @@ void fragment() {
 	           + sin(dot(p, swell_dir) * 3.1 - u_time * 6.5 + 1.7) * 0.5;
 	water += flow * water_flow_shimmer_color;
 
+#ifdef FLUSSTAL_STUDY
+	if (study_ocean) {
+		float h = inside_terrain ? texture(height_tex, terrain_uv).r : 0.0;
+		water = study_ocean_color(p, h, fresnel, inside_terrain, u_time);
+	}
+	water *= study_cloud_light(p, u_time);
+#endif
 	ALBEDO = water;
 	ALPHA = 1.0;
 	ROUGHNESS = mix(water_roughness_steep, water_roughness_grazing, fresnel);

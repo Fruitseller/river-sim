@@ -50,12 +50,24 @@ void study_material(vec3 p, float cold, float rock_w, float veg_w, float soil_w,
 	float study_w = clamp(rock_w + veg_w + soil_w, 0.0, 1.0) * (1.0 - cold);
 	vec3 stone = study_tri(study_rock_color, p * 0.22, weights);
 	float limestone = dot(stone, vec3(0.2126, 0.7152, 0.0722));
-	stone = vec3(0.38, 0.40, 0.39) * (0.48 + limestone * 2.0);
+	float fine = dot(study_tri(study_rock_color, p * 0.95 + 3.7, weights), vec3(0.2126, 0.7152, 0.0722));
+	// Kalkstein: hell gegenüber Wald und Wiese, aber kein Gips — die erste
+	// Fassung (0.38 · (0.48 + 2·L)) lag mit ~0.5–0.6 Albedo bei Schneeweiß und
+	// las sich unter Himmelslicht als Schnee. Zwei Texturskalen geben der Wand
+	// Struktur auf Block- und auf Wandmaßstab.
+	stone = vec3(0.33, 0.32, 0.295) * (0.5 + limestone * 1.1) * mix(0.7, 1.2, fine);
+	// Verwitterungsstreifen: Rauschen quer zur Fallrichtung gestaucht, entlang
+	// gestreckt — Regenrinnen und Sinterfahnen in Steilwänden.
+	vec2 fall = macro_n.xz / max(length(macro_n.xz), 1e-4);
+	float across = dot(p.xz, vec2(-fall.y, fall.x));
+	float streak = vnoise(vec2(across * 7.0, p.y * 0.7)) * 0.65
+	             + vnoise(vec2(across * 19.0, p.y * 1.9)) * 0.35;
+	stone *= mix(1.0, mix(0.62, 1.12, streak), cliff);
 	vec3 ground = texture(study_ground_color, p.xz * 1.4).rgb;
 	vec3 moss = ground * vec3(0.48, 0.65, 0.34);
 	// PBR-Palette nach Sim-Gewichten mischen: Fels-PBR dominiert Felsflächen,
 	// Boden-PBR liegt unter Vegetation und auf freiem Boden.
-	vec3 study_albedo = mix(moss, stone * vec3(1.12, 1.14, 1.12), cliff);
+	vec3 study_albedo = mix(moss, stone, cliff);
 	study_albedo = mix(study_albedo, moss, veg_w * 0.6);
 	// Albedo-Modulation INNERHALB der Gewichte statt Überschreiben von terr:
 	// die Sim-Biomfarben (Vegetation, Boden, Lithologie, Salzkruste) bleiben

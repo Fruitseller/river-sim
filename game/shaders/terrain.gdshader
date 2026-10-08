@@ -28,14 +28,6 @@
 // `material_enabled` — wer `detail_enabled` abschaltet, um die Erosionsrinnen
 // zu isolieren, behält damit die Materialien.
 shader_type spatial;
-// Studien-PBR-Material: nur im FLUSSTAL_STUDY-Build eingebunden (Präprozessor).
-// Der normale Spiel-Shader überspringt Include UND Aufruf komplett — keine
-// Studien-Sampler in Produktion, und `studies/` darf verschoben werden, ohne
-// den Hauptshader zu brechen (Review zu #121). Flusstal.gd setzt das Define
-// zur Laufzeit vor diese Quelle (Godot 4.7 erlaubt #define vor shader_type).
-#ifdef FLUSSTAL_STUDY
-#include "res://studies/flusstal/materials.gdshaderinc"
-#endif
 render_mode cull_disabled;
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
@@ -195,6 +187,19 @@ float triplanar_fbm(vec3 p, vec3 n) {
 	return fbm(p.yz) * weight.x + fbm(p.xz) * weight.y + fbm(p.xy) * weight.z;
 }
 
+// Studien-Schichten: nur im FLUSSTAL_STUDY-Build eingebunden (Präprozessor).
+// Der normale Spiel-Shader überspringt Includes UND Aufrufe komplett — keine
+// Studien-Uniforms in Produktion, und `studies/` darf verschoben werden, ohne
+// den Hauptshader zu brechen (Review zu #121). Flusstal.gd setzt das Define
+// zur Laufzeit vor diese Quelle (Godot 4.7 erlaubt #define vor shader_type).
+// Die Includes stehen HIER, weil die Studie die Höhenfelder und Noise-Helfer
+// darüber mitbenutzt.
+#ifdef FLUSSTAL_STUDY
+#include "res://studies/flusstal/materials.gdshaderinc"
+#include "res://studies/flusstal/landscape.gdshaderinc"
+#include "res://studies/flusstal/clouds.gdshaderinc"
+#endif
+
 void vertex() {
 	vec2 uv = world_uv(VERTEX);
 	v_uv = uv;
@@ -209,6 +214,11 @@ void vertex() {
 	float pond = pond_at(uv, hraw);
 	float lift = calib_window(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
 	VERTEX.y = mix(hraw, hfv, lift) * hscale;
+#ifdef FLUSSTAL_STUDY
+	float study_forest_v;
+	VERTEX.y += study_vertex(uv, hraw, lift, study_forest_v);
+	v_study_forest = study_forest_v;
+#endif
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
 	float hR = texture(height_tex, uv + vec2(texel, 0.0)).r;
@@ -232,6 +242,9 @@ void fragment() {
 	float hD = texture(height_tex, v_uv - vec2(0.0, texel)).r;
 	float hU = texture(height_tex, v_uv + vec2(0.0, texel)).r;
 	vec2 coarse_slope = vec2(hR - hL, hU - hD) * 0.5 * grid_n;
+#ifdef FLUSSTAL_STUDY
+	coarse_slope += study_slope(v_uv);
+#endif
 
 	float ws = world_size / 100.0;
 	float view_dist = length(VERTEX);
@@ -379,6 +392,8 @@ void fragment() {
 	if (study_enabled && hval > sea_level + 0.012) {
 		study_material(material_pos, cold, rock, vegetation, soil_w, macro_n,
 		               terr, n_ws, land_roughness);
+		study_relief_shade(v_uv, terr);
+		study_canopy(wp, v_uv, hval, VERTEX, macro_n, terr, n_ws, land_roughness);
 		NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
 	}
 #endif
@@ -455,4 +470,7 @@ void fragment() {
 	ROUGHNESS = mix(land_roughness, mix(water_roughness_steep, water_roughness_grazing, fresnel), wet);
 	METALLIC = 0.0;
 	SPECULAR = mix(0.5, mix(water_specular_steep, water_specular_grazing, fresnel), wet);
+#ifdef FLUSSTAL_STUDY
+	ALBEDO *= study_cloud_light(wp - world_size * 0.5, u_time);
+#endif
 }

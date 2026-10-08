@@ -1,19 +1,43 @@
 extends "res://scripts/Main.gd"
-## Bildstudie #116. Feste Komposition für Seed 1337, 20.000 Vorlaufjahre.
-## Die handgesetzten Waldgruppen sind keine allgemeine Biom-Verteilung.
+## Bildstudie #116, zweite Runde: dieselbe Simulationswelt, vier Hebel.
+##
+##  geometry  dichtes Render-Mesh (2× Sim-Raster) + grobe Erosionsrinnen und
+##            geschärfte Grate als echte Verschiebung im Vertex-Shader
+##  canopy    Maßstab 1 Einheit ≈ 100 m: Kronendach im Terrain-Shader statt
+##            übergroßer Instanzbäume
+##  light     tiefe Sonne, Schatten, Luftperspektive, Talnebel, Wolkenschatten
+##  frame     Ozean ohne Streifenmuster, Schelf-Farbe aus der Wassertiefe,
+##            Brandungssaum
+##
+## Alles prozedural aus den Sim-Feldern, keine Handplatzierung: die Studie gilt
+## damit für jeden Seed und bleibt im Zeitraffer, nach Pinselstrichen und nach
+## dem Laden aktiv. `RS_STUDY_LEVERS` schaltet einzelne Hebel für die
+## Wirkungsleiter (Komma-Liste, Standard: alle).
 
-const StudyMeshes = preload("res://studies/flusstal/StudyMeshes.gd")
+const STUDY_LEVERS := ["geometry", "canopy", "light", "frame"]
+## Render-Gitter der Studie: Sim-Auflösung (n = 720) statt der 384 von
+## `balanced`. Es trägt die Silhouette der groben Verschiebung; ihre Normalen
+## und Rinnen liest der Fragment-Shader aus der doppelt so feinen Backtextur.
+## Gemessen (M4 Max, 3456×2104, Übersicht): 720 → 16 ms, 1080 → 24 ms,
+## 1440 → 32 ms je Bild — die Kosten folgen der Vertexzahl, und bei 1440 sind
+## die Dreiecke in der Übersicht kleiner als ein Pixel. `RS_STUDY_GRID`
+## überschreibt den Wert für Messungen.
+const RELIEF_BAKE_SIZE := 1440
+var STUDY_GRID := int(OS.get_environment("RS_STUDY_GRID")) if OS.has_environment("RS_STUDY_GRID") else 720
 var study_variant := OS.get_environment("RS_STUDY_VARIANT")
 var study_enabled := study_variant == "prototype"
 var study_mode := OS.get_environment("RS_STUDY_MODE")
 var study_output := OS.get_environment("RS_STUDY_OUTPUT")
+var study_levers := {}
 var study_elapsed := 0.0
 var study_frames := 0
 var study_last_draw := 0
 var study_intervals: Array[float] = []
-var study_props: Node3D
-var study_start_year := 0.0
 var study_start_yaw := 0.0
+var study_protect_tex: ImageTexture
+var study_band_mask: Image # Band-Dreiecke, nur beim Fluss-Rebuild gerastert
+var study_relief_vp: SubViewport
+var study_relief_mat: ShaderMaterial
 
 func _ready() -> void:
 	# Nur die zwei dokumentierten Varianten sind gültig: ein Tippfehler oder eine
@@ -23,18 +47,14 @@ func _ready() -> void:
 			+ study_variant + "'. Start über scripts/graphics-study.sh.")
 		get_tree().quit(1)
 		return
+	if not _parse_levers():
+		get_tree().quit(1)
+		return
 	super._ready()
 	if sim == null:
 		get_tree().quit(1)
 		return
-	study_start_year = sim.currentYear()
 	study_start_yaw = cam_yaw
-	if study_enabled:
-		if sim_seed != 1337 or study_start_year != 20000.0:
-			push_error("Handplatzierung braucht Seed 1337 und 20.000 Jahre. Start: scripts/graphics-study.sh")
-			get_tree().quit(1)
-			return
-		_build_composition()
 	for child in get_children():
 		if child is CanvasLayer:
 			child.visible = study_mode.is_empty()
@@ -43,42 +63,179 @@ func _ready() -> void:
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 		RenderingServer.frame_post_draw.connect(_study_drawn)
 	print("STUDY ", JSON.stringify({"variant": "prototype" if study_enabled else "baseline",
-		"seed": sim_seed, "year": study_start_year, "viewport": str(get_viewport().size),
-		"quality": render_quality, "target": str(cam_target), "distance": cam_dist,
-		"yaw": cam_yaw, "pitch": cam_pitch, "mode": study_mode}))
+		"levers": study_levers.keys(), "seed": sim_seed, "year": sim.currentYear(),
+		"viewport": str(get_viewport().size), "quality": render_quality,
+		"terrain_grid": STUDY_GRID if _lever("geometry") else terrain_grid,
+		"target": str(cam_target), "distance": cam_dist, "yaw": cam_yaw,
+		"pitch": cam_pitch, "mode": study_mode}))
+
+## Hebel aus `RS_STUDY_LEVERS`; ein unbekannter Name bricht ab statt still
+## ignoriert zu werden (gleiche Regel wie bei RS_STUDY_VARIANT).
+func _parse_levers() -> bool:
+	if not study_enabled:
+		return true
+	var raw := OS.get_environment("RS_STUDY_LEVERS")
+	var names: PackedStringArray = STUDY_LEVERS if raw.is_empty() else raw.split(",", false)
+	for name in names:
+		if not STUDY_LEVERS.has(name.strip_edges()):
+			push_error("RS_STUDY_LEVERS: unbekannter Hebel '%s' (erlaubt: %s)"
+				% [name, ",".join(STUDY_LEVERS)])
+			return false
+		study_levers[name.strip_edges()] = true
+	return true
+
+func _lever(name: String) -> bool:
+	return study_enabled and study_levers.has(name)
+
+## Zur Laufzeit gebaute Studien-Fassung eines Produktions-Shaders: Godot 4.7
+## lehnt #include einer Datei mit shader_type ab, deshalb wird das Define vor
+## die Quelle gestellt (der Präprozessor läuft auf dem zusammengesetzten Code;
+## alle Uniform-Namen bleiben gleich, gesetzte Werte bleiben am Material).
+static func study_shader(path: String) -> Shader:
+	var shader := Shader.new()
+	shader.code = "#define FLUSSTAL_STUDY\n" + FileAccess.get_file_as_string(path)
+	return shader
 
 func _setup_scene() -> void:
 	super._setup_scene()
 	if not study_enabled:
 		return
-	# Studien-Shader: Godot 4.7 lehnt #include einer Datei mit shader_type ab,
-	# deshalb wird das Define zur Laufzeit vor die Quelle des Produktions-Shaders
-	# gestellt (Präprozessor läuft auf dem zusammengesetzten Code; alle Uniform-
-	# Namen bleiben gleich, Main.gd-Werte bleiben gesetzt, weil dasselbe Material
-	# nur den Shader tauscht). Produktion bindet die Studien-Sampler so NICHT ein.
-	var study_shader := Shader.new()
-	study_shader.code = "#define FLUSSTAL_STUDY\n" \
-		+ FileAccess.get_file_as_string("res://shaders/terrain.gdshader")
-	terrain_mat.shader = study_shader
+	terrain_mat.shader = study_shader("res://shaders/terrain.gdshader")
 	terrain_mat.set_shader_parameter("study_enabled", true)
 	for kind in ["rock", "ground"]:
 		for channel in ["color", "normal", "roughness"]:
 			terrain_mat.set_shader_parameter("study_" + kind + "_" + channel,
 				load("res://studies/flusstal/assets/" + kind + "_" + channel + ".jpg"))
-	for child in get_children():
-		if child is WorldEnvironment:
-			child.environment.tonemap_exposure = 0.78
-			child.environment.ambient_light_energy = 0.42
-			child.environment.fog_density = 0.0012
-		if child is DirectionalLight3D:
-			child.look_at_from_position(Vector3(-80, 105, 50), Vector3.ZERO, Vector3.UP)
-			child.light_color = Color(1.0, 0.97, 0.91)
-			child.directional_shadow_max_distance = 160.0
+	ocean_mat.shader = study_shader("res://shaders/ocean.gdshader")
+	if river_mat != null:
+		river_mat.shader = study_shader("res://shaders/water.gdshader")
+	var debug := OS.get_environment("RS_STUDY_DEBUG")
+	terrain_mat.set_shader_parameter("study_debug",
+		{"protect": 1, "forest": 2, "cavity": 3}.get(debug, 0))
 
-func _tree_mesh(variant: int) -> ArrayMesh:
-	if not study_enabled:
-		return super._tree_mesh(variant)
-	return StudyMeshes.tree(variant)
+
+	if _lever("geometry"):
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(world_size, world_size)
+		pm.subdivide_width = STUDY_GRID - 2
+		pm.subdivide_depth = STUDY_GRID - 2
+		terrain_mi.mesh = pm
+		# Die Bänder sampeln die SICHTBARE Oberfläche des Render-Gitters. Das
+		# dichte Mesh zeigt außerhalb der Verschiebung die bilineare Sim-Fläche,
+		# deren nächste Entsprechung das volle Sim-Gitter ist.
+		sim.setRenderGrid(N)
+		_setup_relief_bake()
+		terrain_mat.set_shader_parameter("study_geometry", true)
+	if _lever("canopy"):
+		terrain_mat.set_shader_parameter("study_canopy_enabled", true)
+		# Das Kronendach ersetzt die Instanzbäume (in diesem Maßstab ~90 m breit).
+		for mmi in tree_mmi:
+			mmi.visible = false
+	if _lever("frame"):
+		ocean_mat.set_shader_parameter("study_ocean", true)
+	if _lever("light"):
+		_setup_study_light()
+
+## Back-Pass der groben Verschiebung: ein Float-SubViewport auf Render-Gitter-
+## Auflösung, der nur nach einem Terrain-Update einmal zeichnet (UPDATE_ONCE).
+func _setup_relief_bake() -> void:
+	study_relief_vp = SubViewport.new()
+	study_relief_vp.size = Vector2i(RELIEF_BAKE_SIZE, RELIEF_BAKE_SIZE)
+	study_relief_vp.use_hdr_2d = true
+	# Transparent, sonst verwirft der Viewport den Alpha-Kanal (Rinnen/Rippen).
+	study_relief_vp.transparent_bg = true
+	study_relief_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	var rect := ColorRect.new()
+	rect.size = Vector2(RELIEF_BAKE_SIZE, RELIEF_BAKE_SIZE)
+	study_relief_mat = ShaderMaterial.new()
+	study_relief_mat.shader = load("res://studies/flusstal/relief_bake.gdshader")
+	study_relief_mat.set_shader_parameter("grid_n", float(N))
+	study_relief_mat.set_shader_parameter("hscale", HSCALE)
+	study_relief_mat.set_shader_parameter("sea_level", sea)
+	# Kalibrier-Hilfe: "skala,stärke,schärfung" der groben Verschiebung.
+	var relief := OS.get_environment("RS_STUDY_RELIEF").split(",")
+	if relief.size() == 3:
+		study_relief_mat.set_shader_parameter("study_relief_scale", float(relief[0]))
+		study_relief_mat.set_shader_parameter("study_relief_strength", float(relief[1]))
+		study_relief_mat.set_shader_parameter("study_sharpen", float(relief[2]))
+	rect.material = study_relief_mat
+	study_relief_vp.add_child(rect)
+	add_child(study_relief_vp)
+	terrain_mat.set_shader_parameter("study_relief_tex", study_relief_vp.get_texture())
+
+func _bake_relief() -> void:
+	if study_relief_vp == null or height_field._tex == null or study_protect_tex == null:
+		return
+	study_relief_mat.set_shader_parameter("height_tex", height_field._tex)
+	study_relief_mat.set_shader_parameter("study_protect_tex", study_protect_tex)
+	study_relief_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+func _setup_study_light() -> void:
+	# Sonnenstand: Azimut/Höhe in Grad. Standard: Seitenlicht von links, quer
+	# zur Studienkamera (Yaw 0.7 ≈ 40°). Gegenlicht (−130°) war dramatischer,
+	# legte aber alle der Kamera zugewandten Wände in den Schatten — dort
+	# verschwand das Relief, auf das die Studie zielt.
+	var sun_az := -50.0
+	var sun_el := 28.0
+	var sun_env := OS.get_environment("RS_STUDY_SUN").split(",")
+	if sun_env.size() == 2:
+		sun_az = float(sun_env[0])
+		sun_el = float(sun_env[1])
+	var az := deg_to_rad(sun_az)
+	var el := deg_to_rad(sun_el)
+	var to_sun := Vector3(cos(el) * sin(az), sin(el), cos(el) * cos(az))
+	RenderingServer.directional_shadow_atlas_set_size(8192, true)
+	RenderingServer.directional_soft_shadow_filter_set_quality(
+		RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM)
+	for mat in [terrain_mat, ocean_mat, river_mat]:
+		if mat != null:
+			mat.set_shader_parameter("study_clouds", true)
+	for child in get_children():
+		if child is DirectionalLight3D:
+			child.look_at_from_position(to_sun * 300.0, Vector3.ZERO, Vector3.UP)
+			child.light_color = Color(1.0, 0.89, 0.74)
+			child.light_energy = 2.0
+			child.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+			child.directional_shadow_max_distance = 420.0
+			child.directional_shadow_blend_splits = true
+			child.shadow_bias = 0.04
+			child.shadow_normal_bias = 1.2
+		if child is WorldEnvironment:
+			var e: Environment = child.environment
+			var sky_mat := e.sky.sky_material as ProceduralSkyMaterial
+			var horizon := Color(0.70, 0.76, 0.82)
+			sky_mat.sky_top_color = Color(0.27, 0.42, 0.64)
+			sky_mat.sky_horizon_color = horizon
+			sky_mat.ground_horizon_color = horizon
+			sky_mat.ground_bottom_color = Color(0.22, 0.27, 0.32)
+			sky_mat.energy_multiplier = 1.0
+			e.ambient_light_energy = 0.5
+			# Himmelslicht allein färbt Schattenseiten blau (Fels las sich als
+			# Schnee); ein Drittel neutral-warmes Umgebungslicht dagegen.
+			e.ambient_light_sky_contribution = 0.65
+			e.ambient_light_color = Color(0.62, 0.58, 0.52)
+			e.tonemap_mode = Environment.TONE_MAPPER_AGX
+			e.tonemap_exposure = 0.9
+			e.ssao_radius = 2.5
+			e.ssao_intensity = 2.2
+			e.ssao_power = 1.4
+			e.adjustment_contrast = 1.06
+			e.adjustment_saturation = 1.05
+			# Luftperspektive: Ferne nimmt die Himmelsfarbe an, der Horizont
+			# verschwindet im Dunst statt als Kante vor dem Himmel zu stehen.
+			e.fog_mode = Environment.FOG_MODE_EXPONENTIAL
+			e.fog_light_color = horizon
+			e.fog_density = 0.0016
+			e.fog_aerial_perspective = 0.6
+			e.fog_sun_scatter = 0.12
+			# Talnebel: dichter knapp über dem Meer, liegt in Tälern und Becken.
+			e.fog_height = sea * HSCALE + 1.5
+			e.fog_height_density = 0.035
+
+func _rebuild_trees() -> void:
+	if _lever("canopy"):
+		return
+	super._rebuild_trees()
 
 func _update_ring() -> void:
 	if not study_mode.is_empty():
@@ -87,56 +244,45 @@ func _update_ring() -> void:
 		super._update_ring()
 
 func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = true) -> void:
-	# Auch Laden und Pinselstriche können das Bett bei gleichem Jahr verändern.
-	if study_props != null:
-		study_props.visible = false
 	super._update_terrain_textures(water_blend, update_overlays)
+	if update_overlays:
+		_update_study_protect()
+	_bake_relief()
 
-## Die Gruppenmittelpunkte und Radien wurden für diesen Ausschnitt komponiert.
-## Der Zufall füllt nur diese Gruppen. Wasser und steile Standorte bleiben frei.
-func _build_composition() -> void:
-	study_props = Node3D.new()
-	study_props.name = "HandgesetzteStudie"
-	add_child(study_props)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 116
-	var water := _placement_water()
-	var groups: Array[Vector3] = [Vector3(-22, -36, 8), Vector3(-10, -40, 6), Vector3(-24, -20, 7),
-		Vector3(-5, -28, 5), Vector3(-18, -10, 5), Vector3(-31, -30, 7)]
-	var trees: Array[Transform3D] = []
-	for group in groups:
-		for candidate in 600:
-			var angle := rng.randf() * TAU
-			var radius: float = sqrt(rng.randf()) * group.z
-			var p := Vector2(group.x, group.y) + Vector2(cos(angle), sin(angle)) * radius
-			if not _dry_footprint(p, 0.55, water):
-				continue
-			var y := _height_at(p)
-			if maxf(absf(_height_at(p + Vector2(0.4, 0)) - y),
-				absf(_height_at(p + Vector2(0, 0.4)) - y)) > 0.35:
-				continue
-			var size := rng.randf_range(0.45, 0.9)
-			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size)
-			trees.append(Transform3D(basis, Vector3(p.x, y - 0.08, p.y)))
-	_add_instances(StudyMeshes.tree(0), trees)
-	var rocks: Array[Transform3D] = []
-	# Felszüge entlang der Talflanken; keine Auflage über dem Wasser.
-	for ridge in [Vector3(-15, -33, 7), Vector3(-2, -19, 6), Vector3(-25, -15, 5)]:
-		for candidate in 180:
-			var p := Vector2(ridge.x + rng.randf_range(-ridge.z, ridge.z),
-				ridge.y + rng.randf_range(-2.0, 2.0))
-			var size := rng.randf_range(0.35, 1.1)
-			if not _dry_footprint(p, size * 1.5, water):
-				continue
-			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(size, size, size))
-			rocks.append(Transform3D(basis, Vector3(p.x, _height_at(p) - size * 0.55, p.y)))
-	_add_instances(StudyMeshes.rock(), rocks)
-	print("STUDY_PROPS trees=", trees.size(), " rocks=", rocks.size())
+func _rebuild_rivers() -> void:
+	super._rebuild_rivers()
+	study_band_mask = null
+	_update_study_protect()
+	_bake_relief()
+
+## Schutzmaske für Verschiebung und Kronendach: Rasterwasser plus jedes gebaute
+## Band-Dreieck. Die Mip-Kette (nativ erzeugt) dient dem Shader als billige
+## Ausdehnung um einige Zellen. Je Textur-Update läuft nur natives Kopieren
+## und Mischen; die Dreiecke werden nur nach einem Fluss-Rebuild neu gerastert
+## (im Zeitraffer sonst ~40 ms je Tick in GDScript).
+func _update_study_protect() -> void:
+	if not (_lever("geometry") or _lever("canopy")) or water_field._img == null:
+		return
+	var img := _placement_water()
+	img.generate_mipmaps()
+	if study_protect_tex == null:
+		study_protect_tex = ImageTexture.create_from_image(img)
+		terrain_mat.set_shader_parameter("study_protect_tex", study_protect_tex)
+	else:
+		study_protect_tex.update(img)
 
 func _placement_water() -> Image:
 	var water: Image = water_field._img.duplicate()
-	# Der Raster-Deckel entfernt Wasser unter Bändern. Deshalb zusätzlich jedes
-	# tatsächlich gebaute Dreieck sperren, konservativ über seine XZ-Boundingbox.
+	if study_band_mask == null:
+		study_band_mask = _band_mask(water.get_size())
+	water.blend_rect(study_band_mask, Rect2i(Vector2i.ZERO, water.get_size()), Vector2i.ZERO)
+	return water
+
+## Der Raster-Deckel entfernt Wasser unter Bändern. Deshalb zusätzlich jedes
+## tatsächlich gebaute Dreieck sperren, konservativ über seine XZ-Boundingbox.
+## Transparent außerhalb der Bänder, damit `blend_rect` nur dort deckt.
+func _band_mask(size: Vector2i) -> Image:
+	var mask := Image.create(size.x, size.y, false, Image.FORMAT_RGBA8)
 	if river_mesh.get_surface_count() > 0:
 		var arrays := river_mesh.surface_get_arrays(0)
 		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -149,34 +295,8 @@ func _placement_water() -> Image:
 				var cell := Vector2((p.x + half) / step, (p.z + half) / step)
 				a = a.min(cell.floor())
 				b = b.max(cell.ceil())
-			water.fill_rect(Rect2i(Vector2i(a), Vector2i(b - a) + Vector2i.ONE), Color.RED)
-	return water
-
-func _height_at(p: Vector2) -> float:
-	return _sample_h((p.x + half) / step, (p.y + half) / step) * HSCALE
-
-func _dry_footprint(p: Vector2, radius: float, water: Image) -> bool:
-	var a := Vector2i(floor((p.x - radius + half) / step), floor((p.y - radius + half) / step))
-	var b := Vector2i(ceil((p.x + radius + half) / step), ceil((p.y + radius + half) / step))
-	if a.x < 0 or a.y < 0 or b.x >= N or b.y >= N:
-		return false
-	for z in range(a.y, b.y + 1):
-		for x in range(a.x, b.x + 1):
-			var wet := water.get_pixel(x, z)
-			if maxf(wet.r, wet.g) > 0.02 or _sample_h(x, z) <= sea + 0.025:
-				return false
-	return true
-
-func _add_instances(mesh: ArrayMesh, transforms: Array[Transform3D]) -> void:
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = mesh
-	mm.instance_count = transforms.size()
-	for i in transforms.size():
-		mm.set_instance_transform(i, transforms[i])
-	var node := MultiMeshInstance3D.new()
-	node.multimesh = mm
-	study_props.add_child(node)
+			mask.fill_rect(Rect2i(Vector2i(a), Vector2i(b - a) + Vector2i.ONE), Color.RED)
+	return mask
 
 func _process(delta: float) -> void:
 	if not study_mode.is_empty():
@@ -195,10 +315,6 @@ func _process(delta: float) -> void:
 		for mat in [terrain_mat, ocean_mat, river_mat]:
 			if mat != null:
 				mat.set_shader_parameter("u_time", u_time)
-	# Handplatzierung ist nur für den eingefrorenen Stand gültig. Beim ersten
-	# Fortschritt ausblenden, bevor alte Felsen ein neues Flussbett überdecken.
-	if study_props != null and sim.currentYear() != study_start_year:
-		study_props.visible = false
 
 func _study_drawn() -> void:
 	var now := Time.get_ticks_usec()
