@@ -173,6 +173,7 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/water_geometry.gd
 "$GODOT" --headless --path game --script res://tests/water_uniforms.gd
 "$GODOT" --headless --path game --script res://tests/tree_count.gd
+"$GODOT" --headless --path game --script res://tests/lighting.gd      # ohne GDExtension
 "$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
 ```
 
@@ -184,7 +185,7 @@ grüner Lauf nichts über den lokalen Stand.
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
 Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK`,
-`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`), nicht der
+`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
@@ -247,7 +248,7 @@ Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `prototype|baseline`, `RS_STUDY_MODE`
 `orbit|simulation|shot|still`, `RS_STUDY_OUTPUT`, per Skript zusätzlich
 `RS_STUDY_MOVIE`; für die Wirkungsleiter und Kalibrierung `RS_STUDY_LEVERS`,
-`RS_STUDY_SUN`, `RS_STUDY_GRID`, `RS_STUDY_RELIEF`, `RS_STUDY_DEBUG`) liegen in
+`RS_STUDY_GRID`, `RS_STUDY_RELIEF`, `RS_STUDY_DEBUG`) liegen in
 `game/studies/flusstal/Flusstal.gd` und werden über `scripts/graphics-study.sh`
 gesetzt; Direktstart ohne gültige Variante oder mit unbekanntem Hebel bricht ab.
 
@@ -260,7 +261,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
@@ -316,7 +317,10 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
-   (Flussbänder) und `ocean.gdshader` (offenes Meer). Dazu zwei Shader, die
+   (Flussbänder) und `ocean.gdshader` (offenes Meer); Licht, Atmosphäre und
+   die mit allen drei geteilten Wolkenschatten (`clouds.gdshaderinc`) stellt
+   `scripts/Lighting.gd` ein (feste Welt-Sonne, Issue #151, Wächter
+   `tests/lighting.gd`). Dazu zwei Shader, die
    nichts MALEN, sondern rechnen: `water_field_blur.gdshader` und
    `water_field_ewma.gdshader` sind die abschaltbare GPU-Fassung der
    Schwanzstufen des Wasserfelds (s. `RS_WATER_GPU`); sie enthalten bewusst

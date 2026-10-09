@@ -9,6 +9,7 @@ extends Node3D
 # RenderContract.heightScale in SimCore und als Default von `hscale` in
 # terrain.gdshader; Wächter: SimCoreTests/RenderContractTests.swift (Issue #51).
 const HSCALE := 24.0
+const Lighting = preload("res://scripts/Lighting.gd")
 const BALANCED_TERRAIN_GRID := 384
 const PERFORMANCE_TERRAIN_GRID := 256
 
@@ -462,49 +463,15 @@ static func apply_water_calibration(sim_node: Object, mats: Array[ShaderMaterial
 
 
 func _setup_scene() -> void:
+	# Licht und Atmosphäre (#151): feste Welt-Sonne, Werte und Qualitätsstufen
+	# stehen in Lighting.gd.
 	var env := WorldEnvironment.new()
-	var e := Environment.new()
-	# Prozeduraler Himmel → liefert realistisches Ambient UND Reflexionen fürs Wasser.
-	var sky_mat := ProceduralSkyMaterial.new()
-	# Entsättigter, gedämpfter Himmel (grau-teal wie in der Referenz) → NEUTRALES
-	# Ambient statt kräftig blauem Fülllicht, das grauen Fels blau einfärbt.
-	sky_mat.sky_top_color = Color(0.50, 0.58, 0.66)
-	sky_mat.sky_horizon_color = Color(0.74, 0.78, 0.80)
-	sky_mat.ground_bottom_color = Color(0.30, 0.31, 0.31)
-	sky_mat.ground_horizon_color = Color(0.66, 0.68, 0.70)
-	sky_mat.sun_angle_max = 8.0
-	sky_mat.energy_multiplier = 0.6
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-	e.background_mode = Environment.BG_SKY
-	e.sky = sky
-	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	e.ambient_light_energy = 0.28
-	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	# ACES bleibt für die Spitzlichter, aber ohne ausgefressenen Schnee und den
-	# milchigen Glow des alten Materials.
-	e.tonemap_mode = Environment.TONE_MAPPER_ACES
-	e.tonemap_exposure = 0.68
-	e.ssao_enabled = render_quality != "performance"
-	e.ssao_intensity = 1.45
-	e.glow_enabled = false
-	e.adjustment_enabled = true
-	e.adjustment_saturation = 0.98
-	e.fog_enabled = true
-	e.fog_mode = Environment.FOG_MODE_DEPTH
-	e.fog_light_color = Color(0.76, 0.78, 0.79)
-	e.fog_density = 0.0006
-	env.environment = e
+	env.environment = Lighting.make_environment(render_quality, sea * HSCALE)
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
-	# Die Materialkontraste tragen das Gelände. Das Licht modelliert die Form,
-	# ohne Fels und Schnee wie im alten 1.6-Energy-Setup weiß auszubrennen.
-	sun.light_color = Color(1.0, 0.95, 0.88)
-	sun.light_energy = 1.15
-	sun.shadow_enabled = true
 	add_child(sun)
-	sun.look_at_from_position(Vector3(-60, 120, 60), Vector3.ZERO, Vector3.UP)
+	Lighting.configure_sun(sun, render_quality)
 
 	cam = Camera3D.new()
 	cam.far = 1000.0
@@ -568,6 +535,7 @@ func _setup_scene() -> void:
 	if river_mat != null:
 		water_mats.append(river_mat)
 	apply_water_calibration(sim, water_mats)
+	Lighting.apply_clouds(water_mats, render_quality)
 
 	# Baum-MultiMeshes (Instanzen kommen später aus _rebuild_trees).
 	for v in TREE_VARIANTS:

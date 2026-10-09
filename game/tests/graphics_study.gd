@@ -63,7 +63,7 @@ func _check_lever_parsing() -> void:
 	var script = load("res://studies/flusstal/Flusstal.gd")
 	OS.set_environment("RS_STUDY_LEVERS", "")
 	var all = script.new()
-	_check(all._parse_levers() and all.study_levers.size() == 4, "Ohne Angabe gelten alle vier Hebel")
+	_check(all._parse_levers() and all.study_levers.size() == 3, "Ohne Angabe gelten alle drei Hebel")
 	all.free()
 	OS.set_environment("RS_STUDY_LEVERS", "geometry,frame")
 	var two = script.new()
@@ -74,6 +74,12 @@ func _check_lever_parsing() -> void:
 	var typo = script.new()
 	_check(not typo._parse_levers(), "Tippfehler im Hebel muss abbrechen")
 	typo.free()
+	# `light` ist seit #151 Produktion (Lighting.gd); ein alter Aufruf soll
+	# laut scheitern statt still dasselbe Bild zu liefern.
+	OS.set_environment("RS_STUDY_LEVERS", "light")
+	var light = script.new()
+	_check(not light._parse_levers(), "Übernommener Hebel 'light' muss abbrechen")
+	light.free()
 	OS.set_environment("RS_STUDY_VARIANT", previous_variant)
 	OS.set_environment("RS_STUDY_LEVERS", previous_levers)
 
@@ -90,10 +96,9 @@ func _check_study_shaders() -> void:
 			"study_enabled", "study_rock_color", "study_rock_normal", "study_rock_roughness",
 			"study_ground_color", "study_ground_normal", "study_ground_roughness",
 			"study_geometry", "study_relief_tex", "study_protect_tex",
-			"study_canopy_enabled", "study_clouds",
+			"study_canopy_enabled",
 		],
-		"res://shaders/ocean.gdshader": ["study_ocean", "study_clouds"],
-		"res://shaders/water.gdshader": ["study_clouds"],
+		"res://shaders/ocean.gdshader": ["study_ocean"],
 	}
 	for path in cases:
 		var source: String = FileAccess.get_file_as_string(path)

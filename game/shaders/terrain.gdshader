@@ -197,8 +197,9 @@ float triplanar_fbm(vec3 p, vec3 n) {
 #ifdef FLUSSTAL_STUDY
 #include "res://studies/flusstal/materials.gdshaderinc"
 #include "res://studies/flusstal/landscape.gdshaderinc"
-#include "res://studies/flusstal/clouds.gdshaderinc"
 #endif
+// Wolkenschatten (#151): gemeinsame Funktion mit Ozean und Bändern.
+#include "res://shaders/clouds.gdshaderinc"
 
 void vertex() {
 	vec2 uv = world_uv(VERTEX);
@@ -470,7 +471,5 @@ void fragment() {
 	ROUGHNESS = mix(land_roughness, mix(water_roughness_steep, water_roughness_grazing, fresnel), wet);
 	METALLIC = 0.0;
 	SPECULAR = mix(0.5, mix(water_specular_steep, water_specular_grazing, fresnel), wet);
-#ifdef FLUSSTAL_STUDY
-	ALBEDO *= study_cloud_light(wp - world_size * 0.5, u_time);
-#endif
+	ALBEDO *= cloud_light(wp - world_size * 0.5, u_time);
 }

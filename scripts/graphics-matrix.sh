@@ -15,51 +15,56 @@ case "$mode" in shot|timing|all|list) ;; *) echo "Modus: shot|timing|all|list" >
 filter_seed="${RS_MATRIX_SEED:-}"
 filter_year="${RS_MATRIX_YEAR:-}"
 filter_camera="${RS_MATRIX_CAMERA:-}"
+filter_yaws="${RS_MATRIX_YAWS:-}"
 dry_run="${RS_MATRIX_DRY_RUN:-0}"
+# Qualitätsstufe der Messläufe (#151 misst je Stufe); Aufnahmen bleiben balanced.
+quality="${RS_MATRIX_QUALITY:-balanced}"
+matrix_yaw=""
 
-# Matrix-Definition: Seeds
+# Matrix-Definition. Ohne assoziative Arrays: macOS liefert bash 3.2 (die
+# Zielmaschine ist ein Mac), `declare -A` brach dort mit Syntaxfehler ab.
 seeds=(1337 42 20)
-declare -A seed_names=(
-  [1337]="Flusstal Soča"
-  [42]="Seen- und Beckenplateau"
-  [20]="Hochalpines Massiv"
-)
+seed_name() {
+  case "$1" in
+    1337) echo "Flusstal Soča" ;;
+    42) echo "Seen- und Beckenplateau" ;;
+    20) echo "Hochalpines Massiv" ;;
+  esac
+}
 
-# Matrix-Definition: Jahre
 years=(0 20000 100000)
-declare -A year_labels=(
-  [0]="0k"
-  [20000]="20k"
-  [100000]="100k"
-)
+year_label() {
+  case "$1" in
+    0) echo "0k" ;;
+    20000) echo "20k" ;;
+    100000) echo "100k" ;;
+  esac
+}
 
-# Kameras je Seed (target;dist;yaw;pitch;sun)
-declare -A cameras_1337=(
-  [overview]="0,0;151.846515;0.7;0.85;"
-  [detail]="-12,-25;42.0;0.7;0.85;"
-  [grazing]="-10,-20;38.0;0.7;1.35;"
-  [backlight]="-12,-25;45.0;-0.87;0.85;-50,28"
-  [coast]="-36,-32;45.0;0.9;0.85;"
-  [snow]="18,14;48.0;0.6;0.75;"
-)
-
-declare -A cameras_42=(
-  [overview]="0,0;151.846515;0.7;0.85;"
-  [detail]="4,-6;45.0;0.5;0.80;"
-  [grazing]="6,-4;40.0;0.4;1.35;"
-  [backlight]="4,-6;48.0;-0.87;0.85;-50,28"
-  [coast]="12,-10;38.0;1.1;0.85;"
-  [snow]="-22,20;50.0;0.7;0.75;"
-)
-
-declare -A cameras_20=(
-  [overview]="0,0;151.846515;0.7;0.85;"
-  [detail]="-8,10;42.0;0.6;0.80;"
-  [grazing]="-6,12;38.0;0.5;1.35;"
-  [backlight]="-8,10;46.0;-0.87;0.85;-50,28"
-  [coast]="30,-28;48.0;0.8;0.85;"
-  [snow]="-10,14;40.0;0.6;0.70;"
-)
+# Kameras je Seed: "ziel;distanz;yaw;pitch". Die Sonne ist seit #151 eine feste
+# Welt-Sonne (game/scripts/Lighting.gd, Azimut -50°); `backlight` blickt mit
+# Yaw = Azimut + 180° (130° = 2.269 rad) genau gegen sie. Spiegel der Tabelle:
+# SimCoreTests/GraphicsMatrixTests.swift.
+camera_cfg() {
+  case "$1:$2" in
+    1337:overview|42:overview|20:overview) echo "0,0;151.846515;0.7;0.85" ;;
+    1337:detail)    echo "-12,-25;42.0;0.7;0.85" ;;
+    1337:grazing)   echo "-10,-20;38.0;0.7;1.35" ;;
+    1337:backlight) echo "-12,-25;45.0;2.269;0.85" ;;
+    1337:coast)     echo "-36,-32;45.0;0.9;0.85" ;;
+    1337:snow)      echo "18,14;48.0;0.6;0.75" ;;
+    42:detail)      echo "4,-6;45.0;0.5;0.80" ;;
+    42:grazing)     echo "6,-4;40.0;0.4;1.35" ;;
+    42:backlight)   echo "4,-6;48.0;2.269;0.85" ;;
+    42:coast)       echo "12,-10;38.0;1.1;0.85" ;;
+    42:snow)        echo "-22,20;50.0;0.7;0.75" ;;
+    20:detail)      echo "-8,10;42.0;0.6;0.80" ;;
+    20:grazing)     echo "-6,12;38.0;0.5;1.35" ;;
+    20:backlight)   echo "-8,10;46.0;2.269;0.85" ;;
+    20:coast)       echo "30,-28;48.0;0.8;0.85" ;;
+    20:snow)        echo "-10,14;40.0;0.6;0.70" ;;
+  esac
+}
 
 camera_order=(overview detail grazing backlight coast snow)
 
@@ -68,9 +73,9 @@ if [[ "$mode" == "list" ]]; then
   echo "Variante: $variant"
   echo "Ausgabepfad: $output_dir"
   for s in "${seeds[@]}"; do
-    echo "--- Seed $s (${seed_names[$s]}) ---"
+    echo "--- Seed $s ($(seed_name "$s")) ---"
     for y in "${years[@]}"; do
-      ylabel="${year_labels[$y]}"
+      ylabel="$(year_label "$y")"
       echo "  Stadium Jahr $y ($ylabel):"
       for c in "${camera_order[@]}"; do
         echo "    - $c -> seed${s}_${ylabel}_${c}.png"
@@ -84,11 +89,17 @@ mkdir -p "$output_dir"
 
 run_shot() {
   local s="$1" y="$2" ylabel="$3" c="$4" cfg="$5"
-  local target dist yaw pitch sun
-  IFS=';' read -r target dist yaw pitch sun <<< "$cfg"
+  local target dist yaw pitch
+  IFS=';' read -r target dist yaw pitch <<< "$cfg"
 
   local out_base="$output_dir/seed${s}_${ylabel}_${c}"
-  echo "==> [SHOT] Seed $s (${seed_names[$s]}) | Jahr $y ($ylabel) | Kamera $c"
+  # Blickrichtungs-Serie (#151): RS_MATRIX_YAWS="0.7,2.27,…" rendert dieselbe
+  # Kamera aus mehreren Richtungen, Dateiname mit Yaw-Suffix.
+  if [[ -n "${matrix_yaw:-}" ]]; then
+    yaw="$matrix_yaw"
+    out_base="${out_base}_yaw${yaw}"
+  fi
+  echo "==> [SHOT] Seed $s ($(seed_name "$s")) | Jahr $y ($ylabel) | Kamera $c"
   echo "    Ziel: $target | Dist: $dist | Yaw: $yaw | Pitch: $pitch | Aus: ${out_base}.png"
 
   if [[ "$dry_run" == "1" ]]; then
@@ -99,11 +110,6 @@ run_shot() {
         RS_STUDY_GRID RS_STUDY_LEVERS RS_STUDY_RELIEF RS_STUDY_DEBUG RS_STUDY_MOVIE
   export RS_SEED="$s" RS_STEP="$y" RS_STEP_CHUNK=1000 RS_QUALITY=balanced
   export RS_TARGET="$target" RS_DIST="$dist" RS_YAW="$yaw" RS_PITCH="$pitch"
-  if [[ -n "$sun" ]]; then
-    export RS_STUDY_SUN="$sun"
-  else
-    unset RS_STUDY_SUN
-  fi
   export RS_STUDY_VARIANT="$variant" RS_STUDY_MODE="shot" RS_STUDY_OUTPUT="$out_base"
 
   scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn
@@ -112,13 +118,12 @@ run_shot() {
 run_timing() {
   local s="$1" y="$2" ylabel="$3" timing_mode="$4"
   # Timing-Messung auf der Hauptansicht (detail bzw. overview)
-  local cfg="${cameras_1337[detail]}"
-  if [[ "$s" == "42" ]]; then cfg="${cameras_42[detail]}"; fi
-  if [[ "$s" == "20" ]]; then cfg="${cameras_20[detail]}"; fi
-  local target dist yaw pitch sun
-  IFS=';' read -r target dist yaw pitch sun <<< "$cfg"
+  local cfg
+  cfg="$(camera_cfg "$s" detail)"
+  local target dist yaw pitch
+  IFS=';' read -r target dist yaw pitch <<< "$cfg"
 
-  echo "==> [TIMING:$timing_mode] Seed $s (${seed_names[$s]}) | Jahr $y ($ylabel)"
+  echo "==> [TIMING:$timing_mode] Seed $s ($(seed_name "$s")) | Jahr $y ($ylabel)"
 
   if [[ "$dry_run" == "1" ]]; then
     return 0
@@ -126,9 +131,8 @@ run_timing() {
 
   unset RS_SHOT RS_FPS RS_IDLE RS_FLATTEN RS_WATER_STAMP RS_WATER_GPU RS_RENDER_GRID RS_DEBUG_DIFF RS_NO_MEANDER_PAINT RS_DIAG \
         RS_STUDY_GRID RS_STUDY_LEVERS RS_STUDY_RELIEF RS_STUDY_DEBUG RS_STUDY_MOVIE
-  export RS_SEED="$s" RS_STEP="$y" RS_STEP_CHUNK=1000 RS_QUALITY=balanced
+  export RS_SEED="$s" RS_STEP="$y" RS_STEP_CHUNK=1000 RS_QUALITY="$quality"
   export RS_TARGET="$target" RS_DIST="$dist" RS_YAW="$yaw" RS_PITCH="$pitch"
-  unset RS_STUDY_SUN
   export RS_STUDY_VARIANT="$variant" RS_STUDY_MODE="$timing_mode" RS_STUDY_OUTPUT=""
 
   scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn
@@ -142,19 +146,21 @@ if [[ "$mode" == "shot" || "$mode" == "all" ]]; then
 
     for y in "${years[@]}"; do
       if [[ -n "$filter_year" && "$y" != "$filter_year" ]]; then continue; fi
-      ylabel="${year_labels[$y]}"
+      ylabel="$(year_label "$y")"
 
       for c in "${camera_order[@]}"; do
         if [[ -n "$filter_camera" && "$c" != "$filter_camera" ]]; then continue; fi
 
-        cfg=""
-        case "$s" in
-          1337) cfg="${cameras_1337[$c]}" ;;
-          42)   cfg="${cameras_42[$c]}" ;;
-          20)   cfg="${cameras_20[$c]}" ;;
-        esac
-
-        run_shot "$s" "$y" "$ylabel" "$c" "$cfg"
+        cfg="$(camera_cfg "$s" "$c")"
+        if [[ -n "$filter_yaws" ]]; then
+          IFS=',' read -r -a yaw_list <<< "$filter_yaws"
+          for matrix_yaw in "${yaw_list[@]}"; do
+            run_shot "$s" "$y" "$ylabel" "$c" "$cfg"
+          done
+          matrix_yaw=""
+        else
+          run_shot "$s" "$y" "$ylabel" "$c" "$cfg"
+        fi
       done
     done
   done
@@ -169,7 +175,7 @@ if [[ "$mode" == "timing" || "$mode" == "all" ]]; then
 
     for y in "${years[@]}"; do
       if [[ -n "$filter_year" && "$y" != "$filter_year" ]]; then continue; fi
-      ylabel="${year_labels[$y]}"
+      ylabel="$(year_label "$y")"
 
       for tm in still orbit simulation; do
         run_timing "$s" "$y" "$ylabel" "$tm"

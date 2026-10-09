@@ -62,11 +62,8 @@ varying float v_alpha;
 varying float v_kind;
 varying vec3 v_world;
 
-// Flusstal-Studie (#116): Wolkenschatten laufen ohne Kante über die Bänder
-// weiter. Nur im FLUSSTAL_STUDY-Build (Flusstal.gd setzt das Define).
-#ifdef FLUSSTAL_STUDY
-#include "res://studies/flusstal/clouds.gdshaderinc"
-#endif
+// Wolkenschatten (#151) laufen ohne Kante über die Bänder weiter.
+#include "res://shaders/clouds.gdshaderinc"
 
 void vertex() {
 	v_dir = COLOR.rg * 2.0 - 1.0;
@@ -127,9 +124,7 @@ void fragment() {
 		+ sin(UV.y * 3.1 - u_time * 6.5 + 1.7) * 0.5;
 	water += flow * water_flow_shimmer_color * (1.0 - still);
 
-#ifdef FLUSSTAL_STUDY
-	water *= study_cloud_light(v_world.xz, u_time);
-#endif
+	water *= cloud_light(v_world.xz, u_time);
 	ALBEDO = water;
 	ALPHA = clamp(v_alpha, 0.0, 1.0) * mix(water_opacity_shallow, water_opacity_deep, depth) * feather;
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt
