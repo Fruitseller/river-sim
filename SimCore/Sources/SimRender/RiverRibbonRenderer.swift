@@ -141,12 +141,11 @@ public final class RiverRibbonRenderer {
     }
 
     /// Maximale Knoten-Verschiebung (Zellen) seit `markBuilt`; bei
-    /// Struktur-Änderung (Cutoff, Resample, Neu-Saat, Laden) oder nicht-endlichen
-    /// Koordinaten (NaN, ±inf) bewusst „riesig" (Sentinel 1e9),
-    /// damit GDScript sofort rebuildet. Vor dem ersten Build ebenso.
-    /// Bei persistenter Nicht-Endlichkeit in den Kanal-Koordinaten bleibt der Sentinel aktiv und
-    /// löst bewusst jeden Frame einen Rebuild aus, da bei korruptem Simulationszustand keine
-    /// verlässliche Delta-Aussage möglich ist und der Renderzustand dirty bleibt.
+    /// Struktur-Änderung (Cutoff, Resample, Neu-Saat, Laden) bewusst „riesig"
+    /// (`rebuildSentinel`), damit GDScript sofort rebuildet. Vor dem ersten
+    /// Build ebenso, und bei nicht-endlicher Differenz (NaN in Knoten oder
+    /// Snapshot): `max(maxD, NaN)` liefert `maxD` und verschluckte sie sonst.
+    /// Bleiben Koordinaten nicht-endlich, bleibt der Zustand dirty.
     /// EHRLICHE ERWARTUNG: während die Sim läuft, triggert das praktisch jeden
     /// Schritt (Meander.migrate resampled unconditional → Knotenzahl ändert
     /// sich). Der Vertrag spart im Pause-/Idle-/Sculpt-Zustand (kein Schritt →
@@ -156,26 +155,29 @@ public final class RiverRibbonRenderer {
     /// Vergleicht die Zentrumslinien direkt gegen den Snapshot ohne
     /// Zwischen-Allokation eines flachen Arrays.
     public func maxDelta(_ terrain: Terrain) -> Double {
-        guard let snapshot = riverSnapshot else { return 1e9 }
+        guard let snapshot = riverSnapshot else { return Self.rebuildSentinel }
         var idx = 0
         var maxD = 0.0
         for ch in terrain.meander.channels {
             let count = ch.nodes.count
-            guard idx < snapshot.count else { return 1e9 }
-            if snapshot[idx] != Double(count) { return 1e9 }
+            guard idx < snapshot.count else { return Self.rebuildSentinel }
+            if snapshot[idx] != Double(count) { return Self.rebuildSentinel }
             idx += 1
-            guard idx + count * 2 <= snapshot.count else { return 1e9 }
+            guard idx + count * 2 <= snapshot.count else { return Self.rebuildSentinel }
             for nd in ch.nodes {
                 let dx = abs(nd.x - snapshot[idx])
                 let dz = abs(nd.z - snapshot[idx + 1])
-                guard dx.isFinite && dz.isFinite else { return 1e9 }
+                guard dx.isFinite && dz.isFinite else { return Self.rebuildSentinel }
                 maxD = max(maxD, max(dx, dz))
                 idx += 2
             }
         }
-        guard idx == snapshot.count else { return 1e9 }
+        guard idx == snapshot.count else { return Self.rebuildSentinel }
         return maxD
     }
+
+    /// „Riesiges" `maxDelta`: weit über den Rebuild-Schwellen in `Main.gd`.
+    static let rebuildSentinel = 1e9
 
     /// Setzt den Rebuild-Vergleichspunkt auf die aktuellen Zentrumslinien.
     public func markBuilt(_ terrain: Terrain) { riverSnapshot = flattenedChannelPositions(terrain) }
