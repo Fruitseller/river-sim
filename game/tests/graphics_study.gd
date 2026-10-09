@@ -63,21 +63,19 @@ func _check_lever_parsing() -> void:
 	var script = load("res://studies/flusstal/Flusstal.gd")
 	OS.set_environment("RS_STUDY_LEVERS", "")
 	var all = script.new()
-	_check(all._parse_levers() and all.study_levers.size() == 2, "Ohne Angabe gelten beide Hebel")
+	_check(all._parse_levers() and all.study_levers.size() == 1, "Ohne Angabe gilt der Hebel")
 	all.free()
-	OS.set_environment("RS_STUDY_LEVERS", "geometry")
+	OS.set_environment("RS_STUDY_LEVERS", "canopy")
 	var one = script.new()
-	_check(one._parse_levers() and one._lever("geometry")
-		and not one._lever("canopy"), "Hebel-Liste schaltet einzeln")
+	_check(one._parse_levers() and one._lever("canopy"), "Hebel-Liste schaltet einzeln")
 	one.free()
-	OS.set_environment("RS_STUDY_LEVERS", "geometry,licht")
+	OS.set_environment("RS_STUDY_LEVERS", "canopy,licht")
 	var typo = script.new()
 	_check(not typo._parse_levers(), "Tippfehler im Hebel muss abbrechen")
 	typo.free()
-	# `light` (#151, Lighting.gd) und `frame` (#155, ocean.gdshader) sind
-	# Produktion; ein alter Aufruf soll laut scheitern statt still dasselbe
-	# Bild zu liefern.
-	for adopted in ["light", "frame"]:
+	# `light` (#151), `frame` (#155) und `geometry` (#153) sind Produktion;
+	# ein alter Aufruf soll laut scheitern statt still dasselbe Bild zu liefern.
+	for adopted in ["light", "frame", "geometry"]:
 		OS.set_environment("RS_STUDY_LEVERS", adopted)
 		var old = script.new()
 		_check(not old._parse_levers(), "Übernommener Hebel '%s' muss abbrechen" % adopted)
@@ -97,7 +95,6 @@ func _check_study_shaders() -> void:
 		"res://shaders/terrain.gdshader": [
 			"study_enabled", "study_rock_color", "study_rock_normal", "study_rock_roughness",
 			"study_ground_color", "study_ground_normal", "study_ground_roughness",
-			"study_geometry", "study_relief_tex", "study_protect_tex",
 			"study_canopy_enabled",
 		],
 	}
@@ -114,10 +111,6 @@ func _check_study_shaders() -> void:
 				"Produktions-Shader %s darf Studien-Uniform %s nicht binden" % [path, name])
 			_check(study_names.has(name),
 				"Studien-Fassung von %s muss Uniform %s liefern (Kompilierungsfehler?)" % [path, name])
-	var bake: Shader = load("res://studies/flusstal/relief_bake.gdshader")
-	var bake_names := _uniform_names(bake)
-	for name in ["height_tex", "study_protect_tex", "study_relief_scale", "study_sharpen"]:
-		_check(bake_names.has(name), "Back-Pass muss Uniform %s liefern (Kompilierungsfehler?)" % name)
 
 func _uniform_names(shader: Shader) -> Dictionary:
 	var names := {}

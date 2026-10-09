@@ -45,7 +45,7 @@ Wirkungsleiter einzeln.
 
 | Hebel | Was er tut | Wo |
 | --- | --- | --- |
-| `geometry` | Render-Gitter in Sim-Auflösung (720 statt 384). Grobe Erosionsrinnen (dieselbe runevision-Funktion wie das feine Detail, Skala 0.022 UV ≈ 2,5 km Wellenlänge) und einseitig geschärfte Grate als **echte Verschiebung**. Einmal je Terrain-Update in eine 1440²-Float-Textur gebacken; der Vertex-Shader liest die Höhe, der Fragment-Shader Steigung und Rinnen-Schattierung. | `relief_bake.gdshader`, `landscape.gdshaderinc` |
+| `geometry` | Render-Gitter in Sim-Auflösung (720 statt 384). Grobe Erosionsrinnen (dieselbe runevision-Funktion wie das feine Detail, Skala 0.022 UV ≈ 2,5 km Wellenlänge) und einseitig geschärfte Grate als **echte Verschiebung**. Einmal je Terrain-Update in eine 1440²-Float-Textur gebacken; der Vertex-Shader liest die Höhe, der Fragment-Shader Steigung und Rinnen-Schattierung. **Seit #153 Produktion** (s. [Render-Verschiebung](#render-verschiebung-von-rinnen-und-graten-in-der-anwendung-153)); die Studie hat den Schalter nicht mehr. | `game/shaders/relief_bake.gdshader`, `game/shaders/terrain.gdshader` |
 | `canopy` | Weltmaßstab 1 Einheit ≈ 100 m. Wald als **Kronendach im Terrain-Shader**: ~20 m angehobenes Volumen (Waldkanten werfen Schatten), Voronoi-Kronen von ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel, Anteil nach Höhenband), dunkle Lücken, Selbstschatten zum Kronenrand. Lichtungen aus Rauschen, kein Wald in Wänden, auf Schnee oder an Wasser. Ersetzt die Instanzbäume. | `landscape.gdshaderinc` |
 | `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. **Seit #151 Produktion** (Sonnenhöhe dort 38°, s. [Licht und Atmosphäre](#licht-und-atmosphäre-in-der-anwendung-151)); die Studie hat den Schalter nicht mehr. | `game/scripts/Lighting.gd`, `game/shaders/clouds.gdshaderinc` |
 | `frame` | Ozean ohne Streifenmuster: Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, statt drei Sinuswellen. Farbe aus der echten Wassertiefe über dem Sim-Schelf (türkis → tiefblau), gebrochener Brandungssaum. **Seit #155 Produktion** (s. u.), kein Studien-Schalter mehr. | `shaders/ocean.gdshader` |
@@ -61,7 +61,7 @@ Schutzmaske: godot-freie Render-Ableitung in `SimRender`
 plus der tatsächlichen Abdeckung der Flussbänder (der Raster-Deckel entfernt
 Wasser unter Bändern), um einen Saum von `WaterRender.protectSeamCells` (2)
 Zellen ausgedehnt. Der Saum steckt vollständig in der Maske; der Shader
-(`protect.gdshaderinc`) filtert sie nur linear, die Kante wird also über eine
+(`game/shaders/protect.gdshaderinc`) filtert sie nur linear, die Kante wird also über eine
 Zelle weich. Vor #154 entstand derselbe Saum von etwa zwei Zellen über eine
 Mip-Stufe im Shader. Die Gratschärfung hebt nur, senkt nie: kein Talboden sinkt
 unter ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel, dort
@@ -130,7 +130,7 @@ scripts/graphics-study.sh baseline overview shot /tmp/baseline-overview
 scripts/graphics-study.sh prototype overview shot /tmp/prototype-overview
 
 # Wirkungsleiter: einzelne Hebel
-RS_STUDY_LEVERS=geometry,canopy scripts/graphics-study.sh prototype detail shot /tmp/gc
+RS_STUDY_LEVERS=canopy scripts/graphics-study.sh prototype detail shot /tmp/canopy
 
 # Getrennte Echtzeitmessungen, immer maximiert.
 scripts/graphics-study.sh prototype overview still /tmp/still
@@ -139,9 +139,10 @@ scripts/graphics-study.sh prototype overview simulation /tmp/simulation
 ```
 
 Weitere Schalter, alle in `Flusstal.gd`:
-`RS_STUDY_GRID` (Render-Gitter, für Messungen), `RS_STUDY_RELIEF="skala,stärke,schärfung"`
-(Kalibrierung der groben Verschiebung) und `RS_STUDY_DEBUG=protect|forest|cavity`
-(Schutzmaske, Waldmaske, Rinnen/Rippen als Falschfarbe). Ein unbekannter
+`RS_STUDY_DEBUG=protect|forest|cavity`
+(Schutzmaske, Waldmaske, Rinnen/Rippen als Falschfarbe). `RS_STUDY_GRID` und
+`RS_STUDY_RELIEF` sind mit #153 entfallen: das Render-Gitter misst man über
+`RS_RENDER_GRID`, die Kalibrierung steht in `SimCore.ReliefRender`. Ein unbekannter
 Hebelname bricht wie eine ungültige Variante mit Fehler ab.
 
 `shot` friert die Wasser-Animationsphase ein und speichert nach 60 gerenderten
@@ -563,3 +564,109 @@ mit Wolken 5,53 ms, nur die Wolken aus 5,23 ms, nur Atlas und Kaskaden reduziert
 4,96 ms, beides reduziert (gewählt) 4,80 ms. Die Ersparnis von rund 0,7 ms
 (~13 %) bleibt in der billigsten Stufe. Die Standbild-Werte dieser Reihe
 streuten stärker (5,5–6,6 ms) und sind deshalb nicht aufgeführt.
+
+## Render-Verschiebung von Rinnen und Graten in der Anwendung (#153)
+
+Stand 10. Oktober 2026. Der Hebel `geometry` der Studie ist die normale
+Darstellung, für jede Welt, jedes Stadium und jede Kamera. Grobe
+Erosionsrinnen (~2,5 km Wellenlänge) und einseitig geschärfte Grate sind eine
+echte Verschiebung mit Silhouette und Schattenwurf.
+
+- **Gebacken, nicht pro Vertex.** `game/shaders/relief_bake.gdshader` rechnet
+  die Verschiebung in einem Float-SubViewport mit doppelter Sim-Auflösung
+  (1440²). `Main.gd` stößt den Pass nur bei einem Terrain-Update an
+  (Höhen-Upload, neue Schutzmaske, Band-Bau). Der Terrain-Shader liest nur:
+  die Vertex-Stufe die Höhe, die Pixel-Stufe Steigung und Rinnen-Schattierung.
+- **Wasser bleibt, wo es ist.** Die Verschiebung ist an der Schutzmaske (#154)
+  null, Seen bleiben flach auf ihrem Spiegel (`× (1 − lift)`). Die Bänder
+  sampeln weiter die unverschobene Sim-Fläche. Die Gratschärfung hebt nur. Die
+  Rinnen graben wie in der Studie auch ein (bis ~0,3 Einheiten), aber nie
+  innerhalb der Maske samt Saum. Ein Band liegt also nie über einem gesenkten
+  Talboden.
+- **Kalibrierung als Vertrag.** Rinnenskala 0.022, Stärke 0.55, Gratschärfung
+  2.2 auf 2,5 Zellen Ringradius, Kodierung und Hell-Dunkel der Rinnen stehen in
+  `SimCore.ReliefRender`. Sie reisen über `SimRender.ReliefUniforms` → `SimNode`
+  → `Main.gd` auf Back-Pass und Terrain-Material (Muster der Wasser-Uniforms,
+  default-freie Deklarationen). Die Werte sind die abgenommenen Studienwerte.
+- **Pinsel und Kamera** (Entscheidung vom 8. Oktober 2026): Der Raycast
+  (`_raycast_surface`) läuft gegen Sim-Höhe plus Verschiebung. Pinselring und
+  Kameraziel (`RS_TARGET`) liegen damit auf der sichtbaren Fläche, der Pinsel
+  ändert die Sim-Zelle unter dem Treffer. Für die CPU-Seite liest `Main.gd`
+  die Backtextur zurück (22 ms GPU-Sync bei n = 720), aber lazy: nur wenn ein
+  Raycast sie braucht und ein neuer Back-Pass vorliegt, nie während eines
+  Strichs. Im Zeitraffer wird nichts zurückgelesen. Die Orientierung des
+  Rückwegs ist gegen die Höhen geprüft (Korrelation mit dem Gratanteil 0,66,
+  gespiegelt 0,04, transponiert 0,03).
+- **Physik unverändert:** `simperf --hash` vorher und nachher
+  `c5f16bebbb66a860` (M4 Max).
+
+Wächter: `SimCoreTests/ReliefUniformsTests.swift` (Tabelle, Deklarationen,
+Brücke, nur Lesen im Terrain-Shader), `RenderContractTests` (vollständige Liste
+der Überhöhungs-Anwendungen inklusive Back-Pass) und `game/tests/relief.gd`
+(CI-Marke `RELIEF_OK`). Dieser prüft: die Uniforms kommen an, im Standbild wird
+nicht gebacken und je Sim-Schritt einmal. Pinselring und Kameraziel liegen auf
+der sichtbaren Fläche, und der Pinsel hebt die Sim-Zelle unter dem Treffer.
+
+### Vergleichsmatrix vorher/nachher
+
+Alle 54 Matrixansichten, je Seed ein Bogen (Zeilen: Jahr × vorher/nachher,
+Spalten: overview, detail, grazing, backlight, coast, snow; Qualität
+`balanced`, maximiert 3456×2104). Vorher ist `64a3a4e`, nachher dieser Stand,
+beide mit `scripts/graphics-matrix.sh baseline <ordner> shot`:
+[Seed 1337](screenshots/graphics-quality/relief-matrix-seed1337.jpg),
+[Seed 42](screenshots/graphics-quality/relief-matrix-seed42.jpg),
+[Seed 20](screenshots/graphics-quality/relief-matrix-seed20.jpg).
+
+Sichtprüfung an Steilstrecken: In den Kerbtälern von Seed 1337 (`detail`,
+`coast`) und im flachen Blick auf Seed 20 (`grazing`) liegen Flussbänder und
+Seeufer weiter sichtbar auf dem Gelände. Die Grate werfen Schatten in die Täler,
+verdecken die Bänder aber nicht. Die Godot-Verträge `water_geometry.gd` und
+`river_ribbons.gd` sind grün.
+
+![Flacher Blick, Seed 20, Jahr 0: oben vorher, unten nachher](screenshots/graphics-quality/relief-grazing-seed20-0k.jpg)
+
+**Offen zur Abnahme:** Auf dem jungen, steilen Relief (Jahr 0, vor allem Seed 20
+und 1337) macht die Gratschärfung einzelne Gipfel nadelspitz. Abgenommen wurden
+die Studienwerte an Jahr 20.000. Ob die Schärfung mit dem Relief ausblenden
+soll, ist eine Kalibrierfrage für den Projekteigner (Stellschraube:
+`ReliefRender.sharpen`).
+
+### Qualitätsstufen und Leistung
+
+| Stufe | Render-Gitter vorher → nachher | Verschiebung |
+| --- | --- | --- |
+| performance | 256 → 256 | an |
+| balanced | 384 → 720 (n) | an |
+| quality | 720 (n) → 720 (n) | an |
+
+`balanced` und `quality` sind damit gleich: Ein Gitter über n hinaus brachte
+in der Studie doppelte Kosten ohne sichtbaren Gewinn, die Normalen kommen aus
+der doppelt so feinen Backtextur. `quality` bleibt als Name gültig.
+`performance` bleibt bei 256: mit 384 kostete es gemessen 5,25 statt 4,82 ms im
+Standbild. Die Verschiebung ist dort trotzdem in Schattierung und Normalen
+sichtbar, nur die Silhouette ist gröber.
+
+M4 Max, maximiert, Viewport 3456×2104, Seed 1337, Jahr 20.000, Kamera `detail`,
+ein sequenzieller Lauf je Zeile ohne parallele Last
+(`RS_MATRIX_QUALITY=<stufe> RS_MATRIX_SEED=1337 RS_MATRIX_YEAR=20000
+scripts/graphics-matrix.sh baseline <ordner> timing`). Millisekunden je Frame:
+
+| Stufe | Betrieb | vorher Mittel / p95 / max | nachher Mittel / p95 / max | über 33,3 ms vorher → nachher |
+| --- | --- | ---: | ---: | ---: |
+| performance | Standbild | 4,62 / 4,60 / 8,68 | 4,82 / 4,78 / 12,54 | 0 → 0 |
+| performance | Kamerafahrt | 4,77 / 4,94 / 8,61 | 4,92 / 4,96 / 11,19 | 0 → 0 |
+| performance | Zeitraffer | 6,07 / 8,31 / 82,50 | 6,78 / 8,44 / 82,48 | 39 → 39 |
+| balanced | Standbild | 14,36 / 15,11 / 15,17 | 17,26 / 17,52 / 18,03 | 0 → 0 |
+| balanced | Kamerafahrt | 14,98 / 15,89 / 16,16 | 17,57 / 18,42 / 18,66 | 0 → 0 |
+| balanced | Zeitraffer | 16,91 / 49,08 / 80,62 | 20,98 / 49,70 / 81,55 | 40 → 41 |
+| quality | Standbild | 17,11 / 17,34 / 17,54 | 17,04 / 17,21 / 17,36 | 0 → 0 |
+| quality | Kamerafahrt | 17,59 / 18,34 / 18,50 | 17,57 / 18,44 / 18,74 | 0 → 0 |
+| quality | Zeitraffer | 20,91 / 50,51 / 80,24 | 21,60 / 56,08 / 84,81 | 39 → 41 |
+
+Standbild und Kamerafahrt halten das Budget in jeder Stufe, auch im
+schlechtesten Einzelframe (max. 18,7 ms). Die Verschiebung selbst kostet kaum
+etwas: `quality` hatte schon vorher das 720er-Gitter und bleibt gleich. Die
+rund 3 ms in `balanced` sind das dichtere Gitter. Im Zeitraffer überschreiten
+wie bisher die Sim-Schritte das Budget, gleich oft (39–41 Frames je Lauf) und
+gleich hoch (max. 80–85 ms). Der Back-Pass je Sim-Schritt erhöht weder ihre Zahl
+noch ihre Höhe messbar.

@@ -140,7 +140,9 @@ Bau **28,6 min**, Import 6 s, Stempel-Parität < 1 s, `smoke.gd` 8 s,
 `water_geometry.gd` 13 s, `river_ribbons.gd` 4 s. Seit Issue #154 erzeugt
 auch `graphics_study.gd` einen `SimNode` samt Produktionswelt (wie `smoke.gd`);
 lokal (M4 Max) 1,4 s gegen 3,2 s für `smoke.gd`, auf dem Runner also in der
-Größenordnung von `smoke.gd`. Der Rest des Jobs (Toolchain,
+Größenordnung von `smoke.gd`. Seit Issue #153 dazu `relief.gd` (Produktionswelt,
+`Main` im Baum, drei Sim-Schritte Zeitraffer): lokal 2,4 s gegen 2,9 s für
+`smoke.gd`. Der Rest des Jobs (Toolchain,
 Godot-Download aus dem Cache) liegt zusammen unter 40 s. **Achtung beim
 Iterieren:** `actions/cache` schreibt seinen Eintrag nur bei ERFOLGREICHEM Job —
 solange `godot-contract` rot ist, kostet jede Runde den vollen Kaltbau.

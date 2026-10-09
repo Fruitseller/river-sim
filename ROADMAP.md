@@ -20,8 +20,11 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Folge-Tickets #150–#155.
   Die verbindliche Abnahmematrix für die Vorher/Nachher-Bewertung aller Folge-Tickets
   ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, `scripts/graphics-matrix.sh`,
-  `GraphicsMatrixTests`). Übernommen: der Ozean (#155, Hebel `frame`) ist die
-  normale Darstellung, Kalibrierung als `WaterRender.ocean*`.
+  `GraphicsMatrixTests`). In der Anwendung: Licht und Atmosphäre (#151), der
+  Ozean (#155, Kalibrierung als `WaterRender.ocean*`) und die Render-Verschiebung
+  von Rinnen und Graten (#153, Render-Gitter in Sim-Auflösung, Pinselring und
+  Kameraziel auf der verschobenen Fläche). Offen bei #153: nadelspitze Gipfel
+  auf jungem Relief (Jahr 0), Abnahme durch den Projekteigner.
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare
