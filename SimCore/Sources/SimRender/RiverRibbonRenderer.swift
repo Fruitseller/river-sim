@@ -141,8 +141,12 @@ public final class RiverRibbonRenderer {
     }
 
     /// Maximale Knoten-Verschiebung (Zellen) seit `markBuilt`; bei
-    /// Struktur-Änderung (Cutoff, Resample, Neu-Saat, Laden) bewusst „riesig",
+    /// Struktur-Änderung (Cutoff, Resample, Neu-Saat, Laden) oder nicht-endlichen
+    /// Koordinaten (NaN, ±inf) bewusst „riesig" (Sentinel 1e9),
     /// damit GDScript sofort rebuildet. Vor dem ersten Build ebenso.
+    /// Bei persistenter Nicht-Endlichkeit in den Kanal-Koordinaten bleibt der Sentinel aktiv und
+    /// löst bewusst jeden Frame einen Rebuild aus, da bei korruptem Simulationszustand keine
+    /// verlässliche Delta-Aussage möglich ist und der Renderzustand dirty bleibt.
     /// EHRLICHE ERWARTUNG: während die Sim läuft, triggert das praktisch jeden
     /// Schritt (Meander.migrate resampled unconditional → Knotenzahl ändert
     /// sich). Der Vertrag spart im Pause-/Idle-/Sculpt-Zustand (kein Schritt →
@@ -162,7 +166,10 @@ public final class RiverRibbonRenderer {
             idx += 1
             guard idx + count * 2 <= snapshot.count else { return 1e9 }
             for nd in ch.nodes {
-                maxD = max(maxD, max(abs(nd.x - snapshot[idx]), abs(nd.z - snapshot[idx + 1])))
+                let dx = abs(nd.x - snapshot[idx])
+                let dz = abs(nd.z - snapshot[idx + 1])
+                guard dx.isFinite && dz.isFinite else { return 1e9 }
+                maxD = max(maxD, max(dx, dz))
                 idx += 2
             }
         }
