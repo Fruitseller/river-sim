@@ -48,7 +48,7 @@ Wirkungsleiter einzeln.
 | `geometry` | Render-Gitter in Sim-Auflösung (720 statt 384). Grobe Erosionsrinnen (dieselbe runevision-Funktion wie das feine Detail, Skala 0.022 UV ≈ 2,5 km Wellenlänge) und einseitig geschärfte Grate als **echte Verschiebung**. Einmal je Terrain-Update in eine 1440²-Float-Textur gebacken; der Vertex-Shader liest die Höhe, der Fragment-Shader Steigung und Rinnen-Schattierung. | `relief_bake.gdshader`, `landscape.gdshaderinc` |
 | `canopy` | Weltmaßstab 1 Einheit ≈ 100 m. Wald als **Kronendach im Terrain-Shader**: ~20 m angehobenes Volumen (Waldkanten werfen Schatten), Voronoi-Kronen von ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel, Anteil nach Höhenband), dunkle Lücken, Selbstschatten zum Kronenrand. Lichtungen aus Rauschen, kein Wald in Wänden, auf Schnee oder an Wasser. Ersetzt die Instanzbäume. | `landscape.gdshaderinc` |
 | `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. **Seit #151 Produktion** (Sonnenhöhe dort 38°, s. [Licht und Atmosphäre](#licht-und-atmosphäre-in-der-anwendung-151)); die Studie hat den Schalter nicht mehr. | `game/scripts/Lighting.gd`, `game/shaders/clouds.gdshaderinc` |
-| `frame` | Ozean ohne Streifenmuster: Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, statt drei Sinuswellen. Farbe aus der echten Wassertiefe über dem Sim-Schelf (türkis → tiefblau), gebrochener Brandungssaum. | `ocean.gdshaderinc` |
+| `frame` | Ozean ohne Streifenmuster: Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, statt drei Sinuswellen. Farbe aus der echten Wassertiefe über dem Sim-Schelf (türkis → tiefblau), gebrochener Brandungssaum. **Seit #155 Produktion** (s. u.), kein Studien-Schalter mehr. | `shaders/ocean.gdshader` |
 
 Außerdem ist der Kalkstein der ersten Runde dunkler und strukturierter: er lag
 mit ~0,5–0,6 Albedo bei Schneeweiß und las sich unter Himmelslicht als Schnee.
@@ -286,6 +286,27 @@ SimRender oder als GPU-Pass in die Brücke), Kronendach statt Einzelbäumen in
 der Übersicht, Schutzmaske aus Wasserfeld und Bändern, Ozean nach Wassertiefe.
 Offen: Instanzbäume an Waldrändern für Nahsicht,
 Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen 720er-Gitters.
+
+## Übernahme in die Produktion
+
+### Ozean (#155, Hebel `frame`)
+
+Der Hebel `frame` ist die normale Darstellung des offenen Meers
+(`game/shaders/ocean.gdshader`); `ocean.gdshaderinc` und der Schalter
+`study_ocean` sind entfallen, die Studie zeigt den neuen Ozean damit in beiden
+Varianten. Die Studien-Zahlen stehen jetzt als `WaterRender.ocean*` im
+Kalibrier-Vertrag und reisen als `water_ocean_*`-Uniforms über denselben
+Brücken-Weg wie die übrige Wasser-Optik (`SimRender.WaterUniforms`). Wächter:
+`WaterUniformsTests` (Spiegel, default-freie Deklarationen),
+`WaterRenderTests` (Tiefen-Rampe, Brandungs- und Ausblende-Fenster, kein
+`sin`/`cos` im Ozean-Shader) und End-to-End `game/tests/water_uniforms.gd`.
+
+Gegenüber der Studie geändert: das Rauschen ist das `noise2` des
+Ozean-Shaders statt des Wolken-Rauschens (gleiche Bauform, andere
+Hash-Konstanten), außerhalb des Sim-Quadrats gilt volle Tiefe über denselben
+Ausdruck wie innen. Fresnel, Himmels-Spiegelung, Rauheit und Glanz bleiben die
+gemeinsame Optik aller drei Wasser-Shader; Seicht/Tief-Farbe und
+Strömungs-Schimmer des Binnenwassers liest das Meer nicht mehr.
 
 ## Abnahmematrix für Folge-Tickets (#150, Spec #156, Parent #117)
 

@@ -495,9 +495,16 @@ final class WaterRenderTests: XCTestCase {
         let terrain = try repoFile("game/shaders/terrain.gdshader")
         let water = try repoFile("game/shaders/water.gdshader")
         let ocean = try repoFile("game/shaders/ocean.gdshader")
-        for (name, shader) in [("terrain", terrain), ("water", water), ("ocean", ocean)] {
+        // Die Grundfarbe aus Seicht/Tief und der Strömungs-Schimmer gelten nur
+        // fürs Binnenwasser; das offene Meer färbt seit #155 nach der echten
+        // Wassertiefe über dem Schelf (`WaterRender.ocean*`, eigener Test unten).
+        for (name, shader) in [("terrain", terrain), ("water", water)] {
             assertContains(shader, "mix(water_shallow_color, water_deep_color, depth)",
                            hint: "\(name): Wasserfarbe liest WaterRender.water*Color")
+            assertContains(shader, "flow * water_flow_shimmer_color",
+                           hint: "\(name): Strömungs-Schimmer liest WaterRender.flowShimmerColor")
+        }
+        for (name, shader) in [("terrain", terrain), ("water", water), ("ocean", ocean)] {
             assertContains(shader, "pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6))",
                            hint: "\(name): Fresnel liest WaterRender.fresnelExponent "
                                + "(max: pow(0.0, 0.0) ist GLSL-UB, Null-Uniform der "
@@ -511,8 +518,6 @@ final class WaterRenderTests: XCTestCase {
             assertContains(shader,
                 "mix(water_specular_steep, water_specular_grazing, fresnel)",
                 hint: "\(name): Specular liest WaterRender.waterSpecular*")
-            assertContains(shader, "flow * water_flow_shimmer_color",
-                           hint: "\(name): Strömungs-Schimmer liest WaterRender.flowShimmerColor")
         }
         // Flüsse und Seen lassen ihr lokales Bett durchscheinen. Das offene Meer
         // bleibt opak, weil sonst bei flacher Kamera die rechteckige Unterseite
@@ -527,6 +532,87 @@ final class WaterRenderTests: XCTestCase {
                        hint: "Trübungsfahne liest WaterRender.deltaPlumeColor")
         assertContains(water, "mix(water, water_oxbow_water_color, still * 0.5)",
                        hint: "Altarm-Wasser liest WaterRender.oxbowWaterColor")
+    }
+
+    // MARK: Offenes Meer (Issue #155)
+
+    func testOceanColorDarkensWithDepth() {
+        // Flach türkis, tief dunkelblau: jede Stufe der Tiefen-Rampe ist
+        // dunkler als die davor, sonst liest sich der Schelf nicht als Schelf.
+        func luminance(_ c: (r: Double, g: Double, b: Double)) -> Double {
+            0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+        }
+        XCTAssertGreaterThan(luminance(WaterRender.oceanShallowColor),
+                             luminance(WaterRender.oceanMidColor))
+        XCTAssertGreaterThan(luminance(WaterRender.oceanMidColor),
+                             luminance(WaterRender.oceanDeepColor))
+        // Die Brandung ist heller als jedes Wasser, sonst verschwindet der Saum.
+        XCTAssertGreaterThan(luminance(WaterRender.oceanSurfColor),
+                             luminance(WaterRender.oceanShallowColor))
+    }
+
+    func testOceanDepthWindowsStayInOrder() {
+        // Die Tiefe ist (sea_level − h) / oceanDepthSpan, geklemmt auf 0…1.
+        // Brandungssaum < Knick seicht→mittel < volle Tiefe: der Saum liegt
+        // nur am äußersten Küstenrand, nicht über dem ganzen Schelf.
+        XCTAssertGreaterThan(WaterRender.oceanDepthSpan, 0)
+        XCTAssertGreaterThan(WaterRender.oceanSurfDepth, 0)
+        XCTAssertLessThan(WaterRender.oceanSurfDepth, WaterRender.oceanMidDepth)
+        XCTAssertLessThan(WaterRender.oceanMidDepth, 1)
+        XCTAssertGreaterThan(WaterRender.oceanSurfStrength, 0)
+        XCTAssertLessThanOrEqual(WaterRender.oceanSurfStrength, 1)
+        XCTAssertLessThan(WaterRender.oceanSurfNoiseLo, WaterRender.oceanSurfNoiseHi)
+        // Der Schelf ist breiter als das Ufer-Fenster des Binnenwassers: das
+        // Meer darf über einer tiefen Uferkante nicht schon voll tiefblau sein.
+        XCTAssertGreaterThan(WaterRender.oceanDepthSpan, WaterRender.lakeRawWetDepth)
+    }
+
+    func testOceanWavesFadeBeforeTheyAlias() {
+        // Rausch-Oktaven werden feiner (Lacunarity > 1) und schwächer
+        // (Gain < 1), und jede blendet aus, bevor ihre Wellenlänge unter die
+        // Pixelgröße fällt. Genau das Fehlen dieses Ausblendens machte aus
+        // den Sinuswellen das Streifenmuster bis zum Horizont.
+        XCTAssertGreaterThan(WaterRender.oceanWaveFrequency, 0)
+        XCTAssertGreaterThan(WaterRender.oceanWaveAmplitude, 0)
+        XCTAssertGreaterThan(WaterRender.oceanWaveLacunarity, 1)
+        XCTAssertLessThan(WaterRender.oceanWaveGain, 1)
+        XCTAssertGreaterThan(WaterRender.oceanWaveGain, 0)
+        XCTAssertLessThan(WaterRender.oceanWaveFadeLo, WaterRender.oceanWaveFadeHi)
+        // `footprint · freq` ist die Zahl der Rausch-Zellen je Pixel. Die
+        // Oktave ist aus, bevor eine Zelle kleiner als ein Pixel wird.
+        XCTAssertLessThanOrEqual(WaterRender.oceanWaveFadeHi, 1)
+    }
+
+    func testOceanShaderReadsTheOceanContract() throws {
+        // Struktur wie bei Terrain und Bändern: die Zahlen reisen als
+        // Uniforms, hier steht nur, WELCHE Stelle WELCHEN Wert liest.
+        let ocean = try repoFile("game/shaders/ocean.gdshader")
+        assertContains(ocean, "smoothstep(lo, max(hi, lo + 1e-6), x)",
+                       hint: "Fenster-Helfer klemmt gegen edge0 >= edge1 (GLSL-UB, s. Terrain)")
+        assertContains(ocean,
+            "clamp((sea_level - h) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0)",
+            hint: "Tiefe über dem Schelf liest WaterRender.oceanDepthSpan (max: 0/0-Schutz)")
+        assertContains(ocean,
+            "calib_window(0.0, water_ocean_mid_depth, depth)",
+            hint: "Rampe seicht → mittel liest WaterRender.oceanMidDepth")
+        assertContains(ocean,
+            "calib_window(water_ocean_mid_depth, 1.0, depth)",
+            hint: "Rampe mittel → tief liest WaterRender.oceanMidDepth")
+        assertContains(ocean,
+            "1.0 - calib_window(0.0, water_ocean_surf_depth, depth)",
+            hint: "Brandungssaum liest WaterRender.oceanSurfDepth")
+        assertContains(ocean,
+            "calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi,",
+            hint: "Brechung des Saums liest WaterRender.oceanSurfNoise*")
+        assertContains(ocean,
+            "1.0 - calib_window(water_ocean_wave_fade_lo, water_ocean_wave_fade_hi, footprint * freq)",
+            hint: "Wellen blenden mit ihrer Pixelgröße aus (WaterRender.oceanWaveFade*)")
+        assertContains(ocean, "length(fwidth(p))",
+                       hint: "Pixelgröße der Welle aus den Bildschirm-Ableitungen")
+        // Der eigentliche Fehler, den #155 behebt: periodische Wellen bilden
+        // aus der Übersicht ein Streifenmuster. Kein Sinus, kein Kosinus.
+        XCTAssertFalse(ocean.contains("sin("), "Ozean ohne Sinuswellen (#155: Streifenmuster)")
+        XCTAssertFalse(ocean.contains("cos("), "Ozean ohne Kosinuswellen (#155: Streifenmuster)")
     }
 
     func testExtensionKeepsWaterCalibrationOutOfMarshalling() throws {

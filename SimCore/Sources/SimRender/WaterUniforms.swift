@@ -48,6 +48,24 @@ public enum WaterUniforms {
         ("water_roughness_grazing", WaterRender.waterRoughnessGrazing),
         ("water_specular_steep", WaterRender.waterSpecularSteep),
         ("water_specular_grazing", WaterRender.waterSpecularGrazing),
+        // Offenes Meer (ocean.gdshader, #155).
+        ("water_ocean_depth_span", WaterRender.oceanDepthSpan),
+        ("water_ocean_mid_depth", WaterRender.oceanMidDepth),
+        ("water_ocean_surf_depth", WaterRender.oceanSurfDepth),
+        ("water_ocean_surf_strength", WaterRender.oceanSurfStrength),
+        ("water_ocean_surf_scale", WaterRender.oceanSurfScale),
+        ("water_ocean_surf_drift", WaterRender.oceanSurfDrift),
+        ("water_ocean_surf_noise_lo", WaterRender.oceanSurfNoiseLo),
+        ("water_ocean_surf_noise_hi", WaterRender.oceanSurfNoiseHi),
+        ("water_ocean_wave_frequency", WaterRender.oceanWaveFrequency),
+        ("water_ocean_wave_amplitude", WaterRender.oceanWaveAmplitude),
+        ("water_ocean_wave_lacunarity", WaterRender.oceanWaveLacunarity),
+        ("water_ocean_wave_gain", WaterRender.oceanWaveGain),
+        ("water_ocean_wave_fade_lo", WaterRender.oceanWaveFadeLo),
+        ("water_ocean_wave_fade_hi", WaterRender.oceanWaveFadeHi),
+        ("water_ocean_wave_drift_x", WaterRender.oceanWaveDriftX),
+        ("water_ocean_wave_drift_z", WaterRender.oceanWaveDriftZ),
+        ("water_ocean_wave_octave_speedup", WaterRender.oceanWaveOctaveSpeedup),
     ]
 
     /// Farb-Uniforms (`uniform vec3` in den Shadern).
@@ -58,6 +76,10 @@ public enum WaterUniforms {
         ("water_flow_shimmer_color", WaterRender.flowShimmerColor),
         ("water_delta_plume_color", WaterRender.deltaPlumeColor),
         ("water_oxbow_water_color", WaterRender.oxbowWaterColor),
+        ("water_ocean_shallow_color", WaterRender.oceanShallowColor),
+        ("water_ocean_mid_color", WaterRender.oceanMidColor),
+        ("water_ocean_deep_color", WaterRender.oceanDeepColor),
+        ("water_ocean_surf_color", WaterRender.oceanSurfColor),
     ]
 
     /// Vertragswerte der Godot-Wächter (Issue #92) — KEINE Shader-Uniforms,

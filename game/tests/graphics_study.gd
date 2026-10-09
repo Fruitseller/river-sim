@@ -63,23 +63,25 @@ func _check_lever_parsing() -> void:
 	var script = load("res://studies/flusstal/Flusstal.gd")
 	OS.set_environment("RS_STUDY_LEVERS", "")
 	var all = script.new()
-	_check(all._parse_levers() and all.study_levers.size() == 3, "Ohne Angabe gelten alle drei Hebel")
+	_check(all._parse_levers() and all.study_levers.size() == 2, "Ohne Angabe gelten beide Hebel")
 	all.free()
-	OS.set_environment("RS_STUDY_LEVERS", "geometry,frame")
-	var two = script.new()
-	_check(two._parse_levers() and two._lever("geometry") and two._lever("frame")
-		and not two._lever("canopy"), "Hebel-Liste schaltet einzeln")
-	two.free()
+	OS.set_environment("RS_STUDY_LEVERS", "geometry")
+	var one = script.new()
+	_check(one._parse_levers() and one._lever("geometry")
+		and not one._lever("canopy"), "Hebel-Liste schaltet einzeln")
+	one.free()
 	OS.set_environment("RS_STUDY_LEVERS", "geometry,licht")
 	var typo = script.new()
 	_check(not typo._parse_levers(), "Tippfehler im Hebel muss abbrechen")
 	typo.free()
-	# `light` ist seit #151 Produktion (Lighting.gd); ein alter Aufruf soll
-	# laut scheitern statt still dasselbe Bild zu liefern.
-	OS.set_environment("RS_STUDY_LEVERS", "light")
-	var light = script.new()
-	_check(not light._parse_levers(), "Übernommener Hebel 'light' muss abbrechen")
-	light.free()
+	# `light` (#151, Lighting.gd) und `frame` (#155, ocean.gdshader) sind
+	# Produktion; ein alter Aufruf soll laut scheitern statt still dasselbe
+	# Bild zu liefern.
+	for adopted in ["light", "frame"]:
+		OS.set_environment("RS_STUDY_LEVERS", adopted)
+		var old = script.new()
+		_check(not old._parse_levers(), "Übernommener Hebel '%s' muss abbrechen" % adopted)
+		old.free()
 	OS.set_environment("RS_STUDY_VARIANT", previous_variant)
 	OS.set_environment("RS_STUDY_LEVERS", previous_levers)
 
@@ -98,7 +100,6 @@ func _check_study_shaders() -> void:
 			"study_geometry", "study_relief_tex", "study_protect_tex",
 			"study_canopy_enabled",
 		],
-		"res://shaders/ocean.gdshader": ["study_ocean"],
 	}
 	for path in cases:
 		var source: String = FileAccess.get_file_as_string(path)

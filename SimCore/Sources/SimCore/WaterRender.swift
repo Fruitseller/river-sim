@@ -750,4 +750,58 @@ public enum WaterRender {
     /// Stehendes, trübes Auwasser eines Altarms — grünlicher als der klare Lauf
     /// (`water.gdshader`).
     public static let oxbowWaterColor = (r: 0.16, g: 0.28, b: 0.24)
+
+    // MARK: Offenes Meer (Issue #155)
+
+    // Übernommen aus dem abgenommenen Hebel `frame` der Flusstal-Studie (#121).
+    // Vorher bauten drei Sinuswellen und ein Sinus-Schimmer die Normalen; aus
+    // der Übersicht wurde daraus ein regelmäßiges Streifenmuster bis zum
+    // Horizont, und die Insel las sich als Modell auf einem Tisch. Jetzt:
+    // Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, und Farbe aus der
+    // echten Wassertiefe über dem Sim-Schelf mit gebrochenem Brandungssaum.
+    // Fresnel, Himmels-Spiegelung und Glanz bleiben die gemeinsame Optik oben.
+    // Nur `ocean.gdshader` liest diese Werte.
+
+    /// Wassertiefe (Sim-Höheneinheiten unter `seaLevel`), ab der das Meer voll
+    /// tief gefärbt ist. 0.06 ≈ 1,4 Welteinheiten ≈ 140 m.
+    public static let oceanDepthSpan = 0.06
+    /// Farbe über dem flachen Schelf direkt an der Küste (türkis).
+    public static let oceanShallowColor = (r: 0.09, g: 0.27, b: 0.27)
+    /// Farbe am Knick zwischen Schelf und Hang …
+    public static let oceanMidColor = (r: 0.030, g: 0.125, b: 0.165)
+    /// … und im tiefen Wasser sowie außerhalb des Sim-Quadrats (dunkelblau).
+    public static let oceanDeepColor = (r: 0.012, g: 0.050, b: 0.082)
+    /// Lage des Knicks auf der normierten Tiefe 0…1.
+    public static let oceanMidDepth = 0.25
+    /// Breite des Brandungssaums auf der normierten Tiefe (nur der äußerste
+    /// Küstenrand).
+    public static let oceanSurfDepth = 0.045
+    /// Farbe der Brandung …
+    public static let oceanSurfColor = (r: 0.80, g: 0.85, b: 0.86)
+    /// … und ihr höchster Anteil an der Wasserfarbe.
+    public static let oceanSurfStrength = 0.55
+    /// Rausch-Fenster, das den Saum bricht (nur Rauschwerte darüber schäumen).
+    public static let oceanSurfNoiseLo = 0.35
+    public static let oceanSurfNoiseHi = 0.75
+    /// Rausch-Frequenz der Brechung (je Welteinheit) …
+    public static let oceanSurfScale = 3.1
+    /// … und ihre Drift (Rausch-Zellen je Sekunde).
+    public static let oceanSurfDrift = 0.6
+    /// Rausch-Wellen: Frequenz (je Welteinheit) und Normalen-Gradient der
+    /// ersten Oktave …
+    public static let oceanWaveFrequency = 0.55
+    public static let oceanWaveAmplitude = 0.045
+    /// … je Oktave feiner (Lacunarity) und schwächer (Gain).
+    public static let oceanWaveLacunarity = 2.3
+    public static let oceanWaveGain = 0.7
+    /// Ausblenden einer Oktave über `Pixelgröße · Frequenz` (Rausch-Zellen je
+    /// Pixel). Ohne dieses Fenster flimmern feine Oktaven in der Ferne und
+    /// bilden Moiré.
+    public static let oceanWaveFadeLo = 0.2
+    public static let oceanWaveFadeHi = 0.8
+    /// Drift der Wellen (Rausch-Zellen je Sekunde, Welt-x und Welt-z) …
+    public static let oceanWaveDriftX = 0.21
+    public static let oceanWaveDriftZ = 0.13
+    /// … je Oktave um diesen Anteil schneller (feine Wellen laufen schneller).
+    public static let oceanWaveOctaveSpeedup = 0.35
 }
