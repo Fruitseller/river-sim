@@ -22,6 +22,14 @@
 // Rinnen-Schattierung + Ridge-Map (feuchte Kerben). Rein kosmetisch, die Physik
 // bleibt in SimCore; mit der Kameradistanz ausgeblendet (Aliasing + Kosten).
 //
+// RENDER-VERSCHIEBUNG (#153): grobe Erosionsrinnen (~2,5 km Wellenlänge) und
+// einseitig geschärfte Grate als ECHTE Verschiebung mit Silhouette und
+// Schattenwurf. Gerechnet einmal je Terrain-Update in relief_bake.gdshader
+// (dieselbe runevision-Funktion wie das feine Detail, nur gröber); hier wird
+// nur gelesen: die Vertex-Stufe die Höhe, die Pixel-Stufe Steigung und
+// Rinnen-Schattierung. An Wasser ist sie per Schutzmaske null, Seen bleiben
+// flach auf ihrem Spiegel. Die Physik bleibt unberührt.
+//
 // MATERIAL-LAYER (davon UNABHÄNGIG): aus surface_tex werden Boden, Vegetation,
 // Fels und Schnee/Eis in Weltkoordinaten prozedural aufgebaut (Körnung,
 // Gesteinsschichten, Windverfrachtung, Mikro-Normale). Eigener Schalter
@@ -111,6 +119,20 @@ uniform vec3 water_deep_color;
 uniform vec3 water_sky_reflect_color;
 uniform vec3 water_flow_shimmer_color;
 
+// Render-Verschiebung (#153). Der Schalter ist keine Kalibrier-Zahl: ohne
+// SimNode (Editor-Vorschau) ist keine Backtextur gebunden, und eine schwarze
+// Textur dekodierte zu −2 Einheiten Höhe.
+uniform bool relief_enabled = false;
+uniform sampler2D relief_tex : filter_linear, repeat_disable;
+// Kalibrierung über die Brücke (SimCore.ReliefRender), default-frei.
+uniform float relief_height_code;
+uniform float relief_slope_code;
+uniform float relief_shade_dark;
+uniform float relief_shade_light;
+// Schutzmaske (#154); hier liest sie nur das Kronendach der Studie, die
+// Verschiebung bekommt sie schon im Back-Pass.
+uniform sampler2D protect_tex : filter_linear, repeat_disable;
+
 varying vec2 v_uv;
 
 // Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
@@ -155,6 +177,33 @@ float lake_gate_at(vec2 uv) {
 vec4 erosion_detail(vec2 p, vec2 slope, float fade_target_in, out float out_mag) {
 	return erosion_detail_at(p, slope, fade_target_in, detail_scale, detail_strength, out_mag);
 }
+
+// Render-Verschiebung aus der Backtextur (Kodierung: relief_bake.gdshader).
+// Höhenzuschlag in Welteinheiten …
+float relief_lift(vec2 uv) {
+	if (!relief_enabled) {
+		return 0.0;
+	}
+	return (textureLod(relief_tex, uv, 0.0).r - 0.5) / max(relief_height_code, 1e-6);
+}
+
+// … Steigungszuschlag dh/duv je Pixel (Detail unabhängig von der Mesh-Dichte) …
+vec2 relief_slope(vec2 uv) {
+	if (!relief_enabled) {
+		return vec2(0.0);
+	}
+	return (texture(relief_tex, uv).gb - 0.5) / max(relief_slope_code, 1e-6);
+}
+
+// … und Rinnen (−1) bis Rippen (+1).
+float relief_cavity(vec2 uv) {
+	if (!relief_enabled) {
+		return 0.0;
+	}
+	return (texture(relief_tex, uv).a - 0.5) * 2.0;
+}
+
+#include "res://shaders/protect.gdshaderinc"
 
 // Billiges Value-Noise (2 Oktaven) für Breakup/Schaum — de-uniformiert Flächen.
 float vnoise(vec2 p) {
@@ -214,10 +263,11 @@ void vertex() {
 	float hfv = texture(hf_tex, uv).r;
 	float pond = pond_at(uv, hraw);
 	float lift = calib_window(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
-	VERTEX.y = mix(hraw, hfv, lift) * hscale;
+	// Seen hebt die Zeile selbst auf den Spiegel; dort keine Verschiebung.
+	VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);
 #ifdef FLUSSTAL_STUDY
 	float study_forest_v;
-	VERTEX.y += study_vertex(uv, hraw, lift, study_forest_v);
+	VERTEX.y += study_vertex(uv, hraw, study_forest_v);
 	v_study_forest = study_forest_v;
 #endif
 	float texel = 1.0 / grid_n;
@@ -243,9 +293,7 @@ void fragment() {
 	float hD = texture(height_tex, v_uv - vec2(0.0, texel)).r;
 	float hU = texture(height_tex, v_uv + vec2(0.0, texel)).r;
 	vec2 coarse_slope = vec2(hR - hL, hU - hD) * 0.5 * grid_n;
-#ifdef FLUSSTAL_STUDY
-	coarse_slope += study_slope(v_uv);
-#endif
+	coarse_slope += relief_slope(v_uv);
 
 	float ws = world_size / 100.0;
 	float view_dist = length(VERTEX);
@@ -377,6 +425,11 @@ void fragment() {
 	terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0),
 	           moist * 0.32);
 	terr *= 0.96 + 0.08 * breakup;
+	// Rinnenböden dunkler, Rippen heller (grobe Verschiebung, #153).
+	if (hval > sea_level + 0.012) {
+		float cavity = relief_cavity(v_uv);
+		terr *= 1.0 + (cavity < 0.0 ? cavity * relief_shade_dark : cavity * relief_shade_light);
+	}
 
 	float ice_hint = smoothstep(0.04, 0.16, macro_color.b - macro_color.r) * cold;
 	float land_roughness = mix(0.90, 0.68, rock);
@@ -393,7 +446,6 @@ void fragment() {
 	if (study_enabled && hval > sea_level + 0.012) {
 		study_material(material_pos, cold, rock, vegetation, soil_w, macro_n,
 		               terr, n_ws, land_roughness);
-		study_relief_shade(v_uv, terr);
 		study_canopy(wp, v_uv, hval, VERTEX, macro_n, terr, n_ws, land_roughness);
 		NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
 	}

@@ -253,6 +253,20 @@ final class SimNode: Node {
         })
     }
 
+    // MARK: Kalibrierung der Render-Verschiebung (Issue #153)
+
+    // Tabelle in `SimRender.ReliefUniforms`; `Main.gd` setzt die Werte auf den
+    // Back-Pass und das Terrain-Material und dekodiert damit die Backtextur
+    // für Pinselring und Kameraziel.
+
+    @Callable func reliefUniformNames() -> PackedStringArray {
+        PackedStringArray(ReliefUniforms.scalars.map(\.name))
+    }
+
+    @Callable func reliefUniformValues() -> PackedFloat32Array {
+        PackedFloat32Array(ReliefUniforms.scalars.map { Float($0.value) })
+    }
+
     // Vertragswerte der Godot-Wächter (`water_geometry.gd`, `river_ribbons.gd`,
     // Issue #92) — als Float64, damit die GDScript-Seite exakt die Doubles der
     // Kalibrierung vergleicht statt einer verengten Kopie.

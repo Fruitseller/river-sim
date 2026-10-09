@@ -16,7 +16,7 @@ const BuildStamp = preload("res://scripts/BuildStamp.gd")
 
 const HSCALE := 24.0
 const RIVER_LIFT := 0.35
-const RENDER_GRID := 384   # == BALANCED_TERRAIN_GRID (Main.gd), der Standard
+const Main = preload("res://scripts/Main.gd")
 const YEARS := 2000.0      # eingelaufenes Flussnetz, nicht der Startzustand
 
 var done := false
@@ -35,9 +35,10 @@ func _process(_delta: float) -> bool:
 		return true
 
 	var n: int = sim.gridSize()
-	sim.setRenderGrid(RENDER_GRID)
+	var render_grid := Main.terrain_grid_for("balanced", n) # der Standard
+	sim.setRenderGrid(render_grid)
 	sim.step(YEARS)
-	print("n=", n, " render_grid=", RENDER_GRID, " Jahre=", YEARS)
+	print("n=", n, " render_grid=", render_grid, " Jahre=", YEARS)
 
 	var mid := n * 0.5
 	var measure := func(label: String, call: Callable) -> void:

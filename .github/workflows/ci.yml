@@ -221,3 +221,7 @@ jobs:
       - name: Licht und Atmosphäre (Issue #151)
         run: |
           scripts/godot-test.sh res://tests/lighting.gd LIGHTING_OK
+
+      - name: Render-Verschiebung von Rinnen und Graten (Issue #153)
+        run: |
+          scripts/godot-test.sh res://tests/relief.gd RELIEF_OK

@@ -10,8 +10,13 @@ extends Node3D
 # terrain.gdshader; Wächter: SimCoreTests/RenderContractTests.swift (Issue #51).
 const HSCALE := 24.0
 const Lighting = preload("res://scripts/Lighting.gd")
-const BALANCED_TERRAIN_GRID := 384
+# Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
+# das volle Sim-Gitter (`terrain_grid_for`).
 const PERFORMANCE_TERRAIN_GRID := 256
+# Back-Auflösung der Render-Verschiebung in Vielfachen des Sim-Gitters: die
+# Pixel-Stufe liest Steigung und Rinnen aus der doppelt so feinen Textur, damit
+# ihr Detail nicht an der Mesh-Dichte hängt (Flusstal-Studie #116).
+const RELIEF_BAKE_FACTOR := 2
 
 # Kosmetische Sub-Grid-Rinnen des Terrain-Shaders. Die Physik altert von einer
 # scharfen zu einer runden Landschaft; eine konstante Detailstärke überzeichnete
@@ -193,6 +198,25 @@ var debug_difference_field := FieldTexture.new("debug_difference_tex", Image.FOR
 var h_cache: PackedFloat32Array
 var h_cache_dirty := true
 
+# Render-Verschiebung von Rinnen und Graten (#153): ein Float-SubViewport backt
+# sie einmal je Terrain-Update (`_bake_relief`), der Terrain-Shader liest nur.
+# Pinselring und Kameraziel liegen auf der SICHTBAREN Fläche; dafür liest
+# `_relief_cpu` die Backtextur zurück, lazy und nie während eines Strichs (der
+# Rückweg ist ein GPU-Sync, gemessen 22 ms bei n = 720, M4 Max).
+# `relief_lift_cache` ist der kodierte Höhenzuschlag auf dem Sim-Gitter
+# (Dekodierung in `_surface_y`), leer = keine Verschiebung bekannt.
+var relief_vp: SubViewport
+var relief_mat: ShaderMaterial
+var relief_height_code := 0.0
+var relief_lift_cache: PackedFloat32Array
+var relief_bake_frame := -1  # Frame des noch nicht zurückgelesenen Auftrags
+var relief_bakes := 0  # Zähler für den Wächter: nur Terrain-Updates backen
+# Kameraziel auf die sichtbare Fläche nachziehen, sobald die erste
+# Verschiebung zurückgelesen ist (RS_TARGET).
+var cam_target_on_surface := false
+# Schutzmaske (#154): endet die Verschiebung an Wasser.
+var protect_tex: ImageTexture
+
 # Kamera-Orbit
 var cam: Camera3D
 var cam_yaw := 0.7
@@ -349,8 +373,7 @@ func _ready() -> void:
 		render_quality = "balanced"
 	if OS.has_environment("RS_FPS"):
 		active_fps_cap = 0  # s. ACTIVE_FPS_CAP
-	var requested_grid := N if render_quality == "quality" else (
-		PERFORMANCE_TERRAIN_GRID if render_quality == "performance" else BALANCED_TERRAIN_GRID)
+	var requested_grid := terrain_grid_for(render_quality, N)
 	if OS.has_environment("RS_RENDER_GRID"):
 		requested_grid = int(OS.get_environment("RS_RENDER_GRID"))
 	terrain_grid = clampi(requested_grid, 64, N)
@@ -411,7 +434,8 @@ func _ready() -> void:
 	if OS.has_environment("RS_TARGET"):
 		# Blickpunkt auf die GELÄNDEHÖHE heben: mit y = 0 zielt die Kamera unter
 		# die Landschaft, und der Ausschnitt zeigt Himmel statt Mündung.
-		cam_target.y = _sample_h((cam_target.x + half) / step, (cam_target.z + half) / step) * HSCALE
+		cam_target.y = _surface_y((cam_target.x + half) / step, (cam_target.z + half) / step)
+		cam_target_on_surface = true
 		_update_camera()
 	_update_year()
 	# Bänder VOR den Texturen: das Wasserfeld deckelt Korridore nur unter
@@ -424,6 +448,14 @@ func _ready() -> void:
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
+
+## Render-Gitter je Qualitätsstufe (#153). Erst das Sim-Gitter trägt die
+## Silhouette der Render-Verschiebung; ein doppelt so dichtes Gitter kostete in
+## der Studie doppelt so viel ohne sichtbaren Gewinn (die Dreiecke liegen in der
+## Übersicht unter einem Pixel), Normalen und Rinnen kommen ohnehin aus der
+## feineren Backtextur. Messreihe: docs/graphics-quality.md, Abschnitt #153.
+static func terrain_grid_for(quality: String, n: int) -> int:
+	return PERFORMANCE_TERRAIN_GRID if quality == "performance" else n
 
 func _diag() -> void:
 	var land := 0
@@ -462,6 +494,45 @@ static func apply_water_calibration(sim_node: Object, mats: Array[ShaderMaterial
 			mat.set_shader_parameter(color_names[i], color_values[i])
 
 
+## Kalibrierung der Render-Verschiebung über die Brücke (#153): Name → Wert aus
+## SimCore.ReliefRender. Statisch, damit game/tests/relief.gd sie headless prüft.
+static func relief_calibration(sim_node: Object) -> Dictionary:
+	var names: PackedStringArray = sim_node.reliefUniformNames()
+	var values: PackedFloat32Array = sim_node.reliefUniformValues()
+	var calib := {}
+	for i in names.size():
+		calib[names[i]] = values[i]
+	return calib
+
+## Back-Pass der Render-Verschiebung (#153): ein Float-SubViewport in
+## RELIEF_BAKE_FACTOR-facher Sim-Auflösung, der nur nach einem Terrain-Update
+## einmal zeichnet (UPDATE_ONCE, `_bake_relief`).
+func _setup_relief() -> void:
+	var calib := relief_calibration(sim)
+	relief_height_code = calib["relief_height_code"]
+	var size := N * RELIEF_BAKE_FACTOR
+	relief_vp = SubViewport.new()
+	relief_vp.size = Vector2i(size, size)
+	relief_vp.use_hdr_2d = true
+	# Transparent, sonst verwirft der Viewport den Alpha-Kanal (Rinnen/Rippen).
+	relief_vp.transparent_bg = true
+	relief_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	relief_mat = ShaderMaterial.new()
+	relief_mat.shader = load("res://shaders/relief_bake.gdshader")
+	relief_mat.set_shader_parameter("grid_n", float(N))
+	relief_mat.set_shader_parameter("hscale", HSCALE)
+	relief_mat.set_shader_parameter("sea_level", sea)
+	for mat in [relief_mat, terrain_mat]:
+		for name in calib:
+			mat.set_shader_parameter(name, calib[name])
+	var rect := ColorRect.new()
+	rect.size = Vector2(size, size)
+	rect.material = relief_mat
+	relief_vp.add_child(rect)
+	add_child(relief_vp)
+	terrain_mat.set_shader_parameter("relief_tex", relief_vp.get_texture())
+	terrain_mat.set_shader_parameter("relief_enabled", true)
+
 func _setup_scene() -> void:
 	# Licht und Atmosphäre (#151): feste Welt-Sonne, Werte und Qualitätsstufen
 	# stehen in Lighting.gd.
@@ -496,6 +567,7 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("material_enabled", render_quality != "performance")
 	terrain_mi.material_override = terrain_mat
 	add_child(terrain_mi)
+	_setup_relief()
 
 	if OS.has_environment("RS_WATER_GPU"):
 		water_gpu = true
@@ -1119,6 +1191,12 @@ func _process(delta: float) -> void:
 				sculpt_refresh_pending = true
 
 	_update_camera_pan(delta)
+	if cam_target_on_surface:
+		_relief_cpu()
+		if not relief_lift_cache.is_empty():
+			# RS_TARGET: das Ziel lag bisher auf der Sim-Fläche.
+			cam_target_on_surface = false
+			cam_target.y = _surface_y((cam_target.x + half) / step, (cam_target.z + half) / step)
 	_update_ring()
 	_update_camera()
 
@@ -1246,9 +1324,13 @@ func _ensure_h_cache() -> void:
 func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = true) -> void:
 	height_field.upload(terrain_mat, N, sim.heightsBytes())
 	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(sim.currentYear()))
-	if not update_overlays:
-		return
+	if update_overlays:
+		_upload_overlays(water_blend)
+		_update_protect_mask()
+	_bake_relief()
 
+## Alles außer der Höhe: im Zeitraffer und beim Pinseln gedrosselt.
+func _upload_overlays(water_blend: float) -> void:
 	# Seespiegel-Feld (hf): der Vertex-Shader hebt See-Zellen auf diese Höhe →
 	# Seen liegen als horizontale Flächen im Becken statt den Hang anzumalen.
 	hf_field.upload(terrain_mat, N, sim.filledBytes())
@@ -1273,6 +1355,55 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 		_update_water_gpu(water_blend)
 	else:
 		water_field.upload(terrain_mat, N, sim.waterFieldBytes(water_blend))
+
+## Schutzmaske (#154): godot-freie Render-Ableitung aus SimRender
+## (sichtbares Rasterwasser + gebaute Flussbänder + Saum von
+## `WaterRender.protectSeamCells` Zellen), binär als R8. Je Aufruf nur Kopieren
+## und Hochladen; die Maske selbst cached `RenderState` bis zum nächsten
+## Wasser-Upload oder Band-Bau.
+func _update_protect_mask() -> void:
+	var img := _protect_mask()
+	if protect_tex == null:
+		protect_tex = ImageTexture.create_from_image(img)
+		terrain_mat.set_shader_parameter("protect_tex", protect_tex)
+	else:
+		protect_tex.update(img)
+
+func _protect_mask() -> Image:
+	return Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.protectMaskBytes())
+
+## Render-Verschiebung neu backen (#153), einmal je Terrain-Update: der
+## Back-Pass zeichnet genau einen Frame, danach steht die Textur bis zum
+## nächsten Update. Kein Update, kein Back-Pass — der Zeitraffer bleibt damit
+## ruhig, und das Standbild kostet nur das Lesen der Textur.
+func _bake_relief() -> void:
+	if relief_vp == null or height_field._tex == null or protect_tex == null:
+		return
+	relief_mat.set_shader_parameter("height_tex", height_field._tex)
+	relief_mat.set_shader_parameter("protect_tex", protect_tex)
+	relief_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	relief_bake_frame = Engine.get_frames_drawn()
+	relief_bakes += 1
+
+## Holt den Höhenzuschlag der zuletzt gebackenen Verschiebung auf die CPU,
+## verkleinert aufs Sim-Gitter (gleiche Indizierung wie `h_cache`). Lesbar erst
+## NACH dem gezeichneten Back-Frame. Während eines Strichs backt jeder Frame
+## neu; dort bleibt der Stand vom Strich-Beginn stehen (die Sim-Höhe darunter
+## ist immer aktuell), gelesen wird erst nach dem Loslassen. Im Zeitraffer
+## braucht niemand die Fläche, also wird auch nichts gelesen. Headless
+## (Dummy-Renderer) bleibt der Puffer leer; die sichtbare Fläche ist dann die
+## Sim-Fläche.
+func _relief_cpu() -> void:
+	if sculpting or relief_bake_frame < 0 or Engine.get_frames_drawn() <= relief_bake_frame:
+		return
+	relief_bake_frame = -1
+	var img := relief_vp.get_texture().get_image()
+	if img == null or img.is_empty():
+		return
+	img.convert(Image.FORMAT_RF)
+	img.resize(N, N, Image.INTERPOLATE_BILINEAR)
+	# Kodiert (Kanal = Höhe × Code + 0.5), dekodiert wird in `_surface_y`.
+	relief_lift_cache = img.get_data().to_float32_array()
 
 ## Alterungsabhängige Stärke der rein kosmetischen Shader-Rinnen. Smoothstep
 ## vermeidet einen sichtbaren Knick am Anfang und bei 100k; danach bleibt der
@@ -1467,6 +1598,9 @@ func _river_rebuild_due(now_msec: int, force: bool) -> bool:
 
 func _rebuild_rivers() -> void:
 	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
+	# Neue Bänder → neue Schutzmaske → Verschiebung neu backen.
+	_update_protect_mask()
+	_bake_relief()
 	river_mesh.clear_surfaces()
 	var verts: PackedVector3Array = sim.riverRibbonVerts()
 	if verts.size() >= 3:
@@ -1587,24 +1721,29 @@ func _update_ring() -> void:
 			return
 	ring_mi.visible = false
 
-## Heightfield-Raymarch (three.js-Dreieckstest wäre bei 128² zu teuer).
 func _raycast_terrain() -> Vector3:
 	var mpos := get_viewport().get_mouse_position()
-	var ro := cam.project_ray_origin(mpos)
-	var rd := cam.project_ray_normal(mpos)
+	return _raycast_surface(cam.project_ray_origin(mpos), cam.project_ray_normal(mpos))
+
+## Heightfield-Raymarch gegen die SICHTBARE Fläche (Sim-Höhe plus
+## Render-Verschiebung, #153): Pinselring und Strich-Beginn liegen auf dem, was
+## man sieht. Der Pinsel selbst wirkt weiter auf die Sim-Zelle unter dem
+## Treffer (x/z des Treffers → Gitterposition).
+func _raycast_surface(ro: Vector3, rd: Vector3) -> Vector3:
+	_relief_cpu()
 	var prev_t := 0.0
 	var t := 0.8
 	while t < world_size * 6.0:
 		var p := ro + rd * t
 		var gx := (p.x + half) / step
 		var gz := (p.z + half) / step
-		if gx >= 0 and gx <= N - 1 and gz >= 0 and gz <= N - 1 and p.y <= _sample_h(gx, gz) * HSCALE:
+		if gx >= 0 and gx <= N - 1 and gz >= 0 and gz <= N - 1 and p.y <= _surface_y(gx, gz):
 			var lo := prev_t
 			var hi := t
 			for b in 12:
 				var mid := (lo + hi) * 0.5
 				var m := ro + rd * mid
-				if m.y <= _sample_h((m.x + half) / step, (m.z + half) / step) * HSCALE:
+				if m.y <= _surface_y((m.x + half) / step, (m.z + half) / step):
 					hi = mid
 				else:
 					lo = mid
@@ -1613,12 +1752,25 @@ func _raycast_terrain() -> Vector3:
 		t += 0.8
 	return Vector3.INF
 
+## Sim-Höhe (0…1) an einer Gitterposition.
 func _sample_h(gx: float, gz: float) -> float:
 	_ensure_h_cache()
+	return _sample_grid(h_cache, gx, gz)
+
+## Sichtbare Höhe (Welt-Y): Sim-Höhe plus Render-Verschiebung (#153).
+## Seen trägt die Verschiebung nicht (Schutzmaske), dort bleibt es die Sim-Höhe.
+func _surface_y(gx: float, gz: float) -> float:
+	var y := _sample_h(gx, gz) * HSCALE
+	if not relief_lift_cache.is_empty():
+		y += (_sample_grid(relief_lift_cache, gx, gz) - 0.5) / relief_height_code
+	return y
+
+## Bilinear auf einem n×n-Feld, row-major wie die Sim-Felder.
+func _sample_grid(field: PackedFloat32Array, gx: float, gz: float) -> float:
 	var xi := clampi(int(floor(gx)), 0, N - 2)
 	var yi := clampi(int(floor(gz)), 0, N - 2)
 	var fx := clampf(gx - xi, 0.0, 1.0)
 	var fy := clampf(gz - yi, 0.0, 1.0)
 	var i00 := yi * N + xi
-	return h_cache[i00] * (1 - fx) * (1 - fy) + h_cache[i00 + 1] * fx * (1 - fy) \
-		+ h_cache[i00 + N] * (1 - fx) * fy + h_cache[i00 + N + 1] * fx * fy
+	return field[i00] * (1 - fx) * (1 - fy) + field[i00 + 1] * fx * (1 - fy) \
+		+ field[i00 + N] * (1 - fx) * fy + field[i00 + N + 1] * fx * fy

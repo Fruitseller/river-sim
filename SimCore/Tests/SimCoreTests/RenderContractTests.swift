@@ -121,8 +121,11 @@ final class RenderContractTests: XCTestCase {
         // gerenderte Terrain trotzdem von `HSCALE` abweichen — genau die
         // Drift-Klasse, die #51 beendet. Die vier Zeilen sind alle Stellen, die
         // den Uniform lesen: Vertex-Höhe, Vertex-/Pixel-Normale und die
-        // Welt-Y-Koordinate der triplanaren Materialschichten.
-        for use in ["VERTEX.y = mix(hraw, hfv, lift) * hscale;",
+        // Welt-Y-Koordinate der triplanaren Materialschichten. Die
+        // Render-Verschiebung (#153) addiert sich zur Vertex-Höhe UNSKALIERT:
+        // sie liegt schon in Welteinheiten vor, die Überhöhung wendet der
+        // Back-Pass genau einmal an (unten).
+        for use in ["VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);",
                     "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hD - hU) * hscale));",
                     "vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0,"
                         + " -s_uv.y * hscale / world_size));",
@@ -135,6 +138,17 @@ final class RenderContractTests: XCTestCase {
         XCTAssertEqual(shader.count(of: "hscale"), 7,
                        "Neue oder entfernte `hscale`-Anwendung im Terrain-Shader —"
                        + " Liste der geprüften Stellen mitziehen")
+        // Back-Pass der Verschiebung: Main.gd setzt denselben Uniform, der
+        // Shader wendet ihn genau einmal an (Höhenzuschlag in Welteinheiten).
+        assertContains(main, "relief_mat.set_shader_parameter(\"hscale\", HSCALE)",
+                       hint: "Back-Pass bekommt die Überhöhung aus Main.gd HSCALE")
+        let bake = try RepoSource.probe("game/shaders/relief_bake.gdshader")
+        assertContains(bake, "uniform float hscale;",
+                       hint: "Back-Pass deklariert die Überhöhung default-frei")
+        assertContains(bake, "relief = vec4((det.x + ridge) * hscale,",
+                       hint: "Überhöhung wird im Back-Pass unskaliert angewandt")
+        XCTAssertEqual(bake.count(ofIdentifier: "hscale"), 2,
+                       "Neue oder entfernte `hscale`-Anwendung im Back-Pass")
     }
 
     func testRiverLiftIsTheSameInEveryLayer() throws {
