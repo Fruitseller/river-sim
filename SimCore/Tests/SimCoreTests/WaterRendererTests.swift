@@ -737,4 +737,42 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertTrue(hasStream,
                   "Gegenprobe: Mit gültiger Schrittweite muss Fluss im R-Kanal gezeichnet werden")
   }
+
+  /// Nicht-endliche Knoten-Koordinaten (NaN, ±inf) in den Mäander-Kanälen müssen
+  /// als maximale Änderung (Sentinel 1e9) gewertet werden und einen Rebuild erzwingen.
+  /// Persistente Nicht-Endlichkeit erzwingt dauerhaft den Rebuild, bis der
+  /// Zustand wieder endliche Koordinaten annimmt.
+  func testRiverRibbonMaxDeltaHandlesNonFiniteValues() {
+    let terrain = Terrain(config: renderConfig(n: 16), seed: 1337)
+    terrain.meander.channels = [
+      RiverChannel(nodes: [MeanderNode(x: 2, z: 2), MeanderNode(x: 4, z: 4)],
+                   discharge: [100, 100])
+    ]
+    let renderer = RiverRibbonRenderer()
+    renderer.markBuilt(terrain)
+    XCTAssertEqual(renderer.maxDelta(terrain), 0.0, "Unverändertes Terrain hat maxDelta 0")
+
+    // Nicht-endliche Koordinate (NaN) einbringen:
+    terrain.meander.channels[0].nodes[0].x = .nan
+    XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
+                   "NaN-Koordinate in Kanal muss Rebuild erzwingen (Sentinel 1e9)")
+
+    // Persistente Nicht-Endlichkeit bleibt dirty:
+    renderer.markBuilt(terrain)
+    XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
+                   "Persistente Nicht-Endlichkeit muss weiterhin Rebuild erzwingen")
+
+    // Unendlichkeit (±inf) prüfen:
+    terrain.meander.channels[0].nodes[0].x = .infinity
+    XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
+                   "Unendliche Koordinate in Kanal muss Rebuild erzwingen (Sentinel 1e9)")
+
+    // Nach Heilung zu endlichen Werten und erneutem markBuilt beruhigt sich maxDelta wieder:
+    terrain.meander.channels[0].nodes[0].x = 2.0
+    XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
+                   "Übergang von Nicht-Endlichkeit zu endlichem Wert erfordert Rebuild")
+    renderer.markBuilt(terrain)
+    XCTAssertEqual(renderer.maxDelta(terrain), 0.0,
+                   "Nach Heilung und markBuilt beruhigt sich maxDelta wieder auf 0")
+  }
 }
