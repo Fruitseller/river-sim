@@ -14,7 +14,7 @@ render_mode blend_disabled;
 #include "res://shaders/erosion_filter.gdshaderinc"
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
-uniform sampler2D study_protect_tex : filter_linear_mipmap, repeat_disable;
+uniform sampler2D study_protect_tex : filter_linear, repeat_disable;
 uniform float grid_n = 720.0;
 uniform float hscale = 24.0;
 uniform float sea_level = 0.15;
