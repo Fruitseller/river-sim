@@ -335,8 +335,8 @@ Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 `SimRender`; sie hält Render-Zustand (EWMA-Felder, Arbeitspuffer,
 Dirty-Snapshots), liest das Terrain und ändert es nie:
 
-- `RenderState`: BESITZT die vier zustandstragenden Renderer darunter und den
-  Material-Cache (Issue #93; das Terrain gehört weiter der Brücke und reist als
+- `RenderState`: BESITZT die vier zustandstragenden Renderer darunter, den
+  Material-Cache und den Cache der Schutzmaske (Issue #93/#154; das Terrain gehört weiter der Brücke und reist als
   Parameter). Die Brücke hält keinen Render-Zustand mehr; sie meldet jede
   Terrain-Änderung an den EINEN Einstieg `invalidate(terrain,
   worldReplaced:)`. `worldReplaced` ist der aufgelöste Unterschied zwischen
@@ -354,6 +354,11 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie in einem gemeinsamen Pass,
 - `TreeInstanceRenderer`: MultiMesh-Puffer der Bäume,
+- `WaterProtectMask`: Schutzmaske für Kronendach und Render-Verschiebung
+  (Issue #154): zuletzt ausgeliefertes Rasterwasser plus `bandCoverage` plus
+  Saum (`WaterRender.protectSeamCells`), zustandslos; `RenderState` verwirft
+  sie bei jedem Wasser-Upload und Band-Bau (Wächter:
+  `SimCoreTests/WaterProtectMaskTests.swift`),
 - `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
   ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:
   `SimCoreTests/DiagStatsContractTests.swift`),
