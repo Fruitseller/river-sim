@@ -230,6 +230,43 @@ final class RenderStateTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1e8)
     }
 
+    /// Nicht-endliche Knoten (NaN, ±inf) erzwingen den Rebuild-Sentinel, je
+    /// Achse: `max(maxD, NaN)` liefert `maxD`, ohne Wächter meldete eine
+    /// NaN-Koordinate also „unverändert". Liegt der Wert schon im Snapshot,
+    /// bleibt der Zustand dirty, bis wieder endliche Koordinaten gebaut sind.
+    func testRiversMaxDeltaForcesRebuildOnNonFiniteNodes() {
+        let sentinel = RiverRibbonRenderer.rebuildSentinel
+        let axes: [(name: String, path: WritableKeyPath<MeanderNode, Double>)] = [
+            ("x", \.x), ("z", \.z),
+        ]
+        for (axis, path) in axes {
+            let terrain = Terrain(config: renderConfig(n: 16), seed: 1337)
+            let render = RenderState(geometryMode: true)
+            terrain.meander.channels = [
+                RiverChannel(nodes: [MeanderNode(x: 2, z: 2), MeanderNode(x: 4, z: 4)],
+                             discharge: [100, 100]),
+            ]
+            render.markRiversBuilt(terrain)
+            for bad in [Double.nan, .infinity, -.infinity] {
+                terrain.meander.channels[0].nodes[0][keyPath: path] = bad
+                XCTAssertEqual(render.riversMaxDelta(terrain), sentinel,
+                               "\(axis) = \(bad) gegen endlichen Snapshot muss rebuilden")
+            }
+
+            // Nicht-endlicher Wert im Snapshot: auch die Heilung rebuildet.
+            terrain.meander.channels[0].nodes[0][keyPath: path] = .nan
+            render.markRiversBuilt(terrain)
+            XCTAssertEqual(render.riversMaxDelta(terrain), sentinel,
+                           "\(axis): NaN im Snapshot bleibt dirty")
+            terrain.meander.channels[0].nodes[0][keyPath: path] = 2
+            XCTAssertEqual(render.riversMaxDelta(terrain), sentinel,
+                           "\(axis): Heilung gegen NaN-Snapshot muss rebuilden")
+            render.markRiversBuilt(terrain)
+            XCTAssertEqual(render.riversMaxDelta(terrain), 0,
+                           "\(axis): nach Heilung und Rebuild wieder ruhig")
+        }
+    }
+
     /// Die Kopplung der beiden Wasser-Pfade (Issue #34) liegt jetzt im
     /// Zustand, nicht beim Aufrufer: das Feld liest die Bandflags des LETZTEN
     /// Builds selbst. Ohne Band deckelt es nichts, mit Band entsteht der Saum —
