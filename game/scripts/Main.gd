@@ -98,7 +98,9 @@ const SCULPT_REFRESH_SECONDS := 0.15
 const RIVER_REBUILD_DELTA := 0.05  # Zellen Knoten-Verschiebung
 const RIVER_REBUILD_SECONDS := 1.0  # Strahler + Mesh sind CPU-seitig; 0,30 s kosteten im Zeitraffer messbar ~4 % FPS
 # Welt-Y über Gelände: deckt den Chord-Fehler des gröberen Render-Gitters im
-# Talgrund (384er-Gitter auf 832er-Feld). == RenderContract.riverLift (SimCore);
+# Talgrund (384er-Gitter auf 832er-Feld). Seit #153 hat nur noch `performance`
+# ein gröberes Gitter (256 auf 720); der Wert ist dafür nicht neu kalibriert.
+# == RenderContract.riverLift (SimCore);
 # über Wasser gilt stattdessen WaterRender.ribbonLakeSurfaceLift/-SeaSurfaceSink.
 const RIVER_LIFT := 0.35
 
@@ -434,7 +436,7 @@ func _ready() -> void:
 	if OS.has_environment("RS_TARGET"):
 		# Blickpunkt auf die GELÄNDEHÖHE heben: mit y = 0 zielt die Kamera unter
 		# die Landschaft, und der Ausschnitt zeigt Himmel statt Mündung.
-		cam_target.y = _surface_y((cam_target.x + half) / step, (cam_target.z + half) / step)
+		cam_target.y = _surface_y_at(cam_target)
 		cam_target_on_surface = true
 		_update_camera()
 	_update_year()
@@ -1196,7 +1198,7 @@ func _process(delta: float) -> void:
 		if not relief_lift_cache.is_empty():
 			# RS_TARGET: das Ziel lag bisher auf der Sim-Fläche.
 			cam_target_on_surface = false
-			cam_target.y = _surface_y((cam_target.x + half) / step, (cam_target.z + half) / step)
+			cam_target.y = _surface_y_at(cam_target)
 	_update_ring()
 	_update_camera()
 
@@ -1764,6 +1766,10 @@ func _surface_y(gx: float, gz: float) -> float:
 	if not relief_lift_cache.is_empty():
 		y += (_sample_grid(relief_lift_cache, gx, gz) - 0.5) / relief_height_code
 	return y
+
+## Sichtbare Höhe unter einem Weltpunkt (nur x/z zählen).
+func _surface_y_at(p: Vector3) -> float:
+	return _surface_y((p.x + half) / step, (p.z + half) / step)
 
 ## Bilinear auf einem n×n-Feld, row-major wie die Sim-Felder.
 func _sample_grid(field: PackedFloat32Array, gx: float, gz: float) -> float:

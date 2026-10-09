@@ -584,7 +584,8 @@ echte Verschiebung mit Silhouette und Schattenwurf.
   innerhalb der Maske samt Saum. Ein Band liegt also nie über einem gesenkten
   Talboden.
 - **Kalibrierung als Vertrag.** Rinnenskala 0.022, Stärke 0.55, Gratschärfung
-  2.2 auf 2,5 Zellen Ringradius, Kodierung und Hell-Dunkel der Rinnen stehen in
+  2.2 auf 2,5 Zellen Ringradius, Kodierung und Hell-Dunkel der Rinnen (samt den
+  Gewichten, mit denen Rinnen und Grate darin eingehen) stehen in
   `SimCore.ReliefRender`. Sie reisen über `SimRender.ReliefUniforms` → `SimNode`
   → `Main.gd` auf Back-Pass und Terrain-Material (Muster der Wasser-Uniforms,
   default-freie Deklarationen). Die Werte sind die abgenommenen Studienwerte.

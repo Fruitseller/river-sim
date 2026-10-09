@@ -29,6 +29,8 @@ uniform float relief_sharpen;
 uniform float relief_sharpen_radius;
 uniform float relief_height_code;
 uniform float relief_slope_code;
+uniform float relief_cavity_gully_gain;
+uniform float relief_cavity_ridge_gain;
 
 #include "res://shaders/protect.gdshaderinc"
 
@@ -67,7 +69,7 @@ void fragment() {
 		                 / (2.0 * e);
 		float ridge = ridge_at(uv);
 		relief = vec4((det.x + ridge) * hscale, det.yz + ridge_slope,
-		              clamp(det.x / mag * 1.6 + ridge * 25.0, -1.0, 1.0)) * w;
+		              clamp(det.x / mag * relief_cavity_gully_gain + ridge * relief_cavity_ridge_gain, -1.0, 1.0)) * w;
 	}
 	COLOR = vec4(relief.x * relief_height_code + 0.5, relief.yz * relief_slope_code + 0.5,
 	             relief.w * 0.5 + 0.5);
