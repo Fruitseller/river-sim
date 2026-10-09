@@ -47,7 +47,7 @@ Wirkungsleiter einzeln.
 | --- | --- | --- |
 | `geometry` | Render-Gitter in Sim-Auflösung (720 statt 384). Grobe Erosionsrinnen (dieselbe runevision-Funktion wie das feine Detail, Skala 0.022 UV ≈ 2,5 km Wellenlänge) und einseitig geschärfte Grate als **echte Verschiebung**. Einmal je Terrain-Update in eine 1440²-Float-Textur gebacken; der Vertex-Shader liest die Höhe, der Fragment-Shader Steigung und Rinnen-Schattierung. | `relief_bake.gdshader`, `landscape.gdshaderinc` |
 | `canopy` | Weltmaßstab 1 Einheit ≈ 100 m. Wald als **Kronendach im Terrain-Shader**: ~20 m angehobenes Volumen (Waldkanten werfen Schatten), Voronoi-Kronen von ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel, Anteil nach Höhenband), dunkle Lücken, Selbstschatten zum Kronenrand. Lichtungen aus Rauschen, kein Wald in Wänden, auf Schnee oder an Wasser. Ersetzt die Instanzbäume. | `landscape.gdshaderinc` |
-| `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. | `Flusstal.gd`, `clouds.gdshaderinc` |
+| `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. **Seit #151 Produktion** (Sonnenhöhe dort 38°, s. [Licht und Atmosphäre](#licht-und-atmosphäre-in-der-anwendung-151)); die Studie hat den Schalter nicht mehr. | `game/scripts/Lighting.gd`, `game/shaders/clouds.gdshaderinc` |
 | `frame` | Ozean ohne Streifenmuster: Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, statt drei Sinuswellen. Farbe aus der echten Wassertiefe über dem Sim-Schelf (türkis → tiefblau), gebrochener Brandungssaum. | `ocean.gdshaderinc` |
 
 Außerdem ist der Kalkstein der ersten Runde dunkler und strukturierter: er lag
@@ -138,7 +138,7 @@ scripts/graphics-study.sh prototype overview orbit /tmp/orbit
 scripts/graphics-study.sh prototype overview simulation /tmp/simulation
 ```
 
-Weitere Schalter, alle in `Flusstal.gd`: `RS_STUDY_SUN="azimut,höhe"` (Grad),
+Weitere Schalter, alle in `Flusstal.gd`:
 `RS_STUDY_GRID` (Render-Gitter, für Messungen), `RS_STUDY_RELIEF="skala,stärke,schärfung"`
 (Kalibrierung der groben Verschiebung) und `RS_STUDY_DEBUG=protect|forest|cavity`
 (Schutzmaske, Waldmaske, Rinnen/Rippen als Falschfarbe). Ein unbekannter
@@ -238,9 +238,9 @@ selbst (s. o.), nicht die Maske.
   zusätzlich echte Instanzen an Waldrändern.
 - Wolkenschatten wirken als Albedo-Faktor und dunkeln damit auch etwas
   Umgebungslicht ab.
-- Die Lichtstimmung ist auf die Studienkamera abgestimmt. In der normalen
-  Anwendung dreht der Nutzer die Kamera; welches Licht dort trägt, ist eine
-  eigene Entscheidung für #117.
+- Die Lichtstimmung war auf die Studienkamera abgestimmt. Die kamera-
+  unabhängige Wahl für die Anwendung hat #151 getroffen (feste Welt-Sonne,
+  s. u.).
 - Großräumige Geländeformen ändert die Studie nicht. Die Frage aus #116, ob sie
   den Realismus begrenzen, beantwortet die Leiter teilweise: die gerenderte
   Verfeinerung trägt bereits den größten Einzelschritt.
@@ -284,7 +284,7 @@ sind nur verlinkt, keine Spielassets.
 Für #117 übertragbar: Verschiebung als gebackene Render-Ableitung (gehört nach
 SimRender oder als GPU-Pass in die Brücke), Kronendach statt Einzelbäumen in
 der Übersicht, Schutzmaske aus Wasserfeld und Bändern, Ozean nach Wassertiefe.
-Offen: Kamera-unabhängige Lichtwahl, Instanzbäume an Waldrändern für Nahsicht,
+Offen: Instanzbäume an Waldrändern für Nahsicht,
 Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen 720er-Gitters.
 
 ## Abnahmematrix für Folge-Tickets (#150, Spec #156, Parent #117)
@@ -344,7 +344,7 @@ jede Welt neben Übersicht und Nahansicht vier gezielte Stresstests:
 | `overview` | Übersicht | `(0, 0)`, Dist 151.85, Yaw 0.70, Pitch 0.85 | Gesamtsilhouette der Insel, Großrelief, Maßstabslesbarkeit gegen Ozean und Himmel. |
 | `detail` | Nahansicht | Seed 1337: `(-12, -25)`, Dist 42, Yaw 0.70, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 45, Yaw 0.50, Pitch 0.80<br>Seed 20: `(-8, 10)`, Dist 42, Yaw 0.60, Pitch 0.80 | Charakteristisches Hauptmerkmal: Talsohle, Seebucht oder Karenbecken; Kronendach und Felsstrukturen. |
 | `grazing` | Flacher Blick | Seed 1337: `(-10, -20)`, Dist 38, Yaw 0.70, Pitch 1.35<br>Seed 42: `(6, -4)`, Dist 40, Yaw 0.40, Pitch 1.35<br>Seed 20: `(-6, 12)`, Dist 38, Yaw 0.50, Pitch 1.35 | **Stresstest Parallaxe:** Pitch 1.35 (~13° über Horizont). Deckt Flachheit von Kronendach, fehlende Baum-Parallaxe und Texturstreckung an Hangflanken auf. |
-| `backlight` | Gegenlicht | Seed 1337: `(-12, -25)`, Dist 45, Yaw -0.87, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 48, Yaw -0.87, Pitch 0.85<br>Seed 20: `(-8, 10)`, Dist 46, Yaw -0.87, Pitch 0.85<br>*(Sonne Azimut -50°, Höhe 28°)* | **Stresstest Beleuchtung:** Blick direkt gegen die Sonne. Alle kamerazugewandten Flanken liegen im Eigenschatten; prüft Relieflesbarkeit im Schatten, Tonemapping und Streulicht. |
+| `backlight` | Gegenlicht | Seed 1337: `(-12, -25)`, Dist 45, Yaw 2.269, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 48, Yaw 2.269, Pitch 0.85<br>Seed 20: `(-8, 10)`, Dist 46, Yaw 2.269, Pitch 0.85<br>*(feste Welt-Sonne Azimut -50°; Yaw = Azimut + 180°)* | **Stresstest Beleuchtung:** Blick direkt gegen die Sonne. Alle kamerazugewandten Flanken liegen im Eigenschatten; prüft Relieflesbarkeit im Schatten, Tonemapping und Streulicht. |
 | `coast` | Küste / Ufer | Seed 1337: `(-36, -32)`, Dist 45, Yaw 0.90, Pitch 0.85<br>Seed 42: `(12, -10)`, Dist 38, Yaw 1.10, Pitch 0.85<br>Seed 20: `(30, -28)`, Dist 48, Yaw 0.80, Pitch 0.85 | **Stresstest Wasser-Land:** Mündungsdelta, Binnensee-Ufer oder Steilküste. Prüft Schutzmaske, Übergang von Flussband zu Ozean/See, Brandung und Tiefenfarbe. |
 | `snow` | Schnee / Grate | Seed 1337: `(18, 14)`, Dist 48, Yaw 0.60, Pitch 0.75<br>Seed 42: `(-22, 20)`, Dist 50, Yaw 0.70, Pitch 0.75<br>Seed 20: `(-10, 14)`, Dist 40, Yaw 0.60, Pitch 0.70 | **Stresstest Schneegrenze:** Felsrippen, Firnfelder und Gipfel. Prüft Gratschärfung, Schnee-Albedo und Übergang von Wald/Fels zu Schnee. |
 
@@ -411,3 +411,111 @@ scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline ti
   die Zielmaschine (Apple M4 Max). Der Ablauf ist über `scripts/graphics-matrix.sh`
   vollständig automatisiert und vorbereitet.
 
+## Licht und Atmosphäre in der Anwendung (#151)
+
+Stand 9. Oktober 2026. Der Hebel `light` der Studie ist die normale
+Darstellung, für jede Welt und jede Kamerarichtung. Einzige Quelle ist
+`game/scripts/Lighting.gd`: Sonne, Himmel, Umgebungslicht, AgX, Luftperspektive,
+Talnebel, Schattenatlas und Wolkenschatten. Die Wolkenschatten sind eine
+gemeinsame Funktion in `game/shaders/clouds.gdshaderinc`, eingebunden in
+Terrain-, Band- und Ozean-Shader mit denselben Weltkoordinaten, damit sie ohne
+Kante über Ufer und Küste laufen. Ihre Uniforms sind default-frei, die Werte
+setzt nur `Lighting.gd`. Die Wasser-Optik reist unverändert über die Brücke
+(`SimRender.WaterUniforms`); `Lighting.gd` setzt keine `water_*`-Uniform. Der
+neue Himmel ändert nur, was das Wasser spiegelt. Wächter:
+`game/tests/lighting.gd` (CI-Marke `LIGHTING_OK`), die Wasserverträge sind
+unverändert grün.
+
+### Feste Welt-Sonne
+
+Entschieden am 8. Oktober 2026: eine feste Richtung. Azimut −50° hält die
+Startkamera (Yaw 0.7) im Seitenlicht wie in der Studie. Die Höhe stammt aus
+einem Vergleich von 28°, 38° und 48° auf Seed 1337, Jahr 20.000, Kamera
+`detail` aus vier Richtungen: Sonne im Rücken (Yaw −0.87), Seitenlicht von
+beiden Seiten (0.70 und −2.44) und Gegenlicht (2.27).
+
+![Sonnenhöhe aus vier Richtungen](screenshots/graphics-quality/light-sun-elevation.jpg)
+
+- **28°** (Wert der Studie): Im Gegenlicht liegt fast jede der Kamera
+  zugewandte Flanke im Schatten, das Relief zerfällt in dunkle Flächen. Genau
+  diese Schwäche hatte die Studie bei ihrer Gegenlicht-Variante beobachtet.
+- **48°**: alle Richtungen hell, aber die Schatten werden kurz, und das
+  Seitenlicht verliert die Modellierung der Grate.
+- **38°, gewählt**: Das Gegenlicht bleibt lesbar (Flanken dunkel, aber nicht
+  schwarz, Grate mit Lichtkante), im Seitenlicht werfen die Grate noch lange
+  Schatten.
+
+Belegt für alle Matrixwelten aus denselben vier Richtungen, je vorher und
+nachher (Kamera `detail` je Seed, Jahr 0, 20.000 und 100.000). Das Relief
+bleibt in allen Ansichten lesbar:
+
+- [Seed 1337](screenshots/graphics-quality/light-directions-seed1337.jpg)
+- [Seed 42](screenshots/graphics-quality/light-directions-seed42.jpg)
+- [Seed 20](screenshots/graphics-quality/light-directions-seed20.jpg)
+
+### Vergleichsmatrix vorher/nachher
+
+Alle 54 Matrixansichten, je Seed ein Bogen (Zeilen: Jahr × vorher/nachher,
+Spalten: die sechs Kameras):
+[Seed 1337](screenshots/graphics-quality/light-matrix-seed1337.jpg),
+[Seed 42](screenshots/graphics-quality/light-matrix-seed42.jpg),
+[Seed 20](screenshots/graphics-quality/light-matrix-seed20.jpg).
+
+Korrektur an der Matrix aus #150: Die Kamera `backlight` stand bei Yaw −0.87,
+also auf dem Sonnenazimut. Damit stand die Sonne im Rücken, es war kein
+Gegenlicht. Seit #151 gilt Yaw = Azimut + 180° = 2.269, und zwar in beiden
+Spalten des Vergleichs. Die Vorher-Bilder entstanden auf
+`e432f18` mit der korrigierten Matrix (dort hat die Studien-Variante `baseline`
+noch das alte Licht). Reproduktion auf der Zielmaschine:
+
+```sh
+scripts/graphics-matrix.sh baseline /tmp/after shot
+RS_MATRIX_CAMERA=detail RS_MATRIX_YAWS=-0.873,0.698,2.269,-2.443 \
+  scripts/graphics-matrix.sh baseline /tmp/after-dirs shot
+# vorher: dasselbe in einem Worktree auf e432f18 (graphics-matrix.sh von hier kopieren)
+```
+
+`graphics-matrix.sh` lief vorher auf macOS nicht (bash 3.2 kennt `declare -A`).
+Es braucht jetzt keine assoziativen Arrays mehr. `RS_MATRIX_YAWS` rendert eine
+Kamera aus mehreren Richtungen, `RS_MATRIX_QUALITY` legt die Qualitätsstufe der
+Messläufe fest.
+
+### Qualitätsstufen und Leistung
+
+Was `performance` am Licht spart (`Lighting.QUALITY`): 4096er- statt 8192er-
+Schattenatlas, zwei statt vier Kaskaden, keine Wolkenschatten; SSAO war dort
+schon aus. `balanced` und `quality` tragen dasselbe Licht. `quality`
+unterscheidet sich weiter nur im Render-Gitter, und dort dominiert die
+Vertexzahl.
+
+M4 Max, maximiert, Viewport 3456×2104, Seed 1337, Jahr 20.000, Kamera `detail`,
+`scripts/graphics-matrix.sh … timing` (Flusstal-Szene, Variante `baseline` =
+normale Darstellung). Ein sequenzieller Lauf je Zeile ohne parallele Last.
+Millisekunden je Frame:
+
+| Stufe | Betrieb | vorher Mittel / p95 / max | nachher Mittel / p95 / max | über 33,3 ms vorher → nachher |
+| --- | --- | ---: | ---: | ---: |
+| performance | Standbild | 4,09 / 4,07 / 12,03 | 4,69 / 4,73 / 12,31 | 0 → 0 |
+| performance | Kamerafahrt | 4,17 / 4,21 / 9,18 | 4,80 / 4,93 / 8,83 | 0 → 0 |
+| performance | Zeitraffer | 5,45 / 8,34 / 99,79 | 6,11 / 8,44 / 98,17 | 39 → 39 |
+| balanced | Standbild | 13,16 / 13,42 / 13,60 | 16,27 / 17,76 / 18,06 | 0 → 0 |
+| balanced | Kamerafahrt | 13,47 / 15,05 / 15,28 | 17,72 / 19,14 / 19,46 | 0 → 0 |
+| balanced | Zeitraffer | 16,27 / 48,92 / 80,53 | 20,30 / 48,21 / 79,55 | 39 → 38 |
+| quality | Standbild | 21,03 / 21,89 / 22,23 | 21,21 / 21,89 / 22,03 | 0 → 0 |
+| quality | Kamerafahrt | 21,31 / 22,62 / 23,14 | 21,26 / 22,78 / 23,00 | 0 → 0 |
+| quality | Zeitraffer | 23,08 / 50,84 / 77,18 | 23,00 / 50,08 / 78,23 | 38 → 40 |
+
+Standbild und Kamerafahrt halten das Budget von 33,3 ms in jeder Stufe, auch
+im schlechtesten Einzelframe. Das Licht kostet in `balanced` rund 3–4 ms, in
+`performance` rund 0,6 ms. In `quality` ist der Unterschied nicht messbar, weil
+dort das Render-Gitter die Framezeit bestimmt. Im Zeitraffer überschreiten wie
+bisher nur die Sim-Schritte das Budget, gleich oft wie vorher (38–40 Frames je
+Lauf). Das ist der bekannte Befund aus der Studie, das Licht erhöht weder ihre
+Zahl noch ihre Höhe.
+
+Begründung der `performance`-Einsparung: dieselbe Szene in `performance`,
+Kamerafahrt, mit einzeln zurückgedrehten Sparmaßnahmen. Volle Studien-Schatten
+mit Wolken 5,53 ms, nur die Wolken aus 5,23 ms, nur Atlas und Kaskaden reduziert
+4,96 ms, beides reduziert (gewählt) 4,80 ms. Die Ersparnis von rund 0,7 ms
+(~13 %) bleibt in der billigsten Stufe. Die Standbild-Werte dieser Reihe
+streuten stärker (5,5–6,6 ms) und sind deshalb nicht aufgeführt.
