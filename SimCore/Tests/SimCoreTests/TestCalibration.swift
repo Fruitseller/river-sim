@@ -43,3 +43,15 @@ func renderConfig(n: Int = 96) -> SimConfig {
     config.world = n > 1 ? calibrationWorld : 0
     return config
 }
+
+/// Testwelt nach `years` Jahren in 1000er-Schritten, Abfluss frisch berechnet:
+/// die Altersstufe, ab der Mäander, Bänder und Seen sichtbar sind. Gemeinsam
+/// für die Render-Wächter (`WaterRendererTests`, `WaterProtectMaskTests`).
+func agedWorld(_ config: SimConfig, years: Double, seed: UInt32 = 1337) -> Terrain {
+    let terrain = Terrain(config: config, seed: seed)
+    while terrain.years < years {
+        terrain.step(dtYears: min(1000, years - terrain.years))
+    }
+    terrain.computeFlow()
+    return terrain
+}

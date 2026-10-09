@@ -10,12 +10,7 @@ final class WaterRendererTests: XCTestCase {
       config.n = 192
       config.world = calibrationWorld
     }
-    let terrain = Terrain(config: config, seed: 1337)
-    while terrain.years < years {
-      terrain.step(dtYears: min(1000, years - terrain.years))
-    }
-    terrain.computeFlow()
-    return terrain
+    return agedWorld(config, years: years)
   }
 
   func testRibbonMeshIsPODDeterministicAndPhysicsNeutral() {
