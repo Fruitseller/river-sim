@@ -1,24 +1,23 @@
 extends "res://scripts/Main.gd"
-## Bildstudie #116, zweite Runde: dieselbe Simulationswelt, vier Hebel.
+## Bildstudie #116, zweite Runde: dieselbe Simulationswelt, zwei Hebel.
 ##
 ##  geometry  dichtes Render-Mesh (2× Sim-Raster) + grobe Erosionsrinnen und
 ##            geschärfte Grate als echte Verschiebung im Vertex-Shader
 ##  canopy    Maßstab 1 Einheit ≈ 100 m: Kronendach im Terrain-Shader statt
 ##            übergroßer Instanzbäume
-##  frame     Ozean ohne Streifenmuster, Schelf-Farbe aus der Wassertiefe,
-##            Brandungssaum
 ##
-## Der vierte Hebel der Abnahme, `light` (tiefe Sonne, Schatten,
-## Luftperspektive, Talnebel, Wolkenschatten), ist seit #151 Produktion
-## (scripts/Lighting.gd) und gilt damit in beiden Varianten; die Studie hat
-## dafür keinen eigenen Schalter mehr.
+## Die beiden übrigen Hebel der Abnahme sind Produktion und gelten damit in
+## beiden Varianten; die Studie hat für sie keinen eigenen Schalter mehr:
+## `light` (tiefe Sonne, Schatten, Luftperspektive, Talnebel, Wolkenschatten)
+## seit #151 in scripts/Lighting.gd, `frame` (Ozean ohne Streifen,
+## Schelf-Farbe, Brandung) seit #155 in shaders/ocean.gdshader.
 ##
 ## Alles prozedural aus den Sim-Feldern, keine Handplatzierung: die Studie gilt
 ## damit für jeden Seed und bleibt im Zeitraffer, nach Pinselstrichen und nach
 ## dem Laden aktiv. `RS_STUDY_LEVERS` schaltet einzelne Hebel für die
 ## Wirkungsleiter (Komma-Liste, Standard: alle).
 
-const STUDY_LEVERS := ["geometry", "canopy", "frame"]
+const STUDY_LEVERS := ["geometry", "canopy"]
 ## Render-Gitter der Studie: Sim-Auflösung (n = 720) statt der 384 von
 ## `balanced`. Es trägt die Silhouette der groben Verschiebung; ihre Normalen
 ## und Rinnen liest der Fragment-Shader aus der doppelt so feinen Backtextur.
@@ -109,7 +108,6 @@ func _setup_scene() -> void:
 		for channel in ["color", "normal", "roughness"]:
 			terrain_mat.set_shader_parameter("study_" + kind + "_" + channel,
 				load("res://studies/flusstal/assets/" + kind + "_" + channel + ".jpg"))
-	ocean_mat.shader = study_shader("res://shaders/ocean.gdshader")
 	var debug := OS.get_environment("RS_STUDY_DEBUG")
 	terrain_mat.set_shader_parameter("study_debug",
 		{"protect": 1, "forest": 2, "cavity": 3}.get(debug, 0))
@@ -132,8 +130,6 @@ func _setup_scene() -> void:
 		# Das Kronendach ersetzt die Instanzbäume (in diesem Maßstab ~90 m breit).
 		for mmi in tree_mmi:
 			mmi.visible = false
-	if _lever("frame"):
-		ocean_mat.set_shader_parameter("study_ocean", true)
 
 ## Back-Pass der groben Verschiebung: ein Float-SubViewport auf Render-Gitter-
 ## Auflösung, der nur nach einem Terrain-Update einmal zeichnet (UPDATE_ONCE).

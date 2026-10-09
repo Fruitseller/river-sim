@@ -46,17 +46,36 @@ final class WaterUniformsTests: XCTestCase {
         "water_sky_reflect_color", "water_flow_shimmer_color",
     ]
     private static let ribbonColors = ["water_delta_plume_color", "water_oxbow_water_color"]
+    /// Offenes Meer (#155): Tiefen-Farbe über dem Schelf, Brandung, Rausch-Wellen.
+    private static let oceanScalars = [
+        "water_ocean_depth_span", "water_ocean_mid_depth",
+        "water_ocean_surf_depth", "water_ocean_surf_strength",
+        "water_ocean_surf_scale", "water_ocean_surf_drift",
+        "water_ocean_surf_noise_lo", "water_ocean_surf_noise_hi",
+        "water_ocean_wave_frequency", "water_ocean_wave_amplitude",
+        "water_ocean_wave_lacunarity", "water_ocean_wave_gain",
+        "water_ocean_wave_fade_lo", "water_ocean_wave_fade_hi",
+        "water_ocean_wave_drift_x", "water_ocean_wave_drift_z",
+        "water_ocean_wave_octave_speedup",
+    ]
+    private static let oceanColors = [
+        "water_ocean_shallow_color", "water_ocean_mid_color",
+        "water_ocean_deep_color", "water_ocean_surf_color",
+    ]
 
     private static let expectedScalars: [String: [String]] = [
         "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars,
         "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars,
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
-        "game/shaders/ocean.gdshader": opticsScalars,
+        "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
     private static let expectedColors: [String: [String]] = [
         "game/shaders/terrain.gdshader": opticsColors,
         "game/shaders/water.gdshader": opticsColors + ribbonColors,
-        "game/shaders/ocean.gdshader": opticsColors,
+        // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
+        // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
+        // bleibt die Himmels-Spiegelung.
+        "game/shaders/ocean.gdshader": ["water_sky_reflect_color"] + oceanColors,
     ]
 
     func testUniformNamesAreUnique() {
@@ -101,6 +120,23 @@ final class WaterUniformsTests: XCTestCase {
             "water_roughness_grazing": WaterRender.waterRoughnessGrazing,
             "water_specular_steep": WaterRender.waterSpecularSteep,
             "water_specular_grazing": WaterRender.waterSpecularGrazing,
+            "water_ocean_depth_span": WaterRender.oceanDepthSpan,
+            "water_ocean_mid_depth": WaterRender.oceanMidDepth,
+            "water_ocean_surf_depth": WaterRender.oceanSurfDepth,
+            "water_ocean_surf_strength": WaterRender.oceanSurfStrength,
+            "water_ocean_surf_scale": WaterRender.oceanSurfScale,
+            "water_ocean_surf_drift": WaterRender.oceanSurfDrift,
+            "water_ocean_surf_noise_lo": WaterRender.oceanSurfNoiseLo,
+            "water_ocean_surf_noise_hi": WaterRender.oceanSurfNoiseHi,
+            "water_ocean_wave_frequency": WaterRender.oceanWaveFrequency,
+            "water_ocean_wave_amplitude": WaterRender.oceanWaveAmplitude,
+            "water_ocean_wave_lacunarity": WaterRender.oceanWaveLacunarity,
+            "water_ocean_wave_gain": WaterRender.oceanWaveGain,
+            "water_ocean_wave_fade_lo": WaterRender.oceanWaveFadeLo,
+            "water_ocean_wave_fade_hi": WaterRender.oceanWaveFadeHi,
+            "water_ocean_wave_drift_x": WaterRender.oceanWaveDriftX,
+            "water_ocean_wave_drift_z": WaterRender.oceanWaveDriftZ,
+            "water_ocean_wave_octave_speedup": WaterRender.oceanWaveOctaveSpeedup,
         ]
         let expectedColors: [String: (r: Double, g: Double, b: Double)] = [
             "water_shallow_color": WaterRender.waterShallowColor,
@@ -109,6 +145,10 @@ final class WaterUniformsTests: XCTestCase {
             "water_flow_shimmer_color": WaterRender.flowShimmerColor,
             "water_delta_plume_color": WaterRender.deltaPlumeColor,
             "water_oxbow_water_color": WaterRender.oxbowWaterColor,
+            "water_ocean_shallow_color": WaterRender.oceanShallowColor,
+            "water_ocean_mid_color": WaterRender.oceanMidColor,
+            "water_ocean_deep_color": WaterRender.oceanDeepColor,
+            "water_ocean_surf_color": WaterRender.oceanSurfColor,
         ]
         XCTAssertEqual(WaterUniforms.scalars.count, expectedScalars.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")

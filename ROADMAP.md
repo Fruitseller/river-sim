@@ -20,7 +20,8 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   selbst hat noch nicht begonnen.
   Die verbindliche Abnahmematrix für die Vorher/Nachher-Bewertung aller Folge-Tickets
   ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, `scripts/graphics-matrix.sh`,
-  `GraphicsMatrixTests`).
+  `GraphicsMatrixTests`). Übernommen: der Ozean (#155, Hebel `frame`) ist die
+  normale Darstellung, Kalibrierung als `WaterRender.ocean*`.
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare
