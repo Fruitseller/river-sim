@@ -19,7 +19,6 @@ filter_yaws="${RS_MATRIX_YAWS:-}"
 dry_run="${RS_MATRIX_DRY_RUN:-0}"
 # Qualitätsstufe der Messläufe (#151 misst je Stufe); Aufnahmen bleiben balanced.
 quality="${RS_MATRIX_QUALITY:-balanced}"
-matrix_yaw=""
 
 # Matrix-Definition. Ohne assoziative Arrays: macOS liefert bash 3.2 (die
 # Zielmaschine ist ein Mac), `declare -A` brach dort mit Syntaxfehler ab.
@@ -88,14 +87,14 @@ fi
 mkdir -p "$output_dir"
 
 run_shot() {
-  local s="$1" y="$2" ylabel="$3" c="$4" cfg="$5"
+  local s="$1" y="$2" ylabel="$3" c="$4" cfg="$5" matrix_yaw="${6:-}"
   local target dist yaw pitch
   IFS=';' read -r target dist yaw pitch <<< "$cfg"
 
   local out_base="$output_dir/seed${s}_${ylabel}_${c}"
   # Blickrichtungs-Serie (#151): RS_MATRIX_YAWS="0.7,2.27,…" rendert dieselbe
   # Kamera aus mehreren Richtungen, Dateiname mit Yaw-Suffix.
-  if [[ -n "${matrix_yaw:-}" ]]; then
+  if [[ -n "$matrix_yaw" ]]; then
     yaw="$matrix_yaw"
     out_base="${out_base}_yaw${yaw}"
   fi
@@ -154,10 +153,9 @@ if [[ "$mode" == "shot" || "$mode" == "all" ]]; then
         cfg="$(camera_cfg "$s" "$c")"
         if [[ -n "$filter_yaws" ]]; then
           IFS=',' read -r -a yaw_list <<< "$filter_yaws"
-          for matrix_yaw in "${yaw_list[@]}"; do
-            run_shot "$s" "$y" "$ylabel" "$c" "$cfg"
+          for yaw_override in "${yaw_list[@]}"; do
+            run_shot "$s" "$y" "$ylabel" "$c" "$cfg" "$yaw_override"
           done
-          matrix_yaw=""
         else
           run_shot "$s" "$y" "$ylabel" "$c" "$cfg"
         fi

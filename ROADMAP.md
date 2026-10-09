@@ -775,11 +775,12 @@ Pass-Reihenfolge nach einem Pinselstrich liegt als
   Kältematerialien, Lithologieschichten, Wasser-Overlay und Detail-Layer;
   `water.gdshader` — Band-Geometrie; `ocean.gdshader` — opakes offenes Meer,
   unter Land per gemeinsamer Höhenkarte ausgeschnitten.
-- `game/scripts/Main.gd` (~1280 Zeilen) — Licht/Environment, UI, Kamera/Zoom,
-  Werkzeug-Tabelle, RS_*-Env-Schalter.
+- `game/scripts/Main.gd` (~1280 Zeilen) — UI, Kamera/Zoom, Werkzeug-Tabelle,
+  RS_*-Env-Schalter; Licht/Environment und Wolkenschatten seit #151 in
+  `game/scripts/Lighting.gd` (feste Welt-Sonne, Qualitätsstufen).
 - `game/tests/*.gd` — die Godot-seitigen Wächter (`smoke`, `water_geometry`,
   `river_ribbons`, `build_stamp_parity`, `tree_count`, `water_rings`,
-  `pickaxe_repro`) plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter).
+  `pickaxe_repro`, `lighting`) plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter).
 
 ## Arbeitsweise in diesem Projekt (ernst nehmen)
 
