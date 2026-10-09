@@ -784,6 +784,7 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
                    "Unendliche z-Koordinate muss Rebuild erzwingen (Sentinel 1e9)")
 
+    renderer.markBuilt(terrain)
     terrain.meander.channels[0].nodes[0].z = 2.0
     XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
                    "Übergang von Nicht-Endlichkeit in z zu endlichem Wert erfordert Rebuild")
