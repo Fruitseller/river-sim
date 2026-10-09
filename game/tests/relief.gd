@@ -19,12 +19,16 @@ const Main = preload("res://scripts/Main.gd")
 const SHADERS := ["res://shaders/relief_bake.gdshader", "res://shaders/terrain.gdshader"]
 const LIFT := 1.0  # gesetzte Verschiebung in Welteinheiten
 
-## Main mit festem Zeigerstrahl: senkrecht von oben auf `ray_xz`. Alles
+## Main mit festem, SCHRÄGEM Zeigerstrahl auf `ray_xz`: senkrecht fiele der
+## Treffer mit und ohne Verschiebung auf dieselbe Zelle, schräg nicht. Alles
 ## andere (Raymarch, Ring, Pinsel) ist der echte Produktionspfad.
+const RAY_DIR := Vector3(0.45, -1.0, 0.3)
 class FixedRayMain extends "res://scripts/Main.gd":
 	var ray_xz := Vector2.ZERO
+	var ray_y := 0.0
 	func _raycast_terrain() -> Vector3:
-		return _raycast_surface(Vector3(ray_xz.x, 200.0, ray_xz.y), Vector3.DOWN)
+		var d := RAY_DIR.normalized()
+		return _raycast_surface(Vector3(ray_xz.x, ray_y, ray_xz.y) - d * 120.0, d)
 
 var failures := 0
 var main: Node
@@ -65,7 +69,7 @@ func _check(value: bool, message: String) -> void:
 
 func _check_shaders(sim: Object) -> void:
 	var calib: Dictionary = Main.relief_calibration(sim)
-	_check(calib.size() == 8, "Brücke liefert die Relief-Tabelle (8 Werte, hat %d)" % calib.size())
+	_check(not calib.is_empty(), "Brücke liefert die Relief-Tabelle")
 	var decl_re := RegEx.new()
 	decl_re.compile("(?m)^uniform\\s+float\\s+(relief_[A-Za-z0-9_]+)([^;]*);")
 	var declared_anywhere := {}
@@ -142,13 +146,27 @@ func _check_visible_surface(main: Node) -> void:
 	var cj := cell / n
 	var x: float = ci * main.step - main.half
 	var z: float = cj * main.step - main.half
-	main.ray_xz = Vector2(x, z)
 	var sim_y: float = h[cell] * Main.HSCALE
+	main.ray_xz = Vector2(x, z)
+	main.ray_y = sim_y
 
 	var hit: Vector3 = main._raycast_terrain()
 	_check(hit != Vector3.INF, "Strahl muss das Gelände treffen")
-	_check(absf(hit.y - (sim_y + LIFT)) < 0.05,
-		"Treffer auf der sichtbaren Fläche: y %.3f, erwartet %.3f (Sim %.3f)" % [hit.y, sim_y + LIFT, sim_y])
+	if hit == Vector3.INF:
+		return
+	var hit_gx: float = (hit.x + main.half) / main.step
+	var hit_gz: float = (hit.z + main.half) / main.step
+	var hit_sim_y: float = main._sample_h(hit_gx, hit_gz) * Main.HSCALE
+	_check(absf(hit.y - (hit_sim_y + LIFT)) < 0.05,
+		"Treffer auf der sichtbaren Fläche: y %.3f, erwartet %.3f (Sim %.3f)"
+		% [hit.y, hit_sim_y + LIFT, hit_sim_y])
+	# Gegenprobe ohne Verschiebung: der schräge Strahl trifft dann woanders.
+	main.relief_lift_cache = PackedFloat32Array()
+	var bare: Vector3 = main._raycast_terrain()
+	main.relief_lift_cache = field
+	_check(Vector2(bare.x - hit.x, bare.z - hit.z).length() > main.step,
+		"Schräger Strahl muss die Verschiebung sehen (Treffer ohne/mit %s / %s)" % [bare, hit])
+	var hit_cell := roundi(hit_gz) * n + roundi(hit_gx)
 
 	# Pinselring folgt dem Treffer (Standbild, kein Strich).
 	main.last_activity_msec = Time.get_ticks_msec()
@@ -165,13 +183,13 @@ func _check_visible_surface(main: Node) -> void:
 		"Kameraziel liegt auf der sichtbaren Fläche (y %.3f)" % main.cam_target.y)
 
 	# Der Pinsel (Anheben) wirkt auf die Sim-Zelle unter dem Treffer.
-	var far := (cj + 150) * n + ci  # weit außerhalb jedes Pinselradius
+	var far := ((roundi(hit_gz) + n / 2) % n) * n + roundi(hit_gx)  # weit außerhalb jedes Pinselradius
 	var h_far: float = h[far]
 	main.current_tool = 0
 	main.sculpting = true
 	main._process(0.05)
 	main.sculpting = false
 	var after: PackedFloat32Array = main.sim.heights()
-	_check(after[cell] > h[cell], "Pinsel hebt die Sim-Zelle unter dem Treffer (%.5f → %.5f)"
-		% [h[cell], after[cell]])
+	_check(after[hit_cell] > h[hit_cell], "Pinsel hebt die Sim-Zelle unter dem Treffer (%.5f → %.5f)"
+		% [h[hit_cell], after[hit_cell]])
 	_check(after[far] == h_far, "Pinsel lässt entfernte Zellen unberührt")

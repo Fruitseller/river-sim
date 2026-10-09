@@ -45,4 +45,10 @@ public enum ReliefRender {
     /// Felsflächen aus der Übersicht als Fels lesbar statt als glatten Sand.
     public static let shadeDark = 0.42
     public static let shadeLight = 0.18
+
+    /// Wie stark Rinnen (normierte Rinnentiefe) und Grate (Höhe über dem
+    /// Ringmittel) in diesen Hell-Dunkel-Kanal eingehen, bevor er auf ±1
+    /// geklemmt wird.
+    public static let cavityGullyGain = 1.6
+    public static let cavityRidgeGain = 25.0
 }

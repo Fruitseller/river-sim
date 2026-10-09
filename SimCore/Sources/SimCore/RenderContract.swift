@@ -32,7 +32,9 @@ public enum RenderContract {
 
     /// Anhebung der Wasser-Bänder über das Gelände (Godot-Welt-Y): deckt den
     /// Chord-Fehler des gröberen Render-Gitters im Talgrund ab (384er-Gitter auf
-    /// 832er-Feld). Über Wasser gilt er NICHT — dort tritt
+    /// 832er-Feld). Seit #153 hat nur noch die Stufe `performance` ein gröberes
+    /// Gitter (256 auf 720); der Wert ist dafür nicht neu kalibriert. Über
+    /// Wasser gilt er NICHT — dort tritt
     /// `WaterRender.ribbonLakeSurfaceLift` / `ribbonSeaSurfaceSink` an seine
     /// Stelle, und beide müssen deutlich kleiner bleiben als dieser Wert.
     public static let riverLift = 0.35

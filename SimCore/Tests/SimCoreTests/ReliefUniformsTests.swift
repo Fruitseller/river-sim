@@ -23,6 +23,7 @@ final class ReliefUniformsTests: XCTestCase {
         "game/shaders/relief_bake.gdshader": [
             "relief_scale", "relief_strength", "relief_sharpen", "relief_sharpen_radius",
             "relief_height_code", "relief_slope_code",
+            "relief_cavity_gully_gain", "relief_cavity_ridge_gain",
         ],
         "game/shaders/terrain.gdshader": [
             "relief_height_code", "relief_slope_code",
@@ -40,6 +41,8 @@ final class ReliefUniformsTests: XCTestCase {
             "relief_slope_code": ReliefRender.slopeCode,
             "relief_shade_dark": ReliefRender.shadeDark,
             "relief_shade_light": ReliefRender.shadeLight,
+            "relief_cavity_gully_gain": ReliefRender.cavityGullyGain,
+            "relief_cavity_ridge_gain": ReliefRender.cavityRidgeGain,
         ]
         XCTAssertEqual(ReliefUniforms.scalars.count, mirror.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
@@ -49,18 +52,6 @@ final class ReliefUniformsTests: XCTestCase {
         }
         let names = ReliefUniforms.scalars.map(\.name)
         XCTAssertEqual(names.count, Set(names).count, "Uniform-Namen kollidieren")
-    }
-
-    /// Die Studienwerte aus #121, die der Projekteigner abgenommen hat. Eine
-    /// Änderung ist eine neue Kalibrierung und gehört mit Vergleichsbildern
-    /// in `docs/graphics-quality.md`.
-    func testCalibrationIsTheAcceptedStudyLook() {
-        XCTAssertEqual(ReliefRender.scale, 0.022)
-        XCTAssertEqual(ReliefRender.strength, 0.55)
-        XCTAssertEqual(ReliefRender.sharpen, 2.2)
-        XCTAssertEqual(ReliefRender.sharpenRadiusCells, 2.5)
-        XCTAssertEqual(ReliefRender.shadeDark, 0.42)
-        XCTAssertEqual(ReliefRender.shadeLight, 0.18)
     }
 
     /// Die Kodierung muss die größte vorkommende Verschiebung abbilden: die

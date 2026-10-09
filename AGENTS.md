@@ -478,7 +478,7 @@ Größenordnung zur Orientierung (Stand Aug 2026, gerundet; wer eine Datei teilt
 oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4700 Zeilen,
 `Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
 `Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
-Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1280 Zeilen,
+Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1780 Zeilen,
 `SimRender` ~2350 Zeilen und die eigentliche GDExtension nur noch
 `SimNode.swift` mit ~350 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 

@@ -16,5 +16,7 @@ public enum ReliefUniforms {
         ("relief_slope_code", ReliefRender.slopeCode),
         ("relief_shade_dark", ReliefRender.shadeDark),
         ("relief_shade_light", ReliefRender.shadeLight),
+        ("relief_cavity_gully_gain", ReliefRender.cavityGullyGain),
+        ("relief_cavity_ridge_gain", ReliefRender.cavityRidgeGain),
     ]
 }
