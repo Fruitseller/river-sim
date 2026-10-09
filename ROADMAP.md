@@ -16,8 +16,8 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   mit Luftperspektive und Wolkenschatten, Ozean nach Wassertiefe. Keine
   Handplatzierung mehr. Reproduktion, Wirkungsleiter, Messreihe und Grenzen in
   `docs/graphics-quality.md`. Vorbau für #117: Schutzmaske als godot-freie
-  Render-Ableitung in SimRender umgesetzt (#154). Visuelle Abnahme offen; #117
-  selbst hat noch nicht begonnen.
+  Render-Ableitung in SimRender umgesetzt (#154). #117 läuft über die
+  Folge-Tickets #150–#155.
   Die verbindliche Abnahmematrix für die Vorher/Nachher-Bewertung aller Folge-Tickets
   ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, `scripts/graphics-matrix.sh`,
   `GraphicsMatrixTests`). Übernommen: der Ozean (#155, Hebel `frame`) ist die

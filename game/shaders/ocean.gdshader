@@ -77,8 +77,9 @@ float noise2(vec2 p) {
 // ihre Rausch-Zellen unter die Pixelgröße fallen: die Ferne bleibt ruhig statt
 // in Moiré und Streifen zu zerfallen. Die Oktaven-Versätze entkoppeln nur die
 // Muster, der Differenzen-Schritt ist numerisch — beides keine Kalibrierung.
-vec2 ocean_wave_grad(vec2 p, float t) {
-	float footprint = length(fwidth(p));
+// `footprint` kommt vom Aufrufer, VOR dem discard bestimmt: Ableitungen nach
+// einem nicht-uniformen discard sind undefiniert (Nachbarn im Quad fehlen).
+vec2 ocean_wave_grad(vec2 p, float footprint, float t) {
 	vec2 drift = vec2(water_ocean_wave_drift_x, water_ocean_wave_drift_z) * t;
 	vec2 g = vec2(0.0);
 	float freq = water_ocean_wave_frequency;
@@ -105,17 +106,18 @@ void fragment() {
 	vec2 terrain_uv = p / world_size + vec2(0.5);
 	bool inside_terrain = all(greaterThanEqual(terrain_uv, vec2(0.0)))
 	                   && all(lessThanEqual(terrain_uv, vec2(1.0)));
-	if (inside_terrain && texture(height_tex, terrain_uv).r > sea_level) {
+	float footprint = length(fwidth(p));
+	// Außerhalb des Sim-Quadrats ist das Meer tief.
+	float h = inside_terrain ? texture(height_tex, terrain_uv).r : sea_level - water_ocean_depth_span;
+	if (h > sea_level) {
 		discard;
 	}
-	vec2 grad = ocean_wave_grad(p, u_time);
+	vec2 grad = ocean_wave_grad(p, footprint, u_time);
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
 	NORMAL = water_n_vs;
 
-	// Tiefe über dem Sim-Schelf, normiert 0…1; außerhalb des Sim-Quadrats
-	// ist das Meer tief.
-	float h = inside_terrain ? texture(height_tex, terrain_uv).r : sea_level - water_ocean_depth_span;
+	// Tiefe über dem Sim-Schelf, normiert 0…1.
 	float depth = clamp((sea_level - h) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0);
 	vec3 water = mix(water_ocean_shallow_color, water_ocean_mid_color,
 	                 calib_window(0.0, water_ocean_mid_depth, depth));

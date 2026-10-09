@@ -713,11 +713,14 @@ public enum WaterRender {
     // MARK: Gemeinsame Wasser-Optik aller drei Shader (Issue #51)
 
     // `terrain.gdshader` (Raster-Wasser), `water.gdshader` (Band-Geometrie) und
-    // `ocean.gdshader` malen DASSELBE Wasser. Farben, Fresnel und Glanz müssen
-    // zusammenfallen, sonst zerfallen Mündung und Küste sichtbar in verschiedene
-    // Materialien. Die Werte reisen als `water_*`-Uniforms über die Brücke zu
-    // allen drei Shadern (`SimRender.WaterUniforms`, #91/#92); `WaterRenderTests`
-    // pinnt als Struktur, dass alle drei dieselben Uniforms lesen.
+    // `ocean.gdshader` malen DASSELBE Wasser. Fresnel, Himmels-Spiegelung und
+    // Glanz müssen zusammenfallen, sonst zerfallen Mündung und Küste sichtbar in
+    // verschiedene Materialien. Die Werte reisen als `water_*`-Uniforms über die
+    // Brücke (`SimRender.WaterUniforms`, #91/#92); `WaterRenderTests` pinnt als
+    // Struktur, welche Shader welche Uniforms lesen. Seicht/Tief-Farbe und
+    // Strömungs-Schimmer gelten seit #155 nur fürs Binnenwasser: das Meer färbt
+    // nach der Schelf-Tiefe (s. „Offenes Meer" unten), die abgenommene
+    // Flusstal-Studie hat den Farbsprung an der Mündung so bestätigt.
 
     /// Farbe seichten Wassers (das Bett scheint grünlich getrübt durch).
     public static let waterShallowColor = (r: 0.18, g: 0.37, b: 0.42)
