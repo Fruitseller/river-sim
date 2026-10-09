@@ -127,7 +127,10 @@ public final class RenderState {
                                      bandChannelFlags: ribbons.bandChannelFlags,
                                      bandCoverage: ribbons.bandCoverage,
                                      deferTail: deferTail)
-        lastWaterBytes = bytes
+        // Nur die SICHTBARE Fassung merken: die Masken-Schwellen sind dagegen
+        // definiert. Rohbytes des `deferTail`-Pfads (GPU-Schwanz) wären etwas
+        // schmaler als das, was der Spieler sieht.
+        if !deferTail { lastWaterBytes = bytes }
         return bytes
     }
 

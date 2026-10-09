@@ -59,8 +59,12 @@ Jetzt zwei Texturskalen und Verwitterungsstreifen in Fallrichtung
 Schutzmaske: godot-freie Render-Ableitung in `SimRender`
 (`WaterProtectMaskRenderer`, Issue #154) aus sichtbarem Rasterwasser plus der
 tatsächlichen Abdeckung der Flussbänder (der Raster-Deckel entfernt Wasser
-unter Bändern), um einen Saum von zwei Zellen (`WaterRender.protectSeamCells`)
-ausgedehnt. Die Gratschärfung hebt nur, senkt nie: kein Talboden sinkt unter
+unter Bändern), um einen Saum von `WaterRender.protectSeamCells` (2) Zellen
+ausgedehnt. Der Shader (`protect.gdshaderinc`) legt zur binären Maske noch einen
+Mip-1,5-Halo (~2–3 Zellen) darüber; der wirksame Saum ist additiv ~4–5 Zellen,
+und die Kante ist nur über diese Mip weich. Vor #154 war die Mip der einzige
+Saum, Verschiebung und Kronendach enden also weiter vom Ufer. Ob das so bleibt,
+entscheidet die offene visuelle Abnahme (#117). Die Gratschärfung hebt nur, senkt nie: kein Talboden sinkt unter
 ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel, dort gibt es
 keine Verschiebung. Die Bänder sampeln die sichtbare Oberfläche des vollen
 Sim-Gitters (`setRenderGrid(N)`). Die Sim-Felder und `SimCore` ändern sich nicht.

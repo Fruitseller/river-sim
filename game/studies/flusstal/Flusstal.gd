@@ -273,7 +273,13 @@ func _placement_water() -> Image:
 		var bytes: PackedByteArray = sim.protectMaskBytes()
 		if bytes.size() == N * N:
 			return Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
-	return Image.create(maxi(1, N), maxi(1, N), false, Image.FORMAT_R8)
+	# Ohne Brückenmaske lieber ALLES schützen als nichts: sonst wachsen Kronendach
+	# und Verschiebung über Wasser (veraltete Library; der Build-Stempel fängt
+	# den Regelfall ab).
+	push_error("Flusstal: sim.protectMaskBytes() fehlt oder hat falsche Größe, alles geschützt")
+	var img := Image.create(maxi(1, N), maxi(1, N), false, Image.FORMAT_R8)
+	img.fill(Color.WHITE)
+	return img
 
 func _process(delta: float) -> void:
 	if not study_mode.is_empty():

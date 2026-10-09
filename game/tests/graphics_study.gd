@@ -1,5 +1,7 @@
 extends SceneTree
-## Kleine Verhaltenswächter für #116, ohne Weltgenerierung oder Messlauf.
+## Kleine Verhaltenswächter für #116, ohne Messlauf. Mit geladener GDExtension
+## erzeugt `_check_protect_mask` einen `SimNode` und damit die Produktionswelt
+## samt Einlauf (wie `smoke.gd`, das Budget steht in docs/ci-measurements.md).
 
 var failures := 0
 
@@ -48,6 +50,7 @@ func _check_protect_mask() -> void:
 		var mask: Image = study._placement_water()
 		_check(mask != null and mask.get_format() == Image.FORMAT_R8,
 			"Schutzmaske ohne Sim muss Fallback-R8-Bild liefern")
+		_check(mask.get_data()[0] == 255, "Fallback ohne Sim muss alles schützen")
 	study.free()
 
 ## Ein unbekannter Hebelname bricht ab, statt still ignoriert zu werden.
