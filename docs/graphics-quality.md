@@ -57,17 +57,16 @@ Jetzt zwei Texturskalen und Verwitterungsstreifen in Fallrichtung
 
 **Wasser bleibt unangetastet.** Verschiebung und Kronendach enden an einer
 Schutzmaske: godot-freie Render-Ableitung in `SimRender`
-(`WaterProtectMaskRenderer`, Issue #154) aus sichtbarem Rasterwasser plus der
-tatsächlichen Abdeckung der Flussbänder (der Raster-Deckel entfernt Wasser
-unter Bändern), um einen Saum von `WaterRender.protectSeamCells` (2) Zellen
-ausgedehnt. Der Shader (`protect.gdshaderinc`) legt zur binären Maske noch einen
-Mip-1,5-Halo (~2–3 Zellen) darüber; der wirksame Saum ist additiv ~4–5 Zellen,
-und die Kante ist nur über diese Mip weich. Vor #154 war die Mip der einzige
-Saum, Verschiebung und Kronendach enden also weiter vom Ufer. Ob das so bleibt,
-entscheidet die offene visuelle Abnahme (#117). Die Gratschärfung hebt nur, senkt nie: kein Talboden sinkt unter
-ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel, dort gibt es
-keine Verschiebung. Die Bänder sampeln die sichtbare Oberfläche des vollen
-Sim-Gitters (`setRenderGrid(N)`). Die Sim-Felder und `SimCore` ändern sich nicht.
+(`WaterProtectMask`, Issue #154) aus dem zuletzt ausgelieferten Rasterwasser
+plus der tatsächlichen Abdeckung der Flussbänder (der Raster-Deckel entfernt
+Wasser unter Bändern), um einen Saum von `WaterRender.protectSeamCells` (2)
+Zellen ausgedehnt. Der Saum steckt vollständig in der Maske; der Shader
+(`protect.gdshaderinc`) filtert sie nur linear, die Kante wird also über eine
+Zelle weich. Vor #154 entstand derselbe Saum von etwa zwei Zellen über eine
+Mip-Stufe im Shader. Die Gratschärfung hebt nur, senkt nie: kein Talboden sinkt
+unter ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel, dort
+gibt es keine Verschiebung. Die Bänder sampeln die sichtbare Oberfläche des
+vollen Sim-Gitters (`setRenderGrid(N)`). Die Sim-Felder ändern sich nicht.
 
 **Produktion bleibt unverändert.** Alle Studien-Hooks in `terrain.gdshader`,
 `ocean.gdshader` und `water.gdshader` stehen hinter `#ifdef FLUSSTAL_STUDY`;
@@ -211,10 +210,22 @@ Woher die Mehrkosten kommen (gemessen):
 | nur `canopy` / nur `light` / nur `frame` (384er-Gitter) | 10,0 / 10,7 / 11,7 |
 
 Die Kosten folgen der Vertexzahl. Die Hebel `canopy`, `light` und `frame` sind
-im Vergleich billig. Die früheren Spitzen von ~20 ms je Fluss-Rebuild für
-das Rastern der Band-Dreiecke in GDScript entfallen seit Issue #154: die
-Schutzmaske wird godot-frei in `SimRender` abgeleitet und liegt beim Bandbau
-bereits vor.
+im Vergleich billig.
+
+Bis Issue #154 rasterte die Studie je Fluss-Rebuild jedes Band-Dreieck in
+GDScript (~20 ms), seitdem kommt die Schutzmaske fertig aus `SimRender`.
+Gemessen im Zeitraffer wie oben (Übersicht, Prototyp, maximiert,
+Viewport 3456×2104, M4 Max, 9. Oktober 2026), je zwei Läufe abwechselnd mit
+eigenem Build:
+
+| Stand | Mittel | p95 | p99 | Maximum | Frames über 33,3 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| vor #154 (`main` d5e73e2) | 20,65 / 20,91 | 50,70 / 52,92 | 102,08 / 102,46 | 113,08 / 110,59 | 39 / 485, 39 / 478 |
+| mit #154 | 20,25 / 20,35 | 52,63 / 51,64 | 78,70 / 75,80 | 84,10 / 82,82 | 40 / 494, 39 / 492 |
+
+Die höchsten Spitzen, also die Ticks mit Fluss-Rebuild, fallen um rund 28 ms.
+Die Zahl der Frames über dem Budget bleibt: das sind die Simulationsschritte
+selbst (s. o.), nicht die Maske.
 
 ## Grenzen dieser Studie
 
@@ -257,9 +268,10 @@ sind nur verlinkt, keine Spielassets.
 ## Verifikation und Übergabe
 
 - `graphics_study.gd` (CI-Marke `GRAPHICS_STUDY_OK`) prüft: die Schutzmaske
-  liegt als R8-Textur vor, übernimmt Raster-Fluss und See, sperrt
-  Bandflächen, lässt trockenes Land frei und verändert das Render-Wasserfeld
-  nicht; die Hebel-Liste schaltet einzeln und ein Tippfehler bricht ab; die
+  kommt über Brücke und Studie als R8 in Gittergröße an, sperrt voll
+  sichtbares Wasser, lässt trockenes Land frei und verändert das
+  Render-Wasserfeld nicht (Inhalt im Einzelnen: `WaterProtectMaskTests`);
+  die Hebel-Liste schaltet einzeln und ein Tippfehler bricht ab; die
   Studien-Fassungen von Terrain-, Ozean- und Band-Shader kompilieren und
   liefern ihre Uniforms, die Produktionsfassungen kennen sie nicht; der
   Back-Pass kompiliert.

@@ -137,7 +137,10 @@ speist die ganze Modulkette, mehr Kerne helfen nicht.
 
 Auf dem Runner gemessen (`ubuntu-22.04`, Lauf 31898601044, Extension-Cache leer):
 Bau **28,6 min**, Import 6 s, Stempel-Parität < 1 s, `smoke.gd` 8 s,
-`water_geometry.gd` 13 s, `river_ribbons.gd` 4 s. Der Rest des Jobs (Toolchain,
+`water_geometry.gd` 13 s, `river_ribbons.gd` 4 s. Seit Issue #154 erzeugt
+auch `graphics_study.gd` einen `SimNode` samt Produktionswelt (wie `smoke.gd`);
+lokal (M4 Max) 1,4 s gegen 3,2 s für `smoke.gd`, auf dem Runner also in der
+Größenordnung von `smoke.gd`. Der Rest des Jobs (Toolchain,
 Godot-Download aus dem Cache) liegt zusammen unter 40 s. **Achtung beim
 Iterieren:** `actions/cache` schreibt seinen Eintrag nur bei ERFOLGREICHEM Job —
 solange `godot-contract` rot ist, kostet jede Runde den vollen Kaltbau.
