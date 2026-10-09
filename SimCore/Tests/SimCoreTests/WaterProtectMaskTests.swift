@@ -1,68 +1,106 @@
+import Foundation
 import XCTest
 
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für die Schutzmaske (`WaterProtectMaskRenderer` / `RenderState.protectMaskBytes`, Issue #154).
+/// Wächter für die Schutzmaske (`WaterProtectMask` / `RenderState.protectMaskBytes`, Issue #154).
 ///
 /// Die Schutzmaske sperrt Kronendach und Verschiebung an Wasserflächen:
 ///  - Sichtbare Raster-Flüsse und Seen aus dem Wasserfeld
-///  - Jede gebaute Bandfläche (`RiverRibbonRenderer.bandCoverage`)
-///  - Einen Saum von etwa zwei Zellen (`WaterRender.protectSeamCells`) um beides
-///  - Trockenes Land ohne Wasser/Bänder bleibt frei (0)
+///  - Jede gebaute Bandfläche (`RiverRibbonRenderer.bandCoverage`), auch dort,
+///    wo der Raster-Deckel das Wasser darunter entfernt hat
+///  - Einen Saum von `WaterRender.protectSeamCells` Zellen um beides
+///  - Trockenes Land ohne Wasser/Bänder im Saum-Abstand bleibt frei (0)
 ///  - Das Render-Wasserfeld selbst ändert sich nicht
-///  - Gleiche Welt ergibt dieselbe Maske; Mutationen hinterlassen keine veraltete Maske
+///  - Gleiche Welt ergibt dieselbe Maske; Pinsel, Neugenerieren und Laden
+///    hinterlassen keine veraltete Maske
+///
+/// Die Aufruf-Reihenfolge der Tests ist die von `Main.gd`: Bänder bauen, dann
+/// das Wasserfeld ziehen, dann die Maske.
 final class WaterProtectMaskTests: XCTestCase {
 
-    private func makeTerrain(n: Int = 96, seed: UInt32 = 1337) -> Terrain {
-        let cfg = renderConfig(n: n)
-        let terrain = Terrain(config: cfg, seed: seed)
-        terrain.computeFlow()
-        return terrain
+    private let seam = WaterRender.protectSeamCells
+
+    private func aged(years: Double = 2000, seed: UInt32 = 1337) -> Terrain {
+        agedWorld(renderConfig(n: 192), years: years, seed: seed)
     }
 
-    private func agedTerrain(years: Double = 4000, n: Int = 192, seed: UInt32 = 1337) -> Terrain {
-        let cfg = renderConfig(n: n)
-        let terrain = Terrain(config: cfg, seed: seed)
-        while terrain.years < years {
-            terrain.step(dtYears: min(1000, years - terrain.years))
+    /// Der Render-Takt aus `Main.gd` nach einer Terrain-Änderung.
+    @discardableResult
+    private func refresh(_ render: RenderState, _ terrain: Terrain)
+        -> (water: [UInt8], mask: [UInt8]) {
+        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
+        let water = render.waterFieldBytes(terrain, blend: 1.0)
+        return (water, render.protectMaskBytes(terrain))
+    }
+
+    /// Kern-Zellen (Wasser oder Band) nach den Vertrags-Schwellen.
+    private func core(_ water: [UInt8], _ coverage: [Double], count: Int) -> [Bool] {
+        let river = byte01(WaterRender.protectRiverThreshold)
+        let lake = byte01(WaterRender.protectLakeThreshold)
+        return (0..<count).map { k in
+            water[k * 4] >= river || water[k * 4 + 1] >= lake
+                || (k < coverage.count && coverage[k] >= WaterRender.protectBandThreshold)
         }
-        terrain.computeFlow()
-        return terrain
     }
 
     // MARK: - Inhalt der Maske
 
-    /// Prüft, dass sichtbare Raster-Flüsse in der Maske geschützt sind (Wert 255).
-    func testMaskIncludesVisibleRasterRivers() {
-        let terrain = agedTerrain(years: 2000)
+    /// Sichtbare Flüsse, jede Bandfläche und gerade die vom Raster-Deckel
+    /// geleerten Bandzellen sind geschützt; außerhalb des Saums ist alles frei.
+    func testMaskCoversWaterAndBandsAndLeavesDryLandFree() {
+        let terrain = aged()
         let render = RenderState(geometryMode: true)
-        let waterBytes = render.waterFieldBytes(terrain, blend: 1.0)
-        let mask = render.protectMaskBytes(terrain)
+        let (water, mask) = refresh(render, terrain)
+        let coverage = render.riverRibbonMesh.bandCoverage
+        let n = terrain.cfg.n, cnt = n * n
+        XCTAssertEqual(mask.count, cnt)
 
-        XCTAssertEqual(mask.count, terrain.cfg.count)
-        let riverThresh = byte01(WaterRender.protectRiverThreshold)
-
-        var foundRiver = false
-        for k in 0..<terrain.cfg.count {
-            if waterBytes[k * 4] >= riverThresh {
-                foundRiver = true
-                XCTAssertEqual(mask[k], 255, "Zelle \(k) mit sichtbarem Fluss muss geschützt (255) sein")
+        let river = byte01(WaterRender.protectRiverThreshold)
+        var rivers = 0, cappedBands = 0
+        for k in 0..<cnt {
+            if water[k * 4] >= river {
+                rivers += 1
+                XCTAssertEqual(mask[k], 255, "Sichtbarer Fluss an Zelle \(k) ungeschützt")
+            }
+            if coverage[k] >= WaterRender.protectBandThreshold {
+                XCTAssertEqual(mask[k], 255, "Bandzelle \(k) ungeschützt")
+                if water[k * 4] < river { cappedBands += 1 }
             }
         }
-        XCTAssertTrue(foundRiver, "Testwelt muss mindestens eine sichtbare Flusszelle haben")
+        XCTAssertGreaterThan(rivers, 0, "Testwelt braucht sichtbare Raster-Flüsse")
+        XCTAssertGreaterThan(cappedBands, 0,
+                             "Testwelt braucht Bandzellen ohne sichtbares Raster (Raster-Deckel)")
+
+        // Exakt: geschützt genau dann, wenn eine Kernzelle im Saum-Abstand liegt.
+        let isCore = core(water, coverage, count: cnt)
+        var free = 0
+        for j in 0..<n {
+            for i in 0..<n {
+                var near = false
+                for nj in max(0, j - seam)...min(n - 1, j + seam) where !near {
+                    for ni in max(0, i - seam)...min(n - 1, i + seam) where isCore[nj * n + ni] {
+                        near = true
+                        break
+                    }
+                }
+                XCTAssertEqual(mask[j * n + i], near ? 255 : 0, "Zelle (\(i), \(j))")
+                if !near { free += 1 }
+            }
+        }
+        XCTAssertGreaterThan(free, cnt / 4, "Testwelt braucht weite trockene Flächen")
     }
 
-    /// Prüft, dass sichtbare Seen in der Maske geschützt sind (Wert 255).
+    /// Ein künstlicher See (Wasserspiegel über dem Boden) ist geschützt.
     func testMaskIncludesVisibleRasterLakes() {
-        let terrain = makeTerrain()
-        // See erzeugen: eine Vertiefung graben und füllen
+        let terrain = Terrain(config: renderConfig(n: 96), seed: 1337)
+        terrain.computeFlow()
         let n = terrain.cfg.n
-        let cx = n / 2, cz = n / 2
         var state = terrain.state
         for dj in -5...5 {
             for di in -5...5 where di * di + dj * dj <= 25 {
-                let k = (cz + dj) * n + (cx + di)
+                let k = (n / 2 + dj) * n + (n / 2 + di)
                 state.h[k] = terrain.cfg.sea + 0.1
                 state.waterLevel[k] = terrain.cfg.sea + 0.5
             }
@@ -71,178 +109,151 @@ final class WaterProtectMaskTests: XCTestCase {
         terrain.computeFlow()
 
         let render = RenderState(geometryMode: true)
-        let waterBytes = render.waterFieldBytes(terrain, blend: 1.0)
+        let water = render.waterFieldBytes(terrain, blend: 1.0)
         let mask = render.protectMaskBytes(terrain)
 
-        let lakeThresh = byte01(WaterRender.protectLakeThreshold)
-        var foundLake = false
-        for k in 0..<terrain.cfg.count {
-            if waterBytes[k * 4 + 1] >= lakeThresh {
-                foundLake = true
-                XCTAssertEqual(mask[k], 255, "Zelle \(k) mit sichtbarem See muss geschützt (255) sein")
-            }
+        let lake = byte01(WaterRender.protectLakeThreshold)
+        var lakes = 0
+        for k in 0..<terrain.cfg.count where water[k * 4 + 1] >= lake {
+            lakes += 1
+            XCTAssertEqual(mask[k], 255, "Sichtbarer See an Zelle \(k) ungeschützt")
         }
-        XCTAssertTrue(foundLake, "See-Zellen müssen vorhanden sein")
+        XCTAssertGreaterThan(lakes, 0, "See-Zellen müssen vorhanden sein")
     }
 
-    /// Prüft, dass gebaute Flussbänder (`bandCoverage > 0`) geschützt sind,
-    /// selbst wenn das Rasterwasser unter ihnen durch den Raster-Deckel entfernt wurde.
-    func testMaskIncludesBuiltRiverRibbonCoverage() {
-        let terrain = agedTerrain(years: 2000)
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        let coverage = render.riverRibbonMesh.bandCoverage
-        XCTAssertFalse(coverage.isEmpty, "Testwelt muss Bänder bauen")
-
-        let mask = render.protectMaskBytes(terrain)
-        XCTAssertEqual(mask.count, terrain.cfg.count)
-
-        var foundBand = false
-        for k in 0..<terrain.cfg.count where coverage[k] >= WaterRender.protectBandThreshold {
-            foundBand = true
-            XCTAssertEqual(mask[k], 255, "Bandzelle \(k) (Deckung \(coverage[k])) muss geschützt sein")
-        }
-        XCTAssertTrue(foundBand, "Mindestens eine Zelle mit Band-Deckung erwartet")
-    }
-
-    /// Prüft, dass die Maske um jede Wasser- und Bandzelle einen Saum von etwa
-    /// zwei Zellen aufspannt (Chebyshev-Abstand 1 und 2 = 255).
-    func testMaskExpandsByTwoCellsAroundWaterAndRibbons() {
-        let terrain = makeTerrain(n: 32)
-        // Flache Hochebene, weit über dem Meer (kein natürliches Wasser)
-        var state = terrain.state
-        for k in 0..<terrain.cfg.count {
-            state.h[k] = 2.0
-            state.waterLevel[k] = 2.0
-        }
-        terrain.restore(state)
-        let renderer = WaterProtectMaskRenderer()
-
-        // Künstliche Bandabdeckung an genau EINER Zelle (10, 10)
+    /// Der Saum reicht genau `protectSeamCells` Zellen (Chebyshev), für Bänder
+    /// wie für Rasterwasser.
+    func testSeamReachesExactlyProtectSeamCells() {
         let n = 32
         var coverage = [Double](repeating: 0, count: n * n)
         coverage[10 * n + 10] = 1.0
+        var water = [UInt8](repeating: 0, count: n * n * 4)
+        water[(20 * n + 22) * 4 + 1] = 255 // ein See-Texel
 
-        let mask = renderer.bytes(terrain: terrain, bandCoverage: coverage, waterBytes: [])
-
-        // Kernzelle (10, 10)
-        XCTAssertEqual(mask[10 * n + 10], 255, "Kernzelle muss geschützt sein")
-
-        // Abstand 1 Zelle (8-Nachbarn)
-        for dj in -1...1 {
-            for di in -1...1 {
-                let k = (10 + dj) * n + (10 + di)
-                XCTAssertEqual(mask[k], 255, "Abstand 1 (\(di), \(dj)) muss im Saum liegen")
+        let mask = WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water)
+        for (ci, cj) in [(10, 10), (22, 20)] {
+            for dj in -(seam + 1)...(seam + 1) {
+                for di in -(seam + 1)...(seam + 1) {
+                    let inside = max(abs(di), abs(dj)) <= seam
+                    XCTAssertEqual(mask[(cj + dj) * n + ci + di], inside ? 255 : 0,
+                                   "Abstand (\(di), \(dj)) um (\(ci), \(cj))")
+                }
             }
         }
-
-        // Abstand 2 Zellen
-        for dj in -2...2 {
-            for di in -2...2 {
-                let k = (10 + dj) * n + (10 + di)
-                XCTAssertEqual(mask[k], 255, "Abstand 2 (\(di), \(dj)) muss im Saum liegen")
-            }
-        }
-
-        // Abstand 3 Zellen: trockenes Land, frei (0)
-        for di in [-3, 3] {
-            let k = 10 * n + (10 + di)
-            XCTAssertEqual(mask[k], 0, "Abstand 3 (\(di), 0) muss frei (0) bleiben")
-        }
-        for dj in [-3, 3] {
-            let k = (10 + dj) * n + 10
-            XCTAssertEqual(mask[k], 0, "Abstand 3 (0, \(dj)) muss frei (0) bleiben")
-        }
-    }
-
-    /// Prüft, dass trockenes Land weitab von Wasser und Bändern frei (0) bleibt.
-    func testMaskLeavesDryLandFree() {
-        let terrain = makeTerrain(n: 48)
-        let render = RenderState(geometryMode: true)
-        let mask = render.protectMaskBytes(terrain)
-
-        // Auf einer frischen Testwelt gibt es weite trockene Berg-/Plateauflächen
-        var freeCount = 0
-        for k in 0..<terrain.cfg.count where mask[k] == 0 {
-            freeCount += 1
-        }
-        XCTAssertGreaterThan(freeCount, terrain.cfg.count / 2,
-                             "Mehr als die Hälfte des Terrains sollte trockenes freies Land sein")
     }
 
     // MARK: - Unveränderlichkeit des Render-Wasserfelds
 
-    /// Zusicherung: Die Berechnung der Maske verändert das Render-Wasserfeld und dessen
-    /// EWMA-Glättung nicht ("Das Render-Wasserfeld selbst ändert sich nicht").
-    func testWaterFieldBytesRemainsUntouchedByMaskComputation() {
-        let terrain = agedTerrain(years: 2000)
-        let renderA = RenderState(geometryMode: true)
-        let renderB = RenderState(geometryMode: true)
+    /// Die Maske liest das Wasserfeld nur: auch über einen EWMA-Übergang
+    /// (`blend` < 1 nach einem Sim-Schritt) bleibt es bit-gleich zu einem
+    /// Render-Zustand, der nie eine Maske gezogen hat.
+    func testMaskLeavesTheWaterFieldUntouched() {
+        let terrain = aged()
+        let withMask = RenderState(geometryMode: true)
+        let without = RenderState(geometryMode: true)
+        refresh(withMask, terrain)
+        without.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
+        _ = without.waterFieldBytes(terrain, blend: 1.0)
 
-        // renderA berechnet NUR das Wasserfeld
-        let waterA = renderA.waterFieldBytes(terrain, blend: 0.5)
-
-        // renderB berechnet erst die Schutzmaske, dann das Wasserfeld
-        _ = renderB.protectMaskBytes(terrain)
-        let waterB = renderB.waterFieldBytes(terrain, blend: 0.5)
-
-        XCTAssertEqual(waterA, waterB,
-                       "Das Wasserfeld muss bit-identisch sein, egal ob die Schutzmaske berechnet wurde")
+        terrain.step(dtYears: 200)
+        for render in [withMask, without] { render.invalidate(terrain) }
+        _ = withMask.protectMaskBytes(terrain)
+        let a = withMask.waterFieldBytes(terrain, blend: 0.3)
+        _ = withMask.protectMaskBytes(terrain)
+        let b = without.waterFieldBytes(terrain, blend: 0.3)
+        XCTAssertEqual(a, b, "Die Schutzmaske hat das Wasserfeld verändert")
     }
 
     // MARK: - Determinismus
 
-    /// Gleiche Welt ergibt dieselbe Maske.
-    func testDeterministicSameWorldYieldsIdenticalMask() {
-        let terrainA = agedTerrain(years: 2000, seed: 42)
-        let terrainB = agedTerrain(years: 2000, seed: 42)
-        let renderA = RenderState(geometryMode: true)
-        let renderB = RenderState(geometryMode: true)
-
-        renderA.buildRiverRibbons(terrainA, hscale: 24, lift: 0.35)
-        renderB.buildRiverRibbons(terrainB, hscale: 24, lift: 0.35)
-
-        let maskA = renderA.protectMaskBytes(terrainA)
-        let maskB = renderB.protectMaskBytes(terrainB)
-
-        XCTAssertEqual(maskA, maskB, "Gleiche Welt muss deterministisch dieselbe Maske liefern")
-
-        // Wiederholter Aufruf auf demselben render-Objekt
-        let maskA2 = renderA.protectMaskBytes(terrainA)
-        XCTAssertEqual(maskA, maskA2, "Wiederholter Aufruf muss identisch sein (Cache)")
+    func testSameWorldYieldsIdenticalMask() {
+        let a = refresh(RenderState(geometryMode: true), aged(seed: 42)).mask
+        let b = refresh(RenderState(geometryMode: true), aged(seed: 42)).mask
+        XCTAssertEqual(a, b, "Gleiche Welt muss dieselbe Maske liefern")
     }
 
     // MARK: - Invalidierung
 
-    /// Prüft, dass mutierende Operationen (Pinsel, Hebung, Recompute, Generieren)
-    /// den Cache invalidieren und keine veraltete Maske hinterlassen.
-    func testInvalidationLeavesFreshMaskBehind() {
-        let terrain = agedTerrain(years: 4000, n: 192, seed: 1337)
+    /// Die Maske folgt beiden Quellen: jedem Wasser-Upload und jedem Band-Bau,
+    /// auch ohne Terrain-Änderung dazwischen (Reihenfolge Bänder → Maske →
+    /// Wasser → Maske, wie beim Fluss-Rebuild vor dem Textur-Update).
+    func testMaskFollowsEachWaterUploadAndRibbonBuild() {
+        let terrain = aged()
         let render = RenderState(geometryMode: true)
-        let maskBefore = render.protectMaskBytes(terrain)
-        XCTAssertTrue(maskBefore.contains(255), "Maske vor Änderung muss geschützte Wasserzellen enthalten")
-
-        // 1. Terrain verändern durch Graben einer tiefen Vertiefung / See
         let n = terrain.cfg.n
-        terrain.sculpt(gx: Double(n / 4), gz: Double(n / 4), radiusWorld: 20.0, dir: -1.0, strength: 100.0)
+
+        let water = render.waterFieldBytes(terrain, blend: 1.0)
+        let waterOnly = render.protectMaskBytes(terrain)
+        XCTAssertEqual(waterOnly, WaterProtectMask.bytes(n: n, bandCoverage: [], waterBytes: water))
+
+        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
+        let coverage = render.riverRibbonMesh.bandCoverage
+        let withBands = render.protectMaskBytes(terrain)
+        XCTAssertEqual(withBands,
+                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water))
+        XCTAssertNotEqual(withBands, waterOnly, "Band-Bau muss die Maske erneuern")
+
+        let water2 = render.waterFieldBytes(terrain, blend: 1.0)
+        XCTAssertEqual(render.protectMaskBytes(terrain),
+                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water2),
+                       "Wasser-Upload muss die Maske erneuern")
+    }
+
+    /// Pinselstrich (über `BrushTool`, wie die Brücke) hinterlässt nach dem
+    /// Render-Takt dieselbe Maske wie ein frischer Render-Zustand.
+    func testBrushStrokeLeavesNoStaleMask() {
+        let terrain = aged()
+        let render = RenderState(geometryMode: true)
+        let before = refresh(render, terrain).mask
+
+        let n = Double(terrain.cfg.n)
+        BrushTool.raise.apply(to: terrain, gx: n / 2, gz: n / 2,
+                              radiusWorld: 25, strength: 40, target: 0)
+        render.invalidate(terrain)
         terrain.recomputeFlowAfterEdit()
         render.invalidate(terrain)
+        let after = refresh(render, terrain).mask
 
-        let maskAfterSculpt = render.protectMaskBytes(terrain)
-        XCTAssertNotEqual(maskBefore, maskAfterSculpt, "Nach Sculpting muss eine frische Maske entstehen")
+        XCTAssertNotEqual(before, after, "Pinselstrich muss die Maske verändern")
+        XCTAssertEqual(after, refresh(RenderState(geometryMode: true), terrain).mask)
+    }
 
-        // 2. Band-Rebuild invalidiert die Maske
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        let maskAfterRibbons = render.protectMaskBytes(terrain)
-        XCTAssertEqual(maskAfterRibbons.count, terrain.cfg.count)
-        XCTAssertTrue(maskAfterRibbons.contains(255))
+    /// Neugenerieren: keine Wasser-Reste der alten Welt, danach frisch.
+    func testRegenerateLeavesNoStaleMask() {
+        let terrain = aged()
+        let render = RenderState(geometryMode: true)
+        refresh(render, terrain)
 
-        // 3. Neugenerieren
         terrain.generate(seed: 9999)
+        terrain.computeFlow()
         render.invalidate(terrain, worldReplaced: true)
-        let maskAfterGenerate = render.protectMaskBytes(terrain)
-        XCTAssertNotEqual(maskAfterRibbons, maskAfterGenerate,
-                          "Nach Neu-Generieren muss eine frische Maske entstehen")
+        let beforeUpload = render.protectMaskBytes(terrain)
+        XCTAssertEqual(beforeUpload,
+                       WaterProtectMask.bytes(n: terrain.cfg.n,
+                                              bandCoverage: render.riverRibbonMesh.bandCoverage,
+                                              waterBytes: []),
+                       "Das Wasserfeld der alten Welt darf nicht in die neue Maske")
+
+        XCTAssertEqual(refresh(render, terrain).mask,
+                       refresh(RenderState(geometryMode: true), terrain).mask)
+    }
+
+    /// Laden: eine ANDERE Terrain-Instanz kommt herein (wie `SimNode.loadWorld`).
+    func testLoadLeavesNoStaleMask() throws {
+        let saved = aged(seed: 4242)
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("protect-mask-\(UUID().uuidString).rsworld").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        _ = try WorldSnapshot.write(saved, to: path)
+
+        let render = RenderState(geometryMode: true)
+        let before = refresh(render, aged()).mask
+        let loaded = try WorldSnapshot.read(from: path)
+        render.invalidate(loaded, worldReplaced: true)
+        let after = refresh(render, loaded).mask
+
+        XCTAssertNotEqual(before, after)
+        XCTAssertEqual(after, refresh(RenderState(geometryMode: true), loaded).mask)
     }
 
     // MARK: - Grenzfälle
@@ -252,10 +263,7 @@ final class WaterProtectMaskTests: XCTestCase {
         var cfg = SimConfig()
         cfg.n = 0
         let empty = Terrain(allocating: cfg, seed: 1)
-        let render = RenderState(geometryMode: true)
-        XCTAssertEqual(render.protectMaskBytes(empty), [UInt8]())
-
-        let renderer = WaterProtectMaskRenderer()
-        XCTAssertEqual(renderer.bytes(terrain: empty, bandCoverage: [], waterBytes: []), [UInt8]())
+        XCTAssertEqual(RenderState(geometryMode: true).protectMaskBytes(empty), [UInt8]())
+        XCTAssertEqual(WaterProtectMask.bytes(n: 0, bandCoverage: [], waterBytes: []), [UInt8]())
     }
 }

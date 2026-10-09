@@ -144,6 +144,20 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertGreaterThan(WaterRender.lakeDepthSpan, 0)
     }
 
+    // MARK: Schutzmaske (Issue #154)
+
+    func testProtectMaskReadsVisibilityFromTheShaderWindows() {
+        // „Sichtbar" heißt für die Schutzmaske dasselbe wie im Shader: wandert
+        // eine smoothstep-Unterkante, wandert die Maske mit, statt Wasser
+        // ungeschützt zu lassen oder trockenes Ufer zu sperren.
+        XCTAssertEqual(WaterRender.protectRiverThreshold, WaterRender.riverMaskLo)
+        XCTAssertEqual(WaterRender.protectLakeThreshold, WaterRender.lakeGateLo)
+        XCTAssertEqual(WaterRender.protectBandThreshold, 0.01)
+        // Der Saum muss die zwei Blur-Pässe des See-Kanals decken, die der
+        // RS_WATER_GPU-Pfad CPU-seitig auslässt (Begründung am Wert).
+        XCTAssertEqual(WaterRender.protectSeamCells, 2)
+    }
+
     func testShaderReadsEveryWindowFromItsUniform() throws {
         // Die ZAHLEN reisen seit #92 über die Brücke; was hier bleibt, ist der
         // Struktur-Vertrag: WELCHE Shader-Stelle WELCHES Fenster liest. Ein

@@ -2,8 +2,9 @@ import Foundation
 import SimCore
 
 /// Der Render-Zustand EINER Welt: die vier zustandstragenden Renderer mit ihren
-/// EWMA-Feldern, Arbeitspuffern und Dirty-Snapshots plus der Cache des
-/// zustandslosen `TerrainColorRenderer`-Passes (Issue #93).
+/// EWMA-Feldern, Arbeitspuffern und Dirty-Snapshots plus die Caches der
+/// zustandslosen Pässe `TerrainColorRenderer` (Issue #93) und
+/// `WaterProtectMask` (Issue #154).
 ///
 /// Warum als eigener Typ und warum hier: dieser Zustand gehörte bis #93 der
 /// GDExtension, obwohl die Brücke laut `AGENTS.md` §Architektur reines
@@ -42,17 +43,22 @@ public final class RenderState {
     private let ribbons = RiverRibbonRenderer()
     private let trees = TreeInstanceRenderer()
     private let diagnostics = TerrainDiagnostics()
-    private let protectMaskRenderer = WaterProtectMaskRenderer()
 
     /// Farbe und Materialgewichte entstehen gemeinsam und bleiben bis zur
     /// nächsten Terrain-Änderung gepuffert. Godot lädt sie als zwei Texturen,
     /// die teure Standortauswertung läuft aber nur einmal.
     private var materials: TerrainColorRenderer.Buffers?
 
-    /// Schutzmaske für Kronendach und Verschiebung (R8, gepuffert bis zur
-    /// nächsten Terrain- oder Ribbon-Änderung).
-    private var protectMask: [UInt8]?
-    private var lastWaterBytes: [UInt8]?
+    /// Schutzmaske für Kronendach und Verschiebung (R8), gepuffert bis sich
+    /// eine ihrer beiden Quellen ändert: das zuletzt ausgelieferte Wasserfeld
+    /// (`visibleWater`) oder die Bandabdeckung (`buildRiverRibbons`).
+    private var protectMaskCache: [UInt8]?
+    /// Das zuletzt an Godot ausgelieferte Wasserfeld, also das, was der Spieler
+    /// gerade SIEHT. Die Maske folgt ihm statt dem Terrain: nach einem
+    /// Pinselstrich zeigt Godot bis zum nächsten Wasser-Upload noch das alte
+    /// Feld, und genau das muss geschützt bleiben. Ein eigenes Nachrechnen
+    /// kostete außerdem einen zweiten Wasserfeld-Lauf (~13 ms).
+    private var visibleWater: [UInt8]?
 
     // MARK: - Invalidierung (DER eine Einstieg)
 
@@ -83,9 +89,10 @@ public final class RenderState {
     /// Taktung anfasst, entscheidet sie mit (Issue #94).
     public func invalidate(_ terrain: Terrain, worldReplaced: Bool = false) {
         materials = nil
-        protectMask = nil
-        lastWaterBytes = nil
+        protectMaskCache = nil
         guard worldReplaced else { return }
+        // Eine ANDERE Welt: das alte Wasserfeld passt nicht mehr dazu.
+        visibleWater = nil
         trees.invalidateSnapshot()
         ribbons.invalidateSnapshot()
         diagnostics.capture(terrain)
@@ -127,31 +134,27 @@ public final class RenderState {
                                      bandChannelFlags: ribbons.bandChannelFlags,
                                      bandCoverage: ribbons.bandCoverage,
                                      deferTail: deferTail)
-        // Nur die SICHTBARE Fassung merken: die Masken-Schwellen sind dagegen
-        // definiert. Rohbytes des `deferTail`-Pfads (GPU-Schwanz) wären etwas
-        // schmaler als das, was der Spieler sieht.
-        if !deferTail { lastWaterBytes = bytes }
+        // Auch die Rohbytes des `deferTail`-Pfads (RS_WATER_GPU) zählen: sie sind
+        // ungeblurt um höchstens die zwei Blur-Pässe schmaler als das Sichtbare,
+        // und genau so weit reicht der Saum (`WaterRender.protectSeamCells`).
+        visibleWater = bytes
+        protectMaskCache = nil
         return bytes
     }
 
     // MARK: - Schutzmaske (Issue #154)
 
     /// Schutzmaske für Kronendach und Verschiebung (R8-Puffer, n×n).
-    /// Vereint sichtbares Rasterwasser, gebaute Flussbänder und einen Saum (~2 Zellen).
+    /// Vereint das zuletzt ausgelieferte Wasserfeld (s. `visibleWater`), die
+    /// gebauten Flussbänder und einen Saum. Vor dem ersten `waterFieldBytes`
+    /// einer Welt schützt sie nur die Bänder; der Wasser-Upload folgt in
+    /// `Main.gd` im selben Frame und verwirft diesen Stand wieder.
     public func protectMaskBytes(_ terrain: Terrain) -> [UInt8] {
-        if let protectMask { return protectMask }
-        let waterBytes = lastWaterBytes ?? waterField.bytes(
-            terrain, blend: 1.0, geometryMode: geometryMode,
-            bandChannelFlags: ribbons.bandChannelFlags,
-            bandCoverage: ribbons.bandCoverage,
-            deferTail: true
-        )
-        let mask = protectMaskRenderer.bytes(
-            terrain: terrain,
-            bandCoverage: ribbons.bandCoverage,
-            waterBytes: waterBytes
-        )
-        protectMask = mask
+        if let protectMaskCache { return protectMaskCache }
+        let mask = WaterProtectMask.bytes(n: terrain.cfg.n,
+                                          bandCoverage: ribbons.bandCoverage,
+                                          waterBytes: visibleWater ?? [])
+        protectMaskCache = mask
         return mask
     }
 
@@ -194,7 +197,7 @@ public final class RenderState {
     /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y).
     public func buildRiverRibbons(_ terrain: Terrain, hscale: Double, lift: Double) {
         ribbons.build(terrain, hscale: hscale, lift: lift)
-        protectMask = nil
+        protectMaskCache = nil
     }
 
     /// Letztes Band-Bauergebnis als POD-Puffer (die Brücke wrappt sie in

@@ -78,13 +78,25 @@ public enum WaterRender {
 
     // MARK: Schutzmaske (Issue #154)
 
-    /// Untere Schwelle für sichtbaren Fluss im Wasserfeld (Stream-Kanal).
+    // `SimRender.WaterProtectMask` sperrt Kronendach und Verschiebung an
+    // Wasser. „Sichtbar" heißt dabei dasselbe wie im Shader: die beiden
+    // Wasser-Schwellen SIND die unteren smoothstep-Kanten oben, keine eigene
+    // Kalibrierung. Gepinnt in `WaterRenderTests`.
+
+    /// Fluss sichtbar ab der Unterkante von `riverMask` (R-Kanal).
     public static let protectRiverThreshold = riverMaskLo
-    /// Untere Schwelle für sichtbaren See im Wasserfeld (Lake-Gate).
+    /// See sichtbar ab der Unterkante von `lake_gate_at` (G-Kanal).
     public static let protectLakeThreshold = lakeGateLo
-    /// Untere Schwelle für gebaute Band-Abdeckung.
+    /// Band gilt als gebaut, sobald es an der Zelle überhaupt deckt. Nicht 0:
+    /// `bandCoverage` ist ein Maximum über Alpha-Verläufe, und die
+    /// auslaufenden Enden (Alpha → 0) sind unsichtbar; 0.01 ≈ 3/255, also
+    /// unter jeder darstellbaren Deckkraft eines 8-Bit-Ziels.
     public static let protectBandThreshold = 0.01
-    /// Saum-Breite der Schutzmaske in Zellen (~2 Zellen).
+    /// Saum in Zellen (Chebyshev). 2, weil (a) #154 „etwa zwei Zellen"
+    /// verlangt (Ufer dürfen nicht über ein Band wachsen) und (b) die Rohbytes
+    /// des `RS_WATER_GPU`-Pfads ungeblurt sind: der See-Kanal wird CPU-seitig
+    /// zweimal geblurt (`blurMax`, 1 Zelle je Pass), der Saum deckt genau das.
+    /// Der Shader (`protect.gdshaderinc`) legt KEINEN zweiten Saum darüber.
     public static let protectSeamCells = 2
 
     // MARK: Kohärenz-Gate des Fluss-Kanals
