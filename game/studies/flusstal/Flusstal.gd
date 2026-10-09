@@ -254,32 +254,23 @@ func _rebuild_rivers() -> void:
 	_bake_relief()
 
 ## Schutzmaske für Verschiebung und Kronendach (#154): godot-freie Render-Ableitung
-## aus SimRender (sichtbares Rasterwasser + gebaute Flussbänder + 2-Zellen-Saum).
-## Das frühere GDScript-Dreieck-Rastern entfällt; die Daten kommen direkt als R8.
-## Die Mip-Kette (nativ erzeugt) dient dem Shader für kontinuierliche Uferübergänge.
+## aus SimRender (sichtbares Rasterwasser + gebaute Flussbänder + Saum von
+## `WaterRender.protectSeamCells` Zellen), binär als R8. Je Aufruf nur Kopieren
+## und Hochladen; die Maske selbst cached `RenderState` bis zum nächsten
+## Wasser-Upload oder Band-Bau. Eine veraltete Library fängt der Build-Stempel
+## beim Start ab (`scripts/start.sh`), hier steht dafür kein Ersatzpfad.
 func _update_study_protect() -> void:
 	if not (_lever("geometry") or _lever("canopy")):
 		return
-	var img := _placement_water()
-	img.generate_mipmaps()
+	var img := _protect_mask()
 	if study_protect_tex == null:
 		study_protect_tex = ImageTexture.create_from_image(img)
 		terrain_mat.set_shader_parameter("study_protect_tex", study_protect_tex)
 	else:
 		study_protect_tex.update(img)
 
-func _placement_water() -> Image:
-	if sim != null and sim.has_method("protectMaskBytes"):
-		var bytes: PackedByteArray = sim.protectMaskBytes()
-		if bytes.size() == N * N:
-			return Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
-	# Ohne Brückenmaske lieber ALLES schützen als nichts: sonst wachsen Kronendach
-	# und Verschiebung über Wasser (veraltete Library; der Build-Stempel fängt
-	# den Regelfall ab).
-	push_error("Flusstal: sim.protectMaskBytes() fehlt oder hat falsche Größe, alles geschützt")
-	var img := Image.create(maxi(1, N), maxi(1, N), false, Image.FORMAT_R8)
-	img.fill(Color.WHITE)
-	return img
+func _protect_mask() -> Image:
+	return Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.protectMaskBytes())
 
 func _process(delta: float) -> void:
 	if not study_mode.is_empty():

@@ -15,14 +15,14 @@
 //    pro Pixel. Wald liest aus der Luft als Textur aus Kronen und dunklen
 //    Lücken, nicht als Ansammlung einzelner Modelle.
 //
-// Beide Schichten enden an Wasser: `study_protect_tex` ist das Rasterwasser
-// plus jedes gebaute Band-Dreieck (Flusstal.gd), über Mip-Stufen ausgedehnt.
+// Beide Schichten enden an Wasser: `study_protect_tex` ist die Schutzmaske aus
+// SimRender (Rasterwasser plus gebaute Bänder plus Saum, #154).
 // So liegen Flussbänder und Seeufer weiter auf der unveränderten Sim-Höhe.
 
 uniform bool study_geometry = false;
 uniform bool study_canopy_enabled = false;
 uniform int study_debug = 0; // 1 = Schutzmaske, 2 = Waldmaske, 3 = Rinnen/Rippen
-uniform sampler2D study_protect_tex : filter_linear_mipmap, repeat_disable;
+uniform sampler2D study_protect_tex : filter_linear, repeat_disable;
 // Gebackene grobe Verschiebung (relief_bake.gdshader, Kodierung dort).
 uniform sampler2D study_relief_tex : filter_linear, repeat_disable;
 uniform float study_canopy_cell = 0.11;   // Welteinheiten je Krone

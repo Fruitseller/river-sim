@@ -1,7 +1,7 @@
 extends SceneTree
-## Kleine Verhaltenswächter für #116, ohne Messlauf. Mit geladener GDExtension
-## erzeugt `_check_protect_mask` einen `SimNode` und damit die Produktionswelt
-## samt Einlauf (wie `smoke.gd`, das Budget steht in docs/ci-measurements.md).
+## Kleine Verhaltenswächter für #116, ohne Messlauf. `_check_protect_mask`
+## erzeugt einen `SimNode` und damit die Produktionswelt samt Einlauf (wie
+## `smoke.gd`; Laufzeit in docs/ci-measurements.md).
 
 var failures := 0
 
@@ -20,38 +20,40 @@ func _check(value: bool, message: String) -> void:
 		failures += 1
 		print("FAIL: ", message)
 
-## Die Schutzmaske sperrt Verschiebung und Kronendach an Wasser (#154).
-## Sie entsteht als godot-freie Render-Ableitung in SimRender und wird
-## über die Brücke (sim.protectMaskBytes) als R8-Puffer bereitgestellt.
+## Die Schutzmaske sperrt Verschiebung und Kronendach an Wasser (#154). Ihr
+## Inhalt ist headless gepinnt (`WaterProtectMaskTests`); hier zählt der Weg
+## durch Brücke und Studie: R8 in Gittergröße, voll sichtbares Wasser gesperrt,
+## trockenes Land frei, das Wasserfeld unverändert.
 func _check_protect_mask() -> void:
+	if not ClassDB.class_exists("SimNode"):
+		_check(false, "SimNode nicht registriert (GDExtension gebaut und importiert?)")
+		return
+	var sim: Object = ClassDB.instantiate("SimNode")
 	var study = load("res://studies/flusstal/Flusstal.gd").new()
-	if ClassDB.class_exists("SimNode"):
-		var sim: Object = ClassDB.instantiate("SimNode")
-		study.sim = sim
-		study.N = sim.gridSize()
-		study.half = sim.worldSize() * 0.5
-		study.step = sim.worldSize() / float(study.N - 1)
-
-		var mask: Image = study._placement_water()
-		_check(mask != null, "Schutzmaske muss erzeugt werden")
-		_check(mask.get_format() == Image.FORMAT_R8, "Schutzmaske muss im Format R8 vorliegen")
-		_check(mask.get_width() == study.N and mask.get_height() == study.N,
-			"Schutzmaske muss Dimension N*N haben")
-
-		var mask_bytes: PackedByteArray = sim.protectMaskBytes()
-		_check(mask_bytes.size() == study.N * study.N, "sim.protectMaskBytes() muss n*n Bytes liefern")
-
-		var water_before: PackedByteArray = sim.waterFieldBytes(1.0)
-		var _dummy: PackedByteArray = sim.protectMaskBytes()
-		var water_after: PackedByteArray = sim.waterFieldBytes(1.0)
-		_check(water_before == water_after, "Schutzmaske darf das Render-Wasserfeld nicht ändern")
-	else:
-		study.N = 16
-		var mask: Image = study._placement_water()
-		_check(mask != null and mask.get_format() == Image.FORMAT_R8,
-			"Schutzmaske ohne Sim muss Fallback-R8-Bild liefern")
-		_check(mask.get_data()[0] == 255, "Fallback ohne Sim muss alles schützen")
+	study.sim = sim
+	study.N = sim.gridSize()
+	sim.buildRiverRibbons(24.0, 0.35)
+	var water: PackedByteArray = sim.waterFieldBytes(1.0)
+	var mask: Image = study._protect_mask()
+	_check(mask.get_format() == Image.FORMAT_R8, "Schutzmaske muss im Format R8 vorliegen")
+	_check(mask.get_width() == study.N and mask.get_height() == study.N,
+		"Schutzmaske muss Dimension N*N haben")
+	var bytes := mask.get_data()
+	var water_cells := 0
+	var free_cells := 0
+	for k in bytes.size():
+		if water[k * 4] == 255 or water[k * 4 + 1] == 255:
+			water_cells += 1
+			if bytes[k] != 255:
+				_check(false, "Voll sichtbares Wasser an Zelle %d ist ungeschützt" % k)
+				break
+		if bytes[k] == 0:
+			free_cells += 1
+	_check(water_cells > 0, "Produktionswelt muss sichtbares Wasser haben")
+	_check(free_cells > bytes.size() / 4, "Trockenes Land muss frei bleiben")
+	_check(sim.waterFieldBytes(1.0) == water, "Schutzmaske darf das Render-Wasserfeld nicht ändern")
 	study.free()
+	sim.free()
 
 ## Ein unbekannter Hebelname bricht ab, statt still ignoriert zu werden.
 func _check_lever_parsing() -> void:
