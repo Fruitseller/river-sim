@@ -769,5 +769,21 @@ final class WaterRendererTests: XCTestCase {
     renderer.markBuilt(terrain)
     XCTAssertEqual(renderer.maxDelta(terrain), 0.0,
                    "Nach Heilung und markBuilt beruhigt sich maxDelta wieder auf 0")
+
+    // Zweiter Operand dz: Nicht-endliche z-Koordinate (NaN, ±inf) pinnen:
+    terrain.meander.channels[0].nodes[0].z = .nan
+    XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
+                   "NaN in z-Koordinate muss Rebuild erzwingen (Sentinel 1e9)")
+
+    terrain.meander.channels[0].nodes[0].z = .infinity
+    XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
+                   "Unendliche z-Koordinate muss Rebuild erzwingen (Sentinel 1e9)")
+
+    terrain.meander.channels[0].nodes[0].z = 2.0
+    XCTAssertEqual(renderer.maxDelta(terrain), 1e9,
+                   "Übergang von Nicht-Endlichkeit in z zu endlichem Wert erfordert Rebuild")
+    renderer.markBuilt(terrain)
+    XCTAssertEqual(renderer.maxDelta(terrain), 0.0,
+                   "Nach Heilung der z-Koordinate beruhigt sich maxDelta wieder auf 0")
   }
 }
