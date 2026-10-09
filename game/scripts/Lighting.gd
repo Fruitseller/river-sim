@@ -14,10 +14,13 @@ extends RefCounted
 ## Azimut in Grad in der Kamera-Konvention von Main._update_camera (Yaw = Azimut
 ## der Kameraposition um das Ziel): eine Kamera mit Yaw = Azimut hat die Sonne
 ## im Rücken, Yaw = Azimut ± 180° blickt ins Gegenlicht.
-## Höhe: die Studie stand bei 28°, abgestimmt auf IHRE Kamera (Seitenlicht).
-## Wahl und Bildbelege aus vier Blickrichtungen: docs/graphics-quality.md §Licht.
+## Azimut −50° hält die Startkamera (Yaw 0.7) im Seitenlicht wie in der Studie.
+## Höhe 38° statt der 28° der Studie, die auf IHRE eine Kamera abgestimmt war:
+## bei 28° lag im Gegenlicht jede der Kamera zugewandte Flanke im Schatten,
+## 48° nahm dem Seitenlicht die Schattenlänge. Bildbelege aus vier
+## Blickrichtungen: docs/graphics-quality.md §Licht (#151).
 const SUN_AZIMUTH_DEG := -50.0
-const SUN_ELEVATION_DEG := 28.0
+const SUN_ELEVATION_DEG := 38.0
 const SUN_COLOR := Color(1.0, 0.89, 0.74)
 const SUN_ENERGY := 2.0
 
