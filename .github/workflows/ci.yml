@@ -217,3 +217,7 @@ jobs:
       - name: Flusstal-Studie (Platzierung und Geometrie, Issue #116)
         run: |
           scripts/godot-test.sh res://tests/graphics_study.gd GRAPHICS_STUDY_OK
+
+      - name: Licht und Atmosphäre (Issue #151)
+        run: |
+          scripts/godot-test.sh res://tests/lighting.gd LIGHTING_OK

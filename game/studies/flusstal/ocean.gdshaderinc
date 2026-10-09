@@ -1,4 +1,4 @@
-// Offenes Meer der Flusstal-Studie (#116). Eingebunden nach clouds.gdshaderinc
+// Offenes Meer der Flusstal-Studie (#116). Eingebunden nach res://shaders/clouds.gdshaderinc
 // (nutzt dessen Noise) und nur im FLUSSTAL_STUDY-Build.
 //
 // Der Produktions-Ozean baut seine Normalen aus drei Sinuswellen und legt einen
@@ -17,9 +17,9 @@ vec2 study_ocean_grad(vec2 p, float t) {
 		vec2 q = p * freq + vec2(t * 0.21, t * 0.13) * (1.0 + float(o) * 0.35)
 		       + vec2(float(o) * 13.7, float(o) * 7.1);
 		float e = 0.08;
-		float n0 = study_cloud_noise(q);
-		vec2 d = vec2(study_cloud_noise(q + vec2(e, 0.0)) - n0,
-		              study_cloud_noise(q + vec2(0.0, e)) - n0) / e;
+		float n0 = cloud_noise(q);
+		vec2 d = vec2(cloud_noise(q + vec2(e, 0.0)) - n0,
+		              cloud_noise(q + vec2(0.0, e)) - n0) / e;
 		g += d * amp * (1.0 - smoothstep(0.2, 0.8, footprint * freq));
 		freq *= 2.3;
 		amp *= 0.7;
@@ -38,6 +38,6 @@ vec3 study_ocean_color(vec2 p, float h, float fresnel, bool inside, float t) {
 	col = mix(col, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
 	// Brandung: schmaler, gebrochener Saum direkt an der Küste.
 	float surf = 1.0 - smoothstep(0.0, 0.045, depth);
-	surf *= smoothstep(0.35, 0.75, study_cloud_noise(p * 3.1 + vec2(t * 0.6, 0.0)));
+	surf *= smoothstep(0.35, 0.75, cloud_noise(p * 3.1 + vec2(t * 0.6, 0.0)));
 	return mix(col, vec3(0.80, 0.85, 0.86), surf * (inside ? 0.55 : 0.0));
 }

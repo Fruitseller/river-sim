@@ -5,16 +5,20 @@ extends "res://scripts/Main.gd"
 ##            geschärfte Grate als echte Verschiebung im Vertex-Shader
 ##  canopy    Maßstab 1 Einheit ≈ 100 m: Kronendach im Terrain-Shader statt
 ##            übergroßer Instanzbäume
-##  light     tiefe Sonne, Schatten, Luftperspektive, Talnebel, Wolkenschatten
 ##  frame     Ozean ohne Streifenmuster, Schelf-Farbe aus der Wassertiefe,
 ##            Brandungssaum
+##
+## Der vierte Hebel der Abnahme, `light` (tiefe Sonne, Schatten,
+## Luftperspektive, Talnebel, Wolkenschatten), ist seit #151 Produktion
+## (scripts/Lighting.gd) und gilt damit in beiden Varianten; die Studie hat
+## dafür keinen eigenen Schalter mehr.
 ##
 ## Alles prozedural aus den Sim-Feldern, keine Handplatzierung: die Studie gilt
 ## damit für jeden Seed und bleibt im Zeitraffer, nach Pinselstrichen und nach
 ## dem Laden aktiv. `RS_STUDY_LEVERS` schaltet einzelne Hebel für die
 ## Wirkungsleiter (Komma-Liste, Standard: alle).
 
-const STUDY_LEVERS := ["geometry", "canopy", "light", "frame"]
+const STUDY_LEVERS := ["geometry", "canopy", "frame"]
 ## Render-Gitter der Studie: Sim-Auflösung (n = 720) statt der 384 von
 ## `balanced`. Es trägt die Silhouette der groben Verschiebung; ihre Normalen
 ## und Rinnen liest der Fragment-Shader aus der doppelt so feinen Backtextur.
@@ -106,8 +110,6 @@ func _setup_scene() -> void:
 			terrain_mat.set_shader_parameter("study_" + kind + "_" + channel,
 				load("res://studies/flusstal/assets/" + kind + "_" + channel + ".jpg"))
 	ocean_mat.shader = study_shader("res://shaders/ocean.gdshader")
-	if river_mat != null:
-		river_mat.shader = study_shader("res://shaders/water.gdshader")
 	var debug := OS.get_environment("RS_STUDY_DEBUG")
 	terrain_mat.set_shader_parameter("study_debug",
 		{"protect": 1, "forest": 2, "cavity": 3}.get(debug, 0))
@@ -132,8 +134,6 @@ func _setup_scene() -> void:
 			mmi.visible = false
 	if _lever("frame"):
 		ocean_mat.set_shader_parameter("study_ocean", true)
-	if _lever("light"):
-		_setup_study_light()
 
 ## Back-Pass der groben Verschiebung: ein Float-SubViewport auf Render-Gitter-
 ## Auflösung, der nur nach einem Terrain-Update einmal zeichnet (UPDATE_ONCE).
@@ -168,68 +168,6 @@ func _bake_relief() -> void:
 	study_relief_mat.set_shader_parameter("height_tex", height_field._tex)
 	study_relief_mat.set_shader_parameter("study_protect_tex", study_protect_tex)
 	study_relief_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-
-func _setup_study_light() -> void:
-	# Sonnenstand: Azimut/Höhe in Grad. Standard: Seitenlicht von links, quer
-	# zur Studienkamera (Yaw 0.7 ≈ 40°). Gegenlicht (−130°) war dramatischer,
-	# legte aber alle der Kamera zugewandten Wände in den Schatten — dort
-	# verschwand das Relief, auf das die Studie zielt.
-	var sun_az := -50.0
-	var sun_el := 28.0
-	var sun_env := OS.get_environment("RS_STUDY_SUN").split(",")
-	if sun_env.size() == 2:
-		sun_az = float(sun_env[0])
-		sun_el = float(sun_env[1])
-	var az := deg_to_rad(sun_az)
-	var el := deg_to_rad(sun_el)
-	var to_sun := Vector3(cos(el) * sin(az), sin(el), cos(el) * cos(az))
-	RenderingServer.directional_shadow_atlas_set_size(8192, true)
-	RenderingServer.directional_soft_shadow_filter_set_quality(
-		RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM)
-	for mat in [terrain_mat, ocean_mat, river_mat]:
-		if mat != null:
-			mat.set_shader_parameter("study_clouds", true)
-	for child in get_children():
-		if child is DirectionalLight3D:
-			child.look_at_from_position(to_sun * 300.0, Vector3.ZERO, Vector3.UP)
-			child.light_color = Color(1.0, 0.89, 0.74)
-			child.light_energy = 2.0
-			child.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-			child.directional_shadow_max_distance = 420.0
-			child.directional_shadow_blend_splits = true
-			child.shadow_bias = 0.04
-			child.shadow_normal_bias = 1.2
-		if child is WorldEnvironment:
-			var e: Environment = child.environment
-			var sky_mat := e.sky.sky_material as ProceduralSkyMaterial
-			var horizon := Color(0.70, 0.76, 0.82)
-			sky_mat.sky_top_color = Color(0.27, 0.42, 0.64)
-			sky_mat.sky_horizon_color = horizon
-			sky_mat.ground_horizon_color = horizon
-			sky_mat.ground_bottom_color = Color(0.22, 0.27, 0.32)
-			sky_mat.energy_multiplier = 1.0
-			e.ambient_light_energy = 0.5
-			# Himmelslicht allein färbt Schattenseiten blau (Fels las sich als
-			# Schnee); ein Drittel neutral-warmes Umgebungslicht dagegen.
-			e.ambient_light_sky_contribution = 0.65
-			e.ambient_light_color = Color(0.62, 0.58, 0.52)
-			e.tonemap_mode = Environment.TONE_MAPPER_AGX
-			e.tonemap_exposure = 0.9
-			e.ssao_radius = 2.5
-			e.ssao_intensity = 2.2
-			e.ssao_power = 1.4
-			e.adjustment_contrast = 1.06
-			e.adjustment_saturation = 1.05
-			# Luftperspektive: Ferne nimmt die Himmelsfarbe an, der Horizont
-			# verschwindet im Dunst statt als Kante vor dem Himmel zu stehen.
-			e.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-			e.fog_light_color = horizon
-			e.fog_density = 0.0016
-			e.fog_aerial_perspective = 0.6
-			e.fog_sun_scatter = 0.12
-			# Talnebel: dichter knapp über dem Meer, liegt in Tälern und Becken.
-			e.fog_height = sea * HSCALE + 1.5
-			e.fog_height_density = 0.035
 
 func _rebuild_trees() -> void:
 	if _lever("canopy"):

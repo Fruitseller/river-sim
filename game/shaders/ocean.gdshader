@@ -29,10 +29,12 @@ uniform vec3 water_flow_shimmer_color;
 
 varying vec2 v_world;
 
+// Wolkenschatten (#151): gemeinsame Funktion mit Terrain und Bändern.
+#include "res://shaders/clouds.gdshaderinc"
+
 // Flusstal-Studie (#116): nur im FLUSSTAL_STUDY-Build, Flusstal.gd setzt das
 // Define zur Laufzeit. Produktion kompiliert ohne diese Uniforms.
 #ifdef FLUSSTAL_STUDY
-#include "res://studies/flusstal/clouds.gdshaderinc"
 #include "res://studies/flusstal/ocean.gdshaderinc"
 #endif
 
@@ -94,8 +96,8 @@ void fragment() {
 		float h = inside_terrain ? texture(height_tex, terrain_uv).r : 0.0;
 		water = study_ocean_color(p, h, fresnel, inside_terrain, u_time);
 	}
-	water *= study_cloud_light(p, u_time);
 #endif
+	water *= cloud_light(p, u_time);
 	ALBEDO = water;
 	ALPHA = 1.0;
 	ROUGHNESS = mix(water_roughness_steep, water_roughness_grazing, fresnel);

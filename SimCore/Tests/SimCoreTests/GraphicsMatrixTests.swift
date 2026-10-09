@@ -19,20 +19,16 @@ final class GraphicsMatrixTests: XCTestCase {
         public let distance: Double
         public let yaw: Double
         public let pitch: Double
-        public let sunAzimuth: Double?
-        public let sunElevation: Double?
         public let description: String
 
         public init(id: String, targetX: Double, targetZ: Double, distance: Double, yaw: Double, pitch: Double,
-                    sunAzimuth: Double? = nil, sunElevation: Double? = nil, description: String) {
+                    description: String) {
             self.id = id
             self.targetX = targetX
             self.targetZ = targetZ
             self.distance = distance
             self.yaw = yaw
             self.pitch = pitch
-            self.sunAzimuth = sunAzimuth
-            self.sunElevation = sunElevation
             self.description = description
         }
     }
@@ -89,9 +85,8 @@ final class GraphicsMatrixTests: XCTestCase {
                 MatrixCamera(
                     id: "backlight",
                     targetX: -12.0, targetZ: -25.0,
-                    distance: 45.0, yaw: -0.87, pitch: 0.85,
-                    sunAzimuth: -50.0, sunElevation: 28.0,
-                    description: "Gegenlichtaufnahme direkt gegen die tiefstehende Sonne (Azimut -50°)"
+                    distance: 45.0, yaw: 2.269, pitch: 0.85,
+                    description: "Gegenlicht: Yaw = Sonnenazimut + 180° gegen die feste Welt-Sonne (Lighting.gd, Azimut -50°)"
                 ),
                 MatrixCamera(
                     id: "coast",
@@ -140,8 +135,7 @@ final class GraphicsMatrixTests: XCTestCase {
                 MatrixCamera(
                     id: "backlight",
                     targetX: 4.0, targetZ: -6.0,
-                    distance: 48.0, yaw: -0.87, pitch: 0.85,
-                    sunAzimuth: -50.0, sunElevation: 28.0,
+                    distance: 48.0, yaw: 2.269, pitch: 0.85,
                     description: "Gegenlicht über dem Seebecken mit Reflexions- und Schattenprüfung"
                 ),
                 MatrixCamera(
@@ -191,8 +185,7 @@ final class GraphicsMatrixTests: XCTestCase {
                 MatrixCamera(
                     id: "backlight",
                     targetX: -8.0, targetZ: 10.0,
-                    distance: 46.0, yaw: -0.87, pitch: 0.85,
-                    sunAzimuth: -50.0, sunElevation: 28.0,
+                    distance: 46.0, yaw: 2.269, pitch: 0.85,
                     description: "Gegenlicht an den scharfen Felsgraten mit Schattenwurf auf Schneefelder"
                 ),
                 MatrixCamera(
