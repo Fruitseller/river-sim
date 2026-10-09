@@ -167,7 +167,10 @@ final class RenderContractTests: XCTestCase {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(ocean, "uniform sampler2D height_tex",
                        hint: "Ozean liest dasselbe Höhenfeld wie das Terrain")
-        assertContains(ocean, "texture(height_tex, terrain_uv).r > sea_level",
+        assertContains(ocean,
+                       "float h = inside_terrain ? texture(height_tex, terrain_uv).r",
+                       hint: "Ozean liest die Höhe innerhalb des Terrain-Quadrats")
+        assertContains(ocean, "if (h > sea_level)",
                        hint: "Land schneidet die Ozeanplatte ab")
         assertContains(main, "height_field.mirror_to(ocean_mat)",
                        hint: "Main bindet die Höhentextur auch an den Ozean")

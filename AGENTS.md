@@ -492,7 +492,9 @@ auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
 Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
 Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
 (`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK aller
-drei Wasser-Shader (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer).
+drei Wasser-Shader (Fresnel, Himmels-Spiegelung, Rauheit/Specular; Seicht/Tief-
+Farbe und Strömungs-Schimmer nur Binnenwasser) und die Ozean-Werte
+`ocean*` (Schelf-Tiefenfarbe, Brandung, Rausch-Wellen, Issue #155).
 Seit **Issue #92** stehen die Wasser-Werte nicht mehr als gepinnte Kopien im
 Shader, sondern reisen als `water_*`-Uniforms über die Brücke
 (`SimRender.WaterUniforms` → `SimNode` → `Main.gd`; Expand #91, Contract #92).
@@ -528,7 +530,10 @@ doppeltes Wasser; das prüfen `WaterRendererTests` headless und
 `game/tests/water_geometry.gd` weiter als End-to-End-Vertrag.
 
 Das offene Meer ist eine dritte, rein visuelle Fläche (`ocean.gdshader`). Sie
-teilt Farben, Fresnel und Glanz mit beiden Binnenwasser-Pfaden, bleibt aber opak:
+teilt Fresnel, Himmels-Spiegelung und Glanz mit beiden Binnenwasser-Pfaden,
+färbt aber seit Issue #155 nach der Wassertiefe über dem Sim-Schelf
+(`WaterRender.ocean*`, Rausch-Wellen ohne Sinus-Streifen, Brandungssaum) und
+bleibt opak:
 sonst scheint bei flacher Kamera die rechteckige Unterseite des Terrain-
 Heightfields durch. Innerhalb des Terrain-Quadrats schneidet dieselbe
 `height_tex` alle Landzellen aus der Meeresfläche; ihr Meshrand liegt hinter

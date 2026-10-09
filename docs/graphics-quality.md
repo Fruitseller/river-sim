@@ -207,7 +207,7 @@ Woher die Mehrkosten kommen (gemessen):
 | --- | ---: |
 | Render-Gitter 720 / 1080 / 1440, alle Hebel | 16,1 / 23,7 / 32,3 |
 | Filter pro Vertex statt gebacken, 1440er-Gitter | 35,6 |
-| nur `canopy` / nur `light` / nur `frame` (384er-Gitter) | 10,0 / 10,7 / 11,7 |
+| nur `canopy` / nur `light` / nur `frame` (384er-Gitter; `frame` seit #155 nicht mehr schaltbar, Wert historisch) | 10,0 / 10,7 / 11,7 |
 
 Die Kosten folgen der Vertexzahl. Die Hebel `canopy`, `light` und `frame` sind
 im Vergleich billig.
@@ -307,6 +307,29 @@ Hash-Konstanten), außerhalb des Sim-Quadrats gilt volle Tiefe über denselben
 Ausdruck wie innen. Fresnel, Himmels-Spiegelung, Rauheit und Glanz bleiben die
 gemeinsame Optik aller drei Wasser-Shader; Seicht/Tief-Farbe und
 Strömungs-Schimmer des Binnenwassers liest das Meer nicht mehr.
+
+Abnahme (9. Oktober 2026, M4 Max, maximiert 3456×2104, `balanced`, Variante
+`baseline`, Jahr 20.000): Übersicht und Küste je Seed 1337/42/20 aus der
+Matrix, vorher/nachher im selben Build (nur `ocean.gdshader` getauscht, die
+Brücke liefert beide Uniform-Sätze). Vorher in jeder Übersicht das
+Streifenmuster bis zum Horizont, nachher keines; die Küste zeigt einen
+türkisen Schelf mit gebrochenem Brandungssaum. `graphics-matrix.sh` braucht
+Bash 4 (`declare -A`) und läuft mit dem macOS-Bash 3.2 nicht; die Bilder
+entstanden mit denselben Umgebungsvariablen von Hand.
+
+Framezeiten, Übersicht Seed 1337, je vier Läufe interleaved A/B. Parallel lief
+eine zweite Godot-Instanz aus einem anderen Worktree auf derselben GPU; die
+Ausreißer treffen beide Varianten und sind deshalb kein Ozean-Effekt:
+
+| Messung (ms) | vorher Mittel / p95 | nachher Mittel / p95 |
+| --- | --- | --- |
+| Standbild | 9,3–10,1 / 10,3–16,0 | 10,8–11,8 / 16,6–28,9 |
+| Kamerafahrt | 9,9–12,1 / 20,8–26,6 | 9,6–11,1 / 10,1–20,2 |
+
+Der neue Ozean kostet im Standbild gut 1 ms im Mittel (vier Rausch-Oktaven
+mit je drei Abfragen je Pixel). Das Mittel bleibt in allen Läufen weit unter
+33,3 ms. Einzelne Bilder über Budget gab es in beiden Varianten, nur unter der
+Fremdlast. Eine Messung ohne Fremdlast steht noch aus.
 
 ## Abnahmematrix für Folge-Tickets (#150, Spec #156, Parent #117)
 
