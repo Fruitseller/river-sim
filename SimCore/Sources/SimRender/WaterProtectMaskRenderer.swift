@@ -12,7 +12,7 @@ import SimCore
 ///  2. Tatsächliche Abdeckung der Flussbänder (`RiverRibbonRenderer.bandCoverage`),
 ///     weil der Raster-Deckel (`WaterFieldRenderer`) das Rasterwasser unter
 ///     Bändern entfernt.
-///  3. Einen Saum von etwa zwei Zellen (`WaterRender.protectSeamCells`) um alle
+///  3. Einen Saum von `WaterRender.protectSeamCells` Zellen (je Zelle ein 3×3-Pass) um alle
 ///     Wasser- und Bandflächen, damit Uferkonturen und Bandränder sauber
 ///     freibleiben.
 ///
@@ -70,11 +70,12 @@ public final class WaterProtectMaskRenderer {
             }
         }
 
-        // 2. Saum-Dilatation: protectSeamCells (2) Pässe einer 3×3-Max-Erweiterung.
-        // Pass 1: mask -> temp
-        dilate3x3(src: mask, dst: &temp, n: n)
-        // Pass 2: temp -> mask
-        dilate3x3(src: temp, dst: &mask, n: n)
+        // 2. Saum-Dilatation: protectSeamCells Pässe einer 3×3-Max-Erweiterung,
+        // Quelle und Ziel wechseln je Pass (auch ungerade Zahlen landen in `mask`).
+        for _ in 0..<WaterRender.protectSeamCells {
+            dilate3x3(src: mask, dst: &temp, n: n)
+            swap(&mask, &temp)
+        }
 
         return mask
     }
