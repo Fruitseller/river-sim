@@ -182,6 +182,40 @@ final class SimNode: Node {
         PackedByteArray(render.heightDifferenceBytes(terrain, scale: scale))
     }
 
+    // MARK: Frame-Protokoll (Issue #94)
+
+    /// Die Puffer eines Frames — Reihenfolge und Drosseln: `RenderState.frame`.
+    /// `trigger` = Rohwert von `FrameTrigger` (`FRAME_*` in `Main.gd`), `now` =
+    /// `Time.get_ticks_msec() / 1000`. Fehlende Schlüssel heißen „in diesem
+    /// Frame nicht neu": `water`, `water_blend`, `color`, `surface`, `flow`,
+    /// `protect`, `forest` (nur gemeinsam), `ribbons` (Mesh über `riverRibbon*`).
+    @Callable func renderFrame(trigger: Int, now: Double) -> VariantDictionary {
+        let out = VariantDictionary()
+        guard let trigger = FrameTrigger(rawValue: trigger) else {
+            GD.pushError("renderFrame: unbekannter Auslöser \(trigger) — FRAME_* (Main.gd) "
+                         + "und FrameTrigger sind auseinandergelaufen")
+            return out
+        }
+        let frame = render.frame(terrain, trigger, now: now)
+        if let o = frame.overlays {
+            out[Variant("water")] = PackedByteArray(o.water).toVariant()
+            out[Variant("water_blend")] = Variant(o.waterBlend)
+            out[Variant("color")] = PackedByteArray(o.colors).toVariant()
+            out[Variant("surface")] = PackedByteArray(o.surfaces).toVariant()
+            out[Variant("flow")] = PackedByteArray(o.flowDetail).toVariant()
+            out[Variant("protect")] = PackedByteArray(o.protectMask).toVariant()
+            out[Variant("forest")] = PackedByteArray(o.forestMask).toVariant()
+        }
+        if frame.ribbonsRebuilt {
+            out[Variant("ribbons")] = Variant(true)
+        }
+        return out
+    }
+
+    /// `RS_WATER_GPU`: Frames liefern das rohe Wasserfeld, Blur/EWMA laufen in
+    /// der GPU-Kette von `Main.gd`.
+    @Callable func setDeferWaterTail(enabled: Bool) { render.deferWaterTail = enabled }
+
     // MARK: Render-Buffer (in Swift berechnet → GDScript setzt nur zusammen)
 
     /// Großräumige Biom-/Höhen-Farbe als RGBA8-Puffer. Die eigentlichen

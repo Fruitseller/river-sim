@@ -92,7 +92,7 @@ final class RenderContractTests: XCTestCase {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(main, "FieldTexture.new(\"flow_tex\", Image.FORMAT_R8)",
                        hint: "Abfluss-Dichte reist als R8-Textur")
-        assertContains(main, "flow_field.upload(terrain_mat, N, sim.flowDetailBytes())",
+        assertContains(main, "flow_field.upload(terrain_mat, N, frame[\"flow\"])",
                        hint: "Main lädt das Abfluss-Feld mit den Overlays hoch")
         assertContains(shader, "uniform sampler2D flow_tex",
                        hint: "Terrain-Shader kennt die Abfluss-Textur")

@@ -54,8 +54,7 @@ var ring_mi: MeshInstance3D
 # Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel. Seit #34 der
 # STANDARD; `RS_WATER_STAMP` schaltet für den A/B-Vergleich auf den alten
 # Raster-Stempel-Pfad zurück (ohne Rebuild, SimNode liest dieselbe Variable).
-# Dirty-Vertrag: Rebuild nur, wenn sich die Zentrumslinien
-# merklich bewegt haben (riversMaxDelta in Zellen).
+# Wann neu gebaut wird (Dirty-Vertrag, 1-Hz-Deckel), entscheidet RenderState.frame.
 var river_ribbons := true
 var river_mi: MeshInstance3D
 var river_mesh := ArrayMesh.new()
@@ -84,9 +83,17 @@ var river_mat: ShaderMaterial
 # gemessen sind hier nur die Bildraten.
 const SIM_TICK_SECONDS := 0.25
 const SCULPT_REFRESH_SECONDS := 0.15
-const RIVER_REBUILD_DELTA := 0.05  # Zellen Knoten-Verschiebung
-const RIVER_REBUILD_SECONDS := 1.0  # Strahler + Mesh sind CPU-seitig; 0,30 s kosteten im Zeitraffer messbar ~4 % FPS
-# Welt-Y über Gelände: deckt den Chord-Fehler des gröberen Render-Gitters im
+
+# Auslöser eines Render-Frames (Issue #94) == SimRender.FrameTrigger. WAS ein
+# Frame liefert, in welcher Reihenfolge (Bänder vor dem Wasserfeld) und wie es
+# gedrosselt wird (Overlays 0,30 s, Bänder 1 Hz, Wasser-Blend 0.15, Rebuild-
+# Schwellen), steht in RenderState.frame; hier wird nur hochgeladen.
+const FRAME_SETTLED := 0     # Start, Neu, Laden, Sprung-Ende, Strich-Ende
+const FRAME_JUMP_CHUNK := 1  # ein Chunk eines Zeitsprungs
+const FRAME_TIMELAPSE := 2   # ein Zeitraffer-Takt
+const FRAME_STROKE := 3      # Nachzug während eines Pinselstrichs
+# Welt-Y über Gelände (die Bänder baut RenderState.frame mit RenderContract.riverLift;
+# die Godot-Wächter lesen den Wert hier): deckt den Chord-Fehler des gröberen Render-Gitters im
 # Talgrund (384er-Gitter auf 832er-Feld). Seit #153 hat nur noch `performance`
 # ein gröberes Gitter (256 auf 720); der Wert ist dafür nicht neu kalibriert.
 # == RenderContract.riverLift (SimCore);
@@ -263,8 +270,6 @@ var active_fps_cap := ACTIVE_FPS_CAP
 var year_rate := 0.0          # Jahre/Sekunde
 var rebuild_timer := 0.0
 var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
-var overlay_timer := 0.0
-var last_river_rebuild_msec := -1
 var sculpting := false
 var sculpt_refresh_timer := 0.0
 var sculpt_refresh_pending := false  # Teil 2 des Nachzugs steht aus (s. _process)
@@ -443,12 +448,7 @@ func _ready() -> void:
 		cam_target_on_surface = true
 		_update_camera()
 	_update_year()
-	# Bänder VOR den Texturen: das Wasserfeld deckelt Korridore nur unter
-	# Kanälen, die im letzten Ribbon-Build wirklich ein Band bekamen
-	# (SimNode.waterFieldBytes liest bandChannelFlags) — andersherum malte es
-	# diesen einen Upload mit leeren/alten Flags.
-	_maybe_rebuild_rivers_throttled(true)
-	_update_terrain_textures()
+	_render_frame(FRAME_SETTLED)
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -475,7 +475,7 @@ func _diag() -> void:
 	print("DIAG PERF step_60y_ms=", step_ms)
 	var t0 := Time.get_ticks_usec()
 	for r in 10:
-		_update_terrain_textures()
+		_render_frame(FRAME_SETTLED)
 	var t_terr := (Time.get_ticks_usec() - t0) / 10000.0
 	print("DIAG PERF terrain_texupload_ms=", t_terr)
 
@@ -554,7 +554,7 @@ static func canopy_calibration(sim_node: Object) -> Dictionary:
 	return calib
 
 ## Kronendach (#152): Kalibrierung aufs Terrain-Material, die Waldmaske kommt
-## mit jedem Overlay-Upload und Band-Bau (`_update_forest_mask`).
+## mit jedem Overlay-Frame (`_update_forest_mask`).
 func _setup_canopy() -> void:
 	canopy_calib = canopy_calibration(sim)
 	for name in canopy_calib:
@@ -602,6 +602,7 @@ func _setup_scene() -> void:
 		water_gpu = true
 	if water_gpu:
 		_setup_water_gpu()
+	sim.setDeferWaterTail(water_gpu)
 
 	water_mi = MeshInstance3D.new()
 	var wp := PlaneMesh.new()
@@ -619,7 +620,7 @@ func _setup_scene() -> void:
 	add_child(water_mi)
 
 	# Wasser-Geometrie (außer im RS_WATER_STAMP-Modus): EIN MeshInstance3D, dessen
-	# ArrayMesh _rebuild_rivers aus den SimNode-Puffern füllt.
+	# ArrayMesh _upload_ribbon_mesh aus den SimNode-Puffern füllt.
 	if river_ribbons:
 		river_mi = MeshInstance3D.new()
 		river_mi.mesh = river_mesh
@@ -906,20 +907,18 @@ func _jump(years: float) -> void:
 		var chunk := minf(2000.0, years - done)
 		sim.step(chunk)
 		done += chunk
-		_after_sim()
+		_after_sim(FRAME_JUMP_CHUNK)
 		await get_tree().process_frame
-	# Der Deckel darf den sichtbaren Endzustand nicht bis zum nächsten
+	# Der Band-Deckel darf den sichtbaren Endzustand nicht bis zum nächsten
 	# Zeitraffer-Tick verzögern (der Sprung endet typischerweise pausiert).
-	# Voller _after_sim-Endstand statt nur Ribbon-Rebuild: die Wasser-Textur
-	# hängt am Bau-Ergebnis der Bänder und muss NACH ihnen entstehen.
-	_after_sim(true)
+	_after_sim(FRAME_SETTLED)
 	_jumping = false
 
 func _regen() -> void:
 	sim_seed = (sim_seed * 16807 + 1) % 2147483647
 	sim.generate(sim_seed)
 	sim.recomputeFlow()
-	_after_sim(true)
+	_after_sim(FRAME_SETTLED)
 
 # ------------------------------------------------- Speichern / Laden (Issue #8)
 
@@ -970,7 +969,7 @@ func _load_world(path: String = SAVE_PATH) -> void:
 	terrain_mat.set_shader_parameter("sea_level", sea)
 	ocean_mat.set_shader_parameter("sea_level", sea)
 	water_mi.position.y = sea * HSCALE
-	_after_sim(true) # water_blend = 1.0 → kein Überblenden aus der alten Welt
+	_after_sim(FRAME_SETTLED) # Wasser-Blend 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()
 	world_status_label.text = "Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear()))
 
@@ -1024,13 +1023,10 @@ func _set_debug_difference(enabled: bool) -> void:
 	if enabled:
 		_refresh_debug()
 
-func _after_sim(force_rivers := false) -> void:
+func _after_sim(trigger: int) -> void:
 	_invalidate_h_cache()
 	_update_year()
-	# Bänder VOR den Texturen (s. _ready): das Wasserfeld liest das
-	# Bau-Ergebnis der Bänder (bandChannelFlags) für den Korridor-Deckel.
-	_maybe_rebuild_rivers_throttled(force_rivers)
-	_update_terrain_textures()
+	_render_frame(trigger)
 	debug_dirty = true
 
 var _shot_frame := 0
@@ -1106,7 +1102,6 @@ func _process(delta: float) -> void:
 		pending_years += year_rate * delta
 		rebuild_timer += delta
 		if rebuild_timer > SIM_TICK_SECONDS:
-			var elapsed := rebuild_timer
 			rebuild_timer = 0.0
 			# Jahre/Schritt deckeln → hält jeden Schritt billig (keine Todesspirale).
 			var years := minf(pending_years, 240.0)
@@ -1115,18 +1110,10 @@ func _process(delta: float) -> void:
 			_invalidate_h_cache()
 			_update_year()
 			debug_dirty = true
-			overlay_timer += elapsed
-			var update_overlays := overlay_timer >= 0.30
-			if update_overlays:
-				overlay_timer = 0.0
-			# Zeitraffer: Wasserfeld weich blenden → kein Springen zwischen den
-			# diskreten D8-Netzen (die ~27% je Update umwürfeln). 0.15 statt 0.35:
-			# bei 60 J/s sind 0.3 s schon 18 Sim-Jahre — mit 0.35 schnappten
-			# Läufe/Seeufer sichtbar um (User: „super schlimm"), mit 0.15 gleiten
-			# sie über ~2 s in die neue Lage.
-			_update_terrain_textures(0.15, update_overlays)
-			if update_overlays:
-				_maybe_rebuild_rivers_throttled()
+			# Höhe jeden Takt; Overlays gedrosselt und das Wasser weich
+			# geblendet (kein Springen zwischen den diskreten D8-Netzen) —
+			# Werte und Begründung in RenderState.
+			_render_frame(FRAME_TIMELAPSE)
 
 	if sculpting:
 		var hit := _raycast_terrain()
@@ -1164,7 +1151,8 @@ func _process(delta: float) -> void:
 			# Höhe sofort (billig): der Strich muss dem Zeiger ohne Verzögerung
 			# folgen. Flussnetz, Overlays und Bänder laufen im gedrosselten Takt
 			# nach (s. SCULPT_REFRESH_SECONDS).
-			_update_terrain_textures(1.0, false)
+			_upload_heights()
+			_bake_relief()
 			sculpt_refresh_timer += delta
 			# Nachzug auf ZWEI Frames verteilt. GEMESSEN je Aufruf (n = 832,
 			# M4 Max, Aug 2026, res://tests/sculpt_cost.gd):
@@ -1172,7 +1160,7 @@ func _process(delta: float) -> void:
 			#   Teil 2  waterFieldBytes      14,4 ms
 			#           terrainColor/Surface  0,9 ms je, filled-/heightsBytes 0,15
 			#           buildRiverRibbons    11,6 ms — aber höchstens 1×/s,
-			#                                s. RIVER_REBUILD_SECONDS
+			#                                s. RenderState.ribbonRebuildSeconds
 			# In EINEM Frame waren das 51 ms (mit Band-Rebuild 63) alle 0,15 s —
 			# genau das Stocken unter dem Pinsel. Getrennt bleibt die
 			# Gesamtarbeit gleich, die schlechteste Frame-Zeit sinkt auf die
@@ -1200,32 +1188,25 @@ func _process(delta: float) -> void:
 	_update_ring()
 	_update_camera()
 
-## Vollständige Aufbereitung nach einem Pinsel-Eingriff: Flussnetz neu rechnen,
-## Overlays hochladen, Bänder neu bauen. Teuer (~51 ms bei n = 832, Aufschlüsselung
-## am Aufruf im _process), deshalb gedrosselt aufgerufen — nicht pro Frame.
-## Beim LOSLASSEN läuft sie in einem Zug: dort darf nichts auf einen Folgeframe
-## warten, sonst bliebe ein beendeter Strich mit halb altem Flussnetz stehen.
-func _refresh_after_stroke() -> void:
-	_refresh_stroke_flow()
-	_refresh_stroke_upload()
-
 ## Teil 1 des Nachzugs (teuer, ~35 ms): das Flussnetz reagiert auf den Eingriff.
 func _refresh_stroke_flow() -> void:
 	sim.recomputeFlow()
 	_invalidate_h_cache()
 
-## Teil 2 des Nachzugs (~17 ms): Overlays hochladen, Bänder nachziehen.
+## Teil 2 des Nachzugs (~17 ms): Bänder nachziehen (Sculpting droppt gestörte
+## Kanäle → Struktur-Delta), Overlays hochladen.
 func _refresh_stroke_upload() -> void:
-	_update_terrain_textures()
-	_maybe_rebuild_rivers_throttled(true) # Sculpting droppt gestörte Kanäle → Struktur-Delta
+	_render_frame(FRAME_STROKE)
 
-## Strich beendet: einmal vollständig nachziehen, damit der fertige Eingriff nie
-## mit einem halb alten Flussnetz stehen bleibt (der gedrosselte Takt kann
-## mitten im Intervall aufgehört haben).
+## Strich beendet: einmal vollständig nachziehen (Flussnetz, Bänder, Overlays,
+## Bäume) in einem Zug, damit der fertige Eingriff nie mit einem halb alten
+## Flussnetz stehen bleibt (der gedrosselte Takt kann mitten im Intervall
+## aufgehört haben).
 func _finish_stroke() -> void:
 	sculpt_refresh_timer = 0.0
 	sculpt_refresh_pending = false  # der vollständige Nachzug erledigt Teil 2 mit
-	_refresh_after_stroke()
+	_refresh_stroke_flow()
+	_render_frame(FRAME_SETTLED)
 	debug_dirty = true
 
 func _update_camera_pan(delta: float) -> void:
@@ -1316,21 +1297,35 @@ func _ensure_h_cache() -> void:
 
 # ---------------------------------------------------------------- Terrain-Textur
 
-## Lädt Höhen (R32F) und Farben (RGBA8) als Texturen hoch — GPU macht Displacement
-## und Färbung. Pro Tick nur ein Upload statt kompletter Mesh-Rebuild.
+## Ein Render-Frame (Issue #94): Höhe hochladen, die Puffer des Frames aus
+## RenderState.frame holen und hochladen, Verschiebung neu backen. WAS der Frame
+## liefert und in welcher Reihenfolge es entsteht, entscheidet SimRender.
+func _render_frame(trigger: int) -> void:
+	_upload_heights()
+	_apply_frame(sim.renderFrame(trigger, _now()))
+	_bake_relief()
+
+## Uhr der Frame-Drosseln (Sekunden, monoton).
+func _now() -> float:
+	return Time.get_ticks_msec() / 1000.0
+
+## Lädt hoch, was ein Frame mitbringt; fehlende Schlüssel = unverändert.
+func _apply_frame(frame: Dictionary) -> void:
+	if frame.has("ribbons"):
+		_upload_ribbon_mesh()
+	if frame.has("water"):
+		_upload_overlays(frame)
+
+## Höhen (R32F) hochladen — billig (~0,2 ms), läuft auch jeden Pinsel-Frame.
 ## Alle Puffer kommen als ROHE Bytes aus SimNode (Issue #53): `heights()` +
 ## `to_byte_array()` kostete je Update eine zusätzliche ~2,7-MB-Kopie.
-func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = true) -> void:
+func _upload_heights() -> void:
 	height_field.upload(terrain_mat, N, sim.heightsBytes())
 	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(sim.currentYear()))
 	terrain_mat.set_shader_parameter("sim_year", sim.currentYear())
-	if update_overlays:
-		_upload_overlays(water_blend)
-		_update_masks()
-	_bake_relief()
 
-## Alles außer der Höhe: im Zeitraffer und beim Pinseln gedrosselt.
-func _upload_overlays(water_blend: float) -> void:
+## Alles außer der Höhe: im Zeitraffer gedrosselt (RenderState.frame).
+func _upload_overlays(frame: Dictionary) -> void:
 	# Seespiegel-Feld (hf): der Vertex-Shader hebt See-Zellen auf diese Höhe →
 	# Seen liegen als horizontale Flächen im Becken statt den Hang anzumalen.
 	hf_field.upload(terrain_mat, N, sim.filledBytes())
@@ -1347,50 +1342,45 @@ func _upload_overlays(water_blend: float) -> void:
 		terrain_mat.set_shader_parameter("conifer_lo", bands[6])
 		terrain_mat.set_shader_parameter("conifer_hi", bands[7])
 
-	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung; der
-	# Material-Cache in SimRender.RenderState verhindert doppelte
-	# slope-/Habitat-Arbeit (bis Issue #93 lag er in SimNode).
-	color_field.upload(terrain_mat, N, sim.terrainColorBytes())
-	surface_field.upload(terrain_mat, N, sim.terrainSurfaceBytes())
-	flow_field.upload(terrain_mat, N, sim.flowDetailBytes())
-	# Wasser-Feld (Flüsse/Seen/Altarme) als glattes Overlay-Textur.
-	# water_blend < 1 → zeitliche EWMA-Glättung (Läufe blenden statt zu springen).
+	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung.
+	color_field.upload(terrain_mat, N, frame["color"])
+	surface_field.upload(terrain_mat, N, frame["surface"])
+	flow_field.upload(terrain_mat, N, frame["flow"])
+	# Wasser-Feld (Flüsse/Seen/Altarme): im Zeitraffer zeitlich geglättet
+	# (`water_blend` < 1), sonst der frische Stand.
 	if water_gpu:
-		_update_water_gpu(water_blend)
+		_update_water_gpu(frame["water"], frame["water_blend"])
 	else:
-		water_field.upload(terrain_mat, N, sim.waterFieldBytes(water_blend))
+		water_field.upload(terrain_mat, N, frame["water"])
+	# Schutz- und Waldmaske gehören zusammen: der Wald endet an der Schutzmaske
+	# desselben Frames (in SimRender fallen beide gemeinsam, `dropMasks`).
+	_update_protect_mask(frame["protect"])
+	_update_forest_mask(frame["forest"])
 
 ## Schutzmaske (#154): godot-freie Render-Ableitung aus SimRender
 ## (sichtbares Rasterwasser + gebaute Flussbänder + Saum von
-## `WaterRender.protectSeamCells` Zellen), binär als R8. Je Aufruf nur Kopieren
-## und Hochladen; die Maske selbst cached `RenderState` bis zum nächsten
-## Wasser-Upload oder Band-Bau.
-func _update_protect_mask() -> void:
-	var img := _protect_mask()
+## `WaterRender.protectSeamCells` Zellen), binär als R8. Entsteht im Frame NACH
+## Bändern und Wasser; hier nur Kopieren und Hochladen.
+func _update_protect_mask(bytes: PackedByteArray) -> void:
+	var img := _protect_mask(bytes)
 	if protect_tex == null:
 		protect_tex = ImageTexture.create_from_image(img)
 	else:
 		protect_tex.update(img)
 
-func _protect_mask() -> Image:
-	return Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.protectMaskBytes())
-
-## Schutz- und Waldmaske gehören zusammen: der Wald endet an der Schutzmaske
-## (in SimRender fallen beide gemeinsam, `RenderState.dropMasks`).
-func _update_masks() -> void:
-	_update_protect_mask()
-	_update_forest_mask()
+func _protect_mask(bytes: PackedByteArray) -> Image:
+	return Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
 
 ## Waldmaske des Kronendachs (#152): SimRender.ForestCanopyMask aus
-## Materialgewichten, Steigung und Schutzmaske, gecacht wie die Schutzmaske.
+## Materialgewichten, Steigung und Schutzmaske, kommt mit dem Frame.
 ## Hier nur Hochladen; den Raycast-Zuschlag rechnet `_forest_lift_at` lazy.
 ## Der alte Stand wandert nach `forest_prev_tex`: im Zeitraffer blendet der
 ## Terrain-Shader mit derselben Blende wie die Verschiebung (`bake_blend`,
 ## `_bake_relief` direkt danach) hinüber. Kommt der Auftrag mitten in einer
 ## Blende, bleibt der alte Stand stehen wie dort.
-func _update_forest_mask() -> void:
+func _update_forest_mask(bytes: PackedByteArray) -> void:
 	var previous := forest_img
-	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.forestMaskBytes())
+	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
 	forest_lift_cache = PackedFloat32Array()
 	if forest_tex == null:
 		forest_tex = ImageTexture.create_from_image(forest_img)
@@ -1512,8 +1502,8 @@ func _make_field_rect(mat: ShaderMaterial) -> ColorRect:
 ## Ein Durchlauf der GPU-Kette. `blend` hat dieselbe Bedeutung wie im CPU-Pfad:
 ## 1 = frischen Zustand sofort übernehmen (Sprung, Sculpting), klein = weich
 ## blenden im Zeitraffer.
-func _update_water_gpu(blend: float) -> void:
-	wf_raw_field.upload(wf_blur_mat[0], N, sim.waterFieldRawBytes())
+func _update_water_gpu(raw: PackedByteArray, blend: float) -> void:
+	wf_raw_field.upload(wf_blur_mat[0], N, raw)
 	# Ping-Pong: aus dem aktuellen Zustand lesen, in das andere Target schreiben.
 	# Dasselbe Target zu lesen und zu beschreiben ist undefiniert.
 	var previous := wf_state_index
@@ -1536,31 +1526,9 @@ func _update_debug_difference_texture() -> void:
 		sim.heightDifferenceBytes(debug_difference_scale))
 
 
-## Fluss-Ribbons: Rebuild nur, wenn sich die Mäander-Zentrumslinien seit dem
-## letzten Build bewegt haben (Dirty-Vertrag; Struktur-
-## Änderungen wie Cutoffs melden ein Riesen-Delta → sofortiger Rebuild).
-## Gemeinsamer 1-Hz-Deckel für Echtzeit UND `_jump`: der alte reine
-## `_process`-Timer ließ jeden 2000-Jahre-Sprung-Chunk ein Mesh bauen. `force`
-## gilt nur für diskrete Nutzeraktionen (Neu/Laden/Sculpt) und den Sprung-Endstand.
-func _maybe_rebuild_rivers_throttled(force := false) -> void:
-	if not river_ribbons:
-		return
-	var now := Time.get_ticks_msec()
-	if not _river_rebuild_due(now, force):
-		return
-	if sim.riversMaxDelta() > RIVER_REBUILD_DELTA:
-		_rebuild_rivers()
-	last_river_rebuild_msec = now
-
-func _river_rebuild_due(now_msec: int, force: bool) -> bool:
-	return (force or last_river_rebuild_msec < 0
-		or now_msec - last_river_rebuild_msec >= int(RIVER_REBUILD_SECONDS * 1000.0))
-
-func _rebuild_rivers() -> void:
-	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
-	# Neue Bänder → neue Schutz- und Waldmaske → Verschiebung neu backen.
-	_update_masks()
-	_bake_relief()
+## Fluss-Ribbons aus dem letzten Band-Bau des Frames ins Mesh. Die Schutzmaske
+## dazu bringt derselbe Frame mit.
+func _upload_ribbon_mesh() -> void:
 	river_mesh.clear_surfaces()
 	var verts: PackedVector3Array = sim.riverRibbonVerts()
 	if verts.size() >= 3:
@@ -1574,7 +1542,6 @@ func _rebuild_rivers() -> void:
 		arrays[Mesh.ARRAY_TEX_UV2] = sim.riverRibbonUV2s()
 		arrays[Mesh.ARRAY_INDEX] = sim.riverRibbonIndices()
 		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	sim.markRiversBuilt()
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 

@@ -337,12 +337,15 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    keine Kalibrier-Zahl — alle Schwellen bleiben im Vertrag
    `SimCore.WaterRender` und wirken CPU-seitig, bevor das Feld entsteht.
 
-Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, zieht danach
-`heightsBytes()`, `waterFieldBytes()`, `terrainColorBytes()` und
-`terrainSurfaceBytes()` etc. und schiebt sie als Texturen ins Mesh.
+Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, lädt `heightsBytes()`
+hoch und holt den Rest über EINEN Aufruf `sim.renderFrame(trigger, now)`
+(Issue #94): der Auslöser (`FRAME_*` == `SimRender.FrameTrigger`) sagt, was
+passiert ist, `RenderState.frame` entscheidet Reihenfolge (Bänder → Wasserfeld
+→ Schutzmaske → Waldmaske), Drosseln und Wasser-Blend und liefert die Puffer des
+Frames; `Main.gd` lädt nur hoch, was es bekommt.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
-### SimRender- und Extension-Aufbau (Issues #53/#80/#82/#93)
+### SimRender- und Extension-Aufbau (Issues #53/#80/#82/#93/#94)
 
 `SimNode.swift` ist reines Marshalling: Aufruf weiterreichen, POD-Ergebnis als
 `Packed*Array` zurückgeben. Die Render-AUFBEREITUNG lebt im godot-freien Target
@@ -359,6 +362,12 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   neu (vorher tat das nur das Laden). Wächter:
   `SimCoreTests/RenderStateTests.swift` — Verhalten plus Quelltext-Probe, dass
   keine Terrain-Änderung in der Brücke ohne Invalidierung dasteht.
+  Seit Issue #94 hält er auch das Frame-Protokoll (`frame(terrain, trigger,
+  now:)`): Band-Rebuild-Schwelle, 1-Hz-Band-Deckel,
+  0,30-s-Overlay-Drossel und Zeitraffer-Blend 0.15 sind SimRender-Zustand,
+  die Drosseln laufen über die Uhr des Aufrufers und sind damit headless
+  prüfbar. Wächter: `SimCoreTests/RenderFrameTests.swift` (inkl. Probe, dass
+  `Main.gd` die Einzelaufrufe nicht wieder selbst ordnet).
 
 - `WaterFieldRenderer`: Raster-Wasser als `[UInt8]`,
 - `RiverRibbonRenderer`: Band-Geometrie als `RibbonMesh`
