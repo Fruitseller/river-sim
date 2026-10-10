@@ -269,6 +269,24 @@ final class TerrainAPITests: XCTestCase {
         }
     }
 
+    // MARK: - step(dtYears:)
+
+    /// Regression: Nicht-positive oder nicht-endliche Zeitschritte (`dtYears <= 0`,
+    /// `NaN`, `±infinity`) müssen defensiv abgefangen werden (No-op), statt
+    /// die Simulationszeit zu verstellen, Berechnungen mit NaN zu vergiften
+    /// oder in Integer-Konvertierungen (waveSchedule/hillslopeDiffusion) zu trappen.
+    func testStepWithNonPositiveOrNonFiniteDtIsNoOp() {
+        let t = Terrain(config: cfg(n: 16), seed: 1337)
+        let stateBefore = t.fingerprint()
+        let yearsBefore = t.years
+
+        for badDt in [0.0, -0.0, -1.0, -500.0, Double.nan, Double.infinity, -Double.infinity] {
+            t.step(dtYears: badDt)
+            XCTAssertEqual(t.years, yearsBefore, "dt = \(badDt) darf die Simulationszeit nicht verändern")
+            XCTAssertEqual(t.fingerprint(), stateBefore, "dt = \(badDt) muss strikter No-op sein")
+        }
+    }
+
     // MARK: - recomputeFlowAfterEdit()
 
     /// Der Nach-Strich-Auffrischer ist die feste Aufruf-Reihenfolge, die bis
