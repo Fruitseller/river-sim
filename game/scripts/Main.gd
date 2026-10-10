@@ -941,15 +941,16 @@ func _save_world() -> void:
 ## Holt die gespeicherte Welt zurück. Danach ist der Zustand vollständig (der
 ## Seespiegel kommt aus der Datei und schwingt NICHT ein, Issue #8) — es genügt,
 ## die Texturen neu zu ziehen; ein Sim-Schritt ist ausdrücklich nicht nötig.
-func _load_world() -> void:
+## `path` überschreiben nur Tests, damit sie den Spielstand nicht antasten.
+func _load_world(path: String = SAVE_PATH) -> void:
 	if _jumping: # der laufende Sprung würde sofort auf die geladene Welt steppen
 		world_status_label.text = "Zeitsprung läuft — später laden"
 		return
-	if not FileAccess.file_exists(SAVE_PATH):
+	if not FileAccess.file_exists(path):
 		_show_world_error("Kein Spielstand",
-			"Unter %s liegt noch keine Welt. Erst speichern (F5)." % SAVE_PATH)
+			"Unter %s liegt noch keine Welt. Erst speichern (F5)." % path)
 		return
-	var abs_path := ProjectSettings.globalize_path(SAVE_PATH)
+	var abs_path := ProjectSettings.globalize_path(path)
 	# Geometrie-Prüfung VOR dem Laden, solange die laufende Welt noch steht.
 	var mismatch := _world_geometry_mismatch(
 		sim.worldFileGridSize(abs_path), sim.worldFileWorldSize(abs_path))

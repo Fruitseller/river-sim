@@ -6,7 +6,8 @@ extends SceneTree
 ## zählt der Weg durch Brücke, Main und Shader:
 ##  - jede `canopy_*`-Zahl kommt über die Brücke (SimCore.CanopyRender), ist im
 ##    Terrain-Shader default-frei deklariert und auf dem Material gesetzt;
-##  - die Waldmaske liegt als Textur am Material und folgt dem Neugenerieren;
+##  - die Waldmaske liegt als Textur am Material und folgt Pinselstrich,
+##    Neugenerieren und Laden (die Pfade von Main, nicht nur die Brücke);
 ##  - es gibt keine Instanzbäume mehr;
 ##  - Pinselring und Kameraziel liegen auf dem Dach (sichtbare Fläche).
 ## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
@@ -39,7 +40,8 @@ func _process(_delta: float) -> bool:
 	_check_uniforms(main)
 	_check_no_instance_trees(main)
 	_check_visible_surface(main)
-	_check_regenerate(main)
+	_check_brush(main)
+	_check_regenerate_and_load(main)
 	main.queue_free()
 	if failures > 0:
 		quit(1)
@@ -112,13 +114,66 @@ func _check_visible_surface(main: Node) -> void:
 	_check(absf(main.cam_target.y - (sim_y + height)) < 1e-4, "Kameraziel liegt auf dem Dach")
 
 ## Der Dummy-Renderer liest Texturen nicht zurück; geprüft wird das Bild, das
-## Main zuletzt hochgeladen hat, und dass die Textur dieselbe bleibt.
-func _check_regenerate(main: Node) -> void:
-	var tex: Texture2D = main.forest_tex
-	var before: PackedByteArray = main.forest_img.get_data()
-	main._regen()
-	var after: PackedByteArray = main.forest_img.get_data()
-	_check(after != before, "Neugenerieren tauscht den Wald")
-	_check(after == main.sim.forestMaskBytes(), "Hochgeladen ist die Maske der neuen Welt")
+## Main zuletzt hochgeladen hat (`forest_img`), und dass die Textur dieselbe
+## bleibt.
+func _check_uploaded(main: Node, tex: Texture2D, what: String) -> void:
+	_check(main.forest_img.get_data() == main.sim.forestMaskBytes(),
+		"%s: hochgeladen ist die aktuelle Waldmaske" % what)
 	_check(main.terrain_mat.get_shader_parameter("forest_tex") == tex,
-		"Das Material liest weiter die aktualisierte Waldtextur")
+		"%s: das Material liest weiter die aktualisierte Waldtextur" % what)
+
+## Pinselstrich über Mains Strich-Ende: eine Waldzelle unter den Meeresspiegel
+## eingeebnet trägt danach keinen Wald mehr.
+func _check_brush(main: Node) -> void:
+	var tex: Texture2D = main.forest_tex
+	var forest: PackedByteArray = main.forest_img.get_data()
+	var n: int = main.N
+	var cell := -1
+	for k in range(forest.size()):
+		var i := k % n
+		var j := k / n
+		if forest[k] == 255 and i > 20 and i < n - 20 and j > 20 and j < n - 20:
+			cell = k
+			break
+	_check(cell >= 0, "Produktionswelt braucht Wald abseits des Rands")
+	if cell < 0:
+		return
+	var gx := float(cell % n)
+	var gz := float(cell / n)
+	for _r in 6:  # Einebnen nähert sich dem Ziel, ein Hieb reicht nicht
+		main.sim.brush(3, gx, gz, 4.0, 3.0, main.sea - 0.05)
+	main._finish_stroke()
+	_check(main.forest_img.get_data()[cell] == 0,
+		"Pinselstrich: unter den Meeresspiegel eingeebneter Wald verschwindet (%d)"
+			% main.forest_img.get_data()[cell])
+	_check_uploaded(main, tex, "Pinselstrich")
+
+## Neugenerieren tauscht den Wald, Laden holt den gespeicherten zurück. Nicht
+## mitgespeichert ist der Render-Zustand des Rasterwassers (EWMA, s. AGENTS.md);
+## nach dem Laden darf die Schutzmaske deshalb an einzelnen Ufern abweichen, und
+## der Wald folgt ihr. Verglichen wird der Wald überall sonst.
+func _check_regenerate_and_load(main: Node) -> void:
+	var tex: Texture2D = main.forest_tex
+	var path := "user://tests/canopy.%s" % main.sim.worldFileExtension()
+	var saved: PackedByteArray = main.forest_img.get_data()
+	var saved_protect: PackedByteArray = main.sim.protectMaskBytes()
+	var err: String = main.sim.saveWorld(ProjectSettings.globalize_path(path))
+	_check(err.is_empty(), "saveWorld: %s" % err)
+	main._regen()
+	_check(main.forest_img.get_data() != saved, "Neugenerieren tauscht den Wald")
+	_check_uploaded(main, tex, "Neugenerieren")
+	main._load_world(path)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var got: PackedByteArray = main.forest_img.get_data()
+	var protect: PackedByteArray = main.sim.protectMaskBytes()
+	var compared := 0
+	var wrong := 0
+	for k in range(saved.size()):
+		if protect[k] == saved_protect[k]:
+			compared += 1
+			if got[k] != saved[k]:
+				wrong += 1
+	_check(compared > saved.size() * 9 / 10 and wrong == 0,
+		"Laden holt den gespeicherten Wald zurück (%d von %d Zellen abweichend)"
+			% [wrong, compared])
+	_check_uploaded(main, tex, "Laden")
