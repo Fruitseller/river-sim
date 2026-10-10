@@ -74,7 +74,7 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Schluchtsohle ist, nicht die Wände hochdrapiert — sowie Ufer-Übergang über
   Saum-Stempel + Kanten-Feathering (gegen die Rückbau-Ursachen von `f3556c8`).
   Dirty-Vertrag wie bei den Bäumen (`riversMaxDelta`/`markRiversBuilt`), im
-  Zeitraffer auf 1 Hz gedeckelt.
+  Zeitraffer auf 1 Hz gedeckelt (seit #94 in `RenderState.frame`).
   **Korridor nur unter echten Bändern (Aug 2026):** der Saum-Stempel des
   Wasserfelds und sein Raster-Deckel folgen dem ECHTEN Bau-Ergebnis
   (`RiverRibbonRenderer.bandChannelFlags`); vom Strahler-/Kohärenz-Gate
@@ -693,6 +693,14 @@ Pass-Reihenfolge nach einem Pinselstrich liegt als
 `Terrain.recomputeFlowAfterEdit()` in SimCore. Wächter:
 `RenderStateTests` (Verhalten + Quelltext-Probe der Brücke) und
 `TerrainAPITests`. Prefactor für den Frame-Vertrag (#94).
+
+**Frame-Protokoll in SimRender — ERLEDIGT (Okt 2026, Issue #94).**
+`RenderState.frame(terrain, trigger, now:)` liefert die Puffer eines Frames;
+die Reihenfolge Bänder → Wasserfeld ist Konstruktion statt Kommentar, Schwellen,
+Drosseln und Zeitraffer-Blend sind SimRender-Zustand mit den kalibrierten Werten
+aus `Main.gd`. Nebenbei korrigiert: Zeitraffer und Pinsel-Nachzug bauten die
+Bänder bis dahin NACH dem Wasserfeld, das dann die Bandflags des vorigen Builds
+las. Wächter: `RenderFrameTests`.
 
 **Backlog (nicht priorisiert):**
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).

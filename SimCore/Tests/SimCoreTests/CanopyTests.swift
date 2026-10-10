@@ -266,7 +266,8 @@ final class CanopyTests: XCTestCase {
         XCTAssertFalse(bridge.contains("treeInstanceBuffer"),
                        "Instanzbäume sind seit #152 durch das Kronendach ersetzt")
         let main = try RepoSource.probe("game/scripts/Main.gd")
-        for needle in ["canopyUniformNames()", "canopyUniformValues()", "forestMaskBytes()",
+        // Die Waldmaske kommt seit #94 mit dem Frame (`RenderFrameTests`).
+        for needle in ["canopyUniformNames()", "canopyUniformValues()", "frame[\"forest\"]",
                        "static func canopy_calibration"] {
             assertContains(main, needle, hint: "Main.gd liest Kronendach und Waldmaske über die Brücke")
         }

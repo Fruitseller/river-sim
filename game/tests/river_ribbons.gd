@@ -54,22 +54,6 @@ func _run() -> void:
 	max_cross_slope = contract["ribbonMaxCrossSlope"]
 	kind_delta_lo = contract["ribbonDeltaLo"]
 
-	# Derselbe Wallclock-Deckel gilt im Echtzeit- und `_jump`-Pfad: vor einer
-	# Sekunde kein Build, an der Grenze/bei Nutzeraktion sofort.
-	var main: Node3D = Main.new()
-	main.last_river_rebuild_msec = 1000
-	if main._river_rebuild_due(1999, false) or not main._river_rebuild_due(2000, false):
-		push_error("FAIL: 1-Hz-Ribbon-Deckel hat falsche Zeitgrenze")
-		main.free()
-		quit(1)
-		return
-	if not main._river_rebuild_due(1001, true):
-		push_error("FAIL: erzwungener Ribbon-Rebuild wird gedeckelt")
-		main.free()
-		quit(1)
-		return
-	main.free()
-
 	# Mäander brauchen etwas Laufzeit, bis Kanäle getraced und migriert sind.
 	sim.step(4000.0)
 

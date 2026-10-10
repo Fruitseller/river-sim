@@ -34,7 +34,7 @@ func _check_protect_mask() -> void:
 	study.N = sim.gridSize()
 	sim.buildRiverRibbons(24.0, 0.35)
 	var water: PackedByteArray = sim.waterFieldBytes(1.0)
-	var mask: Image = study._protect_mask()
+	var mask: Image = study._protect_mask(sim.protectMaskBytes())
 	_check(mask.get_format() == Image.FORMAT_R8, "Schutzmaske muss im Format R8 vorliegen")
 	_check(mask.get_width() == study.N and mask.get_height() == study.N,
 		"Schutzmaske muss Dimension N*N haben")

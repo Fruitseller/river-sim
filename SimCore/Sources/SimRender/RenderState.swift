@@ -39,6 +39,30 @@ public final class RenderState {
         self.geometryMode = geometryMode
     }
 
+    // MARK: - Frame-Taktung (Issue #94, Werte aus `Main.gd` übernommen)
+
+    /// Wasser-Blend im Zeitraffer: 0.15 statt 0.35 — bei 60 J/s sind 0,3 s
+    /// schon 18 Sim-Jahre; mit 0.35 schnappten Läufe und Seeufer sichtbar um
+    /// (Nutzer: „super schlimm"), mit 0.15 gleiten sie über ~2 s in die neue
+    /// Lage. Alle anderen Auslöser übernehmen den frischen Stand (1.0).
+    public static let timelapseWaterBlend = 0.15
+    /// Overlay-Drossel im Zeitraffer: Wasser, Farbe, Material, Masken und Bänder
+    /// höchstens alle 0,30 s; die Höhe folgt jedem Sim-Takt.
+    public static let overlayIntervalSeconds = 0.30
+    /// Band-Deckel (1 Hz) für Zeitraffer UND Sprung-Chunks: Strahler + Mesh
+    /// sind CPU-seitig; 0,30 s kosteten im Zeitraffer messbar ~4 % FPS.
+    public static let ribbonRebuildSeconds = 1.0
+    /// Band-Rebuild erst ab dieser Knoten-Verschiebung (Zellen).
+    public static let ribbonRebuildDelta = 0.05
+
+    /// Zeitpunkt des letzten Overlay-Uploads bzw. der letzten Band-Prüfung
+    /// (Sekunden, Uhr des Aufrufers). `nil` = noch keiner → sofort fällig.
+    private var lastOverlayTime: Double?
+    private var lastRibbonCheckTime: Double?
+
+    /// `RS_WATER_GPU`: das Wasserfeld kommt roh, Blur/EWMA laufen auf der GPU.
+    public var deferWaterTail = false
+
     private let waterField = WaterFieldRenderer()
     private let ribbons = RiverRibbonRenderer()
     private let diagnostics = TerrainDiagnostics()
@@ -83,8 +107,8 @@ public final class RenderState {
     /// Dann fällt zusätzlich alles, was gegen den VORHERIGEN Stand vergleicht:
     /// - der Dirty-Snapshot der Bänder, damit der nächste Frame sie neu baut
     ///   statt über eine Delta-Heuristik gegen eine fremde Welt zu prüfen
-    ///   (ohne Vergleichsstand meldet er „riesig", 1e9 — weit über der
-    ///   Schwelle in `Main.gd`),
+    ///   (ohne Vergleichsstand meldet er „riesig", 1e9 — weit über
+    ///   `ribbonRebuildDelta`),
     /// - der Vergleichspunkt der Diagnose, damit die Δ-Karte zeigt, was die Sim
     ///   AB JETZT tut, und nicht die Differenz zur alten Welt.
     ///
@@ -96,11 +120,10 @@ public final class RenderState {
     /// AUSGENOMMEN, bewusst: das EWMA-Gedächtnis des Wasserfelds
     /// (`WaterFieldRenderer`). Es fällt auch bei `worldReplaced` nicht, weil es
     /// keine Aussage über die alte Welt ist, sondern eine zeitliche Glättung mit
-    /// einem Mischfaktor, den der Aufrufer je Frame mitgibt — die erste Abfrage
-    /// nach einem Weltwechsel läuft in der Produktion ohnehin über
-    /// `waterFieldBytes(blend: 1.0)` (Textur-Neuaufbau), und ein Reset hier wäre
-    /// eine Verhaltensänderung, die dieser Prefactor nicht mitbringt. Wer die
-    /// Taktung anfasst, entscheidet sie mit (Issue #94).
+    /// einem Mischfaktor — und jeder Weltwechsel endet in einem
+    /// `frame(.settled)`, dessen Blend 1.0 das Gedächtnis ohnehin vollständig
+    /// überschreibt. Ein Reset hier wäre damit wirkungslos (geprüft mit #94,
+    /// das die Taktung hierher gezogen hat).
     public func invalidate(_ terrain: Terrain, worldReplaced: Bool = false) {
         materials = nil
         dropMasks()
@@ -109,6 +132,57 @@ public final class RenderState {
         visibleWater = nil
         ribbons.invalidateSnapshot()
         diagnostics.capture(terrain)
+    }
+
+    // MARK: - Frame (Issue #94)
+
+    /// Die Puffer eines Frames, in der einzigen gültigen Reihenfolge:
+    /// Bänder → Wasserfeld (liest `bandChannelFlags`/`bandCoverage` DIESES
+    /// Builds) → Schutzmaske (liest beides) → Waldmaske (liest die Schutzmaske).
+    /// Bis #94 stand die
+    /// Reihenfolge als Kommentar an drei Stellen in `Main.gd`, und Zeitraffer
+    /// und Pinsel-Nachzug bauten die Bänder tatsächlich NACH dem Wasserfeld.
+    ///
+    /// `now` = monotone Uhr des Aufrufers in Sekunden (Godot:
+    /// `Time.get_ticks_msec() / 1000`). Die Drosseln vergleichen nur Abstände;
+    /// über die Uhr bleiben sie headless prüfbar.
+    public func frame(_ terrain: Terrain, _ trigger: FrameTrigger, now: Double) -> RenderFrame {
+        var out = RenderFrame()
+        if trigger == .timelapse, let last = lastOverlayTime,
+           now - last < Self.overlayIntervalSeconds {
+            return out
+        }
+        lastOverlayTime = now
+
+        out.ribbonsRebuilt = rebuildRibbonsIfDue(
+            terrain, now: now, force: trigger == .settled || trigger == .stroke)
+
+        let blend = trigger == .timelapse ? Self.timelapseWaterBlend : 1.0
+        // GPU-Pfad: die CPU liefert das ungeglättete Feld, gemischt wird im Shader.
+        let water = waterFieldBytes(terrain, blend: deferWaterTail ? 1.0 : blend,
+                                    deferTail: deferWaterTail)
+        out.overlays = RenderFrame.Overlays(
+            water: water, waterBlend: blend,
+            colors: terrainColorBytes(terrain), surfaces: terrainSurfaceBytes(terrain),
+            flowDetail: flowDetailBytes(terrain), protectMask: protectMaskBytes(terrain),
+            forestMask: forestMaskBytes(terrain))
+        return out
+    }
+
+    /// Bänder neu bauen, wenn der Deckel abgelaufen ist (oder `force`) UND sich
+    /// die Zentrumslinien merklich bewegt haben. Der Deckel zählt die PRÜFUNG,
+    /// nicht den Bau: auch eine Prüfung ohne Rebuild startet ihn neu.
+    private func rebuildRibbonsIfDue(_ terrain: Terrain, now: Double, force: Bool) -> Bool {
+        guard geometryMode else { return false }
+        if !force, let last = lastRibbonCheckTime, now - last < Self.ribbonRebuildSeconds {
+            return false
+        }
+        lastRibbonCheckTime = now
+        guard riversMaxDelta(terrain) > Self.ribbonRebuildDelta else { return false }
+        buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
+                          lift: RenderContract.riverLift)
+        markRiversBuilt(terrain)
+        return true
     }
 
     // MARK: - Material-Puffer (Farbe + Gewichte, gemeinsam berechnet)

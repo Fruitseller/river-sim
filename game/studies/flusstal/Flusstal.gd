@@ -85,8 +85,8 @@ func _setup_scene() -> void:
 		{"protect": 1, "forest": 2, "cavity": 3}.get(debug, 0))
 
 ## Die Debug-Ansicht der Schutzmaske liest sie im Terrain-Shader.
-func _update_protect_mask() -> void:
-	super._update_protect_mask()
+func _update_protect_mask(bytes: PackedByteArray) -> void:
+	super._update_protect_mask(bytes)
 	if study_enabled:
 		terrain_mat.set_shader_parameter("protect_tex", protect_tex)
 
