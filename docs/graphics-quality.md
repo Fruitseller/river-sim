@@ -824,6 +824,20 @@ bleibt mit rund 5 ms die billige Stufe; das Kronendach ist dort nicht
 abgestuft, weil es weniger als 0,5 ms kostet. Im Zeitraffer überschreiten wie
 bisher die Sim-Schritte das Budget, gleich hoch (max. 80–100 ms) und
 ähnlich oft (39–46 Frames je Lauf, vorher 39–44); die Waldmaske je
-Overlay-Upload erhöht die Spitzen nicht messbar. Gemessen ist nur die Kamera
-`detail`; `overview` und `grazing` zeigen mehr Wald je Pixel und sind nicht
-eigens vermessen.
+Overlay-Upload erhöht die Spitzen nicht messbar.
+
+Nachgemessen auf `overview` (ganze Karte, die meisten Waldpixel) und `grazing`
+(flachster Blick, größte Kronen im Bild), Stand mit `crown_hash`, gleiche
+Bedingungen, Kamera per `RS_MATRIX_CAMERA=<kamera>` (der Timing-Modus nahm bis
+dahin stets `detail`). Nur nachher, Millisekunden je Frame:
+
+| Stufe | Kamera | Standbild Mittel / p95 / max | Kamerafahrt Mittel / p95 / max | Zeitraffer max, über 33,3 ms |
+| --- | --- | ---: | ---: | ---: |
+| balanced | overview | 15,41 / 15,96 / 16,90 | 15,79 / 16,43 / 17,43 | 96,64, 39 |
+| balanced | grazing | 22,44 / 22,87 / 23,24 | 22,08 / 22,46 / 22,85 | 83,20, 41 |
+| quality | overview | 15,40 / 15,94 / 16,60 | 15,39 / 15,89 / 16,79 | 81,70, 39 |
+| quality | grazing | 21,87 / 22,13 / 22,49 | 22,09 / 22,68 / 22,96 | 85,11, 42 |
+
+Standbild und Kamerafahrt bleiben auch dort im Budget, schlechtester
+Einzelframe 23,2 ms (`grazing`); der Zeitraffer liegt im selben Bereich wie
+bei `detail`.

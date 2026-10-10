@@ -116,13 +116,14 @@ run_shot() {
 
 run_timing() {
   local s="$1" y="$2" ylabel="$3" timing_mode="$4"
-  # Timing-Messung auf der Hauptansicht (detail bzw. overview)
+  # Timing-Messung auf der Hauptansicht `detail`, mit RS_MATRIX_CAMERA auf
+  # einer anderen Kamera der Tabelle.
   local cfg
-  cfg="$(camera_cfg "$s" detail)"
+  cfg="$(camera_cfg "$s" "${filter_camera:-detail}")"
   local target dist yaw pitch
   IFS=';' read -r target dist yaw pitch <<< "$cfg"
 
-  echo "==> [TIMING:$timing_mode] Seed $s ($(seed_name "$s")) | Jahr $y ($ylabel)"
+  echo "==> [TIMING:$timing_mode] Seed $s ($(seed_name "$s")) | Jahr $y ($ylabel) | Kamera ${filter_camera:-detail}"
 
   if [[ "$dry_run" == "1" ]]; then
     return 0
