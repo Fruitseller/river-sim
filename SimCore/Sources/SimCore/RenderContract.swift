@@ -24,10 +24,11 @@ public enum RenderContract {
     /// = Godot-Welt-Y. Von 30 gesenkt — weniger vertikale Überhöhung, sanfterer
     /// Look, ergänzt das gesenkte `baseRelief`.
     ///
-    /// Kennen müssen ihn: `Main.gd` (Mesh, Kamera-Sampling, Bäume, Bänder),
-    /// `terrain.gdshader` (Displacement + Normalen) und `SimNode`
-    /// (`treeInstanceBuffer`, `buildRiverRibbons` — beide bekommen ihn als
-    /// Parameter, legen ihn also NICHT selbst fest).
+    /// Kennen müssen ihn: `Main.gd` (Mesh, Kamera-Sampling, Bänder),
+    /// `terrain.gdshader` (Displacement + Normalen), `SimNode`
+    /// (`buildRiverRibbons` bekommt ihn als Parameter, legt ihn also NICHT
+    /// selbst fest) und die Waldmaske (`ForestCanopyMask`, Steilwand-Schwelle
+    /// in Weltsteigung).
     public static let heightScale = 24.0
 
     /// Anhebung der Wasser-Bänder über das Gelände (Godot-Welt-Y): deckt den

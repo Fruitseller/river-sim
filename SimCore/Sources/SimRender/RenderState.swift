@@ -1,10 +1,10 @@
 import Foundation
 import SimCore
 
-/// Der Render-Zustand EINER Welt: die vier zustandstragenden Renderer mit ihren
+/// Der Render-Zustand EINER Welt: die drei zustandstragenden Renderer mit ihren
 /// EWMA-Feldern, Arbeitspuffern und Dirty-Snapshots plus die Caches der
-/// zustandslosen Pässe `TerrainColorRenderer` (Issue #93) und
-/// `WaterProtectMask` (Issue #154).
+/// zustandslosen Pässe `TerrainColorRenderer` (Issue #93), `WaterProtectMask`
+/// (Issue #154) und `ForestCanopyMask` (Issue #152).
 ///
 /// Warum als eigener Typ und warum hier: dieser Zustand gehörte bis #93 der
 /// GDExtension, obwohl die Brücke laut `AGENTS.md` §Architektur reines
@@ -41,7 +41,6 @@ public final class RenderState {
 
     private let waterField = WaterFieldRenderer()
     private let ribbons = RiverRibbonRenderer()
-    private let trees = TreeInstanceRenderer()
     private let diagnostics = TerrainDiagnostics()
 
     /// Farbe und Materialgewichte entstehen gemeinsam und bleiben bis zur
@@ -60,6 +59,21 @@ public final class RenderState {
     /// kostete außerdem einen zweiten Wasserfeld-Lauf (~13 ms).
     private var visibleWater: [UInt8]?
 
+    /// Waldmaske des Kronendachs (R8). Sie liest Materialgewichte UND
+    /// Schutzmaske und fällt deshalb mit beiden (`dropMasks`).
+    private var forestMaskCache: [UInt8]?
+    /// Lichtungs-Rauschen: hängt nur an Gittergröße und Weltbreite, einmal
+    /// gerechnet.
+    private var clumpField: [Float] = []
+    private var clumpWorld = 0.0
+
+    /// Schutz- und Waldmaske fallen immer gemeinsam: die Waldmaske endet an
+    /// der Schutzmaske, ein veralteter Wald stünde sonst über neuem Wasser.
+    private func dropMasks() {
+        protectMaskCache = nil
+        forestMaskCache = nil
+    }
+
     // MARK: - Invalidierung (DER eine Einstieg)
 
     /// Meldet, dass sich das Terrain geändert hat: der Material-Cache fällt,
@@ -67,10 +81,10 @@ public final class RenderState {
     ///
     /// `worldReplaced` = es ist eine ANDERE Welt (neu generiert oder geladen).
     /// Dann fällt zusätzlich alles, was gegen den VORHERIGEN Stand vergleicht:
-    /// - die Dirty-Snapshots von Bäumen und Bändern, damit der nächste Frame
-    ///   beide neu baut statt sie über eine Delta-Heuristik gegen eine
-    ///   fremde Welt zu prüfen (ohne Vergleichsstand melden beide „riesig":
-    ///   Bäume 1, Bänder 1e9 — weit über den Schwellen in `Main.gd`),
+    /// - der Dirty-Snapshot der Bänder, damit der nächste Frame sie neu baut
+    ///   statt über eine Delta-Heuristik gegen eine fremde Welt zu prüfen
+    ///   (ohne Vergleichsstand meldet er „riesig", 1e9 — weit über der
+    ///   Schwelle in `Main.gd`),
     /// - der Vergleichspunkt der Diagnose, damit die Δ-Karte zeigt, was die Sim
     ///   AB JETZT tut, und nicht die Differenz zur alten Welt.
     ///
@@ -89,11 +103,10 @@ public final class RenderState {
     /// Taktung anfasst, entscheidet sie mit (Issue #94).
     public func invalidate(_ terrain: Terrain, worldReplaced: Bool = false) {
         materials = nil
-        protectMaskCache = nil
+        dropMasks()
         guard worldReplaced else { return }
         // Eine ANDERE Welt: das alte Wasserfeld passt nicht mehr dazu.
         visibleWater = nil
-        trees.invalidateSnapshot()
         ribbons.invalidateSnapshot()
         diagnostics.capture(terrain)
     }
@@ -138,7 +151,7 @@ public final class RenderState {
         // ungeblurt um höchstens die zwei Blur-Pässe schmaler als das Sichtbare,
         // und genau so weit reicht der Saum (`WaterRender.protectSeamCells`).
         visibleWater = bytes
-        protectMaskCache = nil
+        dropMasks()
         return bytes
     }
 
@@ -155,6 +168,23 @@ public final class RenderState {
                                           bandCoverage: ribbons.bandCoverage,
                                           waterBytes: visibleWater ?? [])
         protectMaskCache = mask
+        return mask
+    }
+
+    // MARK: - Kronendach (Issue #152)
+
+    /// Waldmaske des Kronendachs (R8-Puffer, n×n) — s. `ForestCanopyMask`.
+    /// Folgt Terrain, Wasser-Upload und Band-Bau wie die Schutzmaske.
+    public func forestMaskBytes(_ terrain: Terrain) -> [UInt8] {
+        if let forestMaskCache { return forestMaskCache }
+        let n = terrain.cfg.n
+        if clumpField.count != n * n || clumpWorld != terrain.cfg.world {
+            clumpField = ForestCanopyMask.clumpField(n: n, world: terrain.cfg.world)
+            clumpWorld = terrain.cfg.world
+        }
+        let mask = ForestCanopyMask.bytes(terrain, surfaces: terrainSurfaceBytes(terrain),
+                                          protect: protectMaskBytes(terrain), clump: clumpField)
+        forestMaskCache = mask
         return mask
     }
 
@@ -176,17 +206,6 @@ public final class RenderState {
         diagnostics.differenceBytes(terrain, scale: scale)
     }
 
-    // MARK: - Baum-Instanzen
-
-    public func treeVegMaxDelta(_ terrain: Terrain) -> Double { trees.maxDelta(terrain) }
-
-    public func markTreesBuilt(_ terrain: Terrain) { trees.markBuilt(terrain) }
-
-    public func treeInstanceBuffer(_ terrain: Terrain, variant: Int, hscale: Double,
-                                   coverage: Int) -> [Float] {
-        trees.buffer(terrain, variant: variant, hscale: hscale, coverage: coverage)
-    }
-
     // MARK: - Wasser-Geometrie (Band-Pfad)
 
     public func riversMaxDelta(_ terrain: Terrain) -> Double { ribbons.maxDelta(terrain) }
@@ -197,7 +216,7 @@ public final class RenderState {
     /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y).
     public func buildRiverRibbons(_ terrain: Terrain, hscale: Double, lift: Double) {
         ribbons.build(terrain, hscale: hscale, lift: lift)
-        protectMaskCache = nil
+        dropMasks()
     }
 
     /// Letztes Band-Bauergebnis als POD-Puffer (die Brücke wrappt sie in

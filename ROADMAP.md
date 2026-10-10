@@ -24,7 +24,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Ozean (#155, Kalibrierung als `WaterRender.ocean*`) und die Render-Verschiebung
   von Rinnen und Graten (#153, Render-Gitter in Sim-Auflösung, Pinselring und
   Kameraziel auf der verschobenen Fläche, Verformung blendet bis Jahr 20.000
-  mit dem Geländealter ein, Überblendung im Zeitraffer).
+  mit dem Geländealter ein, Überblendung im Zeitraffer) und das Kronendach
+  (#152, ersetzt die Instanzbäume; Waldmaske als godot-freie Render-Ableitung,
+  Kronen im Terrain-Shader). Damit hat die Studie keine Hebel mehr.
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare
@@ -136,10 +138,10 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Dämpfung (Gras 1.0 = Alt-Verhalten, Wald 1.1, Auwald 1.3), Auwald bremst die
   Mäander-Migration (`meanderCohesion`). Störung: Flood-Kill (τ_kill=20a) +
   Ufer-Kill (Mäander-Bett → veg=0); Regrünung per Sukzessions-Samen-Druck
-  (Dispersal-Radius 2, nur bewohnbare Standorte). Rendering: 3D-Bäume als
-  MultiMesh (`treeInstanceBuffer`, deterministischer Hash-Jitter, Waldklasse statt
-  pauschal `veg`, Strand-/Auen-/Hang-Ausschluss, reduzierte Standardansicht;
-  Umschalten keine/reduziert/voll per UI oder Taste V, Rebuild nur bei Max-Δveg > 0.1).
+  (Dispersal-Radius 2, nur bewohnbare Standorte). Rendering: seit Issue #152
+  ein Kronendach im Terrain-Shader (Kronen von ~11 m, Dach ~20 m angehoben,
+  Waldmaske `SimRender.ForestCanopyMask`, Kalibrierung `SimCore.CanopyRender`);
+  die 3D-Instanzbäume samt Schalter (Taste V) sind entfallen.
 - **Speichern/Laden (Issue #8):** eine Welt geht vollständig in EINE versionierte
   Binärdatei (`WorldSnapshot.swift`) — das ganze Zustands-Inventar
   (`TerrainState`, ~25 Felder à n²) plus Mäander-Zentrumslinien/Altarme, Seed und
@@ -769,8 +771,8 @@ Pass-Reihenfolge nach einem Pinselstrich liegt als
 - `SimCore/Sources/SimRender/` — godot-freie Render-Aufbereitung:
   `RenderState` als Besitzer des Render-Zustands (Issue #93) über
   `WaterFieldRenderer`, `RiverRibbonRenderer` + POD-`RibbonMesh`,
-  `TerrainColorRenderer`, `TreeInstanceRenderer`, `TerrainDiagnostics` und
-  `RenderSupport` als gemeinsame Ufer-/Mündungslogik.
+  `TerrainColorRenderer`, `WaterProtectMask`, `ForestCanopyMask`,
+  `TerrainDiagnostics` und `RenderSupport` als gemeinsame Ufer-/Mündungslogik.
 - `Extension/Sources/RiverSimGD/SimNode.swift` — dünne Brücke (`@Callable`s,
   Aufrufweitergabe und `Packed*Array`-Marshalling), ohne eigenen
   Render-Zustand; daneben bleibt nur `BrushTool` als Routing der
@@ -783,8 +785,8 @@ Pass-Reihenfolge nach einem Pinselstrich liegt als
   RS_*-Env-Schalter; Licht/Environment und Wolkenschatten seit #151 in
   `game/scripts/Lighting.gd` (feste Welt-Sonne, Qualitätsstufen).
 - `game/tests/*.gd` — die Godot-seitigen Wächter (`smoke`, `water_geometry`,
-  `river_ribbons`, `build_stamp_parity`, `tree_count`, `water_rings`,
-  `pickaxe_repro`, `lighting`) plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter).
+  `river_ribbons`, `build_stamp_parity`, `water_rings`, `pickaxe_repro`,
+  `lighting`, `relief`, `canopy`) plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter).
 
 ## Arbeitsweise in diesem Projekt (ernst nehmen)
 

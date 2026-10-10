@@ -81,8 +81,6 @@ final class RenderStateTests: XCTestCase {
         render.invalidate(terrain, worldReplaced: true)
 
         assertServesFreshMaterials(render, terrain, staleColors: stale, entry: "loadWorld")
-        XCTAssertGreaterThanOrEqual(render.treeVegMaxDelta(terrain), 1,
-                                    "loadWorld: Bäume müssen neu gebaut werden")
         XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1,
                                     "loadWorld: Bänder müssen neu gebaut werden")
     }
@@ -133,25 +131,19 @@ final class RenderStateTests: XCTestCase {
         let render = RenderState(geometryMode: true)
         render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
         render.markRiversBuilt(terrain)
-        render.markTreesBuilt(terrain)
         render.captureDebugReference(terrain)
         XCTAssertEqual(render.riversMaxDelta(terrain), 0)
-        XCTAssertEqual(render.treeVegMaxDelta(terrain), 0)
 
         render.invalidate(terrain)
         XCTAssertEqual(render.riversMaxDelta(terrain), 0,
                        "Dieselbe Welt: der Band-Vergleichsstand bleibt")
-        XCTAssertEqual(render.treeVegMaxDelta(terrain), 0,
-                       "Dieselbe Welt: der Baum-Vergleichsstand bleibt")
 
         terrain.step(dtYears: 500)
         render.invalidate(terrain, worldReplaced: true)
-        // Ohne Vergleichsstand melden beide Renderer „riesig" (Bäume 1, Bänder
-        // 1e9) — die Schwellen in `Main.gd` liegen weit darunter.
+        // Ohne Vergleichsstand meldet der Band-Renderer „riesig" (1e9) — die
+        // Schwelle in `Main.gd` liegt weit darunter.
         XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1,
                                     "Andere Welt: Bänder müssen neu gebaut werden")
-        XCTAssertGreaterThanOrEqual(render.treeVegMaxDelta(terrain), 1,
-                                    "Andere Welt: Bäume müssen neu gebaut werden")
         // Vergleichspunkt der Diagnose steht auf dem NEUEN Stand: Δ-Karte leer,
         // Referenzjahr = jetzt (Indizes: `TerrainDiagnostics.stats`).
         let stats = render.debugTerrainStats(terrain)
@@ -353,7 +345,7 @@ final class RenderStateTests: XCTestCase {
 
     func testBridgeOwnsNoRenderState() throws {
         let bridge = try RepoSource.extensionSources()
-        for owned in ["WaterFieldRenderer(", "RiverRibbonRenderer(", "TreeInstanceRenderer(",
+        for owned in ["WaterFieldRenderer(", "RiverRibbonRenderer(",
                       "TerrainDiagnostics(", "TerrainColorRenderer"] {
             XCTAssertFalse(bridge.contains(owned),
                            "Die GDExtension baut `\(owned)` selbst — Render-Zustand gehört "

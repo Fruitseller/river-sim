@@ -55,32 +55,20 @@ func _check_protect_mask() -> void:
 	study.free()
 	sim.free()
 
-## Ein unbekannter Hebelname bricht ab, statt still ignoriert zu werden.
+## Alle Hebel sind Produktion (#151, #153, #155, #152): ein alter Aufruf mit
+## `RS_STUDY_LEVERS` scheitert laut, statt still dasselbe Bild zu liefern.
 func _check_lever_parsing() -> void:
-	var previous_variant := OS.get_environment("RS_STUDY_VARIANT")
 	var previous_levers := OS.get_environment("RS_STUDY_LEVERS")
-	OS.set_environment("RS_STUDY_VARIANT", "prototype")
 	var script = load("res://studies/flusstal/Flusstal.gd")
 	OS.set_environment("RS_STUDY_LEVERS", "")
-	var all = script.new()
-	_check(all._parse_levers() and all.study_levers.size() == 1, "Ohne Angabe gilt der Hebel")
-	all.free()
-	OS.set_environment("RS_STUDY_LEVERS", "canopy")
-	var one = script.new()
-	_check(one._parse_levers() and one._lever("canopy"), "Hebel-Liste schaltet einzeln")
-	one.free()
-	OS.set_environment("RS_STUDY_LEVERS", "canopy,licht")
-	var typo = script.new()
-	_check(not typo._parse_levers(), "Tippfehler im Hebel muss abbrechen")
-	typo.free()
-	# `light` (#151), `frame` (#155) und `geometry` (#153) sind Produktion;
-	# ein alter Aufruf soll laut scheitern statt still dasselbe Bild zu liefern.
-	for adopted in ["light", "frame", "geometry"]:
+	var none = script.new()
+	_check(none._reject_levers(), "Ohne RS_STUDY_LEVERS startet die Studie")
+	none.free()
+	for adopted in ["canopy", "light", "frame", "geometry"]:
 		OS.set_environment("RS_STUDY_LEVERS", adopted)
 		var old = script.new()
-		_check(not old._parse_levers(), "Übernommener Hebel '%s' muss abbrechen" % adopted)
+		_check(not old._reject_levers(), "Übernommener Hebel '%s' muss abbrechen" % adopted)
 		old.free()
-	OS.set_environment("RS_STUDY_VARIANT", previous_variant)
 	OS.set_environment("RS_STUDY_LEVERS", previous_levers)
 
 ## Die Studien-Shader werden zur Laufzeit aus den Produktionsquellen gebaut
@@ -95,7 +83,7 @@ func _check_study_shaders() -> void:
 		"res://shaders/terrain.gdshader": [
 			"study_enabled", "study_rock_color", "study_rock_normal", "study_rock_roughness",
 			"study_ground_color", "study_ground_normal", "study_ground_roughness",
-			"study_canopy_enabled",
+			"study_debug",
 		],
 	}
 	for path in cases:

@@ -68,16 +68,15 @@ func _run() -> void:
 	_hash("waterFieldBytes(0.15)", sim.waterFieldBytes(0.15))
 	_hash("heightDifferenceBytes", sim.heightDifferenceBytes(0.01))
 	print("debugTerrainStats=", sim.debugTerrainStats())
-	for v in 3:
-		_hash("treeInstanceBuffer(%d)" % v,
-			(sim.treeInstanceBuffer(v, HSCALE, 2) as PackedFloat32Array).to_byte_array())
+	_hash("protectMaskBytes", sim.protectMaskBytes())
+	_hash("forestMaskBytes", sim.forestMaskBytes())
 	_hash("ribbonVerts", (sim.riverRibbonVerts() as PackedVector3Array).to_byte_array())
 	_hash("ribbonColors", (sim.riverRibbonColors() as PackedColorArray).to_byte_array())
 	_hash("ribbonUVs", (sim.riverRibbonUVs() as PackedVector2Array).to_byte_array())
 	_hash("ribbonUV2s", (sim.riverRibbonUV2s() as PackedVector2Array).to_byte_array())
 	_hash("ribbonIndices", (sim.riverRibbonIndices() as PackedInt32Array).to_byte_array())
 	_hash("ribbonStripStarts", (sim.riverRibbonStripStarts() as PackedInt32Array).to_byte_array())
-	print("riversMaxDelta=", sim.riversMaxDelta(), " treeVegMaxDelta=", sim.treeVegMaxDelta())
+	print("riversMaxDelta=", sim.riversMaxDelta())
 	print("RENDER_FINGERPRINT_OK")
 	quit(0)
 

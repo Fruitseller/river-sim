@@ -30,6 +30,13 @@
 // Rinnen-Schattierung. An Wasser ist sie per Schutzmaske null, Seen bleiben
 // flach auf ihrem Spiegel. Die Physik bleibt unberührt.
 //
+// KRONENDACH (#152): Wald als angehobenes Dach (~20 m) mit Einzelkronen von
+// ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel), dunklen Lücken und
+// Selbstschatten zum Kronenrand. WO Wald steht, sagt allein forest_tex
+// (SimRender.ForestCanopyMask, endet an der Schutzmaske); hier entstehen nur
+// Anhebung und Kronen. In der Entfernung geht das Muster in seinen Mittelwert
+// über.
+//
 // MATERIAL-LAYER (davon UNABHÄNGIG): aus surface_tex werden Boden, Vegetation,
 // Fels und Schnee/Eis in Weltkoordinaten prozedural aufgebaut (Körnung,
 // Gesteinsschichten, Windverfrachtung, Mikro-Normale). Eigener Schalter
@@ -138,9 +145,25 @@ uniform float relief_shade_light;
 // Main.gd setzt `sim_year` bei jedem Höhen-Upload.
 uniform float relief_geometry_age;
 uniform float sim_year = 0.0;
-// Schutzmaske (#154); hier liest sie nur das Kronendach der Studie, die
-// Verschiebung bekommt sie schon im Back-Pass.
-uniform sampler2D protect_tex : filter_linear, repeat_disable;
+// Kronendach (#152). Der Schalter ist keine Kalibrier-Zahl: ohne SimNode
+// (Editor-Vorschau) ist keine Waldmaske gebunden.
+uniform bool canopy_enabled = false;
+uniform sampler2D forest_tex : filter_linear, repeat_disable;
+// Kalibrierung über die Brücke (SimCore.CanopyRender), default-frei.
+uniform float canopy_cell;
+uniform float canopy_height;
+uniform float canopy_lift_lo;
+uniform float canopy_lift_hi;
+uniform float canopy_crown_mid;
+uniform float canopy_crown_spread;
+uniform float canopy_detail_lo;
+uniform float canopy_detail_hi;
+// Nadelbaum-Anteil nach Höhenband (HeightBands.coniferShare, über
+// SimNode.heightBands); die Defaults sind nur der Stand ohne SimNode-Update.
+uniform float conifer_lo = 0.26;
+uniform float conifer_hi = 0.48;
+
+varying float v_forest;
 
 varying vec2 v_uv;
 
@@ -222,7 +245,6 @@ float relief_cavity(vec2 uv) {
 	return (relief_sample(uv).a - 0.5) * 2.0;
 }
 
-#include "res://shaders/protect.gdshaderinc"
 
 // Billiges Value-Noise (2 Oktaven) für Breakup/Schaum — de-uniformiert Flächen.
 float vnoise(vec2 p) {
@@ -255,6 +277,64 @@ float triplanar_fbm(vec3 p, vec3 n) {
 	return fbm(p.yz) * weight.x + fbm(p.xz) * weight.y + fbm(p.xy) * weight.z;
 }
 
+// Kronendach je Pixel (#152, aus der Flusstal-Studie übernommen): Voronoi-
+// Kronen, je Zelle eine mit Zufallsversatz und -radius. Die Farben, Radien und
+// Neigungen hier sind Optik dieses Shaders wie die Ufer- und Kiesfarben unten,
+// keine Kalibrierung; die Schwellen kommen über die Brücke.
+void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
+            inout float rough) {
+	float f = v_forest;
+	if (f <= 0.002) {
+		return;
+	}
+	float conifer_share = clamp((h - conifer_lo) / max(conifer_hi - conifer_lo, 1e-6), 0.1, 0.9);
+	vec2 p = wp / max(canopy_cell, 1e-6);
+	vec2 g = floor(p);
+	float best = 0.0;
+	vec2 tilt = vec2(0.0);
+	float tint = 0.0;
+	float con = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 c = g + vec2(float(i), float(j));
+			vec2 r1 = ehash(c);
+			vec2 r2 = ehash(c + vec2(17.3, 5.1));
+			// Krone steht nur, wo die Waldmaske ihre eigene Schwelle
+			// übertrifft: am Rand dünnt der Wald so kronenweise aus.
+			if (f < canopy_crown_mid + canopy_crown_spread * r2.y) {
+				continue;
+			}
+			vec2 d = p - (c + 0.5 + r1 * 0.30);
+			float rad = 0.58 + 0.16 * r2.x;
+			float dd = length(d);
+			bool is_con = (r1.x * 0.5 + 0.5) < conifer_share;
+			float hgt = is_con ? (rad - dd) * 1.7 : sqrt(max(rad * rad - dd * dd, 0.0));
+			if (hgt > best) {
+				best = hgt;
+				tilt = is_con ? d / max(dd, 1e-4) * 1.7 : d / max(hgt, 0.12);
+				tint = r1.y * 0.5 + 0.5;
+				con = is_con ? 1.0 : 0.0;
+			}
+		}
+	}
+	vec3 decid = vec3(0.105, 0.175, 0.055) * mix(0.75, 1.25, tint);
+	vec3 conif = vec3(0.050, 0.098, 0.060) * mix(0.8, 1.2, tint);
+	vec3 crown = mix(decid, conif, con) * mix(0.55, 1.0, clamp(best / 0.6, 0.0, 1.0));
+	vec3 gap = vec3(0.022, 0.034, 0.020);
+	float inside = smoothstep(0.35, 0.75, f); // Lücken nur im Bestand dunkel
+	vec3 avg = mix(mix(decid, conif, conifer_share) * 0.8, gap, 0.3);
+	// Ab etwa einer Krone je Pixel nur noch der Mittelwert: kein Flimmern.
+	float detail = 1.0 - calib_window(canopy_detail_lo, canopy_detail_hi, length(fwidth(p)));
+	float covered = best > 0.0 ? 1.0 : inside;
+	vec3 near_col = best > 0.0 ? crown : gap;
+	vec3 col = mix(avg, near_col, detail);
+	float amount = mix(smoothstep(0.25, 0.6, f), covered, detail);
+	color = mix(color, col, amount);
+	vec3 t = vec3(clamp(tilt.x, -2.0, 2.0), 0.0, clamp(tilt.y, -2.0, 2.0)) * 0.85 * detail;
+	n = normalize(mix(n, normalize(macro_n + t), amount));
+	rough = mix(rough, 0.92, amount);
+}
+
 // Studien-Schichten: nur im FLUSSTAL_STUDY-Build eingebunden (Präprozessor).
 // Der normale Spiel-Shader überspringt Includes UND Aufrufe komplett — keine
 // Studien-Uniforms in Produktion, und `studies/` darf verschoben werden, ohne
@@ -284,11 +364,9 @@ void vertex() {
 	float lift = calib_window(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
 	// Seen hebt die Zeile selbst auf den Spiegel; dort keine Verschiebung.
 	VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);
-#ifdef FLUSSTAL_STUDY
-	float study_forest_v;
-	VERTEX.y += study_vertex(uv, hraw, study_forest_v);
-	v_study_forest = study_forest_v;
-#endif
+	// Kronendach: Waldkanten werfen Schatten. An Wasser ist die Maske null.
+	v_forest = canopy_enabled ? textureLod(forest_tex, uv, 0.0).r : 0.0;
+	VERTEX.y += calib_window(canopy_lift_lo, canopy_lift_hi, v_forest) * canopy_height;
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
 	float hR = texture(height_tex, uv + vec2(texel, 0.0)).r;
@@ -465,10 +543,15 @@ void fragment() {
 	if (study_enabled && hval > sea_level + 0.012) {
 		study_material(material_pos, cold, rock, vegetation, soil_w, macro_n,
 		               terr, n_ws, land_roughness);
-		study_canopy(wp, v_uv, hval, VERTEX, macro_n, terr, n_ws, land_roughness);
-		NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
 	}
 #endif
+	if (hval > sea_level + 0.012) {
+		canopy(wp, hval, macro_n, terr, n_ws, land_roughness);
+	}
+#ifdef FLUSSTAL_STUDY
+	study_debug_view(v_uv, v_forest, terr);
+#endif
+	NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
 
 	if (debug_difference) {
 		terr = debug_color;

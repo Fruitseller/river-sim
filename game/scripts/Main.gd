@@ -50,22 +50,11 @@ var terrain_mi: MeshInstance3D
 var water_mi: MeshInstance3D
 var ring_mi: MeshInstance3D
 
-# 3D-Bäume aus dem veg-Feld (Stufe 1, reine Optik): je Variante (Laub/Nadel/
-# Busch) EIN MultiMeshInstance3D → 3 Drawcalls für zehntausende Instanzen.
-# Die Instanz-Transforms baut SimNode.treeInstanceBuffer deterministisch
-# (Hash-Jitter, kein Frame-Random); GDScript setzt nur den Puffer.
-var tree_mmi: Array[MultiMeshInstance3D] = []
-const TREE_VARIANTS := 3
-const TREE_REBUILD_DELTA := 0.1 # Rebuild erst, wenn sich veg irgendwo um > 0.1 geändert hat
-enum TreeCoverage { NONE, REDUCED, FULL }
-var tree_coverage := TreeCoverage.REDUCED
-var tree_coverage_picker: OptionButton
-
 # Wasser-Geometrie (Issues #31/#34): Mäander, Delta-Distributäre und Altarme als
 # Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel. Seit #34 der
 # STANDARD; `RS_WATER_STAMP` schaltet für den A/B-Vergleich auf den alten
 # Raster-Stempel-Pfad zurück (ohne Rebuild, SimNode liest dieselbe Variable).
-# Dirty-Vertrag wie bei den Bäumen: Rebuild nur, wenn sich die Zentrumslinien
+# Dirty-Vertrag: Rebuild nur, wenn sich die Zentrumslinien
 # merklich bewegt haben (riversMaxDelta in Zellen).
 var river_ribbons := true
 var river_mi: MeshInstance3D
@@ -224,6 +213,13 @@ var relief_bakes := 0  # Zähler für den Wächter: nur Terrain-Updates backen
 var cam_target_on_surface := false
 # Schutzmaske (#154): endet die Verschiebung an Wasser.
 var protect_tex: ImageTexture
+# Kronendach (#152): Waldmaske aus SimRender (R8). `forest_lift_cache` ist die
+# Maske als Float auf dem Sim-Gitter für den Raycast, lazy aus `forest_img`
+# (leer = veraltet).
+var forest_tex: ImageTexture
+var forest_img: Image
+var forest_lift_cache: PackedFloat32Array
+var canopy_calib := {}
 
 # Kamera-Orbit
 var cam: Camera3D
@@ -452,7 +448,6 @@ func _ready() -> void:
 	# diesen einen Upload mit leeren/alten Flags.
 	_maybe_rebuild_rivers_throttled(true)
 	_update_terrain_textures()
-	_maybe_rebuild_trees()
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -547,6 +542,24 @@ func _setup_relief() -> void:
 	terrain_mat.set_shader_parameter("bake_blend", 1.0)
 	terrain_mat.set_shader_parameter("relief_enabled", true)
 
+## Kalibrierung des Kronendachs über die Brücke (#152): Name → Wert aus
+## SimCore.CanopyRender. Statisch, damit game/tests/canopy.gd sie headless prüft.
+static func canopy_calibration(sim_node: Object) -> Dictionary:
+	var names: PackedStringArray = sim_node.canopyUniformNames()
+	var values: PackedFloat32Array = sim_node.canopyUniformValues()
+	var calib := {}
+	for i in names.size():
+		calib[names[i]] = values[i]
+	return calib
+
+## Kronendach (#152): Kalibrierung aufs Terrain-Material, die Waldmaske kommt
+## mit jedem Overlay-Upload und Band-Bau (`_update_forest_mask`).
+func _setup_canopy() -> void:
+	canopy_calib = canopy_calibration(sim)
+	for name in canopy_calib:
+		terrain_mat.set_shader_parameter(name, canopy_calib[name])
+	terrain_mat.set_shader_parameter("canopy_enabled", true)
+
 func _setup_scene() -> void:
 	# Licht und Atmosphäre (#151): feste Welt-Sonne, Werte und Qualitätsstufen
 	# stehen in Lighting.gd.
@@ -582,6 +595,7 @@ func _setup_scene() -> void:
 	terrain_mi.material_override = terrain_mat
 	add_child(terrain_mi)
 	_setup_relief()
+	_setup_canopy()
 
 	if OS.has_environment("RS_WATER_GPU"):
 		water_gpu = true
@@ -622,19 +636,6 @@ func _setup_scene() -> void:
 		water_mats.append(river_mat)
 	apply_water_calibration(sim, water_mats)
 	Lighting.apply_clouds(water_mats, render_quality)
-
-	# Baum-MultiMeshes (Instanzen kommen später aus _rebuild_trees).
-	for v in TREE_VARIANTS:
-		var mmi := MultiMeshInstance3D.new()
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = _tree_mesh(v)
-		mmi.multimesh = mm
-		# Budget: zehntausende Schattenwerfer kosteten mehr als sie optisch
-		# bringen (Bäume sind aus der Orbit-Distanz wenige Pixel groß).
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(mmi)
-		tree_mmi.append(mmi)
 
 	# Pinsel-Ring
 	ring_mi = MeshInstance3D.new()
@@ -722,17 +723,6 @@ func _setup_ui() -> void:
 		tool_buttons.append(b)
 	tool_buttons[0].set_pressed_no_signal(true)
 
-	_section(vb, "VEGETATION")
-	tree_coverage_picker = OptionButton.new()
-	tree_coverage_picker.add_item("Keine", TreeCoverage.NONE)
-	tree_coverage_picker.add_item("Reduziert", TreeCoverage.REDUCED)
-	tree_coverage_picker.add_item("Voll", TreeCoverage.FULL)
-	tree_coverage_picker.select(TreeCoverage.REDUCED)
-	tree_coverage_picker.tooltip_text = "Bäume ausblenden oder für bessere Geländelesbarkeit reduzieren (V)"
-	tree_coverage_picker.focus_mode = Control.FOCUS_NONE
-	tree_coverage_picker.item_selected.connect(_set_tree_coverage)
-	vb.add_child(tree_coverage_picker)
-
 	_section(vb, "PINSEL")
 	radius_slider = _mk_slider(vb, "Radius", 3.0, 30.0, 1.0, brush_radius,
 		func(v: float): brush_radius = v)
@@ -779,7 +769,7 @@ func _setup_ui() -> void:
 	var hint := Label.new()
 	hint.add_theme_font_size_override("font_size", 15)
 	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Vegetation: V · Pause: Leertaste\nSpeichern: F5 · Laden: F9"
+	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Pause: Leertaste\nSpeichern: F5 · Laden: F9"
 	vb.add_child(hint)
 
 	# Diagnose bewusst als eigene Karte: Die Werkzeugleiste bleibt auch auf kleinen
@@ -899,13 +889,6 @@ func _set_rate(rate: float) -> void:
 	# Toggle-Zustand der Tempo-Buttons nachziehen (auch bei Leertaste/Code-Aufruf).
 	for i in SPEEDS.size():
 		speed_buttons[i].set_pressed_no_signal(SPEEDS[i][1] == rate)
-
-func _set_tree_coverage(coverage: int) -> void:
-	tree_coverage = coverage
-	for mmi in tree_mmi:
-		mmi.visible = coverage != TreeCoverage.NONE
-	if coverage != TreeCoverage.NONE:
-		_rebuild_trees()
 
 # ---------------------------------------------------------------- Zeit
 
@@ -1046,7 +1029,6 @@ func _after_sim(force_rivers := false) -> void:
 	# Bau-Ergebnis der Bänder (bandChannelFlags) für den Korridor-Deckel.
 	_maybe_rebuild_rivers_throttled(force_rivers)
 	_update_terrain_textures()
-	_maybe_rebuild_trees()
 	debug_dirty = true
 
 var _shot_frame := 0
@@ -1142,7 +1124,6 @@ func _process(delta: float) -> void:
 			# sie über ~2 s in die neue Lage.
 			_update_terrain_textures(0.15, update_overlays)
 			if update_overlays:
-				_maybe_rebuild_trees()
 				_maybe_rebuild_rivers_throttled()
 
 	if sculpting:
@@ -1243,7 +1224,6 @@ func _finish_stroke() -> void:
 	sculpt_refresh_timer = 0.0
 	sculpt_refresh_pending = false  # der vollständige Nachzug erledigt Teil 2 mit
 	_refresh_after_stroke()
-	_maybe_rebuild_trees()
 	debug_dirty = true
 
 func _update_camera_pan(delta: float) -> void:
@@ -1345,6 +1325,7 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 	if update_overlays:
 		_upload_overlays(water_blend)
 		_update_protect_mask()
+		_update_forest_mask()
 	_bake_relief()
 
 ## Alles außer der Höhe: im Zeitraffer und beim Pinseln gedrosselt.
@@ -1360,6 +1341,10 @@ func _upload_overlays(water_blend: float) -> void:
 	if bands.size() >= 2:
 		terrain_mat.set_shader_parameter("veg_alt_lo", bands[0])
 		terrain_mat.set_shader_parameter("veg_alt_hi", bands[1])
+	if bands.size() >= 8:
+		# Nadelbaum-Anteil des Kronendachs (#152, HeightBands.coniferShare).
+		terrain_mat.set_shader_parameter("conifer_lo", bands[6])
+		terrain_mat.set_shader_parameter("conifer_hi", bands[7])
 
 	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung; der
 	# Material-Cache in SimRender.RenderState verhindert doppelte
@@ -1383,12 +1368,23 @@ func _update_protect_mask() -> void:
 	var img := _protect_mask()
 	if protect_tex == null:
 		protect_tex = ImageTexture.create_from_image(img)
-		terrain_mat.set_shader_parameter("protect_tex", protect_tex)
 	else:
 		protect_tex.update(img)
 
 func _protect_mask() -> Image:
 	return Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.protectMaskBytes())
+
+## Waldmaske des Kronendachs (#152): SimRender.ForestCanopyMask aus
+## Materialgewichten, Steigung und Schutzmaske, gecacht wie die Schutzmaske.
+## Hier nur Hochladen; den Raycast-Zuschlag rechnet `_forest_lift_at` lazy.
+func _update_forest_mask() -> void:
+	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.forestMaskBytes())
+	forest_lift_cache = PackedFloat32Array()
+	if forest_tex == null:
+		forest_tex = ImageTexture.create_from_image(forest_img)
+		terrain_mat.set_shader_parameter("forest_tex", forest_tex)
+	else:
+		forest_tex.update(forest_img)
 
 ## Render-Verschiebung neu backen (#153), einmal je Terrain-Update: der
 ## Back-Pass zeichnet genau einen Frame, danach steht die Textur bis zum
@@ -1524,89 +1520,8 @@ func _update_debug_difference_texture() -> void:
 		sim.heightDifferenceBytes(debug_difference_scale))
 
 
-# ---------------------------------------------------------------- Bäume (Stufe 1)
-
-## Low-Poly-Baum je Variante als ArrayMesh: Stamm + Krone als getrennte
-## Surfaces mit eigenem Material (kein Vertex-Color-Umweg). Größen sind in die
-## Primitive gebacken (Transforms nur Translation → Normalen bleiben gültig).
-func _tree_mesh(variant: int) -> ArrayMesh:
-	var am := ArrayMesh.new()
-	var trunk_mat := _tree_material(Color(0.32, 0.23, 0.15))
-	match variant:
-		0: # Laubbaum: kurzer Stamm + gestauchte Kugel-Krone
-			var trunk := CylinderMesh.new()
-			trunk.top_radius = 0.05
-			trunk.bottom_radius = 0.09
-			trunk.height = 0.6
-			trunk.radial_segments = 5
-			trunk.rings = 1
-			_add_surface(am, trunk, Vector3(0, 0.3, 0), trunk_mat)
-			var crown := SphereMesh.new()
-			crown.radius = 0.52
-			crown.height = 0.9
-			crown.radial_segments = 7
-			crown.rings = 4
-			_add_surface(am, crown, Vector3(0, 0.95, 0), _tree_material(Color(0.20, 0.38, 0.14)))
-		1: # Nadelbaum: Stamm + Kegel
-			var trunk2 := CylinderMesh.new()
-			trunk2.top_radius = 0.05
-			trunk2.bottom_radius = 0.08
-			trunk2.height = 0.45
-			trunk2.radial_segments = 5
-			trunk2.rings = 1
-			_add_surface(am, trunk2, Vector3(0, 0.22, 0), trunk_mat)
-			var cone := CylinderMesh.new()
-			cone.top_radius = 0.0
-			cone.bottom_radius = 0.4
-			cone.height = 1.5
-			cone.radial_segments = 6
-			cone.rings = 1
-			_add_surface(am, cone, Vector3(0, 1.1, 0), _tree_material(Color(0.12, 0.29, 0.15)))
-		_: # Busch: flache Kugel, kein Stamm
-			var bush := SphereMesh.new()
-			bush.radius = 0.32
-			bush.height = 0.42
-			bush.radial_segments = 6
-			bush.rings = 3
-			_add_surface(am, bush, Vector3(0, 0.16, 0), _tree_material(Color(0.25, 0.40, 0.17)))
-	return am
-
-func _tree_material(c: Color) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = 1.0
-	return m
-
-## Hängt die (nur verschobene) Surface 0 von `src` an `am` an.
-func _add_surface(am: ArrayMesh, src: Mesh, offset: Vector3, mat: Material) -> void:
-	var arr: Array = src.surface_get_arrays(0)
-	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-	for vi in verts.size():
-		verts[vi] += offset
-	arr[Mesh.ARRAY_VERTEX] = verts
-	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	am.surface_set_material(am.get_surface_count() - 1, mat)
-
-## Rebuild-Heuristik: Bäume nur neu setzen, wenn sich das veg-Feld seit dem
-## letzten Build merklich geändert hat (Max-Delta > 0.1) — nicht jeden Frame.
-## Vor dem ersten Build liefert SimNode immer 1.0 → Initial-Build garantiert.
-func _maybe_rebuild_trees() -> void:
-	if sim.treeVegMaxDelta() > TREE_REBUILD_DELTA:
-		_rebuild_trees()
-
-func _rebuild_trees() -> void:
-	if tree_coverage == TreeCoverage.NONE:
-		return
-	for v in tree_mmi.size():
-		var buf: PackedFloat32Array = sim.treeInstanceBuffer(v, HSCALE, tree_coverage)
-		var mm: MultiMesh = tree_mmi[v].multimesh
-		mm.instance_count = buf.size() / 12
-		if buf.size() > 0:
-			mm.buffer = buf
-	sim.markTreesBuilt()
-
 ## Fluss-Ribbons: Rebuild nur, wenn sich die Mäander-Zentrumslinien seit dem
-## letzten Build bewegt haben (Dirty-Vertrag wie bei den Bäumen; Struktur-
+## letzten Build bewegt haben (Dirty-Vertrag; Struktur-
 ## Änderungen wie Cutoffs melden ein Riesen-Delta → sofortiger Rebuild).
 ## Gemeinsamer 1-Hz-Deckel für Echtzeit UND `_jump`: der alte reine
 ## `_process`-Timer ließ jeden 2000-Jahre-Sprung-Chunk ein Mesh bauen. `force`
@@ -1627,8 +1542,9 @@ func _river_rebuild_due(now_msec: int, force: bool) -> bool:
 
 func _rebuild_rivers() -> void:
 	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
-	# Neue Bänder → neue Schutzmaske → Verschiebung neu backen.
+	# Neue Bänder → neue Schutz- und Waldmaske → Verschiebung neu backen.
 	_update_protect_mask()
+	_update_forest_mask()
 	_bake_relief()
 	river_mesh.clear_surfaces()
 	var verts: PackedVector3Array = sim.riverRibbonVerts()
@@ -1701,10 +1617,6 @@ func _unhandled_input(event: InputEvent) -> void:
 				_save_world()
 			KEY_F9: # Welt laden
 				_load_world()
-			KEY_V:
-				if not event.echo:
-					_set_tree_coverage((tree_coverage + 1) % 3)
-					tree_coverage_picker.select(tree_coverage)
 			_:
 				# Werkzeug-Tasten 1…N in Tabellen-Reihenfolge (Issue #53): ein
 				# neues Werkzeug braucht hier keine eigene Zeile mehr.
@@ -1786,14 +1698,28 @@ func _sample_h(gx: float, gz: float) -> float:
 	_ensure_h_cache()
 	return _sample_grid(h_cache, gx, gz)
 
-## Sichtbare Höhe (Welt-Y): Sim-Höhe plus Render-Verschiebung (#153).
-## Seen trägt die Verschiebung nicht (Schutzmaske), dort bleibt es die Sim-Höhe.
+## Sichtbare Höhe (Welt-Y): Sim-Höhe plus Render-Verschiebung (#153) plus
+## Kronendach (#152). Seen tragen beides nicht (Schutzmaske), dort bleibt es
+## die Sim-Höhe.
 func _surface_y(gx: float, gz: float) -> float:
 	var y := _sample_h(gx, gz) * HSCALE
 	if not relief_lift_cache.is_empty():
 		y += (_sample_grid(relief_lift_cache, gx, gz) - 0.5) / relief_height_code \
 			* relief_geometry_fade(sim.currentYear(), relief_geometry_age)
-	return y
+	return y + _forest_lift_at(gx, gz)
+
+## Dachzuschlag in Welt-Y wie im Terrain-Shader: Waldmaske bilinear, dann
+## das Anhebe-Fenster. Die Maske wird erst beim ersten Raycast nach einem
+## Upload in Floats gewandelt.
+func _forest_lift_at(gx: float, gz: float) -> float:
+	if forest_img == null:
+		return 0.0
+	if forest_lift_cache.is_empty():
+		var img: Image = forest_img.duplicate()
+		img.convert(Image.FORMAT_RF)
+		forest_lift_cache = img.get_data().to_float32_array()
+	return smoothstep(canopy_calib["canopy_lift_lo"], canopy_calib["canopy_lift_hi"],
+		_sample_grid(forest_lift_cache, gx, gz)) * canopy_calib["canopy_height"]
 
 ## Anteil der echten Verformung nach Geländealter, wie im Terrain-Shader
 ## (`relief_lift`): auf jungem Relief nur Schattierung, ab `age` voll.

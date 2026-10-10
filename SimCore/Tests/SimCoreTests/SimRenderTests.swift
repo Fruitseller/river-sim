@@ -20,60 +20,6 @@ final class SimRenderTests: XCTestCase {
       "RGBA-Farbpuffer muss vollständig opak sein")
   }
 
-  func testTreeBuffersAreDeterministicAndHonorTheDirtyContract() {
-    let terrain = Terrain(config: renderConfig(), seed: 1337)
-    let renderer = TreeInstanceRenderer()
-
-    XCTAssertEqual(renderer.maxDelta(terrain), 1)
-    let first = renderer.buffer(terrain, variant: 0, hscale: 24, coverage: 2)
-    let second = renderer.buffer(terrain, variant: 0, hscale: 24, coverage: 2)
-    XCTAssertFalse(first.isEmpty, "Testwelt enthält keine Laubbäume")
-    XCTAssertEqual(first.count % 12, 0)
-    XCTAssertEqual(first, second)
-    XCTAssertTrue(first.allSatisfy(\.isFinite))
-
-    renderer.markBuilt(terrain)
-    XCTAssertEqual(renderer.maxDelta(terrain), 0)
-    renderer.invalidateSnapshot()
-    XCTAssertEqual(renderer.maxDelta(terrain), 1)
-  }
-
-  func testTreeMaxDeltaMeasuresIntermediateVegetationDelta() {
-    let terrain = Terrain(config: renderConfig(), seed: 1337)
-    let renderer = TreeInstanceRenderer()
-    renderer.markBuilt(terrain)
-    XCTAssertEqual(renderer.maxDelta(terrain), 0)
-
-    var state = terrain.state
-    let first = 0
-    let middle = terrain.cfg.count / 2
-    let last = terrain.cfg.count - 1
-
-    state.veg[first] += 0.05
-    state.veg[middle] += 0.35
-    state.veg[last] += 0.15
-    terrain.restore(state)
-
-    let delta = renderer.maxDelta(terrain)
-    XCTAssertGreaterThan(delta, 0, "maxDelta muss echte Vegetationsänderungen erkennen")
-    XCTAssertLessThan(delta, 1, "maxDelta darf bei partieller Änderung nicht auf den Sentinel 1 springen")
-    XCTAssertEqual(delta, 0.35, accuracy: 1e-12, "maxDelta muss das exakte Maximum der Abweichungen liefern")
-  }
-
-  func testTreeMaxDeltaHandlesEmptyVegetationBufferAsZeroDelta() {
-    let terrain = Terrain(config: renderConfig(), seed: 1337)
-    let renderer = TreeInstanceRenderer()
-    var state = terrain.state
-    state.veg = []
-    terrain.restore(state)
-
-    XCTAssertEqual(renderer.maxDelta(terrain), 1.0, "Ohne Snapshot stets Rebuild erzwingen")
-    renderer.markBuilt(terrain)
-    XCTAssertEqual(renderer.maxDelta(terrain), 0.0, "Leere Puffer weisen keine Differenz auf (kein Rebuild)")
-    renderer.invalidateSnapshot()
-    XCTAssertEqual(renderer.maxDelta(terrain), 1.0, "Nach Invalidation stets Rebuild erzwingen")
-  }
-
   func testDiagnosticStatsKeepTheirExecutableIndexContract() {
     let terrain = Terrain(config: renderConfig(), seed: 1337)
     let renderer = TerrainDiagnostics()

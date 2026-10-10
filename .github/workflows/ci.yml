@@ -225,3 +225,7 @@ jobs:
       - name: Render-Verschiebung von Rinnen und Graten (Issue #153)
         run: |
           scripts/godot-test.sh res://tests/relief.gd RELIEF_OK
+
+      - name: Kronendach (Issue #152)
+        run: |
+          scripts/godot-test.sh res://tests/canopy.gd CANOPY_OK

@@ -86,51 +86,6 @@ final class HeightBandTests: XCTestCase {
             "Schneezone nach 30k Jahren praktisch leer: \(at30k.ramp)")
     }
 
-    /// **Waldgrenze gegen Schneegrenze** (Review-Finding zu PR #28). Die beiden
-    /// Bänder ÜBERLAPPEN sich per Konstruktion — `vegNone` (vegFull + Rampenbreite)
-    /// liegt über `snowStart` —, die Sim hält also auch in der Schneezone
-    /// noch Bewuchs. Baum-GEOMETRIE darf dort trotzdem nicht stehen; die Regel
-    /// dafür ist `HeightBands.bearsTrees` (verbraucht von
-    /// `SimRender.TreeInstanceRenderer`).
-    ///
-    /// **Seit Issue #33 ist das zugleich der Wächter dafür, dass die WALDGRENZE
-    /// am Schneefeld hängt:** `snowStart` kommt aus der Massenbilanz (früher
-    /// p98.5), `bearsTrees` liest es unverändert. Die Waldgrenze folgt damit dem
-    /// Klima, ohne dass ein Konsument der Höhenband-API etwas ändern musste.
-    ///
-    /// Der Test prüft beides: dass die Überlappung wirklich existiert (sonst wäre
-    /// er stumm) und dass kein Standort in der Schneezone baumtragend ist.
-    /// Gemessen (n=832, Seed 1337, Generierung, Stand #4): snowStart 0.5697,
-    /// vegNone 0.6844, Höhenfaktor an der Schneegrenze 0.617 — 4 von 31995
-    /// Baum-Kandidaten lagen vor dem Fix in der Schneezone, nach 30k Jahren 11
-    /// von 56994. Mit dem Klima (#33) liegt `snowStart` auf 0.5721, die
-    /// Überlappung ist also unverändert vorhanden.
-    func testSnowZoneBearsNoTrees() {
-        var c = SimConfig(); c.n = 256; c.world = calibrationWorld
-        let t = Terrain(config: c, seed: 1337)
-        let b = t.heightBands
-        // Vorbedingung: die Bänder überlappen (sonst testet der Guard nichts).
-        XCTAssertGreaterThan(b.vegNone, b.snowStart,
-            "Bänder überlappen nicht mehr (vegNone \(b.vegNone) ≤ snowStart \(b.snowStart)) — Test stumm")
-        XCTAssertGreaterThan(b.vegetationAltitudeFactor(b.snowStart), 0,
-            "Vegetations-Höhenfaktor ist an der Schneegrenze schon 0 — Test stumm")
-        // …und in der Schneezone wächst real Bewuchs, den die Baum-Maske sonst nähme.
-        var vegetatedSnowCells = 0
-        for k in 0..<c.count where t.h[k] > c.sea && b.snowAmount(t.h[k]) > 0 {
-            if t.veg[k] > 0.32 { vegetatedSnowCells += 1 }
-        }
-        XCTAssertGreaterThan(vegetatedSnowCells, 0,
-            "keine bewachsene Schneezellen-Kandidaten — Test stumm")
-        // Kernaussage: kein Standort in der Schneezone ist baumtragend.
-        for k in 0..<c.count where t.h[k] > c.sea && b.snowAmount(t.h[k]) > 0 {
-            XCTAssertFalse(b.bearsTrees(t.h[k]),
-                "Schneezone trägt Bäume (h = \(t.h[k]), snowStart \(b.snowStart))")
-        }
-        // Unterhalb der Schneegrenze bleibt die Waldgrenze das Vegetationsband.
-        let belowSnow = b.snowStart - 1e-6
-        XCTAssertEqual(b.bearsTrees(belowSnow), b.vegetationAltitudeFactor(belowSnow) > 0)
-    }
-
     /// Die PERZENTIL-Bänder ziehen mit: sinkt das Terrain über einen langen Lauf,
     /// sinkt die Vegetationsgrenze mit — genau das, was absolute Schwellen nicht
     /// können. Nachgemessen (n=160, Seed 1337, 60k Jahre, Stand #33):
@@ -205,8 +160,7 @@ final class HeightBandTests: XCTestCase {
     /// **Schneefreies Klima** (Issue #33): ein Landanteil von 0 ist ein gültiger
     /// Zustand — warme Welt oder flach erodierte Insel. Das Band muss dann
     /// vollständig ÜBER dem Land liegen, sonst wären ausgerechnet die Gipfel
-    /// weiß, obwohl das Klima keinen Schnee trägt (und `bearsTrees` würde sie
-    /// grundlos entwalden).
+    /// weiß, obwohl das Klima keinen Schnee trägt.
     func testEmptySnowFieldPutsTheBandAboveTheLand() {
         var c = SimConfig(); c.n = 64; c.world = calibrationWorld
         var heights = [Double](repeating: c.sea - 0.1, count: 4000)
@@ -218,8 +172,6 @@ final class HeightBandTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(bands.snowFull - bands.snowStart, c.bandMinRampWidth)
         for v in heights where v > c.sea {
             XCTAssertEqual(bands.snowAmount(v), 0, "Land trägt Schnee ohne Schneefeld")
-            XCTAssertEqual(bands.bearsTrees(v), bands.vegetationAltitudeFactor(v) > 0,
-                           "Waldgrenze wird ohne Schnee vom Schnee-Band beschnitten")
         }
 
         // Gegenprobe: mit Schnee schneidet das Band genau den gemessenen Anteil ab.
@@ -264,7 +216,6 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(b.snowAmount(Double.nan), 0, "NaN-Höhe darf keinen Schnee ausweisen")
         XCTAssertEqual(b.vegetationAltitudeFactor(Double.nan), 0, "NaN-Höhe darf keine Vegetation tragen")
         XCTAssertEqual(b.coniferShare(Double.nan), 0.1, "NaN-Höhe muss auf die Untergrenze fallen")
-        XCTAssertFalse(b.bearsTrees(Double.nan), "NaN-Höhe darf keine Bäume tragen")
 
         // Unendlichkeiten
         XCTAssertEqual(b.rockAmount(Double.infinity), 1)
@@ -275,8 +226,6 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(b.vegetationAltitudeFactor(-Double.infinity), 1)
         XCTAssertEqual(b.coniferShare(Double.infinity), 0.9)
         XCTAssertEqual(b.coniferShare(-Double.infinity), 0.1)
-        XCTAssertFalse(b.bearsTrees(Double.infinity))
-        XCTAssertTrue(b.bearsTrees(-Double.infinity))
     }
 
     /// Nicht-endliche (NaN, ±inf) oder extrem große Höhenwerte dürfen bei der
