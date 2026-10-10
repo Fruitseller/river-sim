@@ -777,7 +777,7 @@ Bändern samt Nachbarzelle, keiner in Wänden, auf Schnee, im Ufersaum;
 Determinismus; Pinsel, Neugenerieren und Laden ohne veralteten Wald;
 Vertrag und Uniform-Weg) und `game/tests/canopy.gd` (CI-Marke `CANOPY_OK`:
 Uniforms gesetzt, Waldtextur am Material, keine Instanzbäume, Fläche auf dem
-Dach, Neugenerieren tauscht den Wald).
+Dach; Pinselstrich, Neugenerieren und Laden über die Pfade von `Main.gd`).
 
 ### Vergleichsmatrix vorher/nachher
 
