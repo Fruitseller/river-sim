@@ -78,10 +78,12 @@ der headless Modus sinnvoll.
 
 ### Leistung und Diagnose
 
-Standard ist `RS_QUALITY=balanced`: Die Simulation bleibt bei 720×720, das
-Terrain-Displacement nutzt aber ein 384×384-Gitter. `RS_QUALITY=quality` nutzt
-die volle Geometrie; `RS_QUALITY=performance` verwendet 256×256, deaktiviert
-SSAO, Glow und den kostspieligen Detail-Erosionsshader. `RS_RENDER_GRID=512`
+Standard ist `RS_QUALITY=balanced`: Das Terrain-Gitter hat Sim-Auflösung
+(720×720), die Rinnen und Grate der Render-Verschiebung inklusive.
+`RS_QUALITY=quality` ist seit Issue #153 gleichwertig (ein feineres Gitter
+kostete doppelt ohne sichtbaren Gewinn, `docs/graphics-quality.md`);
+`RS_QUALITY=performance` verwendet 256×256, deaktiviert SSAO und den
+kostspieligen Detail-Erosionsshader. `RS_RENDER_GRID=512`
 überschreibt nur die Gittergröße. `RS_DIAG=1` gibt die Zeit eines 60-Jahr-
 Simulationsschritts und zehn Texture-Updates aus.
 

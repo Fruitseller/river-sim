@@ -135,7 +135,21 @@ run_timing() {
   export RS_TARGET="$target" RS_DIST="$dist" RS_YAW="$yaw" RS_PITCH="$pitch"
   export RS_STUDY_VARIANT="$variant" RS_STUDY_MODE="$timing_mode" RS_STUDY_OUTPUT=""
 
-  scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn
+  # Ergebnis als Datei neben den Aufnahmen (Spec #156): eine JSON-Zeile je Lauf
+  # mit Viewport, Qualitätsstufe und Render-Gitter; der Dateiname trägt Welt,
+  # Stadium, Kamera, Stufe und Betrieb. Die Konsolenausgabe bleibt sichtbar.
+  # Gewertet wird die Zeile, nicht der Exit-Code: Godot reißt beim
+  # Herunterfahren sporadisch ab (Issue #61), die Messung steht dann schon da.
+  local out="$output_dir/timing/seed${s}_${ylabel}_${filter_camera:-detail}_${quality}_${timing_mode}.json"
+  mkdir -p "$output_dir/timing"
+  { scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn || true; } | tee /dev/stderr \
+    | { grep '^STUDY_TIMING ' || true; } | sed 's/^STUDY_TIMING //' > "$out"
+  if [[ ! -s "$out" ]]; then
+    echo "Keine STUDY_TIMING-Zeile für $out" >&2
+    rm -f "$out"
+    exit 1
+  fi
+  echo "    Messung: $out"
 }
 
 # 1. Bilderzeugung (shot)

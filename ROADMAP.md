@@ -10,14 +10,15 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Aktueller Stand (Kurzfassung)
 
-- **Landschaftsqualität #116:** separate ausführbare Flusstal-Studie, zweite
-  Runde mit vier prozeduralen Hebeln: gebackene Render-Verschiebung (Rinnen,
-  geschärfte Grate), Kronendach im Maßstab 1 Einheit ≈ 100 m, tiefes Seitenlicht
-  mit Luftperspektive und Wolkenschatten, Ozean nach Wassertiefe. Keine
-  Handplatzierung mehr. Reproduktion, Wirkungsleiter, Messreihe und Grenzen in
-  `docs/graphics-quality.md`. Vorbau für #117: Schutzmaske als godot-freie
-  Render-Ableitung in SimRender umgesetzt (#154). #117 läuft über die
-  Folge-Tickets #150–#155.
+- **Landschaftsqualität #116/#117:** die Flusstal-Studie (#116, PR #121) hat
+  vier prozedurale Hebel bewiesen: gebackene Render-Verschiebung (Rinnen,
+  geschärfte Grate), Kronendach im Maßstab 1 Einheit ≈ 100 m, Licht mit
+  Luftperspektive und Wolkenschatten, Ozean nach Wassertiefe. Teil 2 (#117,
+  Spec #156) hat alle vier über die Tickets #150–#155 in die normale Anwendung
+  übernommen; Übersicht und Status der Studie (heute Mess- und
+  Referenzbühne, kein Produktionsweg) in `docs/graphics-quality.md`
+  § Abschluss Spec #156. Schutzmaske als godot-freie Render-Ableitung in
+  SimRender (#154).
   Die verbindliche Abnahmematrix für die Vorher/Nachher-Bewertung aller Folge-Tickets
   ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, `scripts/graphics-matrix.sh`,
   `GraphicsMatrixTests`). In der Anwendung: Licht und Atmosphäre (#151), der
@@ -446,9 +447,9 @@ Messreihen `docs/dt-invariance-measurements.md`):
   die Tiefe; kleine Wasserflächen faden über 12→24 Zellen ein, statt bei 25 hart zu
   ploppen. Vertex-Lift und Farbe teilen sich das Gate, sonst bliebe eine trockene
   horizontale Fläche im Becken stehen. OFFEN dabei geblieben: der Vertex-Lift selbst
-  läuft weiter auf dem RENDER-Gitter (384/256) — die Silhouette der Seefläche bleibt
-  dort gerastert, die per-Pixel-Kontur überdeckt sie nur. Nebenwirkung gemessen und
-  behalten: weil der G-Kanal jetzt ein gesättigtes Gate ist, bekommen Seen erstmals
+  läuft weiter auf dem RENDER-Gitter (seit #153 n, in `performance` 256) — die
+  Silhouette der Seefläche bleibt dort gerastert, die per-Pixel-Kontur überdeckt
+  sie nur. Nebenwirkung gemessen und behalten: weil der G-Kanal jetzt ein gesättigtes Gate ist, bekommen Seen erstmals
   einen Ufer-Saum (`shore`) — vorher fiel er an Seen aus, s.
   `docs/lake-shore-contour-measurements.md`.
 - Steile Oberläufe der Fluss-Geometrie leicht segmentiert — feinere Glättung oder

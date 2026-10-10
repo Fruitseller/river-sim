@@ -1,8 +1,11 @@
 # Landschaftsqualität: Flusstal-Studie #116
 
-Stand: 8. Oktober 2026, zweite Runde. Ausführbarer Prototyp, visuelle Abnahme
-noch offen. Teil 2, Issue #117, beginnt erst nach ausdrücklicher Bestätigung
-des Bildsprungs.
+Stand: 10. Oktober 2026. Die Studie (Teil 1, #116) ist mit PR #121
+abgenommen; Teil 2 (#117, Spec #156) hat alle vier Hebel in die normale
+Anwendung übernommen (#150, #151, #152, #153, #154, #155; s.
+[Abschluss Spec #156](#abschluss-spec-156)). Die Kapitel bis „Verifikation und
+Übergabe" sind das Protokoll der Studie und bleiben als historische Referenz
+stehen; wo sie vom heutigen Stand abweichen, steht es dort.
 
 ## Abgestimmtes Ziel
 
@@ -69,9 +72,11 @@ unter ein Band. Seen hebt der Vertex-Shader wie bisher auf den Spiegel, dort
 gibt es keine Verschiebung. Die Bänder sampeln die sichtbare Oberfläche des
 vollen Sim-Gitters (`setRenderGrid(N)`). Die Sim-Felder ändern sich nicht.
 
-**Produktion bleibt unverändert.** Alle Studien-Hooks in `terrain.gdshader`,
-`ocean.gdshader` und `water.gdshader` stehen hinter `#ifdef FLUSSTAL_STUDY`;
-`Flusstal.gd` stellt das Define zur Laufzeit vor die Quelle. Einzige
+**Produktion bleibt unverändert.** Alle Studien-Hooks stehen hinter
+`#ifdef FLUSSTAL_STUDY`; `Flusstal.gd` stellt das Define zur Laufzeit vor die
+Quelle. (Damals in `terrain.gdshader`, `ocean.gdshader` und `water.gdshader`;
+seit #155/#151 nur noch in `terrain.gdshader`, für die PBR-Materialien und die
+Debug-Ansichten.) Einzige
 Strukturänderung am Produktions-Shader: der runevision-Filter liegt jetzt in
 `game/shaders/erosion_filter.gdshaderinc` (gleicher Code, Skala als Parameter),
 damit der Back-Pass ihn mitbenutzt statt ihn zu kopieren. `NOTICE` führt die
@@ -228,13 +233,16 @@ selbst (s. o.), nicht die Maske.
 
 ## Grenzen dieser Studie
 
-- Die Verschiebung ist kosmetisch und nicht Teil der Sim-Höhe: Pinsel-Picking,
-  Baum-Instanzen (hier ausgeschaltet) und alles, was `heightsBytes()` liest,
-  sehen die glatte Sim-Fläche. Gemessen reicht der Zuschlag von −0,25 bis
+- Die Verschiebung ist kosmetisch und nicht Teil der Sim-Höhe: alles, was
+  `heightsBytes()` liest, sieht die glatte Sim-Fläche. (In der Studie galt das
+  auch für Pinsel-Picking und Baum-Instanzen; seit #153 liegen Pinselring und
+  Kameraziel auf der sichtbaren Fläche, seit #152 gibt es keine Instanzbäume
+  mehr.) Gemessen reicht der Zuschlag von −0,25 bis
   +1,0 Einheiten (Grate), meist deutlich weniger.
 - Das Kronendach ist eine Oberfläche, keine Geometrie. Bei sehr flachem Blick
-  fehlt ihm die Parallaxe einzelner Bäume. Für Nahsicht bräuchte #117
-  zusätzlich echte Instanzen an Waldrändern.
+  fehlt ihm die Parallaxe einzelner Bäume. #152 hat die Frage, ob an
+  Waldrändern Instanzen für die Nahsicht bleiben, gegen sie entschieden
+  (angehobenes Volumen und Selbstschatten tragen die Nahsicht, s. u.).
 - Wolkenschatten wirken als Albedo-Faktor und dunkeln damit auch etwas
   Umgebungslicht ab.
 - Die Lichtstimmung war auf die Studienkamera abgestimmt. Die kamera-
@@ -273,14 +281,16 @@ sind nur verlinkt, keine Spielassets.
   die Hebel-Liste schaltet einzeln und ein Tippfehler bricht ab; die
   Studien-Fassungen von Terrain-, Ozean- und Band-Shader kompilieren und
   liefern ihre Uniforms, die Produktionsfassungen kennen sie nicht; der
-  Back-Pass kompiliert.
-- Lokal grün (8. Oktober 2026, macOS): SimCore-Pflichtsuite (392 Tests, 32
+  Back-Pass kompiliert. Heute (seit #152): ein gesetztes `RS_STUDY_LEVERS`
+  bricht ab, und nur noch die Studien-Fassung des Terrain-Shaders wird geprüft.
+- Damals lokal grün (8. Oktober 2026, macOS): SimCore-Pflichtsuite (392 Tests, 32
   übersprungene Messläufe, 0 Fehler), `smoke.gd`, `water_uniforms.gd`,
   `water_geometry.gd`, `river_ribbons.gd`, `graphics_study.gd`.
 - Merge-Gate bleiben `test` und `godot-contract` in CI.
-- Die visuelle Bestätigung des Projekteigners steht noch aus.
+- Die visuelle Bestätigung des Projekteigners kam mit PR #121.
 
-Für #117 übertragbar: Verschiebung als gebackene Render-Ableitung (gehört nach
+Für #117 übertragbar (Stand der Studie; was daraus wurde:
+[Abschluss Spec #156](#abschluss-spec-156)): Verschiebung als gebackene Render-Ableitung (gehört nach
 SimRender oder als GPU-Pass in die Brücke), Kronendach statt Einzelbäumen in
 der Übersicht, Schutzmaske aus Wasserfeld und Bändern, Ozean nach Wassertiefe.
 Offen: Instanzbäume an Waldrändern für Nahsicht,
@@ -436,6 +446,13 @@ RS_MATRIX_SEED=1337 RS_MATRIX_YEAR=20000 scripts/graphics-matrix.sh baseline doc
 # 4. Leistungsmessungen (Standbild, Kamerafahrt, Zeitraffer) je Welt durchführen:
 scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline timing
 ```
+
+Seit Spec #156 schreibt der Timing-Modus jedes Ergebnis zusätzlich als Datei
+`<ordner>/timing/seed<seed>_<stadium>_<kamera>_<stufe>_<betrieb>.json`
+(`betrieb` = `still|orbit|simulation`). Sie enthält die `STUDY_TIMING`-Zeile
+(Kennzahlen plus Viewport-Größe, Qualitätsstufe und Render-Gitter; Felder
+s. `Flusstal.gd`). Ein Lauf ohne diese Zeile (Absturz vor dem
+Messende) bricht das Skript ab.
 
 ### Baseline-Bilder und Messungen (Status)
 
@@ -841,3 +858,55 @@ dahin stets `detail`). Nur nachher, Millisekunden je Frame:
 Standbild und Kamerafahrt bleiben auch dort im Budget, schlechtester
 Einzelframe 23,2 ms (`grazing`); der Zeitraffer liegt im selben Bereich wie
 bei `detail`.
+
+## Abschluss Spec #156
+
+Stand 10. Oktober 2026. Die vier Hebel der Studie sind die normale Darstellung
+für jede Welt, jedes Stadium, jede Kamerarichtung und -distanz; die
+Schutzmaske ist ihr gemeinsamer Vorbau:
+
+| Hebel | Ticket | Produktion | Kalibrier-Vertrag | Wächter |
+| --- | --- | --- | --- | --- |
+| Schutzmaske (Vorbau) | #154 | `SimRender.WaterProtectMask` | `WaterRender.protectSeamCells` | `WaterProtectMaskTests`, `graphics_study.gd` |
+| Form | #153 | `relief_bake.gdshader`, `terrain.gdshader` | `ReliefRender` | `ReliefUniformsTests`, `relief.gd` |
+| Maßstab | #152 | `SimRender.ForestCanopyMask`, `terrain.gdshader` | `CanopyRender` | `CanopyTests`, `canopy.gd` |
+| Licht | #151 | `scripts/Lighting.gd`, `clouds.gdshaderinc` | Konstanten in `Lighting.gd` | `lighting.gd` |
+| Rahmen | #155 | `ocean.gdshader` | `WaterRender.ocean*` | `WaterUniformsTests`, `WaterRenderTests` |
+
+Die Physik ist unberührt: SimCore-seitig kamen Render-Verträge hinzu
+(`WaterRender`, `ReliefRender`, `CanopyRender`, `RenderContract`); #152, das
+als einziges auch Sim-Code anfasste (`Terrain.swift`, `HeightBands.swift`:
+`bearsTrees` entfernt), belegte `simperf --hash` vorher und nachher gleich.
+Vergleichsmatrix und Messläufe (#150): `scripts/graphics-matrix.sh`, Ergebnisse
+je Ticket in den Kapiteln oben.
+
+**Qualitätsstufen.** `performance` rendert ein 256er-Gitter ohne SSAO, Detail
+und Material und bleibt mit rund 5 ms je Bild die billige Stufe; `balanced`
+und `quality` rendern seit #153 beide in Sim-Auflösung und sind seit #151 auch
+im Licht gleich (Begründung: [Qualitätsstufen und
+Leistung](#qualitätsstufen-und-leistung-1)). Standbild und Kamerafahrt halten
+33,3 ms in jeder Stufe auf den gemessenen Kameras (Seed 1337, Jahr 20.000,
+`detail`, `overview`, `grazing`); im Zeitraffer überschreiten wie vor dem
+Projekt die Sim-Schritte das Budget, gleich hoch und ähnlich oft (#152:
+39–46 statt 39–44 Frames je Lauf). Die übrigen Seeds und Kameras sind nur als
+Bild abgenommen, nicht gemessen.
+
+**Status der Studie.** Die Studie ist kein Produktionsweg mehr, sondern Mess-
+und Referenzbühne:
+
+- `baseline` ist die Anwendung selbst (`Flusstal.gd` erbt `Main.gd`) und trägt
+  die Vergleichsmatrix und die Messläufe.
+- `prototype` legt zusätzlich nur die PBR-Materialien der ersten Runde
+  (`materials.gdshaderinc`, sechs CC0-Texturen) und die Debug-Ansichten
+  (`RS_STUDY_DEBUG`) darüber. Die Materialien sind bewusst NICHT übernommen
+  (geomorphologische Materialverteilung ist laut Spec außerhalb des Umfangs);
+  sie bleiben als historische Referenz der Studie stehen. Wer sie übernehmen
+  will, macht daraus ein eigenes Ticket; wer sie streicht, entfernt mit ihnen
+  die `FLUSSTAL_STUDY`-Hooks in `terrain.gdshader`.
+- Die Hebel-Schalter sind entfallen: ein gesetztes `RS_STUDY_LEVERS` bricht
+  ab, `RS_STUDY_GRID` und `RS_STUDY_RELIEF` liest nichts mehr (s.
+  [Reproduktion](#reproduktion)).
+
+**Offen und bewusst nicht Teil von #156:** geomorphologische
+Materialverteilung (Fels auf konvex-steil, Schutthalden, Kiesbänke), höhere
+Render-Gitter als n, Detailstufen der Geometrie nach Kameradistanz.

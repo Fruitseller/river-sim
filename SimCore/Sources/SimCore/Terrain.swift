@@ -3690,9 +3690,9 @@ public final class Terrain {
     /// Zustand" gilt für jeden davon, nicht nur fürs Einebnen.
     ///
     /// Zurückgesetzt wird ANTEILIG (`raw`), nicht hart: ein zaghafter Strich
-    /// lichtet den Wald, ein Bagger-Zug räumt ihn ab. `vegClass` und die
-    /// Baum-Instanzen im Frontend leiten sich aus `veg` ab und folgen von
-    /// selbst; Mäanderlinien/Altarme hängen an Geometrie und werden erst im
+    /// lichtet den Wald, ein Bagger-Zug räumt ihn ab. `vegClass` und das
+    /// Kronendach im Frontend (Waldmaske, Issue #152) leiten sich aus `veg` ab
+    /// und folgen von selbst; Mäanderlinien/Altarme hängen an Geometrie und werden erst im
     /// Schritt darauf gesäubert (`regenerateDisturbed`), weil das ein Sweep
     /// über die Linien ist und kein Per-Zell-Effekt.
     ///
