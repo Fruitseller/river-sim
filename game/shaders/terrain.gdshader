@@ -288,6 +288,20 @@ float triplanar_fbm(vec3 p, vec3 n) {
 	return fbm(p.yz) * weight.x + fbm(p.xz) * weight.y + fbm(p.xy) * weight.z;
 }
 
+// Vier Zufallswerte (−1 … 1) je Kronenzelle. Ganzzahl-Hash (pcg3d, Jarzynski &
+// Olano 2020) statt `ehash`: dessen Float-Produkt x·y·(x+y) liegt bei
+// Zellindizes um 1000 bei ~1e9, `fract` liefert dort nur noch 0, und alle
+// Kronen stünden in einem regelmäßigen Raster (Projekteigner, Nahzoom).
+vec4 crown_hash(vec2 c) {
+	uvec3 v = uvec3(uvec2(ivec2(c) + ivec2(65536)), 152u);
+	v = v * 1664525u + 1013904223u;
+	v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+	v ^= v >> 16u;
+	v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+	uint w = v.x ^ v.y ^ v.z;
+	return vec4(vec3(v), float(w)) * (2.0 / 4294967295.0) - 1.0;
+}
+
 // Kronendach je Pixel (#152, aus der Flusstal-Studie übernommen): Voronoi-
 // Kronen, je Zelle eine mit Zufallsversatz und -radius. Die Farben, Radien und
 // Neigungen hier sind Optik dieses Shaders wie die Ufer- und Kiesfarben unten,
@@ -308,8 +322,9 @@ void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
 	for (int j = -1; j <= 1; j++) {
 		for (int i = -1; i <= 1; i++) {
 			vec2 c = g + vec2(float(i), float(j));
-			vec2 r1 = ehash(c);
-			vec2 r2 = ehash(c + vec2(17.3, 5.1));
+			vec4 r = crown_hash(c);
+			vec2 r1 = r.xy;
+			vec2 r2 = r.zw;
 			// Krone steht nur, wo die Waldmaske ihre eigene Schwelle
 			// übertrifft: am Rand dünnt der Wald so kronenweise aus.
 			if (f < canopy_crown_mid + canopy_crown_spread * r2.y) {
