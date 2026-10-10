@@ -27,7 +27,7 @@ final class ReliefUniformsTests: XCTestCase {
         ],
         "game/shaders/terrain.gdshader": [
             "relief_height_code", "relief_slope_code",
-            "relief_shade_dark", "relief_shade_light",
+            "relief_shade_dark", "relief_shade_light", "relief_geometry_age",
         ],
     ]
 
@@ -38,6 +38,7 @@ final class ReliefUniformsTests: XCTestCase {
             "relief_sharpen": ReliefRender.sharpen,
             "relief_sharpen_radius": ReliefRender.sharpenRadiusCells,
             "relief_ridge_cap": ReliefRender.ridgeCap,
+            "relief_geometry_age": ReliefRender.geometryAgeYears,
             "relief_height_code": ReliefRender.heightCode,
             "relief_slope_code": ReliefRender.slopeCode,
             "relief_shade_dark": ReliefRender.shadeDark,

@@ -134,6 +134,10 @@ uniform float relief_height_code;
 uniform float relief_slope_code;
 uniform float relief_shade_dark;
 uniform float relief_shade_light;
+// Echte Verformung blendet mit dem Geländealter ein (ReliefRender.geometryAgeYears);
+// Main.gd setzt `sim_year` bei jedem Höhen-Upload.
+uniform float relief_geometry_age;
+uniform float sim_year = 0.0;
 // Schutzmaske (#154); hier liest sie nur das Kronendach der Studie, die
 // Verschiebung bekommt sie schon im Back-Pass.
 uniform sampler2D protect_tex : filter_linear, repeat_disable;
@@ -192,12 +196,14 @@ vec4 relief_sample(vec2 uv) {
 	return cur;
 }
 
-// Höhenzuschlag in Welteinheiten …
+// Höhenzuschlag in Welteinheiten, mit dem Alter eingeblendet (gleiche Formel
+// wie Main.gd `relief_geometry_fade`) …
 float relief_lift(vec2 uv) {
 	if (!relief_enabled) {
 		return 0.0;
 	}
-	return (relief_sample(uv).r - 0.5) / max(relief_height_code, 1e-6);
+	return (relief_sample(uv).r - 0.5) / max(relief_height_code, 1e-6)
+	     * smoothstep(0.0, relief_geometry_age, sim_year);
 }
 
 // … Steigungszuschlag dh/duv je Pixel (Detail unabhängig von der Mesh-Dichte) …

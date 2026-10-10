@@ -10,7 +10,9 @@ extends SceneTree
 ##    im Zeitraffer mit jedem Sim-Schritt und dort weich übergeblendet, beim
 ##    Pinsel sofort;
 ##  - Pinselring und Kameraziel liegen auf der SICHTBAREN Fläche (Sim-Höhe plus
-##    Verschiebung), der Pinsel ändert die Sim-Zelle unter dem Treffer.
+##    Verschiebung), der Pinsel ändert die Sim-Zelle unter dem Treffer;
+##  - die echte Verformung blendet mit dem Geländealter ein: auf junger Welt
+##    liegt die sichtbare Fläche auf der Sim-Höhe.
 ## Der Dummy-Renderer zeichnet den Back-Pass nicht; für die Flächen-Prüfung
 ## bekommt Main deshalb eine bekannte Verschiebung (+1 Einheit) gesetzt.
 ## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
@@ -158,6 +160,19 @@ func _check_visible_surface(main: Node) -> void:
 	var sim_y: float = h[cell] * Main.HSCALE
 	main.ray_xz = Vector2(x, z)
 	main.ray_y = sim_y
+
+	# Junge Welt (wenige hundert Jahre): Verformung noch nicht eingeblendet.
+	var year: float = main.sim.currentYear()
+	_check(main.relief_geometry_age > 0.0 and year < 0.05 * main.relief_geometry_age,
+		"Testwelt ist jung (Jahr %.0f, volle Verformung ab %.0f)" % [year, main.relief_geometry_age])
+	_check(main.terrain_mat.get_shader_parameter("sim_year") == year,
+		"Terrain-Material kennt das Geländealter")
+	var young: Vector3 = main._raycast_terrain()
+	_check(young != Vector3.INF and absf(young.y - main._sample_h((young.x + main.half) / main.step,
+		(young.z + main.half) / main.step) * Main.HSCALE) < 0.05,
+		"Junge Welt: Treffer auf der Sim-Höhe, nicht auf der Verformung")
+	# Ab hier wie auf alter Welt: volle Verformung.
+	main.relief_geometry_age = 1e-3
 
 	var hit: Vector3 = main._raycast_terrain()
 	_check(hit != Vector3.INF, "Strahl muss das Gelände treffen")

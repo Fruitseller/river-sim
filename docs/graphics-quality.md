@@ -584,7 +584,8 @@ echte Verschiebung mit Silhouette und Schattenwurf.
   innerhalb der Maske samt Saum. Ein Band liegt also nie über einem gesenkten
   Talboden.
 - **Kalibrierung als Vertrag.** Rinnenskala 0.022, Stärke 0.55, Gratschärfung
-  2.2 auf 2,5 Zellen Ringradius (weich gedeckelt bei 0,8 Einheiten), Kodierung und Hell-Dunkel der Rinnen (samt den
+  2.2 auf 2,5 Zellen Ringradius (weich gedeckelt bei 0,8 Einheiten), das
+  Einblendalter der Verformung (20.000 Jahre), Kodierung und Hell-Dunkel der Rinnen (samt den
   Gewichten, mit denen Rinnen und Grate darin eingehen) stehen in
   `SimCore.ReliefRender`. Sie reisen über `SimRender.ReliefUniforms` → `SimNode`
   → `Main.gd` auf Back-Pass und Terrain-Material (Muster der Wasser-Uniforms,
@@ -613,7 +614,8 @@ Brücke, nur Lesen im Terrain-Shader), `RenderContractTests` (vollständige List
 der Überhöhungs-Anwendungen inklusive Back-Pass) und `game/tests/relief.gd`
 (CI-Marke `RELIEF_OK`). Dieser prüft: die Uniforms kommen an, im Standbild wird
 nicht gebacken und je Sim-Schritt einmal, im Zeitraffer übergeblendet, beim
-Pinsel sofort. Pinselring und Kameraziel liegen auf
+Pinsel sofort. Auf junger Welt liegt die sichtbare Fläche auf der Sim-Höhe.
+Pinselring und Kameraziel liegen auf
 der sichtbaren Fläche, und der Pinsel hebt die Sim-Zelle unter dem Treffer.
 
 ### Vergleichsmatrix vorher/nachher
@@ -649,6 +651,20 @@ verdecken die Bänder aber nicht. Die Godot-Verträge `water_geometry.gd` und
   0,8 nimmt die Nadeln und lässt das abgenommene Bild bei Jahr 20.000 fast
   unverändert. Verworfen: ein Differenzfilter statt „Höhe minus Ringmittel"
   (Maximum in Jahr 0 nur 3,57 → 2,96, die Spitzen sind mehrere Zellen breit).
+
+  Der Deckel allein reichte nicht („immer noch zu spiky"). Mit Bildern an
+  Seed 1337, Kamera `detail`, eingegrenzt: Gratdeckel 0,4 oder Grate ganz aus,
+  Rinnenstärke 0,3 oder 0,15 und eine weichgezeichnete Vertex-Abtastung blieben
+  in Jahr 0 alle zackig. Das 720er-Gitter ohne Verschiebung sah dagegen fast
+  aus wie vorher, ebenso die Verschiebung nur in der Schattierung. Zacken
+  entstehen also, sobald Rinnen oder Grate das junge Gelände wirklich
+  verformen, und jeder Anteil allein reicht dafür. Gewählt (Projekteigner,
+  aus drei Optionen live verglichen): die **Verformung blendet mit dem
+  Geländealter ein** (`ReliefRender.geometryAgeYears` = 20.000, Smoothstep ab
+  Jahr 0). Schattierung und Normalen wirken von Anfang an voll; bei 20.000
+  Jahren steht das abgenommene Bild unverändert. Verworfen: nur die Grate als
+  Geometrie (in Jahr 0 noch zackig) und gar keine Verformung (ohne Silhouette
+  und Schattenwurf, das Ziel von #153).
 - *„Bei 60 J/s springt das Gelände".* Je Back änderte sich die Verschiebung im
   p99 um 0,04 Einheiten, die Sim-Höhe darunter nur um 0,007–0,009: Rinnen und
   Grate verstärken jede Höhenänderung, dazu verschiebt jeder Band-Bau die
