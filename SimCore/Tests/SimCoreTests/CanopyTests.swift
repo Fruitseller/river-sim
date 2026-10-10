@@ -107,6 +107,32 @@ final class CanopyTests: XCTestCase {
         }
     }
 
+    /// Ohne Schrittweite (`cellSize == 0`: `world <= 0` oder nicht-endlich)
+    /// wäre die Weltsteigung ±inf/NaN und der Wald still falsch; die Maske
+    /// bleibt leer wie bei jeder anderen unpassenden Eingabe.
+    func testNoForestWithoutCellSpacing() {
+        let n = 32
+        var veg = [UInt8](repeating: 0, count: n * n * 4)
+        for k in 0..<(n * n) { veg[k * 4] = 255 }
+        let protect = [UInt8](repeating: 0, count: n * n)
+        let clump = [Float](repeating: 0, count: n * n)
+        let flat = Terrain(config: renderConfig(n: n), seed: 1337)
+        var state = flat.state
+        for k in state.h.indices { state.h[k] = flat.cfg.sea + 0.2 }
+        flat.restore(state)
+        XCTAssertTrue(ForestCanopyMask.bytes(flat, surfaces: veg, protect: protect, clump: clump)
+                          .contains(255), "Vorbedingung: Ebene trägt Wald")
+        for world in [0, -10, Double.nan, .infinity] {
+            var c = renderConfig(n: n)
+            c.world = world
+            XCTAssertEqual(c.cellSize, 0)
+            let terrain = Terrain(allocating: c, seed: 1337)
+            terrain.restore(state)
+            XCTAssertEqual(ForestCanopyMask.bytes(terrain, surfaces: veg, protect: protect, clump: clump),
+                           [UInt8](repeating: 0, count: n * n), "Wald bei world = \(world)")
+        }
+    }
+
     // MARK: - Determinismus und Invalidierung
 
     func testSameWorldYieldsIdenticalForest() {
