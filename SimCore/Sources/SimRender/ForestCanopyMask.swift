@@ -76,13 +76,14 @@ public enum ForestCanopyMask {
 
     /// `surfaces` = RGBA8-Materialgewichte (R Vegetation, B Schnee/Eis),
     /// `protect` = R8-Schutzmaske, `clump` = `clumpField`. Passt eine Eingabe
-    /// nicht zur Gittergröße, bleibt die Maske leer statt falsch.
+    /// nicht zur Gittergröße oder fehlt die Schrittweite (`cellSize == 0`, etwa
+    /// bei `world <= 0` oder nicht-endlich), bleibt die Maske leer statt falsch.
     public static func bytes(_ terrain: Terrain, surfaces: [UInt8], protect: [UInt8],
                              clump: [Float]) -> [UInt8] {
         let n = terrain.cfg.n
         let cnt = n * n
         let h = terrain.h
-        guard n > 2, h.count == cnt, surfaces.count == cnt * 4,
+        guard n > 2, terrain.cfg.cellSize > 0, h.count == cnt, surfaces.count == cnt * 4,
               protect.count == cnt, clump.count == cnt else {
             return [UInt8](repeating: 0, count: max(cnt, 0))
         }
