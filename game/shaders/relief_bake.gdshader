@@ -31,12 +31,15 @@ uniform float relief_height_code;
 uniform float relief_slope_code;
 uniform float relief_cavity_gully_gain;
 uniform float relief_cavity_ridge_gain;
+uniform float relief_ridge_cap;
 
 #include "res://shaders/protect.gdshaderinc"
 
 // Laplace-artiger Gratanteil: Höhe minus Mittel eines Rings. Positiv auf
 // Kuppen und Graten, negativ in Mulden; nur der positive Teil wird benutzt,
-// die Verschiebung hebt Grate also nur an und senkt keinen Talboden.
+// die Verschiebung hebt Grate also nur an und senkt keinen Talboden. Weich
+// gedeckelt (tanh, in Welteinheiten): junges, steiles Relief würde einzelne
+// Gipfel sonst zu Nadeln ziehen.
 float ridge_at(vec2 uv) {
 	float r = relief_sharpen_radius / grid_n;
 	float d = r * 0.7071;
@@ -45,7 +48,8 @@ float ridge_at(vec2 uv) {
 	           + texture(height_tex, uv + vec2(0.0, r)).r + texture(height_tex, uv - vec2(0.0, r)).r
 	           + texture(height_tex, uv + vec2(d, d)).r + texture(height_tex, uv - vec2(d, d)).r
 	           + texture(height_tex, uv + vec2(d, -d)).r + texture(height_tex, uv - vec2(d, -d)).r;
-	return max(h - ring * 0.125, 0.0) * relief_sharpen;
+	float cap = relief_ridge_cap / hscale;  // Deckel in Sim-Höhe
+	return cap * tanh(max(h - ring * 0.125, 0.0) * relief_sharpen / cap);
 }
 
 void fragment() {

@@ -124,6 +124,11 @@ uniform vec3 water_flow_shimmer_color;
 // Textur dekodierte zu −2 Einheiten Höhe.
 uniform bool relief_enabled = false;
 uniform sampler2D relief_tex : filter_linear, repeat_disable;
+// Vorheriger Back-Stand und Blende dorthin (`bake_blend`, Main.gd `_bake_relief`): im
+// Zeitraffer gleitet die Verschiebung über einen Sim-Takt, statt zu springen.
+// Die Kodierung ist linear, gemischt wird also direkt auf den Kanälen.
+uniform sampler2D relief_prev_tex : filter_linear, repeat_disable;
+uniform float bake_blend = 1.0;
 // Kalibrierung über die Brücke (SimCore.ReliefRender), default-frei.
 uniform float relief_height_code;
 uniform float relief_slope_code;
@@ -179,12 +184,20 @@ vec4 erosion_detail(vec2 p, vec2 slope, float fade_target_in, out float out_mag)
 }
 
 // Render-Verschiebung aus der Backtextur (Kodierung: relief_bake.gdshader).
+vec4 relief_sample(vec2 uv) {
+	vec4 cur = textureLod(relief_tex, uv, 0.0);
+	if (bake_blend < 1.0) {
+		cur = mix(textureLod(relief_prev_tex, uv, 0.0), cur, bake_blend);
+	}
+	return cur;
+}
+
 // Höhenzuschlag in Welteinheiten …
 float relief_lift(vec2 uv) {
 	if (!relief_enabled) {
 		return 0.0;
 	}
-	return (textureLod(relief_tex, uv, 0.0).r - 0.5) / max(relief_height_code, 1e-6);
+	return (relief_sample(uv).r - 0.5) / max(relief_height_code, 1e-6);
 }
 
 // … Steigungszuschlag dh/duv je Pixel (Detail unabhängig von der Mesh-Dichte) …
@@ -192,7 +205,7 @@ vec2 relief_slope(vec2 uv) {
 	if (!relief_enabled) {
 		return vec2(0.0);
 	}
-	return (texture(relief_tex, uv).gb - 0.5) / max(relief_slope_code, 1e-6);
+	return (relief_sample(uv).gb - 0.5) / max(relief_slope_code, 1e-6);
 }
 
 // … und Rinnen (−1) bis Rippen (+1).
@@ -200,7 +213,7 @@ float relief_cavity(vec2 uv) {
 	if (!relief_enabled) {
 		return 0.0;
 	}
-	return (texture(relief_tex, uv).a - 0.5) * 2.0;
+	return (relief_sample(uv).a - 0.5) * 2.0;
 }
 
 #include "res://shaders/protect.gdshaderinc"

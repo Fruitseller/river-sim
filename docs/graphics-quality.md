@@ -584,11 +584,18 @@ echte Verschiebung mit Silhouette und Schattenwurf.
   innerhalb der Maske samt Saum. Ein Band liegt also nie über einem gesenkten
   Talboden.
 - **Kalibrierung als Vertrag.** Rinnenskala 0.022, Stärke 0.55, Gratschärfung
-  2.2 auf 2,5 Zellen Ringradius, Kodierung und Hell-Dunkel der Rinnen (samt den
+  2.2 auf 2,5 Zellen Ringradius (weich gedeckelt bei 0,8 Einheiten), Kodierung und Hell-Dunkel der Rinnen (samt den
   Gewichten, mit denen Rinnen und Grate darin eingehen) stehen in
   `SimCore.ReliefRender`. Sie reisen über `SimRender.ReliefUniforms` → `SimNode`
   → `Main.gd` auf Back-Pass und Terrain-Material (Muster der Wasser-Uniforms,
-  default-freie Deklarationen). Die Werte sind die abgenommenen Studienwerte.
+  default-freie Deklarationen). Die Werte sind die abgenommenen Studienwerte,
+  plus der Deckel aus der Abnahme (s. u.).
+- **Zeitraffer gleitet.** Ein Back-Stand gilt einen Sim-Takt (0,25 s). Statt
+  viermal je Sekunde zu springen, backt `Main.gd` abwechselnd in zwei Ziele, und
+  der Terrain-Shader blendet über einen Takt vom alten zum neuen Stand
+  (`bake_blend`). Pinsel, Zeitsprung und Laden zeigen den neuen Stand sofort.
+  Kosten: im A/B-Wechsel (alter gegen neuen Terrain-Shader, je zwei Läufe,
+  `balanced`) kein messbarer Unterschied.
 - **Pinsel und Kamera** (Entscheidung vom 8. Oktober 2026): Der Raycast
   (`_raycast_surface`) läuft gegen Sim-Höhe plus Verschiebung. Pinselring und
   Kameraziel (`RS_TARGET`) liegen damit auf der sichtbaren Fläche, der Pinsel
@@ -605,7 +612,8 @@ Wächter: `SimCoreTests/ReliefUniformsTests.swift` (Tabelle, Deklarationen,
 Brücke, nur Lesen im Terrain-Shader), `RenderContractTests` (vollständige Liste
 der Überhöhungs-Anwendungen inklusive Back-Pass) und `game/tests/relief.gd`
 (CI-Marke `RELIEF_OK`). Dieser prüft: die Uniforms kommen an, im Standbild wird
-nicht gebacken und je Sim-Schritt einmal. Pinselring und Kameraziel liegen auf
+nicht gebacken und je Sim-Schritt einmal, im Zeitraffer übergeblendet, beim
+Pinsel sofort. Pinselring und Kameraziel liegen auf
 der sichtbaren Fläche, und der Pinsel hebt die Sim-Zelle unter dem Treffer.
 
 ### Vergleichsmatrix vorher/nachher
@@ -626,11 +634,27 @@ verdecken die Bänder aber nicht. Die Godot-Verträge `water_geometry.gd` und
 
 ![Flacher Blick, Seed 20, Jahr 0: oben vorher, unten nachher](screenshots/graphics-quality/relief-grazing-seed20-0k.jpg)
 
-**Offen zur Abnahme:** Auf dem jungen, steilen Relief (Jahr 0, vor allem Seed 20
-und 1337) macht die Gratschärfung einzelne Gipfel nadelspitz. Abgenommen wurden
-die Studienwerte an Jahr 20.000. Ob die Schärfung mit dem Relief ausblenden
-soll, ist eine Kalibrierfrage für den Projekteigner (Stellschraube:
-`ReliefRender.sharpen`).
+**Abnahme (10. Oktober 2026), zwei Korrekturen:**
+
+- *„Am Anfang viel zu spiky".* Auf jungem, steilem Relief hob die
+  Gratschärfung einzelne Gipfel um bis zu 3,6 Einheiten an. Sie ist jetzt weich
+  gedeckelt (`ReliefRender.ridgeCap`, `0.8 · tanh(x / 0.8)`). Gemessen auf
+  Seed 1337 (Anhebung in Welteinheiten, Landzellen):
+
+  | Jahr | ohne Deckel p99 / max | Deckel 0,8 p99 / max | Deckel 0,5 p99 / max |
+  | --- | ---: | ---: | ---: |
+  | 0 | 0,93 / 3,57 | 0,69 / 0,99 | 0,56 / 0,74 |
+  | 20.000 | 0,54 / 1,17 | 0,50 / 0,89 | 0,45 / 0,71 |
+
+  0,8 nimmt die Nadeln und lässt das abgenommene Bild bei Jahr 20.000 fast
+  unverändert. Verworfen: ein Differenzfilter statt „Höhe minus Ringmittel"
+  (Maximum in Jahr 0 nur 3,57 → 2,96, die Spitzen sind mehrere Zellen breit).
+- *„Bei 60 J/s springt das Gelände".* Je Back änderte sich die Verschiebung im
+  p99 um 0,04 Einheiten, die Sim-Höhe darunter nur um 0,007–0,009: Rinnen und
+  Grate verstärken jede Höhenänderung, dazu verschiebt jeder Band-Bau die
+  Schutzmaske an Ufern um tausende Zellen. Beides ist Teil der Ableitung und
+  bleibt. Die Antwort ist die Überblendung oben. Ein breiterer Steigungs-Stencil
+  für die Rinnen änderte den Wert nicht messbar (0,040 → 0,037).
 
 ### Qualitätsstufen und Leistung
 
