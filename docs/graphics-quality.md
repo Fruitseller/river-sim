@@ -733,6 +733,14 @@ Studie keinen Hebel mehr.
   Vegetationsband ab (`veg_alt_lo − 0.08 … veg_alt_hi`). Produktion nimmt das
   dafür vorgesehene Band `HeightBands.coniferLow/High` mit derselben Formel wie
   `coniferShare` (10–90 %), das bisher nur die Instanzbäume lasen.
+- **Kronen-Zufall als Ganzzahl-Hash.** Die Studie würfelte Versatz, Radius
+  und Typ jeder Krone mit `ehash`. Dessen Float-Produkt liegt bei
+  Kronen-Indizes um 1000 bei ~1e9, und `fract` liefert dort nur noch 0. Im
+  Nahzoom standen alle Kronen gleich groß und gleichartig in einem
+  regelmäßigen Raster (Projekteigner, 10. Oktober 2026: „viel zu
+  gleichmäßig"). Jetzt `crown_hash` (pcg3d auf den Zellindizes). Aus der
+  Matrix-Distanz fiel das nicht auf; die Bögen unten stammen noch vom Stand
+  davor.
 - **Lichtungs-Rauschen.** Das Value-Noise-fBm der Studie, nach Swift portiert.
   Ein erster Versuch mit `SimplexNoise` gleicher Frequenz streute auf mageren
   Hängen sichtbar mehr kleine Waldflecken als das abgenommene Bild; mit dem
