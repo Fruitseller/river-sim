@@ -87,8 +87,9 @@ public enum ForestCanopyMask {
             return [UInt8](repeating: 0, count: max(cnt, 0))
         }
         let sea = terrain.cfg.sea
-        // dh je Zelle (Sim-Einheit) → Weltsteigung: × Überhöhung / Zellbreite.
-        let slopeScale = RenderContract.heightScale / (terrain.cfg.world / Double(n)) * 0.5
+        // `macroSlope` ≈ halbe Höhendifferenz je Zelle (Mittel aus |dx| und
+        // |dz| über ±2 Zellen) → Weltsteigung: × 2 × Überhöhung / Zellbreite.
+        let slopeScale = 2 * RenderContract.heightScale / (terrain.cfg.world / Double(n))
         var mask = [UInt8](repeating: 0, count: cnt)
         h.withUnsafeBufferPointer { hb in
         surfaces.withUnsafeBufferPointer { sb in
@@ -99,7 +100,6 @@ public enum ForestCanopyMask {
             let pc = cb.baseAddress!, pm = mb.baseAddress!
             parallelChunks(n) { jLo, jHi in
                 for j in jLo..<jHi {
-                    let jm = max(j - 1, 0), jp = min(j + 1, n - 1)
                     for i in 0..<n {
                         let k = j * n + i
                         if pp[k] != 0 { continue }
@@ -109,10 +109,9 @@ public enum ForestCanopyMask {
                         if shore <= 0 { continue }
                         let veg = Double(ps[k * 4]) / 255
                         let cold = Double(ps[k * 4 + 2]) / 255
-                        let im = max(i - 1, 0), ip = min(i + 1, n - 1)
-                        let dx = ph[j * n + ip] - ph[j * n + im]
-                        let dz = ph[jp * n + i] - ph[jm * n + i]
-                        let slope = (dx * dx + dz * dz).squareRoot() * slopeScale
+                        // Am Rand (2 Zellen) fehlt der Stencil; dort ist Meer.
+                        let inner = i > 1 && i < n - 2 && j > 1 && j < n - 2
+                        let slope = inner ? Terrain.macroSlope(ph, k, n) * slopeScale : 0
                         let f = smoothstep(CanopyRender.vegetationLo, CanopyRender.vegetationHi,
                                            veg + Double(pc[k]) * CanopyRender.clumpGain)
                             * (1 - smoothstep(CanopyRender.wallSlopeLo, CanopyRender.wallSlopeHi, slope))

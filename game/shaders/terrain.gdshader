@@ -148,20 +148,31 @@ uniform float sim_year = 0.0;
 // Kronendach (#152). Der Schalter ist keine Kalibrier-Zahl: ohne SimNode
 // (Editor-Vorschau) ist keine Waldmaske gebunden.
 uniform bool canopy_enabled = false;
-uniform sampler2D forest_tex : filter_linear, repeat_disable;
+// Schwarz, solange nichts gebunden ist: kein Wald statt einer weißen Fläche.
+uniform sampler2D forest_tex : filter_linear, repeat_disable, hint_default_black;
+// Vorheriger Stand und Blende dorthin wie bei der Verschiebung (`bake_blend`):
+// im Zeitraffer gleitet der Wald über einen Sim-Takt, statt kronenweise zu
+// springen.
+uniform sampler2D forest_prev_tex : filter_linear, repeat_disable, hint_default_black;
 // Kalibrierung über die Brücke (SimCore.CanopyRender), default-frei.
 uniform float canopy_cell;
 uniform float canopy_height;
 uniform float canopy_lift_lo;
 uniform float canopy_lift_hi;
+uniform float canopy_cover_lo;
+uniform float canopy_cover_hi;
+uniform float canopy_gap_lo;
+uniform float canopy_gap_hi;
 uniform float canopy_crown_mid;
 uniform float canopy_crown_spread;
+uniform float canopy_crown_radius;
+uniform float canopy_crown_radius_jitter;
 uniform float canopy_detail_lo;
 uniform float canopy_detail_hi;
 // Nadelbaum-Anteil nach Höhenband (HeightBands.coniferShare, über
-// SimNode.heightBands); die Defaults sind nur der Stand ohne SimNode-Update.
-uniform float conifer_lo = 0.26;
-uniform float conifer_hi = 0.48;
+// SimNode.heightBands, gesetzt mit jedem Overlay-Upload).
+uniform float conifer_lo;
+uniform float conifer_hi;
 
 varying float v_forest;
 
@@ -305,7 +316,7 @@ void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
 				continue;
 			}
 			vec2 d = p - (c + 0.5 + r1 * 0.30);
-			float rad = 0.58 + 0.16 * r2.x;
+			float rad = canopy_crown_radius + canopy_crown_radius_jitter * r2.x;
 			float dd = length(d);
 			bool is_con = (r1.x * 0.5 + 0.5) < conifer_share;
 			float hgt = is_con ? (rad - dd) * 1.7 : sqrt(max(rad * rad - dd * dd, 0.0));
@@ -321,14 +332,14 @@ void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
 	vec3 conif = vec3(0.050, 0.098, 0.060) * mix(0.8, 1.2, tint);
 	vec3 crown = mix(decid, conif, con) * mix(0.55, 1.0, clamp(best / 0.6, 0.0, 1.0));
 	vec3 gap = vec3(0.022, 0.034, 0.020);
-	float inside = smoothstep(0.35, 0.75, f); // Lücken nur im Bestand dunkel
+	float inside = calib_window(canopy_gap_lo, canopy_gap_hi, f); // Lücken nur im Bestand dunkel
 	vec3 avg = mix(mix(decid, conif, conifer_share) * 0.8, gap, 0.3);
 	// Ab etwa einer Krone je Pixel nur noch der Mittelwert: kein Flimmern.
 	float detail = 1.0 - calib_window(canopy_detail_lo, canopy_detail_hi, length(fwidth(p)));
 	float covered = best > 0.0 ? 1.0 : inside;
 	vec3 near_col = best > 0.0 ? crown : gap;
 	vec3 col = mix(avg, near_col, detail);
-	float amount = mix(smoothstep(0.25, 0.6, f), covered, detail);
+	float amount = mix(calib_window(canopy_cover_lo, canopy_cover_hi, f), covered, detail);
 	color = mix(color, col, amount);
 	vec3 t = vec3(clamp(tilt.x, -2.0, 2.0), 0.0, clamp(tilt.y, -2.0, 2.0)) * 0.85 * detail;
 	n = normalize(mix(n, normalize(macro_n + t), amount));
@@ -365,7 +376,13 @@ void vertex() {
 	// Seen hebt die Zeile selbst auf den Spiegel; dort keine Verschiebung.
 	VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);
 	// Kronendach: Waldkanten werfen Schatten. An Wasser ist die Maske null.
-	v_forest = canopy_enabled ? textureLod(forest_tex, uv, 0.0).r : 0.0;
+	v_forest = 0.0;
+	if (canopy_enabled) {
+		v_forest = textureLod(forest_tex, uv, 0.0).r;
+		if (bake_blend < 1.0) {
+			v_forest = mix(textureLod(forest_prev_tex, uv, 0.0).r, v_forest, bake_blend);
+		}
+	}
 	VERTEX.y += calib_window(canopy_lift_lo, canopy_lift_hi, v_forest) * canopy_height;
 	float texel = 1.0 / grid_n;
 	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
@@ -545,9 +562,8 @@ void fragment() {
 		               terr, n_ws, land_roughness);
 	}
 #endif
-	if (hval > sea_level + 0.012) {
-		canopy(wp, hval, macro_n, terr, n_ws, land_roughness);
-	}
+	// Ufersaum, Wasser und Meer trägt die Waldmaske schon nicht.
+	canopy(wp, hval, macro_n, terr, n_ws, land_roughness);
 #ifdef FLUSSTAL_STUDY
 	study_debug_view(v_uv, v_forest, terr);
 #endif

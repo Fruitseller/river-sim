@@ -98,7 +98,8 @@ final class CanopyTests: XCTestCase {
         let forest = ForestCanopyMask.bytes(terrain, surfaces: surfaces,
                                             protect: [UInt8](repeating: 0, count: n * n),
                                             clump: [Float](repeating: 0, count: n * n))
-        for j in 0..<n {
+        // Die Randzeilen tragen keinen Makro-Stencil (±2 Zellen); dort ist sonst Meer.
+        for j in 2..<(n - 2) {
             for i in [4, 20] { XCTAssertEqual(forest[j * n + i], 255, "Ebene trägt Wald (\(i), \(j))") }
             for i in [30, 40, 60, 66, 80, 90] {
                 XCTAssertEqual(forest[j * n + i], 0, "Wald an (\(i), \(j))")
@@ -189,8 +190,14 @@ final class CanopyTests: XCTestCase {
             "canopy_height": CanopyRender.canopyHeight,
             "canopy_lift_lo": CanopyRender.liftLo,
             "canopy_lift_hi": CanopyRender.liftHi,
+            "canopy_cover_lo": CanopyRender.coverLo,
+            "canopy_cover_hi": CanopyRender.coverHi,
+            "canopy_gap_lo": CanopyRender.gapLo,
+            "canopy_gap_hi": CanopyRender.gapHi,
             "canopy_crown_mid": CanopyRender.crownMid,
             "canopy_crown_spread": CanopyRender.crownSpread,
+            "canopy_crown_radius": CanopyRender.crownRadius,
+            "canopy_crown_radius_jitter": CanopyRender.crownRadiusJitter,
             "canopy_detail_lo": CanopyRender.detailFootprintLo,
             "canopy_detail_hi": CanopyRender.detailFootprintHi,
         ]

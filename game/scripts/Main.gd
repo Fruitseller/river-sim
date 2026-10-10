@@ -217,6 +217,7 @@ var protect_tex: ImageTexture
 # Maske als Float auf dem Sim-Gitter für den Raycast, lazy aus `forest_img`
 # (leer = veraltet).
 var forest_tex: ImageTexture
+var forest_prev_tex: ImageTexture
 var forest_img: Image
 var forest_lift_cache: PackedFloat32Array
 var canopy_calib := {}
@@ -1324,8 +1325,7 @@ func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = 
 	terrain_mat.set_shader_parameter("sim_year", sim.currentYear())
 	if update_overlays:
 		_upload_overlays(water_blend)
-		_update_protect_mask()
-		_update_forest_mask()
+		_update_masks()
 	_bake_relief()
 
 ## Alles außer der Höhe: im Zeitraffer und beim Pinseln gedrosselt.
@@ -1374,17 +1374,32 @@ func _update_protect_mask() -> void:
 func _protect_mask() -> Image:
 	return Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.protectMaskBytes())
 
+## Schutz- und Waldmaske gehören zusammen: der Wald endet an der Schutzmaske
+## (in SimRender fallen beide gemeinsam, `RenderState.dropMasks`).
+func _update_masks() -> void:
+	_update_protect_mask()
+	_update_forest_mask()
+
 ## Waldmaske des Kronendachs (#152): SimRender.ForestCanopyMask aus
 ## Materialgewichten, Steigung und Schutzmaske, gecacht wie die Schutzmaske.
 ## Hier nur Hochladen; den Raycast-Zuschlag rechnet `_forest_lift_at` lazy.
+## Der alte Stand wandert nach `forest_prev_tex`: im Zeitraffer blendet der
+## Terrain-Shader mit derselben Blende wie die Verschiebung (`bake_blend`,
+## `_bake_relief` direkt danach) hinüber. Kommt der Auftrag mitten in einer
+## Blende, bleibt der alte Stand stehen wie dort.
 func _update_forest_mask() -> void:
+	var previous := forest_img
 	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, sim.forestMaskBytes())
 	forest_lift_cache = PackedFloat32Array()
 	if forest_tex == null:
 		forest_tex = ImageTexture.create_from_image(forest_img)
+		forest_prev_tex = ImageTexture.create_from_image(forest_img)
 		terrain_mat.set_shader_parameter("forest_tex", forest_tex)
-	else:
-		forest_tex.update(forest_img)
+		terrain_mat.set_shader_parameter("forest_prev_tex", forest_prev_tex)
+		return
+	if relief_mix >= 1.0:
+		forest_prev_tex.update(previous)
+	forest_tex.update(forest_img)
 
 ## Render-Verschiebung neu backen (#153), einmal je Terrain-Update: der
 ## Back-Pass zeichnet genau einen Frame, danach steht die Textur bis zum
@@ -1543,8 +1558,7 @@ func _river_rebuild_due(now_msec: int, force: bool) -> bool:
 func _rebuild_rivers() -> void:
 	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
 	# Neue Bänder → neue Schutz- und Waldmaske → Verschiebung neu backen.
-	_update_protect_mask()
-	_update_forest_mask()
+	_update_masks()
 	_bake_relief()
 	river_mesh.clear_surfaces()
 	var verts: PackedVector3Array = sim.riverRibbonVerts()

@@ -719,7 +719,9 @@ Studie keinen Hebel mehr.
 - **Zwei Hälften.** WO Wald steht, rechnet `SimRender.ForestCanopyMask` auf
   der CPU, einmal je Terrain-Update, als R8-Maske in Sim-Auflösung:
   Vegetationsgewicht mit Lichtungs-Rauschen, ohne Wände (Weltsteigung ab 1,2
-  dünner, ab 1,8 kein Wald), ohne Schnee und Eis, ohne Ufersaum über dem Meer
+  dünner, ab 1,8 kein Wald, gemessen über `Terrain.macroSlope` statt der
+  Per-Zell-Steigung der Studie, die Rinnen-Textur als Löcher in den Wald
+  stanzte), ohne Schnee und Eis, ohne Ufersaum über dem Meer
   und ohne alles, was die Schutzmaske (#154) sperrt. Die Studie rechnete das im
   Shader; als Render-Ableitung ist es deterministisch und headless prüfbar.
   WIE der Wald aussieht, rechnet der Terrain-Shader je Pixel: das Dach ist um
@@ -736,11 +738,16 @@ Studie keinen Hebel mehr.
   Hängen sichtbar mehr kleine Waldflecken als das abgenommene Bild; mit dem
   portierten Rauschen liegen die Bestände an denselben Stellen wie in der
   Studie.
-- **Kalibrierung als Vertrag.** Alle Schwellen, Kronengröße und Dachhöhe
-  stehen in `SimCore.CanopyRender`. Was der Shader braucht, reist über
-  `SimRender.CanopyUniforms` → `SimNode` → `Main.gd` (default-freie
-  Uniforms). Farben, Kronenradien und Neigungen bleiben Optik des Shaders wie
-  die Ufer- und Kiesfarben.
+- **Kalibrierung als Vertrag.** Alle Schwellen auf der Waldmaske (Anhebung,
+  Deckung, dunkle Lücken, Ausdünnen der Kronen), Kronenraster und -radius
+  sowie die Dachhöhe stehen in `SimCore.CanopyRender`. Was der Shader braucht,
+  reist über `SimRender.CanopyUniforms` → `SimNode` → `Main.gd`
+  (default-freie Uniforms). Farben und Kronenneigungen bleiben Optik des
+  Shaders wie die Ufer- und Kiesfarben.
+- **Zeitraffer gleitet.** Die Waldmaske wird mit jedem Overlay-Upload neu
+  hochgeladen; im Zeitraffer blendet der Terrain-Shader mit derselben Blende
+  wie die Verschiebung (`bake_blend`) vom alten zum neuen Stand, statt Kronen
+  an Ufern und Waldrändern umspringen zu lassen.
 - **Pinsel und Kamera.** Pinselring und Kameraziel liegen auf dem Dach
   (`_surface_y` addiert den Dachzuschlag), der Pinsel ändert weiter die
   Sim-Zelle darunter.
@@ -783,27 +790,32 @@ Schutzmaske. Flussbänder und Seeufer liegen in allen Ansichten frei.
 ### Leistung
 
 M4 Max, maximiert, Viewport 3456×2104, Seed 1337, Jahr 20.000, Kamera
-`detail`, je Zeile ein sequenzieller Lauf ohne parallele Last, vorher und
-nachher abwechselnd (`RS_MATRIX_QUALITY=<stufe> RS_MATRIX_SEED=1337
+`detail`, je Zeile ein sequenzieller Lauf ohne parallele Last (`RS_MATRIX_QUALITY=<stufe> RS_MATRIX_SEED=1337
 RS_MATRIX_YEAR=20000 scripts/graphics-matrix.sh baseline <ordner> timing`).
 Millisekunden je Frame:
 
 | Stufe | Betrieb | vorher Mittel / p95 / max | nachher Mittel / p95 / max | über 33,3 ms vorher → nachher |
 | --- | --- | ---: | ---: | ---: |
-| performance | Standbild | 4,97 / 4,95 / 17,19 | 5,48 / 5,56 / 8,94 | 0 → 0 |
-| performance | Kamerafahrt | 5,03 / 5,07 / 9,68 | 5,50 / 5,66 / 15,59 | 0 → 0 |
-| performance | Zeitraffer | 6,71 / 8,43 / 100,36 | 7,13 / 8,67 / 97,81 | 39 → 39 |
-| balanced | Standbild | 17,99 / 18,32 / 18,52 | 18,64 / 18,88 / 20,17 | 0 → 0 |
-| balanced | Kamerafahrt | 18,51 / 19,55 / 19,88 | 19,45 / 22,27 / 22,74 | 0 → 0 |
-| balanced | Zeitraffer | 21,45 / 49,46 / 79,49 | 23,52 / 50,85 / 80,87 | 44 → 45 |
-| quality | Standbild | 19,11 / 20,12 / 20,43 | 19,94 / 21,08 / 21,21 | 0 → 0 |
-| quality | Kamerafahrt | 19,67 / 21,50 / 21,72 | 20,34 / 22,75 / 23,06 | 0 → 0 |
-| quality | Zeitraffer | 22,38 / 52,54 / 81,27 | 22,97 / 52,61 / 81,54 | 41 → 44 |
+| performance | Standbild | 4,97 / 4,95 / 17,19 | 5,32 / 5,30 / 8,86 | 0 → 0 |
+| performance | Kamerafahrt | 5,03 / 5,07 / 9,68 | 5,40 / 5,48 / 8,88 | 0 → 0 |
+| performance | Zeitraffer | 6,71 / 8,43 / 100,36 | 7,28 / 8,86 / 98,48 | 39 → 39 |
+| balanced | Standbild | 17,99 / 18,32 / 18,52 | 19,77 / 20,71 / 20,84 | 0 → 0 |
+| balanced | Kamerafahrt | 18,51 / 19,55 / 19,88 | 20,13 / 21,16 / 21,52 | 0 → 0 |
+| balanced | Zeitraffer | 21,45 / 49,46 / 79,49 | 22,78 / 52,71 / 79,92 | 44 → 46 |
+| quality | Standbild | 19,11 / 20,12 / 20,43 | 18,72 / 19,08 / 19,21 | 0 → 0 |
+| quality | Kamerafahrt | 19,67 / 21,50 / 21,72 | 19,37 / 20,57 / 20,87 | 0 → 0 |
+| quality | Zeitraffer | 22,38 / 52,54 / 81,27 | 22,61 / 50,92 / 80,55 | 41 → 46 |
 
-Das Kronendach kostet rund 0,5–1 ms je Bild (neun Kronenzellen je
-Waldpixel). Standbild und Kamerafahrt halten das Budget in jeder Stufe, auch
-im schlechtesten Einzelframe (max. 23,1 ms). Die Instanzbäume fallen dafür
-weg. Im Zeitraffer überschreiten wie bisher die Sim-Schritte das Budget, gleich
-oft im Rahmen der Streuung (39–45 Frames je Lauf) und gleich hoch (max.
-80–100 ms); die Waldmaske je Overlay-Upload erhöht weder Zahl noch Höhe
-messbar.
+Das Kronendach kostet je nach Lauf zwischen nichts und knapp 2 ms je Bild
+(neun Kronenzellen je Waldpixel); die Streuung zwischen zwei Läufen derselben
+Fassung lag hier bei rund 1 ms (`balanced` nachher in einem früheren Lauf
+18,6 statt 19,8 ms, `quality` nachher unter vorher). Standbild und
+Kamerafahrt halten das Budget in jeder Stufe, auch im schlechtesten
+Einzelframe (max. 21,5 ms). Die Instanzbäume fallen dafür weg. `performance`
+bleibt mit rund 5 ms die billige Stufe; das Kronendach ist dort nicht
+abgestuft, weil es weniger als 0,5 ms kostet. Im Zeitraffer überschreiten wie
+bisher die Sim-Schritte das Budget, gleich hoch (max. 80–100 ms) und
+ähnlich oft (39–46 Frames je Lauf, vorher 39–44); die Waldmaske je
+Overlay-Upload erhöht die Spitzen nicht messbar. Gemessen ist nur die Kamera
+`detail`; `overview` und `grazing` zeigen mehr Wald je Pixel und sind nicht
+eigens vermessen.
