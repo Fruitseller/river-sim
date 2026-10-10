@@ -52,7 +52,9 @@ public final class RenderState {
     /// Band-Deckel (1 Hz) für Zeitraffer UND Sprung-Chunks: Strahler + Mesh
     /// sind CPU-seitig; 0,30 s kosteten im Zeitraffer messbar ~4 % FPS.
     public static let ribbonRebuildSeconds = 1.0
-    /// Band-Rebuild erst ab dieser Knoten-Verschiebung (Zellen).
+    /// Band-Rebuild erst ab dieser Knoten-Verschiebung (Zellen). Struktur-
+    /// Änderungen (Cutoff, neuer/verschwundener Kanal) melden ein Riesen-Delta
+    /// und bauen damit beim nächsten fälligen Frame sofort.
     public static let ribbonRebuildDelta = 0.05
 
     /// Zeitpunkt des letzten Overlay-Uploads bzw. der letzten Band-Prüfung
