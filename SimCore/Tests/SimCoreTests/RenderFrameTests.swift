@@ -154,6 +154,15 @@ final class RenderFrameTests: XCTestCase {
             assertContains(main, "const \(name) := \(trigger.rawValue)",
                            hint: "FrameTrigger.\(trigger) == Main.gd \(name)")
         }
+        // Die Schlüssel des Frame-Dictionarys: was die Brücke setzt, liest Main.gd.
+        let bridge = try RepoSource.probe("Extension/Sources/RiverSimGD/SimNode.swift")
+        for key in ["water", "water_blend", "color", "surface", "flow", "protect",
+                    "forest", "ribbons"] {
+            assertContains(bridge, "out[Variant(\"\(key)\")]",
+                           hint: "SimNode.renderFrame setzt den Schlüssel \(key)")
+            XCTAssertTrue(main.contains("frame[\"\(key)\"]") || main.contains("frame.has(\"\(key)\")"),
+                          "Main.gd liest den Frame-Schlüssel \(key) nicht")
+        }
         for gone in ["riversMaxDelta", "markRiversBuilt", "buildRiverRibbons",
                      "waterFieldBytes", "waterFieldRawBytes", "protectMaskBytes",
                      "forestMaskBytes"] {
