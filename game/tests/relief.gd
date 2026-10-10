@@ -130,6 +130,8 @@ func _check_bake_cadence(main: Node) -> void:
 		"Je Sim-Schritt ein Back-Pass (Schritte %d, Back-Pässe %d)" % [ticks, bakes])
 
 func _check_visible_surface(main: Node) -> void:
+	# Nur die Verschiebung: das Kronendach auf der Fläche prüft canopy.gd.
+	main.forest_img = null
 	# Bekannte Verschiebung statt des (headless nicht gezeichneten) Back-Passes.
 	var code: float = main.relief_height_code
 	_check(code > 0.0, "Höhen-Code der Backtextur kommt über die Brücke")

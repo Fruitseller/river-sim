@@ -57,8 +57,8 @@ public struct RibbonMesh: Equatable {
 public final class RiverRibbonRenderer {
     public init() {}
 
-    /// Zentrumslinien-Stand beim letzten Ribbon-Build (Dirty-Vertrag wie
-    /// `TreeInstanceRenderer`): Knotenzahlen + Positionen, flach. Abfluss ändert
+    /// Zentrumslinien-Stand beim letzten Ribbon-Build (Dirty-Vertrag):
+    /// Knotenzahlen + Positionen, flach. Abfluss ändert
     /// sich nur zusammen mit Positionen (Migration/computeFlow) — Positionen
     /// genügen.
     ///

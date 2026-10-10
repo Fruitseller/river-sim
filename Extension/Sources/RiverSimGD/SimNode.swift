@@ -227,6 +227,12 @@ final class SimNode: Node {
         PackedByteArray(render.protectMaskBytes(terrain))
     }
 
+    /// Waldmaske des Kronendachs als R8-Byte-Buffer (n×n, Issue #152) — s.
+    /// `ForestCanopyMask`. Endet an der Schutzmaske.
+    @Callable func forestMaskBytes() -> PackedByteArray {
+        PackedByteArray(render.forestMaskBytes(terrain))
+    }
+
     // MARK: Wasser-Kalibrierung über die Brücke (Issues #91/#92)
 
     // Die Tabellen (Namen + Werte) leben godot-frei in `SimRender.WaterUniforms`;
@@ -265,6 +271,19 @@ final class SimNode: Node {
 
     @Callable func reliefUniformValues() -> PackedFloat32Array {
         PackedFloat32Array(ReliefUniforms.scalars.map { Float($0.value) })
+    }
+
+    // MARK: Kalibrierung des Kronendachs (Issue #152)
+
+    // Tabelle in `SimRender.CanopyUniforms`; `Main.gd` setzt die Werte auf das
+    // Terrain-Material.
+
+    @Callable func canopyUniformNames() -> PackedStringArray {
+        PackedStringArray(CanopyUniforms.scalars.map(\.name))
+    }
+
+    @Callable func canopyUniformValues() -> PackedFloat32Array {
+        PackedFloat32Array(CanopyUniforms.scalars.map { Float($0.value) })
     }
 
     // Vertragswerte der Godot-Wächter (`water_geometry.gd`, `river_ribbons.gd`,
@@ -315,20 +334,6 @@ final class SimNode: Node {
     /// Effektive Maximal-Breite der Spitzhacke (Welteinheiten) — fürs Ring-Visual.
     @Callable func pickaxeMaxRadiusWorld() -> Double {
         Terrain.pickaxeMaxCells * terrain.cfg.cellSize
-    }
-
-    // MARK: Baum-Instanzen (MultiMesh-Puffer — s. `TreeInstanceRenderer`)
-
-    @Callable func treeVegMaxDelta() -> Double { render.treeVegMaxDelta(terrain) }
-
-    @Callable func markTreesBuilt() { render.markTreesBuilt(terrain) }
-
-    @Callable func treeInstanceBuffer(variant: Int, hscale: Double,
-                                      coverage: Int) -> PackedFloat32Array {
-        PackedFloat32Array(
-            render.treeInstanceBuffer(terrain, variant: variant, hscale: hscale,
-                                      coverage: coverage)
-        )
     }
 
     // MARK: Wasser-Geometrie (Band-Puffer — s. `RiverRibbonRenderer`)

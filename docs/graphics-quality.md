@@ -40,13 +40,14 @@ im Zeitraffer, nach Pinselstrichen und nach dem Laden aktiv.
 
 ## Die vier Hebel
 
-`RS_STUDY_LEVERS` (Komma-Liste, Standard: alle) schaltet sie für die
-Wirkungsleiter einzeln.
+`RS_STUDY_LEVERS` (Komma-Liste, Standard: alle) schaltete sie für die
+Wirkungsleiter einzeln. Seit #152 sind alle vier Produktion; die Studie hat
+keinen Hebel mehr, ein gesetztes `RS_STUDY_LEVERS` bricht ab.
 
 | Hebel | Was er tut | Wo |
 | --- | --- | --- |
 | `geometry` | Render-Gitter in Sim-Auflösung (720 statt 384). Grobe Erosionsrinnen (dieselbe runevision-Funktion wie das feine Detail, Skala 0.022 UV ≈ 2,5 km Wellenlänge) und einseitig geschärfte Grate als **echte Verschiebung**. Einmal je Terrain-Update in eine 1440²-Float-Textur gebacken; der Vertex-Shader liest die Höhe, der Fragment-Shader Steigung und Rinnen-Schattierung. **Seit #153 Produktion** (s. [Render-Verschiebung](#render-verschiebung-von-rinnen-und-graten-in-der-anwendung-153)); die Studie hat den Schalter nicht mehr. | `game/shaders/relief_bake.gdshader`, `game/shaders/terrain.gdshader` |
-| `canopy` | Weltmaßstab 1 Einheit ≈ 100 m. Wald als **Kronendach im Terrain-Shader**: ~20 m angehobenes Volumen (Waldkanten werfen Schatten), Voronoi-Kronen von ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel, Anteil nach Höhenband), dunkle Lücken, Selbstschatten zum Kronenrand. Lichtungen aus Rauschen, kein Wald in Wänden, auf Schnee oder an Wasser. Ersetzt die Instanzbäume. | `landscape.gdshaderinc` |
+| `canopy` | Weltmaßstab 1 Einheit ≈ 100 m. Wald als **Kronendach im Terrain-Shader**: ~20 m angehobenes Volumen (Waldkanten werfen Schatten), Voronoi-Kronen von ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel, Anteil nach Höhenband), dunkle Lücken, Selbstschatten zum Kronenrand. Lichtungen aus Rauschen, kein Wald in Wänden, auf Schnee oder an Wasser. Ersetzt die Instanzbäume. **Seit #152 Produktion** (s. [Kronendach](#kronendach-in-der-anwendung-152)); die Studie hat den Schalter nicht mehr. | `game/shaders/terrain.gdshader`, `SimRender.ForestCanopyMask` |
 | `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. **Seit #151 Produktion** (Sonnenhöhe dort 38°, s. [Licht und Atmosphäre](#licht-und-atmosphäre-in-der-anwendung-151)); die Studie hat den Schalter nicht mehr. | `game/scripts/Lighting.gd`, `game/shaders/clouds.gdshaderinc` |
 | `frame` | Ozean ohne Streifenmuster: Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, statt drei Sinuswellen. Farbe aus der echten Wassertiefe über dem Sim-Schelf (türkis → tiefblau), gebrochener Brandungssaum. **Seit #155 Produktion** (s. u.), kein Studien-Schalter mehr. | `shaders/ocean.gdshader` |
 
@@ -128,9 +129,6 @@ scripts/graphics-study.sh baseline detail interactive
 # Der letzte Parameter ist ein absoluter Ausgabepfad ohne .png.
 scripts/graphics-study.sh baseline overview shot /tmp/baseline-overview
 scripts/graphics-study.sh prototype overview shot /tmp/prototype-overview
-
-# Wirkungsleiter: einzelne Hebel
-RS_STUDY_LEVERS=canopy scripts/graphics-study.sh prototype detail shot /tmp/canopy
 
 # Getrennte Echtzeitmessungen, immer maximiert.
 scripts/graphics-study.sh prototype overview still /tmp/still
@@ -711,3 +709,101 @@ rund 3 ms in `balanced` sind das dichtere Gitter. Im Zeitraffer überschreiten
 wie bisher die Sim-Schritte das Budget, gleich oft (39–41 Frames je Lauf) und
 gleich hoch (max. 80–85 ms). Der Back-Pass je Sim-Schritt erhöht weder ihre Zahl
 noch ihre Höhe messbar.
+
+## Kronendach in der Anwendung (#152)
+
+Stand 10. Oktober 2026. Der Hebel `canopy` der Studie ist die normale
+Darstellung, für jede Welt, jedes Stadium und jede Kamera. Damit hat die
+Studie keinen Hebel mehr.
+
+- **Zwei Hälften.** WO Wald steht, rechnet `SimRender.ForestCanopyMask` auf
+  der CPU, einmal je Terrain-Update, als R8-Maske in Sim-Auflösung:
+  Vegetationsgewicht mit Lichtungs-Rauschen, ohne Wände (Weltsteigung ab 1,2
+  dünner, ab 1,8 kein Wald), ohne Schnee und Eis, ohne Ufersaum über dem Meer
+  und ohne alles, was die Schutzmaske (#154) sperrt. Die Studie rechnete das im
+  Shader; als Render-Ableitung ist es deterministisch und headless prüfbar.
+  WIE der Wald aussieht, rechnet der Terrain-Shader je Pixel: das Dach ist um
+  0,20 Einheiten (≈ 20 m) angehoben und wirft Schatten, darauf Voronoi-Kronen
+  von 0,11 Einheiten (≈ 11 m), Laubbaum als Kuppel, Nadelbaum als Kegel,
+  dunkle Lücken, Ausdünnen am Rand, und ab etwa einer Krone je Pixel nur noch
+  der Mittelwert (kein Flimmern in der Übersicht).
+- **Nadelbaum-Anteil nach Höhenband.** Die Studie leitete ihn aus dem
+  Vegetationsband ab (`veg_alt_lo − 0.08 … veg_alt_hi`). Produktion nimmt das
+  dafür vorgesehene Band `HeightBands.coniferLow/High` mit derselben Formel wie
+  `coniferShare` (10–90 %), das bisher nur die Instanzbäume lasen.
+- **Lichtungs-Rauschen.** Das Value-Noise-fBm der Studie, nach Swift portiert.
+  Ein erster Versuch mit `SimplexNoise` gleicher Frequenz streute auf mageren
+  Hängen sichtbar mehr kleine Waldflecken als das abgenommene Bild; mit dem
+  portierten Rauschen liegen die Bestände an denselben Stellen wie in der
+  Studie.
+- **Kalibrierung als Vertrag.** Alle Schwellen, Kronengröße und Dachhöhe
+  stehen in `SimCore.CanopyRender`. Was der Shader braucht, reist über
+  `SimRender.CanopyUniforms` → `SimNode` → `Main.gd` (default-freie
+  Uniforms). Farben, Kronenradien und Neigungen bleiben Optik des Shaders wie
+  die Ufer- und Kiesfarben.
+- **Pinsel und Kamera.** Pinselring und Kameraziel liegen auf dem Dach
+  (`_surface_y` addiert den Dachzuschlag), der Pinsel ändert weiter die
+  Sim-Zelle darunter.
+- **Physik unverändert:** `simperf --hash` vorher und nachher
+  `c5f16bebbb66a860` (M4 Max).
+
+**Instanzbäume entfallen ganz,** samt Auswahl „Vegetation" und Taste V
+(`TreeInstanceRenderer`, `treeInstanceBuffer`, `game/tests/tree_count.gd`,
+`HeightBands.bearsTrees`). Begründung aus der Matrix: Im richtigen Maßstab
+ist ein Baum 0,11 Einheiten breit, in der nächsten Matrixkamera (`grazing`,
+Distanz 38) also wenige Pixel; echte Instanzen an Waldrändern brächten dort
+keine sichtbare Parallaxe, kosteten aber Drawcalls und einen eigenen
+Rebuild-Takt. Im alten Maßstab (≈ 90 m) waren sie genau der Fehler, den #117
+behebt. Grenze bleibt: Bei sehr flachem Blick ist das Dach eine Fläche mit
+angehobener Kante, keine Silhouette einzelner Bäume.
+
+Wächter: `SimCoreTests/CanopyTests.swift` (kein Wald über Flüssen, Seen und
+Bändern samt Nachbarzelle, keiner in Wänden, auf Schnee, im Ufersaum;
+Determinismus; Pinsel, Neugenerieren und Laden ohne veralteten Wald;
+Vertrag und Uniform-Weg) und `game/tests/canopy.gd` (CI-Marke `CANOPY_OK`:
+Uniforms gesetzt, Waldtextur am Material, keine Instanzbäume, Fläche auf dem
+Dach, Neugenerieren tauscht den Wald).
+
+### Vergleichsmatrix vorher/nachher
+
+Alle 54 Matrixansichten, je Seed ein Bogen (Zeilen: Jahr × vorher/nachher,
+Spalten: overview, detail, grazing, backlight, coast, snow; Qualität
+`balanced`, maximiert 3456×2104). Vorher ist `2d9ce40`, nachher dieser Stand,
+beide mit `scripts/graphics-matrix.sh baseline <ordner> shot`:
+[Seed 1337](screenshots/graphics-quality/canopy-matrix-seed1337.jpg),
+[Seed 42](screenshots/graphics-quality/canopy-matrix-seed42.jpg),
+[Seed 20](screenshots/graphics-quality/canopy-matrix-seed20.jpg).
+
+Befund: Der Wald folgt der Sim-Vegetation. Bei Jahr 100.000 ist er
+entsprechend dicht (Seed 1337 288.000 Waldzellen, s. Baseline-Kennzahlen), und
+die Auen um die Flüsse bleiben als offene Wiesenbänder stehen: dort hält die
+Sim die Vegetation über Flut- und Ufer-Kill niedrig, dazu kommt der Saum der
+Schutzmaske. Flussbänder und Seeufer liegen in allen Ansichten frei.
+
+### Leistung
+
+M4 Max, maximiert, Viewport 3456×2104, Seed 1337, Jahr 20.000, Kamera
+`detail`, je Zeile ein sequenzieller Lauf ohne parallele Last, vorher und
+nachher abwechselnd (`RS_MATRIX_QUALITY=<stufe> RS_MATRIX_SEED=1337
+RS_MATRIX_YEAR=20000 scripts/graphics-matrix.sh baseline <ordner> timing`).
+Millisekunden je Frame:
+
+| Stufe | Betrieb | vorher Mittel / p95 / max | nachher Mittel / p95 / max | über 33,3 ms vorher → nachher |
+| --- | --- | ---: | ---: | ---: |
+| performance | Standbild | 4,97 / 4,95 / 17,19 | 5,48 / 5,56 / 8,94 | 0 → 0 |
+| performance | Kamerafahrt | 5,03 / 5,07 / 9,68 | 5,50 / 5,66 / 15,59 | 0 → 0 |
+| performance | Zeitraffer | 6,71 / 8,43 / 100,36 | 7,13 / 8,67 / 97,81 | 39 → 39 |
+| balanced | Standbild | 17,99 / 18,32 / 18,52 | 18,64 / 18,88 / 20,17 | 0 → 0 |
+| balanced | Kamerafahrt | 18,51 / 19,55 / 19,88 | 19,45 / 22,27 / 22,74 | 0 → 0 |
+| balanced | Zeitraffer | 21,45 / 49,46 / 79,49 | 23,52 / 50,85 / 80,87 | 44 → 45 |
+| quality | Standbild | 19,11 / 20,12 / 20,43 | 19,94 / 21,08 / 21,21 | 0 → 0 |
+| quality | Kamerafahrt | 19,67 / 21,50 / 21,72 | 20,34 / 22,75 / 23,06 | 0 → 0 |
+| quality | Zeitraffer | 22,38 / 52,54 / 81,27 | 22,97 / 52,61 / 81,54 | 41 → 44 |
+
+Das Kronendach kostet rund 0,5–1 ms je Bild (neun Kronenzellen je
+Waldpixel). Standbild und Kamerafahrt halten das Budget in jeder Stufe, auch
+im schlechtesten Einzelframe (max. 23,1 ms). Die Instanzbäume fallen dafür
+weg. Im Zeitraffer überschreiten wie bisher die Sim-Schritte das Budget, gleich
+oft im Rahmen der Streuung (39–45 Frames je Lauf) und gleich hoch (max.
+80–100 ms); die Waldmaske je Overlay-Upload erhöht weder Zahl noch Höhe
+messbar.

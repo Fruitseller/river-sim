@@ -1677,7 +1677,7 @@ public final class Terrain {
     }
 
     /// Bequeme Variante auf dem Array — dieselbe Formel, nur ein Aufrufweg für
-    /// Stellen ohne bereits geöffneten Puffer (z. B. `treeInstanceBuffer`).
+    /// Stellen ohne bereits geöffneten Puffer (z. B. Tests).
     @inline(__always)
     public static func macroSlope(_ a: [Double], _ k: Int, _ n: Int) -> Double {
         a.withUnsafeBufferPointer { macroSlope($0.baseAddress!, k, n) }
