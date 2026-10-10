@@ -41,7 +41,10 @@ public enum CanopyRender {
 
     /// Keine Bäume in Wänden: Weltsteigung (dy/dx in Welteinheiten, mit
     /// `RenderContract.heightScale`), ab der der Wald ausdünnt und ab der er
-    /// fehlt. 1.2 ≈ 50°, 1.8 ≈ 61°.
+    /// fehlt. 1.2 ≈ 50°, 1.8 ≈ 61°. Gemessen über `Terrain.macroSlope`
+    /// (±2 Zellen, AGENTS.md: die EINE Quelle der Makro-Steigung); die
+    /// Per-Zell-Steigung der Studie stanzte Rinnen-Textur als Löcher in den
+    /// Wald.
     public static let wallSlopeLo = 1.2
     public static let wallSlopeHi = 1.8
 
@@ -67,11 +70,26 @@ public enum CanopyRender {
     public static let liftLo = 0.2
     public static let liftHi = 0.65
 
+    /// Waldmaske, ab der der Wald in der Entfernung (Mittelwert statt Kronen)
+    /// die Fläche deckt, und ab der voll.
+    public static let coverLo = 0.25
+    public static let coverHi = 0.6
+
+    /// Waldmaske, ab der die Lücken zwischen den Kronen dunkel sind (nur im
+    /// Bestand, am Rand scheint der Boden durch), und ab der voll.
+    public static let gapLo = 0.35
+    public static let gapHi = 0.75
+
     /// Eine Krone steht nur, wo die Waldmaske ihre eigene Schwelle übertrifft
     /// (`crownMid ± crownSpread`, je Krone zufällig, also 0.25 … 0.85): am Rand
     /// dünnt der Wald so kronenweise aus statt an einer weichen Linie.
     public static let crownMid = 0.55
     public static let crownSpread = 0.30
+
+    /// Kronenradius in Rasterweiten, je Krone zufällig ± Jitter
+    /// (0.42 … 0.74, also Kronen von ~9–16 m Durchmesser bei 0.11).
+    public static let crownRadius = 0.58
+    public static let crownRadiusJitter = 0.16
 
     /// Kronen je Pixel (`fwidth` der Kronenkoordinate), ab denen das Muster in
     /// seinen Mittelwert übergeht, und ab denen nur noch der Mittelwert steht.
