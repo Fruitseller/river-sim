@@ -251,7 +251,9 @@ Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 `RS_STUDY_MOVIE`; für die Kalibrierung `RS_STUDY_DEBUG`) liegen in
 `game/studies/flusstal/Flusstal.gd` und werden über `scripts/graphics-study.sh`
 gesetzt; Direktstart ohne gültige Variante bricht ab. Seit #152 sind alle Hebel
-Produktion; ein gesetztes `RS_STUDY_LEVERS` bricht deshalb ebenfalls ab.
+Produktion; ein gesetztes `RS_STUDY_LEVERS` bricht deshalb ebenfalls ab. Die
+Studie ist seitdem Mess- und Referenzbühne, kein Produktionsweg (Status:
+`docs/graphics-quality.md` § Abschluss Spec #156).
 
 ## CI
 

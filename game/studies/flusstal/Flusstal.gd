@@ -1,6 +1,8 @@
 extends "res://scripts/Main.gd"
-## Bildstudie #116: dieselbe Simulationswelt, Variante `prototype` mit den
-## PBR-Materialien der Studie, `baseline` = normale Darstellung.
+## Bildstudie #116, seit Spec #156 Mess- und Referenzbühne, kein
+## Produktionsweg: `baseline` IST die Anwendung (Main.gd erbt alles),
+## `prototype` legt nur die nicht übernommenen PBR-Materialien der ersten
+## Runde darüber (historische Referenz, s. docs/graphics-quality.md).
 ##
 ## Alle Hebel der zweiten Runde sind Produktion und gelten in beiden
 ## Varianten: `light` (tiefe Sonne, Schatten, Luftperspektive, Talnebel,
@@ -146,5 +148,8 @@ func _study_drawn() -> void:
 			"p99_ms": study_intervals[int((study_intervals.size() - 1) * 0.99)],
 			"max_ms": study_intervals.back(), "over_budget_frames": over_budget,
 			"viewport": str(get_viewport().size), "mode": study_mode,
+			"quality": render_quality, "terrain_grid": terrain_grid,
+			"seed": sim_seed, "year": sim.currentYear(), "target": str(cam_target),
+			"distance": cam_dist, "yaw": study_start_yaw, "variant": study_variant,
 			"movie": false }))
 	get_tree().quit()

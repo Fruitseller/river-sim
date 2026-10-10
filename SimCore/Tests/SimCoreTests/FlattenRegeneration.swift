@@ -66,8 +66,9 @@ final class FlattenRegeneration: XCTestCase {
 
     // MARK: - Kennzahlen
 
-    /// Anteil der Landzellen mit `veg > 0.45` (ab da malt der Renderer Wald und
-    /// setzt Baum-Instanzen — die „Waldtapete" des Reports).
+    /// Anteil der Landzellen mit `veg > 0.45` (ab da malte der Renderer damals
+    /// Wald und setzte Baum-Instanzen — die „Waldtapete" des Reports; seit #152
+    /// ein Kronendach aus `SimRender.ForestCanopyMask`).
     private func forestFraction(_ t: Terrain) -> Double {
         var land = 0, forest = 0
         for k in 0..<t.cfg.count where t.h[k] > t.cfg.sea {
@@ -352,8 +353,8 @@ final class FlattenRegeneration: XCTestCase {
 
     /// Kriterium 2: stark veränderte Zellen verlieren Vegetation und
     /// Stream-Map-Gedächtnis der ALTEN Topografie, unveränderte Bereiche nicht.
-    /// (Die Baum-Instanzen des Frontends leiten sich aus `veg` ab — mit dem
-    /// Bestand fällt auch die Baumplatzierung.)
+    /// (Das Kronendach des Frontends leitet sich aus `veg` ab — mit dem
+    /// Bestand fällt auch der Wald.)
     func testDisturbedCellsDropInheritedStateAndStayLocal() {
         let c = flatCfg()
         let t = Terrain(config: c, seed: 1337)
