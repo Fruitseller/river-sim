@@ -23,8 +23,8 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   `GraphicsMatrixTests`). In der Anwendung: Licht und Atmosphäre (#151), der
   Ozean (#155, Kalibrierung als `WaterRender.ocean*`) und die Render-Verschiebung
   von Rinnen und Graten (#153, Render-Gitter in Sim-Auflösung, Pinselring und
-  Kameraziel auf der verschobenen Fläche). Offen bei #153: nadelspitze Gipfel
-  auf jungem Relief (Jahr 0), Abnahme durch den Projekteigner.
+  Kameraziel auf der verschobenen Fläche, Gratdeckel gegen Nadelgipfel auf
+  jungem Relief, Überblendung im Zeitraffer).
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare

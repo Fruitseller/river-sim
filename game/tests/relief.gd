@@ -7,7 +7,8 @@ extends SceneTree
 ##    die Brücke (SimCore.ReliefRender), ist default-frei deklariert und wird
 ##    auf beiden Materialien gesetzt;
 ##  - Main backt die Verschiebung nur bei Terrain-Updates: im Standbild nie,
-##    im Zeitraffer mit jedem Sim-Schritt;
+##    im Zeitraffer mit jedem Sim-Schritt und dort weich übergeblendet, beim
+##    Pinsel sofort;
 ##  - Pinselring und Kameraziel liegen auf der SICHTBAREN Fläche (Sim-Höhe plus
 ##    Verschiebung), der Pinsel ändert die Sim-Zelle unter dem Treffer.
 ## Der Dummy-Renderer zeichnet den Back-Pass nicht; für die Flächen-Prüfung
@@ -107,12 +108,20 @@ func _check_bake_cadence(main: Node) -> void:
 	var year_before: float = main.sim.currentYear()
 	main.year_rate = 60.0
 	var ticks := 0
+	var faded := false
 	for i in 40:
 		var y: float = main.sim.currentYear()
 		main._process(0.02)
 		if main.sim.currentYear() != y:
 			ticks += 1
+		faded = faded or main.relief_mix < 1.0
 	main.year_rate = 0.0
+	_check(faded, "Zeitraffer blendet die Verschiebung über, statt zu springen")
+	for i in 20:
+		main.last_activity_msec = Time.get_ticks_msec()
+		main._process(0.02)
+	_check(main.relief_mix == 1.0 and main.terrain_mat.get_shader_parameter("bake_blend") == 1.0,
+		"Blende endet nach einem Sim-Takt auf dem neuen Stand")
 	var bakes: int = main.relief_bakes - before
 	_check(ticks > 0 and main.sim.currentYear() > year_before, "Zeitraffer muss Sim-Schritte machen")
 	_check(bakes >= ticks and bakes <= 2 * ticks,
@@ -187,7 +196,10 @@ func _check_visible_surface(main: Node) -> void:
 	var h_far: float = h[far]
 	main.current_tool = 0
 	main.sculpting = true
+	main.year_rate = 60.0  # auch bei laufendem Zeitraffer: der Strich blendet nicht
 	main._process(0.05)
+	main.year_rate = 0.0
+	_check(main.relief_mix == 1.0, "Pinsel backt ohne Blende")
 	main.sculpting = false
 	var after: PackedFloat32Array = main.sim.heights()
 	_check(after[hit_cell] > h[hit_cell], "Pinsel hebt die Sim-Zelle unter dem Treffer (%.5f → %.5f)"

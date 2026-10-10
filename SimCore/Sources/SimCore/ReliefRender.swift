@@ -30,6 +30,14 @@ public enum ReliefRender {
     /// etwa +1 Welteinheit (≈ 100 m).
     public static let sharpen = 2.2
 
+    /// Weicher Deckel der Gratschärfung in Welteinheiten (`cap · tanh(x / cap)`).
+    /// Ohne ihn hob die Schärfung auf jungem, steilem Relief (Jahr 0) einzelne
+    /// Gipfel um bis zu 3,6 Einheiten an (Projekteigner: „viel zu spiky");
+    /// mit 0.8 bleibt es dort bei 1,0, und das bei Jahr 20.000 abgenommene
+    /// Bild ändert sich kaum (p99 der Anhebung 0,54 → 0,50, Maximum
+    /// 1,17 → 0,89). 0.5 drückte auch die reifen Grate sichtbar (Maximum 0,71).
+    public static let ridgeCap = 0.8
+
     /// Radius des Rings, gegen den die Gratschärfung misst, in Sim-Zellen.
     public static let sharpenRadiusCells = 2.5
 

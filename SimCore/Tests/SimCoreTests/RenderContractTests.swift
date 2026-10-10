@@ -139,7 +139,8 @@ final class RenderContractTests: XCTestCase {
                        "Neue oder entfernte `hscale`-Anwendung im Terrain-Shader —"
                        + " Liste der geprüften Stellen mitziehen")
         // Back-Pass der Verschiebung: Main.gd setzt denselben Uniform, der
-        // Shader wendet ihn genau einmal an (Höhenzuschlag in Welteinheiten).
+        // Shader wendet ihn genau einmal an (Höhenzuschlag in Welteinheiten)
+        // und rechnet damit den Gratdeckel in Sim-Höhe um.
         assertContains(main, "relief_mat.set_shader_parameter(\"hscale\", HSCALE)",
                        hint: "Back-Pass bekommt die Überhöhung aus Main.gd HSCALE")
         let bake = try RepoSource.probe("game/shaders/relief_bake.gdshader")
@@ -147,7 +148,9 @@ final class RenderContractTests: XCTestCase {
                        hint: "Back-Pass deklariert die Überhöhung default-frei")
         assertContains(bake, "relief = vec4((det.x + ridge) * hscale,",
                        hint: "Überhöhung wird im Back-Pass unskaliert angewandt")
-        XCTAssertEqual(bake.count(ofIdentifier: "hscale"), 2,
+        assertContains(bake, "float cap = relief_ridge_cap / hscale;",
+                       hint: "Gratdeckel steht in Welteinheiten (ReliefRender.ridgeCap)")
+        XCTAssertEqual(bake.count(ofIdentifier: "hscale"), 3,
                        "Neue oder entfernte `hscale`-Anwendung im Back-Pass")
     }
 

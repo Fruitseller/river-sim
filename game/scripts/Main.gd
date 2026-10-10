@@ -207,7 +207,12 @@ var h_cache_dirty := true
 # Rückweg ist ein GPU-Sync, gemessen 22 ms bei n = 720, M4 Max).
 # `relief_lift_cache` ist der kodierte Höhenzuschlag auf dem Sim-Gitter
 # (Dekodierung in `_surface_y`), leer = keine Verschiebung bekannt.
-var relief_vp: SubViewport
+# Zwei Back-Ziele im Wechsel: im Zeitraffer blendet der Terrain-Shader über
+# einen Sim-Takt vom alten zum neuen Stand (`relief_mix`), statt viermal je
+# Sekunde zu springen; sonst (Pinsel, Sprung, Laden) gilt der neue sofort.
+var relief_vps: Array[SubViewport] = []
+var relief_vp: SubViewport  # das Ziel mit dem neuesten Stand
+var relief_mix := 1.0
 var relief_mat: ShaderMaterial
 var relief_height_code := 0.0
 var relief_lift_cache: PackedFloat32Array
@@ -513,12 +518,6 @@ func _setup_relief() -> void:
 	var calib := relief_calibration(sim)
 	relief_height_code = calib["relief_height_code"]
 	var size := N * RELIEF_BAKE_FACTOR
-	relief_vp = SubViewport.new()
-	relief_vp.size = Vector2i(size, size)
-	relief_vp.use_hdr_2d = true
-	# Transparent, sonst verwirft der Viewport den Alpha-Kanal (Rinnen/Rippen).
-	relief_vp.transparent_bg = true
-	relief_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	relief_mat = ShaderMaterial.new()
 	relief_mat.shader = load("res://shaders/relief_bake.gdshader")
 	relief_mat.set_shader_parameter("grid_n", float(N))
@@ -527,12 +526,23 @@ func _setup_relief() -> void:
 	for mat in [relief_mat, terrain_mat]:
 		for name in calib:
 			mat.set_shader_parameter(name, calib[name])
-	var rect := ColorRect.new()
-	rect.size = Vector2(size, size)
-	rect.material = relief_mat
-	relief_vp.add_child(rect)
-	add_child(relief_vp)
+	for i in 2:
+		var vp := SubViewport.new()
+		vp.size = Vector2i(size, size)
+		vp.use_hdr_2d = true
+		# Transparent, sonst verwirft der Viewport den Alpha-Kanal (Rinnen/Rippen).
+		vp.transparent_bg = true
+		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		var rect := ColorRect.new()
+		rect.size = Vector2(size, size)
+		rect.material = relief_mat
+		vp.add_child(rect)
+		add_child(vp)
+		relief_vps.append(vp)
+	relief_vp = relief_vps[0]
 	terrain_mat.set_shader_parameter("relief_tex", relief_vp.get_texture())
+	terrain_mat.set_shader_parameter("relief_prev_tex", relief_vp.get_texture())
+	terrain_mat.set_shader_parameter("bake_blend", 1.0)
 	terrain_mat.set_shader_parameter("relief_enabled", true)
 
 func _setup_scene() -> void:
@@ -1087,6 +1097,9 @@ func _process(delta: float) -> void:
 		return
 
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
+	if relief_mix < 1.0:
+		relief_mix = minf(relief_mix + delta / SIM_TICK_SECONDS, 1.0)
+		terrain_mat.set_shader_parameter("bake_blend", relief_mix)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
 	if ocean_mat:
@@ -1378,11 +1391,22 @@ func _protect_mask() -> Image:
 ## Back-Pass zeichnet genau einen Frame, danach steht die Textur bis zum
 ## nächsten Update. Kein Update, kein Back-Pass — der Zeitraffer bleibt damit
 ## ruhig, und das Standbild kostet nur das Lesen der Textur.
+## Im Zeitraffer backt das andere Ziel, und der Terrain-Shader blendet über
+## einen Sim-Takt hinüber. Kommt mitten in der Blende ein zweiter Auftrag
+## (Band-Bau im selben Takt), backt das neue Ziel erneut, und die Blende läuft
+## weiter, statt zurück auf den alten Stand zu springen.
 func _bake_relief() -> void:
 	if relief_vp == null or height_field._tex == null or protect_tex == null:
 		return
 	relief_mat.set_shader_parameter("height_tex", height_field._tex)
 	relief_mat.set_shader_parameter("protect_tex", protect_tex)
+	var fade := year_rate > 0.0 and not sculpting and not _jumping
+	if relief_mix >= 1.0 or not fade:
+		terrain_mat.set_shader_parameter("relief_prev_tex", relief_vp.get_texture())
+		relief_vp = relief_vps[1] if relief_vp == relief_vps[0] else relief_vps[0]
+		terrain_mat.set_shader_parameter("relief_tex", relief_vp.get_texture())
+		relief_mix = 0.0 if fade else 1.0
+		terrain_mat.set_shader_parameter("bake_blend", relief_mix)
 	relief_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	relief_bake_frame = Engine.get_frames_drawn()
 	relief_bakes += 1
