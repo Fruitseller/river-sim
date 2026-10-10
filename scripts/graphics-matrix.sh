@@ -111,7 +111,14 @@ run_shot() {
   export RS_TARGET="$target" RS_DIST="$dist" RS_YAW="$yaw" RS_PITCH="$pitch"
   export RS_STUDY_VARIANT="$variant" RS_STUDY_MODE="shot" RS_STUDY_OUTPUT="$out_base"
 
-  scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn
+  # Gewertet wird das Bild, nicht der Exit-Code (Absturz beim Herunterfahren,
+  # Issue #61); sonst bräche ein Abschluss-Absturz die restliche Matrix ab.
+  rm -f "${out_base}.png"
+  { scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn || true; }
+  if [[ ! -s "${out_base}.png" ]]; then
+    echo "Keine Aufnahme ${out_base}.png" >&2
+    exit 1
+  fi
 }
 
 run_timing() {

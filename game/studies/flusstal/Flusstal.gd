@@ -150,6 +150,7 @@ func _study_drawn() -> void:
 			"viewport": str(get_viewport().size), "mode": study_mode,
 			"quality": render_quality, "terrain_grid": terrain_grid,
 			"seed": sim_seed, "year": sim.currentYear(), "target": str(cam_target),
-			"distance": cam_dist, "yaw": study_start_yaw, "variant": study_variant,
+			"distance": cam_dist, "yaw": study_start_yaw, "pitch": cam_pitch,
+			"variant": study_variant,
 			"movie": false }))
 	get_tree().quit()
