@@ -215,6 +215,7 @@ var relief_vp: SubViewport  # das Ziel mit dem neuesten Stand
 var relief_mix := 1.0
 var relief_mat: ShaderMaterial
 var relief_height_code := 0.0
+var relief_geometry_age := 0.0  # Sim-Jahre bis zur vollen Verformung
 var relief_lift_cache: PackedFloat32Array
 var relief_bake_frame := -1  # Frame des noch nicht zurückgelesenen Auftrags
 var relief_bakes := 0  # Zähler für den Wächter: nur Terrain-Updates backen
@@ -517,6 +518,7 @@ static func relief_calibration(sim_node: Object) -> Dictionary:
 func _setup_relief() -> void:
 	var calib := relief_calibration(sim)
 	relief_height_code = calib["relief_height_code"]
+	relief_geometry_age = calib["relief_geometry_age"]
 	var size := N * RELIEF_BAKE_FACTOR
 	relief_mat = ShaderMaterial.new()
 	relief_mat.shader = load("res://shaders/relief_bake.gdshader")
@@ -1339,6 +1341,7 @@ func _ensure_h_cache() -> void:
 func _update_terrain_textures(water_blend: float = 1.0, update_overlays: bool = true) -> void:
 	height_field.upload(terrain_mat, N, sim.heightsBytes())
 	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(sim.currentYear()))
+	terrain_mat.set_shader_parameter("sim_year", sim.currentYear())
 	if update_overlays:
 		_upload_overlays(water_blend)
 		_update_protect_mask()
@@ -1788,8 +1791,14 @@ func _sample_h(gx: float, gz: float) -> float:
 func _surface_y(gx: float, gz: float) -> float:
 	var y := _sample_h(gx, gz) * HSCALE
 	if not relief_lift_cache.is_empty():
-		y += (_sample_grid(relief_lift_cache, gx, gz) - 0.5) / relief_height_code
+		y += (_sample_grid(relief_lift_cache, gx, gz) - 0.5) / relief_height_code \
+			* relief_geometry_fade(sim.currentYear(), relief_geometry_age)
 	return y
+
+## Anteil der echten Verformung nach Geländealter, wie im Terrain-Shader
+## (`relief_lift`): auf jungem Relief nur Schattierung, ab `age` voll.
+static func relief_geometry_fade(year: float, age: float) -> float:
+	return smoothstep(0.0, age, year)
 
 ## Sichtbare Höhe unter einem Weltpunkt (nur x/z zählen).
 func _surface_y_at(p: Vector3) -> float:

@@ -13,6 +13,7 @@ public enum ReliefUniforms {
         ("relief_sharpen", ReliefRender.sharpen),
         ("relief_sharpen_radius", ReliefRender.sharpenRadiusCells),
         ("relief_ridge_cap", ReliefRender.ridgeCap),
+        ("relief_geometry_age", ReliefRender.geometryAgeYears),
         ("relief_height_code", ReliefRender.heightCode),
         ("relief_slope_code", ReliefRender.slopeCode),
         ("relief_shade_dark", ReliefRender.shadeDark),

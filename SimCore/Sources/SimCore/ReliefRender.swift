@@ -38,6 +38,17 @@ public enum ReliefRender {
     /// 1,17 → 0,89). 0.5 drückte auch die reifen Grate sichtbar (Maximum 0,71).
     public static let ridgeCap = 0.8
 
+    /// Alter (Sim-Jahre), bis zu dem die echte Verformung einblendet
+    /// (Smoothstep ab Jahr 0). Rinnen und Grate wirken in Schattierung und
+    /// Normalen von Anfang an voll, die Vertex-Verschiebung erst mit dem Alter:
+    /// auf jungem, steilem Relief zog jede Verformung die Grate zu Sägezähnen
+    /// (Projekteigner, 10. Oktober 2026: „viel zu spiky"). Weder ein kleinerer
+    /// Gratdeckel noch schwächere Rinnen noch eine weichere Abtastung halfen,
+    /// jeder der beiden Anteile allein reichte schon. Bei 20.000 Jahren steht
+    /// das abgenommene Studienbild unverändert. Vorbild: das feine Shader-Detail
+    /// blendet ebenso mit dem Alter ein (`Main.terrain_detail_strength`).
+    public static let geometryAgeYears = 20_000.0
+
     /// Radius des Rings, gegen den die Gratschärfung misst, in Sim-Zellen.
     public static let sharpenRadiusCells = 2.5
 
