@@ -544,8 +544,6 @@ void fragment() {
 		float micro_strength = mix(0.055, 0.13, rock) * mix(1.0, 0.45, cold);
 		n_ws = normalize(n_ws + micro * micro_strength * material_fade);
 	}
-	NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
-
 	float breakup = vnoise(wp * 0.9) * 0.6 + vnoise(wp * 3.7) * 0.4;
 	terr *= 1.0 + min(det_shade, 0.0) * detail_shade
 	      + max(det_shade, 0.0) * detail_shade * 0.3;
