@@ -4429,7 +4429,15 @@ public final class Terrain {
 
     /// Simuliert `dtYears` Jahre. `dtYears` darf groß sein (Stream-Power ist
     /// implizit stabil); die Hangprozesse werden intern anteilig getaktet.
+    /// Nicht-positive sowie nicht-endliche Zeitschritte (`dtYears <= 0`, `NaN`, `±inf`)
+    /// führen defensiv zu einem No-op.
     public func step(dtYears dt: Double) {
+        // Nicht-positive oder nicht-endliche Zeitschritte (<= 0, NaN, ±inf)
+        // defensiv abfangen: Kein Zeitschritt darf die Simulationsuhr rückwärts
+        // verstellen, Berechnungen mit NaNs vergiften oder Traps bei
+        // Integer-Konvertierungen (z. B. in waveSchedule oder hillslopeDiffusion) auslösen.
+        guard dt > 0, dt.isFinite else { return }
+
         // Abklingende Hebung (post-orogener Zerfall, s. Config). Der Relief-Servo
         // ist nur noch UNTERGRENZE: er greift, wenn U(t) das Relief nicht mehr
         // über `reliefTarget` hält — im normalen 100k-Fenster nie (gemessen). Das
