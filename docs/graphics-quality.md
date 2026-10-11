@@ -802,6 +802,13 @@ Studie keinen Hebel mehr.
   längere τ machen den Auengürtel nur breiter. Die Werte weichen von der
   Tabelle im Ticket ab (1,06 % heute), weil der Lauf hier wie der
   Zeitraffer alle 25 J. eine Maske baut und das Wasser mit 0,15 blendet.
+
+  Grenzen: Die dt-Invarianz gilt für das Nachwachsen gegen ein festes Ziel.
+  Ein Zeitsprung baut die Maske nur je 2000-Jahre-Chunk und sieht die
+  Zwischenlagen der Flüsse nicht; nach einem Sprung stehen die Auen deshalb
+  grüner als nach demselben Zeitraum im Zeitraffer. Der Pinsel setzt das
+  Gedächtnis der ganzen Karte zurück, nicht nur unter dem Strich: nach einem
+  Strich stehen alle nachwachsenden Auengürtel sofort wieder voll.
 - **Pinsel und Kamera.** Pinselring und Kameraziel liegen auf dem Dach
   (`_surface_y` addiert den Dachzuschlag), der Pinsel ändert weiter die
   Sim-Zelle darunter.
