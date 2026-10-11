@@ -31,6 +31,7 @@ final class TerrainAging: XCTestCase {
     /// ab 10k flach bei ≈ −0.030 — genau das Plateau, das dieser Test ausschließt.
     func testAgingTrajectoryOver100k() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         let t = Terrain(config: c, seed: 1337)
 
         let relief0 = t.landRelief()

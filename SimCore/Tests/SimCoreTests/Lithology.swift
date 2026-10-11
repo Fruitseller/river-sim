@@ -18,7 +18,9 @@ final class Lithology: XCTestCase {
     /// Produktionsphysik in Testauflösung (die reinen Performance-Schalter der
     /// Produktion sind verhaltensneutral, s. AGENTS.md).
     private func cfg(n: Int = 192) -> SimConfig {
-        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        return c
     }
 
     /// REFERENZARM: das Feld wird gerechnet, wirkt aber auf keine Rate. Damit
@@ -359,6 +361,7 @@ final class Lithology: XCTestCase {
     /// Gestein: sie ist eine Eigenschaft des dort fixierten Beckens.
     func testEndorheicMechanicsSurviveLithology() {
         var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6   // dryCfg von #11, Lithologie AN
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         var ref = c; ref.lithologyEnabled = false                  // derselbe Arm wie der #11-Wächter
 
         /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).

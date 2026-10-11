@@ -10,6 +10,15 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Aktueller Stand (Kurzfassung)
 
+- **Zielbild #174, Paket A (Großform):** `generate()` legt die Grate nicht
+  mehr über die ganze Landfläche, sondern entlang EINES Gebirgskamms mit
+  Seitenästen (`RangeSkeleton`, `Landform.swift`); daneben Hügelland, zur
+  Küste eine Ebene, zwei bis vier Täler vom Kamm zum Meer, die Tektonik nur im
+  Gebirgsgürtel, kein Land am Gitterrand. Abnahmepunkte 1–4 auf allen
+  Matrix-Seeds erfüllt (`docs/zielbild-measurements.md`, Wächter
+  `ZielbildLandformTests`). Mechanik-Wächter mit Testaufbau auf der alten Welt
+  pinnen `calibrationRangeLandform`. Die Seed-1337-Welt hat damit auch kein
+  Riesenbecken mehr (s. „See-Ausreißer" unten, für die neue Form zu prüfen).
 - **Landschaftsqualität #116/#117:** die Flusstal-Studie (#116, PR #121) hat
   vier prozedurale Hebel bewiesen: gebackene Render-Verschiebung (Rinnen,
   geschärfte Grate), Kronendach im Maßstab 1 Einheit ≈ 100 m, Licht mit
@@ -172,6 +181,15 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Messreihen: `docs/flatten-regeneration-measurements.md`.
 
 ## Offene Punkte
+
+**Zielbild #174, Pakete B–E (offen).** Ist-Messung vor B in
+`docs/zielbild-measurements.md`: die Mäander-Sinuosität kommt aus Zacken in
+Bandbreite (Wellenlänge 1–4 Kanalbreiten statt 10–14), das Querprofil ist
+verkehrt (Außen/Innen 0,6–0,8 statt ≥ 2), und es gibt 900–1800 Hals-Cutoffs
+je 20.000 Jahre. Dazu zwei Befunde aus der Test-Kaskade von A: die Eismasse
+hängt in der Produktion an der Schrittweite (schon vor #174, Faktor bis 3
+zwischen dt 100 und 1000), und die Stream-Map trackt auf der neuen Form die
+großen Läufe schlechter (Render-Lücken, Abnahmepunkt 21).
 
 **Seed 1337 ist ein See-Ausreißer (Aug 2026, gemessen — offen: Entscheidung).**
 Der Default-Seed (`RenderContract.defaultSeed`) erzeugt die mit Abstand

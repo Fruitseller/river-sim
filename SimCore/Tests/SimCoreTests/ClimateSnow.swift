@@ -18,7 +18,9 @@ import XCTest
 final class ClimateSnow: XCTestCase {
 
     private func cfg(n: Int = 192) -> SimConfig {
-        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        return c
     }
 
     /// Landanteile: Schnee-Rampe (Deckung > `snowBandCoverStart`), voll beschneit

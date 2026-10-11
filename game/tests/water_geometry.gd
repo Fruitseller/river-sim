@@ -66,15 +66,20 @@ func _run() -> void:
 	# Welt gerade Altarme trägt, ist Physik, keine Render-Eigenschaft (Seed 907
 	# hat nach 60.000 Jahren keinen einzigen wassergefüllten Altarm mehr).
 	var strict := true
-	# 30.000 statt 20.000 J. seit dem Umstieg auf n = 720 (Aug 2026): die
-	# kleinere Welt hat kürzere Läufe, ihre Mäander schnüren später ab.
-	# GEMESSEN über RS_STEP (Bänder mit Typ-Kanal KIND_OXBOW, Seed 1337):
-	# 15.000 J. → 0, 20.000 → 0, 25.000 → 4, 30.000 → 4, 40.000 → 1.
-	# 30.000 liegt auf dem Plateau, nicht an seiner Kante. Bei n = 832 trug
-	# dieselbe Welt schon nach 20.000 J. Altarm-Bänder — die Zusage ist also
-	# nicht schwächer geworden, sie braucht nur den Zeitpunkt, an dem DIESE
-	# Welt sie erfüllt (s. Kommentar über `strict`).
-	var years := 30000.0
+	# Der Wächter prüft den ERSTEN Zustand ab Jahr 20.000 (jedes Jahrtausend bis
+	# 80.000), der Altarm- UND Delta-Bänder trägt, statt eines festen Jahres.
+	# Bis Issue #174 stand hier fest 30.000 J., gemessen auf der damaligen Welt
+	# (Seed 1337: 15.000 → 0, 20.000 → 0, 25.000 → 4, 30.000 → 4, 40.000 → 1
+	# Altarm-Bänder). Ob eine Welt zu einem bestimmten Jahr gerade einen jungen
+	# Altarm trägt, ist Physik: mit der Großform aus #174 und der System-libm des
+	# CI-Runners (Linux) traf 30.000 J. eine Lücke. Die Zusage bleibt — Altarme
+	# und Deltas entstehen, und ihre Bänder halten alle Invarianten unten —,
+	# nur ohne festes Datum. Jedes Jahrtausend, nicht jedes fünfte: ein Altarm-
+	# Band braucht offenes Wasser im eigenen Bogen, und auf der neuen Welt sind
+	# gleichzeitig nur 0–4 junge Altarme wassergefüllt (gemessen Seed 1337,
+	# Jahre 20.000–80.000 in 5.000er-Schritten, macOS) — im 5.000er-Raster
+	# traf der Linux-Runner keinen.
+	var years := 80000.0
 	if OS.has_environment("RS_STEP"):
 		years = float(OS.get_environment("RS_STEP"))
 		strict = false
@@ -85,6 +90,12 @@ func _run() -> void:
 	while y < years:
 		sim.step(1000.0)
 		y += 1000.0
+		if strict and y >= 20000.0:
+			sim.recomputeFlow()
+			sim.buildRiverRibbons(Main.HSCALE, Main.RIVER_LIFT)
+			if _has_kind(sim, kind_oxbow) and _has_kind(sim, kind_delta):
+				break
+	years = y
 	sim.recomputeFlow()
 
 	var h_before: PackedFloat32Array = sim.heights()
@@ -229,3 +240,12 @@ func _pond(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) ->
 func _is_water(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) -> bool:
 	return _pond(h, wl, sea, k) > pond_contour_lo
 
+
+# Trägt der zuletzt gebaute Band-Puffer mindestens ein Band dieses Typs?
+func _has_kind(sim: Object, kind: float) -> bool:
+	var uv2s: PackedVector2Array = sim.riverRibbonUV2s()
+	var starts: PackedInt32Array = sim.riverRibbonStripStarts()
+	for s in starts.size():
+		if starts[s] < uv2s.size() and uv2s[starts[s]].x == kind:
+			return true
+	return false

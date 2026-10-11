@@ -9,6 +9,7 @@ final class WaterRendererTests: XCTestCase {
     if !productionGrid {
       config.n = 192
       config.world = calibrationWorld
+      config.rangeLandform = calibrationRangeLandform  // Großform vor #174
     }
     return agedWorld(config, years: years)
   }
@@ -118,7 +119,13 @@ final class WaterRendererTests: XCTestCase {
   }
 
   func testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater() {
-    let terrain = agedTerrain(years: 30_000, productionGrid: true)
+    // Der Übergabe-Vertrag braucht junge Altarme im Bild. Die Seed-1337-Welt
+    // mit der Großform aus #174 hat in Jahr 30.000 keinen offenen (auf dem
+    // Linux-Runner, System-libm) — geprüft wird hier die Übergabe Band ↔
+    // Raster, nicht die Mäander-Physik.
+    var config = SimConfig()
+    config.rangeLandform = calibrationRangeLandform
+    let terrain = agedWorld(config, years: 30_000)
     let ribbons = RiverRibbonRenderer()
     let mesh = ribbons.build(terrain, hscale: 24, lift: 0.35)
     XCTAssertFalse(mesh.stripStarts.isEmpty, "Testwelt emittiert keine Bänder")

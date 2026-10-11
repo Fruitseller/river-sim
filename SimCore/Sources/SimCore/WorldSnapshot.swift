@@ -88,7 +88,10 @@ public enum WorldSnapshot {
     /// nicht und ist damit ohnehin nicht mehr dekodierbar — der Sprung sorgt nur
     /// dafür, dass der Nutzer die klare Versions-Meldung sieht statt eines
     /// Plist-Fehlers.
-    public static let version: UInt32 = 4
+    /// Version 5 (Issue #174): die Großform-Stellschraube `rangeLandform`
+    /// reist über die synthetisierte Config-Kodierung mit — eine Version-4-Datei
+    /// hat den Schlüssel nicht (Begründung wie bei Version 4).
+    public static let version: UInt32 = 5
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"

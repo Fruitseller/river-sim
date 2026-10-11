@@ -487,6 +487,8 @@ Landzellen bleibt (`docs/melt-runoff-measurements.md` §D).
 Ausgelagert sind nur Dinge mit eigener Datenstruktur: `Hydraulic.swift` (Droplet-Erosion,
 Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, Cutoff),
 `ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0**, siehe `NOTICE`),
+`Landform.swift` (`RangeSkeleton`: Kammachse, Seitenäste und Täler der Generierung
+als Polylinien, Issue #174),
 `HeightBands.swift` (Perzentil-Höhenbänder, Issue #4), `WorldSnapshot.swift`
 (Speicherformat, Issue #8; das Zustands-INVENTAR `TerrainState` steht dagegen am
 Ende von `Terrain.swift`), `Profile.swift` (`SimProfile`, die Pass-Marken des
@@ -623,7 +625,10 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Core-Default-Welten sind deshalb nicht bit-vergleichbar.
 - Testkonfigs (`meanderCfg()` in `SimCoreTests.swift`) **pinnen alte Werte**, damit
   Kopplungs-Mechanik und Produktions-Kalibrierung entkoppelt bleiben. Nicht
-  „aufräumend" an die Produktionswerte angleichen.
+  „aufräumend" an die Produktionswerte angleichen. Dasselbe gilt für die
+  Großform: Mechanik-Wächter, deren Testaufbau Becken, Playas oder Schlingen der
+  alten Seed-1337-Welt braucht, pinnen `rangeLandform` über
+  `calibrationRangeLandform` (`TestCalibration.swift`, Issue #174).
 
 ## Arbeitsweise in diesem Projekt
 

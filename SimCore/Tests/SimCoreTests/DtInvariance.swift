@@ -108,7 +108,9 @@ final class DtInvariance: XCTestCase {
     static func run(seed: UInt32, n: Int = 192, years: Double = 20_000,
                     dt: Double, from: Double = 10_000, every: Double = 2_000,
                     configure: (inout SimConfig) -> Void = { _ in }) -> Metrics {
-        var c = SimConfig(); c.n = n; c.world = calibrationWorld; configure(&c)
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        configure(&c)
         let t = Terrain(config: c, seed: seed)
         var acc = Metrics(), samples = 0.0, next = from
         while t.years < years - 1e-9 {
