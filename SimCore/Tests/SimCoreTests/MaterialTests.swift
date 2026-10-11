@@ -218,7 +218,9 @@ final class MaterialTests: XCTestCase {
             "material_ridge_rock_gain": MaterialRender.ridgeRockGain,
             "material_gully_scree_share": MaterialRender.gullyScreeShare,
             "material_joint_spacing": MaterialRender.jointSpacing,
+            "material_joint_stretch": MaterialRender.jointStretch,
             "material_joint_depth": MaterialRender.jointDepth,
+            "material_joint_gully_gain": MaterialRender.jointGullyGain,
             "material_scree_grain": MaterialRender.screeGrain,
             "material_crevasse_spacing": MaterialRender.crevasseSpacing,
             "material_crevasse_slope_lo": MaterialRender.crevasseSlopeLo,
@@ -253,6 +255,28 @@ final class MaterialTests: XCTestCase {
                        hint: "WO Schutt, Eis, Rohboden und Talboden liegen, sagt allein cover_tex")
         XCTAssertFalse(shader.contains("study_material"),
                        "Die PBR-Materialien der Studie sind durch #174 D ersetzt")
+    }
+
+    /// Review zu PR #177: die Klüftung darf kein regelmäßiges Liniennetz sein.
+    /// Die erste Fassung lag als `fract`-Gitter in der Waagerechten
+    /// (`material_pos.xz`) und stand auf den Wänden als Drahtgitter da. Jetzt
+    /// triplanar mit Fallrichtung, aus Rauschen und an Rinnen/Rippen
+    /// gekoppelt; die Strukturprobe hält das fest, das Bild prüft der Mensch.
+    func testRockJointsAreNoRegularLattice() throws {
+        let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
+        assertContains(shader, "joints = rock_joints(material_pos, n_ws, cavity, tone);",
+                       hint: "Klüftung bekommt Weltposition, Normale und Relief-Rinnen")
+        let bodies = try shader.captures(
+            pattern: "float rock_joint(?:_face|s)\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}")
+        XCTAssertEqual(bodies.count, 2, "rock_joint_face und rock_joints gefunden")
+        for body in bodies {
+            XCTAssertFalse(body.contains("fract("), "Klüftung ohne periodisches fract-Gitter")
+            XCTAssertFalse(body.contains("floor("), "Klüftung ohne Zellraster")
+        }
+        XCTAssertTrue(bodies.joined().contains("material_joint_stretch"),
+                      "Runsen in Fallrichtung gestreckt")
+        XCTAssertTrue(bodies.joined().contains("material_joint_gully_gain"),
+                      "Klüftung an Rinnen/Rippen gekoppelt")
     }
 
     func testBridgeAndMainCarryTheMaterials() throws {
