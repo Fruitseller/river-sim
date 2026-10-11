@@ -4584,13 +4584,13 @@ public final class Terrain {
             }}}
             maxSubUsed = max(maxSubUsed, nsub)
             let sub = dt / Double(nsub)
-            for _ in 0..<nsub {
+            for si in 0..<nsub {
                 mark("belt.migrate")
                 h.withUnsafeBufferPointer { hb in
                 veg.withUnsafeBufferPointer { vb in
                 vegClass.withUnsafeBufferPointer { cb in
                     let ph = hb.baseAddress!, pveg = vb.baseAddress!, pcls = cb.baseAddress!
-                    meander.migrateBeltChannel(ci, dt: sub, config: cfg,
+                    meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
                                                heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) },
                                                riparianAt: { Terrain.riparianVeg(pveg, pcls, nn, bankR, $0.x, $0.z) })
                 }}}
@@ -4614,6 +4614,25 @@ public final class Terrain {
         if meander.channels.isEmpty { seedMeander() }
     }
 
+    /// Sperrmaske der Tropfen (`Hydraulic.erode`, Parameter `underIce`):
+    /// Gletscher (#35) und — mit Gürtel — das Bett der Mäanderläufe (`inBelt`).
+    /// Dort tragen die Tropfen weder ab noch lagern sie ab, ihre Fracht geht
+    /// hindurch. Der Gürtel löst das Bett auf Bankfull-Skala auf (Kolk,
+    /// Gleithang, Bank); der radiale Erosions-Pinsel der Tropfen grub jeden
+    /// Schritt ein symmetrisches V hinein (gemessen: mittleres Querprofil der
+    /// Bögen außen/innen 0,9 / 0,9 Tiefen statt des Kolks außen), und der
+    /// Bezug des Stempels sank mit der Sohle. Dieselbe Doktrin wie
+    /// `channelCarve` auf Gürtelzellen. Ohne Gürtel: `underIce` unverändert.
+    private func beltDropletGate() -> [Bool] {
+        guard cfg.meanderEnabled && cfg.meanderBelt else { return underIce }
+        let c = cfg.count
+        if dropletGateBuf.count != c { dropletGateBuf = .init(repeating: false, count: c) }
+        let iceOn = underIce.count == c
+        for k in 0..<c { dropletGateBuf[k] = inBelt[k] || (iceOn && underIce[k]) }
+        return dropletGateBuf
+    }
+    private var dropletGateBuf: [Bool] = []
+
     /// Größte Teilschrittzahl eines Laufs im letzten Gürtel-Schritt (Diagnose).
     public private(set) var beltSubsteps = 1
 
@@ -4624,6 +4643,12 @@ public final class Terrain {
     ///   im Bogen liegt der Kolk außen, im Wendepunkt (a = 0) ist das Profil
     ///   symmetrisch. Was über dem Ziel liegt, wird abgetragen (Relaxation über
     ///   `meanderBeltRelaxYears`) und geht in das Bank-Budget.
+    /// - Im Kanal füllt das Budget jede Zelle unter dem Ziel auf, außen wie
+    ///   innen. Bis zur Kalibrierung (#174) nur innen: Kolke außen blieben dann
+    ///   tiefer als das über ±2 Knoten gemittelte Ziel, Übergänge wurden
+    ///   darauf abgetragen, der Bezug sank je Teilschritt (Sohlen-Ratsche,
+    ///   gemessen ~2 Tiefen Eintiefung unter die eigene Aue, Rest-Budget
+    ///   29 Tiefen·Zellen je Knoten; danach 13).
     /// - **Bank**: innen neben dem Kanal füllt das Budget bis `z_bf − barTop·D`
     ///   auf — NIE darüber. Die Bank ist damit eben (bankfull), wandernde Läufe
     ///   hinterlassen eine flache Aue: laterale Planation. Was ein Knoten nicht
@@ -4668,6 +4693,7 @@ public final class Terrain {
             guard c >= 3 else { continue }
             let g = MeanderState.beltGeometry(ch, config: cfg,
                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+            let bendCurv = MeanderState.bendCurvature(g, config: cfg)
             // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten gemittelt.
             var floorH = [Double](repeating: 0, count: c)
             for i in 0..<c {
@@ -4709,7 +4735,7 @@ public final class Terrain {
                 for j in lo...hi { ref += floorH[j] }
                 ref /= Double(hi - lo + 1)
                 let depth = depthK * b
-                let a = min(1, abs(g.curv[i]) * b * gain)
+                let a = min(1, abs(bendCurv[i]) * b * gain)
                 // Profil-Maximum von (1 − e²)(1 + κe), κ = skew·a: Nullstelle der
                 // Ableitung −3κe² − 2e + κ. `z_bf` steht genau so hoch, dass der
                 // tiefste Punkt des Zielprofils auf der heutigen Sohle liegt —
@@ -4718,7 +4744,7 @@ public final class Terrain {
                 let kap = skew * a
                 let eMax = kap > 1e-9 ? (-2 + (4 + 12 * kap * kap).squareRoot()) / (6 * kap) : 0
                 let zbf = ref + depth * (1 - eMax * eMax) * (1 + kap * eMax)
-                let sgn = g.curv[i] > 0 ? -1.0 : 1.0              // Außen-Normale wie `meanderStamp`
+                let sgn = bendCurv[i] > 0 ? -1.0 : 1.0            // Außen-Normale wie `meanderStamp`
                 let ox = sgn * g.nx[i], oz = sgn * g.nz[i]
                 let barTarget = zbf - barTop * depth
                 // Außen → Mitte → innen: erst abtragen, dann innen ablagern.
@@ -4732,12 +4758,14 @@ public final class Terrain {
                     let eta = (s + 0.5) / max(1e-6, w)
                     if eta >= -1 {
                         let e = max(-1, min(1, eta))
-                        let target = zbf - depth * (1 - e * e) * (1 + skew * a * e)
+                        // Nie über die Bank-Oberkante: ab κ·η < −1 kippt der Faktor
+                        // (1 + κη) ins Negative, das Ziel läge über bankfull.
+                        let target = min(barTarget, zbf - depth * (1 - e * e) * (1 + skew * a * e))
                         pchan[k] = true; pbelt[k] = true; pveg[k] = 0
                         if eta > -0.5 { page[k] = -1 }
                         if bed.h[k] > target {
                             budget += erodeCell(k, (bed.h[k] - target) * rel, bed)
-                        } else if eta < 0 && budget > 0 {
+                        } else if budget > 0 {
                             let dep = min(budget, (target - bed.h[k]) * rel)
                             depositCell(k, dep, bed); budget -= dep
                         }
@@ -4939,7 +4967,9 @@ public final class Terrain {
                             depositDamp: depositDampBuf,
                             // Vergletscherte Zellen bleiben unangetastet (#35);
                             // leer, solange nirgends Eis liegt.
-                            underIce: underIce,
+                            // Gürtelbett (#174): dieselbe Sperre wie unter dem
+                            // Eis, s. `beltDropletGate`.
+                            underIce: beltDropletGate(),
                             // Dieselbe Gewichtungsregel wie beide Netze (Issue #36):
                             // wo Schmelzwasser abfließt, starten auch mehr Tropfen.
                             flowWeight: flowWeight,

@@ -202,16 +202,19 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Offene Punkte
 
-**Zielbild #174, Paket B (Mäandergürtel) im ersten Stand, Kalibrierung offen.**
+**Zielbild #174, Paket B (Mäandergürtel), kalibriert.**
 `meanderBelt` (Produktion) ersetzt Migration + Ufer-Stempel: Breite als Sim-Größe,
-Howard–Knutson mit implizitem Lokalterm (λ ≈ 12 Breiten ohne Gelände),
-asymmetrisches Bett, Gleithang-Bank auf bankfull mit `barAge`, Chute-Cutoff,
-Hauptstamm-Trasse und angeschlossene Zubringer; der geparkte Auen-Pass
-`floodplainAggradation` bleibt geparkt, die Aue entsteht jetzt aus der
-lateralen Planation. Im Gelände offen: Sinuosität (1,1–1,9 statt 1,5–2,5),
-Querprofil-Asymmetrie (~1 statt ≥ 2), zu wenige offene Altarme — Stand und
-Befunde in `docs/zielbild-measurements.md` § Paket B. Pakete C (Teile), D, E
-als eigene PRs.
+Howard–Knutson mit implizitem Lokalterm, Stromab-Anteil und Störquelle,
+asymmetrisches Bett (Kolk außen, Gleithang innen), Gleithang-Bank auf bankfull
+mit `barAge`, Chute-Cutoff, Hauptstamm-Trasse und angeschlossene Zubringer; im
+Gürtelbett tragen die Tropfen nicht ab. Der geparkte Auen-Pass
+`floodplainAggradation` bleibt geparkt, die Aue entsteht aus der lateralen
+Planation. Im Zeitmittel erreicht: Sinuosität 1,6–1,7, λ 9–13 Breiten,
+Asymmetrie 1,8–2,7. Offen: wassergefüllte Altarme (0–3; das Tiefland fällt
+3–5 Kanaltiefen je Kanalbreite, ein Altarm hält so kaum Wasser — Hebel liegt
+in Paket A oder im Render), Einzelzeitpunkte streuen stark. Stand und Befunde
+in `docs/zielbild-measurements.md` § Paket B, Kalibrierung. Pakete C (Teile),
+D, E als eigene PRs.
 
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
 aus `barAge` (`SimRender.BarMaterial`), Altarm-Verlandung als Ried und

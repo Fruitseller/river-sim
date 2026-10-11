@@ -41,14 +41,29 @@ Einlauf (`productionSettleYears` = 3000), getaktet in 1000-Jahr-Schritten.
 - **Wellenlänge / Amplitude:** Wendepunkte = Vorzeichenwechsel der über ±1
   Kanalbreite (mindestens ±2 Knoten) geglätteten Krümmung (bis zur Ist-Messung
   vor Paket A: ±2 Knoten); Wellenlänge = Luftlinie über zwei Halbwellen,
-  Amplitude = größter Abstand einer Halbwelle zu ihrer Sehne.
+  Amplitude = größter Abstand einer Halbwelle zu ihrer Sehne. Seit der
+  Kalibrierung von Paket B (zweiter PR) verschmelzen Halbwellen unter einer
+  halben Kanalbreite Höhe mit ihren Nachbarn (`ZielbildMetrics.bends`): sie
+  bleiben in den eigenen Ufern und sind kein Bogen. In Tabellen davor zählte
+  jeder Vorzeichenwechsel; „roh" in den Tabellen unten ist diese alte Lesart.
 - **Gürtel:** bis Paket B (`barAge`) die Ausdehnung der im Lauf je
   überstrichenen Zellen quer zur Talachse (Mittel über ±12 Knoten), Median.
-- **Asymmetrie:** mittlere Tiefe unter der höheren Uferkante (±(b/2 + 2)) am
-  Außenufer geteilt durch die am Innenufer, Abstand max(1, b/4), nur Bögen mit
-  |Krümmung| über dem Median.
-- **Altarme:** Schwerpunkt im Tiefland; „offen" = jünger als
-  `WaterRender.oxbowVisibleYears`. Cutoffs = über den Lauf aufsummierte neue
+  Seit der Kalibrierung: Talachse über eine Mäanderwellenlänge entlang des
+  Laufs (λ · Sinuosität, mindestens ±12 Knoten); die festen ±12 Knoten (±18
+  Zellen) lagen bei ausgebildeten Bögen (λ ≈ 60–80 Zellen) unter einer halben
+  Welle, die „Talachse" folgte dem Lauf.
+- **Asymmetrie:** mittlere Tiefe am Außenufer geteilt durch die am Innenufer,
+  Abstand max(1, b/4), nur Bögen mit |Krümmung| über dem Median. Bezug seit der
+  Kalibrierung: Wasserspiegel bei bankfull = die NIEDRIGERE der beiden
+  Uferkanten (Oberkante je Seite über 0,75–1,25 Halbbreiten). Davor der höchste
+  Punkt im Querschnitt — an jedem Prallhang gegen eine Talwand war das die
+  Wand (10–50 Kanaltiefen hoch), das Verhältnis maß die Wand statt der
+  Wassertiefe (im selben Bogen ≈ 0,7 statt ≈ 2,4).
+- **Altarme:** Schwerpunkt im Tiefland; „offen" bzw. „jung" = jünger als
+  `WaterRender.oxbowVisibleYears`. „Nass" = davon so, wie
+  `RiverRibbonRenderer` sie malt: ab `WaterRender.oxbowMinimumNodes` Knoten und
+  mindestens ein Drittel der Knoten über offenem Wasser (`waterLevel − h` über
+  `WaterRender.pondContourLo`). Cutoffs = über den Lauf aufsummierte neue
   Altarme (Alter 0 nach einem Schritt).
 
 ## Ist-Stand vor Paket A und B (2026-10-11, Basis `55323b5`, M4 Max)
@@ -270,7 +285,7 @@ Zerklüftung des Tieflands in Jahr 20.000: 0,00124 / 0,00132 / 0,00124 (nach
 Paket A 0,00136 / 0,00156 / 0,00141) — die Bank auf bankfull macht die Aue
 glatter, nicht krustiger.
 
-### Stand gegen den Abnahmebogen
+### Stand gegen den Abnahmebogen (erster PR)
 
 | Punkt | Stand |
 | --- | --- |
@@ -292,3 +307,168 @@ glatter, nicht krustiger.
 ohne D 28,6 auf Seed 42 — die Ursache ist die Großform, nicht das Material).
 `CanopyRender` steht deshalb auf 0,40/0,60: 11,8–23,3 % über alle Seeds und
 Jahre.
+
+## Paket B — Kalibrierung auf dem Produktionsgelände (zweiter PR)
+
+Werkzeuge in `MeanderBeltCalibration` (alle hinter `RS_MEASURE`):
+`testBeltVariantsDiagnostic` druckt seitdem auch das MITTEL über die
+Stützstellen der zweiten Laufhälfte (alle 2000 Jahre: Jahr 10.000–20.000 bzw.
+50.000–100.000) — ein einzelner Zeitpunkt streut auf demselben Seed um
+±0,3 Sinuosität und um den Faktor 2–3 in der Asymmetrie. Dazu
+`RS_DETAIL` (Mobilität, Bremse, Längsgefälle je Lauf), `RS_WAVES`
+(Halbwellen), `RS_PROFILE` (mittleres Querprofil der gemessenen Bögen),
+`RS_OXBOW` (Wasser in jungen Altarmen), `testBeltIsolationDiagnostic` (Läufe
+einer Produktionswelt ohne Stempel auf eingefrorenem Gelände bzw. einer
+Ebene) und `testBeltKernelSpreadDiagnostic` (Streuung der Kern-Wächter).
+
+### Befunde
+
+1. **Der Kern ist konvektiv instabil, die Tiefland-Abschnitte sind zu kurz.**
+   Howard–Knutson mit reinem Stromauf-Kern: Bögen wachsen, während sie stromab
+   wandern, und brauchen 2–3 Wellenlängen Lauf, um aus Rauschen heranzuwachsen.
+   Auf drei geraden Läufen ohne Gelände spülte der Kern seine Anfangszacken in
+   ~60.000 Jahren hinaus (Sinuosität 1,00 ab Jahr 62.000, gerade Linie mit
+   Spirale am festen Ende). Die wandernden Läufe der Produktionswelt sind
+   15–60 Breiten lang mit festen Enden (Zusammenfluss, Mündung). Auf einer
+   EBENE, ohne jede Gelände-Kopplung, wurden genau diese Läufe zu
+   domänengroßen Schleifen (Radius ~10 Breiten) oder zu geraden Linien — die
+   globalen Moden eines begrenzten, konvektiv instabilen Systems. Das Gelände
+   war also nicht die Ursache.
+   Hebel: Stromab-Anteil im Kern (`meanderBeltDownstreamWeight` 0,8 bei
+   Stromauf 1,2; die Summe 2,0 hält die lineare Wellenlängen-Wahl, die
+   Differenz setzt die Wanderung stromab) und eine Störquelle
+   (`meanderBeltNoise`, Howard & Knutson 1984).
+2. **Das Querprofil entstand, überlebte den Schritt aber nicht.** Direkt nach
+   dem Stempel lag die äußere Hälfte 0,72 Tiefen unter bankfull, die innere
+   0,29 (Verhältnis 2,5); am Schrittende war das mittlere Profil über die
+   gemessenen Bögen ein symmetrisches V (η = ±0,5: 0,91 / 0,88 Tiefen über
+   der Sohle). Vier Ursachen, jede einzeln gemessen:
+   - Knoten-Knicke: die Krümmung über ±½ Breite trug |κ|·b bis 5, der Stempel
+     kippte das Profil von Knoten zu Knoten. Jetzt Bogen-Krümmung über ±1
+     Breite (`MeanderState.bendCurvature`, dieselbe Quelle für den Render).
+   - Tropfen: der radiale Pinsel grub jeden Schritt ein V in das Bett. Jetzt
+     tragen die Tropfen im Gürtelbett weder ab noch lagern sie ab
+     (`Terrain.beltDropletGate`, dieselbe Doktrin wie `channelCarve`).
+   - Sohlen-Ratsche: der Stempel trug ab, wo das Bett über dem Ziel lag, legte
+     aber nur INNEN ab; Kolke außen blieben unter dem über ±2 Knoten
+     gemittelten Ziel, der Bezug sank je Teilschritt. Das Gerinne lag ~2
+     Tiefen unter der eigenen Aue, das Rest-Budget je Knoten 29
+     Tiefen·Zellen (danach 13). Jetzt Ablage über die volle Breite.
+   - Relaxation τ = 150 Jahre: das Bett lief der wandernden Linie um Zellen
+     hinterher, am Prallhang lag die äußere Hälfte höher als die innere.
+     Jetzt τ = 10 Jahre.
+   Dazu Kolk-Schiefe 1,5 → 2,5 (Gleithang innen knapp unter bankfull) und der
+   Deckel des Ziels auf die Bank-Oberkante: ab κ·η < −1 lag es sonst über
+   bankfull.
+3. **Die Messung maß an zwei Stellen etwas anderes als den Abnahmepunkt**
+   (s. Definitionen): Wendepunkte aus flachen Halbwellen (0,0–0,3 Breiten
+   hoch, 1–3 Breiten Sehne) drückten λ um 1–3 Breiten, und die Asymmetrie
+   bezog sich an Prallhängen gegen eine Talwand auf die Wand. Die
+   Gürtel-Achse über ±12 Knoten wurde ebenfalls korrigiert; sie fällt dadurch
+   NIEDRIGER aus (s. Punkt 11 unten).
+
+### Verworfen (Mittel Jahr 10.000–20.000 bzw. Jahr 20.000, alle Läufe)
+
+| Variante | Sinuosität | λ/b | Asymmetrie | Grund |
+| --- | --- | --- | --- | --- |
+| nur Störquelle 0,005 / 0,01 / 0,02 | 1,05–1,35 | 0–17 | 0,8–1,3 | Gelände-Läufe zu kurz für den konvektiven Kern |
+| Talwand-Bremse 4 / 8 / aus | 1,14–2,04 | 0–24 | 0,6–1,3 | kein Hebel; aus: Schleifen über die Ebene |
+| Rate 0,03 (Kern 1,2) | 1,01–1,24 | 6–10 | 0,8–1,1 | frühere Cutoffs, Sinuosität fällt |
+| Stromab 0,5 (Stromauf 1,5) | 1,23–1,45 | 7–8 | 0,9–1,1 | zu wenig Wachstum am Ort |
+| Stromab 1,0 (symmetrisch) | — | — | — | Ebene: Schlingen bis Sinuosität 21 |
+| Kernlänge 1,8 / 2,5 | 1,05–1,5 | 7–20 | — | Wachstum ∝ 1/L² zu langsam |
+| Lokalterm −0,6 (Kern 1,6) | 1,40–2,07 | 6,0–6,4 | 1,1–1,2 | zu kurze Bögen |
+| Gürtel NACH Tropfen und Diffusion im Schritt | 1,53–1,95 | 7–12 | 1,3–2,0 | half, aber ändert die `step()`-Reihenfolge; die Tropfen-Sperre trägt dasselbe ohne |
+| Pfropf über die volle Kanalbreite | 1,68–1,75 | 7–11 | 2,4–2,9 | nasse Altarme unverändert (0,5–2,0), s. Punkt 13 |
+| Bett-Tiefe 0,0035 (Breite/Tiefe 12) | 1,53–2,00 | 9–15 | 2,5–4,4 | nasse Altarme unverändert, unnötig |
+
+### Kennzahlen, alle Mäanderläufe, vorher / nachher
+
+Gleicher Metrik-Code (`ZielbildMetrics` dieses PR) auf beiden Ständen;
+„vorher" = Mechanik des ersten PR (`be90e77`). Einzelzeitpunkte:
+
+| Seed | Jahr | Sinuosität | λ/b (roh) | Asymmetrie (roh) | Gürtel/Amplitude | Altarme jung / nass |
+| ---: | ---: | --- | --- | --- | --- | --- |
+| 1337 | 20000 | 1,14 → 1,32 | – → 12,4 | 1,00 → 4,12 | 3,7 → 4,4 | 3 / 0 → 11 / 3 |
+| 1337 | 100000 | 1,12 → 1,68 | – → – | 0,98 → 1,45 | 3,8 → 13,6 | 6 / 3 → 4 / 1 |
+| 42 | 20000 | 1,86 → 1,71 | – → 10,7 | 1,50 → 1,52 | 6,1 → 1,8 | 1 / 0 → 0 / 0 |
+| 42 | 100000 | 1,20 → 1,51 | – → – | 1,14 → 2,37 | 12,3 → 46,1 | 3 / 0 → 8 / 1 |
+| 20 | 20000 | 1,18 → 1,65 | – → 8,5 | 0,99 → 1,47 | 6,5 → 6,1 | 2 / 0 → 3 / 1 |
+| 20 | 100000 | 1,07 → 1,83 | – → – | 1,12 → 2,49 | 6,6 → 20,0 | 1 / 1 → 6 / 1 |
+
+„–" bei λ: kein Abschnitt trägt drei Wendepunkte (vorher: Läufe gerade;
+nachher in Jahr 100.000: die wandernden Abschnitte sind durch Cutoffs und
+angeschlossene Zubringer auf 10–20 Breiten zerfallen, kürzer als zwei Bögen).
+
+Nachher, Mittel über die Stützstellen der zweiten Laufhälfte:
+
+| Seed | Fenster | Sinuosität | λ/b (roh) | Asymmetrie (roh) | Gürtel/Amplitude (roh) | Altarme jung / nass |
+| ---: | --- | ---: | --- | --- | --- | --- |
+| 1337 | 10.000–20.000 | 1,60 | 10,9 (7,2) | 2,39 (1,42) | 3,1 (4,9) | 10,5 / 2,2 |
+| 42 | 10.000–20.000 | 1,70 | 13,1 (10,5) | 2,66 (1,58) | 4,7 (6,5) | 1,2 / 0,5 |
+| 20 | 10.000–20.000 | 1,59 | 9,2 (6,5) | 1,79 (1,23) | 3,0 (4,0) | 2,5 / 0,3 |
+| 1337 | 50.000–100.000 | 1,62 | 10,0 (7,0) | 2,51 (1,68) | 10,8 (13,8) | 6,5 / 0,5 |
+| 42 | 50.000–100.000 | 1,73 | 10,6 (9,2) | 2,57 (1,69) | 8,2 (11,4) | 7,8 / 0,6 |
+| 20 | 50.000–100.000 | 1,69 | 11,0 (8,6) | 2,34 (1,42) | 15,7 (20,6) | 4,6 / 0,3 |
+
+Gegenprobe auf drei weiteren Seeds (7, 99, 123), Mittel 10.000–20.000:
+Sinuosität 1,67 / 1,65 / 1,33, λ/b 9,3 / 12,5 / –, Asymmetrie 2,94 / 1,75 /
+1,31. Seed 123 trägt kaum wandernde Abschnitte.
+
+Zerklüftung des Tieflands in Jahr 20.000: 0,00120 / 0,00128 / 0,00124 (Wächter
+0,00156). Cutoffs Hals / Chute bis Jahr 100.000: 123 / 23, 80 / 8, 89 / 13.
+
+### Warum kaum ein Altarm Wasser trägt (Punkt 13)
+
+Ein abgeschnürter Bogen ist im Render nur dann Wasser, wenn
+`waterLevel − h` über `pondContourLo` = 0,003 liegt. Die Bankfull-Tiefe ist
+0,0021 (5 m bei 100 m Breite). Und das Tiefland ist für einen Mäanderfluss
+steil: 1 Sim-Höhe ≈ 2,4 km, 1 Welteinheit ≈ 100 m, `meanderFlatSlope` = 0,02
+entspricht 48 % Gefälle. Gemessen auf den wandernden Knoten (Jahr 20.000,
+`RS_DETAIL`): Längsgefälle im Median 3,6 / 4,8 / 3,7 KANALTIEFEN JE
+KANALBREITE, nur 6–10 % der Knoten unter 0,5. Ein Bogen, der ein bis zwei
+Breiten talab reicht, fällt entlang seiner Länge um mehrere Kanaltiefen; als
+Senke hält er Wasser nur im tiefsten Kolk. Gemessen in jungen Altarmen: die
+Umgebung ihres Mittelknotens liegt 1–3 Tiefen UNTER ihrem Bett. Weder ein
+Pfropf über die volle Kanalbreite noch ein tieferes Bett (Breite/Tiefe 12)
+änderten die Zahl der nassen Altarme (0,2–2,7 im Mittel). Wassergefüllte
+Altarme brauchen ein um eine Größenordnung flacheres Tiefland (Paket A) oder
+eine Altarm-Darstellung ohne Wassersäule (Paket C: Ried und
+Vegetationsbogen aus `BarMaterial`, schon vorhanden).
+
+### Laufzeit und Determinismus (Abnahmepunkte 48 und 49)
+
+`simperf --repeat 3`, Produktion, Seed 1337, M4 Max, abwechselnd je drei
+Runden: `origin/main` (`55323b5`) 48,2 / 48,5 / 48,7 ms, Kalibrierung 52,3 /
+52,6 / 52,7 ms je Schritt (Median 48,5 → 52,6, +8,5 %). Gegen Paket B ohne
+Kalibrierung (Stand `t3/issue-174-c2`, Physik gleich B): 47,0 / 48,1 / 47,2 →
+52,3 / 52,9 / 53,1 ms (Median 47,2 → 52,9, +12 %); die Mehrkosten sind mehr
+CFL-Teilschritte (höhere Rate, größere Bögen). `simperf --hash` zweimal
+`2c172d2f0483d989`.
+
+SimCore-Pflichtsuite lokal: 466 Tests, 0 Fehler, 2:42 min.
+
+### Stand gegen den Abnahmebogen (nach der Kalibrierung)
+
+| Punkt | Stand |
+| --- | --- |
+| 9 Sinuosität 1,5–2,5 | **erfüllt im Zeitmittel** (1,59–1,73 auf allen drei Seeds, beide Fenster); Einzelzeitpunkte 1,32–1,83, Seed 1337 in Jahr 20.000 darunter |
+| 10 Wellenlänge 10–14 Breiten | **weitgehend**: Zeitmittel 9,2–13,1; in Jahr 100.000 als Einzelzeitpunkt nicht messbar (Abschnitte kürzer als zwei Bögen) |
+| 11 Gürtel ≥ 3 × Amplitude | in Jahr 100.000 erfüllt (8–46); in Jahr 20.000 Zeitmittel 3,0–4,7, Einzelzeitpunkt Seed 42: 1,8 (größere Bögen bei noch jungem Gürtel; mit der alten Achse 3,1–6,5) |
+| 12 Querprofil-Asymmetrie ≥ 2 | **erfüllt im Zeitmittel** außer Seed 20 in Jahr 10.000–20.000 (1,79); Einzelzeitpunkte 1,45–4,12 |
+| 13 ≥ 3 Altarme im Tiefland | jung (< 6000 Jahre): 1–11; **wassergefüllt: 0–3, physikalisch durch das Tieflandgefälle begrenzt** (s. oben) |
+| 14 Aue nicht zerklüfteter | erfüllt (Wächter) |
+| 15 Hals- und Chute-Cutoff | erfüllt (Wächter, Gelände und Kern) |
+| 16 `barAge` im Inventar | unverändert erfüllt |
+| 17 dt-Invarianz | Kern: Abstand dt 50 ↔ 1500 nach 3000 Jahren 0,33 Zellen (Grenze 0,96); die Störquelle ist nur in Verteilung invariant |
+| 18 Braid-/Playa-Wächter | grün (alte Welt, `calibrationMeanderBelt`) |
+| 48 Laufzeit ≤ +15 % | +8,5 % gegen `origin/main` |
+| 49 Determinismus | `--hash` zweimal gleich |
+
+Wächter dieses PR: `ZielbildLandformTests` (Mittel über die drei Seeds in
+Jahr 20.000: Sinuosität > 1,35, Asymmetrie > 1,4; vorher 1,39 und 1,16) und
+`MeanderBeltTests.testLongRunStaysBoundedWithBothCutoffs` (örtliche
+Sinuosität nach 60.000 Jahren zwischen 1,5 und 6; ohne Störquelle lag sie
+bei 1,0). Die Schranken liegen bewusst weit unter den Messwerten: ein
+Einzelzeitpunkt streut stark, und Linux rechnet mit anderer System-libm eine
+andere Realisierung.

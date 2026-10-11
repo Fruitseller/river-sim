@@ -167,6 +167,12 @@ enum ZielbildMetrics {
         /// (Alter < `WaterRender.oxbowVisibleYears`).
         var lowlandOxbows = 0
         var openLowlandOxbows = 0
+        /// Davon SICHTBAR als Wasser, wie `RiverRibbonRenderer` sie malt: ab
+        /// `WaterRender.oxbowMinimumNodes` Knoten, und mindestens ein Drittel der
+        /// Knoten liegt über offenem Wasser (`waterLevel − h` über
+        /// `WaterRender.pondContourLo`). Ein Bogen ohne Wassersäule bekommt dort
+        /// Deckkraft 0 (Abnahmepunkt 13: „sichtbare Altarme").
+        var wetLowlandOxbows = 0
     }
 
     /// Fenster (Knoten je Seite) für die Längsneigung des Tieflandabschnitts.
@@ -251,6 +257,75 @@ enum ZielbildMetrics {
         return out
     }
 
+    /// Kleinste Halbwelle, die als Bogen zählt: Abstand des Scheitels zur Sehne
+    /// in Kanalbreiten. Darunter bleibt die Linie in ihren eigenen Ufern — das
+    /// ist ein Vorzeichenwechsel der Krümmung auf einer geraden Übergangsstrecke
+    /// (Rauschen, D8-Treppe), kein Mäanderbogen. Bis zur Kalibrierung von
+    /// Paket B zählte jeder Vorzeichenwechsel; auf dem Gelände lagen damit
+    /// zwischen echten Bögen Halbwellen von 0,0–0,3 Breiten Höhe und 1–3 Breiten
+    /// Sehne, die die Wellenlänge um 1–3 Breiten drückten
+    /// (`docs/zielbild-measurements.md` § Paket B, Kalibrierung).
+    static let bendMinAmplitudeWidths = 0.5
+    /// Nur für den Vorher/Nachher-Vergleich: die Messung vor der Kalibrierung
+    /// von Paket B (jeder Vorzeichenwechsel ist ein Wendepunkt, Asymmetrie gegen
+    /// den höchsten Punkt im Querschnitt).
+    nonisolated(unsafe) static var rawInflections = false
+
+    struct Bends {
+        /// Wendepunkte (Knotenindizes) nach dem Verschmelzen flacher Halbwellen.
+        var inflections: [Int] = []
+        /// Luftlinie über zwei Halbwellen, Mittel (Zellen); 0 = unter drei Wendepunkten.
+        var wavelength = 0.0
+        /// Abstand des Scheitels zur Sehne je Halbwelle, Mittel (Zellen).
+        var amplitude = 0.0
+    }
+
+    /// Wendepunkte, Wellenlänge und Amplitude einer Linie (Abnahmepunkt 10).
+    /// Wendepunkt = Vorzeichenwechsel der geglätteten Krümmung `curv`; Halbwellen
+    /// unter `minAmplitudeWidths` Kanalbreiten verschmelzen mit ihren Nachbarn
+    /// (die flachste zuerst), s. `bendMinAmplitudeWidths`.
+    static func bends(_ nodes: [MeanderNode], curv: [Double], width: Double,
+                      minAmplitudeWidths: Double = bendMinAmplitudeWidths) -> Bends {
+        var infl: [Int] = []
+        for i in 1..<nodes.count where (curv[i - 1] < 0) != (curv[i] < 0) { infl.append(i) }
+        func height(_ i0: Int, _ i1: Int) -> Double {
+            let a = nodes[i0], e = nodes[i1]
+            let dx = e.x - a.x, dz = e.z - a.z, l = (dx * dx + dz * dz).squareRoot()
+            var m = 0.0
+            for i in i0...i1 {
+                let p = nodes[i]
+                m = max(m, l > 1e-9 ? abs((p.x - a.x) * dz - (p.z - a.z) * dx) / l : dist(p, a))
+            }
+            return m
+        }
+        let minAmp = minAmplitudeWidths * width
+        while minAmp > 0, infl.count >= 2 {
+            var lo = -1, loH = Double.infinity
+            for k in 0..<(infl.count - 1) {
+                let hk = height(infl[k], infl[k + 1])
+                if hk < loH { loH = hk; lo = k }
+            }
+            guard loH < minAmp else { break }
+            // Innen: beide Wendepunkte fallen, die Nachbarn (gleiches Vorzeichen)
+            // werden eine Halbwelle. Am Rand fällt nur der äußere.
+            if lo == 0 { infl.remove(at: 0) }
+            else if lo == infl.count - 2 { infl.remove(at: infl.count - 1) }
+            else { infl.removeSubrange(lo...(lo + 1)) }
+        }
+        var r = Bends(inflections: infl)
+        if infl.count >= 3 {
+            var lam = 0.0
+            for k in 0..<(infl.count - 2) { lam += dist(nodes[infl[k]], nodes[infl[k + 2]]) }
+            r.wavelength = lam / Double(infl.count - 2)
+        }
+        if infl.count >= 2 {
+            var amp = 0.0
+            for k in 0..<(infl.count - 1) { amp += height(infl[k], infl[k + 1]) }
+            r.amplitude = amp / Double(infl.count - 1)
+        }
+        return r
+    }
+
     /// `swept`: Zellen, die ein Lauf im Messlauf je überstrichen hat (s.
     /// `markSwept`) — die Gürtel-Ausdehnung bis Paket B (danach `barAge ≥ 0`).
     static func belt(_ t: Terrain, lowland: [Bool], swept: [Bool],
@@ -263,7 +338,17 @@ enum ZielbildMetrics {
             let k = min(max(Int(cz.rounded()), 0), n - 1) * n + min(max(Int(cx.rounded()), 0), n - 1)
             guard lowland[k] else { continue }
             r.lowlandOxbows += 1
-            if t.meander.oxbowAge[oi] < WaterRender.oxbowVisibleYears { r.openLowlandOxbows += 1 }
+            if t.meander.oxbowAge[oi] < WaterRender.oxbowVisibleYears {
+                r.openLowlandOxbows += 1
+                if ox.count >= WaterRender.oxbowMinimumNodes {
+                    var wet = 0
+                    for p in ox {
+                        let kk = min(max(Int(p.z.rounded()), 0), n - 1) * n + min(max(Int(p.x.rounded()), 0), n - 1)
+                        if t.h[kk] <= t.cfg.sea || t.waterLevel[kk] - t.h[kk] > WaterRender.pondContourLo { wet += 1 }
+                    }
+                    if 3 * wet >= ox.count { r.wetLowlandOxbows += 1 }
+                }
+            }
         }
         guard let ch = channel ?? mainChannel(t), let reach = lowlandReach(t, ch), reach.count >= 8 else { return r }
         let nodes = Array(ch.nodes[reach])
@@ -277,34 +362,21 @@ enum ZielbildMetrics {
         r.width = MeanderState.beltWidthCells(discharge: q, config: t.cfg)
 
         // Wendepunkte, Wellenlänge, Amplitude.
-        let win = max(2, Int((r.width / max(1e-6, t.cfg.meanderNodeSpacing)).rounded()))
-        let curv = smoothedCurvature(nodes, window: win)
-        var infl: [Int] = []
-        for i in 1..<nodes.count where (curv[i - 1] < 0) != (curv[i] < 0) { infl.append(i) }
-        if infl.count >= 3 {
-            var lam = 0.0
-            for k in 0..<(infl.count - 2) { lam += dist(nodes[infl[k]], nodes[infl[k + 2]]) }
-            r.wavelength = lam / Double(infl.count - 2)
-        }
-        if infl.count >= 2 {
-            var amp = 0.0
-            for k in 0..<(infl.count - 1) {
-                let a = nodes[infl[k]], b = nodes[infl[k + 1]]
-                let dx = b.x - a.x, dz = b.z - a.z, l = (dx * dx + dz * dz).squareRoot()
-                var m = 0.0
-                for i in infl[k]...infl[k + 1] {
-                    let p = nodes[i]
-                    let off = l > 1e-9 ? abs((p.x - a.x) * dz - (p.z - a.z) * dx) / l : dist(p, a)
-                    m = max(m, off)
-                }
-                amp += m
-            }
-            r.amplitude = amp / Double(infl.count - 1)
-        }
+        let curv = smoothedCurvature(nodes, window: max(2, Int((r.width / max(1e-6, t.cfg.meanderNodeSpacing)).rounded())))
+        let bendSet = Self.bends(nodes, curv: curv, width: r.width,
+                                 minAmplitudeWidths: rawInflections ? 0 : bendMinAmplitudeWidths)
+        r.wavelength = bendSet.wavelength
+        r.amplitude = bendSet.amplitude
 
         // Gürtelbreite: quer zur Talachse (Mittel über ±W Knoten) die
         // zusammenhängend überstrichenen Zellen zählen (1 Zelle Lücke erlaubt).
-        let w = 12
+        // Talachse = Mittel über eine Mäanderwellenlänge entlang des Laufs
+        // (λ · Sinuosität), mindestens ±12 Knoten. Mit festen ±12 Knoten
+        // (±18 Zellen) folgte die „Talachse" bei ausgebildeten Bögen
+        // (λ ≈ 60–80 Zellen) dem Lauf selbst, quer dazu lag dann der Kanal,
+        // nicht der Gürtel. Bis zur Kalibrierung von Paket B: feste ±12.
+        let w = rawInflections || r.wavelength <= 0 ? 12
+            : max(12, Int((0.5 * r.wavelength * r.sinuosity / max(1e-6, t.cfg.meanderNodeSpacing)).rounded()))
         var widths: [Double] = []
         for i in stride(from: 0, to: nodes.count, by: 2) {
             let a = max(0, i - w), b = min(nodes.count - 1, i + w)
@@ -330,8 +402,8 @@ enum ZielbildMetrics {
         widths.sort()
         if !widths.isEmpty { r.beltWidth = widths[widths.count / 2] }
 
-        // Querprofil-Asymmetrie: Tiefe unter der höheren Uferkante, außen gegen
-        // innen, in Bögen mit |Krümmung| über dem Median.
+        // Querprofil-Asymmetrie: Tiefe unter dem Wasserspiegel bei bankfull,
+        // außen gegen innen, in Bögen mit |Krümmung| über dem Median.
         let absC = curv.map(abs).sorted()
         let median = absC[absC.count / 2]
         let half = r.width / 2
@@ -348,11 +420,25 @@ enum ZielbildMetrics {
                 func hAt(_ d: Double) -> Double {
                     Terrain.bilinear(p, n, b.x + ox * d, b.z + oz * d)
                 }
-                // Bezug: höchster Punkt im benetzten Querschnitt (≈ Uferkante
-                // bankfull). Die Rinnen-Wand dahinter (`channelCarve`, ≈ 35 m)
-                // stauchte das Verhältnis: (35 + 6,5) / (35 + 1) ≈ 1,15.
-                var ref = -Double.infinity, d = -half
-                while d <= half + 1e-9 { ref = max(ref, hAt(d)); d += 0.5 }
+                var ref = -Double.infinity
+                if rawInflections {
+                    // Bis zur Kalibrierung von Paket B: höchster Punkt im
+                    // benetzten Querschnitt.
+                    var d = -half
+                    while d <= half + 1e-9 { ref = max(ref, hAt(d)); d += 0.5 }
+                } else {
+                    // Bezug: Wasserspiegel bei bankfull = die NIEDRIGERE der beiden
+                    // Uferkanten (Oberkante je Seite über 0,75–1,25 Halbbreiten) —
+                    // über sie tritt das Wasser zuerst aus. Der höchste Punkt im
+                    // Querschnitt war an jedem Prallhang gegen eine Talwand die
+                    // Wand selbst (gemessen 10–50 Kanaltiefen), das Verhältnis
+                    // maß dort die Wand statt der Wassertiefe (≈ 0,7 statt ≈ 2,4
+                    // im selben Bogen). Ebenso stauchte früher die Rinnen-Wand
+                    // von `channelCarve` (≈ 35 m) das Verhältnis.
+                    var topOut = -Double.infinity, topIn = -Double.infinity, d = 0.75 * half
+                    while d <= 1.25 * half + 1e-9 { topOut = max(topOut, hAt(d)); topIn = max(topIn, hAt(-d)); d += 0.25 * half }
+                    ref = min(topOut, topIn)
+                }
                 dOut += max(0, ref - hAt(off)); dIn += max(0, ref - hAt(-off)); bends += 1
             }
         }
@@ -414,6 +500,7 @@ final class ZielbildLandformTests: XCTestCase {
     /// Punkte 1–4 in Jahr 2.000 und 20.000. Ein Lauf je Seed, weil der
     /// 20.000-Jahre-Lauf den teuren Teil trägt.
     func testRangeLandformMeetsTheAcceptanceSheet() {
+        var sinuosity: [Double] = [], asymmetry: [Double] = []
         for seed in ZielbildBaseline.seeds {
             let t = world(seed, years: 2_000)
             var lf = ZielbildMetrics.landform(t)
@@ -441,7 +528,20 @@ final class ZielbildLandformTests: XCTestCase {
             XCTAssertGreaterThan(bars, 1000, "Seed \(seed): kaum Gleithang-Bänke (\(bars) Zellen)")
             XCTAssertLessThan(lf.lowlandRuggedness, 0.00156,
                               "Seed \(seed): Aue zerklüfteter als vor dem Gürtel (\(lf.lowlandRuggedness))")
+            let all = ZielbildMetrics.beltAll(t, lowland: lf.lowland, swept: [Bool](repeating: false, count: t.cfg.count))
+            sinuosity.append(all.sinuosity); asymmetry.append(all.asymmetry)
         }
+        // Punkte 9 und 12 als Wächter gegen den Rückfall, nicht als Abnahme:
+        // ein einzelner Zeitpunkt streut stark (Sinuosität 1,32–1,71,
+        // Asymmetrie 1,47–4,12 in Jahr 20.000 auf den drei Seeds; Mittel über
+        // Jahr 10.000–20.000 1,59–1,70 und 1,79–2,66), deshalb das Mittel über
+        // die Seeds mit Abstand. Vor der Kalibrierung (#174, zweiter PR):
+        // Mittel 1,39 und 1,16 — die Läufe wurden mit der Zeit gerade, das
+        // Querprofil war symmetrisch. Messreihe: docs/zielbild-measurements.md.
+        let meanSinuosity = sinuosity.reduce(0, +) / Double(max(1, sinuosity.count))
+        let meanAsymmetry = asymmetry.reduce(0, +) / Double(max(1, asymmetry.count))
+        XCTAssertGreaterThan(meanSinuosity, 1.35, "Mäander gerade: Sinuosität \(sinuosity)")
+        XCTAssertGreaterThan(meanAsymmetry, 1.4, "Querprofil symmetrisch: Asymmetrie \(asymmetry)")
     }
 
     /// Der Rand bleibt auch bei kleinen Gittern frei — der Abstand skaliert mit `n`.
@@ -499,9 +599,10 @@ final class ZielbildBaseline: XCTestCase {
                 let b = ZielbildMetrics.belt(t, lowland: lf.lowland, swept: swept)
                 let all = ZielbildMetrics.beltAll(t, lowland: lf.lowland, swept: swept)
                 allRows.append(String(
-                    format: "| %d | %.0f | %d | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f |",
+                    format: "| %d | %.0f | %d | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f | %d / %d |",
                     seed, year, all.reachNodes, all.sinuosity, all.width, all.wavelength, all.wavelengthPerWidth,
-                    all.amplitude, all.beltWidth, all.beltPerAmplitude, all.asymmetry))
+                    all.amplitude, all.beltWidth, all.beltPerAmplitude, all.asymmetry,
+                    b.openLowlandOxbows, b.wetLowlandOxbows))
                 beltRows.append(String(
                     format: "| %d | %.0f | %d | %.0f | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f | %d / %d | %d / %d |",
                     seed, year, b.reachNodes, b.mainDischarge, b.sinuosity, b.width, b.wavelength,
@@ -515,8 +616,8 @@ final class ZielbildBaseline: XCTestCase {
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         beltRows.forEach { print($0) }
         print("\n=== ZIELBILD #174: MÄANDERGÜRTEL (B), alle Mäanderläufe (≥ 40 mobile Knoten, Abfluss-gewichtet) ===")
-        print("| Seed | Jahr | Läufe | Sinuosität | Breite | Wellenlänge | λ/Breite | Amplitude | Gürtel | Gürtel/Amplitude | Asymmetrie |")
-        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        print("| Seed | Jahr | Läufe | Sinuosität | Breite | Wellenlänge | λ/Breite | Amplitude | Gürtel | Gürtel/Amplitude | Asymmetrie | Altarme jung / nass |")
+        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         allRows.forEach { print($0) }
         print("=== ENDE ZIELBILD ===\n")
     }
