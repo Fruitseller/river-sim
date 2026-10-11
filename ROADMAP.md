@@ -144,7 +144,10 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Waldmaske `SimRender.ForestCanopyMask`, Kalibrierung `SimCore.CanopyRender`);
   die 3D-Instanzbäume samt Schalter (Taste V) sind entfallen. Seit #168 wird
   nur dichte Vegetation Wald (9–22 % des Landes statt bis 43 %), bewachsener
-  Boden dazwischen rendert als Wiese.
+  Boden dazwischen rendert als Wiese. Seit #167 hat die Waldmaske ein
+  Gedächtnis in Sim-Jahren: Wald weicht Wasser sofort und wächst über
+  `CanopyRender.regrowYears` (800 J.) nach, wandernde Mäander hinterlassen
+  einen offenen Auengürtel statt springender Waldflecken.
 - **Speichern/Laden (Issue #8):** eine Welt geht vollständig in EINE versionierte
   Binärdatei (`WorldSnapshot.swift`) — das ganze Zustands-Inventar
   (`TerrainState`, ~25 Felder à n²) plus Mäander-Zentrumslinien/Altarme, Seed und
