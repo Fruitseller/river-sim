@@ -405,15 +405,30 @@ jede Welt neben Übersicht und Nahansicht vier gezielte Stresstests:
 | `backlight` | Gegenlicht | Seed 1337: `(-12, -25)`, Dist 45, Yaw 2.269, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 48, Yaw 2.269, Pitch 0.85<br>Seed 20: `(-8, 10)`, Dist 46, Yaw 2.269, Pitch 0.85<br>*(feste Welt-Sonne Azimut -50°; Yaw = Azimut + 180°)* | **Stresstest Beleuchtung:** Blick direkt gegen die Sonne. Alle kamerazugewandten Flanken liegen im Eigenschatten; prüft Relieflesbarkeit im Schatten, Tonemapping und Streulicht. |
 | `coast` | Küste / Ufer | Seed 1337: `(-36, -32)`, Dist 45, Yaw 0.90, Pitch 0.85<br>Seed 42: `(12, -10)`, Dist 38, Yaw 1.10, Pitch 0.85<br>Seed 20: `(30, -28)`, Dist 48, Yaw 0.80, Pitch 0.85 | **Stresstest Wasser-Land:** Mündungsdelta, Binnensee-Ufer oder Steilküste. Prüft Schutzmaske, Übergang von Flussband zu Ozean/See, Brandung und Tiefenfarbe. |
 | `snow` | Schnee / Grate | Seed 1337: `(18, 14)`, Dist 48, Yaw 0.60, Pitch 0.75<br>Seed 42: `(-22, 20)`, Dist 50, Yaw 0.70, Pitch 0.75<br>Seed 20: `(-10, 14)`, Dist 40, Yaw 0.60, Pitch 0.70 | **Stresstest Schneegrenze:** Felsrippen, Firnfelder und Gipfel. Prüft Gratschärfung, Schnee-Albedo und Übergang von Wald/Fels zu Schnee. |
-| `diorama` | Vorlage C (#174) | `(0, 0)`, Dist 115, Yaw 0.70, Pitch 0.62 | Ganze Insel schräg als Diorama: Gebirgskamm, Tieflandflüsse, Küste. Im Spiel Taste F1. |
-| `valley` | Vorlage B (#174) | Ziel und Yaw wie `detail`, Dist 60, Pitch 0.42 | Flacher Blick über Tal und Aue bis zum Horizont: Mäander, Bänke, Delta. Im Spiel Taste F2 (Ziel = aktueller Blickpunkt). |
-| `close` | Vorlage A (#174) | Ziel und Yaw wie `coast`, Dist 32, Pitch 0.52 | Schrägsicht auf Hang, Fluss und Küste: Fels, Wald, Kiesbänke, Brandung. Im Spiel Taste F3 (Ziel = aktueller Blickpunkt). |
+| `diorama` | Vorlage C (#174) | `(0, 0)`, Dist 115, Yaw 0.70, Pitch 0.62 | Ganze Insel schräg als Diorama: Gebirgskamm, Tieflandflüsse, Küste. Im Spiel Taste F1 (adaptiv: rahmt die Landfläche). |
+| `valley` | Vorlage B (#174) | Ziel und Yaw wie `detail`, Dist 60, Pitch 0.42 | Flacher Blick über Tal und Aue bis zum Horizont: Mäander, Bänke, Delta. Im Spiel Taste F2 (adaptiv: größter Lauf, s. u.). |
+| `close` | Vorlage A (#174) | Ziel und Yaw wie `coast`, Dist 32, Pitch 0.52 | Schrägsicht auf Hang, Fluss und Küste: Fels, Wald, Kiesbänke, Brandung. Im Spiel Taste F3 (adaptiv: Mündung des größten Laufs, s. u.). |
 
-Die drei Vorlagen-Kameras (Issue #174, Paket E) sind dieselben wie die
-Tasten-Presets im Spiel (`CAMERA_PRESETS` in `game/scripts/Main.gd`): Distanz
-und Pitch sind gleich, Wächter `GraphicsMatrixTests.testCameraPresetsMatchTheMatrix`.
-Die Werte sind ein erster Vorschlag nach den Vorlagenbildern und noch nicht am
-gerenderten Bild abgestimmt.
+Die drei Vorlagen-Kameras (Issue #174, Paket E) gibt es auch als
+Tasten-Presets im Spiel (`CAMERA_PRESETS` in `game/scripts/Main.gd`). Die
+Matrix hält Ziel, Distanz und Yaw je Seed FEST (reproduzierbare Abnahmebilder),
+die Tasten rechnen sie beim Drücken aus der laufenden Welt:
+
+- **Diorama (F1):** Ziel = Mitte der Bounding-Box der Landzellen, Distanz so,
+  dass die Landzellen das Bild in der knapperen Richtung zu 85 % füllen
+  (`Main.frame_land`, aus FOV und Seitenverhältnis); Yaw bleibt. Mit der
+  Insel ganz im Gitter (#175) war die feste Distanz 115 zu weit, die Insel
+  füllte rund ein Drittel des Bildes.
+- **Tal (F2) / Nah (F3):** größter Lauf auf dem D8-Netz (`flowArea`,
+  `receivers`), Ziel 20 bzw. 6 Welteinheiten oberhalb seiner Küstenmündung,
+  Kamera auf der Meerseite mit Blick talaufwärts (`Main.river_view`). Das Ziel
+  ist immer eine Landzelle; vorher behielten beide den aktuellen Blickpunkt
+  und zeigten je nach Seed fast nur Meer.
+
+Gleich bleiben Pitch (alle drei) und Distanz (Tal, Nah), Wächter
+`GraphicsMatrixTests.testCameraPresetsMatchTheMatrix`; die adaptive Rechnung
+misst `game/tests/ui_layout.gd` mit Godots eigener Projektion nach. Die
+adaptive Ansicht einer Welt zeigt `RS_CAMERA=diorama|valley|close`.
 
 ### Physikalische Baseline-Kennzahlen der Matrixwelten
 

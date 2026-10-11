@@ -50,4 +50,21 @@ final class UiContractTests: XCTestCase {
             assertContains(drawer, "\"\(icon)\":", hint: "UiIcon.gd zeichnet die Tempo-Leiste")
         }
     }
+
+    /// Kamera-Presets (Issue #174): adaptiv aus der laufenden Welt (Diorama
+    /// rahmt die Landfläche, Tal/Nah zielen auf den größten Lauf), aber EINMAL
+    /// beim Drücken gerechnet, nicht je Frame. Die Rechnung (Land-Raster,
+    /// Abflussfeld über die Brücke) läuft deshalb nur über
+    /// `_apply_camera_preset`; einen weiteren Aufrufer (etwa in `_process`)
+    /// muss dieser Wächter sehen. Verhalten prüft `game/tests/ui_layout.gd`.
+    func testCameraPresetsAreComputedOnPress() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        // Je Funktion: Definition + genau ein Aufruf.
+        XCTAssertEqual(main.count(of: "camera_preset_view("), 2,
+                       "camera_preset_view nur aus _apply_camera_preset aufrufen")
+        XCTAssertEqual(main.count(of: "frame_land("), 2, "frame_land nur aus camera_preset_view")
+        XCTAssertEqual(main.count(of: "river_view("), 2, "river_view nur aus camera_preset_view")
+        XCTAssertEqual(main.count(of: "\"centered\""), 0,
+                       "Diorama zielt nicht mehr fest auf die Kartenmitte, sondern auf das Land")
+    }
 }

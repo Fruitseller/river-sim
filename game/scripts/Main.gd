@@ -456,15 +456,24 @@ const JUMPS := [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
 ## Kamera-Presets der Vorlagen (Issue #174, Paket E), Tasten F1–F3 in
 ## Tabellen-Reihenfolge: Diorama = ganze Insel schräg (Vorlage C), Tal = Blick
 ## über die Aue bis zum Horizont (B), Nah = Schrägsicht auf Hang, Fluss und
-## Küste (A). `dist` und `pitch` sind dieselben wie bei den Matrix-Kameras
-## gleicher `id` (scripts/graphics-matrix.sh; Wächter
-## GraphicsMatrixTests.testCameraPresetsMatchTheMatrix). Das Ziel steht dort je
-## Seed fest; hier behalten Tal und Nah den aktuellen Blickpunkt, das Diorama
-## blickt auf die Inselmitte.
+## Küste (A). Die Tasten-Presets sind ADAPTIV, einmal beim Drücken für die
+## laufende Welt gerechnet (`camera_preset_view`):
+##  - Diorama (`fill`): Ziel = Mitte der Land-Bounding-Box, Distanz so, dass
+##    die Landzellen das Bild in der knapperen Richtung zu `fill` füllen
+##    (`frame_land`, aus FOV und Seitenverhältnis); Yaw bleibt.
+##  - Tal und Nah (`upstream`): Ziel = Zelle des größten Laufs, `upstream`
+##    Welteinheiten oberhalb seiner Küstenmündung, Kamera auf der Meerseite
+##    der Mündung mit Blick talaufwärts (`river_view`). Das Ziel ist damit
+##    immer eine Landzelle, nie das offene Meer.
+## Pitch (alle) und Distanz (Tal, Nah) sind dieselben wie bei den
+## Matrix-Kameras gleicher `id`; die Matrix (scripts/graphics-matrix.sh) hält
+## dagegen feste Ziele und Distanzen je Seed, damit Abnahmebilder
+## reproduzierbar bleiben (Wächter:
+## GraphicsMatrixTests.testCameraPresetsMatchTheMatrix).
 const CAMERA_PRESETS := [
-	{"id": "diorama", "name": "Diorama", "dist": 115.0, "pitch": 0.62, "centered": true},
-	{"id": "valley", "name": "Tal", "dist": 60.0, "pitch": 0.42},
-	{"id": "close", "name": "Nah", "dist": 32.0, "pitch": 0.52},
+	{"id": "diorama", "name": "Diorama", "fill": 0.85, "pitch": 0.62},
+	{"id": "valley", "name": "Tal", "dist": 60.0, "pitch": 0.42, "upstream": 20.0},
+	{"id": "close", "name": "Nah", "dist": 32.0, "pitch": 0.52, "upstream": 6.0},
 ]
 const CAMERA_PRESET_SECONDS := 0.6
 
@@ -583,6 +592,11 @@ func _ready() -> void:
 		_update_camera()
 	_update_year()
 	_render_frame(FRAME_SETTLED)
+	if OS.has_environment("RS_CAMERA"): # Tasten-Preset per id, für Screenshots
+		var id := OS.get_environment("RS_CAMERA")
+		for c in CAMERA_PRESETS.size():
+			if CAMERA_PRESETS[c]["id"] == id:
+				_apply_camera_preset(c, false)
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -1113,25 +1127,143 @@ func _faster() -> void:
 ## Kamera-Preset aus CAMERA_PRESETS anfahren (F1–F3 oder Knopf). Weich über
 ## CAMERA_PRESET_SECONDS, `animate = false` springt (Tests, RS_CAMERA).
 func _apply_camera_preset(index: int, animate := true) -> void:
-	var p: Dictionary = CAMERA_PRESETS[index]
-	var target := Vector3.ZERO
-	if not p.get("centered", false):
-		target = Vector3(cam_target.x, 0.0, cam_target.z)
-		target.y = _surface_y_at(target)
+	var v := camera_preset_view(index)
+	# Yaw über den kürzeren Bogen anfahren, nicht einmal um die Insel herum.
+	var yaw: float = cam_yaw + wrapf(v["yaw"] - cam_yaw, -PI, PI)
 	if camera_tween != null:
 		camera_tween.kill()
 		camera_tween = null
 	if not animate:
-		cam_dist = p["dist"]
-		cam_pitch = p["pitch"]
-		cam_target = target
+		cam_dist = v["dist"]
+		cam_pitch = v["pitch"]
+		cam_yaw = yaw
+		cam_target = v["target"]
 		_update_camera()
 		return
 	camera_tween = create_tween().set_parallel().set_trans(Tween.TRANS_SINE) \
 		.set_ease(Tween.EASE_IN_OUT)
-	camera_tween.tween_property(self, "cam_dist", p["dist"], CAMERA_PRESET_SECONDS)
-	camera_tween.tween_property(self, "cam_pitch", p["pitch"], CAMERA_PRESET_SECONDS)
-	camera_tween.tween_property(self, "cam_target", target, CAMERA_PRESET_SECONDS)
+	camera_tween.tween_property(self, "cam_dist", v["dist"], CAMERA_PRESET_SECONDS)
+	camera_tween.tween_property(self, "cam_pitch", v["pitch"], CAMERA_PRESET_SECONDS)
+	camera_tween.tween_property(self, "cam_yaw", yaw, CAMERA_PRESET_SECONDS)
+	camera_tween.tween_property(self, "cam_target", v["target"], CAMERA_PRESET_SECONDS)
+
+## Ansicht eines Presets für die laufende Welt: {target, dist, pitch, yaw}.
+## Ohne Land (Diorama) bzw. ohne Lauf (Tal, Nah) bleiben Blickpunkt und Yaw.
+func camera_preset_view(index: int) -> Dictionary:
+	var p: Dictionary = CAMERA_PRESETS[index]
+	_ensure_h_cache()
+	var target := Vector3(cam_target.x, 0.0, cam_target.z)
+	var view := {"dist": p.get("dist", cam_dist), "pitch": p["pitch"], "yaw": cam_yaw}
+	if p.has("fill"):
+		var vp := get_viewport().get_visible_rect().size
+		var f := frame_land(h_cache, N, sea, world_size, cam_yaw, p["pitch"], cam.fov,
+			vp.x / maxf(vp.y, 1.0), p["fill"])
+		if not f.is_empty():
+			view["target"] = f["target"]
+			view["dist"] = clampf(f["dist"], 30.0, world_size * 4.0)
+			return view
+	else:
+		var r := river_view(h_cache, sim.flowArea(), sim.receivers(), N, sea, world_size,
+			p["upstream"])
+		if not r.is_empty():
+			target = r["target"]
+			view["yaw"] = r["yaw"]
+	target.y = _surface_y_at(target)
+	view["target"] = target
+	return view
+
+## Diorama-Rahmen: Ziel = Mitte der Land-Bounding-Box (Höhe: mittlere
+## Landhöhe), Distanz = kleinste, bei der jede Landzelle (Raster `n/180`) in
+## Kamerarichtung `yaw`/`pitch` innerhalb `fill` der halben Bildbreite und
+## -höhe liegt. Je Punkt q (relativ zum Ziel) mit Kamera-Basis r, u, b
+## (rechts, oben, rückwärts) gilt |q·r| ≤ fill·tan(fov_h/2)·(d − q·b), analog
+## für u; d ist das Maximum der Untergrenzen. `fov_deg` ist vertikal (Godot
+## KEEP_HEIGHT), horizontal skaliert mit `aspect`. Leer ohne Land.
+static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: float,
+		yaw: float, pitch: float, fov_deg: float, aspect: float, fill: float) -> Dictionary:
+	var cell := world / float(n - 1)
+	var stride := maxi(1, n / 180)
+	var pts := PackedVector3Array()
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	var y_sum := 0.0
+	for j in range(0, n, stride):
+		for i in range(0, n, stride):
+			var y := h[j * n + i]
+			if y <= sea_level:
+				continue
+			var p := Vector3(i * cell - world * 0.5, y * HSCALE, j * cell - world * 0.5)
+			pts.append(p)
+			lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.z))
+			hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.z))
+			y_sum += p.y
+	if pts.is_empty():
+		return {}
+	var target := Vector3((lo.x + hi.x) * 0.5, y_sum / pts.size(), (lo.y + hi.y) * 0.5)
+	var cp := cos(pitch)
+	var back := Vector3(sin(yaw) * cp, sin(pitch), cos(yaw) * cp)
+	var right := Vector3.UP.cross(back).normalized()
+	var up := back.cross(right)
+	var tan_v := tan(deg_to_rad(fov_deg) * 0.5) * fill
+	var tan_h := tan_v * aspect
+	var dist := 0.0
+	for p in pts:
+		var q := p - target
+		dist = maxf(dist, q.dot(back) + maxf(absf(q.dot(right)) / tan_h, absf(q.dot(up)) / tan_v))
+	return {"target": target, "dist": dist, "land_box": Rect2(lo, hi - lo)}
+
+## Größter Lauf für Tal und Nah, auf dem D8-Netz (`flowArea`/`receivers`):
+## Landzelle mit dem größten Einzugsgebiet, abwärts bis zur letzten Landzelle
+## (Mündung), von dort je Schritt zum Zufluss mit dem größten Einzugsgebiet,
+## bis `upstream` Welteinheiten gelaufen sind oder die Quelle erreicht ist.
+## Yaw stellt die Kamera auf die Mündungsseite (Blick talaufwärts). Ziel und
+## Mündung sind Landzellen (h > Meeresspiegel). Leer ohne Land.
+static func river_view(h: PackedFloat32Array, area: PackedFloat32Array,
+		receivers: PackedInt32Array, n: int, sea_level: float, world: float,
+		upstream: float) -> Dictionary:
+	var mouth := -1
+	var best := -1.0
+	for k in h.size():
+		if area[k] > best and h[k] > sea_level:
+			best = area[k]
+			mouth = k
+	if mouth < 0:
+		return {}
+	for _guard in h.size():
+		var r := receivers[mouth]
+		if r < 0 or h[r] <= sea_level:
+			break
+		mouth = r
+	var cell := world / float(n - 1)
+	var cur := mouth
+	var walked := 0.0
+	while walked < upstream:
+		var ci := cur % n
+		var cj := cur / n
+		var next := -1
+		var next_area := -1.0
+		for dj in range(-1, 2):
+			for di in range(-1, 2):
+				var i := ci + di
+				var j := cj + dj
+				if (di == 0 and dj == 0) or i < 0 or j < 0 or i >= n or j >= n:
+					continue
+				var k := j * n + i
+				if receivers[k] == cur and h[k] > sea_level and area[k] > next_area:
+					next_area = area[k]
+					next = k
+		if next < 0:
+			break
+		walked += cell * (1.0 if (next % n == ci or next / n == cj) else sqrt(2.0))
+		cur = next
+	var at := func(k: int) -> Vector2:
+		return Vector2((k % n) * cell - world * 0.5, (k / n) * cell - world * 0.5)
+	var target: Vector2 = at.call(cur)
+	var seaward: Vector2 = at.call(mouth) - target
+	if seaward.length() < cell: # Lauf zu kurz: von der Kartenmitte nach außen
+		seaward = at.call(mouth)
+	return {"target": Vector3(target.x, 0.0, target.y), "yaw": atan2(seaward.x, seaward.y),
+		"mouth": mouth, "cell": cur}
 
 ## Seed der laufenden Welt. Eine geladene Welt trägt ihren Seed nicht über die
 ## Brücke; die Anzeige sagt dann das, statt den alten Seed stehen zu lassen.

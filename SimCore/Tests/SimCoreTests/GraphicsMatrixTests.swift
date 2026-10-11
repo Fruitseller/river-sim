@@ -310,26 +310,36 @@ final class GraphicsMatrixTests: XCTestCase {
     }
 
     /// Die drei Vorlagen-Kameras (Issue #174, Paket E) gibt es zweimal: als
-    /// Tasten-Presets in `Main.gd` (F1–F3) und als Matrix-Kameras. Distanz und
-    /// Pitch müssen gleich sein, sonst zeigt der Abnahmebogen eine andere
-    /// Ansicht als die Taste im Spiel. Das Ziel gehört nur der Matrix (je Seed
-    /// fest), im Spiel wählt es der Spieler.
+    /// Tasten-Presets in `Main.gd` (F1–F3) und als Matrix-Kameras. Der Pitch
+    /// ist bei allen dreien gleich, die Distanz bei Tal und Nah; sonst zeigt
+    /// der Abnahmebogen eine andere Ansicht als die Taste im Spiel. Ziel und
+    /// Yaw rechnen die Tasten adaptiv aus der laufenden Welt, die Matrix hält
+    /// sie je Seed fest (Reproduzierbarkeit); ebenso die Distanz des Dioramas,
+    /// die im Spiel aus der Land-Bounding-Box folgt (`fill`, s. `Main.gd`
+    /// `frame_land`, nachgemessen in `game/tests/ui_layout.gd`).
     func testCameraPresetsMatchTheMatrix() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         for id in ["diorama", "valley", "close"] {
-            let dist = try main.captures(pattern: "\"id\": \"\(id)\",[^}]*\"dist\": ([0-9.]+)")
             let pitch = try main.captures(pattern: "\"id\": \"\(id)\",[^}]*\"pitch\": ([0-9.]+)")
-            XCTAssertEqual(dist.count, 1, "Preset '\(id)' fehlt in Main.gd CAMERA_PRESETS")
-            XCTAssertEqual(pitch.count, 1, "Preset '\(id)' ohne pitch in Main.gd")
-            guard let d = dist.first.flatMap(Double.init), let p = pitch.first.flatMap(Double.init) else {
-                continue
-            }
+            let dist = try main.captures(pattern: "\"id\": \"\(id)\",[^}]*\"dist\": ([0-9.]+)")
+            let adaptive = id == "diorama"
+            XCTAssertEqual(pitch.count, 1, "Preset '\(id)' ohne pitch in Main.gd CAMERA_PRESETS")
+            XCTAssertEqual(dist.count, adaptive ? 0 : 1,
+                           adaptive ? "Diorama rahmt das Land, keine feste Distanz"
+                                    : "Preset '\(id)' ohne dist in Main.gd CAMERA_PRESETS")
+            let key = adaptive ? "fill" : "upstream"
+            XCTAssertEqual(try main.captures(pattern: "\"id\": \"\(id)\",[^}]*\"\(key)\": ([0-9.]+)").count, 1,
+                           "Preset '\(id)' rechnet adaptiv über \"\(key)\"")
             for world in Self.matrixWorlds {
                 guard let cam = world.cameras.first(where: { $0.id == id }) else {
                     XCTFail("Seed \(world.seed) fehlt Matrix-Kamera '\(id)'"); continue
                 }
-                XCTAssertEqual(cam.distance, d, "Seed \(world.seed) '\(id)': Distanz == Main.gd")
-                XCTAssertEqual(cam.pitch, p, "Seed \(world.seed) '\(id)': Pitch == Main.gd")
+                if let p = pitch.first.flatMap(Double.init) {
+                    XCTAssertEqual(cam.pitch, p, "Seed \(world.seed) '\(id)': Pitch == Main.gd")
+                }
+                if let d = dist.first.flatMap(Double.init) {
+                    XCTAssertEqual(cam.distance, d, "Seed \(world.seed) '\(id)': Distanz == Main.gd")
+                }
             }
         }
         // Und das Shell-Skript, das die Bilder macht, kennt dieselben Werte.
