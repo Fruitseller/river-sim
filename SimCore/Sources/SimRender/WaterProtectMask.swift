@@ -55,7 +55,9 @@ public enum WaterProtectMask {
     }
 
     /// Je Zeile parallel: liest nur `src`, schreibt nur die eigenen Zeilen von
-    /// `dst`, damit bit-identisch zur sequenziellen Schleife.
+    /// `dst`, damit bit-identisch zur sequenziellen Schleife. Bereits
+    /// geschützte Zellen (`ps[k] != 0`) übernehmen sofort 255 ohne Nachbar-Abtastung;
+    /// Nachbarn brechen beim ersten Treffer ab.
     private static func dilate3x3(src: [UInt8], dst: inout [UInt8], n: Int) {
         src.withUnsafeBufferPointer { sb in
         dst.withUnsafeMutableBufferPointer { db in
@@ -64,12 +66,22 @@ public enum WaterProtectMask {
                 for j in jLo..<jHi {
                     let jMin = max(0, j - 1), jMax = min(n - 1, j + 1)
                     for i in 0..<n {
+                        let k = j * n + i
+                        if ps[k] != 0 {
+                            pd[k] = 255
+                            continue
+                        }
                         let iMin = max(0, i - 1), iMax = min(n - 1, i + 1)
                         var hit: UInt8 = 0
-                        for nj in jMin...jMax {
-                            for ni in iMin...iMax { hit |= ps[nj * n + ni] }
+                        check: for nj in jMin...jMax {
+                            for ni in iMin...iMax {
+                                if ps[nj * n + ni] != 0 {
+                                    hit = 255
+                                    break check
+                                }
+                            }
                         }
-                        pd[j * n + i] = hit
+                        pd[k] = hit
                     }
                 }
             }
