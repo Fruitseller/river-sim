@@ -23,10 +23,21 @@ public enum CanopyRender {
 
     // MARK: Waldmaske (CPU, SimRender.ForestCanopyMask)
 
-    /// Vegetationsgewicht (`TerrainColorRenderer`, R-Kanal von `surfaces`), ab
-    /// dem Wald einsetzt, und ab dem er geschlossen ist.
-    public static let vegetationLo = 0.14
-    public static let vegetationHi = 0.32
+    /// Vegetationsgewicht (`TerrainColorRenderer`, R-Kanal von `surfaces`,
+    /// höchstens 0,78), ab dem Wald einsetzt, und ab dem er geschlossen ist.
+    ///
+    /// Issue #168: Die Studien-Werte 0,14/0,32 lagen tief im unteren Teil des
+    /// Wertebereichs; fast jede bewachsene Zelle wurde Wald (Matrix-Seeds, bis
+    /// 43 % des Landes bei Jahr 100.000, Projekteigner: „zuviel Wald").
+    /// 0,35/0,55 halbiert den Anteil auf 9–22 %, dazwischen bleibt Wiese
+    /// (`meadow*`). Mitgemessen: 0,40/0,60 und 0,45/0,65 nehmen nur 1–4 Punkte
+    /// mehr weg; der Ticket-Vorschlag reichte nach den Matrix-Bildern, Bestände
+    /// stehen als Gruppen zwischen Wiesen. `clumpGain` 0,60 statt
+    /// 0,45 änderte den Anteil um höchstens 0,6 Punkte und bleibt deshalb.
+    /// Tabelle: `docs/graphics-quality.md` § Wald und Wiese (#168), Messlauf
+    /// `testCanopyCoverageDiagnostic`.
+    public static let vegetationLo = 0.35
+    public static let vegetationHi = 0.55
 
     /// Lichtungen und Waldränder: Rauschen verschiebt die Vegetationsschwelle,
     /// der Wald bildet so Gruppen statt einer gleichmäßigen Fläche. Frequenz in
@@ -56,6 +67,17 @@ public enum CanopyRender {
     /// Meeresspiegel (Sim-Einheit), ab der der Wald einsetzt.
     public static let shoreLo = 0.012
     public static let shoreHi = 0.03
+
+    // MARK: Wiese (Terrain-Shader)
+
+    /// Bewachsener Boden ohne Wald liest sich als Wiese (Issue #168): ab
+    /// `meadowLo` Vegetationsgewicht wird ein Teil des Bodenanteils grün, ab
+    /// `meadowHi` der volle Anteil `meadowShare`. Ohne das trug ein Gewicht von
+    /// 0,3 nur 30 % Grün; mit den angehobenen Wald-Schwellen standen die
+    /// freigewordenen Flächen als Sand da. Fels und Schnee bleiben unberührt.
+    public static let meadowLo = 0.08
+    public static let meadowHi = 0.35
+    public static let meadowShare = 0.75
 
     // MARK: Kronen (Terrain-Shader)
 

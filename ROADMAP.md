@@ -142,7 +142,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   (Dispersal-Radius 2, nur bewohnbare Standorte). Rendering: seit Issue #152
   ein Kronendach im Terrain-Shader (Kronen von ~11 m, Dach ~20 m angehoben,
   Waldmaske `SimRender.ForestCanopyMask`, Kalibrierung `SimCore.CanopyRender`);
-  die 3D-Instanzbäume samt Schalter (Taste V) sind entfallen.
+  die 3D-Instanzbäume samt Schalter (Taste V) sind entfallen. Seit #168 wird
+  nur dichte Vegetation Wald (9–22 % des Landes statt bis 43 %), bewachsener
+  Boden dazwischen rendert als Wiese.
 - **Speichern/Laden (Issue #8):** eine Welt geht vollständig in EINE versionierte
   Binärdatei (`WorldSnapshot.swift`) — das ganze Zustands-Inventar
   (`TerrainState`, ~25 Felder à n²) plus Mäander-Zentrumslinien/Altarme, Seed und

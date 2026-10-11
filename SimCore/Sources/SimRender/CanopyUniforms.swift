@@ -1,7 +1,7 @@
 import SimCore
 
-/// Kronen-Kalibrierung als benannte Werte für die Brücke (Issue #152, Muster
-/// wie `ReliefUniforms`). Die einzige Quelle der Zahlen bleibt
+/// Kronen- und Wiesen-Kalibrierung als benannte Werte für die Brücke (Issues
+/// #152/#168, Muster wie `ReliefUniforms`). Die einzige Quelle der Zahlen bleibt
 /// `SimCore.CanopyRender`; diese Tabelle vergibt nur Namen. Der Terrain-Shader
 /// deklariert gleichnamige Uniforms ohne Default. Die Schwellen der Waldmaske
 /// stehen nicht hier: sie wirken CPU-seitig in `ForestCanopyMask`.
@@ -23,5 +23,8 @@ public enum CanopyUniforms {
         ("canopy_crown_radius_jitter", CanopyRender.crownRadiusJitter),
         ("canopy_detail_lo", CanopyRender.detailFootprintLo),
         ("canopy_detail_hi", CanopyRender.detailFootprintHi),
+        ("canopy_meadow_lo", CanopyRender.meadowLo),
+        ("canopy_meadow_hi", CanopyRender.meadowHi),
+        ("canopy_meadow_share", CanopyRender.meadowShare),
     ]
 }

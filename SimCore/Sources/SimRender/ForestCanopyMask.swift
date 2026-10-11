@@ -78,8 +78,14 @@ public enum ForestCanopyMask {
     /// `protect` = R8-Schutzmaske, `clump` = `clumpField`. Passt eine Eingabe
     /// nicht zur Gittergröße oder fehlt die Schrittweite (`cellSize == 0`, etwa
     /// bei `world <= 0` oder nicht-endlich), bleibt die Maske leer statt falsch.
+    /// Die Vegetations-Schwellen sind nur für den Kalibrier-Sweep
+    /// (`testCanopyCoverageDiagnostic`) überschreibbar; Produktion liest die
+    /// Defaults aus `CanopyRender`.
     public static func bytes(_ terrain: Terrain, surfaces: [UInt8], protect: [UInt8],
-                             clump: [Float]) -> [UInt8] {
+                             clump: [Float],
+                             vegetationLo: Double = CanopyRender.vegetationLo,
+                             vegetationHi: Double = CanopyRender.vegetationHi,
+                             clumpGain: Double = CanopyRender.clumpGain) -> [UInt8] {
         let n = terrain.cfg.n
         let cnt = n * n
         let h = terrain.h
@@ -113,8 +119,8 @@ public enum ForestCanopyMask {
                         // Am Rand (2 Zellen) fehlt der Stencil; dort ist Meer.
                         let inner = i > 1 && i < n - 2 && j > 1 && j < n - 2
                         let slope = inner ? Terrain.macroSlope(ph, k, n) * slopeScale : 0
-                        let f = smoothstep(CanopyRender.vegetationLo, CanopyRender.vegetationHi,
-                                           veg + Double(pc[k]) * CanopyRender.clumpGain)
+                        let f = smoothstep(vegetationLo, vegetationHi,
+                                           veg + Double(pc[k]) * clumpGain)
                             * (1 - smoothstep(CanopyRender.wallSlopeLo, CanopyRender.wallSlopeHi, slope))
                             * (1 - smoothstep(CanopyRender.coldLo, CanopyRender.coldHi, cold))
                             * shore

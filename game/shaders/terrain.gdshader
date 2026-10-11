@@ -169,6 +169,9 @@ uniform float canopy_crown_radius;
 uniform float canopy_crown_radius_jitter;
 uniform float canopy_detail_lo;
 uniform float canopy_detail_hi;
+uniform float canopy_meadow_lo;
+uniform float canopy_meadow_hi;
+uniform float canopy_meadow_share;
 // Nadelbaum-Anteil nach Höhenband (HeightBands.coniferShare, über
 // SimNode.heightBands, gesetzt mit jedem Overlay-Upload).
 uniform float conifer_lo;
@@ -515,8 +518,17 @@ void fragment() {
 	// Byte-Quantisierung der Gewichte die Summe knapp über 1 heben kann.
 	float cover_w = vegetation + rock + cold;
 	float soil_w = max(0.0, 1.0 - cover_w);
-	vec3 terr = (soil_color * soil_w + rock_color * rock
-	          + vegetation_color * vegetation + cold_color * cold)
+	// Wiese (#168): bewachsener Boden ohne Wald. Linear gemischt trug ein
+	// Vegetationsgewicht von 0,3 nur 30 % Grün und las sich als Sand; ein
+	// Teil des Bodenanteils wird deshalb Gras. Fels und Schnee bleiben, wie
+	// sie sind; die Schwellen stehen in SimCore.CanopyRender.
+	float meadow_w = calib_window(canopy_meadow_lo, canopy_meadow_hi, vegetation)
+	               * canopy_meadow_share * soil_w;
+	vec3 meadow_color = vec3(0.17, 0.25, 0.09)
+	                  * mix(0.82, 1.12, top_large)
+	                  * mix(0.92, 1.08, top_grain * material_fade);
+	vec3 terr = (soil_color * (soil_w - meadow_w) + meadow_color * meadow_w
+	          + rock_color * rock + vegetation_color * vegetation + cold_color * cold)
 	          / max(0.001, soil_w + cover_w);
 	// Die Makrokarte bewahrt Salzkrusten, Gletschereis und Biom-Farbverschiebung,
 	// ohne wieder als alleinige, weichgefilterte Oberfläche sichtbar zu werden.
