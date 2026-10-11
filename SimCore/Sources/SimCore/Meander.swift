@@ -491,10 +491,34 @@ extension MeanderState {
             return [Double](repeating: 0, count: ch.nodes.count)
         }
         let g = beltGeometry(ch, config: config, heightAt: heightAt)
+        let curv = bendCurvature(g, config: config)
         return (0..<ch.nodes.count).map { i in
-            let a = g.curv[i] * g.width[i] * config.meanderBeltPoolGain
+            let a = curv[i] * g.width[i] * config.meanderBeltPoolGain
             return max(-1, min(1, a)) * g.mob[i]
         }
+    }
+
+    /// Bogen-Krümmung für das Querprofil: `g.curv` gemittelt über
+    /// ±`meanderBeltProfileWidths` Kanalbreiten (0 = `g.curv` selbst).
+    /// `g.curv` (±½ Breite) trägt noch Knicke im Knotenabstand (gemessen
+    /// |κ|·b bis 5, Radius unter einer halben Breite); daraus legte der
+    /// Stempel Knoten für Knoten abwechselnd gekippte Profile übereinander,
+    /// im Mittel ein symmetrisches V. Kolk und Gleithang antworten auf den
+    /// BOGEN, nicht auf den Knick. EINE Quelle für Stempel und Render.
+    static func bendCurvature(_ g: BeltGeometry, config: SimConfig) -> [Double] {
+        let c = g.curv.count
+        var out = g.curv
+        guard c >= 3 else { return out }
+        let spc = max(1e-6, config.meanderNodeSpacing)
+        for i in 1..<(c - 1) {
+            let kb = Int((config.meanderBeltProfileWidths * g.width[i] / spc).rounded())
+            guard kb > 0 else { continue }
+            let lo = max(1, i - kb), hi = min(c - 2, i + kb)
+            var acc = 0.0
+            for j in lo...hi { acc += g.curv[j] }
+            out[i] = acc / Double(hi - lo + 1)
+        }
+        return out
     }
 
     static func beltGeometry(_ ch: RiverChannel, config: SimConfig,
@@ -568,6 +592,19 @@ extension MeanderState {
         for i in 1..<c { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
         let sp = max(1e-6, config.meanderNodeSpacing)
         let s0 = config.meanderBeltSinuosityStart, s1 = config.meanderBeltSinuosityFull
+        // Stromab integrierte Krümmung (Spiegelbild von `ema`, ohne Knoten i).
+        let gd = config.meanderBeltDownstreamWeight
+        var down = [Double](repeating: 0, count: gd != 0 ? c : 0)
+        if gd != 0 {
+            var emaD = 0.0
+            for i in stride(from: c - 1, through: 0, by: -1) {
+                let seg = i < c - 1 ? dist(nodes[i], nodes[i + 1]) : 0
+                let w = exp(-seg / max(1e-6, kw * g.width[i]))
+                emaD *= w
+                down[i] = emaD
+                emaD += g.curv[i] * (1 - w)
+            }
+        }
         var ema = 0.0
         for i in 0..<c {
             let seg = i > 0 ? dist(nodes[i - 1], nodes[i]) : 0
@@ -576,7 +613,7 @@ extension MeanderState {
             // Nur der Stromauf-Term: der LOKALE Term (Ω < 0, zur Krümmungsmitte)
             // ist eine Diffusion der Linie mit κ = |Ω|·Rate·b² und läuft als
             // implizit stabile Glättung in `migrateBelt` (s. dort).
-            let eff = ga * ema
+            let eff = ga * ema + (gd != 0 ? gd * down[i] : 0)
             ema += g.curv[i] * (1 - w)
             guard i > 0, i < c - 1, g.mob[i] > 0, ch.discharge[i] >= config.meanderBeltMinCells else { continue }
             let coh = cohesion > 0 ? max(0, min(1, riparianAt(nodes[i]))) : 0
@@ -664,11 +701,11 @@ extension MeanderState {
     /// Glättung, Cutoffs (Hals und Chute), Resample. Der Aufrufer taktet so,
     /// dass kein Knoten mehr als einen halben Knotenabstand springt; die
     /// Klemme hier ist nur Sicherheitsnetz.
-    func migrateBelt(dt: Double, config: SimConfig, heightAt: (MeanderNode) -> Double,
+    func migrateBelt(dt: Double, time: Double, config: SimConfig, heightAt: (MeanderNode) -> Double,
                      riparianAt: (MeanderNode) -> Double) {
         for age in oxbowAge.indices { oxbowAge[age] += dt }
         for ci in channels.indices where Self.migrates(channels[ci], config) {
-            migrateBeltChannel(ci, dt: dt, config: config, heightAt: heightAt, riparianAt: riparianAt)
+            migrateBeltChannel(ci, dt: dt, time: time, config: config, heightAt: heightAt, riparianAt: riparianAt)
         }
     }
 
@@ -685,7 +722,7 @@ extension MeanderState {
 
     /// Ein Teilschritt für EINEN Lauf (ohne Altarm-Alterung, die macht der
     /// Aufrufer einmal je Schritt).
-    func migrateBeltChannel(_ ci: Int, dt: Double, config: SimConfig,
+    func migrateBeltChannel(_ ci: Int, dt: Double, time: Double, config: SimConfig,
                             heightAt: (MeanderNode) -> Double,
                             riparianAt: (MeanderNode) -> Double) {
         let spacing = config.meanderNodeSpacing
@@ -702,6 +739,8 @@ extension MeanderState {
                         let m = max(-maxStep, min(maxStep, r[i] * dt))
                         ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
                     }
+                    Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: ci,
+                                 config: config, maxStep: maxStep)
                     // Lokaler Term als Diffusion der Linie, ∂x/∂t = κ·∂²x/∂s² mit
                     // κ = |Ω|·Rate·b²·Erodierbarkeit, IMPLIZIT (Rückwärts-Euler,
                     // tridiagonal): für jedes dt stabil und in der Zeit konsistent.
@@ -802,6 +841,51 @@ extension MeanderState {
                 }
             }
         }
+    }
+
+    /// Störquelle des Kerns (Howard & Knutson 1984: zufällige Auslenkung der
+    /// Knoten je Zeitschritt). Howard–Knutson ist KONVEKTIV instabil: Bögen
+    /// wachsen und wandern stromab, eine einmal gerade Strecke bleibt gerade.
+    /// Ohne Störquelle spülte der Kern seine Anfangszacken in ~60.000 Jahren
+    /// hinaus und lag danach als gerade Linie mit einer Spirale am festen Ende
+    /// da (gemessen: Sinuosität 1,00 ab Jahr 62.000, `testBeltKernelDiagnostic`).
+    /// In echten Auen kommt die Störung aus der Heterogenität der Ufer
+    /// (Tonpfropfen alter Altarme, Bewuchs, Zubringer).
+    ///
+    /// Auslenkung je Knoten `A · b · √(Rate · dt) · ξ` mit ξ ~ Einheitsvarianz,
+    /// über ±½ Breite geglättet (Knotenzacken dämpft der Lokalterm ohnehin weg)
+    /// und mit der Erodierbarkeit gewichtet (feste Strecken zittern nicht).
+    /// Varianz ∝ dt: in Verteilung schrittweiten-unabhängig (Wiener-Prozess),
+    /// nicht pfadgleich. ξ ist ein Hash aus Zeit, Lauf und Knoten —
+    /// deterministisch und nach `restore` reproduzierbar, ohne neuen Zustand.
+    static func perturb(_ nodes: inout [MeanderNode], _ g: BeltGeometry, _ erod: [Double],
+                        dt: Double, time: Double, channel ci: Int, config: SimConfig, maxStep: Double) {
+        let amp = config.meanderBeltNoise
+        let c = nodes.count
+        guard amp > 0, dt > 0, c >= 3 else { return }
+        let sp = max(1e-6, config.meanderNodeSpacing)
+        let key = time.bitPattern &* 0x9E37_79B9_7F4A_7C15 ^ UInt64(truncatingIfNeeded: ci) &* 0xD1B5_4A32_D192_ED03
+        var xi = [Double](repeating: 0, count: c)
+        for i in 1..<(c - 1) where erod[i] > 0 { xi[i] = 3.0.squareRoot() * hashUnit(key, i) }
+        let base = amp * (config.meanderBeltRate * dt).squareRoot()
+        for i in 1..<(c - 1) where erod[i] > 0 {
+            let kr = max(1, Int((0.5 * g.width[i] / sp).rounded()))
+            let lo = max(1, i - kr), hi = min(c - 2, i + kr)
+            var acc = 0.0
+            for j in lo...hi { acc += xi[j] }
+            let cnt = Double(hi - lo + 1)
+            let m = max(-maxStep, min(maxStep, base * g.width[i] * erod[i] * acc / cnt.squareRoot()))
+            nodes[i].x += m * g.nx[i]; nodes[i].z += m * g.nz[i]
+        }
+    }
+
+    /// Gleichverteilt in [−1, 1) aus (Schlüssel, Index), SplitMix64-Finalisierer.
+    @inline(__always) static func hashUnit(_ key: UInt64, _ i: Int) -> Double {
+        var z = key &+ UInt64(truncatingIfNeeded: i) &* 0x9E37_79B9_7F4A_7C15
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        z ^= z >> 31
+        return Double(z >> 11) / Double(UInt64(1) << 53) * 2 - 1
     }
 
     /// Löst `−aᵢ·xᵢ₋₁ + (1 + 2aᵢ)·xᵢ − aᵢ·xᵢ₊₁ = xᵢ(alt)` für beide Koordinaten
