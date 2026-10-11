@@ -630,6 +630,16 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
 - **Erst headless messen, dann schrauben.** Visuelle Hypothesen waren hier mehrfach
   falsch. Kennzahlen über die Zeit loggen (Relief, Ruggedness, See-Anteil, meanLand,
   Churn); Baseline-Beispiele in `docs/river-baseline-metrics.md`.
+- **Jede Performance-Behauptung MUSS gemessen sein.** Ein Perf-Commit oder -PR
+  ohne Vorher/Nachher-Zahlen wird nicht gemergt: Median über interleaved A/B
+  (alt und neu abwechselnd, nicht nacheinander), auf realistischer Eingabe
+  (Produktions-Config, gealterte Welt), mit Maschine, Wiederholungen und
+  Anteil am Frame bzw. Sim-Schritt. Bit-Identität gehört dazu (`simperf --hash`
+  bzw. Ausgabe alt == neu). „Spart Speicherzugriffe" oder „früher Abbruch" ist
+  keine Messung: der verzweigungsreiche Early-Exit aus PR #169 war gemessen
+  42–61 % LANGSAMER, weil er die Vektorisierung der alten Schleife brach.
+  Ergebnisse gehören in den PR und, wenn bleibend, nach
+  `docs/perf-measurements.md`.
 - **Kalibrier-Kaskade:** Änderungen am Droplet-Pfad verschieben die Braiding-Kalibrierung;
   Rinnen-Textur bricht Formeln, die die Per-Zell-Steigung als „Hang" lesen (Regen,
   Vegetation, Biom-Farbe brauchen Makro-Steigung über ±2 Zellen). Diese
