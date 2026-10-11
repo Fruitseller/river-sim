@@ -214,7 +214,9 @@ func _check_camera_presets() -> void:
 	for c in Main.CAMERA_PRESETS.size():
 		var p: Dictionary = Main.CAMERA_PRESETS[c]
 		main._apply_camera_preset(c, false)
-		_check(is_equal_approx(main.cam_pitch, p["pitch"]), "Preset %s setzt den Pitch" % p["id"])
+		# Pitch aus der Tabelle; nur eine verdeckte Sichtlinie hebt ihn an.
+		_check(main.cam_pitch >= p["pitch"] - 1e-6 and main.cam_pitch < 1.3 + 1e-6,
+			"Preset %s setzt den Pitch (%.2f)" % [p["id"], main.cam_pitch])
 		var t: Vector3 = main.cam_target
 		var gx: float = (t.x + main.half) / main.step
 		var gz: float = (t.z + main.half) / main.step
@@ -247,8 +249,8 @@ func _check_camera_presets() -> void:
 			"Preset %s: Kamera steht auf der Mündungsseite" % p["id"])
 		var eye: Vector3 = main.cam.position
 		_check(eye.y > main._surface_y_at(eye), "Preset %s: Kamera über dem Gelände" % p["id"])
-		print("UI_CAMERA_PRESET %s target (%.1f, %.1f) yaw %.2f mouth (%.1f, %.1f)"
-			% [p["id"], t.x, t.z, main.cam_yaw, mouth_pos.x, mouth_pos.y])
+		print("UI_CAMERA_PRESET %s target (%.1f, %.1f) yaw %.2f pitch %.2f mouth (%.1f, %.1f)"
+			% [p["id"], t.x, t.z, main.cam_yaw, main.cam_pitch, mouth_pos.x, mouth_pos.y])
 	# Taste: F2 fährt „Tal" weich an; nach der Fahrt steht die Kamera dort.
 	var want: Dictionary = main.camera_preset_view(1)
 	main._apply_camera_preset(0, false)
@@ -281,7 +283,7 @@ func _check_diorama_fill(p: Dictionary, h: PackedFloat32Array, n: int) -> void:
 				continue
 			var s: Vector2 = main.cam.unproject_position(w) / vp * 2.0 - Vector2.ONE
 			reach = maxf(reach, maxf(absf(s.x), absf(s.y)))
-	var capped: bool = is_equal_approx(main.cam_dist, 30.0) \
+	var capped: bool = is_equal_approx(main.cam_dist, Main.CAM_DIST_MIN) \
 		or is_equal_approx(main.cam_dist, main.world_size * 4.0)
 	_check(behind == 0, "Diorama: alles Land vor der Kamera (%d dahinter)" % behind)
 	_check(absf(reach - p["fill"]) < 0.02 or (capped and reach < 1.0),

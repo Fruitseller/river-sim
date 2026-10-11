@@ -400,6 +400,7 @@ var play_button: Button
 var tool_buttons: Array[Button] = []
 var debug_panel: Control
 var camera_tween: Tween
+var rs_camera := -1 # RS_CAMERA: Preset-Index, folgt der Fenstergröße bis zur ersten Eingabe
 var radius_value: Label
 var strength_value: Label
 var radius_slider: HSlider
@@ -456,7 +457,9 @@ const JUMPS := [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
 ##  - Tal und Nah (`upstream`): Ziel = Zelle des größten Laufs, `upstream`
 ##    Welteinheiten oberhalb seiner Küstenmündung, Kamera auf der Meerseite
 ##    der Mündung mit Blick talaufwärts (`river_view`). Das Ziel ist damit
-##    immer eine Landzelle, nie das offene Meer.
+##    immer eine Landzelle, nie das offene Meer. Verdeckt Gelände die
+##    Sichtlinie (Talbiegung, Kamera im Hang), steigt der Pitch, bis sie frei
+##    ist (`_clear_pitch`).
 ## Pitch (alle) und Distanz (Tal, Nah) sind dieselben wie bei den
 ## Matrix-Kameras gleicher `id`; die Matrix (scripts/graphics-matrix.sh) hält
 ## dagegen feste Ziele und Distanzen je Seed, damit Abnahmebilder
@@ -464,10 +467,14 @@ const JUMPS := [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
 ## GraphicsMatrixTests.testCameraPresetsMatchTheMatrix).
 const CAMERA_PRESETS := [
 	{"id": "diorama", "name": "Diorama", "fill": 0.85, "pitch": 0.62},
-	{"id": "valley", "name": "Tal", "dist": 60.0, "pitch": 0.42, "upstream": 20.0},
-	{"id": "close", "name": "Nah", "dist": 32.0, "pitch": 0.52, "upstream": 6.0},
+	{"id": "valley", "name": "Tal", "dist": 30.0, "pitch": 0.40, "upstream": 12.0},
+	{"id": "close", "name": "Nah", "dist": 22.0, "pitch": 0.52, "upstream": 4.0},
 ]
 const CAMERA_PRESET_SECONDS := 0.6
+## Kleinster Kamera-Abstand (Zoom und Presets). Bis #174 standen hier 30
+## Einheiten als Zahl an jeder Zoom-Stelle; „Tal" und „Nah" (Vorlagen B, A)
+## brauchen näher heran: aus 60 zeigte „Tal" die ganze Insel, das Tal war klein.
+const CAM_DIST_MIN := 20.0
 
 ## Pinsel als Gitterkuppel (#174, Paket E) statt des flachen Rings: die Kuppel
 ## ist die sichtbare Fläche (Sim-Höhe plus Verschiebung #153 plus Kronendach),
@@ -588,7 +595,16 @@ func _ready() -> void:
 		var id := OS.get_environment("RS_CAMERA")
 		for c in CAMERA_PRESETS.size():
 			if CAMERA_PRESETS[c]["id"] == id:
-				_apply_camera_preset(c, false)
+				rs_camera = c
+		if rs_camera >= 0:
+			_apply_camera_preset(rs_camera, false)
+			# Das Diorama rahmt nach dem Seitenverhältnis; `--maximized` greift
+			# erst NACH _ready. Bis zur ersten Eingabe folgt das Preset deshalb
+			# jeder Größenänderung, RS_SHOT zeigt dann dasselbe wie F1–F3 im
+			# fertigen Fenster.
+			get_viewport().size_changed.connect(func():
+				if rs_camera >= 0:
+					_apply_camera_preset(rs_camera, false))
 	_refresh_debug()
 	if OS.has_environment("RS_DIAG"):
 		_diag()
@@ -1132,7 +1148,7 @@ func camera_preset_view(index: int) -> Dictionary:
 			vp.x / maxf(vp.y, 1.0), p["fill"])
 		if not f.is_empty():
 			view["target"] = f["target"]
-			view["dist"] = clampf(f["dist"], 30.0, world_size * 4.0)
+			view["dist"] = clampf(f["dist"], CAM_DIST_MIN, world_size * 4.0)
 			return view
 	else:
 		var r := river_view(h_cache, sim.flowArea(), sim.receivers(), N, sea, world_size,
@@ -1142,7 +1158,28 @@ func camera_preset_view(index: int) -> Dictionary:
 			view["yaw"] = r["yaw"]
 	target.y = _surface_y_at(target)
 	view["target"] = target
+	view["pitch"] = _clear_pitch(target, view["yaw"], view["pitch"], view["dist"])
 	return view
+
+## Kleinster Pitch ab `pitch` (Schritte 0,05, höchstens 1,3), bei dem Auge und
+## Sichtlinie zum Ziel über der sichtbaren Fläche liegen (24 Proben; Luft
+## wächst vom Ziel, das AUF der Fläche liegt, bis 1 Einheit am Auge). Ohne
+## Hindernis bleibt `pitch` unverändert.
+func _clear_pitch(target: Vector3, yaw: float, pitch: float, dist: float) -> float:
+	while pitch < 1.3:
+		var cp := cos(pitch)
+		var eye := target + Vector3(sin(yaw) * cp, sin(pitch), cos(yaw) * cp) * dist
+		var clear := true
+		for s in range(1, 25):
+			var t := s / 24.0
+			var p := target.lerp(eye, t)
+			if p.y < _surface_y_at(p) + t:
+				clear = false
+				break
+		if clear:
+			break
+		pitch += 0.05
+	return pitch
 
 ## Diorama-Rahmen: Ziel = Mitte der Land-Bounding-Box (Höhe: mittlere
 ## Landhöhe), Distanz = kleinste, bei der jede Landzelle (Raster `n/180`) in
@@ -1923,6 +1960,8 @@ func _update_camera() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	last_activity_msec = Time.get_ticks_msec()
+	if not event is InputEventMouseMotion:
+		rs_camera = -1 # ab jetzt führt der Spieler die Kamera (s. RS_CAMERA)
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
@@ -1940,7 +1979,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_RIGHT:
 				orbiting = event.pressed
 			MOUSE_BUTTON_WHEEL_UP:
-				cam_dist = max(30.0, cam_dist - 8.0)
+				cam_dist = max(CAM_DIST_MIN, cam_dist - 8.0)
 			MOUSE_BUTTON_WHEEL_DOWN:
 				cam_dist = min(world_size * 4.0, cam_dist + 8.0)
 	elif event is InputEventMouseMotion and orbiting:
@@ -1948,15 +1987,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		cam_pitch = clamp(cam_pitch + event.relative.y * 0.005, 0.15, 1.5)
 	# Zoom ohne Maus: Trackpad-Zwei-Finger-Wisch …
 	elif event is InputEventPanGesture:
-		cam_dist = clamp(cam_dist + event.delta.y * 6.0, 30.0, world_size * 4.0)
+		cam_dist = clamp(cam_dist + event.delta.y * 6.0, CAM_DIST_MIN, world_size * 4.0)
 	# … Pinch-Geste …
 	elif event is InputEventMagnifyGesture:
-		cam_dist = clamp(cam_dist / event.factor, 30.0, world_size * 4.0)
+		cam_dist = clamp(cam_dist / event.factor, CAM_DIST_MIN, world_size * 4.0)
 	# … und +/− auf der Tastatur.
 	elif event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
-				cam_dist = max(30.0, cam_dist - 12.0)
+				cam_dist = max(CAM_DIST_MIN, cam_dist - 12.0)
 			KEY_MINUS, KEY_KP_SUBTRACT:
 				cam_dist = min(world_size * 4.0, cam_dist + 12.0)
 			KEY_SPACE: # Pause ↔ letztes Tempo

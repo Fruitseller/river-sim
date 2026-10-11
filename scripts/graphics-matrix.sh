@@ -71,12 +71,12 @@ camera_cfg() {
     # GraphicsMatrixTests.testCameraPresetsMatchTheMatrix. Die adaptive Ansicht
     # zeigt `RS_CAMERA=<id>` beim Start von Main (statt RS_TARGET/RS_DIST/RS_YAW).
     1337:diorama|42:diorama|20:diorama) echo "0,0;115.0;0.7;0.62" ;;
-    1337:valley)    echo "-12,-25;60.0;0.7;0.42" ;;
-    1337:close)     echo "-36,-32;32.0;0.9;0.52" ;;
-    42:valley)      echo "4,-6;60.0;0.5;0.42" ;;
-    42:close)       echo "12,-10;32.0;1.1;0.52" ;;
-    20:valley)      echo "-8,10;60.0;0.6;0.42" ;;
-    20:close)       echo "30,-28;32.0;0.8;0.52" ;;
+    1337:valley)    echo "-12,-25;30.0;0.7;0.40" ;;
+    1337:close)     echo "-36,-32;22.0;0.9;0.52" ;;
+    42:valley)      echo "4,-6;30.0;0.5;0.40" ;;
+    42:close)       echo "12,-10;22.0;1.1;0.52" ;;
+    20:valley)      echo "-8,10;30.0;0.6;0.40" ;;
+    20:close)       echo "30,-28;22.0;0.8;0.52" ;;
   esac
 }
 
