@@ -175,6 +175,7 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/lighting.gd      # ohne GDExtension
 "$GODOT" --headless --path game --script res://tests/relief.gd
 "$GODOT" --headless --path game --script res://tests/canopy.gd
+"$GODOT" --headless --path game --script res://tests/ui_layout.gd
 "$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
 ```
 
@@ -186,7 +187,7 @@ grüner Lauf nichts über den lokalen Stand.
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
 Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK`,
-`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`), nicht der
+`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
@@ -243,7 +244,8 @@ Geometrie), `RS_WATER_GPU` (Schwanzstufen des Raster-Wasserfelds — Blur, EWMA,
 Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension;
 standardmäßig AUS, weil die Ersparnis gemessen 1,8 ms je Aufruf ist und keine
 Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet
-zusätzlich die Bedienleiste aus. Getrennt davon
+zusätzlich die Bedienleiste aus, `RS_SHOT_UI` behält sie (Aufnahmen der
+Bedienung selbst, Issue #174). Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `prototype|baseline`, `RS_STUDY_MODE`
@@ -264,7 +266,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
@@ -318,7 +320,10 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    beide weiter und wrappt `[UInt8]`, `[Float]` sowie `RibbonMesh` in
    `Packed*Array`. Keine Physik, keine Render-Berechnung, kein Render-Zustand.
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
-   derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
+   derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input; das Aussehen der
+   Bedienung steht in EINEM Theme, `ui/glass_theme.tres`, die Werkzeug- und
+   Tempo-Icons zeichnet `scripts/UiIcon.gd`, Issue #174, Wächter
+   `SimCoreTests/UiContractTests.swift` und `tests/ui_layout.gd`),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
    (Flussbänder) und `ocean.gdshader` (offenes Meer); Licht, Atmosphäre und
    die mit allen drei geteilten Wolkenschatten (`clouds.gdshaderinc`) stellt
@@ -327,7 +332,7 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    nichts MALEN, sondern rechnen: `relief_bake.gdshader` backt einmal je
    Terrain-Update die Render-Verschiebung von Rinnen und Graten (Issue #153,
    Kalibrierung `SimCore.ReliefRender` über die Brücke, Wächter
-   `tests/relief.gd`); der Terrain-Shader liest sie nur, Pinselring und
+   `tests/relief.gd`); der Terrain-Shader liest sie nur, Pinselkuppel und
    Kameraziel liegen auf der verschobenen Fläche, der Pinsel wirkt auf die
    Sim-Zelle darunter. Das Kronendach (Issue #152) zeichnet der
    Terrain-Shader je Pixel; WO Wald steht, kommt als Waldmaske aus

@@ -345,7 +345,8 @@ Fremdlast. Eine Messung ohne Fremdlast steht noch aus.
 Als verbindliche Arbeits- und Vergleichsgrundlage für alle nachfolgenden Tickets
 von #117 („Landschaftsqualität") dient eine standardisierte Matrix aus drei
 Seeds, drei Entwicklungsstadien und sechs Kameraperspektiven (insgesamt 54
-Einzelansichten je Variante). Jedes Folge-Ticket erbringt seine Vorher/Nachher-Bilder
+Einzelansichten je Variante). Seit #174 kommen drei Vorlagen-Kameras dazu
+(`diorama`, `valley`, `close`, zusammen 81 Ansichten). Jedes Folge-Ticket erbringt seine Vorher/Nachher-Bilder
 und Leistungsmessungen reproduzierbar gegen diese Matrix.
 
 ### Auswahl der Seeds und Begründung
@@ -400,6 +401,15 @@ jede Welt neben Übersicht und Nahansicht vier gezielte Stresstests:
 | `backlight` | Gegenlicht | Seed 1337: `(-12, -25)`, Dist 45, Yaw 2.269, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 48, Yaw 2.269, Pitch 0.85<br>Seed 20: `(-8, 10)`, Dist 46, Yaw 2.269, Pitch 0.85<br>*(feste Welt-Sonne Azimut -50°; Yaw = Azimut + 180°)* | **Stresstest Beleuchtung:** Blick direkt gegen die Sonne. Alle kamerazugewandten Flanken liegen im Eigenschatten; prüft Relieflesbarkeit im Schatten, Tonemapping und Streulicht. |
 | `coast` | Küste / Ufer | Seed 1337: `(-36, -32)`, Dist 45, Yaw 0.90, Pitch 0.85<br>Seed 42: `(12, -10)`, Dist 38, Yaw 1.10, Pitch 0.85<br>Seed 20: `(30, -28)`, Dist 48, Yaw 0.80, Pitch 0.85 | **Stresstest Wasser-Land:** Mündungsdelta, Binnensee-Ufer oder Steilküste. Prüft Schutzmaske, Übergang von Flussband zu Ozean/See, Brandung und Tiefenfarbe. |
 | `snow` | Schnee / Grate | Seed 1337: `(18, 14)`, Dist 48, Yaw 0.60, Pitch 0.75<br>Seed 42: `(-22, 20)`, Dist 50, Yaw 0.70, Pitch 0.75<br>Seed 20: `(-10, 14)`, Dist 40, Yaw 0.60, Pitch 0.70 | **Stresstest Schneegrenze:** Felsrippen, Firnfelder und Gipfel. Prüft Gratschärfung, Schnee-Albedo und Übergang von Wald/Fels zu Schnee. |
+| `diorama` | Vorlage C (#174) | `(0, 0)`, Dist 115, Yaw 0.70, Pitch 0.62 | Ganze Insel schräg als Diorama: Gebirgskamm, Tieflandflüsse, Küste. Im Spiel Taste F1. |
+| `valley` | Vorlage B (#174) | Ziel und Yaw wie `detail`, Dist 60, Pitch 0.42 | Flacher Blick über Tal und Aue bis zum Horizont: Mäander, Bänke, Delta. Im Spiel Taste F2 (Ziel = aktueller Blickpunkt). |
+| `close` | Vorlage A (#174) | Ziel und Yaw wie `coast`, Dist 32, Pitch 0.52 | Schrägsicht auf Hang, Fluss und Küste: Fels, Wald, Kiesbänke, Brandung. Im Spiel Taste F3 (Ziel = aktueller Blickpunkt). |
+
+Die drei Vorlagen-Kameras (Issue #174, Paket E) sind dieselben wie die
+Tasten-Presets im Spiel (`CAMERA_PRESETS` in `game/scripts/Main.gd`): Distanz
+und Pitch sind gleich, Wächter `GraphicsMatrixTests.testCameraPresetsMatchTheMatrix`.
+Die Werte sind ein erster Vorschlag nach den Vorlagenbildern und noch nicht am
+gerenderten Bild abgestimmt.
 
 ### Physikalische Baseline-Kennzahlen der Matrixwelten
 
@@ -433,7 +443,7 @@ Produktions-Grid $n = 720$, 112,48 m Weltbreite, $HSCALE = 24.0$):
 Das Skript `scripts/graphics-matrix.sh` automatisiert den vollständigen Durchlauf:
 
 ```sh
-# 1. Alle 54 Aufnahmen für eine Variante erzeugen:
+# 1. Alle Aufnahmen für eine Variante erzeugen (seit #174 81):
 scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline shot
 scripts/graphics-matrix.sh prototype docs/screenshots/graphics-matrix/prototype shot
 

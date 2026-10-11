@@ -44,11 +44,17 @@ var step: float
 var sea: float
 var terrain_grid: int
 var render_quality := "balanced"
-var pick_radius_cap := 0.5 # effektive Spitzhacken-Breite (aus SimNode, fürs Ring-Visual)
+var pick_radius_cap := 0.5 # effektive Spitzhacken-Breite (aus SimNode, für die Pinselkuppel)
 
 var terrain_mi: MeshInstance3D
 var water_mi: MeshInstance3D
-var ring_mi: MeshInstance3D
+# Pinselkuppel (s. BRUSH_FALLOFF_POWER): Linien-Mesh, nur bei Änderung neu
+# gebaut (`brush_key`: Treffer, Radius, Profil, Flächen-Stand).
+var brush_mi: MeshInstance3D
+var brush_mesh := ArrayMesh.new()
+var brush_key := []
+# Zählt jede Änderung der sichtbaren Fläche (Höhe, Verschiebung, Kronendach).
+var surface_version := 0
 
 # Wasser-Geometrie (Issues #31/#34): Mäander, Delta-Distributäre und Altarme als
 # Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel. Seit #34 der
@@ -265,7 +271,7 @@ var h_cache_dirty := true
 
 # Render-Verschiebung von Rinnen und Graten (#153): ein Float-SubViewport backt
 # sie einmal je Terrain-Update (`_bake_relief`), der Terrain-Shader liest nur.
-# Pinselring und Kameraziel liegen auf der SICHTBAREN Fläche; dafür liest
+# Pinselkuppel und Kameraziel liegen auf der SICHTBAREN Fläche; dafür liest
 # `_relief_cpu` die Backtextur zurück, lazy und nie während eines Strichs (der
 # Rückweg ist ein GPU-Sync, gemessen 22 ms bei n = 720, M4 Max).
 # `relief_lift_cache` ist der kodierte Höhenzuschlag auf dem Sim-Gitter
@@ -386,8 +392,14 @@ const DEBUG_STATS_COUNT := 19
 const DEBUG_REFRESH_SECONDS := 1.0
 
 # UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
-var speed_buttons: Array[Button] = []
+var hud: Control
+var rate_label: Label
+var seed_label: Label
+var pause_button: Button
+var play_button: Button
 var tool_buttons: Array[Button] = []
+var debug_panel: Control
+var camera_tween: Tween
 var radius_value: Label
 var strength_value: Label
 var radius_slider: HSlider
@@ -406,24 +418,71 @@ var world_dialog: AcceptDialog
 ## (Wächter: SimCoreTests/ToolContractTests.swift). Die Taste ist die
 ## Tabellen-Position (1…N), nicht noch eine dritte Kopie.
 ##
+## Pflichtfeld neben `name` und `mode`:
+##   icon            — Name des gezeichneten Icons (scripts/UiIcon.gd, #174)
 ## Optionale Felder, jedes ersetzt eine vorher verstreute Magie-Zahl:
 ##   shift           — Werkzeug, auf das Shift umschaltet (Anheben ↔ Absenken)
 ##   samples_target  — braucht die Geländehöhe am Strich-Beginn (Einebnen)
 ##   stroke_spacing  — zeichnet EINZELHIEBE entlang des Strichs, Abstand in Zellen
 ##                     (Spitzhacke: auf der Stelle verharren gräbt nicht tiefer)
 ##   strength_factor — Faktor auf die Pinselstärke (Spitzhacke schlägt kräftiger)
-##   radius_capped   — echte Breite ist auf `pick_radius_cap` gedeckelt (Ring-Visual)
+##   radius_capped   — echte Breite ist auf `pick_radius_cap` gedeckelt (Kuppel)
+##   falloff_power   — Exponent p des Pinselgewichts (1 − d²)^p für die Kuppel,
+##                     Standard BRUSH_FALLOFF_POWER (s. dort)
 ## Neues Werkzeug = eine Zeile hier plus ein `case` in BrushTool.
 const TOOLS := [
-	{"icon": "⛰", "name": "Anheben", "mode": 0, "shift": 1},
-	{"icon": "🕳", "name": "Absenken", "mode": 1, "shift": 0},
-	{"icon": "〰", "name": "Glätten", "mode": 2},
-	{"icon": "▭", "name": "Einebnen", "mode": 3, "samples_target": true},
-	{"icon": "🌋", "name": "Aufrauen", "mode": 4},
-	{"icon": "⛏", "name": "Spitzhacke", "mode": 5, "stroke_spacing": 1.5,
-		"strength_factor": 1.5, "radius_capped": true},
+	{"icon": "raise", "name": "Anheben", "mode": 0, "shift": 1},
+	{"icon": "lower", "name": "Absenken", "mode": 1, "shift": 0},
+	{"icon": "smooth", "name": "Glätten", "mode": 2},
+	{"icon": "flatten", "name": "Einebnen", "mode": 3, "samples_target": true},
+	{"icon": "roughen", "name": "Aufrauen", "mode": 4},
+	{"icon": "pickaxe", "name": "Spitzhacke", "mode": 5, "stroke_spacing": 1.5,
+		"strength_factor": 1.5, "radius_capped": true, "falloff_power": 4},
 ]
-const SPEEDS := [["⏸ Pause", 0.0], ["10 J/s", 10.0], ["30 J/s", 30.0], ["60 J/s", 60.0]]
+## Zeitraffer-Stufen in Jahren je Sekunde. ▶ spielt die zuletzt gewählte,
+## ⏩ schaltet reihum eine weiter (nach der schnellsten wieder die langsamste).
+const SPEEDS := [10.0, 30.0, 60.0]
+const JUMPS := [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
+	["+10.000 J.", 10000.0], ["+100.000 J.", 100000.0]]
+
+## Kamera-Presets der Vorlagen (Issue #174, Paket E), Tasten F1–F3 in
+## Tabellen-Reihenfolge: Diorama = ganze Insel schräg (Vorlage C), Tal = Blick
+## über die Aue bis zum Horizont (B), Nah = Schrägsicht auf Hang, Fluss und
+## Küste (A). `dist` und `pitch` sind dieselben wie bei den Matrix-Kameras
+## gleicher `id` (scripts/graphics-matrix.sh; Wächter
+## GraphicsMatrixTests.testCameraPresetsMatchTheMatrix). Das Ziel steht dort je
+## Seed fest; hier behalten Tal und Nah den aktuellen Blickpunkt, das Diorama
+## blickt auf die Inselmitte.
+const CAMERA_PRESETS := [
+	{"id": "diorama", "name": "Diorama", "dist": 115.0, "pitch": 0.62, "centered": true},
+	{"id": "valley", "name": "Tal", "dist": 60.0, "pitch": 0.42},
+	{"id": "close", "name": "Nah", "dist": 32.0, "pitch": 0.52},
+]
+const CAMERA_PRESET_SECONDS := 0.6
+
+## Pinsel als Gitterkuppel (#174, Paket E) statt des flachen Rings: die Kuppel
+## ist die sichtbare Fläche (Sim-Höhe plus Verschiebung #153 plus Kronendach),
+## angehoben um das Gewichtsprofil des Pinsels w(d) = (1 − d²)^p, d = Abstand
+## zum Zentrum / Radius. p = 2 ist das Gewicht ALLER Werkzeuge
+## (Terrain.forEachBrushCell), die Spitzhacke quadriert es (p = 4,
+## Terrain.pickaxe, Feld `falloff_power`). Wächter:
+## ToolContractTests.testBrushDomeFollowsTheBrushFalloff (Profil gegen die
+## gemessene Wirkung von Anheben und Spitzhacke).
+const BRUSH_FALLOFF_POWER := 2.0
+const BRUSH_DOME_HEIGHT := 0.5   # Scheitelhöhe relativ zum Radius, rein visuell
+const BRUSH_DOME_LIFT := 0.08    # Abstand über der Fläche gegen Z-Fighting
+const BRUSH_DOME_RINGS := 5      # Breitenkreise, der äußerste ist der Rand
+const BRUSH_DOME_MERIDIANS := 12
+const BRUSH_DOME_SEGMENTS := 48  # Segmente je Breitenkreis
+const BRUSH_RIM_COLOR := Color(0.85, 0.97, 1.0, 0.95)
+const BRUSH_GRID_COLOR := Color(0.7, 0.92, 1.0, 0.5)
+
+## Gemeinsames Glas-Theme aller Bedienelemente (#174): Farben, Rahmen,
+## Schriftgrößen und die Typ-Varianten (`TitleLabel`, `ToolButton`, …) stehen
+## dort, nicht als Overrides im Code (Wächter: SimCoreTests/UiContractTests).
+const UI_THEME := "res://ui/glass_theme.tres"
+const UiIcon = preload("res://scripts/UiIcon.gd")
+const UI_MARGIN := 16.0
 
 func _ready() -> void:
 	if not ClassDB.class_exists("SimNode"):
@@ -709,173 +768,103 @@ func _setup_scene() -> void:
 	apply_water_calibration(sim, water_mats)
 	Lighting.apply_clouds(water_mats, render_quality)
 
-	# Pinsel-Ring
-	ring_mi = MeshInstance3D.new()
-	var torus := TorusMesh.new()
-	torus.inner_radius = 0.92
-	torus.outer_radius = 1.0
-	ring_mi.mesh = torus
-	var rmat := StandardMaterial3D.new()
-	rmat.albedo_color = Color(1.0, 0.87, 0.4)
-	rmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	rmat.disable_receive_shadows = true
-	ring_mi.material_override = rmat
-	ring_mi.visible = false
-	add_child(ring_mi)
+	# Pinselkuppel: Linien in Vertex-Farben (Rand hell, Gitter gedämpft).
+	brush_mi = MeshInstance3D.new()
+	brush_mi.mesh = brush_mesh
+	var bmat := StandardMaterial3D.new()
+	bmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	bmat.vertex_color_use_as_albedo = true
+	bmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	bmat.disable_receive_shadows = true
+	brush_mi.material_override = bmat
+	brush_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	brush_mi.visible = false
+	add_child(brush_mi)
 
+## Bedienung nach Vorlage B/C (Issue #174, Paket E): vier Ecken auf einer
+## Vollbild-Ebene, die selbst keine Maus fängt (Klicks daneben formen das
+## Gelände). Oben links Titel, Jahr und Tempo, darunter die Werkzeugpalette;
+## oben rechts die Zeitsprünge; unten rechts Diagnose, Welt und Kamera; unten
+## Mitte die Tastenhilfe. Aussehen nur über das Theme (UI_THEME).
 func _setup_ui() -> void:
 	var layer := CanvasLayer.new()
 	# Autonome Screenshots (RS_SHOT) zeigen die LANDSCHAFT: die Bedienleiste
 	# verdeckt sonst die halbe linke Bildhälfte, und genau dort liegen in der
 	# A/B-Serie die Mündungen. Die Diagnosewerte stehen ohnehin im Log.
-	layer.visible = not OS.has_environment("RS_SHOT")
+	# RS_SHOT_UI behält sie für Aufnahmen der Bedienung selbst.
+	layer.visible = not OS.has_environment("RS_SHOT") or OS.has_environment("RS_SHOT_UI")
 	add_child(layer)
-	var panel := PanelContainer.new()
-	panel.position = Vector2(16, 16)
-	panel.custom_minimum_size = Vector2(340, 0)
-	var ui_theme := Theme.new()
-	ui_theme.default_font_size = 20
-	panel.theme = ui_theme
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.09, 0.11, 0.9)
-	style.set_corner_radius_all(14)
-	style.set_content_margin_all(16)
-	panel.add_theme_stylebox_override("panel", style)
-	layer.add_child(panel)
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 7)
-	panel.add_child(vb)
+	var ui_theme: Theme = load(UI_THEME)
+	hud = Control.new()
+	hud.theme = ui_theme
+	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(hud)
 
-	year_label = Label.new()
-	year_label.text = "Jahr 0"
-	year_label.add_theme_font_size_override("font_size", 30) # Jahr prominent
-	vb.add_child(year_label)
+	# --- oben links: Titel, Jahr, Tempo; darunter die Werkzeugpalette
+	var top_left := _corner(Control.PRESET_TOP_LEFT)
+	var head := _panel(top_left)
+	_label(head, "river-sim", &"TitleLabel")
+	year_label = _label(head, "", &"YearLabel")
+	rate_label = _label(head, "", &"RateLabel")
+	var transport := HBoxContainer.new()
+	head.add_child(transport)
+	pause_button = _icon_button(transport, "pause", "Pause (Leertaste)", true)
+	pause_button.pressed.connect(func(): _set_rate(0.0))
+	play_button = _icon_button(transport, "play", "Abspielen (Leertaste)", true)
+	play_button.pressed.connect(func(): _set_rate(last_rate))
+	var faster := _icon_button(transport, "faster",
+		"Schneller: %s J./Sek. reihum" % " → ".join(SPEEDS.map(func(r): return str(int(r)))), false)
+	faster.pressed.connect(_faster)
 
-	_section(vb, "ZEIT")
-	var speeds := HBoxContainer.new()
-	speeds.add_theme_constant_override("separation", 6)
-	vb.add_child(speeds)
-	var speed_group := ButtonGroup.new()
-	for pair in SPEEDS:
-		var rate: float = pair[1]
-		var b := _mk_button(pair[0], true, speed_group)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.pressed.connect(func(): _set_rate(rate))
-		speeds.add_child(b)
-		speed_buttons.append(b)
-	speed_buttons[0].set_pressed_no_signal(true)
-
-	var jumps := GridContainer.new()
-	jumps.columns = 2
-	jumps.add_theme_constant_override("h_separation", 6)
-	jumps.add_theme_constant_override("v_separation", 6)
-	vb.add_child(jumps)
-	for pair in [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
-			["+10.000 J.", 10000.0], ["+100.000 J.", 100000.0]]:
-		var yrs: float = pair[1]
-		var b := _mk_button(pair[0], false, null)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.pressed.connect(func(): _jump(yrs))
-		jumps.add_child(b)
-
-	_section(vb, "WERKZEUG")
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
-	vb.add_child(grid)
+	var tools := _panel(top_left)
+	_label(tools, "GELÄNDE FORMEN", &"SectionLabel")
 	var tool_group := ButtonGroup.new()
 	for t in TOOLS.size():
-		var b := _mk_button("%s %s" % [TOOLS[t]["icon"], TOOLS[t]["name"]], true, tool_group)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var b := _mk_button(TOOLS[t]["name"], true, tool_group)
+		b.theme_type_variation = &"ToolButton"
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.tooltip_text = "Taste %d" % (t + 1)
 		b.pressed.connect(func(): current_tool = t)
-		grid.add_child(b)
+		var icon := UiIcon.new(TOOLS[t]["icon"])
+		icon.set_anchors_preset(Control.PRESET_CENTER_LEFT)
+		icon.position = Vector2(11, -15)
+		icon.size = Vector2(30, 30)
+		b.add_child(icon)
+		tools.add_child(b)
 		tool_buttons.append(b)
 	tool_buttons[0].set_pressed_no_signal(true)
-
-	_section(vb, "PINSEL")
-	radius_slider = _mk_slider(vb, "Radius", 3.0, 30.0, 1.0, brush_radius,
+	tools.add_child(HSeparator.new())
+	radius_slider = _mk_slider(tools, "Radius", 3.0, 30.0, 1.0, brush_radius,
 		func(v: float): brush_radius = v)
 	radius_value = _slider_value_label
-	_mk_slider(vb, "Stärke", 0.25, 3.0, 0.05, brush_strength,
+	_mk_slider(tools, "Stärke", 0.25, 3.0, 0.05, brush_strength,
 		func(v: float): brush_strength = v)
 	strength_value = _slider_value_label
 	_refresh_slider_labels()
 
-	_section(vb, "WELT")
-	var regen_b := _mk_button("🌍 Neues Terrain", false, null)
-	regen_b.pressed.connect(_regen)
-	vb.add_child(regen_b)
+	# --- oben rechts: Zeitsprung-Leiste
+	var jumps := _panel(_corner(Control.PRESET_TOP_RIGHT))
+	_label(jumps, "ZEITSPRUNG", &"SectionLabel")
+	var jump_row := HBoxContainer.new()
+	jumps.add_child(jump_row)
+	for pair in JUMPS:
+		var yrs: float = pair[1]
+		var b := _mk_button(pair[0], false, null)
+		b.pressed.connect(func(): _jump(yrs))
+		jump_row.add_child(b)
 
-	var world_io := HBoxContainer.new()
-	world_io.add_theme_constant_override("separation", 6)
-	vb.add_child(world_io)
-	var save_b := _mk_button("💾 Speichern", false, null)
-	save_b.tooltip_text = "Welt nach %s schreiben (F5)" % SAVE_PATH
-	save_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	save_b.pressed.connect(_save_world)
-	world_io.add_child(save_b)
-	var load_b := _mk_button("📂 Laden", false, null)
-	load_b.tooltip_text = "Gespeicherte Welt zurückholen (F9)"
-	load_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	load_b.pressed.connect(_load_world)
-	world_io.add_child(load_b)
-
-	world_status_label = Label.new()
-	world_status_label.add_theme_font_size_override("font_size", 15)
-	world_status_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	world_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(world_status_label)
-
-	# Fehlerdialog: Speichern/Laden kann echt scheitern (alte Formatversion,
-	# beschädigte oder fremde Datei, volle Platte). Die Meldung kommt wörtlich aus
-	# SimCore (`SnapshotError`) — kein zweiter Text, der auseinanderlaufen kann.
-	world_dialog = AcceptDialog.new()
-	world_dialog.title = "Welt"
-	world_dialog.dialog_autowrap = true
-	world_dialog.theme = ui_theme
-	layer.add_child(world_dialog)
-
-	var hint := Label.new()
-	hint.add_theme_font_size_override("font_size", 15)
-	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	hint.text = "WASD: Kamera bewegen · Links: formen (Shift: ⛰↔🕳) · Rechts: drehen\nZoom: +/− · Werkzeug: 1–6 · Radius: [ ] · Pause: Leertaste\nSpeichern: F5 · Laden: F9"
-	vb.add_child(hint)
-
-	# Diagnose bewusst als eigene Karte: Die Werkzeugleiste bleibt auch auf kleinen
-	# Fenstern vollständig sichtbar, während die Entwicklungswerte oben im Blick sind.
-	var debug_panel := PanelContainer.new()
-	debug_panel.position = Vector2(470, 16) # Platzhalter — dockt unten an die Werkzeug-Karte
-	debug_panel.custom_minimum_size = Vector2(340, 0)
-	# Rechts NEBEN der Werkzeug-Karte andocken statt festem x: deren Breite ist
-	# inhaltsgetrieben (~540px bei Font 20) und überlappte das feste 470.
-	panel.resized.connect(func() -> void:
-		debug_panel.position.x = panel.position.x + panel.size.x + 16)
-	debug_panel.theme = ui_theme
-	debug_panel.add_theme_stylebox_override("panel", style)
-	layer.add_child(debug_panel)
-	var debug_vb := VBoxContainer.new()
-	debug_vb.add_theme_constant_override("separation", 7)
-	debug_panel.add_child(debug_vb)
-	var debug_title := Label.new()
-	debug_title.text = "DIAGNOSE"
-	debug_title.add_theme_font_size_override("font_size", 13)
-	debug_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
-	debug_vb.add_child(debug_title)
-
-	debug_stats_label = Label.new()
-	debug_stats_label.add_theme_font_size_override("font_size", 15)
-	debug_stats_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.72))
-	debug_vb.add_child(debug_stats_label)
-	debug_warning_label = Label.new()
-	debug_warning_label.add_theme_font_size_override("font_size", 15)
+	# --- unten rechts: Diagnose (aufklappbar), Welt, Kamera, Seed
+	var bottom_right := _corner(Control.PRESET_BOTTOM_RIGHT)
+	var debug_vb := _panel(bottom_right)
+	debug_panel = debug_vb.get_parent()
+	debug_panel.visible = false
+	_label(debug_vb, "DIAGNOSE", &"SectionLabel")
+	debug_stats_label = _label(debug_vb, "", &"StatsLabel")
+	debug_warning_label = _label(debug_vb, "", &"OkLabel")
 	debug_warning_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	debug_vb.add_child(debug_warning_label)
-
+	debug_warning_label.custom_minimum_size = Vector2(380, 0)
 	var debug_buttons := HBoxContainer.new()
-	debug_buttons.add_theme_constant_override("separation", 6)
 	debug_vb.add_child(debug_buttons)
 	var difference_b := _mk_button("Δ-Karte", true, null)
 	difference_b.tooltip_text = "Blau: abgetragen · Rot: aufgebaut"
@@ -887,26 +876,149 @@ func _setup_ui() -> void:
 	reference_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	reference_b.pressed.connect(_capture_debug_reference)
 	debug_buttons.add_child(reference_b)
-
-	debug_legend_label = Label.new()
-	debug_legend_label.add_theme_font_size_override("font_size", 14)
-	debug_legend_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.58))
+	debug_legend_label = _label(debug_vb, "", &"StatsLabel")
 	debug_legend_label.visible = false
-	debug_vb.add_child(debug_legend_label)
+
+	var world := _panel(bottom_right)
+	world.custom_minimum_size = Vector2(320, 0)
+	var debug_toggle := _mk_button("Diagnose-Ansicht", true, null)
+	debug_toggle.tooltip_text = "Kennzahlen, Δ-Karte und Referenzpunkt ein- und ausblenden"
+	debug_toggle.toggled.connect(func(on: bool): debug_panel.visible = on)
+	world.add_child(debug_toggle)
+	var world_io := HBoxContainer.new()
+	world.add_child(world_io)
+	var save_b := _mk_button("Welt speichern", false, null)
+	save_b.tooltip_text = "Welt nach %s schreiben (F5)" % SAVE_PATH
+	save_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_b.pressed.connect(_save_world)
+	world_io.add_child(save_b)
+	var load_b := _mk_button("Laden", false, null)
+	load_b.tooltip_text = "Gespeicherte Welt zurückholen (F9)"
+	load_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	load_b.pressed.connect(_load_world)
+	world_io.add_child(load_b)
+	var regen_b := _mk_button("Neue Insel", false, null)
+	regen_b.tooltip_text = "Neue Welt aus dem nächsten Seed erzeugen"
+	regen_b.pressed.connect(_regen)
+	world.add_child(regen_b)
+	_label(world, "KAMERA", &"SectionLabel")
+	var cams := HBoxContainer.new()
+	world.add_child(cams)
+	for c in CAMERA_PRESETS.size():
+		var b := _mk_button(CAMERA_PRESETS[c]["name"], false, null)
+		b.tooltip_text = "F%d" % (c + 1)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(func(): _apply_camera_preset(c))
+		cams.add_child(b)
+	world_status_label = _label(world, "", &"StatusLabel")
+	world_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	world_status_label.visible = false
+	seed_label = _label(world, "", &"SectionLabel")
+	seed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_update_seed()
+
+	# --- unten Mitte: Tastenhilfe, ohne Panel. Schmal umbrochen, damit sie
+	# auch im kleinen Standardfenster (1152 × 648) zwischen Werkzeugpalette und
+	# Welt-Karte passt.
+	var hint := _label(_corner(Control.PRESET_CENTER_BOTTOM),
+		"Links: formen (Shift kehrt um) · Rechts: drehen · WASD: bewegen · +/−: Zoom · "
+		+ "1–6: Werkzeug · [ ]: Radius · Leertaste: Pause · F1–F3: Kamera · "
+		+ "F5/F9: Speichern/Laden", &"HintLabel")
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.custom_minimum_size = Vector2(400, 0)
+
+	# Fehlerdialog: Speichern/Laden kann echt scheitern (alte Formatversion,
+	# beschädigte oder fremde Datei, volle Platte). Die Meldung kommt wörtlich aus
+	# SimCore (`SnapshotError`) — kein zweiter Text, der auseinanderlaufen kann.
+	world_dialog = AcceptDialog.new()
+	world_dialog.title = "Welt"
+	world_dialog.dialog_autowrap = true
+	world_dialog.theme = ui_theme
+	layer.add_child(world_dialog)
+	_set_rate(year_rate)
 
 # --- UI-Helfer -------------------------------------------------------------
 
 var _slider_value_label: Label # letzte von _mk_slider erzeugte Wertanzeige
 
-func _section(parent: VBoxContainer, title: String) -> void:
-	var sep := HSeparator.new()
-	sep.add_theme_constant_override("separation", 8)
-	parent.add_child(sep)
+## Spalte an einem Bildschirmrand (Ecke oder unten Mitte), UI_MARGIN vom Rand.
+## Sie wächst vom Rand weg und schrumpft wieder, wenn ein Teil ausgeblendet
+## wird (`_fit_corner`); sonst bliebe nach dem Zuklappen der Diagnose ein
+## leerer Streifen stehen.
+func _corner(preset: int) -> VBoxContainer:
+	var c := VBoxContainer.new()
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.set_anchors_preset(preset)
+	var right := preset == Control.PRESET_TOP_RIGHT or preset == Control.PRESET_BOTTOM_RIGHT
+	var center := preset == Control.PRESET_CENTER_BOTTOM
+	var bottom := center or preset == Control.PRESET_BOTTOM_LEFT \
+		or preset == Control.PRESET_BOTTOM_RIGHT
+	if center:
+		c.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	else:
+		c.grow_horizontal = Control.GROW_DIRECTION_BEGIN if right else Control.GROW_DIRECTION_END
+	c.grow_vertical = Control.GROW_DIRECTION_BEGIN if bottom else Control.GROW_DIRECTION_END
+	if bottom:
+		c.alignment = BoxContainer.ALIGNMENT_END
+	var ox := 0.0 if center else (-UI_MARGIN if right else UI_MARGIN)
+	var oy := -UI_MARGIN if bottom else UI_MARGIN
+	c.offset_left = ox
+	c.offset_right = ox
+	c.offset_top = oy
+	c.offset_bottom = oy
+	hud.add_child(c)
+	c.minimum_size_changed.connect(_fit_corner.bind(c))
+	return c
+
+## Hält die Ecken-Spalte genau so groß wie ihren Inhalt, an der Ecke verankert.
+func _fit_corner(c: Control) -> void:
+	var m := c.get_combined_minimum_size()
+	if c.grow_horizontal == Control.GROW_DIRECTION_BOTH:
+		c.offset_left = -m.x * 0.5
+		c.offset_right = m.x * 0.5
+	elif c.grow_horizontal == Control.GROW_DIRECTION_BEGIN:
+		c.offset_left = c.offset_right - m.x
+	else:
+		c.offset_right = c.offset_left + m.x
+	if c.grow_vertical == Control.GROW_DIRECTION_BEGIN:
+		c.offset_top = c.offset_bottom - m.y
+	else:
+		c.offset_bottom = c.offset_top + m.y
+
+## Glas-Panel (Stil aus dem Theme) mit senkrechter Spalte; gibt die Spalte zurück.
+func _panel(parent: Control) -> VBoxContainer:
+	var panel := PanelContainer.new()
+	parent.add_child(panel)
+	var vb := VBoxContainer.new()
+	panel.add_child(vb)
+	return vb
+
+## Statuszeile der Welt-Karte; leer belegt sie keinen Platz.
+func _set_status(text: String) -> void:
+	world_status_label.text = text
+	world_status_label.visible = not text.is_empty()
+
+func _label(parent: Control, text: String, variation: StringName) -> Label:
 	var l := Label.new()
-	l.text = title
-	l.add_theme_font_size_override("font_size", 13)
-	l.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	l.text = text
+	l.theme_type_variation = variation
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(l)
+	return l
+
+## Knopf mit gezeichnetem Icon statt Text (Tempo-Leiste).
+func _icon_button(parent: Control, icon_id: String, tip: String, toggle: bool) -> Button:
+	var b := _mk_button("", toggle, null)
+	b.custom_minimum_size = Vector2(46, 40)
+	b.tooltip_text = tip
+	var icon := UiIcon.new(icon_id)
+	icon.set_anchors_preset(Control.PRESET_CENTER)
+	icon.position = Vector2(-11, -11)
+	icon.size = Vector2(22, 22)
+	b.add_child(icon)
+	parent.add_child(b)
+	return b
 
 func _mk_button(text: String, toggle: bool, group: ButtonGroup) -> Button:
 	var b := Button.new()
@@ -921,14 +1033,11 @@ func _mk_button(text: String, toggle: bool, group: ButtonGroup) -> Button:
 func _mk_slider(parent: VBoxContainer, title: String, minv: float, maxv: float,
 		stepv: float, value: float, on_change: Callable) -> HSlider:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
 	parent.add_child(row)
-	var name_l := Label.new()
-	name_l.text = title
+	var name_l := _label(row, title, &"")
 	name_l.custom_minimum_size = Vector2(88, 0)
-	name_l.add_theme_font_size_override("font_size", 18)
-	row.add_child(name_l)
 	var s := HSlider.new()
+	s.custom_minimum_size = Vector2(150, 0)
 	s.min_value = minv
 	s.max_value = maxv
 	s.step = stepv
@@ -937,11 +1046,9 @@ func _mk_slider(parent: VBoxContainer, title: String, minv: float, maxv: float,
 	s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	s.focus_mode = Control.FOCUS_NONE
 	row.add_child(s)
-	var val_l := Label.new()
+	var val_l := _label(row, "", &"")
 	val_l.custom_minimum_size = Vector2(52, 0)
-	val_l.add_theme_font_size_override("font_size", 18)
 	val_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	row.add_child(val_l)
 	_slider_value_label = val_l
 	s.value_changed.connect(func(v: float):
 		on_change.call(v)
@@ -959,8 +1066,49 @@ func _set_rate(rate: float) -> void:
 	if rate > 0.0:
 		last_rate = rate
 	# Toggle-Zustand der Tempo-Buttons nachziehen (auch bei Leertaste/Code-Aufruf).
-	for i in SPEEDS.size():
-		speed_buttons[i].set_pressed_no_signal(SPEEDS[i][1] == rate)
+	if pause_button == null:
+		return
+	pause_button.set_pressed_no_signal(rate == 0.0)
+	play_button.set_pressed_no_signal(rate > 0.0)
+	if rate > 0.0:
+		rate_label.text = "ZEITRAFFER (%s J./Sek.)" % _fmt(int(rate))
+	else:
+		rate_label.text = "PAUSE (weiter mit %s J./Sek.)" % _fmt(int(last_rate))
+
+## ⏩: nächste Zeitraffer-Stufe (SPEEDS), nach der schnellsten wieder die
+## langsamste. Aus der Pause heraus zählt das zuletzt gespielte Tempo.
+func _faster() -> void:
+	var from := year_rate if year_rate > 0.0 else last_rate
+	var i := SPEEDS.find(from)
+	_set_rate(SPEEDS[(i + 1) % SPEEDS.size()])
+
+## Kamera-Preset aus CAMERA_PRESETS anfahren (F1–F3 oder Knopf). Weich über
+## CAMERA_PRESET_SECONDS, `animate = false` springt (Tests, RS_CAMERA).
+func _apply_camera_preset(index: int, animate := true) -> void:
+	var p: Dictionary = CAMERA_PRESETS[index]
+	var target := Vector3.ZERO
+	if not p.get("centered", false):
+		target = Vector3(cam_target.x, 0.0, cam_target.z)
+		target.y = _surface_y_at(target)
+	if camera_tween != null:
+		camera_tween.kill()
+		camera_tween = null
+	if not animate:
+		cam_dist = p["dist"]
+		cam_pitch = p["pitch"]
+		cam_target = target
+		_update_camera()
+		return
+	camera_tween = create_tween().set_parallel().set_trans(Tween.TRANS_SINE) \
+		.set_ease(Tween.EASE_IN_OUT)
+	camera_tween.tween_property(self, "cam_dist", p["dist"], CAMERA_PRESET_SECONDS)
+	camera_tween.tween_property(self, "cam_pitch", p["pitch"], CAMERA_PRESET_SECONDS)
+	camera_tween.tween_property(self, "cam_target", target, CAMERA_PRESET_SECONDS)
+
+## Seed der laufenden Welt. Eine geladene Welt trägt ihren Seed nicht über die
+## Brücke; die Anzeige sagt dann das, statt den alten Seed stehen zu lassen.
+func _update_seed(loaded := false) -> void:
+	seed_label.text = "SEED: geladene Welt" if loaded else "SEED: %s" % _fmt(sim_seed)
 
 # ---------------------------------------------------------------- Zeit
 
@@ -989,6 +1137,7 @@ func _regen() -> void:
 	sim.generate(sim_seed)
 	sim.recomputeFlow()
 	_after_sim(FRAME_SETTLED)
+	_update_seed()
 
 # ------------------------------------------------- Speichern / Laden (Issue #8)
 
@@ -996,7 +1145,7 @@ func _regen() -> void:
 ## kennt Godots `user://` nicht), deshalb `globalize_path`.
 func _save_world() -> void:
 	if _jumping: # mitten in einem Zeitsprung ist der Zustand noch in Bewegung
-		world_status_label.text = "Zeitsprung läuft — später speichern"
+		_set_status("Zeitsprung läuft — später speichern")
 		return
 	var abs_path := ProjectSettings.globalize_path(SAVE_PATH)
 	var err: String = sim.saveWorld(abs_path)
@@ -1004,8 +1153,8 @@ func _save_world() -> void:
 		_show_world_error("Speichern fehlgeschlagen", err)
 		return
 	var mb := float(sim.lastWorldFileBytes()) / (1024.0 * 1024.0)
-	world_status_label.text = "Gespeichert: Jahr %s · %.1f MB" % [
-		_fmt(int(sim.currentYear())), mb]
+	_set_status("Gespeichert: Jahr %s · %.1f MB" % [
+		_fmt(int(sim.currentYear())), mb])
 
 ## Holt die gespeicherte Welt zurück. Danach ist der Zustand vollständig (der
 ## Seespiegel kommt aus der Datei und schwingt NICHT ein, Issue #8) — es genügt,
@@ -1013,7 +1162,7 @@ func _save_world() -> void:
 ## `path` überschreiben nur Tests, damit sie den Spielstand nicht antasten.
 func _load_world(path: String = SAVE_PATH) -> void:
 	if _jumping: # der laufende Sprung würde sofort auf die geladene Welt steppen
-		world_status_label.text = "Zeitsprung läuft — später laden"
+		_set_status("Zeitsprung läuft — später laden")
 		return
 	if not FileAccess.file_exists(path):
 		_show_world_error("Kein Spielstand",
@@ -1041,14 +1190,15 @@ func _load_world(path: String = SAVE_PATH) -> void:
 	water_mi.position.y = sea * HSCALE
 	_after_sim(FRAME_SETTLED) # Wasser-Blend 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()
-	world_status_label.text = "Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear()))
+	_set_status("Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear())))
+	_update_seed(true)
 
 ## Passt die GEOMETRIE einer Welt-Datei zu dieser Sitzung? Rückgabe: leerer
 ## String = ja, sonst der Grund als fertige Meldung.
 ##
 ## Diese Sitzung ist in `_ready` auf EINE Geometrie festgelegt: Höhen-/Farb-/
 ## Wasser-Texturen und `h_cache` haben N × N Einträge, Mesh-Größe und
-## -Tessellation, Kamera-Distanz, Wasserebene, Pinsel-Ring und die
+## -Tessellation, Kamera-Distanz, Wasserebene, Pinselkuppel und die
 ## Welt→Zelle-Umrechnung von Raycast/Werkzeugen (`half`, `step`)
 ## hängen an `world_size`. Beides muss deshalb geprüft werden — `n` allein
 ## genügt NICHT: bei gleicher Auflösung, aber anderer Weltgröße liefe die
@@ -1076,7 +1226,7 @@ func _world_geometry_mismatch(file_grid: int, file_world: float) -> String:
 	return ""
 
 func _show_world_error(title: String, message: String) -> void:
-	world_status_label.text = title
+	_set_status(title)
 	push_warning("%s: %s" % [title, message])
 	world_dialog.title = title
 	world_dialog.dialog_text = message
@@ -1257,7 +1407,7 @@ func _process(delta: float) -> void:
 			# RS_TARGET: das Ziel lag bisher auf der Sim-Fläche.
 			cam_target_on_surface = false
 			cam_target.y = _surface_y_at(cam_target)
-	_update_ring()
+	_update_brush()
 	_update_camera()
 
 ## Teil 1 des Nachzugs (teuer, ~35 ms): das Flussnetz reagiert auf den Eingriff.
@@ -1300,7 +1450,7 @@ func _update_camera_pan(delta: float) -> void:
 	cam_target.z = clampf(cam_target.z, -max_target, max_target)
 
 func _update_year() -> void:
-	year_label.text = "Jahr %s" % _fmt(int(sim.currentYear()))
+	year_label.text = "JAHR %s" % _fmt(int(sim.currentYear()))
 
 func _refresh_debug() -> void:
 	_update_debug_ui()
@@ -1331,7 +1481,7 @@ func _update_debug_ui() -> void:
 	debug_legend_label.text = "Blau −  Grau 0  Rot +   Skala ±%.3f" % debug_difference_scale
 	if stats[DBG_INVALID] > 0:
 		debug_warning_label.text = "⚠ %d ungültige Höhenwerte (Magenta)" % int(stats[DBG_INVALID])
-		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.25, 0.8))
+		debug_warning_label.theme_type_variation = &"AlertLabel"
 	elif stats[DBG_SERVO] > stats[DBG_UPLIFT]:
 		# Der Servo ist nur noch UNTERGRENZE: er übernimmt erst, wenn die
 		# abklingende Hebung U(t) das Relief nicht mehr über dem Ziel hält.
@@ -1339,10 +1489,10 @@ func _update_debug_ui() -> void:
 		debug_warning_label.text = "⚠ Relief-Untergrenze aktiv: +%.5f / 100 J.\nReliefsignal hoch %.3f / tal %.3f / Ziel %.3f (Hebung U(t) %.5f)" % [
 			stats[DBG_SERVO], stats[DBG_RELIEF_SIGNAL], stats[DBG_RELIEF_LOW],
 			stats[DBG_RELIEF_TARGET], stats[DBG_UPLIFT]]
-		debug_warning_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.22))
+		debug_warning_label.theme_type_variation = &"WarnLabel"
 	else:
 		debug_warning_label.text = "Abklingende Hebung U(t) %.5f / 100 J. · Untergrenze inaktiv" % stats[DBG_UPLIFT]
-		debug_warning_label.add_theme_color_override("font_color", Color(0.55, 0.82, 0.58))
+		debug_warning_label.theme_type_variation = &"OkLabel"
 
 func _fmt(v: int) -> String:
 	var s := str(v)
@@ -1361,6 +1511,7 @@ func _fmt(v: int) -> String:
 ## Raycast sie braucht (`_sample_h`) — die Textur liest SimNode direkt.
 func _invalidate_h_cache() -> void:
 	h_cache_dirty = true
+	surface_version += 1
 
 func _ensure_h_cache() -> void:
 	if h_cache_dirty:
@@ -1468,6 +1619,7 @@ func _update_forest_mask(bytes: PackedByteArray) -> void:
 	var previous := forest_img
 	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
 	forest_lift_cache = PackedFloat32Array()
+	surface_version += 1
 	if forest_tex == null:
 		forest_tex = ImageTexture.create_from_image(forest_img)
 		forest_prev_tex = ImageTexture.create_from_image(forest_img)
@@ -1520,6 +1672,7 @@ func _relief_cpu() -> void:
 	img.resize(N, N, Image.INTERPOLATE_BILINEAR)
 	# Kodiert (Kanal = Höhe × Code + 0.5), dekodiert wird in `_surface_y`.
 	relief_lift_cache = img.get_data().to_float32_array()
+	surface_version += 1
 
 ## Alterungsabhängige Stärke der rein kosmetischen Shader-Rinnen. Smoothstep
 ## vermeidet einen sichtbaren Knick am Anfang und bei 100k; danach bleibt der
@@ -1690,7 +1843,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				var t: int = event.keycode - KEY_1
 				if t >= 0 and t < TOOLS.size():
 					current_tool = t
-					tool_buttons[t].set_pressed_no_signal(true)
+					# Über den Setter, nicht set_pressed_no_signal: nur er löst den
+					# vorher aktiven Knopf der ButtonGroup (sonst leuchteten zwei).
+					tool_buttons[t].button_pressed = true
+				# Kamera-Presets ebenso: F1…F3 in Tabellen-Reihenfolge.
+				var c: int = event.keycode - KEY_F1
+				if c >= 0 and c < CAMERA_PRESETS.size():
+					_apply_camera_preset(c)
 
 ## Auch von Controls konsumierte Ereignisse müssen den Renderer wecken. Nur in
 ## `_unhandled_input` käme etwa ein Klick auf „10 J/s" hier nie an, solange das
@@ -1713,28 +1872,81 @@ func _wake_render_loop() -> void:
 		render_loop_suspended = false
 		RenderingServer.render_loop_enabled = true
 
-func _update_ring() -> void:
-	if OS.has_environment("RS_SHOT"): # autonome Screenshots: kein Pinsel-Ring
-		ring_mi.visible = false
+func _update_brush() -> void:
+	if OS.has_environment("RS_SHOT"): # autonome Screenshots: kein Pinsel
+		brush_mi.visible = false
 		return
 	if sculpting or year_rate == 0.0:
 		var hit := _raycast_terrain()
 		if hit != Vector3.INF:
-			ring_mi.visible = true
-			ring_mi.position = hit + Vector3(0, 0.4, 0)
-			# Spitzhacke: Ring zeigt die echte (gedeckelte) Hieb-Breite.
+			var tool: Dictionary = TOOLS[current_tool]
+			# Spitzhacke: die Kuppel zeigt die echte (gedeckelte) Hieb-Breite.
 			var r := minf(brush_radius, pick_radius_cap) \
-				if TOOLS[current_tool].get("radius_capped", false) else brush_radius
-			ring_mi.scale = Vector3(r, 1.0, r)
+				if tool.get("radius_capped", false) else brush_radius
+			var power: float = tool.get("falloff_power", BRUSH_FALLOFF_POWER)
+			var key := [hit, r, power, surface_version]
+			if key != brush_key:
+				brush_key = key
+				var lines := brush_dome(hit, r, power)
+				var arrays := []
+				arrays.resize(Mesh.ARRAY_MAX)
+				arrays[Mesh.ARRAY_VERTEX] = lines[0]
+				arrays[Mesh.ARRAY_COLOR] = lines[1]
+				brush_mesh.clear_surfaces()
+				brush_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
+			brush_mi.position = hit
+			brush_mi.visible = true
 			return
-	ring_mi.visible = false
+	brush_mi.visible = false
+
+## Gewicht des Pinsels im Abstand `d` (Anteil am Radius): (1 − d²)^p wie in
+## Terrain.forEachBrushCell (p = 2) und Terrain.pickaxe (p = 4).
+static func brush_weight(d: float, power: float) -> float:
+	if d >= 1.0:
+		return 0.0
+	return pow(1.0 - d * d, power)
+
+## Linienpaare der Gitterkuppel um `center` (PRIMITIVE_LINES, Koordinaten
+## relativ zu `center`) samt Vertex-Farben: BRUSH_DOME_RINGS Breitenkreise bei
+## d = k / RINGS (der äußerste ist der Rand) und BRUSH_DOME_MERIDIANS Meridiane
+## vom Rand zum Scheitel. Jeder Punkt liegt auf der sichtbaren Fläche plus
+## BRUSH_DOME_LIFT plus Profil r · BRUSH_DOME_HEIGHT · w(d).
+func brush_dome(center: Vector3, radius: float, power: float) -> Array:
+	var verts := PackedVector3Array()
+	var colors := PackedColorArray()
+	for k in range(BRUSH_DOME_RINGS, 0, -1):  # erst der Rand: Punkt 0 liegt auf ihm
+		var d := float(k) / BRUSH_DOME_RINGS
+		var color := BRUSH_RIM_COLOR if k == BRUSH_DOME_RINGS else BRUSH_GRID_COLOR
+		var prev := _dome_point(center, radius, power, d, 0.0)
+		for s in range(1, BRUSH_DOME_SEGMENTS + 1):
+			var p := _dome_point(center, radius, power, d, TAU * s / BRUSH_DOME_SEGMENTS)
+			verts.append_array([prev, p])
+			colors.append_array([color, color])
+			prev = p
+	var steps := BRUSH_DOME_RINGS * 2
+	for m in BRUSH_DOME_MERIDIANS:
+		var a := TAU * m / BRUSH_DOME_MERIDIANS
+		var prev := _dome_point(center, radius, power, 1.0, a)
+		for s in range(1, steps + 1):
+			var p := _dome_point(center, radius, power, 1.0 - float(s) / steps, a)
+			verts.append_array([prev, p])
+			colors.append_array([BRUSH_GRID_COLOR, BRUSH_GRID_COLOR])
+			prev = p
+	return [verts, colors]
+
+func _dome_point(center: Vector3, radius: float, power: float, d: float, a: float) -> Vector3:
+	var x := center.x + cos(a) * d * radius
+	var z := center.z + sin(a) * d * radius
+	var y := _surface_y((x + half) / step, (z + half) / step) + BRUSH_DOME_LIFT \
+		+ radius * BRUSH_DOME_HEIGHT * brush_weight(d, power)
+	return Vector3(x, y, z) - center
 
 func _raycast_terrain() -> Vector3:
 	var mpos := get_viewport().get_mouse_position()
 	return _raycast_surface(cam.project_ray_origin(mpos), cam.project_ray_normal(mpos))
 
 ## Heightfield-Raymarch gegen die SICHTBARE Fläche (Sim-Höhe plus
-## Render-Verschiebung, #153): Pinselring und Strich-Beginn liegen auf dem, was
+## Render-Verschiebung, #153): Pinselkuppel und Strich-Beginn liegen auf dem, was
 ## man sieht. Der Pinsel selbst wirkt weiter auf die Sim-Zelle unter dem
 ## Treffer (x/z des Treffers → Gitterposition).
 func _raycast_surface(ro: Vector3, rd: Vector3) -> Vector3:

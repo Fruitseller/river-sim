@@ -20,7 +20,8 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   § Abschluss Spec #156. Schutzmaske als godot-freie Render-Ableitung in
   SimRender (#154).
   Die verbindliche Abnahmematrix für die Vorher/Nachher-Bewertung aller Folge-Tickets
-  ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, `scripts/graphics-matrix.sh`,
+  ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, seit #174 dazu die drei
+  Vorlagen-Kameras `diorama`/`valley`/`close`, `scripts/graphics-matrix.sh`,
   `GraphicsMatrixTests`). In der Anwendung: Licht und Atmosphäre (#151), der
   Ozean (#155, Kalibrierung als `WaterRender.ocean*`) und die Render-Verschiebung
   von Rinnen und Graten (#153, Render-Gitter in Sim-Auflösung, Pinselring und
@@ -28,6 +29,16 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   mit dem Geländealter ein, Überblendung im Zeitraffer) und das Kronendach
   (#152, ersetzt die Instanzbäume; Waldmaske als godot-freie Render-Ableitung,
   Kronen im Terrain-Shader). Damit hat die Studie keine Hebel mehr.
+
+- **Bedienung nach Vorlage B/C (#174, Paket E):** Glas-Panels aus EINEM Theme
+  (`game/ui/glass_theme.tres`), vier Randspalten (Titel/Jahr/Tempo und
+  Werkzeugpalette oben links, Zeitsprünge oben rechts, Diagnose/Welt/Kamera/Seed
+  unten rechts), gezeichnete Icons (`game/scripts/UiIcon.gd`) statt Emoji,
+  Pinsel als Gitterkuppel im echten Falloff-Profil auf der sichtbaren Fläche,
+  Kamera-Presets Diorama/Tal/Nah auf F1–F3 (dieselben drei als Matrix-Kameras).
+  Offen: Abnahme am Bild durch den Projekteigner (Bogen #174, Punkte 41–45),
+  Feinabstimmung der Preset-Werte am gerenderten Bild, Weichzeichner hinter den
+  Panels (nicht umgesetzt, Kosten ungemessen).
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare

@@ -9,7 +9,7 @@ extends SceneTree
 ##  - Main backt die Verschiebung nur bei Terrain-Updates: im Standbild nie,
 ##    im Zeitraffer mit jedem Sim-Schritt und dort weich übergeblendet, beim
 ##    Pinsel sofort;
-##  - Pinselring und Kameraziel liegen auf der SICHTBAREN Fläche (Sim-Höhe plus
+##  - Pinselkuppel und Kameraziel liegen auf der SICHTBAREN Fläche (Sim-Höhe plus
 ##    Verschiebung), der Pinsel ändert die Sim-Zelle unter dem Treffer;
 ##  - die echte Verformung blendet mit dem Geländealter ein: auf junger Welt
 ##    liegt die sichtbare Fläche auf der Sim-Höhe.
@@ -223,12 +223,18 @@ func _check_visible_surface(main: Node) -> void:
 		"Schräger Strahl muss die Verschiebung sehen (Treffer ohne/mit %s / %s)" % [bare, hit])
 	var hit_cell := roundi(hit_gz) * n + roundi(hit_gx)
 
-	# Pinselring folgt dem Treffer (Standbild, kein Strich).
+	# Pinselkuppel folgt dem Treffer (Standbild, kein Strich), ihr Rand liegt
+	# auf der verschobenen Fläche, nicht auf der Sim-Höhe (#174).
 	main.last_activity_msec = Time.get_ticks_msec()
 	main._process(0.02)
-	_check(main.ring_mi.visible, "Pinselring sichtbar im Standbild")
-	_check(absf(main.ring_mi.position.y - (hit.y + 0.4)) < 0.05,
-		"Pinselring liegt auf der sichtbaren Fläche (y %.3f)" % main.ring_mi.position.y)
+	_check(main.brush_mi.visible, "Pinselkuppel sichtbar im Standbild")
+	_check(absf(main.brush_mi.position.y - hit.y) < 0.05,
+		"Pinselkuppel sitzt auf der sichtbaren Fläche (y %.3f)" % main.brush_mi.position.y)
+	var rim: Vector3 = main.brush_dome(hit, 1.0, Main.BRUSH_FALLOFF_POWER)[0][0] + hit
+	var rim_sim_y: float = main._sample_h((rim.x + main.half) / main.step,
+		(rim.z + main.half) / main.step) * Main.HSCALE
+	_check(absf(rim.y - (rim_sim_y + LIFT + Main.BRUSH_DOME_LIFT)) < 0.05,
+		"Kuppelrand liegt auf der verschobenen Fläche (y %.3f, Sim %.3f)" % [rim.y, rim_sim_y])
 
 	# Kameraziel (RS_TARGET-Pfad) auf der sichtbaren Fläche.
 	main.cam_target = Vector3(x, 0.0, z)

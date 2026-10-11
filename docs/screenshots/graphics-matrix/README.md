@@ -17,6 +17,8 @@ Jede Datei folgt dem Schema:
   - `backlight`: Gegenlichtaufnahme gegen die tiefstehende Sonne (Prüfung von Schatten und Kontrast)
   - `coast`: Küste, Mündungsdelta oder Seeufer (Prüfung der Uferlinie und Schutzmaske)
   - `snow`: Hochalpine Schneefelder und scharfe Felsgrate (Prüfung von Schneegrenze und Gratschärfung)
+  - `diorama`, `valley`, `close`: die drei Vorlagen-Kameras aus Issue #174 (Vorlagen C, B, A),
+    dieselben Distanzen und Pitches wie die Tasten F1–F3 im Spiel
 
 ## Erzeugung
 
@@ -38,7 +40,7 @@ in der Flusstal-Studie vor und entsprechen der Matrix-Kameradefinition:
 
 Um redundante Kopien derselben Binärdateien im Repository zu vermeiden, verweist die
 Matrix auf diese Originale. Bei einem frischen Matrix-Export via `scripts/graphics-matrix.sh`
-werden alle 54 Bilddateien direkt in den angegebenen Zielordner (z. B.
+werden alle 81 Bilddateien (54 bis #174) direkt in den angegebenen Zielordner (z. B.
 `docs/screenshots/graphics-matrix/baseline/`) geschrieben.
 
 *Hinweis:* Gemäß Issue #150 und AGENTS.md werden auf dem Linux-Entwicklerhost keine

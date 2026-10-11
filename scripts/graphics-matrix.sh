@@ -62,10 +62,20 @@ camera_cfg() {
     20:backlight)   echo "-8,10;46.0;2.269;0.85" ;;
     20:coast)       echo "30,-28;48.0;0.8;0.85" ;;
     20:snow)        echo "-10,14;40.0;0.6;0.70" ;;
+    # Vorlagen-Kameras (Issue #174): Distanz und Pitch == Tasten-Presets F1–F3
+    # in game/scripts/Main.gd (CAMERA_PRESETS); diorama = Vorlage C, valley = B,
+    # close = A.
+    1337:diorama|42:diorama|20:diorama) echo "0,0;115.0;0.7;0.62" ;;
+    1337:valley)    echo "-12,-25;60.0;0.7;0.42" ;;
+    1337:close)     echo "-36,-32;32.0;0.9;0.52" ;;
+    42:valley)      echo "4,-6;60.0;0.5;0.42" ;;
+    42:close)       echo "12,-10;32.0;1.1;0.52" ;;
+    20:valley)      echo "-8,10;60.0;0.6;0.42" ;;
+    20:close)       echo "30,-28;32.0;0.8;0.52" ;;
   esac
 }
 
-camera_order=(overview detail grazing backlight coast snow)
+camera_order=(overview detail grazing backlight coast snow diorama valley close)
 
 if [[ "$mode" == "list" ]]; then
   echo "Abnahmematrix (Landschaftsqualität #150):"
