@@ -62,6 +62,10 @@ final class CanopyCoverageTests: XCTestCase {
                 var land: [Int] = []
                 for k in 0..<t.cfg.count where t.h[k] > t.cfg.sea { land.append(k) }
                 let vegs = land.map { surfaces[$0 * 4] }.sorted()
+                guard !vegs.isEmpty else {
+                    print("| \(spec.seed) | \(Int(stage)) | kein Land | | | | |")
+                    continue
+                }
                 let vegged = vegs.filter { $0 >= vegFloor }.count
                 let pct = { (c: Int) in 100 * Double(c) / Double(max(land.count, 1)) }
                 let p50 = Double(vegs[vegs.count / 2]) / 255
