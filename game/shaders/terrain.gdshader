@@ -150,10 +150,14 @@ uniform float sim_year = 0.0;
 uniform bool canopy_enabled = false;
 // Schwarz, solange nichts gebunden ist: kein Wald statt einer weißen Fläche.
 uniform sampler2D forest_tex : filter_linear, repeat_disable, hint_default_black;
-// Vorheriger Stand und Blende dorthin wie bei der Verschiebung (`bake_blend`):
-// im Zeitraffer gleitet der Wald über einen Sim-Takt, statt kronenweise zu
-// springen.
+// Vorheriger Stand und eigene Blende dorthin (`forest_blend`, Main.gd
+// `_update_forest_mask`): im Zeitraffer gleitet der Wald über einen Sim-Takt,
+// statt kronenweise zu springen. NICHT `bake_blend`: die Verschiebung backt
+// jeden Sim-Takt, die Waldmaske kommt nur mit den gedrosselten Overlays; mit
+// der geteilten Blende sprang der Wald an jedem Takt ohne neue Maske auf den
+// alten Stand zurück und glitt wieder vor (#167).
 uniform sampler2D forest_prev_tex : filter_linear, repeat_disable, hint_default_black;
+uniform float forest_blend = 1.0;
 // Kalibrierung über die Brücke (SimCore.CanopyRender), default-frei.
 uniform float canopy_cell;
 uniform float canopy_height;
@@ -397,8 +401,8 @@ void vertex() {
 	v_forest = 0.0;
 	if (canopy_enabled) {
 		v_forest = textureLod(forest_tex, uv, 0.0).r;
-		if (bake_blend < 1.0) {
-			v_forest = mix(textureLod(forest_prev_tex, uv, 0.0).r, v_forest, bake_blend);
+		if (forest_blend < 1.0) {
+			v_forest = mix(textureLod(forest_prev_tex, uv, 0.0).r, v_forest, forest_blend);
 		}
 	}
 	VERTEX.y += calib_window(canopy_lift_lo, canopy_lift_hi, v_forest) * canopy_height;

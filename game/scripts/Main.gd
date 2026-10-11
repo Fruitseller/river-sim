@@ -226,6 +226,8 @@ var protect_tex: ImageTexture
 var forest_tex: ImageTexture
 var forest_prev_tex: ImageTexture
 var forest_img: Image
+# Eigene Blende der Waldmaske (`forest_blend`, s. `_update_forest_mask`).
+var forest_mix := 1.0
 var forest_lift_cache: PackedFloat32Array
 var canopy_calib := {}
 
@@ -1082,6 +1084,9 @@ func _process(delta: float) -> void:
 	if relief_mix < 1.0:
 		relief_mix = minf(relief_mix + delta / SIM_TICK_SECONDS, 1.0)
 		terrain_mat.set_shader_parameter("bake_blend", relief_mix)
+	if forest_mix < 1.0:
+		forest_mix = minf(forest_mix + delta / SIM_TICK_SECONDS, 1.0)
+		terrain_mat.set_shader_parameter("forest_blend", forest_mix)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
 	if ocean_mat:
@@ -1375,9 +1380,13 @@ func _protect_mask(bytes: PackedByteArray) -> Image:
 ## Materialgewichten, Steigung und Schutzmaske, kommt mit dem Frame.
 ## Hier nur Hochladen; den Raycast-Zuschlag rechnet `_forest_lift_at` lazy.
 ## Der alte Stand wandert nach `forest_prev_tex`: im Zeitraffer blendet der
-## Terrain-Shader mit derselben Blende wie die Verschiebung (`bake_blend`,
-## `_bake_relief` direkt danach) hinüber. Kommt der Auftrag mitten in einer
-## Blende, bleibt der alte Stand stehen wie dort.
+## Terrain-Shader über einen Sim-Takt hinüber, mit EIGENER Blende
+## (`forest_blend`). Die Verschiebung backt jeden Sim-Takt neu, die Maske kommt
+## nur mit den Overlays (Drossel 0,30 s, länger als der Takt); an
+## `bake_blend` gekoppelt sprang der Wald an jedem Takt ohne neue Maske auf den
+## alten Stand zurück (#167). Kommt der Auftrag mitten in einer Blende, bleibt
+## der alte Stand stehen wie bei der Verschiebung. Pinsel, Sprung und Laden
+## zeigen den neuen Stand sofort.
 func _update_forest_mask(bytes: PackedByteArray) -> void:
 	var previous := forest_img
 	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
@@ -1388,8 +1397,11 @@ func _update_forest_mask(bytes: PackedByteArray) -> void:
 		terrain_mat.set_shader_parameter("forest_tex", forest_tex)
 		terrain_mat.set_shader_parameter("forest_prev_tex", forest_prev_tex)
 		return
-	if relief_mix >= 1.0:
+	var fade := year_rate > 0.0 and not sculpting and not _jumping
+	if forest_mix >= 1.0 or not fade:
 		forest_prev_tex.update(previous)
+		forest_mix = 0.0 if fade else 1.0
+		terrain_mat.set_shader_parameter("forest_blend", forest_mix)
 	forest_tex.update(forest_img)
 
 ## Render-Verschiebung neu backen (#153), einmal je Terrain-Update: der
