@@ -57,10 +57,15 @@ final class WaterUniformsTests: XCTestCase {
         "water_ocean_wave_fade_lo", "water_ocean_wave_fade_hi",
         "water_ocean_wave_drift_x", "water_ocean_wave_drift_z",
         "water_ocean_wave_octave_speedup",
+        // Sedimentfahne (#174 C).
+        "water_ocean_plume_length", "water_ocean_plume_lod",
+        "water_ocean_plume_spread", "water_ocean_plume_gain",
+        "water_ocean_plume_opacity",
     ]
     private static let oceanColors = [
         "water_ocean_shallow_color", "water_ocean_mid_color",
         "water_ocean_deep_color", "water_ocean_surf_color",
+        "water_ocean_plume_color",
     ]
 
     private static let expectedScalars: [String: [String]] = [
@@ -137,6 +142,11 @@ final class WaterUniformsTests: XCTestCase {
             "water_ocean_wave_drift_x": WaterRender.oceanWaveDriftX,
             "water_ocean_wave_drift_z": WaterRender.oceanWaveDriftZ,
             "water_ocean_wave_octave_speedup": WaterRender.oceanWaveOctaveSpeedup,
+            "water_ocean_plume_length": WaterRender.oceanPlumeLength,
+            "water_ocean_plume_lod": WaterRender.oceanPlumeLod,
+            "water_ocean_plume_spread": WaterRender.oceanPlumeSpread,
+            "water_ocean_plume_gain": WaterRender.oceanPlumeGain,
+            "water_ocean_plume_opacity": WaterRender.oceanPlumeOpacity,
         ]
         let expectedColors: [String: (r: Double, g: Double, b: Double)] = [
             "water_shallow_color": WaterRender.waterShallowColor,
@@ -149,6 +159,7 @@ final class WaterUniformsTests: XCTestCase {
             "water_ocean_mid_color": WaterRender.oceanMidColor,
             "water_ocean_deep_color": WaterRender.oceanDeepColor,
             "water_ocean_surf_color": WaterRender.oceanSurfColor,
+            "water_ocean_plume_color": WaterRender.oceanPlumeColor,
         ]
         XCTAssertEqual(WaterUniforms.scalars.count, expectedScalars.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")

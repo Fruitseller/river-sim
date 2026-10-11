@@ -84,6 +84,16 @@ public final class RenderState {
     /// nächsten Terrain-Änderung gepuffert. Godot lädt sie als drei Texturen,
     /// die teure Standortauswertung läuft aber nur einmal.
     private var materials: TerrainColorRenderer.Buffers?
+    /// Nasse Wiese des zuletzt ausgelieferten Wasserfelds (Issue #174 C,
+    /// `WaterFieldRenderer.wetMeadow`). Sie geht ins Material (`WetMeadow`)
+    /// und in die Schutzmaske; ändert sie sich, fällt der Material-Cache.
+    private var visibleWetMeadow: [Bool] = []
+    /// Nasse Wiese des zuletzt ausgelieferten Wasserfelds (leer vor dem ersten).
+    public var wetMeadowMask: [Bool] { visibleWetMeadow }
+
+    /// Quellen der Sedimentfahnen (Issue #174 C, `SedimentPlume`), gepuffert
+    /// bis zur nächsten Terrain-Änderung.
+    private var plumeCache: [Float]?
 
     /// Schutzmaske für Kronendach und Verschiebung (R8), gepuffert bis sich
     /// eine ihrer beiden Quellen ändert: das zuletzt ausgelieferte Wasserfeld
@@ -150,11 +160,13 @@ public final class RenderState {
     /// das die Taktung hierher gezogen hat).
     public func invalidate(_ terrain: Terrain, _ change: TerrainChange) {
         materials = nil
+        plumeCache = nil
         dropMasks()
         if change != .advanced { forestMemory = [] }
         guard change == .replaced else { return }
         // Eine ANDERE Welt: das alte Wasserfeld passt nicht mehr dazu.
         visibleWater = nil
+        visibleWetMeadow = []
         ribbons.invalidateSnapshot()
         diagnostics.capture(terrain)
     }
@@ -190,7 +202,7 @@ public final class RenderState {
             water: water, waterBlend: blend,
             colors: terrainColorBytes(terrain), surfaces: terrainSurfaceBytes(terrain),
             covers: terrainCoverBytes(terrain), flowDetail: flowDetailBytes(terrain), protectMask: protectMaskBytes(terrain),
-            forestMask: forestMaskBytes(terrain))
+            forestMask: forestMaskBytes(terrain), plume: sedimentPlume(terrain))
         return out
     }
 
@@ -230,9 +242,20 @@ public final class RenderState {
 
     private func cachedMaterials(_ terrain: Terrain) -> TerrainColorRenderer.Buffers {
         if let materials { return materials }
-        let buffers = TerrainColorRenderer.buffers(terrain)
+        let buffers = WetMeadow.apply(TerrainColorRenderer.buffers(terrain),
+                                      mask: visibleWetMeadow)
         materials = buffers
         return buffers
+    }
+
+    // MARK: - Sedimentfahnen (Issue #174 C)
+
+    /// Quellfeld der Sedimentfahnen (Float32, n×n) — s. `SedimentPlume`.
+    public func sedimentPlume(_ terrain: Terrain) -> [Float] {
+        if let plumeCache { return plumeCache }
+        let field = SedimentPlume.field(terrain)
+        plumeCache = field
+        return field
     }
 
     // MARK: - Wasser-Feld (Raster-Pfad)
@@ -256,6 +279,11 @@ public final class RenderState {
         // ungeblurt um höchstens die zwei Blur-Pässe schmaler als das Sichtbare,
         // und genau so weit reicht der Saum (`WaterRender.protectSeamCells`).
         visibleWater = bytes
+        // Nasse Wiese (#174 C): ändert sie sich, gilt das Material nicht mehr.
+        if waterField.wetMeadow != visibleWetMeadow {
+            visibleWetMeadow = waterField.wetMeadow
+            materials = nil
+        }
         dropMasks()
         return bytes
     }
@@ -271,7 +299,8 @@ public final class RenderState {
         if let protectMaskCache { return protectMaskCache }
         let mask = WaterProtectMask.bytes(n: terrain.cfg.n,
                                           bandCoverage: ribbons.bandCoverage,
-                                          waterBytes: visibleWater ?? [])
+                                          waterBytes: visibleWater ?? [],
+                                          wetMeadow: visibleWetMeadow)
         protectMaskCache = mask
         return mask
     }

@@ -301,6 +301,8 @@ var protect_tex: ImageTexture
 var forest_tex: ImageTexture
 var forest_prev_tex: ImageTexture
 var forest_img: Image
+# Quellen der Sedimentfahnen (#174 C): RF mit Mip-Kette, nur am Ozean-Material.
+var plume_tex: ImageTexture
 var forest_lift_cache: PackedFloat32Array
 var canopy_calib := {}
 # Wolkenkörper (#174 D, Lighting.make_cloud_bodies) und alle Materialien mit
@@ -1626,6 +1628,7 @@ func _upload_overlays(frame: Dictionary) -> void:
 	# desselben Frames (in SimRender fallen beide gemeinsam, `dropMasks`).
 	_update_protect_mask(frame["protect"])
 	_update_forest_mask(frame["forest"])
+	_update_plume(frame["plume"])
 
 ## Schutzmaske (#154): godot-freie Render-Ableitung aus SimRender
 ## (sichtbares Rasterwasser + gebaute Flussbänder + Saum von
@@ -1640,6 +1643,21 @@ func _update_protect_mask(bytes: PackedByteArray) -> void:
 
 func _protect_mask(bytes: PackedByteArray) -> Image:
 	return Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
+
+## Sedimentfahnen (#174 C): EINE Zelle je Mündung aus SimRender.SedimentPlume.
+## Die Mip-Kette ist die Weichzeichnung: ocean.gdshader liest die Quelle auf
+## gröberen Stufen und rechnet deren Mittelung zurück. Ohne Überblende — die
+## Quellen wandern mit den Mündungen nur zellweise, die Weichzeichnung glättet.
+func _update_plume(bytes: PackedByteArray) -> void:
+	if ocean_mat == null:
+		return
+	var img := Image.create_from_data(N, N, false, Image.FORMAT_RF, bytes)
+	img.generate_mipmaps()
+	if plume_tex == null:
+		plume_tex = ImageTexture.create_from_image(img)
+		ocean_mat.set_shader_parameter("plume_tex", plume_tex)
+	else:
+		plume_tex.update(img)
 
 ## Waldmaske des Kronendachs (#152): SimRender.ForestCanopyMask aus
 ## Materialgewichten, Steigung und Schutzmaske, kommt mit dem Frame.

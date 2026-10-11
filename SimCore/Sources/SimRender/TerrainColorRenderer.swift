@@ -14,6 +14,8 @@ import SimCore
 /// gestörten Flächen, helle Talboden-Wiese.
 public enum TerrainColorRenderer {
     public struct Buffers {
+        /// RGB = Makrofarbe, A = Sandgewicht des Strands (Issue #174 C,
+        /// `CoastMaterial`; 0 = kein Strand).
         public let colors: [UInt8]
         /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
         /// A = Lithologie-Härte von −1 ... +1 auf 0 ... 1 abgebildet.
@@ -111,6 +113,8 @@ public enum TerrainColorRenderer {
         let slopeScale = cell > 0 && cell.isFinite ? 2 * RenderContract.heightScale / cell : 0
         let hscale = RenderContract.heightScale
         let radius = max(0, MaterialRender.screeReachCells)
+        // Strand und Felsküste (Issue #174 C): Abstand zum Meer je Zelle.
+        let coastDistance = CoastMaterial.seaDistance(terrain)
 
         var colors = [UInt8](repeating: 255, count: n * n * 4)
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
@@ -133,6 +137,7 @@ public enum TerrainColorRenderer {
         rockField.withUnsafeMutableBufferPointer { rfb in
         rowSpread.withUnsafeMutableBufferPointer { rsb in
         reach.withUnsafeMutableBufferPointer { reb in
+        coastDistance.withUnsafeBufferPointer { cdb in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
         covers.withUnsafeMutableBufferPointer { cvb in
@@ -145,6 +150,7 @@ public enum TerrainColorRenderer {
         let ptemp = tmb.baseAddress!
         let prock = rfb.baseAddress!, prow = rsb.baseAddress!, preach = reb.baseAddress!
         let pcolor = cb.baseAddress!, psurface = sb.baseAddress!, pcover = cvb.baseAddress!
+        let pcoast = cdb.baseAddress!
 
         // (1) Felsanteil aus Weltsteigung und Konvexität, nur auf Land und
         // innerhalb des ±2-Stencils (am Rand ist Meer).
@@ -189,12 +195,20 @@ public enum TerrainColorRenderer {
                     var r = 0.0, g = 0.0, b = 0.0
                     var vegWeight = 0.0, rockWeight = 0.0, coldWeight = 0.0
                     var screeWeight = 0.0, bareIce = 0.0, rawWeight = 0.0, valley = 0.0
+                    let interior = i > 1 && i < n - 2 && j > 1 && j < n - 2
+                    var sand = 0.0
 
                     if v <= sea + 0.012 {
                         (r, g, b) = gradColor(v)
+                        // Der Strand reicht bis an die Wasserlinie (#174 C).
+                        if v > sea && interior {
+                            sand = CoastMaterial.sand(distance: pcoast[k],
+                                                      slope: Terrain.macroSlope(ph, k, n),
+                                                      height: v - sea)
+                        }
                     } else {
                         var slope = 0.0, convex = 0.0
-                        if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
+                        if interior {
                             slope = Terrain.macroSlope(ph, k, n)
                             convex = convexity(ph, k, n) * hscale
                         }
@@ -286,6 +300,25 @@ public enum TerrainColorRenderer {
                         rockWeight = rockShare * free * open
                         screeWeight = screeShare * free * open
                         rawWeight = rawShare * (1 - mineral) * free * open
+                        // Küste (#174 C): steile Küste in Reichweite der
+                        // Brandung wird Fels (sie räumt den Bewuchs ab), flache
+                        // Küste knapp über dem Meer Sand. Beide verdrängen die
+                        // Gewichte des Materialmodells (#174 D) anteilig; die
+                        // Summe bleibt ≤ 1.
+                        let cliffCoast = CoastMaterial.cliff(distance: pcoast[k], slope: slope)
+                            * (1 - coldWeight)
+                        if cliffCoast > 0 {
+                            vegWeight *= 1 - cliffCoast
+                            screeWeight *= 1 - cliffCoast
+                            rawWeight *= 1 - cliffCoast
+                            rockWeight = max(rockWeight, cliffCoast * (1 - vegWeight - screeWeight - rawWeight))
+                        }
+                        sand = CoastMaterial.sand(distance: pcoast[k], slope: slope,
+                                                  height: v - sea) * (1 - coldWeight)
+                        vegWeight *= 1 - sand
+                        rockWeight *= 1 - sand
+                        screeWeight *= 1 - sand
+                        rawWeight *= 1 - sand
                         // Die Makrofarbe folgt dem Mineral: der Shader mischt
                         // sie zu 28 % unter, sonst trüge jede Felswand den
                         // Grünstich des Habitats darunter.
@@ -321,7 +354,7 @@ public enum TerrainColorRenderer {
                     pcolor[o] = byte01(r)
                     pcolor[o + 1] = byte01(g)
                     pcolor[o + 2] = byte01(b)
-                    pcolor[o + 3] = 255
+                    pcolor[o + 3] = byte01(sand)
                     psurface[o] = byte01(vegWeight)
                     psurface[o + 1] = byte01(rockWeight)
                     psurface[o + 2] = byte01(coldWeight)
@@ -333,7 +366,7 @@ public enum TerrainColorRenderer {
                 }
             }
         }
-        }}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}
 
         return Buffers(colors: colors, surfaces: surfaces, covers: covers)
     }

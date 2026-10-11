@@ -66,6 +66,12 @@ public enum WaterUniforms {
         ("water_ocean_wave_drift_x", WaterRender.oceanWaveDriftX),
         ("water_ocean_wave_drift_z", WaterRender.oceanWaveDriftZ),
         ("water_ocean_wave_octave_speedup", WaterRender.oceanWaveOctaveSpeedup),
+        // Sedimentfahne (ocean.gdshader, #174 C).
+        ("water_ocean_plume_length", WaterRender.oceanPlumeLength),
+        ("water_ocean_plume_lod", WaterRender.oceanPlumeLod),
+        ("water_ocean_plume_spread", WaterRender.oceanPlumeSpread),
+        ("water_ocean_plume_gain", WaterRender.oceanPlumeGain),
+        ("water_ocean_plume_opacity", WaterRender.oceanPlumeOpacity),
     ]
 
     /// Farb-Uniforms (`uniform vec3` in den Shadern).
@@ -80,6 +86,7 @@ public enum WaterUniforms {
         ("water_ocean_mid_color", WaterRender.oceanMidColor),
         ("water_ocean_deep_color", WaterRender.oceanDeepColor),
         ("water_ocean_surf_color", WaterRender.oceanSurfColor),
+        ("water_ocean_plume_color", WaterRender.oceanPlumeColor),
     ]
 
     /// Vertragswerte der Godot-Wächter (Issue #92) — KEINE Shader-Uniforms,

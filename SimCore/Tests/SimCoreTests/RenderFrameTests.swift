@@ -56,7 +56,8 @@ final class RenderFrameTests: XCTestCase {
         XCTAssertEqual(overlays.protectMask,
                        WaterProtectMask.bytes(n: terrain.cfg.n,
                                               bandCoverage: render.riverRibbonMesh.bandCoverage,
-                                              waterBytes: overlays.water))
+                                              waterBytes: overlays.water,
+                                              wetMeadow: render.wetMeadowMask))
 
         let byHand = RenderState(geometryMode: true)
         byHand.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
@@ -157,7 +158,7 @@ final class RenderFrameTests: XCTestCase {
         // Die Schlüssel des Frame-Dictionarys: was die Brücke setzt, liest Main.gd.
         let bridge = try RepoSource.probe("Extension/Sources/RiverSimGD/SimNode.swift")
         for key in ["water", "water_blend", "color", "surface", "cover", "flow", "protect",
-                    "forest", "ribbons"] {
+                    "forest", "plume", "ribbons"] {
             assertContains(bridge, "out[Variant(\"\(key)\")]",
                            hint: "SimNode.renderFrame setzt den Schlüssel \(key)")
             XCTAssertTrue(main.contains("frame[\"\(key)\"]") || main.contains("frame.has(\"\(key)\")"),

@@ -405,6 +405,13 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Material-Cache und hält ihr Gedächtnis in Sim-Jahren (#167,
   `ForestCanopyMask.regrow`: Wald weicht Wasser sofort, wächst über
   `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`),
+- `CoastMaterial`, `WetMeadow`, `SedimentPlume` (Issue #174, Paket C):
+  Strand und Felsküste (Sand im A-Kanal der Makrofarbe, Fels in den
+  Materialgewichten), nasse Wiese statt kleiner Raster-Tümpel (Maske aus
+  `WaterFieldRenderer.wetMeadow`, wirkt auf Material und Schutzmaske) und die
+  Quellen der Sedimentfahnen im Meer (EINE Float-Zelle je Mündung, Frame-
+  Schlüssel `plume`, `ocean.gdshader` zeichnet sie über die Mip-Kette weich).
+  Kalibrierung in `WaterRender`, Messreihe `docs/river-coast-render-measurements.md`,
 - `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
   ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:
   `SimCoreTests/DiagStatsContractTests.swift`),

@@ -11,7 +11,10 @@ import SimCore
 ///  2. Tatsächliche Abdeckung der Flussbänder (`RiverRibbonRenderer.bandCoverage`),
 ///     weil der Raster-Deckel (`WaterFieldRenderer`) das Rasterwasser unter
 ///     Bändern entfernt.
-///  3. Einen Saum von `WaterRender.protectSeamCells` Zellen (je Zelle ein
+///  3. Die nasse Wiese (Issue #174 C, `WaterFieldRenderer.wetMeadow`): kleine
+///     Tümpel, die das Raster nicht mehr als Wasser malt. Sie tragen ein hohes
+///     Vegetationsgewicht (`WetMeadow`), auf dem sonst Wald stünde.
+///  4. Einen Saum von `WaterRender.protectSeamCells` Zellen (je Zelle ein
 ///     3×3-Pass, also Chebyshev-Abstand) um alle Wasser- und Bandflächen.
 ///
 /// Trockenes Land außerhalb von Wasser, Bändern und Saum bleibt frei (0).
@@ -21,8 +24,10 @@ public enum WaterProtectMask {
 
     /// R8-Puffer (n×n, 0 = frei, 255 = geschützt). `waterBytes` ist das
     /// RGBA8-Wasserfeld (R = Fluss, G = See); fehlt es oder passt die Größe
-    /// nicht, schützt die Maske nur die Bänder.
-    public static func bytes(n: Int, bandCoverage: [Double], waterBytes: [UInt8]) -> [UInt8] {
+    /// nicht, schützt die Maske nur die Bänder. `wetMeadow` (n×n) schützt
+    /// zusätzlich die nasse Wiese; leer = keine.
+    public static func bytes(n: Int, bandCoverage: [Double], waterBytes: [UInt8],
+                             wetMeadow: [Bool] = []) -> [UInt8] {
         guard n > 0 else { return [] }
         let cnt = n * n
         let riverThresh = byte01(WaterRender.protectRiverThreshold)
@@ -30,8 +35,10 @@ public enum WaterProtectMask {
         let bandThresh = WaterRender.protectBandThreshold
         let hasBands = bandCoverage.count == cnt
         let hasWater = waterBytes.count == cnt * 4
+        let hasMeadow = wetMeadow.count == cnt
 
-        // 1. Kern-Zellen: sichtbares Rasterwasser + gebaute Band-Abdeckung.
+        // 1. Kern-Zellen: sichtbares Rasterwasser + gebaute Band-Abdeckung
+        //    + nasse Wiese.
         var mask = [UInt8](repeating: 0, count: cnt)
         mask.withUnsafeMutableBufferPointer { mb in
             let pm = mb.baseAddress!
@@ -40,7 +47,8 @@ public enum WaterProtectMask {
                     let isBand = hasBands && bandCoverage[k] >= bandThresh
                     let isWater = hasWater
                         && (waterBytes[k * 4] >= riverThresh || waterBytes[k * 4 + 1] >= lakeThresh)
-                    pm[k] = (isBand || isWater) ? 255 : 0
+                    let isMeadow = hasMeadow && wetMeadow[k]
+                    pm[k] = (isBand || isWater || isMeadow) ? 255 : 0
                 }
             }
         }
