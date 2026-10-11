@@ -790,26 +790,27 @@ Studie keinen Hebel mehr.
   Krone zurück, wandernde Mäander hinterlassen einen offenen Auengürtel.
   Pinsel, Neugenerieren und Laden setzen das Gedächtnis zurück
   (`TerrainChange.edited`/`.replaced`). Messlauf
-  `testCanopyChurnDiagnostic` (Seed 1337, Jahr 100.000, Maske alle 25 J.),
-  Anteil der Landfläche, deren Wald je 100-Jahr-Takt über 0,5 kippt:
+  `testCanopyChurnDiagnostic` (Seed 1337, Jahr 100.000, Schwellen nach
+  #168, Maske alle 25 J.), Anteil der Landfläche, deren Wald je
+  100-Jahr-Takt über 0,5 kippt:
 
   | Fassung | Umkippen je Takt | Waldanteil |
   | --- | ---: | ---: |
-  | ohne Gedächtnis (vor #167) | 0,91 % | 38,7 % |
-  | τ = 300 J. | 0,55 % | 37,8 % |
-  | τ = 500 J. | 0,48 % | 37,5 % |
-  | **τ = 800 J. (Produktion)** | **0,40 %** | **36,9 %** |
-  | τ = 1200 J. | 0,34 % | 36,4 % |
-  | ganz ohne Schutzmaske | 0,26 % | 55,4 % |
+  | ohne Gedächtnis (vor #167) | 0,64 % | 19,2 % |
+  | τ = 300 J. | 0,38 % | 18,6 % |
+  | τ = 500 J. | 0,32 % | 18,3 % |
+  | **τ = 800 J. (Produktion)** | **0,26 %** | **17,9 %** |
+  | τ = 1200 J. | 0,23 % | 17,6 % |
+  | ganz ohne Schutzmaske, ohne Gedächtnis | 0,30 % | 28,9 % |
 
-  Die letzte Zeile ist die Untergrenze, das Umkippen der Sim-Vegetation
-  selbst. Zielwert war die Hälfte von heute (≤ 0,45 %); 800 J. nimmt den
-  wandernden Bändern gut drei Viertel ihres Anteils (0,65 → 0,14 Punkte),
-  längere τ machen den Auengürtel nur breiter. Die Werte weichen von der
-  Tabelle im Ticket ab (1,06 % heute), weil der Lauf hier wie der
-  Zeitraffer alle 25 J. eine Maske baut, das Wasser mit 0,15 blendet und
-  die Bänder nur im Produktionsdeckel (≈ alle 75 J., ab
-  `ribbonRebuildDelta`) neu baut.
+  Die letzte Zeile ist das Umkippen der Sim-Vegetation allein; das
+  Gedächtnis dämpft auch deren Nachwachsen und landet deshalb darunter.
+  Zielwert war höchstens die Hälfte von heute (≤ 0,32 %); längere τ machen
+  den Auengürtel nur breiter. Vor #168 (mehr Wald) lag der Lauf bei
+  0,91 % → 0,40 %. Die Werte weichen von der Tabelle im Ticket ab (1,06 %
+  heute), weil der Lauf hier wie der Zeitraffer alle 25 J. eine Maske baut,
+  das Wasser mit 0,15 blendet und die Bänder nur im Produktionsdeckel
+  (≈ alle 75 J., ab `ribbonRebuildDelta`) neu baut.
 
   Grenzen: Die dt-Invarianz gilt für das Nachwachsen gegen ein festes Ziel.
   Ein Zeitsprung baut die Maske nur je 2000-Jahre-Chunk und sieht die

@@ -73,15 +73,15 @@ public enum CanopyRender {
     /// sich zurückgezogen hat. Kommt Wasser, ist er sofort weg.
     ///
     /// Gemessen mit `testCanopyChurnDiagnostic` (Seed 1337, Jahr 100.000,
-    /// Maske alle 25 J., Bänder im Produktionsdeckel, Umkippen über 0,5 je
-    /// 100-Jahr-Takt in % Land): τ = 0 (vor #167) 0,91 %, 300 J. 0,55 %,
-    /// 500 J. 0,48 %, 800 J. 0,40 %, 1200 J. 0,34 %; ganz ohne Schutzmaske
-    /// 0,26 % (das Umkippen der Sim-Vegetation selbst, die Untergrenze).
-    /// 800 J. nimmt gut drei Viertel des Anteils der wandernden Bänder weg
-    /// (0,65 → 0,14 Punkte) und kostet 1,8 Punkte Waldanteil (38,7 → 36,9 %);
+    /// Schwellen nach #168, Maske alle 25 J., Bänder im Produktionsdeckel,
+    /// Umkippen über 0,5 je 100-Jahr-Takt in % Land): τ = 0 (vor #167)
+    /// 0,64 %, 300 J. 0,38 %, 500 J. 0,32 %, 800 J. 0,26 %, 1200 J. 0,23 %;
+    /// ganz ohne Schutzmaske, ohne Gedächtnis 0,30 % (nur die Sim-Vegetation).
+    /// Das Gedächtnis dämpft also auch deren Nachwachsen, nicht nur die
+    /// wandernden Bänder. 800 J. kostet 1,3 Punkte Waldanteil (19,2 → 17,9 %);
     /// darüber wird es kaum ruhiger, der Auengürtel nur breiter. Zielwert des
-    /// Tickets: ≤ 0,45 %, die Hälfte von heute. Bei 60 J/s sind 800 J. gut
-    /// 13 s Zeitraffer.
+    /// Tickets: höchstens die Hälfte von heute (≤ 0,32 %). Bei 60 J/s sind
+    /// 800 J. gut 13 s Zeitraffer. (Vor #168, mit mehr Wald: 0,91 % → 0,40 %.)
     public static let regrowYears = 800.0
 
     // MARK: Wiese (Terrain-Shader)
