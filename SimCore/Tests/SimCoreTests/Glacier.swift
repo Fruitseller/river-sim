@@ -33,6 +33,7 @@ final class Glacier: XCTestCase {
     private func cfg(n: Int = 384) -> SimConfig {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
         return c
     }
 

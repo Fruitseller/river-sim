@@ -91,7 +91,9 @@ public enum WorldSnapshot {
     /// Version 5 (Issue #174): die Großform-Stellschraube `rangeLandform`
     /// reist über die synthetisierte Config-Kodierung mit — eine Version-4-Datei
     /// hat den Schlüssel nicht (Begründung wie bei Version 4).
-    public static let version: UInt32 = 5
+    /// Version 6 (Issue #174, Paket B): Feld `barAge` (Alter der
+    /// Gleithang-Bänke) und die Stellschrauben des Mäandergürtels.
+    public static let version: UInt32 = 6
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
@@ -415,6 +417,7 @@ public enum WorldSnapshot {
         .init("snow", \.snow, mayBeEmpty: true),
         .init("ice", \.ice, mayBeEmpty: true),
         .init("veg", \.veg), .init("riparian", \.riparian),
+        .init("barAge", \.barAge),
         .init("hf", \.hf), .init("waterLevel", \.waterLevel),
         .init("lakeBalance", \.lakeBalance), .init("saltCrust", \.saltCrust),
         .init("endorheicInflow", \.endorheicInflow),

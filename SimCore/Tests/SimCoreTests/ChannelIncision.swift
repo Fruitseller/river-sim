@@ -143,6 +143,7 @@ final class ChannelIncisionTests: XCTestCase {
             var cOn = SimConfig(); cOn.n = 256
             cOn.world = SimConfig().cellSize * Double(cOn.n - 1)
             cOn.rangeLandform = calibrationRangeLandform  // Großform vor #174
+            cOn.meanderBelt = calibrationMeanderBelt  // Mäander-Mechanik vor #174
             var cOff = cOn
             cOff.channelDiffusionDamp = 1.0   // Kanal-Schutz der Diffusion aus
             cOff.flowDepositDamp = 1.0        // Abfluss-Dämpfer der Deposition aus

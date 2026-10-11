@@ -59,6 +59,17 @@ let calibrationWorld: Double = 130
 /// `ZielbildMetrics`/`docs/zielbild-measurements.md`, nicht hier.
 let calibrationRangeLandform = false
 
+/// Mäander-Mechanik der Testwelten: die Zentrumslinie VOR dem Mäandergürtel
+/// (Issue #174, Paket B). Dieselbe Doktrin wie `calibrationRangeLandform`. Der
+/// Gürtel zählt Abfluss und Breite in ZELLEN (Breite aus
+/// `WaterRender.ribbonHalfWidthCells`, Mindestabfluss `meanderBeltMinCells`),
+/// kalibriert auf das Produktionsgitter (Zellgröße 0,156). Auf den Testgittern
+/// der Suite (n = 96…256 mit `calibrationWorld`, Zellgröße 0,5–1,4) erreicht
+/// kaum ein Lauf den Mindestabfluss: gemessen „Läufe mäandern nicht mehr"
+/// (Sinuosität 1,0008), keine Altarme, keine Schlingen. Die Gürtel-Mechanik hat
+/// eigene Wächter (`MeanderBeltTests`, `ZielbildBeltTests`).
+let calibrationMeanderBelt = false
+
 /// Produktionsphysik in kleiner Auflösung, mit der Kalibrier-Paarung dieser
 /// Suite: der Standard-Zuschnitt der Render-Wächter (`SimRenderTests`,
 /// `RenderStateTests`). Genau der Fall, für den `calibrationWorld` oben steht —
