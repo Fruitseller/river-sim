@@ -770,9 +770,15 @@ Studie keinen Hebel mehr.
   (default-freie Uniforms). Farben und Kronenneigungen bleiben Optik des
   Shaders wie die Ufer- und Kiesfarben.
 - **Zeitraffer gleitet.** Die Waldmaske wird mit jedem Overlay-Upload neu
-  hochgeladen; im Zeitraffer blendet der Terrain-Shader mit derselben Blende
-  wie die Verschiebung (`bake_blend`) vom alten zum neuen Stand, statt Kronen
-  an Ufern und Waldrändern umspringen zu lassen.
+  hochgeladen; im Zeitraffer blendet der Terrain-Shader über einen Sim-Takt
+  vom alten zum neuen Stand, statt Kronen an Ufern und Waldrändern
+  umspringen zu lassen. Seit #167 mit eigener Blende (`forest_blend`): an der
+  Blende der Verschiebung (`bake_blend`) hängend, die jeden Sim-Takt neu
+  startet, sprang der Wald an jedem Takt ohne neue Maske (Overlay-Drossel
+  0,30 s, Takt 0,25 s) für ein Bild auf den alten Stand zurück und glitt
+  wieder vor. Im Bildschirmvideo des Projekteigners (11. Oktober 2026,
+  60 J/s) war das ein Sprung etwa alle 0,3 s an Lichtungsrändern und in der
+  Kronenschattierung.
 - **Wald wächst nach (#167).** Im Zeitraffer wanderten sandfarbene
   Kahlflächen mit den Mäandern: die Schutzmaske stanzte den Wald in jedem
   Bild dort aus, wo gerade ein Band lag, und er sprang sofort zurück, sobald
