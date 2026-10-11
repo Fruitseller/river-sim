@@ -35,6 +35,43 @@ final class ToolContractTests: XCTestCase {
                        "Werkzeug-Modi müssen lückenlos ab 0 in Tabellen-Reihenfolge stehen")
     }
 
+    /// Die Pinselkuppel in `Main.gd` (Issue #174, Paket E) zeigt die Form der
+    /// Wirkung: ihr Profil ist (1 − d²)^p mit p = 2 für alle Werkzeuge und p = 4
+    /// für die Spitzhacke. Die GDScript-Seite ist Text, die Swift-Seite wird
+    /// GEMESSEN: Δh je Zelle geteilt durch Δh im Zentrum muss genau dieses
+    /// Profil sein. Ändert jemand das Gewicht in `Terrain.forEachBrushCell`
+    /// oder die Spitze der Spitzhacke, zeigte die Kuppel sonst still eine
+    /// falsche Form.
+    func testBrushDomeFollowsTheBrushFalloff() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        assertContains(main, "const BRUSH_FALLOFF_POWER := 2.0",
+                       hint: "Standard-Exponent der Kuppel == Gewicht in Terrain.forEachBrushCell")
+        assertContains(main, "return pow(1.0 - d * d, power)",
+                       hint: "Kuppelprofil ist (1 − d²)^p")
+        XCTAssertEqual(main.count(of: "\"falloff_power\":"), 1,
+                       "Nur die Spitzhacke weicht vom Standardprofil ab")
+        XCTAssertEqual(try main.integers(pattern: "\"mode\": 5,[^}]*\"falloff_power\": ([0-9]+)"), [4],
+                       "Spitzhacke (mode 5) trägt falloff_power 4 (Terrain.pickaxe: w²)")
+
+        func assertProfile(_ tool: BrushTool, cells: Double, power: Double, sign: Double) {
+            let t = makeTerrain()
+            let before = t.h
+            tool.apply(to: t, gx: gx, gz: gz, radiusWorld: cells * cfg.cellSize,
+                       strength: 1, target: 0)
+            let center = t.h[centerIndex] - before[centerIndex]
+            XCTAssertGreaterThan(center * sign, 0, "\(tool) wirkt im Zentrum")
+            for di in 1..<Int(cells.rounded(.up)) {
+                let k = centerIndex + di
+                let d = Double(di) / cells
+                let expected = pow(1 - d * d, power)
+                XCTAssertEqual((t.h[k] - before[k]) / center, expected, accuracy: 1e-9,
+                               "\(tool): Profil bei d = \(d) weicht von (1 − d²)^\(power) ab")
+            }
+        }
+        assertProfile(.raise, cells: 6, power: 2, sign: 1)
+        assertProfile(.pickaxe, cells: Terrain.pickaxeMaxCells, power: 4, sign: -1)
+    }
+
     // MARK: - Verhaltens-Tests (die zweite Hälfte des Vertrags, Issue #79)
     //
     // Die ZAHL stimmt, aber tut ihr `case` auch das Gemeinte? Früher las das ein

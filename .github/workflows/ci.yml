@@ -229,3 +229,7 @@ jobs:
       - name: Kronendach (Issue #152)
         run: |
           scripts/godot-test.sh res://tests/canopy.gd CANOPY_OK
+
+      - name: Bedienung (Issue #174, Paket E)
+        run: |
+          scripts/godot-test.sh res://tests/ui_layout.gd UI_LAYOUT_OK

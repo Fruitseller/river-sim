@@ -92,11 +92,11 @@ func _update_protect_mask(bytes: PackedByteArray) -> void:
 	if study_enabled:
 		terrain_mat.set_shader_parameter("protect_tex", protect_tex)
 
-func _update_ring() -> void:
+func _update_brush() -> void:
 	if not study_mode.is_empty():
-		ring_mi.visible = false
+		brush_mi.visible = false
 	else:
-		super._update_ring()
+		super._update_brush()
 
 func _process(delta: float) -> void:
 	if not study_mode.is_empty():
