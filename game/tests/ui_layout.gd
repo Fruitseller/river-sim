@@ -249,6 +249,11 @@ func _check_camera_presets() -> void:
 			"Preset %s: Kamera steht auf der Mündungsseite" % p["id"])
 		var eye: Vector3 = main.cam.position
 		_check(eye.y > main._surface_y_at(eye), "Preset %s: Kamera über dem Gelände" % p["id"])
+		# Schräg talaufwärts, nicht senkrecht von oben: die Sichtlinie ist in
+		# den Prüfwelten frei (auf der CI-Welt mündet der Lauf am Kartenrand;
+		# draußen liegt nur Meer, kein geklemmtes Randgelände).
+		_check(main.cam_pitch < p["pitch"] + 0.3,
+			"Preset %s bleibt schräg (pitch %.2f)" % [p["id"], main.cam_pitch])
 		print("UI_CAMERA_PRESET %s target (%.1f, %.1f) yaw %.2f pitch %.2f mouth (%.1f, %.1f)"
 			% [p["id"], t.x, t.z, main.cam_yaw, main.cam_pitch, mouth_pos.x, mouth_pos.y])
 	# Taste: F2 fährt „Tal" weich an; nach der Fahrt steht die Kamera dort.
