@@ -14,7 +14,9 @@ import XCTest
 ///  - Querprofil im Band: UV2.y trägt die Bogenstärke der Sim, das
 ///    Prallhang-Ufer ist das tiefe.
 ///  - Abfluss-Vertrauen: ein kleiner Lauf ohne Stream-Map-Stütze bleibt
-///    unsichtbar (die Stütze filtert weiter verwaiste Linien).
+///    unsichtbar (die Stütze filtert weiter verwaiste Linien). Im Raster
+///    füllt das Vertrauen nur die Lücken des Bands, und unter einem deckenden
+///    Band bleibt kein Raster-Wasser stehen, auch am Steilhang (Review #181).
 /// Alles reine Render-Ableitung: das Terrain bleibt bit-gleich.
 final class BarMaterialTests: XCTestCase {
 
@@ -268,6 +270,87 @@ final class BarMaterialTests: XCTestCase {
         let lo = WaterRender.ribbonTrustLoReferences * terrain.cfg.renderMinCells
         for (ci, ch) in terrain.meander.channels.enumerated() where (ch.discharge.max() ?? 0) <= lo {
             XCTAssertFalse(mesh.bandChannelFlags[ci], "Lauf \(ci) ohne Stütze und Vertrauen bleibt unsichtbar")
+        }
+    }
+
+    /// Gerader Lauf in Zeile `row` mit großem Abfluss (20 × `renderMinCells`,
+    /// voll im Vertrauen). `crossSlope` (Sim-Höhe je Welt-Einheit) neigt das
+    /// Gelände quer zum Lauf, `streamMap` ist die Stütze auf der Laufzeile.
+    private func straightRiver(n: Int = 64, row: Int = 32, crossSlope: Double = 0,
+                               streamMap: Double = 0,
+                               channel: Bool = false) -> Terrain {
+        let t = flatWorld(n: n) { _, _ in -1 }
+        var s = t.state
+        let cs = t.cfg.cellSize
+        let q = 20 * t.cfg.renderMinCells
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = j * n + i
+                s.h[k] = t.cfg.sea + 0.08 + crossSlope * Double(abs(j - row)) * cs
+                if j == row {
+                    s.areaMFD[k] = q * cs * cs
+                    s.area[k] = q * cs * cs
+                    s.streamMap[k] = streamMap
+                }
+            }
+        }
+        s.hf = s.h
+        s.waterLevel = s.h
+        if channel {
+            let nodes = stride(from: 2.0, through: Double(n - 3), by: 1.5).map { MeanderNode(x: $0, z: Double(row)) }
+            s.meanderChannels = [RiverChannel(nodes: nodes, discharge: nodes.map { _ in q })]
+        }
+        t.restore(s)
+        return t
+    }
+
+    /// Review #181: das Vertrauen malte den großen Lauf im Raster AUCH dort,
+    /// wo ein Band ihn trägt — die D8-Treppe stand als zweites Wasser unter
+    /// und neben dem glatten Band. Es gilt nur noch in den Band-Lücken.
+    func testTrustedRasterFillsOnlyTheBandGaps() {
+        let n = 64, row = 32
+        let t = straightRiver(n: n, row: row)
+        // Band über der linken Hälfte des Laufs, rechts eine Lücke.
+        var cover = [Double](repeating: 0, count: n * n)
+        for j in (row - 2)...(row + 2) { for i in 0..<(n / 2) { cover[j * n + i] = 1 } }
+        let riverT = byte01(WaterRender.riverMaskLo)
+        let withBand = WaterFieldRenderer().bytes(t, blend: 1, geometryMode: true,
+                                                  bandChannelFlags: [], bandCoverage: cover)
+        let noBand = WaterFieldRenderer().bytes(t, blend: 1, geometryMode: true,
+                                                bandChannelFlags: [], bandCoverage: [])
+        for i in 4..<(n / 2 - 4) {
+            XCTAssertGreaterThanOrEqual(noBand[(row * n + i) * 4], riverT,
+                                        "ohne Band malt das Vertrauen den Lauf (i = \(i))")
+            XCTAssertLessThan(withBand[(row * n + i) * 4], riverT,
+                              "unter dem Band kein zweites Raster-Wasser (i = \(i))")
+        }
+        for i in (n / 2 + 4)..<(n - 4) {
+            XCTAssertGreaterThanOrEqual(withBand[(row * n + i) * 4], riverT,
+                                        "in der Band-Lücke füllt das Raster (i = \(i))")
+        }
+    }
+
+    /// Review #181: der Raster-Deckel unter einem Band hatte eine eigene
+    /// Kaskaden-Ausnahme über die Zell-Neigung. Die sah auch das QUERgefälle
+    /// einer Talflanke und ließ das Raster unter einem voll deckenden Band
+    /// stehen (doppeltes Wasser in Zellblöcken). Die Kaskade blendet das Band
+    /// selbst aus; der Deckel folgt nur noch der Band-Deckung.
+    func testRasterUnderAFullBandIsCappedOnASteepCrossSlope() {
+        let n = 64, row = 32
+        let steep = WaterRender.cascadeSlopeLo + 2 * WaterRender.cascadeSlopeSpan
+        let t = straightRiver(n: n, row: row, crossSlope: steep, streamMap: 1, channel: true)
+        var cover = [Double](repeating: 0, count: n * n)
+        for j in (row - 2)...(row + 2) { for i in 0..<n { cover[j * n + i] = 1 } }
+        let riverT = byte01(WaterRender.riverMaskLo)
+        let capped = WaterFieldRenderer().bytes(t, blend: 1, geometryMode: true,
+                                                bandChannelFlags: [true], bandCoverage: cover)
+        let open = WaterFieldRenderer().bytes(t, blend: 1, geometryMode: true,
+                                              bandChannelFlags: [false], bandCoverage: [])
+        for i in 8..<(n - 8) {
+            XCTAssertGreaterThanOrEqual(open[(row * n + i) * 4], riverT,
+                                        "ohne Band malt das Raster den Lauf (i = \(i))")
+            XCTAssertLessThan(capped[(row * n + i) * 4], riverT,
+                              "unter dem deckenden Band kein Raster-Wasser, auch am Steilhang (i = \(i))")
         }
     }
 
