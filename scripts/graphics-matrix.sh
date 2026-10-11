@@ -62,9 +62,14 @@ camera_cfg() {
     20:backlight)   echo "-8,10;46.0;2.269;0.85" ;;
     20:coast)       echo "30,-28;48.0;0.8;0.85" ;;
     20:snow)        echo "-10,14;40.0;0.6;0.70" ;;
-    # Vorlagen-Kameras (Issue #174): Distanz und Pitch == Tasten-Presets F1–F3
-    # in game/scripts/Main.gd (CAMERA_PRESETS); diorama = Vorlage C, valley = B,
-    # close = A.
+    # Vorlagen-Kameras (Issue #174): diorama = Vorlage C, valley = B, close = A.
+    # Hier stehen FESTE Werte je Seed (Ziel, Distanz, Yaw), damit Abnahmebilder
+    # reproduzierbar bleiben. Die Tasten-Presets F1–F3 in game/scripts/Main.gd
+    # (CAMERA_PRESETS) sind dagegen ADAPTIV: Diorama rahmt die Landfläche,
+    # Tal/Nah zielen auf den größten Lauf. Gemeinsam ist nur der Pitch (alle)
+    # und die Distanz (valley, close); Wächter:
+    # GraphicsMatrixTests.testCameraPresetsMatchTheMatrix. Die adaptive Ansicht
+    # zeigt `RS_CAMERA=<id>` beim Start von Main (statt RS_TARGET/RS_DIST/RS_YAW).
     1337:diorama|42:diorama|20:diorama) echo "0,0;115.0;0.7;0.62" ;;
     1337:valley)    echo "-12,-25;60.0;0.7;0.42" ;;
     1337:close)     echo "-36,-32;32.0;0.9;0.52" ;;

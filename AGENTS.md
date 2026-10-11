@@ -231,6 +231,8 @@ zulässig, deren Ergebnis nicht vom Renderer oder von Interaktion abhängt.
 Standard 1000 J., der Vorlauf taktet wie der Zeitraffer, nicht in EINEM Sprung),
 `RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"`, Blickpunkt in
 Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
+`RS_CAMERA` (`diorama|valley|close`: Tasten-Preset F1–F3 adaptiv für die
+Welt anfahren, statt fester `RS_TARGET`/`RS_DIST`/`RS_YAW`),
 `RS_QUALITY` (`performance|balanced|quality`), `RS_RENDER_GRID`, `RS_DIAG`,
 `RS_DEBUG_DIFF` (Δ-Karte gleich an, für automatisierte Diagnose-Screenshots),
 `RS_FPS`, `RS_IDLE` (misst mit `RS_FPS` den Leerlauf statt des Zeitraffers;

@@ -35,7 +35,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Werkzeugpalette oben links, Zeitsprünge oben rechts, Diagnose/Welt/Kamera/Seed
   unten rechts), gezeichnete Icons (`game/scripts/UiIcon.gd`) statt Emoji,
   Pinsel als Gitterkuppel im echten Falloff-Profil auf der sichtbaren Fläche,
-  Kamera-Presets Diorama/Tal/Nah auf F1–F3 (dieselben drei als Matrix-Kameras).
+  Kamera-Presets Diorama/Tal/Nah auf F1–F3, adaptiv (Diorama rahmt die
+  Landfläche, Tal/Nah zielen auf den größten Lauf; als Matrix-Kameras mit
+  festen Werten).
   Offen: Abnahme am Bild durch den Projekteigner (Bogen #174, Punkte 41–45),
   Feinabstimmung der Preset-Werte am gerenderten Bild, Weichzeichner hinter den
   Panels (nicht umgesetzt, Kosten ungemessen).
