@@ -7,6 +7,10 @@ uniform float u_time = 0.0;
 uniform float world_size = 100.0;
 uniform float sea_level = 0.15;
 uniform sampler2D height_tex : filter_linear, repeat_disable;
+// Vorgängerstand und Blende der Höhe (#172, Main.gd `height_fade`): die
+// Küstenlinie folgt im Zeitraffer derselben Zwischenhöhe wie das Terrain.
+uniform sampler2D height_prev_tex : filter_linear, repeat_disable;
+uniform float height_blend = 1.0;
 
 // Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
 // Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
@@ -108,7 +112,13 @@ void fragment() {
 	                   && all(lessThanEqual(terrain_uv, vec2(1.0)));
 	float footprint = length(fwidth(p));
 	// Außerhalb des Sim-Quadrats ist das Meer tief.
-	float h = inside_terrain ? texture(height_tex, terrain_uv).r : sea_level - water_ocean_depth_span;
+	float h = sea_level - water_ocean_depth_span;
+	if (inside_terrain) {
+		h = texture(height_tex, terrain_uv).r;
+		if (height_blend < 1.0) {
+			h = mix(texture(height_prev_tex, terrain_uv).r, h, height_blend);
+		}
+	}
 	if (h > sea_level) {
 		discard;
 	}

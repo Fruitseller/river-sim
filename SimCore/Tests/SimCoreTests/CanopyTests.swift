@@ -350,20 +350,6 @@ final class CanopyTests: XCTestCase {
                        hint: "Das Dach ist angehoben (Schattenwurf der Waldkanten)")
     }
 
-    /// Der Wald blendet mit EIGENER Blende (#167): die Verschiebung startet
-    /// `bake_blend` jeden Sim-Takt neu, die Waldmaske kommt nur mit den
-    /// gedrosselten Overlays. Geteilt sprang der Wald an jedem Takt ohne neue
-    /// Maske auf den alten Stand zurück.
-    func testForestFadesWithItsOwnBlend() throws {
-        let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
-        assertContains(shader,
-                       "v_forest = mix(textureLod(forest_prev_tex, uv, 0.0).r, v_forest, forest_blend);",
-                       hint: "Waldmaske blendet über `forest_blend`")
-        let main = try RepoSource.probe("game/scripts/Main.gd")
-        assertContains(main, "set_shader_parameter(\"forest_blend\", forest_mix)",
-                       hint: "Main.gd führt die Blende der Waldmaske selbst")
-    }
-
     func testBridgeAndMainCarryTheCanopy() throws {
         let bridge = try RepoSource.extensionSources()
         for needle in ["func canopyUniformNames", "func canopyUniformValues",

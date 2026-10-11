@@ -111,19 +111,36 @@ func _check_bake_cadence(main: Node) -> void:
 	main.year_rate = 60.0
 	var ticks := 0
 	var faded := false
+	var height_faded := false
+	var overlay_faded := false
 	for i in 40:
 		var y: float = main.sim.currentYear()
 		main._process(0.02)
 		if main.sim.currentYear() != y:
 			ticks += 1
 		faded = faded or main.relief_mix < 1.0
+		height_faded = height_faded or main.height_fade.mix < 1.0
+		overlay_faded = overlay_faded or main.overlay_fade.mix < 1.0
+	# Die Overlay-Drossel läuft auf der echten Uhr (0,30 s); die kurzen
+	# Test-Frames schaffen das nicht sicher. Ein Frame MIT Overlays während
+	# des Zeitraffers muss die Overlay-Blende starten.
+	main._apply_frame(main.sim.renderFrame(main.FRAME_SETTLED, main._now()))
+	overlay_faded = overlay_faded or main.overlay_fade.mix < 1.0
 	main.year_rate = 0.0
 	_check(faded, "Zeitraffer blendet die Verschiebung über, statt zu springen")
+	# #172: Höhe und Overlays gleiten ebenso, jede mit ihrer eigenen Blende.
+	_check(height_faded, "Zeitraffer blendet die Höhe über")
+	_check(overlay_faded, "Zeitraffer blendet Farbe, Material und Wald über")
 	for i in 20:
 		main.last_activity_msec = Time.get_ticks_msec()
 		main._process(0.02)
 	_check(main.relief_mix == 1.0 and main.terrain_mat.get_shader_parameter("bake_blend") == 1.0,
 		"Blende endet nach einem Sim-Takt auf dem neuen Stand")
+	for param in ["height_blend", "overlay_blend"]:
+		_check(main.terrain_mat.get_shader_parameter(param) == 1.0,
+			"%s endet auf dem neuen Stand" % param)
+	_check(main.ocean_mat.get_shader_parameter("height_blend") == 1.0,
+		"Das Meer blendet die Höhe mit dem Terrain")
 	var bakes: int = main.relief_bakes - before
 	_check(ticks > 0 and main.sim.currentYear() > year_before, "Zeitraffer muss Sim-Schritte machen")
 	_check(bakes >= ticks and bakes <= 2 * ticks,
@@ -217,6 +234,7 @@ func _check_visible_surface(main: Node) -> void:
 	main._process(0.05)
 	main.year_rate = 0.0
 	_check(main.relief_mix == 1.0, "Pinsel backt ohne Blende")
+	_check(main.height_fade.mix == 1.0, "Pinsel zeigt die neue Höhe sofort (#172)")
 	main.sculpting = false
 	var after: PackedFloat32Array = main.sim.heights()
 	_check(after[hit_cell] > h[hit_cell], "Pinsel hebt die Sim-Zelle unter dem Treffer (%.5f → %.5f)"

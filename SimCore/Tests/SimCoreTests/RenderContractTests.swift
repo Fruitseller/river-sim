@@ -90,7 +90,7 @@ final class RenderContractTests: XCTestCase {
     func testTerrainDetailFollowsRealDischarge() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
-        assertContains(main, "FieldTexture.new(\"flow_tex\", Image.FORMAT_R8)",
+        assertContains(main, "FieldTexture.new(\"flow_tex\", Image.FORMAT_R8, true)",
                        hint: "Abfluss-Dichte reist als R8-Textur")
         assertContains(main, "flow_field.upload(terrain_mat, N, frame[\"flow\"])",
                        hint: "Main lädt das Abfluss-Feld mit den Overlays hoch")
@@ -98,7 +98,7 @@ final class RenderContractTests: XCTestCase {
                        hint: "Terrain-Shader kennt die Abfluss-Textur")
         assertContains(shader,
                        "mix(\(glsl(WaterRender.flowDetailGainLo)), "
-                       + "\(glsl(WaterRender.flowDetailGainHi)), texture(flow_tex, v_uv).r)",
+                       + "\(glsl(WaterRender.flowDetailGainHi)), flow_at(v_uv))",
                        hint: "Stärke-Fenster == WaterRender.flowDetailGainLo/Hi")
         let bridge = try RepoSource.extensionSources()
         assertContains(bridge, "render.flowDetailBytes(terrain)",
@@ -185,7 +185,7 @@ final class RenderContractTests: XCTestCase {
         assertContains(ocean, "uniform sampler2D height_tex",
                        hint: "Ozean liest dasselbe Höhenfeld wie das Terrain")
         assertContains(ocean,
-                       "float h = inside_terrain ? texture(height_tex, terrain_uv).r",
+                       "if (inside_terrain) {\n\t\th = texture(height_tex, terrain_uv).r;",
                        hint: "Ozean liest die Höhe innerhalb des Terrain-Quadrats")
         assertContains(ocean, "if (h > sea_level)",
                        hint: "Land schneidet die Ozeanplatte ab")

@@ -49,6 +49,18 @@ uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
 uniform sampler2D color_tex : filter_linear, repeat_disable;
 uniform sampler2D surface_tex : filter_linear, repeat_disable; // R Vegetation, G Fels, B Schnee/Eis, A Lithologie
+// Zeitraffer-Überblenden (#172, Main.gd `Crossfade`): der Vorgängerstand je
+// Textur und zwei Blenden, jede im Takt IHRES Uploads. `height_blend` folgt
+// dem Sim-Takt (Höhe), `overlay_blend` der Overlay-Drossel (Farbe, Material,
+// Rinnen-Detail, Seespiegel, Wald). Gelesen wird nur über die `*_at`-Helfer
+// unten, damit Form, Normalen und Farbe denselben Zwischenstand zeigen.
+uniform sampler2D height_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D hf_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D color_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D surface_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D flow_prev_tex : filter_linear, repeat_disable;
+uniform float height_blend = 1.0;
+uniform float overlay_blend = 1.0;
 uniform sampler2D debug_difference_tex : filter_linear, repeat_disable;
 uniform sampler2D water_tex : filter_linear, repeat_disable;
 // Abfluss-Dichte fürs Erosions-Detail (R8, WaterFieldRenderer.flowDetailField):
@@ -150,14 +162,12 @@ uniform float sim_year = 0.0;
 uniform bool canopy_enabled = false;
 // Schwarz, solange nichts gebunden ist: kein Wald statt einer weißen Fläche.
 uniform sampler2D forest_tex : filter_linear, repeat_disable, hint_default_black;
-// Vorheriger Stand und eigene Blende dorthin (`forest_blend`, Main.gd
-// `_update_forest_mask`): im Zeitraffer gleitet der Wald über einen Sim-Takt,
-// statt kronenweise zu springen. NICHT `bake_blend`: die Verschiebung backt
-// jeden Sim-Takt, die Waldmaske kommt nur mit den gedrosselten Overlays; mit
-// der geteilten Blende sprang der Wald an jedem Takt ohne neue Maske auf den
-// alten Stand zurück und glitt wieder vor (#167).
+// Vorheriger Stand: im Zeitraffer gleitet der Wald mit `overlay_blend` wie
+// Farbe und Material, statt kronenweise zu springen. NICHT `bake_blend`: die
+// Verschiebung backt jeden Sim-Takt, die Waldmaske kommt nur mit den
+// gedrosselten Overlays; geteilt sprang der Wald an jedem Takt ohne neue Maske
+// auf den alten Stand zurück und glitt wieder vor (#170).
 uniform sampler2D forest_prev_tex : filter_linear, repeat_disable, hint_default_black;
-uniform float forest_blend = 1.0;
 // Kalibrierung über die Brücke (SimCore.CanopyRender), default-frei.
 uniform float canopy_cell;
 uniform float canopy_height;
@@ -195,6 +205,33 @@ float calib_window(float lo, float hi, float x) {
 
 // UV aus der Weltposition ableiten (statt Mesh-UV) → deckungsgleich mit der
 // Zellindizierung des Sim-Kerns und damit mit Flüssen/Wasser.
+// Lesezugriffe auf die überblendeten Felder (#172). Ohne laufende Blende
+// genau ein Texturzugriff wie vorher.
+float height_at(vec2 uv) {
+	float h = texture(height_tex, uv).r;
+	return height_blend < 1.0 ? mix(texture(height_prev_tex, uv).r, h, height_blend) : h;
+}
+
+float hf_at(vec2 uv) {
+	float h = texture(hf_tex, uv).r;
+	return overlay_blend < 1.0 ? mix(texture(hf_prev_tex, uv).r, h, overlay_blend) : h;
+}
+
+vec3 color_at(vec2 uv) {
+	vec3 c = texture(color_tex, uv).rgb;
+	return overlay_blend < 1.0 ? mix(texture(color_prev_tex, uv).rgb, c, overlay_blend) : c;
+}
+
+vec4 surface_at(vec2 uv) {
+	vec4 m = texture(surface_tex, uv);
+	return overlay_blend < 1.0 ? mix(texture(surface_prev_tex, uv), m, overlay_blend) : m;
+}
+
+float flow_at(vec2 uv) {
+	float f = texture(flow_tex, uv).r;
+	return overlay_blend < 1.0 ? mix(texture(flow_prev_tex, uv).r, f, overlay_blend) : f;
+}
+
 vec2 world_uv(vec3 vert) {
 	return (vert.xz + world_size * 0.5) / world_size;
 }
@@ -206,7 +243,7 @@ vec2 world_uv(vec3 vert) {
 // nicht die Treppe des Render-Gitters (Issue #32). hf = waterLevel → die
 // Kontur erbt das Anti-Sägezahn-Verhalten.
 float pond_at(vec2 uv, float h_val) {
-	float hf_val = texture(hf_tex, uv).r;
+	float hf_val = hf_at(uv);
 	return max(hf_val - h_val, 0.0) * step(sea_level, hf_val);
 }
 
@@ -385,14 +422,14 @@ void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
 void vertex() {
 	vec2 uv = world_uv(VERTEX);
 	v_uv = uv;
-	float hraw = texture(height_tex, uv).r;
+	float hraw = height_at(uv);
 	// Seen als ECHTE horizontale Flächen: unter Wasser stehende Zellen werden
 	// auf den Seespiegel hf gehoben. Der weiche Einstieg glättet die Uferlinie.
 	// MIT dem See-Gate multipliziert: eine Komponente, die das Gate (noch) nicht
 	// sichtbar macht, darf auch nicht gehoben werden — sonst stünde eine
 	// horizontale Fläche in Terrain-Farbe im Becken („trockener Wasserspiegel").
 	// So faden kleine Seen als Ganzes ein: Geometrie und Farbe zusammen.
-	float hfv = texture(hf_tex, uv).r;
+	float hfv = hf_at(uv);
 	float pond = pond_at(uv, hraw);
 	float lift = calib_window(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
 	// Seen hebt die Zeile selbst auf den Spiegel; dort keine Verschiebung.
@@ -401,33 +438,33 @@ void vertex() {
 	v_forest = 0.0;
 	if (canopy_enabled) {
 		v_forest = textureLod(forest_tex, uv, 0.0).r;
-		if (forest_blend < 1.0) {
-			v_forest = mix(textureLod(forest_prev_tex, uv, 0.0).r, v_forest, forest_blend);
+		if (overlay_blend < 1.0) {
+			v_forest = mix(textureLod(forest_prev_tex, uv, 0.0).r, v_forest, overlay_blend);
 		}
 	}
 	VERTEX.y += calib_window(canopy_lift_lo, canopy_lift_hi, v_forest) * canopy_height;
 	float texel = 1.0 / grid_n;
-	float hL = texture(height_tex, uv - vec2(texel, 0.0)).r;
-	float hR = texture(height_tex, uv + vec2(texel, 0.0)).r;
-	float hD = texture(height_tex, uv - vec2(0.0, texel)).r;
-	float hU = texture(height_tex, uv + vec2(0.0, texel)).r;
+	float hL = height_at(uv - vec2(texel, 0.0));
+	float hR = height_at(uv + vec2(texel, 0.0));
+	float hD = height_at(uv - vec2(0.0, texel));
+	float hU = height_at(uv + vec2(0.0, texel));
 	float sw = world_size / (grid_n - 1.0);
 	NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hD - hU) * hscale));
 }
 
 void fragment() {
-	vec3 macro_color = texture(color_tex, v_uv).rgb;
-	vec4 surface = texture(surface_tex, v_uv);
+	vec3 macro_color = color_at(v_uv);
+	vec4 surface = surface_at(v_uv);
 	vec3 debug_color = texture(debug_difference_tex, v_uv).rgb;
-	float hval = texture(height_tex, v_uv).r;
+	float hval = height_at(v_uv);
 
 	// Grobe Steigung aus dem Sim-Gitter. Sie bestimmt die Form, während die
 	// Material-Normale darunter nur Licht im Zentimetermaßstab bricht.
 	float texel = 1.0 / grid_n;
-	float hL = texture(height_tex, v_uv - vec2(texel, 0.0)).r;
-	float hR = texture(height_tex, v_uv + vec2(texel, 0.0)).r;
-	float hD = texture(height_tex, v_uv - vec2(0.0, texel)).r;
-	float hU = texture(height_tex, v_uv + vec2(0.0, texel)).r;
+	float hL = height_at(v_uv - vec2(texel, 0.0));
+	float hR = height_at(v_uv + vec2(texel, 0.0));
+	float hD = height_at(v_uv - vec2(0.0, texel));
+	float hU = height_at(v_uv + vec2(0.0, texel));
 	vec2 coarse_slope = vec2(hR - hL, hU - hD) * 0.5 * grid_n;
 	coarse_slope += relief_slope(v_uv);
 
@@ -445,7 +482,7 @@ void fragment() {
 		// Stärke folgt dem echten Abfluss (WaterRender.flowDetailGainLo/Hi):
 		// Rinnen bündeln sich in Abflussbahnen, abseits davon beruhigt sich
 		// der Layer unter den früheren Uniform-Look.
-		float flow_gain = mix(0.3, 1.8, texture(flow_tex, v_uv).r);
+		float flow_gain = mix(0.3, 1.8, flow_at(v_uv));
 		det_slope = det.yz * dfade * detail_normal * flow_gain;
 		det_shade = det.x / det_mag * dfade * flow_gain;
 		det_ridge = det.w * dfade;
