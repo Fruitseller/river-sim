@@ -40,12 +40,12 @@ final class SimNode: Node {
     @Callable func generate(seed: Int) {
         terrain.generate(seed: UInt32(truncatingIfNeeded: seed),
                          settleYears: SimConfig.productionSettleYears)
-        render.invalidate(terrain, worldReplaced: true)
+        render.invalidate(terrain, .replaced)
     }
 
     @Callable func step(years: Double) {
         terrain.step(dtYears: years)
-        render.invalidate(terrain)
+        render.invalidate(terrain, .advanced)
     }
 
     // MARK: Speichern / Laden (Issue #8)
@@ -75,11 +75,12 @@ final class SimNode: Node {
             let loaded = try WorldSnapshot.read(from: path)
             terrain = loaded
             lastWorldBytes = 0
-            // `worldReplaced` erledigt beides: die Δ-Karte zeigt ab jetzt, was
-            // die Sim tut (nicht die Differenz zur alten Welt), und Bäume wie
-            // Fluss-Bänder bauen im nächsten Frame neu. Dieselbe Politik wie
-            // beim Generieren — Begründung an `RenderState.invalidate`.
-            render.invalidate(terrain, worldReplaced: true)
+            // `.replaced` erledigt alles: die Δ-Karte zeigt ab jetzt, was
+            // die Sim tut (nicht die Differenz zur alten Welt), Fluss-Bänder
+            // bauen im nächsten Frame neu, der Wald vergisst sein Gedächtnis.
+            // Dieselbe Politik wie beim Generieren — Begründung an
+            // `RenderState.invalidate`.
+            render.invalidate(terrain, .replaced)
             return ""
         } catch let error as SnapshotError {
             return error.description
@@ -338,7 +339,7 @@ final class SimNode: Node {
     /// Gitterzentrum (gx, gz) mit Radius in Welteinheiten. Koppelt in die Tektonik.
     @Callable func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double) {
         terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: dir)
-        render.invalidate(terrain)
+        render.invalidate(terrain, .edited)
     }
 
     /// Pinsel-Werkzeug mit Stärke. `mode` ist der Rohwert von `BrushTool` — die
@@ -354,7 +355,7 @@ final class SimNode: Node {
         }
         tool.apply(to: terrain, gx: gx, gz: gz, radiusWorld: radiusWorld,
                    strength: strength, target: target)
-        render.invalidate(terrain)
+        render.invalidate(terrain, .edited)
     }
 
     /// Nach Sculpting/Änderungen Entwässerung neu berechnen (für Live-Flüsse).
@@ -362,7 +363,7 @@ final class SimNode: Node {
     /// bei ihrem Besitzer: `Terrain.recomputeFlowAfterEdit`.
     @Callable func recomputeFlow() {
         terrain.recomputeFlowAfterEdit()
-        render.invalidate(terrain)
+        render.invalidate(terrain, .edited)
     }
 
     /// Effektive Maximal-Breite der Spitzhacke (Welteinheiten) — fürs Ring-Visual.

@@ -29,25 +29,25 @@ final class RenderStateTests: XCTestCase {
         let mutations: [(name: String, change: (Terrain, RenderState) -> Void)] = [
             ("generate", { terrain, render in
                 terrain.generate(seed: 4711)
-                render.invalidate(terrain, worldReplaced: true)
+                render.invalidate(terrain, .replaced)
             }),
             ("step", { terrain, render in
                 terrain.step(dtYears: 200)
-                render.invalidate(terrain)
+                render.invalidate(terrain, .advanced)
             }),
             ("sculpt", { terrain, render in
                 terrain.sculpt(gx: 48, gz: 48, radiusWorld: 14, dir: 1, strength: 30)
-                render.invalidate(terrain)
+                render.invalidate(terrain, .edited)
             }),
             ("brush", { terrain, render in
                 BrushTool.flatten.apply(to: terrain, gx: 48, gz: 48, radiusWorld: 14,
                                         strength: 1, target: 0.6)
-                render.invalidate(terrain)
+                render.invalidate(terrain, .edited)
             }),
             ("recomputeFlow", { terrain, render in
                 terrain.sculpt(gx: 30, gz: 60, radiusWorld: 14, dir: -1, strength: 30)
                 terrain.recomputeFlowAfterEdit()
-                render.invalidate(terrain)
+                render.invalidate(terrain, .edited)
             }),
         ]
 
@@ -78,7 +78,7 @@ final class RenderStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: path) }
 
         terrain = try WorldSnapshot.read(from: path)
-        render.invalidate(terrain, worldReplaced: true)
+        render.invalidate(terrain, .replaced)
 
         assertServesFreshMaterials(render, terrain, staleColors: stale, entry: "loadWorld")
         XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1,
@@ -118,12 +118,12 @@ final class RenderStateTests: XCTestCase {
         XCTAssertEqual(render.terrainColorBytes(terrain), before,
                        "Ohne Invalidierung darf der Cache nicht neu rechnen")
 
-        render.invalidate(terrain, worldReplaced: true)
+        render.invalidate(terrain, .replaced)
         XCTAssertNotEqual(render.terrainColorBytes(terrain), before,
                           "Nach der Invalidierung muss die neue Welt gefärbt werden")
     }
 
-    /// `worldReplaced` ist der aufgelöste Unterschied zwischen Neu-Generieren
+    /// `.replaced` ist der aufgelöste Unterschied zwischen Neu-Generieren
     /// und Laden: dieselbe Welt behält ihre Vergleichsstände, eine ANDERE Welt
     /// verwirft Dirty-Snapshots und Diagnose-Vergleichspunkt.
     func testWorldReplacedDropsEveryComparisonPoint() {
@@ -134,12 +134,12 @@ final class RenderStateTests: XCTestCase {
         render.captureDebugReference(terrain)
         XCTAssertEqual(render.riversMaxDelta(terrain), 0)
 
-        render.invalidate(terrain)
+        render.invalidate(terrain, .advanced)
         XCTAssertEqual(render.riversMaxDelta(terrain), 0,
                        "Dieselbe Welt: der Band-Vergleichsstand bleibt")
 
         terrain.step(dtYears: 500)
-        render.invalidate(terrain, worldReplaced: true)
+        render.invalidate(terrain, .replaced)
         // Ohne Vergleichsstand meldet der Band-Renderer „riesig" (1e9) — die
         // Schwelle in `Main.gd` liegt weit darunter.
         XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1,
@@ -147,7 +147,7 @@ final class RenderStateTests: XCTestCase {
         // Vergleichspunkt der Diagnose steht auf dem NEUEN Stand: Δ-Karte leer,
         // Referenzjahr = jetzt (Indizes: `TerrainDiagnostics.stats`).
         let stats = render.debugTerrainStats(terrain)
-        XCTAssertEqual(stats[5], 0, "deltaMax nach worldReplaced nicht 0")
+        XCTAssertEqual(stats[5], 0, "deltaMax nach .replaced nicht 0")
         XCTAssertEqual(stats[14], Float(terrain.years), "Referenzjahr nicht mitgezogen")
     }
 
@@ -175,7 +175,7 @@ final class RenderStateTests: XCTestCase {
         let ungenerated = Terrain(allocating: renderConfig(), seed: 4711)
         XCTAssertTrue(ungenerated.meander.channels.isEmpty,
                       "Testaufbau: diese Welt soll gerade KEINE Zentrumslinien haben")
-        render.invalidate(ungenerated, worldReplaced: true)
+        render.invalidate(ungenerated, .replaced)
         XCTAssertGreaterThanOrEqual(
             render.riversMaxDelta(ungenerated), 1,
             "Andere Welt ohne Kanäle: die Bänder der alten Welt bleiben sonst stehen")
@@ -387,6 +387,17 @@ final class RenderStateTests: XCTestCase {
                        ["brush", "generate", "loadWorld", "recomputeFlow", "sculpt", "step"],
                        "Die ändernden Einstiege der Brücke haben sich verschoben — "
                        + "Liste mitziehen (sie ist der Umfang dieses Wächters)")
+
+        // Issue #167: die Art der Änderung entscheidet, ob das Gedächtnis der
+        // Waldmaske weiterläuft. Ein Pinsel als `.advanced` ließe veralteten
+        // Wald stehen, ein Sim-Schritt als `.edited` schaltete es ab.
+        let kinds = ["step": ".advanced", "generate": ".replaced", "loadWorld": ".replaced",
+                     "sculpt": ".edited", "brush": ".edited", "recomputeFlow": ".edited"]
+        for method in bridge.swiftMethods() where method.body.hasPrefix("    @Callable ") {
+            guard let kind = kinds[method.name] else { continue }
+            XCTAssertTrue(method.body.contains("render.invalidate(terrain, \(kind))"),
+                          "`\(method.name)` muss `render.invalidate(…, \(kind))` melden")
+        }
     }
 
     /// Zugriffe, die das Terrain nur LESEN. Jeder Eintrag ist eine bewusste

@@ -773,6 +773,35 @@ Studie keinen Hebel mehr.
   hochgeladen; im Zeitraffer blendet der Terrain-Shader mit derselben Blende
   wie die Verschiebung (`bake_blend`) vom alten zum neuen Stand, statt Kronen
   an Ufern und Waldrändern umspringen zu lassen.
+- **Wald wächst nach (#167).** Im Zeitraffer wanderten sandfarbene
+  Kahlflächen mit den Mäandern: die Schutzmaske stanzte den Wald in jedem
+  Bild dort aus, wo gerade ein Band lag, und er sprang sofort zurück, sobald
+  es weiterzog. Jetzt hält `RenderState` ein Gedächtnis in Sim-Jahren
+  (`ForestCanopyMask.regrow`): Kommt Wasser, ist der Wald sofort weg; zieht
+  es sich zurück, wächst er mit `CanopyRender.regrowYears` = 800 J.
+  exponentiell nach (`Terrain.relaxFraction`, Zeitraffer und Sprung ergeben
+  dasselbe). Wegen der je Krone zufälligen Schwelle kommt er Krone für
+  Krone zurück, wandernde Mäander hinterlassen einen offenen Auengürtel.
+  Pinsel, Neugenerieren und Laden setzen das Gedächtnis zurück
+  (`TerrainChange.edited`/`.replaced`). Messlauf
+  `testCanopyChurnDiagnostic` (Seed 1337, Jahr 100.000, Maske alle 25 J.),
+  Anteil der Landfläche, deren Wald je 100-Jahr-Takt über 0,5 kippt:
+
+  | Fassung | Umkippen je Takt | Waldanteil |
+  | --- | ---: | ---: |
+  | ohne Gedächtnis (vor #167) | 0,92 % | 38,7 % |
+  | τ = 300 J. | 0,57 % | 37,7 % |
+  | τ = 500 J. | 0,48 % | 37,3 % |
+  | **τ = 800 J. (Produktion)** | **0,39 %** | **36,8 %** |
+  | τ = 1200 J. | 0,34 % | 36,2 % |
+  | ganz ohne Schutzmaske | 0,26 % | 55,4 % |
+
+  Die letzte Zeile ist die Untergrenze, das Umkippen der Sim-Vegetation
+  selbst. Zielwert war die Hälfte von heute (≤ 0,45 %); 800 J. nimmt den
+  wandernden Bändern vier Fünftel ihres Anteils (0,66 → 0,13 Punkte),
+  längere τ machen den Auengürtel nur breiter. Die Werte weichen von der
+  Tabelle im Ticket ab (1,06 % heute), weil der Lauf hier wie der
+  Zeitraffer alle 25 J. eine Maske baut und das Wasser mit 0,15 blendet.
 - **Pinsel und Kamera.** Pinselring und Kameraziel liegen auf dem Dach
   (`_surface_y` addiert den Dachzuschlag), der Pinsel ändert weiter die
   Sim-Zelle darunter.
@@ -792,6 +821,7 @@ angehobener Kante, keine Silhouette einzelner Bäume.
 Wächter: `SimCoreTests/CanopyTests.swift` (kein Wald über Flüssen, Seen und
 Bändern samt Nachbarzelle, keiner in Wänden, auf Schnee, im Ufersaum;
 Determinismus; Pinsel, Neugenerieren und Laden ohne veralteten Wald;
+Nachwachsen dt-invariant, sofortiges Verschwinden bei Wasser;
 Vertrag und Uniform-Weg) und `game/tests/canopy.gd` (CI-Marke `CANOPY_OK`:
 Uniforms gesetzt, Waldtextur am Material, keine Instanzbäume, Fläche auf dem
 Dach; Pinselstrich, Neugenerieren und Laden über die Pfade von `Main.gd`).

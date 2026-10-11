@@ -183,18 +183,25 @@ final class CanopyTests: XCTestCase {
     }
 
     /// Pinselstrich (über `BrushTool`, wie die Brücke): nach dem Render-Takt
-    /// derselbe Wald wie in einem frischen Render-Zustand.
+    /// derselbe Wald wie in einem frischen Render-Zustand. Vorher läuft die
+    /// Sim, damit das Gedächtnis der Waldmaske (#167) etwas hält, das der
+    /// Pinsel verwerfen muss.
     func testBrushStrokeLeavesNoStaleForest() {
         let terrain = aged()
         let render = RenderState(geometryMode: true)
+        refresh(render, terrain)
+        terrain.step(dtYears: 200)
+        render.invalidate(terrain, .advanced)
         let before = refresh(render, terrain).forest
+        XCTAssertNotEqual(before, refresh(RenderState(geometryMode: true), terrain).forest,
+                          "Vorbedingung: das Gedächtnis hält nachwachsenden Wald")
 
         let n = Double(terrain.cfg.n)
         BrushTool.raise.apply(to: terrain, gx: n / 2, gz: n / 2,
                               radiusWorld: 25, strength: 40, target: 0)
-        render.invalidate(terrain)
+        render.invalidate(terrain, .edited)
         terrain.recomputeFlowAfterEdit()
-        render.invalidate(terrain)
+        render.invalidate(terrain, .edited)
         let after = refresh(render, terrain).forest
 
         XCTAssertNotEqual(before, after, "Pinselstrich muss den Wald verändern")
@@ -208,7 +215,7 @@ final class CanopyTests: XCTestCase {
 
         terrain.generate(seed: 9999)
         terrain.computeFlow()
-        render.invalidate(terrain, worldReplaced: true)
+        render.invalidate(terrain, .replaced)
         let after = refresh(render, terrain).forest
 
         XCTAssertNotEqual(before, after)
@@ -225,11 +232,70 @@ final class CanopyTests: XCTestCase {
         let render = RenderState(geometryMode: true)
         let before = refresh(render, aged()).forest
         let loaded = try WorldSnapshot.read(from: path)
-        render.invalidate(loaded, worldReplaced: true)
+        render.invalidate(loaded, .replaced)
         let after = refresh(render, loaded).forest
 
         XCTAssertNotEqual(before, after)
         XCTAssertEqual(after, refresh(RenderState(geometryMode: true), loaded).forest)
+    }
+
+    // MARK: - Gedächtnis (Issue #167)
+
+    /// Ein großer Schritt ergibt dasselbe wie viele kleine (AGENTS.md
+    /// § Framerate-Unabhängigkeit), und zwar die exponentielle Relaxation.
+    func testRegrowthIsDtInvariant() {
+        let target: [UInt8] = [255, 200, 128, 60]
+        let start: [Float] = [0, 0.1, 0.3, 0.2]
+        let tau = CanopyRender.regrowYears
+        var once = start
+        let jump = ForestCanopyMask.regrow(&once, toward: target, dtYears: 600, tau: tau)
+        var many = start
+        var tick: [UInt8] = []
+        for _ in 0..<24 {
+            tick = ForestCanopyMask.regrow(&many, toward: target, dtYears: 25, tau: tau)
+        }
+        let rise = Float(1 - exp(-600 / tau))
+        for k in target.indices {
+            let t = Float(target[k]) / 255
+            XCTAssertEqual(once[k], start[k] + (t - start[k]) * rise, accuracy: 1e-6)
+            XCTAssertEqual(many[k], once[k], accuracy: 1e-5, "Zelle \(k)")
+            XCTAssertLessThanOrEqual(abs(Int(tick[k]) - Int(jump[k])), 1, "Zelle \(k)")
+            XCTAssertLessThan(jump[k], target[k], "nach 2 τ noch nicht ganz nachgewachsen")
+        }
+    }
+
+    /// Kommt Wasser (oder geht die Vegetation zurück), ist der Wald sofort weg,
+    /// auch ohne verstrichene Sim-Zeit.
+    func testForestVanishesAtOnce() {
+        let target: [UInt8] = [0, 40, 255]
+        var memory: [Float] = [1, 1, 1]
+        let out = ForestCanopyMask.regrow(&memory, toward: target, dtYears: 0,
+                                          tau: CanopyRender.regrowYears)
+        XCTAssertEqual(out, target)
+        XCTAssertEqual(memory, target.map { Float($0) / 255 })
+    }
+
+    /// Im Render-Takt: nach einem Sim-Schritt steht nirgends mehr Wald als in
+    /// der frischen Maske, und wo er zurückkommt, wächst er erst nach. Gleiche
+    /// Abfolge ergibt dieselben Bytes.
+    func testForestRegrowsOverSimYears() {
+        func run() -> (memory: [UInt8], fresh: [UInt8]) {
+            let terrain = aged()
+            let render = RenderState(geometryMode: true)
+            refresh(render, terrain)
+            terrain.step(dtYears: 200)
+            render.invalidate(terrain, .advanced)
+            return (refresh(render, terrain).forest,
+                    refresh(RenderState(geometryMode: true), terrain).forest)
+        }
+        let (memory, fresh) = run()
+        var regrowing = 0
+        for k in fresh.indices {
+            XCTAssertLessThanOrEqual(memory[k], fresh[k], "Zelle \(k): mehr Wald als das Ziel")
+            if memory[k] < fresh[k] { regrowing += 1 }
+        }
+        XCTAssertGreaterThan(regrowing, 0, "Kein Wald wächst nach: Gedächtnis wirkungslos")
+        XCTAssertEqual(run().memory, memory, "Gleiche Abfolge muss dieselbe Waldmaske liefern")
     }
 
     // MARK: - Uniform-Weg (Struktur)
