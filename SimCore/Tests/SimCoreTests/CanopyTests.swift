@@ -68,7 +68,7 @@ final class CanopyTests: XCTestCase {
         XCTAssertGreaterThan(bands, 0, "Testwelt braucht Flussbänder")
         // Seit #168 (Schwellen 0,35/0,55) trägt die Testwelt 2013 geschlossene
         // Waldzellen (5,5 % aller Zellen); die alte Grenze n²/20 (1843) ließ
-        // kaum Luft. n²/40 verlangt weiter rund tausend Zellen neben Wasser.
+        // kaum Luft. n²/40 verlangt weiter über 900 geschlossene Waldzellen.
         XCTAssertGreaterThan(forest.filter { $0 == 255 }.count, n * n / 40,
                              "Testwelt braucht geschlossenen Wald, sonst prüft der Test nichts")
     }
