@@ -78,14 +78,19 @@ public enum ForestCanopyMask {
     /// `protect` = R8-Schutzmaske, `clump` = `clumpField`. Passt eine Eingabe
     /// nicht zur Gittergröße oder fehlt die Schrittweite (`cellSize == 0`, etwa
     /// bei `world <= 0` oder nicht-endlich), bleibt die Maske leer statt falsch.
-    /// Die Vegetations-Schwellen sind nur für den Kalibrier-Sweep
-    /// (`testCanopyCoverageDiagnostic`) überschreibbar; Produktion liest die
-    /// Defaults aus `CanopyRender`.
     public static func bytes(_ terrain: Terrain, surfaces: [UInt8], protect: [UInt8],
-                             clump: [Float],
-                             vegetationLo: Double = CanopyRender.vegetationLo,
-                             vegetationHi: Double = CanopyRender.vegetationHi,
-                             clumpGain: Double = CanopyRender.clumpGain) -> [UInt8] {
+                             clump: [Float]) -> [UInt8] {
+        bytes(terrain, surfaces: surfaces, protect: protect, clump: clump,
+              vegetationLo: CanopyRender.vegetationLo, vegetationHi: CanopyRender.vegetationHi,
+              clumpGain: CanopyRender.clumpGain)
+    }
+
+    /// Dieselbe Maske mit anderen Vegetations-Schwellen, nur für den
+    /// Kalibrier-Sweep (`testCanopyCoverageDiagnostic`, Issue #168); bewusst
+    /// nicht öffentlich, die Produktion liest allein `CanopyRender`.
+    static func bytes(_ terrain: Terrain, surfaces: [UInt8], protect: [UInt8],
+                      clump: [Float], vegetationLo: Double, vegetationHi: Double,
+                      clumpGain: Double) -> [UInt8] {
         let n = terrain.cfg.n
         let cnt = n * n
         let h = terrain.h

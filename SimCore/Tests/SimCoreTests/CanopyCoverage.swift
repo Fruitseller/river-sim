@@ -7,10 +7,10 @@ import XCTest
 /// Waldanteil des Kronendachs über die Matrix-Welten (Issue #168).
 ///
 /// Misst, wie viel Land Wald trägt (Waldmaske ≥ 0,5), wie viel davon
-/// bewachsen ist (Vegetationsgewicht `vegW` ≥ 0,14, R-Kanal von `surfaces`)
-/// und wie viel bewachsenes Land ohne Wald als Wiese bleibt — für die
-/// Produktions-Schwellen und jede Kandidaten-Zeile in `candidates`. Tabelle:
-/// `docs/graphics-quality.md` § Waldanteil.
+/// bewachsen ist (Vegetationsgewicht `vegW` ≥ `vegetatedFloor`, R-Kanal von
+/// `surfaces`) und wie viel bewachsenes Land ohne Wald als Wiese bleibt — für
+/// die Produktions-Schwellen und jede Kandidaten-Zeile in `candidates`.
+/// Tabelle: `docs/graphics-quality.md` § Wald und Wiese (#168).
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
 ///         -Xswiftc -swift-version -Xswiftc 5 --filter testCanopyCoverageDiagnostic
@@ -24,17 +24,23 @@ final class CanopyCoverageTests: XCTestCase {
     private let candidates: [(String, Double, Double, Double)] = [
         ("Produktion", CanopyRender.vegetationLo, CanopyRender.vegetationHi, CanopyRender.clumpGain),
         ("vor #168", 0.14, 0.32, 0.45),
+        ("0,35/0,55 g0,60", 0.35, 0.55, 0.60),
         ("0,40/0,60 g0,45", 0.40, 0.60, 0.45),
         ("0,45/0,65 g0,45", 0.45, 0.65, 0.45),
         ("0,40/0,60 g0,60", 0.40, 0.60, 0.60),
         ("0,45/0,65 g0,60", 0.45, 0.65, 0.60),
     ]
 
+    /// Ab hier zählt eine Zelle als bewachsen: die Wald-Schwelle vor #168,
+    /// damit die Spalten mit der Ticket-Tabelle vergleichbar bleiben. Der
+    /// Shader tönt Wiese schon ab `CanopyRender.meadowLo` (0,08) leicht grün.
+    private let vegetatedFloor = 0.14
+
     func testCanopyCoverageDiagnostic() throws {
         try skipUnlessMeasuring()
         let filterSeed = ProcessInfo.processInfo.environment["RS_SEED"].flatMap { UInt32($0) }
         let stages: [Double] = [2_000, 20_000, 100_000]
-        let vegFloor = UInt8(0.14 * 255 + 0.5)
+        let vegFloor = UInt8(vegetatedFloor * 255 + 0.5)
 
         print("\n=== KRONENDACH: WALDANTEIL (Issue #168) ===")
         print("| Seed | Jahr | vegW ≥ 0,14 (% Land) | vegW p50 / p90 | Schwellen | Wald (% Land) | Wiese (% Land) |")
