@@ -232,12 +232,15 @@ func _check_camera_presets() -> void:
 		var mouth: int = r["mouth"]
 		var mi := mouth % n
 		var mj := mouth / n
-		var coastal := false
+		# Auslass = Küste ODER Kartenrand: ohne Randabstand (#175) läuft der
+		# größte Lauf mancher Welt über den Rand ab (so die CI-Welt).
+		var outlet := mi == 0 or mj == 0 or mi == n - 1 or mj == n - 1
 		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 			var i: int = clampi(mi + d.x, 0, n - 1)
 			var j: int = clampi(mj + d.y, 0, n - 1)
-			coastal = coastal or h[j * n + i] <= main.sea
-		_check(h[mouth] > main.sea and coastal, "Preset %s: Mündung ist Küsten-Landzelle" % p["id"])
+			outlet = outlet or h[j * n + i] <= main.sea
+		_check(h[mouth] > main.sea and outlet,
+			"Preset %s: Mündung ist Landzelle an Küste oder Kartenrand" % p["id"])
 		var mouth_pos := Vector2(mi * main.step - main.half, mj * main.step - main.half)
 		var cam_dir := Vector2(sin(main.cam_yaw), cos(main.cam_yaw))
 		_check(cam_dir.dot(mouth_pos - Vector2(t.x, t.z)) > 0.0,
