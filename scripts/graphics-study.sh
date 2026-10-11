@@ -2,11 +2,11 @@
 # Reproduzierbare A/B-Studie #116. Aufruf aus beliebigem Verzeichnis.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-variant="${1:-prototype}"
+variant="${1:-baseline}"
 camera="${2:-detail}"
 mode="${3:-interactive}"
 output="${4:-/tmp/river-sim-study}"
-case "$variant" in baseline|prototype) ;; *) echo "Variante: baseline|prototype" >&2; exit 2;; esac
+case "$variant" in baseline) ;; *) echo "Variante: baseline (prototype ist mit #174 D entfernt)" >&2; exit 2;; esac
 case "$mode" in interactive|shot|still|orbit|simulation) ;; *) echo "Modus: interactive|shot|still|orbit|simulation" >&2; exit 2;; esac
 case "$camera" in
 overview) export RS_DIST=151.846515 RS_TARGET=0,0 RS_YAW=0.7 RS_PITCH=0.85 ;;

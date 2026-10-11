@@ -62,6 +62,7 @@ func _run() -> void:
 	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
 	_hash("terrainColorBytes", sim.terrainColorBytes())
 	_hash("terrainSurfaceBytes", sim.terrainSurfaceBytes())
+	_hash("terrainCoverBytes", sim.terrainCoverBytes())
 	# Wasserfeld zweimal: der zweite Aufruf durchläuft die EWMA-Puffer aus dem
 	# ersten (persistenter Render-Zustand) — beide Hashes gehören zum Vertrag.
 	_hash("waterFieldBytes(1.0)", sim.waterFieldBytes(1.0))

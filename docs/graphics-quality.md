@@ -124,21 +124,25 @@ deterministisch identische Welt.
 | `overview` | 0 / 0 | 151.846515 | 0.7 | 0.85 |
 | `detail` | -12 / -25 | 42 | 0.7 | 0.85 |
 
+Die Variante `prototype` (PBR-Materialien der ersten Runde) gibt es seit
+#174 D nicht mehr: die prozedurale Materialverteilung ersetzt sie (s.
+[Material, Schnee, Wolken](#material-schnee-wolken-174-d)). Die Prototyp-Bilder
+und -Filme in diesem Kapitel sind damit historische Belege; reproduzierbar
+bleibt `baseline`, die Debug-Ansichten schaltet `RS_STUDY_DEBUG`.
+
 ```sh
 export GODOT=/pfad/Godot.app/Contents/MacOS/Godot
 scripts/build-stamp.sh --check
 "$GODOT" --headless --path game --import
-scripts/graphics-study.sh prototype detail interactive
 scripts/graphics-study.sh baseline detail interactive
 
 # Der letzte Parameter ist ein absoluter Ausgabepfad ohne .png.
 scripts/graphics-study.sh baseline overview shot /tmp/baseline-overview
-scripts/graphics-study.sh prototype overview shot /tmp/prototype-overview
 
 # Getrennte Echtzeitmessungen, immer maximiert.
-scripts/graphics-study.sh prototype overview still /tmp/still
-scripts/graphics-study.sh prototype overview orbit /tmp/orbit
-scripts/graphics-study.sh prototype overview simulation /tmp/simulation
+scripts/graphics-study.sh baseline overview still /tmp/still
+scripts/graphics-study.sh baseline overview orbit /tmp/orbit
+scripts/graphics-study.sh baseline overview simulation /tmp/simulation
 ```
 
 Weitere Schalter, alle in `Flusstal.gd`:
@@ -254,10 +258,10 @@ selbst (s. o.), nicht die Maske.
 
 ## Assets und Lizenzen
 
-Die sechs 1K-JPEGs liegen unverändert unter `game/studies/flusstal/assets/`.
-Nach einem Klon ist kein Assetdienst erforderlich. `manifest.json` enthält die
-Original-Downloadadressen, die vom Anbieter gelieferten MD5-Werte und
-SHA-256-Prüfsummen der eingecheckten Dateien.
+Die sechs 1K-JPEGs lagen bis #174 D unter `game/studies/flusstal/assets/`
+(mit `manifest.json`: Downloadadressen, MD5 des Anbieters, SHA-256 der
+eingecheckten Dateien); mit der Variante `prototype` sind sie entfernt. Die
+Nennung bleibt als Herkunftsnachweis der historischen Bilder.
 
 | Asset | Urheber | Nutzung |
 | --- | --- | --- |
@@ -435,7 +439,6 @@ Das Skript `scripts/graphics-matrix.sh` automatisiert den vollständigen Durchla
 ```sh
 # 1. Alle 54 Aufnahmen für eine Variante erzeugen:
 scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline shot
-scripts/graphics-matrix.sh prototype docs/screenshots/graphics-matrix/prototype shot
 
 # 2. Übersicht aller Permutationen auflisten:
 scripts/graphics-matrix.sh baseline "" list
@@ -1039,17 +1042,103 @@ und Referenzbühne:
 
 - `baseline` ist die Anwendung selbst (`Flusstal.gd` erbt `Main.gd`) und trägt
   die Vergleichsmatrix und die Messläufe.
-- `prototype` legt zusätzlich nur die PBR-Materialien der ersten Runde
-  (`materials.gdshaderinc`, sechs CC0-Texturen) und die Debug-Ansichten
-  (`RS_STUDY_DEBUG`) darüber. Die Materialien sind bewusst NICHT übernommen
-  (geomorphologische Materialverteilung ist laut Spec außerhalb des Umfangs);
-  sie bleiben als historische Referenz der Studie stehen. Wer sie übernehmen
-  will, macht daraus ein eigenes Ticket; wer sie streicht, entfernt mit ihnen
-  die `FLUSSTAL_STUDY`-Hooks in `terrain.gdshader`.
+- `prototype` legte bis #174 D die PBR-Materialien der ersten Runde
+  (`materials.gdshaderinc`, sechs CC0-Texturen) darüber. #174 D hat sie durch
+  die prozedurale, geomorphologische Materialverteilung ersetzt und mit ihren
+  Texturen und dem Material-Hook in `terrain.gdshader` entfernt (s.
+  [Material, Schnee, Wolken](#material-schnee-wolken-174-d)). Geblieben ist ein
+  `FLUSSTAL_STUDY`-Hook für die Debug-Ansichten (`RS_STUDY_DEBUG`).
 - Die Hebel-Schalter sind entfallen: ein gesetztes `RS_STUDY_LEVERS` bricht
   ab, `RS_STUDY_GRID` und `RS_STUDY_RELIEF` liest nichts mehr (s.
   [Reproduktion](#reproduktion)).
 
 **Offen und bewusst nicht Teil von #156:** geomorphologische
-Materialverteilung (Fels auf konvex-steil, Schutthalden, Kiesbänke), höhere
-Render-Gitter als n, Detailstufen der Geometrie nach Kameradistanz.
+Materialverteilung (Fels auf konvex-steil, Schutthalden, Kiesbänke; Fels und
+Halden seit #174 D, Kiesbänke folgen mit #174 C), höhere Render-Gitter als n,
+Detailstufen der Geometrie nach Kameradistanz.
+
+## Material, Schnee, Wolken (#174 D)
+
+Paket D des Zielbilds #174 (Vorlagen A–C unter `docs/references/zielbild/` auf
+`claude/sim-appearance-functionality-643hwl`): der in #156 offen gelassene Punkt
+„geomorphologische Materialverteilung" plus Wolkenkörper. Reine Render-Arbeit:
+`simperf --hash` vorher (main `55323b5`) und nachher gleich (`c5f16bebbb66a860`,
+M4 Max, Produktions-Config).
+
+**Was wo entsteht.** WO ein Material liegt, rechnet
+`SimRender.TerrainColorRenderer` je Sim-Zelle (headless, Kalibrierung
+`SimCore.MaterialRender`, Wächter `SimCoreTests/MaterialTests.swift`); WIE es
+aussieht, rechnet `terrain.gdshader` je Pixel (Uniform-Weg
+`SimRender.MaterialUniforms` → `SimNode` → `Main.gd`, default-frei, Wächter
+`MaterialTests` und `game/tests/canopy.gd`). Der neue Puffer `covers` reist als
+`cover_tex` mit den Overlays (Frame-Schlüssel `cover`, Zeitraffer-Blende wie
+`surface_tex`):
+
+| Material | Wo (CPU) | Wie (Shader) |
+| --- | --- | --- |
+| Fels | Weltsteigung aus `Terrain.macroSlope` 1,50 → 2,60 (56° → 69°), auf Graten bis 0,5 früher, in Rinnen später (Konvexität ±2 Zellen); Bewuchs weicht erst ab 40 % Mineral | dunkelgrau (0,20–0,33), Blockton, Klüftung triplanar aus Rauschen: Runsen in Fallrichtung (Abstand ~30–60 m, 5-fach gestreckt), gestückelte Fugen und Schichtfugen, Breite und Stärke moduliert, in Rinnen des Relief-Bakes (#153) 1,6-fach, auf Rippen 0,4-fach; Schichten aus der Lithologie nur stückweise; auf Rippen mehr Fels, in Rinnen rutscht er als Schutt nach. Die erste Fassung (zwei gerade Kluftscharen, 45 m, in der Waagerechten) las sich auf den Wänden als Drahtgitter (Review PR #177) |
+| Schutthalde | Fels in 3 Zellen Reichweite, Steigung im Schüttwinkel (30°–39°), Hohlform | hell, grob gekörnt (5 m), rau |
+| Schnee/Firn | Kältedeckung wie bisher (B von `surfaces`) | weiß mit Windverfrachtung |
+| Gletschereis | blankes Eis nur im Zehrgebiet (`Terrain.temperature` über 0 °C, ±1 °C weich), darüber Firn | bläulich, Spalten quer zur Fließrichtung ab 22° Gefälle, Seiten- und Mittelmoränen |
+| Rohboden (braun) | nur `Terrain.disturb` (Pinsel), klingt mit der Regeneration ab | der alte Bodenton |
+| Grund | Rest ohne Bewuchs, Fels, Schutt, Eis, Rohboden | Trockenrasen, über der Vegetationsgrenze steinig; bis #174 war das brauner Boden |
+| Talboden-Wiese | flach (unter 0,10 → 0,30) und unter dem Nadelwald-Band (#152) | Wiese, Bewuchs und Grund hell-saftig |
+
+Anknüpfungspunkt Paket B: der A-Kanal von `covers` (Talboden) nimmt alte Bänke
+(`barAge`) als zweite Quelle auf (`max`), sobald das Feld existiert; die Stelle
+ist in `TerrainColorRenderer` markiert.
+
+**Flächenanteile** (`testMaterialCoverageDiagnostic`, Produktions-Config,
+% der Landzellen; „vorher" ist der Stand vor #174 D, im Messlauf als
+`LegacyTerrainColor` mitgerechnet):
+
+| Seed | Jahr | Fels vorher | Fels | Halde | Kälte | blankes Eis | Talboden | Grund ≥ 0,5 | Wald vorher | Wald |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1337 | 2.000 | 0,6 | 23,5 | 10,6 | 2,3 | 1,3 | 5,3 | 41,6 | 8,5 | 7,8 |
+| 1337 | 20.000 | 0,4 | 16,1 | 5,0 | 1,0 | 0,3 | 12,3 | 48,4 | 10,9 | 10,4 |
+| 1337 | 100.000 | 1,0 | 7,5 | 2,2 | 0,2 | 0,0 | 9,3 | 53,3 | 19,3 | 19,0 |
+| 42 | 2.000 | 0,9 | 15,5 | 7,5 | 0,4 | 0,2 | 6,2 | 46,2 | 17,8 | 16,6 |
+| 42 | 20.000 | 1,3 | 12,8 | 4,0 | 0,0 | 0,0 | 11,3 | 51,7 | 20,4 | 19,5 |
+| 42 | 100.000 | 1,6 | 13,1 | 3,9 | 0,0 | 0,0 | 7,1 | 51,9 | 19,3 | 18,3 |
+| 20 | 2.000 | 0,4 | 18,9 | 8,7 | 3,5 | 2,2 | 8,4 | 50,0 | 10,0 | 9,2 |
+| 20 | 20.000 | 0,6 | 14,5 | 4,3 | 1,6 | 0,5 | 15,6 | 54,1 | 13,0 | 12,4 |
+| 20 | 100.000 | 1,3 | 8,8 | 2,1 | 0,4 | 0,0 | 12,2 | 53,2 | 22,6 | 22,1 |
+
+Fels, Halde und Talboden ≥ 0,5 Gewicht; blankes Eis ≥ 0,3 Anteil auf Zellen mit
+Kälte ≥ 0,5; Wald = Waldmaske ≥ 0,5. Der Wald bleibt höchstens 22,1 % des
+Landes (#168 nicht zurückgedreht); er verliert 0,3–1,2 Punkte an Wände und
+Halden. Verworfen: Fels ab 0,70/1,20 (52–63 % Fels, Wald auf ein Viertel),
+Halde ohne Hohlform-Bedingung (11–22 % Halde, Wald bis −24 %), Fels VOR dem
+Bewuchs ohne Ausweich-Rampe (Wald 8,5 → 6,0 % auf 1337/2.000). Gletscher gibt
+es auf den heutigen Welten nur jung und klein (Eisdeckung ≥ 0,1 auf 0,0–4,9 %
+des Landes); Paket A hebt den Kamm über die Schneegrenze.
+
+**Wolkenkörper.** `game/shaders/cloud_body.gdshader`: drei gestapelte,
+weiche Impostor-Ebenen (Abstand 45 m, höhere nur im Wolkenkern) knapp über dem
+oberen Felsband (`HeightBands.rockFull` + 0,6, Main.gd bei jedem Overlay-Upload),
+sichtbar nur über Gelände zwischen `rockStart` und `rockFull` (dem Kamm).
+Rauschen und Deckungsschwelle sind dieselben wie die der Wolkenschatten
+(`clouds.gdshaderinc`, `cloud_cover`). Die Schatten projizieren seit #174 D
+entlang der Sonne auf die Wolkenbasis (`cloud_sun_shift`, `cloud_height`) und
+liegen damit unter ihrer Wolke; Gipfel über der Basis stehen in der Sonne.
+In `performance` sind Körper und Schatten aus (Wächter `lighting.gd`).
+
+**Studie aufgeräumt.** Die PBR-Variante `prototype` (sechs CC0-Texturen,
+`materials.gdshaderinc`) ist entfernt; ihr Fels war Kalkstein-hell und
+gekachelt, die prozedurale Verteilung ersetzt ihn. Der `FLUSSTAL_STUDY`-Hook
+trägt nur noch die Debug-Ansichten (`RS_STUDY_DEBUG`).
+
+**Leistung.** CPU (Material-Pass, interleavtes A/B, 9 Läufe, Median, M4 Max,
+n = 720): vorher 0,59–0,80 ms, nachher 1,25–2,08 ms je Overlay-Upload (im
+Zeitraffer höchstens alle 0,30 s). Die GPU-Kosten des Shaders (Abnahmepunkt 47:
+Standbild und Kamerafahrt ≤ 33,3 ms in `balanced`, maximiert) sind NICHT
+gemessen: die Agenten bauen die GDExtension nicht lokal, CI rendert headless.
+Neu je Pixel: Klüftung und Körnung nur auf Fels- bzw. Haldenpixeln, Spalten und
+Moränen nur auf Eis (alle hinter `material_enabled`, in `performance` aus); die
+Wolkenkörper sind drei transparente Ebenen über dem Inselquadrat mit je drei
+Rauschoktaven. Die Messung gehört vor das Mergen auf den Referenz-Mac
+(`scripts/graphics-matrix.sh baseline … timing`).
+
+**Abnahme (Bildpunkte 31–38).** Bewertet der Projekteigner auf den
+Matrix-Bögen und den Vorlagen-Kameras; die Bilder dieses Pakets entstehen auf
+dem Referenz-Mac mit `scripts/graphics-matrix.sh baseline`.

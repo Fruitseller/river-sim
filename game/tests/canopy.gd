@@ -9,7 +9,10 @@ extends SceneTree
 ##  - die Waldmaske liegt als Textur am Material und folgt Pinselstrich,
 ##    Neugenerieren und Laden (die Pfade von Main, nicht nur die Brücke);
 ##  - es gibt keine Instanzbäume mehr;
-##  - Pinselring und Kameraziel liegen auf dem Dach (sichtbare Fläche).
+##  - Pinselring und Kameraziel liegen auf dem Dach (sichtbare Fläche);
+##  - Materialverteilung (#174 D): jede `material_*`-Zahl kommt über die Brücke
+##    (SimCore.MaterialRender), ist default-frei deklariert und gesetzt, die
+##    Bodenbedeckung liegt in Gittergröße am Material und folgt dem Pinsel.
 ## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
@@ -38,6 +41,7 @@ func _process(_delta: float) -> bool:
 		return false
 	done = true
 	_check_uniforms(main)
+	_check_material(main)
 	_check_no_instance_trees(main)
 	_check_visible_surface(main)
 	_check_brush(main)
@@ -77,6 +81,31 @@ func _check_uniforms(main: Node) -> void:
 	var tex: Texture2D = mat.get_shader_parameter("forest_tex")
 	_check(tex != null and tex.get_width() == main.N and tex.get_height() == main.N,
 		"Waldmaske liegt in Gittergröße am Material")
+
+## Materialverteilung (#174 D): Kalibrierung über die Brücke, default-frei
+## im Terrain-Shader, gesetzt; die Bodenbedeckung kommt mit dem Frame.
+func _check_material(main: Node) -> void:
+	var calib: Dictionary = Main.material_calibration(main.sim)
+	_check(not calib.is_empty(), "Brücke liefert die Material-Tabelle")
+	var mat: ShaderMaterial = main.terrain_mat
+	var decl_re := RegEx.new()
+	decl_re.compile("(?m)^uniform\\s+float\\s+(material_[A-Za-z0-9_]+)([^;]*);")
+	var declared := {}
+	for m in decl_re.search_all(FileAccess.get_file_as_string(SHADER)):
+		var name := m.get_string(1)
+		declared[name] = true
+		_check(calib.has(name), "Terrain-Shader deklariert %s an der Brücke vorbei" % name)
+		_check(m.get_string(2).find("=") < 0, "%s trägt einen Literal-Default" % name)
+		var got: Variant = mat.get_shader_parameter(name)
+		_check(got != null and absf(float(got) - float(calib.get(name, 0.0))) < 1e-6,
+			"%s nicht gesetzt" % name)
+	for name in calib:
+		_check(declared.has(name), "Brückenwert %s wird vom Terrain-Shader nicht gelesen" % name)
+	var tex: Texture2D = mat.get_shader_parameter("cover_tex")
+	_check(tex != null and tex.get_width() == main.N and tex.get_height() == main.N,
+		"Bodenbedeckung liegt in Gittergröße am Material")
+	var cover: PackedByteArray = main.sim.terrainCoverBytes()
+	_check(cover.size() == main.N * main.N * 4, "Bodenbedeckung ist RGBA8 in Gittergröße")
 
 func _check_no_instance_trees(main: Node) -> void:
 	for child in main.get_children():
@@ -147,6 +176,8 @@ func _check_brush(main: Node) -> void:
 		"Pinselstrich: unter den Meeresspiegel eingeebneter Wald verschwindet (%d)"
 			% main.forest_img.get_data()[cell])
 	_check_uploaded(main, tex, "Pinselstrich")
+	_check(main.cover_field._img.get_data() == main.sim.terrainCoverBytes(),
+		"Pinselstrich: hochgeladen ist die aktuelle Bodenbedeckung (#174 D)")
 
 ## Neugenerieren tauscht den Wald, Laden holt den gespeicherten zurück. Nicht
 ## mitgespeichert ist der Render-Zustand des Rasterwassers (EWMA, s. AGENTS.md);
