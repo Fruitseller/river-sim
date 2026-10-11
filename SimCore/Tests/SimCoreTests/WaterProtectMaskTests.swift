@@ -10,7 +10,8 @@ import XCTest
 ///  - Sichtbare Raster-Flüsse und Seen aus dem Wasserfeld
 ///  - Jede gebaute Bandfläche (`RiverRibbonRenderer.bandCoverage`), auch dort,
 ///    wo der Raster-Deckel das Wasser darunter entfernt hat
-///  - Einen Saum von `WaterRender.protectSeamCells` Zellen um beides
+///  - Die nasse Wiese (Issue #174 C, `WaterFieldRenderer.wetMeadow`)
+///  - Einen Saum von `WaterRender.protectSeamCells` Zellen um alles
 ///  - Trockenes Land ohne Wasser/Bänder im Saum-Abstand bleibt frei (0)
 ///  - Das Render-Wasserfeld selbst ändert sich nicht
 ///  - Gleiche Welt ergibt dieselbe Maske; Pinsel, Neugenerieren und Laden
@@ -35,13 +36,16 @@ final class WaterProtectMaskTests: XCTestCase {
         return (water, render.protectMaskBytes(terrain))
     }
 
-    /// Kern-Zellen (Wasser oder Band) nach den Vertrags-Schwellen.
-    private func core(_ water: [UInt8], _ coverage: [Double], count: Int) -> [Bool] {
+    /// Kern-Zellen (Wasser, Band oder nasse Wiese, #174 C) nach den
+    /// Vertrags-Schwellen.
+    private func core(_ water: [UInt8], _ coverage: [Double], meadow: [Bool],
+                      count: Int) -> [Bool] {
         let river = byte01(WaterRender.protectRiverThreshold)
         let lake = byte01(WaterRender.protectLakeThreshold)
         return (0..<count).map { k in
             water[k * 4] >= river || water[k * 4 + 1] >= lake
                 || (k < coverage.count && coverage[k] >= WaterRender.protectBandThreshold)
+                || (k < meadow.count && meadow[k])
         }
     }
 
@@ -74,7 +78,7 @@ final class WaterProtectMaskTests: XCTestCase {
                              "Testwelt braucht Bandzellen ohne sichtbares Raster (Raster-Deckel)")
 
         // Exakt: geschützt genau dann, wenn eine Kernzelle im Saum-Abstand liegt.
-        let isCore = core(water, coverage, count: cnt)
+        let isCore = core(water, coverage, meadow: render.wetMeadowMask, count: cnt)
         var free = 0
         for j in 0..<n {
             for i in 0..<n {
@@ -184,18 +188,21 @@ final class WaterProtectMaskTests: XCTestCase {
 
         let water = render.waterFieldBytes(terrain, blend: 1.0)
         let waterOnly = render.protectMaskBytes(terrain)
-        XCTAssertEqual(waterOnly, WaterProtectMask.bytes(n: n, bandCoverage: [], waterBytes: water))
+        XCTAssertEqual(waterOnly, WaterProtectMask.bytes(n: n, bandCoverage: [], waterBytes: water,
+                                                         wetMeadow: render.wetMeadowMask))
 
         render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
         let coverage = render.riverRibbonMesh.bandCoverage
         let withBands = render.protectMaskBytes(terrain)
         XCTAssertEqual(withBands,
-                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water))
+                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water,
+                                              wetMeadow: render.wetMeadowMask))
         XCTAssertNotEqual(withBands, waterOnly, "Band-Bau muss die Maske erneuern")
 
         let water2 = render.waterFieldBytes(terrain, blend: 1.0)
         XCTAssertEqual(render.protectMaskBytes(terrain),
-                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water2),
+                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water2,
+                                              wetMeadow: render.wetMeadowMask),
                        "Wasser-Upload muss die Maske erneuern")
     }
 

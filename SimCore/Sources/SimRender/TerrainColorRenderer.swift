@@ -9,6 +9,8 @@ import SimCore
 /// verwaschene "Textur" sichtbar zu machen.
 public enum TerrainColorRenderer {
     public struct Buffers {
+        /// RGB = Makrofarbe, A = Sandgewicht des Strands (Issue #174 C,
+        /// `CoastMaterial`; 0 = kein Strand).
         public let colors: [UInt8]
         /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
         /// A = Lithologie-Härte von −1 ... +1 auf 0 ... 1 abgebildet.
@@ -50,6 +52,8 @@ public enum TerrainColorRenderer {
         let iceOn = ice.count == n * n
         let iceRef = terrain.cfg.iceCoverRef
         let bands = terrain.heightBands
+        // Strand und Felsküste (Issue #174 C): Abstand zum Meer je Zelle.
+        let coastDistance = CoastMaterial.seaDistance(terrain)
 
         var colors = [UInt8](repeating: 255, count: n * n * 4)
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
@@ -60,6 +64,7 @@ public enum TerrainColorRenderer {
         lith.withUnsafeBufferPointer { ltb in
         snow.withUnsafeBufferPointer { snb in
         ice.withUnsafeBufferPointer { icb in
+        coastDistance.withUnsafeBufferPointer { cdb in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
         // Nach dem Guard oben hat jeder Puffer mindestens eine Zelle (Eingaben n*n bzw. [0.0],
@@ -69,6 +74,7 @@ public enum TerrainColorRenderer {
         let psalt = slb.baseAddress!, plith = ltb.baseAddress!
         let psnow = snb.baseAddress!, pice = icb.baseAddress!
         let pcolor = cb.baseAddress!, psurface = sb.baseAddress!
+        let pcoast = cdb.baseAddress!
 
         parallelChunks(n) { jLo, jHi in
             for j in jLo..<jHi {
@@ -78,12 +84,20 @@ public enum TerrainColorRenderer {
                     let hard = lithOn ? min(1, max(-1, plith[k])) : 0
                     var r = 0.0, g = 0.0, b = 0.0
                     var vegWeight = 0.0, rockWeight = 0.0, coldWeight = 0.0
+                    let interior = i > 1 && i < n - 2 && j > 1 && j < n - 2
+                    var sand = 0.0
 
                     if v <= sea + 0.012 {
                         (r, g, b) = gradColor(v)
+                        // Der Strand reicht bis an die Wasserlinie (#174 C).
+                        if v > sea && interior {
+                            sand = CoastMaterial.sand(distance: pcoast[k],
+                                                      slope: Terrain.macroSlope(ph, k, n),
+                                                      height: v - sea)
+                        }
                     } else {
                         var slope = 0.0
-                        if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
+                        if interior {
                             slope = Terrain.macroSlope(ph, k, n)
                         }
                         let steep = clamp01(slope * 45)
@@ -154,6 +168,21 @@ public enum TerrainColorRenderer {
                         let cliff = smoothstep(0.004, 0.026, slope)
                         rockWeight = max(highRock * 0.82, cliff)
                             * (1 - vegWeight) * (1 - coldWeight) * (1 - saltCover)
+
+                        // Küste (#174 C): steile Küste in Reichweite der
+                        // Brandung wird Fels (sie räumt den Bewuchs ab), flache
+                        // Küste knapp über dem Meer Sand. Beide verdrängen
+                        // Vegetation und Fels anteilig; die Summe bleibt ≤ 1.
+                        let cliffCoast = CoastMaterial.cliff(distance: pcoast[k], slope: slope)
+                            * (1 - coldWeight)
+                        if cliffCoast > 0 {
+                            vegWeight *= 1 - cliffCoast
+                            rockWeight = max(rockWeight, cliffCoast * (1 - vegWeight))
+                        }
+                        sand = CoastMaterial.sand(distance: pcoast[k], slope: slope,
+                                                  height: v - sea) * (1 - coldWeight)
+                        vegWeight *= 1 - sand
+                        rockWeight *= 1 - sand
                     }
 
                     // Umrechnung 0…1 → Byte nur über `byte01` (RenderSupport):
@@ -162,7 +191,7 @@ public enum TerrainColorRenderer {
                     pcolor[o] = byte01(r)
                     pcolor[o + 1] = byte01(g)
                     pcolor[o + 2] = byte01(b)
-                    pcolor[o + 3] = 255
+                    pcolor[o + 3] = byte01(sand)
                     psurface[o] = byte01(vegWeight)
                     psurface[o + 1] = byte01(rockWeight)
                     psurface[o + 2] = byte01(coldWeight)
@@ -170,7 +199,7 @@ public enum TerrainColorRenderer {
                 }
             }
         }
-        }}}}}}}}}
+        }}}}}}}}}}
 
         return Buffers(colors: colors, surfaces: surfaces)
     }

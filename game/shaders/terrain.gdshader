@@ -47,7 +47,7 @@ render_mode cull_disabled;
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
-uniform sampler2D color_tex : filter_linear, repeat_disable;
+uniform sampler2D color_tex : filter_linear, repeat_disable; // RGB Makrofarbe, A Sandgewicht (Strand, #174 C)
 uniform sampler2D surface_tex : filter_linear, repeat_disable; // R Vegetation, G Fels, B Schnee/Eis, A Lithologie
 // Zeitraffer-Überblenden (#172, Main.gd `Crossfade`): der Vorgängerstand je
 // Textur und zwei Blenden, jede im Takt IHRES Uploads. `height_blend` folgt
@@ -217,9 +217,10 @@ float hf_at(vec2 uv) {
 	return overlay_blend < 1.0 ? mix(texture(hf_prev_tex, uv).r, h, overlay_blend) : h;
 }
 
-vec3 color_at(vec2 uv) {
-	vec3 c = texture(color_tex, uv).rgb;
-	return overlay_blend < 1.0 ? mix(texture(color_prev_tex, uv).rgb, c, overlay_blend) : c;
+// RGB = Makrofarbe, A = Sandgewicht des Strands (#174 C).
+vec4 color_at(vec2 uv) {
+	vec4 c = texture(color_tex, uv);
+	return overlay_blend < 1.0 ? mix(texture(color_prev_tex, uv), c, overlay_blend) : c;
 }
 
 vec4 surface_at(vec2 uv) {
@@ -453,7 +454,8 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 macro_color = color_at(v_uv);
+	vec4 macro_rgba = color_at(v_uv);
+	vec3 macro_color = macro_rgba.rgb;
 	vec4 surface = surface_at(v_uv);
 	vec3 debug_color = texture(debug_difference_tex, v_uv).rgb;
 	float hval = height_at(v_uv);
@@ -617,6 +619,16 @@ void fragment() {
 	land_roughness = mix(land_roughness, 0.78, cold);
 	land_roughness = mix(land_roughness, 0.34, ice_hint);
 	land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
+	// Strand (#174 C): flache Küste in Reichweite der Brandung ist Sand, bis an
+	// die Wasserlinie. Wo und wie viel, sagt allein SimRender.CoastMaterial;
+	// die Sandfarbe ist Optik dieses Shaders wie Ufer- und Kiesfarbe unten.
+	float sand = macro_rgba.a;
+	if (sand > 0.002) {
+		vec3 sand_col = mix(vec3(0.56, 0.51, 0.41), vec3(0.68, 0.62, 0.50), breakup)
+		              * mix(0.94, 1.06, top_grain * material_fade);
+		terr = mix(terr, sand_col, sand);
+		land_roughness = mix(land_roughness, 0.88, sand);
+	}
 	// Studien-Material nur im FLUSSTAL_STUDY-Build (Flusstal.gd setzt das
 	// Define zur Laufzeit) und NUR über Wasser: unterhalb der
 	// Meeresspiegel-Grenze bleibt das Flussbett bei der Standard-Optik, der

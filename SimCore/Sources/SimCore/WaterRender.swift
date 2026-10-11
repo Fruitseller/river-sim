@@ -807,4 +807,116 @@ public enum WaterRender {
     public static let oceanWaveDriftZ = 0.13
     /// … je Oktave um diesen Anteil schneller (feine Wellen laufen schneller).
     public static let oceanWaveOctaveSpeedup = 0.35
+
+    // MARK: Nasse Wiese statt Tümpel-Teppich (Issue #174, Paket C)
+
+    // Die Übersicht zeigte in den Tälern Matten kleiner blauer Flecken: Tümpel
+    // des Raster-Felds, über Bäche und Pfützen zu Komponenten verbunden, die
+    // der Komponenten-Fade oben (ab 50 Zellen voll) zeigt, einzeln aber zu
+    // klein, um als See zu lesen. Unter
+    // `wetMeadowMaxCells` malt das Raster sie nicht mehr als Wasserspiegel,
+    // sondern meldet sie als nasse Wiese; `RenderState` tönt das Material
+    // dort dunkelgrün und hält Wald und Verschiebung fern (Schutzmaske).
+    // Ausgenommen sind Komponenten an einem Band- oder Altarm-Korridor: dort
+    // malt die Geometrie, und die Übergabe Band ↔ Raster (`lakeRawWetDepth`,
+    // Mündungs-Überlappung) darf keine Lücke bekommen.
+
+    /// Tümpel (Zellen stehenden Wassers über `lakeRawWetDepth`,
+    /// 4er-Nachbarschaft, OHNE ihre Zubringer) unter dieser Größe werden
+    /// nasse Wiese. Messreihe: `docs/river-coast-render-measurements.md` §A.
+    public static let wetMeadowMaxCells = 200
+
+    /// Wird ein Tümpel als nasse Wiese gemalt? Nur ohne Band-Korridor
+    /// (`banded`); den Fluss-Kanal seiner Zellen regelt weiter `streamGate`.
+    @inline(__always)
+    public static func isWetMeadow(pondCells: Int, banded: Bool) -> Bool {
+        !banded && pondCells < wetMeadowMaxCells
+    }
+
+    /// Vegetationsgewicht (R-Kanal der Materialgewichte), auf das eine nasse
+    /// Wiese mindestens gehoben wird: dunkles Grün der Vegetations-Farbe statt
+    /// des hellen Wiesen-Tons aus #168.
+    public static let wetMeadowVegetation = 0.85
+    /// Makrofarbe der nassen Wiese (dunkler und satter als trockenes Grasland) …
+    public static let wetMeadowColor = (r: 0.07, g: 0.16, b: 0.06)
+    /// … und ihr Anteil an der Makrofarbe der Zelle.
+    public static let wetMeadowColorMix = 0.7
+
+    // MARK: Strand und Felsküste (Issue #174, Paket C)
+
+    // Bisher trug jede Küste dieselbe Bodenfarbe bis an die Wasserlinie. Jetzt
+    // wird eine Landzelle in Reichweite der Brandung (`coastReachCells`) Sand,
+    // wenn sie flach ist und knapp über dem Meer liegt — genau dort arbeitet
+    // `Terrain.wavePass` (|h − sea| ≤ `SimConfig.waveBand`) Material auf ein
+    // Strandprofil. Steile Küste in derselben Reichweite wird Fels: die
+    // Brandung räumt den Bewuchs ab, der Saum im Ozean-Shader (#155) bleibt.
+    // Ableitung: `SimRender.CoastMaterial`, Gewichte im `TerrainColorRenderer`.
+    // Messreihe: `docs/river-coast-render-measurements.md` §B.
+
+    /// Reichweite der Brandung landeinwärts (Zellen, Chebyshev-Abstand zur
+    /// nächsten Meereszelle). 3 Zellen ≈ 47 m.
+    public static let coastReachCells = 3
+    /// Höhe über dem Meeresspiegel (Sim-Einheiten), bis zu der eine flache
+    /// Küstenzelle voll Sand ist …
+    public static let beachHeightLo = 0.008
+    /// … und ab der sie kein Sand mehr ist. Muss innerhalb des Wellenbands
+    /// `SimConfig.waveBand` liegen (Wächter: `CoastMaterialTests`).
+    public static let beachHeightHi = 0.018
+    /// Makro-Steigung (`Terrain.macroSlope`), bis zu der eine Küstenzelle voll
+    /// Sand ist … GEMESSEN (§B, drei Matrix-Seeds, Jahr 0 bis 100.000): die
+    /// Brandung hält die Küste nahe am Wellen-Talus, Küstenzellen liegen bei
+    /// p50 ≈ 0,0035…0,0045 und p90 ≈ 0,005…0,006. Steil ist an dieser Küste
+    /// also schon, was über p90 liegt; ein Fenster an der allgemeinen
+    /// Klippen-Schwelle (0,004…0,026 im `TerrainColorRenderer`) fände keine
+    /// einzige Felsküste.
+    public static let beachSlopeLo = 0.0042
+    /// … und ab der sie kein Sand mehr ist.
+    public static let beachSlopeHi = 0.0058
+    /// Makro-Steigung, ab der eine Küstenzelle Felsküste wird …
+    public static let cliffCoastSlopeLo = 0.006
+    /// … und ab der sie voll Fels ist. Die Fenster von Strand und Fels
+    /// überlappen nicht (Wächter): eine Zelle ist Strand ODER Fels.
+    public static let cliffCoastSlopeHi = 0.011
+
+    // MARK: Sedimentfahne im Meer (Issue #174, Paket C)
+
+    // Jede Mündung ins Meer bekommt eine Trübungsfahne. SimRender
+    // (`SedimentPlume`) schreibt EINE Zelle je Mündung in eine Float-Textur,
+    // gewichtet nach Abfluss und Fracht; `ocean.gdshader` zeichnet sie über die
+    // Mip-Stufen der Textur weich und zieht sie mit der Küstenströmung stromab.
+    // Die Strömung ist die Drift der Ozean-Wellen (`oceanWaveDriftX/Z`), damit
+    // Fahne und Wellen in dieselbe Richtung ziehen.
+    //
+    // Fracht: es gibt im Sim-Kern kein Frachtfeld. Stellvertreter ist das
+    // Relief des Einzugsgebiets (höchster Punkt über dem Meer): nach Milliman &
+    // Syvitski (1992) steigt die Schwebstofffracht eines Flusses mit Fläche
+    // UND maximaler Höhe seines Einzugsgebiets — Gebirgsflüsse trüben das
+    // Meer, Tieflandbäche kaum. Messreihe: §C.
+
+    /// Mündungen unter diesem Einzugsgebiet (Zellen) bekommen keine Fahne.
+    public static let plumeMinDischargeCells = 2000.0
+    /// Einzugsgebiet (Zellen), ab dem das Abfluss-Gewicht voll ist (log-Rampe
+    /// zwischen `plumeMinDischargeCells` und diesem Wert).
+    public static let plumeFullDischargeCells = 40000.0
+    /// Relief des Einzugsgebiets (Sim-Höhe über dem Meer), ab dem das
+    /// Fracht-Gewicht voll ist …
+    public static let plumeFullRelief = 0.5
+    /// … und der Anteil, den auch ein flaches Einzugsgebiet behält.
+    public static let plumeReliefFloor = 0.3
+    /// So weit (Zellen) setzt SimRender die Quelle in Fließrichtung ins Meer
+    /// hinaus: der Fleck soll vor der Mündung liegen, nicht halb an Land.
+    public static let plumeOffshoreCells = 4
+
+    /// Länge der Fahne entlang der Küstenströmung (Welteinheiten).
+    public static let oceanPlumeLength = 5.0
+    /// Mip-Stufe der Weichzeichnung an der Mündung (2^lod Zellen) …
+    public static let oceanPlumeLod = 3.0
+    /// … und um so viele Stufen breiter am Ende der Fahne.
+    public static let oceanPlumeSpread = 2.0
+    /// Verstärkung der normierten Fahnen-Dichte vor der Sättigung.
+    public static let oceanPlumeGain = 2.5
+    /// Höchster Anteil der Trübung an der Wasserfarbe.
+    public static let oceanPlumeOpacity = 0.6
+    /// Farbe der Trübung (Schwebstoff, lehmig-hell).
+    public static let oceanPlumeColor = (r: 0.42, g: 0.38, b: 0.27)
 }

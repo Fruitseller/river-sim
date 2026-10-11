@@ -189,7 +189,8 @@ final class SimNode: Node {
     /// `trigger` = Rohwert von `FrameTrigger` (`FRAME_*` in `Main.gd`), `now` =
     /// `Time.get_ticks_msec() / 1000`. Fehlende Schlüssel heißen „in diesem
     /// Frame nicht neu": `water`, `water_blend`, `color`, `surface`, `flow`,
-    /// `protect`, `forest` (nur gemeinsam), `ribbons` (Mesh über `riverRibbon*`).
+    /// `protect`, `forest`, `plume` (nur gemeinsam), `ribbons` (Mesh über
+    /// `riverRibbon*`).
     @Callable func renderFrame(trigger: Int, now: Double) -> VariantDictionary {
         let out = VariantDictionary()
         guard let trigger = FrameTrigger(rawValue: trigger) else {
@@ -206,6 +207,8 @@ final class SimNode: Node {
             out[Variant("flow")] = PackedByteArray(o.flowDetail).toVariant()
             out[Variant("protect")] = PackedByteArray(o.protectMask).toVariant()
             out[Variant("forest")] = PackedByteArray(o.forestMask).toVariant()
+            // Sedimentfahnen (#174 C): Float32-Rohbytes für eine RF-Textur.
+            out[Variant("plume")] = packFloatBytes(o.plume).toVariant()
         }
         if frame.ribbonsRebuilt {
             out[Variant("ribbons")] = Variant(true)
@@ -429,6 +432,11 @@ final class SimNode: Node {
             }
         }}
         return PackedFloat32Array(f)
+    }
+
+    /// `[Float]` als rohe float32-Bytes (RF-Textur), ohne Umweg über Double.
+    private func packFloatBytes(_ a: [Float]) -> PackedByteArray {
+        PackedByteArray(a.withUnsafeBytes { Array($0) })
     }
 
     /// Wie `pack`, aber als rohe float32-Bytes: Godot kann sie direkt als R32F-
