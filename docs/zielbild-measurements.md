@@ -400,7 +400,9 @@ Gleicher Metrik-Code (`ZielbildMetrics` dieses PR) auf beiden Ständen;
 nachher in Jahr 100.000: die wandernden Abschnitte sind durch Cutoffs und
 angeschlossene Zubringer auf 10–20 Breiten zerfallen, kürzer als zwei Bögen).
 
-Nachher, Mittel über die Stützstellen der zweiten Laufhälfte:
+Nachher, Mittel über die Stützstellen der zweiten Laufhälfte (in der
+Spalte Gürtel/Amplitude gingen nicht messbare Stützstellen hier noch als 0 ein;
+die verbindliche Zeitmittel-Tabelle steht in § Paket B — Zeitmittel-Abnahme):
 
 | Seed | Fenster | Sinuosität | λ/b (roh) | Asymmetrie (roh) | Gürtel/Amplitude (roh) | Altarme jung / nass |
 | ---: | --- | ---: | --- | --- | --- | --- |
@@ -448,7 +450,10 @@ CFL-Teilschritte (höhere Rate, größere Bögen). `simperf --hash` zweimal
 
 SimCore-Pflichtsuite lokal: 466 Tests, 0 Fehler, 2:42 min.
 
-### Stand gegen den Abnahmebogen (nach der Kalibrierung)
+### Stand gegen den Abnahmebogen (nach der Kalibrierung, überholt)
+
+Überholt durch § Paket B — Zeitmittel-Abnahme (Bewertung je Seed im
+Zeitmittel, danach nachkalibriert). Stand dieses Schritts:
 
 | Punkt | Stand |
 | --- | --- |
@@ -472,6 +477,195 @@ Sinuosität nach 60.000 Jahren zwischen 1,5 und 6; ohne Störquelle lag sie
 bei 1,0). Die Schranken liegen bewusst weit unter den Messwerten: ein
 Einzelzeitpunkt streut stark, und Linux rechnet mit anderer System-libm eine
 andere Realisierung.
+
+## Paket B — Zeitmittel-Abnahme (dritter Schritt)
+
+**Entscheidung des Projekteigners:** die Mäander-Punkte 9–13 werden über
+ZEITMITTEL je Seed gewertet: Fenster Jahr 10.000–20.000 und 50.000–100.000,
+Stützstellen alle 2000 Jahre (6 bzw. 26), Kennzahl `ZielbildMetrics.beltAll`
+über alle Mäanderläufe. Einzelzeitpunkte sind nur Streuung (min–max unten).
+Altarme (Punkt 13) = sichtbare junge Altarme im Tiefland: jünger als
+`WaterRender.oxbowVisibleYears`, ab `WaterRender.oxbowMinimumNodes` Knoten
+(darunter zeichnen weder das Wasserband noch das Ried aus `BarMaterial`
+etwas), Schwerpunkt im Tiefland. Seit #181 ist ein trockener junger Altarm
+als Ried-Bogen sichtbar; Wasserfüllung verlangt der Punkt nicht.
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildMeanderTimeMeanDiagnostic
+```
+
+`RS_SEED` wählt einen Seed (die Läufe lassen sich parallel starten, je Seed
+~10–15 s auf dem M4 Max), `RS_VARIANT` Parameter-Varianten wie
+`MeanderBeltCalibration`. **Nicht messbare Stützstellen gehen nicht als 0 ins
+Mittel**, sie werden ausgelassen und gezählt („n. m."): λ ohne Abschnitt mit
+drei Wendepunkten, Gürtel/Amplitude bei Amplitude unter 0,5 Zellen,
+Asymmetrie ohne Bogen über dem Krümmungs-Median (`ZielbildMetrics.Series`).
+
+### Vorher (Stand nach der Kalibrierung, `280f5d2`)
+
+Mittel (min–max der Einzelzeitpunkte):
+
+| Seed | Fenster | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 Altarme sichtbar | davon nass |
+| ---: | --- | --- | --- | --- | --- | --- | --- |
+| 1337 | 10.000–20.000 | 1,60 (1,32–2,08) | 10,9 (8,9–14,2) | 3,5 (1,9–4,4) | 2,39 (1,61–4,12) | 5,5 (4–8) | 2,2 |
+| 1337 | 50.000–100.000 | 1,62 (1,30–2,04) | 10,0 (4,3–15,7), 1 n. m. | 11,5 (5,1–29,9) | 2,51 (1,45–4,24) | 3,7 (1–8) | 0,5 |
+| 42 | 10.000–20.000 | 1,70 (1,54–2,04) | 13,1 (10,7–14,1), 1 n. m. | 4,9 (1,8–15,5) | 2,66 (1,52–7,03) | **0,5** (0–1) | 0,5 |
+| 42 | 50.000–100.000 | 1,73 (1,40–2,07) | 10,6 (5,5–16,4), 7 n. m. | 8,3 (1,8–46,1) | 2,57 (1,38–5,33) | **1,8** (0–4) | 0,6 |
+| 20 | 10.000–20.000 | 1,59 (1,32–1,89) | **9,2** (8,4–10,4) | 3,0 (1,8–6,1) | **1,79** (1,43–2,98) | **1,5** (0–2) | 0,3 |
+| 20 | 50.000–100.000 | 1,69 (1,44–2,65) | 11,0 (4,3–14,2), 10 n. m. | 16,5 (2,9–46,9), 1 n. m. | 2,34 (1,29–5,64) | **1,4** (0–4) | 0,3 |
+
+Verfehlt im Zeitmittel: Punkt 13 auf Seed 42 und 20 in beiden Fenstern,
+Punkt 10 und 12 auf Seed 20 im ersten Fenster; Punkt 11 dort genau auf der
+Grenze (3,0).
+
+### Befund: der Gürtel schnürte Knicke ab, keine Bögen
+
+Junge Altarme im Tiefland JEDER Größe gab es genug (Mittel 50.000–100.000:
+6,5 / 7,8 / 4,6), sichtbar davon nur 3,7 / 1,8 / 1,4. Die Altarme waren zu
+klein für den Render: Median 15 Knoten auf Seed 42 und 20 (Schwelle 20). Je
+neuem Altarm (`testOxbowOriginDiagnostic`): bei voller Kanalbreite
+(b ≈ 6,4 Zellen) 3–5 Breiten Bogenlänge, also ein Ring vom Durchmesser einer
+Kanalbreite — ein Knick an einem Spiralkern, kein Mäanderbogen (ein
+abgeschnürter Bogen ist 1–2 Wellenlängen lang, 10–30 Breiten). Auf der Karte
+(`testBeltRiverViewDiagnostic`, Altarme unter 20 Knoten jetzt cyan, dazu
+die Linien als Text für vergrößerte Ausschnitte) lagen die kleinen Altarme
+im Kern eingerollter Schleifen.
+
+Ursache: die örtliche Sättigung (`meanderBeltSinuosityStart/Full` = 2,0 /
+2,8 über ±10 Breiten). Ein Bogen, dessen Hals sich schließt (Omega-Form),
+hat dort eine örtliche Sinuosität über 3; das Wachstum stand also still,
+bevor ein Hals zuging. Mit 3,0 / 4,0 wachsen die Bögen bis zum Cutoff: der
+Altarm-Median in Jahr 20.000 steigt von 18 / 16 / 18 auf 28 / 54 / 37
+Knoten, auf der Karte liegen die jungen Altarme als ganze Hufeisen neben dem
+Lauf. Zwei Folgen, beide nachgezogen: die weiteren Bögen ließen die
+Asymmetrie fallen (Mittel 10.000–20.000 auf 8 Seeds 2,01 → 1,67), weil der
+Kolk erst bei Krümmungsradius / Breite = `meanderBeltPoolGain` voll
+ausgebildet ist (2,5 → 4); und die größeren Bögen blieben an Aue-Stufen an
+der Talwand-Bremse hängen, der junge Gürtel blieb schmal
+(`meanderBeltBrakeDepths` 2 → 3: Gürtel/Amplitude 10.000–20.000 auf 12
+Seeds 2,9 → 4,7). `meanderBeltPoolSkew` 2,5 → 3 ist auf 24 Seeds neutral
+(Summe erfüllter Punkte 180 → 182 von 240); unter den gleichwertigen
+Kandidaten ist es der mit den meisten erfüllten Punkten auf den
+Matrix-Seeds (28 statt 24 von 30) — das ist Realisierung, nicht Physik, und
+steht deshalb hier.
+
+### Ensemble statt drei Seeds
+
+Ein Zeitmittel über sechs Stützstellen streut je Seed noch stark, und jede
+Parameter-Änderung zieht eine neue Realisierung. Gewählt wurde deshalb auf
+24 Seeds (Matrix-Seeds plus 7, 99, 123, 5, 11, 3, 64, 777, 2024, 1, 2, 4, 6,
+8–10, 12–16). Tabelle: Seeds mit erfülltem Punkt im Zeitmittel, in Klammern
+das Mittel über die Seeds.
+
+| Punkt | 10.000–20.000 vorher | nachher | 50.000–100.000 vorher | nachher |
+| --- | --- | --- | --- | --- |
+| 9 Sinuosität 1,5–2,5 | 18 (1,68) | 18 (1,84) | 17 (1,72) | 20 (1,88) |
+| 10 λ/Breite 10–14 | 9 (10,3) | 15 (12,1) | 6 (9,1) | 12 (10,6) |
+| 11 Gürtel ≥ 3 × Amplitude | 16 (3,8) | 17 (4,1) | 23 (13,4) | 24 (15,6) |
+| 12 Asymmetrie ≥ 2 | 13 (2,52) | 18 (3,00) | 18 (2,60) | 24 (4,19) |
+| 13 ≥ 3 sichtbare Altarme | 4 (1,7) | 16 (4,4) | 3 (1,7) | 18 (4,8) |
+
+Summe erfüllter Punkte: 127 → 182 von 240.
+
+### Verworfen
+
+| Variante | Befund |
+| --- | --- |
+| Krümmungsdeckel im Kern, \|κ\|·b ≤ 0,3 / 0,5 | unterdrückt die Knicke, aber fast jeden Cutoff: Sinuosität 1,2–1,5, sichtbare Altarme 0–1,5 (Matrix-Seeds) |
+| Chute ab 1500 Zellen statt 4000 | mehr Altarme, aber weiter klein (Seed 20: 31 von 41 unter 20 Knoten), Sinuosität Seed 42 1,3 |
+| Chute-Sehne 2,5 Breiten, Schleife ≥ 6 × Sehne | ebenso; Asymmetrie 1,6–2,2 |
+| Sättigung 2,5 / 3,5 | Zwischenstufe: Altarme 3,4 / 4,3 im Mittel (8 Seeds), Sinuosität Seed 20 1,35 |
+| Sättigung 3,0 / 4,0 allein | Altarme auf 7 von 8 Seeds erfüllt, Asymmetrie 10.000–20.000 1,67 (1 von 8) |
+| Sättigung 3,5 / 5,0 | Asymmetrie 10.000–20.000 1,64 (0 von 8) |
+| dazu Störquelle 0,015 | Asymmetrie 1,66, Sinuosität 1,43 (8 Seeds) |
+| dazu Gain 3,5 statt 4 | 88 von 120 erfüllten Punkten (12 Seeds) gegen 98 |
+| dazu Bremse 2,5 / 4 | 91 / 85 von 120 |
+| dazu Kernlänge 1,3 / 1,4 | Summe gleich (183 von 240 bei 1,3), λ 50.000–100.000 schlechter (7 von 24) |
+
+### Nachher (Standard-Config)
+
+| Seed | Fenster | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 Altarme sichtbar | davon nass |
+| ---: | --- | --- | --- | --- | --- | --- | --- |
+| 1337 | 10.000–20.000 | 1,79 (1,32–2,38) | 13,8 (8,0–17,5) | 3,1 (1,9–5,5) | 2,43 (1,74–3,55) | 10,7 (9–12) | 2,2 |
+| 1337 | 50.000–100.000 | 1,85 (1,24–4,94) | 12,4 (5,0–15,8), 1 n. m. | 10,3 (3,8–21,2) | 3,67 (1,84–12,97) | 11,2 (4–17) | 3,6 |
+| 42 | 10.000–20.000 | 1,63 (1,20–1,98) | 12,8 (11,9–14,4), 3 n. m. | 5,5 (1,5–11,3) | 3,13 (2,32–5,15) | 3,2 (1–5) | 1,0 |
+| 42 | 50.000–100.000 | 1,63 (1,02–2,18) | **8,3** (3,5–19,4), 16 n. m. | 28,0 (8,7–96,8), 1 n. m. | 2,58 (1,23–6,72) | 4,8 (2–8) | 1,7 |
+| 20 | 10.000–20.000 | 1,63 (1,44–1,78) | 11,9 (5,4–16,0) | **2,6** (1,8–3,6) | 2,66 (1,53–4,31) | 4,5 (2–8) | 1,3 |
+| 20 | 50.000–100.000 | 1,72 (1,38–2,23) | 10,6 (4,8–16,7), 15 n. m. | 11,6 (1,8–60,5) | 2,35 (1,24–4,45) | 3,3 (1–6) | 1,0 |
+
+Hals- / Chute-Cutoffs bis Jahr 100.000: 174 / 105 (1337), 64 / 43 (42),
+55 / 44 (20); vorher 123 / 23, 80 / 8, 89 / 13.
+
+Verfehlt: Punkt 11 auf Seed 20 im ersten Fenster (2,6; vorher 3,0) und
+Punkt 10 auf Seed 42 im zweiten (8,3 aus nur 10 messbaren von 26
+Stützstellen: die Abschnitte zerfallen dort zwischen Cutoffs und
+angeschlossenen Zubringern auf unter zwei Bögen). Beides liegt im Ensemble
+in der Realisierungs-Streuung (Punkt 11 im ersten Fenster: 17 von 24 Seeds,
+Punkt 10 im zweiten: 12 von 24). Ein Parameter, der genau diese zwei Zellen
+dreht, wäre an die Realisierung angepasst, nicht an die Physik.
+
+### Kern-Wächter
+
+Auf der unbegrenzten Ebene (`MeanderBeltTests`, drei Läufe à 20.000 Zellen)
+wachsen die Bögen jetzt bis zum Chute-Cutoff, bevor ein Hals zugeht: über acht
+Rausch-Seeds 0–2 Hals- neben 323–501 Chute-Cutoffs in 60.000 Jahren
+(vorher 3–12 Hals). Der Langlauf-Wächter führt deshalb einen Lauf unter der
+Chute-Schwelle (3000 Zellen): 59–76 Hals, 201–343 Chute, örtliche
+Sinuosität 3,3–5,1 (Grenze 6). Wellenlängen- und dt-Wächter laufen
+unverändert (der Kern erreicht dort die Sättigung nicht): dt 50 ↔ 1500 nach
+3000 Jahren 0,33–0,59 Zellen über acht Rausch-Seeds (Grenze 0,96).
+
+### Laufzeit und Determinismus
+
+`simperf --repeat 3`, Produktion, Seed 1337, M4 Max, abwechselnd fünf
+Runden `origin/main` (`55323b5`) / Kalibrierung (`280f5d2`) / Zeitmittel:
+54,5 / 57,9 / 59,5 — 55,3 / 57,5 / 58,1 — 55,2 / 58,1 / 56,4 — 55,6 / 58,2 /
+56,9 — 56,5 / 57,5 / 57,8 ms je Schritt. Median 55,3 / 57,9 / 57,8: gegen
+`origin/main` +4,5 %, gegen die Kalibrierung unverändert. Der Rechner lief an
+diesem Tag ~14 % langsamer als bei der Messung oben; verglichen wird nur
+innerhalb der Runden. `simperf --hash` zweimal `1625b1e4b83c85f4`.
+
+SimCore-Pflichtsuite lokal: 468 Tests, 0 Fehler, 181 s;
+`testRangeLandformMeetsTheAcceptanceSheet` 11,6 → 12,0 s.
+
+### Wächter
+
+`ZielbildLandformTests.testRangeLandformMeetsTheAcceptanceSheet` nimmt im
+selben 20.000-Jahre-Lauf das Zeitmittel des ersten Fensters (sechs
+Stützstellen je Seed, kein zusätzlicher Lauf) und prüft das Mittel über die
+drei Seeds. Die Schranken liegen unter dem kleinsten Dreier-Mittel aus den
+24 Seeds (alle 2024 Kombinationen): Linux zieht mit anderer System-libm eine
+andere Realisierung, ein Wächter je Seed wäre dort Zufall.
+
+| Kennzahl | Wächter | kleinstes Dreier-Mittel (24 Seeds) | Matrix-Seeds |
+| --- | --- | --- | --- |
+| Sinuosität | > 1,25 | 1,30 | 1,68 |
+| λ/Breite | 7,5–16,5 | 8,2 (größtes 14,6) | 12,8 |
+| Gürtel/Amplitude | > 1,7 | 1,77 | 3,7 |
+| Asymmetrie | > 1,7 | 1,76 | 2,74 |
+| sichtbare Altarme | > 0,8 | 1,03 | 6,1 |
+| Median Altarm-Knoten (Jahr 20.000) | ≥ 20 | 20,7 | 39,7 |
+
+Das zweite Fenster (bis Jahr 100.000) läuft nur im Diagnostic (je Seed
+~10 s lokal, auf dem CI-Runner ein Mehrfaches).
+
+### Stand gegen den Abnahmebogen (Zeitmittel je Seed)
+
+| Punkt | Stand |
+| --- | --- |
+| 9 Sinuosität 1,5–2,5 | **erfüllt** auf allen drei Seeds in beiden Fenstern (1,63–1,85); Einzelzeitpunkte 1,02–4,94 |
+| 10 Wellenlänge 10–14 Breiten | **erfüllt** außer Seed 42 im Fenster 50.000–100.000 (8,3; 16 von 26 Stützstellen nicht messbar) |
+| 11 Gürtel ≥ 3 × Amplitude | **erfüllt** außer Seed 20 im Fenster 10.000–20.000 (2,6); im zweiten Fenster 10–28 |
+| 12 Querprofil-Asymmetrie ≥ 2 | **erfüllt** auf allen drei Seeds in beiden Fenstern (2,35–3,67) |
+| 13 ≥ 3 sichtbare Altarme im Tiefland | **erfüllt** auf allen drei Seeds in beiden Fenstern (3,2–11,2); davon wassergefüllt 1,0–3,6 |
+| 14 Aue nicht zerklüfteter | erfüllt (Wächter) |
+| 15 Hals- und Chute-Cutoff | erfüllt (Wächter, Gelände und Kern) |
+| 16 `barAge` im Inventar | unverändert erfüllt |
+| 17 dt-Invarianz | Kern unverändert (0,33–0,59 Zellen, Grenze 0,96) |
+| 18 Braid-/Playa-Wächter | grün (alte Welt, `calibrationMeanderBelt`) |
+| 48 Laufzeit ≤ +15 % | +4,5 % gegen `origin/main` |
+| 49 Determinismus | `--hash` zweimal gleich |
 
 ## Flüsse laufen bergauf (Befund im Zeitraffer, Jahr 230.000)
 

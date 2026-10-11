@@ -8,13 +8,14 @@ import XCTest
 final class MeanderBeltTests: XCTestCase {
     private let q = 20_000.0
 
-    private func straightRuns(_ seed: UInt32 = 7) -> MeanderState {
+    /// Drei gerade Läufe mit Rauschen; `discharges` je Lauf (Standard: alle `q`).
+    private func straightRuns(_ seed: UInt32 = 7, discharges: [Double]? = nil) -> MeanderState {
         let m = MeanderState()
         var rng = Mulberry32(seed: seed)
-        for z0 in [150.0, 360, 570] {
+        for (ri, z0) in [150.0, 360, 570].enumerated() {
             var nodes: [MeanderNode] = []
             for i in 0..<400 { nodes.append(MeanderNode(x: 60 + Double(i) * 1.5, z: z0 + (rng.next() - 0.5) * 0.4)) }
-            m.channels.append(RiverChannel(nodes: nodes, discharge: Array(repeating: q, count: 400)))
+            m.channels.append(RiverChannel(nodes: nodes, discharge: Array(repeating: discharges?[ri] ?? q, count: 400)))
         }
         return m
     }
@@ -107,13 +108,18 @@ final class MeanderBeltTests: XCTestCase {
 
     /// Lange Läufe bleiben beschränkt: endliche Knoten, örtliche Sinuosität
     /// unter dem Knäuel-Regime, und BEIDE Cutoff-Arten treten auf
-    /// (Abnahmepunkt 15). 60.000 Jahre: nach 30.000 gab es über sechs
-    /// Rausch-Seeds nur 1–5 Hals-Cutoffs (neben 51–66 Chute), nach 60.000
-    /// 3–12. Örtliche Sinuosität dort 3,3–4,3; die des ganzen Laufs (bis 13)
-    /// misst auf der Ebene ohne Talwand das seitliche Auswandern, nicht Knäuel.
+    /// (Abnahmepunkt 15). 60.000 Jahre. Ein Lauf liegt unter der
+    /// Chute-Schwelle (`meanderChuteMinCells`): seit der Sättigung 3/4
+    /// (Zeitmittel-Kalibrierung) wachsen die Bögen der großen Läufe auf der
+    /// unbegrenzten Ebene bis zum Chute-Cutoff, bevor ein Hals zugeht
+    /// (drei Läufe à 20.000 Zellen: 0–2 Hals- neben 323–501 Chute-Cutoffs über
+    /// acht Rausch-Seeds). So: 59–76 Hals, 201–343 Chute, örtliche Sinuosität
+    /// 3,3–5,1 (`testBeltKernelSpreadDiagnostic`, RS_LONG=60000). Die des
+    /// ganzen Laufs (bis 14) misst auf der Ebene ohne Talwand das seitliche
+    /// Auswandern, nicht Knäuel.
     func testLongRunStaysBoundedWithBothCutoffs() {
         let c = SimConfig.production
-        let m = straightRuns()
+        let m = straightRuns(discharges: [q, q, 0.75 * c.meanderChuteMinCells])
         run(m, years: 60_000, dt: 1000, c)
         for ch in m.channels {
             XCTAssertTrue(ch.nodes.allSatisfy { $0.x.isFinite && $0.z.isFinite }, "Knoten nicht endlich")
