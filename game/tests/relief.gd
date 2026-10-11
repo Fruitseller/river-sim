@@ -57,6 +57,7 @@ func _process(_delta: float) -> bool:
 	done = true
 	_check_bake_cadence(main)
 	_check_visible_surface(main)
+	_check_regen_does_not_fade(main)
 	main.queue_free()
 	if failures > 0:
 		quit(1)
@@ -64,6 +65,15 @@ func _process(_delta: float) -> bool:
 	print("RELIEF_OK")
 	quit(0)
 	return true
+
+## Neugenerieren mitten im Zeitraffer zeigt die neue Welt sofort, statt sie
+## aus der alten einzublenden (Review #173). Zuletzt: es tauscht die Welt.
+func _check_regen_does_not_fade(main: Node) -> void:
+	main.year_rate = 60.0
+	main._regen()
+	main.year_rate = 0.0
+	_check(main.height_fade.mix == 1.0 and main.overlay_fade.mix == 1.0
+		and main.relief_mix == 1.0, "Neugenerieren im Zeitraffer blendet nicht")
 
 func _check(value: bool, message: String) -> void:
 	if not value:
@@ -124,7 +134,9 @@ func _check_bake_cadence(main: Node) -> void:
 	# Die Overlay-Drossel läuft auf der echten Uhr (0,30 s); die kurzen
 	# Test-Frames schaffen das nicht sicher. Ein Frame MIT Overlays während
 	# des Zeitraffers muss die Overlay-Blende starten.
+	main._frame_trigger = main.FRAME_TIMELAPSE
 	main._apply_frame(main.sim.renderFrame(main.FRAME_SETTLED, main._now()))
+	main._frame_trigger = main.FRAME_SETTLED
 	overlay_faded = overlay_faded or main.overlay_fade.mix < 1.0
 	main.year_rate = 0.0
 	_check(faded, "Zeitraffer blendet die Verschiebung über, statt zu springen")
