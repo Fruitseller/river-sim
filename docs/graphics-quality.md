@@ -881,7 +881,8 @@ Welten bis 43 % des Landes.
 
 Waldanteil über die Matrix-Seeds, Produktions-Config (`RS_MEASURE=1 … --filter
 testCanopyCoverageDiagnostic`). Wald = Waldmaske ≥ 0,5; Wiese = Vegetation
-≥ 0,14 ohne Wald; Prozent der Landzellen:
+≥ 0,14 ohne Wald (die alte Wald-Schwelle, vergleichbar mit der Ticket-Tabelle;
+der Shader tönt schon ab 0,08 leicht grün); Prozent der Landzellen:
 
 | Seed | Jahr | Vegetation ≥ 0,14 | vegW p50 / p90 | Wald vorher | Wald nachher | Wiese vorher | Wiese nachher |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
