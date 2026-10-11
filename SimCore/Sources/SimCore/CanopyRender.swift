@@ -30,7 +30,7 @@ public enum CanopyRender {
     /// Wertebereichs; fast jede bewachsene Zelle wurde Wald (Matrix-Seeds, bis
     /// 43 % des Landes bei Jahr 100.000, Projekteigner: „zuviel Wald").
     /// 0,35/0,55 halbiert den Anteil auf 9–22 %, dazwischen bleibt Wiese
-    /// (`meadow*`). Mitgemessen: 0,40/0,60 und 0,45/0,65 nehmen nur 1–4 Punkte
+    /// (`meadow*`). Mitgemessen: 0,40/0,60 und 0,45/0,65 nehmen nur 1–6 Punkte
     /// mehr weg; der Ticket-Vorschlag reichte nach den Matrix-Bildern, Bestände
     /// stehen als Gruppen zwischen Wiesen. `clumpGain` 0,60 statt
     /// 0,45 änderte den Anteil um höchstens 0,6 Punkte und bleibt deshalb.

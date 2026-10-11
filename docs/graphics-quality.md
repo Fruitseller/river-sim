@@ -896,8 +896,8 @@ der Shader tönt schon ab 0,08 leicht grün); Prozent der Landzellen:
 | 20 | 20.000 | 78,6 | 0,29 / 0,71 | 28,4 | 12,8 | 50,5 | 65,7 |
 | 20 | 100.000 | 87,3 | 0,38 / 0,78 | 43,4 | 22,0 | 44,0 | 65,4 |
 
-Mitgemessen und nicht genommen: 0,40/0,60 und 0,45/0,65 nehmen nur 1–4 Punkte
-mehr weg (Seed 42 bei 100.000 Jahren: 15,2 bzw. 12,7 %). Der Wald wächst
+Mitgemessen und nicht genommen: 0,40/0,60 und 0,45/0,65 nehmen nur 1–6 Punkte
+mehr weg (Seed 42 bei 100.000 Jahren: 15,2 bzw. 12,7 statt 18,6 %). Der Wald wächst
 weiter mit dem Alter, weil die Sim-Vegetation dichter wird, aber nur noch bis
 rund ein Fünftel des Landes.
 
