@@ -1201,7 +1201,11 @@ func _clear_pitch(target: Vector3, yaw: float, pitch: float, dist: float) -> flo
 		for s in range(1, 25):
 			var t := s / 24.0
 			var p := target.lerp(eye, t)
-			if p.y < _surface_y_at(p) + t:
+			# Außerhalb des Gitters liegt nur das Meer (sonst zöge die
+			# Rand-Klemme von `_sample_grid` das Randgelände endlos weiter).
+			var ground := sea * HSCALE if maxf(absf(p.x), absf(p.z)) > half \
+				else _surface_y_at(p)
+			if p.y < ground + t:
 				clear = false
 				break
 		if clear:
