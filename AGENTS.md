@@ -248,7 +248,7 @@ zusätzlich die Bedienleiste aus, `RS_SHOT_UI` behält sie (Aufnahmen der
 Bedienung selbst, Issue #174). Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
-#116 (`RS_STUDY_VARIANT` `prototype|baseline`, `RS_STUDY_MODE`
+#116 (`RS_STUDY_VARIANT` `baseline`, `prototype` ist mit #174 D entfernt; `RS_STUDY_MODE`
 `orbit|simulation|shot|still`, `RS_STUDY_OUTPUT`, per Skript zusätzlich
 `RS_STUDY_MOVIE`; für die Kalibrierung `RS_STUDY_DEBUG`) liegen in
 `game/studies/flusstal/Flusstal.gd` und werden über `scripts/graphics-study.sh`
@@ -328,7 +328,14 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    (Flussbänder) und `ocean.gdshader` (offenes Meer); Licht, Atmosphäre und
    die mit allen drei geteilten Wolkenschatten (`clouds.gdshaderinc`) stellt
    `scripts/Lighting.gd` ein (feste Welt-Sonne, Issue #151, Wächter
-   `tests/lighting.gd`). Dazu Shader, die
+   `tests/lighting.gd`); dieselbe Rauschquelle zeichnet seit #174 D die
+   Wolkenkörper über dem Kamm (`cloud_body.gdshader`, in `performance` aus),
+   die Schatten fallen entlang der Sonne von deren Basis. WO Fels, Schutthalden,
+   Gletschereis, Rohboden und Talboden-Wiese liegen, rechnet
+   `SimRender.TerrainColorRenderer` (Kalibrierung `SimCore.MaterialRender`,
+   Wächter `SimCoreTests/MaterialTests.swift` und `tests/canopy.gd`); der
+   Terrain-Shader baut daraus nur Klüftung, Körnung, Spalten und Moränen.
+   Dazu Shader, die
    nichts MALEN, sondern rechnen: `relief_bake.gdshader` backt einmal je
    Terrain-Update die Render-Verschiebung von Rinnen und Graten (Issue #153,
    Kalibrierung `SimCore.ReliefRender` über die Brücke, Wächter
@@ -384,7 +391,9 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Bauergebnis für den Raster-Deckel (`bandChannelFlags`/`bandCoverage`) reist
   im selben Wert statt als impliziter Nebenkanal,
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
-  Schnee/Eis und Lithologie in einem gemeinsamen Pass,
+  Schnee/Eis und Lithologie plus Bodenbedeckung (Schutthalde, blankes
+  Gletschereis, Rohboden, Talboden-Wiese, Issue #174 D) in einem gemeinsamen
+  Pass,
 - `WaterProtectMask`: Schutzmaske für Kronendach und Render-Verschiebung
   (Issue #154): zuletzt ausgeliefertes Rasterwasser plus `bandCoverage` plus
   Saum (`WaterRender.protectSeamCells`), zustandslos; `RenderState` verwirft
@@ -512,7 +521,7 @@ Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1780 Zeilen,
 `SimRender` ~2350 Zeilen und die eigentliche GDExtension nur noch
 `SimNode.swift` mit ~350 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 
-Fünf Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
+Sechs Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
 Sim-Zustand; sie bilden den gemeinsamen Vertrag für `SimRender`, Godot und
 Shader: `Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31),
 `WaterRender.swift` (Kalibrier-Paarungen des Wasserfelds:
@@ -523,7 +532,9 @@ die Übergabe Band ↔ Raster: `deltaFrontDepth == lakeRawWetDepth`,
 (Issue #153: Rinnenskala, Gratschärfung, Kodierung der Backtextur; Uniform-Weg
 über `SimRender.ReliefUniforms` wie bei `WaterUniforms`) und `CanopyRender.swift`
 (Issue #152: Schwellen der Waldmaske, Kronengröße und Dachhöhe; Uniform-Weg
-über `SimRender.CanopyUniforms`). Alle fünf sind aus
+über `SimRender.CanopyUniforms`) sowie `MaterialRender.swift` (Issue #174 D:
+Fels auf steil-konvex, Schutthalden, Firn/Eis, Rohboden, Talboden; Klüftung,
+Spalten, Moränen über `SimRender.MaterialUniforms`). Alle sechs sind aus
 `SimCoreTests` gepinnt; Werte dort ändern heißt `SimRender`, Shader und
 gegebenenfalls `SimNode`/`Main.gd` mitziehen (der Test sagt, wo).
 

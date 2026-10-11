@@ -124,7 +124,7 @@ void fragment() {
 		+ sin(UV.y * 3.1 - u_time * 6.5 + 1.7) * 0.5;
 	water += flow * water_flow_shimmer_color * (1.0 - still);
 
-	water *= cloud_light(v_world.xz, u_time);
+	water *= cloud_light(v_world, u_time);
 	ALBEDO = water;
 	ALPHA = clamp(v_alpha, 0.0, 1.0) * mix(water_opacity_shallow, water_opacity_deep, depth) * feather;
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt

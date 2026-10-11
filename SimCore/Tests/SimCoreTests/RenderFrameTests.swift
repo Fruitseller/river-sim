@@ -156,7 +156,7 @@ final class RenderFrameTests: XCTestCase {
         }
         // Die Schlüssel des Frame-Dictionarys: was die Brücke setzt, liest Main.gd.
         let bridge = try RepoSource.probe("Extension/Sources/RiverSimGD/SimNode.swift")
-        for key in ["water", "water_blend", "color", "surface", "flow", "protect",
+        for key in ["water", "water_blend", "color", "surface", "cover", "flow", "protect",
                     "forest", "ribbons"] {
             assertContains(bridge, "out[Variant(\"\(key)\")]",
                            hint: "SimNode.renderFrame setzt den Schlüssel \(key)")

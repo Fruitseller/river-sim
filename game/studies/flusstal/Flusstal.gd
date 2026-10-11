@@ -1,8 +1,10 @@
 extends "res://scripts/Main.gd"
 ## Bildstudie #116, seit Spec #156 Mess- und Referenzbühne, kein
-## Produktionsweg: `baseline` IST die Anwendung (Main.gd erbt alles),
-## `prototype` legt nur die nicht übernommenen PBR-Materialien der ersten
-## Runde darüber (historische Referenz, s. docs/graphics-quality.md).
+## Produktionsweg: die einzige Variante `baseline` IST die Anwendung (Main.gd
+## erbt alles). Die Variante `prototype` legte die nicht übernommenen
+## PBR-Materialien der ersten Runde darüber; #174 D hat sie durch die
+## prozedurale Materialverteilung ersetzt und mit ihren Texturen entfernt.
+## Geblieben sind die Debug-Ansichten der Kalibrierung (`RS_STUDY_DEBUG`).
 ##
 ## Alle Hebel der zweiten Runde sind Produktion und gelten in beiden
 ## Varianten: `light` (tiefe Sonne, Schatten, Luftperspektive, Talnebel,
@@ -15,7 +17,9 @@ extends "res://scripts/Main.gd"
 ## Vergleichsbühne (scripts/graphics-matrix.sh) und für die Debug-Ansichten
 ## der Kalibrierung (`RS_STUDY_DEBUG`).
 var study_variant := OS.get_environment("RS_STUDY_VARIANT")
-var study_enabled := study_variant == "prototype"
+var study_debug := OS.get_environment("RS_STUDY_DEBUG")
+## Studien-Fassung des Terrain-Shaders nur für die Debug-Ansichten.
+var study_enabled := not study_debug.is_empty()
 var study_mode := OS.get_environment("RS_STUDY_MODE")
 var study_output := OS.get_environment("RS_STUDY_OUTPUT")
 var study_elapsed := 0.0
@@ -25,11 +29,12 @@ var study_intervals: Array[float] = []
 var study_start_yaw := 0.0
 
 func _ready() -> void:
-	# Nur die zwei dokumentierten Varianten sind gültig: ein Tippfehler oder eine
-	# leere Umgebung landete vorher still im Prototyp (Review zu #121).
-	if study_variant != "prototype" and study_variant != "baseline":
-		push_error("RS_STUDY_VARIANT muss 'prototype' oder 'baseline' sein, ist: '"
-			+ study_variant + "'. Start über scripts/graphics-study.sh.")
+	# Nur die dokumentierte Variante ist gültig: ein Tippfehler oder eine leere
+	# Umgebung landete früher still im Prototyp (Review zu #121); `prototype`
+	# gibt es seit #174 D nicht mehr und bricht ebenfalls laut ab.
+	if study_variant != "baseline":
+		push_error("RS_STUDY_VARIANT muss 'baseline' sein, ist: '" + study_variant
+			+ "' ('prototype' ist mit #174 D entfernt). Start über scripts/graphics-study.sh.")
 		get_tree().quit(1)
 		return
 	if not _reject_levers():
@@ -47,7 +52,7 @@ func _ready() -> void:
 		active_fps_cap = 0
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 		RenderingServer.frame_post_draw.connect(_study_drawn)
-	print("STUDY ", JSON.stringify({"variant": "prototype" if study_enabled else "baseline",
+	print("STUDY ", JSON.stringify({"variant": study_variant, "debug": study_debug,
 		"seed": sim_seed, "year": sim.currentYear(),
 		"viewport": str(get_viewport().size), "quality": render_quality,
 		"terrain_grid": terrain_grid,
@@ -77,14 +82,8 @@ func _setup_scene() -> void:
 	if not study_enabled:
 		return
 	terrain_mat.shader = study_shader("res://shaders/terrain.gdshader")
-	terrain_mat.set_shader_parameter("study_enabled", true)
-	for kind in ["rock", "ground"]:
-		for channel in ["color", "normal", "roughness"]:
-			terrain_mat.set_shader_parameter("study_" + kind + "_" + channel,
-				load("res://studies/flusstal/assets/" + kind + "_" + channel + ".jpg"))
-	var debug := OS.get_environment("RS_STUDY_DEBUG")
 	terrain_mat.set_shader_parameter("study_debug",
-		{"protect": 1, "forest": 2, "cavity": 3}.get(debug, 0))
+		{"protect": 1, "forest": 2, "cavity": 3}.get(study_debug, 0))
 
 ## Die Debug-Ansicht der Schutzmaske liest sie im Terrain-Shader.
 func _update_protect_mask(bytes: PackedByteArray) -> void:

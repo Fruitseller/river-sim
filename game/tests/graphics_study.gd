@@ -80,11 +80,9 @@ func _check_lever_parsing() -> void:
 func _check_study_shaders() -> void:
 	var study_script = load("res://studies/flusstal/Flusstal.gd")
 	var cases := {
-		"res://shaders/terrain.gdshader": [
-			"study_enabled", "study_rock_color", "study_rock_normal", "study_rock_roughness",
-			"study_ground_color", "study_ground_normal", "study_ground_roughness",
-			"study_debug",
-		],
+		# Seit #174 D nur noch die Debug-Ansichten; die PBR-Materialien der
+		# ersten Runde sind durch die prozedurale Materialverteilung ersetzt.
+		"res://shaders/terrain.gdshader": ["study_debug"],
 	}
 	for path in cases:
 		var source: String = FileAccess.get_file_as_string(path)

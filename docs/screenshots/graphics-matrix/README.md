@@ -27,8 +27,7 @@ Ein Aufruf erzeugt alle Bilder einer Variante:
 # Baseline-Bilder (Produktionsstand)
 scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline shot
 
-# Prototyp-Bilder (#116 Flusstal-Studie mit allen Hebeln)
-scripts/graphics-matrix.sh prototype docs/screenshots/graphics-matrix/prototype shot
+# Die Variante prototype (PBR-Materialien der Studie) ist mit #174 D entfernt.
 ```
 
 ## Referenz-Aufnahmen und Namensbeispiele (Zielmaschine M4 Max, 3456×2104)

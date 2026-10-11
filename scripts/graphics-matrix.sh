@@ -8,7 +8,7 @@ variant="${1:-baseline}"
 output_dir="${2:-docs/screenshots/graphics-matrix/$variant}"
 mode="${3:-shot}"
 
-case "$variant" in baseline|prototype) ;; *) echo "Variante: baseline|prototype" >&2; exit 2;; esac
+case "$variant" in baseline) ;; *) echo "Variante: baseline (prototype ist mit #174 D entfernt)" >&2; exit 2;; esac
 case "$mode" in shot|timing|all|list) ;; *) echo "Modus: shot|timing|all|list" >&2; exit 2;; esac
 
 # Optionale Filter über Umgebungsvariablen

@@ -1,23 +1,73 @@
 import Foundation
 import SimCore
 
-/// Makrofarbe und Materialgewichte des Geländes als zwei RGBA8-Puffer.
+/// Makrofarbe und Materialgewichte des Geländes als drei RGBA8-Puffer.
 ///
 /// Die Farbe trägt nur großräumige Sim-Signale wie Biom, Salz und Eis. Der
-/// Shader baut daraus zusammen mit `surfaces` die eigentliche Oberfläche. So
-/// bleiben Materialgrenzen an die Physik gebunden, ohne die 256er-Sim-Zellen als
-/// verwaschene "Textur" sichtbar zu machen.
+/// Shader baut daraus zusammen mit `surfaces` und `covers` die eigentliche
+/// Oberfläche. So bleiben Materialgrenzen an die Physik gebunden, ohne die
+/// Sim-Zellen als verwaschene "Textur" sichtbar zu machen.
+///
+/// Die geomorphologische Verteilung (Issue #174, Paket D) kalibriert
+/// `SimCore.MaterialRender`: Fels auf steil-konvexen Formen, Schutthalden
+/// darunter, blankes Gletschereis getrennt vom Schnee, Rohboden nur auf
+/// gestörten Flächen, helle Talboden-Wiese.
 public enum TerrainColorRenderer {
     public struct Buffers {
         public let colors: [UInt8]
         /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
         /// A = Lithologie-Härte von −1 ... +1 auf 0 ... 1 abgebildet.
         public let surfaces: [UInt8]
+        /// Bodenbedeckung (Issue #174 D): R = Schutthalde, G = blankes
+        /// Gletschereis als Anteil an der Kältedeckung (B von `surfaces`),
+        /// B = Rohboden (frisch gestört), A = Talboden-Wiese (Tönung, kein
+        /// eigenes Gewicht).
+        public let covers: [UInt8]
     }
 
-    /// Berechnet beide Puffer in EINEM Lauf. Farbe und Materialgewichte brauchen
-    /// dieselben teuren Standortwerte (`macroSlope`, Habitat, Schnee/Eis); zwei
-    /// getrennte Callables würden diese Arbeit pro Textur-Update verdoppeln.
+    /// Konvexität einer Zelle in Sim-Höhe: eigene Höhe minus Mittel der vier
+    /// Nachbarn im Abstand 2 (Stencil-Weite von `Terrain.macroSlope`).
+    /// Positiv auf Graten, negativ in Rinnen. Nur für 2 ≤ i,j ≤ n−3 gültig.
+    @inline(__always)
+    static func convexity(_ p: UnsafePointer<Double>, _ k: Int, _ n: Int) -> Double {
+        p[k] - (p[k + 2] + p[k - 2] + p[k + 2 * n] + p[k - 2 * n]) * 0.25
+    }
+
+    static func convexity(_ a: [Double], _ k: Int, _ n: Int) -> Double {
+        a.withUnsafeBufferPointer { convexity($0.baseAddress!, k, n) }
+    }
+
+    /// Felsanteil eines Standorts (0 … 1) aus Weltsteigung und Konvexität
+    /// (Welteinheiten): die Steigungsschwellen rücken auf Graten nach unten
+    /// und in Rinnen nach oben (`MaterialRender.convexSlopeShift`).
+    @inline(__always)
+    static func rockTarget(worldSlope: Double, convexity: Double) -> Double {
+        let c = min(1, max(-1, convexity / MaterialRender.convexRef))
+        let shift = c * MaterialRender.convexSlopeShift
+        return smoothstep(MaterialRender.rockSlopeLo - shift, MaterialRender.rockSlopeHi - shift,
+                          worldSlope)
+    }
+
+    /// Haldenanteil (0 … 1): verbreiterter Felsanteil in der Nähe (`source`),
+    /// Steigung im Bereich des Schüttwinkels und eine Hohlform — Schutt
+    /// sammelt sich in Rinnen und am Hangfuß (`screeConcavity`), Rippen und
+    /// gerade Hänge tragen Fels oder Bewuchs.
+    @inline(__always)
+    static func screeTarget(worldSlope: Double, source: Double, convexity: Double) -> Double {
+        smoothstep(MaterialRender.screeSourceLo, MaterialRender.screeSourceHi, source)
+            * smoothstep(MaterialRender.screeSlopeLo, MaterialRender.screeSlopeHi, worldSlope)
+            * smoothstep(0, MaterialRender.screeConcavity, -convexity)
+    }
+
+    /// Berechnet alle drei Puffer in EINEM Aufruf. Farbe und Materialgewichte
+    /// brauchen dieselben teuren Standortwerte (`macroSlope`, Habitat,
+    /// Schnee/Eis); getrennte Callables würden diese Arbeit pro Textur-Update
+    /// vervielfachen.
+    ///
+    /// Drei Durchgänge: (1) Felsanteil je Zelle, (2) Felsanteil quer
+    /// verbreitert (separierbarer Maximum-Filter, Quelle der Halden), (3) Farbe
+    /// und Gewichte. Jeder Durchgang schreibt nur seine eigene Zelle, parallel
+    /// also bit-identisch zur sequenziellen Schleife.
     public static func buffers(_ terrain: Terrain) -> Buffers {
         let n = terrain.cfg.n
         let h = terrain.h
@@ -26,9 +76,9 @@ public enum TerrainColorRenderer {
         // Prüft n > 0 sowie die exakte Größe (n * n) aller vier direkt in der Pixelschleife
         // ohne Fallback gelesenen Felder (h, rain, veg, saltCrust), um Out-of-Bounds-Zugriffe
         // sicher auszuschließen.
-        // lithHardness, snow und ice werden bewusst NICHT im Guard gefordert: Sie sind optionale
-        // Feature-Felder (leer, wenn Feature deaktiviert) und besitzen weiter unten einen
-        // [0.0]-Fallback mit bedingter Auswertung (lithOn, snowOn, iceOn).
+        // lithHardness, snow, ice und disturb werden bewusst NICHT im Guard gefordert: Sie
+        // sind optionale Feature-Felder (leer, wenn Feature deaktiviert) und besitzen weiter
+        // unten einen [0.0]-Fallback mit bedingter Auswertung (lithOn, snowOn, iceOn, rawOn).
         // Bei Größen-Mismatch oder n == 0 liefert der Guard bewusst still leere Puffer zurück
         // statt laut zu scheitern (preconditionFailure): Da dieser Code pro Textur-Update im
         // Render-Pfad läuft (Godot/GDExtension), ist ein harter Crash mitten im Frame schlechter
@@ -38,7 +88,7 @@ public enum TerrainColorRenderer {
               rain.count == n * n,
               veg.count == n * n,
               salt.count == n * n else {
-            return Buffers(colors: [], surfaces: [])
+            return Buffers(colors: [], surfaces: [], covers: [])
         }
         let sea = terrain.cfg.sea
         let lith = terrain.lithHardness.count == n * n ? terrain.lithHardness : [0.0]
@@ -49,10 +99,28 @@ public enum TerrainColorRenderer {
         let ice = terrain.ice.count == n * n ? terrain.ice : [0.0]
         let iceOn = ice.count == n * n
         let iceRef = terrain.cfg.iceCoverRef
+        let disturb = terrain.disturb.count == n * n ? terrain.disturb : [0.0]
+        let rawOn = disturb.count == n * n
+        let temp = terrain.temperature.count == n * n ? terrain.temperature : [0.0]
+        let tempOn = temp.count == n * n
         let bands = terrain.heightBands
+        // Weltsteigung aus `macroSlope` wie in `ForestCanopyMask`; ohne
+        // Schrittweite (world <= 0 oder nicht endlich) gibt es keine
+        // Weltsteigung, dann tragen nur die Höhenbänder Fels.
+        let cell = terrain.cfg.world / Double(n)
+        let slopeScale = cell > 0 && cell.isFinite ? 2 * RenderContract.heightScale / cell : 0
+        let hscale = RenderContract.heightScale
+        let radius = max(0, MaterialRender.screeReachCells)
 
         var colors = [UInt8](repeating: 255, count: n * n * 4)
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
+        var covers = [UInt8](repeating: 0, count: n * n * 4)
+        // Felsanteil je Zelle (Durchgang 1), je Zeile und dann je Spalte
+        // verbreitert (Durchgang 2).
+        var rockField = [Float](repeating: 0, count: n * n)
+        var rowSpread = [Float](repeating: 0, count: n * n)
+        var reach = [Float](repeating: 0, count: n * n)
+
         h.withUnsafeBufferPointer { hb in
         rain.withUnsafeBufferPointer { rnb in
         veg.withUnsafeBufferPointer { vgb in
@@ -60,16 +128,58 @@ public enum TerrainColorRenderer {
         lith.withUnsafeBufferPointer { ltb in
         snow.withUnsafeBufferPointer { snb in
         ice.withUnsafeBufferPointer { icb in
+        disturb.withUnsafeBufferPointer { dsb in
+        temp.withUnsafeBufferPointer { tmb in
+        rockField.withUnsafeMutableBufferPointer { rfb in
+        rowSpread.withUnsafeMutableBufferPointer { rsb in
+        reach.withUnsafeMutableBufferPointer { reb in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
+        covers.withUnsafeMutableBufferPointer { cvb in
         // Nach dem Guard oben hat jeder Puffer mindestens eine Zelle (Eingaben n*n bzw. [0.0],
         // Ausgaben n*n*4 mit n > 0), baseAddress ist beweisbar ungleich nil.
         // Force-Unwrap folgt dem Stil der Nachbar-Renderer (WaterFieldRenderer, RiverRibbonRenderer).
         let ph = hb.baseAddress!, prain = rnb.baseAddress!, pveg = vgb.baseAddress!
         let psalt = slb.baseAddress!, plith = ltb.baseAddress!
-        let psnow = snb.baseAddress!, pice = icb.baseAddress!
-        let pcolor = cb.baseAddress!, psurface = sb.baseAddress!
+        let psnow = snb.baseAddress!, pice = icb.baseAddress!, pdist = dsb.baseAddress!
+        let ptemp = tmb.baseAddress!
+        let prock = rfb.baseAddress!, prow = rsb.baseAddress!, preach = reb.baseAddress!
+        let pcolor = cb.baseAddress!, psurface = sb.baseAddress!, pcover = cvb.baseAddress!
 
+        // (1) Felsanteil aus Weltsteigung und Konvexität, nur auf Land und
+        // innerhalb des ±2-Stencils (am Rand ist Meer).
+        parallelChunks(n) { jLo, jHi in
+            for j in jLo..<jHi where j > 1 && j < n - 2 {
+                for i in 2..<max(2, n - 2) {
+                    let k = j * n + i
+                    guard ph[k] > sea + 0.012 else { continue }
+                    prock[k] = Float(rockTarget(
+                        worldSlope: Terrain.macroSlope(ph, k, n) * slopeScale,
+                        convexity: convexity(ph, k, n) * hscale))
+                }
+            }
+        }
+        // (2) Separierbarer Maximum-Filter über ±`screeReachCells`.
+        parallelChunks(n) { jLo, jHi in
+            for j in jLo..<jHi {
+                for i in 0..<n {
+                    var m: Float = 0
+                    for d in max(0, i - radius)...min(n - 1, i + radius) { m = max(m, prock[j * n + d]) }
+                    prow[j * n + i] = m
+                }
+            }
+        }
+        parallelChunks(n) { jLo, jHi in
+            for j in jLo..<jHi {
+                for i in 0..<n {
+                    var m: Float = 0
+                    for d in max(0, j - radius)...min(n - 1, j + radius) { m = max(m, prow[d * n + i]) }
+                    preach[j * n + i] = m
+                }
+            }
+        }
+
+        // (3) Farbe und Gewichte.
         parallelChunks(n) { jLo, jHi in
             for j in jLo..<jHi {
                 for i in 0..<n {
@@ -78,14 +188,17 @@ public enum TerrainColorRenderer {
                     let hard = lithOn ? min(1, max(-1, plith[k])) : 0
                     var r = 0.0, g = 0.0, b = 0.0
                     var vegWeight = 0.0, rockWeight = 0.0, coldWeight = 0.0
+                    var screeWeight = 0.0, bareIce = 0.0, rawWeight = 0.0, valley = 0.0
 
                     if v <= sea + 0.012 {
                         (r, g, b) = gradColor(v)
                     } else {
-                        var slope = 0.0
+                        var slope = 0.0, convex = 0.0
                         if i > 1 && i < n - 2 && j > 1 && j < n - 2 {
                             slope = Terrain.macroSlope(ph, k, n)
+                            convex = convexity(ph, k, n) * hscale
                         }
+                        let worldSlope = slope * slopeScale
                         let steep = clamp01(slope * 45)
 
                         // Dunkler Grundfels statt der bisherigen kreidigen
@@ -141,19 +254,65 @@ public enum TerrainColorRenderer {
                         g -= hard * 0.075
                         b -= hard * 0.09
 
-                        // Die drei Gewichte werden hier hierarchisch
-                        // abgeschwächt (Kälte deckt alles, Vegetation wächst
-                        // nicht unter Schnee, Fels schaut nur zwischen beiden
-                        // durch) und summieren sich deshalb auf höchstens 1 —
-                        // der Rest ist Boden. `terrain.gdshader` mischt die
-                        // Materialien als GEWICHTSSUMME und verlässt sich
-                        // genau darauf; wer die Faktoren hier ändert, prüft
-                        // die Summe dort mit.
+                        // Die Gewichte werden hierarchisch abgeschwächt und
+                        // summieren sich deshalb auf höchstens 1 — der Rest
+                        // ist Grund (Shader: Trockenrasen, in der Höhe
+                        // steiniger Grund). Reihenfolge: Kälte deckt alles;
+                        // Fels (steil-konvex, Issue #174 D) vor Halde, Halde
+                        // vor Rohboden, Rohboden vor Vegetation. Bis #174
+                        // stand die Vegetation VOR dem Fels und deckte ihn
+                        // auf jedem bewachsbaren Hang zu. `terrain.gdshader`
+                        // mischt die Materialien als GEWICHTSSUMME und
+                        // verlässt sich genau darauf; wer die Faktoren hier
+                        // ändert, prüft die Summe dort mit
+                        // (`MaterialTests.testWeightsNeverExceedOne`).
                         coldWeight = max(snowCover, iceCover)
-                        vegWeight = vegAmount * (1 - coldWeight) * (1 - saltCover)
-                        let cliff = smoothstep(0.004, 0.026, slope)
-                        rockWeight = max(highRock * 0.82, cliff)
-                            * (1 - vegWeight) * (1 - coldWeight) * (1 - saltCover)
+                        let open = (1 - coldWeight) * (1 - saltCover)
+                        // Hochlagen-Grau nur, wo nichts wächst (wie vor #174).
+                        let rockShare = max(Double(prock[k]), highRock * 0.82 * (1 - vegAmount))
+                        let screeShare = screeTarget(worldSlope: worldSlope, source: Double(preach[k]),
+                                                     convexity: convex) * (1 - rockShare)
+                        let mineral = rockShare + screeShare
+                        let rawShare = rawOn
+                            ? smoothstep(MaterialRender.rawDisturbLo, MaterialRender.rawDisturbHi, pdist[k])
+                            : 0
+                        // Bewuchs weicht erst, wenn Fels und Schutt den Standort
+                        // überwiegend decken; bis dahin füllt das Mineral nur
+                        // die Lücken (der Wald hängt an diesem Gewicht, #168).
+                        let vegShare = vegAmount * (1 - rawShare)
+                            * (1 - smoothstep(MaterialRender.vegYieldLo, MaterialRender.vegYieldHi, mineral))
+                        let free = 1 - vegShare
+                        vegWeight = vegShare * open
+                        rockWeight = rockShare * free * open
+                        screeWeight = screeShare * free * open
+                        rawWeight = rawShare * (1 - mineral) * free * open
+                        // Die Makrofarbe folgt dem Mineral: der Shader mischt
+                        // sie zu 28 % unter, sonst trüge jede Felswand den
+                        // Grünstich des Habitats darunter.
+                        let tint = rockWeight + screeWeight
+                        r += (0.37 - r) * tint
+                        g += (0.365 - g) * tint
+                        b += (0.355 - b) * tint
+
+                        // Blankes Eis nur im Zehrgebiet (über 0 °C, dort
+                        // schmilzt `updateIce`), darüber Firn. Als
+                        // Anteil an der Kältedeckung, damit der Shader Eis-
+                        // und Schneefarbe innerhalb von B mischt.
+                        let ablation = tempOn
+                            ? smoothstep(MaterialRender.firnTempLo, MaterialRender.firnTempHi, ptemp[k])
+                            : 1
+                        let bare = iceCover * ablation * (1 - MaterialRender.iceSnowHide * snowCover)
+                        bareIce = coldWeight > 0 ? clamp01(bare / coldWeight) : 0
+
+                        // Talboden: flach und unterhalb des Nadelwald-Bands.
+                        // Anknüpfungspunkt Paket B (#174): alte Bänke
+                        // (`barAge`) kommen hier als zweite Quelle hinzu,
+                        // `valley = max(valley, Wiese aus barAge)`.
+                        let lowland = 1 - smoothstep(bands.coniferLow,
+                                                     max(bands.coniferHigh, bands.coniferLow + 1e-6), v)
+                        valley = (1 - smoothstep(MaterialRender.valleySlopeLo,
+                                                 MaterialRender.valleySlopeHi, worldSlope))
+                            * lowland * open
                     }
 
                     // Umrechnung 0…1 → Byte nur über `byte01` (RenderSupport):
@@ -167,12 +326,16 @@ public enum TerrainColorRenderer {
                     psurface[o + 1] = byte01(rockWeight)
                     psurface[o + 2] = byte01(coldWeight)
                     psurface[o + 3] = byte01(hard * 0.5 + 0.5)
+                    pcover[o] = byte01(screeWeight)
+                    pcover[o + 1] = byte01(bareIce)
+                    pcover[o + 2] = byte01(rawWeight)
+                    pcover[o + 3] = byte01(valley)
                 }
             }
         }
-        }}}}}}}}}
+        }}}}}}}}}}}}}}}
 
-        return Buffers(colors: colors, surfaces: surfaces)
+        return Buffers(colors: colors, surfaces: surfaces, covers: covers)
     }
 
     // Meeresgrund und unmittelbarer Ufersaum. Landmaterialien entstehen im
@@ -189,7 +352,7 @@ public enum TerrainColorRenderer {
     // Innerhalb der parallelen Pixelschleife aufgerufen; @inline(__always)
     // vermeidet den Call-Overhead für jeden Meeresgrund-Punkt analog zu clamp01/smoothstep.
     @inline(__always)
-    private static func gradColor(_ v: Double) -> (Double, Double, Double) {
+    static func gradColor(_ v: Double) -> (Double, Double, Double) {
         for k in 0..<(stops.count - 1) {
             if v <= stops[k + 1].0 {
                 let a = stops[k], c = stops[k + 1]

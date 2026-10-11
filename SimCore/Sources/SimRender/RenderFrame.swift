@@ -30,6 +30,8 @@ public struct RenderFrame {
         public let waterBlend: Double
         public let colors: [UInt8]
         public let surfaces: [UInt8]
+        /// Bodenbedeckung (Issue #174 D, `TerrainColorRenderer.Buffers.covers`).
+        public let covers: [UInt8]
         public let flowDetail: [UInt8]
         /// Entsteht NACH Bändern und Wasser, sieht also beide dieses Frames.
         public let protectMask: [UInt8]

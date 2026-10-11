@@ -210,6 +210,8 @@ var height_field := FieldTexture.new("height_tex", Image.FORMAT_RF, true)
 var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF, true)
 var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8, true)
 var surface_field := FieldTexture.new("surface_tex", Image.FORMAT_RGBA8, true)
+# Bodenbedeckung (#174 D): Schutthalde, Gletschereis, Rohboden, Talboden.
+var cover_field := FieldTexture.new("cover_tex", Image.FORMAT_RGBA8, true)
 var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8)
 # Abfluss-Dichte fürs Shader-Detail: bündelt die kosmetischen Erosionsrinnen in
 # echten Abflussbahnen statt als uniformes Muster (WaterRender.flowDetailIntensity).
@@ -301,6 +303,10 @@ var forest_prev_tex: ImageTexture
 var forest_img: Image
 var forest_lift_cache: PackedFloat32Array
 var canopy_calib := {}
+# Wolkenkörper (#174 D, Lighting.make_cloud_bodies) und alle Materialien mit
+# Wolkenschatten oder -körper.
+var cloud_bodies: Node3D
+var cloud_mats: Array[ShaderMaterial] = []
 
 # Kamera-Orbit
 var cam: Camera3D
@@ -687,6 +693,17 @@ func _setup_canopy() -> void:
 		terrain_mat.set_shader_parameter(name, canopy_calib[name])
 	terrain_mat.set_shader_parameter("canopy_enabled", true)
 
+## Material-Kalibrierung über die Brücke (#174 D): Name → Wert aus
+## SimCore.MaterialRender. Statisch, damit game/tests/canopy.gd sie headless
+## prüft. Die Gewichte kommen mit jedem Overlay-Frame (`cover`, `surface`).
+static func material_calibration(sim_node: Object) -> Dictionary:
+	var names: PackedStringArray = sim_node.materialUniformNames()
+	var values: PackedFloat32Array = sim_node.materialUniformValues()
+	var calib := {}
+	for i in names.size():
+		calib[names[i]] = values[i]
+	return calib
+
 func _setup_scene() -> void:
 	# Licht und Atmosphäre (#151): feste Welt-Sonne, Werte und Qualitätsstufen
 	# stehen in Lighting.gd.
@@ -723,6 +740,9 @@ func _setup_scene() -> void:
 	add_child(terrain_mi)
 	_setup_relief()
 	_setup_canopy()
+	var material_calib := material_calibration(sim)
+	for name in material_calib:
+		terrain_mat.set_shader_parameter(name, material_calib[name])
 
 	if OS.has_environment("RS_WATER_GPU"):
 		water_gpu = true
@@ -766,7 +786,13 @@ func _setup_scene() -> void:
 	if river_mat != null:
 		water_mats.append(river_mat)
 	apply_water_calibration(sim, water_mats)
-	Lighting.apply_clouds(water_mats, render_quality)
+	# Wolkenkörper über dem Kamm (#174 D) teilen Rauschen und Basis mit den
+	# Wolkenschatten; `cloud_mats` sind alle Materialien, die beides lesen.
+	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, HSCALE)
+	add_child(cloud_bodies)
+	cloud_mats.assign(water_mats)
+	cloud_mats.append_array(Lighting.cloud_body_materials(cloud_bodies))
+	Lighting.apply_clouds(cloud_mats, render_quality)
 
 	# Pinselkuppel: Linien in Vertex-Farben (Rand hell, Gitter gedämpft).
 	brush_mi = MeshInstance3D.new()
@@ -1310,6 +1336,8 @@ func _process(delta: float) -> void:
 		ocean_mat.set_shader_parameter("u_time", u_time)
 	if river_mat:
 		river_mat.set_shader_parameter("u_time", u_time)
+	for mat in Lighting.cloud_body_materials(cloud_bodies):
+		mat.set_shader_parameter("u_time", u_time)
 	if debug_dirty:
 		debug_refresh_timer += delta
 		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS:
@@ -1547,6 +1575,9 @@ func _apply_frame(frame: Dictionary) -> void:
 func _upload_heights() -> void:
 	height_fade.start(_now(), _timelapse_fading())
 	height_field.upload(terrain_mat, N, sim.heightsBytes())
+	# Die Wolkenkörper erscheinen nur über dem Kamm und lesen dafür die Höhe.
+	for mat in Lighting.cloud_body_materials(cloud_bodies):
+		mat.set_shader_parameter("height_tex", height_field._tex)
 	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(sim.currentYear()))
 	terrain_mat.set_shader_parameter("sim_year", sim.currentYear())
 
@@ -1577,10 +1608,13 @@ func _upload_overlays(frame: Dictionary) -> void:
 		# Nadelbaum-Anteil des Kronendachs (#152, HeightBands.coniferShare).
 		terrain_mat.set_shader_parameter("conifer_lo", bands[6])
 		terrain_mat.set_shader_parameter("conifer_hi", bands[7])
+		# Wolkenbasis knapp über dem Kamm (#174 D): rockStart/rockFull.
+		Lighting.place_clouds(cloud_mats, bands[2] * HSCALE, bands[3] * HSCALE, cloud_bodies)
 
 	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung.
 	color_field.upload(terrain_mat, N, frame["color"])
 	surface_field.upload(terrain_mat, N, frame["surface"])
+	cover_field.upload(terrain_mat, N, frame["cover"])
 	flow_field.upload(terrain_mat, N, frame["flow"])
 	# Wasser-Feld (Flüsse/Seen/Altarme): im Zeitraffer zeitlich geglättet
 	# (`water_blend` < 1), sonst der frische Stand.
