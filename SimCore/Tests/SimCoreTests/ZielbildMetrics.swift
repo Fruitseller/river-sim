@@ -23,11 +23,15 @@ enum ZielbildMetrics {
         var lowlandFraction: Double { landCells == 0 ? 0 : Double(lowlandCells) / Double(landCells) }
         /// Zusammenhängende Tieflandflächen ab `corridorMinFraction` des Landes.
         var corridors = 0
-        /// Anteil des Tieflands, der in diesen Korridoren liegt.
-        var corridorShare = 0.0
-        /// Größte Reichweite eines küstennahen Korridors landeinwärts, als
-        /// Anteil der größten Küstendistanz der Insel (1 = reicht bis zum
-        /// küstenfernsten Punkt, also zum Kamm). Punkt 2.
+        /// Anteil des LANDES in den `mainCorridors` größten Tieflandflächen.
+        /// Das ist die Lesart von „≥ 20 % Tiefland in ≤ 4 Korridoren": nicht
+        /// „höchstens vier Flecken" — bei einer Schwelle von 0,003 Höhe je Zelle
+        /// zählt jede Talsohle im Hügelland als eigener Fleck —, sondern „die
+        /// vier größten zusammenhängenden Flächen tragen schon 20 % des Landes".
+        var mainCorridorLandShare = 0.0
+        /// Größte Reichweite eines dieser Hauptkorridore landeinwärts, sofern er
+        /// die Küste berührt, als Anteil der größten Küstendistanz der Insel
+        /// (1 = reicht bis zum küstenfernsten Punkt, also zum Kamm). Punkt 2.
         var coastCorridorReach = 0.0
         /// Landzellen im äußersten Ring des Gitters (Punkt 3: muss 0 sein).
         var landOnBorder = 0
@@ -46,6 +50,8 @@ enum ZielbildMetrics {
     /// Mindestgröße eines Tieflandkorridors (Anteil der Landzellen): Flecken
     /// darunter sind Talsohlen-Stücke, keine Korridore.
     static let corridorMinFraction = 0.0025
+    /// Zahl der Hauptkorridore (Issue #174: „in ≤ 4 zusammenhängenden Korridoren").
+    static let mainCorridors = 4
 
     static func landform(_ t: Terrain) -> Landform {
         let n = t.cfg.n, cs = t.cfg.cellSize, sea = t.cfg.sea
@@ -107,7 +113,7 @@ enum ZielbildMetrics {
         let minSize = max(1, Int(corridorMinFraction * Double(r.landCells)))
         var seen = [Bool](repeating: false, count: n * n)
         var stack: [Int] = []
-        var inCorridors = 0
+        var comps: [(size: Int, coastReach: Double)] = []
         for start in 0..<(n * n) where lowland[start] && !seen[start] {
             stack.removeAll(keepingCapacity: true)
             stack.append(start); seen[start] = true
@@ -122,14 +128,14 @@ enum ZielbildMetrics {
                     seen[nb] = true; stack.append(nb)
                 }
             }
-            guard size >= minSize else { continue }
-            r.corridors += 1
-            inCorridors += size
-            if touchesCoast, maxDist > 0 {
-                r.coastCorridorReach = max(r.coastCorridorReach, Double(reach) / Double(maxDist))
-            }
+            if size >= minSize { r.corridors += 1 }
+            comps.append((size, touchesCoast && maxDist > 0 ? Double(reach) / Double(maxDist) : 0))
         }
-        r.corridorShare = r.lowlandCells == 0 ? 0 : Double(inCorridors) / Double(r.lowlandCells)
+        comps.sort { $0.size > $1.size }
+        let main = comps.prefix(mainCorridors)
+        r.mainCorridorLandShare = r.landCells == 0 ? 0
+            : Double(main.reduce(0) { $0 + $1.size }) / Double(r.landCells)
+        r.coastCorridorReach = main.map(\.coastReach).max() ?? 0
         r.lowland = lowland
         return r
     }
@@ -336,6 +342,52 @@ enum ZielbildMetrics {
     }
 }
 
+/// Wächter der Großform (Issue #174, Paket A, Abnahmepunkte 1–4) auf den drei
+/// Matrix-Seeds, Produktions-Config mit Einlauf. Schranken aus dem Issue;
+/// gemessene Werte in `docs/zielbild-measurements.md`.
+final class ZielbildLandformTests: XCTestCase {
+    private func world(_ seed: UInt32, years: Double) -> Terrain {
+        let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+        while t.years < years - 1e-6 { t.step(dtYears: min(1000, years - t.years)) }
+        return t
+    }
+
+    /// Punkte 1–4 in Jahr 2.000 und 20.000. Ein Lauf je Seed, weil der
+    /// 20.000-Jahre-Lauf den teuren Teil trägt.
+    func testRangeLandformMeetsTheAcceptanceSheet() {
+        for seed in ZielbildBaseline.seeds {
+            let t = world(seed, years: 2_000)
+            var lf = ZielbildMetrics.landform(t)
+            // Punkt 1: Tiefland ≥ 20 % des Landes, getragen von ≤ 4 Korridoren.
+            XCTAssertGreaterThanOrEqual(lf.mainCorridorLandShare, 0.20,
+                "Seed \(seed): vier größte Tieflandflächen tragen nur \(lf.mainCorridorLandShare) des Landes")
+            // Punkt 2: einer davon reicht von der Küste bis zum Kamm.
+            XCTAssertGreaterThanOrEqual(lf.coastCorridorReach, 0.8,
+                "Seed \(seed): kein Korridor reicht von der Küste ins Inselinnere (\(lf.coastCorridorReach))")
+            // Punkt 3: kein Land am Gitterrand (mit Luft: 3 % des Gitters).
+            XCTAssertGreaterThanOrEqual(Double(lf.minBorderDistance), 0.03 * Double(t.cfg.n),
+                "Seed \(seed): Land \(lf.minBorderDistance) Zellen vom Rand")
+            while t.years < 20_000 - 1e-6 { t.step(dtYears: 1000) }
+            lf = ZielbildMetrics.landform(t)
+            // Punkt 4: Gletscher ab Jahr 20.000.
+            XCTAssertGreaterThan(lf.iceCells, 0, "Seed \(seed): kein Eis in Jahr 20.000")
+            XCTAssertEqual(lf.landOnBorder, 0, "Seed \(seed): Land am Rand in Jahr 20.000")
+        }
+    }
+
+    /// Der Rand bleibt auch bei kleinen Gittern frei — der Abstand skaliert mit `n`.
+    func testBorderMarginScalesWithGrid() {
+        for n in [96, 192] {
+            var c = SimConfig(); c.n = n; c.world = calibrationWorld
+            for seed in ZielbildBaseline.seeds {
+                let lf = ZielbildMetrics.landform(Terrain(config: c, seed: seed))
+                XCTAssertEqual(lf.landOnBorder, 0, "n \(n), Seed \(seed): Land am Rand")
+                XCTAssertGreaterThan(lf.landCells, n * n / 8, "n \(n), Seed \(seed): Insel verschwindet")
+            }
+        }
+    }
+}
+
 /// Ist-Messung für Issue #174 („Erst messen, dann schrauben"): Kennzahlen 1–4
 /// und 9–15 auf den drei Matrix-Seeds, Produktions-Config mit Einlauf.
 ///
@@ -354,7 +406,7 @@ final class ZielbildBaseline: XCTestCase {
         let maxYear = env["RS_YEARS"].flatMap { Double($0) } ?? 100_000
 
         print("\n=== ZIELBILD #174: GROSSFORM (A) ===")
-        print("| Seed | Jahr | Tiefland | Korridore | in Korridoren | Küsten-Reichweite | Land am Rand | min. Randabstand | Eiszellen | Zerklüftung Tiefland |")
+        print("| Seed | Jahr | Tiefland | Flecken ≥ 0,25 % | Land in 4 größten | Küsten-Reichweite | Land am Rand | min. Randabstand | Eiszellen | Zerklüftung Tiefland |")
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         var beltRows: [String] = []
         for seed in Self.seeds where onlySeed == nil || onlySeed == seed {
@@ -372,7 +424,7 @@ final class ZielbildBaseline: XCTestCase {
                 }
                 let lf = ZielbildMetrics.landform(t)
                 print(String(format: "| %d | %.0f | %.1f %% | %d | %.0f %% | %.2f | %d | %d | %d | %.5f |",
-                             seed, year, 100 * lf.lowlandFraction, lf.corridors, 100 * lf.corridorShare,
+                             seed, year, 100 * lf.lowlandFraction, lf.corridors, 100 * lf.mainCorridorLandShare,
                              lf.coastCorridorReach, lf.landOnBorder, lf.minBorderDistance,
                              lf.iceCells, lf.lowlandRuggedness))
                 let b = ZielbildMetrics.belt(t, lowland: lf.lowland, swept: swept)
@@ -388,5 +440,47 @@ final class ZielbildBaseline: XCTestCase {
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         beltRows.forEach { print($0) }
         print("=== ENDE ZIELBILD ===\n")
+    }
+
+    /// Karte je Seed als PPM nach `RS_OUT` (Standard `/tmp`): Meer blau, Tiefland
+    /// grün, sonst Grau nach Höhe, Eis weiß, Mäanderläufe rot. Für den Blick
+    /// auf die Großform beim Kalibrieren von Paket A; `RS_YEARS` wählt das Jahr.
+    func testZielbildMapDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let env = ProcessInfo.processInfo.environment
+        let out = env["RS_OUT"] ?? "/tmp"
+        let year = env["RS_YEARS"].flatMap { Double($0) } ?? 0
+        for seed in Self.seeds where env["RS_SEED"].flatMap({ UInt32($0) }).map({ $0 == seed }) ?? true {
+            let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+            while t.years < year - 1e-6 { t.step(dtYears: min(1000, year - t.years)) }
+            let lf = ZielbildMetrics.landform(t)
+            let n = t.cfg.n
+            var px = [UInt8](repeating: 0, count: n * n * 3)
+            let maxH = t.h.max() ?? 1
+            for k in 0..<(n * n) {
+                var c: (Double, Double, Double)
+                if t.hf[k] <= t.cfg.sea { c = (30, 60, 120) }
+                else if t.underIce.count == n * n && t.underIce[k] { c = (240, 245, 255) }
+                else if t.hf[k] - t.h[k] > 0.01 { c = (60, 110, 200) }
+                else {
+                    let v = 60 + 190 * (t.h[k] - t.cfg.sea) / max(1e-9, maxH - t.cfg.sea)
+                    c = lf.lowland[k] ? (v * 0.55, v * 0.9, v * 0.45) : (v, v, v)
+                }
+                px[3 * k] = UInt8(min(255, max(0, c.0)))
+                px[3 * k + 1] = UInt8(min(255, max(0, c.1)))
+                px[3 * k + 2] = UInt8(min(255, max(0, c.2)))
+            }
+            for ch in t.meander.channels {
+                for p in ch.nodes {
+                    let k = min(n - 1, max(0, Int(p.z.rounded()))) * n + min(n - 1, max(0, Int(p.x.rounded())))
+                    px[3 * k] = 220; px[3 * k + 1] = 30; px[3 * k + 2] = 30
+                }
+            }
+            var data = Data("P6\n\(n) \(n)\n255\n".utf8)
+            data.append(contentsOf: px)
+            let path = "\(out)/zielbild-\(seed)-\(Int(year)).ppm"
+            try data.write(to: URL(fileURLWithPath: path))
+            print("MAP \(path) Tiefland \(String(format: "%.1f", 100 * lf.lowlandFraction)) % Korridore \(lf.corridors) Reichweite \(String(format: "%.2f", lf.coastCorridorReach)) Rand \(lf.minBorderDistance) Eis \(lf.iceCells)")
+        }
     }
 }

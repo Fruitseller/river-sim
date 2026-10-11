@@ -503,6 +503,219 @@ public final class Terrain {
         self.dropCarry = 0
         noise = SimplexNoise(seed: seed)
 
+        // Grundrelief und Tektonik-Feld: die Großform aus Issue #174 oder, für
+        // die Testwelten der Kalibrier-Suite, die Form davor (`rangeLandform`).
+        let (box, boy) = cfg.rangeLandform ? generateRangeRelief(seed: seed)
+                                           : generateLegacyRelief(seed: seed)
+        // Pre-Erosion (runevision-Filter): verzweigte Rinnen/Grate einmalig ins
+        // Basisrelief carven — deterministisch je Seed (Rinnen-Muster wandert mit).
+        if cfg.preErodeEnabled {
+            ErosionFilter.apply(h: &h, n: n, sea: cfg.sea,
+                                seedOffsetX: box, seedOffsetY: boy,
+                                params: cfg.preErodeParams)
+        }
+        initLayers()
+        // Gesteinsfeld (Issue #12) VOR dem ersten Flow: der Becken-Breach und die
+        // Spin-up-Tropfen sollen die Härtekontraste schon sehen — die antezedente
+        // Entwässerung ist damit von Anfang an strukturkontrolliert.
+        buildLithologyField()
+        updateLithology()
+        // Becken-Wasserhaushalt (Issue #11) im Gleichgewicht starten: die
+        // Generierung ruft `computeFlow` mit dt = 0, der Bilanz-Spiegel snappt
+        // also auf seinen Zielstand statt sich über die ersten Spieljahre
+        // einzuschwingen (dieselbe Doktrin wie `waterLevel = hf` unten).
+        for k in 0..<cfg.count {
+            lakeBalance[k] = h[k]
+            endorheicBasin[k] = .none
+            saltCrust[k] = 0
+            disturb[k] = 0 // frisches Terrain hat keine Baustellen (Issue #26)
+            regenPending[k] = 0
+        }
+        disturbActive = false
+        // Kryo-Felder leeren, BEVOR der erste `computeFlow` läuft. Seit Issue #36
+        // speist die Schneedecke den Abfluss; ein `generate` auf einem BESTEHENDEN
+        // Terrain (im Spiel: neuer Seed auf demselben Node) würde sonst die neue
+        // Insel mit dem Schnee der alten entwässern — der Seed wäre nicht mehr
+        // allein bestimmend, und Determinismus ist eine getestete Invariante.
+        // `updateClimate(dt: 10000)` unten baut die Felder gleich frisch auf.
+        temperature = []; snow = []; ice = []
+        // Die Vergletscherungs-Maske ist eine Ableitung daraus (#35) — mit dem
+        // Eis muss sie weg, sonst gatet die alte Insel die Erosion der neuen.
+        underIce = []
+        computeFlow()
+        if cfg.breachEnabled { breachBasins() }
+        spinUpStreamMap()
+        // Die Spin-up-Tropfen lagern Sediment ab und können frisch entwässerte
+        // Becken wieder andämmen → einmal nachbreachen (billig, fast alles offen).
+        if cfg.breachEnabled { breachBasins() }
+        // Klima im eingeschwungenen Zustand starten (Issue #33) — dieselbe
+        // Doktrin wie `waterLevel = hf` und `lakeBalance = h` oben: die
+        // Schneedecke ist ÄLTER als das Spieljahr 0 und soll nicht über die
+        // ersten Jahrhunderte einschwingen. 10.000 Jahre sind bei der trägsten
+        // Zeitkonstante (`snowTurnoverYears` 500) 20 τ — der Vorrat steht exakt
+        // auf S*. Muss VOR `updateVegetation` laufen: dessen
+        // `updateHeightBands` liest die Schneegrenze aus dem Feld.
+        updateClimate(dt: 10000)
+        // Vegetation im eingeschwungenen Zustand starten.
+        updateVegetation(years: 10000)
+        seedMeander()
+        // Einlauf (s. Doc-Kommentar oben): VOR den Startzustands-Doktrinen
+        // darunter, damit Seespiegel und Playa-Kruste den EINGELAUFENEN Stand
+        // einfrieren. Getaktet wie der Zeitraffer (1000-Jahr-Chunks).
+        if settleYears > 0 {
+            var remaining = settleYears
+            while remaining > 0 {
+                let dt = min(1000, remaining)
+                step(dtYears: dt)
+                remaining -= dt
+            }
+            years = 0
+        }
+        waterLevel = hf // Startzustand: Seespiegel = Füllstand (kein Einschwingen)
+        // Playas starten mit ihrer Kruste (sie sind ÄLTER als das Spieljahr 0) —
+        // sonst salzt eine seit der Generierung trockene Pfanne erst über die
+        // ersten ~1200 Jahre ein.
+        for k in 0..<cfg.count where playaBed[k] { saltCrust[k] = 1 }
+    }
+
+    /// Grundrelief und Tektonik-Feld mit Gebirgskamm und Tieflandkorridoren
+    /// (Issue #174, `RangeSkeleton`). Liefert den Rausch-Versatz für die
+    /// Pre-Erosion.
+    private func generateRangeRelief(seed: UInt32) -> (Double, Double) {
+        // --- Per-Seed-Makro-Parameter: jeder Seed bekommt eine eigene Insel-Form,
+        // Reliefstärke, Grat/Rundhügel-Charakter und Küsten-Archetyp → echte Vielfalt
+        // statt immer derselben zentrierten Rund-Insel. Deterministisch (Mulberry32).
+        var gr = Mulberry32(seed: seed ^ 0x1234_abcd)
+        let box = gr.next() * 1000, boy = gr.next() * 1000        // Noise-Region (Seed sampelt anderswo)
+        let cx = Double(n - 1) / 2
+        // Zentrum und Ausdehnung seit Issue #174 enger (vorher ±0,17 n Versatz,
+        // fStart 0,58–0,88, Ellipse über die kurze Achse normiert, also mit
+        // bis zu 1,8-facher langer Halbachse): die Insel soll als Ganzes im
+        // Gitter liegen, der Randabstand unten schneidet sonst gerade, steile
+        // Küsten parallel zum Rand.
+        let ccx = cx + (gr.next() - 0.5) * 0.12 * Double(n)        // Insel-Zentrum versetzt
+        let ccy = cx + (gr.next() - 0.5) * 0.12 * Double(n)
+        let aAng = gr.next() * .pi                                  // Anisotropie-Achse
+        let aRatio = 0.55 + gr.next() * 1.05                        // Streckung: 0.55 langer Zug … 1.6 gestaucht
+        let fStart = 0.55 + gr.next() * 0.15                        // Landausdehnung (kleine Insel ↔ Kontinent)
+        let fWidth = 0.30 + gr.next() * 0.15                        // Küstensaum-Breite (≥ 0,30: flache Küstenebene, s. u.)
+        let relief = cfg.baseRelief * (0.80 + gr.next() * 0.45)     // Reliefstärke variiert
+        let roll = gr.next() * gr.next() * 0.7                      // 0=schroffe Grate … Rundhügel (quadr.→meist schroff)
+        let mFreqK = 0.22 + gr.next() * 0.42                        // Massiv-Frequenz (Gipfel-Klumpung entlang des Kamms)
+        _ = gr.next()                                               // (war mBias, die Tiefland-Grundhöhe — jetzt Sache des Kamms)
+        let bfMul = 0.72 + gr.next() * 0.75                         // Feature-Skala (grob ↔ fein)
+        let sharp = 1.0 + gr.next() * 0.9                           // Grat-Schärfe (pow-Exponent)
+        let archetype = Int(gr.next() * 3.0)                        // 0 Insel · 1 Küste · 2 Archipel
+        let coastAng = gr.next() * 2 * .pi                          // Küsten-Richtung (Archetyp 1)
+
+        @inline(__always) func smooth(_ a: Double, _ b: Double, _ v: Double) -> Double {
+            let t = min(max((v - a) / (b - a), 0), 1); return t * t * (3 - 2 * t)
+        }
+
+        // Großform (Issue #174, `RangeSkeleton`): EIN Kamm entlang der langen
+        // Inselachse statt Grate über die ganze Fläche. Beim Archetyp Küste
+        // läuft er parallel zur Küste im Hinterland.
+        let ca = cos(aAng), sa = sin(aAng)
+        var axisDir = aRatio < 1 ? SIMD2(-sa, ca) : SIMD2(ca, sa)
+        var axisCenter = SIMD2(ccx, ccy)
+        let longSemi = fStart * cx
+        if archetype == 1 {
+            let cd = SIMD2(cos(coastAng), sin(coastAng))
+            axisDir = SIMD2(-cd.y, cd.x)
+            axisCenter = SIMD2(cx, cx) - 0.18 * Double(n) * cd
+        }
+        var lr = Mulberry32(seed: seed ^ 0x7a11_4e5d)
+        let skeleton = RangeSkeleton(n: n, rng: &lr, center: axisCenter, axisDir: axisDir,
+                                     halfLength: min(0.42 * Double(n), 0.75 * longSemi))
+        let form = skeleton.evaluate(n: n)
+
+        // Tektonik-Feld: fix je Terrain (reale Tektonik wechselt nicht alle 100 J).
+        let uNoise = SimplexNoise(seed: seed ^ 0x5eed)
+        var uRnd = Mulberry32(seed: seed ^ 0x5eed)
+        let uox = uRnd.next() * 1000, uoy = uRnd.next() * 1000
+        let uFreq = cfg.upliftFreq / Double(n)
+        for j in 0..<n {
+            for i in 0..<n {
+                // RIDGED Tektonik: Hebung konzentriert sich auf Gebirgs-GRATE (statt
+                // eines glatten Blobs). Entscheidend gegen die Langzeit-Degradation —
+                // die Erosion läuft sonst ins glatte Hebungsfeld (→ runde Kuppeln);
+                // ein gratiges Hebungsfeld trägt langfristig gratige Berge.
+                // Seit Issue #174 nur noch im Gebirgsgürtel: `applyUplift` und der
+                // Relief-Servo heben ausschließlich über den POSITIVEN Teil, die
+                // Ebenen und Täler bleiben damit tektonisch ruhig — sonst höbe der
+                // Servo das Tiefland über die Jahrtausende wieder zu Hügeln.
+                let ridge = uNoise.ridged01(Double(i) * uFreq + uox,
+                                            Double(j) * uFreq + uoy, octaves: 5)
+                upliftBase[idx(i, j)] = (ridge * 1.15 - 0.22) * form.mountain[idx(i, j)]
+            }
+        }
+
+        // Grundrelief: Grate (ridged, optional mit fBm gemischt) im Gebirgsgürtel,
+        // sanfte Hügel daneben, flache Ebene dahinter; Täler schneiden vom Kamm
+        // zur Küste. Darüber der per-Seed variierende Insel-/Küsten-/Archipel-
+        // Falloff unter den Meeresspiegel und der Randabstand.
+        let bf = cfg.baseFreq / Double(n)
+        // Ebene: Höhe 0,20 über einem Meer bei 0,15. Die Küstenlinie liegt damit
+        // bei falloff = 0,75, im oberen, flachen Teil der Smoothstep: das
+        // Küstengefälle der Ebene (0,20 · 1,125 / (0,30 · 360 Zellen) ≈ 0,002 je
+        // Zelle) bleibt unter der Mäander-Schwelle (0,02 · cellSize ≈ 0,003).
+        let plainBase = 0.20
+        let valleyHeadRise = 0.10   // Talschluss über der Ebene (Gefälle ≈ 0,1 / 2,2 R)
+        // Randabstand relativ zu n (bei 720: 24 Zellen Rand, 72 Zellen Rampe,
+        // ±14 Zellen Rauschen) — in absoluten Zellen fraß er den Testwelten
+        // (n = 96…256) einen Großteil des Landes.
+        let borderMargin = 0.033 * Double(n)
+        let borderRamp = 0.10 * Double(n)
+        let borderWobble = 0.04 * Double(n)
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = idx(i, j)
+                let x = Double(i) * bf * bfMul + box, y = Double(j) * bf * bfMul + boy
+                let ridge = noise.ridged01(x, y, octaves: cfg.baseOctaves)
+                let rollv = noise.fbm01(x, y, octaves: 6)          // sanfte Alternative
+                let base = (1 - roll) * ridge + roll * rollv       // Grat ↔ Rundhügel
+                let massif = noise.fbm01(x * mFreqK, y * mFreqK, octaves: 3)
+                let ridgeE = 0.38 + 0.62 * pow(base, sharp)
+                let mountain = ridgeE * relief * (0.40 + 0.50 * massif)
+                let hills = relief * 0.40 * base * (0.5 + 0.5 * massif) // Vorberge: dieselben Grate, niedriger
+                let plain = plainBase + 0.03 * (noise.fbm01(x * 0.5 + 70, y * 0.5 + 70, octaves: 3) - 0.5)
+                let wm = form.mountain[k]
+                let land = plain + valleyHeadRise * form.rise[k]
+                    + form.hill[k] * (1 - wm) * hills + wm * mountain
+                // Anisotroper, versetzter Falloff.
+                let dx = Double(i) - ccx, dy = Double(j) - ccy
+                let rx = dx * ca + dy * sa
+                let ry = (-dx * sa + dy * ca) * aRatio
+                let d = (rx * rx + ry * ry).squareRoot() / cx / min(1, aRatio) // lange Halbachse = fStart
+                var falloff = 1 - smooth(fStart, fStart + fWidth, d)
+                if archetype == 1 {                                // Küste: Land auf einer Seite
+                    let proj = (Double(i) - cx) * cos(coastAng) + (Double(j) - cx) * sin(coastAng)
+                    let wob = (noise.fbm01(x * 0.6 + 30, y * 0.6 + 30, octaves: 3) - 0.5) * 0.5
+                    let g = proj / Double(n) + wob
+                    falloff = min(falloff, 1 - smooth(0.0, 0.26, g))
+                } else if archetype == 2 {                         // Archipel: in Inseln zerlegen
+                    let isl = noise.fbm01(x * 0.7 + 50, y * 0.7 + 50, octaves: 4)
+                    falloff *= smooth(0.34, 0.52, isl)
+                }
+                // Randabstand (Issue #174): kein Land am Gitterrand, sonst endet
+                // die Insel in einer geraden Kante und das Heightfield zeigt seine
+                // senkrechte Unterseite. Verrauscht, damit die Küste dort nicht
+                // dem Rand parallel läuft.
+                let bd = Double(min(min(i, j), min(n - 1 - i, n - 1 - j)))
+                let bw = bd + borderWobble * (noise.fbm01(x * 0.8 + 90, y * 0.8 + 90, octaves: 3) - 0.5)
+                falloff = min(falloff, smooth(borderMargin, borderMargin + borderRamp, bw))
+                h[k] = land * falloff
+            }
+        }
+        return (box, boy)
+    }
+
+    /// Grundrelief und Tektonik-Feld VOR Issue #174: Grate über die ganze
+    /// Landfläche, Massiv-Rauschen nur als Höhe. Unverändert erhalten, weil die
+    /// Mechanik-Wächter der Suite ihre Testwelt darauf kalibriert haben
+    /// (`calibrationRangeLandform` in `SimCoreTests/TestCalibration.swift`);
+    /// bit-identisch zum Stand davor.
+    private func generateLegacyRelief(seed: UInt32) -> (Double, Double) {
         // Tektonik-Feld: fix je Terrain (reale Tektonik wechselt nicht alle 100 J).
         let uNoise = SimplexNoise(seed: seed ^ 0x5eed)
         var uRnd = Mulberry32(seed: seed ^ 0x5eed)
@@ -580,75 +793,7 @@ public final class Terrain {
                 h[idx(i, j)] = ridgeE * relief * m * falloff
             }
         }
-        // Pre-Erosion (runevision-Filter): verzweigte Rinnen/Grate einmalig ins
-        // Basisrelief carven — deterministisch je Seed (Rinnen-Muster wandert mit).
-        if cfg.preErodeEnabled {
-            ErosionFilter.apply(h: &h, n: n, sea: cfg.sea,
-                                seedOffsetX: box, seedOffsetY: boy,
-                                params: cfg.preErodeParams)
-        }
-        initLayers()
-        // Gesteinsfeld (Issue #12) VOR dem ersten Flow: der Becken-Breach und die
-        // Spin-up-Tropfen sollen die Härtekontraste schon sehen — die antezedente
-        // Entwässerung ist damit von Anfang an strukturkontrolliert.
-        buildLithologyField()
-        updateLithology()
-        // Becken-Wasserhaushalt (Issue #11) im Gleichgewicht starten: die
-        // Generierung ruft `computeFlow` mit dt = 0, der Bilanz-Spiegel snappt
-        // also auf seinen Zielstand statt sich über die ersten Spieljahre
-        // einzuschwingen (dieselbe Doktrin wie `waterLevel = hf` unten).
-        for k in 0..<cfg.count {
-            lakeBalance[k] = h[k]
-            endorheicBasin[k] = .none
-            saltCrust[k] = 0
-            disturb[k] = 0 // frisches Terrain hat keine Baustellen (Issue #26)
-            regenPending[k] = 0
-        }
-        disturbActive = false
-        // Kryo-Felder leeren, BEVOR der erste `computeFlow` läuft. Seit Issue #36
-        // speist die Schneedecke den Abfluss; ein `generate` auf einem BESTEHENDEN
-        // Terrain (im Spiel: neuer Seed auf demselben Node) würde sonst die neue
-        // Insel mit dem Schnee der alten entwässern — der Seed wäre nicht mehr
-        // allein bestimmend, und Determinismus ist eine getestete Invariante.
-        // `updateClimate(dt: 10000)` unten baut die Felder gleich frisch auf.
-        temperature = []; snow = []; ice = []
-        // Die Vergletscherungs-Maske ist eine Ableitung daraus (#35) — mit dem
-        // Eis muss sie weg, sonst gatet die alte Insel die Erosion der neuen.
-        underIce = []
-        computeFlow()
-        if cfg.breachEnabled { breachBasins() }
-        spinUpStreamMap()
-        // Die Spin-up-Tropfen lagern Sediment ab und können frisch entwässerte
-        // Becken wieder andämmen → einmal nachbreachen (billig, fast alles offen).
-        if cfg.breachEnabled { breachBasins() }
-        // Klima im eingeschwungenen Zustand starten (Issue #33) — dieselbe
-        // Doktrin wie `waterLevel = hf` und `lakeBalance = h` oben: die
-        // Schneedecke ist ÄLTER als das Spieljahr 0 und soll nicht über die
-        // ersten Jahrhunderte einschwingen. 10.000 Jahre sind bei der trägsten
-        // Zeitkonstante (`snowTurnoverYears` 500) 20 τ — der Vorrat steht exakt
-        // auf S*. Muss VOR `updateVegetation` laufen: dessen
-        // `updateHeightBands` liest die Schneegrenze aus dem Feld.
-        updateClimate(dt: 10000)
-        // Vegetation im eingeschwungenen Zustand starten.
-        updateVegetation(years: 10000)
-        seedMeander()
-        // Einlauf (s. Doc-Kommentar oben): VOR den Startzustands-Doktrinen
-        // darunter, damit Seespiegel und Playa-Kruste den EINGELAUFENEN Stand
-        // einfrieren. Getaktet wie der Zeitraffer (1000-Jahr-Chunks).
-        if settleYears > 0 {
-            var remaining = settleYears
-            while remaining > 0 {
-                let dt = min(1000, remaining)
-                step(dtYears: dt)
-                remaining -= dt
-            }
-            years = 0
-        }
-        waterLevel = hf // Startzustand: Seespiegel = Füllstand (kein Einschwingen)
-        // Playas starten mit ihrer Kruste (sie sind ÄLTER als das Spieljahr 0) —
-        // sonst salzt eine seit der Generierung trockene Pfanne erst über die
-        // ersten ~1200 Jahre ein.
-        for k in 0..<cfg.count where playaBed[k] { saltCrust[k] = 1 }
+        return (box, boy)
     }
 
     /// Seespiegel sofort auf den Füllstand setzen — für Spieler-Eingriffe

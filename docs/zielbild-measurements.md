@@ -18,11 +18,15 @@ Einlauf (`productionSettleYears` = 3000), getaktet in 1000-Jahr-Schritten.
   meanderFlatSlope`. `macroSlope` ist Höhe je ZELLE, die Mäander-Schwelle Höhe
   je WELTEINHEIT (Gate in `MeanderState.lateralStep`); ohne die Division wäre
   die Schwelle um den Faktor 6,4 zu scharf.
-- **Korridor:** 4er-Zusammenhangskomponente des Tieflands ab 0,25 % der
-  Landzellen. „in Korridoren" = Anteil des Tieflands in diesen Komponenten.
-- **Küsten-Reichweite:** größte Küstendistanz (4er-BFS) in einem Korridor, der
-  die Küste berührt, geteilt durch die größte Küstendistanz der Insel.
-  1,00 = ein Korridor reicht bis zum küstenfernsten Punkt.
+- **Korridore:** 4er-Zusammenhangskomponenten des Tieflands. „Flecken" zählt
+  die ab 0,25 % der Landzellen; „Land in 4 größten" ist der Landanteil der
+  vier größten. Das ist die Lesart von „≥ 20 % Tiefland in ≤ 4 Korridoren"
+  (Punkt 1): bei einer Schwelle von 0,003 Höhe je Zelle zählt jede Talsohle
+  im Hügelland als eigener Fleck, „höchstens vier Flecken" wäre damit eine
+  Aussage über Talsohlen, nicht über Korridore.
+- **Küsten-Reichweite:** größte Küstendistanz (4er-BFS) in einem der vier
+  größten Korridore, sofern er die Küste berührt, geteilt durch die größte
+  Küstendistanz der Insel. 1,00 = reicht bis zum küstenfernsten Punkt.
 - **Zerklüftung Tiefland:** mittlerer Betrag des diskreten Laplace über die
   Tieflandzellen (Höhe je Zelle).
 - **Hauptlauf:** Mäanderlauf mit der größten Abfluss-Summe über seine Knoten.
@@ -50,17 +54,21 @@ Einlauf (`productionSettleYears` = 3000), getaktet in 1000-Jahr-Schritten.
 
 ### Großform
 
-| Seed | Jahr | Tiefland | Korridore | in Korridoren | Küsten-Reichweite | Land am Rand | min. Randabstand | Eiszellen | Zerklüftung Tiefland |
+Spalte „Land in 4 größten" und „Küsten-Reichweite" nach der Definition oben
+(nachgemessen auf `origin/main`, Jahr 2000 und 20.000; die erste Fassung
+dieser Tabelle zählte die Reichweite über alle Flecken):
+
+| Seed | Jahr | Tiefland | Flecken ≥ 0,25 % | Land in 4 größten | Küsten-Reichweite | Land am Rand | min. Randabstand | Eiszellen | Zerklüftung Tiefland |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1337 | 2000 | 35.5 % | 24 | 66 % | 0.30 | 659 | 0 | 11409 | 0.00361 |
-| 1337 | 20000 | 48.0 % | 17 | 86 % | 0.51 | 725 | 0 | 5214 | 0.00211 |
-| 1337 | 100000 | 65.9 % | 10 | 97 % | 1.00 | 780 | 0 | 931 | 0.00124 |
-| 42 | 2000 | 43.3 % | 12 | 85 % | 0.00 | 0 | 44 | 776 | 0.00304 |
-| 42 | 20000 | 50.5 % | 13 | 92 % | 0.39 | 0 | 45 | 136 | 0.00200 |
-| 42 | 100000 | 60.5 % | 8 | 97 % | 0.80 | 0 | 44 | 0 | 0.00138 |
-| 20 | 2000 | 42.7 % | 14 | 80 % | 0.19 | 280 | 0 | 11645 | 0.00298 |
-| 20 | 20000 | 53.3 % | 14 | 90 % | 0.76 | 288 | 0 | 5782 | 0.00180 |
-| 20 | 100000 | 68.2 % | 7 | 98 % | 1.00 | 351 | 0 | 1469 | 0.00112 |
+| 1337 | 2000 | 35.5 % | 24 | 13 % | 0.00 | 659 | 0 | 11409 | 0.00361 |
+| 1337 | 20000 | 48.0 % | 17 | 23 % | 0.51 | 725 | 0 | 5214 | 0.00211 |
+| 1337 | 100000 | 65.9 % | 10 | – | – | 780 | 0 | 931 | 0.00124 |
+| 42 | 2000 | 43.3 % | 12 | 32 % | 0.00 | 0 | 44 | 776 | 0.00304 |
+| 42 | 20000 | 50.5 % | 13 | 41 % | 0.39 | 0 | 45 | 136 | 0.00200 |
+| 42 | 100000 | 60.5 % | 8 | – | – | 0 | 44 | 0 | 0.00138 |
+| 20 | 2000 | 42.7 % | 14 | 26 % | 0.00 | 280 | 0 | 11645 | 0.00298 |
+| 20 | 20000 | 53.3 % | 14 | 40 % | 0.76 | 288 | 0 | 5782 | 0.00180 |
+| 20 | 100000 | 68.2 % | 7 | – | – | 351 | 0 | 1469 | 0.00112 |
 
 ### Mäandergürtel, Hauptlauf
 
@@ -80,10 +88,9 @@ Einlauf (`productionSettleYears` = 3000), getaktet in 1000-Jahr-Schritten.
 
 - **Tiefland fehlt nicht, es ist zerstückelt.** Schon ab Jahr 2000 liegen
   35–43 % der Landzellen unter der Mäander-Schwelle, mit dem Alter bis 68 %.
-  Abnahmepunkt 1 (≥ 20 %) hält also schon heute. Es zerfällt aber in 12–24
-  Flecken, und der größte küstennahe reicht in Jahr 2000 nur 0–30 % ins
-  Inselinnere. Paket A muss das Tiefland also zusammenhängend machen
-  (Korridore ≤ 4, Punkt 2), nicht vermehren.
+  Es zerfällt aber in 12–24 Flecken; die vier größten tragen in Jahr 2000
+  nur 13–32 % des Landes, und keiner davon berührt die Küste. Paket A muss
+  das Tiefland also zusammenhängend machen, nicht vermehren.
 - **Die Mäander sind keine Mäander.** Die Sinuosität des Hauptlaufs liegt mit
   2,2–3,1 sogar über dem Ziel, aber die Wellenlänge beträgt nur 1–3
   Kanalbreiten (Ziel 10–14) bei einer Amplitude von 1,5–2 Zellen: die
@@ -102,3 +109,72 @@ Einlauf (`productionSettleYears` = 3000), getaktet in 1000-Jahr-Schritten.
 - **Rand:** Seed 1337 und 20 haben Land im äußersten Gitterring (Punkt 3).
 - **Gletscher:** Seed 42 hat ab Jahr 100.000 kein Eis mehr (Punkt 4 verlangt
   „ab Jahr 20.000").
+
+### Laufzeit-Anteil des Mäanders (Ist, für Abnahmepunkt 48)
+
+`simperf --repeat 3` (Produktion, Seed 1337, M4 Max, 2026-10-11): 47,0 ms je
+Schritt (Minimum aus 3 Blöcken, 48,2 / 47,0 / 47,5). `migrateMeander` 3,15 ms
+(6,6 %), `meanderStamp` 1,75 ms (3,7 %), zusammen 10,3 %. Die Perf-Welt trägt
+937 Läufe mit 19.453 Knoten und 3907 Altarme.
+
+## Nach Paket A (Großform, `rangeLandform`)
+
+Gleiche Messung, Großform aus `RangeSkeleton` (`SimCore/Sources/SimCore/Landform.swift`):
+
+| Seed | Jahr | Tiefland | Flecken ≥ 0,25 % | Land in 4 größten | Küsten-Reichweite | Land am Rand | min. Randabstand | Eiszellen | Zerklüftung Tiefland |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1337 | 2000 | 60.3 % | 13 | 48 % | 1.00 | 0 | 50 | 16319 | 0.00179 |
+| 1337 | 20000 | 65.4 % | 4 | 63 % | 0.97 | 0 | 52 | 4543 | 0.00136 |
+| 1337 | 100000 | 74.2 % | 3 | 73 % | 1.00 | 0 | 56 | 1008 | 0.00126 |
+| 42 | 2000 | 66.0 % | 5 | 62 % | 1.00 | 0 | 82 | 6199 | 0.00183 |
+| 42 | 20000 | 68.0 % | 6 | 64 % | 1.00 | 0 | 83 | 965 | 0.00156 |
+| 42 | 100000 | 71.0 % | 1 | 70 % | 1.00 | 0 | 85 | 529 | 0.00150 |
+| 20 | 2000 | 57.6 % | 6 | 52 % | 1.00 | 0 | 65 | 9613 | 0.00166 |
+| 20 | 20000 | 59.9 % | 11 | 51 % | 1.00 | 0 | 66 | 2263 | 0.00141 |
+| 20 | 100000 | 65.3 % | 3 | 64 % | 0.99 | 0 | 69 | 398 | 0.00136 |
+
+Abnahmepunkte 1–4 auf allen drei Seeds erfüllt; Wächter
+`ZielbildLandformTests` (Pflichtsuite, Jahre 2000 und 20.000), `LongRunCollapse`
+grün. Die Zerklüftung des Tieflands sinkt um 40–50 % (Gegenprobe für Punkt 14
+in Paket B: Referenz sind ab jetzt diese Werte).
+
+Mäander-Kennzahlen unverändert schlecht (Paket B steht aus): λ/Breite 0,8–4,2,
+Asymmetrie 0,6–0,8, 900–1800 Cutoffs je 20.000 Jahre.
+
+Verworfen beim Kalibrieren (Karten über `testZielbildMapDiagnostic`):
+
+- **Ebene direkt hinter dem Gebirge** (Hügel nur bis 2,4 R): die Ebene ist ein
+  Kegel, von dem viele kleine Läufe parallel zur Küste rinnen; die Täler
+  sammeln nichts. Hügelland bis 3,6 R, die Täler schneiden hinein.
+- **Kamm mit Massiv-Faktor 0,65–1,0**: ein Hochplateau über der
+  Frostgrenze (h ≈ 0,6), 29.500 Eiszellen auf Seed 1337 gegen 11.400 vorher.
+  0,40–0,90 lässt die Gipfel variieren.
+- **Vorberge auf 2,5-facher Frequenz** (eigene `ridged01`-Ebene): mehr kleine
+  flache Talsohlen, 14–25 statt 5–12 Flecken in Jahr 2000.
+- **Randabstand in absoluten Zellen** (24 + 70): fraß auf den Testgittern
+  (n = 96…256) einen Großteil des Landes. Jetzt 3,3 % + 10 % von `n`.
+- **Ellipse über die kurze Achse normiert** (alter Stand): bei `aRatio` 0,55
+  ragte die lange Halbachse bis 1,8 Gitter-Halbbreiten, der Randabstand
+  schnitt die Insel zu steilen, geraden Küsten.
+
+### Offene Befunde aus der Test-Kaskade
+
+- **Eis hängt an der Schrittweite, schon vor #174.** Produktion, Jahr 20.000,
+  Eismasse bei dt 100 gegen 1000 auf `origin/main`: 77,4 / 128,1 (1337),
+  0,29 / 1,04 (42), 117,1 / 179,5 (20); mit der neuen Form 49,6 / 126,3,
+  65,3 / 31,5, 162,3 / 57,1. Der Wächter `testIceIsFramerateIndependent`
+  (n = 256) lag auf der alten Welt zufällig in einem ruhigen Bereich.
+- **Stream-Map trackt die großen Läufe schlechter.** `testStreamMapMarksAndPersists`
+  (n = 256, Zellgröße der Suite) misst auf der neuen Form einen Recall von
+  0,15 statt > 0,40: die Tropfen folgen den großen D8-Läufen in der flachen
+  Ebene seltener. Das betrifft Abnahmepunkt 21 (Hauptlauf ohne Lücke) und ist
+  in Paket C auf dem Produktionsgitter nachzumessen.
+
+### Laufzeit und Determinismus nach Paket A
+
+`simperf` (Produktion, Seed 1337, M4 Max, 2026-10-11), alt (`origin/main`
+`55323b5`) und neu abwechselnd, je `--repeat 3`: alt 48,5 / 48,9 / 49,0 ms,
+neu 43,8 / 44,1 / 44,3 ms je Schritt (Median 48,9 → 44,1). Keine Optimierung,
+sondern eine andere Welt (weniger Seen und Läufe). Einlauf samt Generierung
+5,2 / 5,3 s → 4,9 / 4,8 s. `simperf --hash` zweimal `ba89c2b11150f5a5`
+(Punkt 49; der Wert gilt nur auf dieser Maschine).

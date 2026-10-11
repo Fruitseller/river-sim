@@ -25,6 +25,7 @@ final class FlattenRegeneration: XCTestCase {
     private func flatCfg(n: Int = 96) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         return c
     }
 

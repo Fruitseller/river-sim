@@ -9,7 +9,10 @@ import XCTest
 /// dass die Glättung wirkt und niemand das Rendering zurück auf `hf` verdrahtet.
 final class LakeLevelStability: XCTestCase {
     func testWaterLevelDampsFillJumps() {
-        let t = Terrain(config: .production, seed: 1337)
+        // Großform vor #174 (`calibrationRangeLandform`): die neue
+        // Seed-1337-Welt entwässert über Täler und hat kein Becken über 500 Zellen.
+        var c = SimConfig.production; c.rangeLandform = calibrationRangeLandform
+        let t = Terrain(config: c, seed: 1337)
         // Warmup wie eine frühe Spielsession (kleine Echtzeit-Schritte).
         var years = 0.0
         while years < 2000 { t.step(dtYears: 20); years += 20 }

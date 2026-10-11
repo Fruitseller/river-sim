@@ -9,6 +9,7 @@ final class WaterRendererTests: XCTestCase {
     if !productionGrid {
       config.n = 192
       config.world = calibrationWorld
+      config.rangeLandform = calibrationRangeLandform  // Großform vor #174
     }
     return agedWorld(config, years: years)
   }

@@ -8,7 +8,11 @@ import XCTest
 /// die D8 prinzipiell nicht darstellen kann. Kalibriert bei n≤200 für Tempo.
 final class RiverDynamicsTests: XCTestCase {
 
-    private func cfg(n: Int) -> SimConfig { var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c }
+    private func cfg(n: Int) -> SimConfig {
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        return c
+    }
 
     /// Kanalzellen: Land mit Einzugsgebiet ≥ `creek` Zellen. (Der Renderer nutzt
     /// braidMinCells=120; das Default 30 hier hält die älteren MFD-Metriken stabil.)
@@ -186,6 +190,7 @@ final class RiverDynamicsTests: XCTestCase {
     /// (Tiefe +25…+57%, Verlandung 13–15% → 7–10%), Relief/maxH unverändert.
     func testChannelBedSurvivesDroplets() {
         var cOn = SimConfig(); cOn.n = 256; cOn.world = calibrationWorld
+        cOn.rangeLandform = calibrationRangeLandform  // Großform vor #174
         var cOff = cOn
         cOff.hydraulic.channelDepositDamp = 1.0 // = Zustand vor der Reconciliation
         let tOn = Terrain(config: cOn, seed: 1337)
@@ -489,6 +494,8 @@ final class RiverDynamicsTests: XCTestCase {
         var everFormed = false, everClosed = false
         for seed in Self.braidSeeds {
             var cOn = SimConfig(); cOn.n = 256; cOn.world = calibrationWorld
+        cOn.rangeLandform = calibrationRangeLandform  // Großform vor #174
+            cOn.rangeLandform = calibrationRangeLandform  // Großform vor #174
             // Becken-Wasserhaushalt (Issue #11) AUSGEPINNT — wie `meanderCfg()`
             // seine alten Werte pinnt: dieser Wächter misst den braidPass A/B,
             // nicht das Klima. Mit Verdunstung fällt Ponding in den Braid-Plains
@@ -669,6 +676,7 @@ final class RiverDynamicsTests: XCTestCase {
     /// (etablierte Läufe bleiben — Sharpening), statt jeden Schritt zu springen.
     func testStreamMapMarksAndPersists() {
         var c = SimConfig(); c.n = 256; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         let t = Terrain(config: c, seed: 1337)
         func renderedSet() -> (set: Set<Int>, recall: Double) {
             let chan = channelSet(t, area: t.areaMFD, creek: 120)

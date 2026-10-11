@@ -34,6 +34,24 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // ---- Terrain-Generierung ----
     public var baseOctaves: Int = 9    // viele Oktaven → feine Grate bis zur Auflösungsgrenze
     public var baseFreq: Double = 3.5  // Grundfrequenz (× 1/n)
+    /// Großform der Generierung (Issue #174, `RangeSkeleton` in `Landform.swift`):
+    /// EIN Gebirgskamm entlang der langen Inselachse mit Seitenästen, Hügelland
+    /// daneben, flache Ebene dahinter, zwei bis vier Täler vom Kamm zur Küste;
+    /// die Tektonik (`upliftBase`) liegt nur noch im Gebirgsgürtel. Dazu ein
+    /// Randabstand (kein Land am Gitterrand) und eine Insel-Ellipse, die über
+    /// ihre LANGE Halbachse normiert ist.
+    ///
+    /// Gemessen (Produktion, Seeds 1337/42/20, `docs/zielbild-measurements.md`):
+    /// Landanteil der vier größten Tieflandflächen in Jahr 2000 13/32/26 % →
+    /// 48/62/52 %, und erst jetzt erreicht eine davon die Küste (Reichweite
+    /// 0,00 → 1,00). Land im Randring 659/0/280 → 0 Zellen. Eis in Jahr 100.000
+    /// auf Seed 42 0 → 529 Zellen. `LongRunCollapse` bleibt grün.
+    ///
+    /// `false` = die Form davor (Grate über die ganze Landfläche), bit-identisch.
+    /// Nur für die Mechanik-Wächter der Testsuite, deren Testwelt Becken,
+    /// Playas und Schlingen der alten Seed-1337-Welt braucht
+    /// (`calibrationRangeLandform` in `SimCoreTests/TestCalibration.swift`).
+    public var rangeLandform = true
     public var baseRelief: Double = 0.78 // vertikale Reliefstärke. Von 1.05 gesenkt (User: „zu extrem"): sanfteres Terrain → weniger Nadel-Gipfel UND flachere/breitere Talböden (niedrigere Slopes → mehr Reaches unter der Mäander-Schwelle) = Platz für Fluss-Dynamik. 0.72 ebnete über 100k knapp unter den LongRunCollapse-Wächter (0.30); 0.78 hält Marge.
     public var upliftFreq: Double = 2.5
 
