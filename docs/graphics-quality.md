@@ -406,8 +406,8 @@ jede Welt neben Übersicht und Nahansicht vier gezielte Stresstests:
 | `coast` | Küste / Ufer | Seed 1337: `(-36, -32)`, Dist 45, Yaw 0.90, Pitch 0.85<br>Seed 42: `(12, -10)`, Dist 38, Yaw 1.10, Pitch 0.85<br>Seed 20: `(30, -28)`, Dist 48, Yaw 0.80, Pitch 0.85 | **Stresstest Wasser-Land:** Mündungsdelta, Binnensee-Ufer oder Steilküste. Prüft Schutzmaske, Übergang von Flussband zu Ozean/See, Brandung und Tiefenfarbe. |
 | `snow` | Schnee / Grate | Seed 1337: `(18, 14)`, Dist 48, Yaw 0.60, Pitch 0.75<br>Seed 42: `(-22, 20)`, Dist 50, Yaw 0.70, Pitch 0.75<br>Seed 20: `(-10, 14)`, Dist 40, Yaw 0.60, Pitch 0.70 | **Stresstest Schneegrenze:** Felsrippen, Firnfelder und Gipfel. Prüft Gratschärfung, Schnee-Albedo und Übergang von Wald/Fels zu Schnee. |
 | `diorama` | Vorlage C (#174) | `(0, 0)`, Dist 115, Yaw 0.70, Pitch 0.62 | Ganze Insel schräg als Diorama: Gebirgskamm, Tieflandflüsse, Küste. Im Spiel Taste F1 (adaptiv: rahmt die Landfläche). |
-| `valley` | Vorlage B (#174) | Ziel und Yaw wie `detail`, Dist 60, Pitch 0.42 | Flacher Blick über Tal und Aue bis zum Horizont: Mäander, Bänke, Delta. Im Spiel Taste F2 (adaptiv: größter Lauf, s. u.). |
-| `close` | Vorlage A (#174) | Ziel und Yaw wie `coast`, Dist 32, Pitch 0.52 | Schrägsicht auf Hang, Fluss und Küste: Fels, Wald, Kiesbänke, Brandung. Im Spiel Taste F3 (adaptiv: Mündung des größten Laufs, s. u.). |
+| `valley` | Vorlage B (#174) | Ziel und Yaw wie `detail`, Dist 30, Pitch 0.40 | Flacher Blick über Tal und Aue bis zum Horizont: Mäander, Bänke, Delta. Im Spiel Taste F2 (adaptiv: größter Lauf, s. u.). |
+| `close` | Vorlage A (#174) | Ziel und Yaw wie `coast`, Dist 22, Pitch 0.52 | Schrägsicht auf Hang, Fluss und Küste: Fels, Wald, Kiesbänke, Brandung. Im Spiel Taste F3 (adaptiv: Mündung des größten Laufs, s. u.). |
 
 Die drei Vorlagen-Kameras (Issue #174, Paket E) gibt es auch als
 Tasten-Presets im Spiel (`CAMERA_PRESETS` in `game/scripts/Main.gd`). Die
@@ -420,10 +420,14 @@ die Tasten rechnen sie beim Drücken aus der laufenden Welt:
   Insel ganz im Gitter (#175) war die feste Distanz 115 zu weit, die Insel
   füllte rund ein Drittel des Bildes.
 - **Tal (F2) / Nah (F3):** größter Lauf auf dem D8-Netz (`flowArea`,
-  `receivers`), Ziel 20 bzw. 6 Welteinheiten oberhalb seiner Küstenmündung,
-  Kamera auf der Meerseite mit Blick talaufwärts (`Main.river_view`). Das Ziel
-  ist immer eine Landzelle; vorher behielten beide den aktuellen Blickpunkt
-  und zeigten je nach Seed fast nur Meer.
+  `receivers`), Ziel 12 bzw. 4 Welteinheiten oberhalb seiner Küstenmündung,
+  Kamera auf der Meerseite mit Blick talaufwärts (`Main.river_view`); verdeckt
+  Gelände die Sichtlinie, steigt der Pitch. Das Ziel ist immer eine Landzelle;
+  vorher behielten beide den aktuellen Blickpunkt und zeigten je nach Seed fast
+  nur Meer. Aus Distanz 60 zeigte „Tal" die ganze Insel statt des Tals; seit
+  dem Folgebefund steht es auf 30 (Ziel 12 Einheiten oberhalb der Mündung),
+  „Nah" auf 22 (4 Einheiten); der kleinste Zoom-Abstand `CAM_DIST_MIN` sank
+  dafür von 30 auf 20.
 
 Gleich bleiben Pitch (alle drei) und Distanz (Tal, Nah), Wächter
 `GraphicsMatrixTests.testCameraPresetsMatchTheMatrix`; die adaptive Rechnung

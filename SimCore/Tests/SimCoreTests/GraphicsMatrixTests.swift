@@ -111,13 +111,13 @@ final class GraphicsMatrixTests: XCTestCase {
                 MatrixCamera(
                     id: "valley",
                     targetX: -12.0, targetZ: -25.0,
-                    distance: 60.0, yaw: 0.7, pitch: 0.42,
+                    distance: 30.0, yaw: 0.7, pitch: 0.40,
                     description: "Vorlage B: flacher Blick über Tal und Aue bis zum Horizont"
                 ),
                 MatrixCamera(
                     id: "close",
                     targetX: -36.0, targetZ: -32.0,
-                    distance: 32.0, yaw: 0.9, pitch: 0.52,
+                    distance: 22.0, yaw: 0.9, pitch: 0.52,
                     description: "Vorlage A: Schrägsicht auf Hang, Fluss und Küste"
                 )
             ]
@@ -181,13 +181,13 @@ final class GraphicsMatrixTests: XCTestCase {
                 MatrixCamera(
                     id: "valley",
                     targetX: 4.0, targetZ: -6.0,
-                    distance: 60.0, yaw: 0.5, pitch: 0.42,
+                    distance: 30.0, yaw: 0.5, pitch: 0.40,
                     description: "Vorlage B: flacher Blick über Tal und Aue bis zum Horizont"
                 ),
                 MatrixCamera(
                     id: "close",
                     targetX: 12.0, targetZ: -10.0,
-                    distance: 32.0, yaw: 1.1, pitch: 0.52,
+                    distance: 22.0, yaw: 1.1, pitch: 0.52,
                     description: "Vorlage A: Schrägsicht auf Hang, Fluss und Küste"
                 )
             ]
@@ -251,13 +251,13 @@ final class GraphicsMatrixTests: XCTestCase {
                 MatrixCamera(
                     id: "valley",
                     targetX: -8.0, targetZ: 10.0,
-                    distance: 60.0, yaw: 0.6, pitch: 0.42,
+                    distance: 30.0, yaw: 0.6, pitch: 0.40,
                     description: "Vorlage B: flacher Blick über Tal und Aue bis zum Horizont"
                 ),
                 MatrixCamera(
                     id: "close",
                     targetX: 30.0, targetZ: -28.0,
-                    distance: 32.0, yaw: 0.8, pitch: 0.52,
+                    distance: 22.0, yaw: 0.8, pitch: 0.52,
                     description: "Vorlage A: Schrägsicht auf Hang, Fluss und Küste"
                 )
             ]

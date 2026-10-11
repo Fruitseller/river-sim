@@ -66,5 +66,9 @@ final class UiContractTests: XCTestCase {
         XCTAssertEqual(main.count(of: "river_view("), 2, "river_view nur aus camera_preset_view")
         XCTAssertEqual(main.count(of: "\"centered\""), 0,
                        "Diorama zielt nicht mehr fest auf die Kartenmitte, sondern auf das Land")
+        // RS_CAMERA rahmt im FERTIGEN Fenster: `--maximized` greift erst nach
+        // _ready, das Diorama hängt am Seitenverhältnis (Folgebefund #176).
+        assertContains(main, "get_viewport().size_changed.connect(",
+                       hint: "RS_CAMERA folgt der Fenstergröße bis zur ersten Eingabe")
     }
 }
