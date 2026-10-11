@@ -105,6 +105,49 @@ Was bleibt (Seed 42): 26 Zellen unter Läufen mit Q 280–980 im Oberlauf
 Zentrumslinie in der Nähe, je zur Hälfte nahe Quelle und Mündung. Das ist
 die Stream-Map selbst, kein Render-Gate mehr.
 
+**Doppelwasser durch das Vertrauen (Review #181).** In der maximierten
+Abnahme (Seed 42, Jahr 20.000, `close`) lief der Hauptlauf stellenweise als
+blockige, versetzte Raster-Segmente in D8-Treppe unter und neben dem glatten
+Band. Zwei Ursachen, beide im Raster:
+
+1. Das Vertrauen galt im Raster überall. Es malte jeden großen D8-Lauf voll,
+   auch wo ein Band ihn schon trägt; D8-Pfad und Zentrumslinie liegen dort
+   einige Zellen auseinander.
+2. Der Raster-Deckel unter einem Band hatte eine eigene Kaskaden-Ausnahme
+   über das Max-Gefälle zur 8er-Nachbarschaft. Die sah auch das Quergefälle
+   an Talflanken und ließ das Raster unter einem voll deckenden Band stehen,
+   in Zellblöcken. Die Band-Deckung trägt die Kaskaden-Blende des Bands schon
+   (`alpha × (1 − cascadeWeight)`), die Ausnahme war daneben doppelt.
+
+Fix: das Vertrauen im Raster wird mit (1 − größte Band-Deckung im Quadrat
+±`ribbonTrustBandClearanceCells`) gewichtet, der Deckel folgt nur noch der
+Band-Deckung. Messung mit `testMainStemBandDiagnostic` (Zeilen „Deckung
+≥ 0,7" und „neben einem Band"); Lücke im Hauptlauf in %, Raster-Fluss unter
+Band-Deckung ≥ 0,7 in % dieser Band-Zellen, Raster-Fluss ohne Band mit einem
+kräftigen Band in ±3 Zellen (Zellen), Seeds 1337 / 42 / 20:
+
+| Abstand | Lücke | Raster unter dem Band | Raster neben dem Band |
+| --- | --- | --- | --- |
+| vorher (#181) | 3,0 / 19,6 / 6,9 | 37,9 / 32,0 / 26,9 | 1295 / 677 / 651 |
+| 0 Zellen | 3,0 / 19,6 / 6,9 | 11,8 / 9,3 / 10,4 | 901 / 508 / 439 |
+| **1 Zelle** | **3,0 / 19,6 / 6,9** | **11,6 / 8,8 / 10,0** | **863 / 480 / 427** |
+| 2 Zellen | 3,0 / 19,8 / 6,9 | 11,5 / 8,2 / 9,6 | 827 / 408 / 398 |
+| 4 Zellen | 3,3 / 25,7 / 8,7 | 11,2 / 7,6 / 9,2 | 706 / 261 / 326 |
+
+Gewählt 1 Zelle: der größte Abstand ohne neue Lücke. Ab 2 Zellen nimmt die
+Schranke dem Raster auch Strecken hinter einem Bandende (Seed 42: Lücken ohne
+Zentrumslinie 44 → 45 → 66). Den Großteil nimmt der Deckel ohne
+Kaskaden-Ausnahme (Zeile „0 Zellen"). Der Rest unter dem Band ist
+Track-Masken-Raster unter auslaufender Band-Deckung (Enden, Kaskaden), wie
+vor dem Vertrauen. Wächter: `BarMaterialTests.testTrustedRasterFillsOnlyTheBandGaps`
+und `testRasterUnderAFullBandIsCappedOnASteepCrossSlope` (beide auf dem alten
+Stand rot).
+
+Kosten: `WaterFieldRenderer.bytes` auf Seed 42, Jahr 20.000 (1000-Jahr-Schritte
+wie `RS_STEP`), alt 6,80 ms, neu 6,83 ms (Median aus 15, alt/neu interleaved
+im selben Prozess, M4 Max). Gemessen mit 1 Zelle Abstand; die Ausnahme fällt
+weg, die Dilatation kommt dazu, netto gleich.
+
 **Breite (`ribbonHalfWidthCapCells`)**: 52–82 % der Hauptlauf-Zellen liegen
 am Deckel 3,2 Zellen. Den Deckel anzuheben hieße die Sim-Kanalbreite
 ändern: `MeanderState.beltWidthCells` liest dieselbe Funktion

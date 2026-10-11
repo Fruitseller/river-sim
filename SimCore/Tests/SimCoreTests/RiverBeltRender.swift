@@ -96,6 +96,27 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
                 }
                 print(String(format: "  Band-Zellen %d, davon ohne D8-Lauf ≥ renderMinCells in 3 Zellen: %d (%.1f%%)",
                              bandCells, ghost, 100 * Double(ghost) / Double(max(1, bandCells))))
+                // Doppelwasser direkt (Review #181): Raster-Fluss sichtbar
+                // (Schwelle des Shaders) unter einem kräftigen Band.
+                let riverT = byte01(WaterRender.riverMaskLo)
+                var strong = 0, doubled = 0
+                for k in 0..<(n * n) where cov[k] >= 0.7 {
+                    strong += 1
+                    if o.water[k * 4] >= riverT { doubled += 1 }
+                }
+                // … und daneben: Raster-Fluss ohne Band, aber ein kräftiges
+                // Band in ±3 Zellen (die D8-Treppe parallel zum Band).
+                var beside = 0
+                for k in 0..<(n * n) where o.water[k * 4] >= riverT && cov[k] < WaterRender.protectBandThreshold {
+                    let i = k % n, j = k / n
+                    search: for dj in -3...3 { for di in -3...3 {
+                        let ni = i + di, nj = j + dj
+                        guard ni >= 0, nj >= 0, ni < n, nj < n else { continue }
+                        if cov[nj * n + ni] >= 0.7 { beside += 1; break search }
+                    }}
+                }
+                print(String(format: "  Band-Zellen mit Deckung ≥ 0,7: %d, davon mit Raster-Fluss darunter: %d (%.1f%%) | Raster-Fluss ohne Band neben einem Band (±3 Zellen): %d",
+                             strong, doubled, 100 * Double(doubled) / Double(max(1, strong)), beside))
             }
             let near = s.gapLineDistance.filter { $0 <= 4 }.count
             let far = s.gapLineDistance.filter { $0 > 8 }.count
