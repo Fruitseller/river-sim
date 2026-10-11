@@ -129,11 +129,27 @@ public enum MaterialRender {
     public static let ridgeRockGain = 0.6
     public static let gullyScreeShare = 0.7
 
-    /// Klüftung: Kluftabstand in Welteinheiten (0,45 ≈ 45 m, Wandmaßstab) und
-    /// wie stark die Klüfte abdunkeln (0 … 1). Ab etwa einer Kluft je Pixel
-    /// blendet das Muster in seinen Mittelwert.
-    public static let jointSpacing = 0.45
-    public static let jointDepth = 0.45
+    /// Klüftung: Grundabstand des Musters quer zur Fallrichtung in
+    /// Welteinheiten (0,30 ≈ 30 m; die Runsen liegen bei etwa dem Doppelten),
+    /// Streckung entlang der Fallrichtung (Runsen 5-mal so lang wie breit) und
+    /// wie stark das Muster höchstens abdunkelt (0 … 1). Ab etwa einem
+    /// Kluftabstand je Pixel blendet es in seinen Mittelwert.
+    ///
+    /// Review zu PR #177: die erste Fassung (zwei gerade Kluftscharen im
+    /// Abstand 0,45, Tiefe 0,45, in der Waagerechten) stand auf maximierten
+    /// Screenshots als gleichmäßiges Rautennetz über allen Wänden, das sich
+    /// wie ein Drahtgitter las. Jetzt Runsen und gestückelte Fugen aus
+    /// Rauschen, in Fallrichtung gestreckt, in Breite und Stärke moduliert;
+    /// die höhere Tiefe gleicht aus, dass das Muster im Mittel schwächer ist.
+    public static let jointSpacing = 0.30
+    public static let jointStretch = 5.0
+    public static let jointDepth = 0.55
+
+    /// Kopplung der Klüftung an die Form (Relief-Bake #153, −1 Rinne … +1
+    /// Rippe): Breite und Stärke × (1 − `jointGullyGain` × Rinne/Rippe). In
+    /// voll ausgeprägten Rinnen also 1,6-fach, auf Rippen 0,4-fach; der Fels
+    /// zerfällt dort, wo das Wasser ihn ausräumt.
+    public static let jointGullyGain = 0.6
 
     /// Körnung der Halden: Blockgröße in Welteinheiten (0,05 ≈ 5 m).
     public static let screeGrain = 0.05

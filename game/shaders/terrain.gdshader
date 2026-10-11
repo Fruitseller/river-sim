@@ -204,7 +204,9 @@ uniform float conifer_hi;
 uniform float material_ridge_rock_gain;
 uniform float material_gully_scree_share;
 uniform float material_joint_spacing;
+uniform float material_joint_stretch;
 uniform float material_joint_depth;
+uniform float material_joint_gully_gain;
 uniform float material_scree_grain;
 uniform float material_crevasse_spacing;
 uniform float material_crevasse_slope_lo;
@@ -358,22 +360,76 @@ float triplanar_fbm(vec3 p, vec3 n) {
 	return fbm(p.yz) * weight.x + fbm(p.xz) * weight.y + fbm(p.xy) * weight.z;
 }
 
-// Klüftung (#174 D): zwei gegeneinander verdrehte Kluftscharen in der
-// Waagerechten, leicht gewellt. Auf Wänden stehen sie als senkrechte Fugen,
-// zusammen mit den Gesteinsschichten zerlegen sie den Fels in Blöcke. Liefert
-// die Abdunklung (0 … 1) und je Block einen Zufallston (−1 … 1). Ab etwa einer
-// Kluft je Pixel geht beides in seinen Mittelwert über, statt zu flimmern.
-float rock_joints(vec2 p, out float block) {
-	vec2 q = p / max(material_joint_spacing, 1e-4);
-	vec2 a = vec2(dot(q, vec2(0.866, 0.5)), dot(q, vec2(-0.342, 0.940)))
-	       + (vec2(vnoise(q * 0.61), vnoise(q * 0.61 + vec2(9.1, 3.3))) - 0.5) * 0.7;
-	vec2 fw = fwidth(a);
-	float detail = 1.0 - smoothstep(0.25, 0.8, max(fw.x, fw.y));
-	vec2 f = abs(fract(a) - 0.5) * 2.0; // 1 auf der Kluft
-	vec2 w = 0.10 + fw * 1.5;
-	float lines = max(smoothstep(1.0 - w.x, 1.0, f.x), smoothstep(1.0 - w.y, 1.0, f.y));
-	block = ehash(floor(a)).x * detail;
-	return lines * detail * 0.75 + 0.06; // 0.06 ≈ Mittel der Fugen in der Ferne
+// Klüftung einer Projektionsebene (#174 D, überarbeitet im Review zu PR #177).
+// `q` in Kluftabständen, q.x quer zur Fallrichtung, q.y entlang; `k` streckt
+// das Muster entlang q.y. Drei Anteile, alle aus Rauschen statt aus `fract`,
+// damit kein Gitter entsteht (die erste Fassung legte zwei gerade
+// Kluftscharen in die Waagerechte; auf Wänden standen sie als gleichmäßiges
+// Rautennetz, das sich wie ein Drahtgitter las):
+//  - Runsen: dunkle Tonstreifen in Fallrichtung, Breite aus dem Rauschen;
+//  - Fugen: Isolinien eines verzerrten Rauschens, nur stellenweise offen,
+//    Breite mit dem Blockton und mit `couple` (Rinne/Rippe) moduliert;
+//  - Schichtfugen quer zur Fallrichtung, kurz und gestückelt.
+// `crack_detail` blendet die feinen Fugen vor den breiteren Runsen aus.
+// Die Formzahlen hier sind Optik wie die Farben unten; die Kalibrierung
+// (Abstand, Streckung, Tiefe, Rinnen-Kopplung) kommt über die Brücke.
+// `aa` ist die Fugenbreite eines Pixels im Linienmaß (analytisch statt
+// fwidth: der Aufrufer verzweigt je Pixel, Ableitungen wären dort undefiniert).
+float rock_joint_face(vec2 q, float k, float couple, float crack_detail, float aa,
+                      out float tone) {
+	float ay = q.y / k;
+	float wx = q.x + (vnoise(vec2(q.x * 0.35, ay * 0.35 + 3.1)) - 0.5) * 1.6;
+	float st = vnoise(vec2(wx * 0.5 + 2.0, ay * 0.5)) * 0.65
+	         + vnoise(vec2(wx * 1.3 + 9.0, ay * 1.3)) * 0.35;
+	float streak = smoothstep(0.48, 0.78, st);
+	tone = vnoise(q * 0.5 + vec2(13.0, 7.0));
+	float r = 1.0 - abs(vnoise(vec2(wx, ay)) * 2.0 - 1.0); // 1 auf der Fuge
+	float width = (0.02 + 0.10 * smoothstep(0.3, 0.8, tone)) * couple;
+	float gate = smoothstep(0.5, 0.7, vnoise(vec2(q.x * 0.4 + 3.3, ay * 1.5 + 8.0)));
+	float crack = smoothstep(1.0 - width - aa, 1.0, r) * gate;
+	float bx = q.x / k + (vnoise(q * 0.3 + vec2(7.7, 0.0)) - 0.5) * 0.8;
+	float rb = 1.0 - abs(vnoise(vec2(bx, q.y * 0.8 + 11.0)) * 2.0 - 1.0);
+	float bed = smoothstep(0.93 - aa, 1.0, rb) * smoothstep(0.45, 0.75, vnoise(q * 0.5 + vec2(1.3, 2.9)));
+	tone = tone * 2.0 - 1.0;
+	return streak * 0.6 + max(crack, bed * 0.7) * crack_detail;
+}
+
+// Klüftung (#174 D): triplanar auf die Wände gelegt. Auf den beiden
+// Wandebenen läuft q.y senkrecht, die Runsen stehen also in Fallrichtung und
+// sind um `material_joint_stretch` gestreckt; die Draufsicht (flache
+// Felsrippen) bleibt ungestreckt. `cavity` (Relief-Bake #153, −1 Rinne … +1
+// Rippe) koppelt das Muster an die Form: in Rinnen breiter und tiefer, auf
+// Rippen schwächer. Die Stärke schwankt zusätzlich großflächig, ganze
+// Wandpartien bleiben fast glatt. Liefert die Abdunklung (0 … 1) und einen
+// Blockton (−1 … 1); ab etwa einem Kluftabstand je Pixel gehen beide in ihren
+// Mittelwert über, statt zu flimmern.
+float rock_joints(vec3 p, vec3 n, float cavity, out float tone) {
+	vec3 q = p / max(material_joint_spacing, 1e-4);
+	float k = max(material_joint_stretch, 1.0);
+	float couple = clamp(1.0 - cavity * material_joint_gully_gain, 0.2, 2.0);
+	float fw = length(fwidth(q));
+	float detail = 1.0 - smoothstep(0.5, 1.2, fw);
+	float crack_detail = 1.0 - smoothstep(0.08, 0.3, fw);
+	vec3 w = pow(abs(n), vec3(4.0));
+	w /= max(w.x + w.y + w.z, 1e-4);
+	float j = 0.0;
+	tone = 0.0;
+	// Rauschen steigt um höchstens ~1,5 je Einheit, die Fugen (1 − |2n − 1|)
+	// also um ~3: so breit ist ein Pixel im Linienmaß.
+	float aa = fw * 3.0;
+	float t;
+	if (detail > 0.0) {
+		// Projektionen unter 2 % Gewicht entfallen (Kosten nur auf Fels).
+		if (w.x > 0.02) { j += w.x * rock_joint_face(q.zy, k, couple, crack_detail, aa, t); tone += w.x * t; }
+		if (w.z > 0.02) { j += w.z * rock_joint_face(q.xy, k, couple, crack_detail, aa, t); tone += w.z * t; }
+		if (w.y > 0.02) { j += w.y * rock_joint_face(q.xz, 1.0, couple, crack_detail, aa, t); tone += w.y * t; }
+	}
+	float strength = (0.35 + 0.65 * smoothstep(0.25, 0.75, vnoise(q.xz * 0.13 + vec2(19.0, 4.0))))
+	               * min(couple, 1.4);
+	tone *= detail;
+	// 0.11 ≈ Flächenmittel des Musters (bei cavity 0), damit die Ferne nicht
+	// heller wird als die Nähe; die Rinnen-Kopplung bleibt dort erhalten.
+	return mix(0.11 * min(couple, 1.4), min(j * strength, 1.0), detail);
 }
 
 // Körnung der Halden: Blöcke von `material_scree_grain`, zwei Oktaven,
@@ -639,18 +695,23 @@ void fragment() {
 	float strata_phase = abs(fract(material_pos.y * 1.65 + tri_large * 1.8) - 0.5) * 2.0;
 	float strata_edge = smoothstep(0.72, 0.96, strata_phase);
 	float lith_contrast = mix(1.09, 0.82, lith * 0.5 + 0.5);
-	// Grauer Fels mit Klüftung (#174 D): Blöcke mit eigenem Ton, dunkle Fugen.
-	// Heller als vor #174 (0,28–0,37), aber unter 0,5: Kalkstein mit 0,5–0,6
-	// las sich in der Studie unter Himmelslicht als Schnee.
-	float block = 0.0;
+	// Dunkelgrauer Fels mit Klüftung (#174 D): Runsen in Fallrichtung, Fugen,
+	// Blockton. Im Review zu PR #177 dunkler und kontrastreicher gestellt
+	// (0,20–0,33 statt 0,33–0,40): die Vorlagen A/B/C tragen dunkelgrauen,
+	// schroffen Fels; der hellere las sich unter Himmelslicht beige. Kalkstein
+	// mit 0,5–0,6 las sich in der Studie sogar als Schnee.
+	float tone = 0.0;
 	float joints = 0.0;
 	if (material_enabled && rock > 0.01) {
-		joints = rock_joints(material_pos.xz, block);
+		joints = rock_joints(material_pos, n_ws, cavity, tone);
+		// Schichtkanten nur stückweise: über die ganze Wand durchgezogen
+		// stünden sie als gleichmäßige Höhenlinien da.
+		strata_edge *= smoothstep(0.35, 0.70, vnoise(material_pos.xz * 0.9 + vec2(4.0, 21.0)));
 	}
-	vec3 rock_color = mix(vec3(0.33, 0.33, 0.33), vec3(0.44, 0.42, 0.39), tri_large * 0.55)
-	                * mix(0.86, 1.08, mix(0.5, tri_grain, material_fade))
+	vec3 rock_color = mix(vec3(0.20, 0.20, 0.205), vec3(0.33, 0.32, 0.30), smoothstep(0.30, 0.70, tri_large))
+	                * mix(0.82, 1.10, mix(0.5, tri_grain, material_fade))
 	                * mix(1.0, lith_contrast, strata_edge * rock)
-	                * (1.0 + block * 0.08)
+	                * (1.0 + tone * 0.10)
 	                * (1.0 - joints * material_joint_depth);
 	// Schutthalde: heller als die Wand, grob gekörnt.
 	float grain = 0.0;

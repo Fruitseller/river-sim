@@ -1076,7 +1076,7 @@ aussieht, rechnet `terrain.gdshader` je Pixel (Uniform-Weg
 
 | Material | Wo (CPU) | Wie (Shader) |
 | --- | --- | --- |
-| Fels | Weltsteigung aus `Terrain.macroSlope` 1,50 → 2,60 (56° → 69°), auf Graten bis 0,5 früher, in Rinnen später (Konvexität ±2 Zellen); Bewuchs weicht erst ab 40 % Mineral | grau, Blöcke mit eigenem Ton, zwei Kluftscharen (45 m), Schichten aus der Lithologie; auf Rippen des Relief-Bakes (#153) mehr Fels, in Rinnen rutscht er als Schutt nach |
+| Fels | Weltsteigung aus `Terrain.macroSlope` 1,50 → 2,60 (56° → 69°), auf Graten bis 0,5 früher, in Rinnen später (Konvexität ±2 Zellen); Bewuchs weicht erst ab 40 % Mineral | dunkelgrau (0,20–0,33), Blockton, Klüftung triplanar aus Rauschen: Runsen in Fallrichtung (Abstand ~30–60 m, 5-fach gestreckt), gestückelte Fugen und Schichtfugen, Breite und Stärke moduliert, in Rinnen des Relief-Bakes (#153) 1,6-fach, auf Rippen 0,4-fach; Schichten aus der Lithologie nur stückweise; auf Rippen mehr Fels, in Rinnen rutscht er als Schutt nach. Die erste Fassung (zwei gerade Kluftscharen, 45 m, in der Waagerechten) las sich auf den Wänden als Drahtgitter (Review PR #177) |
 | Schutthalde | Fels in 3 Zellen Reichweite, Steigung im Schüttwinkel (30°–39°), Hohlform | hell, grob gekörnt (5 m), rau |
 | Schnee/Firn | Kältedeckung wie bisher (B von `surfaces`) | weiß mit Windverfrachtung |
 | Gletschereis | blankes Eis nur im Zehrgebiet (`Terrain.temperature` über 0 °C, ±1 °C weich), darüber Firn | bläulich, Spalten quer zur Fließrichtung ab 22° Gefälle, Seiten- und Mittelmoränen |
