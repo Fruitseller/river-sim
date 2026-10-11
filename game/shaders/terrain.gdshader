@@ -50,7 +50,7 @@ render_mode cull_disabled;
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
-uniform sampler2D color_tex : filter_linear, repeat_disable; // RGB Makrofarbe, A Sandgewicht (Strand, #174 C)
+uniform sampler2D color_tex : filter_linear, repeat_disable; // RGB Makrofarbe, A Sandgewicht max(Strand, Bank) (#174 C/C2)
 uniform sampler2D surface_tex : filter_linear, repeat_disable; // R Vegetation, G Fels, B Schnee/Eis, A Lithologie
 // Bodenbedeckung (#174 D): R Schutthalde, G blankes Gletschereis (Anteil an B
 // von surface_tex), B Rohboden (frisch gestört), A Talboden-Wiese. Schwarz,
@@ -145,6 +145,12 @@ uniform vec3 water_shallow_color;
 uniform vec3 water_deep_color;
 uniform vec3 water_sky_reflect_color;
 uniform vec3 water_flow_shimmer_color;
+// Sand-Material (Issue #174 C2, auch Strand aus C): WO Sand liegt, sagen
+// SimRender.BarMaterial und CoastMaterial (A-Kanal von color_tex, max beider);
+// wie er aussieht, diese Werte.
+uniform vec3 water_bar_sand_color;
+uniform vec3 water_bar_sand_wet_color;
+uniform float water_bar_roughness;
 
 // Render-Verschiebung (#153). Der Schalter ist keine Kalibrier-Zahl: ohne
 // SimNode (Editor-Vorschau) ist keine Backtextur gebunden, und eine schwarze
@@ -238,7 +244,7 @@ float hf_at(vec2 uv) {
 	return overlay_blend < 1.0 ? mix(texture(hf_prev_tex, uv).r, h, overlay_blend) : h;
 }
 
-// RGB = Makrofarbe, A = Sandgewicht des Strands (#174 C).
+// RGB = Makrofarbe, A = Sandgewicht: max(Strand, frische Gleithang-Bank) (#174 C/C2).
 vec4 color_at(vec2 uv) {
 	vec4 c = texture(color_tex, uv);
 	return overlay_blend < 1.0 ? mix(texture(color_prev_tex, uv), c, overlay_blend) : c;
@@ -752,15 +758,18 @@ void fragment() {
 	land_roughness = mix(land_roughness, 0.78, cold);
 	land_roughness = mix(land_roughness, 0.34, ice_w);
 	land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
-	// Strand (#174 C): flache Küste in Reichweite der Brandung ist Sand, bis an
-	// die Wasserlinie. Wo und wie viel, sagt allein SimRender.CoastMaterial;
-	// die Sandfarbe ist Optik dieses Shaders wie Ufer- und Kiesfarbe unten.
+	// Sand (#174 C/C2), EIN Block für beide Quellen: Strand (flache Küste in
+	// Reichweite der Brandung, bis an die Wasserlinie; SimRender.CoastMaterial)
+	// und frische Gleithang-Bänke mit Scroll-Rippen (SimRender.BarMaterial).
+	// Der A-Kanal trägt max(Strand, Bank); wo und wie viel, sagt allein
+	// SimRender. Farbe und Rauheit reisen als water_bar_* über die Brücke
+	// (SimCore.WaterRender).
 	float sand = macro_rgba.a;
 	if (sand > 0.002) {
-		vec3 sand_col = mix(vec3(0.56, 0.51, 0.41), vec3(0.68, 0.62, 0.50), breakup)
+		vec3 sand_col = mix(water_bar_sand_wet_color, water_bar_sand_color, breakup)
 		              * mix(0.94, 1.06, top_grain * material_fade);
 		terr = mix(terr, sand_col, sand);
-		land_roughness = mix(land_roughness, 0.88, sand);
+		land_roughness = mix(land_roughness, water_bar_roughness, sand);
 	}
 	// Ufersaum, Wasser und Meer trägt die Waldmaske schon nicht.
 	canopy(wp, hval, macro_n, terr, n_ws, land_roughness);

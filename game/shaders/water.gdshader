@@ -4,7 +4,11 @@
 //   COLOR.rg = Fließrichtung (kodiert dir*0.5+0.5; genau 0 = STILLWASSER),
 //   COLOR.b = Strahler-Rang/6, COLOR.a = Deckkraft,
 //   UV.x = Quer-Position 0..1, UV.y = Bogenlänge (Welt),
-//   UV2.x = Typ (0 Fluss · 0.5 Delta-Arm · 1 Altarm) == WaterRender.ribbonKind*.
+//   UV2.x = Typ (0 Fluss · 0.5 Delta-Arm · 1 Altarm) == WaterRender.ribbonKind*,
+//   UV2.y = signierte Bogenstärke −1…+1 (MeanderState.bendStrength, Issue #174
+//           C2): + = Linksbogen, Außenufer (Prallhang) bei UV.x = 0. Färbt das
+//           Querprofil außen dunkel-tief, innen hell-seicht (Vorlage E).
+//           0 = symmetrisch (Wendepunkt, Delta-Arm, Altarm).
 // Farben/Glanz sind DIESELBEN wie im Feld-Wasser des Terrain-Shaders, damit
 // Band-Wasser und Textur-Zubringer als EIN Wasser lesen: Wasserfarben, Fresnel,
 // Rauheit/Specular und der Strömungs-Schimmer kommen als water_*-Uniforms über
@@ -48,6 +52,9 @@ uniform vec3 water_sky_reflect_color;
 uniform vec3 water_flow_shimmer_color;
 uniform vec3 water_delta_plume_color;
 uniform vec3 water_oxbow_water_color;
+uniform float water_ribbon_bend_depth;
+uniform float water_ribbon_shoal_mix;
+uniform vec3 water_ribbon_shoal_color;
 
 // Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
 // SimNode, s. Deklarationsblock oben) — dasselbe Epsilon wie im
@@ -60,6 +67,7 @@ varying vec2 v_dir;
 varying float v_rank;
 varying float v_alpha;
 varying float v_kind;
+varying float v_bend;
 varying vec3 v_world;
 
 // Wolkenschatten (#151) laufen ohne Kante über die Bänder weiter.
@@ -70,6 +78,7 @@ void vertex() {
 	v_rank = COLOR.b;
 	v_alpha = COLOR.a;
 	v_kind = UV2.x;
+	v_bend = UV2.y;
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
@@ -88,6 +97,10 @@ void fragment() {
 	float depth = clamp(0.35 + v_rank * 1.5, 0.0, 1.0) * mix(0.35, 1.0, feather);
 	// Delta-Arme liegen auf dem Ablagerungskörper: per Definition Flachwasser.
 	depth = mix(depth, depth * 0.35, delta);
+	// Querprofil im Bogen (Issue #174 C2, Spiegel: WaterRender.ribbonOutward):
+	// +1 am Prallhang (Kolk, tief), −1 am Gleithang (Bank, seicht).
+	float outward = -(UV.x * 2.0 - 1.0) * clamp(v_bend, -1.0, 1.0);
+	depth = clamp(depth + water_ribbon_bend_depth * outward, 0.0, 1.0);
 
 	vec3 water = mix(water_shallow_color, water_deep_color, depth);
 	// Delta: sedimentbeladene Fahne über der Seefläche — heller und wärmer als
@@ -96,6 +109,8 @@ void fragment() {
 	water = mix(water, water_delta_plume_color, delta * 0.5);
 	// Altarm: stehendes, trübes Auwasser — grünlicher als der klare Lauf.
 	water = mix(water, water_oxbow_water_color, still * 0.5);
+	// Gleithang: über der Bank scheint der Sand durch.
+	water = mix(water, water_ribbon_shoal_color, water_ribbon_shoal_mix * max(-outward, 0.0));
 
 	// Kräusel-Normale wie beim Feld-Wasser: Wellen entlang der Bogenlänge
 	// (folgen der Kurve) + quer, analytischer Gradient → Glints. Stillwasser

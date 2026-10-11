@@ -95,6 +95,11 @@ public final class RenderState {
     /// bis zur nächsten Terrain-Änderung.
     private var plumeCache: [Float]?
 
+    /// Material des Mäandergürtels (Issue #174 C2): Sand, Scroll-Rippen,
+    /// Altarm-Verlandung. Liest nur das Terrain, fällt also mit dem
+    /// Material-Cache; Farbe und Schutzmaske lesen DASSELBE Feld.
+    private var barCache: BarMaterial.Field?
+
     /// Schutzmaske für Kronendach und Verschiebung (R8), gepuffert bis sich
     /// eine ihrer beiden Quellen ändert: das zuletzt ausgelieferte Wasserfeld
     /// (`visibleWater`) oder die Bandabdeckung (`buildRiverRibbons`).
@@ -161,6 +166,7 @@ public final class RenderState {
     public func invalidate(_ terrain: Terrain, _ change: TerrainChange) {
         materials = nil
         plumeCache = nil
+        barCache = nil
         dropMasks()
         if change != .advanced { forestMemory = [] }
         guard change == .replaced else { return }
@@ -242,7 +248,7 @@ public final class RenderState {
 
     private func cachedMaterials(_ terrain: Terrain) -> TerrainColorRenderer.Buffers {
         if let materials { return materials }
-        let buffers = WetMeadow.apply(TerrainColorRenderer.buffers(terrain),
+        let buffers = WetMeadow.apply(TerrainColorRenderer.buffers(terrain, bars: barMaterial(terrain)),
                                       mask: visibleWetMeadow)
         materials = buffers
         return buffers
@@ -255,6 +261,16 @@ public final class RenderState {
         if let plumeCache { return plumeCache }
         let field = SedimentPlume.field(terrain)
         plumeCache = field
+        return field
+    }
+
+    // MARK: - Mäandergürtel (Issue #174 C2)
+
+    /// Gürtel-Material (Issue #174 C2) — s. `BarMaterial`.
+    public func barMaterial(_ terrain: Terrain) -> BarMaterial.Field {
+        if let barCache { return barCache }
+        let field = BarMaterial.field(terrain)
+        barCache = field
         return field
     }
 
@@ -300,7 +316,8 @@ public final class RenderState {
         let mask = WaterProtectMask.bytes(n: terrain.cfg.n,
                                           bandCoverage: ribbons.bandCoverage,
                                           waterBytes: visibleWater ?? [],
-                                          wetMeadow: visibleWetMeadow)
+                                          wetMeadow: visibleWetMeadow,
+                                          barSand: barMaterial(terrain).sand)
         protectMaskCache = mask
         return mask
     }

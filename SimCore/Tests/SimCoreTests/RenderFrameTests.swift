@@ -57,7 +57,8 @@ final class RenderFrameTests: XCTestCase {
                        WaterProtectMask.bytes(n: terrain.cfg.n,
                                               bandCoverage: render.riverRibbonMesh.bandCoverage,
                                               waterBytes: overlays.water,
-                                              wetMeadow: render.wetMeadowMask))
+                                              wetMeadow: render.wetMeadowMask,
+                                              barSand: render.barMaterial(terrain).sand))
 
         let byHand = RenderState(geometryMode: true)
         byHand.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,

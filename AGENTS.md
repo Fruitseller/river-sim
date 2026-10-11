@@ -411,7 +411,16 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   `WaterFieldRenderer.wetMeadow`, wirkt auf Material und Schutzmaske) und die
   Quellen der Sedimentfahnen im Meer (EINE Float-Zelle je Mündung, Frame-
   Schlüssel `plume`, `ocean.gdshader` zeichnet sie über die Mip-Kette weich).
-  Kalibrierung in `WaterRender`, Messreihe `docs/river-coast-render-measurements.md`,
+  Kalibrierung in `WaterRender` (Messreihe `docs/river-coast-render-measurements.md`;
+  Wächter: `SimCoreTests/CoastMaterialTests.swift` und `SedimentPlumeTests.swift`),
+- `BarMaterial`: Material des Mäandergürtels (Issue #174 C2): Sand auf
+  frischen Bänken aus `Terrain.barAge`, Scroll-Rippen über dessen Isolinien,
+  Ried und Vegetationsbogen der Altarme; zustandslos, `RenderState` cacht es
+  mit dem Material und gibt dasselbe Feld an `TerrainColorRenderer` (Sand im
+  A-Kanal der Makrofarbe, geteilt mit dem Strand: `max(Strand, Bank)`) und
+  `WaterProtectMask` (Kalibrierung:
+  `WaterRender` § Mäandergürtel im Render; Wächter:
+  `SimCoreTests/BarMaterialTests.swift`),
 - `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
   ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:
   `SimCoreTests/DiagStatsContractTests.swift`),

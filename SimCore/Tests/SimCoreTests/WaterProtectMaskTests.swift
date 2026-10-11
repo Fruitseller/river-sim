@@ -79,6 +79,7 @@ final class WaterProtectMaskTests: XCTestCase {
 
         // Exakt: geschützt genau dann, wenn eine Kernzelle im Saum-Abstand liegt.
         let isCore = core(water, coverage, meadow: render.wetMeadowMask, count: cnt)
+        let bars = render.barMaterial(terrain)
         var free = 0
         for j in 0..<n {
             for i in 0..<n {
@@ -89,8 +90,10 @@ final class WaterProtectMaskTests: XCTestCase {
                         break
                     }
                 }
-                XCTAssertEqual(mask[j * n + i], near ? 255 : 0, "Zelle (\(i), \(j))")
-                if !near { free += 1 }
+                // Frische Bänke (#174 C2) sind ohne Saum geschützt.
+                let bar = bars.sand[j * n + i] >= Float(WaterRender.barProtectSand)
+                XCTAssertEqual(mask[j * n + i], near || bar ? 255 : 0, "Zelle (\(i), \(j))")
+                if !near && !bar { free += 1 }
             }
         }
         XCTAssertGreaterThan(free, cnt / 4, "Testwelt braucht weite trockene Flächen")
@@ -189,20 +192,23 @@ final class WaterProtectMaskTests: XCTestCase {
         let water = render.waterFieldBytes(terrain, blend: 1.0)
         let waterOnly = render.protectMaskBytes(terrain)
         XCTAssertEqual(waterOnly, WaterProtectMask.bytes(n: n, bandCoverage: [], waterBytes: water,
-                                                         wetMeadow: render.wetMeadowMask))
+                                                         wetMeadow: render.wetMeadowMask,
+                                                         barSand: render.barMaterial(terrain).sand))
 
         render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
         let coverage = render.riverRibbonMesh.bandCoverage
         let withBands = render.protectMaskBytes(terrain)
         XCTAssertEqual(withBands,
                        WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water,
-                                              wetMeadow: render.wetMeadowMask))
+                                              wetMeadow: render.wetMeadowMask,
+                                              barSand: render.barMaterial(terrain).sand))
         XCTAssertNotEqual(withBands, waterOnly, "Band-Bau muss die Maske erneuern")
 
         let water2 = render.waterFieldBytes(terrain, blend: 1.0)
         XCTAssertEqual(render.protectMaskBytes(terrain),
                        WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water2,
-                                              wetMeadow: render.wetMeadowMask),
+                                              wetMeadow: render.wetMeadowMask,
+                                              barSand: render.barMaterial(terrain).sand),
                        "Wasser-Upload muss die Maske erneuern")
     }
 

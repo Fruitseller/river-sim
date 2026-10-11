@@ -292,7 +292,11 @@ public final class WaterFieldRenderer {
                         // Track-Maske und Abfluss-Abstufung stehen im Kalibrier-
                         // Vertrag (`WaterRender`) statt hier und werden zusammen mit
                         // diesem ausführbaren Pfad headless geprüft (Issues #51/#82).
-                        let m = WaterRender.trackMask(streamMap: psm[k])
+                        // Abfluss-Vertrauen (#174 C2, wie im Band): ein großer
+                        // D8-Lauf ist Wasser, auch wo die Stream-Map ihn nicht
+                        // trackt — sonst riss der Hauptlauf in der Übersicht ab.
+                        let m = max(WaterRender.trackMask(streamMap: psm[k]),
+                                    WaterRender.ribbonTrust(dischargeCells: cu, referenceCells: creek))
                         if m <= 0 { continue }
                         psd[k] = WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
                             * WaterRender.trackWeight(mask: m)

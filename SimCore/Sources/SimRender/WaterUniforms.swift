@@ -72,6 +72,10 @@ public enum WaterUniforms {
         ("water_ocean_plume_spread", WaterRender.oceanPlumeSpread),
         ("water_ocean_plume_gain", WaterRender.oceanPlumeGain),
         ("water_ocean_plume_opacity", WaterRender.oceanPlumeOpacity),
+        // Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
+        ("water_ribbon_bend_depth", WaterRender.ribbonBendDepth),
+        ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),
+        ("water_bar_roughness", WaterRender.barRoughness),
     ]
 
     /// Farb-Uniforms (`uniform vec3` in den Shadern).
@@ -87,6 +91,9 @@ public enum WaterUniforms {
         ("water_ocean_deep_color", WaterRender.oceanDeepColor),
         ("water_ocean_surf_color", WaterRender.oceanSurfColor),
         ("water_ocean_plume_color", WaterRender.oceanPlumeColor),
+        ("water_ribbon_shoal_color", WaterRender.ribbonShoalColor),
+        ("water_bar_sand_color", WaterRender.barSandColor),
+        ("water_bar_sand_wet_color", WaterRender.barSandWetColor),
     ]
 
     /// Vertragswerte der Godot-Wächter (Issue #92) — KEINE Shader-Uniforms,

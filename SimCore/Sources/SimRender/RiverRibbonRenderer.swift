@@ -125,6 +125,9 @@ public final class RiverRibbonRenderer {
         /// Wasserspiegel (Sim-Höhe), auf dem das Band aufliegt; `nil` = das Band
         /// folgt dem GELÄNDE und jede Kante bekommt ihre eigene lokale Höhe.
         var surface: Double?
+        /// Signierte Bogenstärke (−1 … +1, `MeanderState.bendStrength`) → UV2.y:
+        /// Tiefenfarbe nach Querprofil. 0 = symmetrisch (Delta-Arm, Altarm).
+        var bend: Double = 0
     }
 
     // MARK: Dirty-Vertrag
@@ -257,8 +260,13 @@ public final class RiverRibbonRenderer {
                 !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
             }) else { continue }
             guard !ch.discharge.prefix(m).contains(where: { !$0.isFinite || abs($0) > 1e9 }) else { continue }
+            // Bogenstärke je Knoten aus der Gürtel-Geometrie der Sim (dieselbe
+            // Größe, mit der `beltStamp` den Kolk nach außen legt).
+            let hgridBend = terrain.h
+            let nodeBend = MeanderState.bendStrength(ch, config: terrain.cfg,
+                                                     heightAt: { bilinearGrid(hgridBend, $0.x, $0.z, n: n) })
             // Catmull-Rom-Subdivision der Zentrumslinie; Abfluss linear je Segment.
-            var px: [Double] = [], pz: [Double] = [], pq: [Double] = []
+            var px: [Double] = [], pz: [Double] = [], pq: [Double] = [], pb: [Double] = []
             px.reserveCapacity(m * subdivisions)
             pz.reserveCapacity(m * subdivisions)
             pq.reserveCapacity(m * subdivisions)
@@ -275,9 +283,11 @@ public final class RiverRibbonRenderer {
                         + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2
                         + (3 * p1.z - p0.z - 3 * p2.z + p3.z) * t3))
                     pq.append(ch.discharge[i] + (ch.discharge[i + 1] - ch.discharge[i]) * t)
+                    pb.append(nodeBend[i] + (nodeBend[i + 1] - nodeBend[i]) * t)
                 }
             }
             px.append(nodes[m - 1].x); pz.append(nodes[m - 1].z); pq.append(ch.discharge[m - 1])
+            pb.append(nodeBend[m - 1])
             let cnt = px.count
 
             // Deckkraft: Abfluss-Rampe je Sample (fein auslaufen statt harter
@@ -353,7 +363,14 @@ public final class RiverRibbonRenderer {
             let supportMean = supportSum / max(supportWeight, 1e-9)
             let channelOpacity = smoothstep(0, 1, (supportMean - WaterRender.ribbonSupportLo)
                                                   / WaterRender.ribbonSupportSpan)
-            for a in 0..<cnt { alpha[a] *= channelOpacity }
+            // Abfluss-Vertrauen (Issue #174 C2): ein großer Lauf bleibt sichtbar,
+            // auch wenn die Stream-Map ihn nicht trackt — je Stützpunkt, damit
+            // sein feiner Oberlauf weiter an der Stütze hängt.
+            // Den Strahler-Rang (unten) braucht auch ein vertrauter Lauf.
+            for a in 0..<cnt {
+                alpha[a] *= max(channelOpacity,
+                                WaterRender.ribbonTrust(dischargeCells: pq[a], referenceCells: creek))
+            }
 
             // Diskrete Strahler-Zellen können an Netz-Kreuzungen verbleibende
             // Sprünge erzeugen. Symmetrisch längs filtern: keine zeitliche
@@ -400,7 +417,7 @@ public final class RiverRibbonRenderer {
                 samples.append(RibbonSample(x: px[a], z: pz[a],
                                             halfWidth: ribbonHalfWidthCells(pq[a], cfg: terrain.cfg) * taper,
                                             alpha: alpha[a] * taper,
-                                            rank: rank[a], surface: nil))
+                                            rank: rank[a], surface: nil, bend: pb[a]))
             }
 
             // MÜNDUNG (Issue #34): das Band lief bisher über die letzten ~2
@@ -737,7 +754,8 @@ public final class RiverRibbonRenderer {
             mesh.colors.append(col); mesh.colors.append(col)
             mesh.uvs.append(SIMD2(0, Float(arc[a])))
             mesh.uvs.append(SIMD2(1, Float(arc[a])))
-            let kindUV = SIMD2(Float(kind), Float(0))
+            // UV2.y = Bogenstärke (Tiefenfarbe nach Querprofil, Issue #174 C2).
+            let kindUV = SIMD2(Float(kind), Float(max(-1, min(1, s.bend))))
             mesh.uv2s.append(kindUV); mesh.uv2s.append(kindUV)
             if a > 0 {
                 let v = Int32(base + (a - 1) * 2)
