@@ -159,7 +159,8 @@ enum ZielbildMetrics {
         var amplitude = 0.0
         /// Median der Gürtelbreite (überstrichene Zellen quer zum Tal), Zellen.
         var beltWidth = 0.0
-        var beltPerAmplitude: Double { amplitude > 0 ? beltWidth / amplitude : 0 }
+        /// Unter 0,5 Zellen Amplitude ist der Lauf praktisch gerade — kein Verhältnis.
+        var beltPerAmplitude: Double { amplitude > 0.5 ? beltWidth / amplitude : 0 }
         /// Mittlere Tiefe Außen- / Innenufer in Bögen über dem Krümmungs-Median.
         var asymmetry = 0.0
         /// Altarme mit Schwerpunkt im Tiefland, davon als offenes Wasser
@@ -171,21 +172,42 @@ enum ZielbildMetrics {
     /// Fenster (Knoten je Seite) für die Längsneigung des Tieflandabschnitts.
     static let slopeWindow = 3
 
-    /// Hauptlauf = Lauf mit der größten Abfluss-Summe über seine Knoten
-    /// (Länge × Abfluss). Nicht „größter Abfluss am Ende": `traceChannels`
-    /// bricht den Stamm an jedem Zusammenfluss, der Lauf mit dem größten
-    /// Endabfluss ist deshalb oft ein Stummel von wenigen Knoten vor der Mündung.
+    /// Hauptlauf. Mit Gürtel (Paket B, Abfluss entlang des Laufs monoton): der
+    /// Lauf mit dem größten Abfluss unter denen mit mindestens 30 Knoten —
+    /// `traceChannels` bricht den Stamm an jedem Zusammenfluss, darunter
+    /// liegen Stummel vor der Mündung. Ohne Gürtel war der Abfluss am Ende
+    /// unzuverlässig (bilinear auf der einzelligen D8-Rinne); dort gilt die
+    /// größte Abfluss-Summe über die Knoten. Die Summe bevorzugt aber lange,
+    /// gewundene Läufe (mehr Knoten) und wählte auf Seed 42 mit Gürtel einen
+    /// Lauf mit Sinuosität 11.
     static func mainChannel(_ t: Terrain) -> RiverChannel? {
-        t.meander.channels.max { $0.discharge.reduce(0, +) < $1.discharge.reduce(0, +) }
+        if t.cfg.meanderBelt {
+            return t.meander.channels.filter { $0.nodes.count >= 30 }
+                .max { ($0.discharge.max() ?? 0) < ($1.discharge.max() ?? 0) }
+        }
+        return t.meander.channels.max { $0.discharge.reduce(0, +) < $1.discharge.reduce(0, +) }
     }
 
     /// Längster zusammenhängender Knotenbereich, dessen Längsneigung (±`slopeWindow`
     /// Knoten) unter `meanderFlatSlope` liegt.
+    /// Mit Gürtel: der längste Bereich, den die Sim selbst als mobil führt
+    /// (`BeltGeometry.mob > 0` und Abfluss ab `meanderBeltMinCells`) — dieselbe
+    /// Definition wie die Migration, kein zweites Gate.
     static func lowlandReach(_ t: Terrain, _ ch: RiverChannel) -> Range<Int>? {
         let nodes = ch.nodes, cs = t.cfg.cellSize, flat = t.cfg.meanderFlatSlope
         guard nodes.count > 2 * slopeWindow + 2 else { return nil }
         func hAt(_ p: MeanderNode) -> Double {
             t.h.withUnsafeBufferPointer { Terrain.bilinear($0.baseAddress!, t.cfg.n, p.x, p.z) }
+        }
+        if t.cfg.meanderBelt {
+            let g = MeanderState.beltGeometry(ch, config: t.cfg, heightAt: hAt)
+            var best: Range<Int>? = nil, start: Int? = nil
+            for i in 0...nodes.count {
+                let on = i < nodes.count && g.mob[i] > 0 && ch.discharge[i] >= t.cfg.meanderBeltMinCells
+                if on { if start == nil { start = i } }
+                else if let s0 = start { if best == nil || i - s0 > best!.count { best = s0..<i }; start = nil }
+            }
+            return best
         }
         var cum = [Double](repeating: 0, count: nodes.count)
         for i in 1..<nodes.count { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
@@ -207,8 +229,10 @@ enum ZielbildMetrics {
     }
 
     /// Signierte Krümmung je Knoten (dieselbe Formel wie `lateralStep`), über
-    /// ±2 Knoten geglättet, damit die D8-Treppe keine Schein-Wendepunkte setzt.
-    static func smoothedCurvature(_ nodes: [MeanderNode]) -> [Double] {
+    /// ±`window` Knoten geglättet, damit Knicke unter der Kanalbreite (D8-Treppe,
+    /// Resample) keine Schein-Wendepunkte setzen. Echte Bögen (Halbwelle ≈ 5
+    /// Breiten) überstehen ein Fenster von ±1 Breite.
+    static func smoothedCurvature(_ nodes: [MeanderNode], window: Int = 2) -> [Double] {
         let c = nodes.count
         var curv = [Double](repeating: 0, count: c)
         guard c >= 3 else { return curv }
@@ -221,7 +245,7 @@ enum ZielbildMetrics {
         }
         var out = curv
         for i in 0..<c {
-            let a = max(0, i - 2), b = min(c - 1, i + 2)
+            let a = max(0, i - window), b = min(c - 1, i + window)
             out[i] = curv[a...b].reduce(0, +) / Double(b - a + 1)
         }
         return out
@@ -229,7 +253,8 @@ enum ZielbildMetrics {
 
     /// `swept`: Zellen, die ein Lauf im Messlauf je überstrichen hat (s.
     /// `markSwept`) — die Gürtel-Ausdehnung bis Paket B (danach `barAge ≥ 0`).
-    static func belt(_ t: Terrain, lowland: [Bool], swept: [Bool]) -> Belt {
+    static func belt(_ t: Terrain, lowland: [Bool], swept: [Bool],
+                     channel: RiverChannel? = nil) -> Belt {
         var r = Belt()
         let n = t.cfg.n
         for (oi, ox) in t.meander.oxbows.enumerated() where !ox.isEmpty {
@@ -240,7 +265,7 @@ enum ZielbildMetrics {
             r.lowlandOxbows += 1
             if t.meander.oxbowAge[oi] < WaterRender.oxbowVisibleYears { r.openLowlandOxbows += 1 }
         }
-        guard let ch = mainChannel(t), let reach = lowlandReach(t, ch), reach.count >= 8 else { return r }
+        guard let ch = channel ?? mainChannel(t), let reach = lowlandReach(t, ch), reach.count >= 8 else { return r }
         let nodes = Array(ch.nodes[reach])
         r.reachNodes = nodes.count
         r.mainDischarge = ch.discharge.last ?? 0
@@ -249,10 +274,11 @@ enum ZielbildMetrics {
         let chord = dist(nodes[0], nodes[nodes.count - 1])
         r.sinuosity = chord > 1e-9 ? len / chord : 1
         let q = ch.discharge[reach].reduce(0, +) / Double(nodes.count)
-        r.width = 2 * WaterRender.ribbonHalfWidthCells(dischargeCells: q, referenceCells: t.cfg.renderMinCells)
+        r.width = MeanderState.beltWidthCells(discharge: q, config: t.cfg)
 
         // Wendepunkte, Wellenlänge, Amplitude.
-        let curv = smoothedCurvature(nodes)
+        let win = max(2, Int((r.width / max(1e-6, t.cfg.meanderNodeSpacing)).rounded()))
+        let curv = smoothedCurvature(nodes, window: win)
         var infl: [Int] = []
         for i in 1..<nodes.count where (curv[i - 1] < 0) != (curv[i] < 0) { infl.append(i) }
         if infl.count >= 3 {
@@ -309,7 +335,7 @@ enum ZielbildMetrics {
         let absC = curv.map(abs).sorted()
         let median = absC[absC.count / 2]
         let half = r.width / 2
-        let off = max(1.0, 0.5 * half), rim = half + 2
+        let off = max(1.0, 0.5 * half)
         var dOut = 0.0, dIn = 0.0, bends = 0
         t.h.withUnsafeBufferPointer { hb in
             let p = hb.baseAddress!
@@ -322,7 +348,11 @@ enum ZielbildMetrics {
                 func hAt(_ d: Double) -> Double {
                     Terrain.bilinear(p, n, b.x + ox * d, b.z + oz * d)
                 }
-                let ref = max(hAt(rim), hAt(-rim))
+                // Bezug: höchster Punkt im benetzten Querschnitt (≈ Uferkante
+                // bankfull). Die Rinnen-Wand dahinter (`channelCarve`, ≈ 35 m)
+                // stauchte das Verhältnis: (35 + 6,5) / (35 + 1) ≈ 1,15.
+                var ref = -Double.infinity, d = -half
+                while d <= half + 1e-9 { ref = max(ref, hAt(d)); d += 0.5 }
                 dOut += max(0, ref - hAt(off)); dIn += max(0, ref - hAt(-off)); bends += 1
             }
         }
@@ -330,9 +360,37 @@ enum ZielbildMetrics {
         return r
     }
 
-    /// Markiert die Zellen unter allen Laufknoten als überstrichen.
+    /// Mittel über ALLE Mäanderläufe (mobiler Abschnitt ab `minNodes` Knoten),
+    /// gewichtet mit dem Abfluss. Der Hauptlauf allein ist dünn: auf Seed 1337
+    /// ist es der Abfluss des großen Sees durchs Gebirge, mit ~30 mobilen
+    /// Knoten. Altarme zählen wie in `belt` (einmal über die Welt). `count` =
+    /// Zahl der gemittelten Läufe in `reachNodes`.
+    static func beltAll(_ t: Terrain, lowland: [Bool], swept: [Bool], minNodes: Int = 40) -> Belt {
+        var r = belt(t, lowland: lowland, swept: swept, channel: RiverChannel(nodes: [], discharge: []))
+        var w = 0.0, wl = 0.0, wa = 0.0, count = 0
+        var sinu = 0.0, width = 0.0, lam = 0.0, amp = 0.0, beltW = 0.0, asym = 0.0
+        for ch in t.meander.channels {
+            guard let reach = lowlandReach(t, ch), reach.count >= minNodes else { continue }
+            let b = belt(t, lowland: lowland, swept: swept, channel: ch)
+            let q = ch.discharge[reach].reduce(0, +) / Double(reach.count)
+            count += 1; w += q
+            sinu += q * b.sinuosity; width += q * b.width; amp += q * b.amplitude; beltW += q * b.beltWidth
+            if b.wavelength > 0 { lam += q * b.wavelength; wl += q }
+            if b.asymmetry > 0 { asym += q * b.asymmetry; wa += q }
+        }
+        guard w > 0 else { return r }
+        r.reachNodes = count
+        r.sinuosity = sinu / w; r.width = width / w; r.amplitude = amp / w; r.beltWidth = beltW / w
+        r.wavelength = wl > 0 ? lam / wl : 0
+        r.asymmetry = wa > 0 ? asym / wa : 0
+        return r
+    }
+
+    /// Markiert die Zellen unter allen Laufknoten als überstrichen, dazu (ab
+    /// Paket B) jede Zelle mit Gleithang-Bank (`barAge ≥ 0`).
     static func markSwept(_ t: Terrain, _ swept: inout [Bool]) {
         let n = t.cfg.n
+        for k in 0..<(n * n) where t.barAge[k] >= 0 { swept[k] = true }
         for ch in t.meander.channels {
             for p in ch.nodes {
                 let x = min(max(Int(p.x.rounded()), 0), n - 1), z = min(max(Int(p.z.rounded()), 0), n - 1)
@@ -342,8 +400,9 @@ enum ZielbildMetrics {
     }
 }
 
-/// Wächter der Großform (Issue #174, Paket A, Abnahmepunkte 1–4) auf den drei
-/// Matrix-Seeds, Produktions-Config mit Einlauf. Schranken aus dem Issue;
+/// Wächter der Großform (Issue #174, Paket A, Abnahmepunkte 1–4) und der
+/// lauf-unabhängigen Gürtel-Punkte (Paket B, 14–16) auf den drei Matrix-Seeds,
+/// Produktions-Config mit Einlauf. Schranken aus dem Issue;
 /// gemessene Werte in `docs/zielbild-measurements.md`.
 final class ZielbildLandformTests: XCTestCase {
     private func world(_ seed: UInt32, years: Double) -> Terrain {
@@ -372,6 +431,16 @@ final class ZielbildLandformTests: XCTestCase {
             // Punkt 4: Gletscher ab Jahr 20.000.
             XCTAssertGreaterThan(lf.iceCells, 0, "Seed \(seed): kein Eis in Jahr 20.000")
             XCTAssertEqual(lf.landOnBorder, 0, "Seed \(seed): Land am Rand in Jahr 20.000")
+            // Paket B (Mäandergürtel) im selben Lauf — kein zweiter 20.000-Jahre-Lauf.
+            // Punkt 15 (beide Cutoff-Arten), Punkt 16 (Bänke im Zustand),
+            // Punkt 14 (Aue nicht zerklüfteter als nach Paket A: 0,00136 /
+            // 0,00156 / 0,00141 in Jahr 20.000, gemessen vor dem Gürtel).
+            XCTAssertGreaterThan(t.meander.neckCutoffs, 0, "Seed \(seed): kein Hals-Cutoff bis Jahr 20.000")
+            XCTAssertGreaterThan(t.meander.chuteCutoffs, 0, "Seed \(seed): kein Chute-Cutoff bis Jahr 20.000")
+            let bars = t.barAge.filter { $0 >= 0 }.count
+            XCTAssertGreaterThan(bars, 1000, "Seed \(seed): kaum Gleithang-Bänke (\(bars) Zellen)")
+            XCTAssertLessThan(lf.lowlandRuggedness, 0.00156,
+                              "Seed \(seed): Aue zerklüfteter als vor dem Gürtel (\(lf.lowlandRuggedness))")
         }
     }
 
@@ -408,7 +477,7 @@ final class ZielbildBaseline: XCTestCase {
         print("\n=== ZIELBILD #174: GROSSFORM (A) ===")
         print("| Seed | Jahr | Tiefland | Flecken ≥ 0,25 % | Land in 4 größten | Küsten-Reichweite | Land am Rand | min. Randabstand | Eiszellen | Zerklüftung Tiefland |")
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-        var beltRows: [String] = []
+        var beltRows: [String] = [], allRows: [String] = []
         for seed in Self.seeds where onlySeed == nil || onlySeed == seed {
             let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
             var swept = [Bool](repeating: false, count: t.cfg.count)
@@ -419,7 +488,7 @@ final class ZielbildBaseline: XCTestCase {
                     let dt = min(1000, target - year)
                     t.step(dtYears: dt)
                     year += dt
-                    neckCutoffs += t.meander.oxbowAge.filter { $0 == 0 }.count
+                    if !t.cfg.meanderBelt { neckCutoffs += t.meander.oxbowAge.filter { $0 == 0 }.count }
                     ZielbildMetrics.markSwept(t, &swept)
                 }
                 let lf = ZielbildMetrics.landform(t)
@@ -428,17 +497,27 @@ final class ZielbildBaseline: XCTestCase {
                              lf.coastCorridorReach, lf.landOnBorder, lf.minBorderDistance,
                              lf.iceCells, lf.lowlandRuggedness))
                 let b = ZielbildMetrics.belt(t, lowland: lf.lowland, swept: swept)
+                let all = ZielbildMetrics.beltAll(t, lowland: lf.lowland, swept: swept)
+                allRows.append(String(
+                    format: "| %d | %.0f | %d | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f |",
+                    seed, year, all.reachNodes, all.sinuosity, all.width, all.wavelength, all.wavelengthPerWidth,
+                    all.amplitude, all.beltWidth, all.beltPerAmplitude, all.asymmetry))
                 beltRows.append(String(
-                    format: "| %d | %.0f | %d | %.0f | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f | %d / %d | %d / 0 |",
+                    format: "| %d | %.0f | %d | %.0f | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f | %d / %d | %d / %d |",
                     seed, year, b.reachNodes, b.mainDischarge, b.sinuosity, b.width, b.wavelength,
                     b.wavelengthPerWidth, b.amplitude, b.beltWidth, b.beltPerAmplitude, b.asymmetry,
-                    b.openLowlandOxbows, b.lowlandOxbows, neckCutoffs))
+                    b.openLowlandOxbows, b.lowlandOxbows,
+                    t.cfg.meanderBelt ? t.meander.neckCutoffs : neckCutoffs, t.meander.chuteCutoffs))
             }
         }
         print("\n=== ZIELBILD #174: MÄANDERGÜRTEL (B), Hauptlauf ===")
         print("| Seed | Jahr | Tiefland-Knoten | Abfluss | Sinuosität | Breite | Wellenlänge | λ/Breite | Amplitude | Gürtel | Gürtel/Amplitude | Asymmetrie | Altarme offen / Tiefland | Cutoffs Hals / Chute |")
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         beltRows.forEach { print($0) }
+        print("\n=== ZIELBILD #174: MÄANDERGÜRTEL (B), alle Mäanderläufe (≥ 40 mobile Knoten, Abfluss-gewichtet) ===")
+        print("| Seed | Jahr | Läufe | Sinuosität | Breite | Wellenlänge | λ/Breite | Amplitude | Gürtel | Gürtel/Amplitude | Asymmetrie |")
+        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        allRows.forEach { print($0) }
         print("=== ENDE ZIELBILD ===\n")
     }
 
@@ -465,17 +544,27 @@ final class ZielbildBaseline: XCTestCase {
                 else {
                     let v = 60 + 190 * (t.h[k] - t.cfg.sea) / max(1e-9, maxH - t.cfg.sea)
                     c = lf.lowland[k] ? (v * 0.55, v * 0.9, v * 0.45) : (v, v, v)
+                    // Gleithang-Bänke: frisch gelb, mit dem Alter über Hellgrün
+                    // zurück in die Grundfarbe (Scroll-Bars als Bänder sichtbar).
+                    let age = t.barAge[k]
+                    if age >= 0 {
+                        let f = max(0, min(1, age / 8000))
+                        let band = 0.85 + 0.15 * cos(age / 400)
+                        c = ((235 * (1 - f) + c.0 * f) * band, (215 * (1 - f) + c.1 * f) * band, (120 * (1 - f) + c.2 * f) * band)
+                    }
                 }
                 px[3 * k] = UInt8(min(255, max(0, c.0)))
                 px[3 * k + 1] = UInt8(min(255, max(0, c.1)))
                 px[3 * k + 2] = UInt8(min(255, max(0, c.2)))
             }
-            for ch in t.meander.channels {
+            for ch in t.meander.channels where env["RS_NO_LINES"] != "1" {
                 for p in ch.nodes {
                     let k = min(n - 1, max(0, Int(p.z.rounded()))) * n + min(n - 1, max(0, Int(p.x.rounded())))
                     px[3 * k] = 220; px[3 * k + 1] = 30; px[3 * k + 2] = 30
                 }
             }
+            if env["RS_NO_LINES"] == "1" { for k in 0..<(n * n) where t.hf[k] > t.cfg.sea && t.isChannel[k] {
+                px[3 * k] = 40; px[3 * k + 1] = 90; px[3 * k + 2] = 210 } }
             var data = Data("P6\n\(n) \(n)\n255\n".utf8)
             data.append(contentsOf: px)
             let path = "\(out)/zielbild-\(seed)-\(Int(year)).ppm"

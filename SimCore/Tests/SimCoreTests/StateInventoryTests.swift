@@ -166,6 +166,15 @@ final class StateInventoryTests: XCTestCase {
             "Sedimentfracht in Transit (`transportLimited`, Testpfad) — der Pass "
             + "beschreibt sie in Empfänger-Reihenfolge, bevor er sie liest.")),
         ("isChannel", .persistent(.sameName)),
+        ("barAge", .persistent(.sameName)),
+        ("inBelt", .scratch(reason:
+            "Maske der Zellen, deren Sohle der Gürtel-Stempel in diesem Schritt "
+            + "setzt (Issue #174); `meanderBeltStep` leert sie zu Beginn jedes "
+            + "Schritts, bevor `channelCarve` sie liest.")),
+        ("beltSubsteps", .derived(reason:
+            "Teilschritt-Zahl des letzten Gürtel-Schritts — reine Diagnose, kein "
+            + "Pass liest sie.",
+            clearedOnRestore: false)),
         ("streamMap", .persistent(.sameName)),
         ("streamRate", .persistent(.sameName)),
         ("trackBuf", .scratch(reason:

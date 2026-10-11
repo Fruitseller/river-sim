@@ -23,6 +23,9 @@ final class SimCoreTests: XCTestCase {
         c.meanderMigration = 5.0e-5
         c.meanderNeckDist = 1.2
         c.meanderCohesion = 0 // Stufe 2 (Ufer-Kohäsion) neutralisiert: diese Tests prüfen die reine Kopplungs-Mechanik
+        // Mäandergürtel (Issue #174) aus: diese Tests pinnen die Zentrumslinien-
+        // Mechanik davor (Migration ∝ Krümmung × Abfluss, Ein-Zellen-Ufer).
+        c.meanderBelt = calibrationMeanderBelt
         // Mäander-Logik gegen KONSTANTE aktive Tektonik testen: die isolierte
         // Grid-Variante ohne Droplet braucht dauerhaften Relief-Nachschub für die
         // Altarm-Alterung. Die abklingende Produktions-Hebung (Issue #13) ist hier
@@ -49,7 +52,9 @@ final class SimCoreTests: XCTestCase {
     /// Pfad, der real läuft — Langzeit-Stabilität muss auf dem echten Pfad
     /// (Droplet + Sinuositäts-Deckel + Hals 2.0) gemessen werden.
     private func prodMeanderCfg(n: Int = 192) -> SimConfig {
-        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld
+        c.meanderBelt = calibrationMeanderBelt  // Mechanik vor #174
+        return c
     }
 
     // MARK: - Determinismus

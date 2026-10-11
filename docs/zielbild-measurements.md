@@ -38,8 +38,9 @@ Einlauf (`productionSettleYears` = 3000), getaktet in 1000-Jahr-Schritten.
 - **Breite:** bis Paket B gibt es keine Sim-Breite; gemessen wird die
   Band-Breite `2 · WaterRender.ribbonHalfWidthCells` am mittleren Abfluss des
   Abschnitts (Deckel 6,4 Zellen).
-- **Wellenlänge / Amplitude:** Wendepunkte = Vorzeichenwechsel der über ±2
-  Knoten geglätteten Krümmung; Wellenlänge = Luftlinie über zwei Halbwellen,
+- **Wellenlänge / Amplitude:** Wendepunkte = Vorzeichenwechsel der über ±1
+  Kanalbreite (mindestens ±2 Knoten) geglätteten Krümmung (bis zur Ist-Messung
+  vor Paket A: ±2 Knoten); Wellenlänge = Luftlinie über zwei Halbwellen,
   Amplitude = größter Abstand einer Halbwelle zu ihrer Sehne.
 - **Gürtel:** bis Paket B (`barAge`) die Ausdehnung der im Lauf je
   überstrichenen Zellen quer zur Talachse (Mittel über ±12 Knoten), Median.
@@ -178,3 +179,108 @@ neu 43,8 / 44,1 / 44,3 ms je Schritt (Median 48,9 → 44,1). Keine Optimierung,
 sondern eine andere Welt (weniger Seen und Läufe). Einlauf samt Generierung
 5,2 / 5,3 s → 4,9 / 4,8 s. `simperf --hash` zweimal `ba89c2b11150f5a5`
 (Punkt 49; der Wert gilt nur auf dieser Maschine).
+
+## Paket B (Mäandergürtel, `meanderBelt`) — Stand des ersten PR
+
+### Was der Gürtel tut
+
+`Terrain.meanderBeltStep` ersetzt im Produktionspfad `migrateMeander` +
+`meanderStamp` (die bleiben unverändert für `meanderBelt = false`):
+
+- **Breite** `b(Q)` aus `WaterRender.ribbonHalfWidthCells` (dieselbe Kurve wie
+  das Band), Abfluss je Knoten = größtes Einzugsgebiet im 3×3, entlang des Laufs
+  monoton.
+- **Migration nach Howard–Knutson.** Stromauf integrierte Krümmung (Γ = 2,
+  Kernlänge L = 1,2 Breiten) explizit, CFL-getaktet je Lauf; der lokale Term
+  (Ω = −1) ist eine Diffusion der Linie mit κ = |Ω|·Rate·b² und läuft
+  IMPLIZIT (Rückwärts-Euler, tridiagonal). Lineare Analyse:
+  σ(k) ∝ k²·(Γ/(1+(kL)²) − 1), Maximum bei (1+(kL)²)² = Γ, also
+  λ ≈ 9,8·L ≈ 12 Breiten. Gemessen ohne Gelände (`MeanderBeltTests`):
+  λ/b 10,2 / 10,4 / 15,7, dt 50 gegen 1500 Jahre 0,09 Zellen Abstand.
+- **Erodierbarkeit** (Mobilität aus der Längsneigung, Talwand-Bremse,
+  Ufer-Kohäsion) skaliert BEIDE Terme.
+- **Stempel** über die volle Breite: Sohle `z_bf − D·(1 − η²)(1 + skew·a·η)`
+  (Kolk außen), Material des Prallhangs als Bank innen bis knapp unter bankfull,
+  `barAge` als Zustandsfeld. `channelCarve` gräbt seine Rinne nicht in
+  Tiefland-Läufe des Gürtels.
+- **Cutoffs:** Hals ab 1 Breite, Chute ab 1,5 Breiten Sehne bei 8-facher
+  Schleifenlänge und Abfluss ab 4000 Zellen; höchstens 150 Breiten Schleife.
+- **Netz:** Hauptstamm zuerst getrasst (längster Fließweg), Zubringer enden an
+  ihrem Vorfluter und folgen ihm.
+
+### Befunde beim Kalibrieren (Werkzeuge: `MeanderBeltCalibration`)
+
+Jeder Punkt ist gemessen; verworfen, was nicht trug:
+
+1. **Lokaler Term explizit** (als Teil der Rate): nur bis dt ≈ ds²/(2κ) ≈ 3
+   Jahre stabil. Die Linie zackte im Knotenabstand, 1000–3000 Cutoffs je
+   20.000 Jahre, die CFL-Teilschritte liefen in jeden Deckel.
+2. **Lokaler Term als Glättung** mit Faktor `1 − e^(−4κ·dt/ds²)`: sättigte
+   schon bei dt = 50 auf 1, die Diffusion wuchs mit der ZAHL der Teilschritte
+   (19 % Kanalbreite Abstand zwischen dt 50 und 1500). Die scheinbar gute
+   Wellenlänge (10 Breiten bei Kernlänge 3,5) war ein Artefakt davon; mit der
+   impliziten Fassung und Kernlänge 3,5 wuchs nichts mehr (Analyse oben: nur
+   λ > 22 Breiten wachsen dort, langsam).
+3. **Kohäsion und Talwand-Bremse nur auf dem Wachstumsterm:** dort überwog die
+   Diffusion, die Linie wurde gerade statt stehen zu bleiben (Rate 1,5 Zellen je
+   1000 Jahre, Bewegung 0,2, Sinuosität fallend).
+4. **Zug zur tieferen Uferseite** (Rückstellkraft gegen Abkoppeln): in jedem
+   V-Tal ~4-mal stärker als der Wachstumsterm, Sinuosität 1,2. Standard jetzt
+   aus (`meanderBeltPull = 0`), der Schalter bleibt.
+5. **Bremse Ufer gegen gegenüberliegendes Ufer** direkt am Kanal: reagierte auf
+   jedes sanfte Quergefälle. Ersetzt durch die Talwand 3,5 Breiten weit.
+6. **Ohne jede Bremse:** die Ebene im Osten von Seed 1337 wurde zum Knäuel aus
+   Schlingen durch Schlingen.
+7. **Trasse in Index-Reihenfolge:** der Hauptlauf mit dem größten Abfluss war
+   ein Stummel aus 30 Knoten (eine kurze Quelle nahe der Küste besaß den
+   Unterlauf); feste Enden und Rand-Ausblendung lassen auf Stummeln keinen Bogen
+   wachsen.
+8. **Zubringer ohne Anschluss:** zwei, drei parallele Bänder durch denselben
+   Gürtel. Mit Anschluss über den Abfluss AN DER STELLE zerhackte der Vergleich
+   jeden Hauptlauf an jedem Zusammenfluss (die Mündungszelle des Zubringers
+   trägt den Abfluss des Vorfluters) — verglichen wird jetzt der ganze Lauf.
+9. **Rinne von `channelCarve`** (≈ 35 m) im Tiefland: hielt jede Schlinge fest.
+
+### Laufzeit (Abnahmepunkt 48)
+
+`simperf --repeat 3`, Produktion, Seed 1337, M4 Max, abwechselnd:
+`origin/main` 48,8 / 49,2 ms, Gürtel 49,8 ms je Schritt (davon Gürtel ≈ 7 ms:
+Migration 2,0, Stempel 1,8, Zubringer 2,2, feste Läufe 0,8). Gegen Paket A
+allein (44,1 ms, andere Welt) +13 %. Die erste Fassung mit EINER
+Teilschrittzahl für alle ~700 Läufe kostete 99 ms je Schritt (Gürtel 69 %),
+mit Dictionary-Bins in Cutoff- und Zubringer-Suche 36 ms.
+`simperf --hash` zweimal `615a48df5b50668c`.
+
+### Kennzahlen, alle Mäanderläufe (Abfluss-gewichtet), nach Paket B
+
+| Seed | Jahr | Läufe | Sinuosität | λ/Breite | Amplitude | Gürtel | Gürtel/Amplitude | Asymmetrie |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1337 | 2000 | 12 | 1.21 | 11.2 | 3.6 | 7.4 | 2.0 | 1.06 |
+| 1337 | 20000 | 8 | 1.14 | 13.9 | 3.4 | 17.7 | 5.1 | 1.02 |
+| 1337 | 100000 | 9 | 1.12 | 8.6 | 4.5 | 23.4 | 5.2 | 0.97 |
+| 42 | 2000 | 8 | 1.59 | 11.8 | 6.1 | 12.9 | 2.1 | 1.26 |
+| 42 | 20000 | 6 | 1.86 | 5.6 | 3.7 | 30.5 | 8.3 | 0.84 |
+| 42 | 100000 | 6 | 1.20 | – | 2.1 | 25.8 | 12.3 | 1.17 |
+| 20 | 2000 | 5 | 1.26 | 15.2 | 8.0 | 6.5 | 0.8 | 0.81 |
+| 20 | 20000 | 7 | 1.18 | 6.7 | 2.7 | 16.6 | 6.1 | 1.08 |
+| 20 | 100000 | 4 | 1.07 | 4.2 | 1.8 | 18.1 | 9.9 | 1.13 |
+
+Hals- / Chute-Cutoffs bis Jahr 100.000: 85 / 6 (1337), 35 / 3 (42), 38 / 6 (20).
+Zerklüftung des Tieflands in Jahr 20.000: 0,00124 / 0,00132 / 0,00124 (nach
+Paket A 0,00136 / 0,00156 / 0,00141) — die Bank auf bankfull macht die Aue
+glatter, nicht krustiger.
+
+### Stand gegen den Abnahmebogen
+
+| Punkt | Stand |
+| --- | --- |
+| 9 Sinuosität 1,5–2,5 | **offen**: 1,1–1,9 |
+| 10 Wellenlänge 10–14 Breiten | **teilweise**: Kern ohne Gelände 10–16, im Gelände 4–15 (Jahr, Seed) |
+| 11 Gürtel ≥ 3 × Amplitude | erfüllt ab Jahr 20.000 (5,1–12,3), in Jahr 2000 noch nicht |
+| 12 Querprofil-Asymmetrie ≥ 2 | **offen**: ~1; der Stempel setzt das Profil (Proben zeigen den Kolk außen), aber die Bögen sind mit 2–4 Zellen Amplitude kaum breiter als der Kanal |
+| 13 ≥ 3 Altarme im Tiefland | **teilweise**: 1–6 offen je Seed und Jahr |
+| 14 Aue nicht zerklüfteter | erfüllt (Wächter) |
+| 15 Hals- und Chute-Cutoff | erfüllt (Wächter) |
+| 16 `barAge` im Inventar | erfüllt (`FingerprintTests`, `StateInventoryTests`, Snapshot v6) |
+| 17 dt-Invarianz | Kern erfüllt (`MeanderBeltTests`); die Gelände-Wächter (`DtInvariance`) laufen auf der Mechanik vor #174 (`calibrationMeanderBelt`) |
+| 18 Braid-/Playa-Wächter | grün, ebenfalls auf der alten Welt |
