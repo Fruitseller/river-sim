@@ -981,6 +981,10 @@ Wald (#170).
   Höhe mit (Küstenlinie). Ohne laufende Blende kostet das nichts, jeder Helfer
   liest dann genau eine Textur.
 - **Sofort statt weich:** Pinsel, Zeitsprung, Laden und Neugenerieren.
+  Geblendet wird nur ein Zeitraffer-TAKT (`FRAME_TIMELAPSE`), nicht jeder
+  Upload bei laufendem Zeitraffer: Neugenerieren pausiert ihn nicht, und die
+  neue Welt glitt sonst aus der alten herein (Review #173; gilt seitdem auch
+  für die Verschiebung).
   Pinselring, Kameraziel und Raycast lesen die CPU-Höhe und springen weiter;
   das sieht man nur im Zeitraffer, und dort wird nicht gepinselt.
 - **Wasser bleibt außen vor:** Das Rasterwasser glättet die CPU (Blend 0,15),

@@ -144,9 +144,14 @@ class FieldTexture:
 			_bind(mat)
 			if _mirror_mat != null:
 				_bind(_mirror_mat)
+		elif _prev_tex != null:
+			# Der neue Stand bekommt ein EIGENES Image: der alte bleibt damit
+			# unverändert, auch wenn der Renderer die Bytes erst später liest
+			# (separater Render-Thread).
+			_prev_tex.update(_img)
+			_img = Image.create_from_data(n, n, false, _format, bytes)
+			_tex.update(_img)
 		else:
-			if _prev_tex != null:
-				_prev_tex.update(_img)
 			_img.set_data(n, n, false, _format, bytes)
 			_tex.update(_img)
 
@@ -206,6 +211,8 @@ var flow_field := FieldTexture.new("flow_tex", Image.FORMAT_R8, true)
 # Zeitraffer-Überblenden (#172): die Höhe im Sim-Takt, alles Gedrosselte
 # (Farbe, Material, Rinnen-Detail, Seespiegel, Wald) im Overlay-Takt.
 var height_fade := Crossfade.new(&"height_blend")
+# Auslöser des Frames, der gerade hochlädt (s. `_timelapse_fading`).
+var _frame_trigger := FRAME_SETTLED
 var overlay_fade := Crossfade.new(&"overlay_blend")
 
 # GPU-Schwanzstufen des Raster-Wasserfelds (siehe shaders/water_field_*.gdshader).
@@ -1366,9 +1373,11 @@ func _ensure_h_cache() -> void:
 ## RenderState.frame holen und hochladen, Verschiebung neu backen. WAS der Frame
 ## liefert und in welcher Reihenfolge es entsteht, entscheidet SimRender.
 func _render_frame(trigger: int) -> void:
+	_frame_trigger = trigger
 	_upload_heights()
 	_apply_frame(sim.renderFrame(trigger, _now()))
 	_bake_relief()
+	_frame_trigger = FRAME_SETTLED
 
 ## Uhr der Frame-Drosseln (Sekunden, monoton).
 func _now() -> float:
@@ -1391,9 +1400,13 @@ func _upload_heights() -> void:
 	terrain_mat.set_shader_parameter("sim_year", sim.currentYear())
 
 ## Im Zeitraffer gleiten die Texturen von Stand zu Stand (#172); Pinsel,
-## Sprung, Laden und Neugenerieren zeigen den neuen Stand sofort.
+## Sprung, Laden und Neugenerieren zeigen den neuen Stand sofort. Geblendet
+## wird nur ein Zeitraffer-TAKT (`_frame_trigger`), nicht schon ein laufender
+## Zeitraffer: Neugenerieren pausiert ihn nicht, und die neue Welt glitt sonst
+## aus der alten herein.
 func _timelapse_fading() -> bool:
-	return year_rate > 0.0 and not sculpting and not _jumping
+	return _frame_trigger == FRAME_TIMELAPSE and year_rate > 0.0 \
+		and not sculpting and not _jumping
 
 ## Alles außer der Höhe: im Zeitraffer gedrosselt (RenderState.frame).
 func _upload_overlays(frame: Dictionary) -> void:
