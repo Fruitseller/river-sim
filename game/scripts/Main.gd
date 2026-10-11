@@ -109,44 +109,104 @@ var ocean_mat: ShaderMaterial
 ## (und hängt sie an ihren Shader-Parameter), danach nur noch `set_data` +
 ## `update`. Ersetzt fünf wortgleiche Blöcke (Issue #53) — der Unterschied waren
 ## nur Name und Pixelformat.
+##
+## `keeps_previous` (#172): vor jedem Upload wandert der alte Stand nach
+## `<param>_prev`, über den der Terrain-Shader im Zeitraffer hinüberblendet
+## (s. `Crossfade`).
 class FieldTexture:
 	var _param: StringName
+	var _prev_param: StringName
 	var _format: int
 	var _img: Image
 	var _tex: ImageTexture
+	var _prev_tex: ImageTexture
 	var _mirror_mat: ShaderMaterial
 
-	func _init(param: StringName, format: int) -> void:
+	func _init(param: StringName, format: int, keeps_previous := false) -> void:
 		_param = param
 		_format = format
+		if keeps_previous:
+			_prev_param = StringName(String(param).replace("_tex", "_prev_tex"))
 
 	## Bindet denselben GPU-Texturzustand an einen zweiten Shader. Die Höhenkarte
 	## schneidet damit auch die Ozeanplatte ab, ohne einen zweiten Image-Upload.
 	func mirror_to(mat: ShaderMaterial) -> void:
 		_mirror_mat = mat
 		if _tex != null:
-			_mirror_mat.set_shader_parameter(_param, _tex)
+			_bind(_mirror_mat)
 
 	func upload(mat: ShaderMaterial, n: int, bytes: PackedByteArray) -> void:
 		if _img == null:
 			_img = Image.create_from_data(n, n, false, _format, bytes)
 			_tex = ImageTexture.create_from_image(_img)
-			mat.set_shader_parameter(_param, _tex)
+			if _prev_param != &"":
+				_prev_tex = ImageTexture.create_from_image(_img)
+			_bind(mat)
 			if _mirror_mat != null:
-				_mirror_mat.set_shader_parameter(_param, _tex)
+				_bind(_mirror_mat)
 		else:
+			if _prev_tex != null:
+				_prev_tex.update(_img)
 			_img.set_data(n, n, false, _format, bytes)
 			_tex.update(_img)
 
-var height_field := FieldTexture.new("height_tex", Image.FORMAT_RF)
+	func _bind(mat: ShaderMaterial) -> void:
+		mat.set_shader_parameter(_param, _tex)
+		if _prev_tex != null:
+			mat.set_shader_parameter(_prev_param, _prev_tex)
+
+## Überblende vom Vorgängerstand zum neuen (#172), als Shader-Parameter
+## (`height_blend`, `overlay_blend`). JEDE Blende gehört zu GENAU einem
+## Upload-Takt: eine geteilte Blende über zwei Takte ließ den Wald an jedem
+## Takt ohne neue Maske zurückspringen (#170). Jeder Upload startet neu und
+## dauert so lange wie der Abstand zum vorigen: bei gleichmäßigem Takt
+## gleitet die Fläche damit ohne Halt von Stand zu Stand, statt erst zu
+## springen und dann zu stehen. Ohne `fade` (Pinsel, Sprung, Laden) gilt der
+## neue Stand sofort.
+class Crossfade:
+	const MIN_SECONDS := 0.1
+	const MAX_SECONDS := 0.6  # nach einer Pause nicht ewig blenden
+	var _param: StringName
+	var _mats: Array[ShaderMaterial] = []
+	var mix := 1.0
+	var seconds := MAX_SECONDS
+	var _last := -1.0
+
+	func _init(param: StringName) -> void:
+		_param = param
+
+	func bind(mat: ShaderMaterial) -> void:
+		_mats.append(mat)
+		mat.set_shader_parameter(_param, mix)
+
+	func start(now: float, fade: bool) -> void:
+		if fade and _last >= 0.0:
+			seconds = clampf(now - _last, MIN_SECONDS, MAX_SECONDS)
+		_last = now
+		_apply(0.0 if fade else 1.0)
+
+	func advance(delta: float) -> void:
+		if mix < 1.0:
+			_apply(minf(mix + delta / seconds, 1.0))
+
+	func _apply(value: float) -> void:
+		mix = value
+		for mat in _mats:
+			mat.set_shader_parameter(_param, mix)
+
+var height_field := FieldTexture.new("height_tex", Image.FORMAT_RF, true)
 # gefüllte Oberfläche (Seespiegel) → echte horizontale Seeflächen
-var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF)
-var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8)
-var surface_field := FieldTexture.new("surface_tex", Image.FORMAT_RGBA8)
+var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF, true)
+var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8, true)
+var surface_field := FieldTexture.new("surface_tex", Image.FORMAT_RGBA8, true)
 var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8)
 # Abfluss-Dichte fürs Shader-Detail: bündelt die kosmetischen Erosionsrinnen in
 # echten Abflussbahnen statt als uniformes Muster (WaterRender.flowDetailIntensity).
-var flow_field := FieldTexture.new("flow_tex", Image.FORMAT_R8)
+var flow_field := FieldTexture.new("flow_tex", Image.FORMAT_R8, true)
+# Zeitraffer-Überblenden (#172): die Höhe im Sim-Takt, alles Gedrosselte
+# (Farbe, Material, Rinnen-Detail, Seespiegel, Wald) im Overlay-Takt.
+var height_fade := Crossfade.new(&"height_blend")
+var overlay_fade := Crossfade.new(&"overlay_blend")
 
 # GPU-Schwanzstufen des Raster-Wasserfelds (siehe shaders/water_field_*.gdshader).
 # Die Aufbereitung des Felds bleibt in der Extension — ihre zwei teuren Stufen
@@ -226,8 +286,6 @@ var protect_tex: ImageTexture
 var forest_tex: ImageTexture
 var forest_prev_tex: ImageTexture
 var forest_img: Image
-# Eigene Blende der Waldmaske (`forest_blend`, s. `_update_forest_mask`).
-var forest_mix := 1.0
 var forest_lift_cache: PackedFloat32Array
 var canopy_calib := {}
 
@@ -617,6 +675,9 @@ func _setup_scene() -> void:
 	ocean_mat.set_shader_parameter("world_size", world_size)
 	ocean_mat.set_shader_parameter("sea_level", sea)
 	height_field.mirror_to(ocean_mat)
+	height_fade.bind(terrain_mat)
+	height_fade.bind(ocean_mat)
+	overlay_fade.bind(terrain_mat)
 	water_mi.material_override = ocean_mat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
@@ -1084,9 +1145,8 @@ func _process(delta: float) -> void:
 	if relief_mix < 1.0:
 		relief_mix = minf(relief_mix + delta / SIM_TICK_SECONDS, 1.0)
 		terrain_mat.set_shader_parameter("bake_blend", relief_mix)
-	if forest_mix < 1.0:
-		forest_mix = minf(forest_mix + delta / SIM_TICK_SECONDS, 1.0)
-		terrain_mat.set_shader_parameter("forest_blend", forest_mix)
+	height_fade.advance(delta)
+	overlay_fade.advance(delta)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
 	if ocean_mat:
@@ -1325,12 +1385,19 @@ func _apply_frame(frame: Dictionary) -> void:
 ## Alle Puffer kommen als ROHE Bytes aus SimNode (Issue #53): `heights()` +
 ## `to_byte_array()` kostete je Update eine zusätzliche ~2,7-MB-Kopie.
 func _upload_heights() -> void:
+	height_fade.start(_now(), _timelapse_fading())
 	height_field.upload(terrain_mat, N, sim.heightsBytes())
 	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(sim.currentYear()))
 	terrain_mat.set_shader_parameter("sim_year", sim.currentYear())
 
+## Im Zeitraffer gleiten die Texturen von Stand zu Stand (#172); Pinsel,
+## Sprung, Laden und Neugenerieren zeigen den neuen Stand sofort.
+func _timelapse_fading() -> bool:
+	return year_rate > 0.0 and not sculpting and not _jumping
+
 ## Alles außer der Höhe: im Zeitraffer gedrosselt (RenderState.frame).
 func _upload_overlays(frame: Dictionary) -> void:
+	overlay_fade.start(_now(), _timelapse_fading())
 	# Seespiegel-Feld (hf): der Vertex-Shader hebt See-Zellen auf diese Höhe →
 	# Seen liegen als horizontale Flächen im Becken statt den Hang anzumalen.
 	hf_field.upload(terrain_mat, N, sim.filledBytes())
@@ -1380,13 +1447,10 @@ func _protect_mask(bytes: PackedByteArray) -> Image:
 ## Materialgewichten, Steigung und Schutzmaske, kommt mit dem Frame.
 ## Hier nur Hochladen; den Raycast-Zuschlag rechnet `_forest_lift_at` lazy.
 ## Der alte Stand wandert nach `forest_prev_tex`: im Zeitraffer blendet der
-## Terrain-Shader über einen Sim-Takt hinüber, mit EIGENER Blende
-## (`forest_blend`). Die Verschiebung backt jeden Sim-Takt neu, die Maske kommt
-## nur mit den Overlays (Drossel 0,30 s, länger als der Takt); an
-## `bake_blend` gekoppelt sprang der Wald an jedem Takt ohne neue Maske auf den
-## alten Stand zurück (#167). Kommt der Auftrag mitten in einer Blende, bleibt
-## der alte Stand stehen wie bei der Verschiebung. Pinsel, Sprung und Laden
-## zeigen den neuen Stand sofort.
+## Terrain-Shader mit der Overlay-Blende (`overlay_fade`, #172) hinüber, wie
+## Farbe und Material. NICHT mit `bake_blend`: die Verschiebung backt jeden
+## Sim-Takt, die Maske kommt nur mit den Overlays; geteilt sprang der Wald an
+## jedem Takt ohne neue Maske auf den alten Stand zurück (#170).
 func _update_forest_mask(bytes: PackedByteArray) -> void:
 	var previous := forest_img
 	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
@@ -1397,11 +1461,7 @@ func _update_forest_mask(bytes: PackedByteArray) -> void:
 		terrain_mat.set_shader_parameter("forest_tex", forest_tex)
 		terrain_mat.set_shader_parameter("forest_prev_tex", forest_prev_tex)
 		return
-	var fade := year_rate > 0.0 and not sculpting and not _jumping
-	if forest_mix >= 1.0 or not fade:
-		forest_prev_tex.update(previous)
-		forest_mix = 0.0 if fade else 1.0
-		terrain_mat.set_shader_parameter("forest_blend", forest_mix)
+	forest_prev_tex.update(previous)
 	forest_tex.update(forest_img)
 
 ## Render-Verschiebung neu backen (#153), einmal je Terrain-Update: der
@@ -1417,7 +1477,7 @@ func _bake_relief() -> void:
 		return
 	relief_mat.set_shader_parameter("height_tex", height_field._tex)
 	relief_mat.set_shader_parameter("protect_tex", protect_tex)
-	var fade := year_rate > 0.0 and not sculpting and not _jumping
+	var fade := _timelapse_fading()
 	if relief_mix >= 1.0 or not fade:
 		terrain_mat.set_shader_parameter("relief_prev_tex", relief_vp.get_texture())
 		relief_vp = relief_vps[1] if relief_vp == relief_vps[0] else relief_vps[0]

@@ -770,15 +770,15 @@ Studie keinen Hebel mehr.
   (default-freie Uniforms). Farben und Kronenneigungen bleiben Optik des
   Shaders wie die Ufer- und Kiesfarben.
 - **Zeitraffer gleitet.** Die Waldmaske wird mit jedem Overlay-Upload neu
-  hochgeladen; im Zeitraffer blendet der Terrain-Shader über einen Sim-Takt
-  vom alten zum neuen Stand, statt Kronen an Ufern und Waldrändern
-  umspringen zu lassen. Seit #167 mit eigener Blende (`forest_blend`): an der
-  Blende der Verschiebung (`bake_blend`) hängend, die jeden Sim-Takt neu
-  startet, sprang der Wald an jedem Takt ohne neue Maske (Overlay-Drossel
-  0,30 s, Takt 0,25 s) für ein Bild auf den alten Stand zurück und glitt
-  wieder vor. Im Bildschirmvideo des Projekteigners (11. Oktober 2026,
-  60 J/s) war das ein Sprung etwa alle 0,3 s an Lichtungsrändern und in der
-  Kronenschattierung.
+  hochgeladen; im Zeitraffer blendet der Terrain-Shader vom alten zum neuen
+  Stand, statt Kronen an Ufern und Waldrändern umspringen zu lassen. Seit #170
+  NICHT mehr mit der Blende der Verschiebung (`bake_blend`): die startet jeden
+  Sim-Takt neu, und der Wald sprang an jedem Takt ohne neue Maske
+  (Overlay-Drossel 0,30 s, Takt 0,25 s) für ein Bild auf den alten Stand
+  zurück. Im Bildschirmvideo des Projekteigners (11. Oktober 2026, 60 J/s) war
+  das ein Sprung etwa alle 0,3 s an Lichtungsrändern und in der
+  Kronenschattierung. Seit #172 gleitet der Wald mit den übrigen Overlays
+  (s. [Zeitraffer-Überblenden](#zeitraffer-überblenden-172)).
 - **Wald wächst nach (#167).** Im Zeitraffer wanderten sandfarbene
   Kahlflächen mit den Mäandern: die Schutzmaske stanzte den Wald in jedem
   Bild dort aus, wo gerade ein Band lag, und er sprang sofort zurück, sobald
@@ -956,6 +956,47 @@ overview, detail, grazing, backlight, coast, snow; `balanced`, maximiert
 [Seed 20](screenshots/graphics-quality/canopy-meadow-matrix-seed20.jpg).
 Leistung nicht neu gemessen: Die Maske kostet dasselbe, der Shader rechnet je
 Pixel eine Gewichtung mehr.
+
+## Zeitraffer-Überblenden (#172)
+
+Stand 11. Oktober 2026. Im Zeitraffer gleiten alle Geländetexturen von Stand
+zu Stand, statt hart zu tauschen (Projekteigner: „weiche Übergänge wie beim
+Wald"). Vorher blendeten nur die Verschiebung (`bake_blend`, #153) und der
+Wald (#170).
+
+- **Zwei Blenden, je Upload-Takt eine** (`Crossfade` in `Main.gd`):
+  `height_blend` für die Höhe (jeder Sim-Takt) und `overlay_blend` für alles,
+  was mit den gedrosselten Overlays kommt: Makrofarbe, Materialgewichte,
+  Rinnen-Detail, Seespiegel, Wald. Eine geteilte Blende über zwei Takte war
+  der Fehler aus #170.
+- **Dauer = Abstand zum vorigen Upload** (0,1–0,6 s). Die Overlays kommen
+  im Zeitraffer nicht alle 0,30 s, sondern mit jedem zweiten Sim-Takt
+  (≈ 0,5 s: die Drossel prüft nur, wenn ein Takt fällt); eine feste Blende
+  von 0,25 s hätte die Fläche erst gleiten und dann stehen lassen. Bei
+  gleichmäßigem Takt gleitet sie so ohne Halt von Stand zu Stand.
+- **Vorgängerstand je Textur** (`*_prev_tex`, `FieldTexture` mit
+  `keeps_previous`). Der Terrain-Shader liest die Felder nur über die Helfer
+  `height_at`, `hf_at`, `color_at`, `surface_at`, `flow_at`, damit Form,
+  Normalen und Farbe denselben Zwischenstand zeigen; das Meer blendet die
+  Höhe mit (Küstenlinie). Ohne laufende Blende kostet das nichts, jeder Helfer
+  liest dann genau eine Textur.
+- **Sofort statt weich:** Pinsel, Zeitsprung, Laden und Neugenerieren.
+  Pinselring, Kameraziel und Raycast lesen die CPU-Höhe und springen weiter;
+  das sieht man nur im Zeitraffer, und dort wird nicht gepinselt.
+- **Wasser bleibt außen vor:** Das Rasterwasser glättet die CPU (Blend 0,15),
+  die Flussbänder baut sie höchstens einmal je Sekunde neu.
+
+- **Kosten:** Im Zeitraffer läuft praktisch immer eine Blende, die Helfer
+  lesen dann zwei Texturen. `RS_FPS` (Zeitraffer 60 J/s, `balanced`,
+  maximiert, M4 Max, vier Paare im Wechsel): vorher 54,4 / 52,8 / 54,3 /
+  52,5, nachher 51,0 / 51,8 / 52,7 / 52,2 FPS, Median 53,5 → 52,0
+  (18,7 → 19,2 ms je Bild, +0,5 ms, knapp 3 % des Frames). Im Standbild
+  läuft keine Blende und es kostet nichts.
+
+Wächter: `SimCoreTests/TimelapseFadeTests.swift` (jede Textur liest über die
+Blende ihres Uploads, Main startet jede Blende mit ihrem Upload) und
+`game/tests/relief.gd` (Höhe und Overlays blenden im Zeitraffer, enden auf
+dem neuen Stand, der Pinsel blendet nicht).
 
 ## Abschluss Spec #156
 
