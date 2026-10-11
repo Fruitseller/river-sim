@@ -107,6 +107,27 @@ final class CanopyTests: XCTestCase {
         }
     }
 
+    /// Nur dichte Vegetation wird Wald (Issue #168): bei mittlerem
+    /// Vegetationsgewicht (0,3, bis #168 schon geschlossener Wald) bleibt
+    /// Wiese, ab 0,7 steht geschlossener Bestand. Ebene, ohne Rauschen.
+    func testOnlyDenseVegetationBecomesForest() {
+        let n = 32
+        let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
+        var state = terrain.state
+        for k in state.h.indices { state.h[k] = terrain.cfg.sea + 0.2 }
+        terrain.restore(state)
+        func forest(vegetation: Double) -> UInt8 {
+            var surfaces = [UInt8](repeating: 0, count: n * n * 4)
+            for k in 0..<(n * n) { surfaces[k * 4] = byte01(vegetation) }
+            let mask = ForestCanopyMask.bytes(terrain, surfaces: surfaces,
+                                              protect: [UInt8](repeating: 0, count: n * n),
+                                              clump: [Float](repeating: 0, count: n * n))
+            return mask[(n / 2) * n + n / 2]
+        }
+        XCTAssertEqual(forest(vegetation: 0.3), 0, "Mittlere Vegetation bleibt Wiese")
+        XCTAssertEqual(forest(vegetation: 0.7), 255, "Dichte Vegetation ist geschlossener Wald")
+    }
+
     /// Ohne Schrittweite (`cellSize == 0`: `world <= 0` oder nicht-endlich)
     /// wäre die Weltsteigung ±inf/NaN und der Wald still falsch; die Maske
     /// bleibt leer wie bei jeder anderen unpassenden Eingabe.
@@ -226,6 +247,9 @@ final class CanopyTests: XCTestCase {
             "canopy_crown_radius_jitter": CanopyRender.crownRadiusJitter,
             "canopy_detail_lo": CanopyRender.detailFootprintLo,
             "canopy_detail_hi": CanopyRender.detailFootprintHi,
+            "canopy_meadow_lo": CanopyRender.meadowLo,
+            "canopy_meadow_hi": CanopyRender.meadowHi,
+            "canopy_meadow_share": CanopyRender.meadowShare,
         ]
         XCTAssertEqual(CanopyUniforms.scalars.count, mirror.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")

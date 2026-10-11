@@ -859,6 +859,57 @@ Standbild und Kamerafahrt bleiben auch dort im Budget, schlechtester
 Einzelframe 23,2 ms (`grazing`); der Zeitraffer liegt im selben Bereich wie
 bei `detail`.
 
+### Wald und Wiese (#168)
+
+Stand 11. Oktober 2026. Projekteigner am 10. Oktober zu einem Screenshot um
+Jahr 1.800: „Das ist zuviel Wald." Die Schwellen der Waldmaske stammten aus der
+Studie (`vegetationLo/Hi` 0,14/0,32) und lagen tief im unteren Teil des
+Vegetationsgewichts (bis 0,78); fast jede bewachsene Zelle wurde Wald, in alten
+Welten bis 43 % des Landes.
+
+- **Schwellen 0,35/0,55.** Nur dichte Vegetation wird Wald, dazwischen bleibt
+  Wiese. Das Lichtungs-Rauschen (`clumpGain` 0,45) bleibt: 0,60 änderte den
+  Waldanteil um höchstens 0,6 Punkte, und die Bestände stehen auch so als
+  Gruppen.
+- **Wiese statt Sand.** Mit dem Wald fiel auf, dass bewachsener Boden ohne Wald
+  braun blieb: der Terrain-Shader mischte die Vegetationsfarbe linear mit dem
+  Gewicht, 0,3 hieß 30 % Grün auf 70 % Boden. Jetzt wird ein Teil des
+  Bodenanteils Gras (`CanopyRender.meadowLo/Hi/Share` 0,08/0,35/0,75, über
+  `canopy_meadow_*` an den Shader); Fels und Schnee behalten ihren Anteil.
+- **Physik unverändert:** Die Änderung liegt in Render-Vertrag und Shader
+  (`CanopyRender`, `CanopyUniforms`, `terrain.gdshader`), kein Sim-Code.
+
+Waldanteil über die Matrix-Seeds, Produktions-Config (`RS_MEASURE=1 … --filter
+testCanopyCoverageDiagnostic`). Wald = Waldmaske ≥ 0,5; Wiese = Vegetation
+≥ 0,14 ohne Wald; Prozent der Landzellen:
+
+| Seed | Jahr | Vegetation ≥ 0,14 | vegW p50 / p90 | Wald vorher | Wald nachher | Wiese vorher | Wiese nachher |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1337 | 2.000 | 63,9 | 0,20 / 0,72 | 16,2 | 8,6 | 48,1 | 55,3 |
+| 1337 | 20.000 | 76,0 | 0,26 / 0,78 | 21,2 | 11,0 | 55,1 | 65,0 |
+| 1337 | 100.000 | 89,4 | 0,33 / 0,78 | 38,3 | 19,2 | 51,1 | 70,2 |
+| 42 | 2.000 | 89,5 | 0,34 / 0,73 | 35,7 | 17,5 | 53,8 | 71,9 |
+| 42 | 20.000 | 91,6 | 0,36 / 0,76 | 40,0 | 19,9 | 51,5 | 71,6 |
+| 42 | 100.000 | 91,9 | 0,38 / 0,78 | 42,7 | 18,6 | 49,2 | 73,2 |
+| 20 | 2.000 | 71,9 | 0,25 / 0,65 | 21,7 | 9,9 | 50,6 | 62,0 |
+| 20 | 20.000 | 78,6 | 0,29 / 0,71 | 28,4 | 12,8 | 50,5 | 65,7 |
+| 20 | 100.000 | 87,3 | 0,38 / 0,78 | 43,4 | 22,0 | 44,0 | 65,4 |
+
+Mitgemessen und nicht genommen: 0,40/0,60 und 0,45/0,65 nehmen nur 1–4 Punkte
+mehr weg (Seed 42 bei 100.000 Jahren: 15,2 bzw. 12,7 %). Der Wald wächst
+weiter mit dem Alter, weil die Sim-Vegetation dichter wird, aber nur noch bis
+rund ein Fünftel des Landes.
+
+Vergleichsmatrix, je Seed ein Bogen (Zeilen: Jahr × vorher/nachher, Spalten:
+overview, detail, grazing, backlight, coast, snow; `balanced`, maximiert
+3456×2104, M4 Max). Vorher `f3725d5`, nachher dieser Stand, beide mit
+`scripts/graphics-matrix.sh baseline <ordner> shot`:
+[Seed 1337](screenshots/graphics-quality/canopy-meadow-matrix-seed1337.jpg),
+[Seed 42](screenshots/graphics-quality/canopy-meadow-matrix-seed42.jpg),
+[Seed 20](screenshots/graphics-quality/canopy-meadow-matrix-seed20.jpg).
+Leistung nicht neu gemessen: Die Maske kostet dasselbe, der Shader rechnet je
+Pixel eine Gewichtung mehr.
+
 ## Abschluss Spec #156
 
 Stand 10. Oktober 2026. Die vier Hebel der Studie sind die normale Darstellung
