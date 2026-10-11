@@ -81,7 +81,7 @@ public final class RenderState {
     private let diagnostics = TerrainDiagnostics()
 
     /// Farbe und Materialgewichte entstehen gemeinsam und bleiben bis zur
-    /// nächsten Terrain-Änderung gepuffert. Godot lädt sie als zwei Texturen,
+    /// nächsten Terrain-Änderung gepuffert. Godot lädt sie als drei Texturen,
     /// die teure Standortauswertung läuft aber nur einmal.
     private var materials: TerrainColorRenderer.Buffers?
 
@@ -189,7 +189,7 @@ public final class RenderState {
         out.overlays = RenderFrame.Overlays(
             water: water, waterBlend: blend,
             colors: terrainColorBytes(terrain), surfaces: terrainSurfaceBytes(terrain),
-            flowDetail: flowDetailBytes(terrain), protectMask: protectMaskBytes(terrain),
+            covers: terrainCoverBytes(terrain), flowDetail: flowDetailBytes(terrain), protectMask: protectMaskBytes(terrain),
             forestMask: forestMaskBytes(terrain))
         return out
     }
@@ -220,6 +220,12 @@ public final class RenderState {
     /// R = Vegetation, G = freier Fels, B = Schnee/Eis, A = Lithologie-Härte.
     public func terrainSurfaceBytes(_ terrain: Terrain) -> [UInt8] {
         cachedMaterials(terrain).surfaces
+    }
+
+    /// R = Schutthalde, G = blankes Gletschereis, B = Rohboden,
+    /// A = Talboden-Wiese (Issue #174 D).
+    public func terrainCoverBytes(_ terrain: Terrain) -> [UInt8] {
+        cachedMaterials(terrain).covers
     }
 
     private func cachedMaterials(_ terrain: Terrain) -> TerrainColorRenderer.Buffers {

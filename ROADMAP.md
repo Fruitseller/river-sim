@@ -28,6 +28,15 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   mit dem Geländealter ein, Überblendung im Zeitraffer) und das Kronendach
   (#152, ersetzt die Instanzbäume; Waldmaske als godot-freie Render-Ableitung,
   Kronen im Terrain-Shader). Damit hat die Studie keine Hebel mehr.
+  Zielbild #174 (Vorlagen A–C, Abnahmebogen 50 × 2 %), Paket D (Render):
+  geomorphologische Materialverteilung (Fels auf steil-konvex mit Klüftung,
+  Schutthalden, Firn und blankes Gletschereis mit Spalten und Moränen,
+  Rohboden nur auf gestörten Flächen, Talboden-Wiese; Kalibrierung
+  `SimCore.MaterialRender`) und Wolkenkörper über dem Kamm mit
+  sonnenprojizierten Schatten; die PBR-Variante `prototype` der Studie ist
+  damit entfernt (`docs/graphics-quality.md` § Material, Schnee, Wolken).
+  Offen in #174: Großform (A), Mäandergürtel mit `barAge` (B, Anknüpfung im
+  Talboden-Kanal), Wasser/Delta/Küste (C), Bedienung (E).
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare

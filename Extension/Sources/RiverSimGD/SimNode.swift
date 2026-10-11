@@ -188,7 +188,7 @@ final class SimNode: Node {
     /// Die Puffer eines Frames — Reihenfolge und Drosseln: `RenderState.frame`.
     /// `trigger` = Rohwert von `FrameTrigger` (`FRAME_*` in `Main.gd`), `now` =
     /// `Time.get_ticks_msec() / 1000`. Fehlende Schlüssel heißen „in diesem
-    /// Frame nicht neu": `water`, `water_blend`, `color`, `surface`, `flow`,
+    /// Frame nicht neu": `water`, `water_blend`, `color`, `surface`, `cover`, `flow`,
     /// `protect`, `forest` (nur gemeinsam), `ribbons` (Mesh über `riverRibbon*`).
     @Callable func renderFrame(trigger: Int, now: Double) -> VariantDictionary {
         let out = VariantDictionary()
@@ -203,6 +203,7 @@ final class SimNode: Node {
             out[Variant("water_blend")] = Variant(o.waterBlend)
             out[Variant("color")] = PackedByteArray(o.colors).toVariant()
             out[Variant("surface")] = PackedByteArray(o.surfaces).toVariant()
+            out[Variant("cover")] = PackedByteArray(o.covers).toVariant()
             out[Variant("flow")] = PackedByteArray(o.flowDetail).toVariant()
             out[Variant("protect")] = PackedByteArray(o.protectMask).toVariant()
             out[Variant("forest")] = PackedByteArray(o.forestMask).toVariant()
@@ -229,6 +230,13 @@ final class SimNode: Node {
     /// A = Lithologie-Härte. Beide Puffer werden gemeinsam berechnet.
     @Callable func terrainSurfaceBytes() -> PackedByteArray {
         PackedByteArray(render.terrainSurfaceBytes(terrain))
+    }
+
+    /// Bodenbedeckung (Issue #174 D): R = Schutthalde, G = blankes Gletschereis,
+    /// B = Rohboden, A = Talboden-Wiese. Gemeinsam mit den beiden Puffern oben
+    /// berechnet.
+    @Callable func terrainCoverBytes() -> PackedByteArray {
+        PackedByteArray(render.terrainCoverBytes(terrain))
     }
 
     /// Wie `waterFieldBytes`, aber ohne Blur/EWMA/Glättung: die erledigt der
@@ -319,6 +327,19 @@ final class SimNode: Node {
 
     @Callable func canopyUniformValues() -> PackedFloat32Array {
         PackedFloat32Array(CanopyUniforms.scalars.map { Float($0.value) })
+    }
+
+    // MARK: Material-Kalibrierung (Issue #174 D)
+
+    // Tabelle in `SimRender.MaterialUniforms`; `Main.gd` setzt die Werte auf das
+    // Terrain-Material.
+
+    @Callable func materialUniformNames() -> PackedStringArray {
+        PackedStringArray(MaterialUniforms.scalars.map(\.name))
+    }
+
+    @Callable func materialUniformValues() -> PackedFloat32Array {
+        PackedFloat32Array(MaterialUniforms.scalars.map { Float($0.value) })
     }
 
     // Vertragswerte der Godot-Wächter (`water_geometry.gd`, `river_ribbons.gd`,

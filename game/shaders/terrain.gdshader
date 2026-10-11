@@ -37,11 +37,14 @@
 // Anhebung und Kronen. In der Entfernung geht das Muster in seinen Mittelwert
 // über.
 //
-// MATERIAL-LAYER (davon UNABHÄNGIG): aus surface_tex werden Boden, Vegetation,
-// Fels und Schnee/Eis in Weltkoordinaten prozedural aufgebaut (Körnung,
-// Gesteinsschichten, Windverfrachtung, Mikro-Normale). Eigener Schalter
-// `material_enabled` — wer `detail_enabled` abschaltet, um die Erosionsrinnen
-// zu isolieren, behält damit die Materialien.
+// MATERIAL-LAYER (davon UNABHÄNGIG): aus surface_tex und cover_tex werden
+// Grund, Vegetation, Fels, Schutthalden, Schnee, Gletschereis und Rohboden in
+// Weltkoordinaten prozedural aufgebaut (Körnung, Klüftung, Gesteinsschichten,
+// Spalten, Moränen, Windverfrachtung, Mikro-Normale). WO welches Material
+// liegt, rechnet SimRender.TerrainColorRenderer (Kalibrierung
+// SimCore.MaterialRender, Issue #174 D); hier entsteht nur, WIE es aussieht.
+// Eigener Schalter `material_enabled` — wer `detail_enabled` abschaltet, um
+// die Erosionsrinnen zu isolieren, behält damit die Materialien.
 shader_type spatial;
 render_mode cull_disabled;
 
@@ -49,6 +52,10 @@ uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
 uniform sampler2D color_tex : filter_linear, repeat_disable;
 uniform sampler2D surface_tex : filter_linear, repeat_disable; // R Vegetation, G Fels, B Schnee/Eis, A Lithologie
+// Bodenbedeckung (#174 D): R Schutthalde, G blankes Gletschereis (Anteil an B
+// von surface_tex), B Rohboden (frisch gestört), A Talboden-Wiese. Schwarz,
+// solange nichts gebunden ist (Editor-Vorschau): keine dieser Schichten.
+uniform sampler2D cover_tex : filter_linear, repeat_disable, hint_default_black;
 // Zeitraffer-Überblenden (#172, Main.gd `Crossfade`): der Vorgängerstand je
 // Textur und zwei Blenden, jede im Takt IHRES Uploads. `height_blend` folgt
 // dem Sim-Takt (Höhe), `overlay_blend` der Overlay-Drossel (Farbe, Material,
@@ -58,6 +65,7 @@ uniform sampler2D height_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D color_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D surface_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D cover_prev_tex : filter_linear, repeat_disable, hint_default_black;
 uniform sampler2D flow_prev_tex : filter_linear, repeat_disable;
 uniform float height_blend = 1.0;
 uniform float overlay_blend = 1.0;
@@ -190,6 +198,19 @@ uniform float canopy_meadow_share;
 // SimNode.heightBands, gesetzt mit jedem Overlay-Upload).
 uniform float conifer_lo;
 uniform float conifer_hi;
+// Material-Kalibrierung über die Brücke (SimCore.MaterialRender, #174 D),
+// default-frei. Mit Null-Uniforms (Editor-Vorschau) bleibt jede Schicht total:
+// die Fenster laufen über calib_window, die Abstände über max().
+uniform float material_ridge_rock_gain;
+uniform float material_gully_scree_share;
+uniform float material_joint_spacing;
+uniform float material_joint_depth;
+uniform float material_scree_grain;
+uniform float material_crevasse_spacing;
+uniform float material_crevasse_slope_lo;
+uniform float material_crevasse_slope_hi;
+uniform float material_moraine_lo;
+uniform float material_moraine_hi;
 
 varying float v_forest;
 
@@ -225,6 +246,11 @@ vec3 color_at(vec2 uv) {
 vec4 surface_at(vec2 uv) {
 	vec4 m = texture(surface_tex, uv);
 	return overlay_blend < 1.0 ? mix(texture(surface_prev_tex, uv), m, overlay_blend) : m;
+}
+
+vec4 cover_at(vec2 uv) {
+	vec4 c = texture(cover_tex, uv);
+	return overlay_blend < 1.0 ? mix(texture(cover_prev_tex, uv), c, overlay_blend) : c;
 }
 
 float flow_at(vec2 uv) {
@@ -332,6 +358,45 @@ float triplanar_fbm(vec3 p, vec3 n) {
 	return fbm(p.yz) * weight.x + fbm(p.xz) * weight.y + fbm(p.xy) * weight.z;
 }
 
+// Klüftung (#174 D): zwei gegeneinander verdrehte Kluftscharen in der
+// Waagerechten, leicht gewellt. Auf Wänden stehen sie als senkrechte Fugen,
+// zusammen mit den Gesteinsschichten zerlegen sie den Fels in Blöcke. Liefert
+// die Abdunklung (0 … 1) und je Block einen Zufallston (−1 … 1). Ab etwa einer
+// Kluft je Pixel geht beides in seinen Mittelwert über, statt zu flimmern.
+float rock_joints(vec2 p, out float block) {
+	vec2 q = p / max(material_joint_spacing, 1e-4);
+	vec2 a = vec2(dot(q, vec2(0.866, 0.5)), dot(q, vec2(-0.342, 0.940)))
+	       + (vec2(vnoise(q * 0.61), vnoise(q * 0.61 + vec2(9.1, 3.3))) - 0.5) * 0.7;
+	vec2 fw = fwidth(a);
+	float detail = 1.0 - smoothstep(0.25, 0.8, max(fw.x, fw.y));
+	vec2 f = abs(fract(a) - 0.5) * 2.0; // 1 auf der Kluft
+	vec2 w = 0.10 + fw * 1.5;
+	float lines = max(smoothstep(1.0 - w.x, 1.0, f.x), smoothstep(1.0 - w.y, 1.0, f.y));
+	block = ehash(floor(a)).x * detail;
+	return lines * detail * 0.75 + 0.06; // 0.06 ≈ Mittel der Fugen in der Ferne
+}
+
+// Körnung der Halden: Blöcke von `material_scree_grain`, zwei Oktaven,
+// mit der Pixelgröße ausgeblendet (−1 … 1, Mittel 0).
+float scree_grain(vec2 p) {
+	vec2 q = p / max(material_scree_grain, 1e-4);
+	float detail = 1.0 - smoothstep(0.3, 1.0, length(fwidth(q)));
+	return ((vnoise(q) - 0.5) * 1.4 + (vnoise(q * 2.7 + vec2(4.0, 1.0)) - 0.5) * 0.6) * detail;
+}
+
+// Gletscherspalten quer zur Fließrichtung `fall` (Einheitsvektor bergab),
+// gewellt; 0 … 1, mit der Pixelgröße ausgeblendet.
+float crevasses(vec2 p, vec2 fall) {
+	float s = max(material_crevasse_spacing, 1e-4);
+	vec2 side = vec2(-fall.y, fall.x);
+	float t = dot(p, fall) / s + (vnoise(vec2(dot(p, side) / (s * 3.0), 0.0)) - 0.5) * 1.6;
+	float fw = fwidth(t);
+	float detail = 1.0 - smoothstep(0.3, 0.9, fw);
+	float f = abs(fract(t) - 0.5) * 2.0;
+	float open = vnoise(vec2(dot(p, side) / (s * 1.7), floor(t)));
+	return smoothstep(0.82 - fw, 0.97, f) * smoothstep(0.35, 0.6, open) * detail;
+}
+
 // Vier Zufallswerte (−1 … 1) je Kronenzelle. Ganzzahl-Hash (pcg3d, Jarzynski &
 // Olano 2020) statt `ehash`: dessen Float-Produkt x·y·(x+y) liegt bei
 // Zellindizes um 1000 bei ~1e9, `fract` liefert dort nur noch 0, und alle
@@ -405,15 +470,15 @@ void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
 	rough = mix(rough, 0.92, amount);
 }
 
-// Studien-Schichten: nur im FLUSSTAL_STUDY-Build eingebunden (Präprozessor).
-// Der normale Spiel-Shader überspringt Includes UND Aufrufe komplett — keine
-// Studien-Uniforms in Produktion, und `studies/` darf verschoben werden, ohne
-// den Hauptshader zu brechen (Review zu #121). Flusstal.gd setzt das Define
-// zur Laufzeit vor diese Quelle (Godot 4.7 erlaubt #define vor shader_type).
-// Die Includes stehen HIER, weil die Studie die Höhenfelder und Noise-Helfer
-// darüber mitbenutzt.
+// Debug-Ansichten der Flusstal-Studie: nur im FLUSSTAL_STUDY-Build
+// eingebunden (Präprozessor). Der normale Spiel-Shader überspringt Include UND
+// Aufruf komplett — keine Studien-Uniforms in Produktion, und `studies/` darf
+// verschoben werden, ohne den Hauptshader zu brechen (Review zu #121).
+// Flusstal.gd setzt das Define zur Laufzeit vor diese Quelle (Godot 4.7
+// erlaubt #define vor shader_type). Das Include steht HIER, weil die Studie
+// die Helfer darüber mitbenutzt. Die PBR-Materialien der ersten Runde sind mit
+// #174 D durch die prozedurale Materialverteilung ersetzt und entfernt.
 #ifdef FLUSSTAL_STUDY
-#include "res://studies/flusstal/materials.gdshaderinc"
 #include "res://studies/flusstal/landscape.gdshaderinc"
 #endif
 // Wolkenschatten (#151): gemeinsame Funktion mit Ozean und Bändern.
@@ -494,13 +559,30 @@ void fragment() {
 	vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,
 	                         wp.y - world_size * 0.5);
 
-	// Vier physikalisch gebundene Grundmaterialien. Die CPU liefert nur ihre
-	// Gewichte; Körnung, Schichten und Rauheit entstehen hier kontinuierlich in
-	// Weltkoordinaten und bleiben damit unabhängig vom Render-Gitter.
+	// Physikalisch gebundene Grundmaterialien (#174 D). Die CPU liefert nur
+	// ihre Gewichte (SimRender.TerrainColorRenderer, Kalibrierung
+	// SimCore.MaterialRender); Körnung, Klüfte, Schichten und Rauheit entstehen
+	// hier kontinuierlich in Weltkoordinaten und bleiben damit unabhängig vom
+	// Render-Gitter.
 	float vegetation = clamp(surface.r, 0.0, 1.0);
 	float rock = clamp(surface.g, 0.0, 1.0);
 	float cold = clamp(surface.b, 0.0, 1.0);
 	float lith = surface.a * 2.0 - 1.0;
+	vec4 cover = cover_at(v_uv);
+	float scree = clamp(cover.r, 0.0, 1.0);
+	float ice_share = clamp(cover.g, 0.0, 1.0);
+	float raw = clamp(cover.b, 0.0, 1.0);
+	float valley = clamp(cover.a, 0.0, 1.0);
+	// Feinverteilung an Rinnen und Rippen der Render-Verschiebung (#153): in
+	// Rinnen rutscht Fels als Schutt nach, auf Rippen steht er auch dort, wo
+	// das Sim-Gitter nur Grund sieht. Der Zuschlag nimmt nur vom Grund, die
+	// Gewichtssumme bleibt damit höchstens 1.
+	float cavity = hval > sea_level + 0.012 ? relief_cavity(v_uv) : 0.0;
+	float slid = rock * clamp(-cavity, 0.0, 1.0) * material_gully_scree_share;
+	rock -= slid;
+	scree += slid;
+	float bare_rest = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
+	rock += min(bare_rest, rock * clamp(cavity, 0.0, 1.0) * material_ridge_rock_gain);
 	// `material_fade` blendet NUR das Feingran aus: es aliast in der Distanz und
 	// liegt dort unter einem Pixel. Die GROSSEN Terme (tri_large, top_large)
 	// tragen die Makro-Variation der Grundfarben und laufen bis zum Horizont
@@ -525,12 +607,29 @@ void fragment() {
 		}
 	}
 
+	// Brauner Rohboden nur noch auf frisch gestörten Flächen (Gewicht `raw`
+	// aus Terrain.disturb); bis #174 war er die Grundfarbe ganzer Hänge.
 	vec3 soil_color = vec3(0.25, 0.20, 0.14)
 	                * mix(0.82, 1.12, top_large)
 	                * mix(0.93, 1.07, top_grain * material_fade);
+	// Talboden hell und saftig, Hänge im Ton von #168.
+	vec3 lush_color = vec3(0.21, 0.35, 0.085)
+	                * mix(0.85, 1.10, top_large)
+	                * mix(0.92, 1.08, top_grain * material_fade);
 	vec3 vegetation_color = vec3(0.10, 0.24, 0.075)
 	                      * mix(0.76, 1.15, top_large)
 	                      * mix(0.90, 1.08, top_grain * material_fade);
+	vegetation_color = mix(vegetation_color, lush_color * 0.85, valley * 0.6);
+	// Grund: weder bewachsen noch Fels, Schutt, Eis oder Rohboden. Unterhalb
+	// der Vegetationsgrenze Trockenrasen, darüber steiniger Grund.
+	vec3 dry_grass = vec3(0.20, 0.23, 0.11)
+	               * mix(0.82, 1.12, top_large)
+	               * mix(0.92, 1.08, top_grain * material_fade);
+	vec3 stony = vec3(0.34, 0.33, 0.30)
+	           * mix(0.86, 1.10, tri_large)
+	           * mix(0.90, 1.10, mix(0.5, tri_grain, material_fade));
+	vec3 ground_color = mix(dry_grass, stony, smoothstep(veg_alt_lo, veg_alt_hi, hval));
+	ground_color = mix(ground_color, lush_color, valley * 0.7);
 
 	// Die echte Lithologie steuert die Helligkeit der Schichtflächen. Harte
 	// Bänder sind dunkler, feinkörniger und rauer; weiche Bänder verwittern hell. Das
@@ -540,36 +639,73 @@ void fragment() {
 	float strata_phase = abs(fract(material_pos.y * 1.65 + tri_large * 1.8) - 0.5) * 2.0;
 	float strata_edge = smoothstep(0.72, 0.96, strata_phase);
 	float lith_contrast = mix(1.09, 0.82, lith * 0.5 + 0.5);
-	vec3 rock_color = mix(vec3(0.28, 0.29, 0.30), vec3(0.37, 0.35, 0.32),
-	                      tri_large * 0.55)
+	// Grauer Fels mit Klüftung (#174 D): Blöcke mit eigenem Ton, dunkle Fugen.
+	// Heller als vor #174 (0,28–0,37), aber unter 0,5: Kalkstein mit 0,5–0,6
+	// las sich in der Studie unter Himmelslicht als Schnee.
+	float block = 0.0;
+	float joints = 0.0;
+	if (material_enabled && rock > 0.01) {
+		joints = rock_joints(material_pos.xz, block);
+	}
+	vec3 rock_color = mix(vec3(0.33, 0.33, 0.33), vec3(0.44, 0.42, 0.39), tri_large * 0.55)
 	                * mix(0.86, 1.08, mix(0.5, tri_grain, material_fade))
-	                * mix(1.0, lith_contrast, strata_edge * rock);
+	                * mix(1.0, lith_contrast, strata_edge * rock)
+	                * (1.0 + block * 0.08)
+	                * (1.0 - joints * material_joint_depth);
+	// Schutthalde: heller als die Wand, grob gekörnt.
+	float grain = 0.0;
+	if (material_enabled && scree > 0.01) {
+		grain = scree_grain(material_pos.xz);
+	}
+	vec3 scree_color = vec3(0.45, 0.44, 0.41) * mix(0.90, 1.06, tri_large) * (1.0 + grain * 0.16);
 
-	vec3 cold_color = vec3(0.79, 0.84, 0.89)
+	// Schnee und Gletscher: im Zehrgebiet blankes, bläuliches Eis mit Spalten
+	// und Moränen, darüber Firn wie Schnee.
+	vec3 snow_color = vec3(0.79, 0.84, 0.89)
 	                * mix(0.91, 1.05, wind_snow * material_fade);
+	vec3 ice_color = vec3(0.56, 0.70, 0.80) * mix(0.94, 1.04, tri_large);
+	vec3 cold_color = mix(snow_color, ice_color, ice_share);
+	float ice_w = cold * ice_share;
+	if (material_enabled && ice_w > 0.01) {
+		vec2 fall = length(coarse_slope) > 1e-5 ? -normalize(coarse_slope) : vec2(0.0, 1.0);
+		float world_slope = length(coarse_slope) * hscale / world_size;
+		float crack = crevasses(wp, fall)
+		            * calib_window(material_crevasse_slope_lo, material_crevasse_slope_hi, world_slope);
+		cold_color = mix(cold_color, vec3(0.16, 0.26, 0.38), crack * ice_share * 0.85);
+		// Seiten- und Endmoräne am Rand der Zunge, Mittelmoränen als Streifen
+		// in Fließrichtung.
+		float margin = calib_window(0.0, material_moraine_lo, cold)
+		             * (1.0 - calib_window(material_moraine_lo, material_moraine_hi, cold));
+		vec2 side = vec2(-fall.y, fall.x);
+		float medial = smoothstep(0.62, 0.80, vnoise(vec2(dot(wp, side) * 1.3, dot(wp, fall) * 0.12)));
+		float moraine = clamp(margin + medial * 0.6, 0.0, 1.0) * ice_share;
+		cold_color = mix(cold_color, vec3(0.30, 0.29, 0.27) * mix(0.85, 1.1, tri_grain), moraine * 0.85);
+	}
 
 	// Die CPU liefert die Gewichte schon hierarchisch abgeschwächt
-	// (TerrainColorRenderer: Kälte voll, Vegetation × (1−Kälte), Fels ×
-	// (1−Vegetation)(1−Kälte)); sie summieren sich damit auf höchstens 1, der
-	// Rest ist Boden. Als mix-KETTE gerechnet dämpfte jedes spätere Material das
+	// (TerrainColorRenderer: Kälte deckt alles, Fels und Schutt vor Rohboden
+	// und Vegetation); sie summieren sich damit auf höchstens 1, der Rest ist
+	// Grund. Als mix-KETTE gerechnet dämpfte jedes spätere Material das
 	// frühere ein ZWEITES Mal — auf einem bewaldeten Hang (veg 0.6, rock 0.2)
 	// blieben von der Felsfarbe 8 % statt 20 %, und das Ergebnis hing an der
 	// Blend-Reihenfolge. Als Gewichtssumme ist es reihenfolge-unabhängig und
 	// jedes Material genau mit seinem Anteil sichtbar. Normiert wird, weil die
 	// Byte-Quantisierung der Gewichte die Summe knapp über 1 heben kann.
-	float cover_w = vegetation + rock + cold;
+	float cover_w = vegetation + rock + cold + scree + raw;
 	float soil_w = max(0.0, 1.0 - cover_w);
-	// Wiese (#168): bewachsener Boden ohne Wald. Linear gemischt trug ein
+	// Wiese (#168): bewachsener Grund ohne Wald. Linear gemischt trug ein
 	// Vegetationsgewicht von 0,3 nur 30 % Grün und las sich als Sand; ein
-	// Teil des Bodenanteils wird deshalb Gras. Fels und Schnee bleiben, wie
+	// Teil des Grundanteils wird deshalb Gras. Fels und Schnee bleiben, wie
 	// sie sind; die Schwellen stehen in SimCore.CanopyRender.
 	float meadow_w = calib_window(canopy_meadow_lo, canopy_meadow_hi, vegetation)
 	               * canopy_meadow_share * soil_w;
 	vec3 meadow_color = vec3(0.17, 0.25, 0.09)
 	                  * mix(0.82, 1.12, top_large)
 	                  * mix(0.92, 1.08, top_grain * material_fade);
-	vec3 terr = (soil_color * (soil_w - meadow_w) + meadow_color * meadow_w
-	          + rock_color * rock + vegetation_color * vegetation + cold_color * cold)
+	meadow_color = mix(meadow_color, lush_color, valley);
+	vec3 terr = (ground_color * (soil_w - meadow_w) + meadow_color * meadow_w
+	          + soil_color * raw + rock_color * rock + scree_color * scree
+	          + vegetation_color * vegetation + cold_color * cold)
 	          / max(0.001, soil_w + cover_w);
 	// Die Makrokarte bewahrt Salzkrusten, Gletschereis und Biom-Farbverschiebung,
 	// ohne wieder als alleinige, weichgefilterte Oberfläche sichtbar zu werden.
@@ -582,8 +718,8 @@ void fragment() {
 		terr = macro_color;
 	}
 	// UNGESTÖRTE Makro-Normale sichern, bevor die Mikro-Normale sie verändert:
-	// die Studien-Materialfunktion braucht sie für Triplanar-Gewichte und
-	// Vorzeichenkorrektur ohne Mikro-Rauschen (Review zu #121).
+	// das Kronendach neigt seine Kronen gegen sie, ohne Mikro-Rauschen
+	// (Review zu #121).
 	vec3 macro_n = n_ws;
 	// Mikro-Normale aus drei Weltachsen. Ein einfacher Noise-Sample pro Achse
 	// genügt hier; drei weitere vollständige triplanare FBMs kosteten pro Pixel
@@ -594,7 +730,7 @@ void fragment() {
 		                  vnoise(micro_pos.yz + vec2(23.0, 3.0)),
 		                  vnoise(micro_pos.xz + vec2(13.0, 31.0))) - vec3(0.5);
 		micro -= n_ws * dot(micro, n_ws);
-		float micro_strength = mix(0.055, 0.13, rock) * mix(1.0, 0.45, cold);
+		float micro_strength = mix(0.055, 0.13, rock + scree) * mix(1.0, 0.45, cold);
 		n_ws = normalize(n_ws + micro * micro_strength * material_fade);
 	}
 	float breakup = vnoise(wp * 0.9) * 0.6 + vnoise(wp * 3.7) * 0.4;
@@ -606,28 +742,14 @@ void fragment() {
 	           moist * 0.32);
 	terr *= 0.96 + 0.08 * breakup;
 	// Rinnenböden dunkler, Rippen heller (grobe Verschiebung, #153).
-	if (hval > sea_level + 0.012) {
-		float cavity = relief_cavity(v_uv);
-		terr *= 1.0 + (cavity < 0.0 ? cavity * relief_shade_dark : cavity * relief_shade_light);
-	}
+	terr *= 1.0 + (cavity < 0.0 ? cavity * relief_shade_dark : cavity * relief_shade_light);
 
-	float ice_hint = smoothstep(0.04, 0.16, macro_color.b - macro_color.r) * cold;
 	float land_roughness = mix(0.90, 0.68, rock);
+	land_roughness = mix(land_roughness, 0.95, scree);
 	land_roughness = mix(land_roughness, 0.84, vegetation);
 	land_roughness = mix(land_roughness, 0.78, cold);
-	land_roughness = mix(land_roughness, 0.34, ice_hint);
+	land_roughness = mix(land_roughness, 0.34, ice_w);
 	land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
-	// Studien-Material nur im FLUSSTAL_STUDY-Build (Flusstal.gd setzt das
-	// Define zur Laufzeit) und NUR über Wasser: unterhalb der
-	// Meeresspiegel-Grenze bleibt das Flussbett bei der Standard-Optik, der
-	// helle mineralische FlussRAND über der Wasserlinie (Soča-Referenz,
-	// docs/graphics-quality.md) bleibt erhalten. Gate wie bei der Mikro-Normale.
-#ifdef FLUSSTAL_STUDY
-	if (study_enabled && hval > sea_level + 0.012) {
-		study_material(material_pos, cold, rock, vegetation, soil_w, macro_n,
-		               terr, n_ws, land_roughness);
-	}
-#endif
 	// Ufersaum, Wasser und Meer trägt die Waldmaske schon nicht.
 	canopy(wp, hval, macro_n, terr, n_ws, land_roughness);
 #ifdef FLUSSTAL_STUDY
@@ -707,5 +829,5 @@ void fragment() {
 	ROUGHNESS = mix(land_roughness, mix(water_roughness_steep, water_roughness_grazing, fresnel), wet);
 	METALLIC = 0.0;
 	SPECULAR = mix(0.5, mix(water_specular_steep, water_specular_grazing, fresnel), wet);
-	ALBEDO *= cloud_light(wp - world_size * 0.5, u_time);
+	ALBEDO *= cloud_light(material_pos, u_time);
 }

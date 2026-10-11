@@ -18,6 +18,7 @@ final class TimelapseFadeTests: XCTestCase {
         ("hf_tex", "hf_at", "overlay_blend", "overlay_fade"),
         ("color_tex", "color_at", "overlay_blend", "overlay_fade"),
         ("surface_tex", "surface_at", "overlay_blend", "overlay_fade"),
+        ("cover_tex", "cover_at", "overlay_blend", "overlay_fade"),
         ("flow_tex", "flow_at", "overlay_blend", "overlay_fade"),
     ]
 

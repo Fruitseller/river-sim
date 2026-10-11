@@ -142,7 +142,7 @@ void fragment() {
 	                     noise2(p * water_ocean_surf_scale + vec2(u_time * water_ocean_surf_drift, 0.0)));
 	water = mix(water, water_ocean_surf_color, surf * water_ocean_surf_strength);
 
-	water *= cloud_light(p, u_time);
+	water *= cloud_light(vec3(p.x, NODE_POSITION_WORLD.y, p.y), u_time);
 	ALBEDO = water;
 	ALPHA = 1.0;
 	ROUGHNESS = mix(water_roughness_steep, water_roughness_grazing, fresnel);
