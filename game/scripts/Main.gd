@@ -1186,7 +1186,7 @@ static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: f
 
 ## Größter Lauf für Tal und Nah, auf dem D8-Netz (`flowArea`/`receivers`):
 ## Landzelle mit dem größten Einzugsgebiet, abwärts bis zur letzten Landzelle
-## (Mündung), von dort je Schritt zum Zufluss mit dem größten Einzugsgebiet,
+## (Mündung; an der Küste oder, ohne Randabstand, am Kartenrand), von dort je Schritt zum Zufluss mit dem größten Einzugsgebiet,
 ## bis `upstream` Welteinheiten gelaufen sind oder die Quelle erreicht ist.
 ## Yaw stellt die Kamera auf die Mündungsseite (Blick talaufwärts). Ziel und
 ## Mündung sind Landzellen (h > Meeresspiegel). Leer ohne Land.
