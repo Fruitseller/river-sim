@@ -178,3 +178,12 @@ neu 43,8 / 44,1 / 44,3 ms je Schritt (Median 48,9 → 44,1). Keine Optimierung,
 sondern eine andere Welt (weniger Seen und Läufe). Einlauf samt Generierung
 5,2 / 5,3 s → 4,9 / 4,8 s. `simperf --hash` zweimal `ba89c2b11150f5a5`
 (Punkt 49; der Wert gilt nur auf dieser Maschine).
+
+### Wald auf der neuen Großform (Abnahmepunkt 40)
+
+`testCanopyCoverageDiagnostic`, Wald in % des Landes, Schwellen #168
+(0,35/0,55) auf der Großform: 1337 16,4 / 15,4 / 14,4, 42 27,5 / 23,5 / 15,9,
+20 24,4 / 18,6 / 13,6 (Jahr 2000 / 20.000 / 100.000; mit Paket D gemessen,
+ohne D 28,6 auf Seed 42 — die Ursache ist die Großform, nicht das Material).
+`CanopyRender` steht deshalb auf 0,40/0,60: 11,8–23,3 % über alle Seeds und
+Jahre.
