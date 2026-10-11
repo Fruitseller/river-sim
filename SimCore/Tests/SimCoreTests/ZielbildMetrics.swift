@@ -171,8 +171,14 @@ enum ZielbildMetrics {
         /// `WaterRender.oxbowMinimumNodes` Knoten, und mindestens ein Drittel der
         /// Knoten liegt über offenem Wasser (`waterLevel − h` über
         /// `WaterRender.pondContourLo`). Ein Bogen ohne Wassersäule bekommt dort
-        /// Deckkraft 0 (Abnahmepunkt 13: „sichtbare Altarme").
+        /// Deckkraft 0.
         var wetLowlandOxbows = 0
+        /// Junge Altarme, die der Render ZEIGT (Abnahmepunkt 13): ab
+        /// `WaterRender.oxbowMinimumNodes` Knoten. Seit Paket C (#181) malt
+        /// `BarMaterial` jeden solchen Bogen als Ried, ein wassergefüllter
+        /// trägt zusätzlich das Wasserband; unter der Knotenzahl zeichnet keiner
+        /// der beiden Wege etwas. Wasserfüllung verlangt Punkt 13 nicht.
+        var visibleLowlandOxbows = 0
     }
 
     /// Fenster (Knoten je Seite) für die Längsneigung des Tieflandabschnitts.
@@ -341,6 +347,7 @@ enum ZielbildMetrics {
             if t.meander.oxbowAge[oi] < WaterRender.oxbowVisibleYears {
                 r.openLowlandOxbows += 1
                 if ox.count >= WaterRender.oxbowMinimumNodes {
+                    r.visibleLowlandOxbows += 1
                     var wet = 0
                     for p in ox {
                         let kk = min(max(Int(p.z.rounded()), 0), n - 1) * n + min(max(Int(p.x.rounded()), 0), n - 1)
@@ -484,6 +491,118 @@ enum ZielbildMetrics {
             }
         }
     }
+
+    // MARK: - Zeitmittel (B, Abnahmepunkte 9–13)
+    //
+    // Entscheidung des Projekteigners (#174): die Mäander-Kennzahlen werden
+    // über ZEITMITTEL je Seed gewertet, Einzelzeitpunkte nur als Streuung. Ein
+    // Zeitpunkt streut auf demselben Seed um ±0,3 Sinuosität und um den Faktor
+    // 2–3 in der Asymmetrie; der Gürtel ist ein chaotisches System (Cutoffs,
+    // Störquelle), seine Kennzahl ist eine Verteilung.
+
+    /// Die beiden Fenster des Abnahmebogens: junger Gürtel und Fließgleichgewicht.
+    static let meanderWindows: [ClosedRange<Double>] = [10_000...20_000, 50_000...100_000]
+    /// Stützstellen-Abstand in den Fenstern (Jahre).
+    static let meanderSampleYears = 2_000.0
+
+    /// Eine Kennzahl über die Stützstellen eines Fensters. Nicht messbare
+    /// Stützstellen (`nil`) gehen NICHT als 0 ins Mittel, sie werden
+    /// ausgelassen und gezählt: λ = 0 heißt „kein Abschnitt trägt drei
+    /// Wendepunkte", nicht „Wellenlänge null".
+    struct Series {
+        var values: [Double] = []
+        var skipped = 0
+        mutating func add(_ v: Double?) { if let v { values.append(v) } else { skipped += 1 } }
+        var mean: Double? { values.isEmpty ? nil : values.reduce(0, +) / Double(values.count) }
+    }
+
+    /// Kennzahlen 9–13 an EINER Stützstelle, `nil` = nicht messbar.
+    struct MeanderSample {
+        /// Punkt 9; `nil`: kein Lauf mit ≥ 40 mobilen Knoten.
+        var sinuosity: Double?
+        /// Punkt 10; `nil`: kein Abschnitt mit drei Wendepunkten.
+        var wavelengthPerWidth: Double?
+        /// Punkt 11; `nil`: Amplitude unter 0,5 Zellen (Lauf gerade) oder kein Gürtel.
+        var beltPerAmplitude: Double?
+        /// Punkt 12; `nil`: kein Bogen über dem Krümmungs-Median.
+        var asymmetry: Double?
+        /// Punkt 13: sichtbare junge Altarme im Tiefland (immer messbar).
+        var visibleOxbows: Double
+        /// Davon wassergefüllt (nur zur Information, Punkt 13 verlangt es nicht).
+        var wetOxbows: Double
+        /// Alle jungen Altarme (jede Größe, ganze Welt) und davon im Tiefland —
+        /// zeigt, wo zwischen Cutoff und sichtbarem Altarm einer verloren geht.
+        var youngOxbows: Double
+        var youngLowlandOxbows: Double
+    }
+
+    static func meanderSample(_ t: Terrain, swept: [Bool]) -> MeanderSample {
+        let lf = landform(t)
+        let a = beltAll(t, lowland: lf.lowland, swept: swept)
+        let measured = a.reachNodes > 0
+        return MeanderSample(
+            sinuosity: measured ? a.sinuosity : nil,
+            wavelengthPerWidth: measured && a.wavelength > 0 ? a.wavelengthPerWidth : nil,
+            beltPerAmplitude: measured && a.beltPerAmplitude > 0 ? a.beltPerAmplitude : nil,
+            asymmetry: measured && a.asymmetry > 0 ? a.asymmetry : nil,
+            visibleOxbows: Double(a.visibleLowlandOxbows),
+            wetOxbows: Double(a.wetLowlandOxbows),
+            youngOxbows: Double(t.meander.oxbowAge.filter { $0 < WaterRender.oxbowVisibleYears }.count),
+            youngLowlandOxbows: Double(a.openLowlandOxbows))
+    }
+
+    /// Größe der Altarme in der Liste (alle Alter bis `oxbowMaxAge`): wie viele
+    /// erreichen `WaterRender.oxbowMinimumNodes` Knoten, ab der der Render sie
+    /// zeigt. Vor der Zeitmittel-Kalibrierung schnürte der Gürtel vor allem
+    /// Knicke von 3–5 Breiten Bogenlänge ab (Median 15 Knoten auf Seed 42 und
+    /// 20) — Cutoffs ohne sichtbaren Altarm.
+    static func oxbowSizes(_ t: Terrain) -> (visible: Int, total: Int, median: Int) {
+        let sizes = t.meander.oxbows.map(\.count).sorted()
+        return (sizes.filter { $0 >= WaterRender.oxbowMinimumNodes }.count, sizes.count,
+                sizes.isEmpty ? 0 : sizes[sizes.count / 2])
+    }
+
+    /// Kennzahlen 9–13 eines Fensters.
+    struct MeanderWindow {
+        var sinuosity = Series(), wavelength = Series(), belt = Series()
+        var asymmetry = Series(), oxbows = Series(), wetOxbows = Series()
+        var youngOxbows = Series(), youngLowlandOxbows = Series()
+        mutating func add(_ s: MeanderSample) {
+            sinuosity.add(s.sinuosity); wavelength.add(s.wavelengthPerWidth); belt.add(s.beltPerAmplitude)
+            asymmetry.add(s.asymmetry); oxbows.add(s.visibleOxbows); wetOxbows.add(s.wetOxbows)
+            youngOxbows.add(s.youngOxbows); youngLowlandOxbows.add(s.youngLowlandOxbows)
+        }
+    }
+
+    /// Führt eine Welt in 1000-Jahr-Schritten vor, markiert den Gürtel
+    /// (`markSwept`) und nimmt in jedem Fenster alle `meanderSampleYears` eine
+    /// Stützstelle. Messung und Wächter lesen denselben Lauf.
+    struct MeanderTimeMean {
+        let windows: [ClosedRange<Double>]
+        var result: [MeanderWindow]
+        var swept: [Bool]
+
+        init(_ t: Terrain, windows: [ClosedRange<Double>] = ZielbildMetrics.meanderWindows) {
+            self.windows = windows
+            result = Array(repeating: MeanderWindow(), count: windows.count)
+            swept = [Bool](repeating: false, count: t.cfg.count)
+            ZielbildMetrics.markSwept(t, &swept)
+        }
+
+        mutating func advance(_ t: Terrain, to year: Double) {
+            while t.years < year - 1e-6 {
+                t.step(dtYears: min(1000, year - t.years))
+                ZielbildMetrics.markSwept(t, &swept)
+                let y = t.years.rounded()
+                guard abs(t.years - y) < 1e-6,
+                      y.truncatingRemainder(dividingBy: ZielbildMetrics.meanderSampleYears) == 0 else { continue }
+                let hits = windows.indices.filter { windows[$0].contains(y) }
+                guard !hits.isEmpty else { continue }
+                let s = ZielbildMetrics.meanderSample(t, swept: swept)
+                for w in hits { result[w].add(s) }
+            }
+        }
+    }
 }
 
 /// Wächter der Großform (Issue #174, Paket A, Abnahmepunkte 1–4) und der
@@ -491,18 +610,17 @@ enum ZielbildMetrics {
 /// Produktions-Config mit Einlauf. Schranken aus dem Issue;
 /// gemessene Werte in `docs/zielbild-measurements.md`.
 final class ZielbildLandformTests: XCTestCase {
-    private func world(_ seed: UInt32, years: Double) -> Terrain {
-        let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
-        while t.years < years - 1e-6 { t.step(dtYears: min(1000, years - t.years)) }
-        return t
-    }
-
     /// Punkte 1–4 in Jahr 2.000 und 20.000. Ein Lauf je Seed, weil der
     /// 20.000-Jahre-Lauf den teuren Teil trägt.
     func testRangeLandformMeetsTheAcceptanceSheet() {
-        var sinuosity: [Double] = [], asymmetry: [Double] = []
+        var windows: [ZielbildMetrics.MeanderWindow] = []
+        var oxbowMedians: [Double] = []
         for seed in ZielbildBaseline.seeds {
-            let t = world(seed, years: 2_000)
+            let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+            // Zeitmittel im ersten Fenster des Abnahmebogens (Jahr 10.000–20.000,
+            // alle 2000 Jahre) im selben Lauf wie Großform und Cutoffs.
+            var run = ZielbildMetrics.MeanderTimeMean(t, windows: [ZielbildMetrics.meanderWindows[0]])
+            run.advance(t, to: 2_000)
             var lf = ZielbildMetrics.landform(t)
             // Punkt 1: Tiefland ≥ 20 % des Landes, getragen von ≤ 4 Korridoren.
             XCTAssertGreaterThanOrEqual(lf.mainCorridorLandShare, 0.20,
@@ -513,7 +631,7 @@ final class ZielbildLandformTests: XCTestCase {
             // Punkt 3: kein Land am Gitterrand (mit Luft: 3 % des Gitters).
             XCTAssertGreaterThanOrEqual(Double(lf.minBorderDistance), 0.03 * Double(t.cfg.n),
                 "Seed \(seed): Land \(lf.minBorderDistance) Zellen vom Rand")
-            while t.years < 20_000 - 1e-6 { t.step(dtYears: 1000) }
+            run.advance(t, to: 20_000)
             lf = ZielbildMetrics.landform(t)
             // Punkt 4: Gletscher ab Jahr 20.000.
             XCTAssertGreaterThan(lf.iceCells, 0, "Seed \(seed): kein Eis in Jahr 20.000")
@@ -528,20 +646,45 @@ final class ZielbildLandformTests: XCTestCase {
             XCTAssertGreaterThan(bars, 1000, "Seed \(seed): kaum Gleithang-Bänke (\(bars) Zellen)")
             XCTAssertLessThan(lf.lowlandRuggedness, 0.00156,
                               "Seed \(seed): Aue zerklüfteter als vor dem Gürtel (\(lf.lowlandRuggedness))")
-            let all = ZielbildMetrics.beltAll(t, lowland: lf.lowland, swept: [Bool](repeating: false, count: t.cfg.count))
-            sinuosity.append(all.sinuosity); asymmetry.append(all.asymmetry)
+            windows.append(run.result[0])
+            oxbowMedians.append(Double(ZielbildMetrics.oxbowSizes(t).median))
         }
-        // Punkte 9 und 12 als Wächter gegen den Rückfall, nicht als Abnahme:
-        // ein einzelner Zeitpunkt streut stark (Sinuosität 1,32–1,71,
-        // Asymmetrie 1,47–4,12 in Jahr 20.000 auf den drei Seeds; Mittel über
-        // Jahr 10.000–20.000 1,59–1,70 und 1,79–2,66), deshalb das Mittel über
-        // die Seeds mit Abstand. Vor der Kalibrierung (#174, zweiter PR):
-        // Mittel 1,39 und 1,16 — die Läufe wurden mit der Zeit gerade, das
-        // Querprofil war symmetrisch. Messreihe: docs/zielbild-measurements.md.
-        let meanSinuosity = sinuosity.reduce(0, +) / Double(max(1, sinuosity.count))
-        let meanAsymmetry = asymmetry.reduce(0, +) / Double(max(1, asymmetry.count))
-        XCTAssertGreaterThan(meanSinuosity, 1.35, "Mäander gerade: Sinuosität \(sinuosity)")
-        XCTAssertGreaterThan(meanAsymmetry, 1.4, "Querprofil symmetrisch: Asymmetrie \(asymmetry)")
+        // Punkte 9–13 als Wächter gegen den Rückfall, nicht als Abnahme (die
+        // Abnahme ist das Zeitmittel JE Seed, `testZielbildMeanderTimeMeanDiagnostic`).
+        // Der Gürtel ist chaotisch: schon ein Zeitmittel über sechs Stützstellen
+        // streut je Seed stark (auf 24 Seeds Sinuosität 1,1–3,8, Asymmetrie
+        // 1,7–7,0, sichtbare Altarme 0,8–11), und Linux rechnet mit anderer
+        // System-libm eine andere Realisierung. Deshalb das Mittel über die
+        // drei Seeds, Schranke unter dem kleinsten Dreier-Mittel aus 24 Seeds
+        // (2024 Kombinationen; docs/zielbild-measurements.md § Zeitmittel).
+        // Nicht messbare Stützstellen zählen nicht (s. `Series`).
+        func seedMean(_ pick: (ZielbildMetrics.MeanderWindow) -> ZielbildMetrics.Series) -> Double {
+            let means = windows.compactMap { pick($0).mean }
+            return means.isEmpty ? 0 : means.reduce(0, +) / Double(means.count)
+        }
+        let sinuosity = seedMean(\.sinuosity), wavelength = seedMean(\.wavelength)
+        let belt = seedMean(\.belt), asymmetry = seedMean(\.asymmetry), oxbows = seedMean(\.oxbows)
+        let oxbowMedian = oxbowMedians.reduce(0, +) / Double(max(1, oxbowMedians.count))
+        print(String(format: "[ZIELBILD] Zeitmittel 10.000–20.000, Mittel über die Seeds: Sinuosität %.2f λ/b %.1f "
+                     + "Gürtel/Amplitude %.1f Asymmetrie %.2f sichtbare Altarme %.1f; Altarm-Median %.1f Knoten",
+                     sinuosity, wavelength, belt, asymmetry, oxbows, oxbowMedian))
+        // Vor der ersten Kalibrierung wurden die Läufe gerade (1,39) …
+        XCTAssertGreaterThan(sinuosity, 1.25, "Mäander gerade: \(windows.map(\.sinuosity.values))")
+        // … zackten in Bandbreite (λ 1–4 Breiten vor Paket B) …
+        XCTAssertGreaterThan(wavelength, 7.5, "Zacken statt Bögen: \(windows.map(\.wavelength.values))")
+        XCTAssertLessThan(wavelength, 16.5, "Bögen zu lang: \(windows.map(\.wavelength.values))")
+        // … der junge Gürtel blieb schmal …
+        XCTAssertGreaterThan(belt, 1.7, "Gürtel schmal: \(windows.map(\.belt.values))")
+        // … das Querprofil war symmetrisch (1,16) …
+        XCTAssertGreaterThan(asymmetry, 1.7, "Querprofil symmetrisch: \(windows.map(\.asymmetry.values))")
+        // … und vor der Zeitmittel-Kalibrierung schnürte der Gürtel vor allem
+        // Knicke unter `WaterRender.oxbowMinimumNodes` ab, die der Render nicht
+        // zeigt (Median der Altarm-Knoten in Jahr 20.000: 18 / 16 / 18, auf 24
+        // Seeds 0–54; danach 28 / 54 / 37, auf 24 Seeds 18–96, kleinstes
+        // Dreier-Mittel 20,7).
+        XCTAssertGreaterThan(oxbows, 0.8, "kaum sichtbare Altarme: \(windows.map(\.oxbows.values))")
+        XCTAssertGreaterThanOrEqual(oxbowMedian, Double(WaterRender.oxbowMinimumNodes),
+                                    "Cutoffs schnüren Knicke statt Bögen ab: Altarm-Median \(oxbowMedians) Knoten")
     }
 
     /// Der Rand bleibt auch bei kleinen Gittern frei — der Abstand skaliert mit `n`.
@@ -620,6 +763,54 @@ final class ZielbildBaseline: XCTestCase {
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         allRows.forEach { print($0) }
         print("=== ENDE ZIELBILD ===\n")
+    }
+
+    /// Abnahmepunkte 9–13 als ZEITMITTEL je Seed und Fenster
+    /// (`ZielbildMetrics.meanderWindows`, Stützstellen alle 2000 Jahre), dazu
+    /// min–max der Einzelzeitpunkte als Streuung und die Zahl der nicht
+    /// messbaren Stützstellen (ausgelassen, nicht als 0 gemittelt).
+    ///
+    ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
+    ///         -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildMeanderTimeMeanDiagnostic
+    ///
+    /// `RS_SEED` wählt einen Seed (auch außerhalb der drei Matrix-Seeds; die
+    /// Läufe sind unabhängig und lassen sich parallel starten), `RS_VARIANT`
+    /// Parameter-Varianten wie `MeanderBeltCalibration`.
+    func testZielbildMeanderTimeMeanDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let onlySeed = ProcessInfo.processInfo.environment["RS_SEED"].flatMap { UInt32($0) }
+        let variant = ProcessInfo.processInfo.environment["RS_VARIANT"] ?? "Produktion"
+        func cell(_ s: ZielbildMetrics.Series, _ f: String) -> String {
+            guard let m = s.mean else { return "– (\(s.skipped) n. m.)" }
+            let spread = String(format: "\(f) (\(f)–\(f))", m, s.values.min()!, s.values.max()!)
+            return s.skipped > 0 ? "\(spread), \(s.skipped) n. m." : spread
+        }
+        var rows: [String] = []
+        for seed in onlySeed.map({ [$0] }) ?? Self.seeds {
+            let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed,
+                            settleYears: SimConfig.productionSettleYears)
+            var run = ZielbildMetrics.MeanderTimeMean(t)
+            for end in run.windows.map(\.upperBound).sorted() {
+                run.advance(t, to: end)
+                let size = ZielbildMetrics.oxbowSizes(t)
+                print("ALTARM-GRÖSSE s\(seed) Jahr \(Int(end)): \(size.visible) von \(size.total) Altarmen ab "
+                      + "\(WaterRender.oxbowMinimumNodes) Knoten, Median \(size.median) Knoten")
+            }
+            for (w, r) in zip(run.windows, run.result) {
+                rows.append("| \(seed) | \(Int(w.lowerBound))–\(Int(w.upperBound)) | \(r.sinuosity.values.count + r.sinuosity.skipped) | "
+                    + [cell(r.sinuosity, "%.2f"), cell(r.wavelength, "%.1f"), cell(r.belt, "%.1f"),
+                       cell(r.asymmetry, "%.2f"), cell(r.oxbows, "%.1f"), cell(r.wetOxbows, "%.1f"),
+                       String(format: "%.1f / %.1f", r.youngOxbows.mean ?? 0, r.youngLowlandOxbows.mean ?? 0)]
+                        .joined(separator: " | ") + " |")
+            }
+            print("ZEITMITTEL s\(seed) \(variant) fertig, Cutoffs Hals/Chute \(t.meander.neckCutoffs)/\(t.meander.chuteCutoffs)")
+        }
+        print("\n=== ZIELBILD #174: MÄANDER-ZEITMITTEL (Punkte 9–13), Mittel (min–max), n. m. = nicht messbar ===")
+        print("Variante: \(variant)")
+        print("| Seed | Fenster | Stützstellen | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 Altarme sichtbar | davon nass | jung gesamt / Tiefland |")
+        print("| ---: | --- | ---: | --- | --- | --- | --- | --- | --- | --- |")
+        rows.forEach { print($0) }
+        print("=== ENDE ZEITMITTEL ===\n")
     }
 
     /// Karte je Seed als PPM nach `RS_OUT` (Standard `/tmp`): Meer blau, Tiefland

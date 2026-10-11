@@ -1514,6 +1514,17 @@ public struct SimConfig: Sendable, Codable, Equatable {
     //    Aue; jetzt Ablage über die volle Breite).
     // 3. τ = 150 Jahre ließ das Bett der wandernden Linie um Zellen
     //    hinterherlaufen (`meanderBeltRelaxYears`).
+    //
+    // Zeitmittel-Abnahme (Issue #174, dritter Schritt; Punkte 9–13 je Seed im
+    // Zeitmittel, gewählt auf 24 Seeds, `docs/zielbild-measurements.md`
+    // § Paket B — Zeitmittel-Abnahme): sichtbare junge Altarme im Tiefland
+    // 1,7 → 4,4 / 4,8 im Mittel, Summe erfüllter Punkte 127 → 182 von 240.
+    // Der Gürtel schnürte fast nur Knicke an Spiralkernen ab (unter
+    // `WaterRender.oxbowMinimumNodes`, unsichtbar), weil die örtliche
+    // Sättigung das Wachstum vor dem Hals-Cutoff stoppte
+    // (`meanderBeltSinuosityStart/Full` 2,0/2,8 → 3,0/4,0); dazu
+    // `meanderBeltPoolGain` 2,5 → 4, `meanderBeltBrakeDepths` 2 → 3,
+    // `meanderBeltPoolSkew` 2,5 → 3 (Begründungen dort).
     public var meanderBelt = true
     /// Gewicht der lokalen Krümmung (Howard–Knutson Ω). Läuft als implizite
     /// Diffusion der Linie (κ = |Ω|·Rate·b²), s. `MeanderState.migrateBeltChannel`.
@@ -1570,7 +1581,12 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var meanderBeltPullDeadband: Double = 1.5
     /// Talwand-Bremse ab so viel Überhöhung des Geländes 3,5 Kanalbreiten weit
     /// in Bewegungsrichtung über der Linie, in Rinnentiefen (`.infinity` = aus).
-    public var meanderBeltBrakeDepths: Double = 2.0
+    /// 2 → 3 mit der Sättigung 3/4 (s. `meanderBeltSinuosityStart`): die
+    /// größeren Bögen liefen bei 2 schon an Aue-Stufen fest, der junge Gürtel
+    /// überstrich zu wenig (Gürtel/Amplitude im Mittel 10.000–20.000 auf 12
+    /// Seeds 2,9 → 4,7, Punkt 11 erfüllt auf 4 → 10 von 12). Allein, mit
+    /// der alten Sättigung, war die Bremse kein Hebel (Werte 4 / 8 / aus).
+    public var meanderBeltBrakeDepths: Double = 3.0
     /// Ufer-Kohäsion (Auwald) im Gürtel, wie `meanderCohesion` im alten Pfad.
     /// 0: mit 0,5 flachte sie gemessen jedes Wachstum ab (Sinuosität 1,3 statt
     /// 2,0 nach 20.000 Jahren, Seed 1337); Bewuchs bremst im Gürtel über die
@@ -1594,8 +1610,19 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// bankfull, der Kolk liegt bei η ≈ 0,46 mit 1,7 Tiefen (Vorlage E).
     /// Asymmetrie (Mittel 10.000–20.000) 1,5 → 2,5: 1,70 / 2,50 / 1,38 →
     /// 2,41 / 4,01 / 2,14 (bei Kernlänge 1,2).
-    public var meanderBeltPoolSkew: Double = 2.5
-    public var meanderBeltPoolGain: Double = 2.5
+    /// 2,5 → 3 mit der Sättigung 3/4: Kolk 1,9 statt 1,7 Tiefen bei η ≈ 0,48.
+    /// Auf 24 Seeds neutral (Asymmetrie-Mittel 2,87 / 4,53 → 3,00 / 4,19 in
+    /// den beiden Fenstern); unter den gleichwertigen Kandidaten der mit den
+    /// meisten erfüllten Punkten auf den Matrix-Seeds — das ist Realisierung,
+    /// nicht Physik (`docs/zielbild-measurements.md` § Zeitmittel).
+    public var meanderBeltPoolSkew: Double = 3.0
+    /// `a = min(1, |Krümmung| · b · Gain)`: ab Krümmungsradius / Breite = Gain
+    /// ist der Kolk voll ausgebildet. 2,5 → 4 mit der Sättigung 3/4: die Bögen
+    /// wachsen jetzt bis zum Hals-Cutoff und sind weiter (größerer Radius),
+    /// mit 2,5 fiel die Asymmetrie im Mittel 10.000–20.000 auf 8 Seeds von
+    /// 2,01 auf 1,67. Radius/Breite 2–4 ist der typische enge Mäanderbogen
+    /// (Hickin & Nanson 1984: Migration am stärksten bei 2–3).
+    public var meanderBeltPoolGain: Double = 4.0
     /// Fenster der Bogen-Krümmung für das Querprofil (± Kanalbreiten); 0 = die
     /// Knoten-Krümmung der Migration (±½ Breite). Die trug Knicke bis
     /// |κ|·b = 5 (Radius unter einer halben Breite) und kippte das Profil von
@@ -1620,8 +1647,18 @@ public var meanderBeltSmoothYears: Double = 100
     /// der fror den ganzen Lauf ein, sobald er erreicht war (gemessen: Rate 0
     /// ab Jahr 5000) — die Schlingen sollen aber weiter stromab wandern.
     /// Ohne Deckel lag die Sinuosität eines Laufs gemessen bei 2–7.
-    public var meanderBeltSinuosityStart: Double = 2.0
-    public var meanderBeltSinuosityFull: Double = 2.8
+    /// 2,0 / 2,8 → 3,0 / 4,0 (Zeitmittel-Kalibrierung, #174): ein Bogen, dessen
+    /// Hals sich schließt (Omega-Form), hat über ±10 Breiten eine örtliche
+    /// Sinuosität über 3. Mit 2,0 / 2,8 stand das Wachstum still, bevor ein
+    /// Hals zuging; abgeschnürt wurden fast nur Knicke von 3–5 Breiten
+    /// Bogenlänge an Spiralkernen (Median 15 Knoten auf Seed 42 und 20, unter
+    /// `WaterRender.oxbowMinimumNodes` = 20, also unsichtbar). Sichtbare junge
+    /// Altarme im Tiefland, Mittel über 24 Seeds: 1,7 → 4,4 bzw. 4,8 in den
+    /// Fenstern 10.000–20.000 / 50.000–100.000. Ein Krümmungsdeckel im Kern
+    /// (|κ|·b ≤ 0,3 / 0,5) unterdrückte die Knicke ebenfalls, aber auch fast
+    /// jeden Cutoff (Sinuosität 1,2–1,5): verworfen.
+    public var meanderBeltSinuosityStart: Double = 3.0
+    public var meanderBeltSinuosityFull: Double = 4.0
     public var meanderBeltSinuosityWidths: Double = 10
     /// Hals-Cutoff ab dieser Halsweite in Kanalbreiten (mindestens `meanderNeckDist`).
     public var meanderBeltNeckWidths: Double = 1.0

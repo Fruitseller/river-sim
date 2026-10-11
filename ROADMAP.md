@@ -209,12 +209,15 @@ asymmetrisches Bett (Kolk außen, Gleithang innen), Gleithang-Bank auf bankfull
 mit `barAge`, Chute-Cutoff, Hauptstamm-Trasse und angeschlossene Zubringer; im
 Gürtelbett tragen die Tropfen nicht ab. Der geparkte Auen-Pass
 `floodplainAggradation` bleibt geparkt, die Aue entsteht aus der lateralen
-Planation. Im Zeitmittel erreicht: Sinuosität 1,6–1,7, λ 9–13 Breiten,
-Asymmetrie 1,8–2,7. Offen: wassergefüllte Altarme (0–3; das Tiefland fällt
-3–5 Kanaltiefen je Kanalbreite, ein Altarm hält so kaum Wasser — Hebel liegt
-in Paket A oder im Render), Einzelzeitpunkte streuen stark. Stand und Befunde
-in `docs/zielbild-measurements.md` § Paket B, Kalibrierung. Pakete C (Teile),
-D, E als eigene PRs.
+Planation. Abnahme der Punkte 9–13 im Zeitmittel je Seed (Jahr
+10.000–20.000 und 50.000–100.000): auf den Matrix-Seeds 28 von 30 erfüllt
+(Sinuosität 1,63–1,85, Asymmetrie 2,35–3,67, sichtbare junge Altarme
+3,2–11,2); offen Gürtel/Amplitude Seed 20 im ersten Fenster (2,6) und λ
+Seed 42 im zweiten (8,3, kaum messbar), beides Realisierungs-Streuung (auf
+24 Seeds 182 von 240 Punkten). Wassergefüllt sind davon 1,0–3,6 (das
+Tiefland fällt 3–5 Kanaltiefen je Kanalbreite; trockene junge Altarme zeigt
+der Render als Ried). Stand und Befunde in `docs/zielbild-measurements.md`
+§ Paket B — Zeitmittel-Abnahme. Pakete C (Teile), D, E als eigene PRs.
 
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
 aus `barAge` (`SimRender.BarMaterial`), Altarm-Verlandung als Ried und
