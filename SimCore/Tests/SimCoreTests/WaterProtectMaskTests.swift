@@ -156,7 +156,7 @@ final class WaterProtectMaskTests: XCTestCase {
         _ = without.waterFieldBytes(terrain, blend: 1.0)
 
         terrain.step(dtYears: 200)
-        for render in [withMask, without] { render.invalidate(terrain) }
+        for render in [withMask, without] { render.invalidate(terrain, .advanced) }
         _ = withMask.protectMaskBytes(terrain)
         let a = withMask.waterFieldBytes(terrain, blend: 0.3)
         _ = withMask.protectMaskBytes(terrain)
@@ -209,9 +209,9 @@ final class WaterProtectMaskTests: XCTestCase {
         let n = Double(terrain.cfg.n)
         BrushTool.raise.apply(to: terrain, gx: n / 2, gz: n / 2,
                               radiusWorld: 25, strength: 40, target: 0)
-        render.invalidate(terrain)
+        render.invalidate(terrain, .edited)
         terrain.recomputeFlowAfterEdit()
-        render.invalidate(terrain)
+        render.invalidate(terrain, .edited)
         let after = refresh(render, terrain).mask
 
         XCTAssertNotEqual(before, after, "Pinselstrich muss die Maske verändern")
@@ -226,7 +226,7 @@ final class WaterProtectMaskTests: XCTestCase {
 
         terrain.generate(seed: 9999)
         terrain.computeFlow()
-        render.invalidate(terrain, worldReplaced: true)
+        render.invalidate(terrain, .replaced)
         let beforeUpload = render.protectMaskBytes(terrain)
         XCTAssertEqual(beforeUpload,
                        WaterProtectMask.bytes(n: terrain.cfg.n,
@@ -249,7 +249,7 @@ final class WaterProtectMaskTests: XCTestCase {
         let render = RenderState(geometryMode: true)
         let before = refresh(render, aged()).mask
         let loaded = try WorldSnapshot.read(from: path)
-        render.invalidate(loaded, worldReplaced: true)
+        render.invalidate(loaded, .replaced)
         let after = refresh(render, loaded).mask
 
         XCTAssertNotEqual(before, after)

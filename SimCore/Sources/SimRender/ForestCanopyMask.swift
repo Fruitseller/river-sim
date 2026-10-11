@@ -136,4 +136,34 @@ public enum ForestCanopyMask {
         }}}}}
         return mask
     }
+
+    /// Gedächtnis der Waldmaske in Sim-Jahren (Issue #167): `memory` (0 … 1 je
+    /// Zelle) folgt `target` (frische Maske aus `bytes`) nach unten SOFORT und
+    /// nach oben über exponentielle Relaxation mit Zeitkonstante `tau`
+    /// (`Terrain.relaxFraction`, dt-invariant: ein Sprung über `dtYears`
+    /// ergibt dasselbe wie viele kleine Takte). Kommt Wasser, ist der Wald
+    /// sofort weg; zieht es sich zurück, wächst er nach. Liefert die Maske als
+    /// R8. Passt `memory` nicht zu `target`, beginnt das Gedächtnis beim Ziel.
+    public static func regrow(_ memory: inout [Float], toward target: [UInt8],
+                              dtYears: Double, tau: Double) -> [UInt8] {
+        if memory.count != target.count {
+            memory = target.map { Float($0) / 255 }
+            return target
+        }
+        let rise = Float(tau > 0 ? Terrain.relaxFraction(dt: max(dtYears, 0), tau: tau) : 1)
+        var out = target
+        memory.withUnsafeMutableBufferPointer { mb in
+        out.withUnsafeMutableBufferPointer { ob in
+            let pm = mb.baseAddress!, po = ob.baseAddress!
+            for k in 0..<target.count {
+                let t = Float(po[k]) / 255
+                let m = pm[k]
+                if t <= m { pm[k] = t; continue }   // Ziel steht schon in `po[k]`
+                let next = m + (t - m) * rise
+                pm[k] = next
+                po[k] = UInt8(min(255, (next * 255).rounded()))
+            }
+        }}
+        return out
+    }
 }

@@ -357,13 +357,15 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
 - `RenderState`: BESITZT die drei zustandstragenden Renderer darunter, den
   Material-Cache und die Caches von Schutz- und Waldmaske (Issue #93/#154/#152; das Terrain gehört weiter der Brücke und reist als
   Parameter). Die Brücke hält keinen Render-Zustand mehr; sie meldet jede
-  Terrain-Änderung an den EINEN Einstieg `invalidate(terrain,
-  worldReplaced:)`. `worldReplaced` ist der aufgelöste Unterschied zwischen
-  Neu-Generieren und Laden: eine ANDERE Welt verwirft zusätzlich die
-  Dirty-Snapshots von Bäumen und Bändern und setzt den Diagnose-Vergleichspunkt
-  neu (vorher tat das nur das Laden). Wächter:
-  `SimCoreTests/RenderStateTests.swift` — Verhalten plus Quelltext-Probe, dass
-  keine Terrain-Änderung in der Brücke ohne Invalidierung dasteht.
+  Terrain-Änderung an den EINEN Einstieg `invalidate(terrain, change)`.
+  `TerrainChange` sagt, wie: `.advanced` (Sim-Schritt), `.edited` (Pinsel
+  und Nachzug) oder `.replaced` (Neu-Generieren und Laden). Eine ANDERE Welt
+  verwirft zusätzlich die Dirty-Snapshots der Bänder und setzt den
+  Diagnose-Vergleichspunkt neu (vor #93 tat das nur das Laden); `.edited` und
+  `.replaced` setzen außerdem das Gedächtnis der Waldmaske zurück (#167).
+  Wächter: `SimCoreTests/RenderStateTests.swift` — Verhalten plus
+  Quelltext-Probe, dass keine Terrain-Änderung in der Brücke ohne
+  Invalidierung der passenden Art dasteht.
   Seit Issue #94 hält er auch das Frame-Protokoll (`frame(terrain, trigger,
   now:)`): Band-Rebuild-Schwelle, 1-Hz-Band-Deckel,
   0,30-s-Overlay-Drossel und Zeitraffer-Blend 0.15 sind SimRender-Zustand,
@@ -386,7 +388,9 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
 - `ForestCanopyMask`: Waldmaske des Kronendachs (Issue #152): Vegetation mit
   Lichtungs-Rauschen, ohne Wände, Schnee/Eis, Ufersaum und Schutzmaske,
   zustandslos; `RenderState` verwirft sie mit der Schutzmaske und dem
-  Material-Cache (Wächter: `SimCoreTests/CanopyTests.swift`),
+  Material-Cache und hält ihr Gedächtnis in Sim-Jahren (#167,
+  `ForestCanopyMask.regrow`: Wald weicht Wasser sofort, wächst über
+  `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`),
 - `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
   ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:
   `SimCoreTests/DiagStatsContractTests.swift`),

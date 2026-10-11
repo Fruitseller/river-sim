@@ -87,3 +87,81 @@ final class CanopyCoverageTests: XCTestCase {
         print("=== ENDE WALDANTEIL ===\n")
     }
 }
+
+extension CanopyCoverageTests {
+
+    /// Messlauf (Issue #167): warum Waldflächen im Zeitraffer springen, und was
+    /// das Gedächtnis der Waldmaske dagegen tut. Alte Produktionswelt, Seed
+    /// 1337, ab Jahr 100.000 20 Takte zu je 100 Jahren; die Maske entsteht
+    /// alle 25 Jahre wie bei 60 J/s (Overlay-Drossel 0,30 s ≈ 18 J.).
+    /// „Umkippen" = die Waldmaske kreuzt zwischen zwei Takten die 0,5, in %
+    /// der Landfläche je Takt. τ = 0 ist der Stand vor #167 (kein Gedächtnis);
+    /// die letzte Zeile rechnet ganz ohne Schutzmaske und ohne Gedächtnis,
+    /// also nur das Umkippen, das die Sim-Vegetation selbst verursacht.
+    func testCanopyChurnDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let terrain = Terrain(config: SimConfig.production, seed: 1337,
+                              settleYears: SimConfig.productionSettleYears)
+        while terrain.years < 100_000 { terrain.step(dtYears: 1000) }
+        let render = RenderState(geometryMode: true)
+        let n = terrain.cfg.n
+        let clump = ForestCanopyMask.clumpField(n: n, world: terrain.cfg.world)
+        let taus: [Double] = [0, 100, 200, 300, 500, 800, 1200]
+        var memories = [[Float]](repeating: [], count: taus.count)
+        var lastYear = terrain.years
+        /// Ein Render-Takt wie `RenderState.frame(.timelapse)`, dann je τ das
+        /// Gedächtnis über die verstrichenen Sim-Jahre. Die Reihenfolge steht
+        /// hier von Hand statt über `forestMaskBytes`, weil der Lauf mehrere τ
+        /// gegen DASSELBE Ziel vergleicht; ändert sich das Frame-Protokoll,
+        /// zieht dieser Takt mit. Die Bänder folgen dem Produktionsdeckel
+        /// (`rebuildRibbonsIfDue`): geprüft jeden dritten Takt (75 J.; bei
+        /// 60 J/s prüft der 1-Hz-Deckel jeden vierten Overlay-Upload, ≈ 72 J.),
+        /// gebaut nur ab `ribbonRebuildDelta`.
+        var frames = 0
+        func frame() -> [[UInt8]] {
+            render.invalidate(terrain, .advanced)
+            if frames % 3 == 0, render.riversMaxDelta(terrain) > RenderState.ribbonRebuildDelta {
+                render.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
+                                         lift: RenderContract.riverLift)
+                render.markRiversBuilt(terrain)
+            }
+            frames += 1
+            _ = render.waterFieldBytes(terrain, blend: RenderState.timelapseWaterBlend)
+            let target = ForestCanopyMask.bytes(terrain, surfaces: render.terrainSurfaceBytes(terrain),
+                                                protect: render.protectMaskBytes(terrain), clump: clump)
+            let dt = terrain.years - lastYear
+            lastYear = terrain.years
+            return taus.indices.map {
+                ForestCanopyMask.regrow(&memories[$0], toward: target, dtYears: dt, tau: taus[$0])
+            } + [ForestCanopyMask.bytes(terrain, surfaces: render.terrainSurfaceBytes(terrain),
+                                        protect: [UInt8](repeating: 0, count: n * n), clump: clump)]
+        }
+        // Einlauf: Gedächtnis und Wasser-EWMA auf den Zeitraffer einschwingen.
+        for _ in 0..<80 { terrain.step(dtYears: 25); _ = frame() }
+        var prev = frame()
+        let rows = taus.map { String(format: "%7.0f", $0) } + ["ohne Schutzmaske"]
+        var flips = [Int](repeating: 0, count: rows.count)
+        var forest = [Int](repeating: 0, count: rows.count)
+        var land = 0
+        for k in 0..<n * n where terrain.h[k] > terrain.cfg.sea { land += 1 }
+        let ticks = 20
+        for _ in 0..<ticks {
+            var cur = prev
+            for _ in 0..<4 { terrain.step(dtYears: 25); cur = frame() }
+            for v in rows.indices {
+                for k in 0..<n * n {
+                    let b = cur[v][k] >= 128
+                    if (prev[v][k] >= 128) != b { flips[v] += 1 }
+                    if b { forest[v] += 1 }
+                }
+            }
+            prev = cur
+        }
+        print("tau (J.)  Kipp/Takt (% Land)  Wald (% Land)")
+        for v in rows.indices {
+            print(String(format: "%@ %12.2f %17.1f", rows[v] as NSString,
+                         100 * Double(flips[v]) / Double(ticks * land),
+                         100 * Double(forest[v]) / Double(ticks * land)))
+        }
+    }
+}

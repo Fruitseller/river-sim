@@ -1,6 +1,17 @@
 import Foundation
 import SimCore
 
+/// Wie sich das Terrain geändert hat (Argument von `RenderState.invalidate`).
+public enum TerrainChange {
+    /// Die Sim ist fortgeschritten (`step`): Render-Gedächtnisse laufen weiter.
+    case advanced
+    /// Pinsel oder Nachzug danach (`sculpt`, `brush`, `recomputeFlow`):
+    /// dieselbe Welt, aber kein Gedächtnis darf den alten Stand zeigen.
+    case edited
+    /// Eine ANDERE Welt (neu generiert oder geladen).
+    case replaced
+}
+
 /// Der Render-Zustand EINER Welt: die drei zustandstragenden Renderer mit ihren
 /// EWMA-Feldern, Arbeitspuffern und Dirty-Snapshots plus die Caches der
 /// zustandslosen Pässe `TerrainColorRenderer` (Issue #93), `WaterProtectMask`
@@ -92,6 +103,11 @@ public final class RenderState {
     /// gerechnet.
     private var clumpField: [Float] = []
     private var clumpWorld = 0.0
+    /// Gedächtnis der Waldmaske (Issue #167, s. `ForestCanopyMask.regrow`):
+    /// der zuletzt gezeigte Wald je Zelle und das Sim-Jahr dazu. Leer = kein
+    /// Gedächtnis, die nächste Maske übernimmt das Ziel.
+    private var forestMemory: [Float] = []
+    private var forestMemoryYear = 0.0
 
     /// Schutz- und Waldmaske fallen immer gemeinsam: die Waldmaske endet an
     /// der Schutzmaske, ein veralteter Wald stünde sonst über neuem Wasser.
@@ -103,9 +119,10 @@ public final class RenderState {
     // MARK: - Invalidierung (DER eine Einstieg)
 
     /// Meldet, dass sich das Terrain geändert hat: der Material-Cache fällt,
-    /// die nächste Abfrage rechnet gegen den frischen Stand.
+    /// die nächste Abfrage rechnet gegen den frischen Stand. `change` sagt,
+    /// WIE (s. `TerrainChange`).
     ///
-    /// `worldReplaced` = es ist eine ANDERE Welt (neu generiert oder geladen).
+    /// `.replaced` = es ist eine ANDERE Welt (neu generiert oder geladen).
     /// Dann fällt zusätzlich alles, was gegen den VORHERIGEN Stand vergleicht:
     /// - der Dirty-Snapshot der Bänder, damit der nächste Frame sie neu baut
     ///   statt über eine Delta-Heuristik gegen eine fremde Welt zu prüfen
@@ -119,17 +136,23 @@ public final class RenderState {
     /// generierte Welt teilt mit der alten nichts, gegen das ein Snapshot noch
     /// etwas aussagen könnte.
     ///
+    /// `.edited` und `.replaced` setzen außerdem das Gedächtnis der Waldmaske
+    /// zurück (Issue #167): nach Pinsel, Neugenerieren und Laden steht der Wald
+    /// sofort dort, wo er hingehört, statt über Jahrhunderte nachzuwachsen.
+    /// Nur `.advanced` lässt ihn nachwachsen.
+    ///
     /// AUSGENOMMEN, bewusst: das EWMA-Gedächtnis des Wasserfelds
-    /// (`WaterFieldRenderer`). Es fällt auch bei `worldReplaced` nicht, weil es
+    /// (`WaterFieldRenderer`). Es fällt auch bei `.replaced` nicht, weil es
     /// keine Aussage über die alte Welt ist, sondern eine zeitliche Glättung mit
     /// einem Mischfaktor — und jeder Weltwechsel endet in einem
     /// `frame(.settled)`, dessen Blend 1.0 das Gedächtnis ohnehin vollständig
     /// überschreibt. Ein Reset hier wäre damit wirkungslos (geprüft mit #94,
     /// das die Taktung hierher gezogen hat).
-    public func invalidate(_ terrain: Terrain, worldReplaced: Bool = false) {
+    public func invalidate(_ terrain: Terrain, _ change: TerrainChange) {
         materials = nil
         dropMasks()
-        guard worldReplaced else { return }
+        if change != .advanced { forestMemory = [] }
+        guard change == .replaced else { return }
         // Eine ANDERE Welt: das alte Wasserfeld passt nicht mehr dazu.
         visibleWater = nil
         ribbons.invalidateSnapshot()
@@ -250,7 +273,8 @@ public final class RenderState {
     // MARK: - Kronendach (Issue #152)
 
     /// Waldmaske des Kronendachs (R8-Puffer, n×n) — s. `ForestCanopyMask`.
-    /// Folgt Terrain, Wasser-Upload und Band-Bau wie die Schutzmaske.
+    /// Folgt Terrain, Wasser-Upload und Band-Bau wie die Schutzmaske; wo der
+    /// Wald zurückkommt, wächst er über Sim-Jahre nach (Issue #167).
     public func forestMaskBytes(_ terrain: Terrain) -> [UInt8] {
         if let forestMaskCache { return forestMaskCache }
         let n = terrain.cfg.n
@@ -258,8 +282,14 @@ public final class RenderState {
             clumpField = ForestCanopyMask.clumpField(n: n, world: terrain.cfg.world)
             clumpWorld = terrain.cfg.world
         }
-        let mask = ForestCanopyMask.bytes(terrain, surfaces: terrainSurfaceBytes(terrain),
-                                          protect: protectMaskBytes(terrain), clump: clumpField)
+        let target = ForestCanopyMask.bytes(terrain, surfaces: terrainSurfaceBytes(terrain),
+                                            protect: protectMaskBytes(terrain), clump: clumpField)
+        // Eine Uhr, die rückwärts läuft, gehört zu keiner fortgeschriebenen Welt.
+        if terrain.years < forestMemoryYear { forestMemory = [] }
+        let mask = ForestCanopyMask.regrow(&forestMemory, toward: target,
+                                           dtYears: terrain.years - forestMemoryYear,
+                                           tau: CanopyRender.regrowYears)
+        forestMemoryYear = terrain.years
         forestMaskCache = mask
         return mask
     }
