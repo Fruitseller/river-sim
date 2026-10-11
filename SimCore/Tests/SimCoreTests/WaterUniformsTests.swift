@@ -63,15 +63,21 @@ final class WaterUniformsTests: XCTestCase {
         "water_ocean_deep_color", "water_ocean_surf_color",
     ]
 
+    /// Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
+    private static let bendScalars = ["water_ribbon_bend_depth", "water_ribbon_shoal_mix"]
+    private static let bendColors = ["water_ribbon_shoal_color"]
+    private static let barScalars = ["water_bar_roughness"]
+    private static let barColors = ["water_bar_sand_color", "water_bar_sand_wet_color"]
+
     private static let expectedScalars: [String: [String]] = [
-        "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars,
-        "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars,
+        "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars + barScalars,
+        "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars,
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
     private static let expectedColors: [String: [String]] = [
-        "game/shaders/terrain.gdshader": opticsColors,
-        "game/shaders/water.gdshader": opticsColors + ribbonColors,
+        "game/shaders/terrain.gdshader": opticsColors + barColors,
+        "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors,
         // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
         // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
         // bleibt die Himmels-Spiegelung.
@@ -137,6 +143,9 @@ final class WaterUniformsTests: XCTestCase {
             "water_ocean_wave_drift_x": WaterRender.oceanWaveDriftX,
             "water_ocean_wave_drift_z": WaterRender.oceanWaveDriftZ,
             "water_ocean_wave_octave_speedup": WaterRender.oceanWaveOctaveSpeedup,
+            "water_ribbon_bend_depth": WaterRender.ribbonBendDepth,
+            "water_ribbon_shoal_mix": WaterRender.ribbonShoalMix,
+            "water_bar_roughness": WaterRender.barRoughness,
         ]
         let expectedColors: [String: (r: Double, g: Double, b: Double)] = [
             "water_shallow_color": WaterRender.waterShallowColor,
@@ -149,6 +158,9 @@ final class WaterUniformsTests: XCTestCase {
             "water_ocean_mid_color": WaterRender.oceanMidColor,
             "water_ocean_deep_color": WaterRender.oceanDeepColor,
             "water_ocean_surf_color": WaterRender.oceanSurfColor,
+            "water_ribbon_shoal_color": WaterRender.ribbonShoalColor,
+            "water_bar_sand_color": WaterRender.barSandColor,
+            "water_bar_sand_wet_color": WaterRender.barSandWetColor,
         ]
         XCTAssertEqual(WaterUniforms.scalars.count, expectedScalars.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")

@@ -14,15 +14,22 @@ import SimCore
 ///  3. Einen Saum von `WaterRender.protectSeamCells` Zellen (je Zelle ein
 ///     3×3-Pass, also Chebyshev-Abstand) um alle Wasser- und Bandflächen.
 ///
-/// Trockenes Land außerhalb von Wasser, Bändern und Saum bleibt frei (0).
+///  4. Frische Gleithang-Bänke (Issue #174 C2, `BarMaterial`): ab
+///     `WaterRender.barProtectSand` Sandgewicht kein Wald und keine
+///     Verschiebung — die Bank ist eben (bankfull) und kahl. Ohne Saum: die
+///     Bank liegt ohnehin am Lauf, ein Saum risse den Auwald dahinter weg.
+///
+/// Trockenes Land außerhalb von Wasser, Bändern, Bänken und Saum bleibt frei (0).
 /// Zustandslos: liest nur seine Eingaben, das Wasserfeld bleibt unverändert.
 /// Den Cache hält `RenderState` (wie bei `TerrainColorRenderer`).
 public enum WaterProtectMask {
 
     /// R8-Puffer (n×n, 0 = frei, 255 = geschützt). `waterBytes` ist das
     /// RGBA8-Wasserfeld (R = Fluss, G = See); fehlt es oder passt die Größe
-    /// nicht, schützt die Maske nur die Bänder.
-    public static func bytes(n: Int, bandCoverage: [Double], waterBytes: [UInt8]) -> [UInt8] {
+    /// nicht, schützt die Maske nur die Bänder. `barSand` (n×n,
+    /// `BarMaterial.Field.sand`) schützt zusätzlich frische Bänke; leer = keine.
+    public static func bytes(n: Int, bandCoverage: [Double], waterBytes: [UInt8],
+                             barSand: [Float] = []) -> [UInt8] {
         guard n > 0 else { return [] }
         let cnt = n * n
         let riverThresh = byte01(WaterRender.protectRiverThreshold)
@@ -50,6 +57,12 @@ public enum WaterProtectMask {
         for _ in 0..<WaterRender.protectSeamCells {
             dilate3x3(src: mask, dst: &temp, n: n)
             swap(&mask, &temp)
+        }
+
+        // 3. Frische Bänke, nach dem Saum.
+        if barSand.count == cnt {
+            let limit = Float(WaterRender.barProtectSand)
+            for k in 0..<cnt where barSand[k] >= limit { mask[k] = 255 }
         }
         return mask
     }

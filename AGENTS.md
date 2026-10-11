@@ -391,6 +391,13 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Material-Cache und hält ihr Gedächtnis in Sim-Jahren (#167,
   `ForestCanopyMask.regrow`: Wald weicht Wasser sofort, wächst über
   `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`),
+- `BarMaterial`: Material des Mäandergürtels (Issue #174 C2): Sand auf
+  frischen Bänken aus `Terrain.barAge`, Scroll-Rippen über dessen Isolinien,
+  Ried und Vegetationsbogen der Altarme; zustandslos, `RenderState` cacht es
+  mit dem Material und gibt dasselbe Feld an `TerrainColorRenderer` (Sand im
+  A-Kanal der Makrofarbe) und `WaterProtectMask` (Kalibrierung:
+  `WaterRender` § Mäandergürtel im Render; Wächter:
+  `SimCoreTests/BarMaterialTests.swift`),
 - `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
   ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:
   `SimCoreTests/DiagStatsContractTests.swift`),

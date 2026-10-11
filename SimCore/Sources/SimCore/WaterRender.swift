@@ -455,6 +455,42 @@ public enum WaterRender {
     /// s. `ribbonSupportLo` (Spanne, s. Begründung bei `trackMaskSpan`).
     public static let ribbonSupportSpan = 0.3
 
+    /// Abfluss-Vertrauen (Issue #174, Paket C Teil 2): ab diesem Abfluss (in
+    /// Vielfachen des Referenz-Abflusses `SimConfig.renderMinCells`) braucht
+    /// ein Band die Stream-Map-Stütze nicht mehr, ab `ribbonTrustHiReferences`
+    /// gar nicht. Die Stütze filtert verwaiste Zentrumslinien; ein Lauf mit
+    /// so viel Abfluss ist nicht verwaist — seit dem Gürtel (Paket B) liest
+    /// die Sim den Abfluss je Knoten frisch aus dem Einzugsgebiet unter ihm
+    /// (`Terrain.refreshBeltDischarge`), eine verlassene Linie fällt also auf
+    /// wenige Zellen. GEMESSEN (Jahr 20.000, Hauptlauf per D8):
+    /// die Stream-Map trackt die großen Läufe der neuen Großform kaum (Stütze
+    /// 0,09–0,35 bei bis zu 26.000 Zellen Abfluss), auf Seed 20 fiel der ganze
+    /// Hauptlauf weg (0 % Band, 85 % Lücke), auf Seed 42 die Hälfte.
+    /// Gilt auch für das Raster (`WaterFieldRenderer`, Track-Maske), sonst
+    /// blieb die Lücke dort, wo der Hauptlauf keine Zentrumslinie hat.
+    /// GEMESSEN (Seeds 1337/42/20, Lücke im Hauptlauf in %, in Klammern
+    /// Band-Zellen ohne großen D8-Lauf in 3 Zellen, Gegenprobe Doppelwasser):
+    /// ohne Vertrauen 5,6/50,3/85,2 (10,6/10,8/11,5); 6×…16× 3,0/27,4/16,6;
+    /// 3×…10× 3,0/19,6/6,9 (10,2/14,2/13,5); 2×…8× 3,0/18,7/3,9. 3×…10×
+    /// nimmt den Großteil der Lücken und malt weniger zusätzliche Läufe als
+    /// 2×…8× (Band-Zellen Seed 1337: 14.166 ohne, 18.123 mit 3×, ~19.900 mit
+    /// 2× — „zu viele Flüsse" war eine frühere Klage). Den Strahler-Rang
+    /// braucht auch ein vertrauter Lauf: eine Ausnahme davon änderte keine
+    /// Lücke (gemessen) und hätte den Wächter in `river_ribbons.gd`
+    /// aufgeweicht. Messreihe: `docs/river-belt-render-measurements.md`.
+    public static let ribbonTrustLoReferences = 3.0
+    /// s. `ribbonTrustLoReferences`.
+    public static let ribbonTrustHiReferences = 10.0
+
+    /// 0 … 1: wie weit ein Band-Stützpunkt mit diesem Abfluss ohne
+    /// Stream-Map-Stütze sichtbar bleibt.
+    @inline(__always)
+    public static func ribbonTrust(dischargeCells: Double, referenceCells: Double) -> Double {
+        guard referenceCells > 0, dischargeCells.isFinite else { return 0 }
+        return smoothstep(ribbonTrustLoReferences * referenceCells,
+                          ribbonTrustHiReferences * referenceCells, dischargeCells)
+    }
+
     // MARK: Altarm-Filter (gemeinsam für Geometrie und Raster-Stempel)
 
     // Beide Pfade müssen DIESELBEN Schleifen meinen: im Geometrie-Modus nimmt
@@ -807,4 +843,159 @@ public enum WaterRender {
     public static let oceanWaveDriftZ = 0.13
     /// … je Oktave um diesen Anteil schneller (feine Wellen laufen schneller).
     public static let oceanWaveOctaveSpeedup = 0.35
+
+    // MARK: Mäandergürtel im Render (Issue #174, Paket C Teil 2)
+
+    // Paket B hat den Gürtel als Physik gebaut: Kanalbreite, asymmetrisches
+    // Querprofil, Gleithang-Bänke mit Alter (`Terrain.barAge`), Altarme. Diese
+    // Werte machen ihn sichtbar, ohne die Physik anzufassen. Zwei Leser:
+    //  - `SimRender.BarMaterial` (CPU, je Terrain-Update): Sand auf frischen
+    //    Bänken, Scroll-Bars über Isolinien des Bankalters, Verlandung der
+    //    Altarme. Diese Schwellen erreichen keinen Shader.
+    //  - `water.gdshader` und `terrain.gdshader`: Tiefenfarbe im Band nach dem
+    //    Querprofil und das Bank-Material. Diese Werte reisen als
+    //    `water_*`-Uniforms (`SimRender.WaterUniforms`).
+    // Messreihe: `docs/river-belt-render-measurements.md`.
+
+    /// Sand auf einer frischen Bank: voll bis `barSandYearsLo` Jahre nach der
+    /// letzten Ablagerung, weg ab `barSandYearsHi`. Danach liest die Bank als
+    /// Wiese (die Sim-Vegetation wächst auf ihr nach, `Terrain.veg`).
+    /// GEMESSEN (`testBarAgeDiagnostic`, Jahr 20.000): Bänke tragen 8–9 % des
+    /// Landes, aber nur 3–4 % davon sind jünger als 300 Jahre, 6–8 % jünger
+    /// als 1000 und 10–18 % jünger als 3000. Mit 150/600 lag der Sand als
+    /// 1-Zellen-Saum am Innenufer, fast ganz unter dem Band; mit 800/3000
+    /// stehen an den Gleithängen Sichelbänke (Draufsicht Seed 20).
+    public static let barSandYearsLo = 800.0
+    /// s. `barSandYearsLo`.
+    public static let barSandYearsHi = 3000.0
+
+    /// Sprenkel-Filter: Sand bleibt nur, wo von den 8 Nachbarn mindestens
+    /// `barSandNeighboursLo` selbst Sand tragen (voll ab `…Hi`). Feste Läufe
+    /// stempeln je Schritt einzelne Zellen frisch; ohne Filter lagen sie als
+    /// helle Pünktchen über der ganzen Aue (Draufsicht Seed 20, Jahr 20.000).
+    public static let barSandNeighboursLo = 1.5
+    /// s. `barSandNeighboursLo`.
+    public static let barSandNeighboursHi = 3.5
+
+    /// Sandgewicht einer Bank aus ihrem Alter (`Terrain.barAge`, −1 = keine).
+    @inline(__always)
+    public static func barSand(age: Double) -> Double {
+        guard age >= 0 else { return 0 }
+        return 1 - smoothstep(barSandYearsLo, barSandYearsHi, age)
+    }
+
+    /// Scroll-Bars: Periode der Rippen im BANKALTER (Jahre). Die Höhe kann sie
+    /// auf diesem Gitter nicht tragen (eine Rippe ist schmaler als eine Zelle),
+    /// das Alter schon: jede Isolinie ist eine frühere Lage des Gleithangs.
+    /// Rücken (trocken, heller) und Senken (feucht, grüner) wechseln je Periode.
+    public static let barScrollPeriodYears = 400.0
+    /// Rippen-Abstand in Zellen, unter dem das Muster ausblendet (Aliasing:
+    /// unter ~2 Zellen je Periode ist es Rauschen), und ab dem es voll steht.
+    public static let barScrollMinSpacingLo = 2.0
+    /// s. `barScrollMinSpacingLo`.
+    public static let barScrollMinSpacingHi = 3.5
+    /// Alter, ab dem die Rippen verflachen, und ab dem sie verschwunden sind
+    /// (Auelehm überdeckt sie).
+    public static let barScrollFadeYearsLo = 8000.0
+    /// s. `barScrollFadeYearsLo`.
+    public static let barScrollFadeYearsHi = 20000.0
+    /// Hub der Rippen: im Sand (Senke = feuchter, dunkler Sand) und als
+    /// Verschiebung des Vegetationsgewichts in der Wiese (Senke grüner).
+    public static let barScrollSandDepth = 0.35
+    /// s. `barScrollSandDepth`.
+    public static let barScrollVegGain = 0.22
+
+    /// Rippe −1 … +1 (−1 = Rücken, +1 = Senke, 0 = keine Rippe) aus Alter und
+    /// örtlichem Altersgradienten (Jahre je Zelle), mit Aliasing- und
+    /// Alters-Blende. Ohne Gradient (einzelne Bankzelle) gibt es keine
+    /// Isolinie und damit keine Rippe.
+    @inline(__always)
+    public static func barScroll(age: Double, gradientYearsPerCell: Double) -> Double {
+        guard age >= 0, barScrollPeriodYears > 0, gradientYearsPerCell > 1e-9,
+              gradientYearsPerCell.isFinite else { return 0 }
+        let spacing = barScrollPeriodYears / gradientYearsPerCell
+        let amp = smoothstep(barScrollMinSpacingLo, barScrollMinSpacingHi, spacing)
+            * (1 - smoothstep(barScrollFadeYearsLo, barScrollFadeYearsHi, age))
+        return -amp * cos(2 * Double.pi * age / barScrollPeriodYears)
+    }
+
+    /// Schutzmaske (#154): ab diesem Sandgewicht trägt eine Bank weder Wald
+    /// noch Render-Verschiebung.
+    public static let barProtectSand = 0.25
+
+    /// Altarm-Lebenszyklus (Vorlage D: offen → verlandend → Bogen in der
+    /// Vegetation). Das Band blendet über `oxbowVisibleYears` aus wie bisher;
+    /// auf dem Gelände liegt darunter von Anfang an Ried (feuchte Senke), das
+    /// zwischen 1,5 und 2,5 × `oxbowVisibleYears` einem Vegetationsbogen weicht.
+    /// Das Ried beginnt bewusst sofort und nicht erst mit dem Ausblenden des
+    /// Bands: auf dem Gürtel (Paket B) sind junge Altarme selten wassergefüllt
+    /// (gemessen 0–1 gleichzeitig, Seed 1337), und ein Altarm-Band entsteht nur
+    /// über offenem Wasser. Ohne Ried wäre ein trockener junger Altarm
+    /// unsichtbar; wo Wasser steht, deckt das Band das Ried ab.
+    /// Alle Alter als Anteil von `oxbowVisibleYears`.
+    public static let oxbowReedStart = 0.0
+    /// s. `oxbowReedStart`.
+    public static let oxbowReedFull = 0.15
+    /// s. `oxbowReedStart`.
+    public static let oxbowArcStart = 1.5
+    /// s. `oxbowReedStart`.
+    public static let oxbowArcFull = 2.5
+    /// Der Bogen blendet vor dem Listen-Horizont der Sim aus
+    /// (`SimConfig.oxbowMaxAge`), ab diesem Anteil davon.
+    public static let oxbowArcFadeShare = 0.6
+    /// Ried färbt die Makrofarbe olivbraun …
+    public static let oxbowReedColor = (r: 0.27, g: 0.29, b: 0.14)
+    /// … mit diesem Anteil, und hebt das Vegetationsgewicht leicht (Röhricht,
+    /// kein Wald) …
+    public static let oxbowReedTint = 0.6
+    /// s. `oxbowReedTint`.
+    public static let oxbowReedVeg = 0.12
+    /// … der Vegetationsbogen hebt es deutlich (dichter Auwald im alten Bett).
+    public static let oxbowArcVeg = 0.40
+
+    /// Ried- und Bogengewicht eines Altarms aus seinem Alter (Jahre).
+    @inline(__always)
+    public static func oxbowStages(age: Double, maxAge: Double) -> (reed: Double, arc: Double) {
+        let v = oxbowVisibleYears
+        guard age >= 0, v > 0 else { return (0, 0) }
+        let arcIn = smoothstep(oxbowArcStart * v, oxbowArcFull * v, age)
+        let reed = smoothstep(oxbowReedStart * v, oxbowReedFull * v, age) * (1 - arcIn)
+        let arcOut = maxAge > 0 ? 1 - smoothstep(oxbowArcFadeShare * maxAge, maxAge, age) : 1
+        return (reed, arcIn * arcOut)
+    }
+
+    /// Bank-Material im Terrain-Shader: trockener und feuchter Sand (gemischt
+    /// über Rauschen), Rauheit.
+    public static let barSandColor = (r: 0.70, g: 0.65, b: 0.54)
+    /// s. `barSandColor`.
+    public static let barSandWetColor = (r: 0.52, g: 0.48, b: 0.40)
+    /// s. `barSandColor`.
+    public static let barRoughness = 0.86
+
+    /// Tiefenfarbe im Band nach dem Querprofil (Vorlage E): `UV2.y` trägt die
+    /// signierte Bogenstärke (`MeanderState.bendStrength`, −1 … +1). Am
+    /// Prallhang (außen) wird die Tiefe um bis zu diesen Betrag tiefer, am
+    /// Gleithang (innen) seichter; im Wendepunkt bleibt das Profil symmetrisch.
+    public static let ribbonBendDepth = 0.55
+    /// Seichtes Wasser über der Bank: Sand scheint durch.
+    public static let ribbonShoalColor = (r: 0.46, g: 0.50, b: 0.42)
+    /// Anteil der Sand-Tönung am Gleithang-Ufer bei voller Bogenstärke.
+    public static let ribbonShoalMix = 0.45
+
+    /// Tiefen-Verschiebung im Band: `across` = UV.x (0 … 1), `bend` = UV2.y.
+    /// Positiv = tiefer. Spiegel der Formel in `water.gdshader`.
+    @inline(__always)
+    public static func ribbonBendShift(across: Double, bend: Double) -> Double {
+        ribbonBendDepth * ribbonOutward(across: across, bend: bend)
+    }
+
+    /// −1 … +1: +1 = Prallhang-Ufer, −1 = Gleithang-Ufer. Die Bandkante bei
+    /// UV.x = 1 liegt auf der LINKEN Normalen der Fließrichtung (wie
+    /// `BeltGeometry.nx/nz`); bei positiver Krümmung (Linksbogen) ist die
+    /// Außenseite rechts, also UV.x = 0 — dieselbe Konvention wie der
+    /// Gürtel-Stempel (`Terrain.beltStamp`).
+    @inline(__always)
+    public static func ribbonOutward(across: Double, bend: Double) -> Double {
+        -(2 * across - 1) * max(-1, min(1, bend))
+    }
 }

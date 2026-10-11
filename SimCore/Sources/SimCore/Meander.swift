@@ -478,6 +478,25 @@ extension MeanderState {
                                              referenceCells: config.renderMinCells)
     }
 
+    /// Signierte Bogenstärke je Knoten (−1 … +1) für den Render (Issue #174,
+    /// Paket C Teil 2): dieselbe Größe `a`, mit der `Terrain.beltStamp` den
+    /// Kolk zur Außenkurve schiebt (|Krümmung| · Breite · `meanderBeltPoolGain`,
+    /// gedeckelt auf 1), mit dem Vorzeichen der Krümmung (+ = Linksbogen,
+    /// Außenseite rechts der Fließrichtung) und mal der Mobilität: wo die Sim
+    /// kein asymmetrisches Profil baut (steile Strecke), ist auch keins zu
+    /// malen. Liest nur, ändert nichts.
+    public static func bendStrength(_ ch: RiverChannel, config: SimConfig,
+                                    heightAt: (MeanderNode) -> Double) -> [Double] {
+        guard ch.nodes.count >= 3, ch.discharge.count >= ch.nodes.count else {
+            return [Double](repeating: 0, count: ch.nodes.count)
+        }
+        let g = beltGeometry(ch, config: config, heightAt: heightAt)
+        return (0..<ch.nodes.count).map { i in
+            let a = g.curv[i] * g.width[i] * config.meanderBeltPoolGain
+            return max(-1, min(1, a)) * g.mob[i]
+        }
+    }
+
     static func beltGeometry(_ ch: RiverChannel, config: SimConfig,
                              heightAt: (MeanderNode) -> Double) -> BeltGeometry {
         let nodes = ch.nodes, c = nodes.count
