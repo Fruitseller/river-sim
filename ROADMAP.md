@@ -692,7 +692,8 @@ Vorher-Baseline für den bit-identischen Umzug.
 `SimRender.RenderState` besitzt die vier zustandstragenden Renderer und den
 Material-Cache des zustandslosen `TerrainColorRenderer`; die
 GDExtension hält keinen Render-Zustand mehr und meldet jede Terrain-Änderung an
-den EINEN Einstieg `invalidate(terrain, worldReplaced:)`. Damit ist die alte
+den EINEN Einstieg `invalidate(terrain, change)` (seit #167 mit `TerrainChange`
+`.advanced`/`.edited`/`.replaced` statt des Schalters `worldReplaced`). Damit ist die alte
 Asymmetrie aufgelöst — Neu-Generieren verwirft die Dirty-Snapshots jetzt wie das
 Laden, statt sich auf die Delta-Heuristik zu verlassen — und die feste
 Pass-Reihenfolge nach einem Pinselstrich liegt als

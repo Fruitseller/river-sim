@@ -789,19 +789,21 @@ Studie keinen Hebel mehr.
 
   | Fassung | Umkippen je Takt | Waldanteil |
   | --- | ---: | ---: |
-  | ohne Gedächtnis (vor #167) | 0,92 % | 38,7 % |
-  | τ = 300 J. | 0,57 % | 37,7 % |
-  | τ = 500 J. | 0,48 % | 37,3 % |
-  | **τ = 800 J. (Produktion)** | **0,39 %** | **36,8 %** |
-  | τ = 1200 J. | 0,34 % | 36,2 % |
+  | ohne Gedächtnis (vor #167) | 0,91 % | 38,7 % |
+  | τ = 300 J. | 0,55 % | 37,8 % |
+  | τ = 500 J. | 0,48 % | 37,5 % |
+  | **τ = 800 J. (Produktion)** | **0,40 %** | **36,9 %** |
+  | τ = 1200 J. | 0,34 % | 36,4 % |
   | ganz ohne Schutzmaske | 0,26 % | 55,4 % |
 
   Die letzte Zeile ist die Untergrenze, das Umkippen der Sim-Vegetation
   selbst. Zielwert war die Hälfte von heute (≤ 0,45 %); 800 J. nimmt den
-  wandernden Bändern vier Fünftel ihres Anteils (0,66 → 0,13 Punkte),
+  wandernden Bändern gut drei Viertel ihres Anteils (0,65 → 0,14 Punkte),
   längere τ machen den Auengürtel nur breiter. Die Werte weichen von der
   Tabelle im Ticket ab (1,06 % heute), weil der Lauf hier wie der
-  Zeitraffer alle 25 J. eine Maske baut und das Wasser mit 0,15 blendet.
+  Zeitraffer alle 25 J. eine Maske baut, das Wasser mit 0,15 blendet und
+  die Bänder nur im Produktionsdeckel (≈ alle 75 J., ab
+  `ribbonRebuildDelta`) neu baut.
 
   Grenzen: Die dt-Invarianz gilt für das Nachwachsen gegen ein festes Ziel.
   Ein Zeitsprung baut die Maske nur je 2000-Jahre-Chunk und sieht die
