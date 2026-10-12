@@ -192,7 +192,7 @@ public enum Hydraulic {
                              flowWeight: [Double] = [],
                              erodibility: [Double] = [],
                              track: inout [Double]) {
-        guard count > 0, n > 2,
+        guard count > 0, n > 2, floor.isFinite,
               h.count == n * n,
               rock.count == n * n,
               sed.count == n * n else { return }
@@ -324,6 +324,7 @@ public enum Hydraulic {
                                          weight: flowOn ? flowWeight : [], weightMax: flowMax)
             }
             if let seaLevel {
+                guard seaLevel.isFinite else { return }
                 let start = Int(py) * n + Int(px)
                 if h[start] <= seaLevel { continue }
             }
@@ -331,6 +332,7 @@ public enum Hydraulic {
             var speed = p.initialSpeed, water = p.initialWater, sediment = 0.0
 
             for step in 0..<p.maxSteps {
+                guard px.isFinite, py.isFinite else { break }
                 let nodeX = Int(px), nodeY = Int(py)
                 if nodeX < 0 || nodeX >= n - 1 || nodeY < 0 || nodeY >= n - 1 { break }
                 let fx = px - Double(nodeX), fy = py - Double(nodeY)
@@ -375,10 +377,12 @@ public enum Hydraulic {
                 dirX = dirX * p.inertia - gradX * (1 - p.inertia)
                 dirY = dirY * p.inertia - gradY * (1 - p.inertia)
                 let len = (dirX * dirX + dirY * dirY).squareRoot()
-                if len < 1e-9 { break } // flach & richtungslos → Tropfen endet
+                guard len.isFinite, len >= 1e-9 else { break } // flach, richtungslos oder nicht-endlich → Tropfen endet
                 dirX /= len; dirY /= len
                 let npx = px + dirX, npy = py + dirY
-                if npx < 0 || npx >= Double(n - 1) || npy < 0 || npy >= Double(n - 1) { break }
+                guard npx.isFinite, npy.isFinite,
+                      npx >= 0, npx < Double(n - 1),
+                      npy >= 0, npy < Double(n - 1) else { break }
 
                 // Höhendifferenz zum neuen Punkt.
                 let nnx = Int(npx), nny = Int(npy)
