@@ -1190,28 +1190,30 @@ func camera_preset_view(index: int) -> Dictionary:
 	return view
 
 ## Kleinster Pitch ab `pitch` (Schritte 0,05, höchstens 1,3), bei dem Auge und
-## Sichtlinie zum Ziel über der sichtbaren Fläche liegen (24 Proben; Luft
-## wächst vom Ziel, das AUF der Fläche liegt, bis 1 Einheit am Auge). Ohne
-## Hindernis bleibt `pitch` unverändert.
+## Sichtlinie zum Ziel frei sind (`sight_block`). Ohne Hindernis bleibt
+## `pitch` unverändert.
 func _clear_pitch(target: Vector3, yaw: float, pitch: float, dist: float) -> float:
-	while pitch < 1.3:
-		var cp := cos(pitch)
-		var eye := target + Vector3(sin(yaw) * cp, sin(pitch), cos(yaw) * cp) * dist
-		var clear := true
-		for s in range(1, 25):
-			var t := s / 24.0
-			var p := target.lerp(eye, t)
-			# Außerhalb des Gitters liegt nur das Meer (sonst zöge die
-			# Rand-Klemme von `_sample_grid` das Randgelände endlos weiter).
-			var ground := sea * HSCALE if maxf(absf(p.x), absf(p.z)) > half \
-				else _surface_y_at(p)
-			if p.y < ground + t:
-				clear = false
-				break
-		if clear:
-			break
+	while pitch < 1.3 and sight_block(target, yaw, pitch, dist) >= 0.0:
 		pitch += 0.05
 	return pitch
+
+## Erster verdeckter Anteil t der Sichtlinie Ziel → Auge (−1 = frei), 24
+## Proben ab t = 0,25: die nahe Umgebung des Ziels (Ufer, Kronendach am
+## Fluss) ist das, worauf die Kamera blickt, kein Hindernis davor. Luft über
+## der sichtbaren Fläche wächst bis 1 Einheit am Auge. Außerhalb des Gitters
+## liegt nur das Meer (sonst zöge die Rand-Klemme von `_sample_grid` das
+## Randgelände endlos weiter).
+func sight_block(target: Vector3, yaw: float, pitch: float, dist: float) -> float:
+	var cp := cos(pitch)
+	var eye := target + Vector3(sin(yaw) * cp, sin(pitch), cos(yaw) * cp) * dist
+	for s in range(6, 25):
+		var t := s / 24.0
+		var p := target.lerp(eye, t)
+		var ground := sea * HSCALE if maxf(absf(p.x), absf(p.z)) > half \
+			else _surface_y_at(p)
+		if p.y < ground + t:
+			return t
+	return -1.0
 
 ## Diorama-Rahmen: Ziel = Mitte der Land-Bounding-Box (Höhe: mittlere
 ## Landhöhe), Distanz = kleinste, bei der jede Landzelle (Raster `n/180`) in
