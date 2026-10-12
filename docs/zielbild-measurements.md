@@ -51,7 +51,11 @@ Einlauf (`productionSettleYears` = 3000), getaktet in 1000-Jahr-Schritten.
   Seit der Kalibrierung: Talachse über eine Mäanderwellenlänge entlang des
   Laufs (λ · Sinuosität, mindestens ±12 Knoten); die festen ±12 Knoten (±18
   Zellen) lagen bei ausgebildeten Bögen (λ ≈ 60–80 Zellen) unter einer halben
-  Welle, die „Talachse" folgte dem Lauf.
+  Welle, die „Talachse" folgte dem Lauf. Seit dem vierten Schritt von
+  Paket B: Abstand der Tangenten an die äußersten überstrichenen Zellen
+  parallel zur Talachse über diese Wellenlänge, die Querschnitte starten am
+  Lauf statt am Talachsen-Punkt; `beltAll` mittelt Amplitude und Gürtel nur
+  über Läufe mit Bogen (§ Paket B — Gürtel-Messung und Wellenlänge).
 - **Asymmetrie:** mittlere Tiefe am Außenufer geteilt durch die am Innenufer,
   Abstand max(1, b/4), nur Bögen mit |Krümmung| über dem Median. Bezug seit der
   Kalibrierung: Wasserspiegel bei bankfull = die NIEDRIGERE der beiden
@@ -642,7 +646,7 @@ andere Realisierung, ein Wächter je Seed wäre dort Zufall.
 | --- | --- | --- | --- |
 | Sinuosität | > 1,25 | 1,30 | 1,68 |
 | λ/Breite | 7,5–16,5 | 8,2 (größtes 14,6) | 12,8 |
-| Gürtel/Amplitude | > 1,7 | 1,77 | 3,7 |
+| Gürtel/Amplitude | > 2,7 (bis zum vierten Schritt > 1,7) | 2,80 (alte Messung 1,77) | 5,4 (3,7) |
 | Asymmetrie | > 1,7 | 1,76 | 2,74 |
 | sichtbare Altarme | > 0,8 | 1,03 | 6,1 |
 | Median Altarm-Knoten (Jahr 20.000) | ≥ 20 | 20,7 | 39,7 |
@@ -650,7 +654,10 @@ andere Realisierung, ein Wächter je Seed wäre dort Zufall.
 Das zweite Fenster (bis Jahr 100.000) läuft nur im Diagnostic (je Seed
 ~10 s lokal, auf dem CI-Runner ein Mehrfaches).
 
-### Stand gegen den Abnahmebogen (Zeitmittel je Seed)
+### Stand gegen den Abnahmebogen (Zeitmittel je Seed, überholt)
+
+Überholt durch § Paket B — Gürtel-Messung und Wellenlänge (Punkt 11 mit der
+korrigierten Gürtel-Messung).
 
 | Punkt | Stand |
 | --- | --- |
@@ -666,6 +673,168 @@ Das zweite Fenster (bis Jahr 100.000) läuft nur im Diagnostic (je Seed
 | 18 Braid-/Playa-Wächter | grün (alte Welt, `calibrationMeanderBelt`) |
 | 48 Laufzeit ≤ +15 % | +4,5 % gegen `origin/main` |
 | 49 Determinismus | `--hash` zweimal gleich |
+
+## Paket B — Gürtel-Messung und Wellenlänge (vierter Schritt)
+
+Ausgang: 28 von 30 Prüfungen im Zeitmittel, Ensemble (24 Seeds wie oben) 182
+von 240. Offen waren Punkt 11 auf Seed 20 im Fenster 10.000–20.000 (2,6) und
+Punkt 10 auf Seed 42 im Fenster 50.000–100.000 (8,3, nur 10 von 26
+Stützstellen messbar). Geprüft wurde zuerst die Messung, mit den Kennzahlen
+je Lauf und Stützstelle (Abschnittslänge, Sehne, Wendepunkte, λ, Amplitude,
+Gürtel) und dem Mobilitätsprofil entlang jedes Laufs. Die Physik ist in
+diesem Schritt unverändert, geändert wurde nur `ZielbildMetrics`.
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildMeanderTimeMeanDiagnostic
+# Messung von vorher: zusätzlich RS_BELT_AXIS=1
+```
+
+### Punkt 11: die Gürtel-Messung sah den eigenen Bogenzug nicht
+
+Seed 20, Jahr 10.000, längster Lauf (224 mobile Knoten, Sinuosität 1,90,
+λ 15,3 Breiten): Amplitude 5,15 Breiten, gemessener Gürtel 5,9 Breiten,
+Verhältnis 1,2. Ein Bogenzug mit Amplitude A belegt quer zum Tal aber
+mindestens 2A + b = 11,3 Breiten, schmaler kann der Gürtel nicht sein. Zwei
+Fehler:
+
+1. **Querschnitt ab dem Talachsen-Punkt.** Die Messung lief EINEN Querschnitt
+   vom Schwerpunkt der Knoten über eine Wellenlänge aus und brach nach 1,5
+   Zellen Lücke ab. Der Schwerpunkt liegt zwischen den Bögen; trägt die
+   Innenseite eines Bogens dort keine Bank (Gelände über der Bank-Oberkante,
+   kein Budget), endet die Messung, bevor sie den Lauf erreicht.
+2. **„Nicht messbar" als 0 im Mittel über die Läufe.** `beltAll` mittelte
+   Amplitude und Gürtel über alle Läufe, auch über die ohne Bogen (unter zwei
+   Wendepunkten, Amplitude 0). λ und Asymmetrie zählten dort schon nur die
+   messbaren Läufe, und `Series` schließt dasselbe für die Stützstellen aus.
+
+Korrektur, auf alle Seeds gleich: Gürtel = Abstand der beiden Tangenten an
+die äußersten überstrichenen Zellen, parallel zur Talachse, über eine
+Wellenlänge. Das ist die Lehrbuch-Definition (Linien an die Außenkanten der
+Bögen) und wörtlich der Abnahmepunkt („Ausdehnung von `barAge ≥ 0` quer zum
+Tal"). Die Querschnitte starten an jedem zweiten Knoten im Fenster, die
+Lückenregel bleibt. Amplitude und Gürtel mitteln nur über Läufe mit Bogen.
+
+Jede Hälfte einzeln, Ensemble (Seeds mit erfülltem Punkt 11, in Klammern das
+Mittel über die Seeds):
+
+| Messung | 10.000–20.000 | 50.000–100.000 | Seed 20, 10.000–20.000 |
+| --- | --- | --- | --- |
+| vorher (ab Achse, alle Läufe) | 17 (4,05) | 24 (15,6) | 2,6 |
+| nur: Mittel über Läufe mit Bogen | 2 (2,12) | 24 (6,0) | 1,9 |
+| nur: Querschnitte ab dem Lauf | 23 (8,86) | 24 (25,6) | 7,2 |
+| beide (neu) | 23 (4,98) | 24 (10,4) | 5,8 |
+
+Lesart: über die Läufe mit Bogen allein lag die alte Messung im jungen Fenster
+bei ~2, also unter 2 + b/A, der Untergrenze jedes Bogenzugs. Sie maß dort
+nicht den Gürtel. Die Hülle allein bläht das Verhältnis über die Läufe ohne
+Bogen auf (Gürtel ohne Amplitude), erst beides zusammen ist konsistent. Die
+neue Messung ist im alten Fenster STRENGER (Seed 42: 28,0 → 13,8; Seed 20:
+11,6 → 7,1) und im jungen großzügiger. Am Lauf von oben misst sie 13,5
+Breiten: 2A + b plus 2,2 Breiten überstrichen, Verhältnis 2,6.
+
+Zur Mechanik: der junge Gürtel ist tatsächlich schmal. In den ersten 20.000
+Jahren wachsen die Bögen weitgehend am Ort (am Lauf oben 2A + b plus 2,2
+Breiten), erst die Wanderung verbreitert ihn (zweites Fenster 7–14). Das ist
+das erwartete Bild. Ein Schwellenwert-Hebel wäre hier nur an die Messung
+angepasst gewesen.
+
+### Punkt 10 auf Seed 42 (50.000–100.000): Messung begrenzt, Physik auch
+
+Je Stützstelle und Lauf: die mobilen Abschnitte sind 40–170 Knoten lang
+(10–50 Breiten Bogenlänge). Sie beginnen dort, wo der Abfluss
+`meanderBeltMinCells` erreicht, und enden am Zusammenfluss oder an der
+Mündung, nicht an kurzen Steilstücken (Mobilitätsprofil: Lücken von ein, zwei
+Knoten sind selten, Zusammenlegen ist kein Hebel). Eine volle Welle (drei
+Wendepunkte) braucht λ · S ≈ 19 Breiten Bogenlänge plus die angeschnittenen
+Enden. Die Läufe zerfallen in zwei Gruppen:
+
+- gewundene Zubringer (Abfluss 2000–3700, unter `meanderChuteMinCells`, also
+  nur Hals-Cutoffs): Sinuosität 2,5–5,7, Sehne des ganzen Abschnitts 8–11
+  Breiten, λ 5–8 Breiten. Das sind die meisten messbaren Stützstellen;
+- flache, lange Bögen am Stamm (Sinuosität 1,05–1,2, Halbwellen mit 10–20
+  Breiten Sehne): im Abschnitt nur zwei Wendepunkte, nicht messbar.
+
+Die Kennzahl misst also, was sie soll, auf dem, was da ist. Die gemessenen
+Werte liegen bis auf einen (19,4) bei 3,5–9,9, das Mittel 8,3 ist kein
+Ausreißer weniger Stützstellen.
+
+Geprüfte Korrekturen der Messung, verworfen:
+
+- **λ aus Halbwellen** (2 × Sehne zwischen benachbarten Wendepunkten, messbar
+  ab zwei Wendepunkten): auf denselben 205 Abschnitten mit mindestens drei
+  Wendepunkten (Seeds 1337, 42, 20, 7, 99, 5; Jahr 10.000–100.000) liegt sie
+  im Mittel 14 % über der Definition (Luftlinie über zwei Halbwellen; 7 % bei
+  Sinuosität unter 2, 21 % darüber, Dreiecksungleichung). Seed 42 käme auf
+  11,7, das Ensemble für Punkt 10 auf 19 / 17 von 24 Seeds, aber durch eine
+  großzügigere Kennzahl, nicht durch bessere Bögen.
+- **Mindestlänge des Abschnitts** (Sehne ≥ 14 Breiten, damit die Zielwelle
+  hineinpasst; entfernt die Verzerrung zu kurzen Wellen): auf Seed 42 blieben
+  3 von 12 gemessenen Abschnitten (λ 18,9 / 9,9 / 8,0). Ein Mittel aus drei
+  Stützstellen ist keine Abnahme.
+
+Parameter, im Ensemble gegen den Stand (Messung jeweils gleich):
+
+| Variante | Ensemble | Matrix-Seeds | Seed 42 λ, 50.000–100.000 |
+| --- | --- | --- | --- |
+| Stand, alte / neue Gürtel-Messung | 182 / 188 | 28 / 29 | 8,3 |
+| Chute ab 3000 Zellen statt 4000 (alt) | 176 | 26 | 15,6 |
+| Chute ab 2500 (alt) | 177 | 26 | 12,8 |
+| Chute ab 2000 (alt) | 176 | 26 | 11,5 |
+| Kernlänge 1,7 statt 1,5 (neu) | 162 | 23 | 12,4 |
+| Kernlänge 1,9 (neu) | 164 | 24 | 13,4 |
+
+Jede Variante dreht λ auf Seed 42 in den Zielbereich, verliert aber im
+Ensemble (Chute: λ, Sinuosität oder Asymmetrie; Kernlänge:
+sichtbare Altarme 16 → 7–10 von 24). Das ist Anpassung an eine
+Realisierung. Punkt 10 bleibt auf Seed 42 im zweiten Fenster offen. Im
+Ensemble erfüllen ihn dort 12 von 24 Seeds (Mittel 10,6); ein Hebel dafür
+müsste die gewundenen Zubringer unter der Chute-Schwelle oder die Länge
+der mobilen Abschnitte angehen, nicht die Messung.
+
+### Nachher (Standard-Config, neue Gürtel-Messung)
+
+| Seed | Fenster | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 Altarme sichtbar | davon nass |
+| ---: | --- | --- | --- | --- | --- | --- | --- |
+| 1337 | 10.000–20.000 | 1,79 (1,32–2,38) | 13,8 (8,0–17,5) | 5,4 (3,6–8,6) | 2,43 (1,74–3,55) | 10,7 (9–12) | 2,2 |
+| 1337 | 50.000–100.000 | 1,85 (1,24–4,94) | 12,4 (5,0–15,8), 1 n. m. | 11,1 (6,1–19,5) | 3,67 (1,84–12,97) | 11,2 (4–17) | 3,6 |
+| 42 | 10.000–20.000 | 1,63 (1,20–1,98) | 12,8 (11,9–14,4), 3 n. m. | 5,1 (2,8–8,3) | 3,13 (2,32–5,15) | 3,2 (1–5) | 1,0 |
+| 42 | 50.000–100.000 | 1,63 (1,02–2,18) | **8,3** (3,5–19,4), 16 n. m. | 13,8 (4,5–55,9), 1 n. m. | 2,58 (1,23–6,72) | 4,8 (2–8) | 1,7 |
+| 20 | 10.000–20.000 | 1,63 (1,44–1,78) | 11,9 (5,4–16,0) | 5,8 (3,4–8,0) | 2,66 (1,53–4,31) | 4,5 (2–8) | 1,3 |
+| 20 | 50.000–100.000 | 1,72 (1,38–2,23) | 10,6 (4,8–16,7), 15 n. m. | 7,1 (2,5–14,6) | 2,35 (1,24–4,45) | 3,3 (1–6) | 1,0 |
+
+Ensemble, Seeds mit erfülltem Punkt (Mittel über die Seeds), vorher → nachher:
+
+| Punkt | 10.000–20.000 | 50.000–100.000 |
+| --- | --- | --- |
+| 9 Sinuosität 1,5–2,5 | 18 (1,84) → 18 | 20 (1,88) → 20 |
+| 10 λ/Breite 10–14 | 15 (12,1) → 15 | 12 (10,6) → 12 |
+| 11 Gürtel ≥ 3 × Amplitude | 17 (4,05) → 23 (4,98) | 24 (15,6) → 24 (10,4) |
+| 12 Asymmetrie ≥ 2 | 18 (3,00) → 18 | 24 (4,19) → 24 |
+| 13 ≥ 3 sichtbare Altarme | 16 (4,42) → 16 | 18 (4,78) → 18 |
+
+Summe 182 → 188 von 240, Matrix-Seeds 28 → 29 von 30.
+
+### Laufzeit, Determinismus, Wächter
+
+`SimCore/Sources` ist in diesem Schritt unverändert, Laufzeit und Physik sind
+die des Zeitmittel-Schritts (+4,5 % gegen `origin/main`, oben).
+`simperf --hash` zweimal `1625b1e4b83c85f4`, gleich wie dort.
+SimCore-Pflichtsuite lokal: 471 Tests, 0 Fehler, 183 s;
+`testRangeLandformMeetsTheAcceptanceSheet` 12,1 s (vorher 12,0 s). Der
+Wächter für Gürtel/Amplitude steht jetzt bei > 2,7 (kleinstes Dreier-Mittel
+aus 24 Seeds 2,80, Matrix-Seeds 5,4), s. Tabelle in § Wächter.
+
+### Stand gegen den Abnahmebogen (Zeitmittel je Seed)
+
+| Punkt | Stand |
+| --- | --- |
+| 9 Sinuosität 1,5–2,5 | **erfüllt** auf allen drei Seeds in beiden Fenstern (1,63–1,85) |
+| 10 Wellenlänge 10–14 Breiten | **erfüllt** außer Seed 42 im Fenster 50.000–100.000 (8,3; 16 von 26 Stützstellen nicht messbar); offen, ohne Anpassung an die Realisierung nicht erreicht (s. oben) |
+| 11 Gürtel ≥ 3 × Amplitude | **erfüllt** auf allen drei Seeds in beiden Fenstern (5,1–13,8), korrigierte Messung |
+| 12 Querprofil-Asymmetrie ≥ 2 | **erfüllt** auf allen drei Seeds in beiden Fenstern (2,35–3,67) |
+| 13 ≥ 3 sichtbare Altarme im Tiefland | **erfüllt** auf allen drei Seeds in beiden Fenstern (3,2–11,2) |
+| 14–18, 48, 49 | unverändert (s. vorige Tabelle) |
 
 ## Bildprüfung und Frame-Zeiten auf dem Referenz-Mac (Abnahmepunkte 47, Bildpunkte)
 

@@ -276,6 +276,11 @@ enum ZielbildMetrics {
     /// von Paket B (jeder Vorzeichenwechsel ist ein Wendepunkt, Asymmetrie gegen
     /// den höchsten Punkt im Querschnitt).
     nonisolated(unsafe) static var rawInflections = false
+    /// Nur für den Vorher/Nachher-Vergleich: die Gürtel-Messung bis zum
+    /// Zeitmittel-Abschluss (#174 Paket B) — Querschnitt ab dem Talachsen-Punkt
+    /// statt ab dem Lauf, und `beltAll` mittelte die Amplitude auch über Läufe
+    /// ohne Bogen (als 0). S. `belt`, Gürtelbreite.
+    nonisolated(unsafe) static var beltFromAxis = false
 
     struct Bends {
         /// Wendepunkte (Knotenindizes) nach dem Verschmelzen flacher Halbwellen.
@@ -375,15 +380,36 @@ enum ZielbildMetrics {
         r.wavelength = bendSet.wavelength
         r.amplitude = bendSet.amplitude
 
-        // Gürtelbreite: quer zur Talachse (Mittel über ±W Knoten) die
-        // zusammenhängend überstrichenen Zellen zählen (1 Zelle Lücke erlaubt).
-        // Talachse = Mittel über eine Mäanderwellenlänge entlang des Laufs
-        // (λ · Sinuosität), mindestens ±12 Knoten. Mit festen ±12 Knoten
-        // (±18 Zellen) folgte die „Talachse" bei ausgebildeten Bögen
-        // (λ ≈ 60–80 Zellen) dem Lauf selbst, quer dazu lag dann der Kanal,
-        // nicht der Gürtel. Bis zur Kalibrierung von Paket B: feste ±12.
+        // Gürtelbreite (Punkt 11: „Ausdehnung von `barAge ≥ 0` quer zum Tal"):
+        // Abstand der beiden Tangenten an die äußersten überstrichenen Zellen,
+        // parallel zur Talachse, über eine Mäanderwellenlänge — die
+        // Lehrbuch-Definition (Linien an die Außenkanten der Bögen). Je Knoten
+        // im Fenster läuft ein Querschnitt quer zur Talachse vom LAUF aus nach
+        // beiden Seiten, solange die Zellen zusammenhängend überstrichen sind
+        // (1 Zelle Lücke erlaubt); der Gürtel kann damit nie schmaler sein als
+        // der Bogenzug, der in ihm liegt (2 · Amplitude). Talachse = Mittel über
+        // eine Mäanderwellenlänge entlang des Laufs (λ · Sinuosität), mindestens
+        // ±12 Knoten; mit festen ±12 Knoten (±18 Zellen) folgte sie bei
+        // ausgebildeten Bögen (λ ≈ 60–80 Zellen) dem Lauf selbst (bis zur
+        // Kalibrierung von Paket B, `rawInflections`).
+        // Bis zum Zeitmittel-Abschluss (`beltFromAxis`) lief EIN Querschnitt ab
+        // dem Talachsen-Punkt: lag der in einer Lücke (Innenseite eines
+        // Bogens, die keine Bank trägt), endete die Messung dort. Auf Seed 20,
+        // Jahr 10.000, maß sie am längsten Lauf 5,9 Breiten Gürtel bei 5,2
+        // Breiten Amplitude — schmaler als der Bogenzug selbst (≥ 11,3 Breiten),
+        // docs/zielbild-measurements.md § Paket B — Gürtel-Messung und Wellenlänge.
         let w = rawInflections || r.wavelength <= 0 ? 12
             : max(12, Int((0.5 * r.wavelength * r.sinuosity / max(1e-6, t.cfg.meanderNodeSpacing)).rounded()))
+        func sweptRun(_ ox: Double, _ oz: Double, _ dx: Double, _ dz: Double) -> Double {
+            var s = 0.0, last = 0.0, gap = 0.0
+            while s < Double(n) {
+                s += 0.5
+                let x = Int((ox + dx * s).rounded()), z = Int((oz + dz * s).rounded())
+                guard x >= 0, z >= 0, x < n, z < n else { break }
+                if swept[z * n + x] { last = s; gap = 0 } else { gap += 0.5; if gap > 1.5 { break } }
+            }
+            return last
+        }
         var widths: [Double] = []
         for i in stride(from: 0, to: nodes.count, by: 2) {
             let a = max(0, i - w), b = min(nodes.count - 1, i + w)
@@ -393,18 +419,19 @@ enum ZielbildMetrics {
             let tl = (tx * tx + tz * tz).squareRoot()
             guard tl > 1e-9 else { continue }
             let px = -tz / tl, pz = tx / tl
-            var extent = 0.0
-            for sgn in [-1.0, 1.0] {
-                var s = 0.0, last = 0.0, gap = 0.0
-                while s < Double(n) {
-                    s += 0.5
-                    let x = Int((ax + sgn * px * s).rounded()), z = Int((az + sgn * pz * s).rounded())
-                    guard x >= 0, z >= 0, x < n, z < n else { break }
-                    if swept[z * n + x] { last = s; gap = 0 } else { gap += 0.5; if gap > 1.5 { break } }
-                }
-                extent += last
+            if rawInflections || beltFromAxis {
+                widths.append(sweptRun(ax, az, -px, -pz) + sweptRun(ax, az, px, pz))
+                continue
             }
-            widths.append(extent)
+            var vMax = -Double.infinity, vMin = Double.infinity
+            for j in stride(from: a, through: b, by: 2) {
+                let p = nodes[j]
+                guard abs((p.x - ax) * tx + (p.z - az) * tz) <= 0.5 * tl * tl else { continue }
+                let v = (p.x - ax) * px + (p.z - az) * pz
+                vMax = max(vMax, v + sweptRun(p.x, p.z, px, pz))
+                vMin = min(vMin, v - sweptRun(p.x, p.z, -px, -pz))
+            }
+            if vMax > vMin { widths.append(vMax - vMin) }
         }
         widths.sort()
         if !widths.isEmpty { r.beltWidth = widths[widths.count / 2] }
@@ -458,22 +485,29 @@ enum ZielbildMetrics {
     /// ist es der Abfluss des großen Sees durchs Gebirge, mit ~30 mobilen
     /// Knoten. Altarme zählen wie in `belt` (einmal über die Welt). `count` =
     /// Zahl der gemittelten Läufe in `reachNodes`.
+    /// Wie λ und Asymmetrie mitteln Amplitude und Gürtel nur über Läufe, auf
+    /// denen sie messbar sind (mindestens ein Bogen, also zwei Wendepunkte).
+    /// Bis zum Zeitmittel-Abschluss (`beltFromAxis`) ging ein Lauf ohne Bogen
+    /// mit Amplitude 0 und seinem Gürtel ins Mittel ein — „nicht messbar" als
+    /// 0, was `Series` für die Stützstellen ausdrücklich ausschließt.
     static func beltAll(_ t: Terrain, lowland: [Bool], swept: [Bool], minNodes: Int = 40) -> Belt {
         var r = belt(t, lowland: lowland, swept: swept, channel: RiverChannel(nodes: [], discharge: []))
-        var w = 0.0, wl = 0.0, wa = 0.0, count = 0
+        var w = 0.0, wl = 0.0, wa = 0.0, wb = 0.0, count = 0
         var sinu = 0.0, width = 0.0, lam = 0.0, amp = 0.0, beltW = 0.0, asym = 0.0
         for ch in t.meander.channels {
             guard let reach = lowlandReach(t, ch), reach.count >= minNodes else { continue }
             let b = belt(t, lowland: lowland, swept: swept, channel: ch)
             let q = ch.discharge[reach].reduce(0, +) / Double(reach.count)
             count += 1; w += q
-            sinu += q * b.sinuosity; width += q * b.width; amp += q * b.amplitude; beltW += q * b.beltWidth
+            sinu += q * b.sinuosity; width += q * b.width
+            if beltFromAxis || rawInflections || b.amplitude > 0 { amp += q * b.amplitude; beltW += q * b.beltWidth; wb += q }
             if b.wavelength > 0 { lam += q * b.wavelength; wl += q }
             if b.asymmetry > 0 { asym += q * b.asymmetry; wa += q }
         }
         guard w > 0 else { return r }
         r.reachNodes = count
-        r.sinuosity = sinu / w; r.width = width / w; r.amplitude = amp / w; r.beltWidth = beltW / w
+        r.sinuosity = sinu / w; r.width = width / w
+        r.amplitude = wb > 0 ? amp / wb : 0; r.beltWidth = wb > 0 ? beltW / wb : 0
         r.wavelength = wl > 0 ? lam / wl : 0
         r.asymmetry = wa > 0 ? asym / wa : 0
         return r
@@ -673,8 +707,9 @@ final class ZielbildLandformTests: XCTestCase {
         // … zackten in Bandbreite (λ 1–4 Breiten vor Paket B) …
         XCTAssertGreaterThan(wavelength, 7.5, "Zacken statt Bögen: \(windows.map(\.wavelength.values))")
         XCTAssertLessThan(wavelength, 16.5, "Bögen zu lang: \(windows.map(\.wavelength.values))")
-        // … der junge Gürtel blieb schmal …
-        XCTAssertGreaterThan(belt, 1.7, "Gürtel schmal: \(windows.map(\.belt.values))")
+        // … der junge Gürtel blieb schmal (kleinstes Dreier-Mittel 2,80; mit
+        // der Messung vor dem Zeitmittel-Abschluss, `beltFromAxis`, 1,77) …
+        XCTAssertGreaterThan(belt, 2.7, "Gürtel schmal: \(windows.map(\.belt.values))")
         // … das Querprofil war symmetrisch (1,16) …
         XCTAssertGreaterThan(asymmetry, 1.7, "Querprofil symmetrisch: \(windows.map(\.asymmetry.values))")
         // … und vor der Zeitmittel-Kalibrierung schnürte der Gürtel vor allem
@@ -775,9 +810,12 @@ final class ZielbildBaseline: XCTestCase {
     ///
     /// `RS_SEED` wählt einen Seed (auch außerhalb der drei Matrix-Seeds; die
     /// Läufe sind unabhängig und lassen sich parallel starten), `RS_VARIANT`
-    /// Parameter-Varianten wie `MeanderBeltCalibration`.
+    /// Parameter-Varianten wie `MeanderBeltCalibration`, `RS_BELT_AXIS=1` die
+    /// Gürtel-Messung von vorher (`ZielbildMetrics.beltFromAxis`).
     func testZielbildMeanderTimeMeanDiagnostic() throws {
         try skipUnlessMeasuring()
+        ZielbildMetrics.beltFromAxis = ProcessInfo.processInfo.environment["RS_BELT_AXIS"] == "1"
+        defer { ZielbildMetrics.beltFromAxis = false }
         let onlySeed = ProcessInfo.processInfo.environment["RS_SEED"].flatMap { UInt32($0) }
         let variant = ProcessInfo.processInfo.environment["RS_VARIANT"] ?? "Produktion"
         func cell(_ s: ZielbildMetrics.Series, _ f: String) -> String {
