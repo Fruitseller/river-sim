@@ -393,6 +393,29 @@ public enum WaterRender {
     /// Enden-Taper (Zellen Bogenlänge) — gilt für den im Land versickernden
     /// Lauf, den Überlappungs-Deckel an der Mündung und die Delta-Arme.
     public static let ribbonTailTaperCells = 2.0
+    /// Mindestlänge der beiden LAND-Taper (Quelle und versickerndes Ende) in
+    /// Vielfachen der Halbbreite dort: ein Band endet spitz statt stumpf.
+    /// Mit den festen 4 bzw. 2 Zellen lief ein Hauptlauf am Deckel
+    /// (Halbbreite 3,2) auf weniger als seiner halben Breite von voll auf null
+    /// aus: ein rechtwinklig abgeschnittenes Band, wo die Sim den Lauf vor
+    /// einer Steilstrecke enden lässt und das Raster weitermalt (Review #181).
+    /// Bei 3 Halbbreiten liegt Deckkraft 0,5 eineinhalb Halbbreiten vor dem
+    /// Ende. Mündungen behalten `ribbonTailTaperCells`: dort endet das Band
+    /// im Wasser, und die Übergabe regelt die Wassersäule.
+    /// GEMESSEN: `docs/river-belt-render-measurements.md` §C.
+    public static let ribbonLandTaperHalfWidths = 3.0
+    /// Größte Änderung der gemalten Halbbreite je Zelle Bogenlänge (Zellen je
+    /// Zelle). Der Krümmungs-Deckel (`ribbonCurvatureWidthFactor`) greift je
+    /// Stützpunkt; auf der Mündungs-Kette (D8, ganze Zellen, dazwischen ein
+    /// Mittelpunkt) wechselten gedeckelte Knickpunkte und ungedeckelte
+    /// Mittelpunkte ab, die Breite sprang zwischen 6,4 und 1,3 Zellen: das Band
+    /// zerfiel in versetzte Rechteck-Blöcke. Die Grenze senkt nur ab (wie
+    /// `ribbonMaxAlphaStep`), der Krümmungs-Deckel bleibt also eingehalten.
+    /// GEMESSEN (Seed 42, Jahr 20.000, Segmente mit Breitensprung > 0,75
+    /// Zellen von 1928): ohne Grenze 68, 1,0 → 10, 0,5 → 7. 0,5 verengte die
+    /// Bänder um einen Knick aber über bis zu 4 Zellen je Seite (Band-Zellen
+    /// mit Deckung ≥ 0,7, Seed 1337: 12.318 gegen 12.664 bei 1,0).
+    public static let ribbonMaxHalfWidthSlope = 1.0
     /// Deckkraft, unter der ein Stützpunkt als unsichtbar gilt: Bänder ohne
     /// einen einzigen Punkt darüber werden gar nicht erst emittiert.
     public static let ribbonMinimumAlpha = 0.02

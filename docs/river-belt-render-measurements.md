@@ -148,6 +148,50 @@ wie `RS_STEP`), alt 6,80 ms, neu 6,83 ms (Median aus 15, alt/neu interleaved
 im selben Prozess, M4 Max). Gemessen mit 1 Zelle Abstand; die Ausnahme fällt
 weg, die Dilatation kommt dazu, netto gleich.
 
+**Stumpfe Band-Enden und Breiten-Blöcke (Review #181, zweite Runde).** Nach
+dem Fix oben zeigte das Bild (Seed 42, Jahr 20.000, `close`) Bänder, die vor
+Steilstrecken rechtwinklig abbrachen, und blockig versetzte Bandstücke. Die
+Sim lässt Läufe dort enden, das Raster malt weiter. Zwei Ursachen im Band:
+
+1. Der Land-Taper am Ende war fest 2 Zellen (Quelle 4). Ein Hauptlauf am
+   Breitendeckel (Halbbreite 3,2) lief damit auf weniger als seiner halben
+   Breite von voll auf null aus, oft über nur zwei Stützpunkte, weil das
+   letzte Knotensegment 1,4–1,7 Zellen lang ist.
+2. Der Krümmungs-Deckel wirkt je Stützpunkt. Auf der Mündungs-Kette (D8,
+   ganze Zellen, dazwischen ein Mittelpunkt) wechselten gedeckelte
+   Knickpunkte und ungedeckelte Mittelpunkte ab: die Bandbreite sprang
+   zwischen 6,4 und 1,3 Zellen.
+
+Fix: Land-Taper an Quelle und Ende mindestens `ribbonLandTaperHalfWidths` = 3
+Halbbreiten lang (Mündungen bleiben bei `ribbonTailTaperCells`), und die
+gemalte Halbbreite ändert sich je Zelle Bogenlänge höchstens um
+`ribbonMaxHalfWidthSlope` = 1 (nur absenkend, der Krümmungs-Deckel bleibt
+eingehalten).
+
+Gemessen auf Seed 42 (Bänder; „stumpf" = Deckkraft 0,5 liegt näher am
+Land-Ende als die Halbbreite dort):
+
+| | vorher | nachher |
+| --- | --- | --- |
+| stumpfe Land-Enden (von 101) | 10 | 0 |
+| Segmente mit Breitensprung > 0,75 Zellen (von ~1950) | 97 | 10 |
+
+Hauptlauf und Doppelwasser (`testMainStemBandDiagnostic`, Seeds 1337 / 42 / 20):
+
+| | vor dieser Runde | nachher |
+| --- | --- | --- |
+| Lücke im Hauptlauf | 3,0 / 19,6 / 6,9 % | 3,0 / 19,6 / 6,9 % |
+| Raster-Fluss unter Band-Deckung ≥ 0,7 | 11,6 / 8,8 / 10,0 % | 13,9 / 9,1 / 11,1 % |
+| Raster-Fluss neben einem Band (±3 Zellen) | 863 / 480 / 427 | 994 / 523 / 536 |
+
+Die beiden unteren Zeilen steigen, weil das Band über die längeren Taper
+ausblendet und das Raster dort einblendet. Das ist die gewollte Überblendung
+statt einer Kante, kein neuer Geisterlauf. Die Grenze 0,5 statt 1 nahm noch
+3 Breitensprünge mehr, verengte die Bänder um einen Knick aber über bis zu
+4 Zellen je Seite. Wächter: `BarMaterialTests.testRibbonEndsTaperToAPointAndKeepAContinuousWidth`
+(Breitenteil auf dem alten Stand rot; die Testwelt n = 192 hat keine stumpfen
+Enden, der End-Teil ist hier nur gemessen).
+
 **Breite (`ribbonHalfWidthCapCells`)**: 52–82 % der Hauptlauf-Zellen liegen
 am Deckel 3,2 Zellen. Den Deckel anzuheben hieße die Sim-Kanalbreite
 ändern: `MeanderState.beltWidthCells` liest dieselbe Funktion

@@ -354,6 +354,63 @@ final class BarMaterialTests: XCTestCase {
         }
     }
 
+    /// Review #181 (Kaskaden): wo die Sim einen Lauf vor einer Steilstrecke
+    /// enden lässt, malt das Raster weiter. Das Band endete dort mit voller
+    /// Breite über 2 Zellen: rechtwinklig abgeschnitten. Und auf der
+    /// Mündungs-Kette sprang die Breite zwischen Knick- und Mittelpunkten:
+    /// versetzte Blöcke. Ein Band läuft an Land jetzt spitz aus, und seine
+    /// Breite ändert sich je Zelle höchstens um `ribbonMaxHalfWidthSlope`.
+    func testRibbonEndsTaperToAPointAndKeepAContinuousWidth() {
+        let terrain = agedWorld(renderConfig(n: 192), years: 4000)
+        let mesh = RiverRibbonRenderer().build(terrain, hscale: 24, lift: 0.35)
+        let n = terrain.cfg.n, cs = terrain.cfg.cellSize, half = terrain.cfg.world / 2
+        var landEnds = 0
+        for (si, st) in mesh.stripStarts.enumerated() {
+            let a = Int(st)
+            let b = si + 1 < mesh.stripStarts.count ? Int(mesh.stripStarts[si + 1]) : mesh.vertices.count
+            guard mesh.uv2s[a].x == Float(WaterRender.ribbonKindRiver) else { continue }
+            let m = (b - a) / 2
+            func mid(_ q: Int) -> SIMD3<Float> { (mesh.vertices[a + 2 * q] + mesh.vertices[a + 2 * q + 1]) * 0.5 }
+            func halfWidth(_ q: Int) -> Double {
+                let w = mesh.vertices[a + 2 * q] - mesh.vertices[a + 2 * q + 1]
+                return Double((w * w).sum().squareRoot()) / cs / 2
+            }
+            func length(_ p: Int, _ q: Int) -> Double {
+                let d = mid(q) - mid(p)
+                return Double((d.x * d.x + d.z * d.z).squareRoot()) / cs
+            }
+            for q in 1..<m {
+                XCTAssertLessThanOrEqual(abs(halfWidth(q) - halfWidth(q - 1)),
+                                         WaterRender.ribbonMaxHalfWidthSlope * length(q - 1, q) * 1.1 + 0.02,
+                                         "Band \(si): Breitensprung zwischen Stützpunkt \(q - 1) und \(q)")
+            }
+            for order in [Array((0..<m).reversed()), Array(0..<m)] {
+                let e = mid(order[0])
+                let ci = min(max(Int(((Double(e.x) + half) / cs).rounded()), 0), n - 1)
+                let cj = min(max(Int(((Double(e.z) + half) / cs).rounded()), 0), n - 1)
+                var wet = false
+                for dj in -2...2 { for di in -2...2 {
+                    let ni = ci + di, nj = cj + dj
+                    guard ni >= 0, nj >= 0, ni < n, nj < n else { continue }
+                    let k = nj * n + ni
+                    if terrain.h[k] <= terrain.cfg.sea
+                        || terrain.waterLevel[k] - terrain.h[k] > WaterRender.pondContourLo { wet = true }
+                }}
+                if wet { continue }   // Mündung: die Übergabe regelt die Wassersäule
+                landEnds += 1
+                var dist = 0.0
+                for idx in 1..<order.count {
+                    dist += length(order[idx - 1], order[idx])
+                    guard mesh.colors[a + 2 * order[idx]].w >= 0.5 else { continue }
+                    XCTAssertGreaterThanOrEqual(dist, halfWidth(order[idx]),
+                                                "Band \(si) endet stumpf: Deckkraft 0,5 liegt \(dist) Zellen vor dem Ende, Halbbreite \(halfWidth(order[idx]))")
+                    break
+                }
+            }
+        }
+        XCTAssertGreaterThan(landEnds, 0, "Testwelt hat keine Band-Enden an Land")
+    }
+
     func testBeltRenderLeavesThePhysicsUntouched() {
         let terrain = agedWorld(renderConfig(n: 96), years: 2000)
         let before = terrain.fingerprint()
