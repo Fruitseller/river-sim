@@ -414,11 +414,14 @@ Tasten-Presets im Spiel (`CAMERA_PRESETS` in `game/scripts/Main.gd`). Die
 Matrix hält Ziel, Distanz und Yaw je Seed FEST (reproduzierbare Abnahmebilder),
 die Tasten rechnen sie beim Drücken aus der laufenden Welt:
 
-- **Diorama (F1):** Ziel = Mitte der Bounding-Box der Landzellen, Distanz so,
-  dass die Landzellen das Bild in der knapperen Richtung zu 85 % füllen
-  (`Main.frame_land`, aus FOV und Seitenverhältnis); Yaw bleibt. Mit der
-  Insel ganz im Gitter (#175) war die feste Distanz 115 zu weit, die Insel
-  füllte rund ein Drittel des Bildes.
+- **Diorama (F1):** Kamera so, dass die Landzellen mittig im Bild liegen und
+  es in der knapperen Richtung zu 85 % füllen (`Main.frame_land`, geschlossen
+  aus FOV und Seitenverhältnis über die konvexe Hülle der Landzellen); Yaw
+  bleibt. Mit der Insel ganz im Gitter (#175) war die feste Distanz 115 zu
+  weit, die Insel
+  füllte rund ein Drittel des Bildes. Die erste adaptive Fassung zielte auf
+  die Mitte der Land-Box; in Schrägsicht projiziert die nahe Kante größer, die
+  Insel saß unten und füllte nur ~60 % der Höhe (Seed 42, maximiert).
 - **Tal (F2) / Nah (F3):** größter Lauf auf dem D8-Netz (`flowArea`,
   `receivers`), Ziel 12 bzw. 4 Welteinheiten oberhalb seiner Küstenmündung,
   Kamera auf der Meerseite mit Blick talaufwärts (`Main.river_view`); verdeckt

@@ -190,7 +190,8 @@ func _check_camera_presets() -> void:
 	var n: int = main.N
 	# Rahmen-Rechnung an einer bekannten Form: ein Landquadrat der halben
 	# Kartenbreite, Draufsicht. Zielt auf seine Mitte und braucht für die
-	# halbe Füllung doppelt so viel Abstand wie für die volle.
+	# halbe Füllung doppelt so viel Abstand wie für die volle. Die Mittigkeit
+	# in Schrägsicht misst _check_diorama_fill an der echten Welt.
 	var sq := PackedFloat32Array()
 	sq.resize(101 * 101)
 	for j in 101:
@@ -198,7 +199,7 @@ func _check_camera_presets() -> void:
 			sq[j * 101 + i] = 0.5 if (i >= 25 and i <= 75 and j >= 25 and j <= 75) else 0.0
 	var full := Main.frame_land(sq, 101, 0.1, 100.0, 0.0, PI * 0.5 - 1e-4, 60.0, 1.0, 1.0)
 	var half_fill := Main.frame_land(sq, 101, 0.1, 100.0, 0.0, PI * 0.5 - 1e-4, 60.0, 1.0, 0.5)
-	_check(not full.is_empty() and Vector2(full["target"].x, full["target"].z).length() < 1e-3,
+	_check(not full.is_empty() and Vector2(full["target"].x, full["target"].z).length() < 0.01,
 		"Rahmen zielt auf die Mitte der Land-Box")
 	if not full.is_empty():
 		# Kante 25 Einheiten von der Mitte, halber FOV 30° → d = 25 / tan 30°
@@ -284,7 +285,8 @@ func _check_camera_presets() -> void:
 ## Zoom-Deckel hängt), alle liegen vor der Kamera und im Bild.
 func _check_diorama_fill(p: Dictionary, h: PackedFloat32Array, n: int) -> void:
 	var vp: Vector2 = main.get_viewport().get_visible_rect().size
-	var reach := 0.0
+	var lo := Vector2(INF, INF) # Bildkoordinaten −1…1, y nach unten
+	var hi := Vector2(-INF, -INF)
 	var behind := 0
 	for j in range(0, n, 4):
 		for i in range(0, n, 4):
@@ -295,14 +297,20 @@ func _check_diorama_fill(p: Dictionary, h: PackedFloat32Array, n: int) -> void:
 				behind += 1
 				continue
 			var s: Vector2 = main.cam.unproject_position(w) / vp * 2.0 - Vector2.ONE
-			reach = maxf(reach, maxf(absf(s.x), absf(s.y)))
+			lo = Vector2(minf(lo.x, s.x), minf(lo.y, s.y))
+			hi = Vector2(maxf(hi.x, s.x), maxf(hi.y, s.y))
+	var reach := maxf(maxf(-lo.x, hi.x), maxf(-lo.y, hi.y))
 	var capped: bool = is_equal_approx(main.cam_dist, Main.CAM_DIST_MIN) \
 		or is_equal_approx(main.cam_dist, main.world_size * 4.0)
 	_check(behind == 0, "Diorama: alles Land vor der Kamera (%d dahinter)" % behind)
 	_check(absf(reach - p["fill"]) < 0.02 or (capped and reach < 1.0),
 		"Diorama: Land füllt das Bild zu %.2f (Soll %.2f, dist %.1f)" % [reach, p["fill"], main.cam_dist])
-	print("UI_CAMERA_PRESET diorama dist %.1f fill %.3f target (%.1f, %.1f)"
-		% [main.cam_dist, reach, main.cam_target.x, main.cam_target.z])
+	# Mittig: in Schrägsicht ist die nahe Kante größer als die ferne, ein Ziel
+	# auf der Mitte der Land-Box ließ die Insel unten sitzen (Folgebefund #176).
+	_check(absf(lo.x + hi.x) < 0.05 and absf(lo.y + hi.y) < 0.05,
+		"Diorama: Land mittig im Bild (x %.2f…%.2f, y %.2f…%.2f)" % [lo.x, hi.x, lo.y, hi.y])
+	print("UI_CAMERA_PRESET diorama dist %.1f fill %.3f x %.2f…%.2f y %.2f…%.2f target (%.1f, %.1f)"
+		% [main.cam_dist, reach, lo.x, hi.x, lo.y, hi.y, main.cam_target.x, main.cam_target.z])
 
 func _check_brush_dome() -> void:
 	# Landzelle nahe der Mitte als Zentrum.
