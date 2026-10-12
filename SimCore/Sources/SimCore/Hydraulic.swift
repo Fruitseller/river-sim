@@ -42,6 +42,23 @@ public struct HydraulicParams: Sendable, Codable, Equatable {
                                          // (150k J.: relief 1.22, maxH 1.37). 0.15/0.10 sind
                                          // messgleich, 0.15 hält Abstand zu dieser Kante.
     public init() {}
+
+    /// Prüft, ob alle Fließkomma-Parameter endlich sind.
+    public var isFinite: Bool {
+        inertia.isFinite &&
+        capacity.isFinite &&
+        minSlope.isFinite &&
+        erodeRate.isFinite &&
+        depositRate.isFinite &&
+        evaporate.isFinite &&
+        gravity.isFinite &&
+        initialWater.isFinite &&
+        initialSpeed.isFinite &&
+        streamEvapDamp.isFinite &&
+        poolDepth.isFinite &&
+        poolSedimentKeep.isFinite &&
+        channelDepositDamp.isFinite
+    }
 }
 
 public enum Hydraulic {
@@ -180,6 +197,9 @@ public enum Hydraulic {
     ///   Generierung (`Terrain.spinUpStreamMap`). Er behält damit exakt seine
     ///   kalibrierte Realisierung: die erzeugte Welt hängt an dieser Charge, und
     ///   sie hat kein dt-Problem, das zu beheben wäre.
+    ///
+    /// Nicht-endliche Skalare (`floor`, `seaLevel`) oder Parameter (`p`) verwerfen
+    /// die Charge defensiv als No-op.
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
                               n: Int, count: Int, seed: UInt32, floor: Double,
                               p: HydraulicParams,
@@ -192,7 +212,8 @@ public enum Hydraulic {
                              flowWeight: [Double] = [],
                              erodibility: [Double] = [],
                              track: inout [Double]) {
-        guard count > 0, n > 2,
+        guard count > 0, n > 2, floor.isFinite, p.isFinite,
+              seaLevel?.isFinite ?? true,
               h.count == n * n,
               rock.count == n * n,
               sed.count == n * n else { return }
@@ -331,6 +352,7 @@ public enum Hydraulic {
             var speed = p.initialSpeed, water = p.initialWater, sediment = 0.0
 
             for step in 0..<p.maxSteps {
+                guard px.isFinite, py.isFinite else { break }
                 let nodeX = Int(px), nodeY = Int(py)
                 if nodeX < 0 || nodeX >= n - 1 || nodeY < 0 || nodeY >= n - 1 { break }
                 let fx = px - Double(nodeX), fy = py - Double(nodeY)
@@ -375,10 +397,12 @@ public enum Hydraulic {
                 dirX = dirX * p.inertia - gradX * (1 - p.inertia)
                 dirY = dirY * p.inertia - gradY * (1 - p.inertia)
                 let len = (dirX * dirX + dirY * dirY).squareRoot()
-                if len < 1e-9 { break } // flach & richtungslos → Tropfen endet
+                guard len.isFinite, len >= 1e-9 else { break } // flach, richtungslos oder nicht-endlich → Tropfen endet
                 dirX /= len; dirY /= len
                 let npx = px + dirX, npy = py + dirY
-                if npx < 0 || npx >= Double(n - 1) || npy < 0 || npy >= Double(n - 1) { break }
+                guard npx.isFinite, npy.isFinite,
+                      npx >= 0, npx < Double(n - 1),
+                      npy >= 0, npy < Double(n - 1) else { break }
 
                 // Höhendifferenz zum neuen Punkt.
                 let nnx = Int(npx), nny = Int(npy)
