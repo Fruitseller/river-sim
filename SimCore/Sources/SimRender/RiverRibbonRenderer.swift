@@ -406,14 +406,18 @@ public final class RiverRibbonRenderer {
             }
             let total = arc[hi]
 
-            // Stützpunkte des Laufs (Quellen-Taper über ~4 Zellen). Wo die
-            // Zentrumslinie unter Wasser liegt — geflutete Senke, Mündung —
-            // liegt das Band FLACH auf dem Spiegel und blendet mit der
-            // Wassersäule aus (`lakeHandoverFade`).
+            // Stützpunkte des Laufs (Quellen-Taper über ~4 Zellen, bei einem
+            // breit beginnenden Lauf über `ribbonLandTaperHalfWidths`
+            // Halbbreiten). Wo die Zentrumslinie unter Wasser liegt —
+            // geflutete Senke, Mündung — liegt das Band FLACH auf dem Spiegel
+            // und blendet mit der Wassersäule aus (`lakeHandoverFade`).
             var samples: [RibbonSample] = []
             samples.reserveCapacity(hi - lo + 1 + WaterRender.mouthSearchCells)
+            let sourceTaperCells = max(WaterRender.ribbonSourceTaperCells,
+                                       WaterRender.ribbonLandTaperHalfWidths
+                                       * ribbonHalfWidthCells(pq[lo], cfg: terrain.cfg))
             for a in lo...hi {
-                let taper = clamp01(arc[a] / (WaterRender.ribbonSourceTaperCells * cs))
+                let taper = clamp01(arc[a] / (sourceTaperCells * cs))
                 samples.append(RibbonSample(x: px[a], z: pz[a],
                                             halfWidth: ribbonHalfWidthCells(pq[a], cfg: terrain.cfg) * taper,
                                             alpha: alpha[a] * taper,
@@ -429,10 +433,15 @@ public final class RiverRibbonRenderer {
             // die Ausblendung verhindert eine zweite Wasserfläche über dem See.
             let mouth = mouthPath(terrain, fromX: px[hi], fromZ: pz[hi])
             if mouth.isEmpty {
-                // Kein Wasser in Reichweite: der Lauf versickert im Land — dort
-                // bleibt der weiche Enden-Taper von #31 richtig.
+                // Kein Wasser in Reichweite: der Lauf versickert im Land oder
+                // endet vor einer Steilstrecke, die das Raster weitermalt —
+                // dort läuft das Band spitz aus (Länge wie an der Quelle nach
+                // der Halbbreite, sonst endete ein breiter Lauf stumpf).
+                let tailTaperCells = max(WaterRender.ribbonTailTaperCells,
+                                         WaterRender.ribbonLandTaperHalfWidths
+                                         * ribbonHalfWidthCells(pq[hi], cfg: terrain.cfg))
                 for a in samples.indices {
-                    let t = clamp01((total - arc[lo + a]) / (WaterRender.ribbonTailTaperCells * cs))
+                    let t = clamp01((total - arc[lo + a]) / (tailTaperCells * cs))
                     samples[a].halfWidth *= t
                     samples[a].alpha *= t
                 }
@@ -640,6 +649,30 @@ public final class RiverRibbonRenderer {
             let dz = (samples[a].z - samples[a - 1].z) * cs
             arc[a] = arc[a - 1] + (dx * dx + dz * dz).squareRoot()
         }
+        // Gemalte Halbbreite je Stützpunkt (Zellen): Breite am Krümmungsradius
+        // deckeln, sonst falten sich die Quads an engen Schlingen zu
+        // Dreiecks-Fächern (s. WaterRender.ribbonCurvatureWidthFactor). Danach
+        // die Änderung je Bogenlänge begrenzen, nur nach unten
+        // (`ribbonMaxHalfWidthSlope`): sonst wechselten gedeckelte Knick- und
+        // ungedeckelte Mittelpunkte der Mündungs-Kette ab, und das Band zerfiel
+        // in versetzte Blöcke.
+        var halfWidthCells = [Double](repeating: 0, count: samples.count)
+        for a in 0..<samples.count {
+            let maxRadius = RiverRibbonRenderer.curvatureRadiusCells(
+                                samples[max(0, a - 1)], samples[a],
+                                samples[min(samples.count - 1, a + 1)])
+                            * WaterRender.ribbonCurvatureWidthFactor
+            halfWidthCells[a] = min(maxRadius, max(0, samples[a].halfWidth))
+        }
+        let widthSlope = WaterRender.ribbonMaxHalfWidthSlope
+        for a in 1..<samples.count {
+            let len = (arc[a] - arc[a - 1]) / cs
+            halfWidthCells[a] = min(halfWidthCells[a], halfWidthCells[a - 1] + widthSlope * len)
+        }
+        for a in stride(from: samples.count - 2, through: 0, by: -1) {
+            let len = (arc[a + 1] - arc[a]) / cs
+            halfWidthCells[a] = min(halfWidthCells[a], halfWidthCells[a + 1] + widthSlope * len)
+        }
         let base = mesh.vertices.count
         mesh.stripStarts.append(Int32(base))
         // Vorgänger-Stützpunkt für den Deckungs-Stempel: gestempelt wird das
@@ -672,13 +705,7 @@ public final class RiverRibbonRenderer {
                 tl = (tx * tx + tz * tz).squareRoot()
             }
             if tl > 1e-6 { tx /= tl; tz /= tl } else { tx = 1; tz = 0 }
-            // Breite am Krümmungsradius deckeln, sonst falten sich die Quads
-            // an engen Schlingen zu Dreiecks-Fächern
-            // (s. WaterRender.ribbonCurvatureWidthFactor).
-            let maxRadius = RiverRibbonRenderer.curvatureRadiusCells(
-                                samples[a0], samples[a], samples[a1])
-                            * WaterRender.ribbonCurvatureWidthFactor
-            let hwCells = min(maxRadius, max(0, s.halfWidth))
+            let hwCells = halfWidthCells[a]
             let hw = hwCells * cs
             let wx = s.x * cs - half, wz = s.z * cs - half
             let perpx = -tz * hw, perpz = tx * hw
