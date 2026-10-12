@@ -667,6 +667,55 @@ Das zweite Fenster (bis Jahr 100.000) läuft nur im Diagnostic (je Seed
 | 48 Laufzeit ≤ +15 % | +4,5 % gegen `origin/main` |
 | 49 Determinismus | `--hash` zweimal gleich |
 
+## Bildprüfung und Frame-Zeiten auf dem Referenz-Mac (Abnahmepunkte 47, Bildpunkte)
+
+Gemessen auf dem Integrationsstand aller Pakete (Draft #180: A, B mit
+Kalibrierung, C Teil 1 und 2, D, E samt Review-Fixes), lokal gebaut auf dem
+M4-Max-Referenz-Mac (MacBook Pro, Display 3456×2234, maximiertes Fenster
+3456×2104), Steam-Godot 4.7.2, `scripts/graphics-matrix.sh` (Flusstal-Bühne,
+Variante `baseline`). Lokaler Extension-Build und Messung auf ausdrückliche
+Freigabe des Projekteigners (AGENTS.md verbietet Agenten den lokalen Build
+sonst, s. dort).
+
+### Punkt 47: Frame-Zeiten (`balanced`, maximiert)
+
+`RS_MATRIX_CAMERA=<cam> scripts/graphics-matrix.sh baseline <out> timing`,
+3 Seeds × 3 Stadien (0 / 20.000 / 100.000 Jahre) je Kamera, Betrieb Standbild
+(`still`) und Kamerafahrt (`orbit`), 108 Läufe, alle Viewport (3456, 2104).
+Gemessen vor den Review-Fixes am Fels-Shader und den Bändern (die
+Shaderkosten der Fixes sind nicht nachgemessen).
+
+| Betrieb | Läufe | größtes Mittel | größtes p95 | größtes p99 | Frames > 33,3 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Standbild | 54 | 23,0 ms | 23,7 ms | 23,9 ms | 0 |
+| Kamerafahrt | 54 | 23,6 ms | 25,1 ms | 25,3 ms | 0 |
+| Zeitraffer (nicht Teil von 47) | 54 | 27,1 ms | 71,4 ms | 113,1 ms | 2208 |
+
+Größtes p95 je Kamera (Standbild / Fahrt): overview 17,0 / 17,8, detail 23,7 /
+23,0, grazing 23,7 / 25,1, diorama 14,6 / 14,5, valley 15,6 / 16,2, close
+16,4 / 17,6 ms. Punkt 47 erfüllt. Der Zeitraffer überschreitet das Budget an
+Upload-Frames (p95 bis 71 ms) — Befund, nicht Abnahmekriterium.
+
+### Vorher/Nachher-Bögen
+
+`docs/screenshots/zielbild-174/seed<S>_<J>.jpg`: je Seed und Stadium alle neun
+Matrix-Kameras, oben `main` (vor #174), unten der Integrationsstand.
+`presets_20k.jpg` / `presets_100k.jpg`: die drei Vorlagen-Ansichten über die
+Tasten-Presets F1 (Diorama, Vorlage C), F2 (Tal, Vorlage B), F3 (Nah,
+Vorlage A) auf allen drei Seeds (`RS_CAMERA`, adaptiv, maximiert).
+
+Die festen Matrix-Kameras (`detail`, `coast`, `snow`, …) sind für die Welten
+VOR der Großform aus Paket A gewählt und zeigen auf der neuen Welt teils andere
+Ausschnitte; für das Urteil über die Vorlagen sind die Preset-Bögen gedacht.
+
+Beim Durchsehen gefundene und behobene Befunde (je im zuständigen PR):
+Fels mit gleichmäßigem Liniennetz (D, #177), blockige Raster-Treppe unter dem
+Hauptlauf und rechtwinklige Bandenden an Kaskaden (C Teil 2, #181),
+Diorama-Rahmung und Tal-/Nah-Ziel (E, #176). Offen als Bildurteil: der große
+See wirkt bei flachem Blick milchig (Himmelsspiegelung der allgemeinen
+Wasser-Optik, nicht aus #174), Fels insgesamt eher hell und glatt gegenüber
+dem schroffen Fels der Vorlagen.
+
 ## Flüsse laufen bergauf (Befund im Zeitraffer, Jahr 230.000)
 
 Befund des Projekteigners (Seed 1337, um Jahr 230.000): „als würden manchmal
