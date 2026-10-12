@@ -862,7 +862,25 @@ Shaderkosten der Fixes sind nicht nachgemessen).
 
 Größtes p95 je Kamera (Standbild / Fahrt): overview 17,0 / 17,8, detail 23,7 /
 23,0, grazing 23,7 / 25,1, diorama 14,6 / 14,5, valley 15,6 / 16,2, close
-16,4 / 17,6 ms. Punkt 47 erfüllt. Der Zeitraffer überschreitet das Budget an
+16,4 / 17,6 ms. Punkt 47 erfüllt.
+
+**Nachmessung auf dem Endstand** (Integrationszweig mit allen Review-Fixes:
+Fels-Shader #177, Bänder #181, adaptive Presets #176; dieselben 162 Läufe,
+2026-10-12):
+
+| Betrieb | Läufe | größtes Mittel | größtes p95 | größtes p99 | Frames > 33,3 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Standbild | 54 | 27,9 ms | 30,0 ms | 30,2 ms | 0 |
+| Kamerafahrt | 54 | 27,4 ms | 30,2 ms | 30,6 ms | 0 |
+| Zeitraffer (nicht Teil von 47) | 54 | 33,1 ms | 79,0 ms | 92,0 ms | 2239 |
+
+Größtes p95 je Kamera (Standbild / Fahrt): overview 15,3 / 15,3, detail 26,6 /
+25,1, grazing 30,0 / 30,2, diorama 19,5 / 19,2, valley 17,0 / 17,1, close
+18,2 / 19,6 ms. Punkt 47 bleibt erfüllt, die Marge in der flachen
+Grazing-Kamera schrumpft aber auf ~3 ms: der neue Fels-Shader (bis 3 × 8
+Rausch-Abfragen je Felspixel) kostet dort rund 5 ms. Erster Hebel, falls das
+Budget enger wird: die Kluft-Richtungen mit kleinem Gewicht früher
+überspringen oder die Kluft-Auflösung mit der Distanz stärker ausblenden. Der Zeitraffer überschreitet das Budget an
 Upload-Frames (p95 bis 71 ms) — Befund, nicht Abnahmekriterium.
 
 ### Vorher/Nachher-Bögen
