@@ -254,6 +254,14 @@ func _check_camera_presets() -> void:
 		# draußen liegt nur Meer, kein geklemmtes Randgelände).
 		_check(main.cam_pitch < p["pitch"] + 0.3,
 			"Preset %s bleibt schräg (pitch %.2f)" % [p["id"], main.cam_pitch])
+		var blocked: float = main.sight_block(t, main.cam_yaw, p["pitch"], main.cam_dist)
+		if blocked >= 0.0: # Protokoll: wo die Sichtlinie bei Tabellen-Pitch anstößt
+			var cpp := cos(float(p["pitch"]))
+			var eye0: Vector3 = t + Vector3(sin(main.cam_yaw) * cpp, sin(float(p["pitch"])),
+				cos(main.cam_yaw) * cpp) * main.cam_dist
+			var hit: Vector3 = t.lerp(eye0, blocked)
+			print("UI_CAMERA_SIGHT %s blocked t %.2f at (%.1f, %.1f) ray %.2f ground %.2f target_y %.2f"
+				% [p["id"], blocked, hit.x, hit.z, hit.y, main._surface_y_at(hit), t.y])
 		print("UI_CAMERA_PRESET %s target (%.1f, %.1f) yaw %.2f pitch %.2f mouth (%.1f, %.1f)"
 			% [p["id"], t.x, t.z, main.cam_yaw, main.cam_pitch, mouth_pos.x, mouth_pos.y])
 	# Taste: F2 fährt „Tal" weich an; nach der Fahrt steht die Kamera dort.
