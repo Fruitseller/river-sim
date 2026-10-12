@@ -451,9 +451,8 @@ const JUMPS := [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
 ## über die Aue bis zum Horizont (B), Nah = Schrägsicht auf Hang, Fluss und
 ## Küste (A). Die Tasten-Presets sind ADAPTIV, einmal beim Drücken für die
 ## laufende Welt gerechnet (`camera_preset_view`):
-##  - Diorama (`fill`): Ziel = Mitte der Land-Bounding-Box, Distanz so, dass
-##    die Landzellen das Bild in der knapperen Richtung zu `fill` füllen
-##    (`frame_land`, aus FOV und Seitenverhältnis); Yaw bleibt.
+##  - Diorama (`fill`): Landzellen mittig im Bild, in der knapperen Richtung
+##    bis `fill` (`frame_land`, aus FOV und Seitenverhältnis); Yaw bleibt.
 ##  - Tal und Nah (`upstream`): Ziel = Zelle des größten Laufs, `upstream`
 ##    Welteinheiten oberhalb seiner Küstenmündung, Kamera auf der Meerseite
 ##    der Mündung mit Blick talaufwärts (`river_view`). Das Ziel ist damit
@@ -598,10 +597,11 @@ func _ready() -> void:
 				rs_camera = c
 		if rs_camera >= 0:
 			_apply_camera_preset(rs_camera, false)
-			# Das Diorama rahmt nach dem Seitenverhältnis; `--maximized` greift
-			# erst NACH _ready. Bis zur ersten Eingabe folgt das Preset deshalb
-			# jeder Größenänderung, RS_SHOT zeigt dann dasselbe wie F1–F3 im
-			# fertigen Fenster.
+			# Das Diorama rahmt nach dem Seitenverhältnis. Auf dem Referenz-Mac
+			# hat das Fenster mit `--maximized` schon in _ready die Endgröße
+			# (gemessen 3456×2104); greift das Maximieren auf einer anderen
+			# Plattform später, folgt das Preset bis zur ersten Eingabe jeder
+			# Größenänderung. RS_SHOT zeigt so dasselbe wie F1–F3.
 			get_viewport().size_changed.connect(func():
 				if rs_camera >= 0:
 					_apply_camera_preset(rs_camera, false))
@@ -1147,8 +1147,14 @@ func camera_preset_view(index: int) -> Dictionary:
 		var f := frame_land(h_cache, N, sea, world_size, cam_yaw, p["pitch"], cam.fov,
 			vp.x / maxf(vp.y, 1.0), p["fill"])
 		if not f.is_empty():
-			view["target"] = f["target"]
-			view["dist"] = clampf(f["dist"], CAM_DIST_MIN, world_size * 4.0)
+			# Drehpunkt auf die Fläche in der Bildmitte legen; Auge, Blickrichtung
+			# und Rahmen bleiben. Orbit und Zoom wirken dann auf das, was man sieht.
+			var cp := cos(float(p["pitch"]))
+			var back := Vector3(sin(cam_yaw) * cp, sin(float(p["pitch"])), cos(cam_yaw) * cp)
+			var eye: Vector3 = f["target"] + back * float(f["dist"])
+			var hit := _raycast_surface(eye, -back)
+			view["target"] = f["target"] if hit == Vector3.INF else hit
+			view["dist"] = clampf(eye.distance_to(view["target"]), CAM_DIST_MIN, world_size * 4.0)
 			return view
 	else:
 		var r := river_view(h_cache, sim.flowArea(), sim.receivers(), N, sea, world_size,
@@ -1187,18 +1193,31 @@ func sight_block(target: Vector3, yaw: float, pitch: float, dist: float) -> floa
 			return t
 	return -1.0
 
-## Diorama-Rahmen: Ziel = Mitte der Land-Bounding-Box (Höhe: mittlere
-## Landhöhe), Distanz = kleinste, bei der jede Landzelle (Raster `n/180`) in
-## Kamerarichtung `yaw`/`pitch` innerhalb `fill` der halben Bildbreite und
-## -höhe liegt. Je Punkt q (relativ zum Ziel) mit Kamera-Basis r, u, b
-## (rechts, oben, rückwärts) gilt |q·r| ≤ fill·tan(fov_h/2)·(d − q·b), analog
-## für u; d ist das Maximum der Untergrenzen. `fov_deg` ist vertikal (Godot
-## KEEP_HEIGHT), horizontal skaliert mit `aspect`. Leer ohne Land.
+## Diorama-Rahmen: Kamera mit Blickrichtung `yaw`/`pitch`, die die Landzellen
+## (Raster `n/180`) MITTIG zeigt und in der knapperen Bildrichtung genau bis
+## `fill` füllt. Bis zum Folgebefund zu #176 stand das Ziel auf der Mitte der
+## Land-Box: in Schrägsicht projiziert die nahe Kante größer als die ferne,
+## die Insel saß unten und füllte nur ~60 % der Höhe (unten 0,84, oben 0,38).
+## Rechnung je Bildrichtung in der Ebene (Querachse, Rückachse b), Punkte als
+## (x, y) = (p·u, p·b) bzw. (p·r, p·b), Auge (c, D), Kegel-Steigung k: ein
+## Punkt liegt in der Kante, wenn ±(x − c) ≤ k·(D − y), d. h. a±(k) =
+## max(±x + k·y) ≤ ±c + k·D. Beide Kanten knapp: D(k) = (a+ + a−)/(2k),
+## c(k) = (a+ − a−)/2. Die Richtung mit dem größeren D(k_voll) begrenzt; die
+## andere sucht per Bisektion das k mit D(k) = D und ist damit ebenfalls
+## mittig. a± laufen nur über die konvexe Hülle (`Geometry2D.convex_hull`).
+## k_voll = fill·tan(fov/2) (vertikal, Godot KEEP_HEIGHT), horizontal mal
+## `aspect`. Ziel (Orbit-Drehpunkt) ist der Punkt der Bildachse in der Tiefe
+## der Inselmitte, `dist` sein Abstand zum Auge. Leer ohne Land.
 static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: float,
 		yaw: float, pitch: float, fov_deg: float, aspect: float, fill: float) -> Dictionary:
 	var cell := world / float(n - 1)
 	var stride := maxi(1, n / 180)
-	var pts := PackedVector3Array()
+	var cp := cos(pitch)
+	var back := Vector3(sin(yaw) * cp, sin(pitch), cos(yaw) * cp)
+	var right := Vector3.UP.cross(back).normalized()
+	var up := back.cross(right)
+	var pu := PackedVector2Array()
+	var pr := PackedVector2Array()
 	var lo := Vector2(INF, INF)
 	var hi := Vector2(-INF, -INF)
 	var y_sum := 0.0
@@ -1208,24 +1227,49 @@ static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: f
 			if y <= sea_level:
 				continue
 			var p := Vector3(i * cell - world * 0.5, y * HSCALE, j * cell - world * 0.5)
-			pts.append(p)
+			pu.append(Vector2(p.dot(up), p.dot(back)))
+			pr.append(Vector2(p.dot(right), p.dot(back)))
 			lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.z))
 			hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.z))
 			y_sum += p.y
-	if pts.is_empty():
+	if pu.is_empty():
 		return {}
-	var target := Vector3((lo.x + hi.x) * 0.5, y_sum / pts.size(), (lo.y + hi.y) * 0.5)
-	var cp := cos(pitch)
-	var back := Vector3(sin(yaw) * cp, sin(pitch), cos(yaw) * cp)
-	var right := Vector3.UP.cross(back).normalized()
-	var up := back.cross(right)
-	var tan_v := tan(deg_to_rad(fov_deg) * 0.5) * fill
-	var tan_h := tan_v * aspect
-	var dist := 0.0
-	for p in pts:
-		var q := p - target
-		dist = maxf(dist, q.dot(back) + maxf(absf(q.dot(right)) / tan_h, absf(q.dot(up)) / tan_v))
-	return {"target": target, "dist": dist, "land_box": Rect2(lo, hi - lo)}
+	var hull_u := Geometry2D.convex_hull(pu)
+	var hull_r := Geometry2D.convex_hull(pr)
+	var k_v := tan(deg_to_rad(fov_deg) * 0.5) * fill
+	var k_h := k_v * aspect
+	var fit_u := _edge_fit(hull_u, k_v)
+	var fit_r := _edge_fit(hull_r, k_h)
+	var depth := maxf(fit_u.y, fit_r.y)
+	if fit_u.y < depth:
+		fit_u = _edge_fit_at(hull_u, depth, k_v)
+	else:
+		fit_r = _edge_fit_at(hull_r, depth, k_h)
+	var eye: Vector3 = up * fit_u.x + right * fit_r.x + back * depth
+	var center := Vector3((lo.x + hi.x) * 0.5, y_sum / pu.size(), (lo.y + hi.y) * 0.5)
+	var dist := (eye - center).dot(back)
+	return {"target": eye - back * dist, "dist": dist, "land_box": Rect2(lo, hi - lo)}
+
+## (c, D) der knappen Kanten mit Steigung k für Punkte (x, y), s. frame_land.
+static func _edge_fit(pts: PackedVector2Array, k: float) -> Vector2:
+	var a_pos := -INF
+	var a_neg := -INF
+	for q in pts:
+		a_pos = maxf(a_pos, q.x + k * q.y)
+		a_neg = maxf(a_neg, -q.x + k * q.y)
+	return Vector2((a_pos - a_neg) * 0.5, (a_pos + a_neg) / (2.0 * k))
+
+## (c, D) mit vorgegebener Tiefe D ≥ D(k_max): Bisektion über k, D(k) fällt in k.
+static func _edge_fit_at(pts: PackedVector2Array, depth: float, k_max: float) -> Vector2:
+	var k_lo := 0.0
+	var k_hi := k_max
+	for _i in 40:
+		var k := (k_lo + k_hi) * 0.5
+		if _edge_fit(pts, k).y > depth:
+			k_lo = k
+		else:
+			k_hi = k
+	return Vector2(_edge_fit(pts, k_hi).x, depth)
 
 ## Größter Lauf für Tal und Nah, auf dem D8-Netz (`flowArea`/`receivers`):
 ## Landzelle mit dem größten Einzugsgebiet, abwärts bis zur letzten Landzelle
