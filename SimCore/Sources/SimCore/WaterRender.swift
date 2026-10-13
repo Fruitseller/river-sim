@@ -427,6 +427,12 @@ public enum WaterRender {
     /// Ein-Zellen-Pfütze ließ die See-Übergabe sonst in EINEM halben
     /// Zellschritt von 0.69 auf 0.25 fallen (Seed 1337, Jahr 4000, macOS).
     public static let ribbonMaxAlphaStep = 0.35
+    /// Radius (Stützpunkte à ~0,5 Zellen) der Längs-Glättung der See-/Meer-
+    /// Übergabe (`RiverRibbonRenderer.erodeAndSmooth`): Minimum, dann Mittel
+    /// über ±1 Zelle. Eine Zentrumslinie, die an einer Uferlinie entlangläuft,
+    /// wechselte vorher je Stützpunkt zwischen nass und trocken, und die
+    /// Deckkraft sprang mit — Querstreifen im Band (Befund #174, Seed 1337).
+    public static let ribbonHandoverSmoothSamples = 2
     /// Normierung des Strahler-Rangs für den Farbkanal (`COLOR.b` des
     /// Vertex-Vertrags, gelesen von `water.gdshader` als `v_rank`): Rang/6, auf
     /// 1 geklemmt. Ändert sich der Divisor, verschiebt sich die Tiefenfarbe

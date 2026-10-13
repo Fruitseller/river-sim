@@ -523,6 +523,35 @@ public final class RiverRibbonRenderer {
         return mesh
     }
 
+    /// Längs-Filter für Werte, die eher zu FRÜH als zu spät abfallen sollen:
+    /// Minimum über ±`radius`, dann Kastenmittel. Aus einem Wechsel
+    /// hoch/tief/hoch von Stützpunkt zu Stützpunkt wird so eine stetige Senke
+    /// statt eines Streifenmusters. Ein Stützpunkt mit 0 bleibt 0: Minimum und
+    /// Kastenmittel sehen um ihn herum nur Nullen.
+    static func erodeAndSmooth(_ values: [Double], radius: Int) -> [Double] {
+        let cnt = values.count
+        guard cnt > 1, radius > 0 else { return values }
+        var eroded = values
+        for a in 0..<cnt {
+            var v = values[a]
+            for b in max(0, a - radius)...min(cnt - 1, a + radius) { v = min(v, values[b]) }
+            eroded[a] = v
+        }
+        return boxMean(eroded, radius: radius)
+    }
+
+    private static func boxMean(_ values: [Double], radius: Int) -> [Double] {
+        let cnt = values.count
+        var prefix = [Double](repeating: 0, count: cnt + 1)
+        for a in 0..<cnt { prefix[a + 1] = prefix[a] + values[a] }
+        var out = values
+        for a in 0..<cnt {
+            let aLo = max(0, a - radius), aHi = min(cnt, a + radius + 1)
+            out[a] = (prefix[aHi] - prefix[aLo]) / Double(aHi - aLo)
+        }
+        return out
+    }
+
     // MARK: Übergabe an die Raster-Wasserflächen
 
     /// Blendet die letzten `cells` Zellen eines Bands auf 0 aus — gemessen in
@@ -584,6 +613,7 @@ public final class RiverRibbonRenderer {
         let h = terrain.h, wl = terrain.waterLevel
         let sea = terrain.cfg.sea
         var submergedCells = 0.0
+        var fade = [Double](repeating: 1, count: samples.count)
         for a in samples.indices {
             let ci = min(max(Int(samples[a].x.rounded()), 0), n - 1)
             let cj = min(max(Int(samples[a].z.rounded()), 0), n - 1)
@@ -612,7 +642,7 @@ public final class RiverRibbonRenderer {
                 // CI-Runner: 3,5 Welt-Einheiten über dem Boden, Issue #61).
                 // Es entscheidet die EIGENE Zelle des Stützpunkts.
                 samples[a].surface = nil
-                samples[a].alpha *= RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
+                fade[a] = RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
                 continue
             }
             if a > 0 {
@@ -620,10 +650,17 @@ public final class RiverRibbonRenderer {
                 submergedCells += (dx * dx + dz * dz).squareRoot()
             }
             samples[a].surface = surface
-            samples[a].alpha *= surface <= sea
+            fade[a] = surface <= sea
                 ? RiverRibbonRenderer.seaHandoverFade(submergedCells: submergedCells)
                 : RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
         }
+        // Läuft die Zentrumslinie an einer Uferlinie ENTLANG, wechseln die
+        // Stützpunkte zwischen nass und trocken, und die Übergabe sprang je
+        // halbe Zelle zwischen voll und blass: helle und dunkle Querstreifen
+        // („Leitersprossen" am See, Befund #174). Die Übergabe darf nur
+        // stetig fallen und steigen — eine Senke statt eines Kamms.
+        fade = RiverRibbonRenderer.erodeAndSmooth(fade, radius: WaterRender.ribbonHandoverSmoothSamples)
+        for a in samples.indices { samples[a].alpha *= fade[a] }
         // Der Deckel der Deckkraft-Sprünge (`limitAlphaSteps`) läuft beim
         // Aufrufer NACH `fadeUphill`, damit er beide Blenden erfasst.
     }
@@ -743,7 +780,26 @@ public final class RiverRibbonRenderer {
             let hw = hwCells * cs
             let wx = s.x * cs - half, wz = s.z * cs - half
             let perpx = -tz * hw, perpz = tx * hw
-            let yLeft: Float, yRight: Float
+            // Auf Land folgt jede Kante ihrer EIGENEN lokalen Höhe. Eine
+            // gemeinsame Zentrumslinien-Höhe schneidet das Band an
+            // Quergefällen ins Terrain (nur radiale Fragmente sichtbar).
+            // Aber nur bis zur maximalen QUER-Neigung um die Zentrums-Höhe
+            // (`WaterRender.ribbonMaxCrossSlope`): ist das Band breiter als
+            // die Schluchtsohle, liegt die Kante auf der WAND — ungeklemmt
+            // drapierte sich das Band die Wände hoch (große blaue Platten
+            // an Steilwänden). Die geklemmte Kante taucht in den Fels ein;
+            // sichtbar bleibt genau die Sohlenbreite.
+            let edgeGX = perpx / cs, edgeGZ = perpz / cs
+            let yCenter = renderSurfaceHeight(h, s.x, s.z, n: n,
+                                              renderGrid: renderGrid) * hscale
+            let crossTol = hw * WaterRender.ribbonMaxCrossSlope
+            let yL = renderSurfaceHeight(h, s.x - edgeGX, s.z - edgeGZ, n: n,
+                                         renderGrid: renderGrid) * hscale
+            let yR = renderSurfaceHeight(h, s.x + edgeGX, s.z + edgeGZ, n: n,
+                                         renderGrid: renderGrid) * hscale
+            let yMin = yCenter - crossTol, yMax = yCenter + crossTol
+            var yLeftD = min(yMax, max(yMin, yL)) + lift
+            var yRightD = min(yMax, max(yMin, yR)) + lift
             if let surface = s.surface {
                 // Auf Wasser liegt das Band FLACH auf dem Spiegel — beide Kanten
                 // auf derselben Höhe, sonst kippte es am Ufer aus der Fläche.
@@ -756,32 +812,30 @@ public final class RiverRibbonRenderer {
                 // statt als Fläche darauf. See: der Terrain-Shader hebt seine
                 // Fläche erst ab `geometryLiftLo`, im Apron liegt das Terrain
                 // also unter dem Spiegel; ein Hauch Abstand hält das Band frei.
+                //
+                // Nie aber UNTER die Land-Höhe: läuft die Zentrumslinie an
+                // einer Uferlinie entlang, wechseln ihre Stützpunkte zwischen
+                // nass und trocken. Im flachen Saum liegt der Spiegel unter
+                // Gelände + `lift`, das Band sprang je halbe Zelle zwischen
+                // beiden Höhen, und jede nasse Reihe tauchte unter das Gelände
+                // — Querstreifen („Leitersprossen", Befund #174: Seed 1337,
+                // Jahr 230.000, 0,42 Welt-Einheiten Sprung). Das Maximum ist
+                // stetig: auf tiefem Wasser gewinnt der Spiegel wie bisher,
+                // im Saum das Gelände.
+                // Ausnahme: Delta-Arme auf dem MEER. Sie liegen als Trübung
+                // unter der Meeres-Ebene; über dem flachen Schelf höbe das
+                // Gelände-Maximum sie als Strahlenfächer darüber.
                 let onSea = surface <= terrain.cfg.sea + 1e-9
-                let y = Float(surface * hscale + (onSea ? WaterRender.ribbonSeaSurfaceSink
-                                                        : WaterRender.ribbonLakeSurfaceLift))
-                yLeft = y; yRight = y
-            } else {
-                // Auf Land folgt jede Kante ihrer EIGENEN lokalen Höhe. Eine
-                // gemeinsame Zentrumslinien-Höhe schneidet das Band an
-                // Quergefällen ins Terrain (nur radiale Fragmente sichtbar).
-                // Aber nur bis zur maximalen QUER-Neigung um die Zentrums-Höhe
-                // (`WaterRender.ribbonMaxCrossSlope`): ist das Band breiter als
-                // die Schluchtsohle, liegt die Kante auf der WAND — ungeklemmt
-                // drapierte sich das Band die Wände hoch (große blaue Platten
-                // an Steilwänden). Die geklemmte Kante taucht in den Fels ein;
-                // sichtbar bleibt genau die Sohlenbreite.
-                let edgeGX = perpx / cs, edgeGZ = perpz / cs
-                let yCenter = renderSurfaceHeight(h, s.x, s.z, n: n,
-                                                  renderGrid: renderGrid) * hscale
-                let crossTol = hw * WaterRender.ribbonMaxCrossSlope
-                let yL = renderSurfaceHeight(h, s.x - edgeGX, s.z - edgeGZ, n: n,
-                                             renderGrid: renderGrid) * hscale
-                let yR = renderSurfaceHeight(h, s.x + edgeGX, s.z + edgeGZ, n: n,
-                                             renderGrid: renderGrid) * hscale
-                let yMin = yCenter - crossTol, yMax = yCenter + crossTol
-                yLeft = Float(min(yMax, max(yMin, yL)) + lift)
-                yRight = Float(min(yMax, max(yMin, yR)) + lift)
+                let y = surface * hscale + (onSea ? WaterRender.ribbonSeaSurfaceSink
+                                                  : WaterRender.ribbonLakeSurfaceLift)
+                if onSea && kind == WaterRender.ribbonKindDelta {
+                    yLeftD = y; yRightD = y
+                } else {
+                    yLeftD = max(yLeftD, y)
+                    yRightD = max(yRightD, y)
+                }
             }
+            let yLeft = Float(yLeftD), yRight = Float(yRightD)
             // Deckung dieses Bandstücks ins gemeinsame Feld: dieselbe Fläche,
             // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem
             // Alpha, mit dem sie wirklich malt. `WaterFieldRenderer` deckelt
