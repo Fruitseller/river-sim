@@ -78,14 +78,21 @@ final class WaterRendererTests: XCTestCase {
               bilinear(terrain.h, rightX, rightZ, n: terrain.cfg.n) * 24,
               centerHeight - crossTolerance),
             centerHeight + crossTolerance) + 0.35
-        let landError = max(
-          abs(Double(left.y) - expectedLeft),
-          abs(Double(right.y) - expectedRight))
-        let waterError = waterSurfaceError(
+        // JE KANTE Gelände oder Spiegel (Befund #174): ein Stützpunkt auf
+        // Wasser liegt nie unter seiner Land-Höhe (Maximum aus beiden, s.
+        // `emitRibbon`), im flachen Ufersaum trägt deshalb eine Kante das
+        // Gelände und die andere den Spiegel.
+        let leftWaterError = waterSurfaceError(
           terrain, gridX: centerX, gridZ: centerZ, renderedY: Double(left.y))
+        let rightWaterError = waterSurfaceError(
+          terrain, gridX: centerX, gridZ: centerZ, renderedY: Double(right.y))
         XCTAssertLessThanOrEqual(
-          min(landError, waterError), 0.002,
-          "Bandkante liegt weder auf Gelände noch Wasserspiegel")
+          min(abs(Double(left.y) - expectedLeft), leftWaterError), 0.002,
+          "Linke Bandkante liegt weder auf Gelände noch Wasserspiegel")
+        XCTAssertLessThanOrEqual(
+          min(abs(Double(right.y) - expectedRight), rightWaterError), 0.002,
+          "Rechte Bandkante liegt weder auf Gelände noch Wasserspiegel")
+        let waterError = min(leftWaterError, rightWaterError)
         if waterError <= 0.05 {
           previousLandAlpha = nil
         } else {
