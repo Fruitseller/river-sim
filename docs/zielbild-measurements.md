@@ -738,3 +738,50 @@ Fix 23 Kantenpaare bis 0,0275 über dem Spiegel stromauf sichtbar).
 Offen (Sim, Paket B): das Erben des Abflusses in `refreshBeltDischarge` lässt
 abgekoppelte Linien weiter wandern und ihre Rinne stempeln; der Fix
 versteckt nur das Band.
+
+### Ursache in der Sim: Versuche (nicht übernommen)
+
+Auftrag nach dem Render-Fix: das Erben des Abflusses in
+`refreshBeltDischarge` (#179) abstellen und abgekoppelte Linien nicht weiter
+wandern lassen. `testRibbonUphillDiagnostic` misst seitdem die ROHEN Bänder
+(`RiverRibbonRenderer.fadesUphill = false`) und den ausgeblendeten Anteil;
+`testBeltCouplingDistanceDiagnostic` den Abstand wandernder Knoten zum
+nächsten D8-Gerinne mit mindestens halbem Abfluss.
+
+**Befund: der kalibrierte Gürtel lebt von der Abkopplung.** Produktion, Seed
+1337, Jahr 20.000: nur 35 % der wandernden Knoten liegen höchstens 1,5 Zellen
+von ihrer Rinne, 58 % höchstens 6, 17 % weiter als 20 Zellen. Die Bögen, die
+die Punkte 9–13 erfüllen, sind zu einem großen Teil Linien, die neben der
+D8-Entwässerung mäandern und ihren Abfluss nur über das laufende Maximum
+tragen. Jede Regel, die das Erben wirklich stoppt, nimmt ihnen Abfluss und
+Mobilität:
+
+| Variante (Werte Seeds 1337 / 42 / 20, Fenster 10.000–20.000) | Sinuosität | sichtbare Altarme | rohe Anstiege > 30 m (1337 J20k / J230k, 42 J20k / J230k) |
+| --- | --- | --- | --- |
+| Produktion | 1,79 / 1,63 / 1,63 | 10,7 / 3,2 / 4,5 | 33 / 16, 10 / 8 |
+| Deckel: Abfluss ≤ größtes D8-Einzugsgebiet in 6 Zellen | 1,18 / 1,19 / 1,24, λ meist n. m. | 20,8 / 6,7 / 9,0 | 20 / 4, 4 / 5 |
+| Deckel 10 / 15 / 20 Zellen + Schwelle 3 | 1,30–2,33 je Seed, λ und Gürtel/Amplitude bis 26 von 26 n. m. | 1,2–12,2 | – |
+| Zuwachs zählt erst nach 2 Breiten Weiterführung + Bergauf-Bremse 3 | 1,20 / 1,52 / 1,43 | 1,7 / 1,3 / 1,2 | – |
+| Zuwachs nach 1 Breite | – | – | 19 / 7, 2 / 6 |
+| Bergauf-Bremse 3 Bankfull-Tiefen allein | 1,70 / 1,81 / **1,40** | 5,8 / **1,7** / **2,7** | 20 / 10, 7 / 3 |
+| Bergauf-Bremse 6 allein | – | – | 18 / 14, 7 / 7 |
+| Bett-Schwellen bis 3 Tiefen schneiden allein | 1,76 / 1,83 / 1,64 | 6,7 / 3,0 / 5,7 | – |
+
+„–" = nicht gemessen. Keine Variante bringt die rohen Anstiege unter das
+Niveau, das der Render-Fade ohnehin abfängt (größter roher Anstieg weiter
+38–170 m), und jede, die das Erben stoppt, kippt die Punkte 9–13 (Sinuosität
+unter 1,5, sichtbare Altarme unter 3). Das Schwellen-Schneiden (der Stempel
+gräbt den Bezug auf den tiefsten Bezug stromauf, wenn der Anstieg höchstens
+3 Tiefen beträgt) koppelt am meisten an (Knoten ≤ 1,5 Zellen von der Rinne
+35 → 47 %, ≤ 6 Zellen 58 → 71 %) und hält die Kennzahlen am ehesten
+(verfehlt: λ 1337 im zweiten Fenster 7,4, Altarme 42 im zweiten Fenster 1,9,
+Asymmetrie 20 im ersten 1,77).
+
+Folgerung: die Ursache ist die fehlende Kopplung von Gürtel und
+D8-Entwässerung, nicht die Abfluss-Regel allein. Ein Sim-Fix braucht zuerst
+eine Rinne, der das D8-Netz folgt (Kandidat: Schwellen-Schneiden), danach
+eine Neukalibrierung von Paket B auf dem 24-Seed-Ensemble, und erst dann die
+Regel gegen das Erben. Bis dahin hält `fadeUphill` die Bänder vom Hang fern
+(Produktion, Seeds 1337 / 42, ausgeblendet von den rohen sichtbaren
+Stützpunkten: 19,7 / 19,2 % in Jahr 20.000, 46,0 / 12,6 % in Jahr 100.000,
+33,2 / 14,3 % in Jahr 230.000).

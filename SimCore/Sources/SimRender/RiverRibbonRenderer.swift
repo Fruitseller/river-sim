@@ -109,6 +109,9 @@ public final class RiverRibbonRenderer {
     /// (Begründung am Sampler in `RenderSupport.swift`). 0 = unbekannt =
     /// volle Auflösung (Headless-Wächter: bit-identisch zu `bilinearGrid`).
     public var renderGrid = 0
+    /// Mess-Schalter für `fadeUphill` (nur Diagnose: `RiverUphill.swift`
+    /// misst die Rohhöhen der Bänder ohne das Sicherheitsnetz).
+    var fadesUphill = true
 
     /// Stützpunkt eines Wasser-Bands in GITTER-Koordinaten (kontinuierlich).
     /// Fluss, Delta-Arm und Altarm teilen sich diese Form — sie unterscheiden
@@ -482,7 +485,7 @@ public final class RiverRibbonRenderer {
             // Meer-Regel braucht die Strecke SEIT der Uferlinie, also die
             // Reihenfolge der Stützpunkte).
             applyWaterHandover(&samples, terrain)
-            fadeUphill(&samples, terrain)
+            if fadesUphill { fadeUphill(&samples, terrain) }
             RiverRibbonRenderer.limitAlphaSteps(&samples)
             emitRibbon(samples, terrain, kind: WaterRender.ribbonKindRiver, still: false,
                        hscale: hscale, lift: lift)
