@@ -447,6 +447,35 @@ public enum WaterRender {
     /// RS_TARGET="-40,-20") und blieb ruhig — Bänder bei Jahr 0: 229 → 434.
     public static let ribbonMinimumRank = 0.48
 
+    /// Wasser fließt nicht bergauf (Issue #174, Befund im Zeitraffer um Jahr
+    /// 230.000: „als würden die Flüsse hochfließen, während sie einen Bogen
+    /// bilden"). Ein Land-Band liegt auf dem Gelände unter seiner
+    /// Zentrumslinie, und nichts hält dieses Gelände stromab fallend: die
+    /// Lagrange-Linie ist nicht an die D8-Entwässerung gebunden. Seit dem
+    /// Mäandergürtel (#174 B) trägt sie zudem den Abfluss als laufendes
+    /// Maximum, eine abgekoppelte Linie bleibt damit breit und sichtbar.
+    /// Liegt das Gelände unter dem Band um mehr als `ribbonUphillFadeStart`
+    /// (Sim-Höhe) über dem tiefsten Punkt stromauf, blendet das Band aus, voll
+    /// ab `ribbonUphillFadeEnd`; dort malt das Raster das echte D8-Wasser
+    /// (`bandCoverage`). Die Höhen bleiben unangetastet (Vertrag
+    /// `river_ribbons.gd`: jede Kante auf ihrem Gelände).
+    /// 0,004 ≈ 10 m bei 1 Sim-Höhe ≈ 2,4 km, rund zwei Bankfull-Tiefen des
+    /// Hauptlaufs (`SimConfig.meanderBeltDepthPerWidth`): Kolke und Schwellen
+    /// des Gürtel-Stempels bleiben sichtbar, der Bogen, der eine Talwand oder
+    /// einen Hügel hinaufläuft, nicht.
+    /// GEMESSEN: `docs/zielbild-measurements.md` § Flüsse laufen bergauf.
+    public static let ribbonUphillFadeStart = 0.004
+    /// s. `ribbonUphillFadeStart` (≈ 19 m).
+    public static let ribbonUphillFadeEnd = 0.008
+
+    /// Deckkraft-Faktor eines Band-Stützpunkts, dessen Gelände `rise`
+    /// (Sim-Höhe) über dem tiefsten Punkt stromauf liegt: 1 bis
+    /// `ribbonUphillFadeStart`, 0 ab `ribbonUphillFadeEnd`.
+    @inline(__always)
+    public static func ribbonUphillFade(rise: Double) -> Double {
+        1 - smoothstep(ribbonUphillFadeStart, ribbonUphillFadeEnd, rise)
+    }
+
     /// Kaskaden-Übergabe Band → Raster (Aug 2026): ein Band ist ein ruhender
     /// Wasserspiegel — an Kaskaden gibt es keinen. Ab dieser LÄNGS-Neigung
     /// (Sim-Höhe je Welt-Einheit; × heightScale 24 ≈ 26° sichtbare Neigung)

@@ -666,3 +666,75 @@ Das zweite Fenster (bis Jahr 100.000) läuft nur im Diagnostic (je Seed
 | 18 Braid-/Playa-Wächter | grün (alte Welt, `calibrationMeanderBelt`) |
 | 48 Laufzeit ≤ +15 % | +4,5 % gegen `origin/main` |
 | 49 Determinismus | `--hash` zweimal gleich |
+
+## Flüsse laufen bergauf (Befund im Zeitraffer, Jahr 230.000)
+
+Befund des Projekteigners (Seed 1337, um Jahr 230.000): „als würden manchmal
+die Flüsse hochfließen, während sie so einen schönen Bogen bilden".
+Werkzeug: `RiverUphill.swift` (`RibbonUphill.measure` am fertigen
+`RibbonMesh`), alle hinter `RS_MEASURE`:
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testRibbonUphillDiagnostic
+```
+
+`testRibbonUphillMapDiagnostic` (Karte als PPM, `RS_CROP`, Längsprofil eines
+Laufs mit `RS_CHANNEL`, Welt-Cache `RS_CACHE`) und
+`testRibbonUphillHistoryDiagnostic` (Läufe an ihrem festen Quellknoten über
+die Zeit) für die Ursache. Gemessen wird die Höhe, auf die der Renderer das
+Band legt (Spiegel über Wasser, sonst Gelände unter der Mitte), gegen das
+laufende Minimum stromauf; ein Anstieg zählt, wo er auf sichtbaren
+Stützpunkten (Deckkraft ≥ 0,25) liegt. Welt: Produktion mit Einlauf,
+1000-Jahr-Schritte, M4 Max.
+
+### Ursache
+
+Das Band liegt auf dem Gelände unter der Lagrange-Zentrumslinie, und nichts
+hält dieses Gelände stromab fallend: die Linie ist nicht an die
+D8-Entwässerung gebunden. Das gilt seit den Bändern (#34) und auch auf
+`origin/main` (vor #174). Der Gürtel (#174 B, `be90e77`) macht es häufig:
+`refreshBeltDischarge` nimmt das größte Einzugsgebiet im 3×3 und trägt es als
+laufendes Maximum stromab. Berührt eine Linie einen größeren Fluss, erbt sie
+dessen Abfluss für den Rest ihres Laufs, auch wenn sie ihn wieder verlässt.
+Beispiel Seed 1337: ein Zubringer mit festem Kopf bei Zelle (138, 336) trägt
+210.000 Jahre lang 9–90 Zellen Abfluss; in Jahr 220.000 erreicht der
+Hauptlauf seinen Kopf, die ganze Linie bekommt 10.072 Zellen, wird mobil
+(`meanderBeltMinCells`) und wächst in 10.000 Jahren von 48 auf 105 Knoten,
+83 % davon ohne ein Viertel ihres Abflusses im D8-Netz darunter, Gelände vom
+Kopf zum Ende 0,182 → 0,203 (≈ 50 m bergauf). Das Abfluss-Vertrauen von
+#174 C2 (`ac5a85b`, `ribbonTrust`) hält solche Läufe unabhängig von der
+Stream-Map sichtbar.
+
+Anstiege über 30 m auf sichtbaren Band-Stützpunkten (je 1000 Stützpunkte):
+
+| Stand | 1337 J20.000 | 1337 J230.000 | 42 J20.000 | 42 J230.000 |
+| --- | --- | --- | --- | --- |
+| `origin/main` (alte Welt) | 10 (0,5) | 71 (4,6) | 2 (0,3) | 9 (2,8) |
+| #174 vor dem Fix | 33 (4,8), max 230 m | 16 (5,6), max 114 m | 10 (4,6), max 110 m | 8 (4,7), max 76 m |
+| #174 mit Fix | 0, max 16 m | 0, max 16 m | 0, max 16 m | 0, max 16 m |
+
+Vor dem Fix lagen in Jahr 230.000 57 % (1337) bzw. 51 % (42) der
+Anstiegs-Summe auf Stücken ohne D8-Lauf mit halbem Abfluss in 3 Zellen;
+38 % bzw. 28 % aller sichtbaren Stützpunkte hatten weniger als ein Viertel
+ihres Abflusses im D8-Netz darunter.
+
+### Fix
+
+`RiverRibbonRenderer.fadeUphill` (Render, die Sim bleibt bit-gleich): liegt
+das Gelände unter dem Band mehr als `WaterRender.ribbonUphillFadeStart`
+(0,004 ≈ 10 m) über dem tiefsten Punkt stromauf, blendet das Band aus, voll
+ab `ribbonUphillFadeEnd` (0,008 ≈ 19 m); dort malt das Raster das echte
+D8-Wasser über `bandCoverage`. Die Höhen bleiben, wie `river_ribbons.gd` sie
+verlangt. Sichtbare Band-Stützpunkte: 6879 → 5523 (1337 J20.000),
+2843 → 1900 (1337 J230.000), 2182 → 1763 / 1687 → 1446 (42). Hauptlauf
+(`testMainStemBandDiagnostic`, Jahr 20.000): Lücke unverändert 16,3 / 0 /
+12,2 % (1337 / 42 / 20), Band-Anteil 1337 67,1 → 66,1 %, Band-Zellen ohne
+D8-Lauf in 3 Zellen 2649 → 1540.
+
+Wächter: `RibbonUphillTests` (Kunstwelt mit Rücken quer zur Linie; vor dem
+Fix 23 Kantenpaare bis 0,0275 über dem Spiegel stromauf sichtbar).
+
+Offen (Sim, Paket B): das Erben des Abflusses in `refreshBeltDischarge` lässt
+abgekoppelte Linien weiter wandern und ihre Rinne stempeln; der Fix
+versteckt nur das Band.
