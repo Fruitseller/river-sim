@@ -496,9 +496,18 @@ const BRUSH_DOME_HEIGHT := 0.5   # Scheitelhöhe relativ zum Radius, rein visuel
 const BRUSH_DOME_LIFT := 0.08    # Abstand über der Fläche gegen Z-Fighting
 const BRUSH_DOME_RINGS := 5      # Breitenkreise, der äußerste ist der Rand
 const BRUSH_DOME_MERIDIANS := 12
-const BRUSH_DOME_SEGMENTS := 48  # Segmente je Breitenkreis
-const BRUSH_RIM_COLOR := Color(0.85, 0.97, 1.0, 0.95)
-const BRUSH_GRID_COLOR := Color(0.7, 0.92, 1.0, 0.5)
+## Segmente je Breitenkreis. 96 statt 48: der Rand liegt auf der Fläche, und
+## eine Sehne über 2πr/48 tauchte bei r = 10 alle ~8 Zellen ins Gelände.
+const BRUSH_DOME_SEGMENTS := 96
+## Aussehen (shaders/brush_dome.gdshaderinc): Linien als Bänder in logischen
+## Bildschirm-Pixeln, heller Kern in der Akzentfarbe des Glas-Themes, dunkler
+## Halo je Seite. Der Rand trägt, das Gitter zeigt nur die Wölbung.
+const BRUSH_RIM_COLOR := Color(0.85, 0.97, 1.0, 1.0)
+const BRUSH_RIM_WIDTH_PX := 3.0
+const BRUSH_RIM_HALO_PX := 1.5
+const BRUSH_GRID_COLOR := Color(0.78, 0.94, 1.0, 0.6)
+const BRUSH_GRID_WIDTH_PX := 1.5
+const BRUSH_GRID_HALO_PX := 0.75
 
 ## Gemeinsames Glas-Theme aller Bedienelemente (#174): Farben, Rahmen,
 ## Schriftgrößen und die Typ-Varianten (`TitleLabel`, `ToolButton`, …) stehen
@@ -550,6 +559,10 @@ func _ready() -> void:
 		var parts := OS.get_environment("RS_TARGET").split(",")
 		if parts.size() == 2:
 			cam_target = Vector3(float(parts[0]), 0.0, float(parts[1]))
+	# Pinselkuppel im Screenshot (RS_BRUSH=<Radius>, Welteinheiten wie der
+	# Regler): steht dann in der Bildmitte, auch unter RS_SHOT.
+	if OS.has_environment("RS_BRUSH"):
+		brush_radius = float(OS.get_environment("RS_BRUSH"))
 	if OS.has_environment("RS_YAW"):
 		cam_yaw = float(OS.get_environment("RS_YAW"))
 	if OS.has_environment("RS_PITCH"):
@@ -826,14 +839,20 @@ func _setup_scene() -> void:
 	cloud_mats.append_array(Lighting.cloud_body_materials(cloud_bodies))
 	Lighting.apply_clouds(cloud_mats, render_quality)
 
-	# Pinselkuppel: Linien in Vertex-Farben (Rand hell, Gitter gedämpft).
+	# Pinselkuppel: Bildschirm-Bänder (s. brush_dome.gdshaderinc). Erst der
+	# verdeckte Teil gedämpft ohne Tiefentest, darüber der sichtbare. Die
+	# Priorität legt beide hinter alle übrigen transparenten Flächen (Wasser,
+	# Meer, Wolken), sonst überdeckten die den gedämpften Teil.
 	brush_mi = MeshInstance3D.new()
 	brush_mi.mesh = brush_mesh
-	var bmat := StandardMaterial3D.new()
-	bmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	bmat.vertex_color_use_as_albedo = true
-	bmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	bmat.disable_receive_shadows = true
+	var bmat := ShaderMaterial.new()
+	bmat.shader = load("res://shaders/brush_dome_hidden.gdshader")
+	var bmat_visible := ShaderMaterial.new()
+	bmat_visible.shader = load("res://shaders/brush_dome.gdshader")
+	bmat.next_pass = bmat_visible
+	for m: ShaderMaterial in [bmat, bmat_visible]:
+		m.render_priority = Material.RENDER_PRIORITY_MAX
+		m.set_shader_parameter("px_scale", DisplayServer.screen_get_scale())
 	brush_mi.material_override = bmat
 	brush_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	brush_mi.visible = false
@@ -2146,11 +2165,15 @@ func _wake_render_loop() -> void:
 		RenderingServer.render_loop_enabled = true
 
 func _update_brush() -> void:
-	if OS.has_environment("RS_SHOT"): # autonome Screenshots: kein Pinsel
+	# Autonome Screenshots zeigen keinen Pinsel, außer RS_BRUSH verlangt ihn:
+	# dann steht die Kuppel in der Bildmitte statt am Mauszeiger.
+	var fixed := OS.has_environment("RS_BRUSH")
+	if OS.has_environment("RS_SHOT") and not fixed:
 		brush_mi.visible = false
 		return
 	if sculpting or year_rate == 0.0:
-		var hit := _raycast_terrain()
+		var hit := _raycast_at(get_viewport().get_visible_rect().size * 0.5) \
+			if fixed else _raycast_terrain()
 		if hit != Vector3.INF:
 			var tool: Dictionary = TOOLS[current_tool]
 			# Spitzhacke: die Kuppel zeigt die echte (gedeckelte) Hieb-Breite.
@@ -2160,13 +2183,10 @@ func _update_brush() -> void:
 			var key := [hit, r, power, surface_version]
 			if key != brush_key:
 				brush_key = key
-				var lines := brush_dome(hit, r, power)
-				var arrays := []
-				arrays.resize(Mesh.ARRAY_MAX)
-				arrays[Mesh.ARRAY_VERTEX] = lines[0]
-				arrays[Mesh.ARRAY_COLOR] = lines[1]
 				brush_mesh.clear_surfaces()
-				brush_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
+				brush_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES,
+					brush_bands(brush_dome(hit, r, power)), [], {},
+					Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
 			brush_mi.position = hit
 			brush_mi.visible = true
 			return
@@ -2179,22 +2199,29 @@ static func brush_weight(d: float, power: float) -> float:
 		return 0.0
 	return pow(1.0 - d * d, power)
 
-## Linienpaare der Gitterkuppel um `center` (PRIMITIVE_LINES, Koordinaten
-## relativ zu `center`) samt Vertex-Farben: BRUSH_DOME_RINGS Breitenkreise bei
-## d = k / RINGS (der äußerste ist der Rand) und BRUSH_DOME_MERIDIANS Meridiane
-## vom Rand zum Scheitel. Jeder Punkt liegt auf der sichtbaren Fläche plus
-## BRUSH_DOME_LIFT plus Profil r · BRUSH_DOME_HEIGHT · w(d).
+## Linienpaare der Gitterkuppel um `center` (Koordinaten relativ zu `center`)
+## samt Vertex-Farben und Breiten (Kern, Halo in px): BRUSH_DOME_RINGS
+## Breitenkreise bei d = k / RINGS (der äußerste ist der Rand) und
+## BRUSH_DOME_MERIDIANS Meridiane vom Rand zum Scheitel. Jeder Punkt liegt auf
+## der sichtbaren Fläche plus BRUSH_DOME_LIFT plus Profil
+## r · BRUSH_DOME_HEIGHT · w(d). Gezeichnet wird daraus `brush_bands`.
 func brush_dome(center: Vector3, radius: float, power: float) -> Array:
 	var verts := PackedVector3Array()
 	var colors := PackedColorArray()
+	var widths := PackedVector2Array()
+	var rim_w := Vector2(BRUSH_RIM_WIDTH_PX, BRUSH_RIM_HALO_PX)
+	var grid_w := Vector2(BRUSH_GRID_WIDTH_PX, BRUSH_GRID_HALO_PX)
 	for k in range(BRUSH_DOME_RINGS, 0, -1):  # erst der Rand: Punkt 0 liegt auf ihm
 		var d := float(k) / BRUSH_DOME_RINGS
-		var color := BRUSH_RIM_COLOR if k == BRUSH_DOME_RINGS else BRUSH_GRID_COLOR
+		var rim := k == BRUSH_DOME_RINGS
+		var color := BRUSH_RIM_COLOR if rim else BRUSH_GRID_COLOR
+		var w := rim_w if rim else grid_w
 		var prev := _dome_point(center, radius, power, d, 0.0)
 		for s in range(1, BRUSH_DOME_SEGMENTS + 1):
 			var p := _dome_point(center, radius, power, d, TAU * s / BRUSH_DOME_SEGMENTS)
 			verts.append_array([prev, p])
 			colors.append_array([color, color])
+			widths.append_array([w, w])
 			prev = p
 	var steps := BRUSH_DOME_RINGS * 2
 	for m in BRUSH_DOME_MERIDIANS:
@@ -2204,8 +2231,48 @@ func brush_dome(center: Vector3, radius: float, power: float) -> Array:
 			var p := _dome_point(center, radius, power, 1.0 - float(s) / steps, a)
 			verts.append_array([prev, p])
 			colors.append_array([BRUSH_GRID_COLOR, BRUSH_GRID_COLOR])
+			widths.append_array([grid_w, grid_w])
 			prev = p
-	return [verts, colors]
+	return [verts, colors, widths]
+
+## Mesh-Arrays (PRIMITIVE_TRIANGLES, CUSTOM0 als RGBA-Float) aus den
+## Linienpaaren von `brush_dome`: je Paar ein Band aus vier Ecken, das
+## shaders/brush_dome.gdshaderinc in Bildschirm-Pixeln aufspannt (Belegung der
+## Kanäle dort). Ecken 0/1 sitzen auf dem Anfang, 2/3 auf dem Ende; das Ende
+## sieht den Anfang als „anderen" Punkt, also dreht CUSTOM0.w seine Normale.
+static func brush_bands(lines: Array) -> Array:
+	var src: PackedVector3Array = lines[0]
+	var src_colors: PackedColorArray = lines[1]
+	var src_widths: PackedVector2Array = lines[2]
+	var verts := PackedVector3Array()
+	var other := PackedFloat32Array()
+	var colors := PackedColorArray()
+	var uv := PackedVector2Array()
+	var uv2 := PackedVector2Array()
+	var index := PackedInt32Array()
+	for i in range(0, src.size(), 2):
+		var a := src[i]
+		var b := src[i + 1]
+		var w := src_widths[i]
+		var base := verts.size()
+		verts.append_array([a, a, b, b])
+		other.append_array([b.x, b.y, b.z, 1.0, b.x, b.y, b.z, 1.0,
+			a.x, a.y, a.z, -1.0, a.x, a.y, a.z, -1.0])
+		colors.append_array([src_colors[i], src_colors[i], src_colors[i + 1], src_colors[i + 1]])
+		uv.append_array([Vector2(-1.0, w.x), Vector2(1.0, w.x),
+			Vector2(-1.0, w.x), Vector2(1.0, w.x)])
+		var halo := Vector2(w.y, 0.0)
+		uv2.append_array([halo, halo, halo, halo])
+		index.append_array([base, base + 1, base + 2, base + 2, base + 1, base + 3])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_CUSTOM0] = other
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	arrays[Mesh.ARRAY_TEX_UV2] = uv2
+	arrays[Mesh.ARRAY_INDEX] = index
+	return arrays
 
 func _dome_point(center: Vector3, radius: float, power: float, d: float, a: float) -> Vector3:
 	var x := center.x + cos(a) * d * radius
@@ -2215,8 +2282,11 @@ func _dome_point(center: Vector3, radius: float, power: float, d: float, a: floa
 	return Vector3(x, y, z) - center
 
 func _raycast_terrain() -> Vector3:
-	var mpos := get_viewport().get_mouse_position()
-	return _raycast_surface(cam.project_ray_origin(mpos), cam.project_ray_normal(mpos))
+	return _raycast_at(get_viewport().get_mouse_position())
+
+## Treffer der sichtbaren Fläche unter einem Bildschirmpunkt.
+func _raycast_at(screen_pos: Vector2) -> Vector3:
+	return _raycast_surface(cam.project_ray_origin(screen_pos), cam.project_ray_normal(screen_pos))
 
 ## Heightfield-Raymarch gegen die SICHTBARE Fläche (Sim-Höhe plus
 ## Render-Verschiebung, #153): Pinselkuppel und Strich-Beginn liegen auf dem, was
