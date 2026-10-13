@@ -59,6 +59,17 @@ var river_ribbons := true
 var river_mi: MeshInstance3D
 var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
+# Zeitraffer-Überblende der Bänder (#174): der vorige Band-Bau bleibt als
+# zweites Mesh stehen und löst sich über `ribbon_fade` in den neuen auf, statt
+# im Takt der Band-Bauten (~1 s) zu springen; Pixel-Aufteilung statt
+# Alpha-Mischung, Begründung in water.gdshader (`ribbon_blend`). Die Dauer ist
+# der Band-Deckel selbst (RenderState.ribbonRebuildSeconds): im Zeitraffer
+# liegen zwei Bauten nie dichter, die Blende endet also immer vor dem nächsten
+# Bau, und kein halb aufgelöster Stand wird verworfen.
+const RIBBON_FADE_SECONDS := 1.0
+var river_prev_mi: MeshInstance3D
+var river_prev_mesh := ArrayMesh.new()
+var river_prev_mat: ShaderMaterial
 # Pinsel-Strich: die HÖHE folgt jedem Frame (heightsBytes ≈ 0,2 ms), die teure
 # Aufbereitung dahinter nur in diesem Takt. Gemessen je Aufruf (n = 832, M4 Max):
 # recomputeFlow 41 ms + waterFieldBytes 17 ms + buildRiverRibbons 10 ms samt
@@ -168,6 +179,7 @@ class FieldTexture:
 ## gleitet die Fläche damit ohne Halt von Stand zu Stand, statt erst zu
 ## springen und dann zu stehen. Ohne `fade` (Pinsel, Sprung, Laden) gilt der
 ## neue Stand sofort.
+## `fixed_seconds` > 0: feste Dauer statt des Abstands (Bänder, s. `ribbon_fade`).
 class Crossfade:
 	const MIN_SECONDS := 0.1
 	const MAX_SECONDS := 0.6  # nach einer Pause nicht ewig blenden
@@ -176,16 +188,20 @@ class Crossfade:
 	var mix := 1.0
 	var seconds := MAX_SECONDS
 	var _last := -1.0
+	var _fixed_seconds := 0.0
 
-	func _init(param: StringName) -> void:
+	func _init(param: StringName, fixed_seconds := 0.0) -> void:
 		_param = param
+		_fixed_seconds = fixed_seconds
 
 	func bind(mat: ShaderMaterial) -> void:
 		_mats.append(mat)
 		mat.set_shader_parameter(_param, mix)
 
 	func start(now: float, fade: bool) -> void:
-		if fade and _last >= 0.0:
+		if _fixed_seconds > 0.0:
+			seconds = _fixed_seconds
+		elif fade and _last >= 0.0:
 			seconds = clampf(now - _last, MIN_SECONDS, MAX_SECONDS)
 		_last = now
 		_apply(0.0 if fade else 1.0)
@@ -204,16 +220,21 @@ var height_field := FieldTexture.new("height_tex", Image.FORMAT_RF, true)
 var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF, true)
 var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8, true)
 var surface_field := FieldTexture.new("surface_tex", Image.FORMAT_RGBA8, true)
-var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8)
+# Raster-Wasser blendet seit #174 ebenfalls im Overlay-Takt (`water_at` im
+# Terrain-Shader); die EWMA (`water_blend`) glättet nur von Upload zu Upload.
+var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8, true)
 # Abfluss-Dichte fürs Shader-Detail: bündelt die kosmetischen Erosionsrinnen in
 # echten Abflussbahnen statt als uniformes Muster (WaterRender.flowDetailIntensity).
 var flow_field := FieldTexture.new("flow_tex", Image.FORMAT_R8, true)
 # Zeitraffer-Überblenden (#172): die Höhe im Sim-Takt, alles Gedrosselte
-# (Farbe, Material, Rinnen-Detail, Seespiegel, Wald) im Overlay-Takt.
+# (Farbe, Material, Rinnen-Detail, Seespiegel, Wald, Raster-Wasser) im
+# Overlay-Takt.
 var height_fade := Crossfade.new(&"height_blend")
 # Auslöser des Frames, der gerade hochlädt (s. `_timelapse_fading`).
 var _frame_trigger := FRAME_SETTLED
 var overlay_fade := Crossfade.new(&"overlay_blend")
+# Dritter Takt: die Bänder (s. RIBBON_FADE_SECONDS).
+var ribbon_fade := Crossfade.new(&"ribbon_blend", RIBBON_FADE_SECONDS)
 
 # GPU-Schwanzstufen des Raster-Wasserfelds (siehe shaders/water_field_*.gdshader).
 # Die Aufbereitung des Felds bleibt in der Extension — ihre zwei teuren Stufen
@@ -689,23 +710,24 @@ func _setup_scene() -> void:
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
 
-	# Wasser-Geometrie (außer im RS_WATER_STAMP-Modus): EIN MeshInstance3D, dessen
-	# ArrayMesh _upload_ribbon_mesh aus den SimNode-Puffern füllt.
+	# Wasser-Geometrie (außer im RS_WATER_STAMP-Modus): ein MeshInstance3D, dessen
+	# ArrayMesh _upload_ribbon_mesh aus den SimNode-Puffern füllt, und eines für
+	# den vorigen Stand, der im Zeitraffer ausblendet (`ribbon_fade`).
 	if river_ribbons:
-		river_mi = MeshInstance3D.new()
-		river_mi.mesh = river_mesh
-		river_mat = ShaderMaterial.new()
-		river_mat.shader = load("res://shaders/water.gdshader")
-		river_mi.material_override = river_mat
-		river_mi.extra_cull_margin = 1000.0 # Geometrie ändert sich laufend
-		river_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(river_mi)
+		river_mi = _make_river_instance(river_mesh, false)
+		river_mat = river_mi.material_override as ShaderMaterial
+		river_prev_mi = _make_river_instance(river_prev_mesh, true)
+		river_prev_mat = river_prev_mi.material_override as ShaderMaterial
+		river_prev_mi.visible = false
+		ribbon_fade.bind(river_mat)
+		ribbon_fade.bind(river_prev_mat)
 
 	# Wasser-Kalibrierung aus SimCore (Issue #91) auf alle Wasser-Materialien;
 	# das Band-Material fehlt im RS_WATER_STAMP-Modus.
 	var water_mats: Array[ShaderMaterial] = [terrain_mat, ocean_mat]
 	if river_mat != null:
 		water_mats.append(river_mat)
+		water_mats.append(river_prev_mat)
 	apply_water_calibration(sim, water_mats)
 	Lighting.apply_clouds(water_mats, render_quality)
 
@@ -1154,12 +1176,16 @@ func _process(delta: float) -> void:
 		terrain_mat.set_shader_parameter("bake_blend", relief_mix)
 	height_fade.advance(delta)
 	overlay_fade.advance(delta)
+	ribbon_fade.advance(delta)
 	if terrain_mat:
 		terrain_mat.set_shader_parameter("u_time", u_time)
 	if ocean_mat:
 		ocean_mat.set_shader_parameter("u_time", u_time)
 	if river_mat:
 		river_mat.set_shader_parameter("u_time", u_time)
+		river_prev_mat.set_shader_parameter("u_time", u_time)
+		# Ausgeblendet: der vorige Stand kostet keine Vertex-Arbeit mehr.
+		river_prev_mi.visible = ribbon_fade.mix < 1.0
 	if debug_dirty:
 		debug_refresh_timer += delta
 		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS:
@@ -1605,15 +1631,45 @@ func _update_water_gpu(raw: PackedByteArray, blend: float) -> void:
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	wf_state_vp[wf_state_index].render_target_update_mode = SubViewport.UPDATE_ONCE
 	terrain_mat.set_shader_parameter("water_tex", wf_state_vp[wf_state_index].get_texture())
+	# Vorgängerstand für `overlay_blend` (#174): das andere Ping-Pong-Ziel, das
+	# erst der NÄCHSTE Durchlauf wieder beschreibt.
+	terrain_mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
 
 func _update_debug_difference_texture() -> void:
 	debug_difference_field.upload(terrain_mat, N,
 		sim.heightDifferenceBytes(debug_difference_scale))
 
 
+## Ein Band-Mesh mit eigenem Material: `outgoing` = der vorige Stand, der im
+## Zeitraffer ausblendet (water.gdshader `ribbon_outgoing`).
+func _make_river_instance(mesh: ArrayMesh, outgoing: bool) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/water.gdshader")
+	mat.set_shader_parameter("ribbon_outgoing", outgoing)
+	mi.material_override = mat
+	mi.extra_cull_margin = 1000.0 # Geometrie ändert sich laufend
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	return mi
+
 ## Fluss-Ribbons aus dem letzten Band-Bau des Frames ins Mesh. Die Schutzmaske
-## dazu bringt derselbe Frame mit.
+## dazu bringt derselbe Frame mit. Im Zeitraffer wandert das bisherige Mesh
+## ins ausblendende (`river_prev_mi`), der neue Stand löst es über
+## `ribbon_fade` ab; Pinsel, Sprung, Laden und Neugenerieren zeigen ihn sofort.
 func _upload_ribbon_mesh() -> void:
+	var fade := _timelapse_fading()
+	if fade:
+		var shown := river_mesh
+		river_mesh = river_prev_mesh
+		river_prev_mesh = shown
+		river_mi.mesh = river_mesh
+		river_prev_mi.mesh = river_prev_mesh
+	ribbon_fade.start(_now(), fade)
+	# Sofort, nicht erst im nächsten `_process`: sonst fehlte für ein Bild der
+	# alte Stand, während der neue noch bei Blende 0 steht (kein Band).
+	river_prev_mi.visible = fade
 	river_mesh.clear_surfaces()
 	var verts: PackedVector3Array = sim.riverRibbonVerts()
 	if verts.size() >= 3:
