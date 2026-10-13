@@ -137,7 +137,7 @@ class FieldTexture:
 	var _img: Image
 	var _tex: ImageTexture
 	var _prev_tex: ImageTexture
-	var _mirror_mat: ShaderMaterial
+	var _mirror_mats: Array[ShaderMaterial] = []
 
 	func _init(param: StringName, format: int, keeps_previous := false) -> void:
 		_param = param
@@ -145,12 +145,14 @@ class FieldTexture:
 		if keeps_previous:
 			_prev_param = StringName(String(param).replace("_tex", "_prev_tex"))
 
-	## Bindet denselben GPU-Texturzustand an einen zweiten Shader. Die Höhenkarte
-	## schneidet damit auch die Ozeanplatte ab, ohne einen zweiten Image-Upload.
+	## Bindet denselben GPU-Texturzustand an weitere Shader. Die Höhenkarte
+	## schneidet damit auch die Ozeanplatte ab, ohne einen zweiten Image-Upload;
+	## die Bänder lesen Höhe, Seespiegel und Wasserfeld, um dort auszublenden,
+	## wo der Terrain-Shader einen See malt.
 	func mirror_to(mat: ShaderMaterial) -> void:
-		_mirror_mat = mat
+		_mirror_mats.append(mat)
 		if _tex != null:
-			_bind(_mirror_mat)
+			_bind(mat)
 
 	func upload(mat: ShaderMaterial, n: int, bytes: PackedByteArray) -> void:
 		if _img == null:
@@ -159,8 +161,8 @@ class FieldTexture:
 			if _prev_param != &"":
 				_prev_tex = ImageTexture.create_from_image(_img)
 			_bind(mat)
-			if _mirror_mat != null:
-				_bind(_mirror_mat)
+			for mirror in _mirror_mats:
+				_bind(mirror)
 		elif _prev_tex != null:
 			# Der neue Stand bekommt ein EIGENES Image: der alte bleibt damit
 			# unverändert, auch wenn der Renderer die Bytes erst später liest
@@ -848,6 +850,18 @@ func _setup_scene() -> void:
 		river_prev_mi.visible = false
 		ribbon_fade.bind(river_mat)
 		ribbon_fade.bind(river_prev_mat)
+		# EINE Seite malt: über einem Raster-See blendet das Band per Pixel
+		# mit derselben See-Maske aus, mit der terrain.gdshader den See malt —
+		# dafür liest es dieselben Felder mit denselben Blenden. Beide
+		# Band-Generationen der Zeitraffer-Blende brauchen sie.
+		for mat in [river_mat, river_prev_mat]:
+			height_field.mirror_to(mat)
+			hf_field.mirror_to(mat)
+			water_field.mirror_to(mat)
+			height_fade.bind(mat)
+			overlay_fade.bind(mat)
+			mat.set_shader_parameter("world_size", world_size)
+			mat.set_shader_parameter("sea_level", sea)
 
 	# Wasser-Kalibrierung aus SimCore (Issue #91) auf alle Wasser-Materialien;
 	# das Band-Material fehlt im RS_WATER_STAMP-Modus.
@@ -1478,6 +1492,9 @@ func _load_world(path: String = SAVE_PATH) -> void:
 	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	terrain_mat.set_shader_parameter("sea_level", sea)
 	ocean_mat.set_shader_parameter("sea_level", sea)
+	for mat in [river_mat, river_prev_mat]:
+		if mat != null:
+			mat.set_shader_parameter("sea_level", sea)
 	water_mi.position.y = sea * HSCALE
 	_after_sim(FRAME_SETTLED) # Wasser-Blend 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()
@@ -2086,6 +2103,10 @@ func _update_water_gpu(raw: PackedByteArray, blend: float) -> void:
 	# Vorgängerstand für `overlay_blend` (#174): das andere Ping-Pong-Ziel, das
 	# erst der NÄCHSTE Durchlauf wieder beschreibt.
 	terrain_mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
+	for mat in [river_mat, river_prev_mat]:
+		if mat != null:
+			mat.set_shader_parameter("water_tex", wf_state_vp[wf_state_index].get_texture())
+			mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
 
 func _update_debug_difference_texture() -> void:
 	debug_difference_field.upload(terrain_mat, N,
