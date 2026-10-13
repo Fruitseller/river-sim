@@ -64,4 +64,29 @@ final class LakeLevelStability: XCTestCase {
         XCTAssertLessThan(maxWLJump, 0.0015,
             "Seespiegel-Sprünge über der Sichtbarkeitsschwelle")
     }
+
+    /// Gedämpft wird nur der ANSTIEG (Issue #174): fällt `hf`, folgt der
+    /// Spiegel sofort. Vorher relaxierte er auch abwärts, und auf trockenem
+    /// Boden (hf = h) war er dann eine verzögerte Kopie des Geländes — jede
+    /// Zelle, die der Mäandergürtel binnen Jahrzehnten eine Kanaltiefe tief
+    /// gräbt, trug Jahrhunderte lang einen fleckigen Geister-See
+    /// (`docs/zielbild-measurements.md` § Geister-Seen im Mäandergürtel).
+    /// Erosion senkt in jedem Schritt irgendwo trockenen Boden, die Invariante
+    /// bricht also sofort, wenn jemand die Abwärts-Relaxation zurückholt.
+    func testWaterLevelNeverStandsAboveFill() {
+        let t = Terrain(config: renderConfig(n: 96), seed: 1337)
+        var maxAbove = 0.0, fell = 0
+        for _ in 0..<10 {
+            let before = t.hf
+            t.step(dtYears: 20)
+            for k in 0..<t.cfg.count {
+                maxAbove = max(maxAbove, t.waterLevel[k] - t.hf[k])
+                if t.hf[k] < before[k] - 1e-6 { fell += 1 }
+            }
+        }
+        XCTAssertGreaterThan(fell, 0, "kein fallender Füllstand — der Test prüft nichts")
+        XCTAssertLessThanOrEqual(maxAbove, 0,
+            "Darstellungs-Spiegel über dem Füllstand: Geister-See auf trockenem Boden")
+    }
 }
+
