@@ -449,7 +449,9 @@ final class BarMaterialTests: XCTestCase {
             func mid(_ q: Int) -> SIMD3<Float> { (mesh.vertices[a + 2 * q] + mesh.vertices[a + 2 * q + 1]) * 0.5 }
             func halfWidth(_ q: Int) -> Double {
                 let w = mesh.vertices[a + 2 * q] - mesh.vertices[a + 2 * q + 1]
-                return Double((w * w).sum().squareRoot()) / cs / 2
+                // Waagerecht: am Ufer liegen die beiden Kanten auf eigener Höhe
+                // (Land bzw. Spiegel), der Höhenversatz ist keine Breite.
+                return Double((w.x * w.x + w.z * w.z).squareRoot()) / cs / 2
             }
             func length(_ p: Int, _ q: Int) -> Double {
                 let d = mid(q) - mid(p)
