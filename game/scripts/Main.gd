@@ -2119,7 +2119,8 @@ func _update_brush() -> void:
 	if OS.has_environment("RS_SHOT") and not fixed:
 		brush_mi.visible = false
 		return
-	if sculpting or year_rate == 0.0:
+	# Im Screenshot läuft meist der Zeitraffer; RS_BRUSH zeigt sie trotzdem.
+	if sculpting or year_rate == 0.0 or fixed:
 		var hit := _raycast_at(get_viewport().get_visible_rect().size * 0.5) \
 			if fixed else _raycast_terrain()
 		if hit != Vector3.INF:
