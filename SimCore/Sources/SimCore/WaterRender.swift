@@ -278,6 +278,18 @@ public enum WaterRender {
     /// Winkel-Aufweitung der äußeren Distributär-Arme gegen die Mündungs-
     /// richtung (Bogenmaß ≈ 25°) — die Auffächerung des Fächers.
     public static let deltaArmSpread = 0.44
+    /// Mindestabstand (Zellen) zweier Delta-Fächer: münden mehrere Kanäle so
+    /// dicht beieinander, bekommt nur der größte einen Fächer. Vorher lagen an
+    /// einer Mündung bis zu vier identische Fächer übereinander (Seed 1337,
+    /// Jahr 230.000) und addierten sich zu einem dunklen Block.
+    public static let deltaFanSpacingCells = 3.0
+    /// Verdeckungs-Fenster der Bänder untereinander (`RiverRibbonRenderer.
+    /// emitRibbon`): ein Band blendet über der Deckung FRÜHER gebauter Bänder
+    /// aus — ab 0,3 beginnend, ab 0,9 ganz. Zwei halbtransparente Bänder
+    /// übereinander malten sonst dunkle Blöcke und Stöße an Zusammenflüssen.
+    public static let ribbonOcclusionLo = 0.3
+    /// s. `ribbonOcclusionLo`.
+    public static let ribbonOcclusionHi = 0.9
 
     // Höhen-Versatz eines Bands auf einer Wasserfläche, in GODOT-WELT-Y (wie
     // `Main.RIVER_LIFT`, NICHT in Sim-Höhen). Auf Land trägt das Band den vollen
