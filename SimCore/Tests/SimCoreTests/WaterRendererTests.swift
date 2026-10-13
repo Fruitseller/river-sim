@@ -732,4 +732,99 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertTrue(hasStream,
                   "Gegenprobe: Mit gültiger Schrittweite muss Fluss im R-Kanal gezeichnet werden")
   }
+
+  // MARK: Nasse Wiese statt Tümpel-Teppich (Issue #174, Paket C)
+
+  /// Land auf 0,3 mit einem quadratischen Tümpel (`side`² Zellen, 0,05 tief)
+  /// ab Zelle (8, 8); optional ein Band-Kanal entlang Zeile 6 direkt daneben.
+  private func pondWorld(side: Int, withBand: Bool) -> Terrain {
+    let config = renderConfig(n: 48)
+    let n = config.n
+    let terrain = Terrain(allocating: config, seed: 1337)
+    var state = terrain.state
+    for k in 0..<(n * n) {
+      state.h[k] = 0.3
+      state.receiver[k] = -1
+      state.area[k] = 0
+      state.areaMFD[k] = 0
+      state.streamMap[k] = 0
+    }
+    state.waterLevel = state.h
+    for j in 8..<(8 + side) {
+      for i in 8..<(8 + side) { state.waterLevel[j * n + i] = 0.35 }
+    }
+    terrain.restore(state)
+    if withBand {
+      terrain.meander.channels = [
+        RiverChannel(
+          nodes: (2..<40).map { MeanderNode(x: Double($0), z: 6) },
+          discharge: Array(repeating: 2 * config.renderMinCells, count: 38))
+      ]
+    }
+    return terrain
+  }
+
+  private func waterBytes(_ terrain: Terrain, banded: Bool) -> (bytes: [UInt8], field: WaterFieldRenderer) {
+    let field = WaterFieldRenderer()
+    let bytes = field.bytes(
+      terrain, blend: 1, geometryMode: true,
+      bandChannelFlags: banded ? [true] : [],
+      bandCoverage: [])
+    return (bytes, field)
+  }
+
+  func testSmallPondIsPaintedAsWetMeadowNotAsWater() {
+    // 8 × 8 = 64 Zellen: über dem Komponenten-Fade (voll ab 50), unter der
+    // Wiesen-Schwelle — vor #174 ein sichtbarer Tümpel.
+    XCTAssertGreaterThan(64, Int(WaterRender.componentFadeHiCells))
+    XCTAssertLessThan(64, WaterRender.wetMeadowMaxCells)
+    let terrain = pondWorld(side: 8, withBand: false)
+    let n = terrain.cfg.n
+    let (bytes, field) = waterBytes(terrain, banded: false)
+    let center = 12 * n + 12
+    XCTAssertEqual(bytes[center * 4 + 1], 0, "kleiner Tümpel trägt kein See-Gate")
+    XCTAssertTrue(field.wetMeadow[center], "kleiner Tümpel ist nasse Wiese")
+    XCTAssertEqual(field.wetMeadow.filter { $0 }.count, 64)
+  }
+
+  func testLargePondStaysWater() {
+    let side = 16
+    XCTAssertGreaterThanOrEqual(side * side, WaterRender.wetMeadowMaxCells)
+    let terrain = pondWorld(side: side, withBand: false)
+    let n = terrain.cfg.n
+    let (bytes, field) = waterBytes(terrain, banded: false)
+    let center = 16 * n + 16
+    XCTAssertGreaterThanOrEqual(bytes[center * 4 + 1], byte01(WaterRender.lakeGateHi))
+    XCTAssertFalse(field.wetMeadow.contains(true))
+  }
+
+  func testPondAtABandCorridorStaysWater() {
+    // Die Übergabe Band ↔ Raster darf keine Lücke bekommen: ein Tümpel am
+    // Korridor eines gebauten Bands bleibt, wie er ist.
+    let terrain = pondWorld(side: 8, withBand: true)
+    let n = terrain.cfg.n
+    let (bytes, field) = waterBytes(terrain, banded: true)
+    let center = 12 * n + 12
+    XCTAssertGreaterThan(bytes[center * 4 + 1], 0, "Tümpel am Band bleibt Wasser")
+    XCTAssertFalse(field.wetMeadow[center])
+  }
+
+  func testWetMeadowReachesMaterialAndProtectMask() {
+    let terrain = pondWorld(side: 8, withBand: false)
+    let n = terrain.cfg.n
+    let center = 12 * n + 12
+    let render = RenderState(geometryMode: true)
+    let before = render.terrainSurfaceBytes(terrain)
+    _ = render.waterFieldBytes(terrain, blend: 1)
+    let surfaces = render.terrainSurfaceBytes(terrain)
+    XCTAssertGreaterThanOrEqual(
+      surfaces[center * 4], byte01(WaterRender.wetMeadowVegetation * 0.99),
+      "nasse Wiese hebt das Vegetationsgewicht (Material-Cache fiel mit der Maske)")
+    XCTAssertLessThan(before[center * 4], surfaces[center * 4])
+    XCTAssertEqual(render.protectMaskBytes(terrain)[center], 255,
+                   "kein Wald und keine Verschiebung auf der nassen Wiese")
+    XCTAssertEqual(render.forestMaskBytes(terrain)[center], 0)
+    let colors = render.terrainColorBytes(terrain)
+    XCTAssertLessThan(colors[center * 4], colors[center * 4 + 1], "Makrofarbe grün getönt")
+  }
 }

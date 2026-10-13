@@ -54,6 +54,23 @@ uniform vec3 water_ocean_mid_color;
 uniform vec3 water_ocean_deep_color;
 uniform vec3 water_ocean_surf_color;
 
+// Sedimentfahne (#174 C): EINE Zelle je Mündung aus SimRender.SedimentPlume
+// (Float32 mit Mip-Kette, Main.gd `_update_plume`), hier über die Mip-Stufen
+// weichgezeichnet und mit der Küstenströmung (= Wellen-Drift) stromab
+// gezogen. Ohne SimNode ist keine Textur gebunden: schwarz = keine Fahne.
+uniform sampler2D plume_tex : filter_linear_mipmap, repeat_disable, hint_default_black;
+// Vorgängerstand und Overlay-Blende (#174, Main.gd `overlay_fade`): die
+// Quellen kommen mit den Overlays und springen sonst je Upload (gemessen bei
+// 60 J/s: ein Drittel bis die Hälfte der Masse auf Mip-Stufe 3).
+uniform sampler2D plume_prev_tex : filter_linear_mipmap, repeat_disable, hint_default_black;
+uniform float overlay_blend = 1.0;
+uniform float water_ocean_plume_length;
+uniform float water_ocean_plume_lod;
+uniform float water_ocean_plume_spread;
+uniform float water_ocean_plume_gain;
+uniform float water_ocean_plume_opacity;
+uniform vec3 water_ocean_plume_color;
+
 varying vec2 v_world;
 
 // Wolkenschatten (#151): gemeinsame Funktion mit Terrain und Bändern.
@@ -101,6 +118,30 @@ vec2 ocean_wave_grad(vec2 p, float footprint, float t) {
 	return g;
 }
 
+// Quellstärke über die Overlay-Blende (#174).
+float plume_at(vec2 uv, float lod) {
+	float s = textureLod(plume_tex, uv, lod).r;
+	return overlay_blend < 1.0 ? mix(textureLod(plume_prev_tex, uv, lod).r, s, overlay_blend) : s;
+}
+
+// Trübung 0…1 am Punkt `p` (Welt-xz). Jeder Abgriff liest die Quelle stromauf
+// der Strömung, je weiter stromab desto gröber (breitere Mip-Stufe). Eine
+// Mip-Stufe mittelt 4^lod Zellen; mal 4^lod zurückgerechnet liefert sie die
+// Quellstärke selbst, egal wie breit gezeichnet wird.
+float sediment_plume(vec2 p) {
+	vec2 current = vec2(water_ocean_wave_drift_x, water_ocean_wave_drift_z);
+	current /= max(length(current), 1e-6);
+	float sum = 0.0;
+	for (int i = 0; i < 6; i++) {
+		float t = float(i) / 5.0;
+		float lod = water_ocean_plume_lod + t * water_ocean_plume_spread;
+		vec2 back = p - current * (t * water_ocean_plume_length);
+		vec2 uv = back / world_size + vec2(0.5);
+		sum += plume_at(uv, lod) * exp2(2.0 * lod);
+	}
+	return 1.0 - exp(-sum / 6.0 * water_ocean_plume_gain);
+}
+
 void vertex() {
 	v_world = VERTEX.xz;
 }
@@ -132,6 +173,10 @@ void fragment() {
 	vec3 water = mix(water_ocean_shallow_color, water_ocean_mid_color,
 	                 calib_window(0.0, water_ocean_mid_depth, depth));
 	water = mix(water, water_ocean_deep_color, calib_window(water_ocean_mid_depth, 1.0, depth));
+	// Außerhalb des Sim-Quadrats gibt es keine Mündung: dort keine Abgriffe.
+	if (inside_terrain) {
+		water = mix(water, water_ocean_plume_color, sediment_plume(p) * water_ocean_plume_opacity);
+	}
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
 	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
