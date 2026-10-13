@@ -78,21 +78,51 @@ final class RiverFadeTests: XCTestCase {
                        hint: "Auch der alte Stand bekommt Kalibrierung und Wolken")
     }
 
-    /// Der Shader teilt die Pixel zwischen altem und neuem Stand auf, statt
-    /// zwei halbdurchsichtige Bänder übereinander zu mischen: das Mischen
-    /// machte stehende Läufe mitten in der Blende durchsichtiger (Deckkraft
-    /// 0,95 → 0,72) und pulste im Takt der Band-Bauten.
-    func testWaterShaderSplitsPixelsBetweenOldAndNewBands() throws {
+    /// Alter und neuer Stand teilen sich die optische Dicke (Befund #174,
+    /// Seed 1337 / Jahr 2.305): wo beide liegen, decken sie zusammen GENAU wie
+    /// ein Band — lineares Mischen machte stehende Läufe mitten in der Blende
+    /// durchsichtiger (0,95 → 0,72) und pulste im Band-Takt. Wo nur einer
+    /// liegt, blendet er stetig, ohne Pixel-Los: das zeichnete körnige Ufer.
+    func testFadeSplitsOpticalDepthBetweenOldAndNewBands() {
+        for a in [0.0, 0.3, 0.6, 0.95, 0.99, 1.0] {
+            let capped = min(a, WaterRender.ribbonFadeOpacityCap)
+            for k in 0...20 {
+                let t = Double(k) / 20
+                let new = WaterRender.ribbonFadeOpacity(alpha: a, share: t)
+                let old = WaterRender.ribbonFadeOpacity(alpha: a, share: 1 - t)
+                let both = 1 - (1 - new) * (1 - old)
+                // Innerhalb der Blende gilt der Deckel; an den Enden das Band selbst.
+                let expected = (t == 0 || t == 1) ? a : capped
+                XCTAssertEqual(both, expected, accuracy: 1e-9,
+                               "übereinander: Deckkraft \(a) bei Blende \(t)")
+            }
+        }
+        // Allein liegend: stetig und monoton von 0 bis zur eigenen Deckkraft.
+        var last = -1.0
+        for k in 0...100 {
+            let v = WaterRender.ribbonFadeOpacity(alpha: 1, share: Double(k) / 100)
+            XCTAssertGreaterThanOrEqual(v, last, "monoton bei \(k) %")
+            XCTAssertLessThan(v - max(last, 0), 0.1, "kein Sprung bei \(k) %")
+            last = v
+        }
+        XCTAssertEqual(WaterRender.ribbonFadeOpacity(alpha: 0.7, share: 0), 0, "Blende 0: unsichtbar")
+        XCTAssertEqual(WaterRender.ribbonFadeOpacity(alpha: 0.7, share: 1), 0.7, "ohne Blende unverändert")
+    }
+
+    /// Der Shader rechnet dieselbe Formel, ohne Pixel-Los.
+    func testWaterShaderSplitsOpticalDepthLikeWaterRender() throws {
         let shader = try RepoSource.probe("game/shaders/water.gdshader")
         assertContains(shader, "uniform float ribbon_blend = 1.0;", hint: "Band-Blende, ohne Bau voll")
         assertContains(shader, "uniform bool ribbon_outgoing = false;", hint: "Rolle des Meshes")
-        assertContains(shader, "return ribbon_outgoing ? r < ribbon_blend : r >= ribbon_blend;",
-                       hint: "Alter und neuer Stand teilen sich die Pixel komplementär")
-        assertContains(shader, "void fragment() {\n\tif (ribbon_hidden(FRAGCOORD.xy)) {\n\t\tdiscard;",
-                       hint: "Das Pixel-Los fällt vor jeder Optik")
-        // Deklaration + die beiden Vergleiche des Pixel-Loses, sonst nichts.
+        assertContains(shader, "float share = ribbon_outgoing ? 1.0 - ribbon_blend : ribbon_blend;",
+                       hint: "Alter und neuer Stand teilen sich die Blende komplementär")
+        assertContains(shader, "return 1.0 - pow(1.0 - clamp(a, 0.0, water_ribbon_fade_cap), max(share, 0.0));",
+                       hint: "WaterRender.ribbonFadeOpacity")
+        assertContains(shader, "ALPHA = ribbon_fade_alpha(", hint: "Die Blende wirkt auf die fertige Deckkraft")
+        XCTAssertEqual(shader.count(ofIdentifier: "discard"), 0, "kein Pixel-Los mehr: es zeichnete körnige Ufer")
+        // Deklaration + die beiden Lesestellen in `ribbon_fade_alpha`, sonst nichts.
         XCTAssertEqual(shader.count(ofIdentifier: "ribbon_blend"), 3,
-                       "ribbon_blend nur im Pixel-Los: als Alpha-Faktor pulsierte der Lauf")
+                       "ribbon_blend nur in ribbon_fade_alpha: als linearer Faktor pulsierte der Lauf")
     }
 
     // MARK: - Messlauf

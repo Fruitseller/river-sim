@@ -90,10 +90,16 @@ final class WaterUniformsTests: XCTestCase {
         "water_pond_contour_lo", "water_pond_contour_hi",
     ]
 
+    /// Zeitraffer-Blende der Bänder (geteilte optische Dicke) und Raster an
+    /// Steilwänden (Befund #174, Seed 1337 / Jahr 2.305).
+    private static let ribbonFadeScalars = ["water_ribbon_fade_cap"]
+    private static let wallScalars = ["water_wall_slope_lo", "water_wall_slope_hi"]
+
     private static let expectedScalars: [String: [String]] = [
-        "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars + barScalars,
+        "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars + barScalars
+            + wallScalars,
         "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars
-            + profileScalars + sharedWaveScalars + lakeMaskScalars,
+            + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars,
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
@@ -178,6 +184,9 @@ final class WaterUniformsTests: XCTestCase {
             "water_ribbon_ripple_amplitude": WaterRender.ribbonRippleAmplitude,
             "water_ribbon_ripple_stretch": WaterRender.ribbonRippleStretch,
             "water_ribbon_ripple_speed": WaterRender.ribbonRippleSpeed,
+            "water_ribbon_fade_cap": WaterRender.ribbonFadeOpacityCap,
+            "water_wall_slope_lo": WaterRender.rasterWallSlopeLo,
+            "water_wall_slope_hi": WaterRender.rasterWallSlopeHi,
         ]
         let expectedColors: [String: (r: Double, g: Double, b: Double)] = [
             "water_shallow_color": WaterRender.waterShallowColor,

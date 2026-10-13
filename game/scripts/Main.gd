@@ -61,8 +61,8 @@ var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
 # Zeitraffer-Überblende der Bänder (#174): der vorige Band-Bau bleibt als
 # zweites Mesh stehen und löst sich über `ribbon_fade` in den neuen auf, statt
-# im Takt der Band-Bauten (~1 s) zu springen; Pixel-Aufteilung statt
-# Alpha-Mischung, Begründung in water.gdshader (`ribbon_blend`). Die Dauer ist
+# im Takt der Band-Bauten (~1 s) zu springen; die beiden Stände teilen sich
+# die optische Dicke, Begründung in water.gdshader (`ribbon_blend`). Die Dauer ist
 # der Band-Deckel selbst (RenderState.ribbonRebuildSeconds): im Zeitraffer
 # liegen zwei Bauten nie dichter, die Blende endet also immer vor dem nächsten
 # Bau, und kein halb aufgelöster Stand wird verworfen.

@@ -1026,22 +1026,28 @@ Jahr 0 / 20.000 / 100.000):
   (`RIBBON_FADE_SECONDS` == `RenderState.ribbonRebuildSeconds`). Im
   Zeitraffer liegen zwei Bauten nie dichter, die Blende endet also vor dem
   nächsten Bau. Der vorige Bau bleibt als zweites Mesh stehen.
-- **Pixel-Aufteilung statt Alpha-Mischung:** jedes Pixel zeigt genau einen
-  der beiden Stände, der neue hat den Anteil `ribbon_blend` (Interleaved
-  Gradient Noise, ortsfest; dasselbe Prinzip wie Godots Dither-Überblende
-  zwischen LOD-Stufen). Zwei halbdurchsichtige Bänder übereinander wären
-  dort, wo der Lauf steht, mitten in der Blende durchsichtiger geworden
-  (Deckkraft 0,95 → 0,72) und hätten im Band-Takt gepulst. Ein Vertex-Morph
-  scheidet aus: der Mäander resampelt seine Knoten je Schritt, die Topologie
-  zweier Bauten passt nicht zusammen.
+- **Geteilte optische Dicke statt Pixel-Aufteilung** (Nachtrag, Befund des
+  Projekteigners Seed 1337 / Jahr 2.305, Retina): die erste Fassung zeigte je
+  Pixel genau einen der beiden Stände (Interleaved Gradient Noise, ortsfest).
+  Wo die Stände übereinanderliegen, ist das unsichtbar; wo der Lauf gewandert
+  ist, zeigte jedes Pixel mal den einen, mal den anderen — körnige Bandränder
+  an jedem gewanderten Ufer, im maximierten Fenster deutlich, im
+  Zeitraffer praktisch dauernd (bei 1 Bau/s läuft fast immer eine Blende).
+  Jetzt zeichnet der neue Stand mit `1 − (1 − a)^t`, der alte mit
+  `1 − (1 − a)^(1−t)` (`WaterRender.ribbonFadeOpacity`, Deckel 0,99):
+  übereinander lassen beide zusammen genau `1 − a` durch, der stehende Lauf
+  deckt also wie ein Band (lineares Mischen: 0,95 → 0,72, pulste im
+  Band-Takt); allein liegend blendet ein Stand stetig ein bzw. aus, ohne Korn.
+  Ein Vertex-Morph scheidet weiter aus: der Mäander resampelt seine Knoten je
+  Schritt, die Topologie zweier Bauten passt nicht zusammen.
 - **Kosten nicht gemessen** (kein Godot im Agentenlauf): im Zeitraffer zeichnet
   fast immer das zweite Band-Mesh mit, das Rasterwasser liest zwei Texturen.
   Messung steht aus (`RS_FPS`,
   Zeitraffer 60 J/s, maximiert, interleaved A/B).
 
 Wächter: `SimCoreTests/RiverFadeTests.swift` (Dauer == Band-Deckel, kein
-Band-Bau innerhalb der Blende, Verdrahtung in `Main.gd`, Pixel-Aufteilung im
-Shader), `TimelapseFadeTests` (Rasterwasser über `water_at`) und
+Band-Bau innerhalb der Blende, Verdrahtung in `Main.gd`, geteilte Deckkraft
+im Shader), `TimelapseFadeTests` (Rasterwasser über `water_at`) und
 `game/tests/relief.gd` (Band-Bau im Zeitraffer blendet, endet auf dem neuen
 Stand, Neugenerieren blendet nicht).
 

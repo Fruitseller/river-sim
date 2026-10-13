@@ -119,6 +119,8 @@ uniform float water_lake_gate_lo;
 uniform float water_lake_gate_hi;
 uniform float water_river_mask_lo;
 uniform float water_river_mask_hi;
+uniform float water_wall_slope_lo;
+uniform float water_wall_slope_hi;
 uniform float water_shore_lo;
 uniform float water_shore_hi;
 uniform float water_pond_contour_lo;
@@ -485,6 +487,9 @@ void fragment() {
 	float hU = height_at(v_uv + vec2(0.0, texel));
 	vec2 coarse_slope = vec2(hR - hL, hU - hD) * 0.5 * grid_n;
 	coarse_slope += relief_slope(v_uv);
+	// Dieselbe Steigung in sichtbarer Neigung (Welt-Y je Welt-Einheit):
+	// das Raster-Wasser an Wänden liest sie.
+	float world_slope = length(coarse_slope) * hscale / world_size;
 
 	float ws = world_size / 100.0;
 	float view_dist = length(VERTEX);
@@ -669,7 +674,14 @@ void fragment() {
 	}
 
 	vec4 w = water_at(v_uv);
-	float stream = w.r;
+	// Wasser steigt keine Wand hoch (WaterRender.rasterWallSlopeLo/Hi): die
+	// bilineare Kontur des Abfluss-Rasters reicht eine halbe Zelle über die
+	// Rinne hinaus, an einer Wand also deren ganze Höhe hinauf — senkrechte
+	// Wasserplatten mit Rauten in Schluchten und unter Abbruchkanten. Grobe
+	// Steigung aus dem Sim-Gitter (`world_slope`);
+	// auf der Rinnensohle misst sie nur das Längs-Gefälle. Am Abfluss-Kanal
+	// selbst, damit Wasser UND nasser Ufersaum weichen.
+	float stream = w.r * (1.0 - calib_window(water_wall_slope_lo, water_wall_slope_hi, world_slope));
 	float lake_gate = w.g;
 	vec2 dir = w.ba * 2.0 - 1.0;
 	float riverMask = calib_window(water_river_mask_lo, water_river_mask_hi, stream);

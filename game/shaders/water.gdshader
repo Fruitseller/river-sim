@@ -40,21 +40,15 @@ uniform float u_time = 0.0;
 
 // Band-Überblende im Zeitraffer (#174, Main.gd `ribbon_fade`): nach einem
 // Band-Bau zeichnen ZWEI Meshes, der vorige Stand (`ribbon_outgoing`) und der
-// neue, mit derselben Blende. Jedes Pixel zeigt genau EINES der beiden, in
-// fester Rausch-Reihenfolge: bei `ribbon_blend` = t hat der neue Stand den
-// Anteil t der Pixel. Kein Alpha-Mischen: zwei übereinanderliegende
-// halbdurchsichtige Bänder würden dort, wo der Lauf stillsteht, mitten in der
-// Blende durchsichtiger (Deckkraft 0,95 → 0,72 bei t = 0,5) und pulsierten im
-// Takt der Band-Bauten. So bleibt die Deckkraft überall die eines Bands; wo
-// sich Lage oder Breite ändern, löst sich der alte Stand auf.
+// neue, mit derselben Blende. Sie teilen sich die optische Dicke
+// (`ribbon_fade_alpha`, WaterRender.ribbonFadeOpacity): wo der Lauf
+// stillsteht, decken beide zusammen genau wie EIN Band, wo er gewandert ist,
+// blendet der alte Stand stetig aus und der neue ein. Weder lineares Mischen
+// (Deckkraft 0,95 → 0,72 mitten in der Blende, pulste im Takt der Band-Bauten)
+// noch ein Pixel-Los zwischen den Ständen (körnige Ufer, wo sie
+// auseinanderliegen).
 uniform float ribbon_blend = 1.0;
 uniform bool ribbon_outgoing = false;
-
-bool ribbon_hidden(vec2 frag) {
-	// Interleaved Gradient Noise: gleichverteilt je Bildschirm-Pixel, ortsfest.
-	float r = fract(52.9829189 * fract(dot(frag, vec2(0.06711056, 0.00583715))));
-	return ribbon_outgoing ? r < ribbon_blend : r >= ribbon_blend;
-}
 
 // Felder des Terrain-Shaders (Main.gd spiegelt dieselben Texturen hierher).
 uniform sampler2D height_tex : filter_linear, repeat_disable;
@@ -107,6 +101,7 @@ uniform float water_ribbon_waterline;
 uniform float water_ribbon_waterline_jitter;
 uniform float water_ribbon_waterline_scale;
 uniform float water_ribbon_bank_opacity;
+uniform float water_ribbon_fade_cap;
 uniform vec3 water_ribbon_bank_color;
 uniform vec3 water_bed_color;
 uniform float water_ribbon_ripple_frequency;
@@ -123,6 +118,18 @@ uniform float water_ocean_wave_fade_hi;
 // Terrain-Shader: Mindest-Fensterbreite, keine Kalibrier-Kopie.
 float calib_window(float lo, float hi, float x) {
 	return smoothstep(lo, max(hi, lo + 1e-6), x);
+}
+
+// Deckkraft dieses Stands in der Überblende: Anteil `share` an der optischen
+// Dicke −ln(1 − a). Gedeckelt (water_ribbon_fade_cap), sonst wäre sie bei
+// a = 1 unendlich und ein allein liegender Stand spränge sofort auf voll.
+// Außerhalb der Blende (share 1) unverändert.
+float ribbon_fade_alpha(float a) {
+	float share = ribbon_outgoing ? 1.0 - ribbon_blend : ribbon_blend;
+	if (share >= 1.0) {
+		return a;
+	}
+	return 1.0 - pow(1.0 - clamp(a, 0.0, water_ribbon_fade_cap), max(share, 0.0));
 }
 
 varying vec2 v_dir;
@@ -199,9 +206,6 @@ void vertex() {
 }
 
 void fragment() {
-	if (ribbon_hidden(FRAGCOORD.xy)) {
-		discard;
-	}
 	// Typ-Gewichte aus UV2.x (0 Fluss · 0.5 Delta · 1 Altarm). Als weiche
 	// Gewichte statt if-Kaskade: die Werte kommen pro Vertex und werden über
 	// das Band interpoliert, an Bandgrenzen gibt es also keine harte Kante.
@@ -289,8 +293,8 @@ void fragment() {
 	ALBEDO = col;
 	NORMAL = normalize(mix(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0), water_n_vs, wet));
 	float lake = lake_mask_at((v_world.xz + world_size * 0.5) / world_size);
-	ALPHA = smoothstep(0.0, 0.25, presence) * max(wet, bank * water_ribbon_bank_opacity)
-		* (1.0 - lake * (1.0 - delta));
+	ALPHA = ribbon_fade_alpha(smoothstep(0.0, 0.25, presence) * max(wet, bank * water_ribbon_bank_opacity)
+		* (1.0 - lake * (1.0 - delta)));
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt
 	// Stillwasser) — numerisch zufällig gleich fresnelSkyMix/waterOpacityShallow,
 	// KEINE WaterRender-Konstante. Das nasse Ufer glänzt matt (0.6).

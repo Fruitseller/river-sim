@@ -355,6 +355,23 @@ final class WaterRenderTests: XCTestCase {
                        "Gefälle-Richtung darf die Übergabe nicht umgehen")
     }
 
+    /// Raster an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305): das
+    /// Raster weicht erst dort, wo das Band die Kaskade schon VOLL abgegeben
+    /// hat — dazwischen bliebe sonst eine Strecke ohne jedes Wasser. Und es
+    /// weicht am Abfluss-Kanal selbst, damit Wasser und Ufersaum zusammen gehen.
+    func testRasterLeavesWallsOnlyAboveTheBandCascade() throws {
+        XCTAssertEqual(WaterRender.rasterWallSlopeLo,
+                       (WaterRender.cascadeSlopeLo + WaterRender.cascadeSlopeSpan) * RenderContract.heightScale,
+                       accuracy: 1e-12, "Wand-Fenster beginnt an der vollen Kaskaden-Übergabe des Bands")
+        XCTAssertGreaterThan(WaterRender.rasterWallSlopeHi, WaterRender.rasterWallSlopeLo)
+        let shader = try repoFile("game/shaders/terrain.gdshader")
+        // `world_slope` selbst (sichtbare Neigung, dieselbe wie die
+        // Gletscherspalten) pinnt RenderContractTests über `hscale`.
+        assertContains(shader,
+            "float stream = w.r * (1.0 - calib_window(water_wall_slope_lo, water_wall_slope_hi, world_slope));",
+            hint: "Wand-Fenster liest WaterRender.rasterWallSlope* am Abfluss-Kanal")
+    }
+
     func testOxbowFilterIsSharedAndSelfConsistent() {
         XCTAssertEqual(WaterRender.oxbowMinimumNodes, 20)
         XCTAssertEqual(WaterRender.oxbowMaximumTrimmedNodes, 3)
