@@ -397,6 +397,18 @@ public final class RiverRibbonRenderer {
             // Strahler 3 erreichen (Historie und Messung: `ribbonMinimumRank`).
             // Der feine Oberlauf DESSELBEN Bands bleibt vollständig erhalten.
             if !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
+            // Für die Tiefenfarbe fällt der Rang stromab nie: die Strahler-
+            // Ordnung eines Laufs wächst nur an Zusammenflüssen. Der 3×3-
+            // Stützsaum oben überbrückt nur einen Zellversatz zwischen
+            // D8-Netz und Zentrumslinie; driftet die Linie weiter weg, fiel
+            // EIN Stützpunkt auf Rang 0 (oder ein Stück auf Ordnung 2), und
+            // der Shader malte über die volle Bandbreite einen hellen Quer-
+            // strich bzw. Block („Leitersprosse", Seed 1337 / Jahr 230.000:
+            // 0.667 → 0 → 0.667 an einem einzigen Stützpunkt). Die Stützpunkte
+            // laufen von der Quelle zur Mündung, das laufende Maximum folgt
+            // also der Fließrichtung; Gate und `river_ribbons.gd` lesen das
+            // Maximum des Bands, das bleibt unverändert.
+            for a in 1..<cnt { rank[a] = max(rank[a], rank[a - 1]) }
             // Ab hier wird das Band sicher emittiert — das Wasserfeld darf den
             // Korridor dieses Kanals auf Saum-Intensität deckeln.
             mesh.bandChannelFlags[chIndex] = true
