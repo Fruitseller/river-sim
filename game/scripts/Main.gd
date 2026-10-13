@@ -1651,10 +1651,10 @@ func _update_water_gpu(raw: PackedByteArray, blend: float) -> void:
 	# Vorgängerstand für `overlay_blend` (#174): das andere Ping-Pong-Ziel, das
 	# erst der NÄCHSTE Durchlauf wieder beschreibt.
 	terrain_mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
-	for mat in [river_mat, river_prev_mat]:
-		if mat != null:
-			mat.set_shader_parameter("water_tex", wf_state_vp[wf_state_index].get_texture())
-			mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
+	for band_mat in [river_mat, river_prev_mat]:
+		if band_mat != null:
+			band_mat.set_shader_parameter("water_tex", wf_state_vp[wf_state_index].get_texture())
+			band_mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
 
 func _update_debug_difference_texture() -> void:
 	debug_difference_field.upload(terrain_mat, N,
