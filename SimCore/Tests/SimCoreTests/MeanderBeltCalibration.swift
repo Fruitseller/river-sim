@@ -17,10 +17,13 @@ import XCTest
 final class MeanderBeltCalibration: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
-    /// Produktions-Config mit den Varianten aus RS_VARIANT.
-    private func config() -> SimConfig {
+    private func config() -> SimConfig { Self.variantConfig() }
+
+    /// Produktions-Config mit den Varianten aus RS_VARIANT (auch gelesen von
+    /// den Messläufen in `RiverUphill.swift`).
+    static func variantConfig() -> SimConfig {
         var c = SimConfig.production
-        for kv in (env["RS_VARIANT"] ?? "").split(separator: ",") where kv.contains("=") {
+        for kv in (ProcessInfo.processInfo.environment["RS_VARIANT"] ?? "").split(separator: ",") where kv.contains("=") {
             let p = kv.split(separator: "=")
             guard let v = Double(p[1]) else { continue }
             switch p[0] {

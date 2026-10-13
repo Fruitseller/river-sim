@@ -482,6 +482,8 @@ public final class RiverRibbonRenderer {
             // Meer-Regel braucht die Strecke SEIT der Uferlinie, also die
             // Reihenfolge der Stützpunkte).
             applyWaterHandover(&samples, terrain)
+            fadeUphill(&samples, terrain)
+            RiverRibbonRenderer.limitAlphaSteps(&samples)
             emitRibbon(samples, terrain, kind: WaterRender.ribbonKindRiver, still: false,
                        hscale: hscale, lift: lift)
 
@@ -607,7 +609,24 @@ public final class RiverRibbonRenderer {
                 ? RiverRibbonRenderer.seaHandoverFade(submergedCells: submergedCells)
                 : RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
         }
-        RiverRibbonRenderer.limitAlphaSteps(&samples)
+        // Der Deckel der Deckkraft-Sprünge (`limitAlphaSteps`) läuft beim
+        // Aufrufer NACH `fadeUphill`, damit er beide Blenden erfasst.
+    }
+
+    /// Wasser fließt nicht bergauf (`WaterRender.ribbonUphillFade`): blendet
+    /// jeden Stützpunkt aus, dessen Höhe über dem tiefsten Punkt stromauf
+    /// liegt. Höhe = Spiegel auf Wasser, sonst die sichtbare Oberfläche unter
+    /// der Mitte — dieselbe, auf die `emitRibbon` das Band legt. Ein stromab
+    /// fallender Lauf bleibt bit-gleich (Faktor exakt 1).
+    private func fadeUphill(_ samples: inout [RibbonSample], _ terrain: Terrain) {
+        let n = terrain.cfg.n, h = terrain.h
+        var lowest = Double.infinity
+        for a in samples.indices {
+            let y = samples[a].surface
+                ?? renderSurfaceHeight(h, samples[a].x, samples[a].z, n: n, renderGrid: renderGrid)
+            if y > lowest { samples[a].alpha *= WaterRender.ribbonUphillFade(rise: y - lowest) }
+            lowest = min(lowest, y)
+        }
     }
 
     /// Deckelt den Deckkraft-Sprung je Segment auf `WaterRender.ribbonMaxAlphaStep`,
