@@ -785,3 +785,85 @@ Regel gegen das Erben. Bis dahin hält `fadeUphill` die Bänder vom Hang fern
 (Produktion, Seeds 1337 / 42, ausgeblendet von den rohen sichtbaren
 Stützpunkten: 19,7 / 19,2 % in Jahr 20.000, 46,0 / 12,6 % in Jahr 100.000,
 33,2 / 14,3 % in Jahr 230.000).
+
+## Geister-Seen im Mäandergürtel (Befund im Zeitraffer, Jahr 2.305)
+
+Befund des Projekteigners (Seed 1337, Jahr 2.305, Schrägsicht): in den
+Mäanderschlingen und neben den Bändern lagen große, fleckige,
+halbdurchsichtige Seen, durch die der Sand der Bänke schien, ohne klare
+Uferlinie. Werkzeug: `BeltLakes.swift`, hinter `RS_MEASURE`:
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testBeltLakesDiagnostic
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testBeltLakeHistoryDiagnostic
+```
+
+Gemessen werden die Seen, die `terrain.gdshader` malt (See-Gate ≥
+`lakeGateLo` und Wassersäule `waterLevel − h` über `pondContourLo`), als
+4er-Komponenten. „Im Gürtel" heißt: die Mehrheit der Zellen liegt im
+Kanal-plus-Bank-Streifen eines wandernden Laufs, auf einer Bank
+(`barAge ≥ 0`) oder an einem Altarm. Produktion mit Einlauf,
+100-Jahr-Schritte, M4 Max.
+
+### Ursache
+
+Die Seen standen nicht im Wasser der Physik. `Terrain.waterLevel` (der
+Darstellungs-Spiegel) relaxierte mit τ = 350 Jahren in BEIDE Richtungen auf
+den Füllstand `hf`. Auf trockenem Boden ist `hf = h`, der Spiegel war dort
+also eine verzögerte Kopie des Geländes. Der Gürtel-Stempel (#179, `be90e77`)
+gräbt das Bett aber in wenigen Jahrzehnten eine Kanaltiefe tief, seit der
+Kalibrierung (#183, `c1ecdff`, `meanderBeltRelaxYears` 150 → 10) binnen
+~10 Jahren. Jede frisch abgetragene Zelle trug damit für Jahrhunderte einen
+Geister-See der Tiefe des Abtrags; im Kanal selbst gab das Band an diese
+Fläche ab (seit `c6a3d3c` malt nur eine Seite), daneben stand sie über den
+Bänken. Ihre Tiefe fiel mit dem Spiegel langsam durch die Tiefen-Rampe des
+Shaders: daher halbdurchsichtig und fleckig.
+
+Geister-Zellen = Spiegel > hf + 0,01 bei Wassersäule über `pondContourLo`,
+Seed 1337, Jahr 2.200–2.400, 10-Jahr-Schritte:
+
+| Stand | Geister-Zellen Gürtel / sonst | Säule hf / Spiegel (Gürtel) |
+| --- | --- | --- |
+| ohne Gürtel (`meanderBelt = false`) | 64–99 / 44–166 | 0,0005 / 0,014 |
+| Gürtel, Relaxation 150 J. (≈ #179) | 693–701 / 802–1127 | 0,0005 / 0,017–0,018 |
+| Gürtel, Produktion (#183) | 1117–1364 / 1312–1495 | 0,0003–0,0006 / 0,019–0,021 |
+| nach dem Fix | 0 / 0 | – |
+
+Die hf-Säule der Geister-Zellen liegt bei 0,0005 (trocken), der Spiegel bei
+0,02, rund zehn Bankfull-Tiefen (D = 0,0021 bei 6,4 Zellen Breite).
+
+### Fix
+
+`Terrain.relaxWaterLevel` dämpft nur noch den Anstieg (den Sill-Plug des
+Sägezahns, für den die Glättung da ist); fällt `hf`, folgt der Spiegel
+sofort. Die Physik liest `waterLevel` nicht: Fingerabdruck ohne
+`waterLevel` (Produktion, Seed 1337, 100 × 100 J. Einlauf + 30 × 100 J.)
+vorher und nachher `c7c4f28eb407f835`. `simperf --hash` ändert sich, weil
+`waterLevel` im Inventar steht: `1625b1e4b83c85f4` → `e505e21e35d719aa`
+(nachher zweimal gleich). Zielbild-Punkte 9–13 inkl. „davon nass" und die
+Cutoff-Zahlen auf 1337 / 42 / 20 unverändert (Tabelle § Zeitmittel-Abnahme,
+Nachher). `simperf --repeat 3`, fünf Runden abwechselnd vorher / nachher:
+56,9 / 54,7 — 54,8 / 55,5 — 56,4 / 55,2 — 57,4 / 59,6 — 54,2 / 54,2 ms je
+Schritt, Median 56,4 / 55,2 (Rauschen). Wächter:
+`LakeLevelStability.testWaterLevelNeverStandsAboveFill` (rot ohne Fix: Spiegel
+0,24 über `hf`), `testWaterLevelDampsFillJumps` grün.
+
+Gemalte Seen vorher → nachher (Anzahl / Zellen; „halbdurchs." = Zellen mit
+Tiefen-Rampe unter 0,5):
+
+| Seed, Jahr | im Gürtel | halbdurchs. im Gürtel | außerhalb |
+| --- | --- | --- | --- |
+| 1337, 2.300 | 7 / 646 → 5 / 202 | 294 → 46 | 5 / 5584 → 3 / 5420 |
+| 1337, 20.000 | 3 / 151 → 1 / 35 | 69 → 14 | 2 / 4456 → 2 / 4453 |
+| 42, 2.300 | 0 / 0 → 1 / 1 | 0 → 0 | 1 / 11 → 1 / 2 |
+| 42, 20.000 | 4 / 316 → 1 / 38 | 157 → 18 | 0 → 0 |
+
+Was im Gürtel bleibt, ist echtes Wasser (`hf − h` über `lakeRawWetDepth`
+auf allen gemalten Kernzellen): auf Seed 1337 ein tiefes Becken bei Welt
+(−21,2; 5,4), 174 Zellen, im Mittel 38 D tief, das ohne Gürtel genauso
+steht (334 Zellen). Kandidaten für die Seen aus dem Bericht (aus der Karte
+zugeordnet, nicht im Bild bestätigt): die Geister-Komponenten bei Welt
+(13,8; 6,8) (67 Zellen, Spiegel im Mittel 14,7 D über dem Boden, hf 4,6 D,
+45 Zellen im Kanal) und (9,9; −11,4) (46 Zellen).

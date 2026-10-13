@@ -218,7 +218,10 @@ public final class Terrain {
     /// Becken-Auslass (Droplets, Braiding, Mäander; gemessen: keine Einzelquelle
     /// dominiert) lässt sonst die GESAMTE Seefläche im Render schlagartig springen
     /// und die Auslass-Inzision schneidet sie über ~100 J. wieder frei (Plug/
-    /// Breach-Sägezahn). Physisch: ein See füllt/leert sich mit endlicher Rate.
+    /// Breach-Sägezahn). Physisch: ein See füllt sich mit endlicher Rate.
+    /// Gedämpft wird nur der Anstieg: der Spiegel liegt nie über `hf` (sonst
+    /// Geister-Seen auf frisch abgetragenem, trockenem Boden, Issue #174, s.
+    /// `relaxWaterLevel`).
     /// NUR fürs Rendering — die gesamte Physik (Pools, Verlandung, Tropfen)
     /// liest weiter `hf` (ein träges Verlandungs-Ziel war messbar wirkungslos
     /// und störte die Braid-Bänke, s. Kommentar in fillShallowPonds).
@@ -5042,6 +5045,21 @@ public final class Terrain {
     /// (s. waterLevel-Doku). Exponentiell in Sim-Zeit → dt-invariant: Zeitraffer
     /// in Mini-Schritten und ein +10.000-J.-Sprung landen am selben Pegel.
     /// Per-Zelle unabhängig → parallel, bit-identisch zur sequenziellen Schleife.
+    ///
+    /// Gedämpft wird nur der ANSTIEG (der Sill-Plug des Sägezahns); fällt der
+    /// Füllstand unter den Spiegel, folgt der Spiegel sofort. Bis Issue #174
+    /// relaxierte er in beide Richtungen, und auf TROCKENEM Boden (hf = h) ist
+    /// er dann nur eine verzögerte Kopie des Geländes: jede Zelle, die schneller
+    /// sinkt als τ, trug für Jahrhunderte einen Geister-See der Tiefe des
+    /// Abtrags. Der Mäandergürtel gräbt sein Bett in ~10 Jahren eine
+    /// Kanaltiefe tief (`meanderBeltRelaxYears`); gemessen (Seed 1337, Jahr
+    /// 2300) lagen damit ~2600 Zellen mit Spiegel > hf + 0,01 auf trockenem
+    /// Boden (hf-Säule 0,0005, Spiegel-Säule 0,02 ≈ 10 Bankfull-Tiefen), als
+    /// fleckige, halbdurchsichtige Seen in den Schlingen und im Kanal selbst
+    /// (ohne Gürtel ~140; Messreihe `docs/zielbild-measurements.md`
+    /// § Geister-Seen im Mäandergürtel). Ein echter Pegelfall (Auslass
+    /// schneidet sich frei) läuft über die Inzision ohnehin allmählich. Die
+    /// Physik liest `waterLevel` nicht; sie bleibt bit-identisch.
     private func relaxWaterLevel(dt: Double) {
         guard cfg.lakeLevelResponseYears > 0 else { waterLevel = hf; return }
         let wlam = Terrain.relaxFraction(dt: dt, tau: cfg.lakeLevelResponseYears)
@@ -5049,7 +5067,9 @@ public final class Terrain {
         hf.withUnsafeBufferPointer { hfb in
             let pwl = wlb.baseAddress!, phf = hfb.baseAddress!
             parallel(cfg.count) { lo, hi in
-                for k in lo..<hi { pwl[k] += (phf[k] - pwl[k]) * wlam }
+                for k in lo..<hi {
+                    pwl[k] = phf[k] < pwl[k] ? phf[k] : pwl[k] + (phf[k] - pwl[k]) * wlam
+                }
             }
         }}
     }
