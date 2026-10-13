@@ -37,7 +37,7 @@ enum RepoSource {
         switch (relativePath as NSString).pathExtension {
         case "swift": language = .swift
         case "gd": language = .gdscript
-        case "gdshader": language = .gdshader
+        case "gdshader", "gdshaderinc": language = .gdshader
         default:
             // Laut fehlschlagen, nie überspringen: ein Skip hier wäre genau die
             // stille Entschärfung, die `file(_:)` oben ausschließt.

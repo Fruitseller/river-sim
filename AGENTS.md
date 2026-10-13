@@ -247,7 +247,9 @@ Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension;
 standardmäßig AUS, weil die Ersparnis gemessen 1,8 ms je Aufruf ist und keine
 Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet
 zusätzlich die Bedienleiste aus, `RS_SHOT_UI` behält sie (Aufnahmen der
-Bedienung selbst, Issue #174). Getrennt davon
+Bedienung selbst, Issue #174). `RS_SHOT` blendet auch den Pinsel aus;
+`RS_BRUSH=<Radius>` zeigt die Pinselkuppel trotzdem, in der Bildmitte statt am
+Mauszeiger (Aufnahmen der Kuppel ohne Maus). Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `prototype|baseline`, `RS_STUDY_MODE`

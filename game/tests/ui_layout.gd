@@ -15,7 +15,8 @@ extends SceneTree
 ##    aktiven Knopf hervor; Tempo-Leiste ⏸ ▶ ⏩;
 ##  - Kamera-Presets auf F1–F3 (auch weich angefahren): Diorama rahmt das
 ##    Land, Tal und Nah zielen auf den größten Lauf, nie aufs Meer;
-##  - Pinselkuppel: Rand auf der Fläche, Scheitel im Profil (1 − d²)^p.
+##  - Pinselkuppel: Rand auf der Fläche, Scheitel im Profil (1 − d²)^p,
+##    gezeichnet als Bildschirm-Bänder (Rand breiter als das Gitter).
 ## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
@@ -357,6 +358,26 @@ func _check_brush_dome() -> void:
 	_check(Main.brush_weight(0.5, 4.0) < Main.brush_weight(0.5, 2.0)
 		and is_equal_approx(Main.brush_weight(0.5, 2.0), 0.5625)
 		and Main.brush_weight(1.0, 2.0) == 0.0, "Profil (1 − d²)^p")
+	# Bänder (shaders/brush_dome.gdshaderinc): vier Ecken und zwei Dreiecke je
+	# Linienstück, die Enden verweisen aufeinander, der Rand ist breiter als das
+	# Gitter, und Godot nimmt das Format (CUSTOM0 als RGBA-Float) an.
+	var widths: PackedVector2Array = dome[2]
+	_check(widths.size() == verts.size() and widths[0].x > widths[widths.size() - 1].x,
+		"Rand breiter als das Gitter (%s / %s)" % [widths[0], widths[widths.size() - 1]])
+	var bands: Array = Main.brush_bands(dome)
+	var band_verts: PackedVector3Array = bands[Mesh.ARRAY_VERTEX]
+	var other: PackedFloat32Array = bands[Mesh.ARRAY_CUSTOM0]
+	var index: PackedInt32Array = bands[Mesh.ARRAY_INDEX]
+	_check(band_verts.size() == 2 * verts.size() and index.size() == 3 * verts.size()
+		and other.size() == 4 * band_verts.size(), "Ein Band je Linienstück")
+	_check(Vector3(other[0], other[1], other[2]).is_equal_approx(verts[1])
+		and Vector3(other[8], other[9], other[10]).is_equal_approx(verts[0])
+		and other[3] == 1.0 and other[11] == -1.0, "Bandenden verweisen aufeinander")
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, bands, [], {},
+		Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
+	_check(mesh.get_surface_count() == 1 and mesh.surface_get_array_len(0) == band_verts.size(),
+		"Godot nimmt das Band-Mesh an")
 	# Keine Leistungsbehauptung, nur das Protokoll: Kosten eines Kuppel-Baus
 	# auf diesem Rechner (gebaut wird nur bei Änderung, s. Main.brush_key).
 	print("UI_BRUSH_DOME_US ", dome_us)

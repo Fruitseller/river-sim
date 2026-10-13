@@ -71,4 +71,42 @@ final class UiContractTests: XCTestCase {
         assertContains(main, "get_viewport().size_changed.connect(",
                        hint: "RS_CAMERA folgt der Fenstergröße bis zur ersten Eingabe")
     }
+
+    /// Pinselkuppel lesbar auf jedem Grund (Abnahme-Befund #174 E: „zu schwer
+    /// zu erkennen"). Vorher 1-px-GL-Linien in blassem Cyan unter Nebel und
+    /// Tonemapper. Jetzt Bänder in Bildschirm-Pixeln mit dunklem Halo, unlit,
+    /// ohne Nebel, der verdeckte Teil gedämpft sichtbar. Breiten und Farben
+    /// stehen nur in Main.gd und reisen im Mesh; der Shader liest sie von dort
+    /// statt eine Kopie zu führen. Geometrie und Bänder prüft
+    /// `game/tests/ui_layout.gd`.
+    func testBrushDomeReadsOnEveryGround() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        XCTAssertEqual(main.count(of: "PRIMITIVE_LINES"), 0,
+                       "Kuppel nicht mehr als GL-Linien (1 px, keine Breite einstellbar)")
+        assertContains(main, "Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT",
+                       hint: "CUSTOM0 trägt den anderen Endpunkt als RGBA-Float")
+        assertContains(main, "bmat.next_pass = bmat_visible",
+                       hint: "Erst der verdeckte Pass, darüber der sichtbare")
+        assertContains(main, "m.set_shader_parameter(\"px_scale\", DisplayServer.screen_get_scale())",
+                       hint: "Pixelbreiten in logischen Pixeln (Retina)")
+
+        let body = try RepoSource.probe("game/shaders/brush_dome.gdshaderinc")
+        for channel in ["UV.y", "UV2.x", "CUSTOM0.w", "COLOR.rgb"] {
+            assertContains(body, channel, hint: "Kuppel-Shader liest \(channel) aus dem Mesh")
+        }
+        assertContains(body, "POSITION = clip;", hint: "Band in Bildschirm-Pixeln aufgespannt")
+
+        for (file, hidden) in [("brush_dome.gdshader", false), ("brush_dome_hidden.gdshader", true)] {
+            let pass = try RepoSource.probe("game/shaders/\(file)")
+            // Roh gelesen: der Shader-Lexer kennt keine Zeichenketten und hielte
+            // das `//` in `res://` für einen Kommentar.
+            XCTAssertTrue(pass.raw.contains("\n#include \"res://shaders/brush_dome.gdshaderinc\"\n"),
+                          "\(file) teilt den Körper")
+            for mode in ["unshaded", "fog_disabled", "depth_draw_never"] {
+                assertContains(pass, mode, hint: "\(file): \(mode)")
+            }
+            XCTAssertEqual(pass.contains("depth_test_disabled"), hidden,
+                           "\(file): nur der gedämpfte Pass zeichnet ohne Tiefentest")
+        }
+    }
 }
