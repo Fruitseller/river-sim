@@ -337,12 +337,21 @@ final class RiverUphillDiagnostics: XCTestCase {
         let seeds = (env["RS_SEEDS"] ?? "1337,42").split(separator: ",").compactMap { UInt32($0) }
         let years = (env["RS_YEARS"] ?? "20000,230000").split(separator: ",").compactMap { Double($0) }.sorted()
         for seed in seeds {
-            let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+            let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed, settleYears: SimConfig.productionSettleYears)
             for y in years {
                 while t.years < y - 1e-6 { t.step(dtYears: min(1000, y - t.years)) }
-                let r = RiverRibbonRenderer()
-                let mesh = r.build(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
-                print(RibbonUphill.report("s\(seed)", t, RibbonUphill.measure(t, mesh: mesh)))
+                // Roh (ohne das Sicherheitsnetz `fadeUphill`) und gemalt.
+                let raw = RiverRibbonRenderer()
+                raw.fadesUphill = false
+                let rawSummary = RibbonUphill.measure(t, mesh: raw.build(t, hscale: RenderContract.heightScale,
+                                                                          lift: RenderContract.riverLift))
+                print(RibbonUphill.report("s\(seed) roh", t, rawSummary))
+                let faded = RibbonUphill.measure(t, mesh: RiverRibbonRenderer().build(
+                    t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift))
+                print(String(format: "FADE s%d J%.0f: sichtbare Stützpunkte roh %d, gemalt %d (ausgeblendet %.1f%%), Anstiege >30 m gemalt %d, max %.0f m",
+                             seed, t.years, rawSummary.visibleSamples, faded.visibleSamples,
+                             100 * (1 - Double(faded.visibleSamples) / Double(max(1, rawSummary.visibleSamples))),
+                             faded.count(overMeters: 30), faded.maxMeters))
             }
         }
     }
@@ -358,7 +367,7 @@ final class RiverUphillDiagnostics: XCTestCase {
         }
         let every = Double(env["RS_EVERY"] ?? "10000")!
         let end = Double(env["RS_YEAR"] ?? "230000")!
-        let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+        let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed, settleYears: SimConfig.productionSettleYears)
         let n = t.cfg.n, cellArea = t.cfg.cellSize * t.cfg.cellSize
         func hAt(_ p: MeanderNode) -> Double { t.h.withUnsafeBufferPointer { Terrain.bilinear($0.baseAddress!, n, p.x, p.z) } }
         func localArea(_ p: MeanderNode) -> Double {
@@ -388,11 +397,50 @@ final class RiverUphillDiagnostics: XCTestCase {
         }
     }
 
+    /// Abstand der Knoten wandernder Läufe zum nächsten D8-Gerinne mit
+    /// mindestens halbem Abfluss des Knotens (Zellen, Suche bis 30): wie weit
+    /// liegt ein gesunder Mäander von seiner Rinne? `RS_YEAR`, `RS_SEED`,
+    /// `RS_VARIANT`.
+    func testBeltCouplingDistanceDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let seed = UInt32(env["RS_SEED"] ?? "1337")!
+        let year = Double(env["RS_YEAR"] ?? "20000")!
+        let t = try world(seed: seed, year: year)
+        let n = t.cfg.n, cellArea = t.cfg.cellSize * t.cfg.cellSize
+        let edges = [1.5, 3, 6, 10, 15, 20, 30]
+        var bins = [Int](repeating: 0, count: edges.count + 1)
+        var total = 0
+        for ch in t.meander.channels where MeanderState.migrates(ch, t.cfg) {
+            for (i, p) in ch.nodes.enumerated() where i > 0 && i < ch.nodes.count - 1
+                && ch.discharge[i] >= t.cfg.meanderBeltMinCells {
+                let need = 0.5 * ch.discharge[i] * cellArea
+                let i0 = Int(p.x.rounded()), j0 = Int(p.z.rounded())
+                var best = Double.infinity
+                for j in max(0, j0 - 30)...min(n - 1, j0 + 30) {
+                    for ii in max(0, i0 - 30)...min(n - 1, i0 + 30) where t.area[j * n + ii] >= need {
+                        let d = ((Double(ii) - p.x) * (Double(ii) - p.x) + (Double(j) - p.z) * (Double(j) - p.z)).squareRoot()
+                        best = min(best, d)
+                    }
+                }
+                total += 1
+                bins[edges.firstIndex { best <= $0 } ?? edges.count] += 1
+            }
+        }
+        var line = String(format: "KOPPLUNG s%d J%.0f %@: %d Knoten mit Abfluss ≥ meanderBeltMinCells, Abstand zur D8-Rinne",
+                          seed, t.years, env["RS_VARIANT"] ?? "Produktion", total)
+        var cum = 0
+        for (b, e) in edges.enumerated() {
+            cum += bins[b]
+            line += String(format: " ≤%.1f: %.0f%%", e, 100 * Double(cum) / Double(max(1, total)))
+        }
+        print(line)
+    }
+
     /// Welt aus dem Cache unter `RS_CACHE` (falls gesetzt), sonst frisch.
     private func world(seed: UInt32, year: Double) throws -> Terrain {
-        let cache = env["RS_CACHE"].map { "\($0)/world-\(seed)-\(Int(year)).rsw" }
+        let cache = env["RS_CACHE"].map { "\($0)/world-\(seed)-\(Int(year))-\(env["RS_VARIANT"] ?? "prod").rsw" }
         if let c = cache, FileManager.default.fileExists(atPath: c) { return try WorldSnapshot.read(from: c) }
-        let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+        let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed, settleYears: SimConfig.productionSettleYears)
         while t.years < year - 1e-6 { t.step(dtYears: min(1000, year - t.years)) }
         if let c = cache { try WorldSnapshot.write(t, to: c) }
         return t
