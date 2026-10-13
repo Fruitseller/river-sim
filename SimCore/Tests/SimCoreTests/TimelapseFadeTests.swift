@@ -20,6 +20,8 @@ final class TimelapseFadeTests: XCTestCase {
         ("surface_tex", "surface_at", "overlay_blend", "overlay_fade"),
         ("cover_tex", "cover_at", "overlay_blend", "overlay_fade"),
         ("flow_tex", "flow_at", "overlay_blend", "overlay_fade"),
+        // Raster-Wasser (#174): die EWMA glättet nur von Upload zu Upload.
+        ("water_tex", "water_at", "overlay_blend", "overlay_fade"),
     ]
 
     func testTerrainShaderReadsEveryFieldThroughItsBlend() throws {
@@ -64,5 +66,7 @@ final class TimelapseFadeTests: XCTestCase {
         assertContains(main, "func _upload_overlays(frame: Dictionary) -> void:\n\toverlay_fade.start(",
                        hint: "Die Overlay-Blende startet mit dem Overlay-Upload")
         assertContains(main, "height_fade.bind(ocean_mat)", hint: "Auch das Meer blendet die Höhe")
+        assertContains(main, "terrain_mat.set_shader_parameter(\"water_prev_tex\", wf_state_vp[previous].get_texture())",
+                       hint: "RS_WATER_GPU: Vorgängerstand ist das andere Ping-Pong-Ziel")
     }
 }

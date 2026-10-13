@@ -59,14 +59,16 @@ uniform sampler2D cover_tex : filter_linear, repeat_disable, hint_default_black;
 // Zeitraffer-Überblenden (#172, Main.gd `Crossfade`): der Vorgängerstand je
 // Textur und zwei Blenden, jede im Takt IHRES Uploads. `height_blend` folgt
 // dem Sim-Takt (Höhe), `overlay_blend` der Overlay-Drossel (Farbe, Material,
-// Rinnen-Detail, Seespiegel, Wald). Gelesen wird nur über die `*_at`-Helfer
-// unten, damit Form, Normalen und Farbe denselben Zwischenstand zeigen.
+// Rinnen-Detail, Seespiegel, Wald, Raster-Wasser). Gelesen wird nur über die
+// `*_at`-Helfer unten, damit Form, Normalen und Farbe denselben Zwischenstand
+// zeigen.
 uniform sampler2D height_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D color_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D surface_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D cover_prev_tex : filter_linear, repeat_disable, hint_default_black;
 uniform sampler2D flow_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D water_prev_tex : filter_linear, repeat_disable;
 uniform float height_blend = 1.0;
 uniform float overlay_blend = 1.0;
 uniform sampler2D debug_difference_tex : filter_linear, repeat_disable;
@@ -267,6 +269,14 @@ float flow_at(vec2 uv) {
 	return overlay_blend < 1.0 ? mix(texture(flow_prev_tex, uv).r, f, overlay_blend) : f;
 }
 
+// Raster-Wasser (#174): die EWMA (`water_blend`) glättet nur von Upload zu
+// Upload; dazwischen sprang das Feld je Overlay-Upload (gemessen bei 60 J/s:
+// je Upload ~10 % der nassen Zellen um mehr als 0,1 Sichtbarkeit).
+vec4 water_at(vec2 uv) {
+	vec4 w = texture(water_tex, uv);
+	return overlay_blend < 1.0 ? mix(texture(water_prev_tex, uv), w, overlay_blend) : w;
+}
+
 vec2 world_uv(vec3 vert) {
 	return (vert.xz + world_size * 0.5) / world_size;
 }
@@ -287,7 +297,7 @@ float pond_at(vec2 uv, float h_val) {
 // Blur-Halo am Ufer durch und schaltet ab WaterRender.lakeGateHi voll
 // (Kalibrier-Herleitung: WaterFieldRenderer, fadeLo/HiCells).
 float lake_gate_at(vec2 uv) {
-	return calib_window(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g);
+	return calib_window(water_lake_gate_lo, water_lake_gate_hi, water_at(uv).g);
 }
 
 // Phacelle-Noise + Erosionsfilter (runevision, MPL-2.0): erosion_filter.gdshaderinc.
@@ -844,7 +854,7 @@ void fragment() {
 		land_roughness = 0.9;
 	}
 
-	vec4 w = texture(water_tex, v_uv);
+	vec4 w = water_at(v_uv);
 	float stream = w.r;
 	float lake_gate = w.g;
 	vec2 dir = w.ba * 2.0 - 1.0;

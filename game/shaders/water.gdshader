@@ -24,6 +24,24 @@ render_mode cull_disabled, depth_draw_never;
 
 uniform float u_time = 0.0;
 
+// Band-Überblende im Zeitraffer (#174, Main.gd `ribbon_fade`): nach einem
+// Band-Bau zeichnen ZWEI Meshes, der vorige Stand (`ribbon_outgoing`) und der
+// neue, mit derselben Blende. Jedes Pixel zeigt genau EINES der beiden, in
+// fester Rausch-Reihenfolge: bei `ribbon_blend` = t hat der neue Stand den
+// Anteil t der Pixel. Kein Alpha-Mischen: zwei übereinanderliegende
+// halbdurchsichtige Bänder würden dort, wo der Lauf stillsteht, mitten in der
+// Blende durchsichtiger (Deckkraft 0,95 → 0,72 bei t = 0,5) und pulsierten im
+// Takt der Band-Bauten. So bleibt die Deckkraft überall die eines Bands; wo
+// sich Lage oder Breite ändern, löst sich der alte Stand auf.
+uniform float ribbon_blend = 1.0;
+uniform bool ribbon_outgoing = false;
+
+bool ribbon_hidden(vec2 frag) {
+	// Interleaved Gradient Noise: gleichverteilt je Bildschirm-Pixel, ortsfest.
+	float r = fract(52.9829189 * fract(dot(frag, vec2(0.06711056, 0.00583715))));
+	return ribbon_outgoing ? r < ribbon_blend : r >= ribbon_blend;
+}
+
 // Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
 // Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
 // Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
@@ -83,6 +101,9 @@ void vertex() {
 }
 
 void fragment() {
+	if (ribbon_hidden(FRAGCOORD.xy)) {
+		discard;
+	}
 	// Typ-Gewichte aus UV2.x (0 Fluss · 0.5 Delta · 1 Altarm). Als weiche
 	// Gewichte statt if-Kaskade: die Werte kommen pro Vertex und werden über
 	// das Band interpoliert, an Bandgrenzen gibt es also keine harte Kante.

@@ -178,7 +178,7 @@ final class WaterRenderTests: XCTestCase {
             "calib_window(water_pond_contour_lo, water_pond_contour_hi, pond)",
             hint: "Kontur-Fuß/Sattel der Uferlinie liest WaterRender.pondContour*")
         assertContains(shader,
-            "calib_window(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g)",
+            "calib_window(water_lake_gate_lo, water_lake_gate_hi, water_at(uv).g)",
             hint: "See-GATE liest WaterRender.lakeGate*")
         assertContains(shader,
             "calib_window(water_river_mask_lo, water_river_mask_hi, stream)",
