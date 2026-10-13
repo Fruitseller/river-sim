@@ -98,7 +98,8 @@ final class WaterUniformsTests: XCTestCase {
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
     private static let expectedColors: [String: [String]] = [
-        "game/shaders/terrain.gdshader": opticsColors + barColors,
+        // Das Bett unter dem Wasser teilen Band und Raster-Wasser.
+        "game/shaders/terrain.gdshader": opticsColors + barColors + ["water_bed_color"],
         "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors + profileColors
             + ["water_bed_color"],
         // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
