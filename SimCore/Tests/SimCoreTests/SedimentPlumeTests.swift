@@ -85,4 +85,19 @@ final class SedimentPlumeTests: XCTestCase {
         let next = try XCTUnwrap(render.frame(dry, .settled, now: 10).overlays)
         XCTAssertFalse(next.plume.contains { $0 > 0 })
     }
+
+    /// Die Fahne kommt mit den Overlays und blendet mit ihnen (#174): die
+    /// Mip-Weichzeichnung allein glättete den Sprung nicht.
+    func testPlumeFadesWithTheOverlays() throws {
+        let ocean = try RepoSource.probe("game/shaders/ocean.gdshader")
+        assertContains(ocean, "uniform sampler2D plume_prev_tex", hint: "Vorgängerstand der Fahne")
+        assertContains(ocean, "mix(textureLod(plume_prev_tex, uv, lod).r, s, overlay_blend)",
+                       hint: "plume_at mischt über die Overlay-Blende")
+        XCTAssertEqual(ocean.count(of: "textureLod(plume_tex,"), 1,
+                       "plume_tex nur in plume_at lesen")
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        assertContains(main, "overlay_fade.bind(ocean_mat)", hint: "Das Meer hängt an der Overlay-Blende")
+        assertContains(main, "plume_prev_tex.update(previous)",
+                       hint: "Der alte Stand wandert vor dem Upload nach plume_prev_tex")
+    }
 }

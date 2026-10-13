@@ -113,6 +113,16 @@ größten Mündungen je Welt:
 Kleine Mündungen (2000…5000 Zellen) liegen bei 0,07…0,3: sichtbar schwach,
 der Hauptfluss deutlich.
 
+**Zeitraffer (#174, Nachtrag):** die Quellen kommen mit jedem Overlay-Upload
+und sprangen hart; die Mip-Weichzeichnung verbarg das nicht. Bei 60 J/s
+änderte sich je Upload ein Drittel bis die Hälfte der Masse auf Mip-Stufe 3
+(31–53 %, Produktionswelt Seed 1337, Jahr 0 / 20.000 / 100.000; gemessen mit
+`RiverFadeTests.testRiverJumpsPerUploadDiagnostic` auf dem Integrationsstand
+#180). Seitdem wandert der alte Stand nach `plume_prev_tex`, und
+`ocean.gdshader` liest beide über `plume_at` unter `overlay_blend`, wie die
+Terrain-Overlays (#172). Wächter:
+`SedimentPlumeTests.testPlumeFadesWithTheOverlays`.
+
 ## §D Kosten
 
 Median über 15 Läufe, Seed 1337, Jahr 20.000, M4 Max, CPU-seitig:
@@ -129,5 +139,5 @@ Alle laufen nur bei Overlay-Frames (im Zeitraffer höchstens alle 0,30 s).
 Ein interleaved A/B gegen den Stand vor #174 für `WaterFieldRenderer.bytes`
 fehlt; die Zahl oben ist die absolute Laufzeit, keine Differenz. Die
 Shader-Kosten der Fahne (sechs `textureLod`-Abgriffe je Meeres-Pixel im
-Sim-Quadrat) und des Sand-Blocks sind NICHT gemessen: Agenten bauen die
+Sim-Quadrat, während einer Überblende zwölf) und des Sand-Blocks sind NICHT gemessen: Agenten bauen die
 GDExtension nicht lokal, und CI misst keine Bildrate.
