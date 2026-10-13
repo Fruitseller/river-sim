@@ -70,6 +70,15 @@ public enum WaterUniforms {
         ("water_ribbon_bend_depth", WaterRender.ribbonBendDepth),
         ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),
         ("water_bar_roughness", WaterRender.barRoughness),
+        // Querprofil und Oberfläche des Bands (Befund #174).
+        ("water_ribbon_waterline", WaterRender.ribbonWaterline),
+        ("water_ribbon_waterline_jitter", WaterRender.ribbonWaterlineJitter),
+        ("water_ribbon_waterline_scale", WaterRender.ribbonWaterlineScale),
+        ("water_ribbon_bank_opacity", WaterRender.ribbonBankOpacity),
+        ("water_ribbon_ripple_frequency", WaterRender.ribbonRippleFrequency),
+        ("water_ribbon_ripple_amplitude", WaterRender.ribbonRippleAmplitude),
+        ("water_ribbon_ripple_stretch", WaterRender.ribbonRippleStretch),
+        ("water_ribbon_ripple_speed", WaterRender.ribbonRippleSpeed),
     ]
 
     /// Farb-Uniforms (`uniform vec3` in den Shadern).
@@ -87,6 +96,8 @@ public enum WaterUniforms {
         ("water_ribbon_shoal_color", WaterRender.ribbonShoalColor),
         ("water_bar_sand_color", WaterRender.barSandColor),
         ("water_bar_sand_wet_color", WaterRender.barSandWetColor),
+        ("water_ribbon_bank_color", WaterRender.ribbonBankColor),
+        ("water_bed_color", WaterRender.waterBedColor),
     ]
 
     /// Vertragswerte der Godot-Wächter (Issue #92) — KEINE Shader-Uniforms,

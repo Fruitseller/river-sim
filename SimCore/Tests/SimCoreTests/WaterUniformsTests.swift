@@ -68,16 +68,39 @@ final class WaterUniformsTests: XCTestCase {
     private static let bendColors = ["water_ribbon_shoal_color"]
     private static let barScalars = ["water_bar_roughness"]
     private static let barColors = ["water_bar_sand_color", "water_bar_sand_wet_color"]
+    /// Querprofil und Oberfläche des Bands (Befund #174): Wasserlinie, nasses
+    /// Ufer, Kräuselung. Die Oktaven-Folge und Pixel-Ausblendung der Kräuselung
+    /// teilt das Band mit dem Ozean.
+    private static let profileScalars = [
+        "water_ribbon_waterline", "water_ribbon_waterline_jitter",
+        "water_ribbon_waterline_scale", "water_ribbon_bank_opacity",
+        "water_ribbon_ripple_frequency", "water_ribbon_ripple_amplitude",
+        "water_ribbon_ripple_stretch", "water_ribbon_ripple_speed",
+    ]
+    private static let profileColors = ["water_ribbon_bank_color"]
+    /// Ozean-Werte, die das Band für seine Kräuselung mitliest.
+    private static let sharedWaveScalars = [
+        "water_ocean_wave_lacunarity", "water_ocean_wave_gain",
+        "water_ocean_wave_fade_lo", "water_ocean_wave_fade_hi",
+    ]
+    /// See-Maske des Terrain-Shaders, die das Band per Pixel nachrechnet
+    /// (EINE Seite malt über einem Raster-See).
+    private static let lakeMaskScalars = [
+        "water_lake_gate_lo", "water_lake_gate_hi",
+        "water_pond_contour_lo", "water_pond_contour_hi",
+    ]
 
     private static let expectedScalars: [String: [String]] = [
         "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars + barScalars,
-        "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars,
+        "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars
+            + profileScalars + sharedWaveScalars + lakeMaskScalars,
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
     private static let expectedColors: [String: [String]] = [
         "game/shaders/terrain.gdshader": opticsColors + barColors,
-        "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors,
+        "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors + profileColors
+            + ["water_bed_color"],
         // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
         // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
         // bleibt die Himmels-Spiegelung.
@@ -146,6 +169,14 @@ final class WaterUniformsTests: XCTestCase {
             "water_ribbon_bend_depth": WaterRender.ribbonBendDepth,
             "water_ribbon_shoal_mix": WaterRender.ribbonShoalMix,
             "water_bar_roughness": WaterRender.barRoughness,
+            "water_ribbon_waterline": WaterRender.ribbonWaterline,
+            "water_ribbon_waterline_jitter": WaterRender.ribbonWaterlineJitter,
+            "water_ribbon_waterline_scale": WaterRender.ribbonWaterlineScale,
+            "water_ribbon_bank_opacity": WaterRender.ribbonBankOpacity,
+            "water_ribbon_ripple_frequency": WaterRender.ribbonRippleFrequency,
+            "water_ribbon_ripple_amplitude": WaterRender.ribbonRippleAmplitude,
+            "water_ribbon_ripple_stretch": WaterRender.ribbonRippleStretch,
+            "water_ribbon_ripple_speed": WaterRender.ribbonRippleSpeed,
         ]
         let expectedColors: [String: (r: Double, g: Double, b: Double)] = [
             "water_shallow_color": WaterRender.waterShallowColor,
@@ -161,6 +192,8 @@ final class WaterUniformsTests: XCTestCase {
             "water_ribbon_shoal_color": WaterRender.ribbonShoalColor,
             "water_bar_sand_color": WaterRender.barSandColor,
             "water_bar_sand_wet_color": WaterRender.barSandWetColor,
+            "water_ribbon_bank_color": WaterRender.ribbonBankColor,
+            "water_bed_color": WaterRender.waterBedColor,
         ]
         XCTAssertEqual(WaterUniforms.scalars.count, expectedScalars.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")

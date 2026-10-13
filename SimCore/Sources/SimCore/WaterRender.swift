@@ -1072,11 +1072,57 @@ public enum WaterRender {
     /// signierte Bogenstärke (`MeanderState.bendStrength`, −1 … +1). Am
     /// Prallhang (außen) wird die Tiefe um bis zu diesen Betrag tiefer, am
     /// Gleithang (innen) seichter; im Wendepunkt bleibt das Profil symmetrisch.
-    public static let ribbonBendDepth = 0.55
+    /// 0,55 → 0,35 mit dem Querprofil aus dem Befund #174: das Band ist dort
+    /// ohnehin fast überall voll tief, die Verschiebung wirkte also nur noch
+    /// nach innen und zog die halbe Breite jedes Bogens milchig auf.
+    public static let ribbonBendDepth = 0.35
     /// Seichtes Wasser über der Bank: Sand scheint durch.
     public static let ribbonShoalColor = (r: 0.46, g: 0.50, b: 0.42)
     /// Anteil der Sand-Tönung am Gleithang-Ufer bei voller Bogenstärke.
     public static let ribbonShoalMix = 0.45
+
+    // MARK: Querprofil und Oberfläche des Bands (Befund #174 „hässlich")
+    //
+    // Bis hier federte das Band über die äußeren 35 % seiner Breite
+    // halbtransparent ins Gelände aus: ein gleichförmiger blauer Schlauch mit
+    // Dunstsaum über dem Gras, der wie aufgemalt wirkte. Jetzt liegt im Band
+    // eine Wasserlinie, außen ein nasses Ufer, innen Flachwasser über dem Bett
+    // (`water.gdshader`). Gemessen an Seed 1337 (Jahr 230.000) und 42, Nah-
+    // und Übersichtsaufnahmen im maximierten Fenster.
+
+    /// Wasserlinie im Band als Anteil der Halbbreite, von der Bandkante aus:
+    /// außen davon nasses Ufer, innen Wasser. Die sichtbare Wasserbreite ist
+    /// damit ~65 % der Bandbreite — so breit, wie das alte Ausfedern deckend
+    /// wirkte; die Band-Breiten (`ribbonHalfWidthCells`) bleiben unverändert.
+    public static let ribbonWaterline = 0.35
+    /// Versatz der Wasserlinie über Rauschen (± Anteil der Halbbreite): das
+    /// Ufer läuft nicht als Lineal parallel zur Zentrumslinie.
+    public static let ribbonWaterlineJitter = 0.15
+    /// Frequenz dieses Rauschens je Welteinheit (Zelle ≈ 0,156): ~2 Zellen.
+    public static let ribbonWaterlineScale = 3.0
+    /// Deckkraft des nassen Ufers (dunkler Saum zwischen Bandkante und
+    /// Wasserlinie, läuft nach außen auf 0).
+    public static let ribbonBankOpacity = 0.6
+    /// Farbe des nassen Ufers: feuchter Schlamm/Kies.
+    public static let ribbonBankColor = (r: 0.13, g: 0.12, b: 0.09)
+    /// Bett unter dem Wasser, GEMEINSAM für Band und Raster-Wasser: scheint
+    /// über die Deckkraft-Rampe (`waterOpacityShallow/Deep`) durch. Das
+    /// Raster-Wasser mischte vorher das abgedunkelte Gelände selbst darunter,
+    /// samt Erosions-Detail — dessen Rinnen standen als Höhenlinien-Moiré und
+    /// Ringe im Wasser (Befund #174, Seen und breite Raster-Läufe). Es nimmt
+    /// jetzt überwiegend diese Farbe (s. `terrain.gdshader`).
+    public static let waterBedColor = (r: 0.17, g: 0.17, b: 0.12)
+    /// Kräuselung: Grundfrequenz je Welteinheit, Amplitude der Normalen-
+    /// Neigung, Streckung längs der Strömung (< 1 = längliche Wellen) und
+    /// Wandergeschwindigkeit stromab. Oktaven-Folge und Pixel-Ausblendung
+    /// teilt das Band mit dem Ozean (`oceanWaveLacunarity/Gain/FadeLo/Hi`).
+    public static let ribbonRippleFrequency = 3.0
+    /// s. `ribbonRippleFrequency`.
+    public static let ribbonRippleAmplitude = 0.04
+    /// s. `ribbonRippleFrequency`.
+    public static let ribbonRippleStretch = 0.4
+    /// s. `ribbonRippleFrequency`.
+    public static let ribbonRippleSpeed = 1.5
 
     /// Tiefen-Verschiebung im Band: `across` = UV.x (0 … 1), `bend` = UV2.y.
     /// Positiv = tiefer. Spiegel der Formel in `water.gdshader`.
