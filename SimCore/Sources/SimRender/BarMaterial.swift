@@ -6,15 +6,19 @@ import SimCore
 ///
 /// Reine Render-Ableitung aus dem Sim-Zustand von Paket B, zustandslos, ändert
 /// das Terrain nie (Muster wie `ForestCanopyMask`):
-///  1. **Sand** auf frischen Gleithang-Bänken (`Terrain.barAge`): hell bis
-///     `WaterRender.barSandYearsLo` Jahre nach der letzten Ablagerung, danach
-///     liest die Bank als Wiese — die Sim-Vegetation wächst auf ihr nach.
-///  2. **Scroll-Bars** als Rippen über den Isolinien des Bankalters (jede
-///     Isolinie ist eine frühere Lage des Gleithangs). Die Höhe kann sie auf
-///     diesem Gitter nicht tragen; hier wechseln Rücken (heller, trockener)
-///     und Senken (feuchter Sand, grünere Wiese). Wo die Rippen enger als
+///  1. **Sand** nur auf der JUNGEN Gleithang-Bank direkt am Gerinne: jung
+///     nach `Terrain.barAge` (`WaterRender.barSandYearsLo/Hi`) UND nah an der
+///     aktuellen Zentrumslinie (`barSandReachLo/Hi`, in Kanalbreiten). Was der
+///     Lauf früher überstrichen hat, ist Aue, kein Sand.
+///  2. **Pionier-Grün** dahinter: die Sim setzt den Bewuchs beim Stempeln auf
+///     0 und lässt ihn über Jahrhunderte nachwachsen; die junge Bank liest
+///     deshalb über `barPioneer` grüner, statt als kahler Trockenrasen.
+///  3. **Scroll-Bars** als leise Rippen im Bewuchs über den Isolinien des
+///     Bankalters (jede Isolinie ist eine frühere Lage des Gleithangs). Die
+///     Höhe kann sie auf diesem Gitter nicht tragen; Senken sind grüner,
+///     Rücken magerer — nie heller Sand. Wo die Rippen enger als
 ///     `barScrollMinSpacingLo` Zellen stünden, blenden sie aus (Aliasing).
-///  3. **Altarme** färben über ihr Alter (`MeanderState.oxbowAge`): Ried in
+///  4. **Altarme** färben über ihr Alter (`MeanderState.oxbowAge`): Ried in
 ///     der feuchten Senke, später ein Vegetationsbogen. Das Wasserband blendet
 ///     darüber wie bisher über `WaterRender.oxbowVisibleYears` aus.
 ///
@@ -26,10 +30,11 @@ import SimCore
 public enum BarMaterial {
 
     public struct Field: Equatable {
-        /// Sandgewicht 0 … 1 (frische Bank, mit Scroll-Rippen).
+        /// Sandgewicht 0 … 1 (junge Bank am Gerinne).
         public var sand: [Float]
-        /// Verschiebung des Vegetationsgewichts (−1 … +1): Rippen-Senken und
-        /// alte Altarm-Bögen grüner, Rippen-Rücken magerer.
+        /// Verschiebung des Vegetationsgewichts (−1 … +1): Pionier-Grün auf
+        /// junger Bank, Rippen-Senken und alte Altarm-Bögen grüner,
+        /// Rippen-Rücken magerer.
         public var vegShift: [Float]
         /// Ried-Gewicht 0 … 1 (verlandender Altarm): Makrofarbe olivbraun.
         public var reed: [Float]
@@ -55,10 +60,13 @@ public enum BarMaterial {
         let hasBars = age.count == cnt
 
         if hasBars {
+            let near = lineDistance(terrain, barAge: age, reachWidths: WaterRender.barSandReachHi)
             age.withUnsafeBufferPointer { ab in
+            near.withUnsafeBufferPointer { nb in
             sand.withUnsafeMutableBufferPointer { sb in
             vegShift.withUnsafeMutableBufferPointer { vb in
-                let pa = ab.baseAddress!, ps = sb.baseAddress!, pv = vb.baseAddress!
+                let pa = ab.baseAddress!, pn = nb.baseAddress!
+                let ps = sb.baseAddress!, pv = vb.baseAddress!
                 parallelChunks(n) { jLo, jHi in
                     for j in jLo..<jHi {
                         for i in 0..<n {
@@ -67,17 +75,17 @@ public enum BarMaterial {
                             guard a >= 0 else { continue }
                             let ripple = WaterRender.barScroll(
                                 age: a, gradientYearsPerCell: ageGradient(pa, i, j, n))
-                            let s = WaterRender.barSand(age: a)
-                            // Im Sand: die Senke ist feucht und dunkler.
-                            ps[k] = Float(s * (1 - WaterRender.barScrollSandDepth * max(0, ripple)))
-                            // In der Wiese: Senke (+) grüner, Rücken (−) magerer;
-                            // auf Sand wirkt die Verschiebung nicht (dort trägt
-                            // der Sand die Rippe).
-                            pv[k] = Float((1 - s) * WaterRender.barScrollVegGain * ripple)
+                            let s = WaterRender.barSand(age: a, lineDistanceWidths: Double(pn[k]))
+                            ps[k] = Float(s)
+                            // Hinter dem Sand: Pionier-Grün auf der jungen Bank,
+                            // die Scroll-Rippen als leise Bewuchs-Bänder
+                            // (Senke +, Rücken −). Auf Sand wirkt beides nicht.
+                            pv[k] = Float((1 - s) * (WaterRender.barPioneer(age: a)
+                                                     + WaterRender.barScrollVegGain * ripple))
                         }
                     }
                 }
-            }}}
+            }}}}
         }
 
         if hasBars { sand = despeckle(sand, n: n) }
@@ -109,6 +117,81 @@ public enum BarMaterial {
             }
         }}
         return out
+    }
+
+    /// Abstand jeder BANK-Zelle (`barAge` ≥ 0) zur nächsten AKTUELLEN
+    /// Zentrumslinie in örtlichen Kanalbreiten (Breite aus dem Abfluss,
+    /// `MeanderState.beltWidthCells`, dieselbe Kurve wie Bett und Band).
+    /// Gemessen bis `reachWidths`, sonst `.infinity`. Punkt-Strecke-Abstand je
+    /// Knotenpaar, Breite gemittelt. Parallel über Zeilenbereiche: jede
+    /// Strecke liegt in den Zeilenbändern, die ihr Kasten berührt, und jeder
+    /// Bereich schreibt nur seine Zeilen (Minimum, reihenfolgeunabhängig).
+    static func lineDistance(_ terrain: Terrain, barAge: [Double], reachWidths: Double) -> [Float] {
+        let n = terrain.cfg.n, cnt = n * n
+        var dist = [Float](repeating: .infinity, count: cnt)
+        guard reachWidths > 0, barAge.count == cnt else { return dist }
+        struct Segment { var ax, az, sx, sz, invL2, invB2: Double; var x0, x1, z0, z1: Int }
+        var segments: [Segment] = []
+        for ch in terrain.meander.channels where ch.nodes.count >= 2 && ch.discharge.count >= ch.nodes.count {
+            let nodes = ch.nodes
+            var wA = MeanderState.beltWidthCells(discharge: ch.discharge[0], config: terrain.cfg)
+            for s in 0..<(nodes.count - 1) {
+                let wB = MeanderState.beltWidthCells(discharge: ch.discharge[s + 1], config: terrain.cfg)
+                defer { wA = wB }
+                let a = nodes[s], e = nodes[s + 1]
+                guard a.x.isFinite, a.z.isFinite, e.x.isFinite, e.z.isFinite,
+                      abs(a.x) < 1e9, abs(a.z) < 1e9, abs(e.x) < 1e9, abs(e.z) < 1e9 else { continue }
+                let b = max(1e-6, 0.5 * (wA + wB))
+                let r = reachWidths * b
+                let x0 = max(0, Int((min(a.x, e.x) - r).rounded(.down)))
+                let x1 = min(n - 1, Int((max(a.x, e.x) + r).rounded(.up)))
+                let z0 = max(0, Int((min(a.z, e.z) - r).rounded(.down)))
+                let z1 = min(n - 1, Int((max(a.z, e.z) + r).rounded(.up)))
+                guard x0 <= x1, z0 <= z1 else { continue }
+                let sx = e.x - a.x, sz = e.z - a.z
+                segments.append(Segment(ax: a.x, az: a.z, sx: sx, sz: sz,
+                                        invL2: 1 / max(1e-12, sx * sx + sz * sz), invB2: 1 / (b * b),
+                                        x0: x0, x1: x1, z0: z0, z1: z1))
+            }
+        }
+        guard !segments.isEmpty else { return dist }
+        // Zeilenbänder → Strecken, deren Kasten sie berührt.
+        let band = 8
+        var buckets = [[Int32]](repeating: [], count: (n + band - 1) / band)
+        for (si, sg) in segments.enumerated() {
+            for bi in (sg.z0 / band)...(sg.z1 / band) { buckets[bi].append(Int32(si)) }
+        }
+        let reach2 = reachWidths * reachWidths
+        barAge.withUnsafeBufferPointer { ab in
+        dist.withUnsafeMutableBufferPointer { db in
+            let pa = ab.baseAddress!, pd = db.baseAddress!
+            parallelChunks(n) { jLo, jHi in
+                for bi in (jLo / band)...((jHi - 1) / band) {
+                    let r0 = max(jLo, bi * band), r1 = min(jHi, bi * band + band)
+                    for si in buckets[bi] {
+                        let sg = segments[Int(si)]
+                        let zLo = max(r0, sg.z0), zHi = min(r1, sg.z1 + 1)
+                        guard zLo < zHi else { continue }
+                        for j in zLo..<zHi {
+                            let pz = Double(j) - sg.az
+                            for i in sg.x0...sg.x1 {
+                                let k = j * n + i
+                                guard pa[k] >= 0 else { continue }
+                                let px = Double(i) - sg.ax
+                                let u = max(0, min(1, (px * sg.sx + pz * sg.sz) * sg.invL2))
+                                let dx = px - u * sg.sx, dz = pz - u * sg.sz
+                                let d2 = (dx * dx + dz * dz) * sg.invB2
+                                if d2 <= reach2 {
+                                    let d = Float(d2.squareRoot())
+                                    if d < pd[k] { pd[k] = d }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }}
+        return dist
     }
 
     /// Betrag des Altersgradienten (Jahre je Zelle) über die Nachbarn, die

@@ -391,8 +391,10 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Material-Cache und hält ihr Gedächtnis in Sim-Jahren (#167,
   `ForestCanopyMask.regrow`: Wald weicht Wasser sofort, wächst über
   `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`),
-- `BarMaterial`: Material des Mäandergürtels (Issue #174 C2): Sand auf
-  frischen Bänken aus `Terrain.barAge`, Scroll-Rippen über dessen Isolinien,
+- `BarMaterial`: Material des Mäandergürtels (Issue #174 C2): Sand nur auf
+  der jungen Bank am Gerinne (`Terrain.barAge` UND Abstand zur aktuellen
+  Zentrumslinie in Kanalbreiten), dahinter Pionier-Grün, Scroll-Rippen als
+  leise Bewuchs-Bänder über den Isolinien des Bankalters,
   Ried und Vegetationsbogen der Altarme; zustandslos, `RenderState` cacht es
   mit dem Material und gibt dasselbe Feld an `TerrainColorRenderer` (Sand im
   A-Kanal der Makrofarbe) und `WaterProtectMask` (Kalibrierung:

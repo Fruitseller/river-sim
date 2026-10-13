@@ -5,7 +5,8 @@ import XCTest
 @testable import SimRender
 
 /// Wächter für das Render des Mäandergürtels (Issue #174, Paket C Teil 2):
-///  - `BarMaterial`: frische Bank = Sand, alternd zurück zur Wiese; Scroll-
+///  - `BarMaterial`: junge Bank AM GERINNE = Sand (höchstens ~1 Kanalbreite
+///    je Ufer, Befund #174 „Sandwüste“), dahinter Pionier-Grün; Scroll-
 ///    Rippen folgen den Isolinien des Bankalters und blenden aus, wo sie
 ///    aliasen würden; Altarme verlanden über Ried zum Vegetationsbogen, auch
 ///    TROCKENE junge Altarme (ohne Wasserband) zeigen das Ried.
@@ -22,7 +23,7 @@ final class BarMaterialTests: XCTestCase {
 
     /// Flaches Land knapp über dem Meer, ohne Schnee/Eis, mit einem
     /// gesetzten Bankalter-Feld. `age(i, j)` < 0 = keine Bank.
-    private func flatWorld(n: Int = 64, age: (Int, Int) -> Double,
+    private func flatWorld(n: Int = 64, channelRow: Int? = nil, age: (Int, Int) -> Double,
                            oxbows: [[MeanderNode]] = [], oxbowAge: [Double] = []) -> Terrain {
         let t = Terrain(config: renderConfig(n: n), seed: 1337)
         var s = t.state
@@ -38,6 +39,12 @@ final class BarMaterialTests: XCTestCase {
         s.areaMFD = [Double](repeating: 0, count: n * n)
         s.streamMap = [Double](repeating: 0, count: n * n)
         s.meanderChannels = []
+        if let row = channelRow {
+            // Gerader Lauf am Breiten-Deckel (Breite `channelWidth` Zellen).
+            let q = 20 * t.cfg.renderMinCells
+            let nodes = stride(from: 2.0, through: Double(n - 3), by: 1.5).map { MeanderNode(x: $0, z: Double(row)) }
+            s.meanderChannels = [RiverChannel(nodes: nodes, discharge: nodes.map { _ in q })]
+        }
         s.barAge = (0..<(n * n)).map { age($0 % n, $0 / n) }
         s.oxbows = oxbows
         s.oxbowAge = oxbowAge
@@ -47,38 +54,106 @@ final class BarMaterialTests: XCTestCase {
 
     // MARK: - Sand
 
+    /// Breite des Test-Laufs (Zellen): Abfluss 20 × `renderMinCells` liegt am
+    /// Breiten-Deckel.
+    private var channelWidth: Double { 2 * WaterRender.ribbonHalfWidthCapCells }
+
+    /// Zeile im Abstand `widths` Kanalbreiten von der Zentrumslinie in `row`.
+    private func row(_ row: Int, plus widths: Double) -> Int {
+        row + Int((widths * channelWidth).rounded())
+    }
+
     func testFreshBarIsSandAndOldBarIsNot() {
-        let n = 64
-        let t = flatWorld(n: n) { i, j in
-            guard (10..<20).contains(j), (10..<54).contains(i) else { return -1 }
+        let n = 64, line = 16
+        let t = flatWorld(n: n, channelRow: line) { i, j in
+            guard j > line + 3, j < 50, (6..<58).contains(i) else { return -1 }
             return i < 32 ? 0 : 20_000
         }
         let f = BarMaterial.field(t)
-        XCTAssertEqual(f.sand[15 * n + 20], 1, accuracy: 1e-6, "frische Bank = voller Sand")
-        XCTAssertEqual(f.sand[15 * n + 45], 0, "alte Bank trägt keinen Sand mehr")
-        XCTAssertEqual(f.sand[40 * n + 20], 0, "ohne Bank kein Sand")
-        XCTAssertEqual(WaterRender.barSand(age: -1), 0)
-        XCTAssertEqual(WaterRender.barSand(age: WaterRender.barSandYearsLo), 1, accuracy: 1e-12)
-        XCTAssertEqual(WaterRender.barSand(age: WaterRender.barSandYearsHi), 0, accuracy: 1e-12)
+        let bank = row(line, plus: 0.8)
+        XCTAssertEqual(f.sand[bank * n + 20], 1, accuracy: 1e-6, "junge Bank am Gerinne = voller Sand")
+        XCTAssertEqual(f.sand[bank * n + 45], 0, "alte Bank trägt keinen Sand mehr")
+        XCTAssertEqual(f.sand[row(line, plus: 3) * n + 20], 0,
+                       "junge Bank drei Kanalbreiten vom Gerinne: Aue, kein Sand")
+        XCTAssertEqual(f.sand[55 * n + 20], 0, "ohne Bank kein Sand")
+        XCTAssertEqual(BarMaterial.field(flatWorld(n: n) { _, _ in 0 }).sand.max(), 0,
+                       "ohne Lauf kein Sand, auch auf junger Bank")
+        XCTAssertEqual(WaterRender.barSand(age: -1, lineDistanceWidths: 0.7), 0)
+        XCTAssertEqual(WaterRender.barSand(age: 0, lineDistanceWidths: .infinity), 0)
+        XCTAssertEqual(WaterRender.barSand(age: WaterRender.barSandYearsLo,
+                                           lineDistanceWidths: WaterRender.barSandReachLo), 1, accuracy: 1e-12)
+        XCTAssertEqual(WaterRender.barSand(age: WaterRender.barSandYearsHi, lineDistanceWidths: 0.7), 0, accuracy: 1e-12)
+        XCTAssertEqual(WaterRender.barSand(age: 0, lineDistanceWidths: WaterRender.barSandReachHi), 0, accuracy: 1e-12)
         var last = 2.0
         for age in stride(from: 0.0, through: 4000, by: 100) {
-            let s = WaterRender.barSand(age: age)
+            let s = WaterRender.barSand(age: age, lineDistanceWidths: 0.7)
             XCTAssertLessThanOrEqual(s, last, "Sand nimmt mit dem Alter nur ab")
             last = s
+        }
+        last = 2.0
+        for d in stride(from: 0.0, through: 3, by: 0.1) {
+            let s = WaterRender.barSand(age: 0, lineDistanceWidths: d)
+            XCTAssertLessThanOrEqual(s, last, "Sand nimmt mit dem Abstand zum Gerinne nur ab")
+            last = s
+        }
+    }
+
+    /// Befund #174 („Sandwüste“): ist das GANZE Innere einer Schlinge junge
+    /// Bank (der Gürtel hat es eben überstrichen), liegt Sand trotzdem nur als
+    /// Streifen am Gerinne: höchstens eine Kanalbreite je Ufer und Lauflänge.
+    func testSandStaysAStripAlongTheChannel() {
+        let n = 96, line = 48
+        // Bank überall außer im Gerinne selbst (dort setzt der Stempel −1).
+        let t = flatWorld(n: n, channelRow: line) { _, j in
+            Double(abs(j - line)) < 0.5 * self.channelWidth ? -1 : 0
+        }
+        let f = BarMaterial.field(t)
+        var sandArea = 0.0
+        for j in 0..<n { for i in 20..<76 { sandArea += Double(f.sand[j * n + i]) } }
+        let perSide = sandArea / (2 * 56 * channelWidth)
+        XCTAssertGreaterThan(perSide, 0.4, "am Gerinne liegt eine Sandbank")
+        XCTAssertLessThanOrEqual(perSide, 1.0,
+                                 "Sand je Ufer und Lauflänge höchstens eine Kanalbreite (\(perSide))")
+        for j in 0..<n where abs(Double(j - line)) > WaterRender.barSandReachHi * channelWidth + 0.5 {
+            XCTAssertEqual(f.sand[j * n + 40], 0, "kein Sand \(j - line) Zellen vom Gerinne")
+        }
+        // Dahinter: Pionier-Grün statt Trockenrasen, ohne Sand.
+        let behind = (row(line, plus: 2.5)) * n + 40
+        XCTAssertEqual(f.sand[behind], 0)
+        XCTAssertGreaterThan(Double(f.vegShift[behind]), 0.5 * WaterRender.barPioneerVeg,
+                             "junge Bank hinter dem Sand liest grüner")
+    }
+
+    /// Scroll-Rippen sind leise Bewuchs-Bänder, nie helle Sandringe: auf
+    /// gestaffeltem Bankalter weit vom Gerinne bleibt der Sand 0 und die
+    /// Verschiebung klein.
+    func testScrollRipplesNeverPaintSand() {
+        let n = 96, line = 8
+        let step = 120.0
+        let t = flatWorld(n: n, channelRow: line) { i, j in
+            j > line + 3 && (5..<90).contains(i) ? step * Double(j - line) : -1
+        }
+        let f = BarMaterial.field(t)
+        for j in row(line, plus: WaterRender.barSandReachHi + 0.2)..<n {
+            for i in 10..<85 {
+                XCTAssertEqual(f.sand[j * n + i], 0, "kein Sand weit vom Gerinne (\(i), \(j))")
+                XCTAssertLessThanOrEqual(abs(Double(f.vegShift[j * n + i])),
+                                         WaterRender.barPioneerVeg + WaterRender.barScrollVegGain + 1e-6)
+            }
         }
     }
 
     func testSingleFreshCellIsNoBar() {
         let n = 64
-        let t = flatWorld(n: n) { i, j in i == 30 && j == 30 ? 0 : -1 }
+        let t = flatWorld(n: n, channelRow: 25) { i, j in i == 30 && j == 30 ? 0 : -1 }
         XCTAssertEqual(BarMaterial.field(t).sand[30 * n + 30], 0,
                        "eine einzelne frisch gestempelte Zelle ist ein Sprenkel, keine Bank")
     }
 
     func testSandEntersMaterialWeights() {
         let n = 64
-        let bar = flatWorld(n: n) { i, j in (10..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
-        let none = flatWorld(n: n) { _, _ in -1 }
+        let bar = flatWorld(n: n, channelRow: 10) { i, j in (14..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
+        let none = flatWorld(n: n, channelRow: 10) { _, _ in -1 }
         let a = TerrainColorRenderer.buffers(bar), b = TerrainColorRenderer.buffers(none)
         let k = 15 * n + 20
         XCTAssertGreaterThan(a.colors[k * 4 + 3], 200, "Sand im A-Kanal der Makrofarbe")
@@ -91,12 +166,12 @@ final class BarMaterialTests: XCTestCase {
 
     func testFreshBarsAreProtectedFromForest() {
         let n = 64
-        let t = flatWorld(n: n) { i, j in (10..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
+        let t = flatWorld(n: n, channelRow: 6) { i, j in (10..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
         let render = RenderState(geometryMode: true)
         _ = render.waterFieldBytes(t, blend: 1.0)
         let mask = render.protectMaskBytes(t)
         let forest = render.forestMaskBytes(t)
-        for j in 11..<19 {
+        for j in 11..<14 {
             for i in 11..<29 {
                 XCTAssertEqual(mask[j * n + i], 255, "frische Bank (\(i),\(j)) ist geschützt")
                 XCTAssertEqual(forest[j * n + i], 0, "kein Wald auf frischer Bank")
@@ -121,8 +196,8 @@ final class BarMaterialTests: XCTestCase {
         }
         // … quer dazu wechseln Rücken und Senke mit der Periode im Alter.
         let row = (20..<70).map { Double(f.vegShift[40 * n + $0]) }
-        XCTAssertGreaterThan(row.max()!, 0.1, "Senken sind grüner")
-        XCTAssertLessThan(row.min()!, -0.1, "Rücken sind magerer")
+        XCTAssertGreaterThan(row.max()!, 0.5 * WaterRender.barScrollVegGain, "Senken sind grüner")
+        XCTAssertLessThan(row.min()!, -0.5 * WaterRender.barScrollVegGain, "Rücken sind magerer")
         var crossings = 0
         for a in 1..<row.count where (row[a - 1] < 0) != (row[a] < 0) { crossings += 1 }
         let expected = 2 * Double(row.count) * step / WaterRender.barScrollPeriodYears
@@ -187,7 +262,8 @@ final class BarMaterialTests: XCTestCase {
         XCTAssertEqual(Double(f.vegShift[44 * n + 33]), WaterRender.oxbowArcVeg, accuracy: 1e-5,
                        "alter Altarm: Vegetationsbogen")
         XCTAssertEqual(f.reed[44 * n + 33], 0)
-        XCTAssertEqual(f.vegShift[42 * n + 25], 0, "eine jüngere Bank hat den Bogen überschüttet")
+        XCTAssertEqual(Double(f.vegShift[42 * n + 25]), WaterRender.barPioneer(age: 100), accuracy: 1e-6,
+                       "eine jüngere Bank hat den Bogen überschüttet (nur ihr Pionier-Grün bleibt)")
     }
 
     // MARK: - Querprofil im Band

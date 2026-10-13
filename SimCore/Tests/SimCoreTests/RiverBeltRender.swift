@@ -8,6 +8,9 @@ import XCTest
 // - testBarAgeDiagnostic: Verteilung des Bankalters (`Terrain.barAge`) und
 //   sein Gradient je Zelle auf der Produktionswelt — daraus Sand-Horizont und
 //   Scroll-Bar-Periode von `BarMaterial`.
+// - testBarSandExtentDiagnostic: Sandfläche aus `BarMaterial` gegen Bank- und
+//   Kanalfläche, nach Bankalter, Abstand zur Zentrumslinie und Höhe über
+//   bankfull (Befund #174 „Sandwüste in der Schlinge").
 // - testMainStemBandDiagnostic: der Hauptlauf (D8, größtes Einzugsgebiet bis
 //   zur Band-Schwelle) Zelle für Zelle: wer malt ihn (Band, Raster-Fluss,
 //   See), wo bleibt eine Lücke, und warum.
@@ -227,19 +230,22 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
             print("DELTA s\(seed): Delta-Arm-Bänder \(deltaStrips)")
             // Kosten auf der Produktionswelt: Gürtel-Material allein und der
             // Material-Pass mit/ohne Gürtel, interleaved, Median über 7.
-            var tField: [Double] = [], tWith: [Double] = [], tWithout: [Double] = []
+            var tField: [Double] = [], tWith: [Double] = [], tWithout: [Double] = [], tLine: [Double] = []
             for _ in 0..<7 {
                 var c = Date()
                 let f = BarMaterial.field(t)
                 tField.append(Date().timeIntervalSince(c) * 1000)
+                c = Date()
+                _ = BarMaterial.lineDistance(t, barAge: t.barAge, reachWidths: WaterRender.barSandReachHi)
+                tLine.append(Date().timeIntervalSince(c) * 1000)
                 c = Date(); _ = TerrainColorRenderer.buffers(t, bars: f)
                 tWith.append(Date().timeIntervalSince(c) * 1000)
                 c = Date(); _ = TerrainColorRenderer.buffers(t, bars: .empty)
                 tWithout.append(Date().timeIntervalSince(c) * 1000)
             }
             func med(_ a: [Double]) -> Double { a.sorted()[a.count / 2] }
-            print(String(format: "COST s%d: BarMaterial.field %.2f ms | Materialpass mit Gürtel %.2f ms, ohne %.2f ms (Median aus 7, interleaved)",
-                         seed, med(tField), med(tWith), med(tWithout)))
+            print(String(format: "COST s%d: BarMaterial.field %.2f ms (davon Abstand zur Zentrumslinie %.2f ms) | Materialpass mit Gürtel %.2f ms, ohne %.2f ms (Median aus 7, interleaved)",
+                         seed, med(tField), med(tLine), med(tWith), med(tWithout)))
             let sandCells = bars.sand.filter { $0 > 0.25 }.count
             let reedCells = bars.reed.filter { $0 > 0.25 }.count
             print("MAP s\(seed): \(path) | Sand > 0,25: \(sandCells) Zellen, Ried > 0,25: \(reedCells) Zellen, Altarme \(t.meander.oxbows.count)")
@@ -351,5 +357,183 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
         r.lake = 100 * Double(lake) / total; r.gap = 100 * Double(gap) / total
         r.atCap = 100 * Double(cap) / total
         return r
+    }
+}
+
+// MARK: - Sandfläche des Gürtels (Befund #174 „Sandwüste in der Schlinge")
+
+extension RiverBeltRenderDiagnostics {
+
+    /// Nächste Zentrumslinie je Zelle: Abstand in Kanalbreiten, Breite dort
+    /// und geschätztes bankfull (tiefste Sohle im Querschnitt + Kanaltiefe,
+    /// wie `Terrain.beltStamp` ohne Kolk-Schiefe). Reichweite `reach` Breiten.
+    static func nearestLine(_ t: Terrain, reach: Double) -> (dist: [Double], width: [Double], zbf: [Double]) {
+        let n = t.cfg.n, cnt = n * n
+        var dist = [Double](repeating: .infinity, count: cnt)
+        var width = [Double](repeating: 0, count: cnt)
+        var zbf = [Double](repeating: 0, count: cnt)
+        let depthK = t.cfg.meanderBeltDepthPerWidth * t.cfg.cellSize
+        for ch in t.meander.channels where ch.nodes.count >= 3 {
+            let c = ch.nodes.count
+            var bw = [Double](repeating: 0, count: c), bf = [Double](repeating: 0, count: c)
+            for i in 0..<c {
+                let b = MeanderState.beltWidthCells(discharge: ch.discharge[i], config: t.cfg)
+                bw[i] = b
+                let w = 0.5 * b, p = ch.nodes[i]
+                var lo = Double.infinity
+                let r = Int(w.rounded(.up))
+                let ci = Int(p.x.rounded()), cj = Int(p.z.rounded())
+                for j in max(0, cj - r)...min(n - 1, max(0, cj + r)) {
+                    for i2 in max(0, ci - r)...min(n - 1, max(0, ci + r)) {
+                        let dx = Double(i2) - p.x, dz = Double(j) - p.z
+                        if dx * dx + dz * dz <= (w + 0.5) * (w + 0.5) { lo = min(lo, t.h[j * n + i2]) }
+                    }
+                }
+                bf[i] = (lo.isFinite ? lo : t.h[min(max(cj, 0), n - 1) * n + min(max(ci, 0), n - 1)]) + depthK * b
+            }
+            for i in 0..<(c - 1) {
+                let a = ch.nodes[i], e = ch.nodes[i + 1]
+                let b = 0.5 * (bw[i] + bw[i + 1])
+                let R = reach * b
+                let x0 = max(0, Int((min(a.x, e.x) - R).rounded(.down))), x1 = min(n - 1, Int((max(a.x, e.x) + R).rounded(.up)))
+                let z0 = max(0, Int((min(a.z, e.z) - R).rounded(.down))), z1 = min(n - 1, Int((max(a.z, e.z) + R).rounded(.up)))
+                guard x0 <= x1, z0 <= z1 else { continue }
+                let sx = e.x - a.x, sz = e.z - a.z, l2 = max(1e-12, sx * sx + sz * sz)
+                for j in z0...z1 {
+                    for i2 in x0...x1 {
+                        let px = Double(i2) - a.x, pz = Double(j) - a.z
+                        let u = max(0, min(1, (px * sx + pz * sz) / l2))
+                        let dx = px - u * sx, dz = pz - u * sz
+                        let d = (dx * dx + dz * dz).squareRoot() / max(b, 1e-6)
+                        let k = j * n + i2
+                        if d < dist[k] {
+                            dist[k] = d; width[k] = b
+                            zbf[k] = bf[i] + u * (bf[i + 1] - bf[i])
+                        }
+                    }
+                }
+            }
+        }
+        return (dist, width, zbf)
+    }
+
+    /// Sandfläche aus `BarMaterial` gegen Gürtel und Kanal, verteilt nach
+    /// Bankalter, Abstand zur Zentrumslinie (Kanalbreiten) und Höhe über
+    /// bankfull (Kanaltiefen). RS_YEARS_LIST (Standard „2300,20000,100000"),
+    /// RS_SEEDS; RS_CACHE = Ordner für Welt-Snapshots (spart den Lauf).
+    func testBarSandExtentDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let marks = (env["RS_YEARS_LIST"] ?? "2300,20000,100000").split(separator: ",").compactMap { Double($0) }
+        let cache = env["RS_CACHE"]
+        for seed in (env["RS_SEEDS"] ?? "1337,42").split(separator: ",").compactMap({ UInt32($0) }) {
+            var t: Terrain?
+            var start = 0.0
+            for mark in marks {
+                let path = cache.map { "\($0)/world-s\(seed)-\(Int(mark)).rsw" }
+                if let p = path, FileManager.default.fileExists(atPath: p), let w = try? WorldSnapshot.read(from: p) {
+                    t = w; start = w.years - mark
+                } else {
+                    if t == nil {
+                        t = Terrain(config: SimConfig.production, seed: seed,
+                                    settleYears: SimConfig.productionSettleYears)
+                        start = t!.years
+                    }
+                    while t!.years < start + mark - 1e-6 { t!.step(dtYears: 100) }
+                    if let p = path { _ = try WorldSnapshot.write(t!, to: p) }
+                }
+                Self.printSandExtent(t!, seed: seed, label: mark)
+            }
+        }
+    }
+
+    static func printSandExtent(_ t: Terrain, seed: UInt32, label: Double) {
+        let n = t.cfg.n, cnt = n * n
+        let f = BarMaterial.field(t)
+        let near = nearestLine(t, reach: 12)
+        let depthK = t.cfg.meanderBeltDepthPerWidth * t.cfg.cellSize
+        var channelArea = 0.0
+        for ch in t.meander.channels where ch.nodes.count >= 3 {
+            for i in 0..<(ch.nodes.count - 1) {
+                let a = ch.nodes[i], e = ch.nodes[i + 1]
+                let len = ((e.x - a.x) * (e.x - a.x) + (e.z - a.z) * (e.z - a.z)).squareRoot()
+                channelArea += len * 0.5 * (MeanderState.beltWidthCells(discharge: ch.discharge[i], config: t.cfg)
+                                            + MeanderState.beltWidthCells(discharge: ch.discharge[i + 1], config: t.cfg))
+            }
+        }
+        var bank = 0, sand = 0, sandAny = 0
+        let ageEdges = [100.0, 300, 800, 1500, 3000, .infinity]
+        let distEdges = [0.5, 1, 1.5, 2, 4, 8, .infinity]
+        let hEdges = [-0.5, 0, 0.5, 1, 3, .infinity]
+        var byAge = [Int](repeating: 0, count: ageEdges.count)
+        var byDist = [Int](repeating: 0, count: distEdges.count)
+        var byH = [Int](repeating: 0, count: hEdges.count)
+        var vegSum = 0.0
+        // Sim-Bewuchs auf Bank-Zellen nach Bankalter (alle Bänke, nicht nur Sand).
+        var bankVeg = [Double](repeating: 0, count: ageEdges.count), bankN = [Int](repeating: 0, count: ageEdges.count)
+        func bucket(_ v: Double, _ edges: [Double]) -> Int { edges.firstIndex { v < $0 } ?? edges.count - 1 }
+        for k in 0..<cnt {
+            if t.barAge[k] >= 0 {
+                bank += 1
+                let b = bucket(t.barAge[k], ageEdges)
+                bankVeg[b] += t.veg[k]; bankN[b] += 1
+            }
+            if f.sand[k] > 0.05 { sandAny += 1 }
+            guard f.sand[k] > 0.5 else { continue }
+            sand += 1
+            byAge[bucket(max(0, t.barAge[k]), ageEdges)] += 1
+            byDist[bucket(near.dist[k], distEdges)] += 1
+            let depth = depthK * max(near.width[k], 1e-6)
+            byH[bucket(near.dist[k].isFinite ? (t.h[k] - near.zbf[k]) / depth : 99, hEdges)] += 1
+            vegSum += t.veg[k]
+        }
+        func pct(_ a: [Int]) -> String {
+            a.map { String(format: "%.0f", 100 * Double($0) / Double(max(1, sand))) }.joined(separator: "/")
+        }
+        print(String(format: "SAND s%d J%.0f | Sand>0,5 %d Zellen (>0,05: %d) | Bank %d → %.1f %% der Bank | Kanalfläche %.0f → Sand/Kanal %.2f | Sim-veg auf Sand %.2f",
+                     seed, label, sand, sandAny, bank, 100 * Double(sand) / Double(max(1, bank)),
+                     channelArea, Double(sand) / max(1, channelArea), vegSum / Double(max(1, sand))))
+        print("  Alter <100/<300/<800/<1500/<3000/≥3000 J. (% Sand): " + pct(byAge))
+        print("  Abstand <0,5/<1/<1,5/<2/<4/<8/≥8 Breiten (% Sand): " + pct(byDist))
+        print("  Höhe über bankfull <−0,5/<0/<0,5/<1/<3/≥3 Tiefen (% Sand): " + pct(byH))
+        // Junge Bank direkt am Gerinne (0,5–1,5 Breiten, jünger als 800 J.):
+        // wie viel davon trägt Sand? (Gegenprobe: der Fix darf sie nicht leeren.)
+        var young = 0, youngSand = 0
+        for k in 0..<cnt where t.barAge[k] >= 0 && t.barAge[k] < 800 && near.dist[k] >= 0.5 && near.dist[k] < 1.5 {
+            young += 1
+            if f.sand[k] > 0.5 { youngSand += 1 }
+        }
+        // Gegenprobe der bankfull-Schätzung: frisch gestempelte Bank (< 100 J.)
+        // am Gerinne liegt per Stempel höchstens auf `z_bf − barTop·D`.
+        var fresh: [Double] = [], sandH: [Double] = []
+        for k in 0..<cnt where near.dist[k] >= 0.5 && near.dist[k] < 1.5 {
+            let depth = depthK * max(near.width[k], 1e-6)
+            let rel = (t.h[k] - near.zbf[k]) / depth
+            if t.barAge[k] >= 0 && t.barAge[k] < 100 { fresh.append(rel) }
+            if f.sand[k] > 0.5 { sandH.append(rel) }
+        }
+        fresh.sort(); sandH.sort()
+        func q(_ a: [Double], _ p: Double) -> Double { a.isEmpty ? .nan : a[min(a.count - 1, Int(p * Double(a.count)))] }
+        print(String(format: "  Höhe über bankfull (Tiefen D = %.5f Sim-Höhe bei Deckel-Breite), p10/p50/p90: frische Bank < 100 J. %.1f/%.1f/%.1f (%d) | Sand %.1f/%.1f/%.1f",
+                     depthK * 2 * WaterRender.ribbonHalfWidthCapCells,
+                     q(fresh, 0.1), q(fresh, 0.5), q(fresh, 0.9), fresh.count, q(sandH, 0.1), q(sandH, 0.5), q(sandH, 0.9)))
+        // Dichtestes Bankfenster (40×40 Zellen, Bank jünger als 3000 J.) als
+        // Blickpunkt für RS_TARGET (Weltkoordinaten).
+        var bestCount = 0, bestI = 0, bestJ = 0
+        for j0 in stride(from: 0, to: n - 40, by: 10) {
+            for i0 in stride(from: 0, to: n - 40, by: 10) {
+                var c = 0
+                for j in j0..<(j0 + 40) { for i in i0..<(i0 + 40) {
+                    let a = t.barAge[j * n + i]
+                    if a >= 0 && a < 3000 { c += 1 }
+                }}
+                if c > bestCount { bestCount = c; bestI = i0 + 20; bestJ = j0 + 20 }
+            }
+        }
+        let cs = t.cfg.cellSize, half = t.cfg.world / 2
+        print(String(format: "  junge Bank am Gerinne (0,5–1,5 Br., < 800 J.) %d Zellen, davon Sand %.0f %% | dichteste junge Bank um Zelle (%d, %d) = RS_TARGET %.1f,%.1f",
+                     young, 100 * Double(youngSand) / Double(max(1, young)), bestI, bestJ,
+                     Double(bestI) * cs - half, Double(bestJ) * cs - half))
+        print("  Sim-veg auf Bank nach Alter <100/<300/<800/<1500/<3000/≥3000: "
+              + zip(bankVeg, bankN).map { String(format: "%.2f(%d)", $0 / Double(max(1, $1)), $1) }.joined(separator: " "))
     }
 }

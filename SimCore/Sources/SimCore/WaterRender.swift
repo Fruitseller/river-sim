@@ -953,17 +953,40 @@ public enum WaterRender {
     //    `water_*`-Uniforms (`SimRender.WaterUniforms`).
     // Messreihe: `docs/river-belt-render-measurements.md`.
 
-    /// Sand auf einer frischen Bank: voll bis `barSandYearsLo` Jahre nach der
-    /// letzten Ablagerung, weg ab `barSandYearsHi`. Danach liest die Bank als
-    /// Wiese (die Sim-Vegetation wächst auf ihr nach, `Terrain.veg`).
-    /// GEMESSEN (`testBarAgeDiagnostic`, Jahr 20.000): Bänke tragen 8–9 % des
-    /// Landes, aber nur 3–4 % davon sind jünger als 300 Jahre, 6–8 % jünger
-    /// als 1000 und 10–18 % jünger als 3000. Mit 150/600 lag der Sand als
-    /// 1-Zellen-Saum am Innenufer, fast ganz unter dem Band; mit 800/3000
-    /// stehen an den Gleithängen Sichelbänke (Draufsicht Seed 20).
-    public static let barSandYearsLo = 800.0
+    /// Sand nur auf der JUNGEN Gleithang-Bank direkt am Gerinne. In der Natur
+    /// ist nur die Bank am Innenufer kahl (Größenordnung eine Kanalbreite, bis
+    /// knapp unter bankfull); ältere Bankflächen tragen binnen Jahrzehnten
+    /// Pionierweiden, dann Auwald. Zwei Bedingungen, multipliziert:
+    ///  - **Alter** (`Terrain.barAge`): voll bis `barSandYearsLo`, weg ab
+    ///    `barSandYearsHi` Jahren nach der letzten Ablagerung. Das Raster der
+    ///    Sim ist der Gürtel-Teilschritt im 100-Jahr-Schritt; darunter lässt
+    ///    sich „jung“ nicht auflösen.
+    ///  - **Nähe** zur AKTUELLEN Zentrumslinie (`barSandReachLo/Hi`, in
+    ///    örtlichen Kanalbreiten, Bandkante bei 0,5): ein Streifen von etwa
+    ///    einer Kanalbreite neben dem Band.
+    ///
+    /// Befund #174 („sieht komisch aus“, Seed 1337, Jahr 2.305): mit dem
+    /// Alters-Horizont allein (800/3000, `ac5a85b`, kalibriert in Jahr 20.000)
+    /// war das GANZE Innere jeder Schlinge eine Sandfläche mit hellen
+    /// Scroll-Ringen. Der Gürtel überstreicht in den ersten Jahrtausenden
+    /// (3000 J. Einlauf + Laufzeit) große Teile der Aue; alles davon war
+    /// jünger als 3000 Jahre. GEMESSEN (`testBarSandExtentDiagnostic`, Sand
+    /// > 0,5, Seed 1337 / 42, Jahr 2300): 10.389 / 5.593 Zellen = 43 / 50 % der
+    /// Bankfläche, 55 / 47 % davon 800–3000 Jahre alt, 33 / 38 % weiter als 1,5
+    /// Kanalbreiten von der Zentrumslinie (bis 8 Breiten). Nachher (Jahr
+    /// 2300): 4.036 / 2.006 Zellen, alle innerhalb 1,5 Breiten, 62–69 % in
+    /// 0,5–1 Breite. Das Alter (400/1500) sortiert jetzt nur noch alte Bank
+    /// an einem stehenden Lauf aus; die junge Bank am Gerinne (0,5–1,5
+    /// Breiten, jünger als 800 J.) trägt weiter zu 62–71 % Sand. Kürzer
+    /// (150/600, erste Fassung von #181) blieb nur ein Saum unter dem Band.
+    /// Messreihe: `docs/river-belt-render-measurements.md` § F.
+    public static let barSandYearsLo = 400.0
     /// s. `barSandYearsLo`.
-    public static let barSandYearsHi = 3000.0
+    public static let barSandYearsHi = 1500.0
+    /// s. `barSandYearsLo`.
+    public static let barSandReachLo = 1.0
+    /// s. `barSandYearsLo`.
+    public static let barSandReachHi = 1.5
 
     /// Sprenkel-Filter: Sand bleibt nur, wo von den 8 Nachbarn mindestens
     /// `barSandNeighboursLo` selbst Sand tragen (voll ab `…Hi`). Feste Läufe
@@ -973,17 +996,43 @@ public enum WaterRender {
     /// s. `barSandNeighboursLo`.
     public static let barSandNeighboursHi = 3.5
 
-    /// Sandgewicht einer Bank aus ihrem Alter (`Terrain.barAge`, −1 = keine).
+    /// Sandgewicht einer Bank aus ihrem Alter (`Terrain.barAge`, −1 = keine)
+    /// und dem Abstand zur nächsten aktuellen Zentrumslinie in Kanalbreiten
+    /// (`.infinity` = kein Lauf in Reichweite).
     @inline(__always)
-    public static func barSand(age: Double) -> Double {
+    public static func barSand(age: Double, lineDistanceWidths: Double) -> Double {
+        guard age >= 0, lineDistanceWidths.isFinite else { return 0 }
+        return (1 - smoothstep(barSandYearsLo, barSandYearsHi, age))
+            * (1 - smoothstep(barSandReachLo, barSandReachHi, lineDistanceWidths))
+    }
+
+    /// Pionier-Grün auf junger Bank, wo kein Sand liegt: die Sim setzt den
+    /// Bewuchs beim Stempeln auf 0 und lässt ihn mit `vegTimeConstant` (250 J.)
+    /// nachwachsen. GEMESSEN (Bank-Zellen, Seed 1337 / 42, Jahr 2300–100.000):
+    /// Sim-Bewuchs 0,18–0,22 unter 100 Jahren, 0,32–0,40 unter 300, 0,44–0,53
+    /// unter 800, ab 1500 Jahren 0,5–0,65 wie die übrige Aue. Ohne Ausgleich
+    /// liest die junge Bank hinter dem Sand als heller Trockenrasen, also
+    /// wieder als Sandfläche. Die Verschiebung hebt sie um `barPioneerVeg`,
+    /// voll bis `barPioneerYearsLo`, weg ab `barPioneerYearsHi` — dann trägt
+    /// die Sim selbst.
+    public static let barPioneerVeg = 0.25
+    /// s. `barPioneerVeg`.
+    public static let barPioneerYearsLo = 300.0
+    /// s. `barPioneerVeg`.
+    public static let barPioneerYearsHi = 1500.0
+
+    /// Pionier-Verschiebung des Bewuchses (0 … `barPioneerVeg`) aus dem Bankalter.
+    @inline(__always)
+    public static func barPioneer(age: Double) -> Double {
         guard age >= 0 else { return 0 }
-        return 1 - smoothstep(barSandYearsLo, barSandYearsHi, age)
+        return barPioneerVeg * (1 - smoothstep(barPioneerYearsLo, barPioneerYearsHi, age))
     }
 
     /// Scroll-Bars: Periode der Rippen im BANKALTER (Jahre). Die Höhe kann sie
     /// auf diesem Gitter nicht tragen (eine Rippe ist schmaler als eine Zelle),
     /// das Alter schon: jede Isolinie ist eine frühere Lage des Gleithangs.
-    /// Rücken (trocken, heller) und Senken (feucht, grüner) wechseln je Periode.
+    /// Rücken (trockener, magerer Bewuchs) und Senken (feucht, grüner) wechseln
+    /// je Periode.
     public static let barScrollPeriodYears = 400.0
     /// Rippen-Abstand in Zellen, unter dem das Muster ausblendet (Aliasing:
     /// unter ~2 Zellen je Periode ist es Rauschen), und ab dem es voll steht.
@@ -995,11 +1044,13 @@ public enum WaterRender {
     public static let barScrollFadeYearsLo = 8000.0
     /// s. `barScrollFadeYearsLo`.
     public static let barScrollFadeYearsHi = 20000.0
-    /// Hub der Rippen: im Sand (Senke = feuchter, dunkler Sand) und als
-    /// Verschiebung des Vegetationsgewichts in der Wiese (Senke grüner).
-    public static let barScrollSandDepth = 0.35
-    /// s. `barScrollSandDepth`.
-    public static let barScrollVegGain = 0.22
+    /// Hub der Rippen als Verschiebung des Vegetationsgewichts (Senke grüner,
+    /// Rücken magerer). Bis zum Befund #174 („Sandwüste“) standen die Rippen
+    /// zusätzlich im Sand (Senke 35 % dunkler) und mit 0,22 im Bewuchs: auf
+    /// der großen Sandfläche lagen sie als helle konzentrische Ringe, in der
+    /// Wiese machten die Rücken den Bewuchs so mager, dass der helle
+    /// Trockenrasen durchkam. Jetzt nur noch leise Bewuchs-Bänder.
+    public static let barScrollVegGain = 0.10
 
     /// Rippe −1 … +1 (−1 = Rücken, +1 = Senke, 0 = keine Rippe) aus Alter und
     /// örtlichem Altersgradienten (Jahre je Zelle), mit Aliasing- und
