@@ -867,3 +867,94 @@ steht (334 Zellen). Kandidaten für die Seen aus dem Bericht (aus der Karte
 zugeordnet, nicht im Bild bestätigt): die Geister-Komponenten bei Welt
 (13,8; 6,8) (67 Zellen, Spiegel im Mittel 14,7 D über dem Boden, hf 4,6 D,
 45 Zellen im Kanal) und (9,9; −11,4) (46 Zellen).
+
+## Raster-Abkürzungen im Mäandergürtel (Befund im Zeitraffer, Jahr 2.305)
+
+Befund des Koordinators nach dem Geister-See-Fix (Seed 1337, Jahr 2.305,
+`RS_TARGET="13.8,6.8"`, Draufsicht): breite, flache, blockige blaue Flächen
+mit treppigen, rechteckigen Ufern in und zwischen den Schlingen, teils quer
+zum Hauptlauf, dazu kleine runde blaue Punkte neben den Bändern. Werkzeug:
+`testBeltLakeZoomDiagnostic` in `BeltLakes.swift` (Ausschnitt als BMP mit
+`RS_DUMP`, Komponenten-Tabelle, ganze Karte; Zeitraffer-Takt 15 Jahre wie
+`Main.gd`, `RS_TIME=1` misst das Wasserfeld).
+
+### Was die Flächen sind
+
+Keine Seen: im Ausschnitt (±110 Zellen) malt der See-Kanal nichts, und unter
+keiner der Flächen steht Wasser (`hf − h` über `pondContourLo` auf 0–2
+Zellen je Komponente). Es ist der Fluss-Kanal (R) des Raster-Wassers, also
+D8-Läufe mit 3.000–14.000 Zellen Abfluss (Hauptlauf-Klasse), 7–17 Zellen
+breit. Zwei Arten:
+
+| Komponente (Zellen) | Breite | D8-Abfluss | Band ≤ 3 Zellen | auf Gleithang-Bank | Art |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 476 | 17 | 13.361 | 110 | 383 | Abkürzung über den Gleithang zwischen zwei Bandbögen |
+| 102 | 9 | 9.823 | 99 | 9 | Abkürzung am Band entlang |
+| 1.249 | 38 | 9.891 | 28 | 287 | Hauptlauf ohne Band (das Band endet stromauf, das Raster übernimmt) |
+
+Die Abkürzung entsteht, weil Gürtel-Linie und D8-Entwässerung nicht
+gekoppelt sind (§ Flüsse laufen bergauf): der D8-Lauf fließt über die Bank
+quer durch die Schlinge, das Band malt den Bogen außen herum. Die
+Bergauf-Blende ist nicht die Ursache: ohne `fadeUphill` blieben die
+Komponenten unverändert (476 / 102 / 1.249 Zellen).
+
+**Treppenform:** das R-Feld ist ein Zellraster. Der Lauf folgt den D8-Zellen
+(acht Richtungen, also selbst eine Treppe), wird mit zwei
+4er-Dilatationen (`widenThresholds`) und einem 3×3-Blur verbreitert und im
+Shader bilinear gelesen und mit `smoothstep(riverMaskLo, riverMaskHi)`
+geschwellt. Die Kontur läuft deshalb an Zellkanten entlang. Bei einem
+Ein-Zellen-Bach fällt das nicht auf, bei einem auf der flachen Bank voll
+verbreiterten Hauptlauf schon. Seen haben eine Kontur je Pixel aus
+`waterLevel − h`, Raster-Flüsse keine.
+
+**Runde Punkte:** Ein- bis Drei-Zell-Flecken des Rasters im Band-Korridor
+neben der Bandkante, wo das Band nicht deckt. Korridor-Zellen waren ganz vom
+Kohärenz-Gate (`streamGate`, 28 Zellen) ausgenommen, damit der Saum
+überlebt; die Ausnahme galt aber auch für alles, was der Korridor darüber
+trug. Nach Blur und Uferring im Shader standen sie als runde Punkte.
+
+### Fix (`WaterFieldRenderer`, Kalibrierung `WaterRender`)
+
+- Auf Gleithang-Bänken (`barAge ≥ 0`) trägt das Raster nur den Saum, wenn
+  höchstens `rasterBarBandReachCells` = 16 Zellen entfernt ein sichtbares
+  Band (Deckung ≥ 0,3 an seiner Zentrumslinie) mit mindestens dem halben
+  Abfluss läuft (`rasterBarBandDischargeRatio`). Reichweite 8 ließ von der
+  Abkürzung 158 Zellen stehen, 16 nahm sie ganz, 32 schnitt schon den
+  bandlosen Hauptlauf an (1.249 → 730).
+- Die Gate-Ausnahme des Korridors gilt nur noch für den Saum.
+
+Ganze Karte, Jahr 2.305, vorher → nachher:
+
+| Seed | sichtbare Raster-Flecken unter 28 Zellen | sichtbarer Raster-Fluss auf Bänken ohne Band |
+| ---: | --- | --- |
+| 1337 | 150 (479 Zellen) → 2 (2) | 1.769 → 713 Zellen |
+| 42 | 93 (338) → 0 | 568 → 232 |
+| 20 | 97 (346) → 0 | 858 → 383 |
+
+Hauptlauf (`testMainStemBandDiagnostic`, D8-Hauptlauf, Anteil der Zellen
+ohne Band und ohne Raster), vorher → nachher:
+
+| Seed | Jahr 2.300 | Jahr 20.000 |
+| ---: | --- | --- |
+| 1337 | 2,0 → 5,6 % (längste 6 → 12) | 16,8 → 18,4 % |
+| 42 | 4,5 → 9,8 % (längste 11 → 18) | 0 → 0 % |
+| 20 | 19,5 → 29,2 % (längste 62 → 85) | 12,2 → 12,2 % |
+
+Die Kennzahl zählt Zellen des D8-Pfads. Wo der D8-Lauf die Schlinge
+abkürzt, malt jetzt das Band den Fluss außen herum, die Abkürzung selbst
+zählt als Lücke. Auf Seed 1337 / Jahr 2.300 kommen 1,0 Punkte aus dem
+Korridor-Gate und 2,6 aus der Bank-Schranke; auf Seed 20 fast alles aus der
+Schranke (allein 28,3 %; in der Karte ist es der D8-Lauf quer durch die
+große Schlinge im Osten). Nicht
+abgefangen: der bandlose Hauptlauf (Komponente 1.249) bleibt Raster und
+damit treppig; dort fehlt das Band, nicht die Schranke.
+
+Kosten: `WaterFieldRenderer.bytes`, Produktion Seed 1337 / Jahr 2.305, M4
+Max, Median über 15 Aufrufe, drei Runden abwechselnd vorher / nachher:
+8,36 / 9,65 — 9,07 / 9,46 — 8,65 / 9,87 ms (rund +1 ms je Wasser-Update).
+Ein Vollbild-Maximumfilter über die Reichweite kostete +2 ms und wurde
+durch die Suche nur an Bank-Zellen mit Raster-Fluss ersetzt. Die Sim ist
+unberührt.
+
+Wächter: `RasterBeltTests` (beide rot ohne den Fix: 9 Flecken unter dem
+Gate, 17 Raster-Zellen auf Bänken neben dem eigenen Band).

@@ -79,6 +79,9 @@ public final class WaterFieldRenderer {
     private var waterBytes: [UInt8] = []
     private var waterComponent: [Int] = []
     private var waterStack: [Int] = []
+    /// Abfluss der sichtbaren Bänder je Zentrumslinien-Zelle — für die
+    /// Bank-Schranke des Raster-Flusses (`WaterRender.rasterBarBandReachCells`).
+    private var waterBandQ: [Double] = []
     /// Nasse Wiese (Issue #174, Paket C) des letzten `bytes`-Laufs: Zellen
     /// kleiner See-Komponenten, die das Raster NICHT als Wasser malt
     /// (`WaterRender.isWetMeadow`). `RenderState` reicht die Maske an
@@ -674,7 +677,48 @@ public final class WaterFieldRenderer {
         //     Was das Feld beisteuert, ist der Nass-Saum um den Bogen: derselbe
         //     Halo wie unter den Fluss-Bändern, damit auch ein Altarm ein Ufer
         //     hat statt einer Farbkante.
+        // Bank-Schranke (`WaterRender.rasterBarBandReachCells`): Abfluss der
+        // sichtbaren Bänder an ihren Zentrumslinien-Zellen.
+        let barAge = terrain.barAge
+        let barCheck = geometryMode && bandCoverage.count == cnt && barAge.count == cnt
+            && cellArea > 0 && cellArea.isFinite
+        if barCheck {
+            if waterBandQ.count != cnt { waterBandQ = [Double](repeating: 0, count: cnt) }
+            waterBandQ.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+            for (chIndex, ch) in terrain.meander.channels.enumerated()
+            where chIndex < bandChannelFlags.count && bandChannelFlags[chIndex] {
+                for (i, node) in ch.nodes.enumerated() where i < ch.discharge.count {
+                    guard node.x.isFinite, node.z.isFinite, ch.discharge[i].isFinite else { continue }
+                    let ci = min(max(Int(node.x.rounded()), 0), n - 1)
+                    let cj = min(max(Int(node.z.rounded()), 0), n - 1)
+                    let k = cj * n + ci
+                    if bandCoverage[k] >= WaterRender.rasterBarBandCoverage {
+                        waterBandQ[k] = max(waterBandQ[k], ch.discharge[i])
+                    }
+                }
+            }
+        }
+        let reach = WaterRender.rasterBarBandReachCells
+        let bandQ = waterBandQ   // lokal: die Suche liest es je Kandidat bis zu 33² Mal
         for k in 0..<cnt {
+            // Raster-Fluss auf einer Bank neben einem Band, das denselben oder
+            // einen größeren Fluss trägt: das ist die D8-Abkürzung über den
+            // Gleithang, das Band ist hier der Fluss → nur Saum. Gesucht wird
+            // nur für die wenigen Bank-Zellen mit Raster-Fluss (Abbruch beim
+            // ersten Treffer); ein Vollbild-Maximumfilter kostete gemessen
+            // 2 ms je Aufruf.
+            if barCheck && barAge[k] >= 0 && sd[k] > haloIntensity {
+                let need = WaterRender.rasterBarBandDischargeRatio * area[k] / cellArea
+                let i = k % n, j = k / n
+                var found = false
+                search: for jj in max(0, j - reach)...min(n - 1, j + reach) {
+                    for ii in max(0, i - reach)...min(n - 1, i + reach) where bandQ[jj * n + ii] >= need
+                        && bandQ[jj * n + ii] > 0 {
+                        found = true; break search
+                    }
+                }
+                if found { sd[k] = haloIntensity }
+            }
             rawWet[k] = hf[k] > sea && hf[k] - h[k] > WaterRender.lakeRawWetDepth
             if geometryMode {
                 if oxb[k] > 0 {
@@ -824,8 +868,16 @@ public final class WaterFieldRenderer {
                     // Der Ribbon-Saum (WaterRender.ribbonHaloIntensity) ist davon
                     // ausgenommen: Korridor-Zellen sind per Definition Teil eines echten
                     // Laufs (Zentrumslinie), nicht Speckle (Issue #31).
-                    if !(geometryMode && pms[k]) {
-                        psd[k] *= WaterRender.streamGate(componentFade: pcf[k])
+                    // Seit #174 gilt die Ausnahme nur für den Saum selbst: was ein
+                    // Korridor darüber trägt (D8-Raster neben der Bandkante, wo
+                    // das Band nicht deckt), unterliegt dem Gate wie überall —
+                    // sonst standen Ein- bis Drei-Zell-Flecken als runde blaue
+                    // Punkte mit Uferring neben den Bändern.
+                    let gate = WaterRender.streamGate(componentFade: pcf[k])
+                    if geometryMode && pms[k] {
+                        if gate == 0 && psd[k] > haloIntensity { psd[k] = haloIntensity }
+                    } else {
+                        psd[k] *= gate
                     }
                     // See-Kanal: weicher Fade (Issue #32) — und NICHT vom Korridor
                     // ausgenommen, ein Ribbon-Korridor darf keine Kleinst-Pfütze als See
