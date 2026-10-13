@@ -519,6 +519,61 @@ public enum WaterRender {
         min(1, max(0, (abs(slope) - cascadeSlopeLo) / cascadeSlopeSpan))
     }
 
+    /// Raster-Wasser an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305,
+    /// Schrägsicht): ab dieser SICHTBAREN Neigung (Welt-Y je Welt-Einheit,
+    /// `terrain.gdshader` aus dem Höhenfeld je Pixel) blendet das Fluss-Raster
+    /// aus, voll ab `rasterWallSlopeHi`. Grund: das Abfluss-Feld ist ein
+    /// Zellraster, bilinear gelesen; seine Kontur reicht eine halbe Zelle über
+    /// die Rinne hinaus. In der Fläche ist das eine halbe Zelle, an einer
+    /// Wand aber deren ganze Höhe — das Raster malte senkrechte dunkelblaue
+    /// Platten in Schluchten und unter die Abbruchkante, mit Rauten und Zacken
+    /// (die Konturen einzelner Zellen, senkrecht gestreckt). Wasser steigt
+    /// keine Wand hoch. Auf der Rinnensohle bleibt der Lauf: dort misst die
+    /// Neigung nur das LÄNGS-Gefälle, solange es flacher als die Wand ist.
+    ///
+    /// Paarung: Lo == volle Kaskaden-Übergabe des Bands
+    /// (`cascadeSlopeLo + cascadeSlopeSpan`, ≈ 50°) in sichtbarer Neigung —
+    /// bis dahin malt das Raster die Kaskade, die das Band abgegeben hat,
+    /// darüber steht Wand. Wächter: `WaterRenderTests`.
+    public static let rasterWallSlopeLo = (cascadeSlopeLo + cascadeSlopeSpan) * RenderContract.heightScale
+    /// s. `rasterWallSlopeLo` (≈ 62°). Im A/B-Screenshot verschwanden die
+    /// Wand-Platten ab hier vollständig, die Sohle der Schlucht blieb als
+    /// dünner Faden stehen.
+    public static let rasterWallSlopeHi = 1.9
+
+    /// Band-Überblende im Zeitraffer (`water.gdshader`, Main.gd
+    /// `ribbon_fade`): der alte und der neue Band-Stand teilen sich die
+    /// OPTISCHE DICKE statt der Pixel. Bei Blende `t` zeichnet der neue Stand
+    /// mit `1 − (1 − a)^t`, der alte mit `1 − (1 − a)^(1−t)`; wo beide mit
+    /// derselben Deckkraft `a` liegen, lässt das Paar zusammen genau
+    /// `(1 − a)^t · (1 − a)^(1−t) = 1 − a` durch — der stehende Lauf bleibt
+    /// mitten in der Blende so deckend wie ohne (lineares Mischen machte aus
+    /// 0,95 dort 0,72 und pulste im Takt der Band-Bauten). Wo nur EIN Stand
+    /// liegt (der Lauf ist gewandert), blendet er stetig ein bzw. aus.
+    ///
+    /// Vorher teilte ein Rausch-Los die Pixel komplementär zwischen den
+    /// Ständen: exakte Deckkraft, aber überall dort, wo die Stände
+    /// auseinanderliegen, sah man je Pixel mal den einen, mal den anderen —
+    /// körnige Bandränder im Zeitraffer, an jedem gewanderten Ufer (Befund
+    /// des Projekteigners, Seed 1337 / Jahr 2.305, Retina).
+    ///
+    /// Die Deckel-Zahl hält die optische Dicke endlich: bei `a = 1` wäre sie
+    /// unendlich, ein allein liegender Stand spränge bei `t > 0` sofort auf
+    /// voll. Mit 0,99 erreicht ein neuer Stand die halbe Deckkraft bei
+    /// t ≈ 0,15 (ein alter verliert sie bei t ≈ 0,85); das deckende Innere
+    /// eines Bands ist während der Blende 1 % durchsichtiger.
+    public static let ribbonFadeOpacityCap = 0.99
+
+    /// Deckkraft eines Band-Pixels mit eigener Deckkraft `alpha` und dem
+    /// Anteil `share` an der Überblende (neuer Stand: Blende, alter: 1 −
+    /// Blende); `water.gdshader` `ribbon_fade_alpha` ist dieselbe Formel.
+    @inline(__always)
+    public static func ribbonFadeOpacity(alpha: Double, share: Double) -> Double {
+        if share >= 1 { return alpha }
+        let a = min(max(alpha, 0), ribbonFadeOpacityCap)
+        return 1 - pow(1 - a, max(share, 0))
+    }
+
     /// Kohärenz-Fenster eines ganzen Bands: gemittelte Track-Maske über den
     /// Kanal (`corridorMask`, abfluss-gewichtet). Darunter ist die Zentrumslinie
     /// verwaist/verknäult und das Band blendet als EINHEIT aus — lokale

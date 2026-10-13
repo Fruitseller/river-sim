@@ -85,6 +85,10 @@ public enum WaterUniforms {
         ("water_ribbon_ripple_amplitude", WaterRender.ribbonRippleAmplitude),
         ("water_ribbon_ripple_stretch", WaterRender.ribbonRippleStretch),
         ("water_ribbon_ripple_speed", WaterRender.ribbonRippleSpeed),
+        // Zeitraffer-Blende der Bänder und Raster an Steilwänden (Befund #174).
+        ("water_ribbon_fade_cap", WaterRender.ribbonFadeOpacityCap),
+        ("water_wall_slope_lo", WaterRender.rasterWallSlopeLo),
+        ("water_wall_slope_hi", WaterRender.rasterWallSlopeHi),
     ]
 
     /// Farb-Uniforms (`uniform vec3` in den Shadern).

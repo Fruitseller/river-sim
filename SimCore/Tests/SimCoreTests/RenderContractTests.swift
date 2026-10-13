@@ -130,8 +130,9 @@ final class RenderContractTests: XCTestCase {
                     "vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0,"
                         + " -s_uv.y * hscale / world_size));",
                     "vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,",
-                    // Weltsteigung der Gletscherspalten (#174 D), dieselbe
-                    // Umrechnung wie die Pixel-Normale.
+                    // Weltsteigung der Gletscherspalten (#174 D) und des
+                    // Raster-Wassers an Wänden, dieselbe Umrechnung wie die
+                    // Pixel-Normale.
                     "float world_slope = length(coarse_slope) * hscale / world_size;"] {
             assertContains(shader, use,
                            hint: "Überhöhung wird unskaliert angewandt (keine Zusatzfaktoren)")
