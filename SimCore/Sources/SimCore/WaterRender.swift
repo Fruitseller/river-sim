@@ -519,6 +519,36 @@ public enum WaterRender {
         min(1, max(0, (abs(slope) - cascadeSlopeLo) / cascadeSlopeSpan))
     }
 
+    /// Raster-Fluss auf den Bänken des Mäandergürtels (Befund #174, Seed 1337 /
+    /// Jahr 2.305, `RS_TARGET="13.8,6.8"`): auf Zellen mit Gleithang-Bank
+    /// (`Terrain.barAge ≥ 0`), die höchstens so viele Zellen (Chebyshev) von
+    /// einem Band (Deckung ≥ 0,3) entfernt liegen, trägt das Raster nur den
+    /// Saum (`ribbonHaloIntensity`). Grund: Gürtel-Linie und D8-Entwässerung
+    /// sind nicht gekoppelt (`docs/zielbild-measurements.md` § Flüsse laufen
+    /// bergauf). Der D8-Lauf nimmt die Abkürzung über den Gleithang, während
+    /// das Band den Bogen außen herum malt; das Raster malte die Abkürzung als
+    /// zweiten Hauptlauf, 7–17 Zellen breit, mit Zellkanten-Ufer quer durch
+    /// die Schlinge und eckig am Band abgeschnitten. Dort ist das Band der
+    /// Fluss. Fern jedes Bands bleibt das Raster, sonst risse ein Hauptlauf
+    /// ohne Band ab. GEMESSEN (Ausschnitt ±110 Zellen um den Befund, Jahr
+    /// 2.305, Zeitraffer-Takt 15 J.): 8 Zellen ließ von der Abkürzung (476
+    /// Zellen) 158 stehen, 16 nahm sie ganz, 32 schnitt schon den bandlosen
+    /// Hauptlauf daneben an (1249 → 730 Zellen). Messreihe und Lücken im
+    /// Hauptlauf: `docs/zielbild-measurements.md` § Raster-Abkürzungen im
+    /// Mäandergürtel.
+    public static let rasterBarBandReachCells = 16
+    /// Band-Deckung, ab der eine Zentrumslinien-Zelle für
+    /// `rasterBarBandReachCells` als sichtbares Band zählt (dieselbe Schwelle
+    /// wie „Band" in den Messreihen).
+    public static let rasterBarBandCoverage = 0.3
+    /// Das Band in Reichweite muss mindestens diesen Anteil des Abflusses der
+    /// Raster-Zelle tragen (MFD-Einzugsgebiet gegen Knoten-Abfluss des Laufs):
+    /// nur dann ist es DERSELBE (oder ein größerer) Fluss, und ein schmales
+    /// Zubringer-Band nimmt einem bandlosen Hauptlauf daneben nichts weg. Auf
+    /// den Messwelten (Seeds 1337/42/20, Jahr 2.300 und 20.000) änderte der
+    /// Vergleich keine Zahl; er hält die Regel bei ihrer Begründung.
+    public static let rasterBarBandDischargeRatio = 0.5
+
     /// Raster-Wasser an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305,
     /// Schrägsicht): ab dieser SICHTBAREN Neigung (Welt-Y je Welt-Einheit,
     /// `terrain.gdshader` aus dem Höhenfeld je Pixel) blendet das Fluss-Raster
