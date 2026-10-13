@@ -252,7 +252,20 @@ public final class RiverRibbonRenderer {
         }
 
         let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
-        for (chIndex, ch) in terrain.meander.channels.enumerated() {
+        // Große Läufe ZUERST: jedes Band blendet dort aus, wo ein früheres
+        // schon deckt (`emitRibbon`). In Abfluss-Reihenfolge endet so der
+        // Zubringer am Hauptlauf statt umgekehrt, und Stummel-Kanäle auf
+        // demselben Bett verschwinden unter dem Lauf, den sie doppeln.
+        // Gleichstand nach Index: der Bau bleibt deterministisch.
+        let channels = terrain.meander.channels
+        let peak = channels.map { $0.discharge.max() ?? 0 }
+        let order = channels.indices.sorted {
+            peak[$0] != peak[$1] ? peak[$0] > peak[$1] : $0 < $1
+        }
+        // Mündungen, an denen schon ein Delta-Fächer steht (s. unten).
+        var fanMouths: [(x: Double, z: Double)] = []
+        for chIndex in order {
+            let ch = channels[chIndex]
             let nodes = ch.nodes
             let m = nodes.count
             if m < 2 { continue }
@@ -504,9 +517,18 @@ public final class RiverRibbonRenderer {
 
             // DELTA (Issue #34): am Eintritt ins stehende Wasser fächert der Lauf
             // über den Ablagerungskörper auf, den die Sim dort aufschüttet.
+            // EIN Fächer je Mündung: münden mehrere Kanäle in dieselbe Zelle
+            // (Stummel-Kanäle neben dem Hauptlauf), lagen bis zu vier
+            // identische Fächer übereinander und malten einen dunklen Block
+            // (Seed 1337, Jahr 230.000).
             if let mouthIndex = samples.firstIndex(where: { $0.surface != nil }),
-               mouthIndex > 0 {
+               mouthIndex > 0,
+               !fanMouths.contains(where: {
+                   let dx = $0.x - samples[mouthIndex].x, dz = $0.z - samples[mouthIndex].z
+                   return dx * dx + dz * dz < WaterRender.deltaFanSpacingCells * WaterRender.deltaFanSpacingCells
+               }) {
                 let entry = samples[mouthIndex], before = samples[mouthIndex - 1]
+                fanMouths.append((x: entry.x, z: entry.z))
                 var dx = entry.x - before.x, dz = entry.z - before.z
                 let dl = (dx * dx + dz * dz).squareRoot()
                 if dl > 1e-9 {
@@ -713,6 +735,18 @@ public final class RiverRibbonRenderer {
         let cs = terrain.cfg.cellSize
         let half = terrain.cfg.world / 2
         let h = terrain.h
+        // Keine Bänder übereinander: wo ein FRÜHER gebautes Band schon deckt
+        // (`bandCoverage` hält bis hier nur die früheren), blendet dieses aus.
+        // Zwei halbtransparente Bänder addierten sich sonst zu dunklen
+        // Blöcken und Stößen an Zusammenflüssen, Delta-Fächern und Stummel-
+        // Kanälen auf demselben Bett.
+        var samples = samples
+        for a in samples.indices {
+            let occ = bilinearGrid(mesh.bandCoverage, samples[a].x, samples[a].z, n: n)
+            samples[a].alpha *= 1 - smoothstep(WaterRender.ribbonOcclusionLo,
+                                               WaterRender.ribbonOcclusionHi, occ)
+        }
+        RiverRibbonRenderer.limitAlphaSteps(&samples)
         // Bogenlänge (Welt) für UV.y — im Shader die Phase der Wellen/Strömung.
         var arc = [Double](repeating: 0, count: samples.count)
         for a in 1..<samples.count {
