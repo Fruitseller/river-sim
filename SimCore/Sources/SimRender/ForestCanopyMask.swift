@@ -146,6 +146,8 @@ public enum ForestCanopyMask {
     /// R8. Passt `memory` nicht zu `target`, beginnt das Gedächtnis beim Ziel.
     /// Nicht-positive sowie nicht-endliche Zeitschritte (`dtYears <= 0`, `NaN`, `±inf`)
     /// führen defensiv zu keinem Nachwachsen und vergiften das Gedächtnis nicht.
+    /// Nicht-positives oder ungültiges `tau` (`tau <= 0`, `NaN`) führt defensiv zu
+    /// sofortigem Nachwachsen auf das Ziel (`rise = 1`, instantane Relaxation).
     public static func regrow(_ memory: inout [Float], toward target: [UInt8],
                               dtYears: Double, tau: Double) -> [UInt8] {
         guard !target.isEmpty else {
@@ -156,15 +158,12 @@ public enum ForestCanopyMask {
             memory = target.map { Float($0) / 255 }
             return target
         }
-        let safeDt = (dtYears.isFinite && dtYears > 0) ? dtYears : 0.0
-        let rise: Float
-        if tau.isFinite && tau > 0 {
-            rise = Float(Terrain.relaxFraction(dt: safeDt, tau: tau))
-        } else if tau <= 0 {
-            rise = 1
-        } else {
-            rise = 0
+        guard tau > 0 else {
+            memory = target.map { Float($0) / 255 }
+            return target
         }
+        let safeDt = (dtYears.isFinite && dtYears > 0) ? dtYears : 0.0
+        let rise = Float(Terrain.relaxFraction(dt: safeDt, tau: tau))
         var out = target
         memory.withUnsafeMutableBufferPointer { mb in
         out.withUnsafeMutableBufferPointer { ob in

@@ -317,8 +317,8 @@ final class CanopyTests: XCTestCase {
             // Nicht-positive oder ungültige dt: kein Nachwachsen, altes Gedächtnis bleibt
             XCTAssertEqual(memory[1], initialMemory[1], "Gedächtnis darf nicht verändert werden bei dt = \(badDt)")
             XCTAssertEqual(memory[2], initialMemory[2], "Gedächtnis darf nicht verändert werden bei dt = \(badDt)")
-            XCTAssertEqual(out[1], UInt8((initialMemory[1] * 255).rounded()))
-            XCTAssertEqual(out[2], UInt8((initialMemory[2] * 255).rounded()))
+            XCTAssertEqual(out[1], 51)
+            XCTAssertEqual(out[2], 26)
         }
 
         // Leere Puffer dürfen nicht trappen (nil-baseAddress Guard)
@@ -326,6 +326,32 @@ final class CanopyTests: XCTestCase {
         let emptyOut = ForestCanopyMask.regrow(&empty, toward: [], dtYears: 100, tau: tau)
         XCTAssertEqual(emptyOut, [])
         XCTAssertEqual(empty, [])
+    }
+
+    /// Nicht-positive sowie nicht-endliche Zeitkonstanten (tau <= 0, NaN)
+    /// führen defensiv zu sofortiger Relaxation auf das Ziel (rise = 1);
+    /// tau = +inf führt zu keinem Nachwachsen (verschwindende Rate).
+    func testRegrowthHandlesNonPositiveAndNonFiniteTauSafely() {
+        let target: [UInt8] = [0, 100, 200]
+        let initialMemory: [Float] = [0.5, 0.2, 0.1]
+
+        for badTau in [0.0, -0.0, -1.0, -800.0, Double.nan, -Double.infinity] {
+            var memory = initialMemory
+            let out = ForestCanopyMask.regrow(&memory, toward: target, dtYears: 100.0, tau: badTau)
+
+            XCTAssertEqual(out, target, "Sofortige Relaxation muss das Ziel liefern bei tau = \(badTau)")
+            XCTAssertEqual(memory, target.map { Float($0) / 255 }, "Gedächtnis muss sofort Ziel erreichen bei tau = \(badTau)")
+        }
+
+        // tau = +inf: Zeitkonstante unendlich -> kein Nachwachsen
+        var memInf = initialMemory
+        let outInf = ForestCanopyMask.regrow(&memInf, toward: target, dtYears: 100.0, tau: Double.infinity)
+        XCTAssertEqual(outInf[0], 0)
+        XCTAssertEqual(memInf[0], 0.0)
+        XCTAssertEqual(memInf[1], initialMemory[1])
+        XCTAssertEqual(memInf[2], initialMemory[2])
+        XCTAssertEqual(outInf[1], 51)
+        XCTAssertEqual(outInf[2], 26)
     }
 
     // MARK: - Uniform-Weg (Struktur)
