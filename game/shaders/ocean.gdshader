@@ -59,6 +59,11 @@ uniform vec3 water_ocean_surf_color;
 // weichgezeichnet und mit der Küstenströmung (= Wellen-Drift) stromab
 // gezogen. Ohne SimNode ist keine Textur gebunden: schwarz = keine Fahne.
 uniform sampler2D plume_tex : filter_linear_mipmap, repeat_disable, hint_default_black;
+// Vorgängerstand und Overlay-Blende (#174, Main.gd `overlay_fade`): die
+// Quellen kommen mit den Overlays und springen sonst je Upload (gemessen bei
+// 60 J/s: ein Drittel bis die Hälfte der Masse auf Mip-Stufe 3).
+uniform sampler2D plume_prev_tex : filter_linear_mipmap, repeat_disable, hint_default_black;
+uniform float overlay_blend = 1.0;
 uniform float water_ocean_plume_length;
 uniform float water_ocean_plume_lod;
 uniform float water_ocean_plume_spread;
@@ -113,6 +118,12 @@ vec2 ocean_wave_grad(vec2 p, float footprint, float t) {
 	return g;
 }
 
+// Quellstärke über die Overlay-Blende (#174).
+float plume_at(vec2 uv, float lod) {
+	float s = textureLod(plume_tex, uv, lod).r;
+	return overlay_blend < 1.0 ? mix(textureLod(plume_prev_tex, uv, lod).r, s, overlay_blend) : s;
+}
+
 // Trübung 0…1 am Punkt `p` (Welt-xz). Jeder Abgriff liest die Quelle stromauf
 // der Strömung, je weiter stromab desto gröber (breitere Mip-Stufe). Eine
 // Mip-Stufe mittelt 4^lod Zellen; mal 4^lod zurückgerechnet liefert sie die
@@ -126,7 +137,7 @@ float sediment_plume(vec2 p) {
 		float lod = water_ocean_plume_lod + t * water_ocean_plume_spread;
 		vec2 back = p - current * (t * water_ocean_plume_length);
 		vec2 uv = back / world_size + vec2(0.5);
-		sum += textureLod(plume_tex, uv, lod).r * exp2(2.0 * lod);
+		sum += plume_at(uv, lod) * exp2(2.0 * lod);
 	}
 	return 1.0 - exp(-sum / 6.0 * water_ocean_plume_gain);
 }

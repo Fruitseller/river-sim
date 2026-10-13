@@ -235,8 +235,8 @@ var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8, true)
 # echten Abflussbahnen statt als uniformes Muster (WaterRender.flowDetailIntensity).
 var flow_field := FieldTexture.new("flow_tex", Image.FORMAT_R8, true)
 # Zeitraffer-Überblenden (#172): die Höhe im Sim-Takt, alles Gedrosselte
-# (Farbe, Material, Rinnen-Detail, Seespiegel, Wald, Raster-Wasser) im
-# Overlay-Takt.
+# (Farbe, Material, Rinnen-Detail, Seespiegel, Wald, Raster-Wasser,
+# Sedimentfahne) im Overlay-Takt.
 var height_fade := Crossfade.new(&"height_blend")
 # Auslöser des Frames, der gerade hochlädt (s. `_timelapse_fading`).
 var _frame_trigger := FRAME_SETTLED
@@ -324,6 +324,8 @@ var forest_prev_tex: ImageTexture
 var forest_img: Image
 # Quellen der Sedimentfahnen (#174 C): RF mit Mip-Kette, nur am Ozean-Material.
 var plume_tex: ImageTexture
+var plume_prev_tex: ImageTexture
+var plume_img: Image
 var forest_lift_cache: PackedFloat32Array
 var canopy_calib := {}
 # Wolkenkörper (#174 D, Lighting.make_cloud_bodies) und alle Materialien mit
@@ -830,6 +832,7 @@ func _setup_scene() -> void:
 	height_fade.bind(terrain_mat)
 	height_fade.bind(ocean_mat)
 	overlay_fade.bind(terrain_mat)
+	overlay_fade.bind(ocean_mat)
 	water_mi.material_override = ocean_mat
 	water_mi.position.y = sea * HSCALE
 	add_child(water_mi)
@@ -1910,18 +1913,24 @@ func _protect_mask(bytes: PackedByteArray) -> Image:
 
 ## Sedimentfahnen (#174 C): EINE Zelle je Mündung aus SimRender.SedimentPlume.
 ## Die Mip-Kette ist die Weichzeichnung: ocean.gdshader liest die Quelle auf
-## gröberen Stufen und rechnet deren Mittelung zurück. Ohne Überblende — die
-## Quellen wandern mit den Mündungen nur zellweise, die Weichzeichnung glättet.
+## gröberen Stufen und rechnet deren Mittelung zurück. Der alte Stand wandert
+## nach `plume_prev_tex`, im Zeitraffer blendet die Overlay-Blende hinüber
+## (#174): die Weichzeichnung allein glättete den Sprung nicht, gemessen
+## änderte sich je Upload ein Drittel bis die Hälfte der Masse auf Mip-Stufe 3.
 func _update_plume(bytes: PackedByteArray) -> void:
 	if ocean_mat == null:
 		return
-	var img := Image.create_from_data(N, N, false, Image.FORMAT_RF, bytes)
-	img.generate_mipmaps()
+	var previous := plume_img
+	plume_img = Image.create_from_data(N, N, false, Image.FORMAT_RF, bytes)
+	plume_img.generate_mipmaps()
 	if plume_tex == null:
-		plume_tex = ImageTexture.create_from_image(img)
+		plume_tex = ImageTexture.create_from_image(plume_img)
+		plume_prev_tex = ImageTexture.create_from_image(plume_img)
 		ocean_mat.set_shader_parameter("plume_tex", plume_tex)
-	else:
-		plume_tex.update(img)
+		ocean_mat.set_shader_parameter("plume_prev_tex", plume_prev_tex)
+		return
+	plume_prev_tex.update(previous)
+	plume_tex.update(plume_img)
 
 ## Waldmaske des Kronendachs (#152): SimRender.ForestCanopyMask aus
 ## Materialgewichten, Steigung und Schutzmaske, kommt mit dem Frame.

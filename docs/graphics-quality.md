@@ -1051,12 +1051,13 @@ Jahr 0 / 20.000 / 100.000):
 | --- | --- | --- | --- |
 | Flussbänder | Band-Bau alle 1,07 s | Lage Ø 0,23–0,28, p99 2,3–3,6 Zellen (Halbbreite ~2); Alpha p99 0,78–0,87; Halbbreite p99 2,2–2,6 Zellen; 2–3 % der Stützpunkte neu | hart |
 | Rasterwasser | Overlays alle 0,53 s | Sichtbarkeit p99 0,36–0,41; 10–13 % der nassen Zellen > 0,1 | EWMA 0,15, dazwischen hart |
+| Sedimentfahne | Overlays | 31–53 % der Masse auf Mip-Stufe 3 | hart |
 | Bank-/Strand-Sand (A der Makrofarbe) | Overlays | p99 ~1 | `overlay_blend` |
 | Schutzmaske | Overlays | ~2000 Zellen kippen | Verbraucher blenden (Verschiebung `bake_blend`, Wald `overlay_blend`) |
 
-- **Rasterwasser** hängt jetzt an `overlay_blend` (`water_at` im
-  Terrain-Shader); die EWMA bleibt, sie glättet den Wechsel zwischen den
-  D8-Netzen, die Blende die Stufen dazwischen.
+- **Rasterwasser und Fahne** hängen jetzt an `overlay_blend` (`water_at` im
+  Terrain-Shader, `plume_at` im Meer); die EWMA bleibt, sie glättet den
+  Wechsel zwischen den D8-Netzen, die Blende die Stufen dazwischen.
 - **Bänder: eigene Blende `ribbon_blend`, Dauer = Band-Deckel**
   (`RIBBON_FADE_SECONDS` == `RenderState.ribbonRebuildSeconds`). Im
   Zeitraffer liegen zwei Bauten nie dichter, die Blende endet also vor dem
@@ -1070,13 +1071,13 @@ Jahr 0 / 20.000 / 100.000):
   scheidet aus: der Mäander resampelt seine Knoten je Schritt, die Topologie
   zweier Bauten passt nicht zusammen.
 - **Kosten nicht gemessen** (kein Godot im Agentenlauf): im Zeitraffer zeichnet
-  fast immer das zweite Band-Mesh mit, das Rasterwasser liest zwei Texturen.
-  Messung steht aus (`RS_FPS`,
+  fast immer das zweite Band-Mesh mit, das Rasterwasser liest zwei Texturen,
+  die Fahne zwölf statt sechs Abgriffe. Messung steht aus (`RS_FPS`,
   Zeitraffer 60 J/s, maximiert, interleaved A/B).
 
 Wächter: `SimCoreTests/RiverFadeTests.swift` (Dauer == Band-Deckel, kein
 Band-Bau innerhalb der Blende, Verdrahtung in `Main.gd`, Pixel-Aufteilung im
-Shader), `TimelapseFadeTests` (Rasterwasser über `water_at`) und
+Shader, Fahne), `TimelapseFadeTests` (Rasterwasser über `water_at`) und
 `game/tests/relief.gd` (Band-Bau im Zeitraffer blendet, endet auf dem neuen
 Stand, Neugenerieren blendet nicht).
 
