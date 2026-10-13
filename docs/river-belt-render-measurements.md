@@ -29,7 +29,8 @@ und auf diesem Stand gleich, `615a48df5b50668c` (M4 Max).
 
 Folgen für die Kalibrierung:
 
-- **Sand-Horizont** `barSandYearsLo/Hi` = 800/3000. Mit 150/600 lag Sand nur
+- **Sand-Horizont** (überholt, s. § F: Sand jetzt nur am Gerinne, 400/1500
+  Jahre UND ≤ 1–1,5 Kanalbreiten) `barSandYearsLo/Hi` = 800/3000. Mit 150/600 lag Sand nur
   als 1-Zellen-Saum am Innenufer, fast ganz unter dem Band (Draufsicht
   Seed 20); mit 800/3000 stehen an den Gleithängen Sichelbänke. Zellen mit
   Sand > 0,25: 1040 / 801 / 1142.
@@ -220,3 +221,95 @@ Schranken). Die Bogenstärke im Band-Bau (`MeanderState.bendStrength` je
 Lauf, 1-Hz-Deckel) ist nicht getrennt gemessen. Shader-Kosten (Sand-Zweig im
 Terrain-Shader, Querprofil im Wasser-Shader) sind ohne Bildschirm nicht
 messbar; sie gehören zu Abnahmepunkt 47 (maximiert, Referenz-Mac).
+
+Nachtrag § F: das Feld rechnet seitdem zusätzlich den Abstand jeder Bankzelle
+zur nächsten Zentrumslinie. `BarMaterial.field` 0,75 → 1,55 ms (Seed 1337,
+Jahr 2300, getrennte Läufe auf Basis und Fix), davon der Abstand 0,66–0,70 ms
+(im selben Lauf interleaved gemessen, Jahr 2300 und 20.000).
+
+## F. Sandfläche des Gürtels (Befund #174 „Sandwüste in der Schlinge“)
+
+Befund des Projekteigners (Seed 1337, Jahr 2.305 im Zeitraffer, Schrägsicht,
+maximiert): das GANZE Innere jeder Mäanderschlinge war eine helle Sandfläche
+mit konzentrischen Scroll-Ringen, teils viele Kanalbreiten breit und bis an
+die Hänge. In der Natur ist nur die junge Gleithangbank direkt am Gerinne
+kahl (rund eine Kanalbreite, bis knapp unter bankfull); ältere Bankflächen
+tragen binnen Jahrzehnten Pionierweiden, dann Auwald, Scroll-Rücken zeigen
+sich als leise Vegetationsbänder.
+
+```sh
+RS_MEASURE=1 RS_CACHE=/tmp/welten RS_SEEDS=1337 RS_YEARS_LIST=2300 \
+    swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testBarSandExtentDiagnostic
+```
+
+(`RS_CACHE` legt die gealterten Welten als Snapshot ab; je Aufruf EINE
+Seed-/Jahr-Kombination, mit mehreren gingen die Zeilen auf dem Mess-Mac
+gelegentlich verloren.)
+
+**Ursache.** `WaterRender.barSand` las nur das Bankalter, mit dem Horizont
+800/3000 Jahre (`ac5a85b`, #174 C2, PR #181), kalibriert in Jahr 20.000. Der
+Gürtel (`Terrain.beltStamp`, `be90e77`) setzt `barAge` auf jeder Zelle, die
+er als Bank aufschüttet, und lässt es danach nur altern; jede je überstrichene
+Zelle bleibt Bank. In den ersten Jahrtausenden (3000 Jahre Einlauf plus
+Laufzeit) hat der wandernde Lauf große Teile der Schlinge überstrichen, und
+alles davon war jünger als 3000 Jahre — also Sand. Die Scroll-Rippen standen
+zusätzlich im Sand (Senke 35 % dunkler) und machten daraus die hellen Ringe.
+
+**Messung** (Sand > 0,5; „Abstand“ = zur nächsten aktuellen Zentrumslinie in
+örtlichen Kanalbreiten, Bandkante bei 0,5; Kanalfläche = Σ Länge × Breite
+aller Läufe):
+
+| Seed | Jahr | Sand vorher → nachher (Zellen) | % der Bankfläche | Sand / Kanalfläche | Sand > 1,5 Breiten vom Gerinne | Sand älter als 800 J. |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1337 | 2300 | 10.389 → 4.036 | 43,0 → 16,7 | 0,29 → 0,11 | 33 % → 0 | 55 % → 9 % |
+| 1337 | 20.000 | 6.039 → 2.759 | 18,1 → 8,3 | 0,18 → 0,08 | 25 % → 0 | 40 % → 8 % |
+| 1337 | 100.000 | 1.594 → 577 | 3,2 → 1,1 | 0,07 → 0,02 | 23 % → 0 | 57 % → 14 % |
+| 42 | 2300 | 5.593 → 2.006 | 49,5 → 17,8 | 0,27 → 0,10 | 38 % → 0 | 47 % → 7 % |
+| 42 | 20.000 | 2.484 → 1.291 | 13,2 → 6,9 | 0,13 → 0,07 | 18 % → 0 | 38 % → 10 % |
+| 42 | 100.000 | 2.895 → 1.336 | 11,6 → 5,3 | 0,17 → 0,08 | 25 % → 0 | 47 % → 10 % |
+
+Vorher lag der Sand bis 8 Breiten vom Gerinne (Seed 1337, Jahr 2300:
+< 1 Breite 44 %, 1–1,5 23 %, 1,5–2 10 %, 2–4 18 %, 4–8 5 %). Nachher liegt
+er zu 62–69 % in 0,5–1 Breite (die Bank direkt am Band), zu 11–19 % unter
+dem Band (< 0,5) und zu 19–25 % in 1–1,5 Breiten.
+Die junge Bank am Gerinne (0,5–1,5 Breiten, jünger als 800 Jahre) trägt
+nachher zu 62–71 % Sand (Jahr 100.000 Seed 1337: 41 %, dort wandern die
+Läufe kaum noch); der Fix leert sie also nicht.
+
+**Höhe über bankfull** (Schätzung: tiefste Sohle im Querschnitt der nächsten
+Zentrumslinie plus Kanaltiefe, wie `beltStamp` ohne Kolk-Schiefe): taugt
+nicht als Kriterium. Selbst frisch gestempelte Bank (jünger als 100 Jahre),
+die der Stempel per Konstruktion bis höchstens `z_bf − 0,15·D` aufschüttet,
+misst Median +1,6…+2,2 D (p90 +5…+7 D; D = 0,0021 Sim-Höhe am Breiten-
+Deckel). Bankfull ist kein gespeichertes Feld, und die Kanaltiefe ist so
+klein, dass Sohlenwechsel entlang des Laufs die Schätzung überdecken. Der
+Abstand trägt die Höhe implizit: der Stempel baut Bank nur bis 1,25 Breiten
+neben die Linie und nur bis bankfull; was höher am Hang liegt, liegt auch
+weiter weg.
+
+**Sim-Bewuchs auf Bank** nach Alter (Mittel `Terrain.veg`, alle sechs
+Welten): < 100 J. 0,18–0,22, < 300 J. 0,32–0,40, < 800 J. 0,44–0,53, ab 1500
+J. 0,5–0,65 wie die übrige Aue. Der Stempel setzt den Bewuchs auf 0, er
+wächst mit `vegTimeConstant` (250 J.) nach. Ohne Ausgleich läse die junge
+Bank hinter dem Sand als heller Trockenrasen, also wieder fast als Sand.
+
+**Fix** (nur Render, `BarMaterial` + `WaterRender` § Mäandergürtel im Render):
+
+- Sand = Alter (400/1500 J.) × Nähe zur aktuellen Zentrumslinie (voll bis
+  1,0, weg ab 1,5 Kanalbreiten). Gewählt nach der Natur-Vorgabe „rund eine
+  Kanalbreite“: von der Bandkante (0,5) bis 1,0 voll, bis 1,5 auslaufend,
+  also etwa 0,75 Breiten je Ufer.
+- Pionier-Grün: +0,25 Bewuchs auf junger Bank ohne Sand, voll bis 300, weg
+  ab 1500 Jahren (bis dahin hat die Sim aufgeholt).
+- Scroll-Rippen nur noch im Bewuchs, Hub 0,22 → 0,10, nie mehr im Sand.
+
+Draufsicht vorher/nachher (`testBeltRenderMapDiagnostic`, Seed 1337, Jahr
+2300): der große Sandkreis mit Ringen südlich des Hauptlaufs ist Wald und
+Wiese, an den Gleithängen liegt ein schmaler Sandstreifen am Band. Physik
+unverändert (das Feld liest nur; Wächter `testBeltRenderLeavesThePhysicsUntouched`).
+Wächter: `BarMaterialTests.testSandStaysAStripAlongTheChannel` (ganze
+Schlinge junge Bank → höchstens eine Kanalbreite Sand je Ufer und
+Lauflänge, nichts jenseits von `barSandReachHi`, dahinter Pionier-Grün),
+`testScrollRipplesNeverPaintSand`, `testFreshBarIsSandAndOldBarIsNot` (junge
+Bank fern vom Gerinne ist Aue).

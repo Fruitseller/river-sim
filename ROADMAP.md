@@ -222,7 +222,8 @@ der Render als Ried). Stand und Befunde in `docs/zielbild-measurements.md`
 § Paket B — Zeitmittel-Abnahme. Pakete C (Teile), D, E als eigene PRs.
 
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
-aus `barAge` (`SimRender.BarMaterial`), Altarm-Verlandung als Ried und
+aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der
+Schlinge“ nur am Gerinne, Rippen nur im Bewuchs), Altarm-Verlandung als Ried und
 Vegetationsbogen, Tiefenfarbe im Band nach Querprofil (UV2.y), Abfluss-
 Vertrauen gegen den abreißenden Hauptlauf. Offen: die Stream-Map trackt die
 großen Läufe der neuen Großform kaum (Rest-Lücken im Oberlauf), Hauptlauf am
