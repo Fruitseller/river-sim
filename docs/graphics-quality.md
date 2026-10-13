@@ -345,7 +345,8 @@ Fremdlast. Eine Messung ohne Fremdlast steht noch aus.
 Als verbindliche Arbeits- und Vergleichsgrundlage für alle nachfolgenden Tickets
 von #117 („Landschaftsqualität") dient eine standardisierte Matrix aus drei
 Seeds, drei Entwicklungsstadien und sechs Kameraperspektiven (insgesamt 54
-Einzelansichten je Variante). Jedes Folge-Ticket erbringt seine Vorher/Nachher-Bilder
+Einzelansichten je Variante). Seit #174 kommen drei Vorlagen-Kameras dazu
+(`diorama`, `valley`, `close`, zusammen 81 Ansichten). Jedes Folge-Ticket erbringt seine Vorher/Nachher-Bilder
 und Leistungsmessungen reproduzierbar gegen diese Matrix.
 
 ### Auswahl der Seeds und Begründung
@@ -400,6 +401,37 @@ jede Welt neben Übersicht und Nahansicht vier gezielte Stresstests:
 | `backlight` | Gegenlicht | Seed 1337: `(-12, -25)`, Dist 45, Yaw 2.269, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 48, Yaw 2.269, Pitch 0.85<br>Seed 20: `(-8, 10)`, Dist 46, Yaw 2.269, Pitch 0.85<br>*(feste Welt-Sonne Azimut -50°; Yaw = Azimut + 180°)* | **Stresstest Beleuchtung:** Blick direkt gegen die Sonne. Alle kamerazugewandten Flanken liegen im Eigenschatten; prüft Relieflesbarkeit im Schatten, Tonemapping und Streulicht. |
 | `coast` | Küste / Ufer | Seed 1337: `(-36, -32)`, Dist 45, Yaw 0.90, Pitch 0.85<br>Seed 42: `(12, -10)`, Dist 38, Yaw 1.10, Pitch 0.85<br>Seed 20: `(30, -28)`, Dist 48, Yaw 0.80, Pitch 0.85 | **Stresstest Wasser-Land:** Mündungsdelta, Binnensee-Ufer oder Steilküste. Prüft Schutzmaske, Übergang von Flussband zu Ozean/See, Brandung und Tiefenfarbe. |
 | `snow` | Schnee / Grate | Seed 1337: `(18, 14)`, Dist 48, Yaw 0.60, Pitch 0.75<br>Seed 42: `(-22, 20)`, Dist 50, Yaw 0.70, Pitch 0.75<br>Seed 20: `(-10, 14)`, Dist 40, Yaw 0.60, Pitch 0.70 | **Stresstest Schneegrenze:** Felsrippen, Firnfelder und Gipfel. Prüft Gratschärfung, Schnee-Albedo und Übergang von Wald/Fels zu Schnee. |
+| `diorama` | Vorlage C (#174) | `(0, 0)`, Dist 115, Yaw 0.70, Pitch 0.62 | Ganze Insel schräg als Diorama: Gebirgskamm, Tieflandflüsse, Küste. Im Spiel Taste F1 (adaptiv: rahmt die Landfläche). |
+| `valley` | Vorlage B (#174) | Ziel und Yaw wie `detail`, Dist 30, Pitch 0.40 | Flacher Blick über Tal und Aue bis zum Horizont: Mäander, Bänke, Delta. Im Spiel Taste F2 (adaptiv: größter Lauf, s. u.). |
+| `close` | Vorlage A (#174) | Ziel und Yaw wie `coast`, Dist 22, Pitch 0.52 | Schrägsicht auf Hang, Fluss und Küste: Fels, Wald, Kiesbänke, Brandung. Im Spiel Taste F3 (adaptiv: Mündung des größten Laufs, s. u.). |
+
+Die drei Vorlagen-Kameras (Issue #174, Paket E) gibt es auch als
+Tasten-Presets im Spiel (`CAMERA_PRESETS` in `game/scripts/Main.gd`). Die
+Matrix hält Ziel, Distanz und Yaw je Seed FEST (reproduzierbare Abnahmebilder),
+die Tasten rechnen sie beim Drücken aus der laufenden Welt:
+
+- **Diorama (F1):** Kamera so, dass die Landzellen mittig im Bild liegen und
+  es in der knapperen Richtung zu 85 % füllen (`Main.frame_land`, geschlossen
+  aus FOV und Seitenverhältnis über die konvexe Hülle der Landzellen); Yaw
+  bleibt. Mit der Insel ganz im Gitter (#175) war die feste Distanz 115 zu
+  weit, die Insel
+  füllte rund ein Drittel des Bildes. Die erste adaptive Fassung zielte auf
+  die Mitte der Land-Box; in Schrägsicht projiziert die nahe Kante größer, die
+  Insel saß unten und füllte nur ~60 % der Höhe (Seed 42, maximiert).
+- **Tal (F2) / Nah (F3):** größter Lauf auf dem D8-Netz (`flowArea`,
+  `receivers`), Ziel 12 bzw. 4 Welteinheiten oberhalb seiner Küstenmündung,
+  Kamera auf der Meerseite mit Blick talaufwärts (`Main.river_view`); verdeckt
+  Gelände die Sichtlinie, steigt der Pitch. Das Ziel ist immer eine Landzelle;
+  vorher behielten beide den aktuellen Blickpunkt und zeigten je nach Seed fast
+  nur Meer. Aus Distanz 60 zeigte „Tal" die ganze Insel statt des Tals; seit
+  dem Folgebefund steht es auf 30 (Ziel 12 Einheiten oberhalb der Mündung),
+  „Nah" auf 22 (4 Einheiten); der kleinste Zoom-Abstand `CAM_DIST_MIN` sank
+  dafür von 30 auf 20.
+
+Gleich bleiben Pitch (alle drei) und Distanz (Tal, Nah), Wächter
+`GraphicsMatrixTests.testCameraPresetsMatchTheMatrix`; die adaptive Rechnung
+misst `game/tests/ui_layout.gd` mit Godots eigener Projektion nach. Die
+adaptive Ansicht einer Welt zeigt `RS_CAMERA=diorama|valley|close`.
 
 ### Physikalische Baseline-Kennzahlen der Matrixwelten
 
@@ -433,7 +465,7 @@ Produktions-Grid $n = 720$, 112,48 m Weltbreite, $HSCALE = 24.0$):
 Das Skript `scripts/graphics-matrix.sh` automatisiert den vollständigen Durchlauf:
 
 ```sh
-# 1. Alle 54 Aufnahmen für eine Variante erzeugen:
+# 1. Alle Aufnahmen für eine Variante erzeugen (seit #174 81):
 scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline shot
 scripts/graphics-matrix.sh prototype docs/screenshots/graphics-matrix/prototype shot
 

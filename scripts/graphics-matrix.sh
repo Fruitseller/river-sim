@@ -62,10 +62,25 @@ camera_cfg() {
     20:backlight)   echo "-8,10;46.0;2.269;0.85" ;;
     20:coast)       echo "30,-28;48.0;0.8;0.85" ;;
     20:snow)        echo "-10,14;40.0;0.6;0.70" ;;
+    # Vorlagen-Kameras (Issue #174): diorama = Vorlage C, valley = B, close = A.
+    # Hier stehen FESTE Werte je Seed (Ziel, Distanz, Yaw), damit Abnahmebilder
+    # reproduzierbar bleiben. Die Tasten-Presets F1–F3 in game/scripts/Main.gd
+    # (CAMERA_PRESETS) sind dagegen ADAPTIV: Diorama rahmt die Landfläche,
+    # Tal/Nah zielen auf den größten Lauf. Gemeinsam ist nur der Pitch (alle)
+    # und die Distanz (valley, close); Wächter:
+    # GraphicsMatrixTests.testCameraPresetsMatchTheMatrix. Die adaptive Ansicht
+    # zeigt `RS_CAMERA=<id>` beim Start von Main (statt RS_TARGET/RS_DIST/RS_YAW).
+    1337:diorama|42:diorama|20:diorama) echo "0,0;115.0;0.7;0.62" ;;
+    1337:valley)    echo "-12,-25;30.0;0.7;0.40" ;;
+    1337:close)     echo "-36,-32;22.0;0.9;0.52" ;;
+    42:valley)      echo "4,-6;30.0;0.5;0.40" ;;
+    42:close)       echo "12,-10;22.0;1.1;0.52" ;;
+    20:valley)      echo "-8,10;30.0;0.6;0.40" ;;
+    20:close)       echo "30,-28;22.0;0.8;0.52" ;;
   esac
 }
 
-camera_order=(overview detail grazing backlight coast snow)
+camera_order=(overview detail grazing backlight coast snow diorama valley close)
 
 if [[ "$mode" == "list" ]]; then
   echo "Abnahmematrix (Landschaftsqualität #150):"
