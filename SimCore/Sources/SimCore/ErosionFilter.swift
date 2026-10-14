@@ -228,9 +228,9 @@ public enum ErosionFilter {
     /// Feld ∝ magnitude — Rinnen CARVEN dann netto, statt Grate aufzuschütten.
     ///
     /// Degenerierte Gitter (`n <= 1`), nicht-endliche Parameter (`sea`,
-    /// `seedOffsetX/Y`, `heightOffset`), ungültige Filter-Parameter (`params.isValid == false`)
-    /// sowie nicht-endliche Höhenspannen (`peak <= valley`) werden defensiv abgefangen
-    /// (No-op). Ein Pufferlängen-Mismatch (`h.count != n * n`) bricht per `precondition` ab.
+    /// `seedOffsetX/Y`, `heightOffset`) sowie ungültige Filter-Parameter (`params.isValid == false`)
+    /// werden defensiv abgefangen (No-op). Ein Pufferlängen-Mismatch (`h.count != n * n`)
+    /// bricht per `precondition` ab.
     public static func apply(
         h: inout [Double], n: Int, sea: Double,
         seedOffsetX: Double, seedOffsetY: Double,
@@ -249,16 +249,13 @@ public enum ErosionFilter {
             if v.isFinite { peak = max(peak, v) }
         }
         let valley = sea
-        guard peak.isFinite, peak > valley else { return }
         let scaleUV = Double(n - 1) * 0.5 // zentrale Differenz → dh/duv
 
         var out = [Double](repeating: 0, count: count)
-        var applied = false
         out.withUnsafeMutableBufferPointer { outBuf in
             src.withUnsafeBufferPointer { s in
                 guard let outPtr = outBuf.baseAddress,
                       let sp = s.baseAddress else { return }
-                applied = true
                 DispatchQueue.concurrentPerform(iterations: n) { j in
                     let inv = 1.0 / Double(n - 1)
                     for i in 0..<n {
@@ -283,8 +280,6 @@ public enum ErosionFilter {
                 }
             }
         }
-        if applied {
-            h = out
-        }
+        h = out
     }
 }

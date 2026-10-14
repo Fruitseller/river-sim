@@ -260,4 +260,33 @@ final class ErosionFilterTests: XCTestCase {
         ErosionFilter.apply(h: &hParams, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0, params: invalidParams)
         XCTAssertEqual(hParams, initial, "Ungültige params (strength NaN) müssen No-op sein")
     }
+
+    /// Quelltext-Wächter: `apply` fängt nicht-endliche Offsets und ungültige Parameter
+    /// bereits am Methodeneinstieg per `guard` ab, um die parallele Zelliteration
+    /// gar nicht erst zu starten.
+    func testApplyEntryGuardsSourceContract() throws {
+        let probe = try RepoSource.probe("SimCore/Sources/SimCore/ErosionFilter.swift")
+        let applyMethod = try XCTUnwrap(
+            probe.swiftMethods().first { $0.name == "apply" },
+            "ErosionFilter.apply nicht in der Quelltext-Probe gefunden"
+        )
+        assertContains(probe, "seedOffsetX.isFinite", hint: "apply prüft seedOffsetX am Einstieg")
+        assertContains(probe, "seedOffsetY.isFinite", hint: "apply prüft seedOffsetY am Einstieg")
+        assertContains(probe, "heightOffset.0.isFinite", hint: "apply prüft heightOffset.0 am Einstieg")
+        assertContains(probe, "heightOffset.1.isFinite", hint: "apply prüft heightOffset.1 am Einstieg")
+        assertContains(probe, "params.isValid", hint: "apply prüft params.isValid am Einstieg")
+
+        let body = applyMethod.body
+        XCTAssertTrue(body.contains("guard n > 1, sea.isFinite"),
+                      "apply fängt ungültige Gitter und Parameter im Einstiegs-Guard ab")
+
+        if let guardRange = body.range(of: "guard n > 1, sea.isFinite"),
+           let performRange = body.range(of: "DispatchQueue.concurrentPerform") {
+            XCTAssertTrue(guardRange.lowerBound < performRange.lowerBound,
+                          "Einstiegs-Guard muss vor der concurrentPerform-Iteration stehen")
+        } else {
+            XCTFail("Einstiegs-Guard oder concurrentPerform im Quelltext von apply nicht gefunden")
+        }
+    }
 }
+
