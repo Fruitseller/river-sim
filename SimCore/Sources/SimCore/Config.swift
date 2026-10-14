@@ -449,7 +449,7 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // sind die Talböden zu schmal (V-Täler) für sichtbare Fluss-Dynamik. Füllt nur
     // tal-nahe Zellen bis knapp über Bett-Niveau → steile Talwände bleiben unberührt
     // (die Berge werden NICHT zugeschüttet). Physisch = Overbank-Deposition.
-    public var floodplainEnabled = false // AUS: die per-Zell-Aggradation fügt feine Krusten hinzu (gemessen 2.7× Zerklüftung bei 3000 J.) für unbestätigten Auen-Nutzen → zurückgenommen. Ein glatterer Auen-Ansatz (z. B. diffundierte Deposition oder Tiefland-Generierung) ist offen. Code bleibt als Referenz.
+    public var floodplainEnabled = false // AUS: die per-Zell-Aggradation fügt feine Krusten hinzu (gemessen 2.7× Zerklüftung bei 3000 J.) für unbestätigten Auen-Nutzen → zurückgenommen. Seit Issue #174 entsteht die Aue stattdessen aus der lateralen Planation des Mäandergürtels (`meanderBelt`: Gleithang-Bank gedeckelt auf bankfull, gemessen GLATTER als vorher, `docs/zielbild-measurements.md` § Paket B). Code bleibt als Referenz.
     // #10: unverändert (Pass ist ohnehin aus) — dieselbe Begründung wie bei
     // braidMinCells: der normierte Abfluss zählt weiter in Zellen.
     public var floodplainMinArea: Double = 500  // ab so viel Einzugsgebiet (Zellen): NUR Hauptflüsse bauen Auen. Niedrig (60) → jedes Rinnsal baut Levees → Krusten-Rauschen (verworfen). Bergbäche haben real keine Aue.
@@ -607,7 +607,7 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // mehr als ein Millimeter Wasser — als Salzweiß gemalt wäre das die halbe
     // Insel, statt der Pfanne im Beckenkern.
     public var endorheicSaltMinDepth: Double = 0.03
-    public var lakeLevelResponseYears = 350.0 // Zeitkonstante des DARSTELLUNGS-Seespiegels (Terrain.waterLevel; 0 = aus, Spiegel = hf). Priority-Flood hebt hf beim Zuschütten des Auslass-Sills INSTANTAN fürs ganze Becken; die Auslass-Inzision schneidet in ~100 J. zurück → Sägezahn, sichtbar als periodisch hüpfende See-/Schwemmflächen (gemessen n=832 Seed 1337, 3000 J.: 17 hf-Sprünge > 0.0005, max 0.006; Quellen Droplets+Braiding+Mäander gemeinsam, Dämpfung einzelner Depositionspfade griff nicht und verschob nur die Kalibrierung). 250 J. drückt die sichtbare Restamplitude der ~100-J.-Sägezähne auf ~1/6 (gemessen via LakeLevelStability), lässt echte Pegeländerungen (Verlanden, neue Seen, +10.000-J.-Sprünge) aber praktisch ungebremst durch. 250 → 350 mit dem Umstieg auf 720/112,4789: die kleinere Welt schüttet ihren Auslass-Sill in 1,59× größeren Stufen zu (hf-Sprung 0,00755 → 0,01198 gemessen, Seed 1337, größtes Becken), und der gedämpfte REST stieg damit von 0,00067 auf 0,00181 — über die Sichtbarkeitsschwelle 0,0015, die LakeLevelStability prüft. Die Dämpfung selbst war intakt (1/6,6, die Zusage ist ~1/6; 832 lag mit 1/11 nur besser als versprochen). 350 stellt die Reserve wieder her (350 und 400 beide grün, 350 als kleinere Änderung gewählt); der Preis ist ein träger reagierender Darstellungsspiegel, echte Pegeländerungen bleiben ungebremst.
+    public var lakeLevelResponseYears = 350.0 // Zeitkonstante des DARSTELLUNGS-Seespiegels (Terrain.waterLevel; 0 = aus, Spiegel = hf). Priority-Flood hebt hf beim Zuschütten des Auslass-Sills INSTANTAN fürs ganze Becken; die Auslass-Inzision schneidet in ~100 J. zurück → Sägezahn, sichtbar als periodisch hüpfende See-/Schwemmflächen (gemessen n=832 Seed 1337, 3000 J.: 17 hf-Sprünge > 0.0005, max 0.006; Quellen Droplets+Braiding+Mäander gemeinsam, Dämpfung einzelner Depositionspfade griff nicht und verschob nur die Kalibrierung). 250 J. drückt die sichtbare Restamplitude der ~100-J.-Sägezähne auf ~1/6 (gemessen via LakeLevelStability), lässt echte Pegeländerungen (Verlanden, neue Seen, +10.000-J.-Sprünge) aber praktisch ungebremst durch. 250 → 350 mit dem Umstieg auf 720/112,4789: die kleinere Welt schüttet ihren Auslass-Sill in 1,59× größeren Stufen zu (hf-Sprung 0,00755 → 0,01198 gemessen, Seed 1337, größtes Becken), und der gedämpfte REST stieg damit von 0,00067 auf 0,00181 — über die Sichtbarkeitsschwelle 0,0015, die LakeLevelStability prüft. Die Dämpfung selbst war intakt (1/6,6, die Zusage ist ~1/6; 832 lag mit 1/11 nur besser als versprochen). 350 stellt die Reserve wieder her (350 und 400 beide grün, 350 als kleinere Änderung gewählt); der Preis ist ein träger reagierender Darstellungsspiegel, echte Pegeländerungen bleiben ungebremst. Seit Issue #174 wirkt die Zeitkonstante nur auf den ANSTIEG: fällt hf, folgt der Spiegel sofort (Geister-Seen auf dem frisch gegrabenen Mäandergürtel, s. `Terrain.relaxWaterLevel`).
     public var hydraulic: HydraulicParams = {
         var h = HydraulicParams()
         h.inertia = 0.10 // mehr Trägheit → längere, verzweigende (dendritische) Rinnen
@@ -1470,6 +1470,107 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // −4.3 %) und bleiben damit im gepinnten Band.
     public var oxbowFillYears: Double = 5500
     public var oxbowMaxAge: Double = 25000        // ab diesem Alter gilt der Altarm als verlandet (aus der Liste)
+
+    // ---- Mäandergürtel (Issue #174, Paket B) ----
+    //
+    // Vorher (`meanderBelt = false`, bit-identisch erhalten für die
+    // Kopplungs-Wächter in `meanderCfg()`): Migration ∝ Krümmung × Abfluss mit
+    // positiv gewichteter Stromauf-Krümmung, Ufer-Rückkopplung eine Zelle außen
+    // → eine Zelle innen, keine Kanalbreite im Bett. Gemessen
+    // (`docs/zielbild-measurements.md`): Wellenlänge 1–4 Kanalbreiten statt
+    // 10–14, die Sinuosität kam aus Zacken in Bandbreite; Querprofil verkehrt
+    // (außen/innen 0,6–0,8); 900–2000 Hals-Cutoffs je 20.000 Jahre.
+    //
+    // Mit `meanderBelt`:
+    // - Breite `b(Q)` = Band-Breite (`WaterRender.ribbonHalfWidthCells`, EINE
+    //   Funktion für Bett und Band), Abfluss entlang des Laufs monoton.
+    // - Migration nach Howard–Knutson: lokale Krümmung NEGATIV gewichtet,
+    //   stromauf integrierte Krümmung positiv, Kern-Länge ∝ Breite. Kurze
+    //   Wellen (unter ~Kernlänge) werden gedämpft, lange wachsen — das wählt die
+    //   Mäanderwellenlänge. Rate ∝ Breite × (Breite · Krümmung), sub-getaktet.
+    // - Bett über die volle Breite, asymmetrisch (Kolk außen), Material des
+    //   Prallhangs als Gleithang-Bank innen, gedeckelt knapp unter bankfull →
+    //   laterale Planation, `barAge` als Zustandsfeld.
+    // - Hals-Cutoff ab einer Kanalbreite, Chute-Cutoff bei großem Abfluss.
+    public var meanderBelt = true
+    /// Gewicht der lokalen Krümmung (Howard–Knutson Ω). Läuft als implizite
+    /// Diffusion der Linie (κ = |Ω|·Rate·b²), s. `MeanderState.migrateBeltChannel`.
+    public var meanderBeltLocalWeight: Double = -1.0
+    /// Gewicht der stromauf integrierten Krümmung (Howard–Knutson Γ).
+    public var meanderBeltUpstreamWeight: Double = 2.0
+    /// Abkling-Länge des Stromauf-Kerns in Kanalbreiten. Lineare Analyse:
+    /// Wachstum σ(k) ∝ k²·(Γ/(1+(kL)²) − 1), am schnellsten bei
+    /// (1+(kL)²)² = Γ, also λ ≈ 9,8·L. 1,2 Breiten → λ ≈ 12 Breiten
+    /// (Leopold–Wolman 10–14); gemessen ohne Gelände 10–16. Verworfen 3,5: dort
+    /// wachsen nur Wellen über 22 Breiten, und die langsam.
+    public var meanderBeltKernelWidths: Double = 1.2
+    /// Migrationsrate je Jahr: Anteil der Kanalbreite bei `b · eff = 1`.
+    /// 0,015 ≈ 1–2 % der Breite je Jahr in engen Bögen (reale Mäanderflüsse:
+    /// 1–5 %). 0,005 wuchs im Gelände nicht über die Startzacken der D8-Trasse
+    /// hinaus. Messreihen: `docs/zielbild-measurements.md` § Paket B.
+    public var meanderBeltRate: Double = 0.015
+    /// Zug der Linie zur tieferen Uferseite, als Vielfaches von Rate × Breite
+    /// je Rinnentiefe Quergefälle über dem Totband (0 = aus). Ein Sicherheitsnetz
+    /// gegen das Abkoppeln von der Talsohle, keine Rückstellkraft: mit Stärke 1
+    /// und Totband 0,5 hielt der Zug in jedem V-Tal die Linie gerade (gemessen
+    /// ~4-mal stärker als der Wachstumsterm, Sinuosität 1,2 nach 20.000 Jahren).
+    public var meanderBeltPull: Double = 0
+    /// Totband des Zugs in Rinnentiefen Quergefälle.
+    public var meanderBeltPullDeadband: Double = 1.5
+    /// Talwand-Bremse ab so viel Überhöhung des Geländes 3,5 Kanalbreiten weit
+    /// in Bewegungsrichtung über der Linie, in Rinnentiefen (`.infinity` = aus).
+    public var meanderBeltBrakeDepths: Double = 2.0
+    /// Ufer-Kohäsion (Auwald) im Gürtel, wie `meanderCohesion` im alten Pfad.
+    /// 0: mit 0,5 flachte sie gemessen jedes Wachstum ab (Sinuosität 1,3 statt
+    /// 2,0 nach 20.000 Jahren, Seed 1337); Bewuchs bremst im Gürtel über die
+    /// Ufer-Zerstörung im Stempel, nicht über die Rate.
+    public var meanderBeltCohesion: Double = 0
+    /// Nur Läufe ab diesem Abfluss (Zellen Einzugsgebiet) wandern. Kleinere
+    /// liegen als D8-Linie fest: jeder Lauf ist eine eigene Zentrumslinie ohne
+    /// Anbindung an seinen Vorfluter, und frei wandernde Zubringer kreuzten
+    /// gemessen die Hauptläufe als Knäuel. 2000 ≈ Kanalbreite 4 Zellen.
+    public var meanderBeltMinCells: Double = 2000
+    /// Bankfull-Tiefe in Sim-Höhe je Welteinheit Kanalbreite. 0,0021 ≈
+    /// Breite/Tiefe 20 (Mäanderflüsse ~10–30) bei 1 Welteinheit ≈ 100 m und
+    /// 1 Sim-Höhe ≈ 2,4 km: 100 m Breite → 5 m Tiefe. Bewusst ein fester
+    /// Physik-Wert, nicht aus `RenderContract.heightScale` abgeleitet (dieselbe
+    /// Begründung wie bei `channelTargetDepth`).
+    public var meanderBeltDepthPerWidth: Double = 0.0021
+    /// Wie weit der Kolk zur Außenkurve wandert: Profil
+    /// `(1 − η²)(1 + skew·a·η)`, `a = min(1, |Krümmung| · b · Gain)`.
+    public var meanderBeltPoolSkew: Double = 1.5
+    public var meanderBeltPoolGain: Double = 2.5
+    /// Zeitkonstante, mit der das Bett auf sein Profil und die Bank auf ihre
+    /// Höhe relaxiert (Jahre, exponentiell über `relaxFraction`).
+    public var meanderBeltRelaxYears: Double = 150
+    /// Bankoberkante unter bankfull, als Anteil der Kanaltiefe.
+    public var meanderBarTopDepth: Double = 0.15
+    /// Breite der Bank-Zone innen neben dem Kanal, in Kanalbreiten.
+    public var meanderBarWidths: Double = 0.75
+public var meanderBeltSmoothYears: Double = 100
+    /// Örtliche Sättigung: der Wachstumsterm blendet zwischen diesen
+    /// Sinuositäten (über ±`meanderBeltSinuosityWidths` Kanalbreiten gemessen)
+    /// auf 0 aus. Ersetzt im Gürtel den GLOBALEN Deckel `meanderMaxSinuosity`:
+    /// der fror den ganzen Lauf ein, sobald er erreicht war (gemessen: Rate 0
+    /// ab Jahr 5000) — die Schlingen sollen aber weiter stromab wandern.
+    /// Ohne Deckel lag die Sinuosität eines Laufs gemessen bei 2–7.
+    public var meanderBeltSinuosityStart: Double = 2.0
+    public var meanderBeltSinuosityFull: Double = 2.8
+    public var meanderBeltSinuosityWidths: Double = 10
+    /// Hals-Cutoff ab dieser Halsweite in Kanalbreiten (mindestens `meanderNeckDist`).
+    public var meanderBeltNeckWidths: Double = 1.0
+    /// Längste Schleife (Bogenlänge in Kanalbreiten), die ein Cutoff abschnürt.
+    /// Ein Hals- oder Chute-Cutoff nimmt EINEN Bogen heraus (1–2 Wellenlängen,
+    /// ~10–30 Breiten); ohne Grenze schnürte ein Lauf, der seitlich zurück an
+    /// seinen Anfang driftete, gemessen fast seine ganze Länge ab und lag
+    /// danach als gerade Linie da.
+    public var meanderBeltMaxLoopWidths: Double = 150
+    /// Chute-Cutoff: Sehne unter so vielen Kanalbreiten …
+    public var meanderChuteWidths: Double = 2.0
+    /// … bei einer Schleife, die mindestens so oft länger ist als die Sehne …
+    public var meanderChuteLoopRatio: Double = 8.0
+    /// … und mindestens diesem Abfluss (Zellen Einzugsgebiet).
+    public var meanderChuteMinCells: Double = 4000
 
     // ---- Störung / Regeneration nach Spieler-Eingriffen (Issue #26) ----
     //

@@ -427,7 +427,8 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
   → priorityFlood → D8-Empfänger/area → capEndorheicBasins → computeMFDArea
 → relaxWaterLevel (Darstellungs-Seespiegel) → updateSaltCrust (Playa-Kruste)
 → Gletscher (updateIce: Firn→Eis, Eisfluss, glaziale Erosion, Moränen)
-→ Mäander (migrateMeander + meanderStamp)
+→ Mäander (migrateMeander + meanderStamp; mit `meanderBelt`, Produktion:
+  meanderBeltStep — Migration und Gürtel-Stempel je Lauf sub-getaktet, #174)
 ──── ab hier der Produktionszweig `hydraulicEnabled` ────
 → outletIncision → channelCarve (separat über channelTargetDepth abschaltbar)
 → fillLakes (geparkt, `basinFill = false`) → fillShallowPonds

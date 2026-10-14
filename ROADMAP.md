@@ -182,7 +182,18 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Offene Punkte
 
-**Zielbild #174, Pakete B–E (offen).** Ist-Messung vor B in
+**Zielbild #174, Paket B (Mäandergürtel) im ersten Stand, Kalibrierung offen.**
+`meanderBelt` (Produktion) ersetzt Migration + Ufer-Stempel: Breite als Sim-Größe,
+Howard–Knutson mit implizitem Lokalterm (λ ≈ 12 Breiten ohne Gelände),
+asymmetrisches Bett, Gleithang-Bank auf bankfull mit `barAge`, Chute-Cutoff,
+Hauptstamm-Trasse und angeschlossene Zubringer; der geparkte Auen-Pass
+`floodplainAggradation` bleibt geparkt, die Aue entsteht jetzt aus der
+lateralen Planation. Im Gelände offen: Sinuosität (1,1–1,9 statt 1,5–2,5),
+Querprofil-Asymmetrie (~1 statt ≥ 2), zu wenige offene Altarme — Stand und
+Befunde in `docs/zielbild-measurements.md` § Paket B. Pakete C (Teile), D, E
+als eigene PRs.
+
+**Zielbild #174, Pakete B–E (ursprünglicher Befund).** Ist-Messung vor B in
 `docs/zielbild-measurements.md`: die Mäander-Sinuosität kommt aus Zacken in
 Bandbreite (Wellenlänge 1–4 Kanalbreiten statt 10–14), das Querprofil ist
 verkehrt (Außen/Innen 0,6–0,8 statt ≥ 2), und es gibt 900–1800 Hals-Cutoffs

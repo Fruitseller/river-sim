@@ -11,6 +11,7 @@ final class RiverDynamicsTests: XCTestCase {
     private func cfg(n: Int) -> SimConfig {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
         return c
     }
 
@@ -134,6 +135,11 @@ final class RiverDynamicsTests: XCTestCase {
     /// dynamisch Altarme. Ersetzt die geparkten Skips, jetzt auf dem sanften Terrain.
     func testMeanderProductionStable() {
         var c = SimConfig(); c.n = 256; c.world = calibrationWorld // Produktions-Defaults (meanderEnabled/Migration/Deckel)
+        // Wächter des GLOBALEN Sinuositäts-Deckels der Mechanik vor #174; der
+        // Gürtel ersetzt ihn durch örtliche Sättigung und hat eigene Wächter
+        // (`MeanderBeltTests.testLongRunStaysBoundedWithBothCutoffs`).
+        c.rangeLandform = calibrationRangeLandform
+        c.meanderBelt = calibrationMeanderBelt
         let t = Terrain(config: c, seed: 1337)
         var everOxbow = false
         var maxSinuEver = 0.0
@@ -191,6 +197,7 @@ final class RiverDynamicsTests: XCTestCase {
     func testChannelBedSurvivesDroplets() {
         var cOn = SimConfig(); cOn.n = 256; cOn.world = calibrationWorld
         cOn.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        cOn.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
         var cOff = cOn
         cOff.hydraulic.channelDepositDamp = 1.0 // = Zustand vor der Reconciliation
         let tOn = Terrain(config: cOn, seed: 1337)
@@ -495,7 +502,10 @@ final class RiverDynamicsTests: XCTestCase {
         for seed in Self.braidSeeds {
             var cOn = SimConfig(); cOn.n = 256; cOn.world = calibrationWorld
         cOn.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        cOn.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
             cOn.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        cOn.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
+            cOn.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
             // Becken-Wasserhaushalt (Issue #11) AUSGEPINNT — wie `meanderCfg()`
             // seine alten Werte pinnt: dieser Wächter misst den braidPass A/B,
             // nicht das Klima. Mit Verdunstung fällt Ponding in den Braid-Plains
@@ -677,6 +687,7 @@ final class RiverDynamicsTests: XCTestCase {
     func testStreamMapMarksAndPersists() {
         var c = SimConfig(); c.n = 256; c.world = calibrationWorld
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
         let t = Terrain(config: c, seed: 1337)
         func renderedSet() -> (set: Set<Int>, recall: Double) {
             let chan = channelSet(t, area: t.areaMFD, creek: 120)

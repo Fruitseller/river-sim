@@ -10,6 +10,7 @@ final class WaterRendererTests: XCTestCase {
       config.n = 192
       config.world = calibrationWorld
       config.rangeLandform = calibrationRangeLandform  // Großform vor #174
+      config.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
     }
     return agedWorld(config, years: years)
   }
@@ -121,10 +122,12 @@ final class WaterRendererTests: XCTestCase {
   func testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater() {
     // Der Übergabe-Vertrag braucht junge Altarme im Bild. Die Seed-1337-Welt
     // mit der Großform aus #174 hat in Jahr 30.000 keinen offenen (auf dem
-    // Linux-Runner, System-libm) — geprüft wird hier die Übergabe Band ↔
-    // Raster, nicht die Mäander-Physik.
+    // Linux-Runner, System-libm), mit dem Gürtel ebenso wenig (wenige Cutoffs,
+    // Abnahmepunkt 13 offen) — geprüft wird hier die Übergabe Band ↔ Raster,
+    // nicht die Mäander-Physik.
     var config = SimConfig()
     config.rangeLandform = calibrationRangeLandform
+    config.meanderBelt = calibrationMeanderBelt
     let terrain = agedWorld(config, years: 30_000)
     let ribbons = RiverRibbonRenderer()
     let mesh = ribbons.build(terrain, hscale: 24, lift: 0.35)
