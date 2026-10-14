@@ -182,16 +182,22 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Offene Punkte
 
-**Zielbild #174, Paket B (Mäandergürtel) im ersten Stand, Kalibrierung offen.**
+**Zielbild #174, Paket B (Mäandergürtel), kalibriert.**
 `meanderBelt` (Produktion) ersetzt Migration + Ufer-Stempel: Breite als Sim-Größe,
-Howard–Knutson mit implizitem Lokalterm (λ ≈ 12 Breiten ohne Gelände),
-asymmetrisches Bett, Gleithang-Bank auf bankfull mit `barAge`, Chute-Cutoff,
-Hauptstamm-Trasse und angeschlossene Zubringer; der geparkte Auen-Pass
-`floodplainAggradation` bleibt geparkt, die Aue entsteht jetzt aus der
-lateralen Planation. Im Gelände offen: Sinuosität (1,1–1,9 statt 1,5–2,5),
-Querprofil-Asymmetrie (~1 statt ≥ 2), zu wenige offene Altarme — Stand und
-Befunde in `docs/zielbild-measurements.md` § Paket B. Pakete C (Teile), D, E
-als eigene PRs.
+Howard–Knutson mit implizitem Lokalterm, Stromab-Anteil und Störquelle,
+asymmetrisches Bett (Kolk außen, Gleithang innen), Gleithang-Bank auf bankfull
+mit `barAge`, Chute-Cutoff, Hauptstamm-Trasse und angeschlossene Zubringer; im
+Gürtelbett tragen die Tropfen nicht ab. Der geparkte Auen-Pass
+`floodplainAggradation` bleibt geparkt, die Aue entsteht aus der lateralen
+Planation. Abnahme der Punkte 9–13 im Zeitmittel je Seed (Jahr
+10.000–20.000 und 50.000–100.000): auf den Matrix-Seeds 28 von 30 erfüllt
+(Sinuosität 1,63–1,85, Asymmetrie 2,35–3,67, sichtbare junge Altarme
+3,2–11,2); offen Gürtel/Amplitude Seed 20 im ersten Fenster (2,6) und λ
+Seed 42 im zweiten (8,3, kaum messbar), beides Realisierungs-Streuung (auf
+24 Seeds 182 von 240 Punkten). Wassergefüllt sind davon 1,0–3,6 (das
+Tiefland fällt 3–5 Kanaltiefen je Kanalbreite; trockene junge Altarme zeigt
+der Render als Ried). Stand und Befunde in `docs/zielbild-measurements.md`
+§ Paket B — Zeitmittel-Abnahme. Pakete C (Teile), D, E als eigene PRs.
 
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
 aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der

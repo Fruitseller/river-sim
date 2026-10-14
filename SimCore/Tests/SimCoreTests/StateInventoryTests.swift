@@ -183,6 +183,10 @@ final class StateInventoryTests: XCTestCase {
             "Faktor der Tropfen-Deposition je Zelle (Issue #108) — `buildDepositDamp` "
             + "leitet ihn je Schritt vollständig aus `area`/Config ab, direkt vor dem "
             + "einzigen Leser (`Hydraulic.erode`).")),
+        ("dropletGateBuf", .scratch(reason:
+            "Sperrmaske der Tropfen (Eis oder Gürtelbett, Issue #174) — "
+            + "`beltDropletGate` füllt sie je Schritt vollständig aus `underIce`/`inBelt`, "
+            + "direkt vor dem einzigen Leser (`Hydraulic.erode`).")),
         ("pondSeen", .scratch(reason:
             "Arbeitspuffer der Pfützen-Komponentensuche.")),
         ("noise", .derived(reason:

@@ -167,6 +167,18 @@ enum ZielbildMetrics {
         /// (Alter < `WaterRender.oxbowVisibleYears`).
         var lowlandOxbows = 0
         var openLowlandOxbows = 0
+        /// Davon SICHTBAR als Wasser, wie `RiverRibbonRenderer` sie malt: ab
+        /// `WaterRender.oxbowMinimumNodes` Knoten, und mindestens ein Drittel der
+        /// Knoten liegt über offenem Wasser (`waterLevel − h` über
+        /// `WaterRender.pondContourLo`). Ein Bogen ohne Wassersäule bekommt dort
+        /// Deckkraft 0.
+        var wetLowlandOxbows = 0
+        /// Junge Altarme, die der Render ZEIGT (Abnahmepunkt 13): ab
+        /// `WaterRender.oxbowMinimumNodes` Knoten. Seit Paket C (#181) malt
+        /// `BarMaterial` jeden solchen Bogen als Ried, ein wassergefüllter
+        /// trägt zusätzlich das Wasserband; unter der Knotenzahl zeichnet keiner
+        /// der beiden Wege etwas. Wasserfüllung verlangt Punkt 13 nicht.
+        var visibleLowlandOxbows = 0
     }
 
     /// Fenster (Knoten je Seite) für die Längsneigung des Tieflandabschnitts.
@@ -251,6 +263,80 @@ enum ZielbildMetrics {
         return out
     }
 
+    /// Kleinste Halbwelle, die als Bogen zählt: Abstand des Scheitels zur Sehne
+    /// in Kanalbreiten. Darunter bleibt die Linie in ihren eigenen Ufern — das
+    /// ist ein Vorzeichenwechsel der Krümmung auf einer geraden Übergangsstrecke
+    /// (Rauschen, D8-Treppe), kein Mäanderbogen. Bis zur Kalibrierung von
+    /// Paket B zählte jeder Vorzeichenwechsel; auf dem Gelände lagen damit
+    /// zwischen echten Bögen Halbwellen von 0,0–0,3 Breiten Höhe und 1–3 Breiten
+    /// Sehne, die die Wellenlänge um 1–3 Breiten drückten
+    /// (`docs/zielbild-measurements.md` § Paket B, Kalibrierung).
+    static let bendMinAmplitudeWidths = 0.5
+    /// Nur für den Vorher/Nachher-Vergleich: die Messung vor der Kalibrierung
+    /// von Paket B (jeder Vorzeichenwechsel ist ein Wendepunkt, Asymmetrie gegen
+    /// den höchsten Punkt im Querschnitt).
+    nonisolated(unsafe) static var rawInflections = false
+    /// Nur für den Vorher/Nachher-Vergleich: die Gürtel-Messung bis zum
+    /// Zeitmittel-Abschluss (#174 Paket B) — Querschnitt ab dem Talachsen-Punkt
+    /// statt ab dem Lauf, und `beltAll` mittelte die Amplitude auch über Läufe
+    /// ohne Bogen (als 0). S. `belt`, Gürtelbreite.
+    nonisolated(unsafe) static var beltFromAxis = false
+
+    struct Bends {
+        /// Wendepunkte (Knotenindizes) nach dem Verschmelzen flacher Halbwellen.
+        var inflections: [Int] = []
+        /// Luftlinie über zwei Halbwellen, Mittel (Zellen); 0 = unter drei Wendepunkten.
+        var wavelength = 0.0
+        /// Abstand des Scheitels zur Sehne je Halbwelle, Mittel (Zellen).
+        var amplitude = 0.0
+    }
+
+    /// Wendepunkte, Wellenlänge und Amplitude einer Linie (Abnahmepunkt 10).
+    /// Wendepunkt = Vorzeichenwechsel der geglätteten Krümmung `curv`; Halbwellen
+    /// unter `minAmplitudeWidths` Kanalbreiten verschmelzen mit ihren Nachbarn
+    /// (die flachste zuerst), s. `bendMinAmplitudeWidths`.
+    static func bends(_ nodes: [MeanderNode], curv: [Double], width: Double,
+                      minAmplitudeWidths: Double = bendMinAmplitudeWidths) -> Bends {
+        var infl: [Int] = []
+        for i in 1..<nodes.count where (curv[i - 1] < 0) != (curv[i] < 0) { infl.append(i) }
+        func height(_ i0: Int, _ i1: Int) -> Double {
+            let a = nodes[i0], e = nodes[i1]
+            let dx = e.x - a.x, dz = e.z - a.z, l = (dx * dx + dz * dz).squareRoot()
+            var m = 0.0
+            for i in i0...i1 {
+                let p = nodes[i]
+                m = max(m, l > 1e-9 ? abs((p.x - a.x) * dz - (p.z - a.z) * dx) / l : dist(p, a))
+            }
+            return m
+        }
+        let minAmp = minAmplitudeWidths * width
+        while minAmp > 0, infl.count >= 2 {
+            var lo = -1, loH = Double.infinity
+            for k in 0..<(infl.count - 1) {
+                let hk = height(infl[k], infl[k + 1])
+                if hk < loH { loH = hk; lo = k }
+            }
+            guard loH < minAmp else { break }
+            // Innen: beide Wendepunkte fallen, die Nachbarn (gleiches Vorzeichen)
+            // werden eine Halbwelle. Am Rand fällt nur der äußere.
+            if lo == 0 { infl.remove(at: 0) }
+            else if lo == infl.count - 2 { infl.remove(at: infl.count - 1) }
+            else { infl.removeSubrange(lo...(lo + 1)) }
+        }
+        var r = Bends(inflections: infl)
+        if infl.count >= 3 {
+            var lam = 0.0
+            for k in 0..<(infl.count - 2) { lam += dist(nodes[infl[k]], nodes[infl[k + 2]]) }
+            r.wavelength = lam / Double(infl.count - 2)
+        }
+        if infl.count >= 2 {
+            var amp = 0.0
+            for k in 0..<(infl.count - 1) { amp += height(infl[k], infl[k + 1]) }
+            r.amplitude = amp / Double(infl.count - 1)
+        }
+        return r
+    }
+
     /// `swept`: Zellen, die ein Lauf im Messlauf je überstrichen hat (s.
     /// `markSwept`) — die Gürtel-Ausdehnung bis Paket B (danach `barAge ≥ 0`).
     static func belt(_ t: Terrain, lowland: [Bool], swept: [Bool],
@@ -263,7 +349,18 @@ enum ZielbildMetrics {
             let k = min(max(Int(cz.rounded()), 0), n - 1) * n + min(max(Int(cx.rounded()), 0), n - 1)
             guard lowland[k] else { continue }
             r.lowlandOxbows += 1
-            if t.meander.oxbowAge[oi] < WaterRender.oxbowVisibleYears { r.openLowlandOxbows += 1 }
+            if t.meander.oxbowAge[oi] < WaterRender.oxbowVisibleYears {
+                r.openLowlandOxbows += 1
+                if ox.count >= WaterRender.oxbowMinimumNodes {
+                    r.visibleLowlandOxbows += 1
+                    var wet = 0
+                    for p in ox {
+                        let kk = min(max(Int(p.z.rounded()), 0), n - 1) * n + min(max(Int(p.x.rounded()), 0), n - 1)
+                        if t.h[kk] <= t.cfg.sea || t.waterLevel[kk] - t.h[kk] > WaterRender.pondContourLo { wet += 1 }
+                    }
+                    if 3 * wet >= ox.count { r.wetLowlandOxbows += 1 }
+                }
+            }
         }
         guard let ch = channel ?? mainChannel(t), let reach = lowlandReach(t, ch), reach.count >= 8 else { return r }
         let nodes = Array(ch.nodes[reach])
@@ -277,34 +374,42 @@ enum ZielbildMetrics {
         r.width = MeanderState.beltWidthCells(discharge: q, config: t.cfg)
 
         // Wendepunkte, Wellenlänge, Amplitude.
-        let win = max(2, Int((r.width / max(1e-6, t.cfg.meanderNodeSpacing)).rounded()))
-        let curv = smoothedCurvature(nodes, window: win)
-        var infl: [Int] = []
-        for i in 1..<nodes.count where (curv[i - 1] < 0) != (curv[i] < 0) { infl.append(i) }
-        if infl.count >= 3 {
-            var lam = 0.0
-            for k in 0..<(infl.count - 2) { lam += dist(nodes[infl[k]], nodes[infl[k + 2]]) }
-            r.wavelength = lam / Double(infl.count - 2)
-        }
-        if infl.count >= 2 {
-            var amp = 0.0
-            for k in 0..<(infl.count - 1) {
-                let a = nodes[infl[k]], b = nodes[infl[k + 1]]
-                let dx = b.x - a.x, dz = b.z - a.z, l = (dx * dx + dz * dz).squareRoot()
-                var m = 0.0
-                for i in infl[k]...infl[k + 1] {
-                    let p = nodes[i]
-                    let off = l > 1e-9 ? abs((p.x - a.x) * dz - (p.z - a.z) * dx) / l : dist(p, a)
-                    m = max(m, off)
-                }
-                amp += m
-            }
-            r.amplitude = amp / Double(infl.count - 1)
-        }
+        let curv = smoothedCurvature(nodes, window: max(2, Int((r.width / max(1e-6, t.cfg.meanderNodeSpacing)).rounded())))
+        let bendSet = Self.bends(nodes, curv: curv, width: r.width,
+                                 minAmplitudeWidths: rawInflections ? 0 : bendMinAmplitudeWidths)
+        r.wavelength = bendSet.wavelength
+        r.amplitude = bendSet.amplitude
 
-        // Gürtelbreite: quer zur Talachse (Mittel über ±W Knoten) die
-        // zusammenhängend überstrichenen Zellen zählen (1 Zelle Lücke erlaubt).
-        let w = 12
+        // Gürtelbreite (Punkt 11: „Ausdehnung von `barAge ≥ 0` quer zum Tal"):
+        // Abstand der beiden Tangenten an die äußersten überstrichenen Zellen,
+        // parallel zur Talachse, über eine Mäanderwellenlänge — die
+        // Lehrbuch-Definition (Linien an die Außenkanten der Bögen). Je Knoten
+        // im Fenster läuft ein Querschnitt quer zur Talachse vom LAUF aus nach
+        // beiden Seiten, solange die Zellen zusammenhängend überstrichen sind
+        // (1 Zelle Lücke erlaubt); der Gürtel kann damit nie schmaler sein als
+        // der Bogenzug, der in ihm liegt (2 · Amplitude). Talachse = Mittel über
+        // eine Mäanderwellenlänge entlang des Laufs (λ · Sinuosität), mindestens
+        // ±12 Knoten; mit festen ±12 Knoten (±18 Zellen) folgte sie bei
+        // ausgebildeten Bögen (λ ≈ 60–80 Zellen) dem Lauf selbst (bis zur
+        // Kalibrierung von Paket B, `rawInflections`).
+        // Bis zum Zeitmittel-Abschluss (`beltFromAxis`) lief EIN Querschnitt ab
+        // dem Talachsen-Punkt: lag der in einer Lücke (Innenseite eines
+        // Bogens, die keine Bank trägt), endete die Messung dort. Auf Seed 20,
+        // Jahr 10.000, maß sie am längsten Lauf 5,9 Breiten Gürtel bei 5,2
+        // Breiten Amplitude — schmaler als der Bogenzug selbst (≥ 11,3 Breiten),
+        // docs/zielbild-measurements.md § Paket B — Gürtel-Messung und Wellenlänge.
+        let w = rawInflections || r.wavelength <= 0 ? 12
+            : max(12, Int((0.5 * r.wavelength * r.sinuosity / max(1e-6, t.cfg.meanderNodeSpacing)).rounded()))
+        func sweptRun(_ ox: Double, _ oz: Double, _ dx: Double, _ dz: Double) -> Double {
+            var s = 0.0, last = 0.0, gap = 0.0
+            while s < Double(n) {
+                s += 0.5
+                let x = Int((ox + dx * s).rounded()), z = Int((oz + dz * s).rounded())
+                guard x >= 0, z >= 0, x < n, z < n else { break }
+                if swept[z * n + x] { last = s; gap = 0 } else { gap += 0.5; if gap > 1.5 { break } }
+            }
+            return last
+        }
         var widths: [Double] = []
         for i in stride(from: 0, to: nodes.count, by: 2) {
             let a = max(0, i - w), b = min(nodes.count - 1, i + w)
@@ -314,24 +419,25 @@ enum ZielbildMetrics {
             let tl = (tx * tx + tz * tz).squareRoot()
             guard tl > 1e-9 else { continue }
             let px = -tz / tl, pz = tx / tl
-            var extent = 0.0
-            for sgn in [-1.0, 1.0] {
-                var s = 0.0, last = 0.0, gap = 0.0
-                while s < Double(n) {
-                    s += 0.5
-                    let x = Int((ax + sgn * px * s).rounded()), z = Int((az + sgn * pz * s).rounded())
-                    guard x >= 0, z >= 0, x < n, z < n else { break }
-                    if swept[z * n + x] { last = s; gap = 0 } else { gap += 0.5; if gap > 1.5 { break } }
-                }
-                extent += last
+            if rawInflections || beltFromAxis {
+                widths.append(sweptRun(ax, az, -px, -pz) + sweptRun(ax, az, px, pz))
+                continue
             }
-            widths.append(extent)
+            var vMax = -Double.infinity, vMin = Double.infinity
+            for j in stride(from: a, through: b, by: 2) {
+                let p = nodes[j]
+                guard abs((p.x - ax) * tx + (p.z - az) * tz) <= 0.5 * tl * tl else { continue }
+                let v = (p.x - ax) * px + (p.z - az) * pz
+                vMax = max(vMax, v + sweptRun(p.x, p.z, px, pz))
+                vMin = min(vMin, v - sweptRun(p.x, p.z, -px, -pz))
+            }
+            if vMax > vMin { widths.append(vMax - vMin) }
         }
         widths.sort()
         if !widths.isEmpty { r.beltWidth = widths[widths.count / 2] }
 
-        // Querprofil-Asymmetrie: Tiefe unter der höheren Uferkante, außen gegen
-        // innen, in Bögen mit |Krümmung| über dem Median.
+        // Querprofil-Asymmetrie: Tiefe unter dem Wasserspiegel bei bankfull,
+        // außen gegen innen, in Bögen mit |Krümmung| über dem Median.
         let absC = curv.map(abs).sorted()
         let median = absC[absC.count / 2]
         let half = r.width / 2
@@ -348,11 +454,25 @@ enum ZielbildMetrics {
                 func hAt(_ d: Double) -> Double {
                     Terrain.bilinear(p, n, b.x + ox * d, b.z + oz * d)
                 }
-                // Bezug: höchster Punkt im benetzten Querschnitt (≈ Uferkante
-                // bankfull). Die Rinnen-Wand dahinter (`channelCarve`, ≈ 35 m)
-                // stauchte das Verhältnis: (35 + 6,5) / (35 + 1) ≈ 1,15.
-                var ref = -Double.infinity, d = -half
-                while d <= half + 1e-9 { ref = max(ref, hAt(d)); d += 0.5 }
+                var ref = -Double.infinity
+                if rawInflections {
+                    // Bis zur Kalibrierung von Paket B: höchster Punkt im
+                    // benetzten Querschnitt.
+                    var d = -half
+                    while d <= half + 1e-9 { ref = max(ref, hAt(d)); d += 0.5 }
+                } else {
+                    // Bezug: Wasserspiegel bei bankfull = die NIEDRIGERE der beiden
+                    // Uferkanten (Oberkante je Seite über 0,75–1,25 Halbbreiten) —
+                    // über sie tritt das Wasser zuerst aus. Der höchste Punkt im
+                    // Querschnitt war an jedem Prallhang gegen eine Talwand die
+                    // Wand selbst (gemessen 10–50 Kanaltiefen), das Verhältnis
+                    // maß dort die Wand statt der Wassertiefe (≈ 0,7 statt ≈ 2,4
+                    // im selben Bogen). Ebenso stauchte früher die Rinnen-Wand
+                    // von `channelCarve` (≈ 35 m) das Verhältnis.
+                    var topOut = -Double.infinity, topIn = -Double.infinity, d = 0.75 * half
+                    while d <= 1.25 * half + 1e-9 { topOut = max(topOut, hAt(d)); topIn = max(topIn, hAt(-d)); d += 0.25 * half }
+                    ref = min(topOut, topIn)
+                }
                 dOut += max(0, ref - hAt(off)); dIn += max(0, ref - hAt(-off)); bends += 1
             }
         }
@@ -365,22 +485,29 @@ enum ZielbildMetrics {
     /// ist es der Abfluss des großen Sees durchs Gebirge, mit ~30 mobilen
     /// Knoten. Altarme zählen wie in `belt` (einmal über die Welt). `count` =
     /// Zahl der gemittelten Läufe in `reachNodes`.
+    /// Wie λ und Asymmetrie mitteln Amplitude und Gürtel nur über Läufe, auf
+    /// denen sie messbar sind (mindestens ein Bogen, also zwei Wendepunkte).
+    /// Bis zum Zeitmittel-Abschluss (`beltFromAxis`) ging ein Lauf ohne Bogen
+    /// mit Amplitude 0 und seinem Gürtel ins Mittel ein — „nicht messbar" als
+    /// 0, was `Series` für die Stützstellen ausdrücklich ausschließt.
     static func beltAll(_ t: Terrain, lowland: [Bool], swept: [Bool], minNodes: Int = 40) -> Belt {
         var r = belt(t, lowland: lowland, swept: swept, channel: RiverChannel(nodes: [], discharge: []))
-        var w = 0.0, wl = 0.0, wa = 0.0, count = 0
+        var w = 0.0, wl = 0.0, wa = 0.0, wb = 0.0, count = 0
         var sinu = 0.0, width = 0.0, lam = 0.0, amp = 0.0, beltW = 0.0, asym = 0.0
         for ch in t.meander.channels {
             guard let reach = lowlandReach(t, ch), reach.count >= minNodes else { continue }
             let b = belt(t, lowland: lowland, swept: swept, channel: ch)
             let q = ch.discharge[reach].reduce(0, +) / Double(reach.count)
             count += 1; w += q
-            sinu += q * b.sinuosity; width += q * b.width; amp += q * b.amplitude; beltW += q * b.beltWidth
+            sinu += q * b.sinuosity; width += q * b.width
+            if beltFromAxis || rawInflections || b.amplitude > 0 { amp += q * b.amplitude; beltW += q * b.beltWidth; wb += q }
             if b.wavelength > 0 { lam += q * b.wavelength; wl += q }
             if b.asymmetry > 0 { asym += q * b.asymmetry; wa += q }
         }
         guard w > 0 else { return r }
         r.reachNodes = count
-        r.sinuosity = sinu / w; r.width = width / w; r.amplitude = amp / w; r.beltWidth = beltW / w
+        r.sinuosity = sinu / w; r.width = width / w
+        r.amplitude = wb > 0 ? amp / wb : 0; r.beltWidth = wb > 0 ? beltW / wb : 0
         r.wavelength = wl > 0 ? lam / wl : 0
         r.asymmetry = wa > 0 ? asym / wa : 0
         return r
@@ -398,6 +525,118 @@ enum ZielbildMetrics {
             }
         }
     }
+
+    // MARK: - Zeitmittel (B, Abnahmepunkte 9–13)
+    //
+    // Entscheidung des Projekteigners (#174): die Mäander-Kennzahlen werden
+    // über ZEITMITTEL je Seed gewertet, Einzelzeitpunkte nur als Streuung. Ein
+    // Zeitpunkt streut auf demselben Seed um ±0,3 Sinuosität und um den Faktor
+    // 2–3 in der Asymmetrie; der Gürtel ist ein chaotisches System (Cutoffs,
+    // Störquelle), seine Kennzahl ist eine Verteilung.
+
+    /// Die beiden Fenster des Abnahmebogens: junger Gürtel und Fließgleichgewicht.
+    static let meanderWindows: [ClosedRange<Double>] = [10_000...20_000, 50_000...100_000]
+    /// Stützstellen-Abstand in den Fenstern (Jahre).
+    static let meanderSampleYears = 2_000.0
+
+    /// Eine Kennzahl über die Stützstellen eines Fensters. Nicht messbare
+    /// Stützstellen (`nil`) gehen NICHT als 0 ins Mittel, sie werden
+    /// ausgelassen und gezählt: λ = 0 heißt „kein Abschnitt trägt drei
+    /// Wendepunkte", nicht „Wellenlänge null".
+    struct Series {
+        var values: [Double] = []
+        var skipped = 0
+        mutating func add(_ v: Double?) { if let v { values.append(v) } else { skipped += 1 } }
+        var mean: Double? { values.isEmpty ? nil : values.reduce(0, +) / Double(values.count) }
+    }
+
+    /// Kennzahlen 9–13 an EINER Stützstelle, `nil` = nicht messbar.
+    struct MeanderSample {
+        /// Punkt 9; `nil`: kein Lauf mit ≥ 40 mobilen Knoten.
+        var sinuosity: Double?
+        /// Punkt 10; `nil`: kein Abschnitt mit drei Wendepunkten.
+        var wavelengthPerWidth: Double?
+        /// Punkt 11; `nil`: Amplitude unter 0,5 Zellen (Lauf gerade) oder kein Gürtel.
+        var beltPerAmplitude: Double?
+        /// Punkt 12; `nil`: kein Bogen über dem Krümmungs-Median.
+        var asymmetry: Double?
+        /// Punkt 13: sichtbare junge Altarme im Tiefland (immer messbar).
+        var visibleOxbows: Double
+        /// Davon wassergefüllt (nur zur Information, Punkt 13 verlangt es nicht).
+        var wetOxbows: Double
+        /// Alle jungen Altarme (jede Größe, ganze Welt) und davon im Tiefland —
+        /// zeigt, wo zwischen Cutoff und sichtbarem Altarm einer verloren geht.
+        var youngOxbows: Double
+        var youngLowlandOxbows: Double
+    }
+
+    static func meanderSample(_ t: Terrain, swept: [Bool]) -> MeanderSample {
+        let lf = landform(t)
+        let a = beltAll(t, lowland: lf.lowland, swept: swept)
+        let measured = a.reachNodes > 0
+        return MeanderSample(
+            sinuosity: measured ? a.sinuosity : nil,
+            wavelengthPerWidth: measured && a.wavelength > 0 ? a.wavelengthPerWidth : nil,
+            beltPerAmplitude: measured && a.beltPerAmplitude > 0 ? a.beltPerAmplitude : nil,
+            asymmetry: measured && a.asymmetry > 0 ? a.asymmetry : nil,
+            visibleOxbows: Double(a.visibleLowlandOxbows),
+            wetOxbows: Double(a.wetLowlandOxbows),
+            youngOxbows: Double(t.meander.oxbowAge.filter { $0 < WaterRender.oxbowVisibleYears }.count),
+            youngLowlandOxbows: Double(a.openLowlandOxbows))
+    }
+
+    /// Größe der Altarme in der Liste (alle Alter bis `oxbowMaxAge`): wie viele
+    /// erreichen `WaterRender.oxbowMinimumNodes` Knoten, ab der der Render sie
+    /// zeigt. Vor der Zeitmittel-Kalibrierung schnürte der Gürtel vor allem
+    /// Knicke von 3–5 Breiten Bogenlänge ab (Median 15 Knoten auf Seed 42 und
+    /// 20) — Cutoffs ohne sichtbaren Altarm.
+    static func oxbowSizes(_ t: Terrain) -> (visible: Int, total: Int, median: Int) {
+        let sizes = t.meander.oxbows.map(\.count).sorted()
+        return (sizes.filter { $0 >= WaterRender.oxbowMinimumNodes }.count, sizes.count,
+                sizes.isEmpty ? 0 : sizes[sizes.count / 2])
+    }
+
+    /// Kennzahlen 9–13 eines Fensters.
+    struct MeanderWindow {
+        var sinuosity = Series(), wavelength = Series(), belt = Series()
+        var asymmetry = Series(), oxbows = Series(), wetOxbows = Series()
+        var youngOxbows = Series(), youngLowlandOxbows = Series()
+        mutating func add(_ s: MeanderSample) {
+            sinuosity.add(s.sinuosity); wavelength.add(s.wavelengthPerWidth); belt.add(s.beltPerAmplitude)
+            asymmetry.add(s.asymmetry); oxbows.add(s.visibleOxbows); wetOxbows.add(s.wetOxbows)
+            youngOxbows.add(s.youngOxbows); youngLowlandOxbows.add(s.youngLowlandOxbows)
+        }
+    }
+
+    /// Führt eine Welt in 1000-Jahr-Schritten vor, markiert den Gürtel
+    /// (`markSwept`) und nimmt in jedem Fenster alle `meanderSampleYears` eine
+    /// Stützstelle. Messung und Wächter lesen denselben Lauf.
+    struct MeanderTimeMean {
+        let windows: [ClosedRange<Double>]
+        var result: [MeanderWindow]
+        var swept: [Bool]
+
+        init(_ t: Terrain, windows: [ClosedRange<Double>] = ZielbildMetrics.meanderWindows) {
+            self.windows = windows
+            result = Array(repeating: MeanderWindow(), count: windows.count)
+            swept = [Bool](repeating: false, count: t.cfg.count)
+            ZielbildMetrics.markSwept(t, &swept)
+        }
+
+        mutating func advance(_ t: Terrain, to year: Double) {
+            while t.years < year - 1e-6 {
+                t.step(dtYears: min(1000, year - t.years))
+                ZielbildMetrics.markSwept(t, &swept)
+                let y = t.years.rounded()
+                guard abs(t.years - y) < 1e-6,
+                      y.truncatingRemainder(dividingBy: ZielbildMetrics.meanderSampleYears) == 0 else { continue }
+                let hits = windows.indices.filter { windows[$0].contains(y) }
+                guard !hits.isEmpty else { continue }
+                let s = ZielbildMetrics.meanderSample(t, swept: swept)
+                for w in hits { result[w].add(s) }
+            }
+        }
+    }
 }
 
 /// Wächter der Großform (Issue #174, Paket A, Abnahmepunkte 1–4) und der
@@ -405,17 +644,17 @@ enum ZielbildMetrics {
 /// Produktions-Config mit Einlauf. Schranken aus dem Issue;
 /// gemessene Werte in `docs/zielbild-measurements.md`.
 final class ZielbildLandformTests: XCTestCase {
-    private func world(_ seed: UInt32, years: Double) -> Terrain {
-        let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
-        while t.years < years - 1e-6 { t.step(dtYears: min(1000, years - t.years)) }
-        return t
-    }
-
     /// Punkte 1–4 in Jahr 2.000 und 20.000. Ein Lauf je Seed, weil der
     /// 20.000-Jahre-Lauf den teuren Teil trägt.
     func testRangeLandformMeetsTheAcceptanceSheet() {
+        var windows: [ZielbildMetrics.MeanderWindow] = []
+        var oxbowMedians: [Double] = []
         for seed in ZielbildBaseline.seeds {
-            let t = world(seed, years: 2_000)
+            let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+            // Zeitmittel im ersten Fenster des Abnahmebogens (Jahr 10.000–20.000,
+            // alle 2000 Jahre) im selben Lauf wie Großform und Cutoffs.
+            var run = ZielbildMetrics.MeanderTimeMean(t, windows: [ZielbildMetrics.meanderWindows[0]])
+            run.advance(t, to: 2_000)
             var lf = ZielbildMetrics.landform(t)
             // Punkt 1: Tiefland ≥ 20 % des Landes, getragen von ≤ 4 Korridoren.
             XCTAssertGreaterThanOrEqual(lf.mainCorridorLandShare, 0.20,
@@ -426,7 +665,7 @@ final class ZielbildLandformTests: XCTestCase {
             // Punkt 3: kein Land am Gitterrand (mit Luft: 3 % des Gitters).
             XCTAssertGreaterThanOrEqual(Double(lf.minBorderDistance), 0.03 * Double(t.cfg.n),
                 "Seed \(seed): Land \(lf.minBorderDistance) Zellen vom Rand")
-            while t.years < 20_000 - 1e-6 { t.step(dtYears: 1000) }
+            run.advance(t, to: 20_000)
             lf = ZielbildMetrics.landform(t)
             // Punkt 4: Gletscher ab Jahr 20.000.
             XCTAssertGreaterThan(lf.iceCells, 0, "Seed \(seed): kein Eis in Jahr 20.000")
@@ -441,7 +680,46 @@ final class ZielbildLandformTests: XCTestCase {
             XCTAssertGreaterThan(bars, 1000, "Seed \(seed): kaum Gleithang-Bänke (\(bars) Zellen)")
             XCTAssertLessThan(lf.lowlandRuggedness, 0.00156,
                               "Seed \(seed): Aue zerklüfteter als vor dem Gürtel (\(lf.lowlandRuggedness))")
+            windows.append(run.result[0])
+            oxbowMedians.append(Double(ZielbildMetrics.oxbowSizes(t).median))
         }
+        // Punkte 9–13 als Wächter gegen den Rückfall, nicht als Abnahme (die
+        // Abnahme ist das Zeitmittel JE Seed, `testZielbildMeanderTimeMeanDiagnostic`).
+        // Der Gürtel ist chaotisch: schon ein Zeitmittel über sechs Stützstellen
+        // streut je Seed stark (auf 24 Seeds Sinuosität 1,1–3,8, Asymmetrie
+        // 1,7–7,0, sichtbare Altarme 0,8–11), und Linux rechnet mit anderer
+        // System-libm eine andere Realisierung. Deshalb das Mittel über die
+        // drei Seeds, Schranke unter dem kleinsten Dreier-Mittel aus 24 Seeds
+        // (2024 Kombinationen; docs/zielbild-measurements.md § Zeitmittel).
+        // Nicht messbare Stützstellen zählen nicht (s. `Series`).
+        func seedMean(_ pick: (ZielbildMetrics.MeanderWindow) -> ZielbildMetrics.Series) -> Double {
+            let means = windows.compactMap { pick($0).mean }
+            return means.isEmpty ? 0 : means.reduce(0, +) / Double(means.count)
+        }
+        let sinuosity = seedMean(\.sinuosity), wavelength = seedMean(\.wavelength)
+        let belt = seedMean(\.belt), asymmetry = seedMean(\.asymmetry), oxbows = seedMean(\.oxbows)
+        let oxbowMedian = oxbowMedians.reduce(0, +) / Double(max(1, oxbowMedians.count))
+        print(String(format: "[ZIELBILD] Zeitmittel 10.000–20.000, Mittel über die Seeds: Sinuosität %.2f λ/b %.1f "
+                     + "Gürtel/Amplitude %.1f Asymmetrie %.2f sichtbare Altarme %.1f; Altarm-Median %.1f Knoten",
+                     sinuosity, wavelength, belt, asymmetry, oxbows, oxbowMedian))
+        // Vor der ersten Kalibrierung wurden die Läufe gerade (1,39) …
+        XCTAssertGreaterThan(sinuosity, 1.25, "Mäander gerade: \(windows.map(\.sinuosity.values))")
+        // … zackten in Bandbreite (λ 1–4 Breiten vor Paket B) …
+        XCTAssertGreaterThan(wavelength, 7.5, "Zacken statt Bögen: \(windows.map(\.wavelength.values))")
+        XCTAssertLessThan(wavelength, 16.5, "Bögen zu lang: \(windows.map(\.wavelength.values))")
+        // … der junge Gürtel blieb schmal (kleinstes Dreier-Mittel 2,80; mit
+        // der Messung vor dem Zeitmittel-Abschluss, `beltFromAxis`, 1,77) …
+        XCTAssertGreaterThan(belt, 2.7, "Gürtel schmal: \(windows.map(\.belt.values))")
+        // … das Querprofil war symmetrisch (1,16) …
+        XCTAssertGreaterThan(asymmetry, 1.7, "Querprofil symmetrisch: \(windows.map(\.asymmetry.values))")
+        // … und vor der Zeitmittel-Kalibrierung schnürte der Gürtel vor allem
+        // Knicke unter `WaterRender.oxbowMinimumNodes` ab, die der Render nicht
+        // zeigt (Median der Altarm-Knoten in Jahr 20.000: 18 / 16 / 18, auf 24
+        // Seeds 0–54; danach 28 / 54 / 37, auf 24 Seeds 18–96, kleinstes
+        // Dreier-Mittel 20,7).
+        XCTAssertGreaterThan(oxbows, 0.8, "kaum sichtbare Altarme: \(windows.map(\.oxbows.values))")
+        XCTAssertGreaterThanOrEqual(oxbowMedian, Double(WaterRender.oxbowMinimumNodes),
+                                    "Cutoffs schnüren Knicke statt Bögen ab: Altarm-Median \(oxbowMedians) Knoten")
     }
 
     /// Der Rand bleibt auch bei kleinen Gittern frei — der Abstand skaliert mit `n`.
@@ -499,9 +777,10 @@ final class ZielbildBaseline: XCTestCase {
                 let b = ZielbildMetrics.belt(t, lowland: lf.lowland, swept: swept)
                 let all = ZielbildMetrics.beltAll(t, lowland: lf.lowland, swept: swept)
                 allRows.append(String(
-                    format: "| %d | %.0f | %d | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f |",
+                    format: "| %d | %.0f | %d | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f | %d / %d |",
                     seed, year, all.reachNodes, all.sinuosity, all.width, all.wavelength, all.wavelengthPerWidth,
-                    all.amplitude, all.beltWidth, all.beltPerAmplitude, all.asymmetry))
+                    all.amplitude, all.beltWidth, all.beltPerAmplitude, all.asymmetry,
+                    b.openLowlandOxbows, b.wetLowlandOxbows))
                 beltRows.append(String(
                     format: "| %d | %.0f | %d | %.0f | %.2f | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f | %d / %d | %d / %d |",
                     seed, year, b.reachNodes, b.mainDischarge, b.sinuosity, b.width, b.wavelength,
@@ -515,10 +794,61 @@ final class ZielbildBaseline: XCTestCase {
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         beltRows.forEach { print($0) }
         print("\n=== ZIELBILD #174: MÄANDERGÜRTEL (B), alle Mäanderläufe (≥ 40 mobile Knoten, Abfluss-gewichtet) ===")
-        print("| Seed | Jahr | Läufe | Sinuosität | Breite | Wellenlänge | λ/Breite | Amplitude | Gürtel | Gürtel/Amplitude | Asymmetrie |")
-        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        print("| Seed | Jahr | Läufe | Sinuosität | Breite | Wellenlänge | λ/Breite | Amplitude | Gürtel | Gürtel/Amplitude | Asymmetrie | Altarme jung / nass |")
+        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         allRows.forEach { print($0) }
         print("=== ENDE ZIELBILD ===\n")
+    }
+
+    /// Abnahmepunkte 9–13 als ZEITMITTEL je Seed und Fenster
+    /// (`ZielbildMetrics.meanderWindows`, Stützstellen alle 2000 Jahre), dazu
+    /// min–max der Einzelzeitpunkte als Streuung und die Zahl der nicht
+    /// messbaren Stützstellen (ausgelassen, nicht als 0 gemittelt).
+    ///
+    ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
+    ///         -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildMeanderTimeMeanDiagnostic
+    ///
+    /// `RS_SEED` wählt einen Seed (auch außerhalb der drei Matrix-Seeds; die
+    /// Läufe sind unabhängig und lassen sich parallel starten), `RS_VARIANT`
+    /// Parameter-Varianten wie `MeanderBeltCalibration`, `RS_BELT_AXIS=1` die
+    /// Gürtel-Messung von vorher (`ZielbildMetrics.beltFromAxis`).
+    func testZielbildMeanderTimeMeanDiagnostic() throws {
+        try skipUnlessMeasuring()
+        ZielbildMetrics.beltFromAxis = ProcessInfo.processInfo.environment["RS_BELT_AXIS"] == "1"
+        defer { ZielbildMetrics.beltFromAxis = false }
+        let onlySeed = ProcessInfo.processInfo.environment["RS_SEED"].flatMap { UInt32($0) }
+        let variant = ProcessInfo.processInfo.environment["RS_VARIANT"] ?? "Produktion"
+        func cell(_ s: ZielbildMetrics.Series, _ f: String) -> String {
+            guard let m = s.mean else { return "– (\(s.skipped) n. m.)" }
+            let spread = String(format: "\(f) (\(f)–\(f))", m, s.values.min()!, s.values.max()!)
+            return s.skipped > 0 ? "\(spread), \(s.skipped) n. m." : spread
+        }
+        var rows: [String] = []
+        for seed in onlySeed.map({ [$0] }) ?? Self.seeds {
+            let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed,
+                            settleYears: SimConfig.productionSettleYears)
+            var run = ZielbildMetrics.MeanderTimeMean(t)
+            for end in run.windows.map(\.upperBound).sorted() {
+                run.advance(t, to: end)
+                let size = ZielbildMetrics.oxbowSizes(t)
+                print("ALTARM-GRÖSSE s\(seed) Jahr \(Int(end)): \(size.visible) von \(size.total) Altarmen ab "
+                      + "\(WaterRender.oxbowMinimumNodes) Knoten, Median \(size.median) Knoten")
+            }
+            for (w, r) in zip(run.windows, run.result) {
+                rows.append("| \(seed) | \(Int(w.lowerBound))–\(Int(w.upperBound)) | \(r.sinuosity.values.count + r.sinuosity.skipped) | "
+                    + [cell(r.sinuosity, "%.2f"), cell(r.wavelength, "%.1f"), cell(r.belt, "%.1f"),
+                       cell(r.asymmetry, "%.2f"), cell(r.oxbows, "%.1f"), cell(r.wetOxbows, "%.1f"),
+                       String(format: "%.1f / %.1f", r.youngOxbows.mean ?? 0, r.youngLowlandOxbows.mean ?? 0)]
+                        .joined(separator: " | ") + " |")
+            }
+            print("ZEITMITTEL s\(seed) \(variant) fertig, Cutoffs Hals/Chute \(t.meander.neckCutoffs)/\(t.meander.chuteCutoffs)")
+        }
+        print("\n=== ZIELBILD #174: MÄANDER-ZEITMITTEL (Punkte 9–13), Mittel (min–max), n. m. = nicht messbar ===")
+        print("Variante: \(variant)")
+        print("| Seed | Fenster | Stützstellen | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 Altarme sichtbar | davon nass | jung gesamt / Tiefland |")
+        print("| ---: | --- | ---: | --- | --- | --- | --- | --- | --- | --- |")
+        rows.forEach { print($0) }
+        print("=== ENDE ZEITMITTEL ===\n")
     }
 
     /// Karte je Seed als PPM nach `RS_OUT` (Standard `/tmp`): Meer blau, Tiefland
