@@ -270,23 +270,25 @@ final class ErosionFilterTests: XCTestCase {
             probe.swiftMethods().first { $0.name == "apply" },
             "ErosionFilter.apply nicht in der Quelltext-Probe gefunden"
         )
-        assertContains(probe, "seedOffsetX.isFinite", hint: "apply prüft seedOffsetX am Einstieg")
-        assertContains(probe, "seedOffsetY.isFinite", hint: "apply prüft seedOffsetY am Einstieg")
-        assertContains(probe, "heightOffset.0.isFinite", hint: "apply prüft heightOffset.0 am Einstieg")
-        assertContains(probe, "heightOffset.1.isFinite", hint: "apply prüft heightOffset.1 am Einstieg")
-        assertContains(probe, "params.isValid", hint: "apply prüft params.isValid am Einstieg")
-
         let body = applyMethod.body
-        XCTAssertTrue(body.contains("guard n > 1, sea.isFinite"),
-                      "apply fängt ungültige Gitter und Parameter im Einstiegs-Guard ab")
+        let performRange = try XCTUnwrap(
+            body.range(of: "DispatchQueue.concurrentPerform"),
+            "concurrentPerform im Quelltext von apply nicht gefunden"
+        )
+        let entry = body[..<performRange.lowerBound]
 
-        if let guardRange = body.range(of: "guard n > 1, sea.isFinite"),
-           let performRange = body.range(of: "DispatchQueue.concurrentPerform") {
-            XCTAssertTrue(guardRange.lowerBound < performRange.lowerBound,
-                          "Einstiegs-Guard muss vor der concurrentPerform-Iteration stehen")
-        } else {
-            XCTFail("Einstiegs-Guard oder concurrentPerform im Quelltext von apply nicht gefunden")
-        }
+        XCTAssertTrue(entry.contains("guard n > 1, sea.isFinite"),
+                      "apply fängt ungültige Gitter und Parameter im Einstiegs-Guard ab")
+        XCTAssertTrue(entry.contains("seedOffsetX.isFinite"),
+                      "apply prüft seedOffsetX am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("seedOffsetY.isFinite"),
+                      "apply prüft seedOffsetY am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("heightOffset.0.isFinite"),
+                      "apply prüft heightOffset.0 am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("heightOffset.1.isFinite"),
+                      "apply prüft heightOffset.1 am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("params.isValid"),
+                      "apply prüft params.isValid am Einstieg vor der Iteration")
     }
 }
 
