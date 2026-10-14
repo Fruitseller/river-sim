@@ -209,4 +209,86 @@ final class ErosionFilterTests: XCTestCase {
             XCTAssertTrue(h[k].isFinite, "Endliche Nachbarzelle \(k) darf nicht vergiftet werden")
         }
     }
+
+    /// Nicht-endliche Parameter (Offsets, Höhenversatz) sowie ungültige Filter-Parameter
+    /// führen bei `apply` zu einem sicheren No-op und belassen das Höhenfeld unverändert.
+    func testApplyHandlesNonFiniteParametersAndInvalidParamsSafely() {
+        let n = 4
+        let initial = [Double](repeating: 0.5, count: n * n)
+        let validParams = ErosionFilter.Params()
+
+        // Nicht-endliche seedOffsets
+        for badOffset in [Double.nan, Double.infinity, -Double.infinity] {
+            var hX = initial
+            ErosionFilter.apply(h: &hX, n: n, sea: 0.1, seedOffsetX: badOffset, seedOffsetY: 0, params: validParams)
+            XCTAssertEqual(hX, initial, "Nicht-endliches seedOffsetX darf Höhenfeld nicht verändern")
+
+            var hY = initial
+            ErosionFilter.apply(h: &hY, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: badOffset, params: validParams)
+            XCTAssertEqual(hY, initial, "Nicht-endliches seedOffsetY darf Höhenfeld nicht verändern")
+        }
+
+        // Nicht-endliche heightOffset-Komponenten
+        for badOffset in [Double.nan, Double.infinity, -Double.infinity] {
+            var h0 = initial
+            ErosionFilter.apply(h: &h0, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0,
+                               params: validParams, heightOffset: (badOffset, 0.5))
+            XCTAssertEqual(h0, initial, "Nicht-endliches heightOffset.0 darf Höhenfeld nicht verändern")
+
+            var h1 = initial
+            ErosionFilter.apply(h: &h1, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0,
+                               params: validParams, heightOffset: (-0.35, badOffset))
+            XCTAssertEqual(h1, initial, "Nicht-endliches heightOffset.1 darf Höhenfeld nicht verändern")
+        }
+
+        // Ungültige Filter-Parameter (params.isValid == false)
+        var invalidParams = ErosionFilter.Params()
+        invalidParams.octaves = 0
+        var hParams = initial
+        ErosionFilter.apply(h: &hParams, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0, params: invalidParams)
+        XCTAssertEqual(hParams, initial, "Ungültige params (octaves <= 0) müssen No-op sein")
+
+        invalidParams = ErosionFilter.Params()
+        invalidParams.scale = -1.0
+        hParams = initial
+        ErosionFilter.apply(h: &hParams, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0, params: invalidParams)
+        XCTAssertEqual(hParams, initial, "Ungültige params (scale <= 0) müssen No-op sein")
+
+        invalidParams = ErosionFilter.Params()
+        invalidParams.strength = .nan
+        hParams = initial
+        ErosionFilter.apply(h: &hParams, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0, params: invalidParams)
+        XCTAssertEqual(hParams, initial, "Ungültige params (strength NaN) müssen No-op sein")
+    }
+
+    /// Quelltext-Wächter: `apply` fängt nicht-endliche Offsets und ungültige Parameter
+    /// bereits am Methodeneinstieg per `guard` ab, um die parallele Zelliteration
+    /// gar nicht erst zu starten.
+    func testApplyEntryGuardsSourceContract() throws {
+        let probe = try RepoSource.probe("SimCore/Sources/SimCore/ErosionFilter.swift")
+        let applyMethod = try XCTUnwrap(
+            probe.swiftMethods().first { $0.name == "apply" },
+            "ErosionFilter.apply nicht in der Quelltext-Probe gefunden"
+        )
+        let body = applyMethod.body
+        let performRange = try XCTUnwrap(
+            body.range(of: "DispatchQueue.concurrentPerform"),
+            "concurrentPerform im Quelltext von apply nicht gefunden"
+        )
+        let entry = body[..<performRange.lowerBound]
+
+        XCTAssertTrue(entry.contains("guard n > 1, sea.isFinite"),
+                      "apply fängt ungültige Gitter und Parameter im Einstiegs-Guard ab")
+        XCTAssertTrue(entry.contains("seedOffsetX.isFinite"),
+                      "apply prüft seedOffsetX am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("seedOffsetY.isFinite"),
+                      "apply prüft seedOffsetY am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("heightOffset.0.isFinite"),
+                      "apply prüft heightOffset.0 am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("heightOffset.1.isFinite"),
+                      "apply prüft heightOffset.1 am Einstieg vor der Iteration")
+        XCTAssertTrue(entry.contains("params.isValid"),
+                      "apply prüft params.isValid am Einstieg vor der Iteration")
+    }
 }
+
