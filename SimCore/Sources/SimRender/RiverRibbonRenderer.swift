@@ -109,6 +109,9 @@ public final class RiverRibbonRenderer {
     /// (Begründung am Sampler in `RenderSupport.swift`). 0 = unbekannt =
     /// volle Auflösung (Headless-Wächter: bit-identisch zu `bilinearGrid`).
     public var renderGrid = 0
+    /// Mess-Schalter für `fadeUphill` (nur Diagnose: `RiverUphill.swift`
+    /// misst die Rohhöhen der Bänder ohne das Sicherheitsnetz).
+    var fadesUphill = true
 
     /// Stützpunkt eines Wasser-Bands in GITTER-Koordinaten (kontinuierlich).
     /// Fluss, Delta-Arm und Altarm teilen sich diese Form — sie unterscheiden
@@ -125,6 +128,9 @@ public final class RiverRibbonRenderer {
         /// Wasserspiegel (Sim-Höhe), auf dem das Band aufliegt; `nil` = das Band
         /// folgt dem GELÄNDE und jede Kante bekommt ihre eigene lokale Höhe.
         var surface: Double?
+        /// Signierte Bogenstärke (−1 … +1, `MeanderState.bendStrength`) → UV2.y:
+        /// Tiefenfarbe nach Querprofil. 0 = symmetrisch (Delta-Arm, Altarm).
+        var bend: Double = 0
     }
 
     // MARK: Dirty-Vertrag
@@ -246,7 +252,20 @@ public final class RiverRibbonRenderer {
         }
 
         let subdivisions = 3 // Samples je Knoten-Segment (Knotenabstand ~1.5 Zellen)
-        for (chIndex, ch) in terrain.meander.channels.enumerated() {
+        // Große Läufe ZUERST: jedes Band blendet dort aus, wo ein früheres
+        // schon deckt (`emitRibbon`). In Abfluss-Reihenfolge endet so der
+        // Zubringer am Hauptlauf statt umgekehrt, und Stummel-Kanäle auf
+        // demselben Bett verschwinden unter dem Lauf, den sie doppeln.
+        // Gleichstand nach Index: der Bau bleibt deterministisch.
+        let channels = terrain.meander.channels
+        let peak = channels.map { $0.discharge.max() ?? 0 }
+        let order = channels.indices.sorted {
+            peak[$0] != peak[$1] ? peak[$0] > peak[$1] : $0 < $1
+        }
+        // Mündungen, an denen schon ein Delta-Fächer steht (s. unten).
+        var fanMouths: [(x: Double, z: Double)] = []
+        for chIndex in order {
+            let ch = channels[chIndex]
             let nodes = ch.nodes
             let m = nodes.count
             if m < 2 { continue }
@@ -257,8 +276,13 @@ public final class RiverRibbonRenderer {
                 !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
             }) else { continue }
             guard !ch.discharge.prefix(m).contains(where: { !$0.isFinite || abs($0) > 1e9 }) else { continue }
+            // Bogenstärke je Knoten aus der Gürtel-Geometrie der Sim (dieselbe
+            // Größe, mit der `beltStamp` den Kolk nach außen legt).
+            let hgridBend = terrain.h
+            let nodeBend = MeanderState.bendStrength(ch, config: terrain.cfg,
+                                                     heightAt: { bilinearGrid(hgridBend, $0.x, $0.z, n: n) })
             // Catmull-Rom-Subdivision der Zentrumslinie; Abfluss linear je Segment.
-            var px: [Double] = [], pz: [Double] = [], pq: [Double] = []
+            var px: [Double] = [], pz: [Double] = [], pq: [Double] = [], pb: [Double] = []
             px.reserveCapacity(m * subdivisions)
             pz.reserveCapacity(m * subdivisions)
             pq.reserveCapacity(m * subdivisions)
@@ -275,9 +299,11 @@ public final class RiverRibbonRenderer {
                         + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2
                         + (3 * p1.z - p0.z - 3 * p2.z + p3.z) * t3))
                     pq.append(ch.discharge[i] + (ch.discharge[i + 1] - ch.discharge[i]) * t)
+                    pb.append(nodeBend[i] + (nodeBend[i + 1] - nodeBend[i]) * t)
                 }
             }
             px.append(nodes[m - 1].x); pz.append(nodes[m - 1].z); pq.append(ch.discharge[m - 1])
+            pb.append(nodeBend[m - 1])
             let cnt = px.count
 
             // Deckkraft: Abfluss-Rampe je Sample (fein auslaufen statt harter
@@ -353,7 +379,14 @@ public final class RiverRibbonRenderer {
             let supportMean = supportSum / max(supportWeight, 1e-9)
             let channelOpacity = smoothstep(0, 1, (supportMean - WaterRender.ribbonSupportLo)
                                                   / WaterRender.ribbonSupportSpan)
-            for a in 0..<cnt { alpha[a] *= channelOpacity }
+            // Abfluss-Vertrauen (Issue #174 C2): ein großer Lauf bleibt sichtbar,
+            // auch wenn die Stream-Map ihn nicht trackt — je Stützpunkt, damit
+            // sein feiner Oberlauf weiter an der Stütze hängt.
+            // Den Strahler-Rang (unten) braucht auch ein vertrauter Lauf.
+            for a in 0..<cnt {
+                alpha[a] *= max(channelOpacity,
+                                WaterRender.ribbonTrust(dischargeCells: pq[a], referenceCells: creek))
+            }
 
             // Diskrete Strahler-Zellen können an Netz-Kreuzungen verbleibende
             // Sprünge erzeugen. Symmetrisch längs filtern: keine zeitliche
@@ -377,6 +410,18 @@ public final class RiverRibbonRenderer {
             // Strahler 3 erreichen (Historie und Messung: `ribbonMinimumRank`).
             // Der feine Oberlauf DESSELBEN Bands bleibt vollständig erhalten.
             if !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
+            // Für die Tiefenfarbe fällt der Rang stromab nie: die Strahler-
+            // Ordnung eines Laufs wächst nur an Zusammenflüssen. Der 3×3-
+            // Stützsaum oben überbrückt nur einen Zellversatz zwischen
+            // D8-Netz und Zentrumslinie; driftet die Linie weiter weg, fiel
+            // EIN Stützpunkt auf Rang 0 (oder ein Stück auf Ordnung 2), und
+            // der Shader malte über die volle Bandbreite einen hellen Quer-
+            // strich bzw. Block („Leitersprosse", Seed 1337 / Jahr 230.000:
+            // 0.667 → 0 → 0.667 an einem einzigen Stützpunkt). Die Stützpunkte
+            // laufen von der Quelle zur Mündung, das laufende Maximum folgt
+            // also der Fließrichtung; Gate und `river_ribbons.gd` lesen das
+            // Maximum des Bands, das bleibt unverändert.
+            for a in 1..<cnt { rank[a] = max(rank[a], rank[a - 1]) }
             // Ab hier wird das Band sicher emittiert — das Wasserfeld darf den
             // Korridor dieses Kanals auf Saum-Intensität deckeln.
             mesh.bandChannelFlags[chIndex] = true
@@ -389,18 +434,22 @@ public final class RiverRibbonRenderer {
             }
             let total = arc[hi]
 
-            // Stützpunkte des Laufs (Quellen-Taper über ~4 Zellen). Wo die
-            // Zentrumslinie unter Wasser liegt — geflutete Senke, Mündung —
-            // liegt das Band FLACH auf dem Spiegel und blendet mit der
-            // Wassersäule aus (`lakeHandoverFade`).
+            // Stützpunkte des Laufs (Quellen-Taper über ~4 Zellen, bei einem
+            // breit beginnenden Lauf über `ribbonLandTaperHalfWidths`
+            // Halbbreiten). Wo die Zentrumslinie unter Wasser liegt —
+            // geflutete Senke, Mündung — liegt das Band FLACH auf dem Spiegel
+            // und blendet mit der Wassersäule aus (`lakeHandoverFade`).
             var samples: [RibbonSample] = []
             samples.reserveCapacity(hi - lo + 1 + WaterRender.mouthSearchCells)
+            let sourceTaperCells = max(WaterRender.ribbonSourceTaperCells,
+                                       WaterRender.ribbonLandTaperHalfWidths
+                                       * ribbonHalfWidthCells(pq[lo], cfg: terrain.cfg))
             for a in lo...hi {
-                let taper = clamp01(arc[a] / (WaterRender.ribbonSourceTaperCells * cs))
+                let taper = clamp01(arc[a] / (sourceTaperCells * cs))
                 samples.append(RibbonSample(x: px[a], z: pz[a],
                                             halfWidth: ribbonHalfWidthCells(pq[a], cfg: terrain.cfg) * taper,
                                             alpha: alpha[a] * taper,
-                                            rank: rank[a], surface: nil))
+                                            rank: rank[a], surface: nil, bend: pb[a]))
             }
 
             // MÜNDUNG (Issue #34): das Band lief bisher über die letzten ~2
@@ -412,10 +461,15 @@ public final class RiverRibbonRenderer {
             // die Ausblendung verhindert eine zweite Wasserfläche über dem See.
             let mouth = mouthPath(terrain, fromX: px[hi], fromZ: pz[hi])
             if mouth.isEmpty {
-                // Kein Wasser in Reichweite: der Lauf versickert im Land — dort
-                // bleibt der weiche Enden-Taper von #31 richtig.
+                // Kein Wasser in Reichweite: der Lauf versickert im Land oder
+                // endet vor einer Steilstrecke, die das Raster weitermalt —
+                // dort läuft das Band spitz aus (Länge wie an der Quelle nach
+                // der Halbbreite, sonst endete ein breiter Lauf stumpf).
+                let tailTaperCells = max(WaterRender.ribbonTailTaperCells,
+                                         WaterRender.ribbonLandTaperHalfWidths
+                                         * ribbonHalfWidthCells(pq[hi], cfg: terrain.cfg))
                 for a in samples.indices {
-                    let t = clamp01((total - arc[lo + a]) / (WaterRender.ribbonTailTaperCells * cs))
+                    let t = clamp01((total - arc[lo + a]) / (tailTaperCells * cs))
                     samples[a].halfWidth *= t
                     samples[a].alpha *= t
                 }
@@ -456,14 +510,25 @@ public final class RiverRibbonRenderer {
             // Meer-Regel braucht die Strecke SEIT der Uferlinie, also die
             // Reihenfolge der Stützpunkte).
             applyWaterHandover(&samples, terrain)
+            if fadesUphill { fadeUphill(&samples, terrain) }
+            RiverRibbonRenderer.limitAlphaSteps(&samples)
             emitRibbon(samples, terrain, kind: WaterRender.ribbonKindRiver, still: false,
                        hscale: hscale, lift: lift)
 
             // DELTA (Issue #34): am Eintritt ins stehende Wasser fächert der Lauf
             // über den Ablagerungskörper auf, den die Sim dort aufschüttet.
+            // EIN Fächer je Mündung: münden mehrere Kanäle in dieselbe Zelle
+            // (Stummel-Kanäle neben dem Hauptlauf), lagen bis zu vier
+            // identische Fächer übereinander und malten einen dunklen Block
+            // (Seed 1337, Jahr 230.000).
             if let mouthIndex = samples.firstIndex(where: { $0.surface != nil }),
-               mouthIndex > 0 {
+               mouthIndex > 0,
+               !fanMouths.contains(where: {
+                   let dx = $0.x - samples[mouthIndex].x, dz = $0.z - samples[mouthIndex].z
+                   return dx * dx + dz * dz < WaterRender.deltaFanSpacingCells * WaterRender.deltaFanSpacingCells
+               }) {
                 let entry = samples[mouthIndex], before = samples[mouthIndex - 1]
+                fanMouths.append((x: entry.x, z: entry.z))
                 var dx = entry.x - before.x, dz = entry.z - before.z
                 let dl = (dx * dx + dz * dz).squareRoot()
                 if dl > 1e-9 {
@@ -478,6 +543,35 @@ public final class RiverRibbonRenderer {
         // ALTARME (Issue #34): vom Raster-Overlay in die Geometrie.
         appendOxbowRibbons(terrain, hscale: hscale, lift: lift)
         return mesh
+    }
+
+    /// Längs-Filter für Werte, die eher zu FRÜH als zu spät abfallen sollen:
+    /// Minimum über ±`radius`, dann Kastenmittel. Aus einem Wechsel
+    /// hoch/tief/hoch von Stützpunkt zu Stützpunkt wird so eine stetige Senke
+    /// statt eines Streifenmusters. Ein Stützpunkt mit 0 bleibt 0: Minimum und
+    /// Kastenmittel sehen um ihn herum nur Nullen.
+    static func erodeAndSmooth(_ values: [Double], radius: Int) -> [Double] {
+        let cnt = values.count
+        guard cnt > 1, radius > 0 else { return values }
+        var eroded = values
+        for a in 0..<cnt {
+            var v = values[a]
+            for b in max(0, a - radius)...min(cnt - 1, a + radius) { v = min(v, values[b]) }
+            eroded[a] = v
+        }
+        return boxMean(eroded, radius: radius)
+    }
+
+    private static func boxMean(_ values: [Double], radius: Int) -> [Double] {
+        let cnt = values.count
+        var prefix = [Double](repeating: 0, count: cnt + 1)
+        for a in 0..<cnt { prefix[a + 1] = prefix[a] + values[a] }
+        var out = values
+        for a in 0..<cnt {
+            let aLo = max(0, a - radius), aHi = min(cnt, a + radius + 1)
+            out[a] = (prefix[aHi] - prefix[aLo]) / Double(aHi - aLo)
+        }
+        return out
     }
 
     // MARK: Übergabe an die Raster-Wasserflächen
@@ -541,6 +635,7 @@ public final class RiverRibbonRenderer {
         let h = terrain.h, wl = terrain.waterLevel
         let sea = terrain.cfg.sea
         var submergedCells = 0.0
+        var fade = [Double](repeating: 1, count: samples.count)
         for a in samples.indices {
             let ci = min(max(Int(samples[a].x.rounded()), 0), n - 1)
             let cj = min(max(Int(samples[a].z.rounded()), 0), n - 1)
@@ -569,7 +664,7 @@ public final class RiverRibbonRenderer {
                 // CI-Runner: 3,5 Welt-Einheiten über dem Boden, Issue #61).
                 // Es entscheidet die EIGENE Zelle des Stützpunkts.
                 samples[a].surface = nil
-                samples[a].alpha *= RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
+                fade[a] = RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
                 continue
             }
             if a > 0 {
@@ -577,11 +672,35 @@ public final class RiverRibbonRenderer {
                 submergedCells += (dx * dx + dz * dz).squareRoot()
             }
             samples[a].surface = surface
-            samples[a].alpha *= surface <= sea
+            fade[a] = surface <= sea
                 ? RiverRibbonRenderer.seaHandoverFade(submergedCells: submergedCells)
                 : RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
         }
-        RiverRibbonRenderer.limitAlphaSteps(&samples)
+        // Läuft die Zentrumslinie an einer Uferlinie ENTLANG, wechseln die
+        // Stützpunkte zwischen nass und trocken, und die Übergabe sprang je
+        // halbe Zelle zwischen voll und blass: helle und dunkle Querstreifen
+        // („Leitersprossen" am See, Befund #174). Die Übergabe darf nur
+        // stetig fallen und steigen — eine Senke statt eines Kamms.
+        fade = RiverRibbonRenderer.erodeAndSmooth(fade, radius: WaterRender.ribbonHandoverSmoothSamples)
+        for a in samples.indices { samples[a].alpha *= fade[a] }
+        // Der Deckel der Deckkraft-Sprünge (`limitAlphaSteps`) läuft beim
+        // Aufrufer NACH `fadeUphill`, damit er beide Blenden erfasst.
+    }
+
+    /// Wasser fließt nicht bergauf (`WaterRender.ribbonUphillFade`): blendet
+    /// jeden Stützpunkt aus, dessen Höhe über dem tiefsten Punkt stromauf
+    /// liegt. Höhe = Spiegel auf Wasser, sonst die sichtbare Oberfläche unter
+    /// der Mitte — dieselbe, auf die `emitRibbon` das Band legt. Ein stromab
+    /// fallender Lauf bleibt bit-gleich (Faktor exakt 1).
+    private func fadeUphill(_ samples: inout [RibbonSample], _ terrain: Terrain) {
+        let n = terrain.cfg.n, h = terrain.h
+        var lowest = Double.infinity
+        for a in samples.indices {
+            let y = samples[a].surface
+                ?? renderSurfaceHeight(h, samples[a].x, samples[a].z, n: n, renderGrid: renderGrid)
+            if y > lowest { samples[a].alpha *= WaterRender.ribbonUphillFade(rise: y - lowest) }
+            lowest = min(lowest, y)
+        }
     }
 
     /// Deckelt den Deckkraft-Sprung je Segment auf `WaterRender.ribbonMaxAlphaStep`,
@@ -616,12 +735,48 @@ public final class RiverRibbonRenderer {
         let cs = terrain.cfg.cellSize
         let half = terrain.cfg.world / 2
         let h = terrain.h
+        // Keine Bänder übereinander: wo ein FRÜHER gebautes Band schon deckt
+        // (`bandCoverage` hält bis hier nur die früheren), blendet dieses aus.
+        // Zwei halbtransparente Bänder addierten sich sonst zu dunklen
+        // Blöcken und Stößen an Zusammenflüssen, Delta-Fächern und Stummel-
+        // Kanälen auf demselben Bett.
+        var samples = samples
+        for a in samples.indices {
+            let occ = bilinearGrid(mesh.bandCoverage, samples[a].x, samples[a].z, n: n)
+            samples[a].alpha *= 1 - smoothstep(WaterRender.ribbonOcclusionLo,
+                                               WaterRender.ribbonOcclusionHi, occ)
+        }
+        RiverRibbonRenderer.limitAlphaSteps(&samples)
         // Bogenlänge (Welt) für UV.y — im Shader die Phase der Wellen/Strömung.
         var arc = [Double](repeating: 0, count: samples.count)
         for a in 1..<samples.count {
             let dx = (samples[a].x - samples[a - 1].x) * cs
             let dz = (samples[a].z - samples[a - 1].z) * cs
             arc[a] = arc[a - 1] + (dx * dx + dz * dz).squareRoot()
+        }
+        // Gemalte Halbbreite je Stützpunkt (Zellen): Breite am Krümmungsradius
+        // deckeln, sonst falten sich die Quads an engen Schlingen zu
+        // Dreiecks-Fächern (s. WaterRender.ribbonCurvatureWidthFactor). Danach
+        // die Änderung je Bogenlänge begrenzen, nur nach unten
+        // (`ribbonMaxHalfWidthSlope`): sonst wechselten gedeckelte Knick- und
+        // ungedeckelte Mittelpunkte der Mündungs-Kette ab, und das Band zerfiel
+        // in versetzte Blöcke.
+        var halfWidthCells = [Double](repeating: 0, count: samples.count)
+        for a in 0..<samples.count {
+            let maxRadius = RiverRibbonRenderer.curvatureRadiusCells(
+                                samples[max(0, a - 1)], samples[a],
+                                samples[min(samples.count - 1, a + 1)])
+                            * WaterRender.ribbonCurvatureWidthFactor
+            halfWidthCells[a] = min(maxRadius, max(0, samples[a].halfWidth))
+        }
+        let widthSlope = WaterRender.ribbonMaxHalfWidthSlope
+        for a in 1..<samples.count {
+            let len = (arc[a] - arc[a - 1]) / cs
+            halfWidthCells[a] = min(halfWidthCells[a], halfWidthCells[a - 1] + widthSlope * len)
+        }
+        for a in stride(from: samples.count - 2, through: 0, by: -1) {
+            let len = (arc[a + 1] - arc[a]) / cs
+            halfWidthCells[a] = min(halfWidthCells[a], halfWidthCells[a + 1] + widthSlope * len)
         }
         let base = mesh.vertices.count
         mesh.stripStarts.append(Int32(base))
@@ -655,17 +810,30 @@ public final class RiverRibbonRenderer {
                 tl = (tx * tx + tz * tz).squareRoot()
             }
             if tl > 1e-6 { tx /= tl; tz /= tl } else { tx = 1; tz = 0 }
-            // Breite am Krümmungsradius deckeln, sonst falten sich die Quads
-            // an engen Schlingen zu Dreiecks-Fächern
-            // (s. WaterRender.ribbonCurvatureWidthFactor).
-            let maxRadius = RiverRibbonRenderer.curvatureRadiusCells(
-                                samples[a0], samples[a], samples[a1])
-                            * WaterRender.ribbonCurvatureWidthFactor
-            let hwCells = min(maxRadius, max(0, s.halfWidth))
+            let hwCells = halfWidthCells[a]
             let hw = hwCells * cs
             let wx = s.x * cs - half, wz = s.z * cs - half
             let perpx = -tz * hw, perpz = tx * hw
-            let yLeft: Float, yRight: Float
+            // Auf Land folgt jede Kante ihrer EIGENEN lokalen Höhe. Eine
+            // gemeinsame Zentrumslinien-Höhe schneidet das Band an
+            // Quergefällen ins Terrain (nur radiale Fragmente sichtbar).
+            // Aber nur bis zur maximalen QUER-Neigung um die Zentrums-Höhe
+            // (`WaterRender.ribbonMaxCrossSlope`): ist das Band breiter als
+            // die Schluchtsohle, liegt die Kante auf der WAND — ungeklemmt
+            // drapierte sich das Band die Wände hoch (große blaue Platten
+            // an Steilwänden). Die geklemmte Kante taucht in den Fels ein;
+            // sichtbar bleibt genau die Sohlenbreite.
+            let edgeGX = perpx / cs, edgeGZ = perpz / cs
+            let yCenter = renderSurfaceHeight(h, s.x, s.z, n: n,
+                                              renderGrid: renderGrid) * hscale
+            let crossTol = hw * WaterRender.ribbonMaxCrossSlope
+            let yL = renderSurfaceHeight(h, s.x - edgeGX, s.z - edgeGZ, n: n,
+                                         renderGrid: renderGrid) * hscale
+            let yR = renderSurfaceHeight(h, s.x + edgeGX, s.z + edgeGZ, n: n,
+                                         renderGrid: renderGrid) * hscale
+            let yMin = yCenter - crossTol, yMax = yCenter + crossTol
+            var yLeftD = min(yMax, max(yMin, yL)) + lift
+            var yRightD = min(yMax, max(yMin, yR)) + lift
             if let surface = s.surface {
                 // Auf Wasser liegt das Band FLACH auf dem Spiegel — beide Kanten
                 // auf derselben Höhe, sonst kippte es am Ufer aus der Fläche.
@@ -678,32 +846,30 @@ public final class RiverRibbonRenderer {
                 // statt als Fläche darauf. See: der Terrain-Shader hebt seine
                 // Fläche erst ab `geometryLiftLo`, im Apron liegt das Terrain
                 // also unter dem Spiegel; ein Hauch Abstand hält das Band frei.
+                //
+                // Nie aber UNTER die Land-Höhe: läuft die Zentrumslinie an
+                // einer Uferlinie entlang, wechseln ihre Stützpunkte zwischen
+                // nass und trocken. Im flachen Saum liegt der Spiegel unter
+                // Gelände + `lift`, das Band sprang je halbe Zelle zwischen
+                // beiden Höhen, und jede nasse Reihe tauchte unter das Gelände
+                // — Querstreifen („Leitersprossen", Befund #174: Seed 1337,
+                // Jahr 230.000, 0,42 Welt-Einheiten Sprung). Das Maximum ist
+                // stetig: auf tiefem Wasser gewinnt der Spiegel wie bisher,
+                // im Saum das Gelände.
+                // Ausnahme: Delta-Arme auf dem MEER. Sie liegen als Trübung
+                // unter der Meeres-Ebene; über dem flachen Schelf höbe das
+                // Gelände-Maximum sie als Strahlenfächer darüber.
                 let onSea = surface <= terrain.cfg.sea + 1e-9
-                let y = Float(surface * hscale + (onSea ? WaterRender.ribbonSeaSurfaceSink
-                                                        : WaterRender.ribbonLakeSurfaceLift))
-                yLeft = y; yRight = y
-            } else {
-                // Auf Land folgt jede Kante ihrer EIGENEN lokalen Höhe. Eine
-                // gemeinsame Zentrumslinien-Höhe schneidet das Band an
-                // Quergefällen ins Terrain (nur radiale Fragmente sichtbar).
-                // Aber nur bis zur maximalen QUER-Neigung um die Zentrums-Höhe
-                // (`WaterRender.ribbonMaxCrossSlope`): ist das Band breiter als
-                // die Schluchtsohle, liegt die Kante auf der WAND — ungeklemmt
-                // drapierte sich das Band die Wände hoch (große blaue Platten
-                // an Steilwänden). Die geklemmte Kante taucht in den Fels ein;
-                // sichtbar bleibt genau die Sohlenbreite.
-                let edgeGX = perpx / cs, edgeGZ = perpz / cs
-                let yCenter = renderSurfaceHeight(h, s.x, s.z, n: n,
-                                                  renderGrid: renderGrid) * hscale
-                let crossTol = hw * WaterRender.ribbonMaxCrossSlope
-                let yL = renderSurfaceHeight(h, s.x - edgeGX, s.z - edgeGZ, n: n,
-                                             renderGrid: renderGrid) * hscale
-                let yR = renderSurfaceHeight(h, s.x + edgeGX, s.z + edgeGZ, n: n,
-                                             renderGrid: renderGrid) * hscale
-                let yMin = yCenter - crossTol, yMax = yCenter + crossTol
-                yLeft = Float(min(yMax, max(yMin, yL)) + lift)
-                yRight = Float(min(yMax, max(yMin, yR)) + lift)
+                let y = surface * hscale + (onSea ? WaterRender.ribbonSeaSurfaceSink
+                                                  : WaterRender.ribbonLakeSurfaceLift)
+                if onSea && kind == WaterRender.ribbonKindDelta {
+                    yLeftD = y; yRightD = y
+                } else {
+                    yLeftD = max(yLeftD, y)
+                    yRightD = max(yRightD, y)
+                }
             }
+            let yLeft = Float(yLeftD), yRight = Float(yRightD)
             // Deckung dieses Bandstücks ins gemeinsame Feld: dieselbe Fläche,
             // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem
             // Alpha, mit dem sie wirklich malt. `WaterFieldRenderer` deckelt
@@ -737,7 +903,8 @@ public final class RiverRibbonRenderer {
             mesh.colors.append(col); mesh.colors.append(col)
             mesh.uvs.append(SIMD2(0, Float(arc[a])))
             mesh.uvs.append(SIMD2(1, Float(arc[a])))
-            let kindUV = SIMD2(Float(kind), Float(0))
+            // UV2.y = Bogenstärke (Tiefenfarbe nach Querprofil, Issue #174 C2).
+            let kindUV = SIMD2(Float(kind), Float(max(-1, min(1, s.bend))))
             mesh.uv2s.append(kindUV); mesh.uv2s.append(kindUV)
             if a > 0 {
                 let v = Int32(base + (a - 1) * 2)

@@ -14,10 +14,14 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(first.surfaces.count, terrain.cfg.count * 4)
     XCTAssertEqual(first.colors, second.colors)
     XCTAssertEqual(first.surfaces, second.surfaces)
+    // A-Kanal = Sandgewicht der frischen Gleithang-Bank (Issue #174 C2,
+    // `BarMaterial`): bis dahin konstant 255 („opak"), gelesen hat ihn
+    // niemand. Ohne Bank (`barAge` < 0) bleibt er 0.
     XCTAssertTrue(
-      stride(from: 3, to: first.colors.count, by: 4)
-        .allSatisfy { first.colors[$0] == 255 },
-      "RGBA-Farbpuffer muss vollständig opak sein")
+      (0..<terrain.cfg.count).allSatisfy { k in
+        terrain.barAge[k] >= 0 || first.colors[k * 4 + 3] == 0
+      },
+      "Sand nur auf Bänken")
   }
 
   func testDiagnosticStatsKeepTheirExecutableIndexContract() {

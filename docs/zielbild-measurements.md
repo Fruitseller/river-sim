@@ -293,6 +293,125 @@ glatter, nicht krustiger.
 | 17 dt-Invarianz | Kern erfüllt (`MeanderBeltTests`); die Gelände-Wächter (`DtInvariance`) laufen auf der Mechanik vor #174 (`calibrationMeanderBelt`) |
 | 18 Braid-/Playa-Wächter | grün, ebenfalls auf der alten Welt |
 
+## Flüsse laufen bergauf (Befund im Zeitraffer, Jahr 230.000)
+
+Befund des Projekteigners (Seed 1337, um Jahr 230.000): „als würden manchmal
+die Flüsse hochfließen, während sie so einen schönen Bogen bilden".
+Werkzeug: `RiverUphill.swift` (`RibbonUphill.measure` am fertigen
+`RibbonMesh`), alle hinter `RS_MEASURE`:
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testRibbonUphillDiagnostic
+```
+
+`testRibbonUphillMapDiagnostic` (Karte als PPM, `RS_CROP`, Längsprofil eines
+Laufs mit `RS_CHANNEL`, Welt-Cache `RS_CACHE`) und
+`testRibbonUphillHistoryDiagnostic` (Läufe an ihrem festen Quellknoten über
+die Zeit) für die Ursache. Gemessen wird die Höhe, auf die der Renderer das
+Band legt (Spiegel über Wasser, sonst Gelände unter der Mitte), gegen das
+laufende Minimum stromauf; ein Anstieg zählt, wo er auf sichtbaren
+Stützpunkten (Deckkraft ≥ 0,25) liegt. Welt: Produktion mit Einlauf,
+1000-Jahr-Schritte, M4 Max.
+
+### Ursache
+
+Das Band liegt auf dem Gelände unter der Lagrange-Zentrumslinie, und nichts
+hält dieses Gelände stromab fallend: die Linie ist nicht an die
+D8-Entwässerung gebunden. Das gilt seit den Bändern (#34) und auch auf
+`origin/main` (vor #174). Der Gürtel (#174 B, `be90e77`) macht es häufig:
+`refreshBeltDischarge` nimmt das größte Einzugsgebiet im 3×3 und trägt es als
+laufendes Maximum stromab. Berührt eine Linie einen größeren Fluss, erbt sie
+dessen Abfluss für den Rest ihres Laufs, auch wenn sie ihn wieder verlässt.
+Beispiel Seed 1337: ein Zubringer mit festem Kopf bei Zelle (138, 336) trägt
+210.000 Jahre lang 9–90 Zellen Abfluss; in Jahr 220.000 erreicht der
+Hauptlauf seinen Kopf, die ganze Linie bekommt 10.072 Zellen, wird mobil
+(`meanderBeltMinCells`) und wächst in 10.000 Jahren von 48 auf 105 Knoten,
+83 % davon ohne ein Viertel ihres Abflusses im D8-Netz darunter, Gelände vom
+Kopf zum Ende 0,182 → 0,203 (≈ 50 m bergauf). Das Abfluss-Vertrauen von
+#174 C2 (`ac5a85b`, `ribbonTrust`) hält solche Läufe unabhängig von der
+Stream-Map sichtbar.
+
+Anstiege über 30 m auf sichtbaren Band-Stützpunkten (je 1000 Stützpunkte):
+
+| Stand | 1337 J20.000 | 1337 J230.000 | 42 J20.000 | 42 J230.000 |
+| --- | --- | --- | --- | --- |
+| `origin/main` (alte Welt) | 10 (0,5) | 71 (4,6) | 2 (0,3) | 9 (2,8) |
+| #174 vor dem Fix | 33 (4,8), max 230 m | 16 (5,6), max 114 m | 10 (4,6), max 110 m | 8 (4,7), max 76 m |
+| #174 mit Fix | 0, max 16 m | 0, max 16 m | 0, max 16 m | 0, max 16 m |
+
+Vor dem Fix lagen in Jahr 230.000 57 % (1337) bzw. 51 % (42) der
+Anstiegs-Summe auf Stücken ohne D8-Lauf mit halbem Abfluss in 3 Zellen;
+38 % bzw. 28 % aller sichtbaren Stützpunkte hatten weniger als ein Viertel
+ihres Abflusses im D8-Netz darunter.
+
+### Fix
+
+`RiverRibbonRenderer.fadeUphill` (Render, die Sim bleibt bit-gleich): liegt
+das Gelände unter dem Band mehr als `WaterRender.ribbonUphillFadeStart`
+(0,004 ≈ 10 m) über dem tiefsten Punkt stromauf, blendet das Band aus, voll
+ab `ribbonUphillFadeEnd` (0,008 ≈ 19 m); dort malt das Raster das echte
+D8-Wasser über `bandCoverage`. Die Höhen bleiben, wie `river_ribbons.gd` sie
+verlangt. Sichtbare Band-Stützpunkte: 6879 → 5523 (1337 J20.000),
+2843 → 1900 (1337 J230.000), 2182 → 1763 / 1687 → 1446 (42). Hauptlauf
+(`testMainStemBandDiagnostic`, Jahr 20.000): Lücke unverändert 16,3 / 0 /
+12,2 % (1337 / 42 / 20), Band-Anteil 1337 67,1 → 66,1 %, Band-Zellen ohne
+D8-Lauf in 3 Zellen 2649 → 1540.
+
+Wächter: `RibbonUphillTests` (Kunstwelt mit Rücken quer zur Linie; vor dem
+Fix 23 Kantenpaare bis 0,0275 über dem Spiegel stromauf sichtbar).
+
+Offen (Sim, Paket B): das Erben des Abflusses in `refreshBeltDischarge` lässt
+abgekoppelte Linien weiter wandern und ihre Rinne stempeln; der Fix
+versteckt nur das Band.
+
+### Ursache in der Sim: Versuche (nicht übernommen)
+
+Auftrag nach dem Render-Fix: das Erben des Abflusses in
+`refreshBeltDischarge` (#179) abstellen und abgekoppelte Linien nicht weiter
+wandern lassen. `testRibbonUphillDiagnostic` misst seitdem die ROHEN Bänder
+(`RiverRibbonRenderer.fadesUphill = false`) und den ausgeblendeten Anteil;
+`testBeltCouplingDistanceDiagnostic` den Abstand wandernder Knoten zum
+nächsten D8-Gerinne mit mindestens halbem Abfluss.
+
+**Befund: der kalibrierte Gürtel lebt von der Abkopplung.** Produktion, Seed
+1337, Jahr 20.000: nur 35 % der wandernden Knoten liegen höchstens 1,5 Zellen
+von ihrer Rinne, 58 % höchstens 6, 17 % weiter als 20 Zellen. Die Bögen, die
+die Punkte 9–13 erfüllen, sind zu einem großen Teil Linien, die neben der
+D8-Entwässerung mäandern und ihren Abfluss nur über das laufende Maximum
+tragen. Jede Regel, die das Erben wirklich stoppt, nimmt ihnen Abfluss und
+Mobilität:
+
+| Variante (Werte Seeds 1337 / 42 / 20, Fenster 10.000–20.000) | Sinuosität | sichtbare Altarme | rohe Anstiege > 30 m (1337 J20k / J230k, 42 J20k / J230k) |
+| --- | --- | --- | --- |
+| Produktion | 1,79 / 1,63 / 1,63 | 10,7 / 3,2 / 4,5 | 33 / 16, 10 / 8 |
+| Deckel: Abfluss ≤ größtes D8-Einzugsgebiet in 6 Zellen | 1,18 / 1,19 / 1,24, λ meist n. m. | 20,8 / 6,7 / 9,0 | 20 / 4, 4 / 5 |
+| Deckel 10 / 15 / 20 Zellen + Schwelle 3 | 1,30–2,33 je Seed, λ und Gürtel/Amplitude bis 26 von 26 n. m. | 1,2–12,2 | – |
+| Zuwachs zählt erst nach 2 Breiten Weiterführung + Bergauf-Bremse 3 | 1,20 / 1,52 / 1,43 | 1,7 / 1,3 / 1,2 | – |
+| Zuwachs nach 1 Breite | – | – | 19 / 7, 2 / 6 |
+| Bergauf-Bremse 3 Bankfull-Tiefen allein | 1,70 / 1,81 / **1,40** | 5,8 / **1,7** / **2,7** | 20 / 10, 7 / 3 |
+| Bergauf-Bremse 6 allein | – | – | 18 / 14, 7 / 7 |
+| Bett-Schwellen bis 3 Tiefen schneiden allein | 1,76 / 1,83 / 1,64 | 6,7 / 3,0 / 5,7 | – |
+
+„–" = nicht gemessen. Keine Variante bringt die rohen Anstiege unter das
+Niveau, das der Render-Fade ohnehin abfängt (größter roher Anstieg weiter
+38–170 m), und jede, die das Erben stoppt, kippt die Punkte 9–13 (Sinuosität
+unter 1,5, sichtbare Altarme unter 3). Das Schwellen-Schneiden (der Stempel
+gräbt den Bezug auf den tiefsten Bezug stromauf, wenn der Anstieg höchstens
+3 Tiefen beträgt) koppelt am meisten an (Knoten ≤ 1,5 Zellen von der Rinne
+35 → 47 %, ≤ 6 Zellen 58 → 71 %) und hält die Kennzahlen am ehesten
+(verfehlt: λ 1337 im zweiten Fenster 7,4, Altarme 42 im zweiten Fenster 1,9,
+Asymmetrie 20 im ersten 1,77).
+
+Folgerung: die Ursache ist die fehlende Kopplung von Gürtel und
+D8-Entwässerung, nicht die Abfluss-Regel allein. Ein Sim-Fix braucht zuerst
+eine Rinne, der das D8-Netz folgt (Kandidat: Schwellen-Schneiden), danach
+eine Neukalibrierung von Paket B auf dem 24-Seed-Ensemble, und erst dann die
+Regel gegen das Erben. Bis dahin hält `fadeUphill` die Bänder vom Hang fern
+(Produktion, Seeds 1337 / 42, ausgeblendet von den rohen sichtbaren
+Stützpunkten: 19,7 / 19,2 % in Jahr 20.000, 46,0 / 12,6 % in Jahr 100.000,
+33,2 / 14,3 % in Jahr 230.000).
+
 ## Geister-Seen im Mäandergürtel (Befund im Zeitraffer, Jahr 2.305)
 
 Befund des Projekteigners (Seed 1337, Jahr 2.305, Schrägsicht): in den
@@ -374,3 +493,94 @@ steht (334 Zellen). Kandidaten für die Seen aus dem Bericht (aus der Karte
 zugeordnet, nicht im Bild bestätigt): die Geister-Komponenten bei Welt
 (13,8; 6,8) (67 Zellen, Spiegel im Mittel 14,7 D über dem Boden, hf 4,6 D,
 45 Zellen im Kanal) und (9,9; −11,4) (46 Zellen).
+
+## Raster-Abkürzungen im Mäandergürtel (Befund im Zeitraffer, Jahr 2.305)
+
+Befund des Koordinators nach dem Geister-See-Fix (Seed 1337, Jahr 2.305,
+`RS_TARGET="13.8,6.8"`, Draufsicht): breite, flache, blockige blaue Flächen
+mit treppigen, rechteckigen Ufern in und zwischen den Schlingen, teils quer
+zum Hauptlauf, dazu kleine runde blaue Punkte neben den Bändern. Werkzeug:
+`testBeltLakeZoomDiagnostic` in `BeltLakes.swift` (Ausschnitt als BMP mit
+`RS_DUMP`, Komponenten-Tabelle, ganze Karte; Zeitraffer-Takt 15 Jahre wie
+`Main.gd`, `RS_TIME=1` misst das Wasserfeld).
+
+### Was die Flächen sind
+
+Keine Seen: im Ausschnitt (±110 Zellen) malt der See-Kanal nichts, und unter
+keiner der Flächen steht Wasser (`hf − h` über `pondContourLo` auf 0–2
+Zellen je Komponente). Es ist der Fluss-Kanal (R) des Raster-Wassers, also
+D8-Läufe mit 3.000–14.000 Zellen Abfluss (Hauptlauf-Klasse), 7–17 Zellen
+breit. Zwei Arten:
+
+| Komponente (Zellen) | Breite | D8-Abfluss | Band ≤ 3 Zellen | auf Gleithang-Bank | Art |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 476 | 17 | 13.361 | 110 | 383 | Abkürzung über den Gleithang zwischen zwei Bandbögen |
+| 102 | 9 | 9.823 | 99 | 9 | Abkürzung am Band entlang |
+| 1.249 | 38 | 9.891 | 28 | 287 | Hauptlauf ohne Band (das Band endet stromauf, das Raster übernimmt) |
+
+Die Abkürzung entsteht, weil Gürtel-Linie und D8-Entwässerung nicht
+gekoppelt sind (§ Flüsse laufen bergauf): der D8-Lauf fließt über die Bank
+quer durch die Schlinge, das Band malt den Bogen außen herum. Die
+Bergauf-Blende ist nicht die Ursache: ohne `fadeUphill` blieben die
+Komponenten unverändert (476 / 102 / 1.249 Zellen).
+
+**Treppenform:** das R-Feld ist ein Zellraster. Der Lauf folgt den D8-Zellen
+(acht Richtungen, also selbst eine Treppe), wird mit zwei
+4er-Dilatationen (`widenThresholds`) und einem 3×3-Blur verbreitert und im
+Shader bilinear gelesen und mit `smoothstep(riverMaskLo, riverMaskHi)`
+geschwellt. Die Kontur läuft deshalb an Zellkanten entlang. Bei einem
+Ein-Zellen-Bach fällt das nicht auf, bei einem auf der flachen Bank voll
+verbreiterten Hauptlauf schon. Seen haben eine Kontur je Pixel aus
+`waterLevel − h`, Raster-Flüsse keine.
+
+**Runde Punkte:** Ein- bis Drei-Zell-Flecken des Rasters im Band-Korridor
+neben der Bandkante, wo das Band nicht deckt. Korridor-Zellen waren ganz vom
+Kohärenz-Gate (`streamGate`, 28 Zellen) ausgenommen, damit der Saum
+überlebt; die Ausnahme galt aber auch für alles, was der Korridor darüber
+trug. Nach Blur und Uferring im Shader standen sie als runde Punkte.
+
+### Fix (`WaterFieldRenderer`, Kalibrierung `WaterRender`)
+
+- Auf Gleithang-Bänken (`barAge ≥ 0`) trägt das Raster nur den Saum, wenn
+  höchstens `rasterBarBandReachCells` = 16 Zellen entfernt ein sichtbares
+  Band (Deckung ≥ 0,3 an seiner Zentrumslinie) mit mindestens dem halben
+  Abfluss läuft (`rasterBarBandDischargeRatio`). Reichweite 8 ließ von der
+  Abkürzung 158 Zellen stehen, 16 nahm sie ganz, 32 schnitt schon den
+  bandlosen Hauptlauf an (1.249 → 730).
+- Die Gate-Ausnahme des Korridors gilt nur noch für den Saum.
+
+Ganze Karte, Jahr 2.305, vorher → nachher:
+
+| Seed | sichtbare Raster-Flecken unter 28 Zellen | sichtbarer Raster-Fluss auf Bänken ohne Band |
+| ---: | --- | --- |
+| 1337 | 150 (479 Zellen) → 2 (2) | 1.769 → 713 Zellen |
+| 42 | 93 (338) → 0 | 568 → 232 |
+| 20 | 97 (346) → 0 | 858 → 383 |
+
+Hauptlauf (`testMainStemBandDiagnostic`, D8-Hauptlauf, Anteil der Zellen
+ohne Band und ohne Raster), vorher → nachher:
+
+| Seed | Jahr 2.300 | Jahr 20.000 |
+| ---: | --- | --- |
+| 1337 | 2,0 → 5,6 % (längste 6 → 12) | 16,8 → 18,4 % |
+| 42 | 4,5 → 9,8 % (längste 11 → 18) | 0 → 0 % |
+| 20 | 19,5 → 29,2 % (längste 62 → 85) | 12,2 → 12,2 % |
+
+Die Kennzahl zählt Zellen des D8-Pfads. Wo der D8-Lauf die Schlinge
+abkürzt, malt jetzt das Band den Fluss außen herum, die Abkürzung selbst
+zählt als Lücke. Auf Seed 1337 / Jahr 2.300 kommen 1,0 Punkte aus dem
+Korridor-Gate und 2,6 aus der Bank-Schranke; auf Seed 20 fast alles aus der
+Schranke (allein 28,3 %; in der Karte ist es der D8-Lauf quer durch die
+große Schlinge im Osten). Nicht
+abgefangen: der bandlose Hauptlauf (Komponente 1.249) bleibt Raster und
+damit treppig; dort fehlt das Band, nicht die Schranke.
+
+Kosten: `WaterFieldRenderer.bytes`, Produktion Seed 1337 / Jahr 2.305, M4
+Max, Median über 15 Aufrufe, drei Runden abwechselnd vorher / nachher:
+8,36 / 9,65 — 9,07 / 9,46 — 8,65 / 9,87 ms (rund +1 ms je Wasser-Update).
+Ein Vollbild-Maximumfilter über die Reichweite kostete +2 ms und wurde
+durch die Suche nur an Bank-Zellen mit Raster-Fluss ersetzt. Die Sim ist
+unberührt.
+
+Wächter: `RasterBeltTests` (beide rot ohne den Fix: 9 Flecken unter dem
+Gate, 17 Raster-Zellen auf Bänken neben dem eigenen Band).

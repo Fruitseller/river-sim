@@ -73,7 +73,8 @@ func _check_regen_does_not_fade(main: Node) -> void:
 	main._regen()
 	main.year_rate = 0.0
 	_check(main.height_fade.mix == 1.0 and main.overlay_fade.mix == 1.0
-		and main.relief_mix == 1.0, "Neugenerieren im Zeitraffer blendet nicht")
+		and main.relief_mix == 1.0 and main.ribbon_fade.mix == 1.0
+		and not main.river_prev_mi.visible, "Neugenerieren im Zeitraffer blendet nicht")
 
 func _check(value: bool, message: String) -> void:
 	if not value:
@@ -138,6 +139,13 @@ func _check_bake_cadence(main: Node) -> void:
 	main._apply_frame(main.sim.renderFrame(main.FRAME_SETTLED, main._now()))
 	main._frame_trigger = main.FRAME_SETTLED
 	overlay_faded = overlay_faded or main.overlay_fade.mix < 1.0
+	# Bänder (#174): ein Band-Bau im Zeitraffer blendet über die eigene Blende,
+	# der alte Stand bleibt sichtbar, bis sie endet.
+	main._frame_trigger = main.FRAME_TIMELAPSE
+	main._apply_frame({"ribbons": true})
+	main._frame_trigger = main.FRAME_SETTLED
+	_check(main.ribbon_fade.mix == 0.0 and main.river_prev_mi.visible,
+		"Band-Bau im Zeitraffer blendet über, der alte Stand bleibt sichtbar")
 	main.year_rate = 0.0
 	_check(faded, "Zeitraffer blendet die Verschiebung über, statt zu springen")
 	# #172: Höhe und Overlays gleiten ebenso, jede mit ihrer eigenen Blende.
@@ -153,6 +161,12 @@ func _check_bake_cadence(main: Node) -> void:
 			"%s endet auf dem neuen Stand" % param)
 	_check(main.ocean_mat.get_shader_parameter("height_blend") == 1.0,
 		"Das Meer blendet die Höhe mit dem Terrain")
+	for i in 40: # zusammen mit den 20 Frames oben länger als RIBBON_FADE_SECONDS
+		main.last_activity_msec = Time.get_ticks_msec()
+		main._process(0.02)
+	_check(main.ribbon_fade.mix == 1.0 and not main.river_prev_mi.visible
+		and main.river_mat.get_shader_parameter("ribbon_blend") == 1.0,
+		"Band-Blende endet auf dem neuen Stand, der alte verschwindet")
 	var bakes: int = main.relief_bakes - before
 	_check(ticks > 0 and main.sim.currentYear() > year_before, "Zeitraffer muss Sim-Schritte machen")
 	_check(bakes >= ticks and bakes <= 2 * ticks,

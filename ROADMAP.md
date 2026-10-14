@@ -193,6 +193,15 @@ Querprofil-Asymmetrie (~1 statt ≥ 2), zu wenige offene Altarme — Stand und
 Befunde in `docs/zielbild-measurements.md` § Paket B. Pakete C (Teile), D, E
 als eigene PRs.
 
+**Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
+aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der
+Schlinge“ nur am Gerinne, Rippen nur im Bewuchs), Altarm-Verlandung als Ried und
+Vegetationsbogen, Tiefenfarbe im Band nach Querprofil (UV2.y), Abfluss-
+Vertrauen gegen den abreißenden Hauptlauf. Offen: die Stream-Map trackt die
+großen Läufe der neuen Großform kaum (Rest-Lücken im Oberlauf), Hauptlauf am
+Breiten-Deckel (Anheben = Physik, Paket B), Delta-Distributäre brauchen die
+Sim. Messreihe: `docs/river-belt-render-measurements.md`.
+
 **Zielbild #174, Pakete B–E (ursprünglicher Befund).** Ist-Messung vor B in
 `docs/zielbild-measurements.md`: die Mäander-Sinuosität kommt aus Zacken in
 Bandbreite (Wellenlänge 1–4 Kanalbreiten statt 10–14), das Querprofil ist

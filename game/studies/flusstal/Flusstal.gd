@@ -112,7 +112,7 @@ func _process(delta: float) -> void:
 	if study_mode == "shot":
 		# Gleiche Wasser-Animationsphase unabhängig von Shader-Kompilierzeiten.
 		u_time = 1.0
-		for mat in [terrain_mat, ocean_mat, river_mat]:
+		for mat in [terrain_mat, ocean_mat, river_mat, river_prev_mat]:
 			if mat != null:
 				mat.set_shader_parameter("u_time", u_time)
 

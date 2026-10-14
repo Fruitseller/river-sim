@@ -129,13 +129,17 @@ final class RenderContractTests: XCTestCase {
                     "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hD - hU) * hscale));",
                     "vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0,"
                         + " -s_uv.y * hscale / world_size));",
-                    "vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,"] {
+                    "vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,",
+                    // Weltsteigung des Raster-Wassers an Wänden, dieselbe
+                    // Umrechnung wie die Pixel-Normale.
+                    "float world_slope = length(coarse_slope) * hscale / world_size;"] {
             assertContains(shader, use,
                            hint: "Überhöhung wird unskaliert angewandt (keine Zusatzfaktoren)")
         }
-        // Und keine fünfte, ungeprüfte Anwendung: 1 Deklaration + 1 Vertex-Höhe
-        // + 2 Vertex-Normale + 2 Pixel-Normale + 1 Materialkoordinate = 7.
-        XCTAssertEqual(shader.count(of: "hscale"), 7,
+        // Und keine weitere, ungeprüfte Anwendung: 1 Deklaration + 1 Vertex-Höhe
+        // + 2 Vertex-Normale + 2 Pixel-Normale + 1 Materialkoordinate
+        // + 1 Wand-Steigung = 8.
+        XCTAssertEqual(shader.count(of: "hscale"), 8,
                        "Neue oder entfernte `hscale`-Anwendung im Terrain-Shader —"
                        + " Liste der geprüften Stellen mitziehen")
         // Back-Pass der Verschiebung: Main.gd setzt denselben Uniform, der

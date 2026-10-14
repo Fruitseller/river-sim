@@ -178,7 +178,7 @@ final class WaterRenderTests: XCTestCase {
             "calib_window(water_pond_contour_lo, water_pond_contour_hi, pond)",
             hint: "Kontur-Fuß/Sattel der Uferlinie liest WaterRender.pondContour*")
         assertContains(shader,
-            "calib_window(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g)",
+            "calib_window(water_lake_gate_lo, water_lake_gate_hi, water_at(uv).g)",
             hint: "See-GATE liest WaterRender.lakeGate*")
         assertContains(shader,
             "calib_window(water_river_mask_lo, water_river_mask_hi, stream)",
@@ -353,6 +353,23 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertEqual(WaterRender.cascadeWeight(slope: 0.05), 1)
         XCTAssertEqual(WaterRender.cascadeWeight(slope: -0.05), 1,
                        "Gefälle-Richtung darf die Übergabe nicht umgehen")
+    }
+
+    /// Raster an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305): das
+    /// Raster weicht erst dort, wo das Band die Kaskade schon VOLL abgegeben
+    /// hat — dazwischen bliebe sonst eine Strecke ohne jedes Wasser. Und es
+    /// weicht am Abfluss-Kanal selbst, damit Wasser und Ufersaum zusammen gehen.
+    func testRasterLeavesWallsOnlyAboveTheBandCascade() throws {
+        XCTAssertEqual(WaterRender.rasterWallSlopeLo,
+                       (WaterRender.cascadeSlopeLo + WaterRender.cascadeSlopeSpan) * RenderContract.heightScale,
+                       accuracy: 1e-12, "Wand-Fenster beginnt an der vollen Kaskaden-Übergabe des Bands")
+        XCTAssertGreaterThan(WaterRender.rasterWallSlopeHi, WaterRender.rasterWallSlopeLo)
+        let shader = try repoFile("game/shaders/terrain.gdshader")
+        // `world_slope` selbst (sichtbare Neigung, dieselbe wie die
+        // Gletscherspalten) pinnt RenderContractTests über `hscale`.
+        assertContains(shader,
+            "float stream = w.r * (1.0 - calib_window(water_wall_slope_lo, water_wall_slope_hi, world_slope));",
+            hint: "Wand-Fenster liest WaterRender.rasterWallSlope* am Abfluss-Kanal")
     }
 
     func testOxbowFilterIsSharedAndSelfConsistent() {

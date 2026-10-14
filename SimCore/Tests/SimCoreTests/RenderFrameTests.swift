@@ -56,7 +56,8 @@ final class RenderFrameTests: XCTestCase {
         XCTAssertEqual(overlays.protectMask,
                        WaterProtectMask.bytes(n: terrain.cfg.n,
                                               bandCoverage: render.riverRibbonMesh.bandCoverage,
-                                              waterBytes: overlays.water))
+                                              waterBytes: overlays.water,
+                                              barSand: render.barMaterial(terrain).sand))
 
         let byHand = RenderState(geometryMode: true)
         byHand.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,

@@ -9,6 +9,8 @@ import SimCore
 /// verwaschene "Textur" sichtbar zu machen.
 public enum TerrainColorRenderer {
     public struct Buffers {
+        /// RGB = Makrofarbe, A = Sandgewicht (frische Gleithang-Bank,
+        /// `BarMaterial`, Issue #174 C2; 0 = kein Sand).
         public let colors: [UInt8]
         /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
         /// A = Lithologie-Härte von −1 ... +1 auf 0 ... 1 abgebildet.
@@ -19,6 +21,13 @@ public enum TerrainColorRenderer {
     /// dieselben teuren Standortwerte (`macroSlope`, Habitat, Schnee/Eis); zwei
     /// getrennte Callables würden diese Arbeit pro Textur-Update verdoppeln.
     public static func buffers(_ terrain: Terrain) -> Buffers {
+        buffers(terrain, bars: BarMaterial.field(terrain))
+    }
+
+    /// Wie oben, mit dem Gürtel-Material von außen (`RenderState` rechnet es
+    /// einmal und gibt es auch der Schutzmaske). Passt `bars` nicht zum
+    /// Gitter, bleibt der Gürtel unsichtbar statt falsch.
+    public static func buffers(_ terrain: Terrain, bars: BarMaterial.Field) -> Buffers {
         let n = terrain.cfg.n
         let h = terrain.h
         let rain = terrain.rain, veg = terrain.veg
@@ -50,6 +59,11 @@ public enum TerrainColorRenderer {
         let iceOn = ice.count == n * n
         let iceRef = terrain.cfg.iceCoverRef
         let bands = terrain.heightBands
+        let barsOn = bars.fits(n * n)
+        let barSand = barsOn ? bars.sand : [0]
+        let barVeg = barsOn ? bars.vegShift : [0]
+        let barReed = barsOn ? bars.reed : [0]
+        let reedColor = WaterRender.oxbowReedColor
 
         var colors = [UInt8](repeating: 255, count: n * n * 4)
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
@@ -60,6 +74,9 @@ public enum TerrainColorRenderer {
         lith.withUnsafeBufferPointer { ltb in
         snow.withUnsafeBufferPointer { snb in
         ice.withUnsafeBufferPointer { icb in
+        barSand.withUnsafeBufferPointer { bsb in
+        barVeg.withUnsafeBufferPointer { bvb in
+        barReed.withUnsafeBufferPointer { brb in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
         // Nach dem Guard oben hat jeder Puffer mindestens eine Zelle (Eingaben n*n bzw. [0.0],
@@ -69,6 +86,7 @@ public enum TerrainColorRenderer {
         let psalt = slb.baseAddress!, plith = ltb.baseAddress!
         let psnow = snb.baseAddress!, pice = icb.baseAddress!
         let pcolor = cb.baseAddress!, psurface = sb.baseAddress!
+        let pbsand = bsb.baseAddress!, pbveg = bvb.baseAddress!, pbreed = brb.baseAddress!
 
         parallelChunks(n) { jLo, jHi in
             for j in jLo..<jHi {
@@ -78,6 +96,7 @@ public enum TerrainColorRenderer {
                     let hard = lithOn ? min(1, max(-1, plith[k])) : 0
                     var r = 0.0, g = 0.0, b = 0.0
                     var vegWeight = 0.0, rockWeight = 0.0, coldWeight = 0.0
+                    var sand = 0.0
 
                     if v <= sea + 0.012 {
                         (r, g, b) = gradColor(v)
@@ -150,10 +169,32 @@ public enum TerrainColorRenderer {
                         // genau darauf; wer die Faktoren hier ändert, prüft
                         // die Summe dort mit.
                         coldWeight = max(snowCover, iceCover)
-                        vegWeight = vegAmount * (1 - coldWeight) * (1 - saltCover)
+                        let open = (1 - coldWeight) * (1 - saltCover)
+                        vegWeight = vegAmount * open
+                        // Mäandergürtel (#174 C2, `BarMaterial`): Altarme färben
+                        // die Makrofarbe als Ried, Scroll-Rippen und alte Bögen
+                        // verschieben das Vegetationsgewicht — gedeckelt auf den
+                        // Bereich, den `vegAmount` selbst erreichen kann (0,78).
+                        if barsOn {
+                            let reed = Double(pbreed[k]) * WaterRender.oxbowReedTint * open
+                            if reed > 0 {
+                                r += (reedColor.r - r) * reed
+                                g += (reedColor.g - g) * reed
+                                b += (reedColor.b - b) * reed
+                            }
+                            vegWeight = min(0.78 * open, max(0, vegWeight + Double(pbveg[k]) * open))
+                        }
                         let cliff = smoothstep(0.004, 0.026, slope)
                         rockWeight = max(highRock * 0.82, cliff)
                             * (1 - vegWeight) * (1 - coldWeight) * (1 - saltCover)
+                        // Frische Bank: Sand verdrängt Vegetation und Fels
+                        // anteilig (Summe der Gewichte bleibt ≤ 1); der Shader
+                        // malt ihn aus dem A-Kanal der Makrofarbe.
+                        if barsOn {
+                            sand = Double(pbsand[k]) * (1 - coldWeight)
+                            vegWeight *= 1 - sand
+                            rockWeight *= 1 - sand
+                        }
                     }
 
                     // Umrechnung 0…1 → Byte nur über `byte01` (RenderSupport):
@@ -162,7 +203,7 @@ public enum TerrainColorRenderer {
                     pcolor[o] = byte01(r)
                     pcolor[o + 1] = byte01(g)
                     pcolor[o + 2] = byte01(b)
-                    pcolor[o + 3] = 255
+                    pcolor[o + 3] = byte01(sand)
                     psurface[o] = byte01(vegWeight)
                     psurface[o + 1] = byte01(rockWeight)
                     psurface[o + 2] = byte01(coldWeight)
@@ -170,7 +211,7 @@ public enum TerrainColorRenderer {
                 }
             }
         }
-        }}}}}}}}}
+        }}}}}}}}}}}}
 
         return Buffers(colors: colors, surfaces: surfaces)
     }

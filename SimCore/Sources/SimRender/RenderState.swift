@@ -84,6 +84,10 @@ public final class RenderState {
     /// nächsten Terrain-Änderung gepuffert. Godot lädt sie als zwei Texturen,
     /// die teure Standortauswertung läuft aber nur einmal.
     private var materials: TerrainColorRenderer.Buffers?
+    /// Material des Mäandergürtels (Issue #174 C2): Sand, Scroll-Rippen,
+    /// Altarm-Verlandung. Liest nur das Terrain, fällt also mit dem
+    /// Material-Cache; Farbe und Schutzmaske lesen DASSELBE Feld.
+    private var barCache: BarMaterial.Field?
 
     /// Schutzmaske für Kronendach und Verschiebung (R8), gepuffert bis sich
     /// eine ihrer beiden Quellen ändert: das zuletzt ausgelieferte Wasserfeld
@@ -150,6 +154,7 @@ public final class RenderState {
     /// das die Taktung hierher gezogen hat).
     public func invalidate(_ terrain: Terrain, _ change: TerrainChange) {
         materials = nil
+        barCache = nil
         dropMasks()
         if change != .advanced { forestMemory = [] }
         guard change == .replaced else { return }
@@ -224,9 +229,17 @@ public final class RenderState {
 
     private func cachedMaterials(_ terrain: Terrain) -> TerrainColorRenderer.Buffers {
         if let materials { return materials }
-        let buffers = TerrainColorRenderer.buffers(terrain)
+        let buffers = TerrainColorRenderer.buffers(terrain, bars: barMaterial(terrain))
         materials = buffers
         return buffers
+    }
+
+    /// Gürtel-Material (Issue #174 C2) — s. `BarMaterial`.
+    public func barMaterial(_ terrain: Terrain) -> BarMaterial.Field {
+        if let barCache { return barCache }
+        let field = BarMaterial.field(terrain)
+        barCache = field
+        return field
     }
 
     // MARK: - Wasser-Feld (Raster-Pfad)
@@ -265,7 +278,8 @@ public final class RenderState {
         if let protectMaskCache { return protectMaskCache }
         let mask = WaterProtectMask.bytes(n: terrain.cfg.n,
                                           bandCoverage: ribbons.bandCoverage,
-                                          waterBytes: visibleWater ?? [])
+                                          waterBytes: visibleWater ?? [],
+                                          barSand: barMaterial(terrain).sand)
         protectMaskCache = mask
         return mask
     }

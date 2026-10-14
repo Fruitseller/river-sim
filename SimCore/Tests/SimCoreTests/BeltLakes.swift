@@ -235,4 +235,242 @@ final class BeltLakeTests: XCTestCase {
             }
         }
     }
+
+    /// Ausschnitt um einen Weltpunkt (`RS_TARGET` = "x,z", Standard 13.8,6.8;
+    /// `RS_RADIUS` Zellen, Standard 70), 5-fach vergrößert als BMP nach
+    /// `RS_DUMP`: Raster-Fluss sichtbar (R ≥ riverMaskLo) hellblau, Raster-See
+    /// dunkelblau, Band-Deckung weiß, großer D8-Lauf (Vertrauen > 0) rot,
+    /// Track-Maske > 0 grün. Dazu je Komponente des sichtbaren Raster-Flusses
+    /// Zellen, Breite und Herkunft.
+    func testBeltLakeZoomDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let seed = env["RS_SEEDS"].flatMap { UInt32($0) } ?? 1337
+        let years = env["RS_YEARS"].flatMap { Double($0) } ?? 2305
+        let tgt = (env["RS_TARGET"] ?? "13.8,6.8").split(separator: ",").compactMap { Double($0) }
+        let rad = env["RS_RADIUS"].flatMap { Int($0) } ?? 70
+        // Zeitraffer-Takt der App: ~15 Jahre je Schritt (`Main.gd`, SIM_TICK_SECONDS).
+        let dt = env["RS_DT"].flatMap { Double($0) } ?? 15
+        let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+        while t.years < years - 1e-6 { t.step(dtYears: min(dt, years - t.years)) }
+        let n = t.cfg.n, ws = t.cfg.world, sea = t.cfg.sea
+        let ci = Int(((tgt[0] + 0.5 * ws) / ws * Double(n)).rounded())
+        let cj = Int(((tgt[1] + 0.5 * ws) / ws * Double(n)).rounded())
+        let render = RenderState(geometryMode: true)
+        render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
+        let cover = render.riverRibbonMesh.bandCoverage
+        let water = WaterFieldRenderer().bytes(t, blend: 1, geometryMode: true,
+                                bandChannelFlags: render.riverRibbonMesh.bandChannelFlags,
+                                bandCoverage: cover)
+        if env["RS_TIME"] == "1" {
+            // Kosten des Wasserfelds je Aufruf (Median über 15, ein Renderer
+            // wie in der App, `blend` des Zeitraffers).
+            let field = WaterFieldRenderer()
+            var ms: [Double] = []
+            for _ in 0..<15 {
+                let c0 = Date()
+                _ = field.bytes(t, blend: 0.15, geometryMode: true,
+                                bandChannelFlags: render.riverRibbonMesh.bandChannelFlags, bandCoverage: cover)
+                ms.append(-c0.timeIntervalSinceNow * 1000)
+            }
+            print(String(format: "ZEIT WaterFieldRenderer.bytes Median %.2f ms", ms.sorted()[7]))
+            return
+        }
+        let creek = t.cfg.renderMinCells, cellArea = t.cfg.cellSize * t.cfg.cellSize
+        func stream(_ k: Int) -> Double { Double(water[k * 4]) / 255 }
+        func lake(_ k: Int) -> Double {
+            WaterRender.lakeMask(channel: Double(water[k * 4 + 1]) / 255, pond: t.waterLevel[k] - t.h[k])
+        }
+        let i0 = max(0, ci - rad), i1 = min(n - 1, ci + rad), j0 = max(0, cj - rad), j1 = min(n - 1, cj + rad)
+        // Ganze Karte: kleine sichtbare Raster-Fluss-Flecken (unter
+        // `streamGateCells`) — die runden Punkte neben den Bändern.
+        do {
+            var seenAll = [Bool](repeating: false, count: n * n)
+            var small = 0, smallCells = 0, smallNearBand = 0
+            for s0 in 0..<(n * n) where stream(s0) >= WaterRender.riverMaskLo && !seenAll[s0] {
+                var stack = [s0]; seenAll[s0] = true; var c = 0, near = false
+                while let k = stack.popLast() {
+                    c += 1
+                    let i = k % n, j = k / n
+                    if !near { for dj in -3...3 { for di in -3...3 {
+                        let ii = i + di, jj = j + dj
+                        if ii >= 0, ii < n, jj >= 0, jj < n, cover.count == n * n, cover[jj * n + ii] >= 0.3 { near = true }
+                    } } }
+                    for (ok, nb) in [(i > 0, k - 1), (i < n - 1, k + 1), (j > 0, k - n), (j < n - 1, k + n)]
+                    where ok && stream(nb) >= WaterRender.riverMaskLo && !seenAll[nb] { seenAll[nb] = true; stack.append(nb) }
+                }
+                if c < WaterRender.streamGateCells { small += 1; smallCells += c; if near { smallNearBand += 1 } }
+            }
+            print("Ganze Karte: sichtbare Raster-Fluss-Flecken unter \(WaterRender.streamGateCells) Zellen: \(small) (\(smallCells) Zellen), davon ≤ 3 Zellen an einem Band: \(smallNearBand)")
+            var barRaster = 0
+            for k in 0..<(n * n) where stream(k) >= WaterRender.riverMaskLo && t.barAge[k] >= 0 && (k >= cover.count || cover[k] < 0.3) { barRaster += 1 }
+            print("Ganze Karte: sichtbarer Raster-Fluss auf Bänken ohne Band: \(barRaster) Zellen")
+        }
+        print("\n=== Ausschnitt Seed \(seed), Jahr \(Int(t.years)), Zelle (\(ci), \(cj)) ±\(rad) ===")
+        // Abstand (Chebyshev, Zellen) zur nächsten Band-Zelle (Deckung ≥ 0,3)
+        // und zur nächsten Zentrumslinie eines Laufs OHNE Band.
+        func distance(_ seeds: [Bool]) -> [Int] {
+            var d = [Int](repeating: Int.max, count: n * n); var q: [Int] = []
+            for k in 0..<(n * n) where seeds[k] { d[k] = 0; q.append(k) }
+            var h = 0
+            while h < q.count { let k = q[h]; h += 1
+                let i = k % n, j = k / n
+                for dj in -1...1 { for di in -1...1 {
+                    let ii = i + di, jj = j + dj
+                    guard ii >= 0, ii < n, jj >= 0, jj < n else { continue }
+                    let nk = jj * n + ii
+                    if d[nk] == Int.max { d[nk] = d[k] + 1; q.append(nk) }
+                } }
+            }
+            return d
+        }
+        let flags = render.riverRibbonMesh.bandChannelFlags
+        var bandSeed = [Bool](repeating: false, count: n * n), loneLine = [Bool](repeating: false, count: n * n)
+        var bandLine = [Bool](repeating: false, count: n * n)
+        for k in 0..<(n * n) where k < cover.count && cover[k] >= 0.3 { bandSeed[k] = true }
+        for (ci, ch) in t.meander.channels.enumerated() {
+            let has = ci < flags.count && flags[ci]
+            for nd in ch.nodes {
+                let i = Int(nd.x.rounded()), j = Int(nd.z.rounded())
+                guard i >= 0, i < n, j >= 0, j < n else { continue }
+                if has { bandLine[j * n + i] = true } else { loneLine[j * n + i] = true }
+            }
+        }
+        let dBand = distance(bandSeed), dLone = distance(loneLine), dLine = distance(bandLine)
+        // Komponenten sichtbaren Raster-Flusses im Ausschnitt.
+        var seen = Set<Int>()
+        print("| Zellen | max Breite quer (Zellen) | Track > 0 | Vertrauen > 0 | Band ≥ 0,3 | Wassersäule hf−h > 0,003 | mittl. Intensität | ≤ 3 Z. Band | ≤ 3 Z. Linie mit Band | ≤ 3 Z. Linie ohne Band | unter ausgebl. Band | max D8-Abfluss (Zellen) | auf Bank | im Gürtel-Bett | Zelle i,j |")
+        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+        for j in j0...j1 { for i in i0...i1 {
+            let s0 = j * n + i
+            guard stream(s0) >= WaterRender.riverMaskLo, !seen.contains(s0) else { continue }
+            var stack = [s0]; seen.insert(s0)
+            var cells = 0, track = 0, trust = 0, band = 0, pond = 0, sumI = 0.0
+            var nearBand = 0, nearLone = 0, nearBandLine = 0, faded = 0, maxQ = 0.0, onBar = 0, inBeltBed = 0
+            var rows: [Int: Int] = [:], cols: [Int: Int] = [:]
+            while let k = stack.popLast() {
+                cells += 1; sumI += stream(k)
+                let ii = k % n, jj = k / n
+                rows[jj, default: 0] += 1; cols[ii, default: 0] += 1
+                if WaterRender.trackMask(streamMap: t.streamMap[k]) > 0 { track += 1 }
+                if WaterRender.ribbonTrust(dischargeCells: t.areaMFD[k] / cellArea, referenceCells: creek) > 0 { trust += 1 }
+                if k < cover.count && cover[k] >= 0.3 { band += 1 }
+                if t.hf[k] - t.h[k] > WaterRender.pondContourLo { pond += 1 }
+                if dBand[k] <= 3 { nearBand += 1 }
+                if dLone[k] <= 3 { nearLone += 1 }
+                if dLine[k] <= 3 { nearBandLine += 1 }
+                if k < cover.count && cover[k] > WaterRender.protectBandThreshold && cover[k] < 0.3 { faded += 1 }
+                maxQ = max(maxQ, t.area[k] / cellArea)
+                if t.barAge[k] >= 0 { onBar += 1 }
+                if t.isChannel[k] { inBeltBed += 1 }
+                for (ok, nb) in [(ii > i0, k - 1), (ii < i1, k + 1), (jj > j0, k - n), (jj < j1, k + n)]
+                where ok && stream(nb) >= WaterRender.riverMaskLo && !seen.contains(nb) { seen.insert(nb); stack.append(nb) }
+            }
+            if cells < 8 { continue }
+            let width = min(rows.values.max() ?? 0, cols.values.max() ?? 0)
+            print("| \(cells) | \(width) | \(track) | \(trust) | \(band) | \(pond) | \(String(format: "%.2f", sumI / Double(cells))) | \(nearBand) | \(nearBandLine) | \(nearLone) | \(faded) | \(Int(maxQ)) | \(onBar) | \(inBeltBed) | \(i),\(j) |")
+        } }
+        // Band-Stützpunkte im Ausschnitt: Deckkraft je Strip (Mittel/Min/Max,
+        // Anteil unter 0,1) — warum fehlt das Band über einem Raster-Lauf?
+        let mesh = render.riverRibbonMesh, half = ws / 2, cs = t.cfg.cellSize
+        for (si, start) in mesh.stripStarts.enumerated() {
+            let s0 = Int(start)
+            let s1 = si + 1 < mesh.stripStarts.count ? Int(mesh.stripStarts[si + 1]) : mesh.vertices.count
+            var inside = 0, low = 0, sum = 0.0, lo = 1.0, hi = 0.0
+            var a = s0
+            while a + 1 < s1 {
+                let l = mesh.vertices[a], r = mesh.vertices[a + 1]
+                let gi = Int(((Double(l.x + r.x) * 0.5 + half) / cs).rounded())
+                let gj = Int(((Double(l.z + r.z) * 0.5 + half) / cs).rounded())
+                if gi >= i0, gi <= i1, gj >= j0, gj <= j1 {
+                    let al = Double(mesh.colors[a].w)
+                    inside += 1; sum += al; lo = min(lo, al); hi = max(hi, al)
+                    if al < 0.1 { low += 1 }
+                }
+                a += 2
+            }
+            if inside > 0 {
+                print(String(format: "Strip %d (Art %.1f): %d Stützpunkte im Ausschnitt, Deckkraft Mittel %.2f (%.2f–%.2f), unter 0,1: %d",
+                             si, Double(mesh.uv2s[s0].x), inside, sum / Double(inside), lo, hi, low))
+            }
+        }
+        // Gemalte See-Flecken im Ausschnitt (lakeMask > 0,05 auf Zellebene).
+        print("See-Flecken: | Zellen | rawWet (> lakeRawWetDepth) | max Säule Spiegel | max Säule hf | ≤ 3 Z. Band | Zelle i,j |")
+        var seenL = Set<Int>()
+        for j in j0...j1 { for i in i0...i1 {
+            let s0 = j * n + i
+            guard lake(s0) > 0.05, !seenL.contains(s0) else { continue }
+            var stack = [s0]; seenL.insert(s0)
+            var cells = 0, raw = 0, near = 0, maxP = 0.0, maxH = 0.0
+            while let k = stack.popLast() {
+                cells += 1
+                let p = t.waterLevel[k] - t.h[k]
+                maxP = max(maxP, p); maxH = max(maxH, t.hf[k] - t.h[k])
+                if p > WaterRender.lakeRawWetDepth { raw += 1 }
+                if dBand[k] <= 3 { near += 1 }
+                let ii = k % n, jj = k / n
+                for (ok, nb) in [(ii > i0, k - 1), (ii < i1, k + 1), (jj > j0, k - n), (jj < j1, k + n)]
+                where ok && lake(nb) > 0.05 && !seenL.contains(nb) { seenL.insert(nb); stack.append(nb) }
+            }
+            print(String(format: "See-Fleck | %d | %d | %.4f | %.4f | %d | %d,%d |", cells, raw, maxP, maxH, near, i, j))
+        } }
+        guard let dir = env["RS_DUMP"] else { return }
+        var centerline = [Bool](repeating: false, count: n * n)
+        for ch in t.meander.channels { for nd in ch.nodes {
+            let i = Int(nd.x.rounded()), j = Int(nd.z.rounded())
+            if i >= 0, i < n, j >= 0, j < n { centerline[j * n + i] = true }
+        } }
+        let sc = env["RS_SCALE"].flatMap { Int($0) } ?? 5, w = (i1 - i0 + 1) * sc, hgt = (j1 - j0 + 1) * sc
+        let row = (w * 3 + 3) & ~3, size = 54 + row * hgt
+        var d = [UInt8](repeating: 0, count: size)
+        func le(_ v: Int, _ at: Int, _ bytes: Int) { for b in 0..<bytes { d[at + b] = UInt8((v >> (8 * b)) & 0xff) } }
+        d[0] = 0x42; d[1] = 0x4d; le(size, 2, 4); le(54, 10, 4); le(40, 14, 4); le(w, 18, 4); le(hgt, 22, 4)
+        le(1, 26, 2); le(24, 28, 2); le(row * hgt, 34, 4)
+        for j in j0...j1 { for i in i0...i1 {
+            let k = j * n + i
+            let dx = t.h[min(n - 1, i + 1) + j * n] - t.h[max(0, i - 1) + j * n]
+            let dz = t.h[min(n - 1, j + 1) * n + i] - t.h[max(0, j - 1) * n + i]
+            let shade = max(0.15, min(1, 0.6 - 40 * (dx + dz)))
+            var c = t.h[k] <= sea ? (0.05, 0.1, 0.25) : (0.55 * shade, 0.6 * shade, 0.45 * shade)
+            if t.barAge[k] >= 0 { c = (0.8 * shade, 0.72 * shade, 0.5 * shade) }
+            let rm = WaterRender.riverMask(stream: stream(k))
+            c = (c.0 * (1 - rm) + 0.35 * rm, c.1 * (1 - rm) + 0.7 * rm, c.2 * (1 - rm) + 0.95 * rm)
+            let lm = lake(k)
+            c = (c.0 * (1 - lm) + 0.05 * lm, c.1 * (1 - lm) + 0.15 * lm, c.2 * (1 - lm) + 0.6 * lm)
+            let bc = k < cover.count ? min(1, cover[k]) * 0.6 : 0
+            c = (c.0 * (1 - bc) + bc, c.1 * (1 - bc) + bc, c.2 * (1 - bc) + bc)
+            // Ausgeblendetes Band (Deckung unter 0,3, aber gebaut): magenta Rand.
+            let faded = k < cover.count && cover[k] > WaterRender.protectBandThreshold && cover[k] < 0.3
+            // Mäander-Zentrumslinien (alle Läufe, auch ohne Band): gelb.
+            let line = centerline[k]
+            let tr = WaterRender.ribbonTrust(dischargeCells: t.area[k] / cellArea, referenceCells: creek) > 0
+            let tm = WaterRender.trackMask(streamMap: t.streamMap[k]) > 0
+            for y in 0..<sc { for x in 0..<sc {
+                var p = c
+                let center = x == sc / 2 && y == sc / 2
+                if center && tr { p = (1, 0.1, 0.1) } else if (x == 0 && y == 0) && tm { p = (0.1, 0.9, 0.1) }
+                if faded && (x == sc - 1 || y == sc - 1) { p = (0.9, 0.1, 0.9) }
+                if line && x >= 1 && x <= 3 && y >= 1 && y <= 3 { p = (1, 1, 0) }
+                let px = (i - i0) * sc + x, py = (j - j0) * sc + y
+                let o = 54 + (hgt - 1 - py) * row + px * 3
+                d[o] = UInt8(max(0, min(255, p.2 * 255))); d[o + 1] = UInt8(max(0, min(255, p.1 * 255)))
+                d[o + 2] = UInt8(max(0, min(255, p.0 * 255)))
+            } }
+        } }
+        // Band-Stützpunkte: Deckkraft < 0,1 rot, sonst schwarz (Mittelpunkt der Zelle).
+        var sa = 0
+        while sa + 1 < mesh.vertices.count {
+            let l = mesh.vertices[sa], r = mesh.vertices[sa + 1]
+            let gi = Int(((Double(l.x + r.x) * 0.5 + half) / cs).rounded())
+            let gj = Int(((Double(l.z + r.z) * 0.5 + half) / cs).rounded())
+            if gi >= i0, gi <= i1, gj >= j0, gj <= j1, Double(mesh.uv2s[sa].x) == WaterRender.ribbonKindRiver {
+                let lowA = mesh.colors[sa].w < 0.1
+                let px = (gi - i0) * sc + 2, py = (gj - j0) * sc + 2
+                let o = 54 + (hgt - 1 - py) * row + px * 3
+                d[o] = 0; d[o + 1] = 0; d[o + 2] = lowA ? 255 : 0
+            }
+            sa += 2
+        }
+        FileManager.default.createFile(atPath: "\(dir)/zoom_\(seed)_\(Int(t.years)).bmp", contents: Data(d))
+    }
 }
+

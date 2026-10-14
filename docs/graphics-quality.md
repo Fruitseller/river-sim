@@ -987,8 +987,9 @@ Wald (#170).
   für die Verschiebung).
   Pinselring, Kameraziel und Raycast lesen die CPU-Höhe und springen weiter;
   das sieht man nur im Zeitraffer, und dort wird nicht gepinselt.
-- **Wasser bleibt außen vor:** Das Rasterwasser glättet die CPU (Blend 0,15),
-  die Flussbänder baut sie höchstens einmal je Sekunde neu.
+- **Wasser blieb zunächst außen vor** (Rasterwasser über die CPU-EWMA, Bänder
+  höchstens einmal je Sekunde neu gebaut); seit #174 blendet es mit, s.
+  [Flüsse im Zeitraffer](#flüsse-im-zeitraffer-174).
 
 - **Kosten:** Im Zeitraffer läuft praktisch immer eine Blende, die Helfer
   lesen dann zwei Texturen. `RS_FPS` (Zeitraffer 60 J/s, `balanced`,
@@ -1001,6 +1002,54 @@ Wächter: `SimCoreTests/TimelapseFadeTests.swift` (jede Textur liest über die
 Blende ihres Uploads, Main startet jede Blende mit ihrem Upload) und
 `game/tests/relief.gd` (Höhe und Overlays blenden im Zeitraffer, enden auf
 dem neuen Stand, der Pinsel blendet nicht).
+
+## Flüsse im Zeitraffer (#174)
+
+Stand 13. Oktober 2026. Projekteigner: „Die Wälder haben immer noch das
+verbesserte Blending, aber bei 60 J/s springen die Flussveränderungen, statt
+dass sie auch blenden." Gemessen mit
+`RiverFadeTests.testRiverJumpsPerUploadDiagnostic` (Produktionswelt Seed
+1337, Takt wie `Main.gd` bei 60 FPS, 30 s Zeitraffer je Alter; Spannen über
+Jahr 0 / 20.000 / 100.000):
+
+| Ausgabe | Takt | Sprung je Upload | vorher |
+| --- | --- | --- | --- |
+| Flussbänder | Band-Bau alle 1,07 s | Lage Ø 0,23–0,28, p99 2,3–3,6 Zellen (Halbbreite ~2); Alpha p99 0,78–0,87; Halbbreite p99 2,2–2,6 Zellen; 2–3 % der Stützpunkte neu | hart |
+| Rasterwasser | Overlays alle 0,53 s | Sichtbarkeit p99 0,36–0,41; 10–13 % der nassen Zellen > 0,1 | EWMA 0,15, dazwischen hart |
+| Bank-/Strand-Sand (A der Makrofarbe) | Overlays | p99 ~1 | `overlay_blend` |
+| Schutzmaske | Overlays | ~2000 Zellen kippen | Verbraucher blenden (Verschiebung `bake_blend`, Wald `overlay_blend`) |
+
+- **Rasterwasser** hängt jetzt an `overlay_blend` (`water_at` im
+  Terrain-Shader); die EWMA bleibt, sie glättet den Wechsel zwischen den
+  D8-Netzen, die Blende die Stufen dazwischen.
+- **Bänder: eigene Blende `ribbon_blend`, Dauer = Band-Deckel**
+  (`RIBBON_FADE_SECONDS` == `RenderState.ribbonRebuildSeconds`). Im
+  Zeitraffer liegen zwei Bauten nie dichter, die Blende endet also vor dem
+  nächsten Bau. Der vorige Bau bleibt als zweites Mesh stehen.
+- **Geteilte optische Dicke statt Pixel-Aufteilung** (Nachtrag, Befund des
+  Projekteigners Seed 1337 / Jahr 2.305, Retina): die erste Fassung zeigte je
+  Pixel genau einen der beiden Stände (Interleaved Gradient Noise, ortsfest).
+  Wo die Stände übereinanderliegen, ist das unsichtbar; wo der Lauf gewandert
+  ist, zeigte jedes Pixel mal den einen, mal den anderen — körnige Bandränder
+  an jedem gewanderten Ufer, im maximierten Fenster deutlich, im
+  Zeitraffer praktisch dauernd (bei 1 Bau/s läuft fast immer eine Blende).
+  Jetzt zeichnet der neue Stand mit `1 − (1 − a)^t`, der alte mit
+  `1 − (1 − a)^(1−t)` (`WaterRender.ribbonFadeOpacity`, Deckel 0,99):
+  übereinander lassen beide zusammen genau `1 − a` durch, der stehende Lauf
+  deckt also wie ein Band (lineares Mischen: 0,95 → 0,72, pulste im
+  Band-Takt); allein liegend blendet ein Stand stetig ein bzw. aus, ohne Korn.
+  Ein Vertex-Morph scheidet weiter aus: der Mäander resampelt seine Knoten je
+  Schritt, die Topologie zweier Bauten passt nicht zusammen.
+- **Kosten nicht gemessen** (kein Godot im Agentenlauf): im Zeitraffer zeichnet
+  fast immer das zweite Band-Mesh mit, das Rasterwasser liest zwei Texturen.
+  Messung steht aus (`RS_FPS`,
+  Zeitraffer 60 J/s, maximiert, interleaved A/B).
+
+Wächter: `SimCoreTests/RiverFadeTests.swift` (Dauer == Band-Deckel, kein
+Band-Bau innerhalb der Blende, Verdrahtung in `Main.gd`, geteilte Deckkraft
+im Shader), `TimelapseFadeTests` (Rasterwasser über `water_at`) und
+`game/tests/relief.gd` (Band-Bau im Zeitraffer blendet, endet auf dem neuen
+Stand, Neugenerieren blendet nicht).
 
 ## Abschluss Spec #156
 

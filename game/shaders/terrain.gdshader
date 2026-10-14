@@ -47,18 +47,20 @@ render_mode cull_disabled;
 
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable; // gefüllte Oberfläche (Seespiegel)
-uniform sampler2D color_tex : filter_linear, repeat_disable;
+uniform sampler2D color_tex : filter_linear, repeat_disable; // RGB Makrofarbe, A Sandgewicht (Bank, #174 C2)
 uniform sampler2D surface_tex : filter_linear, repeat_disable; // R Vegetation, G Fels, B Schnee/Eis, A Lithologie
 // Zeitraffer-Überblenden (#172, Main.gd `Crossfade`): der Vorgängerstand je
 // Textur und zwei Blenden, jede im Takt IHRES Uploads. `height_blend` folgt
 // dem Sim-Takt (Höhe), `overlay_blend` der Overlay-Drossel (Farbe, Material,
-// Rinnen-Detail, Seespiegel, Wald). Gelesen wird nur über die `*_at`-Helfer
-// unten, damit Form, Normalen und Farbe denselben Zwischenstand zeigen.
+// Rinnen-Detail, Seespiegel, Wald, Raster-Wasser). Gelesen wird nur über die
+// `*_at`-Helfer unten, damit Form, Normalen und Farbe denselben Zwischenstand
+// zeigen.
 uniform sampler2D height_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D color_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D surface_prev_tex : filter_linear, repeat_disable;
 uniform sampler2D flow_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D water_prev_tex : filter_linear, repeat_disable;
 uniform float height_blend = 1.0;
 uniform float overlay_blend = 1.0;
 uniform sampler2D debug_difference_tex : filter_linear, repeat_disable;
@@ -117,6 +119,8 @@ uniform float water_lake_gate_lo;
 uniform float water_lake_gate_hi;
 uniform float water_river_mask_lo;
 uniform float water_river_mask_hi;
+uniform float water_wall_slope_lo;
+uniform float water_wall_slope_hi;
 uniform float water_shore_lo;
 uniform float water_shore_hi;
 uniform float water_pond_contour_lo;
@@ -137,6 +141,12 @@ uniform vec3 water_shallow_color;
 uniform vec3 water_deep_color;
 uniform vec3 water_sky_reflect_color;
 uniform vec3 water_flow_shimmer_color;
+uniform vec3 water_bed_color;
+// Bank-Material (Issue #174 C2): WO Sand liegt, sagt SimRender.BarMaterial
+// (A-Kanal von color_tex); wie er aussieht, diese Werte.
+uniform vec3 water_bar_sand_color;
+uniform vec3 water_bar_sand_wet_color;
+uniform float water_bar_roughness;
 
 // Render-Verschiebung (#153). Der Schalter ist keine Kalibrier-Zahl: ohne
 // SimNode (Editor-Vorschau) ist keine Backtextur gebunden, und eine schwarze
@@ -217,9 +227,10 @@ float hf_at(vec2 uv) {
 	return overlay_blend < 1.0 ? mix(texture(hf_prev_tex, uv).r, h, overlay_blend) : h;
 }
 
-vec3 color_at(vec2 uv) {
-	vec3 c = texture(color_tex, uv).rgb;
-	return overlay_blend < 1.0 ? mix(texture(color_prev_tex, uv).rgb, c, overlay_blend) : c;
+// RGB = Makrofarbe, A = Sandgewicht (frische Gleithang-Bank, #174 C2).
+vec4 color_at(vec2 uv) {
+	vec4 c = texture(color_tex, uv);
+	return overlay_blend < 1.0 ? mix(texture(color_prev_tex, uv), c, overlay_blend) : c;
 }
 
 vec4 surface_at(vec2 uv) {
@@ -230,6 +241,14 @@ vec4 surface_at(vec2 uv) {
 float flow_at(vec2 uv) {
 	float f = texture(flow_tex, uv).r;
 	return overlay_blend < 1.0 ? mix(texture(flow_prev_tex, uv).r, f, overlay_blend) : f;
+}
+
+// Raster-Wasser (#174): die EWMA (`water_blend`) glättet nur von Upload zu
+// Upload; dazwischen sprang das Feld je Overlay-Upload (gemessen bei 60 J/s:
+// je Upload ~10 % der nassen Zellen um mehr als 0,1 Sichtbarkeit).
+vec4 water_at(vec2 uv) {
+	vec4 w = texture(water_tex, uv);
+	return overlay_blend < 1.0 ? mix(texture(water_prev_tex, uv), w, overlay_blend) : w;
 }
 
 vec2 world_uv(vec3 vert) {
@@ -252,7 +271,7 @@ float pond_at(vec2 uv, float h_val) {
 // Blur-Halo am Ufer durch und schaltet ab WaterRender.lakeGateHi voll
 // (Kalibrier-Herleitung: WaterFieldRenderer, fadeLo/HiCells).
 float lake_gate_at(vec2 uv) {
-	return calib_window(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g);
+	return calib_window(water_lake_gate_lo, water_lake_gate_hi, water_at(uv).g);
 }
 
 // Phacelle-Noise + Erosionsfilter (runevision, MPL-2.0): erosion_filter.gdshaderinc.
@@ -453,7 +472,8 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 macro_color = color_at(v_uv);
+	vec4 macro_rgba = color_at(v_uv);
+	vec3 macro_color = macro_rgba.rgb;
 	vec4 surface = surface_at(v_uv);
 	vec3 debug_color = texture(debug_difference_tex, v_uv).rgb;
 	float hval = height_at(v_uv);
@@ -467,6 +487,9 @@ void fragment() {
 	float hU = height_at(v_uv + vec2(0.0, texel));
 	vec2 coarse_slope = vec2(hR - hL, hU - hD) * 0.5 * grid_n;
 	coarse_slope += relief_slope(v_uv);
+	// Dieselbe Steigung in sichtbarer Neigung (Welt-Y je Welt-Einheit):
+	// das Raster-Wasser an Wänden liest sie.
+	float world_slope = length(coarse_slope) * hscale / world_size;
 
 	float ws = world_size / 100.0;
 	float view_dist = length(VERTEX);
@@ -617,6 +640,16 @@ void fragment() {
 	land_roughness = mix(land_roughness, 0.78, cold);
 	land_roughness = mix(land_roughness, 0.34, ice_hint);
 	land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
+	// Sand- und Kiesbank (#174 C2): frische Gleithang-Bänke aus dem
+	// Bankalter, mit Scroll-Rippen (SimRender.BarMaterial). Farbe und Rauheit
+	// reisen als water_bar_* über die Brücke (SimCore.WaterRender).
+	float sand = macro_rgba.a;
+	if (sand > 0.002) {
+		vec3 sand_col = mix(water_bar_sand_wet_color, water_bar_sand_color, breakup)
+		              * mix(0.94, 1.06, top_grain * material_fade);
+		terr = mix(terr, sand_col, sand);
+		land_roughness = mix(land_roughness, water_bar_roughness, sand);
+	}
 	// Studien-Material nur im FLUSSTAL_STUDY-Build (Flusstal.gd setzt das
 	// Define zur Laufzeit) und NUR über Wasser: unterhalb der
 	// Meeresspiegel-Grenze bleibt das Flussbett bei der Standard-Optik, der
@@ -640,8 +673,15 @@ void fragment() {
 		land_roughness = 0.9;
 	}
 
-	vec4 w = texture(water_tex, v_uv);
-	float stream = w.r;
+	vec4 w = water_at(v_uv);
+	// Wasser steigt keine Wand hoch (WaterRender.rasterWallSlopeLo/Hi): die
+	// bilineare Kontur des Abfluss-Rasters reicht eine halbe Zelle über die
+	// Rinne hinaus, an einer Wand also deren ganze Höhe hinauf — senkrechte
+	// Wasserplatten mit Rauten in Schluchten und unter Abbruchkanten. Grobe
+	// Steigung aus dem Sim-Gitter (`world_slope`);
+	// auf der Rinnensohle misst sie nur das Längs-Gefälle. Am Abfluss-Kanal
+	// selbst, damit Wasser UND nasser Ufersaum weichen.
+	float stream = w.r * (1.0 - calib_window(water_wall_slope_lo, water_wall_slope_hi, world_slope));
 	float lake_gate = w.g;
 	vec2 dir = w.ba * 2.0 - 1.0;
 	float riverMask = calib_window(water_river_mask_lo, water_river_mask_hi, stream);
@@ -662,37 +702,56 @@ void fragment() {
 	terr = mix(terr, river_gravel, riverMask * 0.88);
 
 	float lake_depth = clamp((pond - water_lake_depth_lo) / max(water_lake_depth_span, 1e-6), 0.0, 1.0) * lakeMask;
-	float depth = clamp(max(lake_depth, stream), 0.0, 1.0);
+	// Fluss-Tiefe aus der Abfluss-Intensität, früh gesättigt: die Intensität
+	// springt zwischen Nachbarzellen (8-Bit-Feld, Korridor-Deckel), und linear
+	// in die Farbe übernommen zeichnete das bilinear gefilterte Feld helle und
+	// dunkle Zellblöcke in breite Läufe. Die Schwellen sind eigene Optik-Zahlen
+	// dieses Shaders, keine WaterRender-Konstanten.
+	float depth = clamp(max(lake_depth, smoothstep(0.05, 0.6, stream)), 0.0, 1.0);
 	float speed = riverMask >= lakeMask ? 1.0 : 0.25;
 	vec2 d1 = normalize(length(dir) > 0.05 ? dir : vec2(0.7, 0.7));
-	vec2 d2 = vec2(-d1.y, d1.x);
-	float p1 = dot(wp, d1) * 2.3 - u_time * 5.0 * speed;
-	float p2 = dot(wp, d2) * 4.1 + dot(wp, d1) * 1.3 - u_time * 3.1 * speed;
-	float p3_wave = dot(wp, d1 + d2) * 6.3 - u_time * 7.3 * speed + 1.7;
 	float ripple_fade = 1.0 - smoothstep(50.0 * ws, 160.0 * ws, view_dist);
-	// Amplituden-Fenster der Kräusel: eigene Optik-Zahl dieses Shaders —
-	// numerisch zufällig gleich dem geometry_lift-Fenster, KEINE
-	// WaterRender-Konstante (das Band nutzt ein anderes Fenster, 0.02..0.05).
-	float amp = mix(0.015, 0.05, depth) * ripple_fade;
+	// Kräuselung als Rauschen mit Fließkarte (zwei Phasen, gegeneinander
+	// versetzt überblendet): die Richtung verschiebt das Muster nur um höchstens
+	// eine Rauschzelle. Vorher lief die Phase über dot(Weltposition, Richtung)
+	// — die Richtung springt aber von Zelle zu Zelle (D8), und mit der langen
+	// Weltposition multipliziert malte das Höhenlinien-Moiré, Ringe und
+	// Zellblöcke auf jeden See und breiten Lauf (Befund #174). Frequenzen,
+	// Phasen-Takt und Amplituden sind eigene Optik-Zahlen dieses Shaders —
+	// das Raster-Wasser kräuselt mit 0.015..0.05, keine WaterRender-Konstanten.
+	float flow_t = u_time * 0.35 * speed;
+	float ph0 = fract(flow_t);
+	float ph1 = fract(flow_t + 0.5);
+	float w0 = 1.0 - abs(ph0 * 2.0 - 1.0);
+	vec2 rp0 = wp * 3.1 - d1 * ph0 * 1.6;
+	vec2 rp1 = wp * 3.1 - d1 * ph1 * 1.6 + vec2(5.2, 1.3);
+	float re = 0.08;
+	float r0 = vnoise(rp0), r1 = vnoise(rp1);
+	vec2 g0 = vec2(vnoise(rp0 + vec2(re, 0.0)) - r0, vnoise(rp0 + vec2(0.0, re)) - r0) / re;
+	vec2 g1 = vec2(vnoise(rp1 + vec2(re, 0.0)) - r1, vnoise(rp1 + vec2(0.0, re)) - r1) / re;
+	// Pixel-Ausblendung wie im Ozean: unter Pixelgröße bleibt die Fläche ruhig.
+	float ripple_px = 1.0 - smoothstep(0.2, 0.8, length(fwidth(wp)) * 3.1);
+	float amp = mix(0.015, 0.05, depth) * ripple_fade * ripple_px;
 	amp *= riverMask >= lakeMask ? 1.0 : 0.45;
-	vec2 grad = d1 * (2.3 * cos(p1)) * amp
-	          + (d2 * 4.1 + d1 * 1.3) * (0.6 * cos(p2)) * amp
-	          + (d1 + d2) * (6.3 * cos(p3_wave)) * (0.25 * amp);
+	vec2 grad = (g0 * w0 + g1 * (1.0 - w0)) * amp * 2.0;
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
 	NORMAL = normalize(mix(NORMAL, water_n_vs, wet));
 
 	vec3 water = mix(water_shallow_color, water_deep_color, depth);
-	vec3 bed = terr * mix(1.0, 0.55, wet);
+	// Bett: überwiegend die gemeinsame Bett-Farbe (WaterRender.waterBedColor),
+	// nur ein Rest Gelände. Das volle Gelände trug sein Erosions-Detail ins
+	// Wasser — Höhenlinien-Moiré und Ringe auf Seen und breiten Läufen.
+	vec3 bed = mix(terr * 0.55, water_bed_color, 0.75 * wet);
 	float opacity = mix(water_opacity_shallow, water_opacity_deep, depth);
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
 	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
 
 	if (riverMask >= lakeMask && length(dir) > 0.05) {
-		float along = dot(wp, normalize(dir));
-		float flow = sin(along * 1.4 - u_time * 4.0) * 0.5
-			+ sin(along * 3.1 - u_time * 6.5 + 1.7) * 0.5;
+		// Schimmer aus derselben Fließkarte (nicht über dot(Position,
+		// Richtung), s. Kräuselung oben): wandernde Schlieren statt Ringe.
+		float flow = (vnoise(rp0 * 0.45) * w0 + vnoise(rp1 * 0.45) * (1.0 - w0)) * 2.0 - 1.0;
 		water += flow * water_flow_shimmer_color;
 	}
 
@@ -702,7 +761,9 @@ void fragment() {
 	// Deckkraft-Paar (water_opacity_*), KEINE WaterRender-Konstante.
 	float foam = smoothstep(0.55, 0.95, edge * (0.45 + 0.75 * foam_n)) * ripple_fade;
 	vec3 water_final = mix(bed, water, opacity);
-	water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * 0.45);
+	// Schaum nur als Hauch und nur in fließendem Wasser: mit 0.45 auf jeder
+	// Uferlinie zog er einen weißen Umriss um jeden Lauf und jeden See.
+	water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * (riverMask >= lakeMask ? 0.12 : 0.0));
 	ALBEDO = mix(terr, water_final, wet);
 	ROUGHNESS = mix(land_roughness, mix(water_roughness_steep, water_roughness_grazing, fresnel), wet);
 	METALLIC = 0.0;
