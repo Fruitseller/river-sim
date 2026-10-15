@@ -126,96 +126,109 @@ public final class MeanderState {
         }
     }
 
+    private struct LateralWorkNode {
+        var curv: Double = 0
+        var nlx: Double = 0
+        var nlz: Double = 0
+        var mob: Double = 0
+        var seg: Double = 0
+        var eff: Double = 0
+    }
+
     /// Verschiebt jeden inneren Knoten lateral ∝ (signierte Krümmung × Abfluss).
     /// Positive Krümmung (Linksbogen) + linke Normale → weiter nach links: die
     /// bestehende Schlinge verstärkt sich (Howard–Knutson, lokale Variante).
     private func lateralStep(_ ch: inout RiverChannel, dt: Double, config: SimConfig,
                              heightAt: (MeanderNode) -> Double,
                              riparianAt: (MeanderNode) -> Double = { _ in 0 }) {
-        let nodes = ch.nodes
-        let count = nodes.count
+        let count = ch.nodes.count
         guard count >= 3 else { return }
         let k = config.meanderMigration
         let flat = config.meanderFlatSlope
         let cs = config.cellSize
         let maxStep = 0.5 * config.meanderNodeSpacing // CFL: kein Knoten springt >½ Abstand
 
-        // Pass 1: signierte Krümmung, linke Normale, Mobilität, Segmentlänge je Knoten.
-        var curv = [Double](repeating: 0, count: count)
-        var nlx = [Double](repeating: 0, count: count)
-        var nlz = [Double](repeating: 0, count: count)
-        var mob = [Double](repeating: 0, count: count)
-        var seg = [Double](repeating: config.meanderNodeSpacing, count: count)
-        for i in 1..<(count - 1) {
-            let a = nodes[i - 1], b = nodes[i], c = nodes[i + 1]
-            let v1x = b.x - a.x, v1z = b.z - a.z
-            let v2x = c.x - b.x, v2z = c.z - b.z
-            let l1 = (v1x * v1x + v1z * v1z).squareRoot()
-            let l2 = (v2x * v2x + v2z * v2z).squareRoot()
-            let ds = 0.5 * (l1 + l2)
-            if ds < 1e-9 { continue }
-            seg[i] = ds
-            let cross = v1x * v2z - v1z * v2x
-            let dot = v1x * v2x + v1z * v2z
-            curv[i] = atan2(cross, dot) / ds
-            let tx = c.x - a.x, tz = c.z - a.z
-            let tl = (tx * tx + tz * tz).squareRoot()
-            if tl < 1e-9 { continue }
-            nlx[i] = -tz / tl; nlz[i] = tx / tl // linke Normale der Sehne a→c
-            let arc = (l1 + l2) * cs               // Flachland-Gate über die Längsneigung
-            let longSlope = arc > 1e-9 ? abs(heightAt(a) - heightAt(c)) / arc : 0
-            mob[i] = max(0, min(1, 1 - longSlope / flat))
-        }
+        withUnsafeTemporaryAllocation(of: LateralWorkNode.self, capacity: count) { work in
+            work.initialize(repeating: LateralWorkNode(curv: 0, nlx: 0, nlz: 0, mob: 0,
+                                                       seg: config.meanderNodeSpacing, eff: 0))
 
-        // Pass 2: upstream-gewichtete Krümmung (Ikeda–Parker–Sawai). Die Bank­erosion
-        // hängt von der stromauf integrierten Krümmung ab (das near-bank-Geschwindig­
-        // keitsfeld lagt) → die Erosionsspitze verschiebt sich stromab, Schlingen
-        // werden asymmetrisch (downstream-geskewt) statt symmetrisch. EMA über
-        // steigendes i (= stromab), integriert also j<i (= stromauf).
-        let beta = config.meanderSkew
-        let lam = max(1e-6, config.meanderSkewLength)
-        var eff = curv
-        if beta > 0 {
-            var ema = 0.0
-            var sumC = 0.0, sumE = 0.0
-            for i in 0..<count {
-                eff[i] = (1 - beta) * curv[i] + beta * ema
-                let w = exp(-seg[i] / lam)
-                ema = ema * w + curv[i] * (1 - w)
-                sumC += abs(curv[i]); sumE += abs(eff[i])
+            // Pass 1: signierte Krümmung, linke Normale, Mobilität, Segmentlänge je Knoten.
+            for i in 1..<(count - 1) {
+                let a = ch.nodes[i - 1], b = ch.nodes[i], c = ch.nodes[i + 1]
+                let v1x = b.x - a.x, v1z = b.z - a.z
+                let v2x = c.x - b.x, v2z = c.z - b.z
+                let l1 = (v1x * v1x + v1z * v1z).squareRoot()
+                let l2 = (v2x * v2x + v2z * v2z).squareRoot()
+                let ds = 0.5 * (l1 + l2)
+                if ds < 1e-9 { continue }
+                work[i].seg = ds
+                let cross = v1x * v2z - v1z * v2x
+                let dot = v1x * v2x + v1z * v2z
+                work[i].curv = atan2(cross, dot) / ds
+                let tx = c.x - a.x, tz = c.z - a.z
+                let tl = (tx * tx + tz * tz).squareRoot()
+                if tl < 1e-9 { continue }
+                work[i].nlx = -tz / tl; work[i].nlz = tx / tl // linke Normale der Sehne a→c
+                let arc = (l1 + l2) * cs                         // Flachland-Gate über die Längsneigung
+                let longSlope = arc > 1e-9 ? abs(heightAt(a) - heightAt(c)) / arc : 0
+                work[i].mob = max(0, min(1, 1 - longSlope / flat))
             }
-            // Auf gleiche Gesamt-Stärke normieren: die EMA ist ein Tiefpass und
-            // würde die Amplitude (und damit die Mäander-Rate) sonst dämpfen.
-            // Der Skew verschiebt so nur die Phase (Erosionsspitze stromab).
-            let sc = sumE > 1e-9 ? sumC / sumE : 1
-            for i in 0..<count { eff[i] *= sc }
-        }
 
-        // Pass 3: Knoten entlang lokaler Normale verschieben (Betrag aus eff).
-        let cohesion = config.meanderCohesion
-        var out = nodes
-        for i in 1..<(count - 1) {
-            // −eff: zum Außenufer (weg vom Krümmungszentrum) → Schlinge verstärkt sich.
-            // Ufer-Kohäsion: Auwald-bewachsene Ufer (riparianAt) bremsen die
-            // Migration — Wurzelwerk hält den Prallhang (Stufe 2).
-            let coh = cohesion > 0 ? max(0, min(1, riparianAt(nodes[i]))) : 0
-            var m = -k * ch.discharge[i] * eff[i] * dt * mob[i] * (1 - cohesion * coh)
-            m = max(-maxStep, min(maxStep, m)) // Displacement-Clamp gegen Verheddern
-            out[i] = MeanderNode(x: nodes[i].x + m * nlx[i], z: nodes[i].z + m * nlz[i])
+            // Pass 2: upstream-gewichtete Krümmung (Ikeda–Parker–Sawai). Die Bank­erosion
+            // hängt von der stromauf integrierten Krümmung ab (das near-bank-Geschwindig­
+            // keitsfeld lagt) → die Erosionsspitze verschiebt sich stromab, Schlingen
+            // werden asymmetrisch (downstream-geskewt) statt symmetrisch. EMA über
+            // steigendes i (= stromab), integriert also j<i (= stromauf).
+            let beta = config.meanderSkew
+            let lam = max(1e-6, config.meanderSkewLength)
+            if beta > 0 {
+                var ema = 0.0
+                var sumC = 0.0, sumE = 0.0
+                for i in 0..<count {
+                    let ci = work[i].curv
+                    let ei = (1 - beta) * ci + beta * ema
+                    work[i].eff = ei
+                    let w = exp(-work[i].seg / lam)
+                    ema = ema * w + ci * (1 - w)
+                    sumC += abs(ci); sumE += abs(ei)
+                }
+                // Auf gleiche Gesamt-Stärke normieren: die EMA ist ein Tiefpass und
+                // würde die Amplitude (und damit die Mäander-Rate) sonst dämpfen.
+                // Der Skew verschiebt so nur die Phase (Erosionsspitze stromab).
+                let sc = sumE > 1e-9 ? sumC / sumE : 1
+                for i in 0..<count { work[i].eff *= sc }
+            } else {
+                for i in 0..<count { work[i].eff = work[i].curv }
+            }
+
+            // Pass 3: Knoten entlang lokaler Normale verschieben (Betrag aus eff).
+            let cohesion = config.meanderCohesion
+            for i in 1..<(count - 1) {
+                // −eff: zum Außenufer (weg vom Krümmungszentrum) → Schlinge verstärkt sich.
+                // Ufer-Kohäsion: Auwald-bewachsene Ufer (riparianAt) bremsen die
+                // Migration — Wurzelwerk hält den Prallhang (Stufe 2).
+                let coh = cohesion > 0 ? max(0, min(1, riparianAt(ch.nodes[i]))) : 0
+                var m = -k * ch.discharge[i] * work[i].eff * dt * work[i].mob * (1 - cohesion * coh)
+                m = max(-maxStep, min(maxStep, m)) // Displacement-Clamp gegen Verheddern
+                ch.nodes[i].x += m * work[i].nlx
+                ch.nodes[i].z += m * work[i].nlz
+            }
         }
-        ch.nodes = out
     }
 
     /// Milde Laplace-Glättung (Endpunkte fest), hält den Lauf gegen die D8-
     /// Treppe und Zacken glatt, ohne die Amplifikation zu ersticken.
     private func smooth(_ nodes: inout [MeanderNode], factor: Double) {
         guard factor > 0, nodes.count >= 3 else { return }
-        let src = nodes
-        for i in 1..<(src.count - 1) {
-            let lx = (src[i - 1].x + 2 * src[i].x + src[i + 1].x) * 0.25
-            let lz = (src[i - 1].z + 2 * src[i].z + src[i + 1].z) * 0.25
-            nodes[i].x = src[i].x + (lx - src[i].x) * factor
-            nodes[i].z = src[i].z + (lz - src[i].z) * factor
+        var prev = nodes[0]
+        for i in 1..<(nodes.count - 1) {
+            let curr = nodes[i]
+            let next = nodes[i + 1]
+            let lx = (prev.x + 2 * curr.x + next.x) * 0.25
+            let lz = (prev.z + 2 * curr.z + next.z) * 0.25
+            nodes[i].x = curr.x + (lx - curr.x) * factor
+            nodes[i].z = curr.z + (lz - curr.z) * factor
+            prev = curr
         }
     }
 
@@ -316,34 +329,36 @@ public final class MeanderState {
     private func resample(_ ch: RiverChannel, spacing: Double) -> RiverChannel {
         let nodes = ch.nodes
         guard nodes.count >= 2, spacing > 0, spacing.isFinite else { return ch }
-        var cum = [Double](repeating: 0, count: nodes.count)
-        for i in 1..<nodes.count { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
-        let total = cum[nodes.count - 1]
-        guard total.isFinite else { return ch }
-        if total < spacing { // zu kurz → nur Endpunkte
-            return RiverChannel(nodes: [nodes[0], nodes[nodes.count - 1]],
-                                discharge: [ch.discharge[0], ch.discharge[nodes.count - 1]])
+        return withUnsafeTemporaryAllocation(of: Double.self, capacity: nodes.count) { cum in
+            cum.initialize(repeating: 0)
+            for i in 1..<nodes.count { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
+            let total = cum[nodes.count - 1]
+            guard total.isFinite else { return ch }
+            if total < spacing { // zu kurz → nur Endpunkte
+                return RiverChannel(nodes: [nodes[0], nodes[nodes.count - 1]],
+                                    discharge: [ch.discharge[0], ch.discharge[nodes.count - 1]])
+            }
+            // Schrittzahl vor der Konvertierung deckeln, um Int(inf) bzw. Überlauf bei
+            // extrem kleinem spacing (z. B. meanderNodeSpacing = 1e-320) abzufangen.
+            let rawSteps = (total / spacing).rounded()
+            guard rawSteps.isFinite, rawSteps >= 0 else { return ch }
+            let maxSteps = 65_536
+            let steps = Int(min(Double(maxSteps), rawSteps))
+            let count = max(2, steps + 1)
+            var outN = [MeanderNode](); outN.reserveCapacity(count)
+            var outD = [Double](); outD.reserveCapacity(count)
+            var seg = 0
+            for kk in 0..<count {
+                let target = total * Double(kk) / Double(count - 1)
+                while seg < nodes.count - 2 && cum[seg + 1] < target { seg += 1 }
+                let segLen = cum[seg + 1] - cum[seg]
+                let t = segLen > 1e-9 ? (target - cum[seg]) / segLen : 0
+                outN.append(MeanderNode(x: nodes[seg].x + (nodes[seg + 1].x - nodes[seg].x) * t,
+                                        z: nodes[seg].z + (nodes[seg + 1].z - nodes[seg].z) * t))
+                outD.append(ch.discharge[seg] + (ch.discharge[seg + 1] - ch.discharge[seg]) * t)
+            }
+            return RiverChannel(nodes: outN, discharge: outD)
         }
-        // Schrittzahl vor der Konvertierung deckeln, um Int(inf) bzw. Überlauf bei
-        // extrem kleinem spacing (z. B. meanderNodeSpacing = 1e-320) abzufangen.
-        let rawSteps = (total / spacing).rounded()
-        guard rawSteps.isFinite, rawSteps >= 0 else { return ch }
-        let maxSteps = 65_536
-        let steps = Int(min(Double(maxSteps), rawSteps))
-        let count = max(2, steps + 1)
-        var outN = [MeanderNode](); outN.reserveCapacity(count)
-        var outD = [Double](); outD.reserveCapacity(count)
-        var seg = 0
-        for kk in 0..<count {
-            let target = total * Double(kk) / Double(count - 1)
-            while seg < nodes.count - 2 && cum[seg + 1] < target { seg += 1 }
-            let segLen = cum[seg + 1] - cum[seg]
-            let t = segLen > 1e-9 ? (target - cum[seg]) / segLen : 0
-            outN.append(MeanderNode(x: nodes[seg].x + (nodes[seg + 1].x - nodes[seg].x) * t,
-                                    z: nodes[seg].z + (nodes[seg + 1].z - nodes[seg].z) * t))
-            outD.append(ch.discharge[seg] + (ch.discharge[seg + 1] - ch.discharge[seg]) * t)
-        }
-        return RiverChannel(nodes: outN, discharge: outD)
     }
 
     // MARK: - Initialisierung aus der D8-Entwässerung

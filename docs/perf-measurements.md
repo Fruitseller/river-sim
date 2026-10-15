@@ -759,3 +759,72 @@ for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; d
 RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
 ```
+
+---
+
+## L. Heap-Allokationen und COW-Kopien in der Mäander-Migration (Oktober 2026)
+
+Anlass: In `MeanderState.step` (Pass `migrateMeander`) laufen für alle aktiven
+Mäander-Kanäle (~940 Kanäle in der Produktions-Config) mehrere geometrische
+Schritte ab: laterale Knotenverschiebung (`lateralStep`), Glättung (`smooth`)
+und Resampling (`resample`). Bisher allokierten diese Hilfs-Arrays auf dem Heap
+und erzeugten implizite Copy-on-Write-Kopien.
+
+### Was geändert wurde
+
+1. **`lateralStep`**:
+   - Vorher: 6 separate dynamische `[Double]`-Arrays (`curv`, `nlx`, `nlz`,
+     `mob`, `seg`, `eff`) wurden je Kanal angelegt, gefolgt von `var out = nodes`
+     (weitere Heap-Allokation). Bei 940 Kanälen waren das >6.500 Heap-Allokationen
+     pro Sim-Schritt.
+   - Nachher: Zusammenfassung der Knotendaten in ein POD-Struct `LateralWorkNode`
+     über `withUnsafeTemporaryAllocation(of: LateralWorkNode.self, capacity: count)`
+     (ein temporärer Puffer statt sechs dynamischer Heap-Arrays); `ch.nodes` wird
+     direkt in-place mutiert statt über ein zweites Array `out`.
+2. **`smooth`**:
+   - Vorher: `let src = nodes` erzeugte eine zweite Referenz auf das Knoten-Array.
+     Die Zuweisung `nodes[i].x = ...` löste daher bei jedem Kanal eine vollständige
+     Copy-on-Write-Duplizierung des Arrays auf dem Heap aus (~940 COW-Kopien/Schritt).
+   - Nachher: Register-Tracking des Vorgängers (`var prev = nodes[0]`). `nodes`
+     bleibt eindeutig referenziert; keine COW-Kopie.
+3. **`resample`**:
+   - Vorher: `var cum = [Double](repeating: 0, count: nodes.count)` allokierte
+     ein weiteres Heap-Array je Kanal.
+   - Nachher: `withUnsafeTemporaryAllocation(of: Double.self, capacity: nodes.count)`.
+
+Insgesamt entfallen so rund 8.000 kurzlebige Heap-Allokationen und COW-Kopien
+je Simulationsschritt.
+
+### Gemessen (Linux-VM, Produktions-Config)
+
+Interleaved gemessen über 5 Paare (`simperf.base` vs. `simperf.neu`, jeweils
+`--repeat 3`, gleiche Sitzung, Linux-VM, 4 Kerne, Lastmittel ~1,0):
+
+| Paar | `migrateMeander` base (ms) | `migrateMeander` neu (ms) | Delta | Schritt gesamt base (ms) | Schritt gesamt neu (ms) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 9,99 | 7,66 | −2,33 ms (−23,3 %) | 153,5 | 143,9 |
+| 2 | 8,52 | 7,73 | −0,79 ms (−9,3 %) | 152,7 | 143,1 |
+| 3 | 9,62 | 7,74 | −1,88 ms (−19,5 %) | 156,9 | 149,1 |
+| 4 | 8,85 | 8,00 | −0,85 ms (−9,6 %) | 151,8 | 151,3 |
+| 5 | 8,76 | 7,92 | −0,84 ms (−9,6 %) | 152,2 | 145,3 |
+| **Median** | **8,85** | **7,74** | **−1,11 ms (−12,5 %)** | **152,7** | **145,3** |
+| **Minimum** | **8,52** | **7,66** | **−0,86 ms (−10,1 %)** | **151,8** | **143,1** |
+
+In allen fünf Messblöcken ist `migrateMeander` konsistent und reproduzierbar
+schneller (−12,5 % im Median, −10,1 % im Minimum; Streuung base 8,52 … 9,99 ms vs.
+neu 7,66 … 8,00 ms; das neu-Maximum liegt noch unter dem base-Minimum).
+
+### Physik und Bit-Identität
+
+`simperf --hash` ist vor und nach der Änderung identisch (gleiche Maschine,
+gleiche Sitzung, bit-identisch).
+
+### Reproduktion
+
+```sh
+source ~/.local/share/swiftly/env.sh
+swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+SimCore/.build/release/simperf --repeat 3
+SimCore/.build/release/simperf --hash
+```
+
