@@ -330,7 +330,7 @@ public final class MeanderState {
         let nodes = ch.nodes
         guard nodes.count >= 2, spacing > 0, spacing.isFinite else { return ch }
         return withUnsafeTemporaryAllocation(of: Double.self, capacity: nodes.count) { cum in
-            cum[0] = 0
+            cum.initialize(repeating: 0)
             for i in 1..<nodes.count { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
             let total = cum[nodes.count - 1]
             guard total.isFinite else { return ch }

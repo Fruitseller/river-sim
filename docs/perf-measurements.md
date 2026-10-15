@@ -778,9 +778,9 @@ und erzeugten implizite Copy-on-Write-Kopien.
      (weitere Heap-Allokation). Bei 940 Kanälen waren das >6.500 Heap-Allokationen
      pro Sim-Schritt.
    - Nachher: Zusammenfassung der Knotendaten in ein POD-Struct `LateralWorkNode`
-     über `withUnsafeTemporaryAllocation(of: LateralWorkNode.self, capacity: count)`.
-     Die kleinen Knotenlisten (~21 Knoten im Schnitt) passen auf den Stack;
-     `ch.nodes` wird direkt in-place mutiert statt über ein zweites Array `out`.
+     über `withUnsafeTemporaryAllocation(of: LateralWorkNode.self, capacity: count)`
+     (ein temporärer Puffer statt sechs dynamischer Heap-Arrays); `ch.nodes` wird
+     direkt in-place mutiert statt über ein zweites Array `out`.
 2. **`smooth`**:
    - Vorher: `let src = nodes` erzeugte eine zweite Referenz auf das Knoten-Array.
      Die Zuweisung `nodes[i].x = ...` löste daher bei jedem Kanal eine vollständige
@@ -798,7 +798,7 @@ je Simulationsschritt.
 ### Gemessen (Linux-VM, Produktions-Config)
 
 Interleaved gemessen über 5 Paare (`simperf.base` vs. `simperf.neu`, jeweils
-`--repeat 3`, gleiche Sitzung):
+`--repeat 3`, gleiche Sitzung, Linux-VM, 4 Kerne, Lastmittel ~1,0):
 
 | Paar | `migrateMeander` base (ms) | `migrateMeander` neu (ms) | Delta | Schritt gesamt base (ms) | Schritt gesamt neu (ms) |
 |---|---:|---:|---:|---:|---:|
@@ -808,9 +808,11 @@ Interleaved gemessen über 5 Paare (`simperf.base` vs. `simperf.neu`, jeweils
 | 4 | 8,85 | 8,00 | −0,85 ms (−9,6 %) | 151,8 | 151,3 |
 | 5 | 8,76 | 7,92 | −0,84 ms (−9,6 %) | 152,2 | 145,3 |
 | **Median** | **8,85** | **7,74** | **−1,11 ms (−12,5 %)** | **152,7** | **145,3** |
+| **Minimum** | **8,52** | **7,66** | **−0,86 ms (−10,1 %)** | **151,8** | **143,1** |
 
 In allen fünf Messblöcken ist `migrateMeander` konsistent und reproduzierbar
-schneller (−12,5 % im Median).
+schneller (−12,5 % im Median, −10,1 % im Minimum; Streuung base 8,52 … 9,99 ms vs.
+neu 7,66 … 8,00 ms; das neu-Maximum liegt noch unter dem base-Minimum).
 
 ### Physik und Bit-Identität
 
