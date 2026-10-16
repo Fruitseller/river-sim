@@ -656,9 +656,13 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Hebung niedrig ist (Auslass-Inzision hält den See-Anteil von allein bei ~15%
   diskreten Seen), aber der dokumentierte Rückfall für Konfigurationen mit hoher
   Hebung. Begründung im Config-Kommentar.
-- `floodplainAggradation` liegt deaktiviert als Referenz herum (`floodplainEnabled=false`):
-  per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
-  jetzt über sanfteres Relief (`baseRelief` 0.78).
+- `floodplainAggradation` liegt deaktiviert als Referenz herum
+  (`floodplainEnabled=false`): die per-Zell-Aggradation fügte gemessen 2.7×
+  Zerklüftung/Krusten hinzu. Seit #174 entsteht die Aue aus der lateralen
+  Planation des Mäandergürtels (`meanderBelt`: Gleithang-Bank gedeckelt auf
+  bankfull, gemessen glatter als vorher, `docs/zielbild-measurements.md`
+  § Paket B); der Gürtel liefert die Aue, der Pass bleibt geparkt
+  (Begründung im Config-Kommentar an `floodplainEnabled`).
 - PR #110, Review-Nacharbeit: Bett-Inzision unabhängig von `outletIncision`,
   separat über `channelTargetDepth = 0` abschaltbar. Render-Übergabe prüft nur
   die Doppelmalungs-Obergrenze 0.045; Bett-Tiefe bleibt ein Sim-Wächter.
