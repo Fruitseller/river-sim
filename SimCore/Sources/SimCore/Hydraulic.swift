@@ -101,12 +101,23 @@ public enum Hydraulic {
     ///   `testUniformRainWeightIsBitIdentical`).
     static func spawnPosition(_ rnd: inout Mulberry32, n: Int,
                               weight: [Double], weightMax: Double) -> (x: Double, y: Double) {
+        guard !weight.isEmpty, weightMax > 0 else {
+            return spawnPosition(&rnd, n: n, pweight: nil, weightMax: weightMax)
+        }
+        return weight.withUnsafeBufferPointer { wb in
+            spawnPosition(&rnd, n: n, pweight: wb.baseAddress, weightMax: weightMax)
+        }
+    }
+
+    @inline(__always)
+    static func spawnPosition(_ rnd: inout Mulberry32, n: Int,
+                              pweight: UnsafePointer<Double>?, weightMax: Double) -> (x: Double, y: Double) {
         var px = rnd.next() * Double(n - 1)
         var py = rnd.next() * Double(n - 1)
-        guard !weight.isEmpty, weightMax > 0 else { return (px, py) }
+        guard let pweight, weightMax > 0 else { return (px, py) }
         var tries = 0
         while true {
-            let w = weight[Int(py) * n + Int(px)]
+            let w = pweight[Int(py) * n + Int(px)]
             if w >= weightMax { break }              // Maximum → immer angenommen
             if rnd.next() * weightMax <= w { break } // angenommen
             if tries >= spawnRejectionTries { break }
@@ -217,16 +228,36 @@ public enum Hydraulic {
             for i in bw.indices { bw[i] /= wsum }
         }
 
+        let cnt = h.count
         // Optionale Puffer aktivieren, wenn ihre Länge exakt zur Zellzahl passt
         // (verhindert Out-of-Bounds-Zugriffe bei fehlerhaften Puffergrößen).
-        let chanOn = channel.count == h.count
-        let ddOn = depositDamp.count == h.count
-        let lithOn = erodibility.count == h.count
-        let iceOn = underIce.count == h.count
-        let trackOn = track.count == h.count
-        let poolOn = hf.count == h.count
-        let recOn = receiver.count == h.count
-        let streamOn = stream.count == h.count
+        let chanOn = channel.count == cnt
+        let ddOn = depositDamp.count == cnt
+        let lithOn = erodibility.count == cnt
+        let iceOn = underIce.count == cnt
+        let trackOn = track.count == cnt
+        let poolOn = hf.count == cnt
+        let recOn = receiver.count == cnt
+        let streamOn = stream.count == cnt
+        let flowOn = flowWeight.count == cnt
+
+        h.withUnsafeMutableBufferPointer { hb in
+        rock.withUnsafeMutableBufferPointer { rkb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        track.withUnsafeMutableBufferPointer { trb in
+        hf.withUnsafeBufferPointer { hfb in
+        receiver.withUnsafeBufferPointer { rcb in
+        stream.withUnsafeBufferPointer { smb in
+        channel.withUnsafeBufferPointer { chb in
+        depositDamp.withUnsafeBufferPointer { ddb in
+        underIce.withUnsafeBufferPointer { uib in
+        flowWeight.withUnsafeBufferPointer { fwb in
+        erodibility.withUnsafeBufferPointer { erb in
+        let ph = hb.baseAddress!, prock = rkb.baseAddress!, psed = sb.baseAddress!
+        let ptrack = trb.baseAddress
+        let phf = hfb.baseAddress, prec = rcb.baseAddress, pstream = smb.baseAddress
+        let pchan = chb.baseAddress, pdeposit = ddb.baseAddress, pice = uib.baseAddress
+        let pflow = fwb.baseAddress, perod = erb.baseAddress
 
         // Abtrag; gibt den tatsächlich abgetragenen Betrag zurück (am Tiefseeboden
         // gedeckelt), damit die Sedimentbilanz stimmt.
@@ -248,20 +279,20 @@ public enum Hydraulic {
             // Unter Eis kein fluvialer Abtrag (Issue #35): das Bett gehört dem
             // Gletscher. Vor jeder anderen Rechnung, damit auch die
             // Lithologie-Arithmetik nicht anläuft.
-            if iceOn && underIce[k] { return 0 }
+            if iceOn && pice![k] { return 0 }
             var d = amount
-            let f = lithOn ? erodibility[k] : 1.0
+            let f = lithOn ? perod![k] : 1.0
             if f != 1.0 {
-                let s = sed[k]
+                let s = psed[k]
                 if d > s { d = s + (d - s) * f }
             }
-            let room = h[k] - floor
+            let room = ph[k] - floor
             if room <= 0 { return 0 } // schon am Tiefseeboden
             if d > room { d = room }  // nicht unter den Boden graben
-            let take = min(d, sed[k])
-            sed[k] -= take
-            rock[k] -= (d - take)
-            h[k] -= d
+            let take = min(d, psed[k])
+            psed[k] -= take
+            prock[k] -= (d - take)
+            ph[k] -= d
             return d
         }
 
@@ -274,33 +305,32 @@ public enum Hydraulic {
             // Gletscherzelle: gar nichts ablegen, alles bleibt in Suspension
             // (Issue #35) — der Tropfen trägt seine Fracht über das Eis hinweg
             // und lädt sie hinter der Zunge ab (Sander am Gletschertor).
-            if iceOn && underIce[k] { return amount }
+            if iceOn && pice![k] { return amount }
             // Der STÄRKERE der beiden Dämpfer gewinnt (s. `depositDamp` oben).
             var f = 1.0
-            if chanOn && channel[k] { f = p.channelDepositDamp }
-            if ddOn && depositDamp[k] < f { f = depositDamp[k] }
+            if chanOn && pchan![k] { f = p.channelDepositDamp }
+            if ddOn && pdeposit![k] < f { f = pdeposit![k] }
             if f >= 1 {
-                sed[k] += amount; h[k] += amount
+                psed[k] += amount; ph[k] += amount
                 return 0
             }
             let put = amount * f
-            sed[k] += put; h[k] += put
+            psed[k] += put; ph[k] += put
             return amount - put
         }
 
         // Gewichts-Maximum einmal je Charge (die Ablehnungs-Stichprobe normiert
         // darauf); leeres/kaputtes Feld → gleichverteilte Starts wie bisher.
-        let flowOn = flowWeight.count == h.count
         // PERF: `Array.max()` nimmt den generischen Sequence-Pfad (Iterator plus
         // Closure je Element) und tastet hier 692k Zellen ab. Die
         // Roh-Puffer-Schleife vergleicht in derselben Reihenfolge und liefert
         // denselben Wert.
-        let flowMax: Double = !flowOn ? 0 : flowWeight.withUnsafeBufferPointer { rb in
-            guard let pw = rb.baseAddress, rb.count > 0 else { return 0 }
+        let flowMax: Double = !flowOn ? 0 : {
+            guard let pw = pflow, fwb.count > 0 else { return 0 }
             var m = pw[0]
-            for k in 1..<rb.count where pw[k] > m { m = pw[k] }
+            for k in 1..<fwb.count where pw[k] > m { m = pw[k] }
             return m
-        }
+        }()
 
         // Zufallsstrom: EINER JE TROPFEN aus dessen laufender Nummer, wenn diese
         // Charge Teil des fortlaufenden Stroms ist (Issue #2) — sonst einer je
@@ -313,19 +343,20 @@ public enum Hydraulic {
         // trotzdem weiter, und ein großer Schritt zog alle Tropfen aus einem
         // einzigen Strom — der Droplet-Pass blieb damit schrittweiten-abhängig.
         var batch = Mulberry32(seed: seed)
+        let pSpawnWeight = flowOn ? pflow : nil
         for i in 0..<count {
             var px = 0.0, py = 0.0
             if let firstDrop {
                 var rnd = dropRNG(seed: seed, index: firstDrop &+ UInt64(i))
                 (px, py) = spawnPosition(&rnd, n: n,
-                                         weight: flowOn ? flowWeight : [], weightMax: flowMax)
+                                         pweight: pSpawnWeight, weightMax: flowMax)
             } else {
                 (px, py) = spawnPosition(&batch, n: n,
-                                         weight: flowOn ? flowWeight : [], weightMax: flowMax)
+                                         pweight: pSpawnWeight, weightMax: flowMax)
             }
             if let seaLevel {
                 let start = Int(py) * n + Int(px)
-                if h[start] <= seaLevel { continue }
+                if ph[start] <= seaLevel { continue }
             }
             var dirX = 0.0, dirY = 0.0
             var speed = p.initialSpeed, water = p.initialWater, sediment = 0.0
@@ -340,11 +371,11 @@ public enum Hydraulic {
                 // Tropfen woanders → Rauschen), gereifte Tropfen sind ins Talnetz
                 // konvergiert (immer dieselben Zellen → Flüsse). Ohne Gewicht
                 // liegt das Rauschband nur ~5× unter den Trunk-Raten.
-                if trackOn { track[k] += min(1.0, Double(step) / 40) }
+                if trackOn { ptrack![k] += min(1.0, Double(step) / 40) }
 
                 // See-Interaktion (nickmcd Descend→Flood→Drain): Sediment als
                 // Delta am Eintritt abladen, zum Auslass springen, weiterlaufen.
-                if poolOn && hf[k] - h[k] > p.poolDepth {
+                if poolOn && phf![k] - ph[k] > p.poolDepth {
                     let dep = sediment * (1 - p.poolSedimentKeep)
                     sediment -= dep - deposit(k, dep)
                     var c = k, guardN = 0
@@ -352,10 +383,10 @@ public enum Hydraulic {
                     if recOn {
                         while guardN < 4 * n {
                             guardN += 1
-                            let r = receiver[c]
+                            let r = prec![c]
                             if r < 0 || r >= n * n { break }
                             c = Int(r)
-                            if hf[c] - h[c] <= p.poolDepth { exited = true; break }
+                            if phf![c] - ph[c] <= p.poolDepth { exited = true; break }
                         }
                     }
                     if !exited { break } // See ohne Auslass (Meer/Rand) → Tropfen endet
@@ -364,7 +395,7 @@ public enum Hydraulic {
                     speed = p.initialSpeed
                     continue
                 }
-                let hNW = h[k], hNE = h[k + 1], hSW = h[k + n], hSE = h[k + n + 1]
+                let hNW = ph[k], hNE = ph[k + 1], hSW = ph[k + n], hSE = ph[k + n + 1]
                 // Höhe + Gradient (bilinear)
                 let gradX = (hNE - hNW) * (1 - fy) + (hSE - hSW) * fy
                 let gradY = (hSW - hNW) * (1 - fx) + (hSE - hNE) * fx
@@ -384,8 +415,8 @@ public enum Hydraulic {
                 let nnx = Int(npx), nny = Int(npy)
                 let nfx = npx - Double(nnx), nfy = npy - Double(nny)
                 let nk = nny * n + nnx
-                let newHeight = h[nk] * (1 - nfx) * (1 - nfy) + h[nk + 1] * nfx * (1 - nfy)
-                             + h[nk + n] * (1 - nfx) * nfy + h[nk + n + 1] * nfx * nfy
+                let newHeight = ph[nk] * (1 - nfx) * (1 - nfy) + ph[nk + 1] * nfx * (1 - nfy)
+                             + ph[nk + n] * (1 - nfx) * nfy + ph[nk + n + 1] * nfx * nfy
                 let deltaH = newHeight - height
 
                 // Sedimentkapazität an dieser Stelle.
@@ -419,11 +450,12 @@ public enum Hydraulic {
                 // auf etablierten Läufen LANGSAMER (nickmcd-Sharpening: Tropfen
                 // im Fluss leben länger → der Fluss verlängert/verstärkt sich).
                 speed = (max(0, speed * speed - deltaH * p.gravity)).squareRoot()
-                let sv = streamOn ? min(1, max(0, stream[k])) : 0.0
+                let sv = streamOn ? min(1, max(0, pstream![k])) : 0.0
                 water *= (1 - p.evaporate * (1 - p.streamEvapDamp * sv))
                 px = npx; py = npy
                 if water < 1e-3 { break }
             }
         }
+        }}}}}}}}}}}}
     }
 }

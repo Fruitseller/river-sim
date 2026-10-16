@@ -759,3 +759,48 @@ for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; d
 RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
 ```
+
+---
+
+## L. Roh-Puffer-Zugriff in Hydraulic.erode (Oktober 2026) — 9,1 → 7,0 ms
+
+Anlass: `Hydraulic.erode` war mit ~9,5 ms/Schritt (~6,4 % des Produktions-Schritts)
+einer der verbliebenen Pässe, die noch komplett über Swift-Array-Subskripte
+(`inout [Double]`, `[Double]`, `[Bool]`, `[Int32]`) liefen. Bei Tausenden
+Tropfen mit jeweils bis zu 40 Schritten summierten sich Bounds-, Exklusivitäts-
+und COW-Prüfungen auf über zwei Millionen Zugriffe je Aufruf.
+
+### Was geändert wurde
+
+1. `h`, `rock`, `sed`, `track` sowie alle optionalen Eingabefelder (`hf`,
+   `receiver`, `stream`, `channel`, `depositDamp`, `underIce`, `flowWeight`,
+   `erodibility`) werden am Einstieg von `Hydraulic.erode` einmal über
+   `withUnsafeMutableBufferPointer` bzw. `withUnsafeBufferPointer` geöffnet.
+2. `dig` und `deposit` operieren direkt auf den rohen Zeigern.
+3. `spawnPosition` erhält eine Überladung für `UnsafePointer<Double>?`, sodass
+   auch die Ablehnungs-Stichprobe keine Array-Objekte herumreicht. Die bestehende
+   Array-Signatur bleibt für Tests erhalten und delegiert an die Zeiger-Variante.
+
+Arithmetik, Zufallszahlen und Schrittfolge sind 100 % identisch.
+
+### Gemessen
+
+Interleaved (5 Runden, abwechselnd `base` und `neu`, je `--repeat 3`, dieselbe
+Sitzung):
+
+| Runde | `Hydraulic.erode` base | `Hydraulic.erode` neu | Δ ms | Ersparnis |
+|---|---:|---:|---:|---:|
+| 1 | 8,18 ms | 6,93 ms | −1,25 ms | −15,3 % |
+| 2 | 9,95 ms | 6,81 ms | −3,14 ms | −31,6 % |
+| 3 | 10,04 ms | 6,77 ms | −3,27 ms | −32,6 % |
+| 4 | 8,57 ms | 7,22 ms | −1,35 ms | −15,8 % |
+| 5 | 8,65 ms | 7,05 ms | −1,60 ms | −18,5 % |
+| **Mittelwert** | **9,08 ms** | **6,96 ms** | **−2,12 ms** | **−23,3 %** |
+
+In jedem einzelnen Durchlauf war `Hydraulic.erode` messbar schneller.
+
+### Bit-Identität
+
+`simperf --hash` vor und nach der Änderung identisch (gleiche Maschine, gleiche Sitzung):
+`fingerprint 88de046751de3c2f`. Die Physik bleibt bit-identisch.
+
