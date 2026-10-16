@@ -45,8 +45,10 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   `SimCore.MaterialRender`) und Wolkenkörper über dem Kamm mit
   sonnenprojizierten Schatten; die PBR-Variante `prototype` der Studie ist
   damit entfernt (`docs/graphics-quality.md` § Material, Schnee, Wolken).
-  Offen in #174: Großform (A), Mäandergürtel mit `barAge` (B, Anknüpfung im
-  Talboden-Kanal), Wasser/Delta/Küste (C), Bedienung (E).
+  Status in #174: Großform (A) und Mäandergürtel (B) sind kalibriert und
+  abgenommen (s. eigene Punkte oben und Offene Punkte), Paket C hat
+  Restpunkte (Delta-Distributäre, Stream-Map im Oberlauf), offen ist die
+  Abnahme am Bild durch den Projekteigner (E).
 
 - **Bedienung nach Vorlage B/C (#174, Paket E):** Glas-Panels aus EINEM Theme
   (`game/ui/glass_theme.tres`), vier Randspalten (Titel/Jahr/Tempo und
