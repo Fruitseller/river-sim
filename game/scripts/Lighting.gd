@@ -50,6 +50,12 @@ const VALLEY_FOG_DENSITY := 0.035
 ## Raumfrequenz (Zellgröße ~3–4 km bei 1 Einheit ≈ 100 m).
 const CLOUD_STRENGTH := 0.24
 const CLOUD_SCALE := 0.028
+## Weiche Blende unter der Wolkenbasis (Welteinheiten ≈ 100 m): der Schatten
+## läuft dort aus, statt an der Basis hart abzuschneiden — Gipfel, die die
+## Basis durchstoßen, trügen sonst eine CLOUD_STRENGTH-Helligkeitsstufe als
+## Höhenlinie. Einige Zehntel: breiter als die Körnung der Deckung, schmaler
+## als der Ebenen-Abstand CLOUD_LAYER_STEP der Wolkenkörper.
+const CLOUD_BASE_FADE := 0.8
 
 ## Wolkenkörper über dem Kamm (#174 D, game/shaders/cloud_body.gdshader).
 ## Die Wolkenbasis liegt knapp über dem oberen Felsband der Welt
@@ -154,6 +160,7 @@ static func apply_clouds(mats: Array[ShaderMaterial], quality: String) -> void:
 		mat.set_shader_parameter("cloud_strength", CLOUD_STRENGTH)
 		mat.set_shader_parameter("cloud_scale", CLOUD_SCALE)
 		mat.set_shader_parameter("cloud_sun_shift", Vector2(to_sun.x, to_sun.z) / to_sun.y)
+		mat.set_shader_parameter("cloud_base_fade", CLOUD_BASE_FADE)
 	place_clouds(mats, CLOUD_RIDGE_FALLBACK.x, CLOUD_RIDGE_FALLBACK.y)
 
 ## Wolkenbasis und Kamm-Fenster aus den Höhenbändern der Welt (Welt-Y):
