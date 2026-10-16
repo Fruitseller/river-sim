@@ -11,7 +11,7 @@
 // dunklen Halo; so liest es sich auf hellem Grund (Sand, Schnee, Wolken) wie
 // auf dunklem (Wald, Wasser, Hangschatten). Unlit und ohne Nebel.
 //
-// Daten je Ecke (gebaut in Main.gd, `_brush_bands`; dort stehen Breiten und
+// Daten je Ecke (gebaut in Main.gd, `brush_bands`; dort stehen Breiten und
 // Farben, hier nur die Darstellung des Halos):
 //   VERTEX       eigener Endpunkt (relativ zur Kuppelmitte)
 //   CUSTOM0.xyz  anderer Endpunkt; CUSTOM0.w ±1 dreht die Normale, damit beide
