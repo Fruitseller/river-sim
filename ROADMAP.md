@@ -870,8 +870,11 @@ las. Wächter: `RenderFrameTests`.
   RS_*-Env-Schalter; Licht/Environment und Wolkenschatten seit #151 in
   `game/scripts/Lighting.gd` (feste Welt-Sonne, Qualitätsstufen).
 - `game/tests/*.gd` — die Godot-seitigen Wächter (`smoke`, `water_geometry`,
-  `river_ribbons`, `build_stamp_parity`, `water_rings`, `pickaxe_repro`,
-  `lighting`, `relief`, `canopy`) plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter).
+  `water_uniforms`, `river_ribbons`, `build_stamp_parity`, `graphics_study`,
+  `water_rings`, `pickaxe_repro`, `lighting`, `relief`, `canopy`, `ui_layout`)
+  plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter);
+  `sculpt_cost.gd` ist das Messwerkzeug zum Pinsel-Nachzug,
+  `water_contract.gd` der gemeinsame Helfer der Wasser-Vertragstests.
 
 ## Arbeitsweise in diesem Projekt (ernst nehmen)
 
