@@ -47,9 +47,23 @@ float cloud_density(vec2 world_xz, float t) {
 	     + cloud_noise(q * 4.7 + 3.1) * 0.15;
 }
 
-// Deckung 0 … 1: dieselbe Schwelle für Schatten und Wolkenkörper.
+// Deckungs-Schwelle der Wolkendichte (≈ 0 … 1): EINE Quelle für Schatten und
+// Wolkenkörper — eine Kopie im Körper-Shader würde gegen die hier drüber
+// gedreht, und der Schatten läge neben seiner Wolke.
+const float CLOUD_COVER_LO = 0.56;
+const float CLOUD_COVER_HI = 0.70;
+
+// Deckung 0 … 1: dieselbe Schwelle für Schatten und Wolkenkörper; `lift` hebt
+// sie an (höhere Ebenen des Wolkenkörpers zeigen nur den dichteren Kern,
+// cloud_body.gdshader).
+float cloud_cover_at(vec2 world_xz, float t, float lift) {
+	return smoothstep(CLOUD_COVER_LO + lift, CLOUD_COVER_HI + lift, cloud_density(world_xz, t));
+}
+
+// Deckung 0 … 1 an der Basis (lift 0): Schwelle von Schatten und unterster
+// Wolkenkörper-Ebene.
 float cloud_cover(vec2 world_xz, float t) {
-	return smoothstep(0.56, 0.70, cloud_density(world_xz, t));
+	return cloud_cover_at(world_xz, t, 0.0);
 }
 
 // Faktor für ALBEDO: 1 = Sonne, 1 − cloud_strength = im Wolkenschatten.
