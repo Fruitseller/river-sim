@@ -303,7 +303,7 @@ final class MaterialTests: XCTestCase {
         XCTAssertTrue(body.contains("float density = cloud_density(xz, u_time);"),
                       "Körper aus derselben Dichte wie der Schatten")
         let include = try RepoSource.file("game/shaders/clouds.gdshaderinc")
-        XCTAssertTrue(include.contains("return 1.0 - cloud_cover(at, t) * cloud_strength;"),
+        XCTAssertTrue(include.contains("return 1.0 - cloud_cover(at, t) * cloud_strength * fade;"),
                       "Schatten aus derselben Deckung wie der Körper")
         for path in ["game/shaders/terrain.gdshader", "game/shaders/water.gdshader",
                      "game/shaders/ocean.gdshader"] {

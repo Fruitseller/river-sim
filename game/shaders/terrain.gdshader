@@ -954,5 +954,13 @@ void fragment() {
 	ROUGHNESS = mix(land_roughness, mix(water_roughness_steep, water_roughness_grazing, fresnel), wet);
 	METALLIC = 0.0;
 	SPECULAR = mix(0.5, mix(water_specular_steep, water_specular_grazing, fresnel), wet);
-	ALBEDO *= cloud_light(material_pos, u_time);
+	// Wolkenschatten auf der GERENDERTEN Oberfläche: Weltposition aus dem
+	// view-space VERTEX (INV_VIEW_MATRIX), nicht die Sim-Höhe — Seespiegel-
+	// Anhebung, Relief-Verschiebung und Kronendach heben die sichtbare
+	// Fläche über die Sim-Zelle, und die Schattenprojektion (cloud_sun_shift
+	// je Einheit Höhendifferenz) rückte ihn sonst um diese Differenz: geschert
+	// auf Seen, versetzt gegen die Bänder, die ihre echte Vertex-Höhe
+	// übergeben (Review zu #174 D).
+	vec3 shadow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	ALBEDO *= cloud_light(shadow_pos, u_time);
 }

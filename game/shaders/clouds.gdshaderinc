@@ -18,6 +18,12 @@ uniform float cloud_scale;
 // dem Wolkenkörper.
 uniform float cloud_height;
 uniform vec2 cloud_sun_shift;
+// Weiche Blende unter der Wolkenbasis (Welteinheiten ≈ 100 m): Über diese
+// Höhe läuft der Schatten aus, statt an der Basis hart abzuschneiden —
+// sonst trüge jeder Gipfel, der die Wolkenbasis durchstößt, eine
+// cloud_strength-Helligkeitsstufe als Höhenlinie (Review zu #174 D).
+// Wert setzt Lighting.gd.
+uniform float cloud_base_fade;
 
 float cloud_hash(vec2 p) {
 	p = fract(p * vec2(127.1, 311.7));
@@ -47,13 +53,16 @@ float cloud_cover(vec2 world_xz, float t) {
 }
 
 // Faktor für ALBEDO: 1 = Sonne, 1 − cloud_strength = im Wolkenschatten.
-// `world_pos` in Weltkoordinaten; alle Shader übergeben dieselben (Ursprung
-// Weltmitte), sonst bekäme der Schatten an der Uferlinie eine Kante. Was über
-// der Wolkenbasis liegt, steht in der Sonne.
+// `world_pos` ist die tatsächlich GERENDERTE Oberfläche in Weltkoordinaten
+// (Ursprung Weltmitte); alle Shader übergeben dieselbe, sonst bekäme der
+// Schatten an der Uferlinie eine Kante oder läge neben seiner Wolke. Über
+// der Wolkenbasis steht die Oberfläche in der Sonne; knapp darunter blendet
+// der Schatten über cloud_base_fade Welteinheiten weich aus.
 float cloud_light(vec3 world_pos, float t) {
 	if (!clouds_enabled || world_pos.y >= cloud_height) {
 		return 1.0;
 	}
+	float fade = 1.0 - smoothstep(cloud_height - cloud_base_fade, cloud_height, world_pos.y);
 	vec2 at = world_pos.xz + cloud_sun_shift * (cloud_height - world_pos.y);
-	return 1.0 - cloud_cover(at, t) * cloud_strength;
+	return 1.0 - cloud_cover(at, t) * cloud_strength * fade;
 }

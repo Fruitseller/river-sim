@@ -24,7 +24,7 @@ const SHADERS := [
 	"res://shaders/cloud_body.gdshader",
 ]
 const CLOUD_UNIFORMS := ["clouds_enabled", "cloud_strength", "cloud_scale", "cloud_height",
-	"cloud_sun_shift"]
+	"cloud_sun_shift", "cloud_base_fade"]
 
 var failures := 0
 
