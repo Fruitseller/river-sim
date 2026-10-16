@@ -1224,3 +1224,65 @@ Rauschoktaven. Die Messung gehört vor das Mergen auf den Referenz-Mac
 **Abnahme (Bildpunkte 31–38).** Bewertet der Projekteigner auf den
 Matrix-Bögen und den Vorlagen-Kameras; die Bilder dieses Pakets entstehen auf
 dem Referenz-Mac mit `scripts/graphics-matrix.sh baseline`.
+
+## Zielbild #174
+
+Stand 16. Oktober 2026. Das Zielbild (Issue #174, Vorlagen A–C unter
+`docs/references/zielbild/`, Abnahmebogen 50 × 2 %) baut auf Spec #156 auf.
+Die Pakete A und B ändern die Physik absichtlich (`simperf --hash` ändert
+sich), C–E sind Render- und UI-Arbeit. Kennzahlen, Kalibrier-Läufe und
+Befunde: `docs/zielbild-measurements.md`.
+
+- **A — Großform:** `generate()` legt die Grate entlang eines Gebirgskamms mit
+  Seitenästen (`RangeSkeleton`) statt über die ganze Fläche; zwei bis vier
+  Tieflandkorridore laufen vom Kamm zur Küste, kein Land am Gitterrand, und
+  der Kamm reicht über die Schneegrenze (Gletscher ab Jahr 20.000). Wächter:
+  `ZielbildLandformTests`.
+- **B — Mäandergürtel:** `meanderBelt` ersetzt Migration und Ufer-Stempel —
+  Kanalbreite als Sim-Größe, Migration nach Howard–Knutson, asymmetrisches
+  Bett (Kolk außen, Gleithang innen), Gleithang-Bank auf bankfull mit
+  `barAge` als Zustandsfeld, Hals- und Chute-Cutoff; die Aue entsteht aus
+  der lateralen Planation. Abnahme der Punkte 9–13 im Zeitmittel je Seed
+  (s. Messreihe).
+- **C — Fluss, Delta, Küste:** Tiefenfarbe im Band nach Querprofil (UV2.y),
+  Sand und Scroll-Rippen aus `barAge` (`SimRender.BarMaterial`), nasse Wiese
+  statt Tümpel-Teppich (`WetMeadow`), Strände und Felsküste
+  (`CoastMaterial`), Sedimentfahnen je Mündung (`SedimentPlume`) sowie die
+  Render-Fixes an bergauf laufenden Bändern und Raster-Abkürzungen auf
+  Gleithang-Bänken (s. Messreihe).
+- **D — Material, Schnee, Wolken:** s. [Material, Schnee, Wolken
+  (#174 D)](#material-schnee-wolken-174-d).
+- **E — Bedienung:** Glas-Panels aus EINEM Theme, gezeichnete Icons statt
+  Emoji, Pinsel als Gitterkuppel, Kamera-Presets Diorama/Tal/Nah auf F1–F3
+  (Wächter `tests/ui_layout.gd`).
+
+Vorher/Nachher-Bögen in `docs/screenshots/zielbild-174/`: je Seed und
+Stadium alle neun Matrix-Kameras, oben `main` vor #174, unten der
+Integrationsstand — [Seed 1337, Jahr 0](screenshots/zielbild-174/seed1337_0k.jpg),
+[Jahr 20.000](screenshots/zielbild-174/seed1337_20k.jpg),
+[Jahr 100.000](screenshots/zielbild-174/seed1337_100k.jpg);
+[Seed 42, Jahr 0](screenshots/zielbild-174/seed42_0k.jpg),
+[Jahr 20.000](screenshots/zielbild-174/seed42_20k.jpg),
+[Jahr 100.000](screenshots/zielbild-174/seed42_100k.jpg);
+[Seed 20, Jahr 0](screenshots/zielbild-174/seed20_0k.jpg),
+[Jahr 20.000](screenshots/zielbild-174/seed20_20k.jpg),
+[Jahr 100.000](screenshots/zielbild-174/seed20_100k.jpg).
+
+Die drei Vorlagen-Ansichten über die Tasten-Presets F1–F3 (Diorama, Tal,
+Nah; adaptiv, alle drei Seeds):
+
+![Presets F1–F3, Jahr 20.000](screenshots/zielbild-174/presets_20k.jpg)
+
+![Presets F1–F3, Jahr 100.000](screenshots/zielbild-174/presets_100k.jpg)
+
+Die festen Matrix-Kameras sind für die Welten vor der Großform aus A gewählt
+und zeigen auf der neuen Welt teils andere Ausschnitte; für das Urteil über
+die Vorlagen sind die Preset-Bögen gedacht (s. Messreihe § Vorher/Nachher-Bögen).
+
+**Frame-Zeiten (Abnahmepunkt 47):** Standbild und Kamerafahrt bleiben in
+`balanced`, maximiert 3456×2104, im Budget — Zahlen, je Kamera und die
+Nachmessung auf dem Endstand stehen in `docs/zielbild-measurements.md`
+§ „Bildprüfung und Frame-Zeiten auf dem Referenz-Mac".
+
+**Offene Bildpunkte** (großer See bei flachem Blick milchig, Fels hell und
+glatt gegenüber den Vorlagen) und die offenen Sim-Reste: `docs/zielbild-measurements.md` § „Vorher/Nachher-Bögen" und `ROADMAP.md` § Offene Punkte.
