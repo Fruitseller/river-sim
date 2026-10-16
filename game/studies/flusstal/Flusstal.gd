@@ -42,6 +42,14 @@ const AB_SKIP_FRAMES := 12
 var ab_rounds := maxi(1, int(OS.get_environment("RS_STUDY_ROUNDS"))) if OS.has_environment("RS_STUDY_ROUNDS") else 8
 var ab_frame := 0
 var ab_blocks: Dictionary = {} # "runde:zustand" -> Array[float] (Bildintervalle in ms)
+# Hauptthread-Zeit je abgeholtem Hintergrund-Schritt (Main.last_apply_usec, ms).
+var study_applies := 0
+var study_apply_ms: Array[float] = []
+# Wartezeit des Hauptthreads auf Hintergrund-Schritte bei Messbeginn (ms).
+var study_wait_start := -1.0
+# Frame-Abstände der Frames, die einen Schritt hochgeladen haben (ms).
+var study_drawn_applies := 0
+var study_apply_intervals: Array[float] = []
 
 func _ready() -> void:
 	# Nur die dokumentierte Variante ist gültig: ein Tippfehler oder eine leere
@@ -129,6 +137,12 @@ func _process(delta: float) -> void:
 		elif study_mode == "simulation" and study_elapsed > 2.0:
 			year_rate = 60.0
 	super._process(delta)
+	if study_elapsed > 2.0 and study_wait_start < 0.0:
+		study_wait_start = sim.stepWaitMilliseconds()
+	if step_applies != study_applies:
+		study_applies = step_applies
+		if study_elapsed > 2.0:
+			study_apply_ms.append(last_apply_usec / 1000.0)
 	if study_mode == "shot":
 		# Gleiche Wasser-Animationsphase unabhängig von Shader-Kompilierzeiten.
 		u_time = 1.0
@@ -245,12 +259,19 @@ func _study_drawn() -> void:
 		_study_drawn_ab(now)
 		return
 	if study_elapsed > 2.0 and study_last_draw != 0:
-		study_intervals.append(float(now - study_last_draw) / 1000.0)
+		var interval := float(now - study_last_draw) / 1000.0
+		study_intervals.append(interval)
+		if step_applies != study_drawn_applies:
+			study_apply_intervals.append(interval)
+	study_drawn_applies = step_applies
 	study_last_draw = now
 	var finished := study_frames >= 60 if study_mode == "shot" else study_elapsed >= 12.0
 	if not finished:
 		return
 	RenderingServer.frame_post_draw.disconnect(_study_drawn)
+	# Wartezeit IM Messfenster: vor jedem weiteren Sim-Aufruf ablesen, die
+	# warten selbst auf einen noch rechnenden Schritt.
+	var waited: float = sim.stepWaitMilliseconds() - maxf(study_wait_start, 0.0)
 	# Bei Movie-Läufen schreibt Godot selbst den Film; kein zusätzliches PNG
 	# (Review zu #121, konsistent mit dem Timing-Zweig darunter).
 	if not study_output.is_empty() and Engine.get_write_movie_path().is_empty():
@@ -267,6 +288,19 @@ func _study_drawn() -> void:
 			total += interval
 			if interval > 33.3:
 				over_budget += 1
+		# Hochladen der Hintergrund-Schritte (nur Betrieb `simulation`):
+		# Median und Maximum der Hauptthread-Zeit je Schritt.
+		study_apply_ms.sort()
+		var apply_median: float = study_apply_ms[study_apply_ms.size() / 2] \
+			if not study_apply_ms.is_empty() else 0.0
+		var apply_max: float = study_apply_ms.back() if not study_apply_ms.is_empty() else 0.0
+		# Die Frames mit Hochladen selbst: ihr längster Abstand ist die Frage,
+		# ob das Hochladen das Budget sprengt.
+		study_apply_intervals.sort()
+		var apply_frame_median: float = study_apply_intervals[study_apply_intervals.size() / 2] \
+			if not study_apply_intervals.is_empty() else 0.0
+		var apply_frame_max: float = study_apply_intervals.back() \
+			if not study_apply_intervals.is_empty() else 0.0
 		print("STUDY_TIMING ", JSON.stringify({"rendered_frames": study_intervals.size(),
 			"mean_ms": total / study_intervals.size(),
 			"p95_ms": study_intervals[int((study_intervals.size() - 1) * 0.95)],
@@ -274,8 +308,11 @@ func _study_drawn() -> void:
 			"max_ms": study_intervals.back(), "over_budget_frames": over_budget,
 			"viewport": str(get_viewport().size), "mode": study_mode,
 			"quality": render_quality, "terrain_grid": terrain_grid,
-			"seed": sim_seed, "year": sim.currentYear(), "target": str(cam_target),
+			"seed": sim_seed, "year": shown_year, "target": str(cam_target),
 			"distance": cam_dist, "yaw": study_start_yaw, "pitch": cam_pitch,
 			"variant": study_variant,
+			"steps_applied": study_apply_ms.size(), "apply_median_ms": apply_median,
+			"apply_max_ms": apply_max, "step_wait_ms": waited,
+			"apply_frame_median_ms": apply_frame_median, "apply_frame_max_ms": apply_frame_max,
 			"movie": false }))
 	get_tree().quit()
