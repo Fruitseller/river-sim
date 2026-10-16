@@ -72,6 +72,14 @@ const CLOUD_RIDGE_FALLBACK := Vector2(12.0, 13.9)  # rockStart, rockFull in Welt
 const CLOUD_LAYERS := 3
 const CLOUD_LAYER_STEP := 0.45
 const CLOUD_BODY_OPACITY := 0.55
+## Tuning der Wolkenkörper (cloud_body.gdshader, Wächter game/tests/lighting.gd):
+## höhere Ebenen zeigen nur den Kern (Schwelle je Ebene um CLOUD_BODY_LIFT
+## angehoben); der Selbstschatten probiert die Dichte
+## CLOUD_BODY_SELF_SHADOW_DIST Welteinheiten zur Sonne und hellt/abdunkelt um
+## die Dichte-Differenz mal CLOUD_BODY_SELF_SHADOW_GAIN auf.
+const CLOUD_BODY_LIFT := 0.10
+const CLOUD_BODY_SELF_SHADOW_DIST := 0.9
+const CLOUD_BODY_SELF_SHADOW_GAIN := 2.5
 
 ## Was die Qualitätsstufen am Licht unterscheiden, gemessen im maximierten
 ## Fenster (docs/graphics-quality.md §Licht). `performance` spart Schatten-
@@ -202,6 +210,9 @@ static func make_cloud_bodies(quality: String, world_size: float, hscale: float)
 		mat.set_shader_parameter("hscale", hscale)
 		mat.set_shader_parameter("cloud_body_layer", float(i) / float(max(CLOUD_LAYERS - 1, 1)))
 		mat.set_shader_parameter("cloud_body_opacity", CLOUD_BODY_OPACITY)
+		mat.set_shader_parameter("cloud_body_lift", CLOUD_BODY_LIFT)
+		mat.set_shader_parameter("cloud_body_self_shadow_dist", CLOUD_BODY_SELF_SHADOW_DIST)
+		mat.set_shader_parameter("cloud_body_self_shadow_gain", CLOUD_BODY_SELF_SHADOW_GAIN)
 		mat.set_shader_parameter("cloud_body_sun", to_sun)
 		mi.material_override = mat
 		root.add_child(mi)

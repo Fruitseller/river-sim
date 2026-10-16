@@ -25,6 +25,10 @@ const SHADERS := [
 ]
 const CLOUD_UNIFORMS := ["clouds_enabled", "cloud_strength", "cloud_scale", "cloud_height",
 	"cloud_sun_shift", "cloud_base_fade"]
+## Tuning-Werte des Wolkenkörpers (Review zu #174 D): reisen nur über
+## Lighting.gd, deklariert default-frei im Shader.
+const BODY_TUNING_UNIFORMS := ["cloud_body_lift", "cloud_body_self_shadow_dist",
+	"cloud_body_self_shadow_gain"]
 
 var failures := 0
 
@@ -115,8 +119,26 @@ func _check_clouds() -> void:
 				"%s: Wolkenschatten folgen der Qualitätsstufe %s" % [SHADERS[i], quality])
 
 ## Wolkenkörper (#174 D): drei Ebenen über dem Kamm, Basis = Schattenbasis,
-## in `performance` unsichtbar; der Schatten wandert gegen die Sonne.
+## in `performance` unsichtbar; der Schatten wandert gegen die Sonne. Das
+## Tuning des Körpers reist nur über Lighting.gd (default-frei deklariert,
+## gesetzt), die Deckungs-Schwelle teilt er mit dem Schatten über
+## cloud_cover_at — keine Kopie im Körper-Shader.
 func _check_cloud_bodies() -> void:
+	var body_src := FileAccess.get_file_as_string("res://shaders/cloud_body.gdshader")
+	var decl_re := RegEx.new()
+	decl_re.compile("(?m)^uniform\\s+\\w+\\s+(\\w+)([^;]*);")
+	var declared := {}
+	for m in decl_re.search_all(body_src):
+		declared[m.get_string(1)] = m.get_string(2)
+	for name in BODY_TUNING_UNIFORMS:
+		_check(declared.has(name), "cloud_body.gdshader muss %s deklarieren" % name)
+		if declared.has(name):
+			_check(declared[name].find("=") < 0,
+				"%s trägt einen Literal-Default — der Wert gehört nach Lighting.gd" % name)
+	_check(body_src.find("cloud_cover_at(") >= 0,
+		"Körper teilt die Deckungs-Schwelle mit dem Schatten (cloud_cover_at aus dem Include)")
+	_check(body_src.find("smoothstep(0.56") < 0 and body_src.find("smoothstep(0.70") < 0,
+		"Körper darf die Schwelle nicht aus clouds.gdshaderinc kopieren")
 	for quality in ["performance", "balanced"]:
 		var bodies := Lighting.make_cloud_bodies(quality, 100.0, 24.0)
 		var mats := Lighting.cloud_body_materials(bodies)
@@ -139,6 +161,9 @@ func _check_cloud_bodies() -> void:
 			_check(mat.get_shader_parameter("cloud_height") == base, "Körper und Schatten teilen die Basis")
 			_check(mat.get_shader_parameter("cloud_body_ridge_lo") == 12.0
 				and mat.get_shader_parameter("cloud_body_ridge_hi") == 14.0, "Kamm-Fenster gesetzt")
+			for name in BODY_TUNING_UNIFORMS:
+				_check(mat.get_shader_parameter(name) != null,
+					"Wolkenkörper-Tuning %s nicht gesetzt (%s)" % [name, quality])
 		var shift: Vector2 = ground.get_shader_parameter("cloud_sun_shift")
 		var to_sun := Lighting.sun_direction()
 		_check(shift.dot(Vector2(to_sun.x, to_sun.z)) > 0.0,
