@@ -636,7 +636,8 @@ Was bewusst NICHT angetastet wurde:
   ein Intervall aus, trifft nicht zu). Ein größeres Intervall wäre eine
   Physik-Änderung und braucht eine eigene Kalibrier-Runde.
 - Alles, was mit `dt` skaliert (`Hydraulic.erode`), ist für die Echtzeit-FPS
-  ohnehin nicht der Treiber.
+  ohnehin nicht der Treiber (im Produktions-Sprung dt = 100 aber ~9,5 ms; im
+  Oktober 2026 auf Roh-Puffer umgestellt, gemessen 9,1 → 7,0 ms, `docs/perf-measurements.md` §L).
 
 Nächste Hebel, wenn wieder Laufzeit gebraucht wird: Sim-Schritt vom
 Render-Thread entkoppeln (Doppelpuffer), oder die drei verbliebenen seriellen
