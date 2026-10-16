@@ -783,10 +783,15 @@ und COW-Prüfungen auf über zwei Millionen Zugriffe je Aufruf.
 
 Arithmetik, Zufallszahlen und Schrittfolge sind 100 % identisch.
 
-### Gemessen
+### Gemessen (Linux-VM, 4 Kerne, Lastmittel ~0,7)
 
-Interleaved (5 Runden, abwechselnd `base` und `neu`, je `--repeat 3`, dieselbe
-Sitzung):
+Interleaved nach der Hygiene aus §I/§K (eigene Binärdateien `simperf.base` /
+`simperf.neu`, abwechselnd, je `--repeat 3`, 5 Paare in derselben Sitzung),
+Linux-VM, 4 Kerne (`nproc`), Lastmittel ~0,7 (`uptime`).
+
+Gemessene Eingabe: Standard-Produktions-Config von `simperf` (`n = 720`,
+`world = 112.4789`, `seed = 1337`, `warmup` 100 Schritte à `dt = 100.0`,
+Messung 30 Schritte à `dt = 100.0`):
 
 | Runde | `Hydraulic.erode` base | `Hydraulic.erode` neu | Δ ms | Ersparnis |
 |---|---:|---:|---:|---:|
@@ -797,10 +802,27 @@ Sitzung):
 | 5 | 8,65 ms | 7,05 ms | −1,60 ms | −18,5 % |
 | **Mittelwert** | **9,08 ms** | **6,96 ms** | **−2,12 ms** | **−23,3 %** |
 
-In jedem einzelnen Durchlauf war `Hydraulic.erode` messbar schneller.
+Anteil von `Hydraulic.erode` am Produktions-Schritt nach der Änderung:
+gemessen 6,85–7,09 ms/Schritt (~4,4–4,8 %, im Mittel 6,96 ms bzw. ~4,8 % bei
+~145 ms Gesamtschrittzeit, vor der Änderung ~6,4 %).
+
+**Einordnung:** Auf Pass-Ebene ist die Ersparnis in 5/5 Runden reproduzierbar
+(−22 bis −23 %). Auf Gesamt-Schritt-Ebene beträgt der Effekt ~2 ms von ~145 ms
+(~1,4–1,5 %) und ist damit kleiner als die Block-zu-Block-Streuung der VM (~5 %).
+In 5/5 Runden liegt das Gesamt-Minimum unter base, aber nicht jeder einzelne
+Messblock. Das ist bei einem Pass, der unter 5 % der Gesamtlaufzeit ausmacht,
+zu erwarten.
 
 ### Bit-Identität
 
 `simperf --hash` vor und nach der Änderung identisch (gleiche Maschine, gleiche Sitzung):
 `fingerprint 88de046751de3c2f`. Die Physik bleibt bit-identisch.
 
+### Reproduktion
+
+```sh
+swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+cp SimCore/.build/release/simperf /tmp/simperf.base    # bzw. .neu, je Stand
+for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; done
+/tmp/simperf.base --hash && /tmp/simperf.neu --hash    # Physik bit-identisch: 88de046751de3c2f
+```
