@@ -158,7 +158,10 @@ Bildern. Ein normal gestartetes Spiel aktiviert die Studie nicht.
 ## Bewegung
 
 Bewegungsaufnahmen mit Godots MovieWriter bei festen 30 Bildern pro Sekunde,
-maximiert. Reproduzierbare Bewegungsbelege, keine FPS-Messungen.
+maximiert. Reproduzierbare Bewegungsbelege, keine FPS-Messungen. Der Befehl
+ist der historische aus der Studienzeit: die Variante `prototype` gibt es
+seit #174 D nicht mehr (s. [Reproduktion](#reproduktion)), die Filme der
+Tabelle entstanden so; heutige Aufnahmen laufen mit `baseline`.
 
 ```sh
 RS_STUDY_MOVIE=/tmp/prototype-orbit.avi \
@@ -297,8 +300,9 @@ Für #117 übertragbar (Stand der Studie; was daraus wurde:
 [Abschluss Spec #156](#abschluss-spec-156)): Verschiebung als gebackene Render-Ableitung (gehört nach
 SimRender oder als GPU-Pass in die Brücke), Kronendach statt Einzelbäumen in
 der Übersicht, Schutzmaske aus Wasserfeld und Bändern, Ozean nach Wassertiefe.
-Offen: Instanzbäume an Waldrändern für Nahsicht,
-Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen 720er-Gitters.
+Offen: Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen
+720er-Gitters. Instanzbäume an Waldrändern für die Nahsicht sind mit dem
+Kronendach #152 entfallen (s. [Kronendach](#kronendach-in-der-anwendung-152)).
 
 ## Übernahme in die Produktion
 
