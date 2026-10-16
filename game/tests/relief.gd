@@ -12,7 +12,9 @@ extends SceneTree
 ##  - Pinselkuppel und Kameraziel liegen auf der SICHTBAREN Fläche (Sim-Höhe plus
 ##    Verschiebung), der Pinsel ändert die Sim-Zelle unter dem Treffer;
 ##  - die echte Verformung blendet mit dem Geländealter ein: auf junger Welt
-##    liegt die sichtbare Fläche auf der Sim-Höhe.
+##    liegt die sichtbare Fläche auf der Sim-Höhe;
+##  - der Zeitraffer rechnet im Hintergrund (docs/perf-measurements.md §L): ein
+##    Strich, der währenddessen beginnt, wartet nicht auf den Schritt.
 ## Der Dummy-Renderer zeichnet den Back-Pass nicht; für die Flächen-Prüfung
 ## bekommt Main deshalb eine bekannte Verschiebung (+1 Einheit) gesetzt.
 ## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
@@ -57,6 +59,7 @@ func _process(_delta: float) -> bool:
 	done = true
 	_check_bake_cadence(main)
 	_check_visible_surface(main)
+	_check_stroke_never_waits(main)
 	_check_regen_does_not_fade(main)
 	main.queue_free()
 	if failures > 0:
@@ -65,6 +68,29 @@ func _process(_delta: float) -> bool:
 	print("RELIEF_OK")
 	quit(0)
 	return true
+
+## Ein Strich, der beginnt, während ein Hintergrund-Schritt rechnet
+## (docs/perf-measurements.md §L), wartet nicht auf ihn: er setzt aus, bis der
+## Schritt abgeholt und hochgeladen ist, und malt dann auf dem neuen Stand.
+func _check_stroke_never_waits(main: Node) -> void:
+	main.year_rate = 0.0
+	main._settle_sim()
+	var year: float = main.shown_year
+	var waited: float = main.sim.stepWaitMilliseconds()
+	main.sim.beginStep(15.0, main.FRAME_TIMELAPSE, main._now())
+	main.sculpting = true
+	main.last_activity_msec = Time.get_ticks_msec()
+	main._process(0.05)
+	_check(main.sim.stepWaitMilliseconds() == waited,
+		"Der Pinsel wartet nicht auf den Hintergrund-Schritt")
+	while main.sim.stepInFlight() and not main.sim.stepReady():
+		OS.delay_msec(1)
+	main._process(0.05) # holt ab, dann malt der Strich
+	main.sculpting = false
+	_check(main.shown_year == year + 15.0 and not main.sim.stepInFlight(),
+		"Der Schritt ist abgeholt, bevor der Strich weitermalt (Jahr %s → %s)"
+			% [year, main.shown_year])
+	_check(main.sim.stepWaitMilliseconds() == waited, "Auch das Abholen wartet nicht")
 
 ## Neugenerieren mitten im Zeitraffer zeigt die neue Welt sofort, statt sie
 ## aus der alten einzublenden (Review #173). Zuletzt: es tauscht die Welt.
@@ -118,20 +144,29 @@ func _check_bake_cadence(main: Node) -> void:
 		main._process(0.02)
 	_check(main.relief_bakes == before, "Standbild darf nicht neu backen (%d → %d)"
 		% [before, main.relief_bakes])
-	var year_before: float = main.sim.currentYear()
+	var year_before: float = main.shown_year
 	main.year_rate = 60.0
 	var ticks := 0
 	var faded := false
 	var height_faded := false
 	var overlay_faded := false
 	for i in 40:
-		var y: float = main.sim.currentYear()
+		var y: float = main.shown_year
 		main._process(0.02)
-		if main.sim.currentYear() != y:
+		if main.shown_year != y:
 			ticks += 1
 		faded = faded or main.relief_mix < 1.0
 		height_faded = height_faded or main.height_fade.mix < 1.0
 		overlay_faded = overlay_faded or main.overlay_fade.mix < 1.0
+		# Der Schritt rechnet im Hintergrund (SimNode.beginStep): echte Zeit
+		# vergehen lassen, bis er fertig ist; der nächste Frame holt ihn ab.
+		while main.sim.stepInFlight() and not main.sim.stepReady():
+			OS.delay_msec(1)
+	# Ein noch liegender Schritt wird abgeholt, bevor der Test die Sim direkt fragt.
+	var y_last: float = main.shown_year
+	main._settle_sim()
+	if main.shown_year != y_last:
+		ticks += 1
 	# Die Overlay-Drossel läuft auf der echten Uhr (0,30 s); die kurzen
 	# Test-Frames schaffen das nicht sicher. Ein Frame MIT Overlays während
 	# des Zeitraffers muss die Overlay-Blende starten.
@@ -168,7 +203,7 @@ func _check_bake_cadence(main: Node) -> void:
 		and main.river_mat.get_shader_parameter("ribbon_blend") == 1.0,
 		"Band-Blende endet auf dem neuen Stand, der alte verschwindet")
 	var bakes: int = main.relief_bakes - before
-	_check(ticks > 0 and main.sim.currentYear() > year_before, "Zeitraffer muss Sim-Schritte machen")
+	_check(ticks > 0 and main.shown_year > year_before, "Zeitraffer muss Sim-Schritte machen")
 	_check(bakes >= ticks and bakes <= 2 * ticks,
 		"Je Sim-Schritt ein Back-Pass (Schritte %d, Back-Pässe %d)" % [ticks, bakes])
 

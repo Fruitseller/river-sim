@@ -61,7 +61,7 @@ final class RiverFadeTests: XCTestCase {
     func testMainHandsTheOldBandsToTheOutgoingMesh() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let body = try XCTUnwrap(try main.captures(
-            pattern: "func _upload_ribbon_mesh\\(\\) -> void:\\n((?:\\t.*\\n|\\n)*)").first)
+            pattern: "func _upload_ribbon_mesh\\(frame: Dictionary\\) -> void:\\n((?:\\t.*\\n|\\n)*)").first)
         for needle in ["var fade := _timelapse_fading()",
                        "river_mesh = river_prev_mesh",
                        "river_prev_mesh = shown",

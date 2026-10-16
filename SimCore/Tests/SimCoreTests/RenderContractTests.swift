@@ -72,9 +72,13 @@ final class RenderContractTests: XCTestCase {
                        hint: "100k behält sichtbare Reliefstruktur")
         assertContains(main, "const TERRAIN_DETAIL_AGE_YEARS := 100000.0",
                        hint: "Rampe endet am größten UI-Zeitsprung")
+        // Das Alter der hochgeladenen Höhen, nicht das der Sim: im Zeitraffer
+        // rechnet die schon am nächsten Schritt (perf-measurements §L).
+        assertContains(main, "func _upload_heights(bytes: PackedByteArray, year: float) -> void:",
+                       hint: "Der Höhen-Upload kennt das Jahr seiner Höhen")
         assertContains(main,
-                       "set_shader_parameter(\"detail_strength\", terrain_detail_strength(sim.currentYear()))",
-                       hint: "Shader-Kontrast folgt dem aktuellen Sim-Alter")
+                       "set_shader_parameter(\"detail_strength\", terrain_detail_strength(year))",
+                       hint: "Shader-Kontrast folgt dem Sim-Alter der gezeigten Höhen")
         assertContains(main, "clampf(years / TERRAIN_DETAIL_AGE_YEARS, 0.0, 1.0)",
                        hint: "Detailkontrast bleibt vor Jahr 0 und nach 100k gedeckelt")
         assertContains(shader, "uniform float detail_strength = 0.16;",

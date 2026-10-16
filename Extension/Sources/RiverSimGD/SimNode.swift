@@ -23,17 +23,48 @@ final class SimNode: Node {
     /// eine von sechs handgepflegten Kopien da, die nichts verband. Nur der
     /// Produktionspfad läuft ein, die SimCore-Testwelten (`generate`-Default 0)
     /// bleiben unverändert. Wächter: `SimCoreTests/RenderContractTests.swift`.
-    private var terrain = Terrain(config: SimConfig.production,
-                                  seed: RenderContract.defaultSeed,
-                                  settleYears: SimConfig.productionSettleYears)
+    ///
+    /// Angefasst wird die Welt nur über `terrain` (s. dort); direkt nur in
+    /// `beginStep`, das sie dem Hintergrund-Job übergibt.
+    private var world = Terrain(config: SimConfig.production,
+                                seed: RenderContract.defaultSeed,
+                                settleYears: SimConfig.productionSettleYears)
     private var lastWorldBytes = 0
 
     /// Der gesamte Render-Zustand (die Renderer mit ihren EWMA-Feldern,
     /// Arbeitspuffern und Dirty-Snapshots plus der Material-Cache) liegt seit
     /// Issue #93 in `SimRender`. Die Brücke hält davon nichts mehr selbst und
     /// meldet nach JEDER Terrain-Änderung `render.invalidate` — den einen
-    /// Einstieg dort.
-    private let render = RenderState()
+    /// Einstieg dort. Angefasst wird er nur über `render` (s. dort).
+    private let renderState = RenderState()
+
+    /// Sim-Schritt plus Frame-Aufbereitung auf einem Hintergrund-Thread
+    /// (`beginStep`): im Zeitraffer wartet der Hauptthread nicht mehr darauf.
+    /// Das Ergebnis ist das fertig verpackte Frame-Dictionary.
+    private let job = BackgroundJob<VariantDictionary>(label: "river-sim.step")
+
+    /// DER Zugang zur Welt für jeden Aufruf der Brücke: wartet zuerst einen
+    /// laufenden Hintergrund-Schritt ab. Damit kann kein Aufruf die Welt
+    /// anfassen, während der Job sie rechnet, und vergessen lässt sich das
+    /// nicht, weil es keinen zweiten Weg gibt (Wächter:
+    /// `BackgroundJobTests.testBridgeTouchesTheWorldOnlyThroughTheGate`).
+    /// Ohne laufenden Job kostet das eine Sperre.
+    private var terrain: Terrain {
+        get { job.wait(); return world }
+        set { job.wait(); world = newValue }
+    }
+
+    /// Wie `terrain`, für den Render-Zustand.
+    private var render: RenderState {
+        job.wait()
+        return renderState
+    }
+
+    /// Ein laufender Job darf seinen Knoten nicht überleben: beim Beenden
+    /// entlädt Godot danach die Library, deren Code er gerade ausführt.
+    deinit {
+        job.wait()
+    }
 
     // MARK: Steuerung
 
@@ -47,6 +78,56 @@ final class SimNode: Node {
         terrain.step(dtYears: years)
         render.invalidate(terrain, .advanced)
     }
+
+    // MARK: Hintergrund-Schritt (Zeitraffer)
+
+    /// Startet `step(years)` und danach den Frame `trigger` (wie `renderFrame`)
+    /// auf einem Hintergrund-Thread und kehrt sofort zurück. Abholen:
+    /// `stepReady()` fragt, ohne zu blockieren, `finishStep()` liefert das
+    /// Frame-Dictionary (dieselben Schlüssel wie `renderFrame`).
+    ///
+    /// Bis zum Abholen ist der Schritt UNTERWEGS (`stepInFlight`). Jeder
+    /// andere Aufruf, der Welt oder Render-Zustand braucht, wartet ihn ab
+    /// (`terrain`/`render`), lässt sein Ergebnis aber liegen: hochladen muss
+    /// es der Aufrufer, sonst zeigt Godot einen anderen Stand als den, den
+    /// `RenderState` für sichtbar hält. Ein Start, solange ein Schritt
+    /// unterwegs ist, ist deshalb ein Fehler und startet nichts.
+    ///
+    /// Determinismus: der Job rechnet genau `step` + `renderFrame`, nur auf
+    /// einem anderen Thread, und niemand sonst fasst die Welt dabei an.
+    @Callable func beginStep(years: Double, trigger: Int, now: Double) {
+        guard let frameTrigger = Self.frameTrigger(trigger, "beginStep") else { return }
+        guard !job.isPending else {
+            GD.pushError("beginStep: der vorige Schritt ist noch unterwegs — erst "
+                         + "finishStep(), sonst ginge sein Frame verloren")
+            return
+        }
+        // Ohne Job unterwegs gehören Welt und Render-Zustand ab hier dem Job.
+        let terrain = world, render = renderState
+        job.start {
+            terrain.step(dtYears: years)
+            render.invalidate(terrain, .advanced)
+            let frame = render.frame(terrain, frameTrigger, now: now)
+            return Self.packFrame(frame, frameTrigger, heights: terrain.h, year: terrain.years,
+                                  waterLevel: terrain.waterLevel, bands: terrain.heightBands,
+                                  ribbons: render.riverRibbonMesh)
+        }
+    }
+
+    /// Ist ein Hintergrund-Schritt unterwegs (rechnet oder wartet aufs Abholen)?
+    @Callable func stepInFlight() -> Bool { job.isPending }
+
+    /// Ist der Hintergrund-Schritt fertig? Blockiert nie.
+    @Callable func stepReady() -> Bool { job.isReady }
+
+    /// Holt das Frame-Dictionary des Hintergrund-Schritts ab (wartet, falls er
+    /// noch rechnet). Leer = es war keiner unterwegs.
+    @Callable func finishStep() -> VariantDictionary { job.take() ?? VariantDictionary() }
+
+    /// Aufsummierte Zeit, die der Hauptthread auf Hintergrund-Schritte
+    /// gewartet hat (ms), Messgröße für `docs/perf-measurements.md` §L: im
+    /// Zeitraffer soll sie nicht wachsen.
+    @Callable func stepWaitMilliseconds() -> Double { job.waitedSeconds * 1000 }
 
     // MARK: Speichern / Laden (Issue #8)
 
@@ -133,19 +214,19 @@ final class SimNode: Node {
 
     // MARK: Felder (row-major, Länge n*n)
 
-    @Callable func heights() -> PackedFloat32Array { pack(terrain.h) }
+    @Callable func heights() -> PackedFloat32Array { Self.pack(terrain.h) }
 
     /// Höhenfeld als ROHE float32-Bytes — direkt als R32F-Textur hochladbar.
     /// GDScript hat vorher `heights().to_byte_array()` gerechnet: dieselben
     /// Bytes, aber eine zusätzliche ~2,7-MB-Kopie je Textur-Update (Issue #53).
-    @Callable func heightsBytes() -> PackedByteArray { packBytes(terrain.h) }
+    @Callable func heightsBytes() -> PackedByteArray { Self.packBytes(terrain.h) }
 
     // Rendering bekommt den ratenbegrenzten SEESPIEGEL statt hf: Priority-Flood
     // springt beim Sill-Zuschütten instantan → hüpfende Seeflächen (s. Terrain.waterLevel).
-    @Callable func filled() -> PackedFloat32Array { pack(terrain.waterLevel) }
+    @Callable func filled() -> PackedFloat32Array { Self.pack(terrain.waterLevel) }
 
     /// Seespiegel als rohe float32-Bytes — Begründung wie bei `heightsBytes`.
-    @Callable func filledBytes() -> PackedByteArray { packBytes(terrain.waterLevel) }
+    @Callable func filledBytes() -> PackedByteArray { Self.packBytes(terrain.waterLevel) }
 
     /// Aktuelle Höhenbänder (Issue #4) als
     /// `[vegFull, vegNone, rockStart, rockFull, snowStart, snowFull, coniferLow, coniferHigh]`.
@@ -154,15 +235,16 @@ final class SimNode: Node {
     /// **Ausnahme seit Issue #33:** `snowStart`/`snowFull` sind keine Perzentile
     /// mehr, sondern aus dem Schneefeld zurückgerechnet (s. `HeightBands`). An der
     /// Reihenfolge und Bedeutung der Werte ändert das nichts.
-    @Callable func heightBands() -> PackedFloat32Array {
-        let b = terrain.heightBands
-        return PackedFloat32Array([
+    @Callable func heightBands() -> PackedFloat32Array { Self.packBands(terrain.heightBands) }
+
+    private static func packBands(_ b: HeightBands) -> PackedFloat32Array {
+        PackedFloat32Array([
             Float(b.vegFull), Float(b.vegNone), Float(b.rockStart), Float(b.rockFull),
             Float(b.snowStart), Float(b.snowFull), Float(b.coniferLow), Float(b.coniferHigh),
         ])
     }
 
-    @Callable func flowArea() -> PackedFloat32Array { pack(terrain.area) }
+    @Callable func flowArea() -> PackedFloat32Array { Self.pack(terrain.area) }
 
     /// Abfluss-Nachbar je Zelle (-1 = Senke/Meer) — für Fluss-Geometrie.
     @Callable func receivers() -> PackedInt32Array { PackedInt32Array(terrain.receiver) }
@@ -187,18 +269,48 @@ final class SimNode: Node {
 
     /// Die Puffer eines Frames — Reihenfolge und Drosseln: `RenderState.frame`.
     /// `trigger` = Rohwert von `FrameTrigger` (`FRAME_*` in `Main.gd`), `now` =
-    /// `Time.get_ticks_msec() / 1000`. Fehlende Schlüssel heißen „in diesem
-    /// Frame nicht neu": `water`, `water_blend`, `color`, `surface`, `cover`, `flow`,
-    /// `protect`, `forest`, `plume` (nur gemeinsam), `ribbons` (Mesh über
-    /// `riverRibbon*`).
+    /// `Time.get_ticks_msec() / 1000`. Schlüssel: s. `packFrame`.
     @Callable func renderFrame(trigger: Int, now: Double) -> VariantDictionary {
-        let out = VariantDictionary()
-        guard let trigger = FrameTrigger(rawValue: trigger) else {
-            GD.pushError("renderFrame: unbekannter Auslöser \(trigger) — FRAME_* (Main.gd) "
-                         + "und FrameTrigger sind auseinandergelaufen")
-            return out
+        guard let frameTrigger = Self.frameTrigger(trigger, "renderFrame") else {
+            return VariantDictionary()
         }
-        let frame = render.frame(terrain, trigger, now: now)
+        let frame = render.frame(terrain, frameTrigger, now: now)
+        return Self.packFrame(frame, frameTrigger, heights: terrain.h, year: terrain.years,
+                              waterLevel: terrain.waterLevel, bands: terrain.heightBands,
+                              ribbons: render.riverRibbonMesh)
+    }
+
+    private static func frameTrigger(_ raw: Int, _ caller: String) -> FrameTrigger? {
+        guard let trigger = FrameTrigger(rawValue: raw) else {
+            GD.pushError("\(caller): unbekannter Auslöser \(raw) — FRAME_* (Main.gd) "
+                         + "und FrameTrigger sind auseinandergelaufen")
+            return nil
+        }
+        return trigger
+    }
+
+    /// Ein Frame als Dictionary, für `renderFrame` (Hauptthread) und
+    /// `beginStep` (Hintergrund) derselbe Weg. Statisch und ohne Zugriff auf
+    /// den Knoten: der Hintergrund-Job verpackt damit selbst, und der
+    /// Hauptthread bekommt fertige Packed-Arrays. Das sind Godots eingebaute
+    /// Werttypen, kein `Object`; sie auf einem anderen Thread anzulegen und
+    /// danach zu übergeben, ist erlaubt.
+    ///
+    /// Schlüssel:
+    /// - immer: `trigger` (Rohwert), `year`, `heights` (R32F-Rohbytes),
+    /// - mit Overlays (nur gemeinsam): `water`, `water_blend`, `color`,
+    ///   `surface`, `cover`, `flow`, `protect`, `forest`, `plume`, `filled`
+    ///   (Seespiegel, R32F) und `bands` (Höhenbänder wie `heightBands`),
+    /// - nach einem Band-Bau: `ribbons` plus das Mesh in `ribbon_verts`,
+    ///   `ribbon_colors`, `ribbon_uvs`, `ribbon_uv2s`, `ribbon_indices`.
+    /// Fehlende Schlüssel heißen „in diesem Frame nicht neu".
+    private static func packFrame(_ frame: RenderFrame, _ trigger: FrameTrigger,
+                                  heights: [Double], year: Double, waterLevel: [Double],
+                                  bands: HeightBands, ribbons: RibbonMesh) -> VariantDictionary {
+        let out = VariantDictionary()
+        out[Variant("trigger")] = Variant(trigger.rawValue)
+        out[Variant("year")] = Variant(year)
+        out[Variant("heights")] = packBytes(heights).toVariant()
         if let o = frame.overlays {
             out[Variant("water")] = PackedByteArray(o.water).toVariant()
             out[Variant("water_blend")] = Variant(o.waterBlend)
@@ -210,9 +322,16 @@ final class SimNode: Node {
             out[Variant("forest")] = PackedByteArray(o.forestMask).toVariant()
             // Sedimentfahnen (#174 C): Float32-Rohbytes für eine RF-Textur.
             out[Variant("plume")] = packFloatBytes(o.plume).toVariant()
+            out[Variant("filled")] = packBytes(waterLevel).toVariant()
+            out[Variant("bands")] = packBands(bands).toVariant()
         }
         if frame.ribbonsRebuilt {
             out[Variant("ribbons")] = Variant(true)
+            out[Variant("ribbon_verts")] = ribbonVerts(ribbons).toVariant()
+            out[Variant("ribbon_colors")] = ribbonColors(ribbons).toVariant()
+            out[Variant("ribbon_uvs")] = ribbonUVs(ribbons).toVariant()
+            out[Variant("ribbon_uv2s")] = ribbonUV2s(ribbons).toVariant()
+            out[Variant("ribbon_indices")] = PackedInt32Array(ribbons.indices).toVariant()
         }
         return out
     }
@@ -415,23 +534,24 @@ final class SimNode: Node {
         render.renderGrid = grid
     }
 
-    @Callable func riverRibbonVerts() -> PackedVector3Array {
-        PackedVector3Array(render.riverRibbonMesh.vertices.map {
-            Vector3(x: $0.x, y: $0.y, z: $0.z)
-        })
-    }
-    @Callable func riverRibbonColors() -> PackedColorArray {
-        PackedColorArray(render.riverRibbonMesh.colors.map {
-            Color(r: $0.x, g: $0.y, b: $0.z, a: $0.w)
-        })
-    }
-    @Callable func riverRibbonUVs() -> PackedVector2Array {
-        PackedVector2Array(render.riverRibbonMesh.uvs.map { Vector2(x: $0.x, y: $0.y) })
-    }
+    @Callable func riverRibbonVerts() -> PackedVector3Array { Self.ribbonVerts(render.riverRibbonMesh) }
+    @Callable func riverRibbonColors() -> PackedColorArray { Self.ribbonColors(render.riverRibbonMesh) }
+    @Callable func riverRibbonUVs() -> PackedVector2Array { Self.ribbonUVs(render.riverRibbonMesh) }
     /// Typ-Kanal des Vertex-Vertrags (UV2.x = `WaterRender.ribbonKind*`):
     /// Fluss / Delta-Arm / Altarm. Der Shader färbt und animiert danach.
-    @Callable func riverRibbonUV2s() -> PackedVector2Array {
-        PackedVector2Array(render.riverRibbonMesh.uv2s.map { Vector2(x: $0.x, y: $0.y) })
+    @Callable func riverRibbonUV2s() -> PackedVector2Array { Self.ribbonUV2s(render.riverRibbonMesh) }
+
+    private static func ribbonVerts(_ mesh: RibbonMesh) -> PackedVector3Array {
+        PackedVector3Array(mesh.vertices.map { Vector3(x: $0.x, y: $0.y, z: $0.z) })
+    }
+    private static func ribbonColors(_ mesh: RibbonMesh) -> PackedColorArray {
+        PackedColorArray(mesh.colors.map { Color(r: $0.x, g: $0.y, b: $0.z, a: $0.w) })
+    }
+    private static func ribbonUVs(_ mesh: RibbonMesh) -> PackedVector2Array {
+        PackedVector2Array(mesh.uvs.map { Vector2(x: $0.x, y: $0.y) })
+    }
+    private static func ribbonUV2s(_ mesh: RibbonMesh) -> PackedVector2Array {
+        PackedVector2Array(mesh.uv2s.map { Vector2(x: $0.x, y: $0.y) })
     }
     @Callable func riverRibbonIndices() -> PackedInt32Array {
         PackedInt32Array(render.riverRibbonMesh.indices)
@@ -443,7 +563,7 @@ final class SimNode: Node {
 
     // MARK: Marshalling
 
-    private func pack(_ a: [Double]) -> PackedFloat32Array {
+    private static func pack(_ a: [Double]) -> PackedFloat32Array {
         var f = [Float](repeating: 0, count: a.count)
         a.withUnsafeBufferPointer { ab in
         f.withUnsafeMutableBufferPointer { fb in
@@ -456,14 +576,14 @@ final class SimNode: Node {
     }
 
     /// `[Float]` als rohe float32-Bytes (RF-Textur), ohne Umweg über Double.
-    private func packFloatBytes(_ a: [Float]) -> PackedByteArray {
+    private static func packFloatBytes(_ a: [Float]) -> PackedByteArray {
         PackedByteArray(a.withUnsafeBytes { Array($0) })
     }
 
     /// Wie `pack`, aber als rohe float32-Bytes: Godot kann sie direkt als R32F-
     /// Bilddaten übernehmen (`Image.set_data`), ohne dass GDScript das
     /// Float-Array noch einmal konvertieren muss.
-    private func packBytes(_ a: [Double]) -> PackedByteArray {
+    private static func packBytes(_ a: [Double]) -> PackedByteArray {
         var bytes = [UInt8](repeating: 0, count: a.count * 4)
         a.withUnsafeBufferPointer { ab in
         bytes.withUnsafeMutableBufferPointer { bb in

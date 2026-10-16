@@ -61,7 +61,7 @@ final class TimelapseFadeTests: XCTestCase {
             XCTAssertTrue(try main.captures(pattern: "FieldTexture\\.new\\(\"\(f.tex)\", [A-Za-z_.0-9]+, (true)\\)")
                 .count == 1, "\(f.tex) muss seinen Vorgängerstand halten (keeps_previous)")
         }
-        assertContains(main, "func _upload_heights() -> void:\n\theight_fade.start(",
+        assertContains(main, "func _upload_heights(bytes: PackedByteArray, year: float) -> void:\n\theight_fade.start(",
                        hint: "Die Höhen-Blende startet mit dem Höhen-Upload")
         assertContains(main, "func _upload_overlays(frame: Dictionary) -> void:\n\toverlay_fade.start(",
                        hint: "Die Overlay-Blende startet mit dem Overlay-Upload")

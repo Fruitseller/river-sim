@@ -290,9 +290,24 @@ var debug_difference_field := FieldTexture.new("debug_difference_tex", Image.FOR
 # Renderfelder bleiben im nativen SimNode und vermeiden große FFI-Kopien.
 # LAZY gezogen (Issue #53): die Höhen-TEXTUR kommt als rohe Bytes direkt aus
 # SimNode, dieses Array braucht nur der Raycast — im Zeitraffer ohne Eingriff
-# also gar nicht.
+# also gar nicht. Quelle ist der zuletzt HOCHGELADENE Stand (`shown_heights`),
+# nicht die Sim: im Zeitraffer rechnet die schon am nächsten Schritt
+# (`sim.beginStep`), der Raycast trifft aber, was man sieht, und wartet nie.
 var h_cache: PackedFloat32Array
 var h_cache_dirty := true
+# Zuletzt hochgeladene Höhen (R32F-Rohbytes) und ihr Sim-Jahr: der Stand, den
+# Bild, Jahresanzeige, Raycast und Pinselkuppel zeigen.
+var shown_heights: PackedByteArray
+var shown_year := 0.0
+
+# Hintergrund-Schritt (docs/perf-measurements.md §L): im Zeitraffer rechnet
+# SimNode Sim-Schritt und Frame-Aufbereitung auf einem eigenen Thread
+# (`sim.beginStep`), `_process` holt das Ergebnis ab, sobald es fertig ist
+# (`sim.stepReady`), und lädt nur noch hoch. Die Regeln je Pfad stehen an
+# `_settle_sim`. Gemessen wird die Hauptthread-Zeit des Hochladens
+# (`last_apply_usec`, je abgeholtem Schritt; Auswertung in der Flusstal-Bühne).
+var last_apply_usec := 0
+var step_applies := 0
 
 # Render-Verschiebung von Rinnen und Graten (#153): ein Float-SubViewport backt
 # sie einmal je Terrain-Update (`_bake_relief`), der Terrain-Shader liest nur.
@@ -643,8 +658,7 @@ func _ready() -> void:
 		cam_target.y = _surface_y_at(cam_target)
 		cam_target_on_surface = true
 		_update_camera()
-	_update_year()
-	_render_frame(FRAME_SETTLED)
+	_render_frame(FRAME_SETTLED) # zeigt auch das Jahr (Höhen-Upload)
 	if OS.has_environment("RS_CAMERA"): # Tasten-Preset per id, für Screenshots
 		var id := OS.get_environment("RS_CAMERA")
 		for c in CAMERA_PRESETS.size():
@@ -673,6 +687,7 @@ static func terrain_grid_for(quality: String, n: int) -> int:
 	return PERFORMANCE_TERRAIN_GRID if quality == "performance" else n
 
 func _diag() -> void:
+	_settle_sim()
 	var land := 0
 	_ensure_h_cache()
 	for k in h_cache.size():
@@ -1261,6 +1276,7 @@ func _apply_camera_preset(index: int, animate := true) -> void:
 ## Ansicht eines Presets für die laufende Welt: {target, dist, pitch, yaw}.
 ## Ohne Land (Diorama) bzw. ohne Lauf (Tal, Nah) bleiben Blickpunkt und Yaw.
 func camera_preset_view(index: int) -> Dictionary:
+	_settle_sim() # Abfluss und Empfänger kommen aus der Sim selbst
 	var p: Dictionary = CAMERA_PRESETS[index]
 	_ensure_h_cache()
 	var target := Vector3(cam_target.x, 0.0, cam_target.z)
@@ -1465,6 +1481,9 @@ func _jump(years: float) -> void:
 	var done := 0.0
 	while done < years:
 		var chunk := minf(2000.0, years - done)
+		# Zwischen zwei Chunks läuft `_process`, und der Zeitraffer darf dort
+		# einen Hintergrund-Schritt begonnen haben.
+		_settle_sim()
 		sim.step(chunk)
 		done += chunk
 		_after_sim(FRAME_JUMP_CHUNK)
@@ -1475,6 +1494,7 @@ func _jump(years: float) -> void:
 	_jumping = false
 
 func _regen() -> void:
+	_settle_sim()
 	sim_seed = (sim_seed * 16807 + 1) % 2147483647
 	sim.generate(sim_seed)
 	sim.recomputeFlow()
@@ -1489,6 +1509,9 @@ func _save_world() -> void:
 	if _jumping: # mitten in einem Zeitsprung ist der Zustand noch in Bewegung
 		_set_status("Zeitsprung läuft — später speichern")
 		return
+	# Gespeichert wird der Stand, den man sieht: erst den laufenden
+	# Zeitraffer-Schritt abholen und zeigen.
+	_settle_sim()
 	var abs_path := ProjectSettings.globalize_path(SAVE_PATH)
 	var err: String = sim.saveWorld(abs_path)
 	if not err.is_empty():
@@ -1517,6 +1540,8 @@ func _load_world(path: String = SAVE_PATH) -> void:
 	if not mismatch.is_empty():
 		_show_world_error("Welt nicht darstellbar", mismatch)
 		return
+	# Ein laufender Zeitraffer-Schritt käme sonst NACH der geladenen Welt an.
+	_settle_sim()
 	var err: String = sim.loadWorld(abs_path)
 	if not err.is_empty():
 		_show_world_error("Laden fehlgeschlagen", err)
@@ -1578,6 +1603,7 @@ func _show_world_error(title: String, message: String) -> void:
 	world_dialog.popup_centered(Vector2i(560, 0))
 
 func _capture_debug_reference() -> void:
+	_settle_sim() # Vergleichspunkt = der Stand, den man sieht
 	sim.captureDebugReference()
 	_refresh_debug()
 
@@ -1589,10 +1615,41 @@ func _set_debug_difference(enabled: bool) -> void:
 		_refresh_debug()
 
 func _after_sim(trigger: int) -> void:
-	_invalidate_h_cache()
-	_update_year()
-	_render_frame(trigger)
+	_render_frame(trigger) # Höhen-Cache und Jahresanzeige zieht der Höhen-Upload nach
 	debug_dirty = true
+
+## Wartet einen unterwegs befindlichen Hintergrund-Schritt ab (`sim.beginStep`)
+## und lädt sein Ergebnis hoch. Pflicht vor allem, was die Welt ändert oder ihren
+## aktuellen Stand liest: Zeitsprung, Neu, Laden, Speichern, Diagnose,
+## Kamera-Presets, Nachzug des Pinsels und jeder synchrone Frame
+## (`_render_frame`). Der Pinselstrich selbst wartet nicht: solange ein Schritt
+## rechnet, setzt er in `_process` aus. Raycast, Pinselkuppel und Jahresanzeige
+## brauchen die Sim gar nicht, sie lesen den gezeigten Stand (`shown_heights`,
+## `shown_year`).
+##
+## Die Brücke allein wäre nicht genug: sie wartet den Job zwar selbst ab, bevor
+## irgendein Aufruf die Welt anfasst (kein gleichzeitiger Zugriff, s.
+## SimNode.terrain), lässt sein Ergebnis aber liegen. Käme es erst danach an,
+## überschriebe ein älterer Stand den neueren (etwa die Höhe eines
+## Pinselstrichs), und Bänder und Wasser, die RenderState für sichtbar hält,
+## hätte Godot nie bekommen. Im Zeitraffer selbst wartet niemand: dort holt
+## `_process` nur fertige Schritte ab.
+func _settle_sim() -> void:
+	if sim.stepInFlight():
+		_apply_step(sim.finishStep())
+
+## Lädt das Ergebnis eines Hintergrund-Schritts hoch (Frame-Dictionary wie
+## `renderFrame`, Auslöser im Schlüssel `trigger`).
+func _apply_step(frame: Dictionary) -> void:
+	if frame.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+	_frame_trigger = frame["trigger"]
+	_apply_frame(frame)
+	_frame_trigger = FRAME_SETTLED
+	debug_dirty = true
+	last_apply_usec = Time.get_ticks_usec() - t0
+	step_applies += 1
 
 var _shot_frame := 0
 var _fps_accum := 0.0
@@ -1622,9 +1679,13 @@ func _process(delta: float) -> void:
 			print("RS_FPS avg=", _fps_accum / 200.0)
 			get_tree().quit()
 
+	if sim == null:
+		return
 	# Leerlauf-Drossel (s. IDLE_FPS_CAP): nur wenn wirklich nichts passiert —
-	# Zeitraffer, Sprung und Sculpting zählen als Aktivität.
-	var idle := year_rate == 0.0 and not _jumping and not sculpting \
+	# Zeitraffer, Sprung, Sculpting und ein noch nicht abgeholter
+	# Hintergrund-Schritt zählen als Aktivität.
+	var idle: bool = year_rate == 0.0 and not _jumping and not sculpting \
+		and not sim.stepInFlight() \
 		and Time.get_ticks_msec() - last_activity_msec > IDLE_FPS_DELAY_MSEC
 	if idle:
 		Engine.max_fps = IDLE_FPS_CAP
@@ -1663,9 +1724,15 @@ func _process(delta: float) -> void:
 		mat.set_shader_parameter("u_time", u_time)
 	if debug_dirty:
 		debug_refresh_timer += delta
-		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS:
+		# Die Kennzahlen lesen die Sim: nie auf einen laufenden
+		# Hintergrund-Schritt warten, sondern den nächsten Frame ohne nehmen.
+		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS and not sim.stepInFlight():
 			_refresh_debug()
 
+	# Hintergrund-Schritt abholen, sobald er fertig ist; `stepReady` blockiert
+	# nie. Der Hauptthread lädt nur hoch (docs/perf-measurements.md §L).
+	if sim.stepReady():
+		_apply_step(sim.finishStep())
 	if _simulation_should_step(year_rate, sculpting):
 		# Jahre über das Render-Intervall AKKUMULIEREN und nur EINMAL pro Render
 		# steppen — statt jeden Frame (die Sim-Schritte enthalten mehrere O(n²)-
@@ -1674,21 +1741,25 @@ func _process(delta: float) -> void:
 		# ein Schritt à 9 Jahre ist gleichwertig und ~9× billiger.
 		pending_years += year_rate * delta
 		rebuild_timer += delta
-		if rebuild_timer > SIM_TICK_SECONDS:
+		# Ein Schritt zur Zeit: rechnet der vorige noch (oder wartet er aufs
+		# Abholen), beginnt der nächste später, die Jahre sammeln sich weiter.
+		if rebuild_timer > SIM_TICK_SECONDS and not sim.stepInFlight():
 			rebuild_timer = 0.0
 			# Jahre/Schritt deckeln → hält jeden Schritt billig (keine Todesspirale).
 			var years := minf(pending_years, 240.0)
 			pending_years = 0.0
-			sim.step(years)
-			_invalidate_h_cache()
-			_update_year()
-			debug_dirty = true
-			# Höhe jeden Takt; Overlays gedrosselt und das Wasser weich
+			# Schritt UND Frame-Aufbereitung im Hintergrund (SimNode.beginStep):
+			# Höhe jeden Takt, Overlays gedrosselt und das Wasser weich
 			# geblendet (kein Springen zwischen den diskreten D8-Netzen) —
-			# Werte und Begründung in RenderState.
-			_render_frame(FRAME_TIMELAPSE)
+			# Werte und Begründung in RenderState. Bis zum Abholen zeichnet der
+			# Hauptthread ungestört weiter.
+			sim.beginStep(years, FRAME_TIMELAPSE, _now())
 
-	if sculpting:
+	# Der Strich ändert die Welt. Rechnet beim Drücken noch ein
+	# Zeitraffer-Schritt, setzt der Strich aus, bis oben das Abholen ihn
+	# hochgeladen hat (höchstens die Dauer eines Schritts), statt auf ihn zu
+	# warten; neue Schritte beginnen während des Strichs nicht.
+	if sculpting and not sim.stepInFlight():
 		var hit := _raycast_terrain()
 		if hit != Vector3.INF:
 			var gx := (hit.x + half) / step
@@ -1724,7 +1795,7 @@ func _process(delta: float) -> void:
 			# Höhe sofort (billig): der Strich muss dem Zeiger ohne Verzögerung
 			# folgen. Flussnetz, Overlays und Bänder laufen im gedrosselten Takt
 			# nach (s. SCULPT_REFRESH_SECONDS).
-			_upload_heights()
+			_upload_heights(sim.heightsBytes(), sim.currentYear())
 			_bake_relief()
 			sculpt_refresh_timer += delta
 			# Nachzug auf ZWEI Frames verteilt. GEMESSEN je Aufruf (n = 832,
@@ -1763,6 +1834,7 @@ func _process(delta: float) -> void:
 
 ## Teil 1 des Nachzugs (teuer, ~35 ms): das Flussnetz reagiert auf den Eingriff.
 func _refresh_stroke_flow() -> void:
+	_settle_sim()
 	sim.recomputeFlow()
 	_invalidate_h_cache()
 
@@ -1801,9 +1873,11 @@ func _update_camera_pan(delta: float) -> void:
 	cam_target.z = clampf(cam_target.z, -max_target, max_target)
 
 func _update_year() -> void:
-	year_label.text = "JAHR %s" % _fmt(int(sim.currentYear()))
+	if year_label != null:
+		year_label.text = "JAHR %s" % _fmt(int(shown_year))
 
 func _refresh_debug() -> void:
+	_settle_sim() # Kennzahlen und Δ-Karte gelten für den gezeigten Stand
 	_update_debug_ui()
 	if debug_difference_enabled:
 		_update_debug_difference_texture()
@@ -1866,43 +1940,56 @@ func _invalidate_h_cache() -> void:
 
 func _ensure_h_cache() -> void:
 	if h_cache_dirty:
-		h_cache = sim.heights()
+		# Der zuletzt hochgeladene Stand (s. `shown_heights`); vor dem ersten
+		# Upload, im Aufbau, gibt es nur die Sim selbst.
+		h_cache = sim.heights() if shown_heights.is_empty() \
+			else shown_heights.to_float32_array()
 		h_cache_dirty = false
 
 # ---------------------------------------------------------------- Terrain-Textur
 
-## Ein Render-Frame (Issue #94): Höhe hochladen, die Puffer des Frames aus
-## RenderState.frame holen und hochladen, Verschiebung neu backen. WAS der Frame
-## liefert und in welcher Reihenfolge es entsteht, entscheidet SimRender.
+## Ein synchroner Render-Frame (Issue #94): die Puffer des Frames aus
+## RenderState.frame holen und hochladen. WAS der Frame liefert und in welcher
+## Reihenfolge es entsteht, entscheidet SimRender. Im Zeitraffer kommt derselbe
+## Frame aus dem Hintergrund-Schritt (`_apply_step`).
 func _render_frame(trigger: int) -> void:
+	_settle_sim()
 	_frame_trigger = trigger
-	_upload_heights()
 	_apply_frame(sim.renderFrame(trigger, _now()))
-	_bake_relief()
 	_frame_trigger = FRAME_SETTLED
 
 ## Uhr der Frame-Drosseln (Sekunden, monoton).
 func _now() -> float:
 	return Time.get_ticks_msec() / 1000.0
 
-## Lädt hoch, was ein Frame mitbringt; fehlende Schlüssel = unverändert.
+## Lädt hoch, was ein Frame mitbringt (Schlüssel: SimNode.packFrame); fehlende
+## Schlüssel = unverändert. Mit der Höhe backt die Verschiebung neu.
 func _apply_frame(frame: Dictionary) -> void:
+	if frame.has("heights"):
+		_upload_heights(frame["heights"], frame["year"])
 	if frame.has("ribbons"):
-		_upload_ribbon_mesh()
+		_upload_ribbon_mesh(frame)
 	if frame.has("water"):
 		_upload_overlays(frame)
+	if frame.has("heights"):
+		_bake_relief()
 
 ## Höhen (R32F) hochladen — billig (~0,2 ms), läuft auch jeden Pinsel-Frame.
 ## Alle Puffer kommen als ROHE Bytes aus SimNode (Issue #53): `heights()` +
 ## `to_byte_array()` kostete je Update eine zusätzliche ~2,7-MB-Kopie.
-func _upload_heights() -> void:
+## `year` ist das Sim-Jahr DIESER Höhen; zusammen sind sie der gezeigte Stand.
+func _upload_heights(bytes: PackedByteArray, year: float) -> void:
 	height_fade.start(_now(), _timelapse_fading())
-	height_field.upload(terrain_mat, N, sim.heightsBytes())
+	height_field.upload(terrain_mat, N, bytes)
+	shown_heights = bytes
+	shown_year = year
+	_invalidate_h_cache()
+	_update_year()
 	# Die Wolkenkörper erscheinen nur über dem Kamm und lesen dafür die Höhe.
 	for mat in Lighting.cloud_body_materials(cloud_bodies):
 		mat.set_shader_parameter("height_tex", height_field._tex)
-	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(sim.currentYear()))
-	terrain_mat.set_shader_parameter("sim_year", sim.currentYear())
+	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(year))
+	terrain_mat.set_shader_parameter("sim_year", year)
 
 ## Im Zeitraffer gleiten die Texturen von Stand zu Stand (#172); Pinsel,
 ## Sprung, Laden und Neugenerieren zeigen den neuen Stand sofort. Geblendet
@@ -1918,12 +2005,12 @@ func _upload_overlays(frame: Dictionary) -> void:
 	overlay_fade.start(_now(), _timelapse_fading())
 	# Seespiegel-Feld (hf): der Vertex-Shader hebt See-Zellen auf diese Höhe →
 	# Seen liegen als horizontale Flächen im Becken statt den Hang anzumalen.
-	hf_field.upload(terrain_mat, N, sim.filledBytes())
+	hf_field.upload(terrain_mat, N, frame["filled"])
 
 	# Höhenbänder (Issue #4) an den Shader durchreichen: die Vegetations-Grenzen
 	# sind Perzentile der aktuellen Landhöhen und wandern mit der alternden
 	# Landschaft — der Shader darf dafür keine eigenen absoluten Werte halten.
-	var bands: PackedFloat32Array = sim.heightBands()
+	var bands: PackedFloat32Array = frame["bands"]
 	if bands.size() >= 2:
 		terrain_mat.set_shader_parameter("veg_alt_lo", bands[0])
 		terrain_mat.set_shader_parameter("veg_alt_hi", bands[1])
@@ -2168,7 +2255,7 @@ func _make_river_instance(mesh: ArrayMesh, outgoing: bool) -> MeshInstance3D:
 ## dazu bringt derselbe Frame mit. Im Zeitraffer wandert das bisherige Mesh
 ## ins ausblendende (`river_prev_mi`), der neue Stand löst es über
 ## `ribbon_fade` ab; Pinsel, Sprung, Laden und Neugenerieren zeigen ihn sofort.
-func _upload_ribbon_mesh() -> void:
+func _upload_ribbon_mesh(frame: Dictionary) -> void:
 	var fade := _timelapse_fading()
 	if fade:
 		var shown := river_mesh
@@ -2181,17 +2268,18 @@ func _upload_ribbon_mesh() -> void:
 	# alte Stand, während der neue noch bei Blende 0 steht (kein Band).
 	river_prev_mi.visible = fade
 	river_mesh.clear_surfaces()
-	var verts: PackedVector3Array = sim.riverRibbonVerts()
+	# Das Mesh reist im Frame (SimNode.packFrame), schon als Packed-Arrays.
+	var verts: PackedVector3Array = frame.get("ribbon_verts", PackedVector3Array())
 	if verts.size() >= 3:
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
 		arrays[Mesh.ARRAY_VERTEX] = verts
-		arrays[Mesh.ARRAY_COLOR] = sim.riverRibbonColors()
-		arrays[Mesh.ARRAY_TEX_UV] = sim.riverRibbonUVs()
+		arrays[Mesh.ARRAY_COLOR] = frame["ribbon_colors"]
+		arrays[Mesh.ARRAY_TEX_UV] = frame["ribbon_uvs"]
 		# UV2.x = Typ (Fluss/Delta/Altarm, Issue #34) — der Shader färbt danach
 		# und schaltet für Altarme die Strömung ab.
-		arrays[Mesh.ARRAY_TEX_UV2] = sim.riverRibbonUV2s()
-		arrays[Mesh.ARRAY_INDEX] = sim.riverRibbonIndices()
+		arrays[Mesh.ARRAY_TEX_UV2] = frame["ribbon_uv2s"]
+		arrays[Mesh.ARRAY_INDEX] = frame["ribbon_indices"]
 		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 # ---------------------------------------------------------------- Kamera & Eingabe
@@ -2451,7 +2539,7 @@ func _surface_y(gx: float, gz: float) -> float:
 	var y := _sample_h(gx, gz) * HSCALE
 	if not relief_lift_cache.is_empty():
 		y += (_sample_grid(relief_lift_cache, gx, gz) - 0.5) / relief_height_code \
-			* relief_geometry_fade(sim.currentYear(), relief_geometry_age)
+			* relief_geometry_fade(shown_year, relief_geometry_age)
 	return y + _forest_lift_at(gx, gz)
 
 ## Dachzuschlag in Welt-Y wie im Terrain-Shader: Waldmaske bilinear, dann

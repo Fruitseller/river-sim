@@ -384,14 +384,15 @@ final class RenderStateTests: XCTestCase {
                           + "Wächters.")
         }
         XCTAssertEqual(mutating.sorted(),
-                       ["brush", "generate", "loadWorld", "recomputeFlow", "sculpt", "step"],
+                       ["beginStep", "brush", "generate", "loadWorld", "recomputeFlow", "sculpt", "step"],
                        "Die ändernden Einstiege der Brücke haben sich verschoben — "
                        + "Liste mitziehen (sie ist der Umfang dieses Wächters)")
 
         // Issue #167: die Art der Änderung entscheidet, ob das Gedächtnis der
         // Waldmaske weiterläuft. Ein Pinsel als `.advanced` ließe veralteten
         // Wald stehen, ein Sim-Schritt als `.edited` schaltete es ab.
-        let kinds = ["step": ".advanced", "generate": ".replaced", "loadWorld": ".replaced",
+        let kinds = ["step": ".advanced", "beginStep": ".advanced",
+                     "generate": ".replaced", "loadWorld": ".replaced",
                      "sculpt": ".edited", "brush": ".edited", "recomputeFlow": ".edited"]
         for method in bridge.swiftMethods() where method.body.hasPrefix("    @Callable ") {
             guard let kind = kinds[method.name] else { continue }
