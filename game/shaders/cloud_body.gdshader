@@ -35,16 +35,24 @@ void vertex() {
 
 void fragment() {
 	vec2 xz = v_world.xz;
-	float density = cloud_density(xz, u_time);
-	// Höhere Ebenen nur im Wolkenkern: gleiche Schwelle wie der Schatten an der
-	// Basis, nach oben um bis zu 0,1 angehoben.
-	float lift = cloud_body_layer * 0.10;
-	float cover = smoothstep(0.56 + lift, 0.70 + lift, density);
+	// Erst die billige Kamm-Prüfung (eine Textur-Lesung), dann die teure
+	// Dichte (drei Rausch-Oktaven je Aufruf): die Ebenen sind weltgroß und
+	// transparent, der Löwenanteil der Fragmente liegt außerhalb des Kamms
+	// oder der Welt und verwirft hier, bevor Rauschen läuft (Review zu
+	// #174 D).
 	vec2 uv = xz / max(world_size, 1e-4) + vec2(0.5);
 	float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
 	float ground = textureLod(height_tex, clamp(uv, vec2(0.0), vec2(1.0)), 0.0).r * hscale;
 	float ridge = smoothstep(cloud_body_ridge_lo, max(cloud_body_ridge_hi, cloud_body_ridge_lo + 1e-4), ground)
 	            * inside;
+	if (ridge <= 0.0) {
+		discard;
+	}
+	float density = cloud_density(xz, u_time);
+	// Höhere Ebenen nur im Wolkenkern: gleiche Schwelle wie der Schatten an der
+	// Basis, nach oben um bis zu 0,1 angehoben.
+	float lift = cloud_body_layer * 0.10;
+	float cover = smoothstep(0.56 + lift, 0.70 + lift, density);
 	float alpha = cover * ridge * cloud_body_opacity;
 	if (alpha < 0.003) {
 		discard;
