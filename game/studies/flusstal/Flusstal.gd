@@ -114,6 +114,11 @@ func _process(delta: float) -> void:
 		for mat in [terrain_mat, ocean_mat, river_mat, river_prev_mat]:
 			if mat != null:
 				mat.set_shader_parameter("u_time", u_time)
+		# Wolkenkörper mitnehmen: Main.gd takten sie selbst, hier im Shot-Modus
+		# sonst nicht — Körper und Schatten drifteten auseinander und die
+		# Aufnahmen wären nicht reproduzierbar (Review zu #174 D).
+		for mat in Lighting.cloud_body_materials(cloud_bodies):
+			mat.set_shader_parameter("u_time", u_time)
 
 func _study_drawn() -> void:
 	var now := Time.get_ticks_usec()
