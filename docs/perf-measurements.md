@@ -1183,3 +1183,22 @@ Blockversuch oder SIMD. `MFDRouteTests` vergleicht die komplette Ausgabe
 bitweise gegen die serielle Referenz, inklusive beider Exponenten-Zweige,
 Randzellen, flachen Flächen und eines nichtganzzahligen Exponenten. Die
 Scratch-Einordnung ist in `StateInventoryTests` erfasst.
+
+### Gegenmessung bei der Übernahme (Integrationszweig)
+
+Unabhängig nachgemessen vor dem Cherry-Pick, M4 Max, dieselbe geteilte
+Maschine (zwei weitere Agenten aktiv), interleaved, drei Stände je Runde,
+Reihenfolge je Runde umgekehrt, `simperf --repeat 1`, 8 Runden:
+
+| Stand | ms/Schritt, Runde 1–8 | Median |
+| --- | --- | ---: |
+| Integration `7b7a880` | 62,8 62,9 62,8 63,2 63,4 63,3 63,2 63,5 | 63,20 |
+| MFD-Routen (`3133d27`) | 60,2 60,5 60,6 60,2 60,0 61,0 60,5 61,6 | 60,50 |
+| dazu Inzisionsfaktor vorab parallel (WIP) | 59,7 60,4 61,1 60,6 60,2 59,6 60,6 60,4 | 60,40 |
+
+Der MFD-Umbau spart −2,70 ms (−4,3 %) und ist in allen acht Runden
+schneller. Der zusätzliche WIP-Schritt (Faktor `kErode·dt·A^m/dist` der
+`outletIncision` parallel vorab statt nur `A^m`) liegt mit −0,10 ms im
+Rauschen und wurde nicht übernommen; bit-identisch war er (Hash 1337/42/20).
+Fingerprints nach dem Cherry-Pick: `c25268a941dd4beb` / `685222593c36209f` /
+`948941e9feca57df`, unverändert.
