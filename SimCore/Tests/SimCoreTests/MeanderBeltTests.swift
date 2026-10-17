@@ -5,6 +5,25 @@ import XCTest
 /// gerade Läufe mit kleinem Rauschen auf einer Ebene. Prüft die Mechanik, die
 /// das Gelände nicht verdecken darf — Wellenlängen-Wahl, Schrittweiten-
 /// Unabhängigkeit, Beschränktheit. Kalibrier-Werkzeuge: `MeanderBeltCalibration`.
+/// Kern-API nur für die Tests ohne Gelände: EINE Teilschrittzahl für alle
+/// Läufe (die Produktion taktet je Lauf, `Terrain.meanderBeltStep`).
+extension MeanderState {
+    /// Größte Verschiebungsrate aller wandernden Läufe (Zellen/Jahr).
+    func beltMaxRate(config: SimConfig, heightAt: (MeanderNode) -> Double) -> Double {
+        var m = 0.0
+        for ci in channels.indices { m = max(m, beltMaxRate(channel: ci, config: config, heightAt: heightAt)) }
+        return m
+    }
+
+    /// Ein Teilschritt aller wandernden Läufe, mit Altarm-Alterung.
+    func migrateBelt(dt: Double, time: Double, config: SimConfig, heightAt: (MeanderNode) -> Double) {
+        for age in oxbowAge.indices { oxbowAge[age] += dt }
+        for ci in channels.indices where Self.migrates(channels[ci], config) {
+            migrateBeltChannel(ci, dt: dt, time: time, config: config, heightAt: heightAt)
+        }
+    }
+}
+
 final class MeanderBeltTests: XCTestCase {
     private let q = 20_000.0
 
@@ -47,9 +66,9 @@ final class MeanderBeltTests: XCTestCase {
         var y = 0.0
         while y < years - 1e-9 {
             let step = min(dt, years - y)
-            let rate = m.beltMaxRate(config: c, heightAt: flat, riparianAt: { _ in 0 })
+            let rate = m.beltMaxRate(config: c, heightAt: flat)
             let nsub = max(1, min(256, Int((rate * step / (0.5 * c.meanderNodeSpacing)).rounded(.up))))
-            for si in 0..<nsub { m.migrateBelt(dt: step / Double(nsub), time: y + Double(si) * step / Double(nsub), config: c, heightAt: flat, riparianAt: { _ in 0 }) }
+            for si in 0..<nsub { m.migrateBelt(dt: step / Double(nsub), time: y + Double(si) * step / Double(nsub), config: c, heightAt: flat) }
             y += step
         }
     }
@@ -88,7 +107,16 @@ final class MeanderBeltTests: XCTestCase {
     /// 0,33–0,59 Zellen Abstand bei 2–7 Zellen Auslenkung
     /// (`testBeltKernelSpreadDiagnostic`); ohne Störquelle nach 1500 Jahren 0,09.
     func testMigrationIsStepSizeInvariant() {
-        let c = SimConfig.production
+        // Wachstum vor der Neukalibrierung #187 (Rate 0,02, Kern 1,5): der
+        // Wächter misst die Numerik des Schemas (CFL-Teilschritte, implizite
+        // Diffusion), nicht die Kalibrierung. Mit 0,04 / 1,0 wachsen die Bögen
+        // rund 4,5-mal schneller (∝ Rate/L²); nach 3000 Jahren liegen dt 50
+        // und 1500 dann im Mittel 5,0 Zellen auseinander, ohne Störquelle 3,55
+        // Zellen bei 27,8 Zellen größter Auslenkung (13 %): der zeitliche
+        // Fehler erster Ordnung wird vom exponentiellen Wachstum verstärkt.
+        var c = SimConfig.production
+        c.meanderBeltRate = 0.02
+        c.meanderBeltKernelWidths = 1.5
         let a = straightRuns(), b = straightRuns()
         run(a, years: 3000, dt: 50, c)
         run(b, years: 3000, dt: 1500, c)

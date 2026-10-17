@@ -6,7 +6,7 @@ import XCTest
 //
 // - testBeltVariantsDiagnostic: Produktionswelt bis Jahr 20.000 mit
 //   Parameter-Varianten, Kennzahlen über alle Mäanderläufe
-//   (`ZielbildMetrics.beltAll`). RS_SEED, RS_VARIANT="pull=0,brake=2,…",
+//   (`ZielbildMetrics.beltAll`). RS_SEED, RS_VARIANT="brake=2,avw=4,…",
 //   RS_YEARS.
 // - testBeltKernelDiagnostic: Migration OHNE Gelände (drei gerade Läufe mit
 //   Rauschen) — die Wellenlängen-Wahl des Kerns isoliert, ohne Kopplung ans
@@ -38,10 +38,7 @@ final class MeanderBeltCalibration: XCTestCase {
             case "down": c.meanderBeltDownstreamWeight = v
             case "prof": c.meanderBeltProfileWidths = v
             case "gain": c.meanderBeltPoolGain = v
-            case "pull": c.meanderBeltPull = v
-            case "deadband": c.meanderBeltPullDeadband = v
             case "brake": c.meanderBeltBrakeDepths = v
-            case "coh": c.meanderBeltCohesion = v
             case "minq": c.meanderBeltMinCells = v
             case "neck": c.meanderBeltNeckWidths = v
             case "chw": c.meanderChuteWidths = v
@@ -54,6 +51,13 @@ final class MeanderBeltCalibration: XCTestCase {
             case "depth": c.meanderBeltDepthPerWidth = v
             case "chq": c.meanderChuteMinCells = v
             case "braid": c.braidingEnabled = v > 0
+            case "coup": c.meanderBeltCoupling = v > 0
+            case "slack": c.meanderBeltCouplingSlackCells = v
+            case "avw": c.meanderBeltAvulsionWidths = v
+            case "avd": c.meanderBeltAvulsionDepths = v > 0 ? v : .infinity
+            case "avy": c.meanderBeltAvulsionYears = v
+            case "abw": c.meanderBeltAbandonMinWidths = v
+            case "drops": c.hydraulicPerYear = v
             default: XCTFail("unbekannter Varianten-Schlüssel \(p[0])")
             }
         }
@@ -154,7 +158,7 @@ final class MeanderBeltCalibration: XCTestCase {
             }
             for ch in m.channels {
                 let g = MeanderState.beltGeometry(ch, config: c, heightAt: hAt)
-                let (r, er) = m.beltRatesAndErodibility(ch, g, config: c, heightAt: hAt, riparianAt: { _ in 0 })
+                let (r, er) = m.beltRatesAndErodibility(ch, g, config: c, heightAt: hAt)
                 let mob = g.mob.filter { $0 > 0 }.count
                 print(String(format: "ISO0 %@ knoten %d len %.0f q %.0f..%.0f mobil %d Ø er %.2f max|r| %.4f Ø|curv| %.4f Ø spacing %.2f",
                              name, ch.nodes.count, ch.length, ch.discharge.first ?? 0, ch.discharge.last ?? 0, mob,
@@ -163,11 +167,11 @@ final class MeanderBeltCalibration: XCTestCase {
             }
             var y = 0.0
             while y < years - 1e-6 {
-                let rate = m.beltMaxRate(config: c, heightAt: hAt, riparianAt: { _ in 0 })
+                let rate = m.beltMaxRate(config: c, heightAt: hAt)
                 let nsub = max(1, min(256, Int((rate * 1000 / (0.5 * c.meanderNodeSpacing)).rounded(.up))))
                 for si in 0..<nsub {
                     m.migrateBelt(dt: 1000 / Double(nsub), time: y + Double(si) * 1000 / Double(nsub), config: c,
-                                  heightAt: hAt, riparianAt: { _ in 0 })
+                                  heightAt: hAt)
                 }
                 y += 1000
                 if let out = env["RS_PNG"], y >= years - 1e-6 {
@@ -311,7 +315,7 @@ final class MeanderBeltCalibration: XCTestCase {
             let hAt: (MeanderNode) -> Double = { Terrain.bilinear(ph, n, $0.x, $0.z) }
             for ch in t.meander.channels where MeanderState.migrates(ch, c) && ch.nodes.count >= 3 {
                 let g = MeanderState.beltGeometry(ch, config: c, heightAt: hAt)
-                let (r, er) = t.meander.beltRatesAndErodibility(ch, g, config: c, heightAt: hAt, riparianAt: { _ in 0 })
+                let (r, er) = t.meander.beltRatesAndErodibility(ch, g, config: c, heightAt: hAt)
                 var mobN = 0, braked = 0, sMob = 0.0, sRatio = 0.0, sRate = 0.0
                 for i in ch.nodes.indices where g.mob[i] > 0 && ch.discharge[i] >= c.meanderBeltMinCells {
                     mobN += 1; sMob += g.mob[i]; sRatio += er[i] / g.mob[i]; sRate += abs(r[i])
@@ -356,11 +360,11 @@ final class MeanderBeltCalibration: XCTestCase {
             var y = 0.0
             while y < years - 1e-9 {
                 let step = min(dt, years - y)
-                let rate = m.beltMaxRate(config: c, heightAt: flat, riparianAt: { _ in 0 })
+                let rate = m.beltMaxRate(config: c, heightAt: flat)
                 let nsub = max(1, min(256, Int((rate * step / (0.5 * c.meanderNodeSpacing)).rounded(.up))))
                 for si in 0..<nsub {
                     m.migrateBelt(dt: step / Double(nsub), time: y + Double(si) * step / Double(nsub), config: c,
-                                  heightAt: flat, riparianAt: { _ in 0 })
+                                  heightAt: flat)
                 }
                 y += step
             }
@@ -414,11 +418,11 @@ final class MeanderBeltCalibration: XCTestCase {
         var years = 0.0, sSum = 0.0, lSum = 0.0, nS = 0.0, maxSub = 0
         while years < end {
             let dt = 1000.0
-            let rate = m.beltMaxRate(config: c, heightAt: hAt, riparianAt: { _ in 0 })
+            let rate = m.beltMaxRate(config: c, heightAt: hAt)
             let nsub = max(1, min(256, Int((rate * dt / (0.5 * c.meanderNodeSpacing)).rounded(.up))))
             maxSub = max(maxSub, nsub)
             for si in 0..<nsub {
-                m.migrateBelt(dt: dt / Double(nsub), time: years + Double(si) * dt / Double(nsub), config: c, heightAt: hAt, riparianAt: { _ in 0 })
+                m.migrateBelt(dt: dt / Double(nsub), time: years + Double(si) * dt / Double(nsub), config: c, heightAt: hAt)
             }
             years += dt
             guard years >= 10_000, Int(years) % 2000 == 0 else { continue }

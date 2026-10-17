@@ -71,6 +71,18 @@ public final class MeanderState {
     /// Abnahmepunkt 15) — kein Sim-Zustand: kein Pass liest sie.
     public private(set) var neckCutoffs = 0
     public private(set) var chuteCutoffs = 0
+    /// Zähler der Kopplung an die Entwässerung (Issue #187), ebenfalls nur
+    /// Diagnose: Avulsionen (verlassenes Gerinne eines wandernden Laufs) und
+    /// D8-Abschnitte, die ohne alte Linie neu getrasst wurden (je Schritt).
+    public internal(set) var avulsions = 0
+    public internal(set) var retraced = 0
+    /// Knoten wandernder Größe (Abfluss ab `meanderBeltMinCells`), die die
+    /// Kopplung übernommen bzw. durch D8-Zellen ersetzt hat (kumuliert).
+    public internal(set) var coupledKept = 0
+    public internal(set) var coupledInserted = 0
+    /// Davon: vor der ersten Strecke, zwischen zwei Strecken desselben alten
+    /// Laufs, zwischen Strecken verschiedener Läufe, nach der letzten (Diagnose).
+    public internal(set) var insertedByPlace = [0, 0, 0, 0]
 
     // Wiederverwendbare Puffer des räumlichen Cutoff-Index (Produktion,
     // meanderSpatialCutoffIndex): flaches Bin-Gitter mit Linked-List statt
@@ -81,6 +93,10 @@ public final class MeanderState {
     private var binNext: [Int32] = []
     private var binTouched: [Int32] = []
     private var binW = 0
+    // Dasselbe für `applyBeltCutoffs` (Gürtel).
+    private var cutBinHead: [Int32] = []
+    private var cutBinNext: [Int32] = []
+    private var cutBinTouched: [Int32] = []
 
     public init() {}
 
@@ -374,10 +390,13 @@ public final class MeanderState {
         guard cellArea > 0, cellArea.isFinite,
               minCells > 0, minCells.isFinite else { return [] }
         let sea = config.sea
-        let lakeEps = 0.035
+        let lakeEps = traceLakeDepth
 
         var isBig = [Bool](repeating: false, count: count)
         for k in 0..<count where hf[k] > sea && area[k] / cellArea >= minCells { isBig[k] = true }
+        if config.meanderBelt && config.meanderBeltCoupling {
+            return traceHorton(config: config, h: h, hf: hf, area: area, receiver: receiver)
+        }
 
         func isSource(_ k: Int) -> Bool {
             if !isBig[k] { return false }
@@ -445,6 +464,54 @@ public final class MeanderState {
     }
 }
 
+// MARK: - Kopplung an die Entwässerung (Issue #187)
+
+extension MeanderState {
+    /// Wassersäule, ab der eine geflutete Zelle als See zählt: eine Trasse endet
+    /// davor (`traceChannels`, `Terrain.drainageSegments`).
+    static let traceLakeDepth = 0.035
+
+    /// Trasse nach dem Hack-Prinzip (Issue #187): an jedem Zusammenfluss läuft
+    /// der Lauf mit dem GRÖSSEREN Einzugsgebiet weiter (Gleichstand: kleinerer
+    /// Index), der kleinere endet in der Zusammenfluss-Zelle — dieselben
+    /// Abschnitte (`Terrain.drainageSegments`), aus denen die Kopplung die Läufe
+    /// jeden Schritt neu zusammensetzt. Bis #187 zog `traceChannels` den
+    /// längsten Fließweg zuerst bis zur Mündung; an jedem Zusammenfluss mit
+    /// einem größeren Fluss besaß damit der KLEINERE den Unterlauf.
+    static func traceHorton(config: SimConfig, h: [Double], hf: [Double], area: [Double],
+                            receiver: [Int32]) -> [RiverChannel] {
+        let n = config.n, cellArea = config.cellSize * config.cellSize
+        let segs = h.withUnsafeBufferPointer { hb in
+            hf.withUnsafeBufferPointer { hfb in
+            area.withUnsafeBufferPointer { ab in
+            receiver.withUnsafeBufferPointer { rb in
+                Terrain.drainageSegments(config: config, h: hb.baseAddress!, hf: hfb.baseAddress!,
+                                         area: ab.baseAddress!, receiver: rb.baseAddress!)
+            }}}
+        }
+        let state = MeanderState() // nur für resample() wiederverwendet
+        return segs.map { seg in
+            let nodes = seg.cells.map { MeanderNode(x: Double(Int($0) % n), z: Double(Int($0) / n)) }
+            var dis = seg.cells.map { area[Int($0)] / cellArea }
+            // Die Zusammenfluss-Zelle gehört dem größeren Fluss.
+            if seg.endsAtConfluence { dis[dis.count - 1] = dis[dis.count - 2] }
+            return state.resample(RiverChannel(nodes: nodes, discharge: dis), spacing: config.meanderNodeSpacing)
+        }
+    }
+
+    /// Lauf neu auf `meanderNodeSpacing` abtasten (Zugang für `Terrain`).
+    func resampled(_ ch: RiverChannel, config: SimConfig) -> RiverChannel {
+        resample(ch, spacing: config.meanderNodeSpacing)
+    }
+
+    /// Ein verlassenes Gerinne wird ein Altarm (`Terrain.plugOxbows` verkorkt
+    /// seine Enden, `fillOxbows` verlandet es) — wie nach einem Cutoff.
+    func abandon(_ nodes: [MeanderNode], age: Double) {
+        oxbows.append(nodes)
+        oxbowAge.append(age)
+    }
+}
+
 // MARK: - Mäandergürtel (Issue #174, Paket B)
 
 /// Geometrie eines Laufs auf Breiten-Skala, je Knoten.
@@ -463,11 +530,19 @@ struct BeltGeometry {
 
 extension MeanderState {
     /// Wandert dieser Lauf überhaupt? Erst ab `meanderBeltMinCells` Abfluss; der
-    /// Abfluss ist entlang des Laufs monoton (`Terrain.refreshBeltDischarge`),
-    /// das Ende reicht also. Nur diese Läufe (einige Dutzend von ~700) laufen
-    /// durch die Teilschritte — vorher kostete der Gürtel 99 ms je Schritt.
+    /// Abfluss ist entlang des Laufs monoton, der letzte INNENKNOTEN reicht
+    /// also. Nur diese Läufe (einige Dutzend von ~700) laufen durch die
+    /// Teilschritte — vorher kostete der Gürtel 99 ms je Schritt.
+    /// Bis #187 entschied der Endknoten: er sitzt bei einem Zubringer auf der
+    /// Mündungszelle und trug über das 3×3-Maximum den Abfluss des Vorfluters,
+    /// gemessen zählten 208 von 718 Läufen als wandernd, nur 38–44 davon mit
+    /// einem Innenknoten über der Schwelle (ohne Kopplung bleibt das so, für
+    /// den A/B-Vergleich).
     @inline(__always) static func migrates(_ ch: RiverChannel, _ config: SimConfig) -> Bool {
-        (ch.discharge.last ?? 0) >= config.meanderBeltMinCells
+        guard config.meanderBeltCoupling, ch.discharge.count >= 2 else {
+            return (ch.discharge.last ?? 0) >= config.meanderBeltMinCells
+        }
+        return ch.discharge[ch.discharge.count - 2] >= config.meanderBeltMinCells
     }
 
     /// Kanalbreite (Zellen) aus dem Abfluss — DIESELBE Kurve wie die
@@ -564,29 +639,32 @@ extension MeanderState {
 
     /// Verschiebungsrate je Knoten (Zellen/Jahr entlang der linken Normalen)
     /// nach Howard–Knutson: `Ω·C + Γ·∫C stromauf`, Kern-Länge ∝ Breite, Rate
-    /// ∝ Breite × (Breite · eff). Mit Mobilität und Ufer-Kohäsion.
+    /// ∝ Breite × (Breite · eff). Mit Mobilität und Talwand-Bremse.
     func beltRates(_ ch: RiverChannel, _ g: BeltGeometry, config: SimConfig,
-                   heightAt: (MeanderNode) -> Double,
-                   riparianAt: (MeanderNode) -> Double) -> [Double] {
-        beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt, riparianAt: riparianAt).rate
+                   heightAt: (MeanderNode) -> Double) -> [Double] {
+        beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt).rate
     }
 
     /// Rate (Zellen/Jahr) und Ufer-Erodierbarkeit je Knoten (0…1: Mobilität ×
-    /// Kohäsion × Talwand-Bremse). Die Erodierbarkeit skaliert AUCH den
-    /// impliziten Lokalterm in `migrateBelt`: bremste sie nur den
-    /// Wachstumsterm, überwog an jeder gebremsten Stelle die Diffusion, und die
-    /// Linie wurde gerade statt stehen zu bleiben (gemessen: Rate 1,5 Zellen je
-    /// 1000 Jahre, Bewegung 0,2, Sinuosität fallend).
+    /// Talwand-Bremse). Die Erodierbarkeit skaliert AUCH den impliziten
+    /// Lokalterm in `migrateBeltChannel`: bremste sie nur den Wachstumsterm,
+    /// überwog an jeder gebremsten Stelle die Diffusion, und die Linie wurde
+    /// gerade statt stehen zu bleiben (gemessen: Rate 1,5 Zellen je 1000
+    /// Jahre, Bewegung 0,2, Sinuosität fallend).
+    ///
+    /// Entfernt mit #187 (beide standen auf 0 und änderten nichts): der Zug zur
+    /// tieferen Uferseite (`meanderBeltPull`; mit Stärke 1 hielt er in jedem
+    /// V-Tal die Linie gerade, Sinuosität 1,2) und die Ufer-Kohäsion
+    /// (`meanderBeltCohesion`; mit 0,5 Sinuosität 1,3 statt 2,0, Bewuchs bremst
+    /// im Gürtel über die Ufer-Zerstörung im Stempel). Die Kopplung an die
+    /// Entwässerung leistet jetzt `Terrain.coupleBeltToDrainage`.
     func beltRatesAndErodibility(_ ch: RiverChannel, _ g: BeltGeometry, config: SimConfig,
-                                 heightAt: (MeanderNode) -> Double,
-                                 riparianAt: (MeanderNode) -> Double) -> (rate: [Double], erod: [Double]) {
+                                 heightAt: (MeanderNode) -> Double) -> (rate: [Double], erod: [Double]) {
         let nodes = ch.nodes, c = nodes.count
         var rate = [Double](repeating: 0, count: c)
         var erod = [Double](repeating: 0, count: c)
-        var pull = [Double](repeating: 0, count: c)
         let ga = config.meanderBeltUpstreamWeight
         let kw = config.meanderBeltKernelWidths, e = config.meanderBeltRate
-        let cohesion = config.meanderBeltCohesion
         // Örtliche Sinuosität über ±`meanderBeltSinuosityWidths` Breiten.
         var cum = [Double](repeating: 0, count: c)
         for i in 1..<c { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
@@ -612,11 +690,10 @@ extension MeanderState {
             ema *= w                                    // stromauf integriert, ohne Knoten i selbst
             // Nur der Stromauf-Term: der LOKALE Term (Ω < 0, zur Krümmungsmitte)
             // ist eine Diffusion der Linie mit κ = |Ω|·Rate·b² und läuft als
-            // implizit stabile Glättung in `migrateBelt` (s. dort).
+            // implizit stabile Glättung in `migrateBeltChannel` (s. dort).
             let eff = ga * ema + (gd != 0 ? gd * down[i] : 0)
             ema += g.curv[i] * (1 - w)
             guard i > 0, i < c - 1, g.mob[i] > 0, ch.discharge[i] >= config.meanderBeltMinCells else { continue }
-            let coh = cohesion > 0 ? max(0, min(1, riparianAt(nodes[i]))) : 0
             let b = g.width[i]
             let m = max(1, Int((config.meanderBeltSinuosityWidths * b / sp).rounded()))
             let lo = max(0, i - m), hi = min(c - 1, i + m)
@@ -624,29 +701,20 @@ extension MeanderState {
             let localSinu = chord > 1e-9 ? (cum[hi] - cum[lo]) / chord : 1
             let sat = s1 > s0 ? max(0, min(1, (s1 - localSinu) / (s1 - s0))) : 1
             // −eff: zum Außenufer (weg vom Krümmungszentrum), wie `lateralStep`.
-            var er = g.mob[i] * (1 - cohesion * coh)
+            var er = g.mob[i]
             var r = -e * b * (b * eff) * er * sat
-            // Querneigung: Ufer links gegen rechts (linke Normale), gemessen in
-            // der Rinnen-Tiefe von `channelCarve` (mindestens Kanaltiefe): in
-            // dieser Rinne liegt jeder D8-Lauf, sie ist hier „die Aue".
-            // Ohne Querbezug lief die Linie gemessen am HANG entlang
-            // (Längsneigung ~0 entlang der Höhenlinie, das Flachland-Gate sah
-            // „flach"): 40 m Quergefälle über 16 Zellen, kein Profil sichtbar.
-            let reach = 0.5 * b + 1.5
-            let dref = max(1e-9, config.meanderBeltDepthPerWidth * config.cellSize * b,
-                           config.channelTargetDepth)
-            let hl = heightAt(MeanderNode(x: nodes[i].x + g.nx[i] * reach, z: nodes[i].z + g.nz[i] * reach))
-            let hr = heightAt(MeanderNode(x: nodes[i].x - g.nx[i] * reach, z: nodes[i].z - g.nz[i] * reach))
-            let cross = (hl - hr) / dref                   // > 0: links höher
             // Talwand-Bremse: liegt das Gelände ein paar Breiten weiter in
             // Bewegungsrichtung deutlich über der Linie (über
             // `meanderBeltBrakeDepths` Rinnentiefen), hält der Lauf — Hügel und
             // Talflanken begrenzen den Gürtel, Unebenheiten der Aue nicht.
+            // Rinnentiefe: die von `channelCarve`, mindestens die Kanaltiefe.
             // Gemessen verworfen: Ufer gegen gegenüberliegendes Ufer direkt am
             // Kanal — das reagierte auf jedes sanfte Quergefälle und hielt die
             // Linie gerade (Sinuosität 1,1–1,2); ganz ohne Bremse lief der Lauf
             // über die Ebene ins Knäuel.
             if r != 0 {
+                let dref = max(1e-9, config.meanderBeltDepthPerWidth * config.cellSize * b,
+                               config.channelTargetDepth)
                 let dir = r > 0 ? 1.0 : -1.0
                 let far = 0.5 * b + 3 * b
                 let wall = heightAt(MeanderNode(x: nodes[i].x + dir * g.nx[i] * far,
@@ -657,114 +725,73 @@ extension MeanderState {
             }
             erod[i] = er
             rate[i] = r
-            // Zug zur tieferen Seite (Totband `meanderBeltPullDeadband`), unten
-            // längs geglättet: koppelt die Linie an die Talsohle zurück, ohne
-            // jeder zellgroßen Rinne nachzulaufen — ungeglättet zackte sie
-            // gemessen in Bandbreite (2100 Hals-Cutoffs in 20.000 Jahren).
-            let dz = max(0, abs(cross) - config.meanderBeltPullDeadband) * (cross > 0 ? 1 : -1)
-            pull[i] = -config.meanderBeltPull * e * b * max(-3, min(3, dz)) * g.mob[i]
         }
-        // Längs glätten: Zug über ±1 Breite, die Gesamtrate über ±½ Breite.
-        // (`sp` von oben.)
-        // Je Knoten verschiedene Bremsfaktoren verschoben Nachbarknoten
-        // ungleich; der entstehende Zickzack im Knotenabstand liegt unter der
-        // Krümmungs-Skala (±½ Breite), der negative Lokalterm sah ihn nicht,
-        // und seine Knick-Krümmung trieb die CFL-Teilschritte gemessen in den
-        // Deckel (64 in jedem Lauf).
+        // Die Gesamtrate längs über ±½ Breite glätten: je Knoten verschiedene
+        // Bremsfaktoren verschoben Nachbarknoten ungleich; der entstehende
+        // Zickzack im Knotenabstand liegt unter der Krümmungs-Skala (±½
+        // Breite), der negative Lokalterm sah ihn nicht, und seine
+        // Knick-Krümmung trieb die CFL-Teilschritte gemessen in den Deckel.
         var out = rate
         for i in 1..<max(1, c - 1) {
-            let kp = max(1, Int((g.width[i] / sp).rounded()))
             let kr = max(1, Int((0.5 * g.width[i] / sp).rounded()))
-            var accP = 0.0, accR = 0.0
-            let lp = max(1, i - kp), hp = min(c - 2, i + kp)
-            for j in lp...hp { accP += pull[j] }
+            var accR = 0.0
             let lr = max(1, i - kr), hr = min(c - 2, i + kr)
             for j in lr...hr { accR += rate[j] }
-            out[i] = accR / Double(hr - lr + 1) + accP / Double(hp - lp + 1)
+            out[i] = accR / Double(hr - lr + 1)
         }
         return (out, erod)
     }
 
-    /// Größte Verschiebungsrate aller mobilen Läufe (Zellen/Jahr) — daraus
-    /// bestimmt der Aufrufer die Teilschritte (CFL statt Deckel je Schritt).
-    func beltMaxRate(config: SimConfig, heightAt: (MeanderNode) -> Double,
-                     riparianAt: (MeanderNode) -> Double) -> Double {
-        var m = 0.0
-        for ch in channels where ch.nodes.count >= 3 && Self.migrates(ch, config) {
-            let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
-            for r in beltRates(ch, g, config: config, heightAt: heightAt, riparianAt: riparianAt) { m = max(m, abs(r)) }
-        }
-        return m
-    }
-
-    /// Ein Teilschritt der Gürtel-Migration über `dt` Jahre: Verschiebung,
-    /// Glättung, Cutoffs (Hals und Chute), Resample. Der Aufrufer taktet so,
-    /// dass kein Knoten mehr als einen halben Knotenabstand springt; die
-    /// Klemme hier ist nur Sicherheitsnetz.
-    func migrateBelt(dt: Double, time: Double, config: SimConfig, heightAt: (MeanderNode) -> Double,
-                     riparianAt: (MeanderNode) -> Double) {
-        for age in oxbowAge.indices { oxbowAge[age] += dt }
-        for ci in channels.indices where Self.migrates(channels[ci], config) {
-            migrateBeltChannel(ci, dt: dt, time: time, config: config, heightAt: heightAt, riparianAt: riparianAt)
-        }
-    }
-
     /// Größte Verschiebungsrate EINES Laufs (Zellen/Jahr) — seine eigene
     /// CFL-Teilschrittzahl (`Terrain.meanderBeltStep`).
-    func beltMaxRate(channel ci: Int, config: SimConfig, heightAt: (MeanderNode) -> Double,
-                     riparianAt: (MeanderNode) -> Double) -> Double {
+    func beltMaxRate(channel ci: Int, config: SimConfig, heightAt: (MeanderNode) -> Double) -> Double {
         let ch = channels[ci]
         guard ch.nodes.count >= 3, Self.migrates(ch, config) else { return 0 }
         let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
-        return beltRates(ch, g, config: config, heightAt: heightAt, riparianAt: riparianAt)
-            .reduce(0) { max($0, abs($1)) }
+        return beltRates(ch, g, config: config, heightAt: heightAt).reduce(0) { max($0, abs($1)) }
     }
 
-    /// Ein Teilschritt für EINEN Lauf (ohne Altarm-Alterung, die macht der
-    /// Aufrufer einmal je Schritt).
+    /// Ein Teilschritt für EINEN Lauf über `dt` Jahre: Verschiebung, Störung,
+    /// Glättung (implizit), Cutoffs (Hals und Chute), Resample. Der Aufrufer
+    /// taktet so, dass kein Knoten mehr als einen halben Knotenabstand springt;
+    /// die Klemme hier ist nur Sicherheitsnetz. Altarm-Alter setzt der Aufrufer.
     func migrateBeltChannel(_ ci: Int, dt: Double, time: Double, config: SimConfig,
-                            heightAt: (MeanderNode) -> Double,
-                            riparianAt: (MeanderNode) -> Double) {
+                            heightAt: (MeanderNode) -> Double) {
         let spacing = config.meanderNodeSpacing
         let maxStep = 0.5 * spacing
         let kappaK = abs(config.meanderBeltLocalWeight) * config.meanderBeltRate / max(1e-12, spacing * spacing)
-        do {
-            var ch = channels[ci]
-            if ch.nodes.count >= 3 {
-                do {
-                    let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
-                    let (r, erod) = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt,
-                                                            riparianAt: riparianAt)
-                    for i in 1..<(ch.nodes.count - 1) where r[i] != 0 {
-                        let m = max(-maxStep, min(maxStep, r[i] * dt))
-                        ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
-                    }
-                    Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: ci,
-                                 config: config, maxStep: maxStep)
-                    // Lokaler Term als Diffusion der Linie, ∂x/∂t = κ·∂²x/∂s² mit
-                    // κ = |Ω|·Rate·b²·Erodierbarkeit, IMPLIZIT (Rückwärts-Euler,
-                    // tridiagonal): für jedes dt stabil und in der Zeit konsistent.
-                    // Explizit (als Teil der Rate) war er nur bis dt ≈ ds²/(2κ)
-                    // ≈ 3 Jahre stabil, die Linie zackte im Knotenabstand. Die
-                    // Zwischenfassung als Glättung mit Faktor 1 − e^(−4κ·dt/ds²)
-                    // sättigte schon bei dt = 50 auf 1 — die Diffusion wuchs dann
-                    // mit der ZAHL der Teilschritte (gemessen 19 % Kanalbreite
-                    // Abstand zwischen dt 50 und 1500).
-                    // Erodierbarkeit (Mobilität, Kohäsion, Talwand) wirkt auf BEIDE
-                    // Terme, s. `beltRatesAndErodibility`.
-                    let c = ch.nodes.count
-                    var a = [Double](repeating: 0, count: c)
-                    for i in 1..<(c - 1) where erod[i] > 0 {
-                        let b = g.width[i]
-                        a[i] = kappaK * b * b * erod[i] * dt
-                    }
-                    ch.nodes = Self.implicitDiffuse(ch.nodes, a)
-                }
+        var ch = channels[ci]
+        if ch.nodes.count >= 3 {
+            let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
+            let (r, erod) = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
+            for i in 1..<(ch.nodes.count - 1) where r[i] != 0 {
+                let m = max(-maxStep, min(maxStep, r[i] * dt))
+                ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
             }
-            applyBeltCutoffs(&ch, config: config)
-            ch = resample(ch, spacing: spacing)
-            channels[ci] = ch
+            Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: ci,
+                         config: config, maxStep: maxStep)
+            // Lokaler Term als Diffusion der Linie, ∂x/∂t = κ·∂²x/∂s² mit
+            // κ = |Ω|·Rate·b²·Erodierbarkeit, IMPLIZIT (Rückwärts-Euler,
+            // tridiagonal): für jedes dt stabil und in der Zeit konsistent.
+            // Explizit (als Teil der Rate) war er nur bis dt ≈ ds²/(2κ)
+            // ≈ 3 Jahre stabil, die Linie zackte im Knotenabstand. Die
+            // Zwischenfassung als Glättung mit Faktor 1 − e^(−4κ·dt/ds²)
+            // sättigte schon bei dt = 50 auf 1 — die Diffusion wuchs dann
+            // mit der ZAHL der Teilschritte (gemessen 19 % Kanalbreite
+            // Abstand zwischen dt 50 und 1500).
+            // Erodierbarkeit (Mobilität, Talwand) wirkt auf BEIDE Terme, s.
+            // `beltRatesAndErodibility`.
+            let c = ch.nodes.count
+            var a = [Double](repeating: 0, count: c)
+            for i in 1..<(c - 1) where erod[i] > 0 {
+                let b = g.width[i]
+                a[i] = kappaK * b * b * erod[i] * dt
+            }
+            ch.nodes = Self.implicitDiffuse(ch.nodes, a)
         }
+        applyBeltCutoffs(&ch, config: config)
+        ch = resample(ch, spacing: spacing)
+        channels[ci] = ch
     }
 
     /// Zubringer bleiben an ihrem Vorfluter: jeder Lauf ist eine eigene
@@ -774,7 +801,10 @@ extension MeanderState {
     /// Deshalb: kommt ein Lauf einem GRÖSSEREN (Abfluss am Ende) näher als
     /// die halbe Summe beider Breiten, endet er dort, und sein Endknoten sitzt
     /// auf dem nächsten Knoten des Vorfluters — auch in den folgenden
-    /// Teilschritten, solange der Vorfluter in Reichweite (zwei Breiten) bleibt.
+    /// Schritten (der Aufruf läuft EINMAL je Schritt, nach allen
+    /// Teilschritten), solange der Vorfluter in Reichweite (zwei Breiten)
+    /// bleibt. „Abfluss am Ende" ist seit der Kopplung (#187) der EIGENE: die
+    /// Mündungszelle zählt dort zum größeren Fluss.
     func attachTributaries(config: SimConfig) {
         let cell = 8.0
         // Nachschlagen auf einer unveränderten Kopie: das Kürzen eines Laufs
@@ -785,7 +815,12 @@ extension MeanderState {
         var head = [Int32](repeating: -1, count: gw * gw)
         var flatC: [Int32] = [], flatN: [Int32] = [], next: [Int32] = []
         @inline(__always) func bin(_ v: Double) -> Int { min(gw - 1, max(0, Int(v / cell) + 1)) }
-        for (ci, ch) in snap.enumerated() {
+        // Mit Kopplung (#187) enden feste Läufe ohnehin an ihrem
+        // D8-Zusammenfluss; neu heranrücken kann nur ein WANDERNDER Vorfluter.
+        // Nur seine Knoten kommen ins Gitter (gemessen 2,9 ms je Schritt, als
+        // jeder Knoten jedes Laufs gegen alle Läufe geprüft wurde).
+        let mobileTargets = config.meanderBelt && config.meanderBeltCoupling
+        for (ci, ch) in snap.enumerated() where !mobileTargets || Self.migrates(ch, config) {
             for (ni, p) in ch.nodes.enumerated() {
                 let b = bin(p.z) * gw + bin(p.x)
                 next.append(head[b]); head[b] = Int32(flatC.count)
@@ -936,13 +971,19 @@ extension MeanderState {
             // Flaches Bin-Gitter (Kantenlänge maxReach, verkettete Listen):
             // Kandidaten nur aus den 3×3 Nachbar-Bins. Ein Dictionary allokierte
             // je Lauf und Teilschritt und trug den Großteil der Gürtel-Kosten.
+            // Puffer wiederverwendet (Review #187: je Aufruf, also je Lauf und
+            // Teilschritt, neu allokiert); zurückgesetzt werden nur die
+            // belegten Bins. Reihenfolge der Listen unverändert.
             let gw = max(1, Int(Double(config.n) / maxReach) + 3)
-            var head = [Int32](repeating: -1, count: gw * gw)
-            var next = [Int32](repeating: -1, count: c)
+            if cutBinHead.count < gw * gw { cutBinHead = [Int32](repeating: -1, count: gw * gw) }
+            for b in cutBinTouched { cutBinHead[Int(b)] = -1 }
+            cutBinTouched.removeAll(keepingCapacity: true)
+            if cutBinNext.count < c { cutBinNext = [Int32](repeating: -1, count: c) }
             @inline(__always) func bin(_ v: Double) -> Int { min(gw - 1, max(0, Int(v / maxReach) + 1)) }
             for i in 0..<c {
                 let b = bin(nodes[i].z) * gw + bin(nodes[i].x)
-                next[i] = head[b]; head[b] = Int32(i)
+                if cutBinHead[b] < 0 { cutBinTouched.append(Int32(b)) }
+                cutBinNext[i] = cutBinHead[b]; cutBinHead[b] = Int32(i)
             }
             var cut: (Int, Int, Bool)? = nil
             outer: for i in 0..<c {
@@ -955,9 +996,9 @@ extension MeanderState {
                 var best: (Int, Bool)? = nil
                 for zz in max(0, bz - 1)...min(gw - 1, bz + 1) {
                     for xx in max(0, bx - 1)...min(gw - 1, bx + 1) {
-                        var jj = head[zz * gw + xx]
+                        var jj = cutBinHead[zz * gw + xx]
                         while jj >= 0 {
-                            let j = Int(jj); jj = next[j]
+                            let j = Int(jj); jj = cutBinNext[j]
                             guard j >= i + minSep, best == nil || j < best!.0,
                                   cum[j] - cum[i] <= maxLoop else { continue }
                             let d = dist(nodes[i], nodes[j])

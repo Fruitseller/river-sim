@@ -4470,7 +4470,10 @@ public final class Terrain {
     /// Altarm-Verlandung: hebt die Altarm-Betten langsam (Zeitkonstante
     /// `oxbowFillYears`) Richtung Uferrand an (Sediment) — der See verschwindet
     /// allmählich. Vollständig verlandete Altarme fallen aus der Liste.
-    private func fillOxbows(dt: Double) {
+    /// `byAge` (Mäandergürtel): ein Altarm verlandet im Schritt seiner
+    /// Entstehung nur über sein Alter, nicht über den ganzen Schritt (er
+    /// entsteht in einem Teilschritt, s. `meanderBeltStep`).
+    private func fillOxbows(dt: Double, byAge: Bool = false) {
         // Exponentiell (Issue #2, s. fillLakes): `min(1, dt/τ)` verlandete einen
         // 5500-Jahr-Sprung komplett in EINEM Schritt, dieselbe Zeit in kleinen
         // Schritten dagegen nur zu 63 % (1 − 1/e).
@@ -4482,7 +4485,9 @@ public final class Terrain {
         let nn = n
         withBed { bed in
         let ph = bed.h
-        for loop in meander.oxbows {
+        for (oi, loop) in meander.oxbows.enumerated() {
+            let rate = byAge && meander.oxbowAge[oi] < dt
+                ? Terrain.relaxFraction(dt: meander.oxbowAge[oi], tau: cfg.oxbowFillYears) : rate
             for nd in loop {
                 let ci = min(max(Int(nd.x.rounded()), 1), nn - 2)
                 let cj = min(max(Int(nd.z.rounded()), 1), nn - 2)
@@ -4502,10 +4507,21 @@ public final class Terrain {
     /// Sediment, sodass D8 nicht mehr hindurchroutet und die eingetiefte Schleife
     /// über den bestehenden `hf>h`-Mechanismus zum Altarm-See wird.
     private func plugOxbows() {
+        plugOxbows(indices: meander.oxbows.indices.filter { meander.oxbowAge[$0] == 0 })
+    }
+
+    /// Verkorkt die Altarme ab Index `from` — der Gürtel erkennt neue Altarme
+    /// am Index, nicht am Alter 0: sie tragen seit #187 ihr Alter am Schrittende.
+    private func plugOxbows(from: Int) {
+        guard from < meander.oxbows.count else { return }
+        plugOxbows(indices: Array(from..<meander.oxbows.count))
+    }
+
+    private func plugOxbows(indices: [Int]) {
         let nn = n
         withBed { bed in
         let ph = bed.h
-        for oi in meander.oxbows.indices where meander.oxbowAge[oi] == 0 {
+        for oi in indices {
             let loop = meander.oxbows[oi]
             guard loop.count >= 4 else { continue }
             for nd in [loop[1], loop[loop.count - 2]] {
@@ -4561,63 +4577,98 @@ public final class Terrain {
     /// Knoten der Welt den Takt aller (gemessen 13 Teilschritte je 100 Jahre,
     /// Gürtel 36 ms je Schritt). Feste Läufe (unter `meanderBeltMinCells`)
     /// bekommen einen Stempel über den ganzen Schritt.
+    ///
+    /// **Alter je Teilschritt** (Review #187): eine Bank oder ein Altarm aus
+    /// Teilschritt `si` ist am Schrittende `dt − (si+1)·sub` Jahre alt, nicht 0.
+    /// Bis dahin alterten Bank- und Altarm-Alter nur einmal je Schritt; nach
+    /// einem 1000-Jahr-Schritt trugen gemessen alle 9971 neuen Bankzellen das
+    /// Alter 0 (in 100 × 10 Jahren: 269, der Rest über 0–1000 Jahre verteilt).
+    /// Die Scroll-Rippen (Isolinien des Alters) fehlten damit nach dem Einlauf
+    /// und nach jedem Sprung.
     private func meanderBeltStep(dt: Double) {
         if meander.channels.isEmpty { seedMeander() }
         fill(&isChannel, false)
         fill(&inBelt, false)
-        for k in 0..<cfg.count where barAge[k] >= 0 { barAge[k] += dt }
+        if cfg.meanderBeltCoupling {
+            // Tropfen-Sperre nur im Bett WANDERNDER Läufe (s. `beltDropletGate`);
+            // `beltStamp` setzt sie je Teilschritt.
+            if dropletGateBuf.count != cfg.count { dropletGateBuf = .init(repeating: false, count: cfg.count) }
+            fill(&dropletGateBuf, false)
+        }
+        // Alterung auf dem Roh-Puffer, parallel (Review #187: als Schleife über
+        // die Klassen-Property seriell über alle n² Zellen).
+        barAge.withUnsafeMutableBufferPointer { ab in
+            let pa = ab.baseAddress!
+            parallel(cfg.count) { lo, hi in
+                for k in lo..<hi where pa[k] >= 0 { pa[k] += dt }
+            }
+        }
         for oi in meander.oxbowAge.indices { meander.oxbowAge[oi] += dt }
-        let nn = n, bankR = bankRadius, maxc = Double(n - 1)
-        let maxSub = 256
-        mark("belt.discharge")
-        refreshBeltDischarge()
+        let nn = n, maxc = Double(n - 1)
+        // Teilschritt-Deckel nur als Sicherheitsnetz. Mit 256 riss er bei
+        // Einlauf und Sprüngen: gemessen max. Rate 0,21–0,31 Zellen/Jahr →
+        // nötig 276–419 Teilschritte bei dt 1000, 551–837 bei dt 2000; schnelle
+        // Bögen wuchsen dann nur mit 31–93 % ihrer Rate (Review #187).
+        let maxSub = 4096
+        // Mit Kopplung (#187) setzt `coupleBeltToDrainage` Läufe und Abfluss
+        // EINMAL je Schritt aus dem D8-Netz; in den Teilschritten reist der
+        // Abfluss mit den Knoten (Neuabtastung und Cutoffs interpolieren bzw.
+        // schneiden ihn mit). Das Abflussfeld ändert sich im Schritt ohnehin nicht.
+        let coupled = cfg.meanderBeltCoupling
+        if coupled {
+            mark("belt.couple")
+            let ox0 = meander.oxbows.count
+            coupleBeltToDrainage(dt: dt)
+            plugOxbows(from: ox0)
+        } else {
+            mark("belt.discharge")
+            refreshBeltDischarge()
+        }
         var maxSubUsed = 0
         let mobile = meander.channels.indices.filter { MeanderState.migrates(meander.channels[$0], cfg) }
         for ci in mobile {
             mark("belt.migrate")
-            var nsub = 1
-            h.withUnsafeBufferPointer { hb in
-            veg.withUnsafeBufferPointer { vb in
-            vegClass.withUnsafeBufferPointer { cb in
-                let ph = hb.baseAddress!, pveg = vb.baseAddress!, pcls = cb.baseAddress!
-                let rate = meander.beltMaxRate(channel: ci, config: cfg,
-                                               heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) },
-                                               riparianAt: { Terrain.riparianVeg(pveg, pcls, nn, bankR, $0.x, $0.z) })
-                nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
-            }}}
+            let rate = h.withUnsafeBufferPointer { hb in
+                let ph = hb.baseAddress!
+                return meander.beltMaxRate(channel: ci, config: cfg,
+                                           heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+            }
+            let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
             maxSubUsed = max(maxSubUsed, nsub)
             let sub = dt / Double(nsub)
             for si in 0..<nsub {
                 mark("belt.migrate")
+                let ageAtEnd = dt - Double(si + 1) * sub
+                let ox0 = meander.oxbows.count
                 h.withUnsafeBufferPointer { hb in
-                veg.withUnsafeBufferPointer { vb in
-                vegClass.withUnsafeBufferPointer { cb in
-                    let ph = hb.baseAddress!, pveg = vb.baseAddress!, pcls = cb.baseAddress!
+                    let ph = hb.baseAddress!
                     meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
-                                               heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) },
-                                               riparianAt: { Terrain.riparianVeg(pveg, pcls, nn, bankR, $0.x, $0.z) })
-                }}}
+                                               heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+                }
+                for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
                 meander.channels[ci].clampToWorld(maxCoord: maxc)
-                mark("belt.discharge")
-                refreshBeltDischarge(only: ci)
+                if !coupled {
+                    mark("belt.discharge")
+                    refreshBeltDischarge(only: ci)
+                }
                 mark("belt.stamp")
-                beltStamp(dt: sub, only: ci)
-                plugOxbows()
+                beltStamp(dt: sub, only: ci, ageAtEnd: ageAtEnd)
+                plugOxbows(from: ox0)
             }
         }
         beltSubsteps = maxSubUsed
         mark("belt.attach")
         meander.attachTributaries(config: cfg)
         meander.channels.removeAll { $0.nodes.count < 3 }
-        refreshBeltDischarge()
+        if !coupled { refreshBeltDischarge() }
         mark("belt.fixedStamp")
-        beltStamp(dt: dt, only: nil)
+        beltStamp(dt: dt, only: nil, ageAtEnd: 0)
         mark("belt.fill")
-        fillOxbows(dt: dt)
+        fillOxbows(dt: dt, byAge: true)
         if meander.channels.isEmpty { seedMeander() }
     }
 
-    /// Sperrmaske der Tropfen (`Hydraulic.erode`, Parameter `underIce`):
+    /// Sperrmaske der Tropfen (`Hydraulic.erode`, Parameter `bedLocked`):
     /// Gletscher (#35) und — mit Gürtel — das Bett der Mäanderläufe (`inBelt`).
     /// Dort tragen die Tropfen weder ab noch lagern sie ab, ihre Fracht geht
     /// hindurch. Der Gürtel löst das Bett auf Bankfull-Skala auf (Kolk,
@@ -4626,12 +4677,34 @@ public final class Terrain {
     /// Bögen außen/innen 0,9 / 0,9 Tiefen statt des Kolks außen), und der
     /// Bezug des Stempels sank mit der Sohle. Dieselbe Doktrin wie
     /// `channelCarve` auf Gürtelzellen. Ohne Gürtel: `underIce` unverändert.
+    ///
+    /// Mit Kopplung (#187) nur das Bett WANDERNDER Läufe: die Tropfen tragen
+    /// über gesperrte Zellen ihre volle Fracht und laden sie an der ersten
+    /// freien Zelle ab. Seit jeder D8-Abschnitt seine Linie hat, liegen
+    /// Profil-Stempel fester Läufe auf viel mehr Wegen, und am Ende eines
+    /// solchen Stücks wuchs gemessen ein Schutthügel von 0,40 Höhe in einem
+    /// 500-Jahr-Schritt (n = 160, Seed 1337, Zelle (5, 101): 0,318 → 0,722,
+    /// über dem höchsten Gipfel; ohne Tropfen keiner). Das Profil, das die
+    /// Sperre schützt (Kolk, Gleithang), baut nur der wandernde Gürtel.
     private func beltDropletGate() -> [Bool] {
         guard cfg.meanderEnabled && cfg.meanderBelt else { return underIce }
         let c = cfg.count
         if dropletGateBuf.count != c { dropletGateBuf = .init(repeating: false, count: c) }
         let iceOn = underIce.count == c
-        for k in 0..<c { dropletGateBuf[k] = inBelt[k] || (iceOn && underIce[k]) }
+        let mobileOnly = cfg.meanderBeltCoupling
+        // Roh-Puffer, parallel (Review #187: seriell über die Properties).
+        dropletGateBuf.withUnsafeMutableBufferPointer { gb in
+        inBelt.withUnsafeBufferPointer { bb in
+        underIce.withUnsafeBufferPointer { ib in
+            let pg = gb.baseAddress!, pb = bb.baseAddress!, pi = ib.baseAddress
+            parallel(c) { lo, hi in
+                if mobileOnly {
+                    for k in lo..<hi { pg[k] = pg[k] || (iceOn && pi![k]) }
+                } else {
+                    for k in lo..<hi { pg[k] = pb[k] || (iceOn && pi![k]) }
+                }
+            }
+        }}}
         return dropletGateBuf
     }
     private var dropletGateBuf: [Bool] = []
@@ -4663,7 +4736,15 @@ public final class Terrain {
     ///   Bett formen `channelCarve` und die Tropfen.
     /// - `only`: genau dieser (wandernde) Lauf, je Teilschritt; `nil` = alle
     ///   festen Läufe, einmal je Schritt (s. `meanderBeltStep`).
-    private func beltStamp(dt: Double, only: Int?) {
+    /// - `ageAtEnd`: Alter einer hier frisch abgelegten Bank am Schrittende
+    ///   (Teilschritt `si`: `dt − (si+1)·sub`; feste Läufe 0).
+    /// - **Frische Bank** nur, wo die Ablage die Zelle bis auf eine Viertel
+    ///   Kanaltiefe an die Bank-Oberkante hebt — ein Zustand, keine Menge. Bis
+    ///   #187 machte jede Mini-Ablagerung eine frische Bank (Alter 0, Bewuchs
+    ///   weg, Tropfen gesperrt), und ihre Menge hing über `rel` an der
+    ///   Schrittweite. Eine bestehende Bank verjüngt sich, wenn die Ablage mehr
+    ///   als 0,2 Tiefen Lücke bis zur Oberkante schließt.
+    private func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) {
         let cs = cfg.cellSize
         guard cs > 0, cs.isFinite else { return }
         let nn = n
@@ -4679,9 +4760,11 @@ public final class Terrain {
         isChannel.withUnsafeMutableBufferPointer { icb in
         inBelt.withUnsafeMutableBufferPointer { ibb in
         barAge.withUnsafeMutableBufferPointer { bab in
+        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
         withBed { bed in
         let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
         let pbelt = ibb.baseAddress!, page = bab.baseAddress!
+        let plock = glb.baseAddress, lockHere = cfg.meanderBeltCoupling && only != nil && glb.count == cfg.count
         let pice = uib.baseAddress
         let iceOn = uib.count == cfg.count
         @inline(__always) func cell(_ x: Double, _ z: Double) -> Int {
@@ -4690,16 +4773,34 @@ public final class Terrain {
         @inline(__always) func blocked(_ k: Int) -> Bool {
             phf[k] - bed.h[k] > 0.02 || (iceOn && pice![k])
         }
+        // Mit Kopplung (#187) stempelt der Teilschritt eines wandernden Laufs
+        // nur dessen FLACHE Knoten (Mobilität > 0); seine steilen Strecken
+        // bekommen wie die festen Läufe einen Linien-Carve über den ganzen
+        // Schritt (`only == nil`). Seit die wandernden Läufe die ganzen Flüsse
+        // von der Quelle bis zur Mündung sind, stempelte jeder Teilschritt
+        // sonst den ganzen Gebirgsabschnitt mit (gemessen belt.stamp 3,8 →
+        // 8,0 ms je Schritt).
+        let split = cfg.meanderBeltCoupling
         for (ci, ch) in meander.channels.enumerated()
-        where only.map({ $0 == ci }) ?? !MeanderState.migrates(ch, cfg) {
+        where only.map({ $0 == ci }) ?? (split || !MeanderState.migrates(ch, cfg)) {
             let nodes = ch.nodes, c = nodes.count
             guard c >= 3 else { continue }
+            // 0: alle Knoten; 1: nur flache (Teilschritt eines wandernden Laufs);
+            // 2: nur steile (wandernder Lauf am Schrittende).
+            let part = !split ? 0 : (only != nil ? 1 : (MeanderState.migrates(ch, cfg) ? 2 : 0))
             let g = MeanderState.beltGeometry(ch, config: cfg,
                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
             let bendCurv = MeanderState.bendCurvature(g, config: cfg)
-            // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten gemittelt.
+            // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten
+            // gemittelt — nur gebraucht, wo ein flacher Knoten in ±2 liegt.
             var floorH = [Double](repeating: 0, count: c)
             for i in 0..<c {
+                if part == 2 { break }
+                if part == 1 || split {
+                    var flat = false
+                    for j in max(0, i - 2)...min(c - 1, i + 2) where g.mob[j] > 0 { flat = true; break }
+                    if !flat { continue }
+                }
                 let w = 0.5 * g.width[i]
                 var lo = Double.infinity, s = -w
                 while s <= w + 1e-9 {
@@ -4714,6 +4815,7 @@ public final class Terrain {
                 if blocked(ck) { budget = 0; continue }
                 let b = g.width[i], w = 0.5 * b
                 if g.mob[i] <= 0 {
+                    if part == 1 { budget = 0; continue }
                     // Steile Strecke: Linien-Carve wie `meanderStamp` (Teil 1).
                     let a = nodes[i], bn = nodes[i + 1]
                     let d = dist(a, bn)
@@ -4733,6 +4835,7 @@ public final class Terrain {
                     budget = 0
                     continue
                 }
+                if part == 2 { budget = 0; continue }
                 var ref = 0.0
                 let lo = max(0, i - 2), hi = min(c - 1, i + 2)
                 for j in lo...hi { ref += floorH[j] }
@@ -4765,6 +4868,7 @@ public final class Terrain {
                         // (1 + κη) ins Negative, das Ziel läge über bankfull.
                         let target = min(barTarget, zbf - depth * (1 - e * e) * (1 + skew * a * e))
                         pchan[k] = true; pbelt[k] = true; pveg[k] = 0
+                        if lockHere { plock![k] = true }
                         if eta > -0.5 { page[k] = -1 }
                         if bed.h[k] > target {
                             budget += erodeCell(k, (bed.h[k] - target) * rel, bed)
@@ -4773,15 +4877,436 @@ public final class Terrain {
                             depositCell(k, dep, bed); budget -= dep
                         }
                     } else if bed.h[k] < barTarget && budget > 0 {
-                        let dep = min(budget, (barTarget - bed.h[k]) * rel)
+                        let gap = barTarget - bed.h[k]
+                        let dep = min(budget, gap * rel)
                         depositCell(k, dep, bed); budget -= dep
-                        pbelt[k] = true
-                        if page[k] < 0 || dep > 0.2 * depth { page[k] = 0; pveg[k] = 0 }
+                        let atBar = barTarget - bed.h[k] <= 0.25 * depth
+                        if atBar && (page[k] < 0 || gap > 0.2 * depth) { page[k] = ageAtEnd; pveg[k] = 0 }
+                        if page[k] >= 0 { pbelt[k] = true; if lockHere { plock![k] = true } }
                     }
                 }
             }
         }
-        }}}}}}}
+        }}}}}}}}
+    }
+
+    // MARK: - Kopplung Gürtel ↔ Entwässerung (Issue #187)
+
+    /// Ein Abschnitt des D8-Netzes nach dem Hack-Prinzip: von einer Quelle die
+    /// Empfänger-Kette entlang, solange der Abschnitt an jedem Zusammenfluss der
+    /// größere Zufluss ist; er endet vor Meer oder See oder IN der
+    /// Zusammenfluss-Zelle mit einem größeren Fluss (die gehört dann dem).
+    struct DrainageSegment {
+        var cells: [Int32]
+        var endsAtConfluence: Bool
+    }
+
+    /// Hack-Abschnitte des großen D8-Netzes (Einzugsgebiet ab `meanderMinCells`,
+    /// über dem Meer), in Index-Reihenfolge der Quellen. EINE Regel für die
+    /// Trasse (`MeanderState.traceHorton`) und die Kopplung je Schritt.
+    static func drainageSegments(config cfg: SimConfig, h: UnsafePointer<Double>, hf: UnsafePointer<Double>,
+                                 area: UnsafePointer<Double>, receiver: UnsafePointer<Int32>) -> [DrainageSegment] {
+        let nn = cfg.n, cnt = cfg.count, sea = cfg.sea
+        let lakeEps = MeanderState.traceLakeDepth
+        let minA = cfg.meanderMinCells * cfg.cellSize * cfg.cellSize
+        @inline(__always) func big(_ k: Int) -> Bool { hf[k] > sea && area[k] >= minA }
+        // Größter großer Zufluss einer Zelle (Gleichstand: kleinerer Index), −1 = keiner.
+        @inline(__always) func bestDonor(_ r: Int) -> Int {
+            let ri = r % nn, rj = r / nn
+            var best = -1
+            for dj in -1...1 {
+                let j = rj + dj
+                guard j >= 0, j < nn else { continue }
+                for di in -1...1 where di != 0 || dj != 0 {
+                    let i = ri + di
+                    guard i >= 0, i < nn else { continue }
+                    let d = j * nn + i
+                    guard Int(receiver[d]) == r, big(d) else { continue }
+                    if best < 0 || area[d] > area[best] || (area[d] == area[best] && d < best) { best = d }
+                }
+            }
+            return best
+        }
+        // Quellen (große Zellen ohne großen Zufluss) parallel in Blöcken
+        // suchen, in Index-Reihenfolge zusammensetzen — dieselbe Liste wie die
+        // serielle Schleife (gemessen 1,4 ms je Schritt seriell).
+        let chunks = max(1, min(64, cnt / 4096))
+        var found = [[Int]](repeating: [], count: chunks)
+        found.withUnsafeMutableBufferPointer { fb in
+            let pf = fb.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: chunks) { c in
+                var list: [Int] = []
+                for s in (cnt * c / chunks)..<(cnt * (c + 1) / chunks) where big(s) && bestDonor(s) < 0 {
+                    list.append(s)
+                }
+                pf[c] = list
+            }
+        }
+        var out: [DrainageSegment] = []
+        for s in found.joined() {
+            var cells: [Int32] = [Int32(s)]
+            var c = s, confluence = false
+            while cells.count < cnt {
+                let r = Int(receiver[c])
+                if r < 0 || r >= cnt || r == c { break }
+                if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
+                cells.append(Int32(r))
+                if bestDonor(r) != c { confluence = true; break }
+                c = r
+            }
+            if cells.count >= 3 { out.append(DrainageSegment(cells: cells, endsAtConfluence: confluence)) }
+        }
+        return out
+    }
+
+    /// Kopplung der Gürtel-Linien an die D8-Entwässerung, einmal je Schritt auf
+    /// dem frischen Abflussfeld, VOR der Migration (Issue #187). Bis dahin liefen
+    /// Linie und Entwässerung getrennt: `refreshBeltDischarge` übernahm über ein
+    /// laufendes Maximum den Abfluss jedes größeren Flusses, den eine Linie
+    /// einmal berührte, und die Linie wanderte damit breit und beweglich neben
+    /// der Rinne den Hang hinauf (`docs/zielbild-measurements.md` § Flüsse
+    /// laufen bergauf). Jetzt gilt:
+    ///
+    /// - **Das D8-Netz bestimmt, WELCHE Flüsse es gibt** (`drainageSegments`):
+    ///   je Hack-Abschnitt ein Lauf, der kleinere endet am Zusammenfluss. Der
+    ///   Abfluss jedes Knotens ist das Einzugsgebiet der Abschnittszelle, an der
+    ///   er liegt, entlang des Laufs monoton — ein Erben über eine Berührung mit
+    ///   einem größeren Fluss ist damit ausgeschlossen, ebenso ein Lauf ohne
+    ///   Fluss darunter. Ein neuer oder durch einen Pinselstrich verlorener
+    ///   Fluss bekommt im nächsten Schritt seine Linie aus D8.
+    /// - **Die alte Linie bestimmt, WO er liegt** (Mäander-Gedächtnis): jeder
+    ///   Knoten einer alten Linie, der höchstens `0,5 · b +
+    ///   meanderBeltCouplingSlackCells` von einer Abschnittszelle liegt, gehört
+    ///   dorthin; zusammenhängende Strecken (kurze Abweichungen eingeschlossen)
+    ///   werden in den neuen Lauf übernommen.
+    /// - **Avulsion:** verlässt eine Linie ihren Abschnitt über mindestens
+    ///   `meanderBeltAvulsionWidths` Kanalbreiten, oder liegt das Gelände unter
+    ///   dem abgekoppelten Stück im Mittel mehr als `meanderBeltAvulsionDepths`
+    ///   Bankfull-Tiefen über dem Abschnitt dazwischen, ersetzen die
+    ///   Abschnittszellen das Stück (geglättet); das verlassene Gerinne eines
+    ///   wandernden Laufs wird Altarm mit `barAge`-Narbe.
+    ///
+    /// Geprüft wird am Schrittanfang, auf dem Abflussfeld des Betts, das der
+    /// vorige Schritt gestempelt hat. Innerhalb des Schritts ändert sich das
+    /// Abflussfeld nicht; nach der Wanderung eines großen Schritts sähe jede
+    /// weite Bewegung wie eine Abkopplung aus.
+    private func coupleBeltToDrainage(dt: Double) {
+        let nn = n, cnt = cfg.count, cs = cfg.cellSize
+        let cellArea = cs * cs
+        guard cellArea > 0, cellArea.isFinite else { return }
+        mark("belt.couple.segments")
+        let segs = h.withUnsafeBufferPointer { hb in
+            hf.withUnsafeBufferPointer { hfb in
+            area.withUnsafeBufferPointer { ab in
+            receiver.withUnsafeBufferPointer { rb in
+                Terrain.drainageSegments(config: cfg, h: hb.baseAddress!, hf: hfb.baseAddress!,
+                                         area: ab.baseAddress!, receiver: rb.baseAddress!)
+            }}}
+        }
+        if segOwner.count != cnt {
+            segOwner = [Int32](repeating: -1, count: cnt); segPos = [Int32](repeating: -1, count: cnt)
+        }
+        for (s, seg) in segs.enumerated() {
+            let own = seg.endsAtConfluence ? seg.cells.count - 1 : seg.cells.count
+            for p in 0..<own { segOwner[Int(seg.cells[p])] = Int32(s); segPos[Int(seg.cells[p])] = Int32(p) }
+        }
+        defer {
+            for seg in segs { for k in seg.cells { segOwner[Int(k)] = -1; segPos[Int(k)] = -1 } }
+        }
+        let old = meander.channels
+        let slack = cfg.meanderBeltCouplingSlackCells
+        let kW = cfg.meanderBeltAvulsionWidths, xD = cfg.meanderBeltAvulsionDepths
+        let tAv = cfg.meanderBeltAvulsionYears
+        let depthK = cfg.meanderBeltDepthPerWidth * cs
+        let sea = cfg.sea, lakeEps = MeanderState.traceLakeDepth
+
+        mark("belt.couple.match")
+        // 1. Zuordnung der alten Knoten: nächste Abschnittszelle in Reichweite.
+        //    Bleibt der Vorgänger-Abschnitt höchstens eine Zelle weiter als der
+        //    nächste, gilt er (keine Flackern an Zusammenflüssen; die
+        //    Zusammenfluss-Zelle am Ende zählt dabei zum Vorgänger-Abschnitt).
+        // Parallel je Lauf (jeder schreibt nur seine Knoten in die flachen
+        // Puffer), danach je Lauf als Array — bit-gleich zur seriellen Schleife.
+        var off = [Int](repeating: 0, count: old.count + 1)
+        for l in old.indices { off[l + 1] = off[l] + old[l].nodes.count }
+        var flatSeg = [Int32](repeating: -1, count: off[old.count]), flatPos = flatSeg
+        let cfgL = cfg
+        segOwner.withUnsafeBufferPointer { ob in
+        segPos.withUnsafeBufferPointer { pb in
+        hf.withUnsafeBufferPointer { hfb in
+        h.withUnsafeBufferPointer { hb in
+        flatSeg.withUnsafeMutableBufferPointer { fsb in
+        flatPos.withUnsafeMutableBufferPointer { fpb in
+            let po = ob.baseAddress!, pp = pb.baseAddress!, phf = hfb.baseAddress!, ph = hb.baseAddress!
+            let fs = fsb.baseAddress, fp = fpb.baseAddress
+            let lineChunks = max(1, min(old.count, Terrain.coreCount * 4))
+            DispatchQueue.concurrentPerform(iterations: lineChunks) { cc in
+            for l in (old.count * cc / lineChunks)..<(old.count * (cc + 1) / lineChunks) {
+                let ch = old[l], base = off[l]
+                var prev: Int32 = -1
+                for (i, p) in ch.nodes.enumerated() {
+                    let ci0 = min(max(Int(p.x.rounded()), 0), nn - 1), cj0 = min(max(Int(p.z.rounded()), 0), nn - 1)
+                    let k0 = cj0 * nn + ci0
+                    if phf[k0] <= sea || phf[k0] - ph[k0] > lakeEps { prev = -1; continue }   // bleibt −1
+                    let tol = 0.5 * MeanderState.beltWidthCells(discharge: ch.discharge[i], config: cfgL) + slack
+                    let rMax = Int(tol.rounded(.up)) + 1
+                    var bS: Int32 = -1, bP: Int32 = -1, bD2 = tol * tol + 1e-9
+                    var vS: Int32 = -1, vP: Int32 = -1, vD2 = tol * tol + 1e-9  // Vorgänger-Abschnitt
+                    let prevEnd = prev >= 0 && segs[Int(prev)].endsAtConfluence ? Int(segs[Int(prev)].cells.last!) : -1
+                    for r in 0...rMax {
+                        if bS >= 0, Double(r) - 0.75 > bD2.squareRoot() + 1.0 { break }
+                        for dj in -r...r {
+                            let j = cj0 + dj
+                            guard j >= 0, j < nn else { continue }
+                            let edge = abs(dj) == r
+                            var di = -r
+                            while di <= r {
+                                let i2 = ci0 + di
+                                if i2 >= 0, i2 < nn {
+                                    let k = j * nn + i2
+                                    let ow = po[k]
+                                    if ow >= 0 || k == prevEnd {
+                                        let dx = Double(i2) - p.x, dz = Double(j) - p.z
+                                        let d2 = dx * dx + dz * dz
+                                        if ow >= 0, d2 < bD2 { bS = ow; bP = pp[k]; bD2 = d2 }
+                                        if prev >= 0, ow == prev || k == prevEnd, d2 < vD2 {
+                                            vS = prev
+                                            vP = k == prevEnd ? Int32(segs[Int(prev)].cells.count - 1) : pp[k]
+                                            vD2 = d2
+                                        }
+                                    }
+                                }
+                                if r == 0 { break }
+                                di += edge ? 1 : 2 * r
+                            }
+                        }
+                    }
+                    if vS >= 0, vD2.squareRoot() <= bD2.squareRoot() + 1.0 { bS = vS; bP = vP }
+                    fs![base + i] = bS; fp![base + i] = bP
+                    prev = bS
+                }
+            }
+            }
+        }}}}}}
+        let mSeg = old.indices.map { Array(flatSeg[off[$0]..<off[$0 + 1]]) }
+        let mPos = old.indices.map { Array(flatPos[off[$0]..<off[$0 + 1]]) }
+
+        mark("belt.couple.runs")
+        // 2. Strecken je alter Linie: Anker (gleicher Abschnitt, Position stromab
+        //    nicht rückwärts), Anker desselben Abschnitts über kurze
+        //    Abweichungen verschmolzen; lange oder überhöhte Abweichungen
+        //    zwischen zwei Ankern sind Avulsionen.
+        struct Run { var line: Int; var i0: Int; var i1: Int; var pa: Int; var pb: Int }
+        struct Gap { var line: Int; var i0: Int; var i1: Int; var runA: Int; var runB: Int; var width: Double }
+        var runs: [Run] = [], gaps: [Gap] = []
+        var segRuns = [[Int]](repeating: [], count: segs.count)
+        for (l, ch) in old.enumerated() {
+            let sg = mSeg[l], ps = mPos[l], c = ch.nodes.count
+            var anchors: [Run] = []
+            var i = 0
+            while i < c {
+                guard sg[i] >= 0 else { i += 1; continue }
+                var a = Run(line: l, i0: i, i1: i, pa: Int(ps[i]), pb: Int(ps[i]))
+                var j = i + 1
+                while j < c, sg[j] == sg[i], Int(ps[j]) >= a.pb - 3 { a.i1 = j; a.pb = max(a.pb, Int(ps[j])); j += 1 }
+                anchors.append(a)
+                i = j
+            }
+            var cum = [Double](repeating: 0, count: c)
+            for q in 1..<max(1, c) { cum[q] = cum[q - 1] + dist(ch.nodes[q - 1], ch.nodes[q]) }
+            var k = 0
+            var gapAtAnchor: [Int: Int] = [:]          // Anker-Index → Avulsion davor
+            while k < anchors.count {
+                var cur = anchors[k]
+                let s = Int(sg[cur.i0])
+                var next = k + 1
+                var pendingGap: (Int, Int, Double, Int)? = nil
+                while true {
+                    var b = next
+                    while b < anchors.count, Int(sg[anchors[b].i0]) != s { b += 1 }
+                    guard b < anchors.count, anchors[b].pa >= cur.pb - 3 else { break }
+                    let nb = anchors[b]
+                    let bw = MeanderState.beltWidthCells(discharge: ch.discharge[cur.i1], config: cfg)
+                    var avulse = cum[nb.i0] - cum[cur.i1] >= kW * bw
+                    if !avulse, xD.isFinite, nb.i0 - cur.i1 >= 2, nb.pa > cur.pb {
+                        var hl = 0.0, hp = 0.0
+                        h.withUnsafeBufferPointer { hb in
+                            for q in (cur.i1 + 1)..<nb.i0 { hl += Terrain.bilinear(hb.baseAddress!, nn, ch.nodes[q].x, ch.nodes[q].z) }
+                        }
+                        hl /= Double(nb.i0 - cur.i1 - 1)
+                        for p in cur.pb...nb.pa { hp += h[Int(segs[s].cells[p])] }
+                        hp /= Double(nb.pa - cur.pb + 1)
+                        avulse = hl - hp > xD * depthK * bw
+                    }
+                    if avulse, tAv > 0 {
+                        // Ereignis mit Rate 1/τ, solange die Abkopplung besteht:
+                        // die Prüfung läuft je Schritt auf einem flackernden
+                        // Abflussfeld, ohne Rate hing die Zahl der Avulsionen an
+                        // der Schrittweite (gemessen dt 100 gegen 1000: 204 gegen
+                        // 71 in 8000 Jahren). Deterministisch aus Zeit und Ort.
+                        let key = years.bitPattern &* 0x9E37_79B9_7F4A_7C15
+                            ^ UInt64(truncatingIfNeeded: segs[s].cells[0]) &* 0xD1B5_4A32_D192_ED03
+                        let u = 0.5 * (MeanderState.hashUnit(key, cur.pb) + 1)
+                        avulse = u < 1 - exp(-dt / tAv)
+                    }
+                    if avulse { pendingGap = (cur.i1, nb.i0, bw, b); break }
+                    cur.i1 = nb.i1; cur.pb = max(cur.pb, nb.pb)
+                    next = b + 1
+                }
+                runs.append(cur)
+                let rid = runs.count - 1
+                segRuns[s].append(rid)
+                if let g = gapAtAnchor[k] { gaps[g].runB = rid }
+                if let g = pendingGap {
+                    // Der Anker danach beginnt die nächste Strecke dieses Abschnitts.
+                    gaps.append(Gap(line: l, i0: g.0, i1: g.1, runA: rid, runB: -1, width: g.2))
+                    gapAtAnchor[g.3] = gaps.count - 1
+                }
+                k = next
+            }
+        }
+
+        mark("belt.couple.build")
+        // 3. Je Abschnitt die Strecken ohne Überlappung (längste zuerst), dann
+        //    der neue Lauf: Abschnittszellen, wo keine Strecke liegt.
+        var selected = [Bool](repeating: false, count: runs.count)
+        var newChannels: [RiverChannel] = []
+        newChannels.reserveCapacity(segs.count)
+        for (s, seg) in segs.enumerated() {
+            let cand = segRuns[s].sorted {
+                let a = runs[$0], b = runs[$1]
+                let la = a.i1 - a.i0, lb = b.i1 - b.i0
+                return la != lb ? la > lb : (a.line != b.line ? a.line < b.line : a.i0 < b.i0)
+            }
+            var acc: [Int] = []
+            for r in cand where !acc.contains(where: { runs[$0].pa <= runs[r].pb && runs[r].pa <= runs[$0].pb }) {
+                acc.append(r)
+            }
+            acc.sort { runs[$0].pa < runs[$1].pa }
+            for r in acc { selected[r] = true }
+            let L = seg.cells.count
+            var nodes: [MeanderNode] = [], pos: [Int] = [], inserted: [Bool] = []
+            var place: [Int] = []
+            func addCells(_ from: Int, _ to: Int, _ where_: Int) {
+                guard from < to else { return }
+                for p in from..<to {
+                    let k = Int(seg.cells[p])
+                    nodes.append(MeanderNode(x: Double(k % nn), z: Double(k / nn))); pos.append(p); inserted.append(true)
+                    place.append(where_)
+                }
+            }
+            var prevPb = -1, prevLine = -1
+            for r in acc {
+                let run = runs[r]
+                addCells(prevPb + 1, run.pa, prevLine < 0 ? 0 : (prevLine == run.line ? 1 : 2))
+                prevLine = run.line
+                let ch = old[run.line]
+                for i in run.i0...run.i1 {
+                    nodes.append(ch.nodes[i])
+                    pos.append(mSeg[run.line][i] == Int32(s) ? Int(mPos[run.line][i]) : -1)
+                    inserted.append(false); place.append(-1)
+                }
+                prevPb = max(prevPb, run.pb)
+            }
+            addCells(prevPb + 1, L, prevLine < 0 ? 0 : 3)
+            guard nodes.count >= 3 else { continue }
+            // Eingesetzte D8-Zellen glätten (Treppe aus Achtel-Richtungen), Nachbarn fest.
+            for _ in 0..<3 {
+                var prevNode = nodes[0]
+                for i in 1..<(nodes.count - 1) {
+                    let cur = nodes[i]
+                    if inserted[i] {
+                        nodes[i].x = cur.x + 0.5 * (0.5 * (prevNode.x + nodes[i + 1].x) - cur.x)
+                        nodes[i].z = cur.z + 0.5 * (0.5 * (prevNode.z + nodes[i + 1].z) - cur.z)
+                    }
+                    prevNode = cur
+                }
+            }
+            // Abfluss: Einzugsgebiet der zugeordneten Abschnittszelle, monoton; die
+            // Zusammenfluss-Zelle gehört dem größeren Fluss, dort zählt die davor.
+            var dis = [Double](repeating: 0, count: nodes.count)
+            var run = 0.0
+            for i in nodes.indices {
+                if pos[i] >= 0 {
+                    let p = seg.endsAtConfluence && pos[i] == L - 1 ? L - 2 : pos[i]
+                    run = max(run, area[Int(seg.cells[p])] / cellArea)
+                }
+                dis[i] = run
+            }
+            for i in nodes.indices where dis[i] >= cfg.meanderBeltMinCells {
+                if inserted[i] {
+                    meander.coupledInserted += 1
+                    if !acc.isEmpty { meander.insertedByPlace[place[i]] += 1 }
+                } else { meander.coupledKept += 1 }
+            }
+            if let log = beltCouplingLog, (dis.last ?? 0) >= cfg.meanderBeltMinCells {
+                var line = "SEG \(s) L=\(L) conf=\(seg.endsAtConfluence) Q=\(Int(dis.last ?? 0)) Kandidaten \(cand.count) gewählt:"
+                for r in acc { let q = runs[r]; line += " [Lauf \(q.line) Knoten \(q.i0)…\(q.i1)/\(old[q.line].nodes.count) pos \(q.pa)…\(q.pb)]" }
+                for r in cand where !acc.contains(r) { let q = runs[r]; line += " verworfen[Lauf \(q.line) \(q.i0)…\(q.i1) pos \(q.pa)…\(q.pb)]" }
+                line += " eingesetzt \(inserted.filter { $0 }.count) von \(nodes.count)"
+                log(line)
+            }
+            // Unverändert (eine Strecke = ein ganzer alter Lauf, nichts eingesetzt):
+            // nicht neu abtasten.
+            if acc.count == 1, runs[acc[0]].i0 == 0, runs[acc[0]].i1 == old[runs[acc[0]].line].nodes.count - 1,
+               !inserted.contains(true) {
+                newChannels.append(RiverChannel(nodes: nodes, discharge: dis))
+            } else {
+                newChannels.append(meander.resampled(RiverChannel(nodes: nodes, discharge: dis), config: cfg))
+            }
+        }
+        // 4. Verlassene Gerinne: nur zwischen zwei übernommenen Strecken
+        //    desselben Abschnitts, und nur wo der Lauf wanderte.
+        for g in gaps where g.runB >= 0 && selected[g.runA] && selected[g.runB] {
+            let ch = old[g.line]
+            guard ch.discharge[g.i0] >= cfg.meanderBeltMinCells else { continue }
+            meander.avulsions += 1
+            abandonChannel(Array(ch.nodes[g.i0...g.i1]), width: g.width, age: dt)
+        }
+        meander.retraced += segs.indices.filter { segRuns[$0].isEmpty }.count
+        meander.channels = newChannels
+    }
+    private var segOwner: [Int32] = []
+    private var segPos: [Int32] = []
+    /// Diagnose-Haken (nur Tests): Aufbau der Läufe wandernder Größe je Schritt.
+    var beltCouplingLog: ((String) -> Void)?
+
+    /// Gürtelbett-Sperre der Tropfen an Zelle `k` (Diagnose).
+    func beltBedLockedForTests(_ k: Int) -> Bool { dropletGateBuf.count > k && dropletGateBuf[k] }
+
+    /// Zugang für die Kopplungs-Wächter (`BeltCouplingTests`): EIN
+    /// Kopplungs-Pass auf dem aktuellen Abflussfeld, ohne Migration und Stempel.
+    func coupleBeltForTests(dt: Double) {
+        let ox0 = meander.oxbows.count
+        coupleBeltToDrainage(dt: dt)
+        plugOxbows(from: ox0)
+    }
+
+    /// Verlassenes Gerinne einer Avulsion: Altarm (wie nach einem Cutoff, s.
+    /// `plugOxbows`/`fillOxbows`), wenn es mindestens
+    /// `meanderBeltAbandonMinWidths` und höchstens so lang ist wie die längste
+    /// abschnürbare Schleife, und `barAge`-Narbe über die Kanalbreite (danach
+    /// Pionier-Grün und Wiese, `BarMaterial`). `age`: Alter am Schrittende —
+    /// die Avulsion fällt auf den Schrittanfang.
+    private func abandonChannel(_ nodes: [MeanderNode], width b: Double, age: Double) {
+        guard nodes.count >= 4 else { return }
+        var len = 0.0
+        for i in 1..<nodes.count { len += dist(nodes[i - 1], nodes[i]) }
+        if len >= cfg.meanderBeltAbandonMinWidths * b && len <= cfg.meanderBeltMaxLoopWidths * b {
+            meander.abandon(nodes, age: age)
+        }
+        let nn = n, r = 0.5 * b, ri = Int(r.rounded(.up))
+        for p in nodes {
+            let ci0 = Int(p.x.rounded()), cj0 = Int(p.z.rounded())
+            for j in max(0, cj0 - ri)...min(nn - 1, cj0 + ri) {
+                for i in max(0, ci0 - ri)...min(nn - 1, ci0 + ri) {
+                    let dx = Double(i) - p.x, dz = Double(j) - p.z
+                    guard dx * dx + dz * dz <= r * r else { continue }
+                    let k = j * nn + i
+                    if barAge[k] < 0 { barAge[k] = age }
+                }
+            }
+        }
     }
 
     // MARK: - Zeitschritt
@@ -4972,7 +5497,7 @@ public final class Terrain {
                             // leer, solange nirgends Eis liegt.
                             // Gürtelbett (#174): dieselbe Sperre wie unter dem
                             // Eis, s. `beltDropletGate`.
-                            underIce: beltDropletGate(),
+                            bedLocked: beltDropletGate(),
                             // Dieselbe Gewichtungsregel wie beide Netze (Issue #36):
                             // wo Schmelzwasser abfließt, starten auch mehr Tropfen.
                             flowWeight: flowWeight,

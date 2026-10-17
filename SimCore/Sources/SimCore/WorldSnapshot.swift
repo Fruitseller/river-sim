@@ -93,7 +93,10 @@ public enum WorldSnapshot {
     /// hat den Schlüssel nicht (Begründung wie bei Version 4).
     /// Version 6 (Issue #174, Paket B): Feld `barAge` (Alter der
     /// Gleithang-Bänke) und die Stellschrauben des Mäandergürtels.
-    public static let version: UInt32 = 6
+    /// Version 7 (Issue #187): die Stellschrauben der Kopplung Gürtel ↔
+    /// Entwässerung (`meanderBeltCoupling` …) reisen über die synthetisierte
+    /// Config-Kodierung mit (Begründung wie bei Version 4).
+    public static let version: UInt32 = 7
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"

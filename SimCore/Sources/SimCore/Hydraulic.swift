@@ -154,7 +154,10 @@ public enum Hydraulic {
     ///   Mäanderbetten (hoher Abfluss UND Maske) in Richtung 0, und 0 ist als
     ///   instabil belegt (s. `channelDepositDamp`). Leeres Array = kein
     ///   Dämpfer (bit-identisch).
-    /// - `underIce`: Vergletscherungs-Maske (Terrain.underIce, Issue #35). Auf
+    /// - `bedLocked`: gesperrtes Bett. Bis #187 hieß der Parameter `underIce`:
+    ///   die Vergletscherungs-Maske (Terrain.underIce, Issue #35); seit dem
+    ///   Mäandergürtel (#174) trägt er zusätzlich das Gürtelbett
+    ///   (`Terrain.beltDropletGate`, Begründung dort). Auf
     ///   diesen Zellen rührt der Tropfen das BETT nicht an — weder erodierend
     ///   (unter einem Gletscher gibt es keinen fluvialen Abtrag) noch ablagernd
     ///   (Schutt auf einer Eisoberfläche ist kein Sediment im Bett). Der nicht
@@ -188,7 +191,7 @@ public enum Hydraulic {
                               hf: [Double] = [], receiver: [Int32] = [],
                              stream: [Double] = [], channel: [Bool] = [],
                              depositDamp: [Double] = [],
-                             underIce: [Bool] = [],
+                             bedLocked: [Bool] = [],
                              flowWeight: [Double] = [],
                              erodibility: [Double] = [],
                              track: inout [Double]) {
@@ -222,7 +225,7 @@ public enum Hydraulic {
         let chanOn = channel.count == h.count
         let ddOn = depositDamp.count == h.count
         let lithOn = erodibility.count == h.count
-        let iceOn = underIce.count == h.count
+        let iceOn = bedLocked.count == h.count
         let trackOn = track.count == h.count
         let poolOn = hf.count == h.count
         let recOn = receiver.count == h.count
@@ -248,7 +251,7 @@ public enum Hydraulic {
             // Unter Eis kein fluvialer Abtrag (Issue #35): das Bett gehört dem
             // Gletscher. Vor jeder anderen Rechnung, damit auch die
             // Lithologie-Arithmetik nicht anläuft.
-            if iceOn && underIce[k] { return 0 }
+            if iceOn && bedLocked[k] { return 0 }
             var d = amount
             let f = lithOn ? erodibility[k] : 1.0
             if f != 1.0 {
@@ -274,7 +277,7 @@ public enum Hydraulic {
             // Gletscherzelle: gar nichts ablegen, alles bleibt in Suspension
             // (Issue #35) — der Tropfen trägt seine Fracht über das Eis hinweg
             // und lädt sie hinter der Zunge ab (Sander am Gletschertor).
-            if iceOn && underIce[k] { return amount }
+            if iceOn && bedLocked[k] { return amount }
             // Der STÄRKERE der beiden Dämpfer gewinnt (s. `depositDamp` oben).
             var f = 1.0
             if chanOn && channel[k] { f = p.channelDepositDamp }

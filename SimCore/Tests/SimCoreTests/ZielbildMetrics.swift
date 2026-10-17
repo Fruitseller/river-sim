@@ -623,9 +623,13 @@ enum ZielbildMetrics {
             ZielbildMetrics.markSwept(t, &swept)
         }
 
+        /// Schrittweite (Jahre). Die Abnahme läuft in 1000-Jahr-Schritten; der
+        /// Zeitraffer taktet feiner (`RS_DT` im Diagnostic, #187).
+        var stepYears = 1000.0
+
         mutating func advance(_ t: Terrain, to year: Double) {
             while t.years < year - 1e-6 {
-                t.step(dtYears: min(1000, year - t.years))
+                t.step(dtYears: min(stepYears, year - t.years))
                 ZielbildMetrics.markSwept(t, &swept)
                 let y = t.years.rounded()
                 guard abs(t.years - y) < 1e-6,
@@ -716,9 +720,12 @@ final class ZielbildLandformTests: XCTestCase {
         // Knicke unter `WaterRender.oxbowMinimumNodes` ab, die der Render nicht
         // zeigt (Median der Altarm-Knoten in Jahr 20.000: 18 / 16 / 18, auf 24
         // Seeds 0–54; danach 28 / 54 / 37, auf 24 Seeds 18–96, kleinstes
-        // Dreier-Mittel 20,7).
+        // Dreier-Mittel 20,7). Seit der Kopplung (#187) schnürt der schnellere
+        // Gürtel mehr und kleinere Bögen ab, sichtbar bleiben deutlich mehr
+        // (Mittel 4,4 → 13,7): Median auf 24 Seeds 14–46 (vorher 18–96),
+        // kleinstes Dreier-Mittel 15,3, Matrix-Seeds 20 / 16 / 24.
         XCTAssertGreaterThan(oxbows, 0.8, "kaum sichtbare Altarme: \(windows.map(\.oxbows.values))")
-        XCTAssertGreaterThanOrEqual(oxbowMedian, Double(WaterRender.oxbowMinimumNodes),
+        XCTAssertGreaterThanOrEqual(oxbowMedian, 15,
                                     "Cutoffs schnüren Knicke statt Bögen ab: Altarm-Median \(oxbowMedians) Knoten")
     }
 
@@ -828,6 +835,7 @@ final class ZielbildBaseline: XCTestCase {
             let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed,
                             settleYears: SimConfig.productionSettleYears)
             var run = ZielbildMetrics.MeanderTimeMean(t)
+            if let dt = ProcessInfo.processInfo.environment["RS_DT"].flatMap(Double.init) { run.stepYears = dt }
             for end in run.windows.map(\.upperBound).sorted() {
                 run.advance(t, to: end)
                 let size = ZielbildMetrics.oxbowSizes(t)
@@ -841,7 +849,8 @@ final class ZielbildBaseline: XCTestCase {
                        String(format: "%.1f / %.1f", r.youngOxbows.mean ?? 0, r.youngLowlandOxbows.mean ?? 0)]
                         .joined(separator: " | ") + " |")
             }
-            print("ZEITMITTEL s\(seed) \(variant) fertig, Cutoffs Hals/Chute \(t.meander.neckCutoffs)/\(t.meander.chuteCutoffs)")
+            print("ZEITMITTEL s\(seed) \(variant) fertig, Cutoffs Hals/Chute \(t.meander.neckCutoffs)/\(t.meander.chuteCutoffs)"
+                  + " Avulsionen \(t.meander.avulsions)")
         }
         print("\n=== ZIELBILD #174: MÄANDER-ZEITMITTEL (Punkte 9–13), Mittel (min–max), n. m. = nicht messbar ===")
         print("Variante: \(variant)")

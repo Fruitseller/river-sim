@@ -1555,7 +1555,15 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// (50.000–100.000); 1,5 (mit Rate 0,02, das Wachstum fällt ∝ 1/L²) →
     /// 10,9 / 13,1 / 9,2 und 10,0 / 10,6 / 11,0. 1,8 wuchs zu langsam
     /// (Sinuosität 1,5).
-    public var meanderBeltKernelWidths: Double = 1.5
+    /// 1,5 → 1,0 mit der Kopplung an die Entwässerung (#187, zusammen mit
+    /// `meanderBeltRate` 0,02 → 0,03; 24-Seed-Zeitmittel, Punkte 9–13; die
+    /// Reihe unten lief vor der Tropfen-Sperre nur im wandernden Bett): ohne
+    /// das Erben wandern nur noch die Läufe mit eigenem Abfluss, und die
+    /// Kopplung ersetzt jeden Schritt, was ihr D8-Netz nicht trägt. Mit
+    /// 1,5 / 0,02 140 von 240, Sinuosität 1,42 / 1,32; 1,2 / 0,03 177;
+    /// 1,0 / 0,03 201; 1,2 / 0,04 197; 1,0 / 0,04 221 (Matrix-Seeds 30 von
+    /// 30); Nachbarn 1,0 / 0,05 214, 0,9 / 0,04 216.
+    public var meanderBeltKernelWidths: Double = 1.0
     /// Migrationsrate je Jahr: Anteil der Kanalbreite bei `b · eff = 1`.
     /// 0,015 ≈ 1–2 % der Breite je Jahr in engen Bögen (reale Mäanderflüsse:
     /// 1–5 %). 0,005 wuchs im Gelände nicht über die Startzacken der D8-Trasse
@@ -1563,7 +1571,14 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// 0,02 seit Kernlänge 1,5 (gleiches Wachstum wie 0,015 bei 1,2 auf die
     /// Wellenlänge gerechnet, s. dort). 0,03 bei Kernlänge 1,2: frühere
     /// Cutoffs, Sinuosität FIEL auf 1,06 / 1,01 / 1,24.
-    public var meanderBeltRate: Double = 0.02
+    /// 0,02 → 0,03 mit der Kopplung (#187), Messreihe bei
+    /// `meanderBeltKernelWidths`. Ohne Kopplung war 0,03 zu schnell (oben);
+    /// gekoppelt muss ein Bogen schneller wachsen, als das D8-Netz ihn abkürzt.
+    /// Auf dem Endstand (Tropfen-Sperre nur im wandernden Bett): 0,03 → 210
+    /// von 240 (Matrix-Seeds 30 von 30), 0,035 → 213 (29), 0,04 → 207 (29).
+    /// 0,03, weil jede Erhöhung vor allem mehr Hals-Cutoffs bringt: sichtbare
+    /// junge Altarme im Mittel 13,7 / 15,8 / 18,0 (vor #187: 4,4).
+    public var meanderBeltRate: Double = 0.03
     /// Störquelle des Kerns (`MeanderState.perturb`): Auslenkung je Knoten
     /// `A · Breite · √(Rate · dt)`, Einheitsvarianz, 0 = aus. Ohne sie spülte
     /// der Kern seine Anfangszacken in ~60.000 Jahren hinaus (Sinuosität 1,00
@@ -1571,14 +1586,6 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Sinuosität ~2 und λ/b 11–13. Allein (ohne Stromab-Anteil) im Gelände
     /// wirkungslos (Sinuosität 1,05–1,35), s. `meanderBeltDownstreamWeight`.
     public var meanderBeltNoise: Double = 0.01
-    /// Zug der Linie zur tieferen Uferseite, als Vielfaches von Rate × Breite
-    /// je Rinnentiefe Quergefälle über dem Totband (0 = aus). Ein Sicherheitsnetz
-    /// gegen das Abkoppeln von der Talsohle, keine Rückstellkraft: mit Stärke 1
-    /// und Totband 0,5 hielt der Zug in jedem V-Tal die Linie gerade (gemessen
-    /// ~4-mal stärker als der Wachstumsterm, Sinuosität 1,2 nach 20.000 Jahren).
-    public var meanderBeltPull: Double = 0
-    /// Totband des Zugs in Rinnentiefen Quergefälle.
-    public var meanderBeltPullDeadband: Double = 1.5
     /// Talwand-Bremse ab so viel Überhöhung des Geländes 3,5 Kanalbreiten weit
     /// in Bewegungsrichtung über der Linie, in Rinnentiefen (`.infinity` = aus).
     /// 2 → 3 mit der Sättigung 3/4 (s. `meanderBeltSinuosityStart`): die
@@ -1587,11 +1594,6 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Seeds 2,9 → 4,7, Punkt 11 erfüllt auf 4 → 10 von 12). Allein, mit
     /// der alten Sättigung, war die Bremse kein Hebel (Werte 4 / 8 / aus).
     public var meanderBeltBrakeDepths: Double = 3.0
-    /// Ufer-Kohäsion (Auwald) im Gürtel, wie `meanderCohesion` im alten Pfad.
-    /// 0: mit 0,5 flachte sie gemessen jedes Wachstum ab (Sinuosität 1,3 statt
-    /// 2,0 nach 20.000 Jahren, Seed 1337); Bewuchs bremst im Gürtel über die
-    /// Ufer-Zerstörung im Stempel, nicht über die Rate.
-    public var meanderBeltCohesion: Double = 0
     /// Nur Läufe ab diesem Abfluss (Zellen Einzugsgebiet) wandern. Kleinere
     /// liegen als D8-Linie fest: jeder Lauf ist eine eigene Zentrumslinie ohne
     /// Anbindung an seinen Vorfluter, und frei wandernde Zubringer kreuzten
@@ -1629,18 +1631,20 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Knoten zu Knoten — im Mittel über die Bögen ein symmetrisches V.
     public var meanderBeltProfileWidths: Double = 1
     /// Zeitkonstante, mit der das Bett auf sein Profil und die Bank auf ihre
-    /// Höhe relaxiert (Jahre, exponentiell über `relaxFraction`). Muss klein
-    /// gegen die Zeit sein, in der die Linie eine halbe Breite wandert
-    /// (~60 Jahre bei der höchsten Rate): mit 150 lief das Bett der Linie um
-    /// Zellen hinterher, am Prallhang lag die äußere Hälfte HÖHER als die
-    /// innere. 30 → 10 hob die Kolktiefe außen direkt nach dem Stempel von
-    /// 0,65 auf 0,98 Tiefen.
+    /// Höhe relaxiert (Jahre, exponentiell über `relaxFraction`). Soll klein
+    /// gegen die Zeit sein, in der die Linie eine halbe Breite wandert: mit 150
+    /// lief das Bett der Linie um Zellen hinterher, am Prallhang lag die
+    /// äußere Hälfte HÖHER als die innere. 30 → 10 hob die Kolktiefe außen
+    /// direkt nach dem Stempel von 0,65 auf 0,98 Tiefen. Bei der höchsten Rate
+    /// (gemessen 0,21–0,31 Zellen/Jahr, Review #187) wandert die Linie eine
+    /// halbe Breite (3,2 Zellen) in 10–15 Jahren, also in der Größenordnung von
+    /// τ selbst — dort läuft das Bett der Linie weiter knapp hinterher (bis
+    /// #187 stand hier fälschlich „~60 Jahre").
     public var meanderBeltRelaxYears: Double = 10
     /// Bankoberkante unter bankfull, als Anteil der Kanaltiefe.
     public var meanderBarTopDepth: Double = 0.15
     /// Breite der Bank-Zone innen neben dem Kanal, in Kanalbreiten.
     public var meanderBarWidths: Double = 0.75
-public var meanderBeltSmoothYears: Double = 100
     /// Örtliche Sättigung: der Wachstumsterm blendet zwischen diesen
     /// Sinuositäten (über ±`meanderBeltSinuosityWidths` Kanalbreiten gemessen)
     /// auf 0 aus. Ersetzt im Gürtel den GLOBALEN Deckel `meanderMaxSinuosity`:
@@ -1674,6 +1678,50 @@ public var meanderBeltSmoothYears: Double = 100
     public var meanderChuteLoopRatio: Double = 8.0
     /// … und mindestens diesem Abfluss (Zellen Einzugsgebiet).
     public var meanderChuteMinCells: Double = 4000
+
+    // ---- Kopplung Gürtel ↔ D8-Entwässerung (Issue #187) ----
+    //
+    // Messreihe: `docs/zielbild-measurements.md` § Gürtel und Entwässerung:
+    // Avulsion (#187).
+    /// Linie und D8-Netz koppeln (`Terrain.coupleBeltToDrainage`): der
+    /// Abfluss eines Laufs kommt aus SEINEM D8-Weg (Quelle → Empfänger-Kette
+    /// bis zum Zusammenfluss mit einem größeren Fluss, Meer oder See), nicht
+    /// mehr als laufendes Maximum über jede Berührung; ein Lauf, der neben
+    /// seinem Weg liegt, springt hinein (Avulsion). `false` = Stand vor #187
+    /// (3×3-Maximum, laufendes Maximum, Trasse „längster Fließweg zuerst").
+    public var meanderBeltCoupling = true
+    /// Ein Knoten liegt an seinem D8-Abschnitt, wenn eine Zelle des Abschnitts
+    /// höchstens halbe Kanalbreite plus so viele Zellen entfernt liegt: das
+    /// Bett überstreicht die volle Breite, der D8-Lauf darin ist eine Treppe
+    /// und hängt an der Sohle von gestern. 24-Seed-Zeitmittel (mit Rate
+    /// 0,03 / Kern 1,0): 1,5 → 140 (Rate 0,02 / Kern 1,5), 3 → 207, 4 → 201,
+    /// 6 → 203; mit Rate 0,04: 3 → 214, 4 → 221. Die Kopplungs-Kennzahl
+    /// (Abstand zur D8-Rinne) misst unabhängig davon.
+    public var meanderBeltCouplingSlackCells: Double = 4
+    /// Avulsion, wenn die Linie ihren D8-Abschnitt über mindestens so viele
+    /// Kanalbreiten Bogenlänge verlässt. Kein Kalibrier-Hebel für die Punkte
+    /// 9–13: 2 / 4 / 8 Breiten (ohne Überhöhungs-Kriterium, Stand vor der
+    /// Neukalibrierung) gaben 146 / 155 / 148 von 240, Sinuosität 1,40–1,46.
+    public var meanderBeltAvulsionWidths: Double = 2.0
+    /// … oder schon kürzer, wenn das Gelände unter dem abgekoppelten Stück im
+    /// Mittel um mehr als so viele Bankfull-Tiefen über dem D8-Abschnitt
+    /// dazwischen liegt (überhöhtes Gerinne). `.infinity` = nur das
+    /// Längen-Kriterium (0 statt 2 Tiefen: 146 statt 147 von 240).
+    public var meanderBeltAvulsionDepths: Double = 2.0
+    /// Zeitkonstante der Avulsion (Jahre): solange eine Strecke abgekoppelt
+    /// ist, springt der Fluss mit der Rate 1/τ (Wahrscheinlichkeit
+    /// `1 − e^(−dt/τ)` je Schritt, deterministisch aus Zeit und Ort). 0 =
+    /// sofort bei der ersten Prüfung. Ohne Rate hing die Zahl der Avulsionen
+    /// an der Schrittweite: Seed 1337, 8000 Jahre, dt 100 gegen 1000: 204 gegen
+    /// 71; mit τ = 1000: 53 gegen 41.
+    public var meanderBeltAvulsionYears: Double = 1000
+    /// Ein verlassenes Gerinne wird erst ab so vielen Kanalbreiten Bogenlänge
+    /// Altarm (kürzere behalten nur die `barAge`-Narbe): ein Stück unter einer
+    /// halben Mäanderwellenlänge ist ein Knick, kein Bogen. Ohne Schwelle
+    /// (alles ab 4 Knoten) trug Seed 1337 in Jahr 20.000 420 Altarme
+    /// (Median 19 Knoten, vor #187: 63, Median 28), und der Wächter gegen
+    /// abgeschnürte Knicke (`ZielbildLandformTests`, Median ≥ 20) kippte.
+    public var meanderBeltAbandonMinWidths: Double = 5
 
     // ---- Störung / Regeneration nach Spieler-Eingriffen (Issue #26) ----
     //

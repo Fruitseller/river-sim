@@ -189,6 +189,14 @@ final class StateInventoryTests: XCTestCase {
             + "direkt vor dem einzigen Leser (`Hydraulic.erode`).")),
         ("pondSeen", .scratch(reason:
             "Arbeitspuffer der Pfützen-Komponentensuche.")),
+        ("segOwner", .scratch(reason:
+            "Zuordnung Zelle → D8-Abschnitt der Gürtel-Kopplung (Issue #187) — "
+            + "`coupleBeltToDrainage` setzt sie je Schritt aus dem frischen Abflussfeld "
+            + "und räumt sie am Ende des Passes wieder auf −1.")),
+        ("segPos", .scratch(reason:
+            "Position der Zelle in ihrem D8-Abschnitt, wie `segOwner`.")),
+        ("beltCouplingLog", .scratch(reason:
+            "Diagnose-Haken der Kopplung (nur Tests), kein Zustand.")),
         ("noise", .derived(reason:
             "Permutationstabelle, rein aus `seed` rekonstruiert — `restore` baut "
             + "sie mit `SimplexNoise(seed:)` neu auf, statt sie zu speichern.",

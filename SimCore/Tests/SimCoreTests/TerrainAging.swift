@@ -32,6 +32,16 @@ final class TerrainAging: XCTestCase {
     func testAgingTrajectoryOver100k() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        // Gürtel-Wachstum vor der Neukalibrierung #187 (Rate 0,02, Kern 1,5):
+        // mit 0,03 / 1,0 fällt das robuste Relief auf DIESER Realisierung in der
+        // ersten Hälfte schneller (0,1802 → 0,1177 in 50k) und steht in 100k
+        // gleich tief (0,1157 gegen 0,1123); „sinkt in der zweiten Hälfte um
+        // 5 %" misst dann die Form der Kurve, nicht ein Plateau. Die Seeds 42
+        // und 20 halten das Kriterium auch mit 0,03 (Verhältnis 0,90 / 0,81),
+        // 1337 mit 0,02 und 0,04 (0,87 / 0,84);
+        // `testAgingTrajectoryVariantsDiagnostic`.
+        c.meanderBeltRate = 0.02
+        c.meanderBeltKernelWidths = 1.5
         let t = Terrain(config: c, seed: 1337)
 
         let relief0 = t.landRelief()

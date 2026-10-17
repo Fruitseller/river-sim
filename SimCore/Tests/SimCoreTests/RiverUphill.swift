@@ -426,8 +426,8 @@ final class RiverUphillDiagnostics: XCTestCase {
                 bins[edges.firstIndex { best <= $0 } ?? edges.count] += 1
             }
         }
-        var line = String(format: "KOPPLUNG s%d J%.0f %@: %d Knoten mit Abfluss ≥ meanderBeltMinCells, Abstand zur D8-Rinne",
-                          seed, t.years, env["RS_VARIANT"] ?? "Produktion", total)
+        var line = String(format: "KOPPLUNG s%d J%.0f dt %@ %@: %d Knoten mit Abfluss ≥ meanderBeltMinCells, Abstand zur D8-Rinne",
+                          seed, t.years, env["RS_DT"] ?? "1000", env["RS_VARIANT"] ?? "Produktion", total)
         var cum = 0
         for (b, e) in edges.enumerated() {
             cum += bins[b]
@@ -441,7 +441,11 @@ final class RiverUphillDiagnostics: XCTestCase {
         let cache = env["RS_CACHE"].map { "\($0)/world-\(seed)-\(Int(year))-\(env["RS_VARIANT"] ?? "prod").rsw" }
         if let c = cache, FileManager.default.fileExists(atPath: c) { return try WorldSnapshot.read(from: c) }
         let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed, settleYears: SimConfig.productionSettleYears)
-        while t.years < year - 1e-6 { t.step(dtYears: min(1000, year - t.years)) }
+        // RS_DT: Schrittweite des Laufs (Standard 1000). Die Kopplung (#187)
+        // prüft am Schrittanfang; nach einem großen Schritt misst der Abstand
+        // auch die Wanderung im Schritt gegen das Abflussfeld vom Anfang.
+        let dt = env["RS_DT"].flatMap(Double.init) ?? 1000
+        while t.years < year - 1e-6 { t.step(dtYears: min(dt, year - t.years)) }
         if let c = cache { try WorldSnapshot.write(t, to: c) }
         return t
     }
