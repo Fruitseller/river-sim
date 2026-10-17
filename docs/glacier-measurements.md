@@ -703,3 +703,41 @@ gegen den Integrationsstand `17218b1`, Rechner nicht ruhig): `updateIce`
 3,5–4,9 → 6,5–10,3 ms je Schritt (das zweite Kriterium verdoppelt die
 Teilschritte auf dickem Eis), der ganze Schritt im Median 59,8 → 62,9 ms
 (+5 %). Im Zeitraffer (dt 15) sind die Teilschritte entsprechend weniger.
+
+### Offener Befund: der stabile Transport macht den Kamm zur Tafel
+
+Im Bild (Seed 1337, Jahr 20.000, F1/F2, maximiert) trägt der Kamm nach dem Fix
+Hochflächen mit senkrechten Wänden statt Graten; die Vorlage
+(`docs/references/zielbild/`) zeigt alpine Grate mit Kar-Gletschern. Deshalb
+ist der Fix NICHT im Integrationszweig (Revert dort, 2026-10-17). Kennzahlen
+(Produktion, dt 1000 wie der `RS_STEP`-Vorlauf, oberste 5 % des Landes;
+„flach" = Weltsteigung < 0,15, Zackigkeit = mittlere |h − Mittel 9 × 9|):
+
+| Stand | flach 1337 / 42 / 20 | Zackigkeit | p95 der Höhe | Eiszellen |
+| --- | --- | --- | --- | --- |
+| alt (instabil) | 1,9 / 2,1 / 4,7 % | 0,0061 / 0,0049 / 0,0061 | 0,530 / 0,521 / 0,523 | 4502 / 955 / 2218 |
+| Fix | 10,5 / 8,1 / 13,8 % | 0,0047 / 0,0037 / 0,0044 | 0,557 / 0,536 / 0,547 | 10547 / 3005 / 4415 |
+| Fix ohne Kriterium `2·I_max` | 5,8 / 12,4 / 9,8 % | 0,0051 / 0,0036 / 0,0049 | 0,537 / 0,536 / 0,529 | 3284 / 1243 / 1381 |
+| Fix ohne Pfützen-Sperre | 3,8 / 3,0 / 5,9 % | 0,0061 / 0,0046 / 0,0059 | 0,564 / 0,537 / 0,551 | 20894 / 5645 / 9028 (Eis läuft weg) |
+| Fix, `iceErodeK` 1,25e-4 | 12,2 / 8,8 / 14,4 % | 0,0040 / 0,0036 / 0,0041 | 0,555 / 0,536 / 0,546 | 7303 / 2233 / 3317 |
+| Fix, `iceErodeK` 2e-4 | 11,9 / 10,0 / 13,3 % | – | 0,550 / 0,535 / 0,542 | 2615 / 1294 / 1598 |
+| Fix + Firn-Abgleiten am Steilhang 0,03…0,06 | 12,7 / 8,1 / 14,2 % | 0,0046 / 0,0038 / 0,0043 | 0,561 / 0,536 / 0,550 | 12940 / 3339 / 5567 |
+
+Lesart: das alte Bild entstand aus dem Artefakt — das Schachbrett-Schleifen
+zersägte die Eiskappe auf dem Kamm. Stabil liegt dort eine Kappe, die den
+fluvialen Abtrag sperrt und auf ihrer flachen Oberfläche kaum schleift
+(`E = K·q^m·S`, `S` klein); die eisfreien Täler daneben schneiden ein, an
+der Eisgrenze entsteht eine Wand. Mehr Schliff senkt Gipfel und Eis, flacht
+aber nicht weniger ab; Firn-Abgleiten am Steilhang hebt die Gipfel sogar
+(weniger Schliff an den Flanken). Dazu kommt die Großform von #174: bei der
+Generierung liegen auf Seed 1337 5,2 % des Landes über der Firn-Grenze, die
+Kalibrierung von #35 ging von ~1,5 % aus. V→U (`testGlaciatedValleysWidenTowardsU`)
+hält bei `iceErodeK` ≤ 1,25e-4 (Δb +0,14 / +0,24), bei 1,5e-4 nicht mehr
+(+0,08 nach 30k).
+
+Nächster Schritt: Nachkalibrierung, die dt-invariant UND alpin ist —
+Kandidaten: Lage der Firn-Grenze gegen die neue Großform (Anteil über der
+Grenze wie bei #35), ein Erosionsgesetz, das unter der Kappe nicht null wird
+(Gleiten ∝ Dicke × Gefälle), oder ein weicher statt binärer fluvialer Gate am
+Eisrand. Messwerkzeug: die Kennzahlen oben (Tabelle aus einem
+Einmal-Diagnoselauf, `testGlacierCrestShapeDiagnostic` (RS_VARIANTS, RS_DTS, RS_SEEDS)).
