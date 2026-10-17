@@ -540,6 +540,15 @@ const BRUSH_GRID_HALO_PX := 0.75
 const UI_THEME := "res://ui/glass_theme.tres"
 const UiIcon = preload("res://scripts/UiIcon.gd")
 const UI_MARGIN := 16.0
+## Weichzeichner hinter den Glas-Panels (#174 E): ein Shader (Material eines
+## ColorRect hinter jedem Panel), dessen Radius und Eckenradius aus dem Theme
+## kommen (`_glass_material`). `RS_UI_BLUR=0` lässt ihn weg (A/B im selben
+## Build, Messung: docs/zielbild-measurements.md). Die Rechtecke stehen in der
+## Gruppe `GLASS_BACKDROP_GROUP`, damit die Messbühne sie zur Laufzeit
+## umschalten kann.
+const GLASS_BLUR_SHADER := "res://ui/glass_blur.gdshader"
+const GLASS_BACKDROP_GROUP := &"glass_backdrop"
+var glass_material: ShaderMaterial
 
 func _ready() -> void:
 	if not ClassDB.class_exists("SimNode"):
@@ -913,6 +922,8 @@ func _setup_ui() -> void:
 	var ui_theme: Theme = load(UI_THEME)
 	hud = Control.new()
 	hud.theme = ui_theme
+	if OS.get_environment("RS_UI_BLUR") != "0":
+		glass_material = _glass_material(ui_theme)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(hud)
@@ -973,7 +984,7 @@ func _setup_ui() -> void:
 	# --- unten rechts: Diagnose (aufklappbar), Welt, Kamera, Seed
 	var bottom_right := _corner(Control.PRESET_BOTTOM_RIGHT)
 	var debug_vb := _panel(bottom_right)
-	debug_panel = debug_vb.get_parent()
+	debug_panel = debug_vb.get_parent().get_parent() # Rahmen (s. _panel), nicht nur das Glas
 	debug_panel.visible = false
 	_label(debug_vb, "DIAGNOSE", &"SectionLabel")
 	debug_stats_label = _label(debug_vb, "", &"StatsLabel")
@@ -1102,10 +1113,36 @@ func _fit_corner(c: Control) -> void:
 	else:
 		c.offset_bottom = c.offset_top + m.y
 
-## Glas-Panel (Stil aus dem Theme) mit senkrechter Spalte; gibt die Spalte zurück.
+## Material des Weichzeichners (Shader: ui/glass_blur.gdshader). Alle Werte
+## kommen aus dem Theme: Radius und Abdunklung aus `GlassBackdrop/…`, der
+## Eckenradius aus dem Glas-Panel selbst, damit Weichzeichner und Panel
+## dieselbe Form haben, ohne sie an zwei Stellen zu führen.
+func _glass_material(ui_theme: Theme) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = load(GLASS_BLUR_SHADER)
+	m.set_shader_parameter("blur_px", float(ui_theme.get_constant("blur_radius", "GlassBackdrop")))
+	m.set_shader_parameter("dim", ui_theme.get_color("dim", "GlassBackdrop"))
+	var glass := ui_theme.get_stylebox("panel", "PanelContainer") as StyleBoxFlat
+	m.set_shader_parameter("corner_px", float(glass.corner_radius_top_left))
+	return m
+
+## Glas-Panel mit senkrechter Spalte; gibt die Spalte zurück. Ein leerer
+## Rahmen (`GlassFrame`) legt den Weichzeichner und das Panel (Stil aus dem
+## Theme) deckungsgleich übereinander: der Weichzeichner zuerst, das Glas
+## darüber. Ein StyleBox kann den Hintergrund nicht verwischen, ein Material
+## gälte für Rand und Schatten mit; deshalb zwei Ebenen.
 func _panel(parent: Control) -> VBoxContainer:
+	var frame := PanelContainer.new()
+	frame.theme_type_variation = &"GlassFrame"
+	parent.add_child(frame)
+	if glass_material != null:
+		var backdrop := ColorRect.new()
+		backdrop.material = glass_material
+		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		backdrop.add_to_group(GLASS_BACKDROP_GROUP)
+		frame.add_child(backdrop)
 	var panel := PanelContainer.new()
-	parent.add_child(panel)
+	frame.add_child(panel)
 	var vb := VBoxContainer.new()
 	panel.add_child(vb)
 	return vb

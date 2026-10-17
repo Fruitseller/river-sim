@@ -11,6 +11,8 @@ extends SceneTree
 ##    auf und wieder zu, ohne
 ##    einen leeren Streifen zu hinterlassen;
 ##  - ein gemeinsames Theme, keine Overrides an einzelnen Controls;
+##  - Weichzeichner hinter jedem Glas-Panel: Rahmen, Rechteck unter dem Glas,
+##    Material mit Radius, Abdunklung und Eckenradius aus dem Theme;
 ##  - jedes Werkzeug trägt sein gezeichnetes Icon, Taste 1–6 hebt den
 ##    aktiven Knopf hervor; Tempo-Leiste ⏸ ▶ ⏩;
 ##  - Kamera-Presets auf F1–F3 (auch weich angefahren): Diorama rahmt das
@@ -57,6 +59,7 @@ func _run() -> void:
 	# Layout und Anpassung der Spalten laufen verzögert (minimum_size_changed).
 	await _frames(3)
 	_check_theme()
+	_check_glass_blur()
 	_check_corners("Start")
 	await _check_debug_toggle()
 	_check_tools()
@@ -97,8 +100,11 @@ func _check_theme() -> void:
 		_check(not c.has_theme_font_size_override("font_size"), "%s überschreibt font_size" % c.get_path())
 		_check(not c.has_theme_constant_override("separation"), "%s überschreibt separation" % c.get_path())
 		if c is PanelContainer:
-			_check(c.get_theme_stylebox("panel") == theme.get_stylebox("panel", "PanelContainer"),
-				"Panel %s nimmt das Glas-Panel des Themes" % c.get_path())
+			# Der Rahmen (`GlassFrame`) zeichnet nichts; das Glas selbst ist das
+			# Panel im Rahmen.
+			var kind := "GlassFrame" if c.theme_type_variation == &"GlassFrame" else "PanelContainer"
+			_check(c.get_theme_stylebox("panel") == theme.get_stylebox("panel", kind),
+				"Panel %s nimmt die Stilbox %s des Themes" % [c.get_path(), kind])
 		if c is Label and c.theme_type_variation != &"":
 			_check(theme.get_type_variation_base(c.theme_type_variation) == &"Label",
 				"Label-Variante %s steht im Theme" % c.theme_type_variation)
@@ -128,6 +134,58 @@ func _check_corners(when: String, overlap := true) -> void:
 			_check(not overlap or not r[i].intersects(r[j]), "%s: Spalten %d und %d überlappen (%s / %s, Fenster %s)"
 				% [when, i, j, r[i], r[j], vp])
 
+## Weichzeichner hinter dem Glas (Issue #174, Paket E): jedes Panel sitzt in
+## einem Rahmen, dessen erstes Kind das Weichzeichner-Rechteck ist, darüber das
+## Glas. Form und Radius kommen aus dem Theme; das Rechteck deckt das Glas
+## exakt, fängt keine Maus und verschwindet mit seinem Rahmen (Diagnose
+## zugeklappt). Das Aussehen im Bild beurteilt der Projekteigner; headless ist
+## nur die Verdrahtung prüfbar (Renderer fehlt).
+func _check_glass_blur() -> void:
+	var theme: Theme = load(Main.UI_THEME)
+	var glass := theme.get_stylebox("panel", "PanelContainer") as StyleBoxFlat
+	var frames: Array[Control] = []
+	for c in _controls(main.hud, []):
+		if c is PanelContainer and c.theme_type_variation == &"GlassFrame":
+			frames.append(c)
+	_check(frames.size() == 5, "fünf Glas-Panels (Kopf, Werkzeuge, Zeitsprung, Diagnose, Welt): %d" % frames.size())
+	_check(main.glass_material != null, "Weichzeichner-Material angelegt (RS_UI_BLUR nicht 0)")
+	if main.glass_material == null:
+		return
+	var material: ShaderMaterial = main.glass_material
+	var shader := material.shader
+	_check(shader != null and shader.resource_path == Main.GLASS_BLUR_SHADER, "Weichzeichner nutzt %s" % Main.GLASS_BLUR_SHADER)
+	for token in ["hint_screen_texture", "filter_linear_mipmap", "textureLod"]:
+		_check(shader != null and shader.code.contains(token), "Shader liest den Bildschirm über %s (Mip-Kette als Weichzeichner)" % token)
+	_check(is_equal_approx(material.get_shader_parameter("blur_px"),
+		float(theme.get_constant("blur_radius", "GlassBackdrop"))), "Weichzeichner-Radius kommt aus dem Theme")
+	_check(material.get_shader_parameter("dim") == theme.get_color("dim", "GlassBackdrop"),
+		"Abdunklung des Weichzeichners kommt aus dem Theme")
+	_check(is_equal_approx(material.get_shader_parameter("corner_px"), float(glass.corner_radius_top_left)),
+		"Eckenradius des Weichzeichners ist der des Glas-Panels")
+	_check(get_nodes_in_group(Main.GLASS_BACKDROP_GROUP).size() == frames.size(), "ein Weichzeichner je Panel")
+	for frame in frames:
+		var backdrop := frame.get_child(0) as ColorRect
+		var panel := frame.get_child(1) as PanelContainer
+		_check(frame.get_child_count() == 2 and backdrop != null and panel != null,
+			"%s: Weichzeichner-Rechteck zuerst, Glas darüber" % frame.get_path())
+		if backdrop == null or panel == null:
+			continue
+		_check(backdrop.material == material, "%s: gemeinsames Weichzeichner-Material" % frame.get_path())
+		_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE, "%s: Weichzeichner fängt keine Maus" % frame.get_path())
+		_check(backdrop.is_in_group(Main.GLASS_BACKDROP_GROUP), "%s: Weichzeichner in der Messgruppe" % frame.get_path())
+		# Ein zugeklapptes Panel wird nicht angeordnet (Größe 0); geprüft wird
+		# nach dem Aufklappen in `_check_debug_toggle`.
+		if frame.is_visible_in_tree():
+			_check_backdrop_covers(frame)
+	_check(main.debug_panel is PanelContainer and main.debug_panel.theme_type_variation == &"GlassFrame",
+		"die Diagnose klappt samt Weichzeichner zu (Rahmen, nicht nur das Glas)")
+
+func _check_backdrop_covers(frame: Control) -> void:
+	var backdrop := frame.get_child(0) as Control
+	var panel := frame.get_child(1) as Control
+	_check(backdrop.get_global_rect().is_equal_approx(panel.get_global_rect()),
+		"%s: Weichzeichner deckt das Glas (%s / %s)" % [frame.get_path(), backdrop.get_global_rect(), panel.get_global_rect()])
+
 func _check_debug_toggle() -> void:
 	var column: Control = main.hud.get_child(2)
 	var closed := column.size
@@ -142,6 +200,7 @@ func _check_debug_toggle() -> void:
 	toggle.button_pressed = true
 	await _frames(3)
 	_check(main.debug_panel.visible and column.size.y > closed.y, "Diagnose klappt auf")
+	_check_backdrop_covers(main.debug_panel) # aufgeklappt: Weichzeichner deckt das Glas
 	_check_corners("Diagnose offen", false)
 	toggle.button_pressed = false
 	await _frames(3)
