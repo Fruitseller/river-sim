@@ -19,6 +19,11 @@ h(T = 0) = sea + climateSeaLevelTemp / climateLapseRate = 0.15 + 11/26 = 0.5731
 Sie ist der Bezugspunkt aller folgenden Zahlen: darüber wandelt sich Firn zu Eis,
 darunter kann Eis nur noch HINFLIESSEN.
 
+**Stand seit #174:** die Produktion nutzt `climateSeaLevelTemp = 13` (Grenze bei
+`0.15 + 13/26 = 0.65`); §A bis §K gelten für die 11 °C und die alte Großform, auf
+der ihre Wächter weiter laufen (`calibrationSeaLevelTemp`). Begründung und
+Messreihe: §L.
+
 ---
 
 ## §A — Gipfelhöhe gegen Firn-Grenze (die Vorbedingung)
@@ -704,12 +709,13 @@ gegen den Integrationsstand `17218b1`, Rechner nicht ruhig): `updateIce`
 Teilschritte auf dickem Eis), der ganze Schritt im Median 59,8 → 62,9 ms
 (+5 %). Im Zeitraffer (dt 15) sind die Teilschritte entsprechend weniger.
 
-### Offener Befund: der stabile Transport macht den Kamm zur Tafel
+### Befund: der stabile Transport macht den Kamm zur Tafel (Ausgangslage)
 
 Im Bild (Seed 1337, Jahr 20.000, F1/F2, maximiert) trägt der Kamm nach dem Fix
 Hochflächen mit senkrechten Wänden statt Graten; die Vorlage
 (`docs/references/zielbild/`) zeigt alpine Grate mit Kar-Gletschern. Deshalb
-ist der Fix NICHT im Integrationszweig (Revert dort, 2026-10-17). Kennzahlen
+war der Fix zunächst NICHT im Integrationszweig (Revert dort, 2026-10-17); er ist
+jetzt mit der Nachkalibrierung unten wieder drin. Kennzahlen
 (Produktion, dt 1000 wie der `RS_STEP`-Vorlauf, oberste 5 % des Landes;
 „flach" = Weltsteigung < 0,15, Zackigkeit = mittlere |h − Mittel 9 × 9|):
 
@@ -735,9 +741,306 @@ Kalibrierung von #35 ging von ~1,5 % aus. V→U (`testGlaciatedValleysWidenTowar
 hält bei `iceErodeK` ≤ 1,25e-4 (Δb +0,14 / +0,24), bei 1,5e-4 nicht mehr
 (+0,08 nach 30k).
 
-Nächster Schritt: Nachkalibrierung, die dt-invariant UND alpin ist —
-Kandidaten: Lage der Firn-Grenze gegen die neue Großform (Anteil über der
-Grenze wie bei #35), ein Erosionsgesetz, das unter der Kappe nicht null wird
-(Gleiten ∝ Dicke × Gefälle), oder ein weicher statt binärer fluvialer Gate am
-Eisrand. Messwerkzeug: die Kennzahlen oben (Tabelle aus einem
-Einmal-Diagnoselauf, `testGlacierCrestShapeDiagnostic` (RS_VARIANTS, RS_DTS, RS_SEEDS)).
+### Vorgänger-Reihen (GPT-6.1-Sol, nicht von mir wiederholt)
+
+Aus dem Verlauf des Vorgänger-Agenten übernommen, nur als Verlauf der Sackgassen
+(Produktion, dt 1000, oberste 5 % des Landes; „flach" = Weltsteigung < 0,15). Was
+ich von dort als Grundlage benutze, habe ich nachgemessen (nächster Abschnitt:
+Ausgangszahlen, eisfreie dt-Drift 15 / 11 / 16 %, Ergebnis der Firn-Grenze bei
+13 °C, Bit-Gleichheit der räumlichen Begrenzung).
+
+| Variante | Befund |
+| --- | --- |
+| Firn-Zufuhr `iceFirnPerSnowYear` 1e-3 → 5e-4 und `iceErodeK` 1e-4 → 2e-4 (WIP-Stand) | Eisfläche 2,99 / 1,61 / 1,98 % des Landes, flach 6,6 / 4,8 / 8,4 %; V→U (Mechanik-Welt) Δb +0,261 / +0,199 nach 30k / 50k, n = 38 / 25 |
+| Zufuhr 3e-4 / Schliff 3e-4 | V→U bei 50k nur Δb +0,032, n = 16 |
+| Zufuhr 7,5e-4 / Schliff 1,5e-4 | V→U verfehlt das Signal schon bei 30k (Δb +0,044) |
+| Zufuhr allein 1e-4 | höhere, kältere Gipfel, Eis wächst auf 7,31 % (Seed 1337) |
+| weniger Firn-Zufuhr allgemein | weniger Schliff, Gipfel bleiben höher und kälter, Eis > 7 % |
+| weniger Gefälle-Abhängigkeit des Schliffs | Eis 5,8 … 11 % |
+| 1/10 Firn + 7,5 × Schliff | Seed 1337 flach 5,0 %, Zackigkeit 0,00516, Eis 3,38 %; Seed 42 Zackigkeit 0,00413; V→U-Wächter nur 6 … 8 auswertbare Profile |
+| Karwand-Rückverlegung (Frost am Eisrand) | flach 10,1 … 10,5 %: löste die Kappe nicht |
+| Meeresspiegel-Temperatur 13 °C (Firn-Grenze 0,65; nur Seed 1337 / 42 gemessen) | 1337: flach 2,7 %, Eis 1,41 %; 42 verliert fast alles Eis; bei 12 °C bleiben im V→U-Wächter keine auswertbaren Profile |
+| `iceErodeK` 1,25e-4 / 2e-4, Firn-Abgleiten am Steilhang | Tabelle im Ausgangsbefund oben |
+
+Alle Zufuhr-/Schliff-Wege verschieben die Kappe, lösen sie aber nicht, und sie
+zahlen mit dem V→U-Signal. Der Grund steht in der Randbedingung des Eises: nicht
+die Eis-Physik ist falsch geeicht, sondern wo die Firn-Grenze liegt.
+
+### Entscheidung: die Firn-Grenze des EISES folgt der Großform
+
+**Ursache.** Die Firn-Grenze `sea + climateSeaLevelTemp / climateLapseRate`
+(0,5731 bei 11 °C) wurde in #33/#35 auf ~1,5 % des Landes geeicht
+(`bandSnowPercentile`). Die Kamm-Großform von #174 trägt mehr Fläche in
+Gipfelhöhe; bei der Generierung (Einlauf 3000 J.) liegen 5,17 / 2,14 / 3,01 %
+des Landes (Seeds 1337 / 42 / 20) über der Grenze. Mit dem stabilen Transport
+ist daraus eine Kappe geworden.
+
+**Erster Versuch, verworfen: die Meeresspiegel-Temperatur auf 13 °C heben.** Das
+verschiebt die Isotherme auf 0,65 und löst die Kappe (Tabelle unten), verschiebt
+aber das GANZE Klima mit: Niederschlagsphase, Schneedecke, Waldgrenze und
+Schmelzwasser. Der Schnee im Bild bricht ein (Anteil des Landes mit sichtbarer
+Decke, Deckung > 0,05, dt 1000):
+
+| Seed | Schnee sichtbar / Rampe, Meer 11 °C (`iceFirnTemp` −2) | Meer 13 °C (`iceFirnTemp` 0) | Meer 13 °C, eisfrei |
+| ---: | :--- | :--- | :--- |
+| 1337 | 8,49 / 5,38 % | 2,68 / 0,65 % | 2,73 / 1,35 % |
+| 42 | 5,53 / 2,56 % | 0,86 / 0,03 % | 0,87 / 0,14 % |
+| 20 | 6,62 / 3,70 % | 1,43 / 0,30 % | 1,38 / 0,55 % |
+
+Seed 42 trägt damit praktisch keinen Schnee mehr, Seed 20 kaum, und die 11 °C
+sind für Schnee, Wald und Phase kalibriert. Die Mechanik-Wächter hätten dafür an
+22 Stellen die alten 11 °C pinnen müssen (zu breiter Regler). Die Reihe, mit der
+ich die 13 °C gewählt hatte (jeder Lauf aus frisch generierter Welt, dt 100 und
+1000):
+
+| Meer °C | Seed | dt | Land über Firn | flach | Zackigkeit | Zack. / eisfrei | Eis, % des Landes |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 12 | 1337 | 100 | 2,86 % | 7,5 % | 0,00619 | – | 2,64 |
+| 12 | 1337 | 1000 | 2,86 % | 8,6 % | 0,00505 | – | 2,66 |
+| 12 | 42 | 100 | 0,88 % | 2,2 % | 0,00481 | – | 1,00 |
+| 12 | 42 | 1000 | 0,88 % | 2,2 % | 0,00418 | – | 1,00 |
+| 12 | 20 | 100 | 1,23 % | 2,6 % | 0,00634 | – | 1,24 |
+| 12 | 20 | 1000 | 1,23 % | 4,3 % | 0,00480 | – | 1,25 |
+| 12,5 | 1337 | 100 | 1,91 % | 3,4 % | 0,00652 | 92 % | 1,82 |
+| 12,5 | 1337 | 1000 | 1,91 % | 4,2 % | 0,00518 | 87 % | 1,84 |
+| 12,5 | 42 | 100 | 0,43 % | 1,4 % | 0,00498 | 97 % | 0,27 |
+| 12,5 | 42 | 1000 | 0,43 % | 1,6 % | 0,00438 | 99 % | 0,28 |
+| 12,5 | 20 | 100 | 0,78 % | 1,6 % | 0,00664 | 98 % | 0,96 |
+| 12,5 | 20 | 1000 | 0,78 % | 3,3 % | 0,00508 | 94 % | 0,97 |
+| 12,75 | 1337 | 100 | 1,55 % | 2,6 % | 0,00666 | 93 % | 1,61 |
+| 12,75 | 1337 | 1000 | 1,55 % | 3,2 % | 0,00530 | 88 % | 1,63 |
+| 12,75 | 42 | 100 | 0,28 % | 1,3 % | 0,00498 | 99 % | 0,18 |
+| 12,75 | 42 | 1000 | 0,28 % | 1,5 % | 0,00449 | 102 % | 0,19 |
+| 12,75 | 20 | 100 | 0,59 % | 1,3 % | 0,00641 | 95 % | 0,78 |
+| 12,75 | 20 | 1000 | 0,59 % | 2,7 % | 0,00509 | 94 % | 0,77 |
+| 13 | 1337 | 100 | 1,23 % | 2,3 % | 0,00683 | 96 % | 1,39 |
+| 13 | 1337 | 1000 | 1,23 % | 2,7 % | 0,00539 | 91 % | 1,41 |
+| 13 | 42 | 100 | 0,19 % | 1,3 % | 0,00504 | 101 % | 0,09 |
+| 13 | 42 | 1000 | 0,19 % | 1,4 % | 0,00434 | 97 % | 0,09 |
+| 13 | 20 | 100 | 0,45 % | 1,4 % | 0,00648 | 98 % | 0,56 |
+| 13 | 20 | 1000 | 0,45 % | 1,8 % | 0,00519 | 97 % | 0,57 |
+| 13,5 | 1337 | 100 | 0,76 % | 1,6 % | 0,00690 | – | 0,75 |
+| 13,5 | 1337 | 1000 | 0,76 % | 1,9 % | 0,00558 | – | 0,76 |
+| 13,5 | 42 | 100 | 0,07 % | 1,1 % | 0,00491 | – | 0,01 |
+| 13,5 | 42 | 1000 | 0,07 % | 1,2 % | 0,00439 | – | 0,01 |
+| 13,5 | 20 | 100 | 0,28 % | 1,2 % | 0,00662 | – | 0,24 |
+| 13,5 | 20 | 1000 | 0,28 % | 2,6 % | 0,00519 | – | 0,24 |
+
+**Entkopplung: `iceFirnTemp`.** Die Firn→Eis-Umwandlung beginnt jetzt unterhalb
+einer eigenen Gleichgewichtslinien-Temperatur, `f_kalt = clamp((iceFirnTemp − T) /
+iceFirnColdSpan, 0, 1)` (vorher `−T / …`, also implizit 0 °C). Physik: die
+Gleichgewichtslinie (ELA) eines Gletschers liegt bei einer Jahresmitteltemperatur
+einige Grad UNTER 0 °C, typisch −2 … −8 °C je nach Niederschlag (Ohmura et al.
+1992), während Dauerschnee schon an der 0-°C-Isotherme liegen bleibt. Die
+Firn-Grenze des Eises liegt bei `h = sea + (climateSeaLevelTemp − iceFirnTemp) /
+climateLapseRate`; mit 11 °C und −2 °C ist das dieselbe Höhe 0,65 wie bei der
+verworfenen 13-°C-Variante, aber nur für das Eis. Die Quelle (`updateIce`, die
+Bounding-Box der Teilschritte und die Aktivitätsprüfung) liest dieselbe Größe.
+`iceFirnTemp = 0` rechnet bit-identisch zum Stand davor (die `ifirn=0`-Zeilen
+unten reproduzieren die Zahlen vor der Änderung Ziffer für Ziffer).
+
+**Messreihe** (Produktion, 20.000 Jahre nach dem Einlauf, dt 100 und 1000, jeder
+Lauf aus frisch generierter Welt; Werkzeug `testGlacierCrestShapeDiagnostic`,
+2026-10-17, M4 Max, Zustand nach dem Rebase auf `0996441`; Zackigkeit = mittlere
+|h − Mittel 9 × 9| der obersten 5 % des Landes, Quotient gegen den eisfreien Arm
+(`iceEnabled = false`, gleicher Seed und Schrittweite); „Land über Eis-Firn" =
+Anteil des Landes über `sea + (T₀ − iceFirnTemp)/Γ` direkt nach dem Einlauf, MIT
+Eis; Schnee = `Terrain.snowCover`, Anteil des Landes mit Deckung > 0,05 bzw. in
+der Rampe `snowBandCoverStart`):
+
+| `iceFirnTemp` °C | Seed | dt | Land über Eis-Firn | flach | Zackigkeit | Zack. / eisfrei | Eis, % des Landes | Schnee sichtbar / Rampe |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
+| 0 | 1337 | 100 | 5,17 % | 9,8 % | 0,00533 | 78 % | 4,09 | 7,72 / 1,75 % |
+| 0 | 1337 | 1000 | 5,17 % | 10,3 % | 0,00450 | 78 % | 4,07 | 8,35 / 1,66 % |
+| 0 | 42 | 100 | 2,14 % | 4,6 % | 0,00492 | 98 % | 2,05 | 4,94 / 1,02 % |
+| 0 | 42 | 1000 | 2,14 % | 6,2 % | 0,00395 | 89 % | 2,08 | 5,38 / 1,02 % |
+| 0 | 20 | 100 | 3,01 % | 9,0 % | 0,00581 | 92 % | 2,63 | 5,79 / 1,35 % |
+| 0 | 20 | 1000 | 3,01 % | 11,1 % | 0,00443 | 83 % | 2,64 | 6,42 / 1,39 % |
+| −1 | 1337 | 100 | 2,84 % | 4,8 % | 0,00597 | 87 % | 3,96 | 7,96 / 4,86 % |
+| −1 | 1337 | 1000 | 2,84 % | 4,9 % | 0,00533 | 92 % | 4,03 | 8,69 / 4,96 % |
+| −1 | 42 | 100 | 0,86 % | 1,9 % | 0,00467 | 93 % | 1,65 | 5,12 / 2,45 % |
+| −1 | 42 | 1000 | 0,86 % | 2,0 % | 0,00416 | 93 % | 1,66 | 5,47 / 2,51 % |
+| −1 | 20 | 100 | 1,22 % | 1,7 % | 0,00597 | 94 % | 2,08 | 5,90 / 3,08 % |
+| −1 | 20 | 1000 | 1,22 % | 3,3 % | 0,00490 | 92 % | 2,12 | 6,62 / 3,33 % |
+| −1,5 | 1337 | 100 | 1,89 % | 2,5 % | 0,00610 | 89 % | 3,04 | 7,98 / 5,18 % |
+| −1,5 | 1337 | 1000 | 1,89 % | 2,7 % | 0,00540 | 93 % | 3,10 | 8,63 / 5,36 % |
+| −1,5 | 42 | 100 | 0,42 % | 1,4 % | 0,00473 | 94 % | 0,63 | 5,11 / 2,50 % |
+| −1,5 | 42 | 1000 | 0,42 % | 1,5 % | 0,00424 | 95 % | 0,64 | 5,48 / 2,56 % |
+| −1,5 | 20 | 100 | 0,77 % | 1,4 % | 0,00620 | 98 % | 1,70 | 6,01 / 3,37 % |
+| −1,5 | 20 | 1000 | 0,77 % | 3,2 % | 0,00513 | 96 % | 1,73 | 6,68 / 3,65 % |
+| −2 | 1337 | 100 | 1,22 % | 1,9 % | 0,00623 | 91 % | 2,44 | 7,95 / 5,26 % |
+| −2 | 1337 | 1000 | 1,22 % | 1,9 % | 0,00546 | 94 % | 2,50 | 8,49 / 5,38 % |
+| −2 | 42 | 100 | 0,18 % | 1,2 % | 0,00483 | 96 % | 0,21 | 5,05 / 2,49 % |
+| −2 | 42 | 1000 | 0,18 % | 1,2 % | 0,00438 | 98 % | 0,22 | 5,53 / 2,56 % |
+| −2 | 20 | 100 | 0,45 % | 1,3 % | 0,00608 | 96 % | 1,06 | 6,02 / 3,43 % |
+| −2 | 20 | 1000 | 0,45 % | 2,7 % | 0,00511 | 96 % | 1,08 | 6,62 / 3,70 % |
+| −2,5 | 1337 | 100 | 0,75 % | 1,4 % | 0,00625 | 91 % | 1,57 | 8,02 / 5,30 % |
+| −2,5 | 1337 | 1000 | 0,75 % | 1,5 % | 0,00553 | 96 % | 1,62 | 8,70 / 5,59 % |
+| −2,5 | 42 | 100 | 0,07 % | 1,0 % | 0,00492 | 98 % | 0,01 | 5,05 / 2,48 % |
+| −2,5 | 42 | 1000 | 0,07 % | 1,1 % | 0,00443 | 99 % | 0,01 | 5,53 / 2,56 % |
+| −2,5 | 20 | 100 | 0,27 % | 1,0 % | 0,00618 | 97 % | 0,49 | 5,99 / 3,41 % |
+| −2,5 | 20 | 1000 | 0,27 % | 2,4 % | 0,00508 | 95 % | 0,54 | 6,71 / 3,69 % |
+| −3 | 1337 | 100 | 0,45 % | 1,2 % | 0,00639 | 93 % | 1,03 | 7,99 / 5,32 % |
+| −3 | 1337 | 1000 | 0,45 % | 1,3 % | 0,00546 | 94 % | 1,06 | 8,73 / 5,55 % |
+| −3 | 42 | 100 | 0,00 % | 1,0 % | 0,00496 | 99 % | 0,00 | 5,08 / 2,50 % |
+| −3 | 42 | 1000 | 0,00 % | 1,0 % | 0,00444 | 100 % | 0,00 | 5,49 / 2,56 % |
+| −3 | 20 | 100 | 0,12 % | 0,8 % | 0,00631 | 100 % | 0,17 | 6,01 / 3,41 % |
+| −3 | 20 | 1000 | 0,12 % | 2,1 % | 0,00517 | 97 % | 0,19 | 6,78 / 3,70 % |
+
+Eisfreie Arme (Quotienten-Nenner, 11 °C; „flach" des eisfreien Reliefs 0,6 …
+2,1 %):
+
+| Seed | Zackigkeit dt 100 / 1000 | dt-Drift | flach dt 100 / 1000 | Land über 0,65 | Schnee sichtbar / Rampe (dt 1000) |
+| ---: | :--- | ---: | :--- | ---: | :--- |
+| 1337 | 0,00684 / 0,00578 | 15 % | 0,8 / 0,8 % | 1,41 % | 8,67 / 5,54 % |
+| 42 | 0,00502 / 0,00446 | 11 % | 0,9 / 1,0 % | 0,21 % | 5,50 / 2,56 % |
+| 20 | 0,00634 / 0,00532 | 16 % | 0,7 / 2,1 % | 0,60 % | 6,73 / 3,69 % |
+
+Die Zackigkeit fällt auch OHNE Eis zwischen dt 100 und 1000 um 15 / 11 / 16 %:
+Operator-Splitting der übrigen Sim (§5 in `docs/dt-invariance-measurements.md`),
+nicht der Gletscher.
+
+**Lesart.**
+
+* Bei `iceFirnTemp = 0` (dem Stand davor) ist die Kappe in den Zahlen: flach
+  10,3 / 6,2 / 11,1 % bei dt 1000, Zackigkeit nur 78 / 89 / 83 % des eisfreien
+  Arms, Eis auf 4,1 / 2,1 / 2,6 % des Landes. Dass die Schnee-Rampe dort nur 1,7 /
+  1,0 / 1,4 % des Landes deckt (eisfrei: 5,5 / 2,6 / 3,7 %), ist derselbe Befund
+  von der anderen Seite: die Kappe schleift die Gipfel unter die Isotherme.
+* −1 °C genügt nicht: Seed 1337 trägt 4,0 % Eis (Spanne 0,5 … 3 %), flach 4,8 /
+  4,9 % und Zackigkeit nur 87 / 92 % des eisfreien Arms (dt 100 / 1000).
+* **−2 °C** erfüllt alle Zahlen (nächster Abschnitt) und liegt bei Seed 1337 mit
+  1,22 % des Landes über der Eis-Firn-Grenze im Zielbereich 1,2 … 1,5 % (so viel
+  wie die verworfene 13-°C-Variante, 1,23 %).
+* −1,5 °C: Eis 3,1 % auf Seed 1337 (über 3 %) und Quotient 89 / 93 % (dt 100 /
+  1000).
+  −2,5 / −3 °C: Seed 1337 bei 1,6 / 1,1 % Eis, Seed 20 bei 0,5 / 0,2 %, Seed 42 hat
+  dann kein Eis mehr.
+* Die Schneeflächen bleiben bei jedem `iceFirnTemp` ≤ −1,5 auf dem Wert der
+  eisfreien Welt (Seed 1337 bei −2: 8,5 / 5,4 % gegen 8,7 / 5,5 %). Der Versatz greift
+  also nur das Eis an.
+
+**Gewählt: `iceFirnTemp = −2 °C`** (Logbuch bei `SimConfig.iceFirnTemp`). Zufuhr
+und Schliff des Eises bleiben bei den Werten von #35 (`iceFirnPerSnowYear`
+1e-3, `iceErodeK` 1e-4), die Nachjustierung war nicht nötig.
+
+**Endstand** (Produktion, 20.000 Jahre, dt 100 / 1000):
+
+| Seed | flach | Zackigkeit | eisfreie Baseline | Quotient | Eis | Land über Eis-Firn |
+| ---: | :--- | :--- | :--- | :--- | :--- | ---: |
+| 1337 | 1,9 / 1,9 % | 0,00623 / 0,00546 | 0,00684 / 0,00578 | 91 / 94 % | 2,44 / 2,50 % | 1,22 % |
+| 42 | 1,2 / 1,2 % | 0,00483 / 0,00438 | 0,00502 / 0,00446 | 96 / 98 % | 0,21 / 0,22 % | 0,18 % |
+| 20 | 1,3 / 2,7 % | 0,00608 / 0,00511 | 0,00634 / 0,00532 | 96 / 96 % | 1,06 / 1,08 % | 0,45 % |
+
+dt-Drift der Zackigkeit zwischen dt 100 und 1000: mit Eis 12 / 9 / 16 %,
+eisfrei 15 / 11 / 16 %: der Eis-Arm driftet nicht stärker als die Welt ohne
+Eis. Seed 42 hat bauartbedingt (höchster Punkt 0,67 ohne Eis) kaum Land über der
+Grenze (0,18 %) und damit fast kein Eis (0,21 %); Kar- und Talgletscher gibt es
+auf den Seeds 1337 und 20. Wächter:
+`GlacierCrestShape.testProductionCrestCarriesGlaciersNotACap`.
+
+**Eismasse an der Schrittweite** (`testIceDtSweepDiagnostic`, Produktion, Jahr
+20.000, Endstand; die Tabelle weiter oben ist der Stand bei `iceFirnTemp = 0`):
+
+| Seed | dt 15 | dt 100 | dt 1000 | Spanne | Eiszellen 15 / 100 / 1000 |
+| ---: | ---: | ---: | ---: | ---: | :--- |
+| 1337 | 169,73 | 170,02 | 175,35 | 3,3 % | 6298 / 6342 / 6473 |
+| 42 | 1,93 | 1,89 | 1,94 | 2,6 % (Masse < 2) | 304 / 304 / 319 |
+| 20 | 32,11 | 32,66 | 34,06 | 6,1 % | 1728 / 1764 / 1798 |
+
+`testIceIsFramerateIndependent` (Schrittpaare, n = 256, alte Welt mit
+`iceFirnTemp = 0` gepinnt) und alle `DtInvariance`-Wächter sind grün
+(Pflichtsuite 582 Tests, 0 Fehler).
+
+**V→U.** Der Pflichtwächter `testGlaciatedValleysWidenTowardsU` ist ein
+Mechanik-Wächter der gepinnten alten Welt (n = 384, `calibrationRangeLandform`,
+`calibrationIceFirnTemp = 0`; mit der Produktions-Grenze 0,65 trüge sie kein
+Eis). Er misst unverändert Δb **+0,287** (30k, n = 56) und **+0,162** (50k,
+n = 54), Schranke +0,1.
+
+In der PRODUKTION gezeigt (`testGlacierProductionValleyDiagnostic`, Eis-Arm gegen
+eisfreien Arm, gepaart auf den am Ende vergletscherten Zellen, dt 100;
+Produktionszellen sind 0,156 statt 0,34 Welteinheiten breit, deshalb
+Halbbreiten W = 6 / 10 / 14 Zellen; `b` Eis / ohne Eis, Δ, n):
+
+| Seed | Jahr | W 6 | W 10 | W 14 |
+| ---: | ---: | :--- | :--- | :--- |
+| 1337 | 10k | 1,702 / 1,579, +0,123 (2166) | 1,649 / 1,429, +0,220 (1611) | 1,430 / 1,215, +0,214 (1308) |
+| 1337 | 20k | 1,762 / 1,641, +0,121 (1367) | 1,663 / 1,415, +0,248 (1024) | 1,451 / 1,225, +0,226 (781) |
+| 1337 | 30k | 1,732 / 1,706, +0,025 (864) | 1,607 / 1,406, +0,201 (654) | 1,445 / 1,290, +0,155 (411) |
+| 1337 | 50k | 1,656 / 1,541, +0,115 (219) | 1,185 / 1,004, +0,180 (150) | 1,081 / 0,725, +0,356 (57) |
+| 20 | 10k | 1,675 / 1,491, +0,184 (679) | 1,587 / 1,274, +0,312 (402) | 1,458 / 1,088, +0,370 (250) |
+| 20 | 20k | 1,710 / 1,540, +0,170 (352) | 1,547 / 1,254, +0,293 (207) | 1,294 / 1,006, +0,289 (116) |
+| 20 | 30k | 1,792 / 1,471, +0,321 (207) | 1,608 / 1,338, +0,270 (134) | 1,201 / 0,887, +0,314 (73) |
+| 20 | 50k | 1,836 / 1,785, +0,051 (175) | 1,671 / 1,530, +0,141 (120) | 2,036 / 1,004, +1,032 (45) |
+
+**Lesart:** mit der Firn-Grenze bei 0,65 gehen die vergletscherten Täler in der
+Produktion auf beiden Seeds, bei allen drei Halbbreiten und über den ganzen Lauf
+Richtung U (alle 24 Δ positiv, +0,03 … +1,03). Das ist stabiler als bei der
+verworfenen 13-°C-Variante (Seed 20 wechselte dort das Vorzeichen) und kleiner
+als bei der Kappe, die weit mehr Eis über das Bett schleift (Δ +0,4 … +1,0 bei
+10k … 20k auf Seed 1337), dort aber bei W 6 ab 30k ins Rauschen fiel.
+
+**Bild** (maximiert, `RS_STEP=20000`, Diorama und Tal, Seeds 1337 / 42 / 20;
+`docs/screenshots/zielbild-174/glacier_seed*_vorher-nachher.jpg`, links der
+Integrationsstand `6a0dfde` (danach nur bit-identische Perf-Commits), rechts diese
+Nachkalibrierung; dazu `glacier_seed1337_kamm_kappe-gegen-versatz.jpg` mit dem
+Zwischenstand „dt-Fix, Firn bei 0 °C"). Ehrliche Bewertung:
+
+* **Schnee wie vorher, Kappe weg.** Alle drei Seeds tragen Schneegrate und
+  Schneefelder auf den Gipfeln (Seed 42 und 20 wieder mit weißen Spitzen, die bei
+  13 °C fehlten); der Zwischenstand bei `iceFirnTemp = 0` zeigt dagegen auf Seed
+  1337 eine geschlossene weiße Decke über dem ganzen Kamm.
+* **Schnee und Eis sind im Render beide weiß.** Kar- und Talgletscher (Eis 2,5 /
+  0,2 / 1,1 % des Landes) erkenne ich im Bild nicht getrennt von den
+  Schneefeldern; die Kennzahlen („flach", Zackigkeit, Eisfläche) tragen den
+  Befund, das Bild bestätigt nur „keine Kappe, Gipfel und Hörner".
+* Auf Seed 1337 liegt im Diorama ein fast durchgehendes weißes Band auf dem Kamm,
+  gleichmäßiger als in der Vorlage; auf Seed 42 trägt der Hauptkamm eine breite
+  Schnee-Schulter mit Wand darunter. Ob diese Schulter von der Großform oder
+  vom Eis kommt, habe ich nicht getrennt (Kennzahl „flach" der Seeds: 1,9 / 1,2 /
+  1,3 … 2,7 %).
+* Der Gletschersee im Trog des Integrationsstands (Seeds 1337 und 42) ist weg.
+* Senkrechte, gestreifte Felswände gibt es in allen Ständen, auch ohne Eis; sie
+  kommen aus der Relief-/Felsdarstellung steiler Zellen, nicht vom Gletscher.
+
+**Kosten** (`simperf --repeat 1`, Produktion, Seed 1337 falls nicht anders
+genannt, dt 100 nach 10.000 Jahren Einlauf, interleaved, Reihenfolge je Runde
+getauscht, M4 Max, Load 7 … 13; ms je Schritt, Rohwerte sortiert):
+
+| Vergleich | Läufe | Median Schritt | Median `updateIce` |
+| --- | --- | --- | --- |
+| nur die räumliche Begrenzung (Commit `perf(glacier)`, `iceFirnTemp` 0), 6 Runden | ohne: 64,3 64,7 65,4 65,6 65,6 71,7; mit: 62,4 62,7 62,9 62,9 63,3 64,3 | 65,5 → 62,9 ms | 10,96 → 8,99 ms |
+| Endstand gegen Integration `0996441`, dt 100, 8 Runden | INT: 58,1 59,2 59,4 59,5 59,9 61,0 61,6 67,0; neu: 57,3 58,1 58,3 58,4 58,6 58,7 59,4 59,5 | 59,70 → 58,50 ms (−1,2) | 6,12 → 5,08 ms |
+| Seed 42, dt 100, 6 Runden | INT: 42,0 42,3 42,6 42,7 42,8 43,4; neu: 41,1 41,2 41,8 42,2 42,5 48,9 | 42,65 → 42,00 ms (−0,65) | 2,38 → 1,30 ms |
+| Zeitraffer dt 15 (`--dt 15 --steps 200`), 10 Runden | INT: 43,5 43,6 43,9 44,0 44,0 44,1 44,1 44,1 44,3 44,9; neu: 44,1 44,1 44,1 44,2 44,5 44,5 44,5 44,6 44,7 45,2 | 44,05 → 44,50 ms (+0,45) | 1,08 → 1,50 ms (+0,42) |
+
+Im Zeitraffer (dt 15) ist der Endstand um 0,45 ms je Schritt langsamer, knapp
+unter der Grenze von +0,5 ms: der Teilschritt läuft dort auf mehr Eis als im
+Integrationsstand (Seed 1337 6473 Eiszellen bei dt 1000 gegen 4502 im Stand mit
+dem instabilen Transport), und die einmalige Gitter-Suche (`iceTransportDomain`)
+fällt bei nur einem Teilschritt stärker ins Gewicht. Die Begrenzung der
+Teilschritte ist **bit-identisch**: `simperf --hash` vor und nach identisch auf den
+Seeds 1337 (`1c3d7fd9de7716fa`) und 42 (`d19cd43ab2e35ce0`) sowie mit großem
+Einlauf-Schritt (`--warmup 25 --warmup-dt 800`: 1337 `39e4122285a884f9`, 20
+`69ca1799f79b8cd3`; Stand des Perf-Commits). Der Endstand hasht reproduzierbar
+(zwei Läufe je Seed: 1337 `6ffeb97d52f8e8d9`, 42 `9f0fb0e9ad4d8493`); die Werte
+sind per-Maschine und mit anderen Ständen nicht vergleichbar.
+
+**Grenzen.**
+
+* Das Eis ist auf Seed 42 praktisch aus (0,21 % des Landes) und auf Seed 20
+  schlank (1,1 %): ein Regler kann nicht jedem Seed Gipfel über der Firn-Grenze
+  geben.
+* Der Zackigkeits-Quotient liegt auf Seed 1337 bei dt 100 mit 91 % knapp über der
+  Schwelle von 90 %.
+* `WorldSnapshot.version` steigt auf 8 (neuer Config-Schlüssel): Spielstände aus
+  Version 7 werden abgelehnt; gespeicherte Welten behalten sonst ihr eigenes
+  `iceFirnTemp`.
+* Die Mechanik-Wächter der alten Großform pinnen `iceFirnTemp = 0`
+  (`calibrationIceFirnTemp`): Glacier, `renderConfig`, Lithology,
+  `testBraidingBuildsBars`, `testAgingTrajectoryOver100k`; dazu die Schranke in
+  `testSnowZoneFollowsTheClimateNotAFixedLandFraction` von 0,85 auf 0,90 (gemessen
+  0,864: die Schnee-Fläche schrumpft mit weniger Eis etwas weniger). Alle übrigen
+  Wächter laufen unverändert.
+* Die Reihen in §A/§B/§D stammen von `iceFirnTemp = 0` und gelten dafür.

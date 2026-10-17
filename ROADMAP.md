@@ -641,6 +641,12 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Offen geblieben: die Gleichgewichts-DICKE ist auflösungsabhängig
   (∝ `1/(n−1)`, die Fließstrecke in Welteinheiten dagegen nicht) — beschränkt,
   aber bei kleinem `n` dickeres Eis, s. Messreihe §B.
+  Nachtrag #174 (Okt 2026): Eismasse jetzt schrittweiten-unabhängig (dt 15 / 100 /
+  1000 innerhalb 3–6 %), und das Eis hat eine eigene Firn-Grenze
+  (`iceFirnTemp` −2 °C, Gleichgewichtslinie unter der Schnee-Isotherme):
+  Kar- und Talgletscher statt Eiskappe auf der Kamm-Großform, Schnee-, Wald- und
+  Phasen-Klima unverändert. Offen: Seed 42 hat damit fast kein Eis (0,2 %),
+  Schnee und Eis sind im Render beide weiß (`docs/glacier-measurements.md` §L).
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**
