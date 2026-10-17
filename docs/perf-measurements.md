@@ -1474,3 +1474,109 @@ heraus in Swift-Arrays (formal ein Data Race); übernommen ist die Fassung mit
 je Zeile eigenem Ergebnis in Roh-Puffern und serieller Reduktion.
 Fingerprints unverändert: `6ffeb97d52f8e8d9` / `9f0fb0e9ad4d8493` /
 `49c9ba0762c9ee01`.
+
+
+## Q. Mäandergürtel parallel, Oktober 2026 (Issue #174)
+
+Startstand `ea85a7c`, Branch `t3/174-belt-parallel`. Gemessen auf Apple M4 Max,
+16 Kerne, 64 GiB, macOS 26.7, Apple Swift 6.4, Release im Swift-5-Sprachmodus.
+Die Maschine war geteilt. Alle A/B-Vergleiche wechseln je Runde A B / B A;
+Schleifen mit `bash -c`. Produktionspaarung n = 720, world = 112,4789,
+Seed 1337, Einlauf 100 × 100 Jahre, Messblock 30 × 100 Jahre.
+`--repeat 1` misst den gesamten ersten Block; bei `--repeat 3` stammt die
+Pass-Tabelle aus dem dritten Block und die ausgegebene Gesamtzeit aus dem
+schnellsten Block. Beide Größen werden getrennt ausgewertet.
+
+### Ansatz und Unabhängigkeit
+
+Die Läufe bleiben gegenüber jedem überlappenden Vorgänger geordnet. Für jeden
+Lauf wird eine geländeunabhängige Obergrenze seiner anfänglichen Rate berechnet:
+Mobilität, Sättigung und Talwand-Bremse können den Betrag nur vermindern;
+Beträge vor der unveränderten Ratenglättung begrenzen auch die mögliche
+Auslöschung verschiedener Vorzeichen. Daraus folgt eine Obergrenze der einmal
+gewählten CFL-Teilschrittzahl. Die tatsächliche Zahl wird erst am zulässigen
+Ausführungspunkt aus dem aktuellen Bett berechnet und gegen diese Schranke
+geprüft, nicht vor überlappenden Vorgängern.
+
+Das Fenster enthält alle anfänglichen Knoten, je möglichem Teilschritt einen
+Knotenabstand für die beiden jeweils auf einen halben Abstand geklemmten
+Bewegungen, sowie den größeren Rand aus 3,5 Kanalbreiten für die Talwand und
+0,5 + `meanderBarWidths` für den Stempel. Zwei zusätzliche Zellen decken
+Rundung, bilineare Abfragen und die vier Nachbarn der Altarm-Pfropfen ab.
+Implizite Diffusion mit nichtnegativen Koeffizienten, Cutoffs und Resample
+bleiben in der konvexen Hülle. Der Sicherheitsaufschlag 1,001 auf Rate/Breite
+verhindert eine zu knappe Schranke durch Rundung. Ungültige Voraussetzungen
+fallen auf den bisherigen seriellen Weg zurück; die Physik bekommt keinen
+neuen Deckel.
+
+Jeder Arbeiter besitzt einen lokalen `MeanderState`, Cutoff-Index und
+Altarm-Historie. Der Rausch-Schlüssel bleibt der ursprüngliche Kanalindex.
+Bett, Vegetation, Bankalter und Masken sind einmal als Roh-Puffer geöffnet;
+parallel werden ausschließlich disjunkte Lese- und Schreibfenster bearbeitet.
+Neue Altarme und Cutoff-Zähler werden nach allen Arbeiten in ursprünglicher
+Lauf-Reihenfolge eingetragen. Pfropfen entstehen weiterhin nach jedem
+Teilschritt, `attachTributaries`, feste Stempel und Verlandung danach seriell.
+Die Kopplung samt Diagnose-Zählern bleibt vor der Migration.
+
+Zusätzlich reist die Geometrie des letzten Stempels zur nächsten Migration:
+Breiten, Krümmung, Normalen und Bogenlängen bleiben bei unveränderter Linie
+gültig, nur die Mobilität liest das frisch gestempelte Bett erneut. Ein
+Bank-Saum endet, sobald außerhalb des Betts kein Sedimentbudget mehr besteht;
+dort kann dann keine weitere Zelle geändert werden.
+
+### Vorversuche und verworfene Varianten
+
+Die Vorversuche dienten zur Auswahl; während einzelner Runden liefen eigene
+Builds/Hash-Prüfungen zusätzlich zur Fremdlast. Maßgeblich ist deshalb die
+abschließende, separat ausgeführte Messreihe unten. Rohwerte aller Varianten
+stehen im begleitenden Rohprotokoll.
+
+| Variante B | A | Gesamt A / B, Median | gepaarte Δ B−A | mobile Pässe A / B, Median |
+| --- | --- | ---: | ---: | ---: |
+| Cache, getrennte Geometrie-/Mobilitäts-Schleifen | Start | 58,350 / 58,900 | 0,450 | 13,025 / 12,580 |
+| Cache mit gemeinsamer Mobilitätsformel + Bank-Abbruch | Start | 58,350 / 58,350 | -0,500 | 13,040 / 12,045 |
+| Feste Ebenen + Cache + Bank-Abbruch | Start | 60,750 / 57,300 | -1,850 | 13,110 / 11,490 |
+| Konvexe Hüllen + feste Ebenen | Start | 59,050 / 59,800 | 0,550 | 12,990 / 12,205 |
+| Tabelle gesättigter Querprofile | Ebenen | 57,200 / 59,850 | 2,700 | 11,610 / 11,905 |
+| Abhängigkeitsplan, Tabelle, Broadcast | Ebenen | 59,100 / 58,500 | -1,500 | 11,805 / 11,895 |
+| Abhängigkeitsplan ohne Tabelle, gezieltes Aufwecken | Ebenen | 57,300 / 57,650 | 0,600 | 11,700 / 11,095 |
+
+Alle Zeiten in ms/Schritt, je vier Runden `--repeat 1`. Mobile Pässe sind in A
+`belt.migrate + belt.stamp`, beim Parallelpfad `belt.schedule + belt.parallel`.
+Die Summe enthält die Planung. Der erste Cache teilte die volle Geometrie
+ungünstig in zwei Schleifen und wurde durch die gemeinsame skalare
+Mobilitätsformel ersetzt. Die Tabelle identischer gesättigter Querprofile wird
+verworfen: kein Gewinn im betroffenen Pass. Konvexe Hüllen vermindern zwar die
+Überlappungen, kosten aber mehr Planung. Die Produktionsfassung verwendet
+Rechtecke und einen gemeinsamen Parallelstart. Ein Lauf wartet nur auf seine
+überlappenden Vorgänger, statt auf eine ganze Ebene. Der Condition-Lock schützt
+alle Scheduler-Daten, gezielte Signale wecken neu ausführbare Arbeiter; am Ende
+werden alle wartenden Arbeiter freigegeben.
+
+Die erste Rechteck-Diagnose auf dem seriellen Startstand maß 1.072 mobile Läufe
+über 30 Schritte, 0 vollständig isolierte Läufe, 5.860 überlappende Paare von
+18.665 möglichen Paaren, 783 Ebenen insgesamt. Das sind 35,73 Läufe und 26,10
+Ebenen je Schritt; 68,60 % der Laufpaare sind unabhängig. 572 von 1.072 Läufen
+liegen in Ebenen mit mehreren Läufen (53,36 %). Die konvexen Hüllen erreichen
+4.462 überlappende Paare, 737 Ebenen, 657 Laufplätze in mehrfach besetzten
+Ebenen, aber weiterhin 0 isolierte Läufe. Diese geometrischen Anteile sind
+keine Zeitanteile; die Läufe haben unterschiedliche Knoten-/Teilschrittzahlen.
+
+Die Rechteck-Messung und die Hüllen-Gegenprobe sind ebenfalls im Rohprotokoll
+enthalten. Der gegatete `testBeltOverlapDiagnostic` reproduziert die Statistik
+mit denselben Produktions-Fenstern; `testBeltScheduleReleasesOnlyIndependentReadyRuns`
+prüft gleichzeitig aktive Läufe und sämtliche Vorgänger-Kanten.
+
+Vor allen Änderungen selbst bestätigte Hashes auf `ea85a7c`:
+
+| Seed / dt | Fingerprint |
+| --- | --- |
+| 1337 / 100 | `08d32575d5cd353a` |
+| 42 / 100 | `0fd978609f8cc241` |
+| 20 / 100 | `9df73cb7672f2610` |
+| 1337 / 15 | `90b5a31c0d94a030` |
+
+Der Ebenen-Kandidat bestätigt alle vier Werte, Seed 1337 zusätzlich zweimal.
+Auch Cache, Hüllen, Profil-Tabelle und der gemeinsame Parallelstart wurden
+jeweils vor ihrer Messung auf Seed 1337 gegen denselben Startwert geprüft.
+Abschlussprüfung und vollständige Messreihe folgen unten.
