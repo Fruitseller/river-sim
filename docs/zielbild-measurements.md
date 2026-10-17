@@ -1810,3 +1810,187 @@ Seeds 15,3; Median je Seed 14–46, vorher 18–96).
   als Ried-Teppich wirkt, ist eine Bildfrage.
 - Laufzeit: Teilschritte wandernder Läufe berechnen Geometrie und Raten über
   den ganzen Fluss, nicht nur den flachen Abschnitt.
+
+## Felswände
+
+17. Oktober 2026, Basis `aeed3b3`, M4 Max, offizielles Godot 4.7.2,
+`balanced`, Jahr 20.000 mit dem Produktions-Einlauf und 1000-Jahr-Schritten.
+Alle Aufnahmen maximiert bei 3456×2104. Der Befund hat zwei Anteile:
+Die **feinen senkrechten Vorhanglinien erzeugt die Material-Klüftung**.
+Die breiten, glatten Steilflanken existieren bereits im Sim-Höhenfeld.
+Dieser Eingriff ändert deren Form und die Sim-Physik nicht.
+
+### Zerlegung im selben Prozess
+
+`CliffsDiagnostic.tscn` erbt die echte Anwendung über die Flusstal-Bühne.
+Welt und Kamera bleiben fest, Wasser und Wolken stehen auf Phase 1,0.
+Je Zustand werden 60 Bilder gezeichnet, dann wird der Viewport gespeichert.
+Die Abschaltungen betreffen jeweils nur den genannten Term. Zuerst wurde
+Seed 1337 im Tal zerlegt, danach Seed 20 und 42. Alle drei zeigen denselben
+Zusammenhang. Das Altbild aus einem zweiten Prozess ist auf Seed 1337
+bytegleich zur ersten Aufnahme, alle 21.814.272 RGB-Bytes stimmen überein.
+
+| Gegenprobe | Ergebnis |
+| --- | --- |
+| `detail_enabled = false` | Feine Vorhanglinien bleiben. Die Draufsicht des Erosionsdetails ist nicht deren Hauptquelle. |
+| `relief_enabled = false` | Silhouetten und breite Rippen ändern sich, die feinen senkrechten Linien bleiben. Der Bake erzeugt sie nicht. |
+| `material_joint_depth = 0` und `material_joint_relief = 0` | Feine Linien verschwinden; breite Steilflanken bleiben. |
+| Nur `material_joint_relief = 0`, Seed 42 | Fast derselbe glatte Eindruck wie ganz ohne Klüftung. Die Normalen tragen den Hauptanteil. |
+| Nur `material_joint_depth = 0`, Seed 42 | Das Vorhangmuster bleibt sichtbar. Es ist keine bloße Albedo-Streifung. |
+| Streckung 5 → 1 bei sonst gleichem Shader | Lange Linien zerfallen in kurze Facetten. Die bereits triplanare Projektion streckte das Muster ausdrücklich in Welt-Y. |
+| Neutrales Grau, ohne Detail/Bake/Material/Wald; zusätzlich echte Dreiecksnormalen | Breite Wandformen und einzelne Rasterfacetten bleiben, die feinen Materiallinien fehlen. |
+
+Ein festgelegter Innenausschnitt der rechten Talwand von Seed 1337,
+Pixelrechteck `[2330, 590, 2490, 775)`, vermeidet Schnee, Bewuchs und
+Silhouette. Kennzahl ist der Mittelwert absoluter Grauwertdifferenzen
+benachbarter Pixel in x beziehungsweise y, Grauwert 0…255. Lange vertikale
+Linien ändern sich quer viel stärker als längs. Die Kennzahl ist ein
+Reproduktionssignal für diesen Ausschnitt, kein allgemeines Qualitätsmaß.
+
+| Zustand | quer Δx | längs Δy | Δx/Δy |
+| --- | ---: | ---: | ---: |
+| vorher | 4,974 | 1,122 | 4,435 |
+| ohne feines Erosionsdetail | 4,758 | 1,036 | 4,594 |
+| ohne Bake | 5,830 | 1,156 | 5,045 |
+| ohne Klüftung | 1,418 | 0,454 | 3,125 |
+| nachher | 5,225 | 2,676 | 1,952 |
+
+Beleg: `docs/screenshots/zielbild-174/cliffs_diagnose_seed1337.jpg`.
+Die Bake-Abschaltung verändert die Geometrie und verschiebt deshalb den
+Ausschnitt leicht; die anderen Schalter und vorher/nachher tun das nicht.
+
+### Anteil des Höhenfelds
+
+Das Harness exportiert die unveränderten Sim-Höhen als Float32.
+Auswertung mit Weltmaß 112,4789, Gitter 720 und Überhöhung 24. Die zentrale
+Steigung misst über ±1 Zelle auf Land oberhalb Meer + 0,012; die größte
+Kante ist dagegen die direkte Differenz zweier Nachbarzellen. Zellabstand
+15,64 m, eine Welteinheit entspricht hier etwa 100 m.
+
+| Seed | Steigung p99 | größte zentrale Steigung | Land > 80° | größte direkte Höhenkante |
+| ---: | ---: | ---: | ---: | ---: |
+| 1337 | 3,727 | 10,356 | 0,218 % | 1,741 Welteinheiten / 174 m |
+| 42 | 3,272 | 7,462 | 0,062 % | 1,353 / 135 m |
+| 20 | 3,811 | 10,091 | 0,182 % | 2,205 / 220 m |
+
+Beispiel Seed 20, größte Kante nahe Welt-x/z 8,53/42,00, Höhenprofil in
+z-Richtung in Welteinheiten:
+`10,379; 10,191; 9,951; 9,638; 8,746; 6,542; 6,211; 6,058; 5,451; 5,117`.
+Hier fällt die Höhe innerhalb einer Zelle um 2,205 Welteinheiten. Solche
+Steilstufen sind echt. Sie erklären einen Teil des blockigen Umrisses,
+aber nicht das feine, nach Abschalten der Klüftung verschwundene Muster.
+Eine Änderung dieser Großform wäre eine gesonderte Sim-/Mesh-Aufgabe und
+wurde hier nicht vorgenommen.
+
+### Änderung und Bildurteil
+
+`MaterialRender.jointStretch` sinkt von 5 auf 1,5. Die zweite Runsen-Oktave
+und die feinen Facetten kreuzen die erste Richtung um 36,87°. Die beiden
+Drehwerte 0,8/0,6 stehen in `MaterialRender`, reisen über
+`MaterialUniforms` und die Brücke und werden default-frei im Shader gelesen.
+Die analytischen Rausch-Ableitungen werden mit der transponierten Drehung
+in die Wandebene zurückgeführt. Anzahl der Rauschabfragen, Kluftabstände,
+Normalentiefe, Materialgewichte und Relief-Bake bleiben gleich.
+
+Verworfen: nur Streckung 1. Sie entfernt die langen Linien, wirkt aber an
+nahen Wänden schuppenartig. Nur Streckung 2 lässt noch mehr parallele
+Bündel stehen. Die gekreuzten Oktaven mit 1,5 brechen die Richtung besser.
+Der zufällig gefundene Präzisionsverlust des Float-Hashs im feinen
+Erosionsfilter wurde nicht verändert: dessen Abschaltung beseitigt den
+hier untersuchten Fehler nicht.
+
+Bögen, jeweils links F1-Diorama, rechts F2-Tal, oben vorher, unten nachher:
+
+- `docs/screenshots/zielbild-174/cliffs_seed1337_vorher-nachher.jpg`
+- `docs/screenshots/zielbild-174/cliffs_seed42_vorher-nachher.jpg`
+- `docs/screenshots/zielbild-174/cliffs_seed20_vorher-nachher.jpg`
+
+Alle Bilder wurden angesehen. Auf 1337 und 42 fällt die Unterbrechung der
+langen Linien besonders an den breiten hellen Wänden auf; auf Seed 20
+auch im Gegenlicht der linken Talwand. Das Ergebnis wirkt kleinteiliger
+gebrochen und weniger wie ein gestreifter Vorhang. In der Nähe bleibt das
+Facettenmuster als prozedurales Relief erkennbar. Die breiten glatten
+Wandflächen und ihre Umrisse bleiben weit von der gebrochenen Großform der
+Vorlage entfernt. Die Änderung ist dafür keine vollständige Lösung.
+
+### Reproduktion
+
+```sh
+GODOT=/Users/piotr/git/river-sim/.tools/godot-macos/Godot.app/Contents/MacOS/Godot
+git show aeed3b3:game/shaders/terrain.gdshader > /tmp/cliffs-before.gdshader
+RS_SEED=1337 RS_STEP=20000 RS_CAMERA=valley RS_QUALITY=balanced \
+  RS_STUDY_VARIANT=baseline RS_STUDY_MODE=still \
+  RS_CLIFF_MODES=before,full,no_detail,no_relief,no_joints,bare,faces \
+  RS_CLIFF_BEFORE=/tmp/cliffs-before.gdshader RS_CLIFF_OUTPUT=/tmp/cliffs-shots \
+  "$GODOT" --path game --maximized --screen 1 \
+  res://studies/flusstal/CliffsDiagnostic.tscn
+```
+
+`before` setzt zusätzlich die historische Material-Streckung 5; die anderen
+Modi verwenden die aktuelle Kalibrierung. Für die ursprüngliche Zerlegung
+auf dem alten Stand das Harness dort mit `full,no_detail,no_relief,no_joints`
+verwenden. Die zusätzliche neutrale Dreiecksansicht ist rein diagnostisch;
+sie verändert keine Produktions-Normale.
+
+### Frame-Zeiten, Punkt 47
+
+A = Shader von `aeed3b3` mit Streckung 5, B = neue Fassung mit 1,5 und
+gekreuzten Oktaven. Beide laufen im **selben Prozess und auf derselben
+unveränderten Welt**. `CliffsTiming.tscn` wechselt je 90 gezeichnete Bilder
+A/B; jede zweite Runde dreht die Reihenfolge um. Runde 0 wärmt beide
+Pipelines, die ersten 12 Bilder jedes Blocks zählen nicht. Je Variante
+bleiben acht Blöcke mit je 78 Bildintervallen. VSync und FPS-Deckel sind
+wie in der Flusstal-Messung aus. Die Tabelle nennt den Median der acht
+Blockmittel beziehungsweise der acht Block-p95, nicht ein zusammengefasstes
+p95 aller Welten.
+
+Grazing verwendet die festen Matrix-Kameras aus `graphics-matrix.sh`;
+der Tal-Lauf das adaptive F2-Preset. Der Kamerabogen fährt je Block dieselben
+Winkel, 0,002 rad je gerendertem Bild, insgesamt 0,18 rad. Das ist eine
+kontrollierte kurze Fahrt für den Shadervergleich, keine Wiederholung der
+gesamten 162-Läufe-Matrix von Punkt 47. Alle gültigen Läufe maximiert bei
+3456×2104, `balanced`, Gitter 720. Vor jedem Start und an jeder Blockgrenze
+wurde auf fremde Godot-Prozesse geprüft. Ein anfänglicher Lauf bei
+6016×3260 mit fremder GPU-Last wurde verworfen; ebenso ein Lauf mit eigenem
+Swift-Build und ein abgebrochener Start während einer fremden Aufnahme.
+
+Die **vollständigen Rohwerte** stehen in
+[`cliffs-frame-times.jsonl`](cliffs-frame-times.jsonl), einschließlich der
+Warmrunde und aller aufsteigend sortierten Einzelintervalle. Nur Runden
+1…8 gehen in die Tabelle ein. Shader-SHA-256, Kameras, Viewport und
+Vergleichszustände stehen dabei. Es werden Frame-Abstände gemessen, keine
+isolierten GPU-Zeitstempel; die shaderbedingte Mehrzeit ergibt sich aus dem
+interleavten Vergleich.
+
+| Seed | Kamera | Betrieb | Mittel A → B | p95 A → B | Frames > 33,3 ms A/B |
+| ---: | --- | --- | --- | --- | ---: |
+| 1337 | grazing | Standbild | 24,09 → 24,17 ms | 24,56 → 24,63 ms | 0 / 0 |
+| 42 | grazing | Standbild | 22,69 → 22,81 ms | 23,27 → 23,41 ms | 0 / 0 |
+| 20 | grazing | Standbild | 23,12 → 23,08 ms | 23,55 → 23,54 ms | 0 / 0 |
+| 1337 | grazing | Kamerabogen | 24,45 → 24,45 ms | 24,83 → 24,97 ms | 0 / 0 |
+| 20 | grazing | Kamerabogen | 22,68 → 22,49 ms | 23,28 → 22,97 ms | 0 / 0 |
+| 20 | valley | Standbild | 14,88 → 14,99 ms | 15,28 → 15,45 ms | 0 / 0 |
+
+Die größte Mehrzeit im Median der Blockmittel beträgt +0,12 ms auf Seed 42.
+Alle gemessenen Grazing-p95 bleiben unter 33,3 ms. Der Vergleich zeigt keine
+Mehrkosten in der Größenordnung von 1 ms. Die Aussage gilt für diese
+Kameras und kurzen Fahrten; sie ersetzt keine vollständige Abnahmematrix.
+
+### Verifikation
+
+Lokaler Extension-Build ausschließlich mit `RS_NO_SHARED_BUILD=1` und dem
+absoluten `scripts/build.sh`-Pfad, jeweils mit „gebaut und signiert“ am
+Ende; Build-Stempel geprüft. Der Projektimport hat die Extension registriert
+und die Ressourcen importiert; Godot stürzte erst beim anschließenden
+Herunterfahren mit Signal 11 ab. Die Bildläufe danach waren erfolgreich.
+
+SimCore-Pflichtsuite in Release mit Swift-5-Sprachmodus: Basis und Endstand
+je 582 Tests, 67 erwartete Mess-Test-Skips, keine Fehler. Nach
+`git rebase t3/issue-174-integration` nochmals bestanden, 212,2 s.
+`MaterialTests` prüft zusätzlich die beiden neuen Tabellenwerte, deren
+default-freie Shader-Deklarationen und die Orthogonalität der Drehung.
+Godot-Verträge über `scripts/godot-test.sh`: `SMOKE_OK`,
+`WATER_UNIFORMS_OK`, `RELIEF_OK`, `CANOPY_OK`, `LIGHTING_OK`.
+Beim Relief-Test meldet der Dummy-Renderer zusätzlich `Invalid image` beim
+Regenerieren, der Vertrag endet mit `RELIEF_OK`; die geprüfte Produktions-
+und Shader-Verdrahtung ist bestanden.

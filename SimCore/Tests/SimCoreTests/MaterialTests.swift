@@ -289,6 +289,8 @@ final class MaterialTests: XCTestCase {
             "material_gully_scree_share": MaterialRender.gullyScreeShare,
             "material_joint_spacing": MaterialRender.jointSpacing,
             "material_joint_stretch": MaterialRender.jointStretch,
+            "material_joint_turn_cos": MaterialRender.jointTurnCos,
+            "material_joint_turn_sin": MaterialRender.jointTurnSin,
             "material_joint_depth": MaterialRender.jointDepth,
             "material_joint_gully_gain": MaterialRender.jointGullyGain,
             "material_joint_relief": MaterialRender.jointRelief,
@@ -300,6 +302,10 @@ final class MaterialTests: XCTestCase {
             "material_moraine_lo": MaterialRender.moraineLo,
             "material_moraine_hi": MaterialRender.moraineHi,
         ]
+        // Die Richtungsänderung darf die Kluftabstände nicht zusätzlich skalieren.
+        XCTAssertEqual(MaterialRender.jointTurnCos * MaterialRender.jointTurnCos
+                       + MaterialRender.jointTurnSin * MaterialRender.jointTurnSin,
+                       1.0, accuracy: 1e-12, "Kluft-Drehung ist orthogonal")
         XCTAssertEqual(MaterialUniforms.scalars.count, mirror.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
         for entry in MaterialUniforms.scalars {
