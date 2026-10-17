@@ -124,7 +124,9 @@ public enum MaterialRender {
     /// Makrofarbe unter Fels und Halde: je Gewicht `rock + scree` wandert
     /// die Farbe zu diesem Ton, sonst trüge jede Felswand den Grünstich des
     /// Habitats darunter (der Shader mischt die Makrofarbe nur zu 28 % unter).
-    public static let mineralTint = (r: 0.37, g: 0.365, b: 0.355)
+    /// Im Ton des Shader-Felses (Befund #174 „Fels zu hell"): mit 0,37 hob die
+    /// Beimischung allein jede Wand um ein Drittel über ihren eigenen Grauton.
+    public static let mineralTint = (r: 0.13, g: 0.13, b: 0.135)
 
     // MARK: Talboden-Wiese (CPU, A-Kanal von `covers`)
 
@@ -163,11 +165,26 @@ public enum MaterialRender {
     public static let jointStretch = 5.0
     public static let jointDepth = 0.55
 
+    /// Tiefe der Runsen als FORM (Befund #174 „Fels glatt"), in
+    /// Kluftabständen: der Shader kippt die Normale entlang der analytischen
+    /// Ableitung des Runsen-Rauschens, dazu feine Grate dazwischen. Bis dahin
+    /// waren die Runsen nur Ton; ohne eigenes Licht und Schatten lasen sich
+    /// die Wände als glatter Putz. Wie das Muster blendet die Form mit der
+    /// Pixelgröße aus.
+    public static let jointRelief = 0.35
+
     /// Kopplung der Klüftung an die Form (Relief-Bake #153, −1 Rinne … +1
     /// Rippe): Breite und Stärke × (1 − `jointGullyGain` × Rinne/Rippe). In
     /// voll ausgeprägten Rinnen also 1,6-fach, auf Rippen 0,4-fach; der Fels
     /// zerfällt dort, wo das Wasser ihn ausräumt.
     public static let jointGullyGain = 0.6
+
+    /// Relief der Felswände (Befund #174 „Fels zu hell und glatt"): auf Fels
+    /// verstärkt der Shader die feinen Erosionsrinnen (runevision-Detail,
+    /// Normale UND Abdunklung der Rinnenböden) um bis zu diesen Faktor. Bis
+    /// dahin lag das Rinnen-Detail auf Fels so schwach wie auf Wiese; die
+    /// Wände lasen sich als glatt verputzte Fläche ohne Runsen und Schatten.
+    public static let rockReliefGain = 2.5
 
     /// Körnung der Halden: Blockgröße in Welteinheiten (0,05 ≈ 5 m).
     public static let screeGrain = 0.05

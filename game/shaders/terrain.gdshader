@@ -99,12 +99,10 @@ uniform float sea_level = 0.15;
 uniform float veg_alt_lo = 0.45;
 uniform float veg_alt_hi = 0.72;
 
-// Detail-Erosion: Skala in UV (0.006 ≈ 4 Sim-Zellen Wellenlänge der größten
-// Rinnen), Stärke = Höhenamplitude relativ zur Skala (wie im Original).
-uniform float detail_scale = 0.006;
+// Detail-Erosion: Stärke = Höhenamplitude relativ zur Skala (wie im
+// Original). Skala, Schattierung und Normalen-Anteil kommen default-frei aus
+// SimCore.ReliefRender (relief_detail_*, Uniform-Weg wie die Verschiebung).
 uniform float detail_strength = 0.16; // Jahr-0-Default; Main.gd fährt bis 0.42 bei 100k hoch
-uniform float detail_shade = 0.20;     // Albedo-Abdunkelung in Rinnenböden
-uniform float detail_normal = 1.0;     // Anteil der Normal-Perturbation
 uniform bool detail_enabled = true;
 // Materialschicht: getrennt schaltbar vom Detail-Layer darüber, weil beides
 // verschiedene Dinge sind (Erosionsrinnen vs. Gesteins- und Bodenmaterial).
@@ -137,17 +135,15 @@ uniform float water_geometry_lift_lo;
 uniform float water_geometry_lift_hi;
 uniform float water_lake_depth_lo;
 uniform float water_lake_depth_span;
+uniform float water_river_depth_lo;
+uniform float water_river_depth_hi;
 uniform float water_fresnel_exponent;
-uniform float water_fresnel_sky_mix;
 uniform float water_opacity_shallow;
 uniform float water_opacity_deep;
-uniform float water_roughness_steep;
-uniform float water_roughness_grazing;
-uniform float water_specular_steep;
-uniform float water_specular_grazing;
+uniform float water_roughness;
+uniform float water_specular;
 uniform vec3 water_shallow_color;
 uniform vec3 water_deep_color;
-uniform vec3 water_sky_reflect_color;
 uniform vec3 water_flow_shimmer_color;
 uniform vec3 water_bed_color;
 // Sand-Material (Issue #174 C2, auch Strand aus C): WO Sand liegt, sagen
@@ -172,6 +168,9 @@ uniform float relief_height_code;
 uniform float relief_slope_code;
 uniform float relief_shade_dark;
 uniform float relief_shade_light;
+uniform float relief_detail_scale;
+uniform float relief_detail_shade;
+uniform float relief_detail_normal;
 // Echte Verformung blendet mit dem Geländealter ein (ReliefRender.geometryAgeYears);
 // Main.gd setzt `sim_year` bei jedem Höhen-Upload.
 uniform float relief_geometry_age;
@@ -218,6 +217,8 @@ uniform float material_joint_spacing;
 uniform float material_joint_stretch;
 uniform float material_joint_depth;
 uniform float material_joint_gully_gain;
+uniform float material_rock_relief_gain;
+uniform float material_joint_relief;
 uniform float material_scree_grain;
 uniform float material_crevasse_spacing;
 uniform float material_crevasse_slope_lo;
@@ -228,6 +229,9 @@ uniform float material_moraine_hi;
 varying float v_forest;
 
 varying vec2 v_uv;
+// Welt-xz des Vertex (das Terrain-Mesh liegt im Ursprung): Materialien und
+// Wasser rechnen in Weltkoordinaten, die Texturen über `world_uv`.
+varying vec2 v_xz;
 
 // Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
 // SimNode, s. Deklarationsblock oben): das Epsilon ist KEINE Kalibrier-Kopie,
@@ -237,8 +241,6 @@ float calib_window(float lo, float hi, float x) {
 	return smoothstep(lo, max(hi, lo + 1e-6), x);
 }
 
-// UV aus der Weltposition ableiten (statt Mesh-UV) → deckungsgleich mit der
-// Zellindizierung des Sim-Kerns und damit mit Flüssen/Wasser.
 // Lesezugriffe auf die überblendeten Felder (#172). Ohne laufende Blende
 // genau ein Texturzugriff wie vorher.
 float height_at(vec2 uv) {
@@ -280,8 +282,15 @@ vec4 water_at(vec2 uv) {
 	return overlay_blend < 1.0 ? mix(texture(water_prev_tex, uv), w, overlay_blend) : w;
 }
 
+// UV aus der Weltposition ableiten (statt Mesh-UV) → deckungsgleich mit der
+// Zellindizierung des Sim-Kerns und damit mit Flüssen/Wasser. Texelzentriert:
+// Zelle k liegt bei −world_size/2 + k·world_size/(grid_n − 1) (Mesh, Main.gd
+// `step`) und ist Texel k mit Mitte (k + ½)/grid_n. Bis zum Review zu #174
+// stand hier (x + world_size/2)/world_size; das traf die Mitte, wich zum Rand
+// hin aber um bis zu einen halben Texel ab (am Rand ~8 m).
 vec2 world_uv(vec3 vert) {
-	return (vert.xz + world_size * 0.5) / world_size;
+	float n = max(grid_n, 2.0);
+	return ((vert.xz / world_size + 0.5) * (n - 1.0) + 0.5) / n;
 }
 
 // Wassersäule des ratenbegrenzten Seespiegels über dem Terrain (0 = trocken;
@@ -290,9 +299,12 @@ vec2 world_uv(vec3 vert) {
 // glatte Kontur auf dem Sim-Gitter (Shader-Äquivalent von Marching Squares),
 // nicht die Treppe des Render-Gitters (Issue #32). hf = waterLevel → die
 // Kontur erbt das Anti-Sägezahn-Verhalten.
-float pond_at(vec2 uv, float h_val) {
-	float hf_val = hf_at(uv);
+float pond_of(float hf_val, float h_val) {
 	return max(hf_val - h_val, 0.0) * step(sea_level, hf_val);
+}
+
+float pond_at(vec2 uv, float h_val) {
+	return pond_of(hf_at(uv), h_val);
 }
 
 // Sichtbarkeits-Gate der Seen (water_tex.g: Komponenten-Fade, geblurt) — WO
@@ -308,9 +320,10 @@ float lake_gate_at(vec2 uv) {
 
 // Produktions-Detail: feine Rinnen mit den Uniform-Werten. Die Skala ist ein
 // Parameter, damit die Flusstal-Studie dieselbe Funktion grob als echte
-// Verschiebung nutzen kann, statt den MPL-Code zu kopieren.
+// Verschiebung nutzen kann, statt den MPL-Code zu kopieren. Das max() hält
+// die Editor-Vorschau ohne SimNode (Null-Uniform) total, keine Kalibrierung.
 vec4 erosion_detail(vec2 p, vec2 slope, float fade_target_in, out float out_mag) {
-	return erosion_detail_at(p, slope, fade_target_in, detail_scale, detail_strength, out_mag);
+	return erosion_detail_at(p, slope, fade_target_in, max(relief_detail_scale, 1e-4), detail_strength, out_mag);
 }
 
 // Render-Verschiebung aus der Backtextur (Kodierung: relief_bake.gdshader).
@@ -332,33 +345,66 @@ float relief_lift(vec2 uv) {
 	     * smoothstep(0.0, relief_geometry_age, sim_year);
 }
 
+// Pixel-Stufe: EIN Abgriff der Backtextur je Pixel für Steigung und Rinnen
+// (vorher zwei, Review zu #174). Ohne Verschiebung neutral (0.5 = kein Zuschlag).
+vec4 relief_pixel(vec2 uv) {
+	return relief_enabled ? relief_sample(uv) : vec4(0.5);
+}
+
 // … Steigungszuschlag dh/duv je Pixel (Detail unabhängig von der Mesh-Dichte) …
-vec2 relief_slope(vec2 uv) {
-	if (!relief_enabled) {
-		return vec2(0.0);
-	}
-	return (relief_sample(uv).gb - 0.5) / max(relief_slope_code, 1e-6);
+vec2 relief_slope(vec4 relief) {
+	return (relief.gb - 0.5) / max(relief_slope_code, 1e-6);
 }
 
 // … und Rinnen (−1) bis Rippen (+1).
-float relief_cavity(vec2 uv) {
-	if (!relief_enabled) {
-		return 0.0;
-	}
-	return (relief_sample(uv).a - 0.5) * 2.0;
+float relief_cavity(vec4 relief) {
+	return (relief.a - 0.5) * 2.0;
 }
 
+
+// Zufallswert −1 … 1 je ganzzahliger Rauschzelle. Bis zum Review zu #174
+// lief das Wertrauschen über `ehash` aus dem Erosionsfilter; dessen
+// Float-Produkt x·y·(x+y) verliert in float32 ab einigen Dutzend Zellen vom
+// Ursprung die Bits hinter dem Komma. Weit weg von der Kartenmitte erstarrte
+// das Rauschen damit zu wenigen Werten: Schutt-Körnung und Klüfte glatt,
+// Gletscherspalten und Wasser-Kräuselung als Gitter. Hier wird der Zellindex
+// ZUERST auf [0, 17) gefaltet: das Produkt bleibt unter ~10⁴, float32 behält
+// dort zehn Nachkommabits. Rein Float (wie vorher): ein Ganzzahl-Hash (pcg)
+// kostete gemessen bis zu 4 ms je Bild (docs/zielbild-measurements.md).
+float vhash(vec2 c) {
+	const vec2 k = vec2(0.3183099, 0.3678794);
+	vec2 x = fract(c * k) * 17.0 + k.yx;
+	return fract(16.0 * k.x * fract(x.x * x.y * (x.x + x.y))) * 2.0 - 1.0;
+}
 
 // Billiges Value-Noise (2 Oktaven) für Breakup/Schaum — de-uniformiert Flächen.
 float vnoise(vec2 p) {
 	vec2 i = floor(p);
 	vec2 f = fract(p);
 	vec2 u = f * f * (3.0 - 2.0 * f);
-	float a = ehash(i).x;
-	float b = ehash(i + vec2(1.0, 0.0)).x;
-	float c = ehash(i + vec2(0.0, 1.0)).x;
-	float d = ehash(i + vec2(1.0, 1.0)).x;
+	float a = vhash(i);
+	float b = vhash(i + vec2(1.0, 0.0));
+	float c = vhash(i + vec2(0.0, 1.0));
+	float d = vhash(i + vec2(1.0, 1.0));
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.5 + 0.5;
+}
+
+// Dasselbe Wertrauschen mit analytischer Ableitung: (Wert 0 … 1, d/dp.x,
+// d/dp.y), aus denselben vier Zellwerten. Die Felsrunsen bekommen daraus ihre
+// Normale, ohne das Rauschen ein zweites Mal abzufragen.
+vec3 vnoise_d(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	vec2 du = 6.0 * f * (1.0 - f);
+	float a = vhash(i);
+	float b = vhash(i + vec2(1.0, 0.0));
+	float c = vhash(i + vec2(0.0, 1.0));
+	float d = vhash(i + vec2(1.0, 1.0));
+	float k4 = a - b - c + d;
+	float v = a + (b - a) * u.x + (c - a) * u.y + k4 * u.x * u.y;
+	vec2 g = du * vec2(b - a + k4 * u.y, c - a + k4 * u.x);
+	return vec3(v * 0.5 + 0.5, g * 0.5);
 }
 
 // Materialrauschen in Weltkoordinaten. Die triplanare Mischung hält die Körnung
@@ -374,10 +420,20 @@ float fbm(vec2 p) {
 	return value;
 }
 
+// Projektionen unter 2 % Gewicht entfallen (Review zu #174, wie in
+// `rock_joints`): auf flachem und mäßig steilem Land rechnet so nur die
+// Draufsicht, sechs der neun Rauschabfragen fallen weg. Die Gewichte werden
+// um die Schwelle abgesenkt statt abgeschnitten und neu normiert, damit der
+// Wert stetig bleibt, wenn eine Projektion zu- oder wegfällt.
 float triplanar_fbm(vec3 p, vec3 n) {
 	vec3 weight = pow(abs(n), vec3(4.0));
 	weight /= max(weight.x + weight.y + weight.z, 0.0001);
-	return fbm(p.yz) * weight.x + fbm(p.xz) * weight.y + fbm(p.xy) * weight.z;
+	weight = max(weight - 0.02, 0.0);
+	float sum = 0.0;
+	if (weight.x > 0.0) { sum += fbm(p.yz) * weight.x; }
+	if (weight.y > 0.0) { sum += fbm(p.xz) * weight.y; }
+	if (weight.z > 0.0) { sum += fbm(p.xy) * weight.z; }
+	return sum / max(weight.x + weight.y + weight.z, 1e-4);
 }
 
 // Klüftung einer Projektionsebene (#174 D, überarbeitet im Review zu PR #177).
@@ -396,22 +452,39 @@ float triplanar_fbm(vec3 p, vec3 n) {
 // `aa` ist die Fugenbreite eines Pixels im Linienmaß (analytisch statt
 // fwidth: der Aufrufer verzweigt je Pixel, Ableitungen wären dort undefiniert).
 float rock_joint_face(vec2 q, float k, float couple, float crack_detail, float aa,
-                      out float tone) {
+                      out float tone, out vec2 grad) {
 	float ay = q.y / k;
 	float wx = q.x + (vnoise(vec2(q.x * 0.35, ay * 0.35 + 3.1)) - 0.5) * 1.6;
-	float st = vnoise(vec2(wx * 0.5 + 2.0, ay * 0.5)) * 0.65
-	         + vnoise(vec2(wx * 1.3 + 9.0, ay * 1.3)) * 0.35;
+	vec3 s0 = vnoise_d(vec2(wx * 0.5 + 2.0, ay * 0.5));
+	vec3 s1 = vnoise_d(vec2(wx * 1.3 + 9.0, ay * 1.3));
+	float st = s0.x * 0.65 + s1.x * 0.35;
 	float streak = smoothstep(0.48, 0.78, st);
+	// Gefälle der Runsen in Kluftabständen (q.x, q.y), für die Normale: die
+	// Verzerrung `wx` geht als Näherung nicht ein, sie verschiebt nur.
+	float ts = clamp((st - 0.48) / 0.30, 0.0, 1.0);
+	vec2 dst = s0.yz * (0.5 * 0.65) + s1.yz * (1.3 * 0.35);
+	grad = 6.0 * ts * (1.0 - ts) / 0.30 * vec2(dst.x, dst.y / k);
 	tone = vnoise(q * 0.5 + vec2(13.0, 7.0));
-	float r = 1.0 - abs(vnoise(vec2(wx, ay)) * 2.0 - 1.0); // 1 auf der Fuge
-	float width = (0.02 + 0.10 * smoothstep(0.3, 0.8, tone)) * couple;
-	float gate = smoothstep(0.5, 0.7, vnoise(vec2(q.x * 0.4 + 3.3, ay * 1.5 + 8.0)));
-	float crack = smoothstep(1.0 - width - aa, 1.0, r) * gate;
-	float bx = q.x / k + (vnoise(q * 0.3 + vec2(7.7, 0.0)) - 0.5) * 0.8;
-	float rb = 1.0 - abs(vnoise(vec2(bx, q.y * 0.8 + 11.0)) * 2.0 - 1.0);
-	float bed = smoothstep(0.93 - aa, 1.0, rb) * smoothstep(0.45, 0.75, vnoise(q * 0.5 + vec2(1.3, 2.9)));
+	float fine = 0.0;
+	// Fugen und Schichtfugen nur, solange sie nicht ausgeblendet sind: fünf
+	// der neun Rauschabfragen je Projektion (Review zu #174).
+	if (crack_detail > 0.0) {
+		// Feine Grate zwischen den Runsen (~9 m), nur als Form: scharf am
+		// Kamm (Höhe ½·(1 − |2n − 1|), ein halber Runsen-Hub), damit die
+		// Wand in Rippen und Kanten bricht.
+		vec3 s2 = vnoise_d(vec2(wx * 3.3 + 5.0, ay * 3.3));
+		grad += sign(s2.x - 0.5) * s2.yz * 3.3 * vec2(1.0, 1.0 / k) * crack_detail;
+		float r = 1.0 - abs(vnoise(vec2(wx, ay)) * 2.0 - 1.0); // 1 auf der Fuge
+		float width = (0.02 + 0.10 * smoothstep(0.3, 0.8, tone)) * couple;
+		float gate = smoothstep(0.5, 0.7, vnoise(vec2(q.x * 0.4 + 3.3, ay * 1.5 + 8.0)));
+		float crack = smoothstep(1.0 - width - aa, 1.0, r) * gate;
+		float bx = q.x / k + (vnoise(q * 0.3 + vec2(7.7, 0.0)) - 0.5) * 0.8;
+		float rb = 1.0 - abs(vnoise(vec2(bx, q.y * 0.8 + 11.0)) * 2.0 - 1.0);
+		float bed = smoothstep(0.93 - aa, 1.0, rb) * smoothstep(0.45, 0.75, vnoise(q * 0.5 + vec2(1.3, 2.9)));
+		fine = max(crack, bed * 0.7) * crack_detail;
+	}
 	tone = tone * 2.0 - 1.0;
-	return streak * 0.6 + max(crack, bed * 0.7) * crack_detail;
+	return streak * 0.6 + fine;
 }
 
 // Klüftung (#174 D): triplanar auf die Wände gelegt. Auf den beiden
@@ -422,12 +495,19 @@ float rock_joint_face(vec2 q, float k, float couple, float crack_detail, float a
 // Rippen schwächer. Die Stärke schwankt zusätzlich großflächig, ganze
 // Wandpartien bleiben fast glatt. Liefert die Abdunklung (0 … 1) und einen
 // Blockton (−1 … 1); ab etwa einem Kluftabstand je Pixel gehen beide in ihren
-// Mittelwert über, statt zu flimmern.
-float rock_joints(vec3 p, vec3 n, float cavity, out float tone) {
-	vec3 q = p / max(material_joint_spacing, 1e-4);
+// Mittelwert über, statt zu flimmern. `px` ist die Pixelgröße in
+// Welteinheiten (`length(fwidth(material_pos))`, oben in fragment() bestimmt:
+// hier, hinter der Felsverzweigung je Pixel, wären Ableitungen undefiniert).
+// `bump` (Befund #174 „Fels glatt"): die Runsen sind auch FORM, nicht nur
+// Ton — Rinnen der Tiefe `material_joint_relief` (in Kluftabständen) als
+// tangentiale Neigung der Normale, aus der analytischen Ableitung des
+// Runsen-Rauschens. Die Sonne zeichnet damit Grate hell und Rinnen dunkel.
+float rock_joints(vec3 p, vec3 n, float cavity, float px, out float tone, out vec3 bump) {
+	float spacing = max(material_joint_spacing, 1e-4);
+	vec3 q = p / spacing;
 	float k = max(material_joint_stretch, 1.0);
 	float couple = clamp(1.0 - cavity * material_joint_gully_gain, 0.2, 2.0);
-	float fw = length(fwidth(q));
+	float fw = px / spacing;
 	float detail = 1.0 - smoothstep(0.5, 1.2, fw);
 	float crack_detail = 1.0 - smoothstep(0.08, 0.3, fw);
 	vec3 w = pow(abs(n), vec3(4.0));
@@ -438,35 +518,55 @@ float rock_joints(vec3 p, vec3 n, float cavity, out float tone) {
 	// also um ~3: so breit ist ein Pixel im Linienmaß.
 	float aa = fw * 3.0;
 	float t;
+	vec2 g;
+	bump = vec3(0.0);
 	if (detail > 0.0) {
 		// Projektionen unter 2 % Gewicht entfallen (Kosten nur auf Fels).
-		if (w.x > 0.02) { j += w.x * rock_joint_face(q.zy, k, couple, crack_detail, aa, t); tone += w.x * t; }
-		if (w.z > 0.02) { j += w.z * rock_joint_face(q.xy, k, couple, crack_detail, aa, t); tone += w.z * t; }
-		if (w.y > 0.02) { j += w.y * rock_joint_face(q.xz, 1.0, couple, crack_detail, aa, t); tone += w.y * t; }
+		// Das Gefälle jeder Ebene geht entlang ihrer beiden Achsen in die Welt.
+		if (w.x > 0.02) {
+			j += w.x * rock_joint_face(q.zy, k, couple, crack_detail, aa, t, g);
+			tone += w.x * t; bump += w.x * vec3(0.0, g.y, g.x);
+		}
+		if (w.z > 0.02) {
+			j += w.z * rock_joint_face(q.xy, k, couple, crack_detail, aa, t, g);
+			tone += w.z * t; bump += w.z * vec3(g.x, g.y, 0.0);
+		}
+		if (w.y > 0.02) {
+			j += w.y * rock_joint_face(q.xz, 1.0, couple, crack_detail, aa, t, g);
+			tone += w.y * t; bump += w.y * vec3(g.x, 0.0, g.y);
+		}
 	}
 	float strength = (0.35 + 0.65 * smoothstep(0.25, 0.75, vnoise(q.xz * 0.13 + vec2(19.0, 4.0))))
 	               * min(couple, 1.4);
 	tone *= detail;
+	// Runsen sind Rinnen: die Normale kippt zur Runse hin (Höhe = −Runse).
+	// Das Gefälle steht in Kluftabständen je Kluftabstand, also direkt als
+	// Neigung; tangential gemacht, damit die Normale nur kippt.
+	bump = (bump - n * dot(bump, n)) * material_joint_relief * strength * detail;
 	// 0.11 ≈ Flächenmittel des Musters (bei cavity 0), damit die Ferne nicht
 	// heller wird als die Nähe; die Rinnen-Kopplung bleibt dort erhalten.
 	return mix(0.11 * min(couple, 1.4), min(j * strength, 1.0), detail);
 }
 
 // Körnung der Halden: Blöcke von `material_scree_grain`, zwei Oktaven,
-// mit der Pixelgröße ausgeblendet (−1 … 1, Mittel 0).
-float scree_grain(vec2 p) {
-	vec2 q = p / max(material_scree_grain, 1e-4);
-	float detail = 1.0 - smoothstep(0.3, 1.0, length(fwidth(q)));
+// mit der Pixelgröße `px` (Welteinheiten, s. `rock_joints`) ausgeblendet
+// (−1 … 1, Mittel 0).
+float scree_grain(vec2 p, float px) {
+	float grain = max(material_scree_grain, 1e-4);
+	vec2 q = p / grain;
+	float detail = 1.0 - smoothstep(0.3, 1.0, px / grain);
 	return ((vnoise(q) - 0.5) * 1.4 + (vnoise(q * 2.7 + vec2(4.0, 1.0)) - 0.5) * 0.6) * detail;
 }
 
 // Gletscherspalten quer zur Fließrichtung `fall` (Einheitsvektor bergab),
-// gewellt; 0 … 1, mit der Pixelgröße ausgeblendet.
-float crevasses(vec2 p, vec2 fall) {
+// gewellt; 0 … 1, mit der Pixelgröße `px` (Welteinheiten) ausgeblendet. Die
+// Wellung geht in die Fugenbreite nicht ein: sie streckt das Muster quer,
+// die Pixelgröße längs `fall` bleibt die der Ebene.
+float crevasses(vec2 p, vec2 fall, float px) {
 	float s = max(material_crevasse_spacing, 1e-4);
 	vec2 side = vec2(-fall.y, fall.x);
 	float t = dot(p, fall) / s + (vnoise(vec2(dot(p, side) / (s * 3.0), 0.0)) - 0.5) * 1.6;
-	float fw = fwidth(t);
+	float fw = px / s;
 	float detail = 1.0 - smoothstep(0.3, 0.9, fw);
 	float f = abs(fract(t) - 0.5) * 2.0;
 	float open = vnoise(vec2(dot(p, side) / (s * 1.7), floor(t)));
@@ -490,8 +590,10 @@ vec4 crown_hash(vec2 c) {
 // Kronendach je Pixel (#152, aus der Flusstal-Studie übernommen): Voronoi-
 // Kronen, je Zelle eine mit Zufallsversatz und -radius. Die Farben, Radien und
 // Neigungen hier sind Optik dieses Shaders wie die Ufer- und Kiesfarben unten,
-// keine Kalibrierung; die Schwellen kommen über die Brücke.
-void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
+// keine Kalibrierung; die Schwellen kommen über die Brücke. `px` ist die
+// Pixelgröße in Welteinheiten (`length(fwidth(wp))` aus fragment(), vor dem
+// frühen Return bestimmt: danach wären Ableitungen undefiniert).
+void canopy(vec2 wp, float h, vec3 macro_n, float px, inout vec3 color, inout vec3 n,
             inout float rough) {
 	float f = v_forest;
 	if (f <= 0.002) {
@@ -535,7 +637,7 @@ void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
 	float inside = calib_window(canopy_gap_lo, canopy_gap_hi, f); // Lücken nur im Bestand dunkel
 	vec3 avg = mix(mix(decid, conif, conifer_share) * 0.8, gap, 0.3);
 	// Ab etwa einer Krone je Pixel nur noch der Mittelwert: kein Flimmern.
-	float detail = 1.0 - calib_window(canopy_detail_lo, canopy_detail_hi, length(fwidth(p)));
+	float detail = 1.0 - calib_window(canopy_detail_lo, canopy_detail_hi, px / max(canopy_cell, 1e-6));
 	float covered = best > 0.0 ? 1.0 : inside;
 	vec3 near_col = best > 0.0 ? crown : gap;
 	vec3 col = mix(avg, near_col, detail);
@@ -563,6 +665,7 @@ void canopy(vec2 wp, float h, vec3 macro_n, inout vec3 color, inout vec3 n,
 void vertex() {
 	vec2 uv = world_uv(VERTEX);
 	v_uv = uv;
+	v_xz = VERTEX.xz;
 	float hraw = height_at(uv);
 	// Seen als ECHTE horizontale Flächen: unter Wasser stehende Zellen werden
 	// auf den Seespiegel hf gehoben. Der weiche Einstieg glättet die Uferlinie.
@@ -571,7 +674,7 @@ void vertex() {
 	// horizontale Fläche in Terrain-Farbe im Becken („trockener Wasserspiegel").
 	// So faden kleine Seen als Ganzes ein: Geometrie und Farbe zusammen.
 	float hfv = hf_at(uv);
-	float pond = pond_at(uv, hraw);
+	float pond = pond_of(hfv, hraw);
 	float lift = calib_window(water_geometry_lift_lo, water_geometry_lift_hi, pond) * lake_gate_at(uv);
 	// Seen hebt die Zeile selbst auf den Spiegel; dort keine Verschiebung.
 	VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);
@@ -590,15 +693,27 @@ void vertex() {
 	float hD = height_at(uv - vec2(0.0, texel));
 	float hU = height_at(uv + vec2(0.0, texel));
 	float sw = world_size / (grid_n - 1.0);
-	NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hD - hU) * hscale));
+	// Vorzeichen wie die Pixel-Normale (`n_ws` in fragment()): hU liegt bei +z.
+	// Licht rechnet die Pixel-Normale, aber Godots Schatten-Normal-Bias liest
+	// diese hier; mit `-(hD - hU)` zeigte sie an jedem ±z-Hang falsch herum
+	// (Review zu #174).
+	NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hU - hD) * hscale));
 }
 
 void fragment() {
 	vec4 macro_rgba = color_at(v_uv);
 	vec3 macro_color = macro_rgba.rgb;
 	vec4 surface = surface_at(v_uv);
-	vec3 debug_color = texture(debug_difference_tex, v_uv).rgb;
 	float hval = height_at(v_uv);
+	// Pixelgröße in Welteinheiten, EINMAL hier im gleichförmigen Kontrollfluss:
+	// Klüftung, Körnung, Spalten und Kronen blenden darüber aus, laufen aber
+	// hinter Verzweigungen je Pixel, wo `fwidth` undefiniert ist.
+	vec2 wp = v_xz + world_size * 0.5;
+	vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,
+	                         wp.y - world_size * 0.5);
+	float px_wp = length(fwidth(wp));
+	float px_mat = length(fwidth(material_pos));
+	vec4 relief = relief_pixel(v_uv);
 
 	// Grobe Steigung aus dem Sim-Gitter. Sie bestimmt die Form, während die
 	// Material-Normale darunter nur Licht im Zentimetermaßstab bricht.
@@ -608,7 +723,7 @@ void fragment() {
 	float hD = height_at(v_uv - vec2(0.0, texel));
 	float hU = height_at(v_uv + vec2(0.0, texel));
 	vec2 coarse_slope = vec2(hR - hL, hU - hD) * 0.5 * grid_n;
-	coarse_slope += relief_slope(v_uv);
+	coarse_slope += relief_slope(relief);
 	// Dieselbe Steigung in sichtbarer Neigung (Welt-Y je Welt-Einheit):
 	// Gletscherspalten (#174 D) und Raster-Wasser an Wänden lesen sie.
 	float world_slope = length(coarse_slope) * hscale / world_size;
@@ -628,16 +743,17 @@ void fragment() {
 		// Rinnen bündeln sich in Abflussbahnen, abseits davon beruhigt sich
 		// der Layer unter den früheren Uniform-Look.
 		float flow_gain = mix(0.3, 1.8, flow_at(v_uv));
-		det_slope = det.yz * dfade * detail_normal * flow_gain;
+		// Fels trägt die Rinnen schärfer (MaterialRender.rockReliefGain):
+		// Runsen und Rippen mit echtem Licht und dunklen Rinnenböden statt
+		// einer glatt verputzten Wand (Befund #174).
+		flow_gain *= mix(1.0, material_rock_relief_gain, clamp(surface.g, 0.0, 1.0));
+		det_slope = det.yz * dfade * relief_detail_normal * flow_gain;
 		det_shade = det.x / det_mag * dfade * flow_gain;
 		det_ridge = det.w * dfade;
 	}
 
 	vec2 s_uv = coarse_slope + det_slope;
 	vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0, -s_uv.y * hscale / world_size));
-	vec2 wp = v_uv * world_size;
-	vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,
-	                         wp.y - world_size * 0.5);
 
 	// Physikalisch gebundene Grundmaterialien (#174 D). Die CPU liefert nur
 	// ihre Gewichte (SimRender.TerrainColorRenderer, Kalibrierung
@@ -657,7 +773,7 @@ void fragment() {
 	// Rinnen rutscht Fels als Schutt nach, auf Rippen steht er auch dort, wo
 	// das Sim-Gitter nur Grund sieht. Der Zuschlag nimmt nur vom Grund, die
 	// Gewichtssumme bleibt damit höchstens 1.
-	float cavity = hval > sea_level + 0.012 ? relief_cavity(v_uv) : 0.0;
+	float cavity = hval > sea_level + 0.012 ? relief_cavity(relief) : 0.0;
 	float slid = rock * clamp(-cavity, 0.0, 1.0) * material_gully_scree_share;
 	rock -= slid;
 	scree += slid;
@@ -705,7 +821,7 @@ void fragment() {
 	vec3 dry_grass = vec3(0.20, 0.23, 0.11)
 	               * mix(0.82, 1.12, top_large)
 	               * mix(0.92, 1.08, top_grain * material_fade);
-	vec3 stony = vec3(0.34, 0.33, 0.30)
+	vec3 stony = vec3(0.17, 0.167, 0.16)
 	           * mix(0.86, 1.10, tri_large)
 	           * mix(0.90, 1.10, mix(0.5, tri_grain, material_fade));
 	vec3 ground_color = mix(dry_grass, stony, smoothstep(veg_alt_lo, veg_alt_hi, hval));
@@ -723,16 +839,21 @@ void fragment() {
 	// Blockton. Im Review zu PR #177 dunkler und kontrastreicher gestellt
 	// (0,20–0,33 statt 0,33–0,40): die Vorlagen A/B/C tragen dunkelgrauen,
 	// schroffen Fels; der hellere las sich unter Himmelslicht beige. Kalkstein
-	// mit 0,5–0,6 las sich in der Studie sogar als Schnee.
+	// mit 0,5–0,6 las sich in der Studie sogar als Schnee. Die Zahlen sind
+	// LINEARE Albedo (Godot): 0,20–0,33 sind auf dem Bildschirm 0,48–0,61,
+	// unter der warmen Sonne also hellbeige (Befund #174 „Fels zu hell").
+	// Jetzt 0,07–0,15 (Bildschirm 0,29–0,42) und leicht kühl gegen die
+	// warme Sonne; die Form tragen die Runsen (`rock_bump`).
 	float tone = 0.0;
 	float joints = 0.0;
+	vec3 rock_bump = vec3(0.0);
 	if (material_enabled && rock > 0.01) {
-		joints = rock_joints(material_pos, n_ws, cavity, tone);
+		joints = rock_joints(material_pos, n_ws, cavity, px_mat, tone, rock_bump);
 		// Schichtkanten nur stückweise: über die ganze Wand durchgezogen
 		// stünden sie als gleichmäßige Höhenlinien da.
 		strata_edge *= smoothstep(0.35, 0.70, vnoise(material_pos.xz * 0.9 + vec2(4.0, 21.0)));
 	}
-	vec3 rock_color = mix(vec3(0.20, 0.20, 0.205), vec3(0.33, 0.32, 0.30), smoothstep(0.30, 0.70, tri_large))
+	vec3 rock_color = mix(vec3(0.07, 0.076, 0.086), vec3(0.14, 0.145, 0.15), smoothstep(0.30, 0.70, tri_large))
 	                * mix(0.82, 1.10, mix(0.5, tri_grain, material_fade))
 	                * mix(1.0, lith_contrast, strata_edge * rock)
 	                * (1.0 + tone * 0.10)
@@ -740,9 +861,9 @@ void fragment() {
 	// Schutthalde: heller als die Wand, grob gekörnt.
 	float grain = 0.0;
 	if (material_enabled && scree > 0.01) {
-		grain = scree_grain(material_pos.xz);
+		grain = scree_grain(material_pos.xz, px_mat);
 	}
-	vec3 scree_color = vec3(0.45, 0.44, 0.41) * mix(0.90, 1.06, tri_large) * (1.0 + grain * 0.16);
+	vec3 scree_color = vec3(0.22, 0.215, 0.20) * mix(0.90, 1.06, tri_large) * (1.0 + grain * 0.16);
 
 	// Schnee und Gletscher: im Zehrgebiet blankes, bläuliches Eis mit Spalten
 	// und Moränen, darüber Firn wie Schnee.
@@ -753,7 +874,7 @@ void fragment() {
 	float ice_w = cold * ice_share;
 	if (material_enabled && ice_w > 0.01) {
 		vec2 fall = length(coarse_slope) > 1e-5 ? -normalize(coarse_slope) : vec2(0.0, 1.0);
-		float crack = crevasses(wp, fall)
+		float crack = crevasses(wp, fall, px_wp)
 		            * calib_window(material_crevasse_slope_lo, material_crevasse_slope_hi, world_slope);
 		cold_color = mix(cold_color, vec3(0.16, 0.26, 0.38), crack * ice_share * 0.85);
 		// Seiten- und Endmoräne am Rand der Zunge, Mittelmoränen als Streifen
@@ -805,6 +926,8 @@ void fragment() {
 	// das Kronendach neigt seine Kronen gegen sie, ohne Mikro-Rauschen
 	// (Review zu #121).
 	vec3 macro_n = n_ws;
+	// Runsen als Form (s. `rock_joints`), mit dem Felsanteil.
+	n_ws = normalize(n_ws + rock_bump * rock);
 	// Mikro-Normale aus drei Weltachsen. Ein einfacher Noise-Sample pro Achse
 	// genügt hier; drei weitere vollständige triplanare FBMs kosteten pro Pixel
 	// 27 unnötige Noise-Auswertungen.
@@ -818,8 +941,8 @@ void fragment() {
 		n_ws = normalize(n_ws + micro * micro_strength * material_fade);
 	}
 	float breakup = vnoise(wp * 0.9) * 0.6 + vnoise(wp * 3.7) * 0.4;
-	terr *= 1.0 + min(det_shade, 0.0) * detail_shade
-	      + max(det_shade, 0.0) * detail_shade * 0.3;
+	terr *= 1.0 + min(det_shade, 0.0) * relief_detail_shade
+	      + max(det_shade, 0.0) * relief_detail_shade * 0.3;
 	float crease = clamp(-det_ridge, 0.0, 1.0);
 	float moist = crease * (1.0 - smoothstep(veg_alt_lo, veg_alt_hi, hval));
 	terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0),
@@ -848,14 +971,15 @@ void fragment() {
 		land_roughness = mix(land_roughness, water_bar_roughness, sand);
 	}
 	// Ufersaum, Wasser und Meer trägt die Waldmaske schon nicht.
-	canopy(wp, hval, macro_n, terr, n_ws, land_roughness);
+	canopy(wp, hval, macro_n, px_wp, terr, n_ws, land_roughness);
 #ifdef FLUSSTAL_STUDY
 	study_debug_view(v_uv, v_forest, terr);
 #endif
 	NORMAL = normalize(mat3(VIEW_MATRIX) * n_ws);
 
 	if (debug_difference) {
-		terr = debug_color;
+		// Nur hier gelesen: die Δ-Karte ist eine Diagnose-Ansicht.
+		terr = texture(debug_difference_tex, v_uv).rgb;
 		land_roughness = 0.9;
 	}
 
@@ -869,10 +993,12 @@ void fragment() {
 	// selbst, damit Wasser UND nasser Ufersaum weichen.
 	float stream = w.r * (1.0 - calib_window(water_wall_slope_lo, water_wall_slope_hi, world_slope));
 	float lake_gate = w.g;
-	vec2 dir = w.ba * 2.0 - 1.0;
 	float riverMask = calib_window(water_river_mask_lo, water_river_mask_hi, stream);
 	float pond = pond_at(v_uv, hval);
-	float lakeMask = calib_window(water_pond_contour_lo, water_pond_contour_hi, pond) * lake_gate_at(v_uv);
+	// See-Gate aus demselben Abgriff `w` (bis zum Review zu #174 las
+	// `lake_gate_at` die Wasser-Textur hier ein zweites Mal).
+	float lakeMask = calib_window(water_pond_contour_lo, water_pond_contour_hi, pond)
+	               * calib_window(water_lake_gate_lo, water_lake_gate_hi, lake_gate);
 	float wet = max(riverMask, lakeMask);
 
 	float dry = 1.0 - calib_window(water_pond_contour_lo, water_pond_contour_hi, pond);
@@ -882,78 +1008,98 @@ void fragment() {
 	terr *= 1.0 - shore * 0.28;
 	land_roughness = mix(land_roughness, 0.36, shore * 0.55);
 
-	// Flussbett: Geröll, Kiesel und Schwemmsand statt Wiese unter dem Wasser
-	vec3 river_gravel = mix(vec3(0.33, 0.30, 0.26), vec3(0.46, 0.42, 0.36), breakup);
-	river_gravel *= mix(0.85, 1.15, vnoise(wp * 4.5));
-	terr = mix(terr, river_gravel, riverMask * 0.88);
+	// Pixel-Ausblendung der Kräuselung wie im Ozean (unter Pixelgröße bleibt
+	// die Fläche ruhig), aus der Pixelgröße oben: der Wasser-Block darunter
+	// verzweigt je Pixel.
+	float ripple_px = 1.0 - smoothstep(0.2, 0.8, px_wp * 3.1);
+	vec3 albedo = terr;
+	float roughness = land_roughness;
+	float specular = 0.5;
+	// Der Wasser-Block (Bett-Kies, Kräuselung, Schimmer, Schaum) läuft nur auf
+	// nassen Pixeln. Bis zum Review zu #174 lief er auf jedem Landpixel mit
+	// (zehn Rauschabfragen), obwohl er dort mit `wet` = 0 nichts beitrug.
+	if (wet > 0.0) {
+		vec2 dir = w.ba * 2.0 - 1.0;
+		// Flussbett: Geröll, Kiesel und Schwemmsand statt Wiese unter dem Wasser
+		vec3 river_gravel = mix(vec3(0.33, 0.30, 0.26), vec3(0.46, 0.42, 0.36), breakup);
+		river_gravel *= mix(0.85, 1.15, vnoise(wp * 4.5));
+		terr = mix(terr, river_gravel, riverMask * 0.88);
 
-	float lake_depth = clamp((pond - water_lake_depth_lo) / max(water_lake_depth_span, 1e-6), 0.0, 1.0) * lakeMask;
-	// Fluss-Tiefe aus der Abfluss-Intensität, früh gesättigt: die Intensität
-	// springt zwischen Nachbarzellen (8-Bit-Feld, Korridor-Deckel), und linear
-	// in die Farbe übernommen zeichnete das bilinear gefilterte Feld helle und
-	// dunkle Zellblöcke in breite Läufe. Die Schwellen sind eigene Optik-Zahlen
-	// dieses Shaders, keine WaterRender-Konstanten.
-	float depth = clamp(max(lake_depth, smoothstep(0.05, 0.6, stream)), 0.0, 1.0);
-	float speed = riverMask >= lakeMask ? 1.0 : 0.25;
-	vec2 d1 = normalize(length(dir) > 0.05 ? dir : vec2(0.7, 0.7));
-	float ripple_fade = 1.0 - smoothstep(50.0 * ws, 160.0 * ws, view_dist);
-	// Kräuselung als Rauschen mit Fließkarte (zwei Phasen, gegeneinander
-	// versetzt überblendet): die Richtung verschiebt das Muster nur um höchstens
-	// eine Rauschzelle. Vorher lief die Phase über dot(Weltposition, Richtung)
-	// — die Richtung springt aber von Zelle zu Zelle (D8), und mit der langen
-	// Weltposition multipliziert malte das Höhenlinien-Moiré, Ringe und
-	// Zellblöcke auf jeden See und breiten Lauf (Befund #174). Frequenzen,
-	// Phasen-Takt und Amplituden sind eigene Optik-Zahlen dieses Shaders —
-	// das Raster-Wasser kräuselt mit 0.015..0.05, keine WaterRender-Konstanten.
-	float flow_t = u_time * 0.35 * speed;
-	float ph0 = fract(flow_t);
-	float ph1 = fract(flow_t + 0.5);
-	float w0 = 1.0 - abs(ph0 * 2.0 - 1.0);
-	vec2 rp0 = wp * 3.1 - d1 * ph0 * 1.6;
-	vec2 rp1 = wp * 3.1 - d1 * ph1 * 1.6 + vec2(5.2, 1.3);
-	float re = 0.08;
-	float r0 = vnoise(rp0), r1 = vnoise(rp1);
-	vec2 g0 = vec2(vnoise(rp0 + vec2(re, 0.0)) - r0, vnoise(rp0 + vec2(0.0, re)) - r0) / re;
-	vec2 g1 = vec2(vnoise(rp1 + vec2(re, 0.0)) - r1, vnoise(rp1 + vec2(0.0, re)) - r1) / re;
-	// Pixel-Ausblendung wie im Ozean: unter Pixelgröße bleibt die Fläche ruhig.
-	float ripple_px = 1.0 - smoothstep(0.2, 0.8, length(fwidth(wp)) * 3.1);
-	float amp = mix(0.015, 0.05, depth) * ripple_fade * ripple_px;
-	amp *= riverMask >= lakeMask ? 1.0 : 0.45;
-	vec2 grad = (g0 * w0 + g1 * (1.0 - w0)) * amp * 2.0;
-	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
-	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
-	NORMAL = normalize(mix(NORMAL, water_n_vs, wet));
+		float lake_depth = clamp((pond - water_lake_depth_lo) / max(water_lake_depth_span, 1e-6), 0.0, 1.0) * lakeMask;
+		// Fluss-Tiefe aus der Abfluss-Intensität, früh gesättigt: die Intensität
+		// springt zwischen Nachbarzellen (8-Bit-Feld, Korridor-Deckel), und linear
+		// in die Farbe übernommen zeichnete das bilinear gefilterte Feld helle und
+		// dunkle Zellblöcke in breite Läufe. Das Fenster liest R wie
+		// `water_river_mask_*` und kommt deshalb wie dieses aus WaterRender.
+		float depth = clamp(max(lake_depth, calib_window(water_river_depth_lo, water_river_depth_hi, stream)), 0.0, 1.0);
+		float speed = riverMask >= lakeMask ? 1.0 : 0.25;
+		vec2 d1 = normalize(length(dir) > 0.05 ? dir : vec2(0.7, 0.7));
+		float ripple_fade = 1.0 - smoothstep(50.0 * ws, 160.0 * ws, view_dist);
+		// Kräuselung als Rauschen mit Fließkarte (zwei Phasen, gegeneinander
+		// versetzt überblendet): die Richtung verschiebt das Muster nur um höchstens
+		// eine Rauschzelle. Vorher lief die Phase über dot(Weltposition, Richtung)
+		// — die Richtung springt aber von Zelle zu Zelle (D8), und mit der langen
+		// Weltposition multipliziert malte das Höhenlinien-Moiré, Ringe und
+		// Zellblöcke auf jeden See und breiten Lauf (Befund #174). Frequenzen,
+		// Phasen-Takt und Amplituden sind eigene Optik-Zahlen dieses Shaders —
+		// das Raster-Wasser kräuselt mit 0.015..0.05, keine WaterRender-Konstanten.
+		float flow_t = u_time * 0.35 * speed;
+		float ph0 = fract(flow_t);
+		float ph1 = fract(flow_t + 0.5);
+		float w0 = 1.0 - abs(ph0 * 2.0 - 1.0);
+		vec2 rp0 = wp * 3.1 - d1 * ph0 * 1.6;
+		vec2 rp1 = wp * 3.1 - d1 * ph1 * 1.6 + vec2(5.2, 1.3);
+		float re = 0.08;
+		float r0 = vnoise(rp0), r1 = vnoise(rp1);
+		vec2 g0 = vec2(vnoise(rp0 + vec2(re, 0.0)) - r0, vnoise(rp0 + vec2(0.0, re)) - r0) / re;
+		vec2 g1 = vec2(vnoise(rp1 + vec2(re, 0.0)) - r1, vnoise(rp1 + vec2(0.0, re)) - r1) / re;
+		float amp = mix(0.015, 0.05, depth) * ripple_fade * ripple_px;
+		amp *= riverMask >= lakeMask ? 1.0 : 0.45;
+		vec2 grad = (g0 * w0 + g1 * (1.0 - w0)) * amp * 2.0;
+		vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
+		vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
+		NORMAL = normalize(mix(NORMAL, water_n_vs, wet));
 
-	vec3 water = mix(water_shallow_color, water_deep_color, depth);
-	// Bett: überwiegend die gemeinsame Bett-Farbe (WaterRender.waterBedColor),
-	// nur ein Rest Gelände. Das volle Gelände trug sein Erosions-Detail ins
-	// Wasser — Höhenlinien-Moiré und Ringe auf Seen und breiten Läufen.
-	vec3 bed = mix(terr * 0.55, water_bed_color, 0.75 * wet);
-	float opacity = mix(water_opacity_shallow, water_opacity_deep, depth);
-	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
-	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
-	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
+		vec3 water = mix(water_shallow_color, water_deep_color, depth);
+		// Bett: überwiegend die gemeinsame Bett-Farbe (WaterRender.waterBedColor),
+		// nur ein Rest Gelände. Das volle Gelände trug sein Erosions-Detail ins
+		// Wasser — Höhenlinien-Moiré und Ringe auf Seen und breiten Läufen.
+		vec3 bed = mix(terr * 0.55, water_bed_color, 0.75 * wet);
+		float opacity = mix(water_opacity_shallow, water_opacity_deep, depth);
+		float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
+		float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
 
-	if (riverMask >= lakeMask && length(dir) > 0.05) {
-		// Schimmer aus derselben Fließkarte (nicht über dot(Position,
-		// Richtung), s. Kräuselung oben): wandernde Schlieren statt Ringe.
-		float flow = (vnoise(rp0 * 0.45) * w0 + vnoise(rp1 * 0.45) * (1.0 - w0)) * 2.0 - 1.0;
-		water += flow * water_flow_shimmer_color;
+		if (riverMask >= lakeMask && length(dir) > 0.05) {
+			// Schimmer aus derselben Fließkarte (nicht über dot(Position,
+			// Richtung), s. Kräuselung oben): wandernde Schlieren statt Ringe.
+			float flow = (vnoise(rp0 * 0.45) * w0 + vnoise(rp1 * 0.45) * (1.0 - w0)) * 2.0 - 1.0;
+			water += flow * water_flow_shimmer_color;
+		}
+
+		float edge = wet * (1.0 - wet) * 4.0;
+		float foam_n = vnoise(wp * 7.0 - dir * u_time * 2.5 + vec2(0.0, u_time * 0.4));
+		// Schaum-Schwellen: eigene Optik-Zahl — numerisch zufällig gleich dem
+		// Deckkraft-Paar (water_opacity_*), KEINE WaterRender-Konstante.
+		float foam = smoothstep(0.55, 0.95, edge * (0.45 + 0.75 * foam_n)) * ripple_fade;
+		vec3 water_final = mix(bed, water, opacity);
+		// Spiegelung statt Farbe (Befund #174 „See milchig"): den Himmel spiegelt
+		// Godot selbst (SPECULAR/ROUGHNESS gegen die Umgebung). Der Wasserkörper
+		// tritt dafür mit dem Fresnel-Anteil zurück — Godot dämpft die diffuse
+		// Albedo nicht mit Fresnel. Bis dahin mischte der Shader eine feste
+		// Himmelsfarbe IN DIE ALBEDO; die Sonne beleuchtete sie wie Farbe, und
+		// bei flachem Blick lag das Wasser als heller, kontrastloser Film da.
+		water_final *= 1.0 - fresnel;
+		// Schaum nur als Hauch und nur in fließendem Wasser: mit 0.45 auf jeder
+		// Uferlinie zog er einen weißen Umriss um jeden Lauf und jeden See.
+		water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * (riverMask >= lakeMask ? 0.12 : 0.0));
+		albedo = mix(terr, water_final, wet);
+		roughness = mix(land_roughness, water_roughness, wet);
+		specular = mix(0.5, water_specular, wet);
 	}
-
-	float edge = wet * (1.0 - wet) * 4.0;
-	float foam_n = vnoise(wp * 7.0 - dir * u_time * 2.5 + vec2(0.0, u_time * 0.4));
-	// Schaum-Schwellen: eigene Optik-Zahl — numerisch zufällig gleich dem
-	// Deckkraft-Paar (water_opacity_*), KEINE WaterRender-Konstante.
-	float foam = smoothstep(0.55, 0.95, edge * (0.45 + 0.75 * foam_n)) * ripple_fade;
-	vec3 water_final = mix(bed, water, opacity);
-	// Schaum nur als Hauch und nur in fließendem Wasser: mit 0.45 auf jeder
-	// Uferlinie zog er einen weißen Umriss um jeden Lauf und jeden See.
-	water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * (riverMask >= lakeMask ? 0.12 : 0.0));
-	ALBEDO = mix(terr, water_final, wet);
-	ROUGHNESS = mix(land_roughness, mix(water_roughness_steep, water_roughness_grazing, fresnel), wet);
+	ALBEDO = albedo;
+	ROUGHNESS = roughness;
 	METALLIC = 0.0;
-	SPECULAR = mix(0.5, mix(water_specular_steep, water_specular_grazing, fresnel), wet);
+	SPECULAR = specular;
 	// Wolkenschatten auf der GERENDERTEN Oberfläche: Weltposition aus dem
 	// view-space VERTEX (INV_VIEW_MATRIX), nicht die Sim-Höhe — Seespiegel-
 	// Anhebung, Relief-Verschiebung und Kronendach heben die sichtbare

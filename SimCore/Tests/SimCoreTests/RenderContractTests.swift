@@ -130,7 +130,10 @@ final class RenderContractTests: XCTestCase {
         // sie liegt schon in Welteinheiten vor, die Überhöhung wendet der
         // Back-Pass genau einmal an (unten).
         for use in ["VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);",
-                    "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hD - hU) * hscale));",
+                    // Vertex-Normale mit demselben Vorzeichen wie die Pixel-Normale
+                    // (hU bei +z): Godots Schatten-Normal-Bias liest sie
+                    // (Review zu #174, vorher `-(hD - hU)`).
+                    "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hU - hD) * hscale));",
                     "vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0,"
                         + " -s_uv.y * hscale / world_size));",
                     "vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,",

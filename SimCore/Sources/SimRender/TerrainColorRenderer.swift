@@ -366,7 +366,10 @@ public enum TerrainColorRenderer {
                         rawWeight *= 1 - sand
                         // Die Makrofarbe folgt dem Mineral: der Shader mischt
                         // sie zu 28 % unter, sonst trüge jede Felswand den
-                        // Grünstich des Habitats darunter.
+                        // Grünstich des Habitats darunter. Im Ton des
+                        // Shader-Felses (Befund #174 „Fels zu hell"): mit
+                        // 0,37 hob die Beimischung allein jede Wand um ein
+                        // Drittel über ihren eigenen Grauton.
                         let tint = rockWeight + screeWeight
                         r += (mineralTint.r - r) * tint
                         g += (mineralTint.g - g) * tint

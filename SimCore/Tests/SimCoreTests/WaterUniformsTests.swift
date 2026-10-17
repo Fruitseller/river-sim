@@ -26,6 +26,7 @@ final class WaterUniformsTests: XCTestCase {
     private static let windowScalars = [
         "water_lake_gate_lo", "water_lake_gate_hi",
         "water_river_mask_lo", "water_river_mask_hi",
+        "water_river_depth_lo", "water_river_depth_hi",
         "water_shore_lo", "water_shore_hi",
         "water_pond_contour_lo", "water_pond_contour_hi",
         "water_geometry_lift_lo", "water_geometry_lift_hi",
@@ -36,14 +37,12 @@ final class WaterUniformsTests: XCTestCase {
         "water_ribbon_delta_lo", "water_ribbon_delta_hi",
     ]
     private static let opticsScalars = [
-        "water_fresnel_exponent", "water_fresnel_sky_mix",
-        "water_roughness_steep", "water_roughness_grazing",
-        "water_specular_steep", "water_specular_grazing",
+        "water_fresnel_exponent", "water_roughness", "water_specular",
     ]
     private static let opacityScalars = ["water_opacity_shallow", "water_opacity_deep"]
     private static let opticsColors = [
         "water_shallow_color", "water_deep_color",
-        "water_sky_reflect_color", "water_flow_shimmer_color",
+        "water_flow_shimmer_color",
     ]
     private static let ribbonColors = ["water_delta_plume_color", "water_oxbow_water_color"]
     /// Offenes Meer (#155): Tiefen-Farbe über dem Schelf, Brandung, Rausch-Wellen.
@@ -115,8 +114,8 @@ final class WaterUniformsTests: XCTestCase {
             + ["water_bed_color"],
         // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
         // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
-        // bleibt die Himmels-Spiegelung.
-        "game/shaders/ocean.gdshader": ["water_sky_reflect_color"] + oceanColors,
+        // bleibt die Optik (Fresnel, Rauheit, Specular, oben).
+        "game/shaders/ocean.gdshader": oceanColors,
     ]
 
     func testUniformNamesAreUnique() {
@@ -141,6 +140,8 @@ final class WaterUniformsTests: XCTestCase {
             "water_lake_gate_hi": WaterRender.lakeGateHi,
             "water_river_mask_lo": WaterRender.riverMaskLo,
             "water_river_mask_hi": WaterRender.riverMaskHi,
+            "water_river_depth_lo": WaterRender.riverDepthLo,
+            "water_river_depth_hi": WaterRender.riverDepthHi,
             "water_shore_lo": WaterRender.shoreLo,
             "water_shore_hi": WaterRender.shoreHi,
             "water_pond_contour_lo": WaterRender.pondContourLo,
@@ -154,13 +155,10 @@ final class WaterUniformsTests: XCTestCase {
             "water_ribbon_delta_lo": WaterRender.ribbonDeltaLo,
             "water_ribbon_delta_hi": WaterRender.ribbonDeltaHi,
             "water_fresnel_exponent": WaterRender.fresnelExponent,
-            "water_fresnel_sky_mix": WaterRender.fresnelSkyMix,
             "water_opacity_shallow": WaterRender.waterOpacityShallow,
             "water_opacity_deep": WaterRender.waterOpacityDeep,
-            "water_roughness_steep": WaterRender.waterRoughnessSteep,
-            "water_roughness_grazing": WaterRender.waterRoughnessGrazing,
-            "water_specular_steep": WaterRender.waterSpecularSteep,
-            "water_specular_grazing": WaterRender.waterSpecularGrazing,
+            "water_roughness": WaterRender.waterRoughness,
+            "water_specular": WaterRender.waterSpecular,
             "water_ocean_depth_span": WaterRender.oceanDepthSpan,
             "water_ocean_mid_depth": WaterRender.oceanMidDepth,
             "water_ocean_surf_depth": WaterRender.oceanSurfDepth,
@@ -201,7 +199,6 @@ final class WaterUniformsTests: XCTestCase {
         let expectedColors: [String: (r: Double, g: Double, b: Double)] = [
             "water_shallow_color": WaterRender.waterShallowColor,
             "water_deep_color": WaterRender.waterDeepColor,
-            "water_sky_reflect_color": WaterRender.skyReflectColor,
             "water_flow_shimmer_color": WaterRender.flowShimmerColor,
             "water_delta_plume_color": WaterRender.deltaPlumeColor,
             "water_oxbow_water_color": WaterRender.oxbowWaterColor,

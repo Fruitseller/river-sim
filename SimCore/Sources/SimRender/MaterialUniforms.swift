@@ -16,6 +16,8 @@ public enum MaterialUniforms {
         ("material_joint_stretch", MaterialRender.jointStretch),
         ("material_joint_depth", MaterialRender.jointDepth),
         ("material_joint_gully_gain", MaterialRender.jointGullyGain),
+        ("material_joint_relief", MaterialRender.jointRelief),
+        ("material_rock_relief_gain", MaterialRender.rockReliefGain),
         ("material_scree_grain", MaterialRender.screeGrain),
         ("material_crevasse_spacing", MaterialRender.crevasseSpacing),
         ("material_crevasse_slope_lo", MaterialRender.crevasseSlopeLo),

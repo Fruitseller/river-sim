@@ -20,6 +20,9 @@ uniform float u_time = 0.0;
 // Sim-Höhenfeld (Main.gd bindet height_tex des Terrains), schwarz ohne Bindung.
 uniform sampler2D height_tex : filter_linear, repeat_disable, hint_default_black;
 uniform float world_size;
+// Kantenlänge des Sim-Gitters (Main.gd `N`) für die texelzentrierte
+// Abbildung Welt → Textur wie `world_uv` im Terrain-Shader.
+uniform float grid_n;
 uniform float hscale;
 uniform float cloud_body_layer;
 uniform float cloud_body_opacity;
@@ -45,7 +48,8 @@ void fragment() {
 	// transparent, der Löwenanteil der Fragmente liegt außerhalb des Kamms
 	// oder der Welt und verwirft hier, bevor Rauschen läuft (Review zu
 	// #174 D).
-	vec2 uv = xz / max(world_size, 1e-4) + vec2(0.5);
+	float n = max(grid_n, 2.0);
+	vec2 uv = ((xz / max(world_size, 1e-4) + 0.5) * (n - 1.0) + 0.5) / n;
 	float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
 	float ground = textureLod(height_tex, clamp(uv, vec2(0.0), vec2(1.0)), 0.0).r * hscale;
 	float ridge = smoothstep(cloud_body_ridge_lo, max(cloud_body_ridge_hi, cloud_body_ridge_lo + 1e-4), ground)

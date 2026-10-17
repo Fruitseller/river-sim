@@ -20,5 +20,8 @@ public enum ReliefUniforms {
         ("relief_shade_light", ReliefRender.shadeLight),
         ("relief_cavity_gully_gain", ReliefRender.cavityGullyGain),
         ("relief_cavity_ridge_gain", ReliefRender.cavityRidgeGain),
+        ("relief_detail_scale", ReliefRender.detailScale),
+        ("relief_detail_shade", ReliefRender.detailShade),
+        ("relief_detail_normal", ReliefRender.detailNormal),
     ]
 }

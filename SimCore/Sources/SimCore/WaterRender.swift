@@ -58,6 +58,14 @@ public enum WaterRender {
     public static let riverMaskLo = 0.16
     /// s. `riverMaskLo`.
     public static let riverMaskHi = 0.45
+    /// Tiefe eines Raster-Flusses in `terrain.gdshader`: smoothstep über den
+    /// R-Kanal, früh gesättigt. Die Intensität springt zwischen Nachbarzellen
+    /// (8-Bit-Feld, Korridor-Deckel); linear in die Farbe übernommen malte das
+    /// bilinear gefilterte Feld helle und dunkle Zellblöcke in breite Läufe.
+    /// Bis zum Review zu #174 stand das Fenster als Zahl im Shader.
+    public static let riverDepthLo = 0.05
+    /// s. `riverDepthLo`.
+    public static let riverDepthHi = 0.6
 
     // Ufer-Saum: der Shader tönt den weichen Blur-Halo der Wasserfelder als
     // nassen Sand-/Kies-Streifen. Sein Fenster liegt UNTER dem Wasser-Fenster des
@@ -930,7 +938,7 @@ public enum WaterRender {
     // MARK: Gemeinsame Wasser-Optik aller drei Shader (Issue #51)
 
     // `terrain.gdshader` (Raster-Wasser), `water.gdshader` (Band-Geometrie) und
-    // `ocean.gdshader` malen DASSELBE Wasser. Fresnel, Himmels-Spiegelung und
+    // `ocean.gdshader` malen DASSELBE Wasser. Fresnel, Spiegelung und
     // Glanz müssen zusammenfallen, sonst zerfallen Mündung und Küste sichtbar in
     // verschiedene Materialien. Die Werte reisen als `water_*`-Uniforms über die
     // Brücke (`SimRender.WaterUniforms`, #91/#92); `WaterRenderTests` pinnt als
@@ -939,29 +947,40 @@ public enum WaterRender {
     // nach der Schelf-Tiefe (s. „Offenes Meer" unten), die abgenommene
     // Flusstal-Studie hat den Farbsprung an der Mündung so bestätigt.
 
+    // Spiegelung statt Farbe (Befund #174 „See bei flachem Blick milchig",
+    // Messung `docs/zielbild-measurements.md` § Fels und Wasser): bis dahin
+    // mischten alle drei Shader eine feste Himmelsfarbe (0,62/0,70/0,76) mit
+    // bis zu 55 % IN DIE ALBEDO, zusätzlich zu Godots eigener Spiegelung der
+    // Umgebung (SPECULAR bis 1,0 bei streifendem Blick, also F0 = 0,16). Die
+    // Sonne beleuchtete diese „Spiegelung" wie Farbe; bei flachem Blick lag
+    // jede Wasserfläche als heller, kontrastloser Film da, der von der Wellung
+    // nichts zeigte. Jetzt spiegelt allein Godot (SPECULAR/ROUGHNESS gegen
+    // den Himmel), und der Wasserkörper tritt mit dem Fresnel-Anteil zurück
+    // (`× (1 − fresnel)`; Godot dämpft die diffuse Albedo nicht selbst).
+
     /// Farbe seichten Wassers (das Bett scheint grünlich getrübt durch).
-    public static let waterShallowColor = (r: 0.18, g: 0.37, b: 0.42)
-    /// Farbe tiefen Wassers (opak dunkelblau).
-    public static let waterDeepColor = (r: 0.03, g: 0.12, b: 0.26)
-    /// Himmels-Ton der Fresnel-Spiegelung (wie die Environment-Farbe).
-    public static let skyReflectColor = (r: 0.62, g: 0.7, b: 0.76)
-    /// Schlick-Näherung: `pow(1 − n·v, fresnelExponent)`.
+    /// Mit #174 dunkler (vorher 0,18/0,37/0,42, linear): Wasser schluckt
+    /// Licht, die Helligkeit trägt die Spiegelung.
+    public static let waterShallowColor = (r: 0.06, g: 0.17, b: 0.18)
+    /// Farbe tiefen Wassers (opak, dunkel blaugrün; vorher 0,03/0,12/0,26,
+    /// das las sich im Licht als Schwimmbad-Blau).
+    public static let waterDeepColor = (r: 0.010, g: 0.050, b: 0.085)
+    /// Schlick-Näherung: `pow(1 − n·v, fresnelExponent)`. Um diesen Anteil
+    /// tritt der Wasserkörper hinter Godots Spiegelung zurück.
     public static let fresnelExponent = 5.0
-    /// Anteil, mit dem der Himmels-Ton bei streifendem Blick einmischt.
-    public static let fresnelSkyMix = 0.55
     /// Deckkraft seichten Wassers (das Bett scheint durch) …
     public static let waterOpacityShallow = 0.55
     /// … und tiefen Wassers.
     public static let waterOpacityDeep = 0.95
-    /// Rauheit bei steilem Blick — matter, sonst spiegelt der graue Himmel die
-    /// Farbe milchig weg …
-    public static let waterRoughnessSteep = 0.34
-    /// … und bei streifendem Blick (glasklar spiegelnd).
-    public static let waterRoughnessGrazing = 0.08
-    /// Specular bei steilem Blick …
-    public static let waterSpecularSteep = 0.55
-    /// … und bei streifendem Blick.
-    public static let waterSpecularGrazing = 1.0
+    /// Rauheit der Wasserfläche. Vorher 0,34 bei steilem bis 0,08 bei
+    /// streifendem Blick: die 0,34 zogen die Sonne bei Gegenlicht zu einem
+    /// breiten, milchigen Glanzfleck über Meer und Flussschleifen (Seed 20,
+    /// Tal-Kamera). Die Wellung der Normalen bricht den Glanz jetzt in Funkeln.
+    public static let waterRoughness = 0.08
+    /// Specular (Godot: F0 = 0,16 · s² = 0,04, dielektrisch). Vorher stieg
+    /// er zum streifenden Blick bis 1,0 (F0 = 0,16) und rechnete den
+    /// Fresnel-Anstieg damit doppelt, den Godot schon selbst macht.
+    public static let waterSpecular = 0.5
     /// Strömungs-Schimmer stromab (Bewegung im Zeitraffer ablesbar).
     public static let flowShimmerColor = (r: 0.012, g: 0.018, b: 0.025)
     /// Trübungsfahne eines Delta-Arms: heller und wärmer als das Becken, sonst

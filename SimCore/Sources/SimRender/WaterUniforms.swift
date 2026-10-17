@@ -26,6 +26,8 @@ public enum WaterUniforms {
         ("water_lake_gate_hi", WaterRender.lakeGateHi),
         ("water_river_mask_lo", WaterRender.riverMaskLo),
         ("water_river_mask_hi", WaterRender.riverMaskHi),
+        ("water_river_depth_lo", WaterRender.riverDepthLo),
+        ("water_river_depth_hi", WaterRender.riverDepthHi),
         ("water_shore_lo", WaterRender.shoreLo),
         ("water_shore_hi", WaterRender.shoreHi),
         ("water_pond_contour_lo", WaterRender.pondContourLo),
@@ -41,13 +43,10 @@ public enum WaterUniforms {
         ("water_ribbon_delta_hi", WaterRender.ribbonDeltaHi),
         // Gemeinsame Wasser-Optik aller drei Shader.
         ("water_fresnel_exponent", WaterRender.fresnelExponent),
-        ("water_fresnel_sky_mix", WaterRender.fresnelSkyMix),
         ("water_opacity_shallow", WaterRender.waterOpacityShallow),
         ("water_opacity_deep", WaterRender.waterOpacityDeep),
-        ("water_roughness_steep", WaterRender.waterRoughnessSteep),
-        ("water_roughness_grazing", WaterRender.waterRoughnessGrazing),
-        ("water_specular_steep", WaterRender.waterSpecularSteep),
-        ("water_specular_grazing", WaterRender.waterSpecularGrazing),
+        ("water_roughness", WaterRender.waterRoughness),
+        ("water_specular", WaterRender.waterSpecular),
         // Offenes Meer (ocean.gdshader, #155).
         ("water_ocean_depth_span", WaterRender.oceanDepthSpan),
         ("water_ocean_mid_depth", WaterRender.oceanMidDepth),
@@ -95,7 +94,6 @@ public enum WaterUniforms {
     public static let colors: [(name: String, value: (r: Double, g: Double, b: Double))] = [
         ("water_shallow_color", WaterRender.waterShallowColor),
         ("water_deep_color", WaterRender.waterDeepColor),
-        ("water_sky_reflect_color", WaterRender.skyReflectColor),
         ("water_flow_shimmer_color", WaterRender.flowShimmerColor),
         ("water_delta_plume_color", WaterRender.deltaPlumeColor),
         ("water_oxbow_water_color", WaterRender.oxbowWaterColor),

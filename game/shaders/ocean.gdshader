@@ -5,6 +5,8 @@ render_mode blend_mix, depth_prepass_alpha, cull_disabled;
 
 uniform float u_time = 0.0;
 uniform float world_size = 100.0;
+// Kantenlänge des Sim-Gitters (Main.gd `N`), s. `grid_uv`.
+uniform float grid_n = 256.0;
 uniform float sea_level = 0.15;
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 // Vorgängerstand und Blende der Höhe (#172, Main.gd `height_fade`): die
@@ -22,12 +24,8 @@ uniform float height_blend = 1.0;
 // Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
 // game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
 uniform float water_fresnel_exponent;
-uniform float water_fresnel_sky_mix;
-uniform float water_roughness_steep;
-uniform float water_roughness_grazing;
-uniform float water_specular_steep;
-uniform float water_specular_grazing;
-uniform vec3 water_sky_reflect_color;
+uniform float water_roughness;
+uniform float water_specular;
 
 // Offenes Meer (#155, übernommen aus dem Studien-Hebel `frame`): Farbe aus
 // der Wassertiefe über dem Sim-Schelf, Brandungssaum, Rausch-Wellen.
@@ -75,6 +73,13 @@ varying vec2 v_world;
 
 // Wolkenschatten (#151): gemeinsame Funktion mit Terrain und Bändern.
 #include "res://shaders/clouds.gdshaderinc"
+
+// Welt-xz → Texturkoordinate des Sim-Gitters, texelzentriert wie `world_uv`
+// im Terrain-Shader (Zelle k = Texel k mit Mitte (k + ½)/grid_n).
+vec2 grid_uv(vec2 xz) {
+	float n = max(grid_n, 2.0);
+	return ((xz / world_size + 0.5) * (n - 1.0) + 0.5) / n;
+}
 
 float calib_window(float lo, float hi, float x) {
 	return smoothstep(lo, max(hi, lo + 1e-6), x);
@@ -136,7 +141,7 @@ float sediment_plume(vec2 p) {
 		float t = float(i) / 5.0;
 		float lod = water_ocean_plume_lod + t * water_ocean_plume_spread;
 		vec2 back = p - current * (t * water_ocean_plume_length);
-		vec2 uv = back / world_size + vec2(0.5);
+		vec2 uv = grid_uv(back);
 		sum += plume_at(uv, lod) * exp2(2.0 * lod);
 	}
 	return 1.0 - exp(-sum / 6.0 * water_ocean_plume_gain);
@@ -148,7 +153,7 @@ void vertex() {
 
 void fragment() {
 	vec2 p = v_world;
-	vec2 terrain_uv = p / world_size + vec2(0.5);
+	vec2 terrain_uv = grid_uv(p);
 	bool inside_terrain = all(greaterThanEqual(terrain_uv, vec2(0.0)))
 	                   && all(lessThanEqual(terrain_uv, vec2(1.0)));
 	float footprint = length(fwidth(p));
@@ -179,7 +184,11 @@ void fragment() {
 	}
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
-	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
+	// Spiegelung statt Farbe (Befund #174): den Himmel spiegelt Godot über
+	// SPECULAR/ROUGHNESS, der Wasserkörper tritt mit dem Fresnel-Anteil zurück
+	// (wie terrain.gdshader und water.gdshader). Die Brandung darunter ist
+	// Schaum auf der Oberfläche und bleibt davon unberührt.
+	water *= 1.0 - fresnel;
 
 	// Brandung: schmaler, von Rauschen gebrochener Saum direkt an der Küste.
 	float surf = 1.0 - calib_window(0.0, water_ocean_surf_depth, depth);
@@ -190,7 +199,7 @@ void fragment() {
 	water *= cloud_light(vec3(p.x, NODE_POSITION_WORLD.y, p.y), u_time);
 	ALBEDO = water;
 	ALPHA = 1.0;
-	ROUGHNESS = mix(water_roughness_steep, water_roughness_grazing, fresnel);
+	ROUGHNESS = water_roughness;
 	METALLIC = 0.0;
-	SPECULAR = mix(water_specular_steep, water_specular_grazing, fresnel);
+	SPECULAR = water_specular;
 }

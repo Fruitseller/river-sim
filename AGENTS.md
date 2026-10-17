@@ -613,8 +613,9 @@ auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
 Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
 Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
 (`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK aller
-drei Wasser-Shader (Fresnel, Himmels-Spiegelung, Rauheit/Specular; Seicht/Tief-
-Farbe und Strömungs-Schimmer nur Binnenwasser) und die Ozean-Werte
+drei Wasser-Shader (Fresnel, Rauheit/Specular; den Himmel spiegelt Godot
+selbst, der Wasserkörper tritt mit Fresnel zurück, seit #174 ohne Himmelsfarbe
+in der Albedo; Seicht/Tief-Farbe und Strömungs-Schimmer nur Binnenwasser) und die Ozean-Werte
 `ocean*` (Schelf-Tiefenfarbe, Brandung, Rausch-Wellen, Issue #155).
 Seit **Issue #92** stehen die Wasser-Werte nicht mehr als gepinnte Kopien im
 Shader, sondern reisen als `water_*`-Uniforms über die Brücke
@@ -651,7 +652,7 @@ doppeltes Wasser; das prüfen `WaterRendererTests` headless und
 `game/tests/water_geometry.gd` weiter als End-to-End-Vertrag.
 
 Das offene Meer ist eine dritte, rein visuelle Fläche (`ocean.gdshader`). Sie
-teilt Fresnel, Himmels-Spiegelung und Glanz mit beiden Binnenwasser-Pfaden,
+teilt Fresnel, Spiegelung und Glanz mit beiden Binnenwasser-Pfaden,
 färbt aber seit Issue #155 nach der Wassertiefe über dem Sim-Schelf
 (`WaterRender.ocean*`, Rausch-Wellen ohne Sinus-Streifen, Brandungssaum) und
 bleibt opak:

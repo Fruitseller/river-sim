@@ -192,7 +192,8 @@ static func place_clouds(mats: Array[ShaderMaterial], ridge_lo: float, ridge_hi:
 ## Wolkenkörper als eigener Knoten mit CLOUD_LAYERS Ebenen (#174 D). In
 ## `performance` unsichtbar und ohne Zeichenaufwand; die Wolkenschatten sind
 ## dort ebenfalls aus (QUALITY).
-static func make_cloud_bodies(quality: String, world_size: float, hscale: float) -> Node3D:
+static func make_cloud_bodies(quality: String, world_size: float, hscale: float,
+		grid_n: int) -> Node3D:
 	var root := Node3D.new()
 	root.name = "CloudBodies"
 	root.visible = profile(quality)["clouds"]
@@ -207,6 +208,7 @@ static func make_cloud_bodies(quality: String, world_size: float, hscale: float)
 		var mat := ShaderMaterial.new()
 		mat.shader = shader
 		mat.set_shader_parameter("world_size", world_size)
+		mat.set_shader_parameter("grid_n", float(grid_n))
 		mat.set_shader_parameter("hscale", hscale)
 		mat.set_shader_parameter("cloud_body_layer", float(i) / float(max(CLOUD_LAYERS - 1, 1)))
 		mat.set_shader_parameter("cloud_body_opacity", CLOUD_BODY_OPACITY)

@@ -267,11 +267,11 @@ final class MaterialTests: XCTestCase {
     /// Vertrag `MaterialRender`; der Renderer liest sie von dort.
     func testRendererReadsItsMaterialCalibrationFromTheContract() throws {
         XCTAssertEqual(MaterialRender.vegAmountMax, 0.78, "Wert unverändert gegenüber den Literalen")
-        XCTAssertEqual(MaterialRender.mineralTint.r, 0.37)
-        XCTAssertEqual(MaterialRender.mineralTint.g, 0.365)
-        XCTAssertEqual(MaterialRender.mineralTint.b, 0.355)
+        XCTAssertEqual(MaterialRender.mineralTint.r, 0.13)
+        XCTAssertEqual(MaterialRender.mineralTint.g, 0.13)
+        XCTAssertEqual(MaterialRender.mineralTint.b, 0.135)
         let source = try RepoSource.probe("SimCore/Sources/SimRender/TerrainColorRenderer.swift")
-        for literal in ["* 0.78", "min(0.78", "0.365", "0.355", "(0.37 - r)"] {
+        for literal in ["* 0.78", "min(0.78", "(0.13 - r)", "(0.135 - b)"] {
             XCTAssertFalse(source.contains(literal),
                            "TerrainColorRenderer trägt \(literal) als Literal statt aus MaterialRender")
         }
@@ -291,6 +291,8 @@ final class MaterialTests: XCTestCase {
             "material_joint_stretch": MaterialRender.jointStretch,
             "material_joint_depth": MaterialRender.jointDepth,
             "material_joint_gully_gain": MaterialRender.jointGullyGain,
+            "material_joint_relief": MaterialRender.jointRelief,
+            "material_rock_relief_gain": MaterialRender.rockReliefGain,
             "material_scree_grain": MaterialRender.screeGrain,
             "material_crevasse_spacing": MaterialRender.crevasseSpacing,
             "material_crevasse_slope_lo": MaterialRender.crevasseSlopeLo,
@@ -334,8 +336,11 @@ final class MaterialTests: XCTestCase {
     /// gekoppelt; die Strukturprobe hält das fest, das Bild prüft der Mensch.
     func testRockJointsAreNoRegularLattice() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
-        assertContains(shader, "joints = rock_joints(material_pos, n_ws, cavity, tone);",
-                       hint: "Klüftung bekommt Weltposition, Normale und Relief-Rinnen")
+        assertContains(shader,
+                       "joints = rock_joints(material_pos, n_ws, cavity, px_mat, tone, rock_bump);",
+                       hint: "Klüftung bekommt Weltposition, Normale, Relief-Rinnen und Pixelgröße")
+        assertContains(shader, "n_ws = normalize(n_ws + rock_bump * rock);",
+                       hint: "Runsen sind Form: sie kippen die Normale (Befund #174 „Fels glatt\")")
         let bodies = try shader.captures(
             pattern: "float rock_joint(?:_face|s)\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}")
         XCTAssertEqual(bodies.count, 2, "rock_joint_face und rock_joints gefunden")
@@ -347,6 +352,33 @@ final class MaterialTests: XCTestCase {
                       "Runsen in Fallrichtung gestreckt")
         XCTAssertTrue(bodies.joined().contains("material_joint_gully_gain"),
                       "Klüftung an Rinnen/Rippen gekoppelt")
+    }
+
+    /// Review zu #174: zwei Fallen, die Fels, Schutt, Spalten und Kräuselung
+    /// still glätteten bzw. undefiniert machten.
+    ///  - Das Wertrauschen hasht über `vhash`, das den Zellindex ZUERST auf
+    ///    [0, 17) faltet. Über `ehash` (Float-Produkt x·y·(x+y) auf dem rohen
+    ///    Index) erstarrte es ab einigen Dutzend Zellen vom Ursprung:
+    ///    Schutt-Körnung bei `material_pos / 0.05` auf großen Teilen der Karte
+    ///    konstant, Spalten und Riffel als Gitter. Ein Ganzzahl-Hash wäre
+    ///    ebenso genau, kostete aber gemessen +2,5 ms je Bild.
+    ///  - Ableitungen nur im gleichförmigen Kontrollfluss: `fwidth` steht
+    ///    genau zweimal oben in fragment(); Klüftung, Körnung, Spalten und
+    ///    Kronen laufen hinter Verzweigungen je Pixel und bekommen die
+    ///    Pixelgröße übergeben.
+    func testNoiseHashAndDerivativesStayDefined() throws {
+        let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
+        let vnoise = try shader.captures(pattern: "float vnoise\\(vec2 p\\) \\{([\\s\\S]*?)\\n\\}")
+        XCTAssertEqual(vnoise.count, 1, "vnoise gefunden")
+        XCTAssertFalse(vnoise.joined().contains("ehash"), "Wertrauschen ohne Float-Hash")
+        XCTAssertTrue(vnoise.joined().contains("vhash("), "Wertrauschen über den gefalteten Hash")
+        assertContains(shader, "vec2 x = fract(c * k) * 17.0 + k.yx;",
+                       hint: "vhash faltet den Zellindex, bevor er multipliziert")
+        XCTAssertEqual(shader.count(of: "fwidth("), 2,
+                       "fwidth nur oben in fragment(), nie hinter einer Verzweigung je Pixel")
+        assertContains(shader, "float px_wp = length(fwidth(wp));", hint: "Pixelgröße in der Ebene")
+        assertContains(shader, "float px_mat = length(fwidth(material_pos));",
+                       hint: "Pixelgröße der triplanaren Materialien")
     }
 
     func testBridgeAndMainCarryTheMaterials() throws {

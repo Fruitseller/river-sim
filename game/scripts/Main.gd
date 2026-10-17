@@ -853,6 +853,7 @@ func _setup_scene() -> void:
 	ocean_mat = ShaderMaterial.new()
 	ocean_mat.shader = load("res://shaders/ocean.gdshader")
 	ocean_mat.set_shader_parameter("world_size", world_size)
+	ocean_mat.set_shader_parameter("grid_n", float(N))
 	ocean_mat.set_shader_parameter("sea_level", sea)
 	height_field.mirror_to(ocean_mat)
 	height_fade.bind(terrain_mat)
@@ -885,6 +886,7 @@ func _setup_scene() -> void:
 			height_fade.bind(mat)
 			overlay_fade.bind(mat)
 			mat.set_shader_parameter("world_size", world_size)
+			mat.set_shader_parameter("grid_n", float(N))
 			mat.set_shader_parameter("sea_level", sea)
 
 	# Wasser-Kalibrierung aus SimCore (Issue #91) auf alle Wasser-Materialien;
@@ -896,7 +898,7 @@ func _setup_scene() -> void:
 	apply_water_calibration(sim, water_mats)
 	# Wolkenkörper über dem Kamm (#174 D) teilen Rauschen und Basis mit den
 	# Wolkenschatten; `cloud_mats` sind alle Materialien, die beides lesen.
-	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, HSCALE)
+	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, HSCALE, N)
 	add_child(cloud_bodies)
 	cloud_mats.assign(water_mats)
 	cloud_mats.append_array(Lighting.cloud_body_materials(cloud_bodies))

@@ -140,7 +140,7 @@ func _check_cloud_bodies() -> void:
 	_check(body_src.find("smoothstep(0.56") < 0 and body_src.find("smoothstep(0.70") < 0,
 		"Körper darf die Schwelle nicht aus clouds.gdshaderinc kopieren")
 	for quality in ["performance", "balanced"]:
-		var bodies := Lighting.make_cloud_bodies(quality, 100.0, 24.0)
+		var bodies := Lighting.make_cloud_bodies(quality, 100.0, 24.0, 256)
 		var mats := Lighting.cloud_body_materials(bodies)
 		_check(mats.size() == Lighting.CLOUD_LAYERS, "%d Wolkenebenen" % Lighting.CLOUD_LAYERS)
 		_check(bodies.visible == Lighting.profile(quality)["clouds"],

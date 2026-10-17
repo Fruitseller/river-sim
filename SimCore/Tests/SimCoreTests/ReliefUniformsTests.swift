@@ -28,6 +28,8 @@ final class ReliefUniformsTests: XCTestCase {
         "game/shaders/terrain.gdshader": [
             "relief_height_code", "relief_slope_code",
             "relief_shade_dark", "relief_shade_light", "relief_geometry_age",
+            // Feines Rinnen-Detail (bis zum Review zu #174 Literal-Defaults).
+            "relief_detail_scale", "relief_detail_shade", "relief_detail_normal",
         ],
     ]
 
@@ -45,6 +47,9 @@ final class ReliefUniformsTests: XCTestCase {
             "relief_shade_light": ReliefRender.shadeLight,
             "relief_cavity_gully_gain": ReliefRender.cavityGullyGain,
             "relief_cavity_ridge_gain": ReliefRender.cavityRidgeGain,
+            "relief_detail_scale": ReliefRender.detailScale,
+            "relief_detail_shade": ReliefRender.detailShade,
+            "relief_detail_normal": ReliefRender.detailNormal,
         ]
         XCTAssertEqual(ReliefUniforms.scalars.count, mirror.count,
                        "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
@@ -122,8 +127,13 @@ final class ReliefUniformsTests: XCTestCase {
                        hint: "Terrain-Shader liest die gebackene Verschiebung")
         assertContains(terrain, "VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);",
                        hint: "Seen bleiben flach auf ihrem Spiegel (Verschiebung × (1 − lift))")
-        assertContains(terrain, "coarse_slope += relief_slope(v_uv);",
+        assertContains(terrain, "coarse_slope += relief_slope(relief);",
                        hint: "Pixel-Normale bekommt die Steigung der Verschiebung")
+        // EIN Abgriff je Pixel für Steigung und Rinnen (Review zu #174).
+        assertContains(terrain, "vec4 relief = relief_pixel(v_uv);",
+                       hint: "Pixel-Stufe liest die Backtextur einmal")
+        XCTAssertEqual(terrain.count(ofIdentifier: "relief_pixel"), 2,
+                       "relief_pixel: Definition plus genau ein Aufruf")
         XCTAssertEqual(terrain.count(ofIdentifier: "erosion_detail_at"), 1,
                        "Terrain-Shader ruft den Filter nur für das feine Detail auf")
         let bake = try RepoSource.probe("game/shaders/relief_bake.gdshader")
