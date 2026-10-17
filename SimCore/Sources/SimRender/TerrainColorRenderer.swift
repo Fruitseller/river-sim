@@ -127,6 +127,9 @@ public enum TerrainColorRenderer {
         let barSand = barsOn ? bars.sand : [0]
         let barVeg = barsOn ? bars.vegShift : [0]
         let barReed = barsOn ? bars.reed : [0]
+        // Aue: alte Bänke des Mäandergürtels tragen Talboden-Wiese (s. unten).
+        let barAge = terrain.barAge.count == n * n ? terrain.barAge : [-1.0]
+        let aueOn = barAge.count == n * n
         let reedColor = WaterRender.oxbowReedColor
         let vegMax = MaterialRender.vegAmountMax, mineralTint = MaterialRender.mineralTint
 
@@ -155,6 +158,7 @@ public enum TerrainColorRenderer {
         barSand.withUnsafeBufferPointer { bsb in
         barVeg.withUnsafeBufferPointer { bvb in
         barReed.withUnsafeBufferPointer { brb in
+        barAge.withUnsafeBufferPointer { bab in
         colors.withUnsafeMutableBufferPointer { cb in
         surfaces.withUnsafeMutableBufferPointer { sb in
         covers.withUnsafeMutableBufferPointer { cvb in
@@ -169,6 +173,7 @@ public enum TerrainColorRenderer {
         let pcolor = cb.baseAddress!, psurface = sb.baseAddress!, pcover = cvb.baseAddress!
         let pcoast = cdb.baseAddress!
         let pbsand = bsb.baseAddress!, pbveg = bvb.baseAddress!, pbreed = brb.baseAddress!
+        let pbage = bab.baseAddress!
 
         // (1) Felsanteil aus Weltsteigung und Konvexität, nur auf Land und
         // innerhalb des ±2-Stencils (am Rand ist Meer).
@@ -377,15 +382,22 @@ public enum TerrainColorRenderer {
                         let bare = iceCover * ablation * (1 - MaterialRender.iceSnowHide * snowCover)
                         bareIce = coldWeight > 0 ? clamp01(bare / coldWeight) : 0
 
-                        // Talboden: flach und unterhalb des Nadelwald-Bands.
-                        // Anknüpfungspunkt Paket B (#174): alte Bänke
-                        // (`barAge`) kommen hier als zweite Quelle hinzu,
-                        // `valley = max(valley, Wiese aus barAge)`.
+                        // Talboden: flach und unterhalb des Nadelwald-Bands,
+                        // dazu die Aue: Bänke, die der Fluss verlassen hat
+                        // (`barAge` ab dem Ende des Sand-Fensters). Die
+                        // Höhenbänder allein verfehlen sie, der Gürtel liegt
+                        // zu 83–97 % über `coniferLow` (Review zu #174 D,
+                        // `testBarMeadowDiagnostic`).
                         let lowland = 1 - smoothstep(bands.coniferLow,
                                                      max(bands.coniferHigh, bands.coniferLow + 1e-6), v)
                         valley = (1 - smoothstep(MaterialRender.valleySlopeLo,
                                                  MaterialRender.valleySlopeHi, worldSlope))
                             * lowland * open
+                        if aueOn, pbage[k] >= 0 {
+                            let aue = smoothstep(WaterRender.barSandYearsLo,
+                                                 WaterRender.barSandYearsHi, pbage[k])
+                            valley = max(valley, aue * open)
+                        }
                     }
 
                     // Umrechnung 0…1 → Byte nur über `byte01` (RenderSupport):
@@ -406,7 +418,7 @@ public enum TerrainColorRenderer {
                 }
             }
         }
-        }}}}}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}}}}}
 
         return Buffers(colors: colors, surfaces: surfaces, covers: covers)
     }

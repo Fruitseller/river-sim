@@ -11,6 +11,9 @@ import XCTest
 // - testBarSandExtentDiagnostic: Sandfläche aus `BarMaterial` gegen Bank- und
 //   Kanalfläche, nach Bankalter, Abstand zur Zentrumslinie und Höhe über
 //   bankfull (Befund #174 „Sandwüste in der Schlinge").
+// - testBarMeadowDiagnostic: Talboden-Wiese (A-Kanal von `covers`) auf Bank-
+//   Zellen nach Bankalter: wie viel der Aue (alte Bank) trägt sie heute, und
+//   was änderte eine zweite Quelle aus `barAge` (Review zu #174 D, § H).
 // - testMainStemBandDiagnostic: der Hauptlauf (D8, größtes Einzugsgebiet bis
 //   zur Band-Schwelle) Zelle für Zelle: wer malt ihn (Band, Raster-Fluss,
 //   See), wo bleibt eine Lücke, und warum.
@@ -33,6 +36,74 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
         let start = t.years
         while t.years < start + years - 1e-6 { t.step(dtYears: 100) }
         return t
+    }
+
+    /// Talboden-Wiese auf Bank-Zellen nach Bankalter. RS_YEARS_LIST (Standard
+    /// „2300,20000"), RS_SEEDS, RS_CACHE wie `testBarSandExtentDiagnostic`.
+    func testBarMeadowDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let marks = (env["RS_YEARS_LIST"] ?? "2300,20000").split(separator: ",").compactMap { Double($0) }
+        let cache = env["RS_CACHE"]
+        for seed in seeds {
+            var t: Terrain?
+            var start = 0.0
+            for mark in marks {
+                let path = cache.map { "\($0)/world-s\(seed)-\(Int(mark)).rsw" }
+                if let p = path, FileManager.default.fileExists(atPath: p), let w = try? WorldSnapshot.read(from: p) {
+                    t = w; start = w.years - mark
+                } else {
+                    if t == nil {
+                        t = Terrain(config: SimConfig.production, seed: seed,
+                                    settleYears: SimConfig.productionSettleYears)
+                        start = t!.years
+                    }
+                    while t!.years < start + mark - 1e-6 { t!.step(dtYears: 100) }
+                    if let p = path { _ = try WorldSnapshot.write(t!, to: p) }
+                }
+                Self.printBarMeadow(t!, seed: seed, label: mark)
+            }
+        }
+    }
+
+    static func printBarMeadow(_ t: Terrain, seed: UInt32, label: Double) {
+        let n = t.cfg.n, cnt = n * n
+        let covers = TerrainColorRenderer.buffers(t).covers
+        let render = RenderState(geometryMode: true)
+        let forest = render.forestMaskBytes(t)
+        let edges = [WaterRender.barSandYearsLo, WaterRender.barSandYearsHi, .infinity]
+        var total = [Int](repeating: 0, count: edges.count), meadow = total
+        var land = 0, landMeadow = 0, forestOnBank = 0, bank = 0
+        for k in 0..<cnt where t.h[k] > t.cfg.sea {
+            land += 1
+            if covers[k * 4 + 3] >= 128 { landMeadow += 1 }
+            guard t.barAge[k] >= 0 else { continue }
+            bank += 1
+            if forest[k] >= 128 { forestOnBank += 1 }
+            let b = edges.firstIndex { t.barAge[k] < $0 } ?? edges.count - 1
+            total[b] += 1
+            if covers[k * 4 + 3] >= 128 { meadow[b] += 1 }
+        }
+        func share(_ a: Int, _ b: Int) -> String { String(format: "%.0f %%", 100 * Double(a) / Double(max(1, b))) }
+        // Warum trägt alte Bank KEINE Talboden-Wiese? Weltsteigung gegen Höhenband.
+        let slopeScale = 2 * RenderContract.heightScale / (t.cfg.world / Double(n))
+        let bands = t.heightBands
+        var slopeBins = [0, 0, 0, 0], oldBank = 0, aboveBand = 0
+        for j in 2..<(n - 2) { for i in 2..<(n - 2) {
+            let k = j * n + i
+            guard t.h[k] > t.cfg.sea, t.barAge[k] >= WaterRender.barSandYearsHi else { continue }
+            oldBank += 1
+            if t.h[k] >= bands.coniferLow { aboveBand += 1 }
+            let w = Terrain.macroSlope(t.h, k, n) * slopeScale
+            slopeBins[w < MaterialRender.valleySlopeLo ? 0 : w < MaterialRender.valleySlopeHi ? 1 : w < 0.6 ? 2 : 3] += 1
+        } }
+        print("BARMEADOW-WHY s\(seed) J\(Int(label)) | alte Bank \(oldBank): Weltsteigung <0,1: \(share(slopeBins[0], oldBank)), "
+              + "0,1–0,3: \(share(slopeBins[1], oldBank)), 0,3–0,6: \(share(slopeBins[2], oldBank)), ≥ 0,6: \(share(slopeBins[3], oldBank)); "
+              + "ab Nadelwald-Band: \(share(aboveBand, oldBank))")
+        print(String(format: "BARMEADOW s%d J%.0f | Land %d, Talboden ≥ 0,5 %@ | Bank %d (Wald auf Bank %@)",
+                     seed, label, land, share(landMeadow, land), bank, share(forestOnBank, bank))
+              + " | Talboden-Anteil je Bankalter <\(Int(edges[0])) J.: \(share(meadow[0], total[0])) (\(total[0])), "
+              + "\(Int(edges[0]))–\(Int(edges[1])): \(share(meadow[1], total[1])) (\(total[1])), "
+              + "≥ \(Int(edges[1])): \(share(meadow[2], total[2])) (\(total[2]))")
     }
 
     func testBarAgeDiagnostic() throws {

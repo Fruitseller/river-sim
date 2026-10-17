@@ -200,6 +200,34 @@ final class BarMaterialTests: XCTestCase {
         XCTAssertLessThanOrEqual(sum, 256, "Gewichte summieren sich weiter auf höchstens 1")
     }
 
+    /// Review zu #174 D („Talboden-Wiese hell-saftig in der Aue, aus B"):
+    /// Bänke, deren Sand-Fenster vorbei ist, tragen Talboden-Wiese, auch wo
+    /// Steigung und Höhenband sie verfehlen. Junge Bank und Land ohne Bank
+    /// behalten den Wert aus Steigung und Höhenband.
+    func testOldBarsCarryValleyMeadow() {
+        let n = 64
+        func ramp(_ t: Terrain) -> Terrain {
+            var s = t.state
+            s.h = (0..<(n * n)).map { t.cfg.sea + 0.08 + 0.05 * Double($0 % n) }
+            s.hf = s.h
+            s.waterLevel = s.h
+            t.restore(s)
+            return t
+        }
+        let old = ramp(flatWorld(n: n) { i, j in (20..<40).contains(j) && (10..<30).contains(i) ? 20_000 : -1 })
+        let young = ramp(flatWorld(n: n) { i, j in (20..<40).contains(j) && (10..<30).contains(i) ? 0 : -1 })
+        let none = ramp(flatWorld(n: n) { _, _ in -1 })
+        let k = 30 * n + 20
+        let base = TerrainColorRenderer.buffers(none).covers[k * 4 + 3]
+        XCTAssertLessThan(base, 26, "Vorbedingung: am Hang trägt Steigung allein keine Talboden-Wiese")
+        XCTAssertEqual(TerrainColorRenderer.buffers(old).covers[k * 4 + 3], 255, "alte Bank = Aue = volle Wiese")
+        XCTAssertEqual(TerrainColorRenderer.buffers(young).covers[k * 4 + 3], base,
+                       "junge Bank: Sand-Fenster, keine Aue")
+        let off = (30 * n + 45) * 4 + 3
+        XCTAssertEqual(TerrainColorRenderer.buffers(old).covers[off], TerrainColorRenderer.buffers(none).covers[off],
+                       "Land ohne Bank unverändert")
+    }
+
     func testFreshBarsAreProtectedFromForest() {
         let n = 64
         let t = flatWorld(n: n, channelRow: 6) { i, j in (10..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }

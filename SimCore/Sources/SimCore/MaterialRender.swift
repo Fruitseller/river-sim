@@ -131,9 +131,10 @@ public enum MaterialRender {
     /// Talboden = flach (Weltsteigung unter `valleySlopeLo` voll, ab
     /// `valleySlopeHi` nicht mehr) UND unterhalb des Nadelwald-Bands
     /// (`HeightBands.coniferLow/High`, #152). Dort ist die Wiese hell und
-    /// saftig statt des Hangtons. Anknüpfungspunkt Paket B: alte Bänke
-    /// (`barAge`) gehen hier als zweite Quelle ein (Maximum), sobald das
-    /// Feld existiert.
+    /// saftig statt des Hangtons. Zweite Quelle (Maximum): die Aue, also
+    /// Bänke, deren Sand-Fenster vorbei ist (`Terrain.barAge` über
+    /// `WaterRender.barSandYearsLo/Hi`, ohne Steigungs- und Höhentor: der
+    /// Gürtel liegt zu 83–97 % über `coniferLow`, s. `testBarMeadowDiagnostic`).
     public static let valleySlopeLo = 0.10
     public static let valleySlopeHi = 0.30
 
