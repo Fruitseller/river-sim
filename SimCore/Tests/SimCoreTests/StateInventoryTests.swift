@@ -167,6 +167,9 @@ final class StateInventoryTests: XCTestCase {
             + "beschreibt sie in Empfänger-Reihenfolge, bevor er sie liest.")),
         ("isChannel", .persistent(.sameName)),
         ("barAge", .persistent(.sameName)),
+        ("beltFloorHBuf", .scratch(reason:
+            "Scratch-Puffer für Sohlenhöhen beim Stempeln eines Laufs (Issue #174); "
+            + "wird nur innerhalb von `stampSingleChannel` verwendet.")),
         ("inBelt", .scratch(reason:
             "Maske der Zellen, deren Sohle der Gürtel-Stempel in diesem Schritt "
             + "setzt (Issue #174); `meanderBeltStep` leert sie zu Beginn jedes "
