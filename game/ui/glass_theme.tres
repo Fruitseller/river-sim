@@ -152,6 +152,8 @@ corner_radius_bottom_left = 9
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_focus"]
 
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_frame"]
+
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_slider"]
 content_margin_top = 2.0
 content_margin_bottom = 2.0
@@ -207,6 +209,15 @@ Button/styles/hover = SubResource("StyleBoxFlat_button_hover")
 Button/styles/hover_pressed = SubResource("StyleBoxFlat_button_active")
 Button/styles/normal = SubResource("StyleBoxFlat_button")
 Button/styles/pressed = SubResource("StyleBoxFlat_button_active")
+; Weichzeichner hinter den Panels (Shader: ui/glass_blur.gdshader): Radius in
+; Pixeln und Abdunklung (je Kanal mit dem verwischten Hintergrund multipliziert;
+; Lesbarkeit der Schrift auf Schnee). Der Eckenradius des Weichzeichners ist der des Glas-Panels (unten,
+; PanelContainer/styles/panel); `GlassFrame` ist nur der Träger, der Weichzeichner
+; und Panel übereinanderlegt, und zeichnet selbst nichts.
+GlassBackdrop/colors/dim = Color(0.66, 0.68, 0.72, 1)
+GlassBackdrop/constants/blur_radius = 24
+GlassFrame/base_type = &"PanelContainer"
+GlassFrame/styles/panel = SubResource("StyleBoxEmpty_frame")
 HSeparator/constants/separation = 12
 HSeparator/styles/separator = SubResource("StyleBoxFlat_separator")
 HSlider/styles/grabber_area = SubResource("StyleBoxFlat_slider_fill")

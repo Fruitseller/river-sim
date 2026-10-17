@@ -32,6 +32,56 @@ final class UiContractTests: XCTestCase {
         }
     }
 
+    /// Weichzeichner hinter den Glas-Panels (Abnahmepunkt 43, Paket E). Ein
+    /// StyleBox kann den Hintergrund nicht verwischen, deshalb legt Main.gd je
+    /// Panel einen Rahmen (`GlassFrame`) mit einem Rechteck darunter, dessen
+    /// Material `game/ui/glass_blur.gdshader` den Bildschirm über die Mip-Kette
+    /// liest. Die Werte bleiben im Theme: Radius als Konstante, Eckenradius vom
+    /// Glas-Panel selbst; der Shader trägt keine Kopie (default-freie Uniforms).
+    /// Verdrahtung im Spiel und Deckung von Rechteck und Glas prüft
+    /// `game/tests/ui_layout.gd`; das Aussehen entscheidet der Projekteigner am
+    /// Bild, die Kosten stehen in `docs/zielbild-measurements.md`.
+    func testGlassPanelsCarryTheBlurFromTheTheme() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        assertContains(main, "const GLASS_BLUR_SHADER := \"res://ui/glass_blur.gdshader\"",
+                       hint: "Main lädt den Weichzeichner-Shader")
+        assertContains(main, "frame.theme_type_variation = &\"GlassFrame\"",
+                       hint: "Jedes Panel sitzt in einem Rahmen")
+        assertContains(main, "backdrop.material = glass_material",
+                       hint: "Das Rechteck unter dem Glas trägt das Weichzeichner-Material")
+        assertContains(main, "ui_theme.get_constant(\"blur_radius\", \"GlassBackdrop\")",
+                       hint: "Der Radius kommt aus dem Theme")
+        assertContains(main, "ui_theme.get_color(\"dim\", \"GlassBackdrop\")",
+                       hint: "Die Abdunklung (Lesbarkeit auf Schnee) kommt aus dem Theme")
+        assertContains(main, "glass.corner_radius_top_left",
+                       hint: "Der Eckenradius ist der des Glas-Panels, keine zweite Zahl")
+        assertContains(main, "OS.get_environment(\"RS_UI_BLUR\")",
+                       hint: "RS_UI_BLUR=0 ist der A/B-Schalter der Kostenmessung")
+        let behind = try XCTUnwrap(main.code.range(of: "frame.add_child(backdrop)"),
+                                   "Weichzeichner-Rechteck wird in den Rahmen gehängt")
+        let glass = try XCTUnwrap(main.code.range(of: "frame.add_child(panel)"),
+                                  "Glas wird in den Rahmen gehängt")
+        XCTAssertLessThan(behind.lowerBound, glass.lowerBound,
+                          "Weichzeichner VOR dem Glas hängen, sonst verdeckt er es")
+
+        let theme = try RepoSource.file("game/ui/glass_theme.tres")
+        XCTAssertTrue(theme.contains("GlassBackdrop/constants/blur_radius = "),
+                      "Weichzeichner-Radius steht im Theme")
+        XCTAssertTrue(theme.contains("GlassBackdrop/colors/dim = "),
+                      "Abdunklung des Weichzeichners steht im Theme")
+        XCTAssertTrue(theme.contains("GlassFrame/base_type = &\"PanelContainer\""),
+                      "Der Rahmen ist eine Typ-Variante des Theme")
+
+        let shader = try RepoSource.probe("game/ui/glass_blur.gdshader")
+        for token in ["hint_screen_texture", "filter_linear_mipmap", "textureLod("] {
+            assertContains(shader, token, hint: "Weichzeichner liest die Mip-Kette des Bildschirms")
+        }
+        for declaration in ["uniform float blur_px;", "uniform float corner_px;", "uniform vec4 dim;"] {
+            assertContains(shader, declaration,
+                           hint: "default-frei: der Wert kommt aus dem Theme, nicht aus dem Shader")
+        }
+    }
+
     /// Jedes Werkzeug trägt ein GEZEICHNETES Icon (kein Emoji mehr), und
     /// `UiIcon.gd` kennt jeden Namen aus der Werkzeug-Tabelle. Ein Tippfehler
     /// ließe sonst einen leeren Knopf stehen.
