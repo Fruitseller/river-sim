@@ -179,11 +179,14 @@ Verworfen beim Kalibrieren (Karten über `testZielbildMapDiagnostic`):
 
 ### Offene Befunde aus der Test-Kaskade
 
-- **Eis hängt an der Schrittweite, schon vor #174.** Produktion, Jahr 20.000,
-  Eismasse bei dt 100 gegen 1000 auf `origin/main`: 77,4 / 128,1 (1337),
-  0,29 / 1,04 (42), 117,1 / 179,5 (20); mit der neuen Form 49,6 / 126,3,
+- **Erledigt: Eis hing an der Schrittweite, schon vor #174.** Produktion,
+  Jahr 20.000, Eismasse bei dt 100 gegen 1000 auf `origin/main`: 77,4 / 128,1
+  (1337), 0,29 / 1,04 (42), 117,1 / 179,5 (20); mit der neuen Form 49,6 / 126,3,
   65,3 / 31,5, 162,3 / 57,1. Der Wächter `testIceIsFramerateIndependent`
-  (n = 256) lag auf der alten Welt zufällig in einem ruhigen Bereich.
+  (n = 256) lag auf der alten Welt zufällig in einem ruhigen Bereich. Drei
+  Ursachen (instabiler Eis-Transport bei dickem Eis, Pfützen-Verlandung
+  füllte den Gletscherschliff großer Schritte wieder auf, Temperatur vom
+  Schrittanfang), behoben und neu bewacht: `docs/glacier-measurements.md` §L.
 - **Stream-Map trackt die großen Läufe schlechter.** `testStreamMapMarksAndPersists`
   (n = 256, Zellgröße der Suite) misst auf der neuen Form einen Recall von
   0,15 statt > 0,40: die Tropfen folgen den großen D8-Läufen in der flachen
