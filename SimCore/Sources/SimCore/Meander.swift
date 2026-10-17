@@ -583,6 +583,27 @@ extension MeanderState {
     /// im Mittel ein symmetrisches V. Kolk und Gleithang antworten auf den
     /// BOGEN, nicht auf den Knick. EINE Quelle für Stempel und Render.
     static func bendCurvature(_ g: BeltGeometry, config: SimConfig,
+                              activeRange: ClosedRange<Int>? = nil,
+                              into out: inout [Double]) {
+        let c = g.curv.count
+        if out.count < c { out = [Double](repeating: 0, count: max(c, 512)) }
+        for i in 0..<c { out[i] = g.curv[i] }
+        guard c >= 3 else { return }
+        let spc = max(1e-6, config.meanderNodeSpacing)
+        let rLo = max(1, activeRange?.lowerBound ?? 1)
+        let rHi = min(c - 2, activeRange?.upperBound ?? (c - 2))
+        guard rLo <= rHi else { return }
+        for i in rLo...rHi {
+            let kb = Int((config.meanderBeltProfileWidths * g.width[i] / spc).rounded())
+            guard kb > 0 else { continue }
+            let lo = max(1, i - kb), hi = min(c - 2, i + kb)
+            var acc = 0.0
+            for j in lo...hi { acc += g.curv[j] }
+            out[i] = acc / Double(hi - lo + 1)
+        }
+    }
+
+    static func bendCurvature(_ g: BeltGeometry, config: SimConfig,
                               activeRange: ClosedRange<Int>? = nil) -> [Double] {
         let c = g.curv.count
         var out = g.curv

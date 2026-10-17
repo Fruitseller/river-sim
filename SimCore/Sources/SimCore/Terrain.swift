@@ -276,6 +276,8 @@ public final class Terrain {
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
     /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
     private var areaPow: [Double] = []
+    private var beltFloorH: [Double] = []
+    private var beltBendCurv: [Double] = []
     private var mfdRoutes: [MFDRoute] = []
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     /// Zellen unter einer Mäander-Zentrumslinie (M3-Maske). Reconciliation-Maske für
@@ -4721,9 +4723,17 @@ public final class Terrain {
         plugOxbows(indices: Array(from..<meander.oxbows.count))
     }
 
+    private func plugOxbows(from: Int, bed: Bed) {
+        guard from < meander.oxbows.count else { return }
+        plugOxbows(indices: Array(from..<meander.oxbows.count), bed: bed)
+    }
+
     private func plugOxbows(indices: [Int]) {
+        withBed { bed in plugOxbows(indices: indices, bed: bed) }
+    }
+
+    private func plugOxbows(indices: [Int], bed: Bed) {
         let nn = n
-        withBed { bed in
         let ph = bed.h
         for oi in indices {
             let loop = meander.oxbows[oi]
@@ -4739,7 +4749,6 @@ public final class Terrain {
                 lip = max(lip, ph[k - nn]); lip = max(lip, ph[k + nn])
                 depositCell(k, max(0, lip - ph[k]), bed)
             }
-        }
         }
     }
 
@@ -4830,48 +4839,62 @@ public final class Terrain {
         }
         var maxSubUsed = 0
         let mobile = meander.channels.indices.filter { MeanderState.migrates(meander.channels[$0], cfg) }
-        for ci in mobile {
-            mark("belt.migrate")
-            let plan = h.withUnsafeBufferPointer { hb in
-                let ph = hb.baseAddress!
-                return meander.beltMigrationPlan(channel: ci, config: cfg,
-                                                 heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
-            }
-            let rate = plan.rate
-            let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
-            maxSubUsed = max(maxSubUsed, nsub)
-            let sub = dt / Double(nsub)
-            for si in 0..<nsub {
+        hf.withUnsafeBufferPointer { hfb in
+        underIce.withUnsafeBufferPointer { uib in
+        veg.withUnsafeMutableBufferPointer { vb in
+        isChannel.withUnsafeMutableBufferPointer { icb in
+        inBelt.withUnsafeMutableBufferPointer { ibb in
+        barAge.withUnsafeMutableBufferPointer { bab in
+        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
+        withBed { bed in
+            let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
+            let pbelt = ibb.baseAddress!, page = bab.baseAddress!
+            let plock = glb.baseAddress, lockActive = cfg.meanderBeltCoupling && glb.count == cfg.count
+            let pice = uib.baseAddress
+            let iceOn = uib.count == cfg.count
+            for ci in mobile {
                 mark("belt.migrate")
-                let ageAtEnd = dt - Double(si + 1) * sub
-                let ox0 = meander.oxbows.count
-                h.withUnsafeBufferPointer { hb in
-                    let ph = hb.baseAddress!
+                let plan = meander.beltMigrationPlan(channel: ci, config: cfg,
+                                                     heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+                let rate = plan.rate
+                let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
+                maxSubUsed = max(maxSubUsed, nsub)
+                let sub = dt / Double(nsub)
+                for si in 0..<nsub {
+                    mark("belt.migrate")
+                    let ageAtEnd = dt - Double(si + 1) * sub
+                    let ox0 = meander.oxbows.count
                     if si == 0 {
                         meander.applyBeltMigrationPlan(ci, plan: plan, dt: sub, time: years, config: cfg)
                     } else {
                         meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
-                                                   heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+                                                   heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
                     }
+                    for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
+                    meander.channels[ci].clampToWorld(maxCoord: maxc)
+                    if !coupled {
+                        mark("belt.discharge")
+                        refreshBeltDischarge(only: ci)
+                    }
+                    mark("belt.stamp")
+                    beltStampCore(dt: sub, only: ci, ageAtEnd: ageAtEnd,
+                                  bed: bed, phf: phf, pice: pice, pveg: pveg,
+                                  pchan: pchan, pbelt: pbelt, page: page, plock: plock,
+                                  lockHere: lockActive, iceOn: iceOn)
+                    plugOxbows(from: ox0, bed: bed)
                 }
-                for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
-                meander.channels[ci].clampToWorld(maxCoord: maxc)
-                if !coupled {
-                    mark("belt.discharge")
-                    refreshBeltDischarge(only: ci)
-                }
-                mark("belt.stamp")
-                beltStamp(dt: sub, only: ci, ageAtEnd: ageAtEnd)
-                plugOxbows(from: ox0)
             }
-        }
-        beltSubsteps = maxSubUsed
-        mark("belt.attach")
-        meander.attachTributaries(config: cfg)
-        meander.channels.removeAll { $0.nodes.count < 3 }
-        if !coupled { refreshBeltDischarge() }
-        mark("belt.fixedStamp")
-        beltStamp(dt: dt, only: nil, ageAtEnd: 0)
+            beltSubsteps = maxSubUsed
+            mark("belt.attach")
+            meander.attachTributaries(config: cfg)
+            meander.channels.removeAll { $0.nodes.count < 3 }
+            if !coupled { refreshBeltDischarge() }
+            mark("belt.fixedStamp")
+            beltStampCore(dt: dt, only: nil, ageAtEnd: 0,
+                          bed: bed, phf: phf, pice: pice, pveg: pveg,
+                          pchan: pchan, pbelt: pbelt, page: page, plock: plock,
+                          lockHere: false, iceOn: iceOn)
+        }}}}}}}}
         mark("belt.fill")
         fillOxbows(dt: dt, byAge: true)
         if meander.channels.isEmpty { seedMeander() }
@@ -4956,13 +4979,6 @@ public final class Terrain {
     private func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) {
         let cs = cfg.cellSize
         guard cs > 0, cs.isFinite else { return }
-        let nn = n
-        let rel = Terrain.relaxFraction(dt: dt, tau: max(1e-6, cfg.meanderBeltRelaxYears))
-        let capF = stepCapFraction(dt)
-        let m = cfg.mExp, cellArea = cs * cs
-        let skew = cfg.meanderBeltPoolSkew, gain = cfg.meanderBeltPoolGain
-        let barTop = cfg.meanderBarTopDepth, barW = cfg.meanderBarWidths
-        let depthK = cfg.meanderBeltDepthPerWidth * cs
         hf.withUnsafeBufferPointer { hfb in
         underIce.withUnsafeBufferPointer { uib in
         veg.withUnsafeMutableBufferPointer { vb in
@@ -4976,6 +4992,33 @@ public final class Terrain {
         let plock = glb.baseAddress, lockHere = cfg.meanderBeltCoupling && only != nil && glb.count == cfg.count
         let pice = uib.baseAddress
         let iceOn = uib.count == cfg.count
+        beltStampCore(dt: dt, only: only, ageAtEnd: ageAtEnd,
+                      bed: bed, phf: phf, pice: pice, pveg: pveg,
+                      pchan: pchan, pbelt: pbelt, page: page, plock: plock,
+                      lockHere: lockHere, iceOn: iceOn)
+        }}}}}}}}
+    }
+
+    private func beltStampCore(dt: Double, only: Int?, ageAtEnd: Double,
+                               bed: Bed,
+                               phf: UnsafePointer<Double>,
+                               pice: UnsafePointer<Bool>?,
+                               pveg: UnsafeMutablePointer<Double>,
+                               pchan: UnsafeMutablePointer<Bool>,
+                               pbelt: UnsafeMutablePointer<Bool>,
+                               page: UnsafeMutablePointer<Double>,
+                               plock: UnsafeMutablePointer<Bool>?,
+                               lockHere: Bool,
+                               iceOn: Bool) {
+        let cs = cfg.cellSize
+        guard cs > 0, cs.isFinite else { return }
+        let nn = n
+        let rel = Terrain.relaxFraction(dt: dt, tau: max(1e-6, cfg.meanderBeltRelaxYears))
+        let capF = stepCapFraction(dt)
+        let m = cfg.mExp, cellArea = cs * cs
+        let skew = cfg.meanderBeltPoolSkew, gain = cfg.meanderBeltPoolGain
+        let barTop = cfg.meanderBarTopDepth, barW = cfg.meanderBarWidths
+        let depthK = cfg.meanderBeltDepthPerWidth * cs
         @inline(__always) func cell(_ x: Double, _ z: Double) -> Int {
             min(max(Int(z.rounded()), 0), nn - 1) * nn + min(max(Int(x.rounded()), 0), nn - 1)
         }
@@ -5006,12 +5049,15 @@ public final class Terrain {
             if part == 1 && firstMob == nil { continue }
             let needsLateral = part != 2 && firstMob != nil
             // Krümmungs-Mittelung nur über dem mobilen Fenster (Teilschritt braucht nur dort Kolk/Gleithang)
-            let bendCurv = needsLateral
-                ? MeanderState.bendCurvature(g, config: cfg, activeRange: firstMob!...lastMob!)
-                : []
+            if needsLateral {
+                MeanderState.bendCurvature(g, config: cfg, activeRange: firstMob!...lastMob!, into: &beltBendCurv)
+            }
             // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten
             // gemittelt — nur gebraucht, wo ein flacher Knoten in ±2 liegt.
-            var floorH = needsLateral ? [Double](repeating: 0, count: c) : []
+            if needsLateral {
+                if beltFloorH.count < c { beltFloorH = [Double](repeating: 0, count: max(c, 512)) }
+                for i in 0..<c { beltFloorH[i] = 0 }
+            }
             let fLo = part == 1 ? max(0, firstMob! - 2) : 0
             let fHi = part == 1 ? min(c - 1, lastMob! + 2) : (c - 1)
             if needsLateral && fLo <= fHi {
@@ -5027,7 +5073,7 @@ public final class Terrain {
                         lo = min(lo, bed.h[cell(nodes[i].x + g.nx[i] * s, nodes[i].z + g.nz[i] * s)])
                         s += 0.5
                     }
-                    floorH[i] = lo
+                    beltFloorH[i] = lo
                 }
             }
             var budget = 0.0
@@ -5062,10 +5108,10 @@ public final class Terrain {
                 if part == 2 { budget = 0; continue }
                 var ref = 0.0
                 let lo = max(0, i - 2), hi = min(c - 1, i + 2)
-                for j in lo...hi { ref += floorH[j] }
+                for j in lo...hi { ref += beltFloorH[j] }
                 ref /= Double(hi - lo + 1)
                 let depth = depthK * b
-                let a = min(1, abs(bendCurv[i]) * b * gain)
+                let a = min(1, abs(beltBendCurv[i]) * b * gain)
                 // Profil-Maximum von (1 − e²)(1 + κe), κ = skew·a: Nullstelle der
                 // Ableitung −3κe² − 2e + κ. `z_bf` steht genau so hoch, dass der
                 // tiefste Punkt des Zielprofils auf der heutigen Sohle liegt —
@@ -5074,7 +5120,7 @@ public final class Terrain {
                 let kap = skew * a
                 let eMax = kap > 1e-9 ? (-2 + (4 + 12 * kap * kap).squareRoot()) / (6 * kap) : 0
                 let zbf = ref + depth * (1 - eMax * eMax) * (1 + kap * eMax)
-                let sgn = bendCurv[i] > 0 ? -1.0 : 1.0            // Außen-Normale wie `meanderStamp`
+                let sgn = beltBendCurv[i] > 0 ? -1.0 : 1.0            // Außen-Normale wie `meanderStamp`
                 let ox = sgn * g.nx[i], oz = sgn * g.nz[i]
                 let barTarget = zbf - barTop * depth
                 // Außen → Mitte → innen: erst abtragen, dann innen ablagern.
@@ -5112,7 +5158,6 @@ public final class Terrain {
             }
             }
         }
-        }}}}}}}}
     }
 
     // MARK: - Kopplung Gürtel ↔ Entwässerung (Issue #187)
