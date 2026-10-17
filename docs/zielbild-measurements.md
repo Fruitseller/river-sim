@@ -190,6 +190,19 @@ Verworfen beim Kalibrieren (Karten über `testZielbildMapDiagnostic`):
   Ebene seltener. Das betrifft Abnahmepunkt 21 (Hauptlauf ohne Lücke) und ist
   in Paket C auf dem Produktionsgitter nachzumessen.
 
+  Nachgemessen (`testStreamMapRecallDiagnostic`, Produktion n = 720, Jahr
+  20.000, Welten von `0fec08b`): auf dem Produktionsgitter liegen 41–58 % der
+  großen D8-Läufe (Abfluss ≥ 10 × Bach-Schwelle) über der Track-Schwelle,
+  gemalt sind sie zu 94–96 %, weil Band und Abfluss-Vertrauen sie tragen.
+  Die Stream-Map entscheidet nur über die kleinen Zubringer: unter 3 ×
+  Bach-Schwelle sind 20–28 % gemalt, mit einer perfekten Stream-Map
+  („Orakel") wären es 74–82 %. Das ist gewollt (weniger, dünnere Bäche; die
+  Stütze filtert verwaiste Linien). Die Hauptlauf-Lücke von Seed 1337
+  (18 %, längste 39 Zellen; 42: 0 %, 20: 12 % an der Quelle) bleibt OHNE
+  Stream-Map gleich (18,1 %): sie kommt aus der Entkopplung Gürtel ↔ D8
+  (#187, unten), nicht aus der Stream-Map. Deshalb keine Änderung an der
+  Stream-Map.
+
 ### Laufzeit und Determinismus nach Paket A
 
 `simperf` (Produktion, Seed 1337, M4 Max, 2026-10-11), alt (`origin/main`
