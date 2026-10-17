@@ -121,6 +121,9 @@ Zellen), weil die Großform keine Steilküsten hat. Das ändert erst Paket A
 
 ## §C Mündungen und Sedimentfahne
 
+(Stand der ersten Fassung; Schwelle und Stärke-Rampe stehen seit §F anders,
+die Mündungs-Zahlen gelten weiter.)
+
 D8-Mündungen ins Meer ab 2000 Zellen Einzugsgebiet: 9…13 je Welt, davon
 1…4 über 20.000 Zellen. Relief der Einzugsgebiete 0,29…0,51. Stärke
 (Abfluss-Rampe log 2000…40.000 × Fracht 0,3 + 0,7 · Relief/0,5) für die drei
@@ -152,4 +155,194 @@ Ein interleaved A/B gegen den Stand vor #174 für `WaterFieldRenderer.bytes`
 fehlt; die Zahl oben ist die absolute Laufzeit, keine Differenz. Die
 Shader-Kosten der Fahne (sechs `textureLod`-Abgriffe je Meeres-Pixel im
 Sim-Quadrat) und des Sand-Blocks sind NICHT gemessen: Agenten bauen die
-GDExtension nicht lokal, und CI misst keine Bildrate.
+GDExtension nicht lokal, und CI misst keine Bildrate. (Seit §F liest der
+Ozean-Shader die Fahne mit einer Abfrage; die CPU-Kosten der neuen Küsten- und
+Fahnen-Ableitung stehen in §G.)
+
+## §E Strand-Ring um die ganze Insel (Befund und Umbau)
+
+Reproduzieren (Welt-Cache `RS_CACHE`, Standard `/tmp/river-sim-coast-cache`, die
+Welt entsteht beim ersten Lauf; `RS_OUT` hängt die Ausgabe an eine Datei,
+`RS_MAP` schreibt Küstenkarten als PPM):
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testCoastShapeDiagnostic
+```
+
+Produktions-Config (`SimConfig.production`, n = 720, Einlauf 3000 Jahre), Seeds
+1337 / 42 / 20 bei Jahr 20.000, Apple M4 Max. Die Welten dieses Messlaufs
+kommen wie bei `simperf` direkt aus `Terrain` und sind nicht bit-gleich mit der
+Welt, die die Brücke im Spiel erzeugt; für die Verteilungen ist das ohne Belang,
+Flussmündungen liegen im Spiel an anderen Stellen.
+
+**Befund.** Auf der Insel im Diorama lief ein beiger Streifen von nahezu
+konstanter Breite um fast die ganze Küste, auch unter Felswänden und
+Steilhängen; die Vorlagen zeigen Strände in Buchten, an Mündungen und auf
+Küstenebenen, Landzungen und Steilhänge kommen mit Fels oder Bewuchs bis ans
+Wasser. Das Küstenmaterial (§B) las nur Höhe über dem Meer und lokale
+Steigung. Gemessen an der Küstenlinie (Landzellen mit Meer in der 3×3-
+Nachbarschaft):
+
+| Seed | Küstenzellen | Sand ≥ 0,5 | Abschnitte | Sandbreite 2 / 3 Zellen | macroSlope p50 | Höhe über NN p50 |
+| ---: | ---: | ---: | ---: | :--- | ---: | ---: |
+| 1337 | 2520 | 100 % | 1 | 347 / 2173 | 0,0020 | 0,0019 |
+| 42 | 1929 | 100 % | 2 | 399 / 1529 | 0,0023 | 0,0023 |
+| 20 | 2232 | 100 % | 1 | 748 / 1481 | 0,0026 | 0,0024 |
+
+Ursache: `Terrain.wavePass` zieht jede Küste im Wellenband (`waveBand` 0,06)
+auf denselben Talus (`waveTalus` 0,002 je Zelle). Steigung und Höhe der
+Küstenzellen liegen damit alle weit unter den Sand-Fenstern (Steigung p90
+≤ 0,0039 gegen 0,0042…0,0058, Höhe p90 ≤ 0,0053 gegen 0,008…0,018); sie
+unterscheiden Bucht, Landzunge und Steilküste nicht. Fels ≥ 0,5 an der Küste:
+0 Zellen. Die Unterschiede liegen im größeren Zusammenhang:
+
+| Größe (an der Küstenlinie) | Seed 1337 p10 / p50 / p90 | Seed 42 | Seed 20 |
+| :--- | :--- | :--- | :--- |
+| Rückland-Relief, Radius 8 (max h im Fenster − h) | 0,018 / 0,032 / 0,064 | 0,028 / 0,037 / 0,082 | 0,026 / 0,042 / 0,100 |
+| Rückland-Relief, Radius 16 | 0,041 / 0,081 / 0,146 | 0,059 / 0,102 / 0,169 | 0,062 / 0,126 / 0,206 |
+| Meeresanteil im Fenster, Radius 10 | 0,41 / 0,47 / 0,53 | 0,42 / 0,47 / 0,52 | 0,41 / 0,47 / 0,53 |
+
+Das Rückland-Relief streut um den Faktor 3…4 (Küstenebene gegen Steilhang);
+der Meeresanteil streut zwischen Bucht (0,41) und Landzunge (0,53), eine
+gerade Küste liegt bei 0,47 (der Küstenpunkt selbst ist Land). Radius 8
+(≈ 125 m) trennt das Relief schon deutlich und bleibt nahe am Brandungssaum;
+die größeren Radien verschieben nur die Skala.
+
+**Änderung** (`SimRender.CoastMaterial`, Kalibrierung `WaterRender` § Strand
+und Felsküste): je Küstenzelle ein Strandpotenzial aus vier Größen, die
+Saumzellen erben es von ihrer Küstenzelle (Breitensuche, `origin`):
+
+1. Rückland-Relief (`beachReliefLo/Hi` 0,020…0,042): Ebene trägt Strand, Hang nicht.
+2. Offenheit (`beachOpenLo/Hi` 0,40…0,50, Meeresanteil im Radius 10): Stellvertreter
+   für Wellenenergie; die Sim kennt kein Wellenfeld (`wavePass` ist lokal, ohne
+   Richtung oder Fetch). Bucht sammelt Sand, die offene Landzunge nur noch
+   `beachExposedShare` (0,2).
+3. Sedimentzufuhr nahe Flussmündungen (D8-Empfänger = Meer, Einzugsgebiet ab
+   300 Zellen, log-Rampe bis 6000, Reichweite 16 Zellen): hebt das Potenzial,
+   zählt das Rückland um die Hälfte weniger (das Tal öffnet es) und dämpft das
+   Rauschen.
+4. Wertrauschen entlang der Küste (Wellenlänge 30 Zellen, nur Zellenlage, damit
+   nichts im Zeitraffer springt): bricht den Strand auf.
+
+Breite = `beachMaxWidthCells` (5 Zellen ≈ 78 m) × Rampe 0,3…0,9 des Potenzials,
+also stetig 0…5 statt „0 oder voll" (mit einer Rampe 0,25…0,55 gab der Sweep
+auf Seed 1337 1053 Küstenzellen ohne, 1178 mit vollem und nur 289 mit
+dazwischenliegendem Strand; jetzt 1400 / 426 / 694). Höhen- und Steigungsfenster
+je Zelle bleiben als Gate (die Breite im Bild reicht deshalb selten über 4
+Zellen). Steiles Rückland (`cliffReliefLo/Hi` 0,045…0,075, offene Landzungen
+um 30 % steiler) wird Felsküste: der Fels kommt bis ans Wasser und räumt den
+Bewuchs ab. Dazu beendet `TerrainColorRenderer` die Küstenfarbrampe an der
+Wasserlinie (`v ≤ sea` statt `sea + 0,012`): Land ohne Strand läuft als
+Bewuchs oder Fels bis ans Wasser, statt als nackter Ring. Das Abstandsfeld
+(Chebyshev, Deckel 6) kommt jetzt aus einer Breitensuche von der Küste aus
+(siehe §G).
+
+**Ergebnis** (fertige Material-Puffer, Sand-Byte ≥ 128 bzw. Fels-Byte ≥ 128 an
+der Küstenlinie):
+
+| Seed | Sand ≥ 0,5 vorher → nachher | Abschnitte | größter Abschnitt am Sand | Fels ≥ 0,5 vorher → nachher |
+| ---: | :--- | :--- | ---: | :--- |
+| 1337 | 100 % → 45,8 % | 1 → 54 | 8 % | 0 → 12,7 % |
+| 42 | 100 % → 42,4 % | 2 → 36 | 10 % | 0 → 18,1 % |
+| 20 | 100 % → 30,7 % | 1 → 39 | 12 % | 0 → 35,0 % |
+
+Sandbreite an der Küstenlinie (größter Abstand einer Sandzelle im 5×5-Fenster,
+Histogramm 0…3+ Zellen): Seed 1337 vorher `[0, 0, 347, 2173]`, nachher
+`[1076, 194, 277, 973]`. Seed 20 ist die schroffste Welt (Rückland-Relief p50
+0,042) und hat am wenigsten Strand, am meisten Fels.
+
+Bildbelege (maximiert, `balanced`, Jahr 20.000, oben vorher, unten nachher,
+Spalten Diorama / Tal / Nah): `docs/screenshots/zielbild-174/coast-plume_seed1337.jpg`,
+`…_seed42.jpg`, `…_seed20.jpg`.
+
+Wächter (`SimCoreTests/CoastMaterialTests`): Steilflanke ohne Strand und mit
+Fels ≥ 90 %, Küstenebene mit Strand; Strand liegt in Buchten, nicht auf
+Landzungen; die Breite wechselt (≥ 4 verschiedene Breiten, 15…85 % der Küste
+mit Strand, ≥ 3 getrennte Abschnitte); eine Mündung liefert Sand an sonst
+steiler Küste, fern davon keiner; die Strandfunktion ist monoton in Relief,
+Offenheit und Zufuhr; die Kalibrier-Fenster überlappen nicht.
+
+## §F Breite Rauchfächer der Sedimentfahnen (Befund und Umbau)
+
+**Befund.** Im Diorama lagen an mehreren Mündungen breite, braun-orange Fächer,
+die weit ins Meer reichten. Die Vorlagen zeigen dezente Trübung nahe der
+Mündung, die an der Küste klebt und rasch abklingt. Die alte Fahne war eine
+einzelne Quellzelle je Mündung, die der Shader über eine Mip-Kette
+(Stufe 3 → 5, also 8 → 32 Zellen breit) und eine feste Strömung aufzog; Breite
+und Reichweite wuchsen mit jeder Stufe, unabhängig von der Küste, bei
+lehmbraunem Ton (0,42 0,38 0,27) und 60 % Deckung. Gemessen mit denselben
+Quellen und derselben Shader-Formel (CPU-Nachbau, Trübungsanteil ab 10 % der
+Wasserfarbe gilt als sichtbar):
+
+| Seed | Fahnen (≥ 2000 Zellen) | sichtbare Fläche | Anteil Meeresfläche | größte Entfernung zur Mündung | Abstand zur Küste max / Ø |
+| ---: | ---: | ---: | ---: | ---: | :--- |
+| 1337 | 21 | 6374 Zellen | 2,44 % | 54 Zellen | 40 / 17,6 Zellen |
+| 42 | 10 | 4585 Zellen | 1,23 % | 54 Zellen | 26 / 8,5 Zellen |
+| 20 | 13 | 3177 Zellen | 0,90 % | 50 Zellen | 30 / 9,0 Zellen |
+
+**Änderung** (`SimRender.SedimentPlume`, Kalibrierung `WaterRender` § Sedimentfahne):
+
+* Nur die großen Flüsse: ab `plumeMinDischargeCells` 9000 Zellen (vorher 2000);
+  die Stärke steigt log-förmig bis 18.000 Zellen (vorher 40.000) und mit dem
+  Relief des Einzugsgebiets (Fracht-Stellvertreter wie bisher). Das sind 7 / 4 / 4
+  Mündungen statt 21 / 10 / 13; die größte liegt bei Stärke 0,93 / 0,80 / 0,56,
+  die übrigen zwischen 0,05 und 0,53.
+* Küstennah und schmal: die Fahne wird nicht mehr im Shader aufgezogen,
+  sondern auf der CPU als Dichte je Meereszelle gerechnet. Ein kürzester Pfad
+  (Kosten wachsen mit der Schrittlänge und gegen die Küstenströmung, die Drift
+  der Ozean-Wellen) läuft ab der ersten Meereszelle hinter der Mündung nur über
+  Zellen höchstens `plumeBandCells` (5) vom Land; die Dichte klingt mit
+  e^(−Kosten/18 Zellen) ab, endet nach 3,5 Abklinglängen und blendet zum
+  Bandrand aus. Stromauf klingt sie auf einem Drittel der Länge ab; wo die
+  Küste quer zur Strömung läuft, reicht sie nach beiden Seiten. Ein Strahl
+  vor der Mündung (breiteres Band am Anfang) wurde probiert und verworfen: die
+  Strömungs-Kosten verhinderten ihn dort, wo das Meer stromauf liegt, und er
+  änderte das Bild kaum.
+* Weniger gesättigt: Farbe (0,44 0,43 0,32) statt (0,42 0,38 0,27), Deckung
+  höchstens 70 % der Dichte (vorher 60 % auf einer sich auf 1 sättigenden
+  Summe).
+* Der Shader liest nur noch die fertige Dichte, mit EINER Abfrage (zwei während
+  der Overlay-Blende) auf Mip-Stufe 1 (`oceanPlumeLod`). Die Uniforms
+  `water_ocean_plume_length/_spread/_gain` entfallen. Die Stufe muss ≤ 4
+  bleiben, weil die Mip-Kette der Textur bei n = 720 (2⁴ · 45) nur bis dort
+  gleichmäßig ist (die alte Spreizung bis Stufe 5 lag darüber); Wächter:
+  `CoastMaterialTests.testCalibrationWindowsFitTheWaveBandAndDoNotOverlap`.
+
+**Ergebnis:**
+
+| Seed | Fahnen | sichtbare Fläche | Anteil Meeresfläche | größte Entfernung zur Mündung | Abstand zur Küste max / Ø |
+| ---: | ---: | ---: | ---: | ---: | :--- |
+| 1337 | 7 | 393 Zellen (−94 %) | 0,15 % | 20 Zellen | 3 / 1,7 Zellen |
+| 42 | 4 | 205 Zellen (−96 %) | 0,05 % | 26 Zellen | 3 / 1,8 Zellen |
+| 20 | 4 | 131 Zellen (−96 %) | 0,04 % | 19 Zellen | 3 / 1,5 Zellen |
+
+Wächter (`SimCoreTests/SedimentPlumeTests`): die Fahne beginnt auf der Mündungszelle
+mit voller Stärke und berührt nie Land; sie liegt in einem Band von höchstens
+`plumeBandCells` und lässt offenes Meer klar; sie klingt entlang der Küste
+monoton ab und endet nach 3,5 Abklinglängen; stromab reicht sie weiter als
+stromauf; die sichtbare Fläche einer vollen Fahne bleibt unter 600 Zellen
+(der alte Fächer deckte rund 3000).
+
+## §G Kosten
+
+Median über 25 Läufe, abwechselnd (interleaved), Seed 1337 / 42 / 20 (Jahr
+20.000), M4 Max, Maschine sonst ruhig, CPU-seitig:
+
+| Pass | 1337 | 42 | 20 |
+| :--- | ---: | ---: | ---: |
+| Abstandsfeld alt (Deckel 4, vor §E) | 1,56 ms | 1,12 ms | 1,35 ms |
+| Abstandsfeld alt bei Deckel 6 (Gegenprobe) | 2,17 ms | 2,05 ms | 2,07 ms |
+| Abstandsfeld neu (Breitensuche, Deckel 6) | 0,87 ms | 0,78 ms | 0,82 ms |
+| Küstenfeld neu (`shore`: Abstand, Relief, Offenheit, Zufuhr, Breite) | 2,29 ms | 2,01 ms | 2,13 ms |
+| Mündungen (= Etikett-Lauf der alten Fahne) | 2,51 ms | 1,44 ms | 1,58 ms |
+| Fahne neu (Mündungen + Pfad) | 3,09 ms | 1,83 ms | 1,90 ms |
+
+Das Küstenfeld kostet gegenüber dem alten Abstandsfeld (Deckel 4) rund
+0,7…0,9 ms mehr, die Fahne rund 0,3…0,6 ms; zusammen rund 1,1…1,3 ms je Overlay-Takt (im
+Zeitraffer höchstens alle 0,30 s; das Wasserfeld kostet dort 12,8 ms, §D). Die
+Breitensuche ist bei gleichem Deckel gut doppelt so schnell wie die alte
+Stufen-Erweiterung. Der Ozean-Shader wurde billiger statt teurer (eine Abfrage
+statt sechs, während der Overlay-Blende zwei statt zwölf), der Terrain-Shader
+ist unverändert; ein Bildraten-A/B wurde deshalb nicht gefahren und ist NICHT
+gemessen.

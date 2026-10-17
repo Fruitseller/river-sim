@@ -454,10 +454,18 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`),
 - `CoastMaterial`, `WetMeadow`, `SedimentPlume` (Issue #174, Paket C):
   Strand und Felsküste (Sand im A-Kanal der Makrofarbe, Fels in den
-  Materialgewichten), nasse Wiese statt kleiner Raster-Tümpel (Maske aus
-  `WaterFieldRenderer.wetMeadow`, wirkt auf Material und Schutzmaske) und die
-  Quellen der Sedimentfahnen im Meer (EINE Float-Zelle je Mündung, Frame-
-  Schlüssel `plume`, `ocean.gdshader` zeichnet sie über die Mip-Kette weich).
+  Materialgewichten), je KÜSTENPUNKT aus dem Zusammenhang statt aus Höhe und
+  lokaler Steigung (die hält `wavePass` überall gleich, §E): Rückland-Relief,
+  Offenheit (Stellvertreter für Wellenenergie), Mündungs-Zufuhr und Rauschen
+  entlang der Küste ergeben Strandbreite (0…5 Zellen) und Steilküsten-Anteil,
+  die jede Saumzelle von ihrer Küstenzelle erbt. Nasse Wiese statt kleiner
+  Raster-Tümpel (Maske aus `WaterFieldRenderer.wetMeadow`, wirkt auf Material
+  und Schutzmaske). Sedimentfahnen im Meer: nur die großen Flüsse
+  (`plumeMinDischargeCells`), als fertige Dichte je Meereszelle (küstennaher
+  Pfad ab der Mündung, Band `plumeBandCells`, klingt mit der Pfadlänge ab,
+  Frame-Schlüssel `plume`); `ocean.gdshader` liest sie mit EINER Abfrage auf
+  niedriger Mip-Stufe (`oceanPlumeLod` höchstens 4, die Kette ist bei n = 720
+  nur bis dort gleichmäßig).
   Kalibrierung in `WaterRender` (Messreihe `docs/river-coast-render-measurements.md`;
   Wächter: `SimCoreTests/CoastMaterialTests.swift` und `SedimentPlumeTests.swift`),
 - `BarMaterial`: Material des Mäandergürtels (Issue #174 C2): Sand nur auf
