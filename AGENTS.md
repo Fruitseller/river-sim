@@ -247,14 +247,18 @@ Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension;
 standardmäßig AUS, weil die Ersparnis gemessen 1,8 ms je Aufruf ist und keine
 Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet
 zusätzlich die Bedienleiste aus, `RS_SHOT_UI` behält sie (Aufnahmen der
-Bedienung selbst, Issue #174). `RS_SHOT` blendet auch den Pinsel aus;
+Bedienung selbst, Issue #174). `RS_UI_BLUR=0` lässt den Weichzeichner hinter den
+Glas-Panels weg (A/B im selben Build, Kosten: `docs/zielbild-measurements.md`
+§ Glas-Weichzeichner). `RS_SHOT` blendet auch den Pinsel aus;
 `RS_BRUSH=<Radius>` zeigt die Pinselkuppel trotzdem, in der Bildmitte statt am
 Mauszeiger (Aufnahmen der Kuppel ohne Maus). Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `baseline`, `prototype` ist mit #174 D entfernt; `RS_STUDY_MODE`
 `orbit|simulation|shot|still`, `RS_STUDY_OUTPUT`, per Skript zusätzlich
-`RS_STUDY_MOVIE`; für die Kalibrierung `RS_STUDY_DEBUG`) liegen in
+`RS_STUDY_MOVIE`; für die Kalibrierung `RS_STUDY_DEBUG`; für die Kosten der
+Bedienung `RS_STUDY_UI` `plain|glass|ab` und `RS_STUDY_ROUNDS`, s. Kopf von
+`Flusstal.gd`) liegen in
 `game/studies/flusstal/Flusstal.gd` und werden über `scripts/graphics-study.sh`
 gesetzt; Direktstart ohne gültige Variante bricht ab. Seit #152 sind alle Hebel
 Produktion; ein gesetztes `RS_STUDY_LEVERS` bricht deshalb ebenfalls ab. Die
@@ -325,7 +329,9 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    `Packed*Array`. Keine Physik, keine Render-Berechnung, kein Render-Zustand.
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input; das Aussehen der
-   Bedienung steht in EINEM Theme, `ui/glass_theme.tres`, die Werkzeug- und
+   Bedienung steht in EINEM Theme, `ui/glass_theme.tres` (samt Radius und
+   Abdunklung des Weichzeichners hinter den Panels; Shader
+   `ui/glass_blur.gdshader`), die Werkzeug- und
    Tempo-Icons zeichnet `scripts/UiIcon.gd`, Issue #174, Wächter
    `SimCoreTests/UiContractTests.swift` und `tests/ui_layout.gd`),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
