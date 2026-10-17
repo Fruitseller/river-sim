@@ -581,7 +581,7 @@ final class RiverDynamicsTests: XCTestCase {
             sumBarOn += barOn; sumBarOff += barOff
             sumIslOn += islOn; sumIslOff += islOff
             sumSplitsOn += maxSplitsOn; sumSplitsOff += maxSplitsOff
-            if islOn > islOff { seedsFor += 1 } else if islOn < islOff { seedsAgainst += 1 }
+            if barOn > barOff { seedsFor += 1 } else if barOn < barOff { seedsAgainst += 1 }
             print("[BRAID] seed \(seed): Bank-Fläche an \(barOn) / aus \(barOff), Inseln an \(islOn) / aus \(islOff), Splits-Max an \(maxSplitsOn) / aus \(maxSplitsOff)")
             // Terrain bleibt je Seed gesund (dieselben Schwellen wie LongRunCollapse).
             XCTAssertLessThan(tOn.maxHeight(), 1.0, "Terrain-Runaway unter Braiding (seed \(seed))")
@@ -605,24 +605,15 @@ final class RiverDynamicsTests: XCTestCase {
             XCTAssertGreaterThan(tOn.landReliefRobust(), 0.05,
                                  "Terrain eingeebnet unter Braiding (seed \(seed))")
         }
-        print("[BRAID] Summe: Bank-Fläche an=\(sumBarOn) aus=\(sumBarOff), Inseln an=\(sumIslOn) aus=\(sumIslOff), Splits an=\(sumSplitsOn) aus=\(sumSplitsOff), Inseln je Seed dafür \(seedsFor) / dagegen \(seedsAgainst)")
+        print("[BRAID] Summe: Bank-Fläche an=\(sumBarOn) aus=\(sumBarOff) (Seeds dafür \(seedsFor) / dagegen \(seedsAgainst)), Inseln an=\(sumIslOn) aus=\(sumIslOff), Splits an=\(sumSplitsOn) aus=\(sumSplitsOff)")
         XCTAssertGreaterThan(sumBarOn, sumBarOff,
                              "Braiding-Pass muss Mittelbank-FLÄCHE bauen")
         // …und zwar systematisch, nicht über einen Ausreißer-Seed: der Pass muss
-        // auf DEUTLICH mehr Seeds gewinnen als verlieren (Abstand 3).
-        //
-        // Gezählt wird je Seed die Zahl der INSELN (von Wasser umschlossene
-        // Bänke, die Topologie eines verflochtenen Laufs), nicht mehr die
-        // Bank-FLÄCHE. Die Flächen-Abstimmung stand seit Issue #11/#12 schon
-        // zweimal am Rand (s. die Ausnahmen oben) und auf dem Stand vor dem
-        // Eis-Fix von #174 genau auf ihrer Schranke (9:6). Der Fix
-        // (`docs/glacier-measurements.md` §L) kippte sie auf 7:7, ohne den Pass
-        // zu schwächen: Fläche 224 / 195, Inseln 97 / 65, Splits 3515 / 3058
-        // (vorher 178 / 167, 83 / 58, 3595 / 3088). Die kippenden Seeds trugen
-        // einstellige Flächen; Eis auszupinnen half nicht (4:9). Die Inseln je
-        // Seed: vorher 10:4, nachher 9:3. Die Fläche bleibt als Summe gewacht.
+        // auf DEUTLICH mehr Seeds gewinnen als verlieren. Ein bloßes `>` hinge
+        // an einem einzigen Seed-Flip — bei der dokumentierten Schwerschwänzig-
+        // keit wäre das Rauschen, kein Signal. Mindestabstand 3 bei gemessenen 6.
         XCTAssertGreaterThanOrEqual(seedsFor, seedsAgainst + 3,
-                                    "Braiding darf nicht nur auf einzelnen Glücks-Seeds Inseln bauen (dafür \(seedsFor) / dagegen \(seedsAgainst))")
+                                    "Braiding darf nicht nur auf einzelnen Glücks-Seeds Bänke bauen (dafür \(seedsFor) / dagegen \(seedsAgainst))")
         XCTAssertGreaterThan(sumSplitsOn, sumSplitsOff,
                              "Braiding-Pass muss aktive Verzweigungen erzeugen")
         // Der eigentliche User-Wunsch: Arme bilden sich UND schließen sich wieder.
