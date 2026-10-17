@@ -4984,55 +4984,37 @@ public final class Terrain {
     /// Trasse (`MeanderState.traceHorton`) und die Kopplung je Schritt.
     static func drainageSegments(config cfg: SimConfig, h: UnsafePointer<Double>, hf: UnsafePointer<Double>,
                                  area: UnsafePointer<Double>, receiver: UnsafePointer<Int32>) -> [DrainageSegment] {
-        let nn = cfg.n, cnt = cfg.count, sea = cfg.sea
+        let cnt = cfg.count, sea = cfg.sea
         let lakeEps = MeanderState.traceLakeDepth
         let minA = cfg.meanderMinCells * cfg.cellSize * cfg.cellSize
         @inline(__always) func big(_ k: Int) -> Bool { hf[k] > sea && area[k] >= minA }
-        // Größter großer Zufluss einer Zelle (Gleichstand: kleinerer Index), −1 = keiner.
-        @inline(__always) func bestDonor(_ r: Int) -> Int {
-            let ri = r % nn, rj = r / nn
-            var best = -1
-            for dj in -1...1 {
-                let j = rj + dj
-                guard j >= 0, j < nn else { continue }
-                for di in -1...1 where di != 0 || dj != 0 {
-                    let i = ri + di
-                    guard i >= 0, i < nn else { continue }
-                    let d = j * nn + i
-                    guard Int(receiver[d]) == r, big(d) else { continue }
-                    if best < 0 || area[d] > area[best] || (area[d] == area[best] && d < best) { best = d }
-                }
-            }
-            return best
-        }
-        // Quellen (große Zellen ohne großen Zufluss) parallel in Blöcken
-        // suchen, in Index-Reihenfolge zusammensetzen — dieselbe Liste wie die
-        // serielle Schleife (gemessen 1,4 ms je Schritt seriell).
-        let chunks = max(1, min(64, cnt / 4096))
-        var found = [[Int]](repeating: [], count: chunks)
-        found.withUnsafeMutableBufferPointer { fb in
-            let pf = fb.baseAddress!
-            DispatchQueue.concurrentPerform(iterations: chunks) { c in
-                var list: [Int] = []
-                for s in (cnt * c / chunks)..<(cnt * (c + 1) / chunks) where big(s) && bestDonor(s) < 0 {
-                    list.append(s)
-                }
-                pf[c] = list
-            }
-        }
+
+        var bestDonor = [Int32](repeating: -1, count: cnt)
         var out: [DrainageSegment] = []
-        for s in found.joined() {
-            var cells: [Int32] = [Int32(s)]
-            var c = s, confluence = false
-            while cells.count < cnt {
-                let r = Int(receiver[c])
-                if r < 0 || r >= cnt || r == c { break }
-                if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
-                cells.append(Int32(r))
-                if bestDonor(r) != c { confluence = true; break }
-                c = r
+        bestDonor.withUnsafeMutableBufferPointer { bdb in
+            let pb = bdb.baseAddress!
+            for d in 0..<cnt where big(d) {
+                let r = Int(receiver[d])
+                if r >= 0 && r < cnt && r != d {
+                    let cur = Int(pb[r])
+                    if cur < 0 || area[d] > area[cur] || (area[d] == area[cur] && d < cur) {
+                        pb[r] = Int32(d)
+                    }
+                }
             }
-            if cells.count >= 3 { out.append(DrainageSegment(cells: cells, endsAtConfluence: confluence)) }
+            for s in 0..<cnt where big(s) && pb[s] < 0 {
+                var cells: [Int32] = [Int32(s)]
+                var c = s, confluence = false
+                while cells.count < cnt {
+                    let r = Int(receiver[c])
+                    if r < 0 || r >= cnt || r == c { break }
+                    if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
+                    cells.append(Int32(r))
+                    if pb[r] != c { confluence = true; break }
+                    c = r
+                }
+                if cells.count >= 3 { out.append(DrainageSegment(cells: cells, endsAtConfluence: confluence)) }
+            }
         }
         return out
     }
