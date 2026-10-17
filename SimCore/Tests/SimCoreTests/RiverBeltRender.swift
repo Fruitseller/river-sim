@@ -339,18 +339,11 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
         var gapStream: [Double] = []
     }
 
-    /// Hauptlauf = D8-Pfad vom Land mit dem größten Einzugsgebiet stromauf,
-    /// je Zelle zum Zubringer mit dem größten Einzugsgebiet, bis der Abfluss
-    /// unter `renderMinCells` fällt (ab dort gibt es kein Band mehr). Gezählt
-    /// wird, ob eine Zelle als Wasser sichtbar ist: Band-Deckung ab
-    /// `protectBandThreshold`, Raster-Fluss/See ab den Schutz-Schwellen (=
-    /// Sichtbarkeit im Shader, s. `testProtectMaskReadsVisibilityFromTheShaderWindows`)
-    /// — je 3×3, weil D8-Pfad und Zentrumslinie nicht zellgenau
-    /// übereinanderliegen.
-    static func mainStem(_ t: Terrain, render: RenderState, water: [UInt8]) -> StemStats {
-        let n = t.cfg.n, cs = t.cfg.cellSize, cellArea = cs * cs
-        let coverage = render.riverRibbonMesh.bandCoverage
-        let flags = render.riverRibbonMesh.bandChannelFlags
+    /// Der D8-Pfad des Hauptlaufs, von der Mündung (Index 0) zur Quelle: vom
+    /// Land mit dem größten Einzugsgebiet stromauf, je Zelle zum Zubringer mit
+    /// dem größten Einzugsgebiet, bis der Abfluss unter `renderMinCells` fällt.
+    static func stemPath(_ t: Terrain) -> [Int] {
+        let n = t.cfg.n, cellArea = t.cfg.cellSize * t.cfg.cellSize
         var start = -1, best = 0.0
         for k in 0..<(n * n) where t.h[k] > t.cfg.sea && t.area[k] > best { best = t.area[k]; start = k }
         var path: [Int] = []
@@ -367,6 +360,22 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
             }}
             c = next
         }
+        return path
+    }
+
+    /// Hauptlauf = D8-Pfad vom Land mit dem größten Einzugsgebiet stromauf,
+    /// je Zelle zum Zubringer mit dem größten Einzugsgebiet, bis der Abfluss
+    /// unter `renderMinCells` fällt (ab dort gibt es kein Band mehr). Gezählt
+    /// wird, ob eine Zelle als Wasser sichtbar ist: Band-Deckung ab
+    /// `protectBandThreshold`, Raster-Fluss/See ab den Schutz-Schwellen (=
+    /// Sichtbarkeit im Shader, s. `testProtectMaskReadsVisibilityFromTheShaderWindows`)
+    /// — je 3×3, weil D8-Pfad und Zentrumslinie nicht zellgenau
+    /// übereinanderliegen.
+    static func mainStem(_ t: Terrain, render: RenderState, water: [UInt8]) -> StemStats {
+        let n = t.cfg.n, cs = t.cfg.cellSize, cellArea = cs * cs
+        let coverage = render.riverRibbonMesh.bandCoverage
+        let flags = render.riverRibbonMesh.bandChannelFlags
+        let path = stemPath(t)
         // Zellen unter Zentrumslinien: welcher Lauf, ist sein Band gebaut?
         var line = [Int](repeating: -1, count: n * n)
         for (ci, ch) in t.meander.channels.enumerated() {
