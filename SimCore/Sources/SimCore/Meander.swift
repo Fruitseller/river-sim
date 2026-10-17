@@ -580,12 +580,16 @@ extension MeanderState {
     /// Stempel Knoten für Knoten abwechselnd gekippte Profile übereinander,
     /// im Mittel ein symmetrisches V. Kolk und Gleithang antworten auf den
     /// BOGEN, nicht auf den Knick. EINE Quelle für Stempel und Render.
-    static func bendCurvature(_ g: BeltGeometry, config: SimConfig) -> [Double] {
+    static func bendCurvature(_ g: BeltGeometry, config: SimConfig,
+                              activeRange: ClosedRange<Int>? = nil) -> [Double] {
         let c = g.curv.count
         var out = g.curv
         guard c >= 3 else { return out }
         let spc = max(1e-6, config.meanderNodeSpacing)
-        for i in 1..<(c - 1) {
+        let rLo = max(1, activeRange?.lowerBound ?? 1)
+        let rHi = min(c - 2, activeRange?.upperBound ?? (c - 2))
+        guard rLo <= rHi else { return out }
+        for i in rLo...rHi {
             let kb = Int((config.meanderBeltProfileWidths * g.width[i] / spc).rounded())
             guard kb > 0 else { continue }
             let lo = max(1, i - kb), hi = min(c - 2, i + kb)
@@ -597,6 +601,7 @@ extension MeanderState {
     }
 
     static func beltGeometry(_ ch: RiverChannel, config: SimConfig,
+                             minDischarge: Double = 0,
                              heightAt: (MeanderNode) -> Double) -> BeltGeometry {
         let nodes = ch.nodes, c = nodes.count
         var g = BeltGeometry(width: .init(repeating: 0, count: c), curv: .init(repeating: 0, count: c),
@@ -621,6 +626,9 @@ extension MeanderState {
             let tx = d.x - a.x, tz = d.z - a.z, tl = (tx * tx + tz * tz).squareRoot()
             guard tl > 1e-9 else { continue }
             g.nx[i] = -tz / tl; g.nz[i] = tx / tl
+            // Für die Migration zählt Mobilität nur dort, wo auch der Mindestabfluss
+            // für das Wandern erreicht ist (`meanderBeltMinCells`).
+            if minDischarge > 0 && ch.discharge[i] < minDischarge { continue }
             // Längsneigung über ±1,5 Kanalbreiten: über ±k (≈ 3 Zellen) brach
             // jede Stufe im eingeschnittenen Bett den mobilen Abschnitt auf
             // (gemessen 12–45 mobile Knoten am Hauptlauf von Seed 1337).
@@ -742,13 +750,66 @@ extension MeanderState {
         return (out, erod)
     }
 
+    struct BeltMigrationPlan {
+        var rate: Double
+        var g: BeltGeometry
+        var r: [Double]
+        var erod: [Double]
+    }
+
+    /// Berechnet Geometrie und Raten für die Zeitschritt-Schätzung und hält das
+    /// Ergebnis fest, damit Teilschritt 0 dieselbe Arbeit nicht wiederholt.
+    func beltMigrationPlan(channel ci: Int, config: SimConfig,
+                           heightAt: (MeanderNode) -> Double) -> BeltMigrationPlan {
+        let ch = channels[ci]
+        guard ch.nodes.count >= 3, Self.migrates(ch, config) else {
+            let empty = BeltGeometry(width: [], curv: [], nx: [], nz: [], mob: [])
+            return BeltMigrationPlan(rate: 0, g: empty, r: [], erod: [])
+        }
+        let g = Self.beltGeometry(ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
+        let (r, erod) = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
+        let maxRate = r.reduce(0) { max($0, abs($1)) }
+        return BeltMigrationPlan(rate: maxRate, g: g, r: r, erod: erod)
+    }
+
     /// Größte Verschiebungsrate EINES Laufs (Zellen/Jahr) — seine eigene
     /// CFL-Teilschrittzahl (`Terrain.meanderBeltStep`).
     func beltMaxRate(channel ci: Int, config: SimConfig, heightAt: (MeanderNode) -> Double) -> Double {
-        let ch = channels[ci]
-        guard ch.nodes.count >= 3, Self.migrates(ch, config) else { return 0 }
-        let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
-        return beltRates(ch, g, config: config, heightAt: heightAt).reduce(0) { max($0, abs($1)) }
+        beltMigrationPlan(channel: ci, config: config, heightAt: heightAt).rate
+    }
+
+    /// Wendet einen fertigen Migrationsplan (aus `beltMigrationPlan`) bit-identisch an,
+    /// ohne `beltGeometry` und Raten erneut zu berechnen.
+    func applyBeltMigrationPlan(_ ci: Int, plan: BeltMigrationPlan, dt: Double, time: Double, config: SimConfig) {
+        let spacing = config.meanderNodeSpacing
+        let maxStep = 0.5 * spacing
+        let kappaK = abs(config.meanderBeltLocalWeight) * config.meanderBeltRate / max(1e-12, spacing * spacing)
+        var ch = channels[ci]
+        let g = plan.g, r = plan.r, erod = plan.erod
+        if ch.nodes.count >= 3 {
+            if let firstR = r.firstIndex(where: { $0 != 0 }),
+               let lastR = r.lastIndex(where: { $0 != 0 }) {
+                for i in firstR...lastR where r[i] != 0 {
+                    let m = max(-maxStep, min(maxStep, r[i] * dt))
+                    ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
+                }
+            }
+            Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: ci,
+                         config: config, maxStep: maxStep)
+            let c = ch.nodes.count
+            var a = [Double](repeating: 0, count: c)
+            if let firstE = erod.firstIndex(where: { $0 > 0 }),
+               let lastE = erod.lastIndex(where: { $0 > 0 }) {
+                for i in firstE...lastE where erod[i] > 0 {
+                    let b = g.width[i]
+                    a[i] = kappaK * b * b * erod[i] * dt
+                }
+                ch.nodes = Self.implicitDiffuse(ch.nodes, a)
+            }
+        }
+        applyBeltCutoffs(&ch, config: config)
+        ch = resample(ch, spacing: spacing)
+        channels[ci] = ch
     }
 
     /// Ein Teilschritt für EINEN Lauf über `dt` Jahre: Verschiebung, Störung,
@@ -762,32 +823,27 @@ extension MeanderState {
         let kappaK = abs(config.meanderBeltLocalWeight) * config.meanderBeltRate / max(1e-12, spacing * spacing)
         var ch = channels[ci]
         if ch.nodes.count >= 3 {
-            let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
+            let g = Self.beltGeometry(ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
             let (r, erod) = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
-            for i in 1..<(ch.nodes.count - 1) where r[i] != 0 {
-                let m = max(-maxStep, min(maxStep, r[i] * dt))
-                ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
+            if let firstR = r.firstIndex(where: { $0 != 0 }),
+               let lastR = r.lastIndex(where: { $0 != 0 }) {
+                for i in firstR...lastR where r[i] != 0 {
+                    let m = max(-maxStep, min(maxStep, r[i] * dt))
+                    ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
+                }
             }
             Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: ci,
                          config: config, maxStep: maxStep)
-            // Lokaler Term als Diffusion der Linie, ∂x/∂t = κ·∂²x/∂s² mit
-            // κ = |Ω|·Rate·b²·Erodierbarkeit, IMPLIZIT (Rückwärts-Euler,
-            // tridiagonal): für jedes dt stabil und in der Zeit konsistent.
-            // Explizit (als Teil der Rate) war er nur bis dt ≈ ds²/(2κ)
-            // ≈ 3 Jahre stabil, die Linie zackte im Knotenabstand. Die
-            // Zwischenfassung als Glättung mit Faktor 1 − e^(−4κ·dt/ds²)
-            // sättigte schon bei dt = 50 auf 1 — die Diffusion wuchs dann
-            // mit der ZAHL der Teilschritte (gemessen 19 % Kanalbreite
-            // Abstand zwischen dt 50 und 1500).
-            // Erodierbarkeit (Mobilität, Talwand) wirkt auf BEIDE Terme, s.
-            // `beltRatesAndErodibility`.
             let c = ch.nodes.count
             var a = [Double](repeating: 0, count: c)
-            for i in 1..<(c - 1) where erod[i] > 0 {
-                let b = g.width[i]
-                a[i] = kappaK * b * b * erod[i] * dt
+            if let firstE = erod.firstIndex(where: { $0 > 0 }),
+               let lastE = erod.lastIndex(where: { $0 > 0 }) {
+                for i in firstE...lastE where erod[i] > 0 {
+                    let b = g.width[i]
+                    a[i] = kappaK * b * b * erod[i] * dt
+                }
+                ch.nodes = Self.implicitDiffuse(ch.nodes, a)
             }
-            ch.nodes = Self.implicitDiffuse(ch.nodes, a)
         }
         applyBeltCutoffs(&ch, config: config)
         ch = resample(ch, spacing: spacing)
@@ -899,11 +955,13 @@ extension MeanderState {
         let c = nodes.count
         guard amp > 0, dt > 0, c >= 3 else { return }
         let sp = max(1e-6, config.meanderNodeSpacing)
+        guard let firstE = erod.firstIndex(where: { $0 > 0 }),
+              let lastE = erod.lastIndex(where: { $0 > 0 }) else { return }
         let key = time.bitPattern &* 0x9E37_79B9_7F4A_7C15 ^ UInt64(truncatingIfNeeded: ci) &* 0xD1B5_4A32_D192_ED03
         var xi = [Double](repeating: 0, count: c)
-        for i in 1..<(c - 1) where erod[i] > 0 { xi[i] = 3.0.squareRoot() * hashUnit(key, i) }
+        for i in firstE...lastE where erod[i] > 0 { xi[i] = 3.0.squareRoot() * hashUnit(key, i) }
         let base = amp * (config.meanderBeltRate * dt).squareRoot()
-        for i in 1..<(c - 1) where erod[i] > 0 {
+        for i in firstE...lastE where erod[i] > 0 {
             let kr = max(1, Int((0.5 * g.width[i] / sp).rounded()))
             let lo = max(1, i - kr), hi = min(c - 2, i + kr)
             var acc = 0.0
@@ -927,12 +985,18 @@ extension MeanderState {
     /// (Thomas-Algorithmus), Endknoten fest. `a` = κ·dt/ds² je Knoten.
     static func implicitDiffuse(_ nodes: [MeanderNode], _ a: [Double]) -> [MeanderNode] {
         let c = nodes.count
-        guard c >= 3, a.contains(where: { $0 > 0 }) else { return nodes }
-        var cp = [Double](repeating: 0, count: c)
-        var dx = [Double](repeating: 0, count: c), dz = [Double](repeating: 0, count: c)
-        // Zeile 0: x₀ fest.
-        cp[0] = 0; dx[0] = nodes[0].x; dz[0] = nodes[0].z
-        for i in 1..<(c - 1) {
+        guard c >= 3 else { return nodes }
+        guard let firstA = a.firstIndex(where: { $0 > 0 }),
+              let lastA = a.lastIndex(where: { $0 > 0 }) else { return nodes }
+        // Da Zeilen mit a[i] == 0 exakte Identitätszeilen sind (lo=0, di=1, up=0 -> cp=0, dx=nodes[i]),
+        // entkoppelt das System an den Rändern: firstA - 1 und lastA + 1 wirken als feste Dirichlet-Ränder.
+        var cp = [Double](repeating: 0, count: lastA + 1)
+        var dx = [Double](repeating: 0, count: lastA + 1)
+        var dz = [Double](repeating: 0, count: lastA + 1)
+        cp[firstA - 1] = 0
+        dx[firstA - 1] = nodes[firstA - 1].x
+        dz[firstA - 1] = nodes[firstA - 1].z
+        for i in firstA...lastA {
             let lo = -a[i], di = 1 + 2 * a[i], up = -a[i]
             let m = di - lo * cp[i - 1]
             cp[i] = up / m
@@ -940,8 +1004,7 @@ extension MeanderState {
             dz[i] = (nodes[i].z - lo * dz[i - 1]) / m
         }
         var out = nodes
-        // Zeile c−1: Endknoten fest; Rückwärtseinsetzen.
-        for i in stride(from: c - 2, through: 1, by: -1) {
+        for i in stride(from: lastA, through: firstA, by: -1) {
             out[i].x = dx[i] - cp[i] * out[i + 1].x
             out[i].z = dz[i] - cp[i] * out[i + 1].z
         }

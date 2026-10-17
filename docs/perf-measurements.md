@@ -975,3 +975,81 @@ Die Bit-Gleichheit durch die Brücke (14 Takte, oben) lief als Einmal-Skript:
 dieselbe Folge `step(15)` + `renderFrame(FRAME_TIMELAPSE, t)` im alten und
 `beginStep(15, FRAME_TIMELAPSE, t)` + `finishStep()` im neuen Build, SHA-256 je
 Puffer. Bleibend prüfen dasselbe `BackgroundJobTests` und `smoke.gd`.
+
+
+---
+
+## M. Mäandergürtel-Fenster auf mobilen Abschnitt beschränkt (Oktober 2026, Issue #174) — bit-identisch
+
+Anlass: `meanderBeltStep` iterierte je Teilschritt über alle Knoten der wandernden
+Läufe, obwohl weite Strecken (insbesondere der unbewegliche Gebirgsoberlauf mit
+Abfluss unter `meanderBeltMinCells = 2000`) weder wandern noch erodieren noch
+gestempelt werden. Ziel: Berechnung auf die mobilen Fenster samt Schablonen-Rändern
+beschränken, strikt bit-identisch.
+
+### Was geändert wurde
+
+1. **`beltMigrationPlan` / Teilschritt-0-Wiederverwendung**: `meanderBeltStep`
+   berechnet vor den Teilschritten die maximale Rate via `beltMigrationPlan`.
+   Geometrie und Ratenvektoren werden für Teilschritt 0 direkt übernommen,
+   statt sie im ersten Teilschritt identisch nochmals zu berechnen.
+2. **`beltGeometry(..., minDischarge:)`**: Bei der Migration werden für Knoten
+   mit `discharge < meanderBeltMinCells` die drei `heightAt`-Bilinear-Lookups
+   (Längsneigung, Meereshöhe) übersprungen (`g.mob[i] = 0`), da
+   `beltRatesAndErodibility` solche Knoten ohnehin per Guard ausblendet.
+3. **`implicitDiffuse` Thomas-Algorithmus**: Zeilen mit $a_i = 0$ sind exakte
+   Identitätszeilen ($cp=0, dx=nodes[i]$). Das Gleichungssystem entkoppelt an den
+   Rändern, sodass der Vorwärts- und Rückwärtslauf exakt auf
+   `firstA...lastA` mit festen Dirichlet-Rändern an `firstA - 1` und `lastA + 1`
+   begrenzt werden kann.
+4. **`perturb` und Verschiebungs-Schleifen**: Ratenverschiebung auf Knoten mit
+   $r_i \neq 0$ beschränkt, Hash-Rauschen und Glättung in `perturb` auf
+   `firstErod...lastErod`.
+5. **`beltStamp` (Teil 1, mobile Teilschritte)**: Früher Abbruch, falls keine
+   mobilen Knoten vorhanden sind. `bendCurvature` auf `firstMob...lastMob`
+   eingeschränkt, `floorH` auf das $\pm 2$-Sohlenfenster
+   `max(0, firstMob - 2)...min(c - 1, lastMob + 2)` und der Stempel-Loop auf
+   `firstMob...lastMob`.
+
+### Bit-Identität
+
+Vor und nach der Optimierung identischer Fingerprint:
+```
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x100.0
+fingerprint c25268a941dd4beb
+```
+
+### Gemessen
+
+Interleaved A/B-Benchmark über 6 Runden (`/tmp/bw.base` vs `/tmp/bw.cand`,
+`--repeat 3`, 30 Schritte à dt=100.0, M4 Max):
+
+```
+1 base Messung: 30 Schritte à dt=100.0 → 63.2 ms/Schritt (Minimum aus 3 Blöcken)
+1 cand Messung: 30 Schritte à dt=100.0 → 62.0 ms/Schritt (Minimum aus 3 Blöcken)
+2 cand Messung: 30 Schritte à dt=100.0 → 61.2 ms/Schritt (Minimum aus 3 Blöcken)
+2 base Messung: 30 Schritte à dt=100.0 → 64.8 ms/Schritt (Minimum aus 3 Blöcken)
+3 base Messung: 30 Schritte à dt=100.0 → 64.2 ms/Schritt (Minimum aus 3 Blöcken)
+3 cand Messung: 30 Schritte à dt=100.0 → 62.8 ms/Schritt (Minimum aus 3 Blöcken)
+4 cand Messung: 30 Schritte à dt=100.0 → 63.4 ms/Schritt (Minimum aus 3 Blöcken)
+4 base Messung: 30 Schritte à dt=100.0 → 64.3 ms/Schritt (Minimum aus 3 Blöcken)
+5 base Messung: 30 Schritte à dt=100.0 → 63.7 ms/Schritt (Minimum aus 3 Blöcken)
+5 cand Messung: 30 Schritte à dt=100.0 → 63.6 ms/Schritt (Minimum aus 3 Blöcken)
+6 cand Messung: 30 Schritte à dt=100.0 → 62.8 ms/Schritt (Minimum aus 3 Blöcken)
+6 base Messung: 30 Schritte à dt=100.0 → 65.1 ms/Schritt (Minimum aus 3 Blöcken)
+```
+
+| Stand | Runden | Median | Minimum |
+|---|---|---:|---:|
+| Base (`/tmp/bw.base`) | 63.2, 64.8, 64.2, 64.3, 63.7, 65.1 | 64.25 ms/Schritt | 63.2 ms/Schritt |
+| Cand (`/tmp/bw.cand`) | 62.0, 61.2, 62.8, 63.4, 63.6, 62.8 | 62.80 ms/Schritt | 61.2 ms/Schritt |
+
+Differenz: **−1.45 ms/Schritt** (Cand war in allen 6 Runden schneller).
+
+Pass-Tabelle (`simperf --repeat 3`, letzter Block):
+
+| Pass | base | cand | Delta |
+|---|---:|---:|---:|
+| `belt.migrate` | 6.44 ms/Schritt (10.0 %) | 5.14 ms/Schritt (8.4 %) | **−1.30 ms/Schritt (−20.2 %)** |
+| `belt.stamp` | 7.31 ms/Schritt (11.3 %) | 7.22 ms/Schritt (11.8 %) | **−0.09 ms/Schritt** |
+| `belt.*` gesamt | 13.75 ms/Schritt | 12.36 ms/Schritt | **−1.39 ms/Schritt (−10.1 %)** |

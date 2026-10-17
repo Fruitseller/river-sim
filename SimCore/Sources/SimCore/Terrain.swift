@@ -4628,11 +4628,12 @@ public final class Terrain {
         let mobile = meander.channels.indices.filter { MeanderState.migrates(meander.channels[$0], cfg) }
         for ci in mobile {
             mark("belt.migrate")
-            let rate = h.withUnsafeBufferPointer { hb in
+            let plan = h.withUnsafeBufferPointer { hb in
                 let ph = hb.baseAddress!
-                return meander.beltMaxRate(channel: ci, config: cfg,
-                                           heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+                return meander.beltMigrationPlan(channel: ci, config: cfg,
+                                                 heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
             }
+            let rate = plan.rate
             let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
             maxSubUsed = max(maxSubUsed, nsub)
             let sub = dt / Double(nsub)
@@ -4642,8 +4643,12 @@ public final class Terrain {
                 let ox0 = meander.oxbows.count
                 h.withUnsafeBufferPointer { hb in
                     let ph = hb.baseAddress!
-                    meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
-                                               heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+                    if si == 0 {
+                        meander.applyBeltMigrationPlan(ci, plan: plan, dt: sub, time: years, config: cfg)
+                    } else {
+                        meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
+                                                   heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+                    }
                 }
                 for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
                 meander.channels[ci].clampToWorld(maxCoord: maxc)
@@ -4790,27 +4795,39 @@ public final class Terrain {
             let part = !split ? 0 : (only != nil ? 1 : (MeanderState.migrates(ch, cfg) ? 2 : 0))
             let g = MeanderState.beltGeometry(ch, config: cfg,
                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
-            let bendCurv = MeanderState.bendCurvature(g, config: cfg)
+            let firstMob = g.mob.firstIndex(where: { $0 > 0 })
+            let lastMob = g.mob.lastIndex(where: { $0 > 0 })
+            if part == 1 && firstMob == nil { continue }
+            // Krümmungs-Mittelung nur über dem mobilen Fenster (Teilschritt braucht nur dort Kolk/Gleithang)
+            let bendCurv = MeanderState.bendCurvature(g, config: cfg,
+                                                     activeRange: firstMob != nil ? firstMob!...lastMob! : nil)
             // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten
             // gemittelt — nur gebraucht, wo ein flacher Knoten in ±2 liegt.
             var floorH = [Double](repeating: 0, count: c)
-            for i in 0..<c {
-                if part == 2 { break }
-                if part == 1 || split {
-                    var flat = false
-                    for j in max(0, i - 2)...min(c - 1, i + 2) where g.mob[j] > 0 { flat = true; break }
-                    if !flat { continue }
+            let fLo = part == 1 ? max(0, firstMob! - 2) : 0
+            let fHi = part == 1 ? min(c - 1, lastMob! + 2) : (c - 1)
+            if fLo <= fHi {
+                for i in fLo...fHi {
+                    if part == 2 { break }
+                    if part == 1 || split {
+                        var flat = false
+                        for j in max(0, i - 2)...min(c - 1, i + 2) where g.mob[j] > 0 { flat = true; break }
+                        if !flat { continue }
+                    }
+                    let w = 0.5 * g.width[i]
+                    var lo = Double.infinity, s = -w
+                    while s <= w + 1e-9 {
+                        lo = min(lo, bed.h[cell(nodes[i].x + g.nx[i] * s, nodes[i].z + g.nz[i] * s)])
+                        s += 0.5
+                    }
+                    floorH[i] = lo
                 }
-                let w = 0.5 * g.width[i]
-                var lo = Double.infinity, s = -w
-                while s <= w + 1e-9 {
-                    lo = min(lo, bed.h[cell(nodes[i].x + g.nx[i] * s, nodes[i].z + g.nz[i] * s)])
-                    s += 0.5
-                }
-                floorH[i] = lo
             }
             var budget = 0.0
-            for i in 1..<(c - 1) {
+            let sLo = part == 1 ? max(1, firstMob!) : 1
+            let sHi = part == 1 ? min(c - 2, lastMob!) : (c - 2)
+            if sLo <= sHi {
+                for i in sLo...sHi {
                 let ck = cell(nodes[i].x, nodes[i].z)
                 if blocked(ck) { budget = 0; continue }
                 let b = g.width[i], w = 0.5 * b
@@ -4885,6 +4902,7 @@ public final class Terrain {
                         if page[k] >= 0 { pbelt[k] = true; if lockHere { plock![k] = true } }
                     }
                 }
+            }
             }
         }
         }}}}}}}}
