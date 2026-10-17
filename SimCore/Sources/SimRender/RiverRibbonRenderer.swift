@@ -199,7 +199,10 @@ public final class RiverRibbonRenderer {
     /// fein aus. Vertex-Vertrag (konsumiert von water.gdshader):
     ///   COLOR.rg = Fließrichtung (kodiert *0.5+0.5), COLOR.b = Strahler-Rang/6,
     ///   COLOR.a = Deckkraft (Abfluss-Rampe × Kanal-Kohärenz × Taper),
-    ///   UV.x = Quer-Position 0..1 (Kanten-Feathering), UV.y = Bogenlänge (Welt).
+    ///   UV.x = Quer-Position 0..1 (Kanten-Feathering), UV.y = Bogenlänge (Welt),
+    ///   UV2.x = Band-Typ (`WaterRender.ribbonKind*`: Fluss, Delta-Arm, Altarm),
+    ///   UV2.y = signierte Bogenstärke −1 … +1 (Querprofil, Prallhang tief;
+    ///   0 auf Delta- und Altarmen).
     /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y) —
     /// deckt den Diskretisierungs-Fehler des gröberen Render-Gitters im Talgrund.
     @discardableResult
@@ -485,17 +488,24 @@ public final class RiverRibbonRenderer {
                 // halbiert die Schrittweite auf die der regulären Samples;
                 // den Spiegel bestimmt `applyWaterHandover` pro Stützpunkt
                 // ohnehin selbst.
+                // Die Bogenstärke (Tiefenfarbe am Prallhang) des letzten
+                // Laufknotens läuft über die Kette linear auf null aus, statt
+                // an der Mündung auf 0 zu springen (Review zu #174 C2).
                 var prevX = px[hi], prevZ = pz[hi]
-                for point in mouth {
+                let mouthBend = pb[hi], links = Double(mouth.count)
+                for (link, point) in mouth.enumerated() {
+                    let step = Double(link)
                     samples.append(RibbonSample(x: (prevX + point.x) * 0.5,
                                                 z: (prevZ + point.z) * 0.5,
                                                 halfWidth: mouthWidth,
                                                 alpha: mouthAlpha,
-                                                rank: rank[hi], surface: nil))
+                                                rank: rank[hi], surface: nil,
+                                                bend: mouthBend * (1 - (step + 0.5) / links)))
                     samples.append(RibbonSample(x: point.x, z: point.z,
                                                 halfWidth: mouthWidth,
                                                 alpha: mouthAlpha,
-                                                rank: rank[hi], surface: point.surface))
+                                                rank: rank[hi], surface: point.surface,
+                                                bend: mouthBend * (1 - (step + 1) / links)))
                     prevX = point.x
                     prevZ = point.z
                 }
