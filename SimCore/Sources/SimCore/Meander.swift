@@ -742,13 +742,28 @@ extension MeanderState {
         return (out, erod)
     }
 
+    struct BeltMigrationPlan {
+        let g: BeltGeometry
+        let rate: [Double]
+        let erod: [Double]
+    }
+
+    /// Größte Verschiebungsrate EINES Laufs (Zellen/Jahr) und vorberechneter Plan
+    /// für den ersten Teilschritt (`Terrain.meanderBeltStep`).
+    func beltMaxRateWithPlan(channel ci: Int, config: SimConfig,
+                             heightAt: (MeanderNode) -> Double) -> (maxRate: Double, plan: BeltMigrationPlan?) {
+        let ch = channels[ci]
+        guard ch.nodes.count >= 3, Self.migrates(ch, config) else { return (0, nil) }
+        let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
+        let re = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
+        let maxRate = re.rate.reduce(0) { max($0, abs($1)) }
+        return (maxRate, BeltMigrationPlan(g: g, rate: re.rate, erod: re.erod))
+    }
+
     /// Größte Verschiebungsrate EINES Laufs (Zellen/Jahr) — seine eigene
     /// CFL-Teilschrittzahl (`Terrain.meanderBeltStep`).
     func beltMaxRate(channel ci: Int, config: SimConfig, heightAt: (MeanderNode) -> Double) -> Double {
-        let ch = channels[ci]
-        guard ch.nodes.count >= 3, Self.migrates(ch, config) else { return 0 }
-        let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
-        return beltRates(ch, g, config: config, heightAt: heightAt).reduce(0) { max($0, abs($1)) }
+        beltMaxRateWithPlan(channel: ci, config: config, heightAt: heightAt).maxRate
     }
 
     /// Ein Teilschritt für EINEN Lauf über `dt` Jahre: Verschiebung, Störung,
@@ -756,14 +771,23 @@ extension MeanderState {
     /// taktet so, dass kein Knoten mehr als einen halben Knotenabstand springt;
     /// die Klemme hier ist nur Sicherheitsnetz. Altarm-Alter setzt der Aufrufer.
     func migrateBeltChannel(_ ci: Int, dt: Double, time: Double, config: SimConfig,
-                            heightAt: (MeanderNode) -> Double) {
+                            heightAt: (MeanderNode) -> Double,
+                            plan: BeltMigrationPlan? = nil) {
         let spacing = config.meanderNodeSpacing
         let maxStep = 0.5 * spacing
         let kappaK = abs(config.meanderBeltLocalWeight) * config.meanderBeltRate / max(1e-12, spacing * spacing)
         var ch = channels[ci]
         if ch.nodes.count >= 3 {
-            let g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
-            let (r, erod) = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
+            let g: BeltGeometry
+            let r: [Double]
+            let erod: [Double]
+            if let p = plan {
+                g = p.g; r = p.rate; erod = p.erod
+            } else {
+                g = Self.beltGeometry(ch, config: config, heightAt: heightAt)
+                let re = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
+                r = re.rate; erod = re.erod
+            }
             for i in 1..<(ch.nodes.count - 1) where r[i] != 0 {
                 let m = max(-maxStep, min(maxStep, r[i] * dt))
                 ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]

@@ -4647,8 +4647,8 @@ public final class Terrain {
             let pice = uib.baseAddress, iceOn = uib.count == cfg.count
             for ci in mobile {
                 mark("belt.migrate")
-                let rate = meander.beltMaxRate(channel: ci, config: cfg,
-                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+                let (rate, plan) = meander.beltMaxRateWithPlan(channel: ci, config: cfg,
+                                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
                 let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
                 maxSubUsed = max(maxSubUsed, nsub)
                 let sub = dt / Double(nsub)
@@ -4657,7 +4657,8 @@ public final class Terrain {
                     let ageAtEnd = dt - Double(si + 1) * sub
                     let ox0 = meander.oxbows.count
                     meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
-                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) },
+                                               plan: si == 0 ? plan : nil)
                     for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
                     meander.channels[ci].clampToWorld(maxCoord: maxc)
                     if !coupled {
