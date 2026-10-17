@@ -150,6 +150,32 @@ final class BarMaterialTests: XCTestCase {
                        "eine einzelne frisch gestempelte Zelle ist ein Sprenkel, keine Bank")
     }
 
+    /// Review zu #174 C: das Pionier-Grün hing am ROHEN Sand vor dem Entsprenkeln.
+    /// Eine einzelne Sandzelle ohne Bank daneben verliert ihren Sand, behielt
+    /// aber auch kein Grün (`(1 − Sand_roh)` = 0) und stand als kahler Punkt da.
+    func testDespeckledSandCellKeepsItsPioneerGreen() {
+        let n = 64, line = 16
+        let j = row(line, plus: 0.8), i = 20
+        let t = flatWorld(n: n, channelRow: line) { x, y in x == i && y == j ? 0 : -1 }
+        let f = BarMaterial.field(t)
+        let k = j * n + i
+        XCTAssertEqual(f.sand[k], 0, "Aufbau: die einzelne Zelle ist ein Sprenkel")
+        XCTAssertEqual(Double(f.vegShift[k]), WaterRender.barPioneer(age: 0), accuracy: 1e-6,
+                       "ohne Sand liest die junge Bank als Pionier-Grün")
+    }
+
+    /// Wo Sand liegt, wirkt das Grün weiter nicht (vorher wie nachher).
+    func testPioneerGreenStaysOffTheSand() {
+        let n = 64, line = 16
+        let t = flatWorld(n: n, channelRow: line) { i, j in
+            (6..<58).contains(i) && j >= self.row(line, plus: 0.6) && j <= self.row(line, plus: 1.0) ? 0 : -1
+        }
+        let f = BarMaterial.field(t)
+        let k = row(line, plus: 0.8) * n + 30
+        XCTAssertEqual(f.sand[k], 1, accuracy: 1e-6, "Aufbau: volle Sandbank")
+        XCTAssertEqual(f.vegShift[k], 0, accuracy: 1e-6, "auf dem Sand kein Pionier-Grün")
+    }
+
     func testSandEntersMaterialWeights() {
         let n = 64
         let bar = flatWorld(n: n, channelRow: 10) { i, j in (14..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
@@ -251,6 +277,25 @@ final class BarMaterialTests: XCTestCase {
         let plain = TerrainColorRenderer.buffers(t, bars: .empty).colors
         XCTAssertNotEqual(Array(colors[k * 4..<k * 4 + 3]), Array(plain[k * 4..<k * 4 + 3]),
                           "Ried tönt die Makrofarbe")
+    }
+
+    /// Review zu #174 C: ein Altarm-Knoten weiter als die Stempel-Reichweite
+    /// jenseits der Gitterkante ergab einen Bereich mit Untergrenze über der
+    /// Obergrenze und brach ab. Er stempelt nichts und stört die übrigen nicht.
+    func testOxbowNodesFarOutsideTheGridAreSkippedNotTrapped() {
+        let n = 64
+        let beyond = Double(n) + WaterRender.oxbowHalfWidthCells + 20
+        let right = (0..<30).map { MeanderNode(x: beyond + Double($0), z: 20) }
+        let below = (0..<30).map { MeanderNode(x: 20, z: beyond + Double($0)) }
+        let left = (0..<30).map { MeanderNode(x: -beyond - Double($0), z: 20) }
+        let inside = arc(n: n)
+        let t = flatWorld(n: n, age: { _, _ in -1 },
+                          oxbows: [right, below, left, inside], oxbowAge: [1500, 1500, 1500, 1500])
+        let f = BarMaterial.field(t)
+        XCTAssertGreaterThan(f.reed[44 * n + 32], 0.9, "der Altarm im Gitter stempelt weiter")
+        XCTAssertEqual(f.reed[20 * n + 63], 0, "kein Ried vom Altarm hinter dem rechten Rand")
+        XCTAssertEqual(f.reed[63 * n + 20], 0, "kein Ried vom Altarm hinter dem unteren Rand")
+        XCTAssertEqual(f.reed[20 * n], 0, "kein Ried vom Altarm hinter dem linken Rand")
     }
 
     func testOldOxbowBecomesVegetationArcAndNewerBarCoversIt() {

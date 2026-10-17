@@ -79,16 +79,23 @@ public enum BarMaterial {
                             ps[k] = Float(s)
                             // Hinter dem Sand: Pionier-Grün auf der jungen Bank,
                             // die Scroll-Rippen als leise Bewuchs-Bänder
-                            // (Senke +, Rücken −). Auf Sand wirkt beides nicht.
-                            pv[k] = Float((1 - s) * (WaterRender.barPioneer(age: a)
-                                                     + WaterRender.barScrollVegGain * ripple))
+                            // (Senke +, Rücken −). Hier noch OHNE den Sand-
+                            // Abzug: er folgt nach dem Entsprenkeln (s. unten).
+                            pv[k] = Float(WaterRender.barPioneer(age: a)
+                                          + WaterRender.barScrollVegGain * ripple)
                         }
                     }
                 }
             }}}}
         }
 
-        if hasBars { sand = despeckle(sand, n: n) }
+        if hasBars {
+            sand = despeckle(sand, n: n)
+            // Auf Sand wirkt weder Pionier-Grün noch Rippe — auf dem Sand, der
+            // NACH dem Entsprenkeln bleibt. Mit dem rohen Sand gerechnet verlor
+            // eine entfernte Sandzelle ihren Sand UND ihr Grün (kahler Punkt).
+            for k in 0..<cnt { vegShift[k] *= 1 - sand[k] }
+        }
         stampOxbows(terrain, n: n, barAge: hasBars ? age : [], vegShift: &vegShift, reed: &reed)
         return Field(sand: sand, vegShift: vegShift, reed: reed)
     }
@@ -234,8 +241,14 @@ public enum BarMaterial {
                 let node = loop[nodeIndex]
                 guard node.x.isFinite, node.z.isFinite, abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }
                 let ci = Int(node.x.rounded()), cj = Int(node.z.rounded())
-                for j in max(0, cj - reach)...min(n - 1, max(0, cj + reach)) {
-                    for i in max(0, ci - reach)...min(n - 1, max(0, ci + reach)) {
+                // Ein Knoten weiter als `reach` jenseits des Gitters stempelt
+                // nichts (Untergrenze über Obergrenze wäre ein Abbruch,
+                // wie bei `WaterFieldRenderer.stampCorridor`).
+                let jLo = max(0, cj - reach), jHi = min(n - 1, max(0, cj + reach))
+                let iLo = max(0, ci - reach), iHi = min(n - 1, max(0, ci + reach))
+                guard jLo <= jHi, iLo <= iHi else { continue }
+                for j in jLo...jHi {
+                    for i in iLo...iHi {
                         let dx = Double(i) - node.x, dz = Double(j) - node.z
                         if dx * dx + dz * dz > radius * radius { continue }
                         let k = j * n + i
