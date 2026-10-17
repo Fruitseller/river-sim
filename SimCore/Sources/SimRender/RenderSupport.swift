@@ -220,8 +220,15 @@ func ribbonHalfWidthCells(_ q: Double, cfg: SimConfig) -> Double {
 /// Wird von BEIDEN Pfaden gebraucht: die Geometrie baut daraus ihre
 /// Mündung, das Wasserfeld stempelt denselben Korridor als Saum (sonst
 /// malte das D8-Raster unter dem verlängerten Band eine zweite Fluss-Version).
-func mouthPath(_ terrain: Terrain, fromX: Double,
-               fromZ: Double) -> [(x: Double, z: Double, surface: Double?)] {
+///
+/// MEER mit Richtung (`dirX`/`dirZ` = Tangente am Laufende): erreicht der
+/// Strahl geradeaus binnen `WaterRender.mouthRayLandCells` Zellen das Meer,
+/// läuft die Mündung auf ihm (`mouthRay`). Die D8-Kette setzte am Laufende
+/// unter 30–80° an, und am Knick verengte der Krümmungs-Deckel das Band an
+/// der Wasserlinie zur Spitze (Befund #174, „Flüsse erreichen das Meer
+/// nicht", gemessen in `docs/zielbild-measurements.md` § Delta, Mündung).
+func mouthPath(_ terrain: Terrain, fromX: Double, fromZ: Double,
+               dirX: Double = 0, dirZ: Double = 0) -> [(x: Double, z: Double, surface: Double?)] {
     let n = terrain.cfg.n
     // Bei leerem Terrain oder ungültigen Eingaben defensiv abbrechen statt OOB
     // im Empfängernetz oder beim Double-zu-Int-Cast zu trappen.
@@ -231,6 +238,10 @@ func mouthPath(_ terrain: Terrain, fromX: Double,
           abs(fromX) < 1e9, abs(fromZ) < 1e9 else { return [] }
     let h = terrain.h, wl = terrain.waterLevel, rec = terrain.receiver
     let sea = terrain.cfg.sea
+    if dirX.isFinite, dirZ.isFinite,
+       let ray = mouthRay(n: n, h: h, wl: wl, sea: sea, fromX: fromX, fromZ: fromZ, dirX: dirX, dirZ: dirZ) {
+        return ray
+    }
     let i0 = min(max(Int(fromX.rounded()), 0), n - 1)
     let j0 = min(max(Int(fromZ.rounded()), 0), n - 1)
     var k = j0 * n + i0
@@ -253,10 +264,73 @@ func mouthPath(_ terrain: Terrain, fromX: Double,
     // die Wasserfläche zwar berührt, aber nicht IN ihr aufgehört — genau der
     // Spalt, den die Mündungs-Verlängerung schließen soll.
     while let last = path.last, last.surface == nil { path.removeLast() }
-    let raw = path
-    for a in 1..<max(raw.count - 1, 1) {
-        path[a].x = 0.5 * raw[a].x + 0.25 * (raw[a - 1].x + raw[a + 1].x)
-        path[a].z = 0.5 * raw[a].z + 0.25 * (raw[a - 1].z + raw[a + 1].z)
+    // MEER (Befund #174, „Flüsse erreichen das Meer nicht"): Meereszellen haben
+    // keinen D8-Empfänger, die Kette endete an der ERSTEN Meereszelle. Das
+    // Band lief damit auf den letzten zwei Zellen VOR der Wasserlinie aus
+    // (Übergabe und Enden-Taper lagen auf dem Strand), und dort lag der Sand.
+    // Unter der opaken Ozean-Ebene ist das Band unsichtbar: es läuft geradeaus
+    // weiter (Richtung vom Laufende zur ersten Meereszelle), bis es
+    // `mouthSeaCells` Zellen im Meer liegt, und blendet erst dort aus.
+    if let last = path.last, let surface = last.surface, surface <= sea {
+        var dx = last.x - fromX, dz = last.z - fromZ
+        let dl = (dx * dx + dz * dz).squareRoot()
+        if dl > 1e-9 {
+            dx /= dl; dz /= dl
+            var x = last.x, z = last.z
+            while wetCells < WaterRender.mouthSeaCells {
+                x += dx; z += dz
+                let ci = Int(x.rounded()), cj = Int(z.rounded())
+                guard ci >= 0, ci < n, cj >= 0, cj < n,
+                      let s = openWaterSurface(cj * n + ci, h: h, wl: wl, sea: sea), s <= sea
+                else { break }
+                path.append((x, z, s))
+                wetCells += 1
+            }
+        }
     }
+    // Die D8-Kette zickzackt in 45°-Schritten; ein 3-Punkt-Mittel ließ davon
+    // so viel stehen, dass der Krümmungs-Deckel des Bands
+    // (`ribbonCurvatureWidthFactor`) die Mündung auf eine Spitze verengte
+    // (Halbbreite 3,2 → 0,2 auf den letzten zwei Zellen, Seed 1337 Jahr
+    // 20.000). Drei Durchgänge mit dem Laufende als festem Anker glätten sie
+    // zu einer sanften Kurve; das letzte Kettenglied bleibt fest.
+    var smooth = [(x: fromX, z: fromZ)] + path.map { (x: $0.x, z: $0.z) }
+    for _ in 0..<3 {
+        let raw = smooth
+        for a in 1..<max(raw.count - 1, 1) {
+            smooth[a].x = 0.5 * raw[a].x + 0.25 * (raw[a - 1].x + raw[a + 1].x)
+            smooth[a].z = 0.5 * raw[a].z + 0.25 * (raw[a - 1].z + raw[a + 1].z)
+        }
+    }
+    for a in path.indices { path[a].x = smooth[a + 1].x; path[a].z = smooth[a + 1].z }
     return path
+}
+
+/// Geradeaus-Mündung ins Meer (s. `mouthPath`): Schritte von einer Zelle
+/// entlang der Laufrichtung, höchstens `mouthRayLandCells` über Land, dann
+/// bis `mouthSeaCells` Zellen im Meer. `nil`, wenn der Strahl das Meer nicht
+/// erreicht oder vorher in einen See läuft — dann gilt die D8-Kette.
+private func mouthRay(n: Int, h: [Double], wl: [Double], sea: Double, fromX: Double, fromZ: Double,
+                      dirX: Double, dirZ: Double) -> [(x: Double, z: Double, surface: Double?)]? {
+    let dl = (dirX * dirX + dirZ * dirZ).squareRoot()
+    guard dl > 1e-9 else { return nil }
+    let ux = dirX / dl, uz = dirZ / dl
+    var path: [(x: Double, z: Double, surface: Double?)] = []
+    var x = fromX, z = fromZ, land = 0, wet = 0.0
+    while wet < WaterRender.mouthSeaCells {
+        x += ux; z += uz
+        let ci = Int(x.rounded()), cj = Int(z.rounded())
+        guard ci >= 0, ci < n, cj >= 0, cj < n else { break }
+        let surface = openWaterSurface(cj * n + ci, h: h, wl: wl, sea: sea)
+        if let s = surface {
+            if s > sea { return wet > 0 ? path : nil }   // See: D8-Kette
+            wet += 1
+        } else {
+            if wet > 0 { break }                          // Bank im Meer: Ende
+            land += 1
+            if land > WaterRender.mouthRayLandCells { return nil }
+        }
+        path.append((x, z, surface))
+    }
+    return wet > 0 ? path : nil
 }

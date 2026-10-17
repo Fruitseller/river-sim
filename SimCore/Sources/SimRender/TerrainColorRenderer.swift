@@ -124,9 +124,12 @@ public enum TerrainColorRenderer {
         // Strand und Felsküste (Issue #174 C): Abstand zum Meer, Strandbreite
         // und Steilküste je Zelle. Ein zu kurzes Feld (n ≤ 2) lässt die Küste aus.
         let shore = CoastMaterial.shore(terrain)
-        let coastDistance = shore.distance
         let shoreOn = shore.beachWidth.count == n * n && shore.cliff.count == n * n
-        let beachWidth = shoreOn ? shore.beachWidth : [0]
+            && shore.beachReach.count == n * n && shore.cliffReach.count == n * n
+        // Brandungs- und Strandsaum als stetige Reichweiten (runde Säume je
+        // Küstenpunkt, `CoastMaterial.beachReach`) statt des Chebyshev-Abstands.
+        let coastDistance = shoreOn ? shore.cliffReach : [0]
+        let beachWidth = shoreOn ? shore.beachReach : [0]
         let shoreCliff = shoreOn ? shore.cliff : [0]
         let barsOn = bars.fits(n * n)
         let barSand = barsOn ? bars.sand : [0]
@@ -347,7 +350,7 @@ public enum TerrainColorRenderer {
                         // Küste knapp über dem Meer Sand. Beide verdrängen die
                         // Gewichte des Materialmodells (#174 D) anteilig; die
                         // Summe bleibt ≤ 1.
-                        let cliffCoast = CoastMaterial.cliff(distance: pcoast[k], slope: slope,
+                        let cliffCoast = CoastMaterial.cliff(reach: shoreOn ? pcoast[k] : 0, slope: slope,
                                                              relief: shoreOn ? pshoreCliff[k] : 0)
                             * (1 - coldWeight)
                         if cliffCoast > 0 {
@@ -363,8 +366,7 @@ public enum TerrainColorRenderer {
                         // Sand (EIN Kanal für Strand und Bank, #174 C/C2): der
                         // stärkere gewinnt, `max(Strand, Bank)`. Frische Bank
                         // aus `BarMaterial`, Strand aus `CoastMaterial`.
-                        let coastSand = CoastMaterial.sand(distance: pcoast[k],
-                                                           width: shoreOn ? pbeach[k] : 0,
+                        let coastSand = CoastMaterial.sand(reach: shoreOn ? pbeach[k] : 0,
                                                            slope: slope, height: v - sea)
                         let barSandHere = barsOn ? Double(pbsand[k]) : 0
                         sand = max(coastSand, barSandHere) * (1 - coldWeight)
@@ -431,7 +433,51 @@ public enum TerrainColorRenderer {
         }
         }}}}}}}}}}}}}}}}}}}}}}
 
+        softenSand(&colors, h: h, sea: sea, n: n)
         return Buffers(colors: colors, surfaces: surfaces, covers: covers)
+    }
+
+    /// Weiche Sandkante (Befund #174, Rauten und Treppen am Strand und auf
+    /// den Bänken): Strand und Bank tragen ihren Sand je Zelle, mit einer
+    /// Rampe von höchstens einer Zelle. Bilinear gefiltert wurde daraus eine
+    /// Kante, die je Zelle abknickt — Treppen, Kreuze und Rauten im Sand,
+    /// obwohl das Gelände darunter glatt ist. Ein 3×3-Binomialfilter (1-2-1)
+    /// über den Sand-Kanal verbreitert die Rampe auf zwei Zellen; gemittelt
+    /// wird nur über Land, damit der Strand an der Wasserlinie nicht ausbleicht.
+    /// Der Kanal mischt im Shader obenauf (`terr = mix(terr, sand, a)`), die
+    /// Gewichtssumme der Materialien bleibt unberührt. Liest eine Kopie und
+    /// schreibt je Zelle nur sich selbst: parallel bit-identisch.
+    static func softenSand(_ colors: inout [UInt8], h: [Double], sea: Double, n: Int) {
+        guard n > 2, colors.count == n * n * 4, h.count == n * n else { return }
+        let source = colors
+        source.withUnsafeBufferPointer { sb in
+        h.withUnsafeBufferPointer { hb in
+        colors.withUnsafeMutableBufferPointer { cb in
+            let ps = sb.baseAddress!, ph = hb.baseAddress!, pc = cb.baseAddress!
+            parallelChunks(n) { jLo, jHi in
+                for j in jLo..<jHi {
+                    for i in 0..<n {
+                        let k = j * n + i
+                        guard ph[k] > sea else { continue }
+                        var sum = 0, weight = 0
+                        for dj in -1...1 {
+                            let jj = j + dj
+                            guard jj >= 0, jj < n else { continue }
+                            for di in -1...1 {
+                                let ii = i + di
+                                guard ii >= 0, ii < n else { continue }
+                                let nb = jj * n + ii
+                                guard ph[nb] > sea else { continue }
+                                let w = (2 - abs(di)) * (2 - abs(dj))
+                                sum += w * Int(ps[nb * 4 + 3])
+                                weight += w
+                            }
+                        }
+                        if weight > 0 { pc[k * 4 + 3] = UInt8((sum + weight / 2) / weight) }
+                    }
+                }
+            }
+        }}}
     }
 
     // Meeresgrund und unmittelbarer Ufersaum. Landmaterialien entstehen im

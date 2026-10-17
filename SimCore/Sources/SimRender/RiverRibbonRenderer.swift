@@ -131,6 +131,9 @@ public final class RiverRibbonRenderer {
         /// Signierte Bogenstärke (−1 … +1, `MeanderState.bendStrength`) → UV2.y:
         /// Tiefenfarbe nach Querprofil. 0 = symmetrisch (Delta-Arm, Altarm).
         var bend: Double = 0
+        /// Stück einer Meeresmündung jenseits der Wasserlinie: liegt wie die
+        /// Delta-Arme unter der Ozean-Ebene, nicht auf Gelände + `lift`.
+        var seaMouth = false
     }
 
     // MARK: Dirty-Vertrag
@@ -405,7 +408,7 @@ public final class RiverRibbonRenderer {
             // Unsichtbare Schwänze (Deckkraft ≈ 0) nicht emittieren; 2 Samples
             // Vorlauf bleiben für den weichen Einstieg.
             guard var lo = alpha.firstIndex(where: { $0 > WaterRender.ribbonMinimumAlpha }),
-                  let hi = alpha.lastIndex(where: { $0 > WaterRender.ribbonMinimumAlpha })
+                  var hi = alpha.lastIndex(where: { $0 > WaterRender.ribbonMinimumAlpha })
             else { continue }
             lo = max(0, lo - 2)
             if hi - lo < 2 { continue }
@@ -435,7 +438,7 @@ public final class RiverRibbonRenderer {
                 let dx = (px[a] - px[a - 1]) * cs, dz = (pz[a] - pz[a - 1]) * cs
                 arc[a] = arc[a - 1] + (dx * dx + dz * dz).squareRoot()
             }
-            let total = arc[hi]
+
 
             // Stützpunkte des Laufs (Quellen-Taper über ~4 Zellen, bei einem
             // breit beginnenden Lauf über `ribbonLandTaperHalfWidths`
@@ -462,7 +465,27 @@ public final class RiverRibbonRenderer {
             // das Band dem D8-Empfänger bis IN die Wasserfläche und blendet dort
             // über `mouthOverlapCells` aus: die Überlappung schließt den Spalt,
             // die Ausblendung verhindert eine zweite Wasserfläche über dem See.
-            let mouth = mouthPath(terrain, fromX: px[hi], fromZ: pz[hi])
+            // Läuft die Zentrumslinie selbst ins MEER, endet sie hier an der
+            // Wasserlinie (letzter Stützpunkt an Land): dahinter liegt das Band
+            // unter der Ozean-Ebene, und die Linie krümmt sich dort oft
+            // (Seed 1337 Jahr 20.000: drei Zellen Bogen im Meer, der
+            // Krümmungs-Deckel verengte die Mündung an der Wasserlinie). Die
+            // Mündung läuft von dort geradeaus weiter (`mouthPath`).
+            if let wet = (lo...hi).first(where: { a in
+                let ci = min(max(Int(px[a].rounded()), 0), n - 1)
+                let cj = min(max(Int(pz[a].rounded()), 0), n - 1)
+                return terrain.h[cj * n + ci] <= terrain.cfg.sea
+            }), wet - 1 > lo + 2, wet <= hi,
+               // Der Strahler-Anschluss (s. oben) muss auch auf dem gekürzten
+               // Band liegen, sonst stünde ein Band ohne ihn (`river_ribbons.gd`).
+               rank[lo...(wet - 1)].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) {
+                let cut = hi - (wet - 1)
+                samples.removeLast(cut)
+                hi = wet - 1
+            }
+            let tail = max(lo, hi - 2)
+            let mouth = mouthPath(terrain, fromX: px[hi], fromZ: pz[hi],
+                                  dirX: px[hi] - px[tail], dirZ: pz[hi] - pz[tail])
             if mouth.isEmpty {
                 // Kein Wasser in Reichweite: der Lauf versickert im Land oder
                 // endet vor einer Steilstrecke, die das Raster weitermalt —
@@ -472,7 +495,7 @@ public final class RiverRibbonRenderer {
                                          WaterRender.ribbonLandTaperHalfWidths
                                          * ribbonHalfWidthCells(pq[hi], cfg: terrain.cfg))
                 for a in samples.indices {
-                    let t = clamp01((total - arc[lo + a]) / (tailTaperCells * cs))
+                    let t = clamp01((arc[hi] - arc[lo + a]) / (tailTaperCells * cs))
                     samples[a].halfWidth *= t
                     samples[a].alpha *= t
                 }
@@ -509,11 +532,57 @@ public final class RiverRibbonRenderer {
                     prevX = point.x
                     prevZ = point.z
                 }
+                // Knick am Übergang Zentrumslinie → Mündungs-Kette: die Linie
+                // endet oft eine Zelle neben dem D8-Lauf, die Kette setzt dann
+                // unter 30–80° an. Am Knick griff der Krümmungs-Deckel und
+                // verengte die Mündung auf eine Spitze (Halbbreite 0,2–0,4,
+                // über `ribbonMaxHalfWidthSlope` zwei bis drei Zellen stromauf
+                // nachgezogen; Seed 1337 Jahr 20.000). Drei Glättungsdurchgänge
+                // über die letzten sechs Laufknoten und die Kette, beide Enden
+                // fest.
+                let junction = hi - lo + 1
+                let first = max(1, junction - WaterRender.mouthJunctionSmoothSamples)
+                let last = samples.count - 2
+                if last > first {
+                    for _ in 0..<3 {
+                        let raw = samples
+                        for a in first...last {
+                            samples[a].x = 0.5 * raw[a].x + 0.25 * (raw[a - 1].x + raw[a + 1].x)
+                            samples[a].z = 0.5 * raw[a].z + 0.25 * (raw[a - 1].z + raw[a + 1].z)
+                        }
+                    }
+                }
+                // Jenseits der Wasserlinie liegt die Mündung unter der
+                // Ozean-Ebene (`emitRibbon`): mit dem Gelände-Maximum hob der
+                // flache Küstensaum das Band als Keil über das Meer (Seed 20,
+                // Jahr 20.000, Mündung 358/641).
+                for a in junction..<samples.count {
+                    let ci = min(max(Int(samples[a].x.rounded()), 0), n - 1)
+                    let cj = min(max(Int(samples[a].z.rounded()), 0), n - 1)
+                    samples[a].seaMouth = terrain.h[cj * n + ci] <= terrain.cfg.sea
+                }
                 // Der Überlappungs-Deckel kann mitten im flachen Apron greifen
                 // (dort ist die See-Übergabe noch > 0). Dann übernehmen die
                 // Delta-Arme — das Band selbst läuft über die letzten 2 Zellen
-                // weich aus, statt mit einer Kante zu enden.
-                RiverRibbonRenderer.taperTail(&samples, cells: WaterRender.ribbonTailTaperCells)
+                // weich aus, statt mit einer Kante zu enden. Im MEER nur über
+                // das Stück unter der Ozean-Ebene: endet die Mündung früh (eine
+                // Bank eine Zelle vor der Küste hält den Geradeaus-Strahl an),
+                // lag der Taper sonst wieder auf dem Strand (Befund #174).
+                var taper = WaterRender.ribbonTailTaperCells
+                if let firstSea = samples.indices.first(where: { a in
+                    guard a >= junction else { return false }
+                    let ci = min(max(Int(samples[a].x.rounded()), 0), n - 1)
+                    let cj = min(max(Int(samples[a].z.rounded()), 0), n - 1)
+                    return terrain.h[cj * n + ci] <= terrain.cfg.sea
+                }) {
+                    var wet = 0.0
+                    for a in (firstSea + 1)..<max(firstSea + 1, samples.count) {
+                        let dx = samples[a].x - samples[a - 1].x, dz = samples[a].z - samples[a - 1].z
+                        wet += (dx * dx + dz * dz).squareRoot()
+                    }
+                    taper = min(taper, max(wet, 1e-6))
+                }
+                RiverRibbonRenderer.taperTail(&samples, cells: taper)
             }
 
             // Wasser-Übergabe in EINEM Pass über den fertigen Lauf (die
@@ -630,9 +699,15 @@ public final class RiverRibbonRenderer {
     /// hinein (im A/B-Screenshot als heller Rechteck-Ausleger sichtbar). Die
     /// kurze Überlappung schließt den Diskretisierungs-Spalt zur Uferlinie und
     /// endet dann.
+    ///
+    /// Die Blende liegt ganz im Meer (`WaterRender.mouthSeaCells`): bis
+    /// `mouthOverlapCells` unter Wasser bleibt das Band voll, damit es an der
+    /// Wasserlinie in voller Breite und Deckkraft unter die Ozean-Ebene taucht.
+    /// Auch der Minimum-Filter der Übergabe (`erodeAndSmooth`, ± eine Zelle)
+    /// zieht die Blende damit nicht mehr auf den Strand.
     @inline(__always)
     private static func seaHandoverFade(submergedCells: Double) -> Double {
-        1 - smoothstep(0, WaterRender.mouthOverlapCells, submergedCells)
+        1 - smoothstep(WaterRender.mouthOverlapCells, 2 * WaterRender.mouthOverlapCells, submergedCells)
     }
 
     /// Legt jeden Stützpunkt, der unter Wasser liegt, auf dessen Spiegel und
@@ -866,13 +941,18 @@ public final class RiverRibbonRenderer {
                 // Jahr 230.000, 0,42 Welt-Einheiten Sprung). Das Maximum ist
                 // stetig: auf tiefem Wasser gewinnt der Spiegel wie bisher,
                 // im Saum das Gelände.
-                // Ausnahme: Delta-Arme auf dem MEER. Sie liegen als Trübung
-                // unter der Meeres-Ebene; über dem flachen Schelf höbe das
-                // Gelände-Maximum sie als Strahlenfächer darüber.
+                // Ausnahme: Delta-Arme und Mündungen auf dem MEER. Sie liegen
+                // als Trübung unter der Meeres-Ebene; über dem flachen Schelf
+                // höbe das Gelände-Maximum sie als Strahlenfächer bzw. Keil
+                // darüber.
                 let onSea = surface <= terrain.cfg.sea + 1e-9
                 let y = surface * hscale + (onSea ? WaterRender.ribbonSeaSurfaceSink
                                                   : WaterRender.ribbonLakeSurfaceLift)
-                if onSea && kind == WaterRender.ribbonKindDelta {
+                // Mündung: unter die Ozean-Ebene nur, wo auch die gerenderte
+                // Oberfläche schon unter dem Meer liegt — sonst verschwände das
+                // Band eine Zelle vor der sichtbaren Wasserlinie unter dem Strand.
+                let mouthUnder = s.seaMouth && yCenter <= terrain.cfg.sea * hscale
+                if onSea && (kind == WaterRender.ribbonKindDelta || mouthUnder) {
                     yLeftD = y; yRightD = y
                 } else {
                     yLeftD = max(yLeftD, y)

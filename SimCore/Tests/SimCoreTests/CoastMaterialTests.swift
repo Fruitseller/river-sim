@@ -8,8 +8,41 @@ import XCTest
 /// Makrofarbe, Fels im G-Kanal der Materialgewichte).
 final class CoastMaterialTests: XCTestCase {
 
+    /// Das Ende einer Sandbank breitet sich radial aus. Eine quadratische
+    /// Distanz gab der diagonalen Probe denselben Sand wie der Achsenprobe.
+    func testSandbankEndHasARoundBeachContour() {
+        var cfg = SimConfig(); cfg.n = 32
+        let t = Terrain(allocating: cfg, seed: 1)
+        let h = [Double](repeating: cfg.sea + 0.001, count: cfg.count)
+        t.setBedForTests(h: h, sed: h.map { _ in 0.001 }, rock: h.map { $0 - 0.001 }, underIce: [])
+        let center = 16 * cfg.n + 16
+        var widths = [Float](repeating: 0, count: cfg.count); widths[center] = 4
+        let reach = CoastMaterial.beachReach(t, seeds: [center], width: widths)
+        XCTAssertEqual(reach[center + 3], 1)
+        XCTAssertEqual(reach[center + 3 * cfg.n], 1)
+        XCTAssertEqual(reach[center + 3 * cfg.n + 3], 0, "Sand reicht diagonal über den Kreis hinaus")
+        XCTAssertGreaterThan(reach[center + 2 * cfg.n + 3], 0)
+        XCTAssertLessThan(reach[center + 2 * cfg.n + 3], 0.5)
+    }
+
     /// Kleine Welt: Spalten `i < shore` flaches Meer, rechts davon Land mit der Höhe
     /// `land(i)`.
+    func testThickDeltaSedimentDoesNotTurnIntoACoastalRockCliff() {
+        let sea = SimConfig().sea
+        let t = coastWorld(n: 48, shore: 24) { _ in sea + 0.0015 }
+        var state = t.state
+        state.sed = state.h.map { _ in 0.05 }
+        state.rock = zip(state.h, state.sed).map { $0 - $1 }
+        t.restore(state)
+        let shore = CoastMaterial.shore(t)
+        XCTAssertEqual(shore.cliffReach[24 * 48 + 24], 0, "Sediment ist kein Fels")
+        state.sed = state.h.map { _ in 0 }
+        state.rock = state.h
+        t.restore(state)
+        XCTAssertGreaterThan(CoastMaterial.shore(t).cliffReach[24 * 48 + 24], 0,
+                             "Brandung erreicht freiliegenden Fels weiter")
+    }
+
     private func coastWorld(n: Int = 32, shore: Int = 8,
                             land: (Int) -> Double) -> Terrain {
         let config = renderConfig(n: n)
@@ -27,6 +60,31 @@ final class CoastMaterialTests: XCTestCase {
         return terrain
     }
 
+    /// Befund #174 (Seed 42, Südküste): eine flache Uferterrasse vor einem
+    /// Berg wurde über das Rückland-Relief zur Felsküste — dunkles Geröll auf
+    /// ebenem Boden. Fels gehört an die Kliffwand, nicht auf die Terrasse;
+    /// ein Kliff direkt an der Wasserlinie bleibt Fels.
+    func testFlatTerraceBelowAMountainIsNoRockCoast() {
+        let sea = SimConfig().sea
+        // Terrasse 6 Zellen breit auf sea + 0,002 (Gefälle 0,0003 je Zelle),
+        // dahinter ein Hang mit 0,04 je Zelle.
+        let terrace = coastWorld(n: 48, shore: 12) { i in
+            i < 18 ? sea + 0.002 + 0.0003 * Double(i - 12) : sea + 0.004 + 0.04 * Double(i - 18)
+        }
+        let n = terrace.cfg.n
+        let backland = (12...20).map { terrace.h[24 * n + $0] }.max()! - terrace.h[24 * n + 12]
+        XCTAssertGreaterThan(backland, 0.075, "Aufbau: Berg im Rückland (Radius 8), früher volle Felsküste")
+        let buffers = TerrainColorRenderer.buffers(terrace)
+        for i in 12...14 {
+            let k = 24 * n + i
+            XCTAssertLessThan(buffers.surfaces[k * 4 + 1], 32, "Fels auf der flachen Terrasse bei i = \(i)")
+        }
+        let cliff = coastWorld(n: 48, shore: 12) { i in sea + 0.002 + 0.03 * Double(i - 12) }
+        let k = 24 * n + 13
+        XCTAssertGreaterThan(TerrainColorRenderer.buffers(cliff).surfaces[k * 4 + 1], 200,
+                             "Kliff an der Wasserlinie bleibt Fels")
+    }
+
     func testCalibrationWindowsFitTheWaveBandAndDoNotOverlap() {
         XCTAssertLessThanOrEqual(WaterRender.beachHeightHi, SimConfig().waveBand,
                                  "Strand nur, wo die Brandung (wavePass) arbeitet")
@@ -38,9 +96,12 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(WaterRender.coastReachCells, 1)
         // Der Zusammenhang je Küstenpunkt (§E).
         XCTAssertLessThan(WaterRender.beachReliefLo, WaterRender.beachReliefHi)
-        XCTAssertLessThanOrEqual(WaterRender.beachReliefHi, WaterRender.cliffReliefLo,
-                                 "Küstenebene (Strand) und Steilküste (Fels) überlappen nicht")
-        XCTAssertLessThan(WaterRender.cliffReliefLo, WaterRender.cliffReliefHi)
+        XCTAssertLessThan(WaterRender.cliffRiseLo, WaterRender.cliffRiseHi)
+        XCTAssertLessThan(WaterRender.cliffFaceSlopeLo, WaterRender.cliffFaceSlopeHi)
+        XCTAssertLessThanOrEqual(WaterRender.cliffFaceSlopeHi, WaterRender.cliffCoastSlopeLo,
+                                 "die Kliffwand-Schwelle liegt unter der allgemeinen")
+        XCTAssertLessThan(WaterRender.cliffRiseRadiusCells, WaterRender.beachReliefRadiusCells,
+                          "die Kliffhöhe misst näher an der Küste als das Rückland")
         XCTAssertLessThan(WaterRender.beachOpenLo, WaterRender.beachOpenHi)
         XCTAssertLessThan(WaterRender.beachPotentialLo, WaterRender.beachPotentialHi)
         XCTAssertLessThan(WaterRender.beachSupplyMinCells, WaterRender.beachSupplyFullCells)
@@ -54,11 +115,11 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(CoastMaterial.distanceCap, WaterRender.coastReachCells + 1)
         // Das Rauschen allein darf einen geschützten Strand nicht löschen und
         // eine offene Küste ohne Zufuhr nicht zum vollen Strand heben.
-        let sheltered = (0...10).map { CoastMaterial.beach(relief: 0.01, openness: 0.38, supply: 0,
+        let sheltered = (0...10).map { CoastMaterial.beach(relief: 0.01, rise: 0.005, openness: 0.38, supply: 0,
                                                            noise: Double($0) / 10).width }
         XCTAssertGreaterThan(sheltered.min() ?? 0, 0.5 * WaterRender.beachMaxWidthCells,
                              "geschützte Küstenebene bleibt auch bei schlechtestem Rauschen ein breiter Strand")
-        let exposed = (0...10).map { CoastMaterial.beach(relief: 0.01, openness: 0.55, supply: 0,
+        let exposed = (0...10).map { CoastMaterial.beach(relief: 0.01, rise: 0.005, openness: 0.55, supply: 0,
                                                          noise: Double($0) / 10).width }
         XCTAssertLessThan(exposed.max() ?? 0, 0.5 * WaterRender.beachMaxWidthCells,
                           "offene Küstenebene wird auch bei bestem Rauschen kein breiter Strand")
@@ -90,11 +151,36 @@ final class CoastMaterialTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(buffers.colors[k * 4 + 3], 128, "Strand an Spalte \(i)")
             XCTAssertLessThan(buffers.surfaces[k * 4], 128, "kein Bewuchs auf dem Strand")
         }
-        let inland = j * n + 8 + WaterRender.coastReachCells + 2
+        // Die weiche Sandkante (`TerrainColorRenderer.softenSand`, 3×3) läuft
+        // eine Zelle über den breitesten Strand hinaus aus.
+        let inland = j * n + 8 + WaterRender.coastReachCells + 3
         XCTAssertEqual(buffers.colors[inland * 4 + 3], 0, "Strand nur in Reichweite der Brandung")
         for k in 0..<(n * n) where terrain.h[k] <= sea {
             XCTAssertEqual(buffers.colors[k * 4 + 3], 0, "kein Sand unter Wasser")
         }
+    }
+
+    /// Delta-Insel (Issue #174, Punkt 26): eine flache Mündungsbarre vor einer
+    /// Steilküste ist Sand, obwohl sie offen im Meer liegt; die Steilküste
+    /// daneben bleibt Fels ohne Sand.
+    func testDeltaIslandIsSandEvenOnAnOpenCoast() {
+        let sea = SimConfig().sea
+        let terrain = coastWorld(n: 48, shore: 24) { i in sea + 0.02 * Double(i - 23) }
+        let n = terrain.cfg.n
+        var state = terrain.state
+        var island: [Int] = []
+        for j in 20...26 { for i in 8...13 {
+            let k = j * n + i
+            state.h[k] = sea + 0.0015
+            island.append(k)
+        } }
+        state.waterLevel = state.h
+        terrain.restore(state)
+        XCTAssertEqual(Set(CoastMaterial.deltaIslands(terrain)), Set(island))
+        let buffers = TerrainColorRenderer.buffers(terrain)
+        let centre = 23 * n + 10
+        XCTAssertGreaterThanOrEqual(buffers.colors[centre * 4 + 3], 128, "Inselmitte ist Sand")
+        XCTAssertEqual(buffers.colors[(23 * n + 25) * 4 + 3], 0, "Steilküste bleibt ohne Sand")
     }
 
     func testSteepCoastStaysRockWithoutSand() {
@@ -283,7 +369,7 @@ final class CoastMaterialTests: XCTestCase {
     /// geschütztere Lage und mehr Zufuhr geben nie weniger Strand.
     func testBeachModelIsMonotone() {
         func width(_ relief: Double, _ openness: Double, _ supply: Double, _ noise: Double = 0.5) -> Double {
-            CoastMaterial.beach(relief: relief, openness: openness, supply: supply, noise: noise).width
+            CoastMaterial.beach(relief: relief, rise: relief, openness: openness, supply: supply, noise: noise).width
         }
         var previous = Double.infinity
         for r in stride(from: 0.0, through: 0.1, by: 0.005) {
@@ -304,9 +390,11 @@ final class CoastMaterialTests: XCTestCase {
         // geschützter Lage behält ihren Strand, steiles Rückland bekommt keinen.
         XCTAssertGreaterThan(width(0.01, 0.38, 0, 0), 0.5 * WaterRender.beachMaxWidthCells)
         XCTAssertEqual(width(0.09, 0.45, 0, 1), 0)
-        let c = CoastMaterial.beach(relief: 0.09, openness: 0.5, supply: 0, noise: 0.5)
-        XCTAssertEqual(c.cliff, 1, accuracy: 1e-9, "steiles Rückland ist Felsküste")
-        XCTAssertEqual(CoastMaterial.beach(relief: 0.01, openness: 0.4, supply: 0, noise: 0.5).cliff, 0)
+        let c = CoastMaterial.beach(relief: 0.09, rise: 0.04, openness: 0.5, supply: 0, noise: 0.5)
+        XCTAssertEqual(c.cliff, 1, accuracy: 1e-9, "hohes Kliff ist Felsküste")
+        XCTAssertEqual(CoastMaterial.beach(relief: 0.01, rise: 0.005, openness: 0.4, supply: 0, noise: 0.5).cliff, 0)
+        XCTAssertEqual(CoastMaterial.beach(relief: 0.09, rise: 0.005, openness: 0.5, supply: 0, noise: 0.5).cliff, 0,
+                       "Berg im Rückland ohne Kliff an der Küste ist keine Felsküste")
     }
 
     func testCoastWeightsAreDeterministic() {

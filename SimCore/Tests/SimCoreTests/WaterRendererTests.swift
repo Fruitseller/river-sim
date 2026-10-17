@@ -523,6 +523,128 @@ final class WaterRendererTests: XCTestCase {
     }
   }
 
+  // MARK: Mündung ins Meer (Befund #174, „Flüsse erreichen das Meer nicht")
+
+  /// Meereszellen haben keinen D8-Empfänger: die Kette endete an der ersten
+  /// Meereszelle, und Übergabe und Enden-Taper lagen auf dem Strand davor.
+  /// Mit Laufrichtung läuft die Mündung geradeaus `mouthSeaCells` Zellen ins
+  /// Meer.
+  func testSeaMouthRunsStraightUnderTheSeaPlane() {
+    let config = renderConfig(n: 48)
+    let n = config.n, sea = config.sea
+    let terrain = Terrain(allocating: config, seed: 1337)
+    var state = terrain.state
+    for j in 0..<n {
+      for i in 0..<n {
+        let k = j * n + i
+        // Meer westlich von Spalte 20, Land steigt nach Osten.
+        state.h[k] = i < 20 ? sea - 0.004 : sea + 0.0005 * Double(i - 19)
+        state.receiver[k] = i < 20 ? -1 : Int32(k - 1)
+      }
+    }
+    state.waterLevel = state.h
+    terrain.restore(state)
+    let path = mouthPath(terrain, fromX: 24, fromZ: 24, dirX: -1, dirZ: 0)
+    let wet = path.filter { $0.surface != nil }
+    XCTAssertEqual(Double(wet.count), WaterRender.mouthSeaCells, "Mündung endet vor der Ozean-Ebene")
+    XCTAssertTrue(path.allSatisfy { abs($0.z - 24) < 1e-9 }, "Mündung läuft nicht geradeaus")
+    XCTAssertLessThanOrEqual(path.last!.x, 20 - WaterRender.mouthSeaCells + 1e-9)
+    // Ohne Richtung (Wasserfeld-Altpfad): D8-Kette bis zur ersten
+    // Meereszelle, dann geradeaus weiter.
+    let d8 = mouthPath(terrain, fromX: 24, fromZ: 24)
+    XCTAssertEqual(Double(d8.filter { $0.surface != nil }.count), WaterRender.mouthSeaCells)
+  }
+
+  /// End-to-End auf der Produktionswelt: jedes Fluss-Band, das ins Meer
+  /// läuft, ist an seiner letzten Landstelle (Wasserlinie) noch voll deckend
+  /// und voll breit. Vorher lag dort die Übergabe (Deckkraft 0,3–0,6) und der
+  /// Krümmungs-Deckel verengte das Band auf eine Spitze (Halbbreite 3,2 →
+  /// 0,2–1,9; Seed 1337, Jahr 20.000, `docs/zielbild-measurements.md` § Delta,
+  /// Mündung).
+  func testRiverBandsReachTheSeaAtFullWidthAndOpacity() {
+    let terrain = Terrain(config: .production, seed: RenderContract.defaultSeed,
+                          settleYears: SimConfig.productionSettleYears)
+    terrain.step(dtYears: 1000)
+    terrain.computeFlow()
+    let mesh = RiverRibbonRenderer().build(terrain, hscale: RenderContract.heightScale, lift: 0)
+    let n = terrain.cfg.n, sea = terrain.cfg.sea
+    let cs = terrain.cfg.cellSize, half = terrain.cfg.world / 2
+    func cell(_ v: Int) -> Int {
+      let l = mesh.vertices[v], r = mesh.vertices[v + 1]
+      let x = (Double(l.x + r.x) / 2 + half) / cs, z = (Double(l.z + r.z) / 2 + half) / cs
+      return min(max(Int(z.rounded()), 0), n - 1) * n + min(max(Int(x.rounded()), 0), n - 1)
+    }
+    func halfWidth(_ v: Int) -> Double {
+      let l = mesh.vertices[v], r = mesh.vertices[v + 1]
+      return (Double(l.x - r.x) * Double(l.x - r.x) + Double(l.z - r.z) * Double(l.z - r.z)).squareRoot() / 2 / cs
+    }
+    let starts = mesh.stripStarts.map(Int.init) + [mesh.vertices.count]
+    var checked = 0
+    var failures: [String] = [], spikes: [String] = []
+    for s in 0..<(starts.count - 1) {
+      let lo = starts[s], hi = starts[s + 1]
+      guard hi - lo >= 24, mesh.uv2s[lo].x == Float(WaterRender.ribbonKindRiver) else { continue }
+      guard terrain.h[cell(hi - 2)] <= sea else { continue }        // endet nicht im Meer
+      // Letzte Landstelle vor dem Meer.
+      var v = hi - 2
+      while v >= lo, terrain.h[cell(v)] <= sea { v -= 2 }
+      guard v - 20 >= lo else { continue }
+      let upstream = stride(from: v - 20, to: v, by: 2).map { halfWidth($0) }.max() ?? 0
+      let upstreamAlpha = stride(from: v - 20, to: v, by: 2).map { Double(mesh.colors[$0].w) }.max() ?? 0
+      guard upstream > 1, upstreamAlpha > 0.5 else { continue }      // kein sichtbarer Hauptlauf
+      // Mündung über einen Seespiegel (Lagune, nachlaufender `waterLevel`):
+      // dort gilt die See-Übergabe nach der Wassersäule, nicht diese.
+      let apron = stride(from: max(lo, v - 6), through: v, by: 2).contains {
+        let c = cell($0)
+        return terrain.waterLevel[c] - terrain.h[c] > WaterRender.pondContourLo
+      }
+      if apron { continue }
+      checked += 1
+      let alpha = Double(mesh.colors[v].w), width = halfWidth(v)
+      // Deckkraft wie stromauf; die Breite darf an einer echten Biegung an der
+      // Wasserlinie dem Krümmungs-Deckel folgen, aber nicht zur Spitze werden.
+      if alpha < 0.9 * upstreamAlpha || width < 0.5 * upstream {
+        failures.append(String(format: "Band %d: Deckkraft %.2f von %.2f, Halbbreite %.2f von %.2f",
+                               s, alpha, upstreamAlpha, width, upstream))
+        if width < 0.25 * upstream {
+          spikes.append(String(format: "Band %d: Halbbreite %.2f von %.2f", s, width, upstream))
+        }
+      }
+    }
+    print("[MÜNDUNG] \(checked) Mündungen ins Meer, \(failures.count) nicht voll an der Wasserlinie, \(spikes.count) spitz")
+    XCTAssertGreaterThanOrEqual(checked, 5, "Aufbau: zu wenige Mündungen ins Meer")
+    // Einzelne Mündungen dürfen an der Wasserlinie biegen (Krümmungs-Deckel)
+    // oder unter einem früher gebauten Band ausblenden (Überdeckung); zur
+    // Spitze wird keine, und die große Mehrheit taucht voll ins Meer.
+    XCTAssertLessThanOrEqual(Double(failures.count), 0.2 * Double(checked),
+                             "Band endet vor der Wasserlinie: \(failures)")
+    XCTAssertTrue(spikes.isEmpty, "Band läuft an der Wasserlinie spitz aus: \(spikes)")
+  }
+
+  /// Rinne durch den Strand: über dem Gerinne einer Mündung liegt kein Sand,
+  /// daneben schon.
+  func testBeachIsClearedOverTheRiverBedAtTheMouth() {
+    let config = renderConfig(n: 48)
+    let n = config.n, sea = config.sea
+    let terrain = Terrain(allocating: config, seed: 1337)
+    var state = terrain.state
+    let cellArea = config.cellSize * config.cellSize
+    for j in 0..<n {
+      for i in 0..<n {
+        let k = j * n + i
+        state.h[k] = i < 20 ? sea - 0.002 : sea + 0.001 + 0.0002 * Double(i - 20)
+        state.receiver[k] = i < 20 ? -1 : Int32(k - 1)
+        state.area[k] = j == 24 && i >= 20 ? 20 * config.renderMinCells * cellArea : cellArea
+      }
+    }
+    state.waterLevel = state.h
+    terrain.restore(state)
+    let shore = CoastMaterial.shore(terrain)
+    let bed = 24 * n + 21, beside = 18 * n + 21
+    XCTAssertGreaterThan(shore.beachReach[beside], 0.5, "Aufbau: flache Küste trägt Strand")
+    XCTAssertEqual(shore.beachReach[bed], 0, "Sand über dem Gerinne der Mündung")
+  }
+
   func testMouthPathAndOpenWaterSurfaceHandleNonFiniteAndOutOfBoundsInputs() {
     let badInputs = [Double.nan, Double.infinity, -Double.infinity, 1e300, -1e300]
     let terrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)

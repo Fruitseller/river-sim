@@ -254,12 +254,41 @@ public enum WaterRender {
     /// Diskretisierungs-Versatz und sind bei Ribbon-Halbbreiten bis 3,2 Zellen
     /// noch kürzer als das Band breit ist.
     public static let mouthOverlapCells = 2.0
+    /// Im MEER gilt die Überlappung nicht als Blende, sondern als Vorlauf: das
+    /// Band liegt dort unter der opaken Ozean-Ebene, ist also ohnehin
+    /// unsichtbar. Es bleibt deshalb bis `mouthOverlapCells` unter Wasser voll
+    /// und blendet erst zwischen einer und zwei Überlappungen aus; die
+    /// Mündungs-Kette läuft dafür so viele Zellen ins Meer (`mouthPath`).
+    /// Vorher lagen Übergabe und Enden-Taper auf den letzten zwei Zellen VOR
+    /// der Wasserlinie (Meereszellen haben keinen D8-Empfänger, die Kette
+    /// endete an der ersten): das Band endete auf dem Strand (Befund #174,
+    /// gemessen in `docs/zielbild-measurements.md` § Delta, Mündung).
+    public static let mouthSeaCells = 2 * mouthOverlapCells + 1
+    /// Laufknoten vor der Mündungs-Kette, über die `RiverRibbonRenderer` den
+    /// Knick am Übergang glättet (Stützpunkte im Abstand ~0,5 Zellen, also
+    /// fünf Zellen Lauf). Mit 6 blieb das Zellen-Zickzack der letzten
+    /// Gürtel-Knoten an der Küste stehen, und der Krümmungs-Deckel verengte
+    /// das Band dort auf 0,5 Halbbreiten (Seed 1337, Wächter
+    /// `testRiverBandsReachTheSeaAtFullWidthAndOpacity`).
+    public static let mouthJunctionSmoothSamples = 10
+    /// Höchstens so viele Landzellen läuft die Geradeaus-Mündung
+    /// (`SimRender.mouthPath` mit Richtung) vom Laufende bis zum Meer; weiter
+    /// läge das Band nicht mehr sicher auf dem Bett, dann gilt die D8-Kette.
+    public static let mouthRayLandCells = 3
 
     /// Wassersäule, ab der das RASTER-Feld eine Fläche überhaupt als See malt
     /// (`rawWet` in `SimRender.WaterFieldRenderer`). Seichteres Ponding bleibt
     /// dort bewusst trocken („zu viele Seen"), und genau darum ist dieser Wert die
     /// NAHTSTELLE zur Geometrie: unterhalb malt niemand, oberhalb der Raster-See.
     public static let lakeRawWetDepth = 0.03
+    /// Strandsee: abgeschnürtes Wasser mit Boden unter dem Meeresspiegel,
+    /// dessen Spiegel höchstens so weit über dem Meer liegt, malt das Raster
+    /// nicht als See — die Ozean-Ebene deckt es (`WaterFieldRenderer`). Der
+    /// doppelte Delta-Scheitel (`SimConfig.deltaTopset` 0,0015): so hoch
+    /// schüttet das Delta seine Inseln und Wälle, die eine Rinne abschnüren.
+    /// Gemessen (Seed 1337, Jahr 20.000, 1000-Jahr-Schritte): bis 62
+    /// Lagunenzellen inselweit, je nach Schritt, bei 100-Jahr-Schritten 0–2.
+    public static let lagoonMaxRise = 0.003
 
     /// Delta-Front: bis zu dieser Wassersäule gilt eine überflutete Zelle als
     /// Delta-Apron (Ablagerungskörper knapp unter Wasser), darüber beginnt das
@@ -743,8 +772,12 @@ public enum WaterRender {
 
     /// Suchweite der Mündungs-Verlängerung (Zellen). Reicht das Wasser nicht so
     /// weit, endet der Lauf im Land (Versickerung/Trockental) und bekommt seinen
-    /// weichen Enden-Taper statt einer Mündung.
-    public static let mouthSearchCells = 8
+    /// weichen Enden-Taper statt einer Mündung. Vorher 8: seit dem Delta
+    /// (Issue #174, Punkt 26) läuft ein Fluss oft über seine junge Deltaebene,
+    /// bevor er das Meer erreicht; die Zentrumslinie des Gürtels endet an der
+    /// alten Küste. Mit 8 lief das Band dort spitz aus, und das D8-Raster
+    /// malte den Rest des Laufs als breite dunkle Flecken über die Ebene.
+    public static let mouthSearchCells = 16
 
     // MARK: Raster-Feld: Track-Maske, Abstufung, Verbreiterung
 
@@ -1013,8 +1046,13 @@ public enum WaterRender {
     /// Lage des Knicks auf der normierten Tiefe 0…1.
     public static let oceanMidDepth = 0.25
     /// Breite des Brandungssaums auf der normierten Tiefe (nur der äußerste
-    /// Küstenrand).
-    public static let oceanSurfDepth = 0.045
+    /// Küstenrand). Vorher 0,045 (Wassersäule 0,0027): auf den seichten
+    /// Delta-Flächen (Barrenfuß bis `deltaTopset` unter dem Meer, Rinnen
+    /// dazwischen) lag damit über die ganze Fläche Schaum in Rausch-Flecken,
+    /// statt eines Saums an der Wasserlinie (Bögen § Delta). 0,02 (0,0012):
+    /// an offener Küste fällt der Grund ohnehin binnen einer Zelle durch das
+    /// Fenster, der Saum dort bleibt.
+    public static let oceanSurfDepth = 0.02
     /// Farbe der Brandung …
     public static let oceanSurfColor = (r: 0.80, g: 0.85, b: 0.86)
     /// … und ihr höchster Anteil an der Wasserfarbe.
@@ -1159,11 +1197,30 @@ public enum WaterRender {
     /// 1053 Küstenzellen ohne Strand, 1178 voll breit, 360 dazwischen; jetzt
     /// 1437 / 353 / 740).
     public static let beachPotentialHi = 0.90
-    /// Rückland-Relief, ab dem eine Küste Felsküste wird …
-    public static let cliffReliefLo = 0.045
-    /// … und ab dem sie voll Fels ist. Gemessen als oberes Viertel bis Zehntel
-    /// der Küstenzellen.
-    public static let cliffReliefHi = 0.075
+    /// Radius (Zellen) des Fensters für die Kliffhöhe: Anstieg direkt hinter
+    /// der Küstenzelle, ≈ 47 m. Bis #174 (Befund Seed 42, Südküste) stand der
+    /// Fels am Rückland-Relief des Radius 8 (`beachReliefRadiusCells`,
+    /// `cliffReliefLo/Hi` 0,045…0,075): eine flache Uferterrasse vor einem
+    /// Berg wurde zur Felsküste, gemessen 32–55 % der Felszellen im Saum auf
+    /// Boden flacher als 0,003 (Seeds 42/1337, Jahr 20.000,
+    /// `docs/zielbild-measurements.md` § Delta, Küste).
+    public static let cliffRiseRadiusCells = 3
+    /// Kliffhöhe (Sim-Höhe über der Küstenzelle), ab der eine Küste
+    /// Felsküste wird …
+    public static let cliffRiseLo = 0.012
+    /// … und ab der sie voll Fels ist. GEMESSEN (Jahr 20.000, Seeds
+    /// 1337/42/20): p50 0,005/0,012/0,013, p75 0,011/0,016/0,018, p90
+    /// 0,016/0,019/0,023 — das Fenster liegt am oberen Viertel.
+    public static let cliffRiseHi = 0.024
+    /// Eigene Makro-Steigung, ab der eine Zelle unter einem Kliff Fels trägt …
+    public static let cliffFaceSlopeLo = 0.0024
+    /// … und ab der voll. Darunter ist sie Terrasse oder Strand vor dem Kliff
+    /// (Wächter: `CoastMaterialTests.testFlatTerraceBelowAMountainIsNoRockCoast`).
+    /// GEMESSEN (Saum bis 3 Zellen, Jahr 20.000, Seeds 1337/42/20): ganzer
+    /// Saum p50 0,0011/0,0021/0,0023; Saum unter einem Kliff (geerbter Anteil
+    /// ≥ 0,5) p25 0,0027–0,0029, p50 0,0029–0,0033. Das Fenster trennt die
+    /// beiden.
+    public static let cliffFaceSlopeHi = 0.0036
     /// Offene Landzungen wirken um diesen Anteil steiler.
     public static let cliffExposedBoost = 0.3
     /// Höhe über dem Meeresspiegel (Sim-Einheiten), bis zu der eine flache
@@ -1172,6 +1229,26 @@ public enum WaterRender {
     /// … und ab der sie kein Sand mehr ist. Muss innerhalb des Wellenbands
     /// `SimConfig.waveBand` liegen (Wächter: `CoastMaterialTests`).
     public static let beachHeightHi = 0.018
+    /// Delta-Inseln (Issue #174, Punkt 26): flaches Land bis zu dieser Höhe
+    /// über dem Meer, das nirgends an höheres Land grenzt, ist eine
+    /// Mündungsbarre (`Terrain.deltaDeposit`, Scheitel `deltaTopset` 0,0015)
+    /// und trägt die volle Strandbreite — unabhängig von Offenheit und
+    /// Rückland, nach denen eine Insel sonst als offene Landzunge ohne Strand
+    /// läse (gemessen: 0 / 19 / 0 % der Inselzellen hell, Seeds 1337/42/20,
+    /// Jahr 20.000; mit der Regel 100 %, `docs/zielbild-measurements.md`
+    /// § Delta). Doppelter Barrenscheitel: Tropfen und Bänke dürfen die Insel
+    /// etwas aufhöhen; die Küstenrampe des Festlands grenzt nach einer Zelle
+    /// an höheres Land und bleibt beim Strandmodell.
+    public static let deltaIslandMaxHeight = 0.003
+    /// So viele Zellen stromauf löscht `CoastMaterial.clearRiverBeds` den
+    /// Strandsaum über dem Gerinne einer Mündung: weiter als der breiteste
+    /// Strand (`beachMaxWidthCells`) plus eine Kreis-Halbbreite.
+    public static let mouthClearCells = 8
+    // Schmaler Sandrand statt Vollsand auf breiteren, flachen Inseln.
+    public static let deltaIslandBeachCells = 2.6
+    // > 0,02 der normalen Bodenauflage: ein aufgeschütteter Sandkörper,
+    // keine Felsklippe trotz steiler Unterwasserflanke.
+    public static let deltaIslandMinSediment = 0.03
     /// Makro-Steigung (`Terrain.macroSlope`), bis zu der eine Küstenzelle voll
     /// Sand ist … GEMESSEN (§B, drei Matrix-Seeds, Jahr 0 bis 100.000): die
     /// Brandung hält die Küste nahe am Wellen-Talus, Küstenzellen liegen bei

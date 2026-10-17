@@ -38,10 +38,18 @@ public enum CoastMaterial {
         /// Strandbreite landeinwärts in Zellen (0 = kein Strand), von der
         /// Küstenzelle geerbt, von der die Zelle ausgeht.
         public let beachWidth: [Float]
-        /// Steilküsten-Anteil 0…1 aus dem Rückland-Relief, ebenfalls geerbt.
+        /// Sandreichweite 0…1, als Vereinigung euklidischer Küstensäume.
+        /// Anders als die diskrete Brandungsdistanz ohne Schachbrett-Kontur.
+        public let beachReach: [Float]
+        /// Kontinuierlicher Brandungssaum für Fels. Dicke Sedimentkörper
+        /// bleiben ohne Fels, auch wenn ihre Unterwasserflanke steil ist.
+        public let cliffReach: [Float]
+        /// Steilküsten-Anteil 0…1 aus der Kliffhöhe hinter der Küstenzelle
+        /// (`WaterRender.cliffRiseRadiusCells`), ebenfalls geerbt; als Fels
+        /// nur auf der Kliffwand (`cliff(reach:slope:relief:)`).
         public let cliff: [Float]
 
-        public static let empty = Shore(distance: [], beachWidth: [], cliff: [])
+        public static let empty = Shore(distance: [], beachWidth: [], beachReach: [], cliffReach: [], cliff: [])
     }
 
     /// Deckel des Abstandsfelds: so weit reicht jede Küsten-Ableitung
@@ -125,7 +133,7 @@ public enum CoastMaterial {
     public static func shore(_ terrain: Terrain) -> Shore {
         let n = terrain.cfg.n
         let (dist, origin, seeds) = shoreSeeds(terrain)
-        guard n > 2, !dist.isEmpty else { return Shore(distance: dist, beachWidth: [], cliff: []) }
+        guard n > 2, !dist.isEmpty else { return Shore(distance: dist, beachWidth: [], beachReach: [], cliffReach: [], cliff: []) }
         let h = terrain.h, sea = terrain.cfg.sea
 
         // Offenheit: Meeresanteil im Fenster, über ein Summenbild.
@@ -153,16 +161,35 @@ public enum CoastMaterial {
             }
             return top - h[j * n + i]
         }
+        // Kliffhöhe: Anstieg binnen `cliffRiseRadiusCells` hinter der
+        // Küstenzelle. Über das Rückland-Relief (Radius 8) allein wurde eine
+        // flache Uferterrasse vor einem Berg zur Felsküste: dunkles Geröll auf
+        // ebenem Boden (Befund #174, Seed 42 Südküste).
+        let cr = max(1, WaterRender.cliffRiseRadiusCells)
+        func rise(_ i: Int, _ j: Int) -> Double {
+            var top = h[j * n + i]
+            for jj in max(0, j - cr)...min(n - 1, j + cr) {
+                for ii in max(0, i - cr)...min(n - 1, i + cr) { top = max(top, h[jj * n + ii]) }
+            }
+            return top - h[j * n + i]
+        }
         let supply = mouthSupply(terrain, seeds: seeds)
+        let sediment = terrain.sed
 
         var width = [Float](repeating: 0, count: n * n)
         var cliff = [Float](repeating: 0, count: n * n)
         for (index, k) in seeds.enumerated() {
             let i = k % n, j = k / n
             guard i >= 2, i < n - 2, j >= 2, j < n - 2 else { continue }
-            let (w, c) = beach(relief: relief(i, j), openness: openness(i, j),
+            let (w, c) = beach(relief: relief(i, j), rise: rise(i, j), openness: openness(i, j),
                                supply: supply[index], noise: alongShoreNoise(i, j))
-            width[k] = Float(w)
+            // Angeschlossene Delta-Ebene (flach, dicke frische Schüttung):
+            // schmaler Sandrand wie auf den Inseln, dahinter Bewuchs. Über
+            // die Mündungszufuhr allein endete die Regel 16 Zellen neben der
+            // Mündung, und die Ebene dahinter lag voll im Strand.
+            let deltaFlat = h[k] <= sea + WaterRender.deltaIslandMaxHeight
+                && (supply[index] > 0.25 || (sediment.count == n * n && sediment[k] >= WaterRender.deltaIslandMinSediment))
+            width[k] = Float(deltaFlat ? min(w, WaterRender.deltaIslandBeachCells) : w)
             cliff[k] = Float(c)
         }
         // Jede Saumzelle erbt von ihrer Küstenzelle.
@@ -171,7 +198,118 @@ public enum CoastMaterial {
             let o = Int(origin[k])
             if o >= 0, o != k { inherited[k] = width[o]; inheritedCliff[k] = cliff[o] }
         }
-        return Shore(distance: dist, beachWidth: inherited, cliff: inheritedCliff)
+        for k in deltaIslands(terrain) {
+            inherited[k] = Float(WaterRender.deltaIslandBeachCells)
+            inheritedCliff[k] = 0
+        }
+        var reach = beachReach(terrain, seeds: seeds, width: inherited)
+        clearRiverBeds(terrain, seeds: seeds, reach: &reach)
+        let surfWidths = [Float](repeating: Float(WaterRender.coastReachCells), count: n * n)
+        var surf = beachReach(terrain, seeds: seeds, width: surfWidths)
+        if sediment.count == n * n {
+            for k in 0..<(n * n) where h[k] > sea && h[k] <= sea + WaterRender.deltaIslandMaxHeight {
+                if sediment[k] >= WaterRender.deltaIslandMinSediment { surf[k] = 0 }
+            }
+        }
+        return Shore(distance: dist, beachWidth: inherited, beachReach: reach,
+                     cliffReach: surf, cliff: inheritedCliff)
+    }
+
+    /// Rinne durch den Strand (Befund #174, „Flüsse erreichen das Meer nicht"):
+    /// der Strandsaum reichte über das Gerinne jeder Mündung (Sand-Byte 255
+    /// auf den letzten zwei bis vier Landzellen JEDER großen Mündung, Seed
+    /// 1337 Jahr 20.000). Wo das Band oder das Raster auslief, lag Sand quer
+    /// über dem Fluss. Je gemalter Mündung (`renderMinCells`) wird der Saum
+    /// entlang des D8-Hauptlaufs `mouthClearCells` Zellen stromauf in der
+    /// Band-Halbbreite gelöscht, mit einer Zelle weichem Rand.
+    static func clearRiverBeds(_ terrain: Terrain, seeds: [Int], reach: inout [Float]) {
+        let n = terrain.cfg.n, sea = terrain.cfg.sea
+        let h = terrain.h, rec = terrain.receiver, area = terrain.area
+        let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
+        guard reach.count == n * n, rec.count == n * n, area.count == n * n,
+              cellArea > 0, cellArea.isFinite else { return }
+        let minArea = terrain.cfg.renderMinCells * cellArea
+        for k in seeds {
+            let r = Int(rec[k])
+            guard r >= 0, r < n * n, h[r] <= sea, area[k] >= minArea else { continue }
+            var cur = k
+            for _ in 0..<WaterRender.mouthClearCells {
+                let w = WaterRender.ribbonHalfWidthCells(dischargeCells: area[cur] / cellArea,
+                                                         referenceCells: terrain.cfg.renderMinCells)
+                let ci = cur % n, cj = cur / n, rad = Int((w + 1).rounded(.up))
+                for jj in max(0, cj - rad)...min(n - 1, cj + rad) {
+                    for ii in max(0, ci - rad)...min(n - 1, ci + rad) {
+                        let d = Double((ii - ci) * (ii - ci) + (jj - cj) * (jj - cj)).squareRoot()
+                        let keep = Float(smoothstep(w - 0.5, w + 0.5, d))
+                        reach[jj * n + ii] *= keep
+                    }
+                }
+                // Stromauf über den Zufluss mit dem größten Einzugsgebiet.
+                var up = -1, upArea = 0.0
+                for jj in max(0, cj - 1)...min(n - 1, cj + 1) {
+                    for ii in max(0, ci - 1)...min(n - 1, ci + 1) {
+                        let nb = jj * n + ii
+                        if Int(rec[nb]) == cur && area[nb] > upArea { up = nb; upArea = area[nb] }
+                    }
+                }
+                if up < 0 || upArea < minArea { break }
+                cur = up
+            }
+        }
+    }
+
+    /// Kreisförmige Säume je Küstenpunkt statt Breitensuche mit 8 gleichen
+    /// Schrittlängen. Deren quadratische Ausbreitung plus wechselnde Breite
+    /// erzeugte die Rauten im Sand, obwohl das Gelände dort glatt war.
+    static func beachReach(_ terrain: Terrain, seeds: [Int], width: [Float]) -> [Float] {
+        let n = terrain.cfg.n, h = terrain.h, sea = terrain.cfg.sea
+        var out = [Float](repeating: 0, count: n * n)
+        for k in seeds where width[k] > 0 {
+            let w = Double(width[k]), r = Int(w.rounded(.up))
+            let i = k % n, j = k / n
+            for jj in max(0, j - r)...min(n - 1, j + r) {
+                for ii in max(0, i - r)...min(n - 1, i + r) {
+                    let nb = jj * n + ii
+                    guard h[nb] > sea else { continue }
+                    let dx = Double(ii - i), dz = Double(jj - j)
+                    let reach = Float(min(1, max(0, w - (dx * dx + dz * dz).squareRoot())))
+                    out[nb] = max(out[nb], reach)
+                }
+            }
+        }
+        return out
+    }
+
+    /// Zellen der Delta-Inseln (Issue #174, Punkt 26): Komponenten flachen
+    /// Lands bis `WaterRender.deltaIslandMaxHeight` über dem Meer, die an kein
+    /// höheres Land grenzen (8er-Nachbarschaft) — Mündungsbarren aus
+    /// `Terrain.deltaDeposit`. Sie sind Sand, wo das Strandmodell sie als
+    /// offene Landzunge sonst kahl ließe.
+    static func deltaIslands(_ terrain: Terrain) -> [Int] {
+        let n = terrain.cfg.n
+        guard n > 2, terrain.h.count == n * n else { return [] }
+        let h = terrain.h, sea = terrain.cfg.sea, top = sea + WaterRender.deltaIslandMaxHeight
+        var seen = [Bool](repeating: false, count: n * n)
+        var out: [Int] = [], comp: [Int] = [], stack: [Int] = []
+        for start in 0..<(n * n) where !seen[start] && h[start] > sea && h[start] <= top {
+            comp.removeAll(keepingCapacity: true)
+            stack.removeAll(keepingCapacity: true)
+            stack.append(start); seen[start] = true
+            var attached = false
+            while let k = stack.popLast() {
+                comp.append(k)
+                let i = k % n, j = k / n
+                for nj in max(0, j - 1)...min(n - 1, j + 1) {
+                    for ni in max(0, i - 1)...min(n - 1, i + 1) {
+                        let nb = nj * n + ni
+                        if h[nb] > top { attached = true; continue }
+                        if h[nb] > sea && !seen[nb] { seen[nb] = true; stack.append(nb) }
+                    }
+                }
+            }
+            if !attached { out.append(contentsOf: comp) }
+        }
+        return out
     }
 
     /// Die Stellschrauben der Küstenableitung aus `WaterRender`. Eine eigene
@@ -187,15 +325,18 @@ public enum CoastMaterial {
         var supplyNoiseCut = WaterRender.beachSupplyNoiseCut
         var potentialLo = WaterRender.beachPotentialLo, potentialHi = WaterRender.beachPotentialHi
         var maxWidth = WaterRender.beachMaxWidthCells
-        var cliffLo = WaterRender.cliffReliefLo, cliffHi = WaterRender.cliffReliefHi
+        var cliffLo = WaterRender.cliffRiseLo, cliffHi = WaterRender.cliffRiseHi
         var cliffExposedBoost = WaterRender.cliffExposedBoost
 
         static let calibrated = Calibration()
     }
 
     /// Strandbreite (Zellen) und Steilküsten-Anteil eines Küstenpunkts.
-    /// Reine Funktion der vier Größen — Kalibrierung `WaterRender` § Strand.
-    static func beach(relief: Double, openness: Double, supply: Double, noise: Double,
+    /// Reine Funktion der fünf Größen — Kalibrierung `WaterRender` § Strand.
+    /// Die Breite liest das Rückland-Relief (`relief`, Radius 8), den Fels
+    /// die Kliffhöhe direkt hinter der Küste (`rise`, Radius
+    /// `cliffRiseRadiusCells`).
+    static func beach(relief: Double, rise: Double, openness: Double, supply: Double, noise: Double,
                       _ c: Calibration = .calibrated) -> (width: Double, cliff: Double) {
         // Die Mündung öffnet das Rückland: das Tal zählt halb.
         let effective = relief * (1 - c.supplyReliefCut * supply)
@@ -207,7 +348,7 @@ public enum CoastMaterial {
         let strength = smoothstep(c.potentialLo, c.potentialHi, potential)
         // Offene Landzungen wirken steiler: der Fels reicht früher bis ans Wasser.
         let exposure = smoothstep(c.openLo, c.openHi, openness)
-        let steep = relief * (1 + c.cliffExposedBoost * exposure)
+        let steep = rise * (1 + c.cliffExposedBoost * exposure)
         let rock = smoothstep(c.cliffLo, c.cliffHi, steep)
         return (strength * c.maxWidth, rock * (1 - strength))
     }
@@ -285,7 +426,13 @@ public enum CoastMaterial {
         guard distance >= 1, height > 0 else { return 0 }
         let reach = clamp01(Double(width) - Double(distance - 1))
         guard reach > 0 else { return 0 }
-        return reach
+        return sand(reach: Float(reach), slope: slope, height: height)
+    }
+
+    @inline(__always)
+    public static func sand(reach: Float, slope: Double, height: Double) -> Double {
+        guard height > 0, reach > 0 else { return 0 }
+        return Double(reach)
             * (1 - smoothstep(WaterRender.beachSlopeLo, WaterRender.beachSlopeHi, slope))
             * (1 - smoothstep(WaterRender.beachHeightLo, WaterRender.beachHeightHi, height))
     }
@@ -296,7 +443,17 @@ public enum CoastMaterial {
     @inline(__always)
     public static func cliff(distance: UInt8, slope: Double, relief: Float) -> Double {
         guard inSurf(distance) else { return 0 }
-        return max(smoothstep(WaterRender.cliffCoastSlopeLo, WaterRender.cliffCoastSlopeHi, slope),
-                   Double(relief))
+        return cliff(reach: 1, slope: slope, relief: relief)
+    }
+
+    /// Felsgewicht 0…1 einer Zelle im Brandungssaum (`reach` 0…1): steile
+    /// eigene Steigung ODER Kliff am Küstenpunkt (`relief` = geerbter
+    /// Steilküsten-Anteil) — dieser aber nur auf der Kliffwand selbst
+    /// (`cliffFaceSlopeLo/Hi`), nicht auf der flachen Terrasse davor.
+    @inline(__always)
+    public static func cliff(reach: Float, slope: Double, relief: Float) -> Double {
+        let face = smoothstep(WaterRender.cliffFaceSlopeLo, WaterRender.cliffFaceSlopeHi, slope)
+        return Double(reach) * max(smoothstep(WaterRender.cliffCoastSlopeLo, WaterRender.cliffCoastSlopeHi, slope),
+                                   Double(relief) * face)
     }
 }

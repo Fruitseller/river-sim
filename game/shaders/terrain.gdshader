@@ -928,7 +928,12 @@ void fragment() {
 	                * smoothstep(0.04, 0.12, macro_color.r - macro_color.b)
 	                * (1.0 - cold) * (1.0 - vegetation);
 	terr = mix(terr, macro_color, salt_hint * 0.72);
-	if (hval <= sea_level + 0.012) {
+	// Meeresgrund (unter der opaken Ozean-Ebene) nur in der Makrofarbe. Die
+	// Grenze liegt an der Wasserlinie wie die Farbrampe im
+	// TerrainColorRenderer (#174 C): bei `sea_level + 0.012` lag auf jeder
+	// flachen Küste ein grauer Streifen ohne Material, und Delta-Inseln
+	// (Scheitel `deltaTopset` = 0,0015) hatten nie Bewuchs (#174, Punkt 26).
+	if (hval <= sea_level) {
 		terr = macro_color;
 	}
 	// UNGESTÖRTE Makro-Normale sichern, bevor die Mikro-Normale sie verändert:

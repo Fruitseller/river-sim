@@ -236,6 +236,7 @@ final class CoastShapeTests: XCTestCase {
         let inner = seeds.enumerated().filter { $0.element % n >= 2 && $0.element % n < n - 2 && $0.element / n >= 2 && $0.element / n < n - 2 }
         let metrics = inner.map { (index: $0.offset, k: $0.element,
                                    relief: Self.backshore(t, $0.element, radius: rr),
+                                   rise: Self.backshore(t, $0.element, radius: WaterRender.cliffRiseRadiusCells),
                                    open: Self.seaFraction(t, $0.element, radius: r),
                                    noise: CoastMaterial.alongShoreNoise($0.element % n, $0.element / n)) }
         var variants: [(String, CoastMaterial.Calibration)] = [("kalibriert", .calibrated)]
@@ -254,7 +255,7 @@ final class CoastShapeTests: XCTestCase {
             var widths: [Int: Int] = [:]
             var sandy: [Int] = [], rock = 0
             for m in metrics {
-                let b = CoastMaterial.beach(relief: m.relief, openness: m.open, supply: supply[m.index],
+                let b = CoastMaterial.beach(relief: m.relief, rise: m.rise, openness: m.open, supply: supply[m.index],
                                             noise: m.noise, cal)
                 let w = Int(b.width.rounded())
                 widths[w, default: 0] += 1

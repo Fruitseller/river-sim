@@ -561,7 +561,9 @@ public final class WaterFieldRenderer {
                     let rad = Int((ribbonHalfWidthCells(q, cfg: terrain.cfg)
                                    + WaterRender.ribbonHaloMarginCells).rounded())
                     var previousX = last.x, previousZ = last.z
-                    for point in mouthPath(terrain, fromX: last.x, fromZ: last.z) {
+                    let prior = nodes[max(0, nodes.count - 2)]
+                    for point in mouthPath(terrain, fromX: last.x, fromZ: last.z,
+                                           dirX: last.x - prior.x, dirZ: last.z - prior.z) {
                         var dirX = point.x - previousX, dirZ = point.z - previousZ
                         let dl = (dirX * dirX + dirZ * dirZ).squareRoot()
                         if dl > 1e-6 { dirX /= dl; dirZ /= dl }
@@ -729,7 +731,13 @@ public final class WaterFieldRenderer {
                 }
                 if found { sd[k] = haloIntensity }
             }
-            rawWet[k] = hf[k] > sea && hf[k] - h[k] > WaterRender.lakeRawWetDepth
+            // Strandsee (Lagune): Boden unter dem Meer, Spiegel nur eine
+            // flache Schwelle darüber. Sie liegt unter der Ozean-Ebene und ist
+            // Meerwasser im Bild; als See gemalt stand sie dunkel neben dem
+            // Türkis (Befund #174, Delta Seed 1337). `openWaterSurface` liest
+            // solche Zellen ebenfalls als Meer.
+            let lagoon = h[k] <= sea && hf[k] - sea < WaterRender.lagoonMaxRise
+            rawWet[k] = hf[k] > sea && hf[k] - h[k] > WaterRender.lakeRawWetDepth && !lagoon
             if geometryMode {
                 if oxb[k] > 0 {
                     // Altarm-Korridor: das Band malt sicher (Raster und
