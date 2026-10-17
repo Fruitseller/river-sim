@@ -1086,6 +1086,20 @@ Schritt, Median 56,4 / 55,2 (Rauschen). Wächter:
 `LakeLevelStability.testWaterLevelNeverStandsAboveFill` (rot ohne Fix: Spiegel
 0,24 über `hf`), `testWaterLevelDampsFillJumps` grün.
 
+Abwägung (Review-Befund „Seespiegel fällt ungedämpft", bewusst so belassen):
+der Sägezahn, für den die Glättung da ist, entsteht beim ANSTIEG (Sill
+zugeschüttet, `hf` springt fürs ganze Becken); der gedämpfte Spiegel steigt
+während des ~100-jährigen Plugs nur um den Rest, und genau diesen Rest gibt
+der sofortige Abfall wieder ab. Die sichtbare Amplitude bleibt damit dieselbe
+(`testWaterLevelDampsFillJumps`). Ein See, der über seinen Auslass natürlich
+ausläuft, senkt `hf` selbst nur mit der Inzisionsrate; der Spiegel folgt ihm
+ohnehin stetig. Nur ein Becken, das in EINEM Schritt angezapft wird, ist
+einen Sim-Schritt später leer; im Bild verteilt die Überblende der Uploads
+(`RenderState.frame`) auch das über den Zeitraffer-Takt. Eine Dämpfung des
+Abfalls bräuchte ein Kriterium „Boden wurde abgetragen" gegen „See läuft
+aus", das der Spiegel allein nicht kennt, und brächte die Geister-Seen
+zurück, sobald es danebenliegt.
+
 Gemalte Seen vorher → nachher (Anzahl / Zellen; „halbdurchs." = Zellen mit
 Tiefen-Rampe unter 0,5):
 
