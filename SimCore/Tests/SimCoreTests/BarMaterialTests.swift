@@ -143,6 +143,16 @@ final class BarMaterialTests: XCTestCase {
         }
     }
 
+    /// Review zu #174: die Schwelle, ab der ein Nachbar im Sprenkel-Filter als
+    /// Sand zählt, stand als Literal im Filter statt beim Fenster
+    /// `barSandNeighboursLo/Hi` im Vertrag.
+    func testDespeckleThresholdComesFromTheContract() throws {
+        XCTAssertEqual(WaterRender.barSandNeighbourMin, 0.05, "Wert unverändert gegenüber dem Literal")
+        let source = try RepoSource.probe("SimCore/Sources/SimRender/BarMaterial.swift")
+        XCTAssertFalse(source.contains("> 0.05"), "Sprenkel-Schwelle als Literal")
+        XCTAssertTrue(source.contains("WaterRender.barSandNeighbourMin"))
+    }
+
     func testSingleFreshCellIsNoBar() {
         let n = 64
         let t = flatWorld(n: n, channelRow: 25) { i, j in i == 30 && j == 30 ? 0 : -1 }

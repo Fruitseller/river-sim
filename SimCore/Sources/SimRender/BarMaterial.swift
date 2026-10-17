@@ -107,6 +107,7 @@ public enum BarMaterial {
     private static func despeckle(_ sand: [Float], n: Int) -> [Float] {
         var out = sand
         let lo = WaterRender.barSandNeighboursLo, hi = WaterRender.barSandNeighboursHi
+        let minNeighbour = Float(WaterRender.barSandNeighbourMin)
         sand.withUnsafeBufferPointer { sb in
         out.withUnsafeMutableBufferPointer { ob in
             let ps = sb.baseAddress!, po = ob.baseAddress!
@@ -116,7 +117,7 @@ public enum BarMaterial {
                         var count = 0
                         for nj in max(0, j - 1)...min(n - 1, j + 1) {
                             for ni in max(0, i - 1)...min(n - 1, i + 1)
-                            where (ni != i || nj != j) && ps[nj * n + ni] > 0.05 { count += 1 }
+                            where (ni != i || nj != j) && ps[nj * n + ni] > minNeighbour { count += 1 }
                         }
                         po[j * n + i] = ps[j * n + i] * Float(smoothstep(lo, hi, Double(count)))
                     }
@@ -231,13 +232,11 @@ public enum BarMaterial {
         var youngest = [Double](repeating: .infinity, count: cnt)
         let radius = WaterRender.oxbowHalfWidthCells + 0.5
         let reach = Int(radius.rounded(.up))
-        for (index, loop) in oxbows.enumerated() where loop.count >= WaterRender.oxbowMinimumNodes {
+        for (index, loop) in oxbows.enumerated() {
+            guard let nodeRange = oxbowNodeRange(count: loop.count) else { continue }
             let age = index < ages.count ? ages[index] : 0
             guard age.isFinite, age >= 0 else { continue }
-            let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, loop.count / 8))
-            let first = trim, last = loop.count - trim - 1
-            guard last - first >= 2 else { continue }
-            for nodeIndex in first...last {
+            for nodeIndex in nodeRange {
                 let node = loop[nodeIndex]
                 guard node.x.isFinite, node.z.isFinite, abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }
                 let ci = Int(node.x.rounded()), cj = Int(node.z.rounded())

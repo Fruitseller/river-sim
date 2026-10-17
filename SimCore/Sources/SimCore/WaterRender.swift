@@ -1204,6 +1204,11 @@ public enum WaterRender {
     public static let barSandNeighboursLo = 1.5
     /// s. `barSandNeighboursLo`.
     public static let barSandNeighboursHi = 3.5
+    /// Ab diesem Sandgewicht zählt ein Nachbar für den Sprenkel-Filter
+    /// (`barSandNeighboursLo/Hi`) als Sand: die Rampe am Bankrand (Gewichte
+    /// unter 5 %) trägt keine Bank. Bis zum Review von #174 stand die Zahl als
+    /// Literal im Filter; sie gehört zu dessen Fenster.
+    public static let barSandNeighbourMin = 0.05
 
     /// Sandgewicht einer Bank aus ihrem Alter (`Terrain.barAge`, −1 = keine)
     /// und dem Abstand zur nächsten aktuellen Zentrumslinie in Kanalbreiten

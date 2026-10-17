@@ -109,6 +109,23 @@ public enum MaterialRender {
     public static let rawDisturbLo = 0.04
     public static let rawDisturbHi = 0.30
 
+    // MARK: Bewuchs und Makrofarbe (CPU, `colors` und R-Kanal von `surfaces`)
+
+    /// Höchstes Vegetationsgewicht eines Standorts: ein bewachsener Hang
+    /// bleibt zu 22 % Grundton. Eine Zahl für ZWEI Stellen im
+    /// `TerrainColorRenderer`: den Bewuchs-Anteil, der Farbe und Gewicht
+    /// speist, und den Deckel nach dem Gürtel-Zuschlag
+    /// (`BarMaterial.vegShift`: Pionier-Grün darf das Gewicht nicht über das
+    /// heben, was der Bewuchs selbst erreichen kann). Bis zum Review von #174
+    /// stand sie dort als zwei Literale; wer eines änderte, verschob den
+    /// Deckel gegen den Anteil.
+    public static let vegAmountMax = 0.78
+
+    /// Makrofarbe unter Fels und Halde: je Gewicht `rock + scree` wandert
+    /// die Farbe zu diesem Ton, sonst trüge jede Felswand den Grünstich des
+    /// Habitats darunter (der Shader mischt die Makrofarbe nur zu 28 % unter).
+    public static let mineralTint = (r: 0.37, g: 0.365, b: 0.355)
+
     // MARK: Talboden-Wiese (CPU, A-Kanal von `covers`)
 
     /// Talboden = flach (Weltsteigung unter `valleySlopeLo` voll, ab

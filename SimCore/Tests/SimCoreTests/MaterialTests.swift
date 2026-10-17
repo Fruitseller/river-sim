@@ -260,6 +260,27 @@ final class MaterialTests: XCTestCase {
         }
     }
 
+    // MARK: - Kalibrier-Vertrag (CPU)
+
+    /// Review zu #174: Bewuchs-Deckel und Mineral-Tönung standen als Literale
+    /// im `TerrainColorRenderer` (der Deckel sogar doppelt). Sie liegen im
+    /// Vertrag `MaterialRender`; der Renderer liest sie von dort.
+    func testRendererReadsItsMaterialCalibrationFromTheContract() throws {
+        XCTAssertEqual(MaterialRender.vegAmountMax, 0.78, "Wert unverändert gegenüber den Literalen")
+        XCTAssertEqual(MaterialRender.mineralTint.r, 0.37)
+        XCTAssertEqual(MaterialRender.mineralTint.g, 0.365)
+        XCTAssertEqual(MaterialRender.mineralTint.b, 0.355)
+        let source = try RepoSource.probe("SimCore/Sources/SimRender/TerrainColorRenderer.swift")
+        for literal in ["* 0.78", "min(0.78", "0.365", "0.355", "(0.37 - r)"] {
+            XCTAssertFalse(source.contains(literal),
+                           "TerrainColorRenderer trägt \(literal) als Literal statt aus MaterialRender")
+        }
+        XCTAssertEqual(source.count(of: "MaterialRender.vegAmountMax"), 1, "eine Quelle, vor der Schleife gelesen")
+        XCTAssertEqual(source.count(ofIdentifier: "vegMax"), 3,
+                       "Bewuchs-Anteil und Gürtel-Deckel teilen DEN einen Wert")
+        XCTAssertEqual(source.count(of: "MaterialRender.mineralTint"), 1)
+    }
+
     // MARK: - Uniform-Weg (Struktur)
 
     func testEveryTableValueComesFromMaterialRender() {

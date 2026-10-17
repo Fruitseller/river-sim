@@ -128,6 +128,7 @@ public enum TerrainColorRenderer {
         let barVeg = barsOn ? bars.vegShift : [0]
         let barReed = barsOn ? bars.reed : [0]
         let reedColor = WaterRender.oxbowReedColor
+        let vegMax = MaterialRender.vegAmountMax, mineralTint = MaterialRender.mineralTint
 
         var colors = [UInt8](repeating: 255, count: n * n * 4)
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
@@ -241,7 +242,7 @@ public enum TerrainColorRenderer {
 
                         let habitat = Terrain.vegetationSuitability(
                             height: v, slope: slope, rain: prain[k], bands: bands)
-                        let vegAmount = clamp01((0.5 + 0.5 * pveg[k]) * habitat * 1.3) * 0.78
+                        let vegAmount = clamp01((0.5 + 0.5 * pveg[k]) * habitat * 1.3) * vegMax
                         r += (0.15 - r) * vegAmount
                         g += (0.32 - g) * vegAmount
                         b += (0.10 - b) * vegAmount
@@ -323,7 +324,7 @@ public enum TerrainColorRenderer {
                                 g += (reedColor.g - g) * reed
                                 b += (reedColor.b - b) * reed
                             }
-                            vegShare = min(0.78, max(0, vegShare + Double(pbveg[k])))
+                            vegShare = min(vegMax, max(0, vegShare + Double(pbveg[k])))
                         }
                         let free = 1 - vegShare
                         vegWeight = vegShare * open
@@ -362,9 +363,9 @@ public enum TerrainColorRenderer {
                         // sie zu 28 % unter, sonst trüge jede Felswand den
                         // Grünstich des Habitats darunter.
                         let tint = rockWeight + screeWeight
-                        r += (0.37 - r) * tint
-                        g += (0.365 - g) * tint
-                        b += (0.355 - b) * tint
+                        r += (mineralTint.r - r) * tint
+                        g += (mineralTint.g - g) * tint
+                        b += (mineralTint.b - b) * tint
 
                         // Blankes Eis nur im Zehrgebiet (über 0 °C, dort
                         // schmilzt `updateIce`), darüber Firn. Als
