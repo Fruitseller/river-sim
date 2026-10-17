@@ -58,9 +58,15 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Kamera-Presets Diorama/Tal/Nah auf F1–F3, adaptiv (Diorama rahmt die
   Landfläche, Tal/Nah zielen auf den größten Lauf; als Matrix-Kameras mit
   festen Werten).
+  Weichzeichner hinter den Glas-Panels (Punkt 43): je Panel ein Rahmen mit
+  Weichzeichner-Rechteck unter dem Glas (`game/ui/glass_blur.gdshader`, liest
+  die Mip-Kette des Bildschirms; Radius, Abdunklung und Eckenradius aus dem
+  Theme, `RS_UI_BLUR=0` schaltet ihn ab). Kosten gemessen: rund 0,5 ms je Bild
+  (gepaart, maximiert, `balanced`, Standbild und Fahrt), Schrift auf Schnee wie
+  Wasser mindestens Kontrast 4,5 (`docs/zielbild-measurements.md` § Glas-
+  Weichzeichner).
   Offen: Abnahme am Bild durch den Projekteigner (Bogen #174, Punkte 41–45),
-  Feinabstimmung der Preset-Werte am gerenderten Bild, Weichzeichner hinter den
-  Panels (nicht umgesetzt, Kosten ungemessen).
+  Feinabstimmung der Preset-Werte am gerenderten Bild.
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare

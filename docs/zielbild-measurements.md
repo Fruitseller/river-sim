@@ -903,6 +903,121 @@ See wirkt bei flachem Blick milchig (Himmelsspiegelung der allgemeinen
 Wasser-Optik, nicht aus #174), Fels insgesamt eher hell und glatt gegenüber
 dem schroffen Fels der Vorlagen.
 
+## Glas-Weichzeichner (Abnahmepunkt 43, Paket E)
+
+Hinter jedem Glas-Panel liegt ein Weichzeichner (`game/ui/glass_blur.gdshader`,
+Radius und Abdunklung im Theme, `RS_UI_BLUR=0` lässt ihn weg). Bildbelege:
+`docs/screenshots/zielbild-174/glass-hud_*.jpg`: je Seed (1337, 42) und Kamera
+Tal bzw. Nah die vier Bedien-Ausschnitte vorher (links, ohne Weichzeichner) und
+nachher (rechts), dazu `…_gesamt.jpg` (ganzes Bild, Tal) und
+`glass-hud_stress_hintergruende.jpg` (Lesbarkeit, s. u.). Aufnahmen
+maximiert, Viewport (6016, 3260), `balanced`, Jahr 20.000, `RS_CAMERA`,
+`RS_SHOT_UI`.
+
+### Lesbarkeit
+
+Der Weichzeichner allein macht Glas über Schnee mittelgrau; die gedämpfte
+Schrift (Abschnittsüberschriften 60 %, Tempo 78 %) verlor dort Kontrast.
+Deshalb multipliziert der Shader das verwischte Bild mit `GlassBackdrop/dim`
+(Theme, `Color(0.66, 0.68, 0.72)`). Gemessen an einer Wegwerf-Szene mit
+synthetischem Hintergrund unter der echten Bedienung (Schnee `#f2f5f9`,
+dunkles Wasser `#0b2a3d`, Schachbrett Weiß/Schwarz 10 px als härtestes
+Hochfrequenz-Muster; Bild `glass-hud_stress_hintergruende.jpg`, v. l. n. r.:
+Schachbrett ohne, mit Weichzeichner, Schnee, Wasser). Panel-Hintergrund als
+Pixelwert, daraus WCAG-Kontrast der Theme-Schriften (Weiß mit dem jeweiligen
+Alpha über dem Panel):
+
+| Hintergrund | Panel RGB | Label 92 % | Knopf 86 % | Tempo 78 % | Abschnitt 60 % |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Schnee, ohne Abdunklung | 96 100 106 | 5,3 | 4,9 | 4,4 | 3,3 |
+| Schnee, `dim` 0,66 | 67 72 81 | 8,1 | 7,3 | 6,4 | 4,5 |
+| dunkles Wasser, `dim` 0,66 | 13 23 33 | 15,3 | 13,5 | 11,2 | 7,1 |
+
+Mit der Abdunklung liegt jede Schrift auf dem hellsten realistischen Grund bei
+mindestens 4,5 (WCAG AA für Fließtext), ohne sie fiel die kleinste (14 px,
+60 %) auf 3,3. Der Weichzeichner selbst hilft der Lesbarkeit zusätzlich: das
+Schachbrett (links) wird zu gleichmäßigem Grau, harte Kanten laufen nicht mehr
+unter der Schrift durch. Der Wert ist EIN Theme-Eintrag; heller oder dunkler
+zu stellen ändert nur diese Zeile.
+
+### Kosten
+
+Verfahren: die Messbühne (`game/studies/flusstal/Flusstal.gd`, neu
+`RS_STUDY_UI=ab`) schaltet im SELBEN Prozess blockweise zwischen drei Zuständen
+um: `hidden` (keine Bedienung, wie bisher bei Punkt 47), `plain` (Bedienung
+ohne Weichzeichner) und `glass` (mit). Ein Block sind 90 Bilder, davon zählen
+die letzten 78; die Reihenfolge der drei Zustände wird je Runde um einen
+verschoben, Runde 0 wärmt Shader und Pipelines nur an und zählt nicht. Je Runde
+ergibt sich so ein gepaarter Unterschied (`glass − plain` ist der Preis des
+Weichzeichners, `plain − hidden` der der Bedienung ohne ihn), ausgewertet als
+Median über die Runden. Das ist das verlangte Interleaving mit mehreren
+Runden und hält Fremdlast, Takt und Wärme aus dem Vergleich: auf diesem Rechner
+liefen während der Messung andere Agenten (`uptime` vor und nach jedem Lauf:
+Load 31–114 auf dem M4 Max, also weit über Last 10). Absolute Bildzeiten liegen
+deshalb über denen aus Punkt 47 (Grazing dort p95 30,0 ms im Standbild, hier
+Median 30–36 ms); belastbar sind nur die Unterschiede.
+
+```sh
+RS_SEED=1337 RS_STEP=20000 RS_STEP_CHUNK=1000 RS_QUALITY=balanced \
+RS_TARGET=-10,-20 RS_DIST=38.0 RS_YAW=0.7 RS_PITCH=1.35 \
+RS_STUDY_VARIANT=baseline RS_STUDY_MODE=still RS_STUDY_UI=ab RS_STUDY_ROUNDS=14 \
+scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn   # druckt STUDY_UI_AB
+```
+
+Kameras sind die der Matrix (`scripts/graphics-matrix.sh`: `grazing` = knappste
+Kamera von Punkt 47, `valley` = Vorlage B), Betrieb `still` (Standbild) und
+`orbit` (Kamerafahrt), maximiert, Viewport (3456, 2104) wie bei Punkt 47,
+`balanced`, Jahr 20.000. 14 Runden je Lauf; Median der gepaarten Rundenwerte
+in ms, in Klammern kleinster und größter Rundenwert (Ausreißer kommen von
+Fremdlast):
+
+| Seed / Kamera | Betrieb | Median `hidden` / `plain` / `glass` | `glass − plain`, Median | `glass − plain`, Block-p95 | `plain − hidden` |
+| --- | --- | --- | --- | --- | --- |
+| 1337 grazing | Standbild | 35,6 / 35,9 / 36,1 | **+0,52** (−28,6 … +32,4) | +0,52 | +0,14 |
+| 1337 grazing | Fahrt | 37,6 / 37,7 / 38,6 | **+0,74** (−1,0 … +3,4) | +0,75 | −0,03 |
+| 1337 valley | Standbild | 19,7 / 19,7 / 20,2 | **+0,49** (0,0 … +0,6) | +0,55 | +0,04 |
+| 1337 valley | Fahrt | 20,7 / 20,6 / 20,7 | **+0,33** (−0,7 … +1,5) | +0,36 | +0,14 |
+| 42 grazing | Standbild | 30,3 / 30,4 / 30,8 | **+0,52** (+0,35 … +0,58) | +0,51 | +0,03 |
+| 42 grazing | Fahrt | 30,4 / 31,2 / 30,8 | **+0,40** (−2,1 … +1,7) | +0,99 | −0,08 |
+
+Block-p95 heißt: je Block der p95 der 78 Bildintervalle, dann der gepaarte
+Unterschied je Runde, davon der Median. Der über alle Bilder gepoolte p95
+taugt unter dieser Last nicht (einzelne Fremdlast-Spitzen ziehen ihn hoch,
+z. B. 65,7 ms gepoolt gegen 36,1 ms Median in der ersten Zeile); er steht in
+der Rohausgabe `STUDY_UI_AB`.
+Eine zweite Serie mit 12 Runden (ohne Block-p95; Standbild und Fahrt auf
+1337 grazing und valley, 42 grazing, 42 valley Fahrt, dazu drei Läufe mit
+`--resolution 3456x2104`, hier dieselbe Pixelzahl wie maximiert) ergab
+`glass − plain` zwischen +0,39 und +0,77 ms, im Mittel +0,54 (9 Läufe).
+
+Ergebnis: **der Weichzeichner kostet rund 0,5 ms je Bild** (0,3–0,8 ms, bei
+Standbild wie Fahrt, nach p95 wie nach Median gleich), in der knappsten
+Kamera 1,3–2,0 % der Bildzeit, im Tal-Standbild (kürzere Bildzeit) 2,5 %. Das Budget von Punkt 47 (p95 ≤ 33,3 ms;
+Endstand dort Grazing 30,0 / 30,2 ms) bleibt damit erfüllt, die Reserve
+schrumpft von rund 3 ms auf 2,5 ms. Die Bedienung selbst ohne Weichzeichner
+(`plain − hidden`) ist nicht messbar (|Δ| ≤ 0,15 ms).
+
+**Auflösung:** der Preis hängt an der Pixelzahl, nicht an der Panelfläche.
+Auf dem 6016×3260-Viewport dieses Macs am externen Display (2,7-fache
+Pixelzahl, dieselbe Messung mit 8 Runden bei Last 11–19, 1337 grazing,
+Standbild) kostete er +1,2 ms (+0,43 … +1,52).
+
+**Wohin die Zeit geht** (Nebenbefund, 6016×3260, 6 Runden, Last 15–120, also
+nur Größenordnung; Varianten über einen Wegwerf-Schalter, nicht im Repo):
+voller Shader +1,0 ms (zweiter Lauf; der erste +3,6 ms bei Last 55), ohne
+Mip-Kette (nur Bildschirmkopie plus Shader) +0,4 und +0,6 ms, nur eine statt
+neun Abfragen +0,9 und +1,0 ms. Godot kopiert den
+Bildschirm EINMAL je Bild und baut dessen Mip-Kette, unabhängig davon, wie
+viele Panels ihn lesen; je zur Hälfte geht der Preis auf die Kopie und auf die
+Mip-Kette, der Shader auf den Panelflächen ist vernachlässigbar.
+Verworfen: ein `BackBufferCopy` je Panel mit Rechteck-Kopie, um nur die
+Panelflächen zu kopieren. Mit der Teil-Kopie las der Weichzeichner
+schwarz (im Screenshot nahezu schwarze Panels, nicht abgelegt), die Mip-Stufen
+waren offenbar nicht gefüllt; die Ursache ist nicht untersucht. Ohne Mip-Kette
+bräuchte der Weichzeichner Dutzende Abfragen je Pixel; bei 0,5 ms Gesamtpreis
+lohnt der Umbau nicht. Hebel, falls das Budget enger wird: Weichzeichner in
+`performance` weglassen (eine Bedingung in `_setup_ui`).
+
 ## Flüsse laufen bergauf (Befund im Zeitraffer, Jahr 230.000)
 
 Befund des Projekteigners (Seed 1337, um Jahr 230.000): „als würden manchmal
