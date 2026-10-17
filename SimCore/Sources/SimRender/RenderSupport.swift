@@ -177,6 +177,30 @@ func openWaterSurface(_ k: Int, h: [Double], wl: [Double], sea: Double) -> Doubl
     return nil
 }
 
+/// Knoten-Indizes eines Altarms mit `count` Knoten, die gemalt bzw. gestempelt
+/// werden — `nil` = der Altarm zählt nicht. EINE Auswahl für alle drei Leser
+/// (Raster-Wasserfeld, Altarm-Bänder, Gürtel-Material): sie müssen dieselben
+/// Schleifen meinen, sonst steht Wasser ohne Ried oder Ried ohne Wasser.
+///
+/// Mindestlänge `WaterRender.oxbowMinimumNodes`; die Hals-Enden werden um
+/// `min(oxbowMaximumTrimmedNodes, max(1, count / 8))` Knoten getrimmt (die
+/// Cutoff-Enden liegen eng beieinander, beide breit gestempelt schlösse sich
+/// der Altarm zum Wasserring). Es bleiben mindestens drei Knoten. Der
+/// Alters-Fade gehört NICHT hierher: er gilt nur für das Wasser.
+///
+/// Vorher stand die Auswahl dreimal mit verschiedenen Wächtern (`first >
+/// last`, `last - first < 2`, `last - first >= 2`). Bei der Mindestlänge 20
+/// und höchstens 3 getrimmten Knoten bleiben immer mindestens 13 Knoten
+/// übrig, alle drei Wächter griffen also nie verschieden: das Verhalten ist
+/// bit-gleich (Wächter: `OxbowNodeRangeTests`).
+func oxbowNodeRange(count: Int) -> ClosedRange<Int>? {
+    guard count >= WaterRender.oxbowMinimumNodes else { return nil }
+    let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, count / 8))
+    let first = trim, last = count - trim - 1
+    guard last - first >= 2 else { return nil }
+    return first...last
+}
+
 /// Halbbreite (Zellen) aus dem Abfluss `q` (Zellen Einzugsgebiet), bezogen
 /// auf die Render-Schwelle der Config. Kurve und Grenzen:
 /// `WaterRender.ribbonHalfWidthCells`.

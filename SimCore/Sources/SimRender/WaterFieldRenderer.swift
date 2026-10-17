@@ -582,10 +582,9 @@ public final class WaterFieldRenderer {
         // breit stempeln, schlösse sich der Altarm zu einem unnatürlichen Wasserring.
         // Deshalb Hals-Enden trimmen/ausblenden und nur Zellen mit echter Wassersäule
         // markieren: sichtbar bleibt der offene, physisch gefüllte Hufeisenbogen.
-        // Filter/Trimmung/Fade sind GEMEINSAME Konstanten mit der Geometrie
-        // (`appendOxbowRibbons`) — beide Pfade müssen dieselben Schleifen meinen.
-        let minimumOxbowNodes = WaterRender.oxbowMinimumNodes
-        let maximumTrimmedNodes = WaterRender.oxbowMaximumTrimmedNodes
+        // Filter und Trimmung stehen in `oxbowNodeRange`, Fade und Deckkraft in
+        // `WaterRender` — GEMEINSAM mit der Geometrie (`appendOxbowRibbons`) und
+        // dem Gürtel-Material: alle müssen dieselben Schleifen meinen.
         let fullEndFadeSteps = WaterRender.oxbowEndFadeSteps
         // KEINE eigene Tiefen-Rampe mehr (Issue #32): der Shader multipliziert den
         // G-Kanal mit der per-Pixel-Uferkontur smoothstep(pondContourLo,
@@ -613,16 +612,14 @@ public final class WaterFieldRenderer {
         let maximumOxbowOpacity = WaterRender.oxbowMaximumOpacity
         for oxbowIndex in terrain.meander.oxbows.indices {
             let oxbow = terrain.meander.oxbows[oxbowIndex]
-            if oxbow.count < minimumOxbowNodes { continue }
+            guard let nodeRange = oxbowNodeRange(count: oxbow.count) else { continue }
+            let first = nodeRange.lowerBound, last = nodeRange.upperBound
             let age = oxbowIndex < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[oxbowIndex]
                 : 0
             let fade = clamp01(1 - age / WaterRender.oxbowVisibleYears)
             if fade <= 0 { continue }
-            let trim = min(maximumTrimmedNodes, max(1, oxbow.count / 8))
-            let first = trim, last = oxbow.count - trim - 1
-            if first > last { continue }
-            for nodeIndex in first...last {
+            for nodeIndex in nodeRange {
                 let node = oxbow[nodeIndex]
                 guard node.x.isFinite, node.z.isFinite,
                       abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }

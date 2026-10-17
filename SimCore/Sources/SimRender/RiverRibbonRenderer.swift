@@ -1074,17 +1074,15 @@ public final class RiverRibbonRenderer {
         let sea = terrain.cfg.sea
         for index in terrain.meander.oxbows.indices {
             let oxbow = terrain.meander.oxbows[index]
-            if oxbow.count < WaterRender.oxbowMinimumNodes { continue }
+            guard let nodeRange = oxbowNodeRange(count: oxbow.count) else { continue }
+            let first = nodeRange.lowerBound, last = nodeRange.upperBound
             let age = index < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[index] : 0
             let fade = clamp01(1 - age / WaterRender.oxbowVisibleYears)
             if fade <= 0 { continue }
-            let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, oxbow.count / 8))
-            let first = trim, last = oxbow.count - trim - 1
-            if last - first < 2 { continue }
             var samples: [RibbonSample] = []
-            samples.reserveCapacity(last - first + 1)
-            for nodeIndex in first...last {
+            samples.reserveCapacity(nodeRange.count)
+            for nodeIndex in nodeRange {
                 let node = oxbow[nodeIndex]
                 guard node.x.isFinite, node.z.isFinite,
                       abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }
