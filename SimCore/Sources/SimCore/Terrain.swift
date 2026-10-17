@@ -308,6 +308,9 @@ public final class Terrain {
     /// leitet sich vollständig aus `area` und der Config ab und gehört deshalb
     /// nicht ins Zustands-Inventar.
     private var depositDampBuf: [Double] = []
+    /// Mündungen des laufenden Schritts für `deltaDeposit` (Landzelle mit
+    /// Meeres-Empfänger ab `deltaMinCells`, Issue #174), je Schritt neu.
+    private var deltaMouthCells: [Int] = []
     private var pondSeen: [Bool]     // Arbeitspuffer der Pfützen-Komponentensuche
     private var noise: SimplexNoise
 
@@ -542,6 +545,7 @@ public final class Terrain {
         dropletGateBuf = []
         segOwner = []
         segPos = []
+        deltaMouthCells.removeAll(keepingCapacity: true)
         basinCells.removeAll(keepingCapacity: true)
         basinSlots.removeAll(keepingCapacity: true)
 
@@ -3877,6 +3881,481 @@ public final class Terrain {
         return (count, total / Double(count))
     }
 
+    // MARK: - Delta-Schüttung (Issue #174)
+
+    /// Summe der Höhen und Zahl der Landzellen für die Delta-Fracht (s.
+    /// `deltaDeposit`), in festen 64 Blöcken summiert: unabhängig von der
+    /// Kernzahl, also bit-gleich bei jedem Aufruf. Mit `collectMouths`
+    /// sammelt derselbe Durchlauf die Mündungen (`deltaMouthCells`):
+    /// Landzelle ohne See (`hf − h ≤ poolDepth`) mit Meeres-Empfänger ab
+    /// `deltaMinCells` Einzugsgebiet, je Block in Zellreihenfolge und in
+    /// Blockfolge zusammengesetzt (dieselbe Liste wie sequenziell). Als
+    /// eigener sequenzieller Scan kostete die Suche 0,29 ms je Schritt.
+    private func deltaHeightSum(collectMouths: Bool = false) -> (sum: Double, land: Int) {
+        let cnt = cfg.count, sea = cfg.sea, blocks = 64
+        let depth = cfg.hydraulic.poolDepth
+        let minA = cfg.deltaMinCells * cfg.cellSize * cfg.cellSize
+        var sums = [Double](repeating: 0, count: blocks), lands = [Int](repeating: 0, count: blocks)
+        var found = [[Int]](repeating: [], count: collectMouths ? blocks : 0)
+        h.withUnsafeBufferPointer { hb in
+        hf.withUnsafeBufferPointer { fb in
+        area.withUnsafeBufferPointer { ab in
+        receiver.withUnsafeBufferPointer { rb in
+        sums.withUnsafeMutableBufferPointer { sb in
+        lands.withUnsafeMutableBufferPointer { lb in
+        found.withUnsafeMutableBufferPointer { out in
+            let ph = hb.baseAddress!, ps = sb.baseAddress!, pl = lb.baseAddress!
+            let phf = fb.baseAddress!, pa = ab.baseAddress!, prb = rb.baseAddress!
+            // Leeres Feld: `baseAddress` ist dann nicht sicher nil — der
+            // Schalter entscheidet, nicht der Zeiger.
+            let pout = out.baseAddress
+            DispatchQueue.concurrentPerform(iterations: blocks) { c in
+                // Vier Teilsummen je Block (feste Reihenfolge): so
+                // vektorisiert der Compiler die Schleife.
+                var a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0, land = 0
+                let lo = cnt * c / blocks, hi = cnt * (c + 1) / blocks
+                var k = lo
+                while k + 4 <= hi {
+                    a0 += ph[k]; a1 += ph[k + 1]; a2 += ph[k + 2]; a3 += ph[k + 3]
+                    land += (ph[k] > sea ? 1 : 0) + (ph[k + 1] > sea ? 1 : 0)
+                        + (ph[k + 2] > sea ? 1 : 0) + (ph[k + 3] > sea ? 1 : 0)
+                    k += 4
+                }
+                while k < hi { a0 += ph[k]; land += ph[k] > sea ? 1 : 0; k += 1 }
+                ps[c] = (a0 + a1) + (a2 + a3); pl[c] = land
+                guard collectMouths, let pout else { return }
+                var local: [Int] = []
+                for m in lo..<hi where pa[m] >= minA {
+                    guard phf[m] > sea, phf[m] - ph[m] <= depth else { continue }
+                    let r = Int(prb[m])
+                    if r >= 0 && phf[r] <= sea { local.append(m) }
+                }
+                pout[c] = local
+            }
+        }}}}}}}
+        if collectMouths {
+            deltaMouthCells.removeAll(keepingCapacity: true)
+            for list in found { deltaMouthCells.append(contentsOf: list) }
+        }
+        return (sums.reduce(0, +), lands.reduce(0, +))
+    }
+
+    /// Ein Mündungsstrahl des Delta-Baums (s. `deltaDeposit`), in Zellen.
+    private struct DeltaJet {
+        /// Anfang und Richtung (Einheitsvektor) des Strahls.
+        var ox: Double, oz: Double, ux: Double, uz: Double
+        /// Halbbreite der Rinne.
+        var w: Double
+        /// Barrenmitte, Inselradius quer und stromauf (Barre über dem Meer
+        /// bis `r`, Fuß bei 2r) und Streckung stromab (`r · elong`).
+        var cx: Double, cz: Double, r: Double, elong: Double
+        /// Umriss-Rauschen: Phasen der 2. und 3. Harmonischen.
+        var p2: Double, p3: Double
+        /// Beginn der Rinne vor dem Strahl: bei Töchtern das Ende der
+        /// Elternrinne vor der Barre, bei der Wurzel der Strahlanfang selbst.
+        var lx: Double, lz: Double
+        /// Anteil am Abfluss der Mündung (Fracht-Verteilung an die Töchter).
+        var share: Double
+        /// Index der beiden Töchter in der Strahl-Liste (−1 = keine).
+        var left = -1, right = -1
+    }
+
+    /// Deterministisches Rauschen 0 ≤ ξ < 1 für die Delta-Geometrie (reine
+    /// Ganzzahl-Arithmetik, plattformgleich): hängt am Mündungs-Block, an der
+    /// Nummer des Strahls und an einem Kanal.
+    @inline(__always) private static func deltaNoise(_ block: Int, _ jet: Int, _ salt: Int) -> Double {
+        var v = UInt64(truncatingIfNeeded: block) &* 0x9E37_79B9_7F4A_7C15
+        v ^= UInt64(truncatingIfNeeded: jet &+ 1) &* 0xC2B2_AE3D_27D4_EB4F
+        v ^= UInt64(truncatingIfNeeded: salt &+ 7) &* 0x1656_67B1_9E37_79F9
+        v ^= v >> 33; v = v &* 0xFF51_AFD7_ED55_8CCD
+        v ^= v >> 33; v = v &* 0xC4CE_B9FE_1A85_EC53
+        v ^= v >> 33
+        return Double(v >> 11) / 9_007_199_254_740_992.0
+    }
+
+    /// Legt die Fracht der Flüsse als Delta vor ihrer Mündung ab.
+    ///
+    /// **Warum es den Pass gibt.** Die fluviale Erosion der Produktion ist
+    /// detachment-begrenzt: `outletIncision` (Stream-Power) und `channelCarve`
+    /// tragen Material ab, das danach NIRGENDS mehr liegt, und die Tropfen
+    /// laden ihre Fracht am Eintritt ins tiefe Wasser bzw. beim Verdunsten ab.
+    /// Gemessen (`RiverDelta.swift`, `testDeltaBudgetDiagnostic`, Seed 1337,
+    /// Jahr 20.000, größte Mündung): das Einzugsgebiet verliert über die
+    /// Stream-Power-Inzision 7,9 Zellen·Höhe je 1000 Jahre, ins Meer davor
+    /// kommt fluvial −0,1…+0,1. Ohne Fracht an der Küste gibt es keinen
+    /// Ablagerungskörper und damit kein Delta (Messreihe
+    /// `docs/zielbild-measurements.md` § Delta).
+    ///
+    /// **Fracht.** Was `outletIncision` und `channelCarve` in diesem Schritt
+    /// abtragen (Höhensumme davor minus danach, `deltaHeightSum`), je
+    /// Landzelle gemittelt, mal dem Einzugsgebiet der Mündung: jede Mündung ab
+    /// `deltaMinCells` bekommt den Abtrag ihres Einzugsgebiets bei mittlerer
+    /// Abtragsrate, davon bleibt `deltaTrapFraction` liegen. Bis zur Messung
+    /// der Kosten lief die echte D8-Summe des Abtrags je Zelle bis zur Mündung
+    /// (ein See hielt seinen Anteil fest): 1,3–1,5 ms je Schritt, eigen wie in
+    /// der Braid-Schleife mitgeführt (verstreute Zugriffe auf drei Felder je
+    /// Landzelle, `braidPass` 2,2 → 3,6 ms), bei einem Ziel von 0,5 ms für das
+    /// ganze Delta. Was dabei verloren geht: Relief und Klima des einzelnen
+    /// Einzugsgebiets (ein steiles liefert so viel je Zelle wie ein flaches)
+    /// und der Rückhalt in Seen; die Summe über alle Mündungen bleibt unter
+    /// dem Abtrag der Insel. Gürtel und Tropfen zählen nicht
+    /// mit: der Gürtel ist laterale Umlagerung, die Tropfen tragen ihre eigene
+    /// Fracht.
+    ///
+    /// **Ablagerung: Mündungsbarren.** Ein Fluss, der ins Meer tritt, behält
+    /// seinen Strahl einige Rinnenbreiten weit, verliert dann Tempo und legt
+    /// eine Mündungsbarre ab; ist sie bis zum Wasserspiegel gewachsen, teilt
+    /// sich der Strom links und rechts um sie, und jeder Arm baut vor sich die
+    /// nächste Barre (Wright 1977; Edmonds & Slingerland 2007, JGR 112, F02034).
+    /// Die Sim rechnet Wasser im Meer nicht (Meer = Senke), deshalb steht
+    /// diese Hydrodynamik hier als Ablage-Regel: ein Baum aus Strahlen ab der
+    /// Mündung, Rinnenbreite b aus dem Abfluss (dieselbe Kurve wie Band und
+    /// Gürtel), Barre `deltaBarDistanceWidths`·b voraus, Insel mit Radius
+    /// `deltaBarRadiusWidths`·b quer und `deltaBarElongation`-fach längs
+    /// gestreckt (Mündungsbarren sind tropfenförmig in Fließrichtung), Scheitel
+    /// `deltaTopset` über dem Meer, Fuß beim doppelten Radius gleich tief
+    /// darunter. Erst wenn eine Barre voll ist, geht die Fracht nach
+    /// Abflussanteil an ihre zwei Töchter (Winkel um ±`deltaBifurcationAngle`/2,
+    /// Breite wie b ∝ √Q), bis `deltaGenerations` oder bis eine Tochter
+    /// schmaler als `deltaMinHalfWidth` würde; der Rest geht ins offene Meer.
+    /// Teilung, Winkel, Abstände und Umriss schwanken um `deltaJitter`
+    /// (Rauschen am Mündungs-Block, also fest, solange die Mündung steht); der
+    /// stärkere Ast läuft gerader. Vor jeder Barre baut ein Strahl seine
+    /// Uferwälle (eine Halbbreite neben der Rinne, Krone `deltaTopset`) von der
+    /// Wurzel seewärts — die subaerische Deltaebene entlang der Arme. Die
+    /// Rinnen der Strahlen bleiben frei: sie sind die Distributäre, Meerwasser
+    /// zwischen den Inseln. Inseln und Wälle sind echtes Gelände, die Rinnen
+    /// echtes Wasser — der Render malt beides nur ab (Ozean-Ebene über
+    /// `h ≤ sea`, Sand über `CoastMaterial`).
+    ///
+    /// dt: die Fracht ist die Änderung des Schritts (∝ dt), die Barren-
+    /// Oberflächen sind geometrische Obergrenzen, die Füllreihenfolge ist fest
+    /// — viele kleine Schritte laufen gegen dieselbe Form wie ein großer.
+    private func deltaDeposit(yieldPerCell: Double) {
+        let nn = n, sea = cfg.sea
+        let cs = cfg.cellSize
+        guard cs > 0, cs.isFinite, yieldPerCell > 0, yieldPerCell.isFinite else { return }
+        let cellArea = cs * cs
+        let mouths = deltaMouthCells.map { k -> (land: Int, load: Double) in
+            (k, area[k] / cellArea * yieldPerCell * cfg.deltaTrapFraction)
+        }
+        guard !mouths.isEmpty else { return }
+        // (2) Je Mündung den Strahl-Baum aufspannen und Barre für Barre füllen.
+        // `visited` gehört dem Priority-Flood (er setzt es zu Schrittbeginn
+        // selbst zurück und markiert am Ende jede Zelle), `pondSeen` der
+        // Pfützen-Verlandung — beide hier nur geliehen und sauber hinterlassen.
+        fill(&visited, false)
+        fill(&pondSeen, false)
+        let topset = cfg.deltaTopset
+        let barDist = cfg.deltaBarDistanceWidths, barRad = cfg.deltaBarRadiusWidths
+        let elong = max(1, cfg.deltaBarElongation)
+        let half = cfg.deltaBifurcationAngle / 2, jitter = cfg.deltaJitter
+        let wMin = cfg.deltaMinHalfWidth
+        let generations = max(0, cfg.deltaGenerations)
+        var jets: [DeltaJet] = []
+        var corridor: [Int32] = []
+        var touched: [Int32] = []
+        var levee: [(k: Int32, t: Double, ceil: Double)] = []
+        hf.withUnsafeBufferPointer { hfb in
+        receiver.withUnsafeBufferPointer { rb in
+        area.withUnsafeBufferPointer { ab in
+        visited.withUnsafeMutableBufferPointer { vb in
+        pondSeen.withUnsafeMutableBufferPointer { nb in
+        withBed { bed in
+            let phf = hfb.baseAddress!, prec = rb.baseAddress!, pa = ab.baseAddress!
+            let pv = vb.baseAddress!, pno = nb.baseAddress!
+            /// Rinne als Strecke mit Halbbreite `w` in die Sperrmaske.
+            func markCorridor(_ ax: Double, _ az: Double, _ bx: Double, _ bz: Double, _ w: Double) {
+                let dx = bx - ax, dz = bz - az
+                let len2 = max(1e-12, dx * dx + dz * dz)
+                let pad = w + 1
+                let i0 = max(1, Int((min(ax, bx) - pad).rounded(.down)))
+                let i1 = min(nn - 2, Int((max(ax, bx) + pad).rounded(.up)))
+                let j0 = max(1, Int((min(az, bz) - pad).rounded(.down)))
+                let j1 = min(nn - 2, Int((max(az, bz) + pad).rounded(.up)))
+                if i0 > i1 || j0 > j1 { return }
+                for j in j0...j1 {
+                    for i in i0...i1 {
+                        let px = Double(i) - ax, pz = Double(j) - az
+                        let t = min(1, max(0, (px * dx + pz * dz) / len2))
+                        let ex = px - t * dx, ez = pz - t * dz
+                        if ex * ex + ez * ez <= w * w {
+                            let k = j * nn + i
+                            if !pno[k] { pno[k] = true; corridor.append(Int32(k)) }
+                        }
+                    }
+                }
+            }
+            /// Uferwall-Zellen neben der Strecke a→b (Abstand w…2w zur Achse),
+            /// mit Lauflänge `t0 + t` für die Füllreihenfolge und Kronenhöhe.
+            func leveeCells(_ ax: Double, _ az: Double, _ bx: Double, _ bz: Double,
+                            _ w: Double, _ t0: Double) {
+                let dx = bx - ax, dz = bz - az
+                let len2 = dx * dx + dz * dz
+                if len2 < 1e-12 { return }
+                let len = len2.squareRoot()
+                let pad = 2 * w + 1
+                let i0 = max(1, Int((min(ax, bx) - pad).rounded(.down)))
+                let i1 = min(nn - 2, Int((max(ax, bx) + pad).rounded(.up)))
+                let j0 = max(1, Int((min(az, bz) - pad).rounded(.down)))
+                let j1 = min(nn - 2, Int((max(az, bz) + pad).rounded(.up)))
+                if i0 > i1 || j0 > j1 { return }
+                for j in j0...j1 {
+                    for i in i0...i1 {
+                        let px = Double(i) - ax, pz = Double(j) - az
+                        let along = (px * dx + pz * dz) / len2
+                        if along < 0 || along > 1 { continue }
+                        let ex = px - along * dx, ez = pz - along * dz
+                        let e = (ex * ex + ez * ez).squareRoot()
+                        if e <= w || e > 2 * w { continue }
+                        levee.append((k: Int32(j * nn + i), t: t0 + along * len,
+                                      ceil: sea + topset * (1 - (e - w) / w)))
+                    }
+                }
+            }
+            for mouth in mouths {
+                let k0 = mouth.land
+                let mi = k0 % nn, mj = k0 / nn
+                guard mi >= 2, mi < nn - 2, mj >= 2, mj < nn - 2 else { continue }
+                // Richtung: Lauf (8 Zellen stromauf → Meereszelle) und
+                // Küstennormale (Meeresschwerpunkt im Fenster ±8) zu gleichen
+                // Teilen. Der Lauf allein springt mit der D8-Kette um 45°, und
+                // die Mündung selbst wandert je 1000 Jahre bei zwei Dritteln
+                // der großen Mündungen um 0–2 Zellen (Seed 1337, Jahr
+                // 10.000–20.000): jeder Schritt hätte einen anderen Baum
+                // gepflanzt.
+                var up = k0
+                for _ in 0..<8 {
+                    var best = -1, bestA = 0.0
+                    let ui = up % nn, uj = up / nn
+                    for dj in -1...1 { for di in -1...1 where di != 0 || dj != 0 {
+                        let ii = ui + di, jj = uj + dj
+                        if ii < 0 || ii >= nn || jj < 0 || jj >= nn { continue }
+                        let c = jj * nn + ii
+                        if Int(prec[c]) == up && pa[c] > bestA { bestA = pa[c]; best = c }
+                    } }
+                    if best < 0 { break }
+                    up = best
+                }
+                let r0 = Int(prec[k0])
+                var rx = Double(r0 % nn - up % nn), rz = Double(r0 / nn - up / nn)
+                let rl = (rx * rx + rz * rz).squareRoot()
+                guard rl > 1e-9 else { continue }
+                rx /= rl; rz /= rl
+                // Flaches Delta-Land (bis zum doppelten Scheitel) zählt als
+                // Meer: sonst drehte das wachsende Delta seinen eigenen Baum,
+                // und dieselbe Fracht in anderen Schritten gäbe eine andere
+                // Form (Wächter `testSameLoadInFewerStepsBuildsTheSameDelta`).
+                var sx = 0.0, sz = 0.0
+                let win = 8, low = sea + 2 * topset
+                for dj in -win...win { for di in -win...win {
+                    let ii = mi + di, jj = mj + dj
+                    if ii < 0 || ii >= nn || jj < 0 || jj >= nn { continue }
+                    let c = jj * nn + ii
+                    if phf[c] <= sea || bed.h[c] <= low { sx += Double(di); sz += Double(dj) }
+                } }
+                let sl = (sx * sx + sz * sz).squareRoot()
+                if sl > 1e-9 { sx /= sl; sz /= sl } else { sx = rx; sz = rz }
+                var ux = rx + sx, uz = rz + sz
+                let ul = (ux * ux + uz * uz).squareRoot()
+                if ul > 1e-9 { ux /= ul; uz /= ul } else { ux = sx; uz = sz }
+                // Rauschen am 8×8-Block der Mündung: wandert die Mündung um
+                // ein, zwei Zellen, bleibt der Baum derselbe.
+                let block = (mj >> 3) * nn + (mi >> 3)
+                func noise(_ jet: Int, _ salt: Int) -> Double {
+                    2 * Terrain.deltaNoise(block, jet, salt) - 1
+                }
+                // Strahl-Baum (Geometrie fest, Generation für Generation).
+                jets.removeAll(keepingCapacity: true)
+                let w0 = WaterRender.ribbonHalfWidthCells(dischargeCells: pa[k0] / cellArea,
+                                                          referenceCells: cfg.renderMinCells)
+                func makeJet(_ index: Int, _ ox: Double, _ oz: Double, _ dx: Double, _ dz: Double,
+                             _ w: Double, share: Double, from lx: Double, _ lz: Double) -> DeltaJet {
+                    let b = 2 * w
+                    let dist = barDist * b * (1 + jitter * noise(index, 10))
+                    let r = barRad * b * (1 + 0.5 * jitter * noise(index, 11))
+                    let tau = 2 * Double.pi
+                    return DeltaJet(ox: ox, oz: oz, ux: dx, uz: dz, w: w,
+                                    cx: ox + dist * dx, cz: oz + dist * dz, r: r, elong: elong,
+                                    p2: tau * Terrain.deltaNoise(block, index, 12),
+                                    p3: tau * Terrain.deltaNoise(block, index, 13),
+                                    lx: lx, lz: lz, share: share)
+                }
+                jets.append(makeJet(0, Double(mi), Double(mj), ux, uz, w0, share: 1,
+                                    from: Double(mi), Double(mj)))
+                var genStart = 0
+                for _ in 0..<generations {
+                    let genEnd = jets.count
+                    for p in genStart..<genEnd {
+                        let pj = jets[p]
+                        // Zu schmal zum Teilen: der Strahl endet mit seiner Barre.
+                        if pj.w * 0.5.squareRoot() < wMin * (1 - 1e-9) { continue }
+                        // Abflussanteil der linken Tochter um ½ ± jitter/2.
+                        let f = 0.5 + 0.5 * jitter * noise(p, 1)
+                        for side in [-1.0, 1.0] {
+                            let s = side < 0 ? f : 1 - f
+                            let wd = max(wMin, pj.w * s.squareRoot())
+                            // Flanke der Elternbarre; der stärkere Ast läuft
+                            // gerader (bei s = ½ genau der halbe Winkel).
+                            let ang = half * 2 * (1 - s) * (1 + 0.5 * jitter * noise(p, side < 0 ? 2 : 3))
+                            let ca = cos(ang), sa = sin(ang) * side
+                            let px = -pj.uz * side, pz = pj.ux * side
+                            let fx = pj.cx + (pj.r + wd) * px, fz = pj.cz + (pj.r + wd) * pz
+                            let dx = pj.ux * ca - pj.uz * sa
+                            let dz = pj.uz * ca + pj.ux * sa
+                            let child = makeJet(jets.count, fx, fz, dx, dz, wd, share: pj.share * s,
+                                                from: pj.cx - (pj.r + pj.w) * pj.ux,
+                                                pj.cz - (pj.r + pj.w) * pj.uz)
+                            let ci = Int(child.cx.rounded()), cj = Int(child.cz.rounded())
+                            if ci < 2 || ci > nn - 3 || cj < 2 || cj > nn - 3 { continue }
+                            // Barre läge an Land; flaches Delta-Land (bis zum
+                            // doppelten Scheitel) zählt nicht, über die eigenen
+                            // Inseln wächst der Baum weiter.
+                            let cc = cj * nn + ci
+                            if phf[cc] > sea && bed.h[cc] > sea + 2 * topset { continue }
+                            jets.append(child)
+                            if side < 0 { jets[p].left = jets.count - 1 } else { jets[p].right = jets.count - 1 }
+                        }
+                    }
+                    genStart = genEnd
+                }
+                // Rinnen sperren: Strahl bis vor die Barre, von dort zu den
+                // Flanken (Ansatz der Töchter).
+                for j in jets {
+                    let sx = j.cx - (j.r + j.w) * j.ux, sz = j.cz - (j.r + j.w) * j.uz
+                    markCorridor(j.lx, j.lz, j.ox, j.oz, j.w)
+                    markCorridor(j.ox, j.oz, sx, sz, j.w)
+                }
+                // Abgeschnürte Lagunen im Bereich des Baums verlanden zuerst
+                // (bis 0,3 Scheitel über das Meer): sonst schlossen Barren und
+                // Wälle Meer ein, das Raster malte es als dunklen See (Seed
+                // 1337 Jahr 20.000: 160 Zellen an drei großen Mündungen).
+                var load = mouth.load
+                var reachTree = 0.0
+                for j in jets {
+                    let dx = j.cx - Double(mi), dz = j.cz - Double(mj)
+                    reachTree = max(reachTree, (dx * dx + dz * dz).squareRoot() + 2 * j.r * j.elong)
+                }
+                let rt = Int(reachTree.rounded(.up)), marsh = sea + 0.3 * topset
+                for jj in max(1, mj - rt)...min(nn - 2, mj + rt) where load > 0 {
+                    for ii in max(1, mi - rt)...min(nn - 2, mi + rt) where load > 0 {
+                        let c = jj * nn + ii
+                        guard phf[c] > sea, bed.h[c] < sea else { continue }
+                        let dx = Double(ii - mi), dz = Double(jj - mj)
+                        if dx * dx + dz * dz > reachTree * reachTree { continue }
+                        load -= depositCell(c, min(marsh - bed.h[c], load), bed)
+                    }
+                }
+                // Barren füllen: Fracht an die Wurzel, volle Barre gibt weiter.
+                var pending: [(jet: Int, load: Double)] = [(0, load)]
+                var head = 0
+                while head < pending.count {
+                    let (ji, load) = pending[head]; head += 1
+                    let j = jets[ji]
+                    var remaining = load
+                    // Uferwälle zuerst, von der Wurzel des Strahls seewärts:
+                    // ein Streifen von einer Halbbreite neben der Rinne, Krone
+                    // `deltaTopset` an der Rinnenkante, außen auf den Spiegel.
+                    let sx = j.cx - (j.r + j.w) * j.ux, sz = j.cz - (j.r + j.w) * j.uz
+                    levee.removeAll(keepingCapacity: true)
+                    leveeCells(j.lx, j.lz, j.ox, j.oz, j.w, 0)
+                    let lead = ((j.ox - j.lx) * (j.ox - j.lx) + (j.oz - j.lz) * (j.oz - j.lz)).squareRoot()
+                    leveeCells(j.ox, j.oz, sx, sz, j.w, lead)
+                    levee.sort { $0.t < $1.t || ($0.t == $1.t && $0.k < $1.k) }
+                    // Gefüllt wird bis zur Krone, auch über eigener Schüttung
+                    // früherer Schritte, die schon Land ist: sonst stand eine
+                    // halb gefüllte Zelle nach einem kleinen Schritt still, und
+                    // dieselbe Fracht in kleineren Schritten legte weniger ab.
+                    // Eine Rinne bleibt frei, solange sie zum Meer offen ist; ist
+                    // sie abgeschnürt (Lagune, `hf > sea`), verlandet sie wie
+                    // der Rest: das Raster malte sie sonst als dunklen See
+                    // neben dem Türkis des Meers.
+                    for c in levee where remaining > 0 {
+                        let k = Int(c.k)
+                        if (pno[k] && phf[k] <= sea) || bed.h[k] >= c.ceil { continue }
+                        let room = c.ceil - bed.h[k]
+                        if room > 0 { remaining -= depositCell(k, min(room, remaining), bed) }
+                    }
+                    if remaining <= 0 { break }
+                    // Barre: Tropfen in Fließrichtung, Umriss mit 2. und 3.
+                    // Harmonischer gebrochen. `key` = normierter Abstand² im
+                    // gestreckten, verrauschten Maß, in Einheiten von r.
+                    // sin(mθ + p) über Mehrfachwinkel aus cos θ / sin θ statt
+                    // atan2 und sin je Zelle (gleiche Werte bis auf Rundung,
+                    // ein Drittel der Kosten des Passes).
+                    let wobble = 0.5 * jitter
+                    let c2 = cos(j.p2), s2 = sin(j.p2), c3 = cos(j.p3), s3 = sin(j.p3)
+                    func barKey(_ x: Int, _ z: Int) -> Double {
+                        let ex = Double(x) - j.cx, ez = Double(z) - j.cz
+                        let along = ex * j.ux + ez * j.uz, across = -ex * j.uz + ez * j.ux
+                        // Tropfen: stromauf rund (Radius r), stromab um
+                        // `elong` gestreckt — die Barre reicht nicht in die
+                        // Mündungsrinne zurück.
+                        let a = along > 0 ? along / j.elong : along
+                        let d2 = a * a + across * across
+                        if d2 < 1e-12 { return 0 }
+                        let rl = (along * along + across * across).squareRoot()
+                        let co = along / rl, si = across / rl
+                        let sin2 = 2 * si * co, cos2 = co * co - si * si
+                        let sin3 = si * (3 - 4 * si * si), cos3 = co * (4 * co * co - 3)
+                        let rr = 1 + wobble * (0.6 * (sin2 * c2 + cos2 * s2) + 0.4 * (sin3 * c3 + cos3 * s3))
+                        return d2 / (rr * rr)
+                    }
+                    let toe2 = 4 * j.r * j.r
+                    let ci = Int(j.cx.rounded()), cj = Int(j.cz.rounded())
+                    guard ci >= 1, ci < nn - 1, cj >= 1, cj < nn - 1 else { continue }
+                    touched.removeAll(keepingCapacity: true)
+                    heap.removeAll()
+                    heap.withRaw { ref in
+                        let c0 = cj * nn + ci
+                        pv[c0] = true; touched.append(Int32(c0))
+                        ref.push(key: barKey(ci, cj), cell: Int32(c0), col: 0)
+                        while ref.size > 0 && remaining > 0 {
+                            let e = ref.pop()
+                            let c = Int(e.cell)
+                            if !pno[c] || phf[c] > sea {
+                                let room = sea + topset * (1 - e.key.squareRoot() / j.r) - bed.h[c]
+                                if room > 0 {
+                                    let add = min(room, remaining)
+                                    remaining -= depositCell(c, add, bed)
+                                    if add < room { break }
+                                }
+                            }
+                            let i = c % nn, jj = c / nn
+                            for dj in -1...1 {
+                                for di in -1...1 where di != 0 || dj != 0 {
+                                    let ni = i + di, nj = jj + dj
+                                    if ni < 1 || ni >= nn - 1 || nj < 1 || nj >= nn - 1 { continue }
+                                    let nbk = nj * nn + ni
+                                    // Durch Meer und flaches Land unter dem
+                                    // Scheitel (eigene Schüttung, Lagunen),
+                                    // nie über höheres Land.
+                                    if pv[nbk] || bed.h[nbk] >= sea + topset { continue }
+                                    let d2 = barKey(ni, nj)
+                                    if d2 > toe2 { continue }
+                                    pv[nbk] = true; touched.append(Int32(nbk))
+                                    ref.push(key: d2, cell: Int32(nbk), col: 0)
+                                }
+                            }
+                        }
+                    }
+                    for c in touched { pv[Int(c)] = false }
+                    // Volle Barre: Rest nach Abflussanteil an die Töchter.
+                    if remaining > 0 {
+                        let kids = [j.left, j.right].filter { $0 >= 0 }
+                        let total = kids.reduce(0.0) { $0 + jets[$1].share }
+                        if total > 0 {
+                            for c in kids { pending.append((c, remaining * jets[c].share / total)) }
+                        }
+                    }
+                }
+                for c in corridor { pno[Int(c)] = false }
+                corridor.removeAll(keepingCapacity: true)
+            }
+        }}}}}}
+        heap.removeAll()
+    }
+
     // MARK: - Tektonik / Isostasie
 
     /// `gatedAmount` ist die bereits über den Schritt INTEGRIERTE Hebung (Höhen-
@@ -4397,6 +4876,14 @@ public final class Terrain {
     /// Bodenkriechen messen statt das Gate (§I.1 derselben Messreihe). Der
     /// Wächter ruft den Pass deshalb einzeln auf.
     func transportLimitedForTests(dt: Double) { transportLimited(dt: dt) }
+
+    /// Testfenster auf die Delta-Schüttung (Issue #174): `yieldPerCell` steht
+    /// für den mittleren Abtrag eines Schritts je Landzelle, Flussnetz aus dem
+    /// letzten `computeFlow`.
+    func deltaDepositForTests(yieldPerCell: Double) {
+        _ = deltaHeightSum(collectMouths: true)
+        deltaDeposit(yieldPerCell: yieldPerCell)
+    }
 
     // MARK: - Testfenster auf den Bett-Funnel (Issue #81)
 
@@ -5744,6 +6231,11 @@ public final class Terrain {
             // Prozess-Reihenfolge (FastScape/LEM-Konvention, docs/research-terrain-aging.md §4):
             // Uplift → Flow (oben) → Stream-Power/Auslass (Makro-Täler) → Droplet (Textur)
             // → Hangdiffusion (Grate runden) → Wave.
+            // Delta (Issue #174): Abtrag der Inzision und des Bett-Carves
+            // als Höhensumme davor und danach (s. `deltaDeposit`).
+            let deltaOn = cfg.deltaTrapFraction > 0
+            var deltaBefore = (sum: 0.0, land: 0)
+            if deltaOn { mark("deltaYield"); deltaBefore = deltaHeightSum() }
             // 1) Fluviale Makro-Inzision zuerst: schneidet das kohärente Talnetz und
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
             if cfg.outletIncision {
@@ -5751,6 +6243,12 @@ public final class Terrain {
             }
             // Eigener Bett-Pass; channelTargetDepth = 0 schaltet ihn aus.
             mark("channelCarve"); channelCarve(dt: dt)
+            var deltaYieldPerCell = 0.0
+            if deltaOn {
+                mark("deltaYield")
+                let after = deltaHeightSum(collectMouths: true).sum
+                deltaYieldPerCell = max(0, deltaBefore.sum - after) / Double(max(1, deltaBefore.land))
+            }
             if cfg.basinFill { mark("fillLakes"); fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
             if cfg.puddleFillYears > 0 { mark("fillShallowPonds"); fillShallowPonds(dt: dt) }
             // 1b) Braiding: super-linearer Bedload-Transport auf dem MFD-Netz baut
@@ -5814,6 +6312,12 @@ public final class Terrain {
             //     (bankfull) → breite Niedrig-Gradient-Reaches für Mäander/Braiding.
             //     Nach dem Carve (Bett steht), vor der Diffusion (glättet die Aue).
             if cfg.floodplainEnabled { mark("floodplainAggradation"); floodplainAggradation(dt: dt) }
+            // 2c) Delta-Schüttung (Issue #174): die Fracht des fluvialen Blocks
+            //     landet vor der Mündung, VOR Hangdiffusion und Wellen — die
+            //     überarbeiten die frische Front im selben Schritt.
+            if deltaOn {
+                mark("deltaDeposit"); deltaDeposit(yieldPerCell: deltaYieldPerCell)
+            }
             // 3) Hangdiffusion (Bodenkriechen, D·∇²z): rundet Grate über die Zeit → altes
             // Terrain wird RUND statt immer spitzer (Appalachen-Signal, konvexe Kuppen).
             // Gesamtwirkung ∝ dt (chunking-/framerate-UNABHÄNGIG!): Echtzeit-Zeitraffer

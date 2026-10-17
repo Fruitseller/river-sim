@@ -54,6 +54,11 @@ final class SimCoreTests: XCTestCase {
     private func prodMeanderCfg(n: Int = 192) -> SimConfig {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld
         c.meanderBelt = calibrationMeanderBelt  // Mechanik vor #174
+        // Delta-Schüttung (#174, Punkt 26) aus: mit ihr endete
+        // `testMeanderOxbowSiltsUp` auf dieser Realisierung bei 40 von Peak 54
+        // Altarmen (Kriterium < 70 %, gemessen mit der ersten Fassung des Passes). Diese Tests prüfen die Mäander-Mechanik,
+        // nicht die Küste — dieselbe Doktrin wie der Gürtel eine Zeile höher.
+        c.deltaTrapFraction = 0
         return c
     }
 

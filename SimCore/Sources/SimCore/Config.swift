@@ -797,6 +797,92 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // gepinnt, nur die Schrittweiten-Abhängigkeit fällt weg.
     public var waveRelax: Double = 0.5
 
+    // ---- Delta (Issue #174, Abnahmepunkt 26) ----
+    // Fracht der Flüsse als Mündungsbarren vor der Mündung
+    // (`Terrain.deltaDeposit`, Begründung und Ablauf dort). Vorher kam im
+    // Meer vor den großen Mündungen fluvial praktisch nichts an (Seed 1337,
+    // Jahr 20.000, größte Mündung: Einzugsgebiet −7,9 Zellen·Höhe je 1000 J.
+    // über `outletIncision`, ins Meer davor fluvial −0,1…+0,1) — die Inzision ist
+    // detachment-begrenzt, ihr Abtrag lag danach nirgends, und an keiner
+    // Mündung der drei Matrix-Seeds stand eine Sandinsel. Messreihe und
+    // Verworfenes: `docs/zielbild-measurements.md` § Delta.
+    //
+    // Gemessen wird Abnahmepunkt 26 mit `DeltaMetrics.shape`: Distributäre =
+    // 1 + größte Zahl Inseln, die ein Bogen um die Mündung quert. Große
+    // Mündungen (≥ 5000 Zellen) mit ≥ 3 Distributären und Sandinsel, Seeds
+    // 1337 · 20 · 42, je Jahr 2000/20.000/100.000:
+    //   aus (Integrationsstand 3bc20cc):          0/0/0 · 0/0/0 · 0/0/0
+    //   Wahl (unten), Schrittweite 1000:           5/3/7 · 1/1/4 · 0/5/1
+    //   Wahl (unten), Schrittweite 100:            4/1/6 · 3/3/4 · 2/3/2
+    //   (auf 6a0dfde: 4/2/6 · 1/5/3 · 1/3/2 bzw. 5/4/3 · 4/4/4 · 0/2/2)
+    // Erste Fassung (Kreisbarren rad 0,75, 2 Generationen, Fracht als D8-Summe
+    // je Zelle, Mündungen ab 2000), Integrationsstand e2574d1:
+    //   6/4/10 · 2/1/5 · 1/4/1 — Inseln 13–145 Zellen, alle Sand
+    //   dto., Mündungen ab 320 Zellen:             5/3/3 · 3/4/3 · 1/4/3
+    //   dto. plus Erosionsbasis sea − 0,002:       9/2/5 · 1/0/3 · 2/1/0
+    // Auf dem älteren Stand 0fec08b (vor #187), Mündungen ab 320 Zellen:
+    //   trap 0.5, dist 3, rad 1:                   1/0/4 · 0/0/2 · 0/0/1
+    //   trap 0.5, dist 2, rad 0.75:                3/3/6 · 0/2/3 · 0/2/2
+    //   trap 1.0, dist 2, rad 0.75:                5/5/7 · 3/5/2 · 3/2/1
+    //
+    // Anteil der Fracht einer Mündung (Einzugsgebiet × mittlerer Abtrag von
+    // `outletIncision` + `channelCarve` je Landzelle in diesem Schritt), der
+    // als Barre liegen bleibt; was die Barren nicht fassen (Baum voll), geht
+    // als Schweb ins offene Meer. 1.0, weil mit 0.5 die Barren auf Seed 20
+    // und 42 bis Jahr 2000 nicht auftauchten (Tabelle oben): der Schelf vor
+    // den Mündungen fällt mit ~0,003 je Zelle ab, eine Barre zwei
+    // Rinnenbreiten voraus steht in 0,03–0,04 Tiefe. Gürtel und Tropfen
+    // liefern nichts zu (s. dort). 0 = Pass aus (bit-identisch zum Stand
+    // davor).
+    public var deltaTrapFraction: Double = 1.0
+    // Kleinste Mündung (D8-Einzugsgebiet in Zellen), die ein Delta baut;
+    // kleinere Läufe exportieren ihre Fracht wie bisher. Mit 320
+    // (`channelFlowMinCells`) setzten auch Bäche Barren-Sprenkel vor die
+    // Küste, und der Baum-Teil des Passes kostete mehr (0,2 statt 0,5–1,0 ms
+    // je Schritt, `simperf`, erste Fassung). 2000 (Läufe mit Mäandergürtel,
+    // `meanderBeltMinCells`) gab mit der Fracht nach Einzugsgebiet und den
+    // größeren Barren noch Sprenkel vor mittleren Flüssen und kostete
+    // `deltaDeposit` 0,60 statt 0,50 ms; 4000 liegt knapp unter der großen
+    // Mündung der Kennzahl (5000).
+    public var deltaMinCells: Double = 4000
+    // Scheitel einer Mündungsbarre über dem Meer (Sim-Höhe, ≈ 3,6 m bei
+    // `heightScale` 24): die Sandinsel. Unter `waveTalus` (0.002) gewählt: so
+    // tief, dass die Wellen eine Rinne neben der Insel höchstens auf
+    // sea − 0,0005 zuschütten — sie bleibt Wasser.
+    public var deltaTopset: Double = 0.0015
+    // Abstand der Mündungsbarre vor dem Strahlanfang, in Rinnenbreiten (die
+    // Barre liegt einige Breiten vor der Mündung, Edmonds & Slingerland 2007).
+    // 3 legte die Barren in tieferes Wasser und ließ sie seltener auftauchen
+    // (Tabelle oben); auf dem Endstand bei Jahr 20.000 4/2/1 statt 4/1/4
+    // Deltas.
+    public var deltaBarDistanceWidths: Double = 2.0
+    // Inselradius der Barre quer zum Strahl und stromauf, in Rinnenbreiten
+    // (Fuß beim doppelten Radius). Mit 1 überlappten Fuß und Mündungsrinne,
+    // die Barre brauchte mehr Fracht. 0,75 (erste Fassung) gab Inseln von
+    // 13–145 Zellen, alle Sand; mit 0,9 und Streckung 2 (Jahr 20.000, Seeds
+    // 1337/42/20) 3/4/3 Deltas, beste Inseln 95–162 Zellen mit Bewuchs, gegen
+    // 4/3/2 mit 0,75 und Streckung 1,5 (`docs/zielbild-measurements.md`
+    // § Delta, Verworfen).
+    public var deltaBarRadiusWidths: Double = 0.9
+    // Streckung der Barre stromab: Mündungsbarren sind Tropfen in
+    // Fließrichtung, stromauf rund, stromab lang. Stromauf bleibt der Radius,
+    // sonst reichte die Barre bei 2 bis in die Mündungsrinne zurück.
+    public var deltaBarElongation: Double = 2.0
+    // Winkel zwischen den beiden Töchtern einer Verzweigung (Bogenmaß,
+    // ≈ 69°; Deltas verzweigen gemessen um ~70°, Coffey & Shaw 2017, GRL 44).
+    public var deltaBifurcationAngle: Double = 1.2
+    // Zahl der Verzweigungen hinter der ersten Barre. Mit
+    // `deltaMinHalfWidth` endet ein Strahl vorher, wenn seine Töchter
+    // schmaler würden.
+    public var deltaGenerations = 3
+    // Schmalste Rinne (Halbbreite in Zellen): darunter teilt sich ein Strahl
+    // nicht mehr. Ohne Untergrenze gaben drei Generationen Enkel-Rinnen von
+    // ~2 Zellen Breite, an der Auflösungsgrenze.
+    public var deltaMinHalfWidth: Double = 1.2
+    // Schwankung von Teilung, Winkel, Barrenabstand und -umriss (relativ, ±).
+    // 0 gibt einen symmetrischen Baum.
+    public var deltaJitter: Double = 0.3
+
     // ---- Höhenbänder (Issue #4): Perzentile statt absoluter Schwellen ----
     // Schnee-, Hochfels- und Vegetations-Höhengrenzen kommen aus Perzentilen der
     // AKTUELLEN Landhöhenverteilung (`HeightBands.fromLandHeights`, angewandt in

@@ -30,9 +30,17 @@ public enum SimProfile {
     private nonisolated(unsafe) static var openName: String?
     private nonisolated(unsafe) static var openStart: UInt64 = 0
 
+    /// Mess-Haken an jeder Pass-Grenze (nur bei `enabled`): bekommt den Namen
+    /// des Passes, der gerade ENDET (`nil` vor dem ersten). Damit ordnen
+    /// Messläufe die Höhenänderung eines Schritts den Pässen zu (Issue #174,
+    /// Delta-Budget in `SimCoreTests/RiverDelta.swift`), ohne dass `step()`
+    /// dafür eigenen Code trägt. Läuft VOR der Zeitmessung des nächsten Spans.
+    public nonisolated(unsafe) static var onPassEnd: ((String?) -> Void)?
+
     /// Schließt den offenen Span und öffnet `name` (bzw. nichts bei `nil`).
     @inline(never)
     public static func mark(_ name: String?) {
+        if let hook = onPassEnd { hook(openName) }
         let now = DispatchTime.now().uptimeNanoseconds
         if let open = openName {
             totals[open, default: 0] += Double(now &- openStart) * 1e-9

@@ -185,6 +185,9 @@ final class StateInventoryTests: XCTestCase {
             "Faktor der Tropfen-Deposition je Zelle (Issue #108) — `buildDepositDamp` "
             + "leitet ihn je Schritt vollständig aus `area`/Config ab, direkt vor dem "
             + "einzigen Leser (`Hydraulic.erode`).")),
+        ("deltaMouthCells", .scratch(reason:
+            "Mündungsliste des laufenden Schritts (`deltaHeightSum`, Issue #174), "
+            + "vor `deltaDeposit` je Schritt neu aus dem Flussnetz gesammelt.")),
         ("dropletGateBuf", .scratch(reason:
             "Sperrmaske der Tropfen (Eis oder Gürtelbett, Issue #174) — "
             + "`beltDropletGate` füllt sie je Schritt vollständig aus `underIce`/`inBelt`, "

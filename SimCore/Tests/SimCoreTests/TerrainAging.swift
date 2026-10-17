@@ -43,6 +43,14 @@ final class TerrainAging: XCTestCase {
         // `testAgingTrajectoryVariantsDiagnostic`.
         c.meanderBeltRate = 0.02
         c.meanderBeltKernelWidths = 1.5
+        // Delta-Schüttung (#174, Punkt 26) aus: sie baut an den Mündungen
+        // neues Land knapp über dem Meer, auf dieser Realisierung +2,3 %
+        // Landzellen in der zweiten Hälfte (17.549 → 17.948, erste Fassung
+        // des Passes). Median und p95
+        // der Landhöhe sinken dann gleich schnell (−0,031 / −0,033), und das
+        // robuste Relief p95 − Median steht (0,1255 → 0,1235) — Landzuwachs,
+        // nicht ausbleibendes Altern. Dieses Kriterium misst die Abtragung.
+        c.deltaTrapFraction = 0
         let t = Terrain(config: c, seed: 1337)
 
         let relief0 = t.landRelief()

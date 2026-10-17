@@ -99,7 +99,10 @@ public enum WorldSnapshot {
     /// Version 8 (Issue #174): die Gleichgewichtslinien-Temperatur des Eises
     /// (`iceFirnTemp`) reist über die synthetisierte Config-Kodierung mit
     /// (Begründung wie bei Version 4).
-    public static let version: UInt32 = 8
+    /// Version 9 (Issue #174, Delta): die Stellschrauben der Delta-Schüttung
+    /// (`deltaTrapFraction` ff.) reisen über die Config-Kodierung mit — eine
+    /// Version-8-Datei hat die Schlüssel nicht (Begründung wie bei Version 4).
+    public static let version: UInt32 = 9
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
