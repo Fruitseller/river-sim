@@ -2295,18 +2295,56 @@ public final class Terrain {
             let ps = sb.baseAddress!, pd = db.baseAddress!
             parallel(nn) { jLo, jHi in
                 for j in jLo..<jHi {
-                    for i in 0..<nn {
-                        let k = j * nn + i
-                        var m = 0.0
-                        if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
-                        if j > 0 { m = max(m, ps[k - nn]) }
-                        if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
-                        if i > 0 { m = max(m, ps[k - 1]) }
-                        if i < nn - 1 { m = max(m, ps[k + 1]) }
-                        if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
-                        if j < nn - 1 { m = max(m, ps[k + nn]) }
-                        if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
-                        pd[k] = max(ps[k], 0.65 * m)
+                    let row = j * nn
+                    if j == 0 || j == nn - 1 {
+                        for i in 0..<nn {
+                            let k = row + i
+                            var m = 0.0
+                            if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
+                            if j > 0 { m = max(m, ps[k - nn]) }
+                            if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
+                            if i > 0 { m = max(m, ps[k - 1]) }
+                            if i < nn - 1 { m = max(m, ps[k + 1]) }
+                            if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
+                            if j < nn - 1 { m = max(m, ps[k + nn]) }
+                            if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
+                            pd[k] = max(ps[k], 0.65 * m)
+                        }
+                    } else {
+                        // i = 0 (Rand links)
+                        let kLeft = row
+                        var mLeft = 0.0
+                        mLeft = max(mLeft, ps[kLeft - nn])
+                        mLeft = max(mLeft, ps[kLeft - nn + 1])
+                        mLeft = max(mLeft, ps[kLeft + 1])
+                        mLeft = max(mLeft, ps[kLeft + nn])
+                        mLeft = max(mLeft, ps[kLeft + nn + 1])
+                        pd[kLeft] = max(ps[kLeft], 0.65 * mLeft)
+
+                        // 1..<(nn - 1): Innenbereich ohne Verzweigungen
+                        for i in 1..<(nn - 1) {
+                            let k = row + i
+                            var m = 0.0
+                            if ps[k - nn - 1] > m { m = ps[k - nn - 1] }
+                            if ps[k - nn] > m { m = ps[k - nn] }
+                            if ps[k - nn + 1] > m { m = ps[k - nn + 1] }
+                            if ps[k - 1] > m { m = ps[k - 1] }
+                            if ps[k + 1] > m { m = ps[k + 1] }
+                            if ps[k + nn - 1] > m { m = ps[k + nn - 1] }
+                            if ps[k + nn] > m { m = ps[k + nn] }
+                            if ps[k + nn + 1] > m { m = ps[k + nn + 1] }
+                            pd[k] = max(ps[k], 0.65 * m)
+                        }
+
+                        // i = nn - 1 (Rand rechts)
+                        let kRight = row + (nn - 1)
+                        var mRight = 0.0
+                        mRight = max(mRight, ps[kRight - nn - 1])
+                        mRight = max(mRight, ps[kRight - nn])
+                        mRight = max(mRight, ps[kRight - 1])
+                        mRight = max(mRight, ps[kRight + nn - 1])
+                        mRight = max(mRight, ps[kRight + nn])
+                        pd[kRight] = max(ps[kRight], 0.65 * mRight)
                     }
                 }
             }
