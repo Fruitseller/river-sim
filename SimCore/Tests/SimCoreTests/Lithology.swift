@@ -21,6 +21,7 @@ final class Lithology: XCTestCase {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         c.meanderBelt = calibrationMeanderBelt  // Mäander-Mechanik vor #174
+        c.iceFirnTemp = calibrationIceFirnTemp  // Firn-Grenze 0.5731: die Gegenprobe braucht Eis
         return c
     }
 

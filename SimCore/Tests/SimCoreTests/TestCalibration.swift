@@ -72,6 +72,21 @@ let calibrationRangeLandform = false
 /// eigene Wächter (`MeanderBeltTests`, `ZielbildBeltTests`).
 let calibrationMeanderBelt = false
 
+/// Gleichgewichtslinien-Temperatur des Eises (°C) der Testwelten, gegen die die
+/// Eis-WÄCHTER dieser Suite kalibriert sind: der Stand vor der Entkopplung der
+/// Firn-Grenze von der 0-°C-Isotherme in Issue #174 (Produktion seitdem
+/// `SimConfig.iceFirnTemp`, kälter als 0 °C).
+///
+/// Dieselbe Doktrin wie `calibrationRangeLandform`: mit 0 °C liegt die Firn-Grenze
+/// bei 0.5731, knapp unter den Gipfeln der alten Großform, an der Eis, V→U-
+/// Kennzahl und Aging gemessen wurden. Mit der Produktions-Grenze (≈ 0.65) trägt
+/// dieselbe Testwelt (n = 96…384, alte Großform, gealterte Gipfel bei ~0.6) kein
+/// Eis mehr, die Wächter hätten nichts zu messen. Schnee, Waldgrenze und
+/// Niederschlagsphase hängen NICHT daran (die 11 °C Meeresspiegel-Temperatur sind
+/// unverändert). Die PRODUKTIONS-Kalibrierung hat ihren eigenen Wächter
+/// (`GlacierCrestShape.testProductionCrestCarriesGlaciersNotACap`).
+let calibrationIceFirnTemp: Double = 0
+
 /// Produktionsphysik in kleiner Auflösung, mit der Kalibrier-Paarung dieser
 /// Suite: der Standard-Zuschnitt der Render-Wächter (`SimRenderTests`,
 /// `RenderStateTests`). Genau der Fall, für den `calibrationWorld` oben steht —
@@ -84,6 +99,7 @@ func renderConfig(n: Int = 96) -> SimConfig {
     config.n = n
     config.world = n > 1 ? calibrationWorld : 0
     config.rangeLandform = calibrationRangeLandform
+    config.iceFirnTemp = calibrationIceFirnTemp
     return config
 }
 

@@ -1227,8 +1227,9 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Sublimation/Windverfrachtung (die anderen zwei Aufgaben von
     /// `snowTurnoverYears`).
     public var iceFirnPerSnowYear: Double = 1e-3
-    /// Temperaturspanne (K) unter 0 °C, über die die Firn→Eis-Umwandlung
-    /// hochrampt: `f_kalt = clamp(−T / iceFirnColdSpan, 0, 1)`.
+    /// Temperaturspanne (K) unter der Gleichgewichtslinien-Temperatur
+    /// `iceFirnTemp`, über die die Firn→Eis-Umwandlung hochrampt:
+    /// `f_kalt = clamp((iceFirnTemp − T) / iceFirnColdSpan, 0, 1)`.
     ///
     /// Warum eine eigene, KÄLTERE Schwelle als die Niederschlagsphase
     /// (`snowFreezeTemp`/`snowRainTemp`, 50 % bei +1 °C): dass Schnee FÄLLT, heißt
@@ -1236,9 +1237,42 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// der Gleichgewichtslinie, und die liegt im Jahresmittel unter 0 °C.
     /// 2 K Rampe statt harter Kante aus demselben Grund wie bei der
     /// Niederschlagsphase — eine Kante im Feld aliast über die Höhenlinie.
-    /// Bei Produktionswerten (Γ = 26) sind das die Höhen ab `h = 0.573` (Beginn)
-    /// bzw. `h = 0.65` (volle Umwandlung).
+    /// Bei Produktionswerten (Γ = 26, T₀ = 11) und `iceFirnTemp = 0` wären das die
+    /// Höhen ab `h = 0.573` (Beginn) bzw. `h = 0.65` (volle Umwandlung); die
+    /// Produktion liegt seit #174 um `iceFirnTemp` höher (s. dort).
     public var iceFirnColdSpan: Double = 2.0
+    /// **Gleichgewichtslinien-Temperatur des Eises** (°C): unterhalb davon
+    /// beginnt die Firn→Eis-Umwandlung (`iceFirnColdSpan` rampt darunter hoch).
+    /// Entkoppelt die Firn-Grenze des EISES von der 0-°C-Isotherme, an der der
+    /// Dauerschnee liegt (`climateSeaLevelTemp`, Schnee-, Wald- und Regenphase
+    /// bleiben, wie sie in #33 kalibriert sind).
+    ///
+    /// PHYSIK: die Gleichgewichtslinie (ELA) eines Gletschers liegt bei einer
+    /// Jahresmitteltemperatur einige Grad UNTER 0 °C — typisch −2 … −8 °C je nach
+    /// Niederschlag (Ohmura et al. 1992: ELA-Temperatur gegen Winterniederschlag,
+    /// maritime Gletscher nahe −1 °C, kontinentale −8 °C und kälter) —, während
+    /// Schnee schon an der 0-°C-Isotherme dauerhaft liegen bleibt. Bis #174 stand
+    /// hier implizit 0 °C: Schneegrenze und Firn-Grenze fielen zusammen.
+    ///
+    /// ANLASS (#174, `docs/glacier-measurements.md` §L): mit dem dt-invarianten
+    /// Eistransport trug der Kamm eine geschlossene Eiskappe (oberste 5 % des
+    /// Landes zu 10.3 / 6.2 / 11.1 % flach auf den Seeds 1337 / 42 / 20, Eis
+    /// 4.1 / 2.1 / 2.6 % des Landes: Hochflächen mit Wänden statt Gräten), weil
+    /// die Kamm-Großform viel mehr Land über der Firn-Grenze trägt als die Welt,
+    /// auf der #35 geeicht wurde (5.17 / 2.14 / 3.01 % bei der Generierung statt
+    /// ~1.5 %). Die Firn-Grenze des Eises liegt bei
+    /// `h = sea + (climateSeaLevelTemp − iceFirnTemp) / climateLapseRate`.
+    /// VERWORFEN: die Meeresspiegel-Temperatur auf 13 °C heben — dieselbe
+    /// Gleichgewichtslinie, aber das GANZE Klima verschiebt sich mit: Seed 42
+    /// ohne jeden Schnee, Seed 20 fast ohne, Waldgrenze und Regenphase wandern.
+    ///
+    /// 0 °C = Verhalten vor #174 (bit-identisch); die Testwelten der
+    /// Mechanik-Wächter, deren Eis an der alten Firn-Grenze 0.573 hängt, pinnen
+    /// das (`calibrationIceFirnTemp`). Muss ≤ 0 sein, damit das Eis nie wärmer
+    /// entsteht als der Schnee liegt.
+    ///
+    /// Kalibrier-Logbuch (Produktion, Seeds 1337 / 42 / 20): s. unten.
+    public var iceFirnTemp: Double = -2.0
     /// GRUNDUMSATZ des Eises (Jahre) — der Sockel `1/τ` in μ, dieselbe Rolle wie
     /// `snowTurnoverYears` beim Schnee: er hält die Dicke auch bei Dauerfrost
     /// BESCHRÄNKT und ist physikalisch als Sublimation/Kalben besetzt.

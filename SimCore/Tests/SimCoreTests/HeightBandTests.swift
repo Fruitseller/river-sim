@@ -79,7 +79,11 @@ final class HeightBandTests: XCTestCase {
         // 2) Dafür schrumpft die FLÄCHE, während die Gipfel abgetragen werden —
         //    das ist die Ablösung des fixen Landanteils.
         XCTAssertLessThan(t.maxHeight(), 0.70, "Vorbedingung: Insel trägt nicht ab")
-        XCTAssertLessThan(at30k.ramp, atGen.ramp * 0.85,
+        // Schranke 0.90 (vorher 0.85): gemessen 0.864 (0.0610 → 0.0527). Seit der
+        // Entkopplung der Eis-Firn-Grenze (#174, `iceFirnTemp`) schleift das Eis
+        // den Gipfel nicht mehr so früh unter die Isotherme, die Fläche schrumpft
+        // dadurch etwas weniger — kein fester Landanteil (der wäre 1.0).
+        XCTAssertLessThan(at30k.ramp, atGen.ramp * 0.90,
             "Schneefläche folgt der abtragenden Insel nicht (\(atGen.ramp) → \(at30k.ramp))")
         // …und verschwindet dabei nicht: die Gipfel bleiben über der Isotherme.
         XCTAssertGreaterThan(at30k.ramp, 0.002,

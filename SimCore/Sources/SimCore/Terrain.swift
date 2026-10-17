@@ -1573,12 +1573,13 @@ public final class Terrain {
         }
         // Gibt es überhaupt Eis oder eine Quelle dafür? (Reihenfolge-unabhängig,
         // also bit-genau reproduzierbar.)
+        let firnT = cfg.iceFirnTemp
         var active = anyCell(ice) { $0 > 0 }
         if !active {
             active = temperature.withUnsafeBufferPointer { tb in
             snow.withUnsafeBufferPointer { sb in
                 let pt = tb.baseAddress!, ps = sb.baseAddress!
-                for k in 0..<cnt where pt[k] < 0 && ps[k] > 0 { return true }
+                for k in 0..<cnt where pt[k] < firnT && ps[k] > 0 { return true }
                 return false
             }}
         }
@@ -1650,10 +1651,11 @@ public final class Terrain {
         var scale = 0.0
         var iLo = nn, iHi = -1, jLo = nn, jHi = -1
         let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
+        let firnT = cfg.iceFirnTemp
         for j in 0..<nn {
             for i in 0..<nn {
                 let k = j * nn + i
-                if ice[k] > 0 || (snow[k] > 0 && t0 - gamma * max(0, h[k] - sea) < 0) {
+                if ice[k] > 0 || (snow[k] > 0 && t0 - gamma * max(0, h[k] - sea) < firnT) {
                     iLo = min(iLo, i); iHi = max(iHi, i)
                     jLo = min(jLo, j); jHi = max(jHi, j)
                 }
@@ -1709,6 +1711,7 @@ public final class Terrain {
         let thr = max(0, cfg.iceMinThickness)
         let coldSpan = max(1e-9, cfg.iceFirnColdSpan)
         let t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
+        let firnT = cfg.iceFirnTemp
         let firn = cfg.iceFirnPerSnowYear
         let baseMu = 1 / max(1e-9, cfg.iceTurnoverYears)
         let meltC = max(0, cfg.iceMeltPerKYear)
@@ -1806,7 +1809,7 @@ public final class Terrain {
                     // als in zehn Schritten à 100, `docs/glacier-measurements.md`
                     // §L).
                     let t = t0 - gamma * max(0, ph[k] - sea)
-                    let fCold = min(1, max(0, -t / coldSpan))
+                    let fCold = min(1, max(0, (firnT - t) / coldSpan))
                     let a = firn * psnow[k] * fCold
                     // Eisfreie Zelle ohne Zufluss und ohne Zufuhr: nichts zu
                     // rechnen (das Meer und alles Land unterhalb der Firn-Grenze)

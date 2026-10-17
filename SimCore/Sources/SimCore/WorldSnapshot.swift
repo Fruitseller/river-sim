@@ -96,7 +96,10 @@ public enum WorldSnapshot {
     /// Version 7 (Issue #187): die Stellschrauben der Kopplung Gürtel ↔
     /// Entwässerung (`meanderBeltCoupling` …) reisen über die synthetisierte
     /// Config-Kodierung mit (Begründung wie bei Version 4).
-    public static let version: UInt32 = 7
+    /// Version 8 (Issue #174): die Gleichgewichtslinien-Temperatur des Eises
+    /// (`iceFirnTemp`) reist über die synthetisierte Config-Kodierung mit
+    /// (Begründung wie bei Version 4).
+    public static let version: UInt32 = 8
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"

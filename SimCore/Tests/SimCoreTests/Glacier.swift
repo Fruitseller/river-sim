@@ -34,6 +34,7 @@ final class Glacier: XCTestCase {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
+        c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731 der alten Großform
         return c
     }
 
@@ -88,10 +89,11 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Höhe der 0-°C-Isotherme aus der Kalibrier-Formel (`T = T₀ − Γ(h−sea)`) —
-    /// oberhalb davon wandelt sich Firn zu Eis (`iceFirnColdSpan` rampt darunter).
+    /// Höhe der Firn-Grenze des Eises aus der Kalibrier-Formel (`T = T₀ − Γ(h−sea)`
+    /// bei `T = iceFirnTemp`) — oberhalb davon wandelt sich Firn zu Eis
+    /// (`iceFirnColdSpan` rampt darunter).
     static func firnLine(_ c: SimConfig) -> Double {
-        c.sea + c.climateSeaLevelTemp / c.climateLapseRate
+        c.sea + (c.climateSeaLevelTemp - c.iceFirnTemp) / c.climateLapseRate
     }
 
     static func iceStats(_ t: Terrain) -> IceStats {
@@ -310,6 +312,42 @@ final class Glacier: XCTestCase {
             }
             print("   " + Glacier.iceStats(t).line)
         }
+    }
+
+    /// V→U in der PRODUKTION (Issue #174, Nachkalibrierung der Firn-Grenze,
+    /// `docs/glacier-measurements.md` §L): `SimConfig.production` mit dem Einlauf
+    /// der Brücke, Eis-Arm gegen eisfreien Arm mit demselben Seed, gepaart auf
+    /// den am Ende vergletscherten Zellen. Der Pflichtwächter
+    /// (`testGlaciatedValleysWidenTowardsU`) läuft auf der gepinnten alten Welt;
+    /// diese Messung zeigt, dass die Produktions-Welt dieselbe Richtung geht.
+    /// Produktionszellen sind kleiner (0,156 statt 0,34 Welteinheiten), deshalb
+    /// mehrere Halbbreiten.
+    ///
+    ///     RS_MEASURE=1 RS_SEEDS=1337,20 RS_YEARS=10000,20000,30000 \
+    ///         swift test … --filter testGlacierProductionValleyDiagnostic
+    func testGlacierProductionValleyDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let env = ProcessInfo.processInfo.environment
+        let seeds = (env["RS_SEEDS"] ?? "1337,20").split(separator: ",").compactMap { UInt32($0) }
+        let checkpoints = (env["RS_YEARS"] ?? "10000,20000,30000").split(separator: ",").compactMap { Double($0) }
+        let variants = (env["RS_VARIANTS"] ?? "base").split(separator: ";").map(String.init)
+        let dt = Double(env["RS_DT"] ?? "") ?? 100
+        for seed in seeds { for v in variants {
+            let c = Glacier.variant(v, of: SimConfig.production)
+            var off = c; off.iceEnabled = false
+            let ice = Terrain(config: c, seed: seed, settleYears: SimConfig.productionSettleYears)
+            let ref = Terrain(config: off, seed: seed, settleYears: SimConfig.productionSettleYears)
+            for target in checkpoints {
+                for t in [ice, ref] { while t.years < target - 1e-6 { t.step(dtYears: min(dt, target - t.years)) } }
+                let cells = Glacier.glacierCells(ice)
+                var row = String(format: "VUP s%d %@ %.0fk | Eiszellen %d", seed, v, target / 1000, cells.count)
+                for w in [6, 10, 14] {
+                    let p = Glacier.pairedShape(ice, ref, cells: cells, halfWidth: w)
+                    row += String(format: " | W%d b %.3f / %.3f Δ %+.3f n %d", w, p.a, p.b, p.a - p.b, p.count)
+                }
+                print(row); fflush(stdout)
+            }
+        } }
     }
 
     /// Verhältnis **Moräne zu glazialem Abtrag**: wie viel von dem, was das Eis
@@ -941,6 +979,15 @@ final class Glacier: XCTestCase {
             case "pond": c.puddleFillYears = v
             case "erode": c.iceErodeK = v
             case "moraine": c.iceMoraineK = v
+            case "firn": c.iceFirnPerSnowYear = v
+            case "turn": c.iceTurnoverYears = v
+            case "melt": c.iceMeltPerKYear = v
+            case "flow": c.iceFlowK = v
+            case "temp": c.climateSeaLevelTemp = v
+            case "ifirn": c.iceFirnTemp = v
+            case "lapse": c.climateLapseRate = v
+            case "ice": c.iceEnabled = v != 0
+            case "mexp": c.iceErodeFluxExp = v
             case "uplift":
                 c.upliftDecayStartPer100y = v; c.upliftDecayFloorPer100y = v; c.reliefServoPer100y = v
             default: break
