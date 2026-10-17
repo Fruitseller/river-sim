@@ -1443,3 +1443,34 @@ streute unter der Fremdlast (Load wechselnd) zu stark für eine schärfere Zahl
 (8 Runden, Median 75,4 → 68,2 ms bei Einzelrunden von −14 bis +11 ms).
 Fingerprints mit den übernommenen Teilen: `c25268a941dd4beb` /
 `685222593c36209f` / `948941e9feca57df`, unverändert.
+
+---
+
+## P. Sim-Kern, Runde 5 (Oktober 2026) — Eis-Domäne und Tropfen über Roh-Puffer, bit-identisch
+
+Startstand `aeed3b3` (Integrationszweig mit Gletscher-Nachkalibrierung),
+M4 Max, geteilte Maschine (mehrere Agenten, Load stark wechselnd). Vorschläge
+eines Agenten (Gemini 3.8 Flash, Branch `t3/174-sim-perf-r5b`), unabhängig
+nachgemessen: Gesamtschritt 10 Runden interleaved (`simperf --repeat 1`),
+dazu die Pass-Tabelle (`--repeat 3`, 4 Runden, Median der Blöcke).
+
+| Pass | `aeed3b3` | Kandidat (alle vier Commits) | übernommen |
+| --- | ---: | ---: | --- |
+| `Hydraulic.erode` | 3,35 ms | 2,62 ms | ja |
+| `updateIce` | 5,48 ms | 4,07 ms | ja (zeilenweise über `Terrain.parallel` neu geschrieben) |
+| `updateVegetation` | 4,02 ms | 3,94 ms | nein (Gewinn im Rauschen) |
+| `belt.migrate` / `belt.stamp` | 6,16 / 7,88 ms | 6,68 / 8,09 ms | nein (behaupteter Gewinn nicht reproduziert) |
+
+Der Gesamtschritt streute unter der Fremdlast stärker als der Effekt
+(10 Runden, Median 74,95 → 74,0 ms, gepaart +0,8 ms); deshalb gilt hier die
+Pass-Tabelle. Der Agent hatte −2,95 ms gemeldet, seine eigene Tabelle zeigte
+in den drei ruhigsten Runden den Kandidaten LANGSAMER (+1,5 … +2,0 ms) — der
+Median kam aus Lastspitzen auf der Basis-Seite. Lehre: bei wechselnder Last
+nicht den Gesamt-Median, sondern die gepaarten Differenzen und die
+betroffenen Pässe lesen.
+
+`iceTransportDomain` schrieb im Vorschlag aus `DispatchQueue.concurrentPerform`
+heraus in Swift-Arrays (formal ein Data Race); übernommen ist die Fassung mit
+je Zeile eigenem Ergebnis in Roh-Puffern und serieller Reduktion.
+Fingerprints unverändert: `6ffeb97d52f8e8d9` / `9f0fb0e9ad4d8493` /
+`49c9ba0762c9ee01`.
