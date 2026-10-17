@@ -12,6 +12,8 @@ final class EndorheicEvaporation: XCTestCase {
     private func cfg(n: Int = 256, kappa: Double? = nil) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.meanderBelt = calibrationMeanderBelt  // Mäander-Mechanik vor #174
         if let kappa { c.endorheicEvapRatio = kappa }
         // Gesteinsfeld (Issue #12) AUSGEPINNT — dieselbe Doktrin wie κ=6 unten und
         // wie `meanderCfg()` in SimCoreTests: diese Wächter prüfen die MECHANIK des

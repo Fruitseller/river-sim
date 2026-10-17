@@ -43,6 +43,7 @@ final class MeltRunoff: XCTestCase {
     private func cfg(n: Int, arm: Arm) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         switch arm {
         case .off:      c.meltRunoffEnabled = false
         case .renorm:   break
@@ -548,6 +549,7 @@ final class MeltRunoff: XCTestCase {
     /// Salzpfannen?
     func testEndorheicMechanicsSurviveMeltRunoff() {
         var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6   // dryCfg von #11
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         var ref = c; ref.meltRunoffEnabled = false                 // Arm der #11-Wächter
 
         /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).

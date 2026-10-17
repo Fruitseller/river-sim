@@ -5,6 +5,8 @@ render_mode blend_mix, depth_prepass_alpha, cull_disabled;
 
 uniform float u_time = 0.0;
 uniform float world_size = 100.0;
+// Kantenlänge des Sim-Gitters (Main.gd `N`), s. `grid_uv`.
+uniform float grid_n = 256.0;
 uniform float sea_level = 0.15;
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 // Vorgängerstand und Blende der Höhe (#172, Main.gd `height_fade`): die
@@ -22,12 +24,8 @@ uniform float height_blend = 1.0;
 // Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
 // game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
 uniform float water_fresnel_exponent;
-uniform float water_fresnel_sky_mix;
-uniform float water_roughness_steep;
-uniform float water_roughness_grazing;
-uniform float water_specular_steep;
-uniform float water_specular_grazing;
-uniform vec3 water_sky_reflect_color;
+uniform float water_roughness;
+uniform float water_specular;
 
 // Offenes Meer (#155, übernommen aus dem Studien-Hebel `frame`): Farbe aus
 // der Wassertiefe über dem Sim-Schelf, Brandungssaum, Rausch-Wellen.
@@ -54,10 +52,31 @@ uniform vec3 water_ocean_mid_color;
 uniform vec3 water_ocean_deep_color;
 uniform vec3 water_ocean_surf_color;
 
+// Sedimentfahne (#174 C): fertige Trübungsdichte je Meereszelle aus
+// SimRender.SedimentPlume (Float32 mit Mip-Kette, Main.gd `_update_plume`).
+// Die Fahne läuft küstennah ab der Mündung und klingt ab; der Shader liest
+// sie nur und zeichnet sie leicht weichgezeichnet (Mip-Stufe). Ohne SimNode
+// ist keine Textur gebunden: schwarz = keine Fahne.
+uniform sampler2D plume_tex : filter_linear_mipmap, repeat_disable, hint_default_black;
+// Vorgängerstand und Overlay-Blende (#174, Main.gd `overlay_fade`): die
+// Dichte kommt mit den Overlays und springt sonst je Upload.
+uniform sampler2D plume_prev_tex : filter_linear_mipmap, repeat_disable, hint_default_black;
+uniform float overlay_blend = 1.0;
+uniform float water_ocean_plume_lod;
+uniform float water_ocean_plume_opacity;
+uniform vec3 water_ocean_plume_color;
+
 varying vec2 v_world;
 
 // Wolkenschatten (#151): gemeinsame Funktion mit Terrain und Bändern.
 #include "res://shaders/clouds.gdshaderinc"
+
+// Welt-xz → Texturkoordinate des Sim-Gitters, texelzentriert wie `world_uv`
+// im Terrain-Shader (Zelle k = Texel k mit Mitte (k + ½)/grid_n).
+vec2 grid_uv(vec2 xz) {
+	float n = max(grid_n, 2.0);
+	return ((xz / world_size + 0.5) * (n - 1.0) + 0.5) / n;
+}
 
 float calib_window(float lo, float hi, float x) {
 	return smoothstep(lo, max(hi, lo + 1e-6), x);
@@ -101,13 +120,21 @@ vec2 ocean_wave_grad(vec2 p, float footprint, float t) {
 	return g;
 }
 
+// Trübung 0…1 am Punkt `p` (Welt-xz), über die Overlay-Blende (#174).
+float sediment_plume(vec2 p) {
+	vec2 uv = grid_uv(p);
+	float lod = water_ocean_plume_lod;
+	float s = textureLod(plume_tex, uv, lod).r;
+	return overlay_blend < 1.0 ? mix(textureLod(plume_prev_tex, uv, lod).r, s, overlay_blend) : s;
+}
+
 void vertex() {
 	v_world = VERTEX.xz;
 }
 
 void fragment() {
 	vec2 p = v_world;
-	vec2 terrain_uv = p / world_size + vec2(0.5);
+	vec2 terrain_uv = grid_uv(p);
 	bool inside_terrain = all(greaterThanEqual(terrain_uv, vec2(0.0)))
 	                   && all(lessThanEqual(terrain_uv, vec2(1.0)));
 	float footprint = length(fwidth(p));
@@ -132,9 +159,17 @@ void fragment() {
 	vec3 water = mix(water_ocean_shallow_color, water_ocean_mid_color,
 	                 calib_window(0.0, water_ocean_mid_depth, depth));
 	water = mix(water, water_ocean_deep_color, calib_window(water_ocean_mid_depth, 1.0, depth));
+	// Außerhalb des Sim-Quadrats gibt es keine Mündung: dort keine Abgriffe.
+	if (inside_terrain) {
+		water = mix(water, water_ocean_plume_color, sediment_plume(p) * water_ocean_plume_opacity);
+	}
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
-	water = mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix);
+	// Spiegelung statt Farbe (Befund #174): den Himmel spiegelt Godot über
+	// SPECULAR/ROUGHNESS, der Wasserkörper tritt mit dem Fresnel-Anteil zurück
+	// (wie terrain.gdshader und water.gdshader). Die Brandung darunter ist
+	// Schaum auf der Oberfläche und bleibt davon unberührt.
+	water *= 1.0 - fresnel;
 
 	// Brandung: schmaler, von Rauschen gebrochener Saum direkt an der Küste.
 	float surf = 1.0 - calib_window(0.0, water_ocean_surf_depth, depth);
@@ -142,10 +177,10 @@ void fragment() {
 	                     noise2(p * water_ocean_surf_scale + vec2(u_time * water_ocean_surf_drift, 0.0)));
 	water = mix(water, water_ocean_surf_color, surf * water_ocean_surf_strength);
 
-	water *= cloud_light(p, u_time);
+	water *= cloud_light(vec3(p.x, NODE_POSITION_WORLD.y, p.y), u_time);
 	ALBEDO = water;
 	ALPHA = 1.0;
-	ROUGHNESS = mix(water_roughness_steep, water_roughness_grazing, fresnel);
+	ROUGHNESS = water_roughness;
 	METALLIC = 0.0;
-	SPECULAR = mix(water_specular_steep, water_specular_grazing, fresnel);
+	SPECULAR = water_specular;
 }

@@ -162,10 +162,21 @@ final class StateInventoryTests: XCTestCase {
             + "bevor er sie liest.")),
         ("areaPow", .scratch(reason:
             "`A^m` je Zelle für `outletIncision`, je Aufruf neu gerechnet.")),
+        ("mfdRoutes", .scratch(reason:
+            "MFD-Nachbargewichte, vor jeder Akkumulation vollständig neu vorbereitet.")),
         ("qs", .scratch(reason:
             "Sedimentfracht in Transit (`transportLimited`, Testpfad) — der Pass "
             + "beschreibt sie in Empfänger-Reihenfolge, bevor er sie liest.")),
         ("isChannel", .persistent(.sameName)),
+        ("barAge", .persistent(.sameName)),
+        ("inBelt", .scratch(reason:
+            "Maske der Zellen, deren Sohle der Gürtel-Stempel in diesem Schritt "
+            + "setzt (Issue #174); `meanderBeltStep` leert sie zu Beginn jedes "
+            + "Schritts, bevor `channelCarve` sie liest.")),
+        ("beltSubsteps", .derived(reason:
+            "Teilschritt-Zahl des letzten Gürtel-Schritts — reine Diagnose, kein "
+            + "Pass liest sie.",
+            clearedOnRestore: false)),
         ("streamMap", .persistent(.sameName)),
         ("streamRate", .persistent(.sameName)),
         ("trackBuf", .scratch(reason:
@@ -174,8 +185,23 @@ final class StateInventoryTests: XCTestCase {
             "Faktor der Tropfen-Deposition je Zelle (Issue #108) — `buildDepositDamp` "
             + "leitet ihn je Schritt vollständig aus `area`/Config ab, direkt vor dem "
             + "einzigen Leser (`Hydraulic.erode`).")),
+        ("deltaMouthCells", .scratch(reason:
+            "Mündungsliste des laufenden Schritts (`deltaHeightSum`, Issue #174), "
+            + "vor `deltaDeposit` je Schritt neu aus dem Flussnetz gesammelt.")),
+        ("dropletGateBuf", .scratch(reason:
+            "Sperrmaske der Tropfen (Eis oder Gürtelbett, Issue #174) — "
+            + "`beltDropletGate` füllt sie je Schritt vollständig aus `underIce`/`inBelt`, "
+            + "direkt vor dem einzigen Leser (`Hydraulic.erode`).")),
         ("pondSeen", .scratch(reason:
             "Arbeitspuffer der Pfützen-Komponentensuche.")),
+        ("segOwner", .scratch(reason:
+            "Zuordnung Zelle → D8-Abschnitt der Gürtel-Kopplung (Issue #187) — "
+            + "`coupleBeltToDrainage` setzt sie je Schritt aus dem frischen Abflussfeld "
+            + "und räumt sie am Ende des Passes wieder auf −1.")),
+        ("segPos", .scratch(reason:
+            "Position der Zelle in ihrem D8-Abschnitt, wie `segOwner`.")),
+        ("beltCouplingLog", .scratch(reason:
+            "Diagnose-Haken der Kopplung (nur Tests), kein Zustand.")),
         ("noise", .derived(reason:
             "Permutationstabelle, rein aus `seed` rekonstruiert — `restore` baut "
             + "sie mit `SimplexNoise(seed:)` neu auf, statt sie zu speichern.",

@@ -9,7 +9,10 @@ import XCTest
 /// dass die Glättung wirkt und niemand das Rendering zurück auf `hf` verdrahtet.
 final class LakeLevelStability: XCTestCase {
     func testWaterLevelDampsFillJumps() {
-        let t = Terrain(config: .production, seed: 1337)
+        // Großform vor #174 (`calibrationRangeLandform`): die neue
+        // Seed-1337-Welt entwässert über Täler und hat kein Becken über 500 Zellen.
+        var c = SimConfig.production; c.rangeLandform = calibrationRangeLandform
+        let t = Terrain(config: c, seed: 1337)
         // Warmup wie eine frühe Spielsession (kleine Echtzeit-Schritte).
         var years = 0.0
         while years < 2000 { t.step(dtYears: 20); years += 20 }
@@ -61,4 +64,29 @@ final class LakeLevelStability: XCTestCase {
         XCTAssertLessThan(maxWLJump, 0.0015,
             "Seespiegel-Sprünge über der Sichtbarkeitsschwelle")
     }
+
+    /// Gedämpft wird nur der ANSTIEG (Issue #174): fällt `hf`, folgt der
+    /// Spiegel sofort. Vorher relaxierte er auch abwärts, und auf trockenem
+    /// Boden (hf = h) war er dann eine verzögerte Kopie des Geländes — jede
+    /// Zelle, die der Mäandergürtel binnen Jahrzehnten eine Kanaltiefe tief
+    /// gräbt, trug Jahrhunderte lang einen fleckigen Geister-See
+    /// (`docs/zielbild-measurements.md` § Geister-Seen im Mäandergürtel).
+    /// Erosion senkt in jedem Schritt irgendwo trockenen Boden, die Invariante
+    /// bricht also sofort, wenn jemand die Abwärts-Relaxation zurückholt.
+    func testWaterLevelNeverStandsAboveFill() {
+        let t = Terrain(config: renderConfig(n: 96), seed: 1337)
+        var maxAbove = 0.0, fell = 0
+        for _ in 0..<10 {
+            let before = t.hf
+            t.step(dtYears: 20)
+            for k in 0..<t.cfg.count {
+                maxAbove = max(maxAbove, t.waterLevel[k] - t.hf[k])
+                if t.hf[k] < before[k] - 1e-6 { fell += 1 }
+            }
+        }
+        XCTAssertGreaterThan(fell, 0, "kein fallender Füllstand — der Test prüft nichts")
+        XCTAssertLessThanOrEqual(maxAbove, 0,
+            "Darstellungs-Spiegel über dem Füllstand: Geister-See auf trockenem Boden")
+    }
 }
+

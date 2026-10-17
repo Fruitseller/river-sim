@@ -50,6 +50,36 @@ const VALLEY_FOG_DENSITY := 0.035
 ## Raumfrequenz (Zellgröße ~3–4 km bei 1 Einheit ≈ 100 m).
 const CLOUD_STRENGTH := 0.24
 const CLOUD_SCALE := 0.028
+## Weiche Blende unter der Wolkenbasis (Welteinheiten ≈ 100 m): der Schatten
+## läuft dort aus, statt an der Basis hart abzuschneiden — Gipfel, die die
+## Basis durchstoßen, trügen sonst eine CLOUD_STRENGTH-Helligkeitsstufe als
+## Höhenlinie. Einige Zehntel: breiter als die Körnung der Deckung, schmaler
+## als der Ebenen-Abstand CLOUD_LAYER_STEP der Wolkenkörper.
+const CLOUD_BASE_FADE := 0.8
+
+## Wolkenkörper über dem Kamm (#174 D, game/shaders/cloud_body.gdshader).
+## Die Wolkenbasis liegt knapp über dem oberen Felsband der Welt
+## (HeightBands.rockFull, über Main.gd `place_clouds`), sichtbar sind die
+## Körper nur über Gelände zwischen rockStart und rockFull: dort steht der
+## Kamm. Gemessen auf den Matrix-Welten (#174 D, testMaterialCoverageDiagnostic):
+## rockStart 0,50, rockFull 0,57–0,59, Gipfel 0,58–0,66 Sim-Höhe, also Basis
+## bei Welt-Y ≈ 14,5; die höchsten Gipfel stechen durch.
+## Bis zum ersten Höhenband gilt FALLBACK (dieselben Werte in Welt-Y).
+const CLOUD_BASE_ABOVE_RIDGE := 0.6  # Welteinheiten über rockFull
+const CLOUD_RIDGE_FALLBACK := Vector2(12.0, 13.9)  # rockStart, rockFull in Welt-Y
+## Drei Ebenen im Abstand CLOUD_LAYER_STEP (Welteinheiten ≈ 100 m) wölben die
+## Wolke; jede deckt mit CLOUD_BODY_OPACITY.
+const CLOUD_LAYERS := 3
+const CLOUD_LAYER_STEP := 0.45
+const CLOUD_BODY_OPACITY := 0.55
+## Tuning der Wolkenkörper (cloud_body.gdshader, Wächter game/tests/lighting.gd):
+## höhere Ebenen zeigen nur den Kern (Schwelle je Ebene um CLOUD_BODY_LIFT
+## angehoben); der Selbstschatten probiert die Dichte
+## CLOUD_BODY_SELF_SHADOW_DIST Welteinheiten zur Sonne und hellt/abdunkelt um
+## die Dichte-Differenz mal CLOUD_BODY_SELF_SHADOW_GAIN auf.
+const CLOUD_BODY_LIFT := 0.10
+const CLOUD_BODY_SELF_SHADOW_DIST := 0.9
+const CLOUD_BODY_SELF_SHADOW_GAIN := 2.5
 
 ## Was die Qualitätsstufen am Licht unterscheiden, gemessen im maximierten
 ## Fenster (docs/graphics-quality.md §Licht). `performance` spart Schatten-
@@ -127,11 +157,76 @@ static func configure_sun(sun: DirectionalLight3D, quality: String) -> void:
 	sun.shadow_bias = 0.04
 	sun.shadow_normal_bias = 1.2
 
-## Wolkenschatten auf jedes übergebene Material (Terrain, Ozean, Bänder). Alle
-## drei bekommen dieselben Werte, sonst hätte der Schatten am Ufer eine Kante.
+## Wolkenschatten auf jedes übergebene Material (Terrain, Ozean, Bänder,
+## Wolkenkörper). Alle bekommen dieselben Werte, sonst hätte der Schatten am
+## Ufer eine Kante oder läge neben seiner Wolke.
 static func apply_clouds(mats: Array[ShaderMaterial], quality: String) -> void:
 	var enabled: bool = profile(quality)["clouds"]
+	var to_sun := sun_direction()
 	for mat in mats:
 		mat.set_shader_parameter("clouds_enabled", enabled)
 		mat.set_shader_parameter("cloud_strength", CLOUD_STRENGTH)
 		mat.set_shader_parameter("cloud_scale", CLOUD_SCALE)
+		mat.set_shader_parameter("cloud_sun_shift", Vector2(to_sun.x, to_sun.z) / to_sun.y)
+		mat.set_shader_parameter("cloud_base_fade", CLOUD_BASE_FADE)
+	place_clouds(mats, CLOUD_RIDGE_FALLBACK.x, CLOUD_RIDGE_FALLBACK.y)
+
+## Wolkenbasis und Kamm-Fenster aus den Höhenbändern der Welt (Welt-Y):
+## Main.gd ruft das mit jedem Overlay-Upload, die Wolken folgen damit der
+## alternden Landschaft. Schatten und Körper lesen dieselbe Basis.
+static func place_clouds(mats: Array[ShaderMaterial], ridge_lo: float, ridge_hi: float,
+		bodies: Node3D = null) -> void:
+	var base := ridge_hi + CLOUD_BASE_ABOVE_RIDGE
+	for mat in mats:
+		mat.set_shader_parameter("cloud_height", base)
+	if bodies == null:
+		return
+	var i := 0
+	for child in bodies.get_children():
+		if child is MeshInstance3D:
+			child.position.y = base + i * CLOUD_LAYER_STEP
+			child.material_override.set_shader_parameter("cloud_body_ridge_lo", ridge_lo)
+			child.material_override.set_shader_parameter("cloud_body_ridge_hi", ridge_hi)
+			i += 1
+
+## Wolkenkörper als eigener Knoten mit CLOUD_LAYERS Ebenen (#174 D). In
+## `performance` unsichtbar und ohne Zeichenaufwand; die Wolkenschatten sind
+## dort ebenfalls aus (QUALITY).
+static func make_cloud_bodies(quality: String, world_size: float, hscale: float,
+		grid_n: int) -> Node3D:
+	var root := Node3D.new()
+	root.name = "CloudBodies"
+	root.visible = profile(quality)["clouds"]
+	var shader: Shader = load("res://shaders/cloud_body.gdshader")
+	var to_sun := sun_direction()
+	for i in CLOUD_LAYERS:
+		var mi := MeshInstance3D.new()
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(world_size, world_size)
+		mi.mesh = plane
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var mat := ShaderMaterial.new()
+		mat.shader = shader
+		mat.set_shader_parameter("world_size", world_size)
+		mat.set_shader_parameter("grid_n", float(grid_n))
+		mat.set_shader_parameter("hscale", hscale)
+		mat.set_shader_parameter("cloud_body_layer", float(i) / float(max(CLOUD_LAYERS - 1, 1)))
+		mat.set_shader_parameter("cloud_body_opacity", CLOUD_BODY_OPACITY)
+		mat.set_shader_parameter("cloud_body_lift", CLOUD_BODY_LIFT)
+		mat.set_shader_parameter("cloud_body_self_shadow_dist", CLOUD_BODY_SELF_SHADOW_DIST)
+		mat.set_shader_parameter("cloud_body_self_shadow_gain", CLOUD_BODY_SELF_SHADOW_GAIN)
+		mat.set_shader_parameter("cloud_body_sun", to_sun)
+		mi.material_override = mat
+		root.add_child(mi)
+	var mats := cloud_body_materials(root)
+	apply_clouds(mats, quality)
+	place_clouds(mats, CLOUD_RIDGE_FALLBACK.x, CLOUD_RIDGE_FALLBACK.y, root)
+	return root
+
+static func cloud_body_materials(bodies: Node3D) -> Array[ShaderMaterial]:
+	var mats: Array[ShaderMaterial] = []
+	if bodies != null:
+		for child in bodies.get_children():
+			if child is MeshInstance3D:
+				mats.append(child.material_override)
+	return mats

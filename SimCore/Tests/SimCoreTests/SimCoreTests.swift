@@ -23,6 +23,9 @@ final class SimCoreTests: XCTestCase {
         c.meanderMigration = 5.0e-5
         c.meanderNeckDist = 1.2
         c.meanderCohesion = 0 // Stufe 2 (Ufer-Kohäsion) neutralisiert: diese Tests prüfen die reine Kopplungs-Mechanik
+        // Mäandergürtel (Issue #174) aus: diese Tests pinnen die Zentrumslinien-
+        // Mechanik davor (Migration ∝ Krümmung × Abfluss, Ein-Zellen-Ufer).
+        c.meanderBelt = calibrationMeanderBelt
         // Mäander-Logik gegen KONSTANTE aktive Tektonik testen: die isolierte
         // Grid-Variante ohne Droplet braucht dauerhaften Relief-Nachschub für die
         // Altarm-Alterung. Die abklingende Produktions-Hebung (Issue #13) ist hier
@@ -49,7 +52,14 @@ final class SimCoreTests: XCTestCase {
     /// Pfad, der real läuft — Langzeit-Stabilität muss auf dem echten Pfad
     /// (Droplet + Sinuositäts-Deckel + Hals 2.0) gemessen werden.
     private func prodMeanderCfg(n: Int = 192) -> SimConfig {
-        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld
+        c.meanderBelt = calibrationMeanderBelt  // Mechanik vor #174
+        // Delta-Schüttung (#174, Punkt 26) aus: mit ihr endete
+        // `testMeanderOxbowSiltsUp` auf dieser Realisierung bei 40 von Peak 54
+        // Altarmen (Kriterium < 70 %, gemessen mit der ersten Fassung des Passes). Diese Tests prüfen die Mäander-Mechanik,
+        // nicht die Küste — dieselbe Doktrin wie der Gürtel eine Zeile höher.
+        c.deltaTrapFraction = 0
+        return c
     }
 
     // MARK: - Determinismus

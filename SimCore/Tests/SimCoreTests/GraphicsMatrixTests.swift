@@ -99,6 +99,26 @@ final class GraphicsMatrixTests: XCTestCase {
                     targetX: 18.0, targetZ: 14.0,
                     distance: 48.0, yaw: 0.6, pitch: 0.75,
                     description: "Hohe Gebirgsrippe und Übergang von Fels zu Firnfeldern"
+                ),
+                // Vorlagen-Kameras (Issue #174): dieselben Distanzen und Pitches
+                // wie die Tasten-Presets in Main.gd (CAMERA_PRESETS).
+                MatrixCamera(
+                    id: "diorama",
+                    targetX: 0.0, targetZ: 0.0,
+                    distance: 115.0, yaw: 0.7, pitch: 0.62,
+                    description: "Vorlage C: ganze Insel schräg als Diorama"
+                ),
+                MatrixCamera(
+                    id: "valley",
+                    targetX: -12.0, targetZ: -25.0,
+                    distance: 30.0, yaw: 0.7, pitch: 0.40,
+                    description: "Vorlage B: flacher Blick über Tal und Aue bis zum Horizont"
+                ),
+                MatrixCamera(
+                    id: "close",
+                    targetX: -36.0, targetZ: -32.0,
+                    distance: 22.0, yaw: 0.9, pitch: 0.52,
+                    description: "Vorlage A: Schrägsicht auf Hang, Fluss und Küste"
                 )
             ]
         ),
@@ -149,6 +169,26 @@ final class GraphicsMatrixTests: XCTestCase {
                     targetX: -22.0, targetZ: 20.0,
                     distance: 50.0, yaw: 0.7, pitch: 0.75,
                     description: "Umgebender Krater- und Beckenrand mit kahlen Steilhängen"
+                ),
+                // Vorlagen-Kameras (Issue #174): dieselben Distanzen und Pitches
+                // wie die Tasten-Presets in Main.gd (CAMERA_PRESETS).
+                MatrixCamera(
+                    id: "diorama",
+                    targetX: 0.0, targetZ: 0.0,
+                    distance: 115.0, yaw: 0.7, pitch: 0.62,
+                    description: "Vorlage C: ganze Insel schräg als Diorama"
+                ),
+                MatrixCamera(
+                    id: "valley",
+                    targetX: 4.0, targetZ: -6.0,
+                    distance: 30.0, yaw: 0.5, pitch: 0.40,
+                    description: "Vorlage B: flacher Blick über Tal und Aue bis zum Horizont"
+                ),
+                MatrixCamera(
+                    id: "close",
+                    targetX: 12.0, targetZ: -10.0,
+                    distance: 22.0, yaw: 1.1, pitch: 0.52,
+                    description: "Vorlage A: Schrägsicht auf Hang, Fluss und Küste"
                 )
             ]
         ),
@@ -199,6 +239,26 @@ final class GraphicsMatrixTests: XCTestCase {
                     targetX: -10.0, targetZ: 14.0,
                     distance: 40.0, yaw: 0.6, pitch: 0.70,
                     description: "Zentraler Hochgipfel mit scharfen Graten und dauerhafter Schneedecke"
+                ),
+                // Vorlagen-Kameras (Issue #174): dieselben Distanzen und Pitches
+                // wie die Tasten-Presets in Main.gd (CAMERA_PRESETS).
+                MatrixCamera(
+                    id: "diorama",
+                    targetX: 0.0, targetZ: 0.0,
+                    distance: 115.0, yaw: 0.7, pitch: 0.62,
+                    description: "Vorlage C: ganze Insel schräg als Diorama"
+                ),
+                MatrixCamera(
+                    id: "valley",
+                    targetX: -8.0, targetZ: 10.0,
+                    distance: 30.0, yaw: 0.6, pitch: 0.40,
+                    description: "Vorlage B: flacher Blick über Tal und Aue bis zum Horizont"
+                ),
+                MatrixCamera(
+                    id: "close",
+                    targetX: 30.0, targetZ: -28.0,
+                    distance: 22.0, yaw: 0.8, pitch: 0.52,
+                    description: "Vorlage A: Schrägsicht auf Hang, Fluss und Küste"
                 )
             ]
         )
@@ -214,7 +274,8 @@ final class GraphicsMatrixTests: XCTestCase {
         let expectedYears = [0.0, 20_000.0, 100_000.0]
         XCTAssertEqual(Self.standardYears, expectedYears, "Matrix muss Jahre 0, 20k und 100k umfassen")
 
-        let requiredCameras = ["overview", "detail", "grazing", "backlight", "coast", "snow"]
+        let requiredCameras = ["overview", "detail", "grazing", "backlight", "coast", "snow",
+                               "diorama", "valley", "close"]
         let worldSize = SimConfig.production.world
         let maxCoord = worldSize * 0.5
 
@@ -244,6 +305,49 @@ final class GraphicsMatrixTests: XCTestCase {
             for req in requiredCameras {
                 XCTAssertTrue(cameraIds.contains(req),
                               "Welt Seed \(world.seed) fehlt Pflichtkamera '\(req)'")
+            }
+        }
+    }
+
+    /// Die drei Vorlagen-Kameras (Issue #174, Paket E) gibt es zweimal: als
+    /// Tasten-Presets in `Main.gd` (F1–F3) und als Matrix-Kameras. Der Pitch
+    /// ist bei allen dreien gleich, die Distanz bei Tal und Nah; sonst zeigt
+    /// der Abnahmebogen eine andere Ansicht als die Taste im Spiel. Ziel und
+    /// Yaw rechnen die Tasten adaptiv aus der laufenden Welt, die Matrix hält
+    /// sie je Seed fest (Reproduzierbarkeit); ebenso die Distanz des Dioramas,
+    /// die im Spiel aus der Land-Bounding-Box folgt (`fill`, s. `Main.gd`
+    /// `frame_land`, nachgemessen in `game/tests/ui_layout.gd`).
+    func testCameraPresetsMatchTheMatrix() throws {
+        let main = try RepoSource.probe("game/scripts/Main.gd")
+        for id in ["diorama", "valley", "close"] {
+            let pitch = try main.captures(pattern: "\"id\": \"\(id)\",[^}]*\"pitch\": ([0-9.]+)")
+            let dist = try main.captures(pattern: "\"id\": \"\(id)\",[^}]*\"dist\": ([0-9.]+)")
+            let adaptive = id == "diorama"
+            XCTAssertEqual(pitch.count, 1, "Preset '\(id)' ohne pitch in Main.gd CAMERA_PRESETS")
+            XCTAssertEqual(dist.count, adaptive ? 0 : 1,
+                           adaptive ? "Diorama rahmt das Land, keine feste Distanz"
+                                    : "Preset '\(id)' ohne dist in Main.gd CAMERA_PRESETS")
+            let key = adaptive ? "fill" : "upstream"
+            XCTAssertEqual(try main.captures(pattern: "\"id\": \"\(id)\",[^}]*\"\(key)\": ([0-9.]+)").count, 1,
+                           "Preset '\(id)' rechnet adaptiv über \"\(key)\"")
+            for world in Self.matrixWorlds {
+                guard let cam = world.cameras.first(where: { $0.id == id }) else {
+                    XCTFail("Seed \(world.seed) fehlt Matrix-Kamera '\(id)'"); continue
+                }
+                if let p = pitch.first.flatMap(Double.init) {
+                    XCTAssertEqual(cam.pitch, p, "Seed \(world.seed) '\(id)': Pitch == Main.gd")
+                }
+                if let d = dist.first.flatMap(Double.init) {
+                    XCTAssertEqual(cam.distance, d, "Seed \(world.seed) '\(id)': Distanz == Main.gd")
+                }
+            }
+        }
+        // Und das Shell-Skript, das die Bilder macht, kennt dieselben Werte.
+        let script = try RepoSource.file("scripts/graphics-matrix.sh")
+        for world in Self.matrixWorlds {
+            for cam in world.cameras where ["diorama", "valley", "close"].contains(cam.id) {
+                let row = "\(world.seed):\(cam.id)"
+                XCTAssertTrue(script.contains(row), "graphics-matrix.sh fehlt Kamera \(row)")
             }
         }
     }

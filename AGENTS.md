@@ -175,6 +175,7 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/lighting.gd      # ohne GDExtension
 "$GODOT" --headless --path game --script res://tests/relief.gd
 "$GODOT" --headless --path game --script res://tests/canopy.gd
+"$GODOT" --headless --path game --script res://tests/ui_layout.gd
 "$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
 ```
 
@@ -186,7 +187,7 @@ grüner Lauf nichts über den lokalen Stand.
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
 Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK`,
-`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`), nicht der
+`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
@@ -224,12 +225,29 @@ reproduziert, übernimmt deren Fenstergröße; die gemessene Viewport-Größe ge
 mit ins Protokoll. Kleine Fenster bleiben nur für logische Vertragsprüfungen
 zulässig, deren Ergebnis nicht vom Renderer oder von Interaktion abhängt.
 
+**Zeitraffer-Frame-Zeiten als interleaved A/B** (Messprotokoll
+`docs/perf-measurements.md` §L):
+
+```sh
+cp -R game /tmp/alt/game            # Vergleichsstand VOR dem Umbau (mit bin/ und .godot/)
+RS_TIMING_SCREEN=1 RS_TIMING_RUNS=6 RS_TIMING_EXCLUSIVE=1 \
+    scripts/timelapse-timing.sh /tmp/alt/game game
+```
+
+Flusstal-Bühne im Betrieb `simulation`, maximiert; je Runde wechselt die
+Reihenfolge der Stände. `RS_TIMING_SCREEN` wählt den Bildschirm (mit externem
+Monitor am Referenz-Mac ist der eingebaute Index 1), `RS_TIMING_EXCLUSIVE=1`
+wartet vor jedem Lauf, bis kein fremdes Godot mehr die GPU teilt. Weitere
+Schalter im Kopf des Skripts.
+
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
 `RenderState.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
 `RS_SEED`, `RS_STEP`, `RS_STEP_CHUNK` (Schrittweite des `RS_STEP`-Vorlaufs,
 Standard 1000 J., der Vorlauf taktet wie der Zeitraffer, nicht in EINEM Sprung),
 `RS_SHOT`, `RS_DIST`, `RS_TARGET` (`"x,z"`, Blickpunkt in
 Weltkoordinaten, für Ausschnitt-Screenshots), `RS_YAW`, `RS_PITCH`,
+`RS_CAMERA` (`diorama|valley|close`: Tasten-Preset F1–F3 adaptiv für die
+Welt anfahren, statt fester `RS_TARGET`/`RS_DIST`/`RS_YAW`),
 `RS_QUALITY` (`performance|balanced|quality`), `RS_RENDER_GRID`, `RS_DIAG`,
 `RS_DEBUG_DIFF` (Δ-Karte gleich an, für automatisierte Diagnose-Screenshots),
 `RS_FPS`, `RS_IDLE` (misst mit `RS_FPS` den Leerlauf statt des Zeitraffers;
@@ -243,12 +261,19 @@ Geometrie), `RS_WATER_GPU` (Schwanzstufen des Raster-Wasserfelds — Blur, EWMA,
 Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension;
 standardmäßig AUS, weil die Ersparnis gemessen 1,8 ms je Aufruf ist und keine
 Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet
-zusätzlich die Bedienleiste aus. Getrennt davon
+zusätzlich die Bedienleiste aus, `RS_SHOT_UI` behält sie (Aufnahmen der
+Bedienung selbst, Issue #174). `RS_UI_BLUR=0` lässt den Weichzeichner hinter den
+Glas-Panels weg (A/B im selben Build, Kosten: `docs/zielbild-measurements.md`
+§ Glas-Weichzeichner). `RS_SHOT` blendet auch den Pinsel aus;
+`RS_BRUSH=<Radius>` zeigt die Pinselkuppel trotzdem, in der Bildmitte statt am
+Mauszeiger (Aufnahmen der Kuppel ohne Maus). Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
-#116 (`RS_STUDY_VARIANT` `prototype|baseline`, `RS_STUDY_MODE`
+#116 (`RS_STUDY_VARIANT` `baseline`, `prototype` ist mit #174 D entfernt; `RS_STUDY_MODE`
 `orbit|simulation|shot|still`, `RS_STUDY_OUTPUT`, per Skript zusätzlich
-`RS_STUDY_MOVIE`; für die Kalibrierung `RS_STUDY_DEBUG`) liegen in
+`RS_STUDY_MOVIE`; für die Kalibrierung `RS_STUDY_DEBUG`; für die Kosten der
+Bedienung `RS_STUDY_UI` `plain|glass|ab` und `RS_STUDY_ROUNDS`, s. Kopf von
+`Flusstal.gd`) liegen in
 `game/studies/flusstal/Flusstal.gd` und werden über `scripts/graphics-study.sh`
 gesetzt; Direktstart ohne gültige Variante bricht ab. Seit #152 sind alle Hebel
 Produktion; ein gesetztes `RS_STUDY_LEVERS` bricht deshalb ebenfalls ab. Die
@@ -264,7 +289,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
@@ -317,17 +342,33 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    hält einen `Terrain` und einen `SimRender.RenderState`, reicht Aufrufe an
    beide weiter und wrappt `[UInt8]`, `[Float]` sowie `RibbonMesh` in
    `Packed*Array`. Keine Physik, keine Render-Berechnung, kein Render-Zustand.
+   Dazu EIN Hintergrund-Job (`SimRender.BackgroundJob`) für den Zeitraffer:
+   `beginStep` rechnet Sim-Schritt und Frame auf einem eigenen Thread; Welt und
+   Render-Zustand fasst jeder Aufruf nur über die Tore `terrain`/`render` an,
+   die den Job vorher abwarten (s. Datenfluss unten).
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
-   derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input),
+   derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input; das Aussehen der
+   Bedienung steht in EINEM Theme, `ui/glass_theme.tres` (samt Radius und
+   Abdunklung des Weichzeichners hinter den Panels; Shader
+   `ui/glass_blur.gdshader`), die Werkzeug- und
+   Tempo-Icons zeichnet `scripts/UiIcon.gd`, Issue #174, Wächter
+   `SimCoreTests/UiContractTests.swift` und `tests/ui_layout.gd`),
    `shaders/terrain.gdshader` (Land + Raster-Wasser), `water.gdshader`
    (Flussbänder) und `ocean.gdshader` (offenes Meer); Licht, Atmosphäre und
    die mit allen drei geteilten Wolkenschatten (`clouds.gdshaderinc`) stellt
    `scripts/Lighting.gd` ein (feste Welt-Sonne, Issue #151, Wächter
-   `tests/lighting.gd`). Dazu Shader, die
+   `tests/lighting.gd`); dieselbe Rauschquelle zeichnet seit #174 D die
+   Wolkenkörper über dem Kamm (`cloud_body.gdshader`, in `performance` aus),
+   die Schatten fallen entlang der Sonne von deren Basis. WO Fels, Schutthalden,
+   Gletschereis, Rohboden und Talboden-Wiese liegen, rechnet
+   `SimRender.TerrainColorRenderer` (Kalibrierung `SimCore.MaterialRender`,
+   Wächter `SimCoreTests/MaterialTests.swift` und `tests/canopy.gd`); der
+   Terrain-Shader baut daraus nur Klüftung, Körnung, Spalten und Moränen.
+   Dazu Shader, die
    nichts MALEN, sondern rechnen: `relief_bake.gdshader` backt einmal je
    Terrain-Update die Render-Verschiebung von Rinnen und Graten (Issue #153,
    Kalibrierung `SimCore.ReliefRender` über die Brücke, Wächter
-   `tests/relief.gd`); der Terrain-Shader liest sie nur, Pinselring und
+   `tests/relief.gd`); der Terrain-Shader liest sie nur, Pinselkuppel und
    Kameraziel liegen auf der verschobenen Fläche, der Pinsel wirkt auf die
    Sim-Zelle darunter. Das Kronendach (Issue #152) zeichnet der
    Terrain-Shader je Pixel; WO Wald steht, kommt als Waldmaske aus
@@ -339,12 +380,30 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    keine Kalibrier-Zahl — alle Schwellen bleiben im Vertrag
    `SimCore.WaterRender` und wirken CPU-seitig, bevor das Feld entsteht.
 
-Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, lädt `heightsBytes()`
-hoch und holt den Rest über EINEN Aufruf `sim.renderFrame(trigger, now)`
-(Issue #94): der Auslöser (`FRAME_*` == `SimRender.FrameTrigger`) sagt, was
-passiert ist, `RenderState.frame` entscheidet Reihenfolge (Bänder → Wasserfeld
-→ Schutzmaske → Waldmaske), Drosseln und Wasser-Blend und liefert die Puffer des
-Frames; `Main.gd` lädt nur hoch, was es bekommt.
+Datenfluss pro Frame: ein Frame ist EIN Dictionary (`SimNode.packFrame`): Höhe,
+Jahr und Auslöser immer, die gedrosselten Overlays samt Seespiegel und
+Höhenbändern und das Band-Mesh nur, wenn neu. Der Auslöser (`FRAME_*` ==
+`SimRender.FrameTrigger`) sagt, was passiert ist, `RenderState.frame`
+entscheidet Reihenfolge (Bänder → Wasserfeld → Schutzmaske → Waldmaske),
+Drosseln und Wasser-Blend (Issue #94); `Main.gd` lädt nur hoch, was es bekommt
+(`_apply_frame`). Zwei Wege dorthin:
+- **Zeitraffer** (`docs/perf-measurements.md` §L): `sim.beginStep(years,
+  FRAME_TIMELAPSE, now)` rechnet `step` + Frame auf einem Hintergrund-Thread und
+  kehrt sofort zurück; `_process` fragt je Frame `sim.stepReady()` (blockiert
+  nie) und holt mit `sim.finishStep()` ab. Ein Schritt zur Zeit; der Hauptthread
+  wartet im Zeitraffer nie auf Sim oder Render-Aufbereitung.
+- **Alles andere** (Start, Sprung-Chunks, Neu, Laden, Pinsel-Nachzug):
+  synchron `sim.step(years)` bzw. Welt-Eingriff, dann
+  `sim.renderFrame(trigger, now)`.
+
+Die Synchronisationsregel: wer die Welt ändert oder ihren aktuellen Stand liest,
+ruft in `Main.gd` vorher `_settle_sim()` (wartet einen laufenden Schritt ab UND
+lädt ihn hoch, sonst käme sein älterer Stand nach dem neueren an). Der
+Pinselstrich wartet nicht, er setzt aus, solange ein Schritt rechnet. Raycast,
+Pinselkuppel und Jahresanzeige fragen die Sim gar nicht: sie lesen den
+gezeigten Stand (`shown_heights`, `shown_year`). Wächter:
+`SimCoreTests/BackgroundJobTests.swift` (Vertrag, Bit-Gleichheit, beide
+Quelltext-Seiten), `game/tests/smoke.gd` und `game/tests/relief.gd`.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
 ### SimRender- und Extension-Aufbau (Issues #53/#80/#82/#93/#94)
@@ -379,7 +438,9 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Bauergebnis für den Raster-Deckel (`bandChannelFlags`/`bandCoverage`) reist
   im selben Wert statt als impliziter Nebenkanal,
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
-  Schnee/Eis und Lithologie in einem gemeinsamen Pass,
+  Schnee/Eis und Lithologie plus Bodenbedeckung (Schutthalde, blankes
+  Gletschereis, Rohboden, Talboden-Wiese, Issue #174 D) in einem gemeinsamen
+  Pass,
 - `WaterProtectMask`: Schutzmaske für Kronendach und Render-Verschiebung
   (Issue #154): zuletzt ausgeliefertes Rasterwasser plus `bandCoverage` plus
   Saum (`WaterRender.protectSeamCells`), zustandslos; `RenderState` verwirft
@@ -391,12 +452,47 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Material-Cache und hält ihr Gedächtnis in Sim-Jahren (#167,
   `ForestCanopyMask.regrow`: Wald weicht Wasser sofort, wächst über
   `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`),
+- `CoastMaterial`, `WetMeadow`, `SedimentPlume` (Issue #174, Paket C):
+  Strand und Felsküste (Sand im A-Kanal der Makrofarbe, Fels in den
+  Materialgewichten), je KÜSTENPUNKT aus dem Zusammenhang statt aus Höhe und
+  lokaler Steigung (die hält `wavePass` überall gleich, §E): Rückland-Relief,
+  Offenheit (Stellvertreter für Wellenenergie), Mündungs-Zufuhr und Rauschen
+  entlang der Küste ergeben Strandbreite (0…5 Zellen), die Kliffhöhe direkt
+  hinter der Küste (3 Zellen) den Steilküsten-Anteil; jede Saumzelle erbt beide
+  von ihrer Küstenzelle, Sand als Vereinigung runder Säume, Fels nur auf der
+  Kliffwand (eigene Steigung), nie auf der Terrasse davor. Über dem Gerinne
+  einer Mündung liegt kein Sand (`clearRiverBeds`), Delta-Inseln und
+  -Ebenen tragen nur einen schmalen Sandrand (Issue #174, Punkt 26). Nasse Wiese statt kleiner
+  Raster-Tümpel (Maske aus `WaterFieldRenderer.wetMeadow`, wirkt auf Material
+  und Schutzmaske). Sedimentfahnen im Meer: nur die großen Flüsse
+  (`plumeMinDischargeCells`), als fertige Dichte je Meereszelle (küstennaher
+  Pfad ab der Mündung, Band `plumeBandCells`, klingt mit der Pfadlänge ab,
+  Frame-Schlüssel `plume`); `ocean.gdshader` liest sie mit EINER Abfrage auf
+  niedriger Mip-Stufe (`oceanPlumeLod` höchstens 4, die Kette ist bei n = 720
+  nur bis dort gleichmäßig).
+  Kalibrierung in `WaterRender` (Messreihe `docs/river-coast-render-measurements.md`;
+  Wächter: `SimCoreTests/CoastMaterialTests.swift` und `SedimentPlumeTests.swift`),
+- `BarMaterial`: Material des Mäandergürtels (Issue #174 C2): Sand nur auf
+  der jungen Bank am Gerinne (`Terrain.barAge` UND Abstand zur aktuellen
+  Zentrumslinie in Kanalbreiten), dahinter Pionier-Grün, Scroll-Rippen als
+  leise Bewuchs-Bänder über den Isolinien des Bankalters,
+  Ried und Vegetationsbogen der Altarme; zustandslos, `RenderState` cacht es
+  mit dem Material und gibt dasselbe Feld an `TerrainColorRenderer` (Sand im
+  A-Kanal der Makrofarbe, geteilt mit dem Strand: `max(Strand, Bank)`) und
+  `WaterProtectMask` (Kalibrierung:
+  `WaterRender` § Mäandergürtel im Render; Wächter:
+  `SimCoreTests/BarMaterialTests.swift`),
 - `TerrainDiagnostics`: Kennzahlen und Δ-Karte; die Reihenfolge der Kennzahlen ist
   ein Vertrag mit den `DBG_*`-Indizes in `Main.gd` (Wächter:
   `SimCoreTests/DiagStatsContractTests.swift`),
 - `RenderSupport.swift`: was mehrere brauchen (`parallelChunks`,
   `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
   müssen sich über die Uferlinie und die Mündung exakt einig sein.
+- `BackgroundJob`: höchstens EIN Hintergrund-Job mit einem Ergebnis-Platz,
+  die ganze Nebenläufigkeit des Zeitraffers (`SimNode.beginStep`). Ein
+  Besitzer-Thread; `isReady` blockiert nie, `wait`/`take` zählen ihre
+  Wartezeit (Messgröße „Hauptthread wartet"). Godot-frei, damit der Vertrag
+  headless prüfbar bleibt (Wächter: `SimCoreTests/BackgroundJobTests.swift`).
 
 Die Werkzeug-Modi (`BrushTool`) liegen seit Issue #79 in SimCore (s. dort);
 `SimNode.brush` bleibt der dünne Adapter. Ebenso die feste Pass-Reihenfolge nach
@@ -427,12 +523,17 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
   → priorityFlood → D8-Empfänger/area → capEndorheicBasins → computeMFDArea
 → relaxWaterLevel (Darstellungs-Seespiegel) → updateSaltCrust (Playa-Kruste)
 → Gletscher (updateIce: Firn→Eis, Eisfluss, glaziale Erosion, Moränen)
-→ Mäander (migrateMeander + meanderStamp)
+→ Mäander (migrateMeander + meanderStamp; mit `meanderBelt`, Produktion:
+  meanderBeltStep — zuerst die Kopplung an das frische D8-Netz
+  (coupleBeltToDrainage, #187), dann Migration und Gürtel-Stempel je Lauf
+  sub-getaktet, #174)
 ──── ab hier der Produktionszweig `hydraulicEnabled` ────
 → outletIncision → channelCarve (separat über channelTargetDepth abschaltbar)
 → fillLakes (geparkt, `basinFill = false`) → fillShallowPonds
 → braidPass → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA
 → floodplainAggradation (geparkt, `floodplainEnabled = false`)
+→ deltaDeposit (Mündungsbarren: Einzugsgebiet × mittlerer Abtrag von
+  outletIncision + channelCarve dieses Schritts, Höhensummen davor/danach, #174)
 → Hangdiffusion (sub-getaktet) → wavePass (sub-getaktet)
 ────────────────────────────────────────────────────────
 → Klima-Vertikale (updateClimate: Temperatur + Schneebilanz) → updateVegetation
@@ -487,6 +588,8 @@ Landzellen bleibt (`docs/melt-runoff-measurements.md` §D).
 Ausgelagert sind nur Dinge mit eigener Datenstruktur: `Hydraulic.swift` (Droplet-Erosion,
 Stream-Map, Pool-Kopplung), `Meander.swift` (Lagrange-Zentrumslinie, Migration, Cutoff),
 `ErosionFilter.swift` (runevision-Pre-Erosion, **MPL-2.0**, siehe `NOTICE`),
+`Landform.swift` (`RangeSkeleton`: Kammachse, Seitenäste und Täler der Generierung
+als Polylinien, Issue #174),
 `HeightBands.swift` (Perzentil-Höhenbänder, Issue #4), `WorldSnapshot.swift`
 (Speicherformat, Issue #8; das Zustands-INVENTAR `TerrainState` steht dagegen am
 Ende von `Terrain.swift`), `Profile.swift` (`SimProfile`, die Pass-Marken des
@@ -504,7 +607,7 @@ Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1780 Zeilen,
 `SimRender` ~2350 Zeilen und die eigentliche GDExtension nur noch
 `SimNode.swift` mit ~350 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 
-Fünf Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
+Sechs Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
 Sim-Zustand; sie bilden den gemeinsamen Vertrag für `SimRender`, Godot und
 Shader: `Strahler.swift` (Rang-Hierarchie der Ribbons, Issue #31),
 `WaterRender.swift` (Kalibrier-Paarungen des Wasserfelds:
@@ -515,7 +618,9 @@ die Übergabe Band ↔ Raster: `deltaFrontDepth == lakeRawWetDepth`,
 (Issue #153: Rinnenskala, Gratschärfung, Kodierung der Backtextur; Uniform-Weg
 über `SimRender.ReliefUniforms` wie bei `WaterUniforms`) und `CanopyRender.swift`
 (Issue #152: Schwellen der Waldmaske, Kronengröße und Dachhöhe; Uniform-Weg
-über `SimRender.CanopyUniforms`). Alle fünf sind aus
+über `SimRender.CanopyUniforms`) sowie `MaterialRender.swift` (Issue #174 D:
+Fels auf steil-konvex, Schutthalden, Firn/Eis, Rohboden, Talboden; Klüftung,
+Spalten, Moränen über `SimRender.MaterialUniforms`). Alle sechs sind aus
 `SimCoreTests` gepinnt; Werte dort ändern heißt `SimRender`, Shader und
 gegebenenfalls `SimNode`/`Main.gd` mitziehen (der Test sagt, wo).
 
@@ -524,8 +629,9 @@ auch Kanalbreiten (`ribbonHalfWidthCells`, Altarm- und Delta-Breiten),
 Verbreiterung (`widenThresholds`, `widenFalloff`, `widenBarTolerance`),
 Track-Maske (`trackMask`/`corridorMask`) und die Abfluss-Abstufung
 (`streamIntensity`, Legacy-`stamp*`) sowie die gemeinsame Wasser-OPTIK aller
-drei Wasser-Shader (Fresnel, Himmels-Spiegelung, Rauheit/Specular; Seicht/Tief-
-Farbe und Strömungs-Schimmer nur Binnenwasser) und die Ozean-Werte
+drei Wasser-Shader (Fresnel, Rauheit/Specular; den Himmel spiegelt Godot
+selbst, der Wasserkörper tritt mit Fresnel zurück, seit #174 ohne Himmelsfarbe
+in der Albedo; Seicht/Tief-Farbe und Strömungs-Schimmer nur Binnenwasser) und die Ozean-Werte
 `ocean*` (Schelf-Tiefenfarbe, Brandung, Rausch-Wellen, Issue #155).
 Seit **Issue #92** stehen die Wasser-Werte nicht mehr als gepinnte Kopien im
 Shader, sondern reisen als `water_*`-Uniforms über die Brücke
@@ -562,7 +668,7 @@ doppeltes Wasser; das prüfen `WaterRendererTests` headless und
 `game/tests/water_geometry.gd` weiter als End-to-End-Vertrag.
 
 Das offene Meer ist eine dritte, rein visuelle Fläche (`ocean.gdshader`). Sie
-teilt Fresnel, Himmels-Spiegelung und Glanz mit beiden Binnenwasser-Pfaden,
+teilt Fresnel, Spiegelung und Glanz mit beiden Binnenwasser-Pfaden,
 färbt aber seit Issue #155 nach der Wassertiefe über dem Sim-Schelf
 (`WaterRender.ocean*`, Rausch-Wellen ohne Sinus-Streifen, Brandungssaum) und
 bleibt opak:
@@ -623,7 +729,10 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Core-Default-Welten sind deshalb nicht bit-vergleichbar.
 - Testkonfigs (`meanderCfg()` in `SimCoreTests.swift`) **pinnen alte Werte**, damit
   Kopplungs-Mechanik und Produktions-Kalibrierung entkoppelt bleiben. Nicht
-  „aufräumend" an die Produktionswerte angleichen.
+  „aufräumend" an die Produktionswerte angleichen. Dasselbe gilt für die
+  Großform: Mechanik-Wächter, deren Testaufbau Becken, Playas oder Schlingen der
+  alten Seed-1337-Welt braucht, pinnen `rangeLandform` über
+  `calibrationRangeLandform` (`TestCalibration.swift`, Issue #174).
 
 ## Arbeitsweise in diesem Projekt
 

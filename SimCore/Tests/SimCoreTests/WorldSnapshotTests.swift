@@ -19,6 +19,10 @@ final class WorldSnapshotTests: XCTestCase {
     private func cfg(n: Int = 256) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
+        // Mäandergürtel (#174) auch auf dem groben Testgitter aktiv: sonst
+        // erreicht kein Lauf den Mindestabfluss, und `barAge` reiste nur als
+        // Feld voller −1 mit.
+        c.meanderBeltMinCells = 100
         return c
     }
 
@@ -170,6 +174,7 @@ final class WorldSnapshotTests: XCTestCase {
     /// Kalibrierung, sondern dass Altarme MIT ALTER mitreisen und weiter altern.
     func testMeanderHistorySurvivesRoundTrip() throws {
         var config = cfg(n: 96)
+        config.meanderBelt = calibrationMeanderBelt  // Altarm-Geschichte der Mechanik vor #174
         config.hydraulicEnabled = false
         config.meanderMigration = 5.0e-5
         config.meanderNeckDist = 1.2

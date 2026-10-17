@@ -218,7 +218,10 @@ public final class Terrain {
     /// Becken-Auslass (Droplets, Braiding, Mäander; gemessen: keine Einzelquelle
     /// dominiert) lässt sonst die GESAMTE Seefläche im Render schlagartig springen
     /// und die Auslass-Inzision schneidet sie über ~100 J. wieder frei (Plug/
-    /// Breach-Sägezahn). Physisch: ein See füllt/leert sich mit endlicher Rate.
+    /// Breach-Sägezahn). Physisch: ein See füllt sich mit endlicher Rate.
+    /// Gedämpft wird nur der Anstieg: der Spiegel liegt nie über `hf` (sonst
+    /// Geister-Seen auf frisch abgetragenem, trockenem Boden, Issue #174, s.
+    /// `relaxWaterLevel`).
     /// NUR fürs Rendering — die gesamte Physik (Pools, Verlandung, Tropfen)
     /// liest weiter `hf` (ein träges Verlandungs-Ziel war messbar wirkungslos
     /// und störte die Braid-Bänke, s. Kommentar in fillShallowPonds).
@@ -273,10 +276,20 @@ public final class Terrain {
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
     /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
     private var areaPow: [Double] = []
+    private var mfdRoutes: [MFDRoute] = []
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     /// Zellen unter einer Mäander-Zentrumslinie (M3-Maske). Reconciliation-Maske für
     /// BEIDE Erosionspfade: `transportLimited` (Grid) und `Hydraulic.erode` (Droplet).
     private(set) var isChannel: [Bool]
+    /// Alter der Gleithang-Bank in Jahren seit ihrer Ablagerung, `-1` = keine
+    /// Bank (Issue #174, Paket B; nur mit `meanderBelt`). Frisch = Sand/Kies,
+    /// alt = Aue; die Scroll-Bars sind Isolinien dieses Felds. Sim-Zustand: der
+    /// Gürtel-Stempel liest es (ob eine Zelle gerade Kanal war).
+    public private(set) var barAge: [Double]
+    /// Zellen, deren Bett der Gürtel-Stempel in DIESEM Schritt setzt —
+    /// `channelCarve` lässt sie aus (sonst gräbt er seine Einzell-Rinne in die
+    /// Gürtelsohle). Arbeitspuffer, je Schritt neu.
+    private var inBelt: [Bool]
     /// nickmcd-Stream-Map: zeitgemittelte Tropfen-Pfade. Wo Wasser WIRKLICH
     /// fließt — scharfe Fäden statt dispergierter Abflussfläche. Koppelt zurück
     /// in die Droplets (weniger Verdunstung auf etablierten Läufen → River
@@ -295,6 +308,9 @@ public final class Terrain {
     /// leitet sich vollständig aus `area` und der Config ab und gehört deshalb
     /// nicht ins Zustands-Inventar.
     private var depositDampBuf: [Double] = []
+    /// Mündungen des laufenden Schritts für `deltaDeposit` (Landzelle mit
+    /// Meeres-Empfänger ab `deltaMinCells`, Issue #174), je Schritt neu.
+    private var deltaMouthCells: [Int] = []
     private var pondSeen: [Bool]     // Arbeitspuffer der Pfützen-Komponentensuche
     private var noise: SimplexNoise
 
@@ -401,6 +417,8 @@ public final class Terrain {
         scratch = .init(repeating: 0, count: c)
         qs = .init(repeating: 0, count: c)
         isChannel = .init(repeating: false, count: c)
+        barAge = .init(repeating: -1, count: c)
+        inBelt = .init(repeating: false, count: c)
         streamMap = .init(repeating: 0, count: c)
         streamRate = .init(repeating: 0, count: c)
         trackBuf = .init(repeating: 0, count: c)
@@ -483,6 +501,93 @@ public final class Terrain {
 
     // MARK: - Terrain-Generierung
 
+    /// Setzt alle Zustandsfelder und Arbeitspuffer vollständig auf den Stand
+    /// eines frisch allokierten Terrains zurück (Issue #174).
+    ///
+    /// `Terrain.generate(seed:settleYears:)` ruft dies als ersten Schritt auf,
+    /// damit kein Zustand einer früheren Welt (Mäander-Masken, Stream-Map,
+    /// Kryo-Felder, Vegetation, Puffer) überlebt und das Ergebnis bit-identisch
+    /// zu `Terrain(config:seed:settleYears:)` ist. Vorher überlebten u. a.
+    /// `isChannel` der Mäander, Vegetation und Stream-Map, und Seed 42 im Spiel
+    /// war eine andere Welt als in jeder Messreihe. Wer ein Feld hinzufügt,
+    /// setzt es hier zurück; Wächter:
+    /// `FingerprintTests.testGenerateOnUsedTerrainYieldsFreshWorld`.
+    private func resetToAllocated(seed: UInt32) {
+        self.seed = seed
+        self.years = 0
+        self.dropsEmitted = 0
+        self.flowStepCount = 0
+        self.dropCarry = 0
+        self.disturbActive = false
+        self.beltSubsteps = 0
+        self.beltCouplingLog = nil
+        self.noise = SimplexNoise(seed: seed)
+        self.meander = MeanderState()
+        self.heightBands = cfg.heightBandsOverride ?? .legacyAbsolute
+
+        // Arrays mit dynamischer Allokation (leer beim Start)
+        rainWeight = []
+        runoffWeight = []
+        lithHardness = []
+        lithErodeK = []
+        lithBed = []
+        lithProvince = []
+        temperature = []
+        snow = []
+        ice = []
+        underIce = []
+        iceRate = []
+        iceSurf = []
+        iceEro = []
+        vegScratchRow = []
+        areaPow = []
+        depositDampBuf = []
+        dropletGateBuf = []
+        segOwner = []
+        segPos = []
+        deltaMouthCells.removeAll(keepingCapacity: true)
+        basinCells.removeAll(keepingCapacity: true)
+        basinSlots.removeAll(keepingCapacity: true)
+
+        // Feste Gitterpuffer (Größe cfg.count) über Rohpuffer auf Standardwerte
+        fill(&h, 0)
+        fill(&rock, 0)
+        fill(&sed, 0)
+        fill(&upliftBase, 0)
+        fill(&rain, 0)
+        fill(&veg, 0)
+        fill(&vegClass, 0)
+        fill(&disturb, 0)
+        fill(&regenPending, 0)
+        fill(&riparian, 0)
+        fill(&vegScratch, 0)
+        fill(&hf, 0)
+        fill(&waterLevel, 0)
+        fill(&lakeBalance, 0)
+        fill(&endorheicBasin, .none)
+        fill(&saltCrust, 0)
+        fill(&endorheicInflow, 0)
+        fill(&playaBed, false)
+        fill(&basinSeen, false)
+        fill(&orderPos, 0)
+        fill(&receiver, -1)
+        fill(&area, 0)
+        fill(&areaMFD, 0)
+        fill(&order, 0)
+        fill(&floodParent, -1)
+        fill(&visited, false)
+        fill(&scratch, 0)
+        fill(&qs, 0)
+        fill(&isChannel, false)
+        fill(&barAge, -1)
+        fill(&inBelt, false)
+        fill(&streamMap, 0)
+        fill(&streamRate, 0)
+        fill(&trackBuf, 0)
+        fill(&pondSeen, false)
+        heap = MinHeap(capacity: cfg.count)
+    }
+
     /// `settleYears` > 0 lässt die frische Welt so viele Jahre ECHTE Sim-Physik
     /// einlaufen und stellt die Uhr danach auf Jahr 0 zurück — dieselbe Doktrin
     /// wie `updateClimate(dt: 10000)` unten: der Einlauf ist ÄLTER als das
@@ -495,14 +600,227 @@ public final class Terrain {
     /// dieselbe Formensprache, die Jugend-Schärfe bleibt. Default 0: die
     /// SimCore-Testwelten und alle Kalibrier-Messreihen bleiben unverändert;
     /// den Produktionswert setzt die Brücke (`SimConfig.productionSettleYears`).
+    ///
+    /// Auf einem BENUTZTEN Terrain (im Spiel: neuer Seed auf demselben Node)
+    /// liefert der Aufruf dieselbe Welt wie ein frisches `Terrain(seed:)`,
+    /// s. `resetToAllocated`.
     public func generate(seed: UInt32, settleYears: Double = 0) {
-        self.seed = seed
-        self.years = 0
-        self.dropsEmitted = 0
-        self.flowStepCount = 0
-        self.dropCarry = 0
-        noise = SimplexNoise(seed: seed)
+        resetToAllocated(seed: seed)
 
+        // Grundrelief und Tektonik-Feld: die Großform aus Issue #174 oder, für
+        // die Testwelten der Kalibrier-Suite, die Form davor (`rangeLandform`).
+        let (box, boy) = cfg.rangeLandform ? generateRangeRelief(seed: seed)
+                                           : generateLegacyRelief(seed: seed)
+        // Pre-Erosion (runevision-Filter): verzweigte Rinnen/Grate einmalig ins
+        // Basisrelief carven — deterministisch je Seed (Rinnen-Muster wandert mit).
+        if cfg.preErodeEnabled {
+            ErosionFilter.apply(h: &h, n: n, sea: cfg.sea,
+                                seedOffsetX: box, seedOffsetY: boy,
+                                params: cfg.preErodeParams)
+        }
+        initLayers()
+        // Gesteinsfeld (Issue #12) VOR dem ersten Flow: der Becken-Breach und die
+        // Spin-up-Tropfen sollen die Härtekontraste schon sehen — die antezedente
+        // Entwässerung ist damit von Anfang an strukturkontrolliert.
+        buildLithologyField()
+        updateLithology()
+        // Becken-Wasserhaushalt (Issue #11) im Gleichgewicht starten: die
+        // Generierung ruft `computeFlow` mit dt = 0, der Bilanz-Spiegel snappt
+        // also auf seinen Zielstand statt sich über die ersten Spieljahre
+        // einzuschwingen (dieselbe Doktrin wie `waterLevel = hf` unten).
+        for k in 0..<cfg.count {
+            lakeBalance[k] = h[k]
+            endorheicBasin[k] = .none
+            saltCrust[k] = 0
+            disturb[k] = 0 // frisches Terrain hat keine Baustellen (Issue #26)
+            barAge[k] = -1 // noch keine Gleithang-Bank (Issue #174)
+            regenPending[k] = 0
+        }
+        disturbActive = false
+        // Kryo-Felder leeren, BEVOR der erste `computeFlow` läuft. Seit Issue #36
+        // speist die Schneedecke den Abfluss; ein `generate` auf einem BESTEHENDEN
+        // Terrain (im Spiel: neuer Seed auf demselben Node) würde sonst die neue
+        // Insel mit dem Schnee der alten entwässern — der Seed wäre nicht mehr
+        // allein bestimmend, und Determinismus ist eine getestete Invariante.
+        // `updateClimate(dt: 10000)` unten baut die Felder gleich frisch auf.
+        temperature = []; snow = []; ice = []
+        // Die Vergletscherungs-Maske ist eine Ableitung daraus (#35) — mit dem
+        // Eis muss sie weg, sonst gatet die alte Insel die Erosion der neuen.
+        underIce = []
+        computeFlow()
+        if cfg.breachEnabled { breachBasins() }
+        spinUpStreamMap()
+        // Die Spin-up-Tropfen lagern Sediment ab und können frisch entwässerte
+        // Becken wieder andämmen → einmal nachbreachen (billig, fast alles offen).
+        if cfg.breachEnabled { breachBasins() }
+        // Klima im eingeschwungenen Zustand starten (Issue #33) — dieselbe
+        // Doktrin wie `waterLevel = hf` und `lakeBalance = h` oben: die
+        // Schneedecke ist ÄLTER als das Spieljahr 0 und soll nicht über die
+        // ersten Jahrhunderte einschwingen. 10.000 Jahre sind bei der trägsten
+        // Zeitkonstante (`snowTurnoverYears` 500) 20 τ — der Vorrat steht exakt
+        // auf S*. Muss VOR `updateVegetation` laufen: dessen
+        // `updateHeightBands` liest die Schneegrenze aus dem Feld.
+        updateClimate(dt: 10000)
+        // Vegetation im eingeschwungenen Zustand starten.
+        updateVegetation(years: 10000)
+        seedMeander()
+        // Einlauf (s. Doc-Kommentar oben): VOR den Startzustands-Doktrinen
+        // darunter, damit Seespiegel und Playa-Kruste den EINGELAUFENEN Stand
+        // einfrieren. Getaktet wie der Zeitraffer (1000-Jahr-Chunks).
+        if settleYears > 0 {
+            var remaining = settleYears
+            while remaining > 0 {
+                let dt = min(1000, remaining)
+                step(dtYears: dt)
+                remaining -= dt
+            }
+            years = 0
+        }
+        waterLevel = hf // Startzustand: Seespiegel = Füllstand (kein Einschwingen)
+        // Playas starten mit ihrer Kruste (sie sind ÄLTER als das Spieljahr 0) —
+        // sonst salzt eine seit der Generierung trockene Pfanne erst über die
+        // ersten ~1200 Jahre ein.
+        for k in 0..<cfg.count where playaBed[k] { saltCrust[k] = 1 }
+    }
+
+    /// Grundrelief und Tektonik-Feld mit Gebirgskamm und Tieflandkorridoren
+    /// (Issue #174, `RangeSkeleton`). Liefert den Rausch-Versatz für die
+    /// Pre-Erosion.
+    private func generateRangeRelief(seed: UInt32) -> (Double, Double) {
+        // --- Per-Seed-Makro-Parameter: jeder Seed bekommt eine eigene Insel-Form,
+        // Reliefstärke, Grat/Rundhügel-Charakter und Küsten-Archetyp → echte Vielfalt
+        // statt immer derselben zentrierten Rund-Insel. Deterministisch (Mulberry32).
+        var gr = Mulberry32(seed: seed ^ 0x1234_abcd)
+        let box = gr.next() * 1000, boy = gr.next() * 1000        // Noise-Region (Seed sampelt anderswo)
+        let cx = Double(n - 1) / 2
+        // Zentrum und Ausdehnung seit Issue #174 enger (vorher ±0,17 n Versatz,
+        // fStart 0,58–0,88, Ellipse über die kurze Achse normiert, also mit
+        // bis zu 1,8-facher langer Halbachse): die Insel soll als Ganzes im
+        // Gitter liegen, der Randabstand unten schneidet sonst gerade, steile
+        // Küsten parallel zum Rand.
+        let ccx = cx + (gr.next() - 0.5) * 0.12 * Double(n)        // Insel-Zentrum versetzt
+        let ccy = cx + (gr.next() - 0.5) * 0.12 * Double(n)
+        let aAng = gr.next() * .pi                                  // Anisotropie-Achse
+        let aRatio = 0.55 + gr.next() * 1.05                        // Streckung: 0.55 langer Zug … 1.6 gestaucht
+        let fStart = 0.55 + gr.next() * 0.15                        // Landausdehnung (kleine Insel ↔ Kontinent)
+        let fWidth = 0.30 + gr.next() * 0.15                        // Küstensaum-Breite (≥ 0,30: flache Küstenebene, s. u.)
+        let relief = cfg.baseRelief * (0.80 + gr.next() * 0.45)     // Reliefstärke variiert
+        let roll = gr.next() * gr.next() * 0.7                      // 0=schroffe Grate … Rundhügel (quadr.→meist schroff)
+        let mFreqK = 0.22 + gr.next() * 0.42                        // Massiv-Frequenz (Gipfel-Klumpung entlang des Kamms)
+        _ = gr.next()                                               // (war mBias, die Tiefland-Grundhöhe — jetzt Sache des Kamms)
+        let bfMul = 0.72 + gr.next() * 0.75                         // Feature-Skala (grob ↔ fein)
+        let sharp = 1.0 + gr.next() * 0.9                           // Grat-Schärfe (pow-Exponent)
+        let archetype = Int(gr.next() * 3.0)                        // 0 Insel · 1 Küste · 2 Archipel
+        let coastAng = gr.next() * 2 * .pi                          // Küsten-Richtung (Archetyp 1)
+
+        @inline(__always) func smooth(_ a: Double, _ b: Double, _ v: Double) -> Double {
+            let t = min(max((v - a) / (b - a), 0), 1); return t * t * (3 - 2 * t)
+        }
+
+        // Großform (Issue #174, `RangeSkeleton`): EIN Kamm entlang der langen
+        // Inselachse statt Grate über die ganze Fläche. Beim Archetyp Küste
+        // läuft er parallel zur Küste im Hinterland.
+        let ca = cos(aAng), sa = sin(aAng)
+        var axisDir = aRatio < 1 ? SIMD2(-sa, ca) : SIMD2(ca, sa)
+        var axisCenter = SIMD2(ccx, ccy)
+        let longSemi = fStart * cx
+        if archetype == 1 {
+            let cd = SIMD2(cos(coastAng), sin(coastAng))
+            axisDir = SIMD2(-cd.y, cd.x)
+            axisCenter = SIMD2(cx, cx) - 0.18 * Double(n) * cd
+        }
+        var lr = Mulberry32(seed: seed ^ 0x7a11_4e5d)
+        let skeleton = RangeSkeleton(n: n, rng: &lr, center: axisCenter, axisDir: axisDir,
+                                     halfLength: min(0.42 * Double(n), 0.75 * longSemi))
+        let form = skeleton.evaluate(n: n)
+
+        // Tektonik-Feld: fix je Terrain (reale Tektonik wechselt nicht alle 100 J).
+        let uNoise = SimplexNoise(seed: seed ^ 0x5eed)
+        var uRnd = Mulberry32(seed: seed ^ 0x5eed)
+        let uox = uRnd.next() * 1000, uoy = uRnd.next() * 1000
+        let uFreq = cfg.upliftFreq / Double(n)
+        for j in 0..<n {
+            for i in 0..<n {
+                // RIDGED Tektonik: Hebung konzentriert sich auf Gebirgs-GRATE (statt
+                // eines glatten Blobs). Entscheidend gegen die Langzeit-Degradation —
+                // die Erosion läuft sonst ins glatte Hebungsfeld (→ runde Kuppeln);
+                // ein gratiges Hebungsfeld trägt langfristig gratige Berge.
+                // Seit Issue #174 nur noch im Gebirgsgürtel: `applyUplift` und der
+                // Relief-Servo heben ausschließlich über den POSITIVEN Teil, die
+                // Ebenen und Täler bleiben damit tektonisch ruhig — sonst höbe der
+                // Servo das Tiefland über die Jahrtausende wieder zu Hügeln.
+                let ridge = uNoise.ridged01(Double(i) * uFreq + uox,
+                                            Double(j) * uFreq + uoy, octaves: 5)
+                upliftBase[idx(i, j)] = (ridge * 1.15 - 0.22) * form.mountain[idx(i, j)]
+            }
+        }
+
+        // Grundrelief: Grate (ridged, optional mit fBm gemischt) im Gebirgsgürtel,
+        // sanfte Hügel daneben, flache Ebene dahinter; Täler schneiden vom Kamm
+        // zur Küste. Darüber der per-Seed variierende Insel-/Küsten-/Archipel-
+        // Falloff unter den Meeresspiegel und der Randabstand.
+        let bf = cfg.baseFreq / Double(n)
+        // Ebene: Höhe 0,20 über einem Meer bei 0,15. Die Küstenlinie liegt damit
+        // bei falloff = 0,75, im oberen, flachen Teil der Smoothstep: das
+        // Küstengefälle der Ebene (0,20 · 1,125 / (0,30 · 360 Zellen) ≈ 0,002 je
+        // Zelle) bleibt unter der Mäander-Schwelle (0,02 · cellSize ≈ 0,003).
+        let plainBase = 0.20
+        let valleyHeadRise = 0.10   // Talschluss über der Ebene (Gefälle ≈ 0,1 / 2,2 R)
+        // Randabstand relativ zu n (bei 720: 24 Zellen Rand, 72 Zellen Rampe,
+        // ±14 Zellen Rauschen) — in absoluten Zellen fraß er den Testwelten
+        // (n = 96…256) einen Großteil des Landes.
+        let borderMargin = 0.033 * Double(n)
+        let borderRamp = 0.10 * Double(n)
+        let borderWobble = 0.04 * Double(n)
+        for j in 0..<n {
+            for i in 0..<n {
+                let k = idx(i, j)
+                let x = Double(i) * bf * bfMul + box, y = Double(j) * bf * bfMul + boy
+                let ridge = noise.ridged01(x, y, octaves: cfg.baseOctaves)
+                let rollv = noise.fbm01(x, y, octaves: 6)          // sanfte Alternative
+                let base = (1 - roll) * ridge + roll * rollv       // Grat ↔ Rundhügel
+                let massif = noise.fbm01(x * mFreqK, y * mFreqK, octaves: 3)
+                let ridgeE = 0.38 + 0.62 * pow(base, sharp)
+                let mountain = ridgeE * relief * (0.40 + 0.50 * massif)
+                let hills = relief * 0.40 * base * (0.5 + 0.5 * massif) // Vorberge: dieselben Grate, niedriger
+                let plain = plainBase + 0.03 * (noise.fbm01(x * 0.5 + 70, y * 0.5 + 70, octaves: 3) - 0.5)
+                let wm = form.mountain[k]
+                let land = plain + valleyHeadRise * form.rise[k]
+                    + form.hill[k] * (1 - wm) * hills + wm * mountain
+                // Anisotroper, versetzter Falloff.
+                let dx = Double(i) - ccx, dy = Double(j) - ccy
+                let rx = dx * ca + dy * sa
+                let ry = (-dx * sa + dy * ca) * aRatio
+                let d = (rx * rx + ry * ry).squareRoot() / cx / min(1, aRatio) // lange Halbachse = fStart
+                var falloff = 1 - smooth(fStart, fStart + fWidth, d)
+                if archetype == 1 {                                // Küste: Land auf einer Seite
+                    let proj = (Double(i) - cx) * cos(coastAng) + (Double(j) - cx) * sin(coastAng)
+                    let wob = (noise.fbm01(x * 0.6 + 30, y * 0.6 + 30, octaves: 3) - 0.5) * 0.5
+                    let g = proj / Double(n) + wob
+                    falloff = min(falloff, 1 - smooth(0.0, 0.26, g))
+                } else if archetype == 2 {                         // Archipel: in Inseln zerlegen
+                    let isl = noise.fbm01(x * 0.7 + 50, y * 0.7 + 50, octaves: 4)
+                    falloff *= smooth(0.34, 0.52, isl)
+                }
+                // Randabstand (Issue #174): kein Land am Gitterrand, sonst endet
+                // die Insel in einer geraden Kante und das Heightfield zeigt seine
+                // senkrechte Unterseite. Verrauscht, damit die Küste dort nicht
+                // dem Rand parallel läuft.
+                let bd = Double(min(min(i, j), min(n - 1 - i, n - 1 - j)))
+                let bw = bd + borderWobble * (noise.fbm01(x * 0.8 + 90, y * 0.8 + 90, octaves: 3) - 0.5)
+                falloff = min(falloff, smooth(borderMargin, borderMargin + borderRamp, bw))
+                h[k] = land * falloff
+            }
+        }
+        return (box, boy)
+    }
+
+    /// Grundrelief und Tektonik-Feld VOR Issue #174: Grate über die ganze
+    /// Landfläche, Massiv-Rauschen nur als Höhe. Unverändert erhalten, weil die
+    /// Mechanik-Wächter der Suite ihre Testwelt darauf kalibriert haben
+    /// (`calibrationRangeLandform` in `SimCoreTests/TestCalibration.swift`);
+    /// bit-identisch zum Stand davor.
+    private func generateLegacyRelief(seed: UInt32) -> (Double, Double) {
         // Tektonik-Feld: fix je Terrain (reale Tektonik wechselt nicht alle 100 J).
         let uNoise = SimplexNoise(seed: seed ^ 0x5eed)
         var uRnd = Mulberry32(seed: seed ^ 0x5eed)
@@ -580,75 +898,7 @@ public final class Terrain {
                 h[idx(i, j)] = ridgeE * relief * m * falloff
             }
         }
-        // Pre-Erosion (runevision-Filter): verzweigte Rinnen/Grate einmalig ins
-        // Basisrelief carven — deterministisch je Seed (Rinnen-Muster wandert mit).
-        if cfg.preErodeEnabled {
-            ErosionFilter.apply(h: &h, n: n, sea: cfg.sea,
-                                seedOffsetX: box, seedOffsetY: boy,
-                                params: cfg.preErodeParams)
-        }
-        initLayers()
-        // Gesteinsfeld (Issue #12) VOR dem ersten Flow: der Becken-Breach und die
-        // Spin-up-Tropfen sollen die Härtekontraste schon sehen — die antezedente
-        // Entwässerung ist damit von Anfang an strukturkontrolliert.
-        buildLithologyField()
-        updateLithology()
-        // Becken-Wasserhaushalt (Issue #11) im Gleichgewicht starten: die
-        // Generierung ruft `computeFlow` mit dt = 0, der Bilanz-Spiegel snappt
-        // also auf seinen Zielstand statt sich über die ersten Spieljahre
-        // einzuschwingen (dieselbe Doktrin wie `waterLevel = hf` unten).
-        for k in 0..<cfg.count {
-            lakeBalance[k] = h[k]
-            endorheicBasin[k] = .none
-            saltCrust[k] = 0
-            disturb[k] = 0 // frisches Terrain hat keine Baustellen (Issue #26)
-            regenPending[k] = 0
-        }
-        disturbActive = false
-        // Kryo-Felder leeren, BEVOR der erste `computeFlow` läuft. Seit Issue #36
-        // speist die Schneedecke den Abfluss; ein `generate` auf einem BESTEHENDEN
-        // Terrain (im Spiel: neuer Seed auf demselben Node) würde sonst die neue
-        // Insel mit dem Schnee der alten entwässern — der Seed wäre nicht mehr
-        // allein bestimmend, und Determinismus ist eine getestete Invariante.
-        // `updateClimate(dt: 10000)` unten baut die Felder gleich frisch auf.
-        temperature = []; snow = []; ice = []
-        // Die Vergletscherungs-Maske ist eine Ableitung daraus (#35) — mit dem
-        // Eis muss sie weg, sonst gatet die alte Insel die Erosion der neuen.
-        underIce = []
-        computeFlow()
-        if cfg.breachEnabled { breachBasins() }
-        spinUpStreamMap()
-        // Die Spin-up-Tropfen lagern Sediment ab und können frisch entwässerte
-        // Becken wieder andämmen → einmal nachbreachen (billig, fast alles offen).
-        if cfg.breachEnabled { breachBasins() }
-        // Klima im eingeschwungenen Zustand starten (Issue #33) — dieselbe
-        // Doktrin wie `waterLevel = hf` und `lakeBalance = h` oben: die
-        // Schneedecke ist ÄLTER als das Spieljahr 0 und soll nicht über die
-        // ersten Jahrhunderte einschwingen. 10.000 Jahre sind bei der trägsten
-        // Zeitkonstante (`snowTurnoverYears` 500) 20 τ — der Vorrat steht exakt
-        // auf S*. Muss VOR `updateVegetation` laufen: dessen
-        // `updateHeightBands` liest die Schneegrenze aus dem Feld.
-        updateClimate(dt: 10000)
-        // Vegetation im eingeschwungenen Zustand starten.
-        updateVegetation(years: 10000)
-        seedMeander()
-        // Einlauf (s. Doc-Kommentar oben): VOR den Startzustands-Doktrinen
-        // darunter, damit Seespiegel und Playa-Kruste den EINGELAUFENEN Stand
-        // einfrieren. Getaktet wie der Zeitraffer (1000-Jahr-Chunks).
-        if settleYears > 0 {
-            var remaining = settleYears
-            while remaining > 0 {
-                let dt = min(1000, remaining)
-                step(dtYears: dt)
-                remaining -= dt
-            }
-            years = 0
-        }
-        waterLevel = hf // Startzustand: Seespiegel = Füllstand (kein Einschwingen)
-        // Playas starten mit ihrer Kruste (sie sind ÄLTER als das Spieljahr 0) —
-        // sonst salzt eine seit der Generierung trockene Pfanne erst über die
-        // ersten ~1200 Jahre ein.
-        for k in 0..<cfg.count where playaBed[k] { saltCrust[k] = 1 }
+        return (box, boy)
     }
 
     /// Seespiegel sofort auf den Füllstand setzen — für Spieler-Eingriffe
@@ -996,7 +1246,11 @@ public final class Terrain {
         let cnt = cfg.count, sea = cfg.sea
         if rainWeight.count != cnt { rainWeight = .init(repeating: 1, count: cnt) }
         var sum = 0.0, land = 0
-        for k in 0..<cnt where h[k] > sea { sum += rain[k]; land += 1 }
+        h.withUnsafeBufferPointer { hb in
+        rain.withUnsafeBufferPointer { rb in
+            let ph = hb.baseAddress!, prain = rb.baseAddress!
+            for k in 0..<cnt where ph[k] > sea { sum += prain[k]; land += 1 }
+        }}
         let mean = land == 0 ? 0 : sum / Double(land)
         guard mean > 1e-9 else {
             rainWeight.withUnsafeMutableBufferPointer { $0.update(repeating: 1) }
@@ -1254,13 +1508,18 @@ public final class Terrain {
         guard cfg.climateEnabled, snow.count == cfg.count else { return nil }
         let sea = cfg.sea, ref = cfg.snowCoverRef
         let cStart = cfg.snowBandCoverStart, cFull = cfg.snowBandCoverFull
+        let cnt = cfg.count
         var land = 0, ramp = 0, full = 0
-        for k in 0..<cfg.count where h[k] > sea {
-            land += 1
-            let c = Terrain.snowCoverage(swe: snow[k], ref: ref)
-            if c > cStart { ramp += 1 }
-            if c >= cFull { full += 1 }
-        }
+        h.withUnsafeBufferPointer { hb in
+        snow.withUnsafeBufferPointer { sb in
+            let ph = hb.baseAddress!, psnow = sb.baseAddress!
+            for k in 0..<cnt where ph[k] > sea {
+                land += 1
+                let c = Terrain.snowCoverage(swe: psnow[k], ref: ref)
+                if c > cStart { ramp += 1 }
+                if c >= cFull { full += 1 }
+            }
+        }}
         guard land > 0 else { return nil }
         return (Double(ramp) / Double(land), Double(full) / Double(land))
     }
@@ -1287,17 +1546,21 @@ public final class Terrain {
     ///
     /// **Sub-Taktung** exakt wie die Hangdiffusion in `step()`: die Transport-Zahl
     /// des ganzen Schritts (`kappa_Jahr · dt`) wird auf so viele gleich starke
-    /// Teilschritte verteilt, dass jeder unter `iceFlowSubCap` bleibt. Damit ist
+    /// Teilschritte verteilt, dass jeder unter seinen Stabilitätsgrenzen bleibt
+    /// (Ausstrom-Anteil UND Diffusionszahl, s. `iceTransportDomain`). Damit ist
     /// die Gesamtwirkung ∝ `dt` — ein `+10.000 Jahre`-Sprung transportiert
     /// dasselbe wie 50.000 Frame-Schritte à 0,2 Jahre (Wächter
     /// `Glacier.testIceIsFramerateIndependent`). Die Bilanz teleskopiert
     /// ohnehin exakt (Relaxationsform), und der Erosionsterm ist eine RATE mal
     /// `subDt`.
     ///
-    /// **Operator-Splitting** wie im Rest des Schritts: `snow` und `temperature`
-    /// stehen auf dem Stand des vorigen Schrittendes (dieselbe Annahme wie in
-    /// `updateRunoffWeight`), `h` und `area` auf dem frischen Stand dieses
-    /// Schritts.
+    /// **Operator-Splitting** wie im Rest des Schritts: `snow` steht auf dem
+    /// Stand des vorigen Schrittendes (dieselbe Annahme wie in
+    /// `updateRunoffWeight`), `h` auf dem frischen Stand dieses Schritts. Die
+    /// TEMPERATUR dagegen liest der Teilschritt nicht aus dem Feld, sondern
+    /// rechnet sie aus dem Bett, das er gerade vor sich hat (s.
+    /// `iceFlowSubStep`): sie ist eine reine Funktion von `h`, und der Gletscher
+    /// senkt sein eigenes Bett über den Schritt.
     ///
     /// **Schnell-Ausstieg.** Ohne Eis UND ohne Zufuhr (keine Zelle unter 0 °C mit
     /// Schneevorrat) tut der Pass nichts und leert die Maske → alles rechnet
@@ -1314,12 +1577,13 @@ public final class Terrain {
         }
         // Gibt es überhaupt Eis oder eine Quelle dafür? (Reihenfolge-unabhängig,
         // also bit-genau reproduzierbar.)
+        let firnT = cfg.iceFirnTemp
         var active = anyCell(ice) { $0 > 0 }
         if !active {
             active = temperature.withUnsafeBufferPointer { tb in
             snow.withUnsafeBufferPointer { sb in
                 let pt = tb.baseAddress!, ps = sb.baseAddress!
-                for k in 0..<cnt where pt[k] < 0 && ps[k] > 0 { return true }
+                for k in 0..<cnt where pt[k] < firnT && ps[k] > 0 { return true }
                 return false
             }}
         }
@@ -1334,50 +1598,111 @@ public final class Terrain {
         // dieselbe Umrechnung wie bei `hillDiffusion` in `step()`.
         let refN = 639.0, m1 = Double(n - 1)
         let kYear = cfg.iceFlowK * (m1 * m1) / (refN * refN) / 100.0
-        // Die Transport-ZAHL eines Teilschritts ist `kappa · ΣΔs⁺` (der Anteil der
-        // Säule, der die Zelle verlässt) — der Deckel gilt also am STEILSTEN
-        // Eis-Hang, nicht an kappa allein. Der wird hier EINMAL gemessen statt
-        // pessimistisch angenommen: mit `ΣΔs⁺ ≤ 1` als Annahme liefe die
-        // Sub-Taktung um den Faktor 1/wMax (gemessen 5…20) zu fein, und der Pass
-        // dominierte den Zeitschritt (`docs/glacier-measurements.md` §E).
-        // Der harte Positivitäts-Deckel `iceFlowMoveFraction` bleibt trotzdem
-        // stehen: wMax stammt vom Zustand VOR den Teilschritten, und ein
-        // Sculpt-Eingriff kann die Oberfläche dazwischen versteilern.
-        let wMax = steepestIceSurfaceDrop()
-        let totalK = kYear * dt * wMax
+        // Der explizite Transport hat ZWEI Kennzahlen je Teilschritt, und beide
+        // hält die Sub-Taktung unter ihrer Grenze (s. `iceTransportDomain`):
+        //   * `kappa · ΣΔs⁺` ≤ `iceFlowSubCap` — der Anteil der Säule, der die
+        //     Zelle verlässt (Positivität), am STEILSTEN Eis-Hang;
+        //   * `kappa · I` ≤ `iceFlowSubCap / 2` — die Diffusionszahl der
+        //     Eis-OBERFLÄCHE (der Fluss von k nach nb ist `kappa·I_k·(s_k − s_nb)`,
+        //     also Diffusion von s mit dem Koeffizienten `kappa·I`), an der
+        //     DICKSTEN Säule. Der Schachbrett-Modus des 5-Punkt-Sterns wächst
+        //     je Teilschritt um den Faktor `1 − 8·kappa·I`: über 1/4 schaukelt er
+        //     sich auf, zwischen 1/8 und 1/4 kippt er bei jedem Teilschritt das
+        //     Vorzeichen. Erst unter 1/8 ist das Ergebnis konvergiert (gemessen:
+        //     Grenze 1/4 gegen 1/8 −6 … −12 % Eismasse, 1/8 gegen 1/16 < 0,01 %).
+        // Bis Issue #174 stand hier nur die erste. Dickes Eis auf flachem Bett
+        // (I ≫ ΣΔs⁺) lief damit instabil, sobald der Schritt groß genug war, um
+        // `kappa·I` über 1/4 zu heben: bei dt = 1000 Schachbrett-Oberfläche
+        // (Rauheit ×70), Schliff 0,065 im Mittel unter dem Eis in EINEM Schritt
+        // gegen 0,005 bei zehn Schritten à 100 — die Eismasse hing damit an der
+        // Schrittweite (`docs/glacier-measurements.md` §L).
+        // Beide Größen werden hier EINMAL gemessen statt pessimistisch
+        // angenommen: mit `ΣΔs⁺ ≤ 1` als Annahme liefe die Sub-Taktung um den
+        // Faktor 1/wMax (gemessen 5…20) zu fein, und der Pass dominierte den
+        // Zeitschritt (§E). Der harte Positivitäts-Deckel `iceFlowMoveFraction`
+        // bleibt trotzdem stehen: die Messung stammt vom Zustand VOR den
+        // Teilschritten, und ein Sculpt-Eingriff kann die Oberfläche dazwischen
+        // versteilern.
+        let domain = iceTransportDomain()
+        guard domain.iLo <= domain.iHi else { rebuildIceMask(); return }
+        let totalK = kYear * dt * domain.scale
         let nSub = max(1, Int((totalK / max(1e-9, cfg.iceFlowSubCap)).rounded(.up)))
         let subK = kYear * dt / Double(nSub)
         let subDt = dt / Double(nSub)
-        for _ in 0..<nSub { iceFlowSubStep(kappa: subK, dt: subDt) }
+        // Je Teilschritt erreicht Eis höchstens den direkten Nachbarn. Alle
+        // Anfangssäulen und Firnquellen plus nSub Zellen enthalten deshalb den
+        // vollständigen Wirkungsbereich. Pass 1 friert zusätzlich den Rand für
+        // Nachbarfluss und Schleifspur ein. Außerhalb bleiben Eis und Bilanz null.
+        let iLo = max(0, domain.iLo - nSub), iHi = min(n - 1, domain.iHi + nSub)
+        let jLo = max(0, domain.jLo - nSub), jHi = min(n - 1, domain.jHi + nSub)
+        for _ in 0..<nSub {
+            iceFlowSubStep(kappa: subK, dt: subDt, iLo: iLo, iHi: iHi, jLo: jLo, jHi: jHi)
+        }
         rebuildIceMask()
     }
 
-    /// Größte Summe der positiven Oberflächen-Abfälle (`ΣΔs⁺`) über alle Zellen,
-    /// die Eis tragen — die Zahl, an der der explizite Deckel des Transports
-    /// hängt (s. `updateIce`). Sequenziell und als Maximum reihenfolge-unabhängig,
-    /// also bit-genau reproduzierbar. Kostet EINEN Gitter-Durchlauf und spart
-    /// dafür ein Vielfaches an Teilschritten.
-    private func steepestIceSurfaceDrop() -> Double {
+    /// Maßstab der Sub-Taktung: `max(ΣΔs⁺_max, 2·I_max)` über alle Zellen, die Eis
+    /// tragen — größte Summe der positiven Oberflächen-Abfälle (Positivität,
+    /// Grenze `iceFlowSubCap`) und doppelte größte Eisdicke (Diffusionszahl der
+    /// Oberfläche, Grenze `iceFlowSubCap / 2`), s. `updateIce`. Beide sind
+    /// Höhen je Zelle; `kappa` mal dem Maximum unter `iceFlowSubCap` hält also
+    /// beide Kennzahlen eines Teilschritts unter ihrer Grenze.
+    /// Zeilenweise parallel (je Zeile ein eigenes Ergebnis in Roh-Puffern,
+    /// danach seriell reduziert); Maximum und Bounding-Box sind
+    /// reihenfolge-unabhängig, also bit-genau reproduzierbar. Kostet EINEN
+    /// Gitter-Durchlauf und spart dafür ein Vielfaches an Teilschritten.
+    private func iceTransportDomain() -> (scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
         let nn = n
-        var wMax = 0.0
-        for j in 0..<nn {
-            for i in 0..<nn {
-                let k = j * nn + i
-                if ice[k] <= 0 { continue }
-                let sk = h[k] + ice[k]
-                let sl = i > 0      ? h[k - 1]  + ice[k - 1]  : sk
-                let sr = i < nn - 1 ? h[k + 1]  + ice[k + 1]  : sk
-                let sd = j > 0      ? h[k - nn] + ice[k - nn] : sk
-                let su = j < nn - 1 ? h[k + nn] + ice[k + nn] : sk
-                var w = 0.0
-                if sk > sl { w += sk - sl }
-                if sk > sr { w += sk - sr }
-                if sk > sd { w += sk - sd }
-                if sk > su { w += sk - su }
-                if w > wMax { wMax = w }
+        let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
+        let firnT = cfg.iceFirnTemp
+        var rowScale = [Double](repeating: 0, count: nn)
+        var rowILo = [Int](repeating: nn, count: nn)
+        var rowIHi = [Int](repeating: -1, count: nn)
+        h.withUnsafeBufferPointer { hb in
+        ice.withUnsafeBufferPointer { ib in
+        snow.withUnsafeBufferPointer { sb in
+        rowScale.withUnsafeMutableBufferPointer { rsb in
+        rowILo.withUnsafeMutableBufferPointer { rlb in
+        rowIHi.withUnsafeMutableBufferPointer { rhb in
+            let ph = hb.baseAddress!, pice = ib.baseAddress!, psnow = sb.baseAddress!
+            let prs = rsb.baseAddress!, prl = rlb.baseAddress!, prh = rhb.baseAddress!
+            parallel(nn) { jLo, jHi in
+                for j in jLo..<jHi {
+                    let row = j * nn
+                    var scale = 0.0, iLo = nn, iHi = -1
+                    for i in 0..<nn {
+                        let k = row + i
+                        let ik = pice[k]
+                        if ik > 0 || (psnow[k] > 0 && t0 - gamma * max(0, ph[k] - sea) < firnT) {
+                            iLo = min(iLo, i); iHi = max(iHi, i)
+                        }
+                        if ik <= 0 { continue }
+                        if 2 * ik > scale { scale = 2 * ik }
+                        let sk = ph[k] + ik
+                        let sl = i > 0      ? ph[k - 1]  + pice[k - 1]  : sk
+                        let sr = i < nn - 1 ? ph[k + 1]  + pice[k + 1]  : sk
+                        let sd = j > 0      ? ph[k - nn] + pice[k - nn] : sk
+                        let su = j < nn - 1 ? ph[k + nn] + pice[k + nn] : sk
+                        var w = 0.0
+                        if sk > sl { w += sk - sl }
+                        if sk > sr { w += sk - sr }
+                        if sk > sd { w += sk - sd }
+                        if sk > su { w += sk - su }
+                        if w > scale { scale = w }
+                    }
+                    prs[j] = scale; prl[j] = iLo; prh[j] = iHi
+                }
             }
+        }}}}}}
+        var scale = 0.0
+        var iLo = nn, iHi = -1, jLo = nn, jHi = -1
+        for j in 0..<nn {
+            if rowScale[j] > scale { scale = rowScale[j] }
+            guard rowIHi[j] >= 0 else { continue }
+            iLo = min(iLo, rowILo[j]); iHi = max(iHi, rowIHi[j])
+            jLo = min(jLo, j); jHi = max(jHi, j)
         }
-        return wMax
+        return (scale, iLo, iHi, jLo, jHi)
     }
 
     /// EIN Teilschritt des Gletschers. Zwei Pässe über das Gitter, beide
@@ -1399,7 +1724,8 @@ public final class Terrain {
     /// abzieht, ist damit dieselbe Zahl, die ihre Nachbarn als Zufluss
     /// gutschreiben (bis auf die eine Division `out/ΣΔs⁺`, gegen die der
     /// Nullpunkt-Wächter `if I < 0` steht).
-    private func iceFlowSubStep(kappa: Double, dt: Double) {
+    private func iceFlowSubStep(kappa: Double, dt: Double,
+                                iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
         let nn = n, cnt = cfg.count
         let sea = cfg.sea, cs = cfg.cellSize
         let moveFrac = max(0, cfg.iceFlowMoveFraction)
@@ -1412,6 +1738,8 @@ public final class Terrain {
         // wachsen können, sonst gäbe es nie einen Gletscher.
         let thr = max(0, cfg.iceMinThickness)
         let coldSpan = max(1e-9, cfg.iceFirnColdSpan)
+        let t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
+        let firnT = cfg.iceFirnTemp
         let firn = cfg.iceFirnPerSnowYear
         let baseMu = 1 / max(1e-9, cfg.iceTurnoverYears)
         let meltC = max(0, cfg.iceMeltPerKYear)
@@ -1420,6 +1748,9 @@ public final class Terrain {
         let swath = max(0, cfg.iceErodeSwathRadius)
         let swathSide = 2 * swath + 1
         let swathNorm = 1.0 / Double(swathSide * swathSide)
+        let halo = max(1, swath)
+        let freezeILo = max(0, iLo - halo), freezeIHi = min(nn - 1, iHi + halo)
+        let freezeJLo = max(0, jLo - halo), freezeJHi = min(nn - 1, jHi + halo)
         // Gesteinshärte (Issue #12): Abrasion ∝ Eisfluss × Erodierbarkeit. Der
         // Faktor wirkt NUR auf den Fels-Anteil (Regolith weiß nicht, welches
         // Gestein darunter liegt) und wird nur angefasst, wenn er ≠ 1 ist —
@@ -1432,19 +1763,18 @@ public final class Terrain {
         sed.withUnsafeMutableBufferPointer { sb in
         ice.withUnsafeMutableBufferPointer { ib in
         snow.withUnsafeBufferPointer { snb in
-        temperature.withUnsafeBufferPointer { tb in
         lithArr.withUnsafeBufferPointer { ldb in
         iceRate.withUnsafeMutableBufferPointer { rtb in
         iceSurf.withUnsafeMutableBufferPointer { sfb in
         iceEro.withUnsafeMutableBufferPointer { erb in
             let ph = hb.baseAddress!, prock = rkb.baseAddress!, psed = sb.baseAddress!
-            let pice = ib.baseAddress!, psnow = snb.baseAddress!, pt = tb.baseAddress!
+            let pice = ib.baseAddress!, psnow = snb.baseAddress!
             let plith = ldb.baseAddress!
             let prate = rtb.baseAddress!, psurf = sfb.baseAddress!, pero = erb.baseAddress!
             // ---- Pass 1: Oberfläche einfrieren, Ausstrom je Zelle bestimmen ----
-            parallel(nn) { jLo, jHi in
-            for j in jLo..<jHi {
-                for i in 0..<nn {
+            parallel(freezeJHi - freezeJLo + 1) { rowLo, rowHi in
+            for j in (freezeJLo + rowLo)..<(freezeJLo + rowHi) {
+                for i in freezeILo...freezeIHi {
                     let k = j * nn + i
                     let sk = ph[k] + pice[k]
                     psurf[k] = sk
@@ -1480,9 +1810,9 @@ public final class Terrain {
             }
             }
             // ---- Pass 2: Zufluss sammeln, erodieren, Bilanz, Moräne ----
-            parallel(nn) { jLo, jHi in
-            for j in jLo..<jHi {
-                for i in 0..<nn {
+            parallel(jHi - jLo + 1) { rowLo, rowHi in
+            for j in (jLo + rowLo)..<(jLo + rowHi) {
+                for i in iLo...iHi {
                     let k = j * nn + i
                     let sk = psurf[k]
                     var inflow = 0.0, w = 0.0
@@ -1497,8 +1827,17 @@ public final class Terrain {
                     if j < nn - 1 { let d = psurf[k + nn] - sk
                                     if d > 0 { inflow += prate[k + nn] * d } else { w -= d } }
                     let i0 = pice[k]
-                    let t = pt[k]
-                    let fCold = min(1, max(0, -t / coldSpan))
+                    // Temperatur des Betts, auf dem dieser Teilschritt steht —
+                    // dieselbe Formel wie in `updateClimate` (bei unverändertem
+                    // `h` also bit-gleich zum Feld). Das Feld selbst ist vom
+                    // vorigen Schrittende: der Schliff dieses Schritts senkt das
+                    // Bett, in großen Schritten um ein Vielfaches mehr, und das
+                    // Eis sähe sonst über den ganzen Schritt das kältere,
+                    // höhere Bett (gemessen: 3 % mehr Eis je 1000-Jahr-Schritt
+                    // als in zehn Schritten à 100, `docs/glacier-measurements.md`
+                    // §L).
+                    let t = t0 - gamma * max(0, ph[k] - sea)
+                    let fCold = min(1, max(0, (firnT - t) / coldSpan))
                     let a = firn * psnow[k] * fCold
                     // Eisfreie Zelle ohne Zufluss und ohne Zufuhr: nichts zu
                     // rechnen (das Meer und alles Land unterhalb der Firn-Grenze)
@@ -1589,7 +1928,7 @@ public final class Terrain {
                 }
             }
             }
-        }}}}}}}}}}
+        }}}}}}}}}
     }
 
     /// Baut `underIce` aus der frischen Eisdicke. **Leer, wenn keine Zelle über
@@ -2474,102 +2813,136 @@ public final class Terrain {
     /// Wert-Variante für die Hot-Loops (die dort auf Roh-Puffern arbeiten und
     /// `self.areaMFD` nicht gleichzeitig lesen dürfen) — EINE Regel, zwei Aufrufer.
     @inline(__always) func mfdLocalExponent(a: Double, sMax: Double, pond: Double) -> Double {
-        (a >= mfdMinA && sMax < mfdFlatCell && pond < 0.005)
+        (a >= mfdMinA && mfdCanDisperse(sMax: sMax, pond: pond))
             ? cfg.braidDispersion : cfg.mfdExponent
+    }
+    @inline(__always) private func mfdCanDisperse(sMax: Double, pond: Double) -> Bool {
+        sMax < mfdFlatCell && pond < 0.005
     }
     // Schwellen einmal je Terrain (waren `lazy var`: das kostet im 700k-Loop je
     // Zugriff eine Initialisierungs-Prüfung auf einer Klassen-Property).
     private let mfdMinA: Double
     private let mfdFlatCell: Double // Weltslope in Zell-Einheiten
 
+    /// Nachbargewichte hängen nur an der unveränderten Topografie. Zwei
+    /// Exponenten vorbereiten; die Flächen-Schwelle entscheidet erst während
+    /// der weiterhin seriellen Akkumulation in unveränderter `order`.
+    private struct MFDRoute {
+        var neighbors = SIMD8<Int32>(repeating: 0)
+        var weights = SIMD8<Double>(repeating: 0)
+        var dispersed = SIMD8<Double>(repeating: 0)
+        var count = 0
+        var canDisperse = false
+        var sum = 0.0
+        var dispersedSum = 0.0
+    }
+
     private func computeMFDArea() {
         let cellArea = cfg.cellSize * cfg.cellSize
         let cnt = cfg.count, nn = n, sea = cfg.sea
         let sqrt2 = 2.0.squareRoot()
+        let exponent = cfg.mfdExponent, dispersion = cfg.braidDispersion
+        if mfdRoutes.count != cnt { mfdRoutes = .init(repeating: MFDRoute(), count: cnt) }
         hf.withUnsafeBufferPointer { hfb in
         h.withUnsafeBufferPointer { hb in
         areaMFD.withUnsafeMutableBufferPointer { ab in
         floodParent.withUnsafeBufferPointer { pb in
         order.withUnsafeBufferPointer { ob in
         endorheicBasin.withUnsafeBufferPointer { eb in
-        // Nachbar-Puffer auf dem Stack (die alten [Int]/[Double] kosteten je
-        // Zugriff Bounds- + COW-Prüfung).
-        withUnsafeTemporaryAllocation(of: Int32.self, capacity: 8) { nbK in
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
+        let capacity = cnt
+        mfdRoutes.withUnsafeMutableBufferPointer { routes in
             let phf = hfb.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
             let ppar = pb.baseAddress!, pord = ob.baseAddress!, pend = eb.baseAddress!
+            let pr = routes.baseAddress!
             seedFlowAccumulator(pa, cellArea: cellArea)
-            // PERF: `k / nn` je Zelle ist eine echte Ganzzahl-Division auf einem
-            // LAUFZEIT-Divisor — der Compiler kann sie nicht in eine
-            // Multiplikation drehen. Gebraucht wird davon nur die SPALTE (der
-            // Rand-Test); die liefert Lemires „fastmod" mit zwei
-            // Multiplikationen: mit M = ⌊2⁶⁴/nn⌋ + 1 ist die obere Hälfte von
-            // (M·k)·nn exakt k % nn, solange k < 2³² (Lemire/Kaser/Kurz 2019,
-            // hier k < 692224). Ob die ZEILE am Rand liegt, sagt schon der
-            // Indexbereich. Nur die seltenen Randzellen rechnen `k / nn` noch.
             let fastMod = UInt64.max / UInt64(nn) &+ 1
             let lastRow = cnt - nn
-            var oi = cnt - 1
-            while oi >= 0 {
-                let k = Int(pord[oi]); oi -= 1
-                let hk = phf[k]
-                if hk <= sea { continue } // Meer = Senke, reicht nicht weiter
-                // Abflussloses Becken (Issue #11): die Seefläche ist terminal
-                // (Verdunstung) — dieselbe Rolle wie das Meer. Das Render-Feld
-                // zeigt den Zufluss weiter BIS in den See, nur nicht darüber
-                // hinaus. Rollentrennung bleibt: hier wird nichts erodiert.
-                if pend[k] == .water { continue }
-                var c = 0
-                var sMax = 0.0
-                // PERF: die Division erst NACH dem Vorzeichen-Test. `dist` ist
-                // positiv, `s` hat also dasselbe Vorzeichen wie der Zähler —
-                // höhere Nachbarn (die Mehrzahl) kosten damit keine
-                // Fließkomma-Division mehr, und die ist auf dieser Schleife der
-                // Taktgeber (gemessen −0,6 ms/Schritt). Der `s > 0`-Test bleibt
-                // stehen: er fängt den (theoretischen) Unterlauf eines winzigen
-                // positiven Zählers ab ⇒ bit-identisch.
-                @inline(__always) func consider(_ nb: Int, _ dist: Double) {
-                    let d = hk - phf[nb]
-                    if d <= 0 { return }
-                    let s = d / dist
-                    if s > 0 { nbK[c] = Int32(nb); nbW[c] = s; sMax = max(sMax, s); c += 1 }
-                }
-                let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
-                if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
-                    consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
-                    consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
-                    consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
-                } else {
-                    let j = k / nn
-                    for dj in -1...1 {
-                        for di in -1...1 {
-                            if di == 0 && dj == 0 { continue }
-                            let ni = i + di, nj = j + dj
-                            if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                            consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+            var end = cnt
+            while end > 0 {
+                let length = min(capacity, end)
+                let blockEnd = end
+                parallel(length) { lo, hi in
+                for t in lo..<hi {
+                    let k = Int(pord[blockEnd - 1 - t])
+                    let hk = phf[k]
+                    var route = MFDRoute()
+                    if hk <= sea || pend[k] == .water {
+                        route.count = -1
+                        pr[t] = route
+                        continue
+                    }
+                    var slopes = SIMD8<Double>(repeating: 0)
+                    var c = 0
+                    var sMax = 0.0
+                    // PERF: die Division erst NACH dem Vorzeichen-Test. `dist` ist
+                    // positiv, `s` hat also dasselbe Vorzeichen wie der Zähler —
+                    // höhere Nachbarn (die Mehrzahl) kosten damit keine
+                    // Fließkomma-Division mehr, und die ist auf dieser Schleife der
+                    // Taktgeber (gemessen −0,6 ms/Schritt). Der `s > 0`-Test bleibt
+                    // stehen: er fängt den (theoretischen) Unterlauf eines winzigen
+                    // positiven Zählers ab ⇒ bit-identisch.
+                    @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                        let d = hk - phf[nb]
+                        if d <= 0 { return }
+                        let s = d / dist
+                        if s > 0 { route.neighbors[c] = Int32(nb); slopes[c] = s; sMax = max(sMax, s); c += 1 }
+                    }
+                    let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
+                    if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
+                        consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
+                        consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
+                        consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+                    } else {
+                        let j = k / nn
+                        for dj in -1...1 {
+                            for di in -1...1 {
+                                if di == 0 && dj == 0 { continue }
+                                let ni = i + di, nj = j + dj
+                                if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                                consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+                            }
                         }
                     }
+                    route.count = c
+                    route.canDisperse = mfdCanDisperse(sMax: sMax, pond: hk - ph[k])
+                    for j in 0..<c {
+                        route.weights[j] = powFast(slopes[j], exponent)
+                        route.sum += route.weights[j]
+                        if route.canDisperse {
+                            route.dispersed[j] = powFast(slopes[j], dispersion)
+                            route.dispersedSum += route.dispersed[j]
+                        }
+                    }
+                    // Jede Division behält dieselben Operanden. Die
+                    // anschließenden Flächensummen bleiben vollständig seriell.
+                    for j in 0..<c {
+                        route.weights[j] /= route.sum
+                        if route.canDisperse { route.dispersed[j] /= route.dispersedSum }
+                    }
+                    pr[t] = route
                 }
-                // areaMFD[k] ist beim Verarbeiten schon vollständig akkumuliert
-                // (alle Zuflüsse liegen höher in hf) → das Gate im Exponenten-
-                // Helfer ist gültig.
-                let a = pa[k]
-                let p = mfdLocalExponent(a: a, sMax: sMax, pond: hk - ph[k])
-                var wsum = 0.0
-                for t in 0..<c { nbW[t] = powFast(nbW[t], p); wsum += nbW[t] }
-                if c == 0 || wsum <= 0 {
-                    // flache Seespiegel-Zelle (kein tieferer Nachbar) → wie D8 über den
-                    // Priority-Flood-Überlauf (floodParent) weiterreichen, damit die
-                    // Fläche nicht am See versickert. Im abflusslosen Becken NICHT:
-                    // der Überlauf zeigt zur Sill hinaus, wo kein Wasser hinkommt.
-                    if pend[k] != .none { continue }
-                    let fp = ppar[k]
-                    if fp >= 0 { pa[Int(fp)] += a }
-                    continue
                 }
-                for t in 0..<c { pa[Int(nbK[t])] += a * (nbW[t] / wsum) }
+                for t in 0..<length {
+                    let route = pr[t]
+                    if route.count < 0 { continue }
+                    let k = Int(pord[blockEnd - 1 - t])
+                    let a = pa[k]
+                    let disperse = a >= mfdMinA && route.canDisperse
+                    let weights = disperse ? route.dispersed : route.weights
+                    let sum = disperse ? route.dispersedSum : route.sum
+                    if route.count == 0 || sum <= 0 {
+                        if pend[k] != .none { continue }
+                        let fp = ppar[k]
+                        if fp >= 0 { pa[Int(fp)] += a }
+                        continue
+                    }
+                    for j in 0..<route.count {
+                        pa[Int(route.neighbors[j])] += a * weights[j]
+                    }
+                }
+                end -= length
             }
-        }}}}}}}}
+        }}}}}}}
     }
 
     // MARK: - Braiding (zellulärer Bänke-Bau, Murray & Paola 1994)
@@ -2985,17 +3358,33 @@ public final class Terrain {
         // Seezellen und erzeugte mit 0.15744 echtes Doppelwasser.
         let lakeMarginDepth = 0.026
         
+        let beltOn = cfg.meanderEnabled && cfg.meanderBelt
+        let beltMinA = cfg.meanderBeltMinCells * cellArea, beltFlat = cfg.meanderFlatSlope
         hf.withUnsafeBufferPointer { hfb in
+        receiver.withUnsafeBufferPointer { recb in
+        area.withUnsafeBufferPointer { ab in
         order.withUnsafeBufferPointer { ob in
+        inBelt.withUnsafeBufferPointer { beltb in
         withBed { bed in
-            let ph = bed.h, prec = receiver, pa = area, pord = ob.baseAddress!
-            let phf = hfb.baseAddress!
+            let ph = bed.h, prec = recb.baseAddress!, pa = ab.baseAddress!, pord = ob.baseAddress!
+            let phf = hfb.baseAddress!, pbelt = beltb.baseAddress!
             for oi in 0..<cnt {
                 let k = Int(pord[oi])
                 if ph[k] <= sea { continue }
                 if phf[k] - ph[k] > lakeMarginDepth { continue }
+                if beltOn && pbelt[k] { continue } // Sohle gehört dem Gürtel-Stempel (#174)
                 let a = pa[k]
                 if a < minA { continue }
+                // Tiefland-Lauf mit Gürtel (#174): keine Rinne von
+                // `channelTargetDepth` (≈ 35 m) — ein Mäanderfluss liegt bankfull
+                // in seiner Aue. In der Rinne hielt die Querneigung jede Schlinge
+                // fest, der Lauf blieb gemessen gerade und konnte die Rinne auch
+                // nicht seitlich ausräumen.
+                if beltOn && a >= beltMinA {
+                    let ki0 = k % nn, kj0 = k / nn
+                    if ki0 >= 2, kj0 >= 2, ki0 <= nn - 3, kj0 <= nn - 3,
+                       Terrain.macroSlope(ph, k, nn) / cs < beltFlat { continue }
+                }
                 let r = Int(prec[k])
                 if r < 0 || r == k { continue }
                 if ph[r] <= sea { continue }
@@ -3065,7 +3454,7 @@ public final class Terrain {
                     }
                 }
             }
-        }}}
+        }}}}}}
     }
 
     // MARK: - Seen-Verfüllung
@@ -3109,6 +3498,18 @@ public final class Terrain {
     /// Seed auch Bank-Pfützen: Braid-Insel-Guard kippte bei 64 UND 400 Zellen).
     /// Ziel bewusst das volle hf, NICHT der geglättete waterLevel (über 3 Seeds
     /// ohne messbaren Volumen-Effekt, drückte aber die Braid-Bänke 9→2).
+    ///
+    /// Vergletscherte Zellen (`underIce`) sind ebenfalls ausgenommen: unter dem
+    /// Eis steht kein Wasser, in dem Sediment absinken könnte. Und `hf` stammt
+    /// vom Schrittanfang, `updateIce` hat das Bett danach schon geschliffen —
+    /// jede Zelle, die der Gletscher in diesem Schritt um mehr als 0,001 tiefer
+    /// legt, sähe hier wie eine Pfütze aus und bekäme den Schliff zum Teil
+    /// wieder aufgefüllt. Das traf nur große Schritte (bei dt = 1000 schleift
+    /// ein Schritt fast überall mehr als 0,001, bei dt = 100 kaum eine Zelle)
+    /// und machte die Gletscher-Erosion damit schrittweitenabhängig: am Gipfel
+    /// gemessen +0,017 Wiederauffüllung in 4000 Jahren bei dt = 1000 gegen
+    /// +0,002 bei dt = 100 (`docs/glacier-measurements.md` §L). Ohne Eis ist die
+    /// Maske leer und der Pass rechnet bit-identisch zu vorher.
     private func fillShallowPonds(dt: Double) {
         // Exponentielle Relaxation (Issue #2, s. fillLakes): die lineare Form
         // verlandete den Zeitraffer (viele kleine dt) und den Sprung
@@ -3138,6 +3539,9 @@ public final class Terrain {
         let flowLimit = cfg.puddleFillSkipsFlowCells && area.count == cnt
             ? cfg.channelFlowMinCells * cfg.cellSize * cfg.cellSize
             : .infinity
+        // Gletscher-Maske: leer, solange nirgends Eis über der Schwelle liegt.
+        let iceGate = underIce.count == cnt
+        let iceArr = iceGate ? underIce : [false]
         hf.withUnsafeBufferPointer { hfb in
         h.withUnsafeMutableBufferPointer { hb in
         sed.withUnsafeMutableBufferPointer { sb in
@@ -3146,7 +3550,9 @@ public final class Terrain {
         isChannel.withUnsafeBufferPointer { icb in
         regenPending.withUnsafeBufferPointer { rpb in
         area.withUnsafeBufferPointer { arb in
+        iceArr.withUnsafeBufferPointer { iab in
         let phf = hfb.baseAddress!, ph = hb.baseAddress!, psed = sb.baseAddress!
+        let punder = iab.baseAddress!
         let pseen = psb.baseAddress!, pend = ebb.baseAddress!
         let pchan = icb.baseAddress!, pregen = rpb.baseAddress!
         let parea = arb.baseAddress!
@@ -3193,6 +3599,7 @@ public final class Terrain {
                 let k = Int(kk)
                 if pchan[k] { continue }
                 if parea[k] > flowLimit { continue }  // Flussbett, keine Pfütze (#108)
+                if iceGate && punder[k] { continue }  // Gletscherbett, keine Pfütze (s. o.)
                 // Frische Baustelle (Issue #26): solange an dieser Zelle noch
                 // Regeneration aussteht, NICHT verlanden. Die Pfützen-Verlandung
                 // ist ein Aufräum-Pass gegen Flachwasser-Sprenkel in reifen Auen
@@ -3218,7 +3625,7 @@ public final class Terrain {
                 }
             }
         }
-        }}}}}}}}
+        }}}}}}}}}
     }
 
     // MARK: - Auen-Aggradation (Overbank-Deposition → flache Schwemmebenen)
@@ -3472,6 +3879,481 @@ public final class Terrain {
         // kalibrierte 100-Jahr-Schritt werden (Stabilität wie subK ≤ 0.2).
         let count = max(1, Int((dt / 100).rounded(.up)))
         return (count, total / Double(count))
+    }
+
+    // MARK: - Delta-Schüttung (Issue #174)
+
+    /// Summe der Höhen und Zahl der Landzellen für die Delta-Fracht (s.
+    /// `deltaDeposit`), in festen 64 Blöcken summiert: unabhängig von der
+    /// Kernzahl, also bit-gleich bei jedem Aufruf. Mit `collectMouths`
+    /// sammelt derselbe Durchlauf die Mündungen (`deltaMouthCells`):
+    /// Landzelle ohne See (`hf − h ≤ poolDepth`) mit Meeres-Empfänger ab
+    /// `deltaMinCells` Einzugsgebiet, je Block in Zellreihenfolge und in
+    /// Blockfolge zusammengesetzt (dieselbe Liste wie sequenziell). Als
+    /// eigener sequenzieller Scan kostete die Suche 0,29 ms je Schritt.
+    private func deltaHeightSum(collectMouths: Bool = false) -> (sum: Double, land: Int) {
+        let cnt = cfg.count, sea = cfg.sea, blocks = 64
+        let depth = cfg.hydraulic.poolDepth
+        let minA = cfg.deltaMinCells * cfg.cellSize * cfg.cellSize
+        var sums = [Double](repeating: 0, count: blocks), lands = [Int](repeating: 0, count: blocks)
+        var found = [[Int]](repeating: [], count: collectMouths ? blocks : 0)
+        h.withUnsafeBufferPointer { hb in
+        hf.withUnsafeBufferPointer { fb in
+        area.withUnsafeBufferPointer { ab in
+        receiver.withUnsafeBufferPointer { rb in
+        sums.withUnsafeMutableBufferPointer { sb in
+        lands.withUnsafeMutableBufferPointer { lb in
+        found.withUnsafeMutableBufferPointer { out in
+            let ph = hb.baseAddress!, ps = sb.baseAddress!, pl = lb.baseAddress!
+            let phf = fb.baseAddress!, pa = ab.baseAddress!, prb = rb.baseAddress!
+            // Leeres Feld: `baseAddress` ist dann nicht sicher nil — der
+            // Schalter entscheidet, nicht der Zeiger.
+            let pout = out.baseAddress
+            DispatchQueue.concurrentPerform(iterations: blocks) { c in
+                // Vier Teilsummen je Block (feste Reihenfolge): so
+                // vektorisiert der Compiler die Schleife.
+                var a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0, land = 0
+                let lo = cnt * c / blocks, hi = cnt * (c + 1) / blocks
+                var k = lo
+                while k + 4 <= hi {
+                    a0 += ph[k]; a1 += ph[k + 1]; a2 += ph[k + 2]; a3 += ph[k + 3]
+                    land += (ph[k] > sea ? 1 : 0) + (ph[k + 1] > sea ? 1 : 0)
+                        + (ph[k + 2] > sea ? 1 : 0) + (ph[k + 3] > sea ? 1 : 0)
+                    k += 4
+                }
+                while k < hi { a0 += ph[k]; land += ph[k] > sea ? 1 : 0; k += 1 }
+                ps[c] = (a0 + a1) + (a2 + a3); pl[c] = land
+                guard collectMouths, let pout else { return }
+                var local: [Int] = []
+                for m in lo..<hi where pa[m] >= minA {
+                    guard phf[m] > sea, phf[m] - ph[m] <= depth else { continue }
+                    let r = Int(prb[m])
+                    if r >= 0 && phf[r] <= sea { local.append(m) }
+                }
+                pout[c] = local
+            }
+        }}}}}}}
+        if collectMouths {
+            deltaMouthCells.removeAll(keepingCapacity: true)
+            for list in found { deltaMouthCells.append(contentsOf: list) }
+        }
+        return (sums.reduce(0, +), lands.reduce(0, +))
+    }
+
+    /// Ein Mündungsstrahl des Delta-Baums (s. `deltaDeposit`), in Zellen.
+    private struct DeltaJet {
+        /// Anfang und Richtung (Einheitsvektor) des Strahls.
+        var ox: Double, oz: Double, ux: Double, uz: Double
+        /// Halbbreite der Rinne.
+        var w: Double
+        /// Barrenmitte, Inselradius quer und stromauf (Barre über dem Meer
+        /// bis `r`, Fuß bei 2r) und Streckung stromab (`r · elong`).
+        var cx: Double, cz: Double, r: Double, elong: Double
+        /// Umriss-Rauschen: Phasen der 2. und 3. Harmonischen.
+        var p2: Double, p3: Double
+        /// Beginn der Rinne vor dem Strahl: bei Töchtern das Ende der
+        /// Elternrinne vor der Barre, bei der Wurzel der Strahlanfang selbst.
+        var lx: Double, lz: Double
+        /// Anteil am Abfluss der Mündung (Fracht-Verteilung an die Töchter).
+        var share: Double
+        /// Index der beiden Töchter in der Strahl-Liste (−1 = keine).
+        var left = -1, right = -1
+    }
+
+    /// Deterministisches Rauschen 0 ≤ ξ < 1 für die Delta-Geometrie (reine
+    /// Ganzzahl-Arithmetik, plattformgleich): hängt am Mündungs-Block, an der
+    /// Nummer des Strahls und an einem Kanal.
+    @inline(__always) private static func deltaNoise(_ block: Int, _ jet: Int, _ salt: Int) -> Double {
+        var v = UInt64(truncatingIfNeeded: block) &* 0x9E37_79B9_7F4A_7C15
+        v ^= UInt64(truncatingIfNeeded: jet &+ 1) &* 0xC2B2_AE3D_27D4_EB4F
+        v ^= UInt64(truncatingIfNeeded: salt &+ 7) &* 0x1656_67B1_9E37_79F9
+        v ^= v >> 33; v = v &* 0xFF51_AFD7_ED55_8CCD
+        v ^= v >> 33; v = v &* 0xC4CE_B9FE_1A85_EC53
+        v ^= v >> 33
+        return Double(v >> 11) / 9_007_199_254_740_992.0
+    }
+
+    /// Legt die Fracht der Flüsse als Delta vor ihrer Mündung ab.
+    ///
+    /// **Warum es den Pass gibt.** Die fluviale Erosion der Produktion ist
+    /// detachment-begrenzt: `outletIncision` (Stream-Power) und `channelCarve`
+    /// tragen Material ab, das danach NIRGENDS mehr liegt, und die Tropfen
+    /// laden ihre Fracht am Eintritt ins tiefe Wasser bzw. beim Verdunsten ab.
+    /// Gemessen (`RiverDelta.swift`, `testDeltaBudgetDiagnostic`, Seed 1337,
+    /// Jahr 20.000, größte Mündung): das Einzugsgebiet verliert über die
+    /// Stream-Power-Inzision 7,9 Zellen·Höhe je 1000 Jahre, ins Meer davor
+    /// kommt fluvial −0,1…+0,1. Ohne Fracht an der Küste gibt es keinen
+    /// Ablagerungskörper und damit kein Delta (Messreihe
+    /// `docs/zielbild-measurements.md` § Delta).
+    ///
+    /// **Fracht.** Was `outletIncision` und `channelCarve` in diesem Schritt
+    /// abtragen (Höhensumme davor minus danach, `deltaHeightSum`), je
+    /// Landzelle gemittelt, mal dem Einzugsgebiet der Mündung: jede Mündung ab
+    /// `deltaMinCells` bekommt den Abtrag ihres Einzugsgebiets bei mittlerer
+    /// Abtragsrate, davon bleibt `deltaTrapFraction` liegen. Bis zur Messung
+    /// der Kosten lief die echte D8-Summe des Abtrags je Zelle bis zur Mündung
+    /// (ein See hielt seinen Anteil fest): 1,3–1,5 ms je Schritt, eigen wie in
+    /// der Braid-Schleife mitgeführt (verstreute Zugriffe auf drei Felder je
+    /// Landzelle, `braidPass` 2,2 → 3,6 ms), bei einem Ziel von 0,5 ms für das
+    /// ganze Delta. Was dabei verloren geht: Relief und Klima des einzelnen
+    /// Einzugsgebiets (ein steiles liefert so viel je Zelle wie ein flaches)
+    /// und der Rückhalt in Seen; die Summe über alle Mündungen bleibt unter
+    /// dem Abtrag der Insel. Gürtel und Tropfen zählen nicht
+    /// mit: der Gürtel ist laterale Umlagerung, die Tropfen tragen ihre eigene
+    /// Fracht.
+    ///
+    /// **Ablagerung: Mündungsbarren.** Ein Fluss, der ins Meer tritt, behält
+    /// seinen Strahl einige Rinnenbreiten weit, verliert dann Tempo und legt
+    /// eine Mündungsbarre ab; ist sie bis zum Wasserspiegel gewachsen, teilt
+    /// sich der Strom links und rechts um sie, und jeder Arm baut vor sich die
+    /// nächste Barre (Wright 1977; Edmonds & Slingerland 2007, JGR 112, F02034).
+    /// Die Sim rechnet Wasser im Meer nicht (Meer = Senke), deshalb steht
+    /// diese Hydrodynamik hier als Ablage-Regel: ein Baum aus Strahlen ab der
+    /// Mündung, Rinnenbreite b aus dem Abfluss (dieselbe Kurve wie Band und
+    /// Gürtel), Barre `deltaBarDistanceWidths`·b voraus, Insel mit Radius
+    /// `deltaBarRadiusWidths`·b quer und `deltaBarElongation`-fach längs
+    /// gestreckt (Mündungsbarren sind tropfenförmig in Fließrichtung), Scheitel
+    /// `deltaTopset` über dem Meer, Fuß beim doppelten Radius gleich tief
+    /// darunter. Erst wenn eine Barre voll ist, geht die Fracht nach
+    /// Abflussanteil an ihre zwei Töchter (Winkel um ±`deltaBifurcationAngle`/2,
+    /// Breite wie b ∝ √Q), bis `deltaGenerations` oder bis eine Tochter
+    /// schmaler als `deltaMinHalfWidth` würde; der Rest geht ins offene Meer.
+    /// Teilung, Winkel, Abstände und Umriss schwanken um `deltaJitter`
+    /// (Rauschen am Mündungs-Block, also fest, solange die Mündung steht); der
+    /// stärkere Ast läuft gerader. Vor jeder Barre baut ein Strahl seine
+    /// Uferwälle (eine Halbbreite neben der Rinne, Krone `deltaTopset`) von der
+    /// Wurzel seewärts — die subaerische Deltaebene entlang der Arme. Die
+    /// Rinnen der Strahlen bleiben frei: sie sind die Distributäre, Meerwasser
+    /// zwischen den Inseln. Inseln und Wälle sind echtes Gelände, die Rinnen
+    /// echtes Wasser — der Render malt beides nur ab (Ozean-Ebene über
+    /// `h ≤ sea`, Sand über `CoastMaterial`).
+    ///
+    /// dt: die Fracht ist die Änderung des Schritts (∝ dt), die Barren-
+    /// Oberflächen sind geometrische Obergrenzen, die Füllreihenfolge ist fest
+    /// — viele kleine Schritte laufen gegen dieselbe Form wie ein großer.
+    private func deltaDeposit(yieldPerCell: Double) {
+        let nn = n, sea = cfg.sea
+        let cs = cfg.cellSize
+        guard cs > 0, cs.isFinite, yieldPerCell > 0, yieldPerCell.isFinite else { return }
+        let cellArea = cs * cs
+        let mouths = deltaMouthCells.map { k -> (land: Int, load: Double) in
+            (k, area[k] / cellArea * yieldPerCell * cfg.deltaTrapFraction)
+        }
+        guard !mouths.isEmpty else { return }
+        // (2) Je Mündung den Strahl-Baum aufspannen und Barre für Barre füllen.
+        // `visited` gehört dem Priority-Flood (er setzt es zu Schrittbeginn
+        // selbst zurück und markiert am Ende jede Zelle), `pondSeen` der
+        // Pfützen-Verlandung — beide hier nur geliehen und sauber hinterlassen.
+        fill(&visited, false)
+        fill(&pondSeen, false)
+        let topset = cfg.deltaTopset
+        let barDist = cfg.deltaBarDistanceWidths, barRad = cfg.deltaBarRadiusWidths
+        let elong = max(1, cfg.deltaBarElongation)
+        let half = cfg.deltaBifurcationAngle / 2, jitter = cfg.deltaJitter
+        let wMin = cfg.deltaMinHalfWidth
+        let generations = max(0, cfg.deltaGenerations)
+        var jets: [DeltaJet] = []
+        var corridor: [Int32] = []
+        var touched: [Int32] = []
+        var levee: [(k: Int32, t: Double, ceil: Double)] = []
+        hf.withUnsafeBufferPointer { hfb in
+        receiver.withUnsafeBufferPointer { rb in
+        area.withUnsafeBufferPointer { ab in
+        visited.withUnsafeMutableBufferPointer { vb in
+        pondSeen.withUnsafeMutableBufferPointer { nb in
+        withBed { bed in
+            let phf = hfb.baseAddress!, prec = rb.baseAddress!, pa = ab.baseAddress!
+            let pv = vb.baseAddress!, pno = nb.baseAddress!
+            /// Rinne als Strecke mit Halbbreite `w` in die Sperrmaske.
+            func markCorridor(_ ax: Double, _ az: Double, _ bx: Double, _ bz: Double, _ w: Double) {
+                let dx = bx - ax, dz = bz - az
+                let len2 = max(1e-12, dx * dx + dz * dz)
+                let pad = w + 1
+                let i0 = max(1, Int((min(ax, bx) - pad).rounded(.down)))
+                let i1 = min(nn - 2, Int((max(ax, bx) + pad).rounded(.up)))
+                let j0 = max(1, Int((min(az, bz) - pad).rounded(.down)))
+                let j1 = min(nn - 2, Int((max(az, bz) + pad).rounded(.up)))
+                if i0 > i1 || j0 > j1 { return }
+                for j in j0...j1 {
+                    for i in i0...i1 {
+                        let px = Double(i) - ax, pz = Double(j) - az
+                        let t = min(1, max(0, (px * dx + pz * dz) / len2))
+                        let ex = px - t * dx, ez = pz - t * dz
+                        if ex * ex + ez * ez <= w * w {
+                            let k = j * nn + i
+                            if !pno[k] { pno[k] = true; corridor.append(Int32(k)) }
+                        }
+                    }
+                }
+            }
+            /// Uferwall-Zellen neben der Strecke a→b (Abstand w…2w zur Achse),
+            /// mit Lauflänge `t0 + t` für die Füllreihenfolge und Kronenhöhe.
+            func leveeCells(_ ax: Double, _ az: Double, _ bx: Double, _ bz: Double,
+                            _ w: Double, _ t0: Double) {
+                let dx = bx - ax, dz = bz - az
+                let len2 = dx * dx + dz * dz
+                if len2 < 1e-12 { return }
+                let len = len2.squareRoot()
+                let pad = 2 * w + 1
+                let i0 = max(1, Int((min(ax, bx) - pad).rounded(.down)))
+                let i1 = min(nn - 2, Int((max(ax, bx) + pad).rounded(.up)))
+                let j0 = max(1, Int((min(az, bz) - pad).rounded(.down)))
+                let j1 = min(nn - 2, Int((max(az, bz) + pad).rounded(.up)))
+                if i0 > i1 || j0 > j1 { return }
+                for j in j0...j1 {
+                    for i in i0...i1 {
+                        let px = Double(i) - ax, pz = Double(j) - az
+                        let along = (px * dx + pz * dz) / len2
+                        if along < 0 || along > 1 { continue }
+                        let ex = px - along * dx, ez = pz - along * dz
+                        let e = (ex * ex + ez * ez).squareRoot()
+                        if e <= w || e > 2 * w { continue }
+                        levee.append((k: Int32(j * nn + i), t: t0 + along * len,
+                                      ceil: sea + topset * (1 - (e - w) / w)))
+                    }
+                }
+            }
+            for mouth in mouths {
+                let k0 = mouth.land
+                let mi = k0 % nn, mj = k0 / nn
+                guard mi >= 2, mi < nn - 2, mj >= 2, mj < nn - 2 else { continue }
+                // Richtung: Lauf (8 Zellen stromauf → Meereszelle) und
+                // Küstennormale (Meeresschwerpunkt im Fenster ±8) zu gleichen
+                // Teilen. Der Lauf allein springt mit der D8-Kette um 45°, und
+                // die Mündung selbst wandert je 1000 Jahre bei zwei Dritteln
+                // der großen Mündungen um 0–2 Zellen (Seed 1337, Jahr
+                // 10.000–20.000): jeder Schritt hätte einen anderen Baum
+                // gepflanzt.
+                var up = k0
+                for _ in 0..<8 {
+                    var best = -1, bestA = 0.0
+                    let ui = up % nn, uj = up / nn
+                    for dj in -1...1 { for di in -1...1 where di != 0 || dj != 0 {
+                        let ii = ui + di, jj = uj + dj
+                        if ii < 0 || ii >= nn || jj < 0 || jj >= nn { continue }
+                        let c = jj * nn + ii
+                        if Int(prec[c]) == up && pa[c] > bestA { bestA = pa[c]; best = c }
+                    } }
+                    if best < 0 { break }
+                    up = best
+                }
+                let r0 = Int(prec[k0])
+                var rx = Double(r0 % nn - up % nn), rz = Double(r0 / nn - up / nn)
+                let rl = (rx * rx + rz * rz).squareRoot()
+                guard rl > 1e-9 else { continue }
+                rx /= rl; rz /= rl
+                // Flaches Delta-Land (bis zum doppelten Scheitel) zählt als
+                // Meer: sonst drehte das wachsende Delta seinen eigenen Baum,
+                // und dieselbe Fracht in anderen Schritten gäbe eine andere
+                // Form (Wächter `testSameLoadInFewerStepsBuildsTheSameDelta`).
+                var sx = 0.0, sz = 0.0
+                let win = 8, low = sea + 2 * topset
+                for dj in -win...win { for di in -win...win {
+                    let ii = mi + di, jj = mj + dj
+                    if ii < 0 || ii >= nn || jj < 0 || jj >= nn { continue }
+                    let c = jj * nn + ii
+                    if phf[c] <= sea || bed.h[c] <= low { sx += Double(di); sz += Double(dj) }
+                } }
+                let sl = (sx * sx + sz * sz).squareRoot()
+                if sl > 1e-9 { sx /= sl; sz /= sl } else { sx = rx; sz = rz }
+                var ux = rx + sx, uz = rz + sz
+                let ul = (ux * ux + uz * uz).squareRoot()
+                if ul > 1e-9 { ux /= ul; uz /= ul } else { ux = sx; uz = sz }
+                // Rauschen am 8×8-Block der Mündung: wandert die Mündung um
+                // ein, zwei Zellen, bleibt der Baum derselbe.
+                let block = (mj >> 3) * nn + (mi >> 3)
+                func noise(_ jet: Int, _ salt: Int) -> Double {
+                    2 * Terrain.deltaNoise(block, jet, salt) - 1
+                }
+                // Strahl-Baum (Geometrie fest, Generation für Generation).
+                jets.removeAll(keepingCapacity: true)
+                let w0 = WaterRender.ribbonHalfWidthCells(dischargeCells: pa[k0] / cellArea,
+                                                          referenceCells: cfg.renderMinCells)
+                func makeJet(_ index: Int, _ ox: Double, _ oz: Double, _ dx: Double, _ dz: Double,
+                             _ w: Double, share: Double, from lx: Double, _ lz: Double) -> DeltaJet {
+                    let b = 2 * w
+                    let dist = barDist * b * (1 + jitter * noise(index, 10))
+                    let r = barRad * b * (1 + 0.5 * jitter * noise(index, 11))
+                    let tau = 2 * Double.pi
+                    return DeltaJet(ox: ox, oz: oz, ux: dx, uz: dz, w: w,
+                                    cx: ox + dist * dx, cz: oz + dist * dz, r: r, elong: elong,
+                                    p2: tau * Terrain.deltaNoise(block, index, 12),
+                                    p3: tau * Terrain.deltaNoise(block, index, 13),
+                                    lx: lx, lz: lz, share: share)
+                }
+                jets.append(makeJet(0, Double(mi), Double(mj), ux, uz, w0, share: 1,
+                                    from: Double(mi), Double(mj)))
+                var genStart = 0
+                for _ in 0..<generations {
+                    let genEnd = jets.count
+                    for p in genStart..<genEnd {
+                        let pj = jets[p]
+                        // Zu schmal zum Teilen: der Strahl endet mit seiner Barre.
+                        if pj.w * 0.5.squareRoot() < wMin * (1 - 1e-9) { continue }
+                        // Abflussanteil der linken Tochter um ½ ± jitter/2.
+                        let f = 0.5 + 0.5 * jitter * noise(p, 1)
+                        for side in [-1.0, 1.0] {
+                            let s = side < 0 ? f : 1 - f
+                            let wd = max(wMin, pj.w * s.squareRoot())
+                            // Flanke der Elternbarre; der stärkere Ast läuft
+                            // gerader (bei s = ½ genau der halbe Winkel).
+                            let ang = half * 2 * (1 - s) * (1 + 0.5 * jitter * noise(p, side < 0 ? 2 : 3))
+                            let ca = cos(ang), sa = sin(ang) * side
+                            let px = -pj.uz * side, pz = pj.ux * side
+                            let fx = pj.cx + (pj.r + wd) * px, fz = pj.cz + (pj.r + wd) * pz
+                            let dx = pj.ux * ca - pj.uz * sa
+                            let dz = pj.uz * ca + pj.ux * sa
+                            let child = makeJet(jets.count, fx, fz, dx, dz, wd, share: pj.share * s,
+                                                from: pj.cx - (pj.r + pj.w) * pj.ux,
+                                                pj.cz - (pj.r + pj.w) * pj.uz)
+                            let ci = Int(child.cx.rounded()), cj = Int(child.cz.rounded())
+                            if ci < 2 || ci > nn - 3 || cj < 2 || cj > nn - 3 { continue }
+                            // Barre läge an Land; flaches Delta-Land (bis zum
+                            // doppelten Scheitel) zählt nicht, über die eigenen
+                            // Inseln wächst der Baum weiter.
+                            let cc = cj * nn + ci
+                            if phf[cc] > sea && bed.h[cc] > sea + 2 * topset { continue }
+                            jets.append(child)
+                            if side < 0 { jets[p].left = jets.count - 1 } else { jets[p].right = jets.count - 1 }
+                        }
+                    }
+                    genStart = genEnd
+                }
+                // Rinnen sperren: Strahl bis vor die Barre, von dort zu den
+                // Flanken (Ansatz der Töchter).
+                for j in jets {
+                    let sx = j.cx - (j.r + j.w) * j.ux, sz = j.cz - (j.r + j.w) * j.uz
+                    markCorridor(j.lx, j.lz, j.ox, j.oz, j.w)
+                    markCorridor(j.ox, j.oz, sx, sz, j.w)
+                }
+                // Abgeschnürte Lagunen im Bereich des Baums verlanden zuerst
+                // (bis 0,3 Scheitel über das Meer): sonst schlossen Barren und
+                // Wälle Meer ein, das Raster malte es als dunklen See (Seed
+                // 1337 Jahr 20.000: 160 Zellen an drei großen Mündungen).
+                var load = mouth.load
+                var reachTree = 0.0
+                for j in jets {
+                    let dx = j.cx - Double(mi), dz = j.cz - Double(mj)
+                    reachTree = max(reachTree, (dx * dx + dz * dz).squareRoot() + 2 * j.r * j.elong)
+                }
+                let rt = Int(reachTree.rounded(.up)), marsh = sea + 0.3 * topset
+                for jj in max(1, mj - rt)...min(nn - 2, mj + rt) where load > 0 {
+                    for ii in max(1, mi - rt)...min(nn - 2, mi + rt) where load > 0 {
+                        let c = jj * nn + ii
+                        guard phf[c] > sea, bed.h[c] < sea else { continue }
+                        let dx = Double(ii - mi), dz = Double(jj - mj)
+                        if dx * dx + dz * dz > reachTree * reachTree { continue }
+                        load -= depositCell(c, min(marsh - bed.h[c], load), bed)
+                    }
+                }
+                // Barren füllen: Fracht an die Wurzel, volle Barre gibt weiter.
+                var pending: [(jet: Int, load: Double)] = [(0, load)]
+                var head = 0
+                while head < pending.count {
+                    let (ji, load) = pending[head]; head += 1
+                    let j = jets[ji]
+                    var remaining = load
+                    // Uferwälle zuerst, von der Wurzel des Strahls seewärts:
+                    // ein Streifen von einer Halbbreite neben der Rinne, Krone
+                    // `deltaTopset` an der Rinnenkante, außen auf den Spiegel.
+                    let sx = j.cx - (j.r + j.w) * j.ux, sz = j.cz - (j.r + j.w) * j.uz
+                    levee.removeAll(keepingCapacity: true)
+                    leveeCells(j.lx, j.lz, j.ox, j.oz, j.w, 0)
+                    let lead = ((j.ox - j.lx) * (j.ox - j.lx) + (j.oz - j.lz) * (j.oz - j.lz)).squareRoot()
+                    leveeCells(j.ox, j.oz, sx, sz, j.w, lead)
+                    levee.sort { $0.t < $1.t || ($0.t == $1.t && $0.k < $1.k) }
+                    // Gefüllt wird bis zur Krone, auch über eigener Schüttung
+                    // früherer Schritte, die schon Land ist: sonst stand eine
+                    // halb gefüllte Zelle nach einem kleinen Schritt still, und
+                    // dieselbe Fracht in kleineren Schritten legte weniger ab.
+                    // Eine Rinne bleibt frei, solange sie zum Meer offen ist; ist
+                    // sie abgeschnürt (Lagune, `hf > sea`), verlandet sie wie
+                    // der Rest: das Raster malte sie sonst als dunklen See
+                    // neben dem Türkis des Meers.
+                    for c in levee where remaining > 0 {
+                        let k = Int(c.k)
+                        if (pno[k] && phf[k] <= sea) || bed.h[k] >= c.ceil { continue }
+                        let room = c.ceil - bed.h[k]
+                        if room > 0 { remaining -= depositCell(k, min(room, remaining), bed) }
+                    }
+                    if remaining <= 0 { break }
+                    // Barre: Tropfen in Fließrichtung, Umriss mit 2. und 3.
+                    // Harmonischer gebrochen. `key` = normierter Abstand² im
+                    // gestreckten, verrauschten Maß, in Einheiten von r.
+                    // sin(mθ + p) über Mehrfachwinkel aus cos θ / sin θ statt
+                    // atan2 und sin je Zelle (gleiche Werte bis auf Rundung,
+                    // ein Drittel der Kosten des Passes).
+                    let wobble = 0.5 * jitter
+                    let c2 = cos(j.p2), s2 = sin(j.p2), c3 = cos(j.p3), s3 = sin(j.p3)
+                    func barKey(_ x: Int, _ z: Int) -> Double {
+                        let ex = Double(x) - j.cx, ez = Double(z) - j.cz
+                        let along = ex * j.ux + ez * j.uz, across = -ex * j.uz + ez * j.ux
+                        // Tropfen: stromauf rund (Radius r), stromab um
+                        // `elong` gestreckt — die Barre reicht nicht in die
+                        // Mündungsrinne zurück.
+                        let a = along > 0 ? along / j.elong : along
+                        let d2 = a * a + across * across
+                        if d2 < 1e-12 { return 0 }
+                        let rl = (along * along + across * across).squareRoot()
+                        let co = along / rl, si = across / rl
+                        let sin2 = 2 * si * co, cos2 = co * co - si * si
+                        let sin3 = si * (3 - 4 * si * si), cos3 = co * (4 * co * co - 3)
+                        let rr = 1 + wobble * (0.6 * (sin2 * c2 + cos2 * s2) + 0.4 * (sin3 * c3 + cos3 * s3))
+                        return d2 / (rr * rr)
+                    }
+                    let toe2 = 4 * j.r * j.r
+                    let ci = Int(j.cx.rounded()), cj = Int(j.cz.rounded())
+                    guard ci >= 1, ci < nn - 1, cj >= 1, cj < nn - 1 else { continue }
+                    touched.removeAll(keepingCapacity: true)
+                    heap.removeAll()
+                    heap.withRaw { ref in
+                        let c0 = cj * nn + ci
+                        pv[c0] = true; touched.append(Int32(c0))
+                        ref.push(key: barKey(ci, cj), cell: Int32(c0), col: 0)
+                        while ref.size > 0 && remaining > 0 {
+                            let e = ref.pop()
+                            let c = Int(e.cell)
+                            if !pno[c] || phf[c] > sea {
+                                let room = sea + topset * (1 - e.key.squareRoot() / j.r) - bed.h[c]
+                                if room > 0 {
+                                    let add = min(room, remaining)
+                                    remaining -= depositCell(c, add, bed)
+                                    if add < room { break }
+                                }
+                            }
+                            let i = c % nn, jj = c / nn
+                            for dj in -1...1 {
+                                for di in -1...1 where di != 0 || dj != 0 {
+                                    let ni = i + di, nj = jj + dj
+                                    if ni < 1 || ni >= nn - 1 || nj < 1 || nj >= nn - 1 { continue }
+                                    let nbk = nj * nn + ni
+                                    // Durch Meer und flaches Land unter dem
+                                    // Scheitel (eigene Schüttung, Lagunen),
+                                    // nie über höheres Land.
+                                    if pv[nbk] || bed.h[nbk] >= sea + topset { continue }
+                                    let d2 = barKey(ni, nj)
+                                    if d2 > toe2 { continue }
+                                    pv[nbk] = true; touched.append(Int32(nbk))
+                                    ref.push(key: d2, cell: Int32(nbk), col: 0)
+                                }
+                            }
+                        }
+                    }
+                    for c in touched { pv[Int(c)] = false }
+                    // Volle Barre: Rest nach Abflussanteil an die Töchter.
+                    if remaining > 0 {
+                        let kids = [j.left, j.right].filter { $0 >= 0 }
+                        let total = kids.reduce(0.0) { $0 + jets[$1].share }
+                        if total > 0 {
+                            for c in kids { pending.append((c, remaining * jets[c].share / total)) }
+                        }
+                    }
+                }
+                for c in corridor { pno[Int(c)] = false }
+                corridor.removeAll(keepingCapacity: true)
+            }
+        }}}}}}
+        heap.removeAll()
     }
 
     // MARK: - Tektonik / Isostasie
@@ -3995,6 +4877,14 @@ public final class Terrain {
     /// Wächter ruft den Pass deshalb einzeln auf.
     func transportLimitedForTests(dt: Double) { transportLimited(dt: dt) }
 
+    /// Testfenster auf die Delta-Schüttung (Issue #174): `yieldPerCell` steht
+    /// für den mittleren Abtrag eines Schritts je Landzelle, Flussnetz aus dem
+    /// letzten `computeFlow`.
+    func deltaDepositForTests(yieldPerCell: Double) {
+        _ = deltaHeightSum(collectMouths: true)
+        deltaDeposit(yieldPerCell: yieldPerCell)
+    }
+
     // MARK: - Testfenster auf den Bett-Funnel (Issue #81)
 
     /// Setzt Bett und Eismaske direkt — ausschließlich für den Funnel-Wächter
@@ -4295,7 +5185,10 @@ public final class Terrain {
     /// Altarm-Verlandung: hebt die Altarm-Betten langsam (Zeitkonstante
     /// `oxbowFillYears`) Richtung Uferrand an (Sediment) — der See verschwindet
     /// allmählich. Vollständig verlandete Altarme fallen aus der Liste.
-    private func fillOxbows(dt: Double) {
+    /// `byAge` (Mäandergürtel): ein Altarm verlandet im Schritt seiner
+    /// Entstehung nur über sein Alter, nicht über den ganzen Schritt (er
+    /// entsteht in einem Teilschritt, s. `meanderBeltStep`).
+    private func fillOxbows(dt: Double, byAge: Bool = false) {
         // Exponentiell (Issue #2, s. fillLakes): `min(1, dt/τ)` verlandete einen
         // 5500-Jahr-Sprung komplett in EINEM Schritt, dieselbe Zeit in kleinen
         // Schritten dagegen nur zu 63 % (1 − 1/e).
@@ -4307,7 +5200,9 @@ public final class Terrain {
         let nn = n
         withBed { bed in
         let ph = bed.h
-        for loop in meander.oxbows {
+        for (oi, loop) in meander.oxbows.enumerated() {
+            let rate = byAge && meander.oxbowAge[oi] < dt
+                ? Terrain.relaxFraction(dt: meander.oxbowAge[oi], tau: cfg.oxbowFillYears) : rate
             for nd in loop {
                 let ci = min(max(Int(nd.x.rounded()), 1), nn - 2)
                 let cj = min(max(Int(nd.z.rounded()), 1), nn - 2)
@@ -4327,10 +5222,21 @@ public final class Terrain {
     /// Sediment, sodass D8 nicht mehr hindurchroutet und die eingetiefte Schleife
     /// über den bestehenden `hf>h`-Mechanismus zum Altarm-See wird.
     private func plugOxbows() {
+        plugOxbows(indices: meander.oxbows.indices.filter { meander.oxbowAge[$0] == 0 })
+    }
+
+    /// Verkorkt die Altarme ab Index `from` — der Gürtel erkennt neue Altarme
+    /// am Index, nicht am Alter 0: sie tragen seit #187 ihr Alter am Schrittende.
+    private func plugOxbows(from: Int) {
+        guard from < meander.oxbows.count else { return }
+        plugOxbows(indices: Array(from..<meander.oxbows.count))
+    }
+
+    private func plugOxbows(indices: [Int]) {
         let nn = n
         withBed { bed in
         let ph = bed.h
-        for oi in meander.oxbows.indices where meander.oxbowAge[oi] == 0 {
+        for oi in indices {
             let loop = meander.oxbows[oi]
             guard loop.count >= 4 else { continue }
             for nd in [loop[1], loop[loop.count - 2]] {
@@ -4345,6 +5251,835 @@ public final class Terrain {
                 depositCell(k, max(0, lip - ph[k]), bed)
             }
         }
+        }
+    }
+
+    // MARK: - Mäandergürtel (Issue #174, Paket B)
+
+    /// Abfluss je Knoten für den Gürtel: größtes Einzugsgebiet im 3×3 um den
+    /// Knoten, dann entlang des Laufs monoton (laufendes Maximum stromab).
+    /// Bilinear auf der einzelligen D8-Rinne fiel der Abfluss eines Knotens,
+    /// der eine Zelle neben der Rinne lag, auf ~1 Zelle — gemessen endete der
+    /// Hauptlauf in Jahr 100.000 auf 1–50 Zellen Einzugsgebiet.
+    private func refreshBeltDischarge(only: Int? = nil) {
+        let nn = n, cellArea = cfg.cellSize * cfg.cellSize
+        guard cellArea > 0, cellArea.isFinite else { return }
+        area.withUnsafeBufferPointer { ab in
+            let pa = ab.baseAddress!
+            meander.channels.withUnsafeMutableBufferPointer { chs in
+                for ci in chs.indices where only == nil || only == ci {
+                    var run = 0.0
+                    chs[ci].refreshDischarge { gx, gz in
+                        let ci0 = min(max(Int(gx.rounded()), 0), nn - 1)
+                        let cj0 = min(max(Int(gz.rounded()), 0), nn - 1)
+                        var m = 0.0
+                        for j in max(0, cj0 - 1)...min(nn - 1, cj0 + 1) {
+                            for i in max(0, ci0 - 1)...min(nn - 1, ci0 + 1) { m = max(m, pa[j * nn + i]) }
+                        }
+                        run = max(run, m / cellArea)
+                        return run
+                    }
+                }
+            }
+        }
+    }
+
+    /// Migration und Gürtel-Stempel, gemeinsam sub-getaktet — JE LAUF: jeder
+    /// wandernde Lauf springt je Teilschritt höchstens einen halben
+    /// Knotenabstand (seine eigene CFL-Zahl), und hinter ihm bleibt in jedem
+    /// Teilschritt die Bank liegen — sonst hinge die Spur der Scroll-Bars an der
+    /// Schrittweite. Mit EINER Teilschrittzahl für alle setzte der schnellste
+    /// Knoten der Welt den Takt aller (gemessen 13 Teilschritte je 100 Jahre,
+    /// Gürtel 36 ms je Schritt). Feste Läufe (unter `meanderBeltMinCells`)
+    /// bekommen einen Stempel über den ganzen Schritt.
+    ///
+    /// **Alter je Teilschritt** (Review #187): eine Bank oder ein Altarm aus
+    /// Teilschritt `si` ist am Schrittende `dt − (si+1)·sub` Jahre alt, nicht 0.
+    /// Bis dahin alterten Bank- und Altarm-Alter nur einmal je Schritt; nach
+    /// einem 1000-Jahr-Schritt trugen gemessen alle 9971 neuen Bankzellen das
+    /// Alter 0 (in 100 × 10 Jahren: 269, der Rest über 0–1000 Jahre verteilt).
+    /// Die Scroll-Rippen (Isolinien des Alters) fehlten damit nach dem Einlauf
+    /// und nach jedem Sprung.
+    private func meanderBeltStep(dt: Double) {
+        if meander.channels.isEmpty { seedMeander() }
+        fill(&isChannel, false)
+        fill(&inBelt, false)
+        if cfg.meanderBeltCoupling {
+            // Tropfen-Sperre nur im Bett WANDERNDER Läufe (s. `beltDropletGate`);
+            // `beltStamp` setzt sie je Teilschritt.
+            if dropletGateBuf.count != cfg.count { dropletGateBuf = .init(repeating: false, count: cfg.count) }
+            fill(&dropletGateBuf, false)
+        }
+        // Alterung auf dem Roh-Puffer, parallel (Review #187: als Schleife über
+        // die Klassen-Property seriell über alle n² Zellen).
+        barAge.withUnsafeMutableBufferPointer { ab in
+            let pa = ab.baseAddress!
+            parallel(cfg.count) { lo, hi in
+                for k in lo..<hi where pa[k] >= 0 { pa[k] += dt }
+            }
+        }
+        for oi in meander.oxbowAge.indices { meander.oxbowAge[oi] += dt }
+        let nn = n, maxc = Double(n - 1)
+        // Teilschritt-Deckel nur als Sicherheitsnetz. Mit 256 riss er bei
+        // Einlauf und Sprüngen: gemessen max. Rate 0,21–0,31 Zellen/Jahr →
+        // nötig 276–419 Teilschritte bei dt 1000, 551–837 bei dt 2000; schnelle
+        // Bögen wuchsen dann nur mit 31–93 % ihrer Rate (Review #187).
+        let maxSub = 4096
+        // Mit Kopplung (#187) setzt `coupleBeltToDrainage` Läufe und Abfluss
+        // EINMAL je Schritt aus dem D8-Netz; in den Teilschritten reist der
+        // Abfluss mit den Knoten (Neuabtastung und Cutoffs interpolieren bzw.
+        // schneiden ihn mit). Das Abflussfeld ändert sich im Schritt ohnehin nicht.
+        let coupled = cfg.meanderBeltCoupling
+        if coupled {
+            mark("belt.couple")
+            let ox0 = meander.oxbows.count
+            coupleBeltToDrainage(dt: dt)
+            plugOxbows(from: ox0)
+        } else {
+            mark("belt.discharge")
+            refreshBeltDischarge()
+        }
+        var maxSubUsed = 0
+        let mobile = meander.channels.indices.filter { MeanderState.migrates(meander.channels[$0], cfg) }
+        for ci in mobile {
+            mark("belt.migrate")
+            let plan = h.withUnsafeBufferPointer { hb in
+                let ph = hb.baseAddress!
+                return meander.beltMigrationPlan(channel: ci, config: cfg,
+                                                 heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+            }
+            let rate = plan.rate
+            let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
+            maxSubUsed = max(maxSubUsed, nsub)
+            let sub = dt / Double(nsub)
+            for si in 0..<nsub {
+                mark("belt.migrate")
+                let ageAtEnd = dt - Double(si + 1) * sub
+                let ox0 = meander.oxbows.count
+                h.withUnsafeBufferPointer { hb in
+                    let ph = hb.baseAddress!
+                    if si == 0 {
+                        meander.applyBeltMigrationPlan(ci, plan: plan, dt: sub, time: years, config: cfg)
+                    } else {
+                        meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
+                                                   heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+                    }
+                }
+                for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
+                meander.channels[ci].clampToWorld(maxCoord: maxc)
+                if !coupled {
+                    mark("belt.discharge")
+                    refreshBeltDischarge(only: ci)
+                }
+                mark("belt.stamp")
+                beltStamp(dt: sub, only: ci, ageAtEnd: ageAtEnd)
+                plugOxbows(from: ox0)
+            }
+        }
+        beltSubsteps = maxSubUsed
+        mark("belt.attach")
+        meander.attachTributaries(config: cfg)
+        meander.channels.removeAll { $0.nodes.count < 3 }
+        if !coupled { refreshBeltDischarge() }
+        mark("belt.fixedStamp")
+        beltStamp(dt: dt, only: nil, ageAtEnd: 0)
+        mark("belt.fill")
+        fillOxbows(dt: dt, byAge: true)
+        if meander.channels.isEmpty { seedMeander() }
+    }
+
+    /// Sperrmaske der Tropfen (`Hydraulic.erode`, Parameter `bedLocked`):
+    /// Gletscher (#35) und — mit Gürtel — das Bett der Mäanderläufe (`inBelt`).
+    /// Dort tragen die Tropfen weder ab noch lagern sie ab, ihre Fracht geht
+    /// hindurch. Der Gürtel löst das Bett auf Bankfull-Skala auf (Kolk,
+    /// Gleithang, Bank); der radiale Erosions-Pinsel der Tropfen grub jeden
+    /// Schritt ein symmetrisches V hinein (gemessen: mittleres Querprofil der
+    /// Bögen außen/innen 0,9 / 0,9 Tiefen statt des Kolks außen), und der
+    /// Bezug des Stempels sank mit der Sohle. Dieselbe Doktrin wie
+    /// `channelCarve` auf Gürtelzellen. Ohne Gürtel: `underIce` unverändert.
+    ///
+    /// Mit Kopplung (#187) nur das Bett WANDERNDER Läufe: die Tropfen tragen
+    /// über gesperrte Zellen ihre volle Fracht und laden sie an der ersten
+    /// freien Zelle ab. Seit jeder D8-Abschnitt seine Linie hat, liegen
+    /// Profil-Stempel fester Läufe auf viel mehr Wegen, und am Ende eines
+    /// solchen Stücks wuchs gemessen ein Schutthügel von 0,40 Höhe in einem
+    /// 500-Jahr-Schritt (n = 160, Seed 1337, Zelle (5, 101): 0,318 → 0,722,
+    /// über dem höchsten Gipfel; ohne Tropfen keiner). Das Profil, das die
+    /// Sperre schützt (Kolk, Gleithang), baut nur der wandernde Gürtel.
+    private func beltDropletGate() -> [Bool] {
+        guard cfg.meanderEnabled && cfg.meanderBelt else { return underIce }
+        let c = cfg.count
+        if dropletGateBuf.count != c { dropletGateBuf = .init(repeating: false, count: c) }
+        let iceOn = underIce.count == c
+        let mobileOnly = cfg.meanderBeltCoupling
+        // Roh-Puffer, parallel (Review #187: seriell über die Properties).
+        dropletGateBuf.withUnsafeMutableBufferPointer { gb in
+        inBelt.withUnsafeBufferPointer { bb in
+        underIce.withUnsafeBufferPointer { ib in
+            let pg = gb.baseAddress!, pb = bb.baseAddress!, pi = ib.baseAddress
+            parallel(c) { lo, hi in
+                if mobileOnly {
+                    for k in lo..<hi { pg[k] = pg[k] || (iceOn && pi![k]) }
+                } else {
+                    for k in lo..<hi { pg[k] = pb[k] || (iceOn && pi![k]) }
+                }
+            }
+        }}}
+        return dropletGateBuf
+    }
+    private var dropletGateBuf: [Bool] = []
+
+    /// Größte Teilschrittzahl eines Laufs im letzten Gürtel-Schritt (Diagnose).
+    public private(set) var beltSubsteps = 1
+
+    /// Stempelt die Läufe über die volle Kanalbreite ins Höhenfeld:
+    ///
+    /// - **Sohle**: Ziel `z_bf − D·(1 − η²)(1 + skew·a·η)` mit η = Abstand zur
+    ///   Mitte in Halbbreiten (positiv = außen), `a` aus |Krümmung| · Breite —
+    ///   im Bogen liegt der Kolk außen, im Wendepunkt (a = 0) ist das Profil
+    ///   symmetrisch. Was über dem Ziel liegt, wird abgetragen (Relaxation über
+    ///   `meanderBeltRelaxYears`) und geht in das Bank-Budget.
+    /// - Im Kanal füllt das Budget jede Zelle unter dem Ziel auf, außen wie
+    ///   innen. Bis zur Kalibrierung (#174) nur innen: Kolke außen blieben dann
+    ///   tiefer als das über ±2 Knoten gemittelte Ziel, Übergänge wurden
+    ///   darauf abgetragen, der Bezug sank je Teilschritt (Sohlen-Ratsche,
+    ///   gemessen ~2 Tiefen Eintiefung unter die eigene Aue, Rest-Budget
+    ///   29 Tiefen·Zellen je Knoten; danach 13).
+    /// - **Bank**: innen neben dem Kanal füllt das Budget bis `z_bf − barTop·D`
+    ///   auf — NIE darüber. Die Bank ist damit eben (bankfull), wandernde Läufe
+    ///   hinterlassen eine flache Aue: laterale Planation. Was ein Knoten nicht
+    ///   unterbringt, wandert zum nächsten stromab.
+    /// - `z_bf` (bankfull) = tiefste Sohle des Querschnitts plus Kanaltiefe,
+    ///   über ±2 Knoten gemittelt: aus der Sohle, nicht aus den Ufern, sonst
+    ///   senkt die eigene Bank (unter bankfull) den Bezug Schritt für Schritt.
+    /// - Steile Strecken (Mobilität 0) bekommen den alten Linien-Carve; ihr
+    ///   Bett formen `channelCarve` und die Tropfen.
+    /// - `only`: genau dieser (wandernde) Lauf, je Teilschritt; `nil` = alle
+    ///   festen Läufe, einmal je Schritt (s. `meanderBeltStep`).
+    /// - `ageAtEnd`: Alter einer hier frisch abgelegten Bank am Schrittende
+    ///   (Teilschritt `si`: `dt − (si+1)·sub`; feste Läufe 0).
+    /// - **Frische Bank** nur, wo die Ablage die Zelle bis auf eine Viertel
+    ///   Kanaltiefe an die Bank-Oberkante hebt — ein Zustand, keine Menge. Bis
+    ///   #187 machte jede Mini-Ablagerung eine frische Bank (Alter 0, Bewuchs
+    ///   weg, Tropfen gesperrt), und ihre Menge hing über `rel` an der
+    ///   Schrittweite. Eine bestehende Bank verjüngt sich, wenn die Ablage mehr
+    ///   als 0,2 Tiefen Lücke bis zur Oberkante schließt.
+    private func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) {
+        let cs = cfg.cellSize
+        guard cs > 0, cs.isFinite else { return }
+        let nn = n
+        let rel = Terrain.relaxFraction(dt: dt, tau: max(1e-6, cfg.meanderBeltRelaxYears))
+        let capF = stepCapFraction(dt)
+        let m = cfg.mExp, cellArea = cs * cs
+        let skew = cfg.meanderBeltPoolSkew, gain = cfg.meanderBeltPoolGain
+        let barTop = cfg.meanderBarTopDepth, barW = cfg.meanderBarWidths
+        let depthK = cfg.meanderBeltDepthPerWidth * cs
+        hf.withUnsafeBufferPointer { hfb in
+        underIce.withUnsafeBufferPointer { uib in
+        veg.withUnsafeMutableBufferPointer { vb in
+        isChannel.withUnsafeMutableBufferPointer { icb in
+        inBelt.withUnsafeMutableBufferPointer { ibb in
+        barAge.withUnsafeMutableBufferPointer { bab in
+        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
+        withBed { bed in
+        let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
+        let pbelt = ibb.baseAddress!, page = bab.baseAddress!
+        let plock = glb.baseAddress, lockHere = cfg.meanderBeltCoupling && only != nil && glb.count == cfg.count
+        let pice = uib.baseAddress
+        let iceOn = uib.count == cfg.count
+        @inline(__always) func cell(_ x: Double, _ z: Double) -> Int {
+            min(max(Int(z.rounded()), 0), nn - 1) * nn + min(max(Int(x.rounded()), 0), nn - 1)
+        }
+        @inline(__always) func blocked(_ k: Int) -> Bool {
+            phf[k] - bed.h[k] > 0.02 || (iceOn && pice![k])
+        }
+        // Mit Kopplung (#187) stempelt der Teilschritt eines wandernden Laufs
+        // nur dessen FLACHE Knoten (Mobilität > 0); seine steilen Strecken
+        // bekommen wie die festen Läufe einen Linien-Carve über den ganzen
+        // Schritt (`only == nil`). Seit die wandernden Läufe die ganzen Flüsse
+        // von der Quelle bis zur Mündung sind, stempelte jeder Teilschritt
+        // sonst den ganzen Gebirgsabschnitt mit (gemessen belt.stamp 3,8 →
+        // 8,0 ms je Schritt).
+        let split = cfg.meanderBeltCoupling
+        let channelRange = only.map { $0..<($0 + 1) } ?? meander.channels.indices
+        for ci in channelRange {
+            let ch = meander.channels[ci]
+            guard only != nil || split || !MeanderState.migrates(ch, cfg) else { continue }
+            let nodes = ch.nodes, c = nodes.count
+            guard c >= 3 else { continue }
+            // 0: alle Knoten; 1: nur flache (Teilschritt eines wandernden Laufs);
+            // 2: nur steile (wandernder Lauf am Schrittende).
+            let part = !split ? 0 : (only != nil ? 1 : (MeanderState.migrates(ch, cfg) ? 2 : 0))
+            let g = MeanderState.beltGeometry(ch, config: cfg,
+                                              heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+            let firstMob = g.mob.firstIndex(where: { $0 > 0 })
+            let lastMob = g.mob.lastIndex(where: { $0 > 0 })
+            if part == 1 && firstMob == nil { continue }
+            let needsLateral = part != 2 && firstMob != nil
+            // Krümmungs-Mittelung nur über dem mobilen Fenster (Teilschritt braucht nur dort Kolk/Gleithang)
+            let bendCurv = needsLateral
+                ? MeanderState.bendCurvature(g, config: cfg, activeRange: firstMob!...lastMob!)
+                : []
+            // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten
+            // gemittelt — nur gebraucht, wo ein flacher Knoten in ±2 liegt.
+            var floorH = needsLateral ? [Double](repeating: 0, count: c) : []
+            let fLo = part == 1 ? max(0, firstMob! - 2) : 0
+            let fHi = part == 1 ? min(c - 1, lastMob! + 2) : (c - 1)
+            if needsLateral && fLo <= fHi {
+                for i in fLo...fHi {
+                    if part == 1 || split {
+                        var flat = false
+                        for j in max(0, i - 2)...min(c - 1, i + 2) where g.mob[j] > 0 { flat = true; break }
+                        if !flat { continue }
+                    }
+                    let w = 0.5 * g.width[i]
+                    var lo = Double.infinity, s = -w
+                    while s <= w + 1e-9 {
+                        lo = min(lo, bed.h[cell(nodes[i].x + g.nx[i] * s, nodes[i].z + g.nz[i] * s)])
+                        s += 0.5
+                    }
+                    floorH[i] = lo
+                }
+            }
+            var budget = 0.0
+            let sLo = part == 1 ? max(1, firstMob!) : 1
+            let sHi = part == 1 ? min(c - 2, lastMob!) : (c - 2)
+            if sLo <= sHi {
+                for i in sLo...sHi {
+                let ck = cell(nodes[i].x, nodes[i].z)
+                if blocked(ck) { budget = 0; continue }
+                let b = g.width[i], w = 0.5 * b
+                if g.mob[i] <= 0 {
+                    if part == 1 { budget = 0; continue }
+                    // Steile Strecke: Linien-Carve wie `meanderStamp` (Teil 1).
+                    let a = nodes[i], bn = nodes[i + 1]
+                    let d = dist(a, bn)
+                    let hbn = Terrain.bilinear(bed.h, nn, bn.x, bn.z)
+                    let ha = Terrain.bilinear(bed.h, nn, a.x, a.z)
+                    let segSlope = d > 1e-6 ? max(0, ha - hbn) / (d * cs) : 0
+                    let qA = 0.5 * (ch.discharge[i] + ch.discharge[i + 1]) * cellArea
+                    let carveRate = cfg.meanderCarve * pow(max(qA, 0), m) * segSlope * dt
+                    let steps = max(1, Int(d.rounded(.up)))
+                    for sIdx in 0...steps {
+                        let t = Double(sIdx) / Double(steps)
+                        let k = cell(a.x + (bn.x - a.x) * t, a.z + (bn.z - a.z) * t)
+                        if blocked(k) { continue }
+                        pchan[k] = true; pveg[k] = 0
+                        _ = erodeCell(k, min(carveRate, max(0, bed.h[k] - hbn) * capF), bed)
+                    }
+                    budget = 0
+                    continue
+                }
+                if part == 2 { budget = 0; continue }
+                var ref = 0.0
+                let lo = max(0, i - 2), hi = min(c - 1, i + 2)
+                for j in lo...hi { ref += floorH[j] }
+                ref /= Double(hi - lo + 1)
+                let depth = depthK * b
+                let a = min(1, abs(bendCurv[i]) * b * gain)
+                // Profil-Maximum von (1 − e²)(1 + κe), κ = skew·a: Nullstelle der
+                // Ableitung −3κe² − 2e + κ. `z_bf` steht genau so hoch, dass der
+                // tiefste Punkt des Zielprofils auf der heutigen Sohle liegt —
+                // ein Fixpunkt. Mit einem pauschalen Aufschlag wanderte der Bezug
+                // je Teilschritt um die Differenz nach oben (Sohlen-Ratsche).
+                let kap = skew * a
+                let eMax = kap > 1e-9 ? (-2 + (4 + 12 * kap * kap).squareRoot()) / (6 * kap) : 0
+                let zbf = ref + depth * (1 - eMax * eMax) * (1 + kap * eMax)
+                let sgn = bendCurv[i] > 0 ? -1.0 : 1.0            // Außen-Normale wie `meanderStamp`
+                let ox = sgn * g.nx[i], oz = sgn * g.nz[i]
+                let barTarget = zbf - barTop * depth
+                // Außen → Mitte → innen: erst abtragen, dann innen ablagern.
+                var s = w + 0.5, last = -1
+                let inner = -(w + barW * b)
+                while s >= inner - 1e-9 {
+                    let k = cell(nodes[i].x + ox * s, nodes[i].z + oz * s)
+                    s -= 0.5
+                    if k == last || blocked(k) { continue }
+                    last = k
+                    let eta = (s + 0.5) / max(1e-6, w)
+                    if eta >= -1 {
+                        let e = max(-1, min(1, eta))
+                        // Nie über die Bank-Oberkante: ab κ·η < −1 kippt der Faktor
+                        // (1 + κη) ins Negative, das Ziel läge über bankfull.
+                        let target = min(barTarget, zbf - depth * (1 - e * e) * (1 + skew * a * e))
+                        pchan[k] = true; pbelt[k] = true; pveg[k] = 0
+                        if lockHere { plock![k] = true }
+                        if eta > -0.5 { page[k] = -1 }
+                        if bed.h[k] > target {
+                            budget += erodeCell(k, (bed.h[k] - target) * rel, bed)
+                        } else if budget > 0 {
+                            let dep = min(budget, (target - bed.h[k]) * rel)
+                            depositCell(k, dep, bed); budget -= dep
+                        }
+                    } else if bed.h[k] < barTarget && budget > 0 {
+                        let gap = barTarget - bed.h[k]
+                        let dep = min(budget, gap * rel)
+                        depositCell(k, dep, bed); budget -= dep
+                        let atBar = barTarget - bed.h[k] <= 0.25 * depth
+                        if atBar && (page[k] < 0 || gap > 0.2 * depth) { page[k] = ageAtEnd; pveg[k] = 0 }
+                        if page[k] >= 0 { pbelt[k] = true; if lockHere { plock![k] = true } }
+                    }
+                }
+            }
+            }
+        }
+        }}}}}}}}
+    }
+
+    // MARK: - Kopplung Gürtel ↔ Entwässerung (Issue #187)
+
+    /// Ein Abschnitt des D8-Netzes nach dem Hack-Prinzip: von einer Quelle die
+    /// Empfänger-Kette entlang, solange der Abschnitt an jedem Zusammenfluss der
+    /// größere Zufluss ist; er endet vor Meer oder See oder IN der
+    /// Zusammenfluss-Zelle mit einem größeren Fluss (die gehört dann dem).
+    struct DrainageSegment {
+        var cells: [Int32]
+        var endsAtConfluence: Bool
+    }
+
+    /// Hack-Abschnitte des großen D8-Netzes (Einzugsgebiet ab `meanderMinCells`,
+    /// über dem Meer), in Index-Reihenfolge der Quellen. EINE Regel für die
+    /// Trasse (`MeanderState.traceHorton`) und die Kopplung je Schritt.
+    static func drainageSegments(config cfg: SimConfig, h: UnsafePointer<Double>, hf: UnsafePointer<Double>,
+                                 area: UnsafePointer<Double>, receiver: UnsafePointer<Int32>) -> [DrainageSegment] {
+        let nn = cfg.n, cnt = cfg.count, sea = cfg.sea
+        let lakeEps = MeanderState.traceLakeDepth
+        let minA = cfg.meanderMinCells * cfg.cellSize * cfg.cellSize
+        @inline(__always) func big(_ k: Int) -> Bool { hf[k] > sea && area[k] >= minA }
+        // Größter großer Zufluss einer Zelle (Gleichstand: kleinerer Index), −1 = keiner.
+        @inline(__always) func bestDonor(_ r: Int) -> Int {
+            let ri = r % nn, rj = r / nn
+            var best = -1
+            for dj in -1...1 {
+                let j = rj + dj
+                guard j >= 0, j < nn else { continue }
+                for di in -1...1 where di != 0 || dj != 0 {
+                    let i = ri + di
+                    guard i >= 0, i < nn else { continue }
+                    let d = j * nn + i
+                    guard Int(receiver[d]) == r, big(d) else { continue }
+                    if best < 0 || area[d] > area[best] || (area[d] == area[best] && d < best) { best = d }
+                }
+            }
+            return best
+        }
+        // Quellen (große Zellen ohne großen Zufluss) UND je Quelle ihr kompletter
+        // Hack-Abschnitt parallel in Blöcken (auf coreCount geklemmt statt 64 Tasks):
+        // Jeder Abschnitt liest nur `h`, `hf`, `area`, `receiver` und ist von allen
+        // anderen Quellen völlig unabhängig; anschließendes Zusammenfügen in
+        // Block-Reihenfolge ist bit-identisch zur seriellen Schleife.
+        let chunks = max(1, min(Terrain.coreCount, cnt / 4096))
+        var found = [[DrainageSegment]](repeating: [], count: chunks)
+        found.withUnsafeMutableBufferPointer { fb in
+            let pf = fb.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: chunks) { ch in
+                var segs: [DrainageSegment] = []
+                var cells: [Int32] = []
+                cells.reserveCapacity(64)
+                for s in (cnt * ch / chunks)..<(cnt * (ch + 1) / chunks) where big(s) && bestDonor(s) < 0 {
+                    cells.removeAll(keepingCapacity: true)
+                    cells.append(Int32(s))
+                    var c = s, confluence = false
+                    while cells.count < cnt {
+                        let r = Int(receiver[c])
+                        if r < 0 || r >= cnt || r == c { break }
+                        if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
+                        cells.append(Int32(r))
+                        if bestDonor(r) != c { confluence = true; break }
+                        c = r
+                    }
+                    if cells.count >= 3 {
+                        segs.append(DrainageSegment(cells: cells, endsAtConfluence: confluence))
+                    }
+                }
+                pf[ch] = segs
+            }
+        }
+        var totalSegs = 0
+        for ch in 0..<chunks { totalSegs += found[ch].count }
+        var out: [DrainageSegment] = []
+        out.reserveCapacity(totalSegs)
+        for ch in 0..<chunks { out.append(contentsOf: found[ch]) }
+        return out
+    }
+
+    /// Kopplung der Gürtel-Linien an die D8-Entwässerung, einmal je Schritt auf
+    /// dem frischen Abflussfeld, VOR der Migration (Issue #187). Bis dahin liefen
+    /// Linie und Entwässerung getrennt: `refreshBeltDischarge` übernahm über ein
+    /// laufendes Maximum den Abfluss jedes größeren Flusses, den eine Linie
+    /// einmal berührte, und die Linie wanderte damit breit und beweglich neben
+    /// der Rinne den Hang hinauf (`docs/zielbild-measurements.md` § Flüsse
+    /// laufen bergauf). Jetzt gilt:
+    ///
+    /// - **Das D8-Netz bestimmt, WELCHE Flüsse es gibt** (`drainageSegments`):
+    ///   je Hack-Abschnitt ein Lauf, der kleinere endet am Zusammenfluss. Der
+    ///   Abfluss jedes Knotens ist das Einzugsgebiet der Abschnittszelle, an der
+    ///   er liegt, entlang des Laufs monoton — ein Erben über eine Berührung mit
+    ///   einem größeren Fluss ist damit ausgeschlossen, ebenso ein Lauf ohne
+    ///   Fluss darunter. Ein neuer oder durch einen Pinselstrich verlorener
+    ///   Fluss bekommt im nächsten Schritt seine Linie aus D8.
+    /// - **Die alte Linie bestimmt, WO er liegt** (Mäander-Gedächtnis): jeder
+    ///   Knoten einer alten Linie, der höchstens `0,5 · b +
+    ///   meanderBeltCouplingSlackCells` von einer Abschnittszelle liegt, gehört
+    ///   dorthin; zusammenhängende Strecken (kurze Abweichungen eingeschlossen)
+    ///   werden in den neuen Lauf übernommen.
+    /// - **Avulsion:** verlässt eine Linie ihren Abschnitt über mindestens
+    ///   `meanderBeltAvulsionWidths` Kanalbreiten, oder liegt das Gelände unter
+    ///   dem abgekoppelten Stück im Mittel mehr als `meanderBeltAvulsionDepths`
+    ///   Bankfull-Tiefen über dem Abschnitt dazwischen, ersetzen die
+    ///   Abschnittszellen das Stück (geglättet); das verlassene Gerinne eines
+    ///   wandernden Laufs wird Altarm mit `barAge`-Narbe.
+    ///
+    /// Geprüft wird am Schrittanfang, auf dem Abflussfeld des Betts, das der
+    /// vorige Schritt gestempelt hat. Innerhalb des Schritts ändert sich das
+    /// Abflussfeld nicht; nach der Wanderung eines großen Schritts sähe jede
+    /// weite Bewegung wie eine Abkopplung aus.
+    private func coupleBeltToDrainage(dt: Double) {
+        let nn = n, cnt = cfg.count, cs = cfg.cellSize
+        let cellArea = cs * cs
+        guard cellArea > 0, cellArea.isFinite else { return }
+        mark("belt.couple.segments")
+        let segs = h.withUnsafeBufferPointer { hb in
+            hf.withUnsafeBufferPointer { hfb in
+            area.withUnsafeBufferPointer { ab in
+            receiver.withUnsafeBufferPointer { rb in
+                Terrain.drainageSegments(config: cfg, h: hb.baseAddress!, hf: hfb.baseAddress!,
+                                         area: ab.baseAddress!, receiver: rb.baseAddress!)
+            }}}
+        }
+        if segOwner.count != cnt {
+            segOwner = [Int32](repeating: -1, count: cnt); segPos = [Int32](repeating: -1, count: cnt)
+        }
+        // PERF: Über Roh-Zeiger schreiben und zurücksetzen; direkter Zugriff auf
+        // `self.segOwner[k]` / `self.segPos[k]` rief je Abschnittszelle (und im
+        // `defer`) `swift_beginAccess` / `AccessSet::insert` auf.
+        segOwner.withUnsafeMutableBufferPointer { ob in
+            segPos.withUnsafeMutableBufferPointer { pb in
+                let po = ob.baseAddress!, pp = pb.baseAddress!
+                for (s, seg) in segs.enumerated() {
+                    let s32 = Int32(s)
+                    let own = seg.endsAtConfluence ? seg.cells.count - 1 : seg.cells.count
+                    seg.cells.withUnsafeBufferPointer { cb in
+                        let pc = cb.baseAddress!
+                        for p in 0..<own {
+                            let idx = Int(pc[p])
+                            po[idx] = s32; pp[idx] = Int32(p)
+                        }
+                    }
+                }
+            }
+        }
+        defer {
+            segOwner.withUnsafeMutableBufferPointer { ob in
+                segPos.withUnsafeMutableBufferPointer { pb in
+                    let po = ob.baseAddress!, pp = pb.baseAddress!
+                    for seg in segs {
+                        seg.cells.withUnsafeBufferPointer { cb in
+                            for p in 0..<cb.count {
+                                let idx = Int(cb[p])
+                                po[idx] = -1; pp[idx] = -1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let old = meander.channels
+        let slack = cfg.meanderBeltCouplingSlackCells
+        let kW = cfg.meanderBeltAvulsionWidths, xD = cfg.meanderBeltAvulsionDepths
+        let tAv = cfg.meanderBeltAvulsionYears
+        let depthK = cfg.meanderBeltDepthPerWidth * cs
+        let sea = cfg.sea, lakeEps = MeanderState.traceLakeDepth
+
+        mark("belt.couple.match")
+        // 1. Zuordnung der alten Knoten: nächste Abschnittszelle in Reichweite.
+        //    Bleibt der Vorgänger-Abschnitt höchstens eine Zelle weiter als der
+        //    nächste, gilt er (keine Flackern an Zusammenflüssen; die
+        //    Zusammenfluss-Zelle am Ende zählt dabei zum Vorgänger-Abschnitt).
+        // Parallel je Lauf (jeder schreibt nur seine Knoten in die flachen
+        // Puffer), danach je Lauf als Array — bit-gleich zur seriellen Schleife.
+        var off = [Int](repeating: 0, count: old.count + 1)
+        for l in old.indices { off[l + 1] = off[l] + old[l].nodes.count }
+        var flatSeg = [Int32](repeating: -1, count: off[old.count]), flatPos = flatSeg
+        let cfgL = cfg
+        segOwner.withUnsafeBufferPointer { ob in
+        segPos.withUnsafeBufferPointer { pb in
+        hf.withUnsafeBufferPointer { hfb in
+        h.withUnsafeBufferPointer { hb in
+        flatSeg.withUnsafeMutableBufferPointer { fsb in
+        flatPos.withUnsafeMutableBufferPointer { fpb in
+            let po = ob.baseAddress!, pp = pb.baseAddress!, phf = hfb.baseAddress!, ph = hb.baseAddress!
+            let fs = fsb.baseAddress, fp = fpb.baseAddress
+            let lineChunks = max(1, min(old.count, Terrain.coreCount * 4))
+            DispatchQueue.concurrentPerform(iterations: lineChunks) { cc in
+            for l in (old.count * cc / lineChunks)..<(old.count * (cc + 1) / lineChunks) {
+                let ch = old[l], base = off[l]
+                var prev: Int32 = -1
+                for (i, p) in ch.nodes.enumerated() {
+                    let ci0 = min(max(Int(p.x.rounded()), 0), nn - 1), cj0 = min(max(Int(p.z.rounded()), 0), nn - 1)
+                    let k0 = cj0 * nn + ci0
+                    if phf[k0] <= sea || phf[k0] - ph[k0] > lakeEps { prev = -1; continue }   // bleibt −1
+                    let tol = 0.5 * MeanderState.beltWidthCells(discharge: ch.discharge[i], config: cfgL) + slack
+                    let rMax = Int(tol.rounded(.up)) + 1
+                    var bS: Int32 = -1, bP: Int32 = -1, bD2 = tol * tol + 1e-9
+                    var vS: Int32 = -1, vP: Int32 = -1, vD2 = tol * tol + 1e-9  // Vorgänger-Abschnitt
+                    let prevEnd = prev >= 0 && segs[Int(prev)].endsAtConfluence ? Int(segs[Int(prev)].cells.last!) : -1
+                    for r in 0...rMax {
+                        if bS >= 0, Double(r) - 0.75 > bD2.squareRoot() + 1.0 { break }
+                        for dj in -r...r {
+                            let j = cj0 + dj
+                            guard j >= 0, j < nn else { continue }
+                            let edge = abs(dj) == r
+                            var di = -r
+                            while di <= r {
+                                let i2 = ci0 + di
+                                if i2 >= 0, i2 < nn {
+                                    let k = j * nn + i2
+                                    let ow = po[k]
+                                    if ow >= 0 || k == prevEnd {
+                                        let dx = Double(i2) - p.x, dz = Double(j) - p.z
+                                        let d2 = dx * dx + dz * dz
+                                        if ow >= 0, d2 < bD2 { bS = ow; bP = pp[k]; bD2 = d2 }
+                                        if prev >= 0, ow == prev || k == prevEnd, d2 < vD2 {
+                                            vS = prev
+                                            vP = k == prevEnd ? Int32(segs[Int(prev)].cells.count - 1) : pp[k]
+                                            vD2 = d2
+                                        }
+                                    }
+                                }
+                                if r == 0 { break }
+                                di += edge ? 1 : 2 * r
+                            }
+                        }
+                    }
+                    if vS >= 0, vD2.squareRoot() <= bD2.squareRoot() + 1.0 { bS = vS; bP = vP }
+                    fs![base + i] = bS; fp![base + i] = bP
+                    prev = bS
+                }
+            }
+            }
+        }}}}}}
+        let mSeg = old.indices.map { Array(flatSeg[off[$0]..<off[$0 + 1]]) }
+        let mPos = old.indices.map { Array(flatPos[off[$0]..<off[$0 + 1]]) }
+
+        mark("belt.couple.runs")
+        // 2. Strecken je alter Linie: Anker (gleicher Abschnitt, Position stromab
+        //    nicht rückwärts), Anker desselben Abschnitts über kurze
+        //    Abweichungen verschmolzen; lange oder überhöhte Abweichungen
+        //    zwischen zwei Ankern sind Avulsionen.
+        struct Run { var line: Int; var i0: Int; var i1: Int; var pa: Int; var pb: Int }
+        struct Gap { var line: Int; var i0: Int; var i1: Int; var runA: Int; var runB: Int; var width: Double }
+        var runs: [Run] = [], gaps: [Gap] = []
+        var segRuns = [[Int]](repeating: [], count: segs.count)
+        for (l, ch) in old.enumerated() {
+            let sg = mSeg[l], ps = mPos[l], c = ch.nodes.count
+            var anchors: [Run] = []
+            var i = 0
+            while i < c {
+                guard sg[i] >= 0 else { i += 1; continue }
+                var a = Run(line: l, i0: i, i1: i, pa: Int(ps[i]), pb: Int(ps[i]))
+                var j = i + 1
+                while j < c, sg[j] == sg[i], Int(ps[j]) >= a.pb - 3 { a.i1 = j; a.pb = max(a.pb, Int(ps[j])); j += 1 }
+                anchors.append(a)
+                i = j
+            }
+            var cum = [Double](repeating: 0, count: c)
+            for q in 1..<max(1, c) { cum[q] = cum[q - 1] + dist(ch.nodes[q - 1], ch.nodes[q]) }
+            var k = 0
+            var gapAtAnchor: [Int: Int] = [:]          // Anker-Index → Avulsion davor
+            while k < anchors.count {
+                var cur = anchors[k]
+                let s = Int(sg[cur.i0])
+                var next = k + 1
+                var pendingGap: (Int, Int, Double, Int)? = nil
+                while true {
+                    var b = next
+                    while b < anchors.count, Int(sg[anchors[b].i0]) != s { b += 1 }
+                    guard b < anchors.count, anchors[b].pa >= cur.pb - 3 else { break }
+                    let nb = anchors[b]
+                    let bw = MeanderState.beltWidthCells(discharge: ch.discharge[cur.i1], config: cfg)
+                    var avulse = cum[nb.i0] - cum[cur.i1] >= kW * bw
+                    if !avulse, xD.isFinite, nb.i0 - cur.i1 >= 2, nb.pa > cur.pb {
+                        var hl = 0.0, hp = 0.0
+                        h.withUnsafeBufferPointer { hb in
+                            for q in (cur.i1 + 1)..<nb.i0 { hl += Terrain.bilinear(hb.baseAddress!, nn, ch.nodes[q].x, ch.nodes[q].z) }
+                        }
+                        hl /= Double(nb.i0 - cur.i1 - 1)
+                        for p in cur.pb...nb.pa { hp += h[Int(segs[s].cells[p])] }
+                        hp /= Double(nb.pa - cur.pb + 1)
+                        avulse = hl - hp > xD * depthK * bw
+                    }
+                    if avulse, tAv > 0 {
+                        // Ereignis mit Rate 1/τ, solange die Abkopplung besteht:
+                        // die Prüfung läuft je Schritt auf einem flackernden
+                        // Abflussfeld, ohne Rate hing die Zahl der Avulsionen an
+                        // der Schrittweite (gemessen dt 100 gegen 1000: 204 gegen
+                        // 71 in 8000 Jahren). Deterministisch aus Zeit und Ort.
+                        let key = years.bitPattern &* 0x9E37_79B9_7F4A_7C15
+                            ^ UInt64(truncatingIfNeeded: segs[s].cells[0]) &* 0xD1B5_4A32_D192_ED03
+                        let u = 0.5 * (MeanderState.hashUnit(key, cur.pb) + 1)
+                        avulse = u < 1 - exp(-dt / tAv)
+                    }
+                    if avulse { pendingGap = (cur.i1, nb.i0, bw, b); break }
+                    cur.i1 = nb.i1; cur.pb = max(cur.pb, nb.pb)
+                    next = b + 1
+                }
+                runs.append(cur)
+                let rid = runs.count - 1
+                segRuns[s].append(rid)
+                if let g = gapAtAnchor[k] { gaps[g].runB = rid }
+                if let g = pendingGap {
+                    // Der Anker danach beginnt die nächste Strecke dieses Abschnitts.
+                    gaps.append(Gap(line: l, i0: g.0, i1: g.1, runA: rid, runB: -1, width: g.2))
+                    gapAtAnchor[g.3] = gaps.count - 1
+                }
+                k = next
+            }
+        }
+
+        mark("belt.couple.build")
+        // 3. Je Abschnitt die Strecken ohne Überlappung (längste zuerst), dann
+        //    der neue Lauf: Abschnittszellen, wo keine Strecke liegt.
+        var selected = [Bool](repeating: false, count: runs.count)
+        var newChannels: [RiverChannel] = []
+        newChannels.reserveCapacity(segs.count)
+        for (s, seg) in segs.enumerated() {
+            let cand = segRuns[s].sorted {
+                let a = runs[$0], b = runs[$1]
+                let la = a.i1 - a.i0, lb = b.i1 - b.i0
+                return la != lb ? la > lb : (a.line != b.line ? a.line < b.line : a.i0 < b.i0)
+            }
+            var acc: [Int] = []
+            for r in cand where !acc.contains(where: { runs[$0].pa <= runs[r].pb && runs[r].pa <= runs[$0].pb }) {
+                acc.append(r)
+            }
+            acc.sort { runs[$0].pa < runs[$1].pa }
+            for r in acc { selected[r] = true }
+            let L = seg.cells.count
+            var nodes: [MeanderNode] = [], pos: [Int] = [], inserted: [Bool] = []
+            var place: [Int] = []
+            func addCells(_ from: Int, _ to: Int, _ where_: Int) {
+                guard from < to else { return }
+                for p in from..<to {
+                    let k = Int(seg.cells[p])
+                    nodes.append(MeanderNode(x: Double(k % nn), z: Double(k / nn))); pos.append(p); inserted.append(true)
+                    place.append(where_)
+                }
+            }
+            var prevPb = -1, prevLine = -1
+            for r in acc {
+                let run = runs[r]
+                addCells(prevPb + 1, run.pa, prevLine < 0 ? 0 : (prevLine == run.line ? 1 : 2))
+                prevLine = run.line
+                let ch = old[run.line]
+                for i in run.i0...run.i1 {
+                    nodes.append(ch.nodes[i])
+                    pos.append(mSeg[run.line][i] == Int32(s) ? Int(mPos[run.line][i]) : -1)
+                    inserted.append(false); place.append(-1)
+                }
+                prevPb = max(prevPb, run.pb)
+            }
+            addCells(prevPb + 1, L, prevLine < 0 ? 0 : 3)
+            guard nodes.count >= 3 else { continue }
+            // Eingesetzte D8-Zellen glätten (Treppe aus Achtel-Richtungen), Nachbarn fest.
+            for _ in 0..<3 {
+                var prevNode = nodes[0]
+                for i in 1..<(nodes.count - 1) {
+                    let cur = nodes[i]
+                    if inserted[i] {
+                        nodes[i].x = cur.x + 0.5 * (0.5 * (prevNode.x + nodes[i + 1].x) - cur.x)
+                        nodes[i].z = cur.z + 0.5 * (0.5 * (prevNode.z + nodes[i + 1].z) - cur.z)
+                    }
+                    prevNode = cur
+                }
+            }
+            // Abfluss: Einzugsgebiet der zugeordneten Abschnittszelle, monoton; die
+            // Zusammenfluss-Zelle gehört dem größeren Fluss, dort zählt die davor.
+            var dis = [Double](repeating: 0, count: nodes.count)
+            area.withUnsafeBufferPointer { ab in
+                let pa = ab.baseAddress!
+                var run = 0.0
+                for i in nodes.indices {
+                    if pos[i] >= 0 {
+                        let p = seg.endsAtConfluence && pos[i] == L - 1 ? L - 2 : pos[i]
+                        run = max(run, pa[Int(seg.cells[p])] / cellArea)
+                    }
+                    dis[i] = run
+                }
+            }
+            for i in nodes.indices where dis[i] >= cfg.meanderBeltMinCells {
+                if inserted[i] {
+                    meander.coupledInserted += 1
+                    if !acc.isEmpty { meander.insertedByPlace[place[i]] += 1 }
+                } else { meander.coupledKept += 1 }
+            }
+            if let log = beltCouplingLog, (dis.last ?? 0) >= cfg.meanderBeltMinCells {
+                var line = "SEG \(s) L=\(L) conf=\(seg.endsAtConfluence) Q=\(Int(dis.last ?? 0)) Kandidaten \(cand.count) gewählt:"
+                for r in acc { let q = runs[r]; line += " [Lauf \(q.line) Knoten \(q.i0)…\(q.i1)/\(old[q.line].nodes.count) pos \(q.pa)…\(q.pb)]" }
+                for r in cand where !acc.contains(r) { let q = runs[r]; line += " verworfen[Lauf \(q.line) \(q.i0)…\(q.i1) pos \(q.pa)…\(q.pb)]" }
+                line += " eingesetzt \(inserted.filter { $0 }.count) von \(nodes.count)"
+                log(line)
+            }
+            // Unverändert (eine Strecke = ein ganzer alter Lauf, nichts eingesetzt):
+            // nicht neu abtasten.
+            if acc.count == 1, runs[acc[0]].i0 == 0, runs[acc[0]].i1 == old[runs[acc[0]].line].nodes.count - 1,
+               !inserted.contains(true) {
+                newChannels.append(RiverChannel(nodes: nodes, discharge: dis))
+            } else {
+                newChannels.append(meander.resampled(RiverChannel(nodes: nodes, discharge: dis), config: cfg))
+            }
+        }
+        // 4. Verlassene Gerinne: nur zwischen zwei übernommenen Strecken
+        //    desselben Abschnitts, und nur wo der Lauf wanderte.
+        for g in gaps where g.runB >= 0 && selected[g.runA] && selected[g.runB] {
+            let ch = old[g.line]
+            guard ch.discharge[g.i0] >= cfg.meanderBeltMinCells else { continue }
+            meander.avulsions += 1
+            abandonChannel(Array(ch.nodes[g.i0...g.i1]), width: g.width, age: dt)
+        }
+        meander.retraced += segs.indices.filter { segRuns[$0].isEmpty }.count
+        meander.channels = newChannels
+    }
+    private var segOwner: [Int32] = []
+    private var segPos: [Int32] = []
+    /// Diagnose-Haken (nur Tests): Aufbau der Läufe wandernder Größe je Schritt.
+    var beltCouplingLog: ((String) -> Void)?
+
+    /// Gürtelbett-Sperre der Tropfen an Zelle `k` (Diagnose).
+    func beltBedLockedForTests(_ k: Int) -> Bool { dropletGateBuf.count > k && dropletGateBuf[k] }
+
+    /// Zugang für die Kopplungs-Wächter (`BeltCouplingTests`): EIN
+    /// Kopplungs-Pass auf dem aktuellen Abflussfeld, ohne Migration und Stempel.
+    func coupleBeltForTests(dt: Double) {
+        let ox0 = meander.oxbows.count
+        coupleBeltToDrainage(dt: dt)
+        plugOxbows(from: ox0)
+    }
+
+    /// Verlassenes Gerinne einer Avulsion: Altarm (wie nach einem Cutoff, s.
+    /// `plugOxbows`/`fillOxbows`), wenn es mindestens
+    /// `meanderBeltAbandonMinWidths` und höchstens so lang ist wie die längste
+    /// abschnürbare Schleife, und `barAge`-Narbe über die Kanalbreite (danach
+    /// Pionier-Grün und Wiese, `BarMaterial`). `age`: Alter am Schrittende —
+    /// die Avulsion fällt auf den Schrittanfang.
+    private func abandonChannel(_ nodes: [MeanderNode], width b: Double, age: Double) {
+        guard nodes.count >= 4 else { return }
+        var len = 0.0
+        for i in 1..<nodes.count { len += dist(nodes[i - 1], nodes[i]) }
+        if len >= cfg.meanderBeltAbandonMinWidths * b && len <= cfg.meanderBeltMaxLoopWidths * b {
+            meander.abandon(nodes, age: age)
+        }
+        let nn = n, r = 0.5 * b, ri = Int(r.rounded(.up))
+        for p in nodes {
+            let ci0 = Int(p.x.rounded()), cj0 = Int(p.z.rounded())
+            for j in max(0, cj0 - ri)...min(nn - 1, cj0 + ri) {
+                for i in max(0, ci0 - ri)...min(nn - 1, ci0 + ri) {
+                    let dx = Double(i) - p.x, dz = Double(j) - p.z
+                    guard dx * dx + dz * dz <= r * r else { continue }
+                    let k = j * nn + i
+                    if barAge[k] < 0 { barAge[k] = age }
+                }
+            }
         }
     }
 
@@ -4482,7 +6217,10 @@ public final class Terrain {
         // Schritte, oder `iceEnabled = false`) ein reiner Suchlauf, s. dort.
         mark("updateIce")
         updateIce(dt: dt)
-        if cfg.meanderEnabled {
+        if cfg.meanderEnabled && cfg.meanderBelt {
+            mark("meanderBelt")
+            meanderBeltStep(dt: dt) // Migration + Gürtel-Stempel, gemeinsam sub-getaktet (Issue #174)
+        } else if cfg.meanderEnabled {
             mark("migrateMeander")
             migrateMeander(dt: dt) // Läufe evolvieren (Abfluss/Mobilität aus frischem Flow)
             mark("meanderStamp")
@@ -4493,6 +6231,11 @@ public final class Terrain {
             // Prozess-Reihenfolge (FastScape/LEM-Konvention, docs/research-terrain-aging.md §4):
             // Uplift → Flow (oben) → Stream-Power/Auslass (Makro-Täler) → Droplet (Textur)
             // → Hangdiffusion (Grate runden) → Wave.
+            // Delta (Issue #174): Abtrag der Inzision und des Bett-Carves
+            // als Höhensumme davor und danach (s. `deltaDeposit`).
+            let deltaOn = cfg.deltaTrapFraction > 0
+            var deltaBefore = (sum: 0.0, land: 0)
+            if deltaOn { mark("deltaYield"); deltaBefore = deltaHeightSum() }
             // 1) Fluviale Makro-Inzision zuerst: schneidet das kohärente Talnetz und
             //    entwässert die Becken zum Meer, an dem die Hänge dann „hängen".
             if cfg.outletIncision {
@@ -4500,6 +6243,12 @@ public final class Terrain {
             }
             // Eigener Bett-Pass; channelTargetDepth = 0 schaltet ihn aus.
             mark("channelCarve"); channelCarve(dt: dt)
+            var deltaYieldPerCell = 0.0
+            if deltaOn {
+                mark("deltaYield")
+                let after = deltaHeightSum(collectMouths: true).sum
+                deltaYieldPerCell = max(0, deltaBefore.sum - after) / Double(max(1, deltaBefore.land))
+            }
             if cfg.basinFill { mark("fillLakes"); fillLakes(dt: dt) } // Rest-Senken verlanden (Rückfall)
             if cfg.puddleFillYears > 0 { mark("fillShallowPonds"); fillShallowPonds(dt: dt) }
             // 1b) Braiding: super-linearer Bedload-Transport auf dem MFD-Netz baut
@@ -4531,7 +6280,9 @@ public final class Terrain {
                             depositDamp: depositDampBuf,
                             // Vergletscherte Zellen bleiben unangetastet (#35);
                             // leer, solange nirgends Eis liegt.
-                            underIce: underIce,
+                            // Gürtelbett (#174): dieselbe Sperre wie unter dem
+                            // Eis, s. `beltDropletGate`.
+                            bedLocked: beltDropletGate(),
                             // Dieselbe Gewichtungsregel wie beide Netze (Issue #36):
                             // wo Schmelzwasser abfließt, starten auch mehr Tropfen.
                             flowWeight: flowWeight,
@@ -4561,6 +6312,12 @@ public final class Terrain {
             //     (bankfull) → breite Niedrig-Gradient-Reaches für Mäander/Braiding.
             //     Nach dem Carve (Bett steht), vor der Diffusion (glättet die Aue).
             if cfg.floodplainEnabled { mark("floodplainAggradation"); floodplainAggradation(dt: dt) }
+            // 2c) Delta-Schüttung (Issue #174): die Fracht des fluvialen Blocks
+            //     landet vor der Mündung, VOR Hangdiffusion und Wellen — die
+            //     überarbeiten die frische Front im selben Schritt.
+            if deltaOn {
+                mark("deltaDeposit"); deltaDeposit(yieldPerCell: deltaYieldPerCell)
+            }
             // 3) Hangdiffusion (Bodenkriechen, D·∇²z): rundet Grate über die Zeit → altes
             // Terrain wird RUND statt immer spitzer (Appalachen-Signal, konvexe Kuppen).
             // Gesamtwirkung ∝ dt (chunking-/framerate-UNABHÄNGIG!): Echtzeit-Zeitraffer
@@ -4604,6 +6361,21 @@ public final class Terrain {
     /// (s. waterLevel-Doku). Exponentiell in Sim-Zeit → dt-invariant: Zeitraffer
     /// in Mini-Schritten und ein +10.000-J.-Sprung landen am selben Pegel.
     /// Per-Zelle unabhängig → parallel, bit-identisch zur sequenziellen Schleife.
+    ///
+    /// Gedämpft wird nur der ANSTIEG (der Sill-Plug des Sägezahns); fällt der
+    /// Füllstand unter den Spiegel, folgt der Spiegel sofort. Bis Issue #174
+    /// relaxierte er in beide Richtungen, und auf TROCKENEM Boden (hf = h) ist
+    /// er dann nur eine verzögerte Kopie des Geländes: jede Zelle, die schneller
+    /// sinkt als τ, trug für Jahrhunderte einen Geister-See der Tiefe des
+    /// Abtrags. Der Mäandergürtel gräbt sein Bett in ~10 Jahren eine
+    /// Kanaltiefe tief (`meanderBeltRelaxYears`); gemessen (Seed 1337, Jahr
+    /// 2300) lagen damit ~2600 Zellen mit Spiegel > hf + 0,01 auf trockenem
+    /// Boden (hf-Säule 0,0005, Spiegel-Säule 0,02 ≈ 10 Bankfull-Tiefen), als
+    /// fleckige, halbdurchsichtige Seen in den Schlingen und im Kanal selbst
+    /// (ohne Gürtel ~140; Messreihe `docs/zielbild-measurements.md`
+    /// § Geister-Seen im Mäandergürtel). Ein echter Pegelfall (Auslass
+    /// schneidet sich frei) läuft über die Inzision ohnehin allmählich. Die
+    /// Physik liest `waterLevel` nicht; sie bleibt bit-identisch.
     private func relaxWaterLevel(dt: Double) {
         guard cfg.lakeLevelResponseYears > 0 else { waterLevel = hf; return }
         let wlam = Terrain.relaxFraction(dt: dt, tau: cfg.lakeLevelResponseYears)
@@ -4611,7 +6383,9 @@ public final class Terrain {
         hf.withUnsafeBufferPointer { hfb in
             let pwl = wlb.baseAddress!, phf = hfb.baseAddress!
             parallel(cfg.count) { lo, hi in
-                for k in lo..<hi { pwl[k] += (phf[k] - pwl[k]) * wlam }
+                for k in lo..<hi {
+                    pwl[k] = phf[k] < pwl[k] ? phf[k] : pwl[k] + (phf[k] - pwl[k]) * wlam
+                }
             }
         }}
     }
@@ -4718,13 +6492,21 @@ public final class Terrain {
         let span = 2.0
         var hist = [Int](repeating: 0, count: bins)
         var total = 0
-        for v in heights where v > sea && v.isFinite {
-            let b = v >= sea + span
-                ? bins - 1
-                : min(bins - 1, max(0, Int((v - sea) / span * Double(bins))))
-            hist[b] += 1
-            total += 1
-        }
+        let top = sea + span
+        heights.withUnsafeBufferPointer { hb in
+        hist.withUnsafeMutableBufferPointer { histb in
+            guard let ph = hb.baseAddress, let phist = histb.baseAddress else { return }
+            let cnt = hb.count
+            for k in 0..<cnt {
+                let v = ph[k]
+                guard v > sea && v.isFinite else { continue }
+                let b = v >= top
+                    ? bins - 1
+                    : min(bins - 1, max(0, Int((v - sea) / span * Double(bins))))
+                phist[b] += 1
+                total += 1
+            }
+        }}
         guard total >= 20 else { return nil }
         var out = [Double](repeating: sea + span, count: probs.count)
         var cum = 0, next = 0
@@ -5018,6 +6800,7 @@ struct TerrainState {
     var areaMFD: [Double] = []
     // Fluss-Gedächtnis
     var isChannel: [Bool] = []
+    var barAge: [Double] = []            // Gleithang-Bänke (Issue #174), -1 = keine
     var streamMap: [Double] = []
     var streamRate: [Double] = []
     // Störung / Regeneration (Issue #26)
@@ -5061,6 +6844,7 @@ extension Terrain {
         s.receiver = receiver; s.order = order; s.floodParent = floodParent
         s.area = area; s.areaMFD = areaMFD
         s.isChannel = isChannel; s.streamMap = streamMap; s.streamRate = streamRate
+        s.barAge = barAge
         s.disturb = disturb; s.regenPending = regenPending
         s.disturbActive = disturbActive
         s.meanderChannels = meander.channels
@@ -5093,6 +6877,7 @@ extension Terrain {
         receiver = s.receiver; order = s.order; floodParent = s.floodParent
         area = s.area; areaMFD = s.areaMFD
         isChannel = s.isChannel; streamMap = s.streamMap; streamRate = s.streamRate
+        barAge = s.barAge
         disturb = s.disturb; regenPending = s.regenPending
         disturbActive = s.disturbActive
         // Frischer MeanderState: die Bin-Puffer des Cutoff-Index sind Arbeits-

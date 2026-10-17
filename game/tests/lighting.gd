@@ -9,17 +9,26 @@ extends SceneTree
 ##  - Atmosphäre: AgX, Luftperspektive, Talnebel knapp über dem Meer, Anteil
 ##    neutral-warmes Umgebungslicht;
 ##  - Qualitätsstufen: `performance` ist billiger als `balanced`;
-##  - Wolkenschatten: jede `cloud*`-Uniform ist in allen drei Shadern
-##    deklariert, default-frei (die Werte reisen nur über Lighting.gd) und wird
-##    gesetzt; die Shader kompilieren mit dem gemeinsamen Include.
+##  - Wolkenschatten: jede `cloud*`-Uniform ist in allen drei Shadern und im
+##    Wolkenkörper deklariert, default-frei (die Werte reisen nur über
+##    Lighting.gd) und wird gesetzt; die Shader kompilieren mit dem gemeinsamen
+##    Include;
+##  - Wolkenkörper (#174 D): über dem Kamm, auf der Basis der Schatten, in
+##    `performance` aus, Schatten fallen entlang der Sonne.
 
 const Lighting = preload("res://scripts/Lighting.gd")
 const SHADERS := [
 	"res://shaders/terrain.gdshader",
 	"res://shaders/water.gdshader",
 	"res://shaders/ocean.gdshader",
+	"res://shaders/cloud_body.gdshader",
 ]
-const CLOUD_UNIFORMS := ["clouds_enabled", "cloud_strength", "cloud_scale"]
+const CLOUD_UNIFORMS := ["clouds_enabled", "cloud_strength", "cloud_scale", "cloud_height",
+	"cloud_sun_shift", "cloud_base_fade"]
+## Tuning-Werte des Wolkenkörpers (Review zu #174 D): reisen nur über
+## Lighting.gd, deklariert default-frei im Shader.
+const BODY_TUNING_UNIFORMS := ["cloud_body_lift", "cloud_body_self_shadow_dist",
+	"cloud_body_self_shadow_gain"]
 
 var failures := 0
 
@@ -28,6 +37,7 @@ func _initialize() -> void:
 	_check_environment()
 	_check_quality()
 	_check_clouds()
+	_check_cloud_bodies()
 	if failures > 0:
 		quit(1)
 		return
@@ -107,3 +117,55 @@ func _check_clouds() -> void:
 					"%s: %s nicht gesetzt (%s)" % [SHADERS[i], name, quality])
 			_check(mats[i].get_shader_parameter("clouds_enabled") == Lighting.profile(quality)["clouds"],
 				"%s: Wolkenschatten folgen der Qualitätsstufe %s" % [SHADERS[i], quality])
+
+## Wolkenkörper (#174 D): drei Ebenen über dem Kamm, Basis = Schattenbasis,
+## in `performance` unsichtbar; der Schatten wandert gegen die Sonne. Das
+## Tuning des Körpers reist nur über Lighting.gd (default-frei deklariert,
+## gesetzt), die Deckungs-Schwelle teilt er mit dem Schatten über
+## cloud_cover_at — keine Kopie im Körper-Shader.
+func _check_cloud_bodies() -> void:
+	var body_src := FileAccess.get_file_as_string("res://shaders/cloud_body.gdshader")
+	var decl_re := RegEx.new()
+	decl_re.compile("(?m)^uniform\\s+\\w+\\s+(\\w+)([^;]*);")
+	var declared := {}
+	for m in decl_re.search_all(body_src):
+		declared[m.get_string(1)] = m.get_string(2)
+	for name in BODY_TUNING_UNIFORMS:
+		_check(declared.has(name), "cloud_body.gdshader muss %s deklarieren" % name)
+		if declared.has(name):
+			_check(declared[name].find("=") < 0,
+				"%s trägt einen Literal-Default — der Wert gehört nach Lighting.gd" % name)
+	_check(body_src.find("cloud_cover_at(") >= 0,
+		"Körper teilt die Deckungs-Schwelle mit dem Schatten (cloud_cover_at aus dem Include)")
+	_check(body_src.find("smoothstep(0.56") < 0 and body_src.find("smoothstep(0.70") < 0,
+		"Körper darf die Schwelle nicht aus clouds.gdshaderinc kopieren")
+	for quality in ["performance", "balanced"]:
+		var bodies := Lighting.make_cloud_bodies(quality, 100.0, 24.0, 256)
+		var mats := Lighting.cloud_body_materials(bodies)
+		_check(mats.size() == Lighting.CLOUD_LAYERS, "%d Wolkenebenen" % Lighting.CLOUD_LAYERS)
+		_check(bodies.visible == Lighting.profile(quality)["clouds"],
+			"Wolkenkörper folgen der Qualitätsstufe %s" % quality)
+		var ground := ShaderMaterial.new()
+		ground.shader = load("res://shaders/terrain.gdshader")
+		var all: Array[ShaderMaterial] = [ground]
+		all.append_array(mats)
+		Lighting.apply_clouds(all, quality)
+		Lighting.place_clouds(all, 12.0, 14.0, bodies)
+		var base: float = ground.get_shader_parameter("cloud_height")
+		_check(base > 14.0, "Wolkenbasis liegt über dem Kamm (%.2f)" % base)
+		var lowest := INF
+		for child in bodies.get_children():
+			lowest = minf(lowest, child.position.y)
+		_check(is_equal_approx(lowest, base), "Unterste Wolkenebene liegt auf der Schattenbasis")
+		for mat in mats:
+			_check(mat.get_shader_parameter("cloud_height") == base, "Körper und Schatten teilen die Basis")
+			_check(mat.get_shader_parameter("cloud_body_ridge_lo") == 12.0
+				and mat.get_shader_parameter("cloud_body_ridge_hi") == 14.0, "Kamm-Fenster gesetzt")
+			for name in BODY_TUNING_UNIFORMS:
+				_check(mat.get_shader_parameter(name) != null,
+					"Wolkenkörper-Tuning %s nicht gesetzt (%s)" % [name, quality])
+		var shift: Vector2 = ground.get_shader_parameter("cloud_sun_shift")
+		var to_sun := Lighting.sun_direction()
+		_check(shift.dot(Vector2(to_sun.x, to_sun.z)) > 0.0,
+			"Schatten kommen von der Wolke in Richtung Sonne")
+		bodies.free()

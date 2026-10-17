@@ -56,7 +56,9 @@ final class RenderFrameTests: XCTestCase {
         XCTAssertEqual(overlays.protectMask,
                        WaterProtectMask.bytes(n: terrain.cfg.n,
                                               bandCoverage: render.riverRibbonMesh.bandCoverage,
-                                              waterBytes: overlays.water))
+                                              waterBytes: overlays.water,
+                                              wetMeadow: render.wetMeadowMask,
+                                              barSand: render.barMaterial(terrain).sand))
 
         let byHand = RenderState(geometryMode: true)
         byHand.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
@@ -155,13 +157,23 @@ final class RenderFrameTests: XCTestCase {
                            hint: "FrameTrigger.\(trigger) == Main.gd \(name)")
         }
         // Die Schlüssel des Frame-Dictionarys: was die Brücke setzt, liest Main.gd.
+        // Seit dem Hintergrund-Schritt (perf-measurements §L) trägt der Frame
+        // auch Höhe, Jahr, Seespiegel, Höhenbänder und das Band-Mesh: der
+        // Hauptthread lädt den Stand hoch, den der Job verpackt hat, und fragt
+        // die Sim dafür nicht noch einmal.
         let bridge = try RepoSource.probe("Extension/Sources/RiverSimGD/SimNode.swift")
-        for key in ["water", "water_blend", "color", "surface", "flow", "protect",
-                    "forest", "ribbons"] {
+        for key in ["trigger", "year", "heights", "water", "water_blend", "color", "surface",
+                    "cover", "flow", "protect", "forest", "plume", "filled", "bands", "ribbons",
+                    "ribbon_verts", "ribbon_colors", "ribbon_uvs", "ribbon_uv2s", "ribbon_indices"] {
             assertContains(bridge, "out[Variant(\"\(key)\")]",
-                           hint: "SimNode.renderFrame setzt den Schlüssel \(key)")
-            XCTAssertTrue(main.contains("frame[\"\(key)\"]") || main.contains("frame.has(\"\(key)\")"),
+                           hint: "SimNode.packFrame setzt den Schlüssel \(key)")
+            XCTAssertTrue(main.contains("frame[\"\(key)\"]") || main.contains("frame.has(\"\(key)\")")
+                          || main.contains("frame.get(\"\(key)\""),
                           "Main.gd liest den Frame-Schlüssel \(key) nicht")
+        }
+        for gone in ["filledBytes", "heightBands", "riverRibbonVerts", "riverRibbonIndices"] {
+            XCTAssertEqual(main.count(ofIdentifier: gone), 0,
+                           "Main.gd holt \(gone) selbst — der Frame bringt den Stand mit")
         }
         for gone in ["riversMaxDelta", "markRiversBuilt", "buildRiverRibbons",
                      "waterFieldBytes", "waterFieldRawBytes", "protectMaskBytes",

@@ -140,7 +140,8 @@ func _run() -> void:
 		var ground_r := _bilinear_height(heights, n, world, vr.x, vr.z) * Main.HSCALE
 		var expect_l := clampf(ground, ground_c - cross_tol, ground_c + cross_tol) + Main.RIVER_LIFT
 		var expect_r := clampf(ground_r, ground_c - cross_tol, ground_c + cross_tol) + Main.RIVER_LIFT
-		var err := maxf(absf(v.y - expect_l), absf(vr.y - expect_r))
+		var err_l := absf(v.y - expect_l)
+		var err_r := absf(vr.y - expect_r)
 		# Wasserspiegel wird an der ZENTRUMSLINIE und in DERSELBEN Zelle
 		# gelesen wie in SimNode (nächster Gitterpunkt): eine Bandkante liegt
 		# bis zu 3 Zellen daneben, und über dem Ufer fällt `filled` innerhalb
@@ -149,35 +150,51 @@ func _run() -> void:
 		# Versatz wie in RiverRibbonRenderer.emitRibbon (WaterRender.ribbon*Surface*):
 		# See knapp über dem Spiegel, Meer knapp darunter — NICHT RIVER_LIFT,
 		# der gilt nur für Bänder auf dem Gelände.
-		var surface_err: float = minf(
+		var surface_err_l: float = minf(
 			_lake_surface_err(levels, n, world, pair_mid.x, pair_mid.z, v.y),
 			absf(v.y - (sea * Main.HSCALE + sea_surface_sink)))
+		var surface_err_r: float = minf(
+			_lake_surface_err(levels, n, world, pair_mid.x, pair_mid.z, vr.y),
+			absf(vr.y - (sea * Main.HSCALE + sea_surface_sink)))
+		# JE KANTE entweder Gelände oder Spiegel (Befund #174): ein Stützpunkt
+		# auf Wasser liegt nie UNTER seiner Land-Höhe (Maximum aus beiden,
+		# s. emitRibbon) — im flachen Ufersaum trägt so eine Kante das
+		# Gelände, die andere den Spiegel.
+		var edge_l_water := surface_err_l <= 0.05
+		var edge_r_water := surface_err_r <= 0.05
 		# Wasser-Nähe zählt als Wasser, AUCH wenn zufällig beides passt: im
 		# flachen Apron kann die geklemmte Land-Erwartung einer echten
 		# Wasser-Kante gleichen (Tiefe × HSCALE ≈ RIVER_LIFT − Spiegel-Versatz)
 		# — die Alpha-Glattheits-Prüfung unten muss solche Paare ausnehmen,
 		# denn am Wassereintritt blendet das Band bewusst hart aus.
-		var water_like := surface_err <= 0.05
+		var water_like := edge_l_water or edge_r_water
 		pair_on_water.append(water_like)
-		if err > 0.002:
-			if not water_like:
-				stray += 1
-				if stray <= 8:
-					# Gitterposition MIT Nachkommastellen: liegt sie dicht an
-					# x.5, hat die Kante nur die Nachbarzelle erwischt; sonst
-					# steht das Band wirklich auf einem fremden Spiegel.
-					stray_report += ("\n  paar=%d typ=%.2f alpha=%.3f y=%f gitter=(%.3f, %.3f)"
-						+ " gelände_links=%f wasserspiegel=%f meer=%f"
-						+ " ground_err=%f surface_err=%f") % [
-						a, uv2s[a].x, cols[a].a, v.y,
-						(pair_mid.x + world * 0.5) / cs, (pair_mid.z + world * 0.5) / cs,
-						ground + Main.RIVER_LIFT,
-						level * Main.HSCALE + lake_surface_lift,
-						sea * Main.HSCALE + sea_surface_sink,
-						err, surface_err]
-			on_water += 2
+		var stray_l := err_l > 0.002 and not edge_l_water
+		var stray_r := err_r > 0.002 and not edge_r_water
+		if stray_l or stray_r:
+			stray += 1
+			if stray <= 8:
+				# Gitterposition MIT Nachkommastellen: liegt sie dicht an
+				# x.5, hat die Kante nur die Nachbarzelle erwischt; sonst
+				# steht das Band wirklich auf einem fremden Spiegel.
+				stray_report += ("\n  paar=%d typ=%.2f alpha=%.3f y=%f/%f gitter=(%.3f, %.3f)"
+					+ " gelände=%f/%f wasserspiegel=%f meer=%f"
+					+ " ground_err=%f/%f surface_err=%f/%f") % [
+					a, uv2s[a].x, cols[a].a, v.y, vr.y,
+					(pair_mid.x + world * 0.5) / cs, (pair_mid.z + world * 0.5) / cs,
+					expect_l, expect_r,
+					level * Main.HSCALE + lake_surface_lift,
+					sea * Main.HSCALE + sea_surface_sink,
+					err_l, err_r, surface_err_l, surface_err_r]
 			continue
-		max_ground_error = maxf(max_ground_error, err)
+		if edge_l_water:
+			on_water += 1
+		else:
+			max_ground_error = maxf(max_ground_error, err_l)
+		if edge_r_water:
+			on_water += 1
+		else:
+			max_ground_error = maxf(max_ground_error, err_r)
 	print("max_ground_error=", max_ground_error, " vertices_auf_wasser=", on_water)
 	if stray > 0:
 		push_error("FAIL: %d Band-Kantenpaare liegen weder auf dem Gelände noch auf einem Wasserspiegel (erste %d):%s"

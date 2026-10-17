@@ -74,10 +74,35 @@ public final class WaterFieldRenderer {
     private var waterMDZ: [Double] = []
     private var waterStamp: [Bool] = []
     private var waterCapStamp: [Bool] = []
+    private var waterCapped: [Bool] = []
     private var waterOxbow: [Double] = []
     private var waterBytes: [UInt8] = []
     private var waterComponent: [Int] = []
     private var waterStack: [Int] = []
+    /// Abfluss der sichtbaren Bänder je Zentrumslinien-Zelle — für die
+    /// Bank-Schranke des Raster-Flusses (`WaterRender.rasterBarBandReachCells`).
+    private var waterBandQ: [Double] = []
+    /// Wo die Kontinuitäts-Kette an einem Tümpel-Rand endete (Zelle und
+    /// Intensität dort) — für die Fortsetzung durch nasse Wiese.
+    private var waterPondEntries: [(cell: Int, value: Double)] = []
+    /// Nasse Wiese (Issue #174, Paket C) des letzten `bytes`-Laufs: Zellen
+    /// kleiner See-Komponenten, die das Raster NICHT als Wasser malt
+    /// (`WaterRender.isWetMeadow`). `RenderState` reicht die Maske an
+    /// Material und Schutzmaske weiter; leer bis zum ersten Lauf.
+    public private(set) var wetMeadow: [Bool] = []
+    /// Kennzahlen der Tümpel (See-Komponenten) des letzten Laufs — nur für die
+    /// Messreihe (`RiverCoastRenderTests`), kein Render-Zustand.
+    struct ComponentStat {
+        /// Zellen des Tümpels (stehendes Wasser, 4er-Nachbarschaft).
+        let cells: Int
+        /// Hängt an einem Band-/Altarm-Korridor.
+        let banded: Bool
+        /// Vor #174 sichtbar (Komponenten-Fade der Wasser-Komponente > 0).
+        let visible: Bool
+    }
+    private(set) var componentStats: [ComponentStat] = []
+    /// Größen der Rest-Flecken am Band, die der letzte Lauf zurückgenommen hat.
+    private(set) var remnantStats: [Int] = []
     // Persistenter Ausgabepuffer des Abfluss-Felds fürs Shader-Detail (R8).
     private var flowDetail: [UInt8] = []
 
@@ -182,7 +207,6 @@ public final class WaterFieldRenderer {
         }
         let sea = terrain.cfg.sea
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
-        let cellDiagonal = terrain.cfg.cellSize * (2.0).squareRoot()
         let creek = terrain.cfg.renderMinCells // Render-Schwelle sichtbarer Läufe — ENTKOPPELT vom Braid-Physik-Gate (braidMinCells): 30→120→280 erhöht (User: „zu viele Flüsse"), die Braiding-Physik behält ihr eigenes Gate. Die Mäander-Hauptläufe kommen ohnehin direkt aus den Zentrumslinien.
         // areaMFD (Multi-Flow): stetige Fluss-Intensität → Läufe gleiten statt zu
         // springen und können sich um Bänke teilen. Erosion nutzt weiter D8-`area`.
@@ -206,7 +230,9 @@ public final class WaterFieldRenderer {
             waterSeen = [Bool](repeating: false, count: cnt)
             waterStamp = [Bool](repeating: false, count: cnt)
             waterCapStamp = [Bool](repeating: false, count: cnt)
+            waterCapped = [Bool](repeating: false, count: cnt)
             waterBytes = [UInt8](repeating: 0, count: cnt * 4)
+            wetMeadow = [Bool](repeating: false, count: cnt)
             waterComponent.removeAll(keepingCapacity: false)
             waterStack.removeAll(keepingCapacity: false)
         }
@@ -225,6 +251,7 @@ public final class WaterFieldRenderer {
         var mdz: [Double] = []; swap(&mdz, &waterMDZ)
         var mstamp: [Bool] = []; swap(&mstamp, &waterStamp)
         var capStamp: [Bool] = []; swap(&capStamp, &waterCapStamp)
+        var capped: [Bool] = []; swap(&capped, &waterCapped)
         var oxb: [Double] = []; swap(&oxb, &waterOxbow)
         var out: [UInt8] = []; swap(&out, &waterBytes)
         defer {
@@ -234,6 +261,7 @@ public final class WaterFieldRenderer {
             swap(&componentFade, &waterComponentFade); swap(&seen, &waterSeen)
             swap(&mdx, &waterMDX); swap(&mdz, &waterMDZ)
             swap(&mstamp, &waterStamp); swap(&capStamp, &waterCapStamp)
+            swap(&capped, &waterCapped)
             swap(&oxb, &waterOxbow)
             swap(&out, &waterBytes)
         }
@@ -252,6 +280,48 @@ public final class WaterFieldRenderer {
         // entwässerte Ebenen als flächigen Wash. Nicht unter substanziellen Seen
         // (Tiefe > 0.03) malen: dort deckt die Seefläche.
         let smap = terrain.streamMap
+        // Band in der Nähe (Abfluss-Vertrauen nur in Band-Lücken, s.
+        // `WaterRender.ribbonTrustBandClearanceCells`): größte Band-Deckung im
+        // Quadrat ±Abstand um jede Zelle, separabel (Zeilen nach `blur`, dann
+        // Spalten nach `b`). Beide Puffer sind hier nur Zwischenspeicher: `b`
+        // überschreiben die Verbreiterungs-Pässe, `blur` der Rand-Blur, beide
+        // vollständig. Ohne gebautes Band (Stempel-Modus, erster Frame) bleibt
+        // das Feld 0, das Vertrauen gilt dann überall.
+        let clearance = WaterRender.ribbonTrustBandClearanceCells
+        let bandNearby = geometryMode && bandCoverage.count == cnt
+        b.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+        if bandNearby {
+            bandCoverage.withUnsafeBufferPointer { cb in
+            blur.withUnsafeMutableBufferPointer { rb in
+                let pc = cb.baseAddress!, pr = rb.baseAddress!
+                parallelChunks(n) { jLo, jHi in
+                    for j in jLo..<jHi {
+                        for i in 0..<n {
+                            var m = 0.0
+                            for di in max(0, i - clearance)...min(n - 1, i + clearance) {
+                                m = max(m, pc[j * n + di])
+                            }
+                            pr[j * n + i] = m
+                        }
+                    }
+                }
+            }}
+            blur.withUnsafeBufferPointer { rb in
+            b.withUnsafeMutableBufferPointer { nb in
+                let pr = rb.baseAddress!, pn = nb.baseAddress!
+                parallelChunks(n) { jLo, jHi in
+                    for j in jLo..<jHi {
+                        for i in 0..<n {
+                            var m = 0.0
+                            for dj in max(0, j - clearance)...min(n - 1, j + clearance) {
+                                m = max(m, pr[dj * n + i])
+                            }
+                            pn[j * n + i] = m
+                        }
+                    }
+                }
+            }}
+        }
         // cellSize 0 (keine definierte Schrittweite): keine Fluss-Intensität ohne Zellfläche,
         // sonst pa[k] / 0 = inf >= creek und fehlerhafte Vollaussteuerung auf allen Stream-Map-Zellen.
         if cellArea > 0, cellArea.isFinite {
@@ -259,8 +329,9 @@ public final class WaterFieldRenderer {
             sd.withUnsafeMutableBufferPointer { sdb in
             h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
             area.withUnsafeBufferPointer { ab in smap.withUnsafeBufferPointer { smb in
+            b.withUnsafeBufferPointer { nb in
                 let psd = sdb.baseAddress!, ph = hb.baseAddress!, phf = hfb.baseAddress!
-                let pa = ab.baseAddress!, psm = smb.baseAddress!
+                let pa = ab.baseAddress!, psm = smb.baseAddress!, pnear = nb.baseAddress!
                 parallelChunks(cnt) { lo, hi in
                     for k in lo..<hi where phf[k] > sea && ph[k] > sea
                                            && phf[k] - ph[k] <= WaterRender.streamPondTolerance {
@@ -269,13 +340,21 @@ public final class WaterFieldRenderer {
                         // Track-Maske und Abfluss-Abstufung stehen im Kalibrier-
                         // Vertrag (`WaterRender`) statt hier und werden zusammen mit
                         // diesem ausführbaren Pfad headless geprüft (Issues #51/#82).
-                        let m = WaterRender.trackMask(streamMap: psm[k])
+                        // Abfluss-Vertrauen (#174 C2, wie im Band): ein großer
+                        // D8-Lauf ist Wasser, auch wo die Stream-Map ihn nicht
+                        // trackt — sonst riss der Hauptlauf in der Übersicht ab.
+                        // Nur in den LÜCKEN des Bands: wo ein Band in der Nähe
+                        // malt, trägt es den Lauf, und das Vertrauen malte die
+                        // D8-Treppe als zweites Wasser daneben und darunter.
+                        let trust = WaterRender.ribbonTrust(dischargeCells: cu, referenceCells: creek)
+                            * (1 - min(1, pnear[k]))
+                        let m = max(WaterRender.trackMask(streamMap: psm[k]), trust)
                         if m <= 0 { continue }
                         psd[k] = WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
                             * WaterRender.trackWeight(mask: m)
                     }
                 }
-            }}}}}
+            }}}}}}
         }
         // WASSERSPIEGEL-BEWUSST dilatieren: Wasser verbreitert sich nur auf Zellen,
         // deren Bett NAHE am WASSERSPIEGEL (hf) des Nachbarlaufs liegt
@@ -298,6 +377,12 @@ public final class WaterFieldRenderer {
         // würde die Klemme isolierten Speckle zu langen Fäden verstärken.
         // 1 Zelle breit; Breite macht weiterhin nur die (schwellen-gestufte)
         // Dilatation darunter.
+        // TÜMPEL-EINTRITT: ob der Tümpel unter der Kette nasse Wiese ist (dann
+        // malt der See-Kanal ihn nicht und der Bach hätte dort eine Lücke),
+        // steht erst nach den Komponenten unten fest. Die Kette merkt sich
+        // deshalb, wo und mit welchem Wert sie am Tümpel-Rand endet, und läuft
+        // dort weiter (`pondEntries`, s. nach der nassen Wiese).
+        waterPondEntries.removeAll(keepingCapacity: true)
         for start in 0..<(n * n) where sd[start] > WaterRender.continuityFloor {
             var val = max(sd[start] - WaterRender.continuityDecayPerCell,
                           WaterRender.continuityFloor)
@@ -306,7 +391,11 @@ public final class WaterFieldRenderer {
                 let ri = Int(r)
                 if sd[ri] >= val { break }   // Kette ab hier schon (stärker) gemalt
                 // Offenes Wasser erreicht: ab hier malen See-Kanal bzw. Meer.
-                if h[ri] <= sea || hf[ri] - h[ri] > WaterRender.lakeRawWetDepth { break }
+                if h[ri] <= sea { break }
+                if hf[ri] - h[ri] > WaterRender.lakeRawWetDepth {
+                    waterPondEntries.append((cell: ri, value: val))
+                    break
+                }
                 sd[ri] = val
                 val = max(val - WaterRender.continuityDecayPerCell,
                           WaterRender.continuityFloor)
@@ -472,7 +561,9 @@ public final class WaterFieldRenderer {
                     let rad = Int((ribbonHalfWidthCells(q, cfg: terrain.cfg)
                                    + WaterRender.ribbonHaloMarginCells).rounded())
                     var previousX = last.x, previousZ = last.z
-                    for point in mouthPath(terrain, fromX: last.x, fromZ: last.z) {
+                    let prior = nodes[max(0, nodes.count - 2)]
+                    for point in mouthPath(terrain, fromX: last.x, fromZ: last.z,
+                                           dirX: last.x - prior.x, dirZ: last.z - prior.z) {
                         var dirX = point.x - previousX, dirZ = point.z - previousZ
                         let dl = (dirX * dirX + dirZ * dirZ).squareRoot()
                         if dl > 1e-6 { dirX /= dl; dirZ /= dl }
@@ -493,10 +584,9 @@ public final class WaterFieldRenderer {
         // breit stempeln, schlösse sich der Altarm zu einem unnatürlichen Wasserring.
         // Deshalb Hals-Enden trimmen/ausblenden und nur Zellen mit echter Wassersäule
         // markieren: sichtbar bleibt der offene, physisch gefüllte Hufeisenbogen.
-        // Filter/Trimmung/Fade sind GEMEINSAME Konstanten mit der Geometrie
-        // (`appendOxbowRibbons`) — beide Pfade müssen dieselben Schleifen meinen.
-        let minimumOxbowNodes = WaterRender.oxbowMinimumNodes
-        let maximumTrimmedNodes = WaterRender.oxbowMaximumTrimmedNodes
+        // Filter und Trimmung stehen in `oxbowNodeRange`, Fade und Deckkraft in
+        // `WaterRender` — GEMEINSAM mit der Geometrie (`appendOxbowRibbons`) und
+        // dem Gürtel-Material: alle müssen dieselben Schleifen meinen.
         let fullEndFadeSteps = WaterRender.oxbowEndFadeSteps
         // KEINE eigene Tiefen-Rampe mehr (Issue #32): der Shader multipliziert den
         // G-Kanal mit der per-Pixel-Uferkontur smoothstep(pondContourLo,
@@ -524,16 +614,14 @@ public final class WaterFieldRenderer {
         let maximumOxbowOpacity = WaterRender.oxbowMaximumOpacity
         for oxbowIndex in terrain.meander.oxbows.indices {
             let oxbow = terrain.meander.oxbows[oxbowIndex]
-            if oxbow.count < minimumOxbowNodes { continue }
+            guard let nodeRange = oxbowNodeRange(count: oxbow.count) else { continue }
+            let first = nodeRange.lowerBound, last = nodeRange.upperBound
             let age = oxbowIndex < terrain.meander.oxbowAge.count
                 ? terrain.meander.oxbowAge[oxbowIndex]
                 : 0
             let fade = clamp01(1 - age / WaterRender.oxbowVisibleYears)
             if fade <= 0 { continue }
-            let trim = min(maximumTrimmedNodes, max(1, oxbow.count / 8))
-            let first = trim, last = oxbow.count - trim - 1
-            if first > last { continue }
-            for nodeIndex in first...last {
+            for nodeIndex in nodeRange {
                 let node = oxbow[nodeIndex]
                 guard node.x.isFinite, node.z.isFinite,
                       abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }
@@ -576,6 +664,7 @@ public final class WaterFieldRenderer {
         // Herleitung und Fenster in `WaterRender`, headless abgesichert durch
         // `SimCoreTests/WaterRenderTests.swift`.
         rawWet.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        capped.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
         // EIN Durchlauf für drei Dinge, die alle vor der Kohärenz-Maske stehen
         // müssen (jede eigene Vollbild-Schleife kostete hier messbar Frames:
         // die Wasseraufbereitung läuft in JEDEM Textur-Update):
@@ -600,8 +689,55 @@ public final class WaterFieldRenderer {
         //     Was das Feld beisteuert, ist der Nass-Saum um den Bogen: derselbe
         //     Halo wie unter den Fluss-Bändern, damit auch ein Altarm ein Ufer
         //     hat statt einer Farbkante.
+        // Bank-Schranke (`WaterRender.rasterBarBandReachCells`): Abfluss der
+        // sichtbaren Bänder an ihren Zentrumslinien-Zellen.
+        let barAge = terrain.barAge
+        let barCheck = geometryMode && bandCoverage.count == cnt && barAge.count == cnt
+            && cellArea > 0 && cellArea.isFinite
+        if barCheck {
+            if waterBandQ.count != cnt { waterBandQ = [Double](repeating: 0, count: cnt) }
+            waterBandQ.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+            for (chIndex, ch) in terrain.meander.channels.enumerated()
+            where chIndex < bandChannelFlags.count && bandChannelFlags[chIndex] {
+                for (i, node) in ch.nodes.enumerated() where i < ch.discharge.count {
+                    guard node.x.isFinite, node.z.isFinite, ch.discharge[i].isFinite else { continue }
+                    let ci = min(max(Int(node.x.rounded()), 0), n - 1)
+                    let cj = min(max(Int(node.z.rounded()), 0), n - 1)
+                    let k = cj * n + ci
+                    if bandCoverage[k] >= WaterRender.rasterBarBandCoverage {
+                        waterBandQ[k] = max(waterBandQ[k], ch.discharge[i])
+                    }
+                }
+            }
+        }
+        let reach = WaterRender.rasterBarBandReachCells
+        let bandQ = waterBandQ   // lokal: die Suche liest es je Kandidat bis zu 33² Mal
         for k in 0..<cnt {
-            rawWet[k] = hf[k] > sea && hf[k] - h[k] > WaterRender.lakeRawWetDepth
+            // Raster-Fluss auf einer Bank neben einem Band, das denselben oder
+            // einen größeren Fluss trägt: das ist die D8-Abkürzung über den
+            // Gleithang, das Band ist hier der Fluss → nur Saum. Gesucht wird
+            // nur für die wenigen Bank-Zellen mit Raster-Fluss (Abbruch beim
+            // ersten Treffer); ein Vollbild-Maximumfilter kostete gemessen
+            // 2 ms je Aufruf.
+            if barCheck && barAge[k] >= 0 && sd[k] > haloIntensity {
+                let need = WaterRender.rasterBarBandDischargeRatio * area[k] / cellArea
+                let i = k % n, j = k / n
+                var found = false
+                search: for jj in max(0, j - reach)...min(n - 1, j + reach) {
+                    for ii in max(0, i - reach)...min(n - 1, i + reach) where bandQ[jj * n + ii] >= need
+                        && bandQ[jj * n + ii] > 0 {
+                        found = true; break search
+                    }
+                }
+                if found { sd[k] = haloIntensity }
+            }
+            // Strandsee (Lagune): Boden unter dem Meer, Spiegel nur eine
+            // flache Schwelle darüber. Sie liegt unter der Ozean-Ebene und ist
+            // Meerwasser im Bild; als See gemalt stand sie dunkel neben dem
+            // Türkis (Befund #174, Delta Seed 1337). `openWaterSurface` liest
+            // solche Zellen ebenfalls als Meer.
+            let lagoon = h[k] <= sea && hf[k] - sea < WaterRender.lagoonMaxRise
+            rawWet[k] = hf[k] > sea && hf[k] - h[k] > WaterRender.lakeRawWetDepth && !lagoon
             if geometryMode {
                 if oxb[k] > 0 {
                     // Altarm-Korridor: das Band malt sicher (Raster und
@@ -615,34 +751,27 @@ public final class WaterFieldRenderer {
                 // Frame vor dem ersten Ribbon-Build), gilt wie früher „voll".
                 let cover = k < bandCoverage.count ? bandCoverage[k] : 1.0
                 if capStamp[k] && sd[k] > haloIntensity {
-                    // Kaskaden-Zellen behalten ihr Raster-Wasser: dort blendet
-                    // das BAND über dieselbe Funktion aus (s.
-                    // WaterRender.cascadeWeight) — deckelte man sie trotzdem,
-                    // hätte die Steilstrecke weder Band noch Raster. Neigung
-                    // als MAX-Gefälle zur 8er-Nachbarschaft: die ebenen
-                    // STUFENBECKEN inmitten einer Kaskade zählen so mit
-                    // (spiegelbildlich zur ±2-Zellen-Dilatation der Band-Seite).
-                    var maxSlope = 0.0
-                    let ki = k % n, kj = k / n
-                    for dj in -1...1 {
-                        for di in -1...1 where di != 0 || dj != 0 {
-                            let ni = ki + di, nj = kj + dj
-                            if ni < 0 || ni >= n || nj < 0 || nj >= n { continue }
-                            let dist = (di * di + dj * dj == 2)
-                                ? cellDiagonal : terrain.cfg.cellSize
-                            guard dist > 0 else { continue }
-                            maxSlope = max(maxSlope,
-                                           abs(h[k] - h[nj * n + ni]) / dist)
-                        }
-                    }
-                    if WaterRender.cascadeWeight(slope: maxSlope) < 0.5 {
-                        // ANTEILIG statt binär: nur so weit zurücknehmen, wie
-                        // das Band an dieser Stelle wirklich deckt. Wo sein
-                        // Alpha ausläuft (Enden-Taper, Abfluss-Rampe,
-                        // Kohärenz), behält das Raster sein Wasser — sonst
-                        // reißt der Lauf dort ab, wo beide Pfade schweigen.
-                        sd[k] += (haloIntensity - sd[k]) * cover
-                    }
+                    // ANTEILIG statt binär: nur so weit zurücknehmen, wie das
+                    // Band an dieser Stelle wirklich deckt. Wo sein Alpha
+                    // ausläuft (Enden-Taper, Abfluss-Rampe, Kohärenz, und an
+                    // KASKADEN über `WaterRender.cascadeWeight`), behält das
+                    // Raster sein Wasser — sonst reißt der Lauf dort ab, wo
+                    // beide Pfade schweigen.
+                    // Bis #174 C2 stand hier zusätzlich eine eigene
+                    // Kaskaden-Ausnahme (Max-Gefälle zur 8er-Nachbarschaft,
+                    // Raster dann ungedeckelt). Die Deckung trägt die
+                    // Kaskaden-Blende des Bands aber schon; die Zell-Neigung
+                    // sah dagegen auch das Quergefälle an Talwänden und ließ
+                    // das Raster unter einem voll deckenden Band stehen:
+                    // doppeltes Wasser in Zellblöcken (Review #181, Messung:
+                    // docs/river-belt-render-measurements.md §C).
+                    sd[k] += (haloIntensity - sd[k]) * cover
+                    // Als Rest-Kandidat zählt nur, wo das Band wirklich trägt
+                    // (`remnantMinBandCoverage`). An einer Steilstufe läuft
+                    // seine Deckung über kleine Werte gegen 0 aus; dort ist
+                    // das Raster die Kaskade, und ein kleines Stück davon
+                    // fiele sonst als „Rest-Fleck" auf den Saum zurück.
+                    if cover >= WaterRender.remnantMinBandCoverage { capped[k] = true }
                 }
             }
             // Kohärenz-Maske über die Wasser-Schwelle des Shaders: was er als
@@ -651,19 +780,46 @@ public final class WaterFieldRenderer {
         }
         componentFade.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         seen.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        wetMeadow.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        remnantStats.removeAll(keepingCapacity: true)
         waterComponent.removeAll(keepingCapacity: true)
         waterStack.removeAll(keepingCapacity: true)
         for start in 0..<cnt where mask[start] && !seen[start] {
             waterComponent.removeAll(keepingCapacity: true)
             waterStack.removeAll(keepingCapacity: true)
             waterStack.append(start); seen[start] = true
+            var allCapped = true
             while let k = waterStack.popLast() {
                 waterComponent.append(k)
+                // Stehendes Wasser gehört nie zum Rest: ein Mündungs-Korridor
+                // reicht in den See, und dessen Fläche malt das Raster.
+                if !capped[k] || rawWet[k] { allCapped = false }
                 let i = k % n, j = k / n
                 if i > 0 && mask[k - 1] && !seen[k - 1] { seen[k - 1] = true; waterStack.append(k - 1) }
                 if i < n - 1 && mask[k + 1] && !seen[k + 1] { seen[k + 1] = true; waterStack.append(k + 1) }
                 if j > 0 && mask[k - n] && !seen[k - n] { seen[k - n] = true; waterStack.append(k - n) }
                 if j < n - 1 && mask[k + n] && !seen[k + n] { seen[k + n] = true; waterStack.append(k + n) }
+            }
+            // REST-FLECKEN am Band (Issue #174 C): eine kleine Komponente, die
+            // NUR aus anteilig gedeckelten Korridor-Zellen besteht (Band deckt
+            // dort, aber nicht voll), ist kein eigener Lauf, sondern der
+            // Raster-Rest unter einer Bandkante. Korridor-Zellen sind vom
+            // Kohärenz-Gate ausgenommen; diese Reste standen deshalb als
+            // blaue Flecken neben den Bändern (Messreihe §A: 95 % der
+            // sichtbaren Fluss-Fragmente unter 50 Zellen liegen ≤ 2 Zellen
+            // an einem Band). Sie fallen auf den Saum zurück und werden
+            // nasse Wiese. `capped` heißt: das Band deckt dort mindestens
+            // `remnantMinBandCoverage`. Kaskaden-Zellen, an denen das Band
+            // ausblendet, erreichen die Schwelle nicht (eine eigene
+            // Kaskaden-Ausnahme gibt es seit #174 C2 nicht mehr, s. o.): die
+            // Raster-Übergabe an Steilstrecken bleibt unberührt.
+            if allCapped && waterComponent.count < WaterRender.wetMeadowMaxCells {
+                remnantStats.append(waterComponent.count)
+                for k in waterComponent {
+                    if sd[k] > haloIntensity { sd[k] = haloIntensity }
+                    wetMeadow[k] = true
+                }
+                continue
             }
             // Verschmelzen zweier Komponenten kann `fade` in einem Tick springen
             // (Teich berührt Flusskette) — im Zeitraffer dämpft das die EWMA
@@ -673,6 +829,64 @@ public final class WaterFieldRenderer {
                 for k in waterComponent { componentFade[k] = fade }
             }
         }
+        // NASSE WIESE statt Tümpel-Teppich (Issue #174 C): stehendes Wasser
+        // (`rawWet`) als EIGENE Komponenten, ohne die Zubringer — ein Tümpel,
+        // den ein Bach mit dem Flussnetz verbindet, bleibt ein Tümpel. Kleine
+        // Tümpel ohne Band-/Altarm-Korridor malt der See-Kanal nicht; sie
+        // gehen als `wetMeadow` an Material und Schutzmaske. Der Korridor
+        // liegt mit Saum-Intensität außerhalb von `rawWet` (Mündungs-
+        // Korridore reichen dagegen IN den See), deshalb zählt auch der
+        // 4er-Nachbar. Die Fluss-Intensität der Zellen bleibt unberührt.
+        seen.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        componentStats.removeAll(keepingCapacity: true)
+        for start in 0..<cnt where rawWet[start] && !seen[start] {
+            waterComponent.removeAll(keepingCapacity: true)
+            waterStack.removeAll(keepingCapacity: true)
+            waterStack.append(start); seen[start] = true
+            var banded = false
+            while let k = waterStack.popLast() {
+                waterComponent.append(k)
+                let i = k % n, j = k / n
+                if mstamp[k] || (i > 0 && mstamp[k - 1]) || (i < n - 1 && mstamp[k + 1])
+                    || (j > 0 && mstamp[k - n]) || (j < n - 1 && mstamp[k + n]) {
+                    banded = true
+                }
+                if i > 0 && rawWet[k - 1] && !seen[k - 1] { seen[k - 1] = true; waterStack.append(k - 1) }
+                if i < n - 1 && rawWet[k + 1] && !seen[k + 1] { seen[k + 1] = true; waterStack.append(k + 1) }
+                if j > 0 && rawWet[k - n] && !seen[k - n] { seen[k - n] = true; waterStack.append(k - n) }
+                if j < n - 1 && rawWet[k + n] && !seen[k + n] { seen[k + n] = true; waterStack.append(k + n) }
+            }
+            let visible = waterComponent.contains { componentFade[$0] > 0 }
+            componentStats.append(ComponentStat(cells: waterComponent.count,
+                                                banded: banded, visible: visible))
+            if WaterRender.isWetMeadow(pondCells: waterComponent.count, banded: banded) {
+                for k in waterComponent { wetMeadow[k] = true }
+            }
+        }
+        // BACH DURCH NASSE WIESE: die Kontinuitäts-Kette oben endet an jedem
+        // Tümpel-Rand, weil dort der See-Kanal übernimmt. Bei nasser Wiese
+        // malt er nicht, und der Bach risse an ihr ab (Review #174 C): Fluss-
+        // Pass und Kette lassen die Tümpel-Zellen aus, hinter dem Tümpel
+        // beginnt der Bach neu. Die Kette läuft deshalb durch die Wiese weiter,
+        // mit derselben Regel wie oben (Abfall je Zelle, geklemmt, Ende an
+        // einer stärker gemalten Zelle, am Meer oder an einem Tümpel, der
+        // Wasser BLEIBT). Der Tümpel selbst bleibt Wiese: es ist ein Faden
+        // von einer Zelle, kein See-Gate.
+        for entry in waterPondEntries where wetMeadow[entry.cell] {
+            var val = entry.value
+            var ri = entry.cell
+            while sd[ri] < val {
+                sd[ri] = val
+                val = max(val - WaterRender.continuityDecayPerCell,
+                          WaterRender.continuityFloor)
+                let r = rec[ri]
+                guard r >= 0 && r < cnt else { break }
+                ri = Int(r)
+                if h[ri] <= sea { break }
+                if hf[ri] - h[ri] > WaterRender.lakeRawWetDepth && !wetMeadow[ri] { break }
+            }
+        }
+
         // G-Kanal = See-GATE statt Tiefen-Rampe (Issue #32): WO ein See sichtbar
         // ist (inkl. Komponenten-Fade), sagt dieses Feld — die FORM der Uferlinie
         // und die Tiefe fürs Shading rechnet der Shader per Pixel aus
@@ -685,7 +899,9 @@ public final class WaterFieldRenderer {
         mstamp.withUnsafeBufferPointer { msb in
         componentFade.withUnsafeBufferPointer { cfb in
         rawWet.withUnsafeBufferPointer { rwb in
+        wetMeadow.withUnsafeBufferPointer { wmb in
         oxb.withUnsafeBufferPointer { oxbPtr in
+            let pwm = wmb.baseAddress!
             let psd = sdb.baseAddress!, plk = lkb.baseAddress!
             let pms = msb.baseAddress!, pcf = cfb.baseAddress!
             let prw = rwb.baseAddress!, pox = oxbPtr.baseAddress!
@@ -700,20 +916,28 @@ public final class WaterFieldRenderer {
                     // Der Ribbon-Saum (WaterRender.ribbonHaloIntensity) ist davon
                     // ausgenommen: Korridor-Zellen sind per Definition Teil eines echten
                     // Laufs (Zentrumslinie), nicht Speckle (Issue #31).
-                    if !(geometryMode && pms[k]) {
-                        psd[k] *= WaterRender.streamGate(componentFade: pcf[k])
+                    // Seit #174 gilt die Ausnahme nur für den Saum selbst: was ein
+                    // Korridor darüber trägt (D8-Raster neben der Bandkante, wo
+                    // das Band nicht deckt), unterliegt dem Gate wie überall —
+                    // sonst standen Ein- bis Drei-Zell-Flecken als runde blaue
+                    // Punkte mit Uferring neben den Bändern.
+                    let gate = WaterRender.streamGate(componentFade: pcf[k])
+                    if geometryMode && pms[k] {
+                        if gate == 0 && psd[k] > haloIntensity { psd[k] = haloIntensity }
+                    } else {
+                        psd[k] *= gate
                     }
                     // See-Kanal: weicher Fade (Issue #32) — und NICHT vom Korridor
                     // ausgenommen, ein Ribbon-Korridor darf keine Kleinst-Pfütze als See
                     // malen.
-                    if prw[k] { plk[k] = pcf[k] }
+                    if prw[k] && !pwm[k] { plk[k] = pcf[k] }
                     // Altarm-Overlay nur noch im Legacy-Stempel-Modus (Issue #34): im
                     // Geometrie-Modus malt das Altarm-BAND, hier bliebe sonst eine
                     // zweite, fließend schattierte Kopie derselben Schleife stehen.
                     if !geometryMode && pox[k] > plk[k] { plk[k] = pox[k] }
                 }
             }
-        }}}}}}
+        }}}}}}}
         // RÄUMLICH glätten: die Felder sind zell-binär geschwellt (creek/Tiefe) →
         // ohne Glättung wirken Flussränder und Seeufer als Pixel-Grieß. max(Kern,
         // 3×3-Blur) statt reinem Blur: die Kern-Intensität bleibt voll (sonst

@@ -19,7 +19,7 @@ import XCTest
 ///    die Gegenrichtung — unter der Schwelle rührt das EIS nichts an —
 ///    `testThinIceNeitherFlowsNorGrinds`
 /// 5. dt-invariant, deterministisch → `testIceIsFramerateIndependent`,
-///    `testIceIsDeterministic`
+///    `testThickIceTransportIsStableForLargeSteps`, `testIceIsDeterministic`
 /// 6. abgeschaltet bit-identisch → `testDisabledIceIsBitIdentical`,
 ///    `testIcelessWorldIsBitIdentical`
 final class Glacier: XCTestCase {
@@ -31,7 +31,11 @@ final class Glacier: XCTestCase {
     /// (`docs/glacier-measurements.md` §A). n = 384 hält den Abstand zur
     /// Firn-Grenze über 50k Jahre und ist noch schnell genug für Wächter.
     private func cfg(n: Int = 384) -> SimConfig {
-        var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
+        var c = SimConfig(); c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
+        c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731 der alten Großform
+        return c
     }
 
     /// Konfiguration, in der AUSSER dem Eis nichts das Gelände anfasst — der
@@ -85,10 +89,11 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Höhe der 0-°C-Isotherme aus der Kalibrier-Formel (`T = T₀ − Γ(h−sea)`) —
-    /// oberhalb davon wandelt sich Firn zu Eis (`iceFirnColdSpan` rampt darunter).
+    /// Höhe der Firn-Grenze des Eises aus der Kalibrier-Formel (`T = T₀ − Γ(h−sea)`
+    /// bei `T = iceFirnTemp`) — oberhalb davon wandelt sich Firn zu Eis
+    /// (`iceFirnColdSpan` rampt darunter).
     static func firnLine(_ c: SimConfig) -> Double {
-        c.sea + c.climateSeaLevelTemp / c.climateLapseRate
+        c.sea + (c.climateSeaLevelTemp - c.iceFirnTemp) / c.climateLapseRate
     }
 
     static func iceStats(_ t: Terrain) -> IceStats {
@@ -307,6 +312,42 @@ final class Glacier: XCTestCase {
             }
             print("   " + Glacier.iceStats(t).line)
         }
+    }
+
+    /// V→U in der PRODUKTION (Issue #174, Nachkalibrierung der Firn-Grenze,
+    /// `docs/glacier-measurements.md` §L): `SimConfig.production` mit dem Einlauf
+    /// der Brücke, Eis-Arm gegen eisfreien Arm mit demselben Seed, gepaart auf
+    /// den am Ende vergletscherten Zellen. Der Pflichtwächter
+    /// (`testGlaciatedValleysWidenTowardsU`) läuft auf der gepinnten alten Welt;
+    /// diese Messung zeigt, dass die Produktions-Welt dieselbe Richtung geht.
+    /// Produktionszellen sind kleiner (0,156 statt 0,34 Welteinheiten), deshalb
+    /// mehrere Halbbreiten.
+    ///
+    ///     RS_MEASURE=1 RS_SEEDS=1337,20 RS_YEARS=10000,20000,30000 \
+    ///         swift test … --filter testGlacierProductionValleyDiagnostic
+    func testGlacierProductionValleyDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let env = ProcessInfo.processInfo.environment
+        let seeds = (env["RS_SEEDS"] ?? "1337,20").split(separator: ",").compactMap { UInt32($0) }
+        let checkpoints = (env["RS_YEARS"] ?? "10000,20000,30000").split(separator: ",").compactMap { Double($0) }
+        let variants = (env["RS_VARIANTS"] ?? "base").split(separator: ";").map(String.init)
+        let dt = Double(env["RS_DT"] ?? "") ?? 100
+        for seed in seeds { for v in variants {
+            let c = Glacier.variant(v, of: SimConfig.production)
+            var off = c; off.iceEnabled = false
+            let ice = Terrain(config: c, seed: seed, settleYears: SimConfig.productionSettleYears)
+            let ref = Terrain(config: off, seed: seed, settleYears: SimConfig.productionSettleYears)
+            for target in checkpoints {
+                for t in [ice, ref] { while t.years < target - 1e-6 { t.step(dtYears: min(dt, target - t.years)) } }
+                let cells = Glacier.glacierCells(ice)
+                var row = String(format: "VUP s%d %@ %.0fk | Eiszellen %d", seed, v, target / 1000, cells.count)
+                for w in [6, 10, 14] {
+                    let p = Glacier.pairedShape(ice, ref, cells: cells, halfWidth: w)
+                    row += String(format: " | W%d b %.3f / %.3f Δ %+.3f n %d", w, p.a, p.b, p.a - p.b, p.count)
+                }
+                print(row); fflush(stdout)
+            }
+        } }
     }
 
     /// Verhältnis **Moräne zu glazialem Abtrag**: wie viel von dem, was das Eis
@@ -728,30 +769,274 @@ final class Glacier: XCTestCase {
 
     // MARK: - Abnahme 5: dt-Invarianz und Determinismus
 
-    /// Gleiche Simulationszeit, verschiedene Schrittweiten → dasselbe Eis. Der
-    /// Transport ist sub-getaktet, die Bilanz exakt relaxiert; übrig bleibt die
-    /// Operator-Splitting-Drift, die dieses Projekt benannt zulässt
-    /// (`docs/dt-invariance-measurements.md` §5) — deshalb Schranken statt
-    /// Bit-Gleichheit. Gemessene Spanne: `docs/glacier-measurements.md` §G.
+    /// Gleiche Simulationszeit, verschiedene Schrittweiten → dasselbe Eis UND
+    /// derselbe Gletscherschliff. Aus EINEM Zustand (Jahr 5000, volle Physik)
+    /// laufen 1000 Jahre einmal als ein Schritt (Sprung), als 10 × 100 und als
+    /// 64 × 15,625 (Zeitraffer-Takt), auf drei Seeds.
+    ///
+    /// Warum Schrittpaare statt langer Läufe (der Wächter bis Issue #174): über
+    /// 20.000 Jahre laufen zwei Schrittweiten auch ohne jeden Fehler
+    /// auseinander (Tropfen-Splitting, `docs/dt-invariance-measurements.md` §5),
+    /// und die Eismasse hängt an der Gipfelhöhe über der Firn-Grenze — sie
+    /// verstärkt jede Abweichung im Relief. Der alte Wächter musste deshalb
+    /// 15 % zulassen und lag auf seiner Welt zufällig in einem ruhigen Bereich,
+    /// während die Produktion um Faktor 2,5 auseinanderlief. EIN Abschnitt aus
+    /// demselben Zustand kann nicht chaotisch divergieren: was hier abweicht,
+    /// ist Operator-Splitting im Eis-Pfad selbst, auf jedem Seed gleichsinnig.
+    ///
+    /// Und warum `cfg` statt `quietCfg`: zwei der drei Ursachen lagen in der
+    /// Kopplung an den Rest des Schritts (die Pfützen-Verlandung füllte den
+    /// Schliff wieder auf, die Temperatur stand auf dem Schrittanfang);
+    /// `quietCfg` schaltet die Verlandung ab und hätte sie nie gesehen.
+    ///
+    /// Gemessen (`docs/glacier-measurements.md` §L, n = 256, Jahr 5000, Spanne
+    /// über die drei Arme): vor dem Fix Absenkung 51–76 %, Masse 3,2–4,7 % —
+    /// der Sprung schliff nur 25–50 % dessen, was der Zeitraffer schliff;
+    /// danach Absenkung 2,0–3,7 %, Masse 0,5–1,7 %. Die Schranken liegen
+    /// dazwischen.
     func testIceIsFramerateIndependent() {
-        var results: [(dt: Double, mass: Double, cells: Int)] = []
-        for dt in [100.0, 500.0, 2500.0] {
-            let t = Terrain(config: quietCfg(n: 256), seed: 1337)
-            while t.years < 20_000 { t.step(dtYears: dt) }
-            let s = Glacier.iceStats(t)
-            var mass = 0.0
-            for k in 0..<t.cfg.count { mass += t.ice[k] }
-            results.append((dt, mass, s.glacier))
-            print(String(format: "dt %6.0f → Eismasse %.5f, Zellen %d", dt, mass, s.glacier))
+        for seed: UInt32 in [1337, 42, 20] {
+            let src = Terrain(config: cfg(n: 256), seed: seed)
+            run(src, to: 5_000)
+            let arms = [1000.0, 100.0, 15.625].map {
+                Glacier.iceArm(from: src, seed: seed, dt: $0, span: 1000)
+            }
+            for a in arms {
+                print(String(format: "Seed %d, dt %7.3f → Eismasse %.4f, Zellen %d, Absenkung unter Eis %.6f",
+                             seed, a.dt, a.mass, a.cells, a.lowering))
+            }
+            XCTAssertGreaterThan(arms.map(\.mass).min()!, 0, "Seed \(seed): kein Eis in einem der Arme")
+            XCTAssertGreaterThan(arms.map(\.lowering).min()!, 0,
+                                 "Seed \(seed): Testaufbau, das Eis schleift nicht")
+            XCTAssertLessThan(Glacier.spread(arms.map(\.lowering)), 0.15,
+                              "Seed \(seed): Gletscherschliff hängt an der Schrittweite: \(arms.map(\.lowering))")
+            XCTAssertLessThan(Glacier.spread(arms.map(\.mass)), 0.03,
+                              "Seed \(seed): Eismasse hängt an der Schrittweite: \(arms.map(\.mass))")
+            XCTAssertLessThan(Glacier.spread(arms.map { Double($0.cells) }), 0.05,
+                              "Seed \(seed): Eisfläche hängt an der Schrittweite: \(arms.map(\.cells))")
         }
-        let masses = results.map(\.mass)
-        let lo = masses.min()!, hi = masses.max()!
-        XCTAssertGreaterThan(lo, 0, "kein Eis in einem der Arme")
-        XCTAssertLessThan((hi - lo) / lo, 0.15,
-                          "Eismasse hängt an der Schrittweite: \(masses)")
-        let cells = results.map { Double($0.cells) }
-        XCTAssertLessThan((cells.max()! - cells.min()!) / cells.min()!, 0.20,
-                          "Eisfläche hängt an der Schrittweite: \(results.map(\.cells))")
+    }
+
+    /// Nach einem Weltwechsel müssen neue Firnquellen den Arbeitsbereich
+    /// aufspannen. Alte Scratch-Raten dürfen am kleineren oder verschobenen
+    /// Rand keinen Zufluss erzeugen. Vergleich gegen jeweils frische Puffer.
+    func testIceDomainFollowsNewFirnAndReplacedWorld() {
+        let c = cfg(n: 64)
+        var blank = Terrain(config: c, seed: 1337).state
+        let bed = c.sea + 0.2
+        for k in 0..<c.count {
+            blank.h[k] = bed; blank.rock[k] = bed; blank.sed[k] = 0
+            blank.ice[k] = 0; blank.snow[k] = 0; blank.temperature[k] = 5.8
+        }
+        let reused = Terrain(allocating: c, seed: 1337)
+        for (i, j) in [(8, 8), (12, 8), (c.n - 3, c.n - 3), (c.n - 6, c.n - 3)] {
+            var state = blank
+            let k = j * c.n + i
+            state.h[k] = c.sea + 0.65; state.rock[k] = state.h[k]
+            state.snow[k] = 0.2; state.temperature[k] = -5.9
+            reused.restore(state)
+            let fresh = Terrain(allocating: c, seed: 1337); fresh.restore(state)
+            for dt in [1000.0, 5000.0, 100.0] {
+                reused.updateIce(dt: dt); fresh.updateIce(dt: dt)
+                XCTAssertEqual(reused.ice, fresh.ice, "Alter Scratch nach Weltwechsel bei \(i),\(j)")
+                XCTAssertEqual(reused.h, fresh.h)
+                XCTAssertEqual(reused.sed, fresh.sed)
+                XCTAssertEqual(reused.underIce, fresh.underIce)
+            }
+            XCTAssertGreaterThan(reused.ice[k], 0, "Die neue Firnquelle wurde übersprungen")
+        }
+    }
+
+    /// Dickes Eis auf flachem Bett: der Fall, in dem der Transport bis Issue
+    /// #174 instabil lief. Die Sub-Taktung richtete sich nur nach dem
+    /// steilsten Oberflächen-Abfall; auf einer fast ebenen Eisplatte ist der
+    /// klein, also lief EIN Teilschritt mit `kappa·I` weit über 1/4, und der
+    /// Schachbrett-Modus der Oberfläche wuchs je Teilschritt um `|1 − 8·kappa·I|`.
+    /// In der Produktion schliff das aufgeschaukelte Gefälle bei dt = 1000 im
+    /// Mittel 0,065 unter dem Eis in einem Schritt (§L).
+    ///
+    /// Aufbau ohne Welt-Realisierung: n = 64, ebenes Bett über der Firn-Grenze,
+    /// 1.0 Eis mit einem Schachbrett-Muster von ±0.001, keine Zufuhr, keine
+    /// Erosion. 2000 Jahre als EIN Aufruf gegen 20 × 100: die Felder müssen
+    /// übereinstimmen, und das Muster muss abklingen statt wachsen.
+    func testThickIceTransportIsStableForLargeSteps() {
+        var c = cfg(n: 64)
+        c.iceErodeK = 0; c.iceMoraineK = 0
+        var s = Terrain(config: c, seed: 1337).state
+        let nn = c.n
+        let bed = c.sea + 0.6                         // T = −4,6 °C: keine Schmelze
+        func sign(_ k: Int) -> Double { ((k % nn) + (k / nn)) % 2 == 0 ? 1 : -1 }
+        for k in 0..<c.count {
+            s.h[k] = bed; s.rock[k] = bed; s.sed[k] = 0
+            s.ice[k] = 1.0 + 0.001 * sign(k)
+            s.snow[k] = 0
+        }
+        // Größte Abweichung vom Mittel: die Platte startet mit ±0.001 und muss
+        // glatter werden, nicht rauer.
+        func roughness(_ t: Terrain) -> Double {
+            let mean = t.ice.reduce(0, +) / Double(c.count)
+            return t.ice.map { abs($0 - mean) }.max()!
+        }
+        let jump = Terrain(allocating: c, seed: 1337); jump.restore(s)
+        let fine = Terrain(allocating: c, seed: 1337); fine.restore(s)
+        jump.updateIce(dt: 2000)
+        for _ in 0..<20 { fine.updateIce(dt: 100) }
+        var worst = 0.0
+        for k in 0..<c.count { worst = max(worst, abs(jump.ice[k] - fine.ice[k])) }
+        print(String(format: "Schachbrett ±0.001 → Rauheit Sprung %.3e, 20 × 100 %.3e; größte Abweichung %.3e",
+                     roughness(jump), roughness(fine), worst))
+        XCTAssertLessThan(roughness(jump), 0.001, "Sprung: die Eisoberfläche schaukelt sich auf")
+        XCTAssertLessThan(roughness(fine), 0.001, "20 × 100: die Eisoberfläche schaukelt sich auf")
+        XCTAssertLessThan(worst, 1e-3, "Eisfeld hängt an der Schrittweite (max \(worst))")
+    }
+
+    /// Ein Arm des Schrittweiten-Vergleichs: `span` Jahre aus DEMSELBEN Zustand
+    /// in Schritten à `dt`, danach Eismasse, vergletscherte Zellen und die
+    /// mittlere Bett-Absenkung unter dem Eis des Ausgangszustands.
+    struct IceArm { var dt: Double; var mass: Double; var cells: Int; var lowering: Double }
+
+    static func iceArm(from src: Terrain, seed: UInt32, dt: Double, span: Double,
+                       config: SimConfig? = nil) -> IceArm {
+        let c = config ?? src.cfg
+        let t = Terrain(allocating: c, seed: seed); t.restore(src.state)
+        let steps = Int((span / dt).rounded())
+        for _ in 0..<steps { t.step(dtYears: dt) }
+        var mass = 0.0, lowering = 0.0, under = 0
+        for k in 0..<c.count {
+            mass += t.ice[k]
+            if src.ice[k] > c.iceMinThickness && src.h[k] > c.sea {
+                lowering += src.h[k] - t.h[k]; under += 1
+            }
+        }
+        return IceArm(dt: dt, mass: mass, cells: Glacier.iceStats(t).glacier,
+                      lowering: under == 0 ? 0 : lowering / Double(under))
+    }
+
+    /// Größte relative Abweichung einer Kennzahl über die Arme.
+    static func spread(_ v: [Double]) -> Double {
+        let lo = v.min()!, hi = v.max()!
+        return (hi - lo) / max(abs(lo), abs(hi), 1e-12)
+    }
+
+    /// Schrittpaar-Messung: aus EINEM Zustand 1000 Jahre als 1 × 1000,
+    /// 10 × 100 und 64 × 15,625 (Zeitraffer-Takt) — für die Wahl des Aufbaus
+    /// von `testIceIsFramerateIndependent` (`docs/glacier-measurements.md` §L).
+    ///
+    ///     RS_MEASURE=1 RS_GRID=256 RS_SEED=1337,42,20 RS_START=5000 swift test …
+    ///         --filter testIceStepPairDiagnostic
+    ///
+    /// `RS_GRID=prod` misst auf `SimConfig.production` mit Einlauf,
+    /// `RS_VARIANTS="base;hill=0;uplift=0"` wiederholt die Arme mit Ablationen
+    /// (nur die drei Arme, der Vorlauf bleibt Produktion).
+    func testIceStepPairDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let env = ProcessInfo.processInfo.environment
+        let seeds = env["RS_SEED"].map { $0.split(separator: ",").compactMap { UInt32($0) } }
+            ?? [1337, 42, 20]
+        let starts = env["RS_START"].map { $0.split(separator: ",").compactMap { Double($0) } }
+            ?? [5_000]
+        let grid = env["RS_GRID"] ?? "256"
+        let variants = (env["RS_VARIANTS"] ?? "base").split(separator: ";").map(String.init)
+        for seed in seeds {
+            let src: Terrain
+            if grid == "prod" {
+                src = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+            } else {
+                src = Terrain(config: cfg(n: Int(grid) ?? 256), seed: seed)
+            }
+            for start in starts {
+                run(src, to: start)
+                for variant in variants {
+                    let c = Glacier.variant(variant, of: src.cfg)
+                    let arms = [1000.0, 100.0, 15.625].map {
+                        Glacier.iceArm(from: src, seed: seed, dt: $0, span: 1000, config: c)
+                    }
+                    for a in arms {
+                        print(String(format: "[EIS-PAAR] n %@ s%d J%.0f %@ dt %7.3f | Eis %.4f | Zellen %d | Absenkung %.6f",
+                                     grid, seed, start, variant, a.dt, a.mass, a.cells, a.lowering))
+                    }
+                    print(String(format: "[EIS-PAAR] n %@ s%d J%.0f %@ Spanne Masse %.2f %% Zellen %.2f %% Absenkung %.2f %%",
+                                 grid, seed, start, variant, 100 * Glacier.spread(arms.map(\.mass)),
+                                 100 * Glacier.spread(arms.map { Double($0.cells) }),
+                                 100 * Glacier.spread(arms.map(\.lowering))))
+                }
+            }
+        }
+    }
+
+    /// Config-Variante für die Ablationen der Schrittpaar-Messung:
+    /// `hill=0,hyd=0` usw., `base` ist die unveränderte Config.
+    static func variant(_ spec: String, of base: SimConfig) -> SimConfig {
+        var c = base
+        for kv in spec.split(separator: ",") {
+            let p = kv.split(separator: "=")
+            guard p.count == 2, let v = Double(p[1]) else { continue }
+            switch p[0] {
+            case "hill": c.hillDiffusion = v
+            case "hyd": c.hydraulicPerYear = v
+            case "outlet": c.outletErode = v
+            case "wave": c.waveRelax = v
+            case "pond": c.puddleFillYears = v
+            case "erode": c.iceErodeK = v
+            case "moraine": c.iceMoraineK = v
+            case "firn": c.iceFirnPerSnowYear = v
+            case "turn": c.iceTurnoverYears = v
+            case "melt": c.iceMeltPerKYear = v
+            case "flow": c.iceFlowK = v
+            case "temp": c.climateSeaLevelTemp = v
+            case "ifirn": c.iceFirnTemp = v
+            case "lapse": c.climateLapseRate = v
+            case "ice": c.iceEnabled = v != 0
+            case "mexp": c.iceErodeFluxExp = v
+            case "uplift":
+                c.upliftDecayStartPer100y = v; c.upliftDecayFloorPer100y = v; c.reliefServoPer100y = v
+            default: break
+            }
+        }
+        return c
+    }
+
+    /// Eismasse und -fläche in der PRODUKTION (`SimConfig.production` mit dem
+    /// Einlauf der Brücke) über lange Läufe in verschiedenen Schrittweiten —
+    /// die Tabelle in `docs/glacier-measurements.md` §L.
+    ///
+    ///     RS_MEASURE=1 RS_SEED=1337 RS_DTS=15,100,1000 RS_YEARS=20000,100000 \
+    ///         swift test -c release --package-path SimCore \
+    ///         -Xswiftc -swift-version -Xswiftc 5 --filter testIceDtSweepDiagnostic
+    ///
+    /// Die Läufe sind unabhängig und lassen sich je Seed/dt parallel starten.
+    func testIceDtSweepDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let env = ProcessInfo.processInfo.environment
+        let seeds = env["RS_SEED"].map { $0.split(separator: ",").compactMap { UInt32($0) } }
+            ?? [1337, 42, 20]
+        let dts = env["RS_DTS"].map { $0.split(separator: ",").compactMap { Double($0) } }
+            ?? [15, 100, 1000]
+        let checkpoints = env["RS_YEARS"].map { $0.split(separator: ",").compactMap { Double($0) } }
+            ?? [20_000, 100_000]
+        var rows: [String] = []
+        for seed in seeds {
+            for dt in dts {
+                let started = Date()
+                let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+                for target in checkpoints {
+                    while t.years < target - 1e-6 { t.step(dtYears: min(dt, target - t.years)) }
+                    let s = Glacier.iceStats(t)
+                    var mass = 0.0
+                    for k in 0..<t.cfg.count { mass += t.ice[k] }
+                    let row = String(format: "| %d | %.0f | %.0f | %.2f | %d | %.4f | %.4f | %.0f s |",
+                                     seed, dt, t.years, mass, s.glacier, s.maxThick, s.maxH,
+                                     Date().timeIntervalSince(started))
+                    print("[EIS-DT] " + row)
+                    rows.append(row)
+                }
+            }
+        }
+        print("\n=== EIS-DT ===")
+        print("| Seed | dt | Jahr | Eismasse | Eiszellen | max. Dicke | maxH | Zeit |")
+        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        rows.forEach { print($0) }
+        print("=== ENDE EIS-DT ===\n")
     }
 
     /// `dt = 0` (Sculpt-Pfad) darf die Eisbilanz nicht um ein ULP verschieben —

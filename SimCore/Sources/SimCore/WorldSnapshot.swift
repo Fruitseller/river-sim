@@ -88,7 +88,21 @@ public enum WorldSnapshot {
     /// nicht und ist damit ohnehin nicht mehr dekodierbar — der Sprung sorgt nur
     /// dafür, dass der Nutzer die klare Versions-Meldung sieht statt eines
     /// Plist-Fehlers.
-    public static let version: UInt32 = 4
+    /// Version 5 (Issue #174): die Großform-Stellschraube `rangeLandform`
+    /// reist über die synthetisierte Config-Kodierung mit — eine Version-4-Datei
+    /// hat den Schlüssel nicht (Begründung wie bei Version 4).
+    /// Version 6 (Issue #174, Paket B): Feld `barAge` (Alter der
+    /// Gleithang-Bänke) und die Stellschrauben des Mäandergürtels.
+    /// Version 7 (Issue #187): die Stellschrauben der Kopplung Gürtel ↔
+    /// Entwässerung (`meanderBeltCoupling` …) reisen über die synthetisierte
+    /// Config-Kodierung mit (Begründung wie bei Version 4).
+    /// Version 8 (Issue #174): die Gleichgewichtslinien-Temperatur des Eises
+    /// (`iceFirnTemp`) reist über die synthetisierte Config-Kodierung mit
+    /// (Begründung wie bei Version 4).
+    /// Version 9 (Issue #174, Delta): die Stellschrauben der Delta-Schüttung
+    /// (`deltaTrapFraction` ff.) reisen über die Config-Kodierung mit — eine
+    /// Version-8-Datei hat die Schlüssel nicht (Begründung wie bei Version 4).
+    public static let version: UInt32 = 9
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
@@ -412,6 +426,7 @@ public enum WorldSnapshot {
         .init("snow", \.snow, mayBeEmpty: true),
         .init("ice", \.ice, mayBeEmpty: true),
         .init("veg", \.veg), .init("riparian", \.riparian),
+        .init("barAge", \.barAge),
         .init("hf", \.hf), .init("waterLevel", \.waterLevel),
         .init("lakeBalance", \.lakeBalance), .init("saltCrust", \.saltCrust),
         .init("endorheicInflow", \.endorheicInflow),

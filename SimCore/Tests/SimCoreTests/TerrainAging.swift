@@ -31,6 +31,26 @@ final class TerrainAging: XCTestCase {
     /// ab 10k flach bei ≈ −0.030 — genau das Plateau, das dieser Test ausschließt.
     func testAgingTrajectoryOver100k() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731: das Eis hält den Gipfel (s. unten)
+        // Gürtel-Wachstum vor der Neukalibrierung #187 (Rate 0,02, Kern 1,5):
+        // mit 0,03 / 1,0 fällt das robuste Relief auf DIESER Realisierung in der
+        // ersten Hälfte schneller (0,1802 → 0,1177 in 50k) und steht in 100k
+        // gleich tief (0,1157 gegen 0,1123); „sinkt in der zweiten Hälfte um
+        // 5 %" misst dann die Form der Kurve, nicht ein Plateau. Die Seeds 42
+        // und 20 halten das Kriterium auch mit 0,03 (Verhältnis 0,90 / 0,81),
+        // 1337 mit 0,02 und 0,04 (0,87 / 0,84);
+        // `testAgingTrajectoryVariantsDiagnostic`.
+        c.meanderBeltRate = 0.02
+        c.meanderBeltKernelWidths = 1.5
+        // Delta-Schüttung (#174, Punkt 26) aus: sie baut an den Mündungen
+        // neues Land knapp über dem Meer, auf dieser Realisierung +2,3 %
+        // Landzellen in der zweiten Hälfte (17.549 → 17.948, erste Fassung
+        // des Passes). Median und p95
+        // der Landhöhe sinken dann gleich schnell (−0,031 / −0,033), und das
+        // robuste Relief p95 − Median steht (0,1255 → 0,1235) — Landzuwachs,
+        // nicht ausbleibendes Altern. Dieses Kriterium misst die Abtragung.
+        c.deltaTrapFraction = 0
         let t = Terrain(config: c, seed: 1337)
 
         let relief0 = t.landRelief()

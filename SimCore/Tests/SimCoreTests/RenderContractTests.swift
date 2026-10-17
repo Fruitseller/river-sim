@@ -72,9 +72,13 @@ final class RenderContractTests: XCTestCase {
                        hint: "100k behält sichtbare Reliefstruktur")
         assertContains(main, "const TERRAIN_DETAIL_AGE_YEARS := 100000.0",
                        hint: "Rampe endet am größten UI-Zeitsprung")
+        // Das Alter der hochgeladenen Höhen, nicht das der Sim: im Zeitraffer
+        // rechnet die schon am nächsten Schritt (perf-measurements §L).
+        assertContains(main, "func _upload_heights(bytes: PackedByteArray, year: float) -> void:",
+                       hint: "Der Höhen-Upload kennt das Jahr seiner Höhen")
         assertContains(main,
-                       "set_shader_parameter(\"detail_strength\", terrain_detail_strength(sim.currentYear()))",
-                       hint: "Shader-Kontrast folgt dem aktuellen Sim-Alter")
+                       "set_shader_parameter(\"detail_strength\", terrain_detail_strength(year))",
+                       hint: "Shader-Kontrast folgt dem Sim-Alter der gezeigten Höhen")
         assertContains(main, "clampf(years / TERRAIN_DETAIL_AGE_YEARS, 0.0, 1.0)",
                        hint: "Detailkontrast bleibt vor Jahr 0 und nach 100k gedeckelt")
         assertContains(shader, "uniform float detail_strength = 0.16;",
@@ -126,16 +130,24 @@ final class RenderContractTests: XCTestCase {
         // sie liegt schon in Welteinheiten vor, die Überhöhung wendet der
         // Back-Pass genau einmal an (unten).
         for use in ["VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);",
-                    "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hD - hU) * hscale));",
+                    // Vertex-Normale mit demselben Vorzeichen wie die Pixel-Normale
+                    // (hU bei +z): Godots Schatten-Normal-Bias liest sie
+                    // (Review zu #174, vorher `-(hD - hU)`).
+                    "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hU - hD) * hscale));",
                     "vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0,"
                         + " -s_uv.y * hscale / world_size));",
-                    "vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,"] {
+                    "vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,",
+                    // Weltsteigung der Gletscherspalten (#174 D) und des
+                    // Raster-Wassers an Wänden, dieselbe Umrechnung wie die
+                    // Pixel-Normale.
+                    "float world_slope = length(coarse_slope) * hscale / world_size;"] {
             assertContains(shader, use,
                            hint: "Überhöhung wird unskaliert angewandt (keine Zusatzfaktoren)")
         }
-        // Und keine fünfte, ungeprüfte Anwendung: 1 Deklaration + 1 Vertex-Höhe
-        // + 2 Vertex-Normale + 2 Pixel-Normale + 1 Materialkoordinate = 7.
-        XCTAssertEqual(shader.count(of: "hscale"), 7,
+        // Und keine weitere, ungeprüfte Anwendung: 1 Deklaration + 1 Vertex-Höhe
+        // + 2 Vertex-Normale + 2 Pixel-Normale + 1 Materialkoordinate
+        // + 1 Spalten-Steigung = 8.
+        XCTAssertEqual(shader.count(of: "hscale"), 8,
                        "Neue oder entfernte `hscale`-Anwendung im Terrain-Shader —"
                        + " Liste der geprüften Stellen mitziehen")
         // Back-Pass der Verschiebung: Main.gd setzt denselben Uniform, der

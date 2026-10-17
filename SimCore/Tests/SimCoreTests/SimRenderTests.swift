@@ -14,10 +14,19 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(first.surfaces.count, terrain.cfg.count * 4)
     XCTAssertEqual(first.colors, second.colors)
     XCTAssertEqual(first.surfaces, second.surfaces)
+    // A-Kanal = Sandgewicht als max(Strand, Bank) (Issue #174 C/C2): bis vor
+    // #174 stand dort konstant 255 („opak"), gelesen hat ihn niemand. Sand
+    // liegt nur an der Küste in Brandungs-Reichweite über dem Meer
+    // (`CoastMaterial`) oder auf einer Gleithang-Bank (`barAge` ≥ 0,
+    // `BarMaterial`); sonst bleibt der Kanal 0.
+    let distance = CoastMaterial.seaDistance(terrain)
     XCTAssertTrue(
-      stride(from: 3, to: first.colors.count, by: 4)
-        .allSatisfy { first.colors[$0] == 255 },
-      "RGBA-Farbpuffer muss vollständig opak sein")
+      (0..<terrain.cfg.count).allSatisfy { k in
+        CoastMaterial.inSurf(distance[k]) && terrain.h[k] > terrain.cfg.sea
+          || terrain.barAge[k] >= 0
+          || first.colors[k * 4 + 3] == 0
+      },
+      "Sand nur an der Küste und auf Bänken")
   }
 
   func testDiagnosticStatsKeepTheirExecutableIndexContract() {

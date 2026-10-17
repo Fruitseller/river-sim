@@ -10,6 +10,15 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Aktueller Stand (Kurzfassung)
 
+- **Zielbild #174, Paket A (Großform):** `generate()` legt die Grate nicht
+  mehr über die ganze Landfläche, sondern entlang EINES Gebirgskamms mit
+  Seitenästen (`RangeSkeleton`, `Landform.swift`); daneben Hügelland, zur
+  Küste eine Ebene, zwei bis vier Täler vom Kamm zum Meer, die Tektonik nur im
+  Gebirgsgürtel, kein Land am Gitterrand. Abnahmepunkte 1–4 auf allen
+  Matrix-Seeds erfüllt (`docs/zielbild-measurements.md`, Wächter
+  `ZielbildLandformTests`). Mechanik-Wächter mit Testaufbau auf der alten Welt
+  pinnen `calibrationRangeLandform`. Die Seed-1337-Welt hat damit auch kein
+  Riesenbecken mehr (s. „See-Ausreißer" unten, für die neue Form zu prüfen).
 - **Landschaftsqualität #116/#117:** die Flusstal-Studie (#116, PR #121) hat
   vier prozedurale Hebel bewiesen: gebackene Render-Verschiebung (Rinnen,
   geschärfte Grate), Kronendach im Maßstab 1 Einheit ≈ 100 m, Licht mit
@@ -20,7 +29,8 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   § Abschluss Spec #156. Schutzmaske als godot-freie Render-Ableitung in
   SimRender (#154).
   Die verbindliche Abnahmematrix für die Vorher/Nachher-Bewertung aller Folge-Tickets
-  ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, `scripts/graphics-matrix.sh`,
+  ist in #150 definiert (3 Seeds × 3 Stadien × 6 Kameras, seit #174 dazu die drei
+  Vorlagen-Kameras `diorama`/`valley`/`close`, `scripts/graphics-matrix.sh`,
   `GraphicsMatrixTests`). In der Anwendung: Licht und Atmosphäre (#151), der
   Ozean (#155, Kalibrierung als `WaterRender.ocean*`) und die Render-Verschiebung
   von Rinnen und Graten (#153, Render-Gitter in Sim-Auflösung, Pinselring und
@@ -28,6 +38,43 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   mit dem Geländealter ein, Überblendung im Zeitraffer) und das Kronendach
   (#152, ersetzt die Instanzbäume; Waldmaske als godot-freie Render-Ableitung,
   Kronen im Terrain-Shader). Damit hat die Studie keine Hebel mehr.
+  Zielbild #174 (Vorlagen A–C, Abnahmebogen 50 × 2 %), Paket D (Render):
+  geomorphologische Materialverteilung (Fels auf steil-konvex mit Klüftung,
+  Schutthalden, Firn und blankes Gletschereis mit Spalten und Moränen,
+  Rohboden nur auf gestörten Flächen, Talboden-Wiese; Kalibrierung
+  `SimCore.MaterialRender`) und Wolkenkörper über dem Kamm mit
+  sonnenprojizierten Schatten; die PBR-Variante `prototype` der Studie ist
+  damit entfernt (`docs/graphics-quality.md` § Material, Schnee, Wolken).
+  Status in #174: Großform (A) und Mäandergürtel (B) sind kalibriert und
+  abgenommen (s. eigene Punkte oben und Offene Punkte), Paket C hat
+  Restpunkte (Stream-Map im Oberlauf), offen ist die Abnahme am Bild durch
+  den Projekteigner (E). Deltas (Punkt 26) baut seit `Terrain.deltaDeposit`
+  die Sim: der Abtrag der Stream-Power-Inzision landet als Baum aus
+  tropfenförmigen Mündungsbarren vor der Mündung, Inseln mit Sandrand und
+  Bewuchs zwischen Meerwasser-Rinnen; Flüsse laufen voll bis unter die
+  Wasserlinie, ohne Sand über dem Gerinne (`docs/zielbild-measurements.md`
+  § Delta). Offen: die Deltas bleiben kleiner als in Vorlage B (die
+  Mündungen wandern je 1000 Jahre bei einem Drittel der großen Flüsse um
+  10–50 Zellen, jeder Lappen ist jung), und an steilen Küstenstufen trägt das
+  Materialmodell (#174 D) weiter ein Felsband.
+
+- **Bedienung nach Vorlage B/C (#174, Paket E):** Glas-Panels aus EINEM Theme
+  (`game/ui/glass_theme.tres`), vier Randspalten (Titel/Jahr/Tempo und
+  Werkzeugpalette oben links, Zeitsprünge oben rechts, Diagnose/Welt/Kamera/Seed
+  unten rechts), gezeichnete Icons (`game/scripts/UiIcon.gd`) statt Emoji,
+  Pinsel als Gitterkuppel im echten Falloff-Profil auf der sichtbaren Fläche,
+  Kamera-Presets Diorama/Tal/Nah auf F1–F3, adaptiv (Diorama rahmt die
+  Landfläche, Tal/Nah zielen auf den größten Lauf; als Matrix-Kameras mit
+  festen Werten).
+  Weichzeichner hinter den Glas-Panels (Punkt 43): je Panel ein Rahmen mit
+  Weichzeichner-Rechteck unter dem Glas (`game/ui/glass_blur.gdshader`, liest
+  die Mip-Kette des Bildschirms; Radius, Abdunklung und Eckenradius aus dem
+  Theme, `RS_UI_BLUR=0` schaltet ihn ab). Kosten gemessen: rund 0,5 ms je Bild
+  (gepaart, maximiert, `balanced`, Standbild und Fahrt), Schrift auf Schnee wie
+  Wasser mindestens Kontrast 4,5 (`docs/zielbild-measurements.md` § Glas-
+  Weichzeichner).
+  Offen: Abnahme am Bild durch den Projekteigner (Bogen #174, Punkte 41–45),
+  Feinabstimmung der Preset-Werte am gerenderten Bild.
 
 - **Erosion/Terrain:** Droplet-Hydraulik (`Hydraulic.swift`, Lague/nickmcd) legt die
   feine Textur, Flächen-Stream-Power (`outletIncision`) trägt die Makro-Täler, lineare
@@ -172,6 +219,56 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Messreihen: `docs/flatten-regeneration-measurements.md`.
 
 ## Offene Punkte
+
+**Zielbild #174, Paket B (Mäandergürtel), kalibriert.**
+`meanderBelt` (Produktion) ersetzt Migration + Ufer-Stempel: Breite als Sim-Größe,
+Howard–Knutson mit implizitem Lokalterm, Stromab-Anteil und Störquelle,
+asymmetrisches Bett (Kolk außen, Gleithang innen), Gleithang-Bank auf bankfull
+mit `barAge`, Chute-Cutoff, Hauptstamm-Trasse und angeschlossene Zubringer; im
+Gürtelbett tragen die Tropfen nicht ab. Der geparkte Auen-Pass
+`floodplainAggradation` bleibt geparkt, die Aue entsteht aus der lateralen
+Planation. Abnahme der Punkte 9–13 im Zeitmittel je Seed (Jahr
+10.000–20.000 und 50.000–100.000): auf den Matrix-Seeds 28 von 30 erfüllt
+(Sinuosität 1,63–1,85, Asymmetrie 2,35–3,67, sichtbare junge Altarme
+3,2–11,2); offen Gürtel/Amplitude Seed 20 im ersten Fenster (2,6) und λ
+Seed 42 im zweiten (8,3, kaum messbar), beides Realisierungs-Streuung (auf
+24 Seeds 182 von 240 Punkten). Wassergefüllt sind davon 1,0–3,6 (das
+Tiefland fällt 3–5 Kanaltiefen je Kanalbreite; trockene junge Altarme zeigt
+der Render als Ried). Stand und Befunde in `docs/zielbild-measurements.md`
+§ Paket B — Zeitmittel-Abnahme. Pakete C (Teile), D, E als eigene PRs.
+
+**Gürtel ↔ Entwässerung gekoppelt (#187, Ansatz Avulsion).** Die Läufe sind
+seit #187 die Hack-Abschnitte des D8-Netzes (der größere Zufluss läuft weiter);
+die alte Linie liefert die Lage, wo sie an ihrem Abschnitt liegt, ihr Abfluss
+kommt aus dem eigenen Abschnitt (kein Erben mehr). Weicht eine Linie über zwei
+Kanalbreiten oder überhöht von ihm ab, springt sie mit der Rate 1/1000 Jahre
+in den D8-Weg (Avulsion, verlassenes Gerinne = Altarm). Gekoppelt bei dt 100:
+85–92 % der wandernden Knoten höchstens 1,5 Zellen von ihrer Rinne (vorher
+60–81 %). Paket B neu kalibriert (24 Seeds: 201 statt 188 von 240). Offen: die
+Zeitmittel-Abnahme läuft in 1000-Jahr-Schritten, im Zeitraffer-Takt (dt 100)
+liegt die Sinuosität bei 1,28–1,35 statt 1,54–1,62 (167 statt 201 von 240; die
+alte Mechanik driftet dort in die andere Richtung); deutlich mehr und kleinere Altarme; `fadeUphill` und die
+Raster-Bank-Schranke bleiben (seltener nötig). Messreihe:
+`docs/zielbild-measurements.md` § Gürtel und Entwässerung: Avulsion (#187).
+
+**Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
+aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der
+Schlinge“ nur am Gerinne, Rippen nur im Bewuchs), Altarm-Verlandung als Ried und
+Vegetationsbogen, Tiefenfarbe im Band nach Querprofil (UV2.y), Abfluss-
+Vertrauen gegen den abreißenden Hauptlauf. Offen: die Stream-Map trackt die
+großen Läufe der neuen Großform kaum (Rest-Lücken im Oberlauf), Hauptlauf am
+Breiten-Deckel (Anheben = Physik, Paket B). Die Delta-Distributäre liefert
+inzwischen die Sim (`deltaDeposit`, s. oben). Messreihe:
+`docs/river-belt-render-measurements.md`.
+
+**Zielbild #174, Pakete B–E (ursprünglicher Befund).** Ist-Messung vor B in
+`docs/zielbild-measurements.md`: die Mäander-Sinuosität kommt aus Zacken in
+Bandbreite (Wellenlänge 1–4 Kanalbreiten statt 10–14), das Querprofil ist
+verkehrt (Außen/Innen 0,6–0,8 statt ≥ 2), und es gibt 900–1800 Hals-Cutoffs
+je 20.000 Jahre. Dazu zwei Befunde aus der Test-Kaskade von A: die Eismasse
+hängt in der Produktion an der Schrittweite (schon vor #174, Faktor bis 3
+zwischen dt 100 und 1000), und die Stream-Map trackt auf der neuen Form die
+großen Läufe schlechter (Render-Lücken, Abnahmepunkt 21).
 
 **Seed 1337 ist ein See-Ausreißer (Aug 2026, gemessen — offen: Entscheidung).**
 Der Default-Seed (`RenderContract.defaultSeed`) erzeugt die mit Abstand
@@ -553,6 +650,12 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Offen geblieben: die Gleichgewichts-DICKE ist auflösungsabhängig
   (∝ `1/(n−1)`, die Fließstrecke in Welteinheiten dagegen nicht) — beschränkt,
   aber bei kleinem `n` dickeres Eis, s. Messreihe §B.
+  Nachtrag #174 (Okt 2026): Eismasse jetzt schrittweiten-unabhängig (dt 15 / 100 /
+  1000 innerhalb 3–6 %), und das Eis hat eine eigene Firn-Grenze
+  (`iceFirnTemp` −2 °C, Gleichgewichtslinie unter der Schnee-Isotherme):
+  Kar- und Talgletscher statt Eiskappe auf der Kamm-Großform, Schnee-, Wald- und
+  Phasen-Klima unverändert. Offen: Seed 42 hat damit fast kein Eis (0,2 %),
+  Schnee und Eis sind im Render beide weiß (`docs/glacier-measurements.md` §L).
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**
@@ -590,9 +693,13 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Hebung niedrig ist (Auslass-Inzision hält den See-Anteil von allein bei ~15%
   diskreten Seen), aber der dokumentierte Rückfall für Konfigurationen mit hoher
   Hebung. Begründung im Config-Kommentar.
-- `floodplainAggradation` liegt deaktiviert als Referenz herum (`floodplainEnabled=false`):
-  per-Zell-Aggradation fügte gemessen 2.7× Zerklüftung/Krusten hinzu. Die Auen kommen
-  jetzt über sanfteres Relief (`baseRelief` 0.78).
+- `floodplainAggradation` liegt deaktiviert als Referenz herum
+  (`floodplainEnabled=false`): die per-Zell-Aggradation fügte gemessen 2.7×
+  Zerklüftung/Krusten hinzu. Seit #174 entsteht die Aue aus der lateralen
+  Planation des Mäandergürtels (`meanderBelt`: Gleithang-Bank gedeckelt auf
+  bankfull, gemessen glatter als vorher, `docs/zielbild-measurements.md`
+  § Paket B); der Gürtel liefert die Aue, der Pass bleibt geparkt
+  (Begründung im Config-Kommentar an `floodplainEnabled`).
 - PR #110, Review-Nacharbeit: Bett-Inzision unabhängig von `outletIncision`,
   separat über `channelTargetDepth = 0` abschaltbar. Render-Übergabe prüft nur
   die Doppelmalungs-Obergrenze 0.045; Bett-Tiefe bleibt ein Sim-Wächter.
@@ -800,8 +907,11 @@ las. Wächter: `RenderFrameTests`.
   RS_*-Env-Schalter; Licht/Environment und Wolkenschatten seit #151 in
   `game/scripts/Lighting.gd` (feste Welt-Sonne, Qualitätsstufen).
 - `game/tests/*.gd` — die Godot-seitigen Wächter (`smoke`, `water_geometry`,
-  `river_ribbons`, `build_stamp_parity`, `water_rings`, `pickaxe_repro`,
-  `lighting`, `relief`, `canopy`) plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter).
+  `water_uniforms`, `river_ribbons`, `build_stamp_parity`, `graphics_study`,
+  `water_rings`, `pickaxe_repro`, `lighting`, `relief`, `canopy`, `ui_layout`)
+  plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter);
+  `sculpt_cost.gd` ist das Messwerkzeug zum Pinsel-Nachzug,
+  `water_contract.gd` der gemeinsame Helfer der Wasser-Vertragstests.
 
 ## Arbeitsweise in diesem Projekt (ernst nehmen)
 

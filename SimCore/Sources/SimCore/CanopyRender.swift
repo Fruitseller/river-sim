@@ -36,8 +36,16 @@ public enum CanopyRender {
     /// 0,45 änderte den Anteil um höchstens 0,6 Punkte und bleibt deshalb.
     /// Tabelle: `docs/graphics-quality.md` § Wald und Wiese (#168), Messlauf
     /// `testCanopyCoverageDiagnostic`.
-    public static let vegetationLo = 0.35
-    public static let vegetationHi = 0.55
+    ///
+    /// Issue #174 (Großform): Kamm, Hügelland und Ebene statt einer Gratfläche
+    /// bieten mehr bewachsbaren Boden; mit 0,35/0,55 stieg der Wald auf bis zu
+    /// 28,6 % des Landes (Seed 42, Jahr 2000; 1337: 15–17 %, 20: 15–25 %).
+    /// 0,40/0,60 — die nächste schon in #168 gemessene Stufe — hält 11,8–23,3 %
+    /// über alle Matrix-Seeds und Jahre (2000/20.000/100.000), also wieder
+    /// „≤ ~22 %" (Abnahmepunkt 40 von #174); 0,45/0,65 hätte 10,4–19,6 %
+    /// ergeben und die Hänge sichtbar ausgedünnt.
+    public static let vegetationLo = 0.40
+    public static let vegetationHi = 0.60
 
     /// Lichtungen und Waldränder: Rauschen verschiebt die Vegetationsschwelle,
     /// der Wald bildet so Gruppen statt einer gleichmäßigen Fläche. Frequenz in

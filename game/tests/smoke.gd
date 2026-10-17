@@ -164,6 +164,9 @@ func _run() -> void:
 	if not _check_sculpt_owns_clock():
 		quit(1)
 		return
+	if not _check_background_step(sim, abs_save):
+		quit(1)
+		return
 
 	sim.step(500.0) # Welt verändern, damit das Laden etwas zurückholen MUSS
 	var load_err: String = sim.loadWorld(abs_save)
@@ -248,6 +251,67 @@ func _check_sculpt_owns_clock() -> bool:
 		ok = false
 	print("sculpt_owns_clock_ok=", ok)
 	main.free()
+	return ok
+
+## Hintergrund-Schritt über die Brücke (docs/perf-measurements.md §L):
+##  - ohne Job gibt `finishStep` nichts;
+##  - ein Aufruf, der die Welt braucht, wartet den laufenden Job ab und LÄSST
+##    dessen Ergebnis liegen (der Aufrufer muss es noch hochladen);
+##  - ein zweiter Start, solange einer unterwegs ist, startet nichts;
+##  - das Frame-Dictionary trägt Auslöser, Jahr und Höhen;
+##  - Determinismus durch die Brücke: derselbe Schritt synchron (nach dem
+##    Laden derselben Welt) ergibt dieselben Höhen, Seespiegel und dasselbe
+##    Wasser. Die vollen Frames vergleicht SimCore (`BackgroundJobTests`).
+## Lädt am Ende die Welt aus `abs_save` zurück, der Aufrufer prüft danach das Laden.
+func _check_background_step(sim: Object, abs_save: String) -> bool:
+	const SETTLED := 0  # FRAME_SETTLED: Wasser ohne Überblenden, vergleichbar
+	var ok := true
+	if sim.stepInFlight() or not (sim.finishStep() as Dictionary).is_empty():
+		push_error("FAIL: ohne beginStep ist ein Schritt unterwegs")
+		ok = false
+	var year0: float = sim.currentYear()
+	sim.beginStep(15.0, SETTLED, 100.0)
+	if not sim.stepInFlight():
+		push_error("FAIL: beginStep startet keinen Schritt")
+		return false
+	var live: PackedFloat32Array = sim.heights() # wartet den Job ab
+	if not sim.stepInFlight():
+		push_error("FAIL: ein wartender Aufruf hat das Ergebnis verworfen")
+		ok = false
+	print("(erwartet: ein Fehler 'beginStep: der vorige Schritt ist noch unterwegs')")
+	sim.beginStep(15.0, SETTLED, 100.0)
+	var frame: Dictionary = sim.finishStep()
+	if sim.stepInFlight():
+		push_error("FAIL: finishStep lässt den Schritt unterwegs")
+		ok = false
+	for key in ["trigger", "year", "heights", "water", "filled", "bands"]:
+		if not frame.has(key):
+			push_error("FAIL: Frame des Hintergrund-Schritts ohne Schlüssel %s" % key)
+			return false
+	var year: float = frame["year"]
+	print("background_step_year=", year, " waited_ms=", sim.stepWaitMilliseconds())
+	if year != year0 + 15.0 or sim.currentYear() != year:
+		push_error("FAIL: Hintergrund-Schritt %s → %s (zweiter Start lief doch?)" % [year0, year])
+		ok = false
+	if (frame["heights"] as PackedByteArray) != live.to_byte_array():
+		push_error("FAIL: Frame-Höhen ≠ Sim-Höhen nach dem Schritt")
+		ok = false
+	# Gegenprobe synchron, ab derselben Welt.
+	var err: String = sim.loadWorld(abs_save)
+	if not err.is_empty():
+		push_error("FAIL: loadWorld: %s" % err)
+		return false
+	sim.step(15.0)
+	var sync: Dictionary = sim.renderFrame(SETTLED, 100.0)
+	for key in ["year", "heights", "filled", "water"]:
+		if sync[key] != frame[key]:
+			push_error("FAIL: Hintergrund-Schritt weicht vom synchronen ab (%s)" % key)
+			ok = false
+	var reload: String = sim.loadWorld(abs_save)
+	if not reload.is_empty():
+		push_error("FAIL: loadWorld: %s" % reload)
+		ok = false
+	print("background_step_ok=", ok)
 	return ok
 
 ## Summe der Höhen — kompakter Vergleichswert für „derselbe Zustand".

@@ -24,6 +24,20 @@ public enum ReliefRender {
     /// beim feinen Detail).
     public static let strength = 0.55
 
+    // Feines Rinnen-Detail des Terrain-Shaders (dieselbe runevision-Funktion
+    // je Pixel, nur als Normale und Schattierung, keine Verschiebung). Bis
+    // zum Review zu #174 standen diese drei Zahlen als Literal-Defaults im
+    // Shader, Main.gd setzte sie nie. Die Stärke `detail_strength` fährt
+    // Main.gd mit dem Geländealter (`terrain_detail_strength`) und behält
+    // ihren Jahr-0-Default (RenderContractTests).
+
+    /// Skala in UV: 0.006 ≈ 4 Sim-Zellen Wellenlänge der größten feinen Rinne.
+    public static let detailScale = 0.006
+    /// Albedo-Abdunklung in den Rinnenböden.
+    public static let detailShade = 0.20
+    /// Anteil der Normal-Perturbation.
+    public static let detailNormal = 1.0
+
     /// Gratschärfung: Faktor auf den positiven Teil von „Höhe minus Ringmittel".
     /// Nur Kuppen und Grate werden angehoben, Mulden bleiben, wo sie sind;
     /// damit sinkt kein Talboden unter ein Flussband. Auf Graten reicht das bis

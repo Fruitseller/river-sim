@@ -150,4 +150,33 @@ final class FingerprintTests: XCTestCase {
                           + "fingerprint() würde das Band still überspringen")
         }
     }
+
+    /// Wächter für Neu-Generierung auf gebrauchtem Terrain (Issue #174):
+    /// `Terrain.generate(seed:settleYears:)` auf einem bereits benutzten Objekt
+    /// muss exakt denselben Zustand erzeugen wie ein frisches `Terrain(...)`.
+    func testGenerateOnUsedTerrainYieldsFreshWorld() {
+        let cfg = SimConfig.production
+        let settle = 200.0
+        // Terrain A: gebraucht mit Seed 1337 und einigen Zeitschritten
+        let a = Terrain(config: cfg, seed: 1337, settleYears: settle)
+        for _ in 0..<3 {
+            a.step(dtYears: 100)
+        }
+        // Neu-Generierung mit Seed 42 auf DEMSELBEN Objekt
+        a.generate(seed: 42, settleYears: settle)
+
+        // Terrain B: frisch instanziiert mit Seed 42
+        let b = Terrain(config: cfg, seed: 42, settleYears: settle)
+
+        XCTAssertEqual(a.fingerprint(), b.fingerprint(),
+                       "generate(seed: 42) auf gebrauchtem Terrain muss bit-identisch zu frischem Terrain sein")
+
+        // Folgeschritte müssen ebenfalls exakt bit-identisch bleiben
+        for _ in 0..<3 {
+            a.step(dtYears: 100)
+            b.step(dtYears: 100)
+        }
+        XCTAssertEqual(a.fingerprint(), b.fingerprint(),
+                       "Folgeschritte nach generate müssen auf beiden Terrains bit-identisch bleiben")
+    }
 }

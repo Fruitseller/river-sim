@@ -26,6 +26,8 @@ public enum WaterUniforms {
         ("water_lake_gate_hi", WaterRender.lakeGateHi),
         ("water_river_mask_lo", WaterRender.riverMaskLo),
         ("water_river_mask_hi", WaterRender.riverMaskHi),
+        ("water_river_depth_lo", WaterRender.riverDepthLo),
+        ("water_river_depth_hi", WaterRender.riverDepthHi),
         ("water_shore_lo", WaterRender.shoreLo),
         ("water_shore_hi", WaterRender.shoreHi),
         ("water_pond_contour_lo", WaterRender.pondContourLo),
@@ -41,13 +43,10 @@ public enum WaterUniforms {
         ("water_ribbon_delta_hi", WaterRender.ribbonDeltaHi),
         // Gemeinsame Wasser-Optik aller drei Shader.
         ("water_fresnel_exponent", WaterRender.fresnelExponent),
-        ("water_fresnel_sky_mix", WaterRender.fresnelSkyMix),
         ("water_opacity_shallow", WaterRender.waterOpacityShallow),
         ("water_opacity_deep", WaterRender.waterOpacityDeep),
-        ("water_roughness_steep", WaterRender.waterRoughnessSteep),
-        ("water_roughness_grazing", WaterRender.waterRoughnessGrazing),
-        ("water_specular_steep", WaterRender.waterSpecularSteep),
-        ("water_specular_grazing", WaterRender.waterSpecularGrazing),
+        ("water_roughness", WaterRender.waterRoughness),
+        ("water_specular", WaterRender.waterSpecular),
         // Offenes Meer (ocean.gdshader, #155).
         ("water_ocean_depth_span", WaterRender.oceanDepthSpan),
         ("water_ocean_mid_depth", WaterRender.oceanMidDepth),
@@ -66,13 +65,32 @@ public enum WaterUniforms {
         ("water_ocean_wave_drift_x", WaterRender.oceanWaveDriftX),
         ("water_ocean_wave_drift_z", WaterRender.oceanWaveDriftZ),
         ("water_ocean_wave_octave_speedup", WaterRender.oceanWaveOctaveSpeedup),
+        // Sedimentfahne (ocean.gdshader, #174 C).
+        ("water_ocean_plume_lod", WaterRender.oceanPlumeLod),
+        ("water_ocean_plume_opacity", WaterRender.oceanPlumeOpacity),
+        // Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
+        ("water_ribbon_bend_depth", WaterRender.ribbonBendDepth),
+        ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),
+        ("water_bar_roughness", WaterRender.barRoughness),
+        // Querprofil und Oberfläche des Bands (Befund #174).
+        ("water_ribbon_waterline", WaterRender.ribbonWaterline),
+        ("water_ribbon_waterline_jitter", WaterRender.ribbonWaterlineJitter),
+        ("water_ribbon_waterline_scale", WaterRender.ribbonWaterlineScale),
+        ("water_ribbon_bank_opacity", WaterRender.ribbonBankOpacity),
+        ("water_ribbon_ripple_frequency", WaterRender.ribbonRippleFrequency),
+        ("water_ribbon_ripple_amplitude", WaterRender.ribbonRippleAmplitude),
+        ("water_ribbon_ripple_stretch", WaterRender.ribbonRippleStretch),
+        ("water_ribbon_ripple_speed", WaterRender.ribbonRippleSpeed),
+        // Zeitraffer-Blende der Bänder und Raster an Steilwänden (Befund #174).
+        ("water_ribbon_fade_cap", WaterRender.ribbonFadeOpacityCap),
+        ("water_wall_slope_lo", WaterRender.rasterWallSlopeLo),
+        ("water_wall_slope_hi", WaterRender.rasterWallSlopeHi),
     ]
 
     /// Farb-Uniforms (`uniform vec3` in den Shadern).
     public static let colors: [(name: String, value: (r: Double, g: Double, b: Double))] = [
         ("water_shallow_color", WaterRender.waterShallowColor),
         ("water_deep_color", WaterRender.waterDeepColor),
-        ("water_sky_reflect_color", WaterRender.skyReflectColor),
         ("water_flow_shimmer_color", WaterRender.flowShimmerColor),
         ("water_delta_plume_color", WaterRender.deltaPlumeColor),
         ("water_oxbow_water_color", WaterRender.oxbowWaterColor),
@@ -80,6 +98,12 @@ public enum WaterUniforms {
         ("water_ocean_mid_color", WaterRender.oceanMidColor),
         ("water_ocean_deep_color", WaterRender.oceanDeepColor),
         ("water_ocean_surf_color", WaterRender.oceanSurfColor),
+        ("water_ocean_plume_color", WaterRender.oceanPlumeColor),
+        ("water_ribbon_shoal_color", WaterRender.ribbonShoalColor),
+        ("water_bar_sand_color", WaterRender.barSandColor),
+        ("water_bar_sand_wet_color", WaterRender.barSandWetColor),
+        ("water_ribbon_bank_color", WaterRender.ribbonBankColor),
+        ("water_bed_color", WaterRender.waterBedColor),
     ]
 
     /// Vertragswerte der Godot-Wächter (Issue #92) — KEINE Shader-Uniforms,

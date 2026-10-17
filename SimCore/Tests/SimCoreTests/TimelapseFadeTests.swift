@@ -18,7 +18,10 @@ final class TimelapseFadeTests: XCTestCase {
         ("hf_tex", "hf_at", "overlay_blend", "overlay_fade"),
         ("color_tex", "color_at", "overlay_blend", "overlay_fade"),
         ("surface_tex", "surface_at", "overlay_blend", "overlay_fade"),
+        ("cover_tex", "cover_at", "overlay_blend", "overlay_fade"),
         ("flow_tex", "flow_at", "overlay_blend", "overlay_fade"),
+        // Raster-Wasser (#174): die EWMA glättet nur von Upload zu Upload.
+        ("water_tex", "water_at", "overlay_blend", "overlay_fade"),
     ]
 
     func testTerrainShaderReadsEveryFieldThroughItsBlend() throws {
@@ -58,10 +61,12 @@ final class TimelapseFadeTests: XCTestCase {
             XCTAssertTrue(try main.captures(pattern: "FieldTexture\\.new\\(\"\(f.tex)\", [A-Za-z_.0-9]+, (true)\\)")
                 .count == 1, "\(f.tex) muss seinen Vorgängerstand halten (keeps_previous)")
         }
-        assertContains(main, "func _upload_heights() -> void:\n\theight_fade.start(",
+        assertContains(main, "func _upload_heights(bytes: PackedByteArray, year: float) -> void:\n\theight_fade.start(",
                        hint: "Die Höhen-Blende startet mit dem Höhen-Upload")
         assertContains(main, "func _upload_overlays(frame: Dictionary) -> void:\n\toverlay_fade.start(",
                        hint: "Die Overlay-Blende startet mit dem Overlay-Upload")
         assertContains(main, "height_fade.bind(ocean_mat)", hint: "Auch das Meer blendet die Höhe")
+        assertContains(main, "terrain_mat.set_shader_parameter(\"water_prev_tex\", wf_state_vp[previous].get_texture())",
+                       hint: "RS_WATER_GPU: Vorgängerstand ist das andere Ping-Pong-Ziel")
     }
 }

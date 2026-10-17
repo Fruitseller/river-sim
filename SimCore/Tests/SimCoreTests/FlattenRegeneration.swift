@@ -25,6 +25,8 @@ final class FlattenRegeneration: XCTestCase {
     private func flatCfg(n: Int = 96) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
+        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.meanderBelt = calibrationMeanderBelt  // Mäander-Mechanik vor #174
         return c
     }
 
@@ -418,7 +420,10 @@ final class FlattenRegeneration: XCTestCase {
         XCTAssertGreaterThan(keptOxbows, 0, "Testaufbau: keine Altarme entstanden")
         flattenWholeMap(kept, target: off.sea + 0.25)
         kept.step(dtYears: 250)
-        XCTAssertEqual(kept.meander.oxbows.count, keptOxbows,
+        // „Unverändert weiter" heißt: keiner der alten geht verloren. Ein NEUER
+        // Cutoff in den 250 Jahren ist erlaubt (Linux-CI, andere libm: 17 → 18,
+        // seit der Gürtel nach #187 schneller wächst; macOS 17 → 17).
+        XCTAssertGreaterThanOrEqual(kept.meander.oxbows.count, keptOxbows,
             "Testaufbau: ohne Pfad müssten die Altarme unverändert weiterlaufen")
 
         // Mit Pfad: Altarme weg, Läufe frisch aus der neuen Entwässerung

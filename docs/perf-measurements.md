@@ -368,6 +368,8 @@ und brachten nichts (Abschnitt D).
 2. **Sim-Schritt vom Render-Thread entkoppeln.** Ändert die Schrittkosten nicht,
    nimmt sie aber aus dem Frame — für die FPS der größte Hebel, und der
    einzige, der `priorityFlood` nicht anfassen muss.
+   → **Im Oktober 2026 für den Zeitraffer gemacht** (Abschnitt L): Schritt und
+   Frame-Aufbereitung laufen auf einem Hintergrund-Thread, bit-identisch.
 3. **Bit-Identität aufgeben.** Priority-Flood + FIFO und ein
    cache-ausgerichteter Heap zusammen halbieren realistisch den größten Posten.
    Das ist eine Physik-Änderung mit eigener Kalibrier-Runde und gehört in ein
@@ -759,3 +761,716 @@ for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; d
 RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
 ```
+
+---
+
+## L. Zeitraffer ohne Warten: Sim-Schritt im Hintergrund (Oktober 2026)
+
+Befund (Integrationsstand #174, `0fec08b`): im Zeitraffer rief `Main.gd` alle
+`SIM_TICK_SECONDS` (0,25 s) SYNCHRON `sim.step(years)` und danach
+`sim.renderFrame(FRAME_TIMELAPSE)` auf. Headless gemessen (M4 Max, Seed 1337,
+Produktionswelt nach 20.000 Jahren, n = 720, je 5 Wiederholungen):
+`step` 47–57 ms, `renderFrame` mit Overlays und Band-Bau 31–37 ms. Jeder
+Takt-Frame dauerte damit 70–120 ms, viermal je Sekunde ein Ruckler; die
+Zielbild-Messung (`docs/zielbild-measurements.md`, Punkt 47) fand im Zeitraffer
+p95 bis 79 ms gegen ≤ 30 ms in Standbild und Kamerafahrt. §F Punkt 2 hatte
+genau das als größten Hebel benannt: die Schrittkosten bleiben, aber nicht mehr
+im Frame.
+
+### Entwurf
+
+- **`SimRender.BackgroundJob<Output>`** ist die ganze Nebenläufigkeit:
+  höchstens EIN Job, ein Ergebnis-Platz, ein Besitzer-Thread. `isReady`
+  blockiert nie; `wait`/`take` blockieren, solange der Job rechnet, und zählen
+  diese Zeit (`waits`, `waitedSeconds`); `start` startet nichts, solange ein
+  Ergebnis noch nicht abgeholt ist (sonst ginge etwa ein Band-Bau verloren, den
+  `RenderState` schon für ausgeliefert hält). Godot-frei, damit der Vertrag
+  headless prüfbar bleibt.
+- **`SimNode.beginStep(years, trigger, now)`** startet den Job: `terrain.step`,
+  `render.invalidate(.advanced)`, `render.frame(trigger, now)` und das
+  Verpacken ins Frame-Dictionary (`packFrame`). Die Packed-Arrays entstehen auf
+  dem Arbeits-Thread; es sind Godots eingebaute Werttypen, kein `Object`.
+  Abholen: `stepReady()` (blockiert nie), `finishStep()`. Messgröße:
+  `stepWaitMilliseconds()`.
+- **Tore statt Disziplin:** `terrain` und `render` sind in `SimNode` berechnete
+  Properties, die zuerst `job.wait()` rufen. Jeder Aufruf der Brücke kommt nur
+  über sie an Welt und Render-Zustand; die gespeicherten Felder `world` und
+  `renderState` nennt allein `beginStep`, nachdem es geprüft hat, dass kein Job
+  unterwegs ist. Ein gleichzeitiger Zugriff ist damit ausgeschlossen, ohne dass
+  ein Aufruf daran denken muss; `deinit` wartet einen laufenden Job ab (beim
+  Beenden entlädt Godot sonst die Library unter ihm).
+- **Der Frame trägt den ganzen gezeigten Stand:** `trigger`, `year`, `heights`
+  immer, mit Overlays zusätzlich `filled` (Seespiegel) und `bands`
+  (Höhenbänder), nach einem Band-Bau das Mesh. Für einen Frame fragt der
+  Hauptthread die Sim nichts mehr; `renderFrame` liefert dasselbe Dictionary
+  synchron.
+- **`Main.gd`:** `_process` holt einen fertigen Schritt ab (`stepReady` →
+  `finishStep` → `_apply_step`) und beginnt den nächsten, wenn der Takt fällig
+  UND keiner unterwegs ist. Takt (0,25 s), Jahresdeckel (240), Overlay-Drossel
+  (0,30 s), Band-Deckel (1 Hz) und alle Überblenden sind unverändert.
+
+Verworfen: Godots `WorkerThreadPool` aus GDScript. Dann riefe ein Fremd-Thread
+Methoden eines `Node` im Szenenbaum, und die Ausschlussregel stünde als
+Disziplin im Skript statt im Typ; prüfen ließe sie sich nur mit laufender
+Engine.
+
+### Synchronisationsregeln je Pfad
+
+| Pfad in `Main.gd` | Regel |
+| --- | --- |
+| Zeitraffer-Takt | beginnt nur ohne Schritt unterwegs, abgeholt wird nur ein fertiger (`stepReady`); der Hauptthread wartet nie |
+| Pinselstrich | wartet nicht: solange ein Schritt rechnet, setzt der Strich aus, bis das Abholen ihn hochgeladen hat; während des Strichs beginnen keine Schritte (`_simulation_should_step`, wie bisher) |
+| Pinsel-Nachzug, Strich-Ende | `_settle_sim()`, dann synchron wie bisher |
+| Zeitsprung | `_settle_sim()` vor jedem Chunk (zwischen zwei Chunks läuft `_process`), Chunks synchron wie bisher |
+| Neu, Laden, Speichern | `_settle_sim()` zuerst; gespeichert wird der Stand, den man sieht |
+| Diagnose | der Takt-Refresh (1 s) läuft nur in Frames ohne Schritt unterwegs (Kennzahlen 2,3 ms); Δ-Karte und Referenz setzen `_settle_sim()` |
+| Kamera-Presets F1–F3 | `_settle_sim()` (Abfluss und Empfänger kommen aus der Sim) |
+| Raycast, Höhen-Cache, Pinselkuppel, Jahresanzeige, Detailstärke | lesen den GEZEIGTEN Stand (`shown_heights`, `shown_year`) und fragen die Sim nicht |
+| synchroner Frame (`_render_frame`) | `_settle_sim()` zuerst |
+| Leerlauf-Drossel | ein Schritt unterwegs zählt als Aktivität |
+| ein vergessener Pfad | die Brücke wartet selbst (Tor): kein Datenrennen. Das Ergebnis bliebe aber liegen und käme NACH dem neueren Stand an, deshalb der Quelltext-Wächter auf `Main.gd` |
+
+`_settle_sim()` wartet einen laufenden Schritt ab UND lädt ihn hoch. Nur
+abwarten genügt nicht: das Ergebnis enthält Bänder und Wasser, die `RenderState`
+ab dann für sichtbar hält.
+
+### Determinismus
+
+- Die Physik ist nicht berührt (`SimCore/Sources/SimCore` unverändert,
+  `simperf --hash` damit gleich).
+- Hintergrund = synchron, headless: `BackgroundJobTests.
+  testBackgroundStepsAreBitIdenticalToSynchronousSteps` fährt sechs
+  Zeitraffer-Schritte (15–240 Jahre, ein Pinselstrich dazwischen) synchron und
+  über den Job; Fingerabdruck der Welt, alle Overlay-Puffer und das Band-Mesh
+  sind je Schritt bit-gleich.
+- Durch die Brücke, alter gegen neuen Stand: 14 Zeitraffer-Takte (Seed 1337,
+  Produktionswelt + 5.000 Jahre, 15 Jahre je Takt, feste Uhr), alter Build
+  `step` + `renderFrame`, neuer `beginStep` + `finishStep`. SHA-256 von Höhe,
+  Wasser, Farbe, Material, Bodenbedeckung, Rinnen, Schutz- und Waldmaske,
+  Sedimentfahne je Takt sowie das Band-Mesh am Ende: 14 von 14 gleich.
+- `game/tests/smoke.gd` prüft dasselbe gegen die geladene Welt (Jahr, Höhe,
+  Seespiegel, Wasser) auf jedem CI-Lauf.
+
+### Was auf dem Hauptthread bleibt
+
+Je abgeholtem Schritt nur noch Hochladen. Aufgeschlüsselt mit Zeitmarken in
+`_apply_frame` (einmaliger Lauf, nicht eingecheckt; Seed 1337, 20.000 Jahre,
+`balanced`, maximiert 3456 × 2104, 33 Schritte):
+
+| Teil | ms je Schritt | Takt |
+| --- | ---: | --- |
+| Höhe (R32F, Vorgänger + neu) | 0,35–0,48 | jeder Schritt |
+| Band-Mesh (`add_surface_from_arrays`) | 0,38–0,51 | ≤ 1 Hz |
+| Seespiegel, Höhenbänder, Farbe, Material, Bodenbedeckung, Rinnen | 1,2–1,5 | Overlay-Takt (jeder 2. Schritt) |
+| Wasser + Schutzmaske | 0,32–0,40 | Overlay-Takt |
+| Waldmaske | 0,08–0,11 | Overlay-Takt |
+| Sedimentfahne samt Mip-Kette | 0,50–0,66 | Overlay-Takt |
+| Relief-Back (nur der Auftrag, die GPU zeichnet ihn) | 0,02 | jeder Schritt |
+| **Summe** | **0,4–3,7** | |
+
+Das gefährdet das 33,3-ms-Budget nicht, ein Verteilen der Uploads über
+mehrere Frames lohnt deshalb nicht. Die A/B-Läufe unten bestätigen es: der
+Median der Hochlade-Zeit liegt bei 2,4–2,9 ms, ihr Maximum bei 5–8 ms
+(`apply_median_ms`/`apply_max_ms`), und die längsten Frames sind nicht die mit
+Hochladen (`apply_frame_max_ms` < `max_ms`). Die Hälfte der Overlay-Bytes lädt
+`FieldTexture` übrigens nur hoch, um den Vorgängerstand der Überblende (#172)
+erneut zu senden; Tauschen statt Kopieren halbierte das, CPU-seitig sind es
+aber nur ~1 ms (s. Offene Punkte).
+
+### Gemessen: Frame-Zeiten im Zeitraffer
+
+M4-Max-Referenz-Mac (16 Kerne, 64 GB), offizielles Godot 4.7.2, eingebauter
+Bildschirm, maximiert, Viewport 3456 × 2104, `balanced`, Flusstal-Bühne im
+Betrieb `simulation` (Seed 1337 nach 20.000 Jahren, Kamera `detail`, 60 J./Sek.,
+Frame-Abstände über 10 s). A = `0fec08b` (synchron), B = dieser Stand.
+`scripts/timelapse-timing.sh`, interleaved (A B, B A, …), 6 Runden,
+2026-10-17. Der Rechner war dabei NICHT ruhig: andere Agenten bauten, testeten
+und renderten parallel (Lastmittel 11–86), in vier Runden lief mindestens ein
+fremdes Godot auf derselben GPU. Deshalb je Runde, nicht nur der Median:
+
+| Runde | Last A / B | fremdes Godot A / B | A p95 | A > 33,3 ms | B p95 | B > 33,3 ms |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 1 | 11 / 20 | 1 / 0 | 88,7 ms | 45 / 361 | 38,4 ms | 35 / 435 |
+| 2 | 51 / 24 | 1 / 1 | 95,6 ms | 169 / 175 | 22,3 ms | 0 / 485 |
+| 3 | 44 / 46 | 3 / 1 | 178,8 ms | 114 / 114 | 113,7 ms | 165 / 165 |
+| 4 | 37 / 37 | 1 / 1 | 184,3 ms | 127 / 127 | 122,5 ms | 148 / 148 |
+| 5 | 86 / 84 | 1 / 0 | 167,0 ms | 125 / 126 | 31,2 ms | 19 / 367 |
+| 6 | 74 / 77 | 0 / 0 | 148,8 ms | 67 / 265 | 31,3 ms | 19 / 368 |
+
+Median über alle sechs Läufe je Stand:
+
+| Stand | Mittel | p95 | p99 | Max | > 33,3 ms | Hochladen Median / Max | Upload-Frame Max | Hauptthread wartet |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A (synchron) | 69,6 ms | 157,9 ms | 171,6 ms | 179,0 ms | 120 | – | – | – |
+| B (Hintergrund) | 27,3 ms | 34,8 ms | 38,8 ms | 55,8 ms | 27 | 2,9 / 7,7 ms | 35,4 ms | 0,0 ms |
+
+Lesart: In JEDER Runde liegt B unter A, auch unter gleicher Last. In den
+Runden 3 und 4 teilten sich drei bzw. zwei Godots die GPU; dort sind beide
+Stände GPU-gebunden und keine Aussage über die Sim. In den übrigen Runden
+fällt p95 von 89–167 ms auf 22–38 ms. Der Hauptthread hat in keinem Lauf auf
+einen Schritt gewartet (`step_wait_ms` 0,0 im Messfenster), und der längste
+Frame mit Hochladen ist kürzer als der längste Frame überhaupt: was über dem
+Budget bleibt, ist Last von außen, nicht das Hochladen.
+
+Ergänzend zwei Einzelläufe vom Vorabend (2026-10-16, NICHT interleaved,
+Lastmittel 15–57, kein fremdes Godot): A Mittel 28,4 / p95 97,9 / p99 119,0 /
+Max 124,3 ms, 38 von 353 Frames über dem Budget (die vier Takte je Sekunde);
+B Mittel 22,0–22,9 / p95 24,6–25,0 / p99 29,6–31,1 / Max 32,7–44,6 ms, 0–1
+Frames über dem Budget. Das entspricht dem Standbild derselben Kamera
+(Zielbild-Messung: `detail` p95 26,6 ms). Die endgültige Messung gehört auf
+einen ruhigen Rechner: `RS_TIMING_EXCLUSIVE=1` (s. Reproduktion).
+
+### Wächter
+
+- `SimCoreTests/BackgroundJobTests.swift`: Vertrag von `BackgroundJob`
+  (Ergebnis genau einmal, kein zweiter Start, `isReady` blockiert nie, nur
+  echtes Warten zählt, Schreibzugriffe des Jobs sind nach `wait` sichtbar),
+  Bit-Gleichheit Hintergrund ↔ synchron, und als Quelltext: die Brücke fasst
+  Welt und Render-Zustand nur über die Tore an; `_process` beginnt Schritte im
+  Hintergrund, holt nur fertige ab und ruft weder `sim.step` noch
+  `renderFrame`; JEDE Funktion in `Main.gd`, die die Welt ändert oder ihren
+  aktuellen Stand liest, ruft vorher `_settle_sim()` (der Pinsel: setzt aus).
+  Gegenprobe beim Bau: `_settle_sim()` aus `_regen` entfernt bzw. die
+  Pinsel-Sperre gelöscht → beide rot.
+- `RenderStateTests`: `beginStep` steht in der Liste der ändernden Einstiege
+  und meldet `.advanced`.
+- `RenderFrameTests`: jeder Frame-Schlüssel, den `packFrame` setzt, wird in
+  `Main.gd` gelesen; `Main.gd` holt Seespiegel, Höhenbänder und Band-Mesh nicht
+  mehr selbst.
+- `game/tests/smoke.gd`: Protokoll über die echte Brücke (wartender Aufruf
+  lässt das Ergebnis liegen, zweiter Start startet nichts, Schlüssel) und
+  Hintergrund = synchron nach dem Laden derselben Welt.
+- `game/tests/relief.gd`: der Zeitraffer-Pfad in `Main` mit echtem
+  Hintergrund-Schritt (Back-Takt, Blenden) und ein Strich, der während eines
+  rechnenden Schritts beginnt, ohne zu warten.
+
+### Offene Punkte
+
+- **Zeitsprünge** laufen weiter synchron, ein Chunk (2.000 Jahre) je Frame.
+  Mit demselben Job könnten sie im Hintergrund laufen (`beginStep(chunk,
+  FRAME_JUMP_CHUNK, …)` und abwarten per `await`), dann bliebe die Kamera
+  auch im Sprung flüssig. Nicht Teil dieser Runde.
+- **Pinsel-Nachzug** (`recomputeFlow` 35 ms, dann `renderFrame(FRAME_STROKE)`)
+  bleibt synchron; das betrifft Pinsel-Frames, nicht den Zeitraffer.
+- **Doppelter Upload der Vorgängerstände** (#172, `FieldTexture` mit
+  `keeps_previous`): je Overlay-Takt geht die Hälfte der ~30 MB Texturdaten
+  nur dafür über den Bus, den alten Stand erneut zu senden. Tauschen der beiden
+  Texturen statt Kopieren halbierte das; CPU-seitig ~1 ms, GPU-seitig nicht
+  gemessen.
+- **QoS des Arbeits-Threads**: `.userInitiated`. Ob `.utility` unter Fremdlast
+  ruhigere Frames gibt (der Schritt teilt sich die Kerne mit Godots
+  Render-Thread), ist nicht gemessen.
+
+### Reproduktion
+
+```sh
+GODOT=…/Godot.app/Contents/MacOS/Godot   # 4.7.2, offiziell
+cp -R game /tmp/alt/game                 # Vorher-Stand samt bin/ und .godot/ sichern
+# … umbauen, scripts/build.sh release …
+RS_TIMING_SCREEN=1 RS_TIMING_RUNS=6 RS_TIMING_EXCLUSIVE=1 \
+    scripts/timelapse-timing.sh /tmp/alt/game game
+```
+
+Die Bit-Gleichheit durch die Brücke (14 Takte, oben) lief als Einmal-Skript:
+dieselbe Folge `step(15)` + `renderFrame(FRAME_TIMELAPSE, t)` im alten und
+`beginStep(15, FRAME_TIMELAPSE, t)` + `finishStep()` im neuen Build, SHA-256 je
+Puffer. Bleibend prüfen dasselbe `BackgroundJobTests` und `smoke.gd`.
+
+
+---
+
+## M. Mäandergürtel-Fenster auf mobilen Abschnitt beschränkt (Oktober 2026, Issue #174) — bit-identisch
+
+Anlass: `meanderBeltStep` iterierte je Teilschritt über alle Knoten der wandernden
+Läufe, obwohl weite Strecken (insbesondere der unbewegliche Gebirgsoberlauf mit
+Abfluss unter `meanderBeltMinCells = 2000`) weder wandern noch erodieren noch
+gestempelt werden. Ziel: Berechnung auf die mobilen Fenster samt Schablonen-Rändern
+beschränken, strikt bit-identisch.
+
+### Was geändert wurde
+
+1. **`beltMigrationPlan` / Teilschritt-0-Wiederverwendung**: `meanderBeltStep`
+   berechnet vor den Teilschritten die maximale Rate via `beltMigrationPlan`.
+   Geometrie und Ratenvektoren werden für Teilschritt 0 direkt übernommen,
+   statt sie im ersten Teilschritt identisch nochmals zu berechnen.
+2. **`beltGeometry(..., minDischarge:)`**: Bei der Migration werden für Knoten
+   mit `discharge < meanderBeltMinCells` die drei `heightAt`-Bilinear-Lookups
+   (Längsneigung, Meereshöhe) übersprungen (`g.mob[i] = 0`), da
+   `beltRatesAndErodibility` solche Knoten ohnehin per Guard ausblendet.
+3. **`implicitDiffuse` Thomas-Algorithmus**: Zeilen mit $a_i = 0$ sind exakte
+   Identitätszeilen ($cp=0, dx=nodes[i]$). Das Gleichungssystem entkoppelt an den
+   Rändern, sodass der Vorwärts- und Rückwärtslauf exakt auf
+   `firstA...lastA` mit festen Dirichlet-Rändern an `firstA - 1` und `lastA + 1`
+   begrenzt werden kann.
+4. **`perturb` und Verschiebungs-Schleifen**: Ratenverschiebung auf Knoten mit
+   $r_i \neq 0$ beschränkt, Hash-Rauschen und Glättung in `perturb` auf
+   `firstErod...lastErod`.
+5. **`beltStamp` (Teil 1, mobile Teilschritte)**: Früher Abbruch, falls keine
+   mobilen Knoten vorhanden sind. `bendCurvature` auf `firstMob...lastMob`
+   eingeschränkt, `floorH` auf das $\pm 2$-Sohlenfenster
+   `max(0, firstMob - 2)...min(c - 1, lastMob + 2)` und der Stempel-Loop auf
+   `firstMob...lastMob`.
+
+### Bit-Identität
+
+Vor und nach der Optimierung identischer Fingerprint:
+```
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x100.0
+fingerprint c25268a941dd4beb
+```
+
+### Gemessen
+
+Interleaved A/B-Benchmark über 6 Runden (`/tmp/bw.base` vs `/tmp/bw.cand`,
+`--repeat 3`, 30 Schritte à dt=100.0, M4 Max):
+
+```
+1 base Messung: 30 Schritte à dt=100.0 → 63.2 ms/Schritt (Minimum aus 3 Blöcken)
+1 cand Messung: 30 Schritte à dt=100.0 → 62.0 ms/Schritt (Minimum aus 3 Blöcken)
+2 cand Messung: 30 Schritte à dt=100.0 → 61.2 ms/Schritt (Minimum aus 3 Blöcken)
+2 base Messung: 30 Schritte à dt=100.0 → 64.8 ms/Schritt (Minimum aus 3 Blöcken)
+3 base Messung: 30 Schritte à dt=100.0 → 64.2 ms/Schritt (Minimum aus 3 Blöcken)
+3 cand Messung: 30 Schritte à dt=100.0 → 62.8 ms/Schritt (Minimum aus 3 Blöcken)
+4 cand Messung: 30 Schritte à dt=100.0 → 63.4 ms/Schritt (Minimum aus 3 Blöcken)
+4 base Messung: 30 Schritte à dt=100.0 → 64.3 ms/Schritt (Minimum aus 3 Blöcken)
+5 base Messung: 30 Schritte à dt=100.0 → 63.7 ms/Schritt (Minimum aus 3 Blöcken)
+5 cand Messung: 30 Schritte à dt=100.0 → 63.6 ms/Schritt (Minimum aus 3 Blöcken)
+6 cand Messung: 30 Schritte à dt=100.0 → 62.8 ms/Schritt (Minimum aus 3 Blöcken)
+6 base Messung: 30 Schritte à dt=100.0 → 65.1 ms/Schritt (Minimum aus 3 Blöcken)
+```
+
+| Stand | Runden | Median | Minimum |
+|---|---|---:|---:|
+| Base (`/tmp/bw.base`) | 63.2, 64.8, 64.2, 64.3, 63.7, 65.1 | 64.25 ms/Schritt | 63.2 ms/Schritt |
+| Cand (`/tmp/bw.cand`) | 62.0, 61.2, 62.8, 63.4, 63.6, 62.8 | 62.80 ms/Schritt | 61.2 ms/Schritt |
+
+Differenz: **−1.45 ms/Schritt** (Cand war in allen 6 Runden schneller).
+
+Pass-Tabelle (`simperf --repeat 3`, letzter Block):
+
+| Pass | base | cand | Delta |
+|---|---:|---:|---:|
+| `belt.migrate` | 6.44 ms/Schritt (10.0 %) | 5.14 ms/Schritt (8.4 %) | **−1.30 ms/Schritt (−20.2 %)** |
+| `belt.stamp` | 7.31 ms/Schritt (11.3 %) | 7.22 ms/Schritt (11.8 %) | **−0.09 ms/Schritt** |
+| `belt.*` gesamt | 13.75 ms/Schritt | 12.36 ms/Schritt | **−1.39 ms/Schritt (−10.1 %)** |
+
+## N. Sim-Kern, dritte Runde für #174, Oktober 2026
+
+Startstand `7b7a880`, Branch `t3/174-sim-perf-r3`. Gemessen am 17.10.2026
+auf Apple M4 Max, 16 Kerne, 64 GiB, macOS 26.7, Apple Swift 6.4.
+Release-Build mit Swift-5-Sprachmodus. Andere Agenten bauten und testeten auf
+derselben Maschine. Deshalb ausschließlich interleaved A/B, je Runde wechselnd
+A B bzw. B A, je Prozess `simperf --repeat 1`. Produktionspaarung n = 720,
+world = 112,4789, Seed 1337, Einlauf 100 × 100 Jahre, Messblock 30 × 100 Jahre.
+Die Mediane beziehen sich auf alle Runden, nicht auf das Minimum.
+
+Start-Binary `/tmp/simperf.r3-start`, Profil mit `--repeat 3`: Blöcke
+73,1 / 70,8 / 70,5 ms/Schritt. Diese Einzelmessung dient nur zur Hotspot-Suche.
+Im letzten Block: Priority-Flood 15,96, MFD 7,27, Gürtel-Stempel 7,93,
+Gürtel-Migration 5,59, Eis 4,51, Inzision 3,97 ms/Schritt. Ergänzend
+`sample <pid> 10` während desselben Harness-Pfads. Das Sample umfasst auch den
+Einlauf und ersetzt keinen A/B-Vergleich.
+
+Vor der ersten Änderung selbst gemessene Fingerprints, jeweils mit `--hash`
+und sonst unveränderten Standardargumenten:
+
+| Seed | Start-Fingerprint |
+| ---: | --- |
+| 1337 | `c25268a941dd4beb` |
+| 42 | `685222593c36209f` |
+| 20 | `948941e9feca57df` |
+
+### Verworfen: Heap-Pop bis zum Blatt, danach aufwärts einsetzen
+
+Der volle Abstieg entfernt den Vergleich des letzten Elements mit dem kleinsten
+Kind je Ebene. Danach wandert das letzte Element entlang desselben Pfades
+aufwärts. Für dieselbe Pop-Reihenfolge muss es dabei auch über GLEICHE Eltern
+steigen. Ein erster Versuch mit streng größeren Eltern scheiterte bereits am
+Hash-Check, Seed 1337 `b809efbbd8d7a30f`, und wurde vor einer vollständigen
+Messreihe korrigiert. Die korrigierte Fassung besteht alle drei Hash-Vergleiche.
+Sie ist trotzdem langsamer und bleibt nicht im Code.
+
+A = `/tmp/simperf.r3-start`, B = `/tmp/simperf.r3-heap2`.
+
+| Runde | A ms/Schritt | B ms/Schritt | A Priority-Flood | B Priority-Flood |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 66,6 | 88,9 | 15,58 | 18,72 |
+| 2 | 71,4 | 81,7 | 16,12 | 18,86 |
+| 3 | 70,9 | 99,6 | 16,17 | 21,59 |
+| 4 | 66,9 | 100,6 | 15,50 | 21,74 |
+| 5 | 68,0 | 69,1 | 15,69 | 16,25 |
+| 6 | 65,5 | 67,5 | 15,47 | 16,31 |
+| Median | 67,45 | 85,30 | 15,635 | 18,790 |
+
+Die Gesamtzeit streut durch Fremdlast stark. Auch im betroffenen Pass ist die
+Variante in allen sechs Runden langsamer. Auf flachen Flächen steigt sie erst
+ab und über gleiche Keys wieder auf, während die bisherige Fassung früher
+abbricht. FIFO und eine andere Heap-Verzweigung wurden wegen der in §F belegten
+Änderung von `order` und `floodParent` nicht umgesetzt.
+
+### Verworfen: MFD-Nachbargewichte in 32.768-Zellen-Blöcken vorbereiten
+
+Nachbarschaft, Gefälle und Gewichte für beide möglichen Exponenten werden
+parallel vorbereitet. Die Akkumulation bleibt in `order` rückwärts, inklusive
+der unveränderten Nachbarreihenfolge und des `floodParent`-Rückfalls. Die
+Flächen-Schwelle entscheidet erst während der Akkumulation zwischen beiden
+Exponenten. Alle drei Hashes stimmen, ebenso der zusätzliche Vergleich gegen
+eine serielle Referenz auf einem ungeraden Gitter mit Exponenten 4, 2 und 1,3.
+
+A = Start, B = `/tmp/simperf.r3-mfd-only`. Sechs Runden:
+
+| Runde | A ms/Schritt | B ms/Schritt | A MFD | B MFD |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 72,8 | 69,0 | 7,07 | 5,61 |
+| 2 | 68,8 | 110,3 | 7,38 | 11,73 |
+| 3 | 79,7 | 117,5 | 7,04 | 10,81 |
+| 4 | 71,8 | 83,8 | 7,02 | 8,86 |
+| 5 | 75,1 | 72,5 | 7,02 | 7,10 |
+| 6 | 66,9 | 66,8 | 6,92 | 5,69 |
+| Median | 72,30 | 78,15 | 7,03 | 7,98 |
+
+Die Variante trägt unter der gemessenen geteilten Last keinen Gewinn.
+Einzelne gute Runden reichen nicht als Beleg. Die vielen parallelen Blockstarts
+und das zusätzliche Schreiben und Lesen der Routendaten sind zusätzliche
+Arbeit. Welcher Anteil die schlechteren Runden verursacht, isoliert diese
+Messung nicht.
+
+### MFD-Alternative mit gemeinsamem Parallelstart und wiederverwendbarem Puffer
+
+Gleiche Zerlegung wie im Blockversuch, aber ein Parallelstart je MFD-Pass,
+Routendaten in einem wiederverwendbaren Array. Auch die Division der Gewichte
+durch ihre Summe wird vorbereitet. Die Auswahl anhand der Fläche und alle
+Flächensummen bleiben seriell. Alle drei Hashes und der Referenztest stimmen.
+
+A = Start, B = `/tmp/simperf.r3-mfd2`.
+
+| Runde | A ms/Schritt | B ms/Schritt | A MFD | B MFD |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 67,4 | 67,5 | 6,9 | 5,1 |
+| 2 | 80,4 | 67,4 | 7,78 | 5,27 |
+| 3 | 77,5 | 64,9 | 7,17 | 4,54 |
+| 4 | 79,9 | 69,6 | 7,06 | 5,02 |
+| 5 | 72,6 | 63,8 | 6,85 | 4,62 |
+| 6 | 71,4 | 68,9 | 7,47 | 5,0 |
+| Median | 75,050 | 67,450 | 7,115 | 5,010 |
+
+Im MFD-Pass fällt der Median um 2,105 ms. Der Gesamtmedian sinkt um 7,60 ms;
+diese größere Differenz darf nicht vollständig dem MFD-Umbau zugeschrieben
+werden. Die unveränderten Pässe schwanken mit der Fremdlast ebenfalls.
+Der zusätzliche Puffer hält zwei Gewichtssätze und Nachbarindizes je Zelle.
+Eine weitere Gegenprobe prüft deshalb SIMD ohne diesen Zusatzpuffer.
+
+### Verworfen: MFD-Nachbararithmetik als SIMD
+
+Bei inneren Zellen und den Exponenten 4 und 2 werden acht Nachbargefälle und
+Potenzen als SIMD berechnet. Die Reduktion und Akkumulation bleiben seriell,
+Randzellen und andere Exponenten benutzen den bisherigen Pfad. Drei Hashes
+und der serielle Referenztest stimmen. A = Start, B = `/tmp/simperf.r3-mfd-simd`.
+
+| Runde | A ms/Schritt | B ms/Schritt | A MFD | B MFD |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 72,9 | 77,3 | 7,15 | 9,74 |
+| 2 | 72,1 | 73,7 | 7,17 | 9,68 |
+| 3 | 68,2 | 76,8 | 6,85 | 9,7 |
+| 4 | 67,9 | 83,7 | 6,96 | 10,01 |
+| 5 | 67,7 | 71,2 | 6,96 | 9,41 |
+| 6 | 68,4 | 72,1 | 6,97 | 9,58 |
+| Median | 68,300 | 75,250 | 6,965 | 9,690 |
+
+SIMD ist hier in allen sechs Runden langsamer. Übernommen wird die Fassung
+mit gemeinsamem Parallelstart und wiederverwendbarem Puffer, nicht der
+Blockversuch oder SIMD. `MFDRouteTests` vergleicht die komplette Ausgabe
+bitweise gegen die serielle Referenz, inklusive beider Exponenten-Zweige,
+Randzellen, flachen Flächen und eines nichtganzzahligen Exponenten. Die
+Scratch-Einordnung ist in `StateInventoryTests` erfasst.
+
+### Gegenmessung bei der Übernahme (Integrationszweig)
+
+Unabhängig nachgemessen vor dem Cherry-Pick, M4 Max, dieselbe geteilte
+Maschine (zwei weitere Agenten aktiv), interleaved, drei Stände je Runde,
+Reihenfolge je Runde umgekehrt, `simperf --repeat 1`, 8 Runden:
+
+| Stand | ms/Schritt, Runde 1–8 | Median |
+| --- | --- | ---: |
+| Integration `7b7a880` | 62,8 62,9 62,8 63,2 63,4 63,3 63,2 63,5 | 63,20 |
+| MFD-Routen (`3133d27`) | 60,2 60,5 60,6 60,2 60,0 61,0 60,5 61,6 | 60,50 |
+| dazu Inzisionsfaktor vorab parallel (WIP) | 59,7 60,4 61,1 60,6 60,2 59,6 60,6 60,4 | 60,40 |
+
+Der MFD-Umbau spart −2,70 ms (−4,3 %) und ist in allen acht Runden
+schneller. Der zusätzliche WIP-Schritt (Faktor `kErode·dt·A^m/dist` der
+`outletIncision` parallel vorab statt nur `A^m`) liegt mit −0,10 ms im
+Rauschen und wurde nicht übernommen; bit-identisch war er (Hash 1337/42/20).
+Fingerprints nach dem Cherry-Pick: `c25268a941dd4beb` / `685222593c36209f` /
+`948941e9feca57df`, unverändert.
+
+---
+
+## O. Sim-Kern, Runde 4 (Oktober 2026) — aktive Eis-Bounding-Box, parallele D8-Abschnitte und Gürtelschleifen, bit-identisch
+
+Startstand `6a0dfde` (Integrationszweig nach `§M` und `§N`). Gemessen am
+17.10.2026 auf Apple M4 Max (16 Kerne, 64 GiB, macOS 26.7, Swift 6.4 im
+Swift-5-Sprachmodus). Wie in `§I` und `§N` liefen andere Agenten parallel auf
+derselben Maschine; alle Vergleiche erfolgten daher verschränkt (interleaved
+`A B`, `B A`, …) zwischen vorab gebauten Binärdateien (`/tmp/simperf.r4-start`
+gegen Kandidaten), je Prozess `simperf --repeat 1` (Einlauf 100 × 100 Jahre,
+Messblock 30 × 100 Jahre, `n = 720`, `world = 112,4789`).
+
+Fingerprints vor und nach allen übernommenen Änderungen:
+
+| Seed | Fingerprint (`simperf --hash`) |
+| ---: | --- |
+| 1337 | `c25268a941dd4beb` |
+| 42 | `685222593c36209f` |
+| 20 | `948941e9feca57df` |
+
+### Ausgangsprofil und Hypothesen
+
+Nach `§M` (mobiles Gürtel-Fenster) und `§N` (MFD-Routen vorab parallel) verteilte
+sich ein ruhiger 30-Schritt-Messblock auf Seed 1337 (~56–68 ms/Schritt je nach
+Systemlast) auf:
+
+- `priorityFlood`: ~14,4–15,9 ms (25 %) — unter Bit-Identität ausgereizt (`§F`, `§N`).
+- `belt.stamp`: ~6,8–7,0 ms (12 %) + `belt.fixedStamp`: ~1,6–1,8 ms (3 %).
+- `updateIce`: ~6,1–7,9 ms (12 % auf Seed 1337, ~3,4 ms auf Seed 20).
+- `belt.migrate`: ~4,8–5,0 ms (8 %).
+- `computeMFDArea`: ~3,9–5,1 ms (7 %).
+- `belt.couple` (`segments` + `build` + `match` + `runs`): ~2,6 ms (`segments`
+  1,03–1,17 ms, `build` 1,07–1,14 ms).
+- `channelCarve`: ~1,1–1,4 ms.
+
+Daraus wurden vier gezielte Hypothesen abgeleitet und einzeln geprüft:
+
+1. **Hypothese 1 (`belt.couple.segments` + `belt.couple.build`)**:
+   In `Terrain.drainageSegments` lief zwar die Suche nach den ~753
+   Abschnitts-Startzellen (Quellen und Zusammenflüsse) parallel, das Verfolgen
+   der 753 disjunkten `receiver`-Ketten jedoch seriell auf einem Thread; zudem
+   allokierte jeder Abschnitt ein frisches `[Int32]` ohne Größen-Vorwissen, und
+   `coupleBeltToDrainage` schrieb `segOwner`/`segPos` sowie `area` über die
+   Klassen-Property (mit Swift-Exklusivitäts-/COW-Prüfung je Knotenzelle).
+   Da jede Kette deterministisch an einer Senke oder einem Zusammenfluss
+   (`inDeg[cur] != 1`) endet und nur `receiver`/`inDeg` liest, kann jede
+   Thread-Scheibe ihre Ketten direkt in `concurrentPerform` mit einem
+   wiederverwendbaren `cells`-Puffer verfolgen.
+2. **Hypothese 2 (`updateIce` — Roh-Zeiger-Scan + aktives Gitterfenster)**:
+   - `anyCell(ice)` und `steepestIceSurfaceDrop()` lasen `ice[k]` und `h[k]`
+     über die Klassen-Property (ohne `withUnsafeBufferPointer`) zweimal über
+     alle 518.400 Zellen.
+   - Die Gletscher- und Firnzellen (`ice[k] > 0 || (temperature[k] < 0 && snow[k] > 0)`)
+     belegen auf Seed 1337 nur **5,1 %** der Gitterzellen (26.574 / 518.400) in
+     einem Bounding-Box-Rechteck von **23,0 %** der Welt (`j = 135…582`,
+     `i = 184…449`) bei bis zu `nSub = 27` SIA-Teilschritten je Schritt (auf
+     Seed 20: **2,4 %** aktive Zellen in **21,0 %** Bounding-Box bei `nSub = 3…7`).
+   - Weil Eis pro Teilschritt maximal um 1 Zelle in die 4-Nachbarschaft fließt
+     (`inflow > 0` erfordert einen 4-Nachbarn mit `prate[nb] > 0`, also
+     `ice[nb] > thr`), wächst der Träger aktiver Zellen im Teilschritt `s`
+     (`0..<nSub`) um höchstens `reach = s + 1` Zellen in jeder Richtung. Pass 2
+     muss daher nur auf dem um `s + 1` erweiterten Rechteck laufen, und Pass 1
+     nur auf dem zusätzlich um `pad = max(1, swath)` erweiterten Halo (damit
+     alle eingefrorenen `psurf`-, `prate`- und `pero`-Nachbarn im `swath`-Fenster
+     von Pass 2 frisch berechnet sind).
+3. **Hypothese 3 (`beltStamp` / `belt.fixedStamp` + `Meander.swift`)**:
+   - In `beltStamp(dt:only:ageAtEnd:)` iterierte jeder mobile Teilschritt
+     (`only != nil`, ~233 Aufrufe/Schritt auf Seed 1337) über
+     `meander.channels.enumerated() where only.map({ $0 == ci }) ?? ...` und
+     kopierte dabei jedes Mal alle ~686 `RiverChannel`-Structs, nur um 685
+     davon zu verwerfen.
+   - Im Schrittende-Pass (`belt.fixedStamp`, `only == nil`) wurde für alle
+     wandernden Läufe (`part == 2`) sowie für alle komplett steilen Läufe
+     (`firstMob == nil`) trotzdem `MeanderState.bendCurvature` berechnet und
+     `floorH` (Nullen-Array der Länge `c`) allokiert, obwohl weder `bendCurv`
+     noch `floorH` ohne mobile Stempel-Knoten gelesen werden.
+   - In `MeanderState.beltGeometry` wurde die kumulierte Bogenlänge `cum`
+     berechnet und sofort wieder verworfen, worauf `beltRatesAndErodibility`
+     exakt dasselbe `cum`-Array nochmals allokierte und über `dist(...)`
+     aufsummierte. Ebenso berechnete `applyBeltCutoffs` die Kanalbreite
+     `beltWidthCells` je Knoten zweimal hintereinander.
+4. **Hypothese 4 (`channelCarve` & verbleibende Property-Scans)**:
+   In `channelCarve` wurden `receiver` und `area` innerhalb von `withBed` als
+   Array-Kopie aus der Klassen-Property gebunden statt über
+   `withUnsafeBufferPointer`; gleiches galt für `h`/`rain` in `updateRainWeight`
+   und `h`/`snow` in `snowAreaFractions`.
+
+---
+
+### Experiment 1 (Übernommen): Parallele Abschnittsketten in `drainageSegments` + Roh-Puffer in `coupleBeltToDrainage`
+
+`Terrain.drainageSegments` klemmt die Chunk-Zahl auf `Terrain.coreCount` (statt
+64 Kleinst-Chunks), verfolgt die `receiver`-Kette direkt im parallelen Chunk mit
+einem wiederverwendbaren `cells`-Puffer je Chunk (`Array(cells)` kopiert exakt
+auf die tatsächliche Länge) und hängt die Abschnitte in unveränderter
+Chunk-Reihenfolge zusammen. In `coupleBeltToDrainage` werden `segOwner`,
+`segPos` und `area` über `withUnsafeMutableBufferPointer` /
+`withUnsafeBufferPointer` adressiert.
+
+10 Runden interleaved (`/tmp/simperf.r4-start` gegen `/tmp/simperf.r4-couplesegs`,
+Seed 1337):
+
+| Pass | A (Start, Mittel / Median) | B (Exp. 1, Mittel / Median) | Differenz | Siege B |
+| --- | ---: | ---: | ---: | ---: |
+| `belt.couple.segments` | 1,03 / 1,03 ms | **0,41 / 0,41 ms** | **−0,62 ms (−60 %)** | 10 / 10 |
+| `belt.couple.build` | 1,07 / 1,07 ms | **0,99 / 0,99 ms** | **−0,08 ms (−7,5 %)** | 10 / 10 |
+
+Beide Pässe gewinnen in allen 10 Runden, zusammen **−0,70 ms/Schritt**.
+
+---
+
+### Experiment 2 (Verworfen): Zweigeteilter Geometrie-Pass in `MeanderState.beltGeometry`
+
+**Hypothese**: Wenn `beltGeometry` zuerst nur `width` und `mob` berechnet, kann
+für Knoten außerhalb des mobilen Fensters `[firstMob - maxKb, lastMob + maxKb]`
+das `atan2` für `g.curv` entfallen (und in `beltStamp` mit `part == 1` auch die
+Normalen `g.nx`/`g.nz` außerhalb von `firstMob - 2 ... lastMob + 2`).
+
+**Befund**: Auf Seed 1337 sind in den 39 wandernden Läufen bereits **67 %**
+aller Knoten mobil (`21.745 / 32.993` Knoten je Schritt über alle Teilschritte).
+Die Aufteilung in zwei Schleifen über `0..<c` sparte nur bei einem Drittel der
+Knoten das `atan2`, verdoppelte aber die Schleifen- und Nachbarschafts-Arbeit
+(`nodes[i - k]`, `nodes[i + k]`). Im verschränkten A/B-Test stieg `belt.stamp`
+von 6,82 ms auf 7,05 ms (+0,23 ms). Vollständig verworfen.
+
+**Zusatzbefund zu `seg` in `beltRatesAndErodibility`**: Während `cum` aus
+`beltGeometry` für die Sehnen-Sinuosität (`cum[hi] - cum[lo]`) bit-identisch
+wiederverwendet werden kann, darf die einzelne Segmentlänge `seg` für das
+Exponentialgewicht `exp(-seg / ...)` **nicht** durch `cum[i] - cum[i - 1]`
+ersetzt werden: durch die vorangegangene Addition `cum[i - 1] + dist(...)` weicht
+die Differenz `cum[i] - cum[i - 1]` in IEEE-754 um bis zu 1 ULP von
+`dist(nodes[i - 1], nodes[i])` ab, was den Fingerprint verändert (`cd11a10566f3a789`
+statt `c25268a941dd4beb`). Mit `cum` aus `BeltGeometry` für die Sinuosität und
+`dist(...)` für `seg` bleibt die Rechnung auf allen drei Seeds bit-identisch.
+
+---
+
+### Experiment 3 (Übernommen): `updateIce` mit aktivem Bounding-Box-Fenster und kombiniertem Roh-Zeiger-Scan
+
+`activeIceBoundsAndSteepestDrop()` ersetzt `anyCell(ice)` und
+`steepestIceSurfaceDrop()` durch einen einzigen Roh-Zeiger-Durchlauf über
+`ice`, `h`, `temperature` und `snow`, der gleichzeitig `wMax` (für die
+CFL-Teilschrittzahl `nSub`) und die exakte Bounding-Box `(jMin...jMax, iMin...iMax)`
+aller aktiven Eis-/Firnzellen liefert. In `iceFlowSubStep` laufen Pass 1 und
+Pass 2 nur noch über die im Teilschritt `s` um `s + 1` (bzw. `s + 1 + max(1, swath)`
+für Pass 1) erweiterte Bounding-Box.
+
+Isolierter A/B-Test (`/tmp/simperf.r4-couplesegs` gegen `/tmp/simperf.r4-ice`,
+6 Runden je Seed):
+
+- **Seed 1337**: `updateIce` sinkt von **7,34 ms (Med. 6,94)** auf **6,13 ms
+  (Med. 6,03)** (**−1,21 ms Mittel / −0,91 ms Median**, B gewinnt 5/6 Runden).
+- **Seed 20**: `updateIce` sinkt von **3,42 ms (Med. 3,43)** auf **2,83 ms
+  (Med. 2,82)** (**−0,59 ms Mittel / −0,61 ms Median, −17 %**, B gewinnt 6/6 Runden).
+
+---
+
+### Experiment 4 (Übernommen): Direkte Kanal-Indizierung & Lazy-Allokation in `beltStamp`, `BeltGeometry.cum`, `channelCarve`
+
+Zusammengefasst:
+1. `beltStamp`: Bei `only != nil` wird direkt `only..<only+1` indiziert statt
+   `meander.channels.enumerated()` über alle ~686 Kanäle zu kopieren; `bendCurv`
+   und `floorH` werden nur berechnet bzw. allokiert, wenn `part != 2 && firstMob != nil`.
+2. `Meander.swift`: `BeltGeometry` speichert das in `beltGeometry` ohnehin
+   gebildete `cum`-Array für `beltRatesAndErodibility`; `applyBeltCutoffs`
+   merkt sich die Kanalbreiten `widths[i]` aus der `maxReach`-Schleife für die
+   Cutoff-Suche.
+3. `channelCarve`, `updateRainWeight`, `snowAreaFractions`, `landHeightQuantiles`:
+   Roh-Puffer-Zeiger (`withUnsafeBufferPointer`) statt Klassen-Property-Zugriffen.
+
+---
+
+### Gesamtvalidierung Runde 4 (Start gegen Endstand)
+
+Verschränkter A/B-Vergleich zwischen `/tmp/simperf.r4-start` (`de4ba53`) und
+dem kompletten Runde-4-Stand (`/tmp/simperf.r4-meander`), 8 Runden auf Seed 1337
+und 6 Runden auf Seed 20:
+
+#### Seed 1337 (8 Runden interleaved)
+
+| Runde | A Gesamt | B Gesamt | A `updateIce` | B `updateIce` | A `couple.segments` | B `couple.segments` | A `couple.build` | B `couple.build` | A `belt.migrate` | B `belt.migrate` |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 70,6 | 68,1 | 7,84 | 6,28 | 1,15 | 0,60 | 1,14 | 1,04 | 4,92 | 4,85 |
+| 2 | 71,9 | 68,2 | 8,94 | 6,20 | 1,18 | 0,59 | 1,15 | 1,01 | 5,02 | 4,86 |
+| 3 | 70,5 | 67,4 | 8,86 | 6,35 | 1,32 | 0,52 | 1,15 | 1,01 | 4,99 | 4,86 |
+| 4 | 68,8 | 71,7 | 8,04 | 6,37 | 1,16 | 0,49 | 1,10 | 1,02 | 4,93 | 5,03 |
+| 5 | 65,3 | 61,0 | 7,17 | 5,03 | 1,10 | 0,48 | 1,09 | 0,96 | 4,91 | 4,78 |
+| 6 | 71,0 | 59,6 | 8,44 | 5,03 | 1,18 | 0,44 | 1,21 | 0,96 | 5,60 | 4,76 |
+| 7 | 61,7 | 62,2 | 6,24 | 5,19 | 1,04 | 0,46 | 1,06 | 0,98 | 4,84 | 4,77 |
+| 8 | 70,1 | 60,2 | 7,50 | 4,98 | 1,21 | 0,49 | 1,21 | 0,99 | 5,13 | 4,70 |
+| **Mittel** | **68,74** | **64,80** | **7,88** | **5,68** | **1,17** | **0,51** | **1,14** | **1,00** | **5,04** | **4,83** |
+| **Median** | **70,30** | **64,80** | **7,94** | **5,70** | **1,17** | **0,49** | **1,15** | **1,00** | **4,96** | **4,81** |
+
+Aufschlüsselung aller geänderten Pässe (Seed 1337, 8 Runden):
+
+| Pass | A Mittel (Median) | B Mittel (Median) | Differenz Mittel (Median) | Siege B |
+| --- | ---: | ---: | ---: | ---: |
+| `updateIce` | 7,88 (7,94) ms | **5,68 (5,70) ms** | **−2,20 (−2,24) ms (−28 %)** | 8 / 8 |
+| `belt.couple.segments` | 1,17 (1,17) ms | **0,51 (0,49) ms** | **−0,66 (−0,68) ms (−56 %)** | 8 / 8 |
+| `belt.couple.build` | 1,14 (1,15) ms | **1,00 (1,00) ms** | **−0,14 (−0,15) ms (−12 %)** | 8 / 8 |
+| `belt.migrate` | 5,04 (4,96) ms | **4,83 (4,81) ms** | **−0,22 (−0,15) ms (−4 %)** | 7 / 8 |
+| `channelCarve` | 1,40 (1,42) ms | **1,26 (1,23) ms** | **−0,14 (−0,19) ms (−10 %)** | 6 / 8 |
+| `belt.fixedStamp` | 1,78 (1,76) ms | **1,70 (1,69) ms** | **−0,08 (−0,07) ms (−4,5 %)** | 7 / 8 |
+| `belt.stamp` | 7,03 (7,04) ms | **6,95 (6,98) ms** | **−0,08 (−0,06) ms (−1 %)** | 6 / 8 |
+| **Gesamt (`step`)** | **68,74 (70,30) ms** | **64,80 (64,80) ms** | **−3,94 (−5,50) ms (−5,7 %)** | 6 / 8 |
+
+#### Seed 20 (6 Runden interleaved)
+
+| Pass | A Mittel (Median) | B Mittel (Median) | Differenz Mittel (Median) | Siege B |
+| --- | ---: | ---: | ---: | ---: |
+| `updateIce` | 3,39 (3,38) ms | **2,59 (2,61) ms** | **−0,80 (−0,77) ms (−24 %)** | 6 / 6 |
+| `belt.couple.segments` | 0,71 (0,72) ms | **0,39 (0,40) ms** | **−0,32 (−0,32) ms (−45 %)** | 6 / 6 |
+| `belt.couple.build` | 0,63 (0,63) ms | **0,56 (0,56) ms** | **−0,07 (−0,07) ms (−11 %)** | 6 / 6 |
+| `belt.migrate` | 2,20 (2,21) ms | **2,14 (2,15) ms** | **−0,06 (−0,06) ms (−3 %)** | 6 / 6 |
+| `channelCarve` | 0,80 (0,80) ms | **0,74 (0,74) ms** | **−0,06 (−0,06) ms (−7,5 %)** | 6 / 6 |
+| `belt.fixedStamp` | 1,02 (1,02) ms | **0,99 (0,99) ms** | **−0,03 (−0,03) ms (−3 %)** | 6 / 6 |
+| **Gesamt (`step`)** | **45,45 (45,50) ms** | **44,40 (44,45) ms** | **−1,05 (−1,05) ms (−2,3 %)** | 6 / 6 |
+
+### Übernahme in den Integrationszweig
+
+Übernommen sind nur die Teile AUSSERHALB des Gletschers: parallele
+Abschnittsketten in `drainageSegments` und Roh-Puffer in
+`coupleBeltToDrainage`, `beltStamp` (direkte Kanal-Indizierung, Krümmung nur
+für mobile Läufe), `BeltGeometry.cum`/`applyBeltCutoffs` in `Meander.swift`
+und die Roh-Zeiger in `channelCarve`, `updateRainWeight`, `snowAreaFractions`
+und `landHeightQuantiles`. Die Eis-Bounding-Box (Experiment 3) bleibt draußen:
+der Gletscher-Zweig (`t3/174-glacier-recal`, dt-Fix aus `docs/glacier-measurements.md`
+§L) schreibt die Teilschritte von `updateIce` neu und bringt dort seine eigene,
+ebenfalls bit-identische Begrenzung auf das vergletscherte Gebiet mit.
+
+Gegenmessung der Übernahme (Pass-Tabelle `simperf --repeat 3`, je Runde
+Integration `6a0dfde` und Kandidat nacheinander, 4 Runden, geteilte Maschine,
+Median der Blöcke): `belt.couple.segments` 1,14 → 0,49 ms, `belt.couple.build`
+1,16 → 1,08, `channelCarve` 1,27 → 1,15, `computeRain` 1,19 → 1,13,
+`belt.fixedStamp` 1,67 → 1,62; `belt.stamp` 7,28 → 7,38 und `belt.migrate`
+5,14 → 5,21 im Rauschen. Netto rund −0,8 ms je Schritt. Der Gesamtschritt
+streute unter der Fremdlast (Load wechselnd) zu stark für eine schärfere Zahl
+(8 Runden, Median 75,4 → 68,2 ms bei Einzelrunden von −14 bis +11 ms).
+Fingerprints mit den übernommenen Teilen: `c25268a941dd4beb` /
+`685222593c36209f` / `948941e9feca57df`, unverändert.
+
+---
+
+## P. Sim-Kern, Runde 5 (Oktober 2026) — Eis-Domäne und Tropfen über Roh-Puffer, bit-identisch
+
+Startstand `aeed3b3` (Integrationszweig mit Gletscher-Nachkalibrierung),
+M4 Max, geteilte Maschine (mehrere Agenten, Load stark wechselnd). Vorschläge
+eines Agenten (Gemini 3.8 Flash, Branch `t3/174-sim-perf-r5b`), unabhängig
+nachgemessen: Gesamtschritt 10 Runden interleaved (`simperf --repeat 1`),
+dazu die Pass-Tabelle (`--repeat 3`, 4 Runden, Median der Blöcke).
+
+| Pass | `aeed3b3` | Kandidat (alle vier Commits) | übernommen |
+| --- | ---: | ---: | --- |
+| `Hydraulic.erode` | 3,35 ms | 2,62 ms | ja |
+| `updateIce` | 5,48 ms | 4,07 ms | ja (zeilenweise über `Terrain.parallel` neu geschrieben) |
+| `updateVegetation` | 4,02 ms | 3,94 ms | nein (Gewinn im Rauschen) |
+| `belt.migrate` / `belt.stamp` | 6,16 / 7,88 ms | 6,68 / 8,09 ms | nein (behaupteter Gewinn nicht reproduziert) |
+
+Der Gesamtschritt streute unter der Fremdlast stärker als der Effekt
+(10 Runden, Median 74,95 → 74,0 ms, gepaart +0,8 ms); deshalb gilt hier die
+Pass-Tabelle. Der Agent hatte −2,95 ms gemeldet, seine eigene Tabelle zeigte
+in den drei ruhigsten Runden den Kandidaten LANGSAMER (+1,5 … +2,0 ms) — der
+Median kam aus Lastspitzen auf der Basis-Seite. Lehre: bei wechselnder Last
+nicht den Gesamt-Median, sondern die gepaarten Differenzen und die
+betroffenen Pässe lesen.
+
+`iceTransportDomain` schrieb im Vorschlag aus `DispatchQueue.concurrentPerform`
+heraus in Swift-Arrays (formal ein Data Race); übernommen ist die Fassung mit
+je Zeile eigenem Ergebnis in Roh-Puffern und serieller Reduktion.
+Fingerprints unverändert: `6ffeb97d52f8e8d9` / `9f0fb0e9ad4d8493` /
+`49c9ba0762c9ee01`.

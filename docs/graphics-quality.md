@@ -124,21 +124,25 @@ deterministisch identische Welt.
 | `overview` | 0 / 0 | 151.846515 | 0.7 | 0.85 |
 | `detail` | -12 / -25 | 42 | 0.7 | 0.85 |
 
+Die Variante `prototype` (PBR-Materialien der ersten Runde) gibt es seit
+#174 D nicht mehr: die prozedurale Materialverteilung ersetzt sie (s.
+[Material, Schnee, Wolken](#material-schnee-wolken-174-d)). Die Prototyp-Bilder
+und -Filme in diesem Kapitel sind damit historische Belege; reproduzierbar
+bleibt `baseline`, die Debug-Ansichten schaltet `RS_STUDY_DEBUG`.
+
 ```sh
 export GODOT=/pfad/Godot.app/Contents/MacOS/Godot
 scripts/build-stamp.sh --check
 "$GODOT" --headless --path game --import
-scripts/graphics-study.sh prototype detail interactive
 scripts/graphics-study.sh baseline detail interactive
 
 # Der letzte Parameter ist ein absoluter Ausgabepfad ohne .png.
 scripts/graphics-study.sh baseline overview shot /tmp/baseline-overview
-scripts/graphics-study.sh prototype overview shot /tmp/prototype-overview
 
 # Getrennte Echtzeitmessungen, immer maximiert.
-scripts/graphics-study.sh prototype overview still /tmp/still
-scripts/graphics-study.sh prototype overview orbit /tmp/orbit
-scripts/graphics-study.sh prototype overview simulation /tmp/simulation
+scripts/graphics-study.sh baseline overview still /tmp/still
+scripts/graphics-study.sh baseline overview orbit /tmp/orbit
+scripts/graphics-study.sh baseline overview simulation /tmp/simulation
 ```
 
 Weitere Schalter, alle in `Flusstal.gd`:
@@ -154,7 +158,10 @@ Bildern. Ein normal gestartetes Spiel aktiviert die Studie nicht.
 ## Bewegung
 
 Bewegungsaufnahmen mit Godots MovieWriter bei festen 30 Bildern pro Sekunde,
-maximiert. Reproduzierbare Bewegungsbelege, keine FPS-Messungen.
+maximiert. Reproduzierbare Bewegungsbelege, keine FPS-Messungen. Der Befehl
+ist der historische aus der Studienzeit: die Variante `prototype` gibt es
+seit #174 D nicht mehr (s. [Reproduktion](#reproduktion)), die Filme der
+Tabelle entstanden so; heutige Aufnahmen laufen mit `baseline`.
 
 ```sh
 RS_STUDY_MOVIE=/tmp/prototype-orbit.avi \
@@ -254,10 +261,10 @@ selbst (s. o.), nicht die Maske.
 
 ## Assets und Lizenzen
 
-Die sechs 1K-JPEGs liegen unverändert unter `game/studies/flusstal/assets/`.
-Nach einem Klon ist kein Assetdienst erforderlich. `manifest.json` enthält die
-Original-Downloadadressen, die vom Anbieter gelieferten MD5-Werte und
-SHA-256-Prüfsummen der eingecheckten Dateien.
+Die sechs 1K-JPEGs lagen bis #174 D unter `game/studies/flusstal/assets/`
+(mit `manifest.json`: Downloadadressen, MD5 des Anbieters, SHA-256 der
+eingecheckten Dateien); mit der Variante `prototype` sind sie entfernt. Die
+Nennung bleibt als Herkunftsnachweis der historischen Bilder.
 
 | Asset | Urheber | Nutzung |
 | --- | --- | --- |
@@ -293,8 +300,9 @@ Für #117 übertragbar (Stand der Studie; was daraus wurde:
 [Abschluss Spec #156](#abschluss-spec-156)): Verschiebung als gebackene Render-Ableitung (gehört nach
 SimRender oder als GPU-Pass in die Brücke), Kronendach statt Einzelbäumen in
 der Übersicht, Schutzmaske aus Wasserfeld und Bändern, Ozean nach Wassertiefe.
-Offen: Instanzbäume an Waldrändern für Nahsicht,
-Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen 720er-Gitters.
+Offen: Kosten der Maske im Zeitraffer, Detailstufen jenseits eines festen
+720er-Gitters. Instanzbäume an Waldrändern für die Nahsicht sind mit dem
+Kronendach #152 entfallen (s. [Kronendach](#kronendach-in-der-anwendung-152)).
 
 ## Übernahme in die Produktion
 
@@ -322,9 +330,10 @@ Abnahme (9. Oktober 2026, M4 Max, maximiert 3456×2104, `balanced`, Variante
 Matrix, vorher/nachher im selben Build (nur `ocean.gdshader` getauscht, die
 Brücke liefert beide Uniform-Sätze). Vorher in jeder Übersicht das
 Streifenmuster bis zum Horizont, nachher keines; die Küste zeigt einen
-türkisen Schelf mit gebrochenem Brandungssaum. `graphics-matrix.sh` braucht
-Bash 4 (`declare -A`) und läuft mit dem macOS-Bash 3.2 nicht; die Bilder
-entstanden mit denselben Umgebungsvariablen von Hand.
+türkisen Schelf mit gebrochenem Brandungssaum. `graphics-matrix.sh` brauchte
+damals Bash 4 (`declare -A`) und lief mit dem macOS-Bash 3.2 nicht; die Bilder
+entstanden mit denselben Umgebungsvariablen von Hand. Das Skript braucht seit
+#151 keine assoziativen Arrays mehr (s. [Vergleichsmatrix vorher/nachher](#vergleichsmatrix-vorhernachher)).
 
 Framezeiten, Übersicht Seed 1337, je vier Läufe interleaved A/B. Parallel lief
 eine zweite Godot-Instanz aus einem anderen Worktree auf derselben GPU; die
@@ -345,7 +354,8 @@ Fremdlast. Eine Messung ohne Fremdlast steht noch aus.
 Als verbindliche Arbeits- und Vergleichsgrundlage für alle nachfolgenden Tickets
 von #117 („Landschaftsqualität") dient eine standardisierte Matrix aus drei
 Seeds, drei Entwicklungsstadien und sechs Kameraperspektiven (insgesamt 54
-Einzelansichten je Variante). Jedes Folge-Ticket erbringt seine Vorher/Nachher-Bilder
+Einzelansichten je Variante). Seit #174 kommen drei Vorlagen-Kameras dazu
+(`diorama`, `valley`, `close`, zusammen 81 Ansichten). Jedes Folge-Ticket erbringt seine Vorher/Nachher-Bilder
 und Leistungsmessungen reproduzierbar gegen diese Matrix.
 
 ### Auswahl der Seeds und Begründung
@@ -400,6 +410,37 @@ jede Welt neben Übersicht und Nahansicht vier gezielte Stresstests:
 | `backlight` | Gegenlicht | Seed 1337: `(-12, -25)`, Dist 45, Yaw 2.269, Pitch 0.85<br>Seed 42: `(4, -6)`, Dist 48, Yaw 2.269, Pitch 0.85<br>Seed 20: `(-8, 10)`, Dist 46, Yaw 2.269, Pitch 0.85<br>*(feste Welt-Sonne Azimut -50°; Yaw = Azimut + 180°)* | **Stresstest Beleuchtung:** Blick direkt gegen die Sonne. Alle kamerazugewandten Flanken liegen im Eigenschatten; prüft Relieflesbarkeit im Schatten, Tonemapping und Streulicht. |
 | `coast` | Küste / Ufer | Seed 1337: `(-36, -32)`, Dist 45, Yaw 0.90, Pitch 0.85<br>Seed 42: `(12, -10)`, Dist 38, Yaw 1.10, Pitch 0.85<br>Seed 20: `(30, -28)`, Dist 48, Yaw 0.80, Pitch 0.85 | **Stresstest Wasser-Land:** Mündungsdelta, Binnensee-Ufer oder Steilküste. Prüft Schutzmaske, Übergang von Flussband zu Ozean/See, Brandung und Tiefenfarbe. |
 | `snow` | Schnee / Grate | Seed 1337: `(18, 14)`, Dist 48, Yaw 0.60, Pitch 0.75<br>Seed 42: `(-22, 20)`, Dist 50, Yaw 0.70, Pitch 0.75<br>Seed 20: `(-10, 14)`, Dist 40, Yaw 0.60, Pitch 0.70 | **Stresstest Schneegrenze:** Felsrippen, Firnfelder und Gipfel. Prüft Gratschärfung, Schnee-Albedo und Übergang von Wald/Fels zu Schnee. |
+| `diorama` | Vorlage C (#174) | `(0, 0)`, Dist 115, Yaw 0.70, Pitch 0.62 | Ganze Insel schräg als Diorama: Gebirgskamm, Tieflandflüsse, Küste. Im Spiel Taste F1 (adaptiv: rahmt die Landfläche). |
+| `valley` | Vorlage B (#174) | Ziel und Yaw wie `detail`, Dist 30, Pitch 0.40 | Flacher Blick über Tal und Aue bis zum Horizont: Mäander, Bänke, Delta. Im Spiel Taste F2 (adaptiv: größter Lauf, s. u.). |
+| `close` | Vorlage A (#174) | Ziel und Yaw wie `coast`, Dist 22, Pitch 0.52 | Schrägsicht auf Hang, Fluss und Küste: Fels, Wald, Kiesbänke, Brandung. Im Spiel Taste F3 (adaptiv: Mündung des größten Laufs, s. u.). |
+
+Die drei Vorlagen-Kameras (Issue #174, Paket E) gibt es auch als
+Tasten-Presets im Spiel (`CAMERA_PRESETS` in `game/scripts/Main.gd`). Die
+Matrix hält Ziel, Distanz und Yaw je Seed FEST (reproduzierbare Abnahmebilder),
+die Tasten rechnen sie beim Drücken aus der laufenden Welt:
+
+- **Diorama (F1):** Kamera so, dass die Landzellen mittig im Bild liegen und
+  es in der knapperen Richtung zu 85 % füllen (`Main.frame_land`, geschlossen
+  aus FOV und Seitenverhältnis über die konvexe Hülle der Landzellen); Yaw
+  bleibt. Mit der Insel ganz im Gitter (#175) war die feste Distanz 115 zu
+  weit, die Insel
+  füllte rund ein Drittel des Bildes. Die erste adaptive Fassung zielte auf
+  die Mitte der Land-Box; in Schrägsicht projiziert die nahe Kante größer, die
+  Insel saß unten und füllte nur ~60 % der Höhe (Seed 42, maximiert).
+- **Tal (F2) / Nah (F3):** größter Lauf auf dem D8-Netz (`flowArea`,
+  `receivers`), Ziel 12 bzw. 4 Welteinheiten oberhalb seiner Küstenmündung,
+  Kamera auf der Meerseite mit Blick talaufwärts (`Main.river_view`); verdeckt
+  Gelände die Sichtlinie, steigt der Pitch. Das Ziel ist immer eine Landzelle;
+  vorher behielten beide den aktuellen Blickpunkt und zeigten je nach Seed fast
+  nur Meer. Aus Distanz 60 zeigte „Tal" die ganze Insel statt des Tals; seit
+  dem Folgebefund steht es auf 30 (Ziel 12 Einheiten oberhalb der Mündung),
+  „Nah" auf 22 (4 Einheiten); der kleinste Zoom-Abstand `CAM_DIST_MIN` sank
+  dafür von 30 auf 20.
+
+Gleich bleiben Pitch (alle drei) und Distanz (Tal, Nah), Wächter
+`GraphicsMatrixTests.testCameraPresetsMatchTheMatrix`; die adaptive Rechnung
+misst `game/tests/ui_layout.gd` mit Godots eigener Projektion nach. Die
+adaptive Ansicht einer Welt zeigt `RS_CAMERA=diorama|valley|close`.
 
 ### Physikalische Baseline-Kennzahlen der Matrixwelten
 
@@ -433,9 +474,8 @@ Produktions-Grid $n = 720$, 112,48 m Weltbreite, $HSCALE = 24.0$):
 Das Skript `scripts/graphics-matrix.sh` automatisiert den vollständigen Durchlauf:
 
 ```sh
-# 1. Alle 54 Aufnahmen für eine Variante erzeugen:
+# 1. Alle Aufnahmen für eine Variante erzeugen (seit #174 81):
 scripts/graphics-matrix.sh baseline docs/screenshots/graphics-matrix/baseline shot
-scripts/graphics-matrix.sh prototype docs/screenshots/graphics-matrix/prototype shot
 
 # 2. Übersicht aller Permutationen auflisten:
 scripts/graphics-matrix.sh baseline "" list
@@ -461,7 +501,7 @@ Messende) bricht das Skript ab.
   - `baseline-overview.png` (entspricht `seed1337_20k_overview.png`)
   - `baseline-detail.png` (entspricht `seed1337_20k_detail.png`)
   (Keine redundanten Binärduplikate im Repo; `scripts/graphics-matrix.sh` exportiert den
-  vollständigen 54-Bilder-Satz).
+  vollständigen Satz, seit #174 81 Ansichten).
 - **Baseline-Messwerte der Referenzwelt (M4 Max, 3456×2104, Seed 1337, Jahr 20k):**
   - Standbild: Mittel 8,73 ms, p95 9,12 ms, p99 9,39 ms, Max 10,49 ms (0 Überschreitungen / 1147 Frames)
   - Kamerafahrt: Mittel 8,70 ms, p95 9,12 ms, p99 9,29 ms, Max 9,83 ms (0 Überschreitungen / 1150 Frames)
@@ -987,8 +1027,9 @@ Wald (#170).
   für die Verschiebung).
   Pinselring, Kameraziel und Raycast lesen die CPU-Höhe und springen weiter;
   das sieht man nur im Zeitraffer, und dort wird nicht gepinselt.
-- **Wasser bleibt außen vor:** Das Rasterwasser glättet die CPU (Blend 0,15),
-  die Flussbänder baut sie höchstens einmal je Sekunde neu.
+- **Wasser blieb zunächst außen vor** (Rasterwasser über die CPU-EWMA, Bänder
+  höchstens einmal je Sekunde neu gebaut); seit #174 blendet es mit, s.
+  [Flüsse im Zeitraffer](#flüsse-im-zeitraffer-174).
 
 - **Kosten:** Im Zeitraffer läuft praktisch immer eine Blende, die Helfer
   lesen dann zwei Texturen. `RS_FPS` (Zeitraffer 60 J/s, `balanced`,
@@ -1001,6 +1042,55 @@ Wächter: `SimCoreTests/TimelapseFadeTests.swift` (jede Textur liest über die
 Blende ihres Uploads, Main startet jede Blende mit ihrem Upload) und
 `game/tests/relief.gd` (Höhe und Overlays blenden im Zeitraffer, enden auf
 dem neuen Stand, der Pinsel blendet nicht).
+
+## Flüsse im Zeitraffer (#174)
+
+Stand 13. Oktober 2026. Projekteigner: „Die Wälder haben immer noch das
+verbesserte Blending, aber bei 60 J/s springen die Flussveränderungen, statt
+dass sie auch blenden." Gemessen mit
+`RiverFadeTests.testRiverJumpsPerUploadDiagnostic` (Produktionswelt Seed
+1337, Takt wie `Main.gd` bei 60 FPS, 30 s Zeitraffer je Alter; Spannen über
+Jahr 0 / 20.000 / 100.000):
+
+| Ausgabe | Takt | Sprung je Upload | vorher |
+| --- | --- | --- | --- |
+| Flussbänder | Band-Bau alle 1,07 s | Lage Ø 0,23–0,28, p99 2,3–3,6 Zellen (Halbbreite ~2); Alpha p99 0,78–0,87; Halbbreite p99 2,2–2,6 Zellen; 2–3 % der Stützpunkte neu | hart |
+| Rasterwasser | Overlays alle 0,53 s | Sichtbarkeit p99 0,36–0,41; 10–13 % der nassen Zellen > 0,1 | EWMA 0,15, dazwischen hart |
+| Sedimentfahne | Overlays | 31–53 % der Masse auf Mip-Stufe 3 | hart |
+| Bank-/Strand-Sand (A der Makrofarbe) | Overlays | p99 ~1 | `overlay_blend` |
+| Schutzmaske | Overlays | ~2000 Zellen kippen | Verbraucher blenden (Verschiebung `bake_blend`, Wald `overlay_blend`) |
+
+- **Rasterwasser und Fahne** hängen jetzt an `overlay_blend` (`water_at` im
+  Terrain-Shader, `plume_at` im Meer); die EWMA bleibt, sie glättet den
+  Wechsel zwischen den D8-Netzen, die Blende die Stufen dazwischen.
+- **Bänder: eigene Blende `ribbon_blend`, Dauer = Band-Deckel**
+  (`RIBBON_FADE_SECONDS` == `RenderState.ribbonRebuildSeconds`). Im
+  Zeitraffer liegen zwei Bauten nie dichter, die Blende endet also vor dem
+  nächsten Bau. Der vorige Bau bleibt als zweites Mesh stehen.
+- **Geteilte optische Dicke statt Pixel-Aufteilung** (Nachtrag, Befund des
+  Projekteigners Seed 1337 / Jahr 2.305, Retina): die erste Fassung zeigte je
+  Pixel genau einen der beiden Stände (Interleaved Gradient Noise, ortsfest).
+  Wo die Stände übereinanderliegen, ist das unsichtbar; wo der Lauf gewandert
+  ist, zeigte jedes Pixel mal den einen, mal den anderen — körnige Bandränder
+  an jedem gewanderten Ufer, im maximierten Fenster deutlich, im
+  Zeitraffer praktisch dauernd (bei 1 Bau/s läuft fast immer eine Blende).
+  Jetzt zeichnet der neue Stand mit `1 − (1 − a)^t`, der alte mit
+  `1 − (1 − a)^(1−t)` (`WaterRender.ribbonFadeOpacity`, Deckel 0,99):
+  übereinander lassen beide zusammen genau `1 − a` durch, der stehende Lauf
+  deckt also wie ein Band (lineares Mischen: 0,95 → 0,72, pulste im
+  Band-Takt); allein liegend blendet ein Stand stetig ein bzw. aus, ohne Korn.
+  Ein Vertex-Morph scheidet weiter aus: der Mäander resampelt seine Knoten je
+  Schritt, die Topologie zweier Bauten passt nicht zusammen.
+- **Kosten nicht gemessen** (kein Godot im Agentenlauf): im Zeitraffer zeichnet
+  fast immer das zweite Band-Mesh mit, das Rasterwasser liest zwei Texturen,
+  die Fahne zwölf statt sechs Abgriffe. Messung steht aus (`RS_FPS`,
+  Zeitraffer 60 J/s, maximiert, interleaved A/B).
+
+Wächter: `SimCoreTests/RiverFadeTests.swift` (Dauer == Band-Deckel, kein
+Band-Bau innerhalb der Blende, Verdrahtung in `Main.gd`, geteilte Deckkraft
+im Shader, Fahne), `TimelapseFadeTests` (Rasterwasser über `water_at`) und
+`game/tests/relief.gd` (Band-Bau im Zeitraffer blendet, endet auf dem neuen
+Stand, Neugenerieren blendet nicht).
 
 ## Abschluss Spec #156
 
@@ -1039,17 +1129,165 @@ und Referenzbühne:
 
 - `baseline` ist die Anwendung selbst (`Flusstal.gd` erbt `Main.gd`) und trägt
   die Vergleichsmatrix und die Messläufe.
-- `prototype` legt zusätzlich nur die PBR-Materialien der ersten Runde
-  (`materials.gdshaderinc`, sechs CC0-Texturen) und die Debug-Ansichten
-  (`RS_STUDY_DEBUG`) darüber. Die Materialien sind bewusst NICHT übernommen
-  (geomorphologische Materialverteilung ist laut Spec außerhalb des Umfangs);
-  sie bleiben als historische Referenz der Studie stehen. Wer sie übernehmen
-  will, macht daraus ein eigenes Ticket; wer sie streicht, entfernt mit ihnen
-  die `FLUSSTAL_STUDY`-Hooks in `terrain.gdshader`.
+- `prototype` legte bis #174 D die PBR-Materialien der ersten Runde
+  (`materials.gdshaderinc`, sechs CC0-Texturen) darüber. #174 D hat sie durch
+  die prozedurale, geomorphologische Materialverteilung ersetzt und mit ihren
+  Texturen und dem Material-Hook in `terrain.gdshader` entfernt (s.
+  [Material, Schnee, Wolken](#material-schnee-wolken-174-d)). Geblieben ist ein
+  `FLUSSTAL_STUDY`-Hook für die Debug-Ansichten (`RS_STUDY_DEBUG`).
 - Die Hebel-Schalter sind entfallen: ein gesetztes `RS_STUDY_LEVERS` bricht
   ab, `RS_STUDY_GRID` und `RS_STUDY_RELIEF` liest nichts mehr (s.
   [Reproduktion](#reproduktion)).
 
 **Offen und bewusst nicht Teil von #156:** geomorphologische
-Materialverteilung (Fels auf konvex-steil, Schutthalden, Kiesbänke), höhere
-Render-Gitter als n, Detailstufen der Geometrie nach Kameradistanz.
+Materialverteilung (Fels auf konvex-steil, Schutthalden, Kiesbänke; Fels und
+Halden seit #174 D, Kiesbänke folgen mit #174 C), höhere Render-Gitter als n,
+Detailstufen der Geometrie nach Kameradistanz.
+
+## Material, Schnee, Wolken (#174 D)
+
+Paket D des Zielbilds #174 (Vorlagen A–C unter `docs/references/zielbild/` auf
+`claude/sim-appearance-functionality-643hwl`): der in #156 offen gelassene Punkt
+„geomorphologische Materialverteilung" plus Wolkenkörper. Reine Render-Arbeit:
+`simperf --hash` vorher (main `55323b5`) und nachher gleich (`c5f16bebbb66a860`,
+M4 Max, Produktions-Config).
+
+**Was wo entsteht.** WO ein Material liegt, rechnet
+`SimRender.TerrainColorRenderer` je Sim-Zelle (headless, Kalibrierung
+`SimCore.MaterialRender`, Wächter `SimCoreTests/MaterialTests.swift`); WIE es
+aussieht, rechnet `terrain.gdshader` je Pixel (Uniform-Weg
+`SimRender.MaterialUniforms` → `SimNode` → `Main.gd`, default-frei, Wächter
+`MaterialTests` und `game/tests/canopy.gd`). Der neue Puffer `covers` reist als
+`cover_tex` mit den Overlays (Frame-Schlüssel `cover`, Zeitraffer-Blende wie
+`surface_tex`):
+
+| Material | Wo (CPU) | Wie (Shader) |
+| --- | --- | --- |
+| Fels | Weltsteigung aus `Terrain.macroSlope` 1,50 → 2,60 (56° → 69°), auf Graten bis 0,5 früher, in Rinnen später (Konvexität ±2 Zellen); Bewuchs weicht erst ab 40 % Mineral | dunkelgrau (linear 0,07–0,15 seit „Fels und Wasser" in `docs/zielbild-measurements.md`, vorher 0,20–0,33), Blockton, Runsen auch als Normale, Klüftung triplanar aus Rauschen: Runsen in Fallrichtung (Abstand ~30–60 m, 1,5-fach gestreckt; zweite Oktave und feine Facetten um rund 37° gekreuzt, siehe „Felswände“ in `docs/zielbild-measurements.md`), gestückelte Fugen und Schichtfugen, Breite und Stärke moduliert, in Rinnen des Relief-Bakes (#153) 1,6-fach, auf Rippen 0,4-fach; Schichten aus der Lithologie nur stückweise; auf Rippen mehr Fels, in Rinnen rutscht er als Schutt nach. Die erste Fassung (zwei gerade Kluftscharen, 45 m, in der Waagerechten) las sich auf den Wänden als Drahtgitter (Review PR #177) |
+| Schutthalde | Fels in 3 Zellen Reichweite, Steigung im Schüttwinkel (30°–39°), Hohlform | hell, grob gekörnt (5 m), rau |
+| Schnee/Firn | Kältedeckung wie bisher (B von `surfaces`) | weiß mit Windverfrachtung |
+| Gletschereis | blankes Eis nur im Zehrgebiet (`Terrain.temperature` über 0 °C, ±1 °C weich), darüber Firn | bläulich, Spalten quer zur Fließrichtung ab 22° Gefälle, Seiten- und Mittelmoränen |
+| Rohboden (braun) | nur `Terrain.disturb` (Pinsel), klingt mit der Regeneration ab | der alte Bodenton |
+| Grund | Rest ohne Bewuchs, Fels, Schutt, Eis, Rohboden | Trockenrasen, über der Vegetationsgrenze steinig; bis #174 war das brauner Boden |
+| Talboden-Wiese | flach (unter 0,10 → 0,30) und unter dem Nadelwald-Band (#152) | Wiese, Bewuchs und Grund hell-saftig |
+
+Anknüpfungspunkt Paket B: der A-Kanal von `covers` (Talboden) nimmt alte Bänke
+(`barAge`) als zweite Quelle auf (`max`), sobald das Feld existiert; die Stelle
+ist in `TerrainColorRenderer` markiert.
+
+**Flächenanteile** (`testMaterialCoverageDiagnostic`, Produktions-Config,
+% der Landzellen; „vorher" ist der Stand vor #174 D, im Messlauf als
+`LegacyTerrainColor` mitgerechnet):
+
+| Seed | Jahr | Fels vorher | Fels | Halde | Kälte | blankes Eis | Talboden | Grund ≥ 0,5 | Wald vorher | Wald |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1337 | 2.000 | 0,6 | 23,5 | 10,6 | 2,3 | 1,3 | 5,3 | 41,6 | 8,5 | 7,8 |
+| 1337 | 20.000 | 0,4 | 16,1 | 5,0 | 1,0 | 0,3 | 12,3 | 48,4 | 10,9 | 10,4 |
+| 1337 | 100.000 | 1,0 | 7,5 | 2,2 | 0,2 | 0,0 | 9,3 | 53,3 | 19,3 | 19,0 |
+| 42 | 2.000 | 0,9 | 15,5 | 7,5 | 0,4 | 0,2 | 6,2 | 46,2 | 17,8 | 16,6 |
+| 42 | 20.000 | 1,3 | 12,8 | 4,0 | 0,0 | 0,0 | 11,3 | 51,7 | 20,4 | 19,5 |
+| 42 | 100.000 | 1,6 | 13,1 | 3,9 | 0,0 | 0,0 | 7,1 | 51,9 | 19,3 | 18,3 |
+| 20 | 2.000 | 0,4 | 18,9 | 8,7 | 3,5 | 2,2 | 8,4 | 50,0 | 10,0 | 9,2 |
+| 20 | 20.000 | 0,6 | 14,5 | 4,3 | 1,6 | 0,5 | 15,6 | 54,1 | 13,0 | 12,4 |
+| 20 | 100.000 | 1,3 | 8,8 | 2,1 | 0,4 | 0,0 | 12,2 | 53,2 | 22,6 | 22,1 |
+
+Fels, Halde und Talboden ≥ 0,5 Gewicht; blankes Eis ≥ 0,3 Anteil auf Zellen mit
+Kälte ≥ 0,5; Wald = Waldmaske ≥ 0,5. Der Wald bleibt höchstens 22,1 % des
+Landes (#168 nicht zurückgedreht); er verliert 0,3–1,2 Punkte an Wände und
+Halden. Verworfen: Fels ab 0,70/1,20 (52–63 % Fels, Wald auf ein Viertel),
+Halde ohne Hohlform-Bedingung (11–22 % Halde, Wald bis −24 %), Fels VOR dem
+Bewuchs ohne Ausweich-Rampe (Wald 8,5 → 6,0 % auf 1337/2.000). Gletscher gibt
+es auf den heutigen Welten nur jung und klein (Eisdeckung ≥ 0,1 auf 0,0–4,9 %
+des Landes); Paket A hebt den Kamm über die Schneegrenze.
+
+**Wolkenkörper.** `game/shaders/cloud_body.gdshader`: drei gestapelte,
+weiche Impostor-Ebenen (Abstand 45 m, höhere nur im Wolkenkern) knapp über dem
+oberen Felsband (`HeightBands.rockFull` + 0,6, Main.gd bei jedem Overlay-Upload),
+sichtbar nur über Gelände zwischen `rockStart` und `rockFull` (dem Kamm).
+Rauschen und Deckungsschwelle sind dieselben wie die der Wolkenschatten
+(`clouds.gdshaderinc`, `cloud_cover`). Die Schatten projizieren seit #174 D
+entlang der Sonne auf die Wolkenbasis (`cloud_sun_shift`, `cloud_height`) und
+liegen damit unter ihrer Wolke; Gipfel über der Basis stehen in der Sonne.
+In `performance` sind Körper und Schatten aus (Wächter `lighting.gd`).
+
+**Studie aufgeräumt.** Die PBR-Variante `prototype` (sechs CC0-Texturen,
+`materials.gdshaderinc`) ist entfernt; ihr Fels war Kalkstein-hell und
+gekachelt, die prozedurale Verteilung ersetzt ihn. Der `FLUSSTAL_STUDY`-Hook
+trägt nur noch die Debug-Ansichten (`RS_STUDY_DEBUG`).
+
+**Leistung.** CPU (Material-Pass, interleavtes A/B, 9 Läufe, Median, M4 Max,
+n = 720): vorher 0,59–0,80 ms, nachher 1,25–2,08 ms je Overlay-Upload (im
+Zeitraffer höchstens alle 0,30 s). Die GPU-Kosten des Shaders (Abnahmepunkt 47:
+Standbild und Kamerafahrt ≤ 33,3 ms in `balanced`, maximiert) sind NICHT
+gemessen: die Agenten bauen die GDExtension nicht lokal, CI rendert headless.
+Neu je Pixel: Klüftung und Körnung nur auf Fels- bzw. Haldenpixeln, Spalten und
+Moränen nur auf Eis (alle hinter `material_enabled`, in `performance` aus); die
+Wolkenkörper sind drei transparente Ebenen über dem Inselquadrat mit je drei
+Rauschoktaven. Die Messung gehört vor das Mergen auf den Referenz-Mac
+(`scripts/graphics-matrix.sh baseline … timing`).
+
+**Abnahme (Bildpunkte 31–38).** Bewertet der Projekteigner auf den
+Matrix-Bögen und den Vorlagen-Kameras; die Bilder dieses Pakets entstehen auf
+dem Referenz-Mac mit `scripts/graphics-matrix.sh baseline`.
+
+## Zielbild #174
+
+Stand 16. Oktober 2026. Das Zielbild (Issue #174, Vorlagen A–C unter
+`docs/references/zielbild/`, Abnahmebogen 50 × 2 %) baut auf Spec #156 auf.
+Die Pakete A und B ändern die Physik absichtlich (`simperf --hash` ändert
+sich), C–E sind Render- und UI-Arbeit. Kennzahlen, Kalibrier-Läufe und
+Befunde: `docs/zielbild-measurements.md`.
+
+- **A — Großform:** `generate()` legt die Grate entlang eines Gebirgskamms mit
+  Seitenästen (`RangeSkeleton`) statt über die ganze Fläche; zwei bis vier
+  Tieflandkorridore laufen vom Kamm zur Küste, kein Land am Gitterrand, und
+  der Kamm reicht über die Schneegrenze (Gletscher ab Jahr 20.000). Wächter:
+  `ZielbildLandformTests`.
+- **B — Mäandergürtel:** `meanderBelt` ersetzt Migration und Ufer-Stempel —
+  Kanalbreite als Sim-Größe, Migration nach Howard–Knutson, asymmetrisches
+  Bett (Kolk außen, Gleithang innen), Gleithang-Bank auf bankfull mit
+  `barAge` als Zustandsfeld, Hals- und Chute-Cutoff; die Aue entsteht aus
+  der lateralen Planation. Abnahme der Punkte 9–13 im Zeitmittel je Seed
+  (s. Messreihe).
+- **C — Fluss, Delta, Küste:** Tiefenfarbe im Band nach Querprofil (UV2.y),
+  Sand und Scroll-Rippen aus `barAge` (`SimRender.BarMaterial`), nasse Wiese
+  statt Tümpel-Teppich (`WetMeadow`), Strände und Felsküste
+  (`CoastMaterial`), Sedimentfahnen je Mündung (`SedimentPlume`) sowie die
+  Render-Fixes an bergauf laufenden Bändern und Raster-Abkürzungen auf
+  Gleithang-Bänken (s. Messreihe).
+- **D — Material, Schnee, Wolken:** s. [Material, Schnee, Wolken
+  (#174 D)](#material-schnee-wolken-174-d).
+- **E — Bedienung:** Glas-Panels aus EINEM Theme, gezeichnete Icons statt
+  Emoji, Pinsel als Gitterkuppel, Kamera-Presets Diorama/Tal/Nah auf F1–F3
+  (Wächter `tests/ui_layout.gd`).
+
+Vorher/Nachher-Bögen in `docs/screenshots/zielbild-174/`: je Seed und
+Stadium alle neun Matrix-Kameras, oben `main` vor #174, unten der
+Integrationsstand — [Seed 1337, Jahr 0](screenshots/zielbild-174/seed1337_0k.jpg),
+[Jahr 20.000](screenshots/zielbild-174/seed1337_20k.jpg),
+[Jahr 100.000](screenshots/zielbild-174/seed1337_100k.jpg);
+[Seed 42, Jahr 0](screenshots/zielbild-174/seed42_0k.jpg),
+[Jahr 20.000](screenshots/zielbild-174/seed42_20k.jpg),
+[Jahr 100.000](screenshots/zielbild-174/seed42_100k.jpg);
+[Seed 20, Jahr 0](screenshots/zielbild-174/seed20_0k.jpg),
+[Jahr 20.000](screenshots/zielbild-174/seed20_20k.jpg),
+[Jahr 100.000](screenshots/zielbild-174/seed20_100k.jpg).
+
+Die drei Vorlagen-Ansichten über die Tasten-Presets F1–F3 (Diorama, Tal,
+Nah; adaptiv, alle drei Seeds):
+
+![Presets F1–F3, Jahr 20.000](screenshots/zielbild-174/presets_20k.jpg)
+
+![Presets F1–F3, Jahr 100.000](screenshots/zielbild-174/presets_100k.jpg)
+
+Die festen Matrix-Kameras sind für die Welten vor der Großform aus A gewählt
+und zeigen auf der neuen Welt teils andere Ausschnitte; für das Urteil über
+die Vorlagen sind die Preset-Bögen gedacht (s. Messreihe § Vorher/Nachher-Bögen).
+
+**Frame-Zeiten (Abnahmepunkt 47):** Standbild und Kamerafahrt bleiben in
+`balanced`, maximiert 3456×2104, im Budget — Zahlen, je Kamera und die
+Nachmessung auf dem Endstand stehen in `docs/zielbild-measurements.md`
+§ „Bildprüfung und Frame-Zeiten auf dem Referenz-Mac".
+
+**Offene Bildpunkte** (großer See bei flachem Blick milchig, Fels hell und
+glatt gegenüber den Vorlagen) und die offenen Sim-Reste: `docs/zielbild-measurements.md` § „Vorher/Nachher-Bögen" und `ROADMAP.md` § Offene Punkte.

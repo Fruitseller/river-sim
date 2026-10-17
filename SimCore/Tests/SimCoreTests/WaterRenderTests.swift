@@ -178,11 +178,17 @@ final class WaterRenderTests: XCTestCase {
             "calib_window(water_pond_contour_lo, water_pond_contour_hi, pond)",
             hint: "Kontur-Fuß/Sattel der Uferlinie liest WaterRender.pondContour*")
         assertContains(shader,
-            "calib_window(water_lake_gate_lo, water_lake_gate_hi, texture(water_tex, uv).g)",
+            "calib_window(water_lake_gate_lo, water_lake_gate_hi, water_at(uv).g)",
             hint: "See-GATE liest WaterRender.lakeGate*")
         assertContains(shader,
             "calib_window(water_river_mask_lo, water_river_mask_hi, stream)",
             hint: "Fluss-INTENSITÄT liest WaterRender.riverMask*")
+        assertContains(shader,
+            "calib_window(water_river_depth_lo, water_river_depth_hi, stream)",
+            hint: "Fluss-TIEFE liest WaterRender.riverDepth* (bis zum Review zu #174 eine Zahl im Shader)")
+        assertContains(shader,
+            "calib_window(water_lake_gate_lo, water_lake_gate_hi, lake_gate)",
+            hint: "Pixel-Stufe liest das See-Gate aus demselben Abgriff wie den Fluss-Kanal")
         assertContains(shader,
             "calib_window(water_shore_lo, water_shore_hi, max(stream, lake_gate))",
             hint: "Ufer-Saum liest WaterRender.shore*")
@@ -355,6 +361,23 @@ final class WaterRenderTests: XCTestCase {
                        "Gefälle-Richtung darf die Übergabe nicht umgehen")
     }
 
+    /// Raster an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305): das
+    /// Raster weicht erst dort, wo das Band die Kaskade schon VOLL abgegeben
+    /// hat — dazwischen bliebe sonst eine Strecke ohne jedes Wasser. Und es
+    /// weicht am Abfluss-Kanal selbst, damit Wasser und Ufersaum zusammen gehen.
+    func testRasterLeavesWallsOnlyAboveTheBandCascade() throws {
+        XCTAssertEqual(WaterRender.rasterWallSlopeLo,
+                       (WaterRender.cascadeSlopeLo + WaterRender.cascadeSlopeSpan) * RenderContract.heightScale,
+                       accuracy: 1e-12, "Wand-Fenster beginnt an der vollen Kaskaden-Übergabe des Bands")
+        XCTAssertGreaterThan(WaterRender.rasterWallSlopeHi, WaterRender.rasterWallSlopeLo)
+        let shader = try repoFile("game/shaders/terrain.gdshader")
+        // `world_slope` selbst (sichtbare Neigung, dieselbe wie die
+        // Gletscherspalten) pinnt RenderContractTests über `hscale`.
+        assertContains(shader,
+            "float stream = w.r * (1.0 - calib_window(water_wall_slope_lo, water_wall_slope_hi, world_slope));",
+            hint: "Wand-Fenster liest WaterRender.rasterWallSlope* am Abfluss-Kanal")
+    }
+
     func testOxbowFilterIsSharedAndSelfConsistent() {
         XCTAssertEqual(WaterRender.oxbowMinimumNodes, 20)
         XCTAssertEqual(WaterRender.oxbowMaximumTrimmedNodes, 3)
@@ -509,15 +532,22 @@ final class WaterRenderTests: XCTestCase {
                            hint: "\(name): Fresnel liest WaterRender.fresnelExponent "
                                + "(max: pow(0.0, 0.0) ist GLSL-UB, Null-Uniform der "
                                + "Editor-Vorschau)")
-            assertContains(shader,
-                "mix(water, water_sky_reflect_color, fresnel * water_fresnel_sky_mix)",
-                hint: "\(name): Himmels-Anteil liest WaterRender.fresnelSkyMix")
-            assertContains(shader,
-                "mix(water_roughness_steep, water_roughness_grazing, fresnel)",
-                hint: "\(name): Rauheit liest WaterRender.waterRoughness*")
-            assertContains(shader,
-                "mix(water_specular_steep, water_specular_grazing, fresnel)",
-                hint: "\(name): Specular liest WaterRender.waterSpecular*")
+            // Spiegelung statt Farbe (Befund #174 „See milchig"): den Himmel
+            // spiegelt Godot über SPECULAR/ROUGHNESS, der Wasserkörper tritt
+            // mit dem Fresnel-Anteil zurück. Eine Himmelsfarbe in der Albedo
+            // würde die Sonne wie Farbe beleuchten — genau der milchige Film.
+            assertContains(shader, "*= 1.0 - fresnel;",
+                hint: "\(name): Wasserkörper tritt mit Fresnel hinter die Spiegelung zurück")
+            XCTAssertFalse(shader.contains("sky_reflect"),
+                "\(name): keine Himmelsfarbe in der Albedo (Godot spiegelt die Umgebung selbst)")
+            XCTAssertTrue(shader.contains("ROUGHNESS = water_roughness;")
+                          || shader.contains("mix(land_roughness, water_roughness, wet)")
+                          || shader.contains("mix(water_roughness, 0.55, still)"),
+                "\(name): Rauheit liest WaterRender.waterRoughness")
+            XCTAssertTrue(shader.contains("SPECULAR = water_specular;")
+                          || shader.contains("mix(0.5, water_specular, wet)")
+                          || shader.contains("mix(0.4, water_specular, wet)"),
+                "\(name): Specular liest WaterRender.waterSpecular")
         }
         // Flüsse und Seen lassen ihr lokales Bett durchscheinen. Das offene Meer
         // bleibt opak, weil sonst bei flacher Kamera die rechteckige Unterseite
