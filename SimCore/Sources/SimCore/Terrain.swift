@@ -507,16 +507,92 @@ public final class Terrain {
     /// Faktor 2). Ein kurzer Lauf der Pässe, die danach ohnehin weiterlaufen,
     /// entschärft genau diese Formen — junge und gealterte Welt sprechen
     /// dieselbe Formensprache, die Jugend-Schärfe bleibt. Default 0: die
-    /// SimCore-Testwelten und alle Kalibrier-Messreihen bleiben unverändert;
-    /// den Produktionswert setzt die Brücke (`SimConfig.productionSettleYears`).
-    public func generate(seed: UInt32, settleYears: Double = 0) {
+    /// Setzt alle Zustandsfelder und Arbeitspuffer vollständig auf den Stand
+    /// eines frisch allokierten Terrains zurück (Issue #174).
+    ///
+    /// `Terrain.generate(seed:settleYears:)` ruft dies als ersten Schritt auf,
+    /// damit kein Zustand einer früheren Welt (Mäander-Masken, Stream-Map,
+    /// Kryo-Felder, Vegetation, Puffer) überlebt und das Ergebnis bit-identisch
+    /// zu `Terrain(config:seed:settleYears:)` ist.
+    private func resetToAllocated(seed: UInt32) {
         self.seed = seed
-        meander = MeanderState() // Cutoff-Zähler und Arbeitspuffer einer früheren Welt weg
         self.years = 0
         self.dropsEmitted = 0
         self.flowStepCount = 0
         self.dropCarry = 0
-        noise = SimplexNoise(seed: seed)
+        self.disturbActive = false
+        self.beltSubsteps = 0
+        self.beltCouplingLog = nil
+        self.noise = SimplexNoise(seed: seed)
+        self.meander = MeanderState()
+        self.heightBands = cfg.heightBandsOverride ?? .legacyAbsolute
+
+        // Arrays mit dynamischer Allokation (leer beim Start)
+        rainWeight = []
+        runoffWeight = []
+        lithHardness = []
+        lithErodeK = []
+        lithBed = []
+        lithProvince = []
+        temperature = []
+        snow = []
+        ice = []
+        underIce = []
+        iceRate = []
+        iceSurf = []
+        iceEro = []
+        vegScratchRow = []
+        areaPow = []
+        depositDampBuf = []
+        dropletGateBuf = []
+        segOwner = []
+        segPos = []
+        basinCells.removeAll(keepingCapacity: true)
+        basinSlots.removeAll(keepingCapacity: true)
+
+        // Feste Gitterpuffer (Größe cfg.count) über Rohpuffer auf Standardwerte
+        fill(&h, 0)
+        fill(&rock, 0)
+        fill(&sed, 0)
+        fill(&upliftBase, 0)
+        fill(&rain, 0)
+        fill(&veg, 0)
+        fill(&vegClass, 0)
+        fill(&disturb, 0)
+        fill(&regenPending, 0)
+        fill(&riparian, 0)
+        fill(&vegScratch, 0)
+        fill(&hf, 0)
+        fill(&waterLevel, 0)
+        fill(&lakeBalance, 0)
+        fill(&endorheicBasin, .none)
+        fill(&saltCrust, 0)
+        fill(&endorheicInflow, 0)
+        fill(&playaBed, false)
+        fill(&basinSeen, false)
+        fill(&orderPos, 0)
+        fill(&receiver, -1)
+        fill(&area, 0)
+        fill(&areaMFD, 0)
+        fill(&order, 0)
+        fill(&floodParent, -1)
+        fill(&visited, false)
+        fill(&scratch, 0)
+        fill(&qs, 0)
+        fill(&isChannel, false)
+        fill(&barAge, -1)
+        fill(&inBelt, false)
+        fill(&streamMap, 0)
+        fill(&streamRate, 0)
+        fill(&trackBuf, 0)
+        fill(&pondSeen, false)
+        heap = MinHeap(capacity: cfg.count)
+    }
+
+    /// SimCore-Testwelten und alle Kalibrier-Messreihen bleiben unverändert;
+    /// den Produktionswert setzt die Brücke (`SimConfig.productionSettleYears`).
+    public func generate(seed: UInt32, settleYears: Double = 0) {
+        resetToAllocated(seed: seed)
 
         // Grundrelief und Tektonik-Feld: die Großform aus Issue #174 oder, für
         // die Testwelten der Kalibrier-Suite, die Form davor (`rangeLandform`).
