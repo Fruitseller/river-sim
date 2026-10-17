@@ -225,6 +225,21 @@ reproduziert, übernimmt deren Fenstergröße; die gemessene Viewport-Größe ge
 mit ins Protokoll. Kleine Fenster bleiben nur für logische Vertragsprüfungen
 zulässig, deren Ergebnis nicht vom Renderer oder von Interaktion abhängt.
 
+**Zeitraffer-Frame-Zeiten als interleaved A/B** (Messprotokoll
+`docs/perf-measurements.md` §L):
+
+```sh
+cp -R game /tmp/alt/game            # Vergleichsstand VOR dem Umbau (mit bin/ und .godot/)
+RS_TIMING_SCREEN=1 RS_TIMING_RUNS=6 RS_TIMING_EXCLUSIVE=1 \
+    scripts/timelapse-timing.sh /tmp/alt/game game
+```
+
+Flusstal-Bühne im Betrieb `simulation`, maximiert; je Runde wechselt die
+Reihenfolge der Stände. `RS_TIMING_SCREEN` wählt den Bildschirm (mit externem
+Monitor am Referenz-Mac ist der eingebaute Index 1), `RS_TIMING_EXCLUSIVE=1`
+wartet vor jedem Lauf, bis kein fremdes Godot mehr die GPU teilt. Weitere
+Schalter im Kopf des Skripts.
+
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
 `RenderState.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
 `RS_SEED`, `RS_STEP`, `RS_STEP_CHUNK` (Schrittweite des `RS_STEP`-Vorlaufs,
@@ -327,6 +342,10 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    hält einen `Terrain` und einen `SimRender.RenderState`, reicht Aufrufe an
    beide weiter und wrappt `[UInt8]`, `[Float]` sowie `RibbonMesh` in
    `Packed*Array`. Keine Physik, keine Render-Berechnung, kein Render-Zustand.
+   Dazu EIN Hintergrund-Job (`SimRender.BackgroundJob`) für den Zeitraffer:
+   `beginStep` rechnet Sim-Schritt und Frame auf einem eigenen Thread; Welt und
+   Render-Zustand fasst jeder Aufruf nur über die Tore `terrain`/`render` an,
+   die den Job vorher abwarten (s. Datenfluss unten).
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input; das Aussehen der
    Bedienung steht in EINEM Theme, `ui/glass_theme.tres` (samt Radius und
@@ -361,12 +380,30 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    keine Kalibrier-Zahl — alle Schwellen bleiben im Vertrag
    `SimCore.WaterRender` und wirken CPU-seitig, bevor das Feld entsteht.
 
-Datenfluss pro Frame: `Main.gd` ruft `sim.step(years)`, lädt `heightsBytes()`
-hoch und holt den Rest über EINEN Aufruf `sim.renderFrame(trigger, now)`
-(Issue #94): der Auslöser (`FRAME_*` == `SimRender.FrameTrigger`) sagt, was
-passiert ist, `RenderState.frame` entscheidet Reihenfolge (Bänder → Wasserfeld
-→ Schutzmaske → Waldmaske), Drosseln und Wasser-Blend und liefert die Puffer des
-Frames; `Main.gd` lädt nur hoch, was es bekommt.
+Datenfluss pro Frame: ein Frame ist EIN Dictionary (`SimNode.packFrame`): Höhe,
+Jahr und Auslöser immer, die gedrosselten Overlays samt Seespiegel und
+Höhenbändern und das Band-Mesh nur, wenn neu. Der Auslöser (`FRAME_*` ==
+`SimRender.FrameTrigger`) sagt, was passiert ist, `RenderState.frame`
+entscheidet Reihenfolge (Bänder → Wasserfeld → Schutzmaske → Waldmaske),
+Drosseln und Wasser-Blend (Issue #94); `Main.gd` lädt nur hoch, was es bekommt
+(`_apply_frame`). Zwei Wege dorthin:
+- **Zeitraffer** (`docs/perf-measurements.md` §L): `sim.beginStep(years,
+  FRAME_TIMELAPSE, now)` rechnet `step` + Frame auf einem Hintergrund-Thread und
+  kehrt sofort zurück; `_process` fragt je Frame `sim.stepReady()` (blockiert
+  nie) und holt mit `sim.finishStep()` ab. Ein Schritt zur Zeit; der Hauptthread
+  wartet im Zeitraffer nie auf Sim oder Render-Aufbereitung.
+- **Alles andere** (Start, Sprung-Chunks, Neu, Laden, Pinsel-Nachzug):
+  synchron `sim.step(years)` bzw. Welt-Eingriff, dann
+  `sim.renderFrame(trigger, now)`.
+
+Die Synchronisationsregel: wer die Welt ändert oder ihren aktuellen Stand liest,
+ruft in `Main.gd` vorher `_settle_sim()` (wartet einen laufenden Schritt ab UND
+lädt ihn hoch, sonst käme sein älterer Stand nach dem neueren an). Der
+Pinselstrich wartet nicht, er setzt aus, solange ein Schritt rechnet. Raycast,
+Pinselkuppel und Jahresanzeige fragen die Sim gar nicht: sie lesen den
+gezeigten Stand (`shown_heights`, `shown_year`). Wächter:
+`SimCoreTests/BackgroundJobTests.swift` (Vertrag, Bit-Gleichheit, beide
+Quelltext-Seiten), `game/tests/smoke.gd` und `game/tests/relief.gd`.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
 ### SimRender- und Extension-Aufbau (Issues #53/#80/#82/#93/#94)
@@ -439,6 +476,11 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
 - `RenderSupport.swift`: was mehrere brauchen (`parallelChunks`,
   `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
   müssen sich über die Uferlinie und die Mündung exakt einig sein.
+- `BackgroundJob`: höchstens EIN Hintergrund-Job mit einem Ergebnis-Platz,
+  die ganze Nebenläufigkeit des Zeitraffers (`SimNode.beginStep`). Ein
+  Besitzer-Thread; `isReady` blockiert nie, `wait`/`take` zählen ihre
+  Wartezeit (Messgröße „Hauptthread wartet"). Godot-frei, damit der Vertrag
+  headless prüfbar bleibt (Wächter: `SimCoreTests/BackgroundJobTests.swift`).
 
 Die Werkzeug-Modi (`BrushTool`) liegen seit Issue #79 in SimCore (s. dort);
 `SimNode.brush` bleibt der dünne Adapter. Ebenso die feste Pass-Reihenfolge nach

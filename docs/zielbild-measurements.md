@@ -883,6 +883,12 @@ Budget enger wird: die Kluft-Richtungen mit kleinem Gewicht früher
 überspringen oder die Kluft-Auflösung mit der Distanz stärker ausblenden. Der Zeitraffer überschreitet das Budget an
 Upload-Frames (p95 bis 71 ms) — Befund, nicht Abnahmekriterium.
 
+Nachtrag: die Ursache waren nicht die Uploads, sondern Sim-Schritt und
+Frame-Aufbereitung synchron im Takt-Frame. Seit sie auf einem
+Hintergrund-Thread laufen, liegt der Zeitraffer auf der Kamera `detail` beim
+Standbild (p95 ~25 ms statt ~98 ms auf ruhigem Rechner); Messprotokoll und
+Nachmessung: `docs/perf-measurements.md` §L.
+
 ### Vorher/Nachher-Bögen
 
 `docs/screenshots/zielbild-174/seed<S>_<J>.jpg`: je Seed und Stadium alle neun

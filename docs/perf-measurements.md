@@ -368,6 +368,8 @@ und brachten nichts (Abschnitt D).
 2. **Sim-Schritt vom Render-Thread entkoppeln.** Ändert die Schrittkosten nicht,
    nimmt sie aber aus dem Frame — für die FPS der größte Hebel, und der
    einzige, der `priorityFlood` nicht anfassen muss.
+   → **Im Oktober 2026 für den Zeitraffer gemacht** (Abschnitt L): Schritt und
+   Frame-Aufbereitung laufen auf einem Hintergrund-Thread, bit-identisch.
 3. **Bit-Identität aufgeben.** Priority-Flood + FIFO und ein
    cache-ausgerichteter Heap zusammen halbieren realistisch den größten Posten.
    Das ist eine Physik-Änderung mit eigener Kalibrier-Runde und gehört in ein
@@ -759,3 +761,217 @@ for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; d
 RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
 ```
+
+---
+
+## L. Zeitraffer ohne Warten: Sim-Schritt im Hintergrund (Oktober 2026)
+
+Befund (Integrationsstand #174, `0fec08b`): im Zeitraffer rief `Main.gd` alle
+`SIM_TICK_SECONDS` (0,25 s) SYNCHRON `sim.step(years)` und danach
+`sim.renderFrame(FRAME_TIMELAPSE)` auf. Headless gemessen (M4 Max, Seed 1337,
+Produktionswelt nach 20.000 Jahren, n = 720, je 5 Wiederholungen):
+`step` 47–57 ms, `renderFrame` mit Overlays und Band-Bau 31–37 ms. Jeder
+Takt-Frame dauerte damit 70–120 ms, viermal je Sekunde ein Ruckler; die
+Zielbild-Messung (`docs/zielbild-measurements.md`, Punkt 47) fand im Zeitraffer
+p95 bis 79 ms gegen ≤ 30 ms in Standbild und Kamerafahrt. §F Punkt 2 hatte
+genau das als größten Hebel benannt: die Schrittkosten bleiben, aber nicht mehr
+im Frame.
+
+### Entwurf
+
+- **`SimRender.BackgroundJob<Output>`** ist die ganze Nebenläufigkeit:
+  höchstens EIN Job, ein Ergebnis-Platz, ein Besitzer-Thread. `isReady`
+  blockiert nie; `wait`/`take` blockieren, solange der Job rechnet, und zählen
+  diese Zeit (`waits`, `waitedSeconds`); `start` startet nichts, solange ein
+  Ergebnis noch nicht abgeholt ist (sonst ginge etwa ein Band-Bau verloren, den
+  `RenderState` schon für ausgeliefert hält). Godot-frei, damit der Vertrag
+  headless prüfbar bleibt.
+- **`SimNode.beginStep(years, trigger, now)`** startet den Job: `terrain.step`,
+  `render.invalidate(.advanced)`, `render.frame(trigger, now)` und das
+  Verpacken ins Frame-Dictionary (`packFrame`). Die Packed-Arrays entstehen auf
+  dem Arbeits-Thread; es sind Godots eingebaute Werttypen, kein `Object`.
+  Abholen: `stepReady()` (blockiert nie), `finishStep()`. Messgröße:
+  `stepWaitMilliseconds()`.
+- **Tore statt Disziplin:** `terrain` und `render` sind in `SimNode` berechnete
+  Properties, die zuerst `job.wait()` rufen. Jeder Aufruf der Brücke kommt nur
+  über sie an Welt und Render-Zustand; die gespeicherten Felder `world` und
+  `renderState` nennt allein `beginStep`, nachdem es geprüft hat, dass kein Job
+  unterwegs ist. Ein gleichzeitiger Zugriff ist damit ausgeschlossen, ohne dass
+  ein Aufruf daran denken muss; `deinit` wartet einen laufenden Job ab (beim
+  Beenden entlädt Godot sonst die Library unter ihm).
+- **Der Frame trägt den ganzen gezeigten Stand:** `trigger`, `year`, `heights`
+  immer, mit Overlays zusätzlich `filled` (Seespiegel) und `bands`
+  (Höhenbänder), nach einem Band-Bau das Mesh. Für einen Frame fragt der
+  Hauptthread die Sim nichts mehr; `renderFrame` liefert dasselbe Dictionary
+  synchron.
+- **`Main.gd`:** `_process` holt einen fertigen Schritt ab (`stepReady` →
+  `finishStep` → `_apply_step`) und beginnt den nächsten, wenn der Takt fällig
+  UND keiner unterwegs ist. Takt (0,25 s), Jahresdeckel (240), Overlay-Drossel
+  (0,30 s), Band-Deckel (1 Hz) und alle Überblenden sind unverändert.
+
+Verworfen: Godots `WorkerThreadPool` aus GDScript. Dann riefe ein Fremd-Thread
+Methoden eines `Node` im Szenenbaum, und die Ausschlussregel stünde als
+Disziplin im Skript statt im Typ; prüfen ließe sie sich nur mit laufender
+Engine.
+
+### Synchronisationsregeln je Pfad
+
+| Pfad in `Main.gd` | Regel |
+| --- | --- |
+| Zeitraffer-Takt | beginnt nur ohne Schritt unterwegs, abgeholt wird nur ein fertiger (`stepReady`); der Hauptthread wartet nie |
+| Pinselstrich | wartet nicht: solange ein Schritt rechnet, setzt der Strich aus, bis das Abholen ihn hochgeladen hat; während des Strichs beginnen keine Schritte (`_simulation_should_step`, wie bisher) |
+| Pinsel-Nachzug, Strich-Ende | `_settle_sim()`, dann synchron wie bisher |
+| Zeitsprung | `_settle_sim()` vor jedem Chunk (zwischen zwei Chunks läuft `_process`), Chunks synchron wie bisher |
+| Neu, Laden, Speichern | `_settle_sim()` zuerst; gespeichert wird der Stand, den man sieht |
+| Diagnose | der Takt-Refresh (1 s) läuft nur in Frames ohne Schritt unterwegs (Kennzahlen 2,3 ms); Δ-Karte und Referenz setzen `_settle_sim()` |
+| Kamera-Presets F1–F3 | `_settle_sim()` (Abfluss und Empfänger kommen aus der Sim) |
+| Raycast, Höhen-Cache, Pinselkuppel, Jahresanzeige, Detailstärke | lesen den GEZEIGTEN Stand (`shown_heights`, `shown_year`) und fragen die Sim nicht |
+| synchroner Frame (`_render_frame`) | `_settle_sim()` zuerst |
+| Leerlauf-Drossel | ein Schritt unterwegs zählt als Aktivität |
+| ein vergessener Pfad | die Brücke wartet selbst (Tor): kein Datenrennen. Das Ergebnis bliebe aber liegen und käme NACH dem neueren Stand an, deshalb der Quelltext-Wächter auf `Main.gd` |
+
+`_settle_sim()` wartet einen laufenden Schritt ab UND lädt ihn hoch. Nur
+abwarten genügt nicht: das Ergebnis enthält Bänder und Wasser, die `RenderState`
+ab dann für sichtbar hält.
+
+### Determinismus
+
+- Die Physik ist nicht berührt (`SimCore/Sources/SimCore` unverändert,
+  `simperf --hash` damit gleich).
+- Hintergrund = synchron, headless: `BackgroundJobTests.
+  testBackgroundStepsAreBitIdenticalToSynchronousSteps` fährt sechs
+  Zeitraffer-Schritte (15–240 Jahre, ein Pinselstrich dazwischen) synchron und
+  über den Job; Fingerabdruck der Welt, alle Overlay-Puffer und das Band-Mesh
+  sind je Schritt bit-gleich.
+- Durch die Brücke, alter gegen neuen Stand: 14 Zeitraffer-Takte (Seed 1337,
+  Produktionswelt + 5.000 Jahre, 15 Jahre je Takt, feste Uhr), alter Build
+  `step` + `renderFrame`, neuer `beginStep` + `finishStep`. SHA-256 von Höhe,
+  Wasser, Farbe, Material, Bodenbedeckung, Rinnen, Schutz- und Waldmaske,
+  Sedimentfahne je Takt sowie das Band-Mesh am Ende: 14 von 14 gleich.
+- `game/tests/smoke.gd` prüft dasselbe gegen die geladene Welt (Jahr, Höhe,
+  Seespiegel, Wasser) auf jedem CI-Lauf.
+
+### Was auf dem Hauptthread bleibt
+
+Je abgeholtem Schritt nur noch Hochladen. Aufgeschlüsselt mit Zeitmarken in
+`_apply_frame` (einmaliger Lauf, nicht eingecheckt; Seed 1337, 20.000 Jahre,
+`balanced`, maximiert 3456 × 2104, 33 Schritte):
+
+| Teil | ms je Schritt | Takt |
+| --- | ---: | --- |
+| Höhe (R32F, Vorgänger + neu) | 0,35–0,48 | jeder Schritt |
+| Band-Mesh (`add_surface_from_arrays`) | 0,38–0,51 | ≤ 1 Hz |
+| Seespiegel, Höhenbänder, Farbe, Material, Bodenbedeckung, Rinnen | 1,2–1,5 | Overlay-Takt (jeder 2. Schritt) |
+| Wasser + Schutzmaske | 0,32–0,40 | Overlay-Takt |
+| Waldmaske | 0,08–0,11 | Overlay-Takt |
+| Sedimentfahne samt Mip-Kette | 0,50–0,66 | Overlay-Takt |
+| Relief-Back (nur der Auftrag, die GPU zeichnet ihn) | 0,02 | jeder Schritt |
+| **Summe** | **0,4–3,7** | |
+
+Das gefährdet das 33,3-ms-Budget nicht, ein Verteilen der Uploads über
+mehrere Frames lohnt deshalb nicht. Die A/B-Läufe unten bestätigen es: der
+Median der Hochlade-Zeit liegt bei 2,4–2,9 ms, ihr Maximum bei 5–8 ms
+(`apply_median_ms`/`apply_max_ms`), und die längsten Frames sind nicht die mit
+Hochladen (`apply_frame_max_ms` < `max_ms`). Die Hälfte der Overlay-Bytes lädt
+`FieldTexture` übrigens nur hoch, um den Vorgängerstand der Überblende (#172)
+erneut zu senden; Tauschen statt Kopieren halbierte das, CPU-seitig sind es
+aber nur ~1 ms (s. Offene Punkte).
+
+### Gemessen: Frame-Zeiten im Zeitraffer
+
+M4-Max-Referenz-Mac (16 Kerne, 64 GB), offizielles Godot 4.7.2, eingebauter
+Bildschirm, maximiert, Viewport 3456 × 2104, `balanced`, Flusstal-Bühne im
+Betrieb `simulation` (Seed 1337 nach 20.000 Jahren, Kamera `detail`, 60 J./Sek.,
+Frame-Abstände über 10 s). A = `0fec08b` (synchron), B = dieser Stand.
+`scripts/timelapse-timing.sh`, interleaved (A B, B A, …), 6 Runden,
+2026-10-17. Der Rechner war dabei NICHT ruhig: andere Agenten bauten, testeten
+und renderten parallel (Lastmittel 11–86), in vier Runden lief mindestens ein
+fremdes Godot auf derselben GPU. Deshalb je Runde, nicht nur der Median:
+
+| Runde | Last A / B | fremdes Godot A / B | A p95 | A > 33,3 ms | B p95 | B > 33,3 ms |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 1 | 11 / 20 | 1 / 0 | 88,7 ms | 45 / 361 | 38,4 ms | 35 / 435 |
+| 2 | 51 / 24 | 1 / 1 | 95,6 ms | 169 / 175 | 22,3 ms | 0 / 485 |
+| 3 | 44 / 46 | 3 / 1 | 178,8 ms | 114 / 114 | 113,7 ms | 165 / 165 |
+| 4 | 37 / 37 | 1 / 1 | 184,3 ms | 127 / 127 | 122,5 ms | 148 / 148 |
+| 5 | 86 / 84 | 1 / 0 | 167,0 ms | 125 / 126 | 31,2 ms | 19 / 367 |
+| 6 | 74 / 77 | 0 / 0 | 148,8 ms | 67 / 265 | 31,3 ms | 19 / 368 |
+
+Median über alle sechs Läufe je Stand:
+
+| Stand | Mittel | p95 | p99 | Max | > 33,3 ms | Hochladen Median / Max | Upload-Frame Max | Hauptthread wartet |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A (synchron) | 69,6 ms | 157,9 ms | 171,6 ms | 179,0 ms | 120 | – | – | – |
+| B (Hintergrund) | 27,3 ms | 34,8 ms | 38,8 ms | 55,8 ms | 27 | 2,9 / 7,7 ms | 35,4 ms | 0,0 ms |
+
+Lesart: In JEDER Runde liegt B unter A, auch unter gleicher Last. In den
+Runden 3 und 4 teilten sich drei bzw. zwei Godots die GPU; dort sind beide
+Stände GPU-gebunden und keine Aussage über die Sim. In den übrigen Runden
+fällt p95 von 89–167 ms auf 22–38 ms. Der Hauptthread hat in keinem Lauf auf
+einen Schritt gewartet (`step_wait_ms` 0,0 im Messfenster), und der längste
+Frame mit Hochladen ist kürzer als der längste Frame überhaupt: was über dem
+Budget bleibt, ist Last von außen, nicht das Hochladen.
+
+Ergänzend zwei Einzelläufe vom Vorabend (2026-10-16, NICHT interleaved,
+Lastmittel 15–57, kein fremdes Godot): A Mittel 28,4 / p95 97,9 / p99 119,0 /
+Max 124,3 ms, 38 von 353 Frames über dem Budget (die vier Takte je Sekunde);
+B Mittel 22,0–22,9 / p95 24,6–25,0 / p99 29,6–31,1 / Max 32,7–44,6 ms, 0–1
+Frames über dem Budget. Das entspricht dem Standbild derselben Kamera
+(Zielbild-Messung: `detail` p95 26,6 ms). Die endgültige Messung gehört auf
+einen ruhigen Rechner: `RS_TIMING_EXCLUSIVE=1` (s. Reproduktion).
+
+### Wächter
+
+- `SimCoreTests/BackgroundJobTests.swift`: Vertrag von `BackgroundJob`
+  (Ergebnis genau einmal, kein zweiter Start, `isReady` blockiert nie, nur
+  echtes Warten zählt, Schreibzugriffe des Jobs sind nach `wait` sichtbar),
+  Bit-Gleichheit Hintergrund ↔ synchron, und als Quelltext: die Brücke fasst
+  Welt und Render-Zustand nur über die Tore an; `_process` beginnt Schritte im
+  Hintergrund, holt nur fertige ab und ruft weder `sim.step` noch
+  `renderFrame`; JEDE Funktion in `Main.gd`, die die Welt ändert oder ihren
+  aktuellen Stand liest, ruft vorher `_settle_sim()` (der Pinsel: setzt aus).
+  Gegenprobe beim Bau: `_settle_sim()` aus `_regen` entfernt bzw. die
+  Pinsel-Sperre gelöscht → beide rot.
+- `RenderStateTests`: `beginStep` steht in der Liste der ändernden Einstiege
+  und meldet `.advanced`.
+- `RenderFrameTests`: jeder Frame-Schlüssel, den `packFrame` setzt, wird in
+  `Main.gd` gelesen; `Main.gd` holt Seespiegel, Höhenbänder und Band-Mesh nicht
+  mehr selbst.
+- `game/tests/smoke.gd`: Protokoll über die echte Brücke (wartender Aufruf
+  lässt das Ergebnis liegen, zweiter Start startet nichts, Schlüssel) und
+  Hintergrund = synchron nach dem Laden derselben Welt.
+- `game/tests/relief.gd`: der Zeitraffer-Pfad in `Main` mit echtem
+  Hintergrund-Schritt (Back-Takt, Blenden) und ein Strich, der während eines
+  rechnenden Schritts beginnt, ohne zu warten.
+
+### Offene Punkte
+
+- **Zeitsprünge** laufen weiter synchron, ein Chunk (2.000 Jahre) je Frame.
+  Mit demselben Job könnten sie im Hintergrund laufen (`beginStep(chunk,
+  FRAME_JUMP_CHUNK, …)` und abwarten per `await`), dann bliebe die Kamera
+  auch im Sprung flüssig. Nicht Teil dieser Runde.
+- **Pinsel-Nachzug** (`recomputeFlow` 35 ms, dann `renderFrame(FRAME_STROKE)`)
+  bleibt synchron; das betrifft Pinsel-Frames, nicht den Zeitraffer.
+- **Doppelter Upload der Vorgängerstände** (#172, `FieldTexture` mit
+  `keeps_previous`): je Overlay-Takt geht die Hälfte der ~30 MB Texturdaten
+  nur dafür über den Bus, den alten Stand erneut zu senden. Tauschen der beiden
+  Texturen statt Kopieren halbierte das; CPU-seitig ~1 ms, GPU-seitig nicht
+  gemessen.
+- **QoS des Arbeits-Threads**: `.userInitiated`. Ob `.utility` unter Fremdlast
+  ruhigere Frames gibt (der Schritt teilt sich die Kerne mit Godots
+  Render-Thread), ist nicht gemessen.
+
+### Reproduktion
+
+```sh
+GODOT=…/Godot.app/Contents/MacOS/Godot   # 4.7.2, offiziell
+cp -R game /tmp/alt/game                 # Vorher-Stand samt bin/ und .godot/ sichern
+# … umbauen, scripts/build.sh release …
+RS_TIMING_SCREEN=1 RS_TIMING_RUNS=6 RS_TIMING_EXCLUSIVE=1 \
+    scripts/timelapse-timing.sh /tmp/alt/game game
+```
+
+Die Bit-Gleichheit durch die Brücke (14 Takte, oben) lief als Einmal-Skript:
+dieselbe Folge `step(15)` + `renderFrame(FRAME_TIMELAPSE, t)` im alten und
+`beginStep(15, FRAME_TIMELAPSE, t)` + `finishStep()` im neuen Build, SHA-256 je
+Puffer. Bleibend prüfen dasselbe `BackgroundJobTests` und `smoke.gd`.
