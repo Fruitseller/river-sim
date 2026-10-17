@@ -57,8 +57,10 @@ Umsetzung, beide Regeln mit derselben Schwelle `WaterRender.wetMeadowMaxCells`
    aus anteilig gedeckelten Korridor-Zellen besteht und kein stehendes Wasser
    enthält, fällt auf die Saum-Intensität zurück und wird nasse Wiese.
 
-Nicht angefasst, mit Absicht: Kaskaden-Zellen (dort deckelt das Raster nie,
-es IST dort das Wasser), Korridor-Zellen ohne Banddeckung (Band-Enden,
+Nicht angefasst, mit Absicht: Kaskaden-Zellen (es IST dort das Wasser;
+seit die Kaskaden-Ausnahme beim Deckeln entfallen ist, zählt eine Zelle erst
+ab `WaterRender.remnantMinBandCoverage` = 0,5 Banddeckung als Rest-Fleck,
+s. Nachtrag unten), Korridor-Zellen ohne Banddeckung (Band-Enden,
 Kohärenz-Fade: dort ist das Raster das einzige Wasser), Tümpel und Seen am
 Korridor (Mündungs-Überlappung). Die Übergabe Band ↔ Raster
 (`lakeRawWetDepth`) bleibt damit unverändert; die Wächter
@@ -70,6 +72,26 @@ stehen, weil sie Teil größerer Komponenten sind oder an ungedeckten
 Korridor-Zellen hängen. Sie ohne Lücken zu entfernen, braucht die echte
 Kanalbreite aus Paket B (Bandbreite = Bettbreite); dann deckt das Band dort,
 wo heute das Raster nachhilft.
+
+Nachtrag Review #174 C (Oktober 2026): die Regel 2 setzte „gedeckelt"
+schon ab jeder Banddeckung über 0. An einer Steilstufe, wo das Band
+ausblendet (0 < Deckung < 1), fiel damit ein kleines Raster-Stück auf den
+Saum zurück und wurde nasse Wiese: ein halbtransparentes Band über einem
+grünen Streifen statt Wasser. Seitdem zählt erst Deckung ≥ 0,5, und ein
+Bach läuft durch einen Tümpel, der nasse Wiese wurde, weiter
+(`WaterFieldStreamTests`). Gegenprobe mit diesem Messlauf, Seed 1337, alter
+gegen neuen Stand:
+
+| Jahr | Fluss-Fragmente < 50 | Rest-Flecken zurückgenommen | nasse Wiese (Zellen) |
+| ---: | :--- | :--- | :--- |
+| 0 | 6 / 6 | 379 → 116 | 1566 → 809 |
+| 2000 | 6 / 6 | 305 → 115 | 1496 → 698 |
+| 20.000 | 7 / 7 | 282 → 127 | 1221 → 453 |
+| 100.000 | 7 / 7 | 200 → 63 | 615 → 229 |
+
+Der Tümpel-Teppich kommt nicht zurück (kleine Fragmente unverändert); die
+Raster-Komponenten mit 50–99 Zellen nehmen um 1–4 zu, das sind die
+Kaskaden-Stücke, die wieder Wasser zeigen.
 
 Nasse Wiese: Vegetationsgewicht mindestens `wetMeadowVegetation` (0,85),
 Makrofarbe zu 70 % `wetMeadowColor`, und die Zellen gehen in die Schutzmaske
