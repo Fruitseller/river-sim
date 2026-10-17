@@ -837,7 +837,13 @@ extension MeanderState {
         let snap = channels
         let gw = max(1, Int(Double(config.n) / cell) + 3)
         var head = [Int32](repeating: -1, count: gw * gw)
-        var flatC: [Int32] = [], flatN: [Int32] = [], next: [Int32] = []
+        let totalNodes = snap.reduce(0) { $0 + $1.nodes.count }
+        var flatC = [Int32]()
+        flatC.reserveCapacity(totalNodes)
+        var flatN = [Int32]()
+        flatN.reserveCapacity(totalNodes)
+        var next = [Int32]()
+        next.reserveCapacity(totalNodes)
         @inline(__always) func bin(_ v: Double) -> Int { min(gw - 1, max(0, Int(v / cell) + 1)) }
         // Mit Kopplung (#187) enden feste Läufe ohnehin an ihrem
         // D8-Zusammenfluss; neu heranrücken kann nur ein WANDERNDER Vorfluter.
@@ -851,29 +857,28 @@ extension MeanderState {
                 flatC.append(Int32(ci)); flatN.append(Int32(ni))
             }
         }
-        func nearestBigger(_ ci: Int, _ p: MeanderNode, _ q: Double, _ reach: (Double) -> Double)
+        let lastDischarge = snap.map { $0.discharge.last ?? 0 }
+        func nearestBigger(_ ci: Int, _ p: MeanderNode, _ q: Double, isEnd: Bool, bA: Double)
             -> (MeanderNode, Double)? {
             var best: (MeanderNode, Double)? = nil
             let bx = bin(p.x), bz = bin(p.z)
-            let qaEnd = snap[ci].discharge.last ?? 0
+            let qaEnd = lastDischarge[ci]
             for zz in max(0, bz - 2)...min(gw - 1, bz + 2) {
                 for xx in max(0, bx - 2)...min(gw - 1, bx + 2) {
                     var e = head[zz * gw + xx]
                     while e >= 0 {
                         let cj = Int(flatC[Int(e)]), nj = Int(flatN[Int(e)]); e = next[Int(e)]
                         guard cj != ci, nj < snap[cj].nodes.count - 3 else { continue }
-                        // Größer = der GANZE Lauf führt mehr (Abfluss am Ende). Der
-                        // Abfluss an der Stelle taugt nicht: der Endknoten eines
-                        // Zubringers liegt auf der Mündungszelle und trägt den
-                        // Abfluss des Vorfluters — so zerhackte der Vergleich
-                        // gemessen jeden Hauptlauf an jedem Zusammenfluss. Aus
-                        // demselben Grund zählen die letzten Knoten nicht als Ziel.
-                        let qbEnd = snap[cj].discharge.last ?? 0
+                        let qbEnd = lastDischarge[cj]
                         guard qbEnd > qaEnd || (qbEnd == qaEnd && cj < ci) else { continue }
                         let o = snap[cj].nodes[nj]
-                        let d = dist(p, o)
+                        let dx = p.x - o.x, dz = p.z - o.z
+                        let d2 = dx * dx + dz * dz
+                        if let b = best, d2 >= b.1 * b.1 { continue }
+                        let d = d2.squareRoot()
                         let bB = Self.beltWidthCells(discharge: snap[cj].discharge[nj], config: config)
-                        if d < reach(bB), best == nil || d < best!.1 { best = (o, d) }
+                        let maxReach = isEnd ? 2 * bB : 0.5 * (bA + bB)
+                        if d < maxReach { best = (o, d) }
                     }
                 }
             }
@@ -887,7 +892,7 @@ extension MeanderState {
             for j in 2..<c {
                 let q = ch.discharge[j]
                 let bA = Self.beltWidthCells(discharge: q, config: config)
-                if let (o, _) = nearestBigger(ci, ch.nodes[j], q, { 0.5 * (bA + $0) }) {
+                if let (o, _) = nearestBigger(ci, ch.nodes[j], q, isEnd: false, bA: bA) {
                     var nodes = Array(ch.nodes[0...j]), dis = Array(ch.discharge[0...j])
                     nodes[j] = o; dis[j] = q
                     if j + 1 < c || nodes[j] != ch.nodes[j] {
@@ -895,7 +900,7 @@ extension MeanderState {
                     }
                     break
                 }
-                if j == c - 1, let (o, _) = nearestBigger(ci, ch.nodes[j], q, { 2 * $0 }) {
+                if j == c - 1, let (o, _) = nearestBigger(ci, ch.nodes[j], q, isEnd: true, bA: bA) {
                     channels[ci].nodes[j] = o   // angeschlossenes Ende folgt dem Vorfluter
                 }
             }
