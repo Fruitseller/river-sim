@@ -1950,18 +1950,50 @@ public final class Terrain {
             let ps = sb.baseAddress!, pd = db.baseAddress!
             parallel(nn) { jLo, jHi in
                 for j in jLo..<jHi {
-                    for i in 0..<nn {
-                        let k = j * nn + i
-                        var m = 0.0
-                        if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
-                        if j > 0 { m = max(m, ps[k - nn]) }
-                        if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
-                        if i > 0 { m = max(m, ps[k - 1]) }
-                        if i < nn - 1 { m = max(m, ps[k + 1]) }
-                        if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
-                        if j < nn - 1 { m = max(m, ps[k + nn]) }
-                        if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
-                        pd[k] = max(ps[k], 0.65 * m)
+                    let row = j * nn
+                    if j > 0 && j < nn - 1 {
+                        // Linke Randzelle i = 0
+                        var mLeft = max(ps[row - nn], ps[row - nn + 1])
+                        mLeft = max(mLeft, ps[row + 1])
+                        mLeft = max(mLeft, ps[row + nn])
+                        mLeft = max(mLeft, ps[row + nn + 1])
+                        pd[row] = max(ps[row], 0.65 * mLeft)
+                        
+                        // Innere Zellen 1 ..< nn - 1: ohne Verzweigungen
+                        for i in 1..<(nn - 1) {
+                            let k = row + i
+                            var m = max(ps[k - nn - 1], ps[k - nn])
+                            m = max(m, ps[k - nn + 1])
+                            m = max(m, ps[k - 1])
+                            m = max(m, ps[k + 1])
+                            m = max(m, ps[k + nn - 1])
+                            m = max(m, ps[k + nn])
+                            m = max(m, ps[k + nn + 1])
+                            pd[k] = max(ps[k], 0.65 * m)
+                        }
+                        
+                        // Rechte Randzelle i = nn - 1
+                        let rk = row + nn - 1
+                        var mRight = max(ps[rk - nn - 1], ps[rk - nn])
+                        mRight = max(mRight, ps[rk - 1])
+                        mRight = max(mRight, ps[rk + nn - 1])
+                        mRight = max(mRight, ps[rk + nn])
+                        pd[rk] = max(ps[rk], 0.65 * mRight)
+                    } else {
+                        // Oberste (j = 0) und unterste (j = nn - 1) Zeile
+                        for i in 0..<nn {
+                            let k = row + i
+                            var m = 0.0
+                            if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
+                            if j > 0 { m = max(m, ps[k - nn]) }
+                            if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
+                            if i > 0 { m = max(m, ps[k - 1]) }
+                            if i < nn - 1 { m = max(m, ps[k + 1]) }
+                            if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
+                            if j < nn - 1 { m = max(m, ps[k + nn]) }
+                            if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
+                            pd[k] = max(ps[k], 0.65 * m)
+                        }
                     }
                 }
             }

@@ -759,3 +759,55 @@ for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; d
 RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
 ```
+
+---
+
+## L. Verzweigungsfreie Dilatation in updateVegClass (Oktober 2026) — 10,6 → 8,9 ms
+
+Anlass: In `updateVegetation` leitet `updateVegClass` über drei Dilatationsrunden
+(`dilateDamped`, Pass 2) die Auwald-Ufermaske ab. Pro Runde durchliefen alle 518.400
+Zellen (bei n = 720) acht bedingte Verzweigungen (`if i > 0 && j > 0`, etc.) zur
+Randbehandlung — zusammen über 12 Millionen Verzweigungen je Zeitschritt, die
+zudem die SIMD-Vektorisierung der inneren Nachbarschaftsabfrage verhinderten.
+
+### Was geändert wurde
+
+In `dilateDamped` werden die Randzeilen (`j = 0` und `j = nn - 1`) sowie die
+Randspalten (`i = 0` und `i = nn - 1`) separat behandelt. Für alle inneren
+Zellen (`1 ..< nn - 1`, >99,4 % der Zellen) entfallen sämtliche Verzweigungen:
+die acht Nachbarn werden direkt adressiert und über `max` akkumuliert, sodass
+der Compiler den Loop vektorisieren kann.
+
+Die Arithmetik und das Ergebnis sind 100 % bit-identisch.
+
+### Gemessen (Linux-VM, Produktions-Config, 5 Paare interleaved)
+
+Interleaved gemessen über 5 Paare (`simperf.base` vs. `simperf.neu`, jeweils
+`--repeat 3`, gleiche Sitzung, Linux-VM, 4 Kerne):
+
+| Paar | `updateVegetation` base | `updateVegetation` neu | Δ ms | Ersparnis |
+|---|---:|---:|---:|---:|
+| 1 | 10,51 ms | 9,30 ms | −1,21 ms | −11,5 % |
+| 2 | 10,62 ms | 8,72 ms | −1,90 ms | −17,9 % |
+| 3 | 11,20 ms | 8,91 ms | −2,29 ms | −20,4 % |
+| 4 | 9,96 ms | 8,94 ms | −1,02 ms | −10,2 % |
+| 5 | 12,04 ms | 9,03 ms | −3,01 ms | −25,0 % |
+| **Median** | **10,62 ms** | **8,94 ms** | **−1,68 ms** | **−15,8 %** |
+
+In allen 5 Paaren ist `updateVegetation` konsistent und reproduzierbar schneller
+(Ersparnis 1,0 bis 3,0 ms je Schritt, im Median −1,68 ms / −15,8 %).
+
+### Bit-Identität
+
+`simperf --hash` vor und nach der Änderung identisch (gleiche Maschine, gleiche Sitzung):
+`fingerprint 88de046751de3c2f`. Die Physik bleibt bit-identisch.
+
+### Reproduktion
+
+```sh
+source ~/.local/share/swiftly/env.sh
+swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+SimCore/.build/release/simperf --repeat 3
+SimCore/.build/release/simperf --hash
+```
+
