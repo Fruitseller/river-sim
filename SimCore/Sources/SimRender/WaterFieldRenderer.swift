@@ -82,6 +82,9 @@ public final class WaterFieldRenderer {
     /// Abfluss der sichtbaren Bänder je Zentrumslinien-Zelle — für die
     /// Bank-Schranke des Raster-Flusses (`WaterRender.rasterBarBandReachCells`).
     private var waterBandQ: [Double] = []
+    /// Wo die Kontinuitäts-Kette an einem Tümpel-Rand endete (Zelle und
+    /// Intensität dort) — für die Fortsetzung durch nasse Wiese.
+    private var waterPondEntries: [(cell: Int, value: Double)] = []
     /// Nasse Wiese (Issue #174, Paket C) des letzten `bytes`-Laufs: Zellen
     /// kleiner See-Komponenten, die das Raster NICHT als Wasser malt
     /// (`WaterRender.isWetMeadow`). `RenderState` reicht die Maske an
@@ -374,6 +377,12 @@ public final class WaterFieldRenderer {
         // würde die Klemme isolierten Speckle zu langen Fäden verstärken.
         // 1 Zelle breit; Breite macht weiterhin nur die (schwellen-gestufte)
         // Dilatation darunter.
+        // TÜMPEL-EINTRITT: ob der Tümpel unter der Kette nasse Wiese ist (dann
+        // malt der See-Kanal ihn nicht und der Bach hätte dort eine Lücke),
+        // steht erst nach den Komponenten unten fest. Die Kette merkt sich
+        // deshalb, wo und mit welchem Wert sie am Tümpel-Rand endet, und läuft
+        // dort weiter (`pondEntries`, s. nach der nassen Wiese).
+        waterPondEntries.removeAll(keepingCapacity: true)
         for start in 0..<(n * n) where sd[start] > WaterRender.continuityFloor {
             var val = max(sd[start] - WaterRender.continuityDecayPerCell,
                           WaterRender.continuityFloor)
@@ -382,7 +391,11 @@ public final class WaterFieldRenderer {
                 let ri = Int(r)
                 if sd[ri] >= val { break }   // Kette ab hier schon (stärker) gemalt
                 // Offenes Wasser erreicht: ab hier malen See-Kanal bzw. Meer.
-                if h[ri] <= sea || hf[ri] - h[ri] > WaterRender.lakeRawWetDepth { break }
+                if h[ri] <= sea { break }
+                if hf[ri] - h[ri] > WaterRender.lakeRawWetDepth {
+                    waterPondEntries.append((cell: ri, value: val))
+                    break
+                }
                 sd[ri] = val
                 val = max(val - WaterRender.continuityDecayPerCell,
                           WaterRender.continuityFloor)
@@ -748,7 +761,12 @@ public final class WaterFieldRenderer {
                     // doppeltes Wasser in Zellblöcken (Review #181, Messung:
                     // docs/river-belt-render-measurements.md §C).
                     sd[k] += (haloIntensity - sd[k]) * cover
-                    if cover > 0 { capped[k] = true }
+                    // Als Rest-Kandidat zählt nur, wo das Band wirklich trägt
+                    // (`remnantMinBandCoverage`). An einer Steilstufe läuft
+                    // seine Deckung über kleine Werte gegen 0 aus; dort ist
+                    // das Raster die Kaskade, und ein kleines Stück davon
+                    // fiele sonst als „Rest-Fleck" auf den Saum zurück.
+                    if cover >= WaterRender.remnantMinBandCoverage { capped[k] = true }
                 }
             }
             // Kohärenz-Maske über die Wasser-Schwelle des Shaders: was er als
@@ -785,9 +803,11 @@ public final class WaterFieldRenderer {
             // blaue Flecken neben den Bändern (Messreihe §A: 95 % der
             // sichtbaren Fluss-Fragmente unter 50 Zellen liegen ≤ 2 Zellen
             // an einem Band). Sie fallen auf den Saum zurück und werden
-            // nasse Wiese. Kaskaden-Zellen deckelt der Pass oben nicht, sie
-            // sind also nie `capped`: die Raster-Übergabe an Steilstrecken
-            // bleibt unberührt.
+            // nasse Wiese. `capped` heißt: das Band deckt dort mindestens
+            // `remnantMinBandCoverage`. Kaskaden-Zellen, an denen das Band
+            // ausblendet, erreichen die Schwelle nicht (eine eigene
+            // Kaskaden-Ausnahme gibt es seit #174 C2 nicht mehr, s. o.): die
+            // Raster-Übergabe an Steilstrecken bleibt unberührt.
             if allCapped && waterComponent.count < WaterRender.wetMeadowMaxCells {
                 remnantStats.append(waterComponent.count)
                 for k in waterComponent {
@@ -836,6 +856,29 @@ public final class WaterFieldRenderer {
                                                 banded: banded, visible: visible))
             if WaterRender.isWetMeadow(pondCells: waterComponent.count, banded: banded) {
                 for k in waterComponent { wetMeadow[k] = true }
+            }
+        }
+        // BACH DURCH NASSE WIESE: die Kontinuitäts-Kette oben endet an jedem
+        // Tümpel-Rand, weil dort der See-Kanal übernimmt. Bei nasser Wiese
+        // malt er nicht, und der Bach risse an ihr ab (Review #174 C): Fluss-
+        // Pass und Kette lassen die Tümpel-Zellen aus, hinter dem Tümpel
+        // beginnt der Bach neu. Die Kette läuft deshalb durch die Wiese weiter,
+        // mit derselben Regel wie oben (Abfall je Zelle, geklemmt, Ende an
+        // einer stärker gemalten Zelle, am Meer oder an einem Tümpel, der
+        // Wasser BLEIBT). Der Tümpel selbst bleibt Wiese: es ist ein Faden
+        // von einer Zelle, kein See-Gate.
+        for entry in waterPondEntries where wetMeadow[entry.cell] {
+            var val = entry.value
+            var ri = entry.cell
+            while sd[ri] < val {
+                sd[ri] = val
+                val = max(val - WaterRender.continuityDecayPerCell,
+                          WaterRender.continuityFloor)
+                let r = rec[ri]
+                guard r >= 0 && r < cnt else { break }
+                ri = Int(r)
+                if h[ri] <= sea { break }
+                if hf[ri] - h[ri] > WaterRender.lakeRawWetDepth && !wetMeadow[ri] { break }
             }
         }
 

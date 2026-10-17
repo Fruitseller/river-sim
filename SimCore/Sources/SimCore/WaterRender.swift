@@ -1043,6 +1043,18 @@ public enum WaterRender {
     /// nasse Wiese. Messreihe: `docs/river-coast-render-measurements.md` §A.
     public static let wetMeadowMaxCells = 200
 
+    /// Rest-Flecken am Band (zweite Regel von `wetMeadowMaxCells`): eine kleine
+    /// Wasser-Komponente zählt nur dann als Raster-Rest UNTER einem Band, wenn
+    /// das Band an ihren Zellen mindestens diesen Anteil deckt
+    /// (`bandCoverage`). Darunter trägt das Raster das Wasser: an einer
+    /// Steilstufe blendet das Band über `cascadeWeight` aus, seine Deckung
+    /// läuft über kleine Werte gegen 0, und ein kleines Raster-Stück dort ist
+    /// die Kaskade selbst, kein Rest. Ohne die Schwelle (`cover > 0`) fiel es
+    /// auf den Saum zurück und wurde nasse Wiese. 0,5 = das Band malt dort
+    /// mehr Wasser als das Raster; Messreihe: `docs/river-coast-render-
+    /// measurements.md` §A (Review-Nachtrag).
+    public static let remnantMinBandCoverage = 0.5
+
     /// Wird ein Tümpel als nasse Wiese gemalt? Nur ohne Band-Korridor
     /// (`banded`); den Fluss-Kanal seiner Zellen regelt weiter `streamGate`.
     @inline(__always)
