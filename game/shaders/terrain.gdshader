@@ -215,6 +215,8 @@ uniform float material_ridge_rock_gain;
 uniform float material_gully_scree_share;
 uniform float material_joint_spacing;
 uniform float material_joint_stretch;
+uniform float material_joint_turn_cos;
+uniform float material_joint_turn_sin;
 uniform float material_joint_depth;
 uniform float material_joint_gully_gain;
 uniform float material_rock_relief_gain;
@@ -456,7 +458,13 @@ float rock_joint_face(vec2 q, float k, float couple, float crack_detail, float a
 	float ay = q.y / k;
 	float wx = q.x + (vnoise(vec2(q.x * 0.35, ay * 0.35 + 3.1)) - 0.5) * 1.6;
 	vec3 s0 = vnoise_d(vec2(wx * 0.5 + 2.0, ay * 0.5));
-	vec3 s1 = vnoise_d(vec2(wx * 1.3 + 9.0, ay * 1.3));
+	// Gekreuzte Oktaven statt paralleler Rauschachsen: die frühere fünffache
+	// Streckung zog selbst triplanare Klüfte zu senkrechten Vorhängen. Die
+	// Ableitung geht mit der transponierten Drehung zurück in die Wandebene.
+	mat2 turn = mat2(vec2(material_joint_turn_cos, material_joint_turn_sin),
+	                 vec2(-material_joint_turn_sin, material_joint_turn_cos));
+	vec3 s1 = vnoise_d(turn * vec2(wx * 1.3 + 9.0, ay * 1.3));
+	s1.yz = s1.yz * turn;
 	float st = s0.x * 0.65 + s1.x * 0.35;
 	float streak = smoothstep(0.48, 0.78, st);
 	// Gefälle der Runsen in Kluftabständen (q.x, q.y), für die Normale: die
@@ -472,7 +480,8 @@ float rock_joint_face(vec2 q, float k, float couple, float crack_detail, float a
 		// Feine Grate zwischen den Runsen (~9 m), nur als Form: scharf am
 		// Kamm (Höhe ½·(1 − |2n − 1|), ein halber Runsen-Hub), damit die
 		// Wand in Rippen und Kanten bricht.
-		vec3 s2 = vnoise_d(vec2(wx * 3.3 + 5.0, ay * 3.3));
+		vec3 s2 = vnoise_d(turn * vec2(wx * 3.3 + 5.0, ay * 3.3));
+		s2.yz = s2.yz * turn;
 		grad += sign(s2.x - 0.5) * s2.yz * 3.3 * vec2(1.0, 1.0 / k) * crack_detail;
 		float r = 1.0 - abs(vnoise(vec2(wx, ay)) * 2.0 - 1.0); // 1 auf der Fuge
 		float width = (0.02 + 0.10 * smoothstep(0.3, 0.8, tone)) * couple;

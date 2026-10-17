@@ -14,6 +14,8 @@ public enum MaterialUniforms {
         ("material_gully_scree_share", MaterialRender.gullyScreeShare),
         ("material_joint_spacing", MaterialRender.jointSpacing),
         ("material_joint_stretch", MaterialRender.jointStretch),
+        ("material_joint_turn_cos", MaterialRender.jointTurnCos),
+        ("material_joint_turn_sin", MaterialRender.jointTurnSin),
         ("material_joint_depth", MaterialRender.jointDepth),
         ("material_joint_gully_gain", MaterialRender.jointGullyGain),
         ("material_joint_relief", MaterialRender.jointRelief),
