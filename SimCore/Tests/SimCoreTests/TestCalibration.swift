@@ -47,13 +47,11 @@ let calibrationWorld: Double = 130
 /// (`grep calibrationRangeLandform`); `LongRunCollapse` und alle übrigen
 /// Wächter laufen auf der neuen Form.
 ///
-/// Zwei Befunde dabei waren KEIN Testaufbau und stehen in
-/// `docs/zielbild-measurements.md` § Offene Befunde: die Eismasse hing in der
-/// Produktion schon VOR #174 deutlich an der Schrittweite (dt 100 gegen
-/// 1000) — inzwischen behoben, Ursachen und neuer Wächter in
-/// `docs/glacier-measurements.md` §L —, und die Stream-Map trackt auf der
-/// neuen Form nur 15 % statt > 40 % der großen Läufe
-/// (`testStreamMapMarksAndPersists`, n = 256; offen).
+/// Zwei Befunde dabei sind KEIN Testaufbau und stehen offen in
+/// `docs/zielbild-measurements.md`: die Eismasse hängt in der Produktion
+/// schon VOR #174 deutlich an der Schrittweite (dt 100 gegen 1000), und die
+/// Stream-Map trackt auf der neuen Form nur 15 % statt > 40 % der großen
+/// Läufe (`testStreamMapMarksAndPersists`, n = 256).
 ///
 /// Wer einen Wächter auf die neue Großform umzieht, sucht sich dort einen Seed
 /// mit dem gebrauchten Merkmal und misst die Schranke neu — nicht umgekehrt.
