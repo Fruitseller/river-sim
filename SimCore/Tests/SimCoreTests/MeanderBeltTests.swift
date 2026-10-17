@@ -43,9 +43,11 @@ final class MeanderBeltTests: XCTestCase {
 
     /// Größte ÖRTLICHE Sinuosität eines Laufs: Bogenlänge / Sehne über Fenster
     /// von 20 Kanalbreiten Bogenlänge — dieselbe Skala wie die Sättigung im
-    /// Kern (`meanderBeltSinuosityWidths` = ±10). Das ist das Knäuel-Kriterium;
-    /// die Sinuosität des ganzen Laufs misst auf der unbegrenzten Ebene vor
-    /// allem, wie weit die Linie seitlich auswandert (keine Talwand).
+    /// Kern (`meanderBeltSinuosityWidths` = ±10). Grobe Schranke neben dem
+    /// Knäuel-Kriterium `selfCrossings`: ein Omega-Bogen kurz vor dem
+    /// Hals-Cutoff erreicht hier allein schon 7–8. Die Sinuosität des ganzen
+    /// Laufs misst auf der unbegrenzten Ebene vor allem, wie weit die Linie
+    /// seitlich auswandert (keine Talwand).
     static func maxLocalSinuosity(_ ch: RiverChannel, config c: SimConfig) -> Double {
         let nodes = ch.nodes
         guard nodes.count > 2 else { return 1 }
@@ -59,6 +61,28 @@ final class MeanderBeltTests: XCTestCase {
             if chord > 1e-9 { best = max(best, (cum[i + 2 * m] - cum[i]) / chord) }
         }
         return best
+    }
+
+    /// Zahl der Selbstkreuzungen der Zentrumslinie (Paare nicht benachbarter
+    /// Segmente, die sich schneiden). Ein Knäuel („Schlingen durch Schlingen")
+    /// kreuzt sich; ein noch so enger Omega-Bogen vor dem Hals-Cutoff nicht.
+    static func selfCrossings(_ ch: RiverChannel) -> Int {
+        let p = ch.nodes
+        guard p.count > 3 else { return 0 }
+        func cross(_ a: MeanderNode, _ b: MeanderNode, _ c: MeanderNode) -> Double {
+            (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x)
+        }
+        var n = 0
+        for i in 0..<(p.count - 1) {
+            let a = p[i], b = p[i + 1]
+            let (lo, hi) = (min(a.x, b.x), max(a.x, b.x)), (zl, zh) = (min(a.z, b.z), max(a.z, b.z))
+            for j in stride(from: i + 2, to: p.count - 1, by: 1) {
+                let c = p[j], d = p[j + 1]
+                if max(c.x, d.x) < lo || min(c.x, d.x) > hi || max(c.z, d.z) < zl || min(c.z, d.z) > zh { continue }
+                if cross(a, b, c) * cross(a, b, d) < 0 && cross(c, d, a) * cross(c, d, b) < 0 { n += 1 }
+            }
+        }
+        return n
     }
 
     /// Taktet wie `Terrain.meanderBeltStep`: CFL-Teilschritte aus der größten Rate.
@@ -134,17 +158,36 @@ final class MeanderBeltTests: XCTestCase {
         XCTAssertLessThan(mean, 0.15 * w, "Gürtel-Migration hängt an der Schrittweite")
     }
 
-    /// Lange Läufe bleiben beschränkt: endliche Knoten, örtliche Sinuosität
-    /// unter dem Knäuel-Regime, und BEIDE Cutoff-Arten treten auf
-    /// (Abnahmepunkt 15). 60.000 Jahre. Ein Lauf liegt unter der
-    /// Chute-Schwelle (`meanderChuteMinCells`): seit der Sättigung 3/4
-    /// (Zeitmittel-Kalibrierung) wachsen die Bögen der großen Läufe auf der
-    /// unbegrenzten Ebene bis zum Chute-Cutoff, bevor ein Hals zugeht
-    /// (drei Läufe à 20.000 Zellen: 0–2 Hals- neben 323–501 Chute-Cutoffs über
-    /// acht Rausch-Seeds). So: 59–76 Hals, 201–343 Chute, örtliche Sinuosität
-    /// 3,3–5,1 (`testBeltKernelSpreadDiagnostic`, RS_LONG=60000). Die des
-    /// ganzen Laufs (bis 14) misst auf der Ebene ohne Talwand das seitliche
+    /// Lange Läufe bleiben beschränkt: endliche Knoten, keine Selbstkreuzung
+    /// (kein Knäuel), örtliche Sinuosität unter einer groben Schranke, und
+    /// BEIDE Cutoff-Arten treten auf (Abnahmepunkt 15). 60.000 Jahre. Ein Lauf
+    /// liegt unter der Chute-Schwelle (`meanderChuteMinCells`): seit der
+    /// Sättigung 3/4 (Zeitmittel-Kalibrierung) wachsen die Bögen der großen
+    /// Läufe auf der unbegrenzten Ebene bis zum Chute-Cutoff, bevor ein Hals
+    /// zugeht (drei Läufe à 20.000 Zellen: 0–2 Hals- neben 323–501
+    /// Chute-Cutoffs über acht Rausch-Seeds).
+    /// Seit der Kern-Kalibrierung von #187 (Rate 0,03, Kern 1,0 Breiten),
+    /// 24 Rausch-Seeds (`testBeltKernelSpreadDiagnostic`, RS_LONG=60000,
+    /// M4 Max): 131–169 Hals, 610–772 Chute, örtliche Sinuosität 4,6–8,1
+    /// (Median 6,1), Selbstkreuzungen 0 auf allen. Vor #187 waren es 3,3–5,1;
+    /// die alte Schranke 6 lag damit mitten in der Verteilung und kippte auf
+    /// Linux (System-libm, andere Realisierung: 7,66). Die Sinuosität des ganzen
+    /// Laufs (bis 14) misst auf der Ebene ohne Talwand das seitliche
     /// Auswandern, nicht Knäuel.
+    /// Gegenprobe des Knäuel-Kriteriums: eine Schlinge, die über ihren eigenen
+    /// Lauf zurückführt, zählt; ein enger Omega-Bogen mit offenem Hals nicht.
+    func testSelfCrossingsSeparatesKnotFromOmega() {
+        func ch(_ pts: [(Double, Double)]) -> RiverChannel {
+            RiverChannel(nodes: pts.map { MeanderNode(x: $0.0, z: $0.1) }, discharge: Array(repeating: q, count: pts.count))
+        }
+        // Omega: Hals zwischen (−1, 0) und (1, 0), Bogen darüber.
+        let omega = ch([(-5, 0), (-1, 0), (-2, 1), (-2, 3), (0, 4), (2, 3), (2, 1), (1, 0), (5, 0)])
+        // Dieselbe Schlinge, die quer durch ihren Anfang zurückläuft.
+        let knot = ch([(-5, 0), (-1, 0), (-2, 1), (-2, 3), (0, 4), (2, 3), (2, 1), (-3, 0.5), (-6, 0.5)])
+        XCTAssertEqual(Self.selfCrossings(omega), 0)
+        XCTAssertEqual(Self.selfCrossings(knot), 1)
+    }
+
     func testLongRunStaysBoundedWithBothCutoffs() {
         let c = SimConfig.production
         let m = straightRuns(discharges: [q, q, 0.75 * c.meanderChuteMinCells])
@@ -152,7 +195,8 @@ final class MeanderBeltTests: XCTestCase {
         for ch in m.channels {
             XCTAssertTrue(ch.nodes.allSatisfy { $0.x.isFinite && $0.z.isFinite }, "Knoten nicht endlich")
             let loc = Self.maxLocalSinuosity(ch, config: c)
-            XCTAssertLessThan(loc, 6, "Lauf verknäult: örtliche Sinuosität \(loc)")
+            XCTAssertEqual(Self.selfCrossings(ch), 0, "Lauf verknäult: Zentrumslinie kreuzt sich selbst")
+            XCTAssertLessThan(loc, 10, "Lauf verknäult: örtliche Sinuosität \(loc)")
             // Die Störquelle hält den Kern mäandrierend: ohne sie lag jeder Lauf
             // ab Jahr ~62.000 gerade (Sinuosität 1,00), mit ihr örtlich 3–4.
             XCTAssertGreaterThan(loc, 1.5, "Lauf nach 60.000 Jahren gerade (örtliche Sinuosität \(loc))")

@@ -489,9 +489,10 @@ Zeitmittel, danach nachkalibriert). Stand dieses Schritts:
 
 Wächter dieses PR: `ZielbildLandformTests` (Mittel über die drei Seeds in
 Jahr 20.000: Sinuosität > 1,35, Asymmetrie > 1,4; vorher 1,39 und 1,16) und
-`MeanderBeltTests.testLongRunStaysBoundedWithBothCutoffs` (örtliche
-Sinuosität nach 60.000 Jahren zwischen 1,5 und 6; ohne Störquelle lag sie
-bei 1,0). Die Schranken liegen bewusst weit unter den Messwerten: ein
+`MeanderBeltTests.testLongRunStaysBoundedWithBothCutoffs` (keine
+Selbstkreuzung der Zentrumslinie, örtliche Sinuosität nach 60.000 Jahren
+zwischen 1,5 und 10; ohne Störquelle lag sie bei 1,0; bis #187 stand die
+obere Grenze bei 6, s. unten). Die Schranken liegen bewusst weit unter den Messwerten: ein
 Einzelzeitpunkt streut stark, und Linux rechnet mit anderer System-libm eine
 andere Realisierung.
 
@@ -629,7 +630,15 @@ wachsen die Bögen jetzt bis zum Chute-Cutoff, bevor ein Hals zugeht: über acht
 Rausch-Seeds 0–2 Hals- neben 323–501 Chute-Cutoffs in 60.000 Jahren
 (vorher 3–12 Hals). Der Langlauf-Wächter führt deshalb einen Lauf unter der
 Chute-Schwelle (3000 Zellen): 59–76 Hals, 201–343 Chute, örtliche
-Sinuosität 3,3–5,1 (Grenze 6). Wellenlängen- und dt-Wächter laufen
+Sinuosität 3,3–5,1 (Grenze 6). Nach der Kern-Kalibrierung von #187
+(Rate 0,03, Kern 1,0 Breiten) über 24 Rausch-Seeds: 131–169 Hals, 610–772
+Chute, örtliche Sinuosität 4,6–8,1 (Median 6,1), Selbstkreuzungen 0 auf
+allen; auf Linux kippte die Grenze 6 (Seed 7: 7,66). Ein enger Omega-Bogen
+kurz vor dem Hals-Cutoff erreicht über 20 Breiten Bogenlänge allein schon
+7–8, die Sinuosität ist also kein Knäuel-Maß. Der Wächter prüft seitdem das
+Knäuel selbst (keine Selbstkreuzung, Gegenprobe
+`testSelfCrossingsSeparatesKnotFromOmega`) und hält die Sinuosität nur grob
+unter 10. Wellenlängen- und dt-Wächter laufen
 unverändert (der Kern erreicht dort die Sättigung nicht): dt 50 ↔ 1500 nach
 3000 Jahren 0,33–0,59 Zellen über acht Rausch-Seeds (Grenze 0,96).
 

@@ -375,6 +375,7 @@ final class MeanderBeltCalibration: XCTestCase {
             let m = runs(seed, long: true)
             run(m, env["RS_LONG"].flatMap { Double($0) } ?? 30_000, 1000)
             let loc = m.channels.map { MeanderBeltTests.maxLocalSinuosity($0, config: c) }.max() ?? 0
+            let crossings = m.channels.map { MeanderBeltTests.selfCrossings($0) }.reduce(0, +)
             let l = runs(seed)
             run(l, 3000, 1000)
             let bw = MeanderState.beltWidthCells(discharge: 20_000, config: c)
@@ -392,8 +393,8 @@ final class MeanderBeltCalibration: XCTestCase {
                     moved = max(moved, abs(p.z - (ca.nodes.first?.z ?? p.z)))
                 }
             }
-            print(String(format: "SPREAD seed %d | lang: Hals %d Chute %d max Sinu %.2f örtlich %.2f | dt %.0f J.: Abstand %.3f Auslenkung %.2f",
-                         seed, m.neckCutoffs, m.chuteCutoffs, m.channels.map(\.sinuosity).max() ?? 0, loc, dtYears, acc / cnt, moved))
+            print(String(format: "SPREAD seed %d | lang: Hals %d Chute %d max Sinu %.2f örtlich %.2f Kreuzungen %d | dt %.0f J.: Abstand %.3f Auslenkung %.2f",
+                         seed, m.neckCutoffs, m.chuteCutoffs, m.channels.map(\.sinuosity).max() ?? 0, loc, crossings, dtYears, acc / cnt, moved))
         }
     }
 
