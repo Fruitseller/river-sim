@@ -91,7 +91,7 @@ public final class RenderState {
     /// Nasse Wiese des zuletzt ausgelieferten Wasserfelds (leer vor dem ersten).
     public var wetMeadowMask: [Bool] { visibleWetMeadow }
 
-    /// Quellen der Sedimentfahnen (Issue #174 C, `SedimentPlume`), gepuffert
+    /// Dichte der Sedimentfahnen (Issue #174 C, `SedimentPlume`), gepuffert
     /// bis zur nächsten Terrain-Änderung.
     private var plumeCache: [Float]?
 
@@ -256,7 +256,7 @@ public final class RenderState {
 
     // MARK: - Sedimentfahnen (Issue #174 C)
 
-    /// Quellfeld der Sedimentfahnen (Float32, n×n) — s. `SedimentPlume`.
+    /// Dichtefeld der Sedimentfahnen (Float32, n×n) — s. `SedimentPlume`.
     public func sedimentPlume(_ terrain: Terrain) -> [Float] {
         if let plumeCache { return plumeCache }
         let field = SedimentPlume.field(terrain)

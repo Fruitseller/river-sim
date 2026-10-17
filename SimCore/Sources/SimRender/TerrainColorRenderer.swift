@@ -121,8 +121,13 @@ public enum TerrainColorRenderer {
         let slopeScale = cell > 0 && cell.isFinite ? 2 * RenderContract.heightScale / cell : 0
         let hscale = RenderContract.heightScale
         let radius = max(0, MaterialRender.screeReachCells)
-        // Strand und Felsküste (Issue #174 C): Abstand zum Meer je Zelle.
-        let coastDistance = CoastMaterial.seaDistance(terrain)
+        // Strand und Felsküste (Issue #174 C): Abstand zum Meer, Strandbreite
+        // und Steilküste je Zelle. Ein zu kurzes Feld (n ≤ 2) lässt die Küste aus.
+        let shore = CoastMaterial.shore(terrain)
+        let coastDistance = shore.distance
+        let shoreOn = shore.beachWidth.count == n * n && shore.cliff.count == n * n
+        let beachWidth = shoreOn ? shore.beachWidth : [0]
+        let shoreCliff = shoreOn ? shore.cliff : [0]
         let barsOn = bars.fits(n * n)
         let barSand = barsOn ? bars.sand : [0]
         let barVeg = barsOn ? bars.vegShift : [0]
@@ -155,6 +160,8 @@ public enum TerrainColorRenderer {
         rowSpread.withUnsafeMutableBufferPointer { rsb in
         reach.withUnsafeMutableBufferPointer { reb in
         coastDistance.withUnsafeBufferPointer { cdb in
+        beachWidth.withUnsafeBufferPointer { bwb in
+        shoreCliff.withUnsafeBufferPointer { scb in
         barSand.withUnsafeBufferPointer { bsb in
         barVeg.withUnsafeBufferPointer { bvb in
         barReed.withUnsafeBufferPointer { brb in
@@ -172,6 +179,7 @@ public enum TerrainColorRenderer {
         let prock = rfb.baseAddress!, prow = rsb.baseAddress!, preach = reb.baseAddress!
         let pcolor = cb.baseAddress!, psurface = sb.baseAddress!, pcover = cvb.baseAddress!
         let pcoast = cdb.baseAddress!
+        let pbeach = bwb.baseAddress!, pshoreCliff = scb.baseAddress!
         let pbsand = bsb.baseAddress!, pbveg = bvb.baseAddress!, pbreed = brb.baseAddress!
         let pbage = bab.baseAddress!
 
@@ -221,14 +229,12 @@ public enum TerrainColorRenderer {
                     let interior = i > 1 && i < n - 2 && j > 1 && j < n - 2
                     var sand = 0.0
 
-                    if v <= sea + 0.012 {
+                    // Nur Meeresgrund läuft über die Farbrampe. Land bis an die
+                    // Wasserlinie nimmt den normalen Weg (Bewuchs und Fels reichen
+                    // bis ans Wasser, wo kein Strand liegt); die Rampe malte bis
+                    // `sea + 0.012` einen Küstenring (#174 C, Befund §E).
+                    if v <= sea {
                         (r, g, b) = gradColor(v)
-                        // Der Strand reicht bis an die Wasserlinie (#174 C).
-                        if v > sea && interior {
-                            sand = CoastMaterial.sand(distance: pcoast[k],
-                                                      slope: Terrain.macroSlope(ph, k, n),
-                                                      height: v - sea)
-                        }
                     } else {
                         var slope = 0.0, convex = 0.0
                         if interior {
@@ -341,7 +347,8 @@ public enum TerrainColorRenderer {
                         // Küste knapp über dem Meer Sand. Beide verdrängen die
                         // Gewichte des Materialmodells (#174 D) anteilig; die
                         // Summe bleibt ≤ 1.
-                        let cliffCoast = CoastMaterial.cliff(distance: pcoast[k], slope: slope)
+                        let cliffCoast = CoastMaterial.cliff(distance: pcoast[k], slope: slope,
+                                                             relief: shoreOn ? pshoreCliff[k] : 0)
                             * (1 - coldWeight)
                         if cliffCoast > 0 {
                             vegWeight *= 1 - cliffCoast
@@ -356,8 +363,9 @@ public enum TerrainColorRenderer {
                         // Sand (EIN Kanal für Strand und Bank, #174 C/C2): der
                         // stärkere gewinnt, `max(Strand, Bank)`. Frische Bank
                         // aus `BarMaterial`, Strand aus `CoastMaterial`.
-                        let coastSand = CoastMaterial.sand(distance: pcoast[k], slope: slope,
-                                                           height: v - sea)
+                        let coastSand = CoastMaterial.sand(distance: pcoast[k],
+                                                           width: shoreOn ? pbeach[k] : 0,
+                                                           slope: slope, height: v - sea)
                         let barSandHere = barsOn ? Double(pbsand[k]) : 0
                         sand = max(coastSand, barSandHere) * (1 - coldWeight)
                         vegWeight *= 1 - sand
@@ -421,7 +429,7 @@ public enum TerrainColorRenderer {
                 }
             }
         }
-        }}}}}}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}}}}}}}
 
         return Buffers(colors: colors, surfaces: surfaces, covers: covers)
     }

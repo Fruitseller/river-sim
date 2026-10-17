@@ -66,10 +66,7 @@ public enum WaterUniforms {
         ("water_ocean_wave_drift_z", WaterRender.oceanWaveDriftZ),
         ("water_ocean_wave_octave_speedup", WaterRender.oceanWaveOctaveSpeedup),
         // Sedimentfahne (ocean.gdshader, #174 C).
-        ("water_ocean_plume_length", WaterRender.oceanPlumeLength),
         ("water_ocean_plume_lod", WaterRender.oceanPlumeLod),
-        ("water_ocean_plume_spread", WaterRender.oceanPlumeSpread),
-        ("water_ocean_plume_gain", WaterRender.oceanPlumeGain),
         ("water_ocean_plume_opacity", WaterRender.oceanPlumeOpacity),
         // Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
         ("water_ribbon_bend_depth", WaterRender.ribbonBendDepth),

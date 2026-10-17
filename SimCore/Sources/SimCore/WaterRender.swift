@@ -1092,18 +1092,80 @@ public enum WaterRender {
 
     // MARK: Strand und Felsküste (Issue #174, Paket C)
 
-    // Bisher trug jede Küste dieselbe Bodenfarbe bis an die Wasserlinie. Jetzt
-    // wird eine Landzelle in Reichweite der Brandung (`coastReachCells`) Sand,
-    // wenn sie flach ist und knapp über dem Meer liegt — genau dort arbeitet
-    // `Terrain.wavePass` (|h − sea| ≤ `SimConfig.waveBand`) Material auf ein
-    // Strandprofil. Steile Küste in derselben Reichweite wird Fels: die
-    // Brandung räumt den Bewuchs ab, der Saum im Ozean-Shader (#155) bleibt.
-    // Ableitung: `SimRender.CoastMaterial`, Gewichte im `TerrainColorRenderer`.
-    // Messreihe: `docs/river-coast-render-measurements.md` §B.
+    // Bisher trug jede Küstenzelle in Reichweite der Brandung Sand, sobald sie
+    // flach war und knapp über dem Meer lag — genau dort arbeitet
+    // `Terrain.wavePass` (|h − sea| ≤ `SimConfig.waveBand`) Material auf EIN
+    // Strandprofil. Das trifft jede Küstenzelle: ein gleichbreiter Sandring um
+    // die ganze Insel, auch unter Felswänden (Befund und Messung §E). Jetzt
+    // entscheidet der Zusammenhang je Küstenpunkt (`SimRender.CoastMaterial`):
+    //  * Rückland-Relief (Höhe über der Küstenzelle binnen
+    //    `beachReliefRadiusCells`): Küstenebene trägt Strand, Steilhang nicht;
+    //  * Offenheit (Meeresanteil im Fenster, Stellvertreter für die
+    //    Wellenenergie, die die Sim nicht kennt): Bucht sammelt, Landzunge
+    //    wird abgetragen;
+    //  * Sedimentzufuhr nahe Flussmündungen;
+    //  * Rauschen entlang der Küste, damit die Breite schwankt.
+    // Aus beidem folgt die Strandbreite (0 … `beachMaxWidthCells`); die
+    // Höhen- und Steigungsfenster unten bleiben als Gate je Zelle. Steiles
+    // Rückland wird Felsküste: die Brandung räumt den Bewuchs ab, der Saum im
+    // Ozean-Shader (#155) bleibt. Gewichte im `TerrainColorRenderer`.
+    // Messreihe: `docs/river-coast-render-measurements.md` §B und §E.
 
     /// Reichweite der Brandung landeinwärts (Zellen, Chebyshev-Abstand zur
-    /// nächsten Meereszelle). 3 Zellen ≈ 47 m.
+    /// nächsten Meereszelle) für die Felsküste. 3 Zellen ≈ 47 m.
     public static let coastReachCells = 3
+    /// Breitester Strand (Zellen): Pocket-Strände und Mündungsstrände. Die
+    /// Breite schwankt zwischen 0 und diesem Wert. 5 Zellen ≈ 78 m.
+    public static let beachMaxWidthCells = 5.0
+    /// Radius (Zellen) des Fensters für das Rückland-Relief …
+    public static let beachReliefRadiusCells = 8
+    /// … Rückland-Relief (Sim-Höhe über der Küstenzelle), bis zu dem die
+    /// Küste als Ebene gilt (voller Strand) …
+    public static let beachReliefLo = 0.020
+    /// … und ab dem sie kein Strand mehr ist. GEMESSEN (§E, Jahr 20.000): das
+    /// Relief der Küstenzellen liegt bei p10 ≈ 0,018…0,028, p50 ≈ 0,032…0,042
+    /// und p90 ≈ 0,064…0,100; die Fenster stehen an dieser Verteilung.
+    public static let beachReliefHi = 0.042
+    /// Radius (Zellen) des Fensters für die Offenheit.
+    public static let beachOpenRadiusCells = 10
+    /// Meeresanteil im Fenster, bis zu dem die Küste als geschützt gilt …
+    public static let beachOpenLo = 0.40
+    /// … und ab dem sie offene Landzunge ist. GEMESSEN: p10 ≈ 0,41, p50 ≈ 0,47,
+    /// p90 ≈ 0,53 (eine gerade Küste liegt wegen der Landseite des Küstenpunkts
+    /// bei 0,47); das Fenster 0,40…0,50 lässt gerade Küste halb geschützt.
+    public static let beachOpenHi = 0.50
+    /// Anteil des Strandpotenzials, den eine offene Küstenebene behält.
+    public static let beachExposedShare = 0.2
+    /// Mündungen ab diesem Einzugsgebiet (Zellen) liefern Sand …
+    public static let beachSupplyMinCells = 300.0
+    /// … ab diesem das volle Gewicht (log-Rampe) …
+    public static let beachSupplyFullCells = 6000.0
+    /// … der kleinste zählende Fluss liefert diesen Anteil …
+    public static let beachSupplyFloor = 0.5
+    /// … und der Einfluss reicht so weit (Zellen) entlang der Küste.
+    public static let beachSupplyReachCells = 16.0
+    /// Die Mündung öffnet das Rückland: das Relief zählt um diesen Anteil weniger.
+    public static let beachSupplyReliefCut = 0.5
+    /// Nahe einer Mündung (Zufuhr 1) wirkt das Rauschen um diesen Anteil schwächer.
+    public static let beachSupplyNoiseCut = 0.7
+    /// Wellenlänge (Zellen) des Rauschens entlang der Küste …
+    public static let beachNoiseCells = 30.0
+    /// … und seine Stärke auf dem Strandpotenzial 0…1.
+    public static let beachNoiseAmplitude = 0.6
+    /// Strandpotenzial, unter dem kein Strand liegt …
+    public static let beachPotentialLo = 0.30
+    /// … und ab dem er voll breit ist. Die breite Rampe (0,3…0,9) macht die
+    /// Breite stetig: mit 0,25…0,55 war sie fast nur 0 oder voll (Sweep §E:
+    /// 1053 Küstenzellen ohne Strand, 1178 voll breit, 360 dazwischen; jetzt
+    /// 1437 / 353 / 740).
+    public static let beachPotentialHi = 0.90
+    /// Rückland-Relief, ab dem eine Küste Felsküste wird …
+    public static let cliffReliefLo = 0.045
+    /// … und ab dem sie voll Fels ist. Gemessen als oberes Viertel bis Zehntel
+    /// der Küstenzellen.
+    public static let cliffReliefHi = 0.075
+    /// Offene Landzungen wirken um diesen Anteil steiler.
+    public static let cliffExposedBoost = 0.3
     /// Höhe über dem Meeresspiegel (Sim-Einheiten), bis zu der eine flache
     /// Küstenzelle voll Sand ist …
     public static let beachHeightLo = 0.008
@@ -1128,45 +1190,61 @@ public enum WaterRender {
 
     // MARK: Sedimentfahne im Meer (Issue #174, Paket C)
 
-    // Jede Mündung ins Meer bekommt eine Trübungsfahne. SimRender
-    // (`SedimentPlume`) schreibt EINE Zelle je Mündung in eine Float-Textur,
-    // gewichtet nach Abfluss und Fracht; `ocean.gdshader` zeichnet sie über die
-    // Mip-Stufen der Textur weich und zieht sie mit der Küstenströmung stromab.
-    // Die Strömung ist die Drift der Ozean-Wellen (`oceanWaveDriftX/Z`), damit
-    // Fahne und Wellen in dieselbe Richtung ziehen.
+    // Nur die großen Flüsse bekommen eine Trübungsfahne. SimRender
+    // (`SedimentPlume`) rechnet sie als Dichte je Meereszelle: ein Pfad ab der
+    // Mündung über Zellen KÜSTENNAH (`plumeBand*`), der mit der Pfadlänge
+    // abklingt (`plumeDecayCells`); `ocean.gdshader` liest die Dichte, zeichnet
+    // sie mit einer leichten Weichzeichnung und färbt das Wasser damit.
+    // Die Fahne bevorzugt die Richtung der Küstenströmung (die Drift der
+    // Ozean-Wellen, `oceanWaveDriftX/Z`), damit Fahne und Wellen in dieselbe
+    // Richtung ziehen.
     //
     // Fracht: es gibt im Sim-Kern kein Frachtfeld. Stellvertreter ist das
     // Relief des Einzugsgebiets (höchster Punkt über dem Meer): nach Milliman &
     // Syvitski (1992) steigt die Schwebstofffracht eines Flusses mit Fläche
     // UND maximaler Höhe seines Einzugsgebiets — Gebirgsflüsse trüben das
-    // Meer, Tieflandbäche kaum. Messreihe: §C.
+    // Meer, Tieflandbäche kaum. Messreihe: §C und §F.
+    //
+    // Vor dem Befund „Rauchfächer" (§F) legte der Shader EINE Quellzelle über
+    // eine Mip-Kette aus und zog sie entlang der Strömung auf: Breite und
+    // Reichweite wuchsen mit jeder Stufe (bis 32 Zellen breit), unabhängig von
+    // der Küste, dazu ein lehmbrauner Ton bei 60 % Deckung. Das ist ersetzt.
 
     /// Mündungen unter diesem Einzugsgebiet (Zellen) bekommen keine Fahne.
-    public static let plumeMinDischargeCells = 2000.0
+    public static let plumeMinDischargeCells = 9000.0
     /// Einzugsgebiet (Zellen), ab dem das Abfluss-Gewicht voll ist (log-Rampe
     /// zwischen `plumeMinDischargeCells` und diesem Wert).
-    public static let plumeFullDischargeCells = 40000.0
+    public static let plumeFullDischargeCells = 18000.0
     /// Relief des Einzugsgebiets (Sim-Höhe über dem Meer), ab dem das
     /// Fracht-Gewicht voll ist …
     public static let plumeFullRelief = 0.5
     /// … und der Anteil, den auch ein flaches Einzugsgebiet behält.
     public static let plumeReliefFloor = 0.3
-    /// So weit (Zellen) setzt SimRender die Quelle in Fließrichtung ins Meer
-    /// hinaus: der Fleck soll vor der Mündung liegen, nicht halb an Land.
-    public static let plumeOffshoreCells = 4
 
-    /// Länge der Fahne entlang der Küstenströmung (Welteinheiten).
-    public static let oceanPlumeLength = 5.0
-    /// Mip-Stufe der Weichzeichnung an der Mündung (2^lod Zellen) …
-    public static let oceanPlumeLod = 3.0
-    /// … und um so viele Stufen breiter am Ende der Fahne.
-    public static let oceanPlumeSpread = 2.0
-    /// Verstärkung der normierten Fahnen-Dichte vor der Sättigung.
-    public static let oceanPlumeGain = 2.5
+    /// Abklinglänge der Dichte entlang des Pfads (Zellen): bei dieser
+    /// Pfadlänge ist sie auf 1/e gefallen.
+    public static let plumeDecayCells = 18.0
+    /// Der Pfad endet bei dieser Zahl von Abklinglängen (Dichte dort e^−3,5 ≈ 3 %).
+    public static let plumeCutoffDecays = 3.5
+    /// Breite des Streifens (Zellen Abstand zum Land), in dem die Fahne liegen
+    /// darf: sie hält sich an der Küste (5 Zellen ≈ 78 m). Der alte Fächer war
+    /// bis zu 32 Zellen breit.
+    public static let plumeBandCells = 5.0
+    /// Bis zu diesem Abstand zum Land (Zellen) ist die Dichte voll; zum Rand
+    /// des Streifens blendet sie aus.
+    public static let plumeCoreCells = 2.0
+    /// Aufschlag der Pfadkosten gegen die Strömung: stromab 1×, quer 1 + p/2,
+    /// stromauf 1 + p. Mit 2 klingt die Fahne stromauf auf einem Drittel der
+    /// Länge ab.
+    public static let plumeUpstreamPenalty = 2.0
+
+    /// Weichzeichnung der Dichte im Shader (Mip-Stufe der Textur, 2^lod Zellen).
+    public static let oceanPlumeLod = 1.0
     /// Höchster Anteil der Trübung an der Wasserfarbe.
-    public static let oceanPlumeOpacity = 0.6
-    /// Farbe der Trübung (Schwebstoff, lehmig-hell).
-    public static let oceanPlumeColor = (r: 0.42, g: 0.38, b: 0.27)
+    public static let oceanPlumeOpacity = 0.7
+    /// Farbe der Trübung (Schwebstoff, blasses Lehmgrün; der alte Ton (0,42 0,38
+    /// 0,27) bei 60 % Deckung las sich als orangebrauner Rauch).
+    public static let oceanPlumeColor = (r: 0.44, g: 0.43, b: 0.32)
 
     // MARK: Mäandergürtel im Render (Issue #174, Paket C Teil 2)
 

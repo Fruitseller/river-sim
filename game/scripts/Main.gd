@@ -2054,12 +2054,11 @@ func _update_protect_mask(bytes: PackedByteArray) -> void:
 func _protect_mask(bytes: PackedByteArray) -> Image:
 	return Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
 
-## Sedimentfahnen (#174 C): EINE Zelle je Mündung aus SimRender.SedimentPlume.
-## Die Mip-Kette ist die Weichzeichnung: ocean.gdshader liest die Quelle auf
-## gröberen Stufen und rechnet deren Mittelung zurück. Der alte Stand wandert
-## nach `plume_prev_tex`, im Zeitraffer blendet die Overlay-Blende hinüber
-## (#174): die Weichzeichnung allein glättete den Sprung nicht, gemessen
-## änderte sich je Upload ein Drittel bis die Hälfte der Masse auf Mip-Stufe 3.
+## Sedimentfahnen (#174 C): fertige Trübungsdichte aus SimRender.SedimentPlume,
+## küstennah ab der Mündung. Die Mip-Kette zeichnet sie leicht weich:
+## ocean.gdshader liest eine niedrige Stufe. Der alte Stand wandert nach
+## `plume_prev_tex`, im Zeitraffer blendet die Overlay-Blende hinüber (#174):
+## die Weichzeichnung allein glättete den Sprung nicht.
 func _update_plume(bytes: PackedByteArray) -> void:
 	if ocean_mat == null:
 		return

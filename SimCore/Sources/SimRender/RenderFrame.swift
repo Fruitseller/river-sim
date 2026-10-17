@@ -38,9 +38,9 @@ public struct RenderFrame {
         /// Waldmaske des Kronendachs (Issue #152): endet an der Schutzmaske
         /// DIESES Frames.
         public let forestMask: [UInt8]
-        /// Quellen der Sedimentfahnen (Issue #174 C, `SedimentPlume`):
-        /// Float32 n×n, EINE Zelle je Mündung; `ocean.gdshader` zeichnet sie
-        /// über die Mip-Kette weich.
+        /// Trübungsdichte der Sedimentfahnen (Issue #174 C, `SedimentPlume`):
+        /// Float32 n×n, küstennah ab der Mündung; `ocean.gdshader` liest sie
+        /// leicht weichgezeichnet.
         public let plume: [Float]
     }
 

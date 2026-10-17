@@ -57,9 +57,7 @@ final class WaterUniformsTests: XCTestCase {
         "water_ocean_wave_drift_x", "water_ocean_wave_drift_z",
         "water_ocean_wave_octave_speedup",
         // Sedimentfahne (#174 C).
-        "water_ocean_plume_length", "water_ocean_plume_lod",
-        "water_ocean_plume_spread", "water_ocean_plume_gain",
-        "water_ocean_plume_opacity",
+        "water_ocean_plume_lod", "water_ocean_plume_opacity",
     ]
     private static let oceanColors = [
         "water_ocean_shallow_color", "water_ocean_mid_color",
@@ -176,10 +174,7 @@ final class WaterUniformsTests: XCTestCase {
             "water_ocean_wave_drift_x": WaterRender.oceanWaveDriftX,
             "water_ocean_wave_drift_z": WaterRender.oceanWaveDriftZ,
             "water_ocean_wave_octave_speedup": WaterRender.oceanWaveOctaveSpeedup,
-            "water_ocean_plume_length": WaterRender.oceanPlumeLength,
             "water_ocean_plume_lod": WaterRender.oceanPlumeLod,
-            "water_ocean_plume_spread": WaterRender.oceanPlumeSpread,
-            "water_ocean_plume_gain": WaterRender.oceanPlumeGain,
             "water_ocean_plume_opacity": WaterRender.oceanPlumeOpacity,
             "water_ribbon_bend_depth": WaterRender.ribbonBendDepth,
             "water_ribbon_shoal_mix": WaterRender.ribbonShoalMix,
