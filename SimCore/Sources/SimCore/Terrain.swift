@@ -1650,31 +1650,63 @@ public final class Terrain {
     /// Vielfaches an Teilschritten.
     private func iceTransportDomain() -> (scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
         let nn = n
-        var scale = 0.0
-        var iLo = nn, iHi = -1, jLo = nn, jHi = -1
         let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
         let firnT = cfg.iceFirnTemp
-        for j in 0..<nn {
-            for i in 0..<nn {
-                let k = j * nn + i
-                if ice[k] > 0 || (snow[k] > 0 && t0 - gamma * max(0, h[k] - sea) < firnT) {
-                    iLo = min(iLo, i); iHi = max(iHi, i)
-                    jLo = min(jLo, j); jHi = max(jHi, j)
+        let chunks = min(nn, max(1, Terrain.coreCount * 4))
+        var chunkScale = [Double](repeating: 0, count: chunks)
+        var chunkILo = [Int](repeating: nn, count: chunks)
+        var chunkIHi = [Int](repeating: -1, count: chunks)
+        var chunkJLo = [Int](repeating: nn, count: chunks)
+        var chunkJHi = [Int](repeating: -1, count: chunks)
+        h.withUnsafeBufferPointer { hb in
+        ice.withUnsafeBufferPointer { ib in
+        snow.withUnsafeBufferPointer { sb in
+            let ph = hb.baseAddress!, pice = ib.baseAddress!, psnow = sb.baseAddress!
+            DispatchQueue.concurrentPerform(iterations: chunks) { c in
+                let jLoLocal = nn * c / chunks
+                let jHiLocal = nn * (c + 1) / chunks
+                var localScale = 0.0
+                var localILo = nn, localIHi = -1, localJLo = nn, localJHi = -1
+                for j in jLoLocal..<jHiLocal {
+                    let row = j * nn
+                    for i in 0..<nn {
+                        let k = row + i
+                        let ik = pice[k]
+                        if ik > 0 || (psnow[k] > 0 && t0 - gamma * max(0, ph[k] - sea) < firnT) {
+                            localILo = min(localILo, i); localIHi = max(localIHi, i)
+                            localJLo = min(localJLo, j); localJHi = max(localJHi, j)
+                        }
+                        if ik <= 0 { continue }
+                        let twoIk = 2 * ik
+                        if twoIk > localScale { localScale = twoIk }
+                        let sk = ph[k] + ik
+                        let sl = i > 0      ? ph[k - 1]  + pice[k - 1]  : sk
+                        let sr = i < nn - 1 ? ph[k + 1]  + pice[k + 1]  : sk
+                        let sd = j > 0      ? ph[k - nn] + pice[k - nn] : sk
+                        let su = j < nn - 1 ? ph[k + nn] + pice[k + nn] : sk
+                        var w = 0.0
+                        if sk > sl { w += sk - sl }
+                        if sk > sr { w += sk - sr }
+                        if sk > sd { w += sk - sd }
+                        if sk > su { w += sk - su }
+                        if w > localScale { localScale = w }
+                    }
                 }
-                if ice[k] <= 0 { continue }
-                if 2 * ice[k] > scale { scale = 2 * ice[k] }
-                let sk = h[k] + ice[k]
-                let sl = i > 0      ? h[k - 1]  + ice[k - 1]  : sk
-                let sr = i < nn - 1 ? h[k + 1]  + ice[k + 1]  : sk
-                let sd = j > 0      ? h[k - nn] + ice[k - nn] : sk
-                let su = j < nn - 1 ? h[k + nn] + ice[k + nn] : sk
-                var w = 0.0
-                if sk > sl { w += sk - sl }
-                if sk > sr { w += sk - sr }
-                if sk > sd { w += sk - sd }
-                if sk > su { w += sk - su }
-                if w > scale { scale = w }
+                chunkScale[c] = localScale
+                chunkILo[c] = localILo
+                chunkIHi[c] = localIHi
+                chunkJLo[c] = localJLo
+                chunkJHi[c] = localJHi
             }
+        }}}
+        var scale = 0.0
+        var iLo = nn, iHi = -1, jLo = nn, jHi = -1
+        for c in 0..<chunks {
+            if chunkScale[c] > scale { scale = chunkScale[c] }
+            if chunkILo[c] < iLo { iLo = chunkILo[c] }
+            if chunkIHi[c] > iHi { iHi = chunkIHi[c] }
+            if chunkJLo[c] < jLo { jLo = chunkJLo[c] }
+            if chunkJHi[c] > jHi { jHi = chunkJHi[c] }
         }
         return (scale, iLo, iHi, jLo, jHi)
     }
