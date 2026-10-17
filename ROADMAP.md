@@ -229,6 +229,20 @@ Tiefland fällt 3–5 Kanaltiefen je Kanalbreite; trockene junge Altarme zeigt
 der Render als Ried). Stand und Befunde in `docs/zielbild-measurements.md`
 § Paket B — Zeitmittel-Abnahme. Pakete C (Teile), D, E als eigene PRs.
 
+**Gürtel ↔ Entwässerung gekoppelt (#187, Ansatz Avulsion).** Die Läufe sind
+seit #187 die Hack-Abschnitte des D8-Netzes (der größere Zufluss läuft weiter);
+die alte Linie liefert die Lage, wo sie an ihrem Abschnitt liegt, ihr Abfluss
+kommt aus dem eigenen Abschnitt (kein Erben mehr). Weicht eine Linie über zwei
+Kanalbreiten oder überhöht von ihm ab, springt sie mit der Rate 1/1000 Jahre
+in den D8-Weg (Avulsion, verlassenes Gerinne = Altarm). Gekoppelt bei dt 100:
+85–92 % der wandernden Knoten höchstens 1,5 Zellen von ihrer Rinne (vorher
+60–81 %). Paket B neu kalibriert (24 Seeds: 201 statt 188 von 240). Offen: die
+Zeitmittel-Abnahme läuft in 1000-Jahr-Schritten, im Zeitraffer-Takt (dt 100)
+liegt die Sinuosität bei 1,28–1,35 statt 1,54–1,62 (167 statt 201 von 240; die
+alte Mechanik driftet dort in die andere Richtung); deutlich mehr und kleinere Altarme; `fadeUphill` und die
+Raster-Bank-Schranke bleiben (seltener nötig). Messreihe:
+`docs/zielbild-measurements.md` § Gürtel und Entwässerung: Avulsion (#187).
+
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
 aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der
 Schlinge“ nur am Gerinne, Rippen nur im Bewuchs), Altarm-Verlandung als Ried und

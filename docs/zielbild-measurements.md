@@ -258,7 +258,7 @@ Jeder Punkt ist gemessen; verworfen, was nicht trug:
    1000 Jahre, Bewegung 0,2, Sinuosität fallend).
 4. **Zug zur tieferen Uferseite** (Rückstellkraft gegen Abkoppeln): in jedem
    V-Tal ~4-mal stärker als der Wachstumsterm, Sinuosität 1,2. Standard jetzt
-   aus (`meanderBeltPull = 0`), der Schalter bleibt.
+   aus (`meanderBeltPull = 0`); mit #187 samt Code entfernt.
 5. **Bremse Ufer gegen gegenüberliegendes Ufer** direkt am Kanal: reagierte auf
    jedes sanfte Quergefälle. Ersetzt durch die Talwand 3,5 Breiten weit.
 6. **Ohne jede Bremse:** die Ebene im Osten von Seed 1337 wurde zum Knäuel aus
@@ -1157,6 +1157,9 @@ Regel gegen das Erben. Bis dahin hält `fadeUphill` die Bänder vom Hang fern
 Stützpunkten: 19,7 / 19,2 % in Jahr 20.000, 46,0 / 12,6 % in Jahr 100.000,
 33,2 / 14,3 % in Jahr 230.000).
 
+Fortsetzung (Ansatz Avulsion, Kopplung ohne Erben, Neukalibrierung):
+§ Gürtel und Entwässerung: Avulsion (#187).
+
 ## Geister-Seen im Mäandergürtel (Befund im Zeitraffer, Jahr 2.305)
 
 Befund des Projekteigners (Seed 1337, Jahr 2.305, Schrägsicht): in den
@@ -1508,3 +1511,290 @@ Vorher ist der Stand `0fec08b` mit denselben Kameras; die Integration bis
 Godot-Vertragstests auf diesem Stand grün: `smoke`, `water_uniforms`,
 `water_geometry`, `river_ribbons`, `relief`, `canopy`, `lighting`,
 `ui_layout`, `graphics_study`, `build_stamp_parity`.
+
+## Gürtel und Entwässerung: Avulsion (#187)
+
+Ausgang: die Zentrumslinien des Gürtels und die D8-Entwässerung liefen
+getrennt (§ Flüsse laufen bergauf, § Raster-Abkürzungen). Auftrag #187:
+die Ursache in der Sim beheben, Ansatz „Avulsion" — ein überhöhtes Gerinne
+springt in den tieferen Fließweg. Parallel lief ein zweiter Ansatz
+(durchgehende Rinne mit monotoner Sohle); dieser Abschnitt misst nur die
+Avulsion. Vorher = `0fec08b`, nachher = Branch `t3/174-belt-avulsion`,
+Produktion, M4 Max.
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testBeltCouplingHistoryDiagnostic
+# RS_SEED, RS_YEARS, RS_DT, RS_EVERY, RS_VARIANT, RS_SEGLOG=<Jahr> (Aufbau der Läufe)
+```
+
+`testBeltCouplingDistanceDiagnostic` und `testZielbildMeanderTimeMeanDiagnostic`
+lesen seit #187 `RS_DT` (Schrittweite, Standard 1000).
+
+### Was die Kopplung tut (`Terrain.coupleBeltToDrainage`)
+
+Einmal je Schritt, auf dem frischen Abflussfeld, vor der Migration:
+
+- **Welche Flüsse es gibt, sagt das D8-Netz.** Das große Netz (ab
+  `meanderMinCells`) zerfällt in Hack-Abschnitte: an jedem Zusammenfluss läuft
+  der größere Zufluss weiter, der kleinere endet IN der Zusammenfluss-Zelle
+  (`Terrain.drainageSegments`, dieselbe Regel für die Trasse beim Generieren,
+  `MeanderState.traceHorton`). Je Abschnitt ein Lauf. Der Abfluss eines
+  Knotens ist das Einzugsgebiet der Abschnittszelle, an der er liegt, entlang
+  des Laufs monoton; die Zusammenfluss-Zelle zählt zum größeren Fluss. Ein
+  Erben über eine Berührung ist damit ausgeschlossen, und ein Fluss, den ein
+  Pinselstrich seiner Linie beraubt hat, bekommt im nächsten Schritt wieder
+  eine (Review-Befund 5).
+- **Wo er liegt, sagt die alte Linie.** Jeder alte Knoten, der höchstens
+  `0,5 · b + meanderBeltCouplingSlackCells` (4 Zellen) von einer
+  Abschnittszelle liegt, gehört dorthin; zusammenhängende Strecken werden in
+  den neuen Lauf übernommen, kurze Abweichungen eingeschlossen. Wo keine alte
+  Strecke liegt, setzt die Kopplung die Abschnittszellen ein (geglättet).
+- **Avulsion.** Verlässt eine Linie ihren Abschnitt über mindestens
+  `meanderBeltAvulsionWidths` (2) Kanalbreiten, oder liegt das Gelände unter
+  dem abgekoppelten Stück im Mittel mehr als `meanderBeltAvulsionDepths` (2)
+  Bankfull-Tiefen über dem Abschnitt, springt der Fluss in den D8-Weg — als
+  Ereignis mit der Rate 1/`meanderBeltAvulsionYears` (1000 Jahre),
+  deterministisch aus Zeit und Ort. Das verlassene Gerinne eines wandernden
+  Laufs wird ab `meanderBeltAbandonMinWidths` (5) Kanalbreiten Altarm (Alter
+  am Schrittende, verkorkt und verlandet wie nach einem Cutoff), immer
+  bekommt es eine `barAge`-Narbe.
+
+Wächter: `BeltCouplingTests` (Kunstwelt: ein abgekoppeltes Stück springt,
+der Altarm entsteht, der Oberlauf bleibt, kein geerbter Abfluss; bei sehr
+großem τ springt nichts; eine Linie ohne Fluss verschwindet, der Fluss wird
+getrasst), dazu Determinismus und Bank-Alter mit wandernden Läufen auf dem
+kleinen Gitter.
+
+### Befunde
+
+1. **Ein erster Entwurf am Quellknoten verlor die Läufe.** Der D8-Weg ab der
+   Quelle eines Laufs, gekappt am größeren Zusammenfluss, mit Sonderregeln für
+   Anzapfung, geköpfte Läufe, neue Quellen und Übergabe des Unterlaufs: in
+   20.000 Jahren (Seed 1337) 729 → 373 Läufe, ≥ `renderMinCells` 160 → 86,
+   1595 Anzapfungen, 845 Neu-Quellen. Jede Verlagerung einer kleinen Quelle im
+   Gebirge kappte einen ganzen Unterlauf. Die Hack-Abschnitte je Schritt
+   ersetzen alle Sonderregeln durch eine: 570 ± 30 Läufe, stabil.
+2. **Ohne Erben verlieren die Mäander ihre Sinuosität — unabhängig von der
+   Avulsion.** Auf der alten Kalibrierung (Rate 0,02, Kern 1,5): 140 bis 155
+   von 240 Punkten, Sinuosität 1,32–1,46, egal ob die Avulsion nach 2, 4 oder
+   8 Breiten oder ohne Überhöhungs-Kriterium greift (Tabelle unten). Das
+   bestätigt § Ursache in der Sim: Versuche — die gewundenen, frei wandernden
+   Läufe der alten Kalibrierung trugen ihren Abfluss geerbt. Ein
+   Schwellen-Schnitt (Sohle bis 3 Tiefen auf den tiefsten Bezug stromauf,
+   der Kandidat aus § Ursache in der Sim) half dagegen nicht (135 von 240).
+3. **Die Avulsion hing an der Schrittweite**, solange sie bei der ersten
+   Prüfung sprang: Seed 1337, 8000 Jahre, dt 100 gegen 1000: 204 gegen 71
+   Avulsionen. Das Abflussfeld flackert von Schritt zu Schritt; je öfter
+   geprüft wird, desto öfter trifft die Prüfung eine Abweichung. Als Rate
+   (τ = 1000 Jahre): 53 gegen 41.
+4. **Neu kalibriert:** gekoppelt muss ein Bogen schneller wachsen, als das
+   D8-Netz ihn abkürzt (Rate 0,02 → 0,03, Kern 1,5 → 1,0 Breiten, Spielraum
+   1,5 → 4 Zellen). Reihe in `Config.swift` bei `meanderBeltKernelWidths`,
+   `meanderBeltRate`, `meanderBeltCouplingSlackCells`.
+5. **Schutthügel am Ende gesperrter Gürtelbetten.** Die Tropfen tragen über
+   gesperrte Zellen (`bedLocked`, vorher `underIce`) ihre volle Fracht und
+   laden sie an der ersten freien Zelle ab. Seit jeder D8-Abschnitt eine Linie
+   hat, liegen Profil-Stempel fester Läufe auf viel mehr Wegen; am Ende eines
+   solchen Stücks wuchs ein Hügel von 0,40 Höhe in EINEM 500-Jahr-Schritt
+   (n = 160, Seed 1337, Zelle (5, 101): 0,318 → 0,722, über dem höchsten
+   Gipfel — `TerrainAging` „Berge wachsen nicht" kippte; ohne Tropfen kein
+   Hügel). Gesperrt ist mit Kopplung nur noch das Bett WANDERNDER Läufe: das
+   Profil, das die Sperre schützt (Kolk, Gleithang), baut nur der wandernde
+   Gürtel.
+6. **Altarme.** Ohne Mindestlänge wurde jedes verlassene Stück ab 4 Knoten
+   Altarm: Seed 1337, Jahr 20.000, 420 Altarme (Median 19 Knoten; vorher 63,
+   Median 28). Ab 5 Kanalbreiten: 284 (Median 27). Der schnellere Gürtel
+   schnürt trotzdem mehr und kleinere Bögen ab (Hals-Cutoffs bis Jahr 100.000
+   auf 1337 / 42 / 20: 511 / 233 / 246, vorher 174 / 64 / 55), sichtbare junge
+   Altarme im Tiefland im Mittel über 24 Seeds 14,6 / 10,6 statt 4,4 / 4,8.
+7. **Laufzeit.** Die wandernden Läufe sind jetzt die ganzen Flüsse von der
+   Quelle bis zur Mündung (vorher kurze, über das Erben mobile Zubringer):
+   belt.stamp 3,8 → 8,0 ms, belt.migrate 3,6 → 6,0 ms je Schritt, dazu die
+   Kopplung 3,9 ms, zusammen +22,7 % (66,0 gegen 53,8 ms). Seitdem stempelt
+   der Teilschritt nur die flachen Knoten, die steilen Strecken wandernder
+   Läufe bekommen wie die festen einen Linien-Carve je Schritt (belt.stamp
+   7,2, belt.fixedStamp 1,3 → 1,5 ms); Quellsuche und Knoten-Zuordnung der
+   Kopplung laufen parallel (1,4 / 1,1 → 0,9 / 0,3 ms), `attachTributaries`
+   prüft nur gegen wandernde Vorfluter (2,9 → 1,2 ms; feste Läufe enden
+   ohnehin am D8-Zusammenfluss). Ergebnis unter e.
+
+Sweeps (24 Seeds, Zeitmittel wie § Zeitmittel-Abnahme, Summe erfüllter
+Punkte 9–13 von 240; „Stand" = Kopplung und Review-Befunde):
+
+| Variante | Summe | Matrix-Seeds | Sinuosität (Mittel 1. / 2. Fenster) |
+| --- | --- | --- | --- |
+| `0fec08b` | 188 | 29 | 1,84 / 1,88 |
+| nur Review-Befunde, ohne Kopplung | 186 | 25 | 1,87 / 1,92 |
+| Kopplung, alte Kalibrierung, Avulsion 2 Breiten + 2 Tiefen, sofort | 147 | – | 1,38 / 1,34 |
+| … ohne Überhöhung; 4 / 8 Breiten | 146; 155 / 148 | 17; 24 / 17 | 1,40–1,46 |
+| … als Rate (τ 1000) | 140 | 21 | 1,42 / 1,32 |
+| … dazu Schwellen-Schnitt 3 Tiefen | 135 | 17 | 1,43 / 1,33 |
+| Spielraum 4, Rate 0,03, Kern 1,2 / 1,0 | 177 / 201 | 24 / 29 | 1,53 / 1,47; 1,53 / 1,52 |
+| Spielraum 4, Rate 0,04, Kern 1,0 / 0,9 / 1,2 | 221 / 216 / 197 | 30 / 29 / 26 | 1,64 / 1,57 (Kern 1,0) |
+| Spielraum 3 / 6, Rate 0,03, Kern 1,0 | 207 / 203 | 28 / 27 | – |
+| Rate 0,05, Kern 1,0 / 1,2 | 214 / 203 | 28 / 28 | – |
+| + Altarm ab 5 Breiten, Rate 0,04 | 219 | 30 | 1,64 / 1,59 |
+| + Tropfen-Sperre nur im wandernden Bett, Rate 0,03 / 0,035 / 0,04 | 210 / 213 / 207 | 30 / 29 / 29 | 1,58 / 1,53 (0,03) |
+| **+ Laufzeit (Stand, Rate 0,03)** | **201** | **29** | **1,62 / 1,54** |
+
+Die Zeilen ab „Spielraum 4" bilden ein Plateau von 200 bis 220; Rate 0,03
+statt 0,035/0,04, weil jede Erhöhung vor allem Hals-Cutoffs bringt
+(sichtbare Altarme 13,7 / 15,8 / 18,0).
+
+### Kennzahlen vorher / nachher
+
+**a. Kopplung** (`testBeltCouplingDistanceDiagnostic`, Anteil wandernder
+Knoten höchstens 1,5 / 6 Zellen bzw. über 20 Zellen von einem D8-Gerinne mit
+mindestens halbem Abfluss; Knotenzahl in Klammern). Die Diagnose taktet in
+1000-Jahr-Schritten; dort wandert die Linie im Schritt gegen das
+Abflussfeld vom Schrittanfang, das misst vor allem die Wanderung eines
+Schritts. Deshalb zusätzlich dt 100 (Zeitraffer-nah), „alte Mechanik" =
+derselbe Stand ohne Kopplung mit der alten Kalibrierung:
+
+| Seed | Jahr | vorher (dt 1000) | nachher (dt 1000) | alte Mechanik (dt 100) | nachher (dt 100) |
+| ---: | ---: | --- | --- | --- | --- |
+| 1337 | 20.000 | 35 / 58 / 17 % (1881) | 36 / 64 / 4 % (2284) | 60 / 72 / 17 % | 85 / 95 / 0 % |
+| 1337 | 100.000 | 30 / 52 / 15 % (1639) | 30 / 63 / 6 % (2308) | – | – |
+| 42 | 20.000 | 48 / 77 / 6 % (662) | 35 / 75 / 0 % (979) | 60 / 74 / 16 % | 92 / 100 / 0 % |
+| 42 | 100.000 | 55 / 70 / 14 % (664) | 28 / 64 / 6 % (957) | – | – |
+| 20 | 20.000 | 44 / 67 / 3 % (1000) | 37 / 70 / 7 % (1229) | 81 / 90 / 0 % | 89 / 100 / 0 % |
+| 20 | 100.000 | 47 / 71 / 5 % (720) | 36 / 73 / 5 % (1103) | – | – |
+
+**b. Rohe Bänder bergauf** (`testRibbonUphillDiagnostic`, `fadesUphill =
+false`; Anstiege über 30 m, je 1000 sichtbare Stützpunkte, größter Anstieg;
+dazu der Anteil, den `fadeUphill` ausblendet):
+
+| Seed, Jahr | vorher | nachher | ausgeblendet vorher → nachher |
+| --- | --- | --- | --- |
+| 1337, 20.000 | 27 (4,1), 227 m | 22 (2,3), 217 m | 19,5 → 7,3 % |
+| 1337, 230.000 | 14 (5,0), 114 m | 3 (0,3), 52 m | 33,0 → 4,3 % |
+| 42, 20.000 | 8 (3,9), 102 m | 3 (0,8), 52 m | 18,5 → 4,5 % |
+| 42, 230.000 | 6 (3,6), 76 m | 3 (0,9), 97 m | 12,9 → 3,9 % |
+
+**c. Hauptlauf-Lücke** (`testMainStemBandDiagnostic`, 100-Jahr-Schritte,
+Seeds 1337 / 42 / 20): Jahr 2.300 5,6 / 9,8 / 29,2 % → 0,0 / 2,7 / 15,5 %;
+Jahr 20.000 18,4 / 0 / 12,2 % → 4,5 / 9,9 / 18,4 %. Einzelzeitpunkte, stark
+streuend (derselbe Code vor dem Laufzeit-Schritt: 0,0 / 9,2 / 4,2 und
+5,1 / 0 / 0 %).
+
+**d. Punkte 9–13 im Zeitmittel** (24 Seeds, Seeds mit erfülltem Punkt,
+Mittel in Klammern), vorher → nachher:
+
+| Punkt | 10.000–20.000 | 50.000–100.000 |
+| --- | --- | --- |
+| 9 Sinuosität 1,5–2,5 | 18 (1,84) → 18 (1,62) | 20 (1,88) → 16 (1,54) |
+| 10 λ/Breite 10–14 | 15 (12,08) → 17 (12,01) | 12 (10,56) → 16 (11,65) |
+| 11 Gürtel ≥ 3 × Amplitude | 23 (4,98) → 22 (7,10) | 24 (10,39) → 24 (12,95) |
+| 12 Asymmetrie ≥ 2 | 18 (3,00) → 21 (3,04) | 24 (4,19) → 24 (3,81) |
+| 13 ≥ 3 sichtbare Altarme | 16 (4,42) → 21 (14,57) | 18 (4,78) → 22 (10,55) |
+
+Summe 188 → 201 von 240, Matrix-Seeds 29 → 29 von 30. λ ist jetzt auf allen
+Stützstellen messbar (vorher bis 16 von 26 „n. m."): die wandernden
+Abschnitte sind die ganzen Tieflandläufe der großen Flüsse. Matrix-Seeds
+nachher:
+
+| Seed | Fenster | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 Altarme sichtbar | davon nass |
+| ---: | --- | --- | --- | --- | --- | --- | --- |
+| 1337 | 10.000–20.000 | 1,57 (1,40–1,96) | 13,4 (11,6–15,4) | 8,0 (6,0–9,5) | 2,85 (2,39–3,53) | 33,7 (28–39) | 6,5 |
+| 1337 | 50.000–100.000 | 1,61 (1,36–1,82) | **14,3** (11,5–18,1) | 14,4 (10,5–20,1) | 3,57 (2,62–5,20) | 23,1 (12–31) | 1,5 |
+| 42 | 10.000–20.000 | 1,54 (1,38–1,71) | 12,1 (10,9–13,0) | 7,9 (6,3–9,9) | 3,02 (2,29–3,73) | 12,0 (8–15) | 0,3 |
+| 42 | 50.000–100.000 | 1,54 (1,27–2,06) | 12,2 (9,7–15,9) | 13,4 (8,3–26,6) | 4,07 (2,35–8,50) | 7,2 (2–14) | 0,9 |
+| 20 | 10.000–20.000 | 1,53 (1,40–1,65) | 11,5 (9,0–16,6) | 6,5 (4,0–8,7) | 2,95 (2,20–3,55) | 21,7 (17–28) | 3,5 |
+| 20 | 50.000–100.000 | 1,50 (1,22–1,79) | 10,9 (7,4–16,3) | 13,1 (8,7–22,2) | 4,10 (2,80–7,78) | 10,8 (5–20) | 1,8 |
+
+Punkt 10 auf Seed 42 im zweiten Fenster (vorher offen, 8,3) ist erfüllt,
+dafür liegt Seed 1337 dort knapp über 14. Punkt 14 (Zerklüftung, Wächter in
+`ZielbildLandformTests`) und Punkt 15 (beide Cutoff-Arten bis Jahr 20.000)
+grün; Hals- / Chute-Cutoffs bis Jahr 100.000: 511 / 95, 233 / 26, 246 / 80
+(vorher 174 / 105, 64 / 43, 55 / 44). Avulsionen je ~100.000 Jahre über 24
+Seeds: Median 270 (50–662); Seed 1337 / 42 / 20: 662 / 240 / 292.
+
+**Im Zeitraffer-Takt (dt 100) hält das nicht.** Dasselbe Ensemble in
+100-Jahr-Schritten: 167 von 240 (Matrix-Seeds 23 von 30), Sinuosität 1,35 /
+1,28 (erfüllt auf 1 / 1 von 24 Seeds), λ/Breite 11,9 / 12,2, Gürtel/Amplitude
+11,0 / 20,7, Asymmetrie 4,19 / 5,45, sichtbare Altarme 11,0 / 8,0. Die
+Kopplung ersetzt Linienstücke, die ihr D8-Abschnitt nicht trägt, bei jeder
+Prüfung; je Zeiteinheit bei dt 100 rund dreimal so viele wie bei dt 1000
+(Seed 1337, 20.000 Jahre: 45.563 gegen 15.566 ersetzte Knoten wandernder
+Größe), die Avulsionen selbst dagegen seltener (109 gegen 196: im großen
+Schritt wandert die Linie weiter vom Abflussfeld des Schrittanfangs weg). Die alte Mechanik ist
+dort ebenfalls nicht abgenommen: ohne Kopplung mit alter Kalibrierung bei
+dt 100 173 von 240, Sinuosität 1,71 / 2,21 statt 1,87 / 1,92 bei dt 1000 —
+sie driftet in die andere Richtung. Die Abnahme der Punkte 9–13 in
+1000-Jahr-Schritten beschreibt also für keinen der beiden Stände den
+Zeitraffer.
+
+**e. Laufzeit** (`simperf --repeat 3`, Produktion, Seed 1337, M4 Max,
+abwechselnd fünf Runden vorher / nachher, Minimum der drei Blöcke):
+53,6 / 60,7 — 52,8 / 60,2 — 53,7 / 60,9 — 52,5 / 59,9 — 53,4 / 61,6 ms je
+Schritt, Median 53,4 → 60,7 (+13,7 % gegen den Integrationsstand; gegen
+`main` nicht interleaved gemessen, der Integrationsstand lag dort zuletzt bei
++4,5 %, § Zeitmittel-Abnahme). Pass-Tabelle nachher: belt.stamp 7,2 ms,
+belt.migrate 5,5, belt.couple 2,5 (Abschnitte 0,9, Zuordnung 0,3, Strecken
+0,2, Aufbau 1,1), belt.fixedStamp 1,5, belt.attach 1,2. `simperf --hash`
+nachher zweimal `c25268a941dd4beb` (vorher `e505e21e35d719aa`).
+
+**f. Pflichtsuite:** 534 Tests, 60 Messläufe übersprungen, 0 Fehler, 193 s.
+
+### Review-Befunde (Sim-Review zu `0fec08b`), mitgelöst
+
+1. **Alter je Teilschritt:** Bank und Altarm tragen ihr Alter am
+   Schrittende (`dt − (si+1)·sub`), neue Altarme werden am Index verkorkt,
+   verlanden im Entstehungsschritt nur über ihr Alter. Wächter
+   `testBarAgesFollowTheSubsteps`: nach einem 1000-Jahr-Schritt 16 % der
+   jungen Bänke bei Alter 0 (vorher alle), mittleres Alter 370 gegen 347
+   Jahre in zehn 100-Jahr-Schritten.
+2. **Teilschritt-Deckel** 256 → 4096 (Sicherheitsnetz); Kommentar an
+   `meanderBeltRelaxYears` berichtigt.
+3. **Testlücken:** `testBeltIsDeterministic` und die Bank-Alter mit
+   wandernden Läufen (`meanderBeltMinCells` = 100, n = 128).
+4. **`migrates()`** entscheidet mit Kopplung am letzten Innenknoten.
+5. **Pinselstrich löscht den Hauptlauf:** der Fluss wird im nächsten Schritt
+   aus D8 neu getrasst (`testRiverWithoutLineIsRetraced`).
+6. **Frische Bank** nur, wo die Ablage die Zelle bis auf eine Viertel
+   Kanaltiefe an die Bank-Oberkante hebt (ein Zustand statt einer
+   schrittweitenabhängigen Menge); nur dann Bewuchs weg und Tropfen-Sperre.
+7. **Laufzeit:** Alterung und Tropfen-Sperre auf Roh-Puffern parallel, das
+   Bin-Gitter von `applyBeltCutoffs` wiederverwendet; Zug und Kohäsion samt
+   Höhenabtastung entfernt (bit-gleich, beide standen auf 0).
+8. **Aufräumen:** `meanderBeltSmoothYears`, `meanderBeltPull`,
+   `meanderBeltPullDeadband`, `meanderBeltCohesion` entfernt (Spielstand
+   Version 7); `migrateBelt`/`beltMaxRate(config:)` in die Tests verschoben;
+   `Hydraulic.erode(underIce:)` heißt `bedLocked`.
+
+Zwei Mechanik-Wächter pinnen die alte Gürtel-Kalibrierung (Rate 0,02, Kern
+1,5), mit Begründung am Test: `MeanderBeltTests.testMigrationIsStepSizeInvariant`
+misst die Numerik des Schemas (mit 0,03 / 1,0 wachsen die Bögen ∝ Rate/L²
+rund 4,5-mal schneller, und der zeitliche Fehler erster Ordnung wächst mit:
+ohne Störquelle 3,55 Zellen bei 27,8 Zellen Auslenkung) und
+`TerrainAging.testAgingTrajectoryOver100k` (eine Realisierung auf n = 160;
+1337 fällt mit 0,03 in der ersten Hälfte schneller und steht in 100k gleich
+tief, 42 und 20 halten das Kriterium). Der Altarm-Median in
+`ZielbildLandformTests` steht jetzt bei ≥ 15 (kleinstes Dreier-Mittel aus 24
+Seeds 15,3; Median je Seed 14–46, vorher 18–96).
+
+### Render-Pflaster (`fadeUphill`, Raster-Bank-Schranke)
+
+- `fadeUphill` bleibt: rohe Bänder steigen weiter stellenweise über 30 m an
+  (Tabelle b), aber die Blende nimmt nur noch 4–7 % der sichtbaren
+  Stützpunkte statt 13–33 %.
+- Die Raster-Bank-Schranke (`rasterBarBandReachCells`) bleibt. Sichtbarer
+  Raster-Fluss auf Bänken ohne Band (ganze Karte, Jahr 2.305, Zeitraffer-Takt
+  15 Jahre, Seeds 1337 / 42 / 20): vorher ohne Schranke 1.769 / 568 / 858,
+  mit 713 / 232 / 383 Zellen; mit Kopplung ohne Schranke 445 / 223 / 181,
+  mit 203 / 115 / 137 (gemessen auf dem Stand vor dem Laufzeit-Schritt). Die
+  Abkürzungen über den Gleithang sind um 60–80 % seltener, aber nicht weg.
+
+### Offen
+
+- Zeitraffer-Takt: Punkte 9–13 und die Ersetzungs-Rate der Kopplung hängen
+  an der Schrittweite (oben). Die Projektion auf ein flackerndes D8-Netz
+  ersetzt bei kleinem dt öfter; was fehlt, ist ein D8-Netz, das der
+  gestempelten Rinne verlässlich folgt (der zweite Ansatz, durchgehende
+  Rinne mit monotoner Sohle), oder ein Gedächtnis der Kopplung über mehrere
+  Schritte.
+- Deutlich mehr und kleinere Altarme als vor #187 (Befund 6); ob das im Bild
+  als Ried-Teppich wirkt, ist eine Bildfrage.
+- Laufzeit: Teilschritte wandernder Läufe berechnen Geometrie und Raten über
+  den ganzen Fluss, nicht nur den flachen Abschnitt.
