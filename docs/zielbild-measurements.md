@@ -890,8 +890,9 @@ Fels-Shader #177, Bänder #181, adaptive Presets #176; dieselben 162 Läufe,
 Größtes p95 je Kamera (Standbild / Fahrt): overview 15,3 / 15,3, detail 26,6 /
 25,1, grazing 30,0 / 30,2, diorama 19,5 / 19,2, valley 17,0 / 17,1, close
 18,2 / 19,6 ms. Punkt 47 bleibt erfüllt, die Marge in der flachen
-Grazing-Kamera schrumpft aber auf ~3 ms: der neue Fels-Shader (bis 3 × 8
-Rausch-Abfragen je Felspixel) kostet dort rund 5 ms. Erster Hebel, falls das
+Grazing-Kamera schrumpft aber auf ~3 ms: der neue Fels-Shader (damals bis
+3 × 9 + 2 Rausch-Abfragen je Felspixel, nicht 3 × 8; seit „Fels und Wasser"
+unten 3 × 4 + 2, solange die Fugen ausgeblendet sind) kostet dort rund 5 ms. Erster Hebel, falls das
 Budget enger wird: die Kluft-Richtungen mit kleinem Gewicht früher
 überspringen oder die Kluft-Auflösung mit der Distanz stärker ausblenden. Der Zeitraffer überschreitet das Budget an
 Upload-Frames (p95 bis 71 ms) — Befund, nicht Abnahmekriterium.
@@ -917,10 +918,10 @@ Ausschnitte; für das Urteil über die Vorlagen sind die Preset-Bögen gedacht.
 Beim Durchsehen gefundene und behobene Befunde (je im zuständigen PR):
 Fels mit gleichmäßigem Liniennetz (D, #177), blockige Raster-Treppe unter dem
 Hauptlauf und rechtwinklige Bandenden an Kaskaden (C Teil 2, #181),
-Diorama-Rahmung und Tal-/Nah-Ziel (E, #176). Offen als Bildurteil: der große
-See wirkt bei flachem Blick milchig (Himmelsspiegelung der allgemeinen
-Wasser-Optik, nicht aus #174), Fels insgesamt eher hell und glatt gegenüber
-dem schroffen Fels der Vorlagen.
+Diorama-Rahmung und Tal-/Nah-Ziel (E, #176). Die beiden danach offenen
+Bildurteile (großer See bei flachem Blick milchig, Fels hell und glatt) sind
+im Abschnitt „Fels und Wasser" am Ende dieses Dokuments untersucht und
+behoben.
 
 ## Glas-Weichzeichner (Abnahmepunkt 43, Paket E)
 
@@ -1342,3 +1343,168 @@ unberührt.
 
 Wächter: `RasterBeltTests` (beide rot ohne den Fix: 9 Flecken unter dem
 Gate, 17 Raster-Zellen auf Bänken neben dem eigenen Band).
+
+## Fels und Wasser: die zwei offenen Bildbefunde (2026-10-17)
+
+Zwei Bildurteile des Projekteigners blieben nach der Abnahme offen: der
+große See wirkt bei flachem Blick milchig, und der Fels ist heller und
+glatter als der schroffe Fels der Vorlagen A/B (Abnahmepunkte 31/32). Beides
+ist reine Render-Arbeit, die Physik bleibt unberührt. Gemessen und gerendert
+auf dem M4-Max-Referenz-Mac, offizielles Godot 4.7.2, eingebauter Bildschirm,
+maximiert 3456×2104, `balanced`.
+
+### Diagnose
+
+Vor jeder Änderung wurden die Terme einzeln sichtbar gemacht: temporäre
+Debug-Ausgaben in allen drei Wasser-Shadern und im Terrain-Shader (nicht im
+Repo), jeweils als unbeleuchtete Emission oder mit abgeschaltetem Term.
+Kameras: flach über den Kratersee von Seed 42 (Ziel 16/3,6, Distanz 14,
+Pitch 0,2, Sonne im Rücken) und die Tal-Kamera von Seed 20 (Gegenlicht).
+
+**Wasser.** Vier Ansichten derselben Szene:
+
+| Ansicht | See (flach) | Meer am Horizont |
+| --- | --- | --- |
+| nur Albedo, ohne Godot-Spiegelung (`SPECULAR = 0`) | hellblau, flach | grauweiß, milchig |
+| nur Godot-Spiegelung (`ALBEDO = 0`) | dunkles Marineblau mit Wellenstruktur | dunkelblau |
+| Fresnel-Term | 0,2–0,3 | bis 0,8 |
+| unbeleuchtete Albedo | mittelblau | blaugrau |
+
+Der milchige Film kam also nicht aus der Spiegelung, sondern aus der
+**Albedo**: alle drei Shader mischten bei streifendem Blick bis zu 55 % einer
+festen Himmelsfarbe (0,62/0,70/0,76) in die Wasserfarbe. Godot behandelt
+ALBEDO als diffuse Oberfläche, die Sonne (Energie 2) und das Umgebungslicht
+beleuchteten diesen „Himmel" wie Farbe. Obendrauf rechnete Godot seine eigene
+Spiegelung der Umgebung, mit `SPECULAR` bis 1,0 beim streifenden Blick
+(F0 = 0,16 statt der 0,02–0,04 von Wasser): der Fresnel-Anstieg stand damit
+doppelt im Bild. Der Wasserkörper selbst war mit 0,03/0,12/0,26 (linear) für
+tiefes Wasser im Licht „Schwimmbad-Blau". Im Gegenlicht (Seed 20, Tal) zog
+die Rauheit 0,34 bei steilem Blick die Sonne zu einem breiten milchigen
+Fleck über Meer und Flussschleife.
+
+**Fels.** Die Materialgewichte (Debug: Fels/Halde/Grund als RGB) liegen
+richtig, die Wände SIND Fels. Die unbeleuchtete Albedo zeigte sie aber
+hellgrau: die Felsfarben 0,20–0,33 sind lineare Werte (Godot), auf dem
+Bildschirm 0,48–0,61, und die 28-%-Beimischung der Makrofarbe zog sie zum
+CPU-Felston 0,37 hoch. Unter der warmen Sonne wurde daraus Hellbeige. Glatt
+wirkten die Wände, weil die Klüftung nur TON war: die Normale kam aus dem
+15-m-Sim-Gitter, der Verschiebung (#153) und dem feinen Rinnen-Detail, das auf
+Fels so schwach lag wie auf Wiese. Das Kluftmuster dunkelte im Mittel um ~6 %
+ab, ohne eigenes Licht und Schatten. Dazu kam ein Fehler aus dem Shader-Review
+(unten): das Wertrauschen erstarrte weit weg von der Kartenmitte, Körnung und
+Klüfte waren dort glatt.
+
+### Lösung
+
+**Wasser (alle drei Wege, Uniform-Vertrag `WaterRender` → `WaterUniforms`):**
+- Keine Himmelsfarbe mehr in der Albedo. Den Himmel spiegelt Godot über
+  `SPECULAR`/`ROUGHNESS`, der Wasserkörper tritt mit dem Fresnel-Anteil
+  zurück (`× (1 − fresnel)`; Godot dämpft die diffuse Albedo nicht selbst).
+  Entfallen: `skyReflectColor`, `fresnelSkyMix`.
+- Ein Glanzwert statt der Paare steil/streifend: `waterSpecular` 0,5
+  (F0 = 0,04), `waterRoughness` 0,08. Die Wellung der Normalen bricht den
+  Sonnenglanz jetzt in Funkeln statt in einen milchigen Fleck.
+- Dunklerer Wasserkörper: seicht 0,06/0,17/0,18, tief 0,010/0,050/0,085
+  (vorher 0,18/0,37/0,42 und 0,03/0,12/0,26).
+- Wächter: `WaterRenderTests.testAllWaterShadersShareTheSameWater` (Körper
+  tritt mit Fresnel zurück, keine Himmelsfarbe in der Albedo, Rauheit und
+  Specular aus `WaterRender`), `WaterUniformsTests` (Tabelle, Spiegel,
+  default-freie Deklarationen), `game/tests/water_uniforms.gd`.
+
+**Fels (`terrain.gdshader`, Kalibrierung `MaterialRender`):**
+- Albedo dunkler und leicht kühl: Fels 0,07–0,15 (Bildschirm 0,29–0,42),
+  Halde 0,22, steiniger Grund 0,17; der CPU-Felston der Makrofarbe
+  (`TerrainColorRenderer`) 0,13 statt 0,37.
+- Runsen als FORM: `rock_joints` liefert neben dem Ton eine Normalen-Neigung
+  aus der analytischen Ableitung des Runsen-Rauschens (`vnoise_d`, dieselben
+  vier Zellwerte), dazu feine, scharfkantige Grate (~9 m) in der Nähe.
+  Tiefe `MaterialRender.jointRelief` 0,35 Kluftabstände; blendet wie das
+  Muster mit der Pixelgröße aus.
+- Das feine Rinnen-Detail (runevision) liegt auf Fels um bis zu
+  `MaterialRender.rockReliefGain` 2,5 kräftiger (Normale und Abdunklung der
+  Rinnenböden).
+- Wächter: `MaterialTests` (Tabelle, Aufruf mit Pixelgröße und Normale,
+  Runsen kippen die Normale), `game/tests/canopy.gd`.
+
+**Shader-Review (Stand `0fec08b`), im selben Zug:**
+1. `vnoise` hashte über `ehash` (Float-Produkt x·y·(x+y)); ab einigen
+   Dutzend Zellen vom Ursprung verlor `fract` seine Bits. Jetzt `vhash`: der
+   Zellindex wird zuerst auf [0, 17) gefaltet, das Produkt bleibt unter ~10⁴.
+   Ein Ganzzahl-Hash (pcg2d) war die erste Fassung und kostete gemessen
+   +2,5 ms je Bild (Tabelle unten).
+2. Ableitungen nur im gleichförmigen Kontrollfluss: `fwidth` steht genau
+   zweimal oben in `fragment()`; Klüftung, Körnung, Spalten und Kronen
+   bekommen die Pixelgröße übergeben (Wächter
+   `MaterialTests.testNoiseHashAndDerivativesStayDefined`).
+3. Vertex-Normale mit dem Vorzeichen der Pixel-Normale (`-(hU - hD)`), die
+   Godots Schatten-Normal-Bias liest (`RenderContractTests`).
+4. Texelzentrierte Abbildung Welt → Textur in Terrain, Bändern, Meer und
+   Wolkenkörpern (`world_uv`/`grid_uv`, `grid_n`): vorher bis zu einen halben
+   Texel (~8 m) Versatz zum Rand hin.
+5. Felsklüfte: Fugen und Schichtfugen nur, solange `crack_detail > 0`.
+6. Ein Abgriff je Pixel für `relief_tex`, `water_tex` (See-Gate aus `w.g`),
+   `hf_tex` im Vertex; `debug_difference_tex` nur in der Diagnose-Ansicht.
+7. Der Wasser-Block (Kies, Kräuselung, Schimmer, Schaum, zehn
+   Rauschabfragen) läuft nur auf nassen Pixeln.
+8. Die Fluss-Tiefe des Raster-Wassers liest ihr Fenster aus `WaterRender`
+   (`riverDepthLo/Hi`, vorher `smoothstep(0.05, 0.6, …)` im Shader).
+9. Bänder: die Kräuselung quer läuft in Weltmaß (UV.x × Bandbreite aus der
+   Jacobi-Matrix der Bildschirm-Ableitungen), und die Deckkraft des
+   Vertex-Vertrags (auch `fadeUphill`, #187) schrumpft den ganzen Querschnitt,
+   nicht nur das Wasser: vorher blieb bei ausgeblendeten Bändern das nasse
+   Ufer voll breit als leere Rinne liegen.
+10. Feines Rinnen-Detail default-frei über `ReliefRender`
+    (`relief_detail_scale/shade/normal`, vorher Literal-Defaults, die Main.gd
+    nie setzte); der verrutschte `world_uv`-Kommentar steht wieder an seiner
+    Funktion.
+11. Leistung: `triplanar_fbm` überspringt Projektionen unter 2 % Gewicht
+    (stetig über abgesenkte, neu normierte Gewichte); auf flachem und mäßig
+    steilem Land rechnet nur die Draufsicht. Das bezahlt Felsrelief und Hash.
+
+### Frame-Zeiten (Abnahmepunkt 47)
+
+Flusstal-Bühne wie `scripts/graphics-matrix.sh … timing` (Matrix-Kameras,
+Jahr 20.000, `balanced`), 3456×2104, interleaved A B B A (Seed 42 und 20
+zusätzlich B A A B), vor jedem Lauf gewartet, bis kein fremdes Godot mehr
+lief. A = Integrationsstand `ca822ad`, B = dieser Stand. Median über die
+Läufe:
+
+| Seed | Kamera | Betrieb | Läufe | Mittel A → B | p95 A → B | Frames > 33,3 ms |
+| ---: | --- | --- | ---: | --- | --- | --- |
+| 1337 | grazing | Standbild | 2/2 | 24,7 → 24,2 ms | 25,4 → 24,8 ms | 0 / 0 |
+| 42 | grazing | Standbild | 4/4 | 22,7 → 21,8 ms | 23,1 → 22,1 ms | 0 / 0 |
+| 20 | grazing | Standbild | 4/4 | 23,9 → 23,1 ms | 24,4 → 24,0 ms | 0 / 0 |
+| 1337 | detail | Standbild | 2/2 | 18,1 → 18,3 ms | 18,4 → 18,8 ms | 0 / 2 |
+| 1337 | close | Standbild | 2/2 | 13,1 → 12,6 ms | 13,3 → 12,6 ms | 0 / 0 |
+| 1337 | diorama | Standbild | 2/2 | 14,9 → 14,3 ms | 14,9 → 14,4 ms | 0 / 0 |
+| 1337 | grazing | Kamerafahrt | 2/2 | 23,8 → 23,5 ms | 24,2 → 24,0 ms | 0 / 0 |
+
+Die Änderung kostet nichts Messbares; auf der knappen Grazing-Kamera ist sie
+0,5–0,9 ms billiger. `detail` liegt mit +0,2 ms im Rauschen der
+Einzelläufe (dort zwei einzelne Ausreißer-Frames in einem B-Lauf).
+
+Zwischenstände (gleiches Verfahren, 1337, Median Mittel/p95, je drei Läufe):
+
+| Stand | grazing | detail |
+| --- | --- | --- |
+| A (`ca822ad`) | 24,7 / 25,4 ms | 18,7 / 19,3 ms |
+| Ganzzahl-Hash pcg2d | 27,2 / 27,5 ms | 19,6 / 20,4 ms |
+| gefalteter Float-Hash, ohne Triplanar-Sprung | 26,0 / 26,5 ms | 19,5 / 20,2 ms |
+
+Die ersten Läufe dieser Reihe liefen neben fremden Godot-Prozessen und
+Swift-Builds anderer Agenten (p95 auf grazing zwischen 43 und 69 ms im
+selben Stand); sie sind verworfen.
+
+### Bögen
+
+`docs/screenshots/zielbild-174/look-rock-water_seed{1337,42,20}.jpg`: je Seed
+die drei Vorlagen-Presets (F1 Diorama, F2 Tal, F3 Nah, `RS_CAMERA`, Jahr
+20.000), oben vorher, unten nachher. `look-rock-water_lakes.jpg`: flach über
+den großen See von Seed 1337 (Ziel −12/−10, Distanz 14, Yaw 3,14, Pitch 0,25)
+und den Kratersee von Seed 42 (Ziel 16/3,6, Distanz 14, Yaw 0, Pitch 0,2).
+Vorher ist der Stand `0fec08b` mit denselben Kameras; die Integration bis
+`ca822ad` änderte am Bild nur die Wolkenschatten.
+
+Godot-Vertragstests auf diesem Stand grün: `smoke`, `water_uniforms`,
+`water_geometry`, `river_ribbons`, `relief`, `canopy`, `lighting`,
+`ui_layout`, `graphics_study`, `build_stamp_parity`.
