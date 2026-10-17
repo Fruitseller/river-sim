@@ -29,6 +29,12 @@
 #                     Bildschirm des Referenz-Macs ist dann z. B. Index 1
 #                     (maximiert 3456×2104). Die Viewport-Größe steht in
 #                     jeder Ergebniszeile.
+#   RS_TIMING_EXCLUSIVE=1  vor jedem Lauf warten, bis kein anderes Godot mehr
+#                     läuft (höchstens RS_TIMING_EXCLUSIVE_MAX Sekunden,
+#                     Standard 600). Ohne den Schalter steht die Zahl fremder
+#                     Godot-Prozesse (vor und nach dem Lauf, das Maximum) als
+#                     `foreign_godot` in der Ergebniszeile: zwei Godots teilen
+#                     sich die GPU, solche Läufe sind keine saubere Messung.
 #   GODOT             Godot-Binärdatei (Standard: scripts/fetch-godot.sh --path)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -57,6 +63,19 @@ for g in "${games[@]}"; do
   fi
 done
 
+# Fremde Godot-Prozesse (zwischen zwei eigenen Läufen ist jeder fremd).
+foreign_godot() { { pgrep -x Godot 2>/dev/null || true; } | wc -l | tr -d " "; }
+wait_exclusive() {
+  [[ "${RS_TIMING_EXCLUSIVE:-0}" == "1" ]] || return 0
+  local waited=0 limit="${RS_TIMING_EXCLUSIVE_MAX:-600}"
+  while [[ "$(foreign_godot)" != "0" ]]; do
+    if ((waited == 0)); then echo "    warte, bis kein anderes Godot mehr läuft …"; fi
+    if ((waited >= limit)); then echo "    … nach ${limit} s trotzdem weiter"; return 0; fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
 mkdir -p "$out_dir"
 labels=()
 for i in "${!games[@]}"; do
@@ -74,8 +93,10 @@ for ((round = 0; round < runs; round++)); do
     order=("${rev[@]}")
   fi
   for i in "${order[@]}"; do
+    wait_exclusive
+    foreign_before="$(foreign_godot)"
     load="$(uptime | sed 's/.*load averages*: *//')"
-    echo "==> Runde $((round + 1))/$runs, ${labels[$i]} (${games[$i]}), Last: $load"
+    echo "==> Runde $((round + 1))/$runs, ${labels[$i]} (${games[$i]}), Last: $load, fremde Godots: $foreign_before"
     line="$(env -u RS_SHOT -u RS_FPS -u RS_IDLE -u RS_FLATTEN -u RS_WATER_STAMP \
         -u RS_WATER_GPU -u RS_RENDER_GRID -u RS_DEBUG_DIFF -u RS_DIAG -u RS_STUDY_DEBUG \
         RS_SEED="$seed" RS_STEP="$year" RS_STEP_CHUNK=1000 RS_QUALITY="$quality" \
@@ -87,9 +108,11 @@ for ((round = 0; round < runs; round++)); do
       echo "Keine STUDY_TIMING-Zeile (${games[$i]})" >&2
       exit 1
     fi
-    # Lastmittel zum Lauf mitschreiben: auf einem belasteten Rechner ist es
-    # Teil des Ergebnisses.
-    echo "$line" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["load"]=sys.argv[1]; print(json.dumps(d))' "$load" \
+    foreign_after="$(foreign_godot)"
+    foreign=$((foreign_before > foreign_after ? foreign_before : foreign_after))
+    # Lastmittel und fremde Godots zum Lauf mitschreiben: auf einem belasteten
+    # Rechner sind sie Teil des Ergebnisses.
+    echo "$line" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["load"]=sys.argv[1]; d["foreign_godot"]=int(sys.argv[2]); print(json.dumps(d))' "$load" "$foreign" \
       >> "$out_dir/${labels[$i]}.jsonl"
     echo "    $line"
   done
@@ -105,7 +128,7 @@ extra = [("apply_median_ms", "Hochladen Median"), ("apply_max_ms", "Hochladen Ma
          ("apply_frame_max_ms", "Upload-Frame Max"), ("step_wait_ms", "Hauptthread wartet")]
 print()
 print("Median über die Läufe (je Lauf: Frame-Abstände über 10 s Zeitraffer)")
-print("| Stand | Läufe | " + " | ".join(k[1] for k in keys + extra) + " | Last (1 min) | Viewport |")
+print("| Stand | Läufe (ohne fremdes Godot) | " + " | ".join(k[1] for k in keys + extra) + " | Last (1 min) | Viewport |")
 print("| --- | ---: | " + " | ".join("---:" for _ in keys + extra) + " | ---: | --- |")
 for label in labels:
     rows = [json.loads(l) for l in open(f"{out_dir}/{label}.jsonl") if l.strip()]
@@ -121,5 +144,6 @@ for label in labels:
         cells.append(f"{value:.0f}" if key == "over_budget_frames" else f"{value:.1f} ms")
     loads = [float(r["load"].replace(",", ".").split()[0]) for r in rows if "load" in r]
     load = f"{statistics.median(loads):.1f}" if loads else "–"
-    print(f"| {label} | {len(rows)} | " + " | ".join(cells) + f" | {load} | {rows[0]['viewport']} |")
+    clean = sum(1 for r in rows if r.get("foreign_godot", 0) == 0)
+    print(f"| {label} | {len(rows)} ({clean}) | " + " | ".join(cells) + f" | {load} | {rows[0]['viewport']} |")
 PY
