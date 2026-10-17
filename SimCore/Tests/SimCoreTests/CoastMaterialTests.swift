@@ -80,6 +80,34 @@ final class CoastMaterialTests: XCTestCase {
                           "derselbe Hang ohne Brandung bleibt beim allgemeinen Klippen-Gewicht")
     }
 
+    /// Review zu #174 C: die Felsküste füllte den Rest `1 − Vegetation − Halde −
+    /// Rohboden` und ließ dabei die Kälte aus. Unter teilweiser Schneedeckung
+    /// summierten sich die Gewichte über 1 (Shader: Gewichtssumme).
+    func testCliffCoastUnderPartialSnowKeepsWeightsWithinOne() {
+        let sea = SimConfig().sea
+        let terrain = coastWorld { i in sea + 0.02 * Double(i - 7) }
+        let n = terrain.cfg.n
+        var state = terrain.state
+        state.veg = [Double](repeating: 1, count: n * n)
+        state.rain = [Double](repeating: 1, count: n * n)   // ohne Regen wächst hier nichts
+        state.snow = [Double](repeating: terrain.cfg.snowCoverRef, count: n * n)   // Deckung 0,5
+        terrain.restore(state)
+        let buffers = TerrainColorRenderer.buffers(terrain)
+        var worst = 0.0, checked = 0
+        for i in 8...(7 + WaterRender.coastReachCells) {
+            let k = 16 * n + i
+            let cold = Double(buffers.surfaces[k * 4 + 2]) / 255
+            let rock = Double(buffers.surfaces[k * 4 + 1]) / 255
+            guard cold > 0.3, rock > 0 else { continue }   // Aufbau: Küstenfels UNTER Schnee
+            checked += 1
+            let sum = Double(buffers.surfaces[k * 4]) / 255 + rock + cold
+                + Double(buffers.covers[k * 4]) / 255 + Double(buffers.covers[k * 4 + 2]) / 255
+            worst = max(worst, sum)
+        }
+        XCTAssertGreaterThan(checked, 0, "Aufbau: keine Küstenzelle mit Fels unter Schnee")
+        XCTAssertLessThanOrEqual(worst, 1 + 5.0 / 255, "Gewichte der Felsküste unter Schnee über 1")
+    }
+
     func testCoastWeightsAreDeterministic() {
         let terrain = agedWorld(renderConfig(n: 96), years: 2000)
         let a = TerrainColorRenderer.buffers(terrain), b = TerrainColorRenderer.buffers(terrain)

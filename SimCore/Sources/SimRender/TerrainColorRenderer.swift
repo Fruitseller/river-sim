@@ -341,7 +341,11 @@ public enum TerrainColorRenderer {
                             vegWeight *= 1 - cliffCoast
                             screeWeight *= 1 - cliffCoast
                             rawWeight *= 1 - cliffCoast
-                            rockWeight = max(rockWeight, cliffCoast * (1 - vegWeight - screeWeight - rawWeight))
+                            // Der Rest neben der Kälte, nicht neben 0: sonst
+                            // summierten sich die Gewichte unter teilweiser
+                            // Schneedeckung über 1 (Review zu #174 C).
+                            rockWeight = max(rockWeight, cliffCoast
+                                * max(0, (1 - coldWeight) - (vegWeight + screeWeight + rawWeight)))
                         }
                         // Sand (EIN Kanal für Strand und Bank, #174 C/C2): der
                         // stärkere gewinnt, `max(Strand, Bank)`. Frische Bank
