@@ -1242,7 +1242,11 @@ public final class Terrain {
         let cnt = cfg.count, sea = cfg.sea
         if rainWeight.count != cnt { rainWeight = .init(repeating: 1, count: cnt) }
         var sum = 0.0, land = 0
-        for k in 0..<cnt where h[k] > sea { sum += rain[k]; land += 1 }
+        h.withUnsafeBufferPointer { hb in
+        rain.withUnsafeBufferPointer { rb in
+            let ph = hb.baseAddress!, prain = rb.baseAddress!
+            for k in 0..<cnt where ph[k] > sea { sum += prain[k]; land += 1 }
+        }}
         let mean = land == 0 ? 0 : sum / Double(land)
         guard mean > 1e-9 else {
             rainWeight.withUnsafeMutableBufferPointer { $0.update(repeating: 1) }
@@ -1500,13 +1504,18 @@ public final class Terrain {
         guard cfg.climateEnabled, snow.count == cfg.count else { return nil }
         let sea = cfg.sea, ref = cfg.snowCoverRef
         let cStart = cfg.snowBandCoverStart, cFull = cfg.snowBandCoverFull
+        let cnt = cfg.count
         var land = 0, ramp = 0, full = 0
-        for k in 0..<cfg.count where h[k] > sea {
-            land += 1
-            let c = Terrain.snowCoverage(swe: snow[k], ref: ref)
-            if c > cStart { ramp += 1 }
-            if c >= cFull { full += 1 }
-        }
+        h.withUnsafeBufferPointer { hb in
+        snow.withUnsafeBufferPointer { sb in
+            let ph = hb.baseAddress!, psnow = sb.baseAddress!
+            for k in 0..<cnt where ph[k] > sea {
+                land += 1
+                let c = Terrain.snowCoverage(swe: psnow[k], ref: ref)
+                if c > cStart { ramp += 1 }
+                if c >= cFull { full += 1 }
+            }
+        }}
         guard land > 0 else { return nil }
         return (Double(ramp) / Double(land), Double(full) / Double(land))
     }
@@ -3268,10 +3277,12 @@ public final class Terrain {
         let beltOn = cfg.meanderEnabled && cfg.meanderBelt
         let beltMinA = cfg.meanderBeltMinCells * cellArea, beltFlat = cfg.meanderFlatSlope
         hf.withUnsafeBufferPointer { hfb in
+        receiver.withUnsafeBufferPointer { recb in
+        area.withUnsafeBufferPointer { ab in
         order.withUnsafeBufferPointer { ob in
         inBelt.withUnsafeBufferPointer { beltb in
         withBed { bed in
-            let ph = bed.h, prec = receiver, pa = area, pord = ob.baseAddress!
+            let ph = bed.h, prec = recb.baseAddress!, pa = ab.baseAddress!, pord = ob.baseAddress!
             let phf = hfb.baseAddress!, pbelt = beltb.baseAddress!
             for oi in 0..<cnt {
                 let k = Int(pord[oi])
@@ -3359,7 +3370,7 @@ public final class Terrain {
                     }
                 }
             }
-        }}}}
+        }}}}}}
     }
 
     // MARK: - Seen-Verfüllung
@@ -4905,8 +4916,10 @@ public final class Terrain {
         // sonst den ganzen Gebirgsabschnitt mit (gemessen belt.stamp 3,8 →
         // 8,0 ms je Schritt).
         let split = cfg.meanderBeltCoupling
-        for (ci, ch) in meander.channels.enumerated()
-        where only.map({ $0 == ci }) ?? (split || !MeanderState.migrates(ch, cfg)) {
+        let channelRange = only.map { $0..<($0 + 1) } ?? meander.channels.indices
+        for ci in channelRange {
+            let ch = meander.channels[ci]
+            guard only != nil || split || !MeanderState.migrates(ch, cfg) else { continue }
             let nodes = ch.nodes, c = nodes.count
             guard c >= 3 else { continue }
             // 0: alle Knoten; 1: nur flache (Teilschritt eines wandernden Laufs);
@@ -4917,17 +4930,18 @@ public final class Terrain {
             let firstMob = g.mob.firstIndex(where: { $0 > 0 })
             let lastMob = g.mob.lastIndex(where: { $0 > 0 })
             if part == 1 && firstMob == nil { continue }
+            let needsLateral = part != 2 && firstMob != nil
             // Krümmungs-Mittelung nur über dem mobilen Fenster (Teilschritt braucht nur dort Kolk/Gleithang)
-            let bendCurv = MeanderState.bendCurvature(g, config: cfg,
-                                                     activeRange: firstMob != nil ? firstMob!...lastMob! : nil)
+            let bendCurv = needsLateral
+                ? MeanderState.bendCurvature(g, config: cfg, activeRange: firstMob!...lastMob!)
+                : []
             // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten
             // gemittelt — nur gebraucht, wo ein flacher Knoten in ±2 liegt.
-            var floorH = [Double](repeating: 0, count: c)
+            var floorH = needsLateral ? [Double](repeating: 0, count: c) : []
             let fLo = part == 1 ? max(0, firstMob! - 2) : 0
             let fHi = part == 1 ? min(c - 1, lastMob! + 2) : (c - 1)
-            if fLo <= fHi {
+            if needsLateral && fLo <= fHi {
                 for i in fLo...fHi {
-                    if part == 2 { break }
                     if part == 1 || split {
                         var flat = false
                         for j in max(0, i - 2)...min(c - 1, i + 2) where g.mob[j] > 0 { flat = true; break }
@@ -5064,35 +5078,43 @@ public final class Terrain {
             }
             return best
         }
-        // Quellen (große Zellen ohne großen Zufluss) parallel in Blöcken
-        // suchen, in Index-Reihenfolge zusammensetzen — dieselbe Liste wie die
-        // serielle Schleife (gemessen 1,4 ms je Schritt seriell).
-        let chunks = max(1, min(64, cnt / 4096))
-        var found = [[Int]](repeating: [], count: chunks)
+        // Quellen (große Zellen ohne großen Zufluss) UND je Quelle ihr kompletter
+        // Hack-Abschnitt parallel in Blöcken (auf coreCount geklemmt statt 64 Tasks):
+        // Jeder Abschnitt liest nur `h`, `hf`, `area`, `receiver` und ist von allen
+        // anderen Quellen völlig unabhängig; anschließendes Zusammenfügen in
+        // Block-Reihenfolge ist bit-identisch zur seriellen Schleife.
+        let chunks = max(1, min(Terrain.coreCount, cnt / 4096))
+        var found = [[DrainageSegment]](repeating: [], count: chunks)
         found.withUnsafeMutableBufferPointer { fb in
             let pf = fb.baseAddress!
-            DispatchQueue.concurrentPerform(iterations: chunks) { c in
-                var list: [Int] = []
-                for s in (cnt * c / chunks)..<(cnt * (c + 1) / chunks) where big(s) && bestDonor(s) < 0 {
-                    list.append(s)
+            DispatchQueue.concurrentPerform(iterations: chunks) { ch in
+                var segs: [DrainageSegment] = []
+                var cells: [Int32] = []
+                cells.reserveCapacity(64)
+                for s in (cnt * ch / chunks)..<(cnt * (ch + 1) / chunks) where big(s) && bestDonor(s) < 0 {
+                    cells.removeAll(keepingCapacity: true)
+                    cells.append(Int32(s))
+                    var c = s, confluence = false
+                    while cells.count < cnt {
+                        let r = Int(receiver[c])
+                        if r < 0 || r >= cnt || r == c { break }
+                        if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
+                        cells.append(Int32(r))
+                        if bestDonor(r) != c { confluence = true; break }
+                        c = r
+                    }
+                    if cells.count >= 3 {
+                        segs.append(DrainageSegment(cells: cells, endsAtConfluence: confluence))
+                    }
                 }
-                pf[c] = list
+                pf[ch] = segs
             }
         }
+        var totalSegs = 0
+        for ch in 0..<chunks { totalSegs += found[ch].count }
         var out: [DrainageSegment] = []
-        for s in found.joined() {
-            var cells: [Int32] = [Int32(s)]
-            var c = s, confluence = false
-            while cells.count < cnt {
-                let r = Int(receiver[c])
-                if r < 0 || r >= cnt || r == c { break }
-                if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
-                cells.append(Int32(r))
-                if bestDonor(r) != c { confluence = true; break }
-                c = r
-            }
-            if cells.count >= 3 { out.append(DrainageSegment(cells: cells, endsAtConfluence: confluence)) }
-        }
+        out.reserveCapacity(totalSegs)
+        for ch in 0..<chunks { out.append(contentsOf: found[ch]) }
         return out
     }
 
@@ -5143,12 +5165,39 @@ public final class Terrain {
         if segOwner.count != cnt {
             segOwner = [Int32](repeating: -1, count: cnt); segPos = [Int32](repeating: -1, count: cnt)
         }
-        for (s, seg) in segs.enumerated() {
-            let own = seg.endsAtConfluence ? seg.cells.count - 1 : seg.cells.count
-            for p in 0..<own { segOwner[Int(seg.cells[p])] = Int32(s); segPos[Int(seg.cells[p])] = Int32(p) }
+        // PERF: Über Roh-Zeiger schreiben und zurücksetzen; direkter Zugriff auf
+        // `self.segOwner[k]` / `self.segPos[k]` rief je Abschnittszelle (und im
+        // `defer`) `swift_beginAccess` / `AccessSet::insert` auf.
+        segOwner.withUnsafeMutableBufferPointer { ob in
+            segPos.withUnsafeMutableBufferPointer { pb in
+                let po = ob.baseAddress!, pp = pb.baseAddress!
+                for (s, seg) in segs.enumerated() {
+                    let s32 = Int32(s)
+                    let own = seg.endsAtConfluence ? seg.cells.count - 1 : seg.cells.count
+                    seg.cells.withUnsafeBufferPointer { cb in
+                        let pc = cb.baseAddress!
+                        for p in 0..<own {
+                            let idx = Int(pc[p])
+                            po[idx] = s32; pp[idx] = Int32(p)
+                        }
+                    }
+                }
+            }
         }
         defer {
-            for seg in segs { for k in seg.cells { segOwner[Int(k)] = -1; segPos[Int(k)] = -1 } }
+            segOwner.withUnsafeMutableBufferPointer { ob in
+                segPos.withUnsafeMutableBufferPointer { pb in
+                    let po = ob.baseAddress!, pp = pb.baseAddress!
+                    for seg in segs {
+                        seg.cells.withUnsafeBufferPointer { cb in
+                            for p in 0..<cb.count {
+                                let idx = Int(cb[p])
+                                po[idx] = -1; pp[idx] = -1
+                            }
+                        }
+                    }
+                }
+            }
         }
         let old = meander.channels
         let slack = cfg.meanderBeltCouplingSlackCells
@@ -5362,13 +5411,16 @@ public final class Terrain {
             // Abfluss: Einzugsgebiet der zugeordneten Abschnittszelle, monoton; die
             // Zusammenfluss-Zelle gehört dem größeren Fluss, dort zählt die davor.
             var dis = [Double](repeating: 0, count: nodes.count)
-            var run = 0.0
-            for i in nodes.indices {
-                if pos[i] >= 0 {
-                    let p = seg.endsAtConfluence && pos[i] == L - 1 ? L - 2 : pos[i]
-                    run = max(run, area[Int(seg.cells[p])] / cellArea)
+            area.withUnsafeBufferPointer { ab in
+                let pa = ab.baseAddress!
+                var run = 0.0
+                for i in nodes.indices {
+                    if pos[i] >= 0 {
+                        let p = seg.endsAtConfluence && pos[i] == L - 1 ? L - 2 : pos[i]
+                        run = max(run, pa[Int(seg.cells[p])] / cellArea)
+                    }
+                    dis[i] = run
                 }
-                dis[i] = run
             }
             for i in nodes.indices where dis[i] >= cfg.meanderBeltMinCells {
                 if inserted[i] {
@@ -5838,13 +5890,21 @@ public final class Terrain {
         let span = 2.0
         var hist = [Int](repeating: 0, count: bins)
         var total = 0
-        for v in heights where v > sea && v.isFinite {
-            let b = v >= sea + span
-                ? bins - 1
-                : min(bins - 1, max(0, Int((v - sea) / span * Double(bins))))
-            hist[b] += 1
-            total += 1
-        }
+        let top = sea + span
+        heights.withUnsafeBufferPointer { hb in
+        hist.withUnsafeMutableBufferPointer { histb in
+            guard let ph = hb.baseAddress, let phist = histb.baseAddress else { return }
+            let cnt = hb.count
+            for k in 0..<cnt {
+                let v = ph[k]
+                guard v > sea && v.isFinite else { continue }
+                let b = v >= top
+                    ? bins - 1
+                    : min(bins - 1, max(0, Int((v - sea) / span * Double(bins))))
+                phist[b] += 1
+                total += 1
+            }
+        }}
         guard total >= 20 else { return nil }
         var out = [Double](repeating: sea + span, count: probs.count)
         var cum = 0, next = 0

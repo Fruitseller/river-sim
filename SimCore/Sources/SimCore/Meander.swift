@@ -526,6 +526,8 @@ struct BeltGeometry {
     var nz: [Double]
     /// Mobilität 0…1 aus der Längsneigung (Flachland-Gate, `meanderFlatSlope`).
     var mob: [Double]
+    /// Kumulierte Bogenlänge entlang der Knoten (Zellen), wiederverwendet in `beltRatesAndErodibility`.
+    var cum: [Double] = []
 }
 
 extension MeanderState {
@@ -604,13 +606,13 @@ extension MeanderState {
                              minDischarge: Double = 0,
                              heightAt: (MeanderNode) -> Double) -> BeltGeometry {
         let nodes = ch.nodes, c = nodes.count
-        var g = BeltGeometry(width: .init(repeating: 0, count: c), curv: .init(repeating: 0, count: c),
-                             nx: .init(repeating: 0, count: c), nz: .init(repeating: 0, count: c),
-                             mob: .init(repeating: 0, count: c))
-        let sp = max(1e-6, config.meanderNodeSpacing)
-        let cs = config.cellSize, flat = config.meanderFlatSlope
         var cum = [Double](repeating: 0, count: c)
         for i in 1..<max(1, c) { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
+        var g = BeltGeometry(width: .init(repeating: 0, count: c), curv: .init(repeating: 0, count: c),
+                             nx: .init(repeating: 0, count: c), nz: .init(repeating: 0, count: c),
+                             mob: .init(repeating: 0, count: c), cum: cum)
+        let sp = max(1e-6, config.meanderNodeSpacing)
+        let cs = config.cellSize, flat = config.meanderFlatSlope
         let total = cum[max(0, c - 1)]
         for i in 0..<c {
             let b = beltWidthCells(discharge: ch.discharge[i], config: config)
@@ -674,8 +676,14 @@ extension MeanderState {
         let ga = config.meanderBeltUpstreamWeight
         let kw = config.meanderBeltKernelWidths, e = config.meanderBeltRate
         // Örtliche Sinuosität über ±`meanderBeltSinuosityWidths` Breiten.
-        var cum = [Double](repeating: 0, count: c)
-        for i in 1..<c { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
+        let cum: [Double]
+        if g.cum.count == c {
+            cum = g.cum
+        } else {
+            var tmp = [Double](repeating: 0, count: c)
+            for i in 1..<c { tmp[i] = tmp[i - 1] + dist(nodes[i - 1], nodes[i]) }
+            cum = tmp
+        }
         let sp = max(1e-6, config.meanderNodeSpacing)
         let s0 = config.meanderBeltSinuosityStart, s1 = config.meanderBeltSinuosityFull
         // Stromab integrierte Krümmung (Spiegelbild von `ema`, ohne Knoten i).
@@ -1023,9 +1031,11 @@ extension MeanderState {
             let nodes = ch.nodes, c = nodes.count
             var cum = [Double](repeating: 0, count: c)
             for i in 1..<c { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
+            var widths = [Double](repeating: 0, count: c)
             var maxReach = 0.0                                 // größte Prüfweite
             for i in 0..<c {
                 let b = Self.beltWidthCells(discharge: ch.discharge[i], config: config)
+                widths[i] = b
                 let neck = max(config.meanderNeckDist, config.meanderBeltNeckWidths * b)
                 let chute = ch.discharge[i] >= config.meanderChuteMinCells ? config.meanderChuteWidths * b : 0
                 maxReach = max(maxReach, max(neck, chute))
@@ -1050,7 +1060,7 @@ extension MeanderState {
             }
             var cut: (Int, Int, Bool)? = nil
             outer: for i in 0..<c {
-                let b = Self.beltWidthCells(discharge: ch.discharge[i], config: config)
+                let b = widths[i]
                 let neck = max(config.meanderNeckDist, config.meanderBeltNeckWidths * b)
                 let chute = ch.discharge[i] >= config.meanderChuteMinCells ? config.meanderChuteWidths * b : 0
                 let minSep = max(4, Int(neck / spacing * 3) + 2)

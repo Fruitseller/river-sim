@@ -1202,3 +1202,244 @@ schneller. Der zusätzliche WIP-Schritt (Faktor `kErode·dt·A^m/dist` der
 Rauschen und wurde nicht übernommen; bit-identisch war er (Hash 1337/42/20).
 Fingerprints nach dem Cherry-Pick: `c25268a941dd4beb` / `685222593c36209f` /
 `948941e9feca57df`, unverändert.
+
+---
+
+## O. Sim-Kern, Runde 4 (Oktober 2026) — aktive Eis-Bounding-Box, parallele D8-Abschnitte und Gürtelschleifen, bit-identisch
+
+Startstand `6a0dfde` (Integrationszweig nach `§M` und `§N`). Gemessen am
+17.10.2026 auf Apple M4 Max (16 Kerne, 64 GiB, macOS 26.7, Swift 6.4 im
+Swift-5-Sprachmodus). Wie in `§I` und `§N` liefen andere Agenten parallel auf
+derselben Maschine; alle Vergleiche erfolgten daher verschränkt (interleaved
+`A B`, `B A`, …) zwischen vorab gebauten Binärdateien (`/tmp/simperf.r4-start`
+gegen Kandidaten), je Prozess `simperf --repeat 1` (Einlauf 100 × 100 Jahre,
+Messblock 30 × 100 Jahre, `n = 720`, `world = 112,4789`).
+
+Fingerprints vor und nach allen übernommenen Änderungen:
+
+| Seed | Fingerprint (`simperf --hash`) |
+| ---: | --- |
+| 1337 | `c25268a941dd4beb` |
+| 42 | `685222593c36209f` |
+| 20 | `948941e9feca57df` |
+
+### Ausgangsprofil und Hypothesen
+
+Nach `§M` (mobiles Gürtel-Fenster) und `§N` (MFD-Routen vorab parallel) verteilte
+sich ein ruhiger 30-Schritt-Messblock auf Seed 1337 (~56–68 ms/Schritt je nach
+Systemlast) auf:
+
+- `priorityFlood`: ~14,4–15,9 ms (25 %) — unter Bit-Identität ausgereizt (`§F`, `§N`).
+- `belt.stamp`: ~6,8–7,0 ms (12 %) + `belt.fixedStamp`: ~1,6–1,8 ms (3 %).
+- `updateIce`: ~6,1–7,9 ms (12 % auf Seed 1337, ~3,4 ms auf Seed 20).
+- `belt.migrate`: ~4,8–5,0 ms (8 %).
+- `computeMFDArea`: ~3,9–5,1 ms (7 %).
+- `belt.couple` (`segments` + `build` + `match` + `runs`): ~2,6 ms (`segments`
+  1,03–1,17 ms, `build` 1,07–1,14 ms).
+- `channelCarve`: ~1,1–1,4 ms.
+
+Daraus wurden vier gezielte Hypothesen abgeleitet und einzeln geprüft:
+
+1. **Hypothese 1 (`belt.couple.segments` + `belt.couple.build`)**:
+   In `Terrain.drainageSegments` lief zwar die Suche nach den ~753
+   Abschnitts-Startzellen (Quellen und Zusammenflüsse) parallel, das Verfolgen
+   der 753 disjunkten `receiver`-Ketten jedoch seriell auf einem Thread; zudem
+   allokierte jeder Abschnitt ein frisches `[Int32]` ohne Größen-Vorwissen, und
+   `coupleBeltToDrainage` schrieb `segOwner`/`segPos` sowie `area` über die
+   Klassen-Property (mit Swift-Exklusivitäts-/COW-Prüfung je Knotenzelle).
+   Da jede Kette deterministisch an einer Senke oder einem Zusammenfluss
+   (`inDeg[cur] != 1`) endet und nur `receiver`/`inDeg` liest, kann jede
+   Thread-Scheibe ihre Ketten direkt in `concurrentPerform` mit einem
+   wiederverwendbaren `cells`-Puffer verfolgen.
+2. **Hypothese 2 (`updateIce` — Roh-Zeiger-Scan + aktives Gitterfenster)**:
+   - `anyCell(ice)` und `steepestIceSurfaceDrop()` lasen `ice[k]` und `h[k]`
+     über die Klassen-Property (ohne `withUnsafeBufferPointer`) zweimal über
+     alle 518.400 Zellen.
+   - Die Gletscher- und Firnzellen (`ice[k] > 0 || (temperature[k] < 0 && snow[k] > 0)`)
+     belegen auf Seed 1337 nur **5,1 %** der Gitterzellen (26.574 / 518.400) in
+     einem Bounding-Box-Rechteck von **23,0 %** der Welt (`j = 135…582`,
+     `i = 184…449`) bei bis zu `nSub = 27` SIA-Teilschritten je Schritt (auf
+     Seed 20: **2,4 %** aktive Zellen in **21,0 %** Bounding-Box bei `nSub = 3…7`).
+   - Weil Eis pro Teilschritt maximal um 1 Zelle in die 4-Nachbarschaft fließt
+     (`inflow > 0` erfordert einen 4-Nachbarn mit `prate[nb] > 0`, also
+     `ice[nb] > thr`), wächst der Träger aktiver Zellen im Teilschritt `s`
+     (`0..<nSub`) um höchstens `reach = s + 1` Zellen in jeder Richtung. Pass 2
+     muss daher nur auf dem um `s + 1` erweiterten Rechteck laufen, und Pass 1
+     nur auf dem zusätzlich um `pad = max(1, swath)` erweiterten Halo (damit
+     alle eingefrorenen `psurf`-, `prate`- und `pero`-Nachbarn im `swath`-Fenster
+     von Pass 2 frisch berechnet sind).
+3. **Hypothese 3 (`beltStamp` / `belt.fixedStamp` + `Meander.swift`)**:
+   - In `beltStamp(dt:only:ageAtEnd:)` iterierte jeder mobile Teilschritt
+     (`only != nil`, ~233 Aufrufe/Schritt auf Seed 1337) über
+     `meander.channels.enumerated() where only.map({ $0 == ci }) ?? ...` und
+     kopierte dabei jedes Mal alle ~686 `RiverChannel`-Structs, nur um 685
+     davon zu verwerfen.
+   - Im Schrittende-Pass (`belt.fixedStamp`, `only == nil`) wurde für alle
+     wandernden Läufe (`part == 2`) sowie für alle komplett steilen Läufe
+     (`firstMob == nil`) trotzdem `MeanderState.bendCurvature` berechnet und
+     `floorH` (Nullen-Array der Länge `c`) allokiert, obwohl weder `bendCurv`
+     noch `floorH` ohne mobile Stempel-Knoten gelesen werden.
+   - In `MeanderState.beltGeometry` wurde die kumulierte Bogenlänge `cum`
+     berechnet und sofort wieder verworfen, worauf `beltRatesAndErodibility`
+     exakt dasselbe `cum`-Array nochmals allokierte und über `dist(...)`
+     aufsummierte. Ebenso berechnete `applyBeltCutoffs` die Kanalbreite
+     `beltWidthCells` je Knoten zweimal hintereinander.
+4. **Hypothese 4 (`channelCarve` & verbleibende Property-Scans)**:
+   In `channelCarve` wurden `receiver` und `area` innerhalb von `withBed` als
+   Array-Kopie aus der Klassen-Property gebunden statt über
+   `withUnsafeBufferPointer`; gleiches galt für `h`/`rain` in `updateRainWeight`
+   und `h`/`snow` in `snowAreaFractions`.
+
+---
+
+### Experiment 1 (Übernommen): Parallele Abschnittsketten in `drainageSegments` + Roh-Puffer in `coupleBeltToDrainage`
+
+`Terrain.drainageSegments` klemmt die Chunk-Zahl auf `Terrain.coreCount` (statt
+64 Kleinst-Chunks), verfolgt die `receiver`-Kette direkt im parallelen Chunk mit
+einem wiederverwendbaren `cells`-Puffer je Chunk (`Array(cells)` kopiert exakt
+auf die tatsächliche Länge) und hängt die Abschnitte in unveränderter
+Chunk-Reihenfolge zusammen. In `coupleBeltToDrainage` werden `segOwner`,
+`segPos` und `area` über `withUnsafeMutableBufferPointer` /
+`withUnsafeBufferPointer` adressiert.
+
+10 Runden interleaved (`/tmp/simperf.r4-start` gegen `/tmp/simperf.r4-couplesegs`,
+Seed 1337):
+
+| Pass | A (Start, Mittel / Median) | B (Exp. 1, Mittel / Median) | Differenz | Siege B |
+| --- | ---: | ---: | ---: | ---: |
+| `belt.couple.segments` | 1,03 / 1,03 ms | **0,41 / 0,41 ms** | **−0,62 ms (−60 %)** | 10 / 10 |
+| `belt.couple.build` | 1,07 / 1,07 ms | **0,99 / 0,99 ms** | **−0,08 ms (−7,5 %)** | 10 / 10 |
+
+Beide Pässe gewinnen in allen 10 Runden, zusammen **−0,70 ms/Schritt**.
+
+---
+
+### Experiment 2 (Verworfen): Zweigeteilter Geometrie-Pass in `MeanderState.beltGeometry`
+
+**Hypothese**: Wenn `beltGeometry` zuerst nur `width` und `mob` berechnet, kann
+für Knoten außerhalb des mobilen Fensters `[firstMob - maxKb, lastMob + maxKb]`
+das `atan2` für `g.curv` entfallen (und in `beltStamp` mit `part == 1` auch die
+Normalen `g.nx`/`g.nz` außerhalb von `firstMob - 2 ... lastMob + 2`).
+
+**Befund**: Auf Seed 1337 sind in den 39 wandernden Läufen bereits **67 %**
+aller Knoten mobil (`21.745 / 32.993` Knoten je Schritt über alle Teilschritte).
+Die Aufteilung in zwei Schleifen über `0..<c` sparte nur bei einem Drittel der
+Knoten das `atan2`, verdoppelte aber die Schleifen- und Nachbarschafts-Arbeit
+(`nodes[i - k]`, `nodes[i + k]`). Im verschränkten A/B-Test stieg `belt.stamp`
+von 6,82 ms auf 7,05 ms (+0,23 ms). Vollständig verworfen.
+
+**Zusatzbefund zu `seg` in `beltRatesAndErodibility`**: Während `cum` aus
+`beltGeometry` für die Sehnen-Sinuosität (`cum[hi] - cum[lo]`) bit-identisch
+wiederverwendet werden kann, darf die einzelne Segmentlänge `seg` für das
+Exponentialgewicht `exp(-seg / ...)` **nicht** durch `cum[i] - cum[i - 1]`
+ersetzt werden: durch die vorangegangene Addition `cum[i - 1] + dist(...)` weicht
+die Differenz `cum[i] - cum[i - 1]` in IEEE-754 um bis zu 1 ULP von
+`dist(nodes[i - 1], nodes[i])` ab, was den Fingerprint verändert (`cd11a10566f3a789`
+statt `c25268a941dd4beb`). Mit `cum` aus `BeltGeometry` für die Sinuosität und
+`dist(...)` für `seg` bleibt die Rechnung auf allen drei Seeds bit-identisch.
+
+---
+
+### Experiment 3 (Übernommen): `updateIce` mit aktivem Bounding-Box-Fenster und kombiniertem Roh-Zeiger-Scan
+
+`activeIceBoundsAndSteepestDrop()` ersetzt `anyCell(ice)` und
+`steepestIceSurfaceDrop()` durch einen einzigen Roh-Zeiger-Durchlauf über
+`ice`, `h`, `temperature` und `snow`, der gleichzeitig `wMax` (für die
+CFL-Teilschrittzahl `nSub`) und die exakte Bounding-Box `(jMin...jMax, iMin...iMax)`
+aller aktiven Eis-/Firnzellen liefert. In `iceFlowSubStep` laufen Pass 1 und
+Pass 2 nur noch über die im Teilschritt `s` um `s + 1` (bzw. `s + 1 + max(1, swath)`
+für Pass 1) erweiterte Bounding-Box.
+
+Isolierter A/B-Test (`/tmp/simperf.r4-couplesegs` gegen `/tmp/simperf.r4-ice`,
+6 Runden je Seed):
+
+- **Seed 1337**: `updateIce` sinkt von **7,34 ms (Med. 6,94)** auf **6,13 ms
+  (Med. 6,03)** (**−1,21 ms Mittel / −0,91 ms Median**, B gewinnt 5/6 Runden).
+- **Seed 20**: `updateIce` sinkt von **3,42 ms (Med. 3,43)** auf **2,83 ms
+  (Med. 2,82)** (**−0,59 ms Mittel / −0,61 ms Median, −17 %**, B gewinnt 6/6 Runden).
+
+---
+
+### Experiment 4 (Übernommen): Direkte Kanal-Indizierung & Lazy-Allokation in `beltStamp`, `BeltGeometry.cum`, `channelCarve`
+
+Zusammengefasst:
+1. `beltStamp`: Bei `only != nil` wird direkt `only..<only+1` indiziert statt
+   `meander.channels.enumerated()` über alle ~686 Kanäle zu kopieren; `bendCurv`
+   und `floorH` werden nur berechnet bzw. allokiert, wenn `part != 2 && firstMob != nil`.
+2. `Meander.swift`: `BeltGeometry` speichert das in `beltGeometry` ohnehin
+   gebildete `cum`-Array für `beltRatesAndErodibility`; `applyBeltCutoffs`
+   merkt sich die Kanalbreiten `widths[i]` aus der `maxReach`-Schleife für die
+   Cutoff-Suche.
+3. `channelCarve`, `updateRainWeight`, `snowAreaFractions`, `landHeightQuantiles`:
+   Roh-Puffer-Zeiger (`withUnsafeBufferPointer`) statt Klassen-Property-Zugriffen.
+
+---
+
+### Gesamtvalidierung Runde 4 (Start gegen Endstand)
+
+Verschränkter A/B-Vergleich zwischen `/tmp/simperf.r4-start` (`de4ba53`) und
+dem kompletten Runde-4-Stand (`/tmp/simperf.r4-meander`), 8 Runden auf Seed 1337
+und 6 Runden auf Seed 20:
+
+#### Seed 1337 (8 Runden interleaved)
+
+| Runde | A Gesamt | B Gesamt | A `updateIce` | B `updateIce` | A `couple.segments` | B `couple.segments` | A `couple.build` | B `couple.build` | A `belt.migrate` | B `belt.migrate` |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 70,6 | 68,1 | 7,84 | 6,28 | 1,15 | 0,60 | 1,14 | 1,04 | 4,92 | 4,85 |
+| 2 | 71,9 | 68,2 | 8,94 | 6,20 | 1,18 | 0,59 | 1,15 | 1,01 | 5,02 | 4,86 |
+| 3 | 70,5 | 67,4 | 8,86 | 6,35 | 1,32 | 0,52 | 1,15 | 1,01 | 4,99 | 4,86 |
+| 4 | 68,8 | 71,7 | 8,04 | 6,37 | 1,16 | 0,49 | 1,10 | 1,02 | 4,93 | 5,03 |
+| 5 | 65,3 | 61,0 | 7,17 | 5,03 | 1,10 | 0,48 | 1,09 | 0,96 | 4,91 | 4,78 |
+| 6 | 71,0 | 59,6 | 8,44 | 5,03 | 1,18 | 0,44 | 1,21 | 0,96 | 5,60 | 4,76 |
+| 7 | 61,7 | 62,2 | 6,24 | 5,19 | 1,04 | 0,46 | 1,06 | 0,98 | 4,84 | 4,77 |
+| 8 | 70,1 | 60,2 | 7,50 | 4,98 | 1,21 | 0,49 | 1,21 | 0,99 | 5,13 | 4,70 |
+| **Mittel** | **68,74** | **64,80** | **7,88** | **5,68** | **1,17** | **0,51** | **1,14** | **1,00** | **5,04** | **4,83** |
+| **Median** | **70,30** | **64,80** | **7,94** | **5,70** | **1,17** | **0,49** | **1,15** | **1,00** | **4,96** | **4,81** |
+
+Aufschlüsselung aller geänderten Pässe (Seed 1337, 8 Runden):
+
+| Pass | A Mittel (Median) | B Mittel (Median) | Differenz Mittel (Median) | Siege B |
+| --- | ---: | ---: | ---: | ---: |
+| `updateIce` | 7,88 (7,94) ms | **5,68 (5,70) ms** | **−2,20 (−2,24) ms (−28 %)** | 8 / 8 |
+| `belt.couple.segments` | 1,17 (1,17) ms | **0,51 (0,49) ms** | **−0,66 (−0,68) ms (−56 %)** | 8 / 8 |
+| `belt.couple.build` | 1,14 (1,15) ms | **1,00 (1,00) ms** | **−0,14 (−0,15) ms (−12 %)** | 8 / 8 |
+| `belt.migrate` | 5,04 (4,96) ms | **4,83 (4,81) ms** | **−0,22 (−0,15) ms (−4 %)** | 7 / 8 |
+| `channelCarve` | 1,40 (1,42) ms | **1,26 (1,23) ms** | **−0,14 (−0,19) ms (−10 %)** | 6 / 8 |
+| `belt.fixedStamp` | 1,78 (1,76) ms | **1,70 (1,69) ms** | **−0,08 (−0,07) ms (−4,5 %)** | 7 / 8 |
+| `belt.stamp` | 7,03 (7,04) ms | **6,95 (6,98) ms** | **−0,08 (−0,06) ms (−1 %)** | 6 / 8 |
+| **Gesamt (`step`)** | **68,74 (70,30) ms** | **64,80 (64,80) ms** | **−3,94 (−5,50) ms (−5,7 %)** | 6 / 8 |
+
+#### Seed 20 (6 Runden interleaved)
+
+| Pass | A Mittel (Median) | B Mittel (Median) | Differenz Mittel (Median) | Siege B |
+| --- | ---: | ---: | ---: | ---: |
+| `updateIce` | 3,39 (3,38) ms | **2,59 (2,61) ms** | **−0,80 (−0,77) ms (−24 %)** | 6 / 6 |
+| `belt.couple.segments` | 0,71 (0,72) ms | **0,39 (0,40) ms** | **−0,32 (−0,32) ms (−45 %)** | 6 / 6 |
+| `belt.couple.build` | 0,63 (0,63) ms | **0,56 (0,56) ms** | **−0,07 (−0,07) ms (−11 %)** | 6 / 6 |
+| `belt.migrate` | 2,20 (2,21) ms | **2,14 (2,15) ms** | **−0,06 (−0,06) ms (−3 %)** | 6 / 6 |
+| `channelCarve` | 0,80 (0,80) ms | **0,74 (0,74) ms** | **−0,06 (−0,06) ms (−7,5 %)** | 6 / 6 |
+| `belt.fixedStamp` | 1,02 (1,02) ms | **0,99 (0,99) ms** | **−0,03 (−0,03) ms (−3 %)** | 6 / 6 |
+| **Gesamt (`step`)** | **45,45 (45,50) ms** | **44,40 (44,45) ms** | **−1,05 (−1,05) ms (−2,3 %)** | 6 / 6 |
+
+### Übernahme in den Integrationszweig
+
+Übernommen sind nur die Teile AUSSERHALB des Gletschers: parallele
+Abschnittsketten in `drainageSegments` und Roh-Puffer in
+`coupleBeltToDrainage`, `beltStamp` (direkte Kanal-Indizierung, Krümmung nur
+für mobile Läufe), `BeltGeometry.cum`/`applyBeltCutoffs` in `Meander.swift`
+und die Roh-Zeiger in `channelCarve`, `updateRainWeight`, `snowAreaFractions`
+und `landHeightQuantiles`. Die Eis-Bounding-Box (Experiment 3) bleibt draußen:
+der Gletscher-Zweig (`t3/174-glacier-recal`, dt-Fix aus `docs/glacier-measurements.md`
+§L) schreibt die Teilschritte von `updateIce` neu und bringt dort seine eigene,
+ebenfalls bit-identische Begrenzung auf das vergletscherte Gebiet mit.
+
+Gegenmessung der Übernahme (Pass-Tabelle `simperf --repeat 3`, je Runde
+Integration `6a0dfde` und Kandidat nacheinander, 4 Runden, geteilte Maschine,
+Median der Blöcke): `belt.couple.segments` 1,14 → 0,49 ms, `belt.couple.build`
+1,16 → 1,08, `channelCarve` 1,27 → 1,15, `computeRain` 1,19 → 1,13,
+`belt.fixedStamp` 1,67 → 1,62; `belt.stamp` 7,28 → 7,38 und `belt.migrate`
+5,14 → 5,21 im Rauschen. Netto rund −0,8 ms je Schritt. Der Gesamtschritt
+streute unter der Fremdlast (Load wechselnd) zu stark für eine schärfere Zahl
+(8 Runden, Median 75,4 → 68,2 ms bei Einzelrunden von −14 bis +11 ms).
+Fingerprints mit den übernommenen Teilen: `c25268a941dd4beb` /
+`685222593c36209f` / `948941e9feca57df`, unverändert.
