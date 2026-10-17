@@ -1448,17 +1448,21 @@ public final class Terrain {
     ///
     /// **Sub-Taktung** exakt wie die Hangdiffusion in `step()`: die Transport-Zahl
     /// des ganzen Schritts (`kappa_Jahr · dt`) wird auf so viele gleich starke
-    /// Teilschritte verteilt, dass jeder unter `iceFlowSubCap` bleibt. Damit ist
+    /// Teilschritte verteilt, dass jeder unter seinen Stabilitätsgrenzen bleibt
+    /// (Ausstrom-Anteil UND Diffusionszahl, s. `iceTransportScale`). Damit ist
     /// die Gesamtwirkung ∝ `dt` — ein `+10.000 Jahre`-Sprung transportiert
     /// dasselbe wie 50.000 Frame-Schritte à 0,2 Jahre (Wächter
     /// `Glacier.testIceIsFramerateIndependent`). Die Bilanz teleskopiert
     /// ohnehin exakt (Relaxationsform), und der Erosionsterm ist eine RATE mal
     /// `subDt`.
     ///
-    /// **Operator-Splitting** wie im Rest des Schritts: `snow` und `temperature`
-    /// stehen auf dem Stand des vorigen Schrittendes (dieselbe Annahme wie in
-    /// `updateRunoffWeight`), `h` und `area` auf dem frischen Stand dieses
-    /// Schritts.
+    /// **Operator-Splitting** wie im Rest des Schritts: `snow` steht auf dem
+    /// Stand des vorigen Schrittendes (dieselbe Annahme wie in
+    /// `updateRunoffWeight`), `h` auf dem frischen Stand dieses Schritts. Die
+    /// TEMPERATUR dagegen liest der Teilschritt nicht aus dem Feld, sondern
+    /// rechnet sie aus dem Bett, das er gerade vor sich hat (s.
+    /// `iceFlowSubStep`): sie ist eine reine Funktion von `h`, und der Gletscher
+    /// senkt sein eigenes Bett über den Schritt.
     ///
     /// **Schnell-Ausstieg.** Ohne Eis UND ohne Zufuhr (keine Zelle unter 0 °C mit
     /// Schneevorrat) tut der Pass nichts und leert die Maske → alles rechnet
@@ -1495,17 +1499,32 @@ public final class Terrain {
         // dieselbe Umrechnung wie bei `hillDiffusion` in `step()`.
         let refN = 639.0, m1 = Double(n - 1)
         let kYear = cfg.iceFlowK * (m1 * m1) / (refN * refN) / 100.0
-        // Die Transport-ZAHL eines Teilschritts ist `kappa · ΣΔs⁺` (der Anteil der
-        // Säule, der die Zelle verlässt) — der Deckel gilt also am STEILSTEN
-        // Eis-Hang, nicht an kappa allein. Der wird hier EINMAL gemessen statt
-        // pessimistisch angenommen: mit `ΣΔs⁺ ≤ 1` als Annahme liefe die
-        // Sub-Taktung um den Faktor 1/wMax (gemessen 5…20) zu fein, und der Pass
-        // dominierte den Zeitschritt (`docs/glacier-measurements.md` §E).
-        // Der harte Positivitäts-Deckel `iceFlowMoveFraction` bleibt trotzdem
-        // stehen: wMax stammt vom Zustand VOR den Teilschritten, und ein
-        // Sculpt-Eingriff kann die Oberfläche dazwischen versteilern.
-        let wMax = steepestIceSurfaceDrop()
-        let totalK = kYear * dt * wMax
+        // Der explizite Transport hat ZWEI Kennzahlen je Teilschritt, und beide
+        // hält die Sub-Taktung unter ihrer Grenze (s. `iceTransportScale`):
+        //   * `kappa · ΣΔs⁺` ≤ `iceFlowSubCap` — der Anteil der Säule, der die
+        //     Zelle verlässt (Positivität), am STEILSTEN Eis-Hang;
+        //   * `kappa · I` ≤ `iceFlowSubCap / 2` — die Diffusionszahl der
+        //     Eis-OBERFLÄCHE (der Fluss von k nach nb ist `kappa·I_k·(s_k − s_nb)`,
+        //     also Diffusion von s mit dem Koeffizienten `kappa·I`), an der
+        //     DICKSTEN Säule. Der Schachbrett-Modus des 5-Punkt-Sterns wächst
+        //     je Teilschritt um den Faktor `1 − 8·kappa·I`: über 1/4 schaukelt er
+        //     sich auf, zwischen 1/8 und 1/4 kippt er bei jedem Teilschritt das
+        //     Vorzeichen. Erst unter 1/8 ist das Ergebnis konvergiert (gemessen:
+        //     Grenze 1/4 gegen 1/8 −6 … −12 % Eismasse, 1/8 gegen 1/16 < 0,01 %).
+        // Bis Issue #174 stand hier nur die erste. Dickes Eis auf flachem Bett
+        // (I ≫ ΣΔs⁺) lief damit instabil, sobald der Schritt groß genug war, um
+        // `kappa·I` über 1/4 zu heben: bei dt = 1000 Schachbrett-Oberfläche
+        // (Rauheit ×70), Schliff 0,065 im Mittel unter dem Eis in EINEM Schritt
+        // gegen 0,005 bei zehn Schritten à 100 — die Eismasse hing damit an der
+        // Schrittweite (`docs/glacier-measurements.md` §L).
+        // Beide Größen werden hier EINMAL gemessen statt pessimistisch
+        // angenommen: mit `ΣΔs⁺ ≤ 1` als Annahme liefe die Sub-Taktung um den
+        // Faktor 1/wMax (gemessen 5…20) zu fein, und der Pass dominierte den
+        // Zeitschritt (§E). Der harte Positivitäts-Deckel `iceFlowMoveFraction`
+        // bleibt trotzdem stehen: die Messung stammt vom Zustand VOR den
+        // Teilschritten, und ein Sculpt-Eingriff kann die Oberfläche dazwischen
+        // versteilern.
+        let totalK = kYear * dt * iceTransportScale()
         let nSub = max(1, Int((totalK / max(1e-9, cfg.iceFlowSubCap)).rounded(.up)))
         let subK = kYear * dt / Double(nSub)
         let subDt = dt / Double(nSub)
@@ -1513,18 +1532,23 @@ public final class Terrain {
         rebuildIceMask()
     }
 
-    /// Größte Summe der positiven Oberflächen-Abfälle (`ΣΔs⁺`) über alle Zellen,
-    /// die Eis tragen — die Zahl, an der der explizite Deckel des Transports
-    /// hängt (s. `updateIce`). Sequenziell und als Maximum reihenfolge-unabhängig,
-    /// also bit-genau reproduzierbar. Kostet EINEN Gitter-Durchlauf und spart
-    /// dafür ein Vielfaches an Teilschritten.
-    private func steepestIceSurfaceDrop() -> Double {
+    /// Maßstab der Sub-Taktung: `max(ΣΔs⁺_max, 2·I_max)` über alle Zellen, die Eis
+    /// tragen — größte Summe der positiven Oberflächen-Abfälle (Positivität,
+    /// Grenze `iceFlowSubCap`) und doppelte größte Eisdicke (Diffusionszahl der
+    /// Oberfläche, Grenze `iceFlowSubCap / 2`), s. `updateIce`. Beide sind
+    /// Höhen je Zelle; `kappa` mal dem Maximum unter `iceFlowSubCap` hält also
+    /// beide Kennzahlen eines Teilschritts unter ihrer Grenze.
+    /// Sequenziell und als Maximum reihenfolge-unabhängig, also bit-genau
+    /// reproduzierbar. Kostet EINEN Gitter-Durchlauf und spart dafür ein
+    /// Vielfaches an Teilschritten.
+    private func iceTransportScale() -> Double {
         let nn = n
-        var wMax = 0.0
+        var scale = 0.0
         for j in 0..<nn {
             for i in 0..<nn {
                 let k = j * nn + i
                 if ice[k] <= 0 { continue }
+                if 2 * ice[k] > scale { scale = 2 * ice[k] }
                 let sk = h[k] + ice[k]
                 let sl = i > 0      ? h[k - 1]  + ice[k - 1]  : sk
                 let sr = i < nn - 1 ? h[k + 1]  + ice[k + 1]  : sk
@@ -1535,10 +1559,10 @@ public final class Terrain {
                 if sk > sr { w += sk - sr }
                 if sk > sd { w += sk - sd }
                 if sk > su { w += sk - su }
-                if w > wMax { wMax = w }
+                if w > scale { scale = w }
             }
         }
-        return wMax
+        return scale
     }
 
     /// EIN Teilschritt des Gletschers. Zwei Pässe über das Gitter, beide
@@ -1573,6 +1597,7 @@ public final class Terrain {
         // wachsen können, sonst gäbe es nie einen Gletscher.
         let thr = max(0, cfg.iceMinThickness)
         let coldSpan = max(1e-9, cfg.iceFirnColdSpan)
+        let t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
         let firn = cfg.iceFirnPerSnowYear
         let baseMu = 1 / max(1e-9, cfg.iceTurnoverYears)
         let meltC = max(0, cfg.iceMeltPerKYear)
@@ -1593,13 +1618,12 @@ public final class Terrain {
         sed.withUnsafeMutableBufferPointer { sb in
         ice.withUnsafeMutableBufferPointer { ib in
         snow.withUnsafeBufferPointer { snb in
-        temperature.withUnsafeBufferPointer { tb in
         lithArr.withUnsafeBufferPointer { ldb in
         iceRate.withUnsafeMutableBufferPointer { rtb in
         iceSurf.withUnsafeMutableBufferPointer { sfb in
         iceEro.withUnsafeMutableBufferPointer { erb in
             let ph = hb.baseAddress!, prock = rkb.baseAddress!, psed = sb.baseAddress!
-            let pice = ib.baseAddress!, psnow = snb.baseAddress!, pt = tb.baseAddress!
+            let pice = ib.baseAddress!, psnow = snb.baseAddress!
             let plith = ldb.baseAddress!
             let prate = rtb.baseAddress!, psurf = sfb.baseAddress!, pero = erb.baseAddress!
             // ---- Pass 1: Oberfläche einfrieren, Ausstrom je Zelle bestimmen ----
@@ -1658,7 +1682,16 @@ public final class Terrain {
                     if j < nn - 1 { let d = psurf[k + nn] - sk
                                     if d > 0 { inflow += prate[k + nn] * d } else { w -= d } }
                     let i0 = pice[k]
-                    let t = pt[k]
+                    // Temperatur des Betts, auf dem dieser Teilschritt steht —
+                    // dieselbe Formel wie in `updateClimate` (bei unverändertem
+                    // `h` also bit-gleich zum Feld). Das Feld selbst ist vom
+                    // vorigen Schrittende: der Schliff dieses Schritts senkt das
+                    // Bett, in großen Schritten um ein Vielfaches mehr, und das
+                    // Eis sähe sonst über den ganzen Schritt das kältere,
+                    // höhere Bett (gemessen: 3 % mehr Eis je 1000-Jahr-Schritt
+                    // als in zehn Schritten à 100, `docs/glacier-measurements.md`
+                    // §L).
+                    let t = t0 - gamma * max(0, ph[k] - sea)
                     let fCold = min(1, max(0, -t / coldSpan))
                     let a = firn * psnow[k] * fCold
                     // Eisfreie Zelle ohne Zufluss und ohne Zufuhr: nichts zu
@@ -1750,7 +1783,7 @@ public final class Terrain {
                 }
             }
             }
-        }}}}}}}}}}
+        }}}}}}}}}
     }
 
     /// Baut `underIce` aus der frischen Eisdicke. **Leer, wenn keine Zelle über
@@ -3284,6 +3317,18 @@ public final class Terrain {
     /// Seed auch Bank-Pfützen: Braid-Insel-Guard kippte bei 64 UND 400 Zellen).
     /// Ziel bewusst das volle hf, NICHT der geglättete waterLevel (über 3 Seeds
     /// ohne messbaren Volumen-Effekt, drückte aber die Braid-Bänke 9→2).
+    ///
+    /// Vergletscherte Zellen (`underIce`) sind ebenfalls ausgenommen: unter dem
+    /// Eis steht kein Wasser, in dem Sediment absinken könnte. Und `hf` stammt
+    /// vom Schrittanfang, `updateIce` hat das Bett danach schon geschliffen —
+    /// jede Zelle, die der Gletscher in diesem Schritt um mehr als 0,001 tiefer
+    /// legt, sähe hier wie eine Pfütze aus und bekäme den Schliff zum Teil
+    /// wieder aufgefüllt. Das traf nur große Schritte (bei dt = 1000 schleift
+    /// ein Schritt fast überall mehr als 0,001, bei dt = 100 kaum eine Zelle)
+    /// und machte die Gletscher-Erosion damit schrittweitenabhängig: am Gipfel
+    /// gemessen +0,017 Wiederauffüllung in 4000 Jahren bei dt = 1000 gegen
+    /// +0,002 bei dt = 100 (`docs/glacier-measurements.md` §L). Ohne Eis ist die
+    /// Maske leer und der Pass rechnet bit-identisch zu vorher.
     private func fillShallowPonds(dt: Double) {
         // Exponentielle Relaxation (Issue #2, s. fillLakes): die lineare Form
         // verlandete den Zeitraffer (viele kleine dt) und den Sprung
@@ -3313,6 +3358,9 @@ public final class Terrain {
         let flowLimit = cfg.puddleFillSkipsFlowCells && area.count == cnt
             ? cfg.channelFlowMinCells * cfg.cellSize * cfg.cellSize
             : .infinity
+        // Gletscher-Maske: leer, solange nirgends Eis über der Schwelle liegt.
+        let iceGate = underIce.count == cnt
+        let iceArr = iceGate ? underIce : [false]
         hf.withUnsafeBufferPointer { hfb in
         h.withUnsafeMutableBufferPointer { hb in
         sed.withUnsafeMutableBufferPointer { sb in
@@ -3321,7 +3369,9 @@ public final class Terrain {
         isChannel.withUnsafeBufferPointer { icb in
         regenPending.withUnsafeBufferPointer { rpb in
         area.withUnsafeBufferPointer { arb in
+        iceArr.withUnsafeBufferPointer { iab in
         let phf = hfb.baseAddress!, ph = hb.baseAddress!, psed = sb.baseAddress!
+        let punder = iab.baseAddress!
         let pseen = psb.baseAddress!, pend = ebb.baseAddress!
         let pchan = icb.baseAddress!, pregen = rpb.baseAddress!
         let parea = arb.baseAddress!
@@ -3368,6 +3418,7 @@ public final class Terrain {
                 let k = Int(kk)
                 if pchan[k] { continue }
                 if parea[k] > flowLimit { continue }  // Flussbett, keine Pfütze (#108)
+                if iceGate && punder[k] { continue }  // Gletscherbett, keine Pfütze (s. o.)
                 // Frische Baustelle (Issue #26): solange an dieser Zelle noch
                 // Regeneration aussteht, NICHT verlanden. Die Pfützen-Verlandung
                 // ist ein Aufräum-Pass gegen Flachwasser-Sprenkel in reifen Auen
@@ -3393,7 +3444,7 @@ public final class Terrain {
                 }
             }
         }
-        }}}}}}}}
+        }}}}}}}}}
     }
 
     // MARK: - Auen-Aggradation (Overbank-Deposition → flache Schwemmebenen)

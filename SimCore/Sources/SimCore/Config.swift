@@ -1171,6 +1171,28 @@ public struct SimConfig: Sendable, Codable, Equatable {
     // wächst ab Jahr 0 — dieselbe Begründung wie beim Schmelzwasser (#36), die
     // kalibrierte Welt-Erzeugung darf sich nicht verschieben.
     //
+    // DT-INVARIANZ (Nachtrag Issue #174, `docs/glacier-measurements.md` §L): in
+    // der Produktion hing die Eismasse an der Schrittweite — Jahr 20.000, dt 100
+    // gegen 1000: 49 / 122 (Seed 1337), 65 / 31 (42), 159 / 53 (20); der
+    // Zeitraffer-Takt dt 15 lag bei dt 100. Drei Ursachen, alle Kopplungen
+    // eines großen Schritts an Größen vom Schrittanfang, keine davon in der
+    // Bilanz selbst:
+    //   1. Die Sub-Taktung deckelte nur den Ausstrom-Anteil `kappa·ΣΔs⁺`, nicht
+    //      die Diffusionszahl `kappa·I` der Eis-Oberfläche → dickes Eis auf
+    //      flachem Bett lief bei großen Schritten instabil (s. `iceFlowSubCap`).
+    //   2. `fillShallowPonds` liest `hf` vom Schrittanfang und hielt alles, was
+    //      der Gletscher im selben Schritt tiefer als 0,001 schliff, für eine
+    //      Pfütze → füllte es zum Teil wieder auf, nur in großen Schritten.
+    //      Unter dem Eis verlandet seitdem nichts mehr (`underIce`).
+    //   3. Die Temperatur kam aus dem Feld vom Schrittanfang; der Schliff senkt
+    //      das Bett aber über den Schritt → der Teilschritt rechnet sie jetzt
+    //      aus dem Bett, das er vor sich hat (reine Funktion von `h`).
+    // Jede Ursache allein zu beheben reichte nicht (gemessen, §L). Danach
+    // liegen dt 15 / 100 / 1000 auf allen drei Seeds beieinander (Tabelle §L);
+    // Wächter `Glacier.testIceIsFramerateIndependent` (Schrittpaare aus
+    // demselben Zustand, volle Physik) und
+    // `Glacier.testThickIceTransportIsStableForLargeSteps`.
+    //
     // Messreihen: `docs/glacier-measurements.md`.
     public var iceEnabled = true
     /// Umrechnung Schneevorrat → EISZUFUHR: Höheneinheiten Eis je Jahr und
@@ -1286,13 +1308,28 @@ public struct SimConfig: Sendable, Codable, Equatable {
     public var iceFlowK: Double = 3.0
     /// Maximale Transport-Zahl EINES Teilschritts (dimensionslos) — der Anteil
     /// einer Eissäule, der sie am STEILSTEN Hang verlassen darf. Legt die
-    /// Sub-Taktzahl fest: `nSub = ⌈kappa·wMax·dt / cap⌉` mit `wMax` = größte
-    /// Summe positiver Oberflächen-Abfälle (einmal je Schritt gemessen,
-    /// s. `updateIce`). Dieselbe Konstruktion wie die 0.2 der Hangdiffusion in
-    /// `step()`, nur mit gemessenem statt angenommenem Gefälle.
+    /// Sub-Taktzahl fest: `nSub = ⌈kappa·max(wMax, 2·I_max)·dt / cap⌉` mit
+    /// `wMax` = größte Summe positiver Oberflächen-Abfälle und `I_max` = größte
+    /// Eisdicke (beide einmal je Schritt gemessen, s. `updateIce`). Dieselbe
+    /// Konstruktion wie die 0.2 der Hangdiffusion in `step()`, nur mit
+    /// gemessenem statt angenommenem Gefälle.
     /// 0.25 ist der klassische explizite Deckel des 5-Punkt-Sterns in 2D: bei
     /// `kappa·ΣΔs⁺ ≤ 0.25` verlässt höchstens ein Viertel der Säule die Zelle je
-    /// Teilschritt, und das Schema kann nicht überschwingen.
+    /// Teilschritt.
+    ///
+    /// **Die zweite Kennzahl (Issue #174).** Das reicht nicht, damit das Schema
+    /// nicht überschwingt: der Fluss `kappa·I·(s_k − s_nb)` ist Diffusion der
+    /// Eis-OBERFLÄCHE mit dem Koeffizienten `kappa·I`, und deren Schachbrett-
+    /// Modus wächst je Teilschritt um `|1 − 8·kappa·I|`. Dickes Eis auf flachem
+    /// Bett (I ≫ ΣΔs⁺) lief deshalb bei großen Schritten instabil — in der
+    /// Produktion bei dt = 1000 eine Schachbrett-Oberfläche, die das Bett in
+    /// EINEM Schritt im Mittel 0,065 tief schliff (zehn Schritte à 100: 0,005),
+    /// und eine Eismasse, die an der Schrittweite hing
+    /// (`docs/glacier-measurements.md` §L). Seitdem gilt zusätzlich
+    /// `kappa·I ≤ cap/2 = 1/8`, die Grenze, unter der der Modus nicht mehr das
+    /// Vorzeichen wechselt. Gemessen gegen `cap/4` konvergiert (Eismasse
+    /// < 0,01 % Abweichung), gegen `cap` (also 1/4, gerade noch stabil) nicht:
+    /// −6 … −12 % Eismasse.
     public var iceFlowSubCap: Double = 0.25
     /// HARTE Untergrenze der Positivität: mehr als diesen Anteil der Eissäule
     /// darf ein Teilschritt nie abgeben, egal wie steil die Oberfläche steht.
