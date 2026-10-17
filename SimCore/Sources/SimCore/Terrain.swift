@@ -1643,36 +1643,60 @@ public final class Terrain {
     /// Oberfläche, Grenze `iceFlowSubCap / 2`), s. `updateIce`. Beide sind
     /// Höhen je Zelle; `kappa` mal dem Maximum unter `iceFlowSubCap` hält also
     /// beide Kennzahlen eines Teilschritts unter ihrer Grenze.
-    /// Sequenziell und als Maximum reihenfolge-unabhängig, also bit-genau
-    /// reproduzierbar. Kostet EINEN Gitter-Durchlauf und spart dafür ein
-    /// Vielfaches an Teilschritten.
+    /// Zeilenweise parallel (je Zeile ein eigenes Ergebnis in Roh-Puffern,
+    /// danach seriell reduziert); Maximum und Bounding-Box sind
+    /// reihenfolge-unabhängig, also bit-genau reproduzierbar. Kostet EINEN
+    /// Gitter-Durchlauf und spart dafür ein Vielfaches an Teilschritten.
     private func iceTransportDomain() -> (scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
         let nn = n
-        var scale = 0.0
-        var iLo = nn, iHi = -1, jLo = nn, jHi = -1
         let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
         let firnT = cfg.iceFirnTemp
-        for j in 0..<nn {
-            for i in 0..<nn {
-                let k = j * nn + i
-                if ice[k] > 0 || (snow[k] > 0 && t0 - gamma * max(0, h[k] - sea) < firnT) {
-                    iLo = min(iLo, i); iHi = max(iHi, i)
-                    jLo = min(jLo, j); jHi = max(jHi, j)
+        var rowScale = [Double](repeating: 0, count: nn)
+        var rowILo = [Int](repeating: nn, count: nn)
+        var rowIHi = [Int](repeating: -1, count: nn)
+        h.withUnsafeBufferPointer { hb in
+        ice.withUnsafeBufferPointer { ib in
+        snow.withUnsafeBufferPointer { sb in
+        rowScale.withUnsafeMutableBufferPointer { rsb in
+        rowILo.withUnsafeMutableBufferPointer { rlb in
+        rowIHi.withUnsafeMutableBufferPointer { rhb in
+            let ph = hb.baseAddress!, pice = ib.baseAddress!, psnow = sb.baseAddress!
+            let prs = rsb.baseAddress!, prl = rlb.baseAddress!, prh = rhb.baseAddress!
+            parallel(nn) { jLo, jHi in
+                for j in jLo..<jHi {
+                    let row = j * nn
+                    var scale = 0.0, iLo = nn, iHi = -1
+                    for i in 0..<nn {
+                        let k = row + i
+                        let ik = pice[k]
+                        if ik > 0 || (psnow[k] > 0 && t0 - gamma * max(0, ph[k] - sea) < firnT) {
+                            iLo = min(iLo, i); iHi = max(iHi, i)
+                        }
+                        if ik <= 0 { continue }
+                        if 2 * ik > scale { scale = 2 * ik }
+                        let sk = ph[k] + ik
+                        let sl = i > 0      ? ph[k - 1]  + pice[k - 1]  : sk
+                        let sr = i < nn - 1 ? ph[k + 1]  + pice[k + 1]  : sk
+                        let sd = j > 0      ? ph[k - nn] + pice[k - nn] : sk
+                        let su = j < nn - 1 ? ph[k + nn] + pice[k + nn] : sk
+                        var w = 0.0
+                        if sk > sl { w += sk - sl }
+                        if sk > sr { w += sk - sr }
+                        if sk > sd { w += sk - sd }
+                        if sk > su { w += sk - su }
+                        if w > scale { scale = w }
+                    }
+                    prs[j] = scale; prl[j] = iLo; prh[j] = iHi
                 }
-                if ice[k] <= 0 { continue }
-                if 2 * ice[k] > scale { scale = 2 * ice[k] }
-                let sk = h[k] + ice[k]
-                let sl = i > 0      ? h[k - 1]  + ice[k - 1]  : sk
-                let sr = i < nn - 1 ? h[k + 1]  + ice[k + 1]  : sk
-                let sd = j > 0      ? h[k - nn] + ice[k - nn] : sk
-                let su = j < nn - 1 ? h[k + nn] + ice[k + nn] : sk
-                var w = 0.0
-                if sk > sl { w += sk - sl }
-                if sk > sr { w += sk - sr }
-                if sk > sd { w += sk - sd }
-                if sk > su { w += sk - su }
-                if w > scale { scale = w }
             }
+        }}}}}}
+        var scale = 0.0
+        var iLo = nn, iHi = -1, jLo = nn, jHi = -1
+        for j in 0..<nn {
+            if rowScale[j] > scale { scale = rowScale[j] }
+            guard rowIHi[j] >= 0 else { continue }
+            iLo = min(iLo, rowILo[j]); iHi = max(iHi, rowIHi[j])
+            jLo = min(jLo, j); jHi = max(jHi, j)
         }
         return (scale, iLo, iHi, jLo, jHi)
     }
