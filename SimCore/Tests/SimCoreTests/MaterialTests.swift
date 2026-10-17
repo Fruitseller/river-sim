@@ -45,6 +45,55 @@ final class MaterialTests: XCTestCase {
             worst = max(worst, sum)
         }
         XCTAssertLessThanOrEqual(worst, 1 + 5.0 / 255, "Materialgewichte summieren sich über 1")
+
+        // Nasse Wiese (`WetMeadow`) hebt die Vegetation auf jeder Maskenzelle;
+        // die Summe darf dabei nicht über 1 steigen (Review zu #174 C).
+        let wet = WetMeadow.apply(b, mask: [Bool](repeating: true, count: n * n))
+        var worstWet = 0.0
+        for k in 0..<(n * n) {
+            let sum = weight(wet.surfaces, k, 0) + weight(wet.surfaces, k, 1) + weight(wet.surfaces, k, 2)
+                + weight(wet.covers, k, 0) + weight(wet.covers, k, 2)
+            worstWet = max(worstWet, sum)
+        }
+        XCTAssertLessThanOrEqual(worstWet, 1 + 5.0 / 255, "Gewichte auf nasser Wiese summieren sich über 1")
+    }
+
+    /// Vier Zellen, jede mit einem anderen Mischungsfall unter nasser Wiese:
+    /// Halde, Rohboden samt Bewuchs und Sand, Kälte mit Fels und Halde, reiner
+    /// Sand. Vegetation geht auf `wetMeadowVegetation`, die übrigen Gewichte
+    /// (Fels, Halde, Rohboden, Sand) teilen sich PROPORTIONAL, was neben Kälte
+    /// und Vegetation bleibt; vorher blieben Halde, Rohboden und Sand stehen
+    /// (Summe bis ~1,85).
+    func testWetMeadowScalesTheOtherWeightsProportionally() {
+        func bytes(_ values: Double...) -> [UInt8] { values.map { byte01($0) } }
+        // je Zelle RGBA; colors A = Sand, surfaces = (Vegetation, Fels, Kälte, Härte),
+        // covers = (Halde, Eis, Rohboden, Talboden).
+        let colors = bytes(0.3, 0.3, 0.3, 0,   0.3, 0.3, 0.3, 0.5,   0.3, 0.3, 0.3, 0,   0.3, 0.3, 0.3, 1)
+        let surfaces = bytes(0, 0, 0, 0.5,   0.2, 0, 0, 0.5,   0.1, 0.3, 0.4, 0.5,   0, 0, 0, 0.5)
+        let covers = bytes(0.9, 0, 0, 0,   0, 0, 0.6, 0,   0.2, 0, 0, 0,   0, 0, 0, 0)
+        let input = TerrainColorRenderer.Buffers(colors: colors, surfaces: surfaces, covers: covers)
+        let out = WetMeadow.apply(input, mask: [true, true, true, true])
+        let tol = 5.0 / 255
+        for k in 0..<4 {
+            let veg = weight(out.surfaces, k, 0), rock = weight(out.surfaces, k, 1)
+            let cold = weight(out.surfaces, k, 2)
+            let scree = weight(out.covers, k, 0), raw = weight(out.covers, k, 2)
+            let sand = weight(out.colors, k, 3)
+            XCTAssertEqual(cold, weight(input.surfaces, k, 2), accuracy: 1e-9, "Kälte bleibt (Zelle \(k))")
+            XCTAssertGreaterThanOrEqual(veg, WaterRender.wetMeadowVegetation * (1 - cold) - 1.0 / 255,
+                                        "Vegetation wird gehoben (Zelle \(k))")
+            XCTAssertLessThanOrEqual(veg + rock + cold + scree + raw, 1 + tol, "Summe Zelle \(k)")
+            XCTAssertLessThanOrEqual(veg + rock + cold + scree + raw + sand, 1 + tol,
+                                     "Summe samt Sand, Zelle \(k)")
+        }
+        // Zelle 1: Rohboden und Sand behalten ihr Verhältnis (0,6 : 0,5).
+        XCTAssertEqual(weight(out.covers, 1, 2) / weight(out.colors, 1, 3), 0.6 / 0.5, accuracy: 0.05,
+                       "übrige Gewichte werden proportional skaliert")
+        // Zelle 3: reiner Sand weicht der Wiese bis auf den Rest.
+        XCTAssertLessThan(weight(out.colors, 3, 3), 1 - WaterRender.wetMeadowVegetation + 2.0 / 255)
+        // Zelle 2: Fels und Halde schrumpfen anteilig, verschwinden aber nicht.
+        XCTAssertGreaterThan(weight(out.surfaces, 2, 1), 0)
+        XCTAssertGreaterThan(weight(out.covers, 2, 0), 0)
     }
 
     /// Gleiche Welt, gleiche Puffer (der Pass läuft parallel über disjunkte
