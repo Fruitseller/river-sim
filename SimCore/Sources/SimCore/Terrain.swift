@@ -276,6 +276,7 @@ public final class Terrain {
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
     /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
     private var areaPow: [Double] = []
+    private var mfdRoutes: [MFDRoute] = []
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     /// Zellen unter einer Mäander-Zentrumslinie (M3-Maske). Reconciliation-Maske für
     /// BEIDE Erosionspfade: `transportLimited` (Grid) und `Hydraulic.erode` (Droplet).
@@ -2719,102 +2720,136 @@ public final class Terrain {
     /// Wert-Variante für die Hot-Loops (die dort auf Roh-Puffern arbeiten und
     /// `self.areaMFD` nicht gleichzeitig lesen dürfen) — EINE Regel, zwei Aufrufer.
     @inline(__always) func mfdLocalExponent(a: Double, sMax: Double, pond: Double) -> Double {
-        (a >= mfdMinA && sMax < mfdFlatCell && pond < 0.005)
+        (a >= mfdMinA && mfdCanDisperse(sMax: sMax, pond: pond))
             ? cfg.braidDispersion : cfg.mfdExponent
+    }
+    @inline(__always) private func mfdCanDisperse(sMax: Double, pond: Double) -> Bool {
+        sMax < mfdFlatCell && pond < 0.005
     }
     // Schwellen einmal je Terrain (waren `lazy var`: das kostet im 700k-Loop je
     // Zugriff eine Initialisierungs-Prüfung auf einer Klassen-Property).
     private let mfdMinA: Double
     private let mfdFlatCell: Double // Weltslope in Zell-Einheiten
 
+    /// Nachbargewichte hängen nur an der unveränderten Topografie. Zwei
+    /// Exponenten vorbereiten; die Flächen-Schwelle entscheidet erst während
+    /// der weiterhin seriellen Akkumulation in unveränderter `order`.
+    private struct MFDRoute {
+        var neighbors = SIMD8<Int32>(repeating: 0)
+        var weights = SIMD8<Double>(repeating: 0)
+        var dispersed = SIMD8<Double>(repeating: 0)
+        var count = 0
+        var canDisperse = false
+        var sum = 0.0
+        var dispersedSum = 0.0
+    }
+
     private func computeMFDArea() {
         let cellArea = cfg.cellSize * cfg.cellSize
         let cnt = cfg.count, nn = n, sea = cfg.sea
         let sqrt2 = 2.0.squareRoot()
+        let exponent = cfg.mfdExponent, dispersion = cfg.braidDispersion
+        if mfdRoutes.count != cnt { mfdRoutes = .init(repeating: MFDRoute(), count: cnt) }
         hf.withUnsafeBufferPointer { hfb in
         h.withUnsafeBufferPointer { hb in
         areaMFD.withUnsafeMutableBufferPointer { ab in
         floodParent.withUnsafeBufferPointer { pb in
         order.withUnsafeBufferPointer { ob in
         endorheicBasin.withUnsafeBufferPointer { eb in
-        // Nachbar-Puffer auf dem Stack (die alten [Int]/[Double] kosteten je
-        // Zugriff Bounds- + COW-Prüfung).
-        withUnsafeTemporaryAllocation(of: Int32.self, capacity: 8) { nbK in
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
+        let capacity = cnt
+        mfdRoutes.withUnsafeMutableBufferPointer { routes in
             let phf = hfb.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
             let ppar = pb.baseAddress!, pord = ob.baseAddress!, pend = eb.baseAddress!
+            let pr = routes.baseAddress!
             seedFlowAccumulator(pa, cellArea: cellArea)
-            // PERF: `k / nn` je Zelle ist eine echte Ganzzahl-Division auf einem
-            // LAUFZEIT-Divisor — der Compiler kann sie nicht in eine
-            // Multiplikation drehen. Gebraucht wird davon nur die SPALTE (der
-            // Rand-Test); die liefert Lemires „fastmod" mit zwei
-            // Multiplikationen: mit M = ⌊2⁶⁴/nn⌋ + 1 ist die obere Hälfte von
-            // (M·k)·nn exakt k % nn, solange k < 2³² (Lemire/Kaser/Kurz 2019,
-            // hier k < 692224). Ob die ZEILE am Rand liegt, sagt schon der
-            // Indexbereich. Nur die seltenen Randzellen rechnen `k / nn` noch.
             let fastMod = UInt64.max / UInt64(nn) &+ 1
             let lastRow = cnt - nn
-            var oi = cnt - 1
-            while oi >= 0 {
-                let k = Int(pord[oi]); oi -= 1
-                let hk = phf[k]
-                if hk <= sea { continue } // Meer = Senke, reicht nicht weiter
-                // Abflussloses Becken (Issue #11): die Seefläche ist terminal
-                // (Verdunstung) — dieselbe Rolle wie das Meer. Das Render-Feld
-                // zeigt den Zufluss weiter BIS in den See, nur nicht darüber
-                // hinaus. Rollentrennung bleibt: hier wird nichts erodiert.
-                if pend[k] == .water { continue }
-                var c = 0
-                var sMax = 0.0
-                // PERF: die Division erst NACH dem Vorzeichen-Test. `dist` ist
-                // positiv, `s` hat also dasselbe Vorzeichen wie der Zähler —
-                // höhere Nachbarn (die Mehrzahl) kosten damit keine
-                // Fließkomma-Division mehr, und die ist auf dieser Schleife der
-                // Taktgeber (gemessen −0,6 ms/Schritt). Der `s > 0`-Test bleibt
-                // stehen: er fängt den (theoretischen) Unterlauf eines winzigen
-                // positiven Zählers ab ⇒ bit-identisch.
-                @inline(__always) func consider(_ nb: Int, _ dist: Double) {
-                    let d = hk - phf[nb]
-                    if d <= 0 { return }
-                    let s = d / dist
-                    if s > 0 { nbK[c] = Int32(nb); nbW[c] = s; sMax = max(sMax, s); c += 1 }
-                }
-                let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
-                if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
-                    consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
-                    consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
-                    consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
-                } else {
-                    let j = k / nn
-                    for dj in -1...1 {
-                        for di in -1...1 {
-                            if di == 0 && dj == 0 { continue }
-                            let ni = i + di, nj = j + dj
-                            if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                            consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+            var end = cnt
+            while end > 0 {
+                let length = min(capacity, end)
+                let blockEnd = end
+                parallel(length) { lo, hi in
+                for t in lo..<hi {
+                    let k = Int(pord[blockEnd - 1 - t])
+                    let hk = phf[k]
+                    var route = MFDRoute()
+                    if hk <= sea || pend[k] == .water {
+                        route.count = -1
+                        pr[t] = route
+                        continue
+                    }
+                    var slopes = SIMD8<Double>(repeating: 0)
+                    var c = 0
+                    var sMax = 0.0
+                    // PERF: die Division erst NACH dem Vorzeichen-Test. `dist` ist
+                    // positiv, `s` hat also dasselbe Vorzeichen wie der Zähler —
+                    // höhere Nachbarn (die Mehrzahl) kosten damit keine
+                    // Fließkomma-Division mehr, und die ist auf dieser Schleife der
+                    // Taktgeber (gemessen −0,6 ms/Schritt). Der `s > 0`-Test bleibt
+                    // stehen: er fängt den (theoretischen) Unterlauf eines winzigen
+                    // positiven Zählers ab ⇒ bit-identisch.
+                    @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                        let d = hk - phf[nb]
+                        if d <= 0 { return }
+                        let s = d / dist
+                        if s > 0 { route.neighbors[c] = Int32(nb); slopes[c] = s; sMax = max(sMax, s); c += 1 }
+                    }
+                    let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
+                    if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
+                        consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
+                        consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
+                        consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+                    } else {
+                        let j = k / nn
+                        for dj in -1...1 {
+                            for di in -1...1 {
+                                if di == 0 && dj == 0 { continue }
+                                let ni = i + di, nj = j + dj
+                                if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                                consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+                            }
                         }
                     }
+                    route.count = c
+                    route.canDisperse = mfdCanDisperse(sMax: sMax, pond: hk - ph[k])
+                    for j in 0..<c {
+                        route.weights[j] = powFast(slopes[j], exponent)
+                        route.sum += route.weights[j]
+                        if route.canDisperse {
+                            route.dispersed[j] = powFast(slopes[j], dispersion)
+                            route.dispersedSum += route.dispersed[j]
+                        }
+                    }
+                    // Jede Division behält dieselben Operanden. Die
+                    // anschließenden Flächensummen bleiben vollständig seriell.
+                    for j in 0..<c {
+                        route.weights[j] /= route.sum
+                        if route.canDisperse { route.dispersed[j] /= route.dispersedSum }
+                    }
+                    pr[t] = route
                 }
-                // areaMFD[k] ist beim Verarbeiten schon vollständig akkumuliert
-                // (alle Zuflüsse liegen höher in hf) → das Gate im Exponenten-
-                // Helfer ist gültig.
-                let a = pa[k]
-                let p = mfdLocalExponent(a: a, sMax: sMax, pond: hk - ph[k])
-                var wsum = 0.0
-                for t in 0..<c { nbW[t] = powFast(nbW[t], p); wsum += nbW[t] }
-                if c == 0 || wsum <= 0 {
-                    // flache Seespiegel-Zelle (kein tieferer Nachbar) → wie D8 über den
-                    // Priority-Flood-Überlauf (floodParent) weiterreichen, damit die
-                    // Fläche nicht am See versickert. Im abflusslosen Becken NICHT:
-                    // der Überlauf zeigt zur Sill hinaus, wo kein Wasser hinkommt.
-                    if pend[k] != .none { continue }
-                    let fp = ppar[k]
-                    if fp >= 0 { pa[Int(fp)] += a }
-                    continue
                 }
-                for t in 0..<c { pa[Int(nbK[t])] += a * (nbW[t] / wsum) }
+                for t in 0..<length {
+                    let route = pr[t]
+                    if route.count < 0 { continue }
+                    let k = Int(pord[blockEnd - 1 - t])
+                    let a = pa[k]
+                    let disperse = a >= mfdMinA && route.canDisperse
+                    let weights = disperse ? route.dispersed : route.weights
+                    let sum = disperse ? route.dispersedSum : route.sum
+                    if route.count == 0 || sum <= 0 {
+                        if pend[k] != .none { continue }
+                        let fp = ppar[k]
+                        if fp >= 0 { pa[Int(fp)] += a }
+                        continue
+                    }
+                    for j in 0..<route.count {
+                        pa[Int(route.neighbors[j])] += a * weights[j]
+                    }
+                }
+                end -= length
             }
-        }}}}}}}}
+        }}}}}}}
     }
 
     // MARK: - Braiding (zellulärer Bänke-Bau, Murray & Paola 1994)

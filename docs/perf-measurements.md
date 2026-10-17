@@ -1053,3 +1053,133 @@ Pass-Tabelle (`simperf --repeat 3`, letzter Block):
 | `belt.migrate` | 6.44 ms/Schritt (10.0 %) | 5.14 ms/Schritt (8.4 %) | **−1.30 ms/Schritt (−20.2 %)** |
 | `belt.stamp` | 7.31 ms/Schritt (11.3 %) | 7.22 ms/Schritt (11.8 %) | **−0.09 ms/Schritt** |
 | `belt.*` gesamt | 13.75 ms/Schritt | 12.36 ms/Schritt | **−1.39 ms/Schritt (−10.1 %)** |
+
+## N. Sim-Kern, dritte Runde für #174, Oktober 2026
+
+Startstand `7b7a880`, Branch `t3/174-sim-perf-r3`. Gemessen am 17.10.2026
+auf Apple M4 Max, 16 Kerne, 64 GiB, macOS 26.7, Apple Swift 6.4.
+Release-Build mit Swift-5-Sprachmodus. Andere Agenten bauten und testeten auf
+derselben Maschine. Deshalb ausschließlich interleaved A/B, je Runde wechselnd
+A B bzw. B A, je Prozess `simperf --repeat 1`. Produktionspaarung n = 720,
+world = 112,4789, Seed 1337, Einlauf 100 × 100 Jahre, Messblock 30 × 100 Jahre.
+Die Mediane beziehen sich auf alle Runden, nicht auf das Minimum.
+
+Start-Binary `/tmp/simperf.r3-start`, Profil mit `--repeat 3`: Blöcke
+73,1 / 70,8 / 70,5 ms/Schritt. Diese Einzelmessung dient nur zur Hotspot-Suche.
+Im letzten Block: Priority-Flood 15,96, MFD 7,27, Gürtel-Stempel 7,93,
+Gürtel-Migration 5,59, Eis 4,51, Inzision 3,97 ms/Schritt. Ergänzend
+`sample <pid> 10` während desselben Harness-Pfads. Das Sample umfasst auch den
+Einlauf und ersetzt keinen A/B-Vergleich.
+
+Vor der ersten Änderung selbst gemessene Fingerprints, jeweils mit `--hash`
+und sonst unveränderten Standardargumenten:
+
+| Seed | Start-Fingerprint |
+| ---: | --- |
+| 1337 | `c25268a941dd4beb` |
+| 42 | `685222593c36209f` |
+| 20 | `948941e9feca57df` |
+
+### Verworfen: Heap-Pop bis zum Blatt, danach aufwärts einsetzen
+
+Der volle Abstieg entfernt den Vergleich des letzten Elements mit dem kleinsten
+Kind je Ebene. Danach wandert das letzte Element entlang desselben Pfades
+aufwärts. Für dieselbe Pop-Reihenfolge muss es dabei auch über GLEICHE Eltern
+steigen. Ein erster Versuch mit streng größeren Eltern scheiterte bereits am
+Hash-Check, Seed 1337 `b809efbbd8d7a30f`, und wurde vor einer vollständigen
+Messreihe korrigiert. Die korrigierte Fassung besteht alle drei Hash-Vergleiche.
+Sie ist trotzdem langsamer und bleibt nicht im Code.
+
+A = `/tmp/simperf.r3-start`, B = `/tmp/simperf.r3-heap2`.
+
+| Runde | A ms/Schritt | B ms/Schritt | A Priority-Flood | B Priority-Flood |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 66,6 | 88,9 | 15,58 | 18,72 |
+| 2 | 71,4 | 81,7 | 16,12 | 18,86 |
+| 3 | 70,9 | 99,6 | 16,17 | 21,59 |
+| 4 | 66,9 | 100,6 | 15,50 | 21,74 |
+| 5 | 68,0 | 69,1 | 15,69 | 16,25 |
+| 6 | 65,5 | 67,5 | 15,47 | 16,31 |
+| Median | 67,45 | 85,30 | 15,635 | 18,790 |
+
+Die Gesamtzeit streut durch Fremdlast stark. Auch im betroffenen Pass ist die
+Variante in allen sechs Runden langsamer. Auf flachen Flächen steigt sie erst
+ab und über gleiche Keys wieder auf, während die bisherige Fassung früher
+abbricht. FIFO und eine andere Heap-Verzweigung wurden wegen der in §F belegten
+Änderung von `order` und `floodParent` nicht umgesetzt.
+
+### Verworfen: MFD-Nachbargewichte in 32.768-Zellen-Blöcken vorbereiten
+
+Nachbarschaft, Gefälle und Gewichte für beide möglichen Exponenten werden
+parallel vorbereitet. Die Akkumulation bleibt in `order` rückwärts, inklusive
+der unveränderten Nachbarreihenfolge und des `floodParent`-Rückfalls. Die
+Flächen-Schwelle entscheidet erst während der Akkumulation zwischen beiden
+Exponenten. Alle drei Hashes stimmen, ebenso der zusätzliche Vergleich gegen
+eine serielle Referenz auf einem ungeraden Gitter mit Exponenten 4, 2 und 1,3.
+
+A = Start, B = `/tmp/simperf.r3-mfd-only`. Sechs Runden:
+
+| Runde | A ms/Schritt | B ms/Schritt | A MFD | B MFD |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 72,8 | 69,0 | 7,07 | 5,61 |
+| 2 | 68,8 | 110,3 | 7,38 | 11,73 |
+| 3 | 79,7 | 117,5 | 7,04 | 10,81 |
+| 4 | 71,8 | 83,8 | 7,02 | 8,86 |
+| 5 | 75,1 | 72,5 | 7,02 | 7,10 |
+| 6 | 66,9 | 66,8 | 6,92 | 5,69 |
+| Median | 72,30 | 78,15 | 7,03 | 7,98 |
+
+Die Variante trägt unter der gemessenen geteilten Last keinen Gewinn.
+Einzelne gute Runden reichen nicht als Beleg. Die vielen parallelen Blockstarts
+und das zusätzliche Schreiben und Lesen der Routendaten sind zusätzliche
+Arbeit. Welcher Anteil die schlechteren Runden verursacht, isoliert diese
+Messung nicht.
+
+### MFD-Alternative mit gemeinsamem Parallelstart und wiederverwendbarem Puffer
+
+Gleiche Zerlegung wie im Blockversuch, aber ein Parallelstart je MFD-Pass,
+Routendaten in einem wiederverwendbaren Array. Auch die Division der Gewichte
+durch ihre Summe wird vorbereitet. Die Auswahl anhand der Fläche und alle
+Flächensummen bleiben seriell. Alle drei Hashes und der Referenztest stimmen.
+
+A = Start, B = `/tmp/simperf.r3-mfd2`.
+
+| Runde | A ms/Schritt | B ms/Schritt | A MFD | B MFD |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 67,4 | 67,5 | 6,9 | 5,1 |
+| 2 | 80,4 | 67,4 | 7,78 | 5,27 |
+| 3 | 77,5 | 64,9 | 7,17 | 4,54 |
+| 4 | 79,9 | 69,6 | 7,06 | 5,02 |
+| 5 | 72,6 | 63,8 | 6,85 | 4,62 |
+| 6 | 71,4 | 68,9 | 7,47 | 5,0 |
+| Median | 75,050 | 67,450 | 7,115 | 5,010 |
+
+Im MFD-Pass fällt der Median um 2,105 ms. Der Gesamtmedian sinkt um 7,60 ms;
+diese größere Differenz darf nicht vollständig dem MFD-Umbau zugeschrieben
+werden. Die unveränderten Pässe schwanken mit der Fremdlast ebenfalls.
+Der zusätzliche Puffer hält zwei Gewichtssätze und Nachbarindizes je Zelle.
+Eine weitere Gegenprobe prüft deshalb SIMD ohne diesen Zusatzpuffer.
+
+### Verworfen: MFD-Nachbararithmetik als SIMD
+
+Bei inneren Zellen und den Exponenten 4 und 2 werden acht Nachbargefälle und
+Potenzen als SIMD berechnet. Die Reduktion und Akkumulation bleiben seriell,
+Randzellen und andere Exponenten benutzen den bisherigen Pfad. Drei Hashes
+und der serielle Referenztest stimmen. A = Start, B = `/tmp/simperf.r3-mfd-simd`.
+
+| Runde | A ms/Schritt | B ms/Schritt | A MFD | B MFD |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 72,9 | 77,3 | 7,15 | 9,74 |
+| 2 | 72,1 | 73,7 | 7,17 | 9,68 |
+| 3 | 68,2 | 76,8 | 6,85 | 9,7 |
+| 4 | 67,9 | 83,7 | 6,96 | 10,01 |
+| 5 | 67,7 | 71,2 | 6,96 | 9,41 |
+| 6 | 68,4 | 72,1 | 6,97 | 9,58 |
+| Median | 68,300 | 75,250 | 6,965 | 9,690 |
+
+SIMD ist hier in allen sechs Runden langsamer. Übernommen wird die Fassung
+mit gemeinsamem Parallelstart und wiederverwendbarem Puffer, nicht der
+Blockversuch oder SIMD. `MFDRouteTests` vergleicht die komplette Ausgabe
+bitweise gegen die serielle Referenz, inklusive beider Exponenten-Zweige,
+Randzellen, flachen Flächen und eines nichtganzzahligen Exponenten. Die
+Scratch-Einordnung ist in `StateInventoryTests` erfasst.
