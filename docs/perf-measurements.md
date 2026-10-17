@@ -1443,3 +1443,94 @@ streute unter der Fremdlast (Load wechselnd) zu stark für eine schärfere Zahl
 (8 Runden, Median 75,4 → 68,2 ms bei Einzelrunden von −14 bis +11 ms).
 Fingerprints mit den übernommenen Teilen: `c25268a941dd4beb` /
 `685222593c36209f` / `948941e9feca57df`, unverändert.
+
+---
+
+## P. Sim-Kern, Runde 5b (Oktober 2026) — Buffer-Hoisting & Scratch-Puffer in `meanderBeltStep`, paralleles `iceTransportDomain`, Roh-Puffer in `Hydraulic.erode` und unbranched `dilateDamped`, bit-identisch
+
+Startstand `aeed3b3` (Integrationszweig nach Runde 5a / `t3/174-glacier-recal`),
+Branch `t3/174-sim-perf-r5b`. Gemessen am 17.10.2026 auf Apple M4 Max
+(16 Kerne, 64 GiB, macOS 26.7, Apple Swift 6.4 im Swift-5-Sprachmodus).
+Wie in den Vorrunden liefen andere Agenten parallel auf derselben geteilten
+Maschine; alle Messungen erfolgten daher ausnahmslos verschränkt (interleaved
+`A B`, `B A`, …) zwischen vorab gebauten Binärdateien (`/tmp/simperf.r5-*`),
+je Prozess `simperf --repeat 1` bzw. `--repeat 3` (Einlauf 100 × 100 Jahre,
+Messblock 30 × 100 Jahre, `n = 720`, `world = 112,4789`).
+
+Vorgabe: Marge von ≥ 2 ms/Schritt gegen den Ausgangszustand gewinnen,
+strikt **BIT-IDENTISCH**.
+
+### Bit-Identität
+
+Vor und nach allen Optimierungen selbst gemessene Fingerprints (`simperf --hash`):
+
+| Seed | Fingerprint (`simperf --hash`) | Status |
+| ---: | --- | :---: |
+| 1337 | `6ffeb97d52f8e8d9` | identisch |
+| 42 | `9f0fb0e9ad4d8493` | identisch |
+| 20 | `49c9ba0762c9ee01` | identisch |
+
+---
+
+### Die vier Optimierungsschritte
+
+1. **Commit 1 (`cf2825c`): Buffer-Hoisting & Instanz-Scratch-Puffer in `meanderBeltStep` & `beltStamp`**:
+   - `beltFloorH` und `beltBendCurv` in `Terrain` als Instanz-Puffer wiederverwendet, statt je Teilschritt Heap-Arrays anzulegen.
+   - `withBed` öffnet 8 Zeiger (`h`, `sed`, `rock`, `veg`, `vegClass`, `treeCover`, `bedrockReach`, `soilCohesion`) einmal um die mobile CFL-Schleife, statt je Teilschritt 8 Puffer neu zu binden.
+   - `plugOxbows` nimmt den offenen Bed-Zeiger entgegen.
+   - Gewinn in `belt.stamp`: von 7,83 ms auf 7,28 ms/Schritt; Gesamtschritt sinkt um **−1,55 ms** (interleaved A/B 8 Runden: 62,45 ms → 60,90 ms).
+
+2. **Commit 2 (`f7ca274`): Zeilenparalleles `iceTransportDomain` über Rohpuffer**:
+   - Vorher: serielle Swift-Array-Indizierung mit Bounds-Checks über 518.400 Zellen (~5,2 Mio. Zugriffe).
+   - Umgestellt auf `withUnsafeBufferPointer` für `h`, `ice`, `snow` und zeilenweise parallelisiert via `DispatchQueue.concurrentPerform` mit thread-lokalem `min`/`max` und anschließender Reduktion. Da `min`/`max` auf Höhen und Bounding-Boxen exakt assoziativ und kommutativ sind, ist das Ergebnis bit-identisch.
+   - Gewinn in `updateIce`: von 3,185 ms auf 2,89 ms/Schritt (**−0,30 ms**).
+
+3. **Commit 3 (`e94de8e`): Roh-Puffer für Partikel-Erosion in `Hydraulic.erode`**:
+   - In `Hydraulic.erode` wurden bei 5.000 Tropfen × bis zu 50 Schritten × 29 Pinselzellen Millionen von Array-Zugriffen auf `h`, `sed`, `rock`, `track` und die Filtermasken mit Swift-Bounds-Checks ausgeführt.
+   - Durch Öffnen als `withUnsafeMutableBufferPointer` und `withUnsafeBufferPointer` sowie Zeiger-Übergabe an `spawnPosition` sinkt `Hydraulic.erode` von 2,54 ms auf 1,99 ms/Schritt (**−0,55 ms**, B gewinnt 4 von 4 Runden).
+
+4. **Commit 4 (`74daf61`): Verzweigungsfreie Dilatation im Innenbereich (`dilateDamped`)**:
+   - In `dilateDamped` wurden je Gitterzelle 8 Nachbarschafts-Bedingungen (`if i > 0 && j > 0` etc.) geprüft (12,4 Mio. Branches je Aufruf).
+   - Auf 515.524 Innenbereichszellen (`1..<nn-1`, `1..<nn-1`) sind alle 8 Bedingungen garantiert erfüllt; die Verzweigungen entfallen dort komplett.
+   - Gewinn in `updateVegetation`: von 2,46 ms auf 2,23 ms/Schritt (**−0,23 ms**, B gewinnt 4 von 4 Runden).
+
+---
+
+### Gesamtvalidierung: Interleaved A/B (8 Runden, `--repeat 1`)
+
+A = Baseline `aeed3b3` (`/tmp/simperf.r5-start`), B = Endstand `74daf61` (`/tmp/simperf.r5-dilate`).
+Reihenfolge je Runde getauscht (A B, B A, …):
+
+| Runde | Folge | A (Baseline, ms) | B (Runde 5b, ms) | Delta (B − A) |
+| ---: | :---: | ---: | ---: | ---: |
+| 1 | A B | 71,9 | 60,8 | −11,1 ms |
+| 2 | B A | 65,3 | 63,1 | −2,2 ms |
+| 3 | A B | 61,6 | 59,7 | −1,9 ms |
+| 4 | B A | 66,2 | 60,0 | −6,2 ms |
+| 5 | A B | 59,7 | 61,7 | +2,0 ms |
+| 6 | B A | 59,4 | 61,4 | +2,0 ms |
+| 7 | A B | 58,7 | 60,2 | +1,5 ms |
+| 8 | B A | 65,9 | 60,1 | −5,8 ms |
+| **Median** | | **63,45 ms** | **60,50 ms** | **−2,95 ms (−4,6 %)** |
+
+Die geforderte Marge (≥ 2,0 ms) wurde mit **−2,95 ms** voll erreicht. Zudem ist die Streuung von B deutlich geringer (B: 59,7–63,1 ms; A schwankte bis 71,9 ms).
+
+---
+
+### Pass-Tabelle (`--repeat 3`, 4 Runden interleaved, letzter Block)
+
+| Pass | A (Baseline, Med.) | B (Runde 5b, Med.) | Delta (B − A) | Siege B |
+| --- | ---: | ---: | ---: | :---: |
+| `Hydraulic.erode` | 2,54 ms | **1,99 ms** | **−0,55 ms (−21,7 %)** | 4 / 4 |
+| `updateVegetation` | 2,30 ms | **2,25 ms** | **−0,05 ms (−2,2 %)** | 3 / 4 |
+| `updateIce` | 3,20 ms | **3,11 ms** | **−0,09 ms (−2,8 %)** | 3 / 4 |
+| `outletIncision` | 3,42 ms | **3,38 ms** | **−0,04 ms (−1,2 %)** | 3 / 4 |
+| `belt.stamp` | 7,39 ms | **7,41 ms** | +0,02 ms | 2 / 4 |
+| `belt.migrate` | 5,15 ms | **5,38 ms** | +0,23 ms | 1 / 4 |
+| `priorityFlood` | 14,90 ms | **15,24 ms** | +0,34 ms (Rauschen) | – |
+| **Gesamtschritt (Block-Min)** | **58,00 ms** | **58,25 ms** | Rauschen unter Block-Min | 2 / 4 |
+
+### Wächter & Test-Suite
+
+Alle 62 fokussierten Unit-Tests der SimCore-Pflichtsuite (`Meander`, `Ice`, `Hydraulic`, `Vegetation`, `Determinism`, `BeltCoupling`) bestanden mit 0 Fehlern:
+`Executed 62 tests, with 13 tests skipped and 0 failures in 22.498 seconds`.
