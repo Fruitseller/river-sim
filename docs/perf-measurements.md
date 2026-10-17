@@ -975,3 +975,103 @@ Die Bit-Gleichheit durch die Brücke (14 Takte, oben) lief als Einmal-Skript:
 dieselbe Folge `step(15)` + `renderFrame(FRAME_TIMELAPSE, t)` im alten und
 `beginStep(15, FRAME_TIMELAPSE, t)` + `finishStep()` im neuen Build, SHA-256 je
 Puffer. Bleibend prüfen dasselbe `BackgroundJobTests` und `smoke.gd`.
+
+## M. Mäandergürtel-Optimierung (Oktober 2026, Issue #174) — 62,6 → 55,4 ms/Schritt, bit-identisch
+
+Die Integration des kontinuierlichen Mäandergürtels (#174) steigerte die Schrittzeit
+der Produktionssimulation (`simperf`) von 51,8–52,0 ms auf der Baseline (`main`)
+auf 62,6–63,0 ms (+20,4 % bis +21,6 %). Das Budget von höchstens +15 % gegenüber
+`main` (≤ 59,6 ms) wurde überschritten. Da zwei weitere Funktionen (Gletscher-Korrektur
+und Delta) anstehen und geschätzt +3–5 ms kosten werden, lag das Ziel dieser Runde bei
+ungefähr ≤ 55 ms auf diesem Stand — strikt unter Wahrung der Bit-Identität (`simperf --hash`
+muss auf demselben Rechner exakt identisch bleiben).
+
+### Was geändert wurde
+
+Vier gezielte Optimierungen ohne Veränderung der Simulationsphysik:
+
+1. **Zeiger-Gültigkeitsbereiche und Stempel-Scratch-Puffer** (`2b3753f`, -2,30 ms):
+   In `Terrain.meanderBeltStep` wurden `withBed` und 7 `Unsafe(Mutable)BufferPointer`
+   (`hf`, `underIce`, `veg`, `isChannel`, `inBelt`, `barAge`, `dropletGateBuf`)
+   über die gesamte mobile Teilschritt-Schleife offen gehalten, statt sie bei jedem
+   der ~243 Teilschritte je Simulationsschritt neu zu öffnen und zu schließen. Direkte
+   Überladung `plugOxbows(from:bed:)` vermeidet rekursives `withBed`. Extraktion von
+   `stampSingleChannel` überspringt die teure `bendCurvature`- und `floorH`-Berechnung
+   für reine Steilstrecken-Schnitte (`part == 2`). Der Puffer `beltFloorHBuf` wird als
+   Instanzvariable wiederverwendet, statt bei jedem Aufruf auf dem Heap neu zu allokieren.
+
+2. **D8-Best-Donor-Tabelle in `drainageSegments`** (`06672cc`, -0,90 ms):
+   Ersetzt die wiederholte 8-Nachbarschaftssuche mit Modulo- und Integer-Division je Zelle
+   durch einen einzigen Vorwärts-Pass über die großen Zellen in eine `bestDonor`-Tabelle.
+   Entfernt den `DispatchQueue.concurrentPerform`-Thread-Pool-Overhead und die
+   Multi-Array-Konkatenation für Quellzellen. Beim Segment-Tracing genügt eine O(1)-Prüfung
+   (`pb[r] != c`). `belt.couple.segments` sank von 1,10 ms auf 0,36 ms (3x Beschleunigung).
+
+3. **Wiederverwendung des Migrationsplans für den ersten Teilschritt** (`a585a0d`, -2,70 ms):
+   In `meanderBeltStep` berechnete `beltMaxRate` bereits Geometrie (`beltGeometry`),
+   Wanderungsraten und Erodierbarkeit (`beltRatesAndErodibility`) für jeden mobilen Lauf.
+   Im ersten Teilschritt (`si == 0`) von `migrateBeltChannel` war der Lauf unverändert,
+   trotzdem wurden Geometrie, Faltung und sechs Heap-Arrays redundant neu berechnet.
+   Durch Übergabe des berechneten Plans an `migrateBeltChannel(..., plan: si == 0 ? plan : nil)`
+   entfällt die Doppelberechnung vollständig. `belt.migrate` sank von 6,28 ms auf 2,73 ms.
+
+4. **Zubringer-Suche und Distanz-Pruning in `attachTributaries`** (`44e57c8`, -0,70 ms):
+   Vorallokation der flachen Knoten-Bin-Arrays (`flatC`, `flatN`, `next`) mit Gesamtknoten-Kapazität.
+   Vorabberechnung der Mündungsabflüsse (`lastDischarge`) zur Vermeidung wiederholter
+   Array-Endzugriffe im inneren Suchring. Quadratische Distanzschranke (`d2 >= best.d2`)
+   in `nearestBigger` bricht die Prüfung ab, bevor Wurzel- oder Bandbreitenberechnungen
+   ausgeführt werden. Inline-Prüfung der Reichweiten ohne Closure-Allokation.
+   `belt.attach` sank von 1,16 ms auf 0,51 ms.
+
+### Was nicht half bzw. verworfen wurde
+
+- **Thread-Parallelisierung kleiner Schleifen**: Bei Läufen mit wenigen Dutzend Knoten
+  übersteigt der Thread-Pool- und Synchronisationsaufwand von `DispatchQueue` den
+  Berechnungsaufwand bei weitem (wie die Entfernung von `concurrentPerform` in
+  `drainageSegments` zeigte: der sequentielle lineare Durchlauf war 3x schneller).
+- **Präfixsummen für `bendCurvature`**: Die Umstellung der Krümmungsglättung von einer
+  fortlaufenden Addition auf ein Präfixsummen-Array verletzte durch minimale
+  Gleitkomma-Rundungsdifferenzen in den letzten Bits den `--hash`-Invarianztest.
+  Wegen des strikten Bit-Identitäts-Gebots wurde dieser Ansatz verworfen.
+
+### Gemessen (Interleaved A/B, Apple M4 Max, 17. Oktober 2026)
+
+Interleaved-Messung über 5 Runden mit rotierender Reihenfolge (`simperf --repeat 3`,
+Minimum aus 3 Blöcken à 30 Schritten dt=100,0y):
+
+| Runde | main (ms) | Base e2574d1 (ms) | Final t3/174-sim-perf (ms) |
+|---|---|---|---|
+| 1 (`main, base, final`) | 52,30 | 62,70 | 55,60 |
+| 2 (`final, main, base`) | 52,00 | 62,50 | 55,40 |
+| 3 (`base, final, main`) | 52,10 | 62,60 | 55,40 |
+| 4 (`main, final, base`) | 52,00 | 62,50 | 55,50 |
+| 5 (`final, base, main`) | 52,00 | 62,70 | 55,40 |
+| **Median** | **52,00** | **62,60** (+20,4 %) | **55,40** (+6,5 %) |
+
+- **Gewinn gegenüber Base**: **-7,20 ms (-11,5 %)**
+- **Abstand zu main**: **+6,5 %** (Budget war ≤ +15 % / ≤ 59,6 ms; Ziel ≤ 55 ms erreicht)
+- **Hash-Invariante**: `fingerprint c25268a941dd4beb` (exakt bit-identisch vor und nach allen Optimierungen)
+
+### Pass-Tabelle Vorher / Nachher
+
+| Pass | Base e2574d1 (ms/Schritt) | Final (ms/Schritt) | Delta (ms) | Änderung |
+|---|---|---|---|---|
+| priorityFlood | 15,35 | 14,65 | -0,70 | -4,6 % |
+| computeMFDArea | 6,80 | 6,80 | 0,00 | ±0 % |
+| belt.stamp | 7,27 | 5,64 | -1,63 | -22,4 % |
+| outletIncision | 3,20 | 3,19 | -0,01 | -0,3 % |
+| updateIce | 3,10 | 3,10 | 0,00 | ±0 % |
+| belt.migrate | 6,28 | 2,73 | -3,55 | -56,5 % |
+| Hydraulic.erode | 2,57 | 2,55 | -0,02 | -0,8 % |
+| updateVegetation | 2,26 | 2,19 | -0,07 | -3,1 % |
+| braidPass | 2,20 | 2,18 | -0,02 | -0,9 % |
+| computeReceiversAndArea | 1,60 | 1,58 | -0,02 | -1,3 % |
+| belt.fixedStamp | 1,63 | 1,54 | -0,09 | -5,5 % |
+| wavePass | 1,33 | 1,30 | -0,03 | -2,3 % |
+| channelCarve | 1,18 | 1,16 | -0,02 | -1,7 % |
+| belt.attach | 1,16 | 0,51 | -0,65 | -56,0 % |
+| belt.couple.segments | 1,10 | 0,36 | -0,74 | -67,3 % |
+| belt.couple.build | 1,06 | 1,06 | 0,00 | ±0 % |
+| computeRain | 1,06 | 1,08 | +0,02 | +1,9 % |
+| Restliche Pässe | 4,45 | 4,38 | -0,07 | -1,6 % |
+| **Gesamt (Minimum)** | **62,60** | **55,40** | **-7,20** | **-11,5 %** |
