@@ -457,8 +457,12 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Materialgewichten), je KÜSTENPUNKT aus dem Zusammenhang statt aus Höhe und
   lokaler Steigung (die hält `wavePass` überall gleich, §E): Rückland-Relief,
   Offenheit (Stellvertreter für Wellenenergie), Mündungs-Zufuhr und Rauschen
-  entlang der Küste ergeben Strandbreite (0…5 Zellen) und Steilküsten-Anteil,
-  die jede Saumzelle von ihrer Küstenzelle erbt. Nasse Wiese statt kleiner
+  entlang der Küste ergeben Strandbreite (0…5 Zellen), die Kliffhöhe direkt
+  hinter der Küste (3 Zellen) den Steilküsten-Anteil; jede Saumzelle erbt beide
+  von ihrer Küstenzelle, Sand als Vereinigung runder Säume, Fels nur auf der
+  Kliffwand (eigene Steigung), nie auf der Terrasse davor. Über dem Gerinne
+  einer Mündung liegt kein Sand (`clearRiverBeds`), Delta-Inseln und
+  -Ebenen tragen nur einen schmalen Sandrand (Issue #174, Punkt 26). Nasse Wiese statt kleiner
   Raster-Tümpel (Maske aus `WaterFieldRenderer.wetMeadow`, wirkt auf Material
   und Schutzmaske). Sedimentfahnen im Meer: nur die großen Flüsse
   (`plumeMinDischargeCells`), als fertige Dichte je Meereszelle (küstennaher
@@ -528,6 +532,8 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
 → fillLakes (geparkt, `basinFill = false`) → fillShallowPonds
 → braidPass → Droplet-Erosion (Hydraulic.erode) + Stream-Map-EWMA
 → floodplainAggradation (geparkt, `floodplainEnabled = false`)
+→ deltaDeposit (Mündungsbarren: Einzugsgebiet × mittlerer Abtrag von
+  outletIncision + channelCarve dieses Schritts, Höhensummen davor/danach, #174)
 → Hangdiffusion (sub-getaktet) → wavePass (sub-getaktet)
 ────────────────────────────────────────────────────────
 → Klima-Vertikale (updateClimate: Temperatur + Schneebilanz) → updateVegetation

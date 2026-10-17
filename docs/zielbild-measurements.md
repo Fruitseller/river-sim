@@ -1994,3 +1994,410 @@ Godot-Verträge über `scripts/godot-test.sh`: `SMOKE_OK`,
 Beim Relief-Test meldet der Dummy-Renderer zusätzlich `Invalid image` beim
 Regenerieren, der Vertrag endet mit `RELIEF_OK`; die geprüfte Produktions-
 und Shader-Verdrahtung ist bestanden.
+
+## Delta (Abnahmepunkt 26)
+
+Punkt 26: „≥ 1 Delta mit ≥ 3 Distributären und Sandinseln (mind. 2 Seeds)",
+im Bild ein natürliches, gelapptes Delta (Vorlage
+`docs/references/zielbild/b-flusstal-delta-ui.jpg`). Vorher lagen die
+Delta-Arm-Bänder an Meeresmündungen unter der opaken Meeresebene
+(`docs/river-belt-render-measurements.md` §D), und die Sim baute keinen
+Ablagerungskörper, auf dem Arme hätten liegen können. Jetzt baut sie ihn
+(`Terrain.deltaDeposit`, Kalibrier-Logbuch `SimConfig.deltaTrapFraction`
+ff.). Mit dem Delta kamen drei Befunde an Küste und Mündung dazu, die im
+selben Bild stehen (§ Render).
+
+```sh
+RS_MEASURE=1 RS_CACHE=/tmp/delta-welten swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testDeltaBudgetDiagnostic
+```
+
+(`SimCoreTests/RiverDelta.swift`. Schalter: `RS_SEEDS`, `RS_YEARS_LIST`,
+`RS_DT` (Schrittweite der Alterung, Standard 1000 wie `RS_STEP`), `RS_OUT`
+(Draufsicht-PPM je Mündung), `RS_BUDGET=1` (Pass-Bilanz über 1000 Jahre),
+`RS_DELTA=off` bzw. `trap=…,dist=…,rad=…,elong=…,gen=…,wmin=…,jit=…,min=…`
+für Varianten. Der Cache-Ordner muss je Variante und Schrittweite ein
+eigener sein.) Produktions-Config, Einlauf 3000 Jahre; die Welten sind
+dieselben wie im Spiel mit `RS_SEED` und `RS_STEP` (seit caed8b5 liefert
+`generate` auf benutztem Terrain die frische Welt). „Große Mündung" =
+D8-Mündung ab 5000 Zellen Einzugsgebiet. Messrechner M4 Max, mit anderen
+Agenten geteilt.
+
+### Befund
+
+Längsprofil durch die größte Mündung (Seed 1337, Jahr 2000, h − sea je
+Zelle in Fließrichtung, Mündung bei 0; gemessen auf `0fec08b`):
+
+```
+−10 … −1: +0,0225 … +0,0031   0: +0,0004   +1 … +20: −0,0023 … −0,0761
+```
+
+Eine gleichmäßige Rampe von ~0,0025–0,003 je Zelle durch die Küstenlinie,
+ohne Ablagerungskörper und ohne Ebene. Auf dem Integrationsstand
+(`e2574d1`, `RS_DELTA=off`) an allen neun Welten (Seeds 1337/42/20, Jahre
+2000/20.000/100.000): ein Distributär, keine Sandinsel.
+
+Pass-Bilanz um die größte Mündung (Seed 1337, Jahr 20.000, 10 × 100 Jahre,
+Σ Δh in Zellen·Höhe je 1000 Jahre, Integrationsstand):
+
+| Pass | Einzugsgebiet (21.586 Zellen) | Meer in 25 Zellen um die Mündung |
+| --- | ---: | ---: |
+| `outletIncision` | −7,90 | −0,002 |
+| `belt.stamp` / `belt.fixedStamp` | −7,55 / −7,35 | +0,07 / +0,04 |
+| `Hydraulic.erode` | −0,20 | −0,10 |
+| `braidPass` | −0,03 | −0,001 |
+| `wavePass` | −0,01 | +0,18 (vom Land der Zone) |
+
+Fluvial kommt im Meer vor der Mündung praktisch nichts an. Inselweit trägt
+`outletIncision` 75,5 je 1000 Jahre ab; davon liegt danach nichts mehr
+irgendwo.
+
+### Ursache
+
+1. **Die Fracht kommt nicht an.** Die fluviale Erosion der Produktion ist
+   detachment-begrenzt: was `outletIncision` und `channelCarve` abtragen,
+   ist danach weg (AGENTS.md: Masse-Erhaltung gilt nicht). Die Tropfen
+   tragen nur ihre eigene, kleine Fracht und laden sie am Eintritt in Wasser
+   über `poolDepth` (0,03) ab, gedämpft auf den großen Läufen; `braidPass`
+   exportiert, was eine Meereszelle erreicht.
+2. **Im Meer gibt es keine Strömung.** Meer ist Senke (`hf ≤ sea`), D8 und
+   MFD enden an der Küste. Die Verzweigung um eine Mündungsbarre, die echte
+   Distributäre erzeugt, kann die Sim nicht aus dem Abfluss ableiten — auch
+   dann nicht, wenn Fracht ankommt (s. „Ebene" unter Verworfen).
+
+### Lösung
+
+**Fracht.** Was `outletIncision` und `channelCarve` in einem Schritt
+abtragen, als Höhensumme davor minus danach (`deltaHeightSum`, 64 feste
+Blöcke, bit-gleich), je Landzelle gemittelt; jede Mündung ab
+`deltaMinCells` (4000) Zellen bekommt davon Einzugsgebiet × mittleren
+Abtrag, `deltaTrapFraction` (1,0) bleibt liegen. Die erste Fassung summierte
+den Abtrag je Zelle entlang D8 bis zur Mündung (ein See hielt seinen Anteil
+fest). Das kostete gemessen 1,3–1,5 ms je Schritt, auch in der Braid-Schleife
+mitgeführt (`braidPass` 2,2 → 3,6–4,1 ms, drei verstreute Zugriffe je
+Landzelle), bei einem Ziel von 0,5 ms für das ganze Delta. Verloren gehen
+damit Relief und Klima des einzelnen Einzugsgebiets und der Rückhalt in
+Seen; die Summe über alle Mündungen bleibt unter dem Abtrag der Insel.
+`deltaMinCells` 4000 statt 2000: kleinere Läufe setzten Barren-Sprenkel vor
+die Küste, und der Pass kostete 0,60 statt 0,50 ms.
+
+**Ablagerung: ein Baum aus Mündungsbarren.** Der Fluss behält an der
+Mündung seinen Strahl, legt einige Rinnenbreiten voraus eine Barre ab und
+teilt sich um sie (Wright 1977; Edmonds & Slingerland 2007, JGR 112). Die
+Sim rechnet kein Wasser im Meer, deshalb steht das als Ablage-Regel:
+
+- Rinnenbreite b aus dem Abfluss (`WaterRender.ribbonHalfWidthCells`, die
+  Kurve von Band und Gürtel), Barre `deltaBarDistanceWidths` (2) · b voraus.
+- Barre als Tropfen: Radius `deltaBarRadiusWidths` (0,9) · b quer und
+  stromauf, stromab `deltaBarElongation` (2)-fach gestreckt, Umriss mit 2.
+  und 3. Harmonischer gebrochen; Scheitel `deltaTopset` (0,0015) über dem
+  Meer, Fuß beim doppelten Radius gleich tief darunter.
+- Ist eine Barre voll, teilt sich der Rest nach Abflussanteil auf zwei
+  Töchter: Anteil ½ ± `deltaJitter`/2, der stärkere Ast läuft gerader,
+  Winkel um ±`deltaBifurcationAngle`/2 (≈ 34°, Coffey & Shaw 2017), Breite
+  b·√Anteil — bis `deltaGenerations` (3) oder bis eine Tochter schmaler als
+  `deltaMinHalfWidth` (1,2 Zellen) würde. Abstände, Winkel und Umriss
+  schwanken um `deltaJitter` (0,3), Rauschen am 8×8-Block der Mündung.
+- Vor jeder Barre die Uferwälle der Rinne, von der Wurzel seewärts.
+- Richtung: Lauf (8 Zellen stromauf) und Küstennormale (Meeresschwerpunkt
+  im Fenster ±8, eigenes Delta-Land zählt als Meer) zu gleichen Teilen. Die
+  Mündung wandert je 1000 Jahre bei der Hälfte bis zwei Dritteln der großen
+  Mündungen um 0–2 Zellen, beim Rest um 5–72 (Seed 1337, Jahr 11.000 bis
+  20.000, je Schritt); allein nach dem D8-Lauf pflanzte jeder Schritt einen
+  anders gedrehten Baum.
+- Gefüllt wird bis zur Ziel-Oberfläche auch über eigener Schüttung, die
+  schon Land ist, und abgeschnürte Rinnen und Lagunen im Bereich des Baums
+  verlanden zuerst (bis 0,3 Scheitel). Rinnen, die zum Meer offen sind,
+  bleiben frei: das sind die Distributäre.
+
+dt: die Fracht ist ∝ dt, die Oberflächen sind feste Obergrenzen, die
+Reihenfolge ist fest (Wurzel, Töchter Generation für Generation, je Barre
+nach Abstand): viele kleine Schritte laufen gegen dieselbe Form wie ein
+großer (Wächter `testSameLoadInFewerStepsBuildsTheSameDelta`, ±2 %).
+
+### Kennzahl
+
+`DeltaMetrics.shape`: Sandinsel = Land in 45 Zellen um die Mündung ohne
+Landverbindung nach außen, ab 6 Zellen. Distributäre = 1 + größte Zahl von
+Inseln, die ein Bogen um die Mündung (seewärts ±100°) quert. Sand = Anteil
+der Inselzellen, die `TerrainColorRenderer` hell malt (A-Kanal ≥ 0,5).
+Lagune = Zellen unter dem Meeresspiegel ohne Verbindung zum Meer in den
+Zonen der großen Mündungen.
+
+Gemessen auf dem Integrationsstand `3bc20cc` (der Stand danach, `3def64f`,
+ist bit-gleich: Perf-Runde 5, Fingerprints mit Delta unverändert; die
+Tabellen davor auf `6a0dfde` sahen ebenso aus, dort fehlte nur Seed 42 im
+Jahr 2000 bei Schrittweite 100). Schrittweite 1000 Jahre (wie `RS_STEP`):
+
+| Seed | Jahr | bestes Delta: Abfluss | Arme | Inseln / Zellen | Sand | Mündungen mit ≥ 3 Armen + Insel | Lagune |
+| --- | --- | ---: | ---: | --- | ---: | --- | ---: |
+| 1337 | 2000 | 10.309 | 4 | 2 / 122 | 99 % | 5 von 13 | 0 |
+| 1337 | 20.000 | 22.123 | 3 | 2 / 71 | 100 % | 3 von 9 | 105 |
+| 1337 | 100.000 | 5497 | 5 | 2 / 260 | 82 % | 7 von 13 | 2 |
+| 42 | 2000 | 31.123 | 2 | 1 / 66 | 100 % | **0 von 6** | 0 |
+| 42 | 20.000 | 10.725 | 3 | 1 / 90 | 91 % | 5 von 7 | 0 |
+| 42 | 100.000 | 9915 | 3 | 2 / 48 | 100 % | 1 von 6 | 1 |
+| 20 | 2000 | 11.465 | 3 | 1 / 60 | 100 % | 1 von 6 | 0 |
+| 20 | 20.000 | 7192 | 3 | 2 / 106 | 92 % | 1 von 9 | 1 |
+| 20 | 100.000 | 15.092 | 4 | 1 / 108 | 92 % | 4 von 10 | 2 |
+
+Schrittweite 100 Jahre (dieselben Welten, chaotisch auseinandergelaufen):
+
+| Seed | Jahr | bestes Delta: Abfluss | Arme | Inseln / Zellen | Sand | Mündungen mit ≥ 3 Armen + Insel | Lagune |
+| --- | --- | ---: | ---: | --- | ---: | --- | ---: |
+| 1337 | 2000 | 14.770 | 5 | 1 / 49 | 100 % | 4 von 10 | 0 |
+| 1337 | 20.000 | 24.727 | 3 | 1 / 119 | 47 % | 1 von 12 | 1 |
+| 1337 | 100.000 | 6582 | 3 | 2 / 83 | 98 % | 6 von 14 | 10 |
+| 42 | 2000 | 12.076 | 3 | 1 / 129 | 78 % | 2 von 7 | 0 |
+| 42 | 20.000 | 7652 | 3 | 1 / 121 | 88 % | 3 von 7 | 0 |
+| 42 | 100.000 | 5614 | 3 | 1 / 63 | 100 % | 2 von 8 | 0 |
+| 20 | 2000 | 11.792 | 3 | 1 / 128 | 78 % | 3 von 6 | 0 |
+| 20 | 20.000 | 8469 | 4 | 1 / 27 | 100 % | 3 von 9 | 0 |
+| 20 | 100.000 | 6295 | 4 | 2 / 90 | 100 % | 4 von 7 | 0 |
+
+Ohne Pass (`RS_DELTA=off`, Schrittweite 1000) an allen neun Welten
+1 Distributär, keine Insel, 0 Deltas, Lagune 0. Punkt 26 ist bei
+Schrittweite 100 auf allen drei Seeds in allen drei Jahren erfüllt, bei
+Schrittweite 1000 auf allen außer Seed 42 im Jahr 2000 (bestes: 2 Arme, eine
+Insel von 66 Zellen) — also in jedem Jahr auf mindestens zwei Seeds. Die
+Inseln sind größer als in der ersten Fassung (bestes Delta 27–260 statt
+13–145 Zellen, meist 60–130), größere tragen Bewuchs mit Sandrand (Sand
+47–100 % statt immer 100 %).
+
+Lagunen entstehen innerhalb eines großen Schritts (Barren und Wälle
+schnüren eine Rinne ab) und verlanden im nächsten: inselweit gezählt
+(Seed 1337 ab Jahr 20.000, auf `6a0dfde`) je 1000 Jahre 58, 0, 62, 44, 1, 10,
+13 Zellen, je 100 Jahre 58, 0, 0, 0, 1, 1, 2. Das Raster malt sie nicht mehr
+als See, solange ihr Spiegel nahe am Meer liegt (§ Render, Lagunen).
+
+### Verworfen
+
+Kennzahl je Variante: große Mündungen mit ≥ 3 Distributären und Sandinsel,
+Seeds 1337 / 20 / 42, Jahre 2000 / 20.000 / 100.000. Die oberen Zeilen
+stammen von der ersten Fassung (Stand `0fec08b` vor #187 bzw.
+Integrationsstand `e2574d1`), die unteren aus dieser Runde (Integrationsstand
+`6a0dfde`, nur Jahr 20.000, Seeds 1337 / 42 / 20).
+
+| Variante | 1337 | 20 | 42 | Befund |
+| --- | --- | --- | --- | --- |
+| Ebene: Fracht vom Mündungspunkt aus nach Abstand bis `sea + 0,0015 − 0,0002·d` | — | — | — | Küstenebene bis 34 Zellen vorgebaut (Seed 1337, Jahr 100.000), ein einziger Lauf darüber, kein Arm |
+| Barren-Baum ohne Uferwälle, trap 0,5, dist 3, rad 1 | — | — | — | Inseln als lose Untiefen vor der Küste, ohne Rinne zur Mündung |
+| Barren-Baum mit Wällen, trap 0,5, dist 3, rad 1 | 1/0/4 | 0/0/2 | 0/0/1 | Barren in ~0,05 Tiefe, tauchen selten auf |
+| dto., dist 2, rad 0,75 | 3/3/6 | 0/2/3 | 0/2/2 | Seed 20 und 42 bis Jahr 2000 ohne Delta |
+| trap 1,0, dist 2, rad 0,75, Mündungen ab 320 Zellen | 5/3/3 | 3/4/3 | 1/4/3 | Barren-Sprenkel auch vor Bächen |
+| dto. plus Erosionsbasis `sea − 0,002` an der Mündung | 9/2/5 | 1/0/3 | 2/1/0 | Seed 20 bei Jahr 20.000 ohne Delta; brach drei Wächter (Generierung) |
+| erste Fassung: trap 1,0, dist 2, rad 0,75, Kreisbarren, 2 Generationen, Mündungen ab 2000 | 6/4/10 | 2/1/5 | 1/4/1 | Inseln 13–145 Zellen, alle Sand; Kosten s. unten |
+
+| Variante (Jahr 20.000) | 1337 | 42 | 20 | Befund |
+| --- | --- | --- | --- | --- |
+| Hüllkurven-Fächer: Rinnen als Strecken, um jede ein Ablagerungsgürtel, Rinnen bis `sea − 0,002` aufgefüllt, Front davor | 0 von 13 | — | — | eine Ebene ohne Insel: Wellen und Diffusion schütten die seichten Rinnen zu, der Lauf verlängert sich darüber |
+| dto. plus Rinnen-Spülung (Rinnen je Schritt aufs Bett ausgeräumt) | 1 von 11 | — | — | die Mündung wandert, jeder Schritt spült einen anderen Baum frei: ein Kamm gerader Rinnen durch alte Lappen |
+| dto. kompakt (kurze Wurzel, schmale Gürtel), über eigene Inseln weiter | 10 von 15 | 0 von 7 | 2 von 7 | geradkantige Inseln in einer ausgespülten Lagune; im Bild kein Delta |
+| Barren-Baum mit D8-Fracht, Tropfen 1,5, rad 0,75 | 4 von 11 | 3 von 7 | 2 von 7 | Inseln klein, fast nur Sand |
+| dto., rad 0,9 | 4 von 10 | 2 von 7 | 2 von 6 | |
+| dto., Tropfen 2 | 2 von 10 | 4 von 7 | 4 von 6 | |
+| dto., rad 0,9 und Tropfen 2 | 3 von 11 | 4 von 8 | 3 von 8 | Inseln 95–162 Zellen mit Bewuchs: übernommen |
+| Gezeitendurchbruch (Rinne durch niedrige Sandschwellen nach den Wellen) | Lagune 56 statt 6 | 0 / 0 | 0 / 0 | je eine Realisierung, kein Nutzen messbar; ersetzt durch Verlandung der abgeschnürten Lagunen im Baum |
+| D8-Summe der Fracht in der Braid-Schleife | | | | `braidPass` +1,3–1,5 ms; ersetzt durch Einzugsgebiet × mittleren Abtrag |
+
+„—" = vor der Kennzahl gemessen bzw. nicht gerechnet. Die Ebene und der
+Hüllkurven-Fächer sind dieselbe Lehre: Fracht allein macht kein Delta, und
+seichte Rinnen hält in dieser Sim nichts offen. Die Barren-Rinnen bleiben
+offen, weil sie nie aufgefüllt werden (Schelftiefe), und Inseln entstehen
+dort, wo die Barren aus dem Wasser ragen. Die Erosionsbasis am
+Meeresspiegel statt am Meeresboden (`outletIncision`) war physikalisch
+begründet, änderte aber schon die Generierung (Breach) und kippte
+`testFlattenDropsOldMeanderState`, `testMaskIncludesVisibleRasterLakes` und
+`testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater`, ohne die Deltas
+zu verbessern — nicht übernommen.
+
+### Render: Küste und Mündung
+
+**Grauer Küstenstreifen.** Der Terrain-Shader malte jede Zelle bis
+`sea + 0,012` nur in der Makrofarbe, ohne Material (die CPU-Seite war in
+#174 C schon auf die Wasserlinie umgestellt). Auf flachen Küsten lag damit
+ein grauer Streifen ohne Bewuchs und Sand, 10–40 Zellen breit, und die
+Delta-Inseln (Scheitel 0,0015) hatten nie Bewuchs. Jetzt endet die Ausnahme
+an der Wasserlinie (`hval <= sea_level`).
+
+**Flüsse erreichen das Meer nicht** (Befund aus der Bildrunde auf
+`6a0dfde`). Gemessen an Seed 1337, Jahr 20.000, je D8-Mündungskette und
+Band-Stützpunkt:
+
+- Kein Strandwall: die Höhe fällt an fünf von sechs großen Mündungen
+  gleichmäßig bis ans Meer (z. B. 617/395: +0,0058, +0,0046, +0,0037,
+  +0,0023, +0,0012, +0,0003, dann −0,0003); an einer lag eine Schwelle von
+  +0,0009 vor einer Senke.
+- Meereszellen haben keinen D8-Empfänger: die Mündungskette
+  (`mouthPath`) endete an der ersten Meereszelle. See-Übergabe (2 Zellen),
+  ihr Minimum-Filter und der Enden-Taper lagen damit auf dem Strand: die
+  Deckkraft fiel auf den letzten 1,5 Zellen vor der Wasserlinie von 1 auf
+  0,3–0,6.
+- Die D8-Kette setzte am Ende der Gürtel-Linie unter 30–80° an; am Knick
+  verengte der Krümmungs-Deckel das Band auf 0,2–1,9 statt 3,2 Halbbreiten
+  (die dunkle Spitze), über `ribbonMaxHalfWidthSlope` zwei bis drei Zellen
+  stromauf nachgezogen.
+- Der Strandsaum lag über dem Gerinne: Sand-Byte 255 auf den letzten zwei
+  bis vier Landzellen jeder großen Mündung.
+
+Behoben: die Mündung läuft geradeaus entlang der Laufrichtung, bis zu
+`mouthRayLandCells` (3) Zellen über Land, dann `mouthSeaCells` (5) Zellen
+ins Meer (sonst die D8-Kette, ebenfalls bis 5 Zellen ins Meer, dreifach
+geglättet); eine Gürtel-Linie, die selbst ins Meer läuft, endet an der
+Wasserlinie. Die See-Übergabe blendet erst zwischen 2 und 4 Zellen unter
+Wasser aus, der Taper liegt nur noch auf dem Stück im Meer; unter der
+opaken Ozean-Ebene ist das Band dort unsichtbar. Der Knick wird über
+`mouthJunctionSmoothSamples` (10) Stützpunkte geglättet. `mouthSearchCells`
+16 statt 8: über eine junge Deltaebene läuft ein Fluss weiter als 8 Zellen
+bis zum Meer, dort lief das Band sonst spitz aus und das D8-Raster malte
+den Rest als breite dunkle Flecken. Jenseits der Wasserlinie liegt die
+Mündung unter der Ozean-Ebene, sobald die gerenderte Oberfläche unter dem
+Meer liegt (wie die Delta-Arme); mit dem Gelände-Maximum, das an
+Uferlinien Querstreifen verhindert, stand sie sonst als dunkler Keil über
+dem Meer (Seed 20, Mündung 358/641). `CoastMaterial.clearRiverBeds` nimmt
+den Strand auf 8 Zellen stromauf in der Band-Halbbreite vom Gerinne.
+
+Wächter `testRiverBandsReachTheSeaAtFullWidthAndOpacity` (Produktionswelt
+Seed 1337, Jahr 1000; je Fluss-Band, das ins Meer läuft, Deckkraft und
+Halbbreite an der letzten Landstelle gegen die zehn Stützpunkte davor):
+auf `6a0dfde` ohne den Fix 15 von 15 Mündungen nicht voll an der
+Wasserlinie (Deckkraft 0,07–0,59), 4 spitz (Halbbreite < ¼); mit dem Fix
+2 von 15 (eine echte Biegung an der Wasserlinie, ein Band unter einem früher
+gebauten), 0 spitz; auf `3bc20cc` 1 von 12, 0 spitz. Dazu
+`testSeaMouthRunsStraightUnderTheSeaPlane` und
+`testBeachIsClearedOverTheRiverBedAtTheMouth`.
+
+**Sand-Rauten.** Der Strandsaum entstand per Breitensuche im
+Chebyshev-Abstand: quadratische Ausläufer, die bilinear gefiltert als Rauten
+und Treppen im Sand standen, obwohl das Gelände darunter glatt war. Jetzt
+Vereinigung kreisförmiger Säume je Küstenpunkt (`beachReach`), und der
+Sand-Kanal läuft durch einen 3×3-Binomialfilter nur über Land
+(`TerrainColorRenderer.softenSand`): die Kante ist zwei Zellen weich, Strand
+und junge Gleithang-Bank zeigen keine Zellraster-Kanten mehr. Delta-Inseln
+und angeschlossene Deltaebenen (flach, dicke frische Schüttung) tragen einen
+Sandrand von `deltaIslandBeachCells` (2,6) Zellen, dahinter Bewuchs; dicke
+Sedimentkörper werden nie Felsküste.
+
+**Felsküste auf flacher Terrasse** (Befund Seed 42, Südküste). Den
+Steilküsten-Anteil eines Küstenpunkts bestimmte das Rückland-Relief im
+Radius 8: eine flache Uferterrasse vor einem Berg wurde ganz Fels, als
+dunkles Geröll auf ebenem Boden. Jetzt die Kliffhöhe im Radius 3
+(`cliffRiseLo/Hi` 0,012…0,024, gemessen p75–p90 der Küstenpunkte), und Fels
+aus diesem Anteil nur auf der Kliffwand selbst (eigene Makro-Steigung über
+`cliffFaceSlopeLo/Hi` 0,0024…0,0036: der ganze Saum liegt bei p50
+0,0011–0,0023, der Saum unter einem Kliff bei p50 0,0029–0,0033). Felszellen
+(≥ 0,5) im Saum bis 3 Zellen, Jahr 20.000, Seeds 1337/42/20 (auf
+`6a0dfde`, die Welten vorher und nachher verschieden): vorher 668/735/1729,
+davon 369/235/445 auf Boden flacher als 0,003; nachher 210/480/1334, davon 0. Wächter
+`testFlatTerraceBelowAMountainIsNoRockCoast` (vorher rot). Offen bleibt das
+Felsband aus dem Materialmodell (#174 D, Weltsteigung ≥ 1,5 auf konvexen
+Stufen): an der Südküste von Seed 42 steht die Küstenstufe so steil, das
+Band ist heller als vorher, aber da (Bogen unten).
+
+**Brandung.** `oceanSurfDepth` 0,02 statt 0,045 (Wassersäule 0,0012 statt
+0,0027): auf den seichten Delta-Flächen lag sonst über die ganze Fläche
+Schaum in Rausch-Flecken. An offener Küste fällt der Grund ohnehin binnen
+einer Zelle durch das Fenster.
+
+**Lagunen.** Abgeschnürtes Wasser mit Boden unter dem Meer und Spiegel
+höchstens `lagoonMaxRise` (0,003) darüber malt das Raster nicht als See
+(`WaterFieldRenderer`): es liegt unter der Ozean-Ebene und ist Meerwasser im
+Bild.
+
+### Wächter, Gegenproben, Laufzeit
+
+- SimCore-Pflichtsuite (`-c release`, `-swift-version 5`) auf `3bc20cc`:
+  593 Tests, 68 übersprungen (Messläufe), 0 Fehler — darin `DtInvariance`,
+  `RelaxationTests`, `LongRunCollapse`, die Braid- und Playa-Wächter,
+  `FingerprintTests`, `DeltaTests` und die neuen Mündungs- und
+  Küsten-Wächter.
+- Wächter des Passes (`DeltaTests`, Kerbtal-Testwelt):
+  `testMouthBarsBuildIslandsBetweenOpenDistributaries` (≥ 3 Distributäre,
+  Insel ≥ 20 Zellen, nie über dem Scheitel, Mündungsrinne bleibt Wasser),
+  `testZeroTrapFractionLeavesTheTerrainUntouched`,
+  `testSameLoadInFewerStepsBuildsTheSameDelta` (40 × 0,3 gegen 20 × 0,6:
+  gleiche Inselfläche und Ablage ±2 %; rot, solange die Richtung am eigenen
+  Delta-Land hing oder halb gefüllte Zellen nach einem kleinen Schritt
+  stillstanden).
+- Drei Wächter laufen weiter mit `deltaTrapFraction = 0` (Testkonfigs
+  pinnen, was sie nicht prüfen; gemessen mit der ersten Fassung):
+  `TerrainAging.testAgingTrajectoryOver100k`, `testMeanderOxbowSiltsUp`,
+  `testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater`.
+- `generate` setzt die Delta-Arbeitspuffer mit zurück
+  (`testGenerateOnUsedTerrainYieldsFreshWorld` grün);
+  `deltaMouthCells` ist in `StateInventoryTests` als Arbeitspuffer
+  einsortiert.
+- Godot-Vertrag (Extension lokal gebaut, `build-stamp --check` grün):
+  `smoke.gd`, `water_geometry.gd` (16 Mündungen im Wasser, 0 mit Spalt),
+  `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`,
+  `build_stamp_parity.gd`, `canopy.gd`, `relief.gd`, `lighting.gd`,
+  `ui_layout.gd` mit ihrer Erfolgsmarke. `river_ribbons.gd` war zwischendurch
+  rot: eine Gürtel-Linie, die an der Wasserlinie gekürzt wurde, verlor ihren
+  Strahler-3-Anschluss (der lag im Stück im Meer); gekürzt wird jetzt nur,
+  wenn er auf dem Rest liegt.
+- Determinismus (auf `3bc20cc`): `simperf --hash` zweimal
+  `08d32575d5cd353a` (Seed 1337), zweimal `0fd978609f8cc241` (Seed 42);
+  Integration `6ffeb97d52f8e8d9` / `9f0fb0e9ad4d8493` — die Physik ändert
+  sich gewollt.
+- Laufzeit, `simperf --repeat 1` (30 Schritte à 100 Jahre nach 10.000 Jahren
+  Einlauf), Integration und Delta abwechselnd, Reihenfolge je Runde
+  getauscht, M4 Max unter Fremdlast:
+  - auf `6a0dfde`, 8 Runden (Lastmittel ~10): Integration 76,6 / 80,3 /
+    65,1 / 63,0 / 59,9 / 62,0 / 59,8 / 59,6 ms je Schritt (Median 62,5),
+    Delta 65,9 / 70,2 / 73,3 / 65,0 / 65,8 / 63,4 / 64,3 / 63,5 (Median
+    65,4); Median der Rundendifferenzen **+2,95 ms**.
+  - auf `3bc20cc`, 16 Runden (Lastmittel 15–17, stark verrauscht):
+    Integration 72,5 / 72,9 / 71,7 / 78,6 / 69,7 / 77,8 / 80,2 / 72,7 /
+    85,3 / 84,8 / 91,5 / 67,6 / 90,3 / 69,5 / 68,9 / 78,3 (Median 75,4),
+    Delta 79,1 / 79,1 / 81,1 / 82,8 / 84,3 / 77,6 / 73,5 / 75,4 / 88,9 /
+    89,6 / 81,7 / 73,4 / 62,9 / 71,2 / 75,9 / 73,9 (Median 78,4); Median der
+    Rundendifferenzen +3,9 ms.
+
+  Die beiden Pässe selbst: `deltaDeposit` 0,48–0,70 ms, `deltaYield`
+  (Höhensummen und Mündungssuche, 64 parallele Blöcke) 0,16–0,20 ms bei
+  Lastmittel ~10, unter Lastmittel 16 bis 1,3 ms — zusammen ~0,7 ms, das Ziel
+  0,5 ms ist damit nicht erreicht. Der Rest ist die andere Welt: im
+  Messfenster mehr Mäander-Knoten und Altarme (`6a0dfde`: 11.820 statt 11.596
+  bzw. 226 statt 191, Mediane aus je 4 Läufen, `belt.stamp`/`belt.migrate`
+  +2,1 ms; `3bc20cc`: 11.707 statt 11.437 bzw. 208 statt 203). Die erste
+  Fassung lag bei +3,0 ms, davon 1,7–1,9 ms in den Pässen.
+
+### Bögen
+
+Maximiert auf dem eingebauten Bildschirm (3456 × 2104, `--screen 1`), Jahr
+20.000, `RS_STEP=20000`, Stand `3bc20cc` + Delta,
+`docs/screenshots/zielbild-174/`:
+
+| Bild | Welt, Kamera |
+| --- | --- |
+| `delta_seed1337_nah.jpg` | Seed 1337, `RS_TARGET="40.91,9.07" RS_DIST=10 RS_PITCH=1.2` (Mündung 621/418, Delta-Lappen mit Lagune) |
+| `delta_seed1337_nah-2.jpg` | Seed 1337, `RS_TARGET="-46.38,15.57" RS_DIST=10 RS_PITCH=1.2` (63/459) |
+| `delta_seed1337_close.jpg` | Seed 1337, `RS_CAMERA=close` |
+| `delta_seed1337_valley.jpg` | Seed 1337, `RS_CAMERA=valley` |
+| `delta_seed42_nah.jpg` | Seed 42, `RS_TARGET="-11.97,22.29" RS_DIST=10 RS_PITCH=1.2` (283/502) |
+| `delta_seed20_nah.jpg` | Seed 20, `RS_TARGET="-13.53,-17.60" RS_DIST=10 RS_PITCH=1.2` (273/247) |
+| `delta_muendung_vorher-nachher.jpg` | Seed 1337 (oben) und 42 (unten), `RS_CAMERA=close`: links `6a0dfde`, rechts jetzt (Ausschnitte; die Welten unterscheiden sich, weil das Delta die Physik ändert) |
+| `delta_felskueste_seed42_vorher-nachher.jpg` | Seed 42, `RS_CAMERA=diorama`, Südküste: oben `6a0dfde`, unten jetzt |
+
+Selbst angesehen: die Flüsse laufen voll breit bis an die Wasserlinie, ohne
+Sand über dem Gerinne; vor den großen Mündungen liegen tropfenförmige
+Barren-Inseln mit Sandrand, größere mit Bewuchs in der Mitte, dazwischen
+türkise Meerwasser-Rinnen; auf Seed 1337 ein Delta-Lappen mit Inseln und
+Rinnen. Keine Rauten und Treppen im Sand, kein grauer Küstenstreifen, keine
+Geröll-Fläche auf flachen Terrassen. Ehrliche Grenzen:
+
+- Ein vielarmiger, gelappter Vogelfuß wie in Vorlage B ist es nicht. Die
+  Deltas bleiben klein (bestes je Welt 27–260 Inselzellen ≈ 0,007–0,06 km²),
+  weil die Mündungen wandern (s. Lösung) und jeder Lappen jung ist; alte
+  Lappen tragen die Wellen ab.
+- Inseln, die an einer Rinne liegen, haben dort gerade Kanten (die Rinnen
+  sind gerade Strecken); im Meer vor alten Mündungen stehen einzelne
+  Barren-Inseln ohne Lauf dahinter.
+- Neben einigen Mündungen malt das D8-Raster einen dunklen Wasserfleck (ein
+  zweiter D8-Abfluss über die Deltaebene ohne Band), und quert ein Fluss eine
+  Lagune, liegt sein Band über der Schwelle als gerader dunkler Streifen
+  (Seed 1337, `delta_seed1337_nah.jpg`). Seichte Lagunen und Delta-Flächen
+  tragen stellenweise noch Brandungsschaum. Biegt ein Lauf direkt an der Wasserlinie, verengt der
+  Krümmungs-Deckel das Band dort zackig (Seed 20); im Wächter 2 von 15
+  Mündungen, keine läuft spitz aus.
+- An steilen Küstenstufen bleibt das Felsband des Materialmodells (#174 D).

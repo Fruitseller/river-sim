@@ -47,8 +47,16 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   damit entfernt (`docs/graphics-quality.md` § Material, Schnee, Wolken).
   Status in #174: Großform (A) und Mäandergürtel (B) sind kalibriert und
   abgenommen (s. eigene Punkte oben und Offene Punkte), Paket C hat
-  Restpunkte (Delta-Distributäre, Stream-Map im Oberlauf), offen ist die
-  Abnahme am Bild durch den Projekteigner (E).
+  Restpunkte (Stream-Map im Oberlauf), offen ist die Abnahme am Bild durch
+  den Projekteigner (E). Deltas (Punkt 26) baut seit `Terrain.deltaDeposit`
+  die Sim: der Abtrag der Stream-Power-Inzision landet als Baum aus
+  tropfenförmigen Mündungsbarren vor der Mündung, Inseln mit Sandrand und
+  Bewuchs zwischen Meerwasser-Rinnen; Flüsse laufen voll bis unter die
+  Wasserlinie, ohne Sand über dem Gerinne (`docs/zielbild-measurements.md`
+  § Delta). Offen: die Deltas bleiben kleiner als in Vorlage B (die
+  Mündungen wandern je 1000 Jahre bei einem Drittel der großen Flüsse um
+  10–50 Zellen, jeder Lappen ist jung), und an steilen Küstenstufen trägt das
+  Materialmodell (#174 D) weiter ein Felsband.
 
 - **Bedienung nach Vorlage B/C (#174, Paket E):** Glas-Panels aus EINEM Theme
   (`game/ui/glass_theme.tres`), vier Randspalten (Titel/Jahr/Tempo und
@@ -249,8 +257,9 @@ Schlinge“ nur am Gerinne, Rippen nur im Bewuchs), Altarm-Verlandung als Ried u
 Vegetationsbogen, Tiefenfarbe im Band nach Querprofil (UV2.y), Abfluss-
 Vertrauen gegen den abreißenden Hauptlauf. Offen: die Stream-Map trackt die
 großen Läufe der neuen Großform kaum (Rest-Lücken im Oberlauf), Hauptlauf am
-Breiten-Deckel (Anheben = Physik, Paket B), Delta-Distributäre brauchen die
-Sim. Messreihe: `docs/river-belt-render-measurements.md`.
+Breiten-Deckel (Anheben = Physik, Paket B). Die Delta-Distributäre liefert
+inzwischen die Sim (`deltaDeposit`, s. oben). Messreihe:
+`docs/river-belt-render-measurements.md`.
 
 **Zielbild #174, Pakete B–E (ursprünglicher Befund).** Ist-Messung vor B in
 `docs/zielbild-measurements.md`: die Mäander-Sinuosität kommt aus Zacken in

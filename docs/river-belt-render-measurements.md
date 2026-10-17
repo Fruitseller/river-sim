@@ -209,7 +209,10 @@ Sedimentfahne aus Paket C Teil 1 (PR #178). Mehrere Distributäre mit
 Sandinseln dazwischen müsste die Sim liefern (Verzweigung des Laufs auf dem
 Ablagerungskörper); die Bänke aus B liegen an Gleithängen, nicht auf dem
 Delta. Mit Render allein erfunden wären es Wasserläufe ohne Wasser in der
-Sim. Offen.
+Sim. Gelöst in der Sim (`Terrain.deltaDeposit`): Befund, Ursache, Lösung und
+Kennzahl in `docs/zielbild-measurements.md` § Delta (Abnahmepunkt 26). Die
+Band-Arme bleiben unter der Meeresebene; die Distributäre malt jetzt die
+Meeresebene selbst, weil sie echtes Meerwasser zwischen Sandinseln sind.
 
 ## E. Kosten
 
