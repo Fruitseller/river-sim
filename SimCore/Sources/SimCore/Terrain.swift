@@ -4507,19 +4507,27 @@ public final class Terrain {
     /// Sediment, sodass D8 nicht mehr hindurchroutet und die eingetiefte Schleife
     /// über den bestehenden `hf>h`-Mechanismus zum Altarm-See wird.
     private func plugOxbows() {
-        plugOxbows(indices: meander.oxbows.indices.filter { meander.oxbowAge[$0] == 0 })
+        withBed { bed in
+            plugOxbows(indices: meander.oxbows.indices.filter { meander.oxbowAge[$0] == 0 }, bed: bed)
+        }
     }
 
     /// Verkorkt die Altarme ab Index `from` — der Gürtel erkennt neue Altarme
     /// am Index, nicht am Alter 0: sie tragen seit #187 ihr Alter am Schrittende.
     private func plugOxbows(from: Int) {
         guard from < meander.oxbows.count else { return }
-        plugOxbows(indices: Array(from..<meander.oxbows.count))
+        withBed { bed in
+            plugOxbows(indices: Array(from..<meander.oxbows.count), bed: bed)
+        }
     }
 
-    private func plugOxbows(indices: [Int]) {
+    private func plugOxbows(from: Int, bed: Bed) {
+        guard from < meander.oxbows.count else { return }
+        plugOxbows(indices: Array(from..<meander.oxbows.count), bed: bed)
+    }
+
+    private func plugOxbows(indices: [Int], bed: Bed) {
         let nn = n
-        withBed { bed in
         let ph = bed.h
         for oi in indices {
             let loop = meander.oxbows[oi]
@@ -4535,7 +4543,6 @@ public final class Terrain {
                 lip = max(lip, ph[k - nn]); lip = max(lip, ph[k + nn])
                 depositCell(k, max(0, lip - ph[k]), bed)
             }
-        }
         }
     }
 
@@ -4626,36 +4633,47 @@ public final class Terrain {
         }
         var maxSubUsed = 0
         let mobile = meander.channels.indices.filter { MeanderState.migrates(meander.channels[$0], cfg) }
-        for ci in mobile {
-            mark("belt.migrate")
-            let rate = h.withUnsafeBufferPointer { hb in
-                let ph = hb.baseAddress!
-                return meander.beltMaxRate(channel: ci, config: cfg,
-                                           heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
-            }
-            let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
-            maxSubUsed = max(maxSubUsed, nsub)
-            let sub = dt / Double(nsub)
-            for si in 0..<nsub {
+        hf.withUnsafeBufferPointer { hfb in
+        underIce.withUnsafeBufferPointer { uib in
+        veg.withUnsafeMutableBufferPointer { vb in
+        isChannel.withUnsafeMutableBufferPointer { icb in
+        inBelt.withUnsafeMutableBufferPointer { ibb in
+        barAge.withUnsafeMutableBufferPointer { bab in
+        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
+        withBed { bed in
+            let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
+            let pbelt = ibb.baseAddress!, page = bab.baseAddress!
+            let plock = glb.baseAddress, lockHere = coupled && glb.count == cfg.count
+            let pice = uib.baseAddress, iceOn = uib.count == cfg.count
+            for ci in mobile {
                 mark("belt.migrate")
-                let ageAtEnd = dt - Double(si + 1) * sub
-                let ox0 = meander.oxbows.count
-                h.withUnsafeBufferPointer { hb in
-                    let ph = hb.baseAddress!
+                let rate = meander.beltMaxRate(channel: ci, config: cfg,
+                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+                let nsub = max(1, min(maxSub, Int((rate * dt / (0.5 * cfg.meanderNodeSpacing)).rounded(.up))))
+                maxSubUsed = max(maxSubUsed, nsub)
+                let sub = dt / Double(nsub)
+                for si in 0..<nsub {
+                    mark("belt.migrate")
+                    let ageAtEnd = dt - Double(si + 1) * sub
+                    let ox0 = meander.oxbows.count
                     meander.migrateBeltChannel(ci, dt: sub, time: years + Double(si) * sub, config: cfg,
-                                               heightAt: { Terrain.bilinear(ph, nn, $0.x, $0.z) })
+                                               heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+                    for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
+                    meander.channels[ci].clampToWorld(maxCoord: maxc)
+                    if !coupled {
+                        mark("belt.discharge")
+                        refreshBeltDischarge(only: ci)
+                    }
+                    mark("belt.stamp")
+                    stampSingleChannel(
+                        ch: meander.channels[ci], part: 1, dt: sub, ageAtEnd: ageAtEnd,
+                        bed: bed, phf: phf, pveg: pveg, pchan: pchan, pbelt: pbelt, page: page,
+                        plock: plock, lockHere: lockHere, pice: pice, iceOn: iceOn
+                    )
+                    plugOxbows(from: ox0, bed: bed)
                 }
-                for oi in ox0..<meander.oxbowAge.count { meander.oxbowAge[oi] = ageAtEnd }
-                meander.channels[ci].clampToWorld(maxCoord: maxc)
-                if !coupled {
-                    mark("belt.discharge")
-                    refreshBeltDischarge(only: ci)
-                }
-                mark("belt.stamp")
-                beltStamp(dt: sub, only: ci, ageAtEnd: ageAtEnd)
-                plugOxbows(from: ox0)
             }
-        }
+        }}}}}}}}
         beltSubsteps = maxSubUsed
         mark("belt.attach")
         meander.attachTributaries(config: cfg)
@@ -4708,6 +4726,7 @@ public final class Terrain {
         return dropletGateBuf
     }
     private var dropletGateBuf: [Bool] = []
+    private var beltFloorHBuf: [Double] = []
 
     /// Größte Teilschrittzahl eines Laufs im letzten Gürtel-Schritt (Diagnose).
     public private(set) var beltSubsteps = 1
@@ -4744,9 +4763,23 @@ public final class Terrain {
     ///   weg, Tropfen gesperrt), und ihre Menge hing über `rel` an der
     ///   Schrittweite. Eine bestehende Bank verjüngt sich, wenn die Ablage mehr
     ///   als 0,2 Tiefen Lücke bis zur Oberkante schließt.
-    private func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) {
+    private func stampSingleChannel(
+        ch: RiverChannel,
+        part: Int,
+        dt: Double,
+        ageAtEnd: Double,
+        bed: Bed,
+        phf: UnsafePointer<Double>,
+        pveg: UnsafeMutablePointer<Double>,
+        pchan: UnsafeMutablePointer<Bool>,
+        pbelt: UnsafeMutablePointer<Bool>,
+        page: UnsafeMutablePointer<Double>,
+        plock: UnsafeMutablePointer<Bool>?,
+        lockHere: Bool,
+        pice: UnsafePointer<Bool>?,
+        iceOn: Bool
+    ) {
         let cs = cfg.cellSize
-        guard cs > 0, cs.isFinite else { return }
         let nn = n
         let rel = Terrain.relaxFraction(dt: dt, tau: max(1e-6, cfg.meanderBeltRelaxYears))
         let capF = stepCapFraction(dt)
@@ -4754,48 +4787,56 @@ public final class Terrain {
         let skew = cfg.meanderBeltPoolSkew, gain = cfg.meanderBeltPoolGain
         let barTop = cfg.meanderBarTopDepth, barW = cfg.meanderBarWidths
         let depthK = cfg.meanderBeltDepthPerWidth * cs
-        hf.withUnsafeBufferPointer { hfb in
-        underIce.withUnsafeBufferPointer { uib in
-        veg.withUnsafeMutableBufferPointer { vb in
-        isChannel.withUnsafeMutableBufferPointer { icb in
-        inBelt.withUnsafeMutableBufferPointer { ibb in
-        barAge.withUnsafeMutableBufferPointer { bab in
-        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
-        withBed { bed in
-        let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
-        let pbelt = ibb.baseAddress!, page = bab.baseAddress!
-        let plock = glb.baseAddress, lockHere = cfg.meanderBeltCoupling && only != nil && glb.count == cfg.count
-        let pice = uib.baseAddress
-        let iceOn = uib.count == cfg.count
+        let split = cfg.meanderBeltCoupling
+
         @inline(__always) func cell(_ x: Double, _ z: Double) -> Int {
             min(max(Int(z.rounded()), 0), nn - 1) * nn + min(max(Int(x.rounded()), 0), nn - 1)
         }
         @inline(__always) func blocked(_ k: Int) -> Bool {
             phf[k] - bed.h[k] > 0.02 || (iceOn && pice![k])
         }
-        // Mit Kopplung (#187) stempelt der Teilschritt eines wandernden Laufs
-        // nur dessen FLACHE Knoten (Mobilität > 0); seine steilen Strecken
-        // bekommen wie die festen Läufe einen Linien-Carve über den ganzen
-        // Schritt (`only == nil`). Seit die wandernden Läufe die ganzen Flüsse
-        // von der Quelle bis zur Mündung sind, stempelte jeder Teilschritt
-        // sonst den ganzen Gebirgsabschnitt mit (gemessen belt.stamp 3,8 →
-        // 8,0 ms je Schritt).
-        let split = cfg.meanderBeltCoupling
-        for (ci, ch) in meander.channels.enumerated()
-        where only.map({ $0 == ci }) ?? (split || !MeanderState.migrates(ch, cfg)) {
-            let nodes = ch.nodes, c = nodes.count
-            guard c >= 3 else { continue }
-            // 0: alle Knoten; 1: nur flache (Teilschritt eines wandernden Laufs);
-            // 2: nur steile (wandernder Lauf am Schrittende).
-            let part = !split ? 0 : (only != nil ? 1 : (MeanderState.migrates(ch, cfg) ? 2 : 0))
-            let g = MeanderState.beltGeometry(ch, config: cfg,
-                                              heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
-            let bendCurv = MeanderState.bendCurvature(g, config: cfg)
-            // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten
-            // gemittelt — nur gebraucht, wo ein flacher Knoten in ±2 liegt.
-            var floorH = [Double](repeating: 0, count: c)
+
+        let nodes = ch.nodes, c = nodes.count
+        guard c >= 3 else { return }
+
+        let g = MeanderState.beltGeometry(ch, config: cfg,
+                                          heightAt: { Terrain.bilinear(bed.h, nn, $0.x, $0.z) })
+
+        if part == 2 {
+            // Reiner Steilstrecken-Carve für wandernde Läufe am Schrittende.
+            // bendCurvature und floorH werden hier nicht gebraucht.
+            for i in 1..<(c - 1) {
+                let ck = cell(nodes[i].x, nodes[i].z)
+                if blocked(ck) { continue }
+                if g.mob[i] <= 0 {
+                    let a = nodes[i], bn = nodes[i + 1]
+                    let d = dist(a, bn)
+                    let hbn = Terrain.bilinear(bed.h, nn, bn.x, bn.z)
+                    let ha = Terrain.bilinear(bed.h, nn, a.x, a.z)
+                    let segSlope = d > 1e-6 ? max(0, ha - hbn) / (d * cs) : 0
+                    let qA = 0.5 * (ch.discharge[i] + ch.discharge[i + 1]) * cellArea
+                    let carveRate = cfg.meanderCarve * pow(max(qA, 0), m) * segSlope * dt
+                    let steps = max(1, Int(d.rounded(.up)))
+                    for sIdx in 0...steps {
+                        let t = Double(sIdx) / Double(steps)
+                        let k = cell(a.x + (bn.x - a.x) * t, a.z + (bn.z - a.z) * t)
+                        if blocked(k) { continue }
+                        pchan[k] = true; pveg[k] = 0
+                        _ = erodeCell(k, min(carveRate, max(0, bed.h[k] - hbn) * capF), bed)
+                    }
+                }
+            }
+            return
+        }
+
+        let bendCurv = MeanderState.bendCurvature(g, config: cfg)
+        if beltFloorHBuf.count < c {
+            beltFloorHBuf = [Double](repeating: 0, count: c)
+        }
+        beltFloorHBuf.withUnsafeMutableBufferPointer { fhb in
+            let floorH = fhb.baseAddress!
             for i in 0..<c {
-                if part == 2 { break }
+                floorH[i] = 0
                 if part == 1 || split {
                     var flat = false
                     for j in max(0, i - 2)...min(c - 1, i + 2) where g.mob[j] > 0 { flat = true; break }
@@ -4809,6 +4850,7 @@ public final class Terrain {
                 }
                 floorH[i] = lo
             }
+
             var budget = 0.0
             for i in 1..<(c - 1) {
                 let ck = cell(nodes[i].x, nodes[i].z)
@@ -4835,7 +4877,6 @@ public final class Terrain {
                     budget = 0
                     continue
                 }
-                if part == 2 { budget = 0; continue }
                 var ref = 0.0
                 let lo = max(0, i - 2), hi = min(c - 1, i + 2)
                 for j in lo...hi { ref += floorH[j] }
@@ -4887,6 +4928,43 @@ public final class Terrain {
                 }
             }
         }
+    }
+
+    private func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) {
+        let cs = cfg.cellSize
+        guard cs > 0, cs.isFinite else { return }
+        hf.withUnsafeBufferPointer { hfb in
+        underIce.withUnsafeBufferPointer { uib in
+        veg.withUnsafeMutableBufferPointer { vb in
+        isChannel.withUnsafeMutableBufferPointer { icb in
+        inBelt.withUnsafeMutableBufferPointer { ibb in
+        barAge.withUnsafeMutableBufferPointer { bab in
+        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
+        withBed { bed in
+            let phf = hfb.baseAddress!, pveg = vb.baseAddress!, pchan = icb.baseAddress!
+            let pbelt = ibb.baseAddress!, page = bab.baseAddress!
+            let plock = glb.baseAddress, lockHere = cfg.meanderBeltCoupling && only != nil && glb.count == cfg.count
+            let pice = uib.baseAddress
+            let iceOn = uib.count == cfg.count
+            let split = cfg.meanderBeltCoupling
+
+            if let ci = only {
+                stampSingleChannel(
+                    ch: meander.channels[ci], part: 1, dt: dt, ageAtEnd: ageAtEnd,
+                    bed: bed, phf: phf, pveg: pveg, pchan: pchan, pbelt: pbelt, page: page,
+                    plock: plock, lockHere: lockHere, pice: pice, iceOn: iceOn
+                )
+            } else {
+                for ch in meander.channels
+                where split || !MeanderState.migrates(ch, cfg) {
+                    let part = !split ? 0 : (MeanderState.migrates(ch, cfg) ? 2 : 0)
+                    stampSingleChannel(
+                        ch: ch, part: part, dt: dt, ageAtEnd: ageAtEnd,
+                        bed: bed, phf: phf, pveg: pveg, pchan: pchan, pbelt: pbelt, page: page,
+                        plock: plock, lockHere: lockHere, pice: pice, iceOn: iceOn
+                    )
+                }
+            }
         }}}}}}}}
     }
 
