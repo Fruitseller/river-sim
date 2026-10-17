@@ -147,7 +147,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Boden dazwischen rendert als Wiese. Seit #167 hat die Waldmaske ein
   Gedächtnis in Sim-Jahren: Wald weicht Wasser sofort und wächst über
   `CanopyRender.regrowYears` (800 J.) nach, wandernde Mäander hinterlassen
-  einen offenen Auengürtel statt springender Waldflecken.
+  einen offenen Auengürtel statt springender Waldflecken. Die Dilatation der
+  Ufermaske (`dilateDamped`) läuft verzweigungsfrei im Zell-Inneren
+  (`docs/perf-measurements.md` §L).
 - **Speichern/Laden (Issue #8):** eine Welt geht vollständig in EINE versionierte
   Binärdatei (`WorldSnapshot.swift`) — das ganze Zustands-Inventar
   (`TerrainState`, ~25 Felder à n²) plus Mäander-Zentrumslinien/Altarme, Seed und
