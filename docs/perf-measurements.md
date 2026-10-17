@@ -1529,7 +1529,7 @@ dort kann dann keine weitere Zelle geändert werden.
 Die Vorversuche dienten zur Auswahl; während einzelner Runden liefen eigene
 Builds/Hash-Prüfungen zusätzlich zur Fremdlast. Maßgeblich ist deshalb die
 abschließende, separat ausgeführte Messreihe unten. Rohwerte aller Varianten
-stehen im begleitenden Rohprotokoll.
+stehen im [begleitenden Rohprotokoll](perf-belt-parallel-q-raw.txt).
 
 | Variante B | A | Gesamt A / B, Median | gepaarte Δ B−A | mobile Pässe A / B, Median |
 | --- | --- | ---: | ---: | ---: |
@@ -1580,3 +1580,108 @@ Der Ebenen-Kandidat bestätigt alle vier Werte, Seed 1337 zusätzlich zweimal.
 Auch Cache, Hüllen, Profil-Tabelle und der gemeinsame Parallelstart wurden
 jeweils vor ihrer Messung auf Seed 1337 gegen denselben Startwert geprüft.
 Abschlussprüfung und vollständige Messreihe folgen unten.
+
+### Abschließende Gesamtschritt-Messung
+
+A = `/tmp/simperf.q-start` aus `ea85a7c`, B = `/tmp/simperf.q-end` aus dem
+Quellstand `fac991d`. Zehn Runden `--repeat 1`, anschließend vier Runden
+`--repeat 3`, jeweils wechselnde Reihenfolge. Während dieser abschließenden
+Reihen lief kein eigener weiterer Build, Test oder Hash-Lauf. Fremdlast auf
+der geteilten Maschine blieb möglich.
+
+| Runde | A Gesamt | B Gesamt | Δ B−A | A mobile Pässe | B mobile Pässe inkl. Planung |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 58,6 | 57,3 | -1,3 | 13,07 | 10,97 |
+| 2 | 59,6 | 57,7 | -1,9 | 13,08 | 11,07 |
+| 3 | 58,1 | 57,7 | -0,4 | 13,02 | 11,27 |
+| 4 | 59 | 56,5 | -2,5 | 13,23 | 10,83 |
+| 5 | 58,1 | 56,7 | -1,4 | 12,93 | 10,95 |
+| 6 | 58 | 59,3 | 1,3 | 12,87 | 11,32 |
+| 7 | 58 | 57 | -1 | 13,02 | 11,02 |
+| 8 | 57,6 | 57,3 | -0,3 | 12,85 | 11,04 |
+| 9 | 57,7 | 55,7 | -2 | 13,01 | 10,84 |
+| 10 | 58,6 | 56,8 | -1,8 | 12,95 | 10,92 |
+| Median | 58,1 | 57,15 | -1,35 | 13,015 | 10,995 |
+
+Alle Zeiten in ms/Schritt. Gesamt-Mediane **58,1 → 57,15 ms**,
+Differenz der Mediane **-0,95 ms (-1,635 %)**,
+gepaarter Median **-1,35 ms**; B gewinnt 9/10 Paare.
+Der Median der gepaarten Differenzen der mobilen Pässe beträgt
+**-2,005 ms**. Die unveränderte Priority-Flood liegt bei A/B im Median bei
+14,72/15,46 ms.
+Der Pass-Gewinn darf deshalb nicht als derselbe Gewinn des Gesamtschritts
+angegeben werden. Diese Messung isoliert den Grund der anderen Pass-Zeiten nicht.
+
+### Pass-Tabelle, vier Runden `--repeat 3`
+
+Rohwerte des dritten Blocks; die erste Zeitangabe des Harness ist dagegen
+das Minimum der drei Blöcke und wird hier nicht mit der Pass-Tabelle vermischt.
+
+| Runde | A Minimum | B Minimum | A dritter Block | B dritter Block | A mobil | B mobil inkl. Planung | Δ mobil B−A |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 57,5 | 56,5 | 61 | 58,1 | 15,85 | 12,98 | -2,87 |
+| 2 | 58,8 | 58,3 | 60,3 | 58,3 | 15,65 | 13,05 | -2,6 |
+| 3 | 57,4 | 56,7 | 59,3 | 57,7 | 15,51 | 12,92 | -2,59 |
+| 4 | 59,4 | 57,7 | 61,9 | 58,5 | 16,03 | 13,12 | -2,91 |
+
+| Pass | A Median | B Median | Δ Mediane | Median der gepaarten Δ |
+| --- | ---: | ---: | ---: | ---: |
+| Migration + Stempel inkl. Planung | 15,75 | 13,015 | -2,735 | -2,735 |
+| `belt.stamp` | 9,355 | — | — | — |
+| `belt.migrate` | 6,395 | — | — | — |
+| `belt.parallel` | — | 12,795 | — | — |
+| `belt.schedule` | — | 0,22 | — | — |
+| `belt.fixedStamp` | 1,55 | 1,47 | -0,08 | -0,06 |
+| `belt.attach` | 1,265 | 1,21 | -0,055 | -0,045 |
+| `priorityFlood` | 14,805 | 15,38 | 0,575 | 0,57 |
+| `computeMFDArea` | 4,24 | 4,32 | 0,08 | 0,035 |
+| `updateIce` | 2,785 | 2,775 | -0,01 | -0,045 |
+| `Hydraulic.erode` | 1,97 | 1,935 | -0,035 | -0,005 |
+
+`belt.parallel` misst die Wandzeit des gesamten parallelen Abschnitts auf dem
+aufrufenden Thread, einschließlich Synchronisation und Historien-Übernahme.
+Es addiert keine CPU-Zeiten der Arbeiter. `belt.schedule` kommt hinzu.
+
+Das Ziel **mindestens 4 ms weniger im Gesamtschritt ist nicht erreicht**.
+Übernommen wird ein kleinerer, bit-identischer Gewinn. Eine neue Zusage für
+Abnahmepunkt 48 gegenüber `main` folgt daraus allein nicht: `main` wurde in
+dieser Runde nicht erneut mitgemessen. Die 51,9/59,8 ms aus dem Auftrag gehören
+zu dessen eigener Messreihe und werden nicht mit diesen Werten verrechnet.
+
+### Abschlussprüfung nach Rebase
+
+`git rebase t3/issue-174-integration` meldete „up to date“; der lokale
+Integrationsstand war weiterhin `ea85a7c`. Die Sim-Quellen des gemessenen
+`fac991d` bleiben damit unverändert. Nach dem Rebase erneut vollständige
+Pflichtsuite, danach die gegatete Überlappungs-Diagnose und ein regulärer
+Release-Build des Harness. Alle vier Hash-Fälle wurden nach dem Rebase jeweils
+zweimal mit `SimCore/.build/release/simperf` ausgeführt:
+
+| Seed / dt | Start `ea85a7c` | Ende, Lauf 1 | Ende, Lauf 2 |
+| --- | --- | --- | --- |
+| 1337 / 100 | `08d32575d5cd353a` | `08d32575d5cd353a` | `08d32575d5cd353a` |
+| 42 / 100 | `0fd978609f8cc241` | `0fd978609f8cc241` | `0fd978609f8cc241` |
+| 20 / 100 | `9df73cb7672f2610` | `9df73cb7672f2610` | `9df73cb7672f2610` |
+| 1337 / 15 | `90b5a31c0d94a030` | `90b5a31c0d94a030` | `90b5a31c0d94a030` |
+
+Vor dem Rebase ebenfalls alle vier Werte bestätigt, Seed 1337 / dt 100
+zusätzlich wiederholt. Die Hashes umfassen das komplette Zustands-Inventar,
+nicht nur die Kanalgeometrie.
+
+Die Pflichtsuite lief vor und nach dem Rebase mit
+`swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5`:
+je **599 Tests, 69 regulär übersprungen, 0 Fehler**. Laufzeit der Tests
+186,696 bzw. 185,957 Sekunden, jeweils ohne Build-Zeit. Enthalten sind
+`testBeltIsDeterministic`, alle Mäander-/Gürtel-Wächter, `FingerprintTests` und
+`DtInvariance`. Zwei unabhängige Quelltext-Reviews (Standards und Auftrag)
+fanden keine bestätigten Korrektheitsverletzungen. Die Extension wurde nicht
+gebaut.
+
+Die abschließende Rechteck-Diagnose der tatsächlichen Produktionsfenster zählt
+5.862 überlappende Paare von 18.665, also **68,59 % unabhängige Paare**.
+Gegenüber dem ersten Diagnose-Prototyp kommen durch den Sicherheitsaufschlag
+auf die Breite zwei konservative Kanten hinzu. Unverändert sind **1.072 Läufe,
+0 isolierte Läufe, 783 Ebenen**, davon **283 mehrfach besetzte Ebenen
+(36,14 %)** mit **572 Läufen (53,36 %)**. Der Abhängigkeitsplan kann unabhängige
+Läufe verschiedener Ebenen gleichzeitig bearbeiten; die Ebenenzahlen
+beschreiben den Graphen, nicht die gemessene CPU-Auslastung.

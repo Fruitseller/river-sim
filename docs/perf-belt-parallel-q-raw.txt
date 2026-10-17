@@ -2590,3 +2590,1297 @@ n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x100.0
 fingerprint 08d32575d5cd353a
 n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x15.0
 fingerprint 90b5a31c0d94a030
+
+ABSCHLUSS end-ab
+ROUND 1 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 58.6 ms/Schritt
+Tabelle: letzter Block, 1.76s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.79   25.2%       30
+belt.stamp                     7.69   13.1%     8010
+belt.migrate                   5.38    9.2%     9082
+updateIce                      4.40    7.5%       30
+computeMFDArea                 4.09    7.0%       30
+outletIncision                 3.41    5.8%       30
+updateVegetation               2.28    3.9%       30
+braidPass                      2.03    3.5%       30
+Hydraulic.erode                1.93    3.3%       30
+belt.fixedStamp                1.56    2.7%       30
+computeReceiversAndArea        1.33    2.3%       32
+wavePass                       1.28    2.2%       30
+belt.attach                    1.21    2.1%       30
+computeRain                    1.04    1.8%       30
+channelCarve                   1.03    1.8%       30
+belt.couple.build              0.89    1.5%       30
+applyUplift                    0.50    0.8%       30
+deltaDeposit                   0.47    0.8%       30
+fillShallowPonds               0.47    0.8%       30
+hillslopeDiffusion             0.46    0.8%       30
+capEndorheicBasins             0.45    0.8%       30
+belt.couple.segments           0.35    0.6%       30
+belt.couple.match              0.30    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.15    0.3%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.10    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 1 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.8s)
+Messung: 30 Schritte à dt=100.0 → 57.3 ms/Schritt
+Tabelle: letzter Block, 1.72s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.52   27.1%       30
+belt.parallel                 10.76   18.8%       30
+updateIce                      4.50    7.8%       30
+computeMFDArea                 4.22    7.4%       30
+outletIncision                 3.35    5.8%       30
+updateVegetation               2.15    3.8%       30
+braidPass                      2.02    3.5%       30
+Hydraulic.erode                1.89    3.3%       30
+belt.fixedStamp                1.46    2.5%       30
+computeReceiversAndArea        1.45    2.5%       32
+wavePass                       1.29    2.3%       30
+belt.attach                    1.19    2.1%       30
+computeRain                    1.09    1.9%       30
+channelCarve                   1.04    1.8%       30
+belt.couple.build              0.92    1.6%       30
+applyUplift                    0.51    0.9%       30
+fillShallowPonds               0.47    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+capEndorheicBasins             0.46    0.8%       30
+hillslopeDiffusion             0.43    0.8%       30
+belt.couple.segments           0.40    0.7%       30
+belt.couple.match              0.26    0.5%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.21    0.4%       30
+updateLithology                0.16    0.3%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+meanderBelt                    0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 2 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.8s)
+Messung: 30 Schritte à dt=100.0 → 57.7 ms/Schritt
+Tabelle: letzter Block, 1.73s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.64   27.1%       30
+belt.parallel                 10.86   18.8%       30
+updateIce                      4.39    7.6%       30
+computeMFDArea                 4.23    7.3%       30
+outletIncision                 3.40    5.9%       30
+updateVegetation               2.10    3.6%       30
+braidPass                      2.08    3.6%       30
+Hydraulic.erode                1.95    3.4%       30
+belt.fixedStamp                1.47    2.5%       30
+computeReceiversAndArea        1.37    2.4%       32
+wavePass                       1.31    2.3%       30
+belt.attach                    1.20    2.1%       30
+channelCarve                   1.08    1.9%       30
+computeRain                    1.05    1.8%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.52    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+deltaDeposit                   0.48    0.8%       30
+belt.couple.segments           0.48    0.8%       30
+capEndorheicBasins             0.47    0.8%       30
+hillslopeDiffusion             0.43    0.7%       30
+belt.couple.match              0.26    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+belt.schedule                  0.21    0.4%       30
+updateLithology                0.19    0.3%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+meanderBelt                    0.10    0.2%       30
+streamMapEWMA                  0.10    0.2%       30
+relaxWaterLevel                0.09    0.2%       30
+belt.fill                      0.05    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 2 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (6.0s)
+Messung: 30 Schritte à dt=100.0 → 59.6 ms/Schritt
+Tabelle: letzter Block, 1.79s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.99   25.2%       30
+belt.stamp                     7.76   13.0%     8010
+belt.migrate                   5.32    8.9%     9082
+updateIce                      4.49    7.5%       30
+computeMFDArea                 4.18    7.0%       30
+outletIncision                 3.40    5.7%       30
+updateVegetation               2.24    3.8%       30
+braidPass                      2.06    3.5%       30
+Hydraulic.erode                1.99    3.3%       30
+belt.fixedStamp                1.56    2.6%       30
+computeReceiversAndArea        1.49    2.5%       32
+wavePass                       1.32    2.2%       30
+belt.attach                    1.22    2.0%       30
+computeRain                    1.07    1.8%       30
+channelCarve                   1.05    1.8%       30
+belt.couple.build              0.93    1.6%       30
+applyUplift                    0.51    0.9%       30
+fillShallowPonds               0.49    0.8%       30
+deltaDeposit                   0.48    0.8%       30
+belt.couple.segments           0.47    0.8%       30
+capEndorheicBasins             0.46    0.8%       30
+hillslopeDiffusion             0.44    0.7%       30
+belt.couple.match              0.27    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+updateLithology                0.18    0.3%       30
+deltaYield                     0.17    0.3%       60
+meanderBelt                    0.14    0.2%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 3 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 58.1 ms/Schritt
+Tabelle: letzter Block, 1.74s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.68   25.3%       30
+belt.stamp                     7.69   13.2%     8010
+belt.migrate                   5.33    9.2%     9082
+computeMFDArea                 4.20    7.2%       30
+updateIce                      4.07    7.0%       30
+outletIncision                 3.50    6.0%       30
+updateVegetation               2.23    3.8%       30
+braidPass                      1.99    3.4%       30
+Hydraulic.erode                1.88    3.2%       30
+belt.fixedStamp                1.52    2.6%       30
+computeReceiversAndArea        1.29    2.2%       32
+wavePass                       1.28    2.2%       30
+belt.attach                    1.21    2.1%       30
+computeRain                    1.05    1.8%       30
+channelCarve                   1.04    1.8%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.49    0.8%       30
+fillShallowPonds               0.48    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+capEndorheicBasins             0.45    0.8%       30
+hillslopeDiffusion             0.39    0.7%       30
+belt.couple.segments           0.39    0.7%       30
+belt.couple.match              0.26    0.4%       30
+belt.couple.runs               0.24    0.4%       30
+deltaYield                     0.17    0.3%       60
+updateLithology                0.16    0.3%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+updateSaltCrust                0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 3 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 57.7 ms/Schritt
+Tabelle: letzter Block, 1.73s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.63   27.1%       30
+belt.parallel                 11.05   19.2%       30
+updateIce                      4.23    7.3%       30
+computeMFDArea                 4.21    7.3%       30
+outletIncision                 3.37    5.8%       30
+updateVegetation               2.13    3.7%       30
+braidPass                      2.06    3.6%       30
+Hydraulic.erode                1.96    3.4%       30
+belt.fixedStamp                1.48    2.6%       30
+computeReceiversAndArea        1.47    2.5%       32
+wavePass                       1.33    2.3%       30
+belt.attach                    1.23    2.1%       30
+computeRain                    1.08    1.9%       30
+channelCarve                   1.02    1.8%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.52    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+capEndorheicBasins             0.48    0.8%       30
+deltaDeposit                   0.47    0.8%       30
+belt.couple.segments           0.41    0.7%       30
+hillslopeDiffusion             0.40    0.7%       30
+belt.couple.match              0.28    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+belt.schedule                  0.22    0.4%       30
+deltaYield                     0.15    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.13    0.2%       30
+updateLithology                0.12    0.2%       30
+meanderBelt                    0.12    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 4 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.7s)
+Messung: 30 Schritte à dt=100.0 → 56.5 ms/Schritt
+Tabelle: letzter Block, 1.69s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.30   27.1%       30
+belt.parallel                 10.62   18.8%       30
+updateIce                      4.36    7.7%       30
+computeMFDArea                 4.20    7.4%       30
+outletIncision                 3.33    5.9%       30
+updateVegetation               2.06    3.6%       30
+braidPass                      2.00    3.5%       30
+Hydraulic.erode                1.89    3.4%       30
+belt.fixedStamp                1.42    2.5%       30
+wavePass                       1.33    2.3%       30
+computeReceiversAndArea        1.24    2.2%       32
+belt.attach                    1.20    2.1%       30
+computeRain                    1.08    1.9%       30
+channelCarve                   1.04    1.8%       30
+belt.couple.build              0.93    1.7%       30
+applyUplift                    0.49    0.9%       30
+fillShallowPonds               0.48    0.9%       30
+hillslopeDiffusion             0.48    0.8%       30
+capEndorheicBasins             0.47    0.8%       30
+deltaDeposit                   0.44    0.8%       30
+belt.couple.segments           0.36    0.6%       30
+belt.couple.match              0.28    0.5%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.21    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.14    0.3%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateSaltCrust                0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.12    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.04    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 4 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (6.0s)
+Messung: 30 Schritte à dt=100.0 → 59.0 ms/Schritt
+Tabelle: letzter Block, 1.77s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.95   25.3%       30
+belt.stamp                     7.80   13.2%     8010
+belt.migrate                   5.43    9.2%     9082
+updateIce                      4.53    7.7%       30
+computeMFDArea                 4.13    7.0%       30
+outletIncision                 3.48    5.9%       30
+updateVegetation               2.15    3.6%       30
+braidPass                      2.04    3.5%       30
+Hydraulic.erode                1.91    3.2%       30
+belt.fixedStamp                1.53    2.6%       30
+wavePass                       1.33    2.3%       30
+computeReceiversAndArea        1.24    2.1%       32
+belt.attach                    1.22    2.1%       30
+channelCarve                   1.04    1.8%       30
+computeRain                    0.99    1.7%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.52    0.9%       30
+fillShallowPonds               0.49    0.8%       30
+capEndorheicBasins             0.46    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+hillslopeDiffusion             0.42    0.7%       30
+belt.couple.segments           0.41    0.7%       30
+belt.couple.match              0.27    0.5%       30
+belt.couple.runs               0.24    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.13    0.2%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.1%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 5 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 58.1 ms/Schritt
+Tabelle: letzter Block, 1.74s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.73   25.3%       30
+belt.stamp                     7.66   13.2%     8010
+belt.migrate                   5.27    9.1%     9082
+computeMFDArea                 4.28    7.4%       30
+updateIce                      4.13    7.1%       30
+outletIncision                 3.31    5.7%       30
+updateVegetation               2.26    3.9%       30
+braidPass                      2.01    3.5%       30
+Hydraulic.erode                1.88    3.2%       30
+belt.fixedStamp                1.52    2.6%       30
+computeReceiversAndArea        1.30    2.2%       32
+wavePass                       1.29    2.2%       30
+belt.attach                    1.23    2.1%       30
+channelCarve                   1.03    1.8%       30
+computeRain                    1.01    1.7%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.50    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+hillslopeDiffusion             0.47    0.8%       30
+capEndorheicBasins             0.45    0.8%       30
+deltaDeposit                   0.45    0.8%       30
+belt.couple.segments           0.38    0.7%       30
+belt.couple.match              0.27    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.15    0.3%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.11    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 5 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.7s)
+Messung: 30 Schritte à dt=100.0 → 56.7 ms/Schritt
+Tabelle: letzter Block, 1.70s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.31   27.0%       30
+belt.parallel                 10.74   18.9%       30
+updateIce                      4.28    7.6%       30
+computeMFDArea                 4.22    7.4%       30
+outletIncision                 3.42    6.0%       30
+updateVegetation               2.05    3.6%       30
+braidPass                      2.02    3.6%       30
+Hydraulic.erode                1.88    3.3%       30
+belt.fixedStamp                1.44    2.5%       30
+computeReceiversAndArea        1.40    2.5%       32
+wavePass                       1.32    2.3%       30
+belt.attach                    1.20    2.1%       30
+computeRain                    1.04    1.8%       30
+channelCarve                   1.03    1.8%       30
+belt.couple.build              0.93    1.6%       30
+applyUplift                    0.49    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+capEndorheicBasins             0.45    0.8%       30
+deltaDeposit                   0.45    0.8%       30
+belt.couple.segments           0.44    0.8%       30
+hillslopeDiffusion             0.41    0.7%       30
+belt.couple.match              0.28    0.5%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.21    0.4%       30
+updateLithology                0.16    0.3%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+meanderBelt                    0.09    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.2%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 6 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.7s)
+Messung: 30 Schritte à dt=100.0 → 59.3 ms/Schritt
+Tabelle: letzter Block, 1.78s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.87   26.8%       30
+belt.parallel                 11.10   18.7%       30
+computeMFDArea                 4.48    7.6%       30
+updateIce                      4.17    7.0%       30
+outletIncision                 3.58    6.0%       30
+updateVegetation               2.32    3.9%       30
+braidPass                      2.17    3.7%       30
+Hydraulic.erode                2.08    3.5%       30
+belt.fixedStamp                1.52    2.6%       30
+computeReceiversAndArea        1.50    2.5%       32
+wavePass                       1.33    2.2%       30
+belt.attach                    1.22    2.1%       30
+computeRain                    1.17    2.0%       30
+channelCarve                   1.10    1.9%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.51    0.9%       30
+fillShallowPonds               0.51    0.9%       30
+deltaDeposit                   0.51    0.9%       30
+capEndorheicBasins             0.50    0.8%       30
+belt.couple.segments           0.48    0.8%       30
+hillslopeDiffusion             0.43    0.7%       30
+belt.couple.match              0.30    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+belt.schedule                  0.22    0.4%       30
+updateLithology                0.16    0.3%       30
+deltaYield                     0.15    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.13    0.2%       30
+meanderBelt                    0.11    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.1%       30
+belt.fill                      0.05    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 6 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (6.0s)
+Messung: 30 Schritte à dt=100.0 → 58.0 ms/Schritt
+Tabelle: letzter Block, 1.74s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.53   25.0%       30
+belt.stamp                     7.63   13.1%     8010
+belt.migrate                   5.24    9.0%     9082
+updateIce                      4.54    7.8%       30
+computeMFDArea                 4.11    7.1%       30
+outletIncision                 3.37    5.8%       30
+updateVegetation               2.24    3.9%       30
+braidPass                      1.98    3.4%       30
+Hydraulic.erode                1.89    3.3%       30
+belt.fixedStamp                1.49    2.6%       30
+computeReceiversAndArea        1.33    2.3%       32
+wavePass                       1.29    2.2%       30
+belt.attach                    1.19    2.0%       30
+computeRain                    1.05    1.8%       30
+channelCarve                   1.01    1.7%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.50    0.9%       30
+fillShallowPonds               0.47    0.8%       30
+capEndorheicBasins             0.45    0.8%       30
+hillslopeDiffusion             0.45    0.8%       30
+deltaDeposit                   0.44    0.8%       30
+belt.couple.segments           0.36    0.6%       30
+belt.couple.match              0.27    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+updateLithology                0.17    0.3%       30
+deltaYield                     0.17    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+meanderBelt                    0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.2%       30
+belt.fill                      0.04    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.04    0.1%
+ROUND 7 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 58.0 ms/Schritt
+Tabelle: letzter Block, 1.74s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.62   25.2%       30
+belt.stamp                     7.66   13.2%     8010
+belt.migrate                   5.36    9.2%     9082
+updateIce                      4.26    7.3%       30
+computeMFDArea                 4.25    7.3%       30
+outletIncision                 3.41    5.9%       30
+updateVegetation               2.11    3.6%       30
+braidPass                      1.99    3.4%       30
+Hydraulic.erode                1.83    3.2%       30
+belt.fixedStamp                1.50    2.6%       30
+wavePass                       1.29    2.2%       30
+computeReceiversAndArea        1.27    2.2%       32
+belt.attach                    1.21    2.1%       30
+computeRain                    1.05    1.8%       30
+channelCarve                   1.01    1.7%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.50    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+capEndorheicBasins             0.46    0.8%       30
+belt.couple.segments           0.45    0.8%       30
+deltaDeposit                   0.44    0.8%       30
+hillslopeDiffusion             0.40    0.7%       30
+belt.couple.match              0.25    0.4%       30
+belt.couple.runs               0.24    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.13    0.2%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.11    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.1%       30
+belt.fill                      0.04    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 7 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.7s)
+Messung: 30 Schritte à dt=100.0 → 57.0 ms/Schritt
+Tabelle: letzter Block, 1.71s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.42   27.0%       30
+belt.parallel                 10.81   19.0%       30
+updateIce                      4.33    7.6%       30
+computeMFDArea                 4.15    7.3%       30
+outletIncision                 3.39    5.9%       30
+updateVegetation               2.16    3.8%       30
+braidPass                      2.05    3.6%       30
+Hydraulic.erode                1.93    3.4%       30
+belt.fixedStamp                1.47    2.6%       30
+wavePass                       1.32    2.3%       30
+computeReceiversAndArea        1.26    2.2%       32
+belt.attach                    1.23    2.2%       30
+computeRain                    1.07    1.9%       30
+channelCarve                   1.05    1.8%       30
+belt.couple.build              0.94    1.7%       30
+applyUplift                    0.50    0.9%       30
+fillShallowPonds               0.49    0.9%       30
+capEndorheicBasins             0.47    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+hillslopeDiffusion             0.41    0.7%       30
+belt.couple.segments           0.35    0.6%       30
+belt.couple.match              0.29    0.5%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.21    0.4%       30
+updateLithology                0.17    0.3%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+meanderBelt                    0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 8 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.8s)
+Messung: 30 Schritte à dt=100.0 → 57.3 ms/Schritt
+Tabelle: letzter Block, 1.72s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.50   27.0%       30
+belt.parallel                 10.83   18.9%       30
+updateIce                      4.39    7.7%       30
+computeMFDArea                 4.27    7.5%       30
+outletIncision                 3.36    5.9%       30
+updateVegetation               2.20    3.8%       30
+braidPass                      2.04    3.6%       30
+Hydraulic.erode                1.91    3.3%       30
+belt.fixedStamp                1.46    2.5%       30
+wavePass                       1.31    2.3%       30
+computeReceiversAndArea        1.28    2.2%       32
+belt.attach                    1.19    2.1%       30
+computeRain                    1.09    1.9%       30
+channelCarve                   1.03    1.8%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.53    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+capEndorheicBasins             0.47    0.8%       30
+belt.couple.segments           0.46    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+hillslopeDiffusion             0.41    0.7%       30
+belt.couple.match              0.25    0.4%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.21    0.4%       30
+updateLithology                0.16    0.3%       30
+deltaYield                     0.15    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.13    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+meanderBelt                    0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 8 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 57.6 ms/Schritt
+Tabelle: letzter Block, 1.73s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.58   25.3%       30
+belt.stamp                     7.63   13.3%     8010
+belt.migrate                   5.22    9.1%     9082
+updateIce                      4.23    7.3%       30
+computeMFDArea                 4.11    7.1%       30
+outletIncision                 3.45    6.0%       30
+updateVegetation               2.08    3.6%       30
+braidPass                      1.98    3.4%       30
+Hydraulic.erode                1.88    3.3%       30
+belt.fixedStamp                1.49    2.6%       30
+wavePass                       1.28    2.2%       30
+computeReceiversAndArea        1.28    2.2%       32
+belt.attach                    1.19    2.1%       30
+computeRain                    1.06    1.8%       30
+channelCarve                   1.02    1.8%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.49    0.8%       30
+fillShallowPonds               0.48    0.8%       30
+capEndorheicBasins             0.44    0.8%       30
+deltaDeposit                   0.43    0.8%       30
+belt.couple.segments           0.39    0.7%       30
+hillslopeDiffusion             0.38    0.7%       30
+belt.couple.match              0.26    0.4%       30
+belt.couple.runs               0.23    0.4%       30
+updateLithology                0.18    0.3%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.10    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.04    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.04    0.1%
+ROUND 9 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.8s)
+Messung: 30 Schritte à dt=100.0 → 57.7 ms/Schritt
+Tabelle: letzter Block, 1.73s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.71   25.5%       30
+belt.stamp                     7.68   13.3%     8010
+belt.migrate                   5.33    9.2%     9082
+updateIce                      4.20    7.3%       30
+computeMFDArea                 4.12    7.1%       30
+outletIncision                 3.37    5.8%       30
+updateVegetation               2.01    3.5%       30
+braidPass                      2.01    3.5%       30
+Hydraulic.erode                1.84    3.2%       30
+belt.fixedStamp                1.49    2.6%       30
+wavePass                       1.31    2.3%       30
+computeReceiversAndArea        1.27    2.2%       32
+belt.attach                    1.20    2.1%       30
+computeRain                    1.05    1.8%       30
+channelCarve                   1.01    1.7%       30
+belt.couple.build              0.95    1.6%       30
+applyUplift                    0.51    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+capEndorheicBasins             0.45    0.8%       30
+deltaDeposit                   0.44    0.8%       30
+hillslopeDiffusion             0.41    0.7%       30
+belt.couple.segments           0.37    0.6%       30
+belt.couple.match              0.24    0.4%       30
+belt.couple.runs               0.24    0.4%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateLithology                0.12    0.2%       30
+meanderBelt                    0.12    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 9 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.7s)
+Messung: 30 Schritte à dt=100.0 → 55.7 ms/Schritt
+Tabelle: letzter Block, 1.67s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.26   27.4%       30
+belt.parallel                 10.63   19.1%       30
+computeMFDArea                 4.19    7.5%       30
+updateIce                      4.08    7.3%       30
+outletIncision                 3.24    5.8%       30
+updateVegetation               2.09    3.8%       30
+braidPass                      1.98    3.5%       30
+Hydraulic.erode                1.84    3.3%       30
+belt.fixedStamp                1.42    2.6%       30
+wavePass                       1.32    2.4%       30
+belt.attach                    1.18    2.1%       30
+computeReceiversAndArea        1.16    2.1%       32
+channelCarve                   1.03    1.9%       30
+computeRain                    1.01    1.8%       30
+belt.couple.build              0.94    1.7%       30
+applyUplift                    0.52    0.9%       30
+fillShallowPonds               0.48    0.9%       30
+capEndorheicBasins             0.46    0.8%       30
+deltaDeposit                   0.43    0.8%       30
+hillslopeDiffusion             0.41    0.7%       30
+belt.couple.segments           0.36    0.6%       30
+belt.couple.match              0.27    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+belt.schedule                  0.21    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.14    0.3%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+meanderBelt                    0.09    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.2%       30
+belt.fill                      0.04    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 10 B
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.7s)
+Messung: 30 Schritte à dt=100.0 → 56.8 ms/Schritt
+Tabelle: letzter Block, 1.70s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.33   27.0%       30
+belt.parallel                 10.70   18.8%       30
+updateIce                      4.43    7.8%       30
+computeMFDArea                 4.29    7.5%       30
+outletIncision                 3.41    6.0%       30
+updateVegetation               2.12    3.7%       30
+braidPass                      2.00    3.5%       30
+Hydraulic.erode                1.84    3.2%       30
+belt.fixedStamp                1.43    2.5%       30
+wavePass                       1.35    2.4%       30
+computeReceiversAndArea        1.26    2.2%       32
+belt.attach                    1.19    2.1%       30
+computeRain                    1.06    1.9%       30
+channelCarve                   1.04    1.8%       30
+belt.couple.build              0.94    1.6%       30
+applyUplift                    0.52    0.9%       30
+fillShallowPonds               0.47    0.8%       30
+capEndorheicBasins             0.45    0.8%       30
+deltaDeposit                   0.45    0.8%       30
+hillslopeDiffusion             0.43    0.8%       30
+belt.couple.segments           0.35    0.6%       30
+belt.couple.match              0.30    0.5%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.22    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.14    0.3%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.10    0.2%       30
+relaxWaterLevel                0.09    0.2%       30
+belt.fill                      0.05    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 10 A
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 58.6 ms/Schritt
+Tabelle: letzter Block, 1.76s
+Mäander: 665 Läufe, 11707 Knoten, 208 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.79   25.2%       30
+belt.stamp                     7.70   13.1%     8010
+belt.migrate                   5.25    8.9%     9082
+updateIce                      4.32    7.4%       30
+computeMFDArea                 4.27    7.3%       30
+outletIncision                 3.42    5.8%       30
+updateVegetation               2.13    3.6%       30
+braidPass                      2.04    3.5%       30
+Hydraulic.erode                2.01    3.4%       30
+belt.fixedStamp                1.51    2.6%       30
+computeReceiversAndArea        1.39    2.4%       32
+wavePass                       1.30    2.2%       30
+belt.attach                    1.20    2.0%       30
+channelCarve                   1.06    1.8%       30
+computeRain                    1.03    1.8%       30
+belt.couple.build              0.96    1.6%       30
+applyUplift                    0.50    0.9%       30
+fillShallowPonds               0.49    0.8%       30
+capEndorheicBasins             0.46    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+hillslopeDiffusion             0.43    0.7%       30
+belt.couple.segments           0.36    0.6%       30
+belt.couple.match              0.27    0.5%       30
+belt.couple.runs               0.24    0.4%       30
+updateLithology                0.18    0.3%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateSaltCrust                0.12    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.09    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+
+ABSCHLUSS end-profile
+ROUND 1 A
+Blöcke (ms/Schritt): 57.8 57.5 61.0
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (6.1s)
+Messung: 30 Schritte à dt=100.0 → 57.5 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.83s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.87   24.4%       30
+belt.stamp                     9.40   15.4%     9131
+belt.migrate                   6.45   10.6%    10193
+computeMFDArea                 4.19    6.9%       30
+outletIncision                 3.56    5.8%       30
+updateIce                      2.72    4.5%       30
+braidPass                      2.17    3.6%       30
+updateVegetation               2.12    3.5%       30
+Hydraulic.erode                2.00    3.3%       30
+belt.fixedStamp                1.60    2.6%       30
+computeReceiversAndArea        1.59    2.6%       37
+wavePass                       1.41    2.3%       30
+belt.attach                    1.28    2.1%       30
+channelCarve                   1.12    1.8%       30
+computeRain                    1.09    1.8%       30
+belt.couple.build              0.96    1.6%       30
+applyUplift                    0.52    0.9%       30
+capEndorheicBasins             0.50    0.8%       30
+fillShallowPonds               0.48    0.8%       30
+deltaDeposit                   0.47    0.8%       30
+hillslopeDiffusion             0.46    0.8%       30
+belt.couple.segments           0.42    0.7%       30
+belt.couple.match              0.25    0.4%       30
+belt.couple.runs               0.23    0.4%       30
+updateLithology                0.18    0.3%       30
+deltaYield                     0.17    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.13    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+streamMapEWMA                  0.10    0.2%       30
+meanderBelt                    0.10    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.06    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 1 B
+Blöcke (ms/Schritt): 57.4 56.5 58.1
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.8s)
+Messung: 30 Schritte à dt=100.0 → 56.5 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.74s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.30   26.3%       30
+belt.parallel                 12.76   22.0%       30
+computeMFDArea                 4.38    7.5%       30
+outletIncision                 3.37    5.8%       30
+updateIce                      2.87    4.9%       30
+updateVegetation               2.30    3.9%       30
+braidPass                      2.12    3.6%       30
+Hydraulic.erode                1.93    3.3%       30
+computeReceiversAndArea        1.52    2.6%       37
+belt.fixedStamp                1.47    2.5%       30
+wavePass                       1.40    2.4%       30
+belt.attach                    1.20    2.1%       30
+channelCarve                   1.09    1.9%       30
+computeRain                    1.07    1.8%       30
+belt.couple.build              0.93    1.6%       30
+applyUplift                    0.53    0.9%       30
+capEndorheicBasins             0.50    0.9%       30
+fillShallowPonds               0.48    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+hillslopeDiffusion             0.39    0.7%       30
+belt.couple.segments           0.34    0.6%       30
+belt.couple.match              0.28    0.5%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.22    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.13    0.2%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+meanderBelt                    0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.2%       30
+belt.fill                      0.06    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 2 B
+Blöcke (ms/Schritt): 59.0 58.8 58.3
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.8s)
+Messung: 30 Schritte à dt=100.0 → 58.3 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.75s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.42   26.5%       30
+belt.parallel                 12.83   22.0%       30
+computeMFDArea                 4.38    7.5%       30
+outletIncision                 3.46    5.9%       30
+updateIce                      2.82    4.8%       30
+braidPass                      2.11    3.6%       30
+updateVegetation               2.09    3.6%       30
+Hydraulic.erode                1.94    3.3%       30
+computeReceiversAndArea        1.60    2.7%       37
+belt.fixedStamp                1.46    2.5%       30
+wavePass                       1.41    2.4%       30
+belt.attach                    1.23    2.1%       30
+channelCarve                   1.05    1.8%       30
+computeRain                    1.02    1.7%       30
+belt.couple.build              0.95    1.6%       30
+applyUplift                    0.49    0.8%       30
+capEndorheicBasins             0.49    0.8%       30
+fillShallowPonds               0.48    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+hillslopeDiffusion             0.43    0.7%       30
+belt.couple.segments           0.40    0.7%       30
+belt.couple.match              0.26    0.4%       30
+belt.couple.runs               0.22    0.4%       30
+belt.schedule                  0.22    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.15    0.3%       30
+clearEndorheicBasins           0.13    0.2%       30
+meanderBelt                    0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.06    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 2 A
+Blöcke (ms/Schritt): 60.5 58.8 60.3
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (6.0s)
+Messung: 30 Schritte à dt=100.0 → 58.8 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.81s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.74   24.4%       30
+belt.stamp                     9.31   15.4%     9131
+belt.migrate                   6.34   10.5%    10193
+computeMFDArea                 4.28    7.1%       30
+outletIncision                 3.40    5.6%       30
+updateIce                      2.81    4.7%       30
+updateVegetation               2.22    3.7%       30
+braidPass                      2.12    3.5%       30
+Hydraulic.erode                1.95    3.2%       30
+belt.fixedStamp                1.54    2.6%       30
+computeReceiversAndArea        1.50    2.5%       37
+wavePass                       1.41    2.3%       30
+belt.attach                    1.25    2.1%       30
+computeRain                    1.13    1.9%       30
+channelCarve                   1.06    1.8%       30
+belt.couple.build              0.95    1.6%       30
+applyUplift                    0.51    0.8%       30
+fillShallowPonds               0.49    0.8%       30
+capEndorheicBasins             0.49    0.8%       30
+deltaDeposit                   0.46    0.8%       30
+hillslopeDiffusion             0.40    0.7%       30
+belt.couple.segments           0.37    0.6%       30
+belt.couple.match              0.32    0.5%       30
+belt.couple.runs               0.24    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.13    0.2%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.12    0.2%       30
+updateSaltCrust                0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.1%       30
+belt.fill                      0.06    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 3 A
+Blöcke (ms/Schritt): 58.0 57.4 59.3
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.9s)
+Messung: 30 Schritte à dt=100.0 → 57.4 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.78s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 14.35   24.2%       30
+belt.stamp                     9.21   15.5%     9131
+belt.migrate                   6.30   10.6%    10193
+computeMFDArea                 4.20    7.1%       30
+outletIncision                 3.43    5.8%       30
+updateIce                      2.83    4.8%       30
+updateVegetation               2.26    3.8%       30
+braidPass                      2.02    3.4%       30
+Hydraulic.erode                1.82    3.1%       30
+belt.fixedStamp                1.48    2.5%       30
+computeReceiversAndArea        1.46    2.5%       37
+wavePass                       1.38    2.3%       30
+belt.attach                    1.21    2.0%       30
+computeRain                    1.08    1.8%       30
+channelCarve                   1.02    1.7%       30
+belt.couple.build              0.95    1.6%       30
+applyUplift                    0.50    0.8%       30
+capEndorheicBasins             0.49    0.8%       30
+belt.couple.segments           0.47    0.8%       30
+fillShallowPonds               0.46    0.8%       30
+hillslopeDiffusion             0.45    0.8%       30
+deltaDeposit                   0.43    0.7%       30
+belt.couple.match              0.29    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+updateLithology                0.17    0.3%       30
+deltaYield                     0.15    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+meanderBelt                    0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.05    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+ROUND 3 B
+Blöcke (ms/Schritt): 57.7 56.7 57.7
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.7s)
+Messung: 30 Schritte à dt=100.0 → 56.7 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.73s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.34   26.6%       30
+belt.parallel                 12.70   22.0%       30
+computeMFDArea                 4.17    7.2%       30
+outletIncision                 3.46    6.0%       30
+updateIce                      2.73    4.7%       30
+updateVegetation               2.23    3.9%       30
+braidPass                      2.09    3.6%       30
+Hydraulic.erode                1.93    3.3%       30
+computeReceiversAndArea        1.49    2.6%       37
+belt.fixedStamp                1.47    2.5%       30
+wavePass                       1.41    2.4%       30
+belt.attach                    1.18    2.0%       30
+channelCarve                   1.05    1.8%       30
+computeRain                    1.03    1.8%       30
+belt.couple.build              0.91    1.6%       30
+applyUplift                    0.49    0.9%       30
+capEndorheicBasins             0.48    0.8%       30
+fillShallowPonds               0.47    0.8%       30
+belt.couple.segments           0.47    0.8%       30
+deltaDeposit                   0.45    0.8%       30
+hillslopeDiffusion             0.42    0.7%       30
+belt.couple.match              0.28    0.5%       30
+belt.schedule                  0.22    0.4%       30
+belt.couple.runs               0.22    0.4%       30
+updateLithology                0.18    0.3%       30
+deltaYield                     0.16    0.3%       60
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.10    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+updateSaltCrust                0.09    0.1%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.06    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.01    0.0%
+ROUND 4 B
+Blöcke (ms/Schritt): 58.2 57.7 58.5
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (5.8s)
+Messung: 30 Schritte à dt=100.0 → 57.7 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.75s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.57   26.6%       30
+belt.parallel                 12.90   22.1%       30
+computeMFDArea                 4.26    7.3%       30
+outletIncision                 3.44    5.9%       30
+updateIce                      2.55    4.4%       30
+updateVegetation               2.19    3.7%       30
+braidPass                      2.16    3.7%       30
+Hydraulic.erode                1.99    3.4%       30
+computeReceiversAndArea        1.56    2.7%       37
+belt.fixedStamp                1.52    2.6%       30
+wavePass                       1.45    2.5%       30
+belt.attach                    1.22    2.1%       30
+channelCarve                   1.09    1.9%       30
+computeRain                    1.06    1.8%       30
+belt.couple.build              0.96    1.6%       30
+applyUplift                    0.53    0.9%       30
+capEndorheicBasins             0.51    0.9%       30
+fillShallowPonds               0.49    0.8%       30
+deltaDeposit                   0.47    0.8%       30
+hillslopeDiffusion             0.43    0.7%       30
+belt.couple.segments           0.37    0.6%       30
+belt.couple.match              0.29    0.5%       30
+belt.couple.runs               0.23    0.4%       30
+belt.schedule                  0.22    0.4%       30
+deltaYield                     0.16    0.3%       60
+updateLithology                0.13    0.2%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.12    0.2%       30
+meanderBelt                    0.12    0.2%       30
+updateSaltCrust                0.11    0.2%       30
+streamMapEWMA                  0.09    0.2%       30
+relaxWaterLevel                0.09    0.1%       30
+belt.fill                      0.06    0.1%       30
+belt.couple                    0.00    0.0%       30
+regenerateDisturbed            0.00    0.0%       30
+— nicht zugeordnet —           0.02    0.0%
+ROUND 4 A
+Blöcke (ms/Schritt): 60.2 59.4 61.9
+n=720 world=112.4789 seed=1337 warmup=100x100.0y (6.0s)
+Messung: 30 Schritte à dt=100.0 → 59.4 ms/Schritt (Minimum aus 3 Blöcken)
+Tabelle: letzter Block, 1.86s
+Mäander: 658 Läufe, 12123 Knoten, 258 Altarme
+
+Pass                     ms/Schritt  Anteil  Aufrufe
+priorityFlood                 15.11   24.4%       30
+belt.stamp                     9.46   15.3%     9131
+belt.migrate                   6.57   10.6%    10193
+computeMFDArea                 4.34    7.0%       30
+outletIncision                 3.46    5.6%       30
+updateIce                      2.76    4.5%       30
+updateVegetation               2.34    3.8%       30
+braidPass                      2.20    3.6%       30
+Hydraulic.erode                1.99    3.2%       30
+computeReceiversAndArea        1.64    2.7%       37
+belt.fixedStamp                1.56    2.5%       30
+wavePass                       1.43    2.3%       30
+belt.attach                    1.28    2.1%       30
+computeRain                    1.11    1.8%       30
+channelCarve                   1.07    1.7%       30
+belt.couple.build              0.96    1.5%       30
+applyUplift                    0.53    0.9%       30
+capEndorheicBasins             0.52    0.8%       30
+fillShallowPonds               0.50    0.8%       30
+deltaDeposit                   0.49    0.8%       30
+hillslopeDiffusion             0.48    0.8%       30
+belt.couple.segments           0.43    0.7%       30
+belt.couple.match              0.29    0.5%       30
+belt.couple.runs               0.25    0.4%       30
+deltaYield                     0.17    0.3%       60
+updateLithology                0.15    0.2%       30
+clearEndorheicBasins           0.13    0.2%       30
+updateClimate                  0.13    0.2%       30
+meanderBelt                    0.12    0.2%       30
+streamMapEWMA                  0.10    0.2%       30
+updateSaltCrust                0.09    0.2%       30
+relaxWaterLevel                0.08    0.1%       30
+belt.fill                      0.06    0.1%       30
+regenerateDisturbed            0.00    0.0%       30
+belt.couple                    0.00    0.0%       30
+— nicht zugeordnet —           0.05    0.1%
+
+ABSCHLUSS hashes-before
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x100.0
+fingerprint 08d32575d5cd353a
+n=720 world=112.4789 seed=42 warmup=100x100.0 steps=30x100.0
+fingerprint 0fd978609f8cc241
+n=720 world=112.4789 seed=20 warmup=100x100.0 steps=30x100.0
+fingerprint 9df73cb7672f2610
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x15.0
+fingerprint 90b5a31c0d94a030
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x100.0
+fingerprint 08d32575d5cd353a
+
+ABSCHLUSS hashes-after
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x100.0
+fingerprint 08d32575d5cd353a
+n=720 world=112.4789 seed=42 warmup=100x100.0 steps=30x100.0
+fingerprint 0fd978609f8cc241
+n=720 world=112.4789 seed=20 warmup=100x100.0 steps=30x100.0
+fingerprint 9df73cb7672f2610
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x15.0
+fingerprint 90b5a31c0d94a030
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x100.0
+fingerprint 08d32575d5cd353a
+n=720 world=112.4789 seed=42 warmup=100x100.0 steps=30x100.0
+fingerprint 0fd978609f8cc241
+n=720 world=112.4789 seed=20 warmup=100x100.0 steps=30x100.0
+fingerprint 9df73cb7672f2610
+n=720 world=112.4789 seed=1337 warmup=100x100.0 steps=30x15.0
+fingerprint 90b5a31c0d94a030
+
+ABSCHLUSS rebase
+Current branch t3/174-belt-parallel is up to date.
+
+ABSCHLUSS overlap-final
+Building for production...
+[1 / 4] SimCoreTests-product
+warning: language mode was overridden by extra Swift flags and may be inconsistent with code generated during the build
+warning: language mode was overridden by extra Swift flags and may be inconsistent with code generated during the build
+warning: language mode was overridden by extra Swift flags and may be inconsistent with code generated during the build
+warning: language mode was overridden by extra Swift flags and may be inconsistent with code generated during the build
+Build complete! (0,22 secs)
+Test Suite 'Selected tests' started at 2026-10-17 22:04:56.201.
+Test Suite 'SimCoreTests.xctest' started at 2026-10-17 22:04:56.202.
+Test Suite 'BeltParallelTests' started at 2026-10-17 22:04:56.202.
+Test Case '-[SimCoreTests.BeltParallelTests testBeltOverlapDiagnostic]' started.
+Test Case '-[SimCoreTests.BeltParallelTests testBeltOverlapDiagnostic]' passed (8.192 seconds).
+Test Suite 'BeltParallelTests' passed at 2026-10-17 22:05:04.394.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.192 (8.193) seconds
+Test Suite 'SimCoreTests.xctest' passed at 2026-10-17 22:05:04.394.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.192 (8.193) seconds
+Test Suite 'Selected tests' passed at 2026-10-17 22:05:04.394.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.192 (8.193) seconds
+[BELT-OVERLAP] samples=30 runs=1072 isolated=0 overlappingPairs=5862/18665 levels=783 parallelSlots=572 runs/levels=34/23,36/27,38/28,35/25,37/27,34/25,35/26,36/26,35/26,34/25,35/26,33/23,33/24,35/25,37/27,39/30,39/28,37/28,36/25,34/23,34/23,33/23,34/24,35/28,36/28,37/28,39/29,38/28,37/28,37/27
+
+PFLICHTSUITE before
+Befehl: swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+Test Suite 'All tests' started at 2026-10-17 21:58:17.220.
+Test Suite 'BeltCouplingTests' passed at 2026-10-17 21:58:18.212.
+Test Suite 'BeltParallelTests' passed at 2026-10-17 21:58:18.240.
+Test Suite 'DtInvariance' passed at 2026-10-17 21:59:16.493.
+Test Suite 'FingerprintTests' passed at 2026-10-17 21:59:22.044.
+Test Suite 'MeanderBeltTests' passed at 2026-10-17 22:00:27.645.
+	 Executed 599 tests, with 69 tests skipped and 0 failures (0 unexpected) in 186.696 (186.727) seconds
+Test Suite 'All tests' passed at 2026-10-17 22:01:23.947.
+	 Executed 599 tests, with 69 tests skipped and 0 failures (0 unexpected) in 186.696 (186.727) seconds
+
+PFLICHTSUITE after
+Befehl: swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+Test Suite 'All tests' started at 2026-10-17 22:01:48.862.
+Test Suite 'BeltCouplingTests' passed at 2026-10-17 22:01:49.825.
+Test Suite 'BeltParallelTests' passed at 2026-10-17 22:01:49.852.
+Test Suite 'DtInvariance' passed at 2026-10-17 22:02:47.589.
+Test Suite 'FingerprintTests' passed at 2026-10-17 22:02:53.172.
+Test Suite 'MeanderBeltTests' passed at 2026-10-17 22:03:58.780.
+	 Executed 599 tests, with 69 tests skipped and 0 failures (0 unexpected) in 185.957 (185.988) seconds
+Test Suite 'All tests' passed at 2026-10-17 22:04:54.851.
+	 Executed 599 tests, with 69 tests skipped and 0 failures (0 unexpected) in 185.957 (185.988) seconds
