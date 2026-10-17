@@ -1543,7 +1543,7 @@ public final class Terrain {
     /// **Sub-Taktung** exakt wie die Hangdiffusion in `step()`: die Transport-Zahl
     /// des ganzen Schritts (`kappa_Jahr · dt`) wird auf so viele gleich starke
     /// Teilschritte verteilt, dass jeder unter seinen Stabilitätsgrenzen bleibt
-    /// (Ausstrom-Anteil UND Diffusionszahl, s. `iceTransportScale`). Damit ist
+    /// (Ausstrom-Anteil UND Diffusionszahl, s. `iceTransportDomain`). Damit ist
     /// die Gesamtwirkung ∝ `dt` — ein `+10.000 Jahre`-Sprung transportiert
     /// dasselbe wie 50.000 Frame-Schritte à 0,2 Jahre (Wächter
     /// `Glacier.testIceIsFramerateIndependent`). Die Bilanz teleskopiert
@@ -1594,7 +1594,7 @@ public final class Terrain {
         let refN = 639.0, m1 = Double(n - 1)
         let kYear = cfg.iceFlowK * (m1 * m1) / (refN * refN) / 100.0
         // Der explizite Transport hat ZWEI Kennzahlen je Teilschritt, und beide
-        // hält die Sub-Taktung unter ihrer Grenze (s. `iceTransportScale`):
+        // hält die Sub-Taktung unter ihrer Grenze (s. `iceTransportDomain`):
         //   * `kappa · ΣΔs⁺` ≤ `iceFlowSubCap` — der Anteil der Säule, der die
         //     Zelle verlässt (Positivität), am STEILSTEN Eis-Hang;
         //   * `kappa · I` ≤ `iceFlowSubCap / 2` — die Diffusionszahl der
@@ -1618,11 +1618,21 @@ public final class Terrain {
         // bleibt trotzdem stehen: die Messung stammt vom Zustand VOR den
         // Teilschritten, und ein Sculpt-Eingriff kann die Oberfläche dazwischen
         // versteilern.
-        let totalK = kYear * dt * iceTransportScale()
+        let domain = iceTransportDomain()
+        guard domain.iLo <= domain.iHi else { rebuildIceMask(); return }
+        let totalK = kYear * dt * domain.scale
         let nSub = max(1, Int((totalK / max(1e-9, cfg.iceFlowSubCap)).rounded(.up)))
         let subK = kYear * dt / Double(nSub)
         let subDt = dt / Double(nSub)
-        for _ in 0..<nSub { iceFlowSubStep(kappa: subK, dt: subDt) }
+        // Je Teilschritt erreicht Eis höchstens den direkten Nachbarn. Alle
+        // Anfangssäulen und Firnquellen plus nSub Zellen enthalten deshalb den
+        // vollständigen Wirkungsbereich. Pass 1 friert zusätzlich den Rand für
+        // Nachbarfluss und Schleifspur ein. Außerhalb bleiben Eis und Bilanz null.
+        let iLo = max(0, domain.iLo - nSub), iHi = min(n - 1, domain.iHi + nSub)
+        let jLo = max(0, domain.jLo - nSub), jHi = min(n - 1, domain.jHi + nSub)
+        for _ in 0..<nSub {
+            iceFlowSubStep(kappa: subK, dt: subDt, iLo: iLo, iHi: iHi, jLo: jLo, jHi: jHi)
+        }
         rebuildIceMask()
     }
 
@@ -1635,12 +1645,18 @@ public final class Terrain {
     /// Sequenziell und als Maximum reihenfolge-unabhängig, also bit-genau
     /// reproduzierbar. Kostet EINEN Gitter-Durchlauf und spart dafür ein
     /// Vielfaches an Teilschritten.
-    private func iceTransportScale() -> Double {
+    private func iceTransportDomain() -> (scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
         let nn = n
         var scale = 0.0
+        var iLo = nn, iHi = -1, jLo = nn, jHi = -1
+        let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
         for j in 0..<nn {
             for i in 0..<nn {
                 let k = j * nn + i
+                if ice[k] > 0 || (snow[k] > 0 && t0 - gamma * max(0, h[k] - sea) < 0) {
+                    iLo = min(iLo, i); iHi = max(iHi, i)
+                    jLo = min(jLo, j); jHi = max(jHi, j)
+                }
                 if ice[k] <= 0 { continue }
                 if 2 * ice[k] > scale { scale = 2 * ice[k] }
                 let sk = h[k] + ice[k]
@@ -1656,7 +1672,7 @@ public final class Terrain {
                 if w > scale { scale = w }
             }
         }
-        return scale
+        return (scale, iLo, iHi, jLo, jHi)
     }
 
     /// EIN Teilschritt des Gletschers. Zwei Pässe über das Gitter, beide
@@ -1678,7 +1694,8 @@ public final class Terrain {
     /// abzieht, ist damit dieselbe Zahl, die ihre Nachbarn als Zufluss
     /// gutschreiben (bis auf die eine Division `out/ΣΔs⁺`, gegen die der
     /// Nullpunkt-Wächter `if I < 0` steht).
-    private func iceFlowSubStep(kappa: Double, dt: Double) {
+    private func iceFlowSubStep(kappa: Double, dt: Double,
+                                iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
         let nn = n, cnt = cfg.count
         let sea = cfg.sea, cs = cfg.cellSize
         let moveFrac = max(0, cfg.iceFlowMoveFraction)
@@ -1700,6 +1717,9 @@ public final class Terrain {
         let swath = max(0, cfg.iceErodeSwathRadius)
         let swathSide = 2 * swath + 1
         let swathNorm = 1.0 / Double(swathSide * swathSide)
+        let halo = max(1, swath)
+        let freezeILo = max(0, iLo - halo), freezeIHi = min(nn - 1, iHi + halo)
+        let freezeJLo = max(0, jLo - halo), freezeJHi = min(nn - 1, jHi + halo)
         // Gesteinshärte (Issue #12): Abrasion ∝ Eisfluss × Erodierbarkeit. Der
         // Faktor wirkt NUR auf den Fels-Anteil (Regolith weiß nicht, welches
         // Gestein darunter liegt) und wird nur angefasst, wenn er ≠ 1 ist —
@@ -1721,9 +1741,9 @@ public final class Terrain {
             let plith = ldb.baseAddress!
             let prate = rtb.baseAddress!, psurf = sfb.baseAddress!, pero = erb.baseAddress!
             // ---- Pass 1: Oberfläche einfrieren, Ausstrom je Zelle bestimmen ----
-            parallel(nn) { jLo, jHi in
-            for j in jLo..<jHi {
-                for i in 0..<nn {
+            parallel(freezeJHi - freezeJLo + 1) { rowLo, rowHi in
+            for j in (freezeJLo + rowLo)..<(freezeJLo + rowHi) {
+                for i in freezeILo...freezeIHi {
                     let k = j * nn + i
                     let sk = ph[k] + pice[k]
                     psurf[k] = sk
@@ -1759,9 +1779,9 @@ public final class Terrain {
             }
             }
             // ---- Pass 2: Zufluss sammeln, erodieren, Bilanz, Moräne ----
-            parallel(nn) { jLo, jHi in
-            for j in jLo..<jHi {
-                for i in 0..<nn {
+            parallel(jHi - jLo + 1) { rowLo, rowHi in
+            for j in (jLo + rowLo)..<(jLo + rowHi) {
+                for i in iLo...iHi {
                     let k = j * nn + i
                     let sk = psurf[k]
                     var inflow = 0.0, w = 0.0

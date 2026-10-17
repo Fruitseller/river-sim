@@ -779,6 +779,36 @@ final class Glacier: XCTestCase {
         }
     }
 
+    /// Nach einem Weltwechsel müssen neue Firnquellen den Arbeitsbereich
+    /// aufspannen. Alte Scratch-Raten dürfen am kleineren oder verschobenen
+    /// Rand keinen Zufluss erzeugen. Vergleich gegen jeweils frische Puffer.
+    func testIceDomainFollowsNewFirnAndReplacedWorld() {
+        let c = cfg(n: 64)
+        var blank = Terrain(config: c, seed: 1337).state
+        let bed = c.sea + 0.2
+        for k in 0..<c.count {
+            blank.h[k] = bed; blank.rock[k] = bed; blank.sed[k] = 0
+            blank.ice[k] = 0; blank.snow[k] = 0; blank.temperature[k] = 5.8
+        }
+        let reused = Terrain(allocating: c, seed: 1337)
+        for (i, j) in [(8, 8), (12, 8), (c.n - 3, c.n - 3), (c.n - 6, c.n - 3)] {
+            var state = blank
+            let k = j * c.n + i
+            state.h[k] = c.sea + 0.65; state.rock[k] = state.h[k]
+            state.snow[k] = 0.2; state.temperature[k] = -5.9
+            reused.restore(state)
+            let fresh = Terrain(allocating: c, seed: 1337); fresh.restore(state)
+            for dt in [1000.0, 5000.0, 100.0] {
+                reused.updateIce(dt: dt); fresh.updateIce(dt: dt)
+                XCTAssertEqual(reused.ice, fresh.ice, "Alter Scratch nach Weltwechsel bei \(i),\(j)")
+                XCTAssertEqual(reused.h, fresh.h)
+                XCTAssertEqual(reused.sed, fresh.sed)
+                XCTAssertEqual(reused.underIce, fresh.underIce)
+            }
+            XCTAssertGreaterThan(reused.ice[k], 0, "Die neue Firnquelle wurde übersprungen")
+        }
+    }
+
     /// Dickes Eis auf flachem Bett: der Fall, in dem der Transport bis Issue
     /// #174 instabil lief. Die Sub-Taktung richtete sich nur nach dem
     /// steilsten Oberflächen-Abfall; auf einer fast ebenen Eisplatte ist der
