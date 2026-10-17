@@ -101,9 +101,16 @@ public enum Hydraulic {
     ///   `testUniformRainWeightIsBitIdentical`).
     static func spawnPosition(_ rnd: inout Mulberry32, n: Int,
                               weight: [Double], weightMax: Double) -> (x: Double, y: Double) {
+        weight.withUnsafeBufferPointer {
+            spawnPosition(&rnd, n: n, weight: $0.baseAddress, weightMax: weightMax)
+        }
+    }
+
+    @inline(__always) static func spawnPosition(_ rnd: inout Mulberry32, n: Int,
+                                                weight: UnsafePointer<Double>?, weightMax: Double) -> (x: Double, y: Double) {
         var px = rnd.next() * Double(n - 1)
         var py = rnd.next() * Double(n - 1)
-        guard !weight.isEmpty, weightMax > 0 else { return (px, py) }
+        guard let weight, weightMax > 0 else { return (px, py) }
         var tries = 0
         while true {
             let w = weight[Int(py) * n + Int(px)]
@@ -230,70 +237,8 @@ public enum Hydraulic {
         let poolOn = hf.count == h.count
         let recOn = receiver.count == h.count
         let streamOn = stream.count == h.count
-
-        // Abtrag; gibt den tatsächlich abgetragenen Betrag zurück (am Tiefseeboden
-        // gedeckelt), damit die Sedimentbilanz stimmt.
-        //
-        // Lithologie (Issue #12): der Härtefaktor wirkt NUR auf den Fels-Anteil.
-        // Das lockere Sediment darüber wird wie bisher abgeräumt (Regolith weiß
-        // nicht, welches Gestein darunter liegt); was darüber hinaus in den Fels
-        // greift, wird mit dessen Erodierbarkeit skaliert — auf einer harten Bank
-        // bleibt nach dem Abräumen der Auflage genau der Widerstand stehen, der
-        // die Kante hält.
-        //
-        // BIT-IDENTITÄT: der Faktor wird VOR dem restlichen (unveränderten) Ablauf
-        // auf `amount` gerechnet und nur angefasst, wenn er ≠ 1 ist. Sonst liefe
-        // auch bei uniformem Gestein eine andere Gleitkomma-Reihenfolge
-        // (`take + (d − take)` ist NICHT bit-genau `d`), und der 30k-Jahre-Lauf
-        // des Braiding-Wächters driftet messbar weg (gemessen: Bank-Fläche
-        // 185/104 statt 160/81) — chaotisches System, 1-ulp-Unterschiede wachsen.
-        @inline(__always) func dig(_ k: Int, _ amount: Double) -> Double {
-            // Unter Eis kein fluvialer Abtrag (Issue #35): das Bett gehört dem
-            // Gletscher. Vor jeder anderen Rechnung, damit auch die
-            // Lithologie-Arithmetik nicht anläuft.
-            if iceOn && bedLocked[k] { return 0 }
-            var d = amount
-            let f = lithOn ? erodibility[k] : 1.0
-            if f != 1.0 {
-                let s = sed[k]
-                if d > s { d = s + (d - s) * f }
-            }
-            let room = h[k] - floor
-            if room <= 0 { return 0 } // schon am Tiefseeboden
-            if d > room { d = room }  // nicht unter den Boden graben
-            let take = min(d, sed[k])
-            sed[k] -= take
-            rock[k] -= (d - take)
-            h[k] -= d
-            return d
-        }
-
-        /// Ablagerung; gibt den NICHT abgelegten Rest zurück (auf Kanalzellen
-        /// gedämpft: ein Bett, das von Tropfen-Sediment zugeschüttet wird, ist
-        /// derselbe Reconciliation-Bug wie eins, das weggefressen wird). Der Rest
-        /// bleibt beim Tropfen in Suspension (Massenbilanz + physisch: der Kanal
-        /// TRANSPORTIERT das Sediment weiter). Ohne Maske exakt 0 → alte Arithmetik.
-        @inline(__always) func deposit(_ k: Int, _ amount: Double) -> Double {
-            // Gletscherzelle: gar nichts ablegen, alles bleibt in Suspension
-            // (Issue #35) — der Tropfen trägt seine Fracht über das Eis hinweg
-            // und lädt sie hinter der Zunge ab (Sander am Gletschertor).
-            if iceOn && bedLocked[k] { return amount }
-            // Der STÄRKERE der beiden Dämpfer gewinnt (s. `depositDamp` oben).
-            var f = 1.0
-            if chanOn && channel[k] { f = p.channelDepositDamp }
-            if ddOn && depositDamp[k] < f { f = depositDamp[k] }
-            if f >= 1 {
-                sed[k] += amount; h[k] += amount
-                return 0
-            }
-            let put = amount * f
-            sed[k] += put; h[k] += put
-            return amount - put
-        }
-
-        // Gewichts-Maximum einmal je Charge (die Ablehnungs-Stichprobe normiert
-        // darauf); leeres/kaputtes Feld → gleichverteilte Starts wie bisher.
         let flowOn = flowWeight.count == h.count
+
         // PERF: `Array.max()` nimmt den generischen Sequence-Pfad (Iterator plus
         // Closure je Element) und tastet hier 692k Zellen ab. Die
         // Roh-Puffer-Schleife vergleicht in derselben Reihenfolge und liefert
@@ -305,128 +250,154 @@ public enum Hydraulic {
             return m
         }
 
-        // Zufallsstrom: EINER JE TROPFEN aus dessen laufender Nummer, wenn diese
-        // Charge Teil des fortlaufenden Stroms ist (Issue #2) — sonst einer je
-        // Charge wie bisher (s. `firstDrop`). Der gesamte Zufall eines Tropfens
-        // steckt in seinem Startpunkt (die Bahn danach ist deterministisch),
-        // also legt die Nummer den Tropfen vollständig fest: Tropfen Nr. j ist
-        // derselbe, ob er allein in einem 0.2-Jahr-Frame fällt oder als einer
-        // von 360 in einem Sprung. Vorher hing der Charge-Seed an der
-        // SCHRITT-Nummer: leere Frame-Schritte (Tropfenzahl 0) schoben ihn
-        // trotzdem weiter, und ein großer Schritt zog alle Tropfen aus einem
-        // einzigen Strom — der Droplet-Pass blieb damit schrittweiten-abhängig.
-        var batch = Mulberry32(seed: seed)
-        for i in 0..<count {
-            var px = 0.0, py = 0.0
-            if let firstDrop {
-                var rnd = dropRNG(seed: seed, index: firstDrop &+ UInt64(i))
-                (px, py) = spawnPosition(&rnd, n: n,
-                                         weight: flowOn ? flowWeight : [], weightMax: flowMax)
-            } else {
-                (px, py) = spawnPosition(&batch, n: n,
-                                         weight: flowOn ? flowWeight : [], weightMax: flowMax)
-            }
-            if let seaLevel {
-                let start = Int(py) * n + Int(px)
-                if h[start] <= seaLevel { continue }
-            }
-            var dirX = 0.0, dirY = 0.0
-            var speed = p.initialSpeed, water = p.initialWater, sediment = 0.0
+        h.withUnsafeMutableBufferPointer { hb in
+        rock.withUnsafeMutableBufferPointer { rkb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        track.withUnsafeMutableBufferPointer { trb in
+        channel.withUnsafeBufferPointer { chb in
+        depositDamp.withUnsafeBufferPointer { ddb in
+        erodibility.withUnsafeBufferPointer { erb in
+        bedLocked.withUnsafeBufferPointer { blb in
+        hf.withUnsafeBufferPointer { hfb in
+        receiver.withUnsafeBufferPointer { rcb in
+        stream.withUnsafeBufferPointer { stmb in
+        flowWeight.withUnsafeBufferPointer { fwb in
+        bx.withUnsafeBufferPointer { bxb in
+        byv.withUnsafeBufferPointer { byb in
+        bw.withUnsafeBufferPointer { bwb in
+            let ph = hb.baseAddress!, prock = rkb.baseAddress!, psed = sb.baseAddress!
+            let ptrack = trb.baseAddress
+            let pchan = chb.baseAddress, pdd = ddb.baseAddress, plith = erb.baseAddress
+            let pice = blb.baseAddress, phf = hfb.baseAddress, prec = rcb.baseAddress
+            let pstream = stmb.baseAddress, pflow = flowOn ? fwb.baseAddress : nil
+            let pbx = bxb.baseAddress!, pby = byb.baseAddress!, pbw = bwb.baseAddress!
+            let brushCount = bx.count
 
-            for step in 0..<p.maxSteps {
-                let nodeX = Int(px), nodeY = Int(py)
-                if nodeX < 0 || nodeX >= n - 1 || nodeY < 0 || nodeY >= n - 1 { break }
-                let fx = px - Double(nodeX), fy = py - Double(nodeY)
-                let k = nodeY * n + nodeX
-                // Besuchs-Zählung → streamMap, gewichtet nach Tropfen-REIFE: die
-                // ersten Schritte ab Spawn liegen auf zufälligen Hängen (jeder
-                // Tropfen woanders → Rauschen), gereifte Tropfen sind ins Talnetz
-                // konvergiert (immer dieselben Zellen → Flüsse). Ohne Gewicht
-                // liegt das Rauschband nur ~5× unter den Trunk-Raten.
-                if trackOn { track[k] += min(1.0, Double(step) / 40) }
-
-                // See-Interaktion (nickmcd Descend→Flood→Drain): Sediment als
-                // Delta am Eintritt abladen, zum Auslass springen, weiterlaufen.
-                if poolOn && hf[k] - h[k] > p.poolDepth {
-                    let dep = sediment * (1 - p.poolSedimentKeep)
-                    sediment -= dep - deposit(k, dep)
-                    var c = k, guardN = 0
-                    var exited = false
-                    if recOn {
-                        while guardN < 4 * n {
-                            guardN += 1
-                            let r = receiver[c]
-                            if r < 0 || r >= n * n { break }
-                            c = Int(r)
-                            if hf[c] - h[c] <= p.poolDepth { exited = true; break }
-                        }
-                    }
-                    if !exited { break } // See ohne Auslass (Meer/Rand) → Tropfen endet
-                    px = Double(c % n); py = Double(c / n)
-                    dirX = 0; dirY = 0
-                    speed = p.initialSpeed
-                    continue
+            @inline(__always) func dig(_ k: Int, _ amount: Double) -> Double {
+                if iceOn && pice![k] { return 0 }
+                var d = amount
+                let f = lithOn ? plith![k] : 1.0
+                if f != 1.0 {
+                    let s = psed[k]
+                    if d > s { d = s + (d - s) * f }
                 }
-                let hNW = h[k], hNE = h[k + 1], hSW = h[k + n], hSE = h[k + n + 1]
-                // Höhe + Gradient (bilinear)
-                let gradX = (hNE - hNW) * (1 - fy) + (hSE - hSW) * fy
-                let gradY = (hSW - hNW) * (1 - fx) + (hSE - hNE) * fx
-                let height = hNW * (1 - fx) * (1 - fy) + hNE * fx * (1 - fy)
-                           + hSW * (1 - fx) * fy + hSE * fx * fy
+                let room = ph[k] - floor
+                if room <= 0 { return 0 } // schon am Tiefseeboden
+                if d > room { d = room }  // nicht unter den Boden graben
+                let take = min(d, psed[k])
+                psed[k] -= take
+                prock[k] -= (d - take)
+                ph[k] -= d
+                return d
+            }
 
-                // Richtung mit Trägheit aktualisieren, dann normieren.
-                dirX = dirX * p.inertia - gradX * (1 - p.inertia)
-                dirY = dirY * p.inertia - gradY * (1 - p.inertia)
-                let len = (dirX * dirX + dirY * dirY).squareRoot()
-                if len < 1e-9 { break } // flach & richtungslos → Tropfen endet
-                dirX /= len; dirY /= len
-                let npx = px + dirX, npy = py + dirY
-                if npx < 0 || npx >= Double(n - 1) || npy < 0 || npy >= Double(n - 1) { break }
+            @inline(__always) func deposit(_ k: Int, _ amount: Double) -> Double {
+                if iceOn && pice![k] { return amount }
+                var f = 1.0
+                if chanOn && pchan![k] { f = p.channelDepositDamp }
+                if ddOn && pdd![k] < f { f = pdd![k] }
+                if f >= 1 {
+                    psed[k] += amount; ph[k] += amount
+                    return 0
+                }
+                let put = amount * f
+                psed[k] += put; ph[k] += put
+                return amount - put
+            }
 
-                // Höhendifferenz zum neuen Punkt.
-                let nnx = Int(npx), nny = Int(npy)
-                let nfx = npx - Double(nnx), nfy = npy - Double(nny)
-                let nk = nny * n + nnx
-                let newHeight = h[nk] * (1 - nfx) * (1 - nfy) + h[nk + 1] * nfx * (1 - nfy)
-                             + h[nk + n] * (1 - nfx) * nfy + h[nk + n + 1] * nfx * nfy
-                let deltaH = newHeight - height
-
-                // Sedimentkapazität an dieser Stelle.
-                let capacity = max(-deltaH, p.minSlope) * speed * water * p.capacity
-
-                if sediment > capacity || deltaH > 0 {
-                    // Überschuss (oder bergauf) → ablagern, bilinear auf die 4 Zellen.
-                    let dep = (deltaH > 0) ? min(deltaH, sediment)
-                                           : (sediment - capacity) * p.depositRate
-                    sediment -= dep
-                    // Rest aus der Kanal-Dämpfung bleibt in Suspension (ohne Maske: 0).
-                    sediment += deposit(k, dep * (1 - fx) * (1 - fy))
-                             +  deposit(k + 1, dep * fx * (1 - fy))
-                             +  deposit(k + n, dep * (1 - fx) * fy)
-                             +  deposit(k + n + 1, dep * fx * fy)
+            var batch = Mulberry32(seed: seed)
+            for i in 0..<count {
+                var px = 0.0, py = 0.0
+                if let firstDrop {
+                    var rnd = dropRNG(seed: seed, index: firstDrop &+ UInt64(i))
+                    (px, py) = spawnPosition(&rnd, n: n, weight: pflow, weightMax: flowMax)
                 } else {
-                    // Unter Kapazität → erodieren, aber nicht mehr als das Gefälle
-                    // (kein Löchergraben), über den Pinsel verteilt.
-                    let ero = min((capacity - sediment) * p.erodeRate, -deltaH)
-                    if ero > 0 {
-                        for i in bx.indices {
-                            let cx = nodeX + bx[i], cy = nodeY + byv[i]
-                            if cx < 0 || cx >= n || cy < 0 || cy >= n { continue }
-                            let ck = cy * n + cx
-                            sediment += dig(ck, ero * bw[i])
+                    (px, py) = spawnPosition(&batch, n: n, weight: pflow, weightMax: flowMax)
+                }
+                if let seaLevel {
+                    let start = Int(py) * n + Int(px)
+                    if ph[start] <= seaLevel { continue }
+                }
+                var dirX = 0.0, dirY = 0.0
+                var speed = p.initialSpeed, water = p.initialWater, sediment = 0.0
+
+                for step in 0..<p.maxSteps {
+                    let nodeX = Int(px), nodeY = Int(py)
+                    if nodeX < 0 || nodeX >= n - 1 || nodeY < 0 || nodeY >= n - 1 { break }
+                    let fx = px - Double(nodeX), fy = py - Double(nodeY)
+                    let k = nodeY * n + nodeX
+                    if trackOn { ptrack![k] += min(1.0, Double(step) / 40) }
+
+                    if poolOn && phf![k] - ph[k] > p.poolDepth {
+                        let dep = sediment * (1 - p.poolSedimentKeep)
+                        sediment -= dep - deposit(k, dep)
+                        var c = k, guardN = 0
+                        var exited = false
+                        if recOn {
+                            while guardN < 4 * n {
+                                guardN += 1
+                                let r = prec![c]
+                                if r < 0 || r >= n * n { break }
+                                c = Int(r)
+                                if phf![c] - ph[c] <= p.poolDepth { exited = true; break }
+                            }
+                        }
+                        if !exited { break }
+                        px = Double(c % n); py = Double(c / n)
+                        dirX = 0; dirY = 0
+                        speed = p.initialSpeed
+                        continue
+                    }
+                    let hNW = ph[k], hNE = ph[k + 1], hSW = ph[k + n], hSE = ph[k + n + 1]
+                    let gradX = (hNE - hNW) * (1 - fy) + (hSE - hSW) * fy
+                    let gradY = (hSW - hNW) * (1 - fx) + (hSE - hNE) * fx
+                    let height = hNW * (1 - fx) * (1 - fy) + hNE * fx * (1 - fy)
+                               + hSW * (1 - fx) * fy + hSE * fx * fy
+
+                    dirX = dirX * p.inertia - gradX * (1 - p.inertia)
+                    dirY = dirY * p.inertia - gradY * (1 - p.inertia)
+                    let len = (dirX * dirX + dirY * dirY).squareRoot()
+                    if len < 1e-9 { break }
+                    dirX /= len; dirY /= len
+                    let npx = px + dirX, npy = py + dirY
+                    if npx < 0 || npx >= Double(n - 1) || npy < 0 || npy >= Double(n - 1) { break }
+
+                    let nnx = Int(npx), nny = Int(npy)
+                    let nfx = npx - Double(nnx), nfy = npy - Double(nny)
+                    let nk = nny * n + nnx
+                    let newHeight = ph[nk] * (1 - nfx) * (1 - nfy) + ph[nk + 1] * nfx * (1 - nfy)
+                                 + ph[nk + n] * (1 - nfx) * nfy + ph[nk + n + 1] * nfx * nfy
+                    let deltaH = newHeight - height
+
+                    let capacity = max(-deltaH, p.minSlope) * speed * water * p.capacity
+
+                    if sediment > capacity || deltaH > 0 {
+                        let dep = (deltaH > 0) ? min(deltaH, sediment)
+                                               : (sediment - capacity) * p.depositRate
+                        sediment -= dep
+                        sediment += deposit(k, dep * (1 - fx) * (1 - fy))
+                                 +  deposit(k + 1, dep * fx * (1 - fy))
+                                 +  deposit(k + n, dep * (1 - fx) * fy)
+                                 +  deposit(k + n + 1, dep * fx * fy)
+                    } else {
+                        let ero = min((capacity - sediment) * p.erodeRate, -deltaH)
+                        if ero > 0 {
+                            for i in 0..<brushCount {
+                                let cx = nodeX + pbx[i], cy = nodeY + pby[i]
+                                if cx < 0 || cx >= n || cy < 0 || cy >= n { continue }
+                                let ck = cy * n + cx
+                                sediment += dig(ck, ero * pbw[i])
+                            }
                         }
                     }
-                }
 
-                // Speed aus Gefälle (bergab → schneller), Wasser verdunstet —
-                // auf etablierten Läufen LANGSAMER (nickmcd-Sharpening: Tropfen
-                // im Fluss leben länger → der Fluss verlängert/verstärkt sich).
-                speed = (max(0, speed * speed - deltaH * p.gravity)).squareRoot()
-                let sv = streamOn ? min(1, max(0, stream[k])) : 0.0
-                water *= (1 - p.evaporate * (1 - p.streamEvapDamp * sv))
-                px = npx; py = npy
-                if water < 1e-3 { break }
+                    speed = (max(0, speed * speed - deltaH * p.gravity)).squareRoot()
+                    let sv = streamOn ? min(1, max(0, pstream![k])) : 0.0
+                    water *= (1 - p.evaporate * (1 - p.streamEvapDamp * sv))
+                    px = npx; py = npy
+                    if water < 1e-3 { break }
+                }
             }
-        }
+        }}}}}}}}}}}}}}}
     }
 }
