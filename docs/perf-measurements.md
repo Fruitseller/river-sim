@@ -1474,3 +1474,212 @@ heraus in Swift-Arrays (formal ein Data Race); übernommen ist die Fassung mit
 je Zeile eigenem Ergebnis in Roh-Puffern und serieller Reduktion.
 Fingerprints unverändert: `6ffeb97d52f8e8d9` / `9f0fb0e9ad4d8493` /
 `49c9ba0762c9ee01`.
+
+
+## Q. Mäandergürtel parallel, Oktober 2026 (Issue #174)
+
+Startstand `ea85a7c`, Branch `t3/174-belt-parallel`. Gemessen auf Apple M4 Max,
+16 Kerne, 64 GiB, macOS 26.7, Apple Swift 6.4, Release im Swift-5-Sprachmodus.
+Die Maschine war geteilt. Alle A/B-Vergleiche wechseln je Runde A B / B A;
+Schleifen mit `bash -c`. Produktionspaarung n = 720, world = 112,4789,
+Seed 1337, Einlauf 100 × 100 Jahre, Messblock 30 × 100 Jahre.
+`--repeat 1` misst den gesamten ersten Block; bei `--repeat 3` stammt die
+Pass-Tabelle aus dem dritten Block und die ausgegebene Gesamtzeit aus dem
+schnellsten Block. Beide Größen werden getrennt ausgewertet.
+
+### Ansatz und Unabhängigkeit
+
+Die Läufe bleiben gegenüber jedem überlappenden Vorgänger geordnet. Für jeden
+Lauf wird eine geländeunabhängige Obergrenze seiner anfänglichen Rate berechnet:
+Mobilität, Sättigung und Talwand-Bremse können den Betrag nur vermindern;
+Beträge vor der unveränderten Ratenglättung begrenzen auch die mögliche
+Auslöschung verschiedener Vorzeichen. Daraus folgt eine Obergrenze der einmal
+gewählten CFL-Teilschrittzahl. Die tatsächliche Zahl wird erst am zulässigen
+Ausführungspunkt aus dem aktuellen Bett berechnet und gegen diese Schranke
+geprüft, nicht vor überlappenden Vorgängern.
+
+Das Fenster enthält alle anfänglichen Knoten, je möglichem Teilschritt einen
+Knotenabstand für die beiden jeweils auf einen halben Abstand geklemmten
+Bewegungen, sowie den größeren Rand aus 3,5 Kanalbreiten für die Talwand und
+0,5 + `meanderBarWidths` für den Stempel. Zwei zusätzliche Zellen decken
+Rundung, bilineare Abfragen und die vier Nachbarn der Altarm-Pfropfen ab.
+Implizite Diffusion mit nichtnegativen Koeffizienten, Cutoffs und Resample
+bleiben in der konvexen Hülle. Der Sicherheitsaufschlag 1,001 auf Rate/Breite
+verhindert eine zu knappe Schranke durch Rundung. Ungültige Voraussetzungen
+fallen auf den bisherigen seriellen Weg zurück; die Physik bekommt keinen
+neuen Deckel.
+
+Jeder Arbeiter besitzt einen lokalen `MeanderState`, Cutoff-Index und
+Altarm-Historie. Der Rausch-Schlüssel bleibt der ursprüngliche Kanalindex.
+Bett, Vegetation, Bankalter und Masken sind einmal als Roh-Puffer geöffnet;
+parallel werden ausschließlich disjunkte Lese- und Schreibfenster bearbeitet.
+Neue Altarme und Cutoff-Zähler werden nach allen Arbeiten in ursprünglicher
+Lauf-Reihenfolge eingetragen. Pfropfen entstehen weiterhin nach jedem
+Teilschritt, `attachTributaries`, feste Stempel und Verlandung danach seriell.
+Die Kopplung samt Diagnose-Zählern bleibt vor der Migration.
+
+Zusätzlich reist die Geometrie des letzten Stempels zur nächsten Migration:
+Breiten, Krümmung, Normalen und Bogenlängen bleiben bei unveränderter Linie
+gültig, nur die Mobilität liest das frisch gestempelte Bett erneut. Ein
+Bank-Saum endet, sobald außerhalb des Betts kein Sedimentbudget mehr besteht;
+dort kann dann keine weitere Zelle geändert werden.
+
+### Vorversuche und verworfene Varianten
+
+Die Vorversuche dienten zur Auswahl; während einzelner Runden liefen eigene
+Builds/Hash-Prüfungen zusätzlich zur Fremdlast. Maßgeblich ist deshalb die
+abschließende, separat ausgeführte Messreihe unten.
+
+| Variante B | A | Gesamt A / B, Median | gepaarte Δ B−A | mobile Pässe A / B, Median |
+| --- | --- | ---: | ---: | ---: |
+| Cache, getrennte Geometrie-/Mobilitäts-Schleifen | Start | 58,350 / 58,900 | 0,450 | 13,025 / 12,580 |
+| Cache mit gemeinsamer Mobilitätsformel + Bank-Abbruch | Start | 58,350 / 58,350 | -0,500 | 13,040 / 12,045 |
+| Feste Ebenen + Cache + Bank-Abbruch | Start | 60,750 / 57,300 | -1,850 | 13,110 / 11,490 |
+| Konvexe Hüllen + feste Ebenen | Start | 59,050 / 59,800 | 0,550 | 12,990 / 12,205 |
+| Tabelle gesättigter Querprofile | Ebenen | 57,200 / 59,850 | 2,700 | 11,610 / 11,905 |
+| Abhängigkeitsplan, Tabelle, Broadcast | Ebenen | 59,100 / 58,500 | -1,500 | 11,805 / 11,895 |
+| Abhängigkeitsplan ohne Tabelle, gezieltes Aufwecken | Ebenen | 57,300 / 57,650 | 0,600 | 11,700 / 11,095 |
+
+Alle Zeiten in ms/Schritt, je vier Runden `--repeat 1`. Mobile Pässe sind in A
+`belt.migrate + belt.stamp`, beim Parallelpfad `belt.schedule + belt.parallel`.
+Die Summe enthält die Planung. Der erste Cache teilte die volle Geometrie
+ungünstig in zwei Schleifen und wurde durch die gemeinsame skalare
+Mobilitätsformel ersetzt. Die Tabelle identischer gesättigter Querprofile wird
+verworfen: kein Gewinn im betroffenen Pass. Konvexe Hüllen vermindern zwar die
+Überlappungen, kosten aber mehr Planung. Die Produktionsfassung verwendet
+Rechtecke und einen gemeinsamen Parallelstart. Ein Lauf wartet nur auf seine
+überlappenden Vorgänger, statt auf eine ganze Ebene. Der Condition-Lock schützt
+alle Scheduler-Daten, gezielte Signale wecken neu ausführbare Arbeiter; am Ende
+werden alle wartenden Arbeiter freigegeben.
+
+Die erste Rechteck-Diagnose auf dem seriellen Startstand maß 1.072 mobile Läufe
+über 30 Schritte, 0 vollständig isolierte Läufe, 5.860 überlappende Paare von
+18.665 möglichen Paaren, 783 Ebenen insgesamt. Das sind 35,73 Läufe und 26,10
+Ebenen je Schritt; 68,60 % der Laufpaare sind unabhängig. 572 von 1.072 Läufen
+liegen in Ebenen mit mehreren Läufen (53,36 %). Die konvexen Hüllen erreichen
+4.462 überlappende Paare, 737 Ebenen, 657 Laufplätze in mehrfach besetzten
+Ebenen, aber weiterhin 0 isolierte Läufe. Diese geometrischen Anteile sind
+keine Zeitanteile; die Läufe haben unterschiedliche Knoten-/Teilschrittzahlen.
+
+Der gegatete `testBeltOverlapDiagnostic` reproduziert die Statistik
+mit denselben Produktions-Fenstern; `testBeltScheduleReleasesOnlyIndependentReadyRuns`
+prüft gleichzeitig aktive Läufe und sämtliche Vorgänger-Kanten.
+
+Vor allen Änderungen selbst bestätigte Hashes auf `ea85a7c`:
+
+| Seed / dt | Fingerprint |
+| --- | --- |
+| 1337 / 100 | `08d32575d5cd353a` |
+| 42 / 100 | `0fd978609f8cc241` |
+| 20 / 100 | `9df73cb7672f2610` |
+| 1337 / 15 | `90b5a31c0d94a030` |
+
+Der Ebenen-Kandidat bestätigt alle vier Werte, Seed 1337 zusätzlich zweimal.
+Auch Cache, Hüllen, Profil-Tabelle und der gemeinsame Parallelstart wurden
+jeweils vor ihrer Messung auf Seed 1337 gegen denselben Startwert geprüft.
+Abschlussprüfung und vollständige Messreihe folgen unten.
+
+### Abschließende Gesamtschritt-Messung
+
+A = `/tmp/simperf.q-start` aus `ea85a7c`, B = `/tmp/simperf.q-end` aus dem
+Quellstand `fac991d`. Zehn Runden `--repeat 1`, anschließend vier Runden
+`--repeat 3`, jeweils wechselnde Reihenfolge. Während dieser abschließenden
+Reihen lief kein eigener weiterer Build, Test oder Hash-Lauf. Fremdlast auf
+der geteilten Maschine blieb möglich.
+
+| Runde | A Gesamt | B Gesamt | Δ B−A | A mobile Pässe | B mobile Pässe inkl. Planung |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 58,6 | 57,3 | -1,3 | 13,07 | 10,97 |
+| 2 | 59,6 | 57,7 | -1,9 | 13,08 | 11,07 |
+| 3 | 58,1 | 57,7 | -0,4 | 13,02 | 11,27 |
+| 4 | 59 | 56,5 | -2,5 | 13,23 | 10,83 |
+| 5 | 58,1 | 56,7 | -1,4 | 12,93 | 10,95 |
+| 6 | 58 | 59,3 | 1,3 | 12,87 | 11,32 |
+| 7 | 58 | 57 | -1 | 13,02 | 11,02 |
+| 8 | 57,6 | 57,3 | -0,3 | 12,85 | 11,04 |
+| 9 | 57,7 | 55,7 | -2 | 13,01 | 10,84 |
+| 10 | 58,6 | 56,8 | -1,8 | 12,95 | 10,92 |
+| Median | 58,1 | 57,15 | -1,35 | 13,015 | 10,995 |
+
+Alle Zeiten in ms/Schritt. Gesamt-Mediane **58,1 → 57,15 ms**,
+Differenz der Mediane **-0,95 ms (-1,635 %)**,
+gepaarter Median **-1,35 ms**; B gewinnt 9/10 Paare.
+Der Median der gepaarten Differenzen der mobilen Pässe beträgt
+**-2,005 ms**. Die unveränderte Priority-Flood liegt bei A/B im Median bei
+14,72/15,46 ms.
+Der Pass-Gewinn darf deshalb nicht als derselbe Gewinn des Gesamtschritts
+angegeben werden. Diese Messung isoliert den Grund der anderen Pass-Zeiten nicht.
+
+### Pass-Tabelle, vier Runden `--repeat 3`
+
+Rohwerte des dritten Blocks; die erste Zeitangabe des Harness ist dagegen
+das Minimum der drei Blöcke und wird hier nicht mit der Pass-Tabelle vermischt.
+
+| Runde | A Minimum | B Minimum | A dritter Block | B dritter Block | A mobil | B mobil inkl. Planung | Δ mobil B−A |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 57,5 | 56,5 | 61 | 58,1 | 15,85 | 12,98 | -2,87 |
+| 2 | 58,8 | 58,3 | 60,3 | 58,3 | 15,65 | 13,05 | -2,6 |
+| 3 | 57,4 | 56,7 | 59,3 | 57,7 | 15,51 | 12,92 | -2,59 |
+| 4 | 59,4 | 57,7 | 61,9 | 58,5 | 16,03 | 13,12 | -2,91 |
+
+| Pass | A Median | B Median | Δ Mediane | Median der gepaarten Δ |
+| --- | ---: | ---: | ---: | ---: |
+| Migration + Stempel inkl. Planung | 15,75 | 13,015 | -2,735 | -2,735 |
+| `belt.stamp` | 9,355 | — | — | — |
+| `belt.migrate` | 6,395 | — | — | — |
+| `belt.parallel` | — | 12,795 | — | — |
+| `belt.schedule` | — | 0,22 | — | — |
+| `belt.fixedStamp` | 1,55 | 1,47 | -0,08 | -0,06 |
+| `belt.attach` | 1,265 | 1,21 | -0,055 | -0,045 |
+| `priorityFlood` | 14,805 | 15,38 | 0,575 | 0,57 |
+| `computeMFDArea` | 4,24 | 4,32 | 0,08 | 0,035 |
+| `updateIce` | 2,785 | 2,775 | -0,01 | -0,045 |
+| `Hydraulic.erode` | 1,97 | 1,935 | -0,035 | -0,005 |
+
+`belt.parallel` misst die Wandzeit des gesamten parallelen Abschnitts auf dem
+aufrufenden Thread, einschließlich Synchronisation und Historien-Übernahme.
+Es addiert keine CPU-Zeiten der Arbeiter. `belt.schedule` kommt hinzu.
+
+Das Ziel **mindestens 4 ms weniger im Gesamtschritt ist nicht erreicht**.
+Übernommen wird ein kleinerer, bit-identischer Gewinn. Eine neue Zusage für
+Abnahmepunkt 48 gegenüber `main` folgt daraus allein nicht: `main` wurde in
+dieser Runde nicht erneut mitgemessen. Die 51,9/59,8 ms aus dem Auftrag gehören
+zu dessen eigener Messreihe und werden nicht mit diesen Werten verrechnet.
+
+### Abschlussprüfung nach Rebase
+
+`git rebase t3/issue-174-integration` meldete „up to date“; der lokale
+Integrationsstand war weiterhin `ea85a7c`. Die Sim-Quellen des gemessenen
+`fac991d` bleiben damit unverändert. Nach dem Rebase erneut vollständige
+Pflichtsuite, danach die gegatete Überlappungs-Diagnose und ein regulärer
+Release-Build des Harness. Alle vier Hash-Fälle wurden nach dem Rebase jeweils
+zweimal mit `SimCore/.build/release/simperf` ausgeführt:
+
+| Seed / dt | Start `ea85a7c` | Ende, Lauf 1 | Ende, Lauf 2 |
+| --- | --- | --- | --- |
+| 1337 / 100 | `08d32575d5cd353a` | `08d32575d5cd353a` | `08d32575d5cd353a` |
+| 42 / 100 | `0fd978609f8cc241` | `0fd978609f8cc241` | `0fd978609f8cc241` |
+| 20 / 100 | `9df73cb7672f2610` | `9df73cb7672f2610` | `9df73cb7672f2610` |
+| 1337 / 15 | `90b5a31c0d94a030` | `90b5a31c0d94a030` | `90b5a31c0d94a030` |
+
+Vor dem Rebase ebenfalls alle vier Werte bestätigt, Seed 1337 / dt 100
+zusätzlich wiederholt. Die Hashes umfassen das komplette Zustands-Inventar,
+nicht nur die Kanalgeometrie.
+
+Die Pflichtsuite lief vor und nach dem Rebase mit
+`swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5`:
+je **599 Tests, 69 regulär übersprungen, 0 Fehler**. Laufzeit der Tests
+186,696 bzw. 185,957 Sekunden, jeweils ohne Build-Zeit. Enthalten sind
+`testBeltIsDeterministic`, alle Mäander-/Gürtel-Wächter, `FingerprintTests` und
+`DtInvariance`. Zwei unabhängige Quelltext-Reviews (Standards und Auftrag)
+fanden keine bestätigten Korrektheitsverletzungen. Die Extension wurde nicht
+gebaut.
+
+Die abschließende Rechteck-Diagnose der tatsächlichen Produktionsfenster zählt
+5.862 überlappende Paare von 18.665, also **68,59 % unabhängige Paare**.
+Gegenüber dem ersten Diagnose-Prototyp kommen durch den Sicherheitsaufschlag
+auf die Breite zwei konservative Kanten hinzu. Unverändert sind **1.072 Läufe,
+0 isolierte Läufe, 783 Ebenen**, davon **283 mehrfach besetzte Ebenen
+(36,14 %)** mit **572 Läufen (53,36 %)**. Der Abhängigkeitsplan kann unabhängige
+Läufe verschiedener Ebenen gleichzeitig bearbeiten; die Ebenenzahlen
+beschreiben den Graphen, nicht die gemessene CPU-Auslastung.
