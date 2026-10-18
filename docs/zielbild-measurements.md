@@ -2866,7 +2866,7 @@ aufgenommen: `screenshots/zielbild-174/presets_20k.jpg` und `presets_100k.jpg`
 - **Übergänge im Zeitraffer** (Befund): bei 30 und 60 J./Sek. „sieht der Fluss
   in einer Sekunde so aus und in der anderen komplett anders". Gemessen ist das
   die Kopplung Gürtel ↔ D8 im 1000-Jahr-Takt, die alle Läufe zugleich neu setzt
-  (Bandwechsel 4–5×, Wald 11–18× eines normalen Takts). Wird im nächsten
-  Schritt behoben.
+  (Bandwechsel 4–5×, Wald 11–18× eines normalen Takts). Behoben im
+  Render, die Physik bleibt bit-gleich: § Übergänge im Zeitraffer oben.
 - **Performance**: noch nicht gut genug, wird iterativ weiter verbessert.
 
