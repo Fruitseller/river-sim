@@ -572,8 +572,8 @@ final class WaterRendererTests: XCTestCase {
   /// Spitze“ zu reißen (Seed 1337 mit dem Lawinen-Abgang des Firns, #174:
   /// Band 5 mit Halbbreite 0,57 von 3,20). Der Wächter soll den RENDER-Fehler
   /// fangen (Übergabe-Deckkraft, Spitze an JEDER Mündung), nicht die
-  /// Mündungsgeometrie einer Realisierung: Fehler und Spitzen gepoolt, mit
-  /// Schranken, die ein Mehrfaches der gemessenen Werte lassen.
+  /// Mündungsgeometrie einer Realisierung: die nicht vollen Mündungen gepoolt,
+  /// eine Spitze darf an keiner auftreten.
   func testRiverBandsReachTheSeaAtFullWidthAndOpacity() {
     var checked = 0
     var failures: [String] = [], spikes: [String] = []
@@ -587,14 +587,13 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(checked, 15, "Aufbau: zu wenige Mündungen ins Meer")
     // Einzelne Mündungen dürfen an der Wasserlinie biegen (Krümmungs-Deckel)
     // oder unter einem früher gebauten Band ausblenden (Überdeckung); die große
-    // Mehrheit taucht voll ins Meer, und Spitzen bleiben die Ausnahme.
-    // Gemessen über die drei Seeds (Mündungen / nicht voll / spitz): ohne den
-    // Lawinen-Abgang 27 / 1 / 0, mit ihm 31 / 3 / 0 (andere Schwellen: 36 / 6 / 1
-    // und 31 / 5 / 0); vor dem Fix lag jede dritte bis zweite Mündung darunter.
-    XCTAssertLessThanOrEqual(Double(failures.count), 0.25 * Double(checked),
+    // Mehrheit taucht voll ins Meer, zur Spitze wird keine. Gemessen über die
+    // drei Seeds (Mündungen / nicht voll / spitz) auf 694d31e: Mac 30 / 1 / 0,
+    // Linux 32 / 2 / 0; vor den Mündungs-Korrekturen (Deckkraft-Halt, rechter
+    // Winkel an der Kette) lag jede dritte bis zweite Mündung darunter.
+    XCTAssertLessThanOrEqual(Double(failures.count), 0.2 * Double(checked),
                              "Band endet vor der Wasserlinie: \(failures)")
-    XCTAssertLessThanOrEqual(Double(spikes.count), 0.1 * Double(checked),
-                             "Band läuft an der Wasserlinie spitz aus: \(spikes)")
+    XCTAssertTrue(spikes.isEmpty, "Band läuft an der Wasserlinie spitz aus: \(spikes)")
   }
 
   /// Mündungen der Produktionswelt eines Seeds (Jahr 4000): geprüfte Mündungen

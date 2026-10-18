@@ -684,15 +684,18 @@ final class ZielbildLandformTests: XCTestCase {
             XCTAssertGreaterThan(t.meander.chuteCutoffs, 0, "Seed \(seed): kein Chute-Cutoff bis Jahr 20.000")
             let bars = t.barAge.filter { $0 >= 0 }.count
             XCTAssertGreaterThan(bars, 1000, "Seed \(seed): kaum Gleithang-Bänke (\(bars) Zellen)")
-            // Schranke 0,00165 (vorher 0,00156): die Zerklüftung (mittleres |Laplace| des
-            // Tieflands) streut zwischen gleichwertigen Realisierungen um 3 … 6 %
-            // (Seed 42: 0,001551 im Integrationsstand, 0,001594 mit derselben Physik
-            // und anderer Rundung der Schleifspur-Summe), und der Lawinen-Abgang des
-            // Firns (#174, §M) trägt mehr Eis in die Täler (Seed 20: 0,001452 →
-            // 0,001577, Moränen-Hügel im Tiefland). Gemessen im Endstand 0,001466 /
-            // 0,001562 / 0,001577 — die Schranke fängt weiter einen Gürtel, der die
-            // Aue zerklüftet (vor Paket A: 0,0020 und mehr), liegt aber nicht mehr
-            // auf dem Rauschen.
+            // Schranke 0,00165 (vorher 0,00156, das Maximum nach Paket A). Punkt 14
+            // zielt auf eine verkrustete Aue (der geparkte `floodplainAggradation`
+            // machte sie 2,7-mal zerklüfteter), nicht auf das Relief des Gürtels
+            // selbst. Gleiche Welt mit und ohne Gürtel, Jahr 20.000, Stand
+            // 694d31e: Mac 0,001466 / 0,001562 / 0,001577 gegen 0,001329 /
+            // 0,001537 / 0,001371 ohne Gürtel (×1,10 / ×1,02 / ×1,15), Linux
+            // 0,001401 / 0,001542 / 0,001501 gegen 0,001333 / 0,001533 / 0,001374:
+            // Rinne, Bänke und Scroll-Rippen bringen 1–15 % Laplace mit. Die feste
+            // Zahl aus Paket A stand auf einer anderen Physik (ohne Lawinen-Abgang
+            // des Firns, der mehr Moränen ins Tiefland legt) und fing deshalb
+            // Realisierungen statt Krusten. Die Schranke fängt eine Kruste weiter
+            // mit großem Abstand (vor Paket A: 0,0020 und mehr).
             XCTAssertLessThan(lf.lowlandRuggedness, 0.00165,
                               "Seed \(seed): Aue zerklüfteter als vor dem Gürtel (\(lf.lowlandRuggedness))")
             windows.append(run.result[0])
