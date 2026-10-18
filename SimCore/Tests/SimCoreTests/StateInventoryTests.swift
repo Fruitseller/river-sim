@@ -164,6 +164,12 @@ final class StateInventoryTests: XCTestCase {
             "`A^m` je Zelle für `outletIncision`, je Aufruf neu gerechnet.")),
         ("mfdRoutes", .scratch(reason:
             "MFD-Nachbargewichte, vor jeder Akkumulation vollständig neu vorbereitet.")),
+        ("mfdRouteCounts", .scratch(reason:
+            "Route-Klassifikation des MFD-Passes (Runde 7), mit den Routen zusammen "
+            + "vor jedem Lesen vollständig neu gesetzt.")),
+        ("mfdDispersed", .scratch(reason:
+            "Disbursive MFD-Gewichte (Runde 7) — wird nur für canDisperse-Zellen "
+            + "geschrieben und nur nach frischem `mfdRouteCounts`-Flag gelesen.")),
         ("qs", .scratch(reason:
             "Sedimentfracht in Transit (`transportLimited`, Testpfad) — der Pass "
             + "beschreibt sie in Empfänger-Reihenfolge, bevor er sie liest.")),
