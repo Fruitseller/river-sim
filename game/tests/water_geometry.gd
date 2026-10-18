@@ -237,8 +237,15 @@ func _pond(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) ->
 		return wl[k] - h[k]
 	return 0.0
 
+# Wasserfläche = Ozean-Ebene ODER Raster-See. Die Ozean-Ebene deckt jede Zelle
+# unter `sea` (ocean.gdshader verwirft nur über `sea`), die Kontur-Schwelle
+# gilt für den Raster-See. Seit die Bänder ab der Wasserlinie ausblenden (#174,
+# Küsten-Feinschliff), endet ein Band auf den ersten, kaum überfluteten
+# Meereszellen; mit der See-Schwelle auch fürs Meer zählte das als Spalt
+# (Linux-Runner, Seed 1337 Jahr 20.000: Bandende auf sea − 0,0002, die Schwelle
+# erst drei Zellen weiter).
 func _is_water(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) -> bool:
-	return _pond(h, wl, sea, k) > pond_contour_lo
+	return h[k] < sea or _pond(h, wl, sea, k) > pond_contour_lo
 
 
 # Trägt der zuletzt gebaute Band-Puffer mindestens ein Band dieses Typs?
