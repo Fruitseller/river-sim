@@ -162,6 +162,12 @@ final class StateInventoryTests: XCTestCase {
             + "bevor er sie liest.")),
         ("areaPow", .scratch(reason:
             "`A^m` je Zelle für `outletIncision`, je Aufruf neu gerechnet.")),
+        ("incisionGate", .scratch(reason:
+            "Gate-Status der Auslass-Inzision (Runde 7), je Aufruf vollständig "
+            + "neu gesetzt, bevor die serielle Schleife ihn liest.")),
+        ("incisionKErode", .scratch(reason:
+            "Erosionsfaktor je Zelle für `outletIncision` (Runde 7), je Aufruf "
+            + "neu gerechnet, bevor die serielle Schleife ihn liest.")),
         ("mfdRoutes", .scratch(reason:
             "MFD-Nachbargewichte, vor jeder Akkumulation vollständig neu vorbereitet.")),
         ("mfdRouteCounts", .scratch(reason:
