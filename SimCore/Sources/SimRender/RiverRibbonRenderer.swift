@@ -87,6 +87,58 @@ public final class RiverRibbonRenderer {
     /// wegdriften könnte.
     public var bandChannelFlags: [Bool] { mesh.bandChannelFlags }
 
+    // MARK: Einwachsen und Versiegen (Befund Punkt 50, #174)
+
+    /// Deckung des letzten Baus NUR durch ausgewachsene Bänder (Wachstum 1).
+    /// Ein frisch eingesetzter Knoten, der in diesem Feld liegt, war schon
+    /// Wasser und gilt als ausgewachsen (s. `WaterRender.ribbonGrowYears`).
+    private var matureCoverage: [Double] = []
+    private var previousMatureCoverage: [Double] = []
+    /// Gesamte Band-Deckung des vorigen Baus (vor dem Zurücksetzen gemerkt).
+    private var previousCoverage: [Double] = []
+    /// Je Zelle das Sim-Jahr der Kopplung, nach der hier ein Band-Stück
+    /// erstmals sichtbar wurde (−∞ = keins). Die Kopplung setzt die Läufe
+    /// neu zusammen; dabei werden auch ÜBERNOMMENE Strecken sichtbar (Rang,
+    /// Kohärenz und Verdeckung hängen am ganzen Lauf) — gemessen um Jahr
+    /// 21.000, Seed 1337: 1,65 % des Landes neu gedeckt aus übernommenen
+    /// Knoten, 0,04 % aus eingesetzten. Auch sie wachsen ein; das Feld trägt
+    /// den Zustand durch die folgenden Bauten.
+    private var youngYear: [Double] = []
+    /// Die Fluss-Bänder des letzten Baus (Stützpunkte vor der Verdeckung), aus
+    /// denen eine Kopplung die versiegenden Arme nimmt.
+    private var lastRiverBands: [[RibbonSample]] = []
+    /// Versiegende Arme: Band-Stand vor einer Kopplung und deren Sim-Jahr.
+    private var ghosts: [(bands: [[RibbonSample]], year: Double)] = []
+    /// Sim-Jahr des letzten Baus; eine Kopplung dazwischen erkennt der Bau an
+    /// einem jüngeren `RiverChannel.born`.
+    private var lastBuildYear: Double?
+    /// Wächst noch ein Band ein oder versiegt eines? Dann baut `RenderState`
+    /// auch ohne Knoten-Bewegung neu, sonst blieben die Übergänge stehen.
+    public private(set) var inTransition = false
+    /// Zahl der versiegenden Band-Stände (Diagnose und Wächter).
+    public var ghostCount: Int { ghosts.count }
+    /// Diagnose des letzten Baus: Stützpunkte mit jungem Geburtsjahr, davon
+    /// als ausgewachsen gewertet (lag im ausgewachsenen Band des Vorbaus).
+    public private(set) var growthStats = (young: 0, exempt: 0)
+    /// Diagnose: Deckung des letzten Baus nur durch ausgewachsene Stücke.
+    public var matureCoverageForDiagnostics: [Double] { matureCoverage }
+
+    /// Beendet laufende Übergänge (Pinsel, Laden, Neugenerieren): der nächste
+    /// Bau zeigt den Stand ohne versiegende Arme. `otherWorld` verwirft auch
+    /// die ausgewachsene Deckung, die zu einer anderen Welt gehört.
+    public func endTransitions(otherWorld: Bool) {
+        ghosts = []
+        lastRiverBands = []
+        lastBuildYear = nil
+        inTransition = false
+        youngYear = []
+        if otherWorld {
+            matureCoverage = []
+            previousMatureCoverage = []
+            previousCoverage = []
+        }
+    }
+
     /// Je Zelle: wie stark deckt die gebaute Band-Geometrie sie WIRKLICH ab
     /// (0 = gar nicht, 1 = volle Deckkraft)? Gegenstück zu `bandChannelFlags`
     /// eine Ebene feiner — und aus demselben Grund: das Raster-Feld muss sein
@@ -134,6 +186,10 @@ public final class RiverRibbonRenderer {
         /// Stück einer Meeresmündung jenseits der Wasserlinie: liegt wie die
         /// Delta-Arme unter der Ozean-Ebene, nicht auf Gelände + `lift`.
         var seaMouth = false
+        /// Ausbildung des Arms (0 frisch eingesetzt … 1 ausgewachsen,
+        /// `WaterRender.ribbonGrowth`). Nur ausgewachsene Stücke tragen in
+        /// `matureCoverage` ein.
+        var growth = 1.0
     }
 
     // MARK: Dirty-Vertrag
@@ -229,6 +285,8 @@ public final class RiverRibbonRenderer {
             mesh.bandCoverage = []
             return mesh
         }
+        // Die Deckung des vorigen Baus bleibt für die Übergänge stehen.
+        swap(&previousCoverage, &mesh.bandCoverage)
         if mesh.bandCoverage.count != cnt {
             mesh.bandCoverage = [Double](repeating: 0, count: cnt)
         } else {
@@ -243,6 +301,39 @@ public final class RiverRibbonRenderer {
         // cellSize 0 (keine definierte Schrittweite): kein Band ohne Schrittweite,
         // spart Catmull-Rom- und Stützpunkt-Interpolation mit NaN-Offsets ein.
         guard cs > 0, cs.isFinite else { return mesh }
+        // Übergänge (Einwachsen/Versiegen): ausgewachsene Deckung des vorigen
+        // Baus merken; eine Kopplung seit dem letzten Bau (jüngerer Knoten)
+        // legt dessen Fluss-Bänder als versiegende Arme ab.
+        let year = terrain.years
+        swap(&previousMatureCoverage, &matureCoverage)
+        if matureCoverage.count != cnt {
+            matureCoverage = [Double](repeating: 0, count: cnt)
+        } else {
+            matureCoverage.withUnsafeMutableBufferPointer {
+                guard let base = $0.baseAddress else { return }
+                base.update(repeating: 0, count: cnt)
+            }
+        }
+        var coupled = -Double.infinity
+        if let since = lastBuildYear, year >= since {
+            for ch in terrain.meander.channels {
+                for b in ch.born where b.isFinite && b >= since { coupled = max(coupled, b) }
+            }
+            if coupled.isFinite, !lastRiverBands.isEmpty {
+                ghosts.append((bands: lastRiverBands, year: coupled))
+            }
+        } else if lastBuildYear != nil {
+            ghosts = []      // Uhr lief rückwärts: keine fremden Übergänge
+        }
+        lastRiverBands = []
+        lastBuildYear = year
+        // Nach einer Kopplung (und nur dann) wächst ein, was der vorige Bau
+        // nicht zeigte; sonst wäre jede vorlaufende Kante eines wandernden
+        // Bogens „neu".
+        let couplingBuild = coupled.isFinite && previousCoverage.count == cnt
+        if youngYear.count != cnt { youngYear = [Double](repeating: -.infinity, count: cnt) }
+        var growing = false
+        growthStats = (young: 0, exempt: 0)
         let creek = terrain.cfg.renderMinCells
         let smap = terrain.streamMap
         // Strahler-Rang (D8-Netz ab Mäander-Schwelle): Rang-Maß für die
@@ -277,7 +368,7 @@ public final class RiverRibbonRenderer {
             if m < 2 { continue }
             // Kanäle mit unvollständigem/nicht-endlichem Abfluss oder extremen Koordinaten
             // überspringen, um OOB-Traps und Double-to-Int-Konvertierungsfehler zu verhindern.
-            guard ch.discharge.count >= m else { continue }
+            guard ch.discharge.count >= m, ch.born.isEmpty || ch.born.count >= m else { continue }
             guard !nodes.contains(where: {
                 !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
             }) else { continue }
@@ -289,6 +380,7 @@ public final class RiverRibbonRenderer {
                                                      heightAt: { bilinearGrid(hgridBend, $0.x, $0.z, n: n) })
             // Catmull-Rom-Subdivision der Zentrumslinie; Abfluss linear je Segment.
             var px: [Double] = [], pz: [Double] = [], pq: [Double] = [], pb: [Double] = []
+            var pBorn: [Double] = []
             px.reserveCapacity(m * subdivisions)
             pz.reserveCapacity(m * subdivisions)
             pq.reserveCapacity(m * subdivisions)
@@ -306,10 +398,14 @@ public final class RiverRibbonRenderer {
                         + (3 * p1.z - p0.z - 3 * p2.z + p3.z) * t3))
                     pq.append(ch.discharge[i] + (ch.discharge[i + 1] - ch.discharge[i]) * t)
                     pb.append(nodeBend[i] + (nodeBend[i + 1] - nodeBend[i]) * t)
+                    // Geburtsjahr wie `MeanderState.resample`: linear, neben −∞
+                    // das des näheren Knotens.
+                    let b0 = ch.bornAt(i), b1 = ch.bornAt(i + 1)
+                    pBorn.append(b0.isFinite && b1.isFinite ? b0 + (b1 - b0) * t : (t < 0.5 ? b0 : b1))
                 }
             }
             px.append(nodes[m - 1].x); pz.append(nodes[m - 1].z); pq.append(ch.discharge[m - 1])
-            pb.append(nodeBend[m - 1])
+            pb.append(nodeBend[m - 1]); pBorn.append(ch.bornAt(m - 1))
             let cnt = px.count
 
             // Deckkraft: Abfluss-Rampe je Sample (fein auslaufen statt harter
@@ -393,6 +489,53 @@ public final class RiverRibbonRenderer {
                 alpha[a] *= max(channelOpacity,
                                 WaterRender.ribbonTrust(dischargeCells: pq[a], referenceCells: creek))
             }
+            // Einwachsen (WaterRender.ribbonGrowYears): ein von der Kopplung
+            // eingesetzter Arm beginnt dünn und unsichtbar und bildet sich
+            // über Sim-Jahre aus; wo der vorige Bau schon ein ausgewachsenes
+            // Band hatte, war hier schon Fluss. Auf die Deckkraft wirkt es erst
+            // NACH der Längs-Glättung: ein junger, ohnehin unsichtbarer
+            // Stützpunkt zöge sonst ausgewachsene Nachbarn mit herunter (im
+            // Wächter 5 % Deckung eines fertigen Flusses). Die Naht glätten
+            // danach `limitAlphaSteps` und der Breiten-Begrenzer.
+            var growth = [Double](repeating: 1, count: cnt)
+            let mature = previousMatureCoverage.count == n * n ? previousMatureCoverage : []
+            var young = 0, exempt = 0
+            // Roh-Zeiger: `youngYear` ist ein Klassen-Property, je Zelle
+            // gelesen und im Kopplungsbau flächig gestempelt.
+            youngYear.withUnsafeMutableBufferPointer { yb in
+                guard let py = yb.baseAddress else { return }
+                for a in 0..<cnt {
+                    var g = 1.0
+                    if pBorn[a].isFinite {
+                        g = WaterRender.ribbonGrowth(ageYears: year - pBorn[a])
+                        if g < 1 { young += 1 }
+                        if g < 1, !mature.isEmpty, bilinearGrid(mature, px[a], pz[a], n: n) >= 0.5 {
+                            g = 1
+                            exempt += 1
+                        }
+                    }
+                    let ci = min(max(Int(px[a].rounded()), 0), n - 1)
+                    let cj = min(max(Int(pz[a].rounded()), 0), n - 1)
+                    if couplingBuild, g >= 1,
+                       bilinearGrid(previousCoverage, px[a], pz[a], n: n) < WaterRender.ribbonGrowVisibleCoverage {
+                        // Übernommen, aber bisher unsichtbar: wächst ab der Kopplung ein.
+                        g = WaterRender.ribbonGrowth(ageYears: year - coupled)
+                        young += 1
+                        let r = Int((ribbonHalfWidthCells(pq[a], cfg: terrain.cfg) + 1).rounded(.up))
+                        for jj in max(0, cj - r)...min(n - 1, cj + r) {
+                            for ii in max(0, ci - r)...min(n - 1, ci + r) where py[jj * n + ii] < coupled {
+                                py[jj * n + ii] = coupled
+                            }
+                        }
+                    } else if g >= 1, py[cj * n + ci].isFinite {
+                        g = WaterRender.ribbonGrowth(ageYears: year - py[cj * n + ci])
+                        if g < 1 { young += 1 }
+                    }
+                    growth[a] = g
+                }
+            }
+            growthStats.young += young
+            growthStats.exempt += exempt
 
             // Diskrete Strahler-Zellen können an Netz-Kreuzungen verbleibende
             // Sprünge erzeugen. Symmetrisch längs filtern: keine zeitliche
@@ -405,6 +548,7 @@ public final class RiverRibbonRenderer {
                 let aHi = min(cnt, a + alphaRadius + 1)
                 alpha[a] = (prefix[aHi] - prefix[aLo]) / Double(aHi - aLo)
             }
+            for a in 0..<cnt where growth[a] < 1 { alpha[a] *= growth[a] }
             // Unsichtbare Schwänze (Deckkraft ≈ 0) nicht emittieren; 2 Samples
             // Vorlauf bleiben für den weichen Einstieg.
             guard var lo = alpha.firstIndex(where: { $0 > WaterRender.ribbonMinimumAlpha }),
@@ -452,10 +596,12 @@ public final class RiverRibbonRenderer {
                                        * ribbonHalfWidthCells(pq[lo], cfg: terrain.cfg))
             for a in lo...hi {
                 let taper = clamp01(arc[a] / (sourceTaperCells * cs))
+                let grow = WaterRender.ribbonGrowWidth(growth[a])
                 samples.append(RibbonSample(x: px[a], z: pz[a],
-                                            halfWidth: ribbonHalfWidthCells(pq[a], cfg: terrain.cfg) * taper,
+                                            halfWidth: ribbonHalfWidthCells(pq[a], cfg: terrain.cfg) * taper * grow,
                                             alpha: alpha[a] * taper,
-                                            rank: rank[a], surface: nil, bend: pb[a]))
+                                            rank: rank[a], surface: nil, bend: pb[a],
+                                            growth: growth[a]))
             }
 
             // MÜNDUNG (Issue #34): das Band lief bisher über die letzten ~2
@@ -513,6 +659,7 @@ public final class RiverRibbonRenderer {
                     }
                 }
                 let mouthWidth = ribbonHalfWidthCells(pq[hi], cfg: terrain.cfg)
+                    * WaterRender.ribbonGrowWidth(growth[hi])
                 let mouthAlpha = max(alpha[hi], samples.last?.alpha ?? 0)
                 // Die D8-Kette schreitet in GANZEN Zellen; der Enden-Taper
                 // (`taperTail`, 2 Zellen) fiele damit in ~0.5er-Alpha-Stufen je
@@ -535,12 +682,14 @@ public final class RiverRibbonRenderer {
                                                 halfWidth: mouthWidth,
                                                 alpha: mouthAlpha,
                                                 rank: rank[hi], surface: nil,
-                                                bend: mouthBend * (1 - (step + 0.5) / links)))
+                                                bend: mouthBend * (1 - (step + 0.5) / links),
+                                                growth: growth[hi]))
                     samples.append(RibbonSample(x: point.x, z: point.z,
                                                 halfWidth: mouthWidth,
                                                 alpha: mouthAlpha,
                                                 rank: rank[hi], surface: point.surface,
-                                                bend: mouthBend * (1 - (step + 1) / links)))
+                                                bend: mouthBend * (1 - (step + 1) / links),
+                                                growth: growth[hi]))
                     prevX = point.x
                     prevZ = point.z
                 }
@@ -618,6 +767,8 @@ public final class RiverRibbonRenderer {
             applyWaterHandover(&samples, terrain)
             if fadesUphill { fadeUphill(&samples, terrain) }
             RiverRibbonRenderer.limitAlphaSteps(&samples)
+            lastRiverBands.append(samples)
+            if samples.contains(where: { $0.growth < 1 }) { growing = true }
             emitRibbon(samples, terrain, kind: WaterRender.ribbonKindRiver, still: false,
                        hscale: hscale, lift: lift)
 
@@ -648,6 +799,49 @@ public final class RiverRibbonRenderer {
 
         // ALTARME (Issue #34): vom Raster-Overlay in die Geometrie.
         appendOxbowRibbons(terrain, hscale: hscale, lift: lift)
+
+        // VERSIEGENDE ARME (WaterRender.ribbonGhostYears): der Band-Stand vor
+        // einer Kopplung blendet in Sim-Jahren aus. ZULETZT, damit die
+        // Verdeckung in `emitRibbon` ihn überall dort ausblendet, wo heute
+        // ein Band liegt — sichtbar bleibt nur, was der neue Stand nicht
+        // mehr deckt. Er deckelt das Raster und schützt vor Wald wie jedes
+        // Band, solange er zu sehen ist.
+        ghosts.removeAll { WaterRender.ribbonGhostFade(ageYears: year - $0.year) <= 1e-3 }
+        for ghost in ghosts {
+            let fade = WaterRender.ribbonGhostFade(ageYears: year - ghost.year)
+            for band in ghost.bands {
+                // Nur die Stücke, die kein heutiges Band verdeckt (dieselbe
+                // Verdeckung wie in `emitRibbon`, hier vorab): ein ganzes altes
+                // Netz je Bau auszugeben kostete Bau-Zeit und Mesh-Größe für
+                // fast nur unsichtbare Dreiecke.
+                var visible = [Bool](repeating: false, count: band.count)
+                for a in band.indices {
+                    let occ = bilinearGrid(mesh.bandCoverage, band[a].x, band[a].z, n: n)
+                    let alpha = band[a].alpha * fade * (1 - smoothstep(WaterRender.ribbonOcclusionLo,
+                                                                       WaterRender.ribbonOcclusionHi, occ))
+                    visible[a] = alpha > WaterRender.ribbonMinimumAlpha
+                }
+                var a = 0
+                while a < band.count {
+                    guard visible[a] else { a += 1; continue }
+                    var b = a
+                    while b + 1 < band.count && visible[b + 1] { b += 1 }
+                    // Zwei Stützpunkte Vorlauf je Seite für den weichen Einstieg.
+                    let lo = max(0, a - 2), hi = min(band.count - 1, b + 2)
+                    if hi - lo >= 2 {
+                        var faded = Array(band[lo...hi])
+                        for c in faded.indices {
+                            faded[c].alpha *= fade
+                            faded[c].growth = 0
+                        }
+                        emitRibbon(faded, terrain, kind: WaterRender.ribbonKindRiver, still: false,
+                                   hscale: hscale, lift: lift)
+                    }
+                    a = b + 1
+                }
+            }
+        }
+        inTransition = growing || !ghosts.isEmpty
         return mesh
     }
 
@@ -862,10 +1056,38 @@ public final class RiverRibbonRenderer {
         // Blöcken und Stößen an Zusammenflüssen, Delta-Fächern und Stummel-
         // Kanälen auf demselben Bett.
         var samples = samples
+        var occludedMature: [Int] = []
         for a in samples.indices {
             let occ = bilinearGrid(mesh.bandCoverage, samples[a].x, samples[a].z, n: n)
+            let before = samples[a].alpha
             samples[a].alpha *= 1 - smoothstep(WaterRender.ribbonOcclusionLo,
                                                WaterRender.ribbonOcclusionHi, occ)
+            if samples[a].growth >= 1, before > WaterRender.ribbonMinimumAlpha,
+               samples[a].alpha <= WaterRender.ribbonMinimumAlpha {
+                occludedMature.append(a)
+            }
+        }
+        // Ausgewachsen, aber unter einem früheren Band verdeckt: auch hier war
+        // schon Fluss (`matureCoverage`). Sonst zählte ein Knoten, den die
+        // Kopplung dort einsetzt, als neu, und seine Deckkraft 0 zöge über die
+        // Längs-Glättung die sichtbaren Nachbarn mit herunter.
+        if !occludedMature.isEmpty, matureCoverage.count == n * n {
+            matureCoverage.withUnsafeMutableBufferPointer { mb in
+                guard let pm = mb.baseAddress else { return }
+                for a in occludedMature {
+                    let r = max(0, samples[a].halfWidth) + 0.5
+                    let ci = samples[a].x, cj = samples[a].z
+                    let i0 = max(0, Int((ci - r).rounded(.down))), i1 = min(n - 1, Int((ci + r).rounded(.up)))
+                    let j0 = max(0, Int((cj - r).rounded(.down))), j1 = min(n - 1, Int((cj + r).rounded(.up)))
+                    guard i0 <= i1, j0 <= j1 else { continue }
+                    for j in j0...j1 {
+                        for i in i0...i1 {
+                            let dx = Double(i) - ci, dz = Double(j) - cj
+                            if dx * dx + dz * dz <= r * r { pm[j * n + i] = 1 }
+                        }
+                    }
+                }
+            }
         }
         RiverRibbonRenderer.limitAlphaSteps(&samples)
         // Bogenlänge (Welt) für UV.y — im Shader die Phase der Wellen/Strömung.
@@ -1017,6 +1239,7 @@ public final class RiverRibbonRenderer {
                               // Erstes/letztes Segment: dort endet das Band mit
                               // einer geraden Quad-Kante, nicht an einer Naht.
                               openStart: a == 1, openEnd: a == samples.count - 1,
+                              mature: min(samples[a - 1].growth, s.growth) >= 1,
                               n: n)
             }
             previous = (x: s.x, z: s.z, halfWidthCells: hwCells, alpha: s.alpha)
@@ -1088,6 +1311,7 @@ public final class RiverRibbonRenderer {
                                toX: Double, toZ: Double,
                                toHalfWidthCells: Double, toAlpha: Double,
                                openStart: Bool, openEnd: Bool,
+                               mature: Bool = false,
                                n: Int) {
         guard fromAlpha > 0 || toAlpha > 0 else { return }
         let hw0 = max(0, fromHalfWidthCells), hw1 = max(0, toHalfWidthCells)
@@ -1104,23 +1328,34 @@ public final class RiverRibbonRenderer {
         // Segment (zusammenfallende Stützpunkte) hat keine Richtung, dort bleibt
         // es beim Kreis um den Punkt.
         let overhang = len2 > 1e-12 ? 0.5 / len2.squareRoot() : 0
-        for j in j0...j1 {
-            for i in i0...i1 {
-                // Fußpunkt auf der Strecke (geklemmt: die Nähte sind Kappen).
-                let px = Double(i) - fromX, pz = Double(j) - fromZ
-                let tRaw = len2 > 1e-12 ? (px * dx + pz * dz) / len2 : 0
-                // Hinter einem offenen Bandende hört die gemalte Fläche auf.
-                if openStart && tRaw < -overhang { continue }
-                if openEnd && tRaw > 1 + overhang { continue }
-                let t = clamp01(tRaw)
-                let ex = px - dx * t, ez = pz - dz * t
-                let hw = hw0 + (hw1 - hw0) * t + 0.5
-                if ex * ex + ez * ez > hw * hw { continue }
-                let value = clamp01(fromAlpha + (toAlpha - fromAlpha) * t)
-                let k = j * n + i
-                if mesh.bandCoverage[k] < value { mesh.bandCoverage[k] = value }
+        // Roh-Zeiger je Segment: ein Klassen-Property je Zelle (mit
+        // Exklusivitätsprüfung) kostete den Band-Bau gemessen ~5 ms.
+        let stampMature = mature && matureCoverage.count == n * n
+        mesh.bandCoverage.withUnsafeMutableBufferPointer { cb in
+        matureCoverage.withUnsafeMutableBufferPointer { mb in
+            guard let pc = cb.baseAddress else { return }
+            let pm = mb.baseAddress
+            for j in j0...j1 {
+                for i in i0...i1 {
+                    // Fußpunkt auf der Strecke (geklemmt: die Nähte sind Kappen).
+                    let px = Double(i) - fromX, pz = Double(j) - fromZ
+                    let tRaw = len2 > 1e-12 ? (px * dx + pz * dz) / len2 : 0
+                    // Hinter einem offenen Bandende hört die gemalte Fläche auf.
+                    if openStart && tRaw < -overhang { continue }
+                    if openEnd && tRaw > 1 + overhang { continue }
+                    let t = clamp01(tRaw)
+                    let ex = px - dx * t, ez = pz - dz * t
+                    let hw = hw0 + (hw1 - hw0) * t + 0.5
+                    if ex * ex + ez * ez > hw * hw { continue }
+                    let value = clamp01(fromAlpha + (toAlpha - fromAlpha) * t)
+                    let k = j * n + i
+                    if pc[k] < value { pc[k] = value }
+                    // Ausgewachsen deckt jedes sichtbare Stück voll: auch ein
+                    // schwach deckender Bach war schon Fluss.
+                    if stampMature, value > 0 { pm![k] = 1 }
+                }
             }
-        }
+        }}
     }
 
     /// Delta-Fächer an einer Mündung: bis zu drei Distributär-Arme über den

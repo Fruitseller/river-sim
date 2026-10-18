@@ -168,7 +168,12 @@ public final class RenderState {
         plumeCache = nil
         barCache = nil
         dropMasks()
-        if change != .advanced { forestMemory = [] }
+        if change != .advanced {
+            forestMemory = []
+            // Pinsel, Laden, Neugenerieren zeigen den Stand sofort, ohne
+            // versiegende Arme; eine andere Welt verwirft auch die Deckung.
+            ribbons.endTransitions(otherWorld: change == .replaced)
+        }
         guard change == .replaced else { return }
         // Eine ANDERE Welt: das alte Wasserfeld passt nicht mehr dazu.
         visibleWater = nil
@@ -221,7 +226,9 @@ public final class RenderState {
             return false
         }
         lastRibbonCheckTime = now
-        guard riversMaxDelta(terrain) > Self.ribbonRebuildDelta else { return false }
+        // Ein laufender Übergang (Einwachsen, Versiegen) baut auch ohne
+        // Knoten-Bewegung weiter, sonst bliebe er mitten im Vorgang stehen.
+        guard riversMaxDelta(terrain) > Self.ribbonRebuildDelta || ribbons.inTransition else { return false }
         buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
                           lift: RenderContract.riverLift)
         markRiversBuilt(terrain)
@@ -340,7 +347,11 @@ public final class RenderState {
         if terrain.years < forestMemoryYear { forestMemory = [] }
         let mask = ForestCanopyMask.regrow(&forestMemory, toward: target,
                                            dtYears: terrain.years - forestMemoryYear,
-                                           tau: CanopyRender.regrowYears)
+                                           tau: CanopyRender.regrowYears,
+                                           wet: WetNow(bandCoverage: ribbons.bandCoverage,
+                                                       waterBytes: visibleWater ?? [],
+                                                       bandThreshold: CanopyRender.retreatInstantBandCoverage),
+                                           retreatTau: CanopyRender.retreatYears)
         forestMemoryYear = terrain.years
         forestMaskCache = mask
         return mask
@@ -380,6 +391,10 @@ public final class RenderState {
     /// Letztes Band-Bauergebnis als POD-Puffer (die Brücke wrappt sie in
     /// `Packed*Array`).
     public var riverRibbonMesh: RibbonMesh { ribbons.mesh }
+    /// Zahl der versiegenden Band-Stände (Diagnose, s. `RiverRibbonRenderer.ghostCount`).
+    public var ribbonGhostCount: Int { ribbons.ghostCount }
+    public var ribbonGrowthStats: (young: Int, exempt: Int) { ribbons.growthStats }
+    public var ribbonMatureCoverage: [Double] { ribbons.matureCoverageForDiagnostics }
 
     /// Auflösung des Terrain-Render-Gitters (Main.gd `terrain_grid`): die
     /// Land-Bänder sampeln ihre Höhen von der SICHTBAREN Oberfläche statt von

@@ -715,6 +715,60 @@ public enum WaterRender {
     /// Messreihe: `docs/river-belt-render-measurements.md` §C.
     public static let ribbonTrustBandClearanceCells = 1
 
+    // MARK: Einwachsen und Versiegen im Zeitraffer (Befund Punkt 50, #174)
+
+    /// Die Kopplung Gürtel ↔ D8 (`SimConfig.meanderBeltCouplingYears`, 1000
+    /// Jahre) setzt ALLE Läufe zugleich neu: neue Arme, Avulsionen, verlassene
+    /// Strecken. Ohne Übergang erschienen und verschwanden die Bänder im
+    /// Kopplungstakt auf voller Breite (gemessen um Jahr 21.000, Seed 1337:
+    /// Bandwechsel 4–5×, Wald 11–18× eines normalen Band-Baus; der Eigner bei
+    /// 30 und 60 J./Sek.: „in einer Sekunde sieht der Fluss so aus und in der
+    /// anderen komplett anders"). Beide Übergänge laufen in SIM-Jahren, nicht
+    /// in Sekunden: in jedem Zeitraffer-Tempo sieht derselbe Vorgang gleich
+    /// aus, nur schneller oder langsamer, und ein Sprung über viele Jahre
+    /// zeigt den fertigen Zustand.
+    ///
+    /// Ein neuer Arm (Knoten mit `RiverChannel.born` nach der Kopplung) wächst
+    /// über so viele Sim-Jahre von einer dünnen Rinne auf volle Breite und
+    /// Deckkraft; bei 60 J./Sek. sind das 3 s, bei 10 J./Sek. 18 s. Wo der
+    /// vorige Band-Bau schon ein ausgewachsenes Band hatte, gilt der Knoten
+    /// als ausgewachsen: kleine Nachsetzungen der Kopplung neben dem alten
+    /// Lauf dürfen keinen Engpass in einen fertigen Fluss schnüren.
+    public static let ribbonGrowYears = 180.0
+    /// Breite eines frisch eingesetzten Arms relativ zur vollen Breite. Die
+    /// Deckkraft beginnt bei 0, und der Shader verengt das Band mit ihr
+    /// ohnehin (`water.gdshader`, `presence`); der Rest Breite hält die
+    /// Bandgeometrie sauber, solange sie noch unsichtbar ist.
+    public static let ribbonGrowMinWidth = 0.2
+    /// Deckung des vorigen Band-Baus, unter der ein Stück nach einer Kopplung
+    /// als bisher unsichtbar gilt und einwächst, auch wenn sein Knoten
+    /// übernommen ist (die Kopplung setzt die Läufe neu zusammen, Rang und
+    /// Kohärenz hängen am ganzen Lauf). Klein: ein schon sichtbares, nur
+    /// schwach deckendes Band soll nicht noch einmal einwachsen.
+    public static let ribbonGrowVisibleCoverage = 0.05
+    /// Breitenfaktor zur Ausbildung `growth`; ausgewachsen GENAU 1, damit ein
+    /// ausgewachsener Arm bit-gleich zu einem ohne Geburtsjahr baut.
+    public static func ribbonGrowWidth(_ growth: Double) -> Double {
+        growth >= 1 ? 1 : ribbonGrowMinWidth + (1 - ribbonGrowMinWidth) * max(0, growth)
+    }
+    /// Anteil der vollen Ausbildung nach `age` Sim-Jahren (0 … 1). `age`
+    /// nicht endlich (`born` = −∞, schon immer da) → 1.
+    public static func ribbonGrowth(ageYears age: Double) -> Double {
+        guard age.isFinite else { return age > 0 ? 1 : 0 }
+        return smoothstep(0, ribbonGrowYears, age)
+    }
+    /// Ein verlassener Arm (Strecke des Band-Baus VOR der Kopplung, die der
+    /// Bau danach nicht mehr deckt) versiegt über so viele Sim-Jahre: das
+    /// alte Band bleibt liegen und blendet aus, verdeckt von jedem heutigen
+    /// Band. Kürzer als das Einwachsen: der neue Arm übernimmt das Wasser,
+    /// der alte soll nicht als zweiter Fluss danebenstehen.
+    public static let ribbonGhostYears = 150.0
+    /// Deckkraft-Faktor eines versiegenden Arms nach `age` Sim-Jahren.
+    public static func ribbonGhostFade(ageYears age: Double) -> Double {
+        guard age.isFinite else { return age > 0 ? 0 : 1 }
+        return 1 - smoothstep(0, ribbonGhostYears, age)
+    }
+
     // MARK: Altarm-Filter (gemeinsam für Geometrie und Raster-Stempel)
 
     // Beide Pfade müssen DIESELBEN Schleifen meinen: im Geometrie-Modus nimmt

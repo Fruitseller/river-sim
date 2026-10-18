@@ -278,24 +278,41 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(memory, target.map { Float($0) / 255 })
     }
 
-    /// Im Render-Takt: nach einem Sim-Schritt steht nirgends mehr Wald als in
-    /// der frischen Maske, und wo er zurückkommt, wächst er erst nach. Gleiche
+    /// Im Render-Takt: nach einem Sim-Schritt steht über sichtbarem Wasser
+    /// kein Wald mehr als in der frischen Maske; ohne Wasser höchstens der
+    /// Rest des Rückzugs über die Schrittdauer (`CanopyRender.retreatYears`,
+    /// Befund Punkt 50). Wo er zurückkommt, wächst er erst nach. Gleiche
     /// Abfolge ergibt dieselben Bytes.
     func testForestRegrowsOverSimYears() {
-        func run() -> (memory: [UInt8], fresh: [UInt8]) {
+        let dt = 200.0
+        func run() -> (memory: [UInt8], fresh: [UInt8], wet: [Bool]) {
             let terrain = aged()
             let render = RenderState(geometryMode: true)
             refresh(render, terrain)
-            terrain.step(dtYears: 200)
+            terrain.step(dtYears: dt)
             render.invalidate(terrain, .advanced)
-            return (refresh(render, terrain).forest,
-                    refresh(RenderState(geometryMode: true), terrain).forest)
+            let (water, memory) = refresh(render, terrain)
+            let cover = render.riverRibbonMesh.bandCoverage
+            let river = byte01(WaterRender.protectRiverThreshold), lake = byte01(WaterRender.protectLakeThreshold)
+            let wet = cover.indices.map {
+                cover[$0] >= CanopyRender.retreatInstantBandCoverage
+                    || water[$0 * 4] >= river || water[$0 * 4 + 1] >= lake
+            }
+            return (memory, refresh(RenderState(geometryMode: true), terrain).forest, wet)
         }
-        let (memory, fresh) = run()
-        var regrowing = 0
+        let (memory, fresh, wet) = run()
+        // Rest des Rückzugs nach `dt` (plus eine Byte-Rundung).
+        let rest = UInt8(min(255, (255 * (1 - Terrain.relaxFraction(dt: dt, tau: CanopyRender.retreatYears))).rounded(.up) + 1))
+        var regrowing = 0, retreating = 0
         for k in fresh.indices {
-            XCTAssertLessThanOrEqual(memory[k], fresh[k], "Zelle \(k): mehr Wald als das Ziel")
+            if wet[k] {
+                XCTAssertLessThanOrEqual(memory[k], fresh[k], "Zelle \(k): Wald über Wasser")
+            } else {
+                XCTAssertLessThanOrEqual(Int(memory[k]), Int(fresh[k]) + Int(rest),
+                                         "Zelle \(k): Wald weicht langsamer als der Rückzug")
+            }
             if memory[k] < fresh[k] { regrowing += 1 }
+            if memory[k] > fresh[k] { retreating += 1 }
         }
         XCTAssertGreaterThan(regrowing, 0, "Kein Wald wächst nach: Gedächtnis wirkungslos")
         XCTAssertEqual(run().memory, memory, "Gleiche Abfolge muss dieselbe Waldmaske liefern")

@@ -266,7 +266,9 @@ Welt anfahren, statt fester `RS_TARGET`/`RS_DIST`/`RS_YAW`),
 seit dem Renderloop-Abschalten bedeutet `RS_FPS avg` hier die
 Prozess-Iterationsrate unter dem `max_fps`-Deckel, nicht mehr gerenderte
 Frames — ältere Leerlauf-Messreihen sind damit nicht 1:1 vergleichbar),
-`RS_FLATTEN`, `RS_NO_MEANDER_PAINT`,
+`RS_FLATTEN`, `RS_NO_MEANDER_PAINT`, `RS_RATE` (Zeitraffer gleich beim Start in
+diesem Tempo, J./Sek.; für Bildschirmvideos der Übergänge, s.
+`docs/zielbild-measurements.md` § Übergänge im Zeitraffer),
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
 der Wasser-Geometrie; A/B im selben Build; ohne den Schalter rendert die
 Geometrie), `RS_WATER_GPU` (Schwanzstufen des Raster-Wasserfelds — Blur, EWMA,
@@ -448,7 +450,13 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
 - `RiverRibbonRenderer`: Band-Geometrie als `RibbonMesh`
   (`SIMD3<Float>`/`SIMD4<Float>`/`SIMD2<Float>` + Indizes); das echte
   Bauergebnis für den Raster-Deckel (`bandChannelFlags`/`bandCoverage`) reist
-  im selben Wert statt als impliziter Nebenkanal,
+  im selben Wert statt als impliziter Nebenkanal. Seit dem Befund zu Punkt 50
+  hält er die Übergänge der Gürtel-Kopplung in SIM-Jahren: neue Arme wachsen
+  ein (`RiverChannel.born`, das Geburtsjahr je Knoten, das nur der Render
+  liest; dazu bisher unsichtbare Strecken, die die Kopplung sichtbar macht),
+  verlassene versiegen als eingefrorener Vor-Kopplungs-Stand
+  (`WaterRender.ribbonGrowYears`/`ribbonGhostYears`, Wächter:
+  `SimCoreTests/TimelapseTransitionTests.swift`),
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie plus Bodenbedeckung (Schutthalde, blankes
   Gletschereis, Rohboden, Talboden-Wiese, Issue #174 D) in einem gemeinsamen

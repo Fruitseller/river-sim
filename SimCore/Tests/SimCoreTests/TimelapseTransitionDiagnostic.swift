@@ -70,6 +70,8 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
                                         neck: t.meander.neckCutoffs - neck,
                                         chute: t.meander.chuteCutoffs - chute)
                 var added = 0, removed = 0, forest = 0, water = 0, rgb = 0
+                var bandMass = 0.0
+                var split = [0.0, 0.0, 0.0, 0.0]   // neu+, bestehend+, bestehend−, weg−
                 let freshCoverage = frame.ribbonsRebuilt ? render.riverRibbonMesh.bandCoverage : coverage
                 for k in land {
                     let dh = abs(t.h[k] - heights[k])
@@ -80,6 +82,10 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
                         let new = freshCoverage[k] >= WaterRender.protectBandThreshold
                         if new && !old { added += 1 }
                         if old && !new { removed += 1 }
+                        bandMass += abs(freshCoverage[k] - coverage[k])
+                        let d = freshCoverage[k] - coverage[k]
+                        if d > 0 { split[coverage[k] > 0 ? 1 : 0] += d }
+                        else if d < 0 { split[freshCoverage[k] > 0 ? 2 : 3] -= d }
                     }
                     if let next = frame.overlays {
                         if Double(abs(Int(next.forestMask[k]) - Int(shown.forestMask[k]))) / 255 > 0.25 {
@@ -98,7 +104,24 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
                                row.heightSum * RenderContract.heightScale / count,
                                100 * Double(added) / count, 100 * Double(removed) / count,
                                100 * Double(forest) / count, 100 * Double(water) / count,
-                               100 * Double(rgb) / (count * 3 * 255)]
+                               100 * Double(rgb) / (count * 3 * 255),
+                               100 * bandMass / count]
+                if frame.ribbonsRebuilt {
+                    print(String(format: "BANDSPLIT %.1f neu+ %.4f bestehend+ %.4f bestehend- %.4f weg- %.4f (%% Land) Geister %d",
+                                 t.years, 100 * split[0] / Double(land.count), 100 * split[1] / Double(land.count),
+                                 100 * split[2] / Double(land.count), 100 * split[3] / Double(land.count),
+                                 render.ribbonGhostCount))
+                    let matureNow = render.ribbonMatureCoverage
+                    var newMature = 0.0, newYoung = 0.0
+                    if matureNow.count == freshCoverage.count {
+                        for k in land where coverage[k] <= 0 && freshCoverage[k] > 0 {
+                            if matureNow[k] > 0 { newMature += freshCoverage[k] } else { newYoung += freshCoverage[k] }
+                        }
+                    }
+                    print(String(format: "GROWTH %.1f jung %d ausgenommen %d neu aus ausgewachsenen %.4f aus jungen %.4f (%% Land)",
+                                 t.years, render.ribbonGrowthStats.young, render.ribbonGrowthStats.exempt,
+                                 100 * newMature / Double(land.count), 100 * newYoung / Double(land.count)))
+                }
                 heights = t.h
                 if frame.ribbonsRebuilt { coverage = freshCoverage }
                 if let next = frame.overlays { shown = next }
@@ -119,7 +142,9 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
         let events = rows.indices.filter { rows[$0].couplingYear != nil }
         let windows = Set(events.flatMap { Array($0...min($0 + 3, rows.count - 1)) })
         let normal = rows.indices.filter { !windows.contains($0) }
-        let names = ["h%", "hL1", "Band+%", "Band-%", "Wald%", "Raster%", "RGB%"]
+        // BandΣ% = Σ|Δ Deckung| (gewichtet: ein dünnes, einwachsendes Band
+        // zählt mit seiner Deckkraft, nicht als voll gedeckte Zelle).
+        let names = ["h%", "hL1", "Band+%", "Band-%", "Wald%", "Raster%", "RGB%", "BandΣ%"]
         let allMedian = names.indices.map { j in median(normal.map { rows[$0].metrics[j] }) }
         let uncoupled = rows.filter { $0.couplingYear == nil }
         let activeMedian = names.indices.map { j in
@@ -195,6 +220,7 @@ private struct TransitionRow {
 
     func active(_ metric: Int) -> Bool {
         if metric < 2 { return true }
+        if metric == 7 { return built }
         return metric < 4 ? built : uploaded
     }
 

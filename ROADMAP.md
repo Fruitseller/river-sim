@@ -268,6 +268,15 @@ Form, überschritten aber das Laufzeitbudget deutlich. Pflicht-Wächter für
 den Kopplungstakt, Snapshot-Version 10 und Messreihen mit verworfenen Varianten:
 `docs/zielbild-measurements.md` § Gürtel im Zeitraffer (dt 15/100/1000).
 
+**Übergänge im Zeitraffer (Befund des Eigners zu Punkt 50).** Die Kopplung
+Gürtel ↔ D8 setzt im 1000-Jahr-Takt alle Läufe zugleich neu; bei 30/60 J./Sek.
+sprang das Netz sichtbar. Jetzt in Sim-Jahren: neue Arme wachsen über 180 J.
+ein (`RiverChannel.born`, nur Render), verlassene versiegen über 150 J., Wald
+weicht ohne Wasser über 60 J. Physik bit-gleich. Offen: das Bett selbst gräbt
+die Sim weiter mit τ = 10 J. ein (feines Linienmuster in der ersten
+Drittelsekunde), Eigner-Urteil dazu steht aus. Messreihe:
+`docs/zielbild-measurements.md` § Übergänge im Zeitraffer.
+
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
 aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der
 Schlinge“ nur am Gerinne, Rippen nur im Bewuchs), Altarm-Verlandung als Ried und

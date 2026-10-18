@@ -91,6 +91,23 @@ public enum CanopyRender {
     /// Tickets: höchstens die Hälfte von heute (≤ 0,32 %). Bei 60 J/s sind
     /// 800 J. gut 13 s Zeitraffer. (Vor #168, mit mehr Wald: 0,91 % → 0,40 %.)
     public static let regrowYears = 800.0
+    /// Zeitkonstante in Sim-Jahren, mit der der Wald dort weicht, wo er im
+    /// Ziel verschwindet, OHNE dass Wasser kommt (Schutzmaske leer): vor
+    /// allem unter einem frisch eingesetzten Arm, dessen Bett die Sim sofort
+    /// rodet (`veg = 0` im Gürtel-Stempel), während das Band erst über
+    /// `WaterRender.ribbonGrowYears` einwächst. Sofort weg war der Wald dort
+    /// im Kopplungstakt fleckweise auf einen Schlag (Befund Punkt 50: Wald
+    /// 11–18× eines normalen Takts). Wo die Schutzmaske Wasser meldet, weicht
+    /// er weiter sofort: kein Kronendach über Wasser. Etwa ein Drittel des
+    /// Einwachsens: der Wald geht, bevor das Band seine volle Breite hat.
+    public static let retreatYears = 60.0
+    /// Ab dieser Band-Deckung gilt eine Zelle für den Rückzug als Wasser (der
+    /// Wald weicht dort sofort). Die Schutzmaske selbst schützt schon ab
+    /// `WaterRender.protectBandThreshold` (0,01) plus Saum — für das Ziel
+    /// richtig, für das sofortige Weichen zu früh: ein frisch eingesetzter,
+    /// noch unsichtbarer Arm rodete sonst den ganzen Korridor im
+    /// Kopplungstakt.
+    public static let retreatInstantBandCoverage = 0.35
 
     // MARK: Wiese (Terrain-Shader)
 

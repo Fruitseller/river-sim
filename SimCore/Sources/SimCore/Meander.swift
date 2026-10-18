@@ -20,11 +20,35 @@ public struct MeanderNode: Equatable, Sendable {
 public struct RiverChannel: Sendable {
     public var nodes: [MeanderNode]
     public var discharge: [Double] // pro Knoten, in Zell-Flächen-Einheiten (∝ Abfluss)
+    /// Sim-Jahr, in dem der Knoten in den Lauf kam: die Kopplung an die
+    /// Entwässerung (`Terrain.coupleBeltToDrainage`) setzt es für eingesetzte
+    /// D8-Zellen (neuer Arm, Avulsion), übernommene Knoten behalten ihres;
+    /// Neuabtastung und Cutoffs führen es mit wie `discharge`. `-∞` = schon
+    /// immer da (Generierung, Laden, Pinsel-Nachzug). LEER heißt „alle −∞":
+    /// der Normalfall kostet so weder Speicher noch Interpolation in der
+    /// Neuabtastung (gemessen: ein volles Array je Lauf kostete ~0,4 ms je
+    /// Sim-Schritt); lesen über `bornAt`.
+    ///
+    /// NUR für den Render: die Bänder wachsen damit im Zeitraffer über
+    /// Sim-Jahre ein (`WaterRender.ribbonGrowYears`), statt im Kopplungstakt
+    /// auf voller Breite zu erscheinen. Keine Physik liest es; es steht
+    /// deshalb weder im Spielstand noch im Zustands-Fingerabdruck — nach dem
+    /// Laden gilt jeder Knoten als ausgewachsen, und der Fingerabdruck bleibt
+    /// der Beleg, dass die Physik unverändert ist.
+    public var born: [Double]
 
-    public init(nodes: [MeanderNode], discharge: [Double]) {
+    public init(nodes: [MeanderNode], discharge: [Double], born: [Double]? = nil) {
         precondition(nodes.count == discharge.count)
+        precondition(born == nil || born!.isEmpty || born!.count == nodes.count)
         self.nodes = nodes
         self.discharge = discharge
+        // Nur −∞ → leer (s. `born`).
+        self.born = born.map { $0.contains(where: { $0.isFinite }) ? $0 : [] } ?? []
+    }
+
+    /// Geburtsjahr von Knoten `i` (`born` leer → −∞).
+    @inline(__always) public func bornAt(_ i: Int) -> Double {
+        born.isEmpty ? -.infinity : born[i]
     }
 
     /// Frischt `discharge` je Knoten aus einem Feld-Sampler auf. Die Schleife
@@ -324,7 +348,9 @@ public final class MeanderState {
             newNodes.append(contentsOf: ch.nodes[j...])
             var newDis = Array(ch.discharge[0...i])
             newDis.append(contentsOf: ch.discharge[j...])
-            ch = RiverChannel(nodes: newNodes, discharge: newDis)
+            var newBorn: [Double] = []
+            if !ch.born.isEmpty { newBorn = Array(ch.born[0...i]); newBorn.append(contentsOf: ch.born[j...]) }
+            ch = RiverChannel(nodes: newNodes, discharge: newDis, born: newBorn)
         }
     }
 
@@ -342,7 +368,8 @@ public final class MeanderState {
         guard total.isFinite else { return ch }
         if total < spacing { // zu kurz → nur Endpunkte
             return RiverChannel(nodes: [nodes[0], nodes[nodes.count - 1]],
-                                discharge: [ch.discharge[0], ch.discharge[nodes.count - 1]])
+                                discharge: [ch.discharge[0], ch.discharge[nodes.count - 1]],
+                                born: ch.born.isEmpty ? [] : [ch.born[0], ch.born[nodes.count - 1]])
         }
         // Schrittzahl vor der Konvertierung deckeln, um Int(inf) bzw. Überlauf bei
         // extrem kleinem spacing (z. B. meanderNodeSpacing = 1e-320) abzufangen.
@@ -353,6 +380,8 @@ public final class MeanderState {
         let count = max(2, steps + 1)
         var outN = [MeanderNode](); outN.reserveCapacity(count)
         var outD = [Double](); outD.reserveCapacity(count)
+        let young = !ch.born.isEmpty
+        var outB = [Double](); if young { outB.reserveCapacity(count) }
         var seg = 0
         for kk in 0..<count {
             let target = total * Double(kk) / Double(count - 1)
@@ -362,8 +391,14 @@ public final class MeanderState {
             outN.append(MeanderNode(x: nodes[seg].x + (nodes[seg + 1].x - nodes[seg].x) * t,
                                     z: nodes[seg].z + (nodes[seg + 1].z - nodes[seg].z) * t))
             outD.append(ch.discharge[seg] + (ch.discharge[seg + 1] - ch.discharge[seg]) * t)
+            // Geburtsjahr: linear zwischen zwei Jahren; neben einem schon immer
+            // vorhandenen Knoten (−∞) das des näheren, sonst entstünde NaN.
+            if young {
+                let b0 = ch.born[seg], b1 = ch.born[seg + 1]
+                outB.append(b0.isFinite && b1.isFinite ? b0 + (b1 - b0) * t : (t < 0.5 ? b0 : b1))
+            }
         }
-        return RiverChannel(nodes: outN, discharge: outD)
+        return RiverChannel(nodes: outN, discharge: outD, born: outB)
     }
 
     // MARK: - Initialisierung aus der D8-Entwässerung
@@ -1018,7 +1053,8 @@ extension MeanderState {
                     var nodes = Array(ch.nodes[0...j]), dis = Array(ch.discharge[0...j])
                     nodes[j] = o; dis[j] = q
                     if j + 1 < c || nodes[j] != ch.nodes[j] {
-                        channels[ci] = RiverChannel(nodes: nodes, discharge: dis)
+                        channels[ci] = RiverChannel(nodes: nodes, discharge: dis,
+                                                    born: ch.born.isEmpty ? [] : Array(ch.born[0...j]))
                     }
                     break
                 }
@@ -1183,7 +1219,9 @@ extension MeanderState {
             oxbowAge.append(0)
             var newNodes = Array(ch.nodes[0...i]); newNodes.append(contentsOf: ch.nodes[j...])
             var newDis = Array(ch.discharge[0...i]); newDis.append(contentsOf: ch.discharge[j...])
-            ch = RiverChannel(nodes: newNodes, discharge: newDis)
+            var newBorn: [Double] = []
+            if !ch.born.isEmpty { newBorn = Array(ch.born[0...i]); newBorn.append(contentsOf: ch.born[j...]) }
+            ch = RiverChannel(nodes: newNodes, discharge: newDis, born: newBorn)
         }
     }
 }
