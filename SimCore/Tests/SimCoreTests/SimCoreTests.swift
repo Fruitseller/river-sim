@@ -58,7 +58,7 @@ final class SimCoreTests: XCTestCase {
         // `testMeanderOxbowSiltsUp` auf dieser Realisierung bei 40 von Peak 54
         // Altarmen (Kriterium < 70 %, gemessen mit der ersten Fassung des Passes). Diese Tests prüfen die Mäander-Mechanik,
         // nicht die Küste — dieselbe Doktrin wie der Gürtel eine Zeile höher.
-        c.deltaTrapFraction = 0
+        c.deltaTrapFraction = calibrationDeltaTrapFraction
         return c
     }
 

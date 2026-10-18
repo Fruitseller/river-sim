@@ -138,7 +138,7 @@ final class WaterRendererTests: XCTestCase {
     // Delta-Schüttung (#174, Punkt 26) aus, aus demselben Grund: mit ihr
     // trug diese Realisierung in Jahr 30.000 keinen jungen Altarm (erste
     // Fassung des Passes).
-    config.deltaTrapFraction = 0
+    config.deltaTrapFraction = calibrationDeltaTrapFraction
     let terrain = agedWorld(config, years: 30_000)
     let ribbons = RiverRibbonRenderer()
     let mesh = ribbons.build(terrain, hscale: 24, lift: 0.35)

@@ -35,6 +35,7 @@ final class Glacier: XCTestCase {
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
         c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731 der alten Großform
+        c.deltaTrapFraction = calibrationDeltaTrapFraction  // ohne Delta-Schüttung, s. dort
         return c
     }
 

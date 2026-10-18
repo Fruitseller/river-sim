@@ -87,6 +87,23 @@ let calibrationMeanderBelt = false
 /// (`GlacierCrestShape.testProductionCrestCarriesGlaciersNotACap`).
 let calibrationIceFirnTemp: Double = 0
 
+/// Delta-Schüttung der Testwelten (`SimConfig.deltaTrapFraction`, Issue #174,
+/// Punkt 26): aus, der Stand vor dem Pass (0 = bit-identisch zum Stand davor).
+///
+/// Dieselbe Doktrin wie `calibrationRangeLandform`: der Pass baut an den
+/// Mündungen neues Land knapp über dem Meer und verschiebt damit die
+/// Realisierung jeder Testwelt mit großer Mündung. Auf dem Mac blieben die
+/// Mechanik-Wächter grün, auf dem Linux-Runner (andere System-libm, andere
+/// Realisierung) kippten mit dem Pass drei, alle knapp und keiner an seiner
+/// Mechanik: `testLeversKeepTheChannelIncised` (Summe ×1,19 statt > 1,20),
+/// `testGlaciatedValleysWidenTowardsU` (Breiten-Kennzahl 1,213 gegen 1,194
+/// ohne Eis, gefordert + 0,1) und `testHardnessContrastHoldsSlopeBreak`
+/// (Referenzarm 0,085 statt < 0,08). Gepinnt sind diese drei plus die Tests,
+/// die schon mit dem Pass eigene Gründe dafür hatten (`grep
+/// calibrationDeltaTrapFraction`). Die Delta-Mechanik selbst prüfen
+/// `DeltaTests` und `RiverDelta` auf der Produktions-Kalibrierung.
+let calibrationDeltaTrapFraction: Double = 0
+
 /// Produktionsphysik in kleiner Auflösung, mit der Kalibrier-Paarung dieser
 /// Suite: der Standard-Zuschnitt der Render-Wächter (`SimRenderTests`,
 /// `RenderStateTests`). Genau der Fall, für den `calibrationWorld` oben steht —

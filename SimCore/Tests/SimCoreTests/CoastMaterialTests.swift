@@ -402,7 +402,11 @@ final class CoastMaterialTests: XCTestCase {
         let a = TerrainColorRenderer.buffers(terrain), b = TerrainColorRenderer.buffers(terrain)
         XCTAssertEqual(a.colors, b.colors)
         XCTAssertEqual(a.surfaces, b.surfaces)
-        XCTAssertTrue(stride(from: 3, to: a.colors.count, by: 4).contains { a.colors[$0] > 128 },
+        // Nicht leer: irgendein Sand genügt. Auf dem groben Testgitter (Zelle
+        // 1,37 statt 0,156 Welteinheiten) bleiben die weichen Strandsäume (#174)
+        // meist unter halber Stärke: gemessen Mac max. 143 (4 Zellen
+        // über 128), Linux max. 73 (keine), Zellen mit Sand 70 bzw. 37.
+        XCTAssertTrue(stride(from: 3, to: a.colors.count, by: 4).contains { a.colors[$0] > 0 },
                       "gealterte Welt ohne einen einzigen Strand")
     }
 }
