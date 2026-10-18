@@ -168,6 +168,12 @@ final class StateInventoryTests: XCTestCase {
         ("incisionKErode", .scratch(reason:
             "Erosionsfaktor je Zelle für `outletIncision` (Runde 7), je Aufruf "
             + "neu gerechnet, bevor die serielle Schleife ihn liest.")),
+        ("braidStatus", .scratch(reason:
+            "Braid-Gate je Zelle (Runde 7), vor dem seriellen Lauf des Passes "
+            + "vollständig neu gesetzt.")),
+        ("braidDepositCeil", .scratch(reason:
+            "Depositions-Deckel der inaktiven Landzellen des Braid-Passes "
+            + "(Runde 7) — nur hinter frischem `braidStatus` == 1 gültig.")),
         ("mfdRoutes", .scratch(reason:
             "MFD-Nachbargewichte, vor jeder Akkumulation vollständig neu vorbereitet.")),
         ("mfdRouteCounts", .scratch(reason:
