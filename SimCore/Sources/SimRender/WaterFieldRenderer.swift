@@ -19,6 +19,12 @@ import SimCore
 public final class WaterFieldRenderer {
     public init() {}
 
+    /// A/B-Arm der Verbreiterung (Issue #174): `true` = die alte Diamant-
+    /// Dilatation (zwei Pässe), `false` = Scheibenstempel (Standard). Nur für
+    /// Messläufe und Wächter, die beide Fassungen im selben Build vergleichen
+    /// (`RectWaterTests`); der Betrieb läuft immer auf dem Standard.
+    var legacyWiden = ProcessInfo.processInfo.environment["RS_WIDEN_DIAMOND"] != nil
+
     /// Baut die Diagnose-Meldung für einen Feldgrößen-Mismatch (Bug: Feld-Korruption).
     /// Bewusst REIN (kein Trap, keine Assertion): Der Mismatch-Pfad ist unter
     /// `swift test` (Debug-Build) sonst nicht testbar — ein Guard mit `assertionFailure`
@@ -415,29 +421,37 @@ public final class WaterFieldRenderer {
         // diese Zellen zu großen Splittern (User-Screenshot Jahr 0, steile
         // Canyons). Physisch steht Wasser nie an einer Wand UNTER dem Fluss;
         // auf Ebenen ändert die zweite Schranke nichts (Differenzen ≪ barTol).
-        let widenThresh = WaterRender.widenThresholds
-        let widenFalloff = WaterRender.widenFalloff
-        for thresh in widenThresh {
-            // Liest sd/h/hf, schreibt nur b[k] → zeilenparallel, bit-identisch.
-            sd.withUnsafeBufferPointer { sdb in
-            b.withUnsafeMutableBufferPointer { bb in
-            h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
-                let psd = sdb.baseAddress!, pb = bb.baseAddress!
-                let ph = hb.baseAddress!, phf = hfb.baseAddress!
-                parallelChunks(n) { jLo, jHi in
-                for j in jLo..<jHi {
-                    for i in 0..<n {
-                        let k = j * n + i
-                        var m = psd[k]
-                        if i > 0 && psd[k - 1] > thresh && abs(ph[k] - phf[k - 1]) < barTol { m = max(m, psd[k - 1] - widenFalloff) }
-                        if i < n - 1 && psd[k + 1] > thresh && abs(ph[k] - phf[k + 1]) < barTol { m = max(m, psd[k + 1] - widenFalloff) }
-                        if j > 0 && psd[k - n] > thresh && abs(ph[k] - phf[k - n]) < barTol { m = max(m, psd[k - n] - widenFalloff) }
-                        if j < n - 1 && psd[k + n] > thresh && abs(ph[k] - phf[k + n]) < barTol { m = max(m, psd[k + n] - widenFalloff) }
-                        pb[k] = m
+        if legacyWiden {
+            let widenThresh = WaterRender.widenThresholds
+            let widenFalloff = WaterRender.widenFalloff
+            for thresh in widenThresh {
+                // Liest sd/h/hf, schreibt nur b[k] → zeilenparallel, bit-identisch.
+                sd.withUnsafeBufferPointer { sdb in
+                b.withUnsafeMutableBufferPointer { bb in
+                h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
+                    let psd = sdb.baseAddress!, pb = bb.baseAddress!
+                    let ph = hb.baseAddress!, phf = hfb.baseAddress!
+                    parallelChunks(n) { jLo, jHi in
+                    for j in jLo..<jHi {
+                        for i in 0..<n {
+                            let k = j * n + i
+                            var m = psd[k]
+                            if i > 0 && psd[k - 1] > thresh && abs(ph[k] - phf[k - 1]) < barTol { m = max(m, psd[k - 1] - widenFalloff) }
+                            if i < n - 1 && psd[k + 1] > thresh && abs(ph[k] - phf[k + 1]) < barTol { m = max(m, psd[k + 1] - widenFalloff) }
+                            if j > 0 && psd[k - n] > thresh && abs(ph[k] - phf[k - n]) < barTol { m = max(m, psd[k - n] - widenFalloff) }
+                            if j < n - 1 && psd[k + n] > thresh && abs(ph[k] - phf[k + n]) < barTol { m = max(m, psd[k + n] - widenFalloff) }
+                            pb[k] = m
+                        }
                     }
-                }
-                }
-            }}}}
+                    }
+                }}}}
+                swap(&sd, &b)
+            }
+
+        } else {
+            // Scheibenstempel statt Diamant-Dilatation (Issue #174, „Kästen"):
+            // `WaterRender` § „Verbreiterung als Scheibe".
+            RiverWidening.widen(sd, into: &b, h: h, hf: hf, receiver: rec, n: n)
             swap(&sd, &b)
         }
 

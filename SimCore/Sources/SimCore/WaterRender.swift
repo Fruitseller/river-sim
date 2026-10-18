@@ -865,6 +865,93 @@ public enum WaterRender {
     /// Mittelbänke (Braiding!) und Ufer-/Talkanten bleiben trocken.
     public static let widenBarTolerance = 0.004
 
+    // MARK: Verbreiterung als Scheibe (Issue #174, „Kästen")
+    //
+    // BEFUND (Seeds 1337/42/20, Jahr 20.000, `docs/geometry-water-measurements.md`
+    // § H): die dunklen, geraden „Kästen" im Tiefland sind KEINE Seen, Altarme
+    // oder Gürtel-Stempel, sondern der Raster-Fluss großer Läufe ohne Band
+    // (Verteiler der Hauptläufe auf der Küstenebene, Abkürzungen durch Mäander-
+    // Hälse). Ihre Form macht die Verbreiterung: eine Diamant-Dilatation
+    // (4er-Nachbarschaft, zwei Pässe) um einen D8/MFD-Pfad, der auf Ebenen
+    // zellgerade läuft. Ergebnis: gleichbreite Streifen mit geraden Kanten,
+    // stumpfen Enden und Achs-/45°-Ecken, so breit wie der Hauptlauf und dunkler
+    // als er. 73 % der sichtbaren Raster-Fluss-Zellen (Seed 1337) sind solche
+    // Verbreiterung, nicht die Linie selbst.
+    //
+    // Statt zweier Stufen-Pässe stempelt jetzt jede kräftige Linienzelle eine
+    // SCHEIBE (rund statt Diamant) mit einem Radius, der stetig mit der
+    // Intensität wächst (Kopf der Linie läuft spitz aus statt stumpf zu
+    // beginnen), mit Breiten-Rauschen und einem Versatz des Mittelpunkts
+    // (Mäander-Wiegen unter Zellgröße). Die Schwellen und das Gefälle oben bleiben
+    // die Kalibrierung: `widenThresholds[0]` ist der Beginn der Verbreiterung
+    // (Bäche bleiben fadendünn), `widenFalloff` der Intensitätsverlust je Zelle
+    // Abstand, `widenBarTolerance` die Wasserspiegel-Toleranz (Bank-Schranke).
+
+    /// Radius (Zellen) einer Linienzelle knapp über `widenThresholds[0]` — der
+    /// alte Pass 1 reichte eine Zelle weit, ein Bach über der Render-Schwelle
+    /// blieb damit gut drei Zellen breit.
+    public static let widenRadiusAtFirstThreshold = 1.0
+    /// Radius (Zellen) bei `widenThresholds[1]` (alt: Pass 2 beginnt hier).
+    public static let widenRadiusAtSecondThreshold = 1.1
+    /// Radius (Zellen) bei Intensität 1 (alt: zwei Zellen).
+    public static let widenRadiusFull = 1.35
+    /// Breite (Zellen) der Schulter hinter dem Kern der Scheibe: der Wert fällt dort
+    /// linear von der Kern-Intensität auf 0.
+    public static let widenShoulderCells = 1.0
+    /// Relative Schwankung des Radius entlang des Laufs (± Anteil).
+    public static let widenWidthJitter = 0.4
+    /// Wellenlänge (Zellen) von Breiten-Rauschen und Versatz.
+    public static let widenWavelengthCells = 12.0
+    /// Versatz des Scheiben-Mittelpunkts in Vielfachen des Grundradius.
+    public static let widenWanderRadii = 2.4
+    /// Halbe Kantenlänge (Zellen) des Fensters, in dem die Dichte kräftiger Zellen
+    /// gezählt wird (Fenster 7 × 7).
+    public static let widenCrowdCells = 3
+    /// Anteil kräftiger Zellen im Fenster, ab dem der Radius zu schrumpfen beginnt
+    /// (eine einzelne Linie belegt rund 7 von 49 Zellen, also 0,15)…
+    public static let widenCrowdLo = 0.2
+    /// … und bei dem er seinen kleinsten Anteil erreicht (Flächenabfluss).
+    public static let widenCrowdHi = 0.5
+    /// Kleinster Radius-Anteil im dichten Flächenabfluss.
+    public static let widenCrowdMinimum = 0.55
+
+    /// Radius-Anteil für den Anteil `share` kräftiger Zellen im Fenster: 1 für eine
+    /// einzelne Linie, linear bis `widenCrowdMinimum` im dichten Abfluss.
+    @inline(__always)
+    public static func widenCrowdFactor(share: Double) -> Double {
+        let u = min(1, max(0, (share - widenCrowdLo) / (widenCrowdHi - widenCrowdLo)))
+        return 1 - (1 - widenCrowdMinimum) * u
+    }
+
+    /// Länge (Zellen) der Verjüngung am Kopf eines Laufs: die ersten Zellen hinter
+    /// dem Anfang tragen nur einen Bruchteil des Radius, ein Lauf beginnt spitz
+    /// statt als stumpfer Kasten.
+    public static let widenHeadTaperCells = 6
+
+    /// Anteil des Radius an einer Linienzelle, hinter der `upstreamCells` kräftige
+    /// Zellen stromauf liegen (0 am Kopf, 1 ab `widenHeadTaperCells`). Am Kopf bleibt
+    /// ein Rest, damit die Linie dort nicht abreißt.
+    @inline(__always)
+    public static func widenHeadTaper(upstreamCells: Int) -> Double {
+        let u = min(1, Double(upstreamCells) / Double(max(1, widenHeadTaperCells)))
+        return 0.35 + 0.65 * u
+    }
+
+    /// Radius der Scheibe einer Linienzelle mit Intensität `s`: 0 bis
+    /// `widenThresholds[0]` (keine Verbreiterung), darüber stückweise linear und
+    /// monoton durch die drei Radien oben.
+    @inline(__always)
+    public static func widenRadius(intensity s: Double) -> Double {
+        let t0 = widenThresholds[0], t1 = widenThresholds[1]
+        if !(s > t0) { return 0 }
+        if s <= t1 {
+            return widenRadiusAtFirstThreshold
+                + (widenRadiusAtSecondThreshold - widenRadiusAtFirstThreshold) * (s - t0) / (t1 - t0)
+        }
+        let u = min(1, (s - t1) / (1 - t1))
+        return widenRadiusAtSecondThreshold + (widenRadiusFull - widenRadiusAtSecondThreshold) * u
+    }
+
     /// Track-Maske des gestempelten Mäander-Korridors: wo dem gestempelten Bett
     /// real kein Wasser folgt (verwaiste/verknäulte Linien), verblasst der
     /// Stempel, statt voll zu leuchten. Eigenes, tieferes Fenster als
