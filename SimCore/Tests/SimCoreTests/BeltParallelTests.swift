@@ -66,6 +66,33 @@ final class BeltParallelTests: XCTestCase {
         XCTAssertNotEqual(cache.mob, MeanderState.beltGeometry(ch, config: cfg, heightAt: old).mob)
     }
 
+    /// Der Parallelstart füttert die höhenunabhängige Geometrie der
+    /// Footprint-Phase in den Migrationsplan (statt sie ein zweites Mal zu
+    /// bauen). Vertrag: Plan über die Trockengeometrie == komplett frisch
+    /// gebauter Plan, Feld für Feld bitgleich — dieselbe Höhe, derselbe
+    /// Lauf. Die Mobilität der Trockengeometrie stammt vom Höhen-Stub der
+    /// Schranke und MUSS überschrieben werden.
+    func testBeltMigrationPlanReusesDryFootprintGeometry() throws {
+        let cfg = SimConfig.production, ch = line()
+        let height: (MeanderNode) -> Double = { 0.3 - $0.x * 0.0001 + sin($0.z) * 0.1 }
+        let state = MeanderState()
+        state.channels = [ch]
+        let fp = try XCTUnwrap(state.beltFootprintAndGeometry(ch, dt: 100, config: cfg))
+        let viaDry = state.beltMigrationPlan(channel: 0, config: cfg, heightAt: height, dryGeometry: fp.geometry)
+        let fresh = state.beltMigrationPlan(channel: 0, config: cfg, heightAt: height)
+        XCTAssertEqual(viaDry.rate.bitPattern, fresh.rate.bitPattern)
+        for (a, b) in [(viaDry.g.width, fresh.g.width), (viaDry.g.curv, fresh.g.curv),
+                       (viaDry.g.nx, fresh.g.nx), (viaDry.g.nz, fresh.g.nz),
+                       (viaDry.g.mob, fresh.g.mob), (viaDry.g.cum, fresh.g.cum),
+                       (viaDry.r, fresh.r), (viaDry.erod, fresh.erod)] {
+            XCTAssertEqual(a.map(\.bitPattern), b.map(\.bitPattern))
+        }
+        // Abweichende Knotenzahl: Fallback auf den vollständigen Neubau.
+        let mismatch = state.beltMigrationPlan(channel: 0, config: cfg, heightAt: height,
+                                               dryGeometry: BeltGeometry(width: [], curv: [], nx: [], nz: [], mob: []))
+        XCTAssertEqual(mismatch.g.width.map(\.bitPattern), fresh.g.width.map(\.bitPattern))
+    }
+
     func testBeltLocalWorkerRetainsTheOriginalNoiseKey() {
         let cfg = SimConfig.production
         let reference = MeanderState(), local = MeanderState()

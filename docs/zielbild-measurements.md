@@ -1808,8 +1808,11 @@ Seeds 15,3; Median je Seed 14–46, vorher 18–96).
   Schritte.
 - Deutlich mehr und kleinere Altarme als vor #187 (Befund 6); ob das im Bild
   als Ried-Teppich wirkt, ist eine Bildfrage.
-- Laufzeit: Teilschritte wandernder Läufe berechnen Geometrie und Raten über
-  den ganzen Fluss, nicht nur den flachen Abschnitt.
+- Laufzeit: abgehakt. Der Ansatz „nur den flachen Abschnitt rechnen" ist unter
+  der Kopplung (#187) erschöpft — wandernde Läufe sind fast vollständig flach
+  (93 % der Knoten mobil, gemessen; `docs/perf-measurements.md` §R). Was die
+  Teilschritte sonst noch kosten und welche Mikro-Umbauten gemessen NICHT
+  zahlen, steht ebenfalls in §R.
 
 ## Felswände
 

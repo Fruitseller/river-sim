@@ -799,7 +799,17 @@ extension MeanderState {
     /// Sättigung und Talwand-Bremse liegen in 0…1. Vor der Ratenglättung
     /// Beträge zu nehmen begrenzt auch jede mögliche Auslöschung von Vorzeichen.
     /// Die einmal gewählte Teilschrittzahl bleibt im gesamten Lauf konstant.
-    func beltFootprint(_ ch: RiverChannel, dt: Double, config: SimConfig) -> BeltFootprint? {
+    ///
+    /// Gibt zusätzlich die Geometrie des Laufes mit zurück: `width`, `curv`,
+    /// `nx`, `nz` und `cum` hängen NICHT an der Höhe (der Höhen-Stub
+    /// `sea + 1` füttert nur `mob`, das hier bewusst „falsch" ist). Der
+    /// Parallelstart (`Terrain.parallelBeltRuns`) berechnet mit derselben
+    /// Geometrie den Migrationsplan — mit `updateBeltMobility` auf dem echten
+    /// Bett ist sie bit-identisch zu `beltGeometry` auf dem echten Bett
+    /// (Wächter: `testBeltCachedGeometryRefreshesTheChangedBed`); vorher
+    /// baute der Plan dieselben fünf Arrays ein zweites Mal.
+    func beltFootprintAndGeometry(_ ch: RiverChannel, dt: Double, config: SimConfig)
+        -> (footprint: BeltFootprint, geometry: BeltGeometry)? {
         guard ch.nodes.count >= 3, dt > 0, dt.isFinite, config.meanderNodeSpacing > 0,
               config.meanderBeltRate >= 0 else { return nil }
         let g = Self.beltGeometry(ch, config: config, heightAt: { _ in config.sea + 1 })
@@ -819,9 +829,15 @@ extension MeanderState {
             $0.x.isFinite && $0.z.isFinite && $0.x >= 0 && $0.z >= 0
                 && $0.x <= Double(config.n - 1) && $0.z <= Double(config.n - 1)
         }) else { return nil }
-        return BeltFootprint(minX: ch.nodes.map(\.x).min()! - radius, maxX: ch.nodes.map(\.x).max()! + radius,
-                             minZ: ch.nodes.map(\.z).min()! - radius, maxZ: ch.nodes.map(\.z).max()! + radius,
-                             maxSubsteps: substeps)
+        let box = BeltFootprint(minX: ch.nodes.map(\.x).min()! - radius, maxX: ch.nodes.map(\.x).max()! + radius,
+                                 minZ: ch.nodes.map(\.z).min()! - radius, maxZ: ch.nodes.map(\.z).max()! + radius,
+                                 maxSubsteps: substeps)
+        return (box, g)
+    }
+
+    /// Nur die Schranke (s. `beltFootprintAndGeometry`).
+    func beltFootprint(_ ch: RiverChannel, dt: Double, config: SimConfig) -> BeltFootprint? {
+        beltFootprintAndGeometry(ch, dt: dt, config: config)?.footprint
     }
 
     /// Gemeinsame Historie erst nach allen Arbeiten in ursprünglicher Lauf-Reihenfolge.
@@ -841,14 +857,26 @@ extension MeanderState {
 
     /// Berechnet Geometrie und Raten für die Zeitschritt-Schätzung und hält das
     /// Ergebnis fest, damit Teilschritt 0 dieselbe Arbeit nicht wiederholt.
+    /// `dryGeometry`: die höhenunabhängigen Arrays einer bereits gebauten
+    /// Laufgeometrie (aus `beltFootprintAndGeometry`, derselbe Lauf); die
+    /// Mobilität wird auf dem echten Bett neu gelesen — bit-identisch zum
+    /// Neubau (s. dort). Bei Knotenzahl-Abweichung (nil oder andere Länge)
+    /// wird vollständig neu gebaut.
     func beltMigrationPlan(channel ci: Int, config: SimConfig,
-                           heightAt: (MeanderNode) -> Double) -> BeltMigrationPlan {
+                           heightAt: (MeanderNode) -> Double,
+                           dryGeometry: BeltGeometry? = nil) -> BeltMigrationPlan {
         let ch = channels[ci]
         guard ch.nodes.count >= 3, Self.migrates(ch, config) else {
             let empty = BeltGeometry(width: [], curv: [], nx: [], nz: [], mob: [])
             return BeltMigrationPlan(rate: 0, g: empty, r: [], erod: [])
         }
-        let g = Self.beltGeometry(ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
+        var g: BeltGeometry
+        if let dry = dryGeometry, dry.cum.count == ch.nodes.count {
+            g = dry
+            Self.updateBeltMobility(&g, ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
+        } else {
+            g = Self.beltGeometry(ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
+        }
         let (r, erod) = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
         let maxRate = r.reduce(0) { max($0, abs($1)) }
         return BeltMigrationPlan(rate: maxRate, g: g, r: r, erod: erod)

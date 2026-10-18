@@ -1683,3 +1683,173 @@ auf die Breite zwei konservative Kanten hinzu. Unverändert sind **1.072 Läufe,
 (36,14 %)** mit **572 Läufen (53,36 %)**. Der Abhängigkeitsplan kann unabhängige
 Läufe verschiedener Ebenen gleichzeitig bearbeiten; die Ebenenzahlen
 beschreiben den Graphen, nicht die gemessene CPU-Auslastung.
+## R. Mäandergürtel: Teilschritt-Diagnose, eine Wiederverwendung, drei zurückgebaute Versuche (Oktober 2026, #174/#187) — bit-identisch
+
+Startstand `560d809` (Integrationszweig mit Kopplung #187), Branch
+`t3/174-belt-perf`. Gemessen auf derselben Apple M4 Max wie §Q (16 Kerne,
+64 GiB, macOS 26.7, Release im Swift-5-Sprachmodus). Die Maschine lief
+während der gesamten Reihe unter Fremdlast (parallel arbeitende Agenten für
+Kopplungstakt und Gletscher bauen und testen); deshalb lastgesteuerte,
+interleaved A/B-Paare (vor jedem Lauf auf 1-Minuten-Loadavg ≤ 8 gewartet,
+Wert protokolliert) und Auswertung über gepaarte Differenzen (neu − alt),
+Median und Quartile, `--repeat 1` wie die §Q-Schlussmessung. Kein zweiter
+eigener Build, Test oder Hash-Lauf lief während einer Messreihe.
+
+### Diagnose vorab: der Fenster-Hebel ist unter der Kopplung erschöpft
+
+Der offene Hebel aus `docs/zielbild-measurements.md` § Gürtel („Teilschritte
+wandernder Läufe berechnen Geometrie und Raten über den ganzen Fluss, nicht
+nur den flachen Abschnitt") stammt aus der Zeit vor der Kopplung. Zählung
+über 130 Schritte (100 Einlauf + 30 Messung, Seed 1337, temporäre, nach der
+Diagnose entfernte Instrumentierung): **4,78 M von 5,13 M gestempelten
+Knoten sind mobil (93 %)**, die mobile Spannweite überdeckt 97 % der Linien.
+Mit der Kopplung ist jeder wandernde Lauf ein Hack-Abschnitt von der Quelle
+bis zum Zusammenfluss — der steile Gebirgsoberlauf gehört festen Läufen.
+Ein Fenster je wanderndem Lauf fasst fast die ganze Linie; derselbe Befund
+gilt für die stromauf integrierte Krümmung (`ema`): sie hängt an allen
+Knoten stromauf, aber die liegen fast alle im mobilen Teil. Der Hebel
+bringt unter der Produktions-Konfiguration nichts mehr.
+
+Zerlegung der Teilschritt-Arbeit (CPU-Summen über alle Läufe, 130 Schritte,
+Anteile, keine Wandzeit — die absolute Höhe steht auf der geteilten
+Maschine):
+
+| Posten je Teilschritt | Anteil |
+| --- | ---: |
+| Stempel-Walk (Lateralschritte à 0,5 Zellen, 29 Mio. erode/deposit je 130 Schritte) | ~43 % |
+| Stempel-Geometrie (`beltGeometry` inkl. Mobilität und `atan2`) | ~17 % |
+| Cutoffs (Setup-Pässe + Bin-Scan) | ~16 % |
+| Sohlen-Minimum (`floorH`) | ~5 % |
+| Raten (Howard–Knutson, `ema`) | ~5 % |
+| Mobilität-Auffrischung (`updateBeltMobility`) | ~4 % |
+| Rest (perturb, implizite Diffusion, resample, `bendCurvature`) | ~10 % |
+
+Der Abhängigkeitsgraph (§Q-Diagnose, auf diesem Stand erneut gemessen:
+~36 Läufe/Schritt, ~26 Ebenen, 69 % der Paare unabhängig) ist bei 93 %
+Mobilität nicht flacher zu bekommen: Der Gürtel eines Hauptlaufs ist eine
+Kette, die benachbarten Hack-Abschnitte überlappen an den Zusammenflüssen
+zwangsläufig. Der Parallelpfad ist faktisch eine Sequenz — Laufzeit-Hebel
+ist allein die Arbeit je Teilschritt. Der Walk selbst ist bei
+Bit-Identität irreduzibel: Das 0,5er-Raster definiert die besuchte
+Zellfolge, und ein Disassembly-Vergleich zeigt `Double.rounded()` bereits
+als `frinta` inline (kein libm-Aufruf); die Schleifeninvarianten (`max(1e-6, w)`
+usw.) hebt der Compiler ohnehin heraus.
+
+### Was geändert wurde
+
+**Geometrie-Wiederverwendung Footprint → Migrationsplan.** Der
+Parallelstart berechnete je wanderndem Lauf die Laufgeometrie zweimal:
+`beltFootprint` (Zeitplan-Phase, mit dem bewusst geländeunabhängigen
+Höhen-Stub) und `beltMigrationPlan` (im Arbeiter) bauten dieselben fünf
+höhenunabhängigen Arrays (`width`, `curv`, `nx`, `nz`, `cum`) erneut — nur
+`mob` hängt an der Höhe. Jetzt gibt `beltFootprintAndGeometry` die Geometrie
+mit zurück, `BeltRun` trägt sie in den Arbeiter, und
+`beltMigrationPlan(dryGeometry:)` liest nur die Mobilität über
+`updateBeltMobility` auf dem echten Bett neu. Das ist bit-identisch zum
+Neubau — dieselbe Äquivalenz, die der Teilschritt-Pfad seit §Q nutzt und
+die `testBeltCachedGeometryRefreshesTheChangedBed` pinnt; der neue
+`testBeltMigrationPlanReusesDryFootprintGeometry` pinnt sie für den Plan
+selbst (alle Felder, Raten und Erodierbarkeit bitgleich, plus Fallback bei
+Knotenzahl-Abweichung). `beltFootprint` bleibt als dünner Wrapper für
+Bestandstests und Diagnosen unverändert. Ersparnis: ein vollständiger
+`beltGeometry`-Durchlauf (sechs Array-Allokationen, `atan2` je Knoten) je
+Lauf und Schritt, gemessen ~0,37 ms/Schritt über alle Läufe (siehe unten).
+
+### Verworfene und zurückgebaute Versuche
+
+- **Fensterung auf den mobilen Abschnitt** (der Hebel aus der
+  Zielbild-Doku): mit der Kopplung 93 % der Knoten mobil — kein
+  Ansatzpunkt (oben). Nicht gebaut.
+- **`applyBeltCutoffs`-Umstrukturierung** (Breiten aus der Geometrie
+  durchreichen statt `beltWidthCells` je Knoten und Teilschritt,
+  Bogenlänge/Breiten/Prüfweite in einem Pass, Bin-Koordinaten beim Füllen
+  mitgeschrieben statt zwei Divisionen je Scan-Knoten): drei Messrunden
+  (je 9–16 lastgesteuerte bzw. interleaved Paare) ergaben für
+  `belt.parallel` gepaarte Mediane von **+0,05 bis +0,16 ms** statt der
+  erwarteten Ersparnis — die entfernten Wurzel-Divisionen sind auf dem
+  M4-Kern zu billig, um die Zusatzarbeit (CoW-Retain, zwei Puffer,
+  fusierte Schleife mit der seriellen Bogenlängen-Kette als Flaschenhals) zu bezahlen.
+  Zurückgebaut.
+- **`attachTributaries`, Breiten-Vorfilter** (d²-Schranke aus der größten
+  Kanalbreite des Ziels, verworfen erst im sicheren Randstreifen):
+  **+0,15 ms, 9/9 Paare positiv** — die Vorberechnung der Breiten über
+  alle 12 123 Knoten kostete mehr als der Filter je Kandidat spart.
+  Zurückgebaut.
+- **`attachTributaries`, flache Vorab-Arrays** (Endabfluss und
+  Ziel-Grenzknoten je Lauf statt je Ketten-Kandidat aus den
+  Channel-Strukturen geladen): Median **+0,035 ms**, 10/14 Paare positiv
+  — die Struct-Zugriffe waren offenbar bereits cache-heiß, die zwei
+  Zusatz-Allokationen und der Füll-Lauf bleiben unbezahlt. Zurückgebaut.
+- **Walk-Hoists** (`max(1e-6, w)`, `inner − 1e-9`, Knotenposition vor die
+  Schleife): Der Disassembly-Vergleich der gesamten
+  `beltStampChannel`-Funktion zeigt eine **identische Mnemonik-Sequenz** —
+  LLVM hebt diese Werte ohnehin heraus. Kein Effekt, zurückgebaut.
+- **Zellsprung (DDA) im Stempel-Walk**: die 0,5er-Schritte, die dieselbe
+  Zelle mehrfach treffen, sind die billigsten Iterationen des Walks
+  (runden, vergleichen, verwerfen); die nächste Zellgrenze analytisch zu
+  finden kostet zwei Divisionen plus Kontrolle je einmaliger Zelle. Die
+  Überschlagsrechnung mit den gemessenen 86 Mio. Iterationen und 29 Mio.
+  erode/deposit-Aufrufen ist im günstigsten Fall neutral, im realistischen
+  negativ. Nicht gebaut.
+- **Scratch-Puffer gegen die ~21 Array-Allokationen je Lauf-Teilschritt**
+  (Raten, Rauschen, Diffusion, Cutoff-Bogenlänge, resample): geschätzt
+  0,2–0,3 ms/Schritt Ersparnis — unterhalb der Messgrenze der geteilten
+  Maschine (±0,3 ms) und gegen Eingriffe in sechs Funktionen mit
+  Kapazitäts- und CoW-Fallstricken nicht umgesetzt.
+
+### Bit-Identität
+
+Vorher (`/tmp/simperf.belt-old`, Stand `560d809`) und nachher
+(`SimCore/.build/release/simperf`, Arbeitsstand) identische Fingerabdrücke.
+Jede Zwischenfassung der zurückgebauten Versuche wurde vor ihrer eigenen
+Messung gegen dieselben vier Werte geprüft; die Revert-Fassung bestätigt
+sie erneut:
+
+| Seed / dt | vorher | nachher |
+| --- | --- | --- |
+| 1337 / 100 | `08d32575d5cd353a` | `08d32575d5cd353a` |
+| 42 / 100 | `0fd978609f8cc241` | `0fd978609f8cc241` |
+| 20 / 100 | `9df73cb7672f2610` | `9df73cb7672f2610` |
+| 1337 / 15 | `90b5a31c0d94a030` | `90b5a31c0d94a030` |
+
+### Messreihe
+
+A = `/tmp/simperf.belt-old` (Startstand `560d809`), B =
+`SimCore/.build/release/simperf` (Arbeitsstand, Geometrie-Wiederverwendung).
+16 lastgesteuerte Paare, `--repeat 1`, Reihenfolge je Runde getauscht; vor
+jedem Lauf wurde auf 1-Minuten-Loadavg ≤ 8 gewartet (Wert protokolliert).
+Gesamt = Minimum des einzigen Blocks, Pass-Zeilen aus der Pass-Tabelle.
+
+| Kennzahl | alt Median | neu Median | Δ Median | Δ IQR | Δ Bereich |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Gesamt | 61,55 | 61,15 | **−0,20** | [−3,00, +0,40] | [−8,70, +4,40] |
+| `belt.parallel` | 11,18 | 11,06 | **−0,09** | [−0,60, +0,04] | [−1,20, +1,25] |
+| `belt.fixedStamp` (Kontrolle, unverändert) | 1,61 | 1,62 | +0,01 | [−0,05, +0,04] | [−0,30, +0,08] |
+| `belt.attach` (Kontrolle, unverändert) | 1,25 | 1,24 | −0,02 | [−0,04, +0,01] | [−0,18, +0,10] |
+
+Gepaarte Differenzen `belt.parallel` (neu − alt, in der Laufreihenfolge der
+Paare): −1,12, +0,04, −0,02, +0,04, +0,17, +0,06, −0,99, −0,08, −1,20,
+−0,60, −0,10, +0,44, −0,13, −0,10, +1,25, −0,14 — 9 von 16 Paaren negativ.
+
+Die beiden Kontrollen (in B nicht geänderte Pässe) liegen mit +0,01 und
+−0,02 am Nullpunkt und beglaubigen die Messqualität; die Streuung der
+einzelnen Paare (±0,3 … 1,2 ms) ist die Fremdlast der geteilten Maschine,
+auch bei Loadavg ≤ 8 (Lastspitzen mitten im Lauf). Die Ersparnis entspricht
+der Erwartung aus der Zerlegung: Der Plan-Anteil maß ~0,37 ms/Schritt
+(Geometrie + Raten über alle Läufe); wegfallen nur der Geometrie-Teil
+(sechs Array-Allokationen, `atan2` und Krümmung je Knoten), neu hinzu die
+Mobilität-Auffrischung (~0,06 ms/Schritt) — also ~0,1–0,2 ms/Schritt. Das
+liegt an der Auflösungsgrenze der geteilten Maschine, ist aber über den
+Median klar negativ geneigt und, anders als die zurückgebauten Versuche,
+nicht positiv. Auf einer ruhigen Maschine dürfte der Effekt näher an
+−0,2 ms/Schritt liegen; eine stillere Gegenprobe war hier nicht möglich.
+
+### Suite
+
+`swift test -c release --package-path SimCore -Xswiftc -swift-version
+-Xswiftc 5`: **612 Tests, 71 regulär übersprungen, 0 Fehler** (219,2 s ohne
+Build-Zeit), inkl. `testBeltMigrationPlanReusesDryFootprintGeometry`,
+`testBeltCachedGeometryRefreshesTheChangedBed`,
+`testBeltFootprintBoundsSubstepsAndEveryMigrationRead`,
+`testBeltIsDeterministic`, `FingerprintTests` und `DtInvariance`. Die
+Extension wurde nicht gebaut (CI ist die Verifikationsebene).

@@ -5396,11 +5396,17 @@ public final class Terrain {
         let channel: Int
         let state = MeanderState()
         let footprint: MeanderState.BeltFootprint
+        /// Höhenunabhängige Geometrie des Laufes aus der Footprint-Phase —
+        /// der Migrationsplan liest nur die Mobilität auf dem echten Bett neu
+        /// (s. `MeanderState.beltMigrationPlan(dryGeometry:)`).
+        let dryGeometry: BeltGeometry
         var substeps = 0
 
-        init(channel: Int, line: RiverChannel, footprint: MeanderState.BeltFootprint) {
+        init(channel: Int, line: RiverChannel, footprint: MeanderState.BeltFootprint,
+             dryGeometry: BeltGeometry) {
             self.channel = channel
             self.footprint = footprint
+            self.dryGeometry = dryGeometry
             state.channels = [line]
         }
     }
@@ -5459,8 +5465,9 @@ public final class Terrain {
         mark("belt.schedule")
         var runs: [BeltRun] = []
         for ci in mobile {
-            guard let footprint = meander.beltFootprint(meander.channels[ci], dt: dt, config: cfg) else { return nil }
-            runs.append(BeltRun(channel: ci, line: meander.channels[ci], footprint: footprint))
+            guard let fp = meander.beltFootprintAndGeometry(meander.channels[ci], dt: dt, config: cfg) else { return nil }
+            runs.append(BeltRun(channel: ci, line: meander.channels[ci],
+                                footprint: fp.footprint, dryGeometry: fp.geometry))
         }
         let schedule = BeltSchedule(runs.map(\.footprint))
         mark("belt.parallel")
@@ -5478,7 +5485,8 @@ public final class Terrain {
             let heightAt: (MeanderNode) -> Double = { Terrain.bilinear(bed.h, nn, $0.x, $0.z) }
             let work: (Int) -> Void = { index in
                 let run = runs[index], state = run.state
-                let plan = state.beltMigrationPlan(channel: 0, config: config, heightAt: heightAt)
+                let plan = state.beltMigrationPlan(channel: 0, config: config, heightAt: heightAt,
+                                                   dryGeometry: run.dryGeometry)
                 let nsub = max(1, min(4096, Int((plan.rate * dt / (0.5 * config.meanderNodeSpacing)).rounded(.up))))
                 precondition(nsub <= run.footprint.maxSubsteps)
                 run.substeps = nsub
