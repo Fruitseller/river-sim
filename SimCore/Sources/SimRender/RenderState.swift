@@ -297,6 +297,7 @@ public final class RenderState {
         let bytes = waterField.bytes(terrain, blend: blend, geometryMode: geometryMode,
                                      bandChannelFlags: ribbons.bandChannelFlags,
                                      bandCoverage: ribbons.bandCoverage,
+                                     bandOwner: ribbons.bandOwner,
                                      deferTail: deferTail)
         // Auch die Rohbytes des `deferTail`-Pfads (RS_WATER_GPU) zählen: sie sind
         // ungeblurt um höchstens die zwei Blur-Pässe schmaler als das Sichtbare,

@@ -2774,6 +2774,113 @@ fertigen Fluss, Versiegen und Pinsel-Abbruch, Wald-Rückzug dt-invariant) und
 `CanopyTests.testForestRegrowsOverSimYears` (Rückzug nur über Zeit, über
 Wasser sofort).
 
+## Durchgehende Flüsse (Befund des Eigners, 2026-10-18)
+
+Zwei Screenshots des Eigners (Seed 1337, Jahr 2.588 und 3.960): „Der Fluss
+fließt anscheinend durchgehend weiter, aber man sieht das Wasser nicht
+durchgehend" und „die Flüsse kreuzen sich auf eine unnatürliche Weise".
+
+### Was es war
+
+Gürtel-Linie und D8-Netz koppeln nur im Takt `meanderBeltCouplingYears`
+(1000 J.). Dazwischen verlässt der D8-Lauf ein Band (Avulsion, die der
+Gürtel noch nicht nachgezogen hat; ein Bandende vor einer Strecke ohne
+Stream-Map-Spur), und auf diesem Stück malte niemand Wasser:
+
+- das Abfluss-Vertrauen des Rasters schweigt unter dem Dreifachen des
+  Referenz-Abflusses (`ribbonTrustLoReferences`),
+- die Kontinuitäts-Kette hat stromauf keine Quelle (unter dem Band ist das
+  Raster auf den Saum gedeckelt),
+- auf einer Gleithang-Bank nahm die Bank-Schranke
+  (`rasterBarBandReachCells`) den Lauf als Abkürzung weg.
+
+Gemessen (Wasserfeld mit abgeschalteten Schranken neu gerechnet, Seed 1337,
+Jahr 2.600): von den Lücken-Zellen der großen Läufe (≥ 1000 Zellen
+Einzugsgebiet) wären ohne Band-Nähe und Korridor 51 % sichtbar gewesen.
+
+Die „Kreuzung" ist ein Zubringer, der als Keil VOR dem Hauptlauf endet: die
+Kopplung lässt die Linie eines Laufs bis `meanderBeltCouplingSlackCells` (4)
+plus halbe Gürtelbreite neben seiner D8-Zelle liegen, der Zubringer endet
+aber an der D8-Zusammenfluss-Zelle. Er lief dort mit dem Land-Taper spitz
+aus, quer zum Ufer des Hauptlaufs.
+
+### Fix (Render, Physik bit-gleich)
+
+- **Abzweig** (`WaterFieldRenderer`, `WaterRender.departure*`): verlässt ein
+  D8-Lauf ab `renderMinCells` ein Band und kehrt binnen
+  `departureMaxCells` (32) nicht zu DEMSELBEN Band zurück, malt das Raster
+  ihn wie einen getrackten Lauf, auch auf einer Bank, bis er ein anderes
+  Fluss-Band erreicht oder im offenen Wasser endet. Kehrt er zurück, bleibt
+  er die Abkürzung über die Bank. Welches Band wo deckt, sagt
+  `RibbonMesh.bandOwner`. Diagonale D8-Schritte bekommen eine Brückenzelle
+  (die Kohärenz-Maske zählt 4er-Nachbarn); ein Abzweig bis ins Meer ist vom
+  Kohärenz-Gate ausgenommen.
+- **Mündung in den Hauptlauf** (`RiverRibbonRenderer.bandJoinPath`,
+  `WaterRender.ribbonJoin*`): ein Lauf ohne offenes Wasser am Ende folgt
+  seinem D8-Empfänger bis zu 8 Zellen, bis er im Band eines größeren Laufs
+  liegt (Deckung ≥ 0,5), in voller Breite statt mit Land-Taper.
+
+### Messung
+
+`RS_MEASURE=1 … --filter testRiverContinuityDiagnostic` (Produktion,
+`RS_STEP`-Weg in 1000er-Schritten). Lücke = Zelle eines großen D8-Laufs
+(≥ 1000 Zellen) ohne Wasser in 2 Zellen, mit Wasser stromauf UND stromab;
+Keil = Fluss-Band, das an Land spitz ausläuft, obwohl sein D8-Lauf binnen
+8 Zellen in ein anderes Band mündet; quer = sichtbarer Raster-Lauf, der ein
+Band betritt, es binnen 12 Zellen wieder verlässt und dahinter mindestens
+4 Zellen weiterläuft. Vorher = `a665829` (main).
+
+| Seed / Jahr | Lücken-Zellen | Strecken | längste | Raster-Zellen | Keile | quer |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1337 / 2.600 | 112 → 51 | 30 → 18 | 14 → 9 | 3.303 → 4.044 | 1 → 0 | 1 → 3 |
+| 1337 / 4.000 | 71 → 40 | 26 → 22 | 11 → 6 | 3.039 → 3.766 | 4 → 1 | 1 → 2 |
+| 42 / 2.600 | 71 → 56 | 16 → 14 | 19 → 19 | 2.535 → 2.920 | 2 → 1 | 3 → 3 |
+| 42 / 4.000 | 32 → 25 | 12 → 7 | 14 → 14 | 1.183 → 1.681 | 0 → 0 | 0 → 3 |
+| 20 / 2.600 | 32 → 28 | 11 → 8 | 10 → 10 | 1.323 → 1.590 | 3 → 1 | 2 → 2 |
+| 20 / 4.000 | 18 → 9 | 8 → 6 | 5 → 4 | 1.161 → 1.575 | 2 → 2 | 1 → 1 |
+| Summe | 336 → 209 (−38 %) | 103 → 75 | | | 12 → 5 | 8 → 14 |
+
+Die Band-Zellen bleiben gleich (±0,2 %). „Quer" stieg: die Stellen (Seed
+1337, Jahr 2.600) liegen 2–5 Zellen im Band, der Raster-Lauf streift die
+Bandkante desselben Flusses und läuft daneben weiter. Im Bild (Draufsicht
+`RS_TARGET` an den drei Stellen) ist keine Kreuzung zu sehen: zwei Stellen
+sind vorher und nachher gleich, an der dritten, einer Mündung, malt das
+Raster zusätzlich den D8-Lauf, der vom Band ins Meer abzweigt, als zweiten
+Mündungsarm. Von den übrigen Lücken liegt ein Teil an
+Steilstrecken (sichtbare Neigung 1,5–5,6: das Band blendet dort als Kaskade
+aus, der Terrain-Shader nimmt Raster-Wasser von Wänden, `rasterWallSlope*`),
+der Rest auf Läufen, die kein Band verlassen (hinter Seeausläufen und
+Raster-Enden). Die übrigen Keile sind nicht einzeln untersucht.
+
+### Verworfen: Band nur, wo das D8-Netz es trägt
+
+Zuerst blendete das Band dort aus, wo die Kopplung den Knoten jetzt nicht
+behielte (dieselbe Zuordnung wie `coupleBeltToDrainage`, ohne Zufall). Die
+Lücken fielen weiter (Seed 1337: 36 / 27 statt 51 / 40), aber das Band
+verlor bis zu 7 % seiner Zellen, und Raster-Läufe quer durch ein Band stiegen
+von 4 auf 6 bzw. 1 auf 12: die D8-Treppe im Gürtelbett schneidet die Bögen
+ihres eigenen Laufs, und mit dem Band verschwanden genau die Mäanderbögen,
+die das Zielbild verlangt. Eine Variante über das größte Einzugsgebiet nahe
+dem Band (Halbbreite + 4 Zellen, Anteil 0,3 am Knoten-Abfluss) nahm 10 % der
+Band-Zellen. Die Ursache liegt im Kopplungstakt; ihn zu verkürzen ändert die
+Physik und die dt-Matrix (§ Gürtel im Zeitraffer) und ist hier nicht Teil
+des Fixes.
+
+### Kosten
+
+Interleaved A/B im selben Checkout, M4 Max, Produktion, Seed 1337, Jahr
+4.000, Median aus 25, drei Runden: Wasserfeld 11,1–11,5 → 13,9–14,4 ms in
+der Kostenmessung, je Stufe gemessen (13,0 → 14,2 ms): Abzweige +0,4 ms,
+Bank-Schranke +0,4 ms (mehr Raster-Fluss auf Bänken), Rest Rauschen.
+Band-Bau 10,1–10,3 → 10,3–10,7 ms. Beides läuft im Hintergrund-Thread je
+Overlay-Upload (Takt 0,3 s). Wächter: `RiverContinuityTests` auf einer
+Kunstwelt (V-Tal mit Meer, unabhängig von der System-libm): ein Abzweig ist
+bis ins Meer Wasser (ohne die Abzweige rot), die Abkürzung zurück zum selben
+Band bleibt trocken (ohne den Band-Vergleich rot), ein Zubringer-Ende folgt
+seinem D8-Empfänger in das Band des Hauptlaufs. Ein erster Wächter auf
+gealterten Welten prüfte auf dem Linux-Runner nichts: dort trugen die
+Testwelten keinen Abzweig ins Meer.
+
 ## Abnahme-Stand vor dem Merge (2026-10-18)
 
 Stand `442eed1` (Integrationszweig #180), M4-Max-Referenz-Mac, Produktions-

@@ -88,6 +88,13 @@ public final class WaterFieldRenderer {
     /// Abfluss der sichtbaren Bänder je Zentrumslinien-Zelle — für die
     /// Bank-Schranke des Raster-Flusses (`WaterRender.rasterBarBandReachCells`).
     private var waterBandQ: [Double] = []
+    /// Fluss-Intensität je Zelle eines Abzweigs (0 = keiner): der Lauf hat ein
+    /// Band verlassen und kehrt nicht zu ihm zurück
+    /// (`WaterRender.departureReturnCells`).
+    private(set) var waterDeparture: [Double] = []
+    /// Abzweig-Zellen, deren Weg im Meer endet (s. Kohärenz-Gate).
+    private var waterDepartureOpen: [Bool] = []
+    private var waterDeparturePath: [Int] = []
     /// Wo die Kontinuitäts-Kette an einem Tümpel-Rand endete (Zelle und
     /// Intensität dort) — für die Fortsetzung durch nasse Wiese.
     private var waterPondEntries: [(cell: Int, value: Double)] = []
@@ -195,6 +202,7 @@ public final class WaterFieldRenderer {
     /// Shader).
     public func bytes(_ terrain: Terrain, blend: Double, geometryMode: Bool,
                       bandChannelFlags: [Bool], bandCoverage: [Double],
+                      bandOwner: [Int32] = [],
                       deferTail: Bool = false) -> [UInt8] {
         let n = terrain.cfg.n
         // n == 0 ist der etablierte Vertrag für leere Texturen (vgl. #122, #123).
@@ -326,6 +334,112 @@ public final class WaterFieldRenderer {
                 }
             }}
         }
+        // ABZWEIGE (Befund des Eigners 2026-10-18, „der Fluss fließt durchgehend
+        // weiter, aber man sieht das Wasser nicht durchgehend"): Gürtel-Linie
+        // und D8-Netz koppeln nur im Takt `meanderBeltCouplingYears`. Dazwischen
+        // verlässt der D8-Lauf ein Band und fließt woanders weiter (Avulsion,
+        // die der Gürtel noch nicht nachgezogen hat, oder das Bandende vor
+        // einer Strecke ohne Stream-Map-Spur). Dort trug bisher niemand das
+        // Wasser: das Vertrauen schweigt unter dem 3-fachen Referenz-Abfluss,
+        // die Kette hat stromauf keine Quelle (unter dem Band ist das Raster
+        // leer), und auf einer Gleithang-Bank nahm die Bank-Schranke den Lauf
+        // als „Abkürzung" weg. Ein Abzweig ist der D8-Pfad ab der Zelle, an der
+        // er das Band (± Abstand wie oben) verlässt, bis er im offenen Wasser
+        // endet, ein ANDERES Fluss-Band erreicht oder nach `departureMaxCells`
+        // die Kette übernimmt. Kehrt er dagegen zum selben Band zurück, ist er
+        // die Abkürzung über die Bank, und das Band malt den Fluss
+        // (`RibbonMesh.bandOwner`). Abzweig-Zellen malt das Raster wie einen
+        // getrackten Lauf, und die Bank-Schranke lässt sie stehen.
+        if waterDeparture.count != cnt {
+            waterDeparture = [Double](repeating: 0, count: cnt)
+            waterDepartureOpen = [Bool](repeating: false, count: cnt)
+        }
+        waterDeparture.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
+        waterDepartureOpen.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: false, count: cnt) }
+        let d8Area = terrain.area
+        if bandNearby && cellArea > 0 && cellArea.isFinite && d8Area.count == cnt {
+            let inBand = WaterRender.rasterBarBandCoverage
+            let maxSteps = WaterRender.departureMaxCells
+            let owned = bandOwner.count == cnt
+            // Fluss-Band, das um `k` (±1) am stärksten deckt; −1 = keins,
+            // Delta, Altarm oder versiegender Arm.
+            func ownerNear(_ k: Int) -> Int32 {
+                guard owned else { return -1 }
+                let i = k % n, j = k / n
+                var best = -1.0, who: Int32 = -1
+                for jj in max(0, j - clearance)...min(n - 1, j + clearance) {
+                    for ii in max(0, i - clearance)...min(n - 1, i + clearance) where bandCoverage[jj * n + ii] > best {
+                        best = bandCoverage[jj * n + ii]; who = bandOwner[jj * n + ii]
+                    }
+                }
+                return who
+            }
+            b.withUnsafeBufferPointer { nb in
+            waterDeparture.withUnsafeMutableBufferPointer { db in
+            waterDepartureOpen.withUnsafeMutableBufferPointer { ob in
+                let pnear = nb.baseAddress!, pd = db.baseAddress!, popen = ob.baseAddress!
+                for k in 0..<cnt where pnear[k] >= inBand && h[k] > sea {
+                    let r = Int(rec[k])
+                    guard r >= 0, r < cnt, pnear[r] < inBand, h[r] > sea, pd[r] == 0,
+                          d8Area[r] / cellArea >= creek else { continue }
+                    waterDeparturePath.removeAll(keepingCapacity: true)
+                    // Die Austrittszelle selbst noch mit: dort läuft die
+                    // Bandkante aus, und der Abzweig schließt an sie an.
+                    if bandCoverage[k] < WaterRender.departureEdgeCoverage { waterDeparturePath.append(k) }
+                    let from = ownerNear(k)
+                    var x = r, returned = false, open = false
+                    while waterDeparturePath.count < maxSteps {
+                        waterDeparturePath.append(x)
+                        let nx = Int(rec[x])
+                        // Senke, Meer oder See: der Lauf endet im offenen Wasser.
+                        if nx < 0 || nx >= cnt || h[nx] <= sea
+                            || hf[nx] - h[nx] > WaterRender.lakeRawWetDepth {
+                            // Ins Meer: das Meer gehört nicht zur Kohärenz-Maske,
+                            // der Abzweig bleibt dort eine eigene Komponente (s.
+                            // Gate unten). Ein See gehört dazu und trägt ihn.
+                            open = nx >= 0 && nx < cnt && h[nx] <= sea
+                            // Auch der letzte Schritt ins Wasser braucht seine
+                            // Brücke (s. unten), sonst hängt der Abzweig nur
+                            // über Eck am See.
+                            if nx >= 0 && nx < cnt { waterDeparturePath.append(nx) }
+                            break
+                        }
+                        if pd[nx] > 0 { break }   // trifft einen Abzweig: ebenfalls einer
+                        if pnear[nx] >= inBand {
+                            // Zurück zum selben Band (oder zu einem ohne Kanal,
+                            // etwa dem Delta) ist die Abkürzung; mündet der Lauf
+                            // in ein ANDERES Fluss-Band, ist er ein Abzweig.
+                            let to = ownerNear(nx)
+                            returned = !owned || from < 0 || to < 0 || to == from
+                            break
+                        }
+                        x = nx
+                    }
+                    if returned { continue }
+                    // Intensität wie ein getrackter Lauf aus dem Abfluss der
+                    // D8-Zelle. Ein Diagonalschritt bekommt eine Brückenzelle
+                    // (die tiefere der beiden Ecken): die Kohärenz-Maske zählt
+                    // 4er-Nachbarn, ein Faden aus Diagonalschritten zerfiele dort
+                    // in Ein-Zell-Stücke unter dem Gate.
+                    var previous = -1
+                    for c in waterDeparturePath {
+                        let v = WaterRender.streamIntensity(dischargeCells: d8Area[c] / cellArea,
+                                                            creekCells: creek)
+                        // Die Wasserzelle am Ende malt der See-Kanal bzw. das Meer.
+                        let water = h[c] <= sea || hf[c] - h[c] > WaterRender.lakeRawWetDepth
+                        if !water { pd[c] = max(pd[c], v) }
+                        if open && !water { popen[c] = true }
+                        if previous >= 0, previous % n != c % n, previous / n != c / n {
+                            let a = (previous / n) * n + c % n, b2 = (c / n) * n + previous % n
+                            let bridge = h[a] <= h[b2] ? a : b2
+                            pd[bridge] = max(pd[bridge], v)
+                            if open { popen[bridge] = true }
+                        }
+                        previous = c
+                    }
+                }
+            }}}
+        }
         // cellSize 0 (keine definierte Schrittweite): keine Fluss-Intensität ohne Zellfläche,
         // sonst pa[k] / 0 = inf >= creek und fehlerhafte Vollaussteuerung auf allen Stream-Map-Zellen.
         if cellArea > 0, cellArea.isFinite {
@@ -334,11 +448,15 @@ public final class WaterFieldRenderer {
             h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
             area.withUnsafeBufferPointer { ab in smap.withUnsafeBufferPointer { smb in
             b.withUnsafeBufferPointer { nb in
+            waterDeparture.withUnsafeBufferPointer { db in
                 let psd = sdb.baseAddress!, ph = hb.baseAddress!, phf = hfb.baseAddress!
                 let pa = ab.baseAddress!, psm = smb.baseAddress!, pnear = nb.baseAddress!
+                let pdep = db.baseAddress!
                 parallelChunks(cnt) { lo, hi in
                     for k in lo..<hi where phf[k] > sea && ph[k] > sea
                                            && phf[k] - ph[k] <= WaterRender.streamPondTolerance {
+                        // Ein Abzweig (s. oben) ist Wasser wie ein getrackter Lauf.
+                        psd[k] = pdep[k]
                         let cu = pa[k] / cellArea
                         if cu < creek { continue }
                         // Track-Maske und Abfluss-Abstufung stehen im Kalibrier-
@@ -354,11 +472,11 @@ public final class WaterFieldRenderer {
                             * (1 - min(1, pnear[k]))
                         let m = max(WaterRender.trackMask(streamMap: psm[k]), trust)
                         if m <= 0 { continue }
-                        psd[k] = WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
-                            * WaterRender.trackWeight(mask: m)
+                        psd[k] = max(pdep[k], WaterRender.streamIntensity(dischargeCells: cu, creekCells: creek)
+                            * WaterRender.trackWeight(mask: m))
                     }
                 }
-            }}}}}}
+            }}}}}}}
         }
         // WASSERSPIEGEL-BEWUSST dilatieren: Wasser verbreitert sich nur auf Zellen,
         // deren Bett NAHE am WASSERSPIEGEL (hf) des Nachbarlaufs liegt
@@ -730,7 +848,8 @@ public final class WaterFieldRenderer {
             // nur für die wenigen Bank-Zellen mit Raster-Fluss (Abbruch beim
             // ersten Treffer); ein Vollbild-Maximumfilter kostete gemessen
             // 2 ms je Aufruf.
-            if barCheck && barAge[k] >= 0 && sd[k] > haloIntensity {
+            // Ein Abzweig kehrt nicht zum Band zurück, er ist keine Abkürzung.
+            if barCheck && barAge[k] >= 0 && sd[k] > haloIntensity && waterDeparture[k] == 0 {
                 let need = WaterRender.rasterBarBandDischargeRatio * area[k] / cellArea
                 let i = k % n, j = k / n
                 var found = false
@@ -795,13 +914,16 @@ public final class WaterFieldRenderer {
         remnantStats.removeAll(keepingCapacity: true)
         waterComponent.removeAll(keepingCapacity: true)
         waterStack.removeAll(keepingCapacity: true)
+        let departureOpen = waterDepartureOpen
         for start in 0..<cnt where mask[start] && !seen[start] {
             waterComponent.removeAll(keepingCapacity: true)
             waterStack.removeAll(keepingCapacity: true)
             waterStack.append(start); seen[start] = true
             var allCapped = true
+            var departs = false
             while let k = waterStack.popLast() {
                 waterComponent.append(k)
+                if departureOpen[k] { departs = true }
                 // Stehendes Wasser gehört nie zum Rest: ein Mündungs-Korridor
                 // reicht in den See, und dessen Fläche malt das Raster.
                 if !capped[k] || rawWet[k] { allCapped = false }
@@ -835,7 +957,11 @@ public final class WaterFieldRenderer {
             // Verschmelzen zweier Komponenten kann `fade` in einem Tick springen
             // (Teich berührt Flusskette) — im Zeitraffer dämpft das die EWMA
             // unten, bei Sprüngen (blend = 1) ist Sofort-Übernahme gewollt.
-            let fade = WaterRender.componentFade(cells: waterComponent.count)
+            // Ein Abzweig, der vom Band bis ins Meer läuft, ist kein Speckle,
+            // auch wenn er kurz ist (das Meer zählt nicht zur Komponente, ein
+            // See schon). Ein kurzer zwischen zwei Bändern bleibt unter dem
+            // Gate: dort tragen die Bandkanten das Bild.
+            let fade = departs ? 1 : WaterRender.componentFade(cells: waterComponent.count)
             if fade > 0 {
                 for k in waterComponent { componentFade[k] = fade }
             }
