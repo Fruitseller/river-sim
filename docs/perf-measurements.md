@@ -1683,3 +1683,222 @@ auf die Breite zwei konservative Kanten hinzu. Unverändert sind **1.072 Läufe,
 (36,14 %)** mit **572 Läufen (53,36 %)**. Der Abhängigkeitsplan kann unabhängige
 Läufe verschiedener Ebenen gleichzeitig bearbeiten; die Ebenenzahlen
 beschreiben den Graphen, nicht die gemessene CPU-Auslastung.
+
+---
+
+## S. Sim-Kern, Runde 7 (Oktober 2026) — MFD-Routen-Speicher, Inzisions-Gates, Braid-Gate und Carve-Vorfilter vorab, bit-identisch
+
+Startstand `e6d15ea` (Integrationszweig), Branch `t3/174-sim-perf-r7`. Gemessen
+am 18.10.2026 auf Apple M4 Max (16 Kerne, 64 GiB, macOS 26.7, Apple Swift 6.4 im
+Swift-5-Sprachmodus). Geteilte Maschine: Alle Vergleiche laufen verschränkt
+(interleaved, `A B` / `B A` je Runde wechselnd), je 8 Runden, je Prozess
+`simperf --repeat 3` (Einlauf 100 × 100 Jahre, drei Messblöcke à 30 × 100 Jahre,
+n = 720, world = 112,4789, Seed 1337). Pass-Tabelle = dritter Block,
+Gesamtzeit = Minimum der Blöcke (wie §Q). Ausgewertet werden die gepaarten
+Differenzen; der Gesamtschritt trennt unter Fremdlast keine Sub-Millisekunden-
+Effekte (Lehre aus §P/§Q), die Pass-Zeilen tun es. Vier Änderungen, jede einzeln
+gemessen und als eigener Commit übernommen; Baseline `/tmp/simperf.r7-old`.
+
+Fingerprints (`simperf --hash`), nach JEDEM der vier Commits erneut geprüft und
+unverändert:
+
+| Seed / dt | Fingerprint |
+| ---: | --- |
+| 1337 / 100 | `08d32575d5cd353a` |
+| 42 / 100 | `0fd978609f8cc241` |
+| 20 / 100 | `9df73cb7672f2610` |
+| 1337 / 15 | `90b5a31c0d94a030` |
+
+### Änderung 1 (übernommen): MFD-Routen-Speicher von 256 auf ~104 Byte je Zelle geschrumpft
+
+Die MFD-Route reiste als 256-Byte-Struct (zwei komplette `SIMD8<Double>`-
+Gewichtssätze plus Zähler) durch Schreibe- und Leseschleife von `computeMFDArea`
+— rund 133 MB Schreib- UND Leseverkehr je Schritt allein für den
+Zwischenspeicher, obwohl die Mehrheit der Zellen Meer ist und gar keine Route
+braucht. Jetzt trägt der Struct nur den dendritischen Satz (Nachbarn + Gewichte
++ Summe, 104 Byte) und wird NUR für Landzellen mit mindestens einem tieferen
+Nachbarn geschrieben; der seltene disbursive Satz (Exponent `braidDispersion`)
+liegt getrennt in `mfdDispersed` und wird nur für canDisperse-Zellen
+geschrieben. Die Klassifikation (−1 Meer/Beckenwasser · 0 flach · c tiefe
+Nachbarn, c+10 mit Dispersionsflag) reist als Int8 in `mfdRouteCounts` — für
+Meerzellen bleibt vom Zwischenspeicher exakt 1 Byte. Additionskette je
+Summen-Akkumulator (aufsteigend in j), Divisions-Operanden und die
+Flächen-Schwelle an der angesammelten Fläche (weiterhin seriell entschieden)
+sind unverändert.
+
+A = `/tmp/simperf.r7-old`, B = C1-Binary (`a8ec392`). Pass `computeMFDArea`:
+
+| Runde | A Pass | B Pass | Δ Pass | A Gesamt | B Gesamt | Δ Gesamt |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 6,42 | 4,80 | −1,62 | 75,2 | 73,2 | −2,0 |
+| 2 | 7,28 | 5,59 | −1,69 | 74,3 | 74,1 | −0,2 |
+| 3 | 8,41 | 4,78 | −3,63 | 94,1 | 77,8 | −16,3 |
+| 4 | 8,10 | 7,22 | −0,88 | 91,0 | 96,1 | +5,1 |
+| 5 | 7,04 | 5,38 | −1,66 | 89,1 | 87,7 | −1,4 |
+| 6 | 6,06 | 5,31 | −0,75 | 71,7 | 83,6 | +11,9 |
+| 7 | 6,56 | 4,73 | −1,83 | 87,6 | 76,5 | −11,1 |
+| 8 | 6,06 | 4,99 | −1,07 | 74,0 | 78,5 | +4,5 |
+| **Median** | 7,04 | 4,99 | **−1,64** | 82,3 | 77,2 | **−0,8** |
+
+B gewinnt den Pass in 8/8 Runden; der Gesamtschritt in 5/8 (Fremdlast mit
+Einzelrunden von −16 bis +12 ms).
+
+### Änderung 2 (übernommen): Auslass-Inzision — Gate-Kette und kErode vorab parallel
+
+`outletIncision` lief seriell über alle 518k Zellen und zahlte je Zelle
+verstreute Lesezugriffe auf sämtliche Gate-Operanden (`h`, `underIce`, `area`,
+`endorheicBasin`, `receiver`) und auf den Vegetations-/Lithologie-Faktor
+(`veg`, `vegClass`, `vegTypeFactor`, `lithErodeK`), obwohl die meisten Zellen an
+einem Gate scheitern. Alle Entscheidungen, die nicht vom laufend veränderten
+Bett abhängen, laufen jetzt in EINEM parallelen Sweep (der auch das bisher
+separat vorab gerechnete `A^m` übernimmt): die Gate-Kette als Int8 in
+`incisionGate` (0 überspringen, 1 normal, 2 Weltrand), der Faktor `kErode` in
+`incisionKErode`. Bit-identisch, weil der Pass nur je BESUCHTER Zelle schreibt
+(`h`/`sed`/`rock` an `k` selbst — jede Zelle sieht bei ihrem Besuch noch exakt
+die Pass-Startwerte) und `underIce`/`area`/`receiver`/`endorheicBasin`/`veg*`/
+`lith*` im Pass überhaupt nicht geschrieben werden. Der frische
+Empfänger-Höhen-Lesezugriff, die Implizit-Solver-Formel und der
+Sediment/Fels-Split bleiben seriell und unverändert.
+
+A = C1-Binary, B = C2-Binary (`4c479e5`). Pass `outletIncision`:
+
+| Runde | A Pass | B Pass | Δ Pass | A Gesamt | B Gesamt | Δ Gesamt |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 4,74 | 3,33 | −1,41 | 73,7 | 74,8 | +1,1 |
+| 2 | 4,50 | 3,53 | −0,97 | 66,2 | 71,8 | +5,6 |
+| 3 | 4,35 | 2,98 | −1,37 | 69,5 | 68,0 | −1,5 |
+| 4 | 6,89 | 3,47 | −3,42 | 60,4 | 74,4 | +14,0 |
+| 5 | 4,08 | 2,88 | −1,20 | 65,8 | 63,5 | −2,3 |
+| 6 | 3,98 | 2,98 | −1,00 | 63,0 | 62,6 | −0,4 |
+| 7 | 3,73 | 2,72 | −1,01 | 59,8 | 56,3 | −3,5 |
+| 8 | 3,63 | 2,77 | −0,86 | 55,9 | 55,7 | −0,2 |
+| **Median** | 4,22 | 2,98 | **−1,11** | 64,8 | 67,8 | **−0,3** |
+
+B gewinnt den Pass in 8/8 Runden; der Gesamtschritt in 5/8 (Runde 4 mit +14 ms
+Fremdlast auf der B-Seite zeigt, warum nur gepaarte Differenzen zählen).
+
+### Änderung 3 (übernommen): Braid-Gate und inaktiver Depositions-Deckel vorab parallel
+
+`braidPass` läuft über alle Zellen in `order` rückwärts, auch wenn nur wenige
+ein Braid-Reach sind; der active-Test kostete je Zelle vier verstreute
+Lesezugriffe (`areaMFD`, `hf`, `h` ×2). Er lässt sich vorab und parallel
+entscheiden, weil seine Operanden bis zum eigenen Besuch unverändert bleiben:
+`hf` und `areaMFD` schreibt der Pass gar nicht, und `h[k]` ändert sich
+ausschließlich im Funnel von k's EIGENEM Besuch (`erodeCell`/`depositCell`
+schreiben nur die Zelle `k`, s. Bed-Funnel). Dasselbe gilt für den
+Depositions-Deckel der inaktiven Landzellen (`hf + braidDeltaCeiling − h`), der
+mitvorberechnet in `braidDepositCeil` reist. Der serielle Loop liest ein
+Status-Byte (`braidStatus`: 0 Meer, 1 inaktives Land, 2 aktiv) und geht nur die
+Wege, die der Originalcode auch gegangen wäre.
+
+A = C2-Binary, B = C3-Binary (`a0324c3`). Pass `braidPass`:
+
+| Runde | A Pass | B Pass | Δ Pass | A Gesamt | B Gesamt | Δ Gesamt |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 2,40 | 2,30 | −0,10 | 58,3 | 57,6 | −0,7 |
+| 2 | 2,27 | 2,15 | −0,12 | 58,1 | 57,0 | −1,1 |
+| 3 | 2,27 | 2,40 | +0,13 | 57,9 | 59,8 | +1,9 |
+| 4 | 2,37 | 2,30 | −0,07 | 60,2 | 60,2 | 0,0 |
+| 5 | 2,25 | 2,15 | −0,10 | 57,9 | 57,7 | −0,2 |
+| 6 | 2,29 | 2,30 | +0,01 | 58,0 | 59,9 | +1,9 |
+| 7 | 2,30 | 2,15 | −0,15 | 57,3 | 56,7 | −0,6 |
+| 8 | 2,29 | 2,17 | −0,12 | 58,1 | 57,1 | −1,0 |
+| **Median** | 2,29 | 2,30 | **−0,10** | 58,05 | 57,7 | **−0,4** |
+
+B gewinnt den Pass in 6/8 Runden, Band auf beiden Seiten eng (2,15–2,40 ms).
+Ein kleiner, aber konsistenter Gewinn; die Gesamtzeit liegt im Rauschen.
+
+### Änderung 4 (übernommen): `channelCarve` — area/Gürtel-Vorfilter vorab parallel
+
+Nur Zellen mit `area ≥ channelFlowMinCells` außerhalb des Mäandergürtels können
+überhaupt carven — eine kleine Minderheit. `area` und `inBelt` sind die
+einzigen zwei Gates des Passes, deren Operanden sich während des Passes nicht
+ändern; der kombinierte Obermengen-Filter läuft jetzt vorab und parallel in
+`carveStatus`. Reine `continue`-Filter darf man vorziehen (ihr Ergebnis ist
+pro Zelle identisch, egal in welcher Reihenfolge sie geprüft werden); alle
+übrigen Gates (Meer, See-Rand, Gürtel-Flachheit) lesen frisches `h` — die
+Ufer-Erosion schreibt FREMDE Zellen, `h[k]` ist zum Besuchszeitpunkt nicht der
+Pass-Startwert — und bleiben unverändert im seriellen Loop, der jetzt ~95 %
+der Zellen nach einem Status-Byte überspringt.
+
+A = C3-Binary, B = C4-Binary (`5807b3c`). Pass `channelCarve`:
+
+| Runde | A Pass | B Pass | Δ Pass | A Gesamt | B Gesamt | Δ Gesamt |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1,46 | 0,43 | −1,03 | 57,0 | 56,8 | −0,2 |
+| 2 | 1,21 | 0,44 | −0,77 | 55,7 | 57,0 | +1,3 |
+| 3 | 1,35 | 0,53 | −0,82 | 61,1 | 59,1 | −2,0 |
+| 4 | 1,34 | 0,45 | −0,89 | 59,2 | 58,6 | −0,6 |
+| 5 | 1,26 | 0,46 | −0,80 | 59,5 | 59,8 | +0,3 |
+| 6 | 1,20 | 0,46 | −0,74 | 57,7 | 58,5 | +0,8 |
+| 7 | 1,20 | 0,44 | −0,76 | 57,2 | 57,3 | +0,1 |
+| 8 | 1,21 | 0,45 | −0,76 | 57,9 | 57,0 | −0,9 |
+| **Median** | 1,28 | 0,45 | **−0,79** | 57,55 | 57,9 | **−0,05** |
+
+B gewinnt den Pass in 8/8 Runden (inklusive des neuen parallelen Vorfilter-
+Sweeps). Der Gesamtschritt ist hier — wie in §P/§Q — zu träge, um einen
+Sub-Millisekunden-Effekt unter Fremdlast zu trennen (4/8, Median −0,05).
+
+### Gesamtschritt alt gegen Endstand
+
+A = `/tmp/simperf.r7-old` (`e6d15ea`), B = Endstand (`5807b3c`), 8 Runden
+verschränkt. Die Pass-Zeilen sind über die vier Einzelmessungen oben belegt;
+hier zählt der Gesamtschritt:
+
+| Runde | A alt | B final | Δ B−A |
+| ---: | ---: | ---: | ---: |
+| 1 | 63,1 | 60,1 | −3,0 |
+| 2 | 60,3 | 58,1 | −2,2 |
+| 3 | 62,0 | 56,7 | −5,3 |
+| 4 | 58,9 | 58,8 | −0,1 |
+| 5 | 57,1 | 54,1 | −3,0 |
+| 6 | 57,8 | 53,7 | −4,1 |
+| 7 | 58,6 | 55,2 | −3,4 |
+| 8 | 58,5 | 55,4 | −3,1 |
+| **Median** | 58,7 | 56,6 | **−3,05** |
+
+B gewinnt 8/8 Paare, gepaarter Median **−3,05 ms** — konsistent mit der Summe
+der Pass-Mediane (−1,64 − 1,11 − 0,10 − 0,79 = −3,64 ms abzüglich der
+Vorfilter-Sweeps, die in den Pass-Zeilen bereits eingerechnet sind, plus
+Messrauschen). Zur Orientierung die Pass-Tabelle je eines ruhigen Paarlaufs
+(dritter Block, hintereinander, nicht gepaart): `computeMFDArea` 5,38 → 4,13,
+`outletIncision` 4,02 → 2,94, `channelCarve` 1,37 → 0,55, `braidPass`
+2,45 → 2,51 (im Rauschen; der gepaarte Gewinn dieser Änderung liegt bei
+−0,10 ms), Gesamt 66,4 → 62,5 ms/Schritt.
+
+### Nicht weiterverfolgt (mit Begründung)
+
+- **`computeReceiversAndArea`** (≈ 2 ms): Die Empfänger-Suche ist bereits
+  zeilenparallel mit festen 8-Offset-Zweig und Roh-Puffern; die
+  Flächen-Akkumulation ist eine strikt serielle Abhängigkeitskette
+  (`pa[r] += pa[k]` in `order` rückwärts — der Empfänger eines Zuflusses muss
+  bereits vollständig eingesammelt sein). Kein bit-identischer Hebel mit
+  klarem Kopfroom übrig.
+- **`wavePass`** (≈ 1,4 ms): Eine Band-Maske (`|h − sea| ≤ waveBand`) ließe
+  sich vorab berechnen, wird aber während des Passes STALE — der Pass verschiebt
+  Material ZELLE-für-Zelle, Zellen können dabei ins Band ein- und austreten
+  (auch der EMPFÄNGER kann aufsteigen). Der Scan selbst läuft bereits
+  sequenziell über ein 4-MB-Feld mit gutem Ort.
+- **`computeRain`** (≈ 1,3 ms): Der orographische EWMA-Sweep ist bereits über
+  `parallel(nn)` in 64 Zeilenblöcken parallel; die Land-Mittel in
+  `updateRainWeight`/`updateRunoffWeight` müssen SEQUENZIELL laufen (feste
+  FP-Reihenfolge → bit-genau, AGENTS.md). Eine Block-Reduktion würde die
+  Additionskette ändern — nicht erlaubt.
+- **`applyUplift`** (≈ 0,6 ms): Reine per-Zelle-Arithmetik, bereits parallel
+  mit Roh-Puffern; kein messbarer Kopfroom.
+
+### Reproduktion
+
+```sh
+swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+SimCore/.build/release/simperf --hash --seed 1337        # 08d32575d5cd353a
+SimCore/.build/release/simperf --hash --seed 42          # 0fd978609f8cc241
+SimCore/.build/release/simperf --hash --seed 20          # 9df73cb7672f2610
+SimCore/.build/release/simperf --hash --seed 1337 --dt 15  # 90b5a31c0d94a030
+SimCore/.build/release/simperf --repeat 3                # Pass-Tabelle
+```
+
+Pflichtsuite nach dem Endstand (`swift test -c release --package-path SimCore
+-Xswiftc -swift-version -Xswiftc 5`): **611 Tests, 71 übersprungen, 0 Fehler**
+(212,8 s ohne Build). Die Hashes sind Pro-Maschine-Werte (System-libm);
+verglichen wird vor/nach auf DERSELBEN Maschine.
