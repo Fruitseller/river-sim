@@ -1275,3 +1275,20 @@ Handvoll Säulen, s. o. (Begrenzer verworfen). Weitere Ersparnisse, die in diese
 Zahlen schon stecken: Wurzel statt `pow` für den Flussexponenten 0,5 (`pow` war der
 größte Einzelposten), ein `exp` je Teilschritt für das Nährgebiet, zwei
 Kastensummen statt 81 Lesezugriffen je Zelle für die Schleifspur.
+
+### Bild (maximiert, `RS_STEP=20000`, `RS_CAMERA=valley` und `diorama`, Seeds 1337 / 42 / 20)
+
+`docs/screenshots/zielbild-174/glacier-horns_seed*_{valley,diorama}_{vorher,nachher}.jpg`
+(vorher = Stand `72b7b6b`, also vor Gürtel-Kopplung und Mündungs-Korrekturen;
+nachher = dieser Zweig auf `d32e915`), dazu `…_eisfrei.jpg` (Seeds 1337 / 20,
+`iceEnabled = false`, sonst gleiche Basis). Ehrliche Bewertung:
+
+* **Seed 20: klar besser.** Die weiße Tafel mit Zackenrand und senkrechten Wänden im
+  Norden ist weg; an ihrer Stelle stehen Spitzen und Hörner mit Schnee, Eis in den
+  Mulden darunter. Gipfel gleich dem eisfreien Arm.
+* **Seed 1337: besser.** Im Tal-Bild stehen auf dem Hauptkamm Grate und Hörner
+  statt einer durchgehenden weißen Tafel. Im Diorama bleibt die lange Wand im
+  Nordwesten — sie steht genauso im eisfreien Arm, s. o. (Generierung).
+* **Seed 42** unverändert (kaum Eis, höchster Punkt 0,66 statt 0,67 eisfrei).
+* Schnee und Eis sind im Render weiter beide weiß; von den Karen sieht man die
+  Felsrückwände, nicht das Eis.
