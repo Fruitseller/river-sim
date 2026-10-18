@@ -51,6 +51,8 @@ public enum WaterUniforms {
         ("water_ocean_depth_span", WaterRender.oceanDepthSpan),
         ("water_ocean_mid_depth", WaterRender.oceanMidDepth),
         ("water_ocean_surf_depth", WaterRender.oceanSurfDepth),
+        ("water_ocean_surf_slope_lo", WaterRender.oceanSurfSlopeLo),
+        ("water_ocean_surf_slope_hi", WaterRender.oceanSurfSlopeHi),
         ("water_ocean_surf_strength", WaterRender.oceanSurfStrength),
         ("water_ocean_surf_scale", WaterRender.oceanSurfScale),
         ("water_ocean_surf_drift", WaterRender.oceanSurfDrift),

@@ -705,9 +705,15 @@ public final class RiverRibbonRenderer {
     /// Wasserlinie in voller Breite und Deckkraft unter die Ozean-Ebene taucht.
     /// Auch der Minimum-Filter der Übergabe (`erodeAndSmooth`, ± eine Zelle)
     /// zieht die Blende damit nicht mehr auf den Strand.
+    /// Dasselbe fürs MEER — und dort nach der STRECKE seit der Uferlinie.
+    ///
+    /// Das Band läuft ab der Wasserlinie weich in die Meeresfarbe und Deckkraft 0
+    /// aus (über `mouthOverlapCells` Zellen), statt mit gerader Kante über dem
+    /// Schelf abzutauchen. Bis zur Wasserlinie bleibt es voll breit und deckend
+    /// (Wächter `testRiverBandsReachTheSeaAtFullWidthAndOpacity`).
     @inline(__always)
     private static func seaHandoverFade(submergedCells: Double) -> Double {
-        1 - smoothstep(WaterRender.mouthOverlapCells, 2 * WaterRender.mouthOverlapCells, submergedCells)
+        1 - smoothstep(0.0, WaterRender.mouthOverlapCells, submergedCells)
     }
 
     /// Legt jeden Stützpunkt, der unter Wasser liegt, auf dessen Spiegel und
@@ -761,13 +767,25 @@ public final class RiverRibbonRenderer {
                 ? RiverRibbonRenderer.seaHandoverFade(submergedCells: submergedCells)
                 : RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
         }
-        // Läuft die Zentrumslinie an einer Uferlinie ENTLANG, wechseln die
+        // Läuft die Zentrumslinie an einer SEE-Uferlinie entlang, wechseln die
         // Stützpunkte zwischen nass und trocken, und die Übergabe sprang je
         // halbe Zelle zwischen voll und blass: helle und dunkle Querstreifen
-        // („Leitersprossen" am See, Befund #174). Die Übergabe darf nur
-        // stetig fallen und steigen — eine Senke statt eines Kamms.
-        fade = RiverRibbonRenderer.erodeAndSmooth(fade, radius: WaterRender.ribbonHandoverSmoothSamples)
-        for a in samples.indices { samples[a].alpha *= fade[a] }
+        // („Leitersprossen" am See, Befund #174). Die See-Übergabe wird deshalb
+        // geglättet (Minimum-Filter).
+        // Auf dem MEER gilt die monotone Streckenblende ab der Wasserlinie:
+        // der Minimum-Filter darf die Blende nicht auf den Strand zurückziehen
+        // (Wächter `testRiverBandsReachTheSeaAtFullWidthAndOpacity`).
+        var lakeFade = fade
+        for a in samples.indices {
+            let s = samples[a].surface ?? 1.0
+            if s <= sea { lakeFade[a] = 1.0 }
+        }
+        lakeFade = RiverRibbonRenderer.erodeAndSmooth(lakeFade, radius: WaterRender.ribbonHandoverSmoothSamples)
+        for a in samples.indices {
+            let s = samples[a].surface ?? 1.0
+            let f = s <= sea ? fade[a] : lakeFade[a]
+            samples[a].alpha *= f
+        }
         // Der Deckel der Deckkraft-Sprünge (`limitAlphaSteps`) läuft beim
         // Aufrufer NACH `fadeUphill`, damit er beide Blenden erfasst.
     }

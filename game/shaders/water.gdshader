@@ -111,6 +111,8 @@ uniform float water_ocean_wave_lacunarity;
 uniform float water_ocean_wave_gain;
 uniform float water_ocean_wave_fade_lo;
 uniform float water_ocean_wave_fade_hi;
+uniform float water_ocean_depth_span;
+uniform vec3 water_ocean_shallow_color;
 
 // Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
 // SimNode, s. Deklarationsblock oben) — dasselbe Epsilon wie im
@@ -226,8 +228,18 @@ void fragment() {
 	// blieb voll breit und lag bei ausgeblendeten Bändern als leere dunkle
 	// Rinne im Gelände. Das Fenster ist eine eigene Optik-Zahl dieses
 	// Shaders, keine WaterRender-Konstante.
+	// Mündung ins Meer (#174): ab der Wasserlinie blendet das Band über wenige
+	// Zellen weich in die Meeresfarbe und Deckkraft 0 aus, statt mit gerader
+	// Kante über dem türkisen Schelf abzubrechen. Der Ufersaum (Bank) entfällt im Meer.
+	vec2 guv = grid_uv(v_world.xz);
+	float h_terrain = texture(height_tex, guv).r;
+	if (height_blend < 1.0) {
+		h_terrain = mix(texture(height_prev_tex, guv).r, h_terrain, height_blend);
+	}
+	float in_sea = clamp((sea_level - h_terrain) / max(water_ocean_depth_span * 0.1, 1e-5), 0.0, 1.0);
+
 	float presence = clamp(v_alpha, 0.0, 1.0);
-	float visible = smoothstep(0.05, 0.75, presence);
+	float visible = smoothstep(0.05, 0.75, mix(presence, 1.0, in_sea));
 	// Ableitungen VOR jedem bedingten Pfad (s. ocean.gdshader).
 	float across_band = 1.0 - abs(UV.x * 2.0 - 1.0); // 0 = Bandkante, 1 = Mitte
 	float across = clamp((across_band - (1.0 - visible)) / max(visible, 1e-3), 0.0, 1.0);
@@ -247,7 +259,7 @@ void fragment() {
 	float line = water_ribbon_waterline
 		+ (ribbon_noise(v_world.xz * water_ribbon_waterline_scale) - 0.5) * 2.0 * water_ribbon_waterline_jitter;
 	float wet = smoothstep(line - aa, line + aa, across);
-	float bank = calib_window(0.0, line, across) * (1.0 - wet);
+	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea);
 	float profile = calib_window(line, 1.0, across); // 0 Wasserlinie … 1 Mitte
 
 	// Tiefe ∝ Strahler-Rang (Hierarchie: große Läufe tief, Bäche seicht), zur
@@ -306,15 +318,18 @@ void fragment() {
 	vec3 water_final = mix(water_bed_color, water, mix(water_opacity_shallow, water_opacity_deep, depth));
 	water_final = mix(water_final, water_ribbon_shoal_color,
 		water_ribbon_shoal_mix * max(-outward, 0.0) * (1.0 - smoothstep(0.0, 0.6, profile)));
+	water_final = mix(water_final, water_ocean_shallow_color, in_sea * (1.0 - presence * 0.5));
 	water_final *= 1.0 - fresnel;
 
 	vec3 col = mix(water_ribbon_bank_color, water_final, wet);
 	col *= cloud_light(v_world, u_time);
 	ALBEDO = col;
 	NORMAL = normalize(mix(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0), water_n_vs, wet));
-	float lake = lake_mask_at(grid_uv(v_world.xz));
-	// Erst ganz zuletzt blendet der schmale Rest aus.
-	ALPHA = ribbon_fade_alpha(smoothstep(0.0, 0.25, presence) * max(wet, bank * water_ribbon_bank_opacity)
+	float lake = lake_mask_at(guv);
+	// Erst ganz zuletzt blendet der schmale Rest aus. Im Meer blendet die
+	// Deckkraft linear mit presence auf 0 aus (#174), an Land schrumpft die Breite.
+	float sea_alpha = mix(smoothstep(0.0, 0.25, presence), presence, in_sea);
+	ALPHA = ribbon_fade_alpha(sea_alpha * max(wet, bank * water_ribbon_bank_opacity)
 		* (1.0 - lake * (1.0 - delta)));
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt
 	// Stillwasser) — numerisch zufällig gleich waterOpacityShallow,

@@ -1142,6 +1142,11 @@ public enum WaterRender {
     /// an offener Küste fällt der Grund ohnehin binnen einer Zelle durch das
     /// Fenster, der Saum dort bleibt.
     public static let oceanSurfDepth = 0.02
+    /// Untergrenze der Küstenneigung (dh/dp in Welteinheiten) für Brandung:
+    /// darunter (flache Sandbarren, Seichtwasser, Lagunen) bricht keine Welle.
+    public static let oceanSurfSlopeLo = 0.003
+    /// Obergrenze der Küstenneigung: ab hier schäumt die Brandung voll.
+    public static let oceanSurfSlopeHi = 0.008
     /// Farbe der Brandung …
     public static let oceanSurfColor = (r: 0.80, g: 0.85, b: 0.86)
     /// … und ihr höchster Anteil an der Wasserfarbe.
