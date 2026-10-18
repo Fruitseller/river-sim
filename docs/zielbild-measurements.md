@@ -2697,7 +2697,7 @@ Geröll-Fläche auf flachen Terrassen. Ehrliche Grenzen:
 
 Stand `442eed1` (Integrationszweig #180), M4-Max-Referenz-Mac, Produktions-
 Config. K = Kennzahl, B = Bildurteil; die B-Punkte sind hier meine Prüfung
-an den Bögen, das Urteil des Projekteigners (Punkt 50) steht aus.
+an den Bögen. Das Urteil des Projekteigners (Punkt 50) folgt unten.
 
 **Pflichtsuite** 628 Tests, 0 Fehler, auf macOS und auf Linux (Docker
 `swift:6.3.3-jammy`, rechnet bit-gleich wie der CI-Runner); Godot-Verträge
@@ -2749,9 +2749,9 @@ dt 100, −2,4 ms bei dt 15), Lawinen-Abgang des Firns (+2,4 ms).
 | 36 Gletscherzungen | seit 442eed1 bläulich und vom Schnee getrennt (vorher nicht erfüllt) |
 | 37–39 Wolken, Wald, Verträge | erfüllt |
 | 40 Wald ≤ ~22 % | 12,6–19,2 % ab Jahr 20.000; Seed 42 in Jahr 2000 23,2 % |
-| 41–46 Bedienung | erfüllt, Bildurteil des Eigners offen |
+| 41–46 Bedienung | erfüllt; vom Eigner mit Punkt 50 abgenommen |
 | 47–49 | erfüllt (oben) |
-| 50 Eigner-Urteil | offen |
+| 50 Eigner-Urteil | 2026-10-18 abgenommen, mit einem Befund (Übergänge im Zeitraffer, s. u.) |
 
 **Punkt 14 im Einzelnen.** Gleiche Welt mit und ohne Gürtel, Jahr 20.000,
 mittlerer Betrag des Laplace (Höhe je Zelle). „Tiefland" ist die Kennzahl des
@@ -2773,4 +2773,19 @@ Fehlerfall, gegen den Punkt 14 steht, war der geparkte
 entfernt. Die Punkte 14 (wörtlich) und 20 ziehen hier in entgegengesetzte
 Richtungen; die Entscheidung, ob die Rippen so bleiben, gehört zum Urteil des
 Projekteigners (Punkt 50).
+
+**Punkt 50 — Urteil des Projekteigners** (2026-10-18). Der Eigner hat die
+Sim mit Schnee an Steilflanken 1,4/2,2 (Eis 1,6/2,6) in allen drei
+Kamera-Presets angesehen. Sein Urteil zu den Bildern: zufrieden, die
+Gürtel-Rippen aus Punkt 14 bleiben also. Die Bildtafeln dazu sind neu
+aufgenommen: `screenshots/zielbild-174/presets_20k.jpg` und `presets_100k.jpg`
+(Zeilen Diorama/Tal/Nah gegen die Vorlagen C/B/A, Spalten Vorlage, Seed 1337,
+42, 20, maximiert 3456×2104). Zwei offene Punkte hat der Eigner benannt:
+
+- **Übergänge im Zeitraffer** (Befund): bei 30 und 60 J./Sek. „sieht der Fluss
+  in einer Sekunde so aus und in der anderen komplett anders". Gemessen ist das
+  die Kopplung Gürtel ↔ D8 im 1000-Jahr-Takt, die alle Läufe zugleich neu setzt
+  (Bandwechsel 4–5×, Wald 11–18× eines normalen Takts). Wird im nächsten
+  Schritt behoben.
+- **Performance**: noch nicht gut genug, wird iterativ weiter verbessert.
 
