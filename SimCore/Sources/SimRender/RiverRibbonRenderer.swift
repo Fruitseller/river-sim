@@ -696,16 +696,7 @@ public final class RiverRibbonRenderer {
     /// über der ganzen Karte (`water_mi` in Main.gd). Sie deckt ab der ersten
     /// Zelle unter `sea` vollständig — eine Tiefen-Rampe wie am See hätte hier
     /// also nichts zu überbrücken, das Band lief nur als Platte weiter ins Meer
-    /// hinein (im A/B-Screenshot als heller Rechteck-Ausleger sichtbar). Die
-    /// kurze Überlappung schließt den Diskretisierungs-Spalt zur Uferlinie und
-    /// endet dann.
-    ///
-    /// Die Blende liegt ganz im Meer (`WaterRender.mouthSeaCells`): bis
-    /// `mouthOverlapCells` unter Wasser bleibt das Band voll, damit es an der
-    /// Wasserlinie in voller Breite und Deckkraft unter die Ozean-Ebene taucht.
-    /// Auch der Minimum-Filter der Übergabe (`erodeAndSmooth`, ± eine Zelle)
-    /// zieht die Blende damit nicht mehr auf den Strand.
-    /// Dasselbe fürs MEER — und dort nach der STRECKE seit der Uferlinie.
+    /// hinein (im A/B-Screenshot als heller Rechteck-Ausleger sichtbar).
     ///
     /// Das Band läuft ab der Wasserlinie weich in die Meeresfarbe und Deckkraft 0
     /// aus (über `mouthOverlapCells` Zellen), statt mit gerader Kante über dem

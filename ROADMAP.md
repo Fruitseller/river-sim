@@ -62,7 +62,12 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   § Delta). Offen: die Deltas bleiben kleiner als in Vorlage B (die
   Mündungen wandern je 1000 Jahre bei einem Drittel der großen Flüsse um
   10–50 Zellen, jeder Lappen ist jung), und an steilen Küstenstufen trägt das
-  Materialmodell (#174 D) weiter ein Felsband.
+  Materialmodell (#174 D) weiter ein Felsband. Küsten-Feinschliff: Brandung
+  nur an geneigtem Schelf (kein Schaum auf Barren und Lagunen), Bänder blenden
+  ab der Wasserlinie in die Meeresfarbe aus, Schelf-Farbe über einen
+  B-Spline; die treppigen Flächen im Seichtwasser sind die blockige
+  Küstenlinie selbst und werden dadurch nur weicher
+  (`docs/river-coast-render-measurements.md` § H).
 
 - **Bedienung nach Vorlage B/C (#174, Paket E):** Glas-Panels aus EINEM Theme
   (`game/ui/glass_theme.tres`), vier Randspalten (Titel/Jahr/Tempo und
