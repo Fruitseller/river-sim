@@ -612,8 +612,6 @@ extension MeanderState {
                              nx: .init(repeating: 0, count: c), nz: .init(repeating: 0, count: c),
                              mob: .init(repeating: 0, count: c), cum: cum)
         let sp = max(1e-6, config.meanderNodeSpacing)
-        let cs = config.cellSize, flat = config.meanderFlatSlope
-        let total = cum[max(0, c - 1)]
         for i in 0..<c {
             let b = beltWidthCells(discharge: ch.discharge[i], config: config)
             g.width[i] = b
@@ -631,20 +629,47 @@ extension MeanderState {
             // Für die Migration zählt Mobilität nur dort, wo auch der Mindestabfluss
             // für das Wandern erreicht ist (`meanderBeltMinCells`).
             if minDischarge > 0 && ch.discharge[i] < minDischarge { continue }
-            // Längsneigung über ±1,5 Kanalbreiten: über ±k (≈ 3 Zellen) brach
-            // jede Stufe im eingeschnittenen Bett den mobilen Abschnitt auf
-            // (gemessen 12–45 mobile Knoten am Hauptlauf von Seed 1337).
-            let ks = max(k, min(min(i, c - 1 - i), Int((1.5 * b / sp).rounded())))
-            let arc = (cum[i + ks] - cum[i - ks]) * cs
-            let slope = arc > 1e-9 ? abs(heightAt(nodes[i - ks]) - heightAt(nodes[i + ks])) / arc : 0
-            // Unter dem Meeresspiegel wandert nichts: der Schelf ist flach, ohne
-            // das Gate liefen die Schlingen gemessen weit aufs Meer hinaus.
-            g.mob[i] = flat > 0 && heightAt(m) > config.sea ? max(0, min(1, 1 - slope / flat)) : 0
-            // Zu den festen Enden (Quelle, Mündung) hin ausblenden: der
-            // Stromauf-Term staute sich gemessen am festen Endknoten zu Spiralen.
-            g.mob[i] *= min(1, min(cum[i], total - cum[i]) / max(1e-6, 3 * b))
+            g.mob[i] = beltMobility(nodes, cum, i: i, width: b, k: k, config: config, heightAt: heightAt)
         }
         return g
+    }
+
+    /// Nach einem Stempel bleibt die Linie gleich, nur das Höhenfeld ändert
+    /// sich. Krümmung, Normalen, Breiten und Bogenlängen bleiben dafür gültig;
+    /// die Mobilität wird aus dem aktuellen Bett vollständig neu gelesen.
+    static func updateBeltMobility(_ g: inout BeltGeometry, _ ch: RiverChannel, config: SimConfig,
+                                   minDischarge: Double, heightAt: (MeanderNode) -> Double) {
+        let nodes = ch.nodes, c = nodes.count
+        let sp = max(1e-6, config.meanderNodeSpacing)
+        let cum = g.cum
+        for i in 1..<max(1, c - 1) {
+            g.mob[i] = 0
+            guard g.nx[i] != 0 || g.nz[i] != 0 else { continue }
+            if minDischarge > 0 && ch.discharge[i] < minDischarge { continue }
+            let b = g.width[i]
+            let k = max(1, min(min(i, c - 1 - i), Int((0.5 * b / sp).rounded())))
+            g.mob[i] = beltMobility(nodes, cum, i: i, width: b, k: k, config: config, heightAt: heightAt)
+        }
+    }
+
+    @inline(__always)
+    private static func beltMobility(_ nodes: [MeanderNode], _ cum: [Double], i: Int,
+                                     width b: Double, k: Int, config: SimConfig,
+                                     heightAt: (MeanderNode) -> Double) -> Double {
+        let c = nodes.count, sp = max(1e-6, config.meanderNodeSpacing)
+        let cs = config.cellSize, flat = config.meanderFlatSlope
+        let total = cum[c - 1]
+        // Über ±k (≈ 3 Zellen) brach jede Stufe im eingeschnittenen Bett den
+        // mobilen Abschnitt auf (gemessen 12–45 mobile Knoten am Hauptlauf
+        // von Seed 1337). Deshalb ±1,5 Kanalbreiten.
+        let ks = max(k, min(min(i, c - 1 - i), Int((1.5 * b / sp).rounded())))
+        let arc = (cum[i + ks] - cum[i - ks]) * cs
+        let slope = arc > 1e-9 ? abs(heightAt(nodes[i - ks]) - heightAt(nodes[i + ks])) / arc : 0
+        // Unter dem Meer wandert nichts; an Quelle und Mündung ausblenden,
+        // sonst staut sich der Stromauf-Term am festen Ende zu Spiralen.
+        var mob = flat > 0 && heightAt(nodes[i]) > config.sea ? max(0, min(1, 1 - slope / flat)) : 0
+        mob *= min(1, min(cum[i], total - cum[i]) / max(1e-6, 3 * b))
+        return mob
     }
 
     /// Verschiebungsrate je Knoten (Zellen/Jahr entlang der linken Normalen)
@@ -669,7 +694,7 @@ extension MeanderState {
     /// im Gürtel über die Ufer-Zerstörung im Stempel). Die Kopplung an die
     /// Entwässerung leistet jetzt `Terrain.coupleBeltToDrainage`.
     func beltRatesAndErodibility(_ ch: RiverChannel, _ g: BeltGeometry, config: SimConfig,
-                                 heightAt: (MeanderNode) -> Double) -> (rate: [Double], erod: [Double]) {
+                                 heightAt: (MeanderNode) -> Double, boundOnly: Bool = false) -> (rate: [Double], erod: [Double]) {
         let nodes = ch.nodes, c = nodes.count
         var rate = [Double](repeating: 0, count: c)
         var erod = [Double](repeating: 0, count: c)
@@ -709,8 +734,12 @@ extension MeanderState {
             // implizit stabile Glättung in `migrateBeltChannel` (s. dort).
             let eff = ga * ema + (gd != 0 ? gd * down[i] : 0)
             ema += g.curv[i] * (1 - w)
-            guard i > 0, i < c - 1, g.mob[i] > 0, ch.discharge[i] >= config.meanderBeltMinCells else { continue }
+            guard i > 0, i < c - 1, (boundOnly || g.mob[i] > 0), ch.discharge[i] >= config.meanderBeltMinCells else { continue }
             let b = g.width[i]
+            if boundOnly {
+                rate[i] = abs(-e * b * (b * eff))
+                continue
+            }
             let m = max(1, Int((config.meanderBeltSinuosityWidths * b / sp).rounded()))
             let lo = max(0, i - m), hi = min(c - 1, i + m)
             let chord = dist(nodes[lo], nodes[hi])
@@ -758,6 +787,51 @@ extension MeanderState {
         return (out, erod)
     }
 
+    struct BeltFootprint {
+        let minX: Double, maxX: Double, minZ: Double, maxZ: Double
+        let maxSubsteps: Int
+        func overlaps(_ other: BeltFootprint) -> Bool {
+            minX <= other.maxX && other.minX <= maxX && minZ <= other.maxZ && other.minZ <= maxZ
+        }
+    }
+
+    /// Geländeunabhängige Schranke der ANFÄNGLICHEN Rate. Mobilität,
+    /// Sättigung und Talwand-Bremse liegen in 0…1. Vor der Ratenglättung
+    /// Beträge zu nehmen begrenzt auch jede mögliche Auslöschung von Vorzeichen.
+    /// Die einmal gewählte Teilschrittzahl bleibt im gesamten Lauf konstant.
+    func beltFootprint(_ ch: RiverChannel, dt: Double, config: SimConfig) -> BeltFootprint? {
+        guard ch.nodes.count >= 3, dt > 0, dt.isFinite, config.meanderNodeSpacing > 0,
+              config.meanderBeltRate >= 0 else { return nil }
+        let g = Self.beltGeometry(ch, config: config, heightAt: { _ in config.sea + 1 })
+        let (rates, _) = beltRatesAndErodibility(ch, g, config: config, heightAt: { _ in config.sea + 1 }, boundOnly: true)
+        let rate = rates.reduce(0) { max($0, abs($1)) }
+        let needed = (rate * 1.001 * dt / (0.5 * config.meanderNodeSpacing)).rounded(.up)
+        guard needed.isFinite else { return nil }
+        let substeps = max(1, Int(min(4096, needed)))
+        let width = (g.width.max() ?? 0) * 1.001
+        // Explizite Bewegung UND Störung: jeweils <= ½ Knotenabstand.
+        // Implizite Diffusion (nichtnegative Koeffizienten), Cutoff und Resample
+        // bleiben in der konvexen Hülle. Zwei Zellen decken Rundung, bilineare
+        // Abfragen und die vier Nachbarn der Altarm-Pfropfen ab.
+        let radius = Double(substeps) * config.meanderNodeSpacing
+            + max(3.5, 0.5 + config.meanderBarWidths) * width + 2
+        guard radius.isFinite, ch.nodes.allSatisfy({
+            $0.x.isFinite && $0.z.isFinite && $0.x >= 0 && $0.z >= 0
+                && $0.x <= Double(config.n - 1) && $0.z <= Double(config.n - 1)
+        }) else { return nil }
+        return BeltFootprint(minX: ch.nodes.map(\.x).min()! - radius, maxX: ch.nodes.map(\.x).max()! + radius,
+                             minZ: ch.nodes.map(\.z).min()! - radius, maxZ: ch.nodes.map(\.z).max()! + radius,
+                             maxSubsteps: substeps)
+    }
+
+    /// Gemeinsame Historie erst nach allen Arbeiten in ursprünglicher Lauf-Reihenfolge.
+    func appendBeltHistory(_ run: MeanderState) {
+        oxbows.append(contentsOf: run.oxbows)
+        oxbowAge.append(contentsOf: run.oxbowAge)
+        neckCutoffs += run.neckCutoffs
+        chuteCutoffs += run.chuteCutoffs
+    }
+
     struct BeltMigrationPlan {
         var rate: Double
         var g: BeltGeometry
@@ -788,7 +862,8 @@ extension MeanderState {
 
     /// Wendet einen fertigen Migrationsplan (aus `beltMigrationPlan`) bit-identisch an,
     /// ohne `beltGeometry` und Raten erneut zu berechnen.
-    func applyBeltMigrationPlan(_ ci: Int, plan: BeltMigrationPlan, dt: Double, time: Double, config: SimConfig) {
+    func applyBeltMigrationPlan(_ ci: Int, plan: BeltMigrationPlan, dt: Double, time: Double, config: SimConfig,
+                                noiseChannel: Int? = nil) {
         let spacing = config.meanderNodeSpacing
         let maxStep = 0.5 * spacing
         let kappaK = abs(config.meanderBeltLocalWeight) * config.meanderBeltRate / max(1e-12, spacing * spacing)
@@ -802,7 +877,7 @@ extension MeanderState {
                     ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
                 }
             }
-            Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: ci,
+            Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: noiseChannel ?? ci,
                          config: config, maxStep: maxStep)
             let c = ch.nodes.count
             var a = [Double](repeating: 0, count: c)
@@ -825,13 +900,19 @@ extension MeanderState {
     /// taktet so, dass kein Knoten mehr als einen halben Knotenabstand springt;
     /// die Klemme hier ist nur Sicherheitsnetz. Altarm-Alter setzt der Aufrufer.
     func migrateBeltChannel(_ ci: Int, dt: Double, time: Double, config: SimConfig,
-                            heightAt: (MeanderNode) -> Double) {
+                            heightAt: (MeanderNode) -> Double, geometry: BeltGeometry? = nil, noiseChannel: Int? = nil) {
         let spacing = config.meanderNodeSpacing
         let maxStep = 0.5 * spacing
         let kappaK = abs(config.meanderBeltLocalWeight) * config.meanderBeltRate / max(1e-12, spacing * spacing)
         var ch = channels[ci]
         if ch.nodes.count >= 3 {
-            let g = Self.beltGeometry(ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
+            var g: BeltGeometry
+            if let geometry {
+                g = geometry
+                Self.updateBeltMobility(&g, ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
+            } else {
+                g = Self.beltGeometry(ch, config: config, minDischarge: config.meanderBeltMinCells, heightAt: heightAt)
+            }
             let (r, erod) = beltRatesAndErodibility(ch, g, config: config, heightAt: heightAt)
             if let firstR = r.firstIndex(where: { $0 != 0 }),
                let lastR = r.lastIndex(where: { $0 != 0 }) {
@@ -840,7 +921,7 @@ extension MeanderState {
                     ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
                 }
             }
-            Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: ci,
+            Self.perturb(&ch.nodes, g, erod, dt: dt, time: time, channel: noiseChannel ?? ci,
                          config: config, maxStep: maxStep)
             let c = ch.nodes.count
             var a = [Double](repeating: 0, count: c)
