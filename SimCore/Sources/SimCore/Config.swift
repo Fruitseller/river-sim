@@ -1408,12 +1408,6 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// die eigene Zelle — dann trägt ein Gipfel, dessen Zentraldifferenz ±2
     /// Zellen sich aufhebt, Firn, obwohl alles um ihn steil abfällt.
     public var iceAvalancheReach: Int = 1
-    /// Wie oft (Sim-Jahre) die Lawinen-Karte (Ziele und Anteile) aus dem aktuellen
-    /// Bett neu gebaut wird. Schritte unter dieser Länge bauen sie einmal je
-    /// Schritt (der Zeitraffer-Takt, 15 Jahre), große Schritte alle 15 Jahre
-    /// ihrer Teilschritte — die Karte hängt damit an der SIM-ZEIT, nicht an der
-    /// Schrittweite.
-    public var iceAvalancheRefreshYears: Double = 15
     /// GRUNDUMSATZ des Eises (Jahre) — der Sockel `1/τ` in μ, dieselbe Rolle wie
     /// `snowTurnoverYears` beim Schnee: er hält die Dicke auch bei Dauerfrost
     /// BESCHRÄNKT und ist physikalisch als Sublimation/Kalben besetzt.
@@ -1534,7 +1528,13 @@ public struct SimConfig: Sendable, Codable, Equatable {
     ///                             entzieht sich selbst das Nährgebiet)
     /// 1e-4 kostet auf 30k Jahre 0.024 Höheneinheiten Gipfelhöhe gegen den
     /// eisfreien Arm — spürbar, aber genau die erwünschte glaziale Denudation.
-    public var iceErodeK: Double = 1e-4
+    ///
+    /// Seit dem Lawinen-Abgang (#174, §M) 1.05e-4: mit der breiteren Schleifspur
+    /// (`iceErodeSwathRadius` 4) trägt Seed 1337 nach 20.000 Jahren 2.99 % Eis
+    /// (Grenze 3 %); 1.05e-4 gibt 2.93 % bei unverändertem V→U-Signal (15 von 18
+    /// Δb positiv), 1.1e-4 2.86 % mit 3 weiteren negativen Werten, 1.25e-4 / 1.5e-4
+    /// verlieren das Signal auf W 14 (Seed 20 −0.08 … −0.23).
+    public var iceErodeK: Double = 1.05e-4
     /// Fluss-Exponent m des glazialen Stream-Power-Gesetzes
     /// `E = K · q^m · S^n`. 0.5 wie bei Liebl et al. 2023 und wie `mExp` im
     /// fluvialen Pendant (`outletIncision`) — die glaziale Rate ist damit ein
@@ -1554,11 +1554,23 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// ganze BREITE; Liebl et al. 2023 lösen dasselbe Problem im OpenLEM mit
     /// derselben Maßnahme („artificially expanded erosion swath").
     ///
-    /// 2 Zellen (5×5-Fenster) — s. Sweep in `docs/glacier-measurements.md` §D.
+    /// 4 Zellen (9×9-Fenster) — s. Sweep in `docs/glacier-measurements.md` §D und §M.
     /// Fester ZELL-Radius wie `HydraulicParams.erodeRadius`: eine Breite in
     /// Welteinheiten wäre für den Kernel die ehrlichere Größe, aber dann hinge
     /// die Fenstergröße an `n` und mit ihr die Rechenzeit je Zelle.
-    public var iceErodeSwathRadius: Int = 2
+    ///
+    /// **2 → 4 mit der Produktions-Zellgröße (#174, §M).** Die 2 Zellen waren auf
+    /// n = 384 / world 130 (Zelle 0.339) kalibriert, also 0.68 Welteinheiten Breite
+    /// des Schleifbands; die Produktion rechnet mit Zellen von 0.156 (n = 720 /
+    /// 112.48), dort sind 2 Zellen nur 0.31 und damit die Hälfte der Breite, für die
+    /// der Wert geeicht war (Verhältnis 2.17, 2 × 2.17 = 4.3). Sichtbar wurde das mit
+    /// dem Lawinen-Abgang: das Eis im Tal ist dort mehrfach dicker, die Rate
+    /// `(I·S)^m·S` im Thalweg entsprechend größer, und ein 5×5-Fenster verteilt sie
+    /// nicht mehr über die Talbreite (V→U in der Produktion: Eis-Zellen unter der
+    /// Firn-Grenze Δb −0.12 … 0.00 statt +0.2; mit 4: alle 12 Δb auf W 6/10/14 bei
+    /// 10k/20k positiv). 3: Δb positiv, aber auf W 14 −0.04 … −0.08; 5: alle positiv,
+    /// aber Eis 3.01 % auf Seed 1337.
+    public var iceErodeSwathRadius: Int = 4
     /// MORÄNE: Höheneinheiten Sediment je Höheneinheit ausgeschmolzenen Eises.
     /// Das Eis führt eine als konstant angenommene Schuttfracht mit; wo es
     /// abschmilzt, bleibt sie liegen — Ausschmelz-Moräne an Zunge und Rand, dort

@@ -349,8 +349,65 @@ final class Glacier: XCTestCase {
                     row += String(format: " | W%d b %.3f / %.3f Δ %+.3f n %d", w, p.a, p.b, p.a - p.b, p.count)
                 }
                 print(row); fflush(stdout)
+                // Aufteilung der vergletscherten Zellen (Issue #174, §M): unter der
+                // Firn-Grenze (Zungen, Talgletscher), darüber (Kare, Nährgebiet)
+                // und nach Eisdicke — wo das V→U-Signal sitzt.
+                let firn = Glacier.firnLine(c)
+                let classes: [(String, (Int) -> Bool)] = [
+                    ("unter Firn", { ice.h[$0] < firn }),
+                    ("über Firn", { ice.h[$0] >= firn }),
+                    ("Eis > 0,05", { ice.ice[$0] > 0.05 }),
+                    ("Eis ≤ 0,05", { ice.ice[$0] <= 0.05 }),
+                ]
+                var split = String(format: "VUS s%d %@ %.0fk", seed, v, target / 1000)
+                for (name, pred) in classes {
+                    let sub = cells.filter(pred)
+                    let p = Glacier.pairedShape(ice, ref, cells: sub, halfWidth: 10)
+                    split += String(format: " | %@ W10 Δ %+.3f n %d (%d Zellen)", name, p.a - p.b, p.count, sub.count)
+                }
+                print(split); fflush(stdout)
             }
         } }
+    }
+
+    /// **Wächter: die Talgletscher der PRODUKTION schleifen einen Trog** (Issue #174,
+    /// `docs/glacier-measurements.md` §M). `testGlaciatedValleysWidenTowardsU`
+    /// misst auf der gepinnten alten Welt; hier dieselbe Kennzahl (gepaarter
+    /// Formexponent `b`, Eis-Arm gegen eisfreien Arm auf den am Ende vergletscherten
+    /// Zellen) in der Produktion, gepoolt über drei Seeds, 20.000 Jahre, dt 1000.
+    /// Mit dem Lawinen-Abgang und der alten Schleifspur (2 Zellen, auf die
+    /// Zellgröße 0,34 geeicht, in der Produktion mit 0,156 nur die halbe Breite)
+    /// war das Signal weg (Zellen unter der Firn-Grenze Δb −0,12 … 0,00 statt
+    /// +0,2); mit 4 Zellen gemessen Δb W 6 / 10 / 14 gepoolt +0,055 / +0,13 / +0,07,
+    /// alle neun Einzelwerte positiv. Schranken weit darunter.
+    func testProductionGlaciersCarveTroughs() {
+        var weighted = [Int: Double](), counts = [Int: Int]()
+        var tongues = 0.0, tongueN = 0
+        for seed: UInt32 in [1337, 20, 33] {
+            let c = SimConfig.production
+            var off = c; off.iceEnabled = false
+            let ice = Terrain(config: c, seed: seed, settleYears: SimConfig.productionSettleYears)
+            let ref = Terrain(config: off, seed: seed, settleYears: SimConfig.productionSettleYears)
+            for t in [ice, ref] { while t.years < 20_000 - 1e-6 { t.step(dtYears: 1000) } }
+            let cells = Glacier.glacierCells(ice)
+            for w in [6, 10, 14] {
+                let p = Glacier.pairedShape(ice, ref, cells: cells, halfWidth: w)
+                weighted[w, default: 0] += (p.a - p.b) * Double(p.count); counts[w, default: 0] += p.count
+            }
+            let firn = Glacier.firnLine(c)
+            let below = cells.filter { ice.h[$0] < firn }
+            let p = Glacier.pairedShape(ice, ref, cells: below, halfWidth: 10)
+            tongues += (p.a - p.b) * Double(p.count); tongueN += p.count
+        }
+        for w in [6, 10, 14] {
+            let d = weighted[w]! / Double(max(1, counts[w]!))
+            print(String(format: "[V→U Produktion] W%d gepoolt Δb %+.3f (n %d)", w, d, counts[w]!))
+            XCTAssertGreaterThan(counts[w]!, 1000, "W\(w): zu wenige auswertbare Profile")
+        }
+        XCTAssertGreaterThan(weighted[10]! / Double(counts[10]!), 0.05, "W 10: Gletschertäler werden nicht U-förmiger")
+        XCTAssertGreaterThan(weighted[6]! / Double(counts[6]!), 0.0, "W 6: Gletschertäler werden V-förmiger")
+        XCTAssertGreaterThan(weighted[14]! / Double(counts[14]!), 0.0, "W 14: Gletschertäler werden V-förmiger")
+        XCTAssertGreaterThan(tongues / Double(max(1, tongueN)), 0.05, "Zungen unter der Firn-Grenze schleifen keinen Trog")
     }
 
     /// Verhältnis **Moräne zu glazialem Abtrag**: wie viel von dem, was das Eis
@@ -1048,6 +1105,7 @@ final class Glacier: XCTestCase {
             case "avhi": c.iceAvalancheSlopeHi = v
             case "avrun": c.iceAvalancheMaxRun = Int(v)
             case "avreach": c.iceAvalancheReach = Int(v)
+            case "swath": c.iceErodeSwathRadius = Int(v)
             case "mexp": c.iceErodeFluxExp = v
             case "uplift":
                 c.upliftDecayStartPer100y = v; c.upliftDecayFloorPer100y = v; c.reliefServoPer100y = v
@@ -1079,14 +1137,17 @@ final class Glacier: XCTestCase {
         for seed in seeds {
             for dt in dts {
                 let started = Date()
-                let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+                let vc = Glacier.variant(env["RS_VARIANT"] ?? "base", of: SimConfig.production)
+                let t = Terrain(config: vc, seed: seed, settleYears: SimConfig.productionSettleYears)
+                let firn = Glacier.firnLine(vc)
                 for target in checkpoints {
                     while t.years < target - 1e-6 { t.step(dtYears: min(dt, target - t.years)) }
                     let s = Glacier.iceStats(t)
                     var mass = 0.0
                     for k in 0..<t.cfg.count { mass += t.ice[k] }
-                    let row = String(format: "| %d | %.0f | %.0f | %.2f | %d | %.4f | %.4f | %.0f s |",
-                                     seed, dt, t.years, mass, s.glacier, s.maxThick, s.maxH,
+                    let over = t.h.filter { $0 > firn }.count
+                    let row = String(format: "| %d | %.0f | %.0f | %.2f | %d | %.4f | %.4f | %d | %.0f s |",
+                                     seed, dt, t.years, mass, s.glacier, s.maxThick, s.maxH, over,
                                      Date().timeIntervalSince(started))
                     print("[EIS-DT] " + row)
                     rows.append(row)
@@ -1094,8 +1155,8 @@ final class Glacier: XCTestCase {
             }
         }
         print("\n=== EIS-DT ===")
-        print("| Seed | dt | Jahr | Eismasse | Eiszellen | max. Dicke | maxH | Zeit |")
-        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        print("| Seed | dt | Jahr | Eismasse | Eiszellen | max. Dicke | maxH | Zellen über Firn | Zeit |")
+        print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         rows.forEach { print($0) }
         print("=== ENDE EIS-DT ===\n")
     }

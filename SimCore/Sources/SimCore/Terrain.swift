@@ -189,6 +189,8 @@ public final class Terrain {
     private var iceRate: [Double] = []
     private var iceSurf: [Double] = []
     private var iceEro: [Double] = []
+    /// Zeilen-Kastensummen der Erosionsrate für die Schleifspur (`iceEroH`).
+    private var iceEroH: [Double] = []
     /// Lawinen-Scratch (`SimConfig.iceAvalancheSlopeHi`): Ziel-Zelle je
     /// Quellzelle (−1 = keine Lawine) und die Netto-Änderung der Firn-Zufuhr
     /// je Zelle (Quelle −, Ziel +). `iceAvFeed` ist außerhalb der Lawinenliste
@@ -575,6 +577,7 @@ public final class Terrain {
         iceRate = []
         iceSurf = []
         iceEro = []
+        iceEroH = []
         iceAvTarget = []
         iceAvFeed = []
         iceAvPhi = []
@@ -1633,6 +1636,7 @@ public final class Terrain {
         if iceRate.count != cnt { iceRate = .init(repeating: 0, count: cnt) }
         if iceSurf.count != cnt { iceSurf = .init(repeating: 0, count: cnt) }
         if iceEro.count != cnt { iceEro = .init(repeating: 0, count: cnt) }
+        if iceEroH.count != cnt { iceEroH = .init(repeating: 0, count: cnt) }
         // kappa auflösungs-unabhängig (∝ 1/dx² ∝ (n−1)², auf n = 640 kalibriert) —
         // dieselbe Umrechnung wie bei `hillDiffusion` in `step()`.
         let refN = 639.0, m1 = Double(n - 1)
@@ -1664,39 +1668,58 @@ public final class Terrain {
         // versteilern.
         var domain = iceTransportDomain()
         guard domain.iLo <= domain.iHi else { rebuildIceMask(); return }
+        // Lawinen-Karte EINMAL je Schritt aus dem Bett vom Schrittanfang
+        // (Operator-Splitting wie `snow`/`flowWeight`): Ziele und Anteile
+        // erweitern das Arbeitsfenster um ihre Ziel-Zellen. Gemessen: die Karte
+        // selbst ist dt-neutral (Eis allein auf festem Bett: dt 15,6 / 100 / 1000
+        // gleich auf 0,01 %), eine Karte je 15 Sim-Jahre oder je Teilschritt
+        // ändert die dt-Spanne der Langläufe nicht (`docs/glacier-measurements.md`
+        // §M), kostet aber ein Vielfaches.
         let avalanche = iceAvalancheMap(domain: &domain)
         let totalK = kYear * dt * domain.scale
         let nSub = max(1, Int((totalK / max(1e-9, cfg.iceFlowSubCap)).rounded(.up)))
         let subK = kYear * dt / Double(nSub)
         let subDt = dt / Double(nSub)
-        // Je Teilschritt erreicht Eis höchstens den direkten Nachbarn. Alle
-        // Anfangssäulen und Firnquellen plus nSub Zellen enthalten deshalb den
-        // vollständigen Wirkungsbereich. Pass 1 friert zusätzlich den Rand für
-        // Nachbarfluss und Schleifspur ein. Außerhalb bleiben Eis und Bilanz null.
-        let iLo = max(0, domain.iLo - nSub), iHi = min(n - 1, domain.iHi + nSub)
-        let jLo = max(0, domain.jLo - nSub), jHi = min(n - 1, domain.jHi + nSub)
-        // Die Lawinen-Karte folgt dem Bett: alle `iceAvalancheRefreshYears` neu,
-        // sonst hinge das Eis an der Schrittweite (ein 1000-Jahr-Schritt liefe auf
-        // der Karte vom Schrittanfang, 64 Zeitraffer-Schritte à 15,6 Jahre auf
-        // frischen; Eismasse nach 20.000 Jahren auf Seed 1337: 229 / 201 / 199 mit
-        // einer Karte je Schritt, 246 / 236 / 247 mit einer je Teilschritt). Ziele
-        // außerhalb des Arbeitsfensters fallen dabei weg, das Fenster steht.
-        var av = avalanche
-        var sinceMap = 0.0
-        let refresh = max(1e-9, cfg.iceAvalancheRefreshYears)
+        // Je Teilschritt erreicht Eis höchstens den direkten Nachbarn: im Teilschritt
+        // s liegt Eis nur innerhalb von s Zellen um die Anfangssäulen und
+        // Firnquellen, also rechnet Pass 2 dort `s + 1` Zellen darum — JE ZEILE
+        // (Zeilenbereiche, nicht das Rechteck um alles Eis; bei Seed 1337 deckt
+        // das Eis rund ein Zehntel des Rechtecks) und wachsend (die Bereiche
+        // werden je Teilschritt um eine Zelle erweitert statt von Anfang an um
+        // nSub). Zellen außerhalb tragen weder Eis noch Zufuhr noch Zufluss, Pass 2
+        // ließe sie ohnehin unberührt (Schnell-Ausstieg): bit-identisch zum
+        // vollen Rechteck um die Anfangs-Menge ± nSub. Pass 1 friert zusätzlich den
+        // Rand für Nachbarfluss und Schleifspur ein (`halo`). Außerhalb bleiben
+        // Eis und Bilanz null.
+        let swath = max(0, cfg.iceErodeSwathRadius)
+        let halo = max(1, swath)
+        let nn = n
+        var curLo = domain.rowLo, curHi = domain.rowHi
         for _ in 0..<nSub {
-            if sinceMap >= refresh * (1 - 1e-9), let old = av {
-                clearAvalancheFeed(old)
-                var fixed = domain
-                av = iceAvalancheMap(domain: &fixed, extend: false)
-                sinceMap = 0
-            }
-            iceFlowSubStep(kappa: subK, dt: subDt, iLo: iLo, iHi: iHi, jLo: jLo, jHi: jHi,
-                           avalanche: av)
-            sinceMap += subDt
+            let p2 = Terrain.dilateRows(curLo, curHi, by: 1, in: nn)
+            curLo = p2.lo; curHi = p2.hi
+            let p1 = Terrain.dilateRows(p2.lo, p2.hi, by: halo, in: nn)
+            iceFlowSubStep(kappa: subK, dt: subDt, p1Lo: p1.lo, p1Hi: p1.hi, p2Lo: p2.lo, p2Hi: p2.hi,
+                           avalanche: avalanche)
         }
-        if let av { clearAvalancheFeed(av) }
+        if let avalanche { clearAvalancheFeed(avalanche) }
         rebuildIceMask()
+    }
+
+    /// Zeilenbereiche (`lo ... hi` je Zeile, leer wenn `hi < lo`) um `r` Zellen in
+    /// beide Richtungen erweitern: Zeile j nimmt die Vereinigung der Zeilen
+    /// `j − r … j + r` und wird an beiden Enden um `r` Spalten breiter.
+    private static func dilateRows(_ lo: [Int], _ hi: [Int], by r: Int, in nn: Int) -> (lo: [Int], hi: [Int]) {
+        var outLo = [Int](repeating: nn, count: nn), outHi = [Int](repeating: -1, count: nn)
+        for j in 0..<nn {
+            var l = nn, h = -1
+            for q in max(0, j - r)...min(nn - 1, j + r) where hi[q] >= lo[q] {
+                if lo[q] < l { l = lo[q] }
+                if hi[q] > h { h = hi[q] }
+            }
+            if h >= 0 { outLo[j] = max(0, l - r); outHi[j] = min(nn - 1, h + r) }
+        }
+        return (outLo, outHi)
     }
 
     private struct IceAvalanche {
@@ -1709,8 +1732,8 @@ public final class Terrain {
         }
     }
 
-    /// Lawinen-Karte des Firns (`SimConfig.iceAvalancheSlopeHi`), je Teilschritt aus
-    /// dem aktuellen Bett (`updateIce`): jede kalte, beschneite Zelle mit
+    /// Lawinen-Karte des Firns (`SimConfig.iceAvalancheSlopeHi`), einmal je Schritt
+    /// aus dem Bett vom Schrittanfang (`updateIce`): jede kalte, beschneite Zelle mit
     /// Makrosteigung (Maximum im Umkreis `iceAvalancheReach`) über `Lo` bekommt
     /// ihr Ziel — die erste Zelle am Hangfuß, deren Steigung unter `Lo` liegt, auf
     /// dem steilsten Abstieg über `h` (8 Nachbarn, Diagonale durch √2) — und ihren
@@ -1722,10 +1745,9 @@ public final class Terrain {
     /// aufsteigender Zellreihenfolge, die Zufuhr wird also in fester
     /// Reihenfolge summiert — bit-identisch zur sequenziellen Schleife. Wie viel
     /// Zufuhr abgeht, rechnet `applyAvalancheFeed` mit der Temperatur des Betts,
-    /// das der Teilschritt vor sich hat. `extend` erweitert `domain` um die
-    /// Ziel-Zellen (erste Karte des Schritts) bzw. verwirft Ziele außerhalb.
-    private func iceAvalancheMap(domain: inout (scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int),
-                                 extend: Bool = true) -> IceAvalanche? {
+    /// das der Teilschritt vor sich hat. Erweitert `domain` (Rechteck und
+    /// Zeilenbereiche) um die Ziel-Zellen.
+    private func iceAvalancheMap(domain: inout IceDomain) -> IceAvalanche? {
         let hiS = cfg.iceAvalancheSlopeHi
         guard hiS > 0, cfg.cellSize > 0, n >= 8 else { return nil }
         let nn = n, cnt = cfg.count
@@ -1811,10 +1833,10 @@ public final class Terrain {
                     let c = Int(pt[k])
                     guard c >= 0 else { continue }
                     let ci = c % nn, cj = c / nn
-                    if !extend && (ci < domain.iLo || ci > domain.iHi || cj < domain.jLo || cj > domain.jHi) { continue }
                     src.append(k); dst.append(c); phi.append(pf[k])
                     domain.iLo = min(domain.iLo, ci); domain.iHi = max(domain.iHi, ci)
                     domain.jLo = min(domain.jLo, cj); domain.jHi = max(domain.jHi, cj)
+                    domain.rowLo[cj] = min(domain.rowLo[cj], ci); domain.rowHi[cj] = max(domain.rowHi[cj], ci)
                 }
             }
         }}
@@ -1831,7 +1853,14 @@ public final class Terrain {
     /// danach seriell reduziert); Maximum und Bounding-Box sind
     /// reihenfolge-unabhängig, also bit-genau reproduzierbar. Kostet EINEN
     /// Gitter-Durchlauf und spart dafür ein Vielfaches an Teilschritten.
-    private func iceTransportDomain() -> (scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
+    private struct IceDomain {
+        var scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int
+        /// Je Zeile die Spalten der ersten und letzten Zelle mit Eis oder Firnquelle
+        /// (`rowHi < rowLo`: leere Zeile).
+        var rowLo: [Int], rowHi: [Int]
+    }
+
+    private func iceTransportDomain() -> IceDomain {
         let nn = n
         let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
         let firnT = cfg.iceFirnTemp
@@ -1882,7 +1911,7 @@ public final class Terrain {
             iLo = min(iLo, rowILo[j]); iHi = max(iHi, rowIHi[j])
             jLo = min(jLo, j); jHi = max(jHi, j)
         }
-        return (scale, iLo, iHi, jLo, jHi)
+        return IceDomain(scale: scale, iLo: iLo, iHi: iHi, jLo: jLo, jHi: jHi, rowLo: rowILo, rowHi: rowIHi)
     }
 
     /// Lawinen-Zufuhr EINES Teilschritts: jede Quelle gibt `φ · a` ihrer Firn-
@@ -1933,7 +1962,7 @@ public final class Terrain {
     /// gutschreiben (bis auf die eine Division `out/ΣΔs⁺`, gegen die der
     /// Nullpunkt-Wächter `if I < 0` steht).
     private func iceFlowSubStep(kappa: Double, dt: Double,
-                                iLo: Int, iHi: Int, jLo: Int, jHi: Int,
+                                p1Lo: [Int], p1Hi: [Int], p2Lo: [Int], p2Hi: [Int],
                                 avalanche: IceAvalanche?) {
         let nn = n, cnt = cfg.count
         let sea = cfg.sea, cs = cfg.cellSize
@@ -1951,15 +1980,22 @@ public final class Terrain {
         let firnT = cfg.iceFirnTemp
         let firn = cfg.iceFirnPerSnowYear
         let baseMu = 1 / max(1e-9, cfg.iceTurnoverYears)
+        let eBase = exp(-baseMu * dt)
         let meltC = max(0, cfg.iceMeltPerKYear)
         let moraine = max(0, cfg.iceMoraineK)
         let kEro = max(0, cfg.iceErodeK), mEro = cfg.iceErodeFluxExp
+        let mEroIsHalf = mEro == 0.5
         let swath = max(0, cfg.iceErodeSwathRadius)
         let swathSide = 2 * swath + 1
         let swathNorm = 1.0 / Double(swathSide * swathSide)
-        let halo = max(1, swath)
-        let freezeILo = max(0, iLo - halo), freezeIHi = min(nn - 1, iHi + halo)
-        let freezeJLo = max(0, jLo - halo), freezeJHi = min(nn - 1, jHi + halo)
+        // Zeilenbereiche von Pass 1 (mit Rand für Nachbarfluss und Schleifspur) und
+        // Pass 2 (Wirkungsbereich), s. `updateIce`; leere Zeilen haben `hi < lo`.
+        var freezeJLo = nn, freezeJHi = -1, jLo = nn, jHi = -1
+        for j in 0..<nn {
+            if p1Hi[j] >= p1Lo[j] { freezeJLo = min(freezeJLo, j); freezeJHi = max(freezeJHi, j) }
+            if p2Hi[j] >= p2Lo[j] { jLo = min(jLo, j); jHi = max(jHi, j) }
+        }
+        guard jHi >= jLo else { return }
         // Gesteinshärte (Issue #12): Abrasion ∝ Eisfluss × Erodierbarkeit. Der
         // Faktor wirkt NUR auf den Fels-Anteil (Regolith weiß nicht, welches
         // Gestein darunter liegt) und wird nur angefasst, wenn er ≠ 1 ist —
@@ -1980,14 +2016,17 @@ public final class Terrain {
         iceRate.withUnsafeMutableBufferPointer { rtb in
         iceSurf.withUnsafeMutableBufferPointer { sfb in
         iceEro.withUnsafeMutableBufferPointer { erb in
+        iceEroH.withUnsafeMutableBufferPointer { ehb in
             let ph = hb.baseAddress!, prock = rkb.baseAddress!, psed = sb.baseAddress!
             let pice = ib.baseAddress!, psnow = snb.baseAddress!
             let plith = ldb.baseAddress!, pfeed = fdb.baseAddress!
             let prate = rtb.baseAddress!, psurf = sfb.baseAddress!, pero = erb.baseAddress!
+            let peroH = ehb.baseAddress!
             // ---- Pass 1: Oberfläche einfrieren, Ausstrom je Zelle bestimmen ----
             parallel(freezeJHi - freezeJLo + 1) { rowLo, rowHi in
             for j in (freezeJLo + rowLo)..<(freezeJLo + rowHi) {
-                for i in freezeILo...freezeIHi {
+                guard p1Hi[j] >= p1Lo[j] else { continue }
+                for i in p1Lo[j]...p1Hi[j] {
                     let k = j * nn + i
                     let sk = ph[k] + pice[k]
                     psurf[k] = sk
@@ -2015,9 +2054,28 @@ public final class Terrain {
                     // cellSize 0 (keine definierte Schrittweite): kein Gefälle, kein Schliff.
                     if kEro > 0 && cs > 0 && ph[k] > sea {
                         let slope = w / cs
-                        pero[k] = kEro * pow(ik * slope, mEro) * slope
+                        // Exponent 0,5 (Standard) als Wurzel: `pow` war der größte Einzelposten
+                        // des Passes (Messprotokoll §M); Ergebnis höchstens 1 ulp anders.
+                        pero[k] = kEro * (mEroIsHalf ? (ik * slope).squareRoot() : pow(ik * slope, mEro)) * slope
                     } else {
                         pero[k] = 0
+                    }
+                }
+                // Schleifspur, erste Hälfte: Kastensumme der Rate entlang der Zeile.
+                // Die Rate ist nur unter Eis ungleich 0, also streut jede Eis-Zelle
+                // ihren Wert auf die `2·swath + 1` Nachbarn der EIGENEN Zeile (je Zeile
+                // ein Thread, feste Reihenfolge von links nach rechts: bit-identisch
+                // zur sequenziellen Schleife); Pass 2 summiert die Zeilensummen
+                // senkrecht. Zwei Kastensummen statt (2·swath + 1)² Lesezugriffen je
+                // erodierender Zelle — bei Radius 4 sind das 18 statt 81.
+                if swath > 0 && kEro > 0 {
+                    let base = j * nn
+                    for i in max(0, p1Lo[j] - swath)...min(nn - 1, p1Hi[j] + swath) { peroH[base + i] = 0 }
+                    for i in p1Lo[j]...p1Hi[j] {
+                        let e = pero[base + i]
+                        if e != 0 {
+                            for ii in max(0, i - swath)...min(nn - 1, i + swath) { peroH[base + ii] += e }
+                        }
                     }
                 }
             }
@@ -2025,7 +2083,8 @@ public final class Terrain {
             // ---- Pass 2: Zufluss sammeln, erodieren, Bilanz, Moräne ----
             parallel(jHi - jLo + 1) { rowLo, rowHi in
             for j in (jLo + rowLo)..<(jLo + rowHi) {
-                for i in iLo...iHi {
+                guard p2Hi[j] >= p2Lo[j] else { continue }
+                for i in p2Lo[j]...p2Hi[j] {
                     let k = j * nn + i
                     let sk = psurf[k]
                     var inflow = 0.0, w = 0.0
@@ -2090,11 +2149,7 @@ public final class Terrain {
                             for dj in -swath...swath {
                                 let jj = j + dj
                                 if jj < 0 || jj >= nn { continue }
-                                for di in -swath...swath {
-                                    let ii = i + di
-                                    if ii < 0 || ii >= nn { continue }
-                                    sum += pero[jj * nn + ii]
-                                }
+                                sum += peroH[jj * nn + i]
                             }
                             rate = sum * swathNorm
                         }
@@ -2122,7 +2177,9 @@ public final class Terrain {
                     let meltRate = meltC * max(0, t)
                     let mu = baseMu + meltRate
                     let target = a / mu
-                    let e = exp(-mu * dt)
+                    // Ohne Schmelze (T ≤ 0, das Nährgebiet) ist μ = baseMu und der Faktor
+                    // der EINE Wert dieses Teilschritts (`x + 0.0 = x`: bit-gleich).
+                    let e = meltRate == 0 ? eBase : exp(-mu * dt)
                     pice[k] = target + (iceNow - target) * e
                     // ---- Moräne: was AUSSCHMILZT, legt seine Schuttfracht ab ----
                     // ∫₀^dt μ·I dt = μ·I*·dt + (I₀−I*)·(1−e^(−μdt)) — exakt, und
@@ -2142,7 +2199,7 @@ public final class Terrain {
                 }
             }
             }
-        }}}}}}}}}}
+        }}}}}}}}}}}
     }
 
     /// Baut `underIce` aus der frischen Eisdicke. **Leer, wenn keine Zelle über
