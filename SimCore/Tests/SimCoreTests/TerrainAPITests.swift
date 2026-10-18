@@ -287,6 +287,67 @@ final class TerrainAPITests: XCTestCase {
         }
     }
 
+    // MARK: - Hydraulic.erode
+
+    /// Regression: Nicht-endliche Werte (`NaN`, `±infinity`) bei Skalaren (`floor`,
+    /// `seaLevel`) oder Parametern (`HydraulicParams`) verwerfen die Charge als No-op.
+    /// Nicht-endliche Werte im Höhenfeld/Gradienten brechen einzelne Tropfenschritte
+    /// defensiv ab, statt in der Schrittprüfung oder Double-zu-Int-Konvertierungen
+    /// (`Int(npx)`) zu trappen oder auf benachbarte Zellen zu streuen.
+    func testDropletErodeHandlesNonFiniteValuesSafely() {
+        let c = cfg(n: 16)
+        let t = Terrain(config: c, seed: 1337)
+        let h = t.h, rock = t.rock, sed = t.sed
+        var trk = [Double](repeating: 0, count: c.count)
+
+        // 1. Nicht-endliches floor bricht sofort ab (No-op).
+        for badFloor in [Double.nan, .infinity, -.infinity] {
+            var hCopy = h, rockCopy = rock, sedCopy = sed
+            Hydraulic.erode(h: &hCopy, rock: &rockCopy, sed: &sedCopy, n: c.n, count: 50, seed: 7,
+                            floor: badFloor, p: c.hydraulic, track: &trk)
+            XCTAssertEqual(hCopy, h, "Nicht-endlicher floor darf das Terrain nicht verändern")
+        }
+
+        // 2. Nicht-endliches seaLevel bricht sofort ab (No-op).
+        for badSea in [Double.nan, .infinity, -.infinity] {
+            var hCopy = h, rockCopy = rock, sedCopy = sed
+            Hydraulic.erode(h: &hCopy, rock: &rockCopy, sed: &sedCopy, n: c.n, count: 50, seed: 7,
+                            floor: c.floor, p: c.hydraulic, seaLevel: badSea, track: &trk)
+            XCTAssertEqual(hCopy, h, "Nicht-endliches seaLevel darf das Terrain nicht verändern")
+        }
+
+        // 3. NaN im Höhenfeld führt nicht zum Absturz bei Richtungsnormierung oder Int-Casts und streut nicht.
+        let nanIdx = c.n / 2 * c.n + c.n / 2
+        var hWithNaN = h
+        hWithNaN[nanIdx] = .nan
+        var rockNaN = rock, sedNaN = sed
+        Hydraulic.erode(h: &hWithNaN, rock: &rockNaN, sed: &sedNaN, n: c.n, count: 100, seed: 7,
+                        floor: c.floor, p: c.hydraulic, track: &trk)
+        XCTAssertFalse(hWithNaN.enumerated().contains { $0.offset != nanIdx && !$0.element.isFinite },
+                       "NaN im Höhenfeld darf nicht auf benachbarte Zellen streuen")
+        XCTAssertTrue(rockNaN.allSatisfy(\.isFinite), "Rock-Feld muss endlich bleiben")
+        XCTAssertTrue(sedNaN.allSatisfy(\.isFinite), "Sediment-Feld muss endlich bleiben")
+
+        // 4. Nicht-endliche Parameter (z. B. inertia = NaN, depositRate = NaN) verwerfen die Charge als No-op.
+        var pBad = c.hydraulic
+        pBad.inertia = .nan
+        var hInertia = h, rockInertia = rock, sedInertia = sed
+        Hydraulic.erode(h: &hInertia, rock: &rockInertia, sed: &sedInertia, n: c.n, count: 50, seed: 7,
+                        floor: c.floor, p: pBad, track: &trk)
+        XCTAssertEqual(hInertia, h, "Nicht-endliche Parameter dürfen das Höhenfeld nicht verändern")
+        XCTAssertEqual(rockInertia, rock, "Nicht-endliche Parameter dürfen das Gesteinsfeld nicht verändern")
+        XCTAssertEqual(sedInertia, sed, "Nicht-endliche Parameter dürfen das Sedimentfeld nicht verändern")
+
+        var pDeposit = c.hydraulic
+        pDeposit.depositRate = .nan
+        var hDeposit = h, rockDeposit = rock, sedDeposit = sed
+        Hydraulic.erode(h: &hDeposit, rock: &rockDeposit, sed: &sedDeposit, n: c.n, count: 50, seed: 7,
+                        floor: c.floor, p: pDeposit, track: &trk)
+        XCTAssertEqual(hDeposit, h, "Nicht-endlicher depositRate darf das Höhenfeld nicht verändern")
+        XCTAssertEqual(rockDeposit, rock, "Nicht-endlicher depositRate darf das Gesteinsfeld nicht verändern")
+        XCTAssertEqual(sedDeposit, sed, "Nicht-endlicher depositRate darf das Sedimentfeld nicht verändern")
+    }
+
     // MARK: - recomputeFlowAfterEdit()
 
     /// Der Nach-Strich-Auffrischer ist die feste Aufruf-Reihenfolge, die bis
