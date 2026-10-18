@@ -38,6 +38,8 @@ uniform float water_ocean_surf_scale;
 uniform float water_ocean_surf_drift;
 uniform float water_ocean_surf_noise_lo;
 uniform float water_ocean_surf_noise_hi;
+uniform float water_ocean_surf_slope_lo;
+uniform float water_ocean_surf_slope_hi;
 uniform float water_ocean_wave_frequency;
 uniform float water_ocean_wave_amplitude;
 uniform float water_ocean_wave_lacunarity;
@@ -120,9 +122,20 @@ vec2 ocean_wave_grad(vec2 p, float footprint, float t) {
 	return g;
 }
 
+// Hermite-geglättete UV-Koordinaten innerhalb eines Texels: C1-stetige
+// Interpolation verhindert bilineare Ableitungssprünge und achsenparallele
+// Höhenlinien-Treppen auf dem Schelf (#174).
+vec2 smooth_uv(vec2 uv, float n) {
+	vec2 p = uv * n - 0.5;
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return (i + f + 0.5) / n;
+}
+
 // Trübung 0…1 am Punkt `p` (Welt-xz), über die Overlay-Blende (#174).
 float sediment_plume(vec2 p) {
-	vec2 uv = grid_uv(p);
+	vec2 uv = smooth_uv(grid_uv(p), max(grid_n, 2.0));
 	float lod = water_ocean_plume_lod;
 	float s = textureLod(plume_tex, uv, lod).r;
 	return overlay_blend < 1.0 ? mix(textureLod(plume_prev_tex, uv, lod).r, s, overlay_blend) : s;
@@ -141,9 +154,10 @@ void fragment() {
 	// Außerhalb des Sim-Quadrats ist das Meer tief.
 	float h = sea_level - water_ocean_depth_span;
 	if (inside_terrain) {
-		h = texture(height_tex, terrain_uv).r;
+		vec2 smooth_terrain_uv = smooth_uv(terrain_uv, max(grid_n, 2.0));
+		h = texture(height_tex, smooth_terrain_uv).r;
 		if (height_blend < 1.0) {
-			h = mix(texture(height_prev_tex, terrain_uv).r, h, height_blend);
+			h = mix(texture(height_prev_tex, smooth_terrain_uv).r, h, height_blend);
 		}
 	}
 	if (h > sea_level) {
@@ -172,7 +186,11 @@ void fragment() {
 	water *= 1.0 - fresnel;
 
 	// Brandung: schmaler, von Rauschen gebrochener Saum direkt an der Küste.
-	float surf = 1.0 - calib_window(0.0, water_ocean_surf_depth, depth);
+	// Gekoppelt an die Geländeneigung: auf flachen Sandbänken, Rinnen und Lagunen
+	// schäumt das Wasser nicht flächig, sondern nur am Hang zur Wasserlinie (#174).
+	float slope = length(vec2(dFdx(h), dFdy(h))) / max(footprint, 1e-6);
+	float surf = (1.0 - calib_window(0.0, water_ocean_surf_depth, depth))
+	           * calib_window(water_ocean_surf_slope_lo, water_ocean_surf_slope_hi, slope);
 	surf *= calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi,
 	                     noise2(p * water_ocean_surf_scale + vec2(u_time * water_ocean_surf_drift, 0.0)));
 	water = mix(water, water_ocean_surf_color, surf * water_ocean_surf_strength);
