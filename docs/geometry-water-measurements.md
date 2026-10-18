@@ -167,3 +167,195 @@ Die Sim-Zeit ist unberührt (114 vs. 115 ms — Rauschen), wie es sein muss.
   Stillwasser-Kodierung, Physik-Neutralität, Determinismus.
 - `game/tests/river_ribbons.gd` — der Band-Vertrag aus #31, um die
   Wasserspiegel-Ausnahme erweitert.
+
+## H. Raster-Läufe ohne Kästen (Issue #174)
+
+Messung am 18.10.2026 auf dem M4 Max, 16 CPU-Kerne, macOS 26.7,
+Release / Swift-5-Sprachmodus. Ausgangsstand ist `ea85a7c`, übernommener
+Entwurf `9acb962`. Der Cherry-Pick auf den neueren Delta-Stand war konfliktfrei.
+
+### Befund und Verfahren
+
+Die auffälligen dunklen Rechtecke auf den Ebenen tragen den Raster-Fluss-Kanal.
+Die alte Verbreiterung las vier Nachbarn in zwei Pässen. Auf einer geraden
+D8-/MFD-Linie entstehen so Streifen mit konstanter Breite, stumpfen Köpfen
+und Achs- bzw. 45°-Kanten. Echte Seen und Altarme müssen sichtbar bleiben;
+dunkles Wasser allein ist kein Kriterium zum Entfernen einer Fläche.
+
+`RiverWidening` stempelt stattdessen runde Querschnitte. Ihr Radius wächst mit
+der Intensität. Die ersten sechs kräftigen Zellen am Laufkopf verjüngen ihn;
+statisches Gitterrauschen verändert Breite und Lage. Bei vielen benachbarten
+kräftigen Zellen sinkt die Verbreiterung, damit ein Bündel nicht noch über
+seinen äußersten Strang hinaus zur Fläche wächst. Die ursprüngliche Linie
+bleibt erhalten. Unterhalb der Verbreiterungsschwelle entsteht keine neue
+Breite. Alle Werte stehen in `WaterRender.widen*`.
+
+Die Bank-Schranke bleibt symmetrisch und fest bei 0,004 Sim-Höhen Abstand
+zwischen Zielbett und Quell-Wasserspiegel. Der übernommene Entwurf
+multiplizierte diese Toleranz mit dem Abstand. Das ließ niedrige Bänke und
+Zellen unter Geländestufen nass werden. Der neue Wächter
+`testWideningKeepsLowBanksAndSteepDropsDry` prüft beide Vorzeichen mit 0,006
+Höhenunterschied; der unveränderte Entwurf malt dabei 388 verbotene Zellen.
+Mit der festen Schranke sind es 0.
+
+Die Verbreiterung schreibt sequenziell per Maximum. Es gibt keine konkurrierenden
+Stempel und keine Abhängigkeit von der Thread-Zahl. Die Sim-Physik und die
+See-Übergabe `lakeRawWetDepth` bleiben unverändert.
+
+### Kalibrierung und verworfene Varianten
+
+| Größe | Wert | Wirkung |
+|---|---:|---|
+| Intensitäts-Stützstellen | 0,55 / 0,8 | Bäche unter der ersten bleiben unverbreitert |
+| Kernradius an erster / zweiter Stützstelle / bei Intensität 1 | 1 / 1,1 / 1,35 Zellen | stetige Breitenhierarchie oberhalb der Schwelle |
+| Schulter | 1 Zelle | Intensität fällt außerhalb des Kerns auf 0 |
+| Radius-Schwankung / Rausch-Gitterabstand | ±40 % / 12 Zellen | variable Breite ohne zeitliches Rauschen |
+| Mittelpunktversatz | 2,4 Grundradien × Rauschen | lockert die zellgerade Kontur |
+| Kopf-Verjüngung | 0,35 → 1 über 6 kräftige Vorgänger | schmaler Beginn; die Originallinie bleibt |
+| Dichte-Fenster / Rampe / kleinster Faktor | 7×7 / 0,2…0,5 / 0,55 | weniger zusätzliches Wasser in dichten Bündeln |
+| Intensitätsverlust je Zelle / Bank-Toleranz | 0,09 / 0,004 | lesbare Ufer; feste Höhen-Schranke |
+
+Verworfen sind die alte Diamant-Dilatation und die mit dem Abstand wachsende
+Bank-Toleranz aus dem Entwurf. Die Radien, Schulter und Formvariation des
+Entwurfs bleiben nach dem Bildvergleich erhalten. Der Kommentar über eine
+angeblich gemessene Simplex-Variante wurde entfernt: im übernommenen Stand
+lag dazu kein reproduzierbares Vergleichsprotokoll vor.
+
+Der Entwurf maß außerdem die isolierte Verbreiterung auf einem aus fertigen
+RGBA-Bytes zurückgerechneten Feld. Dieses Feld war bereits verbreitert,
+geglättet und gedeckelt. Diese Zahl ist keine Messung der Produktions-Eingabe
+und wird hier nicht verwendet. Gemessen wird der vollständige Wasserfeld-Aufruf.
+
+### Kosten
+
+`testRectWaterCostDiagnostic` erzeugt je Seed frisch eine Produktionswelt:
+`n = 720`, `world = 112,4789`, Produktions-Einlauf 3000 Jahre, danach
+20 × 1000 Jahre. Keine Wiederverwendung alter `/tmp`-Snapshots. Bänder einmal
+bauen, beide Renderer aufwärmen, dann 40 Paare mit wechselnder Reihenfolge
+AB/BA. Gemessen wird jeder einzelne vollständige `bytes`-Aufruf einschließlich
+Blur, EWMA, Quantisierung, Komponenten und Bank-Schranke; `blend = 1`,
+Geometrie-Modus. Die Headless-Welt zeigt den Zustand nach dem letzten Schritt,
+ohne den zusätzlichen manuellen Abfluss-/Seespiegel-Neuaufbau der Screenshot-Bühne.
+Während dieser Messung liefen keine eigenen Screenshot-, Build- oder Suite-Prozesse.
+
+| Seed | Diamant, Median ms | Scheibe, Median ms | Mehrkosten ms | Anteil der Mehrkosten an 33,3 ms |
+|---|---:|---:|---:|---:|
+| 1337 | 11,18 | 12,55 | +1,37 | 4,1 % |
+| 42 | 8,40 | 8,94 | +0,54 | 1,6 % |
+| 20 | 8,67 | 9,68 | +1,01 | 3,0 % |
+
+Das ist eine Mehrlast, keine Optimierung. Die Tabelle ist auch keine
+Bildraten-Messung: die Wasser-Aufbereitung läuft im Zeitraffer im Hintergrund
+und die Overlays werden gedrosselt. Der vollständige Frame mit GPU und Upload
+wurde hier nicht vermessen. Im übernommenen Entwurf lagen die vorläufigen
+Mediane für 1337 bei 11,08 → 12,34 ms und für 42 bei 8,59 → 9,36 ms,
+10 interleaved Blöcke à 6 Aufrufe. Diese Blockmittel sind eine andere Statistik
+als die 40 Einzel-Aufrufe der Endmessung; daraus folgt keine belastbare
+Beschleunigung durch die Bank-Korrektur.
+
+Reproduktion, beide Diagnose-Tests sind hinter `RS_MEASURE=1`:
+
+```sh
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testRectWaterCostDiagnostic
+RS_MEASURE=1 swift test -c release --package-path SimCore \
+    -Xswiftc -swift-version -Xswiftc 5 --filter testRectWaterDiagnostic
+```
+
+`WaterFieldRenderer.legacyWiden` hält intern den alten Vergleichsarm; für
+Bildvergleiche im selben Build setzt `RS_WIDEN_DIAMOND=1` ihn ebenfalls.
+Die Endbilder unten vergleichen dennoch die echte Library von `ea85a7c`
+mit dem neuen Build.
+
+### Formmessung und Grenzen
+
+`testRectWaterDiagnostic` liest die tatsächlichen Renderer-Bytes durch die
+Fluss- und See-Fenster des Shaders, ab Maskenwert 0,5, außerhalb der Banddeckung
+von 0,3. Komponenten sind über vier Nachbarn verbunden. Ein Kasten ist hier
+rein geometrisch definiert: mindestens 30 Zellen, Füllgrad des kleinsten
+Rechtecks im 5°-Raster mindestens 0,75, Streckung mindestens 2. Eine Komponente
+mit überwiegend gerader Kante hat mindestens 20 Zellen und mindestens 50 %
+ihrer Randkanten in achsparallelen Läufen von mindestens sechs Zellen.
+
+| Seed | Kasten-Komponenten / Zellen alt → neu | Komponenten / Zellen mit überwiegend gerader Kante alt → neu |
+|---|---|---|
+| 1337 | 1 / 70 → 1 / 30 | 4 / 226 → 1 / 26 |
+| 42 | 1 / 67 → 0 / 0 | 3 / 121 → 2 / 54 |
+| 20 | 0 / 0 → 0 / 0 | 0 / 0 → 0 / 0 |
+
+Die Konturen werden weniger rechteckig, die Drainage bleibt ein Raster.
+Die Messung verspricht deshalb keine vollständige Beseitigung gerader Stücke.
+Bei 1337 bleibt ein anderer kleiner Kasten bei Zelle 59/370 mit 30 Zellen
+übrig. Auch ein echter länglicher See erfüllt je nach Form ein Streifenmaß.
+Über beide Wasserkanäle sind 124 / 10 / 81 früher sichtbare Zellen in den
+Seeds 1337 / 42 / 20 weiter als drei Zellen von neu sichtbarem Wasser entfernt;
+davon liegen 59 / 10 / 56 nahe einem Band. Das ist ein Grenzwertvergleich von
+Komponenten und Konturen, keine Zusage über identische Wasserfläche.
+Die Tests prüfen die erhaltene Originallinie, schwache Läufe, spitze Köpfe,
+variable Breite, Dichte-Dämpfung, Bank-Schranke und die Band/See-Übergabe direkt.
+
+### Bildvergleich
+
+Alle neun Kombinationen aus Seeds 1337 / 42 / 20 und `valley` / `close` /
+`diorama`, Jahr 20.000, wurden vorher und nachher frisch aufgenommen und
+angesehen. Die Vorher-Library stammt aus einem sauberen Checkout von `ea85a7c`;
+Quell- und Library-Stempel stimmen überein:
+`fc3ea824dd5e9c66d0f85fdf70a98b88cb64d49fbafde904b77609b104ca1583`.
+Der neue Build wurde mit `RS_NO_SHARED_BUILD=1` gebaut und importiert.
+
+Fenster jeweils maximiert, Viewport **3456 × 2104**. Es war nur das interne
+Display angeschlossen: `--screen 1` meldete `screen_count = 1`; alle gültigen
+Vergleichsaufnahmen verwenden deshalb `--screen 0`. Die erste Aufnahme mit
+der ungültigen Bildschirmnummer wurde erneut aufgenommen und nicht verwendet.
+
+Die Gesamtansichten ändern sich wenig, weil die Hauptläufe überwiegend
+Band-Geometrie sind. An den Raster-Läufen sind die Konturen runder und die
+Breiten weniger konstant; Bäche bleiben dünn. Zusätzlich zeigen drei feste
+Nahansichten die in der Diagnose auffälligen Läufe. Gleiche Kamera vor/nachher:
+
+| Seed | `RS_TARGET` | Weitere Werte |
+|---|---|---|
+| 1337 | `35.6,-3.7` | `RS_DIST=12 RS_YAW=0.7 RS_PITCH=1.0` |
+| 42 | `34.9,4.8` | gleich |
+| 20 | `3.7,41.1` | gleich |
+
+Je Tafel oben das Tal-Preset, unten diese Nahansicht, links vorher und rechts
+nachher. Die Originale liegen unter `/tmp/rw/<Seed>_<Kamera>_before.png` und
+`/tmp/rw/<Seed>_<Kamera>_after.png`, mit `focus` für die feste Nahansicht.
+Die JPEG-Tafeln bleiben im Repo, auch wenn `/tmp` gelöscht wird.
+
+![Seed 1337, Tal und Raster-Läufe vorher/nachher](screenshots/zielbild-174/rasterwasser-1337.jpg)
+![Seed 42, Tal und Raster-Läufe vorher/nachher](screenshots/zielbild-174/rasterwasser-42.jpg)
+![Seed 20, Tal und Raster-Läufe vorher/nachher](screenshots/zielbild-174/rasterwasser-20.jpg)
+
+Die nadeldünne dunkle Linie vor der Lagune in Seed 1337 bleibt ein separater
+Befund am Bandende, keine Diamant-Verbreiterung. Eine Projektion der tatsächlich
+gebauten Bandpunkte trifft dort den Höhenwechsel von Zentrum
+`(-46,448; 3,932; 8,587)` zu `(-46,518; 3,540; 8,655)`, bei nur rund 0,145
+Welteinheiten Bandbreite und Deckkraft 0,41 → 0,38. Das ist die Übergabe von
+der angehobenen Land-Geometrie an die Meeresfläche. Sie bleibt für die parallel
+bearbeitete Küsten-/Bandenden-Korrektur unangetastet. Die Scheiben ändern die
+Raster-Fläche daneben, nicht diesen Höhenwechsel.
+
+### Verifikation
+
+- Gesamte SimCore-Pflichtsuite: **606 Tests, 70 Messläufe übersprungen,
+  0 Fehler**, 207,4 Sekunden. Die neuen Form- und Bank-Wächter laufen ohne
+  Mess-Schalter; nur die beiden Tabellen-Läufe sind gegatet.
+- `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`,
+  `canopy.gd`, `relief.gd`: alle sechs Erfolgsmarken über `scripts/godot-test.sh`.
+- `simperf --hash` vor und nach der Änderung:
+  **`08d32575d5cd353a`**, gleiche Maschine, Standardlauf des Harness.
+- Eigenständiger Extension-Release-Build mit `RS_NO_SHARED_BUILD=1`,
+  Schlusszeile „macOS-GDExtension gebaut und signiert“, Build-Stempel-Prüfung
+  erfolgreich. Import wiederholt erfolgreich. Der erste Import hatte alle
+  Phasen abgeschlossen und brach anschließend beim Beenden mit Signal 11 ab;
+  der zweite lief sauber durch.
+
+Bestehender Engine-Befund: `relief.gd` druckt beim Waldmasken-Upload nach
+Neu-Generieren `ERROR: Invalid image`, erreicht aber `RELIEF_OK`. Derselbe
+Lauf auf dem unveränderten `ea85a7c` reproduziert dieselbe Meldung und besteht
+ebenfalls. Der Befund gehört nicht zur Raster-Verbreiterung und wurde nicht
+im Zuge dieses Fixes verändert. Vollständige lokale Protokolle stehen in
+`/tmp/rw/suite.log`, `final-diagnostics.log`, `hash-before.log`, `hash-after.log`
+und `contract-*.log`.
