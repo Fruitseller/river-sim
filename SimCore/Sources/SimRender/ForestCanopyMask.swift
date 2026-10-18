@@ -144,13 +144,26 @@ public enum ForestCanopyMask {
     /// ergibt dasselbe wie viele kleine Takte). Kommt Wasser, ist der Wald
     /// sofort weg; zieht es sich zurück, wächst er nach. Liefert die Maske als
     /// R8. Passt `memory` nicht zu `target`, beginnt das Gedächtnis beim Ziel.
+    /// Nicht-positive sowie nicht-endliche Zeitschritte (`dtYears <= 0`, `NaN`, `±inf`)
+    /// führen defensiv zu keinem Nachwachsen und vergiften das Gedächtnis nicht.
+    /// Nicht-positives oder ungültiges `tau` (`tau <= 0`, `NaN`) führt defensiv zu
+    /// sofortigem Nachwachsen auf das Ziel (`rise = 1`, instantane Relaxation).
     public static func regrow(_ memory: inout [Float], toward target: [UInt8],
                               dtYears: Double, tau: Double) -> [UInt8] {
+        guard !target.isEmpty else {
+            memory = []
+            return []
+        }
         if memory.count != target.count {
             memory = target.map { Float($0) / 255 }
             return target
         }
-        let rise = Float(tau > 0 ? Terrain.relaxFraction(dt: max(dtYears, 0), tau: tau) : 1)
+        guard tau > 0 else {
+            memory = target.map { Float($0) / 255 }
+            return target
+        }
+        let safeDt = (dtYears.isFinite && dtYears > 0) ? dtYears : 0.0
+        let rise = Float(Terrain.relaxFraction(dt: safeDt, tau: tau))
         var out = target
         memory.withUnsafeMutableBufferPointer { mb in
         out.withUnsafeMutableBufferPointer { ob in
@@ -159,9 +172,9 @@ public enum ForestCanopyMask {
                 let t = Float(po[k]) / 255
                 let m = pm[k]
                 if t <= m { pm[k] = t; continue }   // Ziel steht schon in `po[k]`
-                let next = m + (t - m) * rise
+                let next = min(1.0, max(0.0, m + (t - m) * rise))
                 pm[k] = next
-                po[k] = UInt8(min(255, (next * 255).rounded()))
+                po[k] = UInt8((next * 255).rounded())
             }
         }}
         return out
