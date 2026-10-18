@@ -189,6 +189,13 @@ public final class Terrain {
     private var iceRate: [Double] = []
     private var iceSurf: [Double] = []
     private var iceEro: [Double] = []
+    /// Lawinen-Scratch (`SimConfig.iceAvalancheSlopeHi`): Ziel-Zelle je
+    /// Quellzelle (−1 = keine Lawine) und die Netto-Änderung der Firn-Zufuhr
+    /// je Zelle (Quelle −, Ziel +). `iceAvFeed` ist außerhalb der Lawinenliste
+    /// immer 0 und wird am Ende jedes `updateIce` wieder dahin zurückgesetzt.
+    private var iceAvTarget: [Int32] = []
+    private var iceAvFeed: [Double] = []
+    private var iceAvPhi: [Double] = []
     public private(set) var veg: [Double]    // Vegetationsdichte 0..1
     /// Vegetations-Klasse je Zelle: 0 kahl · 1 Gras · 2 Wald · 3 Auwald.
     /// ADDITIV zu `veg` (das bleibt Dichte 0..1 für alle bestehenden
@@ -568,6 +575,9 @@ public final class Terrain {
         iceRate = []
         iceSurf = []
         iceEro = []
+        iceAvTarget = []
+        iceAvFeed = []
+        iceAvPhi = []
         vegScratchRow = []
         areaPow = []
         depositDampBuf = []
@@ -1652,8 +1662,9 @@ public final class Terrain {
         // bleibt trotzdem stehen: die Messung stammt vom Zustand VOR den
         // Teilschritten, und ein Sculpt-Eingriff kann die Oberfläche dazwischen
         // versteilern.
-        let domain = iceTransportDomain()
+        var domain = iceTransportDomain()
         guard domain.iLo <= domain.iHi else { rebuildIceMask(); return }
+        let avalanche = iceAvalancheMap(domain: &domain)
         let totalK = kYear * dt * domain.scale
         let nSub = max(1, Int((totalK / max(1e-9, cfg.iceFlowSubCap)).rounded(.up)))
         let subK = kYear * dt / Double(nSub)
@@ -1664,10 +1675,150 @@ public final class Terrain {
         // Nachbarfluss und Schleifspur ein. Außerhalb bleiben Eis und Bilanz null.
         let iLo = max(0, domain.iLo - nSub), iHi = min(n - 1, domain.iHi + nSub)
         let jLo = max(0, domain.jLo - nSub), jHi = min(n - 1, domain.jHi + nSub)
+        // Die Lawinen-Karte folgt dem Bett: alle `iceAvalancheRefreshYears` neu,
+        // sonst hinge das Eis an der Schrittweite (ein 1000-Jahr-Schritt liefe auf
+        // der Karte vom Schrittanfang, 64 Zeitraffer-Schritte à 15,6 Jahre auf
+        // frischen; Eismasse nach 20.000 Jahren auf Seed 1337: 229 / 201 / 199 mit
+        // einer Karte je Schritt, 246 / 236 / 247 mit einer je Teilschritt). Ziele
+        // außerhalb des Arbeitsfensters fallen dabei weg, das Fenster steht.
+        var av = avalanche
+        var sinceMap = 0.0
+        let refresh = max(1e-9, cfg.iceAvalancheRefreshYears)
         for _ in 0..<nSub {
-            iceFlowSubStep(kappa: subK, dt: subDt, iLo: iLo, iHi: iHi, jLo: jLo, jHi: jHi)
+            if sinceMap >= refresh * (1 - 1e-9), let old = av {
+                clearAvalancheFeed(old)
+                var fixed = domain
+                av = iceAvalancheMap(domain: &fixed, extend: false)
+                sinceMap = 0
+            }
+            iceFlowSubStep(kappa: subK, dt: subDt, iLo: iLo, iHi: iHi, jLo: jLo, jHi: jHi,
+                           avalanche: av)
+            sinceMap += subDt
         }
+        if let av { clearAvalancheFeed(av) }
         rebuildIceMask()
+    }
+
+    private struct IceAvalanche {
+        var src: [Int], dst: [Int], phi: [Double]
+    }
+    private func clearAvalancheFeed(_ av: IceAvalanche) {
+        iceAvFeed.withUnsafeMutableBufferPointer { fb in
+            let pf = fb.baseAddress!
+            for s in 0..<av.src.count { pf[av.src[s]] = 0; pf[av.dst[s]] = 0 }
+        }
+    }
+
+    /// Lawinen-Karte des Firns (`SimConfig.iceAvalancheSlopeHi`), je Teilschritt aus
+    /// dem aktuellen Bett (`updateIce`): jede kalte, beschneite Zelle mit
+    /// Makrosteigung (Maximum im Umkreis `iceAvalancheReach`) über `Lo` bekommt
+    /// ihr Ziel — die erste Zelle am Hangfuß, deren Steigung unter `Lo` liegt, auf
+    /// dem steilsten Abstieg über `h` (8 Nachbarn, Diagonale durch √2) — und ihren
+    /// abgehenden Anteil `φ = smoothstep((s − Lo)/(Hi − Lo))`. Der Lauf endet vor
+    /// dem Meer und in Mulden (dort bleibt der Firn liegen).
+    ///
+    /// Zeilenparallel (je Zelle nur der eigene Eintrag in `iceAvTarget`, Pfad
+    /// liest nur `h`), danach seriell kompaktiert: die Liste liegt in
+    /// aufsteigender Zellreihenfolge, die Zufuhr wird also in fester
+    /// Reihenfolge summiert — bit-identisch zur sequenziellen Schleife. Wie viel
+    /// Zufuhr abgeht, rechnet `applyAvalancheFeed` mit der Temperatur des Betts,
+    /// das der Teilschritt vor sich hat. `extend` erweitert `domain` um die
+    /// Ziel-Zellen (erste Karte des Schritts) bzw. verwirft Ziele außerhalb.
+    private func iceAvalancheMap(domain: inout (scale: Double, iLo: Int, iHi: Int, jLo: Int, jHi: Int),
+                                 extend: Bool = true) -> IceAvalanche? {
+        let hiS = cfg.iceAvalancheSlopeHi
+        guard hiS > 0, cfg.cellSize > 0, n >= 8 else { return nil }
+        let nn = n, cnt = cfg.count
+        let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
+        let firnT = cfg.iceFirnTemp
+        // Weltsteigung → Makrosteigung (Maßstab wie die Kennzahl „flach"):
+        // `macroSlope` ist das Mittel beider Achsen je Zelle, der Faktor 2 macht
+        // eine achsenparallele Wand exakt.
+        let toMacro = cfg.cellSize / (2 * RenderContract.heightScale)
+        let loM = max(0, cfg.iceAvalancheSlopeLo) * toMacro
+        let spanM = max(1e-12, hiS * toMacro - loM)
+        let maxRun = max(1, cfg.iceAvalancheMaxRun)
+        if iceAvTarget.count != cnt { iceAvTarget = .init(repeating: -1, count: cnt) }
+        if iceAvFeed.count != cnt { iceAvFeed = .init(repeating: 0, count: cnt) }
+        if iceAvPhi.count != cnt { iceAvPhi = .init(repeating: 0, count: cnt) }
+        let rowLo = max(2, domain.jLo), rowHi = min(nn - 3, domain.jHi)
+        let colLo = max(2, domain.iLo), colHi = min(nn - 3, domain.iHi)
+        guard rowLo <= rowHi, colLo <= colHi else { return nil }
+        var rowCount = [Int](repeating: 0, count: nn)
+        let reachC = max(0, cfg.iceAvalancheReach)
+        let slopeAround = { (ph: UnsafePointer<Double>, i: Int, j: Int) -> Double in
+            var sl = Terrain.macroSlope(ph, j * nn + i, nn)
+            if reachC > 0 {
+                for dj in -reachC...reachC { for di in -reachC...reachC {
+                    let ii = i + di, jj = j + dj
+                    if ii < 2 || ii > nn - 3 || jj < 2 || jj > nn - 3 { continue }
+                    sl = max(sl, Terrain.macroSlope(ph, jj * nn + ii, nn))
+                } }
+            }
+            return sl
+        }
+        h.withUnsafeBufferPointer { hb in
+        snow.withUnsafeBufferPointer { sb in
+        iceAvTarget.withUnsafeMutableBufferPointer { tb in
+        iceAvPhi.withUnsafeMutableBufferPointer { fb in
+        rowCount.withUnsafeMutableBufferPointer { cb in
+            let ph = hb.baseAddress!, psnow = sb.baseAddress!
+            let pt = tb.baseAddress!, pc = cb.baseAddress!, pf = fb.baseAddress!
+            parallel(rowHi - rowLo + 1) { lo, hi in
+                for j in (rowLo + lo)..<(rowLo + hi) {
+                    var count = 0
+                    for i in colLo...colHi {
+                        let k = j * nn + i
+                        pt[k] = -1
+                        guard psnow[k] > 0, ph[k] > sea,
+                              t0 - gamma * (ph[k] - sea) < firnT else { continue }
+                        let sl = slopeAround(ph, i, j)
+                        guard sl > loM else { continue }
+                        var x = (sl - loM) / spanM
+                        x = min(1, max(0, x))
+                        let f = x * x * (3 - 2 * x)
+                        guard f > 0 else { continue }
+                        pf[k] = f
+                        // Steilster Abstieg bis zur ersten nicht-steilen Zelle.
+                        var c = k, ci = i, cj = j
+                        var run = 0
+                        while run < maxRun {
+                            var best = -1, bi = 0, bj = 0, bd = 0.0
+                            for dj in -1...1 { for di in -1...1 where di != 0 || dj != 0 {
+                                let ii = ci + di, jj = cj + dj
+                                if ii < 2 || ii > nn - 3 || jj < 2 || jj > nn - 3 { continue }
+                                let q = jj * nn + ii
+                                let drop = (ph[c] - ph[q]) / (di != 0 && dj != 0 ? 1.4142135623730951 : 1)
+                                if drop > bd { bd = drop; best = q; bi = ii; bj = jj }
+                            } }
+                            if best < 0 || ph[best] <= sea { break }
+                            c = best; ci = bi; cj = bj; run += 1
+                            if Terrain.macroSlope(ph, c, nn) <= loM { break }
+                        }
+                        if c != k { pt[k] = Int32(c); count += 1 }
+                    }
+                    pc[j] = count
+                }
+            }
+        }}}}}
+        var src: [Int] = [], dst: [Int] = [], phi: [Double] = []
+        iceAvTarget.withUnsafeBufferPointer { tb in
+        iceAvPhi.withUnsafeBufferPointer { fb in
+            let pt = tb.baseAddress!, pf = fb.baseAddress!
+            for j in rowLo...rowHi where rowCount[j] > 0 {
+                for i in colLo...colHi {
+                    let k = j * nn + i
+                    let c = Int(pt[k])
+                    guard c >= 0 else { continue }
+                    let ci = c % nn, cj = c / nn
+                    if !extend && (ci < domain.iLo || ci > domain.iHi || cj < domain.jLo || cj > domain.jHi) { continue }
+                    src.append(k); dst.append(c); phi.append(pf[k])
+                    domain.iLo = min(domain.iLo, ci); domain.iHi = max(domain.iHi, ci)
+                    domain.jLo = min(domain.jLo, cj); domain.jHi = max(domain.jHi, cj)
+                }
+            }
+        }}
+        return src.isEmpty ? nil : IceAvalanche(src: src, dst: dst, phi: phi)
     }
 
     /// Maßstab der Sub-Taktung: `max(ΣΔs⁺_max, 2·I_max)` über alle Zellen, die Eis
@@ -1734,6 +1885,34 @@ public final class Terrain {
         return (scale, iLo, iHi, jLo, jHi)
     }
 
+    /// Lawinen-Zufuhr EINES Teilschritts: jede Quelle gibt `φ · a` ihrer Firn-
+    /// Zufuhr an das Ziel am Hangfuß ab (`iceAvFeed`: Quelle −, Ziel +). `a` mit
+    /// DERSELBEN Formel wie in Pass 2 (Temperatur des Betts, das der Teilschritt
+    /// vor sich hat), damit eine Quelle mit `φ = 1` exakt 0 behält. Seriell über
+    /// die kurze, geordnete Liste: feste Summationsreihenfolge, keine
+    /// konkurrierenden Schreibzugriffe.
+    private func applyAvalancheFeed(_ av: IceAvalanche, firn: Double) {
+        let sea = cfg.sea, t0 = cfg.climateSeaLevelTemp, gamma = cfg.climateLapseRate
+        let firnT = cfg.iceFirnTemp, coldSpan = max(1e-9, cfg.iceFirnColdSpan)
+        h.withUnsafeBufferPointer { hb in
+        snow.withUnsafeBufferPointer { sb in
+        iceAvFeed.withUnsafeMutableBufferPointer { fb in
+            let ph = hb.baseAddress!, psnow = sb.baseAddress!, pf = fb.baseAddress!
+            let m = av.src.count
+            for s in 0..<m { pf[av.src[s]] = 0; pf[av.dst[s]] = 0 }
+            for s in 0..<m {
+                let k = av.src[s]
+                let t = t0 - gamma * max(0, ph[k] - sea)
+                let fCold = min(1, max(0, (firnT - t) / coldSpan))
+                let a = firn * psnow[k] * fCold
+                if a <= 0 { continue }
+                let moved = av.phi[s] * a
+                pf[k] -= moved
+                pf[av.dst[s]] += moved
+            }
+        }}}
+    }
+
     /// EIN Teilschritt des Gletschers. Zwei Pässe über das Gitter, beide
     /// zeilenparallel und bit-identisch zur sequenziellen Schleife:
     ///
@@ -1754,7 +1933,8 @@ public final class Terrain {
     /// gutschreiben (bis auf die eine Division `out/ΣΔs⁺`, gegen die der
     /// Nullpunkt-Wächter `if I < 0` steht).
     private func iceFlowSubStep(kappa: Double, dt: Double,
-                                iLo: Int, iHi: Int, jLo: Int, jHi: Int) {
+                                iLo: Int, iHi: Int, jLo: Int, jHi: Int,
+                                avalanche: IceAvalanche?) {
         let nn = n, cnt = cfg.count
         let sea = cfg.sea, cs = cfg.cellSize
         let moveFrac = max(0, cfg.iceFlowMoveFraction)
@@ -1787,18 +1967,22 @@ public final class Terrain {
         // 1 ulp weg (dieselbe Falle wie in `Hydraulic.dig`, dort ausgemessen).
         let lithOn = lithErodeK.count == cnt
         let lithArr = lithOn ? lithErodeK : [1.0]
+        if let av = avalanche { applyAvalancheFeed(av, firn: firn) }
+        let feedOn = avalanche != nil
+        let feedArr = feedOn ? iceAvFeed : [0.0]
         h.withUnsafeMutableBufferPointer { hb in
         rock.withUnsafeMutableBufferPointer { rkb in
         sed.withUnsafeMutableBufferPointer { sb in
         ice.withUnsafeMutableBufferPointer { ib in
         snow.withUnsafeBufferPointer { snb in
         lithArr.withUnsafeBufferPointer { ldb in
+        feedArr.withUnsafeBufferPointer { fdb in
         iceRate.withUnsafeMutableBufferPointer { rtb in
         iceSurf.withUnsafeMutableBufferPointer { sfb in
         iceEro.withUnsafeMutableBufferPointer { erb in
             let ph = hb.baseAddress!, prock = rkb.baseAddress!, psed = sb.baseAddress!
             let pice = ib.baseAddress!, psnow = snb.baseAddress!
-            let plith = ldb.baseAddress!
+            let plith = ldb.baseAddress!, pfeed = fdb.baseAddress!
             let prate = rtb.baseAddress!, psurf = sfb.baseAddress!, pero = erb.baseAddress!
             // ---- Pass 1: Oberfläche einfrieren, Ausstrom je Zelle bestimmen ----
             parallel(freezeJHi - freezeJLo + 1) { rowLo, rowHi in
@@ -1867,7 +2051,8 @@ public final class Terrain {
                     // §L).
                     let t = t0 - gamma * max(0, ph[k] - sea)
                     let fCold = min(1, max(0, (firnT - t) / coldSpan))
-                    let a = firn * psnow[k] * fCold
+                    var a = firn * psnow[k] * fCold
+                    if feedOn { a += pfeed[k]; if a < 0 { a = 0 } }
                     // Eisfreie Zelle ohne Zufluss und ohne Zufuhr: nichts zu
                     // rechnen (das Meer und alles Land unterhalb der Firn-Grenze)
                     // — BIT-IDENTISCH zur vollen Rechnung, nicht genähert
@@ -1957,7 +2142,7 @@ public final class Terrain {
                 }
             }
             }
-        }}}}}}}}}
+        }}}}}}}}}}
     }
 
     /// Baut `underIce` aus der frischen Eisdicke. **Leer, wenn keine Zelle über

@@ -135,6 +135,9 @@ final class WaterRendererTests: XCTestCase {
     var config = SimConfig()
     config.rangeLandform = calibrationRangeLandform
     config.meanderBelt = calibrationMeanderBelt
+    // Ohne Lawinen-Abgang des Firns (#174): er verschiebt die Realisierung, und der
+    // Wächter braucht in Jahr 30.000 junge Altarme (`TestCalibration`).
+    config.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
     // Delta-Schüttung (#174, Punkt 26) aus, aus demselben Grund: mit ihr
     // trug diese Realisierung in Jahr 30.000 keinen jungen Altarm (erste
     // Fassung des Passes).
@@ -562,7 +565,13 @@ final class WaterRendererTests: XCTestCase {
   /// 0,2–1,9; Seed 1337, Jahr 20.000, `docs/zielbild-measurements.md` § Delta,
   /// Mündung).
   func testRiverBandsReachTheSeaAtFullWidthAndOpacity() {
-    let terrain = Terrain(config: .production, seed: RenderContract.defaultSeed,
+    // Ohne Lawinen-Abgang des Firns (#174): die Probe prüft die Mündungs-Geometrie
+    // einer Realisierung (Seed 1337, Jahr 4000), nicht das Eis; mit dem Abgang
+    // endet ein Band bei Halbbreite 3,0 statt 2,6 — Realisierungs-Glück
+    // (`TestCalibration`).
+    var production = SimConfig.production
+    production.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
+    let terrain = Terrain(config: production, seed: RenderContract.defaultSeed,
                           settleYears: SimConfig.productionSettleYears)
     terrain.step(dtYears: 1000)
     terrain.computeFlow()

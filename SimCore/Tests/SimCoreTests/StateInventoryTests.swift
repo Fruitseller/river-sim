@@ -115,6 +115,17 @@ final class StateInventoryTests: XCTestCase {
         ("iceSurf", .scratch(reason:
             "Arbeitspuffer des Eistransports: die eingefrorene Eis-Oberfläche "
             + "des Teilschritts.")),
+        ("iceAvTarget", .scratch(reason:
+            "Arbeitspuffer des Lawinen-Abgangs (`iceAvalancheMap`): Ziel-Zelle je "
+            + "Quellzelle, wird je `updateIce` im Arbeitsfenster neu geschrieben.")),
+        ("iceAvFeed", .scratch(reason:
+            "Arbeitspuffer des Lawinen-Abgangs: Netto-Änderung der Firn-Zufuhr "
+            + "je Zelle in einem Teilschritt; außerhalb der Lawinenliste 0 und "
+            + "am Ende jedes `updateIce` dorthin zurückgesetzt.")),
+        ("iceAvPhi", .scratch(reason:
+            "Arbeitspuffer des Lawinen-Abgangs: abgehender Anteil je Quellzelle, "
+            + "wird mit `iceAvTarget` je Karte neu geschrieben und nur dort gelesen, "
+            + "wo `iceAvTarget` ein Ziel trägt.")),
         ("iceEro", .scratch(reason:
             "Arbeitspuffer des Eistransports: lokale glaziale Erosionsrate, die "
             + "Pass 2 über die Schleifspur mittelt.")),

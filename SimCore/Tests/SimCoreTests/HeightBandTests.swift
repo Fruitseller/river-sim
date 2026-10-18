@@ -54,6 +54,11 @@ final class HeightBandTests: XCTestCase {
     /// dort, wo `snowStart` steht.
     func testSnowZoneFollowsTheClimateNotAFixedLandFraction() {
         var c = SimConfig(); c.n = 832; c.world = calibrationWorld
+        // Ohne Lawinen-Abgang: mit ihm bleiben die Gipfel über der Firn-Grenze
+        // stehen (Maximum nach 30k Jahren 0.726 statt unter 0.70), die
+        // Vorbedingung „Insel trägt ab" und die Schranke unten sind an den
+        // Stand davor gemessen (`TestCalibration`).
+        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
         let t = Terrain(config: c, seed: 1337)
         let atGen = snowFractions(t)
         let startGen = t.heightBands.snowStart

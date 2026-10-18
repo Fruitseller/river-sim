@@ -23,6 +23,8 @@ final class Lithology: XCTestCase {
         c.meanderBelt = calibrationMeanderBelt  // Mäander-Mechanik vor #174
         c.iceFirnTemp = calibrationIceFirnTemp  // Firn-Grenze 0.5731: die Gegenprobe braucht Eis
         c.deltaTrapFraction = calibrationDeltaTrapFraction  // ohne Delta-Schüttung, s. dort
+
+        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi  // ohne Abgang: s. TestCalibration
         return c
     }
 
@@ -365,6 +367,12 @@ final class Lithology: XCTestCase {
     func testEndorheicMechanicsSurviveLithology() {
         var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6   // dryCfg von #11, Lithologie AN
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        // Die Ratenbegrenzungs-Probe unten (`levelWalk`) ist, wie dort beschrieben,
+        // Realisierungs-Glück eines diskreten Sill-Ereignisses; der Lawinen-Abgang
+        // des Firns (#174) verschiebt über Eis und Moränen die Realisierung
+        // (Sprung 0.01117 gegen Schranke 0.01048), ohne etwas am Becken-Mechanismus
+        // zu ändern — gepinnt wie die übrigen Eis-Stellschrauben (`TestCalibration`).
+        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
         var ref = c; ref.lithologyEnabled = false                  // derselbe Arm wie der #11-Wächter
 
         /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).

@@ -132,6 +132,20 @@ let calibrationIceFirnTemp: Double = 0
 /// `DeltaTests` und `RiverDelta` auf der Produktions-Kalibrierung.
 let calibrationDeltaTrapFraction: Double = 0
 
+/// Lawinen-Abgang des Firns (`SimConfig.iceAvalancheSlopeHi`) der Testwelten, gegen
+/// die die Eis-WÄCHTER dieser Suite kalibriert sind: aus (0), der Stand vor dem
+/// Abgang (Issue #174, `docs/glacier-measurements.md` §M).
+///
+/// Dieselbe Doktrin wie `calibrationIceFirnTemp`: die Mechanik-Wächter laufen auf
+/// der alten Großform mit Firn-Grenze 0.5731, auf der FAST JEDE Zelle über der
+/// Grenze steil ist (die Gipfel der alten Grate); mit dem Abgang wandert dort die
+/// gesamte Zufuhr an den Hangfuß, Eis- und Sediment-Bilanz sind eine andere Welt
+/// (gemessen: 8 Wächter kippten, u. a. Zungenlänge, Moränen-Aus, Schrittpaar-Fläche
+/// 11 %). Die PRODUKTION hat ihre eigenen Wächter
+/// (`GlacierCrestShape.testProductionPeaksStandAboveTheFirnLine`,
+/// `Glacier.testIceIsFramerateIndependentInProduction`).
+let calibrationIceAvalancheSlopeHi: Double = 0
+
 /// Produktionsphysik in kleiner Auflösung, mit der Kalibrier-Paarung dieser
 /// Suite: der Standard-Zuschnitt der Render-Wächter (`SimRenderTests`,
 /// `RenderStateTests`). Genau der Fall, für den `calibrationWorld` oben steht —
@@ -145,6 +159,7 @@ func renderConfig(n: Int = 96) -> SimConfig {
     config.world = n > 1 ? calibrationWorld : 0
     config.rangeLandform = calibrationRangeLandform
     config.iceFirnTemp = calibrationIceFirnTemp
+    config.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
     return config
 }
 

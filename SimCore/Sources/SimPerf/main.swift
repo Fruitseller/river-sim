@@ -87,6 +87,9 @@ let repeats = Int(arg("--repeat", 1))
 var cfg = production
 cfg.n = gridN
 cfg.world = worldSize
+// `--no-avalanche`: Lawinen-Abgang des Firns aus (Issue #174), der Vergleichsarm
+// für Kosten und Bit-Identität zum Stand davor.
+if flag("--no-avalanche") { cfg.iceAvalancheSlopeHi = 0 }
 
 // MARK: - Lauf
 

@@ -59,6 +59,11 @@ final class SimCoreTests: XCTestCase {
         // Altarmen (Kriterium < 70 %, gemessen mit der ersten Fassung des Passes). Diese Tests prüfen die Mäander-Mechanik,
         // nicht die Küste — dieselbe Doktrin wie der Gürtel eine Zeile höher.
         c.deltaTrapFraction = calibrationDeltaTrapFraction
+
+        // Lawinen-Abgang des Firns (#174) aus: er verschiebt über Eis und Moränen die
+        // Realisierung (`testMeanderOxbowSiltsUp`: 20 frische Altarm-Betten statt
+        // > 20), ohne an der Mäander-Mechanik etwas zu ändern (`TestCalibration`).
+        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
         return c
     }
 

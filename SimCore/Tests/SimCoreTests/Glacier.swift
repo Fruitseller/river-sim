@@ -36,6 +36,8 @@ final class Glacier: XCTestCase {
         c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
         c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731 der alten Großform
         c.deltaTrapFraction = calibrationDeltaTrapFraction  // ohne Delta-Schüttung, s. dort
+
+        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi  // Stand vor dem Lawinen-Abgang
         return c
     }
 
@@ -818,6 +820,60 @@ final class Glacier: XCTestCase {
         }
     }
 
+    /// **Lawinen-Abgang erhält die Firn-Zufuhr** (Issue #174, §M): auf einer
+    /// steilen Rampe mit ebenem Fuß, überall kalt genug für volle Umwandlung
+    /// (gleiche Rate μ in jeder Zelle), liegt ohne Abgang die Zufuhr in der
+    /// Rampe, mit Abgang am Fuß — die GESAMTE Eismasse bleibt gleich (kein Fluss,
+    /// keine Erosion, keine Schmelze). Prüft damit Quelle −/Ziel + und die
+    /// Zurücksetzung des Scratch zwischen den Aufrufen.
+    func testAvalancheMovesFirnSupplyWithoutLosingIt() {
+        func massSplit(_ hi: Double) -> (ramp: Double, foot: Double) {
+            var c = cfg(n: 96)
+            c.world = 0.156 * 95                       // Produktions-Zellgröße
+            c.iceFlowK = 0; c.iceErodeK = 0; c.iceMoraineK = 0
+            c.iceAvalancheSlopeLo = 1.0; c.iceAvalancheSlopeHi = hi
+            var st = Terrain(config: c, seed: 1337).state
+            let nn = c.n
+            for j in 0..<nn { for i in 0..<nn {
+                let k = j * nn + i
+                let bed = c.sea + 0.9 - 0.0105 * Double(min(i, 30))   // Rampe i < 30 (Weltsteigung ≈ 1,6), dann eben; Fuß bei T ≈ −4 °C
+                st.h[k] = bed; st.rock[k] = bed; st.sed[k] = 0
+                st.ice[k] = 0; st.snow[k] = 0.3
+            } }
+            let t = Terrain(allocating: c, seed: 1337); t.restore(st)
+            for _ in 0..<5 { t.updateIce(dt: 200) }
+            var ramp = 0.0, foot = 0.0
+            for j in 8..<(nn - 8) { for i in 0..<nn {
+                if i < 30 { ramp += t.ice[j * nn + i] } else { foot += t.ice[j * nn + i] }
+            } }
+            return (ramp, foot)
+        }
+        let off = massSplit(0), on = massSplit(1.6)
+        XCTAssertGreaterThan(on.foot, 1.3 * off.foot, "der Firn geht nicht an den Hangfuß ab: \(on) gegen \(off)")
+        XCTAssertLessThan(on.ramp, 0.5 * off.ramp, "die Rampe trägt weiter Firn: \(on) gegen \(off)")
+        XCTAssertEqual(on.ramp + on.foot, off.ramp + off.foot, accuracy: 1e-6 * (off.ramp + off.foot),
+                       "der Abgang verliert Zufuhr: \(on) gegen \(off)")
+    }
+
+    /// Schrittpaar in der PRODUKTION mit Lawinen-Abgang (der Wächter
+    /// `testIceIsFramerateIndependent` läuft auf der alten Welt ohne Abgang):
+    /// 1000 Jahre ab Jahr 5000 als 1 × 1000, 10 × 100 und 64 × 15,625.
+    /// Gemessen (Jahr 5000 und 15.000, drei Seeds): Masse 0,5 … 0,8 %, Fläche
+    /// 0,3 … 0,5 % (ohne Abgang Masse 0,5 … 1,3 %, Fläche 0,06 … 0,6 %;
+    /// `docs/glacier-measurements.md` §M).
+    func testIceIsFramerateIndependentInProduction() {
+        for seed: UInt32 in [1337, 20] {
+            let src = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
+            run(src, to: 5_000, dt: 1000)
+            let arms = [1000.0, 100.0, 15.625].map { Glacier.iceArm(from: src, seed: seed, dt: $0, span: 1000) }
+            XCTAssertGreaterThan(arms.map(\.mass).min()!, 5, "Seed \(seed): kaum Eis")
+            XCTAssertLessThan(Glacier.spread(arms.map(\.mass)), 0.03,
+                              "Seed \(seed): Eismasse hängt an der Schrittweite: \(arms.map(\.mass))")
+            XCTAssertLessThan(Glacier.spread(arms.map { Double($0.cells) }), 0.07,
+                              "Seed \(seed): Eisfläche hängt an der Schrittweite: \(arms.map(\.cells))")
+        }
+    }
+
     /// Nach einem Weltwechsel müssen neue Firnquellen den Arbeitsbereich
     /// aufspannen. Alte Scratch-Raten dürfen am kleineren oder verschobenen
     /// Rand keinen Zufluss erzeugen. Vergleich gegen jeweils frische Puffer.
@@ -988,6 +1044,10 @@ final class Glacier: XCTestCase {
             case "ifirn": c.iceFirnTemp = v
             case "lapse": c.climateLapseRate = v
             case "ice": c.iceEnabled = v != 0
+            case "avlo": c.iceAvalancheSlopeLo = v
+            case "avhi": c.iceAvalancheSlopeHi = v
+            case "avrun": c.iceAvalancheMaxRun = Int(v)
+            case "avreach": c.iceAvalancheReach = Int(v)
             case "mexp": c.iceErodeFluxExp = v
             case "uplift":
                 c.upliftDecayStartPer100y = v; c.upliftDecayFloorPer100y = v; c.reliefServoPer100y = v

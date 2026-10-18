@@ -1359,6 +1359,61 @@ public struct SimConfig: Sendable, Codable, Equatable {
     ///
     /// Kalibrier-Logbuch (Produktion, Seeds 1337 / 42 / 20): s. unten.
     public var iceFirnTemp: Double = -2.0
+    /// **Lawinen-Abgang des Firns** (Issue #174, `docs/glacier-measurements.md`
+    /// §M): Weltsteigung (dy/dx in Welteinheiten mit `RenderContract.heightScale`,
+    /// gemessen über `Terrain.macroSlope` des BETTS), ab der die Firn-Zufuhr einer
+    /// Zelle nicht mehr liegen bleibt (`Lo`, Anteil 0) und ab der sie ganz abgeht
+    /// (`Hi`, Anteil 1); dazwischen glatt (`smoothstep`). Der abgehende Anteil geht
+    /// nicht verloren, sondern landet — massen-erhaltend — in der ersten Zelle am
+    /// Hangfuß, deren Steigung unter `Lo` liegt (steilster Abstieg über das Bett,
+    /// `iceAvalancheMaxRun` Zellen). `Hi <= 0` = aus, bit-identisch zum Stand davor
+    /// (`simperf --hash` gleich vor und nach).
+    ///
+    /// ANLASS: ohne den Abgang trägt jede Zelle über der Eis-Firn-Grenze (≈ 0,65)
+    /// Firn, auch eine Gipfelflanke von 60°; das Eis schleift die Gipfel bis knapp
+    /// unter die Grenze, und das Gelände staut sich dort zu Tafeln mit Wänden
+    /// (Seed 1337: höchster Punkt 0,670 statt 0,752 ohne Eis, harte Decke bei
+    /// 0,65–0,66; Seed 20: 0,660 statt 0,727). In der Natur halten Flanken über
+    /// 35–45° keinen Firn (Lawinen): Hörner und Grate bleiben eisfrei, und die
+    /// Lawinen NÄHREN die Kare darunter. Die frühere Variante „Firn-Abgleiten am
+    /// Steilhang 0,03…0,06“ (§L) war bei `iceFirnTemp = 0` gemessen, als die ganze
+    /// Kappe das Problem war, und ist nicht dieselbe Mechanik: sie senkte die
+    /// Zufuhr, ohne sie umzulagern.
+    ///
+    /// GEMESSEN (Produktion, Jahr 20.000, dt 1000; höchster Punkt Seed 1337 / 20,
+    /// eisfrei 0,7521 / 0,7274; Zackigkeit der obersten 5 %, eisfrei 0,00579 /
+    /// 0,00529; Eis in % des Landes):
+    ///   aus                             0,6704 / 0,6598 · 0,00537 / 0,00512 · 2,43 / 1,06
+    ///   nur eigene Zelle, 0,7/1,2 … 1,4/2,2 (Seed 20)
+    ///                                   0,665 … 0,679 — Gipfel bleiben gekappt:
+    ///                                   ein Gipfel, dessen Zentraldifferenz ±2 Zellen
+    ///                                   sich aufhebt, hat Steigung ≈ 0 und trägt Firn
+    ///   Reichweite 1 (Maximum im 3×3), 1,0/1,6
+    ///                                   0,7523 / 0,7272 · 0,00741 / 0,00617 · 2,73 / 1,39
+    ///   Reichweite 2, 1,0/1,6 (Seed 20) 0,7271 — gleich, aber 13 % weniger Eis
+    ///   Reichweite 1, 0,7/1,2           0,752 / 0,727 · 0,00763 / 0,00589 · 1,83 / 0,95
+    ///   Reichweite 1, 1,2/1,9           0,7503 / 0,7274 · 0,00729 / 0,00605 · 2,92 / 1,66   ← gewählt
+    ///   Reichweite 1, 1,4/2,2           0,7437 / 0,7272 · 0,00684 / 0,00603 · 2,89 / 1,74
+    /// 1,2/1,9 (≈ 50°/62° in der Darstellung) als Mitte: 1,0/1,6 hielt etwas mehr
+    /// Land über der Grenze (0,81 %), verlor aber im V→U-Diagnostic der Produktion
+    /// mehr (§M); 1,4/2,2 kappt die Gipfel wieder leicht (0,7437) und kommt an
+    /// die Eisgrenze von 3 % des Landes.
+        public var iceAvalancheSlopeLo: Double = 1.2
+    public var iceAvalancheSlopeHi: Double = 1.9
+    /// Längster Lawinenlauf in Zellen (Sicherung gegen endlose Pfade auf
+    /// flach auslaufenden Rücken).
+    public var iceAvalancheMaxRun: Int = 40
+    /// Reichweite (Zellen) der Steigungsmessung für den abgehenden Anteil: das
+    /// Maximum der Makrosteigung im Quadrat dieses Radius um die Zelle. 0 = nur
+    /// die eigene Zelle — dann trägt ein Gipfel, dessen Zentraldifferenz ±2
+    /// Zellen sich aufhebt, Firn, obwohl alles um ihn steil abfällt.
+    public var iceAvalancheReach: Int = 1
+    /// Wie oft (Sim-Jahre) die Lawinen-Karte (Ziele und Anteile) aus dem aktuellen
+    /// Bett neu gebaut wird. Schritte unter dieser Länge bauen sie einmal je
+    /// Schritt (der Zeitraffer-Takt, 15 Jahre), große Schritte alle 15 Jahre
+    /// ihrer Teilschritte — die Karte hängt damit an der SIM-ZEIT, nicht an der
+    /// Schrittweite.
+    public var iceAvalancheRefreshYears: Double = 15
     /// GRUNDUMSATZ des Eises (Jahre) — der Sockel `1/τ` in μ, dieselbe Rolle wie
     /// `snowTurnoverYears` beim Schnee: er hält die Dicke auch bei Dauerfrost
     /// BESCHRÄNKT und ist physikalisch als Sublimation/Kalben besetzt.

@@ -673,6 +673,10 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Kar- und Talgletscher statt Eiskappe auf der Kamm-Großform, Schnee-, Wald- und
   Phasen-Klima unverändert. Offen: Seed 42 hat damit fast kein Eis (0,2 %),
   Schnee und Eis sind im Render beide weiß (`docs/glacier-measurements.md` §L).
+  Seit §M (Issue #174): Lawinen-Abgang des Firns (`iceAvalancheSlopeLo/Hi`) —
+  Gipfel über der Firn-Grenze stehen als Hörner, das Eis sammelt sich in den
+  Karen. Offen: V→U-Diagnostic der Produktion nicht mehr positiv, Kosten
+  +2,3 ms je 100-Jahr-Schritt, Seed 20 hängt an der Schrittweite (13,6 %).
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**

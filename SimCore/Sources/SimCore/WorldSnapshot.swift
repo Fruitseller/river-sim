@@ -104,7 +104,10 @@ public enum WorldSnapshot {
     /// Version-8-Datei hat die Schlüssel nicht (Begründung wie bei Version 4).
     /// Version 10 (Issue #174): Restzeit des festen Gürtel-Kopplungstakts und
     /// Config-Schalter für die geteilte Profil-Relaxation.
-    public static let version: UInt32 = 10
+    /// Version 11 (Issue #174, Gletscher): die Stellschrauben des Lawinen-Abgangs
+    /// des Firns (`iceAvalancheSlopeLo` ff.) reisen über die Config-Kodierung mit
+    /// (Begründung wie bei Version 4).
+    public static let version: UInt32 = 11
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"

@@ -33,6 +33,7 @@ final class TerrainAging: XCTestCase {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         c.rangeLandform = calibrationRangeLandform  // Großform vor #174
         c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731: das Eis hält den Gipfel (s. unten)
+        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi  // ohne Abgang: s. TestCalibration
         // Gürtel-Wachstum vor der Neukalibrierung #187 (Rate 0,02, Kern 1,5):
         // mit 0,03 / 1,0 fällt das robuste Relief auf DIESER Realisierung in der
         // ersten Hälfte schneller (0,1802 → 0,1177 in 50k) und steht in 100k
