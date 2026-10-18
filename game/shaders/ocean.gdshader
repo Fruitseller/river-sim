@@ -122,20 +122,41 @@ vec2 ocean_wave_grad(vec2 p, float footprint, float t) {
 	return g;
 }
 
-// Hermite-geglättete UV-Koordinaten innerhalb eines Texels: C1-stetige
-// Interpolation verhindert bilineare Ableitungssprünge und achsenparallele
-// Höhenlinien-Treppen auf dem Schelf (#174).
-vec2 smooth_uv(vec2 uv, float n) {
-	vec2 p = uv * n - 0.5;
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	return (i + f + 0.5) / n;
+// Kubischer B-Spline über vier bilineare Abgriffe (Sigg/Hadwiger, GPU Gems 2,
+// Kap. 20): glättet über ±1,5 Zellen. Nur für Farbe und Neigung des Schelfs:
+// bilinear treten die Zellstufen einer blockigen Küstenlinie als Treppen in
+// der Tiefenfarbe hervor (Befund #174); die Küstenlinie selbst (discard)
+// bleibt bilinear wie im Terrain.
+vec4 bspline_weights(float v) {
+	vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
+	vec4 s = n * n * n;
+	float x = s.x;
+	float y = s.y - 4.0 * s.x;
+	float z = s.z - 4.0 * s.y + 6.0 * s.x;
+	return vec4(x, y, z, 6.0 - x - y - z) * (1.0 / 6.0);
+}
+
+float texture_bspline(sampler2D tex, vec2 uv, float n) {
+	vec2 t = uv * n - 0.5;
+	vec2 f = fract(t);
+	t -= f;
+	vec4 xc = bspline_weights(f.x);
+	vec4 yc = bspline_weights(f.y);
+	vec4 c = t.xxyy + vec2(-0.5, 1.5).xyxy;
+	vec4 s = vec4(xc.xz + xc.yw, yc.xz + yc.yw);
+	vec4 o = (c + vec4(xc.yw, yc.yw) / s) / n;
+	float s0 = texture(tex, o.xz).r;
+	float s1 = texture(tex, o.yz).r;
+	float s2 = texture(tex, o.xw).r;
+	float s3 = texture(tex, o.yw).r;
+	float sx = s.x / (s.x + s.y);
+	float sy = s.z / (s.z + s.w);
+	return mix(mix(s3, s2, sx), mix(s1, s0, sx), sy);
 }
 
 // Trübung 0…1 am Punkt `p` (Welt-xz), über die Overlay-Blende (#174).
 float sediment_plume(vec2 p) {
-	vec2 uv = smooth_uv(grid_uv(p), max(grid_n, 2.0));
+	vec2 uv = grid_uv(p);
 	float lod = water_ocean_plume_lod;
 	float s = textureLod(plume_tex, uv, lod).r;
 	return overlay_blend < 1.0 ? mix(textureLod(plume_prev_tex, uv, lod).r, s, overlay_blend) : s;
@@ -153,13 +174,19 @@ void fragment() {
 	float footprint = length(fwidth(p));
 	// Außerhalb des Sim-Quadrats ist das Meer tief.
 	float h = sea_level - water_ocean_depth_span;
+	float h_shelf = h;
 	if (inside_terrain) {
-		vec2 smooth_terrain_uv = smooth_uv(terrain_uv, max(grid_n, 2.0));
-		h = texture(height_tex, smooth_terrain_uv).r;
+		float n = max(grid_n, 2.0);
+		h = texture(height_tex, terrain_uv).r;
+		h_shelf = texture_bspline(height_tex, terrain_uv, n);
 		if (height_blend < 1.0) {
-			h = mix(texture(height_prev_tex, smooth_terrain_uv).r, h, height_blend);
+			h = mix(texture(height_prev_tex, terrain_uv).r, h, height_blend);
+			h_shelf = mix(texture_bspline(height_prev_tex, terrain_uv, n), h_shelf, height_blend);
 		}
 	}
+	// Neigung des Schelfs für die Brandung, VOR dem discard (Ableitungen nach
+	// einem nicht-uniformen discard sind undefiniert, s. ocean_wave_grad).
+	float shelf_slope = length(vec2(dFdx(h_shelf), dFdy(h_shelf))) / max(footprint, 1e-6);
 	if (h > sea_level) {
 		discard;
 	}
@@ -169,7 +196,7 @@ void fragment() {
 	NORMAL = water_n_vs;
 
 	// Tiefe über dem Sim-Schelf, normiert 0…1.
-	float depth = clamp((sea_level - h) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0);
+	float depth = clamp((sea_level - h_shelf) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0);
 	vec3 water = mix(water_ocean_shallow_color, water_ocean_mid_color,
 	                 calib_window(0.0, water_ocean_mid_depth, depth));
 	water = mix(water, water_ocean_deep_color, calib_window(water_ocean_mid_depth, 1.0, depth));
@@ -188,9 +215,8 @@ void fragment() {
 	// Brandung: schmaler, von Rauschen gebrochener Saum direkt an der Küste.
 	// Gekoppelt an die Geländeneigung: auf flachen Sandbänken, Rinnen und Lagunen
 	// schäumt das Wasser nicht flächig, sondern nur am Hang zur Wasserlinie (#174).
-	float slope = length(vec2(dFdx(h), dFdy(h))) / max(footprint, 1e-6);
 	float surf = (1.0 - calib_window(0.0, water_ocean_surf_depth, depth))
-	           * calib_window(water_ocean_surf_slope_lo, water_ocean_surf_slope_hi, slope);
+	           * calib_window(water_ocean_surf_slope_lo, water_ocean_surf_slope_hi, shelf_slope);
 	surf *= calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi,
 	                     noise2(p * water_ocean_surf_scale + vec2(u_time * water_ocean_surf_drift, 0.0)));
 	water = mix(water, water_ocean_surf_color, surf * water_ocean_surf_strength);

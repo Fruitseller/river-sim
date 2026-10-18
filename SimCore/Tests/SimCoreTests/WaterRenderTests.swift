@@ -620,7 +620,7 @@ final class WaterRenderTests: XCTestCase {
         assertContains(ocean, "smoothstep(lo, max(hi, lo + 1e-6), x)",
                        hint: "Fenster-Helfer klemmt gegen edge0 >= edge1 (GLSL-UB, s. Terrain)")
         assertContains(ocean,
-            "clamp((sea_level - h) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0)",
+            "clamp((sea_level - h_shelf) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0)",
             hint: "Tiefe über dem Schelf liest WaterRender.oceanDepthSpan (max: 0/0-Schutz)")
         assertContains(ocean,
             "calib_window(0.0, water_ocean_mid_depth, depth)",

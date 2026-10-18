@@ -347,27 +347,53 @@ statt sechs, während der Overlay-Blende zwei statt zwölf), der Terrain-Shader
 ist unverändert; ein Bildraten-A/B wurde deshalb nicht gefahren und ist NICHT
 gemessen.
 
-## §H Küsten-Feinschliff (#174 Polish)
+## §H Küsten-Feinschliff (Issue #174)
 
-Befund und Behebung von drei visuellen Artefakten an der Küste:
+Drei Bildbefunde aus der Bildrunde auf `ea85a7c` (maximiert, 3456×2104,
+Jahr 20.000, Seeds 1337/42/20, Kameras F1–F3).
 
-1. **Schelf-Treppen (C0-Knicke)**:
-   * *Ursache*: Bilineare Filterung (`GL_LINEAR`) der diskreten Höhentabelle im Ozean-Shader erzeugt entlang von Zellgrenzen C0-stetige Knicke der Ableitung, die als achsenparallele Farbtreppen im seichten Schelfwasser sichtbar wurden.
-   * *Behebung*: Kubische Hermite-Glättung der UV-Koordinaten innerhalb jedes Texels (`smooth_uv`) für `height_tex` und `plume_tex`. Die C1-Stetigkeit glättet die Ableitungssprünge und beseitigt die Treppenkanten.
+**1. Helle, treppige Flächen im seichten Küstenwasser.** Verdacht war die
+Sedimentfahne (`plume_tex` auf Mip-Stufe 4, 45×45 Texel). Getrennt per
+A/B im selben Build: Fahne aus, Wolkenschatten aus, Tiefenfarbe fest auf
+„tief". Nur der letzte Schalter nimmt die Flächen weg; Fahne und Wolken sind
+es nicht. Die Tiefe selbst stimmt: die Höhen der Brücke (`heightsBytes` nach
+`generate(1337)` + 20 × 1000 Jahre) sind bit-gleich mit der headless Welt,
+und in der Draufsicht (Pitch 1,55) zeigen die Tiefenbänder (Schritt 0,01) im
+Shader dieselben glatten Linien wie die bilineare CPU-Auswertung. Die
+Treppen sind die blockige Küstenlinie selbst: ein bis drei Zellen große
+Stufen der Uferzellen, die der Schelf (0 → 0,06 Tiefe über 8–15 Zellen)
+nachzeichnet und die schräg aus der Nähe (F3, ~20 px je Zelle) als Kästen
+hervortreten.
 
-2. **Flussband-Stummel an der Wasserlinie**:
-   * *Ursache*: Flussbänder endeten mit gerader Kante über dem Schelf, weil `seaHandoverFade` erst nach `mouthOverlapCells` abtauchte und die Blende durch `erodeAndSmooth` landeinwärts gezogen wurde. Zudem zeichnete der Water-Shader auch im Meer eine Uferbank (`bank`).
-   * *Behebung*: `seaHandoverFade` blendet stetig ab der Wasserlinie (`submergedCells = 0`) über `mouthOverlapCells` aus. Der Glättungsfilter (`erodeAndSmooth`) wird auf Seen beschränkt und zieht die Meeresblende nicht auf den Strand zurück (`testRiverBandsReachTheSeaAtFullWidthAndOpacity` bleibt grün). Im `water.gdshader` wird das Band im Meer (`in_sea`) farblich an `water_ocean_shallow_color` angeglichen, die Bank ausgeblendet und die Deckkraft linear abgebaut.
+Fassung: die Tiefen**farbe** und die Neigung für die Brandung liest der
+Ozean-Shader über einen kubischen B-Spline aus vier bilinearen Abgriffen
+(glättet über ±1,5 Zellen); die Küstenlinie selbst (`discard`) bleibt
+bilinear wie im Terrain-Shader, die Wasserlinie verschiebt sich nicht.
+Verworfen: Hermite-Glättung der Texturkoordinate (Entwurf): ihre Ableitung
+ist an jeder Texelmitte null, die Tiefenfarbe bekommt dort kleine Terrassen
+und die Brandungs-Neigung flackert im Zellraster. Die Zellstufen werden
+weicher, verschwinden aber nicht; ganz weg gingen sie erst mit einer
+Glättung über mehrere Zellen, die auch echte Uferformen verwischt.
 
-3. **Brandung auf Seichtflächen und Lagunen**:
-   * *Ursache*: Die Brandungsformel (`surf`) im Ozean-Shader hing ausschließlich von der absoluten Wassertiefe ab (`water_ocean_surf_depth`). Auf flachen Bänken, Rinnen und Lagunen bildeten sich dadurch flächige weiße Schaumteppiche.
-   * *Behebung*: Koppelung an die Geländeneigung (`slope`): `oceanSurfSlopeLo = 0.003` und `oceanSurfSlopeHi = 0.008` in `WaterRender.swift`, default-frei über `WaterUniforms` (`water_ocean_surf_slope_lo/_hi`). Auf flachen Flächen schäumt das Wasser nicht mehr; Brandung bleibt als schmaler Saum an der tatsächlichen Küstenlinie.
+**2. Band-Stummel über dem Meer.** `seaHandoverFade` blendet ab der
+Wasserlinie über `mouthOverlapCells` aus (vorher erst ab dort), der
+Minimum-Filter der See-Übergabe wirkt nur noch an Seen und zieht die
+Meeresblende nicht auf den Strand. Im Meer übernimmt das Band die seichte
+Meeresfarbe, ohne Ufersaum, und blendet linear aus. Bis zur Wasserlinie
+bleibt es voll breit und deckend (`testRiverBandsReachTheSeaAtFullWidthAndOpacity`).
+Offen: an der Lagune von Seed 1337 (F3) steht ein Band über einem Strandwall
+fast senkrecht von Landhöhe auf den Meeresspiegel (0,39 Welteinheiten Fall
+auf 0,07; `docs/geometry-water-measurements.md` § H) und zeichnet sich als
+dunkle Nadel ab.
 
-**Verifikation und Messungen**:
-* `simperf --hash`: `08d32575d5cd353a` (Bit-Identität gewahrt).
-* Swift-Pakettests: 181 Tests, 0 Fehler (inkl. `WaterUniformsTests`, `WaterRendererTests.testRiverBandsReachTheSeaAtFullWidthAndOpacity`).
-* Godot-Verträge: `WATER_UNIFORMS_OK`, `RIVER_RIBBONS_OK`, `WATER_CONTRACT_OK`, `WATER_GEOMETRY_OK`, `BUILD_STAMP_PARITY_OK`.
-* Visueller A/B-Vergleich (Seed 1337, Jahr 20.000):
-  * Mündungsbereich (`hotspot_mouth`): 8.796 Pixel verändert, dunkler Stummel über dem Schelf restlos verschwunden (Farbsprung an Uferkante von `(167, 170, 161)` auf harmonische `(43, 72, 86)` Meeresfarbe abgesenkt).
-  * Brandung Seichtwasser (`hotspot_island`): 6.388 Pixel verändert, flächiger Schleier auf Lagunen beseitigt.
-  * Schelfwasser (`hotspot_shelf`): 4.228 Pixel verändert, Treppenstrukturen geglättet.
+**3. Schaum auf seichten Flächen.** Die Brandung hing nur an der Tiefe; auf
+Barren und Lagunen lag sie flächig. Jetzt zusätzlich an der Schelf-Neigung
+(`oceanSurfSlopeLo/Hi` 0,003…0,008 Sim-Höhe je Welteinheit): flache Flächen
+schäumen nicht. Die Neigung entsteht aus Bildschirm-Ableitungen und wird
+deshalb VOR dem `discard` bestimmt (danach sind Ableitungen undefiniert, im
+Entwurf genau an der Küste).
+
+Kosten: der Ozean liest die Höhe statt einmal fünfmal (bilinear für die
+Küstenlinie plus vier B-Spline-Abgriffe, während der Höhen-Blende doppelt),
+der Bänder-Shader einmal mehr. Die Bildzeit steht in der Nachmessung von
+Abnahmepunkt 47 (`docs/zielbild-measurements.md`).
