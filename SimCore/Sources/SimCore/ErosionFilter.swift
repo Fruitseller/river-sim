@@ -227,8 +227,9 @@ public enum ErosionFilter {
     /// `heightOffset` (x: -1..1, y: 0..1 Ersetzung durch -fadeTarget) senkt das
     /// Feld ∝ magnitude — Rinnen CARVEN dann netto, statt Grate aufzuschütten.
     ///
-    /// Degenerierte Gitter (`n <= 1`) sowie nicht-endliche Meereshöhen werden
-    /// defensiv abgefangen (No-op). Ein Pufferlängen-Mismatch (`h.count != n * n`)
+    /// Degenerierte Gitter (`n <= 1`), nicht-endliche Parameter (`sea`,
+    /// `seedOffsetX/Y`, `heightOffset`) sowie ungültige Filter-Parameter (`params.isValid == false`)
+    /// werden defensiv abgefangen (No-op). Ein Pufferlängen-Mismatch (`h.count != n * n`)
     /// bricht per `precondition` ab.
     public static func apply(
         h: inout [Double], n: Int, sea: Double,
@@ -236,7 +237,10 @@ public enum ErosionFilter {
         params: Params, heightOffset: (Double, Double) = (-0.35, 0.5)
     ) {
         precondition(h.count == n * n, "Höhenfeld muss exakt n*n Elemente haben")
-        guard n > 1, sea.isFinite else { return }
+        guard n > 1, sea.isFinite,
+              seedOffsetX.isFinite, seedOffsetY.isFinite,
+              heightOffset.0.isFinite, heightOffset.1.isFinite,
+              params.isValid else { return }
         let count = n * n
         let src = h // Steigungen aus dem Eingangsfeld (Filter ist punkt-unabhängig)
         var peak = sea + 0.1
