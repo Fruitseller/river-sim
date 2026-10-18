@@ -277,6 +277,14 @@ die Sim weiter mit τ = 10 J. ein (feines Linienmuster in der ersten
 Drittelsekunde), Eigner-Urteil dazu steht aus. Messreihe:
 `docs/zielbild-measurements.md` § Übergänge im Zeitraffer.
 
+**Durchgehende Flüsse (Befund des Eigners, 2026-10-18).** Zwischen zwei
+Kopplungen verlässt der D8-Lauf Bänder, und dort malte niemand Wasser; ein
+Zubringer endete als Keil vor dem Hauptlauf. Jetzt malt das Raster solche
+Abzweige, und Zubringer laufen bis in das Band des Hauptlaufs; Physik
+bit-gleich. Lücken auf drei Seeds −38 %, Keile 12 → 5. Offen: Lücken an
+Steilstrecken und hinter Seeausläufen; der Kopplungstakt selbst (Sim)
+bleibt. Messreihe: `docs/zielbild-measurements.md` § Durchgehende Flüsse.
+
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
 aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der
 Schlinge“ nur am Gerinne, Rippen nur im Bewuchs), Altarm-Verlandung als Ried und

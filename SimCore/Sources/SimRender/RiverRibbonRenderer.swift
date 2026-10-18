@@ -38,11 +38,17 @@ public struct RibbonMesh: Equatable {
     public var bandChannelFlags: [Bool]
     /// Je Rasterzelle die vom gebauten Band gemalte Deckkraft.
     public var bandCoverage: [Double]
+    /// Je Rasterzelle der Kanal-Index des Fluss-Bands, das dort am stärksten
+    /// deckt (−1 = keins, Delta, Altarm oder versiegender Arm). Das Wasserfeld
+    /// unterscheidet damit die Abkürzung über die Bank (zurück zum SELBEN
+    /// Band) vom Abzweig (`WaterRender.departureMaxCells`).
+    public var bandOwner: [Int32]
 
     public init(vertices: [SIMD3<Float>] = [], colors: [SIMD4<Float>] = [],
                 uvs: [SIMD2<Float>] = [], uv2s: [SIMD2<Float>] = [],
                 indices: [Int32] = [], stripStarts: [Int32] = [],
-                bandChannelFlags: [Bool] = [], bandCoverage: [Double] = []) {
+                bandChannelFlags: [Bool] = [], bandCoverage: [Double] = [],
+                bandOwner: [Int32] = []) {
         self.vertices = vertices
         self.colors = colors
         self.uvs = uvs
@@ -51,6 +57,7 @@ public struct RibbonMesh: Equatable {
         self.stripStarts = stripStarts
         self.bandChannelFlags = bandChannelFlags
         self.bandCoverage = bandCoverage
+        self.bandOwner = bandOwner
     }
 }
 
@@ -104,6 +111,10 @@ public final class RiverRibbonRenderer {
     /// Knoten, 0,04 % aus eingesetzten. Auch sie wachsen ein; das Feld trägt
     /// den Zustand durch die folgenden Bauten.
     private var youngYear: [Double] = []
+    /// Kanal, dessen Band `stampCoverage` gerade stempelt (−1 = keins), und
+    /// der Arbeitspuffer für `RibbonMesh.bandOwner`.
+    private var stampOwner: Int32 = -1
+    private var owners: [Int32] = []
     /// Die Fluss-Bänder des letzten Baus (Stützpunkte vor der Verdeckung), aus
     /// denen eine Kopplung die versiegenden Arme nimmt.
     private var lastRiverBands: [[RibbonSample]] = []
@@ -154,6 +165,9 @@ public final class RiverRibbonRenderer {
     /// abreißende Läufe („keine durchgehenden Adern"): erst Band, dann eine
     /// trockene Rinne, wo weder Band noch Raster malte.
     public var bandCoverage: [Double] { mesh.bandCoverage }
+    /// Fluss-Band je Zelle des letzten Baus (s. `RibbonMesh.bandOwner`).
+    public var bandOwner: [Int32] { mesh.bandOwner }
+
     /// Auflösung des RENDER-Gitters (Main.gd `terrain_grid`, via
     /// `SimNode.setRenderGrid`): die Land-Bänder sampeln ihre Höhen über
     /// `renderSurfaceHeight` von der SICHTBAREN Oberfläche statt von den
@@ -287,6 +301,18 @@ public final class RiverRibbonRenderer {
         }
         // Die Deckung des vorigen Baus bleibt für die Übergänge stehen.
         swap(&previousCoverage, &mesh.bandCoverage)
+        // Kanal je Zelle: eigener Puffer während des Baus (`stampCoverage`
+        // schreibt ihn neben `mesh.bandCoverage`), am Ende ins Mesh getauscht.
+        swap(&owners, &mesh.bandOwner)
+        if owners.count != cnt {
+            owners = [Int32](repeating: -1, count: cnt)
+        } else {
+            owners.withUnsafeMutableBufferPointer {
+                guard let base = $0.baseAddress else { return }
+                base.update(repeating: -1, count: cnt)
+            }
+        }
+        stampOwner = -1
         if mesh.bandCoverage.count != cnt {
             mesh.bandCoverage = [Double](repeating: 0, count: cnt)
         } else {
@@ -407,7 +433,6 @@ public final class RiverRibbonRenderer {
             px.append(nodes[m - 1].x); pz.append(nodes[m - 1].z); pq.append(ch.discharge[m - 1])
             pb.append(nodeBend[m - 1]); pBorn.append(ch.bornAt(m - 1))
             let cnt = px.count
-
             // Deckkraft: Abfluss-Rampe je Sample (fein auslaufen statt harter
             // renderMinCells-Kante) × Stream-Map-Kohärenz des ganzen Kanals
             // (verwaiste/verknäulte Linien als Einheit ausblenden) × Strahler-Boden.
@@ -632,7 +657,30 @@ public final class RiverRibbonRenderer {
             let tail = max(lo, hi - 2)
             let mouth = mouthPath(terrain, fromX: px[hi], fromZ: pz[hi],
                                   dirX: px[hi] - px[tail], dirZ: pz[hi] - pz[tail])
-            if mouth.isEmpty {
+            let join = mouth.isEmpty ? bandJoinPath(fromX: px[hi], fromZ: pz[hi], terrain: terrain) : nil
+            if let join {
+                // MÜNDUNG IN EINEN GRÖSSEREN FLUSS (Befund des Eigners
+                // 2026-10-18, „Flüsse kreuzen sich unnatürlich"): ein Zubringer
+                // endet im Zusammenfluss, aber dessen Band liegt bis zu einem
+                // Spielraum neben der D8-Zelle. Der Lauf lief deshalb spitz
+                // VOR dem Hauptlauf aus, als Keil quer zu dessen Ufer. Jetzt
+                // folgt er dem D8-Empfänger in voller Breite bis in das Band
+                // des Hauptlaufs (`WaterRender.ribbonJoinSearchCells`); die
+                // Verdeckung in `emitRibbon` blendet den Teil darunter aus.
+                if let last = samples.last {
+                    var prevX = px[hi], prevZ = pz[hi]
+                    for point in join {
+                        for mid in [false, true] {
+                            var s2 = last
+                            s2.x = mid ? point.x : (prevX + point.x) * 0.5
+                            s2.z = mid ? point.z : (prevZ + point.z) * 0.5
+                            s2.surface = nil
+                            samples.append(s2)
+                        }
+                        prevX = point.x; prevZ = point.z
+                    }
+                }
+            } else if mouth.isEmpty {
                 // Kein Wasser in Reichweite: der Lauf versickert im Land oder
                 // endet vor einer Steilstrecke, die das Raster weitermalt —
                 // dort läuft das Band spitz aus (Länge wie an der Quelle nach
@@ -769,8 +817,10 @@ public final class RiverRibbonRenderer {
             RiverRibbonRenderer.limitAlphaSteps(&samples)
             lastRiverBands.append(samples)
             if samples.contains(where: { $0.growth < 1 }) { growing = true }
+            stampOwner = Int32(chIndex)
             emitRibbon(samples, terrain, kind: WaterRender.ribbonKindRiver, still: false,
                        hscale: hscale, lift: lift)
+            stampOwner = -1
 
             // DELTA (Issue #34): am Eintritt ins stehende Wasser fächert der Lauf
             // über den Ablagerungskörper auf, den die Sim dort aufschüttet.
@@ -842,6 +892,7 @@ public final class RiverRibbonRenderer {
             }
         }
         inTransition = growing || !ghosts.isEmpty
+        swap(&mesh.bandOwner, &owners)
         return mesh
     }
 
@@ -1040,6 +1091,35 @@ public final class RiverRibbonRenderer {
     /// Hängt ein Band aus `samples` an die Ribbon-Puffer an (Dreiecksstreifen aus
     /// Kantenpaaren). `still` = Altarm: die Fließrichtung wird als 0 kodiert,
     /// woran der Shader Stillwasser erkennt (kein Strömungs-Schimmer).
+    /// Weg vom Ende eines Laufs ohne Mündung ins Band eines früher gebauten
+    /// (größeren) Laufs: D8-Zellen bis einschließlich der ersten, die dieses
+    /// Band zu `WaterRender.ribbonJoinCoverage` deckt. Leer, wenn das Ende
+    /// schon darin liegt; nil, wenn binnen `ribbonJoinSearchCells` kein Band
+    /// kommt (dann läuft das Band spitz aus).
+    private func bandJoinPath(fromX: Double, fromZ: Double, terrain: Terrain) -> [(x: Double, z: Double)]? {
+        RiverRibbonRenderer.joinPath(fromX: fromX, fromZ: fromZ, coverage: mesh.bandCoverage, terrain: terrain)
+    }
+
+    /// s. `bandJoinPath`; statisch, damit der Wächter es mit einer
+    /// vorgegebenen Deckung prüft.
+    static func joinPath(fromX: Double, fromZ: Double, coverage cover: [Double],
+                         terrain: Terrain) -> [(x: Double, z: Double)]? {
+        let n = terrain.cfg.n, cnt = n * n
+        guard fromX.isFinite, fromZ.isFinite, cover.count == cnt,
+              terrain.receiver.count == cnt, terrain.h.count == cnt else { return nil }
+        var k = min(max(Int(fromZ.rounded()), 0), n - 1) * n + min(max(Int(fromX.rounded()), 0), n - 1)
+        if cover[k] >= WaterRender.ribbonJoinCoverage { return [] }
+        var path: [(x: Double, z: Double)] = []
+        for _ in 0..<WaterRender.ribbonJoinSearchCells {
+            let r = Int(terrain.receiver[k])
+            guard r >= 0, r < cnt, terrain.h[r] > terrain.cfg.sea else { return nil }
+            k = r
+            path.append((Double(k % n), Double(k / n)))
+            if cover[k] >= WaterRender.ribbonJoinCoverage { return path }
+        }
+        return nil
+    }
+
     private func emitRibbon(_ samples: [RibbonSample], _ terrain: Terrain,
                             kind: Double, still: Bool,
                             hscale: Double, lift: Double) {
@@ -1331,9 +1411,11 @@ public final class RiverRibbonRenderer {
         // Roh-Zeiger je Segment: ein Klassen-Property je Zelle (mit
         // Exklusivitätsprüfung) kostete den Band-Bau gemessen ~5 ms.
         let stampMature = mature && matureCoverage.count == n * n
+        let owner = stampOwner
         mesh.bandCoverage.withUnsafeMutableBufferPointer { cb in
+        owners.withUnsafeMutableBufferPointer { ob in
         matureCoverage.withUnsafeMutableBufferPointer { mb in
-            guard let pc = cb.baseAddress else { return }
+            guard let pc = cb.baseAddress, let po = ob.baseAddress else { return }
             let pm = mb.baseAddress
             for j in j0...j1 {
                 for i in i0...i1 {
@@ -1349,13 +1431,13 @@ public final class RiverRibbonRenderer {
                     if ex * ex + ez * ez > hw * hw { continue }
                     let value = clamp01(fromAlpha + (toAlpha - fromAlpha) * t)
                     let k = j * n + i
-                    if pc[k] < value { pc[k] = value }
+                    if pc[k] < value { pc[k] = value; po[k] = owner }
                     // Ausgewachsen deckt jedes sichtbare Stück voll: auch ein
                     // schwach deckender Bach war schon Fluss.
                     if stampMature, value > 0 { pm![k] = 1 }
                 }
             }
-        }}
+        }}}
     }
 
     /// Delta-Fächer an einer Mündung: bis zu drei Distributär-Arme über den

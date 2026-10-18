@@ -446,11 +446,15 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   prüfbar. Wächter: `SimCoreTests/RenderFrameTests.swift` (inkl. Probe, dass
   `Main.gd` die Einzelaufrufe nicht wieder selbst ordnet).
 
-- `WaterFieldRenderer`: Raster-Wasser als `[UInt8]`,
+- `WaterFieldRenderer`: Raster-Wasser als `[UInt8]`; malt auch die
+  Abzweige, an denen der D8-Lauf ein Band zwischen zwei Kopplungen verlässt
+  (`WaterRender.departure*`, Wächter: `SimCoreTests/RiverContinuityTests.swift`),
 - `RiverRibbonRenderer`: Band-Geometrie als `RibbonMesh`
   (`SIMD3<Float>`/`SIMD4<Float>`/`SIMD2<Float>` + Indizes); das echte
-  Bauergebnis für den Raster-Deckel (`bandChannelFlags`/`bandCoverage`) reist
-  im selben Wert statt als impliziter Nebenkanal. Seit dem Befund zu Punkt 50
+  Bauergebnis für den Raster-Deckel (`bandChannelFlags`/`bandCoverage`, dazu
+  `bandOwner`: welches Fluss-Band je Zelle deckt) reist im selben Wert statt
+  als impliziter Nebenkanal. Ein Zubringer läuft bis in das Band seines
+  Hauptlaufs (`WaterRender.ribbonJoin*`). Seit dem Befund zu Punkt 50
   hält er die Übergänge der Gürtel-Kopplung in SIM-Jahren: neue Arme wachsen
   ein (`RiverChannel.born`, das Geburtsjahr je Knoten, das nur der Render
   liest; dazu bisher unsichtbare Strecken, die die Kopplung sichtbar macht),

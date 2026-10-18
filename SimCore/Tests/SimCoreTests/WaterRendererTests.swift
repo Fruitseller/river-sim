@@ -194,6 +194,12 @@ final class WaterRendererTests: XCTestCase {
       let last = end - 2
       var cell = cellIndex(mesh.vertices[last], mesh.vertices[last + 1], terrain)
       if pondDepth(terrain, cell) > WaterRender.pondContourLo { continue }
+      // Ein Zubringer, der in das Band eines größeren Laufs mündet
+      // (`WaterRender.ribbonJoinSearchCells`), endet in diesem, und das andere
+      // Band trägt das Wasser weiter. Ein Ende ohne Mündung läuft dagegen
+      // spitz aus (Enden-Taper bis Deckkraft 0): dort deckt kein Band die
+      // Endzelle zu `ribbonJoinCoverage`.
+      if mesh.bandCoverage[cell] >= WaterRender.ribbonJoinCoverage { continue }
       for _ in 0..<WaterRender.mouthSearchCells {
         let receiver = terrain.receiver[cell]
         if receiver < 0 { break }

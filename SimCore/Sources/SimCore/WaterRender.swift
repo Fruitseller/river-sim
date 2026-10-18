@@ -592,6 +592,34 @@ public enum WaterRender {
     /// Vergleich keine Zahl; er hält die Regel bei ihrer Begründung.
     public static let rasterBarBandDischargeRatio = 0.5
 
+    /// Abzweig (Befund des Eigners 2026-10-18, „der Fluss fließt durchgehend
+    /// weiter, aber man sieht das Wasser nicht durchgehend"): verlässt ein
+    /// D8-Lauf ein Band (Deckung ≥ `rasterBarBandCoverage`, ±
+    /// `ribbonTrustBandClearanceCells`) und kehrt binnen so vieler Zellen
+    /// nicht zu DEMSELBEN Band zurück, malt das Raster ihn wie einen
+    /// getrackten Lauf, auch auf einer Gleithang-Bank, bis er ein anderes
+    /// Fluss-Band erreicht oder im offenen Wasser endet; dahinter übernimmt
+    /// die Kontinuitäts-Kette (`continuityFloor`). Kehrt er zurück, ist er die
+    /// Abkürzung über die Bank, die `rasterBarBandReachCells` meint, und das
+    /// Band malt den Fluss. Die Länge ist deren Reichweite (16 Zellen
+    /// Chebyshev) quer über die Bank hin und zurück.
+    public static let departureMaxCells = 2 * rasterBarBandReachCells
+    /// Die Austrittszelle selbst gehört zum Abzweig, solange das Band dort
+    /// weniger als so viel deckt (die auslaufende Bandkante); darunter
+    /// deckelt der Korridor das Raster anteilig.
+    public static let departureEdgeCoverage = 0.5
+
+    /// Mündung in einen größeren Fluss (Befund des Eigners 2026-10-18): ein
+    /// Lauf ohne offenes Wasser am Ende folgt seinem D8-Empfänger bis zu so
+    /// vielen Zellen, bis er im Band eines früher gebauten (größeren) Laufs
+    /// liegt, statt davor spitz auszulaufen. Die Kopplung lässt die Linie des
+    /// Hauptlaufs bis `SimConfig.meanderBeltCouplingSlackCells` (4) plus halbe
+    /// Gürtelbreite neben dessen D8-Zelle liegen; doppelt reicht über beides.
+    public static let ribbonJoinSearchCells = 8
+    /// Ab dieser Deckung des früheren Bands ist der Zubringer angekommen.
+    public static let ribbonJoinCoverage = 0.5
+
+
     /// Raster-Wasser an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305,
     /// Schrägsicht): ab dieser SICHTBAREN Neigung (Welt-Y je Welt-Einheit,
     /// `terrain.gdshader` aus dem Höhenfeld je Pixel) blendet das Fluss-Raster
