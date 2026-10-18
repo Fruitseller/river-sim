@@ -283,6 +283,14 @@ public final class Terrain {
     /// (Runde 7) — hängt an Feldern, die der Pass nicht schreibt. Reiner
     /// Arbeitspuffer, je Aufruf neu gesetzt.
     private var incisionKErode: [Double] = []
+    /// Braid-Status je Zelle (Runde 7, s. `braidPass`): 0 Meer, 1 inaktives
+    /// Land (Deposition möglich), 2 aktiver Reach. Reiner Arbeitspuffer, je
+    /// Aufruf vor dem seriellen Lauf vollständig neu gesetzt.
+    private var braidStatus: [Int8] = []
+    /// Depositions-Deckel der inaktiven Landzellen des Braid-Passes (Runde 7,
+    /// s. `braidPass`) — nur für Status 1 gültig und gelesen. Reiner
+    /// Arbeitspuffer.
+    private var braidDepositCeil: [Double] = []
     private var mfdRoutes: [MFDRoute] = []
     /// Route-Klassifikation des MFD-Passes (Runde 7): −1 Meer/Beckenwasser,
     /// 0 flach, sonst Zahl der tieferen Nachbarn — Dispersions-Zellen tragen
@@ -3045,40 +3053,76 @@ public final class Terrain {
         let mB = cfg.braidExponent
         let kb = cfg.braidCapacity * dt
         let sqrt2 = 2.0.squareRoot()
-        let sea = cfg.sea, nn = n
+        let sea = cfg.sea, nn = n, cnt = cfg.count
         let barHeight = cfg.braidBarHeight, deltaCeiling = cfg.braidDeltaCeiling
         fill(&qs, 0)
-        // PERF (Issue #43): der Pass läuft über ALLE Zellen (der Reihe nach durch
-        // `order`), auch wenn nur wenige ein Braid-Reach sind — der Vorfilter
-        // zahlte seine Klassen-Property-Zugriffe also 692k-fach, und die
-        // Nachbar-Puffer kosteten je Element Bounds- und COW-Prüfung.
-        // `h`/`sed`/`rock` laufen über `withBed`: dieselbe Roh-Puffer-Sicht,
-        // die auch der Funnel `erodeCell`/`depositCell` bekommt (er trägt das
-        // Gletscher-Gate, AGENTS.md) — damit adressiert der Pass sie nicht mehr
-        // je Zelle über die Klassen-Property.
+        // PERF (Runde 7): Der Pass läuft über ALLE Zellen (der Reihe nach durch
+        // `order`), auch wenn nur wenige ein Braid-Reach sind — der active-Test
+        // zahlte seine vier verstreuten Lesezugriffe (areaMFD/hf/h ×2) 518k-fach
+        // je Schritt. Er lässt sich VORAB und PARALLEL entscheiden, weil seine
+        // Operanden bei der Zelle `k` bis zu k's eigenem Besuch unverändert
+        // bleiben: `hf` und `areaMFD` schreibt der Pass gar nicht, und `h[k]`
+        // ändert sich ausschließlich im Funnel von k's EIGENem Besuch
+        // (`erodeCell`/`depositCell` schreiben nur die Zelle `k` selbst, s.
+        // Bed-Funnel) — die serialisierten Besuche laufen also auf exakt den
+        // Pass-Startwerten. Dasselbe gilt für den Depositions-Deckel der
+        // inaktiven Landzellen (`hf + braidDeltaCeiling − h`), der deshalb
+        // mitvorberechnet reist. Bit-identisch: der Test selbst, seine
+        // Operanden und die Reihenfolge der Zweige sind unverändert.
+        if braidStatus.count != cnt { braidStatus = .init(repeating: 0, count: cnt) }
+        if braidDepositCeil.count != cnt { braidDepositCeil = .init(repeating: 0, count: cnt) }
+        hf.withUnsafeBufferPointer { hfb in
+        areaMFD.withUnsafeBufferPointer { amb in
+        h.withUnsafeBufferPointer { hb in
+        braidStatus.withUnsafeMutableBufferPointer { stb in
+        braidDepositCeil.withUnsafeMutableBufferPointer { clb in
+            let phf = hfb.baseAddress!, pamf = amb.baseAddress!, ph0 = hb.baseAddress!
+            let pst = stb.baseAddress!, pceil = clb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi {
+                    // Seicht überströmte Reaches (< 0.015) sind aktiv — dort
+                    // schütten Braid-Deltas Bänke bis über den Wasserspiegel.
+                    // Tiefere Ponds/Seen NICHT: Bänke-Bau dort macht die
+                    // Becken-Böden rau um die See-Render-Schwelle (0.03) herum
+                    // → sichtbares Speckle statt Verflechtung.
+                    let active = pamf[k] >= minA && phf[k] > sea && ph0[k] > sea
+                              && phf[k] - ph0[k] < 0.015
+                    if active { pst[k] = 2; continue }
+                    if phf[k] > sea {
+                        pst[k] = 1
+                        pceil[k] = max(0, phf[k] + deltaCeiling - ph0[k])
+                    } else {
+                        pst[k] = 0
+                    }
+                }
+            }
+        }}}}}
+        // PERF (Issue #43): die Nachbar-Puffer des aktiven Zweigs als temporäre
+        // Roh-Allokation, `h`/`sed`/`rock` über `withBed`: dieselbe Roh-Puffer-
+        // Sicht, die auch der Funnel `erodeCell`/`depositCell` bekommt (er
+        // trägt das Gletscher-Gate, AGENTS.md).
         order.withUnsafeBufferPointer { ob in
         qs.withUnsafeMutableBufferPointer { qb in
         areaMFD.withUnsafeBufferPointer { amb in
         hf.withUnsafeBufferPointer { hfb in
         floodParent.withUnsafeBufferPointer { fpb in
+        braidStatus.withUnsafeBufferPointer { stb in
+        braidDepositCeil.withUnsafeBufferPointer { clb in
         withUnsafeTemporaryAllocation(of: Int.self, capacity: 8) { nbK in
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbS in
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbQc in
         let pord = ob.baseAddress!, pqs = qb.baseAddress!, pamf = amb.baseAddress!
         let phf = hfb.baseAddress!, pfp = fpb.baseAddress!
+        let pst = stb.baseAddress!, pceil = clb.baseAddress!
         withBed { bed in
         var oi = cfg.count - 1
         while oi >= 0 {
             let k = Int(pord[oi]); oi -= 1
+            let st = pst[k]
+            if st == 0 { continue }
             let qin = pqs[k]
-            // Seicht überströmte Reaches (< 0.015) sind aktiv — dort schütten
-            // Braid-Deltas Bänke bis über den Wasserspiegel. Tiefere Ponds/Seen
-            // NICHT: Bänke-Bau dort macht die Becken-Böden rau um die See-Render-
-            // Schwelle (0.03) herum → sichtbares Speckle statt Verflechtung.
-            let active = pamf[k] >= minA && phf[k] > sea && bed.h[k] > sea
-                      && phf[k] - bed.h[k] < 0.015
-            if !active {
+            if st == 1 {
                 // Kein Braid-Reach: Fracht landet hier ab (Delta/Seerand), Überschuss
                 // über den Stauraum hinaus gilt als exportiert (wie transportLimited).
                 //
@@ -3093,9 +3137,11 @@ public final class Terrain {
                 // viele kleine Schritte laufen gegen dieselbe Kante wie ein
                 // großer. Warum die Höhe 0.05 und nicht `braidBarHeight` ist —
                 // und was bei zu engem Deckel kippt — steht im Kalibrier-Logbuch
-                // bei `SimConfig.braidDeltaCeiling`.
-                if qin > 0 && phf[k] > sea {
-                    depositCell(k, min(qin, max(0, phf[k] + deltaCeiling - bed.h[k])), bed)
+                // bei `SimConfig.braidDeltaCeiling`. (Der Deckel reist vorab
+                // berechnet in `braidDepositCeil`; der `phf > sea`-Ast der
+                // Bedingung steckt im Status.)
+                if qin > 0 {
+                    depositCell(k, min(qin, pceil[k]), bed)
                 }
                 continue
             }
@@ -3176,7 +3222,7 @@ public final class Terrain {
                 for t in 0..<cnt { pqs[nbK[t]] += qout * (nbQc[t] / qcTot) }
             }
         }
-        }}}}}}}}}}
+        }}}}}}}}}}}}
     }
 
     // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig) — TESTPFAD
@@ -3275,7 +3321,7 @@ public final class Terrain {
     ///
     /// PERF (Runde 7): Alle ENTSCHEIDUNGEN, die während des Passes NICHT vom
     /// laufend veränderten Bett abhängen, laufen vorab und parallel: die
-    /// Gate-Kette (Meer/Eis/Breach-Fläche/Beckenwasser/Weltrand) als Int8 in
+    /// Gate-Kette (Meer/Eis/Breack-Fläche/Beckenwasser/Weltrand) als Int8 in
     /// `incisionGate` und der Vegetations-/Lithologie-Faktor `kErode` in
     /// `incisionKErode`. Bit-identisch, weil der Pass nur je BESUCHTER Zelle
     /// schreibt (`h`/`sed`/`rock` an `k` selbst) — jede Zelle sieht also bei
