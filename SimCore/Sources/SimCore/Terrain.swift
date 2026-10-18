@@ -277,6 +277,13 @@ public final class Terrain {
     /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
     private var areaPow: [Double] = []
     private var mfdRoutes: [MFDRoute] = []
+    /// Route-Klassifikation des MFD-Passes (Runde 7): −1 Meer/Beckenwasser,
+    /// 0 flach, sonst Zahl der tieferen Nachbarn — Dispersions-Zellen tragen
+    /// c + 10. Reiner Arbeitspuffer, vor jedem Lesen vollständig neu gesetzt.
+    private var mfdRouteCounts: [Int8] = []
+    /// Disbursive MFD-Gewichte — nur für canDisperse-Zellen geschrieben
+    /// (Runde 7, s. `MFDRoute`). Reiner Arbeitspuffer.
+    private var mfdDispersed: [MFDDispersion] = []
     private var qs: [Double]      // Sedimentfracht in Transit (transport-limitiert)
     /// Zellen unter einer Mäander-Zentrumslinie (M3-Maske). Reconciliation-Maske für
     /// BEIDE Erosionspfade: `transportLimited` (Grid) und `Hydraulic.erode` (Droplet).
@@ -2827,14 +2834,32 @@ public final class Terrain {
     /// Nachbargewichte hängen nur an der unveränderten Topografie. Zwei
     /// Exponenten vorbereiten; die Flächen-Schwelle entscheidet erst während
     /// der weiterhin seriellen Akkumulation in unveränderter `order`.
+    ///
+    /// PERF (Runde 7): die Route reiste als 256-Byte-Struct (zwei komplette
+    /// `SIMD8<Double>`-Gewichtssätze plus Zähler) durch Schreibe- und
+    /// Leseschleife — rund 133 MB Schreib- UND Leseverkehr je Schritt allein
+    /// für den Zwischenspeicher, obwohl die Mehrheit der Zellen Meer ist und
+    /// gar keine Route braucht. Jetzt trägt der Struct nur den dendritischen
+    /// Satz (Nachbarn + Gewichte + Summe, 104 Byte) und wird NUR für Land-
+    /// zellen mit mindestens einem tieferen Nachbarn geschrieben; der seltene
+    /// disbursive Satz liegt in `mfdDispersed` und wird nur für canDisperse-
+    /// Zellen geschrieben. Die Klassifikation (Wasser/Becken −1 · flach 0 ·
+    /// Land mit c Nachbarn: c, bzw. c+10 mit Dispersionsflag) reist als Int8
+    /// in `mfdRouteCounts` — für Meerzellen bleibt vom Zwischenspeicher damit
+    /// exakt 1 Byte. Werte, Additionsketten und Vergleichsreihenfolge
+    /// unverändert, s. Kommentare im Pass.
     private struct MFDRoute {
         var neighbors = SIMD8<Int32>(repeating: 0)
         var weights = SIMD8<Double>(repeating: 0)
-        var dispersed = SIMD8<Double>(repeating: 0)
-        var count = 0
-        var canDisperse = false
         var sum = 0.0
-        var dispersedSum = 0.0
+    }
+
+    /// Disbursive Gewichte (Exponent `braidDispersion`) — getrennt von
+    /// `MFDRoute`, weil sie nur für die seltene canDisperse-Minderheit
+    /// gebraucht und geschrieben werden.
+    private struct MFDDispersion {
+        var weights = SIMD8<Double>(repeating: 0)
+        var sum = 0.0
     }
 
     private func computeMFDArea() {
@@ -2843,6 +2868,8 @@ public final class Terrain {
         let sqrt2 = 2.0.squareRoot()
         let exponent = cfg.mfdExponent, dispersion = cfg.braidDispersion
         if mfdRoutes.count != cnt { mfdRoutes = .init(repeating: MFDRoute(), count: cnt) }
+        if mfdRouteCounts.count != cnt { mfdRouteCounts = .init(repeating: 0, count: cnt) }
+        if mfdDispersed.count != cnt { mfdDispersed = .init(repeating: MFDDispersion(), count: cnt) }
         hf.withUnsafeBufferPointer { hfb in
         h.withUnsafeBufferPointer { hb in
         areaMFD.withUnsafeMutableBufferPointer { ab in
@@ -2851,9 +2878,11 @@ public final class Terrain {
         endorheicBasin.withUnsafeBufferPointer { eb in
         let capacity = cnt
         mfdRoutes.withUnsafeMutableBufferPointer { routes in
+        mfdRouteCounts.withUnsafeMutableBufferPointer { rcb in
+        mfdDispersed.withUnsafeMutableBufferPointer { dsp in
             let phf = hfb.baseAddress!, ph = hb.baseAddress!, pa = ab.baseAddress!
             let ppar = pb.baseAddress!, pord = ob.baseAddress!, pend = eb.baseAddress!
-            let pr = routes.baseAddress!
+            let pr = routes.baseAddress!, prc = rcb.baseAddress!, pdsp = dsp.baseAddress!
             seedFlowAccumulator(pa, cellArea: cellArea)
             let fastMod = UInt64.max / UInt64(nn) &+ 1
             let lastRow = cnt - nn
@@ -2865,12 +2894,11 @@ public final class Terrain {
                 for t in lo..<hi {
                     let k = Int(pord[blockEnd - 1 - t])
                     let hk = phf[k]
-                    var route = MFDRoute()
                     if hk <= sea || pend[k] == .water {
-                        route.count = -1
-                        pr[t] = route
+                        prc[t] = -1
                         continue
                     }
+                    var neighbors = SIMD8<Int32>(repeating: 0)
                     var slopes = SIMD8<Double>(repeating: 0)
                     var c = 0
                     var sMax = 0.0
@@ -2885,7 +2913,7 @@ public final class Terrain {
                         let d = hk - phf[nb]
                         if d <= 0 { return }
                         let s = d / dist
-                        if s > 0 { route.neighbors[c] = Int32(nb); slopes[c] = s; sMax = max(sMax, s); c += 1 }
+                        if s > 0 { neighbors[c] = Int32(nb); slopes[c] = s; sMax = max(sMax, s); c += 1 }
                     }
                     let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
                     if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
@@ -2903,46 +2931,80 @@ public final class Terrain {
                             }
                         }
                     }
-                    route.count = c
-                    route.canDisperse = mfdCanDisperse(sMax: sMax, pond: hk - ph[k])
+                    if c == 0 {
+                        // Flache Zelle (Seespiegel/Grat): kein tieferer Nachbar.
+                        // Die Route bleibt ungeschrieben, die Akkumulation fällt
+                        // unten auf den floodParent-Rückfall (identisch zum
+                        // bisherigen `route.count == 0`).
+                        prc[t] = 0
+                        continue
+                    }
+                    var route = MFDRoute()
                     for j in 0..<c {
                         route.weights[j] = powFast(slopes[j], exponent)
                         route.sum += route.weights[j]
-                        if route.canDisperse {
-                            route.dispersed[j] = powFast(slopes[j], dispersion)
-                            route.dispersedSum += route.dispersed[j]
-                        }
                     }
                     // Jede Division behält dieselben Operanden. Die
                     // anschließenden Flächensummen bleiben vollständig seriell.
+                    // Die Additionskette je Akkumulator ist unverändert
+                    // aufsteigend in j — die beiden Akkumulatoren laufen jetzt
+                    // nur in getrennten Schleifen, was die Werte nicht ändert.
                     for j in 0..<c {
                         route.weights[j] /= route.sum
-                        if route.canDisperse { route.dispersed[j] /= route.dispersedSum }
                     }
+                    route.neighbors = neighbors
                     pr[t] = route
+                    if mfdCanDisperse(sMax: sMax, pond: hk - ph[k]) {
+                        // Dispersions-Flag im Int8-Zähler: c + 10 (c ≤ 8, der
+                        // Wert bleibt Int8-safe). Ohne Flag wird der disbursive
+                        // Satz gar nicht erst geschrieben.
+                        prc[t] = Int8(c + 10)
+                        var disp = MFDDispersion()
+                        for j in 0..<c {
+                            disp.weights[j] = powFast(slopes[j], dispersion)
+                            disp.sum += disp.weights[j]
+                        }
+                        for j in 0..<c {
+                            disp.weights[j] /= disp.sum
+                        }
+                        pdsp[t] = disp
+                    } else {
+                        prc[t] = Int8(c)
+                    }
                 }
                 }
                 for t in 0..<length {
-                    let route = pr[t]
-                    if route.count < 0 { continue }
+                    let c8 = prc[t]
+                    if c8 < 0 { continue }
                     let k = Int(pord[blockEnd - 1 - t])
                     let a = pa[k]
-                    let disperse = a >= mfdMinA && route.canDisperse
-                    let weights = disperse ? route.dispersed : route.weights
-                    let sum = disperse ? route.dispersedSum : route.sum
-                    if route.count == 0 || sum <= 0 {
+                    let canD = c8 >= 10
+                    let c = canD ? Int(c8) - 10 : Int(c8)
+                    if c == 0 {
                         if pend[k] != .none { continue }
                         let fp = ppar[k]
                         if fp >= 0 { pa[Int(fp)] += a }
                         continue
                     }
-                    for j in 0..<route.count {
+                    let route = pr[t]
+                    // Die Flächen-Schwelle entscheidet wie bisher erst hier, an
+                    // der bereits angesammelten Fläche.
+                    let disperse = a >= mfdMinA && canD
+                    let weights = disperse ? pdsp[t].weights : route.weights
+                    let sum = disperse ? pdsp[t].sum : route.sum
+                    if sum <= 0 {
+                        if pend[k] != .none { continue }
+                        let fp = ppar[k]
+                        if fp >= 0 { pa[Int(fp)] += a }
+                        continue
+                    }
+                    for j in 0..<c {
                         pa[Int(route.neighbors[j])] += a * weights[j]
                     }
                 }
                 end -= length
             }
-        }}}}}}}
+        }}}}}}}}}
     }
 
     // MARK: - Braiding (zellulärer Bänke-Bau, Murray & Paola 1994)
