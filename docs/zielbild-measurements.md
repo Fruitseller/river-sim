@@ -2170,6 +2170,30 @@ schnüren eine Rinne ab) und verlanden im nächsten: inselweit gezählt
 13 Zellen, je 100 Jahre 58, 0, 0, 0, 1, 1, 2. Das Raster malt sie nicht mehr
 als See, solange ihr Spiegel nahe am Meer liegt (§ Render, Lagunen).
 
+### Wachstum über die Zeit
+
+Bleiben die Lappen liegen, wenn die Mündung wandert? Gezählt: Zellen, die
+nach dem Einlauf Meer waren und jetzt Land sind (neu), und umgekehrt
+(verloren), Produktion, dt 1000, Stand `560d809`, 2026-10-18:
+
+| Seed | Variante | 4.000 J. | 20.000 J. | 40.000 J. |
+| ---: | --- | --- | --- | --- |
+| 1337 | Produktion | +1464 / −560 | +7968 / −1437 | +16693 / −1886 |
+| 1337 | ohne Wellen (`waveRelax` 0) | +2410 / −493 | +11453 / −1100 | +20321 / −1228 |
+| 1337 | ohne Delta (`deltaTrapFraction` 0) | +410 / −497 | +652 / −1982 | +919 / −3328 |
+| 42 | Produktion | +443 / −334 | +1783 / −1180 | +4913 / −1704 |
+| 42 | ohne Delta | +122 / −320 | +263 / −1456 | +471 / −2310 |
+| 20 | Produktion | +549 / −419 | +3800 / −1284 | +8555 / −1840 |
+| 20 | ohne Delta | +138 / −422 | +341 / −1569 | +747 / −2260 |
+
+Das Neuland wächst auf allen drei Seeds gleichmäßig weiter (Seed 1337 rund
+410 Zellen je 1000 Jahre); ohne Delta verliert die Küste nur. Die Wellen
+nehmen bis Jahr 40.000 rund 18 % davon wieder weg. Dass die AKTIVE Mündung
+wandert und ihr Lappen jung ist, heißt also nicht, dass die Deltas klein
+bleiben: verlassene Lappen bleiben als Delta-Ebene liegen, und die Deltas
+werden mit dem Alter der Welt größer. Klein gegen Vorlage B sind sie in
+Jahr 20.000, weil die Vorlage ein reifes Delta zeigt.
+
 ### Verworfen
 
 Kennzahl je Variante: große Mündungen mit ≥ 3 Distributären und Sandinsel,

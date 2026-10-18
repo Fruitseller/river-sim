@@ -59,10 +59,13 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   tropfenförmigen Mündungsbarren vor der Mündung, Inseln mit Sandrand und
   Bewuchs zwischen Meerwasser-Rinnen; Flüsse laufen voll bis unter die
   Wasserlinie, ohne Sand über dem Gerinne (`docs/zielbild-measurements.md`
-  § Delta). Offen: die Deltas bleiben kleiner als in Vorlage B (die
-  Mündungen wandern je 1000 Jahre bei einem Drittel der großen Flüsse um
-  10–50 Zellen, jeder Lappen ist jung), und an steilen Küstenstufen trägt das
-  Materialmodell (#174 D) weiter ein Felsband. Küsten-Feinschliff: Brandung
+  § Delta). Die aktive Mündung wandert je 1000 Jahre bei einem Drittel der
+  großen Flüsse um 10–50 Zellen, verlassene Lappen bleiben aber als
+  Delta-Ebene liegen: das Neuland wächst gleichmäßig weiter (Seed 1337 rund
+  410 Zellen je 1000 Jahre, Wellen nehmen ~18 % zurück; § Delta, Wachstum
+  über die Zeit). In Jahr 20.000 sind die Deltas deshalb noch kleiner als das
+  reife Delta der Vorlage B. An steilen Küstenstufen trägt das
+  Materialmodell (#174 D) weiter ein Felsband (Kliff). Küsten-Feinschliff: Brandung
   nur an geneigtem Schelf (kein Schaum auf Barren und Lagunen), Bänder blenden
   ab der Wasserlinie in die Meeresfarbe aus, Schelf-Farbe über einen
   B-Spline; die treppigen Flächen im Seichtwasser sind die blockige
