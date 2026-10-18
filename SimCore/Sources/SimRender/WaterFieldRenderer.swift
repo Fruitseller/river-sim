@@ -19,6 +19,12 @@ import SimCore
 public final class WaterFieldRenderer {
     public init() {}
 
+    /// A/B-Arm der Verbreiterung (Issue #174): `true` = die alte Diamant-
+    /// Dilatation (zwei Pässe), `false` = Scheibenstempel (Standard). Nur für
+    /// Messläufe und Wächter, die beide Fassungen im selben Build vergleichen
+    /// (`RectWaterTests`); der Betrieb läuft immer auf dem Standard.
+    var legacyWiden = ProcessInfo.processInfo.environment["RS_WIDEN_DIAMOND"] != nil
+
     /// Baut die Diagnose-Meldung für einen Feldgrößen-Mismatch (Bug: Feld-Korruption).
     /// Bewusst REIN (kein Trap, keine Assertion): Der Mismatch-Pfad ist unter
     /// `swift test` (Debug-Build) sonst nicht testbar — ein Guard mit `assertionFailure`
@@ -267,11 +273,9 @@ public final class WaterFieldRenderer {
         }
 
         // Stream-Map mit ABFLUSS-ABHÄNGIGER BREITE: ein Fluss wird stromab breiter &
-        // kräftiger (Hauptflüsse breit + tiefblau, Bäche dünn). Effizient über
-        // schwellen-gestufte Max-Dilatation: dünne Intensität ∝ log(Einzugsgebiet)
-        // je Fluss-Zelle, dann 3 Dilatations-Pässe, in denen höhere Pässe nur noch
-        // KRÄFTIGE Flüsse weiter verbreitern → Breiten-Hierarchie. Sequenziell,
-        // cache-freundlich (kein Scheiben-Stempeln mit verstreuten Zugriffen).
+        // kräftiger (Hauptflüsse breit + tiefblau, Bäche dünn). Die Intensität
+        // folgt log(Einzugsgebiet); nur kräftige Zellen verbreitern sich danach
+        // als Scheiben mit variabler Breite (`RiverWidening`).
         sd.withUnsafeMutableBufferPointer { $0.baseAddress!.update(repeating: 0, count: cnt) }
         // nickmcd-Rendering: gemalt wird die STREAM-MAP (zeitgemittelte Tropfen-
         // Pfade = wo Wasser wirklich fließt, scharfe Fäden), die Intensität/
@@ -375,8 +379,8 @@ public final class WaterFieldRenderer {
         // die Track-Maske ohnehin dünn war (User: „kein zusammenhängender
         // Lauf"). Quellen UNTER dem Boden propagieren weiterhin nicht — sonst
         // würde die Klemme isolierten Speckle zu langen Fäden verstärken.
-        // 1 Zelle breit; Breite macht weiterhin nur die (schwellen-gestufte)
-        // Dilatation darunter.
+        // 1 Zelle breit; die Verbreiterung darunter gibt nur kräftigen
+        // Läufen zusätzliche Breite.
         // TÜMPEL-EINTRITT: ob der Tümpel unter der Kette nasse Wiese ist (dann
         // malt der See-Kanal ihn nicht und der Bach hätte dort eine Lücke),
         // steht erst nach den Komponenten unten fest. Die Kette merkt sich
@@ -403,10 +407,9 @@ public final class WaterFieldRenderer {
             }
         }
         let barTol = WaterRender.widenBarTolerance
-        // NUR kräftige Läufe verbreitern (kein Alle-Läufe-Pass mehr): Bäche bleiben
-        // fadendünn (1 Zelle), Hauptflüsse verlieren ~1 Zelle Breite — die Breiten-
-        // Hierarchie bleibt, ihr Absolutniveau sinkt (User: „proportional zu dick";
-        // die alte Kalibrierung stammt von der kleineren 640er-Map).
+        // Nur kräftige Läufe verbreitern: Bäche bleiben fadendünn (1 Zelle).
+        // Der Messarm hält die alte Diamant-Dilatation zum A/B-Vergleich vor;
+        // der Betrieb stempelt Scheiben (`RiverWidening`).
         // Die Bank-Toleranz gilt SYMMETRISCH (|Bett − Nachbar-Spiegel| < barTol):
         // einseitig („nicht nennenswert DARÜBER") durfte sich Wasser bergab
         // unbegrenzt verbreitern — an Steilwänden liegt jede Zelle unter dem
@@ -415,29 +418,37 @@ public final class WaterFieldRenderer {
         // diese Zellen zu großen Splittern (User-Screenshot Jahr 0, steile
         // Canyons). Physisch steht Wasser nie an einer Wand UNTER dem Fluss;
         // auf Ebenen ändert die zweite Schranke nichts (Differenzen ≪ barTol).
-        let widenThresh = WaterRender.widenThresholds
-        let widenFalloff = WaterRender.widenFalloff
-        for thresh in widenThresh {
-            // Liest sd/h/hf, schreibt nur b[k] → zeilenparallel, bit-identisch.
-            sd.withUnsafeBufferPointer { sdb in
-            b.withUnsafeMutableBufferPointer { bb in
-            h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
-                let psd = sdb.baseAddress!, pb = bb.baseAddress!
-                let ph = hb.baseAddress!, phf = hfb.baseAddress!
-                parallelChunks(n) { jLo, jHi in
-                for j in jLo..<jHi {
-                    for i in 0..<n {
-                        let k = j * n + i
-                        var m = psd[k]
-                        if i > 0 && psd[k - 1] > thresh && abs(ph[k] - phf[k - 1]) < barTol { m = max(m, psd[k - 1] - widenFalloff) }
-                        if i < n - 1 && psd[k + 1] > thresh && abs(ph[k] - phf[k + 1]) < barTol { m = max(m, psd[k + 1] - widenFalloff) }
-                        if j > 0 && psd[k - n] > thresh && abs(ph[k] - phf[k - n]) < barTol { m = max(m, psd[k - n] - widenFalloff) }
-                        if j < n - 1 && psd[k + n] > thresh && abs(ph[k] - phf[k + n]) < barTol { m = max(m, psd[k + n] - widenFalloff) }
-                        pb[k] = m
+        if legacyWiden {
+            let widenThresh = WaterRender.widenThresholds
+            let widenFalloff = WaterRender.widenFalloff
+            for thresh in widenThresh {
+                // Liest sd/h/hf, schreibt nur b[k] → zeilenparallel, bit-identisch.
+                sd.withUnsafeBufferPointer { sdb in
+                b.withUnsafeMutableBufferPointer { bb in
+                h.withUnsafeBufferPointer { hb in hf.withUnsafeBufferPointer { hfb in
+                    let psd = sdb.baseAddress!, pb = bb.baseAddress!
+                    let ph = hb.baseAddress!, phf = hfb.baseAddress!
+                    parallelChunks(n) { jLo, jHi in
+                    for j in jLo..<jHi {
+                        for i in 0..<n {
+                            let k = j * n + i
+                            var m = psd[k]
+                            if i > 0 && psd[k - 1] > thresh && abs(ph[k] - phf[k - 1]) < barTol { m = max(m, psd[k - 1] - widenFalloff) }
+                            if i < n - 1 && psd[k + 1] > thresh && abs(ph[k] - phf[k + 1]) < barTol { m = max(m, psd[k + 1] - widenFalloff) }
+                            if j > 0 && psd[k - n] > thresh && abs(ph[k] - phf[k - n]) < barTol { m = max(m, psd[k - n] - widenFalloff) }
+                            if j < n - 1 && psd[k + n] > thresh && abs(ph[k] - phf[k + n]) < barTol { m = max(m, psd[k + n] - widenFalloff) }
+                            pb[k] = m
+                        }
                     }
-                }
-                }
-            }}}}
+                    }
+                }}}}
+                swap(&sd, &b)
+            }
+
+        } else {
+            // Scheibenstempel statt Diamant-Dilatation (Issue #174, „Kästen"):
+            // `WaterRender` § „Verbreiterung als Scheibe".
+            RiverWidening.widen(sd, into: &b, h: h, hf: hf, receiver: rec, n: n)
             swap(&sd, &b)
         }
 

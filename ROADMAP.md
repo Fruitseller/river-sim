@@ -19,6 +19,12 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   `ZielbildLandformTests`). Mechanik-Wächter mit Testaufbau auf der alten Welt
   pinnen `calibrationRangeLandform`. Die Seed-1337-Welt hat damit auch kein
   Riesenbecken mehr (s. „See-Ausreißer" unten, für die neue Form zu prüfen).
+- **Raster-Flüsse (#174):** Runde Scheiben mit intensitätsabhängiger Breite,
+  Kopf-Verjüngung und statischer Formvariation ersetzen die zwei Diamant-
+  Dilatationen. Die feste Bank-Schranke hält niedrige Bänke und Abstürze trocken.
+  Messung, Bildvergleich und verbleibende Raster-Konturen:
+  `docs/geometry-water-measurements.md` § H. Mehrkosten des Wasserfeld-Aufrufs
+  auf dem M4 Max: 0,54–1,37 ms; Sim-Fingerprint unverändert.
 - **Landschaftsqualität #116/#117:** die Flusstal-Studie (#116, PR #121) hat
   vier prozedurale Hebel bewiesen: gebackene Render-Verschiebung (Rinnen,
   geschärfte Grate), Kronendach im Maßstab 1 Einheit ≈ 100 m, Licht mit
