@@ -174,6 +174,9 @@ final class StateInventoryTests: XCTestCase {
         ("braidDepositCeil", .scratch(reason:
             "Depositions-Deckel der inaktiven Landzellen des Braid-Passes "
             + "(Runde 7) — nur hinter frischem `braidStatus` == 1 gültig.")),
+        ("carveStatus", .scratch(reason:
+            "Vorfilter des `channelCarve` (Runde 7) — `area` und `inBelt` ändern "
+            + "sich im Pass nicht; der Puffer wird je Aufruf neu gesetzt.")),
         ("mfdRoutes", .scratch(reason:
             "MFD-Nachbargewichte, vor jeder Akkumulation vollständig neu vorbereitet.")),
         ("mfdRouteCounts", .scratch(reason:

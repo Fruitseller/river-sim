@@ -291,6 +291,10 @@ public final class Terrain {
     /// s. `braidPass`) — nur für Status 1 gültig und gelesen. Reiner
     /// Arbeitspuffer.
     private var braidDepositCeil: [Double] = []
+    /// Vorfilter des `channelCarve` (Runde 7, s. dort): `area`- und Gürtel-
+    /// Gate, die einzigen zwei Filter des Passes, die im Pass unverändert
+    /// bleiben. Reiner Arbeitspuffer, je Aufruf neu gesetzt.
+    private var carveStatus: [Bool] = []
     private var mfdRoutes: [MFDRoute] = []
     /// Route-Klassifikation des MFD-Passes (Runde 7): −1 Meer/Beckenwasser,
     /// 0 flach, sonst Zahl der tieferen Nachbarn — Dispersions-Zellen tragen
@@ -3509,16 +3513,43 @@ public final class Terrain {
         
         let beltOn = cfg.meanderEnabled && cfg.meanderBelt
         let beltMinA = cfg.meanderBeltMinCells * cellArea, beltFlat = cfg.meanderFlatSlope
+        // PERF (Runde 7): `area` und `inBelt` sind die einzigen zwei Gates des
+        // Passes, deren Operanden sich WÄHREND des Passes nicht ändern — und
+        // sie scheiden fast alle Zellen aus (nur wasserführende Läufe ab
+        // `channelFlowMinCells` kommen überhaupt in Betracht). Der Vorfilter
+        // läuft deshalb vorab und parallel; alle übrigen Gates (Meer, See-
+        // Rand, Gürtel-Flachheit) lesen frisches `h` — die Ufer-Erosion
+        // schreibt FREMDE Zellen, `h[k]` ist zum Besuchzeitpunkt also nicht
+        // der Pass-Startwert — und bleiben unverändert im seriellen Loop.
+        // Reine `continue`-Filter darf man vorziehen: ihr Ergebnis ist für
+        // jede Zelle dasselbe, egal in welcher Reihenfolge sie geprüft
+        // werden.
+        if carveStatus.count != cnt { carveStatus = .init(repeating: false, count: cnt) }
+        area.withUnsafeBufferPointer { ab in
+        inBelt.withUnsafeBufferPointer { beltb in
+        carveStatus.withUnsafeMutableBufferPointer { stb in
+            let pa0 = ab.baseAddress!, pbelt0 = beltb.baseAddress!
+            let pst = stb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi {
+                    pst[k] = pa0[k] >= minA && !(beltOn && pbelt0[k])
+                }
+            }
+        }}}
         hf.withUnsafeBufferPointer { hfb in
         receiver.withUnsafeBufferPointer { recb in
         area.withUnsafeBufferPointer { ab in
         order.withUnsafeBufferPointer { ob in
         inBelt.withUnsafeBufferPointer { beltb in
+        carveStatus.withUnsafeBufferPointer { stb in
         withBed { bed in
             let ph = bed.h, prec = recb.baseAddress!, pa = ab.baseAddress!, pord = ob.baseAddress!
             let phf = hfb.baseAddress!, pbelt = beltb.baseAddress!
+            let pst = stb.baseAddress!
             for oi in 0..<cnt {
                 let k = Int(pord[oi])
+                // Vorfilter (vorab parallel): area/Gürtel-Gate, s. oben.
+                if !pst[k] { continue }
                 if ph[k] <= sea { continue }
                 if phf[k] - ph[k] > lakeMarginDepth { continue }
                 if beltOn && pbelt[k] { continue } // Sohle gehört dem Gürtel-Stempel (#174)
@@ -3603,7 +3634,7 @@ public final class Terrain {
                     }
                 }
             }
-        }}}}}}
+        }}}}}}}
     }
 
     // MARK: - Seen-Verfüllung
