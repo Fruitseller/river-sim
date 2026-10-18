@@ -182,7 +182,10 @@ public enum ForestCanopyMask {
         probe.bandCoverage.withUnsafeBufferPointer { cb in
         probe.waterBytes.withUnsafeBufferPointer { wb in
             let pm = mb.baseAddress!, po = ob.baseAddress!
-            let pc = cb.baseAddress, pw = wb.baseAddress
+            // Leere Felder an der LÄNGE erkennen, nicht an `baseAddress`: die
+            // ist für ein leeres Array nur unter Darwin nil, unter Linux zeigt
+            // sie auf geteilten Leerspeicher (CI las dort über das Ende hinaus).
+            let pc = cb.isEmpty ? nil : cb.baseAddress, pw = wb.isEmpty ? nil : wb.baseAddress
             let band = probe.bandThreshold
             let river = probe.riverThreshold, lake = probe.lakeThreshold
             for k in 0..<target.count {
