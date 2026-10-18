@@ -50,7 +50,9 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
   Alterungs-Kennzahl ist `ridgeCurvature()` (∇²z auf Gratzellen).
 - **Hydrologie:** Priority-Flood + D8 für Erosion, MFD (Freeman/Quinn) für Render und
   Braiding, EWMA-geglättete Stream-Map, Pool-Kopplung (Descend→Flood→Drain),
-  Becken-Breach bei der Generierung (Becken entwässern zum Meer).
+  Becken-Breach bei der Generierung (Becken entwässern zum Meer). In
+  `computeMFDArea` entfällt die Division durch 1.0 bei orthogonalen Nachbarn
+  (`docs/perf-measurements.md` §L).
   **Becken-Wasserhaushalt (Issue #11):** ein geschlossenes Becken läuft nicht mehr
   zwangsläufig bis zur Sill voll — Zufluss (der niederschlagsgewichtete Abfluss
   aus #9/#10) gegen Verdunstung über der Seefläche deckelt den Spiegel

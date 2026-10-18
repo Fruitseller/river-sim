@@ -2521,24 +2521,28 @@ public final class Terrain {
                 if pend[k] == .water { continue }
                 var c = 0
                 var sMax = 0.0
-                // PERF: die Division erst NACH dem Vorzeichen-Test. `dist` ist
-                // positiv, `s` hat also dasselbe Vorzeichen wie der Zähler —
-                // höhere Nachbarn (die Mehrzahl) kosten damit keine
-                // Fließkomma-Division mehr, und die ist auf dieser Schleife der
-                // Taktgeber (gemessen −0,6 ms/Schritt). Der `s > 0`-Test bleibt
-                // stehen: er fängt den (theoretischen) Unterlauf eines winzigen
-                // positiven Zählers ab ⇒ bit-identisch.
-                @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                // PERF: die Division erst NACH dem Vorzeichen-Test und nur für
+                // diagonale Nachbarn. Für orthogonale Nachbarn (dist = 1.0) entfällt
+                // die Division vollständig. Höhere Nachbarn (die Mehrzahl) kosten
+                // damit keine Fließkomma-Division mehr, und die ist auf dieser Schleife
+                // der Taktgeber. Der `s > 0`-Test bei Diagonale fängt den
+                // (theoretischen) Unterlauf ab ⇒ bit-identisch.
+                @inline(__always) func considerDiag(_ nb: Int) {
                     let d = hk - phf[nb]
                     if d <= 0 { return }
-                    let s = d / dist
+                    let s = d / sqrt2
                     if s > 0 { nbK[c] = Int32(nb); nbW[c] = s; sMax = max(sMax, s); c += 1 }
+                }
+                @inline(__always) func considerOrtho(_ nb: Int) {
+                    let d = hk - phf[nb]
+                    if d <= 0 { return }
+                    nbK[c] = Int32(nb); nbW[c] = d; sMax = max(sMax, d); c += 1
                 }
                 let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
                 if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
-                    consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
-                    consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
-                    consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+                    considerDiag(k - nn - 1); considerOrtho(k - nn); considerDiag(k - nn + 1)
+                    considerOrtho(k - 1);                            considerOrtho(k + 1)
+                    considerDiag(k + nn - 1); considerOrtho(k + nn); considerDiag(k + nn + 1)
                 } else {
                     let j = k / nn
                     for dj in -1...1 {
@@ -2546,7 +2550,12 @@ public final class Terrain {
                             if di == 0 && dj == 0 { continue }
                             let ni = i + di, nj = j + dj
                             if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                            consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+                            let nb = nj * nn + ni
+                            if di != 0 && dj != 0 {
+                                considerDiag(nb)
+                            } else {
+                                considerOrtho(nb)
+                            }
                         }
                     }
                 }

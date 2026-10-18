@@ -759,3 +759,55 @@ for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; d
 RS_MEASURE=1 swift test -c release --package-path SimCore \
     -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
 ```
+
+---
+
+## L. Vermeidung von Division durch 1.0 bei orthogonalen MFD-Nachbarn (Oktober 2026) — 20,2 → 19,2 ms
+
+Anlass: In `Terrain.computeMFDArea` läuft für jede Zelle (in topologischer Reihenfolge
+über `order`) eine Nachbarschaftsabfrage über die 8 umliegenden Zellen. Bisher wurde
+für jeden tieferen Nachbarn generisch `let s = d / dist` ausgeführt — also auch für
+die vier orthogonalen Nachbarn (`dist = 1.0`), was pro Schritt hunderttausende
+unnötige Fließkomma-Divisionen durch 1.0 bedeutete.
+
+### Was geändert wurde
+
+Aufteilung in `considerOrtho(nb)` (für orthogonale Nachbarn mit `dist = 1.0`,
+ohne Division: `s = d`) und `considerDiag(nb)` (für diagonale Nachbarn mit
+`s = d / sqrt2`). Für innere Zellen (>99,4 %) werden die 8 Nachbarn direkt
+mit der passenden Helferfunktion aufgerufen; Randzellen verzweigen anhand
+`di != 0 && dj != 0`.
+
+Das Ergebnis ist 100 % bit-identisch.
+
+### Gemessen (Linux-VM, Produktions-Config)
+
+Interleaved gemessen über `simperf.base` vs. `simperf.neu` (`--repeat 3`, gleiche Sitzung,
+Linux-VM, 4 Kerne):
+
+| Stand | Block 1 | Block 2 | Block 3 | Min | `computeMFDArea` (letzter Block) |
+|---|---:|---:|---:|---:|---:|
+| vorher (`simperf.base`) | 158,0 ms | 161,4 ms | 155,7 ms | 155,7 ms | 20,24 ms (13,0 %) |
+| nachher (`simperf.neu`) | 153,1 ms | 153,8 ms | 146,6 ms | 146,6 ms | 19,24 ms (13,1 %) |
+| **Delta** | **−4,9 ms** | **−7,6 ms** | **−9,1 ms** | **−9,1 ms** | **−1,00 ms** |
+
+Interleaved gemessene Paare (`computeMFDArea`):
+- Paar 1: 21,09 ms vs. 19,15 ms (−1,94 ms)
+- Paar 2: 18,93 ms vs. 18,28 ms (−0,65 ms)
+- Paar 3: 20,74 ms vs. 19,42 ms (−1,32 ms)
+- **Mittelwert Ersparnis:** ~1,30 ms/Schritt auf `computeMFDArea`
+
+### Bit-Identität
+
+`simperf --hash` vor und nach der Änderung identisch (gleiche Maschine, gleiche Sitzung).
+Die Physik bleibt bit-identisch.
+
+### Reproduktion
+
+```sh
+source ~/.local/share/swiftly/env.sh
+swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+SimCore/.build/release/simperf --repeat 3
+SimCore/.build/release/simperf --hash
+```
+
