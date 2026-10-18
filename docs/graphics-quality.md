@@ -1230,6 +1230,39 @@ Rauschoktaven. Die Messung gehört vor das Mergen auf den Referenz-Mac
 Matrix-Bögen und den Vorlagen-Kameras; die Bilder dieses Pakets entstehen auf
 dem Referenz-Mac mit `scripts/graphics-matrix.sh baseline`.
 
+### Schnee und Eis an Steilflanken (2026-10-18)
+
+**Befund** (Nahansicht des Kamms, Seed 1337, Jahr 20.000, nach dem
+Lawinen-Abgang des Firns in der Sim): über der Schneegrenze war alles eine
+gleichmäßig weiße Decke, auch Hörner, Grate und Karwände; Gletscherzungen
+waren nicht vom Schnee zu unterscheiden (Abnahmepunkt 36). Zwei Ursachen in
+`TerrainColorRenderer`:
+
+1. Die Kältedeckung (`max(Schnee, Eis)`) hing nicht an der Steigung, und „Kälte
+   deckt alles" (vor Fels). Gemessen auf den Zellen über 0,5: Schnee liegt mit
+   einer mittleren Weltsteigung von 1,36 (44 % über 1,5), Eis mit 1,31 (42 %
+   über 1,5).
+2. Die Grenze Firn/blankes Eis lag fest bei 0 °C, die Gleichgewichtslinie des
+   Gletschers aber seit der Entkopplung bei `iceFirnTemp` = −2 °C: die Zunge
+   zwischen −2 und 0 °C lag als Firn unter dem Schnee.
+
+**Fassung** (Kalibrierung `MaterialRender`, nur Render, Sim-Hash unverändert):
+Schnee gleitet im Bild ab Weltsteigung 1,2 ab und ist ab 2,0 weg
+(`snowShedSlopeLo/Hi`), Eis ab 1,4 bis 2,4 (`iceShedSlopeLo/Hi`, Hängegletscher
+halten sich steiler als Schnee); dort bricht der Fels durch. Blankes Eis gilt
+relativ zur Eis-Firn-Grenze (`firnTempLo/Hi` ±1 °C um `iceFirnTemp`), und im
+Zehrgebiet deckt der Jahresmittel-Schnee der Sim die Zunge nicht mehr zu
+(im Sommer schmilzt er dort ab). Verworfen: 0,8/1,5 für den Schnee — in der
+Diorama-Kamera fast nur noch graue Gipfel (gegen Punkt 35); 1,2/2,0 ohne
+Eis-Abstufung — die Wände blieben weiß, weil das Eis sie deckte.
+
+Vorher/nachher: `docs/screenshots/zielbild-174/schnee-steilflanken_seed1337_nah_{vorher,nachher}.jpg`,
+`…_seed1337_diorama_…`, `…_seed20_diorama_…`. Wald unverändert
+(`testCanopyCoverageDiagnostic`: 12,6–23,2 % des Landes wie vorher). Wächter
+`MaterialTests.testSteepFacesShedSnowAndIce`; `testBareIceOnlyBelowTheEquilibriumLine`
+prüft jetzt auf flachen Zellen. Kosten: zwei `smoothstep` je Zelle auf der CPU,
+im Shader nichts.
+
 ## Zielbild #174
 
 Stand 16. Oktober 2026. Das Zielbild (Issue #174, Vorlagen A–C unter

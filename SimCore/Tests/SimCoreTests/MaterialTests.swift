@@ -176,16 +176,25 @@ final class MaterialTests: XCTestCase {
 
     // MARK: - Schnee und Gletscher
 
-    /// Blankes Eis nur im Zehrgebiet (über 0 °C), darüber Firn; ohne Eis
-    /// keines. Die Kältedeckung (B von `surfaces`) bleibt in allen drei Fällen
-    /// voll — Wald und Kronendach sehen Schnee und Eis gleich.
+    /// Weltsteigung einer Zelle wie im Renderer (`macroSlope` × 2·Überhöhung/Zelle).
+    private func worldSlope(_ t: Terrain, _ k: Int) -> Double {
+        Terrain.macroSlope(t.h, k, t.cfg.n) * 2 * RenderContract.heightScale / t.cfg.cellSize
+    }
+
+    /// Blankes Eis nur im Zehrgebiet (wärmer als die Eis-Firn-Grenze, Testwelt
+    /// bei 0 °C), darüber Firn; ohne Eis keines. Die Kältedeckung (B von
+    /// `surfaces`) bleibt in allen drei Fällen voll — Wald und Kronendach sehen
+    /// Schnee und Eis gleich. Auf FLACHEN Zellen: an Steilflanken gleitet der
+    /// Schnee im Bild ab (`testSteepFacesShedSnowAndIce`).
     func testBareIceOnlyBelowTheEquilibriumLine() {
         let terrain = aged()
         let n = terrain.cfg.n
         var state = terrain.state
         let land = (0..<(n * n)).first { k in
             let i = k % n, j = k / n
-            return i > 4 && i < n - 4 && j > 4 && j < n - 4 && state.h[k] > terrain.cfg.sea + 0.05
+            return i > 4 && i < n - 6 && j > 4 && j < n - 4
+                && (0..<3).allSatisfy { state.h[k + $0] > terrain.cfg.sea + 0.05
+                                        && worldSlope(terrain, k + $0) < 0.5 * MaterialRender.snowShedSlopeLo }
         }!
         XCTAssertEqual(state.ice.count, n * n, "Testwelt braucht das Klima")
         let tongue = land, firn = land + 1, snowfield = land + 2
@@ -201,6 +210,36 @@ final class MaterialTests: XCTestCase {
         for k in [tongue, firn, snowfield] {
             XCTAssertGreaterThan(weight(b.surfaces, k, 2), 0.9, "Kältedeckung bleibt voll (\(k))")
         }
+    }
+
+    /// Steilflanken halten im Bild weder Schnee noch (steiler) Eis: dieselbe
+    /// Schnee- bzw. Eismenge deckt an einer Wand jenseits der Schwellen nichts,
+    /// auf flachem Grund voll; dazwischen fällt die Deckung monoton.
+    func testSteepFacesShedSnowAndIce() {
+        let terrain = aged()
+        let n = terrain.cfg.n
+        var state = terrain.state
+        let interior = (0..<(n * n)).filter { k in
+            let i = k % n, j = k / n
+            return i > 4 && i < n - 4 && j > 4 && j < n - 4 && state.h[k] > terrain.cfg.sea + 0.05
+        }
+        let flat = interior.first { worldSlope(terrain, $0) < 0.5 * MaterialRender.snowShedSlopeLo }!
+        let wall = interior.first { worldSlope(terrain, $0) > MaterialRender.iceShedSlopeHi * 1.1 }!
+        for k in [flat, wall] { state.ice[k] = 0; state.snow[k] = 2; state.temperature[k] = -5 }
+        terrain.restore(state)
+        var b = TerrainColorRenderer.buffers(terrain)
+        XCTAssertGreaterThan(weight(b.surfaces, flat, 2), 0.9, "flacher Schnee deckt voll")
+        XCTAssertLessThan(weight(b.surfaces, wall, 2), 0.05, "Wand hält keinen Schnee")
+        state = terrain.state
+        for k in [flat, wall] { state.snow[k] = 0; state.ice[k] = 0.3 }
+        terrain.restore(state)
+        b = TerrainColorRenderer.buffers(terrain)
+        XCTAssertGreaterThan(weight(b.surfaces, flat, 2), 0.9, "flaches Eis deckt voll")
+        XCTAssertLessThan(weight(b.surfaces, wall, 2), 0.05, "Wand hält kein Eis")
+        XCTAssertLessThan(MaterialRender.snowShedSlopeLo, MaterialRender.iceShedSlopeLo,
+                          "Eis hält sich steiler als Schnee")
+        XCTAssertLessThan(MaterialRender.snowShedSlopeLo, MaterialRender.snowShedSlopeHi)
+        XCTAssertLessThan(MaterialRender.iceShedSlopeLo, MaterialRender.iceShedSlopeHi)
     }
 
     // MARK: - Rohboden

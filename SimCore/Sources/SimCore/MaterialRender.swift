@@ -92,12 +92,46 @@ public enum MaterialRender {
     /// (Vorlage B/C). Gemessen (Seed 1337, Jahr 2000): ohne diese Trennung war
     /// jede kalte Zelle „blankes Eis", weil der Schnee im Nährgebiet zu Eis
     /// wird und die Schneedeckung dort klein bleibt.
+    ///
+    /// Seit der Entkopplung der Eis-Firn-Grenze (`SimConfig.iceFirnTemp`, −2 °C,
+    /// Issue #174) gelten beide Werte RELATIV zu ihr: die Gleichgewichtslinie
+    /// des Gletschers ist dort, wo `updateIce` Firn bildet, nicht mehr an der
+    /// 0-°C-Isotherme des Schnees. Mit dem festen 0 °C lag die Zunge zwischen
+    /// −2 und 0 °C als Firn unter dem Schnee, und im Bild war kein Gletscher vom
+    /// Schneefeld zu unterscheiden (Abnahmepunkt 36).
     public static let firnTempLo = -1.0
     public static let firnTempHi = 1.0
 
     /// Wie stark frischer Schnee das Eis zusätzlich zudeckt: blankes Eis ×
-    /// (1 − `iceSnowHide` × Schneedeckung).
+    /// (1 − `iceSnowHide` × Schneedeckung × (1 − Zehranteil)). Im Zehrgebiet
+    /// schmilzt der Winterschnee auf dem Gletscher jeden Sommer ab; die
+    /// Schneedecke der Sim ist ein Jahresmittel und deckte dort sonst die
+    /// Zunge zu. Im Nährgebiet (Zehranteil 0) bleibt der Gletscher Firn.
     public static let iceSnowHide = 0.85
+
+    // MARK: Schnee an Steilflanken (CPU, B-Kanal von `surfaces`)
+
+    /// Weltsteigung, ab der Schnee von einer Flanke abgleitet, und ab der sie
+    /// schneefrei ist (0,8 ≈ 39°, 1,5 ≈ 56°; Schnee rutscht ab etwa 40° ab). Steile Wände halten keinen
+    /// Schnee, er geht als Lawine ab (dieselbe Physik wie der Firn-Abgang
+    /// des Eises, `SimConfig.iceAvalancheSlopeLo/Hi`, dort in Sim-Steigung).
+    /// Ohne das deckte die Kälte jede Wand über der Schneegrenze weiß zu, und
+    /// Hörner, Grate und Karwände lasen sich als weiße Tafeln (Befund #174,
+    /// Seeds 1337/20, Nahansicht des Kamms). Gemessen (Seed 1337, Jahr 20.000,
+    /// Zellen über 0,5): Schnee liegt mit einer mittleren Weltsteigung von 1,36,
+    /// 44 % über 1,5. Erst mit 1,2/2,0 blieb die Ansicht fast unverändert weiß.
+    public static let snowShedSlopeLo = 1.2
+    public static let snowShedSlopeHi = 2.0
+
+    /// Dasselbe für die EIS-Deckung im Bild, steiler angesetzt (1,2 ≈ 50°,
+    /// 2,2 ≈ 66°): Hängegletscher halten sich bis etwa 50°, darüber bricht Eis
+    /// in Séracs ab. Die Sim behält ihr Eis (die Maske `underIce` und der
+    /// Abtrag bleiben unberührt), nur die Kältedeckung im Render weicht dem
+    /// Fels. Gemessen (Seed 1337, Jahr 20.000, Zellen über 0,5): Eis liegt mit
+    /// einer mittleren Weltsteigung von 1,31, 42 % davon über 1,5 — ohne diese
+    /// Abstufung blieben die Wände weiß, auch wenn der Schnee abglitt.
+    public static let iceShedSlopeLo = 1.4
+    public static let iceShedSlopeHi = 2.4
 
     // MARK: Rohboden (CPU, B-Kanal von `covers`)
 

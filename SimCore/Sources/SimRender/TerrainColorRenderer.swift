@@ -113,6 +113,7 @@ public enum TerrainColorRenderer {
         let rawOn = disturb.count == n * n
         let temp = terrain.temperature.count == n * n ? terrain.temperature : [0.0]
         let tempOn = temp.count == n * n
+        let iceFirnTemp = terrain.cfg.iceFirnTemp
         let bands = terrain.heightBands
         // Weltsteigung aus `macroSlope` wie in `ForestCanopyMask`; ohne
         // Schrittweite (world <= 0 oder nicht endlich) gibt es keine
@@ -268,9 +269,12 @@ public enum TerrainColorRenderer {
                             b += (0.37 - b) * highRock
                         }
 
-                        let snowCover = snowOn
+                        // Steilflanken halten keinen Schnee (`MaterialRender.snowShed*`).
+                        let snowCover = (snowOn
                             ? Terrain.snowCoverage(swe: psnow[k], ref: snowRef)
-                            : bands.snowAmount(v)
+                            : bands.snowAmount(v))
+                            * (1 - smoothstep(MaterialRender.snowShedSlopeLo,
+                                              MaterialRender.snowShedSlopeHi, worldSlope))
                         if snowCover > 0 {
                             r += (0.88 - r) * snowCover
                             g += (0.90 - g) * snowCover
@@ -279,6 +283,8 @@ public enum TerrainColorRenderer {
 
                         let iceCover = iceOn
                             ? Terrain.iceCoverage(thickness: pice[k], ref: iceRef)
+                                * (1 - smoothstep(MaterialRender.iceShedSlopeLo,
+                                                  MaterialRender.iceShedSlopeHi, worldSlope))
                             : 0
                         if iceCover > 0 {
                             r += (0.68 - r) * iceCover
@@ -385,14 +391,17 @@ public enum TerrainColorRenderer {
                         g += (mineralTint.g - g) * tint
                         b += (mineralTint.b - b) * tint
 
-                        // Blankes Eis nur im Zehrgebiet (über 0 °C, dort
-                        // schmilzt `updateIce`), darüber Firn. Als
+                        // Blankes Eis nur im Zehrgebiet (wärmer als die
+                        // Eis-Firn-Grenze `iceFirnTemp`, dort bildet
+                        // `updateIce` keinen Firn mehr), darüber Firn. Als
                         // Anteil an der Kältedeckung, damit der Shader Eis-
                         // und Schneefarbe innerhalb von B mischt.
                         let ablation = tempOn
-                            ? smoothstep(MaterialRender.firnTempLo, MaterialRender.firnTempHi, ptemp[k])
+                            ? smoothstep(iceFirnTemp + MaterialRender.firnTempLo,
+                                         iceFirnTemp + MaterialRender.firnTempHi, ptemp[k])
                             : 1
-                        let bare = iceCover * ablation * (1 - MaterialRender.iceSnowHide * snowCover)
+                        let bare = iceCover * ablation
+                            * (1 - MaterialRender.iceSnowHide * snowCover * (1 - ablation))
                         bareIce = coldWeight > 0 ? clamp01(bare / coldWeight) : 0
 
                         // Talboden: flach und unterhalb des Nadelwald-Bands,
