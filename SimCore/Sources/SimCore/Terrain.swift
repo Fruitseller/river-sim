@@ -2086,6 +2086,17 @@ public final class Terrain {
                 guard p2Hi[j] >= p2Lo[j] else { continue }
                 for i in p2Lo[j]...p2Hi[j] {
                     let k = j * nn + i
+                    // Schnell-Ausstieg VOR den verzweigten Zufluss-Summen: eine eisfreie
+                    // Zelle ohne Schnee, ohne Lawinen-Zufuhr und ohne einen Nachbarn mit
+                    // Ausstrom bekommt keinen Zufluss (`prate = 0` heißt: nichts fließt
+                    // heraus) und keine Zufuhr — dieselbe Abkürzung wie unten
+                    // (`i0 == 0 && inflow == 0 && a == 0`), nur ohne die ~50 %
+                    // fehlvorhergesagten Zweige auf dem Höhenrauschen; bit-gleich.
+                    if pice[k] == 0 && psnow[k] == 0 && (!feedOn || pfeed[k] == 0)
+                        && (i == 0 || prate[k - 1] == 0) && (i == nn - 1 || prate[k + 1] == 0)
+                        && (j == 0 || prate[k - nn] == 0) && (j == nn - 1 || prate[k + nn] == 0) {
+                        continue
+                    }
                     let sk = psurf[k]
                     var inflow = 0.0, w = 0.0
                     // Dieselbe Reihenfolge wie Pass 1 (l, r, d, u): `w` ist damit

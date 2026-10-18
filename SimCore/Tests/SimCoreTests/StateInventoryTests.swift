@@ -115,6 +115,9 @@ final class StateInventoryTests: XCTestCase {
         ("iceSurf", .scratch(reason:
             "Arbeitspuffer des Eistransports: die eingefrorene Eis-Oberfläche "
             + "des Teilschritts.")),
+        ("iceEroH", .scratch(reason:
+            "Arbeitspuffer des Eistransports: Zeilen-Kastensummen der glazialen "
+            + "Erosionsrate (erste Hälfte der Schleifspur), je Teilschritt neu.")),
         ("iceAvTarget", .scratch(reason:
             "Arbeitspuffer des Lawinen-Abgangs (`iceAvalancheMap`): Ziel-Zelle je "
             + "Quellzelle, wird je `updateIce` im Arbeitsfenster neu geschrieben.")),
