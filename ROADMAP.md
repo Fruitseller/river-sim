@@ -674,9 +674,15 @@ Messreihen `docs/dt-invariance-measurements.md`):
   Phasen-Klima unverändert. Offen: Seed 42 hat damit fast kein Eis (0,2 %),
   Schnee und Eis sind im Render beide weiß (`docs/glacier-measurements.md` §L).
   Seit §M (Issue #174): Lawinen-Abgang des Firns (`iceAvalancheSlopeLo/Hi`) —
-  Gipfel über der Firn-Grenze stehen als Hörner, das Eis sammelt sich in den
-  Karen. Offen: V→U-Diagnostic der Produktion nicht mehr positiv, Kosten
-  +2,3 ms je 100-Jahr-Schritt, Seed 20 hängt an der Schrittweite (13,6 %).
+  Gipfel über der Firn-Grenze stehen als Hörner statt als Tafeln, das Eis
+  sammelt sich in den Karen (höchster Punkt Seed 1337 0,670 → 0,751, eisfrei
+  0,752). Die Schleifspur ist auf die Produktions-Zellgröße nachgezogen
+  (`iceErodeSwathRadius` 4): Talgletscher werden wieder U-förmiger (23 von 27
+  Werten positiv, das Signal ist etwa halb so groß wie vorher). Kosten +2,4 ms
+  je 100-Jahr-Schritt, +1,2 ms im Zeitraffer-Takt (dt 15). Eismasse über dt
+  15/100/1000 auf 1337/42/20 in 5–6 %; auf Seed 33 10 %: die Firn-Zufuhr folgt
+  dem Regen am Kamm, und der trägt die Operator-Splitting-Drift der Tropfen
+  (benannter Rest 1 in AGENTS.md, `docs/glacier-measurements.md` §M).
 - Optik-Feinschliff: Grün-Anteil in den Tälern, Küstensaum-Breite.
 
 **Speichern/Laden (Issue #8, erledigt Aug 2026) — was offen bleibt:**

@@ -521,7 +521,7 @@ für die nicht ausführbaren Shader- und `Main.gd`-Verträge.
 
 ### SimCore-Aufbau
 
-`Terrain.swift` (~7000 Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
+`Terrain.swift` (~7500 Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
 Tektonik, Küste, Braiding, Auslass-Inzision sind Pässe auf denselben Grids und ihre
 **Reihenfolge pro Zeitschritt muss zusammen lesbar sein**. Die Reihenfolge in `step()`
 ist LEM-Konvention und nicht beliebig. Hier vollständig, weil jeder nachgerüstete
@@ -534,10 +534,12 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
 → computeFlow: computeRain (+ updateRainWeight/updateRunoffWeight → flowWeight)
   → priorityFlood → D8-Empfänger/area → capEndorheicBasins → computeMFDArea
 → relaxWaterLevel (Darstellungs-Seespiegel) → updateSaltCrust (Playa-Kruste)
-→ Gletscher (updateIce: Firn→Eis, Eisfluss, glaziale Erosion, Moränen)
+→ Gletscher (updateIce: Firn→Eis mit Lawinen-Abgang des Firns von Steilflanken,
+  Eisfluss, glaziale Erosion, Moränen)
 → Mäander (migrateMeander + meanderStamp; mit `meanderBelt`, Produktion:
   meanderBeltStep — zuerst die Kopplung an das frische D8-Netz
-  (coupleBeltToDrainage, #187), dann Migration und Gürtel-Stempel je Lauf
+  (coupleBeltToDrainage, #187, im festen Takt `meanderBeltCouplingYears`
+  am Schrittanfang), dann Migration und Gürtel-Stempel je Lauf
   sub-getaktet, #174; Läufe mit getrennten Fenstern parallel, überlappende
   in ihrer Reihenfolge, bit-identisch: parallelBeltRuns)
 ──── ab hier der Produktionszweig `hydraulicEnabled` ────
@@ -549,6 +551,9 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
   outletIncision + channelCarve dieses Schritts, Höhensummen davor/danach, #174)
 → Hangdiffusion (sub-getaktet) → wavePass (sub-getaktet)
 ────────────────────────────────────────────────────────
+→ zweite Hälfte der Gürtel-Profil-Relaxation (belt.finishProfile, mit
+  `meanderBeltSymmetricStamp`; die erste Hälfte steckt in den Migrations-
+  Teilschritten oben, #174)
 → Klima-Vertikale (updateClimate: Temperatur + Schneebilanz) → updateVegetation
 ```
 
@@ -613,11 +618,11 @@ ausführbar ist; Vertrag mit der Werkzeug-Tabelle in `Main.gd`, Wächter:
 `SimCoreTests/ToolContractTests.swift` mit Verhaltens-Tests je Modus).
 
 Größenordnung zur Orientierung (Stand Okt 2026, gerundet; wer eine Datei teilt
-oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~7000 Zeilen,
-`Config.swift` ~2100, `WaterRender.swift` ~1600, `Meander.swift` ~1200,
+oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~7500 Zeilen,
+`Config.swift` ~2150, `WaterRender.swift` ~1700, `Meander.swift` ~1200,
 `WorldSnapshot.swift` ~900, `Hydraulic.swift` ~400, der Rest dreistellig oder
 kleiner. Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~2600 Zeilen,
-`SimRender` ~5300 Zeilen und die eigentliche GDExtension nur noch
+`SimRender` ~5500 Zeilen und die eigentliche GDExtension nur noch
 `SimNode.swift` mit ~600 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 
 Sechs Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne

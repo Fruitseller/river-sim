@@ -2692,3 +2692,63 @@ Geröll-Fläche auf flachen Terrassen. Ehrliche Grenzen:
   Krümmungs-Deckel das Band dort zackig (Seed 20); im Wächter 2 von 15
   Mündungen, keine läuft spitz aus.
 - An steilen Küstenstufen bleibt das Felsband des Materialmodells (#174 D).
+
+## Abnahme-Stand vor dem Merge (2026-10-18)
+
+Stand `442eed1` (Integrationszweig #180), M4-Max-Referenz-Mac, Produktions-
+Config. K = Kennzahl, B = Bildurteil; die B-Punkte sind hier meine Prüfung
+an den Bögen, das Urteil des Projekteigners (Punkt 50) steht aus.
+
+**Pflichtsuite** 628 Tests, 0 Fehler, auf macOS und auf Linux (Docker
+`swift:6.3.3-jammy`, rechnet bit-gleich wie der CI-Runner); Godot-Verträge
+`smoke`, `water_geometry`, `river_ribbons`, `water_uniforms`, `lighting`,
+`relief`, `canopy`, `ui_layout`, `build_stamp_parity`, `graphics_study` grün.
+
+**Punkt 47 — Frame-Zeiten** (`scripts/graphics-matrix.sh … timing`, alle
+neun Kameras × drei Seeds × drei Stadien, Standbild und Kamerafahrt, 162
+Läufe, Viewport 3456×2104, `balanced`; Rohdaten
+[`data/frame-times-point47-2026-10-18.jsonl`](data/frame-times-point47-2026-10-18.jsonl)):
+
+| Betrieb | Läufe | größtes Mittel | größtes p95 | größtes p99 | Frames > 33,3 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Standbild | 81 | 24,6 ms | 24,7 ms (grazing, 1337, 100k) | 24,7 ms | 0 |
+| Kamerafahrt | 81 | 25,1 ms | 26,4 ms (backlight, 1337, 100k) | 26,4 ms | 0 |
+
+Größtes p95 je Kamera (Standbild / Fahrt): overview 14,9 / 15,3, detail
+20,2 / 20,1, grazing 24,7 / 24,9, backlight 23,3 / 26,4, coast 19,7 / 20,8,
+snow 23,2 / 21,9, diorama 16,3 / 15,3, valley 17,3 / 17,2, close 17,7 / 20,7 ms.
+**Erfüllt**, Marge rund 7 ms (2026-10-12: größtes p95 30,0 / 30,2 ms).
+Danach kam nur noch die Material-Änderung „Schnee an Steilflanken" (CPU,
+zwei `smoothstep` je Zelle), im Shader nichts.
+
+**Punkt 48 — Sim-Schritt** (`simperf`, `main` `55323b5` gegen den
+Integrationszweig, zehn Paare mit wechselnder Reihenfolge, Last 4,5–7,4):
+`main` 50,25 ms, Integration 56,50 ms, Median der Verhältnisse **1,125**
+(alle zehn zwischen 1,119 und 1,132). **Erfüllt** (≤ +15 %). Seit der
+letzten Messung (+15,2 %) hinzugekommen: Gürtel-Läufe parallel (−1,35 ms),
+Perf-Runde 7 (−3,25 ms), Gürtel-Kopplung im 1000-Jahr-Takt (+1,1 ms bei
+dt 100, −2,4 ms bei dt 15), Lawinen-Abgang des Firns (+2,4 ms).
+
+**Punkt 49 — Determinismus:** `simperf --hash` je zweimal gleich: Seed
+1337 `31835ab8b1a85069`, 42 `d47d5fce7d71d14d`, 20 `68048e685236dd61`
+(Werte dieser Maschine).
+
+| Punkte | Stand |
+| --- | --- |
+| 1–4 Großform | erfüllt (Pflicht-Wächter `ZielbildLandformTests`) |
+| 5–7 Kamm, Täler, kein Rock | im Bild erfüllt; die lange Wand im Nordwesten von Seed 1337 kommt aus der Generierung (eisfreier Arm zeigt sie gleich) |
+| 8 LongRunCollapse | erfüllt |
+| 9–13 Mäander | Sprung (dt 1000) 209 / 240 auf 24 Seeds, Zeitraffer-Takt dt 100 223 / 240, dt 15 auf den Matrix-Seeds 15 / 15 (erstes Fenster); gerichtete Rest-Differenz zwischen den Takten (§ Gürtel im Zeitraffer) |
+| 14 Aue nicht zerklüfteter | wörtlich nicht: der Gürtel bringt gegen dieselbe Welt ohne Gürtel 1–15 % Laplace mit (Rinne, Bänke, Scroll-Rippen); keine Kruste (Schranke 0,00165, Begründung am Wächter) |
+| 15–18 Cutoffs, `barAge`, dt-Wächter, Braid/Playa | erfüllt |
+| 19–25 Mäander im Bild | erfüllt (Zeitraffer wandert sichtbar, Scroll-Bars, Bänke, Tiefenfarbe), Bildurteil des Eigners offen |
+| 26 Delta | erfüllt; Deltas wachsen mit dem Alter (§ Delta, Wachstum über die Zeit) |
+| 27–29 Fahne, Strand/Fels, Altarme | erfüllt |
+| 30 Wasser-Verträge | erfüllt |
+| 31–35 Fels, Halden, Talboden, Rohboden, Schnee | erfüllt; Schnee seit 442eed1 nicht mehr auf Steilflanken |
+| 36 Gletscherzungen | seit 442eed1 bläulich und vom Schnee getrennt (vorher nicht erfüllt) |
+| 37–39 Wolken, Wald, Verträge | erfüllt |
+| 40 Wald ≤ ~22 % | 12,6–19,2 % ab Jahr 20.000; Seed 42 in Jahr 2000 23,2 % |
+| 41–46 Bedienung | erfüllt, Bildurteil des Eigners offen |
+| 47–49 | erfüllt (oben) |
+| 50 Eigner-Urteil | offen |
