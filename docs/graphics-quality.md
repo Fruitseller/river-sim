@@ -1247,14 +1247,18 @@ waren nicht vom Schnee zu unterscheiden (Abnahmepunkt 36). Zwei Ursachen in
    zwischen −2 und 0 °C lag als Firn unter dem Schnee.
 
 **Fassung** (Kalibrierung `MaterialRender`, nur Render, Sim-Hash unverändert):
-Schnee gleitet im Bild ab Weltsteigung 1,2 ab und ist ab 2,0 weg
-(`snowShedSlopeLo/Hi`), Eis ab 1,4 bis 2,4 (`iceShedSlopeLo/Hi`, Hängegletscher
+Schnee gleitet im Bild ab Weltsteigung 1,4 ab und ist ab 2,2 weg
+(`snowShedSlopeLo/Hi`), Eis ab 1,6 bis 2,6 (`iceShedSlopeLo/Hi`, Hängegletscher
 halten sich steiler als Schnee); dort bricht der Fels durch. Blankes Eis gilt
 relativ zur Eis-Firn-Grenze (`firnTempLo/Hi` ±1 °C um `iceFirnTemp`), und im
 Zehrgebiet deckt der Jahresmittel-Schnee der Sim die Zunge nicht mehr zu
 (im Sommer schmilzt er dort ab). Verworfen: 0,8/1,5 für den Schnee — in der
 Diorama-Kamera fast nur noch graue Gipfel (gegen Punkt 35); 1,2/2,0 ohne
-Eis-Abstufung — die Wände blieben weiß, weil das Eis sie deckte.
+Eis-Abstufung — die Wände blieben weiß, weil das Eis sie deckte; 1,2/2,0 mit
+Eis 1,4/2,4 (erste Fassung) — im Vergleich mit den Vorlagen (Bildtafeln zu
+Punkt 50) waren die Grate in der Diorama-Kamera grauer als dort; die Stufe
+um 0,2 höher hält mehr Schnee auf dem Kamm, die Nahansicht zeigt die Wände
+weiter als Fels.
 
 Vorher/nachher: `docs/screenshots/zielbild-174/schnee-steilflanken_seed1337_nah_{vorher,nachher}.jpg`,
 `…_seed1337_diorama_…`, `…_seed20_diorama_…`. Wald unverändert

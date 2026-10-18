@@ -112,26 +112,29 @@ public enum MaterialRender {
     // MARK: Schnee an Steilflanken (CPU, B-Kanal von `surfaces`)
 
     /// Weltsteigung, ab der Schnee von einer Flanke abgleitet, und ab der sie
-    /// schneefrei ist (0,8 ≈ 39°, 1,5 ≈ 56°; Schnee rutscht ab etwa 40° ab). Steile Wände halten keinen
+    /// schneefrei ist (1,4 ≈ 55°, 2,2 ≈ 66°, Weltsteigung samt Höhenskala, also die
+    /// Steigung, die man im Bild sieht). Steile Wände halten keinen
     /// Schnee, er geht als Lawine ab (dieselbe Physik wie der Firn-Abgang
     /// des Eises, `SimConfig.iceAvalancheSlopeLo/Hi`, dort in Sim-Steigung).
     /// Ohne das deckte die Kälte jede Wand über der Schneegrenze weiß zu, und
     /// Hörner, Grate und Karwände lasen sich als weiße Tafeln (Befund #174,
     /// Seeds 1337/20, Nahansicht des Kamms). Gemessen (Seed 1337, Jahr 20.000,
     /// Zellen über 0,5): Schnee liegt mit einer mittleren Weltsteigung von 1,36,
-    /// 44 % über 1,5. Erst mit 1,2/2,0 blieb die Ansicht fast unverändert weiß.
-    public static let snowShedSlopeLo = 1.2
-    public static let snowShedSlopeHi = 2.0
+    /// 44 % über 1,5. Verworfen: 0,8/1,5 (Diorama fast nur graue Gipfel) und
+    /// 1,2/2,0 (Grate in der Diorama-Kamera grauer als die Vorlagen von #174;
+    /// mit 1,4/2,2 hält der Kamm sichtbar mehr Schnee, die Wände bleiben Fels).
+    public static let snowShedSlopeLo = 1.4
+    public static let snowShedSlopeHi = 2.2
 
-    /// Dasselbe für die EIS-Deckung im Bild, steiler angesetzt (1,2 ≈ 50°,
-    /// 2,2 ≈ 66°): Hängegletscher halten sich bis etwa 50°, darüber bricht Eis
+    /// Dasselbe für die EIS-Deckung im Bild, steiler angesetzt (1,6 ≈ 58°,
+    /// 2,6 ≈ 69°): Hängegletscher halten sich steiler als Schnee, darüber bricht Eis
     /// in Séracs ab. Die Sim behält ihr Eis (die Maske `underIce` und der
     /// Abtrag bleiben unberührt), nur die Kältedeckung im Render weicht dem
     /// Fels. Gemessen (Seed 1337, Jahr 20.000, Zellen über 0,5): Eis liegt mit
     /// einer mittleren Weltsteigung von 1,31, 42 % davon über 1,5 — ohne diese
     /// Abstufung blieben die Wände weiß, auch wenn der Schnee abglitt.
-    public static let iceShedSlopeLo = 1.4
-    public static let iceShedSlopeHi = 2.4
+    public static let iceShedSlopeLo = 1.6
+    public static let iceShedSlopeHi = 2.6
 
     // MARK: Rohboden (CPU, B-Kanal von `covers`)
 
