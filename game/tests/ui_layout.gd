@@ -298,7 +298,10 @@ func _check_camera_presets() -> void:
 		# Auslass = Küste ODER Kartenrand: ohne Randabstand (#175) läuft der
 		# größte Lauf mancher Welt über den Rand ab (so die CI-Welt).
 		var outlet := mi == 0 or mj == 0 or mi == n - 1 or mj == n - 1
-		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		# Empfänger liegen im D8-Netz auch diagonal im Meer. Die vier
+		# Seiten-Nachbarn allein verwarfen dessen gültige Küstenzellen.
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+				Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]:
 			var i: int = clampi(mi + d.x, 0, n - 1)
 			var j: int = clampi(mj + d.y, 0, n - 1)
 			outlet = outlet or h[j * n + i] <= main.sea

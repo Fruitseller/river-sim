@@ -94,6 +94,7 @@ final class FingerprintTests: XCTestCase {
         assertDetects("years", base: base, baseline: baseline) { $0.years = ulpFlip($0.years) }
         assertDetects("dropsEmitted", base: base, baseline: baseline) { $0.dropsEmitted ^= 1 }
         assertDetects("dropCarry", base: base, baseline: baseline) { $0.dropCarry = ulpFlip($0.dropCarry) }
+        assertDetects("beltCouplingCarry", base: base, baseline: baseline) { $0.beltCouplingCarry = ulpFlip($0.beltCouplingCarry) }
         assertDetects("flowStepCount", base: base, baseline: baseline) { $0.flowStepCount ^= 1 }
         assertDetects("disturbActive", base: base, baseline: baseline) { $0.disturbActive.toggle() }
         assertDetects("heightBands", base: base, baseline: baseline) {
@@ -130,7 +131,7 @@ final class FingerprintTests: XCTestCase {
         // Die nicht tabellierten Bestandteile — genau sie tragen die
         // Hand-Listen in `encode()`, `fingerprint()` und dem Skalar-Test oben.
         let scalars: Set<String> = [
-            "years", "seed", "dropsEmitted", "dropCarry", "flowStepCount",
+            "years", "seed", "dropsEmitted", "dropCarry", "flowStepCount", "beltCouplingCarry",
             "disturbActive", "heightBands",
             "meanderChannels", "oxbows", "oxbowAge",
         ]

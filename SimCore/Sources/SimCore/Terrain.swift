@@ -385,6 +385,8 @@ public final class Terrain {
     /// die Zeit ist die Tropfenzahl exakt ∝ Simulationszeit, egal wie fein
     /// getaktet wird.
     private var dropCarry: Double = 0
+    /// Nicht verbuchte Zeit der Gürtel-Kopplung; einschließlich der ersten Prüfung bei Jahr 0.
+    private var beltCouplingCarry: Double = 0
 
     /// Frisches Terrain: Puffer anlegen UND generieren. Der Default-Seed steht
     /// in `RenderContract` — er ist dieselbe Zahl, die die Godot-Schicht anzeigt
@@ -544,6 +546,7 @@ public final class Terrain {
         self.dropsEmitted = 0
         self.flowStepCount = 0
         self.dropCarry = 0
+        self.beltCouplingCarry = cfg.meanderBeltCouplingYears
         self.disturbActive = false
         self.beltSubsteps = 0
         self.beltCouplingLog = nil
@@ -4889,7 +4892,11 @@ public final class Terrain {
             let j = min(max(Int(nd.z.rounded()), 0), n - 1)
             return disturb[j * n + i] >= thr
         }
+        let oldCount = meander.channels.count
         meander.channels.removeAll { $0.nodes.contains(where: disturbed) }
+        if meander.channels.count != oldCount {
+            beltCouplingCarry = max(beltCouplingCarry, cfg.meanderBeltCouplingYears)
+        }
         var keptOxbows: [[MeanderNode]] = []
         var keptAges: [Double] = []
         for (oi, ox) in meander.oxbows.enumerated() where !ox.contains(where: disturbed) {
@@ -5505,16 +5512,17 @@ public final class Terrain {
         // Bögen wuchsen dann nur mit 31–93 % ihrer Rate (Review #187).
         let maxSub = 4096
         // Mit Kopplung (#187) setzt `coupleBeltToDrainage` Läufe und Abfluss
-        // EINMAL je Schritt aus dem D8-Netz; in den Teilschritten reist der
+        // im festen Kopplungstakt aus dem D8-Netz; dazwischen reist der
         // Abfluss mit den Knoten (Neuabtastung und Cutoffs interpolieren bzw.
         // schneiden ihn mit). Das Abflussfeld ändert sich im Schritt ohnehin nicht.
         let coupled = cfg.meanderBeltCoupling
-        if coupled {
+        let couplingDt = coupled ? beltCouplingStep(dt: dt) : 0
+        if couplingDt > 0 {
             mark("belt.couple")
             let ox0 = meander.oxbows.count
-            coupleBeltToDrainage(dt: dt)
+            coupleBeltToDrainage(dt: couplingDt)
             plugOxbows(from: ox0)
-        } else {
+        } else if !coupled {
             mark("belt.discharge")
             refreshBeltDischarge()
         }
@@ -5555,7 +5563,8 @@ public final class Terrain {
                         refreshBeltDischarge(only: ci)
                     }
                     mark("belt.stamp")
-                    stampedGeometry = beltStamp(dt: sub, only: ci, ageAtEnd: ageAtEnd)
+                    let stampDt = coupled && cfg.meanderBeltSymmetricStamp ? 0.5 * sub : sub
+                    stampedGeometry = beltStamp(dt: stampDt, only: ci, ageAtEnd: ageAtEnd)
                     plugOxbows(from: ox0)
                 }
             }
@@ -5676,7 +5685,8 @@ public final class Terrain {
                     }
                     for oi in ox0..<state.oxbowAge.count { state.oxbowAge[oi] = ageAtEnd }
                     state.channels[0].clampToWorld(maxCoord: maxc)
-                    geometry = self.beltStampChannel(state.channels[0], dt: sub, part: 1, ageAtEnd: ageAtEnd,
+                    let stampDt = config.meanderBeltSymmetricStamp ? 0.5 * sub : sub
+                    geometry = self.beltStampChannel(state.channels[0], dt: stampDt, part: 1, ageAtEnd: ageAtEnd,
                                                      lockHere: true, buffers: buffers)
                     for oi in ox0..<state.oxbows.count { self.plugOxbow(state.oxbows[oi], bed: bed, nn: nn) }
                 }
@@ -6250,7 +6260,7 @@ public final class Terrain {
                         let key = years.bitPattern &* 0x9E37_79B9_7F4A_7C15
                             ^ UInt64(truncatingIfNeeded: segs[s].cells[0]) &* 0xD1B5_4A32_D192_ED03
                         let u = 0.5 * (MeanderState.hashUnit(key, cur.pb) + 1)
-                        avulse = u < 1 - exp(-dt / tAv)
+                        avulse = u < Terrain.relaxFraction(dt: dt, tau: tAv)
                     }
                     if avulse { pendingGap = (cur.i1, nb.i0, bw, b); break }
                     cur.i1 = nb.i1; cur.pb = max(cur.pb, nb.pb)
@@ -6373,6 +6383,21 @@ public final class Terrain {
         meander.channels = newChannels
     }
     private var segOwner: [Int32] = []
+    /// Ein fester Takt der Topologie mit Übertrag, am Schrittanfang geprüft.
+    /// Bei dt 1000 bleibt die alte Reihenfolge erhalten. Feine Schritte
+    /// verlängern die alte Linie bis zur nächsten Prüfung, statt jedes
+    /// Flackern des D8-Netzes in einen neuen Linien-Schnitt zu übersetzen.
+    func beltCouplingStep(dt: Double) -> Double {
+        let interval = cfg.meanderBeltCouplingYears
+        guard interval > 0, interval.isFinite else { return dt }
+        let elapsed = floor(beltCouplingCarry / interval) * interval
+        // Ein großer Schritt darf seine volle Exposition vorziehen, muss sie
+        // dann aber auch abbuchen. Sonst würde der folgende kleine Aufruf
+        // dieselben Jahre ein zweites Mal als Übertrag abrechnen.
+        let exposure = elapsed > 0 ? max(dt, elapsed) : 0
+        beltCouplingCarry = beltCouplingCarry - exposure + dt
+        return exposure
+    }
     private var segPos: [Int32] = []
     /// Diagnose-Haken (nur Tests): Aufbau der Läufe wandernder Größe je Schritt.
     var beltCouplingLog: ((String) -> Void)?
@@ -6676,6 +6701,16 @@ public final class Terrain {
             for i in 0..<max(passes, wave.count) {
                 if i < passes { diffusionPass() }
                 if i < wave.count { wavePass(relax: wave.relax) }
+            }
+        }
+        if cfg.meanderEnabled && cfg.meanderBelt && cfg.meanderBeltCoupling && cfg.meanderBeltSymmetricStamp {
+            // Strömung formt das Profil während der ganzen Zeit weiter. Eine
+            // vollständige Formung nur VOR der Inzision/Diffusion ließ im
+            // großen Schritt viel mehr Profil verschwinden als im Zeitraffer.
+            // Die erste Hälfte steckt in den Migrations-Teilschritten oben.
+            mark("belt.finishProfile")
+            for ci in meander.channels.indices where MeanderState.migrates(meander.channels[ci], cfg) {
+                beltStamp(dt: 0.5 * dt, only: ci, ageAtEnd: 0)
             }
         }
         // Klima-Vertikale (Issue #33) am Schrittende: Temperatur liest die FINALEN
@@ -7156,6 +7191,7 @@ struct TerrainState {
     // bit-genau prüft. (Ersetzt den früheren Schritt-Zähler `stepCount`.)
     var dropsEmitted: UInt64 = 0
     var dropCarry: Double = 0
+    var beltCouplingCarry: Double = 0
     var flowStepCount: UInt32 = 0        // taktet das MFD-Intervall
 }
 
@@ -7184,6 +7220,7 @@ extension Terrain {
         s.oxbowAge = meander.oxbowAge
         s.years = years; s.seed = seed
         s.dropsEmitted = dropsEmitted; s.dropCarry = dropCarry
+        s.beltCouplingCarry = beltCouplingCarry
         s.flowStepCount = flowStepCount
         return s
     }
@@ -7224,6 +7261,7 @@ extension Terrain {
         noise = SimplexNoise(seed: s.seed) // Permutationstabelle rein aus dem Seed
         dropsEmitted = s.dropsEmitted
         dropCarry = s.dropCarry
+        beltCouplingCarry = s.beltCouplingCarry
         flowStepCount = s.flowStepCount
     }
 }

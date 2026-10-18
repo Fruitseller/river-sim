@@ -874,6 +874,9 @@ extension MeanderState {
                let lastR = r.lastIndex(where: { $0 != 0 }) {
                 for i in firstR...lastR where r[i] != 0 {
                     let m = max(-maxStep, min(maxStep, r[i] * dt))
+                    #if RS_BELT_CLAMP_DIAGNOSTIC
+                    Self.beltClampLog?(r[i] * dt, m)
+                    #endif
                     ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
                 }
             }
@@ -918,6 +921,9 @@ extension MeanderState {
                let lastR = r.lastIndex(where: { $0 != 0 }) {
                 for i in firstR...lastR where r[i] != 0 {
                     let m = max(-maxStep, min(maxStep, r[i] * dt))
+                    #if RS_BELT_CLAMP_DIAGNOSTIC
+                    Self.beltClampLog?(r[i] * dt, m)
+                    #endif
                     ch.nodes[i].x += m * g.nx[i]; ch.nodes[i].z += m * g.nz[i]
                 }
             }
@@ -1060,6 +1066,12 @@ extension MeanderState {
             nodes[i].x += m * g.nx[i]; nodes[i].z += m * g.nz[i]
         }
     }
+
+    #if RS_BELT_CLAMP_DIAGNOSTIC
+    /// Diagnose-Haken: nur der Messlauf setzt ihn vor dem Parallelstart;
+    /// seine Aggregation synchronisiert der Aufrufer. Kein Sim-Zustand.
+    static var beltClampLog: ((Double, Double) -> Void)?
+    #endif
 
     /// Gleichverteilt in [−1, 1) aus (Schlüssel, Index), SplitMix64-Finalisierer.
     @inline(__always) static func hashUnit(_ key: UInt64, _ i: Int) -> Double {

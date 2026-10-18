@@ -43,6 +43,8 @@ final class TerrainAging: XCTestCase {
         // `testAgingTrajectoryVariantsDiagnostic`.
         c.meanderBeltRate = 0.02
         c.meanderBeltKernelWidths = 1.5
+        c.meanderBeltCouplingYears = calibrationBeltCouplingYears
+        c.meanderBeltSymmetricStamp = calibrationBeltSymmetricStamp
         // Delta-Schüttung (#174, Punkt 26) aus: sie baut an den Mündungen
         // neues Land knapp über dem Meer, auf dieser Realisierung +2,3 %
         // Landzellen in der zweiten Hälfte (17.549 → 17.948, erste Fassung

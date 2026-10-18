@@ -629,7 +629,9 @@ enum ZielbildMetrics {
 
         mutating func advance(_ t: Terrain, to year: Double) {
             while t.years < year - 1e-6 {
-                t.step(dtYears: min(stepYears, year - t.years))
+                let sample = (floor(t.years / ZielbildMetrics.meanderSampleYears) + 1)
+                    * ZielbildMetrics.meanderSampleYears
+                t.step(dtYears: min(stepYears, min(year, sample) - t.years))
                 ZielbildMetrics.markSwept(t, &swept)
                 let y = t.years.rounded()
                 guard abs(t.years - y) < 1e-6,
@@ -834,7 +836,9 @@ final class ZielbildBaseline: XCTestCase {
         for seed in onlySeed.map({ [$0] }) ?? Self.seeds {
             let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed,
                             settleYears: SimConfig.productionSettleYears)
-            var run = ZielbildMetrics.MeanderTimeMean(t)
+            let maxYear = ProcessInfo.processInfo.environment["RS_YEARS"].flatMap(Double.init) ?? 100_000
+            let windows = ZielbildMetrics.meanderWindows.filter { $0.upperBound <= maxYear }
+            var run = ZielbildMetrics.MeanderTimeMean(t, windows: windows)
             if let dt = ProcessInfo.processInfo.environment["RS_DT"].flatMap(Double.init) { run.stepYears = dt }
             for end in run.windows.map(\.upperBound).sorted() {
                 run.advance(t, to: end)
@@ -843,6 +847,13 @@ final class ZielbildBaseline: XCTestCase {
                       + "\(WaterRender.oxbowMinimumNodes) Knoten, Median \(size.median) Knoten")
             }
             for (w, r) in zip(run.windows, run.result) {
+                let values = [r.sinuosity.mean, r.wavelength.mean, r.belt.mean, r.asymmetry.mean, r.oxbows.mean]
+                    .map { $0 ?? .nan }
+                let passed = [values[0] >= 1.5 && values[0] <= 2.5, values[1] >= 10 && values[1] <= 14,
+                              values[2] >= 3, values[3] >= 2, values[4] >= 3]
+                let mask = passed.enumerated().reduce(0) { $0 | ($1.element ? 1 << $1.offset : 0) }
+                print(String(format: "BSTAT s%u dt%.9g w%.0f %.9f %.9f %.9f %.9f %.9f mask%d",
+                             seed, run.stepYears, w.lowerBound, values[0], values[1], values[2], values[3], values[4], mask))
                 rows.append("| \(seed) | \(Int(w.lowerBound))–\(Int(w.upperBound)) | \(r.sinuosity.values.count + r.sinuosity.skipped) | "
                     + [cell(r.sinuosity, "%.2f"), cell(r.wavelength, "%.1f"), cell(r.belt, "%.1f"),
                        cell(r.asymmetry, "%.2f"), cell(r.oxbows, "%.1f"), cell(r.wetOxbows, "%.1f"),

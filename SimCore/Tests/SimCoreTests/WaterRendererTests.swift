@@ -562,7 +562,13 @@ final class WaterRendererTests: XCTestCase {
   /// 0,2–1,9; Seed 1337, Jahr 20.000, `docs/zielbild-measurements.md` § Delta,
   /// Mündung).
   func testRiverBandsReachTheSeaAtFullWidthAndOpacity() {
-    let terrain = Terrain(config: .production, seed: RenderContract.defaultSeed,
+    // Feste Wasserlinien-Paarung: die neue Gürtel-Realisierung testet hier
+    // andere Kurven (Linux: 3/14 Übergaben, eine Spitze statt 0), nicht eine
+    // Änderung des Mündungs-Vertrags.
+    var c = SimConfig.production
+    c.meanderBeltKernelWidths = calibrationBeltRenderKernelWidths
+    c.meanderBeltSymmetricStamp = calibrationBeltSymmetricStamp
+    let terrain = Terrain(config: c, seed: RenderContract.defaultSeed,
                           settleYears: SimConfig.productionSettleYears)
     terrain.step(dtYears: 1000)
     terrain.computeFlow()

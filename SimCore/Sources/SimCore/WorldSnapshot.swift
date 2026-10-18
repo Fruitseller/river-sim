@@ -40,7 +40,7 @@ import Foundation
 /// Nutzdaten:
 ///   u32 Länge + Bytes  binäres Plist der SimConfig
 ///   u32 seed · f64 years · u64 dropsEmitted · f64 dropCarry
-///   u32 flowStepCount · u8 disturbActive
+///   f64 beltCouplingCarry · u32 flowStepCount · u8 disturbActive
 ///   8 × f64            Höhenbänder (Issue #4)
 ///   u32 Feldzahl, je Feld:
 ///     u32 Länge + Name (ASCII) · u8 Typ (0 f64 · 1 i32 · 2 u8 · 3 bool)
@@ -102,7 +102,9 @@ public enum WorldSnapshot {
     /// Version 9 (Issue #174, Delta): die Stellschrauben der Delta-Schüttung
     /// (`deltaTrapFraction` ff.) reisen über die Config-Kodierung mit — eine
     /// Version-8-Datei hat die Schlüssel nicht (Begründung wie bei Version 4).
-    public static let version: UInt32 = 9
+    /// Version 10 (Issue #174): Restzeit des festen Gürtel-Kopplungstakts und
+    /// Config-Schalter für die geteilte Profil-Relaxation.
+    public static let version: UInt32 = 10
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
@@ -217,6 +219,7 @@ public enum WorldSnapshot {
         body.f64(state.years)
         body.u64(state.dropsEmitted)
         body.f64(state.dropCarry)
+        body.f64(state.beltCouplingCarry)
         body.u32(state.flowStepCount)
         body.u8(state.disturbActive ? 1 : 0)
 
@@ -291,6 +294,7 @@ public enum WorldSnapshot {
         state.years = try body.f64()
         state.dropsEmitted = try body.u64()
         state.dropCarry = try body.f64()
+        state.beltCouplingCarry = try body.f64()
         state.flowStepCount = try body.u32()
         state.disturbActive = try body.u8() != 0
         state.heightBands = HeightBands(vegFull: try body.f64(), vegRamp: try body.f64(),
@@ -527,6 +531,7 @@ extension TerrainState {
         f.mix(years)
         f.mix(dropsEmitted)
         f.mix(dropCarry)
+        f.mix(beltCouplingCarry)
         f.mix(UInt64(flowStepCount))
         f.mix(UInt64(disturbActive ? 1 : 0))
         // Höhenbänder strukturell statt als Hand-Liste (Mirror liefert die

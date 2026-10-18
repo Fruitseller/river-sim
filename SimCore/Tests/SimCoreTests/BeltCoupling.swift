@@ -5,6 +5,60 @@ import XCTest
 /// `Terrain.coupleBeltToDrainage`). Messreihe: docs/zielbild-measurements.md
 /// § Gürtel und Entwässerung: Avulsion (#187).
 final class BeltCouplingTests: XCTestCase {
+    /// Die erste Prüfung liegt bei Jahr 0, die folgenden höchstens einen
+    /// kleinen Aufruf hinter der gemeinsamen 1000-Jahr-Marke. Ein Abzählen
+    /// bis zum SchrittENDE würde dt 100 um 900 Jahre gegen dt 1000 verschieben.
+    func testCouplingClockUsesYearsAndKeepsTheRemainder() {
+        for dt in [15.0, 100, 1000] {
+            let t = Terrain(allocating: renderConfig(n: 8), seed: 1)
+            var s = t.state
+            s.beltCouplingCarry = t.cfg.meanderBeltCouplingYears
+            t.restore(s)
+            var time = 0.0, events: [Double] = []
+            while time < 10_000 {
+                let sub = min(dt, 10_000 - time)
+                let span = t.beltCouplingStep(dt: sub)
+                if span > 0 {
+                    XCTAssertEqual(span, 1000)
+                    events.append(time)
+                }
+                time += sub
+            }
+            XCTAssertEqual(events.count, 10)
+            for (i, time) in events.enumerated() {
+                XCTAssertGreaterThanOrEqual(time, Double(i) * 1000)
+                XCTAssertLessThan(time, Double(i) * 1000 + dt)
+            }
+            XCTAssertEqual(t.state.beltCouplingCarry, 1000)
+        }
+    }
+
+    func testLongCouplingStepKeepsTheWholeAvulsionExposure() {
+        let t = Terrain(allocating: renderConfig(n: 8), seed: 1)
+        var s = t.state
+        s.beltCouplingCarry = 1000
+        t.restore(s)
+        XCTAssertEqual(t.beltCouplingStep(dt: 10_000), 10_000)
+        XCTAssertEqual(t.beltCouplingStep(dt: 10_000), 10_000)
+        XCTAssertEqual(t.beltCouplingStep(dt: 15), 1000,
+                       "der kleine Folgeschritt darf die letzten 10.000 Jahre nicht erneut abrechnen")
+    }
+
+    func testChangingStepSizesConservesCouplingExposure() {
+        let t = Terrain(allocating: renderConfig(n: 8), seed: 1)
+        var s = t.state
+        s.beltCouplingCarry = 1000
+        t.restore(s)
+        var elapsed = 0.0, exposure = 0.0
+        for dt in [15.0, 1000, 15, 100, 10_000, 15, 100, 1000, 15] {
+            elapsed += dt
+            exposure += t.beltCouplingStep(dt: dt)
+            XCTAssertEqual(exposure + t.state.beltCouplingCarry, 1000 + elapsed,
+                           "Zeitraffer/Sprung-Wechsel erzeugt oder verliert Avulsionszeit")
+            XCTAssertGreaterThanOrEqual(t.state.beltCouplingCarry, 0)
+        }
+    }
+
     /// Kunstwelt: ein V-Tal entlang Zeile 30, nach Osten fallend. Jede Zelle
     /// entwässert ins Tal, das Tal nach Osten an den Rand — EIN Fluss.
     private func valleyWorld(_ configure: (inout SimConfig) -> Void = { _ in }) -> Terrain {
@@ -87,6 +141,25 @@ final class BeltCouplingTests: XCTestCase {
         XCTAssertLessThanOrEqual(main.discharge.max()!, t.area.max()! / cellArea * 1.0001, "Abfluss geerbt")
     }
 
+    func testCouplingPreservesBendsAcrossStepSizes() {
+        var values: [Double] = []
+        for dt in [15.0, 100, 1000] {
+            let t = valleyWorld { $0.meanderBeltAvulsionYears = 1e12 }
+            t.meander.channels = [detourLine(t)]
+            var elapsed = 0.0
+            while elapsed < 1000 {
+                let sub = min(dt, 1000 - elapsed)
+                t.coupleBeltForTests(dt: sub)
+                elapsed += sub
+            }
+            let main = t.meander.channels.max { $0.length < $1.length }!
+            values.append(main.sinuosity)
+            print("[BELT-DT] feste Entwässerung dt \(dt): sinu \(main.sinuosity), ersetzt \(t.meander.coupledInserted)")
+        }
+        XCTAssertLessThan((values.max()! - values.min()!) / values.max()!, 0.02,
+                          "Kopplung glättet die Bögen mit jeder Prüfung: \(values)")
+    }
+
     /// Eine Linie ganz ohne D8-Wasser darunter verschwindet; der Fluss bekommt
     /// seine Linie aus dem D8-Netz (auch nach einem Pinselstrich, der die alte
     /// Linie löscht, Review #187).
@@ -102,6 +175,26 @@ final class BeltCouplingTests: XCTestCase {
             ch.nodes.count > 20 && ch.nodes.allSatisfy { abs($0.z - 30) < 1.0 } }, "Talfluss ohne Linie")
     }
 
+    /// Ein Pinselstrich darf das Wieder-Trassieren nicht bis zum nächsten
+    /// 1000-Jahr-Termin verzögern. Der echte Schritt muss nach dem Verwerfen
+    /// gestörter Linien noch im selben Aufruf neu koppeln.
+    func testDisturbedLineForcesCouplingBeforeTheNextTick() {
+        let t = valleyWorld()
+        t.coupleBeltForTests(dt: 1000)
+        var s = t.state
+        s.rock = s.h
+        s.beltCouplingCarry = 0
+        s.disturbActive = true
+        for z in 28...32 { for x in 28...36 { s.disturb[z * t.cfg.n + x] = 1 } }
+        t.restore(s)
+        SimProfile.reset()
+        SimProfile.enabled = true
+        defer { SimProfile.enabled = false; SimProfile.reset() }
+        t.step(dtYears: 15)
+        XCTAssertGreaterThan(SimProfile.counts["belt.couple.build"] ?? 0, 0,
+                             "Pinselstrich wartet auf den nächsten regulären Kopplungstermin")
+    }
+
     /// Gürtel mit wandernden Läufen auf kleinem Gitter (`meanderBeltMinCells`
     /// = 100, wie `WorldSnapshotTests`): `testDeterminism` (n = 96) hat keinen
     /// wandernden Lauf und bewacht den Gürtel nicht (Review #187).
@@ -109,6 +202,40 @@ final class BeltCouplingTests: XCTestCase {
         var c = renderConfig(n: 128)
         c.meanderBeltMinCells = 100
         return c
+    }
+
+    /// Sechs Seeds und gemeinsame Stützstellen: einzelne Realisierungen auf
+    /// dem groben Gitter streuen mit der System-libm. Die Ersetzungszahl muss
+    /// Jahre zählen; das Sinuositäts-Mittel darf dabei nicht auseinanderlaufen.
+    func testBeltStatisticsAreStepSizeIndependent() {
+        var means: [Double] = []
+        var replacements: [Int] = []
+        for dt in [15.0, 100, 1000] {
+            var sum = 0.0, count = 0, inserted = 0
+            for seed: UInt32 in [1337, 42, 20, 7, 99, 123] {
+                var c = beltConfig()
+                c.meanderBeltRate = calibrationBeltDtRate
+                c.meanderBeltKernelWidths = calibrationBeltDtKernelWidths
+                let t = Terrain(config: c, seed: seed)
+                for target in [4000.0, 6000, 8000] {
+                    while t.years < target {
+                        t.step(dtYears: min(dt, target - t.years))
+                    }
+                    let mobile = t.meander.channels.filter { MeanderState.migrates($0, t.cfg) }
+                    XCTAssertFalse(mobile.isEmpty, "Testaufbau ohne wandernden Lauf")
+                    sum += mobile.reduce(0) { $0 + $1.sinuosity } / Double(max(1, mobile.count))
+                    count += 1
+                }
+                inserted += t.meander.coupledInserted
+            }
+            means.append(sum / Double(count))
+            replacements.append(inserted)
+            print("[BELT-DT] dt \(dt): Sechser-Mittel \(means.last!), ersetzt \(inserted)")
+        }
+        XCTAssertLessThan(means.max()! - means.min()!, 0.1,
+                          "Gürtel-Statistik hängt am Aufruftakt: \(means)")
+        XCTAssertLessThan(Double(replacements.max()!), 3 * Double(replacements.min()!),
+                          "Ersetzungen zählen Aufrufe statt Jahre: \(replacements)")
     }
 
     func testBeltIsDeterministic() {
@@ -149,6 +276,133 @@ final class BeltCouplingTests: XCTestCase {
 // Entwässerung: Avulsion (#187).
 final class BeltCouplingDiagnostics: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
+
+    func testMigrationClippingDiagnostic() throws {
+        try skipUnlessMeasuring()
+        #if RS_BELT_CLAMP_DIAGNOSTIC
+        let dt = Double(env["RS_DT"] ?? "1000")!
+        let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: 1337,
+                        settleYears: SimConfig.productionSettleYears)
+        while t.years < 10_000 { t.step(dtYears: min(dt, 10_000 - t.years)) }
+        let lock = NSLock()
+        var count = 0, clipped = 0, want = 0.0, moved = 0.0
+        MeanderState.beltClampLog = { proposed, actual in
+            lock.lock()
+            count += 1; if abs(proposed) > abs(actual) { clipped += 1 }
+            want += abs(proposed); moved += abs(actual)
+            lock.unlock()
+        }
+        defer { MeanderState.beltClampLog = nil }
+        while t.years < 20_000 { t.step(dtYears: min(dt, 20_000 - t.years)) }
+        print("[BELT-KLEMME] dt \(dt): \(clipped)/\(count), angefordert \(want), bewegt \(moved), Verlust \((want - moved) / max(1e-12, want))")
+        #else
+        throw XCTSkip("Klemmen-Messung braucht zusätzlich -Xswiftc -DRS_BELT_CLAMP_DIAGNOSTIC")
+        #endif
+    }
+
+    /// Produktionsgitter und Produktionswerte bei allen drei Takten: jedes
+    /// Zeitmittel über die Matrix-Seeds muss dieselben Punkte 9–13 erfüllen.
+    /// Der kleine Pflicht-Wächter oben prüft die Takt-Mechanik; dieser Lauf
+    /// bewacht auch Änderungen der Produktions-Kalibrierung und bleibt wegen
+    /// der neun 20k-Welten hinter RS_MEASURE.
+    func testBeltProductionDtAcceptanceDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let dts: [Double] = env["RS_DT"].flatMap { Double($0) }.map { [$0] } ?? [15, 100, 1000]
+        for dt in dts {
+            var windows: [ZielbildMetrics.MeanderWindow] = []
+            for seed: UInt32 in [1337, 42, 20] {
+                let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed,
+                                settleYears: SimConfig.productionSettleYears)
+                var run = ZielbildMetrics.MeanderTimeMean(t, windows: [ZielbildMetrics.meanderWindows[0]])
+                run.stepYears = dt
+                run.advance(t, to: 20_000)
+                let ruggedness = ZielbildMetrics.landform(t).lowlandRuggedness
+                print("[BELT-AUE] dt \(dt), Seed \(seed): \(ruggedness)")
+                if dt == 1000 {
+                    XCTAssertLessThan(ruggedness, 0.00156, "bisherige Auen-Abnahme im Sprung bleibt bestehen")
+                }
+                windows.append(run.result[0])
+            }
+            func mean(_ pick: (ZielbildMetrics.MeanderWindow) -> ZielbildMetrics.Series) -> Double {
+                let values = windows.compactMap { pick($0).mean }
+                XCTAssertEqual(values.count, 3, "dt \(dt): nicht alle Matrix-Seeds messbar")
+                return values.reduce(0, +) / Double(max(1, values.count))
+            }
+            let sinu = mean(\.sinuosity), wavelength = mean(\.wavelength)
+            let belt = mean(\.belt), asym = mean(\.asymmetry), oxbows = mean(\.oxbows)
+            print("[BELT-ABNAHME] dt \(dt): Sinu \(sinu), λ/b \(wavelength), Gürtel/A \(belt), Asym \(asym), Altarme \(oxbows)")
+            XCTAssertGreaterThanOrEqual(sinu, 1.5); XCTAssertLessThanOrEqual(sinu, 2.5)
+            XCTAssertGreaterThanOrEqual(wavelength, 10); XCTAssertLessThanOrEqual(wavelength, 14)
+            XCTAssertGreaterThanOrEqual(belt, 3)
+            XCTAssertGreaterThanOrEqual(asym, 2)
+            XCTAssertGreaterThanOrEqual(oxbows, 3)
+        }
+    }
+
+    /// Welcher Pass ändert das Querprofil zwischen Stempel und Schrittende?
+    /// Gleiche Stützstellen wie im ersten Zeitmittel-Fenster, fester Tiefland-
+    /// Ausschnitt je Schritt. So bleibt die Auswahl der Läufe vergleichbar.
+    func testBeltProfilePassesDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let dt = Double(env["RS_DT"] ?? "1000")!
+        let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: UInt32(env["RS_SEED"] ?? "1337")!,
+                        settleYears: SimConfig.productionSettleYears)
+        let passes = ["belt.fixedStamp", "belt.fill", "outletIncision", "channelCarve", "fillShallowPonds",
+                      "braidPass", "Hydraulic.erode", "hillslopeDiffusion", "wavePass",
+                      "belt.finishProfile", "updateVegetation"]
+        var record = false, lowland: [Bool] = []
+        let swept = [Bool](repeating: false, count: t.cfg.count)
+        var values: [String: [Double]] = [:]
+        SimProfile.reset()
+        SimProfile.enabled = true
+        SimProfile.onPassEnd = { pass in
+            guard record, let pass, passes.contains(pass) else { return }
+            let b = ZielbildMetrics.beltAll(t, lowland: lowland, swept: swept)
+            values[pass, default: []].append(b.asymmetry)
+        }
+        defer { SimProfile.enabled = false; SimProfile.onPassEnd = nil; SimProfile.reset() }
+        while t.years < 20_000 {
+            let sample = (floor(t.years / 2000) + 1) * 2000
+            let sub = min(dt, min(sample, 20_000) - t.years), next = t.years + sub
+            record = next >= 10_000 && next.truncatingRemainder(dividingBy: 2000) == 0
+            if record { lowland = ZielbildMetrics.landform(t).lowland }
+            t.step(dtYears: sub)
+        }
+        for pass in passes {
+            let v = values[pass] ?? []
+            print(String(format: "[BELT-PASS] dt %.0f %@ Asym %.4f n%d", dt, pass,
+                         v.reduce(0, +) / Double(max(1, v.count)), v.count))
+        }
+    }
+
+    /// Prüft, ob der Stempel das am Schrittanfang trockene Bett durch seinen
+    /// eigenen Abtrag für einen See hält (`hf` bleibt während des Stempels fest).
+    func testBeltFalseLakeGateDiagnostic() throws {
+        try skipUnlessMeasuring()
+        let dt = Double(env["RS_DT"] ?? "1000")!
+        let end = Double(env["RS_YEARS"] ?? "20000")!
+        let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: UInt32(env["RS_SEED"] ?? "1337")!,
+                        settleYears: SimConfig.productionSettleYears)
+        var initial = [Bool](repeating: false, count: t.cfg.count)
+        var falseWet = 0, channel = 0, steps = 0, peak = 0
+        SimProfile.reset()
+        SimProfile.enabled = true
+        SimProfile.onPassEnd = { pass in
+            if pass == "updateIce" {
+                for k in initial.indices { initial[k] = t.hf[k] - t.h[k] > 0.02 }
+            } else if pass == "belt.fixedStamp" {
+                var now = 0
+                for k in initial.indices where t.isChannel[k] {
+                    channel += 1
+                    if !initial[k] && t.hf[k] - t.h[k] > 0.02 { now += 1 }
+                }
+                falseWet += now; peak = max(peak, now); steps += 1
+            }
+        }
+        defer { SimProfile.enabled = false; SimProfile.onPassEnd = nil; SimProfile.reset() }
+        while t.years < end { t.step(dtYears: min(dt, end - t.years)) }
+        print("[BELT-SEE] dt \(dt), Schritte \(steps), frisch gesperrt \(falseWet) von \(channel), Spitze \(peak)")
+    }
 
     /// `TerrainAging.testAgingTrajectoryOver100k` (n = 160, Großform vor #174)
     /// mit Varianten (`RS_VARIANT`, Schlüssel wie `MeanderBeltCalibration`,

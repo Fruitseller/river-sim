@@ -36,7 +36,10 @@ final class CanopyTests: XCTestCase {
     /// Kein Wald über sichtbaren Flüssen, Seen und Bändern, und auch nicht in
     /// der Nachbarzelle: der Shader liest die Maske linear gefiltert.
     func testNoForestOverRiversLakesOrBands() {
-        let terrain = aged()
+        var c = renderConfig(n: 192)
+        c.meanderBeltKernelWidths = calibrationBeltRenderKernelWidths
+        c.meanderBeltSymmetricStamp = calibrationBeltSymmetricStamp
+        let terrain = agedWorld(c, years: 2000, seed: 1337)
         let render = RenderState(geometryMode: true)
         let (water, forest) = refresh(render, terrain)
         let coverage = render.riverRibbonMesh.bandCoverage

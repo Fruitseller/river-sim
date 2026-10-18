@@ -72,6 +72,33 @@ let calibrationRangeLandform = false
 /// eigene Wächter (`MeanderBeltTests`, `ZielbildBeltTests`).
 let calibrationMeanderBelt = false
 
+/// Kopplungs-Takt der alten Aging-Realisierung: je Aufruf, vor der Korrektur
+/// des Zeitraffer-Takts in #174. `TerrainAging` prüft das Abklingen der Hebung
+/// auf seiner alten Großform, nicht die Gürtel-Kalibrierung. Bei dt 500
+/// verschiebt der feste 1000-Jahr-Takt die Kurve dort auf robust 0,1157 bei
+/// 50k → 0,1133 bei 100k, die zweite Hälfte fällt nur noch um 2,1 %.
+/// Die Produktions-Gürtel-Statistik hat ihren eigenen dt-Wächter.
+let calibrationBeltCouplingYears: Double = 0
+
+/// Kalibrierung des kleinen Kopplungs-dt-Wächters, wie die bereits gepinnte
+/// Migrationsnumerik in MeanderBeltTests: das Wachstum steigt mit Rate/L².
+/// Die Produktionspaarung 0,03/0,9 wächst rund viermal schneller und streut
+/// auf n=128 stark mit der libm (Linux: Sinuosität 1,11/1,16/1,33).
+/// Die Produktions-Abnahme läuft getrennt auf n=720 über 24 Seeds.
+let calibrationBeltDtRate: Double = 0.02
+let calibrationBeltDtKernelWidths: Double = 1.5
+
+/// Render-Paarung vor der neuen Gürtel-Kalibrierung.
+/// Die Produktionspaarung 0,85/geteilt füllt seinen kleinen See (0 sichtbare
+/// Seezellen). Der Test braucht die vorhandene Wasserfläche als Prüffläche
+/// der Waldsperre, keine bestimmte Gürtel-Realisierung. Der Mündungs-Wächter
+/// behält ebenfalls seine alten Wasserlinien und Krümmungs-Deckel.
+let calibrationBeltRenderKernelWidths: Double = 1.0
+/// Bisherige Profil-Integration der Render-Paarung und der alten Aging-Welt.
+/// Aging mit geteiltem Profil: robust 0,1182 → 0,1143 von 50k bis 100k,
+/// statt der bisherigen 0,1318 → 0,1177; der Hebungs-Wächter bleibt gepinnt.
+let calibrationBeltSymmetricStamp = false
+
 /// Gleichgewichtslinien-Temperatur des Eises (°C) der Testwelten, gegen die die
 /// Eis-WÄCHTER dieser Suite kalibriert sind: der Stand vor der Entkopplung der
 /// Firn-Grenze von der 0-°C-Isotherme in Issue #174 (Produktion seitdem

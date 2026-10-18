@@ -52,6 +52,8 @@ final class MeanderBeltCalibration: XCTestCase {
             case "chq": c.meanderChuteMinCells = v
             case "braid": c.braidingEnabled = v > 0
             case "coup": c.meanderBeltCoupling = v > 0
+            case "cadence": c.meanderBeltCouplingYears = v
+            case "symmetric": c.meanderBeltSymmetricStamp = v > 0
             case "slack": c.meanderBeltCouplingSlackCells = v
             case "avw": c.meanderBeltAvulsionWidths = v
             case "avd": c.meanderBeltAvulsionDepths = v > 0 ? v : .infinity
@@ -418,7 +420,7 @@ final class MeanderBeltCalibration: XCTestCase {
         let b = MeanderState.beltWidthCells(discharge: 20000, config: c)
         var years = 0.0, sSum = 0.0, lSum = 0.0, nS = 0.0, maxSub = 0
         while years < end {
-            let dt = 1000.0
+            let dt = min(env["RS_DT"].flatMap(Double.init) ?? 1000, end - years)
             let rate = m.beltMaxRate(config: c, heightAt: hAt)
             let nsub = max(1, min(256, Int((rate * dt / (0.5 * c.meanderNodeSpacing)).rounded(.up))))
             maxSub = max(maxSub, nsub)

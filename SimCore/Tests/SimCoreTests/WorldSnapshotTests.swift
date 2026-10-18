@@ -11,6 +11,22 @@ import XCTest
 /// eine zweite Liste hier: ein neu aufgenommenes Feld ist damit automatisch Teil
 /// des Wächters.
 final class WorldSnapshotTests: XCTestCase {
+    /// Zwischen zwei Topologie-Prüfungen speichern, danach über mehrere
+    /// 1000-Jahr-Marken hinweg bit-gleich weiterlaufen.
+    func testSnapshotKeepsThePartialBeltCouplingClock() throws {
+        var c = renderConfig(n: 128)
+        c.meanderBeltMinCells = 100
+        let original = Terrain(config: c, seed: 1337)
+        original.step(dtYears: 375)
+        XCTAssertEqual(original.state.beltCouplingCarry, 375)
+        let loaded = try WorldSnapshot.decode(WorldSnapshot.encode(original))
+        for dt in [15.0, 100, 1000, 15, 100, 1000] {
+            original.step(dtYears: dt)
+            loaded.step(dtYears: dt)
+            XCTAssertEqual(original.fingerprint(), loaded.fingerprint())
+        }
+    }
+
 
     /// Produktionsphysik in Testauflösung. Bewusst ALLE Zustands-tragenden
     /// Systeme an (Mäander, Braiding, Lithologie, Regen-Gewichtung, Becken-
@@ -77,6 +93,8 @@ final class WorldSnapshotTests: XCTestCase {
                        file: file, line: line)
         XCTAssertEqual(a.dropCarry.bitPattern, b.dropCarry.bitPattern,
                        "\(ctx): dropCarry", file: file, line: line)
+        XCTAssertEqual(a.beltCouplingCarry.bitPattern, b.beltCouplingCarry.bitPattern,
+                       "\(ctx): beltCouplingCarry", file: file, line: line)
         XCTAssertEqual(a.flowStepCount, b.flowStepCount, "\(ctx): flowStepCount",
                        file: file, line: line)
         XCTAssertEqual(a.disturbActive, b.disturbActive, "\(ctx): disturbActive",

@@ -1720,7 +1720,14 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// 1,5 / 0,02 140 von 240, Sinuosität 1,42 / 1,32; 1,2 / 0,03 177;
     /// 1,0 / 0,03 201; 1,2 / 0,04 197; 1,0 / 0,04 221 (Matrix-Seeds 30 von
     /// 30); Nachbarn 1,0 / 0,05 214, 0,9 / 0,04 216.
-    public var meanderBeltKernelWidths: Double = 1.0
+    /// Zeitraffer-Korrektur #174: 1,0 → 0,85 bei unveränderter Rate 0,03,
+    /// nach zeitbasierter Kopplung und geteilter Profil-Relaxation. Diese
+    /// Paarung hält die Auen-Schranke auf Mac und Docker-Linux; Kern 0,9
+    /// verfehlt sie auf Linux knapp (0,001579 statt <0,00156). Matrix:
+    /// 28/30 Punkte. Rate-Nachbarn 0,0325…0,04 brachten keinen auf beiden
+    /// Plattformen tragfähigen Gewinn. Ensemble und dt-Vergleich:
+    /// docs/zielbild-measurements.md § Gürtel im Zeitraffer.
+    public var meanderBeltKernelWidths: Double = 0.85
     /// Migrationsrate je Jahr: Anteil der Kanalbreite bei `b · eff = 1`.
     /// 0,015 ≈ 1–2 % der Breite je Jahr in engen Bögen (reale Mäanderflüsse:
     /// 1–5 %). 0,005 wuchs im Gelände nicht über die Startzacken der D8-Trasse
@@ -1847,6 +1854,25 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// seinem Weg liegt, springt hinein (Avulsion). `false` = Stand vor #187
     /// (3×3-Maximum, laufendes Maximum, Trasse „längster Fließweg zuerst").
     public var meanderBeltCoupling = true
+    /// Abstand der Topologie-Prüfung in Sim-Jahren, statt je Aufruf.
+    /// Die Prüfung liegt am SCHRITTANFANG, wie im 1000-Jahr-Sprung. Der
+    /// Rest reist im Spielstand mit. 0 prüft wie vor der Korrektur je Schritt.
+    /// 1000 Jahre bewahren die Phase des bisherigen Sprungs und reduzieren
+    /// auf Seed 1337 die zusätzlichen Ersetzungen bei dt 100 (vorher 53.590
+    /// gegen 16.106 bei dt 1000 bis 20k). Ohne Profil-Umbau: dt 100 erreicht
+    /// mit Kern 1,0 wieder 219/240 statt 165/240 Punkten.
+    /// Messreihe: docs/zielbild-measurements.md, § Gürtel im Zeitraffer.
+    public var meanderBeltCouplingYears: Double = 1000
+    /// Mobile Querprofile hälftig vor und nach den übrigen Geländepässen
+    /// relaxieren. Migration und steiler Linien-Abtrag behalten ihre volle
+    /// Zeit. Für ein festes Ziel ergeben zwei halbe Expositionen dieselbe
+    /// Relaxation wie eine ganze; der zweite Pass migriert nicht erneut.
+    /// Der alte große Schritt verlor sein Profil nach dem Stempel an die
+    /// Inzision und Hangdiffusion: Matrix-Asymmetrie dt 100/1000 im späten
+    /// Fenster 8,21/4,56 → 8,10/7,88 (Kern 0,9). Die globale Pass-Reihenfolge
+    /// bleibt erhalten; nur die zweite Profilhälfte liegt vor dem Klima.
+    /// Messreihe: docs/zielbild-measurements.md § Gürtel im Zeitraffer.
+    public var meanderBeltSymmetricStamp = true
     /// Ein Knoten liegt an seinem D8-Abschnitt, wenn eine Zelle des Abschnitts
     /// höchstens halbe Kanalbreite plus so viele Zellen entfernt liegt: das
     /// Bett überstreicht die volle Breite, der D8-Lauf darin ist eine Treppe

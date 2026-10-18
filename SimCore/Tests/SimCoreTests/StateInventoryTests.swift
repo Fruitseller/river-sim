@@ -242,6 +242,7 @@ final class StateInventoryTests: XCTestCase {
         ("flowStepCount", .persistent(.sameName)),
         ("dropsEmitted", .persistent(.sameName)),
         ("dropCarry", .persistent(.sameName)),
+        ("beltCouplingCarry", .persistent(.sameName)),
 
         // Aus der Config vorgerechnet (Hot-Loops)
         ("mfdMinA", .derived(reason:
