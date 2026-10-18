@@ -137,7 +137,7 @@ final class WaterRendererTests: XCTestCase {
     config.meanderBelt = calibrationMeanderBelt
     // Ohne Lawinen-Abgang des Firns (#174): er verschiebt die Realisierung, und der
     // Wächter braucht in Jahr 30.000 junge Altarme (`TestCalibration`).
-    config.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
+    config.pinIceBeforeAvalanche()
     // Delta-Schüttung (#174, Punkt 26) aus, aus demselben Grund: mit ihr
     // trug diese Realisierung in Jahr 30.000 keinen jungen Altarm (erste
     // Fassung des Passes).

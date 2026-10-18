@@ -684,7 +684,16 @@ final class ZielbildLandformTests: XCTestCase {
             XCTAssertGreaterThan(t.meander.chuteCutoffs, 0, "Seed \(seed): kein Chute-Cutoff bis Jahr 20.000")
             let bars = t.barAge.filter { $0 >= 0 }.count
             XCTAssertGreaterThan(bars, 1000, "Seed \(seed): kaum Gleithang-Bänke (\(bars) Zellen)")
-            XCTAssertLessThan(lf.lowlandRuggedness, 0.00156,
+            // Schranke 0,00165 (vorher 0,00156): die Zerklüftung (mittleres |Laplace| des
+            // Tieflands) streut zwischen gleichwertigen Realisierungen um 3 … 6 %
+            // (Seed 42: 0,001551 im Integrationsstand, 0,001594 mit derselben Physik
+            // und anderer Rundung der Schleifspur-Summe), und der Lawinen-Abgang des
+            // Firns (#174, §M) trägt mehr Eis in die Täler (Seed 20: 0,001452 →
+            // 0,001577, Moränen-Hügel im Tiefland). Gemessen im Endstand 0,001466 /
+            // 0,001562 / 0,001577 — die Schranke fängt weiter einen Gürtel, der die
+            // Aue zerklüftet (vor Paket A: 0,0020 und mehr), liegt aber nicht mehr
+            // auf dem Rauschen.
+            XCTAssertLessThan(lf.lowlandRuggedness, 0.00165,
                               "Seed \(seed): Aue zerklüfteter als vor dem Gürtel (\(lf.lowlandRuggedness))")
             windows.append(run.result[0])
             oxbowMedians.append(Double(ZielbildMetrics.oxbowSizes(t).median))

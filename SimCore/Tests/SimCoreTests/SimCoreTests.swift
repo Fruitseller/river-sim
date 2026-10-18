@@ -63,7 +63,7 @@ final class SimCoreTests: XCTestCase {
         // Lawinen-Abgang des Firns (#174) aus: er verschiebt über Eis und Moränen die
         // Realisierung (`testMeanderOxbowSiltsUp`: 20 frische Altarm-Betten statt
         // > 20), ohne an der Mäander-Mechanik etwas zu ändern (`TestCalibration`).
-        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
+        c.pinIceBeforeAvalanche()
         return c
     }
 

@@ -24,7 +24,7 @@ final class Lithology: XCTestCase {
         c.iceFirnTemp = calibrationIceFirnTemp  // Firn-Grenze 0.5731: die Gegenprobe braucht Eis
         c.deltaTrapFraction = calibrationDeltaTrapFraction  // ohne Delta-Schüttung, s. dort
 
-        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi  // ohne Abgang: s. TestCalibration
+        c.pinIceBeforeAvalanche()  // ohne Abgang: s. TestCalibration
         return c
     }
 
@@ -372,7 +372,7 @@ final class Lithology: XCTestCase {
         // des Firns (#174) verschiebt über Eis und Moränen die Realisierung
         // (Sprung 0.01117 gegen Schranke 0.01048), ohne etwas am Becken-Mechanismus
         // zu ändern — gepinnt wie die übrigen Eis-Stellschrauben (`TestCalibration`).
-        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
+        c.pinIceBeforeAvalanche()
         var ref = c; ref.lithologyEnabled = false                  // derselbe Arm wie der #11-Wächter
 
         /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).

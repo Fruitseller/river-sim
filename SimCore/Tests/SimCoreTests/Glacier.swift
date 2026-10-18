@@ -37,7 +37,7 @@ final class Glacier: XCTestCase {
         c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731 der alten Großform
         c.deltaTrapFraction = calibrationDeltaTrapFraction  // ohne Delta-Schüttung, s. dort
 
-        c.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi  // Stand vor dem Lawinen-Abgang
+        c.pinIceBeforeAvalanche()  // Stand vor dem Lawinen-Abgang
         return c
     }
 
@@ -378,8 +378,8 @@ final class Glacier: XCTestCase {
     /// Mit dem Lawinen-Abgang und der alten Schleifspur (2 Zellen, auf die
     /// Zellgröße 0,34 geeicht, in der Produktion mit 0,156 nur die halbe Breite)
     /// war das Signal weg (Zellen unter der Firn-Grenze Δb −0,12 … 0,00 statt
-    /// +0,2); mit 4 Zellen gemessen Δb W 6 / 10 / 14 gepoolt +0,055 / +0,13 / +0,07,
-    /// alle neun Einzelwerte positiv. Schranken weit darunter.
+    /// +0,2); mit 4 Zellen gemessen Δb W 6 / 10 / 14 gepoolt +0,05 / +0,14 / +0,06
+    /// (Mac) bzw. +0,07 / +0,14 / +0,12 (Linux). Schranken weit darunter.
     func testProductionGlaciersCarveTroughs() {
         var weighted = [Int: Double](), counts = [Int: Int]()
         var tongues = 0.0, tongueN = 0

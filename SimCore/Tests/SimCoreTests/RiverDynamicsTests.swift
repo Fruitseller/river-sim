@@ -507,7 +507,7 @@ final class RiverDynamicsTests: XCTestCase {
         cOn.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
             cOn.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
             cOn.iceFirnTemp = calibrationIceFirnTemp      // Eis vor #174: die Bank-Seed-Mehrheit hängt am Lauf
-            cOn.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
+            cOn.pinIceBeforeAvalanche()
             // Becken-Wasserhaushalt (Issue #11) AUSGEPINNT — wie `meanderCfg()`
             // seine alten Werte pinnt: dieser Wächter misst den braidPass A/B,
             // nicht das Klima. Mit Verdunstung fällt Ponding in den Braid-Plains

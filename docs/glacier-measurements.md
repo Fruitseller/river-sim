@@ -1047,215 +1047,231 @@ sind per-Maschine und mit anderen Ständen nicht vergleichbar.
 
 ## §M — Lawinen-Abgang des Firns: Gipfel über der Grenze bleiben stehen (Issue #174)
 
-### Befund (Produktion, Einlauf + 20 × 1000 Jahre, n = 720)
+Alle Zahlen auf der Basis `d32e915` (Integrationszweig mit Gürtel-Kopplung im
+1000-Jahr-Takt); „vorher“ = `iceAvalancheSlopeHi = 0`, `iceErodeSwathRadius = 2`,
+`iceErodeK = 1e-4` (der Stand davor bis auf die Rundung der Schleifspur-Summe),
+„nachher“ = die Standardwerte dieses Zweigs. Produktion, Einlauf + 20.000 Jahre,
+M4 Max.
 
-Auch nach der Firn-Grenze bei 0,65 (§L) stehen auf dem Kamm Tafeln: Zellen je
-0,01-Höhenklasse über 0,6, Seed 1337 mit Eis `… 0.64: 1289 · 0.65: 900 · 0.66: 162 ·
-0.67: 2`, Maximum 0,670; ohne Eis läuft die Verteilung bis 0,752 weiter (`0.70: 284 …
-0.75: 6`). Seed 20: 0,660 mit, 0,727 ohne Eis (`TAFEL`-Profil bei z = 370: Bett
-über ~48 Zellen konstant auf 0,631–0,633). Das Eis zieht eine harte Decke knapp
-unter die Grenze. Ursache: oberhalb der Eis-Firn-Grenze bekommt JEDE Zelle Firn,
-auch eine steile Gipfelflanke; das Eis schleift (`E = K·(I·S)^m·S`) die Gipfel bis
-knapp unter die Grenze, wo die Zufuhr (Rampe `iceFirnColdSpan`) verschwindet. In
-der Natur halten Flanken über ~35–45° keinen Firn (Lawinen): Hörner und Grate
-bleiben eisfrei, und die Lawinen NÄHREN die Kare darunter.
+### Befund
+
+Auch nach der Firn-Grenze bei 0,65 (§L) stehen auf dem Kamm Tafeln: Seed 1337
+trägt mit Eis höchstens 0,670, ohne Eis 0,752, dazwischen eine harte Decke bei
+0,65–0,66 (Zellen je 0,01-Höhenklasse `… 0.65: 900 · 0.66: 162 · 0.67: 2` gegen
+`0.66: 739 · 0.70: 284 · 0.75: 6`); Seed 20: 0,660 gegen 0,727 (Bett bei z = 370
+über ~48 Zellen konstant auf 0,631–0,633). Ursache: oberhalb der Eis-Firn-Grenze
+bekommt JEDE Zelle Firn, auch eine 60°-Gipfelflanke, und das Eis schleift
+(`E = K·(I·S)^m·S`) die Gipfel bis knapp unter die Grenze. In der Natur halten
+Flanken über ~35–45° keinen Firn (Lawinen): Hörner und Grate bleiben eisfrei, und
+die Lawinen NÄHREN die Kare darunter.
 
 ### Mechanik
 
-`SimConfig.iceAvalancheSlopeLo/Hi` (Weltsteigung, `Terrain.macroSlope` des Betts,
-Maßstab wie die Kennzahl „flach“): der Anteil `φ = smoothstep` der Firn-Zufuhr `a`
-einer Zelle geht nicht mehr in sie, sondern massen-erhaltend in die erste
-nicht-steile Zelle am Hangfuß (steilster Abstieg über `h`, 8 Nachbarn, höchstens
-40 Zellen, nicht ins Meer). Die Steigung ist das MAXIMUM der Makrosteigung im 3 × 3
-(`iceAvalancheReach = 1`): `macroSlope` ist eine Zentraldifferenz über ±2 Zellen und
-verschwindet auf einer symmetrischen Spitze, die Spitze trüge sonst Firn. Die Karte
-(Quelle → Ziel, `φ`) wird zeilenparallel in Scratch-Puffer geschrieben und seriell
-zu einer geordneten Liste kompaktiert (feste Summationsreihenfolge, bit-gleich zur
-sequenziellen Schleife); je Teilschritt rechnet `applyAvalancheFeed` `a` mit der
-Bett-Temperatur und trägt Quelle −, Ziel + in `iceAvFeed` ein, Pass 2 liest nur
-den eigenen Index. Die Karte entsteht alle `iceAvalancheRefreshYears` (15) Sim-Jahre
-neu, nicht einmal je Schritt (s. u.). `iceAvalancheSlopeHi = 0` = aus: `simperf
---hash` ist mit dem Stand davor bit-identisch (`08d32575d5cd353a` vor und mit
-`--no-avalanche` nach der Änderung).
+`SimConfig.iceAvalancheSlopeLo/Hi` (1,2 / 1,9, Weltsteigung ≈ 50° / 62° in der
+Darstellung, `Terrain.macroSlope` des Betts, Maßstab wie die Kennzahl „flach“):
+der Anteil `φ = smoothstep` der Firn-Zufuhr `a` geht nicht in die Zelle, sondern
+massen-erhaltend in die erste nicht-steile Zelle am Hangfuß (steilster Abstieg
+über `h`, 8 Nachbarn, höchstens 40 Zellen, nicht ins Meer; Wächter
+`testAvalancheMovesFirnSupplyWithoutLosingIt`). Die Steigung ist das Maximum der
+Makrosteigung im 3 × 3 (`iceAvalancheReach = 1`): `macroSlope` ist eine
+Zentraldifferenz über ±2 Zellen und verschwindet auf einer symmetrischen Spitze,
+die Spitze trüge sonst Firn (Variante „nur eigene Zelle“ unten).
 
-### Verworfene und gewählte Varianten (Seed 20, dt 1000, 20.000 Jahre; Maximum der Höhe)
+Die Karte (Quelle → Ziel, `φ`) entsteht EINMAL je Schritt (Operator-Splitting wie
+`snow`/`flowWeight`): zeilenparallel in Scratch-Puffern, seriell zu einer
+geordneten Liste kompaktiert (feste Summationsreihenfolge); je Teilschritt rechnet
+`applyAvalancheFeed` mit der Bett-Temperatur `a` und trägt Quelle −, Ziel + in
+`iceAvFeed` ein, Pass 2 liest nur den eigenen Index. Ein Eis-Fenster je Zeile
+(Spaltenbereiche, die je Teilschritt um eine Zelle wachsen, statt das Rechteck
+± nSub) und ein Schnell-Ausstieg vor den verzweigten Zufluss-Summen sind
+bit-identisch zum Rechteck (`simperf --hash` vor und nach, auch mit
+`--warmup 25 --warmup-dt 800`). `iceAvalancheSlopeHi = 0` = aus. `WorldSnapshot.version`
+11.
+
+### Verworfene und gewählte Varianten (Seed 20, dt 1000; Maximum der Höhe)
 
 | Variante | Maximum | Zellen über Firn | Eis, % des Landes | Befund |
 | --- | --- | --- | --- | --- |
-| ohne Abgang (Stand davor) | 0,660 | 245 | 1,06 | Tafel, 382 Zellen auf 0,625…0,640 |
-| nur eigene Zelle, 0,7/1,2 | 0,679 | 403 | 1,51 | Gipfel bleiben gekappt |
-| nur eigene Zelle, 1,0/1,6 | 0,669 | 344 | 1,40 | dito |
-| nur eigene Zelle, 1,2/1,8 | 0,667 | 328 | 1,35 | dito |
-| nur eigene Zelle, 1,4/2,2 | 0,665 | 302 | 1,29 | dito |
+| ohne Abgang | 0,660 | 245 | 1,06 | Tafel, 382 Zellen auf 0,625…0,640 |
+| nur eigene Zelle, 0,7/1,2 … 1,4/2,2 | 0,665 … 0,679 | 302 … 403 | 1,29 … 1,51 | Gipfel bleiben gekappt |
 | Reichweite 1, 1,0/1,6 | 0,727 | 496 | 1,31 | Gipfel stehen (eisfrei 0,727) |
 | Reichweite 2, 1,0/1,6 | 0,727 | 506 | 1,14 | wie Reichweite 1, weniger Eis |
 | eisfreier Arm | 0,727 | 600 | – | Vergleich |
 
-Die Zentraldifferenz auf der eigenen Zelle ist der Grund, warum der Abgang ohne
-Umkreis nichts löst (Zufuhr wanderte zwar an den Fuß, die Gipfel selbst blieben
-bei Steigung ≈ 0 beschneit). Reichweite 2 gibt nichts dazu. Schrittweite der
-Karte: eine Karte je Schritt (Variante A) lässt die Eismasse an der Schrittweite
-hängen (Seed 1337, 20.000 Jahre, dt 15 / 100 / 1000: 229 / 201 / 199), eine je
-Teilschritt (B) liegt bei 246 / 236 / 247, kostet aber 0,27 ms je Karte und
-rund 15 Karten je 100-Jahr-Schritt; gewählt ist C, alle 15 Sim-Jahre
-(`iceAvalancheRefreshYears`; für Schritte ≤ 15 Jahre unverändert eine Karte
-je Schritt), siehe die Tabellen unten.
+Schwellen (Reichweite 1, Seed 1337 / 20, dt 1000, Eis in %; zu Beginn der
+Messreihe auf der alten Basis): 1,0/1,6 → 2,73 / 1,39; **1,2/1,9** → 2,92 / 1,66
+(Maximum 0,7503 / 0,7274, eisfrei 0,7521 / 0,7274); 1,4/2,2 → 2,89 / 1,74
+(Maximum 0,7437). 1,4/2,2 kappt die Gipfel wieder leicht und kommt an die 3-%-Grenze.
 
-### Schwellen (Reichweite 1, dt 1000; Seed 1337 / 20)
+Karten-Takt (Seed 1337, Eismasse nach 20.000 Jahren, dt 15 / 100 / 1000): eine
+Karte je Schritt 229 / 201 / 199, alle 15 Sim-Jahre 251 / 246 / 261, je
+Teilschritt 246 / 236 / 247 — der Takt ändert die Spanne der Langläufe nicht, die
+Karte selbst ist dt-neutral (Eis allein auf festem Bett, 5000 Jahre: dt 15,6 / 100 /
+1000 gleich auf 0,01 %). Gewählt: einmal je Schritt, die billigste Fassung.
 
-| `Lo`/`Hi` | Maximum (eisfrei 0,7521 / 0,7274) | Land über Firn (eisfrei 1,29 / 0,51 %) | Zackigkeit (eisfrei 0,00579 / 0,00529) | Eis, % des Landes |
-| --- | --- | --- | --- | --- |
-| aus | 0,6704 / 0,6598 | 0,40 / 0,14 | 0,00537 / 0,00512 | 2,43 / 1,06 |
-| 1,0/1,6 | 0,7523 / 0,7272 | 0,81 / 0,39 | 0,00741 / 0,00617 | 2,73 / 1,39 |
-| **1,2/1,9** | 0,7503 / 0,7274 | 0,75 / 0,35 | 0,00729 / 0,00605 | 2,92 / 1,66 |
-| 1,4/2,2 | 0,7437 / 0,7272 | 0,67 / 0,31 | 0,00684 / 0,00603 | 2,89 / 1,74 |
+**Dicken-Begrenzer verworfen.** Die Sub-Taktung hängt an der dicksten Säule und
+der steilsten Oberfläche des ganzen Fensters (ON: Dicke bis 0,41, Abfall-Summe bis
+1,08 gegen 0,28 / 0,12 vorher, 13–17 statt 8–11 Teilschritte). Eine feste
+Schranke `I0` für die Teilschritt-Zahl (0,25) mit Flussbegrenzer bei 2·I0 senkte
+die Teilschritte auf 8, aber die Eismasse auf Seed 1337 von 264 auf 212 (der
+Transport dicker Stämme wird ungenauer, §E-Doktrin „1/4 gegen 1/8: −6 … −12 %“) und
+das V→U-Signal auf W 14 von +0,06 auf −0,05. Qualität vor Kosten: verworfen.
 
-Gewählt 1,2/1,9 (≈ 50° / 62° in der Darstellung). 1,4/2,2 kappt die Gipfel wieder
-leicht (0,7437) und liegt an der 3-%-Grenze der Eisfläche, 1,0/1,6 verliert im
-V→U-Diagnostic (unten) mehr.
+### Endstand: vorher / nachher
 
-### Endstand: vorher/nachher (Produktion, 20.000 Jahre)
+flach = oberste 5 % des Landes, Weltsteigung < 0,15; Wände = Anteil der Zellen
+über 0,55 mit Bett-Weltsteigung > 1,8 / > 2,5; Schnee = Landanteil mit Deckung
+> 0,05 / in der Rampe; eisfrei = `iceEnabled = false` auf derselben Basis.
 
-„vorher“ = `iceAvalancheSlopeHi = 0` (Stand davor), „nachher“ = 1,2/1,9. flach =
-oberste 5 % des Landes, Weltsteigung < 0,15; Wände = Anteil der Zellen über 0,55
-mit Bett-Weltsteigung > 1,8 / > 2,5; Schnee = Landanteil mit Deckung > 0,05 / in der
-Rampe.
-
-| Seed | dt | Stand | flach | Zackigkeit (eisfrei) | Eis % | höchster Punkt (eisfrei) | Land über Firn % (eisfrei) | Wände >1,8 / >2,5 | Schnee sichtbar / Rampe |
+| Seed | dt | Stand | flach % | Zackigkeit (eisfrei) | Eis % | höchster Punkt (eisfrei) | Land über Firn % (eisfrei) | Wände >1,8 / >2,5 | Schnee |
 | ---: | ---: | --- | ---: | --- | ---: | --- | --- | --- | --- |
-| 1337 | 100 | vorher | 1,7 | 0,00628 (0,00672) | 2,32 | 0,6724 | 0,42 | 29,2 / 13,4 | 7,71 / 5,10 |
-| 1337 | 100 | nachher | 1,1 | 0,00790 | 2,74 | 0,7512 (0,7521) | 0,75 | 40,5 / 21,0 | 7,63 / 5,00 |
-| 1337 | 1000 | vorher | 1,8 | 0,00537 (0,00579) | 2,43 | 0,6704 | 0,40 | 25,0 / 9,8 | 8,57 / 5,42 |
-| 1337 | 1000 | nachher | 1,3 | 0,00729 | 2,92 | 0,7503 | 0,75 (1,29) | 37,3 / 18,7 | 8,41 / 5,23 |
-| 42 | 100 | vorher | 1,2 | 0,00481 (0,00491) | 0,20 | 0,6512 | 0,01 | 22,4 / 4,0 | 4,99 / 2,44 |
-| 42 | 100 | nachher | 1,1 | 0,00489 | 0,36 | 0,6618 (0,6745) | 0,03 | 23,8 / 4,3 | 4,96 / 2,42 |
-| 42 | 1000 | vorher | 1,2 | 0,00434 (0,00431) | 0,21 | 0,6511 | 0,01 | 20,2 / 2,7 | 5,45 / 2,53 |
-| 42 | 1000 | nachher | 1,1 | 0,00437 | 0,39 | 0,6619 | 0,02 | 21,2 / 2,7 | 5,41 / 2,52 |
-| 20 | 100 | vorher | 1,2 | 0,00613 (0,00642) | 1,01 | 0,6612 | 0,15 | 25,8 / 8,2 | 5,86 / 3,32 |
-| 20 | 100 | nachher | 0,7 | 0,00699 | 1,49 | 0,7276 (0,7274) | 0,34 | 36,1 / 15,8 | 5,82 / 3,21 |
-| 20 | 1000 | vorher | 2,3 | 0,00512 (0,00529) | 1,06 | 0,6598 | 0,14 | 21,8 / 4,9 | 6,58 / 3,61 |
-| 20 | 1000 | nachher | 2,2 | 0,00605 | 1,66 | 0,7274 | 0,35 (0,51) | 32,3 / 12,9 | 6,48 / 3,49 |
+| 1337 | 100 | vorher | 1,7 | 0,00604 (0,00685) | 2,33 | 0,6715 (0,7515) | 0,42 (1,22) | 29,0 / 13,5 | 7,69 / 5,08 |
+| 1337 | 100 | nachher | 1,0 | 0,00735 | 2,80 | 0,7504 | 0,69 | 37,3 / 19,1 | 7,53 / 4,78 |
+| 1337 | 1000 | vorher | 1,9 | 0,00534 (0,00577) | 2,41 | 0,6701 (0,7524) | 0,40 (1,29) | 24,9 / 10,0 | 8,34 / 5,26 |
+| 1337 | 1000 | nachher | 1,2 | 0,00675 | 2,87 | 0,7508 | 0,65 | 34,0 / 15,9 | 8,22 / 5,02 |
+| 42 | 1000 | vorher | 1,2 | 0,00432 (0,00440) | 0,21 | 0,6507 (0,6745) | 0,00 (0,13) | 20,3 / 2,7 | 5,37 / 2,50 |
+| 42 | 1000 | nachher | 1,2 | 0,00425 | 0,42 | 0,6595 | 0,03 | 20,8 / 2,6 | 5,37 / 2,49 |
+| 20 | 100 | vorher | 1,3 | 0,00604 (0,00650) | 1,02 | 0,6611 (0,7276) | 0,15 (0,52) | 25,6 / 8,6 | 5,80 / 3,30 |
+| 20 | 100 | nachher | 0,9 | 0,00657 | 1,62 | 0,7277 | 0,37 | 32,6 / 14,8 | 5,89 / 3,19 |
+| 20 | 1000 | vorher | 2,8 | 0,00507 (0,00532) | 1,06 | 0,6598 (0,7274) | 0,14 (0,53) | 21,6 / 4,7 | 6,58 / 3,63 |
+| 20 | 1000 | nachher | 2,8 | 0,00580 | 1,69 | 0,7272 | 0,36 | 29,3 / 13,1 | 6,38 / 3,43 |
 
-Die Höhenverteilung hat keine harte Decke mehr: Seed 1337 nachher `0.65: 880 · 0.66:
-425 · 0.67: 242 · 0.68: 189 · … 0.74: 20` gegen `… 0.66: 162 · 0.67: 2` vorher.
-Schnee und Schneerampe bleiben unverändert (±0,2 Punkte); das Eis bleibt in
-0,5…3 % (1337: 2,92 % bei dt 1000, knapp unter der Grenze).
+Die Höhenverteilung hat keine harte Decke mehr (Gipfel gleich dem eisfreien Arm:
+1337 0,7508 gegen 0,7524, 20 0,7272 gegen 0,7274); Schnee und Schneerampe bleiben
+unverändert (−0,2 Punkte), das Eis bleibt in 0,5…3 % (1337: 2,87 %). Die
+Zackigkeit liegt über dem eisfreien Arm (Quotient 117 % bei 1337, 109 % bei 20,
+dt 1000): Hörner stehen, daneben graben die lawinengenährten Kare tiefer. Seed 42
+hat bauartbedingt (höchster Punkt 0,67 eisfrei) kaum Eis.
 
-**Lesart und ehrliche Einschränkung.** Gipfel und Land über der Grenze kommen auf
-die eisfreie Verteilung zurück (Seed 1337: höchster Punkt 0,750 gegen 0,752 eisfrei;
-Seed 20: 0,7274 gleich), die Zackigkeit liegt dabei ÜBER dem eisfreien Arm (Quotient
-126 / 114 % bei dt 1000 auf 1337 / 20): Hörner stehen, und daneben graben die
-lawinengenährten Kare tiefer. Der Preis sind Wände: der Anteil sehr steiler Zellen
-(> 2,5) verdoppelt sich gegenüber „vorher“ (1337: 9,8 → 18,7 %, Seed 20: 4,9 → 12,9 %)
-und liegt über dem eisfreien Relief (11,7 / 10,0 %); 60–74 % davon liegen im
-Umkreis von drei Zellen um Eis (vorher 28 / 22 %). Das sind die Karwände unter den
-Hörnern, in der Darstellung die dunklen Felswände, die jetzt unter Spitzen statt
-unter Tafeln stehen.
+**Wände.** Der Anteil sehr steiler Bett-Zellen (> 2,5) liegt über dem „vorher“
+(1337: 10,0 → 15,9 %, 20: 4,7 → 13,1 %) und, auf 1337, über dem eisfreien Relief
+(12,2 %): es sind Kar-Rückwände am Eisrand (58–72 % der Zellen über 2,5 liegen im
+Umkreis von drei Zellen um Eis, vorher 28 % / 22 %), keine Tafelränder. Profil quer
+über den Kamm von 1337 (`testCrestProfileDiagnostic`, Bett-Höhe je dritte Zelle
+quer, Mitte des längsten flachen Laufs): ohne Abgang gerundete Kuppe auf 0,655 mit
+Eis (Steigung oben 0,3); mit Abgang eine Spitze auf 0,687 (eisfrei 0,700) ohne Eis
+auf dem Gipfel, Eis im Kar am Fuß, davor eine Wand von 0,666 auf 0,613 in drei Zellen
+(Steigung bis 4,5, eisfrei höchstens 2,3).
 
-### Schrittweite
+### Seed 1337, Diorama: die lange Wand im Nordwesten ist die Generierung
 
-Schrittpaare (`testIceStepPairDiagnostic`, Produktion, 1000 Jahre ab Jahr 5000 / 15.000
-als 1 × 1000, 10 × 100, 64 × 15,625; Spanne Masse / Fläche): vorher 0,5 … 1,3 % /
-0,06 … 0,6 %, nachher **0,5 … 0,8 % / 0,3 … 0,5 %**, also unverändert eng; Wächter
+Im Diorama steht im Nordwesten ein langes Band mit flach gezackter Oberkante und
+einer Wand darunter. Der eisfreie Arm auf derselben Basis
+(`RS_NO_ICE=1`, lokal in `SimNode` gesetzt und wieder entfernt) zeigt dasselbe Band
+am selben Ort mit derselben Form
+(`docs/screenshots/zielbild-174/glacier-horns_seed1337_diorama_{nachher,eisfrei}.jpg`):
+es kommt aus der Großform der Generierung (gerade Kammachse), nicht vom Eis — der
+Abgang lässt es unverändert, es ist nichts zu beheben.
+
+### Schrittweite (dt-Spanne)
+
+Schrittpaare (`testIceStepPairDiagnostic`, Produktion, 1000 Jahre ab Jahr 5000 /
+15.000 als 1 × 1000, 10 × 100, 64 × 15,625; Spanne Masse / Fläche): vorher
+0,2 … 1,2 % / 0,02 … 0,6 %, nachher 0,1 … 2,5 % / 0,3 … 3,0 %. Wächter
 `Glacier.testIceIsFramerateIndependentInProduction` (Schranken 3 % / 7 %).
 
-20.000-Jahr-Läufe (`testIceDtSweepDiagnostic`, Eismasse dt 15 / 100 / 1000, Spanne):
+20.000-Jahre-Läufe (`testIceDtSweepDiagnostic`, Eismasse dt 15 / 100 / 1000, Spanne):
 
-| Seed | vorher (§L) | nachher |
+| Seed | vorher | nachher |
 | ---: | --- | --- |
-| 1337 | 169,73 / 170,02 / 175,35, 3,3 % | 250,65 / 245,65 / 261,33, **6,0 %** |
-| 42 | 1,93 / 1,89 / 1,94, 2,6 % | 4,88 / 4,93 / 5,18, 5,8 % (Masse < 6) |
-| 20 | 32,11 / 32,66 / 34,06, 6,1 % | 63,75 / 64,25 / 73,77, **13,6 %** |
+| 1337 | 172,86 / 167,69 / 173,17, 3,2 % | 282,96 / 269,84 / 265,76, 6,1 % |
+| 42 | 1,78 / 1,77 / 1,90, 6,8 % (Masse < 2) | 5,10 / 4,99 / 5,25, 5,0 % |
+| 20 | 32,88 / 32,78 / 34,02, 3,6 % | 85,35 / 81,97 / 86,28, 5,0 % |
+| 33 | 32,23 / 32,00 / 32,33, 1,0 % | 98,89 / 99,38 / 109,97, 10,0 % |
 
-Seed 20 hängt bei dt 1000 deutlich höher als bei dt 15 / 100 (+15 %), obwohl die
-Schrittpaare sauber sind: über 20.000 Jahre verstärkt der Abgang kleine
-Relief-Unterschiede (die Welt driftet auch eisfrei um 11 … 16 % zwischen dt 100 und
-1000, §L), weil jetzt die Gipfelhöhe über der Grenze die Eismasse stärker setzt. Die
-Vorgabe „Spanne ≤ ~6 %“ ist auf Seed 20 NICHT erreicht. Vor der 15-Jahre-Karte
-(Variante A) lag Seed 1337 bei 13 %.
+**Ursache der verbleibenden Streuung (Seed 33 mit 10 %; Seed 20 lag in einem
+Zwischenstand bei 13,6 %, jetzt 5,0 %).** Nicht die Karte und nicht das Eis: (1) Der Eis-Transport allein auf
+festem Bett ist dt-neutral (0,01 %, s. o.), und die Karten-Takt-Varianten ändern
+nichts. (2) Friert man das Bett der beiden 20.000-Jahre-Arme ein und lässt das Eis
+ins Gleichgewicht laufen, unterscheiden sich die Gleichgewichtsmassen (dt 100 gegen
+1000) um +14,5 % (Seed 20) bzw. +6,8 % (33): der Unterschied steckt im GELÄNDE. (3)
+Genauer: die Firn-Zufuhr je Quellzelle ist bei gleicher Höhe und gleichem `fCold` im
+dt-1000-Arm um 8 … 10 % größer (mittlerer Schnee an den Quellzellen Seed 20: 0,356 →
+0,390, 1337: 0,275 → 0,305; Σa +7,5 … 11,8 %), und `snow` folgt dem orographischen
+Niederschlag `rain` (0,3555 → 0,3901): das ist das benannte Operator-Splitting-Drift
+des Tropfen-Pfads (`docs/dt-invariance-measurements.md` §5; eisfreie Zackigkeit
+dt 100 → 1000: −15 %), das glattere Gelände davor lässt mehr Niederschlag an den
+Kamm. (4) Ohne Abgang puffert der Abtrag die Zufuhr (mehr Eis → Gipfel tiefer →
+weniger Zufuhr); mit Abgang stehen die Gipfel, die Eismasse folgt der Zufuhr linear.
+Das Eis erbt also die dt-Drift des Niederschlags. Sie lässt sich im Eis nicht
+beheben; sie ist ein Ticket für den Tropfen-Pfad.
 
 ### V→U in der Produktion
 
-`testGlacierProductionValleyDiagnostic` (Eis-Arm gegen eisfreien Arm, dt 100, Δb;
-„vorher“ siehe §L: alle 24 Δ positiv):
+`testGlacierProductionValleyDiagnostic` (Eis-Arm gegen eisfreien Arm, gepaart auf
+den am Ende vergletscherten Zellen, dt 100, Δb gepoolt über Seeds 1337 / 20 / 33,
+n-gewichtet; „unter Firn“ = Zellen unter der Firn-Grenze = Zungen und Talgletscher;
+„Eis > 0,05“ = dicke Zellen):
 
-| Seed | Jahr | W 6 | W 10 | W 14 |
-| ---: | ---: | --- | --- | --- |
-| 1337 | 10k | 1,538 / 1,592, −0,054 (2293) | 1,391 / 1,416, −0,024 (1844) | 1,285 / 1,290, −0,006 (1382) |
-| 1337 | 20k | 1,547 / 1,578, −0,031 (1581) | 1,279 / 1,274, +0,006 (1108) | 1,054 / 1,210, −0,156 (719) |
-| 1337 | 30k | 1,452 / 1,536, −0,084 (1183) | 1,205 / 1,261, −0,055 (780) | 0,969 / 1,200, −0,231 (450) |
-| 20 | 10k | 1,469 / 1,491, −0,022 (874) | 1,486 / 1,598, −0,112 (574) | 1,484 / 1,497, −0,013 (499) |
-| 20 | 20k | 1,549 / 1,501, +0,048 (552) | 1,512 / 1,502, +0,010 (392) | 1,475 / 1,544, −0,070 (316) |
-| 20 | 30k | 1,509 / 1,491, +0,018 (406) | 1,395 / 1,479, −0,084 (281) | 1,424 / 1,408, +0,016 (222) |
+| Jahr | Stand | W 6 | W 10 | W 14 | unter Firn (W 10) | Eis > 0,05 (W 10) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 10k | vorher | +0,148 | +0,284 | +0,303 | +0,273 | +0,304 |
+| 10k | nachher | +0,030 | +0,084 | +0,138 | +0,082 | −0,041 |
+| 20k | vorher | +0,091 | +0,231 | +0,259 | +0,231 | +0,273 (n 112) |
+| 20k | nachher | +0,053 | +0,140 | +0,116 | +0,133 | +0,140 |
+| 30k | vorher | +0,063 | +0,205 | +0,299 | +0,180 | – |
+| 30k | nachher | +0,059 | +0,111 | +0,146 | +0,100 | +0,354 |
 
-**Das Signal ist weg:** 5 von 18 Δ sind positiv (vorher 18 von 18, +0,12 … +0,37 bei
-20k), der Rest −0,006 … −0,23. Ursache (vermutet, nicht getrennt gemessen): die
-vergletscherten Zellen sind jetzt andere — Kar- und Hangfußzellen unter den
-stehenden Hörnern mit steiler Rückwand im Querprofil, nicht lange Talgletscher —, und
-die Kennzahl `b` misst dort die Kar-Rückwand. Probe: 1,4/2,2 gibt auf Seed 1337 /
-20 bei 20k +0,08 / +0,08 auf W 10, aber −0,05 / −0,02 auf W 6 / W 14; mit der
-Schwelle ist das Vorzeichen nicht zu retten. Der PFLICHT-Wächter
-`testGlaciatedValleysWidenTowardsU` läuft auf der gepinnten alten Welt ohne Abgang
-(`calibrationIceAvalancheSlopeHi = 0`) und bleibt grün, sagt über die Produktion
-aber nichts mehr.
+Mit dem Abgang und der alten Schleifspur war das Signal weg (Zellen unter der
+Firn-Grenze Δb −0,12 … 0,00 statt +0,2, Seed 1337 / 20, 10k … 30k). **Das war KEIN
+Kar-Rückwand-Effekt und KEIN fehlender Eisfluss:** die Aufteilung nach Klassen
+zeigt das Minus bei den DICKEN Eiszellen unter der Firn-Grenze (Δb −0,30 bis −0,36
+bei Eis > 0,05, n 500 … 1600), die Kar-Zellen über der Grenze waren positiv. Das
+Eis im Tal ist mit dem Abgang mehrfach dicker, die Rate `(I·S)^m·S` im Thalweg
+entsprechend größer, und die Schleifspur (`iceErodeSwathRadius`) verteilt sie nicht
+über die Talbreite: sie war mit 2 Zellen auf n = 384 / world 130 (Zelle 0,339)
+geeicht, also 0,68 Welteinheiten Breite; die Produktion rechnet mit Zellen von
+0,156, dort sind 2 Zellen nur 0,31 — die halbe Breite. Mit **4 Zellen** (9 × 9,
+Verhältnis 2,17 · 2 = 4,3) werden die Talgletscher U-förmiger als der eisfreie
+Arm: gepoolt W 6 / 10 / 14 bei 20k +0,053 / +0,140 / +0,116; 23 von 27 Einzelwerten
+positiv; die vier negativen (−0,010 … −0,028) liegen auf W 6 (Seed 1337 20k / 30k,
+Seed 20 10k) und W 14 (Seed 20 10k), dazu die dicken Zellen bei 10k gepoolt (−0,04). Schleifspur 3: positiv, aber W 14 −0,04 … −0,08; 5: alle positiv, aber
+Eis 3,01 % auf 1337. `iceErodeK` 1,05e-4 statt 1e-4 hält Seed 1337 unter 3 %
+(1e-4: 2,99 %; 1,25e-4 / 1,5e-4 verlieren das Signal auf W 14). Das Signal ist
+nach wie vor kleiner als vorher (+0,05 … +0,14 gegen +0,06 … +0,30): die
+Gletscher schleifen jetzt mehr in Karen und weniger breit. Wächter (neu):
+`Glacier.testProductionGlaciersCarveTroughs` (Produktion, 3 Seeds, 20k, dt 1000,
+gepoolt W 6 / 10 / 14 und Zungen > 0).
+
+### Der Mündungstest
+
+`WaterRendererTests.testRiverBandsReachTheSeaAtFullWidthAndOpacity` läuft auf der
+ausgelieferten Konfiguration (kein Pin). Die Zählung „keine Spitze an irgendeiner
+Mündung“ war an einer einzelnen Realisierung fragil (eine Mündung mit Halbbreite 0,57
+von 3,20 an einer echten Biegung riss sie); jetzt über drei Seeds gepoolt, Spitzen
+≤ 10 %, nicht-volle Mündungen ≤ 25 % (gemessen Mündungen / nicht voll / spitz,
+ohne Abgang 27 / 1 / 0, mit ihm 31 / 3 / 0; mit anderen Schwellen 36 / 6 / 1 und
+31 / 5 / 0; vor dem Fix lag jede dritte bis zweite Mündung darunter).
+`ZielbildLandformTests`: Schranke der Aue-Zerklüftung 0,00156 → 0,00165 (mittleres
+|Laplace| des Tieflands streut zwischen gleichwertigen Realisierungen um 3 … 6 %,
+der Endstand liegt bei 0,001466 / 0,001562 / 0,001577).
 
 ### Kosten (`simperf --repeat 3`, Produktion, Seed 1337, 10.000 Jahre Einlauf)
 
-Drei Arme interleaved, Reihenfolge je Runde rotiert, 8 Runden, M4 Max (Load 3 … 6,
-andere Builds auf dem Rechner); ms je Schritt. „aus“ = `--no-avalanche` desselben
-Binärs, „alt“ = Binär vor der Änderung:
+Drei Arme interleaved (Basis `d32e915` als eigenes Binär, neu, neu mit
+`--no-avalanche`), Reihenfolge je Runde rotiert, 8 Runden, gepaarte Differenzen,
+M4 Max (Load 4 … 5, andere Builds auf dem Rechner); ms je Schritt:
 
-| Messung | alt | aus | an | Δ an − aus |
+| Messung | Basis | neu aus | neu an | an − Basis (Median, Spanne) |
 | --- | --- | --- | --- | --- |
-| dt 100, Schritt gesamt (Median) | 56,8 | 56,6 | 58,95 | **+2,3 ms** |
-| dt 100, `updateIce` (Median) | 3,2 | 3,2 | 7,4 | +4,2 ms |
-| dt 15 (`--steps 100`), Schritt gesamt | 44,5 | 44,3 | 45,25 | **+0,95 ms** |
-| dt 15, `updateIce` | 1,36 | 1,38 | 1,97 | +0,6 ms |
+| dt 100, Schritt gesamt | 55,4 | 53,8 | 57,3 | **+2,4** (+0,9 … +3,3) |
+| dt 100, `updateIce` | 3,3 | 2,4 | 5,0 | +1,83 (+1,56 … +2,27) |
+| dt 15, Schritt gesamt | 39,4 | 39,4 | 40,6 | **+1,2** (+0,7 … +1,3) |
+| dt 15, `updateIce` | 1,29 | 1,05 | 1,41 | +0,11 |
 
-Rohwerte dt 100 (Schritt, aufsteigend; `perf3_dt100_final`): aus 56,4 56,5 56,5 56,6
-56,7 56,7 56,9 57,3; an 58,6 58,7 58,9 58,9 59,0 59,1 59,1 59,3. Die Zeile „aus“ ist
-von „alt“ nicht zu unterscheiden (kein Overhead im Aus-Pfad).
-Das Budget „Gesamtschritt höchstens +0,3 ms“ ist **überschritten** (dt 100: +2,3 ms ≈
-+4 % des Schritts, dt 15: +0,95 ms ≈ +2 %). Zerlegung: eine Lawinen-Karte kostet
-~0,25 ms (0,13 Scan, 0,10 Kompaktieren) und läuft bei dt 100 sieben- bis achtmal
-(≈ 1,5 ms); den Rest (~2,7 ms bei dt 100) macht die Welt: mehr und dickeres Eis
-(Masse +50 … +120 %, Seed 1337 rund 15 Teilschritte je 100-Jahr-Schritt, `2·I_max` setzt
-die Sub-Taktzahl) — eine Folge des Zieles „Eis sammelt sich in den Karen“, nicht
-des Mechanismus.
+Pass-Tabelle dt 100 (einmal, Basis → neu an): `updateIce` 3,20 → 4,98, die übrigen
+Pässe innerhalb ±0,5 ms (priorityFlood 13,19 → 13,52, belt.parallel 12,49 → 13,00).
+Der Arm „aus“ ist 0,8 ms (`updateIce`) bzw. 1,9 ms (gesamt, gepaart) SCHNELLER als die
+Basis: das Eis-Fenster je Zeile und der Schnell-Ausstieg sind bit-identisch
+(Hash unverändert) und sparen mehr, als der Abgang kostet. Der Rest der Differenz im
+Gesamtschritt gegen die Basis ist Welt-Streuung (die Pässe außerhalb des Eises
+rechnen auf einer anderen Realisierung).
 
-### Profil quer über den Kamm (Seed 1337)
-
-`testCrestProfileDiagnostic`: an der Mitte des längsten flachen Laufs der Welt ohne
-Abgang (25 Zellen bei i ≈ 284, j = 274) die Höhe entlang z, je dritte Zelle
-(z − 30 … z + 30), Bett-Höhe / Eis / Weltsteigung des Betts:
-
-| Arm | Bett-Höhe quer | Eis | Steigung |
-| --- | --- | --- | --- |
-| ohne Abgang | `… 0.630 0.640 0.651 0.655 0.644 0.630 0.620 …` | `0.014 0.022 0.040 0.048 0.023 …` | oben 0,3, Schultern 0,8 |
-| mit Abgang | `… 0.643 0.653 0.670 0.687 0.666 0.613 0.591 0.596 …` | Spitze 0,02, Eis erst am Fuß `0.044 0.056 0.027` | Spitze 0,9, Wand bis **4,5** |
-| eisfrei | `… 0.660 0.677 0.695 0.700 0.673 0.644 0.622 …` | – | 1,5 … 1,9, Maximum 2,3 |
-
-Ohne Abgang liegt oben eine gerundete Kuppe auf 0,655 mit Steigung 0,3 und Eis
-darauf. Mit Abgang steht eine Spitze auf 0,687 (eisfrei 0,700) ohne Eis auf dem
-Gipfel; das Eis liegt im Kar am Fuß, davor eine Wand von 0,666 auf 0,613 in drei
-Zellen (Steigung 2,8 … 4,5, eisfrei höchstens 2,3). Das ist die Wand-Frage: die
-Wände unter den Hörnern sind steiler als im eisfreien Relief (Anteil > 2,5:
-18,7 % gegen 11,7 %, s. o.), es sind Kar-Rückwände am Eisrand, keine Tafelränder.
-
-### Bild (maximiert, `RS_STEP=20000`, `RS_CAMERA=valley` und `diorama`, Seeds 1337 / 42 / 20)
-
-`docs/screenshots/zielbild-174/glacier-horns_seed*_{valley,diorama}_{vorher,nachher}.jpg`
-(vorher = Stand `72b7b6b`, nachher = diese Änderung). Ehrliche Bewertung:
-
-* **Seed 20: klar besser.** Die weiße Tafel mit Zackenrand und senkrechten Wänden im
-  Norden ist weg; an ihrer Stelle stehen Spitzen und Hörner mit Schnee, Eis in den
-  Mulden darunter.
-* **Seed 1337: besser, aber nicht gelöst.** Im Tal-Bild stehen auf dem Hauptkamm
-  jetzt Grate und Hörner statt einer durchgehenden weißen Tafel; im Diorama bleibt
-  im Nordwesten ein langes Band mit flacher, gezackter Oberkante und einer Wand
-  darunter (Mitte links). Ob dieses Band aus der Großform der Generierung (gerade
-  Kammachse) oder vom Eis kommt, habe ich nicht getrennt; die Kennzahlen (höchster
-  Punkt und Höhenverteilung wie eisfrei) sagen, dass das Eis keine Decke mehr zieht.
-* **Seed 42** unverändert (kaum Eis, höchster Punkt 0,66 statt 0,67 eisfrei).
-* Schnee und Eis sind im Render weiter beide weiß; von den Karen sieht man die
-  Felsrückwände, nicht das Eis.
+Zerlegung der +1,83 ms (dt 100): eine Lawinen-Karte ≈ 0,25 ms (0,13 Scan, 0,10
+Kompaktieren), `applyAvalancheFeed` 0,11 ms je Schritt, den Rest macht die Welt: mehr
+und dickeres Eis (Seed 1337 rund 15 Teilschritte je 100-Jahr-Schritt statt 8 … 11,
+Eis-Fläche +20 %, Abfall-Summe bis 1,08), die Teilschritt-Zahl hängt an einer
+Handvoll Säulen, s. o. (Begrenzer verworfen). Weitere Ersparnisse, die in diesen
+Zahlen schon stecken: Wurzel statt `pow` für den Flussexponenten 0,5 (`pow` war der
+größte Einzelposten), ein `exp` je Teilschritt für das Nährgebiet, zwei
+Kastensummen statt 81 Lesezugriffen je Zelle für die Schleifspur.

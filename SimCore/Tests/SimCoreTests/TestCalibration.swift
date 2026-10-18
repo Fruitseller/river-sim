@@ -146,6 +146,22 @@ let calibrationDeltaTrapFraction: Double = 0
 /// `Glacier.testIceIsFramerateIndependentInProduction`).
 let calibrationIceAvalancheSlopeHi: Double = 0
 
+extension SimConfig {
+    /// Eis-Physik der Mechanik-Testwelten: der Stand VOR dem Lawinen-Abgang
+    /// (`calibrationIceAvalancheSlopeHi`) UND vor der breiteren Schleifspur
+    /// (`iceErodeSwathRadius` 2 statt 4, `iceErodeK` 1e-4 statt 1.05e-4, #174 §M).
+    /// Die Schleifspur gehört zur selben Änderung: auf Linux (andere System-libm,
+    /// andere Realisierung) kippten `testMeanderOxbowSiltsUp` und
+    /// `BarMaterialTests.testRibbonEndsTaperToAPointAndKeepAContinuousWidth` mit
+    /// den neuen Standardwerten, auf dem Mac blieben sie grün — Realisierungs-Glück
+    /// kleiner Testwelten, nicht ihre Mechanik.
+    mutating func pinIceBeforeAvalanche() {
+        iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
+        iceErodeSwathRadius = 2
+        iceErodeK = 1e-4
+    }
+}
+
 /// Produktionsphysik in kleiner Auflösung, mit der Kalibrier-Paarung dieser
 /// Suite: der Standard-Zuschnitt der Render-Wächter (`SimRenderTests`,
 /// `RenderStateTests`). Genau der Fall, für den `calibrationWorld` oben steht —
@@ -159,7 +175,7 @@ func renderConfig(n: Int = 96) -> SimConfig {
     config.world = n > 1 ? calibrationWorld : 0
     config.rangeLandform = calibrationRangeLandform
     config.iceFirnTemp = calibrationIceFirnTemp
-    config.iceAvalancheSlopeHi = calibrationIceAvalancheSlopeHi
+    config.pinIceBeforeAvalanche()
     return config
 }
 
