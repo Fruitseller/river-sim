@@ -2739,7 +2739,7 @@ dt 100, −2,4 ms bei dt 15), Lawinen-Abgang des Firns (+2,4 ms).
 | 5–7 Kamm, Täler, kein Rock | im Bild erfüllt; die lange Wand im Nordwesten von Seed 1337 kommt aus der Generierung (eisfreier Arm zeigt sie gleich) |
 | 8 LongRunCollapse | erfüllt |
 | 9–13 Mäander | Sprung (dt 1000) 209 / 240 auf 24 Seeds, Zeitraffer-Takt dt 100 223 / 240, dt 15 auf den Matrix-Seeds 15 / 15 (erstes Fenster); gerichtete Rest-Differenz zwischen den Takten (§ Gürtel im Zeitraffer) |
-| 14 Aue nicht zerklüfteter | wörtlich nicht: der Gürtel bringt gegen dieselbe Welt ohne Gürtel 1–15 % Laplace mit (Rinne, Bänke, Scroll-Rippen); keine Kruste (Schranke 0,00165, Begründung am Wächter) |
+| 14 Aue nicht zerklüfteter | wörtlich nicht, im Sinn des Punkts ja (keine Kruste); Messung unten |
 | 15–18 Cutoffs, `barAge`, dt-Wächter, Braid/Playa | erfüllt |
 | 19–25 Mäander im Bild | erfüllt (Zeitraffer wandert sichtbar, Scroll-Bars, Bänke, Tiefenfarbe), Bildurteil des Eigners offen |
 | 26 Delta | erfüllt; Deltas wachsen mit dem Alter (§ Delta, Wachstum über die Zeit) |
@@ -2752,3 +2752,25 @@ dt 100, −2,4 ms bei dt 15), Lawinen-Abgang des Firns (+2,4 ms).
 | 41–46 Bedienung | erfüllt, Bildurteil des Eigners offen |
 | 47–49 | erfüllt (oben) |
 | 50 Eigner-Urteil | offen |
+
+**Punkt 14 im Einzelnen.** Gleiche Welt mit und ohne Gürtel, Jahr 20.000,
+mittlerer Betrag des Laplace (Höhe je Zelle). „Tiefland" ist die Kennzahl des
+Wächters (alle Tieflandzellen, mit Gerinne); „Aue" lässt Zellen weg, deren
+5-Punkt-Stencil eine Gerinnezelle (`isChannel`) oder offenes Wasser
+(`hf − h > 0,001`) berührt, misst also die Fläche neben dem Fluss:
+
+| Seed | Tiefland mit / ohne Gürtel | Aue mit / ohne Gürtel (Mac) | Aue mit / ohne Gürtel (Linux) |
+| ---: | --- | --- | --- |
+| 1337 | 0,001466 / 0,001329 | 0,000813 / 0,000765 (+6,3 %) | 0,000803 / 0,000759 (+5,8 %) |
+| 42 | 0,001562 / 0,001537 | 0,000853 / 0,000832 (+2,5 %) | 0,000870 / 0,000828 (+5,1 %) |
+| 20 | 0,001577 / 0,001371 | 0,000802 / 0,000745 (+7,7 %) | 0,000773 / 0,000748 (+3,3 %) |
+
+Auch ohne das Gerinne bleibt die Aue mit Gürtel 3–8 % zerklüfteter. Der Rest
+ist das Relief, das Punkt 20 verlangt: Gleithang-Bänke und Scroll-Rippen
+(Rücken und Senken quer zum Lauf, wie in echten Mäandergürteln). Der
+Fehlerfall, gegen den Punkt 14 steht, war der geparkte
+`floodplainAggradation` mit dem 2,7-fachen Wert; davon ist die Aue weit
+entfernt. Die Punkte 14 (wörtlich) und 20 ziehen hier in entgegengesetzte
+Richtungen; die Entscheidung, ob die Rippen so bleiben, gehört zum Urteil des
+Projekteigners (Punkt 50).
+
