@@ -2693,6 +2693,87 @@ Geröll-Fläche auf flachen Terrassen. Ehrliche Grenzen:
   Mündungen, keine läuft spitz aus.
 - An steilen Küstenstufen bleibt das Felsband des Materialmodells (#174 D).
 
+## Übergänge im Zeitraffer (Befund zu Punkt 50, 2026-10-18)
+
+**Befund des Eigners:** bei 30 und 60 J./Sek. „gibt es keinen schönen
+Übergang zwischen den Ticks: in einer Sekunde sieht der Fluss so aus und in
+der anderen komplett anders".
+
+**Messung.** Bildschirmvideo (`RS_RATE`, Kamera `valley`, Seed 1337 ab Jahr
+20.000, maximiert, 30 fps), mittlere Bilddifferenz je Frame und Kymograph
+(Bildzeilen quer über die Läufe, über die Zeit gestapelt): die normale
+Mäanderwanderung gleitet stetig. Um Jahr 21.000 springt das GANZE Netz binnen
+~0,2 s, an derselben Stelle bei 30 und 60 J./Sek. Die Spitzen alle 250 Frames
+sind Schlüsselbilder des Videos. Headless bestätigt
+(`TimelapseTransitionDiagnostic`, Produktions-Config, emulierter Zeitraffer
+mit 0,25-s-Sim-Takt, 0,30-s-Overlays und 1-Hz-Bändern): es ist die Kopplung
+Gürtel ↔ D8 (`meanderBeltCouplingYears` = 1000), die alle Läufe zugleich neu
+setzt. Avulsionen, neue Läufe für Flüsse, die seit der letzten Kopplung über
+`meanderBeltMinCells` gewachsen sind, und verlassene Strecken; dazu wird
+übernommener Lauf sichtbar, weil Rang, Kohärenz und Verdeckung am ganzen,
+neu zusammengesetzten Lauf hängen (1,65 % des Landes neu gedeckt aus
+übernommenen Knoten, 0,04 % aus eingesetzten). Bett (τ = 10 J.), Rodung
+(`veg = 0`) und Gerinne-Flag folgen sofort.
+
+**Entscheidung: Render in Sim-Jahren, Physik unverändert.** Die Kopplung zu
+entzerren (Phase je Einzugsgebiet) hätte die #187-Kalibrierung neu gefordert
+und jeden Einzelsprung gelassen; eine Avulsion als Sim-Prozess bräche die
+Abfluss-Monotonie (Gutachten GLM, verworfen). Stattdessen:
+
+- **Einwachsen:** `RiverChannel.born` (Geburtsjahr je Knoten, nur Render,
+  nicht im Spielstand und nicht im Fingerabdruck; leer = alle −∞) setzt die
+  Kopplung an eingesetzten Knoten. Breite und Deckkraft wachsen über
+  `WaterRender.ribbonGrowYears` = 180 Sim-Jahre (bei 60 J./Sek. 3 s, bei 10
+  J./Sek. 18 s). Im Bau nach einer Kopplung wächst außerdem alles ein, was der
+  vorige Bau nicht zeigte (`ribbonGrowVisibleCoverage`), über ein
+  Zell-Gedächtnis durch die folgenden Bauten. Wo der vorige Bau schon ein
+  ausgewachsenes Band hatte, wächst nichts ein (kein Engpass im fertigen
+  Fluss). Ausgewachsen baut das Band bit-gleich zu einem ohne Geburtsjahr.
+- **Versiegen:** der Band-Stand vor der Kopplung bleibt als eingefrorener
+  Stand liegen, sichtbar nur, wo kein heutiges Band deckt, und blendet über
+  `ribbonGhostYears` = 150 Sim-Jahre aus. Er deckelt das Raster und schützt
+  vor Wald wie jedes Band.
+- **Wald:** weicht dort, wo die Schutzmaske ihn nimmt, aber noch kein Wasser
+  sichtbar ist (Band-Deckung < `CanopyRender.retreatInstantBandCoverage` =
+  0,35, kein Rasterwasser), über `CanopyRender.retreatYears` = 60 Sim-Jahre
+  statt sofort; über Wasser weiter sofort, ohne vergangene Sim-Zeit ebenso.
+- Ein laufender Übergang baut die Bänder auch ohne Knoten-Bewegung neu
+  (`RiverRibbonRenderer.inTransition`); Pinsel, Laden und Neugenerieren
+  beenden ihn sofort.
+
+**Ergebnis** (`TimelapseTransitionDiagnostic`, Seed 1337, Kopplung um Jahr
+21.000, Faktor gegen den Median eines normalen Band-Baus bzw. Uploads;
+„BandΣ" = Σ|Δ Deckung|, gewichtet):
+
+| 60 J./Sek. | vorher | nachher |
+| --- | ---: | ---: |
+| Band neu (Zellen) | 5,3× | 1,2× |
+| Band weg (Zellen) | 4,1× | 0,4× |
+| BandΣ | — | 1,0× |
+| Wald (Zellen > 0,25) | 11,2× (0,94 % Land) | 3,5× (0,19 % Land) |
+
+| 30 J./Sek. | vorher | nachher |
+| --- | ---: | ---: |
+| Band neu / weg (Zellen) | 8,6× / 6,4× | 1,9× / 0,6× |
+| Wald (Zellen > 0,25) | 0,74 % Land | 0,01 % Land |
+
+Im Video bei 60 J./Sek. ist die Sprungspitze weg; bei 30 J./Sek. wachsen die
+neuen Arme über ~4 s dünn ein, der Wald weicht schrittweise, alte Läufe
+blenden aus. **Bleibt:** das Bett gräbt die Sim mit τ = 10 J. in ~0,3 s ein
+(Höhe 3–5×, Farbe 2,5×): ein feines Linienmuster in der ersten
+Drittelsekunde. Das ist Physik (Gürtel-Stempel) und bleibt, bis der Eigner es
+anders urteilt.
+
+**Kosten** (gepaart, M4 Max): Sim-Schritt bit-gleich (`simperf --hash`
+`31835ab8b1a85069`), +0,15 ms Median der Paardifferenz (0,3 %, 2/8 schneller:
+Rauschen). Frame-Aufbereitung im Hintergrund-Thread: Band-Bau +1,0 ms (+2,5 %),
+je Overlay-Upload im Mittel +1,3 ms (≈ 4 % von ~31 ms), siehe
+`docs/perf-measurements.md` §T. Wächter: `TimelapseTransitionTests`
+(Geburtsjahr nur an eingesetzten Knoten, NaN-frei, Einwachsen, Ausnahme im
+fertigen Fluss, Versiegen und Pinsel-Abbruch, Wald-Rückzug dt-invariant) und
+`CanopyTests.testForestRegrowsOverSimYears` (Rückzug nur über Zeit, über
+Wasser sofort).
+
 ## Abnahme-Stand vor dem Merge (2026-10-18)
 
 Stand `442eed1` (Integrationszweig #180), M4-Max-Referenz-Mac, Produktions-

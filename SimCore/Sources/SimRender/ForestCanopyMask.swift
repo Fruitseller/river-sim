@@ -148,8 +148,14 @@ public enum ForestCanopyMask {
     /// führen defensiv zu keinem Nachwachsen und vergiften das Gedächtnis nicht.
     /// Nicht-positives oder ungültiges `tau` (`tau <= 0`, `NaN`) führt defensiv zu
     /// sofortigem Nachwachsen auf das Ziel (`rise = 1`, instantane Relaxation).
+    ///
+    /// `wet` (sichtbares Wasser JETZT, s. `WetNow`) und `retreatTau`: wo das
+    /// Ziel fällt und dort kein Wasser liegt, weicht der Wald über
+    /// `retreatTau` statt sofort (`CanopyRender.retreatYears`); ohne `wet`,
+    /// mit `retreatTau <= 0` oder ohne vergangene Sim-Zeit wie bisher sofort.
     public static func regrow(_ memory: inout [Float], toward target: [UInt8],
-                              dtYears: Double, tau: Double) -> [UInt8] {
+                              dtYears: Double, tau: Double,
+                              wet: WetNow? = nil, retreatTau: Double = 0) -> [UInt8] {
         guard !target.isEmpty else {
             memory = []
             return []
@@ -164,19 +170,65 @@ public enum ForestCanopyMask {
         }
         let safeDt = (dtYears.isFinite && dtYears > 0) ? dtYears : 0.0
         let rise = Float(Terrain.relaxFraction(dt: safeDt, tau: tau))
+        // Ohne vergangene Sim-Zeit kein Rückzug über Zeit: ändert sich das
+        // Ziel im selben Sim-Jahr (Band-Bau, Wasser-Upload, Pinsel-Takt),
+        // folgt der Wald sofort.
+        let gradual = safeDt > 0 && retreatTau > 0 && retreatTau.isFinite && wet?.fits(target.count) == true
+        let fall = gradual ? Float(Terrain.relaxFraction(dt: safeDt, tau: retreatTau)) : 1
+        let probe = gradual ? wet! : WetNow(bandCoverage: [], waterBytes: [], bandThreshold: 1)
         var out = target
         memory.withUnsafeMutableBufferPointer { mb in
         out.withUnsafeMutableBufferPointer { ob in
+        probe.bandCoverage.withUnsafeBufferPointer { cb in
+        probe.waterBytes.withUnsafeBufferPointer { wb in
             let pm = mb.baseAddress!, po = ob.baseAddress!
+            let pc = cb.baseAddress, pw = wb.baseAddress
+            let band = probe.bandThreshold
+            let river = probe.riverThreshold, lake = probe.lakeThreshold
             for k in 0..<target.count {
                 let t = Float(po[k]) / 255
                 let m = pm[k]
-                if t <= m { pm[k] = t; continue }   // Ziel steht schon in `po[k]`
+                if t <= m {
+                    // Wasser: sofort weg. Sonst (gradual) über `retreatTau`.
+                    if !gradual || fall >= 1 || t == m { pm[k] = t; continue }
+                    let isWet = (pc != nil && pc![k] >= band)
+                        || (pw != nil && (pw![k * 4] >= river || pw![k * 4 + 1] >= lake))
+                    if isWet { pm[k] = t; continue }
+                    let next = min(1.0, max(t, m + (t - m) * fall))
+                    pm[k] = next
+                    po[k] = UInt8((next * 255).rounded())
+                    continue
+                }
                 let next = min(1.0, max(0.0, m + (t - m) * rise))
                 pm[k] = next
                 po[k] = UInt8((next * 255).rounded())
             }
-        }}
+        }}}}
         return out
+    }
+}
+
+/// Sichtbares Wasser JETZT für den Wald-Rückzug (`ForestCanopyMask.regrow`):
+/// Band ab `bandThreshold` Deckung oder Rasterwasser über den Schwellen der
+/// Schutzmaske, ohne Saum, Wiese und Bänke. Davor weicht der Wald sofort, im
+/// übrigen geschützten Bereich über `CanopyRender.retreatYears`. Leere Felder
+/// zählen nicht (vor dem ersten Band-Bau bzw. Wasser-Upload).
+public struct WetNow {
+    public let bandCoverage: [Double]
+    public let waterBytes: [UInt8]
+    public let bandThreshold: Double
+    let riverThreshold = byte01(WaterRender.protectRiverThreshold)
+    let lakeThreshold = byte01(WaterRender.protectLakeThreshold)
+
+    public init(bandCoverage: [Double], waterBytes: [UInt8], bandThreshold: Double) {
+        self.bandCoverage = bandCoverage
+        self.waterBytes = waterBytes
+        self.bandThreshold = bandThreshold
+    }
+
+    /// Passen die Felder zu `count` Zellen (oder sind leer)?
+    func fits(_ count: Int) -> Bool {
+        (bandCoverage.isEmpty || bandCoverage.count == count)
+            && (waterBytes.isEmpty || waterBytes.count == count * 4)
     }
 }

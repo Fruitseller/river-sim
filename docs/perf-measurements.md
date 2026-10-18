@@ -1928,3 +1928,36 @@ dem Linux-Host gemessen). Bit-identisch (die Uferwald-Maske ist 0/1 und wird
 mit `max` und 0,65 erweitert, also nie negativ), aber hier im selben
 Acht-Paar-Lauf nur −0,05 ms in `updateVegetation` (6/8): mehr Code ohne
 messbaren Gewinn auf dem Referenz-Mac.
+
+## T. Übergänge im Zeitraffer (Oktober 2026, Befund zu Punkt 50)
+
+Einwachsen, Versiegen und Wald-Rückzug (`docs/zielbild-measurements.md`
+§ Übergänge im Zeitraffer). M4 Max, Produktions-Config, Seed 1337.
+
+**Sim-Schritt** (`simperf --repeat 1`, 8 Paare, Reihenfolge je Paar
+wechselnd): `main` 56,1–56,7 ms, neu 56,0–56,9 ms; Median der Paardifferenz
++0,15 ms (0,3 %), 2 Paare schneller, eines gleich. Fingerabdruck bit-gleich.
+Die erste Fassung (volles `born`-Array je Lauf, in jeder Neuabtastung
+interpoliert) lag in 6/6 Paaren 0,1–1,0 ms darüber (Median +0,4 ms); seither
+ist `born` leer, solange ein Lauf keinen jungen Knoten hat, und die Kopplung
+setzt Geburtsjahre älter als das Einwachsen wieder auf −∞.
+
+**Frame-Aufbereitung** (`RenderState.frame` im emulierten 60-J./Sek.-Zeitraffer,
+Jahr 20.000 → 22.505, 167 Takte, 83 Uploads, 41 Band-Bauten; je Stand zwei
+Läufe, abwechselnd; ad hoc gemessen, nicht eingecheckt):
+
+| Stand | ms je Upload | ms je Frame mit Band-Bau |
+| --- | ---: | ---: |
+| `main` | 30,2–31,2 | 34,9–36,1 |
+| erste Fassung | 33,2–33,8 | 40,6–41,3 |
+| eingecheckt | 32,0–32,4 | 37,6–38,3 |
+
+Aufgeteilt (Summe über den Lauf): Band-Bau 415 → 471 ms, davon Fluss-Schleife
++41 ms und versiegende Arme 13 ms; Wald +14 ms; Rest im Rauschen. Zwei
+Ursachen der ersten Fassung lagen an Klassen-Properties in inneren Schleifen
+(`matureCoverage` je Zelle im Deckungs-Stempel, `youngYear` je Zelle im
+Kopplungsbau, beide mit Exklusivitätsprüfung): auf Roh-Zeiger umgestellt.
+Die versiegenden Arme geben nur die unverdeckten Stücke aus. Das alles läuft
+im Hintergrund-Job (`BackgroundJob`), nicht auf dem Hauptthread; je
+Zeitraffer-Takt sind das gut 1 % der Hintergrund-Arbeit.
+

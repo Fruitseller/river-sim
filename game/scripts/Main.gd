@@ -675,6 +675,9 @@ func _ready() -> void:
 				if rs_camera >= 0:
 					_apply_camera_preset(rs_camera, false))
 	_refresh_debug()
+	if OS.has_environment("RS_RATE"): # Zeitraffer gleich an (Videoaufnahmen der Übergänge)
+		_set_rate(maxf(0.0, float(OS.get_environment("RS_RATE"))))
+		print("RS_RATE ", year_rate)
 	if OS.has_environment("RS_DIAG"):
 		_diag()
 

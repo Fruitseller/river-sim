@@ -6552,13 +6552,13 @@ public final class Terrain {
             for r in acc { selected[r] = true }
             let L = seg.cells.count
             var nodes: [MeanderNode] = [], pos: [Int] = [], inserted: [Bool] = []
-            var place: [Int] = []
+            var place: [Int] = [], born: [Double] = []
             func addCells(_ from: Int, _ to: Int, _ where_: Int) {
                 guard from < to else { return }
                 for p in from..<to {
                     let k = Int(seg.cells[p])
                     nodes.append(MeanderNode(x: Double(k % nn), z: Double(k / nn))); pos.append(p); inserted.append(true)
-                    place.append(where_)
+                    place.append(where_); born.append(years)
                 }
             }
             var prevPb = -1, prevLine = -1
@@ -6570,7 +6570,11 @@ public final class Terrain {
                 for i in run.i0...run.i1 {
                     nodes.append(ch.nodes[i])
                     pos.append(mSeg[run.line][i] == Int32(s) ? Int(mPos[run.line][i]) : -1)
+                    // Älter als das Einwachsen: für den Render ausgewachsen,
+                    // also wieder −∞ (hält `born` meist leer, s. dort).
+                    let b = ch.bornAt(i)
                     inserted.append(false); place.append(-1)
+                    born.append(b >= years - WaterRender.ribbonGrowYears ? b : -.infinity)
                 }
                 prevPb = max(prevPb, run.pb)
             }
@@ -6619,9 +6623,9 @@ public final class Terrain {
             // nicht neu abtasten.
             if acc.count == 1, runs[acc[0]].i0 == 0, runs[acc[0]].i1 == old[runs[acc[0]].line].nodes.count - 1,
                !inserted.contains(true) {
-                newChannels.append(RiverChannel(nodes: nodes, discharge: dis))
+                newChannels.append(RiverChannel(nodes: nodes, discharge: dis, born: born))
             } else {
-                newChannels.append(meander.resampled(RiverChannel(nodes: nodes, discharge: dis), config: cfg))
+                newChannels.append(meander.resampled(RiverChannel(nodes: nodes, discharge: dis, born: born), config: cfg))
             }
         }
         // 4. Verlassene Gerinne: nur zwischen zwei übernommenen Strecken
