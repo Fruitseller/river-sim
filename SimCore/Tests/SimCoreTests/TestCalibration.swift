@@ -88,11 +88,12 @@ let calibrationBeltCouplingYears: Double = 0
 let calibrationBeltDtRate: Double = 0.02
 let calibrationBeltDtKernelWidths: Double = 1.5
 
-/// Render-Paarung vor der neuen Gürtel-Kalibrierung.
-/// Die Produktionspaarung 0,85/geteilt füllt seinen kleinen See (0 sichtbare
-/// Seezellen). Der Test braucht die vorhandene Wasserfläche als Prüffläche
-/// der Waldsperre, keine bestimmte Gürtel-Realisierung. Der Mündungs-Wächter
-/// behält ebenfalls seine alten Wasserlinien und Krümmungs-Deckel.
+/// Render-Paarung vor der neuen Gürtel-Kalibrierung, nur für die Waldsperre
+/// (`CanopyTests.testNoForestOverRiversLakesOrBands`): die Produktionspaarung
+/// 0,85/geteilt füllt auf ihrer kleinen Testwelt den See (0 sichtbare
+/// Seezellen), der Test braucht die Wasserfläche als Prüffläche, keine
+/// bestimmte Gürtel-Realisierung. Der Mündungs-Wächter läuft dagegen auf der
+/// ausgelieferten Konfiguration.
 let calibrationBeltRenderKernelWidths: Double = 1.0
 /// Bisherige Profil-Integration der Render-Paarung und der alten Aging-Welt.
 /// Aging mit geteiltem Profil: robust 0,1182 → 0,1143 von 50k bis 100k,

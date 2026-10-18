@@ -562,13 +562,7 @@ final class WaterRendererTests: XCTestCase {
   /// 0,2–1,9; Seed 1337, Jahr 20.000, `docs/zielbild-measurements.md` § Delta,
   /// Mündung).
   func testRiverBandsReachTheSeaAtFullWidthAndOpacity() {
-    // Feste Wasserlinien-Paarung: die neue Gürtel-Realisierung testet hier
-    // andere Kurven (Linux: 3/14 Übergaben, eine Spitze statt 0), nicht eine
-    // Änderung des Mündungs-Vertrags.
-    var c = SimConfig.production
-    c.meanderBeltKernelWidths = calibrationBeltRenderKernelWidths
-    c.meanderBeltSymmetricStamp = calibrationBeltSymmetricStamp
-    let terrain = Terrain(config: c, seed: RenderContract.defaultSeed,
+    let terrain = Terrain(config: .production, seed: RenderContract.defaultSeed,
                           settleYears: SimConfig.productionSettleYears)
     terrain.step(dtYears: 1000)
     terrain.computeFlow()
@@ -591,9 +585,14 @@ final class WaterRendererTests: XCTestCase {
       let lo = starts[s], hi = starts[s + 1]
       guard hi - lo >= 24, mesh.uv2s[lo].x == Float(WaterRender.ribbonKindRiver) else { continue }
       guard terrain.h[cell(hi - 2)] <= sea else { continue }        // endet nicht im Meer
-      // Letzte Landstelle vor dem Meer.
-      var v = hi - 2
-      while v >= lo, terrain.h[cell(v)] <= sea { v -= 2 }
+      // Letzte Landstelle vor dem Meer: wie im Renderer (Schnitt an der
+      // Wasserlinie) der Übergang ins Meer von der QUELLE her. Rückwärts vom
+      // Bandende fand die Suche bei einer Linie, die ein Stück über den Schelf
+      // läuft, eine einzelne Inselzelle im Meer statt der Wasserlinie (Linux,
+      // Seed 1337: Halbbreite 0,31 an einem Knick über einer Inselzelle).
+      guard let firstSea = stride(from: lo, to: hi, by: 2).first(where: { terrain.h[cell($0)] <= sea })
+      else { continue }
+      let v = firstSea - 2
       guard v - 20 >= lo else { continue }
       let upstream = stride(from: v - 20, to: v, by: 2).map { halfWidth($0) }.max() ?? 0
       let upstreamAlpha = stride(from: v - 20, to: v, by: 2).map { Double(mesh.colors[$0].w) }.max() ?? 0

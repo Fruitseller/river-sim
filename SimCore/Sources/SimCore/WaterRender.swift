@@ -271,6 +271,12 @@ public enum WaterRender {
     /// das Band dort auf 0,5 Halbbreiten (Seed 1337, Wächter
     /// `testRiverBandsReachTheSeaAtFullWidthAndOpacity`).
     public static let mouthJunctionSmoothSamples = 10
+    /// Höchstzahl der Glättungsdurchgänge am Übergang Zentrumslinie →
+    /// Mündungs-Kette (`RiverRibbonRenderer`, mindestens drei; weiter nur,
+    /// solange der Krümmungs-Deckel dort die Halbbreite halbieren würde). Ein
+    /// Durchgang ist eine 1-2-1-Mittelung; 24 runden einen rechten Winkel
+    /// über das Fenster ab, ohne die Kette vom Lauf zu lösen.
+    public static let mouthJunctionMaxSmoothPasses = 24
     /// Höchstens so viele Landzellen läuft die Geradeaus-Mündung
     /// (`SimRender.mouthPath` mit Richtung) vom Laufende bis zum Meer; weiter
     /// läge das Band nicht mehr sicher auf dem Bett, dann gilt die D8-Kette.
@@ -778,6 +784,16 @@ public enum WaterRender {
     /// alten Küste. Mit 8 lief das Band dort spitz aus, und das D8-Raster
     /// malte den Rest des Laufs als breite dunkle Flecken über die Ebene.
     public static let mouthSearchCells = 16
+    /// Deckkraft-Halt vor der Mündung (Zellen Bogenlänge vor dem letzten
+    /// Landpunkt): darüber fällt die Deckkraft eines Bands, das ins Wasser
+    /// mündet, stromab nicht mehr (laufendes Maximum). Die Deckkraft kommt aus
+    /// dem Abfluss-Vertrauen der Stream-Map, und die Tropfen folgen dem Lauf
+    /// kurz vor der Küste schlechter (Sperre im Gürtelbett, Eintritt ins Meer).
+    /// Ein Lauf, dessen D8-Kette im Wasser endet, führt dort aber sicher
+    /// Wasser. Gemessen (Produktion, Seed 1337 nach Einlauf + 1000 Jahre): an
+    /// 2 von 12 Mündungen lag die Deckkraft am letzten Landpunkt bei 0,59 /
+    /// 0,74 statt 0,79 / 0,93 stromauf, auf Linux an 2 von 14.
+    public static let mouthAlphaHoldCells = 5.0
 
     // MARK: Raster-Feld: Track-Maske, Abstufung, Verbreiterung
 

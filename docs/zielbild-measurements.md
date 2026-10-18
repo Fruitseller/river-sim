@@ -2035,6 +2035,30 @@ Ein Snapshot mitten im Kopplungsintervall läuft nach dem Laden mit
 wechselndem dt bit-identisch weiter. Die Parallel-Fenster bleiben unverändert;
 `testBeltFootprintBoundsSubstepsAndEveryMigrationRead` bleibt grün.
 
+### Mündungen mit der neuen Realisierung
+
+Der Mündungs-Wächter `testRiverBandsReachTheSeaAtFullWidthAndOpacity` läuft
+auf der ausgelieferten Konfiguration und kippte mit der neuen Gürtel-
+Realisierung (Seed 1337, Einlauf + 1000 Jahre): Mac 4 von 12 Mündungen nicht
+voll an der Wasserlinie, Linux 3 von 14 und eine Spitze. Statt den Wächter auf
+die alte Paarung zu pinnen, zwei Render-Korrekturen in `RiverRibbonRenderer`:
+
+- **Deckkraft-Halt** (`WaterRender.mouthAlphaHoldCells`, 5 Zellen): die
+  Deckkraft aus dem Abfluss-Vertrauen fiel kurz vor der Küste ab (0,59 statt
+  0,79 und 0,74 statt 0,93 stromauf, schon vor der Wasser-Übergabe); auf den
+  letzten Zellen vor dem Wasser fällt sie jetzt stromab nicht mehr.
+- **Rechter Winkel an der Mündungs-Kette:** trifft ein Lauf parallel zur
+  Küste ein und biegt die Kette rechtwinklig ins Meer, drückte der
+  Krümmungs-Deckel die Halbbreite an der Wasserlinie auf 0,31 von 2,50.
+  Geglättet wird jetzt weiter, solange der Deckel im Übergangsfenster die
+  Halbbreite halbieren würde (höchstens
+  `WaterRender.mouthJunctionMaxSmoothPasses` = 24, mindestens drei wie
+  bisher). Feste Durchgangszahlen 6 / 10 brachten 0,44 / 0,60.
+
+Der Wächter sucht die Wasserlinie wie der Renderer von der Quelle her: von
+hinten fand er bei einer Linie, die ein Stück über den Schelf läuft, eine
+einzelne Inselzelle. Ergebnis: Mac 1 von 12, Linux 0 von 14, keine Spitze.
+
 ### Bilder
 
 Alle Aufnahmen verwenden den gleichen integrierten Render-Stand `e6d15ea`,

@@ -500,8 +500,20 @@ public final class RiverRibbonRenderer {
                     samples[a].alpha *= t
                 }
             } else {
+                // Deckkraft-Halt (`WaterRender.mouthAlphaHoldCells`): auf den
+                // letzten Zellen vor dem Wasser fällt die Deckkraft stromab
+                // nicht mehr, und die Mündungs-Kette übernimmt den Endwert.
+                if let last = samples.indices.last {
+                    var first = last
+                    while first > 0, arc[hi] - arc[lo + first - 1] <= WaterRender.mouthAlphaHoldCells * cs {
+                        first -= 1
+                    }
+                    if first < last {
+                        for a in (first + 1)...last { samples[a].alpha = max(samples[a].alpha, samples[a - 1].alpha) }
+                    }
+                }
                 let mouthWidth = ribbonHalfWidthCells(pq[hi], cfg: terrain.cfg)
-                let mouthAlpha = alpha[hi]
+                let mouthAlpha = max(alpha[hi], samples.last?.alpha ?? 0)
                 // Die D8-Kette schreitet in GANZEN Zellen; der Enden-Taper
                 // (`taperTail`, 2 Zellen) fiele damit in ~0.5er-Alpha-Stufen je
                 // Segment — als Stufen sichtbar und Bruch des
@@ -537,19 +549,34 @@ public final class RiverRibbonRenderer {
                 // unter 30–80° an. Am Knick griff der Krümmungs-Deckel und
                 // verengte die Mündung auf eine Spitze (Halbbreite 0,2–0,4,
                 // über `ribbonMaxHalfWidthSlope` zwei bis drei Zellen stromauf
-                // nachgezogen; Seed 1337 Jahr 20.000). Drei Glättungsdurchgänge
-                // über die letzten sechs Laufknoten und die Kette, beide Enden
-                // fest.
+                // nachgezogen; Seed 1337 Jahr 20.000). Glättungsdurchgänge
+                // über die letzten Laufknoten und die Kette, beide Enden fest:
+                // mindestens drei, und weiter, solange der Krümmungs-Deckel im
+                // Fenster die Halbbreite unter die Hälfte drücken würde
+                // (`WaterRender.mouthJunctionMaxSmoothPasses`). Trifft ein Lauf
+                // parallel zur Küste ein und biegt die Kette rechtwinklig ins
+                // Meer, reichten drei Durchgänge nicht (Linux, Seed 1337:
+                // Halbbreite 0,31 von 2,50 an der Wasserlinie).
                 let junction = hi - lo + 1
                 let first = max(1, junction - WaterRender.mouthJunctionSmoothSamples)
                 let last = samples.count - 2
                 if last > first {
-                    for _ in 0..<3 {
+                    func pinched() -> Bool {
+                        for a in first...last where samples[a].halfWidth > 0 {
+                            let r = RiverRibbonRenderer.curvatureRadiusCells(samples[a - 1], samples[a], samples[a + 1])
+                                * WaterRender.ribbonCurvatureWidthFactor
+                            if r < 0.5 * samples[a].halfWidth { return true }
+                        }
+                        return false
+                    }
+                    var pass = 0
+                    while pass < 3 || (pass < WaterRender.mouthJunctionMaxSmoothPasses && pinched()) {
                         let raw = samples
                         for a in first...last {
                             samples[a].x = 0.5 * raw[a].x + 0.25 * (raw[a - 1].x + raw[a + 1].x)
                             samples[a].z = 0.5 * raw[a].z + 0.25 * (raw[a - 1].z + raw[a + 1].z)
                         }
+                        pass += 1
                     }
                 }
                 // Jenseits der Wasserlinie liegt die Mündung unter der
