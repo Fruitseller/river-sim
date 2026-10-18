@@ -1818,6 +1818,242 @@ Seeds 15,3; Median je Seed 14–46, vorher 18–96).
   also an der Messgrenze, und wurde deshalb nicht übernommen (Branch
   `t3/174-belt-perf`, Messreihe dort in `docs/perf-measurements.md` §R).
 
+## Gürtel im Zeitraffer (dt 15/100/1000)
+
+Ausgang für diese Messung: `a82c5a1`, Integrationszweig #174. Apple M4 Max,
+64 GB RAM, macOS, Apple Swift 6.4, Swift-5-Sprachmodus; Release. Die älteren
+Tabellen oben sind keine Sollwerte für eine einzelne Realisierung. Hier wird
+die Baseline auf demselben Rechner und mit demselben Werkzeug wie die Varianten
+neu gemessen. Die spätere Integration `e6d15ea` ergänzt ausschließlich Render-
+und Dokumentationsänderungen; die Sim-Baseline bleibt dieselbe.
+
+Die 24 Seeds bleiben 1337, 42, 20, 7, 99, 123, 5, 11, 3, 64, 777, 2024, 1,
+2, 4, 6, 8–10 und 12–16. dt 100 und 1000 laufen bis Jahr 100.000; dt 15 auf
+den Matrix-Seeds bis 20.000. Zeitmittel und Grenzen sind dieselben wie oben.
+`MeanderTimeMean.advance` kürzt den Schritt jetzt an den 2000-Jahr-Stützstellen:
+15 teilt 2000 nicht, vorher fehlten dort Proben. `RS_YEARS=20000` kürzt den
+Zeitmittel-Diagnostic auf das erste Fenster. `BSTAT` druckt zusätzlich ungerundete
+Kennzahlen und eine Bitmaske der erfüllten Punkte, damit etwa 1,495 nicht durch
+seine Anzeige als 1,50 einen Punkt gewinnt.
+
+```sh
+RS_MEASURE=1 RS_SEED=1337 RS_DT=100 RS_YEARS=100000 swift test -c release \
+    --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+    --filter testZielbildMeanderTimeMeanDiagnostic
+RS_MEASURE=1 RS_SEED=1337 RS_DT=15 RS_YEARS=20000 swift test -c release \
+    --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+    --filter testZielbildMeanderTimeMeanDiagnostic
+```
+
+**Stand: deutliche Verbesserung, noch keine vollständige dt-Abnahme.**
+Der Schrittzähler in der Kopplung ist beseitigt, die dt-1000-Abnahme verbessert
+sich von 201 auf 209/240. dt 100 erreicht 223/240 statt 165/240, dt 15 auf den
+drei Matrix-Seeds 15/15 statt 10/15 im ersten Fenster. Trotzdem bleiben
+statistisch erkennbare Unterschiede: vor allem die späte Sinuosität und
+Gürtel/Amplitude sind noch nicht gleichwertig. Dieser Stand ist deshalb kein
+Beleg, dass Zeitraffer und Sprung dieselbe Landschaft liefern.
+
+### Neu gemessene Baseline
+
+Erfüllte Punkte je Fenster, Mittel in Klammern. dt 15 hat nur drei Seeds,
+die anderen Schrittweiten jeweils 24.
+
+| dt | Fenster | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 sichtbare Altarme |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 15 | 10k–20k | 0 (1,26) | 1 (13,8) | 3 (15,2) | 3 (4,90) | 3 (13,9) |
+| 100 | 10k–20k | 0 (1,32) | 15 (11,7) | 24 (11,5) | 24 (4,66) | 19 (11,4) |
+| 100 | 50k–100k | 0 (1,25) | 15 (12,9) | 24 (22,4) | 24 (13,00) | 20 (10,3) |
+| 1000 | 10k–20k | 14 (1,56) | 16 (12,2) | 24 (7,2) | 24 (3,10) | 21 (14,2) |
+| 1000 | 50k–100k | 15 (1,54) | 17 (12,9) | 24 (13,0) | 24 (4,16) | 22 (12,7) |
+
+Summe dt 100: 165/240, dt 1000: 201/240. Die Sinuosität von Seed 11 und 777
+im ersten dt-1000-Fenster beträgt ungerundet 1,49547 und 1,49739; beide
+verfehlen Punkt 9. Die gerundete Tabelle allein würde 203/240 vortäuschen.
+
+### Nach der Korrektur
+
+Erfüllte Punkte je Fenster, Mittel in Klammern; gleiche Seeds und Stützstellen
+wie in der Baseline. Einzelwerte und erfüllte Punkte stehen in
+[`data/belt-dt-174.csv`](data/belt-dt-174.csv). `Anzeige` bezeichnet dort die
+Genauigkeit älterer Tabellen, `BSTAT` die zusätzlich ausgegebenen neun
+Nachkommastellen. Die beiden grenznahen Baseline-Fälle wurden erneut mit
+`BSTAT` gemessen; die Punktzahl verwendet ihre ungerundeten Werte.
+
+| dt | Fenster | 9 Sinuosität | 10 λ/Breite | 11 Gürtel/Amplitude | 12 Asymmetrie | 13 sichtbare Altarme |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 15 | 10k–20k | 3 (1,70) | 3 (11,53) | 3 (10,03) | 3 (6,22) | 3 (21,17) |
+| 100 | 10k–20k | 22 (1,65) | 17 (10,95) | 23 (9,11) | 24 (6,81) | 22 (14,74) |
+| 100 | 50k–100k | 24 (1,67) | 20 (11,59) | 24 (14,97) | 24 (8,84) | 23 (15,38) |
+| 1000 | 10k–20k | 19 (1,59) | 15 (11,02) | 23 (7,43) | 24 (6,13) | 21 (18,22) |
+| 1000 | 50k–100k | 16 (1,53) | 20 (11,88) | 24 (13,62) | 24 (8,74) | 23 (14,87) |
+
+| dt | Vorher | Nachher | Stichprobe |
+| ---: | ---: | ---: | --- |
+| 15 | 10/15 | 15/15 | Matrix, erstes Fenster |
+| 100 | 165/240 | 223/240 | 24 Seeds, beide Fenster |
+| 1000 | 201/240 | 209/240 | 24 Seeds, beide Fenster |
+
+Die Matrix über beide Fenster steigt bei dt 100 von 21 auf 28/30, bei dt 1000
+von 26 auf 28/30. Die historischen 29/30 aus der älteren Messreihe sind damit
+nicht wieder erreicht; auch dieser Unterschied bleibt sichtbar im Protokoll.
+Der Auen-Wächter bleibt bei seiner Schranke 0,00156: Matrix-Werte dt 1000
+auf Mac 0,001460/0,001551/0,001452, auf Linux
+0,001475/0,001525/0,001459.
+
+Für die 24 gepaarten Seeds beträgt die Differenz dt 100 minus dt 1000 im
+späten Fenster bei der Sinuosität +0,13190 (95-%-t-Intervall des Mittelwerts
+[+0,09593; +0,16786]), bei Gürtel/Amplitude +1,35066
+([+0,64739; +2,05394]). Im frühen Fenster liegt Gürtel/Amplitude bei +1,67238
+([+1,11972; +2,22504]). Das sind verbleibende gerichtete Abweichungen,
+keine bloße Einzel-Seed-Streuung. Die Überschneidung der Abnahmepunkte allein
+beweist daher keine dt-Gleichheit.
+
+### Ursache und getrennte Proben
+
+Die Kopplung ist eine diskrete Projektion der alten Linie auf das D8-Netz.
+Ihre Zahl war an Aufrufe gebunden, ihre Wirkung nicht an Jahre. Auf einem
+UNVERÄNDERTEN D8-Netz erzeugen wiederholte Prüfungen dagegen kaum Formverlust
+(Kunstwelt, Sinuosität 1,301 bei dt 15/100 gegen 1,295 bei dt 1000). Auf der
+Produktionswelt ersetzt dt 100 bis Jahr 20.000 53.590 wandernde Knoten, dt 1000
+16.106. Die zusätzliche Prüfung des wechselnden Netzes ist die wesentliche
+Quelle der Begradigung. Die Avulsion selbst verwendete schon eine
+Exponentialrate; sie liest jetzt deren einzige Quelle `Terrain.relaxFraction`.
+
+Ein 1000-Jahr-Takt mit gespeichertem Rest beseitigt die zusätzlichen
+Prüfgelegenheiten. Die Phase gehört zum Verfahren: geprüft wird am
+SCHRITTANFANG, erstmals bei Jahr 0. Eine Prüfung am Schrittende würde dt 100
+um 900 Jahre gegenüber dem bisherigen 1000-Jahr-Schritt verschieben. Übertrag
+verhindert, dass etwa 15-Jahr-Aufrufe daraus einen 1005-Jahr-Takt machen.
+Pinsel-Eingriffe, die eine Linie verwerfen, erzwingen die Prüfung im selben
+Schritt. Ein großer Aufruf behält seine gesamte Avulsions-Exposition.
+`beltCouplingCarry` reist im Inventar und Speicherformat Version 10 mit;
+Fingerabdruck, Neu-Generierung und Weiterlauf nach dem Laden sind bewacht.
+
+Die Kopplung allein stellt die Formen wieder her (dt 100: 219/240), lässt
+aber eine Profil-Drift. `testBeltProfilePassesDiagnostic` misst deshalb dieselben
+sechs Stützstellen von 10k–20k je Pass, Seed 1337, mit festem Tiefland-Ausschnitt:
+
+| Ende des Passes | Asymmetrie dt 100 | dt 1000 |
+| --- | ---: | ---: |
+| Gürtel-Stempel | 6,25 | 5,20 |
+| Auslass-Inzision | 6,01 | 4,29 |
+| Braid-Pass | 5,75 | 4,17 |
+| Tropfen | 5,70 | 4,10 |
+| Hangdiffusion | 5,49 | 3,02 |
+| Schrittende | 5,18 | 2,83 |
+
+Das ist Operator-Splitting, keine zusätzliche Avulsionsrate. Der D8-basierte
+Diffusionsschutz erreicht die wandernde Sohle neben der D8-Zellspur nicht.
+Die Küsten-Pässe und der Gletscher wurden für diese Arbeit nicht umgebaut.
+
+### Verworfene Varianten
+
+| Variante | Messbefund |
+| --- | --- |
+| Kopplungstakt am Schrittende | Matrix-Mittel bei dt 100 im ersten Fenster nur 1,32 Sinuosität; falsche Phase gegenüber dem Sprung |
+| Größere Suchreichweite mit Knoten-Alter, auch mit Abschnitts-Hysterese | dt 100 auf den Matrix-Seeds etwa 1,36 statt 1,32; Knoten wurden weiter oft durch die Topologie-Auswahl verworfen |
+| Ganze alte Linie bis zur Reife der verlorenen Knoten behalten | dt 100 etwa 1,50, dt 15 etwa 1,39; die Abschnittsauswahl und der Übergang ganzer Läufe blieben problematisch |
+| Migrations-Teilschritte höchstens 15 Jahre | Matrix-Mittel dt 1000 im ersten Fenster 1,47 statt 1,49, Asymmetrie 3,17 statt 2,72; schließt die Lücke nicht |
+| Zubringer nur im Kopplungstakt kürzen, Enden weiterführen | dt 100 im zweiten Fenster 1,70 statt 1,71; Profil-Drift bleibt (Asymmetrie 8,55 statt 6,94) |
+| Tropfen aus | Sinuosität dt 100/1000 auf Seed 1337/42 im ersten Fenster 1,83/1,58, Asymmetrie 5,36/2,76; beseitigt den Unterschied nicht |
+| Seemaske vor dem Stempel einfrieren, ohne Tiefenbegrenzung | dt 1000 217/240, dt 100 221/240; erzeugt jedoch neue tiefe Seen (Mac: 23 Zellen auf Seed 1337), daher verworfen |
+
+Die Seemasken-Proben trennen zwei Regeln: Am Schrittanfang trockene Zellen
+erscheinen durch den eigenen Abtrag gegen das alte `hf` als Seen. Im
+Diagnostic sind es bei dt 1000 3,1 % der Kanalzellen-Prüfungen, bei dt 100
+0,6 %. Eine feste Seemaske ohne Tiefenbegrenzung erzeugt neue tiefe Seen.
+Die Begrenzung gegen `hf − 0,02` hält den Tiefgruben-Wächter grün, verändert
+aber auch den Linien-Abtrag steiler Strecken und damit die ganze Entwässerung.
+
+Auch diese Variante wird verworfen: zusammen mit Diffusionsschutz über den
+Gürtel liegt die Auen-Zerklüftung bei 0,00159–0,00172 (Schranke 0,00156).
+Schutz nur im Bett statt auf den Gleithängen genügt nicht (0,00158–0,00167).
+Die Abnahme-Schranke bleibt unverändert. Seemaske, Erosionsbegrenzung und
+zusätzlicher Diffusionsschutz gehören deshalb nicht zur Korrektur.
+
+### Profil-Reihenfolge und Kalibrierung
+
+Die Profil-Relaxation der wandernden Abschnitte wird hälftig aufgeteilt:
+eine Hälfte mit den Migrations-Teilschritten, die andere nach Inzision,
+Tropfen, Hangdiffusion und Wellen. Die Migrationszeit bleibt vollständig.
+Bei festem Ziel gilt für die beiden exponentiellen Hälften dieselbe
+Gesamtwirkung wie für den ganzen Schritt. Das schließt den Profilverlust
+durch die Pass-Reihenfolge deutlich, die nichtlineare Rückkopplung auf
+Geometrie und Entwässerung bleibt jedoch messbar.
+
+Die Kernlänge beträgt 0,85 statt 1,0 Kanalbreiten, die Migrationsrate bleibt
+0,03. Kern 0,9 mit geteilter Profil-Relaxation erreichte 225/240 bei dt 100
+und 206/240 bei dt 1000; Linux verfehlte dabei den unveränderten Auen-Wächter
+mit 0,001579. Nachbarwerte von Rate und Kern brachten keinen konsistenten
+Gewinn auf beiden Plattformen. Die Logbuch-Kommentare der Config halten
+diese Versuche fest. Die Produktions-Auen-Schranke wurde nicht gepinnt.
+
+Ein instrumentierter Lauf misst zusätzlich verlorene explizite Bewegung am
+CFL-Deckel: bei dt 15/100/1000 sind es 0,0010/0,0876/1,1263 % der angeforderten
+Weglänge (Kern 0,9, Rate 0,03). Das ist ein weiterer diskreter Effekt;
+der Versuch mit höchstens 15-jährigen Teilschritten schloss die Form-Lücke
+allerdings nicht. Die Instrumentierung ist nur mit
+`-Xswiftc -DRS_BELT_CLAMP_DIAGNOSTIC` und `RS_MEASURE=1` aktiv
+(`testMigrationClippingDiagnostic`), ohne Kosten im normalen Build.
+
+Auch eine durchgehende Rinne wurde gemessen. Eine schmale Talweg-Verbindung
+steigerte die Sinuosität, verfehlte aber die Auen-Schranke (Seed 20:
+0,001646). Dichte Querprofile mit einmaligem Zugriff je Rasterzelle bestanden
+die Form-Wächter, erzeugten zunächst eine neue tiefe Seezelle. Die Auswahl
+des nächsten Profils je Zelle beseitigte auch diesen Fehler und erreichte
+auf der Matrix dt 1000 30/30 sowie dt 100 29/30. Sie wurde trotzdem verworfen:
+der Sim-Schritt kostete rund 47 ms mehr, weit über dem Budget von 0,5 ms.
+Außerdem blieb die Sinuositäts-Differenz der Matrix bei etwa 0,15.
+Der Versuch und sein Rückbau sind in getrennten Commits nachvollziehbar.
+
+Ein letzter Versuch begrenzt die feste Seemaske und `hf − 0,02` ausdrücklich
+auf mobile Knoten; steile Linien behalten den alten Abtrag. Die Auen-Matrix
+bleibt damit auf Mac grün (0,001440/0,001536/0,001459), ihre dt-1000-Sinuosität
+ändert sich jedoch nur von 1,52859 auf 1,52975. Das erklärt und schließt die
+verbleibende Sinuositäts-Lücke nicht. Auch diese Variante gehört nicht zum
+übernommenen Stand.
+
+### Wächter und Zustandsvertrag
+
+Der kleine Pflicht-Wächter verwendet sechs Seeds und gemeinsame Proben bei
+4k/6k/8k, mit den numerischen Pins Rate 0,02 und Kernlänge 1,5 aus
+`TestCalibration`. Er prüft die Takt-Mechanik: Spannweite der drei
+Sinuositäts-Mittel unter 0,1 und höchstens Faktor 3 bei den Ersetzungen.
+Auf der Baseline scheitert exakt derselbe Wächter am Ersatz-Verhältnis
+35.120/6.905/1.225, also Faktor 28,7. Er ist deshalb kein bloßer Test des
+neuen Zählers. Seine Laufzeit bleibt unter 20 s.
+Der zusätzliche `testBeltProductionDtAcceptanceDiagnostic` prüft auf dem
+Produktionsgitter die fünf Abnahmepunkte der Matrix bei allen drei Takten;
+der 24-Seed-Lauf bleibt als Zeitmittel-Diagnostic erhalten.
+
+Numerische Bestands-Fixtures für Alterung, Seewald und Mündungs-Deckkraft
+pinnen ihre alte Kopplung beziehungsweise Profilfolge in `TestCalibration`,
+damit sie weiter ihren eigenen Vertrag prüfen. Keine ihrer Schranken wurde
+gesenkt. `beltCouplingCarry` ist das einzige neue persistente Feld;
+Inventar, Fingerabdruck und WorldSnapshot-Version 10 sind vollständig.
+Ein Snapshot mitten im Kopplungsintervall läuft nach dem Laden mit
+wechselndem dt bit-identisch weiter. Die Parallel-Fenster bleiben unverändert;
+`testBeltFootprintBoundsSubstepsAndEveryMigrationRead` bleibt grün.
+
+### Bilder
+
+Alle Aufnahmen verwenden den gleichen integrierten Render-Stand `e6d15ea`,
+Produktions-Einlauf, Seed 1337/42/20, Jahr 20.000, `RS_CAMERA=valley`,
+`--maximized --screen 1`, Viewport 3456×2104. Die Tal-Kamera wählt adaptiv den
+größten Lauf; bei geänderter Entwässerung können sich Ausschnitt und Richtung
+ändern, daher ist dies kein Pixelvergleich.
+
+- Vorher: `/tmp/bdt/before-integrated-images/{1337,42,20}_valley_dt{15,1000}.png`
+- Nachher: `/tmp/bdt/final085-images/{1337,42,20}_valley_dt{15,1000}.png`
+
+Im Zeitraffer sind jetzt große, zusammenhängende Bögen sichtbar; die starke
+Begradigung der Baseline nimmt ab. Seed 1337 zeigt den Gewinn besonders klar.
+Die Aufnahmen belegen trotzdem nicht dieselbe Landschaft: Laufwege, Altarme
+und teilweise der größte Tal-Korridor unterscheiden sich weiterhin. Bei Seed
+20 ist im großen Takt zudem eine auffällige helle Steilstrecke sichtbar.
+Die Bilder bestätigen deshalb die Verbesserung und zugleich die noch offene
+dt-Abnahme; sie rechtfertigen keine uneingeschränkte Freigabe.
+
 ## Felswände
 
 17. Oktober 2026, Basis `aeed3b3`, M4 Max, offizielles Godot 4.7.2,

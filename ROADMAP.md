@@ -251,19 +251,22 @@ Tiefland fällt 3–5 Kanaltiefen je Kanalbreite; trockene junge Altarme zeigt
 der Render als Ried). Stand und Befunde in `docs/zielbild-measurements.md`
 § Paket B — Zeitmittel-Abnahme. Pakete C (Teile), D, E als eigene PRs.
 
-**Gürtel ↔ Entwässerung gekoppelt (#187, Ansatz Avulsion).** Die Läufe sind
-seit #187 die Hack-Abschnitte des D8-Netzes (der größere Zufluss läuft weiter);
-die alte Linie liefert die Lage, wo sie an ihrem Abschnitt liegt, ihr Abfluss
-kommt aus dem eigenen Abschnitt (kein Erben mehr). Weicht eine Linie über zwei
-Kanalbreiten oder überhöht von ihm ab, springt sie mit der Rate 1/1000 Jahre
-in den D8-Weg (Avulsion, verlassenes Gerinne = Altarm). Gekoppelt bei dt 100:
-85–92 % der wandernden Knoten höchstens 1,5 Zellen von ihrer Rinne (vorher
-60–81 %). Paket B neu kalibriert (24 Seeds: 201 statt 188 von 240). Offen: die
-Zeitmittel-Abnahme läuft in 1000-Jahr-Schritten, im Zeitraffer-Takt (dt 100)
-liegt die Sinuosität bei 1,28–1,35 statt 1,54–1,62 (167 statt 201 von 240; die
-alte Mechanik driftet dort in die andere Richtung); deutlich mehr und kleinere Altarme; `fadeUphill` und die
-Raster-Bank-Schranke bleiben (seltener nötig). Messreihe:
-`docs/zielbild-measurements.md` § Gürtel und Entwässerung: Avulsion (#187).
+**Gürtel ↔ Entwässerung gekoppelt (#187, Ansatz Avulsion).** Die Hack-Abschnitte
+des D8-Netzes tragen die wandernden Linien und deren Abfluss. Die Prüfung
+läuft nun alle 1000 Sim-Jahre mit gespeichertem Übertrag statt bei jedem
+Aufruf; die Avulsion liest die gemeinsame Exponentialrate. Die Profil-
+Relaxation der flachen Abschnitte liegt hälftig vor und nach den übrigen
+Gelände-Pässen. Das beseitigt die zusätzlichen Begradigungs-Gelegenheiten
+im Zeitraffer und vermindert den Profilverlust im Sprung. Neu gemessene
+24-Seed-Abnahme: dt 100 von 165 auf 223/240, dt 1000 von 201 auf 209/240;
+dt 15 auf den Matrix-Seeds im ersten Fenster von 10 auf 15/15.
+**Offen bleibt die strenge dt-Gleichheit:** späte Sinuosität 1,67 gegen 1,53,
+Gürtel/Amplitude 14,97 gegen 13,62 (dt 100/1000); beide Abweichungen sind im
+gepaarten Ensemble gerichtet. Die Matrix erreicht dt 100 und 1000 je 28/30,
+nicht die historischen 29/30. Durchgehende Rasterprofile verbesserten die
+Form, überschritten aber das Laufzeitbudget deutlich. Pflicht-Wächter für
+den Kopplungstakt, Snapshot-Version 10 und Messreihen mit verworfenen Varianten:
+`docs/zielbild-measurements.md` § Gürtel im Zeitraffer (dt 15/100/1000).
 
 **Zielbild #174, Paket C Teil 2 (Gürtel im Render).** Sand und Scroll-Rippen
 aus `barAge` (`SimRender.BarMaterial`; Sand seit dem Befund „Sandwüste in der
