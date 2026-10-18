@@ -1902,3 +1902,29 @@ Pflichtsuite nach dem Endstand (`swift test -c release --package-path SimCore
 -Xswiftc -swift-version -Xswiftc 5`): **611 Tests, 71 übersprungen, 0 Fehler**
 (212,8 s ohne Build). Die Hashes sind Pro-Maschine-Werte (System-libm);
 verglichen wird vor/nach auf DERSELBEN Maschine.
+
+### Gegenmessung und Übernahme
+
+Vor der Übernahme in den Integrationszweig selbst nachgemessen (2026-10-18,
+M4 Max, geteilte Maschine, Last 5–9): Basis `e6d15ea` gegen die vier
+Perf-Commits, acht Paare `--repeat 3` mit wechselnder Reihenfolge, Minimum
+der drei Blöcke.
+
+| Größe | Basis | Runde 7 | gepaart | Siege |
+| --- | ---: | ---: | ---: | ---: |
+| Gesamtschritt | 58,65 | 55,45 | **−3,25 ms** | 8/8 |
+| `computeMFDArea` | 4,37 | 3,37 | −1,00 ms | 8/8 |
+| `outletIncision` | 3,56 | 2,73 | −0,86 ms | 8/8 |
+
+Hashes je zweimal gleich (1337, 42, 20 und 1337 bei dt 15). Geprüft am Code:
+die Vorab-Entscheidungen von Inzision und Braid lesen nur Felder, die der
+Pass nicht schreibt, oder `h` der Zelle selbst, die nur ihr eigener Besuch
+ändert (`erodeCell`/`depositCell` bekommen ausschließlich die besuchte
+Zelle); der `kErode`-Ausdruck ist Glied für Glied derselbe.
+
+**Verworfen bei der Übernahme:** der verzweigungsfreie Innenteil von
+`dilateDamped` (nächtlicher PR #190, dort −1,7 ms in `updateVegetation` auf
+dem Linux-Host gemessen). Bit-identisch (die Uferwald-Maske ist 0/1 und wird
+mit `max` und 0,65 erweitert, also nie negativ), aber hier im selben
+Acht-Paar-Lauf nur −0,05 ms in `updateVegetation` (6/8): mehr Code ohne
+messbaren Gewinn auf dem Referenz-Mac.
