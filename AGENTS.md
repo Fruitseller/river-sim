@@ -35,6 +35,18 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
   mit nicht-`Sendable`-Closures). Ohne den Schalter bricht der Build mit
   `SendableClosureCaptures` ab.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
+- **Linux-CI lokal reproduzieren:** die Pflichtsuite rechnet auf dem Runner mit
+  der glibc-libm, also auf einer anderen Welt-Realisierung als unter macOS;
+  knappe Wächter kippen dort zuerst. Docker mit dem CI-Toolchain-Image liefert
+  dieselben Zahlen wie CI (gemessen bis zur letzten Stelle, 2026-10-18), das
+  Repo read-only, der Build in einem eigenen Volume:
+  ```sh
+  docker run --rm -v "$PWD":/src:ro -v rs-build:/build swift:6.3.3-jammy bash -c \
+      "cd /src && swift test -c release --package-path SimCore --scratch-path /build \
+       -Xswiftc -swift-version -Xswiftc 5"
+  ```
+  Kippt ein Mechanik-Wächter nur dort, wird nach der Pin-Doktrin unten
+  (§ Konfiguration, `TestCalibration.swift`) gepinnt, nicht die Schranke gesenkt.
 
 **Mess- und Sweep-Läufe gehören NICHT in die Pflichtsuite** (Issue #52). Jede
 Testmethode, deren Name auf `Diagnostic` endet, druckt nur die Tabellen für
@@ -509,7 +521,7 @@ für die nicht ausführbaren Shader- und `Main.gd`-Verträge.
 
 ### SimCore-Aufbau
 
-`Terrain.swift` (~4500 Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
+`Terrain.swift` (~7000 Zeilen) ist absichtlich **eine** Datei: Klima, Vegetation,
 Tektonik, Küste, Braiding, Auslass-Inzision sind Pässe auf denselben Grids und ihre
 **Reihenfolge pro Zeitschritt muss zusammen lesbar sein**. Die Reihenfolge in `step()`
 ist LEM-Konvention und nicht beliebig. Hier vollständig, weil jeder nachgerüstete
@@ -526,7 +538,8 @@ applyUplift (abklingende Hebung + Relief-Servo als Untergrenze)
 → Mäander (migrateMeander + meanderStamp; mit `meanderBelt`, Produktion:
   meanderBeltStep — zuerst die Kopplung an das frische D8-Netz
   (coupleBeltToDrainage, #187), dann Migration und Gürtel-Stempel je Lauf
-  sub-getaktet, #174)
+  sub-getaktet, #174; Läufe mit getrennten Fenstern parallel, überlappende
+  in ihrer Reihenfolge, bit-identisch: parallelBeltRuns)
 ──── ab hier der Produktionszweig `hydraulicEnabled` ────
 → outletIncision → channelCarve (separat über channelTargetDepth abschaltbar)
 → fillLakes (geparkt, `basinFill = false`) → fillShallowPonds
@@ -599,13 +612,13 @@ statt in der Extension, weil der Typ nur an `Terrain` hängt und so headless
 ausführbar ist; Vertrag mit der Werkzeug-Tabelle in `Main.gd`, Wächter:
 `SimCoreTests/ToolContractTests.swift` mit Verhaltens-Tests je Modus).
 
-Größenordnung zur Orientierung (Stand Aug 2026, gerundet; wer eine Datei teilt
-oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~4700 Zeilen,
-`Config.swift` ~1500, `WorldSnapshot.swift` ~750, `WaterRender.swift` ~580,
-`Hydraulic.swift` und `Meander.swift` je ~390, der Rest dreistellig oder kleiner.
-Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~1780 Zeilen,
-`SimRender` ~2350 Zeilen und die eigentliche GDExtension nur noch
-`SimNode.swift` mit ~350 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
+Größenordnung zur Orientierung (Stand Okt 2026, gerundet; wer eine Datei teilt
+oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~7000 Zeilen,
+`Config.swift` ~2100, `WaterRender.swift` ~1600, `Meander.swift` ~1200,
+`WorldSnapshot.swift` ~900, `Hydraulic.swift` ~400, der Rest dreistellig oder
+kleiner. Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~2600 Zeilen,
+`SimRender` ~5300 Zeilen und die eigentliche GDExtension nur noch
+`SimNode.swift` mit ~600 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 
 Sechs Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
 Sim-Zustand; sie bilden den gemeinsamen Vertrag für `SimRender`, Godot und
