@@ -1808,8 +1808,15 @@ Seeds 15,3; Median je Seed 14–46, vorher 18–96).
   Schritte.
 - Deutlich mehr und kleinere Altarme als vor #187 (Befund 6); ob das im Bild
   als Ried-Teppich wirkt, ist eine Bildfrage.
-- Laufzeit: Teilschritte wandernder Läufe berechnen Geometrie und Raten über
-  den ganzen Fluss, nicht nur den flachen Abschnitt.
+- ~~Laufzeit: Teilschritte wandernder Läufe berechnen Geometrie und Raten über
+  den ganzen Fluss, nicht nur den flachen Abschnitt.~~ Kein Hebel mehr: seit
+  der Kopplung sind wandernde Läufe Hack-Abschnitte von der Quelle bis zum
+  Zusammenfluss, der Gebirgsoberlauf gehört festen Läufen; gezählt über
+  130 Schritte (Seed 1337) sind 93 % aller gestempelten Knoten mobil. Ein
+  Fenster spart damit nichts. Die doppelt gebaute Geometrie aus Zeitplan und
+  Arbeiter wiederzuverwenden brachte gepaart −0,2 ms bei 9 von 16 Paaren,
+  also an der Messgrenze, und wurde deshalb nicht übernommen (Branch
+  `t3/174-belt-perf`, Messreihe dort in `docs/perf-measurements.md` §R).
 
 ## Felswände
 
