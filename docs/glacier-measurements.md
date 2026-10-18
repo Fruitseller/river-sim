@@ -1292,3 +1292,14 @@ nachher = dieser Zweig auf `d32e915`), dazu `…_eisfrei.jpg` (Seeds 1337 / 20,
 * **Seed 42** unverändert (kaum Eis, höchster Punkt 0,66 statt 0,67 eisfrei).
 * Schnee und Eis sind im Render weiter beide weiß; von den Karen sieht man die
   Felsrückwände, nicht das Eis.
+
+### Der Mechanik-Wächter bei 50k
+
+`testGlaciatedValleysWidenTowardsU` (alte Welt, gepinnt) verlangt Δb > +0,1 bei 30k
+und 50k. Nach einer Quelltext-Änderung weit außerhalb des Eises (anderer Inlining-/
+FMA-Zuschnitt: auch der eisfreie Referenzarm wanderte, b 1,186 → 1,131) kippte die
+50k-Schranke von +0,162 auf +0,027. Fünf Läufe derselben Welt mit `iceFlowK` um
+1e-5 … 1e-3 (relativ) verschoben: Δb bei 30k +0,173 / +0,174 / +0,152 / +0,131 /
++0,116, bei 50k +0,027 / +0,028 / +0,293 / −0,082 / −0,077 (n ≈ 50). Die Schranke
+gilt deshalb bei 30k (+0,1) und bei 50k nur als „keine starke Umkehr“ (> −0,15);
+die Produktion prüft `testProductionGlaciersCarveTroughs` gepoolt.
