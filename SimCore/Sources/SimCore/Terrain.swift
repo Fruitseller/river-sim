@@ -276,6 +276,13 @@ public final class Terrain {
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
     /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
     private var areaPow: [Double] = []
+    /// Gate-Status der Auslass-Inzision (Runde 7, s. dort): 0 überspringen,
+    /// 1 normal, 2 Weltrand. Reiner Arbeitspuffer, je Aufruf neu gesetzt.
+    private var incisionGate: [Int8] = []
+    /// Vegetations-/Lithologie-Erosionsfaktor je Zelle für `outletIncision`
+    /// (Runde 7) — hängt an Feldern, die der Pass nicht schreibt. Reiner
+    /// Arbeitspuffer, je Aufruf neu gesetzt.
+    private var incisionKErode: [Double] = []
     private var mfdRoutes: [MFDRoute] = []
     /// Route-Klassifikation des MFD-Passes (Runde 7): −1 Meer/Beckenwasser,
     /// 0 flach, sonst Zahl der tieferen Nachbarn — Dispersions-Zellen tragen
@@ -3265,6 +3272,18 @@ public final class Terrain {
     /// implizite Solver liest h[Empfänger], der weiter vorn in `order` schon
     /// aktualisiert wurde. pow bleibt pow (s. powFast-Kommentar: 0.5→sqrt wäre
     /// nicht bit-identisch).
+    ///
+    /// PERF (Runde 7): Alle ENTSCHEIDUNGEN, die während des Passes NICHT vom
+    /// laufend veränderten Bett abhängen, laufen vorab und parallel: die
+    /// Gate-Kette (Meer/Eis/Breach-Fläche/Beckenwasser/Weltrand) als Int8 in
+    /// `incisionGate` und der Vegetations-/Lithologie-Faktor `kErode` in
+    /// `incisionKErode`. Bit-identisch, weil der Pass nur je BESUCHTER Zelle
+    /// schreibt (`h`/`sed`/`rock` an `k` selbst) — jede Zelle sieht also bei
+    /// ihrem Besuch noch exakt die Werte des Pass-Starts — und weil
+    /// `underIce`/`area`/`receiver`/`endorheicBasin`/`veg*`/`lith*` im Pass
+    /// überhaupt nicht geschrieben werden. Was übrig bleibt, ist die
+    /// serielle Abhängigkeit selbst: `ph[Empfänger]` frisch lesen, Formel,
+    /// Sediment/Fels-Split — die respektiert der Loop unverändert.
     private func outletIncision(dt: Double, minAreaCells: Double = 0) {
         let cs = cfg.cellSize
         // cellSize 0 (keine definierte Schrittweite): keine Inzision ohne Distanz,
@@ -3293,59 +3312,81 @@ public final class Terrain {
         // libm-Aufrufe mit denselben Argumenten ⇒ bit-identisch) und die
         // serielle Schleife liest sie nur noch nach.
         if areaPow.count != cnt { areaPow = .init(repeating: 0, count: cnt) }
+        if incisionGate.count != cnt { incisionGate = .init(repeating: 0, count: cnt) }
+        if incisionKErode.count != cnt { incisionKErode = .init(repeating: 0, count: cnt) }
         areaPow.withUnsafeMutableBufferPointer { apb in
+        incisionGate.withUnsafeMutableBufferPointer { gb in
+        incisionKErode.withUnsafeMutableBufferPointer { kb in
         area.withUnsafeBufferPointer { ab in
-            let pap = apb.baseAddress!, pa = ab.baseAddress!
-            parallel(cnt) { lo, hi in
-                for k in lo..<hi { pap[k] = pow(pa[k], m) }
-            }
-        }}
-        h.withUnsafeMutableBufferPointer { hb in
+        h.withUnsafeBufferPointer { hb in
         iceArr.withUnsafeBufferPointer { icb in
         lithArr.withUnsafeBufferPointer { lkb in
-        sed.withUnsafeMutableBufferPointer { sb in
-        rock.withUnsafeMutableBufferPointer { rkb in
         veg.withUnsafeBufferPointer { vb in
         vegClass.withUnsafeBufferPointer { vcb in
         vegTypeFactor.withUnsafeBufferPointer { tfb in
-        area.withUnsafeBufferPointer { ab in
-        areaPow.withUnsafeBufferPointer { apb in
-        order.withUnsafeBufferPointer { ob in
         receiver.withUnsafeBufferPointer { rb in
         endorheicBasin.withUnsafeBufferPointer { eb in
-            let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
-            let pveg = vb.baseAddress!, pa = ab.baseAddress!, pap = apb.baseAddress!
-            let pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
-            let pord = ob.baseAddress!, prec = rb.baseAddress!, pend = eb.baseAddress!
+            let pap = apb.baseAddress!, pa = ab.baseAddress!, ph0 = hb.baseAddress!
+            let pgate = gb.baseAddress!, pker = kb.baseAddress!
+            let pveg = vb.baseAddress!, pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
+            let prec0 = rb.baseAddress!, pend = eb.baseAddress!
             let plith = lkb.baseAddress!, pice = icb.baseAddress!
+            parallel(cnt) { lo, hi in
+                for k in lo..<hi {
+                    pap[k] = pow(pa[k], m)
+                    // Gate-Kette — dieselbe Reihenfolge wie bisher seriell
+                    // (jedes Glied ist ein reiner `continue`-Filter, und alle
+                    // gelesenen Felder ändern sich im Pass nicht).
+                    var g: Int8 = 1
+                    if ph0[k] <= sea { g = 0 }
+                    else if iceOn && pice[k] { g = 0 }
+                    else if minA > 0 && pa[k] < minA { g = 0 }
+                    // Abflussloses Becken (Issue #11): die Seefläche hat keinen
+                    // Auslass, also gibt es dort nichts einzuschneiden. Die SILL
+                    // bleibt dabei ganz ohne Sonderfall stehen — sie sammelt den
+                    // Beckenabfluss nicht mehr ein (terminale Senke), ihr A^m ist
+                    // winzig, die Inzision versandet von selbst. Genau so hört ein
+                    // endorheisches Becken auf, sich selbst zu entwässern.
+                    // (Das `minA > 0` davor ist kein zusätzliches Kriterium,
+                    // sondern spart im Produktionsfall (`minAreaCells = 0`) den
+                    // Zugriff ins große `area`-Feld — `area` ist nie negativ,
+                    // der Vergleich konnte dort also nie zutreffen.)
+                    else if pend[k] == .water { g = 0 }
+                    else if prec0[k] < 0 {
+                        // Trockengefallener Beckenboden ohne Empfänger (flache
+                        // Zelle im geschlossenen Becken): das virtuelle Basis-
+                        // niveau MEER unten gilt nur am Weltrand — im Becken
+                        // würde es den Boden Richtung Meeresspiegel ausgraben.
+                        // Weltrand (Priority-Flood-Seed) = 2: Wasser verlässt
+                        // hier die Welt → virtuelles Basisniveau MEER, s. Loop.
+                        g = pend[k] != .none ? 0 : 2
+                    }
+                    pgate[k] = g
+                    pker[k] = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
+                                  * (lithOn ? plith[k] : 1.0)
+                }
+            }
+        }}}}}}}}}}}}
+        h.withUnsafeMutableBufferPointer { hb in
+        sed.withUnsafeMutableBufferPointer { sb in
+        rock.withUnsafeMutableBufferPointer { rkb in
+        areaPow.withUnsafeBufferPointer { apb in
+        incisionGate.withUnsafeBufferPointer { gb in
+        incisionKErode.withUnsafeBufferPointer { kb in
+        order.withUnsafeBufferPointer { ob in
+        receiver.withUnsafeBufferPointer { rb in
+            let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
+            let pap = apb.baseAddress!, pgate = gb.baseAddress!, pker = kb.baseAddress!
+            let pord = ob.baseAddress!, prec = rb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
         for oi in 0..<cnt {
             let k = Int(pord[oi])
-            let r = prec[k]
-            if ph[k] <= sea { continue }            // Meer nicht einschneiden
-            if iceOn && pice[k] { continue }        // unter Eis kein fluvialer Abtrag (#35)
-            // Breach: nur das Trunk-Netz. Das `minA > 0` davor ist kein
-            // zusätzliches Kriterium, sondern spart im Produktionsfall
-            // (`minAreaCells = 0`) den zufälligen Zugriff ins 5,5-MB-Feld
-            // `area` für alle 692k Zellen — `area` ist nie negativ, der
-            // Vergleich konnte dort also nie zutreffen.
-            if minA > 0 && pa[k] < minA { continue }
-            // Abflussloses Becken (Issue #11): die Seefläche hat keinen Auslass,
-            // also gibt es dort nichts einzuschneiden. Die SILL bleibt dabei
-            // ganz ohne Sonderfall stehen — sie sammelt den Beckenabfluss nicht
-            // mehr ein (terminale Senke), ihr A^m ist winzig, die Inzision
-            // versandet von selbst. Genau so hört ein endorheisches Becken auf,
-            // sich selbst zu entwässern.
-            if pend[k] == .water { continue }
+            let g = pgate[k]
+            if g == 0 { continue }
             let hr: Double
             let dist: Double
-            if r < 0 {
-                // Trockengefallener Beckenboden ohne Empfänger (flache Zelle im
-                // geschlossenen Becken): das virtuelle Basisniveau MEER unten
-                // gilt nur am Weltrand — im Becken würde es den Boden Richtung
-                // Meeresspiegel ausgraben.
-                if pend[k] != .none { continue }
+            if g == 2 {
                 // Land-Zelle ohne Empfänger = Weltrand (Priority-Flood-Seed):
                 // Wasser verlässt hier die Welt → virtuelles Basisniveau MEER.
                 // Ohne das wirkt der Rand als unerodierbarer Pegel und Becken,
@@ -3354,7 +3395,7 @@ public final class Terrain {
                 hr = sea
                 dist = cs
             } else {
-                let ri = Int(r)
+                let ri = Int(prec[k])
                 if ph[k] <= ph[ri] { continue }     // See/Ebene: kein Gefälle → keine Inzision
                 hr = ph[ri]
                 // PERF (Issue #43): Diagonale über die INDEX-DIFFERENZ statt über
@@ -3375,10 +3416,10 @@ public final class Terrain {
             // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
             // statt verrauscht. Ein Becken-Auslass sammelt das ganze Becken → tieft zügig
             // ein → See entwässert zum Meer.
-            // Vegetation bremst — klassen-gewichtet wie vegDamp (Roh-Puffer-Variante).
-            let kErode = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
-                              * (lithOn ? plith[k] : 1.0)
-            let f = kErode * dt * pap[k] / dist
+            // Vegetation bremst — klassen-gewichtet wie vegDamp; der Faktor stand
+            // schon vor dem Pass fest (kein Bett-Feld geht in ihn ein) und
+            // reist deshalb vorab berechnet in `incisionKErode`.
+            let f = pker[k] * dt * pap[k] / dist
             let hNew = (ph[k] + f * hr) / (1 + f)
             var delta = ph[k] - hNew                // > 0
             if delta <= 0 { continue }
@@ -3387,7 +3428,7 @@ public final class Terrain {
             prock[k] -= delta
             ph[k] = hNew
         }
-        }}}}}}}}}}}}}
+        }}}}}}}}
     }
 
     // MARK: - Hydraulische Bett-Inzision (Gleichgewichtstiefe)
