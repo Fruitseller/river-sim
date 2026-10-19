@@ -3639,7 +3639,6 @@ public final class Terrain {
             let plith = lkb.baseAddress!, pice = icb.baseAddress!
             parallel(cnt) { lo, hi in
                 for k in lo..<hi {
-                    pap[k] = pow(pa[k], m)
                     // Gate-Kette — dieselbe Reihenfolge wie bisher seriell
                     // (jedes Glied ist ein reiner `continue`-Filter, und alle
                     // gelesenen Felder ändern sich im Pass nicht).
@@ -3668,6 +3667,11 @@ public final class Terrain {
                         g = pend[k] != .none ? 0 : 2
                     }
                     pgate[k] = g
+                    // Inaktive Zellen (g == 0: Meer, Eis, See) übergeht die
+                    // serielle Schleife; pow(A, m) und kErode werden dort nie
+                    // gelesen und müssen gar nicht erst berechnet werden.
+                    guard g != 0 else { continue }
+                    pap[k] = pow(pa[k], m)
                     pker[k] = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
                                   * (lithOn ? plith[k] : 1.0)
                 }
