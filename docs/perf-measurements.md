@@ -1961,3 +1961,47 @@ Die versiegenden Arme geben nur die unverdeckten Stücke aus. Das alles läuft
 im Hintergrund-Job (`BackgroundJob`), nicht auf dem Hauptthread; je
 Zeitraffer-Takt sind das gut 1 % der Hintergrund-Arbeit.
 
+## U. Vorab-Berechnung der Auslass-Inzision auf aktive Zellen beschränkt (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.outletIncision` berechnete der parallele Vorfilter bisher
+`pap[k] = pow(pa[k], m)` sowie `pker[k]` für ALLE 518.400 Zellen des Gitters
+vorab — auch für Ozeanzellen (`ph0[k] <= sea`), vergletscherte Zellen, Seeflächen
+und abflusslose Senken. Für all diese inaktiven Zellen setzt die Gate-Kette
+`pgate[k] = 0`. In der anschließenden seriellen Schleife über `order` verwirft
+`if g == 0 { continue }` die Zelle sofort; weder `pap[k]` noch `pker[k]` werden
+dort jemals gelesen.
+
+Mit `guard g != 0 else { continue }` vor der `pow`- und `kErode`-Berechnung
+entfallen die teuren `libm`-`pow`-Aufrufe und Tabellenabfragen für die rund
+200.000+ inaktiven Ozean- und Seegitterzellen vollständig. Für alle aktiven
+Zellen (`g != 0`) bleiben Eingangsgrößen, Aufrufe und Reihenfolge exakt
+dieselbe Rechnung; die nachgelagerte serielle Inzision rechnet bit-identisch.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-old` vs `/tmp/simperf-new`,
+jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Lauf 1 (alt → neu):**
+  - Alt: 171,3 / 168,9 / 163,5 ms/Schritt (Minimum: 163,5 ms), `outletIncision`: 9,46 ms
+  - Neu: 158,8 / 156,2 / 161,2 ms/Schritt (Minimum: 156,2 ms), `outletIncision`: 8,65 ms (−0,81 ms / −8,6 %)
+- **Lauf 2 (neu → alt, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Neu: 162,6 / 148,8 / 151,3 ms/Schritt (Minimum: 148,8 ms), `outletIncision`: 8,11 ms
+  - Alt: 161,9 / 157,7 / 159,4 ms/Schritt (Minimum: 157,7 ms), `outletIncision`: 9,24 ms (−1,13 ms / −12,2 %)
+
+Der Pass `outletIncision` sinkt stabil um **0,8 bis 1,1 ms/Schritt** (−9 % bis −12 %).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `7667d3585b1f1904` | `7667d3585b1f1904` | bit-identisch |
+| Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
+| Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
+| Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
+
+
