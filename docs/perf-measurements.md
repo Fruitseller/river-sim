@@ -2080,5 +2080,39 @@ Der Pass `belt.parallel` sinkt stabil um **5,4 bis 7,0 ms/Schritt** (−12 % bis
 Fingerprints (`simperf --hash`) auf Seed 1337 (dt = 100 und dt = 15), Seed 42 und Seed 20
 sind vor und nach der Änderung bit-identisch.
 
+## VII. Braid-Pass: Vorfilter gestrafft, inaktiver Depositions-Puffer entfernt und Nachbarsuche entrollt (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.braidPass`:
+1. **Ozeanzellen im Vorfilter sofort abfangen:** Für alle Ozeanzellen (`phf[k] <= sea`, ~40 % des Gitters) ist `active` per Definition ausgeschlossen. Durch Vorziehen des Tests `if phf[k] <= sea { pst[k] = 0; continue }` entfallen für über 200.000 Zellen die Lesezugriffe auf `areaMFD` und `h`.
+2. **`braidDepositCeil`-Arbeitspuffer eliminiert:** Der 4,1-MB-Puffer (`[Double]` mit 518.400 Elementen) wurde bisher im parallelen Vorfilter für alle Landzellen berechnet und geschrieben, im anschließenden seriellen Durchlauf über `order` aber ausschließlich dann gelesen, wenn `st == 1 && qin > 0` galt — was fast nie der Fall ist (nur wo MFD-Braid-Zuflüsse Fracht in nicht-aktive Seeränder/Deltas abgeben). Weil `h[k]` und `phf[k]` bis zum Besuch von `k` exakt ihren Ausgangswerten entsprechen, wird der Deckel `max(0, phf[k] + deltaCeiling - bed.h[k])` jetzt on-demand nur noch im seltenen Fall `qin > 0` berechnet. Das spart 4,15 MB Speicherallokation und Schreib-/Lese-Verkehr je Schritt.
+3. **Nachbarsuche für innere Zellen entrollt:** Wie in `computeMFDArea` und `computeReceiversAndArea` werden die 8 Nachbarn auf inneren Zellen (`0 < i < n-1, 0 < j < n-1`) ohne 2D-Schleife, Modulo/Multiplikation und Randprüfungen direkt über feste Offsets abgefragt.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-baseline` vs `/tmp/simperf-opt`,
+jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1 (Baseline → Opt):**
+  - Baseline: 172,9 / 168,3 / 166,7 ms/Schritt (Minimum: 166,7 ms), `braidPass`: 7,22 ms
+  - Opt: 170,9 / 167,7 / 172,6 ms/Schritt (Minimum: 167,7 ms), `braidPass`: 6,86 ms (−0,36 ms)
+- **Paar 2 (Opt → Baseline, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Opt: 165,9 / 164,4 / 168,5 ms/Schritt (Minimum: 164,4 ms), `braidPass`: 6,47 ms
+  - Baseline: 169,5 / 178,6 / 177,5 ms/Schritt (Minimum: 169,5 ms), `braidPass`: 8,29 ms (−1,82 ms / −22 %)
+
+Der Pass `braidPass` gewinnt in beiden Paaren messbar und stabil (−0,36 bis −1,82 ms/Schritt).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `7667d3585b1f1904` | `7667d3585b1f1904` | bit-identisch |
+| Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
+| Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
+| Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
+
 
 

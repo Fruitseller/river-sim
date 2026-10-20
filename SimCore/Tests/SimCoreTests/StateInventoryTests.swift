@@ -185,9 +185,6 @@ final class StateInventoryTests: XCTestCase {
         ("braidStatus", .scratch(reason:
             "Braid-Gate je Zelle (Runde 7), vor dem seriellen Lauf des Passes "
             + "vollständig neu gesetzt.")),
-        ("braidDepositCeil", .scratch(reason:
-            "Depositions-Deckel der inaktiven Landzellen des Braid-Passes "
-            + "(Runde 7) — nur hinter frischem `braidStatus` == 1 gültig.")),
         ("carveStatus", .scratch(reason:
             "Vorfilter des `channelCarve` (Runde 7) — `area` und `inBelt` ändern "
             + "sich im Pass nicht; der Puffer wird je Aufruf neu gesetzt.")),
