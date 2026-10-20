@@ -296,10 +296,6 @@ public final class Terrain {
     /// Land (Deposition möglich), 2 aktiver Reach. Reiner Arbeitspuffer, je
     /// Aufruf vor dem seriellen Lauf vollständig neu gesetzt.
     private var braidStatus: [Int8] = []
-    /// Depositions-Deckel der inaktiven Landzellen des Braid-Passes (Runde 7,
-    /// s. `braidPass`) — nur für Status 1 gültig und gelesen. Reiner
-    /// Arbeitspuffer.
-    private var braidDepositCeil: [Double] = []
     /// Vorfilter des `channelCarve` (Runde 7, s. dort): `area`- und Gürtel-
     /// Gate, die einzigen zwei Filter des Passes, die im Pass unverändert
     /// bleiben. Reiner Arbeitspuffer, je Aufruf neu gesetzt.
@@ -3355,38 +3351,32 @@ public final class Terrain {
         // ändert sich ausschließlich im Funnel von k's EIGENem Besuch
         // (`erodeCell`/`depositCell` schreiben nur die Zelle `k` selbst, s.
         // Bed-Funnel) — die serialisierten Besuche laufen also auf exakt den
-        // Pass-Startwerten. Dasselbe gilt für den Depositions-Deckel der
-        // inaktiven Landzellen (`hf + braidDeltaCeiling − h`), der deshalb
-        // mitvorberechnet reist. Bit-identisch: der Test selbst, seine
+        // Pass-Startwerten. Bit-identisch: der Test selbst, seine
         // Operanden und die Reihenfolge der Zweige sind unverändert.
         if braidStatus.count != cnt { braidStatus = .init(repeating: 0, count: cnt) }
-        if braidDepositCeil.count != cnt { braidDepositCeil = .init(repeating: 0, count: cnt) }
         hf.withUnsafeBufferPointer { hfb in
         areaMFD.withUnsafeBufferPointer { amb in
         h.withUnsafeBufferPointer { hb in
         braidStatus.withUnsafeMutableBufferPointer { stb in
-        braidDepositCeil.withUnsafeMutableBufferPointer { clb in
             let phf = hfb.baseAddress!, pamf = amb.baseAddress!, ph0 = hb.baseAddress!
-            let pst = stb.baseAddress!, pceil = clb.baseAddress!
+            let pst = stb.baseAddress!
             parallel(cnt) { lo, hi in
                 for k in lo..<hi {
+                    if phf[k] <= sea {
+                        pst[k] = 0
+                        continue
+                    }
                     // Seicht überströmte Reaches (< 0.015) sind aktiv — dort
                     // schütten Braid-Deltas Bänke bis über den Wasserspiegel.
                     // Tiefere Ponds/Seen NICHT: Bänke-Bau dort macht die
                     // Becken-Böden rau um die See-Render-Schwelle (0.03) herum
                     // → sichtbares Speckle statt Verflechtung.
-                    let active = pamf[k] >= minA && phf[k] > sea && ph0[k] > sea
+                    let active = pamf[k] >= minA && ph0[k] > sea
                               && phf[k] - ph0[k] < 0.015
-                    if active { pst[k] = 2; continue }
-                    if phf[k] > sea {
-                        pst[k] = 1
-                        pceil[k] = max(0, phf[k] + deltaCeiling - ph0[k])
-                    } else {
-                        pst[k] = 0
-                    }
+                    pst[k] = active ? 2 : 1
                 }
             }
-        }}}}}
+        }}}}
         // PERF (Issue #43): die Nachbar-Puffer des aktiven Zweigs als temporäre
         // Roh-Allokation, `h`/`sed`/`rock` über `withBed`: dieselbe Roh-Puffer-
         // Sicht, die auch der Funnel `erodeCell`/`depositCell` bekommt (er
@@ -3397,14 +3387,13 @@ public final class Terrain {
         hf.withUnsafeBufferPointer { hfb in
         floodParent.withUnsafeBufferPointer { fpb in
         braidStatus.withUnsafeBufferPointer { stb in
-        braidDepositCeil.withUnsafeBufferPointer { clb in
         withUnsafeTemporaryAllocation(of: Int.self, capacity: 8) { nbK in
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbS in
         withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbQc in
         let pord = ob.baseAddress!, pqs = qb.baseAddress!, pamf = amb.baseAddress!
         let phf = hfb.baseAddress!, pfp = fpb.baseAddress!
-        let pst = stb.baseAddress!, pceil = clb.baseAddress!
+        let pst = stb.baseAddress!
         withBed { bed in
         var oi = cfg.count - 1
         while oi >= 0 {
@@ -3427,11 +3416,10 @@ public final class Terrain {
                 // viele kleine Schritte laufen gegen dieselbe Kante wie ein
                 // großer. Warum die Höhe 0.05 und nicht `braidBarHeight` ist —
                 // und was bei zu engem Deckel kippt — steht im Kalibrier-Logbuch
-                // bei `SimConfig.braidDeltaCeiling`. (Der Deckel reist vorab
-                // berechnet in `braidDepositCeil`; der `phf > sea`-Ast der
-                // Bedingung steckt im Status.)
+                // bei `SimConfig.braidDeltaCeiling`.
                 if qin > 0 {
-                    depositCell(k, min(qin, pceil[k]), bed)
+                    let ceil = max(0, phf[k] + deltaCeiling - bed.h[k])
+                    depositCell(k, min(qin, ceil), bed)
                 }
                 continue
             }
@@ -3440,19 +3428,27 @@ public final class Terrain {
             let j = k / nn, i = k - j * nn
             var cnt = 0
             var sMax = 0.0
-            for dj in -1...1 {
-                for di in -1...1 {
-                    if di == 0 && dj == 0 { continue }
-                    let ni = i + di, nj = j + dj
-                    if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                    let nb = nj * nn + ni
-                    let dist = (di != 0 && dj != 0) ? sqrt2 : 1.0
-                    let d = phf[k] - phf[nb]
-                    if d <= 0 { continue }   // Division erst nach dem Vorzeichen-
-                    let s = d / dist         // Test, Begründung s. computeMFDArea
-                    if s > 0 {
-                        nbK[cnt] = nb; nbS[cnt] = s; sMax = max(sMax, s)
-                        cnt += 1
+            @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                let d = phf[k] - phf[nb]
+                if d <= 0 { return }
+                let s = d / dist
+                if s > 0 {
+                    nbK[cnt] = nb; nbS[cnt] = s; sMax = max(sMax, s)
+                    cnt += 1
+                }
+            }
+            if i > 0 && i < nn - 1 && j > 0 && j < nn - 1 {
+                consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
+                consider(k - 1, 1.0);                               consider(k + 1, 1.0)
+                consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+            } else {
+                for dj in -1...1 {
+                    for di in -1...1 {
+                        if di == 0 && dj == 0 { continue }
+                        let ni = i + di, nj = j + dj
+                        if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                        let nb = nj * nn + ni
+                        consider(nb, (di != 0 && dj != 0) ? sqrt2 : 1.0)
                     }
                 }
             }
@@ -3512,7 +3508,7 @@ public final class Terrain {
                 for t in 0..<cnt { pqs[nbK[t]] += qout * (nbQc[t] / qcTot) }
             }
         }
-        }}}}}}}}}}}}
+        }}}}}}}}}}}
     }
 
     // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig) — TESTPFAD
