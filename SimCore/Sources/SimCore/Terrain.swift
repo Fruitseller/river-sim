@@ -2357,15 +2357,38 @@ public final class Terrain {
             veg.withUnsafeBufferPointer { vb in
             vegScratchRow.withUnsafeMutableBufferPointer { rb in
                 let pveg = vb.baseAddress!, prow = rb.baseAddress!
+                let iLo = min(dr, nn)
+                let iHi = max(iLo, nn - dr)
                 parallel(nn) { jLo, jHi in
                     for j in jLo..<jHi {
                         let row = j * nn
-                        for i in 0..<nn {
+                        let psrc = pveg + row, pdst = prow + row
+                        for i in 0..<iLo {
                             var m = 0.0
                             for di in max(0, i - dr)...min(nn - 1, i + dr) {
-                                m = max(m, pveg[row + di])
+                                m = max(m, psrc[di])
                             }
-                            prow[row + i] = m
+                            pdst[i] = m
+                        }
+                        if dr == 2 {
+                            for i in iLo..<iHi {
+                                pdst[i] = max(psrc[i - 2], max(psrc[i - 1], max(psrc[i], max(psrc[i + 1], psrc[i + 2]))))
+                            }
+                        } else {
+                            for i in iLo..<iHi {
+                                var m = psrc[i - dr]
+                                for di in (i - dr + 1)...(i + dr) {
+                                    m = max(m, psrc[di])
+                                }
+                                pdst[i] = m
+                            }
+                        }
+                        for i in iHi..<nn {
+                            var m = 0.0
+                            for di in max(0, i - dr)...min(nn - 1, i + dr) {
+                                m = max(m, psrc[di])
+                            }
+                            pdst[i] = m
                         }
                     }
                 }
@@ -2375,12 +2398,16 @@ public final class Terrain {
                 let prow = rb.baseAddress!, psc = sb.baseAddress!
                 parallel(nn) { jLo, jHi in
                     for j in jLo..<jHi {
-                        for i in 0..<nn {
-                            var m = 0.0
-                            for dj in max(0, j - dr)...min(nn - 1, j + dr) {
-                                m = max(m, prow[dj * nn + i])
+                        let jStart = max(0, j - dr)
+                        let jEnd = min(nn - 1, j + dr)
+                        let dst = psc + j * nn
+                        let src0 = prow + jStart * nn
+                        for i in 0..<nn { dst[i] = src0[i] }
+                        for rj in (jStart + 1)...jEnd {
+                            let src = prow + rj * nn
+                            for i in 0..<nn {
+                                dst[i] = max(dst[i], src[i])
                             }
-                            psc[j * nn + i] = m
                         }
                     }
                 }
@@ -2524,7 +2551,6 @@ public final class Terrain {
                     var cls: UInt8 = 0
                     let v = pveg[k]
                     if ph[k] > sea + 0.005 && v >= 0.12 {
-                        let slope = Terrain.macroSlope(ph, k, nn)
                         // Auwald: bis ~2 Zellen vom Wasser (riparian ≥ 0.4),
                         // flach (etwas toleranter als die Baum-Maske) und nicht
                         // selbst tief überflutet. Sonst: dichter Bewuchs = Wald,
@@ -2550,7 +2576,7 @@ public final class Terrain {
                         // flachen Reaches, in denen Bänke entstehen.
                         if prip[k] >= 1 {
                             cls = 1
-                        } else if prip[k] >= 0.4 && slope * 40 < 0.6 && phf[k] - ph[k] <= 0.02 && v >= 0.25 {
+                        } else if prip[k] >= 0.4 && v >= 0.25 && phf[k] - ph[k] <= 0.02 && Terrain.macroSlope(ph, k, nn) * 40 < 0.6 {
                             cls = 3
                         } else if v > 0.45 {
                             cls = 2
