@@ -84,7 +84,7 @@ jobs:
       # SimCore/Tests/SimCoreTests/MeasurementGate.swift.
       - name: SimCore-Suite ausführen
         run: |
-          swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+          swift test -c release --package-path SimCore
 
   godot-contract:
     # Der Godot-Vertrag: alles, was die GDExtension Godot zusagt. Lief bis

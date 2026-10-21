@@ -30,8 +30,8 @@ einzige Unterschied zwischen den Armen und das Gewicht das ROHE `rain`).
 
 ```sh
 RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testRainWeightMeasurementDiagnostic
-swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+    --filter testRainWeightMeasurementDiagnostic
+swift test -c release --package-path SimCore \
     --filter testRainWeightLuvLeeIsSeedRobustDiagnostic
 ```
 

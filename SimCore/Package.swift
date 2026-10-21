@@ -15,5 +15,11 @@ let package = Package(
         .target(name: "SimRender", dependencies: ["SimCore"]),
         .executableTarget(name: "SimPerf", dependencies: ["SimCore"]),
         .testTarget(name: "SimCoreTests", dependencies: ["SimCore", "SimRender"]),
-    ]
+    ],
+    // Swift-5-Sprachmodus: der Code ist Swift-5-Concurrency (u. a.
+    // `Terrain.parallel` mit nicht-`Sendable`-Closures über rohe Zeiger).
+    // Früher als `-Xswiftc -swift-version -Xswiftc 5` an jedem Aufruf, was
+    // SwiftPM je Modul mit „language mode was overridden" quittierte.
+    // Umstieg auf Swift 6: eigenes Issue.
+    swiftLanguageModes: [.v5]
 )

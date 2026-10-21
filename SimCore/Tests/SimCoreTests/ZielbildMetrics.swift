@@ -760,7 +760,7 @@ final class ZielbildLandformTests: XCTestCase {
 /// und 9–15 auf den drei Matrix-Seeds, Produktions-Config mit Einlauf.
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildBaselineDiagnostic
+///         --filter testZielbildBaselineDiagnostic
 ///
 /// `RS_SEED` beschränkt auf einen Seed, `RS_YEARS` kürzt den Lauf.
 final class ZielbildBaseline: XCTestCase {
@@ -827,7 +827,7 @@ final class ZielbildBaseline: XCTestCase {
     /// messbaren Stützstellen (ausgelassen, nicht als 0 gemittelt).
     ///
     ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-    ///         -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildMeanderTimeMeanDiagnostic
+    ///         --filter testZielbildMeanderTimeMeanDiagnostic
     ///
     /// `RS_SEED` wählt einen Seed (auch außerhalb der drei Matrix-Seeds; die
     /// Läufe sind unabhängig und lassen sich parallel starten), `RS_VARIANT`

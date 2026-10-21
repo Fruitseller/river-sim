@@ -10,7 +10,7 @@ import XCTest
 /// `docs/zielbild-measurements.md` § Delta.
 ///
 ///     RS_MEASURE=1 RS_CACHE=/tmp/delta-welten swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testDeltaBudgetDiagnostic
+///         --filter testDeltaBudgetDiagnostic
 ///
 /// `RS_SEEDS` (Komma-Liste), `RS_YEARS_LIST` (Komma-Liste), `RS_CACHE` (Ordner
 /// für gealterte Welten), `RS_OUT` (Ordner für Draufsicht-PPMs der Mündungen),

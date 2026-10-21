@@ -14,10 +14,10 @@ Defaults, nur `n = 192` (Tempo), Seeds 1337 und 4242, 20.000 Jahre,
 Schrittweiten `dt ∈ {10, 240, 2000}`.
 
 ```sh
-swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+swift test -c release --package-path SimCore \
     --filter DtInvariance                                  # Wächter
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter Diagnostic # Messreihen
+    --filter Diagnostic # Messreihen
 ```
 
 Kennzahlen:

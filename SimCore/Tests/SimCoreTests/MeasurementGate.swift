@@ -15,7 +15,7 @@ import XCTest
 // Schalter gerade gemeint ist.
 //
 //     RS_MEASURE=1 swift test -c release --package-path SimCore \
-//         -Xswiftc -swift-version -Xswiftc 5 --filter testDtSpreadDiagnostic
+//         --filter testDtSpreadDiagnostic
 //
 // Konvention, von `MeasurementGateTests` erzwungen: Der Methodenname endet auf
 // `Diagnostic` GENAU DANN, wenn die Methode `try skipUnlessMeasuring()` aufruft.

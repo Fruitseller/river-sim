@@ -21,9 +21,9 @@ Messläufe (alle gegatet, `RS_MEASURE=1`):
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testCrossIncisionOverTimeDiagnostic
+    --filter testCrossIncisionOverTimeDiagnostic
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testIncisionLeverSweepDiagnostic
+    --filter testIncisionLeverSweepDiagnostic
 ```
 
 Alle Zahlen: n = 720, Produktions-Config (`hydraulicSkipWaterSpawns`,

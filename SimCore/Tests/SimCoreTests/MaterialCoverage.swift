@@ -15,7 +15,7 @@ import XCTest
 /// Tabelle: `docs/graphics-quality.md` § Material, Schnee, Wolken (#174 D).
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testMaterialCoverageDiagnostic
+///         --filter testMaterialCoverageDiagnostic
 ///
 /// `RS_SEED` beschränkt auf einen Seed, `RS_YEARS` (Komma-Liste) die Stadien.
 final class MaterialCoverageTests: XCTestCase {

@@ -24,16 +24,18 @@ export LD_LIBRARY_PATH="$PWD/.tools/swift-libs:${LD_LIBRARY_PATH:-}"   # aus Rep
 **Tests** (Sim-Kern, headless, GPU-frei, die eigentliche Verifikationsebene):
 
 ```sh
-swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
-swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+swift test -c release --package-path SimCore
+swift test -c release --package-path SimCore \
     --filter testBraidingBuildsBars       # einzelner Test
 ```
 
 - `-c release` ist Pflicht: Debug ist bei diesen Grids zu langsam.
-- `-Xswiftc -swift-version -Xswiftc 5` ist Pflicht: `SimCore/Package.swift` deklariert
-  tools-version 6.0, der Code ist aber Swift-5-Concurrency (u. a. `Terrain.parallel`
-  mit nicht-`Sendable`-Closures). Ohne den Schalter bricht der Build mit
-  `SendableClosureCaptures` ab.
+- Sprachmodus: `SimCore/Package.swift` deklariert tools-version 6.0, aber
+  `swiftLanguageModes: [.v5]`: der Code ist Swift-5-Concurrency (u. a.
+  `Terrain.parallel` mit nicht-`Sendable`-Closures). Der frühere Schalter
+  `-Xswiftc -swift-version -Xswiftc 5` entfällt; mitgegeben schadet er nicht,
+  erzeugt aber je Modul die Warnung „language mode was overridden".
+  Umstieg auf Swift 6: eigenes Issue.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 - **Linux-CI lokal reproduzieren:** die Pflichtsuite rechnet auf dem Runner mit
   der glibc-libm, also auf einer anderen Welt-Realisierung als unter macOS;
@@ -42,8 +44,7 @@ swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 
   Repo read-only, der Build in einem eigenen Volume:
   ```sh
   docker run --rm -v "$PWD":/src:ro -v rs-build:/build swift:6.3.3-jammy bash -c \
-      "cd /src && swift test -c release --package-path SimCore --scratch-path /build \
-       -Xswiftc -swift-version -Xswiftc 5"
+      "cd /src && swift test -c release --package-path SimCore --scratch-path /build"
   ```
   Kippt ein Mechanik-Wächter nur dort, wird nach der Pin-Doktrin unten
   (§ Konfiguration, `TestCalibration.swift`) gepinnt, nicht die Schranke gesenkt.
@@ -54,7 +55,7 @@ Testmethode, deren Name auf `Diagnostic` endet, druckt nur die Tabellen für
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testDtSpreadDiagnostic
+    --filter testDtSpreadDiagnostic
 ```
 
 Namensendung `Diagnostic` und Gate `try skipUnlessMeasuring()` gehören zusammen:
@@ -68,7 +69,7 @@ Produktions-Config; `n`/`world` kommen aus `SimConfig()` selbst, derzeit also
 720/112,4789):
 
 ```sh
-swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+swift build -c release --package-path SimCore
 SimCore/.build/release/simperf --repeat 3   # ms/Schritt + Pass-Tabelle
 SimCore/.build/release/simperf --hash       # Fingerabdruck aller Zustandsfelder
 ```
