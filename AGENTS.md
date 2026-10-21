@@ -35,7 +35,7 @@ swift test -c release --package-path SimCore \
   `Terrain.parallel` mit nicht-`Sendable`-Closures). Der frühere Schalter
   `-Xswiftc -swift-version -Xswiftc 5` entfällt; mitgegeben schadet er nicht,
   erzeugt aber je Modul die Warnung „language mode was overridden".
-  Umstieg auf Swift 6: eigenes Issue.
+  Umstieg auf Swift 6: Issue #201.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 - **Linux-CI lokal reproduzieren:** die Pflichtsuite rechnet auf dem Runner mit
   der glibc-libm, also auf einer anderen Welt-Realisierung als unter macOS;

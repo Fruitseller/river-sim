@@ -20,6 +20,6 @@ let package = Package(
     // `Terrain.parallel` mit nicht-`Sendable`-Closures über rohe Zeiger).
     // Früher als `-Xswiftc -swift-version -Xswiftc 5` an jedem Aufruf, was
     // SwiftPM je Modul mit „language mode was overridden" quittierte.
-    // Umstieg auf Swift 6: eigenes Issue.
+    // Umstieg auf Swift 6: Issue #201.
     swiftLanguageModes: [.v5]
 )
