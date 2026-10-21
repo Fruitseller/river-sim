@@ -717,6 +717,10 @@ public final class Terrain {
                 remaining -= dt
             }
             years = 0
+            // Geburtsjahre des Einlaufs lägen sonst in der Zukunft des
+            // Spieljahrs 0: eingesetzte Strecken blieben bis ~Jahr 2200
+            // unsichtbar. Alles aus dem Einlauf ist ausgewachsen.
+            for ci in meander.channels.indices { meander.channels[ci].born = [] }
         }
         waterLevel = hf // Startzustand: Seespiegel = Füllstand (kein Einschwingen)
         // Playas starten mit ihrer Kruste (sie sind ÄLTER als das Spieljahr 0) —

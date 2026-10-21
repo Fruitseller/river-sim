@@ -86,6 +86,22 @@ final class TimelapseTransitionTests: XCTestCase {
         XCTAssertTrue(out.born.contains { $0.isFinite }, "junges Stück ging verloren")
     }
 
+    /// Der Einlauf der Generierung koppelt mit und setzt danach `years` auf 0
+    /// zurück. Seine Geburtsjahre lagen damit in der Zukunft des Spieljahrs:
+    /// die eingesetzten Strecken blieben im Zeitraffer bis Jahr ~2200
+    /// unsichtbar (Bänder zerrissen, das Raster lief daneben). Nach dem
+    /// Einlauf gilt jeder Knoten als ausgewachsen.
+    func testSettledWorldHasNoUnbornRibbonNodes() {
+        let t = Terrain(config: .production, seed: RenderContract.defaultSeed,
+                        settleYears: SimConfig.productionSettleYears)
+        XCTAssertEqual(t.years, 0)
+        for (ci, ch) in t.meander.channels.enumerated() {
+            for i in ch.nodes.indices where ch.bornAt(i) > t.years - WaterRender.ribbonGrowYears {
+                return XCTFail("Lauf \(ci) Knoten \(i): Geburtsjahr \(ch.bornAt(i)) nach dem Einlauf noch nicht ausgewachsen")
+            }
+        }
+    }
+
     // MARK: Einwachsen und Versiegen der Bänder
 
     private func agedTerrain() -> Terrain {
