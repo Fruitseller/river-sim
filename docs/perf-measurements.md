@@ -2004,4 +2004,49 @@ Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt iden
 | Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
 | Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
 
+## V. Vegetations-Pass: Box-Maximum zeilenweise gestrafft und Makro-Steigung in Vegetations-Klassen gegatet (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+1. **Separables Box-Maximum der Samenausbreitung gestrafft:** In `Terrain.updateVegetation`
+   iterierte das Spalten-Maximum (Pass 2) bisher je Spaltenindex `i` über `dj` und griff
+   mit Zeilensprüngen (`dj * nn + i`) über das Array zu. Durch Vertauschen der Schleifen
+   wird für jede Zeile `j` zuerst die Startzeile kopiert und anschließend jede Nachbarzeile
+   in einer linearen, cache-lokalen Schleife mit `max` akkumuliert. Das vermeidet 518.400
+   `ClosedRange`-Instanziierungen und nicht-sequenzielle Speicherzugriffe. Im Zeilen-Maximum
+   (Pass 1) werden die inneren Zellen für den Standardfall `dr = 2` direkt ohne
+   Randprüfungen entrollt.
+2. **Makro-Steigungsberechnung in `updateVegClass` gegatet:** In Pass 3 von `updateVegClass`
+   wurde `Terrain.macroSlope(ph, k, nn)` bisher für jede Landzelle mit `v >= 0.12`
+   berechnet (~150.000 Zellen). Die Steigung wird im Entscheidungsbaum jedoch ausschließlich
+   für Auwald-Kandidaten benötigt (`prip[k] >= 0.4 && v >= 0.25 && phf[k] - ph[k] <= 0.02 && slope * 40 < 0.6`).
+   Durch Kurzschlussauswertung am Ende dieser Bedingung entfallen für über 90 % der
+   Landzellen 4 Speicherzugriffe und Absolutwertdifferenzen vollständig.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-old` vs `/tmp/simperf-new`,
+jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1 (alt → neu):**
+  - Alt: 161,9 / 156,7 / 164,1 ms/Schritt (Minimum: 156,7 ms), `updateVegetation`: 9,48 ms
+  - Neu: 152,9 / 152,1 / 159,8 ms/Schritt (Minimum: 152,1 ms), `updateVegetation`: 8,07 ms (−1,41 ms / −14,9 %)
+- **Paar 2 (neu → alt, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Neu: 158,8 / 162,1 / 159,2 ms/Schritt (Minimum: 158,8 ms), `updateVegetation`: 8,20 ms
+  - Alt: 170,9 / 169,2 / 165,4 ms/Schritt (Minimum: 165,4 ms), `updateVegetation`: 9,77 ms (−1,57 ms / −16,1 %)
+
+Der Pass `updateVegetation` sinkt stabil um **1,4 bis 1,6 ms/Schritt** (−15 % bis −16 %).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `7667d3585b1f1904` | `7667d3585b1f1904` | bit-identisch |
+| Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
+| Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
+| Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
+
+
 
