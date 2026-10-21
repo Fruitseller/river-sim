@@ -7,7 +7,7 @@ import XCTest
 /// `docs/zielbild-measurements.md` § Durchgehende Flüsse): Produktion,
 /// Jahr 2.600 und 4.000 in 1000er-Schritten wie `RS_STEP`, je Seed.
 /// Aufruf: RS_MEASURE=1 swift test -c release --package-path SimCore
-/// -Xswiftc -swift-version -Xswiftc 5 --filter testRiverContinuityDiagnostic
+/// --filter testRiverContinuityDiagnostic
 final class RiverContinuityDiagnostics: XCTestCase {
     func testRiverContinuityDiagnostic() throws {
         try skipUnlessMeasuring()

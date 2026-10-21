@@ -6,7 +6,7 @@ Maschine: Apple M4 Max. Reproduzieren:
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testRiverCoastRenderDiagnostic
+    --filter testRiverCoastRenderDiagnostic
 ```
 
 Umfang dieses Pakets ist nur der von der Mäander-Physik unabhängige Teil von C:
@@ -167,7 +167,7 @@ Welt entsteht beim ersten Lauf; `RS_OUT` hängt die Ausgabe an eine Datei,
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testCoastShapeDiagnostic
+    --filter testCoastShapeDiagnostic
 ```
 
 Produktions-Config (`SimConfig.production`, n = 720, Einlauf 3000 Jahre), Seeds

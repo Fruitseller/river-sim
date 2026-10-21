@@ -257,9 +257,9 @@ Reproduktion, beide Diagnose-Tests sind hinter `RS_MEASURE=1`:
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testRectWaterCostDiagnostic
+    --filter testRectWaterCostDiagnostic
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testRectWaterDiagnostic
+    --filter testRectWaterDiagnostic
 ```
 
 `WaterFieldRenderer.legacyWiden` hält intern den alten Vergleichsarm; für

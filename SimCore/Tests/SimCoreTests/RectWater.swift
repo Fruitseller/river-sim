@@ -10,7 +10,7 @@ import XCTest
 /// `docs/geometry-water-measurements.md` § H.
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testRectWaterDiagnostic
+///         --filter testRectWaterDiagnostic
 ///
 /// Die Welten werden frisch mit der Produktions-Config erzeugt und wie die
 /// Zeitraffer-Bühne in 1000-Jahr-Schritten gealtert. Keine implizit wiederverwendeten
@@ -49,7 +49,7 @@ final class RectWaterTests: XCTestCase {
     /// GANZEN Funktion, weil das die Größe ist, die der Frame bezahlt.
     ///
     ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-    ///         -Xswiftc -swift-version -Xswiftc 5 --filter testRectWaterCostDiagnostic
+    ///         --filter testRectWaterCostDiagnostic
     func testRectWaterCostDiagnostic() throws {
         try skipUnlessMeasuring()
         let rounds = 40

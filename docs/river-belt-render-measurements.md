@@ -9,7 +9,6 @@ der Produktions-Config (`SimConfig.production`, n 720, Einlauf
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 \
     --filter "testBarAgeDiagnostic|testMainStemBandDiagnostic|testBeltRenderMapDiagnostic"
 ```
 
@@ -243,7 +242,7 @@ sich als leise Vegetationsbänder.
 ```sh
 RS_MEASURE=1 RS_CACHE=/tmp/welten RS_SEEDS=1337 RS_YEARS_LIST=2300 \
     swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testBarSandExtentDiagnostic
+    --filter testBarSandExtentDiagnostic
 ```
 
 (`RS_CACHE` legt die gealterten Welten als Snapshot ab; je Aufruf EINE

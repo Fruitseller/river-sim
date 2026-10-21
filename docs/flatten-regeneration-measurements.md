@@ -11,9 +11,8 @@ Reproduzieren:
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testFlattenMeasurementDiagnostic
+    --filter testFlattenMeasurementDiagnostic
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 \
     --filter 'testDisturbanceSweepDiagnostic|testRegenerationTrajectoryDiagnostic|testMeanderStateDiagnostic'
 ```
 

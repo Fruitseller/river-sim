@@ -32,7 +32,7 @@ Alle Zahlen aus `SimCoreTests/MeltRunoff.swift` (Release-Lauf), Default-`SimConf
 bis auf `n` und den jeweiligen Arm:
 
 ```sh
-swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+swift test -c release --package-path SimCore \
     --filter testMeltRunoffMeasurementDiagnostic       # §B (Arme über die Zeit)
     --filter testMeltRunoffIsSeedRobustDiagnostic      # §C/§D/§E (gepoolt)
     --filter testSnowyIslandScanDiagnostic             # §A (Reichweite)

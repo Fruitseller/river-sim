@@ -13,7 +13,7 @@ import XCTest
 /// Tabelle: `docs/graphics-quality.md` § Wald und Wiese (#168).
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testCanopyCoverageDiagnostic
+///         --filter testCanopyCoverageDiagnostic
 ///
 /// `RS_SEED` beschränkt auf einen Seed. Laufzeit ~15 min (3 × 100.000 Jahre
 /// bei n = 720).

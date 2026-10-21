@@ -10,7 +10,7 @@ import XCTest
 /// eine Sedimentfahne bekommen. Tabellen: `docs/river-coast-render-measurements.md`.
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testRiverCoastRenderDiagnostic
+///         --filter testRiverCoastRenderDiagnostic
 ///
 /// `RS_SEED` beschränkt auf einen Seed. Laufzeit ~2 min (3 × 100.000 Jahre bei
 /// n = 720, 1000er-Schritte).

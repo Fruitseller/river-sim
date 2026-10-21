@@ -6,7 +6,7 @@ Wächter der Pakete A und B lesen dieselben Funktionen.
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildBaselineDiagnostic
+    --filter testZielbildBaselineDiagnostic
 ```
 
 Produktions-Config (`SimConfig.production`, n = 720, world = 112,4789) mit
@@ -513,7 +513,7 @@ als Ried-Bogen sichtbar; Wasserfüllung verlangt der Punkt nicht.
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildMeanderTimeMeanDiagnostic
+    --filter testZielbildMeanderTimeMeanDiagnostic
 ```
 
 `RS_SEED` wählt einen Seed (die Läufe lassen sich parallel starten, je Seed
@@ -711,7 +711,7 @@ diesem Schritt unverändert, geändert wurde nur `ZielbildMetrics`.
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testZielbildMeanderTimeMeanDiagnostic
+    --filter testZielbildMeanderTimeMeanDiagnostic
 # Messung von vorher: zusätzlich RS_BELT_AXIS=1
 ```
 
@@ -1059,7 +1059,7 @@ Werkzeug: `RiverUphill.swift` (`RibbonUphill.measure` am fertigen
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testRibbonUphillDiagnostic
+    --filter testRibbonUphillDiagnostic
 ```
 
 `testRibbonUphillMapDiagnostic` (Karte als PPM, `RS_CROP`, Längsprofil eines
@@ -1181,9 +1181,9 @@ Uferlinie. Werkzeug: `BeltLakes.swift`, hinter `RS_MEASURE`:
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testBeltLakesDiagnostic
+    --filter testBeltLakesDiagnostic
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testBeltLakeHistoryDiagnostic
+    --filter testBeltLakeHistoryDiagnostic
 ```
 
 Gemessen werden die Seen, die `terrain.gdshader` malt (See-Gate ≥
@@ -1536,7 +1536,7 @@ Produktion, M4 Max.
 
 ```sh
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testBeltCouplingHistoryDiagnostic
+    --filter testBeltCouplingHistoryDiagnostic
 # RS_SEED, RS_YEARS, RS_DT, RS_EVERY, RS_VARIANT, RS_SEGLOG=<Jahr> (Aufbau der Läufe)
 ```
 
@@ -1838,10 +1838,10 @@ seine Anzeige als 1,50 einen Punkt gewinnt.
 
 ```sh
 RS_MEASURE=1 RS_SEED=1337 RS_DT=100 RS_YEARS=100000 swift test -c release \
-    --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+    --package-path SimCore \
     --filter testZielbildMeanderTimeMeanDiagnostic
 RS_MEASURE=1 RS_SEED=1337 RS_DT=15 RS_YEARS=20000 swift test -c release \
-    --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+    --package-path SimCore \
     --filter testZielbildMeanderTimeMeanDiagnostic
 ```
 
@@ -2276,7 +2276,7 @@ selben Bild stehen (§ Render).
 
 ```sh
 RS_MEASURE=1 RS_CACHE=/tmp/delta-welten swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testDeltaBudgetDiagnostic
+    --filter testDeltaBudgetDiagnostic
 ```
 
 (`SimCoreTests/RiverDelta.swift`. Schalter: `RS_SEEDS`, `RS_YEARS_LIST`,

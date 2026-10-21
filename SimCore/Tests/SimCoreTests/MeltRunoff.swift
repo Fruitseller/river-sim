@@ -168,7 +168,7 @@ final class MeltRunoff: XCTestCase {
     /// im Dokument stammen aus demselben Test mit größerem Gitter/Horizont:
     ///
     ///     RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test -c release \
-    ///       --package-path SimCore -Xswiftc -swift-version -Xswiftc 5 \
+    ///       --package-path SimCore \
     ///       --filter testMeltRunoffMeasurementDiagnostic
     func testMeltRunoffMeasurementDiagnostic() throws {
         try skipUnlessMeasuring()

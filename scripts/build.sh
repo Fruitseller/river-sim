@@ -162,8 +162,9 @@ echo "==> Build-Stempel $STAMP"
 
 echo "==> swift build ($CONFIG)"
 # SwiftGodot baut mit library-evolution; die Interface-Verifikation kann dessen
-# internes GDExtension-Modul nicht sehen. Swift 5-Sprachmodus hält den 5.9-Code
-# mit aktuellen Swift-6-Toolchains kompatibel. --product RiverSimGD lässt die
+# internes GDExtension-Modul nicht sehen. Den Swift-5-Sprachmodus deklarieren
+# die Pakete selbst (SimCore `swiftLanguageModes`, Extension über
+# tools-version 5.9, SwiftGodot je Target). --product RiverSimGD lässt die
 # nicht gebrauchten Begleit-Produkte (SwiftGodot-Testextension, docc-/man-
 # Generatoren) aus dem Hauptplan heraus.
 # Zweimal bauen: Nach Kaltbau/Neuplanung invalidieren sich Plugin-Tools-Plan
@@ -176,7 +177,6 @@ for _ in 1 2; do
 		--scratch-path "$SCRATCH" \
 		--product RiverSimGD \
 		-Xswiftc -no-verify-emitted-module-interface \
-		-Xswiftc -swift-version -Xswiftc 5 \
 		-Xlinker -rpath -Xlinker '$ORIGIN'
 done
 

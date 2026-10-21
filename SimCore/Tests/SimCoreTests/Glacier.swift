@@ -1132,7 +1132,7 @@ final class Glacier: XCTestCase {
     ///
     ///     RS_MEASURE=1 RS_SEED=1337 RS_DTS=15,100,1000 RS_YEARS=20000,100000 \
     ///         swift test -c release --package-path SimCore \
-    ///         -Xswiftc -swift-version -Xswiftc 5 --filter testIceDtSweepDiagnostic
+    ///         --filter testIceDtSweepDiagnostic
     ///
     /// Die Läufe sind unabhängig und lassen sich je Seed/dt parallel starten.
     func testIceDtSweepDiagnostic() throws {

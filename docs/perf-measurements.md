@@ -17,7 +17,7 @@ einem Lauf des Harness, nicht aus einer Schätzung.
 ```sh
 source ~/.local/share/swiftly/env.sh
 export LD_LIBRARY_PATH="$(git rev-parse --show-toplevel)/.tools/swift-libs:${LD_LIBRARY_PATH:-}"
-swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+swift build -c release --package-path SimCore
 
 SimCore/.build/release/simperf                      # Zeiten + Pass-Tabelle, dt = 100
 SimCore/.build/release/simperf --repeat 3           # drei Messblöcke (s. u.)
@@ -407,7 +407,7 @@ Zugriffs-Overhead.
 ```sh
 source ~/.local/share/swiftly/env.sh
 export LD_LIBRARY_PATH="$(git rev-parse --show-toplevel)/.tools/swift-libs:${LD_LIBRARY_PATH:-}"
-swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+swift build -c release --package-path SimCore
 
 # Zeiten + Pass-Tabelle
 SimCore/.build/release/simperf --repeat 3
@@ -418,7 +418,7 @@ SimCore/.build/release/simperf --hash
 # Baseline eines alten Stands in derselben Sitzung messen:
 git stash -u
 git checkout <ref> -- SimCore/Sources/SimCore/Terrain.swift
-swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+swift build -c release --package-path SimCore
 SimCore/.build/release/simperf --repeat 3
 git checkout HEAD -- SimCore/Sources/SimCore/Terrain.swift
 git stash pop
@@ -752,14 +752,14 @@ Erosions-Paritäten rot.
 ### Reproduktion
 
 ```sh
-swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+swift build -c release --package-path SimCore
 cp SimCore/.build/release/simperf /tmp/simperf.base    # bzw. .neu, je Stand
 for i in 1 2 3 4 5; do for b in base neu; do /tmp/simperf.$b --repeat 3; done; done
 /tmp/simperf.base --hash && /tmp/simperf.neu --hash    # Produktionspfad unberührt
 
 # Der Beleg für den GEÄNDERTEN Pfad — je Stand einmal, Werte vergleichen:
 RS_MEASURE=1 swift test -c release --package-path SimCore \
-    -Xswiftc -swift-version -Xswiftc 5 --filter testChangedPathFingerprintDiagnostic
+    --filter testChangedPathFingerprintDiagnostic
 ```
 
 ---
@@ -1667,7 +1667,7 @@ zusätzlich wiederholt. Die Hashes umfassen das komplette Zustands-Inventar,
 nicht nur die Kanalgeometrie.
 
 Die Pflichtsuite lief vor und nach dem Rebase mit
-`swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5`:
+`swift test -c release --package-path SimCore`:
 je **599 Tests, 69 regulär übersprungen, 0 Fehler**. Laufzeit der Tests
 186,696 bzw. 185,957 Sekunden, jeweils ohne Build-Zeit. Enthalten sind
 `testBeltIsDeterministic`, alle Mäander-/Gürtel-Wächter, `FingerprintTests` und
@@ -1890,7 +1890,7 @@ Messrauschen). Zur Orientierung die Pass-Tabelle je eines ruhigen Paarlaufs
 ### Reproduktion
 
 ```sh
-swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+swift build -c release --package-path SimCore
 SimCore/.build/release/simperf --hash --seed 1337        # 08d32575d5cd353a
 SimCore/.build/release/simperf --hash --seed 42          # 0fd978609f8cc241
 SimCore/.build/release/simperf --hash --seed 20          # 9df73cb7672f2610
@@ -1898,8 +1898,8 @@ SimCore/.build/release/simperf --hash --seed 1337 --dt 15  # 90b5a31c0d94a030
 SimCore/.build/release/simperf --repeat 3                # Pass-Tabelle
 ```
 
-Pflichtsuite nach dem Endstand (`swift test -c release --package-path SimCore
--Xswiftc -swift-version -Xswiftc 5`): **611 Tests, 71 übersprungen, 0 Fehler**
+Pflichtsuite nach dem Endstand (`swift test -c release --package-path SimCore`):
+**611 Tests, 71 übersprungen, 0 Fehler**
 (212,8 s ohne Build). Die Hashes sind Pro-Maschine-Werte (System-libm);
 verglichen wird vor/nach auf DERSELBEN Maschine.
 

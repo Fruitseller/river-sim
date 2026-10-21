@@ -11,7 +11,7 @@ import XCTest
 /// § Geister-Seen im Mäandergürtel.
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testBeltLakesDiagnostic
+///         --filter testBeltLakesDiagnostic
 ///
 /// `RS_SEEDS` (Standard 1337,42), `RS_YEARS` (Standard 2300,20000),
 /// `RS_NO_BELT=1` fährt dieselbe Produktion ohne Gürtel (`meanderBelt = false`),

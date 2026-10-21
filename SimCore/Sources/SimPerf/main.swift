@@ -16,7 +16,7 @@ import SimCore
 // Zwei Betriebsarten, beide mit Einlauf (`--warmup`), damit gemessen wird, was
 // die Sim im eingeschwungenen Zustand kostet und nicht der Kaltstart:
 //
-//   swift build -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+//   swift build -c release --package-path SimCore
 //   SimCore/.build/release/simperf                      # Zeiten, dt = 100
 //   SimCore/.build/release/simperf --repeat 3           # drei Messblöcke
 //   SimCore/.build/release/simperf --dt 0.2 --steps 200 # Echtzeit-Takt

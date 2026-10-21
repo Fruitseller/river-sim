@@ -5,7 +5,7 @@ import SimRender
 
 /// Ausgelieferte Render-Änderungen bei 60 und 30 J/s, ohne Kamera/GPU.
 /// Aufruf: RS_MEASURE=1 swift test -c release --package-path SimCore
-/// -Xswiftc -swift-version -Xswiftc 5 --filter testTimelapseTransitionDiagnostic
+/// --filter testTimelapseTransitionDiagnostic
 final class TimelapseTransitionDiagnostics: XCTestCase {
     func testTimelapseTransitionDiagnostic() throws {
         try skipUnlessMeasuring()

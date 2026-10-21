@@ -878,9 +878,9 @@ las. Wächter: `RenderFrameTests`.
   Einlauf + Pass-Tabelle) und `simperf --hash` als Bit-Identitäts-Wächter
   vor/nach einer Optimierung. Protokoll und Messhygiene:
   `docs/perf-measurements.md`.
-- **Headless-Tests:** `swift test -c release --package-path SimCore -Xswiftc
-  -swift-version -Xswiftc 5` (Debug ist bei diesen Grids zu langsam, der
-  Swift-5-Schalter Pflicht — Begründung in `AGENTS.md` § Befehle). Beim Iterieren
+- **Headless-Tests:** `swift test -c release --package-path SimCore`
+  (Debug ist bei diesen Grids zu langsam — Begründung in `AGENTS.md`
+  § Befehle). Beim Iterieren
   `--filter <methodName>` — **nicht** den Klassennamen, der
   matcht 0 Tests. Wächter: `LongRunCollapse.swift` (kein Runaway/Kollaps),
   `RiverDynamicsTests.swift` (MFD-Splits, Braiding-Bänke, Becken→Meer, Stream-Map,

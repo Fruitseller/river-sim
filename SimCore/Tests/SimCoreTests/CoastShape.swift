@@ -9,7 +9,7 @@ import XCTest
 /// `docs/river-coast-render-measurements.md` §E ff.
 ///
 ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         -Xswiftc -swift-version -Xswiftc 5 --filter testCoastShapeDiagnostic
+///         --filter testCoastShapeDiagnostic
 ///
 /// `RS_SEED` beschränkt auf einen Seed, `RS_YEAR` setzt das Alter (Standard
 /// 20.000), `RS_CACHE` den Welt-Cache (Standard `/tmp/river-sim-coast-cache`),

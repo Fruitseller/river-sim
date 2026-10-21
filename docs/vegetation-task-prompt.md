@@ -47,7 +47,7 @@ Nach JEDER Stufe committen — so bleibt bei Abbruch ein sauberer Stand.
 ## Build-/Test-Befehle (exakt, aus AGENTS.md)
     source ~/.local/share/swiftly/env.sh
     export LD_LIBRARY_PATH="$PWD/.tools/swift-libs:${LD_LIBRARY_PATH:-}"   # aus Repo-Wurzel
-    swift test -c release --package-path SimCore -Xswiftc -swift-version -Xswiftc 5
+    swift test -c release --package-path SimCore
     # einzelner Test: --filter <Methodenname>  (NICHT der Klassenname)
     "$(git rev-parse --show-toplevel)"/scripts/build.sh release            # auf "gebaut"-Zeile prüfen
     # Godot headless: GODOT-Binary, dann z.B.
