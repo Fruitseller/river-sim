@@ -9,11 +9,12 @@ Es ist keine vorgetäuschte Animation: Die Landschaft entsteht aus einer
 echten Erosions-Simulation: dieselbe Eingabe führt also immer zum selben
 Verlauf, und kleine Eingriffe können sich über Jahrtausende auswirken.
 
-![Terrain nach 20.000 Jahren](docs/screenshots/terrain-20k.png)
+![Aktuelle Inselansicht mit Gebirgen, Wäldern und mäandrierenden Flüssen](docs/screenshots/readme-island.jpg)
 
-| 100.000 Jahre (gleicher Seed) | anderer Seed |
-| --- | --- |
-| ![100k Jahre](docs/screenshots/terrain-100k.png) | ![Seed 907](docs/screenshots/terrain-seed907.png) |
+Ein Blick auf eine aktuelle Simulation mit Gebirgszügen, bewaldeten Tälern und
+Flussläufen. Das Spiel lässt sich auch direkt bedienen:
+
+![Spielansicht mit Werkzeugleiste und Simulationssteuerung](docs/screenshots/readme-gameplay.jpg)
 
 ## Was macht man da?
 
