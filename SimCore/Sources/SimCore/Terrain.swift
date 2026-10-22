@@ -4232,22 +4232,39 @@ public final class Terrain {
             let phard = ldb.baseAddress!, parea = cab.baseAddress!
             parallel(nn) { jLo, jHi in
             for j in jLo..<jHi {
+                let row = j * nn
+                let innerRow = j > 0 && j < nn - 1
                 for i in 0..<nn {
-                    let k = j * nn + i
-                    let hl = i > 0 ? ph[k - 1] : ph[k]
-                    let hr = i < nn - 1 ? ph[k + 1] : ph[k]
-                    let hd = j > 0 ? ph[k - nn] : ph[k]
-                    let hu = j < nn - 1 ? ph[k + nn] : ph[k]
+                    let k = row + i
+                    let hl: Double, hr: Double, hd: Double, hu: Double
+                    if innerRow && i > 0 && i < nn - 1 {
+                        hl = ph[k - 1]; hr = ph[k + 1]
+                        hd = ph[k - nn]; hu = ph[k + nn]
+                    } else {
+                        hl = i > 0 ? ph[k - 1] : ph[k]
+                        hr = i < nn - 1 ? ph[k + 1] : ph[k]
+                        hd = j > 0 ? ph[k - nn] : ph[k]
+                        hu = j < nn - 1 ? ph[k + nn] : ph[k]
+                    }
                     let lap = hl + hr + hd + hu - 4 * ph[k]
-                    // Kahler-Fels-Faktor: hoch (h>0.5), steil und unbewachsen → wenig
+                    if lap == 0 {
+                        psc[k] = 0
+                        continue
+                    }
+                    // Kahler-Fels-Faktor: hoch (h>0.42), steil und unbewachsen → wenig
                     // Kriechen. Sediment/Vegetation heben das Kriechen wieder an.
-                    let gx = (hr - hl) * 0.5, gy = (hu - hd) * 0.5
-                    let slope = (gx * gx + gy * gy).squareRoot()
-                    let steep = min(1, slope * 26)               // etwas früher „steil" → mehr Grate bleiben scharf
-                    let high = min(1, max(0, (ph[k] - 0.42) / 0.35)) // Schutz schon ab mittlerer Höhe
-                    let soil = min(1, psed[k] / 0.02 + pveg[k])  // Boden ODER Bewuchs → Kriechen
-                    let bare = steep * high * max(0, 1 - soil)   // 1 = kahler steiler Hochfels
-                    var localK = base * (1 - 0.92 * bare)        // dort bis auf 8% gedrosselt (Gipfel bleiben spitz)
+                    // Unter 0.42 ist `high = 0` und damit `bare = 0` exakt; die Ableitung,
+                    // Wurzel und Zugriffe auf `sed` und `veg` entfallen dort vollständig.
+                    var localK = base
+                    if ph[k] > 0.42 {
+                        let gx = (hr - hl) * 0.5, gy = (hu - hd) * 0.5
+                        let slope = (gx * gx + gy * gy).squareRoot()
+                        let steep = min(1, slope * 26)               // etwas früher „steil" → mehr Grate bleiben scharf
+                        let high = min(1, (ph[k] - 0.42) / 0.35)     // Schutz schon ab mittlerer Höhe
+                        let soil = min(1, psed[k] / 0.02 + pveg[k])  // Boden ODER Bewuchs → Kriechen
+                        let bare = steep * high * max(0, 1 - soil)   // 1 = kahler steiler Hochfels
+                        localK = base * (1 - 0.92 * bare)            // dort bis auf 8% gedrosselt (Gipfel bleiben spitz)
+                    }
                     // Gesteinshärte: D = 1 − c·hard, Untergrenze 0.05 (kein
                     // vollständig eingefrorener Hang, auch bei c > 1).
                     if lithDC != 0 { localK *= max(0.05, 1 - lithDC * phard[k]) }
