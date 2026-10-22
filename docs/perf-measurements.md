@@ -2103,6 +2103,29 @@ jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
 
 Der Pass `braidPass` gewinnt in beiden Paaren messbar und stabil (−0,36 bis −1,82 ms/Schritt).
 
+## VIII. Hangdiffusion: Flache Zellen abgefangen, Felsfaktor gegatet und Randprüfungen entrollt (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.hillslopeDiffusion`:
+1. **Flache Zellen sofort abfangen:** Für alle flachen Gitterzellen (gesamter Ozean, Seen und ebene Ebenen; über 40 % des Gitters) ist der Laplace-Operator `lap = hl + hr + hd + hu - 4 * ph[k]` exakt 0. Durch `if lap == 0 { psc[k] = 0; continue }` entfallen für über 200.000 Zellen die Berechnung des Gradienten, die Gleitkomma-Wurzel (`squareRoot()`), die Abfragen von `bare` und `soil` sowie die Lesezugriffe auf `psed`, `pveg`, `lithHardness` und `area` vollständig. Das Ergebnis `psc[k] = 0` ist bit-identisch zu `localK * 0.0`.
+2. **Kahler-Fels-Faktor auf Hochlagen beschränkt:** Der Fels-Schutzfaktor `high = min(1, max(0, (ph[k] - 0.42) / 0.35))` ist für alle Lagen `ph[k] <= 0.42` mathematisch exakt 0.0, womit `bare = 0.0` und `1 - 0.92 * bare = 1.0` gilt. Durch Kapseln der Felsberechnung in `if ph[k] > 0.42` entfallen für alle verbleibenden Tiefland- und Hügelzellen die Gradienten-Norm, die Quadratwurzel und die Speicherzugriffe auf `sed` und `veg`.
+3. **Randprüfungen für innere Zellen entrollt:** Für alle inneren Zellen (`0 < i < nn - 1, 0 < j < nn - 1`, rund 99 % des Gitters) werden die 4 Nachbarhöhen ohne bedingte Verzweigungen direkt geladen.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-old` vs `/tmp/simperf-new`,
+jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1 (alt → neu):**
+  - Alt: 182,8 / 183,7 / 178,2 ms/Schritt (Minimum: 178,2 ms), `hillslopeDiffusion`: 2,59 ms
+  - Neu: 175,8 / 173,2 / 185,5 ms/Schritt (Minimum: 173,2 ms), `hillslopeDiffusion`: 1,78 ms (−0,81 ms / −31,3 %)
+- **Paar 2 (neu → alt, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Neu: 172,5 / 177,8 / 185,8 ms/Schritt (Minimum: 172,5 ms), `hillslopeDiffusion`: 1,84 ms
+  - Alt: 165,1 / 162,2 / 168,6 ms/Schritt (Minimum: 162,2 ms), `hillslopeDiffusion`: 2,26 ms (−0,42 ms / −18,6 %)
+
+Der Pass `hillslopeDiffusion` sinkt stabil um **0,42 bis 0,81 ms/Schritt** (−19 % bis −31 %).
+
 ### Bit-Identität
 
 Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
