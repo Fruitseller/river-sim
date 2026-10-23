@@ -2048,5 +2048,37 @@ Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt iden
 | Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
 | Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
 
+## VI. Knotenhöhen in BeltGeometry zwischengespeichert (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `MeanderState.beltGeometry` und `updateBeltMobility` wurde für jeden Knoten `i`
+entlang der Flussläufe (`ch.nodes`) in `beltMobility` mehrfach `heightAt` aufgerufen
+(`nodes[i - ks]`, `nodes[i + ks]`, `nodes[i]`). Jedes `heightAt` interpoliert
+bilinear auf `bed.h`. Zusätzlich rief `beltRatesAndErodibility` für jeden Knoten `i`
+beim Berechnen der Uferbremse (`wall - heightAt(nodes[i])`) erneut `heightAt(nodes[i])` auf.
+
+Durch Speichern der Knotenhöhen in `BeltGeometry.h` (einmalig pro Knoten vorab
+berechnet) entfallen alle redundanten bilinearen Abtastungen in `beltMobility` und
+`beltRatesAndErodibility`. Die Knotenhöhen werden direkt aus dem Array gelesen.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`simperf --repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Lauf 1 (alt → neu):**
+  - Alt: 180,8 / 184,7 / 183,3 ms/Schritt (Minimum: 180,8 ms), `belt.parallel`: 45,82 ms
+  - Neu: 158,4 / 163,2 / 170,8 ms/Schritt (Minimum: 158,4 ms), `belt.parallel`: 40,38 ms (−5,44 ms / −11,9 %)
+- **Lauf 2 (neu → alt, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Neu: 175,4 / 170,7 / 164,1 ms/Schritt (Minimum: 164,1 ms), `belt.parallel`: 38,50 ms
+  - Alt: 175,4 / 183,8 / 187,5 ms/Schritt (Minimum: 175,4 ms), `belt.parallel`: 45,52 ms (−7,02 ms / −15,4 %)
+
+Der Pass `belt.parallel` sinkt stabil um **5,4 bis 7,0 ms/Schritt** (−12 % bis −15 %).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf Seed 1337 (dt = 100 und dt = 15), Seed 42 und Seed 20
+sind vor und nach der Änderung bit-identisch.
+
 
 

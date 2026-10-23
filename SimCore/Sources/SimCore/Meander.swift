@@ -563,6 +563,8 @@ struct BeltGeometry {
     var mob: [Double]
     /// Kumulierte Bogenlänge entlang der Knoten (Zellen), wiederverwendet in `beltRatesAndErodibility`.
     var cum: [Double] = []
+    /// Geländehöhe an den Knotenpunkten, wiederverwendet in Mobilität und Uferbremse.
+    var h: [Double] = []
 }
 
 extension MeanderState {
@@ -643,9 +645,11 @@ extension MeanderState {
         let nodes = ch.nodes, c = nodes.count
         var cum = [Double](repeating: 0, count: c)
         for i in 1..<max(1, c) { cum[i] = cum[i - 1] + dist(nodes[i - 1], nodes[i]) }
+        var h = [Double](repeating: 0, count: c)
+        for i in 0..<c { h[i] = heightAt(nodes[i]) }
         var g = BeltGeometry(width: .init(repeating: 0, count: c), curv: .init(repeating: 0, count: c),
                              nx: .init(repeating: 0, count: c), nz: .init(repeating: 0, count: c),
-                             mob: .init(repeating: 0, count: c), cum: cum)
+                             mob: .init(repeating: 0, count: c), cum: cum, h: h)
         let sp = max(1e-6, config.meanderNodeSpacing)
         for i in 0..<c {
             let b = beltWidthCells(discharge: ch.discharge[i], config: config)
@@ -664,7 +668,7 @@ extension MeanderState {
             // Für die Migration zählt Mobilität nur dort, wo auch der Mindestabfluss
             // für das Wandern erreicht ist (`meanderBeltMinCells`).
             if minDischarge > 0 && ch.discharge[i] < minDischarge { continue }
-            g.mob[i] = beltMobility(nodes, cum, i: i, width: b, k: k, config: config, heightAt: heightAt)
+            g.mob[i] = beltMobility(cum, h, i: i, width: b, k: k, config: config)
         }
         return g
     }
@@ -676,6 +680,9 @@ extension MeanderState {
                                    minDischarge: Double, heightAt: (MeanderNode) -> Double) {
         let nodes = ch.nodes, c = nodes.count
         let sp = max(1e-6, config.meanderNodeSpacing)
+        var h = [Double](repeating: 0, count: c)
+        for i in 0..<c { h[i] = heightAt(nodes[i]) }
+        g.h = h
         let cum = g.cum
         for i in 1..<max(1, c - 1) {
             g.mob[i] = 0
@@ -683,15 +690,14 @@ extension MeanderState {
             if minDischarge > 0 && ch.discharge[i] < minDischarge { continue }
             let b = g.width[i]
             let k = max(1, min(min(i, c - 1 - i), Int((0.5 * b / sp).rounded())))
-            g.mob[i] = beltMobility(nodes, cum, i: i, width: b, k: k, config: config, heightAt: heightAt)
+            g.mob[i] = beltMobility(cum, h, i: i, width: b, k: k, config: config)
         }
     }
 
     @inline(__always)
-    private static func beltMobility(_ nodes: [MeanderNode], _ cum: [Double], i: Int,
-                                     width b: Double, k: Int, config: SimConfig,
-                                     heightAt: (MeanderNode) -> Double) -> Double {
-        let c = nodes.count, sp = max(1e-6, config.meanderNodeSpacing)
+    private static func beltMobility(_ cum: [Double], _ h: [Double], i: Int,
+                                     width b: Double, k: Int, config: SimConfig) -> Double {
+        let c = cum.count, sp = max(1e-6, config.meanderNodeSpacing)
         let cs = config.cellSize, flat = config.meanderFlatSlope
         let total = cum[c - 1]
         // Über ±k (≈ 3 Zellen) brach jede Stufe im eingeschnittenen Bett den
@@ -699,10 +705,10 @@ extension MeanderState {
         // von Seed 1337). Deshalb ±1,5 Kanalbreiten.
         let ks = max(k, min(min(i, c - 1 - i), Int((1.5 * b / sp).rounded())))
         let arc = (cum[i + ks] - cum[i - ks]) * cs
-        let slope = arc > 1e-9 ? abs(heightAt(nodes[i - ks]) - heightAt(nodes[i + ks])) / arc : 0
+        let slope = arc > 1e-9 ? abs(h[i - ks] - h[i + ks]) / arc : 0
         // Unter dem Meer wandert nichts; an Quelle und Mündung ausblenden,
         // sonst staut sich der Stromauf-Term am festen Ende zu Spiralen.
-        var mob = flat > 0 && heightAt(nodes[i]) > config.sea ? max(0, min(1, 1 - slope / flat)) : 0
+        var mob = flat > 0 && h[i] > config.sea ? max(0, min(1, 1 - slope / flat)) : 0
         mob *= min(1, min(cum[i], total - cum[i]) / max(1e-6, 3 * b))
         return mob
     }
@@ -799,7 +805,8 @@ extension MeanderState {
                 let far = 0.5 * b + 3 * b
                 let wall = heightAt(MeanderNode(x: nodes[i].x + dir * g.nx[i] * far,
                                                 z: nodes[i].z + dir * g.nz[i] * far))
-                let over = max(0, (wall - heightAt(nodes[i])) / dref - config.meanderBeltBrakeDepths)
+                let z0 = g.h.count == c ? g.h[i] : heightAt(nodes[i])
+                let over = max(0, (wall - z0) / dref - config.meanderBeltBrakeDepths)
                 r /= 1 + over * over
                 er /= 1 + over * over
             }
