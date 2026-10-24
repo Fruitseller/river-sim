@@ -188,7 +188,12 @@ public final class WaterFieldRenderer {
     /// als Saum ohne Wasser darin (52 % der sichtbaren Zentrumslinien-Zellen).
     /// `deferTail` = die Schwanzstufen (räumlicher Blur, zeitliche EWMA,
     /// Quantisierung) macht der GPU-Pass `game/shaders/water_field_*.gdshader`
-    /// statt dieser Funktion. Alles davor bleibt hier: die beiden teuren Stufen
+    /// statt dieser Funktion. Die Struktur der Kette — Pass-Zahlen, Kanal-
+    /// Masken, Priming des ersten Ticks — steht als Daten im Pass-Plan
+    /// (`WaterTailPlan`, Issue #95) und reist über die Brücke nach
+    /// `game/scripts/WaterGpuTail.gd`; der Godot-Vertragstest
+    /// `game/tests/water_gpu_tail.gd` vergleicht beide Fassungen.
+    /// Alles davor bleibt hier: die beiden teuren Stufen
     /// des Pfads sind SEQUENZIELLE Graph-Algorithmen (Kontinuitäts-Kette entlang
     /// der D8-Empfänger, Flood-Fill der Wasser-Komponenten) und passen in kein
     /// Pixel-Programm; sie GPU-seitig zu wollen kostete Readbacks mitten in der
@@ -1156,12 +1161,14 @@ public final class WaterFieldRenderer {
             return out
         }
 
-        blurMax(&sd, passes: 1)
+        blurMax(&sd, passes: WaterTailPlan.streamBlurPasses)
         // See-Gate ZWEIMAL bluren: es muss den seichten Ufersaum (Wassersäule
         // unter der rawWet-Schwelle 0.03) überdecken, damit die per-Pixel-Kontur
         // im Shader dort nicht vom Gate abgeschnitten wird — der Überstand aufs
-        // Trockene ist unsichtbar, weil pond dort 0 ist.
-        blurMax(&lk, passes: 2)
+        // Trockene ist unsichtbar, weil pond dort 0 ist. Die Pass-Zahlen beider
+        // Kanäle stehen seit #95 im Pass-Plan (SimRender.WaterTailPlan) —
+        // dieselbe Quelle, aus der die GPU-Kette ihre Kanal-Masken baut.
+        blurMax(&lk, passes: WaterTailPlan.lakeBlurPasses)
 
         // EWMA-Puffer bei Bedarf initialisieren (erstes Feld = sofort übernehmen).
         if sdS.count != cnt {

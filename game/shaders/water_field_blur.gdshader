@@ -27,7 +27,11 @@ uniform sampler2D src : filter_nearest, repeat_disable;
 // Der See-Kanal braucht zwei Durchläufe (er muss den seichten Ufersaum unter
 // der rawWet-Schwelle überdecken), der Fluss-Kanal einen — also läuft dieselbe
 // Datei zweimal mit verschiedener Maske, statt zwei fast gleiche Shader zu haben.
-uniform vec2 blur_channels = vec2(1.0, 1.0);
+// Die Maske ist ein Datum aus SimRender (WaterTailPlan, Issue #95) und reist
+// über die Brücke; der Shader trägt bewusst KEIN Default (ein Literal-Default
+// wäre wieder die Kopie der Struktur — dasselbe Verfahren wie bei den
+// water_*-Uniforms seit #92).
+uniform vec2 blur_channels;
 
 void fragment() {
 	ivec2 size = textureSize(src, 0);

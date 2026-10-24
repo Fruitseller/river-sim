@@ -256,8 +256,11 @@ var ribbon_fade := Crossfade.new(&"ribbon_blend", RIBBON_FADE_SECONDS)
 # der 14,4 ms des Passes. Mehr ist ohne Readback mitten in der Kette nicht zu
 # holen, und ein Readback je Tick kostet mehr als er spart.
 #
-# Kette: CPU-Rohfeld → Blur(R+G) → Blur(nur G) → EWMA-Ping-Pong → water_tex.
-# Alle vier Viewports laufen mit UPDATE_ONCE genau einmal pro Textur-Update;
+# Kette: CPU-Rohfeld → Blur-Pässe mit den Kanal-Masken aus SimRender
+# (WaterTailPlan: erst R+G, dann nur G) → EWMA-Ping-Pong → water_tex.
+# Pass-Zahl, Masken und Priming sind seit #95 Daten aus SimRender über die
+# Brücke — Main.gd hält keine eigene Kalibrierzahl der Kette mehr.
+# Alle Viewports laufen mit UPDATE_ONCE genau einmal pro Textur-Update;
 # auf UPDATE_ALWAYS wäre die EWMA-Rate an die Bildrate gekoppelt und die
 # Framerate-Unabhängigkeit (AGENTS.md) verletzt.
 #
@@ -273,17 +276,16 @@ var ribbon_fade := Crossfade.new(&"ribbon_blend", RIBBON_FADE_SECONDS)
 #
 # Der Pfad bleibt drin, weil er auf einer Maschine mit schwacher CPU und freier
 # GPU gewinnen KANN (Kandidat: die iPad-Frage) — und weil er belegt geprüft ist:
-# Bildvergleich gegen den CPU-Pfad 1,09 von 255 mittlerer Abweichung.
+# Bildvergleich gegen den CPU-Pfad 1,09 von 255 mittlerer Abweichung, und seit
+# #95 der Vertragstest tests/water_gpu_tail.gd (CPU gegen GPU Zelle für Zelle,
+# plus Framerate-Unabhängigkeits-Beleg).
 # RS_WATER_GPU=1 schaltet ihn ein — A/B im selben Build, wie RS_WATER_STAMP
 # für Geometrie ↔ Raster.
 var water_gpu := false
-var wf_raw_field := FieldTexture.new("src", Image.FORMAT_RGBA8)
-var wf_blur_vp: Array[SubViewport] = []
-var wf_blur_mat: Array[ShaderMaterial] = []
-var wf_state_vp: Array[SubViewport] = []
-var wf_ewma_mat: Array[ShaderMaterial] = []
-var wf_state_index := 0
-var wf_primed := false  # noch kein EWMA-Gedächtnis → erster Tick übernimmt sofort
+# Die Kette selbst (Viewports, Materialien, Priming-Zustand) lebt in
+# WaterGpuTail.gd — EINE Implementierung, die Main UND der Vertragstest fahren.
+const WaterGpuTailScript = preload("res://scripts/WaterGpuTail.gd")
+var water_gpu_tail: WaterGpuTailScript
 var debug_difference_field := FieldTexture.new("debug_difference_tex", Image.FORMAT_RGBA8)
 
 # Nur die CPU-Höhen braucht GDScript: Raycasts lesen daraus, alle anderen
@@ -2152,89 +2154,27 @@ static func terrain_detail_strength(years: float) -> float:
 	age = age * age * (3.0 - 2.0 * age)
 	return lerpf(TERRAIN_DETAIL_YOUNG, TERRAIN_DETAIL_OLD, age)
 
-## Baut die GPU-Kette des Wasserfelds auf (s. `water_gpu`). Vier SubViewports in
-## Baum-Reihenfolge: zwei Blur-Pässe, dann zwei Zustands-Targets fürs Ping-Pong
-## der EWMA. Godot rendert SubViewports vor dem Hauptviewport; hängt ein Pass
-## dennoch einen Frame zurück, konvergiert die Kette trotzdem — sie wird nur um
-## Frames träger, nicht falsch.
+## Baut die GPU-Kette des Wasserfelds auf (s. `water_gpu`): die Kette selbst —
+## Viewports, Materialien, Pass-Plan aus der Brücke — lebt in WaterGpuTail.gd,
+## hier bleibt nur das Einhängen in die Szene.
 func _setup_water_gpu() -> void:
-	var blur_shader: Shader = load("res://shaders/water_field_blur.gdshader")
-	var ewma_shader: Shader = load("res://shaders/water_field_ewma.gdshader")
-	# Erst R und G glätten, dann nur noch G: der See-Kanal braucht zwei Pässe
-	# (er muss den seichten Ufersaum überdecken), der Fluss-Kanal einen — genau
-	# wie blurMax(sd, 1) und blurMax(lk, 2) auf der CPU.
-	var masks := [Vector2(1.0, 1.0), Vector2(0.0, 1.0)]
-	var upstream: Texture2D = null   # erster Pass liest die CPU-Rohtextur
-	for pass_index in masks.size():
-		var mat := ShaderMaterial.new()
-		mat.shader = blur_shader
-		mat.set_shader_parameter("blur_channels", masks[pass_index])
-		if upstream != null:
-			mat.set_shader_parameter("src", upstream)
-		var vp := _make_field_viewport(true)
-		vp.add_child(_make_field_rect(mat))
-		add_child(vp)
-		wf_blur_vp.append(vp)
-		wf_blur_mat.append(mat)
-		upstream = vp.get_texture()
-	for _state_index in 2:
-		var mat := ShaderMaterial.new()
-		mat.shader = ewma_shader
-		mat.set_shader_parameter("fresh", upstream)
-		# CLEAR_MODE_NEVER: diese beiden Targets SIND das EWMA-Gedächtnis.
-		var vp := _make_field_viewport(false)
-		vp.add_child(_make_field_rect(mat))
-		add_child(vp)
-		wf_state_vp.append(vp)
-		wf_ewma_mat.append(mat)
+	water_gpu_tail = WaterGpuTailScript.new()
+	add_child(water_gpu_tail)
+	water_gpu_tail.setup(sim, N)
 
-func _make_field_viewport(clear_each_pass: bool) -> SubViewport:
-	var vp := SubViewport.new()
-	vp.size = Vector2i(N, N)
-	vp.disable_3d = true
-	# Half-Float-Target: in 8 Bit bliebe die EWMA bei kleinem `blend` STEHEN, weil
-	# das Inkrement bl*(ziel − zustand) unter 1/255 rundet (bei 0.15 schon ab
-	# ~0.026 Abstand). Der Zustand braucht die Auflösung, die Eingabe nicht.
-	vp.use_hdr_2d = true
-	vp.transparent_bg = true
-	vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS if clear_each_pass 		else SubViewport.CLEAR_MODE_NEVER
-	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	return vp
-
-func _make_field_rect(mat: ShaderMaterial) -> ColorRect:
-	var rect := ColorRect.new()
-	rect.size = Vector2(N, N)
-	rect.material = mat
-	return rect
-
-## Ein Durchlauf der GPU-Kette. `blend` hat dieselbe Bedeutung wie im CPU-Pfad:
-## 1 = frischen Zustand sofort übernehmen (Sprung, Sculpting), klein = weich
-## blenden im Zeitraffer.
+## Ein Durchlauf der GPU-Kette; die Verdrahtung der beiden Ping-Pong-Ziele in
+## die Wasser-Shader bleibt hier, weil sie Main gehört (welche Materialien das
+## Feld lesen, weiß die Kette nicht).
 func _update_water_gpu(raw: PackedByteArray, blend: float) -> void:
-	wf_raw_field.upload(wf_blur_mat[0], N, raw)
-	# Ping-Pong: aus dem aktuellen Zustand lesen, in das andere Target schreiben.
-	# Dasselbe Target zu lesen und zu beschreiben ist undefiniert.
-	var previous := wf_state_index
-	wf_state_index = 1 - wf_state_index
-	var mat := wf_ewma_mat[wf_state_index]
-	mat.set_shader_parameter("state", wf_state_vp[previous].get_texture())
-	# Erster Tick: es gibt kein Gedächtnis, sonst blendete das Feld aus Schwarz auf.
-	mat.set_shader_parameter("blend", blend if wf_primed else 1.0)
-	wf_primed = true
-	# GENAU EIN Durchlauf je Textur-Update (nicht je Frame): sonst hinge die
-	# Glättungsrate an der Bildrate. Das gelesene Zustands-Target bleibt dabei
-	# bewusst auf UPDATE_DISABLED.
-	for vp in wf_blur_vp:
-		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-	wf_state_vp[wf_state_index].render_target_update_mode = SubViewport.UPDATE_ONCE
-	terrain_mat.set_shader_parameter("water_tex", wf_state_vp[wf_state_index].get_texture())
+	water_gpu_tail.update(raw, blend)
+	terrain_mat.set_shader_parameter("water_tex", water_gpu_tail.current_texture())
 	# Vorgängerstand für `overlay_blend` (#174): das andere Ping-Pong-Ziel, das
 	# erst der NÄCHSTE Durchlauf wieder beschreibt.
-	terrain_mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
+	terrain_mat.set_shader_parameter("water_prev_tex", water_gpu_tail.previous_texture())
 	for band_mat in [river_mat, river_prev_mat]:
 		if band_mat != null:
-			band_mat.set_shader_parameter("water_tex", wf_state_vp[wf_state_index].get_texture())
-			band_mat.set_shader_parameter("water_prev_tex", wf_state_vp[previous].get_texture())
+			band_mat.set_shader_parameter("water_tex", water_gpu_tail.current_texture())
+			band_mat.set_shader_parameter("water_prev_tex", water_gpu_tail.previous_texture())
 
 func _update_debug_difference_texture() -> void:
 	debug_difference_field.upload(terrain_mat, N,
