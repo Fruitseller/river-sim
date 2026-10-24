@@ -31,7 +31,10 @@ import SimCore
 public enum CoastMaterial {
 
     /// Küstenfeld einer Welt, je Zelle.
-    public struct Shore {
+    /// `Sendable` (Issue #201): reiner Wert-Puffer (nur `[UInt8]`/`[Float]`-
+    /// Felder), die `empty`-Konstante ist globales `let`. Öffentliche Structs
+    /// bekommen keine implizite Konformität, hier ist sie vollständig geprüft.
+    public struct Shore: Sendable {
         /// Chebyshev-Abstand (Zellen) zur nächsten Meereszelle, gedeckelt
         /// (`seaDistance`). Meer = 0.
         public let distance: [UInt8]

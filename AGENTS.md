@@ -30,12 +30,18 @@ swift test -c release --package-path SimCore \
 ```
 
 - `-c release` ist Pflicht: Debug ist bei diesen Grids zu langsam.
-- Sprachmodus: `SimCore/Package.swift` deklariert tools-version 6.0, aber
-  `swiftLanguageModes: [.v5]`: der Code ist Swift-5-Concurrency (u. a.
-  `Terrain.parallel` mit nicht-`Sendable`-Closures). Der frühere Schalter
-  `-Xswiftc -swift-version -Xswiftc 5` entfällt; mitgegeben schadet er nicht,
-  erzeugt aber je Modul die Warnung „language mode was overridden".
-  Umstieg auf Swift 6: Issue #201.
+- Sprachmodus: die Targets `SimCore`, `SimRender`, `SimPerf` und `SimCoreTests`
+  kompilieren im **Swift-6-Modus** (strikte Nebenläufigkeitsprüfung), je Target
+  via `.swiftLanguageMode(.v6)` in `SimCore/Package.swift` (Issue #201). Die
+  unsicheren Stellen stehen ZENTRAL an den Parallel-Helfern als
+  `nonisolated(unsafe)`/`@unchecked Sendable` mit Begründung (`Terrain.parallel`,
+  `parallelChunks`, `BackgroundJob`, `Terrain.BeltSchedule`, die direkten
+  `concurrentPerform`-Blöcke) statt an den ~56 Aufrufstellen — die Signatur der
+  Helfer bleibt bewusst nicht-`@Sendable`, die Disjunktheit der Index-Bereiche
+  ist Projektregel und wird von den Bit-Identitäts-Wächtern geprüft. Wer
+  Nebenläufigkeit ändert, ändert genau diese Engpässe. Die Extension
+  (eigenes Paket, tools 5.9) läuft weiterhin im Swift-5-Modus; ihr Umstieg ist
+  die offene Reststufe von Issue #201 (hängt an SwiftGodot).
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 - **Linux-CI lokal reproduzieren:** die Pflichtsuite rechnet auf dem Runner mit
   der glibc-libm, also auf einer anderen Welt-Realisierung als unter macOS;

@@ -13,7 +13,11 @@ final class RasterBeltTests: XCTestCase {
     /// Wasserfeld als `deferTail`-Ausgabe: die Kanäle VOR Blur und EWMA, also
     /// genau das, was die Regeln entscheiden (der Blur verbreitert danach
     /// jeden Lauf um eine Zelle, auch auf eine Nachbar-Bank).
-    private static let world: (terrain: Terrain, mesh: RibbonMesh, water: [UInt8]) = {
+    ///
+    /// `nonisolated(unsafe)` (Issue #201): `Terrain`/`RibbonMesh` sind nicht
+    /// `Sendable`, die Fixture wird EINMAL gebaut und danach nur gelesen —
+    /// XCTest ruft die Testmethoden einer Klasse seriell auf.
+    nonisolated(unsafe) private static let world: (terrain: Terrain, mesh: RibbonMesh, water: [UInt8]) = {
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
         let render = RenderState(geometryMode: true)
         render.buildRiverRibbons(terrain, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
