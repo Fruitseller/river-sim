@@ -71,6 +71,34 @@ func _frames(count: int) -> void:
 	for _i in count:
 		await process_frame
 
+## Wendet ein Update an und BESTÄTIGT aus dem Readback, dass die Kette es
+## umgesetzt hat: das beschriebene Ping-Pong-Ziel muss einen ANDEREN Inhalt
+## tragen als vorher (sein alter Stand ist vor dem Update `previous_texture()`).
+## Ist das Update nach den Warteframes noch nicht sichtbar, tickt die Kette
+## einmal NACH (retick — mit unveränderten Uniformen idempotent) und erst dann
+## gilt sie als hängend. So ist der Test unabhängig davon, ob der Renderer die
+## Kette im selben Frame oder über mehrere Frames zieht.
+func _tick(tail, raw: PackedByteArray, blend: float, idle: int) -> bool:
+	var before := _tex_data(tail.previous_texture())
+	tail.update(raw, blend)
+	await _frames(idle)
+	if _tex_data(tail.current_texture()) != before:
+		await _frames(2)
+		return true
+	tail.retick()
+	await _frames(maxi(idle, 3))
+	if _tex_data(tail.current_texture()) != before:
+		await _frames(2)
+		return true
+	return false
+
+## Rohdaten eines Textur-Readbacks; nie gerendert → leer (vergleichbar).
+func _tex_data(tex: Texture2D) -> PackedByteArray:
+	var img: Image = tex.get_image()
+	if img.is_empty():
+		return PackedByteArray()
+	return img.get_data()
+
 func _run() -> void:
 	if not ClassDB.class_exists("SimNode"):
 		push_error("FAIL: SimNode nicht registriert (godot --headless --path game --import)")
@@ -156,8 +184,10 @@ func _run() -> void:
 	tail.setup(sim_gpu, n)
 	var first_state := Image.new()
 	for i in gpu_frames.size():
-		tail.update(gpu_frames[i]["water"], gpu_frames[i]["blend"])
-		await _frames(4)
+		if not await _tick(tail, gpu_frames[i]["water"], gpu_frames[i]["blend"], 4):
+			_fail("Hauptkette: Update %d wurde vom Readback nicht umgesetzt" % i)
+			_finish()
+			return
 		if i == 0:
 			first_state = _state_image(tail)
 	var gpu_final := _state_image(tail)
@@ -180,8 +210,10 @@ func _run() -> void:
 	var tail_prime := WaterGpuTailScript.new()
 	root.add_child(tail_prime)
 	tail_prime.setup(sim_gpu, n)
-	tail_prime.update(gpu_frames[0]["water"], timelapse_blend)
-	await _frames(6)
+	if not await _tick(tail_prime, gpu_frames[0]["water"], timelapse_blend, 6):
+		_fail("Priming-Kette: Update wurde vom Readback nicht umgesetzt")
+		_finish()
+		return
 	if not _compare(_state_image(tail_prime), _image_bytes(first_state),
 			"priming", TOL_MAX, TOL_MEAN):
 		_finish()
@@ -192,8 +224,10 @@ func _run() -> void:
 	root.add_child(tail_slow)
 	tail_slow.setup(sim_gpu, n)
 	for i in gpu_frames.size():
-		tail_slow.update(gpu_frames[i]["water"], gpu_frames[i]["blend"])
-		await _frames(10)
+		if not await _tick(tail_slow, gpu_frames[i]["water"], gpu_frames[i]["blend"], 10):
+			_fail("Kadenz-Kette: Update %d wurde vom Readback nicht umgesetzt" % i)
+			_finish()
+			return
 	if not _compare(gpu_final, _image_bytes(_state_image(tail_slow)),
 			"frame_rate", TOL_CADENCE, TOL_CADENCE):
 		_finish()
@@ -218,35 +252,44 @@ func _collect_frames(sim: Object, defer: bool, out: Array) -> void:
 ## Rendert ein magentafarbenes Rechteck in einen SubViewport und liest es
 ## zurück: trifft die Farbe, existiert ein Rendering-Device. Ein LEERER
 ## Readback ist der Dummy-Renderer von --headless → Überspringen ist rechtens.
-## Ein NICHT leeres, aber falsches Bild wäre ein kaputter Renderer → rot.
+## Ein NICHT leeres, aber dauerhaft schwarzes Bild wäre ein kaputter Renderer
+## → rot. UPDATE_ALWAYS statt ONCE: der Anlauf (Fenster, erster Frame, Shader
+## unter llvmpipe) braucht unbestimmt viele Frames, ein ONCE kann verstreichen,
+## bevor jemand zusieht.
 func _probe_renderer() -> bool:
+	# Produktionsform: SubViewports hängen unter einem Node (Main), nicht
+	# direkt am Fenster — hier dasselbe.
+	var host := Node.new()
+	root.add_child(host)
 	var vp := SubViewport.new()
 	vp.size = Vector2i(8, 8)
 	vp.disable_3d = true
-	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	var rect := ColorRect.new()
 	rect.size = Vector2(8, 8)
 	rect.color = Color(1.0, 0.0, 1.0, 1.0)
 	vp.add_child(rect)
-	root.add_child(vp)
-	var img: Image = Image.new()
-	# Bis zu 6 Frames lang: Fenster- und Renderer-Anlauf (xvfb/llvmpipe) kann
-	# die ersten Frames brauchen; der Dummy-Renderer bleibt dauerhaft leer.
-	for _i in 6:
+	host.add_child(vp)
+	var ok := false
+	var non_empty := false
+	for _i in 10:
 		await process_frame
-		img = vp.get_texture().get_image()
-		if not img.is_empty():
+		var img: Image = vp.get_texture().get_image()
+		if img.is_empty():
+			continue
+		non_empty = true
+		if img.get_pixel(4, 4).is_equal_approx(Color(1.0, 0.0, 1.0, 1.0)):
+			ok = true
 			break
-	vp.queue_free()
-	if img.is_empty():
+	host.queue_free()
+	if ok:
+		print("renderer: ", RenderingServer.get_video_adapter_name())
+		return true
+	if not non_empty:
 		return false
-	if not img.get_pixel(4, 4).is_equal_approx(Color(1.0, 0.0, 1.0, 1.0)):
-		_fail("Rendering-Device vorhanden, aber der Readback trifft nicht "
-			+ "(Format %s, Pixel %s) — Überspringen wäre falsch"
-			% [img.get_format(), img.get_pixel(4, 4)])
-		return false
-	print("renderer: ", RenderingServer.get_video_adapter_name())
-	return true
+	_fail("Rendering-Device vorhanden, aber der SubViewport-Readback bleibt "
+		+ "schwarz — Überspringen wäre falsch")
+	return false
 
 func _state_image(tail) -> Image:
 	return tail.current_texture().get_image()
