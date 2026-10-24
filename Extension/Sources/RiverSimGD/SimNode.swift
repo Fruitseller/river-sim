@@ -476,6 +476,27 @@ final class SimNode: Node {
         PackedFloat64Array(WaterUniforms.contract.map(\.value))
     }
 
+    // MARK: Pass-Plan des GPU-Wasser-Schwanzes (Issue #95)
+
+    // Struktur der GPU-Kette in `game/scripts/WaterGpuTail.gd`: Pass-Zahl,
+    // Kanal-Masken (2 Werte je Pass, R dann G) und Priming des ersten Ticks.
+    // Quelle ist `SimRender.WaterTailPlan` — dieselbe Quelle, aus der der
+    // CPU-Pfad (`WaterFieldRenderer`) seine Pass-Zahlen nimmt; die Brücke
+    // hält keine eigene Zahl. Die Blende je Tick reist seit jeher im Frame
+    // (`water_blend`), nicht hier.
+
+    @Callable func waterTailBlurPassCount() -> Int {
+        WaterTailPlan.blurPassCount
+    }
+
+    @Callable func waterTailBlurMasks() -> PackedFloat32Array {
+        PackedFloat32Array(WaterTailPlan.blurMasks().map { Float($0) })
+    }
+
+    @Callable func waterTailPrimeBlend() -> Float {
+        Float(WaterTailPlan.primeBlend)
+    }
+
     // MARK: Sculpting
 
     /// Hebt (dir > 0) oder senkt (dir < 0) das Terrain in einem Pinsel um
