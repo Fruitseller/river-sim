@@ -622,6 +622,39 @@ RS_STEP=20000 RS_DIST=90 RS_SHOT=/tmp/gpu.png RS_WATER_GPU=1 "$GODOT" --path gam
 RS_STEP=20000 RS_DIST=90 RS_SHOT=/tmp/cpu.png "$GODOT" --path game    # Bildvergleich
 ```
 
+### Deckung seit Issue #95 (Oktober 2026)
+
+Seit #95 ist der Pass-Plan (Pass-Zahlen, Kanal-Masken, Priming) ein Datum aus
+`SimRender.WaterTailPlan` — dieselbe Quelle, aus der der CPU-Pfad seine
+Pass-Zahlen nimmt — und der Vertragstest `game/tests/water_gpu_tail.gd` vergleicht
+beide Fassungen Zelle für Zelle (in CI mit echtem Renderer über xvfb + llvmpipe,
+`GODOT_TEST_RENDER=1`; headless überspringt er den GPU-Teil mit Meldung).
+Messwerte des CI-Laufs vom 2026-10-24 (ubuntu-22.04-Runner, llvmpipe, n = 720,
+Standard-Seed, settled + 6 Zeitraffer-Takte à 1000 Jahre, Blende 0.15):
+
+| Vergleich | max (255tel) | Mittel (255tel) | Grenze max/Mittel |
+| --- | --- | --- | --- |
+| CPU-Schwanz gegen GPU-Kette (Endzustand, alle 4 Kanäle) | 1,33 | 0,07 | 4 / 2 |
+| Priming: erster Takt mit Zeitraffer-Blende ≡ erster Takt mit Blende 1.0 | 0,50 | 0,02 | 4 / 2 |
+| Frame-Kadenz 4 gegen 10 Frames je Update (EWMA) | 0,50 | 0,06 | 1 / 1 |
+
+Einordnung: Die Toleranz (Begründung am Test) ist die Summe aus der einseitigen
+`byte01`-Abkappung (≤ 1/255, auf beiden Seiten — das GPU-Rohfeld ist bereits
+quantisiert, die CPU quantisiert erst am Ende), der durch Blur (Konvex), max
+(monoton) und EWMA (konvex) nicht vergrößerten Rohfeld-Quantisierung und der
+Half-Float-Auflösung des Zustands (≈ 0,12/255 je Schritt). Die gemessene
+Abweichung bleibt deutlich darunter und stimmt mit dem älteren in-situ
+Bildvergleich überein (1,09/255 mittlere Abweichung, M4 Max): die Kette ist
+zur Deckung gebracht, der Schalter bleibt aus den Messgründen oben trotzdem aus.
+Der Kadenz-Vergleich bestätigt die Framerate-Unabhängigkeit der EWMA: sie tickt
+mit dem Textur-Update (`UPDATE_ONCE` je `update()`), nicht mit dem Frame.
+
+Reproduktion des Deckungsvergleichs:
+
+```sh
+GODOT_TEST_RENDER=1 scripts/godot-test.sh res://tests/water_gpu_tail.gd WATER_GPU_TAIL_OK
+```
+
 ---
 
 ## K. Ein Funnel statt zweier Fassungen (August 2026, Issue #81) — kostenlos
