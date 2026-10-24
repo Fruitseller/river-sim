@@ -55,12 +55,31 @@ if [[ ! -x "$GODOT" ]]; then
 	exit 1
 fi
 
+# GODOT_TEST_RENDER=1 (Issue #95): den Vertragstest NICHT headless, sondern mit
+# echtem Renderer laufen lassen — GPU-Vertragstests (water_gpu_tail.gd) brauchen
+# ein Rendering-Device für SubViewport-Readbacks. Auf dem CI-Runner stellt xvfb
+# + Mesa-llvmpipe das Device (LIBGL_ALWAYS_SOFTWARE zwingt Software-GL); auf
+# einem Desktop (macOS/Linux mit Display) genügt der direkte Aufruf. Rendering-
+# Methode gl_compatibility: der Runner hat keinen Vulkan, und der Compatibility-
+# Renderer reicht für die canvas_item-Rechen-Shader der Kette. Ohne Device
+# überspringt der Test seinen GPU-Teil mit klarer Meldung (s. Skriptkopf) — ein
+# headless CI ohne diesen Schalter bleibt also grün statt falsch rot.
+if [[ "${GODOT_TEST_RENDER:-0}" == "1" ]]; then
+	if command -v xvfb-run >/dev/null 2>&1; then
+		RUNNER=(xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT" --path game --rendering-method gl_compatibility)
+	else
+		RUNNER=("$GODOT" --path game --rendering-method gl_compatibility)
+	fi
+else
+	RUNNER=("$GODOT" --headless --path game)
+fi
+
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 
 # tee, damit die Ausgabe im CI-Log live sichtbar bleibt; der Exit-Code kommt aus
 # PIPESTATUS, nicht aus tee.
-"$GODOT" --headless --path game --script "$SKRIPT" 2>&1 | tee "$LOG"
+"${RUNNER[@]}" --script "$SKRIPT" 2>&1 | tee "$LOG"
 RC=${PIPESTATUS[0]}
 
 if grep -qE "FAIL[_A-Z]*:" "$LOG"; then
