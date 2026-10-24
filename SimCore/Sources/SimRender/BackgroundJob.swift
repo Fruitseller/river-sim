@@ -23,7 +23,18 @@ import Foundation
 /// - `isReady` blockiert nie. `wait` und `take` blockieren, solange der Job
 ///   rechnet, und zählen diese Zeit (`waits`, `waitedSeconds`): das ist die
 ///   Messgröße „der Hauptthread hat auf die Sim gewartet".
-public final class BackgroundJob<Output> {
+///
+/// Swift 6 (Issue #201): `@unchecked Sendable` — der Typ IST die
+/// Nebenläufigkeit; `running`/`finished`/`output` stehen unter der Sperre,
+/// `waits`/`waitedSeconds` gehören laut Vertrag dem Besitzer-Thread allein.
+/// Die Arbeit selbst (`start`) bleibt eine nicht-`@Sendable`-Closure: sie
+/// erfasst bewusst nicht-`Sendable`-Objekte (Welt, Render-Zustand), die der
+/// Vertrag dem Job exklusiv überträgt — genau das kann das Typsystem ohne
+/// Besitzer-Disziplin nicht ausdrücken. EINE zentrale
+/// `nonisolated(unsafe)`-Erfassung in `start` (statt an jeder Aufrufstelle),
+/// dieselbe Bauform wie `Terrain.parallel`: Wer ein Rennen einbaut, baut es
+/// durch DIESEN Engpass, und die Tor-Wächter (`BackgroundJobTests`) sehen es.
+public final class BackgroundJob<Output>: @unchecked Sendable {
     private let queue: DispatchQueue
     private let lock = NSLock()
     /// Gruppe des unterwegs befindlichen Jobs, `nil` = keiner.
@@ -66,8 +77,9 @@ public final class BackgroundJob<Output> {
         }
         guard claimed else { return false }
         group.enter()
+        nonisolated(unsafe) let unsafeWork = work
         queue.async {
-            let result = work()
+            let result = unsafeWork()
             self.locked {
                 self.output = result
                 self.finished = true

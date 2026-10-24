@@ -420,7 +420,13 @@ public enum WorldSnapshot {
 
     /// Die Tests iterieren diese Tabellen (statt eine zweite Feldliste zu
     /// führen): ein neues Feld im Inventar wird damit automatisch mitgeprüft.
-    static let doubleFields: [FieldSpec<Double>] = [
+    ///
+    /// Swift 6 (Issue #201): `nonisolated(unsafe)`, weil `WritableKeyPath`
+    /// (objc-Klasse) nicht `Sendable` ist und `FieldSpec` ihn führt. Die
+    /// Tabellen sind unveränderliche `let`-Werte (String, KeyPath, Bool —
+    /// nichts davon wird hier angewendet, gelesen oder verändert); die
+    /// Markierung betrifft nur die globale Konstante, nicht die Nutzung.
+    nonisolated(unsafe) static let doubleFields: [FieldSpec<Double>] = [
         .init("h", \.h), .init("rock", \.rock), .init("sed", \.sed),
         .init("upliftBase", \.upliftBase), .init("rain", \.rain),
         .init("rainWeight", \.rainWeight, mayBeEmpty: true),
@@ -441,14 +447,14 @@ public enum WorldSnapshot {
         .init("streamMap", \.streamMap), .init("streamRate", \.streamRate),
         .init("disturb", \.disturb), .init("regenPending", \.regenPending),
     ]
-    static let int32Fields: [FieldSpec<Int32>] = [
+    nonisolated(unsafe) static let int32Fields: [FieldSpec<Int32>] = [
         .init("receiver", \.receiver), .init("order", \.order),
         .init("floodParent", \.floodParent),
     ]
-    static let uint8Fields: [FieldSpec<UInt8>] = [
+    nonisolated(unsafe) static let uint8Fields: [FieldSpec<UInt8>] = [
         .init("vegClass", \.vegClass), .init("endorheicBasin", \.endorheicBasin),
     ]
-    static let boolFields: [FieldSpec<Bool>] = [
+    nonisolated(unsafe) static let boolFields: [FieldSpec<Bool>] = [
         .init("isChannel", \.isChannel), .init("playaBed", \.playaBed),
     ]
 

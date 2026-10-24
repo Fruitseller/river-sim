@@ -477,11 +477,22 @@ public final class Terrain {
     /// eigenen Index) — das Ergebnis ist BIT-IDENTISCH zur sequenziellen Schleife.
     /// Mehr Chunks als Kerne, damit concurrentPerform die ungleich schnellen
     /// P-/E-Kerne auslasten kann.
+    ///
+    /// Swift 6 (Issue #201): `concurrentPerform` verlangt eine `@Sendable`-
+    /// Closure, und die Aufrufer-closures erfassen bewusst rohe Zeiger (die
+    /// Roh-Puffer-Sicht `Terrain.Bed` ist die Hot-Loop-Form) und `self`. Die
+    /// Disjunktheit der Bereiche sieht der Compiler nicht — sie ist die
+    /// Projektregel und wird von den Bit-Identitäts-Wächtern geprüft
+    /// (u. a. `BeltParallelTests`). EINE zentrale `nonisolated(unsafe)`-
+    /// Erfassungsstelle hier statt Streuung über die Aufrufer: die Signatur
+    /// bleibt nicht-`@Sendable`, damit die Aufrufstellen unverändert bleiben.
+    /// Wer ein Rennen einbaut, baut es durch DIESEN Engpass.
     @inline(__always) private func parallel(_ count: Int, _ body: (Int, Int) -> Void) {
         let chunks = min(count, max(1, Terrain.coreCount * 4))
         if chunks <= 1 { body(0, count); return }
+        nonisolated(unsafe) let unsafeBody = body
         DispatchQueue.concurrentPerform(iterations: chunks) { c in
-            body(count * c / chunks, count * (c + 1) / chunks)
+            unsafeBody(count * c / chunks, count * (c + 1) / chunks)
         }
     }
 
@@ -4387,11 +4398,16 @@ public final class Terrain {
         sums.withUnsafeMutableBufferPointer { sb in
         lands.withUnsafeMutableBufferPointer { lb in
         found.withUnsafeMutableBufferPointer { out in
-            let ph = hb.baseAddress!, ps = sb.baseAddress!, pl = lb.baseAddress!
-            let phf = fb.baseAddress!, pa = ab.baseAddress!, prb = rb.baseAddress!
             // Leeres Feld: `baseAddress` ist dann nicht sicher nil — der
-            // Schalter entscheidet, nicht der Zeiger.
-            let pout = out.baseAddress
+            // Schalter entscheidet, nicht der Zeiger. Swift 6 (Issue #201):
+            // rohe Zeiger über die Thread-Grenze als `nonisolated(unsafe)`
+            // deklariert — jeder Block schreibt ausschließlich `ps[c]`/`pl[c]`/
+            // `pout[c]` mit seinem eigenen `c` und liest nur. Disjunktheit ist
+            // Projektregel (s. `parallel`), die Markierung steht zentral hier,
+            // nicht an den Lesestellen.
+            nonisolated(unsafe) let ph = hb.baseAddress!, ps = sb.baseAddress!, pl = lb.baseAddress!
+            nonisolated(unsafe) let phf = fb.baseAddress!, pa = ab.baseAddress!, prb = rb.baseAddress!
+            nonisolated(unsafe) let pout = out.baseAddress
             DispatchQueue.concurrentPerform(iterations: blocks) { c in
                 // Vier Teilsummen je Block (feste Reihenfolge): so
                 // vektorisiert der Compiler die Schleife.
@@ -5898,7 +5914,13 @@ public final class Terrain {
     /// wartet nur auf seine überlappenden Vorgänger, nicht auf unabhängige
     /// langsame Läufe derselben Ebene. Alle Warteschlangen-Zugriffe sind unter
     /// dem Condition-Lock; Sim-Zustand wird hier nie angefasst.
-    final class BeltSchedule {
+    ///
+    /// `@unchecked Sendable` (Issue #201): dieser Typ IST der Parallelstart,
+    /// wird also von allen Worker-Threads gleichzeitig benutzt — der
+    /// Condition-Lock macht jeden Zugriff sicher. Die Prüfung übernimmt der
+    /// Compiler nicht (`waiting`/`ready` sind veränderlich), deshalb die
+    /// ausdrückliche, begründete Markierung statt Umbau.
+    final class BeltSchedule: @unchecked Sendable {
         private let condition = NSCondition()
         private var waiting: [Int]
         private let successors: [[Int]]
@@ -5991,9 +6013,15 @@ public final class Terrain {
                     for oi in ox0..<state.oxbows.count { self.plugOxbow(state.oxbows[oi], bed: bed, nn: nn) }
                 }
             }
+            // Swift 6 (Issue #201): `work` erfasst absichtlich nicht-`Sendable`
+            // Sim-Zustand (jeder Lauf seinen eigenen); die Exklusivität kommt
+            // vom `BeltSchedule`-Graphen, nicht vom Typsystem. Eine zentrale
+            // `nonisolated(unsafe)`-Erfassungsstelle statt Aufruf-Streuung —
+            // dieselbe Begründung wie bei `parallel` (s. dort).
+            nonisolated(unsafe) let unsafeWork = work
             DispatchQueue.concurrentPerform(iterations: min(Terrain.coreCount, runs.count)) { _ in
                 while let index = schedule.take() {
-                    work(index)
+                    unsafeWork(index)
                     schedule.finish(index)
                 }
             }
@@ -6287,9 +6315,14 @@ public final class Terrain {
         let nn = cfg.n, cnt = cfg.count, sea = cfg.sea
         let lakeEps = MeanderState.traceLakeDepth
         let minA = cfg.meanderMinCells * cfg.cellSize * cfg.cellSize
-        @inline(__always) func big(_ k: Int) -> Bool { hf[k] > sea && area[k] >= minA }
+        // Swift 6 (Issue #201): die Zeiger reisen in die @Sendable-Closures
+        // unten; die Abschnitte sind nach Quellen disjunkt und lesen nur
+        // (schreiben tut einzig `pf[ch]` je Block — Projektregel wie bei
+        // `parallel`, deshalb EINE zentrale unsichere Erfassung hier).
+        nonisolated(unsafe) let ph = h, phf = hf, pa = area, prb = receiver
+        @inline(__always) @Sendable func big(_ k: Int) -> Bool { phf[k] > sea && pa[k] >= minA }
         // Größter großer Zufluss einer Zelle (Gleichstand: kleinerer Index), −1 = keiner.
-        @inline(__always) func bestDonor(_ r: Int) -> Int {
+        @inline(__always) @Sendable func bestDonor(_ r: Int) -> Int {
             let ri = r % nn, rj = r / nn
             var best = -1
             for dj in -1...1 {
@@ -6299,8 +6332,8 @@ public final class Terrain {
                     let i = ri + di
                     guard i >= 0, i < nn else { continue }
                     let d = j * nn + i
-                    guard Int(receiver[d]) == r, big(d) else { continue }
-                    if best < 0 || area[d] > area[best] || (area[d] == area[best] && d < best) { best = d }
+                    guard Int(prb[d]) == r, big(d) else { continue }
+                    if best < 0 || pa[d] > pa[best] || (pa[d] == pa[best] && d < best) { best = d }
                 }
             }
             return best
@@ -6313,7 +6346,7 @@ public final class Terrain {
         let chunks = max(1, min(Terrain.coreCount, cnt / 4096))
         var found = [[DrainageSegment]](repeating: [], count: chunks)
         found.withUnsafeMutableBufferPointer { fb in
-            let pf = fb.baseAddress!
+            nonisolated(unsafe) let pf = fb.baseAddress!
             DispatchQueue.concurrentPerform(iterations: chunks) { ch in
                 var segs: [DrainageSegment] = []
                 var cells: [Int32] = []
@@ -6323,9 +6356,9 @@ public final class Terrain {
                     cells.append(Int32(s))
                     var c = s, confluence = false
                     while cells.count < cnt {
-                        let r = Int(receiver[c])
+                        let r = Int(prb[c])
                         if r < 0 || r >= cnt || r == c { break }
-                        if hf[r] <= sea || hf[r] - h[r] > lakeEps { break }
+                        if phf[r] <= sea || phf[r] - ph[r] > lakeEps { break }
                         cells.append(Int32(r))
                         if bestDonor(r) != c { confluence = true; break }
                         c = r
@@ -6450,12 +6483,20 @@ public final class Terrain {
         h.withUnsafeBufferPointer { hb in
         flatSeg.withUnsafeMutableBufferPointer { fsb in
         flatPos.withUnsafeMutableBufferPointer { fpb in
-            let po = ob.baseAddress!, pp = pb.baseAddress!, phf = hfb.baseAddress!, ph = hb.baseAddress!
-            let fs = fsb.baseAddress, fp = fpb.baseAddress
+            // Swift 6 (Issue #201): Zeiger und Offset-Tabelle reisen in die
+            // @Sendable-Closure — je Lauf `l` ein disjunktives Zeilen-Intervall,
+            // geschrieben wird nur `fs`/`fp` an `[base + i]` des eigenen Laufs
+            // (Projektregel wie bei `parallel`). `off` ist vor diesem Block
+            // gefüllt und wird hier nur gelesen; der let-Rebind nimmt der
+            // Closure die var-Referenz.
+            nonisolated(unsafe) let po = ob.baseAddress!, pp = pb.baseAddress!
+            nonisolated(unsafe) let phf = hfb.baseAddress!, ph = hb.baseAddress!
+            nonisolated(unsafe) let fs = fsb.baseAddress, fp = fpb.baseAddress
+            let offsets = off
             let lineChunks = max(1, min(old.count, Terrain.coreCount * 4))
             DispatchQueue.concurrentPerform(iterations: lineChunks) { cc in
             for l in (old.count * cc / lineChunks)..<(old.count * (cc + 1) / lineChunks) {
-                let ch = old[l], base = off[l]
+                let ch = old[l], base = offsets[l]
                 var prev: Int32 = -1
                 for (i, p) in ch.nodes.enumerated() {
                     let ci0 = min(max(Int(p.x.rounded()), 0), nn - 1), cj0 = min(max(Int(p.z.rounded()), 0), nn - 1)

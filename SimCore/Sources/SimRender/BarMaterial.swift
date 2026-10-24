@@ -29,7 +29,10 @@ import SimCore
 /// `SimCoreTests/BarMaterialTests.swift`.
 public enum BarMaterial {
 
-    public struct Field: Equatable {
+    /// `Sendable` (Issue #201): reiner Wert-Puffer (nur `[Float]`-Felder), die
+    /// `empty`-Konstante ist globales `let`. Öffentliche Structs bekommen keine
+    /// implizite Konformität, hier ist sie vollständig geprüft.
+    public struct Field: Equatable, Sendable {
         /// Sandgewicht 0 … 1 (junge Bank am Gerinne).
         public var sand: [Float]
         /// Verschiebung des Vegetationsgewichts (−1 … +1): Pionier-Grün auf

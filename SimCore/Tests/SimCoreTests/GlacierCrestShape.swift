@@ -141,7 +141,7 @@ final class GlacierCrestShape: XCTestCase {
         }
         print(String(format: "SCHNEE %@ | Deckung > 0,05: %.2f %% des Landes | Rampe: %.2f %%",
                      label, 100 * Double(vis) / Double(land.count), 100 * Double(ramp) / Double(land.count)))
-        fflush(stdout)
+        flushStdout()
         return (Double(flatHigh) / Double(max(1, high)), jag / Double(max(1, jagN)),
                 Double(iceCells) / Double(max(1, land.count)))
     }

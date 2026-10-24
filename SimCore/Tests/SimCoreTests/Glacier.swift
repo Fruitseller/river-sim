@@ -348,7 +348,7 @@ final class Glacier: XCTestCase {
                     let p = Glacier.pairedShape(ice, ref, cells: cells, halfWidth: w)
                     row += String(format: " | W%d b %.3f / %.3f Δ %+.3f n %d", w, p.a, p.b, p.a - p.b, p.count)
                 }
-                print(row); fflush(stdout)
+                print(row); flushStdout()
                 // Aufteilung der vergletscherten Zellen (Issue #174, §M): unter der
                 // Firn-Grenze (Zungen, Talgletscher), darüber (Kare, Nährgebiet)
                 // und nach Eisdicke — wo das V→U-Signal sitzt.
@@ -365,7 +365,7 @@ final class Glacier: XCTestCase {
                     let p = Glacier.pairedShape(ice, ref, cells: sub, halfWidth: 10)
                     split += String(format: " | %@ W10 Δ %+.3f n %d (%d Zellen)", name, p.a - p.b, p.count, sub.count)
                 }
-                print(split); fflush(stdout)
+                print(split); flushStdout()
             }
         } }
     }

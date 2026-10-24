@@ -43,6 +43,20 @@ extension XCTestCase {
     }
 }
 
+/// Spült den Textausgabepuffer nach einer gedruckten Messzeile — damit die
+/// Tabellen auch bei einem Absturz noch im Log stehen.
+///
+/// Swift 6 (Issue #201): `fflush(stdout)` geht im Swift-6-Modus nicht mehr
+/// plattformneutral — unter Linux importiert Glibc `stdout` als veränderliche
+/// globale Variable, und schon die Referenz darauf ist eine
+/// Nebenläufigkeits-Fehler (unter Darwin ist `stdout` eine Konstante, deshalb
+/// kompilierte der lokale Bau). `fflush(nil)` spült laut C-Standard ALLE
+/// offenen Ausgabeströme und nennt die Globalle überhaupt nicht; im
+/// Test-Harness ist das praktisch `stdout` allein (`stderr` ist ungepuffert).
+func flushStdout() {
+    fflush(nil)
+}
+
 /// Wächter über die Konvention selbst: Ohne ihn wäre „alle Messläufe sind
 /// gegatet" eine Review-Zusage statt einer geprüften Eigenschaft, und genau das
 /// war der Zustand, den Issue #52 abgestellt hat.
