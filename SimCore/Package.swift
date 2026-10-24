@@ -11,15 +11,20 @@ let package = Package(
         .executable(name: "simperf", targets: ["SimPerf"]),
     ],
     targets: [
-        .target(name: "SimCore"),
-        .target(name: "SimRender", dependencies: ["SimCore"]),
-        .executableTarget(name: "SimPerf", dependencies: ["SimCore"]),
-        .testTarget(name: "SimCoreTests", dependencies: ["SimCore", "SimRender"]),
-    ],
-    // Swift-5-Sprachmodus: der Code ist Swift-5-Concurrency (u. a.
-    // `Terrain.parallel` mit nicht-`Sendable`-Closures über rohe Zeiger).
-    // Früher als `-Xswiftc -swift-version -Xswiftc 5` an jedem Aufruf, was
-    // SwiftPM je Modul mit „language mode was overridden" quittierte.
-    // Umstieg auf Swift 6: Issue #201.
-    swiftLanguageModes: [.v5]
+        // Sprachmodus je Target (Issue #201): die Paket-Default-Ebene
+        // (`swiftLanguageModes`) gilt für alle Targets gleich; hier steht
+        // der Umstieg aber Target für Target an. SimCore/SimRender/SimPerf/
+        // SimCoreTests laufen im Swift-6-Modus mit strikter
+        // Nebenläufigkeitsprüfung — die unsicheren Stellen sind dort als
+        // `@unchecked Sendable`/`nonisolated(unsafe)` markiert und begründet.
+        // Die Extension (eigenes Paket, tools 5.9) baut SimCore als
+        // Abhängigkeit im selben Modus mit.
+        .target(name: "SimCore", swiftSettings: [.swiftLanguageMode(.v6)]),
+        .target(name: "SimRender", dependencies: ["SimCore"],
+                swiftSettings: [.swiftLanguageMode(.v6)]),
+        .executableTarget(name: "SimPerf", dependencies: ["SimCore"],
+                         swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(name: "SimCoreTests", dependencies: ["SimCore", "SimRender"],
+                    swiftSettings: [.swiftLanguageMode(.v6)]),
+    ]
 )

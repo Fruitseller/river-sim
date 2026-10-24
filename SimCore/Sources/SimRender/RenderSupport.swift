@@ -15,12 +15,19 @@ import SimCore
 /// Ergebnis ist BIT-IDENTISCH zur sequenziellen Schleife. Gleiche Idee wie
 /// `Terrain.parallel` in SimCore; die Render-Aufbereitung läuft sonst auf dem
 /// aufrufenden Thread.
+///
+/// Swift 6 (Issue #201): dieselbe zentrale `nonisolated(unsafe)`-Erfassung wie
+/// bei `Terrain.parallel` — die Aufrufer-closures arbeiten bewusst auf rohen
+/// Zeigern der Puffer, die Disjunktheit der Bereiche ist Projektregel und wird
+/// von den Bit-Identitäts-Wächtern der Renderer geprüft. Die Signatur bleibt
+/// nicht-`@Sendable`, damit die Aufrufstellen unverändert bleiben.
 private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
 @inline(__always) public func parallelChunks(_ count: Int, _ body: (Int, Int) -> Void) {
     let chunks = min(count, max(1, hostCoreCount * 4))
     if chunks <= 1 { body(0, count); return }
+    nonisolated(unsafe) let unsafeBody = body
     DispatchQueue.concurrentPerform(iterations: chunks) { c in
-        body(count * c / chunks, count * (c + 1) / chunks)
+        unsafeBody(count * c / chunks, count * (c + 1) / chunks)
     }
 }
 

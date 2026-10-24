@@ -256,26 +256,32 @@ public enum ErosionFilter {
             src.withUnsafeBufferPointer { s in
                 guard let outPtr = outBuf.baseAddress,
                       let sp = s.baseAddress else { return }
+                // Swift 6 (Issue #201): `peak` ist an dieser Stelle fertig
+                // berechnet und wird nur gelesen — der let-Rebind nimmt der
+                // @Sendable-Closure die var-Referenz. Die Zeiger erfassen je
+                // Zeile `j` disjunkt (Projektregel wie bei `Terrain.parallel`).
+                let peakValue = peak
+                nonisolated(unsafe) let outP = outPtr, spP = sp
                 DispatchQueue.concurrentPerform(iterations: n) { j in
                     let inv = 1.0 / Double(n - 1)
                     for i in 0..<n {
                         let k = j * n + i
-                        let hv = sp[k]
+                        let hv = spP[k]
                         // Küsten-Fade: Meeresboden/Strand unangetastet.
                         let landT = clamp01((hv - (sea - 0.02)) / 0.07)
                         let landFade = landT * landT * (3 - 2 * landT)
-                        if landFade <= 0 { outPtr[k] = hv; continue }
+                        if landFade <= 0 { outP[k] = hv; continue }
                         let iL = max(i - 1, 0), iR = min(i + 1, n - 1)
                         let jD = max(j - 1, 0), jU = min(j + 1, n - 1)
-                        let sx = (sp[j * n + iR] - sp[j * n + iL]) * scaleUV
-                        let sy = (sp[jU * n + i] - sp[jD * n + i]) * scaleUV
-                        let fade = min(1, max(-1, (hv - valley) / (peak - valley) * 2 - 1))
+                        let sx = (spP[j * n + iR] - spP[j * n + iL]) * scaleUV
+                        let sy = (spP[jU * n + i] - spP[jD * n + i]) * scaleUV
+                        let fade = min(1, max(-1, (hv - valley) / (peakValue - valley) * 2 - 1))
                         let e = evaluate(px: Double(i) * inv + seedOffsetX,
                                          py: Double(j) * inv + seedOffsetY,
                                          h: hv, sx: sx, sy: sy,
                                          fadeTarget: fade, p: params)
                         let off = (heightOffset.0 + (-fade - heightOffset.0) * heightOffset.1) * e.magnitude
-                        outPtr[k] = hv + (e.dh + off) * landFade
+                        outP[k] = hv + (e.dh + off) * landFade
                     }
                 }
             }

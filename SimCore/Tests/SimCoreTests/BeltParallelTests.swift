@@ -23,7 +23,10 @@ final class BeltParallelTests: XCTestCase {
         }
         let schedule = Terrain.BeltSchedule(boxes)
         let lock = NSLock()
-        var active: Set<Int> = [], completed: Set<Int> = []
+        // Swift 6 (Issue #201): beide Mengen werden ausschließlich unter dem
+        // obigen `lock` gelesen und geschrieben — der Wächter PRÜFT hier ja
+        // gerade die Disziplin, die der Compiler nicht sehen kann.
+        nonisolated(unsafe) var active: Set<Int> = [], completed: Set<Int> = []
         DispatchQueue.concurrentPerform(iterations: 4) { _ in
             while let index = schedule.take() {
                 lock.lock()
