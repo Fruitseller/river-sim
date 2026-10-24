@@ -66,7 +66,7 @@ final class TimelapseFadeTests: XCTestCase {
         assertContains(main, "func _upload_overlays(frame: Dictionary) -> void:\n\toverlay_fade.start(",
                        hint: "Die Overlay-Blende startet mit dem Overlay-Upload")
         assertContains(main, "height_fade.bind(ocean_mat)", hint: "Auch das Meer blendet die Höhe")
-        assertContains(main, "terrain_mat.set_shader_parameter(\"water_prev_tex\", wf_state_vp[previous].get_texture())",
+        assertContains(main, "terrain_mat.set_shader_parameter(\"water_prev_tex\", water_gpu_tail.previous_texture())",
                        hint: "RS_WATER_GPU: Vorgängerstand ist das andere Ping-Pong-Ziel")
     }
 }

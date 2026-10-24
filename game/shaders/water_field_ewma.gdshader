@@ -18,8 +18,11 @@ uniform sampler2D fresh : filter_nearest, repeat_disable;
 uniform sampler2D state : filter_nearest, repeat_disable;
 // 1.0 = frischen Wert sofort übernehmen (Sprung, Sculpting, erster Frame),
 // klein = weiches Blenden im Zeitraffer. Gleiche Bedeutung wie das `blend`-
-// Argument der CPU-Fassung.
-uniform float blend : hint_range(0.0, 1.0) = 1.0;
+// Argument der CPU-Fassung. Der Wert ist ein Datum: er reist je Tick aus dem
+// Frame-Protokoll (`water_blend`, RenderState.frame), und der ERSTE Tick
+// bekommt das Priming aus SimRender (WaterTailPlan.primeBlend, Issue #95)
+// über die Brücke. Kein Default — ein Literal wäre die Kopie.
+uniform float blend : hint_range(0.0, 1.0);
 
 void fragment() {
 	ivec2 p = ivec2(FRAGCOORD.xy);
