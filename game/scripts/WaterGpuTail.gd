@@ -108,16 +108,6 @@ func update(raw: PackedByteArray, blend: float) -> void:
 		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	state_vp[state_index].render_target_update_mode = SubViewport.UPDATE_ONCE
 
-## Taktet die Kette NOCH EINMAL, ohne Daten oder Uniformen zu ändern: ein
-## Render-Wiederholung mit unveränderten Uniformen liefert dasselbe Ergebnis
-## (idempotent). Der Vertragstest fasst damit nach, wenn ein UPDATE_ONCE
-## verloren ging (der Readback blieb unverändert), bevor er die Kette als
-## hängend meldet — Produktionscode ruft das nicht.
-func retick() -> void:
-	for vp in blur_vp:
-		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-	state_vp[state_index].render_target_update_mode = SubViewport.UPDATE_ONCE
-
 ## Rohfeld (RGBA8, ungeblurt — `SimNode` mit `setDeferWaterTail(true)`) in den
 ## ersten Blur-Pass laden. Neues Image je Upload: der alte Stand bleibt damit
 ## für einen noch ausstehenden Read des Renderers unverändert (separater
