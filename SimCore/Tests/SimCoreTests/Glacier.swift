@@ -1198,11 +1198,11 @@ final class Glacier: XCTestCase {
 
     // MARK: - Abnahme 6: abgeschaltet bit-identisch
 
-    /// `iceEnabled = false`: kein Eis, keine Maske — und damit fallen BEIDE Gates
-    /// und der ganze Pass weg. Der Test prüft genau die Vorbedingungen dieser
-    /// Bit-Identität (dass `underIce` leer bleibt, ist die Bedingung, unter der
-    /// `outletIncision` und `Hydraulic.erode` ihre Gletscher-Zweige gar nicht
-    /// erst betreten).
+    /// `iceEnabled = false`: kein Eis, keine Maske — und damit fällt das
+    /// Gate des Bett-Funnels (`Terrain.Bed.erode`, seit #96 die EINE Prüfstelle
+    /// für alle Schreiber) samt dem ganzen Pass weg. Der Test prüft genau die
+    /// Vorbedingungen dieser Bit-Identität (dass `underIce` leer bleibt, ist
+    /// die Bedingung, unter der keine Bett-Schreibung mehr gegatet wird).
     func testDisabledIceIsBitIdentical() {
         var off = cfg(n: 192); off.iceEnabled = false
         let t = Terrain(config: off, seed: 1337)
