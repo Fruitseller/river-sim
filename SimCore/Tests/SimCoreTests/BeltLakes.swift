@@ -186,7 +186,7 @@ final class BeltLakeTests: XCTestCase {
         d[0] = 0x42; d[1] = 0x4d; le(size, 2, 4); le(54, 10, 4); le(40, 14, 4); le(n, 18, 4); le(n, 22, 4)
         le(1, 26, 2); le(24, 28, 2); le(row * n, 34, 4)
         for j in 0..<n { for i in 0..<n { for c in 0..<3 { d[54 + (n - 1 - j) * row + i * 3 + c] = px[(j * n + i) * 3 + c] } } }
-        FileManager.default.createFile(atPath: path, contents: Data(d))
+        _ = FileManager.default.createFile(atPath: path, contents: Data(d))
     }
 
     /// Zeitreihe: wie entstehen die Geisterseen? Je 10-Jahr-Schritt die Zahl
@@ -470,7 +470,7 @@ final class BeltLakeTests: XCTestCase {
             }
             sa += 2
         }
-        FileManager.default.createFile(atPath: "\(dir)/zoom_\(seed)_\(Int(t.years)).bmp", contents: Data(d))
+        _ = FileManager.default.createFile(atPath: "\(dir)/zoom_\(seed)_\(Int(t.years)).bmp", contents: Data(d))
     }
 }
 
