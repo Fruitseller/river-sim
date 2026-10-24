@@ -48,10 +48,14 @@ final class BedFunnelTests: XCTestCase {
     /// Ein Aufruf-Weg in den Funnel: Name für die Fehlermeldung plus die beiden
     /// Operationen. Die Tests laufen über diese Tabelle, statt die Wahl des Wegs
     /// an jeder Aufrufstelle erneut auszuschreiben.
-    private struct CallShape {
+    ///
+    /// `Sendable` (Issue #201): die statischen Tabellen-Einträge sind globales
+    /// `let`; die Closures sind zustandslos (`@Sendable`, sie rufen nur Methoden
+    /// ihres Arguments) — die Konformität ist vollständig geprüft.
+    private struct CallShape: Sendable {
         let name: String
-        let erode: (Terrain, Int, Double) -> Double
-        let deposit: (Terrain, Int, Double) -> Double
+        let erode: @Sendable (Terrain, Int, Double) -> Double
+        let deposit: @Sendable (Terrain, Int, Double) -> Double
     }
 
     private static let viaProperty = CallShape(
@@ -115,7 +119,7 @@ final class BedFunnelTests: XCTestCase {
     /// Operation geprüft wird, sagt der KeyPath in `CallShape` — die Wahl ist
     /// dort schon modelliert und wird hier nicht als Flag zweitverwaltet.
     private func checkParity(withIce: Bool,
-                             _ op: KeyPath<CallShape, (Terrain, Int, Double) -> Double>,
+                             _ op: KeyPath<CallShape, @Sendable (Terrain, Int, Double) -> Double>,
                              _ label: String) {
         let c = cfg()
         let byProperty = Terrain(config: c, seed: 4711)

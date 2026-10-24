@@ -142,8 +142,12 @@ struct RangeSkeleton {
         f.hill.withUnsafeMutableBufferPointer { hb in
         f.corridor.withUnsafeMutableBufferPointer { cb in
         f.rise.withUnsafeMutableBufferPointer { rb in
-            let pm = mb.baseAddress!, ph = hb.baseAddress!
-            let pc = cb.baseAddress!, pr = rb.baseAddress!
+            // Swift 6 (Issue #201): rohe Zeiger in die @Sendable-Closure — je
+            // Zeile `j` ein disjunktes Zeilen-Intervall, geschrieben wird nur
+            // Index `j * n + i` des eigenen `j` (Projektregel wie bei
+            // `Terrain.parallel`).
+            nonisolated(unsafe) let pm = mb.baseAddress!, ph = hb.baseAddress!
+            nonisolated(unsafe) let pc = cb.baseAddress!, pr = rb.baseAddress!
             DispatchQueue.concurrentPerform(iterations: n) { j in
                 for i in 0..<n {
                     let p = SIMD2(Double(i), Double(j))
