@@ -2116,3 +2116,45 @@ Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt iden
 
 
 
+
+## VIII. Eine Bett-Regel für jeden Schreiber (Oktober 2026, Issue #96) — bit-identisch
+
+### Umbau
+
+Auslass-Inzision, Tropfenschleife und Pinsel schreiben seit #96 ausschließlich
+über den Bett-Funnel; Regel (erst Sediment, dann Fels) und Gletscher-Gate
+stehen einzig in `Terrain.Bed.erode/deposit`. Drei Konstruktionen dabei:
+
+1. **Ziel-Fassung `erodeCellTo`** für die Auslass-Inzision: sie schreibt die
+   Zielhöhe `hNew` EXAKT statt `h −= (h − hNew)`. Der Rundtrip
+   `h − fl(h − hNew)` ist im aggressiven Regime (Abtrag > halbe Höhe, große
+   Becken-Auslässe) NICHT bit-gleich zu `hNew` — Stichprobe über 20 Mio.
+   Wertepaare der Inzisionsformel: **29,4 % aller Abträge weichen um 1 ulp ab**
+   (im Regime `hNew < h/2`: 5,9 Mio. von 9,9 Mio. ≈ **59 %**). Die naive
+   `erodeCell`-Übergabe des Deltas hätte den Fingerprint also brechen
+   müssen; die Ziel-Fassung hält ihn (s. u.). Pinnning-Wächter mit
+   konkretem Gegenbeispiel (h = 1.3, target = 0.3):
+   `BedFunnelTests.testTargetFasciaRoundtripIsNotBitIdentical`.
+2. **Eis-Zeile aus der Inzisions-Gate-Kette entfernt**: vergletscherte Zellen
+   laufen jetzt durch die Vorab-Kette und die serielle Formel, der Funnel
+   verwirft den Abtrag. Ergebnis bit-identisch, aber Formel-Arbeit mehr auf
+   Eis-Zellen — das ist die einzige messbare Kostenstelle (s. u.).
+3. **Tropfen-`deposit` rekonstruiert die Suspension-Fracht** aus dem
+   `Bed.deposit`-Rückgabewert (`amount − deposited`): gesperrte Zellen
+   liefern 0 zurück, die Fracht bleibt wie bisher in Suspension — dieselbe
+   Arithmetik wie vor dem Umbau, bit-identisch.
+
+### Gemessen (Apple-Silicon-Arbeitsplatz dieses Agenten, arm64, `--repeat 3`, 30 Schritte à dt=100, Seed 1337)
+
+| Größe | vorher | nachher | Bewertung |
+| --- | --- | --- | --- |
+| Fingerprint `--hash` | `31835ab8b1a85069` | `31835ab8b1a85069` | bit-identisch (nach JEDEM Teilschritt geprüft) |
+| ms/Schritt gesamt | 62,9 | 60,3–62,0 (2 Läufe) | im Lauf-zu-Lauf-Rauschen |
+| `outletIncision` | 2,61 ms | 2,80–2,83 ms | **+0,2 ms** — Eis-Zellen rechnen die Formel, der Funnel verwirft |
+| `Hydraulic.erode` | 2,12 ms | 2,09–2,18 ms | im Rauschen (Regel via `Bed.erode` inline) |
+
+Der +0,22-ms-Posten ist der bewusste Preis dafür, dass das Eis-Gate nur noch
+EINMAL steht und in keinem künftigen Pass vergessen werden kann; er beträgt
+0,35 % des Schritts. Der Pinsel läuft nicht im Fingerprint (kein Nutzereingriff
+im Mess-Harness); seine Funnel-Fassungen öffnen die Sicht je Zelle — einige
+Tausend Zellen je Strich, irrelevant gegen den Schritt.
