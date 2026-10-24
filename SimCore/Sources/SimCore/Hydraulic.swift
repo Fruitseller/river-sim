@@ -177,7 +177,9 @@ public enum Hydraulic {
     ///   (`Terrain.beltDropletGate`, Begründung dort). Auf
     ///   diesen Zellen rührt der Tropfen das BETT nicht an — weder erodierend
     ///   (unter einem Gletscher gibt es keinen fluvialen Abtrag) noch ablagernd
-    ///   (Schutt auf einer Eisoberfläche ist kein Sediment im Bett). Der nicht
+    ///   (Schutt auf einer Eisoberfläche ist kein Sediment im Bett): seit
+    ///   Issue #96 schreibt die Schleife beides über den Bett-Funnel-Kern
+    ///   (`Terrain.Bed.erode`/`deposit`), und die Maske ist deren Gate. Der nicht
     ///   abgelegte Anteil bleibt wie bei der Kanalmaske in Suspension und
     ///   erreicht das Bett erst hinter der Zunge — physisch genau der
     ///   Sander/Schwemmfächer am Gletschertor. Leeres Array = Verhalten wie ohne
@@ -286,9 +288,14 @@ public enum Hydraulic {
             let pstream = stmb.baseAddress, pflow = flowOn ? fwb.baseAddress : nil
             let pbx = bxb.baseAddress!, pby = byb.baseAddress!, pbw = bwb.baseAddress!
             let brushCount = bx.count
+            // Bett-Funnel-Kern (Issue #96): dieselbe Regel wie beim Terrain
+            // (`Bed.erode`/`Bed.deposit`), aber mit der STÄRKEREN Sperr-Maske
+            // des Tropfenpfads — `bedLocked` ist Eis ∪ Gürtelbett
+            // (`beltDropletGate`), nicht nur die Gletscher-Maske.
+            let bed = Terrain.Bed(h: ph, sed: psed, rock: prock,
+                                  locked: iceOn ? pice! : nil)
 
             @inline(__always) func dig(_ k: Int, _ amount: Double) -> Double {
-                if iceOn && pice![k] { return 0 }
                 var d = amount
                 let f = lithOn ? plith![k] : 1.0
                 if f != 1.0 {
@@ -298,25 +305,23 @@ public enum Hydraulic {
                 let room = ph[k] - floor
                 if room <= 0 { return 0 } // schon am Tiefseeboden
                 if d > room { d = room }  // nicht unter den Boden graben
-                let take = min(d, psed[k])
-                psed[k] -= take
-                prock[k] -= (d - take)
-                ph[k] -= d
-                return d
+                // Bett-Regel (erst Sediment, dann Fels) UND Sperr-Gate: der
+                // Funnel-Kern (Issue #96), mit der strengeren Maske des
+                // Tropfenpfads (Eis ∪ Gürtelbett, `bedLocked`).
+                return bed.erode(k, d)
             }
 
             @inline(__always) func deposit(_ k: Int, _ amount: Double) -> Double {
-                if iceOn && pice![k] { return amount }
                 var f = 1.0
                 if chanOn && pchan![k] { f = p.channelDepositDamp }
                 if ddOn && pdd![k] < f { f = pdd![k] }
-                if f >= 1 {
-                    psed[k] += amount; ph[k] += amount
-                    return 0
-                }
-                let put = amount * f
-                psed[k] += put; ph[k] += put
-                return amount - put
+                // Ablage über den Funnel-Kern (Issue #96): gesperrte Zellen
+                // (Eis ∪ Gürtelbett) nehmen nichts an — `Bed.deposit` liefert 0,
+                // der nicht abgelegte Rest bleibt in Suspension und erreicht
+                // das Bett erst hinter der Sperre (physisch: der Sander am
+                // Gletschertor). Bis #96 stand das Gate hier ausgeschrieben.
+                if f >= 1 { return amount - bed.deposit(k, amount) }
+                return amount - bed.deposit(k, amount * f)
             }
 
             var batch = Mulberry32(seed: seed)
