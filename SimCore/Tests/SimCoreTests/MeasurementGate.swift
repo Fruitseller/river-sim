@@ -46,15 +46,15 @@ extension XCTestCase {
 /// Spült den Textausgabepuffer nach einer gedruckten Messzeile — damit die
 /// Tabellen auch bei einem Absturz noch im Log stehen.
 ///
-/// Swift 6 (Issue #201): unter Linux importiert Glibc `stdout` als
-/// veränderliche globale Variable; der Zugriff ist im Swift-6-Modus eine
-/// Nebenläufigkeits-Fehler (unter Darwin ist `stdout` eine Konstante und
-/// unproblematisch). EIN zentraler Helfer mit `nonisolated(unsafe)` statt
-/// dreier Roh-Aufrufe — die C-Globalle ist zur Laufzeit so gut wie konstant
-/// (nur `freopen`/`dup2` könnten sie verschieben, was der Mess-Harness nie tut).
+/// Swift 6 (Issue #201): `fflush(stdout)` geht im Swift-6-Modus nicht mehr
+/// plattformneutral — unter Linux importiert Glibc `stdout` als veränderliche
+/// globale Variable, und schon die Referenz darauf ist eine
+/// Nebenläufigkeits-Fehler (unter Darwin ist `stdout` eine Konstante, deshalb
+/// kompilierte der lokale Bau). `fflush(nil)` spült laut C-Standard ALLE
+/// offenen Ausgabeströme und nennt die Globalle überhaupt nicht; im
+/// Test-Harness ist das praktisch `stdout` allein (`stderr` ist ungepuffert).
 func flushStdout() {
-    nonisolated(unsafe) let out = stdout
-    fflush(out)
+    fflush(nil)
 }
 
 /// Wächter über die Konvention selbst: Ohne ihn wäre „alle Messläufe sind
