@@ -1588,9 +1588,9 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Pfad auch.
     public var iceMoraineK: Double = 0.05
     /// Ab dieser Eisdicke gilt eine Zelle als VERGLETSCHERT: sie kommt in
-    /// `Terrain.underIce`, und die fluvialen Gates greifen (Auslass-Inzision,
-    /// Tropfen und der Bett-Funnel `Terrain.erodeCell`/`depositCell` — s.
-    /// `Terrain.updateIce`).
+    /// `Terrain.underIce`, und das Gate des Bett-Funnels greift — seit Issue
+    /// #96 die EINE Prüfstelle, über die Auslass-Inzision, Tropfen, Pinsel und
+    /// alle übrigen Bett-Bewegungen schreiben (s. `Terrain.updateIce`).
     /// 0.002 Höheneinheiten ≙ 8 m bei H_ref = 4000 m: unter einem Schneefeld
     /// dieser Mächtigkeit fließt kein Eis und der Bach läuft normal weiter. Der
     /// Wert hält den Saum der Gletscher schmal — ohne ihn wanderte die Maske mit
