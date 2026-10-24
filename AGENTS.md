@@ -189,6 +189,8 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/relief.gd
 "$GODOT" --headless --path game --script res://tests/canopy.gd
 "$GODOT" --headless --path game --script res://tests/ui_layout.gd
+"$GODOT" --headless --path game --script res://tests/water_gpu_tail.gd  # GPU-Teil überspringt ohne Rendering-Device
+GODOT_TEST_RENDER=1 scripts/godot-test.sh res://tests/water_gpu_tail.gd WATER_GPU_TAIL_OK  # mit Renderer (lokal Desktop, CI xvfb + llvmpipe)
 "$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
 ```
 
@@ -200,7 +202,7 @@ grüner Lauf nichts über den lokalen Stand.
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
 Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK`,
-`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`), nicht der
+`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`, `WATER_GPU_TAIL_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
@@ -273,9 +275,11 @@ diesem Tempo, J./Sek.; für Bildschirmvideos der Übergänge, s.
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
 der Wasser-Geometrie; A/B im selben Build; ohne den Schalter rendert die
 Geometrie), `RS_WATER_GPU` (Schwanzstufen des Raster-Wasserfelds — Blur, EWMA,
-Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension;
-standardmäßig AUS, weil die Ersparnis gemessen 1,8 ms je Aufruf ist und keine
-Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet
+Quantisierung — als SubViewport-Kette auf der GPU statt in der Extension; deren
+Pass-Plan — Kanal-Masken, Pass-Zahlen, Priming — ist seit #95 ein Datum aus
+`SimRender.WaterTailPlan` über die Brücke, Wächter `SimCoreTests/WaterTailPlanTests.swift`
+und `tests/water_gpu_tail.gd`; standardmäßig AUS, weil die Ersparnis gemessen
+1,8 ms je Aufruf ist und keine Bildraten-Wirkung hatte: `docs/perf-measurements.md` §J). `RS_SHOT` blendet
 zusätzlich die Bedienleiste aus, `RS_SHOT_UI` behält sie (Aufnahmen der
 Bedienung selbst, Issue #174). `RS_UI_BLUR=0` lässt den Weichzeichner hinter den
 Glas-Panels weg (A/B im selben Build, Kosten: `docs/zielbild-measurements.md`
@@ -304,7 +308,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd` (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd`, `water_gpu_tail.gd` (mit Renderer über xvfb + llvmpipe) (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
@@ -394,6 +398,16 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    Schwanzstufen des Wasserfelds (s. `RS_WATER_GPU`); sie enthalten bewusst
    keine Kalibrier-Zahl — alle Schwellen bleiben im Vertrag
    `SimCore.WaterRender` und wirken CPU-seitig, bevor das Feld entsteht.
+   Auch ihre STRUKTUR ist seit #95 kein Skript-Literal mehr: Pass-Zahl,
+   Kanal-Masken und Priming stehen als Daten in `SimRender.WaterTailPlan`
+   (derselben Quelle, aus der der CPU-Pfad seine Pass-Zahlen nimmt) und
+   reisen über die Brücke in `game/scripts/WaterGpuTail.gd`; die Shader
+   deklarieren ihre Uniforms default-frei. Wächter:
+   `SimCoreTests/WaterTailPlanTests.swift` (Struktur, headless) und
+   `tests/water_gpu_tail.gd` (ausführbare Deckung: CPU gegen GPU Zelle für
+   Zelle, Priming, Framerate-Unabhängigkeit der EWMA; braucht ein
+   Rendering-Device und überspringt sonst mit Meldung — in CI stellt es der
+   Wrapper über xvfb + llvmpipe bereit).
 
 Datenfluss pro Frame: ein Frame ist EIN Dictionary (`SimNode.packFrame`): Höhe,
 Jahr und Auslöser immer, die gedrosselten Overlays samt Seespiegel und

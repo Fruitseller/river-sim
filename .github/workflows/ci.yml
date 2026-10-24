@@ -233,3 +233,18 @@ jobs:
       - name: Bedienung (Issue #174, Paket E)
         run: |
           scripts/godot-test.sh res://tests/ui_layout.gd UI_LAYOUT_OK
+
+      # GPU-Wasser-Schwanz (Issue #95): der EINZIGE Vertragstest, der einen
+      # Renderer braucht (SubViewport-Readbacks; alle anderen laufen headless).
+      # xvfb + Mesa-llvmpipe stellen auf dem Runner ein Software-GL-Device;
+      # der Godot-Vertragstest vergleicht damit die GPU-Kette (Blur + EWMA aus
+      # water_field_*.gdshader, Pass-Plan aus SimRender.WaterTailPlan über die
+      # Brücke) Zelle für Zelle gegen den CPU-Pfad und belegt die Framerate-
+      # Unabhängigkeit der EWMA. Liefen die Umgebung doch ohne Device, würde
+      # der Test nur seinen GPU-Teil mit klarer Meldung überspringen.
+      - name: GPU-Wasser-Schwanz (Issue #95)
+        env:
+          GODOT_TEST_RENDER: 1
+        run: |
+          sudo apt-get install -y xvfb libgl1-mesa-dri
+          scripts/godot-test.sh res://tests/water_gpu_tail.gd WATER_GPU_TAIL_OK
