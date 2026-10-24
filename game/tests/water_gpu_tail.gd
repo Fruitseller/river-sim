@@ -66,38 +66,23 @@ func _fail(msg: String) -> void:
 	push_error("FAIL: " + msg)
 	failed = true
 
-## Wartet `count` Engine-Frames (SceneTree-Signal, feuert auch headless).
-func _frames(count: int) -> void:
-	for _i in count:
-		await process_frame
-
-## Wendet ein Update an und BESTÄTIGT aus dem Readback, dass die Kette es
-## umgesetzt hat: das beschriebene Ping-Pong-Ziel muss einen ANDEREN Inhalt
-## tragen als vorher (sein alter Stand ist vor dem Update `previous_texture()`).
-## Ist das Update nach den Warteframes noch nicht sichtbar, tickt die Kette
-## einmal NACH (retick — mit unveränderten Uniformen idempotent) und erst dann
-## gilt sie als hängend. So ist der Test unabhängig davon, ob der Renderer die
-## Kette im selben Frame oder über mehrere Frames zieht.
-func _tick(tail, raw: PackedByteArray, blend: float, idle: int) -> bool:
-	var before := _tex_data(tail.previous_texture())
+## Wendet ein Update an und wartet den EXPLIZITEN Render-Abschluss ab:
+## `update()` stellt alle Kettenglieder auf UPDATE_ONCE — Godot zeichnet sie
+## beim nächsten Draw —, und `RenderingServer.frame_post_draw` feuert NACH
+## jedem abgeschlossenen Draw. Nach `idle` Abwartungen sind also mindestens
+## `idle` Draws vorbei, mehr als die Kettentiefe (2 Blur-Pässe + EWMA), selbst
+## wenn jedes Glied seinen eigenen Frame bräuchte.
+##
+## BEWUSST kein Inhalts-Diff gegen den alten Backbuffer mehr (Review zu #205):
+## Ein korrekt ausgeführtes Update kann denselben Zustand ERGEBEN wie der
+## alte Stand des Ping-Pong-Ziels (unverändertes oder quantisiert identisches
+## Feld) — der Diff hätte das als „Render nicht ausgeführt" gewertet und den
+## Test falsch rot gemacht. Der Render-Abschluss ist das semantisch richtige
+## Signal: Er sagt, DASS gezeichnet wurde, nicht, was dabei herauskam.
+func _tick(tail, raw: PackedByteArray, blend: float, idle: int) -> void:
 	tail.update(raw, blend)
-	await _frames(idle)
-	if _tex_data(tail.current_texture()) != before:
-		await _frames(2)
-		return true
-	tail.retick()
-	await _frames(maxi(idle, 3))
-	if _tex_data(tail.current_texture()) != before:
-		await _frames(2)
-		return true
-	return false
-
-## Rohdaten eines Textur-Readbacks; nie gerendert → leer (vergleichbar).
-func _tex_data(tex: Texture2D) -> PackedByteArray:
-	var img: Image = tex.get_image()
-	if img.is_empty():
-		return PackedByteArray()
-	return img.get_data()
+	for _i in idle:
+		await RenderingServer.frame_post_draw
 
 func _run() -> void:
 	if not ClassDB.class_exists("SimNode"):
@@ -178,16 +163,13 @@ func _run() -> void:
 		_finish()
 		return
 
-	# --- Hauptkette (Kadenz 4 Frames je Update) ------------------------------
+	# --- Hauptkette (Kadenz 4 abgeschlossene Draws je Update) ----------------
 	var tail := WaterGpuTailScript.new()
 	root.add_child(tail)
 	tail.setup(sim_gpu, n)
 	var first_state := Image.new()
 	for i in gpu_frames.size():
-		if not await _tick(tail, gpu_frames[i]["water"], gpu_frames[i]["blend"], 4):
-			_fail("Hauptkette: Update %d wurde vom Readback nicht umgesetzt" % i)
-			_finish()
-			return
+		await _tick(tail, gpu_frames[i]["water"], gpu_frames[i]["blend"], 4)
 		if i == 0:
 			first_state = _state_image(tail)
 	var gpu_final := _state_image(tail)
@@ -210,10 +192,7 @@ func _run() -> void:
 	var tail_prime := WaterGpuTailScript.new()
 	root.add_child(tail_prime)
 	tail_prime.setup(sim_gpu, n)
-	if not await _tick(tail_prime, gpu_frames[0]["water"], timelapse_blend, 6):
-		_fail("Priming-Kette: Update wurde vom Readback nicht umgesetzt")
-		_finish()
-		return
+	await _tick(tail_prime, gpu_frames[0]["water"], timelapse_blend, 6)
 	if not _compare(_state_image(tail_prime), _image_bytes(first_state),
 			"priming", TOL_MAX, TOL_MEAN):
 		_finish()
@@ -224,10 +203,7 @@ func _run() -> void:
 	root.add_child(tail_slow)
 	tail_slow.setup(sim_gpu, n)
 	for i in gpu_frames.size():
-		if not await _tick(tail_slow, gpu_frames[i]["water"], gpu_frames[i]["blend"], 10):
-			_fail("Kadenz-Kette: Update %d wurde vom Readback nicht umgesetzt" % i)
-			_finish()
-			return
+		await _tick(tail_slow, gpu_frames[i]["water"], gpu_frames[i]["blend"], 10)
 	if not _compare(gpu_final, _image_bytes(_state_image(tail_slow)),
 			"frame_rate", TOL_CADENCE, TOL_CADENCE):
 		_finish()
