@@ -50,11 +50,12 @@ public enum BasinRole: UInt8, Sendable {
 ///
 /// Der Gletscher-Pass steht bewusst zwischen Abflussfeld und fluvialer
 /// Makro-Inzision: er braucht das frische Bett, und seine Maske `underIce`
-/// legt den fluvialen Abtrag unter dem Eis still — `outletIncision` und
-/// `Hydraulic.erode` prüfen sie direkt, alle übrigen Bett-Bewegungen
-/// (Mäander-Carve und -Ufer, Altarme, Braid-Fracht, Auen-Aggradation, im
-/// Testpfad auch `transportLimited`) über ihren gemeinsamen Funnel
-/// `erodeCell`/`depositCell`.
+/// legt den fluvialen Abtrag unter dem Eis still — seit Issue #96 über den
+/// EINEN Bett-Funnel (`erodeCell`/`depositCell` samt ihrer Fassungen), über
+/// den JEDE fluviale Bett-Bewegung schreibt: Mäander-Carve und -Ufer,
+/// Altarme, Braid-Fracht, Auen-Aggradation, Auslass-Inzision, Tropfen und
+/// Pinsel. Nur die Hangdiffusion läuft bewusst auch auf Eiszellen
+/// (kein fluvialer Pass, s. `docs/glacier-measurements.md` §I.1).
 ///
 /// Die fluviale Makro-Inzision ist damit `outletIncision` (Flächen-Stream-Power
 /// auf dem Entwässerungsnetz, impliziter n=1-Solver in Empfänger-Reihenfolge →
@@ -163,14 +164,16 @@ public final class Terrain {
     /// **Vergletscherungs-Maske**: `ice[k] > cfg.iceMinThickness`. Gate für den
     /// fluvialen Abtrag — unter einem Gletscher trägt kein Oberflächenwasser ab;
     /// sonst carvt dasselbe Tal ein zweites Mal, mit fluvialem statt glazialem
-    /// Querschnitt. Drei Prüfstellen: `outletIncision`, `Hydraulic.erode` und
-    /// der Funnel `erodeCell`/`depositCell`, über den alle übrigen
-    /// Bett-Bewegungen laufen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
-    /// Auen-Aggradation). Nicht gegatet ist die Hangdiffusion: Bodenkriechen ist
-    /// kein fluvialer Pass, trägt aber Nachbar-Änderungen auf die Eiszelle —
+    /// Querschnitt. EINE Prüfstelle seit Issue #96: der Bett-Funnel
+    /// `erodeCell`/`depositCell` (das Gate steht in `Terrain.Bed.erode`),
+    /// über den jede fluviale Bett-Bewegung schreibt — auch die
+    /// Auslass-Inzision, die Tropfenschleife (mit ihrer strengeren Maske aus
+    /// Eis UND Gürtelbett, `beltDropletGate`) und der Pinsel. Nicht gegatet
+    /// sind die zwei benannten Ausnahmen Hangdiffusion und Brandung: kein
+    /// fluvialer Pass, trägt aber Nachbar-Änderungen auf die Eiszelle —
     /// gemessen in `docs/glacier-measurements.md` §I.1.
     /// Dieselbe Bauform wie `isChannel`: **leer heißt aus**, und wenn keine Zelle
-    /// Eis trägt, wird das Feld auch geleert → die Gates sind dann
+    /// Eis trägt, wird das Feld auch geleert → das Gate ist dann
     /// bit-identisch nicht vorhanden.
     /// Die Schwelle ist dieselbe, an der in `iceFlowSubStep` Transport und
     /// Abrasion einsetzen — der dünne Saum ist damit fluvial UND nur fluvial,
@@ -3607,15 +3610,16 @@ public final class Terrain {
     ///
     /// PERF (Runde 7): Alle ENTSCHEIDUNGEN, die während des Passes NICHT vom
     /// laufend veränderten Bett abhängen, laufen vorab und parallel: die
-    /// Gate-Kette (Meer/Eis/Breack-Fläche/Beckenwasser/Weltrand) als Int8 in
+    /// Gate-Kette (Meer/Breack-Fläche/Beckenwasser/Weltrand) als Int8 in
     /// `incisionGate` und der Vegetations-/Lithologie-Faktor `kErode` in
     /// `incisionKErode`. Bit-identisch, weil der Pass nur je BESUCHTER Zelle
     /// schreibt (`h`/`sed`/`rock` an `k` selbst) — jede Zelle sieht also bei
     /// ihrem Besuch noch exakt die Werte des Pass-Starts — und weil
     /// `underIce`/`area`/`receiver`/`endorheicBasin`/`veg*`/`lith*` im Pass
     /// überhaupt nicht geschrieben werden. Was übrig bleibt, ist die
-    /// serielle Abhängigkeit selbst: `ph[Empfänger]` frisch lesen, Formel,
-    /// Sediment/Fels-Split — die respektiert der Loop unverändert.
+    /// serielle Abhängigkeit selbst: `ph[Empfänger]` frisch lesen, Formel —
+    /// den Sediment/Fels-Split samt Eis-Gate trägt seit Issue #96 der
+    /// Bett-Funnel (`erodeCellTo`), und die respektiert der Loop unverändert.
     private func outletIncision(dt: Double, minAreaCells: Double = 0) {
         let cs = cfg.cellSize
         // cellSize 0 (keine definierte Schrittweite): keine Inzision ohne Distanz,
@@ -3630,12 +3634,6 @@ public final class Terrain {
         // 1-Element-Dummy und Faktor exakt 1.0 → bit-identische Arithmetik.
         let lithOn = lithErodeK.count == cnt
         let lithArr = lithOn ? lithErodeK : [1.0]
-        // Gletscher (Issue #35): unter Eis gibt es keinen fluvialen Abtrag — das
-        // Tal gehört dem Eis, und ein zweiter Carve mit fluvialem Querschnitt
-        // würde den Trog wieder zum Kerbtal machen. Dasselbe Gate-Muster wie beim
-        // abflusslosen Becken unten; leere Maske → Zweig fällt weg.
-        let iceOn = underIce.count == cnt
-        let iceArr = iceOn ? underIce : [false]
         // PERF (Issue #43): `pow(A, m)` je Zelle war mit ~16 ms/Schritt der
         // größte Einzelposten des Passes (Messung: mit einer Multiplikation
         // statt pow fiel er von 41 auf 25 ms). `area` ändert sich WÄHREND des
@@ -3651,7 +3649,6 @@ public final class Terrain {
         incisionKErode.withUnsafeMutableBufferPointer { kb in
         area.withUnsafeBufferPointer { ab in
         h.withUnsafeBufferPointer { hb in
-        iceArr.withUnsafeBufferPointer { icb in
         lithArr.withUnsafeBufferPointer { lkb in
         veg.withUnsafeBufferPointer { vb in
         vegClass.withUnsafeBufferPointer { vcb in
@@ -3662,15 +3659,23 @@ public final class Terrain {
             let pgate = gb.baseAddress!, pker = kb.baseAddress!
             let pveg = vb.baseAddress!, pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
             let prec0 = rb.baseAddress!, pend = eb.baseAddress!
-            let plith = lkb.baseAddress!, pice = icb.baseAddress!
+            let plith = lkb.baseAddress!
             parallel(cnt) { lo, hi in
                 for k in lo..<hi {
                     // Gate-Kette — dieselbe Reihenfolge wie bisher seriell
                     // (jedes Glied ist ein reiner `continue`-Filter, und alle
                     // gelesenen Felder ändern sich im Pass nicht).
+                    // Gletscher (Issue #35) steht hier seit #96 bewusst NICHT
+                    // mehr in der Kette: das Eis-Gate trägt der Funnel
+                    // (`erodeCellTo` → `Bed.erode`), EINMAL für alle
+                    // Bett-Schreiber. Eis-Zellen laufen durch die Kette und
+                    // bekommen ein normales `g` — die serielle Schleife rechnet
+                    // ihre Formel, und der Funnel verwirft den Abtrag.
+                    // Ergebnis bit-identisch (nur Formel-Arbeit mehr auf
+                    // vergletscherten Zellen); das Gate kann in künftigem
+                    // Pass-Code nicht mehr vergessen werden.
                     var g: Int8 = 1
                     if ph0[k] <= sea { g = 0 }
-                    else if iceOn && pice[k] { g = 0 }
                     else if minA > 0 && pa[k] < minA { g = 0 }
                     // Abflussloses Becken (Issue #11): die Seefläche hat keinen
                     // Auslass, also gibt es dort nichts einzuschneiden. Die SILL
@@ -3693,26 +3698,28 @@ public final class Terrain {
                         g = pend[k] != .none ? 0 : 2
                     }
                     pgate[k] = g
-                    // Inaktive Zellen (g == 0: Meer, Eis, See) übergeht die
+                    // Inaktive Zellen (g == 0: Meer, See) übergeht die
                     // serielle Schleife; pow(A, m) und kErode werden dort nie
                     // gelesen und müssen gar nicht erst berechnet werden.
+                    // (Eis-Zellen rechnen mit — der Funnel verwirft.)
                     guard g != 0 else { continue }
                     pap[k] = pow(pa[k], m)
                     pker[k] = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
                                   * (lithOn ? plith[k] : 1.0)
                 }
             }
-        }}}}}}}}}}}}
-        h.withUnsafeMutableBufferPointer { hb in
-        sed.withUnsafeMutableBufferPointer { sb in
-        rock.withUnsafeMutableBufferPointer { rkb in
+        }}}}}}}}}}}
+        // `h`/`sed`/`rock` kommen über `withBed` dazu — dieselbe Sicht, über
+        // die der Funnel schreibt (Issue #96); die Ziel-Fassung `erodeCellTo`
+        // trägt Zerlegung UND Eis-Gate und setzt die Zielhöhe exakt (s. dort).
+        withBed { bed in
         areaPow.withUnsafeBufferPointer { apb in
         incisionGate.withUnsafeBufferPointer { gb in
         incisionKErode.withUnsafeBufferPointer { kb in
         order.withUnsafeBufferPointer { ob in
         receiver.withUnsafeBufferPointer { rb in
-            let ph = hb.baseAddress!, psed = sb.baseAddress!, prock = rkb.baseAddress!
-            let pap = apb.baseAddress!, pgate = gb.baseAddress!, pker = kb.baseAddress!
+            let ph = bed.h, pap = apb.baseAddress!
+            let pgate = gb.baseAddress!, pker = kb.baseAddress!
             let pord = ob.baseAddress!, prec = rb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
@@ -3757,14 +3764,13 @@ public final class Terrain {
             // reist deshalb vorab berechnet in `incisionKErode`.
             let f = pker[k] * dt * pap[k] / dist
             let hNew = (ph[k] + f * hr) / (1 + f)
-            var delta = ph[k] - hNew                // > 0
-            if delta <= 0 { continue }
-            let ds = min(delta, psed[k])            // erst Sediment, dann Fels
-            psed[k] -= ds; delta -= ds
-            prock[k] -= delta
-            ph[k] = hNew
+            // Bett-Regel (erst Sediment, dann Fels) UND Gletscher-Gate: der
+            // Funnel (Issue #96). Die Ziel-Fassung setzt `hNew` EXAKT —
+            // `erodeCell(k, ph[k] - hNew)` wäre nicht bit-gleich zu `hNew`
+            // (s. `erodeCellTo(_:_:_:)`).
+            erodeCellTo(k, hNew, bed)
         }
-        }}}}}}}}
+        }}}}}}
     }
 
     // MARK: - Hydraulische Bett-Inzision (Gleichgewichtstiefe)
@@ -4904,10 +4910,13 @@ public final class Terrain {
               abs(dir) < 1e9, abs(strength) < 1e9,
               dir != 0, strength != 0 else { return }
         forEachBrushCell(gx: gx, gz: gz, radiusWorld: radiusWorld) { k, w in
-            applyDelta(k, dir * 0.006 * strength * w, asRock: true)
             // Kopplung in die Tektonik: angehobene Zonen werden Hebungszonen,
             // damit Eingriffe langfristig erhalten bleiben statt wegzuerodieren.
-            upliftBase[k] = min(2.0, max(-2.0, upliftBase[k] + dir * 0.006 * strength * w * 1.5))
+            // Nur, wo der Hieb das Bett bewegt hat — unter Eis bleibt er
+            // wirkungslos (Issue #96).
+            if applyDelta(k, dir * 0.006 * strength * w, asRock: true) {
+                upliftBase[k] = min(2.0, max(-2.0, upliftBase[k] + dir * 0.006 * strength * w * 1.5))
+            }
         }
     }
 
@@ -5010,19 +5019,35 @@ public final class Terrain {
     /// Höhenänderung mit Fels/Sediment-Buchhaltung (hält h = rock + sed):
     /// Absenken räumt erst Sediment, dann Fels; Anheben schiebt Fels hoch
     /// (`asRock`) oder lagert lockeres Sediment ab (Glätten/Einebnen).
-    private func applyDelta(_ k: Int, _ dhRaw: Double, asRock: Bool) {
-        guard dhRaw.isFinite, abs(dhRaw) < 1e9, dhRaw != 0 else { return }
+    /// Seit Issue #96 schreibt JEDE dieser Bewegungen über den Bett-Funnel
+    /// (`erodeCell`/`depositCell`/`raiseRockCell`) — Zerlegung und
+    /// Gletscher-Gate stehen dort, einmal für alle Schreiber. Der Pinsel ist
+    /// bewusst KEINE Ausnahme: ein Hieb auf vergletschertem Grund bleibt
+    /// wirkungslos (unter dem Eis gehört das Tal dem Gletscher).
+    ///
+    /// Rückgabe: ob die Zelle für den Funnel OFFEN war — `true` auch für den
+    /// Deckel-Fall `dh == 0` (nichts zu bewegen heißt nicht gesperrt). Nur
+    /// dann bucht `registerDisturbance`, und nur dann koppelt `sculpt` in die
+    /// Tektonik: eine Störung ohne Bett-Änderung wäre ein Budget ohne
+    /// Gegenstück, das beim Abschalten der Störung trotzdem oder nie
+    /// einträte.
+    @discardableResult
+    private func applyDelta(_ k: Int, _ dhRaw: Double, asRock: Bool) -> Bool {
+        guard dhRaw.isFinite, abs(dhRaw) < 1e9, dhRaw != 0 else { return false }
         let dh = min(1.4, max(cfg.floor, h[k] + dhRaw)) - h[k]
+        let moved: Double
         if dh >= 0 {
-            if asRock { rock[k] += dh } else { sed[k] += dh }
+            moved = asRock ? raiseRockCell(k, dh) : depositCell(k, dh)
         } else {
-            let ds = min(-dh, sed[k])
-            sed[k] -= ds
-            rock[k] -= (-dh - ds)
+            moved = erodeCell(k, -dh)
         }
-        h[k] += dh
-        // Lockeres Material setzt sich, Fels nicht (s. registerDisturbance).
-        registerDisturbance(k, dh, settles: !asRock)
+        // Offen = der Funnel hat bewegt, oder es gab nichts zu bewegen.
+        // Gesperrt heißt: kein Bett-Umzug und keine Störungs-Buchung.
+        let open = moved > 0 || dh == 0
+        if open {
+            registerDisturbance(k, dh, settles: !asRock)
+        }
+        return open
     }
 
     // MARK: - Störung & Regeneration (Issue #26)
@@ -5151,16 +5176,17 @@ public final class Terrain {
     /// Höhenänderung des Regenerations-Passes mit Fels/Sediment-Buchhaltung.
     /// Wie `applyDelta`, aber OHNE erneute Störungs-Buchung (sonst hielte sich
     /// der Pfad selbst am Leben) und ohne den Werkzeug-Deckel bei 1.4.
+    /// Schreibt seit Issue #96 über den Bett-Funnel (`raiseRockCell` für die
+    /// Hebung, `erodeCell` für den Abtrag) — damit trägt auch der Nachzug das
+    /// Gletscher-Gate: Regeneration auf vergletschertem Grund bleibt aus,
+    /// das Budget verstreicht, ohne das Bett unter dem Eis zu verstellen.
     @inline(__always) private func applyRegenDelta(_ k: Int, _ dhRaw: Double) {
         let dh = max(h[k] + dhRaw, cfg.floor) - h[k]
         if dh >= 0 {
-            rock[k] += dh
+            raiseRockCell(k, dh)
         } else {
-            let ds = min(-dh, sed[k])
-            sed[k] -= ds
-            rock[k] -= (-dh - ds)
+            erodeCell(k, -dh)
         }
-        h[k] += dh
     }
 
     /// Verwirft Mäanderläufe und Altarme, die über stark gestörtes Gelände
@@ -5409,6 +5435,20 @@ public final class Terrain {
         withBed { depositCell(k, amount, $0) }
     }
 
+    /// Ziel-Fassung des Abtrags (`erodeCellTo`) über die Roh-Puffer-Sicht —
+    /// der dritte Aufruf-Weg des Funnels (Issue #96, Auslass-Inzision).
+    @discardableResult
+    func erodeCellToViaBedForTests(_ k: Int, _ target: Double) -> Double {
+        withBed { erodeCellTo(k, target, $0) }
+    }
+
+    /// Fels-Hebung (`raiseRockCell`) über die Roh-Puffer-Sicht — gebraucht
+    /// vom Pinsel-Trichter (Issue #96).
+    @discardableResult
+    func raiseRockCellViaBedForTests(_ k: Int, _ amount: Double) -> Double {
+        withBed { raiseRockCell(k, amount, $0) }
+    }
+
     /// Test-Helfer: setzt den Empfängerwert an einer Gitterzelle, um ungültige
     /// Verweise (z. B. Empfänger außerhalb des Gitters) im Test gezielt prüfen zu können.
     func setReceiverForTests(at index: Int, to value: Int32) {
@@ -5416,8 +5456,8 @@ public final class Terrain {
     }
 
     /// Roh-Puffer-Sicht auf das Bett: dieselben drei Felder, die der Funnel hält
-    /// (`h = rock + sed`), plus die Gletscher-Maske — `nil` heißt „keine
-    /// Maske", genau wie `underIce.isEmpty` es im Feld selbst tut.
+    /// (`h = rock + sed`), plus die Sperr-Maske — `nil` heißt „keine
+    /// Zelle gesperrt", genau wie ein leeres Maskenfeld im Terrain selbst.
     ///
     /// Warum es sie gibt: `meanderStamp`, `braidPass` und die Altarm-Pässe
     /// laufen über 692k Zellen bzw. 30k Knoten und adressierten `h`/`sed`/`rock`
@@ -5427,12 +5467,59 @@ public final class Terrain {
     /// Swift-Laufzeit (`swift_beginAccess`/`AccessSet::insert`, s.
     /// docs/perf-measurements.md).
     /// Mit der Sicht öffnet ein Pass die Felder EINMAL und reicht sie durch.
+    /// Seit Issue #96 trägt die Sicht außerdem die Bett-REGEL selbst
+    /// (`erode(_:_)`/`deposit(_:_:)` unten): Der Terrain-Funnel
+    /// (`erodeCell`/`depositCell`) delegiert hierher, und auch die
+    /// Tropfenschleife (`Hydraulic.erode`) schreibt über sie — mit ihrer
+    /// eigenen, strengeren Maske.
     struct Bed {
         let h: UnsafeMutablePointer<Double>
         let sed: UnsafeMutablePointer<Double>
         let rock: UnsafeMutablePointer<Double>
-        /// Gletscher-Maske oder `nil` (= keine Zelle vergletschert).
-        let ice: UnsafePointer<Bool>?
+        /// Sperr-Maske oder `nil` (= keine Zelle gesperrt). Beim Terrain-Funnel
+        /// ist es die Gletscher-Maske `underIce` (Issue #35); die Tropfenschleife
+        /// übergibt ihre strengere Vereinigung aus Eis UND Gürtelbett
+        /// (`beltDropletGate`, Issues #174/#187) — das Gate selbst steht nur
+        /// einmal, hier.
+        let locked: UnsafePointer<Bool>?
+
+        /// **Die EINE Bett-Regel** (Issue #96): trägt an Zelle `k` `amount` ab
+        /// — ERST SEDIMENT, DANN FELS —, hält `h = rock + sed` und gibt den
+        /// tatsächlich abgetragenen Betrag zurück. **Gletscher-Gate**
+        /// (Issue #35): auf gesperrten Zellen gehört das Tal dem Gletscher,
+        /// es gibt keinen fluvialen Abtrag — Rückgabe 0, nichts bewegt.
+        ///
+        /// Das steht bewusst HIER und nicht je Pass: ein künftiger Bett-Pass
+        /// kann die Regel und das Gate nicht mehr vergessen. Wer sie ändert,
+        /// ändert genau diese Stelle (Wächter: `SimCoreTests/BedFunnel.swift`).
+        /// Die Regel gilt für JEDE Bett-Schreibung der Simulation (Issue #96);
+        /// die zwei begründeten Ausnahmen, die bewusst AUCH auf vergletscherten
+        /// Zellen laufen — Hangdiffusion und Brandung, s. `erodeCell(_:_:_:)` —,
+        /// schreiben als einzige weiterhin selbst.
+        @discardableResult
+        @inline(__always) func erode(_ k: Int, _ amount: Double) -> Double {
+            let a = max(0, amount)
+            if a <= 0 { return 0 }
+            if let locked, locked[k] { return 0 }
+            let ds = min(a, sed[k]); sed[k] -= ds
+            rock[k] -= (a - ds)
+            h[k] -= a
+            return a
+        }
+
+        /// Ablage-Hälfte der Regel (Issue #96): lagert `amount` als Sediment an
+        /// Zelle `k` ab und gibt den tatsächlich abgelegten Betrag zurück.
+        /// Gesperrte Zellen bleiben unangetastet — was mit der nicht
+        /// abgelegten Fracht passiert, entscheidet der Aufrufer (der
+        /// Terrain-Funnel verliert sie, `transportLimited` und die Tropfen
+        /// führen sie weiter talab, s. `depositCell(_:_:_:)`).
+        @discardableResult
+        @inline(__always) func deposit(_ k: Int, _ amount: Double) -> Double {
+            if amount <= 0 { return 0 }
+            if let locked, locked[k] { return 0 }
+            sed[k] += amount; h[k] += amount
+            return amount
+        }
     }
 
     /// Öffnet `h`/`sed`/`rock`/`underIce` einmal für einen ganzen Pass. Solange
@@ -5454,58 +5541,121 @@ public final class Terrain {
         rock.withUnsafeMutableBufferPointer { rb in
         underIce.withUnsafeBufferPointer { ib in
             body(Bed(h: hb.baseAddress!, sed: sb.baseAddress!, rock: rb.baseAddress!,
-                     ice: ib.isEmpty ? nil : ib.baseAddress))
+                     locked: ib.isEmpty ? nil : ib.baseAddress))
         }}}}
     }
 
-    /// **Der Bett-Funnel.** Trägt an Zelle `k` `amount` ab (erst Sediment, dann
-    /// Fels) — hält `h = rock + sed` — und gibt den tatsächlich abgetragenen
-    /// Betrag zurück. Dies ist die EINE Stelle, an der Regel und Gate stehen;
-    /// die Property-Fassung `erodeCell(_:_:)` ist seit Issue #81 nur noch ein
-    /// Adapter darauf. Wächter: `SimCoreTests/BedFunnel.swift`.
+    /// **Der Bett-Funnel.** Der EINE Eingang aller Terrain-Pässe ins Bett.
+    /// Die Zerlegung (erst Sediment, dann Fels), `h = rock + sed` und das
+    /// Gletscher-Gate stehen genau einmal, in `Terrain.Bed.erode(_:_:)`;
+    /// diese Fassung reicht den Betrag dorthin durch. Wächter:
+    /// `SimCoreTests/BedFunnel.swift`.
     ///
-    /// **Gletscher-Gate (Issue #35).** Über den Funnel laufen alle fluvialen
-    /// Bett-Bewegungen außer den zwei, die ihr Gate selbst tragen
-    /// (`outletIncision`, `Hydraulic.erode`): Mäander-Bett-Carve, laterale Ufer,
-    /// Altarm-Pfropf und -Verlandung, Braid-Fracht, Auen-Aggradation und — im
-    /// Nicht-Droplet-Zweig — `transportLimited`. Unter
-    /// dem Eis gehört das Tal dem Gletscher — dieselbe Begründung wie dort.
-    /// Das Gate sitzt am Funnel statt in jedem Pass einzeln, damit ein künftiger
-    /// Bett-Pass es nicht vergessen kann. Leere Maske (keine Zelle
-    /// vergletschert, oder `iceEnabled = false`) → `bed.ice` ist `nil`, der
-    /// Zweig fällt weg und alles rechnet bit-identisch zum Stand vor #35.
+    /// **Aufrufer** (seit Issue #96: jede Bett-Schreibung außer den zwei
+    /// benannten Ausnahmen): Mäander-Bett-Carve und laterale Ufer,
+    /// Altarm-Pfropf und -Verlandung, Braid-Fracht, Auen-Aggradation,
+    /// `channelCarve`, der Testpfad `transportLimited` (über die
+    /// Property-Fassung), die Auslass-Inzision (über die Ziel-Fassung
+    /// `erodeCellTo(_:_:_:)`, s. dort) und der Pinsel samt Nachzug
+    /// (`applyDelta`/`applyRegenDelta`, über die Property-Fassung). Die
+    /// Tropfenschleife schreibt dieselbe Regel über `Terrain.Bed.erode(_:_:)`
+    /// direkt — mit ihrer STRENGEREN Sperr-Maske aus Eis und Gürtelbett
+    /// (`beltDropletGate`, Issues #174/#187), weil ihr Radial-Pinsel auch das
+    /// Bett wandernder Mäanderläufe nicht aufreißen darf.
+    ///
+    /// **Gletscher-Gate (Issue #35).** Unter dem Eis gehört das Tal dem
+    /// Gletscher — kein fluvialer Abtrag, keine fluviale Ablage; sonst carvt
+    /// dasselbe Tal ein zweites Mal, mit fluvialem statt glazialem
+    /// Querschnitt. Das Gate sitzt am Funnel statt in jedem Pass einzeln,
+    /// damit ein künftiger Bett-Pass es nicht vergessen kann. Leere Maske
+    /// (keine Zelle vergletschert, oder `iceEnabled = false`) →
+    /// `bed.locked` ist `nil`, der Zweig fällt weg und alles rechnet
+    /// bit-identisch zum Stand vor #35.
+    ///
+    /// **Die zwei begründeten Ausnahmen**, die bewusst AUCH auf vergletscherten
+    /// Zellen laufen, schreiben als einzige weiterhin selbst und sind hier
+    /// benannt (statt dass sie die Regel nachbauen): **Hangdiffusion**
+    /// (`hillslopeDiffusion`, `diffusionPass`) und **Brandung** (`wavePass`).
+    /// Beides ist kein fluvialer Abtrag: Das Bodenkriechen trägt die
+    /// Höhenänderung der NACHBARN auch auf die Eiszelle, und ein Abschalten
+    /// am Gate ließe den Trog mit unbehandelten Kanten zurück — belegt für
+    /// die Diffusion in `docs/glacier-measurements.md` §I.1; dieselbe
+    /// Begründung trägt die Brandung an der Fjordküste. Das Eis selbst
+    /// schreibt sein Bett über ein EIGENES Erosionsgesetz (`updateIce`,
+    /// Flux-Modell `E = K·q^m·S`) — kein fluvialer Bett-Pass, deshalb kein
+    /// Funnel-Kandidat.
     @inline(__always) private func erodeCell(_ k: Int, _ amount: Double, _ bed: Bed) -> Double {
-        let a = max(0, amount)
-        if a <= 0 { return 0 }
-        if let ice = bed.ice, ice[k] { return 0 }
-        let ds = min(a, bed.sed[k]); bed.sed[k] -= ds
-        bed.rock[k] -= (a - ds)
-        bed.h[k] -= a
-        return a
+        bed.erode(k, amount)
     }
 
     /// Lagert `amount` als Sediment an Zelle `k` ab und gibt den tatsächlich
     /// abgelegten Betrag zurück — die Ablage-Hälfte des Funnels, gleiche
-    /// Zuständigkeit und gleiches Gate wie `erodeCell(_:_:_:)`. Vergletscherte
-    /// Zellen bleiben unangetastet; die Fracht, die dort abgelegt worden wäre,
-    /// gilt wie sonst auch als exportiert (Masse-Erhaltung ist in diesem Repo
+    /// Zuständigkeit und gleiches Gate wie `erodeCell(_:_:_:)`; die Regel
+    /// steht in `Terrain.Bed.deposit(_:_:)`. Vergletscherte Zellen bleiben
+    /// unangetastet; die Fracht, die dort abgelegt worden wäre, gilt wie
+    /// sonst auch als exportiert (Masse-Erhaltung ist in diesem Repo
     /// keine Invariante, AGENTS.md) — der einzige Pass, der sie mitführt
-    /// (`transportLimited`), reicht sie stattdessen talwärts weiter.
+    /// (`transportLimited`), reicht sie stattdessen talwärts weiter; die
+    /// Tropfenschleife führt sie in Suspension weiter (s. `Hydraulic.erode`,
+    /// `deposit(_:_:)` dort).
     @discardableResult
     @inline(__always) private func depositCell(_ k: Int, _ amount: Double, _ bed: Bed) -> Double {
+        bed.deposit(k, amount)
+    }
+
+    /// **Ziel-Fassung des Funnel-Abtrags** — dieselbe Regel und dasselbe Gate
+    /// (beide stehen in `Bed.erode(_:_)`, aufgerufen über
+    /// `erodeCell(_:_:_:)`), aber mit ZIEL-HÖHE statt Betrag: senkt Zelle `k`
+    /// auf `target` ab und gibt den tatsächlich abgetragenen Betrag zurück
+    /// (`bed.h[k] − target`; 0, wenn die Zelle schon tiefer liegt oder
+    /// gesperrt ist).
+    ///
+    /// Warum es sie gibt (Issue #96): Relaxations-Pässe rechnen die Zielhöhe
+    /// als eigenen gerundeten Wert — die Auslass-Inzision ihre als
+    /// `hNew = (h + f·hr)/(1+f)` —, und der naive Funnel-Weg
+    /// `h −= (h − hNew)` ist NICHT bit-gleich zu `hNew`: der Rundtrip
+    /// `h − fl(h − hNew)` weicht im aggressiven Regime (Schritt trägt mehr als
+    /// die halbe Höhe ab — große Becken-Auslässe, Empfänger weit unten) an
+    /// der Mehrheit der Fälle um 1 ulp ab. Darum schreibt diese Fassung die
+    /// Zielhöhe EXAKT und zieht die Zerlegung über den Betrag
+    /// `a = h − target` — bit-identisch zur Ausschreibung, die bis #96 in
+    /// der Auslass-Inzision stand. Der Wächter prüft die Ziel-Fassung deshalb
+    /// auf exakte Zielhöhe statt auf Parität mit der Betrags-Fassung: ihre
+    /// Ergebnisse unterscheiden sich genau um jenen Rundtrip.
+    @discardableResult
+    @inline(__always) private func erodeCellTo(_ k: Int, _ target: Double, _ bed: Bed) -> Double {
+        let a = bed.h[k] - target
+        guard a > 0 else { return 0 }
+        let moved = bed.erode(k, a)
+        if moved > 0 { bed.h[k] = target }
+        return moved
+    }
+
+    /// **Fels-Hebung des Funnels** — die dritte Bett-Bewegung, die der Pinsel
+    /// braucht (`sculpt`/`roughen` heben Fels an, `applyRegenDelta` trägt die
+    /// Regeneration als Fels ein): hebt `amount` GESTEIN (kein Sediment, die
+    /// Zerlegung greift hier nicht) und gibt den tatsächlich angehobenen
+    /// Betrag zurück. Dasselbe Gletscher-Gate wie `erodeCell(_:_:_:)` — auch
+    /// der Pinsel schreibt seit Issue #96 ausschließlich über den Funnel, und
+    /// ein Eingriff auf vergletschertem Grund bleibt damit wirkungslos: Unter
+    /// dem Eis gehört das Tal dem Gletscher, und am Eis-Sicht-Modell änderte
+    /// der Hieb am Bett nichts, bis die Zunge schmilzt.
+    @discardableResult
+    @inline(__always) private func raiseRockCell(_ k: Int, _ amount: Double, _ bed: Bed) -> Double {
         if amount <= 0 { return 0 }
-        if let ice = bed.ice, ice[k] { return 0 }
-        bed.sed[k] += amount; bed.h[k] += amount
+        if let locked = bed.locked, locked[k] { return 0 }
+        bed.rock[k] += amount; bed.h[k] += amount
         return amount
     }
 
     /// Bequemlichkeits-Fassung des Funnels für Pässe, die keine `Bed`-Sicht
     /// offen haben: öffnet sie je Aufruf und reicht durch.
     ///
-    /// **Hier steht keine Regel** (Issue #81). Abtrags-Reihenfolge, `h = rock +
-    /// sed` und das Gletscher-Gate stehen genau einmal, in
-    /// `erodeCell(_:_:_:)`. Bis #81 war das hier eine zweite, von Hand
-    /// synchron gehaltene Ausschreibung derselben Regel.
+    /// **Hier steht keine Regel** (Issue #81,#96). Abtrags-Reihenfolge,
+    /// `h = rock + sed` und das Gletscher-Gate stehen genau einmal, in
+    /// `Terrain.Bed.erode(_:_:)` — erreichbar über `erodeCell(_:_:_:)`.
+    /// Bis #81 war das hier eine zweite, von Hand synchron gehaltene
+    /// Ausschreibung derselben Regel.
     ///
     /// Aufrufer sind nur der Testpfad `transportLimited` und die geparkte
     /// `floodplainAggradation`; kein Produktionspass läuft hier durch, das
@@ -5538,6 +5688,14 @@ public final class Terrain {
     @discardableResult
     @inline(__always) private func depositCell(_ k: Int, _ amount: Double) -> Double {
         withBed { depositCell(k, amount, $0) }
+    }
+
+    /// Bequemlichkeits-Fassung der Fels-Hebung, s. `erodeCell(_:_:)`. Aufrufer
+    /// sind die Pinsel-Trichter `applyDelta`/`applyRegenDelta` (Issue #96) —
+    /// wenige tausend Zellen je Strich, das Öffnen je Aufruf kostet dort nichts.
+    @discardableResult
+    @inline(__always) private func raiseRockCell(_ k: Int, _ amount: Double) -> Double {
+        withBed { raiseRockCell(k, amount, $0) }
     }
 
     /// Stempelt die Mäander-Läufe ins Höhenfeld:
@@ -6122,7 +6280,7 @@ public final class Terrain {
         let depthK = cfg.meanderBeltDepthPerWidth * cs
         let bed = buffers.bed, phf = buffers.hf, pveg = buffers.veg
         let pchan = buffers.channel, pbelt = buffers.belt, page = buffers.age, plock = buffers.lock
-        let pice = bed.ice, iceOn = bed.ice != nil
+        let pice = bed.locked, iceOn = bed.locked != nil
         let split = cfg.meanderBeltCoupling
         @inline(__always) func cell(_ x: Double, _ z: Double) -> Int {
             min(max(Int(z.rounded()), 0), nn - 1) * nn + min(max(Int(x.rounded()), 0), nn - 1)
@@ -6854,11 +7012,12 @@ public final class Terrain {
         updateSaltCrust(dt: dt) // Playa-Kruste folgt der frischen Becken-Rolle
         // Gletscher (Issue #35): NACH dem Abflussfeld — das Eis fließt auf dem
         // Bett, das der frische Priority-Flood gesehen hat — und VOR jeder
-        // fluvialen Höhenänderung des Schritts, weil `underIce` die
-        // Auslass-Inzision, die Tropfen und (über `erodeCell`/`depositCell`) die
-        // Bett-Bewegungen von Mäander und Braiding gatet — auch den
-        // `meanderStamp` direkt darunter. Ohne Eis (Normalfall der ersten
-        // Schritte, oder `iceEnabled = false`) ein reiner Suchlauf, s. dort.
+        // fluvialen Höhenänderung des Schritts, weil `underIce` über den
+        // Bett-Funnel JEDE fluviale Bett-Bewegung gatet (seit #96 auch die
+        // Auslass-Inzision, die Tropfen und den Pinsel; Mäander und Braiding
+        // liefen schon davor darüber) — auch den `meanderStamp` direkt
+        // darunter. Ohne Eis (Normalfall der ersten Schritte, oder
+        // `iceEnabled = false`) ein reiner Suchlauf, s. dort.
         mark("updateIce")
         updateIce(dt: dt)
         if cfg.meanderEnabled && cfg.meanderBelt {
