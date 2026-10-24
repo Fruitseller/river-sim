@@ -606,18 +606,23 @@ Der **Gletscher** (Issue #35, `updateIce`) ist der zweite Weg und bringt sein
 eigenes Erosionsgesetz mit (Flux-Modell `E = K·q^m·S`, nicht Stream-Power auf
 `area`). Er steht **nach dem Abflussfeld und vor jeder fluvialen
 Höhenänderung**, weil seine Maske `Terrain.underIce` den fluvialen Abtrag
-gatet: `outletIncision` und `Hydraulic.erode` prüfen sie direkt, alle übrigen
-Bett-Bewegungen (Mäander-Carve und -Ufer, Altarme, Braid-Fracht,
-Auen-Aggradation, im Testpfad auch `transportLimited`) über ihren gemeinsamen
-Funnel `erodeCell`/`depositCell`. Den ruft man seit der Perf-Runde 3 auf ZWEI
-Wegen — über die Klassen-Properties und über die Roh-Puffer-Sicht `Terrain.Bed`
-(die Hot-Loops) —, aber Regel und Gate stehen seit Issue #81 nur noch EINMAL,
-in der Bed-Fassung; der Property-Weg ist ein dünner Adapter darauf. Wer die
-Regel ändert, ändert genau diese eine Stelle (Wächter:
-`SimCoreTests/BedFunnel.swift`, Messung: `docs/perf-measurements.md` §I und §K).
-Vergletscherte Zellen rührt damit kein fluvialer Pass an; die Hangdiffusion
-dagegen läuft weiter (kein fluvialer Pass, s. `docs/glacier-measurements.md`
-§I.1). Wie `isChannel` gilt: **leeres Feld heißt aus**,
+gatet. Seit Issue #96 schreibt JEDE Bett-Bewegung über den EINEN Funnel
+und trägt damit das Gate automatisch: Mäander-Carve und -Ufer, Altarme,
+Braid-Fracht, Auen-Aggradation, im Testpfad `transportLimited`, die
+Auslass-Inzision (Ziel-Fassung `erodeCellTo`, setzt die Zielhöhe exakt —
+der Rundtrip `h − (h − hNew)` wäre nicht bit-gleich), die Tropfenschleife
+(direkt über die Bed-Regel, mit ihrer STÄRKEREN Maske aus Eis ∪ Gürtelbett,
+`beltDropletGate`) und der Pinsel samt Nachzug (`applyDelta`/
+`applyRegenDelta`). Regel und Gate stehen nur EINMAL, in
+`Terrain.Bed.erode/deposit` (Issue #81/#96); die Property-Fassung ist ein
+dünner Adapter darauf. Wer die Regel ändert, ändert genau diese eine Stelle
+(Wächter: `SimCoreTests/BedFunnel.swift` — deckt seit #96 alle Schreiber ab,
+nicht nur die Funnel-Aufruf-Weise, Messung: `docs/perf-measurements.md`
+§I und §K). Vergletscherte Zellen rührt damit kein fluvialer Pass und kein
+Pinsel an; die zwei begründeten Ausnahmen, die bewusst auch auf
+vergletscherten Zellen laufen — Hangdiffusion und Brandung (keine fluvialen
+Pässe, s. `docs/glacier-measurements.md` §I.1) — sind am Funnel benannt.
+Wie `isChannel` gilt: **leeres Feld heißt aus**,
 und ohne Eis wird es auch geleert; eine eisfreie Welt rechnet damit
 bit-identisch zum Stand vor #35. Das Eis liegt **nicht** in `h` (eigene
 Auflage über dem Bett), die Entwässerung läuft also unverändert auf dem Bett.
