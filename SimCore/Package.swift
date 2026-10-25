@@ -17,7 +17,6 @@ let package = Package(
         // SimCoreTests laufen im Swift-6-Modus mit strikter
         // Nebenläufigkeitsprüfung — die unsicheren Stellen sind dort als
         // `@unchecked Sendable`/`nonisolated(unsafe)` markiert und begründet.
-        // Die Extension (eigenes Paket) läuft ebenfalls im Swift-6-Modus.
         .target(name: "SimCore", swiftSettings: [.swiftLanguageMode(.v6)]),
         .target(name: "SimRender", dependencies: ["SimCore"],
                 swiftSettings: [.swiftLanguageMode(.v6)]),
