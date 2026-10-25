@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 // GDExtension-Brücke: linkt SimCore + die godot-freie Aufbereitung SimRender an
@@ -30,7 +30,11 @@ let package = Package(
                 .product(name: "SimCore", package: "SimCore"),
                 .product(name: "SimRender", package: "SimCore"),
                 "SwiftGodot",
-            ]
+            ],
+            // Swift-6-Sprachmodus wie die SimCore-Targets (Issue #201, Stufe 2).
+            // SwiftGodot deklariert seine Targets selbst als `.v5`; das bleibt
+            // dessen Sache und gilt nur dort.
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
 )
