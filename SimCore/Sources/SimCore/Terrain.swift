@@ -5218,7 +5218,7 @@ public final class Terrain {
         if dh >= 0 {
             raiseRockCell(k, dh)
         } else {
-            erodeCell(k, -dh)
+            _ = erodeCell(k, -dh)
         }
     }
 
