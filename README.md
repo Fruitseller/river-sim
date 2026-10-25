@@ -11,8 +11,17 @@ Verlauf, und kleine Eingriffe können sich über Jahrtausende auswirken.
 
 ![Aktuelle Inselansicht mit Gebirgen, Wäldern und mäandrierenden Flüssen](docs/screenshots/readme-island.jpg)
 
-Ein Blick auf eine aktuelle Simulation mit Gebirgszügen, bewaldeten Tälern und
-Flussläufen. Das Spiel lässt sich auch direkt bedienen:
+Dieselbe Insel nach 20.000 simulierten Jahren aus der Nähe: Der Hauptfluss
+schlängelt sich durch seine Aue, abgeschnittene Schlingen bleiben als Altarme
+liegen, dahinter der verschneite Gebirgskamm.
+
+![Mäandrierender Fluss in seiner Aue vor dem Gebirgskamm](docs/screenshots/readme-meander.jpg)
+
+Die Landschaft altert mit: hier Jahr 0, 5.000 und 50.000 derselben Insel.
+
+![Dieselbe Insel in Jahr 0, 5.000 und 50.000](docs/screenshots/readme-timeline.jpg)
+
+Das Spiel lässt sich auch direkt bedienen:
 
 ![Spielansicht mit Werkzeugleiste und Simulationssteuerung](docs/screenshots/readme-gameplay.jpg)
 
