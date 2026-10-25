@@ -31,17 +31,20 @@ swift test -c release --package-path SimCore \
 
 - `-c release` ist Pflicht: Debug ist bei diesen Grids zu langsam.
 - Sprachmodus: die Targets `SimCore`, `SimRender`, `SimPerf` und `SimCoreTests`
-  kompilieren im **Swift-6-Modus** (strikte Nebenläufigkeitsprüfung), je Target
-  via `.swiftLanguageMode(.v6)` in `SimCore/Package.swift` (Issue #201). Die
+  sowie die Extension `RiverSimGD` kompilieren im **Swift-6-Modus** (strikte
+  Nebenläufigkeitsprüfung), je Target via `.swiftLanguageMode(.v6)` in
+  `SimCore/Package.swift` bzw. `Extension/Package.swift` (Issue #201). Die
   unsicheren Stellen stehen ZENTRAL an den Parallel-Helfern als
   `nonisolated(unsafe)`/`@unchecked Sendable` mit Begründung (`Terrain.parallel`,
   `parallelChunks`, `BackgroundJob`, `Terrain.BeltSchedule`, die direkten
   `concurrentPerform`-Blöcke) statt an den ~56 Aufrufstellen — die Signatur der
   Helfer bleibt bewusst nicht-`@Sendable`, die Disjunktheit der Index-Bereiche
   ist Projektregel und wird von den Bit-Identitäts-Wächtern geprüft. Wer
-  Nebenläufigkeit ändert, ändert genau diese Engpässe. Die Extension
-  (eigenes Paket, tools 5.9) läuft weiterhin im Swift-5-Modus; ihr Umstieg ist
-  die offene Reststufe von Issue #201 (hängt an SwiftGodot).
+  Nebenläufigkeit ändert, ändert genau diese Engpässe. Die Extension (eigenes
+  Paket, tools 6.0) braucht keine eigene Markierung: `SimNode` übergibt die
+  Arbeit nur über `BackgroundJob.start` (nicht-`@Sendable`-Closure, s. dort).
+  Nur die SwiftGodot-Targets bleiben im Swift-5-Modus, das deklariert
+  SwiftGodot selbst.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
 - **Linux-CI lokal reproduzieren:** die Pflichtsuite rechnet auf dem Runner mit
   der glibc-libm, also auf einer anderen Welt-Realisierung als unter macOS;

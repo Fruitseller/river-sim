@@ -35,7 +35,7 @@ permissions:
 
 env:
   # Muss mit der lokal via Swiftly genutzten Toolchain-Version zusammenpassen
-  # (SimCore/Package.swift verlangt tools-version 6.0 + Swift-5-Sprachmodus,
+  # (SimCore/ und Extension/Package.swift verlangen tools-version 6.0,
   # siehe AGENTS.md "Befehle").
   #
   # Version und Prüfsumme werden NUR ZUSAMMEN ausgetauscht — dasselbe Verfahren
