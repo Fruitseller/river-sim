@@ -42,7 +42,9 @@ swift test -c release --package-path SimCore \
   ist Projektregel und wird von den Bit-Identitäts-Wächtern geprüft. Wer
   Nebenläufigkeit ändert, ändert genau diese Engpässe. Die Extension (eigenes
   Paket, tools 6.0) braucht keine eigene Markierung: `SimNode` übergibt die
-  Arbeit nur über `BackgroundJob.start` (nicht-`@Sendable`-Closure, s. dort).
+  Arbeit nur über `BackgroundJob.start` (nicht-`@Sendable`-Closure, s. dort);
+  dass sie Welt und Render-Zustand sonst nur über die Tore anfasst, prüft
+  weiter der Quelltext-Wächter in `BackgroundJobTests`, nicht der Compiler.
   Nur die SwiftGodot-Targets bleiben im Swift-5-Modus, das deklariert
   SwiftGodot selbst.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
