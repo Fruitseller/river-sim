@@ -2243,3 +2243,53 @@ Der Pass `belt.attach` sinkt stabil um **0,56 bis 0,82 ms/Schritt** (−22 % bis
 Fingerprints (`simperf --hash`) auf Seed 1337 (dt = 100 und dt = 15), Seed 42 und Seed 20
 sind vor und nach der Änderung bit-identisch.
 
+## X. MFD-Pass: Vektor-Registerspills im Nachbar-Loop eliminiert, orthogonale Divisionen eingespart und Routenspeicher gestrafft (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.computeMFDArea`:
+1. **Vektor-Registerspills im inneren Nachbar-Loop eliminiert:** Im parallelen Pass 1 waren `neighbors` (`SIMD8<Int32>`) und `slopes` (`SIMD8<Double>`) lokale SIMD-Vektoren. Bei dynamischer Indizierung (`neighbors[c] = ...`, `slopes[c] = ...`) kann der Compiler keine Registerzuweisung vornehmen und generierte pro gefundenem Nachbarn vollständige Spills und Reloads aller 16 Vektorregister auf den Stack (~64 Speicherzugriffe je Zelle). Durch Vorab-Allokation temporärer Puffer je Threadscheibe (`withUnsafeTemporaryAllocation`) erfolgen Nachbar- und Gefälle-Zuweisungen als direkte skalare Schreibzugriffe ohne Spills. Erst beim Abschluss der Zelle wird der fertige Vektor geladen. Ebenso werden im seriellen Pass 2 Nachbarn und Gewichte direkt über Rohzeiger gelesen.
+2. **Orthogonale Nachbar-Divisionen entfallen:** Für die vier orthogonalen Nachbarn innerer Zellen ist der Gitterabstand `dist == 1.0`. Die Gleitkomma-Division `d / 1.0` ist nach IEEE 754 bit-identisch zu `d` und wird für orthogonale Nachbarn vollständig eingespart (über 1,2 Mio. FP-Divisionen je Schritt).
+3. **Routenspeicher gestrafft:** Das redundante Feld `sum` in `MFDRoute` und `MFDDispersion` wurde entfernt. Da flache Zellen und ungültige Summen bereits in Pass 1 abgefangen werden (`prc[t] = 0`), sinkt `MFDRoute` von 104 auf 96 Byte.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-base` vs `/tmp/simperf-opt`, 4 Paare, je `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1 (Base → Opt):**
+  - Base: 190.5 / 194.8 / 185.9 ms/Schritt (Minimum: 185.9 ms), `computeMFDArea`: 24.04 ms
+  - Opt: 174.2 / 172.2 / 178.7 ms/Schritt (Minimum: 172.2 ms), `computeMFDArea`: 14.59 ms (−9.45 ms / −39.3 %)
+- **Paar 1 umgekehrt (Opt → Base):**
+  - Opt: 167.6 / 149.6 / 160.3 ms/Schritt (Minimum: 149.6 ms), `computeMFDArea`: 13.55 ms
+  - Base: 171.2 / 171.9 / 180.1 ms/Schritt (Minimum: 171.2 ms), `computeMFDArea`: 21.91 ms (−8.36 ms / −38.2 %)
+- **Paar 2 (Base → Opt):**
+  - Base: 182.5 / 188.4 / 178.0 ms/Schritt (Minimum: 178.0 ms), `computeMFDArea`: 20.77 ms
+  - Opt: 173.9 / 171.6 / 158.9 ms/Schritt (Minimum: 158.9 ms), `computeMFDArea`: 14.17 ms (−6.60 ms / −31.8 %)
+- **Paar 2 umgekehrt (Opt → Base):**
+  - Opt: 187.5 / 167.7 / 167.9 ms/Schritt (Minimum: 167.7 ms), `computeMFDArea`: 14.28 ms
+  - Base: 170.9 / 174.4 / 187.2 ms/Schritt (Minimum: 170.9 ms), `computeMFDArea`: 22.81 ms (−8.53 ms / −37.4 %)
+- **Paar 3 (Base → Opt):**
+  - Base: 175.2 / 163.5 / 178.0 ms/Schritt (Minimum: 163.5 ms), `computeMFDArea`: 21.14 ms
+  - Opt: 170.4 / 158.6 / 163.4 ms/Schritt (Minimum: 158.6 ms), `computeMFDArea`: 13.19 ms (−7.95 ms / −37.6 %)
+- **Paar 3 umgekehrt (Opt → Base):**
+  - Opt: 162.1 / 166.2 / 172.9 ms/Schritt (Minimum: 162.1 ms), `computeMFDArea`: 14.18 ms
+  - Base: 181.6 / 166.4 / 173.2 ms/Schritt (Minimum: 166.4 ms), `computeMFDArea`: 20.81 ms (−6.63 ms / −31.9 %)
+- **Paar 4 (Base → Opt):**
+  - Base: 172.4 / 167.0 / 180.7 ms/Schritt (Minimum: 167.0 ms), `computeMFDArea`: 21.26 ms
+  - Opt: 169.6 / 155.1 / 168.0 ms/Schritt (Minimum: 155.1 ms), `computeMFDArea`: 14.29 ms (−6.97 ms / −32.8 %)
+- **Paar 4 umgekehrt (Opt → Base):**
+  - Opt: 174.6 / 188.3 / 187.2 ms/Schritt (Minimum: 174.6 ms), `computeMFDArea`: 14.92 ms
+  - Base: 171.9 / 175.0 / 161.4 ms/Schritt (Minimum: 161.4 ms), `computeMFDArea`: 19.64 ms (−4.72 ms / −24.0 %)
+
+Der Pass `computeMFDArea` sinkt stabil um **4.7 bis 9.5 ms/Schritt** (−24 % bis −39 %).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `7667d3585b1f1904` | `7667d3585b1f1904` | bit-identisch |
+| Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
+| Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
+| Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |

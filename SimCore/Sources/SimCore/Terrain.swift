@@ -3166,7 +3166,6 @@ public final class Terrain {
     private struct MFDRoute {
         var neighbors = SIMD8<Int32>(repeating: 0)
         var weights = SIMD8<Double>(repeating: 0)
-        var sum = 0.0
     }
 
     /// Disbursive Gewichte (Exponent `braidDispersion`) — getrennt von
@@ -3174,7 +3173,6 @@ public final class Terrain {
     /// gebraucht und geschrieben werden.
     private struct MFDDispersion {
         var weights = SIMD8<Double>(repeating: 0)
-        var sum = 0.0
     }
 
     private func computeMFDArea() {
@@ -3206,6 +3204,12 @@ public final class Terrain {
                 let length = min(capacity, end)
                 let blockEnd = end
                 parallel(length) { lo, hi in
+                withUnsafeTemporaryAllocation(of: SIMD8<Int32>.self, capacity: 1) { nbBuf in
+                withUnsafeTemporaryAllocation(of: SIMD8<Double>.self, capacity: 1) { slopeBuf in
+                withUnsafeTemporaryAllocation(of: SIMD8<Double>.self, capacity: 1) { weightBuf in
+                let pNeighbors = nbBuf.baseAddress!.withMemoryRebound(to: Int32.self, capacity: 8) { $0 }
+                let pSlopes = slopeBuf.baseAddress!.withMemoryRebound(to: Double.self, capacity: 8) { $0 }
+                let pWeights = weightBuf.baseAddress!.withMemoryRebound(to: Double.self, capacity: 8) { $0 }
                 for t in lo..<hi {
                     let k = Int(pord[blockEnd - 1 - t])
                     let hk = phf[k]
@@ -3213,28 +3217,26 @@ public final class Terrain {
                         prc[t] = -1
                         continue
                     }
-                    var neighbors = SIMD8<Int32>(repeating: 0)
-                    var slopes = SIMD8<Double>(repeating: 0)
                     var c = 0
                     var sMax = 0.0
-                    // PERF: die Division erst NACH dem Vorzeichen-Test. `dist` ist
-                    // positiv, `s` hat also dasselbe Vorzeichen wie der Zähler —
-                    // höhere Nachbarn (die Mehrzahl) kosten damit keine
-                    // Fließkomma-Division mehr, und die ist auf dieser Schleife der
-                    // Taktgeber (gemessen −0,6 ms/Schritt). Der `s > 0`-Test bleibt
-                    // stehen: er fängt den (theoretischen) Unterlauf eines winzigen
-                    // positiven Zählers ab ⇒ bit-identisch.
-                    @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                    // PERF: orthogonale Nachbarn haben dist == 1.0 (d / 1.0 == d
+                    // nach IEEE 754 bit-identisch) und sparen die Gleitkomma-Division.
+                    // Diagonale dividieren erst nach dem Vorzeichen-Test durch sqrt2.
+                    @inline(__always) func considerOrth(_ nb: Int) {
+                        let d = hk - phf[nb]
+                        if d > 0 { pNeighbors[c] = Int32(nb); pSlopes[c] = d; sMax = max(sMax, d); c += 1 }
+                    }
+                    @inline(__always) func considerDiag(_ nb: Int) {
                         let d = hk - phf[nb]
                         if d <= 0 { return }
-                        let s = d / dist
-                        if s > 0 { neighbors[c] = Int32(nb); slopes[c] = s; sMax = max(sMax, s); c += 1 }
+                        let s = d / sqrt2
+                        if s > 0 { pNeighbors[c] = Int32(nb); pSlopes[c] = s; sMax = max(sMax, s); c += 1 }
                     }
                     let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
                     if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
-                        consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
-                        consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
-                        consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+                        considerDiag(k - nn - 1); considerOrth(k - nn); considerDiag(k - nn + 1)
+                        considerOrth(k - 1);                            considerOrth(k + 1)
+                        considerDiag(k + nn - 1); considerOrth(k + nn); considerDiag(k + nn + 1)
                     } else {
                         let j = k / nn
                         for dj in -1...1 {
@@ -3242,7 +3244,11 @@ public final class Terrain {
                                 if di == 0 && dj == 0 { continue }
                                 let ni = i + di, nj = j + dj
                                 if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                                consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+                                if di != 0 && dj != 0 {
+                                    considerDiag(nj * nn + ni)
+                                } else {
+                                    considerOrth(nj * nn + ni)
+                                }
                             }
                         }
                     }
@@ -3254,39 +3260,41 @@ public final class Terrain {
                         prc[t] = 0
                         continue
                     }
-                    var route = MFDRoute()
+                    var sum = 0.0
                     for j in 0..<c {
-                        route.weights[j] = powFast(slopes[j], exponent)
-                        route.sum += route.weights[j]
+                        let w = powFast(pSlopes[j], exponent)
+                        pWeights[j] = w
+                        sum += w
                     }
-                    // Jede Division behält dieselben Operanden. Die
-                    // anschließenden Flächensummen bleiben vollständig seriell.
-                    // Die Additionskette je Akkumulator ist unverändert
-                    // aufsteigend in j — die beiden Akkumulatoren laufen jetzt
-                    // nur in getrennten Schleifen, was die Werte nicht ändert.
+                    if sum <= 0 {
+                        prc[t] = 0
+                        continue
+                    }
                     for j in 0..<c {
-                        route.weights[j] /= route.sum
+                        pWeights[j] /= sum
                     }
-                    route.neighbors = neighbors
-                    pr[t] = route
+                    pr[t] = MFDRoute(neighbors: nbBuf[0], weights: weightBuf[0])
                     if mfdCanDisperse(sMax: sMax, pond: hk - ph[k]) {
-                        // Dispersions-Flag im Int8-Zähler: c + 10 (c ≤ 8, der
-                        // Wert bleibt Int8-safe). Ohne Flag wird der disbursive
-                        // Satz gar nicht erst geschrieben.
-                        prc[t] = Int8(c + 10)
-                        var disp = MFDDispersion()
+                        var dSum = 0.0
                         for j in 0..<c {
-                            disp.weights[j] = powFast(slopes[j], dispersion)
-                            disp.sum += disp.weights[j]
+                            let w = powFast(pSlopes[j], dispersion)
+                            pWeights[j] = w
+                            dSum += w
                         }
-                        for j in 0..<c {
-                            disp.weights[j] /= disp.sum
+                        if dSum > 0 {
+                            for j in 0..<c {
+                                pWeights[j] /= dSum
+                            }
+                            pdsp[t] = MFDDispersion(weights: weightBuf[0])
+                            prc[t] = Int8(c + 10)
+                        } else {
+                            prc[t] = Int8(c)
                         }
-                        pdsp[t] = disp
                     } else {
                         prc[t] = Int8(c)
                     }
                 }
+                }}}
                 }
                 for t in 0..<length {
                     let c8 = prc[t]
@@ -3301,20 +3309,20 @@ public final class Terrain {
                         if fp >= 0 { pa[Int(fp)] += a }
                         continue
                     }
-                    let route = pr[t]
                     // Die Flächen-Schwelle entscheidet wie bisher erst hier, an
                     // der bereits angesammelten Fläche.
                     let disperse = a >= mfdMinA && canD
-                    let weights = disperse ? pdsp[t].weights : route.weights
-                    let sum = disperse ? pdsp[t].sum : route.sum
-                    if sum <= 0 {
-                        if pend[k] != .none { continue }
-                        let fp = ppar[k]
-                        if fp >= 0 { pa[Int(fp)] += a }
-                        continue
-                    }
-                    for j in 0..<c {
-                        pa[Int(route.neighbors[j])] += a * weights[j]
+                    withUnsafePointer(to: &pr[t]) { routePtr in
+                        let pNb = UnsafeRawPointer(routePtr).assumingMemoryBound(to: Int32.self)
+                        let pW: UnsafePointer<Double>
+                        if disperse {
+                            pW = UnsafeRawPointer(pdsp + t).assumingMemoryBound(to: Double.self)
+                        } else {
+                            pW = UnsafeRawPointer(routePtr).advanced(by: MemoryLayout<SIMD8<Int32>>.size).assumingMemoryBound(to: Double.self)
+                        }
+                        for j in 0..<c {
+                            pa[Int(pNb[j])] += a * pW[j]
+                        }
                     }
                 }
                 end -= length
