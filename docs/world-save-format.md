@@ -195,8 +195,8 @@ wenn jemand eine Stellschraube gedreht hat. *Folge:* Änderungen an
 `SimConfig()`-Defaults wirken nur auf NEUE Welten. Wer eine alte Welt mit neuer
 Physik weiterlaufen lassen will, braucht eine bewusste Migration.
 
-`Terrain` wird beim Laden deshalb ERSETZT (nicht überschrieben): `SimNode.terrain`
-ist `var`, und der Konstruktor `Terrain(allocating:seed:)` legt nur Puffer an,
+`Terrain` wird beim Laden deshalb ERSETZT (nicht überschrieben): die Welt-Sitzung
+(`WorldSession.load`, Issue #212) tauscht ihr `Terrain` aus, und der Konstruktor `Terrain(allocating:seed:)` legt nur Puffer an,
 ohne zu generieren (der Snapshot bringt jedes Feld mit).
 
 **Eine Grenze zieht das Frontend:** eine laufende Godot-Sitzung ist auf EINE

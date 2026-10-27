@@ -3,131 +3,68 @@ import SwiftGodot
 import SimCore
 import SimRender
 
-/// GDExtension-Brücke: hält den reinen `SimCore.Terrain` und reicht seine Felder
-/// als Packed*Array an Godot. Alle @Callable-Methoden sind aus GDScript aufrufbar.
+/// GDExtension-Brücke: hält die Welt-Sitzung (`SimRender.WorldSession`) und
+/// reicht ihre Ergebnisse als Packed*Array an Godot. Alle @Callable-Methoden
+/// sind aus GDScript aufrufbar.
 ///
 /// Bewusst dünn (PLAN.md §1): die gesamte Physik lebt in `SimCore`, die
 /// Render-Aufbereitung samt ihrem Zustand im godot-freien Target `SimRender`
-/// (Issues #80/#82/#93). Hier passiert nur Marshalling Swift → Godot: Aufruf
-/// weiterreichen, `[UInt8]`/`[Float]`/`RibbonMesh` als `Packed*Array`
-/// zurückgeben.
+/// (Issues #80/#82/#93), und seit Issue #212 auch die Regel der Brücke (vor
+/// jedem Zugriff einen laufenden Schritt abwarten, nach jeder Weltänderung die
+/// passende `TerrainChange` melden) in der Sitzung. Hier passiert nur
+/// Marshalling Swift → Godot: Aufruf weiterreichen, `[UInt8]`/`[Float]`/
+/// `RibbonMesh` als `Packed*Array` zurückgeben.
 @Godot
 final class SimNode: Node {
-    /// `var`, weil ein geladener Spielstand seine EIGENE Config mitbringt
-    /// (Issue #8): die Datei-Config ist autoritativ, also wird das Terrain beim
-    /// Laden ersetzt statt in-place überschrieben.
-    ///
-    /// Config UND Einlauf kommen als benannte Werte aus SimCore
-    /// (`SimConfig.production`, `SimConfig.productionSettleYears`, Issue #97);
-    /// die Brücke baut hier keine eigene Fassung mehr — sie stand sonst als
-    /// eine von sechs handgepflegten Kopien da, die nichts verband. Nur der
-    /// Produktionspfad läuft ein, die SimCore-Testwelten (`generate`-Default 0)
-    /// bleiben unverändert. Wächter: `SimCoreTests/RenderContractTests.swift`.
-    ///
-    /// Angefasst wird die Welt nur über `terrain` (s. dort); direkt nur in
-    /// `beginStep`, das sie dem Hintergrund-Job übergibt.
-    private var world = Terrain(config: SimConfig.production,
-                                seed: RenderContract.defaultSeed,
-                                settleYears: SimConfig.productionSettleYears)
+    /// Welt, Render-Zustand und Hintergrund-Job. Config UND Einlauf kommen als
+    /// benannte Werte aus SimCore (`SimConfig.production`,
+    /// `SimConfig.productionSettleYears`, Issue #97); die Brücke baut keine
+    /// eigene Fassung. Nur der Produktionspfad läuft ein, die
+    /// SimCore-Testwelten bleiben unverändert. Wächter:
+    /// `SimCoreTests/RenderContractTests.swift`.
+    private let session = WorldSession<VariantDictionary>(
+        config: SimConfig.production,
+        seed: RenderContract.defaultSeed,
+        settleYears: SimConfig.productionSettleYears)
     private var lastWorldBytes = 0
-
-    /// Der gesamte Render-Zustand (die Renderer mit ihren EWMA-Feldern,
-    /// Arbeitspuffern und Dirty-Snapshots plus der Material-Cache) liegt seit
-    /// Issue #93 in `SimRender`. Die Brücke hält davon nichts mehr selbst und
-    /// meldet nach JEDER Terrain-Änderung `render.invalidate` — den einen
-    /// Einstieg dort. Angefasst wird er nur über `render` (s. dort).
-    private let renderState = RenderState()
-
-    /// Sim-Schritt plus Frame-Aufbereitung auf einem Hintergrund-Thread
-    /// (`beginStep`): im Zeitraffer wartet der Hauptthread nicht mehr darauf.
-    /// Das Ergebnis ist das fertig verpackte Frame-Dictionary.
-    private let job = BackgroundJob<VariantDictionary>(label: "river-sim.step")
-
-    /// DER Zugang zur Welt für jeden Aufruf der Brücke: wartet zuerst einen
-    /// laufenden Hintergrund-Schritt ab. Damit kann kein Aufruf die Welt
-    /// anfassen, während der Job sie rechnet, und vergessen lässt sich das
-    /// nicht, weil es keinen zweiten Weg gibt (Wächter:
-    /// `BackgroundJobTests.testBridgeTouchesTheWorldOnlyThroughTheGate`).
-    /// Ohne laufenden Job kostet das eine Sperre.
-    private var terrain: Terrain {
-        get { job.wait(); return world }
-        set { job.wait(); world = newValue }
-    }
-
-    /// Wie `terrain`, für den Render-Zustand.
-    private var render: RenderState {
-        job.wait()
-        return renderState
-    }
-
-    /// Ein laufender Job darf seinen Knoten nicht überleben: beim Beenden
-    /// entlädt Godot danach die Library, deren Code er gerade ausführt.
-    deinit {
-        job.wait()
-    }
 
     // MARK: Steuerung
 
     @Callable func generate(seed: Int) {
-        terrain.generate(seed: UInt32(truncatingIfNeeded: seed),
+        session.generate(seed: UInt32(truncatingIfNeeded: seed),
                          settleYears: SimConfig.productionSettleYears)
-        render.invalidate(terrain, .replaced)
     }
 
-    @Callable func step(years: Double) {
-        terrain.step(dtYears: years)
-        render.invalidate(terrain, .advanced)
-    }
+    @Callable func step(years: Double) { session.step(years: years) }
 
     // MARK: Hintergrund-Schritt (Zeitraffer)
 
-    /// Startet `step(years)` und danach den Frame `trigger` (wie `renderFrame`)
-    /// auf einem Hintergrund-Thread und kehrt sofort zurück. Abholen:
-    /// `stepReady()` fragt, ohne zu blockieren, `finishStep()` liefert das
-    /// Frame-Dictionary (dieselben Schlüssel wie `renderFrame`).
-    ///
-    /// Bis zum Abholen ist der Schritt UNTERWEGS (`stepInFlight`). Jeder
-    /// andere Aufruf, der Welt oder Render-Zustand braucht, wartet ihn ab
-    /// (`terrain`/`render`), lässt sein Ergebnis aber liegen: hochladen muss
-    /// es der Aufrufer, sonst zeigt Godot einen anderen Stand als den, den
-    /// `RenderState` für sichtbar hält. Ein Start, solange ein Schritt
-    /// unterwegs ist, ist deshalb ein Fehler und startet nichts.
-    ///
-    /// Determinismus: der Job rechnet genau `step` + `renderFrame`, nur auf
-    /// einem anderen Thread, und niemand sonst fasst die Welt dabei an.
+    /// Zeitraffer-Schritt im Hintergrund; das Frame-Dictionary (Schlüssel wie
+    /// `renderFrame`) holt `finishStep()` ab. Vertrag: `WorldSession.beginStep`.
     @Callable func beginStep(years: Double, trigger: Int, now: Double) {
         guard let frameTrigger = Self.frameTrigger(trigger, "beginStep") else { return }
-        guard !job.isPending else {
+        guard session.beginStep(years: years, trigger: frameTrigger, now: now,
+                                pack: Self.packFrame) else {
             GD.pushError("beginStep: der vorige Schritt ist noch unterwegs — erst "
                          + "finishStep(), sonst ginge sein Frame verloren")
             return
         }
-        // Ohne Job unterwegs gehören Welt und Render-Zustand ab hier dem Job.
-        let terrain = world, render = renderState
-        job.start {
-            terrain.step(dtYears: years)
-            render.invalidate(terrain, .advanced)
-            let frame = render.frame(terrain, frameTrigger, now: now)
-            return Self.packFrame(frame, frameTrigger, heights: terrain.h, year: terrain.years,
-                                  waterLevel: terrain.waterLevel, bands: terrain.heightBands,
-                                  ribbons: render.riverRibbonMesh)
-        }
     }
 
     /// Ist ein Hintergrund-Schritt unterwegs (rechnet oder wartet aufs Abholen)?
-    @Callable func stepInFlight() -> Bool { job.isPending }
+    @Callable func stepInFlight() -> Bool { session.stepInFlight }
 
     /// Ist der Hintergrund-Schritt fertig? Blockiert nie.
-    @Callable func stepReady() -> Bool { job.isReady }
+    @Callable func stepReady() -> Bool { session.stepReady }
 
     /// Holt das Frame-Dictionary des Hintergrund-Schritts ab (wartet, falls er
     /// noch rechnet). Leer = es war keiner unterwegs.
-    @Callable func finishStep() -> VariantDictionary { job.take() ?? VariantDictionary() }
+    @Callable func finishStep() -> VariantDictionary { session.finishStep() ?? VariantDictionary() }
 
     /// Aufsummierte Zeit, die der Hauptthread auf Hintergrund-Schritte
     /// gewartet hat (ms), Messgröße für `docs/perf-measurements.md` §L: im
     /// Zeitraffer soll sie nicht wachsen.
-    @Callable func stepWaitMilliseconds() -> Double { job.waitedSeconds * 1000 }
+    @Callable func stepWaitMilliseconds() -> Double { session.stepWaitedSeconds * 1000 }
 
     // MARK: Speichern / Laden (Issue #8)
 
@@ -138,7 +75,7 @@ final class SimNode: Node {
     /// die Brücke (Alternative wäre ein Bool + separates `lastError()`).
     @Callable func saveWorld(path: String) -> String {
         do {
-            lastWorldBytes = try WorldSnapshot.write(terrain, to: path)
+            lastWorldBytes = try session.save(to: path)
             return ""
         } catch let error as SnapshotError {
             return error.description
@@ -153,15 +90,8 @@ final class SimNode: Node {
     /// Fehlerfall bleibt die aktuelle Welt unangetastet.
     @Callable func loadWorld(path: String) -> String {
         do {
-            let loaded = try WorldSnapshot.read(from: path)
-            terrain = loaded
+            try session.load(from: path)
             lastWorldBytes = 0
-            // `.replaced` erledigt alles: die Δ-Karte zeigt ab jetzt, was
-            // die Sim tut (nicht die Differenz zur alten Welt), Fluss-Bänder
-            // bauen im nächsten Frame neu, der Wald vergisst sein Gedächtnis.
-            // Dieselbe Politik wie beim Generieren — Begründung an
-            // `RenderState.invalidate`.
-            render.invalidate(terrain, .replaced)
             return ""
         } catch let error as SnapshotError {
             return error.description
@@ -200,10 +130,10 @@ final class SimNode: Node {
 
     // MARK: Konstanten
 
-    @Callable func gridSize() -> Int { terrain.cfg.n }
-    @Callable func worldSize() -> Double { terrain.cfg.world }
-    @Callable func seaLevel() -> Double { terrain.cfg.sea }
-    @Callable func currentYear() -> Double { terrain.years }
+    @Callable func gridSize() -> Int { session.config.n }
+    @Callable func worldSize() -> Double { session.config.world }
+    @Callable func seaLevel() -> Double { session.config.sea }
+    @Callable func currentYear() -> Double { session.year }
 
     /// Zur Bauzeit eingebrannter Stempel der Quellen (Extension/Sources +
     /// SimCore/Sources, Verfahren: scripts/build-stamp.sh). Godot lädt die Library
@@ -214,19 +144,19 @@ final class SimNode: Node {
 
     // MARK: Felder (row-major, Länge n*n)
 
-    @Callable func heights() -> PackedFloat32Array { Self.pack(terrain.h) }
+    @Callable func heights() -> PackedFloat32Array { Self.pack(session.heights) }
 
     /// Höhenfeld als ROHE float32-Bytes — direkt als R32F-Textur hochladbar.
     /// GDScript hat vorher `heights().to_byte_array()` gerechnet: dieselben
     /// Bytes, aber eine zusätzliche ~2,7-MB-Kopie je Textur-Update (Issue #53).
-    @Callable func heightsBytes() -> PackedByteArray { Self.packBytes(terrain.h) }
+    @Callable func heightsBytes() -> PackedByteArray { Self.packBytes(session.heights) }
 
     // Rendering bekommt den ratenbegrenzten SEESPIEGEL statt hf: Priority-Flood
     // springt beim Sill-Zuschütten instantan → hüpfende Seeflächen (s. Terrain.waterLevel).
-    @Callable func filled() -> PackedFloat32Array { Self.pack(terrain.waterLevel) }
+    @Callable func filled() -> PackedFloat32Array { Self.pack(session.waterLevel) }
 
     /// Seespiegel als rohe float32-Bytes — Begründung wie bei `heightsBytes`.
-    @Callable func filledBytes() -> PackedByteArray { Self.packBytes(terrain.waterLevel) }
+    @Callable func filledBytes() -> PackedByteArray { Self.packBytes(session.waterLevel) }
 
     /// Aktuelle Höhenbänder (Issue #4) als
     /// `[vegFull, vegNone, rockStart, rockFull, snowStart, snowFull, coniferLow, coniferHigh]`.
@@ -235,7 +165,7 @@ final class SimNode: Node {
     /// **Ausnahme seit Issue #33:** `snowStart`/`snowFull` sind keine Perzentile
     /// mehr, sondern aus dem Schneefeld zurückgerechnet (s. `HeightBands`). An der
     /// Reihenfolge und Bedeutung der Werte ändert das nichts.
-    @Callable func heightBands() -> PackedFloat32Array { Self.packBands(terrain.heightBands) }
+    @Callable func heightBands() -> PackedFloat32Array { Self.packBands(session.heightBands) }
 
     private static func packBands(_ b: HeightBands) -> PackedFloat32Array {
         PackedFloat32Array([
@@ -244,25 +174,25 @@ final class SimNode: Node {
         ])
     }
 
-    @Callable func flowArea() -> PackedFloat32Array { Self.pack(terrain.area) }
+    @Callable func flowArea() -> PackedFloat32Array { Self.pack(session.flowArea) }
 
     /// Abfluss-Nachbar je Zelle (-1 = Senke/Meer) — für Fluss-Geometrie.
-    @Callable func receivers() -> PackedInt32Array { PackedInt32Array(terrain.receiver) }
+    @Callable func receivers() -> PackedInt32Array { PackedInt32Array(session.receivers) }
 
     // MARK: Diagnose (Kennzahlen und Δ-Karte: `TerrainDiagnostics`)
 
     /// Setzt den Vergleichspunkt der Diagnose auf den aktuellen Zustand.
-    @Callable func captureDebugReference() { render.captureDebugReference(terrain) }
+    @Callable func captureDebugReference() { session.captureDebugReference() }
 
     /// Kompakter Diagnosevertrag für GDScript — Reihenfolge und Bedeutung der
     /// Werte: `TerrainDiagnostics.stats`.
     @Callable func debugTerrainStats() -> PackedFloat32Array {
-        PackedFloat32Array(render.debugTerrainStats(terrain))
+        PackedFloat32Array(session.debugTerrainStats())
     }
 
     /// Δ-Karte gegen den Vergleichspunkt (blau = abgetragen, rot = aufgebaut).
     @Callable func heightDifferenceBytes(scale: Double) -> PackedByteArray {
-        PackedByteArray(render.heightDifferenceBytes(terrain, scale: scale))
+        PackedByteArray(session.heightDifferenceBytes(scale: scale))
     }
 
     // MARK: Frame-Protokoll (Issue #94)
@@ -274,10 +204,7 @@ final class SimNode: Node {
         guard let frameTrigger = Self.frameTrigger(trigger, "renderFrame") else {
             return VariantDictionary()
         }
-        let frame = render.frame(terrain, frameTrigger, now: now)
-        return Self.packFrame(frame, frameTrigger, heights: terrain.h, year: terrain.years,
-                              waterLevel: terrain.waterLevel, bands: terrain.heightBands,
-                              ribbons: render.riverRibbonMesh)
+        return Self.packFrame(session.renderFrame(frameTrigger, now: now))
     }
 
     private static func frameTrigger(_ raw: Int, _ caller: String) -> FrameTrigger? {
@@ -304,14 +231,12 @@ final class SimNode: Node {
     /// - nach einem Band-Bau: `ribbons` plus das Mesh in `ribbon_verts`,
     ///   `ribbon_colors`, `ribbon_uvs`, `ribbon_uv2s`, `ribbon_indices`.
     /// Fehlende Schlüssel heißen „in diesem Frame nicht neu".
-    private static func packFrame(_ frame: RenderFrame, _ trigger: FrameTrigger,
-                                  heights: [Double], year: Double, waterLevel: [Double],
-                                  bands: HeightBands, ribbons: RibbonMesh) -> VariantDictionary {
+    private static func packFrame(_ world: WorldFrame) -> VariantDictionary {
         let out = VariantDictionary()
-        out[Variant("trigger")] = Variant(trigger.rawValue)
-        out[Variant("year")] = Variant(year)
-        out[Variant("heights")] = packBytes(heights).toVariant()
-        if let o = frame.overlays {
+        out[Variant("trigger")] = Variant(world.trigger.rawValue)
+        out[Variant("year")] = Variant(world.year)
+        out[Variant("heights")] = packBytes(world.heights).toVariant()
+        if let o = world.frame.overlays {
             out[Variant("water")] = PackedByteArray(o.water).toVariant()
             out[Variant("water_blend")] = Variant(o.waterBlend)
             out[Variant("color")] = PackedByteArray(o.colors).toVariant()
@@ -322,43 +247,43 @@ final class SimNode: Node {
             out[Variant("forest")] = PackedByteArray(o.forestMask).toVariant()
             // Sedimentfahnen (#174 C): Float32-Rohbytes für eine RF-Textur.
             out[Variant("plume")] = packFloatBytes(o.plume).toVariant()
-            out[Variant("filled")] = packBytes(waterLevel).toVariant()
-            out[Variant("bands")] = packBands(bands).toVariant()
+            out[Variant("filled")] = packBytes(world.waterLevel).toVariant()
+            out[Variant("bands")] = packBands(world.bands).toVariant()
         }
-        if frame.ribbonsRebuilt {
+        if world.frame.ribbonsRebuilt {
             out[Variant("ribbons")] = Variant(true)
-            out[Variant("ribbon_verts")] = ribbonVerts(ribbons).toVariant()
-            out[Variant("ribbon_colors")] = ribbonColors(ribbons).toVariant()
-            out[Variant("ribbon_uvs")] = ribbonUVs(ribbons).toVariant()
-            out[Variant("ribbon_uv2s")] = ribbonUV2s(ribbons).toVariant()
-            out[Variant("ribbon_indices")] = PackedInt32Array(ribbons.indices).toVariant()
+            out[Variant("ribbon_verts")] = ribbonVerts(world.ribbons).toVariant()
+            out[Variant("ribbon_colors")] = ribbonColors(world.ribbons).toVariant()
+            out[Variant("ribbon_uvs")] = ribbonUVs(world.ribbons).toVariant()
+            out[Variant("ribbon_uv2s")] = ribbonUV2s(world.ribbons).toVariant()
+            out[Variant("ribbon_indices")] = PackedInt32Array(world.ribbons.indices).toVariant()
         }
         return out
     }
 
     /// `RS_WATER_GPU`: Frames liefern das rohe Wasserfeld, Blur/EWMA laufen in
     /// der GPU-Kette von `Main.gd`.
-    @Callable func setDeferWaterTail(enabled: Bool) { render.deferWaterTail = enabled }
+    @Callable func setDeferWaterTail(enabled: Bool) { session.deferWaterTail = enabled }
 
     // MARK: Render-Buffer (in Swift berechnet → GDScript setzt nur zusammen)
 
     /// Großräumige Biom-/Höhen-Farbe als RGBA8-Puffer. Die eigentlichen
     /// Materialgewichte kommen getrennt aus `terrainSurfaceBytes`.
     @Callable func terrainColorBytes() -> PackedByteArray {
-        PackedByteArray(render.terrainColorBytes(terrain))
+        PackedByteArray(session.terrainColorBytes())
     }
 
     /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
     /// A = Lithologie-Härte. Beide Puffer werden gemeinsam berechnet.
     @Callable func terrainSurfaceBytes() -> PackedByteArray {
-        PackedByteArray(render.terrainSurfaceBytes(terrain))
+        PackedByteArray(session.terrainSurfaceBytes())
     }
 
     /// Bodenbedeckung (Issue #174 D): R = Schutthalde, G = blankes Gletschereis,
     /// B = Rohboden, A = Talboden-Wiese. Gemeinsam mit den beiden Puffern oben
     /// berechnet.
     @Callable func terrainCoverBytes() -> PackedByteArray {
-        PackedByteArray(render.terrainCoverBytes(terrain))
+        PackedByteArray(session.terrainCoverBytes())
     }
 
     /// Wie `waterFieldBytes`, aber ohne Blur/EWMA/Glättung: die erledigt der
@@ -367,7 +292,7 @@ final class SimNode: Node {
     /// bleiben liegen. Kein `blend`-Argument: der Mischfaktor ist GPU-seitig ein
     /// Uniform.
     @Callable func waterFieldRawBytes() -> PackedByteArray {
-        PackedByteArray(render.waterFieldBytes(terrain, blend: 1.0, deferTail: true))
+        PackedByteArray(session.waterFieldBytes(blend: 1.0, deferTail: true))
     }
 
     /// Wasser-Feld (Flüsse/Seen/Altarme) als RGBA8-Byte-Buffer — Kanäle und
@@ -377,25 +302,25 @@ final class SimNode: Node {
     /// Kanal-Kopplung und Legacy-A/B (`RS_WATER_STAMP`) liegen im Zustand:
     /// `RenderState` kennt das Bau-Ergebnis der Bänder selbst.
     @Callable func waterFieldBytes(blend: Double) -> PackedByteArray {
-        PackedByteArray(render.waterFieldBytes(terrain, blend: blend))
+        PackedByteArray(session.waterFieldBytes(blend: blend))
     }
 
     /// Abfluss-Dichte fürs Shader-Detail als R8-Byte-Buffer (n×n) — Kalibrierung
     /// und Begründung: `WaterRender.flowDetailIntensity`.
     @Callable func flowDetailBytes() -> PackedByteArray {
-        PackedByteArray(render.flowDetailBytes(terrain))
+        PackedByteArray(session.flowDetailBytes())
     }
 
     /// Schutzmaske für Kronendach und Render-Verschiebung als R8-Byte-Buffer (n×n, Issue #154).
     /// Sperrt Wasserflächen (sichtbares Rasterwasser + gebaute Flussbänder + Saum ~2 Zellen).
     @Callable func protectMaskBytes() -> PackedByteArray {
-        PackedByteArray(render.protectMaskBytes(terrain))
+        PackedByteArray(session.protectMaskBytes())
     }
 
     /// Waldmaske des Kronendachs als R8-Byte-Buffer (n×n, Issue #152) — s.
     /// `ForestCanopyMask`. Endet an der Schutzmaske.
     @Callable func forestMaskBytes() -> PackedByteArray {
-        PackedByteArray(render.forestMaskBytes(terrain))
+        PackedByteArray(session.forestMaskBytes())
     }
 
     // MARK: Wasser-Kalibrierung über die Brücke (Issues #91/#92)
@@ -502,8 +427,7 @@ final class SimNode: Node {
     /// Hebt (dir > 0) oder senkt (dir < 0) das Terrain in einem Pinsel um
     /// Gitterzentrum (gx, gz) mit Radius in Welteinheiten. Koppelt in die Tektonik.
     @Callable func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double) {
-        terrain.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: dir)
-        render.invalidate(terrain, .edited)
+        session.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: dir)
     }
 
     /// Pinsel-Werkzeug mit Stärke. `mode` ist der Rohwert von `BrushTool` — die
@@ -517,34 +441,32 @@ final class SimNode: Node {
                          + "und BrushTool sind auseinandergelaufen")
             return
         }
-        tool.apply(to: terrain, gx: gx, gz: gz, radiusWorld: radiusWorld,
-                   strength: strength, target: target)
-        render.invalidate(terrain, .edited)
+        session.brush(tool, gx: gx, gz: gz, radiusWorld: radiusWorld,
+                      strength: strength, target: target)
     }
 
     /// Nach Sculpting/Änderungen Entwässerung neu berechnen (für Live-Flüsse).
     /// WELCHE Pässe in welcher Reihenfolge dazugehören, steht seit Issue #93
     /// bei ihrem Besitzer: `Terrain.recomputeFlowAfterEdit`.
     @Callable func recomputeFlow() {
-        terrain.recomputeFlowAfterEdit()
-        render.invalidate(terrain, .edited)
+        session.recomputeFlow()
     }
 
     /// Effektive Maximal-Breite der Spitzhacke (Welteinheiten) — fürs Ring-Visual.
     @Callable func pickaxeMaxRadiusWorld() -> Double {
-        Terrain.pickaxeMaxCells * terrain.cfg.cellSize
+        session.pickaxeMaxRadiusWorld
     }
 
     // MARK: Wasser-Geometrie (Band-Puffer — s. `RiverRibbonRenderer`)
 
-    @Callable func riversMaxDelta() -> Double { render.riversMaxDelta(terrain) }
+    @Callable func riversMaxDelta() -> Double { session.riversMaxDelta() }
 
-    @Callable func markRiversBuilt() { render.markRiversBuilt(terrain) }
+    @Callable func markRiversBuilt() { session.markRiversBuilt() }
 
     /// Baut die Bänder der Mäander-Hauptläufe, Delta-Arme und Altarme.
     /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y).
     @Callable func buildRiverRibbons(hscale: Double, lift: Double) {
-        render.buildRiverRibbons(terrain, hscale: hscale, lift: lift)
+        session.buildRiverRibbons(hscale: hscale, lift: lift)
     }
 
     /// Meldet die Auflösung des Terrain-Render-Gitters (Main.gd `terrain_grid`),
@@ -552,15 +474,15 @@ final class SimNode: Node {
     /// (`renderSurfaceHeight`) statt von den Sim-Höhen. Ohne Aufruf gilt volle
     /// Auflösung — die Headless-Wächter bleiben damit unverändert.
     @Callable func setRenderGrid(grid: Int) {
-        render.renderGrid = grid
+        session.renderGrid = grid
     }
 
-    @Callable func riverRibbonVerts() -> PackedVector3Array { Self.ribbonVerts(render.riverRibbonMesh) }
-    @Callable func riverRibbonColors() -> PackedColorArray { Self.ribbonColors(render.riverRibbonMesh) }
-    @Callable func riverRibbonUVs() -> PackedVector2Array { Self.ribbonUVs(render.riverRibbonMesh) }
+    @Callable func riverRibbonVerts() -> PackedVector3Array { Self.ribbonVerts(session.riverRibbonMesh) }
+    @Callable func riverRibbonColors() -> PackedColorArray { Self.ribbonColors(session.riverRibbonMesh) }
+    @Callable func riverRibbonUVs() -> PackedVector2Array { Self.ribbonUVs(session.riverRibbonMesh) }
     /// Typ-Kanal des Vertex-Vertrags (UV2.x = `WaterRender.ribbonKind*`):
     /// Fluss / Delta-Arm / Altarm. Der Shader färbt und animiert danach.
-    @Callable func riverRibbonUV2s() -> PackedVector2Array { Self.ribbonUV2s(render.riverRibbonMesh) }
+    @Callable func riverRibbonUV2s() -> PackedVector2Array { Self.ribbonUV2s(session.riverRibbonMesh) }
 
     private static func ribbonVerts(_ mesh: RibbonMesh) -> PackedVector3Array {
         PackedVector3Array(mesh.vertices.map { Vector3(x: $0.x, y: $0.y, z: $0.z) })
@@ -575,11 +497,11 @@ final class SimNode: Node {
         PackedVector2Array(mesh.uv2s.map { Vector2(x: $0.x, y: $0.y) })
     }
     @Callable func riverRibbonIndices() -> PackedInt32Array {
-        PackedInt32Array(render.riverRibbonMesh.indices)
+        PackedInt32Array(session.riverRibbonMesh.indices)
     }
     /// Vertex-Index je Band-Anfang — für die Wächter (`game/tests`).
     @Callable func riverRibbonStripStarts() -> PackedInt32Array {
-        PackedInt32Array(render.riverRibbonMesh.stripStarts)
+        PackedInt32Array(session.riverRibbonMesh.stripStarts)
     }
 
     // MARK: Marshalling

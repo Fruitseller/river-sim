@@ -41,10 +41,11 @@ swift test -c release --package-path SimCore \
   Helfer bleibt bewusst nicht-`@Sendable`, die Disjunktheit der Index-Bereiche
   ist Projektregel und wird von den Bit-Identitäts-Wächtern geprüft. Wer
   Nebenläufigkeit ändert, ändert genau diese Engpässe. Die Extension (eigenes
-  Paket, tools 6.0) braucht keine eigene Markierung: `SimNode` übergibt die
-  Arbeit nur über `BackgroundJob.start` (nicht-`@Sendable`-Closure, s. dort);
-  dass sie Welt und Render-Zustand sonst nur über die Tore anfasst, prüft
-  weiter der Quelltext-Wächter in `BackgroundJobTests`, nicht der Compiler.
+  Paket, tools 6.0) braucht keine eigene Markierung: Hintergrund-Arbeit
+  startet nur `WorldSession.beginStep` (SimRender) über `BackgroundJob.start`
+  (nicht-`@Sendable`-Closure, s. dort); dass `SimNode` Welt und
+  Render-Zustand nur über die Sitzung anfasst, prüft der Quelltext-Wächter in
+  `WorldSessionTests`, nicht der Compiler.
   Nur die SwiftGodot-Targets bleiben im Swift-5-Modus, das deklariert
   SwiftGodot selbst.
 - `--filter` nimmt den **Methodennamen**, nicht den Klassennamen (der matcht 0 Tests).
@@ -369,13 +370,13 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    Diagnostik, Raster-Wasser und Band-Geometrie als POD-Puffer auf. Beide sind headless mit
    XCTest verifizierbar.
 2. **`Extension/`**: SwiftGodot-GDExtension (`SimNode: Node`). Bewusst dünn:
-   hält einen `Terrain` und einen `SimRender.RenderState`, reicht Aufrufe an
-   beide weiter und wrappt `[UInt8]`, `[Float]` sowie `RibbonMesh` in
-   `Packed*Array`. Keine Physik, keine Render-Berechnung, kein Render-Zustand.
-   Dazu EIN Hintergrund-Job (`SimRender.BackgroundJob`) für den Zeitraffer:
-   `beginStep` rechnet Sim-Schritt und Frame auf einem eigenen Thread; Welt und
-   Render-Zustand fasst jeder Aufruf nur über die Tore `terrain`/`render` an,
-   die den Job vorher abwarten (s. Datenfluss unten).
+   hält nur die Welt-Sitzung (`SimRender.WorldSession`, Issue #212), reicht
+   Aufrufe an sie weiter und wrappt `[UInt8]`, `[Float]` sowie `RibbonMesh` in
+   `Packed*Array` (der Frame als Dictionary: `packFrame`). Keine Physik, keine
+   Render-Berechnung, kein Render- oder Welt-Zustand. `Terrain`,
+   `RenderState` und den Hintergrund-Job des Zeitraffers besitzt die Sitzung;
+   sie wartet vor jedem Zugriff einen laufenden Schritt ab (s. Datenfluss
+   unten).
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input; das Aussehen der
    Bedienung steht in EINEM Theme, `ui/glass_theme.tres` (samt Radius und
@@ -441,12 +442,18 @@ ruft in `Main.gd` vorher `_settle_sim()` (wartet einen laufenden Schritt ab UND
 lädt ihn hoch, sonst käme sein älterer Stand nach dem neueren an). Der
 Pinselstrich wartet nicht, er setzt aus, solange ein Schritt rechnet. Raycast,
 Pinselkuppel und Jahresanzeige fragen die Sim gar nicht: sie lesen den
-gezeigten Stand (`shown_heights`, `shown_year`). Wächter:
-`SimCoreTests/BackgroundJobTests.swift` (Vertrag, Bit-Gleichheit, beide
-Quelltext-Seiten), `game/tests/smoke.gd` und `game/tests/relief.gd`.
+gezeigten Stand (`shown_heights`, `shown_year`). Die Gegenseite in Swift
+steht in `WorldSession`: jeder Zugriff wartet einen laufenden Schritt ab, jede
+Weltänderung meldet ihre `TerrainChange`, höchstens ein Schritt ist unterwegs.
+Ein vergessenes `_settle_sim()` ist damit kein Datenrennen, aber das liegende
+Ergebnis käme nach dem neueren Stand an. Wächter:
+`SimCoreTests/WorldSessionTests.swift` (Sitzung, Bit-Gleichheit
+Hintergrund ↔ synchron, `SimNode` fasst nur die Sitzung an),
+`SimCoreTests/BackgroundJobTests.swift` (Job-Vertrag, `Main.gd`-Seite),
+`game/tests/smoke.gd` und `game/tests/relief.gd`.
 Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 
-### SimRender- und Extension-Aufbau (Issues #53/#80/#82/#93/#94)
+### SimRender- und Extension-Aufbau (Issues #53/#80/#82/#93/#94/#212)
 
 `SimNode.swift` ist reines Marshalling: Aufruf weiterreichen, POD-Ergebnis als
 `Packed*Array` zurückgeben. Die Render-AUFBEREITUNG lebt im godot-freien Target
@@ -454,17 +461,17 @@ Alle Felder sind row-major `n×n` (`idx(i,j) = j*n + i`).
 Dirty-Snapshots), liest das Terrain und ändert es nie:
 
 - `RenderState`: BESITZT die drei zustandstragenden Renderer darunter, den
-  Material-Cache und die Caches von Schutz- und Waldmaske (Issue #93/#154/#152; das Terrain gehört weiter der Brücke und reist als
-  Parameter). Die Brücke hält keinen Render-Zustand mehr; sie meldet jede
-  Terrain-Änderung an den EINEN Einstieg `invalidate(terrain, change)`.
+  Material-Cache und die Caches von Schutz- und Waldmaske (Issue #93/#154/#152; das Terrain gehört der `WorldSession` und reist als
+  Parameter). Die Sitzung meldet jede Terrain-Änderung an den EINEN Einstieg
+  `invalidate(terrain, change)`.
   `TerrainChange` sagt, wie: `.advanced` (Sim-Schritt), `.edited` (Pinsel
   und Nachzug) oder `.replaced` (Neu-Generieren und Laden). Eine ANDERE Welt
   verwirft zusätzlich die Dirty-Snapshots der Bänder und setzt den
   Diagnose-Vergleichspunkt neu (vor #93 tat das nur das Laden); `.edited` und
   `.replaced` setzen außerdem das Gedächtnis der Waldmaske zurück (#167).
-  Wächter: `SimCoreTests/RenderStateTests.swift` — Verhalten plus
-  Quelltext-Probe, dass keine Terrain-Änderung in der Brücke ohne
-  Invalidierung der passenden Art dasteht.
+  Wächter: `SimCoreTests/RenderStateTests.swift` (Verhalten) und
+  `SimCoreTests/WorldSessionTests.swift` (jeder Einstieg der Sitzung meldet
+  die passende Art).
   Seit Issue #94 hält er auch das Frame-Protokoll (`frame(terrain, trigger,
   now:)`): Band-Rebuild-Schwelle, 1-Hz-Band-Deckel,
   0,30-s-Overlay-Drossel und Zeitraffer-Blend 0.15 sind SimRender-Zustand,
@@ -538,8 +545,16 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
 - `RenderSupport.swift`: was mehrere brauchen (`parallelChunks`,
   `openWaterSurface`, `mouthPath`, Band-Halbbreite): die beiden Wasser-Pfade
   müssen sich über die Uferlinie und die Mündung exakt einig sein.
+- `WorldSession` (Issue #212): die Welt-Sitzung hinter `SimNode`. Besitzt
+  `Terrain`, `RenderState` und `BackgroundJob`; die Welt verlässt sie nie.
+  Jeder Zugriff wartet einen laufenden Hintergrund-Schritt ab, jede
+  Weltänderung (`generate`, `step`, `beginStep`, `sculpt`, `brush`,
+  `recomputeFlow`, `load`) meldet ihre `TerrainChange` (`.replaced`/
+  `.advanced`/`.edited`). Generisch über die Verpackung des Frames
+  (`WorldSession<Packed>`, in Godot das Frame-Dictionary), damit
+  godot-frei. Wächter: `SimCoreTests/WorldSessionTests.swift`.
 - `BackgroundJob`: höchstens EIN Hintergrund-Job mit einem Ergebnis-Platz,
-  die ganze Nebenläufigkeit des Zeitraffers (`SimNode.beginStep`). Ein
+  die ganze Nebenläufigkeit des Zeitraffers (`WorldSession.beginStep`). Ein
   Besitzer-Thread; `isReady` blockiert nie, `wait`/`take` zählen ihre
   Wartezeit (Messgröße „Hauptthread wartet"). Godot-frei, damit der Vertrag
   headless prüfbar bleibt (Wächter: `SimCoreTests/BackgroundJobTests.swift`).
@@ -666,7 +681,7 @@ oder zusammenlegt, zieht die Zahl mit): `Terrain.swift` ~7500 Zeilen,
 `WorldSnapshot.swift` ~900, `Hydraulic.swift` ~400, der Rest dreistellig oder
 kleiner. Auf der anderen Seite der Brücke: `game/scripts/Main.gd` ~2600 Zeilen,
 `SimRender` ~5500 Zeilen und die eigentliche GDExtension nur noch
-`SimNode.swift` mit ~600 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
+`SimNode.swift` mit ~550 Zeilen; `BrushTool` liegt seit #79 in `SimCore`.
 
 Sechs Dateien im Target `SimCore` sind bewusst **Render**-Ableitungen ohne
 Sim-Zustand; sie bilden den gemeinsamen Vertrag für `SimRender`, Godot und
