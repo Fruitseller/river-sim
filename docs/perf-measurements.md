@@ -2214,3 +2214,32 @@ EINMAL steht und in keinem künftigen Pass vergessen werden kann; er beträgt
 0,35 % des Schritts. Der Pinsel läuft nicht im Fingerprint (kein Nutzereingriff
 im Mess-Harness); seine Funnel-Fassungen öffnen die Sicht je Zelle — einige
 Tausend Zellen je Strich, irrelevant gegen den Schritt.
+
+## IX. Zuflüsse an Vorfluter anbinden: Raster-Kandidaten vorab abgeflacht und Endknoten gefiltert (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `MeanderState.attachTributaries` (Pass `belt.attach`):
+1. **Endknoten vorab aus dem Bin-Gitter filtern:** Die letzten 3 Knoten jedes Laufs (`nj >= ch.nodes.count - 3`) zählen per Definition nie als gültiges Mündungsziel für andere Läufe (sie liegen auf der Mündungszelle und führen den Abfluss des größeren Vorfluters). Bisher wurden sie ins Bin-Gitter eingetragen und erst in der innersten `while e >= 0`-Suchschleife je Nachbarzelle abgefragt. Durch die Vorfilterung `for ni in 0..<max(0, ch.nodes.count - 3)` entfallen diese Knoten vorab aus dem Gitter, womit das Array `flatN` und die Indexgrenzen-Prüfung in der inneren Schleife komplett entfallen.
+2. **Kandidatenknoten, Gürtelbreiten und Endabflüsse vorab abflachen:** Bisher griff jeder Schritt der Nachbarsuche (`while e >= 0`) über `snap[cj].nodes[nj]`, `snap[cj].discharge.last` und `snap[cj].discharge[nj]` auf verschachtelte Array-Properties von Channel-Objekten zu und berechnete `Self.beltWidthCells` (inkl. `squareRoot()`) wiederholt für dieselben Knoten in überlappenden Suchfenstern. Durch Vorabberechnung in flache Puffer (`flatNode`, `flatWidth`, `flatQEnd`) mit vorab reservierter Kapazität (`reserveCapacity`) werden alle Feldzugriffe im Suchgitter zu einfachen Pointer-/Array-Indizierungen ohne Wiederholungsrechnung oder Property-Overhead.
+3. **Closure-Allokationen eliminiert & Inverser Zellabstand:** Die dynamische Closure `reach` in `nearestBigger` wurde durch einen einfachen Bool-Zweig (`isTributary ? 0.5 * (bA + bB) : 2 * bB`) ersetzt; `qaEnd` wird pro Kanal nur noch einmal statt in jedem `nearestBigger`-Aufruf geladen; Koordinaten-zu-Bin-Divisionen wurden auf `* invCell` (0.125) umgestellt.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-baseline` vs `/tmp/simperf-opt`,
+jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1 (Baseline → Opt):**
+  - Baseline: 167,4 / 180,5 / 175,8 ms/Schritt (Minimum: 167,4 ms), `belt.attach`: 2,60 ms
+  - Opt: 176,1 / 182,4 / 168,5 ms/Schritt (Minimum: 168,5 ms), `belt.attach`: 1,78 ms (−0,82 ms / −31,5 %)
+- **Paar 2 (Opt → Baseline, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Opt: 168,7 / 183,1 / 179,2 ms/Schritt (Minimum: 168,7 ms), `belt.attach`: 1,93 ms
+  - Baseline: 175,6 / 179,3 / 175,1 ms/Schritt (Minimum: 175,1 ms), `belt.attach`: 2,49 ms (−0,56 ms / −22,5 %)
+
+Der Pass `belt.attach` sinkt stabil um **0,56 bis 0,82 ms/Schritt** (−22 % bis −31 %).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf Seed 1337 (dt = 100 und dt = 15), Seed 42 und Seed 20
+sind vor und nach der Änderung bit-identisch.
+
