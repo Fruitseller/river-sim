@@ -3204,12 +3204,27 @@ public final class Terrain {
                 let length = min(capacity, end)
                 let blockEnd = end
                 parallel(length) { lo, hi in
-                withUnsafeTemporaryAllocation(of: SIMD8<Int32>.self, capacity: 1) { nbBuf in
-                withUnsafeTemporaryAllocation(of: SIMD8<Double>.self, capacity: 1) { slopeBuf in
-                withUnsafeTemporaryAllocation(of: SIMD8<Double>.self, capacity: 1) { weightBuf in
-                let pNeighbors = nbBuf.baseAddress!.withMemoryRebound(to: Int32.self, capacity: 8) { $0 }
-                let pSlopes = slopeBuf.baseAddress!.withMemoryRebound(to: Double.self, capacity: 8) { $0 }
-                let pWeights = weightBuf.baseAddress!.withMemoryRebound(to: Double.self, capacity: 8) { $0 }
+                // Skalare Puffer, von Anfang an passend gebunden: die Schreib- und
+                // Lesezugriffe der Nachbarschafts-Suche und der Gewichtsschleifen
+                // laufen direkt auf `Int32`-/`Double`-Speicher. Kein
+                // `withMemoryRebound`, dessen Zeiger die Closure verlassen müsste —
+                // der Closure-Zeiger gilt laut Swift-Vertrag nur innerhalb der
+                // Closure (Review PR #210). Die fertigen Vektoren für den Routen-
+                // Speicher werden am Zellenende per unaligniertem Raw-Load als
+                // WERT geladen, ebenfalls ohne Neu-Bindung des Puffers.
+                withUnsafeTemporaryAllocation(of: Int32.self, capacity: 8) { nbBuf in
+                withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { slopeBuf in
+                withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { weightBuf in
+                let pNeighbors = nbBuf.baseAddress!
+                let pSlopes = slopeBuf.baseAddress!
+                let pWeights = weightBuf.baseAddress!
+                // Einmal je Threadscheibe vollständig initialisieren: die alten
+                // lokalen `SIMD8(repeating: 0)` garantierten das implizit je
+                // Zelle, `withUnsafeTemporaryAllocation` liefert uninitialisierten
+                // Speicher. Lanes ab `c` tragen danach definierte Werte (0 bzw.
+                // Daten früherer Zellen derselben Scheibe); Pass 2 liest
+                // ausschließlich `0..<c`, die Wert-Semantik ändert sich nicht.
+                for j in 0..<8 { pNeighbors[j] = 0; pSlopes[j] = 0; pWeights[j] = 0 }
                 for t in lo..<hi {
                     let k = Int(pord[blockEnd - 1 - t])
                     let hk = phf[k]
@@ -3273,7 +3288,9 @@ public final class Terrain {
                     for j in 0..<c {
                         pWeights[j] /= sum
                     }
-                    pr[t] = MFDRoute(neighbors: nbBuf[0], weights: weightBuf[0])
+                    pr[t] = MFDRoute(
+                        neighbors: UnsafeRawPointer(pNeighbors).loadUnaligned(fromByteOffset: 0, as: SIMD8<Int32>.self),
+                        weights: UnsafeRawPointer(pWeights).loadUnaligned(fromByteOffset: 0, as: SIMD8<Double>.self))
                     if mfdCanDisperse(sMax: sMax, pond: hk - ph[k]) {
                         var dSum = 0.0
                         for j in 0..<c {
@@ -3285,7 +3302,8 @@ public final class Terrain {
                             for j in 0..<c {
                                 pWeights[j] /= dSum
                             }
-                            pdsp[t] = MFDDispersion(weights: weightBuf[0])
+                            pdsp[t] = MFDDispersion(
+                                weights: UnsafeRawPointer(pWeights).loadUnaligned(fromByteOffset: 0, as: SIMD8<Double>.self))
                             prc[t] = Int8(c + 10)
                         } else {
                             prc[t] = Int8(c)
