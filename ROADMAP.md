@@ -849,8 +849,9 @@ Asymmetrie aufgelöst — Neu-Generieren verwirft die Dirty-Snapshots jetzt wie 
 Laden, statt sich auf die Delta-Heuristik zu verlassen — und die feste
 Pass-Reihenfolge nach einem Pinselstrich liegt als
 `Terrain.recomputeFlowAfterEdit()` in SimCore. Wächter:
-`RenderStateTests` (Verhalten + Quelltext-Probe der Brücke) und
-`TerrainAPITests`. Prefactor für den Frame-Vertrag (#94).
+`RenderStateTests` (Verhalten) und `TerrainAPITests`; die Quelltext-Probe
+der Brücke ersetzt seit #212 `WorldSessionTests` (die Sitzung meldet jede
+Änderung selbst). Prefactor für den Frame-Vertrag (#94).
 
 **Frame-Protokoll in SimRender — ERLEDIGT (Okt 2026, Issue #94).**
 `RenderState.frame(terrain, trigger, now:)` liefert die Puffer eines Frames;

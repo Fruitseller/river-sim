@@ -955,6 +955,13 @@ einen ruhigen Rechner: `RS_TIMING_EXCLUSIVE=1` (s. Reproduktion).
 
 ### Wächter
 
+Nachtrag Issue #212: Tore, `beginStep` und die Invalidierung stehen nicht mehr
+in `SimNode`, sondern in `SimRender.WorldSession`; `SimNode` hält nur noch die
+Sitzung. Bit-Gleichheit Hintergrund ↔ synchron und der Strukturrest („die
+Brücke fasst nur die Sitzung an") liegen seitdem in
+`SimCoreTests/WorldSessionTests.swift`; die Liste unten ist der Stand bei
+Einführung.
+
 - `SimCoreTests/BackgroundJobTests.swift`: Vertrag von `BackgroundJob`
   (Ergebnis genau einmal, kein zweiter Start, `isReady` blockiert nie, nur
   echtes Warten zählt, Schreibzugriffe des Jobs sind nach `wait` sichtbar),
