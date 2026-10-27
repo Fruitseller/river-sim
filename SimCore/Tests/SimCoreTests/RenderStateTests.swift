@@ -11,9 +11,9 @@ import XCTest
 /// 1. VERHALTEN, headless ausführbar — nach jedem mutierenden Einstieg der
 ///    Brücke liefert der Material-Cache den frischen Stand, und „andere Welt"
 ///    verwirft zusätzlich die Vergleichsstände.
-/// 2. QUELLTEXT der Brücke — sie darf den Zustand nicht wieder selbst halten
-///    und keine Terrain-Änderung ohne Invalidierung fahren (`SourceProbe`; die
-///    Extension ist headless nicht ausführbar, ihr Quelltext aber lesbar).
+/// 2. QUELLTEXT der Brücke — sie darf den Zustand nicht wieder selbst halten.
+///    Dass keine Terrain-Änderung ohne Invalidierung bleibt, prüft seit
+///    Issue #212 `WorldSessionTests` ausgeführt an der Welt-Sitzung.
 final class RenderStateTests: XCTestCase {
 
     // MARK: - Verhalten: der eine Invalidierungs-Einstieg
@@ -351,82 +351,6 @@ final class RenderStateTests: XCTestCase {
                            "Die GDExtension baut `\(owned)` selbst — Render-Zustand gehört "
                            + "seit Issue #93 in `SimRender.RenderState`")
         }
-        assertContains(bridge, "RenderState(", hint: "Die Brücke delegiert an RenderState")
-    }
-
-    /// Die Fehlerklasse, die #93 beendet: eine Terrain-Änderung in der Brücke
-    /// OHNE Invalidierung (sie stand sechsmal von Hand da).
-    ///
-    /// Geprüft je `@Callable` der Brücke, und zwar mit UMGEKEHRTER Beweislast:
-    /// nicht „diese bekannten Mutatoren müssen invalidieren" — dann wäre ein neu
-    /// hinzugefügter Mutator still ungeprüft —, sondern JEDER Umgang mit dem
-    /// Terrain gilt als ändernd, solange er nicht unten als lesend eingetragen
-    /// ist. Ein neuer Eingriff (auch über ein neues Werkzeug, nicht nur über
-    /// `terrain.…`) wird damit rot, bis er invalidiert oder sein Weg bewusst als
-    /// Leser deklariert wird.
-    func testEveryTerrainMutationInTheBridgeInvalidates() throws {
-        let bridge = try RepoSource.probe("\(RepoSource.extensionDirectory)/SimNode.swift")
-        for reader in Self.readOnlyTerrainMembers {
-            XCTAssertTrue(bridge.contains("terrain.\(reader)"),
-                          "`terrain.\(reader)` steht nicht mehr in der Brücke — toten "
-                          + "Eintrag aus der Leser-Liste nehmen, sonst entschärft sie "
-                          + "irgendwann einen echten Mutator")
-        }
-
-        var mutating: [String] = []
-        for method in bridge.swiftMethods()
-        where method.body.hasPrefix("    @Callable ") && changesTheWorld(method.body) {
-            mutating.append(method.name)
-            XCTAssertTrue(method.body.contains("render.invalidate("),
-                          "`\(method.name)` ändert das Terrain ohne `render.invalidate(` — "
-                          + "genau die Handarbeit, die Issue #93 beendet hat. Ist der "
-                          + "Umgang nur lesend, gehört er in die Leser-Listen dieses "
-                          + "Wächters.")
-        }
-        XCTAssertEqual(mutating.sorted(),
-                       ["beginStep", "brush", "generate", "loadWorld", "recomputeFlow", "sculpt", "step"],
-                       "Die ändernden Einstiege der Brücke haben sich verschoben — "
-                       + "Liste mitziehen (sie ist der Umfang dieses Wächters)")
-
-        // Issue #167: die Art der Änderung entscheidet, ob das Gedächtnis der
-        // Waldmaske weiterläuft. Ein Pinsel als `.advanced` ließe veralteten
-        // Wald stehen, ein Sim-Schritt als `.edited` schaltete es ab.
-        let kinds = ["step": ".advanced", "beginStep": ".advanced",
-                     "generate": ".replaced", "loadWorld": ".replaced",
-                     "sculpt": ".edited", "brush": ".edited", "recomputeFlow": ".edited"]
-        for method in bridge.swiftMethods() where method.body.hasPrefix("    @Callable ") {
-            guard let kind = kinds[method.name] else { continue }
-            XCTAssertTrue(method.body.contains("render.invalidate(terrain, \(kind))"),
-                          "`\(method.name)` muss `render.invalidate(…, \(kind))` melden")
-        }
-    }
-
-    /// Zugriffe, die das Terrain nur LESEN. Jeder Eintrag ist eine bewusste
-    /// Ausnahme von der Invalidierungs-Pflicht.
-    private static let readOnlyTerrainMembers: Set<String> = [
-        "cfg", "h", "years", "heightBands", "receiver", "waterLevel", "area",
-    ]
-
-    /// Fasst der Methodenkörper das Terrain auf einem Weg an, der es ändern
-    /// könnte? Alles Lesende wird vorher herausgestrichen; bleibt danach noch
-    /// eine Erwähnung stehen, gilt sie als Eingriff.
-    private func changesTheWorld(_ body: String) -> Bool {
-        var text = body
-        // Lesende Wege, auf denen das Terrain die Brücke verlässt: der
-        // Render-Zustand (liest, s. `RenderState`) und der Spielstand-Schreiber.
-        // Bis zur ERSTEN schließenden Klammer streichen, auch über
-        // Zeilenumbrüche. Steht in einem Leser-Argument eine Klammer VOR dem
-        // `terrain`, bleibt es stehen und der Wächter wird laut rot — er kann
-        // dadurch fälschlich anschlagen, aber nie still grün werden.
-        for reader in ["render\\.[A-Za-z]+\\([^)]*", "WorldSnapshot\\.[A-Za-z]+\\([^)]*"] {
-            text = text.replacingOccurrences(of: reader, with: "",
-                                             options: .regularExpression)
-        }
-        for member in Self.readOnlyTerrainMembers {
-            text = text.replacingOccurrences(of: "terrain.\(member)", with: "")
-        }
-        // Als Wort, nicht als Teilwort: `terrainColorBytes` im Methodennamen ist
-        // kein Zugriff auf die Welt.
-        return text.range(of: "\\bterrain\\b", options: .regularExpression) != nil
+        assertContains(bridge, "WorldSession<", hint: "Die Brücke delegiert an die Welt-Sitzung")
     }
 }

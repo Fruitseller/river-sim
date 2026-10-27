@@ -5,19 +5,19 @@ import XCTest
 @testable import SimRender
 
 /// Wächter des Hintergrund-Schritts (Zeitraffer ohne Warten,
-/// `docs/perf-measurements.md` §L): `SimNode.beginStep` rechnet Sim-Schritt und
-/// Frame-Aufbereitung auf einem eigenen Thread, `Main.gd` holt das Ergebnis ab.
+/// `docs/perf-measurements.md` §L): `WorldSession.beginStep` rechnet
+/// Sim-Schritt und Frame-Aufbereitung auf einem eigenen Thread, `Main.gd` holt
+/// das Ergebnis ab.
 ///
-/// Drei Schichten, drei Prüfungen:
+/// Zwei Prüfungen hier:
 /// - `BackgroundJob` (die ganze Nebenläufigkeit, godot-frei): Vertrag
 ///   ausgeführt — ein Job zur Zeit, Ergebnis genau einmal, `isReady`
 ///   blockiert nie, `wait` macht die Schreibzugriffe des Jobs sichtbar;
-/// - Determinismus: dieselbe Schrittfolge im Hintergrund ist bit-gleich zur
-///   synchronen, auch mit einem Pinselstrich dazwischen;
-/// - die beiden unausführbaren Gegenseiten als Quelltext: die Brücke fasst
-///   Welt und Render-Zustand nur über das Tor an, das den Job abwartet, und
-///   `Main.gd` holt vor jedem Weltzugriff einen laufenden Schritt ab und
-///   wartet im Zeitraffer nie.
+/// - die unausführbare Gegenseite als Quelltext: `Main.gd` holt vor jedem
+///   Weltzugriff einen laufenden Schritt ab und wartet im Zeitraffer nie.
+///
+/// Abwarten, Ein-Schritt-zur-Zeit und Bit-Gleichheit im Hintergrund prüft seit
+/// Issue #212 `WorldSessionTests` ausgeführt an der Sitzung.
 final class BackgroundJobTests: XCTestCase {
 
     // MARK: - Vertrag von BackgroundJob
@@ -93,93 +93,7 @@ final class BackgroundJobTests: XCTestCase {
 
     // MARK: - Determinismus
 
-    /// Dieselbe Folge von Schritten im Hintergrund ergibt bit-gleich dieselbe
-    /// Welt und dieselben Frames wie synchron — auch mit einem Pinselstrich
-    /// zwischen zwei Schritten, den `Main.gd` erst nach dem Abholen setzt
-    /// (`_settle_sim`). Der Job rechnet genau `SimNode.beginStep`.
-    func testBackgroundStepsAreBitIdenticalToSynchronousSteps() throws {
-        let config = renderConfig(n: 96)
-        let syncWorld = agedWorld(config, years: 2000)
-        let asyncWorld = agedWorld(config, years: 2000)
-        XCTAssertEqual(syncWorld.fingerprint(), asyncWorld.fingerprint())
-        let syncRender = RenderState(geometryMode: true)
-        let asyncRender = RenderState(geometryMode: true)
-        let job = BackgroundJob<RenderFrame>(label: "test.step")
-
-        var now = 0.0
-        for (index, years) in [15.0, 15.0, 240.0, 15.0, 60.0, 15.0].enumerated() {
-            now += 0.35
-            if index == 3 {
-                // Pinsel zwischen zwei Schritten: erst abgeholt, dann gemalt.
-                for (world, render) in [(syncWorld, syncRender), (asyncWorld, asyncRender)] {
-                    BrushTool.raise.apply(to: world, gx: 48, gz: 48, radiusWorld: 4,
-                                          strength: 1, target: 0)
-                    render.invalidate(world, .edited)
-                    world.recomputeFlowAfterEdit()
-                    render.invalidate(world, .edited)
-                }
-            }
-            syncWorld.step(dtYears: years)
-            syncRender.invalidate(syncWorld, .advanced)
-            let expected = syncRender.frame(syncWorld, .timelapse, now: now)
-
-            let stamp = now
-            XCTAssertTrue(job.start {
-                asyncWorld.step(dtYears: years)
-                asyncRender.invalidate(asyncWorld, .advanced)
-                return asyncRender.frame(asyncWorld, .timelapse, now: stamp)
-            })
-            let got = try XCTUnwrap(job.take())
-
-            XCTAssertEqual(asyncWorld.fingerprint(), syncWorld.fingerprint(),
-                           "Welt nach Schritt \(index) weicht ab")
-            XCTAssertEqual(got.ribbonsRebuilt, expected.ribbonsRebuilt)
-            XCTAssertEqual(got.overlays == nil, expected.overlays == nil)
-            if let a = got.overlays, let b = expected.overlays {
-                XCTAssertEqual(a.water, b.water, "Wasserfeld nach Schritt \(index)")
-                XCTAssertEqual(a.colors, b.colors)
-                XCTAssertEqual(a.surfaces, b.surfaces)
-                XCTAssertEqual(a.covers, b.covers)
-                XCTAssertEqual(a.flowDetail, b.flowDetail)
-                XCTAssertEqual(a.protectMask, b.protectMask)
-                XCTAssertEqual(a.forestMask, b.forestMask)
-                XCTAssertEqual(a.plume, b.plume)
-            }
-            XCTAssertEqual(asyncRender.riverRibbonMesh.vertices, syncRender.riverRibbonMesh.vertices)
-        }
-    }
-
-    // MARK: - Quelltext: Brücke und Main.gd
-
-    /// Die Brücke fasst Welt und Render-Zustand nur über die Tore `terrain` und
-    /// `render` an, die einen laufenden Job abwarten. Die gespeicherten Felder
-    /// (`world`, `renderState`) nennt nur `beginStep`, das sie dem Job übergibt,
-    /// nachdem es geprüft hat, dass keiner unterwegs ist.
-    func testBridgeTouchesTheWorldOnlyThroughTheGate() throws {
-        let bridge = try RepoSource.probe("\(RepoSource.extensionDirectory)/SimNode.swift")
-        assertContains(bridge, "get { job.wait(); return world }",
-                       hint: "Das Welt-Tor wartet den Job ab")
-        assertContains(bridge, "set { job.wait(); world = newValue }",
-                       hint: "Auch das Ersetzen der Welt (Laden) wartet")
-        assertContains(bridge, "job.wait()\n        return renderState",
-                       hint: "Das Render-Tor wartet den Job ab")
-        assertContains(bridge, "deinit {\n        job.wait()",
-                       hint: "Ein Job darf seinen Knoten nicht überleben")
-        // Das Feld selbst, nicht ein Member gleichen Namens (`cfg.world`).
-        let field = try NSRegularExpression(pattern: "(?<![.\\w])(world|renderState)\\b")
-        var starters: [String] = []
-        for method in bridge.swiftMethods() {
-            let range = NSRange(method.body.startIndex..., in: method.body)
-            if field.firstMatch(in: method.body, range: range) != nil {
-                starters.append(method.name)
-            }
-        }
-        XCTAssertEqual(starters, ["beginStep"],
-                       "Nur beginStep darf am Tor vorbei auf die gespeicherte Welt zugreifen")
-        let begin = try XCTUnwrap(bridge.swiftMethods().first { $0.name == "beginStep" }).body
-        XCTAssertTrue(begin.contains("guard !job.isPending"),
-                      "beginStep übergibt die Welt nur, wenn kein Job unterwegs ist")
-    }
+    // MARK: - Quelltext: Main.gd
 
     /// `Main.gd`: der Zeitraffer beginnt Schritte im Hintergrund und holt sie
     /// nur ab, wenn sie fertig sind — kein synchroner Schritt, kein synchroner

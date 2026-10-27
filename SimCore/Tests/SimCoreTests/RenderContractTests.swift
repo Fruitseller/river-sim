@@ -105,7 +105,7 @@ final class RenderContractTests: XCTestCase {
                        + "\(glsl(WaterRender.flowDetailGainHi)), flow_at(v_uv))",
                        hint: "Stärke-Fenster == WaterRender.flowDetailGainLo/Hi")
         let bridge = try RepoSource.extensionSources()
-        assertContains(bridge, "render.flowDetailBytes(terrain)",
+        assertContains(bridge, "session.flowDetailBytes()",
                        hint: "SimNode marshallt das Abfluss-Feld nur durch")
     }
 
