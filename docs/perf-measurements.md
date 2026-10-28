@@ -2448,3 +2448,38 @@ zwischen Baseline und PR identisch.
 Die A/B-Zeitmessung oben bleibt als Messung gegen `984c444` dokumentiert;
 nach dem Rebase wurden die Pflichtsuite und die Zustands-Fingerprints neu
 geprüft, keine neue Zeitmessung durchgeführt.
+
+## XII. Gedämpfte Dilatation: Randprüfungen für innere Zellen in dilateDamped entrollt (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.dilateDamped` (aufgerufen in Pass 2 von `updateVegClass` innerhalb von `updateVegetation`):
+- **Randprüfungen für innere Zellen entrollt:** In jedem der 3 Dilatationsdurchläufe prüfte die bisherige Schleife für alle Zellen des Gitters 8 bedingte Verzweigungen (`if i > 0 && j > 0`, `if j > 0`, etc.), um Nachbarindizes am Rand abzufangen (über 12,4 Millionen Verzweigungen pro Schritt). Durch Trennung in innere Zeilen (`0 < j < nn - 1`) mit direkter Randbehandlung für `i = 0` und `i = nn - 1` greift die innere Spaltenschleife (`1 <= i < nn - 1`, rund 99 % aller Zellen) direkt und ohne bedingte Verzweigungen auf alle 8 Nachbarn zu. Dies eliminiert Millionen Sprungbefehle und erlaubt dem Compiler eine effiziente Vektorisierung der 8-Wege-Maximum-Reduktion.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-baseline` vs `/tmp/simperf-opt`,
+jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1 (Baseline → Opt):**
+  - Baseline: 175,7 / 171,3 / 179,1 ms/Schritt (Minimum: 171,3 ms), `updateVegetation`: 9,26 ms
+  - Opt: 178,3 / 160,7 / 177,9 ms/Schritt (Minimum: 160,7 ms), `updateVegetation`: 7,58 ms (−1,68 ms / −18,1 %)
+- **Paar 2 (Opt → Baseline, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Opt: 168,4 / 162,7 / 161,3 ms/Schritt (Minimum: 161,3 ms), `updateVegetation`: 7,03 ms
+  - Baseline: 180,3 / 164,7 / 172,5 ms/Schritt (Minimum: 164,7 ms), `updateVegetation`: 8,87 ms (−1,84 ms / −20,7 %)
+- **Paar 3 (Baseline → Opt):**
+  - Baseline: 156,2 / 169,4 / 175,0 ms/Schritt (Minimum: 156,2 ms), `updateVegetation`: 9,41 ms
+  - Opt: 154,8 / 154,7 / 160,4 ms/Schritt (Minimum: 154,7 ms), `updateVegetation`: 6,99 ms (−2,42 ms / −25,7 %)
+
+Der Pass `updateVegetation` sinkt stabil um **1,68 bis 2,42 ms/Schritt** (−18 % bis −26 %).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `7667d3585b1f1904` | `7667d3585b1f1904` | bit-identisch |
+| Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
+| Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
+| Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
