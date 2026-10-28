@@ -182,6 +182,7 @@ func _run() -> void:
 
 	# --- Mündungen: kein Spalt ------------------------------------------------
 	var closed := 0
+	var joined := 0
 	var gaps := 0
 	for s in starts.size():
 		var from: int = starts[s]
@@ -192,6 +193,16 @@ func _run() -> void:
 		var k := _cell_of(verts[last], verts[last + 1], world, cs, n)
 		if _is_water(h, wl, sea, k):
 			closed += 1
+			continue
+		# Zusammenfluss (`WaterRender.ribbonJoin*`, Befund 2026-10-18): ein
+		# Zubringer ohne Wasser in Reichweite läuft bis IN das Band seines
+		# Hauptlaufs und blendet darunter aus. Sein Ende liegt dann im anderen
+		# Band, nicht vor einer Wasserfläche; die Mündung prüft das Band des
+		# Hauptlaufs selbst. Ohne diese Ausnahme zählte das als Spalt (macOS,
+		# Seed 1337 Jahr 20.000: Zubringer endet bei Zelle 78,510 in einem
+		# Hauptlauf, das Meer 14 Zellen stromab).
+		if _inside_other_river(verts, uv2s, starts, s, (verts[last] + verts[last + 1]) * 0.5, cs):
+			joined += 1
 			continue
 		# Trockenes Ende ist nur erlaubt, wenn in Reichweite gar kein Wasser liegt
 		# (der Lauf versickert im Land) — sonst fehlt die Mündung.
@@ -205,7 +216,7 @@ func _run() -> void:
 				gaps += 1
 				break
 	print("fluss_bänder=", strip_kind[kind_river], " mündungen_im_wasser=", closed,
-		" mündungen_mit_spalt=", gaps)
+		" zusammenflüsse=", joined, " mündungen_mit_spalt=", gaps)
 	if gaps > 0:
 		push_error("FAIL: %d Fluss-Band(-Enden) enden vor der Wasserfläche" % gaps)
 		quit(1)
@@ -220,6 +231,25 @@ func _run() -> void:
 
 	print("WATER_GEOMETRY_OK")
 	quit(0)
+
+## Liegt `point` in einem ANDEREN Fluss-Band als `own`? Gemessen an dessen
+## Kantenpaaren: Abstand zur Mitte höchstens Halbbreite plus eine Zelle — der
+## Renderer hört bei Deckung ≥ `ribbonJoinCoverage` auf, und die Deckung reicht
+## über den Saum hinaus.
+func _inside_other_river(verts: PackedVector3Array, uv2s: PackedVector2Array,
+		starts: PackedInt32Array, own: int, point: Vector3, cs: float) -> bool:
+	var p2 := Vector2(point.x, point.z)
+	for s in starts.size():
+		var from: int = starts[s]
+		if s == own or uv2s[from].x != kind_river:
+			continue
+		var to: int = (starts[s + 1] if s + 1 < starts.size() else verts.size())
+		for q in range(from, to - 1, 2):
+			var mid := (verts[q] + verts[q + 1]) * 0.5
+			var half := verts[q].distance_to(verts[q + 1]) * 0.5
+			if p2.distance_to(Vector2(mid.x, mid.z)) <= half + cs:
+				return true
+	return false
 
 ## Zellindex unter der MITTE eines Kantenpaars (die Zentrumslinie des Bands).
 func _cell_of(left: Vector3, right: Vector3, world: float, cs: float, n: int) -> int:
