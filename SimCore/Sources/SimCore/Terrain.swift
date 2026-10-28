@@ -2603,7 +2603,8 @@ public final class Terrain {
 
     /// Eine gedämpfte 3×3-Max-Dilatationsrunde: dst[k] = max(src[k],
     /// 0.65·max(8 Nachbarn)). Liest nur src, schreibt nur dst[k] →
-    /// zeilenparallel bit-identisch.
+    /// zeilenparallel bit-identisch. Innere Zellen ohne Randprüfungen
+    /// entrollt für Vektorisierung.
     private func dilateDamped(from src: [Double], to dst: inout [Double]) {
         let nn = n
         src.withUnsafeBufferPointer { sb in
@@ -2611,18 +2612,45 @@ public final class Terrain {
             let ps = sb.baseAddress!, pd = db.baseAddress!
             parallel(nn) { jLo, jHi in
                 for j in jLo..<jHi {
-                    for i in 0..<nn {
-                        let k = j * nn + i
-                        var m = 0.0
-                        if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
-                        if j > 0 { m = max(m, ps[k - nn]) }
-                        if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
-                        if i > 0 { m = max(m, ps[k - 1]) }
-                        if i < nn - 1 { m = max(m, ps[k + 1]) }
-                        if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
-                        if j < nn - 1 { m = max(m, ps[k + nn]) }
-                        if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
-                        pd[k] = max(ps[k], 0.65 * m)
+                    let row = j * nn
+                    if j > 0 && j < nn - 1 {
+                        // Linke Randzelle (i = 0)
+                        let kLeft = row
+                        let mLeft = max(ps[kLeft - nn], max(ps[kLeft - nn + 1],
+                                    max(ps[kLeft + 1],
+                                    max(ps[kLeft + nn], ps[kLeft + nn + 1]))))
+                        pd[kLeft] = max(ps[kLeft], 0.65 * mLeft)
+
+                        // Innere Zellen: 8 feste Nachbarn ohne Randprüfungen
+                        for i in 1..<(nn - 1) {
+                            let k = row + i
+                            let m = max(ps[k - nn - 1], max(ps[k - nn], max(ps[k - nn + 1],
+                                    max(ps[k - 1],                      max(ps[k + 1],
+                                    max(ps[k + nn - 1], max(ps[k + nn], ps[k + nn + 1])))))))
+                            pd[k] = max(ps[k], 0.65 * m)
+                        }
+
+                        // Rechte Randzelle (i = nn - 1)
+                        let kRight = row + nn - 1
+                        let mRight = max(ps[kRight - nn - 1], max(ps[kRight - nn],
+                                     max(ps[kRight - 1],
+                                     max(ps[kRight + nn - 1], ps[kRight + nn]))))
+                        pd[kRight] = max(ps[kRight], 0.65 * mRight)
+                    } else {
+                        // Randzeilen (j = 0 und j = nn - 1)
+                        for i in 0..<nn {
+                            let k = row + i
+                            var m = 0.0
+                            if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
+                            if j > 0 { m = max(m, ps[k - nn]) }
+                            if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
+                            if i > 0 { m = max(m, ps[k - 1]) }
+                            if i < nn - 1 { m = max(m, ps[k + 1]) }
+                            if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
+                            if j < nn - 1 { m = max(m, ps[k + nn]) }
+                            if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
+                            pd[k] = max(ps[k], 0.65 * m)
+                        }
                     }
                 }
             }
