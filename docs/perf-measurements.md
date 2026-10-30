@@ -2361,7 +2361,9 @@ Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-baseline` vs `/tmp/sim
   - Base: 176.4 / 181.8 / 175.6 ms/Schritt (Minimum: 175.6 ms), `computeReceiversAndArea`: 7.52 ms
   - Opt: 162.1 / 173.1 / 185.9 ms/Schritt (Minimum: 162.1 ms), `computeReceiversAndArea`: 7.38 ms (−0.14 ms)
 
-Der Pass `computeReceiversAndArea` sinkt messbar und stabil um **0.14 bis 1.11 ms/Schritt**, die Gesamtschrittzeit um **6.5 bis 13.5 ms/Schritt**.
+**Ergebnis:**
+- **Pass `computeReceiversAndArea`:** Sinkt messbar und stabil um **0.14 bis 1.11 ms/Schritt** (rund **−11 % bis −14 %** im isolierten Passprofil). Die Einsparung durch die verschränkte Initialisierung (Entfall von 39 sequenziellen Memsets und separaten Thread-Dispatches) ist sowohl im Einzelpass als auch in Wiederholungen konsistent nachweisbar.
+- **Gesamtschrittzeit:** Die Differenz der separat ausgewählten Prozess-Minima (`Base-Min − Opt-Min`) beträgt 6.5 bis 13.5 ms/Schritt. Ein gepaarter Block-für-Block-Vergleich zeigt dagegen kein durchgängiges Gesamtschritt-Delta (die Block-Deltas über alle neun Paare reichen von −10.3 bis +19.3 ms; in Paar 3 wird Block 3 von 175.6 auf 185.9 ms langsamer). Die Median-Verbesserungen je Paar betragen 13.4 / 3.6 / 3.3 ms. Der Gesamtschritt-Vorteil liegt damit innerhalb der typischen VM-Streuung (~5 %) und ist über ganze Schritte nicht blockweise reproduzierbar; belegt und robust ist allein der isolierte Pass-Gewinn von ~0.14–1.1 ms.
 
 ### Bit-Identität
 
