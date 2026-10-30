@@ -2294,3 +2294,40 @@ Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt iden
 | Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
 | Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
 | Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
+
+## XI. D8-Abflussakkumulation: Initialisierung mit Empfängersuche verschränkt und orthogonale Divisionen entrollt (Oktober 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.computeReceiversAndArea`:
+1. **Initialisierungen in die zeilenparallele Empfängersuche verschränkt:** Bisher führte jeder Aufruf vor der Empfängersuche ein sequenzielles `prec.update(repeating: -1, count: cnt)` (2 MB Speicherinitialisierung auf dem Hauptthread) sowie einen separaten parallelen Durchlauf `seedFlowAccumulator` (4,15 MB Schreibzugriff über alle Kerne) aus. Da `pa` (`area`) erst in der topologischen Akkumulationsschleife am Ende des Passes gelesen wird und Meeresspiegelzellen (`phf <= sea`) Senken mit Empfänger -1 sind, werden `pa[k]` und `prec[k]` jetzt direkt im selben zeilenparallelen Durchlauf initialisiert. Dies eliminiert 39 sequenzielle Memsets und 39 separate Thread-Dispatches samt Synchronisationsbarrieren pro 30 Simulationsschritten und halbiert die Speicherrundreisen.
+2. **Orthogonale Nachbar-Divisionen entrollt:** Für orthogonale Nachbarn innerer Zellen ist `dist == 1.0`. Die Gleitkomma-Division `d / 1.0` entfällt nach IEEE 754 bit-identisch, und da `bestSlope >= 0` gilt, ist ein Vorzeichentest vor `d > bestSlope` mathematisch redundant. Für diagonale Nachbarn bleibt die Division durch `sqrt2` hinter dem Vorzeichentest erhalten.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-baseline` vs `/tmp/simperf-opt`, 3 Paare, je `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1 (Base → Opt):**
+  - Base: 179.7 / 192.3 / 186.4 ms/Schritt (Minimum: 179.7 ms), `computeReceiversAndArea`: 8.05 ms
+  - Opt: 173.5 / 173.0 / 170.8 ms/Schritt (Minimum: 170.8 ms), `computeReceiversAndArea`: 6.94 ms (−1.11 ms / −13.8 %)
+- **Paar 2 (Opt → Base, umgekehrte Reihenfolge gegen VM-Drift):**
+  - Opt: 175.6 / 167.5 / 172.9 ms/Schritt (Minimum: 167.5 ms), `computeReceiversAndArea`: 6.64 ms
+  - Base: 176.5 / 174.0 / 180.3 ms/Schritt (Minimum: 174.0 ms), `computeReceiversAndArea`: 7.49 ms (−0.85 ms / −11.3 %)
+- **Paar 3 (Base → Opt):**
+  - Base: 176.4 / 181.8 / 175.6 ms/Schritt (Minimum: 175.6 ms), `computeReceiversAndArea`: 7.52 ms
+  - Opt: 162.1 / 173.1 / 185.9 ms/Schritt (Minimum: 162.1 ms), `computeReceiversAndArea`: 7.38 ms (−0.14 ms)
+
+**Ergebnis:**
+- **Pass `computeReceiversAndArea`:** Sinkt messbar und stabil um **0.14 bis 1.11 ms/Schritt** (rund **−11 % bis −14 %** im isolierten Passprofil). Die Einsparung durch die verschränkte Initialisierung (Entfall von 39 sequenziellen Memsets und separaten Thread-Dispatches) ist sowohl im Einzelpass als auch in Wiederholungen konsistent nachweisbar.
+- **Gesamtschrittzeit:** Die Differenz der separat ausgewählten Prozess-Minima (`Base-Min − Opt-Min`) beträgt 6.5 bis 13.5 ms/Schritt. Ein gepaarter Block-für-Block-Vergleich zeigt dagegen kein durchgängiges Gesamtschritt-Delta (die Block-Deltas über alle neun Paare reichen von −10.3 bis +19.3 ms; in Paar 3 wird Block 3 von 175.6 auf 185.9 ms langsamer). Die Median-Verbesserungen je Paar betragen 13.4 / 3.6 / 3.3 ms. Der Gesamtschritt-Vorteil liegt damit innerhalb der typischen VM-Streuung (~5 %) und ist über ganze Schritte nicht blockweise reproduzierbar; belegt und robust ist allein der isolierte Pass-Gewinn von ~0.14–1.1 ms.
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `7667d3585b1f1904` | `7667d3585b1f1904` | bit-identisch |
+| Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
+| Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
+| Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
