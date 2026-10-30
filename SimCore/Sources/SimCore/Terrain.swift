@@ -2807,48 +2807,65 @@ public final class Terrain {
         let cellArea = cfg.cellSize * cfg.cellSize
         let cnt = cfg.count, nn = n, sea = cfg.sea
         let sqrt2 = 2.0.squareRoot()
+        let weight = flowWeight
+        let hasWeight = weight.count == cnt
         hf.withUnsafeBufferPointer { hfb in
         receiver.withUnsafeMutableBufferPointer { rb in
         area.withUnsafeMutableBufferPointer { ab in
         floodParent.withUnsafeBufferPointer { pb in
         order.withUnsafeBufferPointer { ob in
         endorheicBasin.withUnsafeBufferPointer { eb in
+        (hasWeight ? weight : []).withUnsafeBufferPointer { wb in
             let phf = hfb.baseAddress!, prec = rb.baseAddress!, pa = ab.baseAddress!
             let ppar = pb.baseAddress!, pord = ob.baseAddress!, pend = eb.baseAddress!
-            prec.update(repeating: -1, count: cnt)
-            seedFlowAccumulator(pa, cellArea: cellArea)
+            let pw = hasWeight ? wb.baseAddress! : nil
             // Empfänger: steilster Abstieg auf hf; auf Seespiegel-Flächen Richtung Überlauf.
-            // Jede Zelle schreibt nur prec[k] → zeilenparallel, bit-identisch.
+            // Gleichzeitig Initialisierung von area (Flussakkumulator-Startwerte) und
+            // receiver (-1 für Meeresspiegel-Zellen) in demselben Durchlauf: spart den
+            // sequenziellen Memset von prec und den separaten Parallelstart von seedFlowAccumulator.
             parallel(nn) { jLo, jHi in
             for j in jLo..<jHi {
                 let row = j * nn
                 let innerRow = j > 0 && j < nn - 1
                 for i in 0..<nn {
                     let k = row + i
+                    pa[k] = pw != nil ? cellArea * pw![k] : cellArea
                     let hk = phf[k]
-                    if hk <= sea { continue } // Meer = Senke
+                    if hk <= sea {
+                        prec[k] = -1
+                        continue
+                    }
                     var best: Int32 = -1
                     var bestSlope = 0.0
-                    // Division erst nach dem Vorzeichen-Test (Begründung s.
-                    // `computeMFDArea`): `bestSlope` startet bei 0 und wächst nur,
-                    // ein nicht-positives `s` konnte den Vergleich also nie gewinnen.
-                    @inline(__always) func consider(_ nb: Int, _ dist: Double) {
+                    // Orthogonal: dist = 1.0, Division entfällt; bestSlope startet bei 0,
+                    // ein nicht-positives d kann bestSlope also nie übertreffen.
+                    @inline(__always) func considerOrth(_ nb: Int) {
+                        let d = hk - phf[nb]
+                        if d > bestSlope { bestSlope = d; best = Int32(nb) }
+                    }
+                    // Diagonal: Division durch sqrt2 erst nach Vorzeichen-Test.
+                    @inline(__always) func considerDiag(_ nb: Int) {
                         let d = hk - phf[nb]
                         if d <= 0 { return }
-                        let s = d / dist
+                        let s = d / sqrt2
                         if s > bestSlope { bestSlope = s; best = Int32(nb) }
                     }
                     if innerRow && i > 0 && i < nn - 1 {
-                        consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
-                        consider(k - 1, 1.0); /* Zentrum */              consider(k + 1, 1.0)
-                        consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
+                        considerDiag(k - nn - 1); considerOrth(k - nn); considerDiag(k - nn + 1)
+                        considerOrth(k - 1);     /* Zentrum */          considerOrth(k + 1)
+                        considerDiag(k + nn - 1); considerOrth(k + nn); considerDiag(k + nn + 1)
                     } else {
                         for dj in -1...1 {
                             for di in -1...1 {
                                 if di == 0 && dj == 0 { continue }
                                 let ni = i + di, nj = j + dj
                                 if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                                consider(nj * nn + ni, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+                                let nb = nj * nn + ni
+                                if di != 0 && dj != 0 {
+                                    considerDiag(nb)
+                                } else {
+                                    considerOrth(nb)
+                                }
                             }
                         }
                     }
@@ -2876,7 +2893,7 @@ public final class Terrain {
                 let r = prec[k]
                 if r >= 0 { pa[Int(r)] += pa[k] }
             }
-        }}}}}}
+        }}}}}}}
     }
 
     // MARK: - Wasserhaushalt abflussloser Becken (Verdunstung, Issue #11)
