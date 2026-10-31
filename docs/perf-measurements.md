@@ -2458,28 +2458,68 @@ In `Terrain.dilateDamped` (aufgerufen in Pass 2 von `updateVegClass` innerhalb v
 
 ### Gemessen
 
-Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-baseline` vs `/tmp/simperf-opt`,
-jeweils `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+**Nachbesserung nach Review (fehlende Maschine, Konfiguration, Anteil und
+Aggregationsregel; zugleich Neuvermessung nach dem Rebase auf main).**
 
-- **Paar 1 (Baseline → Opt):**
-  - Baseline: 175,7 / 171,3 / 179,1 ms/Schritt (Minimum: 171,3 ms), `updateVegetation`: 9,26 ms
-  - Opt: 178,3 / 160,7 / 177,9 ms/Schritt (Minimum: 160,7 ms), `updateVegetation`: 7,58 ms (−1,68 ms / −18,1 %)
-- **Paar 2 (Opt → Baseline, umgekehrte Reihenfolge gegen VM-Drift):**
-  - Opt: 168,4 / 162,7 / 161,3 ms/Schritt (Minimum: 161,3 ms), `updateVegetation`: 7,03 ms
-  - Baseline: 180,3 / 164,7 / 172,5 ms/Schritt (Minimum: 164,7 ms), `updateVegetation`: 8,87 ms (−1,84 ms / −20,7 %)
-- **Paar 3 (Baseline → Opt):**
-  - Baseline: 156,2 / 169,4 / 175,0 ms/Schritt (Minimum: 156,2 ms), `updateVegetation`: 9,41 ms
-  - Opt: 154,8 / 154,7 / 160,4 ms/Schritt (Minimum: 154,7 ms), `updateVegetation`: 6,99 ms (−2,42 ms / −25,7 %)
+Rahmen der Messreihe:
 
-Der Pass `updateVegetation` sinkt stabil um **1,68 bis 2,42 ms/Schritt** (−18 % bis −26 %).
+- **Maschine:** Apple M4 Max (Referenz-Mac des Projekts, macOS 27.2, Swift 6.4),
+  in zwei Umgebungen: nativ und im CI-Toolchain-Image `swift:6.3.3-jammy`
+  (Docker auf demselben Host; reproduziert die CI-Bedingungen, AGENTS.md).
+- **Konfiguration:** Produktions-Paarung aus `SimConfig.production`
+  (n = 720, world = 112,4789), Seed 1337, Einlauf 100 × 100 Jahre, 30
+  Messschritte à dt = 100 — der simperf-Standard (`SimPerf/main.swift`).
+- **Aggregationsregel:** Kennzahl je Lauf ist das Block-MINIMUM aus
+  `--repeat 3` (simperf-Semantik: der am wenigsten gestörte Block); der
+  Pass-Wert stammt aus der Pass-Tabelle des LETZTEN Blocks desselben Laufs,
+  ist also ein Einzelblock, kein Median. Über die Paare hinweg wird je Seite
+  der Median über die Läufe angegeben (interleaved, Reihenfolge abwechselnd).
+- **Anteil am Sim-Schritt:** `updateVegetation` trägt nativ 4,1–4,7 %
+  (Median 2,58 ms von ~59 ms), im CI-Toolchain-Image 3,3–3,4 %
+  (1,84 ms von ~52 ms).
+
+Verschränkte A/B-Messung nach dem Rebase, 6 Paare mit abwechselnder
+Reihenfolge, je `--repeat 3`:
+
+| Umgebung | Pass `updateVegetation` Basis (Median, Spanne) | Opt (Median, Spanne) | Δ Pass | Schritt-Minimum Basis → Opt |
+| --- | --- | --- | --- | --- |
+| M4 Max nativ | 2,58 ms (2,44–3,30) | 2,51 ms (2,37–3,10) | −0,07 ms (−2,6 %) | 58,95 → 59,40 ms |
+| CI-Toolchain-Image (Docker) | 1,84 ms (1,83–1,86) | 1,80 ms (1,79–1,85) | −0,04 ms (−2,2 %) | 52,25 → 52,20 ms |
+
+Beide Deltas liegen innerhalb der Lauf-zu-Lauf-Streuung (nativ ±0,3 ms im
+Pass). **Die ursprünglich gemeldete Verbesserung reproduziert sich auf der
+Referenzmaschine nicht:** Der Ersteller-Lauf (nächtliche Bot-Sitzung) maß
+−1,68 bis −2,42 ms/Schritt am Pass (−18 % bis −26 %, z. B. 9,26 → 7,58 ms)
+bei ~170 ms/Schritt Gesamt — ein rund 3× langsamerer Linux-Host. Dessen
+Fingerabdrücke entsprechen exakt dem CI-Toolchain-Image (Tabelle unten),
+die Messung lief also auf demselben Image auf anderer, langsamerer Hardware;
+die Zeilen sind hier als historischer Kontext festgehalten, nicht als
+reproduzierbare Referenz. Fazit auf der Referenzmaschine: die Änderung ist
+gemessen kostenlos (keine Regression in Pass oder Schritt-Minimum) und
+bit-identisch; der Entfall der ~12,4 Mio. bedingten Verzweigungen je Schritt
+wirkt sich dort nicht mehr messbar aus — der Pass ist mit 1,8–2,6 ms zu
+klein, als dass die Randbehandlung im Rauschen sichtbar würde.
+
+Erneute Verifikation nach den weiteren Rebases (zuletzt Basis `3b75abf`, Stand
+nach den Merges von #212/#218/#219 — WorldSession, Gitterkoordinaten-Rundung,
+D8-Verschränkung; der Abschnitt ist dadurch § XII geworden): alle vier
+Fingerprints unverändert vor == nach, Pass-Delta erneut im Rauschen
+(Median 2,29 vs 2,48 ms über 3 Paare, Schritt-Minima ~55,3–56,9 vs
+~55,8–59,6 ms), SimCore-Suite grün (661 Tests, 79 Mess-Gates übersprungen,
+0 Fehler).
 
 ### Bit-Identität
 
-Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt identisch:
+Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt
+identisch, auf beiden Umgebungen der Referenzmaschine (Basis: origin/main;
+Opt: PR-Head nach Rebase). Die Werte des CI-Toolchain-Images entsprechen
+zugleich denen des Ersteller-Laufs — seine Bit-Identitäts-Kette ist damit
+vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
+(Pro-Maschine-Vergleich, AGENTS.md):
 
-| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
-| --- | --- | --- | --- |
-| Seed 1337, dt = 100 | `7667d3585b1f1904` | `7667d3585b1f1904` | bit-identisch |
-| Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
-| Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
-| Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
+| Seed / Konfiguration | CI-Toolchain-Image (swift:6.3.3-jammy) | M4 Max nativ |
+| --- | --- | --- |
+| Seed 1337, dt = 100 | `7667d3585b1f1904` == `7667d3585b1f1904` | `31835ab8b1a85069` == `31835ab8b1a85069` |
+| Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
+| Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
+| Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
