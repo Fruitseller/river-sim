@@ -546,6 +546,21 @@ public final class Terrain {
         1 - exp(-dt / tau)
     }
 
+    /// Kaufmännische Rundung (round-half-away-from-zero) für Gitter- und Raumkoordinaten,
+    /// bit-identisch zu `Int(c.rounded())`, aber direkt in Registern ohne PLT-Aufruf an `round(3)`.
+    /// Behandelt auch den IEEE-754-Grenzfall an `0.5.nextDown` und negative Koordinaten exakt.
+    @inline(__always)
+    public static func gridRound(_ c: Double) -> Int {
+        c >= 0 ? (c < 0.5 ? 0 : Int(c + 0.5)) : (c > -0.5 ? 0 : Int(c - 0.5))
+    }
+
+    /// Rechnet kontinuierliche Koordinaten in einen flachen Gitterindex um,
+    /// bit-identisch zu `min(max(Int(z.rounded()), 0), n - 1) * n + min(max(Int(x.rounded()), 0), n - 1)`.
+    @inline(__always)
+    public static func cellIndex(_ x: Double, _ z: Double, n: Int) -> Int {
+        min(max(gridRound(z), 0), n - 1) * n + min(max(gridRound(x), 0), n - 1)
+    }
+
     // MARK: - Terrain-Generierung
 
     /// Setzt alle Zustandsfelder und Arbeitspuffer vollständig auf den Stand
@@ -6353,12 +6368,13 @@ public final class Terrain {
         let pchan = buffers.channel, pbelt = buffers.belt, page = buffers.age, plock = buffers.lock
         let pice = bed.locked, iceOn = bed.locked != nil
         let split = cfg.meanderBeltCoupling
-        // PERF: `Int(z + 0.5)` statt `Int(z.rounded())`: `rounded()` ruft über die PLT
+        // PERF: `Terrain.cellIndex` statt `Int(coord.rounded())`: `rounded()` ruft über die PLT
         // glibc `round` auf (~20 Zyklen plus Stack-Spills je Achse und Aufruf), während
-        // `Int(z + 0.5)` für alle Gitter-Koordinaten bit-identisch ist und direkt in
-        // Registern ohne Funktionsaufruf inlinet.
+        // `Terrain.cellIndex` (kaufmännische Rundung `gridRound` mit exakter Behandlung des
+        // IEEE-754-Grenzfalls `0.5.nextDown`) direkt in Registern ohne Funktionsaufruf inlinet
+        // und für alle Double bit-identisch zu `Int(coord.rounded())` ist.
         @inline(__always) func cell(_ x: Double, _ z: Double) -> Int {
-            min(max(Int(z + 0.5), 0), nn - 1) * nn + min(max(Int(x + 0.5), 0), nn - 1)
+            Terrain.cellIndex(x, z, n: nn)
         }
         @inline(__always) func blocked(_ k: Int) -> Bool {
             phf[k] - bed.h[k] > 0.02 || (iceOn && pice![k])
