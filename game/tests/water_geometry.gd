@@ -31,6 +31,7 @@ var pond_contour_lo: float
 var lake_raw_wet: float
 var max_oxbow_opacity: float
 var mouth_search_cells: int
+var join_coverage: float
 
 var done := false
 
@@ -58,6 +59,10 @@ func _run() -> void:
 	lake_raw_wet = contract["lakeRawWetDepth"]
 	max_oxbow_opacity = contract["oxbowMaximumOpacity"]
 	mouth_search_cells = int(contract["mouthSearchCells"])
+	join_coverage = contract["ribbonJoinCoverage"]
+	if not _check_inside_other_river_guard():
+		quit(1)
+		return
 
 	# Ohne Überschreibung ist dieser Lauf der WÄCHTER (feste Welt, feste
 	# Erwartungen). Mit RS_SEED/RS_STEP ist er ein MESSLAUF über eine andere Welt:
@@ -201,7 +206,7 @@ func _run() -> void:
 		# Hauptlaufs selbst. Ohne diese Ausnahme zählte das als Spalt (macOS,
 		# Seed 1337 Jahr 20.000: Zubringer endet bei Zelle 78,510 in einem
 		# Hauptlauf, das Meer 14 Zellen stromab).
-		if _inside_other_river(verts, uv2s, starts, s, (verts[last] + verts[last + 1]) * 0.5, cs):
+		if _inside_other_river(verts, cols, uv2s, starts, s, (verts[last] + verts[last + 1]) * 0.5, cs):
 			joined += 1
 			continue
 		# Trockenes Ende ist nur erlaubt, wenn in Reichweite gar kein Wasser liegt
@@ -232,24 +237,104 @@ func _run() -> void:
 	print("WATER_GEOMETRY_OK")
 	quit(0)
 
-## Liegt `point` in einem ANDEREN Fluss-Band als `own`? Gemessen an dessen
-## Kantenpaaren: Abstand zur Mitte höchstens Halbbreite plus eine Zelle — der
-## Renderer hört bei Deckung ≥ `ribbonJoinCoverage` auf, und die Deckung reicht
-## über den Saum hinaus.
-func _inside_other_river(verts: PackedVector3Array, uv2s: PackedVector2Array,
-		starts: PackedInt32Array, own: int, point: Vector3, cs: float) -> bool:
+## Liegt `point` in einem ANDEREN, zu mindestens `ribbonJoinCoverage` deckenden
+## Fluss-Band als `own`? Spiegelbild von `RiverRibbonRenderer.stampCoverage` und
+## `joinPath`: geprüft wird das Bandsegment zwischen zwei Kantenpaaren mit linear
+## interpolierter Halbbreite und Deckkraft sowie halber Zelle Längsüberhang an
+## offenen Bandenden. Unsichtbare Quellenanfänge (Halbbreite 0, Alpha 0) und
+## schwach deckende Ausläufer (< `ribbonJoinCoverage`) zählen nicht als
+## Zusammenfluss.
+func _inside_other_river(verts: PackedVector3Array, cols: PackedColorArray,
+		uv2s: PackedVector2Array, starts: PackedInt32Array, own: int,
+		point: Vector3, cs: float) -> bool:
 	var p2 := Vector2(point.x, point.z)
 	for s in starts.size():
 		var from: int = starts[s]
 		if s == own or uv2s[from].x != kind_river:
 			continue
 		var to: int = (starts[s + 1] if s + 1 < starts.size() else verts.size())
-		for q in range(from, to - 1, 2):
-			var mid := (verts[q] + verts[q + 1]) * 0.5
-			var half := verts[q].distance_to(verts[q + 1]) * 0.5
-			if p2.distance_to(Vector2(mid.x, mid.z)) <= half + cs:
+		for q in range(from, to - 3, 2):
+			var a0 := cols[q].a
+			var a1 := cols[q + 2].a
+			if maxf(a0, a1) < join_coverage:
+				continue
+			var hw0 := Vector2(verts[q].x - verts[q + 1].x, verts[q].z - verts[q + 1].z).length() * 0.5
+			var hw1 := Vector2(verts[q + 2].x - verts[q + 3].x, verts[q + 2].z - verts[q + 3].z).length() * 0.5
+			if maxf(hw0, hw1) <= 0.0:
+				continue
+			var m0 := Vector2((verts[q].x + verts[q + 1].x) * 0.5, (verts[q].z + verts[q + 1].z) * 0.5)
+			var m1 := Vector2((verts[q + 2].x + verts[q + 3].x) * 0.5, (verts[q + 2].z + verts[q + 3].z) * 0.5)
+			var d := m1 - m0
+			var len2 := d.length_squared()
+			var t_raw := (p2 - m0).dot(d) / len2 if len2 > 1e-12 else 0.0
+			var overhang := 0.5 * cs / sqrt(len2) if len2 > 1e-12 else 0.0
+			if q == from and t_raw < -overhang:
+				continue
+			if q + 2 == to - 2 and t_raw > 1.0 + overhang:
+				continue
+			var t := clampf(t_raw, 0.0, 1.0)
+			var alpha := lerpf(a0, a1, t)
+			var hw := lerpf(hw0, hw1, t)
+			if alpha >= join_coverage and hw > 0.0 and p2.distance_to(m0 + d * t) <= hw + cs:
 				return true
 	return false
+
+## Gezielter Selbsttest für `_inside_other_river`: transparente Quellenanfänge,
+## schwach deckende Segmente (< `ribbonJoinCoverage`), degenerierte Nullbreiten
+## und Punkte hinter dem offenen Bandende dürfen die Spaltprüfung nicht
+## überspringen; ein deckendes Fremdsegment (>= `ribbonJoinCoverage`) schon.
+func _check_inside_other_river_guard() -> bool:
+	var cs := 2.0
+	var verts := PackedVector3Array([
+		# Strip 0 (own): voll deckend am Ursprung — muss als eigenes Band ignoriert werden.
+		Vector3(0.0, 0.0, -2.0), Vector3(0.0, 0.0, 2.0),
+		Vector3(4.0, 0.0, -2.0), Vector3(4.0, 0.0, 2.0),
+		# Strip 1: fremdes Fluss-Band, aber schwach deckend (unter ribbonJoinCoverage).
+		Vector3(0.0, 0.0, -2.0), Vector3(0.0, 0.0, 2.0),
+		Vector3(4.0, 0.0, -2.0), Vector3(4.0, 0.0, 2.0),
+		# Strip 2: fremdes Fluss-Band mit Quellenanfang (Halbbreite 0, Alpha 0 bei x=10)
+		# und voll deckendem Segment ab x=14..18.
+		Vector3(10.0, 0.0, 0.0), Vector3(10.0, 0.0, 0.0),
+		Vector3(14.0, 0.0, -2.0), Vector3(14.0, 0.0, 2.0),
+		Vector3(18.0, 0.0, -2.0), Vector3(18.0, 0.0, 2.0),
+		# Strip 3: fremdes Band mit Deckkraft 1, aber degenerierter Halbbreite 0 bei x=30..34.
+		Vector3(30.0, 0.0, 0.0), Vector3(30.0, 0.0, 0.0),
+		Vector3(34.0, 0.0, 0.0), Vector3(34.0, 0.0, 0.0),
+	])
+	var low_alpha := join_coverage * 0.5
+	var cols := PackedColorArray([
+		Color(0.5, 0.5, 1.0, 1.0), Color(0.5, 0.5, 1.0, 1.0),
+		Color(0.5, 0.5, 1.0, 1.0), Color(0.5, 0.5, 1.0, 1.0),
+		Color(0.5, 0.5, 1.0, low_alpha), Color(0.5, 0.5, 1.0, low_alpha),
+		Color(0.5, 0.5, 1.0, low_alpha), Color(0.5, 0.5, 1.0, low_alpha),
+		Color(0.5, 0.5, 1.0, 0.0), Color(0.5, 0.5, 1.0, 0.0),
+		Color(0.5, 0.5, 1.0, 1.0), Color(0.5, 0.5, 1.0, 1.0),
+		Color(0.5, 0.5, 1.0, 1.0), Color(0.5, 0.5, 1.0, 1.0),
+		Color(0.5, 0.5, 1.0, 1.0), Color(0.5, 0.5, 1.0, 1.0),
+		Color(0.5, 0.5, 1.0, 1.0), Color(0.5, 0.5, 1.0, 1.0),
+	])
+	var uv2s := PackedVector2Array()
+	uv2s.resize(verts.size())
+	for i in uv2s.size():
+		uv2s[i] = Vector2(kind_river, 0.0)
+	var starts := PackedInt32Array([0, 4, 8, 14])
+
+	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(2.0, 0.0, 0.0), cs):
+		push_error("FAIL: _inside_other_river akzeptiert eigenes oder zu schwach deckendes Band")
+		return false
+	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(10.0, 0.0, 0.0), cs):
+		push_error("FAIL: _inside_other_river akzeptiert unsichtbaren Quellenanfang (Alpha 0, Breite 0)")
+		return false
+	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(19.5, 0.0, 0.0), cs):
+		push_error("FAIL: _inside_other_river akzeptiert Punkt hinter offenem Bandende")
+		return false
+	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(32.0, 0.0, 0.0), cs):
+		push_error("FAIL: _inside_other_river akzeptiert degeneriertes Band mit Halbbreite 0")
+		return false
+	if not _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(16.0, 0.0, 1.0), cs):
+		push_error("FAIL: _inside_other_river verwirft gedeckten Zusammenfluss im Hauptlauf")
+		return false
+	return true
 
 ## Zellindex unter der MITTE eines Kantenpaars (die Zentrumslinie des Bands).
 func _cell_of(left: Vector3, right: Vector3, world: float, cs: float, n: int) -> int:

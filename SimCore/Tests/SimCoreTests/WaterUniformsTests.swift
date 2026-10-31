@@ -243,6 +243,7 @@ final class WaterUniformsTests: XCTestCase {
             "ribbonMinimumRank": WaterRender.ribbonMinimumRank,
             "ribbonMaxCrossSlope": WaterRender.ribbonMaxCrossSlope,
             "ribbonDeltaLo": WaterRender.ribbonDeltaLo,
+            "ribbonJoinCoverage": WaterRender.ribbonJoinCoverage,
         ]
         XCTAssertEqual(WaterUniforms.contract.count, expected.count,
                        "Vertrags-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")

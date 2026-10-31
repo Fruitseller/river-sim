@@ -132,5 +132,6 @@ public enum WaterUniforms {
         ("ribbonMinimumRank", WaterRender.ribbonMinimumRank),
         ("ribbonMaxCrossSlope", WaterRender.ribbonMaxCrossSlope),
         ("ribbonDeltaLo", WaterRender.ribbonDeltaLo),
+        ("ribbonJoinCoverage", WaterRender.ribbonJoinCoverage),
     ]
 }
