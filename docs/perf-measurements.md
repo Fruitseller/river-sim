@@ -2294,3 +2294,40 @@ Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt iden
 | Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
 | Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
 | Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
+
+
+---
+
+## Inline-Gitterkoordinaten-Rundung in Meander-Stempelung (Oktober 2026)
+
+### Was und warum
+
+In `Terrain.beltStampChannel`:
+1. **PLT-Aufrufe von `round` durch direkte Ganzzahlabrundung eliminiert:** Die lokale Hilfsfunktion `cell(_ x: Double, _ z: Double)` wandelte Fließkomma-Koordinaten über `min(max(Int(z.rounded()), 0), nn - 1) * nn + min(max(Int(x.rounded()), 0), nn - 1)` in Gitterindizes um. `Double.rounded()` ruft unter Linux über die PLT die glibc-Funktion `round` auf (~20 Zyklen plus Stack-Frame und Register-Spills je Achse und Aufruf). `Terrain.cellIndex` verwendet kaufmännische Rundung (`Terrain.gridRound`: `c >= 0 ? (c < 0.5 ? 0 : Int(c + 0.5)) : (c > -0.5 ? 0 : Int(c - 0.5))`), die den IEEE-754-Grenzfall an `0.5.nextDown` (= `0.49999999999999994`) exakt erhält (wo eine naive Addition `x + 0.5` wegen Round-to-Nearest-Even fälschlicherweise auf 1.0 gerundet hätte). Damit ist die Rundungssemantik für alle Double-Werte bit-identisch zu `Int(coord.rounded())`, benötigt keine externen PLT-Funktionsaufrufe und inlinet direkt als schlanke Register-Operationen. Da `cell` in der Querschnittsabtastung und Profilstempelung über 1 Mio. Mal pro Sim-Schritt aufgerufen wird, entfallen damit Millionen von PLT-Sprungbefehlen und Stack-Spills.
+2. **Skalar-Wiederverwendung im Querprofil:** In der Profilstempelung (`while s >= inner - 1e-9`) wurde `(1 + skew * a * e)` pro Stempelschritt neu berechnet. Da `kap = skew * a` vor der Schleife bereits berechnet vorliegt, spart `(1 + kap * e)` die redundante Multiplikation im inneren Loop.
+
+### Gemessen (simperf, eine Sitzung, --repeat 3)
+
+Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-base` vs `/tmp/simperf-opt`, 2 Paare, je `--repeat 3`, 30 Schritte à dt=100.0, Seed 1337):
+
+- **Paar 1:**
+  - Base: 183.2 / 174.4 / 173.9 ms/Schritt (Minimum: 173.9 ms)
+  - Opt:  153.8 / 153.6 / 154.3 ms/Schritt (Minimum: 153.6 ms)
+  - Pass-Vergleich (`belt.parallel` + `belt.fixedStamp` + `belt.finishProfile`):
+    - `belt.parallel`: 43.51 ms → 33.21 ms (−10.30 ms / −23.7 %)
+    - `belt.fixedStamp`: 6.04 ms → 4.54 ms (−1.50 ms / −24.8 %)
+    - `belt.finishProfile`: 3.22 ms → 2.51 ms (−0.71 ms / −22.0 %)
+    - Summe Stempelpässe: 52.77 ms → 40.26 ms (−12.51 ms / −23.7 %)
+
+- **Paar 2:**
+  - Base: 164.6 / 169.7 / 162.3 ms/Schritt (Minimum: 162.3 ms)
+  - Opt:  151.9 / 164.3 / 162.7 ms/Schritt (Minimum: 151.9 ms)
+  - Pass-Vergleich:
+    - `belt.parallel`: 41.01 ms → 35.35 ms (−5.66 ms / −13.8 %)
+    - `belt.fixedStamp`: 5.10 ms → 4.85 ms (−0.25 ms / −4.9 %)
+    - `belt.finishProfile`: 3.07 ms → 2.61 ms (−0.46 ms / −15.0 %)
+    - Summe Stempelpässe: 49.18 ms → 42.81 ms (−6.37 ms / −13.0 %)
+
+### Bit-Identität
+
+Physik-Fingerprint (`simperf --hash`) vor und nach der Änderung exakt identisch: `7667d3585b1f1904`.
