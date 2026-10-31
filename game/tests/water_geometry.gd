@@ -241,7 +241,11 @@ func _run() -> void:
 ## Fluss-Band als `own`? Spiegelbild von `RiverRibbonRenderer.stampCoverage` und
 ## `joinPath`: geprüft wird das Bandsegment zwischen zwei Kantenpaaren mit linear
 ## interpolierter Halbbreite und Deckkraft sowie halber Zelle Längsüberhang an
-## offenen Bandenden. Unsichtbare Quellenanfänge (Halbbreite 0, Alpha 0) und
+## offenen Bandenden. QUER gilt `hw + cs` statt des `hw + halbe Zelle` von
+## `stampCoverage`: der Helfer fragt den exakten Punkt des Bandendes ab,
+## `stampCoverage` urteilt über ZELLMITTEN — die ganze Zelle deckelt den Versatz
+## zwischen Endpunkt und der Mitte seiner Zelle (quer bis ~0,7 Zellen).
+## Unsichtbare Quellenanfänge (Halbbreite 0, Alpha 0) und
 ## schwach deckende Ausläufer (< `ribbonJoinCoverage`) zählen nicht als
 ## Zusammenfluss.
 func _inside_other_river(verts: PackedVector3Array, cols: PackedColorArray,
@@ -292,9 +296,14 @@ func _check_inside_other_river_guard() -> bool:
 		# Strip 1: fremdes Fluss-Band, aber schwach deckend (unter ribbonJoinCoverage).
 		Vector3(0.0, 0.0, -2.0), Vector3(0.0, 0.0, 2.0),
 		Vector3(4.0, 0.0, -2.0), Vector3(4.0, 0.0, 2.0),
-		# Strip 2: fremdes Fluss-Band mit Quellenanfang (Halbbreite 0, Alpha 0 bei x=10)
-		# und voll deckendem Segment ab x=14..18.
-		Vector3(10.0, 0.0, 0.0), Vector3(10.0, 0.0, 0.0),
+		# Strip 2: fremdes Fluss-Band mit Quellenanfang (Halbbreite 0, Alpha 0 bei
+		# x=6) und voll deckendem Segment ab x=14..18. Der Quellenpunkt liegt
+		# 4 Zellen (8 Welt-Einheiten) vor der Naht des gedeckten Segments und
+		# damit außerhalb dessen Überhang (hw + cs) — läge er näher, nähme ihn
+		# der Naht-Fußabdruck des gedeckten Nachbarn an, obwohl dort nichts
+		# gemalt wird (CI-Befund zu 935bcf8), und der Fall prüfte nicht den
+		# Quellenanfang.
+		Vector3(6.0, 0.0, 0.0), Vector3(6.0, 0.0, 0.0),
 		Vector3(14.0, 0.0, -2.0), Vector3(14.0, 0.0, 2.0),
 		Vector3(18.0, 0.0, -2.0), Vector3(18.0, 0.0, 2.0),
 		# Strip 3: fremdes Band mit Deckkraft 1, aber degenerierter Halbbreite 0 bei x=30..34.
@@ -322,7 +331,7 @@ func _check_inside_other_river_guard() -> bool:
 	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(2.0, 0.0, 0.0), cs):
 		push_error("FAIL: _inside_other_river akzeptiert eigenes oder zu schwach deckendes Band")
 		return false
-	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(10.0, 0.0, 0.0), cs):
+	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(6.0, 0.0, 0.0), cs):
 		push_error("FAIL: _inside_other_river akzeptiert unsichtbaren Quellenanfang (Alpha 0, Breite 0)")
 		return false
 	if _inside_other_river(verts, cols, uv2s, starts, 0, Vector3(19.5, 0.0, 0.0), cs):
