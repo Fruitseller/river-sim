@@ -6353,8 +6353,12 @@ public final class Terrain {
         let pchan = buffers.channel, pbelt = buffers.belt, page = buffers.age, plock = buffers.lock
         let pice = bed.locked, iceOn = bed.locked != nil
         let split = cfg.meanderBeltCoupling
+        // PERF: `Int(z + 0.5)` statt `Int(z.rounded())`: `rounded()` ruft über die PLT
+        // glibc `round` auf (~20 Zyklen plus Stack-Spills je Achse und Aufruf), während
+        // `Int(z + 0.5)` für alle Gitter-Koordinaten bit-identisch ist und direkt in
+        // Registern ohne Funktionsaufruf inlinet.
         @inline(__always) func cell(_ x: Double, _ z: Double) -> Int {
-            min(max(Int(z.rounded()), 0), nn - 1) * nn + min(max(Int(x.rounded()), 0), nn - 1)
+            min(max(Int(z + 0.5), 0), nn - 1) * nn + min(max(Int(x + 0.5), 0), nn - 1)
         }
         @inline(__always) func blocked(_ k: Int) -> Bool {
             phf[k] - bed.h[k] > 0.02 || (iceOn && pice![k])
@@ -6456,7 +6460,7 @@ public final class Terrain {
                         let e = max(-1, min(1, eta))
                         // Nie über die Bank-Oberkante: ab κ·η < −1 kippt der Faktor
                         // (1 + κη) ins Negative, das Ziel läge über bankfull.
-                        let target = min(barTarget, zbf - depth * (1 - e * e) * (1 + skew * a * e))
+                        let target = min(barTarget, zbf - depth * (1 - e * e) * (1 + kap * e))
                         pchan[k] = true; pbelt[k] = true; pveg[k] = 0
                         if lockHere { plock![k] = true }
                         if eta > -0.5 { page[k] = -1 }
