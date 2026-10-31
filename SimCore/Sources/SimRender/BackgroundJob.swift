@@ -47,6 +47,12 @@ public final class BackgroundJob<Output>: @unchecked Sendable {
     public private(set) var waits = 0
     public private(set) var waitedSeconds = 0.0
 
+    /// Test-Haken: läuft auf dem Besitzer-Thread, unmittelbar bevor `wait`
+    /// tatsächlich blockiert. Damit geben Wächter einen am Tor gehaltenen Job
+    /// genau dann frei, wenn der Zugriff nachweislich wartet, statt das aus
+    /// einer Verzögerung abzuleiten (Review #216). Produktion setzt ihn nie.
+    var willBlock: (() -> Void)?
+
     public init(label: String) {
         queue = DispatchQueue(label: label, qos: .userInitiated)
     }
@@ -95,6 +101,7 @@ public final class BackgroundJob<Output>: @unchecked Sendable {
         let (group, done) = locked { (running, finished) }
         guard let group, !done else { return }
         let start = DispatchTime.now().uptimeNanoseconds
+        willBlock?()
         group.wait()
         waits += 1
         waitedSeconds += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9

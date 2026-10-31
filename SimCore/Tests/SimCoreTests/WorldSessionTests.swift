@@ -81,8 +81,10 @@ final class WorldSessionTests: XCTestCase {
     // MARK: - Abwarten
 
     /// Jeder Zugriff wartet einen RECHNENDEN Schritt ab und sieht danach
-    /// dessen Ergebnis. Der Job hält hier an einer Schranke, bis der Zugriff
-    /// sicher begonnen hat; ohne Abwarten läse er die alte Welt.
+    /// dessen Ergebnis. Der Job hält an einer Schranke, die erst der Zugriff
+    /// selbst öffnet, unmittelbar bevor er blockiert (`stepWillBlock`):
+    /// ohne Abwarten öffnet sie niemand, und `stepWaits` bleibt 0. Kein
+    /// Zeitfenster, also unabhängig von Scheduling und Rechnerlast.
     func testAccessWaitsForTheRunningStep() {
         let accesses: [(name: String, access: (WorldSession<WorldFrame>) -> Void)] = [
             ("year", { _ = $0.year }),
@@ -101,13 +103,47 @@ final class WorldSessionTests: XCTestCase {
                 gate.wait()
                 return frame
             })
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { gate.signal() }
+            world.stepWillBlock = { gate.signal() }
             access(world)
             XCTAssertEqual(world.stepWaits, 1, "\(name) wartet den Schritt nicht ab")
             XCTAssertTrue(world.stepReady, "\(name): danach ist der Schritt fertig")
             let frame = world.finishStep()
             XCTAssertEqual(frame?.year, before + 100, "\(name): Ergebnis bleibt liegen")
         }
+    }
+
+    /// Gibt der Knoten die Sitzung frei, während ein Schritt rechnet, kehrt
+    /// die Freigabe erst zurück, wenn der Schritt fertig ist: danach entlädt
+    /// Godot beim Beenden die Library, deren Code der Job ausführt. Bis #212
+    /// stand diese Schranke als `SimNode.deinit`; sie trägt nur, solange der
+    /// Job die Sitzung nicht selbst hält (Review #216). Deterministisch: der
+    /// Job hängt an einer Schranke, die der Test erst öffnet, nachdem er
+    /// gesehen hat, dass die Freigabe blockiert.
+    func testReleasingTheSessionWaitsForTheRunningStep() {
+        // Die Semaphoren ordnen alle Zugriffe auf beide Kästen.
+        final class Flag: @unchecked Sendable { var done = false }
+        final class Owner: @unchecked Sendable { var session: WorldSession<WorldFrame>? }
+        let gate = DispatchSemaphore(value: 0), released = DispatchSemaphore(value: 0)
+        let finished = Flag(), owner = Owner()
+        owner.session = session()
+        weak var watched = owner.session
+        XCTAssertTrue(owner.session!.beginStep(years: 10, trigger: .timelapse, now: 0) { frame in
+            gate.wait()
+            finished.done = true
+            return frame
+        })
+        // Freigabe auf einem anderen Thread: der Test-Thread muss die Schranke
+        // öffnen können, während das `deinit` wartet.
+        DispatchQueue.global().async {
+            owner.session = nil
+            released.signal()
+        }
+        XCTAssertEqual(released.wait(timeout: .now() + 0.3), .timedOut,
+                       "die Freigabe kehrt zurück, während der Schritt noch rechnet")
+        gate.signal()
+        XCTAssertEqual(released.wait(timeout: .now() + 30), .success)
+        XCTAssertTrue(finished.done, "der Schritt ist nach der Freigabe fertig")
+        XCTAssertNil(watched, "die Sitzung ist freigegeben")
     }
 
     // MARK: - Ein Schritt zur Zeit
