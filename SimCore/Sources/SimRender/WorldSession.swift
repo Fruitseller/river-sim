@@ -43,7 +43,10 @@ public final class WorldSession<Packed> {
     }
 
     /// Ein laufender Job darf seine Sitzung nicht überleben: beim Beenden
-    /// entlädt Godot danach die Library, deren Code er gerade ausführt.
+    /// entlädt Godot danach die Library, deren Code er gerade ausführt. Das
+    /// trägt nur, weil der Job die Sitzung NICHT hält (s. `beginStep`): gibt
+    /// `SimNode` sie frei, läuft dieses `deinit` sofort und wartet den Job ab
+    /// (Wächter: `WorldSessionTests.testReleasingTheSessionWaitsForTheRunningStep`).
     deinit {
         job.wait()
     }
@@ -71,14 +74,16 @@ public final class WorldSession<Packed> {
 
     /// DER Abschluss jeder Weltänderung.
     private func change(_ kind: TerrainChange) {
-        invalidate(world, render, kind)
+        Self.invalidate(world, render, kind)
+        storedLastChange = kind
     }
 
     /// Die eine Stelle, an der eine Änderung den Render-Zustand erreicht —
     /// auch für den Hintergrund-Schritt, der am Tor vorbei arbeiten muss.
-    private func invalidate(_ terrain: Terrain, _ render: RenderState, _ kind: TerrainChange) {
+    /// Statisch, damit der Job die Sitzung nicht erfassen muss (s. `deinit`).
+    private static func invalidate(_ terrain: Terrain, _ render: RenderState,
+                                   _ kind: TerrainChange) {
         render.invalidate(terrain, kind)
-        storedLastChange = kind
     }
 
     // MARK: - Weltänderungen
@@ -152,10 +157,16 @@ public final class WorldSession<Packed> {
                           pack: @escaping (WorldFrame) -> Packed) -> Bool {
         guard !job.isPending else { return false }
         // Ohne Job unterwegs gehören Welt und Render-Zustand ab hier dem Job.
+        // Er erfasst NUR sie, nie die Sitzung: hielte er sie, liefe ihr
+        // `deinit` beim Freigeben des Knotens erst nach dem Job, und die
+        // Freigabe kehrte zurück, während er noch rechnet (Review #216).
+        // `lastChange` setzt deshalb der Besitzer-Thread; lesen kann es
+        // ohnehin erst, wer den Job abgewartet hat.
         let terrain = storedWorld, render = storedRender
-        return job.start { [self] in
+        storedLastChange = .advanced
+        return job.start {
             terrain.step(dtYears: years)
-            invalidate(terrain, render, .advanced)
+            Self.invalidate(terrain, render, .advanced)
             return pack(Self.frame(terrain, render, trigger, now: now))
         }
     }
@@ -174,6 +185,11 @@ public final class WorldSession<Packed> {
     /// gewartet hat (`docs/perf-measurements.md` §L); wie oft, für die Wächter.
     public var stepWaitedSeconds: Double { job.waitedSeconds }
     var stepWaits: Int { job.waits }
+    /// Test-Haken von `BackgroundJob.willBlock`, für die Wächter.
+    var stepWillBlock: (() -> Void)? {
+        get { job.willBlock }
+        set { job.willBlock = newValue }
+    }
 
     // MARK: - Frame (Issue #94)
 
