@@ -82,7 +82,7 @@ public final class Terrain {
     /// über See auf den neutralen Wert 1.0 gesetzt. Leer, solange
     /// `cfg.rainWeightedFlow` aus ist (dann laufen alle Pfade bit-identisch zum
     /// Stand vor Issue #9). Gefüllt am Ende von `computeRain`, verbraucht von
-    /// `seedFlowAccumulator` (beide Netze) und den Tropfen-Startpunkten
+    /// D8- und MFD-Akkumulation und den Tropfen-Startpunkten
     /// (`Hydraulic.spawnPosition`). Herleitung: `SimConfig.rainWeightedFlow`.
     public private(set) var rainWeight: [Double] = []
     /// Abfluss-GEWICHT INKLUSIVE SCHMELZWASSER (Issue #36) — dieselbe Bauform wie
@@ -103,8 +103,8 @@ public final class Terrain {
     public private(set) var runoffWeight: [Double] = []
     /// **Die EINE Quelle der Abfluss-Gewichtung** (Issue #36): Schmelz-Gewicht,
     /// wenn es eines gibt, sonst das Regen-Gewicht. Alle drei Konsumenten lesen
-    /// dieses Feld und keins der beiden Rohfelder — `seedFlowAccumulator` (D8
-    /// `area` UND MFD `areaMFD`) und die Tropfen-Startpunkte (`Hydraulic.erode`,
+    /// dieses Feld und keins der beiden Rohfelder: D8 `area`, MFD `areaMFD`
+    /// und die Tropfen-Startpunkte (`Hydraulic.erode`,
     /// Parameter `rainWeight`). Leer = ungewichtet (Zellfläche/gleichverteilt).
     ///
     /// Kein Kopieren: die Property gibt eines der beiden Arrays zurück (COW).
@@ -2783,9 +2783,9 @@ public final class Terrain {
         }}}}}}
     }
 
-    /// Startwert der Flächen-Akkumulation je Zelle — die EINE Stelle für beide
-    /// Netze (D8 in `computeReceiversAndArea`, MFD in `computeMFDArea`), damit sie
-    /// nicht auseinanderdriften.
+    /// Startwert der MFD-Flächen-Akkumulation je Zelle. D8 setzt dieselben
+    /// Startwerte direkt in `computeReceiversAndArea`, damit kein eigener
+    /// Initialisierungsdurchlauf nötig ist.
     ///
     /// Ohne `cfg.rainWeightedFlow`: reine Zellfläche (`cellArea` überall) —
     /// bit-identisch zum Zustand vor Issue #9. Mit Schalter: `cellArea ·
@@ -2817,7 +2817,8 @@ public final class Terrain {
 
     /// PERF wie im Flood: Roh-Puffer, i/j aus der Schleife statt `%`/`/` je Zelle,
     /// innere Zellen mit 8 festen Offsets ohne Rand-Checks. Vergleichsreihenfolge
-    /// und `/ dist` bleiben unverändert (strict `>` → der erste steilste gewinnt).
+    /// bleibt unverändert (strict `>` → der erste steilste gewinnt); die
+    /// orthogonale Division durch 1 entfällt.
     private func computeReceiversAndArea() {
         let cellArea = cfg.cellSize * cfg.cellSize
         let cnt = cfg.count, nn = n, sea = cfg.sea

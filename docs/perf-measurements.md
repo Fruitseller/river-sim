@@ -2344,7 +2344,7 @@ Physik-Fingerprint (`simperf --hash`) vor und nach der Änderung exakt identisch
 ### Was geändert wurde
 
 In `Terrain.computeReceiversAndArea`:
-1. **Initialisierungen in die zeilenparallele Empfängersuche verschränkt:** Bisher führte jeder Aufruf vor der Empfängersuche ein sequenzielles `prec.update(repeating: -1, count: cnt)` (2 MB Speicherinitialisierung auf dem Hauptthread) sowie einen separaten parallelen Durchlauf `seedFlowAccumulator` (4,15 MB Schreibzugriff über alle Kerne) aus. Da `pa` (`area`) erst in der topologischen Akkumulationsschleife am Ende des Passes gelesen wird und Meeresspiegelzellen (`phf <= sea`) Senken mit Empfänger -1 sind, werden `pa[k]` und `prec[k]` jetzt direkt im selben zeilenparallelen Durchlauf initialisiert. Dies eliminiert 39 sequenzielle Memsets und 39 separate Thread-Dispatches samt Synchronisationsbarrieren pro 30 Simulationsschritten und halbiert die Speicherrundreisen.
+1. **Initialisierungen in die zeilenparallele Empfängersuche verschränkt:** Bisher führte jeder Aufruf vor der Empfängersuche ein sequenzielles `prec.update(repeating: -1, count: cnt)` (2 MB Speicherinitialisierung auf dem Hauptthread) sowie einen separaten parallelen Durchlauf `seedFlowAccumulator` (4,15 MB Schreibzugriff über alle Kerne) aus. Da `pa` (`area`) erst in der topologischen Akkumulationsschleife am Ende des Passes gelesen wird und Meeresspiegelzellen (`phf <= sea`) Senken mit Empfänger -1 sind, werden `pa[k]` und `prec[k]` jetzt direkt im selben zeilenparallelen Durchlauf initialisiert. Dies eliminiert 39 sequenzielle Memsets und 39 separate Thread-Dispatches samt Synchronisationsbarrieren pro 30 Simulationsschritten und erspart die separaten Initialisierungsdurchläufe.
 2. **Orthogonale Nachbar-Divisionen entrollt:** Für orthogonale Nachbarn innerer Zellen ist `dist == 1.0`. Die Gleitkomma-Division `d / 1.0` entfällt nach IEEE 754 bit-identisch, und da `bestSlope >= 0` gilt, ist ein Vorzeichentest vor `d > bestSlope` mathematisch redundant. Für diagonale Nachbarn bleibt die Division durch `sqrt2` hinter dem Vorzeichentest erhalten.
 
 ### Gemessen
@@ -2362,8 +2362,8 @@ Verschränkte A/B-Messung in einer Sitzung (`/tmp/simperf-baseline` vs `/tmp/sim
   - Opt: 162.1 / 173.1 / 185.9 ms/Schritt (Minimum: 162.1 ms), `computeReceiversAndArea`: 7.38 ms (−0.14 ms)
 
 **Ergebnis:**
-- **Pass `computeReceiversAndArea`:** Sinkt messbar und stabil um **0.14 bis 1.11 ms/Schritt** (rund **−11 % bis −14 %** im isolierten Passprofil). Die Einsparung durch die verschränkte Initialisierung (Entfall von 39 sequenziellen Memsets und separaten Thread-Dispatches) ist sowohl im Einzelpass als auch in Wiederholungen konsistent nachweisbar.
-- **Gesamtschrittzeit:** Die Differenz der separat ausgewählten Prozess-Minima (`Base-Min − Opt-Min`) beträgt 6.5 bis 13.5 ms/Schritt. Ein gepaarter Block-für-Block-Vergleich zeigt dagegen kein durchgängiges Gesamtschritt-Delta (die Block-Deltas über alle neun Paare reichen von −10.3 bis +19.3 ms; in Paar 3 wird Block 3 von 175.6 auf 185.9 ms langsamer). Die Median-Verbesserungen je Paar betragen 13.4 / 3.6 / 3.3 ms. Der Gesamtschritt-Vorteil liegt damit innerhalb der typischen VM-Streuung (~5 %) und ist über ganze Schritte nicht blockweise reproduzierbar; belegt und robust ist allein der isolierte Pass-Gewinn von ~0.14–1.1 ms.
+- **Pass `computeReceiversAndArea`:** Die drei Passprofile zeigen Einsparungen von **0.14 bis 1.11 ms/Schritt** (rund **−1,9 % bis −13,8 %** im isolierten Passprofil). Alle drei Paare zeigen einen niedrigeren Zeitanteil dieses Passes.
+- **Gesamtschrittzeit:** Die Differenz der separat ausgewählten Prozess-Minima (`Base-Min − Opt-Min`) beträgt 6.5 bis 13.5 ms/Schritt. Ein gepaarter Block-für-Block-Vergleich zeigt dagegen kein durchgängiges Gesamtschritt-Delta (die Block-Deltas über alle neun Paare reichen von −10.3 bis +19.3 ms; in Paar 3 wird Block 3 von 175.6 auf 185.9 ms langsamer). Die Median-Verbesserungen je Paar betragen 13.4 / 3.6 / 3.3 ms. Der Gesamtschritt-Vorteil liegt damit innerhalb der typischen VM-Streuung (~5 %) und ist über ganze Schritte nicht blockweise reproduzierbar; die drei Passprofile zeigen dagegen jeweils einen Gewinn von 0.14 bis 1.11 ms.
 
 ### Bit-Identität
 
@@ -2375,3 +2375,52 @@ Fingerprints (`simperf --hash`) auf allen Seeds und Zeitschrittweiten exakt iden
 | Seed 42, dt = 100 | `758727b1ae0866a8` | `758727b1ae0866a8` | bit-identisch |
 | Seed 20, dt = 100 | `629eb937b51dfe81` | `629eb937b51dfe81` | bit-identisch |
 | Seed 1337, dt = 15 | `764c3535772abcdd` | `764c3535772abcdd` | bit-identisch |
+
+### Unabhängige Nachprüfung zu PR #218 am 31. Oktober 2026
+
+Apple M4 Max, arm64, macOS 27.2, Apple Swift 6.4. Baseline `984c444`,
+PR-Code `fb4083c`; die anschließenden Änderungen betreffen nur Kommentare
+und dieses Protokoll. Die Baseline verwendet eine Kopie desselben Pakets mit
+`Terrain.swift` aus `984c444`. Beide Release-Binaries auf derselben Maschine,
+Produktions-Config n=720, world=112.4789, Einlauf 100 × 100 Jahre,
+Messung 30 × 100 Jahre, Seed 1337, sofern nicht anders angegeben.
+Alle Builds, Hash- und Messläufe über `slot.sh test 2 --`.
+
+Vollständige Zustands-Fingerprints mit `simperf --hash`, jeweils vorher = nachher:
+
+| Konfiguration | Baseline | PR |
+| --- | --- | --- |
+| Seed 1337, dt=100 | `31835ab8b1a85069` | `31835ab8b1a85069` |
+| Seed 42, dt=100 | `d47d5fce7d71d14d` | `d47d5fce7d71d14d` |
+| Seed 20, dt=100 | `68048e685236dd61` | `68048e685236dd61` |
+| Seed 1337, dt=15 | `61eaae22717a0004` | `61eaae22717a0004` |
+
+Die Werte oben sind maschinenspezifisch. Die frühere VM-Messung bleibt separat
+stehen; ihre Fingerprints sind keine plattformübergreifenden Erwartungen.
+
+Interleaved A/B in einer Sitzung, drei Paare, Reihenfolge A/B, B/A, A/B,
+je Prozess `--repeat 3`. A = Baseline, B = PR. Keine eigene Testsuite parallel.
+Die Pass-Tabelle des Harness stammt jeweils aus dem dritten Block und gibt
+Kosten pro Sim-Schritt an, nicht pro Pass-Aufruf. Hier je 45 D8-Aufrufe in
+30 Schritten. Alle Blockzeiten unten in ms/Schritt.
+
+| Paar, Reihenfolge | A, Blöcke 1/2/3 | B, Blöcke 1/2/3 | D8-Pass A / B, ms/Schritt | D8-Anteil A / B | Median der gepaarten Block-Deltas A−B |
+| --- | --- | --- | --- | --- | --- |
+| 1, A → B | 65.4 / 59.0 / 58.8 | 57.1 / 59.1 / 63.4 | 1.91 / 1.62 | 3.2 / 2.6 % | -0.1 |
+| 2, B → A | 58.1 / 63.6 / 61.4 | 57.5 / 62.7 / 62.5 | 2.01 / 1.57 | 3.3 / 2.5 % | +0.6 |
+| 3, A → B | 58.0 / 64.0 / 57.6 | 61.2 / 59.3 / 57.8 | 1.82 / 1.39 | 3.2 / 2.4 % | -0.2 |
+
+Der Median der drei gepaarten Pass-Einsparungen beträgt 0,43 ms/Schritt;
+die einzelnen Einsparungen betragen 0,29 / 0,44 / 0,43 ms, entsprechend
+15,2 / 21,9 / 23,6 %. Der Pass belegt vorher rund 3,2 %, nachher 2,4 bis
+2,6 % des jeweils dritten Sim-Blocks. Damit ist der geringere Zeitanteil
+des D8-Passes auch auf dieser Maschine in allen drei Paaren sichtbar.
+
+Die neun gepaarten Gesamtschritt-Deltas reichen von −4,6 bis +8,3 ms,
+ihr Median liegt bei −0,1 ms. Ein positives Delta bedeutet schneller.
+Damit ist kein reproduzierbarer Gewinn für den Gesamtschritt belegt.
+Die Änderung wird ausschließlich als Optimierung des D8-Passes bewertet.
+
+Lokale Pflichtsuite über den Ressourcen-Slot: 656 Tests, davon 79 Messläufe
+planmäßig übersprungen, 0 Fehler, 292,834 Sekunden reine Testzeit.
+Die GDExtension wird ausschließlich durch CI geprüft.
