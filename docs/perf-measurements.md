@@ -2424,3 +2424,27 @@ Die Änderung wird ausschließlich als Optimierung des D8-Passes bewertet.
 Lokale Pflichtsuite über den Ressourcen-Slot: 656 Tests, davon 79 Messläufe
 planmäßig übersprungen, 0 Fehler, 292,834 Sekunden reine Testzeit.
 Die GDExtension wird ausschließlich durch CI geprüft.
+
+### Rebase nach PR #219
+
+PR #218 auf `origin/main` bei `e282630` rebasiert. Der Anhang zur
+Gitterkoordinaten-Rundung aus #219 und der D8-Anhang bleiben vollständig
+erhalten. `Terrain.swift` enthält sowohl `gridRound`/`cellIndex` samt
+Rundungskorrektur als auch die verschränkte D8-Initialisierung.
+
+Erneute Verifikation auf derselben M4-Max-Maschine mit derselben Toolchain:
+657 Tests, 79 übersprungen, 0 Fehler. Darunter besteht
+`testBeltCellRoundingMatchesRoundedAtHalfBoundaries` aus #219.
+Suite und Release-Builds liefen über `slot.sh test 2 --`.
+
+Neue Baseline für `simperf --hash` ist `e282630`, Gegenstand der Prüfung
+der rebasierte Code `8299310`. Alle vier Hash-Paare erneut über den Slot
+berechnet: Seed 1337/dt=100 `31835ab8b1a85069`, Seed 42/dt=100
+`d47d5fce7d71d14d`, Seed 20/dt=100 `68048e685236dd61`, Seed 1337/dt=15
+`61eaae22717a0004`, jeweils Baseline = PR. Die Kopie des Baseline-Pakets
+verwendet `Terrain.swift` aus `e282630`; alle anderen Paketquellen sind
+zwischen Baseline und PR identisch.
+
+Die A/B-Zeitmessung oben bleibt als Messung gegen `984c444` dokumentiert;
+nach dem Rebase wurden die Pflichtsuite und die Zustands-Fingerprints neu
+geprüft, keine neue Zeitmessung durchgeführt.
