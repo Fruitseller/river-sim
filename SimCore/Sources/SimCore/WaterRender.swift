@@ -149,8 +149,8 @@ public enum WaterRender {
 
     // Nachbau der Stellen aus `terrain.gdshader`, die diese Kalibrierung lesen —
     // damit die REGRESSION (Saum ohne Wasser) headless prüfbar ist statt nur auf
-    // der GPU. Die Zahlen reisen als Uniforms zum Shader (`SimRender.
-    // WaterUniforms`, #91/#92); der Struktur-Vertrag in `WaterRenderTests` hält
+    // der GPU. Die Zahlen reisen als Uniforms zum Shader (Gruppe `water`
+    // im `SimRender.CalibrationRegistry`, #91/#92/#213); der Struktur-Vertrag in `WaterRenderTests` hält
     // fest, welche Shader-Stelle welches Fenster liest.
 
     @inline(__always)
@@ -1161,7 +1161,7 @@ public enum WaterRender {
     // `ocean.gdshader` malen DASSELBE Wasser. Fresnel, Spiegelung und
     // Glanz müssen zusammenfallen, sonst zerfallen Mündung und Küste sichtbar in
     // verschiedene Materialien. Die Werte reisen als `water_*`-Uniforms über die
-    // Brücke (`SimRender.WaterUniforms`, #91/#92); `WaterRenderTests` pinnt als
+    // Brücke (Gruppe `water` im `SimRender.CalibrationRegistry`, #213); `WaterRenderTests` pinnt als
     // Struktur, welche Shader welche Uniforms lesen. Seicht/Tief-Farbe und
     // Strömungs-Schimmer gelten seit #155 nur fürs Binnenwasser: das Meer färbt
     // nach der Schelf-Tiefe (s. „Offenes Meer" unten), die abgenommene
@@ -1525,7 +1525,7 @@ public enum WaterRender {
     //    Altarme. Diese Schwellen erreichen keinen Shader.
     //  - `water.gdshader` und `terrain.gdshader`: Tiefenfarbe im Band nach dem
     //    Querprofil und das Bank-Material. Diese Werte reisen als
-    //    `water_*`-Uniforms (`SimRender.WaterUniforms`).
+    //    `water_*`-Uniforms (`SimRender.CalibrationRegistry`).
     // Messreihe: `docs/river-belt-render-measurements.md`.
 
     /// Sand nur auf der JUNGEN Gleithang-Bank direkt am Gerinne. In der Natur

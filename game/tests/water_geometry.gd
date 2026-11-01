@@ -18,12 +18,14 @@ extends SceneTree
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
-const WaterContract = preload("res://tests/water_contract.gd")
 
 # Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
-# über die Brücke geholt (SimNode.waterContractNames/Values) statt als eigene
-# Konstanten kopiert; die Paarung Name ↔ Konstante pinnt
-# SimCoreTests/WaterUniformsTests.swift ausführbar.
+# über die Brücke geholt (Gruppe `water_contract` des Kalibrier-Registers,
+# Issue #213) statt als eigene Konstanten kopiert; die Paarung Name ↔
+# Konstante pinnt SimCoreTests/CalibrationRegistryTests.swift ausführbar.
+# Überhöhung und Band-Anhebung kommen ebenso aus der Gruppe `contract`.
+var hscale: float
+var river_lift: float
 var kind_river: float
 var kind_delta: float
 var kind_oxbow: float
@@ -51,7 +53,10 @@ func _run() -> void:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
-	var contract := WaterContract.fetch(sim)
+	var contract := Main.calibration(sim, "water_contract")
+	var render_contract := Main.calibration(sim, "contract")
+	hscale = render_contract["heightScale"]
+	river_lift = render_contract["riverLift"]
 	kind_river = contract["ribbonKindRiver"]
 	kind_delta = contract["ribbonKindDelta"]
 	kind_oxbow = contract["ribbonKindOxbow"]
@@ -97,7 +102,7 @@ func _run() -> void:
 		y += 1000.0
 		if strict and y >= 20000.0:
 			sim.recomputeFlow()
-			sim.buildRiverRibbons(Main.HSCALE, Main.RIVER_LIFT)
+			sim.buildRiverRibbons(hscale, river_lift)
 			if _has_kind(sim, kind_oxbow) and _has_kind(sim, kind_delta):
 				break
 	years = y
@@ -105,7 +110,7 @@ func _run() -> void:
 
 	var h_before: PackedFloat32Array = sim.heights()
 	var t0 := Time.get_ticks_usec()
-	sim.buildRiverRibbons(Main.HSCALE, Main.RIVER_LIFT)
+	sim.buildRiverRibbons(hscale, river_lift)
 	var build_ms := (Time.get_ticks_usec() - t0) / 1000.0
 	if sim.heights() != h_before:
 		push_error("FAIL: buildRiverRibbons verändert die Sim-Höhen")
@@ -228,7 +233,7 @@ func _run() -> void:
 		return
 
 	# --- Determinismus des Geometrie-Baus ------------------------------------
-	sim.buildRiverRibbons(Main.HSCALE, Main.RIVER_LIFT)
+	sim.buildRiverRibbons(hscale, river_lift)
 	if sim.riverRibbonVerts() != verts or sim.riverRibbonColors() != cols:
 		push_error("FAIL: zweiter Bau liefert andere Geometrie (nicht deterministisch)")
 		quit(1)

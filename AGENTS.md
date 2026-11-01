@@ -691,12 +691,12 @@ Komponenten-Fade ↔ Shader-Smoothstep ↔ Altarm-Stempel, Issue #32; seit #34 a
 die Übergabe Band ↔ Raster: `deltaFrontDepth == lakeRawWetDepth`,
 `mouthOverlapCells`, Typ-Kanal der Bänder) und `RenderContract.swift`
 (Issue #51: `heightScale`, `riverLift`, `defaultSeed`), dazu `ReliefRender.swift`
-(Issue #153: Rinnenskala, Gratschärfung, Kodierung der Backtextur; Uniform-Weg
-über `SimRender.ReliefUniforms` wie bei `WaterUniforms`) und `CanopyRender.swift`
-(Issue #152: Schwellen der Waldmaske, Kronengröße und Dachhöhe; Uniform-Weg
-über `SimRender.CanopyUniforms`) sowie `MaterialRender.swift` (Issue #174 D:
-Fels auf steil-konvex, Schutthalden, Firn/Eis, Rohboden, Talboden; Klüftung,
-Spalten, Moränen über `SimRender.MaterialUniforms`). Alle sechs sind aus
+(Issue #153: Rinnenskala, Gratschärfung, Kodierung der Backtextur) und
+`CanopyRender.swift` (Issue #152: Schwellen der Waldmaske, Kronengröße und
+Dachhöhe) sowie `MaterialRender.swift` (Issue #174 D: Fels auf steil-konvex,
+Schutthalden, Firn/Eis, Rohboden, Talboden; Klüftung, Spalten, Moränen). Alle
+Werte davon, die GDScript oder ein Shader braucht, reisen über das EINE
+Kalibrier-Register (s. u.). Alle sechs sind aus
 `SimCoreTests` gepinnt; Werte dort ändern heißt `SimRender`, Shader und
 gegebenenfalls `SimNode`/`Main.gd` mitziehen (der Test sagt, wo).
 
@@ -710,20 +710,34 @@ selbst, der Wasserkörper tritt mit Fresnel zurück, seit #174 ohne Himmelsfarbe
 in der Albedo; Seicht/Tief-Farbe und Strömungs-Schimmer nur Binnenwasser) und die Ozean-Werte
 `ocean*` (Schelf-Tiefenfarbe, Brandung, Rausch-Wellen, Issue #155).
 Seit **Issue #92** stehen die Wasser-Werte nicht mehr als gepinnte Kopien im
-Shader, sondern reisen als `water_*`-Uniforms über die Brücke
-(`SimRender.WaterUniforms` → `SimNode` → `Main.gd`; Expand #91, Contract #92).
-Die Shader deklarieren sie default-frei (ein Literal-Default wäre wieder eine
-Kopie), und die beiden Godot-Vertragstests (`water_geometry.gd`,
-`river_ribbons.gd`) holen ihre Vertragswerte über denselben Weg
-(`waterContractNames/Values`). Wächter: `WaterUniformsTests`
-(Tabellen-Spiegel, default-freie Deklarationen, Verdrahtung),
+Shader, sondern reisen als `water_*`-Uniforms über die Brücke (Expand #91,
+Contract #92). Seit **Issue #213** nehmen ALLE Werte, die die Godot-Seite
+braucht, denselben Weg: das **Kalibrier-Register**
+`SimRender.CalibrationRegistry` vergibt Namen in Gruppen (`water`,
+`water_contract`, `relief`, `canopy`, `material`, `contract`), die Zahlen
+bleiben in `WaterRender`, `ReliefRender`, `CanopyRender`, `MaterialRender`
+und `RenderContract`. Die Brücke hat dafür EIN Callable
+(`SimNode.calibration(group)` → Dictionary Name → Wert), `Main.gd` EINE
+Funktion zum Lesen (`Main.calibration`) und EINE zum Anwenden auf Materialien
+(`Main.apply_calibration`). Uniform-Gruppen tragen ihren Gruppen-Präfix und
+setzen gleichnamige Shader-Uniforms, die die Shader default-frei deklarieren
+(ein Literal-Default wäre wieder eine Kopie); Vertragsgruppen sind Zahlen, die
+GDScript selbst braucht: `water_contract` für die Godot-Wasser-Wächter
+(`water_geometry.gd`, `river_ribbons.gd`), `contract` für Überhöhung
+(`heightScale`, in `Main.gd` als `hscale`) und Band-Anhebung (`riverLift`).
+Eine neue Gruppe kostet einen Register-Abschnitt und eine Spiegel-Zeile,
+keine neue Brücke. Wächter: `CalibrationRegistryTests` (der EINE
+Name-Wert-Spiegel über alle Gruppen, Präfixe, default-freie Deklarationen,
+nichts am Register vorbei, Brücke, `Main.gd`), `WaterUniformsTests` und
+`ReliefUniformsTests` (welcher Shader welche Uniform liest),
 `WaterRenderTests` (Kalibrier-Paarungen headless; an Quelltext nur noch
 STRUKTUR: welche Shader-Stelle welche Uniform liest), `WaterRendererTests`
-(führen `SimRender` aus) und End-to-End `game/tests/water_uniforms.gd` (jede
-deklarierte Uniform wird gesetzt). `RenderContractTests` hält die
-verbleibenden Verträge zu `Main.gd`, Shader und `SimNode`; der
-`hscale`-Default im Terrain-Shader bleibt dort bewusst als EINZIGE gepinnte
-Shader-Zahl stehen (Editor-Vorschau ohne SimNode, Begründung am Uniform).
+(führen `SimRender` aus) und End-to-End `game/tests/water_uniforms.gd`,
+`relief.gd`, `canopy.gd` (jede deklarierte Uniform wird gesetzt).
+`RenderContractTests` hält die verbleibenden Verträge zu `Main.gd`, Shader und
+`SimNode`; der `hscale`-Default im Terrain-Shader bleibt dort bewusst als
+EINZIGE gepinnte Shader-Zahl stehen (Editor-Vorschau ohne SimNode,
+Begründung am Uniform).
 Gemeinsame Quelltext-Helfer (Issue #83):
 `Tests/SimCoreTests/RepoSource.swift` (Dateizugriff) und `SourceProbe.swift`
 (DER eine Lexer + Abfragen aller Text-Wächter; gematcht wird auf der

@@ -13,12 +13,14 @@ extends SceneTree
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
-const WaterContract = preload("res://tests/water_contract.gd")
 
 # Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
-# über die Brücke geholt (SimNode.waterContractNames/Values) statt als eigene
-# Konstanten kopiert; die Paarung Name ↔ Konstante pinnt
-# SimCoreTests/WaterUniformsTests.swift ausführbar.
+# über die Brücke geholt (Gruppe `water_contract` des Kalibrier-Registers,
+# Issue #213) statt als eigene Konstanten kopiert; die Paarung Name ↔
+# Konstante pinnt SimCoreTests/CalibrationRegistryTests.swift ausführbar.
+# Überhöhung und Band-Anhebung kommen ebenso aus der Gruppe `contract`.
+var hscale: float
+var river_lift: float
 var lake_surface_lift: float
 var sea_surface_sink: float
 var min_rank: float
@@ -47,7 +49,10 @@ func _run() -> void:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
-	var contract := WaterContract.fetch(sim)
+	var contract := Main.calibration(sim, "water_contract")
+	var render_contract := Main.calibration(sim, "contract")
+	hscale = render_contract["heightScale"]
+	river_lift = render_contract["riverLift"]
 	lake_surface_lift = contract["ribbonLakeSurfaceLift"]
 	sea_surface_sink = contract["ribbonSeaSurfaceSink"]
 	min_rank = contract["ribbonMinimumRank"]
@@ -67,7 +72,7 @@ func _run() -> void:
 
 	# Physik-Neutralität: der Geometrie-Build darf die Höhen nicht anfassen.
 	var h_before: PackedFloat32Array = sim.heights()
-	sim.buildRiverRibbons(Main.HSCALE, Main.RIVER_LIFT)
+	sim.buildRiverRibbons(hscale, river_lift)
 	var h_after: PackedFloat32Array = sim.heights()
 	if h_before != h_after:
 		push_error("FAIL: buildRiverRibbons verändert die Sim-Höhen")
@@ -135,11 +140,11 @@ func _run() -> void:
 		var half_w := Vector2(v.x - vr.x, v.z - vr.z).length() * 0.5
 		var cross_tol := half_w * max_cross_slope
 		var pair_mid := (v + vr) * 0.5
-		var ground_c := _bilinear_height(heights, n, world, pair_mid.x, pair_mid.z) * Main.HSCALE
-		var ground := _bilinear_height(heights, n, world, v.x, v.z) * Main.HSCALE
-		var ground_r := _bilinear_height(heights, n, world, vr.x, vr.z) * Main.HSCALE
-		var expect_l := clampf(ground, ground_c - cross_tol, ground_c + cross_tol) + Main.RIVER_LIFT
-		var expect_r := clampf(ground_r, ground_c - cross_tol, ground_c + cross_tol) + Main.RIVER_LIFT
+		var ground_c := _bilinear_height(heights, n, world, pair_mid.x, pair_mid.z) * hscale
+		var ground := _bilinear_height(heights, n, world, v.x, v.z) * hscale
+		var ground_r := _bilinear_height(heights, n, world, vr.x, vr.z) * hscale
+		var expect_l := clampf(ground, ground_c - cross_tol, ground_c + cross_tol) + river_lift
+		var expect_r := clampf(ground_r, ground_c - cross_tol, ground_c + cross_tol) + river_lift
 		var err_l := absf(v.y - expect_l)
 		var err_r := absf(vr.y - expect_r)
 		# Wasserspiegel wird an der ZENTRUMSLINIE und in DERSELBEN Zelle
@@ -148,14 +153,14 @@ func _run() -> void:
 		# einer Zelle auf die Geländehöhe ab.
 		var level := _cell_value(levels, n, world, pair_mid.x, pair_mid.z)
 		# Versatz wie in RiverRibbonRenderer.emitRibbon (WaterRender.ribbon*Surface*):
-		# See knapp über dem Spiegel, Meer knapp darunter — NICHT RIVER_LIFT,
+		# See knapp über dem Spiegel, Meer knapp darunter — NICHT river_lift,
 		# der gilt nur für Bänder auf dem Gelände.
 		var surface_err_l: float = minf(
 			_lake_surface_err(levels, n, world, pair_mid.x, pair_mid.z, v.y),
-			absf(v.y - (sea * Main.HSCALE + sea_surface_sink)))
+			absf(v.y - (sea * hscale + sea_surface_sink)))
 		var surface_err_r: float = minf(
 			_lake_surface_err(levels, n, world, pair_mid.x, pair_mid.z, vr.y),
-			absf(vr.y - (sea * Main.HSCALE + sea_surface_sink)))
+			absf(vr.y - (sea * hscale + sea_surface_sink)))
 		# JE KANTE entweder Gelände oder Spiegel (Befund #174): ein Stützpunkt
 		# auf Wasser liegt nie UNTER seiner Land-Höhe (Maximum aus beiden,
 		# s. emitRibbon) — im flachen Ufersaum trägt so eine Kante das
@@ -164,7 +169,7 @@ func _run() -> void:
 		var edge_r_water := surface_err_r <= 0.05
 		# Wasser-Nähe zählt als Wasser, AUCH wenn zufällig beides passt: im
 		# flachen Apron kann die geklemmte Land-Erwartung einer echten
-		# Wasser-Kante gleichen (Tiefe × HSCALE ≈ RIVER_LIFT − Spiegel-Versatz)
+		# Wasser-Kante gleichen (Tiefe × hscale ≈ river_lift − Spiegel-Versatz)
 		# — die Alpha-Glattheits-Prüfung unten muss solche Paare ausnehmen,
 		# denn am Wassereintritt blendet das Band bewusst hart aus.
 		var water_like := edge_l_water or edge_r_water
@@ -183,8 +188,8 @@ func _run() -> void:
 					a, uv2s[a].x, cols[a].a, v.y, vr.y,
 					(pair_mid.x + world * 0.5) / cs, (pair_mid.z + world * 0.5) / cs,
 					expect_l, expect_r,
-					level * Main.HSCALE + lake_surface_lift,
-					sea * Main.HSCALE + sea_surface_sink,
+					level * hscale + lake_surface_lift,
+					sea * hscale + sea_surface_sink,
 					err_l, err_r, surface_err_l, surface_err_r]
 			continue
 		if edge_l_water:
@@ -299,7 +304,7 @@ func _lake_surface_err(levels: PackedFloat32Array, n: int, world: float,
 	var best := INF
 	for i in _cell_candidates((x + world * 0.5) / cs, n):
 		for j in _cell_candidates((z + world * 0.5) / cs, n):
-			best = minf(best, absf(y - (levels[j * n + i] * Main.HSCALE + lake_surface_lift)))
+			best = minf(best, absf(y - (levels[j * n + i] * hscale + lake_surface_lift)))
 	return best
 
 ## Zellindex(e) einer kontinuierlichen Gitterposition: der gerundete — und auf

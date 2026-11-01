@@ -322,52 +322,18 @@ final class MaterialTests: XCTestCase {
 
     // MARK: - Uniform-Weg (Struktur)
 
-    func testEveryTableValueComesFromMaterialRender() {
-        let mirror: [String: Double] = [
-            "material_ridge_rock_gain": MaterialRender.ridgeRockGain,
-            "material_gully_scree_share": MaterialRender.gullyScreeShare,
-            "material_joint_spacing": MaterialRender.jointSpacing,
-            "material_joint_stretch": MaterialRender.jointStretch,
-            "material_joint_turn_cos": MaterialRender.jointTurnCos,
-            "material_joint_turn_sin": MaterialRender.jointTurnSin,
-            "material_joint_depth": MaterialRender.jointDepth,
-            "material_joint_gully_gain": MaterialRender.jointGullyGain,
-            "material_joint_relief": MaterialRender.jointRelief,
-            "material_rock_relief_gain": MaterialRender.rockReliefGain,
-            "material_scree_grain": MaterialRender.screeGrain,
-            "material_crevasse_spacing": MaterialRender.crevasseSpacing,
-            "material_crevasse_slope_lo": MaterialRender.crevasseSlopeLo,
-            "material_crevasse_slope_hi": MaterialRender.crevasseSlopeHi,
-            "material_moraine_lo": MaterialRender.moraineLo,
-            "material_moraine_hi": MaterialRender.moraineHi,
-        ]
-        // Die Richtungsänderung darf die Kluftabstände nicht zusätzlich skalieren.
+    /// Die Richtungsänderung darf die Kluftabstände nicht zusätzlich skalieren.
+    func testJointTurnIsOrthogonal() {
         XCTAssertEqual(MaterialRender.jointTurnCos * MaterialRender.jointTurnCos
                        + MaterialRender.jointTurnSin * MaterialRender.jointTurnSin,
                        1.0, accuracy: 1e-12, "Kluft-Drehung ist orthogonal")
-        XCTAssertEqual(MaterialUniforms.scalars.count, mirror.count,
-                       "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
-        for entry in MaterialUniforms.scalars {
-            XCTAssertEqual(entry.value, mirror[entry.name],
-                           "\(entry.name) trägt nicht seine MaterialRender-Konstante")
-        }
     }
 
-    /// Der Terrain-Shader deklariert jede Tabellen-Zahl default-frei, liest
-    /// sie und deklariert keine `material_*`-Zahl an der Tabelle vorbei.
-    func testTerrainShaderReadsExactlyTheTable() throws {
+    /// Die `material_*`-Zahlen selbst (Spiegel, default-freie Deklaration,
+    /// nichts am Register vorbei) prüft `CalibrationRegistryTests`; hier
+    /// bleibt, woher der Terrain-Shader die Verteilung nimmt.
+    func testTerrainShaderTakesTheDistributionFromTheCover() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
-        for entry in MaterialUniforms.scalars {
-            assertContains(shader, "uniform float \(entry.name);",
-                           hint: "\(entry.name) default-frei deklariert (Muster #92)")
-            XCTAssertGreaterThanOrEqual(shader.count(ofIdentifier: entry.name), 2,
-                                        "\(entry.name) wird deklariert, aber nie gelesen")
-        }
-        let declared = try shader.pairs(pattern: "uniform\\s+([A-Za-z0-9_]+)\\s+(material_[A-Za-z0-9_]+)")
-        for (kind, name) in declared where kind == "float" {
-            XCTAssertTrue(MaterialUniforms.scalars.contains { $0.name == name },
-                          "terrain.gdshader deklariert \(name) an MaterialUniforms vorbei")
-        }
         assertContains(shader, "uniform sampler2D cover_tex",
                        hint: "WO Schutt, Eis, Rohboden und Talboden liegen, sagt allein cover_tex")
         XCTAssertFalse(shader.contains("study_material"),
@@ -428,13 +394,11 @@ final class MaterialTests: XCTestCase {
 
     func testBridgeAndMainCarryTheMaterials() throws {
         let bridge = try RepoSource.extensionSources()
-        for needle in ["func materialUniformNames", "func materialUniformValues",
-                       "MaterialUniforms.scalars", "out[Variant(\"cover\")]"] {
+        for needle in ["out[Variant(\"cover\")]"] {
             assertContains(bridge, needle, hint: "Brücke marshallt Material-Kalibrierung und Bodenbedeckung")
         }
         let main = try RepoSource.probe("game/scripts/Main.gd")
-        for needle in ["materialUniformNames()", "materialUniformValues()", "frame[\"cover\"]",
-                       "static func material_calibration"] {
+        for needle in ["frame[\"cover\"]", "apply_calibration(sim, \"material\", [terrain_mat])"] {
             assertContains(main, needle, hint: "Main.gd liest Material und Bodenbedeckung über die Brücke")
         }
     }

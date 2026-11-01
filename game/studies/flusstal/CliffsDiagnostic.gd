@@ -21,7 +21,7 @@ func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(cliff_output)
 	var heights := FileAccess.open(cliff_output + "/heights.f32", FileAccess.WRITE)
 	heights.store_buffer(sim.heights().to_byte_array())
-	print("CLIFF_GRID ", JSON.stringify({"n": N, "world": world_size, "hscale": HSCALE,
+	print("CLIFF_GRID ", JSON.stringify({"n": N, "world": world_size, "hscale": hscale,
 		"seed": sim_seed, "year": shown_year, "target": str(cam_target), "viewport": str(get_viewport().size)}))
 	_cliff_probe()
 

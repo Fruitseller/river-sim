@@ -14,8 +14,6 @@ extends SceneTree
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 
-const HSCALE := 24.0
-const RIVER_LIFT := 0.35
 const Main = preload("res://scripts/Main.gd")
 const YEARS := 2000.0      # eingelaufenes Flussnetz, nicht der Startzustand
 
@@ -33,6 +31,8 @@ func _process(_delta: float) -> bool:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return true
+	# Überhöhung und Band-Anhebung über die Brücke (Issue #213), keine Kopie.
+	var render_contract := Main.calibration(sim, "contract")
 
 	var n: int = sim.gridSize()
 	var render_grid := Main.terrain_grid_for("balanced", n) # der Standard
@@ -60,6 +60,6 @@ func _process(_delta: float) -> bool:
 	# Ohne die Schwanzstufen (Blur/EWMA/Quantisierung) — die macht der GPU-Pass,
 	# s. water_gpu in Main.gd. Die Differenz zur Zeile darüber IST die Ersparnis.
 	measure.call("waterFieldRawBytes", func() -> void: sim.waterFieldRawBytes())
-	measure.call("buildRiverRibbons", func() -> void: sim.buildRiverRibbons(HSCALE, RIVER_LIFT))
+	measure.call("buildRiverRibbons", func() -> void: sim.buildRiverRibbons(render_contract["heightScale"], render_contract["riverLift"]))
 	quit(0)
 	return true

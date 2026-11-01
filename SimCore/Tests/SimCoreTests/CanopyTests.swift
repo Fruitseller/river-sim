@@ -376,49 +376,11 @@ final class CanopyTests: XCTestCase {
 
     // MARK: - Uniform-Weg (Struktur)
 
-    func testEveryTableValueComesFromCanopyRender() {
-        let mirror: [String: Double] = [
-            "canopy_cell": CanopyRender.crownCell,
-            "canopy_height": CanopyRender.canopyHeight,
-            "canopy_lift_lo": CanopyRender.liftLo,
-            "canopy_lift_hi": CanopyRender.liftHi,
-            "canopy_cover_lo": CanopyRender.coverLo,
-            "canopy_cover_hi": CanopyRender.coverHi,
-            "canopy_gap_lo": CanopyRender.gapLo,
-            "canopy_gap_hi": CanopyRender.gapHi,
-            "canopy_crown_mid": CanopyRender.crownMid,
-            "canopy_crown_spread": CanopyRender.crownSpread,
-            "canopy_crown_radius": CanopyRender.crownRadius,
-            "canopy_crown_radius_jitter": CanopyRender.crownRadiusJitter,
-            "canopy_detail_lo": CanopyRender.detailFootprintLo,
-            "canopy_detail_hi": CanopyRender.detailFootprintHi,
-            "canopy_meadow_lo": CanopyRender.meadowLo,
-            "canopy_meadow_hi": CanopyRender.meadowHi,
-            "canopy_meadow_share": CanopyRender.meadowShare,
-        ]
-        XCTAssertEqual(CanopyUniforms.scalars.count, mirror.count,
-                       "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
-        for entry in CanopyUniforms.scalars {
-            XCTAssertEqual(entry.value, mirror[entry.name],
-                           "\(entry.name) trägt nicht seine CanopyRender-Konstante")
-        }
-    }
-
-    /// Der Terrain-Shader deklariert jede Tabellen-Zahl default-frei, liest
-    /// sie und deklariert keine `canopy_*`-Zahl an der Tabelle vorbei.
-    func testTerrainShaderReadsExactlyTheTable() throws {
+    /// Die `canopy_*`-Zahlen selbst (Spiegel, default-freie Deklaration,
+    /// nichts am Register vorbei) prüft `CalibrationRegistryTests`; hier
+    /// bleibt, WIE der Terrain-Shader das Dach baut.
+    func testTerrainShaderBuildsTheCanopyFromTheMask() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
-        for entry in CanopyUniforms.scalars {
-            assertContains(shader, "uniform float \(entry.name);",
-                           hint: "\(entry.name) default-frei deklariert (Muster #92)")
-            XCTAssertGreaterThanOrEqual(shader.count(ofIdentifier: entry.name), 2,
-                                        "\(entry.name) wird deklariert, aber nie gelesen")
-        }
-        let declared = try shader.pairs(pattern: "uniform\\s+([A-Za-z0-9_]+)\\s+(canopy_[A-Za-z0-9_]+)")
-        for (kind, name) in declared where kind == "float" {
-            XCTAssertTrue(CanopyUniforms.scalars.contains { $0.name == name },
-                          "terrain.gdshader deklariert \(name) an CanopyUniforms vorbei")
-        }
         assertContains(shader, "uniform sampler2D forest_tex",
                        hint: "WO Wald steht, sagt allein die Waldmaske aus SimRender")
         assertContains(shader,
@@ -428,16 +390,14 @@ final class CanopyTests: XCTestCase {
 
     func testBridgeAndMainCarryTheCanopy() throws {
         let bridge = try RepoSource.extensionSources()
-        for needle in ["func canopyUniformNames", "func canopyUniformValues",
-                       "CanopyUniforms.scalars", "func forestMaskBytes"] {
+        for needle in ["func forestMaskBytes"] {
             assertContains(bridge, needle, hint: "Brücke marshallt Kronendach und Waldmaske")
         }
         XCTAssertFalse(bridge.contains("treeInstanceBuffer"),
                        "Instanzbäume sind seit #152 durch das Kronendach ersetzt")
         let main = try RepoSource.probe("game/scripts/Main.gd")
         // Die Waldmaske kommt seit #94 mit dem Frame (`RenderFrameTests`).
-        for needle in ["canopyUniformNames()", "canopyUniformValues()", "frame[\"forest\"]",
-                       "static func canopy_calibration"] {
+        for needle in ["frame[\"forest\"]", "apply_calibration(sim, \"canopy\", [terrain_mat])"] {
             assertContains(main, needle, hint: "Main.gd liest Kronendach und Waldmaske über die Brücke")
         }
     }

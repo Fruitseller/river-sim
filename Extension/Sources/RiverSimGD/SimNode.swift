@@ -323,82 +323,28 @@ final class SimNode: Node {
         PackedByteArray(session.forestMaskBytes())
     }
 
-    // MARK: Wasser-Kalibrierung über die Brücke (Issues #91/#92)
+    // MARK: Kalibrier-Register über die Brücke (Issue #213)
 
-    // Die Tabellen (Namen + Werte) leben godot-frei in `SimRender.WaterUniforms`;
-    // hier werden sie nur als Packed*Arrays verpackt. `Main.gd` setzt die
-    // Uniform-Werte beim Aufbau auf alle Wasser-Materialien — Namen und Werte
-    // sind paarweise über den Index verknüpft. Die Double→Float32-Verengung ist
-    // verlustfrei genug: GLSL-Uniform-Floats sind ohnehin einfach genau.
-
-    @Callable func waterScalarUniformNames() -> PackedStringArray {
-        PackedStringArray(WaterUniforms.scalars.map(\.name))
-    }
-
-    @Callable func waterScalarUniformValues() -> PackedFloat32Array {
-        PackedFloat32Array(WaterUniforms.scalars.map { Float($0.value) })
-    }
-
-    @Callable func waterColorUniformNames() -> PackedStringArray {
-        PackedStringArray(WaterUniforms.colors.map(\.name))
-    }
-
-    @Callable func waterColorUniformValues() -> PackedVector3Array {
-        PackedVector3Array(WaterUniforms.colors.map {
-            Vector3(x: Float($0.value.r), y: Float($0.value.g), z: Float($0.value.b))
-        })
-    }
-
-    // MARK: Kalibrierung der Render-Verschiebung (Issue #153)
-
-    // Tabelle in `SimRender.ReliefUniforms`; `Main.gd` setzt die Werte auf den
-    // Back-Pass und das Terrain-Material und dekodiert damit die Backtextur
-    // für Pinselring und Kameraziel.
-
-    @Callable func reliefUniformNames() -> PackedStringArray {
-        PackedStringArray(ReliefUniforms.scalars.map(\.name))
-    }
-
-    @Callable func reliefUniformValues() -> PackedFloat32Array {
-        PackedFloat32Array(ReliefUniforms.scalars.map { Float($0.value) })
-    }
-
-    // MARK: Kalibrierung des Kronendachs (Issue #152)
-
-    // Tabelle in `SimRender.CanopyUniforms`; `Main.gd` setzt die Werte auf das
-    // Terrain-Material.
-
-    @Callable func canopyUniformNames() -> PackedStringArray {
-        PackedStringArray(CanopyUniforms.scalars.map(\.name))
-    }
-
-    @Callable func canopyUniformValues() -> PackedFloat32Array {
-        PackedFloat32Array(CanopyUniforms.scalars.map { Float($0.value) })
-    }
-
-    // MARK: Material-Kalibrierung (Issue #174 D)
-
-    // Tabelle in `SimRender.MaterialUniforms`; `Main.gd` setzt die Werte auf das
-    // Terrain-Material.
-
-    @Callable func materialUniformNames() -> PackedStringArray {
-        PackedStringArray(MaterialUniforms.scalars.map(\.name))
-    }
-
-    @Callable func materialUniformValues() -> PackedFloat32Array {
-        PackedFloat32Array(MaterialUniforms.scalars.map { Float($0.value) })
-    }
-
-    // Vertragswerte der Godot-Wächter (`water_geometry.gd`, `river_ribbons.gd`,
-    // Issue #92) — als Float64, damit die GDScript-Seite exakt die Doubles der
-    // Kalibrierung vergleicht statt einer verengten Kopie.
-
-    @Callable func waterContractNames() -> PackedStringArray {
-        PackedStringArray(WaterUniforms.contract.map(\.name))
-    }
-
-    @Callable func waterContractValues() -> PackedFloat64Array {
-        PackedFloat64Array(WaterUniforms.contract.map(\.value))
+    /// Name → Wert EINER Gruppe aus `SimRender.CalibrationRegistry` (`water`,
+    /// `water_contract`, `relief`, `canopy`, `material`, `contract`), in
+    /// Deklarationsreihenfolge. Skalare reisen als `float`, Farben als
+    /// `Vector3`. Uniform-Gruppen werden auf Float32 verengt (GLSL-Uniforms
+    /// sind ohnehin einfach genau, und GDScript rechnet mit genau dem Wert,
+    /// den der Shader sieht); Vertragsgruppen bleiben Double, damit die
+    /// Godot-Wächter exakt die Kalibrierung vergleichen. Eine unbekannte Gruppe
+    /// liefert ein leeres Dictionary, `Main.calibration` meldet das laut.
+    @Callable func calibration(group: String) -> VariantDictionary {
+        let out = VariantDictionary()
+        guard let group = CalibrationRegistry.Group(rawValue: group) else { return out }
+        for entry in CalibrationRegistry.entries(group) {
+            switch entry.value {
+            case .scalar(let v):
+                out[Variant(entry.name)] = Variant(group.isUniform ? Double(Float(v)) : v)
+            case .color(let r, let g, let b):
+                out[Variant(entry.name)] = Variant(Vector3(x: Float(r), y: Float(g), z: Float(b)))
+            }
+        }
+        return out
     }
 
     // MARK: Pass-Plan des GPU-Wasser-Schwanzes (Issue #95)

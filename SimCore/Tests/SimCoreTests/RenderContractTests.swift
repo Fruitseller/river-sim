@@ -112,17 +112,18 @@ final class RenderContractTests: XCTestCase {
     func testHeightScaleIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.heightScale, 24.0)
         let main = try RepoSource.probe("game/scripts/Main.gd")
-        assertContains(main, "const HSCALE := \(glsl(RenderContract.heightScale))",
-                       hint: "Mesh-Überhöhung == RenderContract.heightScale")
-        assertContains(main, "set_shader_parameter(\"hscale\", HSCALE)",
-                       hint: "Shader-Uniform der Überhöhung == Main.gd HSCALE")
+        // Main.gd führt die Zahl seit #213 nicht mehr als Literal, sondern holt
+        // sie über die Brücke (`CalibrationRegistryTests`); hier bleibt, dass
+        // derselbe Wert als Uniform ankommt.
+        assertContains(main, "terrain_mat.set_shader_parameter(\"hscale\", hscale)",
+                       hint: "Shader-Uniform der Überhöhung == Main.gd hscale (Brücke)")
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform float hscale = \(glsl(RenderContract.heightScale));",
                        hint: "Shader-Default der Überhöhung == RenderContract.heightScale")
         // Nicht nur die DEKLARATION pinnen, sondern jede ANWENDUNG: ein
         // zusätzlicher Faktor am Displacement (`* hscale * 1.08`) oder eine
         // eigene Konstante in den Normalen ließe den Vertrag grün und das
-        // gerenderte Terrain trotzdem von `HSCALE` abweichen — genau die
+        // gerenderte Terrain trotzdem von `hscale` abweichen — genau die
         // Drift-Klasse, die #51 beendet. Die vier Zeilen sind alle Stellen, die
         // den Uniform lesen: Vertex-Höhe, Vertex-/Pixel-Normale und die
         // Welt-Y-Koordinate der triplanaren Materialschichten. Die
@@ -153,8 +154,8 @@ final class RenderContractTests: XCTestCase {
         // Back-Pass der Verschiebung: Main.gd setzt denselben Uniform, der
         // Shader wendet ihn genau einmal an (Höhenzuschlag in Welteinheiten)
         // und rechnet damit den Gratdeckel in Sim-Höhe um.
-        assertContains(main, "relief_mat.set_shader_parameter(\"hscale\", HSCALE)",
-                       hint: "Back-Pass bekommt die Überhöhung aus Main.gd HSCALE")
+        assertContains(main, "relief_mat.set_shader_parameter(\"hscale\", hscale)",
+                       hint: "Back-Pass bekommt die Überhöhung aus Main.gd hscale")
         let bake = try RepoSource.probe("game/shaders/relief_bake.gdshader")
         assertContains(bake, "uniform float hscale;",
                        hint: "Back-Pass deklariert die Überhöhung default-frei")
@@ -167,10 +168,9 @@ final class RenderContractTests: XCTestCase {
     }
 
     func testRiverLiftIsTheSameInEveryLayer() throws {
+        // Die Godot-Wächter holen den Wert seit #213 über die Brücke (Gruppe
+        // `contract`, `CalibrationRegistryTests`), Main.gd braucht ihn nicht.
         XCTAssertEqual(RenderContract.riverLift, 0.35)
-        let main = try RepoSource.probe("game/scripts/Main.gd")
-        assertContains(main, "const RIVER_LIFT := \(glsl(RenderContract.riverLift))",
-                       hint: "Band-Anhebung == RenderContract.riverLift")
         // Über Wasser gilt der Land-Lift NICHT — die beiden Wasser-Versätze
         // müssen deutlich kleiner bleiben, sonst wäre die Sonderbehandlung
         // wirkungslos (das Band schwebte als Platte über der Fläche).

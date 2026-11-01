@@ -4,11 +4,6 @@ extends Node3D
 ## (Swift/SimCore, headless getestet). Dieses Skript macht nur Rendering, Kamera,
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
-# Höhen-Skalierung fürs Mesh (von 30 gesenkt: weniger vertikale Überhöhung →
-# sanfterer Look, ergänzt das gesenkte baseRelief). DIESELBE Zahl steht als
-# RenderContract.heightScale in SimCore und als Default von `hscale` in
-# terrain.gdshader; Wächter: SimCoreTests/RenderContractTests.swift (Issue #51).
-const HSCALE := 24.0
 const Lighting = preload("res://scripts/Lighting.gd")
 # Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
 # das volle Sim-Gitter (`terrain_grid_for`).
@@ -37,6 +32,11 @@ const TERRAIN_DETAIL_OLD := 0.42
 const TERRAIN_DETAIL_AGE_YEARS := 100000.0
 
 var sim: Object
+# Höhen-Skalierung fürs Mesh: RenderContract.heightScale, kommt in `_ready`
+# über die Brücke (Gruppe `contract`, Issue #213). Bis dahin stand sie hier als
+# kopiertes Literal; nur der `hscale`-Default in terrain.gdshader bleibt als
+# Kopie für die Editor-Vorschau ohne SimNode.
+var hscale := 0.0
 var N: int
 var world_size: float
 var half: float
@@ -109,13 +109,6 @@ const FRAME_SETTLED := 0     # Start, Neu, Laden, Sprung-Ende, Strich-Ende
 const FRAME_JUMP_CHUNK := 1  # ein Chunk eines Zeitsprungs
 const FRAME_TIMELAPSE := 2   # ein Zeitraffer-Takt
 const FRAME_STROKE := 3      # Nachzug während eines Pinselstrichs
-# Welt-Y über Gelände (die Bänder baut RenderState.frame mit RenderContract.riverLift;
-# die Godot-Wächter lesen den Wert hier): deckt den Chord-Fehler des gröberen Render-Gitters im
-# Talgrund (384er-Gitter auf 832er-Feld). Seit #153 hat nur noch `performance`
-# ein gröberes Gitter (256 auf 720); der Wert ist dafür nicht neu kalibriert.
-# == RenderContract.riverLift (SimCore);
-# über Wasser gilt stattdessen WaterRender.ribbonLakeSurfaceLift/-SeaSurfaceSink.
-const RIVER_LIFT := 0.35
 
 # Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen-,
 # Makrofarben-, Material- und Wasserfelder werden nur hochgeladen.
@@ -573,6 +566,7 @@ func _ready() -> void:
 		return
 	sim = ClassDB.instantiate("SimNode")
 	add_child(sim)
+	hscale = calibration(sim, "contract")["heightScale"]
 	if OS.has_environment("RS_SEED"): # für Screenshot-Vergleiche verschiedener Terrains
 		sim_seed = int(OS.get_environment("RS_SEED"))
 		sim.generate(sim_seed)
@@ -712,49 +706,41 @@ func _diag() -> void:
 
 # ---------------------------------------------------------------- Szene / UI
 
-## Wasser-Kalibrierung über die Brücke (Issue #91, Expand-Schritt): setzt jeden
-## benannten Wert aus SimCore (SimRender.WaterUniforms) auf jedes übergebene
-## Material. Ein Shader, der den Namen deklariert, bekommt damit den Wert; einen
-## undeklarierten Namen ignoriert Godot. Statisch und ohne Szene, damit
-## game/tests/water_uniforms.gd genau diese Funktion headless prüfen kann.
-static func apply_water_calibration(sim_node: Object, mats: Array[ShaderMaterial]) -> void:
-	var scalar_names: PackedStringArray = sim_node.waterScalarUniformNames()
-	var scalar_values: PackedFloat32Array = sim_node.waterScalarUniformValues()
-	var color_names: PackedStringArray = sim_node.waterColorUniformNames()
-	var color_values: PackedVector3Array = sim_node.waterColorUniformValues()
-	for mat in mats:
-		for i in scalar_names.size():
-			mat.set_shader_parameter(scalar_names[i], scalar_values[i])
-		for i in color_names.size():
-			mat.set_shader_parameter(color_names[i], color_values[i])
+## Kalibrier-Register über die Brücke (Issue #213): Name → Wert EINER Gruppe
+## (`water`, `water_contract`, `relief`, `canopy`, `material`, `contract`) aus
+## SimRender.CalibrationRegistry; die Zahlen stehen in den SimCore-Verträgen.
+## Statisch, damit die Godot-Wächter dieselbe Funktion headless benutzen.
+static func calibration(sim_node: Object, group: String) -> Dictionary:
+	var calib: Dictionary = sim_node.calibration(group)
+	if calib.is_empty():
+		push_error("Kalibrier-Gruppe '%s' fehlt in der Brücke" % group)
+	return calib
 
-
-## Kalibrierung der Render-Verschiebung über die Brücke (#153): Name → Wert aus
-## SimCore.ReliefRender. Statisch, damit game/tests/relief.gd sie headless prüft.
-static func relief_calibration(sim_node: Object) -> Dictionary:
-	var names: PackedStringArray = sim_node.reliefUniformNames()
-	var values: PackedFloat32Array = sim_node.reliefUniformValues()
-	var calib := {}
-	for i in names.size():
-		calib[names[i]] = values[i]
+## Setzt jeden Wert einer Uniform-Gruppe als gleichnamige Shader-Uniform auf
+## jedes Material. Einen undeklarierten Namen ignoriert Godot; welcher Shader
+## was deklariert, prüfen SimCoreTests/CalibrationRegistryTests.swift und die
+## Godot-Wächter (water_uniforms.gd, relief.gd, canopy.gd). Gibt die Gruppe
+## zurück, für Werte, die GDScript selbst braucht.
+static func apply_calibration(sim_node: Object, group: String, mats: Array) -> Dictionary:
+	var calib := calibration(sim_node, group)
+	for mat: ShaderMaterial in mats:
+		for name in calib:
+			mat.set_shader_parameter(name, calib[name])
 	return calib
 
 ## Back-Pass der Render-Verschiebung (#153): ein Float-SubViewport in
 ## RELIEF_BAKE_FACTOR-facher Sim-Auflösung, der nur nach einem Terrain-Update
 ## einmal zeichnet (UPDATE_ONCE, `_bake_relief`).
 func _setup_relief() -> void:
-	var calib := relief_calibration(sim)
-	relief_height_code = calib["relief_height_code"]
-	relief_geometry_age = calib["relief_geometry_age"]
 	var size := N * RELIEF_BAKE_FACTOR
 	relief_mat = ShaderMaterial.new()
 	relief_mat.shader = load("res://shaders/relief_bake.gdshader")
 	relief_mat.set_shader_parameter("grid_n", float(N))
-	relief_mat.set_shader_parameter("hscale", HSCALE)
+	relief_mat.set_shader_parameter("hscale", hscale)
 	relief_mat.set_shader_parameter("sea_level", sea)
-	for mat in [relief_mat, terrain_mat]:
-		for name in calib:
-			mat.set_shader_parameter(name, calib[name])
+	var calib := apply_calibration(sim, "relief", [relief_mat, terrain_mat])
+	relief_height_code = calib["relief_height_code"]
+	relief_geometry_age = calib["relief_geometry_age"]
 	for i in 2:
 		var vp := SubViewport.new()
 		vp.size = Vector2i(size, size)
@@ -774,40 +760,17 @@ func _setup_relief() -> void:
 	terrain_mat.set_shader_parameter("bake_blend", 1.0)
 	terrain_mat.set_shader_parameter("relief_enabled", true)
 
-## Kalibrierung des Kronendachs über die Brücke (#152): Name → Wert aus
-## SimCore.CanopyRender. Statisch, damit game/tests/canopy.gd sie headless prüft.
-static func canopy_calibration(sim_node: Object) -> Dictionary:
-	var names: PackedStringArray = sim_node.canopyUniformNames()
-	var values: PackedFloat32Array = sim_node.canopyUniformValues()
-	var calib := {}
-	for i in names.size():
-		calib[names[i]] = values[i]
-	return calib
-
 ## Kronendach (#152): Kalibrierung aufs Terrain-Material, die Waldmaske kommt
 ## mit jedem Overlay-Frame (`_update_forest_mask`).
 func _setup_canopy() -> void:
-	canopy_calib = canopy_calibration(sim)
-	for name in canopy_calib:
-		terrain_mat.set_shader_parameter(name, canopy_calib[name])
+	canopy_calib = apply_calibration(sim, "canopy", [terrain_mat])
 	terrain_mat.set_shader_parameter("canopy_enabled", true)
-
-## Material-Kalibrierung über die Brücke (#174 D): Name → Wert aus
-## SimCore.MaterialRender. Statisch, damit game/tests/canopy.gd sie headless
-## prüft. Die Gewichte kommen mit jedem Overlay-Frame (`cover`, `surface`).
-static func material_calibration(sim_node: Object) -> Dictionary:
-	var names: PackedStringArray = sim_node.materialUniformNames()
-	var values: PackedFloat32Array = sim_node.materialUniformValues()
-	var calib := {}
-	for i in names.size():
-		calib[names[i]] = values[i]
-	return calib
 
 func _setup_scene() -> void:
 	# Licht und Atmosphäre (#151): feste Welt-Sonne, Werte und Qualitätsstufen
 	# stehen in Lighting.gd.
 	var env := WorldEnvironment.new()
-	env.environment = Lighting.make_environment(render_quality, sea * HSCALE)
+	env.environment = Lighting.make_environment(render_quality, sea * hscale)
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
@@ -829,7 +792,7 @@ func _setup_scene() -> void:
 	terrain_mi.extra_cull_margin = 1000.0 # Displacement sprengt die Plan-AABB
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
-	terrain_mat.set_shader_parameter("hscale", HSCALE)
+	terrain_mat.set_shader_parameter("hscale", hscale)
 	terrain_mat.set_shader_parameter("world_size", world_size)
 	terrain_mat.set_shader_parameter("grid_n", float(N))
 	terrain_mat.set_shader_parameter("sea_level", sea)
@@ -839,9 +802,9 @@ func _setup_scene() -> void:
 	add_child(terrain_mi)
 	_setup_relief()
 	_setup_canopy()
-	var material_calib := material_calibration(sim)
-	for name in material_calib:
-		terrain_mat.set_shader_parameter(name, material_calib[name])
+	# Material-Kalibrierung (#174 D); die Gewichte kommen mit jedem
+	# Overlay-Frame (`cover`, `surface`).
+	apply_calibration(sim, "material", [terrain_mat])
 
 	if OS.has_environment("RS_WATER_GPU"):
 		water_gpu = true
@@ -866,7 +829,7 @@ func _setup_scene() -> void:
 	overlay_fade.bind(terrain_mat)
 	overlay_fade.bind(ocean_mat)
 	water_mi.material_override = ocean_mat
-	water_mi.position.y = sea * HSCALE
+	water_mi.position.y = sea * hscale
 	add_child(water_mi)
 
 	# Wasser-Geometrie (außer im RS_WATER_STAMP-Modus): ein MeshInstance3D, dessen
@@ -900,10 +863,10 @@ func _setup_scene() -> void:
 	if river_mat != null:
 		water_mats.append(river_mat)
 		water_mats.append(river_prev_mat)
-	apply_water_calibration(sim, water_mats)
+	apply_calibration(sim, "water", water_mats)
 	# Wolkenkörper über dem Kamm (#174 D) teilen Rauschen und Basis mit den
 	# Wolkenschatten; `cloud_mats` sind alle Materialien, die beides lesen.
-	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, HSCALE, N)
+	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, hscale, N)
 	add_child(cloud_bodies)
 	cloud_mats.assign(water_mats)
 	cloud_mats.append_array(Lighting.cloud_body_materials(cloud_bodies))
@@ -1291,7 +1254,7 @@ func camera_preset_view(index: int) -> Dictionary:
 	if p.has("fill"):
 		var vp := get_viewport().get_visible_rect().size
 		var f := frame_land(h_cache, N, sea, world_size, cam_yaw, p["pitch"], cam.fov,
-			vp.x / maxf(vp.y, 1.0), p["fill"])
+			vp.x / maxf(vp.y, 1.0), p["fill"], hscale)
 		if not f.is_empty():
 			# Drehpunkt auf die Fläche in der Bildmitte legen; Auge, Blickrichtung
 			# und Rahmen bleiben. Orbit und Zoom wirken dann auf das, was man sieht.
@@ -1333,7 +1296,7 @@ func sight_block(target: Vector3, yaw: float, pitch: float, dist: float) -> floa
 	for s in range(6, 25):
 		var t := s / 24.0
 		var p := target.lerp(eye, t)
-		var ground := sea * HSCALE if maxf(absf(p.x), absf(p.z)) > half \
+		var ground := sea * hscale if maxf(absf(p.x), absf(p.z)) > half \
 			else _surface_y_at(p)
 		if p.y < ground + t:
 			return t
@@ -1355,7 +1318,8 @@ func sight_block(target: Vector3, yaw: float, pitch: float, dist: float) -> floa
 ## `aspect`. Ziel (Orbit-Drehpunkt) ist der Punkt der Bildachse in der Tiefe
 ## der Inselmitte, `dist` sein Abstand zum Auge. Leer ohne Land.
 static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: float,
-		yaw: float, pitch: float, fov_deg: float, aspect: float, fill: float) -> Dictionary:
+		yaw: float, pitch: float, fov_deg: float, aspect: float, fill: float,
+		height_scale: float) -> Dictionary:
 	var cell := world / float(n - 1)
 	var stride := maxi(1, n / 180)
 	var cp := cos(pitch)
@@ -1372,7 +1336,7 @@ static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: f
 			var y := h[j * n + i]
 			if y <= sea_level:
 				continue
-			var p := Vector3(i * cell - world * 0.5, y * HSCALE, j * cell - world * 0.5)
+			var p := Vector3(i * cell - world * 0.5, y * height_scale, j * cell - world * 0.5)
 			pu.append(Vector2(p.dot(up), p.dot(back)))
 			pr.append(Vector2(p.dot(right), p.dot(back)))
 			lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.z))
@@ -1564,7 +1528,7 @@ func _load_world(path: String = SAVE_PATH) -> void:
 	for mat in [river_mat, river_prev_mat]:
 		if mat != null:
 			mat.set_shader_parameter("sea_level", sea)
-	water_mi.position.y = sea * HSCALE
+	water_mi.position.y = sea * hscale
 	_after_sim(FRAME_SETTLED) # Wasser-Blend 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()
 	_set_status("Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear())))
@@ -2026,7 +1990,7 @@ func _upload_overlays(frame: Dictionary) -> void:
 		terrain_mat.set_shader_parameter("conifer_lo", bands[6])
 		terrain_mat.set_shader_parameter("conifer_hi", bands[7])
 		# Wolkenbasis knapp über dem Kamm (#174 D): rockStart/rockFull.
-		Lighting.place_clouds(cloud_mats, bands[2] * HSCALE, bands[3] * HSCALE, cloud_bodies)
+		Lighting.place_clouds(cloud_mats, bands[2] * hscale, bands[3] * hscale, cloud_bodies)
 
 	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung.
 	color_field.upload(terrain_mat, N, frame["color"])
@@ -2480,7 +2444,7 @@ func _sample_h(gx: float, gz: float) -> float:
 ## Kronendach (#152). Seen tragen beides nicht (Schutzmaske), dort bleibt es
 ## die Sim-Höhe.
 func _surface_y(gx: float, gz: float) -> float:
-	var y := _sample_h(gx, gz) * HSCALE
+	var y := _sample_h(gx, gz) * hscale
 	if not relief_lift_cache.is_empty():
 		y += (_sample_grid(relief_lift_cache, gx, gz) - 0.5) / relief_height_code \
 			* relief_geometry_fade(shown_year, relief_geometry_age)

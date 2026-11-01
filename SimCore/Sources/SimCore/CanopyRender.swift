@@ -12,7 +12,7 @@
 ///    erreichen keinen Shader.
 ///  - WIE er aussieht (Kronengröße, Dachhöhe, Ausdünnen am Rand, Ausblenden in
 ///    der Entfernung), rechnet `game/shaders/terrain.gdshader` je Pixel. Diese
-///    Zahlen reisen über `SimRender.CanopyUniforms` → `SimNode` → `Main.gd`.
+///    Zahlen reisen über `SimRender.CalibrationRegistry` (Gruppe `canopy`) → `SimNode` → `Main.gd`.
 ///
 /// Herkunft: Flusstal-Studie #116, Hebel `canopy`, vom Projekteigner mit
 /// PR #121 abgenommen (`docs/graphics-quality.md`). Die Studie rechnete die

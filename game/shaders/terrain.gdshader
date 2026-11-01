@@ -10,7 +10,7 @@
 // Alle Schwellen, mit denen dieser Shader die Wasser-Kanäle liest, und die
 // Wasser-OPTIK (Farben, Fresnel, Rauheit/Specular, Strömungs-Schimmer) kommen
 // als water_*-Uniforms über die Brücke (SimCore/WaterRender.swift →
-// SimRender.WaterUniforms → SimNode → Main.gd, Issues #91/#92) — hier steht
+// SimRender.CalibrationRegistry → SimNode → Main.gd, Issues #91/#92) — hier steht
 // keine dieser Zahlen mehr. Die Optik ist mit game/shaders/water.gdshader
 // identisch (dieselben Uniforms), damit Raster-Wasser und Band-Geometrie als
 // EIN Wasser lesen; welcher Ausdruck welche Uniform liest, pinnt
@@ -79,8 +79,8 @@ uniform sampler2D water_tex : filter_linear, repeat_disable;
 // degeneriert der Layer auf gealterten, gleichförmig flachen Hängen zu einem
 // uniformen Tapeten-Muster (PR #106). Kalibrierung: WaterRender (SimCore).
 uniform sampler2D flow_tex : filter_linear, repeat_disable;
-// Default == Main.gd HSCALE == RenderContract.heightScale (Issue #51). Im Spiel
-// setzt Main.gd den Uniform ohnehin; der Default zählt, wo das Material OHNE
+// Default == RenderContract.heightScale (Issue #51). Im Spiel setzt Main.gd
+// den Uniform mit dem Wert aus der Brücke (Gruppe `contract`, Issue #213); der Default zählt, wo das Material OHNE
 // SimNode läuft (Editor-Vorschau) — er stand auf 26.0 und zeigte dort ein 8 %
 // zu hohes Terrain. Wächter: SimCoreTests/RenderContractTests.swift.
 // Bewusst MIT Literal-Default trotz #92 (das die water_*-Defaults abgeschafft
@@ -112,7 +112,7 @@ uniform bool material_enabled = true;
 uniform bool debug_difference = false;
 
 // Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
-// Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
+// Werte beim Aufbau aus SimRender.CalibrationRegistry. BEWUSST ohne Default — ein
 // Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
 // die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null), aber
 // TOTAL: calib_window unten sowie max() an Tiefen-Rampe und Fresnel-Exponent

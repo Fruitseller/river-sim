@@ -13,7 +13,7 @@
 ///    erreichen keinen Shader.
 ///  - WIE es aussieht (Klüftung, Körnung, Spalten, Moränen, Feinverteilung an
 ///    Rinnen und Rippen), rechnet `game/shaders/terrain.gdshader` je Pixel.
-///    Diese Zahlen reisen über `SimRender.MaterialUniforms` → `SimNode` →
+///    Diese Zahlen reisen über `SimRender.CalibrationRegistry` (Gruppe `material`) → `SimNode` →
 ///    `Main.gd`, default-frei im Shader (Muster #92).
 ///
 /// Steigungen sind WELTsteigungen (dy/dx in Welteinheiten, mit
@@ -177,7 +177,7 @@ public enum MaterialRender {
     public static let valleySlopeLo = 0.10
     public static let valleySlopeHi = 0.30
 
-    // MARK: Shader (terrain.gdshader, über `MaterialUniforms`)
+    // MARK: Shader (terrain.gdshader, Gruppe `material` im `CalibrationRegistry`)
 
     /// Rinnen und Rippen aus dem Relief-Bake (#153, A-Kanal −1 … +1) verteilen
     /// das Material fein: auf Rippen wird Fels um bis zu `ridgeRockGain`

@@ -815,7 +815,11 @@ im Review standen, in Wächter überführt. Was seitdem gilt:
   sie default-frei und an Shader-Quelltext wird nur noch STRUKTUR verglichen
   (welche Stelle welche Uniform liest); die frühere Schreibweisen-Regel gilt
   nur noch für die restlichen `glsl(_:)`-Pins (`Main.gd`-Konstanten,
-  `hscale`-Default).
+  `hscale`-Default). Seit #213 laufen alle diese Werte (Wasser, Relief,
+  Kronendach, Material, Wächter-Verträge, `heightScale`/`riverLift`) über EIN
+  Kalibrier-Register (`SimRender.CalibrationRegistry`, Brücke
+  `SimNode.calibration(group)`, `Main.apply_calibration`); `HSCALE` und
+  `RIVER_LIFT` sind keine Literale in `Main.gd` mehr.
 - **#52 — CI verifiziert den Godot-Vertrag** (Job `godot-contract`) und nicht mehr
   nur den Sim-Kern; Godot-Version und -Prüfsumme sind in `scripts/fetch-godot.sh`
   gepinnt, Build-Stempel-Parität Shell ↔ GDScript ist getestet, und Mess-/Sweep-Läufe
