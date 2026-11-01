@@ -340,26 +340,34 @@ Verweise auf denselben Check zeigen.
 
 ### Verifikation über CI (Arbeitsweise der Coding-Agents, ab Issue #61)
 
-Die Orchestrierung (agentbox) läuft auf einem 7,8-GB-RAM-Host. Der lokale
-Extension-Build (SwiftGodot, ~4 GB Spitze) endet dort zuverlässig im OOM-Kill,
-sobald irgendetwas parallel läuft (real 2026-08-15, issue-61, zwei Versuche).
-Deshalb ist für Agenten der **CI-Build die Verifikationsebene**, nicht der
-lokale Host:
+Wo Agenten die Extension bauen, ist eine RESSOURCEN-Frage, keine Grundsatz-
+frage. Der Extension-Build (SwiftGodot) braucht ~4 GB RAM-Spitze, und was
+parallel läuft (SimCore-Suite, Editor, ein zweiter Build) kommt obendrauf.
+Die Entscheidung fällt deshalb der HOST, auf dem die Agenten laufen:
 
-- **Lokal bauen Agenten die Extension NICHT mehr**, weder direkt noch in
-  Docker. Lokal erlaubt ist nur die SimCore-Suite (leicht, <2 GB).
-- Schwere Verifikation läuft im `godot-contract`-Job: Agenten committen und
-  rufen `~/git/agentbox/bin/ci-verify.sh <task> --watch` auf (pusht den Branch,
-  stellt den Draft-PR sicher, pollt die Pflicht-Checks `test` + `godot-contract`
-  und druckt bei Rot das Log-Tail des fehlgeschlagenen Jobs).
-- **Merge-Gate:** `test` UND `godot-contract` müssen grün sein; der
-  Auto-Merger (river-sim-watch.sh) prüft beide, nicht nur `test`.
-- Die Aufgabe- und Fix-Prompts (agentbox `verify-guide.sh`) schreiben das
-  explizit vor; ohne die Projekt-Config (`etc/projects/Fruitseller-river-sim.env`)
-  gilt der alte lokale Workflow.
-
-Menschen mit leistungsfähiger Maschine können weiter lokal bauen (Kommandos
-oben); für Agenten ist das ab jetzt verbotenes Terrain.
+- **Zu wenig Spielraum → CI baut.** Auf dem Orchestrierungs-Host (agentbox,
+  7,8 GB RAM) endet der lokale Build zuverlässig im OOM-Kill, sobald
+  irgendetwas parallel läuft (real 2026-08-15, issue-61, zwei Versuche). Dort
+  bleibt der **CI-Build die Verifikationsebene**: Agenten committen und rufen
+  `~/git/agentbox/bin/ci-verify.sh <task> --watch` auf (pusht den Branch,
+  stellt den Draft-PR sicher, pollt die Pflicht-Checks `test` +
+  `godot-contract` und druckt bei Rot das Log-Tail des fehlgeschlagenen
+  Jobs). Die Aufgabe- und Fix-Prompts (agentbox `verify-guide.sh`) schreiben
+  das dort explizit vor; ohne die Projekt-Config
+  (`etc/projects/Fruitseller-river-sim.env`) gilt der lokale Workflow.
+- **Genug Spielraum → lokal bauen.** Bleibt dem Host über der ~4-GB-Spitze
+  der Extension noch reichlich Luft für die Parallellast (Faustregel:
+  ≥ 16 GB RAM), baut der Agent lokal vor (`scripts/build.sh release`,
+  Godot-Vertragstests headless darunter) und fängt Fehler, die der Rechner
+  auch lokal findet, ohne CI-Runden ein. Auf dem 64-GB-M4-Max-Referenz-Mac
+  kostet ein Extension-Edit ~5 s und ein SimCore-Edit ~9 s (s. o.) — dort
+  wäre ein Build-Verbot reine Wartezeit; die Messreihe dazu steht in
+  `docs/build-invalidation-measurements.md`.
+- **Merge-Gate bleibt CI, in beiden Regimen:** `test` UND `godot-contract`
+  müssen grün sein; der Auto-Merger (river-sim-watch.sh) prüft beide, nicht
+  nur `test`. Ein grüner lokaler Lauf ist ein Vorab-Filter, kein Ersatz für
+  die Pflicht-Checks.
+- Die SimCore-Suite ist überall erlaubt (leicht, <2 GB).
 
 ## Architektur
 
