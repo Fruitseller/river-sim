@@ -500,10 +500,10 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertTrue(mouthPath(empty, fromX: 0, fromZ: 0).isEmpty)
 
     // Auch über RenderState absichern
-    let render = RenderState(geometryMode: true)
-    render.buildRiverRibbons(empty, hscale: 24, lift: 0.35)
-    XCTAssertTrue(render.riverRibbonMesh.vertices.isEmpty)
-    XCTAssertTrue(render.riverRibbonMesh.bandCoverage.isEmpty)
+    let ribbons = RiverRibbonRenderer()
+    ribbons.build(empty, hscale: 24, lift: 0.35)
+    XCTAssertTrue(ribbons.mesh.vertices.isEmpty)
+    XCTAssertTrue(ribbons.mesh.bandCoverage.isEmpty)
   }
 
   func testBilinearGridAndRenderSurfaceHeightHandleEmptyAndNonFiniteInputs() {
@@ -998,18 +998,18 @@ final class WaterRendererTests: XCTestCase {
     let terrain = pondWorld(side: 8, withBand: false)
     let n = terrain.cfg.n
     let center = 12 * n + 12
-    let render = RenderState(geometryMode: true)
-    let before = render.terrainSurfaceBytes(terrain)
-    _ = render.waterFieldBytes(terrain, blend: 1)
-    let surfaces = render.terrainSurfaceBytes(terrain)
+    // Ohne nasse Wiese (Referenz direkt am Renderer, kein Wasser gelaufen):
+    let dry = WetMeadow.apply(TerrainColorRenderer.buffers(terrain, bars: BarMaterial.field(terrain)),
+                             mask: []).surfaces
+    let overlays = frameOverlays(RenderState(geometryMode: true), terrain)
     XCTAssertGreaterThanOrEqual(
-      surfaces[center * 4], byte01(WaterRender.wetMeadowVegetation * 0.99),
+      overlays.surfaces[center * 4], byte01(WaterRender.wetMeadowVegetation * 0.99),
       "nasse Wiese hebt das Vegetationsgewicht (Material-Cache fiel mit der Maske)")
-    XCTAssertLessThan(before[center * 4], surfaces[center * 4])
-    XCTAssertEqual(render.protectMaskBytes(terrain)[center], 255,
+    XCTAssertLessThan(dry[center * 4], overlays.surfaces[center * 4])
+    XCTAssertEqual(overlays.protectMask[center], 255,
                    "kein Wald und keine Verschiebung auf der nassen Wiese")
-    XCTAssertEqual(render.forestMaskBytes(terrain)[center], 0)
-    let colors = render.terrainColorBytes(terrain)
-    XCTAssertLessThan(colors[center * 4], colors[center * 4 + 1], "Makrofarbe grün getönt")
+    XCTAssertEqual(overlays.forestMask[center], 0)
+    XCTAssertLessThan(overlays.colors[center * 4], overlays.colors[center * 4 + 1],
+                     "Makrofarbe grün getönt")
   }
 }

@@ -53,11 +53,11 @@ final class CanopyCoverageTests: XCTestCase {
             for stage in stages {
                 while t.years < stage - 1e-5 { t.step(dtYears: min(1000, stage - t.years)) }
                 t.computeFlow()
-                let render = RenderState(geometryMode: true)
-                render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
-                _ = render.waterFieldBytes(t, blend: 1.0)
-                let surfaces = render.terrainSurfaceBytes(t)
-                let protect = render.protectMaskBytes(t)
+                // Ein Frame (Issue #214): Wasser, Material und Maske
+                // entstehen gemeinsam — derselbe Takt wie im Spiel.
+                let overlays = frameOverlays(RenderState(geometryMode: true), t)
+                let surfaces = overlays.surfaces
+                let protect = overlays.protectMask
 
                 var land: [Int] = []
                 for k in 0..<t.cfg.count where t.h[k] > t.cfg.sea { land.append(k) }

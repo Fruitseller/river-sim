@@ -108,7 +108,7 @@ final class MaterialTests: XCTestCase {
     func testEmptyTerrainYieldsEmptyCovers() {
         let empty = Terrain(allocating: renderConfig(n: 0), seed: 1337)
         XCTAssertEqual(TerrainColorRenderer.buffers(empty).covers, [])
-        XCTAssertEqual(RenderState().terrainCoverBytes(empty), [])
+        XCTAssertEqual(frameOverlays(RenderState(geometryMode: true), empty).covers, [UInt8]())
     }
 
     // MARK: - Fels und Halde

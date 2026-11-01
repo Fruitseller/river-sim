@@ -35,8 +35,17 @@ public final class WorldSession<Packed> {
 
     /// Alle Brücken-Wege fahren den Produktions-Einlauf selbst
     /// (`settleYears`), Testwelten nicht; deshalb ist er ein Argument.
-    public init(config: SimConfig, seed: UInt32, settleYears: Double = 0,
-                render: RenderState = RenderState()) {
+    /// Der Render-Zustand ist seit Issue #214 nicht mehr injizierbar von
+    /// außen: die Sitzung baut ihn selbst, mit dem `RS_WATER_STAMP`-Default.
+    public convenience init(config: SimConfig, seed: UInt32, settleYears: Double = 0) {
+        self.init(config: config, seed: seed, settleYears: settleYears,
+                  render: RenderState())
+    }
+
+    /// Mit injiziertem Render-Zustand — `internal` für die headless Wächter
+    /// (`@testable`), die beide `geometryMode`-Pfade fahren.
+    init(config: SimConfig, seed: UInt32, settleYears: Double = 0,
+         render: RenderState) {
         storedWorld = Terrain(config: config, seed: seed, settleYears: settleYears)
         storedRender = render
         job = BackgroundJob(label: "river-sim.step")
@@ -224,6 +233,11 @@ public final class WorldSession<Packed> {
     public var pickaxeMaxRadiusWorld: Double { Terrain.pickaxeMaxCells * world.cfg.cellSize }
 
     // MARK: - Render-Zustand (liest die Welt, ändert sie nie)
+    //
+    // Issue #214: Die Einzelschritte des Render-Zustands sind nicht mehr
+    // öffentlich weitergereicht — der Frame (`renderFrame`/`beginStep`) ist
+    // der einzige Weg. Was das Spiel außerhalb des Frames liest, steht unten:
+    // Diagnose, `deferWaterTail` und `renderGrid`.
 
     public func captureDebugReference() { render.captureDebugReference(world) }
     public func debugTerrainStats() -> [Float] { render.debugTerrainStats(world) }
@@ -242,22 +256,9 @@ public final class WorldSession<Packed> {
         set { render.renderGrid = newValue }
     }
 
-    public func terrainColorBytes() -> [UInt8] { render.terrainColorBytes(world) }
-    public func terrainSurfaceBytes() -> [UInt8] { render.terrainSurfaceBytes(world) }
-    public func terrainCoverBytes() -> [UInt8] { render.terrainCoverBytes(world) }
-    public func waterFieldBytes(blend: Double, deferTail: Bool = false) -> [UInt8] {
-        render.waterFieldBytes(world, blend: blend, deferTail: deferTail)
-    }
-    public func flowDetailBytes() -> [UInt8] { render.flowDetailBytes(world) }
-    public func protectMaskBytes() -> [UInt8] { render.protectMaskBytes(world) }
-    public func forestMaskBytes() -> [UInt8] { render.forestMaskBytes(world) }
-
-    public func riversMaxDelta() -> Double { render.riversMaxDelta(world) }
-    public func markRiversBuilt() { render.markRiversBuilt(world) }
-    public func buildRiverRibbons(hscale: Double, lift: Double) {
-        render.buildRiverRibbons(world, hscale: hscale, lift: lift)
-    }
-    public var riverRibbonMesh: RibbonMesh { render.riverRibbonMesh }
+    /// Letztes Band-Bauergebnis — `internal`: es reist im Frame (`WorldFrame`
+    /// packt es für die Brücke), die Brücke liest es nicht selbst.
+    var riverRibbonMesh: RibbonMesh { render.riverRibbonMesh }
 }
 
 /// Ein Frame samt der Welt-Werte, die er mitnimmt (Höhe, Jahr, Seespiegel,

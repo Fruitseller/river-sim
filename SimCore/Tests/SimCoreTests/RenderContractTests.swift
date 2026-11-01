@@ -104,9 +104,9 @@ final class RenderContractTests: XCTestCase {
                        "mix(\(glsl(WaterRender.flowDetailGainLo)), "
                        + "\(glsl(WaterRender.flowDetailGainHi)), flow_at(v_uv))",
                        hint: "Stärke-Fenster == WaterRender.flowDetailGainLo/Hi")
-        let bridge = try RepoSource.extensionSources()
-        assertContains(bridge, "session.flowDetailBytes()",
-                       hint: "SimNode marshallt das Abfluss-Feld nur durch")
+        // Das Feld selbst reist seit Issue #214 ausschließlich im Frame
+        // (`flow`-Schlüssel) — dass die Brücke ihn setzt und Main.gd ihn
+        // liest, pinnt RenderFrameTests.testMainUsesTheFrameTriggerValues.
     }
 
     func testHeightScaleIsTheSameInEveryLayer() throws {

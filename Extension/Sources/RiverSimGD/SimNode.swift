@@ -151,33 +151,21 @@ final class SimNode: Node {
     /// Bytes, aber eine zusätzliche ~2,7-MB-Kopie je Textur-Update (Issue #53).
     @Callable func heightsBytes() -> PackedByteArray { Self.packBytes(session.heights) }
 
-    // Rendering bekommt den ratenbegrenzten SEESPIEGEL statt hf: Priority-Flood
-    // springt beim Sill-Zuschütten instantan → hüpfende Seeflächen (s. Terrain.waterLevel).
-    @Callable func filled() -> PackedFloat32Array { Self.pack(session.waterLevel) }
+    @Callable func flowArea() -> PackedFloat32Array { Self.pack(session.flowArea) }
 
-    /// Seespiegel als rohe float32-Bytes — Begründung wie bei `heightsBytes`.
-    @Callable func filledBytes() -> PackedByteArray { Self.packBytes(session.waterLevel) }
+    /// Abfluss-Nachbar je Zelle (-1 = Senke/Meer) — für Fluss-Geometrie.
+    @Callable func receivers() -> PackedInt32Array { PackedInt32Array(session.receivers) }
 
-    /// Aktuelle Höhenbänder (Issue #4) als
+    /// Höhenbänder (Issue #4) für den `bands`-Schlüssel des Frames:
     /// `[vegFull, vegNone, rockStart, rockFull, snowStart, snowFull, coniferLow, coniferHigh]`.
-    /// Sie kommen aus dem Sim-Kern (Perzentile der Landhöhen) — der Shader und die
-    /// Diagnose lesen sie hier ab, statt eigene absolute Schwellen zu führen.
     /// **Ausnahme seit Issue #33:** `snowStart`/`snowFull` sind keine Perzentile
-    /// mehr, sondern aus dem Schneefeld zurückgerechnet (s. `HeightBands`). An der
-    /// Reihenfolge und Bedeutung der Werte ändert das nichts.
-    @Callable func heightBands() -> PackedFloat32Array { Self.packBands(session.heightBands) }
-
+    /// mehr, sondern aus dem Schneefeld zurückgerechnet (s. `HeightBands`).
     private static func packBands(_ b: HeightBands) -> PackedFloat32Array {
         PackedFloat32Array([
             Float(b.vegFull), Float(b.vegNone), Float(b.rockStart), Float(b.rockFull),
             Float(b.snowStart), Float(b.snowFull), Float(b.coniferLow), Float(b.coniferHigh),
         ])
     }
-
-    @Callable func flowArea() -> PackedFloat32Array { Self.pack(session.flowArea) }
-
-    /// Abfluss-Nachbar je Zelle (-1 = Senke/Meer) — für Fluss-Geometrie.
-    @Callable func receivers() -> PackedInt32Array { PackedInt32Array(session.receivers) }
 
     // MARK: Diagnose (Kennzahlen und Δ-Karte: `TerrainDiagnostics`)
 
@@ -227,9 +215,11 @@ final class SimNode: Node {
     /// - immer: `trigger` (Rohwert), `year`, `heights` (R32F-Rohbytes),
     /// - mit Overlays (nur gemeinsam): `water`, `water_blend`, `color`,
     ///   `surface`, `cover`, `flow`, `protect`, `forest`, `plume`, `filled`
-    ///   (Seespiegel, R32F) und `bands` (Höhenbänder wie `heightBands`),
+    ///   (Seespiegel, R32F) und `bands` (Höhenbänder wie früher `heightBands`),
     /// - nach einem Band-Bau: `ribbons` plus das Mesh in `ribbon_verts`,
-    ///   `ribbon_colors`, `ribbon_uvs`, `ribbon_uv2s`, `ribbon_indices`.
+    ///   `ribbon_colors`, `ribbon_uvs`, `ribbon_uv2s`, `ribbon_indices` und
+    ///   `ribbon_strip_starts` (Vertex-Index je Band-Anfang; Main malt einen
+    ///   Dreiecks-Supp und braucht ihn nicht, die Godot-Wächter zählen je Band).
     /// Fehlende Schlüssel heißen „in diesem Frame nicht neu".
     private static func packFrame(_ world: WorldFrame) -> VariantDictionary {
         let out = VariantDictionary()
@@ -257,71 +247,36 @@ final class SimNode: Node {
             out[Variant("ribbon_uvs")] = ribbonUVs(world.ribbons).toVariant()
             out[Variant("ribbon_uv2s")] = ribbonUV2s(world.ribbons).toVariant()
             out[Variant("ribbon_indices")] = PackedInt32Array(world.ribbons.indices).toVariant()
+            out[Variant("ribbon_strip_starts")] = PackedInt32Array(world.ribbons.stripStarts).toVariant()
         }
         return out
+    }
+
+    private static func ribbonVerts(_ mesh: RibbonMesh) -> PackedVector3Array {
+        PackedVector3Array(mesh.vertices.map { Vector3(x: $0.x, y: $0.y, z: $0.z) })
+    }
+    private static func ribbonColors(_ mesh: RibbonMesh) -> PackedColorArray {
+        PackedColorArray(mesh.colors.map { Color(r: $0.x, g: $0.y, b: $0.z, a: $0.w) })
+    }
+    private static func ribbonUVs(_ mesh: RibbonMesh) -> PackedVector2Array {
+        PackedVector2Array(mesh.uvs.map { Vector2(x: $0.x, y: $0.y) })
+    }
+    private static func ribbonUV2s(_ mesh: RibbonMesh) -> PackedVector2Array {
+        PackedVector2Array(mesh.uv2s.map { Vector2(x: $0.x, y: $0.y) })
     }
 
     /// `RS_WATER_GPU`: Frames liefern das rohe Wasserfeld, Blur/EWMA laufen in
     /// der GPU-Kette von `Main.gd`.
     @Callable func setDeferWaterTail(enabled: Bool) { session.deferWaterTail = enabled }
 
-    // MARK: Render-Buffer (in Swift berechnet → GDScript setzt nur zusammen)
-
-    /// Großräumige Biom-/Höhen-Farbe als RGBA8-Puffer. Die eigentlichen
-    /// Materialgewichte kommen getrennt aus `terrainSurfaceBytes`.
-    @Callable func terrainColorBytes() -> PackedByteArray {
-        PackedByteArray(session.terrainColorBytes())
-    }
-
-    /// R = Vegetation, G = freier Fels, B = Schnee/Eis,
-    /// A = Lithologie-Härte. Beide Puffer werden gemeinsam berechnet.
-    @Callable func terrainSurfaceBytes() -> PackedByteArray {
-        PackedByteArray(session.terrainSurfaceBytes())
-    }
-
-    /// Bodenbedeckung (Issue #174 D): R = Schutthalde, G = blankes Gletschereis,
-    /// B = Rohboden, A = Talboden-Wiese. Gemeinsam mit den beiden Puffern oben
-    /// berechnet.
-    @Callable func terrainCoverBytes() -> PackedByteArray {
-        PackedByteArray(session.terrainCoverBytes())
-    }
-
-    /// Wie `waterFieldBytes`, aber ohne Blur/EWMA/Glättung: die erledigt der
-    /// GPU-Pass in `Main.gd` (`game/shaders/water_field_*.gdshader`). Gleiches
-    /// Kanal-Layout, gleiche Kalibrierung — nur die letzten 4,3 ms des Passes
-    /// bleiben liegen. Kein `blend`-Argument: der Mischfaktor ist GPU-seitig ein
-    /// Uniform.
-    @Callable func waterFieldRawBytes() -> PackedByteArray {
-        PackedByteArray(session.waterFieldBytes(blend: 1.0, deferTail: true))
-    }
-
-    /// Wasser-Feld (Flüsse/Seen/Altarme) als RGBA8-Byte-Buffer — Kanäle und
-    /// Kalibrierung: `WaterFieldRenderer`. `blend` glättet zeitlich (1 = Sprung
-    /// sofort übernehmen).
-    ///
-    /// Kanal-Kopplung und Legacy-A/B (`RS_WATER_STAMP`) liegen im Zustand:
-    /// `RenderState` kennt das Bau-Ergebnis der Bänder selbst.
-    @Callable func waterFieldBytes(blend: Double) -> PackedByteArray {
-        PackedByteArray(session.waterFieldBytes(blend: blend))
-    }
-
-    /// Abfluss-Dichte fürs Shader-Detail als R8-Byte-Buffer (n×n) — Kalibrierung
-    /// und Begründung: `WaterRender.flowDetailIntensity`.
-    @Callable func flowDetailBytes() -> PackedByteArray {
-        PackedByteArray(session.flowDetailBytes())
-    }
-
-    /// Schutzmaske für Kronendach und Render-Verschiebung als R8-Byte-Buffer (n×n, Issue #154).
-    /// Sperrt Wasserflächen (sichtbares Rasterwasser + gebaute Flussbänder + Saum ~2 Zellen).
-    @Callable func protectMaskBytes() -> PackedByteArray {
-        PackedByteArray(session.protectMaskBytes())
-    }
-
-    /// Waldmaske des Kronendachs als R8-Byte-Buffer (n×n, Issue #152) — s.
-    /// `ForestCanopyMask`. Endet an der Schutzmaske.
-    @Callable func forestMaskBytes() -> PackedByteArray {
-        PackedByteArray(session.forestMaskBytes())
-    }
+    // MARK: Render-Buffer
+    //
+    // Issue #214: Es gibt keine Einzelschritt-Callables mehr — Wasserfeld,
+    // Farben, Material, Masken und Fahnen entstehen NUR im Frame
+    // (`renderFrame`/`beginStep`, Reihenfolge und Drosseln: `RenderState.frame`)
+    // und reisen in dessen `overlays`. Was die Godot-Wächter brauchen, lesen
+    // sie aus dem Frame-Dictionary; die Einzelschritte sind `internal` in
+    // SimRender und gehören den headless XCTest-Wächtern.
 
     // MARK: Kalibrier-Register über die Brücke (Issue #213)
 
@@ -370,14 +325,12 @@ final class SimNode: Node {
 
     // MARK: Sculpting
 
-    /// Hebt (dir > 0) oder senkt (dir < 0) das Terrain in einem Pinsel um
-    /// Gitterzentrum (gx, gz) mit Radius in Welteinheiten. Koppelt in die Tektonik.
-    @Callable func sculpt(gx: Double, gz: Double, radiusWorld: Double, dir: Double) {
-        session.sculpt(gx: gx, gz: gz, radiusWorld: radiusWorld, dir: dir)
-    }
-
     /// Pinsel-Werkzeug mit Stärke. `mode` ist der Rohwert von `BrushTool` — die
     /// Werkzeug-Tabelle in `Main.gd` hält dieselbe Reihenfolge (Issue #53).
+    /// (Das alte `sculpt`-Callable ist mit Issue #214 weg: das Spiel hebt und
+    /// senkt über den Pinsel, und `BrushTool.raise/lower` fährt auf Swift-Seite
+    /// denselben `terrain.sculpt`-Weg. Die Sitzung hält `sculpt` weiterhin
+    /// bereit, die Wächter laufen headless in `WorldSessionTests`.)
     @Callable func brush(mode: Int, gx: Double, gz: Double, radiusWorld: Double,
                          strength: Double, target: Double) {
         guard let tool = BrushTool(rawValue: mode) else {
@@ -403,51 +356,12 @@ final class SimNode: Node {
         session.pickaxeMaxRadiusWorld
     }
 
-    // MARK: Wasser-Geometrie (Band-Puffer — s. `RiverRibbonRenderer`)
-
-    @Callable func riversMaxDelta() -> Double { session.riversMaxDelta() }
-
-    @Callable func markRiversBuilt() { session.markRiversBuilt() }
-
-    /// Baut die Bänder der Mäander-Hauptläufe, Delta-Arme und Altarme.
-    /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y).
-    @Callable func buildRiverRibbons(hscale: Double, lift: Double) {
-        session.buildRiverRibbons(hscale: hscale, lift: lift)
-    }
-
     /// Meldet die Auflösung des Terrain-Render-Gitters (Main.gd `terrain_grid`),
     /// damit die Land-Bänder ihre Höhen von der SICHTBAREN Oberfläche sampeln
     /// (`renderSurfaceHeight`) statt von den Sim-Höhen. Ohne Aufruf gilt volle
     /// Auflösung — die Headless-Wächter bleiben damit unverändert.
     @Callable func setRenderGrid(grid: Int) {
         session.renderGrid = grid
-    }
-
-    @Callable func riverRibbonVerts() -> PackedVector3Array { Self.ribbonVerts(session.riverRibbonMesh) }
-    @Callable func riverRibbonColors() -> PackedColorArray { Self.ribbonColors(session.riverRibbonMesh) }
-    @Callable func riverRibbonUVs() -> PackedVector2Array { Self.ribbonUVs(session.riverRibbonMesh) }
-    /// Typ-Kanal des Vertex-Vertrags (UV2.x = `WaterRender.ribbonKind*`):
-    /// Fluss / Delta-Arm / Altarm. Der Shader färbt und animiert danach.
-    @Callable func riverRibbonUV2s() -> PackedVector2Array { Self.ribbonUV2s(session.riverRibbonMesh) }
-
-    private static func ribbonVerts(_ mesh: RibbonMesh) -> PackedVector3Array {
-        PackedVector3Array(mesh.vertices.map { Vector3(x: $0.x, y: $0.y, z: $0.z) })
-    }
-    private static func ribbonColors(_ mesh: RibbonMesh) -> PackedColorArray {
-        PackedColorArray(mesh.colors.map { Color(r: $0.x, g: $0.y, b: $0.z, a: $0.w) })
-    }
-    private static func ribbonUVs(_ mesh: RibbonMesh) -> PackedVector2Array {
-        PackedVector2Array(mesh.uvs.map { Vector2(x: $0.x, y: $0.y) })
-    }
-    private static func ribbonUV2s(_ mesh: RibbonMesh) -> PackedVector2Array {
-        PackedVector2Array(mesh.uv2s.map { Vector2(x: $0.x, y: $0.y) })
-    }
-    @Callable func riverRibbonIndices() -> PackedInt32Array {
-        PackedInt32Array(session.riverRibbonMesh.indices)
-    }
-    /// Vertex-Index je Band-Anfang — für die Wächter (`game/tests`).
-    @Callable func riverRibbonStripStarts() -> PackedInt32Array {
-        PackedInt32Array(session.riverRibbonMesh.stripStarts)
     }
 
     // MARK: Marshalling

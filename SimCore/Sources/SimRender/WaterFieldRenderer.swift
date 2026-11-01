@@ -1178,6 +1178,15 @@ public final class WaterFieldRenderer {
             dzS = [Double](repeating: 0, count: cnt)
         }
         let bl = clamp01(blend) // 1 = Sprung sofort, klein = weiches Blenden
+        // Sprung (bl == 1) heißt EXAKTE Übernahme: „s += 1·(v − s)" ist in
+        // Fließkomma wegen Auslöschung nicht exakt v, und die Bit-Gleichheit
+        // Hintergrund- ↔ synchronem Schritt (smoke.gd, `WorldSessionTests`)
+        // hängt daran — der Hintergrund-Schritt erbt das Gedächtnis der
+        // Sitzung, die Gegenprobe nach dem Laden das des Schritts. Der
+        // Schleifen-invariante Zweig kostet nichts (Unswitching), die
+        // dokumentierte „Sofort-Übernahme" (s. Kommentar am Komponenten-Fade)
+        // wird damit auch bitgenau gehalten.
+        let jump = bl >= 1.0
 
         // Per-Zelle unabhängig (schreibt nur die eigenen EWMA-Felder + 4 Bytes)
         // → parallel, bit-identisch.
@@ -1211,10 +1220,10 @@ public final class WaterFieldRenderer {
                     if r >= 0 && r < cnt { dx = Double(Int(r) % n - k % n); dz = Double(Int(r) / n - k / n) }
                 }
                 // EWMA: geglättetes Feld Richtung frischem Wert ziehen (Gedächtnis über Rebuilds).
-                psdS[k]   += bl * (psd[k] - psdS[k])
-                plakeS[k] += bl * (lake   - plakeS[k])
-                pdxS[k]   += bl * (dx     - pdxS[k])
-                pdzS[k]   += bl * (dz     - pdzS[k])
+                psdS[k]   = jump ? psd[k] : psdS[k] + bl * (psd[k] - psdS[k])
+                plakeS[k] = jump ? lake   : plakeS[k] + bl * (lake - plakeS[k])
+                pdxS[k]   = jump ? dx     : pdxS[k] + bl * (dx - pdxS[k])
+                pdzS[k]   = jump ? dz     : pdzS[k] + bl * (dz - pdzS[k])
                 let o = k * 4
                 pout[o] = byte01(psdS[k])
                 pout[o + 1] = byte01(plakeS[k])

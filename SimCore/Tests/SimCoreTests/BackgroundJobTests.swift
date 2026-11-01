@@ -121,10 +121,12 @@ final class BackgroundJobTests: XCTestCase {
                       "_settle_sim wartet ab UND lädt hoch")
 
         // Aufrufe, die die Welt ändern oder ihren aktuellen Stand lesen.
+        // (`sim.sculpt` ist mit Issue #214 aus der Brücke gefallen — das Spiel
+        // hebt über den Pinsel; die Sitzung hält `sculpt` für die Wächter.)
         let worldCalls = ["sim.step(", "sim.brush(", "sim.generate(", "sim.loadWorld(",
                           "sim.saveWorld(", "sim.recomputeFlow(", "sim.captureDebugReference(",
                           "sim.renderFrame(", "sim.flowArea(", "sim.receivers(",
-                          "sim.debugTerrainStats(", "sim.heightDifferenceBytes(", "sim.sculpt("]
+                          "sim.debugTerrainStats(", "sim.heightDifferenceBytes("]
         // Ohne eigenes Abholen, mit Grund: vor dem ersten Frame gibt es keinen
         // Schritt; die Diagnose-Helfer ruft nur `_refresh_debug`, das abholt.
         let exempt: [String: String] = [

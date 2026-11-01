@@ -21,14 +21,14 @@ final class CanopyTests: XCTestCase {
         agedWorld(renderConfig(n: 192), years: years, seed: seed)
     }
 
-    /// Der Render-Takt aus `Main.gd`: Bänder, Wasserfeld, Schutz- und Waldmaske.
+    /// Der Render-Takt aus `Main.gd` — seit Issue #214 über den Frame: Bänder,
+    /// Wasserfeld, Schutz- und Waldmaske entstehen gemeinsam und in dieser
+    /// Reihenfolge (vorher stand sie hier von Hand).
     @discardableResult
     private func refresh(_ render: RenderState, _ terrain: Terrain)
         -> (water: [UInt8], forest: [UInt8]) {
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        let water = render.waterFieldBytes(terrain, blend: 1.0)
-        _ = render.protectMaskBytes(terrain)
-        return (water, render.forestMaskBytes(terrain))
+        let overlays = frameOverlays(render, terrain)
+        return (overlays.water, overlays.forestMask)
     }
 
     // MARK: - Wasser
@@ -168,27 +168,53 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(a, b, "Gleiche Welt muss dieselbe Waldverteilung liefern")
     }
 
-    /// Der Wald folgt beiden Quellen der Schutzmaske: einem Band-Bau ohne
-    /// Terrain-Änderung dazwischen ebenso wie einem Wasser-Upload.
+    /// Der Wald folgt beiden Quellen der Schutzmaske: dem Band-Bau ebenso wie
+    /// dem Wasser-Upload. Seit Issue #214 über den Frame: der Zustand MIT
+    /// Bändern (`geometryMode` wahr) gegen denselben Stand im Raster-Stempel-
+    /// Modus (`RS_WATER_STAMP`, keine Bänder) — zwei Frames, derselbe Takt.
     func testForestFollowsTheProtectMask() {
         let terrain = aged()
-        let render = RenderState(geometryMode: true)
-        _ = render.waterFieldBytes(terrain, blend: 1.0)
-        let withoutBands = render.forestMaskBytes(terrain)
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        let withBands = render.forestMaskBytes(terrain)
+        let withBands = refresh(RenderState(geometryMode: true), terrain).forest
+        let withoutBands = refresh(RenderState(geometryMode: false), terrain).forest
         XCTAssertNotEqual(withoutBands, withBands, "Band-Bau muss den Wald zurücknehmen")
+        // Ableitung aus denselben Quellen wie der Frame: Wald gegen die
+        // Renderer-Dieselben dieses Standes (Bänder → Wasser → Schutz).
+        // `bandOwner` mitgegeben: Der Frame reicht das ECHTE Bau-Ergebnis
+        // inklusive Eigner weiter (Abzweig-Zellen, s. `WaterFieldRenderer`),
+        // die Referenz muss dasselbe Feld lesen.
+        let ribbons = builtRibbons(terrain)
+        let waterRenderer = WaterFieldRenderer()
+        let refWater = waterRenderer.bytes(terrain, blend: 1.0, geometryMode: true,
+                                           bandChannelFlags: ribbons.bandChannelFlags,
+                                           bandCoverage: ribbons.bandCoverage,
+                                           bandOwner: ribbons.bandOwner)
+        let refProtect = WaterProtectMask.bytes(n: terrain.cfg.n,
+                                                bandCoverage: ribbons.bandCoverage,
+                                                waterBytes: refWater,
+                                                wetMeadow: waterRenderer.wetMeadow,
+                                                barSand: BarMaterial.field(terrain).sand)
+        let refSurfaces = WetMeadow.apply(
+            TerrainColorRenderer.buffers(terrain, bars: BarMaterial.field(terrain)),
+            mask: waterRenderer.wetMeadow).surfaces
         XCTAssertEqual(withBands,
-                       ForestCanopyMask.bytes(terrain, surfaces: render.terrainSurfaceBytes(terrain),
-                                              protect: render.protectMaskBytes(terrain),
+                       ForestCanopyMask.bytes(terrain, surfaces: refSurfaces,
+                                              protect: refProtect,
                                               clump: ForestCanopyMask.clumpField(
                                                   n: terrain.cfg.n, world: terrain.cfg.world)))
     }
 
     /// Pinselstrich (über `BrushTool`, wie die Brücke): nach dem Render-Takt
-    /// derselbe Wald wie in einem frischen Render-Zustand. Vorher läuft die
-    /// Sim, damit das Gedächtnis der Waldmaske (#167) etwas hält, das der
-    /// Pinsel verwerfen muss.
+    /// steht der Wald genau dort, wo Terrain, Material und Schutzmaske des
+    /// FRAMES ihn hinlegen — aus nichts Gecachtem. Vorher läuft die Sim, damit
+    /// das Gedächtnis der Waldmaske (#167) etwas hält, das der Pinsel
+    /// verwerfen muss.
+    ///
+    /// Bewusst KEIN Vergleich gegen einen frischen Render-Zustand (wie bei der
+    /// Schutzmaske, s. dort): der Frame deckelt den Band-Neubau an der
+    /// Zentrumslinien-Bewegung, ein Pinsel bewegt die Linien nicht — die
+    /// Bänder des gebrauchteren Zustands sind legitim andere. Statt dessen die
+    /// Neuberechnung aus den Eingaben DES Frames; `.edited` leert das
+    /// Gedächtnis, `regrow` übernimmt also genau dieses Ziel.
     func testBrushStrokeLeavesNoStaleForest() {
         let terrain = aged()
         let render = RenderState(geometryMode: true)
@@ -205,10 +231,15 @@ final class CanopyTests: XCTestCase {
         render.invalidate(terrain, .edited)
         terrain.recomputeFlowAfterEdit()
         render.invalidate(terrain, .edited)
-        let after = refresh(render, terrain).forest
+        let after = frameOverlays(render, terrain)
 
-        XCTAssertNotEqual(before, after, "Pinselstrich muss den Wald verändern")
-        XCTAssertEqual(after, refresh(RenderState(geometryMode: true), terrain).forest)
+        XCTAssertNotEqual(before, after.forestMask, "Pinselstrich muss den Wald verändern")
+        XCTAssertEqual(after.forestMask,
+                       ForestCanopyMask.bytes(terrain, surfaces: after.surfaces,
+                                              protect: after.protectMask,
+                                              clump: ForestCanopyMask.clumpField(
+                                                  n: terrain.cfg.n, world: terrain.cfg.world)),
+                       "Der Wald folgt nicht dem Material und der Schutzmaske seines Frames")
     }
 
     func testRegenerateLeavesNoStaleForest() {
@@ -390,9 +421,12 @@ final class CanopyTests: XCTestCase {
 
     func testBridgeAndMainCarryTheCanopy() throws {
         let bridge = try RepoSource.extensionSources()
-        for needle in ["func forestMaskBytes"] {
-            assertContains(bridge, needle, hint: "Brücke marshallt Kronendach und Waldmaske")
-        }
+        // Die Waldmaske reist im Frame (Issue #214), die `canopy_*`-Zahlen über
+        // das Kalibrier-Register (#213) — Einzel-Callables gibt es keine mehr.
+        assertContains(bridge, "out[Variant(\"forest\")]",
+                       hint: "Die Waldmaske kommt mit den Overlays des Frames")
+        assertContains(bridge, "func calibration",
+                       hint: "Die canopy_*-Zahlen kommen über das Register")
         XCTAssertFalse(bridge.contains("treeInstanceBuffer"),
                        "Instanzbäume sind seit #152 durch das Kronendach ersetzt")
         let main = try RepoSource.probe("game/scripts/Main.gd")

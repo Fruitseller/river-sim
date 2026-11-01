@@ -8,23 +8,32 @@ import XCTest
 /// GDExtension gehörte.
 ///
 /// Zwei Ebenen, weil der Umzug zwei Zusicherungen trägt:
-/// 1. VERHALTEN, headless ausführbar — nach jedem mutierenden Einstieg der
-///    Brücke liefert der Material-Cache den frischen Stand, und „andere Welt"
-///    verwirft zusätzlich die Vergleichsstände.
-/// 2. QUELLTEXT der Brücke — sie darf den Zustand nicht wieder selbst halten.
-///    Dass keine Terrain-Änderung ohne Invalidierung bleibt, prüft seit
-///    Issue #212 `WorldSessionTests` ausgeführt an der Welt-Sitzung.
+/// 1. VERHALTEN, headless ausführbar — nach jedem mutierenden Einstieg liefert
+///    der nächste Frame den frischen Stand, und „andere Welt" verwirft
+///    zusätzlich die Vergleichsstände.
+/// 2. QUELLTEXT der Brücke — sie darf den Zustand nicht wieder selbst halten
+///    und seit Issue #214 auch die Render-Pfade nur noch über den Frame
+///    fahren. Dass keine Terrain-Änderung ohne Invalidierung bleibt, prüft
+///    `WorldSessionTests` ausgeführt an der Welt-Sitzung.
+///
+/// Issue #214: Der Zustand hat nur noch `frame`/`invalidate` als öffentliches
+/// Interface. Diese Wächter fahren genau das — Verhalten der Reihenfolge und
+/// der Drosseln über `frame()`, Band-Mechanik (Delta, Snapshot, Rebuild-
+/// Sentinel) direkt am `RiverRibbonRenderer`. Interne Zwischenergebnisse
+/// (Band-Mesh nach dem Frame) werden mit `@testable` nur BEOBACHTET, nie
+/// gefahren: angetrieben wird ausschließlich über `frame()`/`invalidate()`.
 final class RenderStateTests: XCTestCase {
 
     // MARK: - Verhalten: der eine Invalidierungs-Einstieg
 
-    /// Die Zusicherung von #93: JEDER mutierende Einstieg der Brücke endet in
-    /// `invalidate`, und danach zeigt der Material-Cache den frischen Stand.
+    /// Die Zusicherung von #93: JEDER mutierende Einstieg endet in
+    /// `invalidate`, und danach zeigt der nächste Frame den frischen Stand.
     ///
-    /// Geprüft wird nicht ein internes Flag, sondern die Wirkung: der gepufferte
-    /// Puffer muss dem entsprechen, den `TerrainColorRenderer` für das JETZIGE
-    /// Terrain baut. Die Tabelle fährt die Änderungen genau so, wie `SimNode`
-    /// sie fährt — eine vergessene Invalidierung liefert hier den alten Puffer.
+    /// Geprüft wird nicht ein internes Flag, sondern die Wirkung über das
+    /// öffentliche Interface: der Frame muss dieselben Farben liefern wie ein
+    /// FRISCHER Render-Zustand auf demselben Terrain. Die Tabelle fährt die
+    /// Änderungen genau so, wie die Welt-Sitzung sie fährt — eine vergessene
+    /// Invalidierung liefert hier den alten Puffer weiter.
     func testEveryMutatingEntryLeavesFreshMaterialsBehind() throws {
         let mutations: [(name: String, change: (Terrain, RenderState) -> Void)] = [
             ("generate", { terrain, render in
@@ -54,7 +63,7 @@ final class RenderStateTests: XCTestCase {
         for (name, change) in mutations {
             let terrain = Terrain(config: renderConfig(), seed: 1337)
             let render = RenderState(geometryMode: true)
-            let stale = render.terrainColorBytes(terrain)   // Cache warmlaufen
+            let stale = frameOverlays(render, terrain).colors   // Cache warmlaufen
 
             change(terrain, render)
 
@@ -64,11 +73,11 @@ final class RenderStateTests: XCTestCase {
 
     /// `loadWorld` ist der sechste Einstieg — und der, an dem die Asymmetrie
     /// lebte, die #93 auflöst. Er steht getrennt, weil er über eine echte Datei
-    /// geht (die Brücke ERSETZT das Terrain-Objekt, sie ändert es nicht).
+    /// geht (die Sitzung ERSETZT das Terrain-Objekt, sie ändert es nicht).
     func testLoadingAWorldLeavesFreshMaterialsBehind() throws {
         let render = RenderState(geometryMode: true)
         var terrain = Terrain(config: renderConfig(), seed: 1337)
-        let stale = render.terrainColorBytes(terrain)
+        let stale = frameOverlays(render, terrain).colors
 
         let other = Terrain(config: renderConfig(), seed: 4711)
         let path = FileManager.default.temporaryDirectory
@@ -80,35 +89,57 @@ final class RenderStateTests: XCTestCase {
         terrain = try WorldSnapshot.read(from: path)
         render.invalidate(terrain, .replaced)
 
-        assertServesFreshMaterials(render, terrain, staleColors: stale, entry: "loadWorld")
-        XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1,
-                                    "loadWorld: Bänder müssen neu gebaut werden")
+        // Der ERSTE Frame nach `.replaced` muss neu bauen (bis #93 ließ das
+        // Generieren den Band-Vergleichsstand stehen) — die Zusicherung geht
+        // über `assertServesFreshMaterials` mit, weil deren Frame-Aufruf der
+        // erste ist; ein zweiter Frame prüft nur noch den Delta-Deckel.
+        let fresh = assertServesFreshMaterials(render, terrain, staleColors: stale, entry: "loadWorld")
+        XCTAssertTrue(fresh.ribbonsRebuilt,
+                      "loadWorld: Bänder müssen neu gebaut werden")
     }
 
-    /// Liefert der Cache den Stand des JETZIGEN Terrains — und war überhaupt
-    /// etwas zu invalidieren (`staleColors` muss sich unterscheiden, sonst
-    /// bemerkte die Prüfung einen stehengebliebenen Cache nicht)?
+    /// Liefert der nächste Frame den Stand des JETZIGEN Terrains — und war
+    /// überhaupt etwas zu invalidieren (`staleColors` muss sich unterscheiden,
+    /// sonst bemerkte die Prüfung einen stehengebliebenen Cache nicht)?
+    /// Gibt den gefahrenen Frame zurück, damit Aufrufer Zusicherungen an ihm
+    /// prüfen (etwa `ribbonsRebuilt` am ERSTEN Frame nach der Invalidierung).
+    @discardableResult
     private func assertServesFreshMaterials(_ render: RenderState, _ terrain: Terrain,
                                             staleColors: [UInt8], entry: String,
                                             file: StaticString = #filePath,
-                                            line: UInt = #line) {
-        let expected = TerrainColorRenderer.buffers(terrain)
-        XCTAssertEqual(render.terrainColorBytes(terrain), expected.colors,
+                                            line: UInt = #line) -> RenderFrame {
+        // Die Referenz ist ein FRISCHER Zustand auf demselben Terrain: seine
+        // Cache-Puffer entstehen garantiert aus dem Jetzt-Stand.
+        let expected = frameOverlays(RenderState(geometryMode: true), terrain)
+        let frame = render.frame(terrain, .settled, now: 0)
+        guard let fresh = frame.overlays else {
+            fatalError("Ein .settled-Frame muss Overlays liefern (Drossel prüfen)")
+        }
+        XCTAssertEqual(fresh.colors, expected.colors,
                        "\(entry): Farb-Cache steht noch auf dem alten Stand",
                        file: file, line: line)
-        XCTAssertEqual(render.terrainSurfaceBytes(terrain), expected.surfaces,
+        XCTAssertEqual(fresh.surfaces, expected.surfaces,
                        "\(entry): Material-Cache steht noch auf dem alten Stand",
                        file: file, line: line)
         XCTAssertNotEqual(expected.colors, staleColors,
                           "\(entry): Änderung wirkt nicht auf die Farbe — der Test würde "
                           + "einen stehengebliebenen Cache nicht bemerken",
                           file: file, line: line)
+        return frame
     }
 
     /// Der Cache ist einer: ohne Invalidierung bleibt der ALTE Puffer stehen.
-    /// Die Gegenprobe zum Test oben — sie belegt, dass dort überhaupt ein Cache
-    /// zu invalidieren war (sonst prüfte er nur, dass zweimal dasselbe
-    /// gerechnet wird).
+    /// Die Gegenprobe zu den Tests oben — sie belegt, dass dort überhaupt ein
+    /// Cache zu invalidieren war.
+    ///
+    /// Einzelschritt-Beobachtung (`@testable`, Issue #214): Durch den Frame
+    /// ist „Terrain geändert, aber nicht invalidiert" nicht mehr fahrbar —
+    /// er zieht das Wasserfeld bedingungslos neu, und ändert sich dessen
+    /// nasse Wiese, fällt der Material-Cache BEWUSST (#174 C, s.
+    /// `RenderState.waterFieldBytes`). Vom Brücke-Pfad ist der Zustand eh
+    /// unerreichbar: Jede Terrain-Änderung läuft über die Welt-Sitzung und
+    /// invalidiert. Der reine Cache-Vertrag (stehen bis `invalidate`) ist damit
+    /// nur am internen Schritt zu prüfen, nicht als Reihenfolge.
     func testMaterialsStayCachedUntilInvalidated() {
         let terrain = Terrain(config: renderConfig(), seed: 1337)
         let render = RenderState(geometryMode: true)
@@ -119,31 +150,29 @@ final class RenderStateTests: XCTestCase {
                        "Ohne Invalidierung darf der Cache nicht neu rechnen")
 
         render.invalidate(terrain, .replaced)
-        XCTAssertNotEqual(render.terrainColorBytes(terrain), before,
+        XCTAssertNotEqual(frameOverlays(render, terrain).colors, before,
                           "Nach der Invalidierung muss die neue Welt gefärbt werden")
     }
 
     /// `.replaced` ist der aufgelöste Unterschied zwischen Neu-Generieren
     /// und Laden: dieselbe Welt behält ihre Vergleichsstände, eine ANDERE Welt
-    /// verwirft Dirty-Snapshots und Diagnose-Vergleichspunkt.
+    /// verwirft Dirty-Snapshots und Diagnose-Vergleichspunkt. Beides ist über
+    /// den Frame sichtbar: „nicht neu gebaut" heißt, der Vergleichsstand
+    /// meldet keine Bewegung — „neu gebaut" heißt, er ist gefallen.
     func testWorldReplacedDropsEveryComparisonPoint() {
         let terrain = Terrain(config: renderConfig(), seed: 1337)
         let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        render.markRiversBuilt(terrain)
+        render.frame(terrain, .settled, now: 0)
         render.captureDebugReference(terrain)
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
 
         render.invalidate(terrain, .advanced)
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0,
+        XCTAssertFalse(render.frame(terrain, .settled, now: 1).ribbonsRebuilt,
                        "Dieselbe Welt: der Band-Vergleichsstand bleibt")
 
         terrain.step(dtYears: 500)
         render.invalidate(terrain, .replaced)
-        // Ohne Vergleichsstand meldet der Band-Renderer „riesig" (1e9) — die
-        // Schwelle in `Main.gd` liegt weit darunter.
-        XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1,
-                                    "Andere Welt: Bänder müssen neu gebaut werden")
+        XCTAssertTrue(render.frame(terrain, .settled, now: 2).ribbonsRebuilt,
+                     "Andere Welt: Bänder müssen neu gebaut werden")
         // Vergleichspunkt der Diagnose steht auf dem NEUEN Stand: Δ-Karte leer,
         // Referenzjahr = jetzt (Indizes: `TerrainDiagnostics.stats`).
         let stats = render.debugTerrainStats(terrain)
@@ -160,7 +189,8 @@ final class RenderStateTests: XCTestCase {
     /// Rebuild blieb aus, obwohl `_rebuild_rivers` in `Main.gd` genau der
     /// Aufruf ist, der das alte Mesh leert. Sichtbar wären die Bänder der
     /// VORIGEN Welt geblieben, und `bandCoverage` hätte das Raster-Wasserfeld
-    /// weiter entlang ihrer Korridore gedeckelt.
+    /// weiter entlang ihrer Korridore gedeckelt. Der Frame beweidet beides:
+    /// er baut neu UND das Mesh ist danach leer.
     ///
     /// `Terrain(allocating:seed:)` ist hier genau richtig: es legt die Puffer
     /// an, generiert aber nicht — eine gültige Welt ohne Mäander-Kanäle, ohne
@@ -168,58 +198,62 @@ final class RenderStateTests: XCTestCase {
     func testWorldReplacedDropsTheRibbonSnapshotEvenWithoutChannels() {
         let terrain = Terrain(config: renderConfig(), seed: 1337)
         let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        render.markRiversBuilt(terrain)
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+        XCTAssertTrue(render.frame(terrain, .settled, now: 0).ribbonsRebuilt,
+                      "Testaufbau: erster Frame baut")
 
         let ungenerated = Terrain(allocating: renderConfig(), seed: 4711)
         XCTAssertTrue(ungenerated.meander.channels.isEmpty,
                       "Testaufbau: diese Welt soll gerade KEINE Zentrumslinien haben")
         render.invalidate(ungenerated, .replaced)
-        XCTAssertGreaterThanOrEqual(
-            render.riversMaxDelta(ungenerated), 1,
-            "Andere Welt ohne Kanäle: die Bänder der alten Welt bleiben sonst stehen")
+        XCTAssertTrue(render.frame(ungenerated, .settled, now: 1).ribbonsRebuilt,
+                      "Andere Welt ohne Kanäle: die Bänder der alten Welt bleiben sonst stehen")
+        // Beobachtung am internen Mesh (nicht gefahren): neu gebaut heißt
+        // hier leer — die Bänder der alten Welt sind weg.
+        XCTAssertTrue(render.riverRibbonMesh.vertices.isEmpty,
+                      "Neue Welt ohne Kanäle: das Mesh muss leer sein")
     }
 
-    /// `riversMaxDelta` misst die maximale Knotenverschiebung gegen den Snapshot
+    // MARK: - Band-Mechanik (direkt am Renderer, Issue #214)
+
+    /// `maxDelta` misst die maximale Knotenverschiebung gegen den Snapshot
     /// ohne Zwischen-Allokation und meldet bei Strukturänderungen (Knoten-
-    /// oder Kanalzahl geändert) 1e9.
+    /// oder Kanalzahl geändert) den Rebuild-Sentinel.
     func testRiversMaxDeltaMeasuresMovementAndDetectsStructuralChanges() {
         let terrain = Terrain(config: renderConfig(), seed: 1337)
-        let render = RenderState(geometryMode: true)
+        let ribbons = RiverRibbonRenderer()
         terrain.meander.channels = [
             RiverChannel(nodes: [MeanderNode(x: 10, z: 10), MeanderNode(x: 12, z: 12)],
                          discharge: [100, 100]),
             RiverChannel(nodes: [MeanderNode(x: 20, z: 20), MeanderNode(x: 25, z: 25)],
                          discharge: [200, 200]),
         ]
-        render.markRiversBuilt(terrain)
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+        ribbons.markBuilt(terrain)
+        XCTAssertEqual(ribbons.maxDelta(terrain), 0)
 
         // Bewegung eines einzelnen Knotens um exakt 0.04 Zellen:
         terrain.meander.channels[0].nodes[1].x += 0.04
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0.04, accuracy: 1e-9)
+        XCTAssertEqual(ribbons.maxDelta(terrain), 0.04, accuracy: 1e-9)
 
         // Größere Verschiebung an anderem Knoten (Z-Richtung):
         terrain.meander.channels[1].nodes[0].z -= 0.07
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0.07, accuracy: 1e-9)
+        XCTAssertEqual(ribbons.maxDelta(terrain), 0.07, accuracy: 1e-9)
 
         // Snapshot nachziehen:
-        render.markRiversBuilt(terrain)
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+        ribbons.markBuilt(terrain)
+        XCTAssertEqual(ribbons.maxDelta(terrain), 0)
 
-        // Strukturänderung 1: Knoten hinzugefügt -> 1e9
+        // Strukturänderung 1: Knoten hinzugefügt -> Sentinel
         terrain.meander.channels[0].nodes.append(MeanderNode(x: 14, z: 14))
         terrain.meander.channels[0].discharge.append(100)
-        XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1e8)
+        XCTAssertGreaterThanOrEqual(ribbons.maxDelta(terrain), 1e8)
 
         // Snapshot nachziehen:
-        render.markRiversBuilt(terrain)
-        XCTAssertEqual(render.riversMaxDelta(terrain), 0)
+        ribbons.markBuilt(terrain)
+        XCTAssertEqual(ribbons.maxDelta(terrain), 0)
 
-        // Strukturänderung 2: Kanal entfernt -> 1e9
+        // Strukturänderung 2: Kanal entfernt -> Sentinel
         terrain.meander.channels.removeLast()
-        XCTAssertGreaterThanOrEqual(render.riversMaxDelta(terrain), 1e8)
+        XCTAssertGreaterThanOrEqual(ribbons.maxDelta(terrain), 1e8)
     }
 
     /// Nicht-endliche Knoten (NaN, ±inf) erzwingen den Rebuild-Sentinel, je
@@ -233,67 +267,52 @@ final class RenderStateTests: XCTestCase {
         ]
         for (axis, path) in axes {
             let terrain = Terrain(config: renderConfig(n: 16), seed: 1337)
-            let render = RenderState(geometryMode: true)
+            let ribbons = RiverRibbonRenderer()
             terrain.meander.channels = [
                 RiverChannel(nodes: [MeanderNode(x: 2, z: 2), MeanderNode(x: 4, z: 4)],
                              discharge: [100, 100]),
             ]
-            render.markRiversBuilt(terrain)
+            ribbons.markBuilt(terrain)
             for bad in [Double.nan, .infinity, -.infinity] {
                 terrain.meander.channels[0].nodes[0][keyPath: path] = bad
-                XCTAssertEqual(render.riversMaxDelta(terrain), sentinel,
+                XCTAssertEqual(ribbons.maxDelta(terrain), sentinel,
                                "\(axis) = \(bad) gegen endlichen Snapshot muss rebuilden")
             }
 
             // Nicht-endlicher Wert im Snapshot: auch die Heilung rebuildet.
             terrain.meander.channels[0].nodes[0][keyPath: path] = .nan
-            render.markRiversBuilt(terrain)
-            XCTAssertEqual(render.riversMaxDelta(terrain), sentinel,
+            ribbons.markBuilt(terrain)
+            XCTAssertEqual(ribbons.maxDelta(terrain), sentinel,
                            "\(axis): NaN im Snapshot bleibt dirty")
             terrain.meander.channels[0].nodes[0][keyPath: path] = 2
-            XCTAssertEqual(render.riversMaxDelta(terrain), sentinel,
+            XCTAssertEqual(ribbons.maxDelta(terrain), sentinel,
                            "\(axis): Heilung gegen NaN-Snapshot muss rebuilden")
-            render.markRiversBuilt(terrain)
-            XCTAssertEqual(render.riversMaxDelta(terrain), 0,
+            ribbons.markBuilt(terrain)
+            XCTAssertEqual(ribbons.maxDelta(terrain), 0,
                            "\(axis): nach Heilung und Rebuild wieder ruhig")
         }
     }
 
-    /// Die Kopplung der beiden Wasser-Pfade (Issue #34) liegt jetzt im
-    /// Zustand, nicht beim Aufrufer: das Feld liest die Bandflags des LETZTEN
-    /// Builds selbst. Ohne Band deckelt es nichts, mit Band entsteht der Saum —
-    /// derselbe Vertrag wie in `WaterRendererTests`, hier über `RenderState`.
-    func testWaterFieldReadsTheRibbonResultWithoutBeingTold() {
-        // n = 192 und 4000 Jahre: die kleinste Paarung, in der Kanäle das
-        // Band-Gate passieren (gemessen 8 von 59; bei n = 96 keiner) — sonst
-        // verglichen die beiden Aufrufe nur leere gegen leere Bandflags.
-        let terrain = Terrain(config: renderConfig(n: 192), seed: 1337)
-        while terrain.years < 4000 { terrain.step(dtYears: 1000) }
-        terrain.computeFlow()
-        let render = RenderState(geometryMode: true)
-
-        let withoutBands = render.waterFieldBytes(terrain, blend: 1.0)
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        let withBands = render.waterFieldBytes(terrain, blend: 1.0)
-
-        XCTAssertEqual(withoutBands.count, terrain.cfg.count * 4)
-        XCTAssertTrue(render.riverRibbonMesh.bandChannelFlags.contains(true),
-                      "Testwelt baut keine Bänder — der Vergleich sagt dann nichts")
-        XCTAssertNotEqual(withBands, withoutBands,
-                          "Das Wasserfeld ignoriert das Bau-Ergebnis der Bänder")
+    /// Determinismus des Band-Baus: derselbe Stand, zweimal gebaut — am selben
+    /// Renderer wie an einer frischen Instanz —, liefert bit-gleiches Mesh.
+    /// (Ersatz für den früheren Doppelbau in `game/tests/water_geometry.gd`;
+    /// seit Issue #214 gibt es dort keinen Einzelschritt mehr, den ein Skript
+    /// zweimal erzwingen könnte.)
+    func testRibbonBuildIsDeterministic() throws {
+        let terrain = agedWorld(renderConfig(n: 192), years: 4000)
+        let once = RiverRibbonRenderer()
+        let first = once.build(terrain, hscale: RenderContract.heightScale,
+                               lift: RenderContract.riverLift)
+        let second = once.build(terrain, hscale: RenderContract.heightScale,
+                                lift: RenderContract.riverLift)
+        XCTAssertEqual(first, second, "zweiter Bau am selben Renderer weicht ab")
+        let fresh = builtRibbons(terrain).mesh
+        XCTAssertEqual(first, fresh, "Bau an frischem Renderer weicht ab")
     }
 
-    /// `renderGrid` ist Render-Zustand des Band-Renderers und muss über den
-    /// Zustand erreichbar bleiben (die Brücke hält ihn nicht mehr selbst).
-    func testRenderGridIsForwardedToTheRibbonRenderer() {
-        let render = RenderState(geometryMode: true)
-        XCTAssertEqual(render.renderGrid, 0, "Standard: volle Auflösung")
-        render.renderGrid = 256
-        XCTAssertEqual(render.renderGrid, 256)
-    }
-
-    /// Prüft, dass leere Terrains (n == 0) im Raster-Wasserfeld defensiv abgefangen
-    /// werden und leere Puffer liefern, statt auf 0-zähligen Pufferzeigern zu trappen.
+    /// Leere Terrains (n == 0) fängt der Raster-Wasserpfad defensiv ab und
+    /// liefert leere Puffer, statt auf 0-zähligen Pufferzeigern zu trappen —
+    /// hier über den Frame geprüft, den eine leere Welt nicht umbringen darf.
     func testWaterFieldRendererHandlesEmptyTerrain() {
         let config = renderConfig(n: 0)
         let empty = Terrain(allocating: config, seed: 1337)
@@ -306,19 +325,19 @@ final class RenderStateTests: XCTestCase {
                                            bandChannelFlags: [], bandCoverage: []), [],
                        "Leeres Terrain muss leeren bytes-Puffer liefern")
 
-        // Auch über RenderState abgesichert
+        // Auch über den Frame abgesichert
         let renderState = RenderState(geometryMode: true)
-        XCTAssertEqual(renderState.flowDetailBytes(empty), [],
-                       "RenderState muss leeren flowDetailBytes-Puffer liefern")
-        XCTAssertEqual(renderState.waterFieldBytes(empty, blend: 1.0), [],
-                       "RenderState muss leeren waterFieldBytes-Puffer liefern")
+        let overlays = frameOverlays(renderState, empty)
+        XCTAssertEqual(overlays.flowDetail, [UInt8](),
+                       "Der Frame muss leeren flowDetail-Puffer liefern")
+        XCTAssertEqual(overlays.water, [UInt8](),
+                       "Der Frame muss leeren Wasser-Puffer liefern")
 
         // Nach Rückkehr zur gefüllten Welt bleibt die Funktionalität intakt
         let populated = Terrain(config: renderConfig(), seed: 1337)
-        let populatedFlow = renderState.flowDetailBytes(populated)
-        let populatedWater = renderState.waterFieldBytes(populated, blend: 1.0)
-        XCTAssertEqual(populatedFlow.count, populated.cfg.count)
-        XCTAssertEqual(populatedWater.count, populated.cfg.count * 4)
+        let populatedOverlays = frameOverlays(renderState, populated)
+        XCTAssertEqual(populatedOverlays.flowDetail.count, populated.cfg.count)
+        XCTAssertEqual(populatedOverlays.water.count, populated.cfg.count * 4)
     }
 
     /// Prüft den trap-freien Diagnose-Helfer für Feldgrößen-Mismatches
@@ -352,5 +371,25 @@ final class RenderStateTests: XCTestCase {
                            + "seit Issue #93 in `SimRender.RenderState`")
         }
         assertContains(bridge, "WorldSession<", hint: "Die Brücke delegiert an die Welt-Sitzung")
+    }
+
+    /// Issue #214: Die Brücke bedient den Render-Zustand NUR über den Frame.
+    /// Kein Einzelschritt-Callable darf zurückkommen — sonst ließe sich die
+    /// Reihenfolge Bänder → Wasser → Masken wieder von außen umgehen.
+    func testBridgeDrivesTheRenderOnlyThroughTheFrame() throws {
+        let bridge = try RepoSource.extensionSources()
+        for gone in ["func buildRiverRibbons", "func markRiversBuilt", "func riversMaxDelta",
+                     "func waterFieldBytes", "func waterFieldRawBytes", "func flowDetailBytes",
+                     "func protectMaskBytes", "func forestMaskBytes",
+                     "func terrainColorBytes", "func terrainSurfaceBytes", "func terrainCoverBytes",
+                     "func filled(", "func filledBytes", "func heightBands(",
+                     "func riverRibbonVerts", "func riverRibbonColors", "func riverRibbonUVs",
+                     "func riverRibbonUV2s", "func riverRibbonIndices", "func riverRibbonStripStarts",
+                     "func sculpt("] {
+            XCTAssertFalse(bridge.contains(gone),
+                           "SimNode bedient mit `\(gone)` wieder einen Render-Einzelschritt — "
+                           + "der Frame (renderFrame/beginStep) ist der einzige Weg (Issue #214)")
+        }
+        assertContains(bridge, "session.renderFrame(", hint: "Die Brücke fährt den Frame")
     }
 }

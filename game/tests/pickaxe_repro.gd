@@ -1,8 +1,11 @@
 extends SceneTree
 ## Repro-Loop für die Spitzhacke: carvt eine Kerbe vom stärksten Fluss zur Küste
 ## und prüft getrennt (a) PHYSIK: der Abfluss folgt der Kerbe (flowArea steigt),
-## (b) RENDER: das Wasser-Overlay (waterFieldBytes) zeigt den neuen Lauf.
+## (b) RENDER: das Wasser-Overlay (frame["water"]) zeigt den neuen Lauf.
 ##   godot --headless --path game --script res://tests/pickaxe_repro.gd
+
+# Rohwert von FrameTrigger.settled (Main.gd FRAME_SETTLED).
+const FRAME_SETTLED := 0
 
 var done := false
 
@@ -133,14 +136,18 @@ func _run() -> void:
 	# See-Kanal. Vor #34 verdeckte der Mäander-Stempel das: er malte den Lauf
 	# zusätzlich in R. Nur auf R zu prüfen hieße also, den Stempel zu testen und
 	# nicht die Sichtbarkeit.
-	var wb: PackedByteArray = sim.waterFieldBytes(1.0)
-	sim.buildRiverRibbons(24.0, 0.35)
+	# Seit Issue #214 kommen Wasser und Bänder aus EINEM Frame (`renderFrame`,
+	# FRAME_SETTLED) — derselbe Weg wie Main.gd, inklusive der Kopplung: das
+	# Wasserfeld sieht die bandChannelFlags DIESES Baus.
+	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, 1.0)
+	var wb: PackedByteArray = frame["water"]
 	var band_cells := {}
-	var rverts: PackedVector3Array = sim.riverRibbonVerts()
-	for v in rverts:
-		var rbi: int = clampi(int(round((v.x + world * 0.5) / cell)), 0, n - 1)
-		var rbj: int = clampi(int(round((v.z + world * 0.5) / cell)), 0, n - 1)
-		band_cells[rbj * n + rbi] = true
+	if frame.has("ribbons"):
+		var rverts: PackedVector3Array = frame["ribbon_verts"]
+		for v in rverts:
+			var rbi: int = clampi(int(round((v.x + world * 0.5) / cell)), 0, n - 1)
+			var rbj: int = clampi(int(round((v.z + world * 0.5) / cell)), 0, n - 1)
+			band_cells[rbj * n + rbi] = true
 	var painted := 0
 	var river_cells := 0
 	var lake_cells := 0
@@ -221,9 +228,12 @@ func _run() -> void:
 	quit(0)
 
 ## Mittlere Wassertiefe (hf − h) über den Kerben-Zellen — misst die Übertiefung.
+## Der Seespiegel kommt aus dem Frame (`filled`, R32F-Rohbytes): seit Issue
+## #214 gibt es keinen Einzelschritt-Callable dafür mehr.
 func _trench_pond_depth(sim: Object, trench: Array[int]) -> float:
 	var hh: PackedFloat32Array = sim.heights()
-	var hfx: PackedFloat32Array = sim.filled()
+	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, 2.0)
+	var hfx: PackedFloat32Array = (frame["filled"] as PackedByteArray).to_float32_array()
 	var s := 0.0
 	for k in trench:
 		s += maxf(0.0, hfx[k] - hh[k])

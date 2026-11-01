@@ -58,14 +58,27 @@ final class WorldSessionTests: XCTestCase {
         for (name, kind, prepare, apply) in changes {
             let world = session()
             prepare(world)
-            let stale = world.terrainColorBytes()   // Cache warmlaufen
+            let stale = world.renderFrame(.settled, now: 0).frame.overlays?.colors ?? []
             try apply(world)
             XCTAssertEqual(world.lastChange, kind, "\(name) meldet die falsche Art")
-            XCTAssertNotEqual(world.terrainColorBytes(), stale,
+            let fresh = world.renderFrame(.settled, now: 1).frame.overlays?.colors ?? [1]
+            XCTAssertNotEqual(fresh, stale,
                               "\(name): Farb-Cache steht noch auf dem alten Stand")
-            XCTAssertNotEqual(world.terrainSurfaceBytes(), [],
-                              "\(name): Material-Cache leer")
+            XCTAssertFalse(fresh.isEmpty, "\(name): Material-Cache leer")
         }
+    }
+
+    // MARK: - Render-Zustand über die Sitzung
+
+    /// `renderGrid` ist Render-Zustand des Band-Renderers und muss über die
+    /// Sitzung erreichbar bleiben (die Brücke hält ihn nicht selbst; seit
+    /// Issue #214 liest nur die Sitzung ihn — Ersatz für den früheren
+    /// RenderState-Wächter).
+    func testRenderGridIsForwardedToTheRibbonRenderer() {
+        let world = session()
+        XCTAssertEqual(world.renderGrid, 0, "Standard: volle Auflösung")
+        world.renderGrid = 256
+        XCTAssertEqual(world.renderGrid, 256)
     }
 
     /// Ein fehlgeschlagenes Laden lässt Welt und Render-Zustand stehen.
@@ -90,7 +103,6 @@ final class WorldSessionTests: XCTestCase {
             ("year", { _ = $0.year }),
             ("heights", { _ = $0.heights }),
             ("renderFrame", { _ = $0.renderFrame(.settled, now: 1) }),
-            ("terrainColorBytes", { _ = $0.terrainColorBytes() }),
             ("step", { $0.step(years: 1) }),
             ("brush", { $0.brush(.raise, gx: 48, gz: 48, radiusWorld: 4, strength: 1, target: 0) }),
             ("generate", { $0.generate(seed: 7) }),

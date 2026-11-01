@@ -23,7 +23,9 @@ func _check(value: bool, message: String) -> void:
 ## Die Schutzmaske sperrt Verschiebung und Kronendach an Wasser (#154). Ihr
 ## Inhalt ist headless gepinnt (`WaterProtectMaskTests`); hier zählt der Weg
 ## durch Brücke und Studie: R8 in Gittergröße, voll sichtbares Wasser gesperrt,
-## trockenes Land frei, das Wasserfeld unverändert.
+## trockenes Land frei, das Wasserfeld unverändert. Seit Issue #214 kommen
+## Wasser und Maske aus EINEM Frame (`renderFrame`, FRAME_SETTLED wie Main.gd)
+## — die Maske sieht damit das Wasserfeld genau ihres Frames.
 func _check_protect_mask() -> void:
 	if not ClassDB.class_exists("SimNode"):
 		_check(false, "SimNode nicht registriert (GDExtension gebaut und importiert?)")
@@ -32,9 +34,9 @@ func _check_protect_mask() -> void:
 	var study = load("res://studies/flusstal/Flusstal.gd").new()
 	study.sim = sim
 	study.N = sim.gridSize()
-	sim.buildRiverRibbons(24.0, 0.35)
-	var water: PackedByteArray = sim.waterFieldBytes(1.0)
-	var mask: Image = study._protect_mask(sim.protectMaskBytes())
+	var frame: Dictionary = sim.renderFrame(0, 1.0)  # FRAME_SETTLED
+	var water: PackedByteArray = frame["water"]
+	var mask: Image = study._protect_mask(frame["protect"])
 	_check(mask.get_format() == Image.FORMAT_R8, "Schutzmaske muss im Format R8 vorliegen")
 	_check(mask.get_width() == study.N and mask.get_height() == study.N,
 		"Schutzmaske muss Dimension N*N haben")
@@ -51,7 +53,8 @@ func _check_protect_mask() -> void:
 			free_cells += 1
 	_check(water_cells > 0, "Produktionswelt muss sichtbares Wasser haben")
 	_check(free_cells > bytes.size() / 4, "Trockenes Land muss frei bleiben")
-	_check(sim.waterFieldBytes(1.0) == water, "Schutzmaske darf das Render-Wasserfeld nicht ändern")
+	var again: Dictionary = sim.renderFrame(0, 2.0)
+	_check(again["water"] == water, "Schutzmaske darf das Render-Wasserfeld nicht ändern")
 	study.free()
 	sim.free()
 

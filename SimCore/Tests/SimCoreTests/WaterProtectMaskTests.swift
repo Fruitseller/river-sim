@@ -4,7 +4,7 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für die Schutzmaske (`WaterProtectMask` / `RenderState.protectMaskBytes`, Issue #154).
+/// Wächter für die Schutzmaske (`WaterProtectMask` / `RenderState.frame`, Issue #154).
 ///
 /// Die Schutzmaske sperrt Kronendach und Verschiebung an Wasserflächen:
 ///  - Sichtbare Raster-Flüsse und Seen aus dem Wasserfeld
@@ -17,8 +17,11 @@ import XCTest
 ///  - Gleiche Welt ergibt dieselbe Maske; Pinsel, Neugenerieren und Laden
 ///    hinterlassen keine veraltete Maske
 ///
-/// Die Aufruf-Reihenfolge der Tests ist die von `Main.gd`: Bänder bauen, dann
-/// das Wasserfeld ziehen, dann die Maske.
+/// Seit Issue #214 fährt der Wächter die Reihenfolge über den FRAME
+/// (`RenderState.frame` — dieselbe wie `Main.gd`); interne Zwischenergebnisse
+/// (Bandabdeckung, nasse Wiese, Gürtel-Material) werden mit `@testable` nur
+/// BEOBACHTET. Die beiden Einzelschritt-Tests unten (Reinheit des Maskenpfads,
+/// Maske vor dem ersten Wasser) tragen ihre Begründung am Test.
 final class WaterProtectMaskTests: XCTestCase {
 
     private let seam = WaterRender.protectSeamCells
@@ -27,13 +30,13 @@ final class WaterProtectMaskTests: XCTestCase {
         agedWorld(renderConfig(n: 192), years: years, seed: seed)
     }
 
-    /// Der Render-Takt aus `Main.gd` nach einer Terrain-Änderung.
+    /// Der Render-Takt aus `Main.gd` — seit Issue #214 über den Frame:
+    /// Bänder, Wasserfeld und Masken entstehen gemeinsam in Frame-Reihenfolge.
     @discardableResult
     private func refresh(_ render: RenderState, _ terrain: Terrain)
         -> (water: [UInt8], mask: [UInt8]) {
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        let water = render.waterFieldBytes(terrain, blend: 1.0)
-        return (water, render.protectMaskBytes(terrain))
+        let overlays = frameOverlays(render, terrain)
+        return (overlays.water, overlays.protectMask)
     }
 
     /// Kern-Zellen (Wasser, Band oder nasse Wiese, #174 C) nach den
@@ -100,13 +103,21 @@ final class WaterProtectMaskTests: XCTestCase {
     }
 
     /// Ein künstlicher See (Wasserspiegel über dem Boden) ist geschützt.
+    ///
+    /// Radius 9 bewusst über `WaterRender.wetMeadowMaxCells` (200 Zellen):
+    /// kleinere Tümpel malt der Frame als NASSE WIESE statt als See (#174 C),
+    /// der See-Kanal trägt sie nicht. Der alte Test sah kleinere Seen nur,
+    /// weil er das Wasserfeld OHNE vorherigen Band-Bau zog — ohne Mesh gilt
+    /// jeder Kanal als „hat ein Band" (Fallback in `WaterFieldRenderer.bytes`),
+    /// und der Korridor-Stempel zählte den Tümpel als „banded". Durch den Frame
+    /// baut der Band-Bau zuerst und meldet ehrlich „kein Kanal mit Band".
     func testMaskIncludesVisibleRasterLakes() {
         let terrain = Terrain(config: renderConfig(n: 96), seed: 1337)
         terrain.computeFlow()
         let n = terrain.cfg.n
         var state = terrain.state
-        for dj in -5...5 {
-            for di in -5...5 where di * di + dj * dj <= 25 {
+        for dj in -9...9 {
+            for di in -9...9 where di * di + dj * dj <= 81 {
                 let k = (n / 2 + dj) * n + (n / 2 + di)
                 state.h[k] = terrain.cfg.sea + 0.1
                 state.waterLevel[k] = terrain.cfg.sea + 0.5
@@ -115,9 +126,9 @@ final class WaterProtectMaskTests: XCTestCase {
         terrain.restore(state)
         terrain.computeFlow()
 
-        let render = RenderState(geometryMode: true)
-        let water = render.waterFieldBytes(terrain, blend: 1.0)
-        let mask = render.protectMaskBytes(terrain)
+        let overlays = frameOverlays(RenderState(geometryMode: true), terrain)
+        let water = overlays.water
+        let mask = overlays.protectMask
 
         let lake = byte01(WaterRender.protectLakeThreshold)
         var lakes = 0
@@ -154,6 +165,11 @@ final class WaterProtectMaskTests: XCTestCase {
     /// Die Maske liest das Wasserfeld nur: auch über einen EWMA-Übergang
     /// (`blend` < 1 nach einem Sim-Schritt) bleibt es bit-gleich zu einem
     /// Render-Zustand, der nie eine Maske gezogen hat.
+    ///
+    /// Einzelschritt-Beobachtung (`@testable`, Issue #214): Der Frame koppelt
+    /// Wasser und Maske immer im selben Takt — ein Zustand „ohne je eine
+    /// Maske" ist über ihn nicht erreichbar. Der Test pinnt die Reinheit des
+    /// Maskenpfads (er schreibt nie in den Wasserzustand), keine Reihenfolge.
     func testMaskLeavesTheWaterFieldUntouched() {
         let terrain = aged()
         let withMask = RenderState(geometryMode: true)
@@ -181,39 +197,50 @@ final class WaterProtectMaskTests: XCTestCase {
 
     // MARK: - Invalidierung
 
-    /// Die Maske folgt beiden Quellen: jedem Wasser-Upload und jedem Band-Bau,
-    /// auch ohne Terrain-Änderung dazwischen (Reihenfolge Bänder → Maske →
-    /// Wasser → Maske, wie beim Fluss-Rebuild vor dem Textur-Update).
+    /// Die Maske folgt beiden Quellen: jedem Wasser-Upload und jedem Band-Bau
+    /// — seit Issue #214 über den Frame beobachtet: JEDE Maske ist aus dem
+    /// Wasser und den Bändern IHRES Frames abgeleitet (die Folge stand vorher
+    /// hier von Hand). Die Bänder des Frames werden nur beobachtet
+    /// (`riverRibbonMesh`), nicht selbst gebaut.
     func testMaskFollowsEachWaterUploadAndRibbonBuild() {
         let terrain = aged()
         let render = RenderState(geometryMode: true)
         let n = terrain.cfg.n
 
-        let water = render.waterFieldBytes(terrain, blend: 1.0)
-        let waterOnly = render.protectMaskBytes(terrain)
-        XCTAssertEqual(waterOnly, WaterProtectMask.bytes(n: n, bandCoverage: [], waterBytes: water,
-                                                         wetMeadow: render.wetMeadowMask,
-                                                         barSand: render.barMaterial(terrain).sand))
+        let first = frameOverlays(render, terrain)
+        XCTAssertEqual(first.protectMask,
+                        WaterProtectMask.bytes(n: n,
+                                               bandCoverage: render.riverRibbonMesh.bandCoverage,
+                                               waterBytes: first.water,
+                                               wetMeadow: render.wetMeadowMask,
+                                               barSand: BarMaterial.field(terrain).sand),
+                        "Maske des ersten Frames folgt nicht dessen Wasser und Bändern")
 
-        render.buildRiverRibbons(terrain, hscale: 24, lift: 0.35)
-        let coverage = render.riverRibbonMesh.bandCoverage
-        let withBands = render.protectMaskBytes(terrain)
-        XCTAssertEqual(withBands,
-                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water,
-                                              wetMeadow: render.wetMeadowMask,
-                                              barSand: render.barMaterial(terrain).sand))
-        XCTAssertNotEqual(withBands, waterOnly, "Band-Bau muss die Maske erneuern")
-
-        let water2 = render.waterFieldBytes(terrain, blend: 1.0)
-        XCTAssertEqual(render.protectMaskBytes(terrain),
-                       WaterProtectMask.bytes(n: n, bandCoverage: coverage, waterBytes: water2,
-                                              wetMeadow: render.wetMeadowMask,
-                                              barSand: render.barMaterial(terrain).sand),
-                       "Wasser-Upload muss die Maske erneuern")
+        terrain.step(dtYears: 200)
+        render.invalidate(terrain, .advanced)
+        let second = frameOverlays(render, terrain)
+        XCTAssertNotEqual(second.protectMask, first.protectMask,
+                          "Ein Schritt muss die Maske erneuern (Wasser und Bänder folgen ihm)")
+        XCTAssertEqual(second.protectMask,
+                        WaterProtectMask.bytes(n: n,
+                                               bandCoverage: render.riverRibbonMesh.bandCoverage,
+                                               waterBytes: second.water,
+                                               wetMeadow: render.wetMeadowMask,
+                                               barSand: BarMaterial.field(terrain).sand),
+                        "Maske des zweiten Frames folgt nicht dessen Wasser und Bändern")
     }
 
-    /// Pinselstrich (über `BrushTool`, wie die Brücke) hinterlässt nach dem
-    /// Render-Takt dieselbe Maske wie ein frischer Render-Zustand.
+    /// Pinselstrich (über `BrushTool`, wie die Brücke) hinterlässt keine
+    /// veraltete Maske: die Maske des nächsten Frames ist aus DEM Wasser und
+    /// DEN Bändern dieses Frames abgeleitet — aus nichts Gecachtem.
+    ///
+    /// Bewusst KEIN Vergleich gegen einen frischen Render-Zustand: der Frame
+    /// deckelt den Band-Neubau an der Zentrumslinien-Bewegung (#93/#94), und
+    /// ein Pinselstrich bewegt die Linien nicht (Delta 0) — der gebrauchtere
+    /// Zustand behält seine Bänder legitim, während ein frischer Zustand sie
+    /// baut (noch ohne Vergleichsstand). Verglichen wird stattdessen gegen die
+    /// Neuberechnung aus den eigenen Frame-Eingaben; ein stehengebliebener
+    /// Cache (der Fall, den #93 behob) wiche davon ab.
     func testBrushStrokeLeavesNoStaleMask() {
         let terrain = aged()
         let render = RenderState(geometryMode: true)
@@ -225,13 +252,23 @@ final class WaterProtectMaskTests: XCTestCase {
         render.invalidate(terrain, .edited)
         terrain.recomputeFlowAfterEdit()
         render.invalidate(terrain, .edited)
-        let after = refresh(render, terrain).mask
+        let after = refresh(render, terrain)
 
-        XCTAssertNotEqual(before, after, "Pinselstrich muss die Maske verändern")
-        XCTAssertEqual(after, refresh(RenderState(geometryMode: true), terrain).mask)
+        XCTAssertNotEqual(before, after.mask, "Pinselstrich muss die Maske verändern")
+        XCTAssertEqual(after.mask,
+                       WaterProtectMask.bytes(n: terrain.cfg.n,
+                                              bandCoverage: render.riverRibbonMesh.bandCoverage,
+                                              waterBytes: after.water,
+                                              wetMeadow: render.wetMeadowMask,
+                                              barSand: BarMaterial.field(terrain).sand),
+                       "Die Maske folgt nicht dem Wasser und den Bändern ihres Frames")
     }
 
     /// Neugenerieren: keine Wasser-Reste der alten Welt, danach frisch.
+    /// Der erste Teil (Maske VOR dem ersten Wasser-Upload der neuen Welt)
+    /// beobachtet eine interne Zusicherung über `@testable`: `.replaced`
+    /// verwirft `visibleWater` — durch den Frame ist der Zustand nicht
+    /// erreichbar, dort kommt die Maske immer NACH dem frischen Wasser.
     func testRegenerateLeavesNoStaleMask() {
         let terrain = aged()
         let render = RenderState(geometryMode: true)
@@ -276,7 +313,8 @@ final class WaterProtectMaskTests: XCTestCase {
         var cfg = SimConfig()
         cfg.n = 0
         let empty = Terrain(allocating: cfg, seed: 1)
-        XCTAssertEqual(RenderState(geometryMode: true).protectMaskBytes(empty), [UInt8]())
+        XCTAssertEqual(frameOverlays(RenderState(geometryMode: true), empty).protectMask,
+                       [UInt8]())
         XCTAssertEqual(WaterProtectMask.bytes(n: 0, bandCoverage: [], waterBytes: []), [UInt8]())
     }
 }

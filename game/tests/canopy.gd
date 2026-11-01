@@ -19,9 +19,23 @@ const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 const SHADER := "res://shaders/terrain.gdshader"
 
+# Rohwert von FrameTrigger.settled (Main.gd FRAME_SETTLED).
+const FRAME_SETTLED := 0
+
 var failures := 0
 var main: Node
 var done := false
+# Monotone Uhr für die Probe-Frames (SETTLED ist ungedrosselt, die Uhr läuft
+# trotzdem weiter, damit kein Deckel je zuschlägt).
+var frame_clock := 0.0
+
+## Ein frischer Render-Frame über die Brücke (Issue #214): die Masken und die
+## Bodenbedeckung kommen aus dem Frame — derselbe Weg, den Main.gd fährt. Ohne
+## Weltänderung zwischen Mains letztem Upload und diesem Frame sind die Puffer
+## bit-gleich zu dem, was Main hochgeladen hat.
+func _frame(sim: Object) -> Dictionary:
+	frame_clock += 1.0
+	return sim.renderFrame(FRAME_SETTLED, frame_clock)
 
 func _initialize() -> void:
 	if not ClassDB.class_exists("SimNode"):
@@ -104,7 +118,7 @@ func _check_material(main: Node) -> void:
 	var tex: Texture2D = mat.get_shader_parameter("cover_tex")
 	_check(tex != null and tex.get_width() == main.N and tex.get_height() == main.N,
 		"Bodenbedeckung liegt in Gittergröße am Material")
-	var cover: PackedByteArray = main.sim.terrainCoverBytes()
+	var cover: PackedByteArray = _frame(main.sim)["cover"]
 	_check(cover.size() == main.N * main.N * 4, "Bodenbedeckung ist RGBA8 in Gittergröße")
 
 func _check_no_instance_trees(main: Node) -> void:
@@ -116,7 +130,7 @@ func _check_no_instance_trees(main: Node) -> void:
 func _check_visible_surface(main: Node) -> void:
 	main.relief_lift_cache = PackedFloat32Array()
 	main.relief_bake_frame = -1
-	var forest: PackedByteArray = main.sim.forestMaskBytes()
+	var forest: PackedByteArray = _frame(main.sim)["forest"]
 	var n: int = main.N
 	var cell := -1
 	for j in range(2, n - 2):
@@ -146,7 +160,7 @@ func _check_visible_surface(main: Node) -> void:
 ## Main zuletzt hochgeladen hat (`forest_img`), und dass die Textur dieselbe
 ## bleibt.
 func _check_uploaded(main: Node, tex: Texture2D, what: String) -> void:
-	_check(main.forest_img.get_data() == main.sim.forestMaskBytes(),
+	_check(main.forest_img.get_data() == _frame(main.sim)["forest"],
 		"%s: hochgeladen ist die aktuelle Waldmaske" % what)
 	_check(main.terrain_mat.get_shader_parameter("forest_tex") == tex,
 		"%s: das Material liest weiter die aktualisierte Waldtextur" % what)
@@ -176,7 +190,7 @@ func _check_brush(main: Node) -> void:
 		"Pinselstrich: unter den Meeresspiegel eingeebneter Wald verschwindet (%d)"
 			% main.forest_img.get_data()[cell])
 	_check_uploaded(main, tex, "Pinselstrich")
-	_check(main.cover_field._img.get_data() == main.sim.terrainCoverBytes(),
+	_check(main.cover_field._img.get_data() == _frame(main.sim)["cover"],
 		"Pinselstrich: hochgeladen ist die aktuelle Bodenbedeckung (#174 D)")
 
 ## Neugenerieren tauscht den Wald, Laden holt den gespeicherten zurück. Nicht
@@ -187,7 +201,7 @@ func _check_regenerate_and_load(main: Node) -> void:
 	var tex: Texture2D = main.forest_tex
 	var path := "user://tests/canopy.%s" % main.sim.worldFileExtension()
 	var saved: PackedByteArray = main.forest_img.get_data()
-	var saved_protect: PackedByteArray = main.sim.protectMaskBytes()
+	var saved_protect: PackedByteArray = _frame(main.sim)["protect"]
 	var err: String = main.sim.saveWorld(ProjectSettings.globalize_path(path))
 	_check(err.is_empty(), "saveWorld: %s" % err)
 	main._regen()
@@ -196,7 +210,7 @@ func _check_regenerate_and_load(main: Node) -> void:
 	main._load_world(path)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	var got: PackedByteArray = main.forest_img.get_data()
-	var protect: PackedByteArray = main.sim.protectMaskBytes()
+	var protect: PackedByteArray = _frame(main.sim)["protect"]
 	var compared := 0
 	var wrong := 0
 	for k in range(saved.size()):

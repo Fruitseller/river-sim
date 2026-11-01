@@ -231,10 +231,9 @@ final class BarMaterialTests: XCTestCase {
     func testFreshBarsAreProtectedFromForest() {
         let n = 64
         let t = flatWorld(n: n, channelRow: 6) { i, j in (10..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
-        let render = RenderState(geometryMode: true)
-        _ = render.waterFieldBytes(t, blend: 1.0)
-        let mask = render.protectMaskBytes(t)
-        let forest = render.forestMaskBytes(t)
+        let overlays = frameOverlays(RenderState(geometryMode: true), t)
+        let mask = overlays.protectMask
+        let forest = overlays.forestMask
         for j in 11..<14 {
             for i in 11..<29 {
                 XCTAssertEqual(mask[j * n + i], 255, "frische Bank (\(i),\(j)) ist geschützt")
@@ -577,7 +576,6 @@ final class BarMaterialTests: XCTestCase {
         let before = terrain.fingerprint()
         let render = RenderState(geometryMode: true)
         _ = render.frame(terrain, .settled, now: 0)
-        _ = render.barMaterial(terrain)
         XCTAssertEqual(terrain.fingerprint(), before)
     }
 }
