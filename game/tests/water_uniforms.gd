@@ -48,7 +48,8 @@ func _run() -> void:
 		return
 
 	# Gruppe `water` des Kalibrier-Registers: Skalare als float, Farben als
-	# Vector3 (eindeutige Namen garantiert das Dictionary).
+	# Vector3. Ein doppelter Name überschriebe sich im Dictionary still; die
+	# Eindeutigkeit prüft deshalb CalibrationRegistryTests auf der Swift-Seite.
 	var bridge := Main.calibration(sim, "water")
 	var colors := bridge.values().filter(func(v: Variant) -> bool: return v is Vector3).size()
 	print("scalars=", bridge.size() - colors, " colors=", colors)

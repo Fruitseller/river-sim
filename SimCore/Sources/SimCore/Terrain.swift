@@ -3876,7 +3876,7 @@ public final class Terrain {
     /// Hält auf ausreichend feinen Gittern die Betten des Abflussnetzes auf
     /// hydraulischer Gleichgewichtstiefe (Issue #108, Ansatz 2). Ein aktiver
     /// Fluss verlandet im Alter nicht, sondern räumt sein Bett gegenüber den
-    /// Talflanken auf eine definierte Tiefe aus, abgestimmt auf RIVER_LIFT
+    /// Talflanken auf eine definierte Tiefe aus, abgestimmt auf `RenderContract.riverLift`
     /// (0.35 Welt-Y). Die Auflösungsgrenze steht bei `channelTargetDepth`.
     private func channelCarve(dt: Double) {
         let cs = cfg.cellSize

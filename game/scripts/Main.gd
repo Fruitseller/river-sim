@@ -721,9 +721,9 @@ static func calibration(sim_node: Object, group: String) -> Dictionary:
 ## was deklariert, prüfen SimCoreTests/CalibrationRegistryTests.swift und die
 ## Godot-Wächter (water_uniforms.gd, relief.gd, canopy.gd). Gibt die Gruppe
 ## zurück, für Werte, die GDScript selbst braucht.
-static func apply_calibration(sim_node: Object, group: String, mats: Array) -> Dictionary:
+static func apply_calibration(sim_node: Object, group: String, mats: Array[ShaderMaterial]) -> Dictionary:
 	var calib := calibration(sim_node, group)
-	for mat: ShaderMaterial in mats:
+	for mat in mats:
 		for name in calib:
 			mat.set_shader_parameter(name, calib[name])
 	return calib

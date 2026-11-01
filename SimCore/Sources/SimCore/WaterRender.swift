@@ -335,7 +335,7 @@ public enum WaterRender {
     public static let ribbonOcclusionHi = 0.9
 
     // Höhen-Versatz eines Bands auf einer Wasserfläche, in GODOT-WELT-Y (wie
-    // `Main.RIVER_LIFT`, NICHT in Sim-Höhen). Auf Land trägt das Band den vollen
+    // `RenderContract.riverLift`, NICHT in Sim-Höhen). Auf Land trägt das Band den vollen
     // `lift`, der den Chord-Fehler des gröberen Render-Gitters im Talgrund
     // abdeckt; über Wasser hob genau der es sichtbar aus der Fläche heraus.
     /// See: ein Hauch ÜBER dem Spiegel — im Apron liegt das Terrain-Gitter noch

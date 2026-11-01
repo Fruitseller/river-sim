@@ -959,8 +959,9 @@ las. Wächter: `RenderFrameTests`.
   `water_uniforms`, `river_ribbons`, `build_stamp_parity`, `graphics_study`,
   `water_rings`, `pickaxe_repro`, `lighting`, `relief`, `canopy`, `ui_layout`)
   plus `render_fingerprint.gd` als A/B-WERKZEUG (kein Wächter);
-  `sculpt_cost.gd` ist das Messwerkzeug zum Pinsel-Nachzug,
-  `water_contract.gd` der gemeinsame Helfer der Wasser-Vertragstests.
+  `sculpt_cost.gd` ist das Messwerkzeug zum Pinsel-Nachzug. Die
+  Vertragswerte der Wasser-Wächter holt seit #213 `Main.calibration(sim,
+  "water_contract")` (vorher der Helfer `water_contract.gd`).
 
 ## Arbeitsweise in diesem Projekt (ernst nehmen)
 
