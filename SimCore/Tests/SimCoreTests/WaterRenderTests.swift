@@ -6,7 +6,7 @@ import XCTest
 /// Die Zahlen selbst sind reine Arithmetik; genau ihre PAARUNGEN sind fragil:
 /// Komponenten-Fade ↔ Shader-Smoothstep ↔ Altarm-Stempel. Diese Tests pinnen
 /// die Kalibrierung. Die Shader tragen die Zahlen seit #92 nicht mehr selbst —
-/// sie reisen als `water_*`-Uniforms über die Brücke (`SimRender.WaterUniforms`,
+/// sie reisen als `water_*`-Uniforms über die Brücke (`SimRender.CalibrationRegistry`,
 /// Wächter: `WaterUniformsTests` + `game/tests/water_uniforms.gd`); die
 /// Quelltext-Wächter hier prüfen nur noch STRUKTUR: welche Shader-Stelle
 /// welche Uniform liest.
@@ -237,7 +237,7 @@ final class WaterRenderTests: XCTestCase {
         XCTAssertLessThan(WaterRender.ribbonSeaSurfaceSink, 0)
         XCTAssertGreaterThan(WaterRender.ribbonLakeSurfaceLift, 0)
         // Beide deutlich kleiner als der Land-Lift (`RenderContract.riverLift`,
-        // == Main.gd RIVER_LIFT), sonst wäre die Wasser-Sonderbehandlung
+        // über die Brücke auch in den Godot-Wächtern), sonst wäre die Wasser-Sonderbehandlung
         // wirkungslos. Die Schichten-Kopplung prüft `RenderContractTests`.
         XCTAssertLessThan(abs(WaterRender.ribbonSeaSurfaceSink), RenderContract.riverLift)
         XCTAssertLessThan(WaterRender.ribbonLakeSurfaceLift, RenderContract.riverLift)

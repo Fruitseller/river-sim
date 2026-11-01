@@ -6,7 +6,7 @@ extends RefCounted
 ## Wächter: game/tests/lighting.gd (CI-Marke LIGHTING_OK).
 ##
 ## Rein visuell: nichts hier berührt Sim-Felder oder die Wasser-Kalibrierung.
-## Die Wasser-Optik kommt weiter über die Brücke aus SimRender.WaterUniforms;
+## Die Wasser-Optik kommt weiter über die Brücke aus SimRender.CalibrationRegistry;
 ## der Himmel ändert nur, was das Wasser spiegelt.
 
 ## Feste Welt-Sonne (entschieden 2026-10-08): EINE Richtung, die aus allen

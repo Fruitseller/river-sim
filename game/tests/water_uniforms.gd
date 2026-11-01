@@ -10,7 +10,7 @@ extends SceneTree
 ##  - jede deklarierte `water_*`-Uniform steht in der Tabelle und ist
 ##    default-frei deklariert,
 ##  - jeder Tabellenwert ist in mindestens einem Shader deklariert,
-##  - Main.apply_water_calibration setzt jeden deklarierten Namen wirklich
+##  - Main.apply_calibration (Gruppe `water`, Issue #213) setzt jeden deklarierten Namen wirklich
 ##    (get_shader_parameter liefert den Brückenwert, nicht null).
 ## Exit-Code != 0 bei Fehler.
 
@@ -47,27 +47,13 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Brücken-Tabelle: Namen und Werte paarweise, Namen eindeutig.
-	var scalar_names: PackedStringArray = sim.waterScalarUniformNames()
-	var scalar_values: PackedFloat32Array = sim.waterScalarUniformValues()
-	var color_names: PackedStringArray = sim.waterColorUniformNames()
-	var color_values: PackedVector3Array = sim.waterColorUniformValues()
-	print("scalars=", scalar_names.size(), " colors=", color_names.size())
-	if scalar_names.size() != scalar_values.size():
-		_fail("Skalar-Namen und -Werte sind nicht paarweise")
-	if color_names.size() != color_values.size():
-		_fail("Farb-Namen und -Werte sind nicht paarweise")
-	if scalar_names.is_empty() or color_names.is_empty():
-		_fail("Brücken-Tabelle ist leer")
-	var bridge := {}
-	for i in scalar_names.size():
-		if bridge.has(scalar_names[i]):
-			_fail("Uniform-Name doppelt: " + scalar_names[i])
-		bridge[scalar_names[i]] = scalar_values[i]
-	for i in color_names.size():
-		if bridge.has(color_names[i]):
-			_fail("Uniform-Name doppelt: " + color_names[i])
-		bridge[color_names[i]] = color_values[i]
+	# Gruppe `water` des Kalibrier-Registers: Skalare als float, Farben als
+	# Vector3 (eindeutige Namen garantiert das Dictionary).
+	var bridge := Main.calibration(sim, "water")
+	var colors := bridge.values().filter(func(v: Variant) -> bool: return v is Vector3).size()
+	print("scalars=", bridge.size() - colors, " colors=", colors)
+	if bridge.size() == colors or colors == 0:
+		_fail("Brücken-Gruppe water ohne Skalare oder Farben")
 
 	# Deklarationen aus den echten Shader-Quelltexten. Zeilenanker genügt hier:
 	# die strengere, kommentarbereinigte Sicht hält SimCoreTests (SourceProbe).
@@ -110,7 +96,7 @@ func _run() -> void:
 		# Uniform muss danach gesetzt sein (nicht null) und den Brückenwert tragen.
 		var mat := ShaderMaterial.new()
 		mat.shader = load(path)
-		Main.apply_water_calibration(sim, [mat])
+		Main.apply_calibration(sim, "water", [mat])
 		for name in declared:
 			var got: Variant = mat.get_shader_parameter(name)
 			if got == null:

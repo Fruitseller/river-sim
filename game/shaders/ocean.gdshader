@@ -15,7 +15,7 @@ uniform sampler2D height_prev_tex : filter_linear, repeat_disable;
 uniform float height_blend = 1.0;
 
 // Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
-// Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
+// Werte beim Aufbau aus SimRender.CalibrationRegistry. BEWUSST ohne Default — ein
 // Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
 // die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null), aber
 // TOTAL: calib_window sowie max() an Tiefen-Divisor und Fresnel-Exponent

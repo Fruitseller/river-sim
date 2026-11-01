@@ -12,7 +12,7 @@
 // Farben/Glanz sind DIESELBEN wie im Feld-Wasser des Terrain-Shaders, damit
 // Band-Wasser und Textur-Zubringer als EIN Wasser lesen: Wasserfarben, Fresnel,
 // Rauheit/Specular und der Strömungs-Schimmer kommen als water_*-Uniforms über
-// die Brücke (SimCore/WaterRender.swift → SimRender.WaterUniforms → SimNode →
+// die Brücke (SimCore/WaterRender.swift → SimRender.CalibrationRegistry → SimNode →
 // Main.gd, Issues #91/#92) — beide Shader lesen dieselben Uniforms, der
 // Struktur-Vertrag dazu ist SimCoreTests/WaterRenderTests.swift.
 //
@@ -66,7 +66,7 @@ uniform float grid_n = 256.0;
 uniform float sea_level = 0.15;
 
 // Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
-// Werte beim Aufbau aus SimRender.WaterUniforms. BEWUSST ohne Default — ein
+// Werte beim Aufbau aus SimRender.CalibrationRegistry. BEWUSST ohne Default — ein
 // Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
 // die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null), aber
 // TOTAL: calib_window unten sichert die Typ-Fenster, max() den

@@ -8,10 +8,11 @@ import SimRender
 /// rechnet sie einmal je Terrain-Update in eine Textur, `terrain.gdshader`
 /// liest sie nur. Ausführbar ist davon headless nichts; gepinnt wird deshalb
 /// wie bei der Wasser-Kalibrierung (#92) die STRUKTUR des Uniform-Wegs:
-///   - jede Zahl kommt aus `SimCore.ReliefRender`, die Tabelle vergibt nur Namen,
-///   - die Shader deklarieren die Uniforms default-frei und lesen sie,
-///   - kein Shader deklariert eine `relief_*`-Zahl an der Tabelle vorbei,
-///   - Brücke und `Main.gd` sind verdrahtet.
+///   - welcher Shader welche `relief_*`-Uniform default-frei deklariert und liest,
+///   - die Kodierung deckt die Verschiebung ab,
+///   - der Terrain-Shader liest nur die Backtextur.
+/// Spiegel der Zahlen, „nichts am Register vorbei", Brücke und `Main.gd`
+/// prüft für alle Gruppen gemeinsam `CalibrationRegistryTests` (#213).
 /// Dass die Werte in Godot ankommen und Pinselring, Kameraziel und Pinsel auf
 /// der sichtbaren Fläche arbeiten, prüft End-to-End `game/tests/relief.gd`.
 final class ReliefUniformsTests: XCTestCase {
@@ -33,34 +34,6 @@ final class ReliefUniformsTests: XCTestCase {
         ],
     ]
 
-    func testEveryTableValueComesFromReliefRender() {
-        let mirror: [String: Double] = [
-            "relief_scale": ReliefRender.scale,
-            "relief_strength": ReliefRender.strength,
-            "relief_sharpen": ReliefRender.sharpen,
-            "relief_sharpen_radius": ReliefRender.sharpenRadiusCells,
-            "relief_ridge_cap": ReliefRender.ridgeCap,
-            "relief_geometry_age": ReliefRender.geometryAgeYears,
-            "relief_height_code": ReliefRender.heightCode,
-            "relief_slope_code": ReliefRender.slopeCode,
-            "relief_shade_dark": ReliefRender.shadeDark,
-            "relief_shade_light": ReliefRender.shadeLight,
-            "relief_cavity_gully_gain": ReliefRender.cavityGullyGain,
-            "relief_cavity_ridge_gain": ReliefRender.cavityRidgeGain,
-            "relief_detail_scale": ReliefRender.detailScale,
-            "relief_detail_shade": ReliefRender.detailShade,
-            "relief_detail_normal": ReliefRender.detailNormal,
-        ]
-        XCTAssertEqual(ReliefUniforms.scalars.count, mirror.count,
-                       "Tabellen-Eintrag ohne Spiegel-Zeile (oder umgekehrt)")
-        for entry in ReliefUniforms.scalars {
-            XCTAssertEqual(entry.value, mirror[entry.name],
-                           "\(entry.name) trägt nicht seine ReliefRender-Konstante")
-        }
-        let names = ReliefUniforms.scalars.map(\.name)
-        XCTAssertEqual(names.count, Set(names).count, "Uniform-Namen kollidieren")
-    }
-
     /// Die Kodierung muss die größte vorkommende Verschiebung abbilden: die
     /// Rinnen bleiben unter `strength · scale · hscale` (Summe der Oktaven
     /// < 2 × erste Oktave), die Grate unter ihrem Deckel `ridgeCap` (tanh).
@@ -81,40 +54,6 @@ final class ReliefUniformsTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(shader.count(ofIdentifier: name), 2,
                                             "\(path): \(name) wird deklariert, aber nie gelesen")
             }
-        }
-    }
-
-    func testNoShaderDeclaresAReliefNumberBeyondTheTable() throws {
-        var declared = Set<String>()
-        for path in Self.expected.keys {
-            let shader = try RepoSource.probe(path)
-            let found = try shader.pairs(
-                pattern: "uniform\\s+([A-Za-z0-9_]+)\\s+(relief_[A-Za-z0-9_]+)")
-            for (kind, name) in found {
-                // Textur und Schalter sind keine Kalibrier-Zahlen.
-                if kind.hasPrefix("sampler") || kind == "bool" { continue }
-                XCTAssertEqual(kind, "float", "\(path): \(name) — die Brücke kennt nur float")
-                XCTAssertTrue(ReliefUniforms.scalars.contains { $0.name == name },
-                              "\(path) deklariert \(name) an ReliefUniforms vorbei")
-                declared.insert(name)
-            }
-        }
-        for entry in ReliefUniforms.scalars {
-            XCTAssertTrue(declared.contains(entry.name),
-                          "\(entry.name) wird von keinem Shader deklariert")
-        }
-    }
-
-    func testBridgeAndMainCarryTheTable() throws {
-        let bridge = try RepoSource.extensionSources()
-        for needle in ["func reliefUniformNames", "func reliefUniformValues",
-                       "ReliefUniforms.scalars"] {
-            assertContains(bridge, needle, hint: "Brücke marshallt die Relief-Tabelle")
-        }
-        let main = try RepoSource.probe("game/scripts/Main.gd")
-        for needle in ["reliefUniformNames()", "reliefUniformValues()",
-                       "static func relief_calibration"] {
-            assertContains(main, needle, hint: "Main.gd liest die Relief-Tabelle über die Brücke")
         }
     }
 

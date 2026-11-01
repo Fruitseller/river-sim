@@ -108,7 +108,7 @@ func _check(value: bool, message: String) -> void:
 		print("FAIL: ", message)
 
 func _check_shaders(sim: Object) -> void:
-	var calib: Dictionary = Main.relief_calibration(sim)
+	var calib: Dictionary = Main.calibration(sim, "relief")
 	_check(not calib.is_empty(), "Brücke liefert die Relief-Tabelle")
 	var decl_re := RegEx.new()
 	decl_re.compile("(?m)^uniform\\s+float\\s+(relief_[A-Za-z0-9_]+)([^;]*);")
@@ -237,7 +237,7 @@ func _check_visible_surface(main: Node) -> void:
 	var cj := cell / n
 	var x: float = ci * main.step - main.half
 	var z: float = cj * main.step - main.half
-	var sim_y: float = h[cell] * Main.HSCALE
+	var sim_y: float = h[cell] * main.hscale
 	main.ray_xz = Vector2(x, z)
 	main.ray_y = sim_y
 
@@ -249,7 +249,7 @@ func _check_visible_surface(main: Node) -> void:
 		"Terrain-Material kennt das Geländealter")
 	var young: Vector3 = main._raycast_terrain()
 	_check(young != Vector3.INF and absf(young.y - main._sample_h((young.x + main.half) / main.step,
-		(young.z + main.half) / main.step) * Main.HSCALE) < 0.05,
+		(young.z + main.half) / main.step) * main.hscale) < 0.05,
 		"Junge Welt: Treffer auf der Sim-Höhe, nicht auf der Verformung")
 	# Ab hier wie auf alter Welt: volle Verformung.
 	main.relief_geometry_age = 1e-3
@@ -260,7 +260,7 @@ func _check_visible_surface(main: Node) -> void:
 		return
 	var hit_gx: float = (hit.x + main.half) / main.step
 	var hit_gz: float = (hit.z + main.half) / main.step
-	var hit_sim_y: float = main._sample_h(hit_gx, hit_gz) * Main.HSCALE
+	var hit_sim_y: float = main._sample_h(hit_gx, hit_gz) * main.hscale
 	_check(absf(hit.y - (hit_sim_y + LIFT)) < 0.05,
 		"Treffer auf der sichtbaren Fläche: y %.3f, erwartet %.3f (Sim %.3f)"
 		% [hit.y, hit_sim_y + LIFT, hit_sim_y])
@@ -281,7 +281,7 @@ func _check_visible_surface(main: Node) -> void:
 		"Pinselkuppel sitzt auf der sichtbaren Fläche (y %.3f)" % main.brush_mi.position.y)
 	var rim: Vector3 = main.brush_dome(hit, 1.0, Main.BRUSH_FALLOFF_POWER)[0][0] + hit
 	var rim_sim_y: float = main._sample_h((rim.x + main.half) / main.step,
-		(rim.z + main.half) / main.step) * Main.HSCALE
+		(rim.z + main.half) / main.step) * main.hscale
 	_check(absf(rim.y - (rim_sim_y + LIFT + Main.BRUSH_DOME_LIFT)) < 0.05,
 		"Kuppelrand liegt auf der verschobenen Fläche (y %.3f, Sim %.3f)" % [rim.y, rim_sim_y])
 

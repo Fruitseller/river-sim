@@ -257,8 +257,8 @@ func _check_camera_presets() -> void:
 	for j in 101:
 		for i in 101:
 			sq[j * 101 + i] = 0.5 if (i >= 25 and i <= 75 and j >= 25 and j <= 75) else 0.0
-	var full := Main.frame_land(sq, 101, 0.1, 100.0, 0.0, PI * 0.5 - 1e-4, 60.0, 1.0, 1.0)
-	var half_fill := Main.frame_land(sq, 101, 0.1, 100.0, 0.0, PI * 0.5 - 1e-4, 60.0, 1.0, 0.5)
+	var full := Main.frame_land(sq, 101, 0.1, 100.0, 0.0, PI * 0.5 - 1e-4, 60.0, 1.0, 1.0, main.hscale)
+	var half_fill := Main.frame_land(sq, 101, 0.1, 100.0, 0.0, PI * 0.5 - 1e-4, 60.0, 1.0, 0.5, main.hscale)
 	_check(not full.is_empty() and Vector2(full["target"].x, full["target"].z).length() < 0.01,
 		"Rahmen zielt auf die Mitte der Land-Box")
 	if not full.is_empty():
@@ -269,7 +269,7 @@ func _check_camera_presets() -> void:
 		_check(absf(half_fill["dist"] - 2.0 * full["dist"]) < 0.1,
 			"Rahmen: halbe Füllung, doppelter Abstand")
 	_check(Main.frame_land(PackedFloat32Array([0.0, 0.0, 0.0, 0.0]), 2, 0.1, 10.0, 0.0, 0.6, 55.0,
-		1.0, 0.85).is_empty(), "Ohne Land kein Rahmen")
+		1.0, 0.85, main.hscale).is_empty(), "Ohne Land kein Rahmen")
 
 	main.cam_target = Vector3(10.0, 0.0, -12.0)
 	for c in Main.CAMERA_PRESETS.size():
@@ -355,7 +355,7 @@ func _check_diorama_fill(p: Dictionary, h: PackedFloat32Array, n: int) -> void:
 		for i in range(0, n, 4):
 			if h[j * n + i] <= main.sea:
 				continue
-			var w := Vector3(i * main.step - main.half, h[j * n + i] * Main.HSCALE, j * main.step - main.half)
+			var w := Vector3(i * main.step - main.half, h[j * n + i] * main.hscale, j * main.step - main.half)
 			if main.cam.is_position_behind(w):
 				behind += 1
 				continue

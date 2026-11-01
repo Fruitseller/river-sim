@@ -60,7 +60,7 @@ func _check(value: bool, message: String) -> void:
 		print("FAIL: ", message)
 
 func _check_uniforms(main: Node) -> void:
-	var calib: Dictionary = Main.canopy_calibration(main.sim)
+	var calib: Dictionary = Main.calibration(main.sim, "canopy")
 	_check(not calib.is_empty(), "Brücke liefert die Kronen-Tabelle")
 	var mat: ShaderMaterial = main.terrain_mat
 	_check(not mat.shader.get_shader_uniform_list().is_empty(), "Terrain-Shader muss kompilieren")
@@ -85,7 +85,7 @@ func _check_uniforms(main: Node) -> void:
 ## Materialverteilung (#174 D): Kalibrierung über die Brücke, default-frei
 ## im Terrain-Shader, gesetzt; die Bodenbedeckung kommt mit dem Frame.
 func _check_material(main: Node) -> void:
-	var calib: Dictionary = Main.material_calibration(main.sim)
+	var calib: Dictionary = Main.calibration(main.sim, "material")
 	_check(not calib.is_empty(), "Brücke liefert die Material-Tabelle")
 	var mat: ShaderMaterial = main.terrain_mat
 	var decl_re := RegEx.new()
@@ -134,7 +134,7 @@ func _check_visible_surface(main: Node) -> void:
 		return
 	var gx := float(cell % n) + 0.5
 	var gz := float(cell / n) + 0.5
-	var sim_y: float = main._sample_h(gx, gz) * Main.HSCALE
+	var sim_y: float = main._sample_h(gx, gz) * main.hscale
 	var height: float = main.canopy_calib["canopy_height"]
 	_check(absf(main._surface_y(gx, gz) - (sim_y + height)) < 1e-4,
 		"Sichtbare Fläche liegt auf dem Dach (%.3f, Sim %.3f)" % [main._surface_y(gx, gz), sim_y])

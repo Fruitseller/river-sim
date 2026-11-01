@@ -9,9 +9,8 @@ extends SceneTree
 ## (System-libm), nicht plattformübergreifend.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
+const Main = preload("res://scripts/Main.gd")
 
-const HSCALE := 24.0
-const RIVER_LIFT := 0.35
 const YEARS := 20000.0
 
 var done := false
@@ -32,6 +31,8 @@ func _run() -> void:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
+	# Überhöhung und Band-Anhebung über die Brücke (Issue #213), keine Kopie.
+	var render_contract := Main.calibration(sim, "contract")
 	var y := 0.0
 	while y < YEARS:
 		sim.step(1000.0)
@@ -59,7 +60,7 @@ func _run() -> void:
 	# Texturen aus ihren bandChannelFlags/bandCoverage ableiten. Bis Issue #80
 	# lief das Werkzeug umgekehrt und fingerprintete einmalig einen künstlichen
 	# Zustand mit leeren Banddaten; die korrigierten Hashes sind die neue Baseline.
-	sim.buildRiverRibbons(HSCALE, RIVER_LIFT)
+	sim.buildRiverRibbons(render_contract["heightScale"], render_contract["riverLift"])
 	_hash("terrainColorBytes", sim.terrainColorBytes())
 	_hash("terrainSurfaceBytes", sim.terrainSurfaceBytes())
 	_hash("terrainCoverBytes", sim.terrainCoverBytes())

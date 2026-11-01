@@ -5,7 +5,7 @@
 /// GPU (`game/shaders/relief_bake.gdshader`), einmal je Terrain-Update in eine
 /// Textur; der Terrain-Shader liest daraus Höhe (Vertex), Steigung und
 /// Rinnen-Schattierung (Pixel). Die Zahlen reisen über den Uniform-Weg
-/// (`SimRender.ReliefUniforms` → `SimNode` → `Main.gd`) und stehen in keinem
+/// (`SimRender.CalibrationRegistry` (Gruppe `relief`) → `SimNode` → `Main.gd`) und stehen in keinem
 /// Shader als Kopie.
 ///
 /// Herkunft: Flusstal-Studie #116, Hebel `geometry`, vom Projekteigner mit
