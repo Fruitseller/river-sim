@@ -58,10 +58,16 @@ final class WorldSessionTests: XCTestCase {
         for (name, kind, prepare, apply) in changes {
             let world = session()
             prepare(world)
-            let stale = world.renderFrame(.settled, now: 0).frame.overlays?.colors ?? []
+            // Overlays MUSS der Frame liefern: ein Ersatzwert (`?? []`) ließe
+            // einen ausgebliebenen Material-Upload als grünen Test durchgehen.
+            let stale = try XCTUnwrap(
+                world.renderFrame(.settled, now: 0).frame.overlays,
+                "\(name): der erste .settled-Frame muss Overlays liefern").colors
             try apply(world)
             XCTAssertEqual(world.lastChange, kind, "\(name) meldet die falsche Art")
-            let fresh = world.renderFrame(.settled, now: 1).frame.overlays?.colors ?? [1]
+            let fresh = try XCTUnwrap(
+                world.renderFrame(.settled, now: 1).frame.overlays,
+                "\(name): der zweite .settled-Frame muss Overlays liefern").colors
             XCTAssertNotEqual(fresh, stale,
                               "\(name): Farb-Cache steht noch auf dem alten Stand")
             XCTAssertFalse(fresh.isEmpty, "\(name): Material-Cache leer")
