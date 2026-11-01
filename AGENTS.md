@@ -744,8 +744,8 @@ Gemeinsame Quelltext-Helfer (Issue #83):
 Code-Sicht, eine auskommentierte Zeile der Gegenseite erfüllt keinen
 Vertrag). Die frühere Regel „Zahlen im Shader in Swift-Schreibweise notieren"
 trug nur die mit #92 entfallenen Zahl-Wächter; sie gilt nur noch für die
-wenigen per `glsl(_:)` gepinnten Literale (`Main.gd`-Konstanten,
-`hscale`-Default — Begründung am Helfer).
+wenigen per `glsl(_:)` gepinnten Literale (verbliebene `Main.gd`-Konstanten
+wie `RIBBON_FADE_SECONDS`, `hscale`-Default — Begründung am Helfer).
 
 **Binnenwasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
