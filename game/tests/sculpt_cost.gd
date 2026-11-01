@@ -9,11 +9,17 @@ extends SceneTree
 ## jeweils nach einem frischen Pinselhieb — die Render-Caches der GDExtension
 ## sind dann so schmutzig wie mitten im Strich.
 ##
+## Seit Issue #214 gibt es keine Einzelschritt-Callables mehr: der Frame
+## (`renderFrame`, FRAME_STROKE wie Main.gd am Strich-Nachzug) ist die ganze
+## Rechnung, die der Hauptthread bezahlt. Die Aufschlüsselung nach Pässen lebt
+## headless in SimProfile (simperf --repeat druckt die Pass-Tabelle).
+##
 ## Keine Zusicherungen: die Zeiten gelten je Maschine. Erwartungswerte stehen
 ## bewusst nicht hier, sondern als gemessene Zahlen am Aufrufer in Main.gd.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 
+const FRAME_STROKE := 3   # FrameTrigger.stroke — Main.gd FRAME_STROKE
 const Main = preload("res://scripts/Main.gd")
 const YEARS := 2000.0      # eingelaufenes Flussnetz, nicht der Startzustand
 
@@ -31,8 +37,6 @@ func _process(_delta: float) -> bool:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return true
-	# Überhöhung und Band-Anhebung über die Brücke (Issue #213), keine Kopie.
-	var render_contract := Main.calibration(sim, "contract")
 
 	var n: int = sim.gridSize()
 	var render_grid := Main.terrain_grid_for("balanced", n) # der Standard
@@ -51,15 +55,9 @@ func _process(_delta: float) -> bool:
 		print("%-24s %8.2f ms" % [label, best])
 
 	# Reihenfolge wie in Main.gd: jeden Frame nur die Höhe, der Rest im Nachzug.
+	# FRAME_STROKE ist ungedrosselt — die Uhr spielt für die Messung keine Rolle.
 	measure.call("heightsBytes", func() -> void: sim.heightsBytes())
 	measure.call("recomputeFlow", func() -> void: sim.recomputeFlow())
-	measure.call("filledBytes", func() -> void: sim.filledBytes())
-	measure.call("terrainColorBytes", func() -> void: sim.terrainColorBytes())
-	measure.call("terrainSurfaceBytes", func() -> void: sim.terrainSurfaceBytes())
-	measure.call("waterFieldBytes(1.0)", func() -> void: sim.waterFieldBytes(1.0))
-	# Ohne die Schwanzstufen (Blur/EWMA/Quantisierung) — die macht der GPU-Pass,
-	# s. water_gpu in Main.gd. Die Differenz zur Zeile darüber IST die Ersparnis.
-	measure.call("waterFieldRawBytes", func() -> void: sim.waterFieldRawBytes())
-	measure.call("buildRiverRibbons", func() -> void: sim.buildRiverRibbons(render_contract["heightScale"], render_contract["riverLift"]))
+	measure.call("renderFrame(STROKE)", func() -> void: sim.renderFrame(FRAME_STROKE, 0.0))
 	quit(0)
 	return true

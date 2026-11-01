@@ -55,9 +55,8 @@ final class RectWaterTests: XCTestCase {
         let rounds = 40
         for seed: UInt32 in [1337, 42, 20] {
             let t = Self.world(seed: seed)
-            let render = RenderState(geometryMode: true)
-            render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
-            let mesh = render.riverRibbonMesh
+            let render = builtRibbons(t)
+            let mesh = render.mesh
             let fields = [WaterFieldRenderer(), WaterFieldRenderer()]
             fields[0].legacyWiden = true
             fields[1].legacyWiden = false
@@ -83,14 +82,13 @@ final class RectWaterTests: XCTestCase {
     @discardableResult
     private func report(_ t: Terrain, seed: UInt32, legacy: Bool) -> [UInt8] {
         let n = t.cfg.n, cnt = n * n, sea = t.cfg.sea
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
+        let render = builtRibbons(t)
         let field = WaterFieldRenderer()
         field.legacyWiden = legacy
         let water = field.bytes(t, blend: 1, geometryMode: true,
-                                bandChannelFlags: render.riverRibbonMesh.bandChannelFlags,
-                                bandCoverage: render.riverRibbonMesh.bandCoverage)
-        let cover = render.riverRibbonMesh.bandCoverage
+                                bandChannelFlags: render.bandChannelFlags,
+                                bandCoverage: render.bandCoverage)
+        let cover = render.bandCoverage
         lastCover = cover
         let h = t.h, hf = t.waterLevel
         let cell = t.cfg.cellSize, half = t.cfg.world / 2

@@ -865,6 +865,20 @@ aus `Main.gd`. Nebenbei korrigiert: Zeitraffer und Pinsel-Nachzug bauten die
 Bänder bis dahin NACH dem Wasserfeld, das dann die Bandflags des vorigen Builds
 las. Wächter: `RenderFrameTests`.
 
+**Nur noch der Frame — ERLEDIGT (Nov 2026, Issue #214).**
+`RenderState` führt öffentlich nur noch `frame`/`invalidate` (plus die Werte, die
+das Spiel liest: Diagnose, `deferWaterTail`, `renderGrid` über die Sitzung); die
+reihenfolgeabhängigen Einzelschritte (Bänder bauen/markieren, Wasserfeld,
+Masken, Material, Fahnen) sind `internal` und laufen nur in der Frame-Reihenfolge.
+Die Brücke reicht keine Render-Einzelschritte mehr nach außen — die Welt-Sitzung
+dient den Frame (`renderFrame`/`beginStep`); was nur `game/tests` brauchte, liest
+den Frame (Schlüssel `ribbon_strip_starts`). Die headless Wächter fahren den
+Frame und beobachten interne Zwischenergebnisse über `@testable`; der
+Render-Fingerabdruck (`game/tests/render_fingerprint.gd`, frame-basiert) blieb
+bit-identisch. Nebenbei korrigiert: Das EWMA-Gedächtnis des Wasserfelds
+übernimmt bei Blend 1.0 exakt statt „s += 1·(v − s)" (Fließkomma-Auslöschung;
+die Bit-Gleichheit Hintergrund ↔ synchroner Schritt hängt daran).
+
 **Backlog (nicht priorisiert):**
 - Gekachelte Welt mit LOD + GPU-Compute für die Grid-PDEs (1024²+ in Echtzeit).
 - Klima-Jahreszeiten → schwankender Abfluss, Schneedecke, Hochwasser.

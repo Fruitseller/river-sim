@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 @testable import SimCore
-import SimRender
+@testable import SimRender
 
 /// Ausgelieferte Render-Änderungen bei 60 und 30 J/s, ohne Kamera/GPU.
 /// Aufruf: RS_MEASURE=1 swift test -c release --package-path SimCore

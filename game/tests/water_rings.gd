@@ -1,13 +1,15 @@
 extends SceneTree
 ## Regression: synthetische Altarm-Overlays dürfen keine geschlossenen blauen
-## Ringe mit trockener Mitte erzeugen. Prüft den öffentlichen Render-Pfad über
-## SimNode.waterFieldBytes() beim deterministischen Standard-Seed.
+## Ringe mit trockener Mitte erzeugen. Prüft den öffentlichen Render-Pfad —
+## seit Issue #214 den Frame (`SimNode.renderFrame`, FRAME_SETTLED wie Main.gd)
+## — beim deterministischen Standard-Seed.
 
 const YEARS := 106_000
 const LAKE_CHANNEL := 1
 const VISIBLE_THRESHOLD := 32
 const MIN_HOLE_CELLS := 4
 const MAX_RING_HOLES := 0
+const FRAME_SETTLED := 0
 
 func _initialize() -> void:
 	if not ClassDB.class_exists("SimNode"):
@@ -21,7 +23,7 @@ func _initialize() -> void:
 	for _step in range(int(years / 1000.0)):
 		sim.step(1000.0)
 	var n: int = sim.gridSize()
-	var water: PackedByteArray = sim.waterFieldBytes(1.0)
+	var water: PackedByteArray = sim.renderFrame(FRAME_SETTLED, 1.0)["water"]
 	var rings := _count_enclosed_holes(water, n)
 	sim.free()
 	print("WATER_RINGS year=", years, " holes=", rings, " max=", MAX_RING_HOLES)

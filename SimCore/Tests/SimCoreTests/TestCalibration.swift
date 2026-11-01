@@ -1,6 +1,7 @@
 import Foundation
 
 @testable import SimCore
+@testable import SimRender
 
 /// Weltkantenlänge, gegen die die per-Zell-Erwartungen dieser Suite kalibriert
 /// sind.
@@ -189,4 +190,32 @@ func agedWorld(_ config: SimConfig, years: Double, seed: UInt32 = 1337) -> Terra
     }
     terrain.computeFlow()
     return terrain
+}
+
+// MARK: - Render-Zugriff der Wächter (Issue #214)
+
+/// Die Overlays eines Frames: der EINE öffentliche Weg durch den Render-Zustand
+/// (`RenderState.frame`), mit derselben Reihenfolge und denselben Drosseln wie
+/// im Spiel. `fatalError` statt Rückgabe-Optional: Ein ungedrosselter Frame
+/// ohne Overlays ist ein Vertragsbruch, der Crash ist die Diagnose.
+func frameOverlays(_ render: RenderState, _ terrain: Terrain,
+                   trigger: FrameTrigger = .settled, now: Double = 0) -> RenderFrame.Overlays {
+    guard let overlays = render.frame(terrain, trigger, now: now).overlays else {
+        fatalError("Ein \(trigger)-Frame muss Overlays liefern (Drossel prüfen)")
+    }
+    return overlays
+}
+
+/// Band-Bau am eigenen Renderer (Issue #214): die Wächter reiten nicht mehr auf
+/// den Einzelschritten von `RenderState`, sondern bauen die Bänder direkt am
+/// `RiverRibbonRenderer` — derselbe Bau, den `RenderState.frame` fährt.
+/// Reihenfolge und Drosseln prüft der Frame; die Band-Mechanik prüft der
+/// Renderer.
+@discardableResult
+func builtRibbons(_ terrain: Terrain,
+                  hscale: Double = RenderContract.heightScale,
+                  lift: Double = RenderContract.riverLift) -> RiverRibbonRenderer {
+    let ribbons = RiverRibbonRenderer()
+    ribbons.build(terrain, hscale: hscale, lift: lift)
+    return ribbons
 }

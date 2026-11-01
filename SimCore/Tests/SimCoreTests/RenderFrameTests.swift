@@ -22,12 +22,12 @@ final class RenderFrameTests: XCTestCase {
 
     // MARK: - Reihenfolge
 
-    /// Das Bänder-Ergebnis geht ins Wasserfeld DESSELBEN Frames: bit-gleich zur
-    /// Handreihenfolge „bauen, dann Wasser", und verschieden vom Feld ohne Bänder
-    /// (sonst bewiese die Gleichheit nichts).
+    /// Das Bänder-Ergebnis geht ins Wasserfeld DESSELBEN Frames: bit-gleich zum
+    /// Handbau am eigenen `RiverRibbonRenderer` (Bänder, dann Wasser), und
+    /// verschieden vom Feld ohne Bänder (sonst bewiese die Gleichheit nichts).
     func testRibbonResultReachesTheWaterFieldOfTheSameFrame() throws {
         // n = 192 und 4000 Jahre: die kleinste Paarung mit Bändern (s.
-        // `RenderStateTests.testWaterFieldReadsTheRibbonResultWithoutBeingTold`).
+        // `WaterProtectMaskTests`, `CanopyTests`).
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
 
         let framed = RenderState(geometryMode: true)
@@ -35,20 +35,24 @@ final class RenderFrameTests: XCTestCase {
         let water = try XCTUnwrap(frame.overlays).water
         XCTAssertTrue(frame.ribbonsRebuilt, "Erster Frame muss die Bänder bauen")
 
-        let byHand = RenderState(geometryMode: true)
-        byHand.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
-                                 lift: RenderContract.riverLift)
-        XCTAssertEqual(water, byHand.waterFieldBytes(terrain, blend: 1.0),
-                       "Frame-Wasser weicht von der Handreihenfolge Bänder → Wasser ab")
-        XCTAssertEqual(framed.riverRibbonMesh.vertices, byHand.riverRibbonMesh.vertices)
+        let byHand = builtRibbons(terrain)
+        XCTAssertEqual(water,
+                       WaterFieldRenderer().bytes(terrain, blend: 1.0, geometryMode: true,
+                                                  bandChannelFlags: byHand.bandChannelFlags,
+                                                  bandCoverage: byHand.bandCoverage),
+                       "Frame-Wasser weicht vom Handbau Bänder → Wasser ab")
+        XCTAssertEqual(framed.riverRibbonMesh.vertices, byHand.mesh.vertices)
 
-        let withoutBands = RenderState(geometryMode: true).waterFieldBytes(terrain, blend: 1.0)
+        let withoutBands = WaterFieldRenderer().bytes(terrain, blend: 1.0, geometryMode: true,
+                                                      bandChannelFlags: [], bandCoverage: [])
         XCTAssertNotEqual(water, withoutBands,
                           "Testwelt ohne Bandwirkung — der Vergleich sagt dann nichts")
     }
 
     /// Schutz- und Waldmaske eines Frames sehen dessen Wasser und Bänder:
-    /// bit-gleich zur Handreihenfolge Bänder → Wasser → Schutz → Wald.
+    /// bit-gleich zur Zusammensetzung aus den Renderern desselben Standes
+    /// (Bänder → Wasser → Schutz → Wald) — intern beobachtet, extern gefahren
+    /// nur der Frame (Issue #214).
     func testMasksAreBuiltFromTheSameFrame() throws {
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
         let render = RenderState(geometryMode: true)
@@ -60,12 +64,17 @@ final class RenderFrameTests: XCTestCase {
                                               wetMeadow: render.wetMeadowMask,
                                               barSand: render.barMaterial(terrain).sand))
 
-        let byHand = RenderState(geometryMode: true)
-        byHand.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
-                                 lift: RenderContract.riverLift)
-        _ = byHand.waterFieldBytes(terrain, blend: 1.0)
-        XCTAssertEqual(overlays.forestMask, byHand.forestMaskBytes(terrain),
-                       "Frame-Waldmaske weicht von der Handreihenfolge ab")
+        // Wald: Zielmaske aus denselben Quellen wie im Frame — ein Gedächtnis,
+        // das noch nichts hält, nimmt das Ziel an.
+        let refSurfaces = WetMeadow.apply(
+            TerrainColorRenderer.buffers(terrain, bars: render.barMaterial(terrain)),
+            mask: render.wetMeadowMask).surfaces
+        XCTAssertEqual(overlays.forestMask,
+                       ForestCanopyMask.bytes(terrain, surfaces: refSurfaces,
+                                              protect: overlays.protectMask,
+                                              clump: ForestCanopyMask.clumpField(
+                                                  n: terrain.cfg.n, world: terrain.cfg.world)),
+                       "Frame-Waldmaske weicht von der Zusammensetzung ab")
         XCTAssertTrue(overlays.forestMask.contains { $0 > 0 },
                       "Testwelt ohne Wald — der Vergleich sagt dann nichts")
     }
@@ -129,16 +138,20 @@ final class RenderFrameTests: XCTestCase {
     }
 
     /// GPU-Pfad: die CPU liefert das rohe Feld, der Blend reist zur GPU.
+    /// Die Referenz entsteht direkt an den Renderern (Issue #214) — dieselben
+    /// Bänder, dasselbe Wasser ohne Schwanzstufen.
     func testDeferredWaterTailHandsTheBlendToTheGPU() throws {
         let terrain = agedWorld(renderConfig(n: 96), years: 1000)
         let render = RenderState(geometryMode: true)
         render.deferWaterTail = true
         let overlays = try XCTUnwrap(render.frame(terrain, .timelapse, now: 0).overlays)
         XCTAssertEqual(overlays.waterBlend, RenderState.timelapseWaterBlend)
-        let raw = RenderState(geometryMode: true)
-        raw.buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
-                              lift: RenderContract.riverLift)
-        XCTAssertEqual(overlays.water, raw.waterFieldBytes(terrain, blend: 1.0, deferTail: true))
+        let ribbons = builtRibbons(terrain)
+        XCTAssertEqual(overlays.water,
+                       WaterFieldRenderer().bytes(terrain, blend: 1.0, geometryMode: true,
+                                                  bandChannelFlags: ribbons.bandChannelFlags,
+                                                  bandCoverage: ribbons.bandCoverage,
+                                                  deferTail: true))
     }
 
     // MARK: - Vertrag mit Main.gd
@@ -171,6 +184,14 @@ final class RenderFrameTests: XCTestCase {
                           || main.contains("frame.get(\"\(key)\""),
                           "Main.gd liest den Frame-Schlüssel \(key) nicht")
         }
+        // EINZIGE Ausnahme (Issue #214): die Band-Anfänge gehören zum Mesh
+        // (Struktur wie der Typ-Kanal), aber Main malt einen Dreiecks-Supp —
+        // die Godot-Wächter (river_ribbons, water_geometry) zählen je Band
+        // und lesen sie aus dem Frame; der Einzel-Callable dafür ist weg.
+        assertContains(bridge, "out[Variant(\"ribbon_strip_starts\")]",
+                       hint: "SimNode.packFrame setzt die Band-Anfänge")
+        XCTAssertTrue(main.count(ofIdentifier: "ribbon_strip_starts") == 0,
+                      "Main.gd liest ribbon_strip_starts — gehört den Wächtern (s. oben)")
         for gone in ["filledBytes", "heightBands", "riverRibbonVerts", "riverRibbonIndices"] {
             XCTAssertEqual(main.count(ofIdentifier: gone), 0,
                            "Main.gd holt \(gone) selbst — der Frame bringt den Stand mit")

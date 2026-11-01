@@ -44,12 +44,12 @@ final class MaterialCoverageTests: XCTestCase {
     private func report(_ t: Terrain, seed: UInt32) {
         let n = t.cfg.n
         let h = t.h
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
-        _ = render.waterFieldBytes(t, blend: 1.0)
-        let surfaces = render.terrainSurfaceBytes(t)
-        let covers = render.terrainCoverBytes(t)
-        let protect = render.protectMaskBytes(t)
+        // Ein Frame (Issue #214): Wasser, Material und Masken entstehen
+        // gemeinsam — derselbe Takt wie im Spiel.
+        let overlays = frameOverlays(RenderState(geometryMode: true), t)
+        let surfaces = overlays.surfaces
+        let covers = overlays.covers
+        let protect = overlays.protectMask
         let clump = ForestCanopyMask.clumpField(n: n, world: t.cfg.world)
         let forest = ForestCanopyMask.bytes(t, surfaces: surfaces, protect: protect, clump: clump)
         let legacy = LegacyTerrainColor.buffers(t).surfaces

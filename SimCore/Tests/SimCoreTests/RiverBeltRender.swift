@@ -68,8 +68,7 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
     static func printBarMeadow(_ t: Terrain, seed: UInt32, label: Double) {
         let n = t.cfg.n, cnt = n * n
         let covers = TerrainColorRenderer.buffers(t).covers
-        let render = RenderState(geometryMode: true)
-        let forest = render.forestMaskBytes(t)
+        let forest = frameOverlays(RenderState(geometryMode: true), t).forestMask
         let edges = [WaterRender.barSandYearsLo, WaterRender.barSandYearsHi, .infinity]
         var total = [Int](repeating: 0, count: edges.count), meadow = total
         var land = 0, landMeadow = 0, forestOnBank = 0, bank = 0

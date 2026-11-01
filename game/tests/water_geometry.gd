@@ -19,13 +19,14 @@ extends SceneTree
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 
+# Rohwerte von FrameTrigger (Main.gd FRAME_*; der Unicode-Vertrag dazu pinnt
+# SimCoreTests/RenderFrameTests.testMainUsesTheFrameTriggerValues).
+const FRAME_SETTLED := 0
+
 # Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
 # über die Brücke geholt (Gruppe `water_contract` des Kalibrier-Registers,
 # Issue #213) statt als eigene Konstanten kopiert; die Paarung Name ↔
 # Konstante pinnt SimCoreTests/CalibrationRegistryTests.swift ausführbar.
-# Überhöhung und Band-Anhebung kommen ebenso aus der Gruppe `contract`.
-var hscale: float
-var river_lift: float
 var kind_river: float
 var kind_delta: float
 var kind_oxbow: float
@@ -54,9 +55,6 @@ func _run() -> void:
 		quit(1)
 		return
 	var contract := Main.calibration(sim, "water_contract")
-	var render_contract := Main.calibration(sim, "contract")
-	hscale = render_contract["heightScale"]
-	river_lift = render_contract["riverLift"]
 	kind_river = contract["ribbonKindRiver"]
 	kind_delta = contract["ribbonKindDelta"]
 	kind_oxbow = contract["ribbonKindOxbow"]
@@ -96,31 +94,50 @@ func _run() -> void:
 	if OS.has_environment("RS_SEED"):
 		sim.generate(int(OS.get_environment("RS_SEED")))
 		strict = false
+	# Der letzte Frame mit frischem Band-Bau: seit #214 gibt es keinen
+	# Einzelschritt mehr — die Bänder kommen aus dem Frame (`renderFrame`,
+	# FRAME_SETTLED wie Main.gd am Ende eines Sprungs). Ohne Knoten-Bewegung
+	# baut der Frame nicht neu; der Mesh-Stand der Schleife bleibt dann der
+	# aktuelle, die Geometrie prüft er gegen die frisch gelesenen Felder.
+	var now := 0.0
+	var banded: Dictionary = {}
 	var y := 0.0
 	while y < years:
 		sim.step(1000.0)
 		y += 1000.0
 		if strict and y >= 20000.0:
 			sim.recomputeFlow()
-			sim.buildRiverRibbons(hscale, river_lift)
-			if _has_kind(sim, kind_oxbow) and _has_kind(sim, kind_delta):
+			now += 1.0
+			var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, now)
+			if frame.has("ribbons"):
+				banded = frame
+			if _has_kind(banded, kind_oxbow) and _has_kind(banded, kind_delta):
 				break
 	years = y
 	sim.recomputeFlow()
-
-	var h_before: PackedFloat32Array = sim.heights()
-	var t0 := Time.get_ticks_usec()
-	sim.buildRiverRibbons(hscale, river_lift)
-	var build_ms := (Time.get_ticks_usec() - t0) / 1000.0
-	if sim.heights() != h_before:
-		push_error("FAIL: buildRiverRibbons verändert die Sim-Höhen")
+	now += 1.0
+	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, now)
+	if frame.has("ribbons"):
+		banded = frame
+	if banded.is_empty():
+		push_error("FAIL: kein Frame mit Band-Bau nach %d Jahren" % int(years))
 		quit(1)
 		return
 
-	var verts: PackedVector3Array = sim.riverRibbonVerts()
-	var cols: PackedColorArray = sim.riverRibbonColors()
-	var uv2s: PackedVector2Array = sim.riverRibbonUV2s()
-	var starts: PackedInt32Array = sim.riverRibbonStripStarts()
+	var h_before: PackedFloat32Array = sim.heights()
+	var t0 := Time.get_ticks_usec()
+	now += 1.0
+	sim.renderFrame(FRAME_SETTLED, now)
+	var build_ms := (Time.get_ticks_usec() - t0) / 1000.0
+	if sim.heights() != h_before:
+		push_error("FAIL: der Frame verändert die Sim-Höhen")
+		quit(1)
+		return
+
+	var verts: PackedVector3Array = banded["ribbon_verts"]
+	var cols: PackedColorArray = banded["ribbon_colors"]
+	var uv2s: PackedVector2Array = banded["ribbon_uv2s"]
+	var starts: PackedInt32Array = banded["ribbon_strip_starts"]
 	if verts.size() < 4 or starts.size() < 1:
 		push_error("FAIL: keine Wasser-Geometrie nach %d Jahren" % int(years))
 		quit(1)
@@ -135,7 +152,10 @@ func _run() -> void:
 	var sea: float = sim.seaLevel()
 	var cs := world / float(n - 1)
 	var h: PackedFloat32Array = sim.heights()
-	var wl: PackedFloat32Array = sim.filled()
+	# Seespiegel aus dem JÜNGSTEN Frame (der post-loop-Frame liefert ihn immer);
+	# das Band-Mesh darf älter sein — ohne Bewegung über der Schwelle baut der
+	# Frame nicht neu, und bis zu dieser Schwelle ist die Geometrie standgleich.
+	var wl: PackedFloat32Array = (frame["filled"] as PackedByteArray).to_float32_array()
 	var rec: PackedInt32Array = sim.receivers()
 
 	# --- Zählung je Typ + Deckkraft im vom Raster gemalten Tiefwasser ---------
@@ -162,7 +182,7 @@ func _run() -> void:
 				# Stillwasser-Kodierung: Richtung exakt 0 (COLOR.rg == 0.5).
 				if absf(cols[a].r - 0.5) > 0.002 or absf(cols[a].g - 0.5) > 0.002:
 					oxbow_still = false
-	print("build_ms=", build_ms, " verts=", verts.size(), " bänder=", strip_kind)
+	print("frame_ms=", build_ms, " verts=", verts.size(), " bänder=", strip_kind)
 	print("max_alpha_fluss_im_rasterwasser=", deep_river_alpha,
 		" oxbow_alpha_max=", oxbow_alpha_max)
 
@@ -233,11 +253,11 @@ func _run() -> void:
 		return
 
 	# --- Determinismus des Geometrie-Baus ------------------------------------
-	sim.buildRiverRibbons(hscale, river_lift)
-	if sim.riverRibbonVerts() != verts or sim.riverRibbonColors() != cols:
-		push_error("FAIL: zweiter Bau liefert andere Geometrie (nicht deterministisch)")
-		quit(1)
-		return
+	# Seit Issue #214 gibt es keinen Einzelschritt-Bau mehr, den ein Skript
+	# zweimal erzwingen könnte: ohne Bewegung baut der Frame nicht neu. Der
+	# Determinismus-Nachweis (zweiter Bau == erster Bau) ist auf XCTest
+	# umgezogen: SimCoreTests/RenderStateTests baut denselben Stand zweimal
+	# direkt am `RiverRibbonRenderer`.
 
 	print("WATER_GEOMETRY_OK")
 	quit(0)
@@ -377,10 +397,14 @@ func _is_water(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int
 	return h[k] < sea or _pond(h, wl, sea, k) > pond_contour_lo
 
 
-# Trägt der zuletzt gebaute Band-Puffer mindestens ein Band dieses Typs?
-func _has_kind(sim: Object, kind: float) -> bool:
-	var uv2s: PackedVector2Array = sim.riverRibbonUV2s()
-	var starts: PackedInt32Array = sim.riverRibbonStripStarts()
+# Trägt der letzte Band-Bau mindestens ein Band dieses Typs? Seit #214 aus
+# dem Frame (die Einzelschritt-Callables sind weg); ein Frame ohne „ribbons"
+# hat nicht neu gebaut und sagt nichts.
+func _has_kind(frame: Dictionary, kind: float) -> bool:
+	if not frame.has("ribbons"):
+		return false
+	var uv2s: PackedVector2Array = frame["ribbon_uv2s"]
+	var starts: PackedInt32Array = frame["ribbon_strip_starts"]
 	for s in starts.size():
 		if starts[s] < uv2s.size() and uv2s[starts[s]].x == kind:
 			return true

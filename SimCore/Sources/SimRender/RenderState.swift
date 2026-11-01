@@ -30,8 +30,16 @@ public enum TerrainChange {
 /// Wie die Renderer selbst liest der Typ das Terrain und ändert es nie; die
 /// Physik bleibt vollständig in `SimCore`. Die WELT reist deshalb als Parameter
 /// durch jeden Einstieg und wohnt nicht hier: Besitzer des `Terrain` bleibt die
-/// Brücke — #93 verschiebt den Render-ZUSTAND, nicht die Sim-Ownership, und die
-/// Renderer darunter nehmen das Terrain ohnehin je Aufruf.
+/// Welt-Sitzung — #93 verschiebt den Render-ZUSTAND, nicht die Sim-Ownership,
+/// und die Renderer darunter nehmen das Terrain ohnehin je Aufruf.
+///
+/// Issue #214: Öffentliches Interface sind nur noch `frame` und `invalidate`
+/// plus die Werte, die das Spiel liest (Diagnose, `deferWaterTail`,
+/// `renderGrid` über die Sitzung). Die reihenfolgeabhängigen Einzelschritte
+/// (Bänder bauen/markieren, Wasserfeld, Masken, Material, Fahnen) sind
+/// `internal`: Sie laufen NUR in der Reihenfolge des Frames, und die lässt
+/// sich von außen nicht mehr umgehen. Die headless Wächter beobachten interne
+/// Zwischenergebnisse über `@testable`, fahren aber denselben Frame.
 public final class RenderState {
 
     /// `geometryMode` = malen die Mäander-Hauptläufe und Altarme als
@@ -39,14 +47,16 @@ public final class RenderState {
     /// Legacy-A/B-Schalter `RS_WATER_STAMP` ist damit hier aufgelöst, wo das
     /// Wasserfeld ihn braucht, statt in der Brücke (`Main.gd` liest dieselbe
     /// Umgebungsvariable und baut dann kein Ribbon-Mesh).
-    public let geometryMode: Bool
+    let geometryMode: Bool
 
     /// `geometryMode` ist injizierbar, damit die Wächter beide Pfade fahren
     /// können, ohne die Prozess-Umgebung zu verstellen. Die Umgebung wird EINMAL
     /// hier gelesen statt je Aufruf: sie ändert sich im laufenden Prozess nicht,
     /// und der Schalter darf nicht mitten in einer Sitzung umspringen.
-    public init(geometryMode: Bool = ProcessInfo.processInfo
-                    .environment["RS_WATER_STAMP"] == nil) {
+    /// `internal` (Issue #214): außerhalb von SimRender baut die Welt-Sitzung
+    /// den Zustand mit ihrem Default.
+    init(geometryMode: Bool = ProcessInfo.processInfo
+                .environment["RS_WATER_STAMP"] == nil) {
         self.geometryMode = geometryMode
     }
 
@@ -74,7 +84,8 @@ public final class RenderState {
     private var lastRibbonCheckTime: Double?
 
     /// `RS_WATER_GPU`: das Wasserfeld kommt roh, Blur/EWMA laufen auf der GPU.
-    public var deferWaterTail = false
+    /// Das Spiel setzt ihn über die Welt-Sitzung (`deferWaterTail`).
+    var deferWaterTail = false
 
     private let waterField = WaterFieldRenderer()
     private let ribbons = RiverRibbonRenderer()
@@ -89,7 +100,7 @@ public final class RenderState {
     /// und in die Schutzmaske; ändert sie sich, fällt der Material-Cache.
     private var visibleWetMeadow: [Bool] = []
     /// Nasse Wiese des zuletzt ausgelieferten Wasserfelds (leer vor dem ersten).
-    public var wetMeadowMask: [Bool] { visibleWetMeadow }
+    var wetMeadowMask: [Bool] { visibleWetMeadow }
 
     /// Dichte der Sedimentfahnen (Issue #174 C, `SedimentPlume`), gepuffert
     /// bis zur nächsten Terrain-Änderung.
@@ -236,20 +247,24 @@ public final class RenderState {
     }
 
     // MARK: - Material-Puffer (Farbe + Gewichte, gemeinsam berechnet)
+    //
+    // `internal` seit Issue #214: diese Puffer entstehen im Frame, kurz nach
+    // dem Wasserfeld (dessen nasse Wiese geht ins Material). Ein direkter
+    // Aufruf von außen lieferte einen Stand VOR dem Wasser des Frames.
 
     /// Großräumige Biom-/Höhen-Farbe als RGBA8-Puffer.
-    public func terrainColorBytes(_ terrain: Terrain) -> [UInt8] {
+    func terrainColorBytes(_ terrain: Terrain) -> [UInt8] {
         cachedMaterials(terrain).colors
     }
 
     /// R = Vegetation, G = freier Fels, B = Schnee/Eis, A = Lithologie-Härte.
-    public func terrainSurfaceBytes(_ terrain: Terrain) -> [UInt8] {
+    func terrainSurfaceBytes(_ terrain: Terrain) -> [UInt8] {
         cachedMaterials(terrain).surfaces
     }
 
     /// R = Schutthalde, G = blankes Gletschereis, B = Rohboden,
     /// A = Talboden-Wiese (Issue #174 D).
-    public func terrainCoverBytes(_ terrain: Terrain) -> [UInt8] {
+    func terrainCoverBytes(_ terrain: Terrain) -> [UInt8] {
         cachedMaterials(terrain).covers
     }
 
@@ -264,7 +279,8 @@ public final class RenderState {
     // MARK: - Sedimentfahnen (Issue #174 C)
 
     /// Dichtefeld der Sedimentfahnen (Float32, n×n) — s. `SedimentPlume`.
-    public func sedimentPlume(_ terrain: Terrain) -> [Float] {
+    /// `internal` seit Issue #214: entsteht im Frame.
+    func sedimentPlume(_ terrain: Terrain) -> [Float] {
         if let plumeCache { return plumeCache }
         let field = SedimentPlume.field(terrain)
         plumeCache = field
@@ -274,7 +290,9 @@ public final class RenderState {
     // MARK: - Mäandergürtel (Issue #174 C2)
 
     /// Gürtel-Material (Issue #174 C2) — s. `BarMaterial`.
-    public func barMaterial(_ terrain: Terrain) -> BarMaterial.Field {
+    /// `internal` seit Issue #214: Farbe und Schutzmaske lesen DASSELBE Feld,
+    /// das im Frame entsteht.
+    func barMaterial(_ terrain: Terrain) -> BarMaterial.Field {
         if let barCache { return barCache }
         let field = BarMaterial.field(terrain)
         barCache = field
@@ -292,7 +310,11 @@ public final class RenderState {
     /// `bandChannelFlags`/`bandCoverage` sind das ECHTE Bau-Ergebnis des
     /// letzten Ribbon-Builds, und nur Kanäle MIT Band werden im Feld zum Saum
     /// gedeckelt (Issue #34).
-    public func waterFieldBytes(_ terrain: Terrain, blend: Double,
+    ///
+    /// `internal` seit Issue #214: der Aufruf setzt `visibleWater` und verwirft
+    /// die Masken — im Frame läuft er VOR den Masken, ein direkter Aufruf von
+    /// außen lieferte einen Stand ohne dieses Wasser.
+    func waterFieldBytes(_ terrain: Terrain, blend: Double,
                                 deferTail: Bool = false) -> [UInt8] {
         let bytes = waterField.bytes(terrain, blend: blend, geometryMode: geometryMode,
                                      bandChannelFlags: ribbons.bandChannelFlags,
@@ -319,7 +341,8 @@ public final class RenderState {
     /// gebauten Flussbänder und einen Saum. Vor dem ersten `waterFieldBytes`
     /// einer Welt schützt sie nur die Bänder; der Wasser-Upload folgt in
     /// `Main.gd` im selben Frame und verwirft diesen Stand wieder.
-    public func protectMaskBytes(_ terrain: Terrain) -> [UInt8] {
+    /// `internal` seit Issue #214: im Frame entsteht sie NACH dem Wasser.
+    func protectMaskBytes(_ terrain: Terrain) -> [UInt8] {
         if let protectMaskCache { return protectMaskCache }
         let mask = WaterProtectMask.bytes(n: terrain.cfg.n,
                                           bandCoverage: ribbons.bandCoverage,
@@ -335,7 +358,8 @@ public final class RenderState {
     /// Waldmaske des Kronendachs (R8-Puffer, n×n) — s. `ForestCanopyMask`.
     /// Folgt Terrain, Wasser-Upload und Band-Bau wie die Schutzmaske; wo der
     /// Wald zurückkommt, wächst er über Sim-Jahre nach (Issue #167).
-    public func forestMaskBytes(_ terrain: Terrain) -> [UInt8] {
+    /// `internal` seit Issue #214: im Frame entsteht sie nach der Schutzmaske.
+    func forestMaskBytes(_ terrain: Terrain) -> [UInt8] {
         if let forestMaskCache { return forestMaskCache }
         let n = terrain.cfg.n
         if clumpField.count != n * n || clumpWorld != terrain.cfg.world {
@@ -360,9 +384,9 @@ public final class RenderState {
 
     // MARK: - Diagnose
 
-    /// Setzt den Vergleichspunkt der Δ-Karte auf den aktuellen Zustand.
     /// Abfluss-Dichte fürs Shader-Detail (R8) — s. `WaterFieldRenderer.flowDetailField`.
-    public func flowDetailBytes(_ terrain: Terrain) -> [UInt8] {
+    /// `internal` seit Issue #214: reist im Frame (`flow`).
+    func flowDetailBytes(_ terrain: Terrain) -> [UInt8] {
         waterField.flowDetailField(terrain)
     }
 
@@ -377,30 +401,36 @@ public final class RenderState {
     }
 
     // MARK: - Wasser-Geometrie (Band-Pfad)
+    //
+    // `internal` seit Issue #214: Bänder bauen und markieren läuft im Frame
+    // (`rebuildRibbonsIfDue`, Deckel und Delta-Schwelle inklusive). Ein
+    // direkter Bau von außen hätte die Reihenfolge Bänder → Wasser → Masken
+    // umgangen.
 
-    public func riversMaxDelta(_ terrain: Terrain) -> Double { ribbons.maxDelta(terrain) }
+    func riversMaxDelta(_ terrain: Terrain) -> Double { ribbons.maxDelta(terrain) }
 
-    public func markRiversBuilt(_ terrain: Terrain) { ribbons.markBuilt(terrain) }
+    func markRiversBuilt(_ terrain: Terrain) { ribbons.markBuilt(terrain) }
 
     /// Baut die Bänder der Mäander-Hauptläufe, Delta-Arme und Altarme.
     /// `hscale` = Render-Überhöhung, `lift` = Anhebung über Gelände (Welt-Y).
-    public func buildRiverRibbons(_ terrain: Terrain, hscale: Double, lift: Double) {
+    func buildRiverRibbons(_ terrain: Terrain, hscale: Double, lift: Double) {
         ribbons.build(terrain, hscale: hscale, lift: lift)
         dropMasks()
     }
 
-    /// Letztes Band-Bauergebnis als POD-Puffer (die Brücke wrappt sie in
-    /// `Packed*Array`).
-    public var riverRibbonMesh: RibbonMesh { ribbons.mesh }
+    /// Letztes Band-Bauergebnis als POD-Puffer (die Welt-Sitzung verpackt es
+    /// in den Frame).
+    var riverRibbonMesh: RibbonMesh { ribbons.mesh }
     /// Zahl der versiegenden Band-Stände (Diagnose, s. `RiverRibbonRenderer.ghostCount`).
-    public var ribbonGhostCount: Int { ribbons.ghostCount }
-    public var ribbonGrowthStats: (young: Int, exempt: Int) { ribbons.growthStats }
-    public var ribbonMatureCoverage: [Double] { ribbons.matureCoverageForDiagnostics }
+    var ribbonGhostCount: Int { ribbons.ghostCount }
+    var ribbonGrowthStats: (young: Int, exempt: Int) { ribbons.growthStats }
+    var ribbonMatureCoverage: [Double] { ribbons.matureCoverageForDiagnostics }
 
     /// Auflösung des Terrain-Render-Gitters (Main.gd `terrain_grid`): die
     /// Land-Bänder sampeln ihre Höhen von der SICHTBAREN Oberfläche statt von
-    /// den Sim-Höhen. 0 = unbekannt = volle Auflösung.
-    public var renderGrid: Int {
+    /// den Sim-Höhen. 0 = unbekannt = volle Auflösung. Das Spiel setzt ihn
+    /// über die Welt-Sitzung (`WorldSession.renderGrid`).
+    var renderGrid: Int {
         get { ribbons.renderGrid }
         set { ribbons.renderGrid = newValue }
     }

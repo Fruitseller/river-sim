@@ -50,12 +50,11 @@ final class BeltLakeTests: XCTestCase {
 
     static func report(_ t: Terrain) {
         let n = t.cfg.n, cnt = n * n, sea = t.cfg.sea
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
+        let render = builtRibbons(t)
         let field = WaterFieldRenderer()
         let water = field.bytes(t, blend: 1, geometryMode: true,
-                                bandChannelFlags: render.riverRibbonMesh.bandChannelFlags,
-                                bandCoverage: render.riverRibbonMesh.bandCoverage)
+                                bandChannelFlags: render.bandChannelFlags,
+                                bandCoverage: render.bandCoverage)
         // Gürtel-Maske: Scheibe um jeden wandernden Knoten (Kanal + Bank-Streifen
         // + 1 Breite Rand) und jeder Altarm-Knoten; Kanal-Maske: halbe Breite.
         var belt = [Bool](repeating: false, count: cnt)
@@ -145,11 +144,10 @@ final class BeltLakeTests: XCTestCase {
     /// magenta, Gürtel-Läufe rot, Altarme gelb, Bänke sandfarben).
     static func dumpMap(_ t: Terrain, to path: String) {
         let n = t.cfg.n, sea = t.cfg.sea
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
+        let render = builtRibbons(t)
         let water = WaterFieldRenderer().bytes(t, blend: 1, geometryMode: true,
-                                bandChannelFlags: render.riverRibbonMesh.bandChannelFlags,
-                                bandCoverage: render.riverRibbonMesh.bandCoverage)
+                                bandChannelFlags: render.bandChannelFlags,
+                                bandCoverage: render.bandCoverage)
         var px = [UInt8](repeating: 0, count: n * n * 3)
         func put(_ k: Int, _ r: Double, _ g: Double, _ b: Double) {
             px[k * 3] = UInt8(max(0, min(255, b * 255))); px[k * 3 + 1] = UInt8(max(0, min(255, g * 255)))
@@ -255,11 +253,10 @@ final class BeltLakeTests: XCTestCase {
         let n = t.cfg.n, ws = t.cfg.world, sea = t.cfg.sea
         let ci = Int(((tgt[0] + 0.5 * ws) / ws * Double(n)).rounded())
         let cj = Int(((tgt[1] + 0.5 * ws) / ws * Double(n)).rounded())
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
-        let cover = render.riverRibbonMesh.bandCoverage
+        let render = builtRibbons(t)
+        let cover = render.bandCoverage
         let water = WaterFieldRenderer().bytes(t, blend: 1, geometryMode: true,
-                                bandChannelFlags: render.riverRibbonMesh.bandChannelFlags,
+                                bandChannelFlags: render.bandChannelFlags,
                                 bandCoverage: cover)
         if env["RS_TIME"] == "1" {
             // Kosten des Wasserfelds je Aufruf (Median über 15, ein Renderer
@@ -269,7 +266,7 @@ final class BeltLakeTests: XCTestCase {
             for _ in 0..<15 {
                 let c0 = Date()
                 _ = field.bytes(t, blend: 0.15, geometryMode: true,
-                                bandChannelFlags: render.riverRibbonMesh.bandChannelFlags, bandCoverage: cover)
+                                bandChannelFlags: render.bandChannelFlags, bandCoverage: cover)
                 ms.append(-c0.timeIntervalSinceNow * 1000)
             }
             print(String(format: "ZEIT WaterFieldRenderer.bytes Median %.2f ms", ms.sorted()[7]))
@@ -323,7 +320,7 @@ final class BeltLakeTests: XCTestCase {
             }
             return d
         }
-        let flags = render.riverRibbonMesh.bandChannelFlags
+        let flags = render.bandChannelFlags
         var bandSeed = [Bool](repeating: false, count: n * n), loneLine = [Bool](repeating: false, count: n * n)
         var bandLine = [Bool](repeating: false, count: n * n)
         for k in 0..<(n * n) where k < cover.count && cover[k] >= 0.3 { bandSeed[k] = true }
@@ -371,7 +368,7 @@ final class BeltLakeTests: XCTestCase {
         } }
         // Band-Stützpunkte im Ausschnitt: Deckkraft je Strip (Mittel/Min/Max,
         // Anteil unter 0,1) — warum fehlt das Band über einem Raster-Lauf?
-        let mesh = render.riverRibbonMesh, half = ws / 2, cs = t.cfg.cellSize
+        let mesh = render.mesh, half = ws / 2, cs = t.cfg.cellSize
         for (si, start) in mesh.stripStarts.enumerated() {
             let s0 = Int(start)
             let s1 = si + 1 < mesh.stripStarts.count ? Int(mesh.stripStarts[si + 1]) : mesh.vertices.count

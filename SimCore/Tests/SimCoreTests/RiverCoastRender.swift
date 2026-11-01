@@ -39,12 +39,11 @@ final class RiverCoastRenderTests: XCTestCase {
     // MARK: §A Wasserkomponenten
 
     private func measureComponents(_ t: Terrain) {
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
+        let render = builtRibbons(t)
         let field = WaterFieldRenderer()
         let water = field.bytes(t, blend: 1, geometryMode: true,
-                        bandChannelFlags: render.riverRibbonMesh.bandChannelFlags,
-                        bandCoverage: render.riverRibbonMesh.bandCoverage)
+                        bandChannelFlags: render.bandChannelFlags,
+                        bandCoverage: render.bandCoverage)
         let bins = [0, 10, 25, 50, 100, 200, 400, 800, 1600, Int.max]
         print("§A Tümpel (stehendes Wasser, 4er-Komponenten): Anzahl / Zellen")
         var line = "| Größe |", sep = "| :--- |"
@@ -72,7 +71,7 @@ final class RiverCoastRenderTests: XCTestCase {
         for k in 0..<(n * n) where water[k * 4] >= lo { vis[k] = true }
         var seen = [Bool](repeating: false, count: n * n)
         var sizes: [Int] = []
-        let cover = render.riverRibbonMesh.bandCoverage
+        let cover = render.bandCoverage
         var nearBand = 0, smallFragments = 0
         for s0 in 0..<(n * n) where vis[s0] && !seen[s0] {
             var stack = [s0]; seen[s0] = true; var c = 0
@@ -99,7 +98,7 @@ final class RiverCoastRenderTests: XCTestCase {
         }
         print(row)
         let lakeVis = (0..<(n * n)).filter { water[$0 * 4 + 1] >= byte01(WaterRender.lakeGateHi) }.count
-        print("See-Gate voll (G ≥ lakeGateHi): \(lakeVis) Zellen, Bänder: \(render.riverRibbonMesh.stripStarts.count)")
+        print("See-Gate voll (G ≥ lakeGateHi): \(lakeVis) Zellen, Bänder: \(render.mesh.stripStarts.count)")
         print("Rest-Flecken am Band zurückgenommen: \(field.remnantStats.count) / \(field.remnantStats.reduce(0, +)) Zellen")
         let meadow = field.wetMeadow.filter { $0 }.count
         print("nasse Wiese bei wetMeadowMaxCells = \(WaterRender.wetMeadowMaxCells): \(meadow) Zellen")

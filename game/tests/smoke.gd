@@ -2,7 +2,7 @@ extends SceneTree
 ## Headless-Smoke-Test der GDExtension — GPU-frei ausführbar mit:
 ##   godot --headless --path game --script res://tests/smoke.gd
 ## Prüft: Library aktuell (Build-Stempel), SimNode registriert, Felder haben n*n
-## Einträge, step() verändert das Terrain, Jahr läuft, Sculpting wirkt.
+## Einträge, step() verändert das Terrain, Jahr läuft, der Pinsel hebt an.
 ## Exit-Code != 0 bei Fehler.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
@@ -51,8 +51,10 @@ func _run() -> void:
 	# Render-Vertrag: Makrofarbe und Materialgewichte sind je ein RGBA8-Texel
 	# pro Sim-Zelle. Ein fehlender Kanal würde erst als schwarzes Terrain auf der
 	# GPU auffallen; deshalb Größe und tatsächliches Materialsignal hier prüfen.
-	var color_bytes: PackedByteArray = sim.terrainColorBytes()
-	var surface_bytes: PackedByteArray = sim.terrainSurfaceBytes()
+	# Seit Issue #214 über den Frame (derselbe Weg wie Main.gd).
+	var frame: Dictionary = sim.renderFrame(0, 1.0)  # FRAME_SETTLED
+	var color_bytes: PackedByteArray = frame["color"]
+	var surface_bytes: PackedByteArray = frame["surface"]
 	if color_bytes.size() != n * n * 4 or surface_bytes.size() != n * n * 4:
 		push_error("FAIL: Terrain-Materialpuffer haben nicht n*n*4 Bytes")
 		quit(1)
@@ -78,16 +80,20 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Sculpting: Zentrum anheben.
+	# Welt-Formung über das Werkzeug: Zentrum anheben. Seit Issue #214 gibt es
+	# keinen eigenen sculpt-Callable mehr (das Spiel hebt über den Pinsel);
+	# Modus 0 (`BrushTool.raise`) fährt auf Swift-Seite denselben
+	# `terrain.sculpt(dir: 1)`-Weg. Das Verhalten von sculpt selbst pins
+	# WorldSessionTests headless an der Sitzung.
 	var before: PackedFloat32Array = sim.heights()
 	var c := (n / 2) * n + (n / 2)
 	for k in range(50):
-		sim.sculpt(float(n) / 2.0, float(n) / 2.0, 12.0, 1.0)
+		sim.brush(0, float(n) / 2.0, float(n) / 2.0, 12.0, 1.0, 0.0)  # Heben
 	sim.recomputeFlow()
 	var after: PackedFloat32Array = sim.heights()
 	print("sculpt_delta_center=", after[c] - before[c])
 	if after[c] - before[c] <= 0.0:
-		push_error("FAIL: sculpt hebt nicht an")
+		push_error("FAIL: Heben wirkt nicht am Zentrum")
 		quit(1)
 		return
 
@@ -262,6 +268,11 @@ func _check_sculpt_owns_clock() -> bool:
 ##  - Determinismus durch die Brücke: derselbe Schritt synchron (nach dem
 ##    Laden derselben Welt) ergibt dieselben Höhen, Seespiegel und dasselbe
 ##    Wasser. Die vollen Frames vergleicht SimCore (`BackgroundJobTests`).
+##  - Beide Seiten starten nach `loadWorld`: `.replaced` beendet die Band-
+##    Übergänge (Geisterarme, Einwachsen) — sonst erbte der Hintergrund-Schritt
+##    Übergänge aus der Historie der Sitzung, die synchrone Gegenprobe nach
+##    dem Laden nicht mehr hat. Die Übergänge selbst pins
+##    `TimelapseTransitionTests` headless.
 ## Lädt am Ende die Welt aus `abs_save` zurück, der Aufrufer prüft danach das Laden.
 func _check_background_step(sim: Object, abs_save: String) -> bool:
 	const SETTLED := 0  # FRAME_SETTLED: Wasser ohne Überblenden, vergleichbar
@@ -269,6 +280,12 @@ func _check_background_step(sim: Object, abs_save: String) -> bool:
 	if sim.stepInFlight() or not (sim.finishStep() as Dictionary).is_empty():
 		push_error("FAIL: ohne beginStep ist ein Schritt unterwegs")
 		ok = false
+	# Auf den GESPEICHERTEN Stand zurücksetzen: beide Seiten vergleichen dann
+	# denselben Schritt ab demselben Welt- UND Render-Zustand (s. Doc oben).
+	var reset: String = sim.loadWorld(abs_save)
+	if not reset.is_empty():
+		push_error("FAIL: loadWorld: %s" % reset)
+		return false
 	var year0: float = sim.currentYear()
 	sim.beginStep(15.0, SETTLED, 100.0)
 	if not sim.stepInFlight():

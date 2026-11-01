@@ -1,18 +1,28 @@
 extends SceneTree
 ## Headless-Wächter für die Fluss-Ribbons (Issue #31) — GPU-frei ausführbar mit:
 ##   godot --headless --path game --script res://tests/river_ribbons.gd
-## Prüft den GDExtension-Vertrag des Ribbon-Pfads:
-##  - buildRiverRibbons liefert konsistente Puffer (Verts/Colors/UVs/Indices),
+## Prüft den GDExtension-Vertrag des Ribbon-Pfads — seit Issue #214 alles über
+## den Frame (`SimNode.renderFrame`, derselbe Weg wie `Main.gd`):
+##  - der Frame liefert konsistente Band-Puffer (Verts/Colors/UVs/Indices),
 ##    Breite folgt dem Abfluss (√Q-Gesetz), Bandkanten dem lokalen Gelände,
 ##    Alpha bleibt längs kohärent und jedes Band erreicht Strahler-Ordnung 3
-##  - Dirty-Vertrag: vor dem ersten Build „riesig", nach markRiversBuilt 0,
-##    nach einem Sim-Schritt wieder > 0 (Migration bewegt die Zentrumslinien)
-##  - Determinismus-Nachweis auf Extension-Ebene: buildRiverRibbons ändert die
-##    Sim-Physik nicht (Höhen bit-gleich vor/nach dem Build)
+##  - Dirty-Vertrag: der erste Frame baut die Bänder (kein Vergleichsstand =
+##    Riesen-Delta), ohne Bewegung baut der nächste nicht neu, nach einem
+##    Sim-Schritt wieder (Migration bewegt die Zentrumslinien)
+##  - Determinismus-Nachweis auf Extension-Ebene: der Frame-Bau ändert die
+##    Sim-Physik nicht (Höhen bit-gleich vor/nach dem Frame)
 ## Exit-Code != 0 bei Fehler.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
+
+# Rohwerte von FrameTrigger (Main.gd FRAME_*; der Unicode-Vertrag dazu pinnt
+# SimCoreTests/RenderFrameTests.testMainUsesTheFrameTriggerValues). SETTLED
+# baut die Bänder ungedrosselt — genau der Weg, den Main.gd am Strich-Ende fährt.
+const FRAME_SETTLED := 0
+
+## Monotone Uhr der Drosseln: aufsteigend, damit kein Deckel einen Frame schluckt.
+var now := 0.0
 
 # Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
 # über die Brücke geholt (Gruppe `water_contract` des Kalibrier-Registers,
@@ -62,27 +72,33 @@ func _run() -> void:
 	# Mäander brauchen etwas Laufzeit, bis Kanäle getraced und migriert sind.
 	sim.step(4000.0)
 
-	# Dirty-Vertrag: vor dem ersten Build muss das Delta den Rebuild erzwingen.
-	var d0: float = sim.riversMaxDelta()
-	print("delta_initial=", d0)
-	if d0 < 1.0:
-		push_error("FAIL: riversMaxDelta vor dem ersten Build zu klein")
+	# Dirty-Vertrag: vor dem ersten Build ist das Delta „riesig" (kein
+	# Vergleichsstand) — der erste Frame MUSS die Bänder bauen.
+	now += 1.0
+	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, now)
+	if not frame.has("ribbons"):
+		push_error("FAIL: erster Frame baut die Bänder nicht (Delta-Meldung versagt)")
 		quit(1)
 		return
+	print("delta_initial=", "rebuild")
 
-	# Physik-Neutralität: der Geometrie-Build darf die Höhen nicht anfassen.
+	# Physik-Neutralität: der Frame-Bau darf die Höhen nicht anfassen. (Ob der
+	# zweite Frame dabei neu baut, sagt er nicht — ein laufender Übergang darf
+	# weiterbauen; die Delta-0-Seite des Vertrags pins der direkte Renderer-Test
+	# `RenderStateTests` am `RiverRibbonRenderer`.)
 	var h_before: PackedFloat32Array = sim.heights()
-	sim.buildRiverRibbons(hscale, river_lift)
+	now += 1.0
+	sim.renderFrame(FRAME_SETTLED, now)
 	var h_after: PackedFloat32Array = sim.heights()
 	if h_before != h_after:
-		push_error("FAIL: buildRiverRibbons verändert die Sim-Höhen")
+		push_error("FAIL: der Frame verändert die Sim-Höhen")
 		quit(1)
 		return
 
-	var verts: PackedVector3Array = sim.riverRibbonVerts()
-	var cols: PackedColorArray = sim.riverRibbonColors()
-	var uvs: PackedVector2Array = sim.riverRibbonUVs()
-	var idx: PackedInt32Array = sim.riverRibbonIndices()
+	var verts: PackedVector3Array = frame["ribbon_verts"]
+	var cols: PackedColorArray = frame["ribbon_colors"]
+	var uvs: PackedVector2Array = frame["ribbon_uvs"]
+	var idx: PackedInt32Array = frame["ribbon_indices"]
 	print("verts=", verts.size(), " indices=", idx.size())
 	if verts.size() < 4:
 		push_error("FAIL: keine Ribbon-Geometrie nach 4000 Jahren")
@@ -115,8 +131,8 @@ func _run() -> void:
 	# Senke, Delta-Arm, Altarm) liegen flach auf dem WASSERSPIEGEL — sonst
 	# kippte das Band am Ufer aus der Wasserfläche heraus.
 	var heights: PackedFloat32Array = sim.heights()
-	var levels: PackedFloat32Array = sim.filled()
-	var uv2s: PackedVector2Array = sim.riverRibbonUV2s()
+	var levels: PackedFloat32Array = (frame["filled"] as PackedByteArray).to_float32_array()
+	var uv2s: PackedVector2Array = frame["ribbon_uv2s"]
 	var n: int = sim.gridSize()
 	var world: float = sim.worldSize()
 	var sea: float = sim.seaLevel()
@@ -213,7 +229,7 @@ func _run() -> void:
 	# die alten verknäulten „zu viele Flüsse"-Felder nachzeichnen.
 	# Gilt für FLUSS-Bänder; Delta-Arme und Altarme (Issue #34) haben keine
 	# eigene Strahler-Ordnung, ihre Bänder werden hier also übersprungen.
-	var starts: PackedInt32Array = sim.riverRibbonStripStarts()
+	var starts: PackedInt32Array = frame["ribbon_strip_starts"]
 	var max_alpha_jump := 0.0
 	var river_strips := 0
 	for s in starts.size():
@@ -267,20 +283,13 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Nach markRiversBuilt ist das Delta exakt 0 (nichts hat sich bewegt) …
-	sim.markRiversBuilt()
-	var d1: float = sim.riversMaxDelta()
-	print("delta_after_mark=", d1)
-	if d1 != 0.0:
-		push_error("FAIL: Delta nach markRiversBuilt nicht 0")
-		quit(1)
-		return
-
-	# … und nach einem Sim-Schritt wieder > 0 (Mäander migrieren).
+	# … und nach einem Sim-Schritt baut der nächste Frame wieder (Mäander
+	# migrieren, das Delta übersteigt die Rebuild-Schwelle).
 	sim.step(1000.0)
-	var d2: float = sim.riversMaxDelta()
-	print("delta_after_step=", d2)
-	if d2 <= 0.0:
+	now += 1.0
+	var d2: Dictionary = sim.renderFrame(FRAME_SETTLED, now)
+	print("delta_after_step=", "rebuild" if d2.has("ribbons") else "still")
+	if not d2.has("ribbons"):
 		push_error("FAIL: Migration meldet kein Delta")
 		quit(1)
 		return

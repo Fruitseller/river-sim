@@ -7,11 +7,24 @@ extends SceneTree
 ## Physik-Änderung nachweisen — vorher laufen lassen, umbauen, nachher laufen
 ## lassen, Zeilen vergleichen. Keine Zusicherungen: die Hashes gelten je Maschine
 ## (System-libm), nicht plattformübergreifend.
+##
+## Seit Issue #214 liest das Werkzeug ALLES aus dem Frame (`SimNode.renderFrame`):
+## die Einzelschritt-Callables der Brücke sind weg, und der Frame ist der einzige
+## Weg — derselbe, den `Main.gd` fährt. Vorher/Nachher-Vergleiche gegen die alte
+## Fassung (eigene Hand-Reihenfolge, Farben vor dem ersten Wasser-Aufruf und
+## damit ohne nasse Wiese) sind NICHT gültig: beide Seiten müssen dieselbe
+## Werkzeugfassung gegen ihren Bau laufen lassen.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
-const Main = preload("res://scripts/Main.gd")
+
+# Rohwerte von FrameTrigger (Main.gd FRAME_*; der Unicode-Vertrag dazu pinnt
+# SimCoreTests/RenderFrameTests.testMainUsesTheFrameTriggerValues).
+const FRAME_SETTLED := 0
+const FRAME_TIMELAPSE := 2
 
 const YEARS := 20000.0
+# Über der Overlay-Drossel (0,30 s): der zweite Frame muss durchkommen.
+const SECOND_FRAME_NOW := 1.0
 
 var done := false
 
@@ -31,8 +44,6 @@ func _run() -> void:
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
-	# Überhöhung und Band-Anhebung über die Brücke (Issue #213), keine Kopie.
-	var render_contract := Main.calibration(sim, "contract")
 	var y := 0.0
 	while y < YEARS:
 		sim.step(1000.0)
@@ -41,49 +52,59 @@ func _run() -> void:
 
 	print("year=", sim.currentYear())
 	var hbytes: PackedByteArray = (sim.heights() as PackedFloat32Array).to_byte_array()
-	var fbytes: PackedByteArray = (sim.filled() as PackedFloat32Array).to_byte_array()
-	# Der Textur-Pfad zieht die Felder seit Issue #53 als ROHE Bytes aus SimNode
-	# statt sie in GDScript zu konvertieren. Beide Wege müssen byte-gleich sein —
-	# das ist die einzige Zusicherung hier und die einzige, die auch ohne
-	# Vorher-Stand greift.
+	# Der Textur-Pfad zieht die Höhen seit Issue #53 als ROHE Bytes aus SimNode
+	# statt sie in GDScript zu konvertieren — das ist die einzige Zusicherung
+	# hier, die auch ohne Vorher-Stand greift.
 	if sim.heightsBytes() != hbytes:
 		push_error("FAIL: heightsBytes != heights().to_byte_array()")
 		quit(1)
 		return
-	if sim.filledBytes() != fbytes:
-		push_error("FAIL: filledBytes != filled().to_byte_array()")
+	_hash("heights", hbytes)
+
+	# EIN Frame liefert alle Puffer in Produktions-Reihenfolge
+	# (`RenderState.frame`): Bänder → Wasser → Farbe/Material/Deckung → Abfluss
+	# → Schutzmaske → Waldmaske → Sedimentfahnen. Der erste Frame nach dem Lauf
+	# MUSS die Bänder bauen (kein Vergleichsstand → Riesen-Delta).
+	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, 0.0)
+	if not frame.has("ribbons"):
+		push_error("FAIL: erster Frame baut keine Fluss-Bänder")
 		quit(1)
 		return
-	_hash("heights", hbytes)
-	_hash("filled", fbytes)
-	# Produktions-Reihenfolge seit Issue #34: zuerst die Bänder bauen, dann die
-	# Texturen aus ihren bandChannelFlags/bandCoverage ableiten. Bis Issue #80
-	# lief das Werkzeug umgekehrt und fingerprintete einmalig einen künstlichen
-	# Zustand mit leeren Banddaten; die korrigierten Hashes sind die neue Baseline.
-	sim.buildRiverRibbons(render_contract["heightScale"], render_contract["riverLift"])
-	_hash("terrainColorBytes", sim.terrainColorBytes())
-	_hash("terrainSurfaceBytes", sim.terrainSurfaceBytes())
-	_hash("terrainCoverBytes", sim.terrainCoverBytes())
-	# Wasserfeld zweimal: der zweite Aufruf durchläuft die EWMA-Puffer aus dem
-	# ersten (persistenter Render-Zustand) — beide Hashes gehören zum Vertrag.
-	_hash("waterFieldBytes(1.0)", sim.waterFieldBytes(1.0))
-	_hash("waterFieldBytes(0.15)", sim.waterFieldBytes(0.15))
-	_hash("heightDifferenceBytes", sim.heightDifferenceBytes(0.01))
+	_hash("filled", frame["filled"])
+	_hash("terrainColorBytes", frame["color"])
+	_hash("terrainSurfaceBytes", frame["surface"])
+	_hash("terrainCoverBytes", frame["cover"])
+	_hash("waterFieldBytes(1.0)", frame["water"])
+	_hash("flowDetailBytes", frame["flow"])
+	_hash("sedimentPlume", frame["plume"])
+
+	# Wasserfeld ein zweites Mal — der Zeitraffer-Takt mit dem kalibrierten
+	# Blend 0.15: derselbe Weg dauert die EWMA-Puffer aus dem ersten Frame
+	# fort, beide Hashes gehören zum Vertrag. Die Zeitraffer-Drossel umgeht der
+	# Werkzeuglauf über die Uhr des Aufrufers (SECOND_FRAME_NOW).
+	var second: Dictionary = sim.renderFrame(FRAME_TIMELAPSE, SECOND_FRAME_NOW)
+	if not second.has("water"):
+		push_error("FAIL: zweiter Frame trotz freier Drossel ohne Wasser")
+		quit(1)
+		return
+	_hash("waterFieldBytes(0.15)", second["water"])
+	_hash("heightDifferenceBytes", (sim.heightDifferenceBytes(0.01) as PackedByteArray))
 	print("debugTerrainStats=", sim.debugTerrainStats())
-	_hash("protectMaskBytes", sim.protectMaskBytes())
-	_hash("forestMaskBytes", sim.forestMaskBytes())
-	_hash("ribbonVerts", (sim.riverRibbonVerts() as PackedVector3Array).to_byte_array())
-	_hash("ribbonColors", (sim.riverRibbonColors() as PackedColorArray).to_byte_array())
-	_hash("ribbonUVs", (sim.riverRibbonUVs() as PackedVector2Array).to_byte_array())
-	_hash("ribbonUV2s", (sim.riverRibbonUV2s() as PackedVector2Array).to_byte_array())
-	_hash("ribbonIndices", (sim.riverRibbonIndices() as PackedInt32Array).to_byte_array())
-	_hash("ribbonStripStarts", (sim.riverRibbonStripStarts() as PackedInt32Array).to_byte_array())
-	print("riversMaxDelta=", sim.riversMaxDelta())
+	_hash("protectMaskBytes", second["protect"])
+	_hash("forestMaskBytes", second["forest"])
+
+	_hash("ribbonVerts", (frame["ribbon_verts"] as PackedVector3Array).to_byte_array())
+	_hash("ribbonColors", (frame["ribbon_colors"] as PackedColorArray).to_byte_array())
+	_hash("ribbonUVs", (frame["ribbon_uvs"] as PackedVector2Array).to_byte_array())
+	_hash("ribbonUV2s", (frame["ribbon_uv2s"] as PackedVector2Array).to_byte_array())
+	_hash("ribbonIndices", (frame["ribbon_indices"] as PackedInt32Array).to_byte_array())
+	_hash("ribbonStripStarts", (frame["ribbon_strip_starts"] as PackedInt32Array).to_byte_array())
 	print("RENDER_FINGERPRINT_OK")
 	quit(0)
 
-func _hash(label: String, bytes: PackedByteArray) -> void:
+func _hash(label: String, bytes) -> void:
+	var packed: PackedByteArray = bytes
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
-	ctx.update(bytes)
-	print(label, " len=", bytes.size(), " sha256=", ctx.finish().hex_encode())
+	ctx.update(packed)
+	print(label, " len=", packed.size(), " sha256=", ctx.finish().hex_encode())

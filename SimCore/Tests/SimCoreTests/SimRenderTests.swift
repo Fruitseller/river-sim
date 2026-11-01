@@ -128,9 +128,10 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(buffers.colors, [], "Leeres Terrain muss leeren Farbpuffer liefern")
     XCTAssertEqual(buffers.surfaces, [], "Leeres Terrain muss leeren Oberflächenpuffer liefern")
 
-    let renderState = RenderState()
-    XCTAssertEqual(renderState.terrainColorBytes(empty), [], "RenderState muss leeren Farbpuffer liefern")
-    XCTAssertEqual(renderState.terrainSurfaceBytes(empty), [], "RenderState muss leeren Oberflächenpuffer liefern")
+    let renderState = RenderState(geometryMode: true)
+    let emptyOverlays = frameOverlays(renderState, empty)
+    XCTAssertEqual(emptyOverlays.colors, [UInt8](), "Der Frame muss leeren Farbpuffer liefern")
+    XCTAssertEqual(emptyOverlays.surfaces, [UInt8](), "Der Frame muss leeren Oberflächenpuffer liefern")
 
     let populated = Terrain(config: renderConfig(), seed: 1337)
     let populatedBuffers = TerrainColorRenderer.buffers(populated)

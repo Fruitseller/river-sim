@@ -14,14 +14,15 @@ final class RasterBeltTests: XCTestCase {
     /// genau das, was die Regeln entscheiden (der Blur verbreitert danach
     /// jeden Lauf um eine Zelle, auch auf eine Nachbar-Bank).
     ///
+    /// Direkt am `RiverRibbonRenderer` (Issue #214): die Fixture braucht nur
+    /// den Band-Bau, keine Reihenfolge.
+    ///
     /// `nonisolated(unsafe)` (Issue #201): `Terrain`/`RibbonMesh` sind nicht
     /// `Sendable`, die Fixture wird EINMAL gebaut und danach nur gelesen —
     /// XCTest ruft die Testmethoden einer Klasse seriell auf.
     nonisolated(unsafe) private static let world: (terrain: Terrain, mesh: RibbonMesh, water: [UInt8]) = {
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
-        let render = RenderState(geometryMode: true)
-        render.buildRiverRibbons(terrain, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
-        let mesh = render.riverRibbonMesh
+        let mesh = builtRibbons(terrain).mesh
         let water = WaterFieldRenderer().bytes(terrain, blend: 1, geometryMode: true,
                                                bandChannelFlags: mesh.bandChannelFlags,
                                                bandCoverage: mesh.bandCoverage, deferTail: true)

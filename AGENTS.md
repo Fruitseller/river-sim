@@ -376,7 +376,11 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    Render-Berechnung, kein Render- oder Welt-Zustand. `Terrain`,
    `RenderState` und den Hintergrund-Job des Zeitraffers besitzt die Sitzung;
    sie wartet vor jedem Zugriff einen laufenden Schritt ab (s. Datenfluss
-   unten).
+   unten). Seit Issue #214 bedient die Brücke den Render-Zustand ausschließlich
+   über den Frame (`renderFrame`/`beginStep`) — die Einzel-Callables für
+   Bänder, Wasserfeld, Masken und Material sind weg; was nur `game/tests`
+   brauchte, lesen die aus dem Frame (der `ribbon_strip_starts`-Schlüssel
+   gehört ihnen).
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
    derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input; das Aussehen der
    Bedienung steht in EINEM Theme, `ui/glass_theme.tres` (samt Radius und
@@ -478,6 +482,15 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   die Drosseln laufen über die Uhr des Aufrufers und sind damit headless
   prüfbar. Wächter: `SimCoreTests/RenderFrameTests.swift` (inkl. Probe, dass
   `Main.gd` die Einzelaufrufe nicht wieder selbst ordnet).
+  Seit Issue #214 sind `frame` und `invalidate` (plus die Diagnose-Lese-
+  Einstiege) das GANZE öffentliche Interface: die reihenfolgeabhängigen
+  Einzelschritte — Bänder bauen/markieren, Wasserfeld, Schutzmaske,
+  Waldmaske, Material, Sedimentfahnen — sind `internal` und laufen nur in
+  der Frame-Reihenfolge; von der Brücke aus lässt sie sich nicht mehr
+  umgehen. Die Wächter fahren den Frame und BEOBACHTEN interne
+  Zwischenergebnisse (`riverRibbonMesh`, `wetMeadowMask`) über `@testable`;
+  Band-Mechanik (Delta, Snapshot, Rebuild-Sentinel) prüft
+  `RenderStateTests` direkt am `RiverRibbonRenderer`.
 
 - `WaterFieldRenderer`: Raster-Wasser als `[UInt8]`; malt auch die
   Abzweige, an denen der D8-Lauf ein Band zwischen zwei Kopplungen verlässt
@@ -552,7 +565,10 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   `recomputeFlow`, `load`) meldet ihre `TerrainChange` (`.replaced`/
   `.advanced`/`.edited`). Generisch über die Verpackung des Frames
   (`WorldSession<Packed>`, in Godot das Frame-Dictionary), damit
-  godot-frei. Wächter: `SimCoreTests/WorldSessionTests.swift`.
+  godot-frei. Seit Issue #214 reicht die Sitzung keine Render-Einzelschritte
+  mehr nach außen: Der Frame (`renderFrame`/`beginStep`) ist der einzige
+  Weg, dazu Diagnose, `deferWaterTail` und `renderGrid`. Wächter:
+  `SimCoreTests/WorldSessionTests.swift`.
 - `BackgroundJob`: höchstens EIN Hintergrund-Job mit einem Ergebnis-Platz,
   die ganze Nebenläufigkeit des Zeitraffers (`WorldSession.beginStep`). Ein
   Besitzer-Thread; `isReady` blockiert nie, `wait`/`take` zählen ihre
