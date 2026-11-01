@@ -296,7 +296,11 @@ final class CalibrationRegistryTests: XCTestCase {
         // Bis #213 standen Überhöhung und Band-Anhebung als Literale in
         // Main.gd (`HSCALE`, `RIVER_LIFT`), von Grep-Wächtern auf die Zahl
         // gehalten. Jetzt holt GDScript sie aus der Gruppe `contract`; welche
-        // Zahl sie tragen, pinnt der Spiegel oben.
+        // Zahl sie tragen, pinnt der Spiegel oben. Seit #214 fahren die
+        // Godot-Werkzeuge den Frame: WER die Werte selbst braucht
+        // (river_ribbons.gd rechnet die Band-Höhen nach), holt sie über die
+        // Brücke — die übrigen kapselt der Frame, für sie bleibt „keine Kopie"
+        // (kein `RIVER_LIFT`/`HSCALE`-Literal) als ganzer Vertrag.
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "calibration(sim, \"contract\")[\"heightScale\"]",
                        hint: "Main.gd holt die Überhöhung über die Brücke")
@@ -306,11 +310,15 @@ final class CalibrationRegistryTests: XCTestCase {
         for path in ["game/tests/render_fingerprint.gd", "game/tests/sculpt_cost.gd",
                      "game/tests/river_ribbons.gd", "game/tests/water_geometry.gd"] {
             let script = try RepoSource.probe(path)
-            assertContains(script, "Main.calibration(sim, \"contract\")",
-                           hint: "\(path) holt Überhöhung und Band-Anhebung über die Brücke")
             XCTAssertFalse(script.contains("RIVER_LIFT"),
                            "\(path): Band-Anhebung nicht als Kopie")
+            XCTAssertFalse(script.contains("HSCALE"),
+                           "\(path): Überhöhung nicht als Kopie")
         }
+        let ribbons = try RepoSource.probe("game/tests/river_ribbons.gd")
+        assertContains(ribbons, "Main.calibration(sim, \"contract\")",
+                       hint: "river_ribbons.gd rechnet Band-Höhen selbst nach "
+                           + "und holt Überhöhung und Anhebung über die Brücke")
     }
 
     func testGodotGuardsReadTheWaterContractOverTheBridge() throws {
