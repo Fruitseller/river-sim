@@ -39,7 +39,8 @@ final class RenderFrameTests: XCTestCase {
         XCTAssertEqual(water,
                        WaterFieldRenderer().bytes(terrain, blend: 1.0, geometryMode: true,
                                                   bandChannelFlags: byHand.bandChannelFlags,
-                                                  bandCoverage: byHand.bandCoverage),
+                                                  bandCoverage: byHand.bandCoverage,
+                                                  bandOwner: byHand.bandOwner),
                        "Frame-Wasser weicht vom Handbau Bänder → Wasser ab")
         XCTAssertEqual(framed.riverRibbonMesh.vertices, byHand.mesh.vertices)
 
