@@ -6442,6 +6442,8 @@ public final class Terrain {
             // Bezug: tiefste Sohle des Querschnitts je Knoten, über ±2 Knoten
             // gemittelt — nur gebraucht, wo ein flacher Knoten in ±2 liegt.
             var floorH = needsLateral ? [Double](repeating: 0, count: c) : []
+            var hasFloor = needsLateral ? [Bool](repeating: false, count: c) : []
+            let sillCut = cfg.meanderBeltSillCutDepths
             let fLo = part == 1 ? max(0, firstMob! - 2) : 0
             let fHi = part == 1 ? min(c - 1, lastMob! + 2) : (c - 1)
             if needsLateral && fLo <= fHi {
@@ -6458,6 +6460,27 @@ public final class Terrain {
                         s += 0.5
                     }
                     floorH[i] = lo
+                    hasFloor[i] = true
+                }
+                // Schwellen schneiden (`meanderBeltSillCutDepths`): die Sohle liegt
+                // nie über dem Wasserspiegel stromauf (Füllhöhe `hf`: auf einem See
+                // dessen Spiegel, sonst das Gelände). Eine Schwelle bis zu so vielen
+                // Bankfull-Tiefen bekommt ein Ziel eine Viertel-Tiefe unter diesem
+                // Spiegel, damit D8 ihr folgt; ein flacher Lauf ohne Schwelle bleibt
+                // unberührt. Das Ziel hängt nur vom Zustand ab, nicht von der Zahl
+                // der Stempel (dt-Invarianz über `rel`).
+                if sillCut > 0 {
+                    var runMin = Double.infinity
+                    for i in 0..<c {
+                        let depth = depthK * g.width[i]
+                        if i >= fLo && i <= fHi && hasFloor[i] {
+                            let excess = floorH[i] - runMin
+                            if excess > 0 && excess <= sillCut * depth {
+                                floorH[i] = runMin - 0.25 * depth
+                            }
+                        }
+                        runMin = min(runMin, phf[cell(nodes[i].x, nodes[i].z)])
+                    }
                 }
             }
             var budget = 0.0

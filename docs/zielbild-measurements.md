@@ -1122,6 +1122,18 @@ Offen (Sim, Paket B): das Erben des Abflusses in `refreshBeltDischarge` lässt
 abgekoppelte Linien weiter wandern und ihre Rinne stempeln; der Fix
 versteckt nur das Band.
 
+Nachtrag 2026-11-06 (Befund des Eigners, Seed 1337 / Jahr 532: „die Arme
+breiten sich aus, aber teilweise wird kein Wasser gerendert"): das
+ausgeblendete Band ließ das gestempelte Gürtelbett als trockene Sandrinne
+stehen. Die Sim schneidet jetzt Schwellen im Gürtelbett bis
+`SimConfig.meanderBeltSillCutDepths` (3) Bankfull-Tiefen unter den
+Wasserspiegel stromauf (#187 Vorschlag 1); D8 folgt der Rinne.
+Hauptlauf-Knoten (Abfluss ≥ 2000 Zellen) ohne Wasser, Seeds 1337/42/20,
+Jahre 500–20.000: 2,7–13,9 % → 0,2–7,6 %, davon durch `fadeUphill`
+1,2–7,4 % → 0–2,7 %. Mäander-Zeitmittel 9–13: Masken unverändert
+(Zahlen am Config-Wert). `fadeUphill` bleibt für die Rücken über der
+Schnitt-Grenze.
+
 ### Ursache in der Sim: Versuche (nicht übernommen)
 
 Auftrag nach dem Render-Fix: das Erben des Abflusses in

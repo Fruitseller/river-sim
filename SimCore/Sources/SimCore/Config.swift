@@ -1836,6 +1836,28 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// Physik-Wert, nicht aus `RenderContract.heightScale` abgeleitet (dieselbe
     /// Begründung wie bei `channelTargetDepth`).
     public var meanderBeltDepthPerWidth: Double = 0.0021
+    /// Schwellen im Gürtelbett (Issue #187, Vorschlag 1): ein Fluss fließt nicht
+    /// bergauf. Ragt die Querschnittssohle eines wandernden Knotens über den
+    /// tiefsten Wasserspiegel stromauf (Füllhöhe `hf`, auf einem See also
+    /// dessen Spiegel), um höchstens so viele Bankfull-Tiefen, zielt der
+    /// Stempel eine Viertel-Tiefe unter diesen Spiegel; D8 folgt dann der
+    /// Gürtelrinne. Höhere Rücken bleiben der Kopplung (Avulsion) überlassen.
+    /// Ohne das folgte die Sohle dem Gelände, über das die Linie wandert, das
+    /// D8-Wasser nahm einen anderen Weg, `fadeUphill` blendete das Band aus,
+    /// und zurück blieb ein trockenes Sandbett (Befund des Eigners 2026-11-06,
+    /// Seed 1337 / Jahr 532).
+    ///
+    /// Verworfen: laufendes Minimum der SOHLE statt des Spiegels mit Deckel
+    /// „3 Tiefen je Stempel" — schnitt Seeauslässe bis auf den Seegrund
+    /// (Seeanteil dt 10: 0,005 statt 0,05) und hing über die Stempelzahl am
+    /// Aufruftakt (`DtInvariance`, `BeltCoupling` rot).
+    ///
+    /// GEMESSEN (Produktion, 100-Jahr-Schritte, Hauptlauf-Knoten mit Abfluss
+    /// ≥ 2000 Zellen, Seeds 1337/42/20, Jahre 500/1500/5000/20000): ohne Wasser
+    /// 2,7–13,9 % → 0,2–7,6 %, davon durch `fadeUphill` 1,2–7,4 % → 0–2,7 %.
+    /// Mäander-Zeitmittel (Punkte 9–13, `RS_VARIANT=sill=0` gegen 3, dt 1000):
+    /// Masken je Seed und Fenster unverändert. 0 = aus.
+    public var meanderBeltSillCutDepths: Double = 3.0
     /// Wie weit der Kolk zur Außenkurve wandert: Profil
     /// `(1 − η²)(1 + skew·a·η)`, `a = min(1, |Krümmung| · b · Gain)`, nie über
     /// die Bank-Oberkante (ab κ·η < −1 läge das Ziel sonst über bankfull).

@@ -50,6 +50,7 @@ final class MeanderBeltCalibration: XCTestCase {
             case "relax": c.meanderBeltRelaxYears = v
             case "depth": c.meanderBeltDepthPerWidth = v
             case "chq": c.meanderChuteMinCells = v
+            case "sill": c.meanderBeltSillCutDepths = v
             case "braid": c.braidingEnabled = v > 0
             case "coup": c.meanderBeltCoupling = v > 0
             case "cadence": c.meanderBeltCouplingYears = v
