@@ -463,6 +463,30 @@ final class WorldSnapshotTests: XCTestCase {
                        config.preErodeParams.rounding.1.bitPattern)
     }
 
+    /// Der Schwellen-Schnitt (`meanderBeltSillCutDepths`, #187) reist als
+    /// NICHT-OPTIONALES Feld in der synthetisierten Config-Kodierung: eine
+    /// Datei ohne den Schlüssel ist nicht dekodierbar. Der Versions-Sprung auf
+    /// 12 lehnt Dateien vor diesem Feld vorher ab (klare Meldung statt
+    /// Plist-Fehler); dieser Wächter beweist die andere Richtung — die
+    /// Dekodierung selbst liefert keinen stillen Default, sollte das Feld
+    /// je zu `decodeIfPresent` verweichlicht werden (Review-Befund zu #222:
+    /// derselbe Fall gilt für jedes frühere Config-Feld ab Version 4).
+    func testConfigWithoutTheSillCutKeyDoesNotDecode() throws {
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        let config = SimConfig()
+        var blob = try PropertyListSerialization.propertyList(
+            from: try encoder.encode(config), options: [], format: nil) as! [String: Any]
+        XCTAssertNotNil(blob.removeValue(forKey: "meanderBeltSillCutDepths"),
+                      "Schlüssel fehlt im Plist — Feldname geändert?")
+        let stripped = try PropertyListSerialization.data(
+            fromPropertyList: blob, format: .binary, options: 0)
+        XCTAssertThrowsError(try PropertyListDecoder().decode(SimConfig.self, from: stripped)) { error in
+            XCTAssertTrue("\(error)".contains("meanderBeltSillCutDepths"),
+                          "Dekodierungs-Fehler nennt den fehlenden Schlüssel nicht: \(error)")
+        }
+    }
+
     /// Vollständigkeits-Wächter für die HANDGESCHRIEBENE Serialisierung der
     /// Pre-Erosions-Parameter (`ErosionFilter.Params`, Extension am Ende von
     /// `WorldSnapshot.swift`). Sie ist die einzige Stelle im Config-Graphen ohne

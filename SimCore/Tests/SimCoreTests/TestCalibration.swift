@@ -147,6 +147,28 @@ let calibrationDeltaTrapFraction: Double = 0
 /// `Glacier.testIceIsFramerateIndependentInProduction`).
 let calibrationIceAvalancheSlopeHi: Double = 0
 
+/// Schwellen-Kappung des Gürtelbetts (`SimConfig.meanderBeltSillCutDepths`,
+/// #187) der Testwelten: aus (0), der Stand vor der Kappung.
+///
+/// Dieselbe Doktrin wie `calibrationDeltaTrapFraction`: die Kappung senkt die
+/// Sohle des Gürtelbetts, wo die Linie über Rücken und Bänke wandert, und
+/// verschiebt damit die Realisierung jeder Welt mit Mäandergürtel — nicht
+/// deren Mechanik. Auf dem Mac blieb die Suite grün, auf dem Linux-Runner
+/// (andere System-libm, andere Realisierung) kippte die Ratenbegrenzungs-Probe
+/// in `Lithology.testEndorheicMechanicsSurviveLithology` (Sprung/Spanne
+/// 0,01008/0,01346 = 0,75 gegen Schranke 0,6) und die Mündungs-Realisierung in
+/// `WaterRendererTests.testRiverBandsReachTheSeaAtFullWidthAndOpacity`
+/// (Seed 42: eine Mündung biegt am Übergang zur Mündungs-Kette auf 24 %
+/// Halbbreite bei voller Deckkraft; am Mac biegt dieselbe Mündung nicht).
+/// Beide Wächter messen ihre eigene Mechanik (Becken-Bilanz, RENDER-Übergabe
+/// an der Wasserlinie), nicht die Kappung — gepinnt wie der Lawinen-Abgang
+/// des Firns (`pinIceBeforeAvalanche`). Die Kappung selbst ist gemessen
+/// (`SimConfig.meanderBeltSillCutDepths`, Wächter des Band-Verlaufs und der
+/// Zeitmittel in `MeanderBeltCalibration` mit dem Varianten-Schlüssel `sill`),
+/// und die Zielbild-Abnahme läuft weiter auf der Produktion inklusive
+/// Kappung — nur deren Aue-Schranke ist neu gemessen (dort, mit A/B).
+let calibrationMeanderBeltSillCutDepths: Double = 0
+
 extension SimConfig {
     /// Eis-Physik der Mechanik-Testwelten: der Stand VOR dem Lawinen-Abgang
     /// (`calibrationIceAvalancheSlopeHi`) UND vor der breiteren Schleifspur

@@ -107,7 +107,11 @@ public enum WorldSnapshot {
     /// Version 11 (Issue #174, Gletscher): die Stellschrauben des Lawinen-Abgangs
     /// des Firns (`iceAvalancheSlopeLo` ff.) reisen über die Config-Kodierung mit
     /// (Begründung wie bei Version 4).
-    public static let version: UInt32 = 11
+    /// Version 12 (Issue #187): die Stellschraube der Schwellen-Kappung im
+    /// Gürtelbett (`meanderBeltSillCutDepths`) reist über die synthetisierte
+    /// Config-Kodierung mit — eine Version-11-Datei hat den Schlüssel nicht
+    /// (Begründung wie bei Version 4).
+    public static let version: UInt32 = 12
 
     /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
