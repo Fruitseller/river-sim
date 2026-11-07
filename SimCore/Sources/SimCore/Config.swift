@@ -1856,7 +1856,12 @@ public struct SimConfig: Sendable, Codable, Equatable {
     /// ≥ 2000 Zellen, Seeds 1337/42/20, Jahre 500/1500/5000/20000): ohne Wasser
     /// 2,7–13,9 % → 0,2–7,6 %, davon durch `fadeUphill` 1,2–7,4 % → 0–2,7 %.
     /// Mäander-Zeitmittel (Punkte 9–13, `RS_VARIANT=sill=0` gegen 3, dt 1000):
-    /// Masken je Seed und Fenster unverändert. 0 = aus.
+    /// Masken je Seed und Fenster unverändert. Die Kappung vertieft die
+    /// Gürtelrinne und hebt die Aue-Zerklüftung (Zielbild Punkt 14) meist um
+    /// 1–10 % (A/B Jahr 20.000, Kappung 3 gegen 0 — Mac 0,0014660/0,0015625/
+    /// 0,0015768 → 0,0014817/0,0016418/0,0015660, Linux 0,0014007/0,0015419/
+    /// 0,0015009 → 0,0015464/0,0016577/0,0015712); die Abnahme-Schranke steht
+    /// deshalb auf 0,0017 (vorher 0,00165). 0 = aus.
     public var meanderBeltSillCutDepths: Double = 3.0
     /// Wie weit der Kolk zur Außenkurve wandert: Profil
     /// `(1 − η²)(1 + skew·a·η)`, `a = min(1, |Krümmung| · b · Gain)`, nie über

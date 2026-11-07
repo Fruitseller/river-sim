@@ -1134,6 +1134,29 @@ Jahre 500–20.000: 2,7–13,9 % → 0,2–7,6 %, davon durch `fadeUphill`
 (Zahlen am Config-Wert). `fadeUphill` bleibt für die Rücken über der
 Schnitt-Grenze.
 
+Nachtrag 2026-11-07 (Review zu PR #222): Die Kappung verschiebt die
+Realisierung jeder Welt mit Gürtel. Konsequenzen, alle am selben Stand
+A/B gemessen (Kappung 3 gegen 0):
+
+- Aue-Zerklüftung (Punkt 14, Jahr 20.000) steigt meist um 1–10 %: Mac
+  0,0014660/0,0015625/0,0015768 → 0,0014817/0,0016418/0,0015660,
+  Linux 0,0014007/0,0015419/0,0015009 → 0,0015464/0,0016577/0,0015712.
+  Die Abnahme-Schranke ist neu gemessen: 0,00165 → 0,0017 (Mac Seed 42
+  mit Kappung 0,0016418 lag nur 0,5 % darunter; die Krusten-Grenze bleibt
+  0,0020 und mehr).
+- Linux-Kipper, die an ihrer MECHANIK nicht schuld waren, pinnen die
+  Kappung aus (`TestCalibration.calibrationMeanderBeltSillCutDepths`):
+  die Ratenbegrenzungs-Probe in Lithologie (Sprung/Spanne 0,75 gegen
+  Schranke 0,6) und der Mündungs-Wächter (Seed 42: eine Mündung biegt
+  am Übergang zur Mündungs-Kette auf 24 % Halbbreite bei voller
+  Deckkraft; am Mac biegt dieselbe Mündung nicht). Wie beim Lawinen-
+  Abgang des Firns und beim Delta-Pass.
+- Der Bank-Wächter (`RasterBeltTests`) prüft seitdem die Abzweig-
+  Freistellung nach, die der Renderer schon immer trifft: Ein D8-Lauf,
+  der nicht zum Band zurückkehrt, ist keine Abkürzung über die Bank und
+  wird als Avulsions-Wasser gemalt (Linux-Realisierung: ein Abzweig mit
+  39-Zellen-Patch und 528–1285 Zellen Einzugsgebiet kreuzt die Bank).
+
 ### Ursache in der Sim: Versuche (nicht übernommen)
 
 Auftrag nach dem Render-Fix: das Erben des Abflusses in

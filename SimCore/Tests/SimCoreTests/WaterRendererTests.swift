@@ -606,7 +606,18 @@ final class WaterRendererTests: XCTestCase {
   /// ins Meer, solche mit Deckkraft < 90 % oder Halbbreite < 50 % von stromauf,
   /// und davon die spitzen (< 25 %).
   private func mouthBands(seed: UInt32) -> (checked: Int, failures: [String], spikes: [String]) {
-    let terrain = Terrain(config: .production, seed: seed,
+    var config = SimConfig.production
+    // Schwellen-Kappung des Gürtelbetts gepinnt
+    // (`calibrationMeanderBeltSillCutDepths`): dieser Wächter zielt auf die
+    // RENDER-Übergabe an der Wasserlinie (Deckkraft-Halt, Breite, See-
+    // Übergabe), nicht auf die Mündungsgeometrie einer Realisierung. Die
+    // Kappung (#187) verschiebt, welche Mündung am Übergang zur Mündungs-
+    // Kette biegt (Seed 42, Linux: eine Mündung auf 24 % Halbbreite bei
+    // voller Deckkraft von 1,00; am Mac biegt dieselbe Mündung nicht, 100 %).
+    // Die Render-Paarung bleibt die ausgelieferte; gepinnt ist nur die
+    // Physik-Realisierung, wie bei den übrigen Gürtel-Stellschrauben.
+    config.meanderBeltSillCutDepths = calibrationMeanderBeltSillCutDepths
+    let terrain = Terrain(config: config, seed: seed,
                           settleYears: SimConfig.productionSettleYears)
     terrain.step(dtYears: 1000)
     terrain.computeFlow()

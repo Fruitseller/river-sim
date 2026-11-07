@@ -373,6 +373,13 @@ final class Lithology: XCTestCase {
         // (Sprung 0.01117 gegen Schranke 0.01048), ohne etwas am Becken-Mechanismus
         // zu ändern — gepinnt wie die übrigen Eis-Stellschrauben (`TestCalibration`).
         c.pinIceBeforeAvalanche()
+        // Schwellen-Kappung des Gürtelbetts (#187): wie der Lawinen-Abgang
+        // verschiebt sie über das Gürtelbett die Realisierung dieser Welt, ohne
+        // den Becken-Mechanismus zu ändern (Sprung/Spanne 0,01008/0,01346 =
+        // 0,75 gegen Schranke 0,6 auf dem Linux-Runner, mit Pin
+        // 0,00511/0,01971 = 0,26; Mac blieb in beiden Läufen grün) —
+        // gepinnt (`calibrationMeanderBeltSillCutDepths`, Begründung dort).
+        c.meanderBeltSillCutDepths = calibrationMeanderBeltSillCutDepths
         var ref = c; ref.lithologyEnabled = false                  // derselbe Arm wie der #11-Wächter
 
         /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).

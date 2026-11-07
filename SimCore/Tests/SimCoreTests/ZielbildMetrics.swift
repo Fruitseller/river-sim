@@ -684,19 +684,28 @@ final class ZielbildLandformTests: XCTestCase {
             XCTAssertGreaterThan(t.meander.chuteCutoffs, 0, "Seed \(seed): kein Chute-Cutoff bis Jahr 20.000")
             let bars = t.barAge.filter { $0 >= 0 }.count
             XCTAssertGreaterThan(bars, 1000, "Seed \(seed): kaum Gleithang-Bänke (\(bars) Zellen)")
-            // Schranke 0,00165 (vorher 0,00156, das Maximum nach Paket A). Punkt 14
-            // zielt auf eine verkrustete Aue (der geparkte `floodplainAggradation`
-            // machte sie 2,7-mal zerklüfteter), nicht auf das Relief des Gürtels
-            // selbst. Gleiche Welt mit und ohne Gürtel, Jahr 20.000, Stand
-            // 694d31e: Mac 0,001466 / 0,001562 / 0,001577 gegen 0,001329 /
-            // 0,001537 / 0,001371 ohne Gürtel (×1,10 / ×1,02 / ×1,15), Linux
-            // 0,001401 / 0,001542 / 0,001501 gegen 0,001333 / 0,001533 / 0,001374:
-            // Rinne, Bänke und Scroll-Rippen bringen 1–15 % Laplace mit. Die feste
-            // Zahl aus Paket A stand auf einer anderen Physik (ohne Lawinen-Abgang
-            // des Firns, der mehr Moränen ins Tiefland legt) und fing deshalb
-            // Realisierungen statt Krusten. Die Schranke fängt eine Kruste weiter
-            // mit großem Abstand (vor Paket A: 0,0020 und mehr).
-            XCTAssertLessThan(lf.lowlandRuggedness, 0.00165,
+            // Schranke 0,0017 (vorher 0,00165, gemessen vor der Schwellen-Kappung
+            // des Gürtelbetts, #187). Punkt 14 zielt auf eine verkrustete Aue
+            // (der geparkte `floodplainAggradation` machte sie 2,7-mal
+            // zerklüfteter), nicht auf das Relief des Gürtels selbst. Gleiche
+            // Welt mit und ohne Gürtel, Jahr 20.000, Stand 694d31e: Mac
+            // 0,001466 / 0,001562 / 0,001577 gegen 0,001329 / 0,001537 /
+            // 0,001371 ohne Gürtel (×1,10 / ×1,02 / ×1,15), Linux 0,001401 /
+            // 0,001542 / 0,001501 gegen 0,001333 / 0,001533 / 0,001374:
+            // Rinne, Bänke und Scroll-Rippen bringen 1–15 % Laplace mit. Die
+            // feste Zahl aus Paket A stand auf einer anderen Physik (ohne
+            // Lawinen-Abgang des Firns, der mehr Moränen ins Tiefland legt)
+            // und fing deshalb Realisierungen statt Krusten. Die Schwellen-
+            // Kappung trägt die Schnitt-Tiefe der Gürtelrinne zusätzlich ein
+            // (A/B am selben Stand, Jahr 20.000, Kappung 3 gegen 0 — Mac
+            // 0,0014817 / 0,0016418 / 0,0015660 gegen 0,0014660 / 0,0015625 /
+            // 0,0015768, Linux 0,0015464 / 0,0016577 / 0,0015712 gegen
+            // 0,0014007 / 0,0015419 / 0,0015009: meist +1–10 %, Seed 20 am Mac
+            // −0,7 %). 0,0017 liegt über dem größten Messwert (0,0016577,
+            // Linux Seed 42; Mac Seed 42 mit Kappung 0,0016418 — die alte
+            // Schranke war dort zu 0,5 % aufgezehrt) und fängt eine Kruste
+            // weiter mit Abstand (vor Paket A: 0,0020 und mehr).
+            XCTAssertLessThan(lf.lowlandRuggedness, 0.0017,
                               "Seed \(seed): Aue zerklüfteter als vor dem Gürtel (\(lf.lowlandRuggedness))")
             windows.append(run.result[0])
             oxbowMedians.append(Double(ZielbildMetrics.oxbowSizes(t).median))

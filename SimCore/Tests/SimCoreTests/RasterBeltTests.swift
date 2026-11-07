@@ -15,18 +15,22 @@ final class RasterBeltTests: XCTestCase {
     /// jeden Lauf um eine Zelle, auch auf eine Nachbar-Bank).
     ///
     /// Direkt am `RiverRibbonRenderer` (Issue #214): die Fixture braucht nur
-    /// den Band-Bau, keine Reihenfolge.
+    /// den Band-Bau, keine Reihenfolge. Dazu die Abzweig-Marken des Felds
+    /// (`waterDeparture`): die Bank-Regel im Renderer stellt Abzweige frei,
+    /// und der Bank-Wächter unten prüft dieselbe Unterscheidung nach.
     ///
     /// `nonisolated(unsafe)` (Issue #201): `Terrain`/`RibbonMesh` sind nicht
     /// `Sendable`, die Fixture wird EINMAL gebaut und danach nur gelesen —
     /// XCTest ruft die Testmethoden einer Klasse seriell auf.
-    nonisolated(unsafe) private static let world: (terrain: Terrain, mesh: RibbonMesh, water: [UInt8]) = {
+    nonisolated(unsafe) private static let world: (terrain: Terrain, mesh: RibbonMesh,
+                                                   water: [UInt8], departure: [Double]) = {
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
         let mesh = builtRibbons(terrain).mesh
-        let water = WaterFieldRenderer().bytes(terrain, blend: 1, geometryMode: true,
+        let field = WaterFieldRenderer()
+        let water = field.bytes(terrain, blend: 1, geometryMode: true,
                                                bandChannelFlags: mesh.bandChannelFlags,
                                                bandCoverage: mesh.bandCoverage, deferTail: true)
-        return (terrain, mesh, water)
+        return (terrain, mesh, water, field.waterDeparture)
     }()
 
     private func visible(_ water: [UInt8], _ k: Int) -> Bool {
@@ -37,7 +41,7 @@ final class RasterBeltTests: XCTestCase {
     /// ausgenommen. Vorher standen Ein- bis Drei-Zell-Flecken des D8-Rasters
     /// neben der Bandkante (Seed 1337, Jahr 2.305: 150 Flecken, 479 Zellen).
     func testNoRasterSpeckleInBandCorridors() {
-        let (terrain, _, water) = Self.world
+        let (terrain, _, water, _) = Self.world
         let n = terrain.cfg.n
         var seen = [Bool](repeating: false, count: n * n)
         var small: [Int] = []
@@ -62,9 +66,17 @@ final class RasterBeltTests: XCTestCase {
 
     /// Auf einer Gleithang-Bank neben einem Band, das denselben Fluss trägt,
     /// malt das Raster nur den Saum: dort ist das Band der Fluss, der D8-Lauf
-    /// nimmt nur die Abkürzung über die Bank.
+    /// nimmt nur die Abkürzung über die Bank. Abzweige (`waterDeparture > 0`)
+    /// sind davon ausgenommen: Der Lauf kehrt nicht zum Band zurück, er ist
+    /// keine Abkürzung, sondern echtes Avulsions-Wasser, das der Renderer
+    /// bewusst malt (WaterFieldRenderer, „Ein Abzweig kehrt nicht zum Band
+    /// zurück") — dieselbe Unterscheidung, die die Bank-Schranke dort trifft.
+    /// Mit dem Schwellen-Schnitt (#187) kreuzt auf der Linux-Realisierung
+    /// dieser Welt ein Abzweig (Patch aus 39 Zellen, Einzugsgebiet 528–1285
+    /// Zellen, Mac: kein Abzweig) die Bank; die Abkürzungs-Regel selbst bleibt
+    /// scharf.
     func testRasterLeavesBarsNextToTheirBand() {
-        let (terrain, mesh, water) = Self.world
+        let (terrain, mesh, water, departure) = Self.world
         let n = terrain.cfg.n
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
         let reach = WaterRender.rasterBarBandReachCells
@@ -82,6 +94,9 @@ final class RasterBeltTests: XCTestCase {
         for k in 0..<(n * n) where terrain.barAge[k] >= 0 {
             bars += 1
             guard visible(water, k) else { continue }
+            // Abzweig: kein Wasser DESSEN Band, das hier nebenliegt — die
+            // Abkürzung über die Bank ist es gerade nicht.
+            guard departure[k] == 0 else { continue }
             let i = k % n, j = k / n
             var near = 0.0
             for jj in max(0, j - reach)...min(n - 1, j + reach) {
