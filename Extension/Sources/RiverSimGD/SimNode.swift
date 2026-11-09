@@ -2,6 +2,7 @@ import Foundation
 import SwiftGodot
 import SimCore
 import SimRender
+import SimGame
 
 /// GDExtension-Brücke: hält die Welt-Sitzung (`SimRender.WorldSession`) und
 /// reicht ihre Ergebnisse als Packed*Array an Godot. Alle @Callable-Methoden
@@ -22,7 +23,11 @@ final class SimNode: Node {
     /// eigene Fassung. Nur der Produktionspfad läuft ein, die
     /// SimCore-Testwelten bleiben unverändert. Wächter:
     /// `SimCoreTests/RenderContractTests.swift`.
-    private let session = WorldSession<VariantDictionary>(
+    ///
+    /// `lazy`: der Mutter-Natur-Prototyp (Issue #223) ersetzt die Sitzung vor
+    /// dem ersten Zugriff (`startNatureScenario`), dann wird die große
+    /// Sandkasten-Welt gar nicht erst generiert.
+    private lazy var session = WorldSession<VariantDictionary>(
         config: SimConfig.production,
         seed: RenderContract.defaultSeed,
         settleYears: SimConfig.productionSettleYears)
@@ -127,6 +132,74 @@ final class SimNode: Node {
 
     /// Übliche Dateiendung für Welt-Dateien (ohne Punkt).
     @Callable func worldFileExtension() -> String { WorldSnapshot.fileExtension }
+
+    // MARK: Mutter-Natur-Prototyp (Issue #223)
+    //
+    // Regeln und Zustand leben in `SimGame.NatureGame`, getragen von der
+    // Sitzung; hier nur Weiterreichen und Verpacken.
+
+    /// Ersetzt die Welt durch die Versuchskarte samt Spiel. Muss VOR
+    /// `gridSize()` laufen: die Karte ist kleiner als der Sandkasten.
+    @Callable func startNatureScenario() {
+        session = WorldSession<VariantDictionary>(natureScenario: ())
+    }
+
+    @Callable func natureActive() -> Bool { session.natureActive }
+
+    /// Neustart desselben Versuchs (bit-gleicher Startzustand).
+    @Callable func natureRestart() { session.restartNature() }
+
+    /// Ergebnis des letzten Pinselstrichs unter den Spielregeln (`brush`
+    /// geht im Versuch durch `NatureGame.brush`): Rohwert von
+    /// `NatureGame.BrushResult` (0 = ausgeführt), −1 = kein Versuch aktiv.
+    @Callable func natureLastBrushResult() -> Int { lastNatureBrush }
+    private var lastNatureBrush = -1
+
+    /// Spielstand für die Oberfläche (`NatureView`), leer ohne Versuch.
+    /// Schlüssel: `year`, `budget`, `budget_left`, `strokes`, `outcome`,
+    /// `trial_years`, `edited`/`repaired` (Zell-Indizes), `settlement_count`
+    /// und `settlements` (Index → Dictionary je Siedlung, Schlüssel s. unten).
+    @Callable func natureState() -> VariantDictionary {
+        let out = VariantDictionary()
+        guard let v = session.natureView() else { return out }
+        out[Variant("year")] = Variant(v.year)
+        out[Variant("budget")] = Variant(v.budget)
+        out[Variant("budget_left")] = Variant(v.budgetLeft)
+        out[Variant("strokes")] = Variant(v.strokes)
+        out[Variant("outcome")] = Variant(v.outcome.rawValue)
+        out[Variant("trial_years")] = Variant(v.trialYears)
+        out[Variant("edited")] = PackedInt32Array(v.editedCells.map { Int32($0) }).toVariant()
+        out[Variant("repaired")] = PackedInt32Array(v.repairedCells.map { Int32($0) }).toVariant()
+        let list = VariantDictionary()
+        for (i, st) in v.settlements.enumerated() {
+            let d = VariantDictionary()
+            d[Variant("name")] = Variant(st.name)
+            d[Variant("target")] = Variant(st.isTarget)
+            d[Variant("center_i")] = Variant(st.centerI)
+            d[Variant("center_j")] = Variant(st.centerJ)
+            d[Variant("houses")] = PackedInt32Array(st.houses.map { Int32($0) }).toVariant()
+            d[Variant("fields")] = PackedInt32Array(st.fields.map { Int32($0) }).toVariant()
+            d[Variant("field_water")] = PackedFloat32Array(st.fieldWater.map { Float($0) }).toVariant()
+            d[Variant("field_flooded")] = PackedByteArray(st.fieldFlooded.map { $0 ? UInt8(1) : UInt8(0) }).toVariant()
+            d[Variant("status")] = Variant(st.status.rawValue)
+            d[Variant("status_label")] = Variant(st.status.label)
+            d[Variant("problem")] = Variant(st.problem.rawValue)
+            d[Variant("problem_label")] = Variant(st.problem.label)
+            d[Variant("population")] = Variant(st.population)
+            d[Variant("reserve")] = Variant(st.reserve)
+            d[Variant("bad_streak")] = Variant(st.badStreak)
+            d[Variant("water")] = Variant(st.supply.water)
+            d[Variant("flooded_fields")] = Variant(st.supply.floodedFields)
+            d[Variant("flooded_houses")] = Variant(st.supply.floodedHouses)
+            d[Variant("repairing")] = Variant(st.repairing)
+            d[Variant("harvests")] = PackedFloat32Array(st.harvests.map { Float($0) }).toVariant()
+            d[Variant("history_problems")] = PackedByteArray(st.historyProblems.map { UInt8($0.rawValue) }).toVariant()
+            list[Variant(i)] = d.toVariant()
+        }
+        out[Variant("settlement_count")] = Variant(v.settlements.count)
+        out[Variant("settlements")] = list.toVariant()
+        return out
+    }
 
     // MARK: Konstanten
 
@@ -340,8 +413,8 @@ final class SimNode: Node {
                          + "und BrushTool sind auseinandergelaufen")
             return
         }
-        session.brush(tool, gx: gx, gz: gz, radiusWorld: radiusWorld,
-                      strength: strength, target: target)
+        lastNatureBrush = session.brush(tool, gx: gx, gz: gz, radiusWorld: radiusWorld,
+                                        strength: strength, target: target)?.rawValue ?? -1
     }
 
     /// Nach Sculpting/Änderungen Entwässerung neu berechnen (für Live-Flüsse).

@@ -29,6 +29,7 @@ let package = Package(
             dependencies: [
                 .product(name: "SimCore", package: "SimCore"),
                 .product(name: "SimRender", package: "SimCore"),
+                .product(name: "SimGame", package: "SimCore"),
                 "SwiftGodot",
             ],
             // Swift-6-Sprachmodus wie die SimCore-Targets (Issue #201).
