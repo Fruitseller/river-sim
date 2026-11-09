@@ -10,6 +10,12 @@ Der Verhaltens-Abgleich mit dieser Referenz steht in
 
 ## Aktueller Stand (Kurzfassung)
 
+- **Mutter-Natur-Prototyp #223 (Experiment):** startbar mit `RS_NATURE=1`,
+  eigenes Target `SimGame` (Versuchskarte, Siedlungsregeln, Gegenreaktion
+  „Ausbessern"), Wassermangel-Loop und Aufstau headless belegt. **Spieltest
+  steht aus**, ebenso die Entscheidung über Tempo (5 J./Sek. lässt eine Krise
+  in Sekunden ablaufen) und den Überflutungsweg. Siehe
+  `docs/nature-prototype.md`.
 - **Zielbild #174, Paket A (Großform):** `generate()` legt die Grate nicht
   mehr über die ganze Landfläche, sondern entlang EINES Gebirgskamms mit
   Seitenästen (`RangeSkeleton`, `Landform.swift`); daneben Hügelland, zur

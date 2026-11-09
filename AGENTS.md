@@ -30,7 +30,7 @@ swift test -c release --package-path SimCore \
 ```
 
 - `-c release` ist Pflicht: Debug ist bei diesen Grids zu langsam.
-- Sprachmodus: die Targets `SimCore`, `SimRender`, `SimPerf` und `SimCoreTests`
+- Sprachmodus: die Targets `SimCore`, `SimRender`, `SimGame`, `SimPerf` und `SimCoreTests`
   sowie die Extension `RiverSimGD` kompilieren im **Swift-6-Modus** (strikte
   Nebenläufigkeitsprüfung), je Target via `.swiftLanguageMode(.v6)` in
   `SimCore/Package.swift` bzw. `Extension/Package.swift` (Issue #201). Die
@@ -201,6 +201,7 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/relief.gd
 "$GODOT" --headless --path game --script res://tests/canopy.gd
 "$GODOT" --headless --path game --script res://tests/ui_layout.gd
+"$GODOT" --headless --path game --script res://tests/nature_mode.gd   # Mutter-Natur-Prototyp (#223), in CI Teil von ui_layout.gd
 "$GODOT" --headless --path game --script res://tests/water_gpu_tail.gd  # GPU-Teil überspringt ohne Rendering-Device
 GODOT_TEST_RENDER=1 scripts/godot-test.sh res://tests/water_gpu_tail.gd WATER_GPU_TAIL_OK  # mit Renderer (lokal Desktop, CI xvfb + llvmpipe)
 "$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
@@ -281,7 +282,8 @@ Welt anfahren, statt fester `RS_TARGET`/`RS_DIST`/`RS_YAW`),
 seit dem Renderloop-Abschalten bedeutet `RS_FPS avg` hier die
 Prozess-Iterationsrate unter dem `max_fps`-Deckel, nicht mehr gerenderte
 Frames — ältere Leerlauf-Messreihen sind damit nicht 1:1 vergleichbar),
-`RS_FLATTEN`, `RS_NO_MEANDER_PAINT`, `RS_RATE` (Zeitraffer gleich beim Start in
+`RS_FLATTEN`, `RS_NATURE` (`=1`: Mutter-Natur-Prototyp, Issue #223, statt
+Sandkasten; gleichwertig `-- --nature`), `RS_NO_MEANDER_PAINT`, `RS_RATE` (Zeitraffer gleich beim Start in
 diesem Tempo, J./Sek.; für Bildschirmvideos der Übergänge, s.
 `docs/zielbild-measurements.md` § Übergänge im Zeitraffer),
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
@@ -320,7 +322,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd`, `water_gpu_tail.gd` (mit Renderer über xvfb + llvmpipe) (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd` (samt Mutter-Natur-Prüfungen `NatureChecks.gd`), `water_gpu_tail.gd` (mit Renderer über xvfb + llvmpipe) (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
@@ -372,6 +374,16 @@ Die Entscheidung fällt deshalb der HOST, auf dem die Agenten laufen:
 ## Architektur
 
 Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
+
+(Daneben, abgetrennt: der **Mutter-Natur-Prototyp**, Issue #223. Spielregeln
+und Versuchskarte im eigenen Target `SimCore/Sources/SimGame` (`NatureGame`,
+`SettlementRules`, `NatureScenario`), getragen von `WorldSession`
+(`init(natureScenario:)`; jeder Schritt bucht Spieljahre, der Pinsel läuft
+durch die Spielregeln), in Godot `game/scripts/NatureMode.gd`, Start mit
+`RS_NATURE=1`. Keine Spiel-Logik in SimRender-Renderern, Shadern oder der
+Brücke. Spielanleitung, Versuche und Grenzen: `docs/nature-prototype.md`;
+Wächter `SimCoreTests/NatureGameTests.swift`, `NatureSessionTests.swift`,
+`game/tests/NatureChecks.gd`.)
 
 1. **`SimCore/`**: Swift-Package ohne Godot. Das Target `SimCore` enthält die
    gesamte Physik; `SimRender` bereitet daraus Farben, Wald- und Schutzmaske,

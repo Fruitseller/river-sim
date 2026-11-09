@@ -86,6 +86,16 @@ Auf einer Maschine ohne Vulkan-Unterstützung startet
 `./scripts/start.sh --rendering-method gl_compatibility`; ohne Display ist nur
 der headless Modus sinnvoll.
 
+### Mutter-Natur-Prototyp (Experiment)
+
+```sh
+RS_NATURE=1 ./scripts/start.sh --maximized
+```
+
+Kleines Versuchstal statt Sandkasten: Talheim soll aufgeben, nur durch
+Umleiten oder Aufstauen des Flusses. Spielanleitung, Versuche und Grenzen:
+[`docs/nature-prototype.md`](docs/nature-prototype.md).
+
 ### Leistung und Diagnose
 
 Standard ist `RS_QUALITY=balanced`: Das Terrain-Gitter hat Sim-Auflösung
