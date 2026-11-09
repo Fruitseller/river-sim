@@ -7,6 +7,9 @@ let package = Package(
     products: [
         .library(name: "SimCore", targets: ["SimCore"]),
         .library(name: "SimRender", targets: ["SimRender"]),
+        // Mutter-Natur-Prototyp (Issue #223): Spielregeln, getrennt von
+        // Physik (SimCore) und Render-Aufbereitung (SimRender).
+        .library(name: "SimGame", targets: ["SimGame"]),
         // Mess-Harness (Issue #43) — s. docs/perf-measurements.md.
         .executable(name: "simperf", targets: ["SimPerf"]),
     ],
@@ -18,11 +21,13 @@ let package = Package(
         // Nebenläufigkeitsprüfung — die unsicheren Stellen sind dort als
         // `@unchecked Sendable`/`nonisolated(unsafe)` markiert und begründet.
         .target(name: "SimCore", swiftSettings: [.swiftLanguageMode(.v6)]),
-        .target(name: "SimRender", dependencies: ["SimCore"],
+        .target(name: "SimGame", dependencies: ["SimCore"],
+                swiftSettings: [.swiftLanguageMode(.v6)]),
+        .target(name: "SimRender", dependencies: ["SimCore", "SimGame"],
                 swiftSettings: [.swiftLanguageMode(.v6)]),
         .executableTarget(name: "SimPerf", dependencies: ["SimCore"],
                          swiftSettings: [.swiftLanguageMode(.v6)]),
-        .testTarget(name: "SimCoreTests", dependencies: ["SimCore", "SimRender"],
+        .testTarget(name: "SimCoreTests", dependencies: ["SimCore", "SimRender", "SimGame"],
                     swiftSettings: [.swiftLanguageMode(.v6)]),
     ]
 )

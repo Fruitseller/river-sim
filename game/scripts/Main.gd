@@ -5,6 +5,8 @@ extends Node3D
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const Lighting = preload("res://scripts/Lighting.gd")
+## Mutter-Natur-Prototyp (Issue #223), nur mit RS_NATURE=1 bzw. `-- --nature`.
+const NatureMode = preload("res://scripts/NatureMode.gd")
 # Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
 # das volle Sim-Gitter (`terrain_grid_for`).
 const PERFORMANCE_TERRAIN_GRID := 256
@@ -32,6 +34,8 @@ const TERRAIN_DETAIL_OLD := 0.42
 const TERRAIN_DETAIL_AGE_YEARS := 100000.0
 
 var sim: Object
+## Läuft der Mutter-Natur-Prototyp (Issue #223)? Sonst Sandkasten.
+var nature: Node = null
 # Höhen-Skalierung fürs Mesh: RenderContract.heightScale, kommt in `_ready`
 # über die Brücke (Gruppe `contract`, Issue #213). Bis dahin stand sie hier als
 # kopiertes Literal; nur der `hscale`-Default in terrain.gdshader bleibt als
@@ -570,6 +574,11 @@ func _ready() -> void:
 	if OS.has_environment("RS_SEED"): # für Screenshot-Vergleiche verschiedener Terrains
 		sim_seed = int(OS.get_environment("RS_SEED"))
 		sim.generate(sim_seed)
+	# Mutter-Natur-Prototyp: eigene, kleinere Versuchskarte — VOR gridSize().
+	var nature_mode := OS.get_environment("RS_NATURE") == "1" \
+		or OS.get_cmdline_user_args().has("--nature")
+	if nature_mode:
+		sim.startNatureScenario()
 	N = sim.gridSize()
 	world_size = sim.worldSize()
 	cam_dist = world_size * 1.35 # Start-Zoom skaliert mit der Weltgröße
@@ -671,6 +680,10 @@ func _ready() -> void:
 				if rs_camera >= 0:
 					_apply_camera_preset(rs_camera, false))
 	_refresh_debug()
+	if nature_mode:
+		nature = NatureMode.new()
+		add_child(nature)
+		nature.setup(self)
 	if OS.has_environment("RS_RATE"): # Zeitraffer gleich an (Videoaufnahmen der Übergänge)
 		_set_rate(maxf(0.0, float(OS.get_environment("RS_RATE"))))
 		print("RS_RATE ", year_rate)
@@ -1763,6 +1776,8 @@ func _process(delta: float) -> void:
 					flatten_target)
 			_invalidate_h_cache()
 			debug_dirty = true
+			if nature:
+				nature.after_stroke() # Budget, gesperrte Striche (Issue #223)
 			# Höhe sofort (billig): der Strich muss dem Zeiger ohne Verzögerung
 			# folgen. Flussnetz, Overlays und Bänder laufen im gedrosselten Takt
 			# nach (s. SCULPT_REFRESH_SECONDS).
@@ -1944,6 +1959,16 @@ func _apply_frame(frame: Dictionary) -> void:
 		_upload_overlays(frame)
 	if frame.has("heights"):
 		_bake_relief()
+	if nature:
+		nature.refresh()
+
+## Neustart des Mutter-Natur-Versuchs (Issue #223): derselbe Startzustand.
+func _nature_restart() -> void:
+	_settle_sim()
+	sim.natureRestart()
+	_invalidate_h_cache()
+	_set_rate(0.0)
+	_render_frame(FRAME_SETTLED)
 
 ## Höhen (R32F) hochladen — billig (~0,2 ms), läuft auch jeden Pinsel-Frame.
 ## Alle Puffer kommen als ROHE Bytes aus SimNode (Issue #53): `heights()` +

@@ -1,5 +1,6 @@
 import Foundation
 import SimCore
+import SimGame
 
 /// Die Welt-Sitzung (Issue #212): besitzt die Welt (`Terrain`), ihren
 /// Render-Zustand (`RenderState`) und den Hintergrund-Job des Zeitraffers
@@ -51,6 +52,35 @@ public final class WorldSession<Packed> {
         job = BackgroundJob(label: "river-sim.step")
     }
 
+    /// Mutter-Natur-Prototyp (Issue #223): die Versuchskarte
+    /// (`NatureScenario`) samt Spielzustand statt der Sandkasten-Welt. Jeder
+    /// Sim-Schritt bucht danach die Jahre des Spiels (`NatureGame.advance`),
+    /// auch der Hintergrund-Schritt; Pinselstriche gehen durch die Spielregeln.
+    public convenience init(natureScenario: Void) {
+        self.init(natureScenario: (), render: RenderState())
+    }
+
+    init(natureScenario: Void, render: RenderState) {
+        storedWorld = Self.natureWorld()
+        storedGame = NatureGame()
+        storedRender = render
+        job = BackgroundJob(label: "river-sim.step")
+        storedGame?.measure(storedWorld)
+    }
+
+    private static func natureWorld() -> Terrain {
+        Terrain(config: NatureScenario.config, seed: NatureScenario.seed,
+                relief: NatureScenario.relief(), settleYears: NatureScenario.settleYears)
+    }
+
+    /// Spielzustand des Prototyps; `nil` im Sandkasten. Gehört wie die Welt
+    /// dem Job, solange er rechnet — angefasst nur über `game`.
+    private var storedGame: NatureGame?
+    private var game: NatureGame? {
+        job.wait()
+        return storedGame
+    }
+
     /// Ein laufender Job darf seine Sitzung nicht überleben: beim Beenden
     /// entlädt Godot danach die Library, deren Code er gerade ausführt. Das
     /// trägt nur, weil der Job die Sitzung NICHT hält (s. `beginStep`): gibt
@@ -99,11 +129,13 @@ public final class WorldSession<Packed> {
 
     public func generate(seed: UInt32, settleYears: Double = 0) {
         world.generate(seed: seed, settleYears: settleYears)
+        storedGame = nil // eine neue Sandkasten-Welt beendet den Versuch
         change(.replaced)
     }
 
     public func step(years: Double) {
         world.step(dtYears: years)
+        game?.advance(world, years: years)
         change(.advanced)
     }
 
@@ -113,17 +145,48 @@ public final class WorldSession<Packed> {
         change(.edited)
     }
 
+    /// Pinselstrich. Im Prototyp gelten die Spielregeln (Werkzeuge, Budget,
+    /// Schutzabstand, `NatureGame.brush`); Rückgabe dann deren Ergebnis, im
+    /// Sandkasten `nil`.
+    @discardableResult
     public func brush(_ tool: BrushTool, gx: Double, gz: Double, radiusWorld: Double,
-                      strength: Double, target: Double) {
+                      strength: Double, target: Double) -> NatureGame.BrushResult? {
+        if let game {
+            let result = game.brush(tool, terrain: world, gx: gx, gz: gz,
+                                    radiusWorld: radiusWorld, strength: strength)
+            if result == .applied { change(.edited) }
+            return result
+        }
         tool.apply(to: world, gx: gx, gz: gz, radiusWorld: radiusWorld,
                    strength: strength, target: target)
         change(.edited)
+        return nil
     }
 
     /// Nachzug nach einem Pinselstrich: `Terrain.recomputeFlowAfterEdit`.
+    /// Im Prototyp misst das Spiel danach die Versorgung neu (Anzeige sofort,
+    /// gebucht wird sie erst über verstrichene Sim-Jahre).
     public func recomputeFlow() {
         world.recomputeFlowAfterEdit()
+        game?.measure(world)
         change(.edited)
+    }
+
+    // MARK: - Mutter-Natur-Prototyp (Issue #223)
+
+    /// Läuft der Prototyp?
+    public var natureActive: Bool { game != nil }
+
+    /// Anzeige-Schnappschuss des Spiels; `nil` im Sandkasten.
+    public func natureView() -> NatureView? { game?.view() }
+
+    /// Neustart: dieselbe Versuchskarte, frisches Spiel — bit-gleich zum Start.
+    public func restartNature() {
+        job.wait()
+        storedWorld = Self.natureWorld()
+        storedGame = NatureGame()
+        storedGame?.measure(storedWorld)
+        change(.replaced)
     }
 
     /// Lädt eine Welt aus `path` und ERSETZT die aktuelle (die Datei bringt
@@ -134,6 +197,7 @@ public final class WorldSession<Packed> {
         let loaded = try WorldSnapshot.read(from: path)
         job.wait()
         storedWorld = loaded
+        storedGame = nil // eine geladene Welt ist Sandkasten, kein Versuch
         // `.replaced` erledigt alles: die Δ-Karte zeigt ab jetzt, was die Sim
         // tut (nicht die Differenz zur alten Welt), Fluss-Bänder bauen im
         // nächsten Frame neu, der Wald vergisst sein Gedächtnis. Dieselbe
@@ -171,10 +235,11 @@ public final class WorldSession<Packed> {
         // Freigabe kehrte zurück, während er noch rechnet (Review #216).
         // `lastChange` setzt deshalb der Besitzer-Thread; lesen kann es
         // ohnehin erst, wer den Job abgewartet hat.
-        let terrain = storedWorld, render = storedRender
+        let terrain = storedWorld, render = storedRender, game = storedGame
         storedLastChange = .advanced
         return job.start {
             terrain.step(dtYears: years)
+            game?.advance(terrain, years: years)
             Self.invalidate(terrain, render, .advanced)
             return pack(Self.frame(terrain, render, trigger, now: now))
         }
