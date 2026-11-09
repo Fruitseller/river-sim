@@ -41,6 +41,14 @@ public final class NatureGame {
     public static let protectMargin = 1.5
     /// Größter erlaubter Pinselradius (Zellen) — kleine, gezielte Eingriffe.
     public static let maxBrushCells = 3.0
+    /// Deckel der Strich-Stärke, wie sie über die Brücke ankommt. Main.gd
+    /// skaliert Anheben/Absenken schon mit der Frame-Zeit
+    /// (`Regler × min(delta, 0.05) × 60`, also bis zum Dreifachen der
+    /// Reglerstellung); der Deckel muss deshalb Reglermaximum (3) × diesem
+    /// Zeitfaktor-Deckel (3) sein. Ein Deckel auf die Reglerstellung allein
+    /// schnitte bei 30 FPS die halbe Wirkung ab: Erde je Sekunde hinge wieder
+    /// an der Bildrate. Gegen Missbrauch genügt das Budget.
+    public static let maxStrokeStrength = 3.0 * 3.0
     /// Versuchszeitraum (Jahre): hält die Zielsiedlung so lange, ist der
     /// Versuch für Mutter Natur verloren.
     public static let trialYears = 300
@@ -289,7 +297,7 @@ public final class NatureGame {
             }
         }
         tool.apply(to: terrain, gx: gx, gz: gz, radiusWorld: radius,
-                   strength: min(max(strength, 0), 3), target: 0)
+                   strength: min(max(strength, 0), Self.maxStrokeStrength), target: 0)
         var cost = 0.0
         for (k, before) in window {
             let d = terrain.h[k] - before

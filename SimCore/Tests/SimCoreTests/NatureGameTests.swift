@@ -283,6 +283,25 @@ final class NatureGameTests: XCTestCase {
         for k in l.houses + l.fields { XCTAssertEqual(t.h[k], h0[k]) }
     }
 
+    /// Gleiche Strichdauer bewegt bei 30 und 60 FPS gleich viel Erde: Main.gd
+    /// übergibt `Regler × delta × 60`, der Deckel darf das nicht abschneiden.
+    func testStrokeEffectIsFramerateIndependent() {
+        func earthMoved(fps: Int) -> Double {
+            let (t, g) = Self.world(budget: 1e9)
+            let slider = 3.0 // Reglermaximum
+            for _ in 0..<fps {
+                let frameStrength = slider * min(1.0 / Double(fps), 0.05) * 60
+                XCTAssertEqual(g.brush(.raise, terrain: t, gx: 110, gz: 70,
+                                       radiusWorld: 2 * t.cfg.cellSize,
+                                       strength: frameStrength), .applied)
+            }
+            return g.budgetUsed
+        }
+        let at30 = earthMoved(fps: 30), at60 = earthMoved(fps: 60)
+        XCTAssertGreaterThan(at60, 0)
+        XCTAssertEqual(at30, at60, accuracy: at60 * 1e-6)
+    }
+
     func testViewMirrorsTheGame() {
         let (t, g) = Self.world()
         Self.apply(NatureScenario.lowSaddleCut, t, g)
