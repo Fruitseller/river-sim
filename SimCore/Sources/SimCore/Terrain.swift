@@ -407,6 +407,14 @@ public final class Terrain {
         generate(seed: seed, settleYears: settleYears)
     }
 
+    /// Terrain mit vorgegebenem Grundrelief (Issue #223), s.
+    /// `generate(seed:relief:settleYears:)`.
+    public convenience init(config: SimConfig, seed: UInt32, relief: [Double],
+                            settleYears: Double = 0) {
+        self.init(allocating: config, seed: seed)
+        generate(seed: seed, relief: relief, settleYears: settleYears)
+    }
+
     /// Legt alle Puffer an, generiert aber NICHT — der Weg für die
     /// Wiederherstellung aus einem `WorldSnapshot` (Issue #8): dort kommt jedes
     /// Feld aus der Datei, ein `generate` davor wäre reine Rechenzeit (Breach +
@@ -672,15 +680,40 @@ public final class Terrain {
     /// liefert der Aufruf dieselbe Welt wie ein frisches `Terrain(seed:)`,
     /// s. `resetToAllocated`.
     public func generate(seed: UInt32, settleYears: Double = 0) {
+        generateWorld(seed: seed, settleYears: settleYears, relief: nil)
+    }
+
+    /// Generierung mit VORGEGEBENEM Grundrelief statt Rausch-Relief (Issue #223,
+    /// Versuchskarte des Mutter-Natur-Prototyps). `relief` sind die Höhen
+    /// row-major `n×n` im Sim-Maßstab. Das Tektonik-Feld bleibt 0 (keine
+    /// Hebung: die Karte soll über die Spieldauer von Jahrhunderten ihre Form
+    /// behalten), die Pre-Erosion läuft nicht (sie würde Rausch-Rinnen in die
+    /// entworfene Talform schneiden). Alles danach — Schichten, Lithologie,
+    /// Entwässerung, Breach, Klima, Vegetation, Mäander-Saat, Einlauf — ist
+    /// derselbe Weg wie bei `generate(seed:settleYears:)`, die Physik bleibt
+    /// also die Produktions-Physik der übergebenen Config.
+    public func generate(seed: UInt32, relief: [Double], settleYears: Double = 0) {
+        precondition(relief.count == cfg.count, "Relief muss n×n Höhen haben")
+        generateWorld(seed: seed, settleYears: settleYears, relief: relief)
+    }
+
+    private func generateWorld(seed: UInt32, settleYears: Double, relief: [Double]?) {
         resetToAllocated(seed: seed)
 
         // Grundrelief und Tektonik-Feld: die Großform aus Issue #174 oder, für
-        // die Testwelten der Kalibrier-Suite, die Form davor (`rangeLandform`).
-        let (box, boy) = cfg.rangeLandform ? generateRangeRelief(seed: seed)
+        // die Testwelten der Kalibrier-Suite, die Form davor (`rangeLandform`);
+        // beim vorgegebenen Relief (#223) dieses, ohne Tektonik.
+        let (box, boy): (Double, Double)
+        if let relief {
+            for k in 0..<cfg.count { h[k] = min(1.4, max(cfg.floor, relief[k])) }
+            (box, boy) = (0, 0)
+        } else {
+            (box, boy) = cfg.rangeLandform ? generateRangeRelief(seed: seed)
                                            : generateLegacyRelief(seed: seed)
+        }
         // Pre-Erosion (runevision-Filter): verzweigte Rinnen/Grate einmalig ins
         // Basisrelief carven — deterministisch je Seed (Rinnen-Muster wandert mit).
-        if cfg.preErodeEnabled {
+        if cfg.preErodeEnabled && relief == nil {
             ErosionFilter.apply(h: &h, n: n, sea: cfg.sea,
                                 seedOffsetX: box, seedOffsetY: boy,
                                 params: cfg.preErodeParams)
@@ -5112,6 +5145,23 @@ public final class Terrain {
 
     /// Maximale Spitzhacken-Breite in Zellen (auch fürs Ring-Visual im Frontend).
     public static let pickaxeMaxCells = 3.0
+
+    /// Zieht EINE Zelle um höchstens `maxChange` Richtung `target` (Issue #223:
+    /// Menschen im Mutter-Natur-Prototyp bauen Eingriffe des Spielers zurück).
+    /// Anheben lagert lockeres Sediment ab, Absenken räumt erst Sediment, dann
+    /// Fels — derselbe Funnel wie der Pinsel (`applyDelta`), also auch dasselbe
+    /// Gletscher-Gate. Rückgabe: tatsächliche Höhenänderung. Wie beim Pinsel
+    /// zieht der Aufrufer danach `recomputeFlowAfterEdit()` nach.
+    @discardableResult
+    public func restoreCell(_ k: Int, toward target: Double, maxChange: Double) -> Double {
+        guard k >= 0, k < cfg.count, target.isFinite, maxChange.isFinite,
+              maxChange > 0 else { return 0 }
+        let before = h[k]
+        let dh = min(maxChange, max(-maxChange, target - before))
+        guard dh != 0 else { return 0 }
+        applyDelta(k, dh, asRock: false)
+        return h[k] - before
+    }
 
     /// Gemeinsame Pinsel-Iteration: ruft `body(k, w)` für jede Zelle im Pinsel
     /// mit weichem Abfall-Gewicht w ∈ (0..1] auf.
