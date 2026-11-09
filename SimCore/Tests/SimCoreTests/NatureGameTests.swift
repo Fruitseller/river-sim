@@ -283,6 +283,22 @@ final class NatureGameTests: XCTestCase {
         for k in l.houses + l.fields { XCTAssertEqual(t.h[k], h0[k]) }
     }
 
+    /// Striche neben der Karte (auch weit daneben) werden ohne Wirkung und
+    /// ohne Kosten abgelehnt, statt an einem leeren Bereich abzubrechen.
+    func testStrokesOutsideTheMapAreRejected() {
+        let (t, g) = Self.world()
+        let h0 = t.h, c = t.cfg.cellSize, n = Double(t.cfg.n)
+        for (x, z) in [(200.0, 70.0), (-50.0, 70.0), (70.0, n + 10), (1e12, 70.0), (70.0, -1e300)] {
+            XCTAssertEqual(g.brush(.pickaxe, terrain: t, gx: x, gz: z, radiusWorld: 3 * c, strength: 1),
+                           .outsideMap, "(\(x), \(z))")
+        }
+        XCTAssertEqual(g.brush(.raise, terrain: t, gx: 110, gz: 70, radiusWorld: 0, strength: 1),
+                       .outsideMap)
+        XCTAssertEqual(t.h, h0)
+        XCTAssertEqual(g.budgetUsed, 0)
+        XCTAssertEqual(g.strokes, 0)
+    }
+
     /// Gleiche Strichdauer bewegt bei 30 und 60 FPS gleich viel Erde: Main.gd
     /// übergibt `Regler × delta × 60`, der Deckel darf das nicht abschneiden.
     func testStrokeEffectIsFramerateIndependent() {

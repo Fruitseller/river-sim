@@ -267,6 +267,8 @@ public final class NatureGame {
         case tooCloseToSettlement = 2
         case budgetExhausted = 3
         case trialOver = 4
+        /// Strich liegt ganz neben der Karte (oder Radius ≤ 0): keine Wirkung.
+        case outsideMap = 5
     }
 
     /// Erlaubte Werkzeuge: Anheben, Absenken, Spitzhacke.
@@ -285,14 +287,22 @@ public final class NatureGame {
         else { return .toolNotAllowed }
         let radius = min(radiusWorld, Self.maxBrushCells * cell)
         let rCells = radius / cell
+        // Dieselben Grenzen wie `Terrain.forEachBrushCell`, aber VOR den
+        // Int-Casts und Bereichen des Kostenfensters: ein Strich neben der
+        // Karte (oder mit Radius ≤ 0) ändert nichts und kostet nichts, statt
+        // an einem leeren ClosedRange abzubrechen.
+        let r = Int(rCells.rounded(.up)) + 1
+        guard rCells > 0, abs(gx) < 1e9, abs(gz) < 1e9 else { return .outsideMap }
+        let ci = Int(gx.rounded()), cj = Int(gz.rounded())
+        let jLo = max(0, cj - r), jHi = min(n - 1, cj + r)
+        let iLo = max(0, ci - r), iHi = min(n - 1, ci + r)
+        guard jLo <= jHi, iLo <= iHi else { return .outsideMap }
         if isNearProtected(gx: gx, gz: gz, cells: rCells + Self.protectMargin) {
             return .tooCloseToSettlement
         }
-        let r = Int(rCells.rounded(.up)) + 1
-        let ci = Int(gx.rounded()), cj = Int(gz.rounded())
         var window: [(Int, Double)] = []
-        for j in max(0, cj - r)...min(n - 1, cj + r) {
-            for i in max(0, ci - r)...min(n - 1, ci + r) {
+        for j in jLo...jHi {
+            for i in iLo...iHi {
                 window.append((j * n + i, terrain.h[j * n + i]))
             }
         }
