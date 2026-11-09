@@ -19,11 +19,14 @@ extends SceneTree
 ##    Land, Tal und Nah zielen auf den größten Lauf, nie aufs Meer;
 ##  - Pinselkuppel: Rand auf der Fläche, Scheitel im Profil (1 − d²)^p,
 ##    gezeichnet als Bildschirm-Bänder (Rand breiter als das Gitter).
+##  - Mutter-Natur-Prototyp (Issue #223): ein zweites `Main.gd` mit
+##    RS_NATURE=1, Prüfungen in `tests/NatureChecks.gd`.
 ## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 const UiIcon = preload("res://scripts/UiIcon.gd")
+const NatureChecks = preload("res://tests/NatureChecks.gd")
 const WINDOW := Vector2(1152, 648)
 
 var failures := 0
@@ -67,11 +70,24 @@ func _run() -> void:
 	_check_camera_presets()
 	_check_brush_dome()
 	main.queue_free()
+	await _check_nature_mode()
 	if failures > 0:
 		quit(1)
 		return
 	print("UI_LAYOUT_OK")
 	quit(0)
+
+## Mutter-Natur-Prototyp (Issue #223): ein zweites `Main.gd` im Versuchsmodus,
+## Prüfungen in `tests/NatureChecks.gd` (eigene CI-Stufe s. dort).
+func _check_nature_mode() -> void:
+	OS.set_environment("RS_NATURE", "1")
+	var nature_main: Node = Main.new()
+	root.add_child(nature_main)
+	OS.unset_environment("RS_NATURE")
+	await _frames(2)
+	NatureChecks.run(nature_main, _check)
+	nature_main.queue_free()
+	await _frames(1)
 
 func _frames(n: int) -> void:
 	for i in n:
