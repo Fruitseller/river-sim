@@ -320,3 +320,65 @@ public final class NatureGame {
     /// Setzt die Messung von Hand (Wächter ohne Terrain).
     func setSupplyForTests(_ supply: [YearSupply]) { lastSupply = supply }
 }
+
+// MARK: - Anzeige-Schnappschuss
+
+/// Alles, was die Oberfläche über den Versuch zeigt — ein Wert, damit die
+/// Brücke nichts vom Spielzustand festhält (`WorldSession.natureView`).
+public struct NatureView: Sendable {
+    public struct Settlement: Sendable {
+        public let name: String
+        public let isTarget: Bool
+        public let centerI: Int
+        public let centerJ: Int
+        public let houses: [Int]
+        public let fields: [Int]
+        /// Wasser je Feldzelle (0…1), letzte Messung.
+        public let fieldWater: [Double]
+        public let fieldFlooded: [Bool]
+        public let status: SettlementStatus
+        public let problem: SupplyProblem
+        public let population: Double
+        public let reserve: Double
+        public let badStreak: Int
+        /// Versorgung der letzten Messung (Wasser, überflutete Felder/Häuser).
+        public let supply: YearSupply
+        public let repairing: Bool
+        /// Ernte der letzten Jahre (relativ zum Bedarf), älteste zuerst.
+        public let harvests: [Double]
+        public let historyProblems: [SupplyProblem]
+    }
+
+    public let year: Int
+    public let budget: Double
+    public let budgetLeft: Double
+    public let strokes: Int
+    public let outcome: NatureGame.Outcome
+    public let trialYears: Int
+    public let settlements: [Settlement]
+    /// Vom Spieler veränderte Zellen (sortiert) und die im letzten Jahr von
+    /// den Menschen zurückgebauten.
+    public let editedCells: [Int]
+    public let repairedCells: [Int]
+}
+
+extension NatureGame {
+    public func view() -> NatureView {
+        NatureView(
+            year: yearsClosed, budget: budget, budgetLeft: budgetLeft, strokes: strokes,
+            outcome: outcome, trialYears: Self.trialYears,
+            settlements: layouts.indices.map { s in
+                let l = layouts[s], st = settlements[s]
+                return NatureView.Settlement(
+                    name: l.name, isTarget: l.isTarget, centerI: l.centerI, centerJ: l.centerJ,
+                    houses: l.houses, fields: l.fields,
+                    fieldWater: fieldWater[s], fieldFlooded: fieldFlooded[s],
+                    status: st.status, problem: st.problem, population: st.population,
+                    reserve: st.reserve, badStreak: st.badStreak, supply: lastSupply[s],
+                    repairing: repairing[s],
+                    harvests: st.history.map(\.harvest),
+                    historyProblems: st.history.map(\.problem))
+            },
+            editedCells: edits.keys.sorted(), repairedCells: lastRepairedCells)
+    }
+}
