@@ -88,3 +88,16 @@ static func run(main: Node, check: Callable) -> void:
 	check.call(is_equal_approx(state["budget_left"], state["budget"]), "Neustart füllt das Budget")
 	check.call(sim.heights() == h0, "Neustart: bit-gleicher Startzustand")
 
+	# Laden beendet den Versuch in der Sitzung (Sandkasten-Welt); die
+	# Oberfläche muss mitziehen: kein Versuchsmodus, alle Werkzeuge zurück.
+	var path := "user://tests/nature_leave.%s" % sim.worldFileExtension()
+	var err: String = sim.saveWorld(ProjectSettings.globalize_path(path))
+	check.call(err.is_empty(), "saveWorld: %s" % err)
+	var panel: Control = main.nature.panel_corner
+	main._load_world(path)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	check.call(not sim.natureActive(), "Laden beendet den Versuch in der Sitzung")
+	check.call(main.nature == null, "Laden baut den Versuchsmodus ab")
+	check.call(panel.is_queued_for_deletion(), "Versuchs-Panel entfernt")
+	for t in tools.size():
+		check.call(main.tool_buttons[t].visible, "Werkzeug %s nach dem Laden zurück" % tools[t]["name"])

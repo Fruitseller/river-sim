@@ -44,6 +44,8 @@ var end_label: Label
 var settlement_labels: Array = [] # je Siedlung [Kopf, Zustand, Zahlen, Verlauf]
 var announced_outcome := 0
 var message_until := 0
+var panel_corner: Control
+var sandbox_radius: Array = [] # Radius-Regler vor dem Versuch [min, step, max, value]
 
 func setup(main_node: Node) -> void:
 	main = main_node
@@ -68,6 +70,8 @@ func _restrict_tools() -> void:
 			main.current_tool = t
 			main.tool_buttons[t].set_pressed_no_signal(true)
 	var cap: float = main.pick_radius_cap
+	var rs: Range = main.radius_slider
+	sandbox_radius = [rs.min_value, rs.step, rs.max_value, rs.value]
 	main.radius_slider.min_value = cap * 0.4
 	main.radius_slider.step = cap * 0.1
 	main.radius_slider.max_value = cap
@@ -109,6 +113,7 @@ func _build_markers() -> void:
 
 func _build_panel() -> void:
 	var corner: VBoxContainer = main._corner(Control.PRESET_BOTTOM_LEFT)
+	panel_corner = corner
 	var vb: VBoxContainer = main._panel(corner)
 	vb.custom_minimum_size = Vector2(380, 0)
 	main._label(vb, "MUTTER NATUR — VERSUCH", &"SectionLabel")
@@ -159,6 +164,10 @@ func _restart() -> void:
 func refresh() -> void:
 	state = sim.natureState()
 	if state.is_empty():
+		# „Neu" oder Laden hat den Versuch in der Sitzung beendet (die Welt ist
+		# wieder Sandkasten): die Oberfläche folgt, statt Budget, Siedlungen
+		# und gekürzte Werkzeuge des alten Versuchs stehen zu lassen.
+		_leave()
 		return
 	_update_markers()
 	_update_panel()
@@ -251,3 +260,20 @@ func _update_panel() -> void:
 		for h in st["harvests"]:
 			parts.append(str(int(round(100.0 * h))))
 		labels[3].text = "Ernten (%% vom Bedarf): " + (" · ".join(parts) if parts.size() > 0 else "—")
+
+## Versuchsmodus vollständig abbauen und den Sandkasten wiederherstellen:
+## alle Werkzeuge, Radius-Regler wie vorher, Panel und Markierungen weg.
+func _leave() -> void:
+	for b in main.tool_buttons:
+		b.visible = true
+	if sandbox_radius.size() == 4:
+		var rs: Range = main.radius_slider
+		rs.max_value = sandbox_radius[2] # erst max: der Versuchs-Deckel liegt darunter
+		rs.min_value = sandbox_radius[0]
+		rs.step = sandbox_radius[1]
+		rs.value = sandbox_radius[3]
+	if panel_corner:
+		panel_corner.queue_free()
+	main.nature = null
+	queue_free()
+	print("NATURE_MODE_LEFT")
