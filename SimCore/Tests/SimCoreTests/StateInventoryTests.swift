@@ -174,14 +174,12 @@ final class StateInventoryTests: XCTestCase {
         ("scratch", .scratch(reason:
             "Arbeitspuffer der Hangdiffusion — der Pass schreibt jede Zelle, "
             + "bevor er sie liest.")),
-        ("areaPow", .scratch(reason:
-            "`A^m` je Zelle für `outletIncision`, je Aufruf neu gerechnet.")),
-        ("incisionGate", .scratch(reason:
-            "Gate-Status der Auslass-Inzision (Runde 7), je Aufruf vollständig "
-            + "neu gesetzt, bevor die serielle Schleife ihn liest.")),
-        ("incisionKErode", .scratch(reason:
-            "Erosionsfaktor je Zelle für `outletIncision` (Runde 7), je Aufruf "
-            + "neu gerechnet, bevor die serielle Schleife ihn liest.")),
+        ("incisionCells", .scratch(reason:
+            "Vorab gerechnete Schritte der Auslass-Inzision je Zelle, je Aufruf "
+            + "vollständig neu gesetzt, bevor sie in `order`-Reihenfolge umsortiert werden.")),
+        ("incisionSteps", .scratch(reason:
+            "Vorab gerechnete Schritte der Auslass-Inzision je `order`-Position, "
+            + "je Aufruf vollständig neu gesetzt, bevor die serielle Schleife sie liest.")),
         ("braidStatus", .scratch(reason:
             "Braid-Gate je Zelle (Runde 7), vor dem seriellen Lauf des Passes "
             + "vollständig neu gesetzt.")),

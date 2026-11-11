@@ -286,15 +286,20 @@ public final class Terrain {
     private var heap: MinHeap
     private var visited: [Bool]
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
-    /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
-    private var areaPow: [Double] = []
-    /// Gate-Status der Auslass-Inzision (Runde 7, s. dort): 0 überspringen,
-    /// 1 normal, 2 Weltrand. Reiner Arbeitspuffer, je Aufruf neu gesetzt.
-    private var incisionGate: [Int8] = []
-    /// Vegetations-/Lithologie-Erosionsfaktor je Zelle für `outletIncision`
-    /// (Runde 7) — hängt an Feldern, die der Pass nicht schreibt. Reiner
-    /// Arbeitspuffer, je Aufruf neu gesetzt.
-    private var incisionKErode: [Double] = []
+    /// Ein Schritt der Auslass-Inzision je `order`-Position: Zelle (`k < 0`:
+    /// überspringen), Empfänger (`r < 0`: Weltrand, Basisniveau Meer) und der
+    /// Koeffizient `f` der impliziten Formel, der nur an Feldern hängt, die der
+    /// Pass nicht schreibt. s. `outletIncision`.
+    private struct IncisionStep {
+        var k: Int32
+        var r: Int32
+        var f: Double
+    }
+    /// Schritte der Auslass-Inzision je ZELLE (Vorab-Pass) und dieselben
+    /// Einträge in `order`-Reihenfolge (serielle Schleife) — reine
+    /// Arbeitspuffer, je Aufruf vollständig neu gesetzt, s. `outletIncision`.
+    private var incisionCells: [IncisionStep] = []
+    private var incisionSteps: [IncisionStep] = []
     /// Braid-Status je Zelle (Runde 7, s. `braidPass`): 0 Meer, 1 inaktives
     /// Land (Deposition möglich), 2 aktiver Reach. Reiner Arbeitspuffer, je
     /// Aufruf vor dem seriellen Lauf vollständig neu gesetzt.
@@ -338,7 +343,7 @@ public final class Terrain {
     private var streamRate: [Double] // EWMA der Besuche/Jahr
     private var trackBuf: [Double]   // je Schritt: Tropfen-Besuchszahl je Zelle
     /// Je Schritt: Faktor der Tropfen-Deposition je Zelle (Issue #108, s.
-    /// `buildDepositDamp`). Reiner Arbeitspuffer wie `trackBuf`/`areaPow` —
+    /// `buildDepositDamp`). Reiner Arbeitspuffer wie `trackBuf`/`incisionSteps` —
     /// leitet sich vollständig aus `area` und der Config ab und gehört deshalb
     /// nicht ins Zustands-Inventar.
     private var depositDampBuf: [Double] = []
@@ -607,7 +612,8 @@ public final class Terrain {
         iceAvFeed = []
         iceAvPhi = []
         vegScratchRow = []
-        areaPow = []
+        incisionCells = []
+        incisionSteps = []
         depositDampBuf = []
         dropletGateBuf = []
         segOwner = []
@@ -3708,9 +3714,10 @@ public final class Terrain {
     ///
     /// PERF (Runde 7): Alle ENTSCHEIDUNGEN, die während des Passes NICHT vom
     /// laufend veränderten Bett abhängen, laufen vorab und parallel: die
-    /// Gate-Kette (Meer/Breack-Fläche/Beckenwasser/Weltrand) als Int8 in
-    /// `incisionGate` und der Vegetations-/Lithologie-Faktor `kErode` in
-    /// `incisionKErode`. Bit-identisch, weil der Pass nur je BESUCHTER Zelle
+    /// Gate-Kette (Meer/Breack-Fläche/Beckenwasser/Weltrand), der
+    /// Vegetations-/Lithologie-Faktor `kErode` und `A^m` — seit Runde 8 schon
+    /// zum fertigen Koeffizienten `f` verrechnet und in `order`-Reihenfolge
+    /// abgelegt (`incisionSteps`, s. u.). Bit-identisch, weil der Pass nur je BESUCHTER Zelle
     /// schreibt (`h`/`sed`/`rock` an `k` selbst) — jede Zelle sieht also bei
     /// ihrem Besuch noch exakt die Werte des Pass-Starts — und weil
     /// `underIce`/`area`/`receiver`/`endorheicBasin`/`veg*`/`lith*` im Pass
@@ -3739,12 +3746,20 @@ public final class Terrain {
         // vorab und PARALLEL berechnet (per-Zelle unabhängig, dieselben
         // libm-Aufrufe mit denselben Argumenten ⇒ bit-identisch) und die
         // serielle Schleife liest sie nur noch nach.
-        if areaPow.count != cnt { areaPow = .init(repeating: 0, count: cnt) }
-        if incisionGate.count != cnt { incisionGate = .init(repeating: 0, count: cnt) }
-        if incisionKErode.count != cnt { incisionKErode = .init(repeating: 0, count: cnt) }
-        areaPow.withUnsafeMutableBufferPointer { apb in
-        incisionGate.withUnsafeMutableBufferPointer { gb in
-        incisionKErode.withUnsafeMutableBufferPointer { kb in
+        let blank = IncisionStep(k: -1, r: -1, f: 0)
+        if incisionCells.count != cnt { incisionCells = .init(repeating: blank, count: cnt) }
+        if incisionSteps.count != cnt { incisionSteps = .init(repeating: blank, count: cnt) }
+        // PERF: der Vorab-Pass legt je Zelle fertig ab, was die serielle
+        // Schleife braucht — Zelle (oder „überspringen"), Empfänger und den
+        // Koeffizienten `f` der impliziten Formel. `f` hängt nur an Feldern,
+        // die der Pass nicht schreibt (`area`, `receiver`, Vegetation,
+        // Lithologie): dieselbe Formel in derselben Reihenfolge, also
+        // bit-identisch. Ein zweiter paralleler Lauf sortiert die Einträge in
+        // `order`-Reihenfolge um. Die serielle Schleife liest damit EINEN
+        // Puffer sequenziell statt vier Felder (Gate, `A^m`, kErode,
+        // `receiver`) gestreut an `k`; gestreut bleiben nur die Höhen von Zelle
+        // und Empfänger und der Funnel.
+        incisionCells.withUnsafeMutableBufferPointer { cb in
         area.withUnsafeBufferPointer { ab in
         h.withUnsafeBufferPointer { hb in
         lithArr.withUnsafeBufferPointer { lkb in
@@ -3753,8 +3768,8 @@ public final class Terrain {
         vegTypeFactor.withUnsafeBufferPointer { tfb in
         receiver.withUnsafeBufferPointer { rb in
         endorheicBasin.withUnsafeBufferPointer { eb in
-            let pap = apb.baseAddress!, pa = ab.baseAddress!, ph0 = hb.baseAddress!
-            let pgate = gb.baseAddress!, pker = kb.baseAddress!
+            let pcell = cb.baseAddress!
+            let pa = ab.baseAddress!, ph0 = hb.baseAddress!
             let pveg = vb.baseAddress!, pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
             let prec0 = rb.baseAddress!, pend = eb.baseAddress!
             let plith = lkb.baseAddress!
@@ -3767,7 +3782,7 @@ public final class Terrain {
                     // mehr in der Kette: das Eis-Gate trägt der Funnel
                     // (`erodeCellTo` → `Bed.erode`), EINMAL für alle
                     // Bett-Schreiber. Eis-Zellen laufen durch die Kette und
-                    // bekommen ein normales `g` — die serielle Schleife rechnet
+                    // bekommen ein normales `f` — die serielle Schleife rechnet
                     // ihre Formel, und der Funnel verwirft den Abtrag.
                     // Ergebnis bit-identisch (nur Formel-Arbeit mehr auf
                     // vergletscherten Zellen); das Gate kann in künftigem
@@ -3795,72 +3810,83 @@ public final class Terrain {
                         // hier die Welt → virtuelles Basisniveau MEER, s. Loop.
                         g = pend[k] != .none ? 0 : 2
                     }
-                    pgate[k] = g
-                    // Inaktive Zellen (g == 0: Meer, See) übergeht die
-                    // serielle Schleife; pow(A, m) und kErode werden dort nie
-                    // gelesen und müssen gar nicht erst berechnet werden.
-                    // (Eis-Zellen rechnen mit — der Funnel verwirft.)
-                    guard g != 0 else { continue }
-                    pap[k] = pow(pa[k], m)
-                    pker[k] = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
-                                  * (lithOn ? plith[k] : 1.0)
+                    // Inaktive Zellen (Meer, See) übergeht die serielle
+                    // Schleife; `pow(A, m)` und kErode entfallen für sie.
+                    guard g != 0 else {
+                        pcell[k] = blank
+                        continue
+                    }
+                    let r: Int32
+                    let dist: Double
+                    if g == 2 {
+                        // Land-Zelle ohne Empfänger = Weltrand: Abstand eine
+                        // Zelle zum virtuellen Basisniveau MEER (s. Schleife).
+                        r = -1
+                        dist = cs
+                    } else {
+                        r = prec0[k]
+                        // PERF (Issue #43): Diagonale über die INDEX-DIFFERENZ
+                        // statt über zwei i/j-Paare — das spart zwei
+                        // Integer-Divisionen je Zelle. Der Empfänger ist immer
+                        // einer der 8 Nachbarn: `computeReceiversAndArea`
+                        // vergibt ausschließlich Nachbarn, und sein Rückfall
+                        // `floodParent` ist die Zelle, von der aus der
+                        // Priority-Flood die Senke besucht hat — ebenfalls ein
+                        // Nachbar. Für einen 8-Nachbarn gilt |k − r| ∈ {1,
+                        // nn−1, nn, nn+1}, und genau nn±1 sind die diagonalen
+                        // Schritte. Ergebnis-identisch zu `i != ri && j != rj`.
+                        let ri = Int(r)
+                        let dIdx = k > ri ? k - ri : ri - k
+                        dist = (dIdx == nn - 1 || dIdx == nn + 1) ? cs * sqrt2 : cs
+                    }
+                    // Reine Flächen-Stream-Power: die Inzision konzentriert sich
+                    // auf Zellen mit großem Einzugsgebiet (Täler/Auslässe) und
+                    // lässt Grate in Ruhe → dendritisch statt verrauscht. Ein
+                    // Becken-Auslass sammelt das ganze Becken → tieft zügig ein →
+                    // See entwässert zum Meer. Vegetation bremst —
+                    // klassen-gewichtet wie vegDamp; kein Bett-Feld geht in den
+                    // Faktor ein, er steht vor dem Pass fest.
+                    let kErode = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
+                                      * (lithOn ? plith[k] : 1.0)
+                    let f = kErode * dt * pow(pa[k], m) / dist
+                    pcell[k] = IncisionStep(k: Int32(k), r: r, f: f)
                 }
             }
-        }}}}}}}}}}}
+        }}}}}}}}}
+        incisionCells.withUnsafeBufferPointer { cb in
+        incisionSteps.withUnsafeMutableBufferPointer { sb in
+        order.withUnsafeBufferPointer { ob in
+            let pcell = cb.baseAddress!, pst = sb.baseAddress!, pord = ob.baseAddress!
+            parallel(cnt) { lo, hi in
+                for oi in lo..<hi { pst[oi] = pcell[Int(pord[oi])] }
+            }
+        }}}
         // `h`/`sed`/`rock` kommen über `withBed` dazu — dieselbe Sicht, über
         // die der Funnel schreibt (Issue #96); die Ziel-Fassung `erodeCellTo`
         // trägt Zerlegung UND Eis-Gate und setzt die Zielhöhe exakt (s. dort).
         withBed { bed in
-        areaPow.withUnsafeBufferPointer { apb in
-        incisionGate.withUnsafeBufferPointer { gb in
-        incisionKErode.withUnsafeBufferPointer { kb in
-        order.withUnsafeBufferPointer { ob in
-        receiver.withUnsafeBufferPointer { rb in
-            let ph = bed.h, pap = apb.baseAddress!
-            let pgate = gb.baseAddress!, pker = kb.baseAddress!
-            let pord = ob.baseAddress!, prec = rb.baseAddress!
+        incisionSteps.withUnsafeBufferPointer { sb in
+            let ph = bed.h, pst = sb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
         for oi in 0..<cnt {
-            let k = Int(pord[oi])
-            let g = pgate[k]
-            if g == 0 { continue }
+            let st = pst[oi]
+            if st.k < 0 { continue }
+            let k = Int(st.k)
             let hr: Double
-            let dist: Double
-            if g == 2 {
+            if st.r < 0 {
                 // Land-Zelle ohne Empfänger = Weltrand (Priority-Flood-Seed):
                 // Wasser verlässt hier die Welt → virtuelles Basisniveau MEER.
                 // Ohne das wirkt der Rand als unerodierbarer Pegel und Becken,
                 // die über den Rand entwässern, können nie tiefer ausschneiden
                 // (gemessen: See blieb 28 Breach-Runden bei exakt 2656 Zellen).
                 hr = sea
-                dist = cs
             } else {
-                let ri = Int(prec[k])
+                let ri = Int(st.r)
                 if ph[k] <= ph[ri] { continue }     // See/Ebene: kein Gefälle → keine Inzision
                 hr = ph[ri]
-                // PERF (Issue #43): Diagonale über die INDEX-DIFFERENZ statt über
-                // zwei i/j-Paare — das spart zwei Integer-Divisionen je Zelle
-                // (692k Zellen/Schritt, gemessen der größte Posten des Passes).
-                // Der Empfänger ist immer einer der 8 Nachbarn:
-                // `computeReceiversAndArea` vergibt ausschließlich Nachbarn, und
-                // sein Rückfall `floodParent` ist die Zelle, von der aus der
-                // Priority-Flood die Senke besucht hat — ebenfalls ein Nachbar.
-                // Für einen 8-Nachbarn gilt |k − r| ∈ {1, nn−1, nn, nn+1}, und
-                // genau nn±1 sind die diagonalen Schritte (bei 1 ändert sich nur
-                // die Spalte, bei nn nur die Zeile). Ergebnis-identisch zum
-                // früheren `i != rii && j != rjj`.
-                let dIdx = k > ri ? k - ri : ri - k
-                dist = (dIdx == nn - 1 || dIdx == nn + 1) ? cs * sqrt2 : cs
             }
-            // Reine Flächen-Stream-Power: die Inzision konzentriert sich auf Zellen mit
-            // großem Einzugsgebiet (Täler/Auslässe) und lässt Grate in Ruhe → dendritisch
-            // statt verrauscht. Ein Becken-Auslass sammelt das ganze Becken → tieft zügig
-            // ein → See entwässert zum Meer.
-            // Vegetation bremst — klassen-gewichtet wie vegDamp; der Faktor stand
-            // schon vor dem Pass fest (kein Bett-Feld geht in ihn ein) und
-            // reist deshalb vorab berechnet in `incisionKErode`.
-            let f = pker[k] * dt * pap[k] / dist
+            let f = st.f
             let hNew = (ph[k] + f * hr) / (1 + f)
             // Bett-Regel (erst Sediment, dann Fels) UND Gletscher-Gate: der
             // Funnel (Issue #96). Die Ziel-Fassung setzt `hNew` EXAKT —
@@ -3868,7 +3894,7 @@ public final class Terrain {
             // (s. `erodeCellTo(_:_:_:)`).
             erodeCellTo(k, hNew, bed)
         }
-        }}}}}}
+        }}
     }
 
     // MARK: - Hydraulische Bett-Inzision (Gleichgewichtstiefe)

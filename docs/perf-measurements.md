@@ -2523,3 +2523,63 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+## XIII. Auslass-Inzision: fertige Schritte in `order`-Reihenfolge (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+Die serielle Schleife von `Terrain.outletIncision` lief über `order` und las je
+Zelle vier Felder gestreut an `k`: `incisionGate`, `areaPow`, `incisionKErode`
+und `receiver` — dazu die Höhen von Zelle und Empfänger und den Funnel. Gemessen
+(temporäre Profil-Marke zwischen Vorab-Pass und Schleife, Seed 1337) steckten
+im Ausgangsstand **8,6–9,1 ms** in der seriellen Schleife und nur 1,6–1,7 ms im
+parallelen Vorab-Pass.
+
+Jetzt rechnet der parallele Vorab-Pass (weiter über `k`, also mit
+zusammenhängenden Lesezugriffen) je Zelle EINEN 16-Byte-Eintrag
+`IncisionStep(k, r, f)`: Zelle oder „überspringen", Empfänger oder „Weltrand"
+und den fertigen Koeffizienten `f = kErode · dt · A^m / dist`. Ein zweiter
+paralleler Lauf sortiert die Einträge in `order`-Reihenfolge um
+(`steps[oi] = cells[order[oi]]`). Die serielle Schleife liest danach einen
+Puffer streng sequenziell; gestreut bleiben nur `h[k]`, `h[Empfänger]` und der
+Funnel.
+
+Bit-identisch, weil `f` nur an Feldern hängt, die der Pass nicht schreibt
+(`area`, `receiver`, `veg`, `vegClass`, `lithErodeK`), und dieselbe Formel in
+derselben Operanden-Reihenfolge rechnet wie vorher die Schleife; Gate-Kette,
+Abstandsregel und die frisch gelesenen Höhen bleiben unverändert. Die drei
+Arbeitspuffer `areaPow`, `incisionGate`, `incisionKErode` sind durch
+`incisionCells`/`incisionSteps` ersetzt (`StateInventoryTests`).
+
+Ein erster Versuch, den Vorab-Pass direkt über die `order`-Positionen laufen zu
+lassen, halbierte die serielle Schleife (4,1 ms), verdreifachte aber den
+Vorab-Pass (5,3 ms), weil dann ALLE acht Eingangsfelder gestreut gelesen
+werden. Die Zwei-Stufen-Fassung zahlt den Streu-Zugriff nur einmal, auf einem
+Eintrag je Zelle: Vorab-Pass plus Umsortieren 3,1 ms, Schleife 4,5 ms.
+
+### Gemessen
+
+- **Maschine:** VM, AMD EPYC-Genoa, 4 vCPU, Linux, Swift 6.3.3 (Swift-5-Sprachmodus
+  wie im Nightly-Lauf).
+- **Konfiguration:** simperf-Standard (Produktions-Config, n = 720,
+  world = 112,4789, Seed 1337, Einlauf 100 × 100 Jahre, 30 Schritte à dt = 100),
+  je Lauf `--repeat 3`; Pass-Wert aus der Tabelle des letzten Blocks.
+- **Reihenfolge:** drei Paare verschränkt, A B · B A · A B (vorab gebaute
+  Binärdateien, eine Sitzung).
+
+| Paar | alt Blöcke (ms/Schritt) | neu Blöcke (ms/Schritt) | `outletIncision` alt | neu | Δ Pass |
+| ---: | --- | --- | ---: | ---: | ---: |
+| 1 (A→B) | 166,0 / 171,4 / 160,7 | 160,4 / 178,1 / 169,0 | 10,72 | 9,03 | −1,69 |
+| 2 (B→A) | 163,0 / 162,0 / 164,3 | 164,6 / 165,4 / 167,0 | 11,33 | 8,50 | −2,83 |
+| 3 (A→B) | 158,2 / 175,5 / 167,4 | 159,0 / 167,4 / 165,4 | 11,77 | 8,40 | −3,37 |
+
+Der Pass wird in allen drei Paaren schneller, Median **−2,8 ms** (≈ −25 % des
+Passes, ≈ 1,7 % des Schritts). Der Gesamtschritt bleibt unter dem
+Prozess-zu-Prozess-Rauschen der VM (Blöcke streuen um ±10 ms); ein Gewinn dieser
+Größe ist dort nicht auflösbar und wird hier nicht behauptet.
+
+`simperf --hash` alt == neu auf derselben Maschine für Seed 1337, 42 und 20
+(dt = 100) sowie Seed 1337 mit dt = 15. Der Generierungs-Breach
+(`minAreaCells = 100`) läuft durch denselben Code; ob er bei der Generierung
+überhaupt eine Inzisions-Runde dreht, hängt von der Seefläche der Startwelt ab
+und ist hier nicht gesondert belegt.
