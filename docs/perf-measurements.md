@@ -2536,7 +2536,14 @@ In `Terrain.outletIncision`:
 
 ### Gemessen
 
-Verschränkte A/B-Messung in einer Sitzung (3 Paare mit wechselnder Reihenfolge, je `--repeat 3`, Produktions-Konfiguration n=720, world=112,4789, Seed 1337, dt=100.0, 30 Schritte nach 100 Schritten Warmup):
+Rahmen der Messreihe:
+
+- **Maschine:** Linux-Host `agentbox` (Debian 13 trixie, 4 vCPUs AMD EPYC-Genoa, 7,8 GB RAM), Swift 6.3.3 (`swift-6.3.3-RELEASE`).
+- **Konfiguration:** Produktions-Paarung aus `SimConfig.production` (n = 720, world = 112,4789), Seed 1337, Einlauf 100 × 100 Jahre, 30 Messschritte à dt = 100.0 — der simperf-Standard (`SimPerf/main.swift`).
+- **Aggregationsregel:** Kennzahl je Lauf ist das Block-MINIMUM aus `--repeat 3` (simperf-Semantik: der am wenigsten gestörte Block); der Pass-Wert stammt aus der Pass-Tabelle des LETZTEN Blocks desselben Laufs. Über die Paare hinweg wird je Seite der Median über die Läufe angegeben (interleaved A/B, Reihenfolge abwechselnd).
+- **Anteil am Sim-Schritt:** `outletIncision` trägt rund 6,2–7,0 % (Median ~9,0–10,0 ms von ~145–150 ms).
+
+Verschränkte A/B-Messung in einer Sitzung (3 Paare mit wechselnder Reihenfolge, je `--repeat 3`):
 
 - **Paar 1 (Baseline → Opt):**
   - Baseline: 153,6 / 150,0 / 148,8 ms/Schritt (Minimum: 148,8 ms), `outletIncision`: 9,95 ms (6,7 %)
@@ -2548,7 +2555,13 @@ Verschränkte A/B-Messung in einer Sitzung (3 Paare mit wechselnder Reihenfolge,
   - Baseline: 148,6 / 154,6 / 145,3 ms/Schritt (Minimum: 145,3 ms), `outletIncision`: 9,97 ms (6,9 %)
   - Opt: 161,2 / 164,1 / 161,2 ms/Schritt (unter VM-Hintergrundlast), `outletIncision`: 10,06 ms (6,2 % relative Pass-Last)
 
-Der Pass `outletIncision` sinkt im ungestörten Lauf reproduzierbar von ~9,95–10,74 ms auf ~9,02–9,07 ms (−0,88 bis −1,72 ms, rund −9 % bis −16 %); der Anteil des Passes am Gesamtschritt sinkt von ~6,7–7,0 % auf ~6,2–6,4 %.
+Aggregation über alle drei Paare:
+- **Pass `outletIncision` (Median, Spanne):** Basis 9,97 ms (9,95–10,74 ms) vs. Opt 9,07 ms (9,02–10,06 ms) → Δ Pass: −0,90 ms (−9,0 %).
+- **Schritt-Minimum (Median, Spanne):** Basis 147,5 ms (145,3–148,8 ms) vs. Opt 146,8 ms (140,5–161,2 ms) → Δ Schritt-Minimum: −0,70 ms (−0,5 %).
+
+Ehrliche Einordnung von Paar 3 und Nacht-Kriterium:
+- In den ersten beiden ungestörten Paaren sank der Pass `outletIncision` reproduzierbar von 9,95–10,74 ms auf 9,02–9,07 ms (−0,88 bis −1,72 ms, rund −9 % bis −16 %); das Schritt-Minimum sank jeweils messbar (148,8 → 146,8 ms bzw. 147,5 → 140,5 ms).
+- In Paar 3 war Opt jedoch sowohl beim Pass (9,97 → 10,06 ms, +0,09 ms / +0,9 %) als auch beim Schritt-Minimum (145,3 → 161,2 ms, +15,9 ms) langsamer. Dies darf nicht über den scheinbar gesunkenen relativen Passanteil (6,9 % → 6,2 %) als Gewinn uminterpretiert oder wegerklärt werden: Das harte Nacht-Kriterium verlangt einen Gewinn bei ms/Schritt in jedem Block des unabhängigen A/B-Nachweises; relativer Passanteil alleine reicht nicht. Paar 3 erfüllt dieses Kriterium nicht. Die Spanne von −9 % bis −16 % (−0,88 bis −1,72 ms) beschreibt daher ausschließlich die ersten beiden Paare statt eines pauschalen Reproduzierbarkeitsbelegs über alle drei Paare.
 
 ### Bit-Identität
 
