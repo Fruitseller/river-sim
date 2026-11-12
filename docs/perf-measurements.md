@@ -2523,3 +2523,40 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+## XIII. Auslass-Inzision: Inzisionsfaktor mit dt und Potenz vorab fusioniert und incisionKErode eliminiert (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.outletIncision`:
+- **Fusion des Inzisionsterms in `areaPow`:** Die Berechnung von `kFactor = kOut * max(0, 1 - 0.6 * ptf[pcls[k]] * veg[k]) * lith` und `(kFactor * dt) * pow(A, m)` erfolgt direkt im parallelen Vorab-Pass in den Puffer `areaPow`.
+- **Eliminierung von `incisionKErode`:** Der separate Puffer `incisionKErode` (518.400 `Double`-Einträge = 4,15 MB) und das zugehörige Klassen-Property in `Terrain` entfallen vollständig.
+- **Reduktion von Operationen und Cache-Misses:** Der serielle Lauf entlang `order` spart die Öffnung des `incisionKErode`-Puffers, den gestreuten Lesezugriff `pker[k]` je besuchter Zelle und zwei Gleitkomma-Multiplikationen (`pker[k] * dt * pap[k] / dist` wird zu `pap[k] / dist`).
+- **Bit-Identität:** Mathematisch identische Assoziativität und Operationen; alle Zustands-Fingerprints stimmen bit-identisch überein.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (3 Paare mit wechselnder Reihenfolge, je `--repeat 3`, Produktions-Konfiguration n=720, world=112,4789, Seed 1337, dt=100.0, 30 Schritte nach 100 Schritten Warmup):
+
+- **Paar 1 (Baseline → Opt):**
+  - Baseline: 153,6 / 150,0 / 148,8 ms/Schritt (Minimum: 148,8 ms), `outletIncision`: 9,95 ms (6,7 %)
+  - Opt: 151,8 / 148,6 / 146,8 ms/Schritt (Minimum: 146,8 ms), `outletIncision`: 9,07 ms (6,2 %) (−0,88 ms / −8,8 %)
+- **Paar 2 (Opt → Baseline):**
+  - Opt: 147,7 / 145,0 / 140,5 ms/Schritt (Minimum: 140,5 ms), `outletIncision`: 9,02 ms (6,4 %) (−1,72 ms / −16,0 %)
+  - Baseline: 150,2 / 147,5 / 152,4 ms/Schritt (Minimum: 147,5 ms), `outletIncision`: 10,74 ms (7,0 %)
+- **Paar 3 (Baseline → Opt):**
+  - Baseline: 148,6 / 154,6 / 145,3 ms/Schritt (Minimum: 145,3 ms), `outletIncision`: 9,97 ms (6,9 %)
+  - Opt: 161,2 / 164,1 / 161,2 ms/Schritt (unter VM-Hintergrundlast), `outletIncision`: 10,06 ms (6,2 % relative Pass-Last)
+
+Der Pass `outletIncision` sinkt im ungestörten Lauf reproduzierbar von ~9,95–10,74 ms auf ~9,02–9,07 ms (−0,88 bis −1,72 ms, rund −9 % bis −16 %); der Anteil des Passes am Gesamtschritt sinkt von ~6,7–7,0 % auf ~6,2–6,4 %.
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen vier Standard-Konfigurationen exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `d83b629fa79aa144` | `d83b629fa79aa144` | bit-identisch |
+| Seed 1337, dt = 15 | `33303214b99a9487` | `33303214b99a9487` | bit-identisch |
+| Seed 42, dt = 100 | `86d6a5cc13ce2a92` | `86d6a5cc13ce2a92` | bit-identisch |
+| Seed 20, dt = 100 | `876aee34771e364d` | `876aee34771e364d` | bit-identisch |

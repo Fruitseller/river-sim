@@ -286,15 +286,11 @@ public final class Terrain {
     private var heap: MinHeap
     private var visited: [Bool]
     private var scratch: [Double] // Arbeitspuffer für die Diffusion
-    /// `A^m` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
+    /// `(kFactor * dt) * pow(A, m)` je Zelle für `outletIncision` — reiner Arbeitspuffer, s. dort.
     private var areaPow: [Double] = []
     /// Gate-Status der Auslass-Inzision (Runde 7, s. dort): 0 überspringen,
     /// 1 normal, 2 Weltrand. Reiner Arbeitspuffer, je Aufruf neu gesetzt.
     private var incisionGate: [Int8] = []
-    /// Vegetations-/Lithologie-Erosionsfaktor je Zelle für `outletIncision`
-    /// (Runde 7) — hängt an Feldern, die der Pass nicht schreibt. Reiner
-    /// Arbeitspuffer, je Aufruf neu gesetzt.
-    private var incisionKErode: [Double] = []
     /// Braid-Status je Zelle (Runde 7, s. `braidPass`): 0 Meer, 1 inaktives
     /// Land (Deposition möglich), 2 aktiver Reach. Reiner Arbeitspuffer, je
     /// Aufruf vor dem seriellen Lauf vollständig neu gesetzt.
@@ -3709,8 +3705,8 @@ public final class Terrain {
     /// PERF (Runde 7): Alle ENTSCHEIDUNGEN, die während des Passes NICHT vom
     /// laufend veränderten Bett abhängen, laufen vorab und parallel: die
     /// Gate-Kette (Meer/Breack-Fläche/Beckenwasser/Weltrand) als Int8 in
-    /// `incisionGate` und der Vegetations-/Lithologie-Faktor `kErode` in
-    /// `incisionKErode`. Bit-identisch, weil der Pass nur je BESUCHTER Zelle
+    /// `incisionGate` und der kombinierte Inzisionsfaktor `(kErode * dt) * pow(A, m)`
+    /// in `areaPow`. Bit-identisch, weil der Pass nur je BESUCHTER Zelle
     /// schreibt (`h`/`sed`/`rock` an `k` selbst) — jede Zelle sieht also bei
     /// ihrem Besuch noch exakt die Werte des Pass-Starts — und weil
     /// `underIce`/`area`/`receiver`/`endorheicBasin`/`veg*`/`lith*` im Pass
@@ -3732,19 +3728,16 @@ public final class Terrain {
         // 1-Element-Dummy und Faktor exakt 1.0 → bit-identische Arithmetik.
         let lithOn = lithErodeK.count == cnt
         let lithArr = lithOn ? lithErodeK : [1.0]
-        // PERF (Issue #43): `pow(A, m)` je Zelle war mit ~16 ms/Schritt der
-        // größte Einzelposten des Passes (Messung: mit einer Multiplikation
-        // statt pow fiel er von 41 auf 25 ms). `area` ändert sich WÄHREND des
-        // Passes nicht — nur `h`/`sed`/`rock` tun das —, also wird die Potenz
-        // vorab und PARALLEL berechnet (per-Zelle unabhängig, dieselben
-        // libm-Aufrufe mit denselben Argumenten ⇒ bit-identisch) und die
-        // serielle Schleife liest sie nur noch nach.
+        // PERF (Issue #43, XIII): `pow(A, m)` je Zelle war mit ~16 ms/Schritt der
+        // größte Einzelposten des Passes. Der kombinierte Inzisionsterm
+        // `(kFactor * dt) * pow(A, m)` wird vorab parallel berechnet. Das spart
+        // die separate Allokation des 4,15-MB-Puffers `incisionKErode` und
+        // eliminiert im seriellen Hot-Loop einen gestreuten Cache-Miss-Zugriff
+        // sowie zwei Multiplikationen je besuchter Zelle.
         if areaPow.count != cnt { areaPow = .init(repeating: 0, count: cnt) }
         if incisionGate.count != cnt { incisionGate = .init(repeating: 0, count: cnt) }
-        if incisionKErode.count != cnt { incisionKErode = .init(repeating: 0, count: cnt) }
         areaPow.withUnsafeMutableBufferPointer { apb in
         incisionGate.withUnsafeMutableBufferPointer { gb in
-        incisionKErode.withUnsafeMutableBufferPointer { kb in
         area.withUnsafeBufferPointer { ab in
         h.withUnsafeBufferPointer { hb in
         lithArr.withUnsafeBufferPointer { lkb in
@@ -3754,7 +3747,7 @@ public final class Terrain {
         receiver.withUnsafeBufferPointer { rb in
         endorheicBasin.withUnsafeBufferPointer { eb in
             let pap = apb.baseAddress!, pa = ab.baseAddress!, ph0 = hb.baseAddress!
-            let pgate = gb.baseAddress!, pker = kb.baseAddress!
+            let pgate = gb.baseAddress!
             let pveg = vb.baseAddress!, pcls = vcb.baseAddress!, ptf = tfb.baseAddress!
             let prec0 = rb.baseAddress!, pend = eb.baseAddress!
             let plith = lkb.baseAddress!
@@ -3801,23 +3794,23 @@ public final class Terrain {
                     // gelesen und müssen gar nicht erst berechnet werden.
                     // (Eis-Zellen rechnen mit — der Funnel verwirft.)
                     guard g != 0 else { continue }
-                    pap[k] = pow(pa[k], m)
-                    pker[k] = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
-                                  * (lithOn ? plith[k] : 1.0)
+                    let p = pow(pa[k], m)
+                    let kFactor = kOut * max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
+                                      * (lithOn ? plith[k] : 1.0)
+                    pap[k] = (kFactor * dt) * p
                 }
             }
-        }}}}}}}}}}}
+        }}}}}}}}}}
         // `h`/`sed`/`rock` kommen über `withBed` dazu — dieselbe Sicht, über
         // die der Funnel schreibt (Issue #96); die Ziel-Fassung `erodeCellTo`
         // trägt Zerlegung UND Eis-Gate und setzt die Zielhöhe exakt (s. dort).
         withBed { bed in
         areaPow.withUnsafeBufferPointer { apb in
         incisionGate.withUnsafeBufferPointer { gb in
-        incisionKErode.withUnsafeBufferPointer { kb in
         order.withUnsafeBufferPointer { ob in
         receiver.withUnsafeBufferPointer { rb in
             let ph = bed.h, pap = apb.baseAddress!
-            let pgate = gb.baseAddress!, pker = kb.baseAddress!
+            let pgate = gb.baseAddress!
             let pord = ob.baseAddress!, prec = rb.baseAddress!
         // Stromabwärts→aufwärts (order = aufsteigende Füllhöhe): der Empfänger ist
         // schon aktualisiert, die Inzision propagiert sill-erhaltend flussaufwärts.
@@ -3859,8 +3852,8 @@ public final class Terrain {
             // ein → See entwässert zum Meer.
             // Vegetation bremst — klassen-gewichtet wie vegDamp; der Faktor stand
             // schon vor dem Pass fest (kein Bett-Feld geht in ihn ein) und
-            // reist deshalb vorab berechnet in `incisionKErode`.
-            let f = pker[k] * dt * pap[k] / dist
+            // reist deshalb vorab berechnet und mit dt sowie A^m fusioniert in `areaPow`.
+            let f = pap[k] / dist
             let hNew = (ph[k] + f * hr) / (1 + f)
             // Bett-Regel (erst Sediment, dann Fels) UND Gletscher-Gate: der
             // Funnel (Issue #96). Die Ziel-Fassung setzt `hNew` EXAKT —
@@ -3868,7 +3861,7 @@ public final class Terrain {
             // (s. `erodeCellTo(_:_:_:)`).
             erodeCellTo(k, hNew, bed)
         }
-        }}}}}}
+        }}}}}
     }
 
     // MARK: - Hydraulische Bett-Inzision (Gleichgewichtstiefe)
