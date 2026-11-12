@@ -2523,3 +2523,53 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+## XIII. Auslass-Inzision: Inzisionsfaktor mit dt und Potenz vorab fusioniert und incisionKErode eliminiert (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.outletIncision`:
+- **Fusion des Inzisionsterms in `areaPow`:** Die Berechnung von `kFactor = kOut * max(0, 1 - 0.6 * ptf[pcls[k]] * veg[k]) * lith` und `(kFactor * dt) * pow(A, m)` erfolgt direkt im parallelen Vorab-Pass in den Puffer `areaPow`.
+- **Eliminierung von `incisionKErode`:** Der separate Puffer `incisionKErode` (518.400 `Double`-Einträge = 4,15 MB) und das zugehörige Klassen-Property in `Terrain` entfallen vollständig.
+- **Reduktion von Operationen und Cache-Misses:** Der serielle Lauf entlang `order` spart die Öffnung des `incisionKErode`-Puffers, den gestreuten Lesezugriff `pker[k]` je besuchter Zelle und zwei Gleitkomma-Multiplikationen (`pker[k] * dt * pap[k] / dist` wird zu `pap[k] / dist`).
+- **Bit-Identität:** Mathematisch identische Assoziativität und Operationen; alle Zustands-Fingerprints stimmen bit-identisch überein.
+
+### Gemessen
+
+Rahmen der Messreihe:
+
+- **Maschine:** Linux-Host `agentbox` (Debian 13 trixie, 4 vCPUs AMD EPYC-Genoa, 7,8 GB RAM), Swift 6.3.3 (`swift-6.3.3-RELEASE`).
+- **Konfiguration:** Produktions-Paarung aus `SimConfig.production` (n = 720, world = 112,4789), Seed 1337, Einlauf 100 × 100 Jahre, 30 Messschritte à dt = 100.0 — der simperf-Standard (`SimPerf/main.swift`).
+- **Aggregationsregel:** Kennzahl je Lauf ist das Block-MINIMUM aus `--repeat 3` (simperf-Semantik: der am wenigsten gestörte Block); der Pass-Wert stammt aus der Pass-Tabelle des LETZTEN Blocks desselben Laufs. Über die Paare hinweg wird je Seite der Median über die Läufe angegeben (interleaved A/B, Reihenfolge abwechselnd).
+- **Anteil am Sim-Schritt:** `outletIncision` trägt rund 6,2–7,0 % (Median ~9,0–10,0 ms von ~145–150 ms).
+
+Verschränkte A/B-Messung in einer Sitzung (3 Paare mit wechselnder Reihenfolge, je `--repeat 3`):
+
+- **Paar 1 (Baseline → Opt):**
+  - Baseline: 153,6 / 150,0 / 148,8 ms/Schritt (Minimum: 148,8 ms), `outletIncision`: 9,95 ms (6,7 %)
+  - Opt: 151,8 / 148,6 / 146,8 ms/Schritt (Minimum: 146,8 ms), `outletIncision`: 9,07 ms (6,2 %) (−0,88 ms / −8,8 %)
+- **Paar 2 (Opt → Baseline):**
+  - Opt: 147,7 / 145,0 / 140,5 ms/Schritt (Minimum: 140,5 ms), `outletIncision`: 9,02 ms (6,4 %) (−1,72 ms / −16,0 %)
+  - Baseline: 150,2 / 147,5 / 152,4 ms/Schritt (Minimum: 147,5 ms), `outletIncision`: 10,74 ms (7,0 %)
+- **Paar 3 (Baseline → Opt):**
+  - Baseline: 148,6 / 154,6 / 145,3 ms/Schritt (Minimum: 145,3 ms), `outletIncision`: 9,97 ms (6,9 %)
+  - Opt: 161,2 / 164,1 / 161,2 ms/Schritt (unter VM-Hintergrundlast), `outletIncision`: 10,06 ms (6,2 % relative Pass-Last)
+
+Aggregation über alle drei Paare:
+- **Pass `outletIncision` (Median, Spanne):** Basis 9,97 ms (9,95–10,74 ms) vs. Opt 9,07 ms (9,02–10,06 ms) → Δ Pass: −0,90 ms (−9,0 %).
+- **Schritt-Minimum (Median, Spanne):** Basis 147,5 ms (145,3–148,8 ms) vs. Opt 146,8 ms (140,5–161,2 ms) → Δ Schritt-Minimum: −0,70 ms (−0,5 %).
+
+Ehrliche Einordnung von Paar 3 und Nacht-Kriterium:
+- In den ersten beiden ungestörten Paaren sank der Pass `outletIncision` reproduzierbar von 9,95–10,74 ms auf 9,02–9,07 ms (−0,88 bis −1,72 ms, rund −9 % bis −16 %); das Schritt-Minimum sank jeweils messbar (148,8 → 146,8 ms bzw. 147,5 → 140,5 ms).
+- In Paar 3 war Opt jedoch sowohl beim Pass (9,97 → 10,06 ms, +0,09 ms / +0,9 %) als auch beim Schritt-Minimum (145,3 → 161,2 ms, +15,9 ms) langsamer. Dies darf nicht über den scheinbar gesunkenen relativen Passanteil (6,9 % → 6,2 %) als Gewinn uminterpretiert oder wegerklärt werden: Das harte Nacht-Kriterium verlangt einen Gewinn bei ms/Schritt in jedem Block des unabhängigen A/B-Nachweises; relativer Passanteil alleine reicht nicht. Paar 3 erfüllt dieses Kriterium nicht. Die Spanne von −9 % bis −16 % (−0,88 bis −1,72 ms) beschreibt daher ausschließlich die ersten beiden Paare statt eines pauschalen Reproduzierbarkeitsbelegs über alle drei Paare.
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf allen vier Standard-Konfigurationen exakt identisch:
+
+| Seed / Konfiguration | Fingerprint vorher | Fingerprint nachher | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `d83b629fa79aa144` | `d83b629fa79aa144` | bit-identisch |
+| Seed 1337, dt = 15 | `33303214b99a9487` | `33303214b99a9487` | bit-identisch |
+| Seed 42, dt = 100 | `86d6a5cc13ce2a92` | `86d6a5cc13ce2a92` | bit-identisch |
+| Seed 20, dt = 100 | `876aee34771e364d` | `876aee34771e364d` | bit-identisch |
