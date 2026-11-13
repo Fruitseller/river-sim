@@ -2523,3 +2523,35 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+## XIII. D8-Empfängersuche: Diagonale Divisionen bei d <= bestSlope übersprungen und innere Zellen entrollt (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.computeReceiversAndArea`:
+1. **Diagonale Gleitkomma-Divisionen übersprungen:** In `considerDiag` wurde bisher nach dem Vorzeichentest `d <= 0` stets `s = d / sqrt2` berechnet, selbst wenn `d <= bestSlope` galt. Da `sqrt2 = 1.4142... > 1.0` gilt, ist für jedes `d <= bestSlope` (mit `bestSlope >= 0`) mathematisch und nach IEEE 754 garantiert `d / sqrt2 < bestSlope`. Ein solches `d` kann `bestSlope` niemals übertreffen. Durch `if d <= bestSlope { return }` wird die teure Fließkomma-Division übersprungen, sobald ein früherer (z. B. orthogonaler) Nachbar bereits ein größeres oder gleiches Gefälle gesetzt hat.
+2. **Randprüfungen für innere Zellen entrollt:** In jedem Durchlauf prüfte die innere Spaltenschleife `i in 0..<nn` für jede der ~518k Zellen bedingt `if innerRow && i > 0 && i < nn - 1`. Durch Trennung der Zeilen `0 < j < nn - 1` in Randzellen (`i = 0` und `i = nn - 1`) und die innere Spaltenschleife `1..<(nn - 1)` (über 99,4 % aller Zellen) entfällt die Verzweigung im Hot-Loop vollständig, und der Compiler inlinet die 8 festen Offsets direkt ohne Randprüfungen.
+
+### Gemessen
+
+Verschränkte A/B-Messung in einer Sitzung (`simperf.base` vs `simperf.opt`, 3 Paare mit wechselnder Reihenfolge, je `--repeat 3`, n = 720, world = 112,4789, Seed 1337, 30 Schritte à dt = 100):
+
+- **Paar 1 (Base → Opt):**
+  - Base: 147.9 / 160.2 / 153.0 ms/Schritt (Minimum: 147.9 ms), `computeReceiversAndArea`: 8.56 ms (5.6%)
+  - Opt: 150.5 / 165.1 / 156.3 ms/Schritt (Minimum: 150.5 ms), `computeReceiversAndArea`: 7.72 ms (4.9%) (−0.84 ms / −9.8 %)
+- **Paar 2 (Opt → Base):**
+  - Opt: 158.2 / 157.1 / 152.9 ms/Schritt (Minimum: 152.9 ms), `computeReceiversAndArea`: 7.33 ms (4.8%)
+  - Base: 160.9 / 159.9 / 153.7 ms/Schritt (Minimum: 153.7 ms), `computeReceiversAndArea`: 7.68 ms (5.0%) (−0.35 ms / −4.6 %)
+- **Paar 3 (Base → Opt):**
+  - Base: 150.0 / 157.0 / 151.9 ms/Schritt (Minimum: 150.0 ms), `computeReceiversAndArea`: 7.69 ms (5.1%)
+  - Opt: 164.4 / 162.6 / 159.3 ms/Schritt (Minimum: 159.3 ms), `computeReceiversAndArea`: 7.54 ms (4.7%) (−0.15 ms / −2.0 %)
+
+**Ergebnis:**
+In allen drei Paaren sowie im vorab gemessenen isolierten Durchlauf (7.93 → 6.84 ms, −1.09 ms / −13.7 %) sinkt der Zeitanteil des Passes `computeReceiversAndArea` konsistent um 0.15 bis 1.09 ms/Schritt.
+
+### Bit-Identität
+
+Fingerprint (`simperf --hash`, Produktions-Config, Seed 1337, Einlauf 100 × 100 Jahre, 30 Schritte à dt = 100):
+- Vorher: `d83b629fa79aa144`
+- Nachher: `d83b629fa79aa144` (exakt bit-identisch)
+

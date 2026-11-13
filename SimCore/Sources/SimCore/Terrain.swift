@@ -2844,9 +2844,10 @@ public final class Terrain {
     }
 
     /// PERF wie im Flood: Roh-Puffer, i/j aus der Schleife statt `%`/`/` je Zelle,
-    /// innere Zellen mit 8 festen Offsets ohne Rand-Checks. Vergleichsreihenfolge
-    /// bleibt unverändert (strict `>` → der erste steilste gewinnt); die
-    /// orthogonale Division durch 1 entfällt.
+    /// innere Zellen mit 8 festen Offsets ohne Rand-Checks entrollt. Vergleichsreihenfolge
+    /// bleibt unverändert (strict `>` → der erste steilste gewinnt); die orthogonale
+    /// Division durch 1 entfällt, und die diagonale Division durch sqrt2 wird übersprungen,
+    /// wenn d <= bestSlope (da d / sqrt2 < bestSlope stets garantiert).
     private func computeReceiversAndArea() {
         let cellArea = cfg.cellSize * cfg.cellSize
         let cnt = cfg.count, nn = n, sea = cfg.sea
@@ -2870,14 +2871,13 @@ public final class Terrain {
             parallel(nn) { jLo, jHi in
             for j in jLo..<jHi {
                 let row = j * nn
-                let innerRow = j > 0 && j < nn - 1
-                for i in 0..<nn {
+                @inline(__always) func processCell(_ i: Int, isInner: Bool) {
                     let k = row + i
                     pa[k] = pw != nil ? cellArea * pw![k] : cellArea
                     let hk = phf[k]
                     if hk <= sea {
                         prec[k] = -1
-                        continue
+                        return
                     }
                     var best: Int32 = -1
                     var bestSlope = 0.0
@@ -2887,14 +2887,15 @@ public final class Terrain {
                         let d = hk - phf[nb]
                         if d > bestSlope { bestSlope = d; best = Int32(nb) }
                     }
-                    // Diagonal: Division durch sqrt2 erst nach Vorzeichen-Test.
+                    // Diagonal: Division durch sqrt2 erst wenn d > bestSlope (für d <= bestSlope
+                    // ist d / sqrt2 < bestSlope stets garantiert, spart teure Divisionen).
                     @inline(__always) func considerDiag(_ nb: Int) {
                         let d = hk - phf[nb]
-                        if d <= 0 { return }
+                        if d <= bestSlope { return }
                         let s = d / sqrt2
                         if s > bestSlope { bestSlope = s; best = Int32(nb) }
                     }
-                    if innerRow && i > 0 && i < nn - 1 {
+                    if isInner {
                         considerDiag(k - nn - 1); considerOrth(k - nn); considerDiag(k - nn + 1)
                         considerOrth(k - 1);     /* Zentrum */          considerOrth(k + 1)
                         considerDiag(k + nn - 1); considerOrth(k + nn); considerDiag(k + nn + 1)
@@ -2927,6 +2928,18 @@ public final class Terrain {
                         best = ppar[k] // flacher Seespiegel → Überlauf
                     }
                     prec[k] = best
+                }
+
+                if j > 0 && j < nn - 1 {
+                    processCell(0, isInner: false)
+                    for i in 1..<(nn - 1) {
+                        processCell(i, isInner: true)
+                    }
+                    processCell(nn - 1, isInner: false)
+                } else {
+                    for i in 0..<nn {
+                        processCell(i, isInner: false)
+                    }
                 }
             }
             }
