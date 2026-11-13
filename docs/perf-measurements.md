@@ -2532,6 +2532,13 @@ In `Terrain.computeReceiversAndArea`:
 1. **Diagonale Gleitkomma-Divisionen übersprungen:** In `considerDiag` wurde bisher nach dem Vorzeichentest `d <= 0` stets `s = d / sqrt2` berechnet, selbst wenn `d <= bestSlope` galt. Da `sqrt2 = 1.4142... > 1.0` gilt, ist für jedes `d <= bestSlope` (mit `bestSlope >= 0`) mathematisch und nach IEEE 754 garantiert `d / sqrt2 < bestSlope`. Ein solches `d` kann `bestSlope` niemals übertreffen. Durch `if d <= bestSlope { return }` wird die teure Fließkomma-Division übersprungen, sobald ein früherer (z. B. orthogonaler) Nachbar bereits ein größeres oder gleiches Gefälle gesetzt hat.
 2. **Randprüfungen für innere Zellen entrollt:** In jedem Durchlauf prüfte die innere Spaltenschleife `i in 0..<nn` für jede der ~518k Zellen bedingt `if innerRow && i > 0 && i < nn - 1`. Durch Trennung der Zeilen `0 < j < nn - 1` in Randzellen (`i = 0` und `i = nn - 1`) und die innere Spaltenschleife `1..<(nn - 1)` (über 99,4 % aller Zellen) entfällt die Verzweigung im Hot-Loop vollständig, und der Compiler inlinet die 8 festen Offsets direkt ohne Randprüfungen.
 
+### Rahmen der Messreihe
+
+- **Maschine / Host:** Linux-VM `agentbox` (Debian GNU/Linux 13 (trixie), x86_64, Kernel 6.12, 4 vCPUs AMD EPYC-Genoa, Swift 6.3.3 / swift-6.3.3-RELEASE).
+- **Konfiguration:** Produktions-Paarung aus `SimConfig.production` (n = 720, world = 112,4789), Seed 1337, Einlauf 100 × 100 Jahre, 30 Messschritte à dt = 100 — der simperf-Standard (`SimPerf/main.swift`).
+- **Aggregationsregel:** Kennzahl je Lauf für den Gesamtschritt ist das Block-Minimum aus `--repeat 3` (simperf-Semantik: der am wenigsten gestörte Block); der Pass-Wert `computeReceiversAndArea` stammt aus der Pass-Tabelle des LETZTEN Blocks desselben Laufs (`SimPerf/main.swift:140–165`), ist also jeweils ein Einzelblock-Wert des dritten Blocks, kein Median/Minimum der drei Blöcke. Über die 3 interleaved Paare hinweg (abgewechselte Reihenfolge) wird je Stand der Median der Pass-Werte sowie die Spanne der Einzel-Deltas ausgewiesen.
+- **Anteil am Sim-Schritt:** `computeReceiversAndArea` liegt bei ~7,3–8,6 ms je Schritt (~4,7–5,6 % der Gesamtzeit bei ~150–160 ms/Schritt auf dieser VM).
+
 ### Gemessen
 
 Verschränkte A/B-Messung in einer Sitzung (`simperf.base` vs `simperf.opt`, 3 Paare mit wechselnder Reihenfolge, je `--repeat 3`, n = 720, world = 112,4789, Seed 1337, 30 Schritte à dt = 100):
@@ -2546,12 +2553,27 @@ Verschränkte A/B-Messung in einer Sitzung (`simperf.base` vs `simperf.opt`, 3 P
   - Base: 150.0 / 157.0 / 151.9 ms/Schritt (Minimum: 150.0 ms), `computeReceiversAndArea`: 7.69 ms (5.1%)
   - Opt: 164.4 / 162.6 / 159.3 ms/Schritt (Minimum: 159.3 ms), `computeReceiversAndArea`: 7.54 ms (4.7%) (−0.15 ms / −2.0 %)
 
-**Ergebnis:**
-In allen drei Paaren sowie im vorab gemessenen isolierten Durchlauf (7.93 → 6.84 ms, −1.09 ms / −13.7 %) sinkt der Zeitanteil des Passes `computeReceiversAndArea` konsistent um 0.15 bis 1.09 ms/Schritt.
+**Zusammenfassung und Aggregation:**
+- **Pass `computeReceiversAndArea` (letzter Block):**
+  - Basis: Median 7,69 ms (Spanne 7,68–8,56 ms)
+  - Opt: Median 7,54 ms (Spanne 7,33–7,72 ms)
+  - Delta des Medians: −0,15 ms (−2,0 %)
+  - Spanne der Paar-Deltas: −0,15 bis −0,84 ms (−2,0 % bis −9,8 %)
+  - Vorab gemessener isolierter Einzelvergleich: 7,93 → 6,84 ms (−1,09 ms / −13,7 %)
+- **Gesamtschrittzeit:**
+  - Basis: Minima 147,9 / 153,7 / 150,0 ms (Median: 150,0 ms)
+  - Opt: Minima 150,5 / 152,9 / 159,3 ms (Median: 152,9 ms)
+
+### Einordnung und Einschränkung
+
+Der Pass `computeReceiversAndArea` sinkt in allen drei Paaren sowie im isolierten Vorabtest konsistent um 0,15 bis 1,09 ms/Schritt (Median −0,15 ms). Die Gesamtschrittzeit unterliegt auf der Linux-VM jedoch Hintergrund-Streuung (die Schritt-Minima schwanken um ±5–9 ms, und Paar 3 zeigt auf Gesamtschrittebene eine scheinbare Regression von 150,0 auf 159,3 ms). Ein unabhängiger Gegenlauf des Orchestrators in einer Sitzung bestätigt dieses Bild:
+- Vorher: 147,4 / 159,1 / 153,5 ms/Schritt, Pass (letzter Block): 7,44 ms
+- Nachher: 144,6 / 152,5 / 147,9 ms/Schritt, Pass (letzter Block): 7,39 ms (Δ Pass −0,05 ms)
+
+Der Pass-Gewinn von wenigen Zehntel-Millisekunden liegt innerhalb der typischen VM-Streuung und darf nicht als robuster Gesamtzeitgewinn ausgegeben werden. Die Optimierung eliminiert nachweislich redundante Gleitkommadivisionen und Schleifenverzweigungen im inneren Gitter, ist am Pass gemessen regressionsfrei und bit-identisch.
 
 ### Bit-Identität
 
 Fingerprint (`simperf --hash`, Produktions-Config, Seed 1337, Einlauf 100 × 100 Jahre, 30 Schritte à dt = 100):
-- Vorher: `d83b629fa79aa144`
-- Nachher: `d83b629fa79aa144` (exakt bit-identisch)
+Auf derselben Maschine vor und nach der Optimierung exakt bit-identisch (`vorher == nachher`). Der konkrete Hash-Wert ist plattformspezifisch (System-libm) und wird im PR-Body dokumentiert; ein Erwartungswert gehört gemäß AGENTS.md nicht ins Repository.
 
