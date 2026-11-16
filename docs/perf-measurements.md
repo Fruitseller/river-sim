@@ -2523,3 +2523,32 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+## XIII. Mäandergürtel: Cutoff-Vorfilter, Rohpuffer und `gridRound` in `MeanderState` (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `SimCore/Sources/SimCore/Meander.swift` (`MeanderState`, Schwerpunkt im Pass `belt.parallel` und in `beltRatesAndErodibility` / `bendCurvature`):
+- **Direkter Cutoff-Heißpfad (`applyBeltCutoffs`):** Zugriffe auf `nodes`, `cum`, `widths`, `ch.discharge`, `cutBinHead` und `cutBinNext` über `withUnsafe[Mutable]BufferPointer` ohne Bounds-/COW-/Exklusivitätsprüfungen; Schleifengrenze auf `0..<(c - 4)` plus `i + minSep >= c` verkürzt; `(Int, Bool)?`-Optional durch Skalare `bestJ`/`bestChute` ersetzt und invariante Konfigurationsfelder herausgezogen; Quadratabstands-Vorfilter (`d2 < reachSq` mit kleiner ULP-Reserve `reach * (1 + 1e-12) + 1e-12`) verwirft den Großteil der 3×3-Nachbarpaare vor `squareRoot()`.
+- **Segmentlängen-Cache (`beltRatesAndErodibility`):** Bei `gd != 0` speichert der Rückwärtslauf `dist(nodes[i], nodes[i + 1])` in `segCache`, sodass der Vorwärtslauf dieselben Längen ohne erneute `sqrt`-Berechnung und bit-identisch wiederverwendet.
+- **Inline-Gitterrundung:** Sieben `Int((...).rounded())`-Aufrufe (`bendCurvature`, `beltGeometry`, `updateBeltMobility`, `beltMobility`, zweimal `beltRatesAndErodibility`, `perturb`) durch `Terrain.gridRound(...)` ersetzt, um glibc-`round()`-PLT-Aufrufe einzusparen.
+
+### Gemessen
+
+Rahmen der Messreihe:
+
+- **Maschine:** Linux x86_64 VM (`Linux 6.12.113+deb13-amd64`, 4 vCPUs, AMD EPYC-Genoa Processor), Swift 6.3.3 (`swift-6.3.3-RELEASE`, `-c release`).
+- **Konfiguration:** Produktions-Paarung aus `SimConfig()` (`n = 720`, `world = 112.4789`), Seed 1337, Einlauf `100 × 100` Jahre, `30` Messschritte à `dt = 100` — `simperf --repeat 3`.
+- **Aggregationsregel:** Kennzahl je Lauf ist das Block-Minimum aus `--repeat 3`; der Pass-Wert stammt aus der Pass-Tabelle des letzten Blocks desselben Laufs. Sechs verschränkte A/B-Paare in derselben Sitzung mit abwechselnder Reihenfolge (ungerade Basis → Opt, gerade Opt → Basis).
+- **Anteil am Sim-Schritt:** `belt.parallel` trägt auf der Basis ~20,1 % des Schrittes (`30,64–33,49 ms`).
+
+| Kennzahl (6 Paare, je `--repeat 3`) | Basis Median (Spanne) | Opt Median (Spanne) | Δ Median |
+| --- | --- | --- | --- |
+| Pass `belt.parallel` (letzter Block) | 31,55 ms (30,64–33,49) | 28,25 ms (27,09–29,33) | −3,30 ms (−10,5 %) |
+| Schritt-Minimum (`--repeat 3`) | 151,65 ms (143,2–153,5) | 148,10 ms (141,2–150,8) | −3,55 ms (−2,3 %) |
+
+In `belt.parallel` ist die optimierte Fassung in allen 6 Paaren ohne Überlappung schneller (`−2,06` bis `−5,50 ms` je Paar). Im Einzel-Vorher/Nachher-Vergleich vor bzw. nach dem Umbau fielen alle drei Blöcke von `162,2 / 170,8 / 164,8 ms` (Pass `belt.parallel` `32,76 ms`) auf `151,0 / 146,9 / 158,8 ms` (Pass `28,92 ms`). Bei den Schritt-Minima der 6 verschränkten Paare lag die optimierte Fassung in Paaren 1–4 über alle Blöcke hinweg vorn (`144,0` vs `151,9`, `148,7` vs `153,5`, `141,2` vs `151,4`, `147,7` vs `153,3 ms`); in den Paaren 5–6 drückte je ein Ausreißer-Block 1 der Basis (`143,2` / `143,3 ms`, gefolgt von `162,1 / 160,6` bzw. `157,3 / 162,9 ms`) das Paar-Minimum unter das der optimierten Fassung (`150,8` / `148,5 ms`), während Blöcke 2 und 3 sowie `belt.parallel` jeweils schneller blieben.
+
+### Bit-Identität
+
+Alle geprüften `simperf --hash`-Fingerabdrücke (`Seed 1337 / dt = 100`, `Seed 42 / dt = 100`, `Seed 20 / dt = 100`, `Seed 1337 / dt = 15`) sind auf derselben Maschine vor und nach der Änderung exakt bit-identisch (Pro-Maschine-Vergleich; keine Hex-Werte im Repo).

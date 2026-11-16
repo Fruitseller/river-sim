@@ -629,7 +629,7 @@ extension MeanderState {
         let rHi = min(c - 2, activeRange?.upperBound ?? (c - 2))
         guard rLo <= rHi else { return out }
         for i in rLo...rHi {
-            let kb = Int((config.meanderBeltProfileWidths * g.width[i] / spc).rounded())
+            let kb = Terrain.gridRound(config.meanderBeltProfileWidths * g.width[i] / spc)
             guard kb > 0 else { continue }
             let lo = max(1, i - kb), hi = min(c - 2, i + kb)
             var acc = 0.0
@@ -655,7 +655,7 @@ extension MeanderState {
             let b = beltWidthCells(discharge: ch.discharge[i], config: config)
             g.width[i] = b
             guard i > 0, i < c - 1 else { continue }
-            let k = max(1, min(min(i, c - 1 - i), Int((0.5 * b / sp).rounded())))
+            let k = max(1, min(min(i, c - 1 - i), Terrain.gridRound(0.5 * b / sp)))
             let a = nodes[i - k], m = nodes[i], d = nodes[i + k]
             let v1x = m.x - a.x, v1z = m.z - a.z, v2x = d.x - m.x, v2z = d.z - m.z
             let l1 = (v1x * v1x + v1z * v1z).squareRoot(), l2 = (v2x * v2x + v2z * v2z).squareRoot()
@@ -689,7 +689,7 @@ extension MeanderState {
             guard g.nx[i] != 0 || g.nz[i] != 0 else { continue }
             if minDischarge > 0 && ch.discharge[i] < minDischarge { continue }
             let b = g.width[i]
-            let k = max(1, min(min(i, c - 1 - i), Int((0.5 * b / sp).rounded())))
+            let k = max(1, min(min(i, c - 1 - i), Terrain.gridRound(0.5 * b / sp)))
             g.mob[i] = beltMobility(cum, h, i: i, width: b, k: k, config: config)
         }
     }
@@ -703,7 +703,7 @@ extension MeanderState {
         // Über ±k (≈ 3 Zellen) brach jede Stufe im eingeschnittenen Bett den
         // mobilen Abschnitt auf (gemessen 12–45 mobile Knoten am Hauptlauf
         // von Seed 1337). Deshalb ±1,5 Kanalbreiten.
-        let ks = max(k, min(min(i, c - 1 - i), Int((1.5 * b / sp).rounded())))
+        let ks = max(k, min(min(i, c - 1 - i), Terrain.gridRound(1.5 * b / sp)))
         let arc = (cum[i + ks] - cum[i - ks]) * cs
         let slope = arc > 1e-9 ? abs(h[i - ks] - h[i + ks]) / arc : 0
         // Unter dem Meer wandert nichts; an Quelle und Mündung ausblenden,
@@ -753,12 +753,21 @@ extension MeanderState {
         let sp = max(1e-6, config.meanderNodeSpacing)
         let s0 = config.meanderBeltSinuosityStart, s1 = config.meanderBeltSinuosityFull
         // Stromab integrierte Krümmung (Spiegelbild von `ema`, ohne Knoten i).
+        // Segmentlängen werden im Rückwärtslauf zwischengespeichert, damit der
+        // Vorwärtslauf nicht alle `dist`-Wurzeln ein zweites Mal rechnet.
         let gd = config.meanderBeltDownstreamWeight
         var down = [Double](repeating: 0, count: gd != 0 ? c : 0)
+        var segCache = [Double](repeating: 0, count: gd != 0 ? c : 0)
         if gd != 0 {
             var emaD = 0.0
             for i in stride(from: c - 1, through: 0, by: -1) {
-                let seg = i < c - 1 ? dist(nodes[i], nodes[i + 1]) : 0
+                let seg: Double
+                if i < c - 1 {
+                    seg = dist(nodes[i], nodes[i + 1])
+                    segCache[i + 1] = seg
+                } else {
+                    seg = 0
+                }
                 let w = exp(-seg / max(1e-6, kw * g.width[i]))
                 emaD *= w
                 down[i] = emaD
@@ -767,7 +776,7 @@ extension MeanderState {
         }
         var ema = 0.0
         for i in 0..<c {
-            let seg = i > 0 ? dist(nodes[i - 1], nodes[i]) : 0
+            let seg = i > 0 ? (gd != 0 ? segCache[i] : dist(nodes[i - 1], nodes[i])) : 0
             let w = exp(-seg / max(1e-6, kw * g.width[i]))
             ema *= w                                    // stromauf integriert, ohne Knoten i selbst
             // Nur der Stromauf-Term: der LOKALE Term (Ω < 0, zur Krümmungsmitte)
@@ -781,7 +790,7 @@ extension MeanderState {
                 rate[i] = abs(-e * b * (b * eff))
                 continue
             }
-            let m = max(1, Int((config.meanderBeltSinuosityWidths * b / sp).rounded()))
+            let m = max(1, Terrain.gridRound(config.meanderBeltSinuosityWidths * b / sp))
             let lo = max(0, i - m), hi = min(c - 1, i + m)
             let chord = dist(nodes[lo], nodes[hi])
             let localSinu = chord > 1e-9 ? (cum[hi] - cum[lo]) / chord : 1
@@ -820,7 +829,7 @@ extension MeanderState {
         // Knick-Krümmung trieb die CFL-Teilschritte gemessen in den Deckel.
         var out = rate
         for i in 1..<max(1, c - 1) {
-            let kr = max(1, Int((0.5 * g.width[i] / sp).rounded()))
+            let kr = max(1, Terrain.gridRound(0.5 * g.width[i] / sp))
             var accR = 0.0
             let lr = max(1, i - kr), hr = min(c - 2, i + kr)
             for j in lr...hr { accR += rate[j] }
@@ -1108,7 +1117,7 @@ extension MeanderState {
         for i in firstE...lastE where erod[i] > 0 { xi[i] = 3.0.squareRoot() * hashUnit(key, i) }
         let base = amp * (config.meanderBeltRate * dt).squareRoot()
         for i in firstE...lastE where erod[i] > 0 {
-            let kr = max(1, Int((0.5 * g.width[i] / sp).rounded()))
+            let kr = max(1, Terrain.gridRound(0.5 * g.width[i] / sp))
             let lo = max(1, i - kr), hi = min(c - 2, i + kr)
             var acc = 0.0
             for j in lo...hi { acc += xi[j] }
@@ -1197,37 +1206,64 @@ extension MeanderState {
             cutBinTouched.removeAll(keepingCapacity: true)
             if cutBinNext.count < c { cutBinNext = [Int32](repeating: -1, count: c) }
             @inline(__always) func bin(_ v: Double) -> Int { min(gw - 1, max(0, Int(v / maxReach) + 1)) }
-            for i in 0..<c {
-                let b = bin(nodes[i].z) * gw + bin(nodes[i].x)
-                if cutBinHead[b] < 0 { cutBinTouched.append(Int32(b)) }
-                cutBinNext[i] = cutBinHead[b]; cutBinHead[b] = Int32(i)
-            }
             var cut: (Int, Int, Bool)? = nil
-            outer: for i in 0..<c {
-                let b = widths[i]
-                let neck = max(config.meanderNeckDist, config.meanderBeltNeckWidths * b)
-                let chute = ch.discharge[i] >= config.meanderChuteMinCells ? config.meanderChuteWidths * b : 0
-                let minSep = max(4, Int(neck / spacing * 3) + 2)
-                let maxLoop = config.meanderBeltMaxLoopWidths * b
-                let bx = bin(nodes[i].x), bz = bin(nodes[i].z)
-                var best: (Int, Bool)? = nil
-                for zz in max(0, bz - 1)...min(gw - 1, bz + 1) {
-                    for xx in max(0, bx - 1)...min(gw - 1, bx + 1) {
-                        var jj = cutBinHead[zz * gw + xx]
-                        while jj >= 0 {
-                            let j = Int(jj); jj = cutBinNext[j]
-                            guard j >= i + minSep, best == nil || j < best!.0,
-                                  cum[j] - cum[i] <= maxLoop else { continue }
-                            let d = dist(nodes[i], nodes[j])
-                            if d < neck { best = (j, false) }
-                            else if d < chute && cum[j] - cum[i] >= config.meanderChuteLoopRatio * d {
-                                best = (j, true)
+            let chuteRatio = config.meanderChuteLoopRatio
+            let chuteMinCells = config.meanderChuteMinCells
+            let chuteWidths = config.meanderChuteWidths
+            let neckDist = config.meanderNeckDist
+            let neckWidths = config.meanderBeltNeckWidths
+            let maxLoopWidths = config.meanderBeltMaxLoopWidths
+            nodes.withUnsafeBufferPointer { nb in
+            cum.withUnsafeBufferPointer { cb in
+            widths.withUnsafeBufferPointer { wb in
+            ch.discharge.withUnsafeBufferPointer { qb in
+            cutBinHead.withUnsafeMutableBufferPointer { hb in
+            cutBinNext.withUnsafeMutableBufferPointer { xnb in
+                let pn = nb.baseAddress!, pc = cb.baseAddress!, pw = wb.baseAddress!, pq = qb.baseAddress!
+                let ph = hb.baseAddress!, pnext = xnb.baseAddress!
+                for i in 0..<c {
+                    let b = bin(pn[i].z) * gw + bin(pn[i].x)
+                    if ph[b] < 0 { cutBinTouched.append(Int32(b)) }
+                    pnext[i] = ph[b]; ph[b] = Int32(i)
+                }
+                outer: for i in 0..<(c - 4) {
+                    let b = pw[i]
+                    let neck = max(neckDist, neckWidths * b)
+                    let chute = pq[i] >= chuteMinCells ? chuteWidths * b : 0
+                    let minSep = max(4, Int(neck / spacing * 3) + 2)
+                    if i + minSep >= c { continue }
+                    let maxLoop = maxLoopWidths * b
+                    let reach = max(neck, chute)
+                    // Quadratabstands-Vorfilter mit kleiner ULP-Reserve: verwirft ~99 % der
+                    // Nachbarpaare ohne Wurzelberechnung, exakt bit-identisch zu `dist < reach`.
+                    let reachGuard = reach * (1 + 1e-12) + 1e-12
+                    let reachSq = reachGuard * reachGuard
+                    let ni = pn[i], cumI = pc[i]
+                    let bx = bin(ni.x), bz = bin(ni.z)
+                    var bestJ = Int.max, bestChute = false
+                    for zz in max(0, bz - 1)...min(gw - 1, bz + 1) {
+                        let rowOff = zz * gw
+                        for xx in max(0, bx - 1)...min(gw - 1, bx + 1) {
+                            var jj = ph[rowOff + xx]
+                            while jj >= 0 {
+                                let j = Int(jj); jj = pnext[j]
+                                guard j >= i + minSep, j < bestJ,
+                                      pc[j] - cumI <= maxLoop else { continue }
+                                let nj = pn[j]
+                                let dx = ni.x - nj.x, dz = ni.z - nj.z
+                                let d2 = dx * dx + dz * dz
+                                guard d2 < reachSq else { continue }
+                                let d = d2.squareRoot()
+                                if d < neck { bestJ = j; bestChute = false }
+                                else if d < chute && pc[j] - cumI >= chuteRatio * d {
+                                    bestJ = j; bestChute = true
+                                }
                             }
                         }
                     }
+                    if bestJ < Int.max { cut = (i, bestJ, bestChute); break outer }
                 }
-                if let (j, isChute) = best { cut = (i, j, isChute); break outer }
-            }
+            }}}}}}
             guard let (i, j, isChute) = cut else { break }
             if isChute { chuteCutoffs += 1 } else { neckCutoffs += 1 }
             oxbows.append(Array(ch.nodes[i...j]))
