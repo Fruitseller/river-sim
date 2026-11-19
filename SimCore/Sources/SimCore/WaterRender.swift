@@ -1181,10 +1181,19 @@ public enum WaterRender {
     /// Farbe seichten Wassers (das Bett scheint grünlich getrübt durch).
     /// Mit #174 dunkler (vorher 0,18/0,37/0,42, linear): Wasser schluckt
     /// Licht, die Helligkeit trägt die Spiegelung.
-    public static let waterShallowColor = (r: 0.06, g: 0.17, b: 0.18)
+    /// Hill-Climber Iteration 3: 0,06/0,17/0,18 → 0,035/0,25/0,23. Der
+    /// Bewerter las BEIDE Stände als „gleichmäßig blaues Band"; das Wasser
+    /// braucht Sättigung und einen kräftigen Verlauf (türkis am Ufer, tiefblau
+    /// in der Mitte, Vorlage f), nicht bloß Dunkelheit („flauer", Nr. 2).
+    /// Iteration 5: → 0,045/0,18/0,15. Beide Bewerter lasen 0,25/0,23 als
+    /// „helltürkis/cyan, uniform": grünlicher und dunkler, der Verlauf zur
+    /// tiefblauen Mitte bleibt.
+    public static let waterShallowColor = (r: 0.045, g: 0.18, b: 0.15)
     /// Farbe tiefen Wassers (opak, dunkel blaugrün; vorher 0,03/0,12/0,26,
     /// das las sich im Licht als Schwimmbad-Blau).
-    public static let waterDeepColor = (r: 0.010, g: 0.050, b: 0.085)
+    /// Hill-Climber Iteration 3: 0,010/0,050/0,085 → 0,006/0,055/0,13
+    /// (gesättigtes Tiefblau statt Graublau, s. `waterShallowColor`).
+    public static let waterDeepColor = (r: 0.006, g: 0.055, b: 0.13)
     /// Schlick-Näherung: `pow(1 − n·v, fresnelExponent)`. Um diesen Anteil
     /// tritt der Wasserkörper hinter Godots Spiegelung zurück.
     public static let fresnelExponent = 5.0
@@ -1555,13 +1564,23 @@ public enum WaterRender {
     /// Breiten, jünger als 800 J.) trägt weiter zu 62–71 % Sand. Kürzer
     /// (150/600, erste Fassung von #181) blieb nur ein Saum unter dem Band.
     /// Messreihe: `docs/river-belt-render-measurements.md` § F.
+    ///
+    /// Hill-Climber (Problem „Wasser liegt im Gelände", Iteration 2): Nähe
+    /// 1,0/1,5 → 1,0/1,15. Die weiche Rampe bis 1,5 Breiten lag als
+    /// milchiger, nach außen verlaufender Streifen neben den Läufen. Jetzt
+    /// endet die Bank mit klarer Kante; seit die Uferkante
+    /// (`ReliefRender.bankLift`) das Land neben dem Wasser hebt, liegt sie
+    /// als eigene Stufe knapp über dem Wasser (`ReliefRender.barLift`) und
+    /// die dunkle Böschung steht dahinter, wie in der Vorlage f. Schmaler
+    /// (0,7/1,0) war die Bank aus Übersicht und Tal nicht mehr zu sehen, und
+    /// der Bewerter las den Lauf ohne sie als Band ohne Ufer.
     public static let barSandYearsLo = 400.0
     /// s. `barSandYearsLo`.
     public static let barSandYearsHi = 1500.0
     /// s. `barSandYearsLo`.
     public static let barSandReachLo = 1.0
     /// s. `barSandYearsLo`.
-    public static let barSandReachHi = 1.5
+    public static let barSandReachHi = 1.15
 
     /// Sprenkel-Filter: Sand bleibt nur, wo von den 8 Nachbarn mindestens
     /// `barSandNeighboursLo` selbst Sand tragen (voll ab `…Hi`). Feste Läufe
@@ -1712,9 +1731,54 @@ public enum WaterRender {
     /// nach innen und zog die halbe Breite jedes Bogens milchig auf.
     public static let ribbonBendDepth = 0.35
     /// Seichtes Wasser über der Bank: Sand scheint durch.
-    public static let ribbonShoalColor = (r: 0.46, g: 0.50, b: 0.42)
+    /// Hill-Climber Iteration 5: 0,46/0,50/0,42 → 0,20/0,23/0,16. Hell
+    /// lag die Tönung als milchig-weißer Streifen innen in jedem Bogen; jetzt
+    /// scheint der Grund grünlich-oliv durch.
+    public static let ribbonShoalColor = (r: 0.20, g: 0.23, b: 0.16)
     /// Anteil der Sand-Tönung am Gleithang-Ufer bei voller Bogenstärke.
-    public static let ribbonShoalMix = 0.45
+    /// Iteration 5: 0,45 → 0,35.
+    public static let ribbonShoalMix = 0.35
+    /// Tiefe an der Wasserlinie relativ zur Mitte (Hill-Climber, Problem
+    /// „Wasser liegt nicht im Gelände"): seit die Uferkante
+    /// (`ReliefRender.bankLift`) das Band in einen echten Einschnitt legt,
+    /// liest sich ein Tiefenverlauf quer zum Band als Bett statt als Rohr.
+    /// Vorher fest 0,7 im Shader (fast gleichmäßig tief).
+    public static let ribbonEdgeDepth = 0.15
+    /// Flachwasser an der Wasserlinie: heller Kiesgrund scheint türkis durch.
+    /// Iteration 3: 0,09/0,24/0,22 → 0,07/0,32/0,28 (türkiser, s. `waterShallowColor`).
+    /// Iteration 5: → 0,09/0,17/0,11, grünlich-oliv durchscheinender Grund
+    /// statt Cyan (Bewerter: „grell cyanfarbenes Band").
+    public static let ribbonEdgeColor = (r: 0.09, g: 0.17, b: 0.11)
+    /// Anteil dieser Tönung direkt an der Wasserlinie; läuft zur Mitte auf 0.
+    /// Iteration 3: 0,55 → 0,4; mit der türkiseren Farbe lag die Linie
+    /// sonst als künstliche helle Schleife um jeden Bogen (Bewerter, `nah`).
+    /// Iteration 5: 0,4 → 0,3.
+    public static let ribbonEdgeMix = 0.3
+    /// Breite dieser Flachwasserlinie im Querprofil (0 Wasserlinie … 1 Mitte):
+    /// schmal, damit sie als helle Linie am Ufer steht und die Mitte dunkel
+    /// bleibt (Iteration 1 lief sie über 0,35 des Profils, ein milchiger Rand).
+    /// Iteration 5: 0,15 → 0,1.
+    public static let ribbonEdgeWidth = 0.1
+    /// Spiegelung des Binnenwassers (Band und Raster-Wasser) als Faktor auf
+    /// `waterSpecular`. Godot leitet F0 = 0,16 · s² und daraus auch die
+    /// Spiegelung am streifenden Blick (f90 ≈ 50 · F0) ab: mit vollem
+    /// Specular spiegelte jedes Band den hellen Himmel, in Übersicht und
+    /// Tal lasen sich die Flüsse als hellblaue Streifen statt als dunkler
+    /// Wasserkörper. 0,5 heißt F0 = 0,01 und rund die halbe Spiegelung am
+    /// Horizont; das offene Meer behält die volle (`ocean.gdshader`).
+    public static let inlandSpecularScale = 0.5
+    /// Stromschnellen auf dem Band: Gefälle des Geländes unter dem Band längs
+    /// des Laufs (Sim-Höhe je Welteinheit, über ±3 Zellen in Fließrichtung;
+    /// mal `RenderContract.heightScale` 24 ist das die Welt-Steigung, hier
+    /// also 0,17 … 0,60), ab dem Schaumstreifen (`waterFoamColor`) einsetzen …
+    /// Iteration 5: 0,004/0,015 → 0,007/0,025. Mit den alten Schwellen lag
+    /// über ganze steile Strecken ein heller Längsstreifen; jetzt schäumen
+    /// nur Gefällestufen, und auch die nur in Stücken (Rauschen im Shader).
+    public static let ribbonRapidSlopeLo = 0.007
+    /// … und voll stehen.
+    public static let ribbonRapidSlopeHi = 0.025
+    /// Höchster Anteil der Schaumfarbe in einem Streifen (Iteration 5: 0,6 → 0,4).
+    public static let ribbonRapidMix = 0.4
 
     // MARK: Querprofil und Oberfläche des Bands (Befund #174 „hässlich")
     //
@@ -1735,25 +1799,77 @@ public enum WaterRender {
     public static let ribbonWaterlineJitter = 0.15
     /// Frequenz dieses Rauschens je Welteinheit (Zelle ≈ 0,156): ~2 Zellen.
     public static let ribbonWaterlineScale = 3.0
-    /// Deckkraft des nassen Ufers (dunkler Saum zwischen Bandkante und
-    /// Wasserlinie, läuft nach außen auf 0).
+    /// Deckkraft des nassen Ufers (Saum zwischen Bandkante und Wasserlinie).
+    /// Hill-Climber Iteration 3: 0,6 → 0,9 bei scharfer Außenkante
+    /// (`ribbonWetStrip`); vorher lief der Saum weich nach außen auf 0 und
+    /// verwischte den Rand des Wassers.
+    /// Iteration 5: 0,9 → 0,6, das Gelände scheint durch (s. `ribbonBankColor`).
     public static let ribbonBankOpacity = 0.6
     /// Farbe des nassen Ufers: feuchter Schlamm/Kies.
-    public static let ribbonBankColor = (r: 0.13, g: 0.12, b: 0.09)
+    /// Hill-Climber Iteration 5: 0,13/0,12/0,09 → 0,08/0,08/0,05. Auf dem
+    /// hellen Grasland lag der Streifen als gleichförmiger hellbrauner
+    /// Doppelrand beidseits jedes Laufs. Dunkelbraun (0,055/0,05/0,035, voll
+    /// deckend) las der Bewerter als „harten dunklen, schlammigen Saum";
+    /// jetzt dunkles Oliv, halb durchscheinend (`ribbonBankOpacity`).
+    public static let ribbonBankColor = (r: 0.08, g: 0.08, b: 0.05)
     /// Bett unter dem Wasser, GEMEINSAM für Band und Raster-Wasser: scheint
     /// über die Deckkraft-Rampe (`waterOpacityShallow/Deep`) durch. Das
     /// Raster-Wasser mischte vorher das abgedunkelte Gelände selbst darunter,
     /// samt Erosions-Detail — dessen Rinnen standen als Höhenlinien-Moiré und
     /// Ringe im Wasser (Befund #174, Seen und breite Raster-Läufe). Es nimmt
     /// jetzt überwiegend diese Farbe (s. `terrain.gdshader`).
-    public static let waterBedColor = (r: 0.17, g: 0.17, b: 0.12)
+    /// Hill-Climber Iteration 2: 0,17/0,17/0,12 → 0,13/0,13/0,095. Das helle
+    /// Bett schien in jedem kleinen Lauf durch, und aus der Ferne lasen sich
+    /// Flüsse als graublaue Linien statt als Wasserkörper; 0,10 machte sie
+    /// stumpf (Bewerter: „flauer").
+    public static let waterBedColor = (r: 0.13, g: 0.13, b: 0.095)
+    // MARK: Wasser als Körper (Hill-Climber Iteration 3)
+    //
+    // Befund Nr. 1/2: der Bewerter beschrieb beide Stände als „flaches,
+    // gleichmäßig blaues Band mit weichem Rand". Diese Werte geben dem
+    // Wasser eine scharfe Uferlinie (nasser Streifen außen, Kies innen im
+    // Bogen), Struktur (Strömungsstreifen, Schaum) und Farbe mit Verlauf.
+    // Alle Schaum- und Streifen-Strukturen blenden unter Pixelgröße auf ihre
+    // MITTLERE Deckung aus (Box-Filter), statt zu flimmern oder zu verschwinden.
+
+    /// Breite des dunklen, nassen Streifens außerhalb der Wasserlinie, in
+    /// Anteilen der Halbbreite des Bands (wie `ribbonWaterline`). Außen
+    /// davon endet das Band mit scharfer Kante, das Gelände übernimmt.
+    /// Iteration 5: 0,12 → 0,08 (kein gleichförmiger Rand neben jedem Lauf).
+    public static let ribbonWetStrip = 0.08
+    /// Breite des hellen Kiesstreifens auf der Innenseite des Bogens
+    /// (Gleithang, `ribbonOutward` < 0), gleiche Einheit.
+    public static let ribbonGravelStrip = 0.28
+    /// Farbe dieses Kiesstreifens (trocken, hell; zur Wasserlinie hin nass
+    /// abgedunkelt mit `ribbonBankColor`).
+    public static let ribbonGravelColor = (r: 0.46, g: 0.42, b: 0.34)
+    /// Schaumfarbe des Bands (Schaumzungen und Stromschnellen).
+    /// Iteration 5: 0,82/0,87/0,88 → 0,55/0,60/0,60. Schaum ist nur Albedo
+    /// (matt, ohne Spiegelung, s. `water.gdshader`); weiß leuchtete er auch
+    /// im Geländeschatten als helle Linie (Bewerter, `diorama` und Schlucht
+    /// in `nah`). Der Schaumsaum an der Wasserlinie (`waterFoamLine`, Band
+    /// und Raster) ist mit Iteration 5 entfallen: er zog einen dünnen weißen
+    /// Rand um jeden Lauf und jeden Raster-See.
+    public static let waterFoamColor = (r: 0.55, g: 0.60, b: 0.60)
+    /// Höchster Anteil der Schaumfarbe in den Schaumzungen des Bands. Seit
+    /// Iteration 5 nur an Gefällestufen (`ribbonRapid*`), keine Grunddichte
+    /// und kein Außenbogen mehr.
+    public static let ribbonFoamMix = 0.6
+    /// Helligkeits-Kontrast der Strömungsstreifen längs der Fließrichtung
+    /// (± Anteil der Wasserfarbe). Seen und Altarme tragen ihn zu einem Viertel.
+    /// Iteration 5: 0,8 → 0,4. In Raster-Läufen und -Seen standen die
+    /// Bahnen als dunkle Flecken („Tuscheflecken", Tal-Kamera).
+    public static let waterStreakContrast = 0.4
+
     /// Kräuselung: Grundfrequenz je Welteinheit, Amplitude der Normalen-
     /// Neigung, Streckung längs der Strömung (< 1 = längliche Wellen) und
     /// Wandergeschwindigkeit stromab. Oktaven-Folge und Pixel-Ausblendung
     /// teilt das Band mit dem Ozean (`oceanWaveLacunarity/Gain/FadeLo/Hi`).
     public static let ribbonRippleFrequency = 3.0
     /// s. `ribbonRippleFrequency`.
-    public static let ribbonRippleAmplitude = 0.04
+    /// Iteration 3: 0,04 → 0,07, damit die Sonne auf den Wellen glitzert
+    /// (Glanzpunkte statt einer glatten Fläche).
+    public static let ribbonRippleAmplitude = 0.07
     /// s. `ribbonRippleFrequency`.
     public static let ribbonRippleStretch = 0.4
     /// s. `ribbonRippleFrequency`.

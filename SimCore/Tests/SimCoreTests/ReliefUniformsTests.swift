@@ -25,6 +25,7 @@ final class ReliefUniformsTests: XCTestCase {
             "relief_scale", "relief_strength", "relief_sharpen", "relief_sharpen_radius",
             "relief_ridge_cap", "relief_height_code", "relief_slope_code",
             "relief_cavity_gully_gain", "relief_cavity_ridge_gain",
+            "relief_bank_lift", "relief_bank_radius", "relief_bank_shade", "relief_bar_lift",
         ],
         "game/shaders/terrain.gdshader": [
             "relief_height_code", "relief_slope_code",
@@ -36,12 +37,13 @@ final class ReliefUniformsTests: XCTestCase {
 
     /// Die Kodierung muss die größte vorkommende Verschiebung abbilden: die
     /// Rinnen bleiben unter `strength · scale · hscale` (Summe der Oktaven
-    /// < 2 × erste Oktave), die Grate unter ihrem Deckel `ridgeCap` (tanh).
+    /// < 2 × erste Oktave), die Grate unter ihrem Deckel `ridgeCap` (tanh),
+    /// dazu die Uferkante `bankLift` auf allem Land.
     /// Der Kanal ist 0…1 mit Mitte 0.5, also ± 0.5 / heightCode Einheiten.
     func testHeightCodeCoversTheDisplacement() {
         let gullies = 2.0 * ReliefRender.strength * ReliefRender.scale * RenderContract.heightScale
         let range = 0.5 / ReliefRender.heightCode
-        XCTAssertGreaterThan(range, gullies + ReliefRender.ridgeCap,
+        XCTAssertGreaterThan(range, gullies + ReliefRender.ridgeCap + ReliefRender.bankLift,
                              "Höhenkodierung schneidet die Verschiebung ab")
     }
 

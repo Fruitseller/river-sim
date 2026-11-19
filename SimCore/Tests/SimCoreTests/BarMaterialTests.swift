@@ -236,7 +236,7 @@ final class BarMaterialTests: XCTestCase {
         let forest = overlays.forestMask
         for j in 11..<14 {
             for i in 11..<29 {
-                XCTAssertEqual(mask[j * n + i], 255, "frische Bank (\(i),\(j)) ist geschützt")
+                XCTAssertNotEqual(mask[j * n + i], 0, "frische Bank (\(i),\(j)) ist geschützt")
                 XCTAssertEqual(forest[j * n + i], 0, "kein Wald auf frischer Bank")
             }
         }

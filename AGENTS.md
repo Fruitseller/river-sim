@@ -521,7 +521,10 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Pass,
 - `WaterProtectMask`: Schutzmaske für Kronendach und Render-Verschiebung
   (Issue #154): zuletzt ausgeliefertes Rasterwasser plus `bandCoverage` plus
-  Saum (`WaterRender.protectSeamCells`), zustandslos; `RenderState` verwirft
+  Saum (`WaterRender.protectSeamCells`), zustandslos. Gestuft statt binär:
+  255 Wasser-Kern, 254 übriges Geschützte, 253 frische Bank; die Uferkante
+  im Relief-Bake (`ReliefRender.bankLift`/`barLift`) setzt am Kern an und
+  hebt Bänke nur knapp über den Bandspiegel. `RenderState` verwirft
   sie bei jedem Wasser-Upload und Band-Bau (Wächter:
   `SimCoreTests/WaterProtectMaskTests.swift`),
 - `ForestCanopyMask`: Waldmaske des Kronendachs (Issue #152): Vegetation mit

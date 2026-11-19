@@ -63,12 +63,45 @@ public enum ReliefRender {
     /// blendet ebenso mit dem Alter ein (`Main.terrain_detail_strength`).
     public static let geometryAgeYears = 20_000.0
 
+    /// Uferkante (Hill-Climber, Problem „Wasser liegt nicht im Gelände"):
+    /// das Land außerhalb der Schutzmaske (Wasser, Bänder, Saum) steht um
+    /// diese Höhe in Welteinheiten höher als die Sim-Höhe, alles darin bleibt
+    /// auf ihr. Das ist dasselbe wie ein um diesen Betrag abgesenkter
+    /// Wasserspiegel, nur ohne die Band-Geometrie anzufassen: Bänder,
+    /// Raster-Zubringer und Seen liegen damit in einem echten Einschnitt mit
+    /// Böschung (Geometrie, nicht gemalt), und die Böschung schneidet die
+    /// Bandfläche in der Tiefenprüfung als natürliche Wasserlinie ab. An der
+    /// Meeresküste blendet die Anhebung mit demselben Küsten-Gate aus wie die
+    /// übrige Verschiebung, Strände bekommen also keine Stufe. Größer als
+    /// `RenderContract.riverLift` (0,35), sonst läge der Bandspiegel über der
+    /// Kante; 0,6 ≈ 4 Sim-Zellen Tiefe bei n = 720. 0,8 zog die Ufer zu
+    /// senkrechten Tafelberg-Wänden mit gestreckter Textur.
+    public static let bankLift = 0.6
+    /// Radius in Sim-Zellen, über den der Wasser-Kern der Schutzmaske (Stufe
+    /// 255, s. `WaterProtectMask`) für die Böschung gemittelt wird: bestimmt,
+    /// wie steil die Uferkante ansteigt (Mittel ≥ 0,95 heißt Wasserspiegel,
+    /// ≤ 0,3 volle Anhebung). Mit 2 steigt sie über rund zwei Zellen neben
+    /// der Bandkante an; 1,5 stand zu steil (Wand statt Böschung).
+    public static let bankRadiusCells = 2.0
+    /// Höhe der frischen Gleithang-Bank (Schutzmaske Stufe 253, s.
+    /// `WaterProtectMask`) über der Sim-Höhe: knapp über dem Bandspiegel
+    /// (`RenderContract.riverLift` 0,35), damit die Bank als flacher Kies-
+    /// und Sandstreifen AM Wasser liegt und die dunkle Böschung erst dahinter
+    /// ansteigt. Mit voller `bankLift` lag der Sand oben auf der Kante und
+    /// auf der angestrahlten Flanke, ein heller Saum um jeden Lauf.
+    public static let barLift = 0.42
+    /// Abdunklung der Böschung im Rinnen-Kanal der Backtextur (negativ =
+    /// Rinne, wirkt mit `shadeDark`): am steilsten Teil der Uferkante bis
+    /// zu diesem Wert, oben und am Fuß 0. Liest sich als beschattete,
+    /// erdige Uferböschung statt als heller Saum.
+    public static let bankShade = 0.7
     /// Radius des Rings, gegen den die Gratschärfung misst, in Sim-Zellen.
     public static let sharpenRadiusCells = 2.5
 
     /// Kodierung der Backtextur: Kanal = Wert × Code + 0.5, damit kein Kanal
-    /// negativ wird. Höhe in Welteinheiten (± 2 Einheiten darstellbar) …
-    public static let heightCode = 0.25
+    /// negativ wird. Höhe in Welteinheiten (± 2,5 Einheiten darstellbar; bis
+    /// zur Uferkante `bankLift` ± 2 bei 0.25) …
+    public static let heightCode = 0.2
 
     /// … und Steigung dh/duv (± 25 darstellbar).
     public static let slopeCode = 0.02

@@ -163,7 +163,11 @@ final class RenderContractTests: XCTestCase {
                        hint: "Überhöhung wird im Back-Pass unskaliert angewandt")
         assertContains(bake, "float cap = relief_ridge_cap / hscale;",
                        hint: "Gratdeckel steht in Welteinheiten (ReliefRender.ridgeCap)")
-        XCTAssertEqual(bake.count(ofIdentifier: "hscale"), 3,
+        // Uferkante (ReliefRender.bankLift): Höhe in Welteinheiten, ihre
+        // Steigung zurück in Sim-Höhe je UV wie der übrige Steigungskanal.
+        assertContains(bake, "relief.yz += bank_slope / hscale;",
+                       hint: "Böschungssteigung in Sim-Höhe (Steigungskanal)")
+        XCTAssertEqual(bake.count(ofIdentifier: "hscale"), 4,
                        "Neue oder entfernte `hscale`-Anwendung im Back-Pass")
     }
 

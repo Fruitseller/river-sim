@@ -82,6 +82,8 @@ final class WaterProtectMaskTests: XCTestCase {
 
         // Exakt: geschützt genau dann, wenn eine Kernzelle im Saum-Abstand liegt.
         let isCore = core(water, coverage, meadow: render.wetMeadowMask, count: cnt)
+        // Wasser-Kern (Stufe 255) ohne die nasse Wiese: Uferkante, s. WaterProtectMask.
+        let isWater = core(water, coverage, meadow: [], count: cnt)
         let bars = render.barMaterial(terrain)
         var free = 0
         for j in 0..<n {
@@ -95,7 +97,10 @@ final class WaterProtectMaskTests: XCTestCase {
                 }
                 // Frische Bänke (#174 C2) sind ohne Saum geschützt.
                 let bar = bars.sand[j * n + i] >= Float(WaterRender.barProtectSand)
-                XCTAssertEqual(mask[j * n + i], near || bar ? 255 : 0, "Zelle (\(i), \(j))")
+                // Stufen: Wasser-Kern 255, frische Bank 253, übriges Geschützte 254.
+                let level: UInt8 = isWater[j * n + i] ? 255 : (bar ? 253 : 254)
+                XCTAssertEqual(mask[j * n + i], near || bar ? level : 0,
+                               "Zelle (\(i), \(j))")
                 if !near && !bar { free += 1 }
             }
         }
@@ -153,7 +158,8 @@ final class WaterProtectMaskTests: XCTestCase {
             for dj in -(seam + 1)...(seam + 1) {
                 for di in -(seam + 1)...(seam + 1) {
                     let inside = max(abs(di), abs(dj)) <= seam
-                    XCTAssertEqual(mask[(cj + dj) * n + ci + di], inside ? 255 : 0,
+                    XCTAssertEqual(mask[(cj + dj) * n + ci + di],
+                                   inside ? (di == 0 && dj == 0 ? 255 : 254) : 0,
                                    "Abstand (\(di), \(dj)) um (\(ci), \(cj))")
                 }
             }

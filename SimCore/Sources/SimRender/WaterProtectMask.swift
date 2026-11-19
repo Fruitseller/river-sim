@@ -23,11 +23,20 @@ import SimCore
 ///
 /// Trockenes Land außerhalb von Wasser, Bändern, nasser Wiese, Bänken und Saum
 /// bleibt frei (0).
+///
+/// Drei Stufen statt binär (Hill-Climber, Uferkante `ReliefRender.bankLift`):
+/// 255 = Wasser-KERN (Band-Abdeckung und sichtbares Rasterwasser), 254 = nur
+/// geschützt (Saum, nasse Wiese), 253 = frische Bank außerhalb des Kerns
+/// (Uferkante hebt sie nur um `ReliefRender.barLift`). Wer „geschützt" fragt, fragt `!= 0`
+/// (Kronendach) bzw. liest den Wert linear (Verschiebung, 253…254/255 ≈ 1); die
+/// Uferkante im Back-Pass setzt ihre Böschung am Kern an, damit sie am Wasser
+/// steht statt am Rand von Saum, Wiese und Bank.
 /// Zustandslos: liest nur seine Eingaben, das Wasserfeld bleibt unverändert.
 /// Den Cache hält `RenderState` (wie bei `TerrainColorRenderer`).
 public enum WaterProtectMask {
 
-    /// R8-Puffer (n×n, 0 = frei, 255 = geschützt). `waterBytes` ist das
+    /// R8-Puffer (n×n, 0 = frei, 255 = Wasser-Kern, 254 = geschützt ohne Kern,
+    /// 253 = frische Bank). `waterBytes` ist das
     /// RGBA8-Wasserfeld (R = Fluss, G = See); fehlt es oder passt die Größe
     /// nicht, schützt die Maske nur die Bänder. `wetMeadow` (n×n) schützt
     /// zusätzlich die nasse Wiese, `barSand` (n×n, `BarMaterial.Field.sand`)
@@ -46,18 +55,21 @@ public enum WaterProtectMask {
         // 1. Kern-Zellen: sichtbares Rasterwasser + gebaute Band-Abdeckung
         //    + nasse Wiese.
         var mask = [UInt8](repeating: 0, count: cnt)
+        var core = [Bool](repeating: false, count: cnt)
         mask.withUnsafeMutableBufferPointer { mb in
-            let pm = mb.baseAddress!
+        core.withUnsafeMutableBufferPointer { cb in
+            let pm = mb.baseAddress!, pc = cb.baseAddress!
             parallelChunks(cnt) { lo, hi in
                 for k in lo..<hi {
                     let isBand = hasBands && bandCoverage[k] >= bandThresh
                     let isWater = hasWater
                         && (waterBytes[k * 4] >= riverThresh || waterBytes[k * 4 + 1] >= lakeThresh)
                     let isMeadow = hasMeadow && wetMeadow[k]
+                    pc[k] = isBand || isWater
                     pm[k] = (isBand || isWater || isMeadow) ? 255 : 0
                 }
             }
-        }
+        }}
 
         // 2. Saum: protectSeamCells Pässe einer 3×3-Max-Erweiterung.
         var temp = [UInt8](repeating: 0, count: cnt)
@@ -66,10 +78,15 @@ public enum WaterProtectMask {
             swap(&mask, &temp)
         }
 
-        // 3. Frische Bänke, nach dem Saum (ohne eigenen Saum, s. o.).
+        // 3. Stufen: Kern 255, alles übrige Geschützte 254.
+        for k in 0..<cnt where mask[k] != 0 && !core[k] { mask[k] = 254 }
+        // 4. Frische Bänke, nach dem Saum (ohne eigenen Saum, s. o.), als
+        //    eigene Stufe 253: die Uferkante hebt sie nur bis knapp über den
+        //    Wasserspiegel (`ReliefRender.barLift`), damit die Bank am Wasser
+        //    liegt und die Böschung erst dahinter ansteigt.
         if barSand.count == cnt {
             let limit = Float(WaterRender.barProtectSand)
-            for k in 0..<cnt where barSand[k] >= limit { mask[k] = 255 }
+            for k in 0..<cnt where barSand[k] >= limit && !core[k] { mask[k] = 253 }
         }
         return mask
     }

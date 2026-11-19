@@ -546,7 +546,9 @@ final class WaterRenderTests: XCTestCase {
                 "\(name): Rauheit liest WaterRender.waterRoughness")
             XCTAssertTrue(shader.contains("SPECULAR = water_specular;")
                           || shader.contains("mix(0.5, water_specular, wet)")
-                          || shader.contains("mix(0.4, water_specular, wet)"),
+                          || shader.contains("mix(0.4, water_specular, wet)")
+                          || shader.contains("mix(0.5, water_specular * water_inland_specular_scale, wet)")
+                          || shader.contains("mix(0.4, water_specular * water_inland_specular_scale, wet)"),
                 "\(name): Specular liest WaterRender.waterSpecular")
         }
         // Flüsse und Seen lassen ihr lokales Bett durchscheinen. Das offene Meer

@@ -1017,7 +1017,8 @@ final class WaterRendererTests: XCTestCase {
       overlays.surfaces[center * 4], byte01(WaterRender.wetMeadowVegetation * 0.99),
       "nasse Wiese hebt das Vegetationsgewicht (Material-Cache fiel mit der Maske)")
     XCTAssertLessThan(dry[center * 4], overlays.surfaces[center * 4])
-    XCTAssertEqual(overlays.protectMask[center], 255,
+    // 254: geschützt, aber kein Wasser-Kern (die Uferkante setzt erst am Kern an).
+    XCTAssertEqual(overlays.protectMask[center], 254,
                    "kein Wald und keine Verschiebung auf der nassen Wiese")
     XCTAssertEqual(overlays.forestMask[center], 0)
     XCTAssertLessThan(overlays.colors[center * 4], overlays.colors[center * 4 + 1],

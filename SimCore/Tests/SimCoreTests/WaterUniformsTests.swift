@@ -66,8 +66,20 @@ final class WaterUniformsTests: XCTestCase {
     ]
 
     /// Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
-    private static let bendScalars = ["water_ribbon_bend_depth", "water_ribbon_shoal_mix"]
-    private static let bendColors = ["water_ribbon_shoal_color"]
+    private static let bendScalars = ["water_ribbon_bend_depth", "water_ribbon_shoal_mix",
+                                       "water_ribbon_edge_depth", "water_ribbon_edge_mix",
+                                       "water_ribbon_edge_width",
+                                       "water_ribbon_rapid_slope_lo", "water_ribbon_rapid_slope_hi",
+                                       "water_ribbon_rapid_mix"]
+    private static let bendColors = ["water_ribbon_shoal_color", "water_ribbon_edge_color"]
+    /// Spiegelung nur des Binnenwassers (Band und Raster), nicht des Meers.
+    private static let inlandScalars = ["water_inland_specular_scale"]
+    /// Wasser als Körper (Hill-Climber Iteration 3/5): Strömungsstreifen
+    /// tragen Band UND Raster, Schaum und Uferstreifen nur das Band.
+    private static let bodyScalars = ["water_streak_contrast"]
+    private static let ribbonBodyScalars = ["water_ribbon_wet_strip", "water_ribbon_gravel_strip",
+                                            "water_ribbon_foam_mix"]
+    private static let ribbonBodyColors = ["water_ribbon_gravel_color", "water_foam_color"]
     private static let barScalars = ["water_bar_roughness"]
     private static let barColors = ["water_bar_sand_color", "water_bar_sand_wet_color"]
     /// Querprofil und Oberfläche des Bands (Befund #174): Wasserlinie, nasses
@@ -99,9 +111,10 @@ final class WaterUniformsTests: XCTestCase {
 
     private static let expectedScalars: [String: [String]] = [
         "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars + barScalars
-            + wallScalars,
+            + wallScalars + inlandScalars + bodyScalars,
         "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars
-            + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars,
+            + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars
+            + inlandScalars + bodyScalars + ribbonBodyScalars,
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
@@ -109,7 +122,7 @@ final class WaterUniformsTests: XCTestCase {
         // Das Bett unter dem Wasser teilen Band und Raster-Wasser.
         "game/shaders/terrain.gdshader": opticsColors + barColors + ["water_bed_color"],
         "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors + profileColors
-            + ["water_bed_color"],
+            + ["water_bed_color"] + ribbonBodyColors,
         // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
         // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
         // bleibt die Optik (Fresnel, Rauheit, Specular, oben).

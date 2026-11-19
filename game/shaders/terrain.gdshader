@@ -142,6 +142,7 @@ uniform float water_opacity_shallow;
 uniform float water_opacity_deep;
 uniform float water_roughness;
 uniform float water_specular;
+uniform float water_inland_specular_scale;
 uniform vec3 water_shallow_color;
 uniform vec3 water_deep_color;
 uniform vec3 water_flow_shimmer_color;
@@ -152,6 +153,8 @@ uniform vec3 water_bed_color;
 uniform vec3 water_bar_sand_color;
 uniform vec3 water_bar_sand_wet_color;
 uniform float water_bar_roughness;
+// Wasser als Körper (Hill-Climber Iteration 3, WaterRender § Wasser als Körper).
+uniform float water_streak_contrast;
 
 // Render-Verschiebung (#153). Der Schalter ist keine Kalibrier-Zahl: ohne
 // SimNode (Editor-Vorschau) ist keine Backtextur gebunden, und eine schwarze
@@ -962,8 +965,6 @@ void fragment() {
 	terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0),
 	           moist * 0.32);
 	terr *= 0.96 + 0.08 * breakup;
-	// Rinnenböden dunkler, Rippen heller (grobe Verschiebung, #153).
-	terr *= 1.0 + (cavity < 0.0 ? cavity * relief_shade_dark : cavity * relief_shade_light);
 
 	float land_roughness = mix(0.90, 0.68, rock);
 	land_roughness = mix(land_roughness, 0.95, scree);
@@ -984,6 +985,11 @@ void fragment() {
 		terr = mix(terr, sand_col, sand);
 		land_roughness = mix(land_roughness, water_bar_roughness, sand);
 	}
+	// Rinnenböden dunkler, Rippen heller (grobe Verschiebung, #153). NACH dem
+	// Sand: die Uferböschung (ReliefRender.bankShade, im Rinnen-Kanal) bleibt
+	// auch dort dunkle, nasse Erde, wo eine Bank an ihr hochreicht; vorher
+	// deckte der Sand die Abdunklung zu und zog einen hellen Saum.
+	terr *= 1.0 + (cavity < 0.0 ? cavity * relief_shade_dark : cavity * relief_shade_light);
 	// Ufersaum, Wasser und Meer trägt die Waldmaske schon nicht.
 	canopy(wp, hval, macro_n, px_wp, terr, n_ws, land_roughness);
 #ifdef FLUSSTAL_STUDY
@@ -1007,18 +1013,34 @@ void fragment() {
 	// selbst, damit Wasser UND nasser Ufersaum weichen.
 	float stream = w.r * (1.0 - calib_window(water_wall_slope_lo, water_wall_slope_hi, world_slope));
 	float lake_gate = w.g;
-	float riverMask = calib_window(water_river_mask_lo, water_river_mask_hi, stream);
+	float river_soft = calib_window(water_river_mask_lo, water_river_mask_hi, stream);
 	float pond = pond_at(v_uv, hval);
 	// See-Gate aus demselben Abgriff `w` (bis zum Review zu #174 las
 	// `lake_gate_at` die Wasser-Textur hier ein zweites Mal).
-	float lakeMask = calib_window(water_pond_contour_lo, water_pond_contour_hi, pond)
+	float lake_soft = calib_window(water_pond_contour_lo, water_pond_contour_hi, pond)
 	               * calib_window(water_lake_gate_lo, water_lake_gate_hi, lake_gate);
+	// Scharfe Uferlinie (Hill-Climber Iteration 3): die Kalibrier-Fenster
+	// bleiben, ihr Mittelwert ist die Wasserlinie, und die Kante ist nur
+	// noch ein Pixel breit (fwidth). Die weichen Rampen der Fenster lagen
+	// über das bilinear gefilterte Feld mehrere Zellen breit als verwischter
+	// graublauer Saum um jeden Zubringer, See und Mündungsarm (Tal-Kamera).
+	float river_px = max(fwidth(river_soft), 1e-4);
+	float lake_px = max(fwidth(lake_soft), 1e-4);
+	float riverMask = smoothstep(0.5 - river_px, 0.5 + river_px, river_soft);
+	float lakeMask = smoothstep(0.5 - lake_px, 0.5 + lake_px, lake_soft);
 	float wet = max(riverMask, lakeMask);
 
 	float dry = 1.0 - calib_window(water_pond_contour_lo, water_pond_contour_hi, pond);
-	float shore = calib_window(water_shore_lo, water_shore_hi, max(stream, lake_gate)) * (1.0 - wet) * dry;
-	vec3 shore_col = mix(vec3(0.38, 0.34, 0.28), vec3(0.48, 0.42, 0.34), breakup);
-	terr = mix(terr, shore_col, shore * 0.55);
+	// Nasser Streifen ebenfalls mit scharfer Außenkante.
+	float shore_soft = calib_window(water_shore_lo, water_shore_hi, max(stream, lake_gate));
+	float shore_px = max(fwidth(shore_soft), 1e-4);
+	float shore = smoothstep(0.5 - shore_px, 0.5 + shore_px, shore_soft) * (1.0 - wet) * dry;
+	// Nasser Ufersaum dunkel (nasse Erde, Hill-Climber Iteration 2): mit
+	// 0,38–0,48 lag er als heller beiger Ring um jeden See und Raster-Lauf.
+	// Iteration 5: olivgrün statt braun und nur zu 0,35 deckend; braun las
+	// er sich in der Tal-Kamera als schlammiger Hof um jedes Raster-Wasser.
+	vec3 shore_col = mix(vec3(0.13, 0.14, 0.09), vec3(0.18, 0.19, 0.12), breakup);
+	terr = mix(terr, shore_col, shore * 0.35);
 	terr *= 1.0 - shore * 0.28;
 	land_roughness = mix(land_roughness, 0.36, shore * 0.55);
 
@@ -1090,12 +1112,13 @@ void fragment() {
 			water += flow * water_flow_shimmer_color;
 		}
 
-		float edge = wet * (1.0 - wet) * 4.0;
-		float foam_n = vnoise(wp * 7.0 - dir * u_time * 2.5 + vec2(0.0, u_time * 0.4));
-		// Schaum-Schwellen: eigene Optik-Zahl — numerisch zufällig gleich dem
-		// Deckkraft-Paar (water_opacity_*), KEINE WaterRender-Konstante.
-		float foam = smoothstep(0.55, 0.95, edge * (0.45 + 0.75 * foam_n)) * ripple_fade;
 		vec3 water_final = mix(bed, water, opacity);
+		// Strömungsstreifen (Hill-Climber Iteration 3): helle und dunkle
+		// Bahnen aus derselben Fließkarte wie die Kräuselung, längs gestreckt;
+		// Seen nur ein Viertel. Unter Pixelgröße (ripple_px) bleibt der Ton.
+		float is_river = riverMask >= lakeMask ? 1.0 : 0.25;
+		float lanes = (vnoise(rp0 * vec2(0.6, 0.6) + 11.0) * w0 + vnoise(rp1 * vec2(0.6, 0.6) + 11.0) * (1.0 - w0)) - 0.5;
+		water_final *= 1.0 + lanes * 2.0 * water_streak_contrast * is_river * ripple_px;
 		// Spiegelung statt Farbe (Befund #174 „See milchig"): den Himmel spiegelt
 		// Godot selbst (SPECULAR/ROUGHNESS gegen die Umgebung). Der Wasserkörper
 		// tritt dafür mit dem Fresnel-Anteil zurück — Godot dämpft die diffuse
@@ -1103,12 +1126,13 @@ void fragment() {
 		// Himmelsfarbe IN DIE ALBEDO; die Sonne beleuchtete sie wie Farbe, und
 		// bei flachem Blick lag das Wasser als heller, kontrastloser Film da.
 		water_final *= 1.0 - fresnel;
-		// Schaum nur als Hauch und nur in fließendem Wasser: mit 0.45 auf jeder
-		// Uferlinie zog er einen weißen Umriss um jeden Lauf und jeden See.
-		water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * (riverMask >= lakeMask ? 0.12 : 0.0));
+		// Kein Schaumsaum an der Wasserlinie (Hill-Climber Iteration 5): der
+		// Strich aus Iteration 3 lag als dünner weißer Rand um jeden
+		// Raster-See und -Zubringer; die Kante trägt der dunkle nasse Saum.
 		albedo = mix(terr, water_final, wet);
 		roughness = mix(land_roughness, water_roughness, wet);
-		specular = mix(0.5, water_specular, wet);
+		// Binnenwasser spiegelt schwächer als das Meer (WaterRender.inlandSpecularScale).
+		specular = mix(0.5, water_specular * water_inland_specular_scale, wet);
 	}
 	ALBEDO = albedo;
 	ROUGHNESS = roughness;

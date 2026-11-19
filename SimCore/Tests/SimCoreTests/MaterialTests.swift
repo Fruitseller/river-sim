@@ -374,9 +374,11 @@ final class MaterialTests: XCTestCase {
     ///    konstant, Spalten und Riffel als Gitter. Ein Ganzzahl-Hash wäre
     ///    ebenso genau, kostete aber gemessen +2,5 ms je Bild.
     ///  - Ableitungen nur im gleichförmigen Kontrollfluss: `fwidth` steht
-    ///    genau zweimal oben in fragment(); Klüftung, Körnung, Spalten und
+    ///    zweimal oben in fragment(); Klüftung, Körnung, Spalten und
     ///    Kronen laufen hinter Verzweigungen je Pixel und bekommen die
-    ///    Pixelgröße übergeben.
+    ///    Pixelgröße übergeben. Dazu (Hill-Climber Iteration 3) die drei
+    ///    Kantenbreiten der scharfen Uferlinie, ebenfalls auf oberster Ebene
+    ///    von fragment(), VOR dem Wasser-Block `if (wet > 0.0)`.
     func testNoiseHashAndDerivativesStayDefined() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         let vnoise = try shader.captures(pattern: "float vnoise\\(vec2 p\\) \\{([\\s\\S]*?)\\n\\}")
@@ -385,8 +387,18 @@ final class MaterialTests: XCTestCase {
         XCTAssertTrue(vnoise.joined().contains("vhash("), "Wertrauschen über den gefalteten Hash")
         assertContains(shader, "vec2 x = fract(c * k) * 17.0 + k.yx;",
                        hint: "vhash faltet den Zellindex, bevor er multipliziert")
-        XCTAssertEqual(shader.count(of: "fwidth("), 2,
-                       "fwidth nur oben in fragment(), nie hinter einer Verzweigung je Pixel")
+        XCTAssertEqual(shader.count(of: "fwidth("), 5,
+                       "fwidth nur auf oberster Ebene von fragment(), nie hinter einer Verzweigung je Pixel")
+        for edge in ["float river_px = max(fwidth(river_soft), 1e-4);",
+                     "float lake_px = max(fwidth(lake_soft), 1e-4);",
+                     "float shore_px = max(fwidth(shore_soft), 1e-4);"] {
+            assertContains(shader, edge, hint: "Kantenbreite der Uferlinie auf oberster Ebene")
+        }
+        let source = try RepoSource.file("game/shaders/terrain.gdshader")
+        let waterBlock = try XCTUnwrap(source.range(of: "if (wet > 0.0) {"))
+        let lastEdge = try XCTUnwrap(source.range(of: "float shore_px = max(fwidth(", options: .backwards))
+        XCTAssertLessThan(lastEdge.lowerBound, waterBlock.lowerBound,
+                          "Uferlinien-fwidth vor dem Wasser-Block, nicht darin")
         assertContains(shader, "float px_wp = length(fwidth(wp));", hint: "Pixelgröße in der Ebene")
         assertContains(shader, "float px_mat = length(fwidth(material_pos));",
                        hint: "Pixelgröße der triplanaren Materialien")

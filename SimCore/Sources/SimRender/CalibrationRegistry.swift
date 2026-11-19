@@ -122,6 +122,18 @@ public enum CalibrationRegistry {
         // Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
         ("water_ribbon_bend_depth", WaterRender.ribbonBendDepth),
         ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),
+        ("water_ribbon_edge_depth", WaterRender.ribbonEdgeDepth),
+        ("water_ribbon_edge_mix", WaterRender.ribbonEdgeMix),
+        ("water_ribbon_edge_width", WaterRender.ribbonEdgeWidth),
+        ("water_inland_specular_scale", WaterRender.inlandSpecularScale),
+        ("water_ribbon_rapid_slope_lo", WaterRender.ribbonRapidSlopeLo),
+        ("water_ribbon_rapid_slope_hi", WaterRender.ribbonRapidSlopeHi),
+        ("water_ribbon_rapid_mix", WaterRender.ribbonRapidMix),
+        // Wasser als Körper (Hill-Climber Iteration 3).
+        ("water_ribbon_wet_strip", WaterRender.ribbonWetStrip),
+        ("water_ribbon_gravel_strip", WaterRender.ribbonGravelStrip),
+        ("water_ribbon_foam_mix", WaterRender.ribbonFoamMix),
+        ("water_streak_contrast", WaterRender.waterStreakContrast),
         ("water_bar_roughness", WaterRender.barRoughness),
         // Querprofil und Oberfläche des Bands (Befund #174).
         ("water_ribbon_waterline", WaterRender.ribbonWaterline),
@@ -152,6 +164,9 @@ public enum CalibrationRegistry {
         ("water_bar_sand_wet_color", WaterRender.barSandWetColor),
         ("water_ribbon_bank_color", WaterRender.ribbonBankColor),
         ("water_bed_color", WaterRender.waterBedColor),
+        ("water_ribbon_edge_color", WaterRender.ribbonEdgeColor),
+        ("water_ribbon_gravel_color", WaterRender.ribbonGravelColor),
+        ("water_foam_color", WaterRender.waterFoamColor),
     ])
 
     // MARK: water_contract — Vertragswerte der Godot-Wasser-Wächter (#92)
@@ -192,6 +207,10 @@ public enum CalibrationRegistry {
         ("relief_shade_light", ReliefRender.shadeLight),
         ("relief_cavity_gully_gain", ReliefRender.cavityGullyGain),
         ("relief_cavity_ridge_gain", ReliefRender.cavityRidgeGain),
+        ("relief_bank_lift", ReliefRender.bankLift),
+        ("relief_bank_radius", ReliefRender.bankRadiusCells),
+        ("relief_bank_shade", ReliefRender.bankShade),
+        ("relief_bar_lift", ReliefRender.barLift),
         ("relief_detail_scale", ReliefRender.detailScale),
         ("relief_detail_shade", ReliefRender.detailShade),
         ("relief_detail_normal", ReliefRender.detailNormal),

@@ -96,6 +96,14 @@ uniform vec3 water_oxbow_water_color;
 uniform float water_ribbon_bend_depth;
 uniform float water_ribbon_shoal_mix;
 uniform vec3 water_ribbon_shoal_color;
+uniform float water_ribbon_edge_depth;
+uniform float water_ribbon_edge_mix;
+uniform vec3 water_ribbon_edge_color;
+uniform float water_ribbon_edge_width;
+uniform float water_inland_specular_scale;
+uniform float water_ribbon_rapid_slope_lo;
+uniform float water_ribbon_rapid_slope_hi;
+uniform float water_ribbon_rapid_mix;
 uniform float water_ribbon_waterline;
 uniform float water_ribbon_waterline_jitter;
 uniform float water_ribbon_waterline_scale;
@@ -113,6 +121,13 @@ uniform float water_ocean_wave_fade_lo;
 uniform float water_ocean_wave_fade_hi;
 uniform float water_ocean_depth_span;
 uniform vec3 water_ocean_shallow_color;
+// Wasser als Körper (Hill-Climber Iteration 3, WaterRender § Wasser als Körper).
+uniform float water_ribbon_wet_strip;
+uniform float water_ribbon_gravel_strip;
+uniform vec3 water_ribbon_gravel_color;
+uniform vec3 water_foam_color;
+uniform float water_ribbon_foam_mix;
+uniform float water_streak_contrast;
 
 // Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
 // SimNode, s. Deklarationsblock oben) — dasselbe Epsilon wie im
@@ -259,22 +274,52 @@ void fragment() {
 	float line = water_ribbon_waterline
 		+ (ribbon_noise(v_world.xz * water_ribbon_waterline_scale) - 0.5) * 2.0 * water_ribbon_waterline_jitter;
 	float wet = smoothstep(line - aa, line + aa, across);
-	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea);
 	float profile = calib_window(line, 1.0, across); // 0 Wasserlinie … 1 Mitte
-
-	// Tiefe ∝ Strahler-Rang (Hierarchie: große Läufe tief, Bäche seicht), zur
-	// Wasserlinie hin seicht (Querprofil eines echten Gerinnes).
-	// Fast gleichmäßig tief bis an die Wasserlinie: ein über die Breite
-	// durchlaufender Tiefenverlauf (und erst recht ein heller Flachwasser-
-	// Saum) las sich als Rohr mit dunkler Mittellinie. Die Asymmetrie
-	// Prallhang/Gleithang trägt das Bogenprofil darunter.
-	float depth = clamp(0.35 + v_rank * 1.5, 0.0, 1.0) * mix(0.7, 1.0, smoothstep(0.0, 0.45, profile));
-	// Delta-Arme liegen auf dem Ablagerungskörper: per Definition Flachwasser.
-	depth = mix(depth, depth * 0.35, delta);
 	// Querprofil im Bogen (Issue #174 C2, Spiegel: WaterRender.ribbonOutward):
 	// +1 am Prallhang (Kolk, tief), −1 am Gleithang (Bank, seicht).
 	float outward = -(UV.x * 2.0 - 1.0) * clamp(v_bend, -1.0, 1.0);
+	// Ufer mit SCHARFER Außenkante (Hill-Climber Iteration 3): ein schmaler
+	// nasser Streifen direkt an der Wasserlinie, auf der Innenseite des
+	// Bogens breiter heller Kies; außen davon übernimmt das Gelände. Bis
+	// Iteration 2 lief der Saum über die ganze Bandkante weich auf 0 aus, und
+	// der Rand des Wassers las sich verwischt.
+	// Aus der Ferne (Übersicht) ist der schmale Streifen subpixel: dort wächst
+	// der nasse Streifen über die ganze Bandkante, und der Lauf behält eine
+	// dunkle Fassung statt als helles Band auf dem Gelände zu liegen. Dasselbe
+	// Pixel-Fenster wie die Struktur unten (`fine`), für die Fassung aber auf
+	// den schmalen Streifen bezogen (×20 statt ×6: setzt ab ~0,01 Welt-
+	// einheiten je Pixel ein, die Nahsicht bleibt unberührt).
+	float far = calib_window(water_ocean_wave_fade_lo, water_ocean_wave_fade_hi, footprint * 6.0);
+	float wet_strip = mix(water_ribbon_wet_strip, line,
+		calib_window(water_ocean_wave_fade_lo, water_ocean_wave_fade_hi, footprint * 20.0));
+	// Kies nur am Gleithang und dort in Stücken (Hill-Climber Iteration 5):
+	// ein durchgehender heller Rand las sich als gemalter Doppelrand. Am
+	// Prallhang und auf geraden Strecken bleibt das dunkle nasse Ufer.
+	float inner = clamp(-outward * 2.0, 0.0, 1.0) * (1.0 - still) * (1.0 - delta)
+		* smoothstep(0.4, 0.6, ribbon_noise(v_world.xz * 0.8 + 23.0));
+	float bank_edge = max(line - max(wet_strip, water_ribbon_gravel_strip * inner), 0.0);
+	float bank = smoothstep(bank_edge - aa, bank_edge + aa, across) * (1.0 - wet) * (1.0 - in_sea);
+	// Nass ist nur der innere Teil des Kiesstreifens (Breite des nassen Streifens).
+	float bank_wet = smoothstep(line - wet_strip - aa, line - wet_strip * 0.4, across);
+	vec3 gravel = water_ribbon_gravel_color * mix(0.82, 1.12, ribbon_noise(v_world.xz * 9.0));
+	vec3 bank_col = mix(mix(water_ribbon_bank_color, gravel, inner), water_ribbon_bank_color, bank_wet);
+
+	// Tiefe ∝ Strahler-Rang (Hierarchie: große Läufe tief, Bäche seicht), zur
+	// Wasserlinie hin seicht (Querprofil eines echten Gerinnes).
+	// Seit die Uferkante (ReliefRender.bankLift) das Band in einen echten
+	// Einschnitt legt, liest sich der Verlauf seicht → tief als Bett; als
+	// Band auf dem Gelände las er sich als Rohr (damals fest 0,7 am Rand).
+	// Die Asymmetrie Prallhang/Gleithang trägt das Bogenprofil darunter.
+	float depth = clamp(0.35 + v_rank * 1.5, 0.0, 1.0)
+		* mix(water_ribbon_edge_depth, 1.0, smoothstep(0.0, 0.6, profile));
+	// Delta-Arme liegen auf dem Ablagerungskörper: per Definition Flachwasser.
+	depth = mix(depth, depth * 0.35, delta);
 	depth = clamp(depth + water_ribbon_bend_depth * outward, 0.0, 1.0);
+	// Fließender Lauf nie ganz seicht (Hill-Climber Iteration 5): am Gleithang
+	// lief die Tiefe auf 0, dort schien das helle Bett voll durch und lag als
+	// milchig-weißer Streifen innen in jedem Bogen. Den seichten Gleithang
+	// trägt die olivfarbene Bank-Tönung (`water_ribbon_shoal_*`) darunter.
+	depth = max(depth, 0.35 * (1.0 - still) * (1.0 - delta));
 
 	vec3 water = mix(water_shallow_color, water_deep_color, depth);
 	// Delta: sedimentbeladene Fahne über der Seefläche — heller und wärmer als
@@ -318,10 +363,58 @@ void fragment() {
 	vec3 water_final = mix(water_bed_color, water, mix(water_opacity_shallow, water_opacity_deep, depth));
 	water_final = mix(water_final, water_ribbon_shoal_color,
 		water_ribbon_shoal_mix * max(-outward, 0.0) * (1.0 - smoothstep(0.0, 0.6, profile)));
+	// Flachwasser an der Wasserlinie: heller Kiesgrund scheint türkis durch
+	// (nicht im stehenden Altarm und nicht auf dem Delta-Fächer).
+	water_final = mix(water_final, water_ribbon_edge_color,
+		water_ribbon_edge_mix * (1.0 - smoothstep(0.0, water_ribbon_edge_width, profile)) * (1.0 - still) * (1.0 - delta));
+	// Stromschnellen (WaterRender.ribbonRapid*): wo das Gelände unter dem
+	// Band längs des Laufs steil fällt, weiße Schaumstreifen in
+	// Fließrichtung. Gefälle als Sim-Höhe je Welteinheit über ±3 Zellen
+	// entlang der Fließrichtung (die Band-Geometrie selbst ist je Quad
+	// gestuft, ihre Bildschirm-Ableitung zeichnete Querstriche).
+	float rapid_e = 3.0 * world_size / max(grid_n - 1.0, 1.0);
+	float rapid_slope = abs(texture(height_tex, grid_uv(v_world.xz - d1 * rapid_e)).r
+		- texture(height_tex, grid_uv(v_world.xz + d1 * rapid_e)).r) / (2.0 * rapid_e);
+	// Längs in Stufen gerissen (Iteration 5): auch eine lange steile Strecke
+	// schäumt nur in einzelnen Abschnitten, nicht als durchgehender Streifen.
+	float rapid = smoothstep(water_ribbon_rapid_slope_lo, water_ribbon_rapid_slope_hi, rapid_slope)
+		* smoothstep(0.45, 0.65, ribbon_noise(vec2(UV.y * 0.25, 41.0)))
+		* (1.0 - still) * (1.0 - delta) * (1.0 - in_sea);
+	// Kurze, gebrochene Schaumzungen statt durchgehender Längsstreifen: das
+	// Produkt zweier Rauschen (längs gestreckt × grob) reißt die Streifen auf.
+	float streak = ribbon_noise(vec2(q.x * 2.5, q.y * 7.0) + vec2(-u_time * speed * 0.8, 0.0))
+		* ribbon_noise(vec2(q.x * 0.6, q.y * 1.5) + vec2(-u_time * speed * 0.3, 17.0));
+	float rapid_foam = water_ribbon_rapid_mix * rapid * smoothstep(0.30, 0.55, streak) * profile;
+	water_final = mix(water_final, water_foam_color, rapid_foam);
+
+	// Wasser als Körper (Hill-Climber Iteration 3). Alle Strukturen sind
+	// längs der Strömung gestreckt (q.x stromab, q.y quer in Weltmaß) und
+	// blenden unter Pixelgröße auf ihre MITTLERE Deckung aus (`fine`), statt
+	// zu flimmern: aus der Ferne bleibt der Ton, die Struktur geht.
+	float fine = 1.0 - far;
+	// Strömungsstreifen: lange helle und dunkle Bahnen in Fließrichtung.
+	float lanes = ribbon_noise(vec2(q.x * 0.3 - u_time * speed * 0.6, q.y * 3.0) + 31.0) - 0.5;
+	water_final *= 1.0 + lanes * 2.0 * water_streak_contrast * fine * mix(1.0, 0.25, still);
+	// Schaumzungen: dünne, abgerissene Striche stromab, nur an
+	// Gefällestufen (Iteration 5: vorher auch Grunddichte, Außenbogen und
+	// Wasserlinie, das zog helle Linien über jeden Lauf). `rapid` trägt
+	// Altarm, Delta und Meer schon aus.
+	float foam_density = rapid;
+	// Dünne Linien aus dem Grat eines längs gestreckten Rauschens (|2n − 1|
+	// nahe 0), in Flecken gerissen von einem groben zweiten Rauschen.
+	// Flächige Schwellen auf dem Rauschen malten breite weiße Schlieren.
+	float foam_ridge = 1.0 - abs(2.0 * ribbon_noise(vec2(q.x * 4.0 - u_time * speed * 4.0, q.y * 7.0)) - 1.0);
+	float foam_gate = smoothstep(0.6 - 0.3 * foam_density, 0.75 - 0.3 * foam_density,
+		ribbon_noise(vec2(q.x * 2.5 - u_time * speed * 2.0, q.y * 2.5) + 9.0));
+	// Grat-Kante pixelgenau geglättet (fwidth), damit die Linie nicht treppt.
+	float ridge_px = max(fwidth(foam_ridge), 1e-4);
+	float foam = mix(0.05, smoothstep(0.9 - ridge_px, 0.9 + ridge_px, foam_ridge) * foam_gate, fine) * foam_density;
+	float foam_amt = clamp(water_ribbon_foam_mix * foam + rapid_foam, 0.0, 1.0);
+	water_final = mix(water_final, water_foam_color, water_ribbon_foam_mix * foam);
 	water_final = mix(water_final, water_ocean_shallow_color, in_sea * (1.0 - presence * 0.5));
 	water_final *= 1.0 - fresnel;
 
-	vec3 col = mix(water_ribbon_bank_color, water_final, wet);
+	vec3 col = mix(bank_col, water_final, wet);
 	col *= cloud_light(v_world, u_time);
 	ALBEDO = col;
 	NORMAL = normalize(mix(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0), water_n_vs, wet));
@@ -334,7 +427,11 @@ void fragment() {
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt
 	// Stillwasser) — numerisch zufällig gleich waterOpacityShallow,
 	// KEINE WaterRender-Konstante. Das nasse Ufer glänzt matt (0.6).
-	float water_rough = mix(water_roughness, 0.55, still);
+	// Schaum ist matt und spiegelt nicht (Iteration 5): mit der glatten
+	// Wasserrauheit spiegelte er den Himmel und leuchtete auch im
+	// Geländeschatten weiß. So folgt er dem Licht wie jede Albedo.
+	float water_rough = mix(mix(water_roughness, 0.55, still), 0.9, foam_amt);
 	ROUGHNESS = mix(0.6, water_rough, wet);
-	SPECULAR = mix(0.4, water_specular, wet);
+	// Binnenwasser spiegelt schwächer als das Meer (WaterRender.inlandSpecularScale).
+	SPECULAR = mix(0.4, water_specular * water_inland_specular_scale, wet) * (1.0 - foam_amt * wet);
 }
