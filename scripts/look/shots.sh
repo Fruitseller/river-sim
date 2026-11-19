@@ -14,6 +14,10 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 game=${2:-$root/game}
 godot=${GODOT:-$root/.tools/godot-macos/Godot.app/Contents/MacOS/Godot}
 mkdir -p "$out"
+# Schläft der Bildschirm, drosselt macOS das Fenster: eine Aufnahme dauerte
+# gemessen 16 min statt 20 s. Also wecken und für die Dauer wach halten.
+wach=()
+if command -v caffeinate >/dev/null; then caffeinate -u -t 3; wach=(caffeinate -d); fi
 
 # name | Referenz | Umgebung der Kamera
 shots=(
@@ -24,7 +28,7 @@ shots=(
 for s in "${shots[@]}"; do
   IFS='|' read -r name _ cam <<<"$s"
   # shellcheck disable=SC2086
-  env RS_SEED=1337 RS_STEP=20000 $cam RS_SHOT="$out/$name.png" \
+  "${wach[@]}" env RS_SEED=1337 RS_STEP=20000 $cam RS_SHOT="$out/$name.png" \
     "$godot" --path "$game" --maximized >"$out/$name.log" 2>&1 || true
   [[ -s "$out/$name.png" ]] || { echo "FEHLT: $out/$name.png (Log: $out/$name.log)" >&2; exit 1; }
   sips -Z 2048 -s format jpeg -s formatOptions 90 "$out/$name.png" --out "$out/$name.jpg" >/dev/null

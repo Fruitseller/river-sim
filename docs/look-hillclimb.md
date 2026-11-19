@@ -46,6 +46,16 @@ zu viel als zu wenig (konservativ). Folgen für den Ablauf:
   Neue Bewerter oder ein geänderter Prompt werden vor dem Einsatz mit
   dieser Tabelle neu geeicht.
 
+Nachtrag 2026-11-19: DeepSeek läuft über opencode als Agent mit Shell und
+hat in mehreren Urteilen Verzeichnisse gelistet und die Aufnahmen unter
+ihrem echten Pfad geöffnet (`…/base/…`, `…/it02/…`); der Vergleich war
+dort nicht blind. `judge.sh` gibt seitdem jedem Urteil einen eigenen Ordner
+mit neutralen Kopien (`ref.jpg`, `x.jpg`, `y.jpg`). Nacheichung damit:
+derselbe Stand zweimal gerendert 0/0/9 (verworfen ✓). Beide Skripte
+brauchen ABSOLUTE Pfade. `shots.sh` weckt den Bildschirm und hält ihn wach
+(`caffeinate`): bei schlafendem Bildschirm drosselt macOS das Fenster, eine
+Aufnahme dauerte dann 16 min statt 20 s, der Bildraten-A/B wird unbrauchbar.
+
 ## Ablauf je Iteration
 
 1. Vergleichsstand sichern: `cp -R game "$ALT/game"` (mit `bin/` und `.godot/`),
