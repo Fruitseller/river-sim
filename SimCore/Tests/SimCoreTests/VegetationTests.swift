@@ -280,4 +280,38 @@ final class VegetationTests: XCTestCase {
         XCTAssertEqual(a.veg, b.veg)
         XCTAssertEqual(a.vegClass, b.vegClass)
     }
+
+    /// Regression (PR #229): Bei `vegDispersalRadius = 0` und positiver
+    /// `vegDispersalStrength` überspringt `updateVegetation` den eigenen
+    /// Dispersal-Pass (`dr > 0`), liest ab dem zweiten Aufruf aber weiterhin
+    /// den `vegScratch`-Rest aus `updateVegClass` (2. Runde der gedämpften
+    /// 3×3-Dilatation = 5×5-Tschebyschow-Abfall `0.65^d` für d ≤ 2).
+    func testZeroDispersalRadiusPreservesSecondRoundScratchAcrossCalls() {
+        var c = SimConfig()
+        c.n = 16
+        c.world = calibrationWorld
+        c.vegDispersalRadius = 0
+        c.vegDispersalStrength = 0.75
+        c.disturbanceEnabled = false
+        c.heightBandsOverride = .legacyAbsolute
+
+        let t = Terrain(allocating: c, seed: 1337)
+        var s = t.state
+        s.h = [Double](repeating: c.sea + 0.1, count: c.count)
+        s.hf = s.h
+        s.rain = [Double](repeating: 0.1, count: c.count)
+        s.area[8 * c.n + 8] = c.braidMinCells * c.cellSize * c.cellSize + 1
+        t.restore(s)
+
+        // 1. Aufruf: vegScratch ist noch 0 → nur geografische Eignung (0.13).
+        t.updateVegetation(years: 10_000)
+        XCTAssertEqual(t.veg[10 * c.n + 8], 0.13, accuracy: 1e-12)
+
+        // 2. Aufruf: vegScratch hält 2 Runden der Wasser-Dilatation (d ≤ 2).
+        t.updateVegetation(years: 10_000)
+        XCTAssertEqual(t.veg[9 * c.n + 8], 0.65 * 0.75, accuracy: 1e-12)
+        XCTAssertEqual(t.veg[10 * c.n + 8], 0.65 * 0.65 * 0.75, accuracy: 1e-12)
+        XCTAssertEqual(t.veg[10 * c.n + 10], 0.65 * 0.65 * 0.75, accuracy: 1e-12)
+        XCTAssertEqual(t.veg[11 * c.n + 8], 0.13, accuracy: 1e-12)
+    }
 }

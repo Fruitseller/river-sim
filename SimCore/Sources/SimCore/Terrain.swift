@@ -2633,6 +2633,24 @@ public final class Terrain {
                 }
             }
         }}
+        // Kompatibilität zu Null-Dispersalradius mit positiver Stärke:
+        // `updateVegetation` überspringt bei `dr == 0` den eigenen
+        // Dispersal-Pass (`dr > 0`), liest aber weiterhin `vegScratch` als
+        // Samen-Druck. Die frühere 3-Runden-Swap-Dilatation hinterließ dort die
+        // 2. Runde (5×5-Tschebyschow-Abfall: Werte ≥ w2 bzw. 0 ab Abstand 3).
+        if cfg.vegDispersalStrength > 0
+            && max(0, Int(cfg.vegDispersalRadius.rounded())) == 0 {
+            riparian.withUnsafeBufferPointer { rb in
+            vegScratch.withUnsafeMutableBufferPointer { sb in
+                let prip = rb.baseAddress!, psc = sb.baseAddress!
+                parallel(cnt) { lo, hi in
+                    for k in lo..<hi {
+                        let v = prip[k]
+                        psc[k] = v >= w2 ? v : 0
+                    }
+                }
+            }}
+        }
         // Pass 3: Klassen. Der 2er-Rand bleibt kahl (wie in updateVegetation,
         // die dort auch kein veg aufbaut).
         h.withUnsafeBufferPointer { hb in
