@@ -17,12 +17,14 @@ import SimCore
 /// `RenderState`. Kalibrierung: `SimCore.CanopyRender`.
 public enum ForestCanopyMask {
 
-    /// Lichtungs-Rauschen je Zelle, zentriert um 0. Hängt nur an Gittergröße
+    /// Lichtungs-Rauschen je Zelle, um 0 (Lichtungen ziehen es weit ins
+    /// Negative, `CanopyRender.clearing*`). Hängt nur an Gittergröße
     /// und Weltbreite, nicht am Zustand (und bewusst nicht am Welt-Seed: kein
     /// Weltwechsel muss es neu rechnen); `RenderState` rechnet es einmal.
     public static func clumpField(n: Int, world: Double) -> [Float] {
         guard n > 0 else { return [] }
         let scale = CanopyRender.clumpFrequency * world / Double(n)
+        let clearScale = CanopyRender.clearingFrequency * world / Double(n)
         var field = [Float](repeating: 0, count: n * n)
         field.withUnsafeMutableBufferPointer { fb in
             let pf = fb.baseAddress!
@@ -30,7 +32,14 @@ public enum ForestCanopyMask {
                 for j in jLo..<jHi {
                     for i in 0..<n {
                         let v = clumpNoise((Double(i) + 0.5) * scale, (Double(j) + 0.5) * scale)
-                        pf[j * n + i] = Float(v - CanopyRender.clumpMean)
+                        // Lichtungen in großer Skala (Look-Iteration 6): ein
+                        // zweites, gröberes fBm schneidet auch in dichte
+                        // Bestände Lücken, deren Größe mit den Oktaven
+                        // streut (Einzellichtung bis Wiesental).
+                        let c = clumpNoise((Double(i) + 0.5) * clearScale + 41.3,
+                                           (Double(j) + 0.5) * clearScale + 7.9)
+                        let clearing = 1 - smoothstep(CanopyRender.clearingLo, CanopyRender.clearingHi, c)
+                        pf[j * n + i] = Float(v - CanopyRender.clumpMean - clearing * CanopyRender.clearingDepth)
                     }
                 }
             }

@@ -113,9 +113,10 @@ final class CanopyTests: XCTestCase {
         }
     }
 
-    /// Nur dichte Vegetation wird Wald (Issue #168): bei mittlerem
-    /// Vegetationsgewicht (0,3, bis #168 schon geschlossener Wald) bleibt
-    /// Wiese, ab 0,7 steht geschlossener Bestand. Ebene, ohne Rauschen.
+    /// Nur dichte Vegetation wird geschlossener Wald (Issue #168, seit
+    /// Look-Iteration 6 mit lichtem Saum): magere Vegetation (0,1) bleibt
+    /// Wiese, mittlere (0,3) trägt lichten Wald, ab 0,7 steht geschlossener
+    /// Bestand. Ebene, ohne Rauschen.
     func testOnlyDenseVegetationBecomesForest() {
         let n = 32
         let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
@@ -130,8 +131,27 @@ final class CanopyTests: XCTestCase {
                                               clump: [Float](repeating: 0, count: n * n))
             return mask[(n / 2) * n + n / 2]
         }
-        XCTAssertEqual(forest(vegetation: 0.3), 0, "Mittlere Vegetation bleibt Wiese")
+        XCTAssertEqual(forest(vegetation: 0.1), 0, "Magere Vegetation bleibt Wiese")
+        let middle = forest(vegetation: 0.3)
+        XCTAssertGreaterThan(middle, 0, "Mittlere Vegetation trägt lichten Wald (Saum)")
+        XCTAssertLessThan(middle, 255, "Mittlere Vegetation ist kein geschlossener Bestand")
         XCTAssertEqual(forest(vegetation: 0.7), 255, "Dichte Vegetation ist geschlossener Wald")
+    }
+
+    /// Große Lichtungen (Look-Iteration 6, `CanopyRender.clearing*`): auch
+    /// Vegetation am Deckel (0,78, das Tiefland) bekommt Lücken (Maske unter
+    /// der Hälfte), statt als geschlossener Teppich zu stehen, aber die
+    /// Lichtungen bleiben die Ausnahme. Gemessen auf dem Lichtungs-Rauschen der Produktionswelt.
+    func testClearingsCutIntoDenseVegetation() {
+        let cfg = SimConfig.production
+        let clump = ForestCanopyMask.clumpField(n: cfg.n, world: cfg.world)
+        let open = clump.filter {
+            0.78 + Double($0) * CanopyRender.clumpGain
+                < (CanopyRender.vegetationLo + CanopyRender.vegetationHi) / 2
+        }.count
+        let share = Double(open) / Double(clump.count)
+        XCTAssertGreaterThan(share, 0.02, "Dichte Bestände brauchen Lichtungen")
+        XCTAssertLessThan(share, 0.2, "Lichtungen dürfen den Bestand nicht auflösen")
     }
 
     /// Ohne Schrittweite (`cellSize == 0`: `world <= 0` oder nicht-endlich)
@@ -414,8 +434,9 @@ final class CanopyTests: XCTestCase {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform sampler2D forest_tex",
                        hint: "WO Wald steht, sagt allein die Waldmaske aus SimRender")
-        assertContains(shader,
-                       "VERTEX.y += calib_window(canopy_lift_lo, canopy_lift_hi, v_forest) * canopy_height;",
+        assertContains(shader, "v_lift = calib_window(canopy_lift_lo, canopy_lift_hi, lift_f);",
+                       hint: "Das Dach hebt nach dem Anhebe-Fenster der Waldmaske an")
+        assertContains(shader, "VERTEX.y += v_lift * canopy_height;",
                        hint: "Das Dach ist angehoben (Schattenwurf der Waldkanten)")
     }
 
