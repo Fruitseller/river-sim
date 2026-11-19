@@ -28,3 +28,52 @@ zuverlässig blind, er hat als Agent die echten Pfade gelesen. `judge.sh`
 ist korrigiert und nachgeeicht (`docs/look-hillclimb.md` § Eichung,
 Nachtrag); die Urteile zu Nr. 1 und 2 oben sind mit dem korrigierten
 Bewerter bestätigt (Nr. 2) bzw. in der Richtung gleich (Nr. 1).
+| 3 | Auf Nr. 1+2 aufbauend: scharfe Uferlinie für alles Binnenwasser (Band und Raster), nasser Streifen, Kiesstreifen innen, Strömungsstreifen, Schaum, gesättigter Türkis-zu-Tiefblau-Verlauf, dunkle Fassung in der Übersicht | Implementer: A 3 B 8 GLEICH 4, A 1 B 9 GLEICH 5, A 5 B 8 GLEICH 2. Orchestrator, 5 Läufe: A 4 B 9 GLEICH 2 | verworfen | Erstmals wirkt die Änderung in allen drei Aufnahmen (`diorama` 3 B, `tal` 3 B, `nah` 3 B), aber 4 A-Stimmen: „helltürkise, uniforme Bänder mit scharf abgesetztem hellem Sandrand, die flach aufliegen“. Der gemalte Saum liest sich als Band, nicht als Tiefe. Schranken grün (660 Tests, Hash unverändert, 19,2 gegen 19,2 ms). |
+
+Drei Verwerfungen am selben Problem → strukturelle Eskalation (Regel 6).
+Lehre aus Nr. 1 bis 3: Echte Geometrie (Böschung) wirkt in `nah`, trägt aber
+nicht in die Ferne; gemalte Säume (Türkis, Kies, Schaum) tragen in die Ferne,
+lesen sich aber wieder als aufgelegtes Band. Stand Nr. 3 liegt als Patch
+unter `.tools/look/it03/patch.diff`.
+
+## Problem 1, strukturelle Eskalation
+
+| Nr. | Hypothese | Urteil | Ergebnis | Kernsatz |
+| --- | --- | --- | --- | --- |
+| 4 | Tiefe ist echt statt gemalt: Relief-Bake senkt das Bett unter den Bändern ab (U-Profil, `ReliefRender.bedDepth` 0,9, tiefer je breiter der Lauf), Terrain malt dort Kies; das Band rechnet je Pixel die Wassersäule (Bandfläche minus gerendertes Gelände) und daraus Deckkraft (Beer–Lambert, `WaterRender.ribbonAbsorption` 1,6), Farbe und Uferlinie. Alle gemalten Säume aus Nr. 1–3 und dem #174-Querprofil (Wasserlinie, nasses Ufer, Kies-/Türkis-Streifen, Schaum, Strömungsstreifen, Bogen-Tiefe) entfernt; Land-Anhebung 0,6 → 0,45 | Implementer, 3 Läufe: A 3 B 7 GLEICH 5, A 3 B 4 GLEICH 8, Endstand A 3 B 6 GLEICH 6 | verworfen (Regel) | `nah` 4 B von 5 („helle Flachwasser-/Uferzone, Verlauf von tief zu flach, lesen sich als eingebettete Gewässer mit Bett“); `diorama` 2 B, 3 GLEICH; `tal` 2 A („breitere, flachere Wasserbänder“, „milchiger“). Schranken grün (660 Tests, Hash unverändert, Bildrate 19,5/21,0 → 19,5/21,3 ms Mittel/p95). Die Säule aus dem Tiefenpuffer kostete gemessen 1,2 ms je Bild und ist durch die Höhe aus der Backtextur ersetzt. |
+
+
+Zweitbewerter nach Nr. 4 (Gemini 4 Hydrogen, blind, derselbe Prompt, je ein
+Urteil pro Aufnahme gegen den Ausgangsstand): Stand Nr. 3 gewinnt 3/3
+(„tiefes Blaugrün in der Mitte, hellere Flachwasser-Ränder, klar definierte
+Sandbänke“), Stand Nr. 4 gewinnt 2/3 und verliert `tal` („blasser, flacher,
+graublaue Bänder“). Gemini widerspricht DeepSeek damit bei Nr. 3 deutlich,
+nennt aber dieselbe Schwäche wie dessen A-Stimmen: „zu grelle helle
+Flusslinien“. Folge: Nr. 4 (echte Tiefe) bleibt verworfen, der Arbeitsbaum
+steht wieder auf Nr. 3, und Nr. 5 nimmt genau diese Schwäche weg.
+
+| Nr. | Hypothese | Urteil | Ergebnis | Kernsatz |
+| --- | --- | --- | --- | --- |
+| 5 | Stand Nr. 3 entschärft: kein Cyan (olivgrüner Flachwasserton), Kies nur am Gleithang und unterbrochen, matter Schaum nur an Gefällestufen, kein weißer Seerand, dunkles Ufer | Implementer, 3 Läufe: A 3 B 7 GLEICH 5, A 2 B 7 GLEICH 6, A 2 B 6 GLEICH 7 | verworfen | `nah` durchgehend 4 B von 5; `diorama` und `tal` überwiegend GLEICH, dort bleibt „flache blaue Bänder mit hellen Sandrändern“. Schranken grün bis auf p95: 20,6 → 21,1 ms (kommt aus Nr. 3, Mittel unverändert 19,3 → 19,2 ms). Patch: `.tools/look/it05/patch.diff`. |
+
+### Befund zu Problem 1 nach fünf Versuchen (davon einer strukturell)
+
+Mit Einzelschritten am Wasser ist `B_BEHALTEN` nicht erreichbar. Begründung:
+
+- Die Richtung stimmt in jedem Versuch ab Nr. 3 (B 6 bis 9 von 15, `nah`
+  stets 4 von 5, Gemini 3/3 für Nr. 3). Es scheitert an den A-Stimmen: Sobald
+  sich zwei Stände sichtbar, aber mäßig unterscheiden, vergibt DeepSeek 2 bis
+  4 A-Stimmen von 15, teils mit Gründen, die sich gar nicht geändert haben
+  (Wald, Schnee). Erlaubt ist 1. Dieselbe Streuung zeigt die Eichzeile
+  `performance` gegen `balanced` (4/6/5).
+- In `diorama` und `tal` ist ein Fluss 8 bis 10 px breit. Solange Wald, Fels
+  und Licht dort „weit hinter der Referenz“ liegen, urteilt der Bewerter
+  GLEICH, egal wie das Wasser aussieht.
+- Echte Tiefe (Nr. 4) ist ehrlicher, trägt bei flachem Blick aber schlechter
+  als gemalte: schmale Läufe werden milchig. Der Depth-Buffer-Weg kostete
+  gemessen 1,2 ms je Frame.
+
+Entscheidung: Der Wasser-Stand Nr. 5 wird NICHT committet, sondern als Patch
+aufgehoben. Der Arbeitsbaum geht zurück auf den Ausgangsstand. Wenn die
+flächigen Probleme (Wald, Fels, Licht) behalten sind, wird der Patch als
+eigene Iteration gegen den dann besseren Stand erneut geprüft.
