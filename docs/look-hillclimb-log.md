@@ -77,3 +77,13 @@ Entscheidung: Der Wasser-Stand Nr. 5 wird NICHT committet, sondern als Patch
 aufgehoben. Der Arbeitsbaum geht zurück auf den Ausgangsstand. Wenn die
 flächigen Probleme (Wald, Fels, Licht) behalten sind, wird der Patch als
 eigene Iteration gegen den dann besseren Stand erneut geprüft.
+
+Nachtrag 2026-11-19: Der Wasser-Stand Nr. 5 liegt auf Wunsch des Eigners als
+eigener Draft-PR #230 (Branch `look-water`, Vorher-Nachher-Bilder unter
+`docs/look-water/`); dort entscheidet das Auge, nicht der Bewerter.
+
+## Problem 2: Wald als Flächen mit Lichtungen
+
+| Nr. | Hypothese | Urteil | Ergebnis | Kernsatz |
+| --- | --- | --- | --- | --- |
+| 6 | Wald trägt als Fläche: mehr Deckung, dunkles Tannengrün gegen die Wiese, Variation in zwei Skalen (Bestände, Kronen), unregelmäßige Ränder und Lichtungen; nur Render-Schwellen (`CanopyRender`, `ForestCanopyMask`, `terrain.gdshader`) | noch keins | pausiert (Eigner) | Implementer mitten in der Arbeit gestoppt. Zwischenstand von Auge: in `tal` geschlossene Waldflächen mit Lichtungen, in `nah` deutlich mehr Wald, die Kronen wirken aber kantig-dunkel. Ungeprüft: Schranken, `judge.sh`. Patch: `.tools/look/it06/patch-wip.diff`, Aufnahmen `.tools/look/it06/shots`. |
