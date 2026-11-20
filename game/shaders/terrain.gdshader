@@ -982,17 +982,20 @@ void fragment() {
 		if (cold > 0.002) {
 			float lie = cold * 1.45 + n_mix * material_snow_breakup - cavity * material_snow_cavity
 			          - calib_window(material_snow_slope_lo, material_snow_slope_hi, world_slope);
-			// Nur der SCHNEE-Anteil rutscht: `cold` trägt Schnee und Eis, und
-			// `ice_w` unten entsteht aus dem Ergebnis. Der Eisanteil
-			// (`cold * ice_share`, am Gletscherrand stetig zwischen 0 und 1)
-			// bleibt unangetastet, sonst stünde Eis an Rippen und Steilflanken
-			// anteilig als Fels da, ohne Spalten und Eisrauheit (PR-Review #232).
-			float snow_part = cold * (1.0 - ice_share);
-			float cold_lie = (cold - snow_part)
-			               + mix(snow_part, smoothstep(0.30, 0.62, lie) * (1.0 - ice_share),
+			// Nur der SCHNEE-Anteil rutscht: `cold` trägt Schnee und Eis. Der
+			// Eisanteil (`cold * ice_share`, am Gletscherrand stetig zwischen
+			// 0 und 1) wird vorher gesichert und `ice_share` danach daraus neu
+			// gebildet; `ice_w`, Spalten und Moränen unten sehen so dieselbe
+			// Eismenge wie ohne Umverteilung. Nur `ice_share` mitzugewichten
+			// reicht nicht: die Aufteilung liefe proportional mit, und Eis
+			// stünde anteilig als Fels da (PR-Review #232).
+			float ice_part = cold * ice_share;
+			float snow_part = cold - ice_part;
+			float snow_lie = mix(snow_part, smoothstep(0.30, 0.62, lie) * (1.0 - ice_share),
 			                     calib_window(0.002, material_redistribute_fade, cold));
-			rock += max(cold - cold_lie, 0.0);
-			cold = cold_lie;
+			rock += max(snow_part - snow_lie, 0.0);
+			cold = ice_part + snow_lie;
+			ice_share = cold > 1e-4 ? ice_part / cold : ice_share;
 		}
 		float pair = rock + vegetation;
 		if (rock > 0.005) {
