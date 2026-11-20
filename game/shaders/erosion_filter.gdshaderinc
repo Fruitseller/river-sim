@@ -59,11 +59,14 @@ vec4 phacelle_noise(vec2 p, vec2 norm_dir, float freq, float offset, float norma
 	return vec4(interp / mag, side_dir);
 }
 
-// Erosions-Detail: 3 Oktaven „stacked faded gullies" auf dem Sim-Höhenfeld.
+// Erosions-Detail: `octaves` Oktaven „stacked faded gullies" auf dem
+// Sim-Höhenfeld (Original: 3; die Oktavenzahl als Parameter ist eine Änderung
+// dieses Projekts, Look-Iteration 7: der Terrain-Shader rechnet je Pixel nur
+// noch 2, die feinste trägt seitdem der Relief-Bake mit seinen Felsrippen).
 // slope = dh/duv des groben Felds. Rückgabe: (dh, dsx, dsy, ridgeMap); die
 // Magnitude landet in out_mag (zum Normieren der Schattierung).
 vec4 erosion_detail_at(vec2 p, vec2 slope, float fade_target_in, float scale,
-                       float strength_rel, out float out_mag) {
+                       float strength_rel, int octaves, out float out_mag) {
 	const float GULLY_WEIGHT = 0.5;
 	const float DETAIL = 1.5;
 	const vec4 ROUNDING = vec4(0.1, 0.0, 0.15, 2.0);
@@ -71,7 +74,6 @@ vec4 erosion_detail_at(vec2 p, vec2 slope, float fade_target_in, float scale,
 	const vec2 ASSUMED_SLOPE = vec2(0.7, 1.0);
 	const float CELL_SCALE = 0.7;
 	const float NORMALIZATION = 0.5;
-	const int OCTAVES = 3;
 
 	float strength = strength_rel * scale;
 	float fade_target = clamp(fade_target_in, -1.0, 1.0);
@@ -87,7 +89,7 @@ vec4 erosion_detail_at(vec2 p, vec2 slope, float fade_target_in, float scale,
 	float ridge_fade = fade_target;
 	vec2 gully_slope = mix(slope, slope / slope_len * ASSUMED_SLOPE.x, ASSUMED_SLOPE.y);
 
-	for (int i = 0; i < OCTAVES; i++) {
+	for (int i = 0; i < octaves; i++) {
 		vec4 ph = phacelle_noise(p * freq, safe_dir(gully_slope), CELL_SCALE, 0.25, NORMALIZATION);
 		ph.zw *= -freq;
 		float sloping = abs(ph.y);
