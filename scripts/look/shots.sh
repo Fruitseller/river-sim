@@ -19,6 +19,16 @@ mkdir -p "$out"
 wach=()
 if command -v caffeinate >/dev/null; then caffeinate -u -t 3; wach=(caffeinate -d); fi
 
+# `RS_LOOK_BACKGROUND=1` startet Godot unter macOS über `open -g`, damit das
+# Fenster nicht dauerhaft vorn liegt (dazu Godot im Dock einem eigenen
+# Desktop zuweisen). Noch kein Standard, gemessen 2026-11-20: Godot holt sich
+# beim Start trotzdem kurz den Fokus (6 von 40 Stichproben über drei
+# Aufnahmen), und `nah` kommt um wenige Pixel verschoben heraus (PSNR 18
+# gegen den Direktstart, dessen Wiederholung 38 erreicht; Ursache offen).
+# A und B eines Vergleichs deshalb immer auf DEMSELBEN Weg aufnehmen.
+hintergrund=0; app=${godot%/Contents/MacOS/*}
+if [[ -n ${RS_LOOK_BACKGROUND:-} && $app == *.app ]] && command -v open >/dev/null; then hintergrund=1; fi
+
 # name | Referenz | Umgebung der Kamera
 shots=(
   "diorama|d-insel-diorama-schoen.jpg|RS_CAMERA=diorama"
@@ -27,9 +37,16 @@ shots=(
 )
 for s in "${shots[@]}"; do
   IFS='|' read -r name _ cam <<<"$s"
-  # shellcheck disable=SC2086
-  "${wach[@]}" env RS_SEED=1337 RS_STEP=20000 $cam RS_SHOT="$out/$name.png" \
-    "$godot" --path "$game" --maximized >"$out/$name.log" 2>&1 || true
+  if (( hintergrund )); then
+    envs=()
+    for kv in RS_SEED=1337 RS_STEP=20000 $cam "RS_SHOT=$out/$name.png"; do envs+=(--env "$kv"); done
+    "${wach[@]}" open -g -n -W -a "$app" --stdout "$out/$name.log" --stderr "$out/$name.log" \
+      "${envs[@]}" --args --path "$game" --maximized || true
+  else
+    # shellcheck disable=SC2086
+    "${wach[@]}" env RS_SEED=1337 RS_STEP=20000 $cam RS_SHOT="$out/$name.png" \
+      "$godot" --path "$game" --maximized >"$out/$name.log" 2>&1 || true
+  fi
   [[ -s "$out/$name.png" ]] || { echo "FEHLT: $out/$name.png (Log: $out/$name.log)" >&2; exit 1; }
   sips -Z 2048 -s format jpeg -s formatOptions 90 "$out/$name.png" --out "$out/$name.jpg" >/dev/null
   echo "$name: $out/$name.jpg"
