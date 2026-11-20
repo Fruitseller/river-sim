@@ -252,6 +252,18 @@ reproduziert, übernimmt deren Fenstergröße; die gemessene Viewport-Größe ge
 mit ins Protokoll. Kleine Fenster bleiben nur für logische Vertragsprüfungen
 zulässig, deren Ergebnis nicht vom Renderer oder von Interaktion abhängt.
 
+**Render-Skalierung ist Teil der Messung** (#235): Seit `game/scripts/RenderScale.gd`
+rendert die 3D-Szene in `balanced` mit 0,67 je Achse (MetalFX Spatial auf dem
+Mac, sonst FSR 1.0), `performance` mit 0,5, `quality` nativ. Jede Bildzeit-
+Messung nennt deshalb Stufe UND Faktor. Messreihen von vor #235 liefen nativ;
+wer gegen sie vergleicht, misst mit `RS_RENDER_SCALE=1`. `RS_SCALING=bilinear|fsr|metalfx`
+wählt das Verfahren. Die Bildzeit folgt den Pixeln, nicht der Vertexzahl:
+SSAO, MSAA, Material und Erosionsdetail kosten je rund ein Viertel der Zeit
+(Zerlegung je Kamera im selben Prozess: `game/studies/budget/BudgetProbe.tscn`,
+Messreihe `docs/perf-measurements.md` § V). Die Zerlegungs-Bühne schaltet
+Zustände blockweise im selben Prozess um und ist für kleine Unterschiede
+(unter 1 ms) die genauere Wahl als zwei getrennte Prozesse.
+
 **Zeitraffer-Frame-Zeiten als interleaved A/B** (Messprotokoll
 `docs/perf-measurements.md` §L):
 
@@ -297,7 +309,10 @@ Bedienung selbst, Issue #174). `RS_UI_BLUR=0` lässt den Weichzeichner hinter de
 Glas-Panels weg (A/B im selben Build, Kosten: `docs/zielbild-measurements.md`
 § Glas-Weichzeichner). `RS_SHOT` blendet auch den Pinsel aus;
 `RS_BRUSH=<Radius>` zeigt die Pinselkuppel trotzdem, in der Bildmitte statt am
-Mauszeiger (Aufnahmen der Kuppel ohne Maus). Getrennt davon
+Mauszeiger (Aufnahmen der Kuppel ohne Maus). In eigenen Dateien stehen
+`RS_RENDER_SCALE` und `RS_SCALING` (`RenderScale.gd`, s. o.) sowie
+`RS_TILE_QUADS` (Kachelgröße) in `TerrainTiles.gd`, alle für A/B im selben
+Build. Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `baseline`, `prototype` ist mit #174 D entfernt; `RS_STUDY_MODE`
@@ -390,7 +405,10 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    brauchte, lesen die aus dem Frame (der `ribbon_strip_starts`-Schlüssel
    gehört ihnen).
 3. **`game/`**: Godot-Projekt (Version gepinnt in `scripts/fetch-godot.sh`,
-   derzeit 4.7.2): `Main.gd` (Mesh/Textur-Update, UI, Kamera, Input; das Aussehen der
+   derzeit 4.7.2): `Main.gd` (Textur-Update, UI, Kamera, Input; das Terrain
+   zeichnet `scripts/TerrainTiles.gd` als 64er-Kacheln mit eigener AABB, deren
+   Dreiecke denselben Flächen-Vertrag wie das frühere PlaneMesh einhalten,
+   Issue #235; die Render-Skalierung setzt `scripts/RenderScale.gd`; das Aussehen der
    Bedienung steht in EINEM Theme, `ui/glass_theme.tres` (samt Radius und
    Abdunklung des Weichzeichners hinter den Panels; Shader
    `ui/glass_blur.gdshader`), die Werkzeug- und
