@@ -39,10 +39,6 @@ var grid := 0
 var tiles_per_side := 0
 var tile_density: PackedInt32Array = []
 var instances: Array[MeshInstance3D] = []
-## Schattenwerfer mit gröberem Gitter (je Kachel eine Instanz, nur Schatten),
-## leer, solange `shadow_stride` 1 ist: dann wirft die sichtbare Kachel selbst.
-var shadow_instances: Array[MeshInstance3D] = []
-var shadow_stride := 1
 var material: Material
 ## Höhenbereich der AABB in Welt-Y. Konservativ über die ganze Welt statt je
 ## Kachel: Gecullt wird vor allem nach x/z, und eine zu flache AABB ließe eine
@@ -51,20 +47,15 @@ var y_lo := -2.0
 var y_hi := 40.0
 
 ## Kacheln für ein Render-Gitter mit `grid_points` Punkten je Seite bauen.
-func build(world: float, grid_points: int, mat: Material, aabb_y_lo: float, aabb_y_hi: float,
-		shadow_every := 1) -> void:
+func build(world: float, grid_points: int, mat: Material, aabb_y_lo: float, aabb_y_hi: float) -> void:
 	world_size = world
 	grid = grid_points
 	material = mat
 	y_lo = aabb_y_lo
 	y_hi = aabb_y_hi
-	shadow_stride = maxi(1, shadow_every)
-	if OS.has_environment("RS_SHADOW_STRIDE"): # A/B ohne Umbau
-		shadow_stride = maxi(1, int(OS.get_environment("RS_SHADOW_STRIDE")))
-	for mi in instances + shadow_instances:
+	for mi in instances:
 		mi.queue_free()
 	instances.clear()
-	shadow_instances.clear()
 	if OS.has_environment("RS_TILE_QUADS"): # A/B ohne Umbau
 		tile_quads = maxi(8, int(OS.get_environment("RS_TILE_QUADS")))
 	tiles_per_side = ceili(float(grid - 1) / tile_quads)
@@ -78,15 +69,6 @@ func build(world: float, grid_points: int, mat: Material, aabb_y_lo: float, aabb
 			add_child(mi)
 			instances.append(mi)
 			_rebuild(tz * tiles_per_side + tx)
-			if shadow_stride > 1:
-				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-				var sh := MeshInstance3D.new()
-				sh.name = "TileShadow_%d_%d" % [tx, tz]
-				sh.material_override = material
-				sh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
-				sh.mesh = _grid_mesh(tz * tiles_per_side + tx, 1, shadow_stride)
-				add_child(sh)
-				shadow_instances.append(sh)
 
 ## Zahl der Kacheln.
 func tile_count() -> int:
@@ -127,17 +109,15 @@ func tile_aabb(tile: int) -> AABB:
 		Vector3(r.size.x * step, y_hi - y_lo, r.size.y * step))
 
 func _rebuild(tile: int) -> void:
-	instances[tile].mesh = _grid_mesh(tile, tile_density[tile], 1)
+	instances[tile].mesh = _grid_mesh(tile, tile_density[tile])
 
-## Gitter-Mesh einer Kachel: `d` Vertices je Gitterabstand, oder nur jeder
-## `stride`-te Gitterpunkt (Schattenwerfer; der Kachelrand bleibt dabei auf
-## dem letzten Punkt, damit die gröberen Kacheln dicht aneinander liegen).
-func _grid_mesh(tile: int, d: int, stride: int) -> ArrayMesh:
+## Gitter-Mesh einer Kachel mit `d` Vertices je Gitterabstand.
+func _grid_mesh(tile: int, d: int) -> ArrayMesh:
 	var r := tile_range(tile)
 	var cell := world_size / float(grid - 1)
 	var half := world_size * 0.5
-	var xs := _axis(r.position.x, r.size.x, d, stride)
-	var zs := _axis(r.position.y, r.size.y, d, stride)
+	var xs := _axis(r.position.x, r.size.x, d)
+	var zs := _axis(r.position.y, r.size.y, d)
 	var w := xs.size() - 1
 	var h := zs.size() - 1
 	var verts := PackedVector3Array()
@@ -154,7 +134,7 @@ func _grid_mesh(tile: int, d: int, stride: int) -> ArrayMesh:
 	# jeder Zeile von +x nach −x (PlaneMesh legt seine Punkte gespiegelt an).
 	# Die Reihenfolge kostet messbar: in der Gegenrichtung lag dieselbe Kachel
 	# in `diorama` bei 3456×2104 um 0,9 ms über dem PlaneMesh, so herum gleich
-	# (docs/perf-measurements.md § M).
+	# (docs/perf-measurements.md § V).
 	k = 0
 	for j in range(h, 0, -1):
 		var prevrow := (j - 1) * (w + 1)
@@ -185,15 +165,9 @@ func _grid_mesh(tile: int, d: int, stride: int) -> ArrayMesh:
 ## Gitterkoordinaten (in Render-Gitter-Abständen, auch gebrochen) entlang
 ## einer Kachelachse ab `start` über `quads` Abstände. Der letzte Punkt ist
 ## immer genau `start + quads`: Nachbarn teilen ihn exakt.
-static func _axis(start: int, quads: int, d: int, stride: int) -> PackedFloat32Array:
+static func _axis(start: int, quads: int, d: int) -> PackedFloat32Array:
 	var out := PackedFloat32Array()
-	if stride > 1:
-		var q := 0
-		while q < quads:
-			out.append(start + q)
-			q += stride
-	else:
-		for q in quads * d:
-			out.append(start + float(q) / d)
+	for q in quads * d:
+		out.append(start + float(q) / d)
 	out.append(start + quads)
 	return out

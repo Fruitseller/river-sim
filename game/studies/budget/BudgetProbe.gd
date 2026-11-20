@@ -2,11 +2,21 @@ extends "res://scripts/Main.gd"
 ## Messbühne für #235 (Bildzeit-Budget): Wohin geht die Bildzeit?
 ## Schaltet im SELBEN Prozess blockweise zwischen Zuständen um (Reihenfolge je
 ## Runde gedreht, Runde 0 wärmt nur) und misst je Bild den Abstand der
-## gezeichneten Bilder und die GPU-Zeit des Viewports. Kein Produktionsweg.
+## gezeichneten Bilder (Vsync und Bildraten-Deckel aus). Kein Produktionsweg.
+## Messreihe und Aufruf: docs/perf-measurements.md § V. GPU-Zeitstempel je
+## Pass gibt es unter Metal nicht (viewport_get_measured_render_time_gpu
+## liefert 0), deshalb Zerlegung durch Abschalten.
 ##
-##   RS_PROBE_STATES  Komma-Liste der Zustände (Standard "base,noshadow")
+##   RS_PROBE_STATES  Komma-Liste der Zustände (Standard "base,noshadow").
+##                    Ein Zustand ist eine Folge von Schaltern, z. B.
+##                    "native-noshadow": noshadow, noterrain, noclouds,
+##                    noocean, noriver, nodetail, nomaterial, nocanopy,
+##                    nomsaa, nossao, nofog, native (Skalierung 1),
+##                    scale50/scale67 (bilinear), mfxs67/mfxt67/fsr167/fsr267
+##                    (Verfahren + Prozent), grid360 (halbes PlaneMesh, nur
+##                    alter Stand), tilesNN (Kacheln im alten Stand), am,
+##                    rev…, …tight (Diagnose der Dreiecks-Reihenfolge).
 ##   RS_PROBE_ROUNDS  gezählte Runden (Standard 6)
-##   RS_PROBE_TS=1    einmalig die GPU-Zeitmarken der Renderpässe drucken
 const BLOCK_FRAMES := 120
 const SKIP_FRAMES := 20
 
@@ -14,7 +24,7 @@ var probe_states: PackedStringArray
 var probe_rounds := 6
 var probe_frame := -1
 var probe_last := 0
-var probe_data := {} # "runde:zustand" -> {"dt": [], "gpu": []}
+var probe_data := {} # "runde:zustand" -> Bildabstände (ms)
 var probe_sun: DirectionalLight3D
 var probe_mesh_full: Mesh
 var probe_mesh_half: Mesh
@@ -49,7 +59,6 @@ func _ready() -> void:
 	var vp := get_viewport()
 	probe_defaults = {"mode": vp.scaling_3d_mode, "scale": vp.scaling_3d_scale, "msaa": vp.msaa_3d}
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
-	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 	RenderingServer.frame_post_draw.connect(_probe_drawn)
 	print("PROBE ", JSON.stringify({"viewport": str(get_viewport().size),
 		"quality": render_quality, "terrain_grid": terrain_grid, "states": probe_states,
@@ -100,8 +109,8 @@ func _probe_set(state: String) -> void:
 	# (NN Gitterabstände je Kachel), "am" = PlaneMesh als ArrayMesh.
 	if probe_mesh_full != null:
 		var tq := state.find("tiles")
-		# Schlüssel: Kachelgröße, mit "sh2" gröbere Schattenwerfer (+10000).
-		var key := state.substr(tq + 5, 3).to_int() + (10000 if state.contains("sh2") else 0)
+		# Schlüssel: Kachelgröße.
+		var key := state.substr(tq + 5, 3).to_int()
 		for k in probe_tiles:
 			probe_tiles[k].visible = tq >= 0 and k == key
 		if tq >= 0:
@@ -110,7 +119,7 @@ func _probe_set(state: String) -> void:
 				var tt: Node3D = load("res://scripts/TerrainTiles.gd").new()
 				tt.tile_quads = q
 				add_child(tt)
-				tt.build(world_size, terrain_grid, terrain_mat, -3.5, hscale + 3.5, 2 if key >= 10000 else 1)
+				tt.build(world_size, terrain_grid, terrain_mat, -3.5, hscale + 3.5)
 				probe_tiles[key] = tt
 			var q2 := key
 			probe_tiles[q2].visible = true
@@ -199,31 +208,13 @@ func _probe_drawn() -> void:
 	elif in_block >= SKIP_FRAMES and round_index > 0:
 		var key := "%d:%s" % [round_index, state]
 		if not probe_data.has(key):
-			probe_data[key] = {"dt": [], "gpu": []}
-		probe_data[key]["dt"].append((now - probe_last) / 1000.0)
-		probe_data[key]["gpu"].append(RenderingServer.viewport_get_measured_render_time_gpu(
-			get_viewport().get_viewport_rid()))
-	if OS.has_environment("RS_PROBE_TS") and in_block == BLOCK_FRAMES - 1 and round_index == 1:
-		_probe_timestamps(state)
+			probe_data[key] = []
+		probe_data[key].append((now - probe_last) / 1000.0)
 	probe_last = now
 	if round_index > probe_rounds:
 		RenderingServer.frame_post_draw.disconnect(_probe_drawn)
 		_probe_report()
 		get_tree().quit()
-
-func _probe_timestamps(state: String) -> void:
-	var rd := RenderingServer.get_rendering_device()
-	if rd == null:
-		return
-	var count := rd.get_captured_timestamps_count()
-	var rows := []
-	var prev := 0
-	for i in count:
-		var t := rd.get_captured_timestamp_gpu_time(i)
-		if i > 0:
-			rows.append("%s=%.3f" % [rd.get_captured_timestamp_name(i - 1), (t - prev) / 1000000.0])
-		prev = t
-	print("PROBE_TS ", state, " n=", count, " ", " ".join(rows))
 
 @warning_ignore("integer_division")
 static func _med(values: Array) -> float:
@@ -240,14 +231,12 @@ func _probe_report() -> void:
 	var out := {}
 	for state in probe_states:
 		var dt_meds := []
-		var gpu_meds := []
 		var dt_p95s := []
 		for r in range(1, probe_rounds + 1):
-			var d: Dictionary = probe_data.get("%d:%s" % [r, state], {"dt": [], "gpu": []})
-			dt_meds.append(_med(d["dt"]))
-			dt_p95s.append(_p95(d["dt"]))
-			gpu_meds.append(_med(d["gpu"]))
+			var d: Array = probe_data.get("%d:%s" % [r, state], [])
+			dt_meds.append(_med(d))
+			dt_p95s.append(_p95(d))
 		out[state] = {"frame_ms": snappedf(_med(dt_meds), 0.01), "frame_p95_ms": snappedf(_med(dt_p95s), 0.01),
-			"gpu_ms": snappedf(_med(gpu_meds), 0.01), "gpu_rounds": gpu_meds}
+			"rounds_ms": dt_meds}
 	print("PROBE_RESULT ", JSON.stringify({"viewport": str(get_viewport().size), "rounds": probe_rounds,
 		"states": out}))
