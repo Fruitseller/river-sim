@@ -205,12 +205,20 @@ enum CorridorProfile {
             s.heights[k] = lowTop
             s.depths[k] = water(s.offsets[k]) - lowTop
         }
+        // Jenseits der Uferlinien ist trocken: die Wasser-Ebene läuft quer
+        // weiter, aber ein Fuß auf tieferer Aue liegt nicht unter Wasser
+        // (Review Neon Nr. 6). Tiefe dort ≤ 0.
+        for k in 0..<columns where k < shoreColumn || k > columns - 1 - shoreColumn {
+            s.depths[k] = min(s.depths[k], 0)
+        }
         // Monotone Lage erzwingen (bei winziger Breite fallen Spalten zusammen).
         for k in 1..<columns { s.offsets[k] = max(s.offsets[k], s.offsets[k - 1]) }
-        // Deckel: höchste Geländehöhe und höchste Korridor-Höhe im Querschnitt.
+        // Deckel: höchste Geländehöhe und höchste Korridor-Höhe im Querschnitt,
+        // auch zwischen den Spalten (die Ufersuche lässt bis 2,5 Zellen Abstand).
         var lid = max(waterLeft, waterRight)
         for k in 0..<columns {
             lid = max(lid, s.heights[k], surface(s.offsets[k]))
+            if k > 0 { lid = max(lid, surface(0.5 * (s.offsets[k - 1] + s.offsets[k]))) }
         }
         s.lid = lid + lidClearance
         return s
@@ -231,7 +239,19 @@ struct CorridorBandBuilder {
     }
     var samples: [Sample] = []
 
+    /// Jeder wievielte Stützpunkt einen Querschnitt bekommt: die Band-
+    /// Stützpunkte liegen ~0,5 Zellen auseinander, das Profil braucht nur
+    /// ~1 Zelle. Halbiert Mesh und Upload (gemessen bis 29 ms je Band-Bau im
+    /// Hauptthread bei jedem Stützpunkt).
+    static let sampleStride = 2
+
     func emit(into mesh: inout RiverCorridorMesh, cellSize cs: Double, worldHalf half: Double) {
+        let all = samples
+        guard all.count >= 2 else { return }
+        var samples: [Sample] = []
+        samples.reserveCapacity(all.count / Self.sampleStride + 2)
+        for a in stride(from: 0, to: all.count, by: Self.sampleStride) { samples.append(all[a]) }
+        if (all.count - 1) % Self.sampleStride != 0 { samples.append(all[all.count - 1]) }
         let m = samples.count
         guard m >= 2 else { return }
         let k = CorridorProfile.columns
@@ -248,7 +268,9 @@ struct CorridorBandBuilder {
         for a in 0..<m {
             let s = samples[a]
             let a0 = max(0, a - 1), a1 = min(m - 1, a + 1)
-            let edge = max(abs(s.section.offsets[0]), abs(s.section.offsets[k - 1]), 1e-6)
+            // Querlage je Seite auf ±1 am eigenen Fuß (Review Neon Nr. 8):
+            // der Shader blendet an beiden Kanten ins Gelände.
+            let edgeL = max(abs(s.section.offsets[0]), 1e-6), edgeR = max(abs(s.section.offsets[k - 1]), 1e-6)
             for c in 0..<k {
                 let c0 = max(0, c - 1), c1 = min(k - 1, c + 1)
                 let across = pos[a * k + c1] - pos[a * k + c0]
@@ -265,7 +287,8 @@ struct CorridorBandBuilder {
                 mesh.normals.append(SIMD3(Float(nrm.x), Float(nrm.y), Float(nrm.z)))
                 mesh.colors.append(SIMD4(Float(s.tx * 0.5 + 0.5), Float(s.tz * 0.5 + 0.5),
                                          Float(clamp01(s.rank)), Float(clamp01(s.alpha))))
-                mesh.uvs.append(SIMD2(Float(max(-1, min(1, s.section.offsets[c] / edge))), Float(s.arc)))
+                let off = s.section.offsets[c]
+                mesh.uvs.append(SIMD2(Float(max(-1, min(1, off / (off < 0 ? edgeL : edgeR)))), Float(s.arc)))
                 mesh.uv2s.append(SIMD2(Float(max(-1, min(1, s.bend))), Float(s.section.bar[c])))
                 mesh.custom.append(SIMD4(Float(s.section.depths[c]), Float(s.section.lid),
                                          Float(s.section.offsets[c] * cs),

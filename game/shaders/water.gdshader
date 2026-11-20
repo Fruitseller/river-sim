@@ -240,7 +240,7 @@ void vertex() {
 	// dieselbe Formel und Breite wie der Korridor darunter.
 	float running_v = (1.0 - step(0.25, UV2.x)) * step(0.05, length(v_dir));
 	float half_band = 0.5 * max(CUSTOM0.w, 0.0);
-	float f = corridor_widen(p, max(CUSTOM1.z, 1e-4), COLOR.a * running_v,
+	float f = corridor_widen(p, max(CUSTOM1.z, 1e-4), COLOR.a * running_v * CUSTOM1.x,
 		INV_VIEW_MATRIX[3].xyz, PROJECTION_MATRIX);
 	if (f > 1.001) {
 		vec2 dir = normalize(v_dir);
@@ -251,6 +251,7 @@ void vertex() {
 	}
 	VERTEX = p;
 	v_world = p;
+	POSITION = corridor_clip(p, v_profile.y, INV_VIEW_MATRIX[3].xyz, VIEW_MATRIX, PROJECTION_MATRIX);
 }
 
 void fragment() {
@@ -302,7 +303,7 @@ void fragment() {
 	// Mit Korridor reicht das Wasser bis fast an die Bandkante; die Uferlinie
 	// zeichnet dann die Böschung darunter, die es verdeckt (Deckel-Tiefe).
 	float corridor = clamp(v_profile.x, 0.0, 1.0);
-	wet = mix(wet, smoothstep(0.0, 0.08, across_band), corridor);
+	wet = mix(wet, smoothstep(0.0, 0.08, across), corridor);
 	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea) * (1.0 - corridor);
 	float profile = calib_window(line, 1.0, across); // 0 Wasserlinie … 1 Mitte
 
@@ -357,8 +358,11 @@ void fragment() {
 	float w0 = 1.0 - abs(2.0 * ph0 - 1.0);
 	vec2 q0 = vec2(UV.y * water_ribbon_ripple_stretch - local_speed * ph0 * 5.0, UV.x * band_width);
 	vec2 q1 = vec2(UV.y * water_ribbon_ripple_stretch - local_speed * ph1 * 5.0 + 3.7, UV.x * band_width + 1.3);
-	vec2 g_flow = ribbon_ripple_grad(q0, footprint) * w0 + ribbon_ripple_grad(q1, footprint) * (1.0 - w0);
-	vec2 gq = mix(ribbon_ripple_grad(q, footprint), g_flow, running) * mix(1.0, 0.4, still) * mix(0.6, 1.0, depth)
+	// Nur eine der beiden Formen rechnen (Stillwasser kennt keine Strömung).
+	vec2 g_flow = running > 0.5
+		? ribbon_ripple_grad(q0, footprint) * w0 + ribbon_ripple_grad(q1, footprint) * (1.0 - w0)
+		: ribbon_ripple_grad(q, footprint);
+	vec2 gq = g_flow * mix(1.0, 0.4, still) * mix(0.6, 1.0, depth)
 		* (1.0 + 1.5 * max(riffle, steep));
 	vec2 grad = d1 * gq.x * water_ribbon_ripple_stretch + d2 * gq.y;
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
@@ -433,7 +437,6 @@ void fragment() {
 	ALPHA = ribbon_fade_alpha(sea_alpha * max(wet * body, bank * water_ribbon_bank_opacity)
 		* (1.0 - lake * (1.0 - delta)));
 	vec3 cam_w = CAMERA_POSITION_WORLD;
-	DEPTH = corridor_depth(v_world, v_profile.y, cam_w, VIEW_MATRIX, PROJECTION_MATRIX);
 	LIGHT_VERTEX = (VIEW_MATRIX * vec4(corridor_lid_point(v_world, v_profile.y, cam_w), 1.0)).xyz;
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt
 	// Stillwasser) — numerisch zufällig gleich waterOpacityShallow,

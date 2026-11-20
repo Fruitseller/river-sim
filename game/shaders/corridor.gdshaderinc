@@ -78,6 +78,7 @@ void vertex() {
 	VERTEX = p;
 	v_world = p;
 	v_lid = lid;
+	POSITION = corridor_clip(p, lid, cam, VIEW_MATRIX, PROJECTION_MATRIX);
 	v_depth = CUSTOM0.x;
 	v_alpha = COLOR.a;
 	v_bend = UV2.x;
@@ -155,9 +156,13 @@ void fragment() {
 	if (share < 1.0) {
 		alpha = 1.0 - pow(1.0 - clamp(alpha, 0.0, FADE_CAP), max(share, 0.0));
 	}
+	// Unsichtbares schreibt keine Tiefe: sonst schnitte der einblendende
+	// Stand (Blende 0) das ausblendende Wasser ab (Review Neon Nr. 4).
+	if (alpha < 0.01) {
+		discard;
+	}
 	ALPHA = alpha;
 
 	vec3 cam = CAMERA_POSITION_WORLD;
-	DEPTH = corridor_depth(v_world, v_lid, cam, VIEW_MATRIX, PROJECTION_MATRIX);
 	LIGHT_VERTEX = (VIEW_MATRIX * vec4(corridor_lid_point(v_world, v_lid, cam), 1.0)).xyz;
 }
