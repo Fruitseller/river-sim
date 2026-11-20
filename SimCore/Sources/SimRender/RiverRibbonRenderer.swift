@@ -48,13 +48,24 @@ public struct RibbonMesh: Equatable {
     /// unterscheidet damit die Abkürzung über die Bank (zurück zum SELBEN
     /// Band) vom Abzweig (`WaterRender.departureMaxCells`).
     public var bandOwner: [Int32]
+    /// Korridor je Vertex der Wasserfläche (Look E, #239, `CUSTOM1` in
+    /// `water.gdshader`): x = Korridor-Anteil 0 … 1 (1 = Ufer und Bett liegen
+    /// als Geometrie darunter, das Band zeichnet nur noch die Oberfläche),
+    /// y = Deckel-Höhe (Welt-Y, s. `RiverCorridor`), z = Halbbreite des
+    /// Wassers (Welt), w = Thalweg-Tiefe (Welt-Y).
+    public var profile: [SIMD4<Float>]
+    /// Ufer und Bett unter den Fluss-Bändern (Look E, #239).
+    public var corridor: RiverCorridorMesh
 
     public init(vertices: [SIMD3<Float>] = [], colors: [SIMD4<Float>] = [],
                 uvs: [SIMD2<Float>] = [], uv2s: [SIMD2<Float>] = [],
                 flows: [SIMD4<Float>] = [],
                 indices: [Int32] = [], stripStarts: [Int32] = [],
                 bandChannelFlags: [Bool] = [], bandCoverage: [Double] = [],
-                bandOwner: [Int32] = []) {
+                bandOwner: [Int32] = [], profile: [SIMD4<Float>] = [],
+                corridor: RiverCorridorMesh = RiverCorridorMesh()) {
+        self.profile = profile
+        self.corridor = corridor
         self.vertices = vertices
         self.colors = colors
         self.uvs = uvs
@@ -304,6 +315,8 @@ public final class RiverRibbonRenderer {
         mesh.uvs.removeAll(keepingCapacity: true)
         mesh.uv2s.removeAll(keepingCapacity: true)
         mesh.flows.removeAll(keepingCapacity: true)
+        mesh.profile.removeAll(keepingCapacity: true)
+        mesh.corridor.removeAll()
         mesh.indices.removeAll(keepingCapacity: true)
         mesh.stripStarts.removeAll(keepingCapacity: true)
         let n = terrain.cfg.n
@@ -943,6 +956,28 @@ public final class RiverRibbonRenderer {
         return boxMean(eroded, radius: radius)
     }
 
+    /// Korridor-Anteil je Stützpunkt: 0 über Wasser, an Land über
+    /// `corridorRampSamples` Stützpunkte Abstand zum nächsten Wasser-
+    /// Stützpunkt weich auf 1. Ein Minimum-Filter (`erodeAndSmooth`) löschte
+    /// kurze Bänder an Seen ganz (Render-Testwelt: 48 von 672 Vertices).
+    static let corridorRampSamples = 4
+    static func corridorPresence(_ onLand: [Bool], on: Bool) -> [Double] {
+        let m = onLand.count
+        guard on else { return [Double](repeating: 0, count: m) }
+        var dist = [Int](repeating: Int.max / 2, count: m)
+        var last = Int.min / 2
+        for a in 0..<m {
+            if !onLand[a] { last = a }
+            dist[a] = a - last
+        }
+        last = Int.max / 2
+        for a in stride(from: m - 1, through: 0, by: -1) {
+            if !onLand[a] { last = a }
+            dist[a] = min(dist[a], last - a)
+        }
+        return dist.map { smoothstep(0, Double(corridorRampSamples), Double($0)) }
+    }
+
     private static func boxMean(_ values: [Double], radius: Int) -> [Double] {
         let cnt = values.count
         var prefix = [Double](repeating: 0, count: cnt + 1)
@@ -1239,6 +1274,13 @@ public final class RiverRibbonRenderer {
             height: { bilinearGrid(h, $0, $1, n: n) })
         let base = mesh.vertices.count
         mesh.stripStarts.append(Int32(base))
+        // Korridor (Look E, #239): nur fließende Fluss-Bänder auf Land. Über
+        // Wasser (See, Meer, Mündungs-Kette) liegt das Band flach auf dem
+        // Spiegel; dorthin läuft der Korridor über wenige Stützpunkte aus.
+        let corridorOn = kind == WaterRender.ribbonKindRiver && !still
+        let presence = RiverRibbonRenderer.corridorPresence(samples.map { $0.surface == nil }, on: corridorOn)
+        let bank = BankSurface(h: h, n: n, renderGrid: renderGrid, hscale: hscale)
+        var corridor = CorridorBandBuilder()
         // Vorgänger-Stützpunkt für den Deckungs-Stempel: gestempelt wird das
         // SEGMENT, nicht der Punkt (s. `stampCoverage`), und dafür braucht es
         // die bereits GEDECKELTE Halbbreite der vorigen Runde.
@@ -1396,6 +1438,26 @@ public final class RiverRibbonRenderer {
                 }
             }
             let yLeft = Float(yLeftD), yRight = Float(yRightD)
+            if corridorOn {
+                let pres = presence[a]
+                let sx = s.x, sz = s.z, ptx = tx, ptz = tz
+                let section = CorridorProfile.section(
+                    halfWidthCells: hwCells,
+                    visible: WaterRender.ribbonVisibleWidth(s.alpha * pres),
+                    waterLeft: yLeftD, waterRight: yRightD, bend: s.bend,
+                    riffle: Double(flows[a].x), cellSize: cs,
+                    surface: { c in bank.height(sx - ptz * c, sz + ptx * c) })
+                corridor.samples.append(.init(x: s.x, z: s.z, tx: tx, tz: tz, section: section,
+                                              alpha: s.alpha * pres, rank: s.rank,
+                                              bend: s.bend, arc: arc[a]))
+                let p = SIMD4(Float(pres), Float(section.lid),
+                              Float(section.waterHalfWidthCells * cs),
+                              Float(section.depths[CorridorProfile.columns / 2]))
+                mesh.profile.append(p); mesh.profile.append(p)
+            } else {
+                let p = SIMD4<Float>(0, max(yLeft, yRight), Float(hwCells * cs), 0)
+                mesh.profile.append(p); mesh.profile.append(p)
+            }
             // Deckung dieses Bandstücks ins gemeinsame Feld: dieselbe Fläche,
             // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem
             // Alpha, mit dem sie wirklich malt. `WaterFieldRenderer` deckelt
@@ -1439,6 +1501,9 @@ public final class RiverRibbonRenderer {
                 mesh.indices.append(v); mesh.indices.append(v + 2); mesh.indices.append(v + 1)
                 mesh.indices.append(v + 1); mesh.indices.append(v + 2); mesh.indices.append(v + 3)
             }
+        }
+        if corridorOn {
+            corridor.emit(into: &mesh.corridor, cellSize: cs, worldHalf: half)
         }
     }
 

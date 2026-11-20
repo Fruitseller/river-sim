@@ -156,6 +156,15 @@ func _run() -> void:
 		push_error("FAIL: ribbon_flows trägt keine Lauf-Größen (Summe %s)" % flow_sum)
 		quit(1)
 		return
+	# Korridor (Look E, #239): `ribbon_profile` je Band-Vertex (CUSTOM1 in
+	# water.gdshader) und Ufer/Bett als eigenes Mesh (`corridor_*`,
+	# RiverCorridor.gd). Geometrie-Verträge prüft SimCoreTests/RiverCorridorTests;
+	# hier, dass das Marshalling vollständig und in sich stimmig ankommt.
+	var corridor_err := _check_corridor(frame, verts.size())
+	if corridor_err != "":
+		push_error("FAIL: " + corridor_err)
+		quit(1)
+		return
 	if idx.size() % 3 != 0:
 		push_error("FAIL: Index-Puffer ist kein Dreiecks-Vielfaches")
 		quit(1)
@@ -441,3 +450,39 @@ func _bilinear_height(h: PackedFloat32Array, n: int, world: float, x: float, z: 
 		+ h[k + 1] * fx * (1.0 - fz)
 		+ h[k + n] * (1.0 - fx) * fz
 		+ h[k + n + 1] * fx * fz)
+
+
+## Korridor-Puffer aus dem Frame (Look E, #239): leere Meldung = stimmig.
+func _check_corridor(frame: Dictionary, ribbon_verts: int) -> String:
+	for key in ["ribbon_profile", "corridor_verts", "corridor_normals", "corridor_colors",
+			"corridor_uvs", "corridor_uv2s", "corridor_custom", "corridor_indices"]:
+		if not frame.has(key):
+			return "Frame ohne " + key
+	var profile: PackedFloat32Array = frame["ribbon_profile"]
+	if profile.size() != 4 * ribbon_verts:
+		return "ribbon_profile hat %d Werte, erwartet 4 × %d" % [profile.size(), ribbon_verts]
+	var cv: PackedVector3Array = frame["corridor_verts"]
+	if cv.size() < 3:
+		return "kein Korridor-Mesh nach 4000 Jahren"
+	var sizes := [(frame["corridor_normals"] as PackedVector3Array).size(),
+		(frame["corridor_colors"] as PackedColorArray).size(),
+		(frame["corridor_uvs"] as PackedVector2Array).size(),
+		(frame["corridor_uv2s"] as PackedVector2Array).size(),
+		(frame["corridor_custom"] as PackedFloat32Array).size() / 4]
+	for size in sizes:
+		if size != cv.size():
+			return "Korridor-Puffer ungleich lang (%s gegen %d Vertices)" % [str(sizes), cv.size()]
+	var ci: PackedInt32Array = frame["corridor_indices"]
+	if ci.size() % 3 != 0:
+		return "Korridor-Indizes kein Dreiecks-Vielfaches"
+	for i in ci:
+		if i < 0 or i >= cv.size():
+			return "Korridor-Index %d außerhalb" % i
+	var with_corridor := 0
+	for v in ribbon_verts:
+		if profile[4 * v] > 0.0:
+			with_corridor += 1
+	if with_corridor == 0:
+		return "kein Band-Vertex trägt einen Korridor"
+	print("corridor_verts=", cv.size(), " band_vertices_mit_korridor=", with_corridor)
+	return ""

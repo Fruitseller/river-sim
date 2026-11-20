@@ -9,6 +9,9 @@ const TerrainTiles = preload("res://scripts/TerrainTiles.gd")
 const RenderScale = preload("res://scripts/RenderScale.gd")
 const Atmosphere = preload("res://scripts/Atmosphere.gd")
 const TerrainAmplifier = preload("res://scripts/TerrainAmplifier.gd")
+# Ufer und Bett unter den Bändern (Look E, #239).
+const RiverCorridor = preload("res://scripts/RiverCorridor.gd")
+var corridor: RiverCorridor
 # Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
 # das volle Sim-Gitter (`terrain_grid_for`).
 const PERFORMANCE_TERRAIN_GRID := 256
@@ -934,6 +937,16 @@ func _setup_scene() -> void:
 			mat.set_shader_parameter("world_size", world_size)
 			mat.set_shader_parameter("grid_n", float(N))
 			mat.set_shader_parameter("sea_level", sea)
+			mat.set_shader_parameter("corridor_hscale", hscale)
+			mat.set_shader_parameter("corridor_sun_dir", Lighting.sun_direction())
+			mat.render_priority = 1 # nach Ufer und Bett (RiverCorridor)
+		corridor = RiverCorridor.new()
+		for mat in corridor.setup(self, hscale, world_size, N):
+			height_field.mirror_to(mat)
+			color_field.mirror_to(mat)
+			height_fade.bind(mat)
+			overlay_fade.bind(mat)
+			ribbon_fade.bind(mat)
 
 	# Wasser-Kalibrierung aus SimCore (Issue #91) auf alle Wasser-Materialien;
 	# das Band-Material fehlt im RS_WATER_STAMP-Modus.
@@ -947,6 +960,8 @@ func _setup_scene() -> void:
 	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, hscale, N)
 	add_child(cloud_bodies)
 	cloud_mats.assign(water_mats)
+	if corridor != null:
+		cloud_mats.append_array([corridor.mat, corridor.prev_mat])
 	cloud_mats.append_array(Lighting.cloud_body_materials(cloud_bodies))
 	Lighting.apply_clouds(cloud_mats, render_quality)
 	add_child(atmosphere.make_valley_fog(render_quality, world_size, hscale, N, sea * hscale))
@@ -1782,6 +1797,8 @@ func _process(delta: float) -> void:
 		river_prev_mat.set_shader_parameter("u_time", u_time)
 		# Ausgeblendet: der vorige Stand kostet keine Vertex-Arbeit mehr.
 		river_prev_mi.visible = ribbon_fade.mix < 1.0
+		corridor.advance(u_time, ribbon_fade.mix, float(get_viewport().size.y),
+			[river_mat, river_prev_mat])
 	for mat in Lighting.cloud_body_materials(cloud_bodies):
 		mat.set_shader_parameter("u_time", u_time)
 	if debug_dirty:
@@ -2326,9 +2343,13 @@ func _upload_ribbon_mesh(frame: Dictionary) -> void:
 		# CUSTOM0 = Lauf-Größen (Riffel, Weißwasser, Gefälle, Breite; Look-
 		# Iteration 14, RiverRibbonRenderer.flowAttributes).
 		arrays[Mesh.ARRAY_CUSTOM0] = frame["ribbon_flows"]
+		# CUSTOM1 = Korridor je Vertex (Look E, #239, RibbonMesh.profile).
+		arrays[Mesh.ARRAY_CUSTOM1] = frame["ribbon_profile"]
 		arrays[Mesh.ARRAY_INDEX] = frame["ribbon_indices"]
 		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {},
-			Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
+			(Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
+			| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT))
+	corridor.upload(frame, fade)
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 
