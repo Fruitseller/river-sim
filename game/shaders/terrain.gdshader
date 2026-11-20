@@ -1013,17 +1013,19 @@ void fragment() {
 		vec3 soil_color = vec3(0.25, 0.20, 0.14)
 		                * mix(0.82, 1.12, top_large)
 		                * mix(0.93, 1.07, top_grain * material_fade);
-		// Talboden hell und saftig, Hänge im Ton von #168.
-		vec3 lush_color = vec3(0.21, 0.35, 0.085)
+		// Talboden hell und saftig, Hänge im Ton von #168. Look-Iteration 10:
+		// alle Grüntöne mit weniger Blau und Rot (satter), weil sie unter der
+		// warmen, tiefen Sonne sonst gelboliv lasen.
+		vec3 lush_color = vec3(0.17, 0.35, 0.06)
 		                * mix(0.85, 1.10, top_large)
 		                * mix(0.92, 1.08, top_grain * material_fade);
-		vec3 vegetation_color = vec3(0.10, 0.24, 0.075)
+		vec3 vegetation_color = vec3(0.08, 0.23, 0.06)
 		                      * mix(0.76, 1.15, top_large)
 		                      * mix(0.90, 1.08, top_grain * material_fade);
 		vegetation_color = mix(vegetation_color, lush_color * 0.85, valley * 0.6);
 		// Grund: weder bewachsen noch Fels, Schutt, Eis oder Rohboden. Unterhalb
 		// der Vegetationsgrenze Trockenrasen, darüber steiniger Grund.
-		vec3 dry_grass = vec3(0.20, 0.23, 0.11)
+		vec3 dry_grass = vec3(0.17, 0.23, 0.08)
 		               * mix(0.82, 1.12, top_large)
 		               * mix(0.92, 1.08, top_grain * material_fade);
 		vec3 stony = vec3(0.17, 0.167, 0.16)
@@ -1107,7 +1109,7 @@ void fragment() {
 		// sie sind; die Schwellen stehen in SimCore.CanopyRender.
 		float meadow_w = calib_window(canopy_meadow_lo, canopy_meadow_hi, vegetation)
 		               * canopy_meadow_share * soil_w;
-		vec3 meadow_color = vec3(0.17, 0.25, 0.09)
+		vec3 meadow_color = vec3(0.13, 0.26, 0.06)
 		                  * mix(0.82, 1.12, top_large)
 		                  * mix(0.92, 1.08, top_grain * material_fade);
 		meadow_color = mix(meadow_color, lush_color, valley);

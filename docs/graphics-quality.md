@@ -51,7 +51,7 @@ keinen Hebel mehr, ein gesetztes `RS_STUDY_LEVERS` bricht ab.
 | --- | --- | --- |
 | `geometry` | Render-Gitter in Sim-Auflösung (720 statt 384). Grobe Erosionsrinnen (dieselbe runevision-Funktion wie das feine Detail, Skala 0.022 UV ≈ 2,5 km Wellenlänge) und einseitig geschärfte Grate als **echte Verschiebung**. Einmal je Terrain-Update in eine 1440²-Float-Textur gebacken; der Vertex-Shader liest die Höhe, der Fragment-Shader Steigung und Rinnen-Schattierung. **Seit #153 Produktion** (s. [Render-Verschiebung](#render-verschiebung-von-rinnen-und-graten-in-der-anwendung-153)); die Studie hat den Schalter nicht mehr. | `game/shaders/relief_bake.gdshader`, `game/shaders/terrain.gdshader` |
 | `canopy` | Weltmaßstab 1 Einheit ≈ 100 m. Wald als **Kronendach im Terrain-Shader**: ~20 m angehobenes Volumen (Waldkanten werfen Schatten), Voronoi-Kronen von ~11 m (Laubbaum als Kuppel, Nadelbaum als Kegel, Anteil nach Höhenband), dunkle Lücken, Selbstschatten zum Kronenrand. Lichtungen aus Rauschen, kein Wald in Wänden, auf Schnee oder an Wasser. Ersetzt die Instanzbäume. **Seit #152 Produktion** (s. [Kronendach](#kronendach-in-der-anwendung-152)); die Studie hat den Schalter nicht mehr. | `game/shaders/terrain.gdshader`, `SimRender.ForestCanopyMask` |
-| `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. **Seit #151 Produktion** (Sonnenhöhe dort 38°, s. [Licht und Atmosphäre](#licht-und-atmosphäre-in-der-anwendung-151)); die Studie hat den Schalter nicht mehr. | `game/scripts/Lighting.gd`, `game/shaders/clouds.gdshaderinc` |
+| `light` | Seitenlicht von links quer zur Studienkamera (Azimut −50°, Höhe 28°, warm), 8192er-Schattenatlas mit vier Kaskaden, AgX-Tonemapping, Luftperspektive (exponentieller Nebel mit Himmelsanteil), Talnebel über dem Meer, Wolkenschatten über Land, Bändern und Meer, ein Drittel neutral-warmes Umgebungslicht gegen blaue Schattenseiten. **Seit #151 Produktion** (Sonnenhöhe dort 38°, seit Look-Iteration 10 30°, s. [Licht und Atmosphäre](#licht-und-atmosphäre-in-der-anwendung-151)); die Studie hat den Schalter nicht mehr. | `game/scripts/Lighting.gd`, `game/shaders/clouds.gdshaderinc` |
 | `frame` | Ozean ohne Streifenmuster: Rausch-Wellen, die mit ihrer Pixelgröße ausblenden, statt drei Sinuswellen. Farbe aus der echten Wassertiefe über dem Sim-Schelf (türkis → tiefblau), gebrochener Brandungssaum. **Seit #155 Produktion** (s. u.), kein Studien-Schalter mehr. | `shaders/ocean.gdshader` |
 
 Außerdem ist der Kalkstein der ersten Runde dunkler und strukturierter: er lag
@@ -544,6 +544,15 @@ beiden Seiten (0.70 und −2.44) und Gegenlicht (2.27).
 - **38°, gewählt**: Das Gegenlicht bleibt lesbar (Flanken dunkel, aber nicht
   schwarz, Grate mit Lichtkante), im Seitenlicht werfen die Grate noch lange
   Schatten.
+
+Nachtrag Look-Hill-Climber, Iteration 10 (November 2026): Die Höhe steht
+jetzt auf **30°**, wärmer (`SUN_COLOR` 1,0/0,85/0,66) und kräftiger
+(Energie 2,4). Die lange Schattenwirkung modelliert das Relief auch in der
+Totalen, wie es die Referenz `docs/references/zielbild/d-insel-diorama-schoen.jpg`
+zeigt. Die Gegenlicht-Schwäche der 28° fängt ein kühleres Himmelslicht ab
+(Himmelsanteil 0,80), dazu mehr AgX-Kontrast (1,45) und Sättigung (1,15).
+Bewertet mit dem blinden Paarvergleich (`docs/look-hillclimb.md`); Werte und
+Begründung stehen in `game/scripts/Lighting.gd`.
 
 Belegt für alle Matrixwelten aus denselben vier Richtungen, je vorher und
 nachher (Kamera `detail` je Seed, Jahr 0, 20.000 und 100.000). Das Relief
