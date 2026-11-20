@@ -186,42 +186,10 @@ public enum MaterialRender {
     public static let ridgeRockGain = 0.6
     public static let gullyScreeShare = 0.7
 
-    /// Klüftung: Grundabstand des Musters quer zur Fallrichtung in
-    /// Welteinheiten (0,30 ≈ 30 m; die Runsen liegen bei etwa dem Doppelten),
-    /// Streckung entlang der Fallrichtung (Runsen 1,5-mal so lang wie breit) und
-    /// wie stark das Muster höchstens abdunkelt (0 … 1). Ab etwa einem
-    /// Kluftabstand je Pixel blendet es in seinen Mittelwert.
-    ///
-    /// Review zu PR #177: die erste Fassung (zwei gerade Kluftscharen im
-    /// Abstand 0,45, Tiefe 0,45, in der Waagerechten) stand auf maximierten
-    /// Screenshots als gleichmäßiges Rautennetz über allen Wänden, das sich
-    /// wie ein Drahtgitter las. Jetzt Runsen und gestückelte Fugen aus
-    /// Rauschen, in Fallrichtung gestreckt, in Breite und Stärke moduliert;
-    /// die höhere Tiefe gleicht aus, dass das Muster im Mittel schwächer ist.
-    public static let jointSpacing = 0.30
-    public static let jointStretch = 1.5
-    public static let jointDepth = 0.55
-
-    /// Die zweite Runsen-Oktave und die feinen Facetten kreuzen die erste
-    /// Richtung um rund 37°. Kosinus/Sinus einer orthogonalen Drehung;
-    /// gemeinsam mit der kurzen Streckung brechen sie lange Vorhanglinien.
-    /// Diagnose und A/B: docs/zielbild-measurements.md, Abschnitt Felswände.
-    public static let jointTurnCos = 0.8
-    public static let jointTurnSin = 0.6
-
-    /// Tiefe der Runsen als FORM (Befund #174 „Fels glatt"), in
-    /// Kluftabständen: der Shader kippt die Normale entlang der analytischen
-    /// Ableitung des Runsen-Rauschens, dazu feine Grate dazwischen. Bis dahin
-    /// waren die Runsen nur Ton; ohne eigenes Licht und Schatten lasen sich
-    /// die Wände als glatter Putz. Wie das Muster blendet die Form mit der
-    /// Pixelgröße aus.
-    public static let jointRelief = 0.35
-
-    /// Kopplung der Klüftung an die Form (Relief-Bake #153, −1 Rinne … +1
-    /// Rippe): Breite und Stärke × (1 − `jointGullyGain` × Rinne/Rippe). In
-    /// voll ausgeprägten Rinnen also 1,6-fach, auf Rippen 0,4-fach; der Fels
-    /// zerfällt dort, wo das Wasser ihn ausräumt.
-    public static let jointGullyGain = 0.6
+    /// Klüftung und Haldenkörnung (bis #237 `joint*`, `screeGrain`): Fels und
+    /// Schutt kommen seit #237 aus gescannten CC0-Materialien
+    /// (game/shaders/scan_material.gdshaderinc); deren Maßstäbe sind
+    /// Geschmackswerte neben dem Shader-Code, keine Kalibrierung mehr.
 
     /// Relief der Felswände (Befund #174 „Fels zu hell und glatt"): auf Fels
     /// verstärkt der Shader die feinen Erosionsrinnen (runevision-Detail,
@@ -230,8 +198,6 @@ public enum MaterialRender {
     /// Wände lasen sich als glatt verputzte Fläche ohne Runsen und Schatten.
     public static let rockReliefGain = 2.5
 
-    /// Körnung der Halden: Blockgröße in Welteinheiten (0,05 ≈ 5 m).
-    public static let screeGrain = 0.05
 
     /// Gletscherspalten: Abstand quer zur Fließrichtung (0,12 ≈ 12 m) und die
     /// Weltsteigung, ab der sie aufreißen, und ab der sie voll stehen
