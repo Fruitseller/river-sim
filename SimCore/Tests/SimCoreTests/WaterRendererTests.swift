@@ -66,18 +66,28 @@ final class WaterRendererTests: XCTestCase {
         let rightZ = (Double(right.z) + half) / cellSize
         let centerHeight = bilinear(terrain.h, centerX, centerZ, n: terrain.cfg.n) * 24
         let crossTolerance = Double(width) * 0.5 * WaterRender.ribbonMaxCrossSlope
-        let expectedLeft =
-          min(
-            max(
-              bilinear(terrain.h, leftX, leftZ, n: terrain.cfg.n) * 24,
-              centerHeight - crossTolerance),
-            centerHeight + crossTolerance) + 0.35
-        let expectedRight =
-          min(
-            max(
-              bilinear(terrain.h, rightX, rightZ, n: terrain.cfg.n) * 24,
-              centerHeight - crossTolerance),
-            centerHeight + crossTolerance) + 0.35
+        // Land-Kante (Look-Iteration 13, Issue #233): nie über der
+        // Wand-Grenze (Zentrum + Querneigung + `lift`) und nie zugleich über
+        // dem eigenen Gelände + `ribbonWaterlineLift` UND dem Wasserspiegel
+        // der Mitte (Zentrum + `lift`). Senken darf sie sich, heben nicht.
+        // Ob die Wasserlinie dazwischen schwebt, misst `RibbonFloatTests`.
+        func landEdgeExcess(_ x: Double, _ z: Double, _ y: Double) -> Double {
+          let ground = bilinear(terrain.h, x, z, n: terrain.cfg.n) * 24
+          // Über seichtem See hebt das Band nur anteilig zum Spiegel (wie der
+          // Terrain-Shader, `geometryLift*`): höchstens bis Spiegel + Hauch.
+          let ci = min(max(Int(centerX.rounded()), 0), terrain.cfg.n - 1)
+          let cj = min(max(Int(centerZ.rounded()), 0), terrain.cfg.n - 1)
+          let lake = terrain.waterLevel[cj * terrain.cfg.n + ci] * 24 + WaterRender.ribbonLakeSurfaceLift
+          let wall = y - max(centerHeight + crossTolerance + 0.35, lake)
+          // Look-Iteration 14: die Gerade zwischen den Wasserlinien hebt sich
+          // um bis zu `ribbonCenterRaiseMax`, wenn Gelände in der Bandmitte
+          // sonst durchs Wasser stäche.
+          let float = y - max(ground + WaterRender.ribbonWaterlineLift + WaterRender.ribbonCenterRaiseMax,
+                              centerHeight + 0.35, lake)
+          return max(wall, float, 0)
+        }
+        let leftExcess = landEdgeExcess(leftX, leftZ, Double(left.y))
+        let rightExcess = landEdgeExcess(rightX, rightZ, Double(right.y))
         // JE KANTE Gelände oder Spiegel (Befund #174): ein Stützpunkt auf
         // Wasser liegt nie unter seiner Land-Höhe (Maximum aus beiden, s.
         // `emitRibbon`), im flachen Ufersaum trägt deshalb eine Kante das
@@ -87,11 +97,11 @@ final class WaterRendererTests: XCTestCase {
         let rightWaterError = waterSurfaceError(
           terrain, gridX: centerX, gridZ: centerZ, renderedY: Double(right.y))
         XCTAssertLessThanOrEqual(
-          min(abs(Double(left.y) - expectedLeft), leftWaterError), 0.002,
-          "Linke Bandkante liegt weder auf Gelände noch Wasserspiegel")
+          min(leftExcess, leftWaterError), 0.002,
+          "Linke Bandkante liegt weder im Gelände noch auf dem Wasserspiegel")
         XCTAssertLessThanOrEqual(
-          min(abs(Double(right.y) - expectedRight), rightWaterError), 0.002,
-          "Rechte Bandkante liegt weder auf Gelände noch Wasserspiegel")
+          min(rightExcess, rightWaterError), 0.002,
+          "Rechte Bandkante liegt weder im Gelände noch auf dem Wasserspiegel")
         let waterError = min(leftWaterError, rightWaterError)
         if waterError <= 0.05 {
           previousLandAlpha = nil

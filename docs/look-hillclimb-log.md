@@ -141,15 +141,46 @@ Problem 1 gilt für diesen Kletterer als **nicht erreichbar**. Begründung:
 PR #230 trägt denselben Fehler in der Totalen und bleibt als Anschauung für
 die Nahsicht offen.
 
+## Problem 1, zweiter Anlauf (2026-11-20, auf Wunsch des Eigners)
+
+Der Befund „nicht erreichbar“ oben ist damit überholt. Vergleichsstand:
+Stand nach Nr. 10 (`.tools/look/keep4/`). Ab Nr. 14 gilt die gelockerte
+Regel (`docs/look-hillclimb.md` § Regel: über 30 Urteile B − A ≥ 10, A ≤ 6,
+in keiner Aufnahme mehr A als B; Bildrate bis 4 % schlechter erlaubt).
+Implementer ab Nr. 14 mit Effort high.
+
+| Nr. | Hypothese | Urteil | Ergebnis | Kernsatz |
+| --- | --- | --- | --- | --- |
+| 12 | Der Fluss wird durch Bewuchs eingebettet statt durch Geländeform: Galeriewald bis ans Ufer (5–14 Zellen), schmalerer kahler Korridor, keine dunkle Konturlinie | Implementer, deckender Saum: A 5 B 10 GLEICH 0 und A 5 B 7 GLEICH 3; mit durchsichtigem Saum (nicht abgegeben) A 1 B 13 GLEICH 1 | verworfen | Der dunkle Ufersaum der Bänder IST die Konturlinie, und er verdeckt nur, dass die Bänder über dem Gelände schweben (Issue #233). Ohne Saum gewinnt der Stand, zeigt aber das Schweben. Das breite Gehölzband fraß die Lichtungen aus Nr. 6 („Baumkugeln gleichmäßig über nahezu alle Hänge“). Bildrate 18,1/19,1 → 16,8/17,9 ms. |
+| 13 | Das Band schwebt an der Wurzel nicht mehr, damit kann die Kontur weg: Bandkanten folgen dem Gelände nach unten statt Gelände plus `riverLift`; neuer Wächter `RibbonFloatTests`; Saum 0,6 → 0,12; Gehölzband 3–7 Zellen | Implementer: A 1 B 9 GLEICH 5 und A 2 B 7 GLEICH 6. Orchestrator, 10 Läufe: A 5 B 12 GLEICH 13 (`tal` 3/3) | verworfen, auch nach neuer Regel | Schwebende Messpunkte auf der Produktionswelt 98,3 % → 0,1 %. Der Bewerter sieht das Ende des Schwebens nicht als Gewinn: „Wasser als flaches, hellblau-graues Band statt als eingesenkter Wasserkörper“. In `tal` wuchs die Talmitte zu. Stand bleibt als Grundlage für Nr. 14 im Arbeitsbaum. |
+| 14 | Das Wasser selbst lebt (auf Nr. 12+13): Lauf-Größen je Band-Vertex (Kolk ↔ Riffel aus Bogenstärke und Gefälle, Weißwasser an Stufen, Engstellen, Zusammenflüssen); Petrol im Kolk, heller Riffel, Strömungsstriche und fleckiger Schaum, Flüsse spiegeln weniger Himmel, Seen zur Mitte tiefblau; Raster-Wasser zieht mit; Galeriewald nur an Bändern und Seen (2,5–5 Zellen), Grundwald wieder mit voller Sperre | Implementer, 10 Läufe: A 3 B 18 GLEICH 9. Orchestrator, 10 Läufe: A 4 B 21 GLEICH 4 (`diorama` 1/5, `tal` 2/7, `nah` 1/9) | **behalten** (Nr. 12–14 als ein Commit) | „Bei X liest sich der Fluss als Körper im Gelände — Kiesbänke, helle Flachwasserzonen, weiße Stromschnellen und sichtbares Bett —, während Y ihn als gleichmäßig flaches, deckend blaues Band über die Talsohle legt.“ A-Stimmen: „breite helle Sand-/Sedimentschleier“, „teils grelle Glanzspur“. Ein blauerer Ton verlor `diorama` 0/3 gegen Petrol 3/3. Schranken grün (667 Tests, Hash unverändert, Bildrate 18,2/19,3 → 18,0/19,1 ms). |
+
+Lehren: Sechs Versuche scheiterten, weil sie das Bett formen oder bemalen
+wollten, während das Band tatsächlich über dem Gelände lag und eine dunkle
+Kontur das verdeckte. Erst Ursache (Geometrie), dann Fassung (Bewuchs), dann
+Oberfläche (Wechsel entlang des Laufs) trug. Der Bewerter belohnt den
+Geometrie-Fix allein nicht; behalten wurde das Paket.
+
+Rest-Schwächen am Wasser: Weißwasser spärlicher und weicher als in
+Referenz f; manche Schaumstriche an Gefällestufen zu lang und gleichmäßig;
+grauer Ring um Raster-Seen (schon vorher); Wolkenspiegelung auf Seen kaum
+sichtbar; `diorama` bleibt meist GLEICH (Läufe 8–10 px breit); der Messlauf
+`RiverUphill` rechnet noch mit Bandhöhe minus `riverLift`.
+
+Vorher-Nachher: `docs/look-hillclimb/wasser-{diorama,tal,nah}-vorher-nachher.jpg`.
+
 ## Abschluss (2026-11-20)
 
 Behalten: Nr. 6 (Wald), Nr. 7 (Fels, Hänge, Schnee), Nr. 8 (Küste), Nr. 10
-(Licht). Verworfen: Nr. 1 bis 5 und 11 (Wasser), Nr. 9 (Licht, erster Anlauf).
+(Licht), Nr. 14 (Wasser, mit Nr. 12 und 13). Verworfen: Nr. 1 bis 5 und 11
+(Wasser), Nr. 9 (Licht, erster Anlauf). Die Tabelle darunter ist der Stand
+vor Nr. 14; die Zahlen am Endstand mit Wasser stehen bei Nr. 14.
 
 | Prüfung | Ergebnis |
 | --- | --- |
 | Endstand gegen Ausgangsstand 705db55, `judge.sh`, 5 Läufe | A 0 B 15 GLEICH 0, `B_BEHALTEN` |
-| Zweitbewerter Gemini 4 Hydrogen | nicht gelaufen: Antigravity 1.4.5 läuft nicht mit der aktuellen T3-Version |
+| Zweitbewerter Gemini 4 Neon (blind, ein Urteil je Aufnahme, Endstand mit Wasser) | gegen Ausgangsstand 705db55: Endstand 3/3 („Wasser liegt … glaubwürdig im Talbett“ gegen „flaches, gleichförmig dunkelblaues Band“). Gegen den Stand vor Nr. 14: `nah` Endstand, `diorama` und `tal` GLEICH |
+| Endstand mit Wasser (Nr. 14), vom Orchestrator gefahren | 667 Tests, 81 übersprungen, 0 Fehler; Hash `95cf93ca1b40985c`; smoke, water_geometry, river_ribbons, water_uniforms, lighting, relief, canopy, ui_layout, graphics_study grün |
 | SimCore-Pflichtsuite | 661 Tests, 79 übersprungen, 0 Fehler |
 | Godot-Vertragstests | smoke, river_ribbons, water_geometry, water_uniforms, lighting, relief, canopy, ui_layout, water_gpu_tail grün; `pickaxe_repro` rot (`FAIL_INFILL 0.0069 → 0.0067`), am Ausgangsstand ebenso |
 | `simperf --hash` | `95cf93ca1b40985c`, unverändert |
@@ -159,12 +190,11 @@ Kontaktbögen (Ausgangsstand, Endstand, Referenz): `docs/look-hillclimb/kontaktb
 
 Offen:
 
-- Wasser im Gelände (s. Befund oben).
-- Gemini-Urteil Endstand gegen Ausgangsstand nachholen.
+- Wasser im Gelände: mit Nr. 14 behalten; Rest-Schwächen s. zweiter Anlauf.
 - `pickaxe_repro` ist auf main rot und gehört in ein eigenes Issue.
 - Küste: trockene Sandflächen auf Terrassen hinter dem Strand; dunkles Meer
   ohne Türkis an tiefen Mündungsrinnen.
 - Licht: Dunst trägt kaum zur Tiefenstaffelung; `diorama` gewinnt am wenigsten.
 - Wald: Kronen in der Nahsicht weiter als runde Noppen lesbar („Ballon-Bäume“).
 - Der Prüfpunkt nach fünf behaltenen Iterationen (Zweitmeinung zum Diff) ist
-  nicht erreicht worden, es sind vier.
+  mit Nr. 14 erreicht (fünf); die Zweitmeinung zum Diff steht aus.

@@ -217,7 +217,8 @@ final class SimNode: Node {
     ///   `surface`, `cover`, `flow`, `protect`, `forest`, `plume`, `filled`
     ///   (Seespiegel, R32F) und `bands` (Höhenbänder wie früher `heightBands`),
     /// - nach einem Band-Bau: `ribbons` plus das Mesh in `ribbon_verts`,
-    ///   `ribbon_colors`, `ribbon_uvs`, `ribbon_uv2s`, `ribbon_indices` und
+    ///   `ribbon_colors`, `ribbon_uvs`, `ribbon_uv2s`, `ribbon_flows`
+    ///   (Lauf-Größen, `CUSTOM0`), `ribbon_indices` und
     ///   `ribbon_strip_starts` (Vertex-Index je Band-Anfang; Main malt einen
     ///   Dreiecks-Supp und braucht ihn nicht, die Godot-Wächter zählen je Band).
     /// Fehlende Schlüssel heißen „in diesem Frame nicht neu".
@@ -246,6 +247,7 @@ final class SimNode: Node {
             out[Variant("ribbon_colors")] = ribbonColors(world.ribbons).toVariant()
             out[Variant("ribbon_uvs")] = ribbonUVs(world.ribbons).toVariant()
             out[Variant("ribbon_uv2s")] = ribbonUV2s(world.ribbons).toVariant()
+            out[Variant("ribbon_flows")] = ribbonFlows(world.ribbons).toVariant()
             out[Variant("ribbon_indices")] = PackedInt32Array(world.ribbons.indices).toVariant()
             out[Variant("ribbon_strip_starts")] = PackedInt32Array(world.ribbons.stripStarts).toVariant()
         }
@@ -263,6 +265,13 @@ final class SimNode: Node {
     }
     private static func ribbonUV2s(_ mesh: RibbonMesh) -> PackedVector2Array {
         PackedVector2Array(mesh.uv2s.map { Vector2(x: $0.x, y: $0.y) })
+    }
+    /// Lauf-Größen (`RibbonMesh.flows`) flach als RGBA-Float für `CUSTOM0`.
+    private static func ribbonFlows(_ mesh: RibbonMesh) -> PackedFloat32Array {
+        var flat: [Float] = []
+        flat.reserveCapacity(mesh.flows.count * 4)
+        for f in mesh.flows { flat.append(f.x); flat.append(f.y); flat.append(f.z); flat.append(f.w) }
+        return PackedFloat32Array(flat)
     }
 
     /// `RS_WATER_GPU`: Frames liefern das rohe Wasserfeld, Blur/EWMA laufen in

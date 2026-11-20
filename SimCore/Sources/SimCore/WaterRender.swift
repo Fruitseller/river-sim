@@ -1181,10 +1181,20 @@ public enum WaterRender {
     /// Farbe seichten Wassers (das Bett scheint grünlich getrübt durch).
     /// Mit #174 dunkler (vorher 0,18/0,37/0,42, linear): Wasser schluckt
     /// Licht, die Helligkeit trägt die Spiegelung.
-    public static let waterShallowColor = (r: 0.06, g: 0.17, b: 0.18)
+    ///
+    /// Look-Iteration 14: grünlich-satter Petrol-Ton (vorher 0,06/0,17/0,18).
+    /// Bläulicher (0,035/0,15/0,17, Tief 0,005/0,042/0,072, Riffel
+    /// 0,08/0,19/0,21) urteilte der Bewerter in `diorama` nur GLEICH zu keep4
+    /// (A 0 B 6 GLEICH 3), mit diesem Ton B (A 0 B 8 GLEICH 1). Danach eine
+    /// Spur dunkler (0,05/0,19/0,15, Riffel 0,075/0,18/0,15, Riffel-Tiefe
+    /// 0,4): die A-Stimmen lasen das Wasser in `diorama` als „heller türkis,
+    /// durchscheinendes Bett“.
+    public static let waterShallowColor = (r: 0.04, g: 0.16, b: 0.14)
     /// Farbe tiefen Wassers (opak, dunkel blaugrün; vorher 0,03/0,12/0,26,
     /// das las sich im Licht als Schwimmbad-Blau).
-    public static let waterDeepColor = (r: 0.010, g: 0.050, b: 0.085)
+    ///
+    /// Look-Iteration 14: Petrol statt Schieferblau (vorher 0,010/0,050/0,085).
+    public static let waterDeepColor = (r: 0.006, g: 0.050, b: 0.062)
     /// Schlick-Näherung: `pow(1 − n·v, fresnelExponent)`. Um diesen Anteil
     /// tritt der Wasserkörper hinter Godots Spiegelung zurück.
     public static let fresnelExponent = 5.0
@@ -1589,9 +1599,13 @@ public enum WaterRender {
     /// s. `barSandYearsLo`.
     public static let barSandYearsHi = 1500.0
     /// s. `barSandYearsLo`.
-    public static let barSandReachLo = 1.0
+    ///
+    /// Look-Iteration 12 (Auwald): 0,8/1,2 statt 1,0/1,5 — offener Sand nur
+    /// noch an der Bank direkt am Gerinne, dahinter rasch Grün und Gehölz;
+    /// mit dem breiteren Sand lag jeder Mäander in einem hellen Korridor.
+    public static let barSandReachLo = 0.8
     /// s. `barSandYearsLo`.
-    public static let barSandReachHi = 1.5
+    public static let barSandReachHi = 1.2
 
     /// Sprenkel-Filter: Sand bleibt nur, wo von den 8 Nachbarn mindestens
     /// `barSandNeighboursLo` selbst Sand tragen (voll ab `…Hi`). Feste Läufe
@@ -1625,7 +1639,11 @@ public enum WaterRender {
     /// wieder als Sandfläche. Die Verschiebung hebt sie um `barPioneerVeg`,
     /// voll bis `barPioneerYearsLo`, weg ab `barPioneerYearsHi` — dann trägt
     /// die Sim selbst.
-    public static let barPioneerVeg = 0.25
+    ///
+    /// Look-Iteration 12 (Auwald): 0,40 statt 0,25 — die junge Bank hinter
+    /// dem Sand liest sonst als blasses Beige-Grün und trägt keinen
+    /// Galeriewald (`CanopyRender.riparianVegLo/Hi`).
+    public static let barPioneerVeg = 0.40
     /// s. `barPioneerVeg`.
     public static let barPioneerYearsLo = 300.0
     /// s. `barPioneerVeg`.
@@ -1775,24 +1793,78 @@ public enum WaterRender {
     /// außen davon nasses Ufer, innen Wasser. Die sichtbare Wasserbreite ist
     /// damit ~65 % der Bandbreite — so breit, wie das alte Ausfedern deckend
     /// wirkte; die Band-Breiten (`ribbonHalfWidthCells`) bleiben unverändert.
+    ///
+    /// Look-Iteration 12 (Auwald) hatte 0,42 mit fast durchsichtigem Ufer
+    /// versucht; das Band schwebte damals noch über dem Ufer (Issue #233,
+    /// seit Iteration 13 behoben, s. `ribbonWaterlineLift`).
     public static let ribbonWaterline = 0.35
     /// Versatz der Wasserlinie über Rauschen (± Anteil der Halbbreite): das
     /// Ufer läuft nicht als Lineal parallel zur Zentrumslinie.
     public static let ribbonWaterlineJitter = 0.15
     /// Frequenz dieses Rauschens je Welteinheit (Zelle ≈ 0,156): ~2 Zellen.
     public static let ribbonWaterlineScale = 3.0
+    /// Äußerste Wasserlinie als Anteil der Halbbreite eines voll sichtbaren
+    /// Bands (`1 − ribbonWaterline + ribbonWaterlineJitter`): bis hierhin
+    /// malt `water.gdshader` Wasser. Dort richtet `RiverRibbonRenderer` die
+    /// Bandhöhe am Gelände aus (Look-Iteration 13, Issue #233). Schmaler
+    /// sichtbare Bänder (Vertex-Alpha) skalieren mit `ribbonVisibleWidth`,
+    /// mindestens `ribbonWaterlineReachMin` (sonst kippte die Querlinie
+    /// aus zwei eng benachbarten Punkten beliebig steil).
+    public static let ribbonWaterlineReach = 1 - ribbonWaterline + ribbonWaterlineJitter
+    /// s. `ribbonWaterlineReach`.
+    public static let ribbonWaterlineReachMin = 0.3
+    /// Innerste Wasserlinie als Anteil von `ribbonWaterlineReach`:
+    /// `(1 − ribbonWaterline − ribbonWaterlineJitter) / ribbonWaterlineReach`.
+    public static let ribbonWaterlineInner =
+        (1 - ribbonWaterline - ribbonWaterlineJitter) / ribbonWaterlineReach
+    /// Höchster Abstand der Wasserlinie über dem gerenderten Gelände
+    /// (Welt-Y; Zelle 0,156 breit): genug gegen Z-Kämpfe mit dem Gelände,
+    /// zu wenig, um als Platte zu schweben. Vorher stand die ganze Kante um
+    /// `RenderContract.riverLift` (0,35) darüber.
+    public static let ribbonWaterlineLift = 0.03
+    /// Mindestabstand der Wasserfläche über dem gerenderten Gelände in der
+    /// Bandmitte (Welt-Y, Look-Iteration 14): darunter stachen kleine
+    /// Geländeinseln durch die Bandfläche.
+    public static let ribbonCenterClearance = 0.02
+    /// Höchste Anhebung der Wasserlinien dafür (Welt-Y). Mit
+    /// `ribbonWaterlineLift` zusammen 0,07 < `RibbonFloat.floatTolerance`.
+    public static let ribbonCenterRaiseMax = 0.04
+    /// Sichtbarer Breiten-Anteil eines Bands mit Deckkraft `alpha`
+    /// (Vertex-Alpha): `water.gdshader` schrumpft den Querschnitt statt ihn
+    /// durchsichtig zu machen, `visible = smoothstep(lo, hi, presence)`.
+    /// Spiegel der Shader-Literale (Wächter `RenderContractTests`); gelesen
+    /// von `RiverRibbonRenderer.bandVisibleCoverage` (Look-Iteration 12).
+    public static let ribbonVisibleLo = 0.05
+    /// s. `ribbonVisibleLo`.
+    public static let ribbonVisibleHi = 0.75
+    @inline(__always)
+    public static func ribbonVisibleWidth(_ alpha: Double) -> Double {
+        let t = min(1, max(0, (alpha - ribbonVisibleLo) / (ribbonVisibleHi - ribbonVisibleLo)))
+        return t * t * (3 - 2 * t)
+    }
+
     /// Deckkraft des nassen Ufers (dunkler Saum zwischen Bandkante und
     /// Wasserlinie, läuft nach außen auf 0).
-    public static let ribbonBankOpacity = 0.6
-    /// Farbe des nassen Ufers: feuchter Schlamm/Kies.
-    public static let ribbonBankColor = (r: 0.13, g: 0.12, b: 0.09)
+    ///
+    ///
+    /// Look-Iteration 13: 0,12 statt 0,6. Der deckende Saum verbarg nur, dass
+    /// das Band über dem Ufer schwebte (Issue #233), und lag als dunkle
+    /// Konturlinie um jedes Gewässer. Seit die Wasserlinie am Gelände liegt
+    /// (`ribbonWaterlineLift`), bleibt nur ein Hauch feuchter Boden.
+    public static let ribbonBankOpacity = 0.12
+    /// Farbe des nassen Ufers: feuchter, bewachsener Boden. Look-Iteration 12:
+    /// moosdunkel statt Schlamm-Schwarz (0,13/0,12/0,09), damit der Saum
+    /// neben dem Galeriewald als dessen Schatten liest statt als Konturlinie.
+    public static let ribbonBankColor = (r: 0.11, g: 0.13, b: 0.07)
     /// Bett unter dem Wasser, GEMEINSAM für Band und Raster-Wasser: scheint
     /// über die Deckkraft-Rampe (`waterOpacityShallow/Deep`) durch. Das
     /// Raster-Wasser mischte vorher das abgedunkelte Gelände selbst darunter,
     /// samt Erosions-Detail — dessen Rinnen standen als Höhenlinien-Moiré und
     /// Ringe im Wasser (Befund #174, Seen und breite Raster-Läufe). Es nimmt
     /// jetzt überwiegend diese Farbe (s. `terrain.gdshader`).
-    public static let waterBedColor = (r: 0.17, g: 0.17, b: 0.12)
+    /// Look-Iteration 14: grünlich-dunkler (vorher 0,17/0,17/0,12): das
+    /// graue Bett lag im Flachwasser am Gleithang als heller Streifen.
+    public static let waterBedColor = (r: 0.11, g: 0.13, b: 0.08)
     /// Kräuselung: Grundfrequenz je Welteinheit, Amplitude der Normalen-
     /// Neigung, Streckung längs der Strömung (< 1 = längliche Wellen) und
     /// Wandergeschwindigkeit stromab. Oktaven-Folge und Pixel-Ausblendung
@@ -1804,6 +1876,89 @@ public enum WaterRender {
     public static let ribbonRippleStretch = 0.4
     /// s. `ribbonRippleFrequency`.
     public static let ribbonRippleSpeed = 1.5
+
+    // MARK: Lauf-Größen des Bands (Look-Iteration 14, `RibbonMesh.flows`)
+    //
+    // Befund Nr. 13: das Wasser saß im Gelände, las sich aber als einfarbige
+    // schieferblaue Folie („flaches, hellblau-graues Band"). Ein Fluss ist
+    // ein Wasserkörper, weil er ENTLANG (Kolk ↔ Riffel, Stufen) und QUER
+    // (Prallhang tief, Gleithang seicht) wechselt. Die Größen dafür kommen je
+    // Stützpunkt aus der Geometrie des Laufs
+    // (`RiverRibbonRenderer.flowAttributes`), die Farben unten.
+
+    /// Halbes Fenster (Zellen Bogenlänge) für das Längsgefälle.
+    public static let ribbonSlopeWindowCells = 3.0
+    /// Längsgefälle (Sim-Höhe je Zelle) → `flows.z` 0 … 1. Gemessen auf
+    /// der Produktionswelt (Seed 1337, 20.000 J., `RibbonFlowTests`
+    /// Diagnose): Median 0,0015, 90 % 0,005, 98 % 0,009 je Zelle.
+    public static let ribbonSlopeLo = 0.001
+    /// s. `ribbonSlopeLo`.
+    public static let ribbonSlopeHi = 0.006
+    /// Bogenstärke, unter der ein Stück als Übergang zwischen zwei Bögen
+    /// (Riffel) gilt; darüber Bogenscheitel (Kolk).
+    public static let ribbonRiffleBendLo = 0.2
+    /// s. `ribbonRiffleBendLo`.
+    public static let ribbonRiffleBendHi = 0.6
+    /// Abstand Riffel → Riffel auf gerader Strecke, in Bandbreiten
+    /// (Leopold-Wolman: 5–7 Gerinnebreiten).
+    public static let ribbonRiffleSpacingWidths = 6.0
+    /// Mindest-Bandbreite (Zellen) für diesen Abstand: sehr schmale Bänder
+    /// wechselten sonst im Zellentakt.
+    public static let ribbonRiffleMinWidthCells = 2.0
+    /// Anteil, um den steiles Gefälle (`flows.z`) ein Stück zum Riffel macht.
+    public static let ribbonRiffleSteepShare = 0.6
+    /// Längsgefälle (Sim-Höhe je Zelle) einer Gefällestufe mit Weißwasser.
+    public static let ribbonWhiteSlopeLo = 0.004
+    /// s. `ribbonWhiteSlopeLo`.
+    public static let ribbonWhiteSlopeHi = 0.012
+    /// Engstelle: relativer Breitenverlust gegen den Lauf oberhalb
+    /// (2 Bandbreiten).
+    public static let ribbonConstrictionLo = 0.15
+    /// s. `ribbonConstrictionLo`.
+    public static let ribbonConstrictionHi = 0.4
+    /// Zusammenfluss: Deckung eines früher gebauten Bands am Stützpunkt
+    /// (das Ende des Zubringers taucht unter den Hauptlauf).
+    public static let ribbonConfluenceLo = 0.05
+    /// s. `ribbonConfluenceLo`.
+    public static let ribbonConfluenceHi = 0.5
+    /// Weißwasser-Anteil aus Engstelle, Zusammenfluss und steilem Riffel
+    /// (die Stufe selbst zählt voll).
+    public static let ribbonWhiteRiffleShare = 0.6
+
+    /// Belüftete Oberfläche über einem Riffel (linear): heller, grünlich klar,
+    /// kein Cyan (Nr. 3 fiel mit Helltürkis durch).
+    public static let waterRiffleColor = (r: 0.06, g: 0.15, b: 0.14)
+    /// Tiefen-Faktor über einem Riffel (`flows.x` = 1): seicht über die
+    /// ganze Breite; im Kolk die volle Tiefe.
+    public static let waterRiffleDepth = 0.6
+    /// Farbe des Weißwassers (linear).
+    public static let waterFoamColor = (r: 0.80, g: 0.85, b: 0.86)
+    /// Stärke des Weißwassers (Deckung der Schaumflecken).
+    public static let waterFoamAmount = 0.9
+    /// Frequenz der Strömungsstreifen je Welteinheit (quer; längs um
+    /// `ribbonRippleStretch` gestreckt). In der Ferne trägt ein Viertel davon
+    /// (gröbere Flecken, die bei 8–10 px Laufbreite stehen bleiben).
+    public static let waterFoamScale = 6.0
+    /// Weißwasser am Außenbogen (Prallhang), relativ zu `flows.y`.
+    public static let waterFoamOuter = 0.5
+    /// Specular des FLIESSENDEN Wassers (Godot F0 = 0,16 · s²): weniger
+    /// Himmel über dem Wasserkörper. Stillwasser behält `waterSpecular`.
+    public static let waterRiverSpecular = 0.25
+    /// Tiefe eines Sees (Raster-Wasser, linear): blauer und dunkler als der
+    /// petrolgrüne Lauf, damit See und Fluss sich unterscheiden (Referenz f).
+    public static let waterLakeColor = (r: 0.008, g: 0.040, b: 0.095)
+    /// Wolkenspiegelung auf Stillwasser (Seen, Altarme): Helligkeit der
+    /// gespiegelten Wolkendeckung.
+    public static let waterCloudReflection = 0.6
+
+    /// Raster-Wasser (Zubringer): Gefällestufe der Rinnensohle über die
+    /// sichtbare Steigung `world_slope` (tan, mit Überhöhung) im
+    /// Terrain-Shader. Ein Längsgefälle von 0,0015 Sim-Höhe je Zelle (Median
+    /// der Bänder) ist sichtbar 0,23; Wände beginnen bei
+    /// `rasterWallSlopeLo` (≈ 1,2).
+    public static let rasterSteepLo = 0.3
+    /// s. `rasterSteepLo`.
+    public static let rasterSteepHi = 0.8
 
     /// Tiefen-Verschiebung im Band: `across` = UV.x (0 … 1), `bend` = UV2.y.
     /// Positiv = tiefer. Spiegel der Formel in `water.gdshader`.

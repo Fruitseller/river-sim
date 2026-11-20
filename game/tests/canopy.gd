@@ -196,7 +196,11 @@ func _check_brush(main: Node) -> void:
 ## Neugenerieren tauscht den Wald, Laden holt den gespeicherten zurück. Nicht
 ## mitgespeichert ist der Render-Zustand des Rasterwassers (EWMA, s. AGENTS.md);
 ## nach dem Laden darf die Schutzmaske deshalb an einzelnen Ufern abweichen, und
-## der Wald folgt ihr. Verglichen wird der Wald überall sonst.
+## der Wald folgt ihr. Seit Look-Iteration 12 reicht der Galeriewald bis
+## `CanopyRender.riparianReachCells` Zellen vom Wasser; eine abweichende
+## Uferzelle verschiebt ihn so weit. Verglichen wird der Wald überall sonst.
+const RIPARIAN_REACH := 6
+const MAX_REGROW_CELLS := 8
 func _check_regenerate_and_load(main: Node) -> void:
 	var tex: Texture2D = main.forest_tex
 	var path := "user://tests/canopy.%s" % main.sim.worldFileExtension()
@@ -211,14 +215,29 @@ func _check_regenerate_and_load(main: Node) -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	var got: PackedByteArray = main.forest_img.get_data()
 	var protect: PackedByteArray = _frame(main.sim)["protect"]
+	var n: int = main.N
+	var near_diff := PackedByteArray()
+	near_diff.resize(saved.size())
+	for k in range(saved.size()):
+		if protect[k] != saved_protect[k]:
+			var ci := k % n
+			var cj := k / n
+			for j in range(maxi(0, cj - RIPARIAN_REACH), mini(n, cj + RIPARIAN_REACH + 1)):
+				for i in range(maxi(0, ci - RIPARIAN_REACH), mini(n, ci + RIPARIAN_REACH + 1)):
+					near_diff[j * n + i] = 1
 	var compared := 0
 	var wrong := 0
 	for k in range(saved.size()):
-		if protect[k] == saved_protect[k]:
+		if near_diff[k] == 0:
 			compared += 1
 			if got[k] != saved[k]:
 				wrong += 1
-	_check(compared > saved.size() * 9 / 10 and wrong == 0,
+	# Das Gedächtnis der Waldmaske (#167) reist nicht im Spielstand: wo der
+	# Wald vor dem Speichern noch nachwuchs (Galeriewald über
+	# `CanopyRender.riparianRegrowYears`), zeigt das Laden gleich das Ziel.
+	# Look-Iteration 13 traf das eine Zelle (0 → 169); erlaubt sind
+	# MAX_REGROW_CELLS, ein vertauschter Wald wiche um Zehntausende ab.
+	_check(compared > saved.size() * 9 / 10 and wrong <= MAX_REGROW_CELLS,
 		"Laden holt den gespeicherten Wald zurück (%d von %d Zellen abweichend)"
 			% [wrong, compared])
 	_check_uploaded(main, tex, "Laden")

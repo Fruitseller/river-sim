@@ -35,6 +35,7 @@ var lake_surface_lift: float
 var sea_surface_sink: float
 var min_rank: float
 var max_cross_slope: float
+var waterline_lift: float
 var kind_delta_lo: float
 
 # Wie nah an der Zellgrenze (in Zellen) die Zentrumslinie liegen darf, damit
@@ -67,6 +68,7 @@ func _run() -> void:
 	sea_surface_sink = contract["ribbonSeaSurfaceSink"]
 	min_rank = contract["ribbonMinimumRank"]
 	max_cross_slope = contract["ribbonMaxCrossSlope"]
+	waterline_lift = contract["ribbonWaterlineLift"]
 	kind_delta_lo = contract["ribbonDeltaLo"]
 
 	# Mäander brauchen etwas Laufzeit, bis Kanäle getraced und migriert sind.
@@ -121,12 +123,14 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Jede Bandkante muss auf ihrer EIGENEN lokalen Geländehöhe liegen — GEKLEMMT
-	# auf die maximale Quer-Neigung um die Zentrums-Höhe (max_cross_slope, s.
-	# WaterRender.ribbonMaxCrossSlope): sanfte Quergefälle folgen dem Gelände
-	# (eine reine Zentrums-Höhe schnitte das Band dort ins Terrain), Kanten auf
-	# Schluchtwänden tauchen stattdessen in den Fels ein, statt das Band die
-	# Wand hochzudrapieren.
+	# Keine Bandkante liegt über dem Gelände (Look-Iteration 13, Issue #233):
+	# höchstens auf der Wand-Grenze (Zentrum + Halbbreite × max_cross_slope +
+	# river_lift, s. WaterRender.ribbonMaxCrossSlope: Kanten auf Schluchtwänden
+	# tauchen in den Fels ein, statt das Band die Wand hochzudrapieren) und nie
+	# zugleich über dem eigenen Gelände + waterline_lift UND dem Wasserspiegel
+	# der Mitte (Zentrum + river_lift). Senken darf sich eine Kante, heben
+	# nicht; ob die Wasserlinie dazwischen schwebt, misst
+	# SimCoreTests/RibbonFloatTests headless.
 	# AUSNAHME seit Issue #34: Stützpunkte UNTER Wasser (Mündung, geflutete
 	# Senke, Delta-Arm, Altarm) liegen flach auf dem WASSERSPIEGEL — sonst
 	# kippte das Band am Ufer aus der Wasserfläche heraus.
@@ -159,10 +163,14 @@ func _run() -> void:
 		var ground_c := _bilinear_height(heights, n, world, pair_mid.x, pair_mid.z) * hscale
 		var ground := _bilinear_height(heights, n, world, v.x, v.z) * hscale
 		var ground_r := _bilinear_height(heights, n, world, vr.x, vr.z) * hscale
-		var expect_l := clampf(ground, ground_c - cross_tol, ground_c + cross_tol) + river_lift
-		var expect_r := clampf(ground_r, ground_c - cross_tol, ground_c + cross_tol) + river_lift
-		var err_l := absf(v.y - expect_l)
-		var err_r := absf(vr.y - expect_r)
+		# Über seichtem See hebt das Band anteilig zum Spiegel wie der
+		# Terrain-Shader (geometryLift*): Obergrenze dann Spiegel + Hauch.
+		var lake_c := _cell_value(levels, n, world, pair_mid.x, pair_mid.z) * hscale + lake_surface_lift
+		var expect_l := maxf(ground + waterline_lift, ground_c + river_lift)
+		var expect_r := maxf(ground_r + waterline_lift, ground_c + river_lift)
+		var wall := maxf(ground_c + cross_tol + river_lift, lake_c)
+		var err_l := maxf(0.0, maxf(v.y - maxf(expect_l, lake_c), v.y - wall))
+		var err_r := maxf(0.0, maxf(vr.y - maxf(expect_r, lake_c), vr.y - wall))
 		# Wasserspiegel wird an der ZENTRUMSLINIE und in DERSELBEN Zelle
 		# gelesen wie in SimNode (nächster Gitterpunkt): eine Bandkante liegt
 		# bis zu 3 Zellen daneben, und über dem Ufer fällt `filled` innerhalb

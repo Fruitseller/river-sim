@@ -67,14 +67,21 @@ final class RenderFrameTests: XCTestCase {
 
         // Wald: Zielmaske aus denselben Quellen wie im Frame — ein Gedächtnis,
         // das noch nichts hält, nimmt das Ziel an.
-        let refSurfaces = WetMeadow.apply(
+        // Seit Look-Iteration 12 endet der Wald am Wasserkörper der Bänder
+        // (`bandCore`) statt an der Schutzmaske, mit Galeriewald davor; seit
+        // Look-Iteration 14 sperrt die Schutzmaske wieder den Grundwald.
+        let refMaterial = WetMeadow.apply(
             TerrainColorRenderer.buffers(terrain, bars: render.barMaterial(terrain)),
-            mask: render.wetMeadowMask).surfaces
+            mask: render.wetMeadowMask)
+        let n = terrain.cfg.n
         XCTAssertEqual(overlays.forestMask,
-                       ForestCanopyMask.bytes(terrain, surfaces: refSurfaces,
-                                              protect: overlays.protectMask,
-                                              clump: ForestCanopyMask.clumpField(
-                                                  n: terrain.cfg.n, world: terrain.cfg.world)),
+                       ForestCanopyMask.target(
+                           terrain, surfaces: refMaterial.surfaces, colors: refMaterial.colors,
+                           bandCore: render.bandCore, waterBytes: overlays.water,
+                           wetMeadow: render.wetMeadowMask, barSand: render.barMaterial(terrain).sand,
+                           clump: ForestCanopyMask.clumpField(n: n, world: terrain.cfg.world),
+                           riparianNoise: ForestCanopyMask.riparianField(n: n, world: terrain.cfg.world),
+                           protect: overlays.protectMask).mask,
                        "Frame-Waldmaske weicht von der Zusammensetzung ab")
         XCTAssertTrue(overlays.forestMask.contains { $0 > 0 },
                       "Testwelt ohne Wald — der Vergleich sagt dann nichts")
@@ -178,7 +185,8 @@ final class RenderFrameTests: XCTestCase {
         let bridge = try RepoSource.probe("Extension/Sources/RiverSimGD/SimNode.swift")
         for key in ["trigger", "year", "heights", "water", "water_blend", "color", "surface",
                     "cover", "flow", "protect", "forest", "plume", "filled", "bands", "ribbons",
-                    "ribbon_verts", "ribbon_colors", "ribbon_uvs", "ribbon_uv2s", "ribbon_indices"] {
+                    "ribbon_verts", "ribbon_colors", "ribbon_uvs", "ribbon_uv2s", "ribbon_flows",
+                    "ribbon_indices"] {
             assertContains(bridge, "out[Variant(\"\(key)\")]",
                            hint: "SimNode.packFrame setzt den Schlüssel \(key)")
             XCTAssertTrue(main.contains("frame[\"\(key)\"]") || main.contains("frame.has(\"\(key)\")")
