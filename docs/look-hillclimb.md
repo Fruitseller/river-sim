@@ -15,8 +15,29 @@ scripts/look/judge.sh <A-ordner> <B-ordner> [3]  # blinder Paarvergleich (~30 s)
 
 `judge.sh` würfelt je Urteil, welcher Stand X und welcher Y ist, erlaubt
 „GLEICH“ und druckt am Ende `ENTSCHEIDUNG B_BEHALTEN` oder
-`ENTSCHEIDUNG VERWERFEN`. Behalten heißt: B gewinnt mindestens 2/3 der
-Urteile, A höchstens 1/9.
+`ENTSCHEIDUNG VERWERFEN`.
+
+### Regel (seit 2026-11-20, vom Eigner gelockert)
+
+Gewertet wird über 30 Urteile (10 Läufe je Aufnahme, als ein Durchgang mit
+10 oder zwei mit je 5). Behalten heißt:
+
+- B − A beträgt mindestens 1/3 aller Urteile (≥ 10 von 30),
+- A gewinnt höchstens 1/5 der Urteile (≤ 6 von 30),
+- in keiner Aufnahme stehen mehr A- als B-Stimmen.
+
+„GLEICH“ zählt damit nicht mehr gegen B. Bis 2026-11-20 galt „B ≥ 2/3 und
+A ≤ 1/9“; das verwarf gemessen auch kleine echte Verbesserungen (Eichzeile
+`performance` gegen `balanced`: 1 bis 4 A-Stimmen von 15), und in den
+Totalen ist GLEICH für eine Änderung an 8 px breiten Flüssen das erwartbare
+Urteil. Nacheichung der neuen Regel: derselbe Stand zweimal gerendert
+0/0/30 (verworfen ✓); `performance` gegen `balanced` aus den alten Läufen
+5/10/15 (verworfen, wie bisher); heute gegen Referenz und weichgezeichnet
+gegen heute bleiben behalten. Die Urteile der Iterationen 1 bis 12 kippen
+unter der neuen Regel nicht.
+
+Die Bildrate darf seitdem bis zu 4 % schlechter sein als der
+Vergleichsstand (Mittel); das lässt sich später zurückholen.
 
 ## Eichung (2026-11-18)
 
@@ -66,8 +87,8 @@ Aufnahme dauerte dann 16 min statt 20 s, der Bildraten-A/B wird unbrauchbar.
    - SimCore-Pflichtsuite und die Godot-Vertragstests (AGENTS.md § Befehle),
    - Determinismus (`simperf --hash` unverändert, wenn die Physik nicht
      Gegenstand der Hypothese ist),
-   - keine Bildraten-Einbuße: Zeitraffer-A/B nach AGENTS.md
-     (`scripts/timelapse-timing.sh "$ALT/game" game`, maximiert),
+   - Bildrate höchstens 4 % schlechter (Mittel): Zeitraffer-A/B nach
+     AGENTS.md (`scripts/timelapse-timing.sh "$ALT/game" game`, maximiert),
    - Wasser liegt nirgends sichtbar über dem Gelände (von Auge in `nah`;
      ein automatischer Wächter dafür fehlt noch).
 4. `scripts/look/shots.sh neu` und `scripts/look/judge.sh "$ALT/shots" neu`.

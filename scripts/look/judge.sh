@@ -9,11 +9,14 @@
 # `ERGEBNIS A <a> B <b> GLEICH <g> VON <n>` und `ENTSCHEIDUNG B_BEHALTEN`
 # bzw. `ENTSCHEIDUNG VERWERFEN`.
 #
-# Entscheidungsregel: B (der neue Stand) wird behalten, wenn er mindestens
-# 2/3 aller Urteile gewinnt UND A höchstens 1/9 der Urteile. „GLEICH“ ist
-# erlaubt: mit erzwungener Wahl ging dasselbe Bild zweimal gerendert (nur
-# Subpixel-Unterschiede) gemessen 6:3 aus, die alte Regel „A <= 3/9“ hätte
-# Rauschen in rund einem Viertel der Fälle behalten.
+# Entscheidungsregel (seit 2026-11-20, s. docs/look-hillclimb.md § Regel):
+# B (der neue Stand) wird behalten, wenn B − A mindestens 1/3 aller Urteile
+# beträgt, A höchstens 1/5 der Urteile gewinnt UND in keiner Aufnahme mehr
+# A- als B-Stimmen stehen. Gewertet wird über 10 Läufe je Aufnahme (zwei
+# Durchgänge mit je 5 oder einer mit 10). „GLEICH“ ist erlaubt und zählt
+# nicht gegen B: mit erzwungener Wahl ging dasselbe Bild zweimal gerendert
+# (nur Subpixel-Unterschiede) gemessen 6:3 aus. Die frühere Regel (B ≥ 2/3,
+# A ≤ 1/9) verwarf gemessen auch kleine echte Verbesserungen.
 # Weitere Bewerter (Panel): LOOK_JUDGES="deepseek codex", s. judge_one.
 # GLM 5.3 sieht keine Bilder und taugt deshalb nicht als Bewerter.
 set -euo pipefail
@@ -107,9 +110,19 @@ for f in "$meta"/*.out; do
   elif [[ $v == "$(cat "$meta/$tag.a_is")" ]]; then w=A; aw=$((aw + 1))
   else w=B; bw=$((bw + 1)); fi
   echo "$tag: $w — $(grep -v 'URTEIL' "$f" | tr '\n' ' ' | cut -c1-240)"
+done >"$meta/zeilen.txt"
+cat "$meta/zeilen.txt"
+# Je Aufnahme: keine darf mehr A- als B-Stimmen tragen.
+cam_ok=1
+for s in "${shots[@]}"; do
+  name=${s%%|*}
+  ca=$(grep -cE "^$name\\.[^:]*: A " "$meta/zeilen.txt" || true)
+  cb=$(grep -cE "^$name\\.[^:]*: B " "$meta/zeilen.txt" || true)
+  echo "AUFNAHME $name A $ca B $cb"
+  (( ca > cb )) && cam_ok=0
 done
 echo "ERGEBNIS A $aw B $bw GLEICH $tie VON $total (Rohurteile: $meta)"
-if (( total > 0 && 3 * bw >= 2 * total && 9 * aw <= total )); then
+if (( total > 0 && 3 * (bw - aw) >= total && 5 * aw <= total && cam_ok )); then
   echo "ENTSCHEIDUNG B_BEHALTEN"
 else
   echo "ENTSCHEIDUNG VERWERFEN"
