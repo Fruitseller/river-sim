@@ -3411,16 +3411,22 @@ public final class Terrain {
 
     // MARK: - Braiding (zellulärer Bänke-Bau, Murray & Paola 1994)
 
-    /// Vorab berechnete Route und Parameter einer aktiven Braid-Zelle (`st == 2`)
+    /// Vorab berechnete Parameter einer aktiven Braid-Zelle (`st == 2`)
     /// für den seriellen Fracht-Durchlauf in `braidPass`.
     private struct BraidActive {
         var k: Int32
         var cnt: Int32
-        var nbK: SIMD8<Int32>
-        var nbQc: SIMD8<Double>
         var qcTot: Double
         var vegDamp: Double
         var maxScour: Double
+    }
+
+    /// Scheiben-Puffer für Pass 1b → Pass 2: aktive Zellen plus skalar gebundene
+    /// Routen-Arrays (`nbK`, `nbQc`) nur für tatsächlich existierende Empfänger.
+    private struct BraidChunk {
+        var cells: [BraidActive] = []
+        var nbK: [Int32] = []
+        var nbQc: [Double] = []
     }
 
     /// Baut Mittelbänke und Fäden auf den großen Läufen — die Verflechtung
@@ -3494,7 +3500,7 @@ public final class Terrain {
         // Pass 1b (parallel in `order`-Reihenfolge rückwärts, rein lesend auf `pst`):
         // nur die ~3–4 % aktiven Zellen werden berechnet und kompaktiert.
         let chunks = min(cnt, max(1, Terrain.coreCount * 4))
-        var activeChunks = [[BraidActive]](repeating: [], count: chunks)
+        var activeChunks = [BraidChunk](repeating: BraidChunk(), count: chunks)
         let fastMod = UInt64.max / UInt64(nn) &+ 1
         let lastRow = cnt - nn
         order.withUnsafeBufferPointer { ob in
@@ -3513,17 +3519,20 @@ public final class Terrain {
                 withUnsafeTemporaryAllocation(of: Int32.self, capacity: 8) { nbKBuf in
                 withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbSBuf in
                 withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbWBuf in
-                withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbQcBuf in
-                let pNbK = nbKBuf.baseAddress!, pNbS = nbSBuf.baseAddress!
-                let pNbW = nbWBuf.baseAddress!, pNbQc = nbQcBuf.baseAddress!
-                for lane in 0..<8 { pNbK[lane] = 0; pNbS[lane] = 0; pNbW[lane] = 0; pNbQc[lane] = 0 }
+                let pNbK = nbKBuf.baseAddress!, pNbS = nbSBuf.baseAddress!, pNbW = nbWBuf.baseAddress!
                 for ch in cLo..<cHi {
                     let lo = cnt * ch / chunks, hi = cnt * (ch + 1) / chunks
-                    var local: [BraidActive] = []
+                    var localCells: [BraidActive] = []
+                    var localNbK: [Int32] = []
+                    var localNbQc: [Double] = []
                     for t in lo..<hi {
                         let k = Int(pord[cnt - 1 - t])
                         if pst[k] != 2 { continue }
-                        if local.isEmpty { local.reserveCapacity(1024) }
+                        if localCells.isEmpty {
+                            localCells.reserveCapacity(1024)
+                            localNbK.reserveCapacity(4096)
+                            localNbQc.reserveCapacity(4096)
+                        }
                         let hfk = phf[k]
                         let hk = ph0[k]
                         let amf = pamf[k]
@@ -3563,10 +3572,8 @@ public final class Terrain {
                         var wsum = 0.0
                         for u in 0..<nbCnt { pNbW[u] = powFast(pNbS[u], p); wsum += pNbW[u] }
                         if nbCnt == 0 || wsum <= 0 {
-                            local.append(BraidActive(
-                                k: Int32(k), cnt: 0,
-                                nbK: SIMD8<Int32>(repeating: 0), nbQc: SIMD8<Double>(repeating: 0),
-                                qcTot: 0, vegDamp: 0, maxScour: 0))
+                            localCells.append(BraidActive(
+                                k: Int32(k), cnt: 0, qcTot: 0, vegDamp: 0, maxScour: 0))
                             continue
                         }
                         // Kapazität je Route: qcᵢ = Kb·dt · Q·Sᵢ · fᵢ^m  (Q in Zell-Einheiten).
@@ -3580,10 +3587,12 @@ public final class Terrain {
                         var qcTot = 0.0
                         var lowest = hk
                         for u in 0..<nbCnt {
+                            let nb = pNbK[u]
                             let qc = kq * pNbS[u] * pow(pNbW[u] / wsum, mB)
-                            pNbQc[u] = qc
+                            localNbK.append(nb)
+                            localNbQc.append(qc)
                             qcTot += qc
-                            lowest = min(lowest, ph0[Int(pNbK[u])])
+                            lowest = min(lowest, ph0[Int(nb)])
                         }
                         let vDamp = max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
                         // Der SCOUR-Deckel bleibt bewusst bei festen 0.5 je Schritt und
@@ -3591,15 +3600,13 @@ public final class Terrain {
                         // die DEPOSITIONS-Deckel; dies ist die Erosionsseite; s.
                         // docs/dt-invariance-measurements.md §5).
                         let maxScour = max(0, hk - lowest) * 0.5
-                        local.append(BraidActive(
+                        localCells.append(BraidActive(
                             k: Int32(k), cnt: Int32(nbCnt),
-                            nbK: UnsafeRawPointer(pNbK).loadUnaligned(fromByteOffset: 0, as: SIMD8<Int32>.self),
-                            nbQc: UnsafeRawPointer(pNbQc).loadUnaligned(fromByteOffset: 0, as: SIMD8<Double>.self),
                             qcTot: qcTot, vegDamp: vDamp, maxScour: maxScour))
                     }
-                    pach[ch] = local
+                    pach[ch] = BraidChunk(cells: localCells, nbK: localNbK, nbQc: localNbQc)
                 }
-                }}}}
+                }}}
             }
         }}}}}}}}}
         // Pass 2 (seriell in exakter `order`-Reihenfolge rückwärts): nur aktive Zellen.
@@ -3611,18 +3618,21 @@ public final class Terrain {
         braidStatus.withUnsafeBufferPointer { stb in
         let pqs = qb.baseAddress!, phf = hfb.baseAddress!
         let pfp = fpb.baseAddress!, pst = stb.baseAddress!
-        let nbKOffset = MemoryLayout<BraidActive>.offset(of: \.nbK)!
-        let nbQcOffset = MemoryLayout<BraidActive>.offset(of: \.nbQc)!
         withBed { bed in
         for ch in 0..<chunks {
-            activeChunks[ch].withUnsafeBufferPointer { ab in
+            activeChunks[ch].cells.withUnsafeBufferPointer { ab in
+            activeChunks[ch].nbK.withUnsafeBufferPointer { kb in
+            activeChunks[ch].nbQc.withUnsafeBufferPointer { qcb in
                 guard let pa = ab.baseAddress else { return }
                 let m = ab.count
+                let pNbK = kb.baseAddress
+                let pNbQc = qcb.baseAddress
+                var routeOff = 0
                 for idx in 0..<m {
-                    let pe = pa + idx
-                    let k = Int(pe.pointee.k)
+                    let e = pa[idx]
+                    let k = Int(e.k)
                     let qin = pqs[k]
-                    let nbCnt = Int(pe.pointee.cnt)
+                    let nbCnt = Int(e.cnt)
                     if nbCnt == 0 {
                         // Seespiegel-Fläche: Fracht sedimentiert im See (bis Spiegel), Rest
                         // wandert über den Überlauf weiter.
@@ -3639,7 +3649,7 @@ public final class Terrain {
                         }
                         continue
                     }
-                    let qcTot = pe.pointee.qcTot
+                    let qcTot = e.qcTot
                     var qout = qin
                     if qin > qcTot {
                         // Überlast → Bank bauen: bis knapp über den Wasserspiegel (Insel!).
@@ -3649,16 +3659,14 @@ public final class Terrain {
                     } else {
                         // Unterlast → Faden scourt (Vegetation bremst, nie unter den
                         // tiefsten Empfänger — halber Weg wie transportLimited).
-                        let want = (qcTot - qin) * pe.pointee.vegDamp
-                        let er = erodeCell(k, min(want, pe.pointee.maxScour), bed)
+                        let want = (qcTot - qin) * e.vegDamp
+                        let er = erodeCell(k, min(want, e.maxScour), bed)
                         qout += er
                     }
                     // Fracht folgt der Kapazität (∝ qcᵢ): der starke Faden trägt sie weiter.
-                    if qout > 0 && qcTot > 1e-30 {
-                        let raw = UnsafeRawPointer(pe)
-                        let pNbK = raw.advanced(by: nbKOffset).assumingMemoryBound(to: Int32.self)
-                        let pNbQc = raw.advanced(by: nbQcOffset).assumingMemoryBound(to: Double.self)
-                        for u in 0..<nbCnt {
+                    let routeEnd = routeOff + nbCnt
+                    if qout > 0 && qcTot > 1e-30, let pNbK, let pNbQc {
+                        for u in routeOff..<routeEnd {
                             let nb = Int(pNbK[u])
                             let nbSt = pst[nb]
                             if nbSt == 0 { continue }
@@ -3667,8 +3675,9 @@ public final class Terrain {
                             pqs[nb] += add
                         }
                     }
+                    routeOff = routeEnd
                 }
-            }
+            }}}
         }
         // Pass 3: Inaktive Landzellen (`st == 1`), die Fracht erhalten haben —
         // gegenseitig unabhängig und strikt nach allen sie speisenden aktiven Zellen.
