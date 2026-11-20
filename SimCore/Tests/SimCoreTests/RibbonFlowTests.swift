@@ -13,7 +13,7 @@ final class RibbonFlowTests: XCTestCase {
         let t = agedWorld(renderConfig(n: 192), years: 2000)
         let mesh = builtRibbons(t).mesh
         XCTAssertEqual(mesh.flows.count, mesh.vertices.count)
-        var riffles: [Float] = [], whites: [Float] = []
+        var riffles: [Float] = [], whites: [Float] = [], slopes: [Float] = []
         let starts = mesh.stripStarts.map(Int.init) + [mesh.vertices.count]
         for s in 0..<(starts.count - 1) {
             let lo = starts[s], hi = starts[s + 1]
@@ -22,11 +22,18 @@ final class RibbonFlowTests: XCTestCase {
             for v in lo..<hi {
                 let f = mesh.flows[v]
                 for c in 0..<3 { XCTAssert((0...1).contains(f[c]), "flows[\(v)][\(c)] = \(f[c])") }
-                XCTAssertGreaterThanOrEqual(f.w, 0)
+                // Breite (w) = gemalte Bandbreite, also der Abstand des
+                // Kantenpaars; `water.gdshader` skaliert die Kräuselung quer
+                // damit (Review Neon Nr. 7/8).
+                let pair = v - (v - lo) % 2
+                let dx = mesh.vertices[pair].x - mesh.vertices[pair + 1].x
+                let dz = mesh.vertices[pair].z - mesh.vertices[pair + 1].z
+                let width = (dx * dx + dz * dz).squareRoot()
+                XCTAssertEqual(f.w, width, accuracy: 1e-4 * max(1, width), "flows[\(v)].w ist nicht die Bandbreite")
                 if kind != WaterRender.ribbonKindRiver {
                     XCTAssertEqual(f.x + f.y + f.z, 0, "Stillwasser/Delta trägt keine Strömung")
                 } else {
-                    riffles.append(f.x); whites.append(f.y)
+                    riffles.append(f.x); whites.append(f.y); slopes.append(f.z)
                 }
             }
         }
@@ -40,6 +47,22 @@ final class RibbonFlowTests: XCTestCase {
         // trägt auf 402 von rund 1200 Fluss-Vertices Weißwasser, zu Recht
         // (Gefällestufen). Ein Saum über ganze Läufe läge nahe 100 %.
         XCTAssertLessThan(white, whites.count / 2, "Weißwasser ist kein Saum über ganze Läufe")
+        // Gefälle (z): wechselt entlang der Läufe, nicht überall gleich.
+        let steep = slopes.filter { $0 > 0.5 }.count, flat = slopes.filter { $0 < 0.1 }.count
+        print("Gefälle: \(steep) steil (> 0,5), \(flat) flach (< 0,1) von \(slopes.count)")
+        XCTAssertGreaterThan(steep, 0, "nirgends Gefälle")
+        XCTAssertGreaterThan(flat, 0, "überall Gefälle")
+    }
+
+    /// `water.gdshader` liest die Breite aus dem Kanal statt sie je Pixel aus
+    /// Bildschirm-Ableitungen zu schätzen (Review Neon Nr. 8: der Kanal war
+    /// tot).
+    func testWaterShaderReadsTheBandWidthFromTheFlowChannel() throws {
+        let shader = try RepoSource.probe("game/shaders/water.gdshader")
+        assertContains(shader, "float band_width = max(v_flow.w, 0.0);",
+                       hint: "Bandbreite kommt aus RibbonMesh.flows.w")
+        XCTAssertEqual(shader.count(ofIdentifier: "inverse"), 0,
+                       "keine Jacobi-Schätzung der Bandbreite je Pixel mehr")
     }
 
     /// Messlauf: Verteilung der Lauf-Größen auf der Produktionswelt.

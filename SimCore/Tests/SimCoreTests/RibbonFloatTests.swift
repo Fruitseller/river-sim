@@ -46,19 +46,27 @@ enum RibbonFloat {
     static let visibleAlpha = 0.25
     static let bins = [0.02, 0.05, 0.08, 0.15, 0.25, 0.35]
 
-    static func measure(_ t: Terrain, mesh: RibbonMesh,
+    /// `water` = RGBA8-Wasserfeld desselben Frames (G = See-Kanal): daraus
+    /// das See-Gate wie im Terrain-Shader (`lake_gate_at`). Leer = ohne Gate;
+    /// dann hebt die Fläche hier über kleinen Tümpeln mehr als im Bild, und
+    /// Schweben darüber bliebe unsichtbar (Review Neon Nr. 6) — die
+    /// Pflicht-Wächter geben es deshalb mit.
+    static func measure(_ t: Terrain, mesh: RibbonMesh, water: [UInt8] = [],
                         hscale: Double = RenderContract.heightScale) -> Summary {
         let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world / 2
         let sea = t.cfg.sea
+        let gated = water.count == n * n * 4
         // Gerenderte Oberfläche wie im Terrain-Vertex-Shader: Seen heben das
         // Gelände über `geometryLift*` (smoothstep auf die Spiegeltiefe) auf
-        // ihren Spiegel. Das See-Gate aus dem Rasterwasser fehlt headless;
-        // ohne es hebt die Fläche hier höchstens mehr als im Bild.
+        // ihren Spiegel, mal dem See-Gate des Rasterwassers.
         var surface = t.h
         for k in 0..<surface.count where t.waterLevel[k] > sea && t.h[k] > sea {
             let pond = t.waterLevel[k] - t.h[k]
+            let gate = gated
+                ? WaterRender.smoothstep(WaterRender.lakeGateLo, WaterRender.lakeGateHi,
+                                         Double(water[k * 4 + 1]) / 255) : 1
             surface[k] += WaterRender.smoothstep(WaterRender.geometryLiftLo,
-                                                 WaterRender.geometryLiftHi, pond) * max(0, pond)
+                                                 WaterRender.geometryLiftHi, pond) * max(0, pond) * gate
         }
         // Über dem Meer zählt der Punkt nicht: dort liegt das Band als
         // Trübung unter der Meeresfläche.
@@ -138,21 +146,27 @@ final class RibbonFloatTests: XCTestCase {
     /// die Wasserlinie der Bänder im Gelände, nicht darüber.
     func testRibbonWaterlineDoesNotFloat() {
         let t = agedWorld(renderConfig(n: 192), years: 2000)
-        let mesh = builtRibbons(t).mesh
-        let s = RibbonFloat.measure(t, mesh: mesh)
+        let render = RenderState(geometryMode: true)
+        let water = frameOverlays(render, t).water
+        let s = RibbonFloat.measure(t, mesh: render.riverRibbonMesh, water: water)
         print(RibbonFloat.report(s, label: "n192/2000"))
         XCTAssertGreaterThan(s.edgePoints, 200, "Testwelt trägt zu wenig Bänder für eine Aussage")
-        // Schranken über BEIDE Welt-Realisierungen (System-libm): macOS misst
-        // 0,8 % über 0,08 und nichts über 0,15; die steilere Linux-Welt
-        // (glibc) 3,5 % über 0,08 (meist Segmentmitten über rauem Gelände,
-        // Mittel −0,09: das Band liegt dort tief im Einschnitt) und 2 von
-        // 2654 Punkten über 0,15. Vor dem Fix schwebten 64,9 % mit Mittel
-        // 0,34 — die Platte aus #233 liegt weit über beiden Schranken.
+        // Schranken über BEIDE Welt-Realisierungen (System-libm), gemessen
+        // MIT See-Gate (Review Neon Nr. 6; ohne Gate hob die Messung kleine
+        // Tümpel an, über denen das Bild nicht hebt): macOS 0,9 % über 0,08,
+        // nichts über 0,15, 1,1 % versunkene Mitten; die steilere Linux-Welt
+        // (glibc) 4,0 % über 0,08 (meist Segmentmitten über rauem Gelände,
+        // Mittel −0,07: das Band liegt dort tief im Einschnitt), 2 von 2654
+        // Punkten über 0,15 und 1,8 % versunkene Mitten (ohne Gate 3,5 %
+        // schwebend). Vor dem Fix aus #233 schwebten 64,9 % mit Mittel 0,34 —
+        // die Platte liegt weit über beiden Schranken.
         XCTAssertLessThanOrEqual(Double(s.floating), 0.05 * Double(s.edgePoints),
                                  "Wasserlinie schwebt über dem Gelände (Issue #233)")
         XCTAssertLessThanOrEqual(Double(s.over[0.15] ?? 0), 0.005 * Double(s.edgePoints),
                                  "Wasserlinie steht als Platte über dem Gelände (Issue #233)")
-        XCTAssertLessThanOrEqual(Double(s.sunk), 0.25 * Double(s.centerPoints),
+        // Bis zum Review Neon Nr. 6: 25 %. Ein Zehntel lässt beiden Welten
+        // Luft und fängt ein Band, das in größeren Teilen ins Gelände sinkt.
+        XCTAssertLessThanOrEqual(Double(s.sunk), 0.10 * Double(s.centerPoints),
                                  "Bandmitte verschwindet unter dem Gelände")
     }
 

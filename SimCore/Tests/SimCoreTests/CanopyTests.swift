@@ -95,6 +95,13 @@ final class CanopyTests: XCTestCase {
         // kaum Luft. n²/40 verlangt weiter über 900 geschlossene Waldzellen.
         XCTAssertGreaterThan(forest.filter { $0 == 255 }.count, n * n / 40,
                              "Testwelt braucht geschlossenen Wald, sonst prüft der Test nichts")
+        // Bänder: gegen die tatsächlich GEMALTE Wasserfläche, nicht gegen den
+        // Bandkern, aus dem die Maske selbst entsteht (Review Neon Nr. 1).
+        let s = CanopyWaterline.measure(terrain, mesh: render.riverRibbonMesh, forest: forest)
+        print(CanopyWaterline.report(s))
+        XCTAssertGreaterThan(s.points, 2000, "Testwelt trägt zu wenig Bandwasser für eine Aussage")
+        XCTAssertEqual(s.forested, 0,
+                       "Wald im sichtbaren Bandwasser (inkl. Wasserlinien-Rauschen); erster Punkt \(s.first.map { "(\($0.0), \($0.1))" } ?? "-")")
     }
 
     // MARK: - Gelände
@@ -456,11 +463,6 @@ final class CanopyTests: XCTestCase {
         let shader = try RepoSource.probe("game/shaders/water.gdshader")
         assertContains(shader, "smoothstep(\(glsl(WaterRender.ribbonVisibleLo)), \(glsl(WaterRender.ribbonVisibleHi)), mix(presence",
                        hint: "Fenster in water.gdshader und WaterRender.ribbonVisibleLo/Hi gemeinsam ändern")
-        // Der Lade-Vergleich in `game/tests/canopy.gd` klammert die Reichweite
-        // des Galeriewalds um abweichende Uferzellen aus.
-        let canopyTest = try RepoSource.probe("game/tests/canopy.gd")
-        assertContains(canopyTest, "RIPARIAN_REACH := \(CanopyRender.riparianReachCells)",
-                       hint: "game/tests/canopy.gd mit CanopyRender.riparianReachCells mitziehen")
         XCTAssertEqual(WaterRender.ribbonVisibleWidth(0), 0)
         XCTAssertEqual(WaterRender.ribbonVisibleWidth(1), 1)
     }
@@ -489,6 +491,97 @@ final class CanopyTests: XCTestCase {
         }
     }
 
+    /// Auwald wächst schneller nach (`fast`/`fastTau`,
+    /// `CanopyRender.riparianRegrowYears`): exponentielle Relaxation je Zelle
+    /// mit der eigenen Zeitkonstante, dt-invariant (Review Neon Nr. 7).
+    func testRiparianCellsRegrowOverTheFastTau() {
+        let target: [UInt8] = [255, 255]
+        let fast = [true, false]
+        let dt = 100.0, tau = CanopyRender.regrowYears, fastTau = CanopyRender.riparianRegrowYears
+        XCTAssertLessThan(fastTau, tau, "Auwald wächst schneller als der übrige Wald")
+        var memory: [Float] = [0, 0]
+        let out = ForestCanopyMask.regrow(&memory, toward: target, dtYears: dt, tau: tau,
+                                          fast: fast, fastTau: fastTau)
+        XCTAssertEqual(Double(memory[0]), Terrain.relaxFraction(dt: dt, tau: fastTau), accuracy: 1e-6)
+        XCTAssertEqual(Double(memory[1]), Terrain.relaxFraction(dt: dt, tau: tau), accuracy: 1e-6)
+        XCTAssertGreaterThan(out[0], out[1])
+        // Zwei halbe Schritte = ein ganzer (Framerate-Unabhängigkeit).
+        var split: [Float] = [0, 0]
+        _ = ForestCanopyMask.regrow(&split, toward: target, dtYears: dt / 2, tau: tau, fast: fast, fastTau: fastTau)
+        _ = ForestCanopyMask.regrow(&split, toward: target, dtYears: dt / 2, tau: tau, fast: fast, fastTau: fastTau)
+        XCTAssertEqual(split[0], memory[0], accuracy: 1e-5)
+        XCTAssertEqual(split[1], memory[1], accuracy: 1e-5)
+        // Ohne `fast` (leer) gilt überall `tau`.
+        var plain: [Float] = [0, 0]
+        _ = ForestCanopyMask.regrow(&plain, toward: target, dtYears: dt, tau: tau)
+        XCTAssertEqual(plain[0], memory[1])
+    }
+
+    /// `Riparian.baseBlock` (Look-Iteration 14): die Schutzmaske sperrt den
+    /// GRUNDWALD, nicht den Galeriewald. Volle Vegetation überall, ein
+    /// gesperrter Streifen um den Lauf: darin steht nur das Gehölzband am
+    /// Wasser, außerhalb der Grundwald (Review Neon Nr. 7).
+    func testProtectMaskBlocksTheBaseForestButNotTheRiparianBand() {
+        let n = 96
+        let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
+        var state = terrain.state
+        state.h = [Double](repeating: terrain.cfg.sea + 0.2, count: n * n)
+        terrain.restore(state)
+        var surfaces = [UInt8](repeating: 0, count: n * n * 4)
+        for k in 0..<(n * n) { surfaces[k * 4] = 255 }   // überall Wald
+        var core = [Double](repeating: 0, count: n * n)
+        var protect = [UInt8](repeating: 0, count: n * n)
+        for j in 0..<n {
+            core[j * n + 48] = 1
+            for i in 38...58 { protect[j * n + i] = 255 }
+        }
+        let out = ForestCanopyMask.target(
+            terrain, surfaces: surfaces, colors: [UInt8](repeating: 0, count: n * n * 4),
+            bandCore: core, waterBytes: [], wetMeadow: [], barSand: [],
+            clump: [Float](repeating: 0, count: n * n),
+            riparianNoise: [Float](repeating: 0.6, count: n * n), protect: protect).mask
+        for j in 4..<(n - 4) {
+            XCTAssertEqual(out[j * n + 51], 255, "Galeriewald trotz Sperre (51, \(j))")
+            XCTAssertEqual(out[j * n + 57], 0, "kein Grundwald in der Sperre (57, \(j))")
+            XCTAssertEqual(out[j * n + 20], 255, "Grundwald außerhalb (20, \(j))")
+        }
+    }
+
+    /// `canopyGuard` (Look-Iteration 14): der Galeriewald (`distance`) misst
+    /// nur Bänder und Seen; um Raster-Zubringer und nasse Wiese sperrt der
+    /// volle Saum der Schutzmaske, ohne Galeriewald (Review Neon Nr. 7).
+    func testCanopyGuardSeparatesBandsAndLakesFromRasterStreams() {
+        let n = 64
+        var band = [Double](repeating: 0, count: n * n)
+        var water = [UInt8](repeating: 0, count: n * n * 4)
+        var meadow = [Bool](repeating: false, count: n * n)
+        let riverByte = byte01(WaterRender.protectRiverThreshold)
+        let lakeByte = byte01(WaterRender.protectLakeThreshold)
+        for j in 0..<n {
+            band[j * n + 10] = 1                       // Band in Spalte 10
+            water[(j * n + 30) * 4] = riverByte        // Raster-Zubringer in Spalte 30
+            water[(j * n + 50) * 4 + 1] = lakeByte     // See-Ufer in Spalte 50
+        }
+        meadow[20 * n + 40] = true                     // nasser Tümpel
+        let guardMask = WaterProtectMask.canopyGuard(n: n, bandCoverage: band, waterBytes: water,
+                                                     wetMeadow: meadow)
+        let j = 32
+        // Band und See: Abstand gezählt, Sperre nur `waterSeamCells`.
+        XCTAssertEqual(guardMask.distance[j * n + 10], 0)
+        XCTAssertEqual(Int(guardMask.distance[j * n + 13]), 3)
+        XCTAssertEqual(guardMask.distance[j * n + 50], 0)
+        XCTAssertEqual(Int(guardMask.distance[j * n + 47]), 3)
+        XCTAssertEqual(guardMask.blocked[j * n + 10 + CanopyRender.waterSeamCells], 255)
+        XCTAssertEqual(guardMask.blocked[j * n + 11 + CanopyRender.waterSeamCells], 0)
+        // Raster-Zubringer und Tümpel: kein Galeriewald-Abstand, voller Saum.
+        XCTAssertEqual(guardMask.distance[j * n + 30], 255)
+        XCTAssertEqual(guardMask.distance[20 * n + 40], 255)
+        XCTAssertEqual(guardMask.blocked[j * n + 30 + WaterRender.protectSeamCells], 255)
+        XCTAssertEqual(guardMask.blocked[j * n + 31 + WaterRender.protectSeamCells], 0)
+        XCTAssertEqual(guardMask.blocked[20 * n + 40 + WaterRender.protectSeamCells], 255)
+        XCTAssertEqual(guardMask.blocked[20 * n + 41 + WaterRender.protectSeamCells], 0)
+    }
+
     func testTerrainShaderBuildsTheCanopyFromTheMask() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform sampler2D forest_tex",
@@ -514,5 +607,80 @@ final class CanopyTests: XCTestCase {
         for needle in ["frame[\"forest\"]", "apply_calibration(sim, \"canopy\", [terrain_mat])"] {
             assertContains(main, needle, hint: "Main.gd liest Kronendach und Waldmaske über die Brücke")
         }
+    }
+}
+
+/// Wald im sichtbaren Bandwasser (Review Neon Nr. 1): misst die Waldmaske,
+/// wie der Terrain-Shader sie an jedem Punkt der GEMALTEN Wasserfläche eines
+/// Bands sieht.
+///
+/// Sichtbares Wasser: `water.gdshader` malt Wasser für
+/// |2u − 1| ≤ (1 − `ribbonWaterline` + `ribbonWaterlineJitter`) ·
+/// visible(alpha) — die äußerste Lage der verrauschten Wasserlinie. Die
+/// Waldmaske liest der Terrain-Vertex-Shader je Gitterpunkt (`forest_tex`
+/// an der Texelmitte, Gitterpunkt = Sim-Zelle bei `renderGrid == n`), über
+/// das Dreieck interpoliert: Wald an einem Punkt heißt, die interpolierte
+/// Maske übersteigt die Schwelle, ab der `canopy()` überhaupt etwas tut
+/// (0,002). Dreiecke wie Godots PlaneMesh (Anti-Diagonale, s.
+/// `renderSurfaceHeight`).
+enum CanopyWaterline {
+    struct Summary {
+        var points = 0
+        var forested = 0
+        var maxForest = 0.0
+        var first: (Double, Double)?
+    }
+
+    static func forestAt(_ forest: [UInt8], _ gx: Double, _ gz: Double, n: Int) -> Double {
+        let xi = min(max(Int(gx.rounded(.down)), 0), n - 2)
+        let zi = min(max(Int(gz.rounded(.down)), 0), n - 2)
+        let fx = min(max(gx - Double(xi), 0), 1), fz = min(max(gz - Double(zi), 0), 1)
+        func f(_ i: Int, _ j: Int) -> Double { Double(forest[(zi + j) * n + xi + i]) / 255 }
+        if fx + fz <= 1 {
+            return f(0, 0) + fx * (f(1, 0) - f(0, 0)) + fz * (f(0, 1) - f(0, 0))
+        }
+        return f(1, 1) + (1 - fx) * (f(0, 1) - f(1, 1)) + (1 - fz) * (f(1, 0) - f(1, 1))
+    }
+
+    static func measure(_ t: Terrain, mesh: RibbonMesh, forest: [UInt8]) -> Summary {
+        let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world / 2
+        let reach = 1 - WaterRender.ribbonWaterline + WaterRender.ribbonWaterlineJitter
+        var out = Summary()
+        let starts = mesh.stripStarts.map(Int.init) + [mesh.vertices.count]
+        for s in 0..<(starts.count - 1) {
+            let lo = starts[s], hi = starts[s + 1]
+            guard hi - lo >= 4 else { continue }
+            for v in stride(from: lo, to: hi - 2, by: 2) {
+                let L0 = SIMD3<Double>(mesh.vertices[v]), R0 = SIMD3<Double>(mesh.vertices[v + 1])
+                let L1 = SIMD3<Double>(mesh.vertices[v + 2]), R1 = SIMD3<Double>(mesh.vertices[v + 3])
+                let a0 = Double(mesh.colors[v].w), a1 = Double(mesh.colors[v + 2].w)
+                for tt in stride(from: 0.0, through: 0.75, by: 0.25) {
+                    let vis = WaterRender.ribbonVisibleWidth(a0 + (a1 - a0) * tt)
+                    guard vis > 0 else { continue }
+                    let du = 0.5 * reach * vis
+                    for q in 0...8 {
+                        let u = 0.5 - du + 2 * du * Double(q) / 8
+                        let p: SIMD3<Double> = u + tt <= 1
+                            ? L0 + u * (R0 - L0) + tt * (L1 - L0)
+                            : R1 + (1 - u) * (L1 - R1) + (1 - tt) * (R0 - R1)
+                        let gx = (p.x + half) / cs, gz = (p.z + half) / cs
+                        guard gx >= 0, gz >= 0, gx <= Double(n - 1), gz <= Double(n - 1) else { continue }
+                        let f = forestAt(forest, gx, gz, n: n)
+                        out.points += 1
+                        out.maxForest = max(out.maxForest, f)
+                        if f > 0.002 {
+                            out.forested += 1
+                            if out.first == nil { out.first = (gx, gz) }
+                        }
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    static func report(_ s: Summary) -> String {
+        String(format: "Bandwasser: %d Punkte, mit Wald %d = %.2f %%, max Maske %.2f",
+               s.points, s.forested, 100 * Double(s.forested) / Double(max(1, s.points)), s.maxForest)
     }
 }

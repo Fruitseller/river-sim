@@ -268,6 +268,15 @@ public enum MaterialRender {
     /// geschärft. 0 hieße der weiche Verlauf von vorher.
     public static let rockFray = 0.6
 
+    /// Schnee- und Fels-Umverteilung (`snowCavity` ff., `rockFray`) setzen
+    /// erst ab einem kleinen Kälte- bzw. Felsgewicht ein (0,002 bzw. 0,005 im
+    /// Shader: ohne die Schwelle lägen Schnee und Fels in jeder Rinne bzw. auf
+    /// jeder Rippe). Bis zu diesem Gewicht blenden sie stetig ein. Bis zum
+    /// Review Neon Nr. 4 schalteten sie an der Schwelle hart: ein Pixel mit
+    /// Kälte 0,0021 in einer Rinne lag voll im Schnee, sein Nachbar mit
+    /// 0,0019 ganz frei. Oberhalb bleibt alles wie zuvor.
+    public static let redistributeFade = 0.05
+
     /// Felsköpfe auf Grashängen: Weltsteigung JE PIXEL, ab der auf Rippen
     /// Fels aus dem Gras tritt, und ab der das voll gilt, sowie der höchste
     /// Anteil. Dazu kahle Schuttstreifen in den Rinnen derselben Hänge

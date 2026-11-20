@@ -127,17 +127,27 @@ func _check_no_instance_trees(main: Node) -> void:
 
 ## Pinselring und Kameraziel liegen auf dem Dach: Sim-Höhe plus Dachhöhe an
 ## einer Zelle mit geschlossenem Wald (ohne Verschiebung, die prüft relief.gd).
+## Am Bestandsrand hebt der Terrain-Vertex-Shader nach der geglätteten Maske
+## (`canopy_lift_smooth_texels`) und damit weniger; dort muss die sichtbare
+## Fläche genauso tief liegen (Review Neon Nr. 2).
 func _check_visible_surface(main: Node) -> void:
 	main.relief_lift_cache = PackedFloat32Array()
 	main.relief_bake_frame = -1
 	var forest: PackedByteArray = _frame(main.sim)["forest"]
 	var n: int = main.N
+	# Innen: 6×6 geschlossener Wald um das Quad (i … i+1, j … j+1), so reicht
+	# auch die Glättung beider Ecken nur über Wald.
 	var cell := -1
-	for j in range(2, n - 2):
-		for i in range(2, n - 2):
+	for j in range(3, n - 4):
+		for i in range(3, n - 4):
 			var full := true
-			for k in [j * n + i, j * n + i + 1, (j + 1) * n + i, (j + 1) * n + i + 1]:
-				full = full and forest[k] == 255
+			for dj in range(-2, 4):
+				for di in range(-2, 4):
+					full = full and forest[(j + dj) * n + i + di] == 255
+					if not full:
+						break
+				if not full:
+					break
 			if full:
 				cell = j * n + i
 				break
@@ -155,6 +165,54 @@ func _check_visible_surface(main: Node) -> void:
 	main.cam_target = Vector3(gx * main.step - main.half, 0.0, gz * main.step - main.half)
 	main.cam_target.y = main._surface_y_at(main.cam_target)
 	_check(absf(main.cam_target.y - (sim_y + height)) < 1e-4, "Kameraziel liegt auf dem Dach")
+	_check_canopy_edge(main, forest)
+
+## Bestandsrand: ein Gitterpunkt mit voller Maske, dessen geglättete Maske
+## unter `canopy_lift_lo` fällt. Der Terrain-Vertex-Shader hebt ihn nicht
+## (`lift_f = min(v_forest, sm * 0.25)`); hier unabhängig davon nachgerechnet
+## aus der Maske des Frames.
+func _check_canopy_edge(main: Node, forest: PackedByteArray) -> void:
+	var n: int = main.N
+	var calib: Dictionary = main.canopy_calib
+	var lo: float = calib["canopy_lift_lo"]
+	var o: float = calib["canopy_lift_smooth_texels"]
+	var height: float = calib["canopy_height"]
+	var found := 0
+	var checked_low := false
+	for j in range(3, n - 3):
+		for i in range(3, n - 3):
+			if forest[j * n + i] != 255:
+				continue
+			var sm := 0.0
+			for d in [Vector2(o, o), Vector2(-o, -o), Vector2(o, -o), Vector2(-o, o)]:
+				sm += _bilinear_mask(forest, n, i + d.x, j + d.y)
+			var expect := smoothstep(lo, calib["canopy_lift_hi"], minf(1.0, sm * 0.25)) * height
+			if expect > height * 0.5:
+				continue
+			var gx := float(i)
+			var gz := float(j)
+			var sim_y: float = main._sample_h(gx, gz) * main.hscale
+			var got: float = main._surface_y(gx, gz) - sim_y
+			_check(absf(got - expect) < 1e-4,
+				"Bestandsrand (%d, %d): sichtbare Fläche %.4f über Sim, Shader hebt %.4f" % [i, j, got, expect])
+			checked_low = checked_low or expect == 0.0
+			found += 1
+			if found >= 20:
+				break
+		if found >= 20:
+			break
+	_check(found >= 20 and checked_low, "Produktionswelt braucht Bestandsränder (%d)" % found)
+
+func _bilinear_mask(forest: PackedByteArray, n: int, gx: float, gz: float) -> float:
+	var x := clampf(gx, 0.0, n - 1.0)
+	var z := clampf(gz, 0.0, n - 1.0)
+	var x0 := mini(int(x), n - 2)
+	var z0 := mini(int(z), n - 2)
+	var fx := x - x0
+	var fz := z - z0
+	var k := z0 * n + x0
+	return (forest[k] * (1 - fx) * (1 - fz) + forest[k + 1] * fx * (1 - fz)
+		+ forest[k + n] * (1 - fx) * fz + forest[k + n + 1] * fx * fz) / 255.0
 
 ## Der Dummy-Renderer liest Texturen nicht zurück; geprüft wird das Bild, das
 ## Main zuletzt hochgeladen hat (`forest_img`), und dass die Textur dieselbe
@@ -193,16 +251,16 @@ func _check_brush(main: Node) -> void:
 	_check(main.cover_field._img.get_data() == _frame(main.sim)["cover"],
 		"Pinselstrich: hochgeladen ist die aktuelle Bodenbedeckung (#174 D)")
 
-## Neugenerieren tauscht den Wald, Laden holt den gespeicherten zurück. Nicht
-## mitgespeichert ist der Render-Zustand des Rasterwassers (EWMA, s. AGENTS.md);
-## nach dem Laden darf die Schutzmaske deshalb an einzelnen Ufern abweichen, und
-## der Wald folgt ihr. Seit Look-Iteration 12 reicht der Galeriewald bis
-## `CanopyRender.riparianReachCells` Zellen vom Wasser; eine abweichende
-## Uferzelle verschiebt ihn so weit. Verglichen wird der Wald überall sonst.
-const RIPARIAN_REACH := 6
-# Als Anteil statt fester Zahl: die Linux-Welt (glibc-libm) trifft 9 Zellen
-# von 517.537, der Mac eine. 1 von 10.000 sind hier rund 50 Zellen.
-const MAX_REGROW_SHARE := 10000
+## Neugenerieren tauscht den Wald, Laden holt den gespeicherten zurück —
+## bit-gleich. Der Render-Zustand des Rasterwassers reist zwar nicht im
+## Spielstand (EWMA, s. AGENTS.md), aber jeder Weltwechsel endet in einem
+## `settled`-Frame mit Blend 1,0, der ihn vollständig überschreibt. Bis zum
+## Review Neon Nr. 5 wich der Wald hier ab (Mac 1, Linux 9 Zellen), und der
+## Test klammerte Ufer aus und duldete einen Anteil: Ursache war nicht das
+## Gedächtnis der Waldmaske (der Test lässt keine Zeit laufen), sondern dass
+## der Endstand des Pinselstrichs die Bänder des Vor-Pinsel-Stands behielt
+## (`RenderState.rebuildRibbonsIfDue`, Wächter
+## `RenderFrameTests.testFinishedStrokeMatchesTheLoadedWorld`).
 func _check_regenerate_and_load(main: Node) -> void:
 	var tex: Texture2D = main.forest_tex
 	var path := "user://tests/canopy.%s" % main.sim.worldFileExtension()
@@ -217,29 +275,14 @@ func _check_regenerate_and_load(main: Node) -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	var got: PackedByteArray = main.forest_img.get_data()
 	var protect: PackedByteArray = _frame(main.sim)["protect"]
-	var n: int = main.N
-	var near_diff := PackedByteArray()
-	near_diff.resize(saved.size())
-	for k in range(saved.size()):
-		if protect[k] != saved_protect[k]:
-			var ci := k % n
-			var cj := k / n
-			for j in range(maxi(0, cj - RIPARIAN_REACH), mini(n, cj + RIPARIAN_REACH + 1)):
-				for i in range(maxi(0, ci - RIPARIAN_REACH), mini(n, ci + RIPARIAN_REACH + 1)):
-					near_diff[j * n + i] = 1
-	var compared := 0
 	var wrong := 0
+	var wrong_protect := 0
 	for k in range(saved.size()):
-		if near_diff[k] == 0:
-			compared += 1
-			if got[k] != saved[k]:
-				wrong += 1
-	# Das Gedächtnis der Waldmaske (#167) reist nicht im Spielstand: wo der
-	# Wald vor dem Speichern noch nachwuchs (Galeriewald über
-	# `CanopyRender.riparianRegrowYears`), zeigt das Laden gleich das Ziel.
-	# Look-Iteration 13 traf das eine Zelle (0 → 169); erlaubt sind
-	# compared / MAX_REGROW_SHARE, ein vertauschter Wald wiche um Zehntausende ab.
-	_check(compared > saved.size() * 9 / 10 and wrong <= compared / MAX_REGROW_SHARE,
-		"Laden holt den gespeicherten Wald zurück (%d von %d Zellen abweichend)"
-			% [wrong, compared])
+		if got[k] != saved[k]:
+			wrong += 1
+		if protect[k] != saved_protect[k]:
+			wrong_protect += 1
+	_check(wrong == 0 and wrong_protect == 0,
+		"Laden holt den gespeicherten Wald zurück (%d Wald-, %d Schutzzellen von %d abweichend)"
+			% [wrong, wrong_protect, saved.size()])
 	_check_uploaded(main, tex, "Laden")

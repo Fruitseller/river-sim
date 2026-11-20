@@ -47,6 +47,7 @@ final class WaterUniformsTests: XCTestCase {
     private static let ribbonColors = ["water_delta_plume_color", "water_oxbow_water_color"]
     /// Offenes Meer (#155): Tiefen-Farbe über dem Schelf, Brandung, Rausch-Wellen.
     private static let oceanScalars = [
+        "water_ocean_surf_slope_lo", "water_ocean_surf_slope_hi",
         "water_ocean_depth_span", "water_ocean_mid_depth",
         "water_ocean_shoal_scale",
         "water_ocean_shoal_depth_variation",
@@ -79,7 +80,7 @@ final class WaterUniformsTests: XCTestCase {
         "water_bar_roughness",
         // Meeresstrand (Hill-Climber Nr. 8).
         "water_beach_wet_height", "water_beach_height_hi",
-        "water_beach_edge_lo", "water_beach_edge_hi",
+        "water_beach_edge_lo", "water_beach_edge_hi", "water_beach_blend_height",
     ]
     private static let barColors = [
         "water_bar_sand_color", "water_bar_sand_wet_color",
@@ -111,20 +112,36 @@ final class WaterUniformsTests: XCTestCase {
     /// Steilwänden (Befund #174, Seed 1337 / Jahr 2.305).
     private static let ribbonFadeScalars = ["water_ribbon_fade_cap"]
     private static let wallScalars = ["water_wall_slope_lo", "water_wall_slope_hi"]
+    /// Lauf-Optik (Look-Iteration 14): Kolk ↔ Riffel, Schaum, Glanz und
+    /// Wolken-Spiegelung — Band und Raster-Fluss lesen dieselben Werte
+    /// (Review Neon Nr. 7: fehlte hier, nur das Register prüfte „steht in
+    /// irgendeinem Shader").
+    private static let runScalars = [
+        "water_riffle_depth", "water_foam_amount", "water_river_specular",
+        "water_cloud_reflection",
+    ]
+    private static let runColors = ["water_riffle_color", "water_foam_color"]
+    /// Nur das Band: Schaum-Muster und Weißwasser am Ufer.
+    private static let ribbonFoamScalars = ["water_foam_scale", "water_foam_outer"]
+    /// Nur das Raster: Fließen an Steilstrecken und Seefarbe.
+    private static let rasterRunScalars = ["water_raster_steep_lo", "water_raster_steep_hi"]
+    private static let rasterRunColors = ["water_lake_color"]
 
     private static let expectedScalars: [String: [String]] = [
         "game/shaders/terrain.gdshader": windowScalars + opticsScalars + opacityScalars + barScalars
-            + wallScalars,
+            + wallScalars + runScalars + rasterRunScalars,
         "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars
-            + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars,
+            + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars
+            + runScalars + ribbonFoamScalars + ["water_ocean_depth_span"],
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
     private static let expectedColors: [String: [String]] = [
         // Das Bett unter dem Wasser teilen Band und Raster-Wasser.
-        "game/shaders/terrain.gdshader": opticsColors + barColors + ["water_bed_color"],
+        "game/shaders/terrain.gdshader": opticsColors + barColors + ["water_bed_color"]
+            + runColors + rasterRunColors,
         "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors + profileColors
-            + ["water_bed_color"],
+            + ["water_bed_color"] + runColors + ["water_ocean_shallow_color"],
         // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
         // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
         // bleibt die Optik (Fresnel, Rauheit, Specular, oben).
@@ -157,6 +174,23 @@ final class WaterUniformsTests: XCTestCase {
                                hint: "\(path): \(name) default-frei deklariert (#92)")
                 XCTAssertGreaterThanOrEqual(shader.count(ofIdentifier: name), 2,
                                             "\(path): \(name) wird deklariert, aber nie gelesen")
+            }
+        }
+    }
+
+    /// Vollständig in der Gegenrichtung: jede `water_*`-Uniform, die ein
+    /// Wasser-Shader deklariert, steht oben in seiner Liste. Sonst konnte ein
+    /// Shader eine Lesung verlieren, solange irgendein anderer den Namen
+    /// trug (Review Neon Nr. 7, Look-Iteration 14).
+    func testEveryDeclaredWaterUniformIsListed() throws {
+        let regex = try NSRegularExpression(pattern: #"uniform\s+(?:float|vec3)\s+(water_[a-z0-9_]+)\s*;"#)
+        for path in Self.expectedScalars.keys {
+            let code = try RepoSource.probe(path).code
+            let listed = Set(Self.expectedScalars[path, default: []] + Self.expectedColors[path, default: []])
+            let range = NSRange(code.startIndex..., in: code)
+            for match in regex.matches(in: code, range: range) {
+                let name = String(code[Range(match.range(at: 1), in: code)!])
+                XCTAssertTrue(listed.contains(name), "\(path): \(name) fehlt in WaterUniformsTests")
             }
         }
     }

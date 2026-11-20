@@ -2455,9 +2455,10 @@ func _surface_y(gx: float, gz: float) -> float:
 			* relief_geometry_fade(shown_year, relief_geometry_age)
 	return y + _forest_lift_at(gx, gz)
 
-## Dachzuschlag in Welt-Y wie im Terrain-Shader: Waldmaske bilinear, dann
-## das Anhebe-Fenster. Die Maske wird erst beim ersten Raycast nach einem
-## Upload in Floats gewandelt.
+## Dachzuschlag in Welt-Y wie im Terrain-Vertex-Shader: je Gitterpunkt die
+## Anhebung aus der geglätteten Maske (`_canopy_vertex_lift`), dazwischen
+## bilinear wie die übrigen Höhen hier. Die Maske wird erst beim ersten
+## Raycast nach einem Upload in Floats gewandelt.
 func _forest_lift_at(gx: float, gz: float) -> float:
 	if forest_img == null:
 		return 0.0
@@ -2465,8 +2466,33 @@ func _forest_lift_at(gx: float, gz: float) -> float:
 		var img: Image = forest_img.duplicate()
 		img.convert(Image.FORMAT_RF)
 		forest_lift_cache = img.get_data().to_float32_array()
-	return smoothstep(canopy_calib["canopy_lift_lo"], canopy_calib["canopy_lift_hi"],
-		_sample_grid(forest_lift_cache, gx, gz)) * canopy_calib["canopy_height"]
+	var xi := clampi(int(floor(gx)), 0, N - 2)
+	var zi := clampi(int(floor(gz)), 0, N - 2)
+	var fx := clampf(gx - xi, 0.0, 1.0)
+	var fz := clampf(gz - zi, 0.0, 1.0)
+	var lift := _canopy_vertex_lift(xi, zi) * (1 - fx) * (1 - fz) \
+		+ _canopy_vertex_lift(xi + 1, zi) * fx * (1 - fz) \
+		+ _canopy_vertex_lift(xi, zi + 1) * (1 - fx) * fz \
+		+ _canopy_vertex_lift(xi + 1, zi + 1) * fx * fz
+	return lift * canopy_calib["canopy_height"]
+
+## Anhebe-Anteil (0…1) am Gitterpunkt (i, j), Spiegel des Terrain-Vertex-
+## Shaders (`lift_f`): unter `canopy_lift_lo` hebt nichts, sonst das Minimum
+## aus eigener Maske und dem Mittel der vier diagonalen Abgriffe im Abstand
+## `canopy_lift_smooth_texels` (Review Neon Nr. 2: vorher fehlte die
+## Glättung, am Bestandsrand schwebten Kuppel und Raycast-Treffer um die
+## volle Dachhöhe über dem Bild).
+func _canopy_vertex_lift(i: int, j: int) -> float:
+	var lo: float = canopy_calib["canopy_lift_lo"]
+	var f := forest_lift_cache[j * N + i]
+	if f <= lo:
+		return 0.0
+	var o: float = canopy_calib["canopy_lift_smooth_texels"]
+	var sm := _sample_grid(forest_lift_cache, i + o, j + o) \
+		+ _sample_grid(forest_lift_cache, i - o, j - o) \
+		+ _sample_grid(forest_lift_cache, i + o, j - o) \
+		+ _sample_grid(forest_lift_cache, i - o, j + o)
+	return smoothstep(lo, canopy_calib["canopy_lift_hi"], minf(f, sm * 0.25))
 
 ## Anteil der echten Verformung nach Geländealter, wie im Terrain-Shader
 ## (`relief_lift`): auf jungem Relief nur Schattierung, ab `age` voll.
