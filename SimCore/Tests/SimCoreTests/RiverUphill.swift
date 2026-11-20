@@ -7,8 +7,7 @@ import XCTest
 /// `RiverRibbonRenderer` sie baut, entlang des Laufs stromab.
 ///
 /// Gemessen wird am fertigen `RibbonMesh` (Fluss-Streifen, `uv2.x ==
-/// ribbonKindRiver`): Bandhöhe wie im Renderer (Spiegel über Wasser, sonst
-/// das Gelände unter der Mitte), dazu und die tiefste Stelle des
+/// ribbonKindRiver`): Höhe der Bandmitte und tiefste Stelle des
 /// Querschnitts (±Halbbreite + 1,5 Zellen). Ein ANSTIEG ist eine Strecke
 /// sichtbarer Stützpunkte, deren Bandhöhe über dem laufenden Minimum
 /// ALLER Stützpunkte stromauf liegt; seine Höhe ist das größte Übermaß darin, in
@@ -67,6 +66,12 @@ enum RibbonUphill {
     /// Rauschgrenze: Übermaß unter einer Viertel-Tiefe zählt nicht.
     static let toleranceDepths = 0.25
 
+    /// Wie in `RibbonFloat.measure` liegt die Bandmitte bei u = 0,5
+    /// zwischen den fertigen Kanten. Nur die Überhöhung zurückrechnen.
+    static func centerHeight(_ left: SIMD3<Float>, _ right: SIMD3<Float>) -> Double {
+        (Double(left.y) + Double(right.y)) * 0.5 / RenderContract.heightScale
+    }
+
     static func measure(_ t: Terrain, mesh: RibbonMesh) -> Summary {
         let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world / 2
         let cellArea = cs * cs
@@ -96,11 +101,7 @@ enum RibbonUphill {
                 gz[a] = (Double(l.z + r.z) * 0.5 + half) / cs
                 let ex = Double(r.x - l.x), ez = Double(r.z - l.z)
                 hw[a] = 0.5 * (ex * ex + ez * ez).squareRoot() / cs
-                // Höhe, auf die der Renderer das Band legt: Spiegel über Wasser,
-                // sonst das Gelände unter der Mitte (die Kanten weichen davon um
-                // bis zu ±Halbbreite·`ribbonMaxCrossSlope` ab).
-                let k = min(max(Int(gz[a].rounded()), 0), n - 1) * n + min(max(Int(gx[a].rounded()), 0), n - 1)
-                y[a] = openWaterSurface(k, h: h, wl: t.waterLevel, sea: t.cfg.sea) ?? hAt(gx[a], gz[a])
+                y[a] = centerHeight(l, r)
                 alpha[a] = Double(mesh.colors[s0 + 2 * a].w)
             }
             func nearestNode(_ x: Double, _ z: Double) -> Int {
@@ -516,13 +517,14 @@ final class RiverUphillDiagnostics: XCTestCase {
             var runMin = Double.infinity
             for a in 0..<((s1 - s0) / 2) {
                 let l = mesh.vertices[s0 + 2 * a], r = mesh.vertices[s0 + 2 * a + 1]
+                let y = RibbonUphill.centerHeight(l, r)
+                let rise = y - runMin
+                runMin = min(runMin, y)
                 guard Double(mesh.colors[s0 + 2 * a].w) >= RibbonUphill.visibleAlpha else { continue }
-                let y = (Double(l.y + r.y) * 0.5 - RenderContract.riverLift) / RenderContract.heightScale
                 let gx = (Double(l.x + r.x) * 0.5 + half) / cs, gz = (Double(l.z + r.z) * 0.5 + half) / cs
-                let ex = (y - runMin) / 0.0015   // ~ eine Bankfull-Tiefe bei b ≈ 4,5
+                let ex = rise / 0.0015   // ~ eine Bankfull-Tiefe bei b ≈ 4,5
                 let c: (UInt8, UInt8, UInt8) = ex > 0.5 ? (255, UInt8(max(0, 200 - 20 * ex)), 0) : (0, 230, 60)
                 put(gx, gz, c, r: scale / 3)
-                runMin = min(runMin, y)
             }
         }
         for (a, b) in ends { put(a.x, a.z, (255, 0, 255), r: scale); put(b.x, b.z, (255, 255, 255), r: scale) }
