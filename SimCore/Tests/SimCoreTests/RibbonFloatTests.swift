@@ -142,8 +142,16 @@ final class RibbonFloatTests: XCTestCase {
         let s = RibbonFloat.measure(t, mesh: mesh)
         print(RibbonFloat.report(s, label: "n192/2000"))
         XCTAssertGreaterThan(s.edgePoints, 200, "Testwelt trägt zu wenig Bänder für eine Aussage")
-        XCTAssertLessThanOrEqual(Double(s.floating), 0.01 * Double(s.edgePoints),
+        // Schranken über BEIDE Welt-Realisierungen (System-libm): macOS misst
+        // 0,8 % über 0,08 und nichts über 0,15; die steilere Linux-Welt
+        // (glibc) 3,5 % über 0,08 (meist Segmentmitten über rauem Gelände,
+        // Mittel −0,09: das Band liegt dort tief im Einschnitt) und 2 von
+        // 2654 Punkten über 0,15. Vor dem Fix schwebten 64,9 % mit Mittel
+        // 0,34 — die Platte aus #233 liegt weit über beiden Schranken.
+        XCTAssertLessThanOrEqual(Double(s.floating), 0.05 * Double(s.edgePoints),
                                  "Wasserlinie schwebt über dem Gelände (Issue #233)")
+        XCTAssertLessThanOrEqual(Double(s.over[0.15] ?? 0), 0.005 * Double(s.edgePoints),
+                                 "Wasserlinie steht als Platte über dem Gelände (Issue #233)")
         XCTAssertLessThanOrEqual(Double(s.sunk), 0.25 * Double(s.centerPoints),
                                  "Bandmitte verschwindet unter dem Gelände")
     }
