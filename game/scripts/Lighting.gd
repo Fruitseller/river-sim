@@ -15,34 +15,59 @@ extends RefCounted
 ## der Kameraposition um das Ziel): eine Kamera mit Yaw = Azimut hat die Sonne
 ## im Rücken, Yaw = Azimut ± 180° blickt ins Gegenlicht.
 ## Azimut −50° hält die Startkamera (Yaw 0.7) im Seitenlicht wie in der Studie.
-## Höhe 38° statt der 28° der Studie, die auf IHRE eine Kamera abgestimmt war:
-## bei 28° lag im Gegenlicht jede der Kamera zugewandte Flanke im Schatten,
-## 48° nahm dem Seitenlicht die Schattenlänge. Bildbelege aus vier
-## Blickrichtungen: docs/graphics-quality.md §Licht (#151).
 const SUN_AZIMUTH_DEG := -50.0
-const SUN_ELEVATION_DEG := 38.0
-const SUN_COLOR := Color(1.0, 0.89, 0.74)
-const SUN_ENERGY := 2.0
+## Höhe 30° (Look-Iterationen 9/10; #151 hatte 38° aus einem Vergleich von 28°,
+## 38° und 48°, docs/graphics-quality.md §Licht). Die tiefere, warme Sonne legt
+## lange Schatten in Täler und hinter Grate und modelliert das Relief auch in
+## der Totalen (Referenz d). Die Schwäche von 28° in #151, im Gegenlicht
+## schwarze Flanken, fängt heute das kühlere, offenere Himmelslicht
+## (AMBIENT_*) ab; die Energie gleicht den flacheren Einfall auf Ebenen aus.
+const SUN_ELEVATION_DEG := 30.0
+const SUN_COLOR := Color(1.0, 0.85, 0.66)
+const SUN_ENERGY := 2.4
 
 ## Himmel: Horizontfarbe ist zugleich die Farbe der Luftperspektive, damit die
 ## Ferne ohne Kante in den Himmel übergeht.
-const SKY_TOP := Color(0.27, 0.42, 0.64)
-const SKY_HORIZON := Color(0.70, 0.76, 0.82)
+## Look-Iteration 10: tiefes Blau oben, Horizont hell und klar. Nicht
+## beige: das Wasser spiegelt bei tiefer Sonne vor allem den Horizont und
+## wurde damit milchig (verworfener Zwischenstand); die Wärme der Ferne kommt
+## aus der Sonnenstreuung des Dunsts (FOG_SUN_SCATTER).
+const SKY_TOP := Color(0.14, 0.33, 0.68)
+const SKY_HORIZON := Color(0.74, 0.80, 0.87)
 const SKY_GROUND_BOTTOM := Color(0.22, 0.27, 0.32)
 
 ## Umgebungslicht: Himmelslicht allein färbt Schattenseiten blau (Fels las sich
 ## in der Studie als Schnee); ein Drittel neutral-warmes Licht dagegen.
-const AMBIENT_ENERGY := 0.5
-const AMBIENT_SKY_CONTRIBUTION := 0.65
-const AMBIENT_COLOR := Color(0.62, 0.58, 0.52)
+## Look-Iteration 10: kühler als in #151 (Himmelsanteil 0,65 → 0,80, neutral
+## statt warm), damit warme Sonnenseiten gegen blau-offene Schatten stehen.
+## Die Energie liegt knapp unter #151 (0,5 → 0,48): Iteration 9 (0,42) ließ die
+## langen Schatten fast schwarz zulaufen, ein Zwischenstand mit 0,55–0,62
+## machte das Bild flau und milchig (verworfen, A 4 B 5). Der neutrale Anteil
+## bleibt, sonst liest sich Fels im Schatten wieder als Schnee.
+const AMBIENT_ENERGY := 0.48
+const AMBIENT_SKY_CONTRIBUTION := 0.80
+const AMBIENT_COLOR := Color(0.56, 0.57, 0.58)
 
-const TONEMAP_EXPOSURE := 0.9
+## Tonemapping (Look-Iterationen 9/10): AgX entsättigt und verflacht; mehr
+## AgX-Kontrast und Sättigung nehmen den Grauschleier, ohne Schnee auszubrennen.
+## Das Wiesengrün im Terrain-Shader ist dafür etwas blauärmer (satter) gestellt.
+const TONEMAP_EXPOSURE := 0.95
+const TONEMAP_AGX_CONTRAST := 1.45
+const ADJUST_CONTRAST := 1.08
+const ADJUST_SATURATION := 1.15
 
 ## Luftperspektive (exponentieller Nebel mit Himmelsanteil) und Talnebel, der
 ## knapp über dem Meer in Tälern und Becken liegt.
-const FOG_DENSITY := 0.0016
+## Look-Iteration 9/10: dünner (0,0016 → 0,0011), damit die Übersicht nicht
+## milchig wird; die Ferne staffelt trotzdem, zur Sonne hin warm gestreut
+## (FOG_SUN_SCATTER 0,12 → 0,40). Dichterer Dunst (0,0024) machte die Totale
+## flau und verlor im Urteil.
+const FOG_DENSITY := 0.0011
 const FOG_AERIAL_PERSPECTIVE := 0.6
-const FOG_SUN_SCATTER := 0.12
+const FOG_SUN_SCATTER := 0.40
+## Der Himmel selbst nimmt nur einen Teil des Dunsts an, sonst überdeckt die
+## Nebelfarbe den Blauverlauf über dem Horizont (Look-Iteration 9).
+const FOG_SKY_AFFECT := 0.35
 const VALLEY_FOG_ABOVE_SEA := 1.5 # Welteinheiten über dem Meeresspiegel
 const VALLEY_FOG_DENSITY := 0.035
 
@@ -121,20 +146,22 @@ static func make_environment(quality: String, sea_y: float) -> Environment:
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	e.tonemap_mode = Environment.TONE_MAPPER_AGX
 	e.tonemap_exposure = TONEMAP_EXPOSURE
+	e.tonemap_agx_contrast = TONEMAP_AGX_CONTRAST
 	e.ssao_enabled = quality != "performance"
 	e.ssao_radius = 2.5
 	e.ssao_intensity = 2.2
 	e.ssao_power = 1.4
 	e.glow_enabled = false
 	e.adjustment_enabled = true
-	e.adjustment_contrast = 1.06
-	e.adjustment_saturation = 1.05
+	e.adjustment_contrast = ADJUST_CONTRAST
+	e.adjustment_saturation = ADJUST_SATURATION
 	e.fog_enabled = true
 	e.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	e.fog_light_color = SKY_HORIZON
 	e.fog_density = FOG_DENSITY
 	e.fog_aerial_perspective = FOG_AERIAL_PERSPECTIVE
 	e.fog_sun_scatter = FOG_SUN_SCATTER
+	e.fog_sky_affect = FOG_SKY_AFFECT
 	e.fog_height = sea_y + VALLEY_FOG_ABOVE_SEA
 	e.fog_height_density = VALLEY_FOG_DENSITY
 	return e
