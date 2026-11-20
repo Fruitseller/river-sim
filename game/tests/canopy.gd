@@ -200,7 +200,9 @@ func _check_brush(main: Node) -> void:
 ## `CanopyRender.riparianReachCells` Zellen vom Wasser; eine abweichende
 ## Uferzelle verschiebt ihn so weit. Verglichen wird der Wald überall sonst.
 const RIPARIAN_REACH := 6
-const MAX_REGROW_CELLS := 8
+# Als Anteil statt fester Zahl: die Linux-Welt (glibc-libm) trifft 9 Zellen
+# von 517.537, der Mac eine. 1 von 10.000 sind hier rund 50 Zellen.
+const MAX_REGROW_SHARE := 10000
 func _check_regenerate_and_load(main: Node) -> void:
 	var tex: Texture2D = main.forest_tex
 	var path := "user://tests/canopy.%s" % main.sim.worldFileExtension()
@@ -236,8 +238,8 @@ func _check_regenerate_and_load(main: Node) -> void:
 	# Wald vor dem Speichern noch nachwuchs (Galeriewald über
 	# `CanopyRender.riparianRegrowYears`), zeigt das Laden gleich das Ziel.
 	# Look-Iteration 13 traf das eine Zelle (0 → 169); erlaubt sind
-	# MAX_REGROW_CELLS, ein vertauschter Wald wiche um Zehntausende ab.
-	_check(compared > saved.size() * 9 / 10 and wrong <= MAX_REGROW_CELLS,
+	# compared / MAX_REGROW_SHARE, ein vertauschter Wald wiche um Zehntausende ab.
+	_check(compared > saved.size() * 9 / 10 and wrong <= compared / MAX_REGROW_SHARE,
 		"Laden holt den gespeicherten Wald zurück (%d von %d Zellen abweichend)"
 			% [wrong, compared])
 	_check_uploaded(main, tex, "Laden")
