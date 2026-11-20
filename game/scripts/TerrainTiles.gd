@@ -31,6 +31,7 @@ extends Node3D
 ## Culling, aber mehr Zeichenaufrufe (je Kachel einer im Hauptpass und einer
 ## je Kaskade, in der sie liegt).
 const TILE_QUADS := 64
+var tile_quads := TILE_QUADS
 const MAX_DENSITY := 4
 
 var world_size := 0.0
@@ -64,7 +65,9 @@ func build(world: float, grid_points: int, mat: Material, aabb_y_lo: float, aabb
 		mi.queue_free()
 	instances.clear()
 	shadow_instances.clear()
-	tiles_per_side = ceili(float(grid - 1) / TILE_QUADS)
+	if OS.has_environment("RS_TILE_QUADS"): # A/B ohne Umbau
+		tile_quads = maxi(8, int(OS.get_environment("RS_TILE_QUADS")))
+	tiles_per_side = ceili(float(grid - 1) / tile_quads)
 	tile_density.resize(tiles_per_side * tiles_per_side)
 	tile_density.fill(1)
 	for tz in tiles_per_side:
@@ -98,10 +101,10 @@ func tile_index(tx: int, tz: int) -> int:
 func tile_range(tile: int) -> Rect2i:
 	var tx := tile % tiles_per_side
 	var tz := tile / tiles_per_side
-	var x0 := tx * TILE_QUADS
-	var z0 := tz * TILE_QUADS
-	var x1 := mini(x0 + TILE_QUADS, grid - 1)
-	var z1 := mini(z0 + TILE_QUADS, grid - 1)
+	var x0 := tx * tile_quads
+	var z0 := tz * tile_quads
+	var x1 := mini(x0 + tile_quads, grid - 1)
+	var z1 := mini(z0 + tile_quads, grid - 1)
 	return Rect2i(x0, z0, x1 - x0, z1 - z0)
 
 ## Vertex-Dichte einer Kachel (1, 2 oder 4 Vertices je Gitterabstand).
@@ -147,18 +150,23 @@ func _grid_mesh(tile: int, d: int, stride: int) -> ArrayMesh:
 			k += 1
 	var idx := PackedInt32Array()
 	idx.resize(w * h * 6)
+	# Dreiecke in der Reihenfolge des alten PlaneMesh: von +z nach −z, in
+	# jeder Zeile von +x nach −x (PlaneMesh legt seine Punkte gespiegelt an).
+	# Die Reihenfolge kostet messbar: in der Gegenrichtung lag dieselbe Kachel
+	# in `diorama` bei 3456×2104 um 0,9 ms über dem PlaneMesh, so herum gleich
+	# (docs/perf-measurements.md § M).
 	k = 0
-	for j in range(1, h + 1):
+	for j in range(h, 0, -1):
 		var prevrow := (j - 1) * (w + 1)
 		var thisrow := j * (w + 1)
-		for i in range(1, w + 1):
+		for i in range(w, 0, -1):
 			# Wie PlaneMesh: Teilung entlang der Anti-Diagonale (prevrow+i ↔
 			# thisrow+i−1), s. RenderSupport.renderSurfaceHeight.
-			idx[k] = prevrow + i - 1
-			idx[k + 1] = prevrow + i
+			idx[k] = prevrow + i
+			idx[k + 1] = thisrow + i
 			idx[k + 2] = thisrow + i - 1
-			idx[k + 3] = prevrow + i
-			idx[k + 4] = thisrow + i
+			idx[k + 3] = prevrow + i - 1
+			idx[k + 4] = prevrow + i
 			idx[k + 5] = thisrow + i - 1
 			k += 6
 	var normals := PackedVector3Array()

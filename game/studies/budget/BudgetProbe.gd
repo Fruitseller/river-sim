@@ -23,6 +23,9 @@ var probe_state := ""
 ## Alter Stand: das eine PlaneMesh (`terrain_mi`); neuer Stand: die Kacheln.
 var probe_terrain: Node3D
 var probe_defaults := {}
+var probe_tiles := {} # Gitterabstände je Kachel -> TerrainTiles
+var probe_mesh_am: ArrayMesh
+var probe_mesh_rev: ArrayMesh
 
 func _ready() -> void:
 	super._ready()
@@ -93,8 +96,81 @@ func _probe_set(state: String) -> void:
 	if env != null:
 		env.ssao_enabled = not state.contains("nossao")
 		env.fog_enabled = not state.contains("nofog")
+	# Im alten Stand (PlaneMesh) dieselben Kacheln im SELBEN Prozess: "tilesNN"
+	# (NN Gitterabstände je Kachel), "am" = PlaneMesh als ArrayMesh.
+	if probe_mesh_full != null:
+		var tq := state.find("tiles")
+		# Schlüssel: Kachelgröße, mit "sh2" gröbere Schattenwerfer (+10000).
+		var key := state.substr(tq + 5, 3).to_int() + (10000 if state.contains("sh2") else 0)
+		for k in probe_tiles:
+			probe_tiles[k].visible = tq >= 0 and k == key
+		if tq >= 0:
+			var q := state.substr(tq + 5, 3).to_int()
+			if not probe_tiles.has(key):
+				var tt: Node3D = load("res://scripts/TerrainTiles.gd").new()
+				tt.tile_quads = q
+				add_child(tt)
+				tt.build(world_size, terrain_grid, terrain_mat, -3.5, hscale + 3.5, 2 if key >= 10000 else 1)
+				probe_tiles[key] = tt
+			var q2 := key
+			probe_tiles[q2].visible = true
+			probe_terrain.visible = false
+		if state.contains("am") and probe_mesh_am == null:
+			probe_mesh_am = ArrayMesh.new()
+			probe_mesh_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, probe_mesh_full.get_mesh_arrays())
+	if probe_mesh_full != null and state.contains("rev") and probe_mesh_rev == null:
+		# Kachel-Mesh (eine Kachel) mit umgekehrter Vertex-Reihenfolge wie PlaneMesh.
+		var tt: Node3D = load("res://scripts/TerrainTiles.gd").new()
+		tt.tile_quads = 720
+		add_child(tt)
+		tt.build(world_size, terrain_grid, terrain_mat, -3.5, hscale + 3.5)
+		var arr: Array = tt.instances[0].mesh.surface_get_arrays(0)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var nv := v.size()
+		var v2 := PackedVector3Array(); v2.resize(nv)
+		for i in nv:
+			v2[i] = v[nv - 1 - i]
+		var ix: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		if state.contains("tri"):
+			# nur die Reihenfolge der Dreiecke umdrehen, Vertices bleiben
+			var t2 := PackedInt32Array(); t2.resize(ix.size())
+			var nt := ix.size() / 3
+			for t in nt:
+				for c in 3:
+					t2[t * 3 + c] = ix[(nt - 1 - t) * 3 + c]
+			ix = t2
+			v2 = v
+		elif state.contains("uvt"):
+			v2 = v
+			var uv := PackedVector2Array(); uv.resize(nv)
+			var tg := PackedFloat32Array(); tg.resize(nv * 4)
+			for i in nv:
+				tg[i * 4] = 1.0
+				tg[i * 4 + 3] = 1.0
+			arr[Mesh.ARRAY_TEX_UV] = uv
+			arr[Mesh.ARRAY_TANGENT] = tg
+		else:
+			for i in ix.size():
+				ix[i] = nv - 1 - ix[i]
+		arr[Mesh.ARRAY_VERTEX] = v2
+		arr[Mesh.ARRAY_INDEX] = ix
+		probe_mesh_rev = ArrayMesh.new()
+		probe_mesh_rev.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		tt.queue_free()
+	if probe_mesh_full != null:
+		probe_terrain.extra_cull_margin = 0.0 if state.contains("tight") else 1000.0
+		if probe_mesh_am != null:
+			probe_mesh_am.custom_aabb = AABB(Vector3(-world_size / 2, -3.5, -world_size / 2),
+				Vector3(world_size, hscale + 7.0, world_size)) if state.contains("tight") else AABB()
+		if probe_mesh_rev != null:
+			probe_mesh_rev.custom_aabb = AABB(Vector3(-world_size / 2, -3.5, -world_size / 2),
+				Vector3(world_size, hscale + 7.0, world_size)) if state.contains("tight") else AABB()
 	if probe_mesh_full == null:
 		pass
+	elif state.contains("rev"):
+		probe_terrain.mesh = probe_mesh_rev
+	elif state.contains("am"):
+		probe_terrain.mesh = probe_mesh_am
 	elif state.contains("grid360"):
 		if probe_mesh_half == null:
 			var pm := PlaneMesh.new()
