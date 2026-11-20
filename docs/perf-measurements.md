@@ -2523,3 +2523,34 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+---
+
+## XIII. Braid-Pass: Aktive Zellen parallel vorberechnet und kompaktiert, `vegDamp` über Roh-Puffer (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.braidPass`:
+1. **Parallele Vorberechnung und Kompaktierung der aktiven Zellen (`st == 2`):** Bisher durchlief die serielle Schleife über `order` rückwärts alle 518.400 Zellen (davon ~252k Ozean und ~248k inaktives Land mit verstreuten Lesezugriffen auf `braidStatus` und `qs`) und berechnete für die ~18.200 aktiven Zellen (~3,5 % des Gitters) die 8-Nachbar-Suche, `powFast`, `pow(..., mB)` und die Scour-Grenze seriell auf einem Kern. Da `hf`, `areaMFD` und `veg*` im Pass nicht geschrieben werden, `erodeCell`/`depositCell` ausschließlich die besuchte Zelle selbst verändern und jeder tiefere Nachbar `nb` (`hf[nb] < hf[k]`) in `order` rückwärts strikt hinter `k` liegt, entsprechen alle Eingangsgrößen bis zum eigenen Besuch exakt den Pass-Startwerten. Pass 1a füllt `braidStatus` linear ohne False Sharing; Pass 1b sammelt die aktiven Zellen in `order`-Reihenfolge parallel je Scheibe in `BraidActive`-Einträge (mit skalaren Temporärpuffern ohne Vektor-Registerspills, ohne Division durch `1.0` für orthogonale Nachbarn und mit `fastMod` für den Spaltenindex).
+2. **`vegDamp` über Roh-Puffer statt Klassen-Properties:** Der bisherige Aufruf `vegDamp(k)` griff je aktivem Scour über drei Klassen-Properties (`vegTypeFactor`, `vegClass`, `veg`) mit Exklusivitätsprüfung zu. In Pass 1b wird derselbe Ausdruck direkt über Roh-Puffer berechnet.
+3. **Verzögerte Ablagerung der belieferten `st == 1`-Zellen:** Inaktive Landzellen (`st == 1`) schreiben weder `qs` noch liest eine spätere aktive Zelle ihre geänderte Höhe (`hf[C] <= hf[B]`, daher kein tieferer Nachbar). Statt alle ~248k `st == 1`-Zellen seriell abzutasten, sammelt Pass 2 nur die tatsächlich belieferten (~8.400 Zellen) in `touchedSt1` und lagert sie in Pass 3 ab.
+
+### Gemessen
+
+Rahmen der Messreihe:
+- **Maschine / Toolchain:** Linux x86_64 (4 Kerne, Debian 13 VM), Swift 6.3.3 (Release, Swift-6-Modus), Basis `a243e25`.
+- **Konfiguration:** `SimConfig.production` (n = 720, world = 112,4789), Seed 1337, Einlauf 100 × 100 Jahre, Messung 30 × 100 Jahre (`simperf --repeat 3`).
+- **Aggregationsregel:** Kennzahl je Lauf ist das Block-Minimum aus `--repeat 3`; die Pass-Zeile stammt aus der Pass-Tabelle des dritten Blocks desselben Laufs. Drei verschränkte Paare in einer Sitzung (Basis → Opt, Opt → Basis, Basis → Opt).
+- **Anteil am Sim-Schritt:** `braidPass` sinkt von 4,1–4,4 % auf 2,2–2,4 %.
+
+| Paar, Reihenfolge | Basis Blöcke 1/2/3 (Min) | Opt Blöcke 1/2/3 (Min) | Pass `braidPass` Basis → Opt | Δ Pass | Anteil Basis → Opt |
+| --- | --- | --- | --- | ---: | --- |
+| 1, Basis → Opt | 148,0 / 162,4 / 149,7 (**148,0**) | 140,8 / 160,2 / 147,5 (**140,8**) | 6,66 → **3,50 ms** | −3,16 ms (−47,4 %) | 4,4 % → 2,4 % |
+| 2, Opt → Basis | 133,3 / 148,2 / 152,4 (**133,3**) | 148,8 / 148,4 / 139,1 (**139,1**) | 6,18 → **3,11 ms** | −3,07 ms (−49,7 %) | 4,1 % → 2,2 % |
+| 3, Basis → Opt | 147,0 / 147,2 / 145,1 (**145,1**) | 136,2 / 145,9 / 140,7 (**136,2**) | 6,34 → **3,30 ms** | −3,04 ms (−47,9 %) | 4,4 % → 2,3 % |
+
+Der Pass `braidPass` sinkt in allen drei Paaren um **3,04 bis 3,16 ms/Schritt (−47,4 % bis −49,7 %**, gepaarter Median **−3,07 ms**). Im Gesamtschritt gewinnen 7 von 9 gepaarten Blöcken (Paar 1 und Paar 3 in allen drei Blöcken; gepaarter Block-Median −3,0 ms).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`) auf Seed 1337 (dt = 100 und dt = 15), Seed 42 (dt = 100) und Seed 20 (dt = 100) sind vor und nach der Änderung auf derselben Maschine bit-identisch (Pro-Maschine-Vergleich; keine Erwartungswerte im Repo).
