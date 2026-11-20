@@ -169,6 +169,14 @@ sichtbar; `diorama` bleibt meist GLEICH (Läufe 8–10 px breit); der Messlauf
 
 Vorher-Nachher: `docs/look-hillclimb/wasser-{diorama,tal,nah}-vorher-nachher.jpg`.
 
+## Rest-Schwächen nach Nr. 14 (ab 2026-11-20, Implementer GPT-6.2 Sol, Effort high)
+
+Vergleichsstand: Stand nach Nr. 14 (`.tools/look/keep5/`).
+
+| Nr. | Hypothese | Urteil | Ergebnis | Kernsatz |
+| --- | --- | --- | --- | --- |
+| 15 | Wasser-Reste: gruppierte, kürzere Schaumfahnen; feuchter Boden und fleckiger Kies statt grauem Ring um Raster-Seen; ruhiger Himmelsverlauf auf Seen; stärkerer Himmelsreflex in der Totalen (verworfen, bevor abgegeben) | Implementer, 10 Läufe: A 4 B 3 GLEICH 23 (`diorama` 0/0, `tal` 1/0, `nah` 3/3) | verworfen | Der Bewerter sieht den Unterschied nicht (23 GLEICH). In `nah` hebt sich beides auf: „klar abgesetzte Gischtflecken“ gegen „harte, zackige Weißsplitter“ und eine Wasserfläche, die „stärker mit der Wiese verschwimmt“ (weiches See-Ufer). Schranken grün (667 Tests, Hash unverändert, 17,83 → 17,86 ms). Patch: `.tools/look/it15/patch.diff`. |
+
 ## Abschluss (2026-11-20)
 
 Behalten: Nr. 6 (Wald), Nr. 7 (Fels, Hänge, Schnee), Nr. 8 (Küste), Nr. 10
