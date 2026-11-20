@@ -103,7 +103,9 @@ for p in "${jobs_[@]}"; do wait "$p" || true; done
 aw=0; bw=0; tie=0; total=0
 for f in "$meta"/*.out; do
   tag=$(basename "$f" .out)
-  v=$(grep -oE 'URTEIL: *(X|Y|GLEICH)' "$f" | tail -1 | sed 's/URTEIL: *//' || true)
+  # Nur eine exakt passende LETZTE Urteilszeile zählt.
+  v=$(sed $'s/\x1b\\[[0-9;]*m//g' "$f" | grep -E '^[[:space:]]*URTEIL:' | tail -1 \
+      | sed -nE 's/^[[:space:]]*URTEIL:[[:space:]]*(X|Y|GLEICH)[[:space:]]*$/\1/p' || true)
   [[ -n $v ]] || { echo "$tag: kein Urteil"; continue; }
   total=$((total + 1))
   if [[ $v == GLEICH ]]; then w=GLEICH; tie=$((tie + 1))
@@ -122,6 +124,14 @@ for s in "${shots[@]}"; do
   (( ca > cb )) && cam_ok=0
 done
 echo "ERGEBNIS A $aw B $bw GLEICH $tie VON $total (Rohurteile: $meta)"
+# Fehlende Urteile sind keine Freigabe: der Nenner wären sonst nur die
+# lesbaren Ausgaben, und ein Vergleich, dem eine ganze Aufnahme fehlt, könnte
+# trotzdem „behalten“ sagen.
+erwartet=$(( ${#shots[@]} * runs * $(wc -w <<<"$judges") ))
+if (( total != erwartet )); then
+  echo "ENTSCHEIDUNG UNVOLLSTAENDIG ($total von $erwartet Urteilen; nicht behalten, neu fahren)"
+  exit 2
+fi
 if (( total > 0 && 3 * (bw - aw) >= total && 5 * aw <= total && cam_ok )); then
   echo "ENTSCHEIDUNG B_BEHALTEN"
 else
