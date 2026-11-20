@@ -14,6 +14,12 @@
 //           Damit wechselt der Fluss ENTLANG des Laufs (Kolk dunkel und glatt,
 //           Riffel hell und bewegt, Schaum an Stufen, Engstellen,
 //           Zusammenflüssen) statt als einfarbige Folie zu liegen.
+//   CUSTOM1 = Korridor (Look E, #239, RibbonMesh.profile): x Anteil 0 … 1,
+//           y Deckel-Höhe, z Wasser-Halbbreite (Welt), w Thalweg-Tiefe.
+//           Mit Korridor liegen Ufer und Bett als eigene Geometrie darunter
+//           (corridor.gdshader) und malen auch den Wasserkörper nach der
+//           Tiefe des Profils (Beer-Lambert); das Band zeichnet dann nur noch
+//           die Oberfläche: Spiegelung, Kräuselung, Strömung, Schaum, Glitzern.
 // Farben/Glanz sind DIESELBEN wie im Feld-Wasser des Terrain-Shaders, damit
 // Band-Wasser und Textur-Zubringer als EIN Wasser lesen: Wasserfarben, Fresnel,
 // Rauheit/Specular und der Strömungs-Schimmer kommen als water_*-Uniforms über
@@ -127,6 +133,8 @@ uniform float water_ocean_wave_fade_hi;
 uniform float water_ocean_depth_span;
 uniform vec3 water_ocean_shallow_color;
 
+#include "res://shaders/corridor_common.gdshaderinc"
+
 // Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
 // SimNode, s. Deklarationsblock oben) — dasselbe Epsilon wie im
 // Terrain-Shader: Mindest-Fensterbreite, keine Kalibrier-Kopie.
@@ -153,6 +161,7 @@ varying float v_kind;
 varying float v_bend;
 varying vec3 v_world;
 varying vec4 v_flow;
+varying vec4 v_profile;
 
 // Wolkenschatten (#151) laufen ohne Kante über die Bänder weiter.
 #include "res://shaders/clouds.gdshaderinc"
@@ -225,7 +234,23 @@ void vertex() {
 	v_kind = UV2.x;
 	v_bend = UV2.y;
 	v_flow = CUSTOM0;
-	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_profile = CUSTOM1;
+	vec3 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// Mindestbreite in der Totalen (corridor_common): nur fließende Läufe,
+	// dieselbe Formel und Breite wie der Korridor darunter.
+	float running_v = (1.0 - step(0.25, UV2.x)) * step(0.05, length(v_dir));
+	float half_band = 0.5 * max(CUSTOM0.w, 0.0);
+	float f = corridor_widen(p, max(CUSTOM1.z, 1e-4), COLOR.a * running_v,
+		INV_VIEW_MATRIX[3].xyz, PROJECTION_MATRIX);
+	if (f > 1.001) {
+		vec2 dir = normalize(v_dir);
+		vec2 perp = vec2(-dir.y, dir.x);
+		float off = half_band * (UV.x * 2.0 - 1.0);
+		p.xz += perp * (corridor_widened_offset(off, max(CUSTOM1.z, 1e-4), f) - off);
+		v_profile.y = max(v_profile.y, corridor_terrain_y(p.xz) + CORRIDOR_LID_CLEAR);
+	}
+	VERTEX = p;
+	v_world = p;
 }
 
 void fragment() {
@@ -274,7 +299,11 @@ void fragment() {
 	float line = water_ribbon_waterline
 		+ (ribbon_noise(v_world.xz * water_ribbon_waterline_scale) - 0.5) * 2.0 * water_ribbon_waterline_jitter;
 	float wet = smoothstep(line - aa, line + aa, across);
-	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea);
+	// Mit Korridor reicht das Wasser bis fast an die Bandkante; die Uferlinie
+	// zeichnet dann die Böschung darunter, die es verdeckt (Deckel-Tiefe).
+	float corridor = clamp(v_profile.x, 0.0, 1.0);
+	wet = mix(wet, smoothstep(0.0, 0.08, across_band), corridor);
+	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea) * (1.0 - corridor);
 	float profile = calib_window(line, 1.0, across); // 0 Wasserlinie … 1 Mitte
 
 	// Tiefe ∝ Strahler-Rang (Hierarchie: große Läufe tief, Bäche seicht), zur
@@ -318,7 +347,18 @@ void fragment() {
 	vec2 d2 = vec2(-d1.y, d1.x);
 	float speed = water_ribbon_ripple_speed * (1.0 - still);
 	vec2 q = vec2(UV.y * water_ribbon_ripple_stretch - u_time * speed, UV.x * band_width);
-	vec2 gq = ribbon_ripple_grad(q, footprint) * mix(1.0, 0.4, still) * mix(0.6, 1.0, depth)
+	// Flowmap aus der Band-Tangente in zwei versetzten Phasen (Valve 2010):
+	// das Tempo wechselt entlang des Laufs (Gefälle, Riffel), eine stetige
+	// Verschiebung würde das Muster dabei zerren. Jede Phase verschiebt höchstens
+	// eine Periode weit und springt dann zurück, wenn ihr Gewicht null ist.
+	float local_speed = speed * (0.6 + 1.6 * steep + 0.6 * riffle);
+	float ph0 = fract(u_time * 0.2);
+	float ph1 = fract(ph0 + 0.5);
+	float w0 = 1.0 - abs(2.0 * ph0 - 1.0);
+	vec2 q0 = vec2(UV.y * water_ribbon_ripple_stretch - local_speed * ph0 * 5.0, UV.x * band_width);
+	vec2 q1 = vec2(UV.y * water_ribbon_ripple_stretch - local_speed * ph1 * 5.0 + 3.7, UV.x * band_width + 1.3);
+	vec2 g_flow = ribbon_ripple_grad(q0, footprint) * w0 + ribbon_ripple_grad(q1, footprint) * (1.0 - w0);
+	vec2 gq = mix(ribbon_ripple_grad(q, footprint), g_flow, running) * mix(1.0, 0.4, still) * mix(0.6, 1.0, depth)
 		* (1.0 + 1.5 * max(riffle, steep));
 	vec2 grad = d1 * gq.x * water_ribbon_ripple_stretch + d2 * gq.y;
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
@@ -373,13 +413,28 @@ void fragment() {
 	vec3 col = mix(water_ribbon_bank_color, water_final, wet);
 	col *= cloud_light(v_world, u_time);
 	ALBEDO = col;
+	// Sonnenglitzern: Facetten in der Größe des Bildpunkts, die die Sonne ins
+	// Auge spiegeln. In der Totalen das stärkste Signal für Wasser.
+	vec3 view_g = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
+	vec2 cell = floor(v_world.xz / max(footprint * 1.5, 0.004));
+	vec2 jit = vec2(ribbon_hash(cell + floor(u_time * 3.0)), ribbon_hash(cell.yx + 17.0 + floor(u_time * 3.0))) - 0.5;
+	vec3 n_glint = normalize(water_n_ws + vec3(jit.x, 0.0, jit.y) * 0.5);
+	float glint = pow(max(dot(reflect(-view_g, n_glint), normalize(corridor_sun_dir)), 0.0), 900.0)
+		* wet * (1.0 - still) * (1.0 - foam) * smoothstep(0.005, 0.05, footprint);
 	NORMAL = normalize(mix(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0), water_n_vs, wet));
 	float lake = lake_mask_at(guv);
 	// Erst ganz zuletzt blendet der schmale Rest aus. Im Meer blendet die
 	// Deckkraft linear mit presence auf 0 aus (#174), an Land schrumpft die Breite.
 	float sea_alpha = mix(smoothstep(0.0, 0.25, presence), presence, in_sea);
-	ALPHA = ribbon_fade_alpha(sea_alpha * max(wet, bank * water_ribbon_bank_opacity)
+	// Mit Korridor deckt das Band nur als Oberfläche: der Körper kommt aus
+	// dem Profil darunter, sichtbar bleiben Spiegelung, Riffel und Schaum.
+	float surface_alpha = clamp(0.1 + 0.7 * fresnel + 0.25 * riffle + foam, 0.0, 1.0);
+	float body = mix(1.0, surface_alpha, corridor);
+	ALPHA = ribbon_fade_alpha(sea_alpha * max(wet * body, bank * water_ribbon_bank_opacity)
 		* (1.0 - lake * (1.0 - delta)));
+	vec3 cam_w = CAMERA_POSITION_WORLD;
+	DEPTH = corridor_depth(v_world, v_profile.y, cam_w, VIEW_MATRIX, PROJECTION_MATRIX);
+	LIGHT_VERTEX = (VIEW_MATRIX * vec4(corridor_lid_point(v_world, v_profile.y, cam_w), 1.0)).xyz;
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt
 	// Stillwasser) — numerisch zufällig gleich waterOpacityShallow,
 	// KEINE WaterRender-Konstante. Das nasse Ufer glänzt matt (0.6).
@@ -402,5 +457,6 @@ void fragment() {
 	float cloud_w = still * wet * water_cloud_reflection;
 	float cloud_hit = clouds_enabled && cloud_w > 0.0 && refl.y > 0.05 && v_world.y < cloud_height
 		? cloud_cover(v_world.xz + refl.xz * (cloud_height - v_world.y) / refl.y, u_time) : 0.0;
-	EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel);
+	EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel)
+		+ vec3(1.0, 0.92, 0.78) * glint * 6.0;
 }
