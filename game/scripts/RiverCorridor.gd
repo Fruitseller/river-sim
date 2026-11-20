@@ -38,8 +38,9 @@ func _make(parent: Node, m: ArrayMesh, shader: Shader, outgoing: bool) -> MeshIn
 	var sm := ShaderMaterial.new()
 	sm.shader = shader
 	sm.set_shader_parameter("ribbon_outgoing", outgoing)
-	# Vor dem Wasser zeichnen (Wasser: Priorität 1, s. Main._make_river_instance).
-	sm.render_priority = 0
+	# Vor allen übrigen transparenten Flächen (Wasser, Wolken: Priorität 0),
+	# damit das Band danach gegen Ufer und Bett getestet wird.
+	sm.render_priority = -1
 	inst.material_override = sm
 	inst.extra_cull_margin = 1000.0 # Geometrie ändert sich laufend
 	inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

@@ -1450,7 +1450,10 @@ public final class RiverRibbonRenderer {
                 corridor.samples.append(.init(x: s.x, z: s.z, tx: tx, tz: tz, section: section,
                                               alpha: s.alpha * pres, rank: s.rank,
                                               bend: s.bend, arc: arc[a]))
-                let p = SIMD4(Float(pres), Float(section.lid),
+                // Deckel nur mit Korridor: über Wasser (Mündung, Meer) bleibt das
+                // Band auf seiner eigenen Höhe (Review Neon Nr. 9).
+                let ownTop = max(yLeftD, yRightD)
+                let p = SIMD4(Float(pres), Float(ownTop + pres * (section.lid - ownTop)),
                               Float(section.waterHalfWidthCells * cs),
                               Float(section.depths[CorridorProfile.columns / 2]))
                 mesh.profile.append(p); mesh.profile.append(p)

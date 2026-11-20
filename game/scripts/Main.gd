@@ -862,7 +862,6 @@ func _setup_scene() -> void:
 			mat.set_shader_parameter("sea_level", sea)
 			mat.set_shader_parameter("corridor_hscale", hscale)
 			mat.set_shader_parameter("corridor_sun_dir", Lighting.sun_direction())
-			mat.render_priority = 1 # nach Ufer und Bett (RiverCorridor)
 		corridor = RiverCorridor.new()
 		for mat in corridor.setup(self, hscale, world_size, N):
 			height_field.mirror_to(mat)

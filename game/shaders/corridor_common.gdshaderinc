@@ -32,7 +32,9 @@ uniform float corridor_viewport_h = 1080.0;
 // Geschmackswerte (Entscheidung des Eigners: Konstanten neben ihrem Code).
 const float CORRIDOR_MIN_WATER_PX = 5.0;   // Wasserbreite in der Totalen, Bildpunkte
 const float CORRIDOR_MAX_WIDEN = 3.5;      // höchstens so viel breiter als echt
-const float CORRIDOR_DEPTH_KEEP = 0.08;    // Anteil der wahren Tiefe hinter dem Deckel
+const float CORRIDOR_DEPTH_KEEP = 0.08;    // Anteil der wahren Tiefe hinter dem Deckel …
+const float CORRIDOR_DEPTH_KEEP_MAX = 0.008; // … höchstens so weit unter dem Deckel (Welt-Y, < Abstand/2)
+const float CORRIDOR_LID_REACH = 6.0;      // Deckelpunkt höchstens (Deckel − Punkt) × so weit vor dem Punkt
 const float CORRIDOR_LID_CLEAR = 0.02;     // = CorridorProfile.lidClearance
 
 vec2 corridor_grid_uv(vec2 xz) {
@@ -68,17 +70,34 @@ float corridor_widened_offset(float off, float water_half, float f) {
 }
 
 // Punkt, an dem der Sehstrahl zu `p` die Deckel-Höhe `lid` schneidet.
+// Bei flachem Blick läge der Schnitt mit der (unendlichen) Deckel-Ebene weit
+// vor dem Fluss, und der Korridor gewänne gegen Hügel davor: der Weg zum
+// Deckelpunkt ist auf `CORRIDOR_LID_REACH` × (Deckel − Punkt) begrenzt. Dort
+// verliert das Bett eher gegen das Gelände, als dass es durch Berge scheint.
 vec3 corridor_lid_point(vec3 p, float lid, vec3 cam) {
 	vec3 d = p - cam;
 	if (cam.y > lid && p.y < lid && abs(d.y) > 1e-6) {
-		return cam + d * ((lid - cam.y) / d.y);
+		float t = (lid - cam.y) / d.y;                       // 0 … 1 vom Auge zum Punkt
+		float reach = CORRIDOR_LID_REACH * (lid - p.y) / max(length(d), 1e-6);
+		return cam + d * max(t, 1.0 - reach);
 	}
 	return p;
 }
 
-// Tiefenwert (wie DEPTH) des Deckel-Punkts, mit Rest der wahren Tiefe.
-float corridor_depth(vec3 p, float lid, vec3 cam, mat4 view, mat4 proj) {
-	vec3 q = mix(corridor_lid_point(p, lid, cam), p, CORRIDOR_DEPTH_KEEP);
-	vec4 clip = proj * (view * vec4(q, 1.0));
-	return clip.z / clip.w;
+// Clip-Position des Weltpunkts `p` mit der Tiefe des Deckel-Punkts (Rest
+// der wahren Tiefe bleibt). Im VERTEX-Shader als POSITION: der Tiefentest
+// bleibt früh (ein DEPTH-Schreiben im Fragment schaltet Early-Z ab) und
+// gilt in jeder Clip-Konvention (auch gl_compatibility). Zwischen den
+// Vertices läuft die Tiefe linear im Bild statt exakt; der Deckel hat dafür
+// Abstand.
+vec4 corridor_clip(vec3 p, float lid, vec3 cam, mat4 view, mat4 proj) {
+	vec4 clip = proj * (view * vec4(p, 1.0));
+	vec3 pl = corridor_lid_point(p, lid, cam);
+	// Rest der wahren Tiefe: hält die Reihenfolge der Korridor-Flächen, aber
+	// nie mehr als CORRIDOR_DEPTH_KEEP_MAX unter den Deckel (sonst verlöre ein
+	// tiefes Bett gegen Gelände knapp unter dem Deckel, Review Neon Nr. 1).
+	float keep = min(CORRIDOR_DEPTH_KEEP, CORRIDOR_DEPTH_KEEP_MAX / max(pl.y - p.y, 1e-6));
+	vec3 q = mix(pl, p, keep);
+	vec4 lid_clip = proj * (view * vec4(q, 1.0));
+	return vec4(clip.xy, lid_clip.z / lid_clip.w * clip.w, clip.w);
 }

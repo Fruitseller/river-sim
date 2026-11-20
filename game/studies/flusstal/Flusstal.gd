@@ -146,7 +146,7 @@ func _process(delta: float) -> void:
 	if study_mode == "shot":
 		# Gleiche Wasser-Animationsphase unabhängig von Shader-Kompilierzeiten.
 		u_time = 1.0
-		for mat in [terrain_mat, ocean_mat, river_mat, river_prev_mat]:
+		for mat in [terrain_mat, ocean_mat, river_mat, river_prev_mat] + _corridor_mats():
 			if mat != null:
 				mat.set_shader_parameter("u_time", u_time)
 		# Wolkenkörper mitnehmen: Main.gd takten sie selbst, hier im Shot-Modus
@@ -316,3 +316,8 @@ func _study_drawn() -> void:
 			"apply_frame_median_ms": apply_frame_median, "apply_frame_max_ms": apply_frame_max,
 			"movie": false }))
 	get_tree().quit()
+
+
+## Ufer und Bett (Look E, #239) laufen mit derselben Zeit wie die Bänder.
+func _corridor_mats() -> Array:
+	return [] if corridor == null else [corridor.mat, corridor.prev_mat]
