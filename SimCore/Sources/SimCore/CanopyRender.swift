@@ -116,19 +116,14 @@ public enum CanopyRender {
     /// Lichtungs-Rauschen lag jeder Lauf in einem kahlen Korridor, der sich
     /// in der Totalen als Straße las; in den Referenzbildern steht Gehölz bis
     /// ans Ufer.
+    ///
+    /// An Bändern zählt als Wasser die äußerste Lage der verrauschten
+    /// Wasserlinie (`RiverRibbonRenderer.bandVisibleCoverage`): die Maske
+    /// läuft so genau an der gemalten Wasserfläche auf null aus. Bis zum
+    /// Review Neon Nr. 1 zog der Bandkern davon noch eine Zelle ab und ließ
+    /// das Rauschen weg; die interpolierte Maske reichte damit in 2 % der
+    /// sichtbaren Wasserpunkte hinein (Testwelt n = 192, bis 0,79).
     public static let waterSeamCells = 1
-
-    /// Kern eines Bands für das Kronendach
-    /// (`RiverRibbonRenderer.bandVisibleCoverage`): die sichtbare Wasserbreite
-    /// (`1 − WaterRender.ribbonWaterline` der sichtbaren Halbbreite) minus
-    /// diese Zellen, mindestens die Zelle der Zentrumslinie. Zusammen mit
-    /// `waterSeamCells` setzt die Maske so eine Zelle außerhalb der
-    /// Wasserlinie an, bei jeder Bandbreite. Außerhalb der Wasserlinie malt
-    /// das Band den dunklen Ufersaum (`WaterRender.ribbonBankOpacity`), unter
-    /// dem der Wald als beschattetes Ufergehölz liegt; bisher sperrte die
-    /// volle Banddeckung plus zwei Zellen den Wald, und die Wiese dahinter
-    /// lag als blasser Korridor um jeden Lauf.
-    public static let bandCoreInsetCells = 1.0
 
     /// Galeriewald: entlang von Flüssen und Seen steht ein Gehölzband, auch
     /// wo die Vegetation sonst Wiese trägt. Seine Breite in Zellen ab dem
@@ -273,6 +268,13 @@ public enum CanopyRender {
     /// eigenen), damit der Bestandsrand sanft ansteigt statt Zelle für Zelle.
     public static let liftLo = 0.7
     public static let liftHi = 0.95
+    /// Abstand der vier diagonalen Abgriffe, über die der Terrain-Vertex-
+    /// Shader die Maske vor dem Anhebe-Fenster glättet (Texel = Sim-Zelle):
+    /// 1,5 mittelt bilinear über etwa 4×4 Zellen. `Main._forest_lift_at`
+    /// rechnet mit demselben Wert nach, damit Pinselkuppel, Raycast und
+    /// Kameraziel am Bestandsrand auf dem Dach liegen statt darüber (Review
+    /// Neon Nr. 2; Wächter `game/tests/canopy.gd`).
+    public static let liftSmoothTexels = 1.5
 
     /// Waldmaske, ab der der Wald in der Entfernung (Mittelwert statt Kronen)
     /// die Fläche deckt, und ab der voll.

@@ -36,11 +36,20 @@ var sea_surface_sink: float
 var min_rank: float
 var max_cross_slope: float
 var waterline_lift: float
+var waterline_reach: float
+var waterline_reach_min: float
+var waterline_inner: float
+var center_raise_max: float
+var visible_lo: float
+var visible_hi: float
 var kind_delta_lo: float
 
 # Wie nah an der Zellgrenze (in Zellen) die Zentrumslinie liegen darf, damit
 # auch die Nachbarzelle als gemeinter Spiegel zählt — s. `_lake_surface_err`.
 const CELL_BOUNDARY_EPS := 0.001
+# Bandmitte gilt als versunken, wenn das Gelände der Mitte um mehr darüber
+# liegt (Welt-Y; wie `RibbonFloat.sinkTolerance`).
+const SINK_TOLERANCE := 0.02
 
 var done := false
 
@@ -69,6 +78,12 @@ func _run() -> void:
 	min_rank = contract["ribbonMinimumRank"]
 	max_cross_slope = contract["ribbonMaxCrossSlope"]
 	waterline_lift = contract["ribbonWaterlineLift"]
+	waterline_reach = contract["ribbonWaterlineReach"]
+	waterline_reach_min = contract["ribbonWaterlineReachMin"]
+	waterline_inner = contract["ribbonWaterlineInner"]
+	center_raise_max = contract["ribbonCenterRaiseMax"]
+	visible_lo = contract["ribbonVisibleLo"]
+	visible_hi = contract["ribbonVisibleHi"]
 	kind_delta_lo = contract["ribbonDeltaLo"]
 
 	# Mäander brauchen etwas Laufzeit, bis Kanäle getraced und migriert sind.
@@ -106,9 +121,39 @@ func _run() -> void:
 		push_error("FAIL: keine Ribbon-Geometrie nach 4000 Jahren")
 		quit(1)
 		return
-	if cols.size() != verts.size() or uvs.size() != verts.size():
-		push_error("FAIL: Puffer-Längen inkonsistent (verts=%d cols=%d uvs=%d)"
-			% [verts.size(), cols.size(), uvs.size()])
+	var uv2s_all: PackedVector2Array = frame["ribbon_uv2s"]
+	if cols.size() != verts.size() or uvs.size() != verts.size() or uv2s_all.size() != verts.size():
+		push_error("FAIL: Puffer-Längen inkonsistent (verts=%d cols=%d uvs=%d uv2s=%d)"
+			% [verts.size(), cols.size(), uvs.size(), uv2s_all.size()])
+		quit(1)
+		return
+	# Lauf-Größen je Vertex (`RibbonMesh.flows`, CUSTOM0 in water.gdshader):
+	# vier Floats je Vertex, Kolk/Riffel, Weißwasser und Gefälle in 0 … 1,
+	# Breite ≥ 0; auf Flüssen nicht überall null (Marshalling, Review Neon
+	# Nr. 7). Die Verteilung selbst prüft SimCoreTests/RibbonFlowTests.
+	if not frame.has("ribbon_flows"):
+		push_error("FAIL: Frame ohne ribbon_flows")
+		quit(1)
+		return
+	var flows: PackedFloat32Array = frame["ribbon_flows"]
+	if flows.size() != 4 * verts.size():
+		push_error("FAIL: ribbon_flows hat %d Werte, erwartet 4 × %d" % [flows.size(), verts.size()])
+		quit(1)
+		return
+	var flow_sum := Vector4.ZERO
+	for v in verts.size():
+		for c in 3:
+			if flows[4 * v + c] < 0.0 or flows[4 * v + c] > 1.0:
+				push_error("FAIL: ribbon_flows[%d][%d] = %f außerhalb 0 … 1" % [v, c, flows[4 * v + c]])
+				quit(1)
+				return
+		if flows[4 * v + 3] < 0.0:
+			push_error("FAIL: ribbon_flows[%d].w = %f < 0" % [v, flows[4 * v + 3]])
+			quit(1)
+			return
+		flow_sum += Vector4(flows[4 * v], flows[4 * v + 1], flows[4 * v + 2], flows[4 * v + 3])
+	if flow_sum.x <= 0.0 or flow_sum.z <= 0.0 or flow_sum.w <= 0.0:
+		push_error("FAIL: ribbon_flows trägt keine Lauf-Größen (Summe %s)" % flow_sum)
 		quit(1)
 		return
 	if idx.size() % 3 != 0:
@@ -150,6 +195,8 @@ func _run() -> void:
 	# Verfügung — dann ist die AUSGABE die Diagnose (Issue #61).
 	var stray := 0
 	var stray_report := ""
+	var land_pairs := 0
+	var sunk_pairs := 0
 	for a in range(0, verts.size(), 2):
 		var v: Vector3 = verts[a]
 		var vr: Vector3 = verts[a + 1]
@@ -166,8 +213,21 @@ func _run() -> void:
 		# Über seichtem See hebt das Band anteilig zum Spiegel wie der
 		# Terrain-Shader (geometryLift*): Obergrenze dann Spiegel + Hauch.
 		var lake_c := _cell_value(levels, n, world, pair_mid.x, pair_mid.z) * hscale + lake_surface_lift
-		var expect_l := maxf(ground + waterline_lift, ground_c + river_lift)
-		var expect_r := maxf(ground_r + waterline_lift, ground_c + river_lift)
+		# Wasserlinien-Ziel wie emitRibbon: tiefstes Gelände über der Spanne der
+		# verrauschten Wasserlinie + waterline_lift + höchstens
+		# center_raise_max, nie über dem Spiegel der Mitte (ground_c +
+		# river_lift). Bis zum Review Neon Nr. 6 stand hier der Spiegel der
+		# Mitte allein, auf ebenem Talboden blieb die alte Platte erlaubt.
+		var reach := maxf(waterline_reach_min,
+			waterline_reach * smoothstep(visible_lo, visible_hi, cols[a].a))
+		var target_l := minf(ground_c + river_lift,
+			_waterline_ground(heights, n, world, pair_mid, v, reach) * hscale
+				+ waterline_lift + center_raise_max)
+		var target_r := minf(ground_c + river_lift,
+			_waterline_ground(heights, n, world, pair_mid, vr, reach) * hscale
+				+ waterline_lift + center_raise_max)
+		var expect_l := maxf(ground + waterline_lift, target_l)
+		var expect_r := maxf(ground_r + waterline_lift, target_r)
 		var wall := maxf(ground_c + cross_tol + river_lift, lake_c)
 		var err_l := maxf(0.0, maxf(v.y - maxf(expect_l, lake_c), v.y - wall))
 		var err_r := maxf(0.0, maxf(vr.y - maxf(expect_r, lake_c), vr.y - wall))
@@ -216,6 +276,13 @@ func _run() -> void:
 					sea * hscale + sea_surface_sink,
 					err_l, err_r, surface_err_l, surface_err_r]
 			continue
+		# Untergrenze (Review Neon Nr. 6): die Bandmitte eines Land-Paars
+		# liegt nicht unter dem Gelände der Mitte. Senken dürfen sich nur die
+		# Kanten; eine Mitte unter dem Gelände heißt, das Band verschwindet.
+		if not water_like:
+			land_pairs += 1
+			if pair_mid.y < ground_c - SINK_TOLERANCE:
+				sunk_pairs += 1
 		if edge_l_water:
 			on_water += 1
 		else:
@@ -224,7 +291,15 @@ func _run() -> void:
 			on_water += 1
 		else:
 			max_ground_error = maxf(max_ground_error, err_r)
-	print("max_ground_error=", max_ground_error, " vertices_auf_wasser=", on_water)
+	print("max_ground_error=", max_ground_error, " vertices_auf_wasser=", on_water,
+		" land_paare=", land_pairs, " mitte_versunken=", sunk_pairs)
+	# Mac (Produktionswelt, 4000 Jahre) misst 89 von 11.127 Land-Paaren
+	# (0,8 %); die steilere Linux-Welt liegt höher, deshalb ein Zehntel. Ein
+	# versenktes oder auf 0 marshalltes Band läge nahe 100 %.
+	if land_pairs < 1000 or sunk_pairs * 10 > land_pairs:
+		push_error("FAIL: Bandmitte unter dem Gelände (%d von %d Land-Paaren)" % [sunk_pairs, land_pairs])
+		quit(1)
+		return
 	if stray > 0:
 		push_error("FAIL: %d Band-Kantenpaare liegen weder auf dem Gelände noch auf einem Wasserspiegel (erste %d):%s"
 			% [stray, mini(stray, 8), stray_report])
@@ -341,6 +416,17 @@ func _cell_value(f: PackedFloat32Array, n: int, world: float, x: float, z: float
 	var i := clampi(int(round((x + world * 0.5) / cs)), 0, n - 1)
 	var j := clampi(int(round((z + world * 0.5) / cs)), 0, n - 1)
 	return f[j * n + i]
+
+## Tiefstes Gelände (Sim-Höhe) über der Spanne der verrauschten Wasserlinie
+## zwischen Bandmitte und Kante `edge` (Spiegel von emitRibbon: `reach` mal
+## innerste, mittlere und äußerste Lage).
+func _waterline_ground(h: PackedFloat32Array, n: int, world: float, mid: Vector3, edge: Vector3,
+		reach: float) -> float:
+	var g := INF
+	for f in [waterline_inner, 0.5 * (1.0 + waterline_inner), 1.0]:
+		var p: Vector3 = mid + (edge - mid) * (reach * f)
+		g = minf(g, _bilinear_height(h, n, world, p.x, p.z))
+	return g
 
 func _bilinear_height(h: PackedFloat32Array, n: int, world: float, x: float, z: float) -> float:
 	var cs := world / float(n - 1)

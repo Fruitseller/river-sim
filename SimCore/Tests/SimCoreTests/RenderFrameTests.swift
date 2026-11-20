@@ -120,6 +120,77 @@ final class RenderFrameTests: XCTestCase {
         XCTAssertFalse(render.frame(terrain, .settled, now: 5).ribbonsRebuilt)
     }
 
+    /// Nach einem Welt-Eingriff (`.edited`) baut der abschließende
+    /// `.settled`-Frame die Bänder auch ohne Knoten-Bewegung neu (Gelände,
+    /// Abfluss und Seespiegel gehen in die Bänder ein); `.stroke` während des
+    /// Strichs bleibt bei der Delta-Prüfung, und der Bau verbraucht den
+    /// Eingriff (Review Neon Nr. 5).
+    func testSettledFrameAfterAnEditRebuildsTheRibbons() {
+        let terrain = channelWorld()
+        let render = RenderState(geometryMode: true)
+        _ = render.frame(terrain, .settled, now: 0)
+        render.invalidate(terrain, .edited)
+        XCTAssertFalse(render.frame(terrain, .stroke, now: 1).ribbonsRebuilt,
+                       "Während des Strichs zählt weiter die Knoten-Bewegung")
+        XCTAssertTrue(render.frame(terrain, .settled, now: 2).ribbonsRebuilt,
+                      "Endstand nach dem Eingriff baut die Bänder neu")
+        XCTAssertFalse(render.frame(terrain, .settled, now: 3).ribbonsRebuilt,
+                       "Ohne neuen Eingriff kein zweiter Bau")
+        render.invalidate(terrain, .advanced)
+        XCTAssertFalse(render.frame(terrain, .settled, now: 4).ribbonsRebuilt,
+                       "Ein Sim-Schritt ohne Bewegung baut nicht")
+    }
+
+    /// Ende-zu-Ende über die Sitzung (der Weg von `Main._finish_stroke` und
+    /// `Main._load_world`): nach Pinsel und Nachzug ist der Endstand derselbe,
+    /// den das Laden dieser Welt zeigt — Wald, Schutzmaske und Bänder
+    /// bit-gleich. Vor dem Fix blieb der Band-Bau des Vor-Pinsel-Stands
+    /// stehen; gemessen (n = 192, 13 Pinselorte) wichen danach 201–853
+    /// Waldzellen ab, auch fern vom Pinsel (der Nachzug rechnet Abfluss und
+    /// Seespiegel neu).
+    func testFinishedStrokeMatchesTheLoadedWorld() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("frame-load-\(UUID().uuidString).\(WorldSnapshot.fileExtension)").path
+        let edited = path + ".edited.\(WorldSnapshot.fileExtension)"
+        defer {
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: edited)
+        }
+        let world = agedWorld(renderConfig(n: 192), years: 2000, seed: 1337)
+        _ = try WorldSnapshot.write(world, to: path)
+        let session = WorldSession<WorldFrame>(config: world.cfg, seed: 1337,
+                                               render: RenderState(geometryMode: true))
+        var now = 0.0
+        func settled() -> WorldFrame {
+            now += 1
+            return session.renderFrame(.settled, now: now)
+        }
+        try session.load(from: path)
+        _ = settled()
+        let n = world.cfg.n
+        for (gx, gz) in [(60.0, 60.0), (130.0, 90.0)] {
+            for _ in 0..<6 {
+                session.brush(.flatten, gx: gx, gz: gz, radiusWorld: 1.0, strength: 3.0,
+                              target: world.cfg.sea - 0.05)
+            }
+            session.recomputeFlow()
+            let stroke = settled()
+            _ = try session.save(to: edited)
+            session.generate(seed: 99)
+            _ = settled()
+            try session.load(from: edited)
+            let loaded = settled()
+            let a = try XCTUnwrap(stroke.frame.overlays), b = try XCTUnwrap(loaded.frame.overlays)
+            XCTAssertEqual(a.forestMask.count, n * n)
+            XCTAssertEqual(zip(a.forestMask, b.forestMask).filter { $0 != $1 }.count, 0,
+                           "Wald nach dem Laden wie nach dem Strich (\(gx), \(gz))")
+            XCTAssertEqual(zip(a.protectMask, b.protectMask).filter { $0 != $1 }.count, 0,
+                           "Schutzmaske nach dem Laden wie nach dem Strich (\(gx), \(gz))")
+            XCTAssertEqual(stroke.ribbons.vertices, loaded.ribbons.vertices,
+                           "Bänder nach dem Laden wie nach dem Strich (\(gx), \(gz))")
+        }
+    }
+
     /// Raster-Stempel-Modus (`RS_WATER_STAMP`): es gibt keine Bänder zu bauen.
     func testStampModeNeverBuildsRibbons() {
         let render = RenderState(geometryMode: false)

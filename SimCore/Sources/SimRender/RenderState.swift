@@ -138,6 +138,9 @@ public final class RenderState {
     /// der zuletzt gezeigte Wald je Zelle und das Sim-Jahr dazu. Leer = kein
     /// Gedächtnis, die nächste Maske übernimmt das Ziel.
     private var forestMemory: [Float] = []
+    /// Seit dem letzten Band-Bau gab es einen Welt-Eingriff (`.edited`): der
+    /// nächste `.settled`-Frame baut die Bänder neu (s. `rebuildRibbonsIfDue`).
+    private var editedSinceRibbonBuild = false
     private var forestMemoryYear = 0.0
 
     /// Schutz- und Waldmaske fallen immer gemeinsam: die Waldmaske endet an
@@ -184,6 +187,7 @@ public final class RenderState {
         plumeCache = nil
         barCache = nil
         dropMasks()
+        if change == .edited { editedSinceRibbonBuild = true }
         if change != .advanced {
             forestMemory = []
             // Pinsel, Laden, Neugenerieren zeigen den Stand sofort, ohne
@@ -219,7 +223,8 @@ public final class RenderState {
         lastOverlayTime = now
 
         out.ribbonsRebuilt = rebuildRibbonsIfDue(
-            terrain, now: now, force: trigger == .settled || trigger == .stroke)
+            terrain, now: now, force: trigger == .settled || trigger == .stroke,
+            afterEdit: trigger == .settled && editedSinceRibbonBuild)
 
         let blend = trigger == .timelapse ? Self.timelapseWaterBlend : 1.0
         // GPU-Pfad: die CPU liefert das ungeglättete Feld, gemischt wird im Shader.
@@ -236,7 +241,18 @@ public final class RenderState {
     /// Bänder neu bauen, wenn der Deckel abgelaufen ist (oder `force`) UND sich
     /// die Zentrumslinien merklich bewegt haben. Der Deckel zählt die PRÜFUNG,
     /// nicht den Bau: auch eine Prüfung ohne Rebuild startet ihn neu.
-    private func rebuildRibbonsIfDue(_ terrain: Terrain, now: Double, force: Bool) -> Bool {
+    ///
+    /// `afterEdit`: der abschließende `.settled`-Frame nach einem Welt-Eingriff
+    /// (Pinselstrich samt Nachzug) baut IMMER. Die Bänder lesen außer den
+    /// Zentrumslinien auch Gelände, Abfluss und Seespiegel (Höhe, Breite,
+    /// Deckkraft, sichtbarer Kern); der Pinsel ändert die, ohne die
+    /// Zentrumslinien merklich zu verschieben. Vorher blieb der Bau des
+    /// Vor-Pinsel-Stands stehen, und erst das Laden des Spielstands baute neu:
+    /// Wald und Schutzmaske wichen nach dem Laden ab (Review Neon Nr. 5,
+    /// Wächter `game/tests/canopy.gd`, `RenderFrameTests`). Während des
+    /// Strichs (`.stroke`) bleibt es bei der Delta-Prüfung.
+    private func rebuildRibbonsIfDue(_ terrain: Terrain, now: Double, force: Bool,
+                                     afterEdit: Bool = false) -> Bool {
         guard geometryMode else { return false }
         if !force, let last = lastRibbonCheckTime, now - last < Self.ribbonRebuildSeconds {
             return false
@@ -244,10 +260,12 @@ public final class RenderState {
         lastRibbonCheckTime = now
         // Ein laufender Übergang (Einwachsen, Versiegen) baut auch ohne
         // Knoten-Bewegung weiter, sonst bliebe er mitten im Vorgang stehen.
-        guard riversMaxDelta(terrain) > Self.ribbonRebuildDelta || ribbons.inTransition else { return false }
+        guard afterEdit || riversMaxDelta(terrain) > Self.ribbonRebuildDelta
+                || ribbons.inTransition else { return false }
         buildRiverRibbons(terrain, hscale: RenderContract.heightScale,
                           lift: RenderContract.riverLift)
         markRiversBuilt(terrain)
+        editedSinceRibbonBuild = false
         return true
     }
 

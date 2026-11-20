@@ -261,12 +261,12 @@ void fragment() {
 	float aa = max(fwidth(across_band), 1e-4) / max(visible, 1e-3);
 	float footprint = length(fwidth(v_world.xz));
 	// Bandbreite in Welteinheiten je Einheit UV.x (Review zu #174): UV.y ist
-	// schon Weltmaß (Bogenlänge), UV.x läuft quer 0 … 1. Die Jacobi-Spalte
-	// ∂Welt/∂UV.x aus den Bildschirm-Ableitungen von Weltposition und UV;
-	// gedeckelt gegen das Band, das von der Kante gesehen wird.
-	mat2 dw = mat2(dFdx(v_world.xz), dFdy(v_world.xz));
-	mat2 du = mat2(dFdx(UV), dFdy(UV));
-	float band_width = abs(determinant(du)) > 1e-12 ? min(length((dw * inverse(du))[0]), 8.0) : 0.0;
+	// schon Weltmaß (Bogenlänge), UV.x läuft quer 0 … 1. Sie kommt je
+	// Stützpunkt aus dem Band-Bau (`RibbonMesh.flows.w`, Review Neon Nr. 8);
+	// bis dahin entstand sie je Pixel als Jacobi-Spalte ∂Welt/∂UV.x aus den
+	// Bildschirm-Ableitungen — dieselbe Größe, aber je Dreieck konstant und
+	// an Dreieckskanten von den Ableitungen der Nachbarpixel verrauscht.
+	float band_width = max(v_flow.w, 0.0);
 
 	// Wasserlinie: um ein Rauschen versetzt, damit das Ufer nicht als
 	// Lineal-Kante parallel zur Zentrumslinie läuft; Glättung nach Pixelgröße
@@ -396,7 +396,11 @@ void fragment() {
 	// Weißton ist eine Optik-Zahl wie im Terrain-Shader).
 	vec3 view_ws = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
 	vec3 refl = reflect(-view_ws, water_n_ws);
-	float cloud_hit = refl.y > 0.05 ? cloud_cover(v_world.xz + refl.xz * (cloud_height - v_world.y) / refl.y, u_time) : 0.0;
-	EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * water_cloud_reflection * still * wet
-		* (0.35 + 0.65 * fresnel) * float(clouds_enabled);
+	// Nur wo das Ergebnis zählt (Review Neon Nr. 9): Stillwasser, sichtbar,
+	// Wolken an, Wasserspiegel unter der Wolkenbasis (darüber spiegelte der
+	// Strahl rückwärts auf Wolken unter dem Wasser, vgl. `cloud_light`).
+	float cloud_w = still * wet * water_cloud_reflection;
+	float cloud_hit = clouds_enabled && cloud_w > 0.0 && refl.y > 0.05 && v_world.y < cloud_height
+		? cloud_cover(v_world.xz + refl.xz * (cloud_height - v_world.y) / refl.y, u_time) : 0.0;
+	EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel);
 }

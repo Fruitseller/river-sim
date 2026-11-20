@@ -173,14 +173,16 @@ public final class RiverRibbonRenderer {
     /// trockene Rinne, wo weder Band noch Raster malte.
     public var bandCoverage: [Double] { mesh.bandCoverage }
     /// Je Zelle die Deckkraft der Bänder, deren WASSERKÖRPER sie deckt
-    /// (Look-Iteration 12, Auwald): sichtbare Wasserbreite minus
-    /// `CanopyRender.bandCoreInsetCells`, mindestens die Zelle der
-    /// Zentrumslinie. `water.gdshader` zeichnet ein Band mit Deckkraft p nur
-    /// über den Anteil `WaterRender.ribbonVisibleWidth(p)` seiner Breite, und
-    /// davon nur innerhalb der Wasserlinie Wasser; `bandCoverage` meldet
+    /// (Look-Iteration 12, Auwald): bis zur äußersten Lage der verrauschten
+    /// Wasserlinie (`WaterRender.ribbonWaterlineReach`), mindestens die Zelle
+    /// der Zentrumslinie. `water.gdshader` zeichnet ein Band mit Deckkraft p
+    /// nur über den Anteil `WaterRender.ribbonVisibleWidth(p)` seiner Breite,
+    /// und davon nur innerhalb der Wasserlinie Wasser; `bandCoverage` meldet
     /// dagegen die volle Breite plus eine halbe Zelle. Das Kronendach endet
     /// (mit `CanopyRender.waterSeamCells` Saum) an dieser Deckung und steht
-    /// damit bis an den Wasserkörper.
+    /// damit bis an den Wasserkörper, nie darin (Wächter
+    /// `CanopyTests.testNoForestOverRiversLakesOrBands`, gegen die gemalte
+    /// Wasserfläche).
     public private(set) var bandVisibleCoverage: [Double] = []
     /// Fluss-Band je Zelle des letzten Baus (s. `RibbonMesh.bandOwner`).
     public var bandOwner: [Int32] { mesh.bandOwner }
@@ -1621,8 +1623,7 @@ public final class RiverRibbonRenderer {
                     if pc[k] < value { pc[k] = value; po[k] = owner }
                     if let pv, pv[k] < value {
                         let hv = max(hwRaw * WaterRender.ribbonVisibleWidth(value)
-                                     * (1 - WaterRender.ribbonWaterline)
-                                     - CanopyRender.bandCoreInsetCells, 0.5)
+                                     * WaterRender.ribbonWaterlineReach, 0.5)
                         if e2 <= hv * hv { pv[k] = value }
                     }
                     // Ausgewachsen deckt jedes sichtbare Stück voll: auch ein

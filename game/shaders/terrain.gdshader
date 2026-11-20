@@ -171,6 +171,7 @@ uniform vec3 water_beach_dry_color;
 uniform vec3 water_beach_wet_color;
 uniform float water_beach_wet_height;
 uniform float water_beach_height_hi;
+uniform float water_beach_blend_height;
 uniform float water_beach_edge_lo;
 uniform float water_beach_edge_hi;
 
@@ -212,6 +213,7 @@ uniform float canopy_cell;
 uniform float canopy_height;
 uniform float canopy_lift_lo;
 uniform float canopy_lift_hi;
+uniform float canopy_lift_smooth_texels;
 uniform float canopy_cover_lo;
 uniform float canopy_cover_hi;
 uniform float canopy_gap_lo;
@@ -254,6 +256,7 @@ uniform float material_snow_slope_lo;
 uniform float material_snow_slope_hi;
 uniform float material_snow_breakup;
 uniform float material_rock_fray;
+uniform float material_redistribute_fade;
 uniform float material_outcrop;
 uniform float material_outcrop_slope_lo;
 uniform float material_outcrop_slope_hi;
@@ -802,7 +805,8 @@ void vertex() {
 		v_stand = vec2(vnoise(swp * 0.55 + vec2(3.7, 11.3)), vnoise(swp * 0.13 + vec2(19.1, 5.4)));
 	}
 	// Das Dach hebt nach der GEGLÄTTETEN Maske an (vier bilineare Abgriffe
-	// im Abstand von 1,5 Texeln, also ein Mittel über etwa 4×4 Zellen): je
+	// im Abstand von `canopy_lift_smooth_texels` (1,5) Texeln, also ein Mittel
+	// über etwa 4×4 Zellen; `Main._forest_lift_at` rechnet es nach): je
 	// Sim-Zelle angehoben zog es Zeltspitzen und steile Dreieckswände hoch,
 	// die sich in der Nahsicht als schwarze Splitter lasen. Geglättet steigt
 	// der Bestandsrand über mehrere Zellen sanft an, Einzelzellen heben kaum.
@@ -811,7 +815,7 @@ void vertex() {
 	// kann nur kleiner werden): dort keine Abgriffe. Der Vertex-Shader läuft
 	// auch in jedem Schatten-Pass, die Abgriffe kosteten sonst messbar.
 	if (canopy_enabled && v_forest > canopy_lift_lo) {
-		vec2 o = vec2(1.5 / grid_n);
+		vec2 o = vec2(canopy_lift_smooth_texels / grid_n);
 		float sm = textureLod(forest_tex, uv + o, 0.0).r + textureLod(forest_tex, uv - o, 0.0).r
 		         + textureLod(forest_tex, uv + vec2(o.x, -o.y), 0.0).r
 		         + textureLod(forest_tex, uv + vec2(-o.x, o.y), 0.0).r;
@@ -972,18 +976,24 @@ void fragment() {
 		float rock_cell = rock;
 		float scree_cell = scree;
 		float n_mix = (breakup - 0.5) * 1.8;
+		// Beide Umverteilungen blenden ab ihrer Schwelle über
+		// `material_redistribute_fade` ein (SimCore.MaterialRender, Review
+		// Neon Nr. 4: vorher harter Sprung an der Schwelle).
 		if (cold > 0.002) {
 			float lie = cold * 1.45 + n_mix * material_snow_breakup - cavity * material_snow_cavity
 			          - calib_window(material_snow_slope_lo, material_snow_slope_hi, world_slope);
-			float cold_lie = smoothstep(0.30, 0.62, lie);
+			float cold_lie = mix(cold, smoothstep(0.30, 0.62, lie),
+			                     calib_window(0.002, material_redistribute_fade, cold));
 			rock += max(cold - cold_lie, 0.0);
 			cold = cold_lie;
 		}
 		float pair = rock + vegetation;
-		if (pair > 0.02 && rock > 0.005) {
+		if (rock > 0.005) {
 			float t = rock / pair + (n_mix + cavity * 0.5) * material_rock_fray;
-			rock = pair * smoothstep(0.25, 0.75, t);
-			vegetation = pair - rock;
+			float rock_fray = mix(rock, pair * smoothstep(0.25, 0.75, t),
+			                      calib_window(0.005, material_redistribute_fade, rock));
+			vegetation = pair - rock_fray;
+			rock = rock_fray;
 		}
 		float steep_g = calib_window(material_outcrop_slope_lo, material_outcrop_slope_hi, world_slope);
 		if (steep_g > 0.0) {
@@ -1194,14 +1204,20 @@ void fragment() {
 		if (sand > 0.002) {
 			float shore = hval - sea_level;
 			vec3 sand_col = mix(water_bar_sand_wet_color, water_bar_sand_color, breakup);
-			if (shore < water_beach_height_hi) {
+			// Strandband: unter `water_beach_height_hi`, die letzten
+			// `water_beach_blend_height` stetig in die Bank-Behandlung (bis zum
+			// Review Neon Nr. 3 ein hartes `if`, s. WaterRender.beachBlendHeight).
+			float beach = 1.0 - calib_window(water_beach_height_hi - water_beach_blend_height,
+			                                 water_beach_height_hi, shore);
+			if (beach > 0.0) {
 				// Rückkante scharf; an der Wasserlinie dagegen fällt das Gewicht
 				// bilinear zur Meereszelle (A = 0) ab, dort bis ans Wasser voll.
 				float dry = smoothstep(water_beach_wet_height, 2.0 * water_beach_wet_height + 1e-6, shore);
-				sand = mix(smoothstep(0.0, water_beach_edge_lo, sand),
-				           smoothstep(water_beach_edge_lo, max(water_beach_edge_hi, water_beach_edge_lo + 1e-6), sand),
-				           dry);
-				sand_col = mix(water_beach_wet_color, water_beach_dry_color, dry);
+				float beach_sand = mix(calib_window(0.0, water_beach_edge_lo, sand),
+				                       calib_window(water_beach_edge_lo, water_beach_edge_hi, sand),
+				                       dry);
+				sand = mix(sand, beach_sand, beach);
+				sand_col = mix(sand_col, mix(water_beach_wet_color, water_beach_dry_color, dry), beach);
 			}
 			sand_col *= mix(0.94, 1.06, top_grain * material_fade);
 			terr = mix(terr, sand_col, sand);
@@ -1353,10 +1369,12 @@ void fragment() {
 		vec3 view_ws = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
 		vec3 refl = reflect(-view_ws, water_n_ws);
 		vec3 lake_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-		float cloud_hit = refl.y > 0.05 && clouds_enabled
+		// Nur auf stehendem Wasser unter der Wolkenbasis (Review Neon Nr. 9:
+		// vorher auch auf jedem fließenden Raster-Pixel, Ergebnis mal 0).
+		float cloud_w = water_cloud_reflection * lakeMask * (1.0 - flowing);
+		float cloud_hit = clouds_enabled && cloud_w > 0.0 && refl.y > 0.05 && lake_pos.y < cloud_height
 			? cloud_cover(lake_pos.xz + refl.xz * (cloud_height - lake_pos.y) / refl.y, u_time) : 0.0;
-		EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * water_cloud_reflection * lakeMask * (1.0 - flowing)
-			* (0.35 + 0.65 * fresnel);
+		EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel);
 	}
 	ALBEDO = albedo;
 	ROUGHNESS = roughness;

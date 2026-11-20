@@ -1751,6 +1751,14 @@ public enum WaterRender {
     public static let beachEdgeLo = 0.32
     /// s. `beachEdgeLo`.
     public static let beachEdgeHi = 0.82
+    /// Über diese Höhe (Sim-Einheiten) unterhalb von `beachHeightHi` blendet
+    /// der Shader die Strand-Behandlung (Rückkante, nass/trocken) in die der
+    /// Bänke über. Bis zum Review Neon Nr. 3 schaltete sie an
+    /// `beachHeightHi` hart ab: bilinear gelesenes Sandgewicht einer
+    /// tieferen Strandzelle sprang dort ungeschärft auf und wechselte die
+    /// Farbe. Schmal gegen das Strandband (0,004 … 0,011), damit der Strand
+    /// selbst unverändert bleibt.
+    public static let beachBlendHeight = 0.001
 
     /// Tiefenfarbe im Band nach dem Querprofil (Vorlage E): `UV2.y` trägt die
     /// signierte Bogenstärke (`MeanderState.bendStrength`, −1 … +1). Am

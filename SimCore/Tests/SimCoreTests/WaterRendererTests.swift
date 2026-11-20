@@ -68,9 +68,27 @@ final class WaterRendererTests: XCTestCase {
         let crossTolerance = Double(width) * 0.5 * WaterRender.ribbonMaxCrossSlope
         // Land-Kante (Look-Iteration 13, Issue #233): nie über der
         // Wand-Grenze (Zentrum + Querneigung + `lift`) und nie zugleich über
-        // dem eigenen Gelände + `ribbonWaterlineLift` UND dem Wasserspiegel
-        // der Mitte (Zentrum + `lift`). Senken darf sie sich, heben nicht.
-        // Ob die Wasserlinie dazwischen schwebt, misst `RibbonFloatTests`.
+        // dem eigenen Gelände + `ribbonWaterlineLift` UND dem Wasserlinien-
+        // Ziel: tiefstes Gelände über der Spanne der verrauschten Wasserlinie
+        // + `ribbonWaterlineLift` + höchstens `ribbonCenterRaiseMax`, aber
+        // nie über dem Wasserspiegel der Mitte (Zentrum + `lift`). Bis zum
+        // Review Neon Nr. 6 stand hier statt des Ziels der Spiegel der Mitte
+        // allein — auf ebenem Talboden durfte die Kante damit wieder die
+        // alte Platte (Gelände + 0,35) tragen. Senken darf sie sich, heben
+        // nicht; ob die Wasserlinie dazwischen schwebt und ob die Bandmitte
+        // versinkt, misst `RibbonFloatTests`.
+        let alpha = Double(first.colors[vertex].w)
+        let reach = max(WaterRender.ribbonWaterlineReachMin,
+                        WaterRender.ribbonWaterlineReach * WaterRender.ribbonVisibleWidth(alpha))
+        func waterlineGround(_ ex: Double, _ ez: Double) -> Double {
+          var g = Double.infinity
+          for f in [WaterRender.ribbonWaterlineInner, 0.5 * (1 + WaterRender.ribbonWaterlineInner), 1.0] {
+            let r = reach * f
+            g = min(g, bilinear(terrain.h, centerX + (ex - centerX) * r,
+                                centerZ + (ez - centerZ) * r, n: terrain.cfg.n) * 24)
+          }
+          return g
+        }
         func landEdgeExcess(_ x: Double, _ z: Double, _ y: Double) -> Double {
           let ground = bilinear(terrain.h, x, z, n: terrain.cfg.n) * 24
           // Über seichtem See hebt das Band nur anteilig zum Spiegel (wie der
@@ -82,8 +100,10 @@ final class WaterRendererTests: XCTestCase {
           // Look-Iteration 14: die Gerade zwischen den Wasserlinien hebt sich
           // um bis zu `ribbonCenterRaiseMax`, wenn Gelände in der Bandmitte
           // sonst durchs Wasser stäche.
-          let float = y - max(ground + WaterRender.ribbonWaterlineLift + WaterRender.ribbonCenterRaiseMax,
-                              centerHeight + 0.35, lake)
+          let target = min(centerHeight + 0.35,
+                           waterlineGround(x, z) + WaterRender.ribbonWaterlineLift
+                             + WaterRender.ribbonCenterRaiseMax)
+          let float = y - max(target, ground + WaterRender.ribbonWaterlineLift, lake)
           return max(wall, float, 0)
         }
         let leftExcess = landEdgeExcess(leftX, leftZ, Double(left.y))

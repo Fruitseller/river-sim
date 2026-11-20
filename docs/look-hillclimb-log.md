@@ -182,6 +182,33 @@ Vergleichsstand: Stand nach Nr. 14 (`.tools/look/keep5/`).
 
 | 18 | Wald sieht aus wie Wald: spitze Kronen in Hanglagen, rundliche im Tiefland, streuende Größe, matte Farbe mit dunkler Basis und hellen Spitzen, gelbgrüne Akzente, ausfransende Ränder | Implementer, 10 Läufe: A 2 B 8 GLEICH 20. Orchestrator, 10 Läufe: A 3 B 9 GLEICH 18 (`diorama` 1/0). Gepoolt über 60: A 5 B 17 GLEICH 38 | verworfen | Die Richtung stimmt (`nah` 0/7, `tal` 4/10), aber zwei Drittel der Urteile sehen keinen Unterschied, `diorama` gar keinen. Im Bild bleiben es Schuppen statt Noppen: Das Kronendach je Pixel im Terrain-Shader kann keine Baum-Silhouette gegen den Hintergrund zeichnen. Eine echte Lösung bräuchte Geometrie (Instanzbäume sind seit #152 bewusst abgeschafft) und ist ein eigenes Vorhaben. Bildrate laut Implementer bis 3,7 % schlechter, Messung verrauscht. Patch: `.tools/look/it18/patch-orch.diff`. |
 
+## Zweitmeinung zum Gesamt-Diff (2026-11-20)
+
+Gemini 4 Neon hat den Code-Diff 705db55..c1f6ad4 gelesen (elf Befunde), Opus
+5.5 hat jeden am Code geprüft und behoben, was stimmte. Kein Look-Schritt:
+der Bewerter sieht gegen den Stand davor 15× GLEICH.
+
+- Wald reichte in den gemalten Wasserrand (236 von 11.997 Wasserpunkten,
+  Maske bis 0,79; der alte Wächter prüfte nur den verkleinerten Bandkern).
+  Der Bandkern reicht jetzt bis zur äußersten verrauschten Wasserlinie.
+  Preis: der Galeriewald steht rund 1,5 Zellen weiter vom Ufer zurück, in
+  `nah` als schmaler Wiesensaum sichtbar.
+- Pinselkuppel und Raycast schwebten am Waldrand bis 0,20 über dem Dach
+  (`Main.gd` rechnete ohne die Glättung des Vertex-Shaders).
+- Nach einem Pinselstrich wurden die Bänder nicht neu gebaut; das war die
+  wahre Ursache der Lade-Abweichung in `canopy.gd` (201 bis 853 Zellen an 13
+  Pinselorten). Der Test vergleicht wieder exakt, die Toleranz aus ab35d41
+  ist weg.
+- Harte Schwellen an Strand, Schnee und Fels blenden stetig; Band-Wächter
+  haben wieder eine Untergrenze; 13 Uniforms und `ribbon_flows` sind von
+  Wächtern gedeckt; Wolkenspiegelung rechnet nur noch auf Stillwasser.
+- Offen: `canopyGuard` kostet gemessen 4,5 ms je Overlay-Takt im
+  Hintergrund-Schritt; Schattierungsterme lesen rohe Materialgewichte;
+  `RibbonFloatTests` misst auf Linux 4,0 % bei Schranke 5 %.
+
+Schranken: 674 Tests, 0 Fehler; Hash unverändert; neun Godot-Vertragstests
+grün; Bildrate 17,8 → 17,9 ms (Rauschen).
+
 ## Abschluss (2026-11-20)
 
 Behalten: Nr. 6 (Wald), Nr. 7 (Fels, Hänge, Schnee), Nr. 8 (Küste), Nr. 10

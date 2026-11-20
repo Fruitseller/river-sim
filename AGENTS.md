@@ -406,18 +406,30 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    Gletschereis, Rohboden und Talboden-Wiese liegen, rechnet
    `SimRender.TerrainColorRenderer` (Kalibrierung `SimCore.MaterialRender`,
    Wächter `SimCoreTests/MaterialTests.swift` und `tests/canopy.gd`); der
-   Terrain-Shader baut daraus nur Klüftung, Körnung, Spalten und Moränen.
+   Terrain-Shader baut daraus nur Klüftung, Körnung, Spalten und Moränen,
+   und verteilt je Pixel nach der Form um (Look-Hill-Climber Nr. 7): Schnee
+   hält sich in Rinnen und gleitet von Rippen und Steilflanken ab (wird
+   Fels), die Grenze Fels ↔ Bewuchs franst nach Rauschen und Form aus;
+   beides blendet ab einer kleinen Kälte- bzw. Felsschwelle stetig ein
+   (`MaterialRender.snowCavity` ff., `rockFray`, `redistributeFade`).
    Dazu Shader, die
    nichts MALEN, sondern rechnen: `relief_bake.gdshader` backt einmal je
-   Terrain-Update die Render-Verschiebung von Rinnen und Graten (Issue #153,
-   Kalibrierung `SimCore.ReliefRender` über die Brücke, Wächter
+   Terrain-Update die Render-Verschiebung von Rinnen und Graten, seit
+   Look-Iteration 7 auch Felsrippen und Felsbänke (`relief_rib_*`,
+   `relief_bench_*`) samt der Form-Kennzahl `cavity`, die der Terrain-Shader
+   für die Umverteilung liest (Issue #153, Kalibrierung
+   `SimCore.ReliefRender` über die Brücke, Wächter
    `tests/relief.gd`); der Terrain-Shader liest sie nur, Pinselkuppel und
    Kameraziel liegen auf der verschobenen Fläche, der Pinsel wirkt auf die
    Sim-Zelle darunter. Das Kronendach (Issue #152) zeichnet der
    Terrain-Shader je Pixel; WO Wald steht, kommt als Waldmaske aus
    `SimRender.ForestCanopyMask` (Kalibrierung `SimCore.CanopyRender`, Wächter
-   `SimCoreTests/CanopyTests.swift` und `tests/canopy.gd`). Instanzbäume gibt
-   es seitdem nicht mehr. `water_field_blur.gdshader` und
+   `SimCoreTests/CanopyTests.swift` und `tests/canopy.gd`). Das Dach hebt
+   der Vertex-Shader nach der geglätteten Maske an
+   (`CanopyRender.liftSmoothTexels`); `Main._forest_lift_at` rechnet
+   dasselbe für Raycast, Pinselkuppel und Kameraziel nach (Wächter
+   `tests/canopy.gd`, Bestandsrand). Instanzbäume gibt es seitdem nicht
+   mehr. `water_field_blur.gdshader` und
    `water_field_ewma.gdshader` sind die abschaltbare GPU-Fassung der
    Schwanzstufen des Wasserfelds (s. `RS_WATER_GPU`); sie enthalten bewusst
    keine Kalibrier-Zahl — alle Schwellen bleiben im Vertrag
@@ -530,13 +542,20 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   (Issue #154): zuletzt ausgeliefertes Rasterwasser plus `bandCoverage` plus
   Saum (`WaterRender.protectSeamCells`), zustandslos; `RenderState` verwirft
   sie bei jedem Wasser-Upload und Band-Bau (Wächter:
-  `SimCoreTests/WaterProtectMaskTests.swift`),
+  `SimCoreTests/WaterProtectMaskTests.swift`). Fürs Kronendach liefert
+  `WaterProtectMask.canopyGuard` Sperre und Abstandskarte: um Bänder (bis
+  zur äußersten verrauschten Wasserlinie,
+  `RiverRibbonRenderer.bandVisibleCoverage`) und Seen nur
+  `CanopyRender.waterSeamCells` Saum, um Raster-Zubringer und nasse Wiese
+  der volle Saum der Schutzmaske; der Galeriewald misst nur Bänder und
+  Seen (Wächter: `CanopyTests`, u. a. gegen die gemalte Wasserfläche),
 - `ForestCanopyMask`: Waldmaske des Kronendachs (Issue #152): Vegetation mit
   Lichtungs-Rauschen, ohne Wände, Schnee/Eis, Ufersaum und Schutzmaske,
   zustandslos; `RenderState` verwirft sie mit der Schutzmaske und dem
   Material-Cache und hält ihr Gedächtnis in Sim-Jahren (#167,
   `ForestCanopyMask.regrow`: Wald weicht Wasser sofort, wächst über
-  `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`).
+  `CanopyRender.regrowYears` nach, in Wassernähe (Auwald) über
+  `CanopyRender.riparianRegrowYears`; Wächter: `SimCoreTests/CanopyTests.swift`).
   Entlang von Flussbändern und Seen steht ein lückiger Galeriewald
   (`CanopyRender.riparian*`, Look-Hill-Climber Nr. 12–14), der Grundwald
   hält weiter die volle Schutzmaske ein,
@@ -545,7 +564,8 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Materialgewichten), je KÜSTENPUNKT aus dem Zusammenhang statt aus Höhe und
   lokaler Steigung (die hält `wavePass` überall gleich, §E): Rückland-Relief,
   Offenheit (Stellvertreter für Wellenenergie), Mündungs-Zufuhr und Rauschen
-  entlang der Küste ergeben Strandbreite (0…5 Zellen), die Kliffhöhe direkt
+  entlang der Küste ergeben Strandbreite (0…4 Zellen,
+  `WaterRender.beachMaxWidthCells`), die Kliffhöhe direkt
   hinter der Küste (3 Zellen) den Steilküsten-Anteil; jede Saumzelle erbt beide
   von ihrer Küstenzelle, Sand als Vereinigung runder Säume, Fels nur auf der
   Kliffwand (eigene Steigung), nie auf der Terrasse davor. Über dem Gerinne
