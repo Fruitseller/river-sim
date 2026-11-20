@@ -800,13 +800,14 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("material_enabled", render_quality != "performance")
 	_setup_relief()
 	_setup_canopy()
-	# Höhenbereich der Kachel-AABBs: Sim-Höhe 0…1 mal hscale, dazu die
+	# Höhenbereich der Kachel-AABBs: der ganze Sim-Bereich (Config.swift,
+	# −0,3 … 1,4; der Pinsel reicht bis an beide Enden) mal hscale, dazu die
 	# Render-Verschiebung (±0,5 / relief_height_code) und das Kronendach.
 	var lift := 0.5 / maxf(relief_height_code, 1e-3) + float(canopy_calib["canopy_height"]) + 0.5
 	terrain_tiles = TerrainTiles.new()
 	terrain_tiles.name = "TerrainTiles"
 	add_child(terrain_tiles)
-	terrain_tiles.build(world_size, terrain_grid, terrain_mat, -lift, hscale + lift)
+	terrain_tiles.build(world_size, terrain_grid, terrain_mat, -0.3 * hscale - lift, 1.4 * hscale + lift)
 	# Material-Kalibrierung (#174 D); die Gewichte kommen mit jedem
 	# Overlay-Frame (`cover`, `surface`).
 	apply_calibration(sim, "material", [terrain_mat])
@@ -890,7 +891,10 @@ func _setup_scene() -> void:
 	bmat.next_pass = bmat_visible
 	for m: ShaderMaterial in [bmat, bmat_visible]:
 		m.render_priority = Material.RENDER_PRIORITY_MAX
-		m.set_shader_parameter("px_scale", DisplayServer.screen_get_scale())
+		# VIEWPORT_SIZE ist im 3D-Shader die SKALIERTE Renderauflösung
+		# (RenderScale): mit dem Faktor bleiben die Linien gleich breit.
+		m.set_shader_parameter("px_scale", DisplayServer.screen_get_scale()
+			* get_viewport().scaling_3d_scale)
 	brush_mi.material_override = bmat
 	brush_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	brush_mi.visible = false

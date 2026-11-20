@@ -73,6 +73,10 @@ func _probe_set(state: String) -> void:
 	probe_state = state
 	var vp := get_viewport()
 	probe_sun.shadow_enabled = not state.contains("noshadow")
+	# Schatten-Reichweite "shdNNN" (Welteinheiten, sonst 420) und Atlas 4096 ("atl4k").
+	var sd := state.find("shd")
+	probe_sun.directional_shadow_max_distance = float(state.substr(sd + 3, 3).to_int()) if sd >= 0 else 420.0
+	RenderingServer.directional_shadow_atlas_set_size(4096 if state.contains("atl4k") else 8192, true)
 	vp.scaling_3d_mode = probe_defaults["mode"]
 	vp.scaling_3d_scale = probe_defaults["scale"]
 	if state.contains("native"):
