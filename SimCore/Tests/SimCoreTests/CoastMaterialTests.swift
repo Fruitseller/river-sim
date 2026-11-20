@@ -23,6 +23,22 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertEqual(reach[center + 3 * cfg.n + 3], 0, "Sand reicht diagonal über den Kreis hinaus")
         XCTAssertGreaterThan(reach[center + 2 * cfg.n + 3], 0)
         XCTAssertLessThan(reach[center + 2 * cfg.n + 3], 0.5)
+
+        let beach = CoastMaterial.beachReach(t, seeds: [center], width: widths,
+                                             fadeCells: WaterRender.beachBackshoreFadeCells)
+        XCTAssertEqual(beach[center], 1, "Sand bleibt an der Wasserlinie")
+        XCTAssertLessThan(beach[center + 3], reach[center + 3], "Landeinwärts läuft der Sand in Gras aus")
+
+        widths[center] = Float(WaterRender.deltaIslandBeachCells)
+        let bank = CoastMaterial.beachReach(t, seeds: [center], width: widths,
+                                            fadeCells: WaterRender.beachBackshoreFadeCells)
+        XCTAssertEqual(bank, CoastMaterial.beachReach(t, seeds: [center], width: widths),
+                       "Schmale Strände und Delta-Inseln behalten ihren Sand")
+
+        widths[center] = 0.4
+        let thin = CoastMaterial.beachReach(t, seeds: [center], width: widths,
+                                            fadeCells: WaterRender.beachBackshoreFadeCells)
+        XCTAssertEqual(thin[center], 0.4, "Schwaches Strandpotenzial bleibt schwach")
     }
 
     /// Kleine Welt: Spalten `i < shore` flaches Meer, rechts davon Land mit der Höhe

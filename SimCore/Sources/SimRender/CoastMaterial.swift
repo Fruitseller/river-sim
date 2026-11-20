@@ -205,7 +205,8 @@ public enum CoastMaterial {
             inherited[k] = Float(WaterRender.deltaIslandBeachCells)
             inheritedCliff[k] = 0
         }
-        var reach = beachReach(terrain, seeds: seeds, width: inherited)
+        var reach = beachReach(terrain, seeds: seeds, width: inherited,
+                               fadeCells: WaterRender.beachBackshoreFadeCells)
         clearRiverBeds(terrain, seeds: seeds, reach: &reach)
         let surfWidths = [Float](repeating: Float(WaterRender.coastReachCells), count: n * n)
         var surf = beachReach(terrain, seeds: seeds, width: surfWidths)
@@ -263,19 +264,24 @@ public enum CoastMaterial {
 
     /// Kreisförmige Säume je Küstenpunkt statt Breitensuche mit 8 gleichen
     /// Schrittlängen. Deren quadratische Ausbreitung plus wechselnde Breite
-    /// erzeugte die Rauten im Sand, obwohl das Gelände dort glatt war.
-    static func beachReach(_ terrain: Terrain, seeds: [Int], width: [Float]) -> [Float] {
+    /// erzeugte die Rauten im Sand, obwohl das Gelände dort glatt war. Ein
+    /// breiterer Auslauf am Strand gibt den hinteren Zellen weniger Sand.
+    static func beachReach(_ terrain: Terrain, seeds: [Int], width: [Float],
+                           fadeCells: Double = 1) -> [Float] {
         let n = terrain.cfg.n, h = terrain.h, sea = terrain.cfg.sea
         var out = [Float](repeating: 0, count: n * n)
         for k in seeds where width[k] > 0 {
             let w = Double(width[k]), r = Int(w.rounded(.up))
+            let backshore = smoothstep(WaterRender.deltaIslandBeachCells, WaterRender.beachMaxWidthCells, w)
+            let fade = 1 + (fadeCells - 1) * backshore
             let i = k % n, j = k / n
             for jj in max(0, j - r)...min(n - 1, j + r) {
                 for ii in max(0, i - r)...min(n - 1, i + r) {
                     let nb = jj * n + ii
                     guard h[nb] > sea else { continue }
                     let dx = Double(ii - i), dz = Double(jj - j)
-                    let reach = Float(min(1, max(0, w - (dx * dx + dz * dz).squareRoot())))
+                    let distance = (dx * dx + dz * dz).squareRoot()
+                    let reach = Float(clamp01((w - distance) / fade))
                     out[nb] = max(out[nb], reach)
                 }
             }

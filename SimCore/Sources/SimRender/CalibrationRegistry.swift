@@ -99,6 +99,12 @@ public enum CalibrationRegistry {
         // Offenes Meer (ocean.gdshader, #155).
         ("water_ocean_depth_span", WaterRender.oceanDepthSpan),
         ("water_ocean_mid_depth", WaterRender.oceanMidDepth),
+        ("water_ocean_shoal_scale", WaterRender.oceanShoalScale),
+        ("water_ocean_shoal_depth_variation", WaterRender.oceanShoalDepthVariation),
+        ("water_ocean_breaker_spacing", WaterRender.oceanBreakerSpacing),
+        ("water_ocean_breaker_width", WaterRender.oceanBreakerWidth),
+        ("water_ocean_breaker_depth", WaterRender.oceanBreakerDepth),
+        ("water_ocean_breaker_strength", WaterRender.oceanBreakerStrength),
         ("water_ocean_surf_depth", WaterRender.oceanSurfDepth),
         ("water_ocean_surf_slope_lo", WaterRender.oceanSurfSlopeLo),
         ("water_ocean_surf_slope_hi", WaterRender.oceanSurfSlopeHi),

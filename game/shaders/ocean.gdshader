@@ -32,6 +32,12 @@ uniform float water_specular;
 // Begründung der Werte: SimCore WaterRender.ocean*.
 uniform float water_ocean_depth_span;
 uniform float water_ocean_mid_depth;
+uniform float water_ocean_shoal_scale;
+uniform float water_ocean_shoal_depth_variation;
+uniform float water_ocean_breaker_spacing;
+uniform float water_ocean_breaker_width;
+uniform float water_ocean_breaker_depth;
+uniform float water_ocean_breaker_strength;
 uniform float water_ocean_surf_depth;
 uniform float water_ocean_surf_strength;
 uniform float water_ocean_surf_scale;
@@ -196,17 +202,26 @@ void fragment() {
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
 	NORMAL = water_n_vs;
 
-	// Tiefe über dem Sim-Schelf, normiert 0…1.
+	// Statische, längliche Schlieren im Schelf. Abseits der Küste und der
+	// Mündungen bleibt die Tiefe die einzige Quelle der Wasserfarbe.
 	float depth = clamp((sea_level - h_shelf) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0);
+	float plume = 0.0;
+	float sediment = 0.0;
+	if (inside_terrain) {
+		plume = sediment_plume(p);
+		if (depth < 1.0 || plume > 0.0) {
+			vec2 q = p * water_ocean_shoal_scale;
+			float banks = noise2(q + vec2(noise2(q.yx), 0.0));
+			float streaks = noise2(q * vec2(1.5, 3.0));
+			depth *= 1.0 + water_ocean_shoal_depth_variation *
+			         (banks + streaks - 1.0) * (1.0 - depth);
+			sediment = plume * (0.55 + banks * streaks);
+		}
+	}
 	vec3 water = mix(water_ocean_shallow_color, water_ocean_mid_color,
 	                 calib_window(0.0, water_ocean_mid_depth, depth));
 	water = mix(water, water_ocean_deep_color, calib_window(water_ocean_mid_depth, 1.0, depth));
-	// Außerhalb des Sim-Quadrats gibt es keine Mündung: dort keine Abgriffe.
-	float plume = 0.0;
-	if (inside_terrain) {
-		plume = sediment_plume(p);
-		water = mix(water, water_ocean_plume_color, plume * water_ocean_plume_opacity);
-	}
+	water = mix(water, water_ocean_plume_color, clamp(sediment * water_ocean_plume_opacity, 0.0, 1.0));
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
 	// Spiegelung statt Farbe (Befund #174): den Himmel spiegelt Godot über
@@ -215,20 +230,31 @@ void fragment() {
 	// Schaum auf der Oberfläche und bleibt davon unberührt.
 	water *= 1.0 - fresnel;
 
-	// Brandung: schmaler, von Rauschen gebrochener Strich an der Wasserlinie.
-	// Die Tiefe des Saums misst die SCHARFE Wassersäule (bilinear, dieselbe
-	// Höhe wie die Küstenlinie), nicht den geglätteten Schelf: sonst lag der
-	// Saum als Schleier vor der Küste (Hill-Climber Nr. 8).
-	// Gekoppelt an die Geländeneigung: auf flachen Sandbänken, Rinnen und Lagunen
-	// schäumt das Wasser nicht flächig, sondern nur am Hang zur Wasserlinie (#174).
-	// Vor Mündungen (Sedimentfahne) bricht keine Welle.
+	// Der Saum liegt an der scharfen Küstenlinie (Nr. 8). Zwei vorgelagerte
+	// Brecher folgen dem Schelf mit ungleichmäßiger Breite und Lücken.
 	float line_depth = clamp((sea_level - h) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0);
-	float surf = (1.0 - calib_window(0.0, water_ocean_surf_depth, line_depth))
-	           * calib_window(water_ocean_surf_slope_lo, water_ocean_surf_slope_hi, shelf_slope);
-	surf *= calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi,
-	                     noise2(p * water_ocean_surf_scale + vec2(u_time * water_ocean_surf_drift, 0.0)));
-	surf *= clamp(1.0 - plume * water_ocean_surf_plume_cut, 0.0, 1.0);
-	water = mix(water, water_ocean_surf_color, surf * water_ocean_surf_strength);
+	if (line_depth < water_ocean_breaker_depth) {
+		float slope_gate = calib_window(water_ocean_surf_slope_lo, water_ocean_surf_slope_hi, shelf_slope);
+		vec2 foam_uv = p * water_ocean_surf_scale + vec2(u_time * water_ocean_surf_drift, 0.0);
+		float patches = noise2(foam_uv);
+		float gaps = calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi, patches);
+		float wash = 1.0 - calib_window(0.0, water_ocean_surf_depth, line_depth);
+		float distance_to_shore = (sea_level - h) / max(shelf_slope, water_ocean_surf_slope_lo + 1e-6);
+		float swell = noise2(foam_uv * 0.4);
+		float spray = noise2(foam_uv * 2.0);
+		// Gegenläufige Versätze und Lücken lösen das Paar in einzelne Kämme
+		// auf. Die feine Gischt stört die Kontur am Rand jedes Kamms.
+		vec2 centers = water_ocean_breaker_spacing * (vec2(1.0, 2.0) + (swell - 0.5) * vec2(0.45, -0.65));
+		vec2 crest_distance = abs(vec2(distance_to_shore) - centers + water_ocean_breaker_width * (spray - 0.5));
+		float width = max(1e-6, water_ocean_breaker_width * (0.5 + patches));
+		vec2 crests = 1.0 - smoothstep(vec2(0.0), vec2(width), crest_distance);
+		float outer_gaps = calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi, 1.0 - patches);
+		float breakers = max(crests.x * gaps, crests.y * outer_gaps) * water_ocean_breaker_strength
+		               * (1.0 - calib_window(0.0, water_ocean_breaker_depth, line_depth));
+		float surf = max(wash * gaps, breakers) * slope_gate;
+		surf *= clamp(1.0 - plume * water_ocean_surf_plume_cut, 0.0, 1.0);
+		water = mix(water, water_ocean_surf_color, surf * water_ocean_surf_strength);
+	}
 
 	water *= cloud_light(vec3(p.x, NODE_POSITION_WORLD.y, p.y), u_time);
 	ALBEDO = water;

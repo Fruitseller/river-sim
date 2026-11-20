@@ -48,6 +48,12 @@ final class WaterUniformsTests: XCTestCase {
     /// Offenes Meer (#155): Tiefen-Farbe über dem Schelf, Brandung, Rausch-Wellen.
     private static let oceanScalars = [
         "water_ocean_depth_span", "water_ocean_mid_depth",
+        "water_ocean_shoal_scale",
+        "water_ocean_shoal_depth_variation",
+        "water_ocean_breaker_spacing",
+        "water_ocean_breaker_width",
+        "water_ocean_breaker_depth",
+        "water_ocean_breaker_strength",
         "water_ocean_surf_depth", "water_ocean_surf_strength",
         "water_ocean_surf_scale", "water_ocean_surf_drift",
         "water_ocean_surf_noise_lo", "water_ocean_surf_noise_hi",
