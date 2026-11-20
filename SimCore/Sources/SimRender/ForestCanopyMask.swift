@@ -47,6 +47,92 @@ public enum ForestCanopyMask {
         return field
     }
 
+    /// Auwald-Rauschen je Zelle (0 … 0,94, Mittel ≈ 0,47; Look-Iteration 12):
+    /// steuert Breite und Lücken des Galeriewalds
+    /// (`CanopyRender.riparian*`). Wie `clumpField` nur von Gittergröße und
+    /// Weltbreite abhängig; `RenderState` rechnet es einmal.
+    public static func riparianField(n: Int, world: Double) -> [Float] {
+        guard n > 0 else { return [] }
+        let scale = CanopyRender.riparianFrequency * world / Double(n)
+        var field = [Float](repeating: 0, count: n * n)
+        field.withUnsafeMutableBufferPointer { fb in
+            let pf = fb.baseAddress!
+            parallelChunks(n) { jLo, jHi in
+                for j in jLo..<jHi {
+                    for i in 0..<n {
+                        pf[j * n + i] = Float(clumpNoise((Double(i) + 0.5) * scale + 113.7,
+                                                         (Double(j) + 0.5) * scale + 61.2))
+                    }
+                }
+            }
+        }
+        return field
+    }
+
+    /// Eingaben des Galeriewalds: Abstand zum Wasser
+    /// (`WaterProtectMask.canopyGuard`), Auwald-Rauschen (`riparianField`)
+    /// und die Makrofarbe (A-Kanal = Sand von Strand und Bank).
+    public struct Riparian {
+        public let distance: [UInt8]
+        public let noise: [Float]
+        public let colors: [UInt8]
+        /// Sperre für den GRUNDWALD (n×n, leer = keine; Look-Iteration 14):
+        /// die volle Schutzmaske. Der Galeriewald darf bis an den
+        /// Wasserkörper, der übrige Wald bleibt wie vor Iteration 12 hinter
+        /// dem Saum der Schutzmaske — sonst wuchs der Talboden zwischen eng
+        /// liegenden Läufen zu.
+        public let baseBlock: [UInt8]
+
+        public init(distance: [UInt8], noise: [Float], colors: [UInt8], baseBlock: [UInt8] = []) {
+            self.distance = distance
+            self.noise = noise
+            self.colors = colors
+            self.baseBlock = baseBlock
+        }
+
+        func fits(_ count: Int) -> Bool {
+            distance.count == count && noise.count == count && colors.count == count * 4
+        }
+    }
+
+    /// Galeriewald-Anteil 0 … `riparianDensity` einer Zelle aus Abstand zum
+    /// Wasser (Zellen), Auwald-Rauschen, Fels und Sand. Bewusst OHNE
+    /// Vegetationsgewicht: die Sim rodet den Mäandergürtel beim Stempeln
+    /// (`veg = 0`), gemessen fiel so ein Drittel der ufernahen Zellen ohne
+    /// Wald auf kahlen Gürtelboden — genau der Korridor, um den es geht.
+    @inline(__always)
+    static func riparianCover(distance: Double, noise: Double, rock: Double, sand: Double) -> Double {
+        let t = smoothstep(CanopyRender.riparianGapLo, CanopyRender.riparianGapHi, noise)
+        guard t > 0 else { return 0 }
+        let width = CanopyRender.riparianWidthLo
+            + (CanopyRender.riparianWidthHi - CanopyRender.riparianWidthLo)
+            * smoothstep(CanopyRender.riparianGapHi, 0.62, noise)
+        let near = 1 - smoothstep(width, width + 1, distance)
+        return CanopyRender.riparianDensity * t * near
+            * (1 - smoothstep(CanopyRender.riparianRockLo, CanopyRender.riparianRockHi, rock))
+            * (1 - smoothstep(CanopyRender.riparianSandLo, CanopyRender.riparianSandHi, sand))
+    }
+
+    /// Zielmaske des Frames (vor dem Gedächtnis): Sperre und Abstandskarte
+    /// aus Bandkern, Rasterwasser, nasser Wiese und Bänken
+    /// (`WaterProtectMask.canopyGuard`), Galeriewald daran. Der EINE Weg,
+    /// den `RenderState` fährt; die Wächter rechnen damit nach. `protect`
+    /// (die Schutzmaske, leer = keine) sperrt den Grundwald wie vor
+    /// Look-Iteration 12 (`Riparian.baseBlock`).
+    public static func target(_ terrain: Terrain, surfaces: [UInt8], colors: [UInt8],
+                              bandCore: [Double], waterBytes: [UInt8], wetMeadow: [Bool],
+                              barSand: [Float], clump: [Float], riparianNoise: [Float],
+                              protect: [UInt8] = [])
+        -> (mask: [UInt8], distance: [UInt8]) {
+        let water = WaterProtectMask.canopyGuard(n: terrain.cfg.n, bandCoverage: bandCore,
+                                                 waterBytes: waterBytes, wetMeadow: wetMeadow,
+                                                 barSand: barSand)
+        let mask = bytes(terrain, surfaces: surfaces, protect: water.blocked, clump: clump,
+                         riparian: Riparian(distance: water.distance, noise: riparianNoise,
+                                            colors: colors, baseBlock: protect))
+        return (mask, water.distance)
+    }
+
     /// Value-Noise-fBm der Flusstal-Studie (3 Oktaven, Amplituden 0.55 · 0.48ⁱ,
     /// Wertebereich 0 … 0.94, Mittel ≈ 0.47), portiert aus `fbm`/`vnoise`/
     /// `ehash` in `terrain.gdshader` und `erosion_filter.gdshaderinc`. Gleiche
@@ -87,11 +173,13 @@ public enum ForestCanopyMask {
     /// `protect` = R8-Schutzmaske, `clump` = `clumpField`. Passt eine Eingabe
     /// nicht zur Gittergröße oder fehlt die Schrittweite (`cellSize == 0`, etwa
     /// bei `world <= 0` oder nicht-endlich), bleibt die Maske leer statt falsch.
+    /// `riparian` (Look-Iteration 12) setzt entlang des Wassers den
+    /// Galeriewald dazu; ohne (oder passt es nicht) gibt es keinen.
     public static func bytes(_ terrain: Terrain, surfaces: [UInt8], protect: [UInt8],
-                             clump: [Float]) -> [UInt8] {
+                             clump: [Float], riparian: Riparian? = nil) -> [UInt8] {
         bytes(terrain, surfaces: surfaces, protect: protect, clump: clump,
               vegetationLo: CanopyRender.vegetationLo, vegetationHi: CanopyRender.vegetationHi,
-              clumpGain: CanopyRender.clumpGain)
+              clumpGain: CanopyRender.clumpGain, riparian: riparian)
     }
 
     /// Dieselbe Maske mit anderen Vegetations-Schwellen, nur für den
@@ -99,7 +187,7 @@ public enum ForestCanopyMask {
     /// nicht öffentlich, die Produktion liest allein `CanopyRender`.
     static func bytes(_ terrain: Terrain, surfaces: [UInt8], protect: [UInt8],
                       clump: [Float], vegetationLo: Double, vegetationHi: Double,
-                      clumpGain: Double) -> [UInt8] {
+                      clumpGain: Double, riparian: Riparian? = nil) -> [UInt8] {
         let n = terrain.cfg.n
         let cnt = n * n
         let h = terrain.h
@@ -111,6 +199,7 @@ public enum ForestCanopyMask {
         // `macroSlope` ≈ halbe Höhendifferenz je Zelle (Mittel aus |dx| und
         // |dz| über ±2 Zellen) → Weltsteigung: × 2 × Überhöhung / Zellbreite.
         let slopeScale = 2 * RenderContract.heightScale / (terrain.cfg.world / Double(n))
+        let rip = riparian?.fits(cnt) == true ? riparian : nil
         var mask = [UInt8](repeating: 0, count: cnt)
         h.withUnsafeBufferPointer { hb in
         surfaces.withUnsafeBufferPointer { sb in
@@ -127,17 +216,35 @@ public enum ForestCanopyMask {
                         let v = ph[k]
                         let shore = smoothstep(sea + CanopyRender.shoreLo,
                                                sea + CanopyRender.shoreHi, v)
-                        if shore <= 0 { continue }
+                        // Der Galeriewald hat einen eigenen, flacheren
+                        // Ufersaum zum Meer: Mündungsebenen liegen kaum über
+                        // dem Meeresspiegel; den Strand sperrt dort das
+                        // Sandgewicht (`riparianSand*`).
+                        let ripShore = smoothstep(sea + CanopyRender.riparianShoreLo,
+                                                  sea + CanopyRender.riparianShoreHi, v)
+                        if shore <= 0 && ripShore <= 0 { continue }
                         let veg = Double(ps[k * 4]) / 255
                         let cold = Double(ps[k * 4 + 2]) / 255
                         // Am Rand (2 Zellen) fehlt der Stencil; dort ist Meer.
                         let inner = i > 1 && i < n - 2 && j > 1 && j < n - 2
                         let slope = inner ? Terrain.macroSlope(ph, k, n) * slopeScale : 0
-                        let f = smoothstep(vegetationLo, vegetationHi,
-                                           veg + Double(pc[k]) * clumpGain)
+                        let baseOpen = rip.map { $0.baseBlock.count != cnt || $0.baseBlock[k] == 0 } ?? true
+                        var cover = smoothstep(vegetationLo, vegetationHi,
+                                               veg + Double(pc[k]) * clumpGain) * shore
+                            * (baseOpen ? 1 : 0)
                             * (1 - smoothstep(CanopyRender.wallSlopeLo, CanopyRender.wallSlopeHi, slope))
+                        if let rip, rip.distance[k] != 255 {
+                            // Eigenes Wand-Gate: die Makro-Steigung (±2 Zellen)
+                            // schließt am Ufer das eingetiefte Gerinne ein.
+                            cover = max(cover, ripShore * riparianCover(
+                                distance: Double(rip.distance[k]), noise: Double(rip.noise[k]),
+                                rock: Double(ps[k * 4 + 1]) / 255,
+                                sand: Double(rip.colors[k * 4 + 3]) / 255)
+                                * (1 - smoothstep(CanopyRender.riparianWallSlopeLo,
+                                                  CanopyRender.riparianWallSlopeHi, slope)))
+                        }
+                        let f = cover
                             * (1 - smoothstep(CanopyRender.coldLo, CanopyRender.coldHi, cold))
-                            * shore
                         pm[k] = byte01(f)
                     }
                 }
@@ -162,9 +269,12 @@ public enum ForestCanopyMask {
     /// Ziel fällt und dort kein Wasser liegt, weicht der Wald über
     /// `retreatTau` statt sofort (`CanopyRender.retreatYears`); ohne `wet`,
     /// mit `retreatTau <= 0` oder ohne vergangene Sim-Zeit wie bisher sofort.
+    /// `fast` (n×n, leer = keine) markiert Zellen, die über `fastTau` statt
+    /// `tau` nachwachsen (Auwald, `CanopyRender.riparianRegrowYears`).
     public static func regrow(_ memory: inout [Float], toward target: [UInt8],
                               dtYears: Double, tau: Double,
-                              wet: WetNow? = nil, retreatTau: Double = 0) -> [UInt8] {
+                              wet: WetNow? = nil, retreatTau: Double = 0,
+                              fast: [Bool] = [], fastTau: Double = 0) -> [UInt8] {
         guard !target.isEmpty else {
             memory = []
             return []
@@ -179,6 +289,10 @@ public enum ForestCanopyMask {
         }
         let safeDt = (dtYears.isFinite && dtYears > 0) ? dtYears : 0.0
         let rise = Float(Terrain.relaxFraction(dt: safeDt, tau: tau))
+        // Auwald (Look-Iteration 12): in Wassernähe (`fast`) wächst der Wald
+        // über `fastTau` nach — Weichholzaue auf frisch verlassenem Gleithang.
+        let hasFast = fast.count == target.count && fastTau > 0 && fastTau.isFinite
+        let riseFast = hasFast ? Float(Terrain.relaxFraction(dt: safeDt, tau: fastTau)) : rise
         // Ohne vergangene Sim-Zeit kein Rückzug über Zeit: ändert sich das
         // Ziel im selben Sim-Jahr (Band-Bau, Wasser-Upload, Pinsel-Takt),
         // folgt der Wald sofort.
@@ -211,7 +325,7 @@ public enum ForestCanopyMask {
                     po[k] = UInt8((next * 255).rounded())
                     continue
                 }
-                let next = min(1.0, max(0.0, m + (t - m) * rise))
+                let next = min(1.0, max(0.0, m + (t - m) * (hasFast && fast[k] ? riseFast : rise)))
                 pm[k] = next
                 po[k] = UInt8((next * 255).rounded())
             }

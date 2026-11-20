@@ -101,6 +101,9 @@ public final class RenderState {
     private var visibleWetMeadow: [Bool] = []
     /// Nasse Wiese des zuletzt ausgelieferten Wasserfelds (leer vor dem ersten).
     var wetMeadowMask: [Bool] { visibleWetMeadow }
+    /// Bandkern des letzten Baus (`RiverRibbonRenderer.bandVisibleCoverage`),
+    /// für die Wächter der Waldmaske.
+    var bandCore: [Double] { ribbons.bandVisibleCoverage }
 
     /// Dichte der Sedimentfahnen (Issue #174 C, `SedimentPlume`), gepuffert
     /// bis zur nächsten Terrain-Änderung.
@@ -128,6 +131,8 @@ public final class RenderState {
     /// Lichtungs-Rauschen: hängt nur an Gittergröße und Weltbreite, einmal
     /// gerechnet.
     private var clumpField: [Float] = []
+    /// Auwald-Rauschen (Look-Iteration 12), wie `clumpField` einmal gerechnet.
+    private var riparianNoise: [Float] = []
     private var clumpWorld = 0.0
     /// Gedächtnis der Waldmaske (Issue #167, s. `ForestCanopyMask.regrow`):
     /// der zuletzt gezeigte Wald je Zelle und das Sim-Jahr dazu. Leer = kein
@@ -364,10 +369,17 @@ public final class RenderState {
         let n = terrain.cfg.n
         if clumpField.count != n * n || clumpWorld != terrain.cfg.world {
             clumpField = ForestCanopyMask.clumpField(n: n, world: terrain.cfg.world)
+            riparianNoise = ForestCanopyMask.riparianField(n: n, world: terrain.cfg.world)
             clumpWorld = terrain.cfg.world
         }
-        let target = ForestCanopyMask.bytes(terrain, surfaces: terrainSurfaceBytes(terrain),
-                                            protect: protectMaskBytes(terrain), clump: clumpField)
+        // Das Kronendach endet nicht an der Schutzmaske (Saum 2 Zellen, für die
+        // Verschiebung), sondern eine Zelle vor dem Wasserkörper, und davor
+        // steht der Galeriewald (Look-Iteration 12, `CanopyRender.riparian*`).
+        let (target, distance) = ForestCanopyMask.target(
+            terrain, surfaces: terrainSurfaceBytes(terrain), colors: terrainColorBytes(terrain),
+            bandCore: ribbons.bandVisibleCoverage, waterBytes: visibleWater ?? [],
+            wetMeadow: visibleWetMeadow, barSand: barMaterial(terrain).sand,
+            clump: clumpField, riparianNoise: riparianNoise, protect: protectMaskBytes(terrain))
         // Eine Uhr, die rückwärts läuft, gehört zu keiner fortgeschriebenen Welt.
         if terrain.years < forestMemoryYear { forestMemory = [] }
         let mask = ForestCanopyMask.regrow(&forestMemory, toward: target,
@@ -376,7 +388,9 @@ public final class RenderState {
                                            wet: WetNow(bandCoverage: ribbons.bandCoverage,
                                                        waterBytes: visibleWater ?? [],
                                                        bandThreshold: CanopyRender.retreatInstantBandCoverage),
-                                           retreatTau: CanopyRender.retreatYears)
+                                           retreatTau: CanopyRender.retreatYears,
+                                           fast: distance.map { Int($0) <= Int(CanopyRender.riparianWidthHi) + 1 },
+                                           fastTau: CanopyRender.riparianRegrowYears)
         forestMemoryYear = terrain.years
         forestMaskCache = mask
         return mask

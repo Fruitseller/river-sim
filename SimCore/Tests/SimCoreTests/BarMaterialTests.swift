@@ -234,7 +234,9 @@ final class BarMaterialTests: XCTestCase {
         let overlays = frameOverlays(RenderState(geometryMode: true), t)
         let mask = overlays.protectMask
         let forest = overlays.forestMask
-        for j in 11..<14 {
+        // Bank innerhalb `barSandReachLo` Kanalbreiten (Look-Iteration 12:
+        // offener Sand nur noch direkt am Gerinne, s. dort).
+        for j in 10..<row(6, plus: WaterRender.barSandReachLo) {
             for i in 11..<29 {
                 XCTAssertEqual(mask[j * n + i], 255, "frische Bank (\(i),\(j)) ist geschützt")
                 XCTAssertEqual(forest[j * n + i], 0, "kein Wald auf frischer Bank")

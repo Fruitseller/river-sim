@@ -33,7 +33,8 @@ public enum WaterProtectMask {
     /// zusätzlich die nasse Wiese, `barSand` (n×n, `BarMaterial.Field.sand`)
     /// frische Bänke; leer = keine.
     public static func bytes(n: Int, bandCoverage: [Double], waterBytes: [UInt8],
-                             wetMeadow: [Bool] = [], barSand: [Float] = []) -> [UInt8] {
+                             wetMeadow: [Bool] = [], barSand: [Float] = [],
+                             seamCells: Int = WaterRender.protectSeamCells) -> [UInt8] {
         guard n > 0 else { return [] }
         let cnt = n * n
         let riverThresh = byte01(WaterRender.protectRiverThreshold)
@@ -61,7 +62,7 @@ public enum WaterProtectMask {
 
         // 2. Saum: protectSeamCells Pässe einer 3×3-Max-Erweiterung.
         var temp = [UInt8](repeating: 0, count: cnt)
-        for _ in 0..<WaterRender.protectSeamCells {
+        for _ in 0..<max(0, seamCells) {
             dilate3x3(src: mask, dst: &temp, n: n)
             swap(&mask, &temp)
         }
@@ -72,6 +73,67 @@ public enum WaterProtectMask {
             for k in 0..<cnt where barSand[k] >= limit { mask[k] = 255 }
         }
         return mask
+    }
+
+    /// Sperre und Abstandskarte für das Kronendach (Look-Iteration 12,
+    /// Auwald): dieselben Kern-Zellen wie `bytes` (Rasterwasser, Bänder,
+    /// nasse Wiese), aber nur `CanopyRender.waterSeamCells` Zellen Saum statt
+    /// `WaterRender.protectSeamCells`. `distance` ist der Chebyshev-Abstand
+    /// zum Kern in Zellen (0 = Kern, 255 = weiter als
+    /// `CanopyRender.riparianReachCells`); `blocked` sperrt den Saum und frische
+    /// Bänke (`WaterRender.barProtectSand`) wie die Schutzmaske.
+    ///
+    /// Look-Iteration 14: `distance` (der Galeriewald) zählt nur Bänder und
+    /// Seen, nicht die Raster-Zubringer und die nasse Wiese, und um diese
+    /// sperrt wieder der volle Saum der Schutzmaske — sonst wuchs jeder Bach
+    /// im Talboden zu (Bewerter Nr. 13: Lichtungen und Grasflächen der
+    /// Talmitte fehlten).
+    public static func canopyGuard(n: Int, bandCoverage: [Double], waterBytes: [UInt8],
+                                   wetMeadow: [Bool] = [], barSand: [Float] = [])
+        -> (blocked: [UInt8], distance: [UInt8]) {
+        guard n > 0 else { return ([], []) }
+        let cnt = n * n
+        let full = bytes(n: n, bandCoverage: bandCoverage, waterBytes: waterBytes,
+                         wetMeadow: wetMeadow, seamCells: 0)
+        var lakeOnly = waterBytes
+        if lakeOnly.count == cnt * 4 {
+            for k in stride(from: 0, to: cnt * 4, by: 4) { lakeOnly[k] = 0 }
+        }
+        let open = bytes(n: n, bandCoverage: bandCoverage, waterBytes: lakeOnly, seamCells: 0)
+        // Raster-Zubringer und nasse Wiese: Kern ohne Bänder und Seen. Um sie
+        // bleibt die volle Schutzmasken-Sperre (`WaterRender.protectSeamCells`)
+        // wie vor Look-Iteration 12; mit nur `waterSeamCells` wuchs der
+        // Talboden zwischen den Bächen zu (Look-Iteration 14).
+        var raster = full
+        for k in 0..<cnt where open[k] != 0 { raster[k] = 0 }
+        let rasterDistance = chebyshev(raster, reach: WaterRender.protectSeamCells, n: n)
+        let reach = max(CanopyRender.riparianReachCells, CanopyRender.waterSeamCells)
+        let distance = chebyshev(open, reach: reach, n: n)
+        var mask = [UInt8](repeating: 0, count: cnt)
+        for k in 0..<cnt where Int(distance[k]) <= CanopyRender.waterSeamCells
+            || Int(rasterDistance[k]) <= WaterRender.protectSeamCells { mask[k] = 255 }
+        if barSand.count == cnt {
+            let limit = Float(WaterRender.barProtectSand)
+            for k in 0..<cnt where barSand[k] >= limit { mask[k] = 255 }
+        }
+        return (mask, distance)
+    }
+
+    /// Chebyshev-Abstand (Zellen) zum Kern `core` (≠ 0), bis `reach`;
+    /// weiter weg 255.
+    private static func chebyshev(_ core: [UInt8], reach: Int, n: Int) -> [UInt8] {
+        let cnt = n * n
+        var core = core
+        var distance = core.map { $0 != 0 ? UInt8(0) : UInt8(255) }
+        var temp = [UInt8](repeating: 0, count: cnt)
+        if reach > 0 {
+            for step in 1...reach {
+                dilate3x3(src: core, dst: &temp, n: n)
+                swap(&core, &temp)
+                for k in 0..<cnt where core[k] != 0 && distance[k] == 255 { distance[k] = UInt8(step) }
+            }
+        }
+        return distance
     }
 
     /// Je Zeile parallel: liest nur `src`, schreibt nur die eigenen Zeilen von

@@ -9,6 +9,11 @@
 //           C2): + = Linksbogen, Außenufer (Prallhang) bei UV.x = 0. Färbt das
 //           Querprofil außen dunkel-tief, innen hell-seicht (Vorlage E).
 //           0 = symmetrisch (Wendepunkt, Delta-Arm, Altarm).
+//   CUSTOM0 = Lauf-Größen (Look-Iteration 14, RiverRibbonRenderer.flowAttributes):
+//           x Riffel (0 Kolk … 1 Riffel), y Weißwasser, z Gefälle, w Breite (Welt).
+//           Damit wechselt der Fluss ENTLANG des Laufs (Kolk dunkel und glatt,
+//           Riffel hell und bewegt, Schaum an Stufen, Engstellen,
+//           Zusammenflüssen) statt als einfarbige Folie zu liegen.
 // Farben/Glanz sind DIESELBEN wie im Feld-Wasser des Terrain-Shaders, damit
 // Band-Wasser und Textur-Zubringer als EIN Wasser lesen: Wasserfarben, Fresnel,
 // Rauheit/Specular und der Strömungs-Schimmer kommen als water_*-Uniforms über
@@ -94,6 +99,14 @@ uniform vec3 water_flow_shimmer_color;
 uniform vec3 water_delta_plume_color;
 uniform vec3 water_oxbow_water_color;
 uniform float water_ribbon_bend_depth;
+uniform vec3 water_riffle_color;
+uniform float water_riffle_depth;
+uniform vec3 water_foam_color;
+uniform float water_foam_amount;
+uniform float water_foam_scale;
+uniform float water_foam_outer;
+uniform float water_river_specular;
+uniform float water_cloud_reflection;
 uniform float water_ribbon_shoal_mix;
 uniform vec3 water_ribbon_shoal_color;
 uniform float water_ribbon_waterline;
@@ -139,6 +152,7 @@ varying float v_alpha;
 varying float v_kind;
 varying float v_bend;
 varying vec3 v_world;
+varying vec4 v_flow;
 
 // Wolkenschatten (#151) laufen ohne Kante über die Bänder weiter.
 #include "res://shaders/clouds.gdshaderinc"
@@ -210,6 +224,7 @@ void vertex() {
 	v_alpha = COLOR.a;
 	v_kind = UV2.x;
 	v_bend = UV2.y;
+	v_flow = CUSTOM0;
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
@@ -271,6 +286,14 @@ void fragment() {
 	float depth = clamp(0.35 + v_rank * 1.5, 0.0, 1.0) * mix(0.7, 1.0, smoothstep(0.0, 0.45, profile));
 	// Delta-Arme liegen auf dem Ablagerungskörper: per Definition Flachwasser.
 	depth = mix(depth, depth * 0.35, delta);
+	// Lauf-Größen (CUSTOM0) nur im fließenden Wasser.
+	float running = (1.0 - still) * (1.0 - delta);
+	float riffle = clamp(v_flow.x, 0.0, 1.0) * running;
+	float whitewater = clamp(v_flow.y, 0.0, 1.0) * running;
+	float steep = clamp(v_flow.z, 0.0, 1.0) * running;
+	// Kolk ↔ Riffel ENTLANG des Laufs: über der Furt seicht über die ganze
+	// Breite, im Kolk die volle Tiefe.
+	depth *= mix(1.0, water_riffle_depth, riffle);
 	// Querprofil im Bogen (Issue #174 C2, Spiegel: WaterRender.ribbonOutward):
 	// +1 am Prallhang (Kolk, tief), −1 am Gleithang (Bank, seicht).
 	float outward = -(UV.x * 2.0 - 1.0) * clamp(v_bend, -1.0, 1.0);
@@ -295,7 +318,8 @@ void fragment() {
 	vec2 d2 = vec2(-d1.y, d1.x);
 	float speed = water_ribbon_ripple_speed * (1.0 - still);
 	vec2 q = vec2(UV.y * water_ribbon_ripple_stretch - u_time * speed, UV.x * band_width);
-	vec2 gq = ribbon_ripple_grad(q, footprint) * mix(1.0, 0.4, still) * mix(0.6, 1.0, depth);
+	vec2 gq = ribbon_ripple_grad(q, footprint) * mix(1.0, 0.4, still) * mix(0.6, 1.0, depth)
+		* (1.0 + 1.5 * max(riffle, steep));
 	vec2 grad = d1 * gq.x * water_ribbon_ripple_stretch + d2 * gq.y;
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
@@ -316,10 +340,35 @@ void fragment() {
 	// Gleithang zusätzlich die Bank — nur im Saum an der Wasserlinie: über die
 	// halbe Bandbreite gezogen lag sie als milchiger Schleier auf dem Fluss.
 	vec3 water_final = mix(water_bed_color, water, mix(water_opacity_shallow, water_opacity_deep, depth));
+	// Strömungsstriche: quer fein, längs gestreckt. Nah die feine Schar, in
+	// der Ferne gröbere Flecken (Zellen ≥ 1 px quer). Die Faktoren sind
+	// Optik-Zahlen dieses Shaders (Seitenverhältnis der Striche), die
+	// Grundfrequenz kommt als water_foam_scale.
+	float streak_far = ribbon_noise(vec2(q.x * 0.8 - u_time * speed * 0.8, q.y * 2.8) * water_foam_scale * 0.3 + 2.7);
+	// Nah: zwei Rauschfelder multipliziert, das zweite quer sehr fein —
+	// schmale, abreißende Striche statt runder Flecken.
+	float streak_near = sqrt(ribbon_noise(vec2(q.x * 1.2 - u_time * speed, q.y * 2.4) * water_foam_scale + 9.1)
+		* ribbon_noise(vec2(q.x * 0.6 - u_time * speed, q.y * 8.0) * water_foam_scale + 4.4));
+	float near_w = 1.0 - smoothstep(0.3, 1.0, footprint * water_foam_scale * 8.0);
+	float streak = mix(streak_far, streak_near, near_w);
+	// Riffel: belüftete, hellere Oberfläche, entlang der Striche gebrochen.
+	water_final = mix(water_final, water_riffle_color, riffle * mix(0.4, 1.0, smoothstep(0.3, 0.7, streak)) * profile);
+	// Gleithang: Kiesbank nur als schmale, unterbrochene Kante an der
+	// Wasserlinie (über den ganzen Lauf gezogen las sie sich als heller Saum).
+	float shoal_gate = smoothstep(0.55, 0.75, ribbon_noise(vec2(q.x * 4.0, q.y * 2.0) + 31.0));
 	water_final = mix(water_final, water_ribbon_shoal_color,
-		water_ribbon_shoal_mix * max(-outward, 0.0) * (1.0 - smoothstep(0.0, 0.6, profile)));
+		water_ribbon_shoal_mix * max(-outward, 0.0) * shoal_gate * (1.0 - smoothstep(0.0, 0.15, profile)));
+	// Weißwasser: Schaumfahnen in Fließrichtung an Stufen, Engstellen und
+	// Zusammenflüssen (CUSTOM0.y), dazu am Außenbogen. Fleckig über eine
+	// Schwelle auf den Strömungsstreifen; in der Ferne gröbere Flecken,
+	// damit sie bei 8–10 px Laufbreite als Akzent stehen bleiben.
+	float outer = smoothstep(0.3, 1.0, outward) * smoothstep(0.3, 0.9, abs(v_bend)) * running;
+	float foam_drive = clamp(whitewater + water_foam_outer * outer + 0.5 * riffle * (1.0 - 0.5 * depth), 0.0, 1.0);
+	float foam = smoothstep(0.8 - 0.4 * foam_drive, 0.85 - 0.4 * foam_drive, streak)
+		* smoothstep(0.0, 0.3, foam_drive) * profile * water_foam_amount * mix(0.6, 1.0, near_w);
 	water_final = mix(water_final, water_ocean_shallow_color, in_sea * (1.0 - presence * 0.5));
 	water_final *= 1.0 - fresnel;
+	water_final = mix(water_final, water_foam_color, clamp(foam, 0.0, 1.0));
 
 	vec3 col = mix(water_ribbon_bank_color, water_final, wet);
 	col *= cloud_light(v_world, u_time);
@@ -335,6 +384,19 @@ void fragment() {
 	// Stillwasser) — numerisch zufällig gleich waterOpacityShallow,
 	// KEINE WaterRender-Konstante. Das nasse Ufer glänzt matt (0.6).
 	float water_rough = mix(water_roughness, 0.55, still);
+	water_rough = mix(water_rough, 0.7, foam);
 	ROUGHNESS = mix(0.6, water_rough, wet);
-	SPECULAR = mix(0.4, water_specular, wet);
+	// Fließendes Wasser spiegelt den Himmel schwächer (water_river_specular):
+	// sonst legte sich das Himmelsgrau über den Wasserkörper, der Lauf las
+	// sich als „hellblau-graue Folie" (Nr. 13). Altarme spiegeln voll.
+	float spec = mix(water_specular, water_river_specular, running * (1.0 - foam));
+	SPECULAR = mix(0.4, spec, wet);
+	// Stillwasser spiegelt die Wolken: Strahl am Wasserspiegel auf die
+	// Wolkenbasis, deren Deckung als heller Fleck (Licht, nicht Farbe; der
+	// Weißton ist eine Optik-Zahl wie im Terrain-Shader).
+	vec3 view_ws = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
+	vec3 refl = reflect(-view_ws, water_n_ws);
+	float cloud_hit = refl.y > 0.05 ? cloud_cover(v_world.xz + refl.xz * (cloud_height - v_world.y) / refl.y, u_time) : 0.0;
+	EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * water_cloud_reflection * still * wet
+		* (0.35 + 0.65 * fresnel) * float(clouds_enabled);
 }

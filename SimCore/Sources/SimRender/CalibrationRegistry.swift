@@ -122,6 +122,14 @@ public enum CalibrationRegistry {
         ("water_ocean_plume_opacity", WaterRender.oceanPlumeOpacity),
         // Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
         ("water_ribbon_bend_depth", WaterRender.ribbonBendDepth),
+        ("water_riffle_depth", WaterRender.waterRiffleDepth),
+        ("water_raster_steep_lo", WaterRender.rasterSteepLo),
+        ("water_raster_steep_hi", WaterRender.rasterSteepHi),
+        ("water_foam_amount", WaterRender.waterFoamAmount),
+        ("water_foam_scale", WaterRender.waterFoamScale),
+        ("water_foam_outer", WaterRender.waterFoamOuter),
+        ("water_river_specular", WaterRender.waterRiverSpecular),
+        ("water_cloud_reflection", WaterRender.waterCloudReflection),
         ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),
         ("water_bar_roughness", WaterRender.barRoughness),
         // Meeresstrand (terrain.gdshader, Hill-Climber Nr. 8).
@@ -154,6 +162,9 @@ public enum CalibrationRegistry {
         ("water_ocean_surf_color", WaterRender.oceanSurfColor),
         ("water_ocean_plume_color", WaterRender.oceanPlumeColor),
         ("water_ribbon_shoal_color", WaterRender.ribbonShoalColor),
+        ("water_riffle_color", WaterRender.waterRiffleColor),
+        ("water_foam_color", WaterRender.waterFoamColor),
+        ("water_lake_color", WaterRender.waterLakeColor),
         ("water_bar_sand_color", WaterRender.barSandColor),
         ("water_bar_sand_wet_color", WaterRender.barSandWetColor),
         ("water_beach_dry_color", WaterRender.beachDryColor),
@@ -181,6 +192,7 @@ public enum CalibrationRegistry {
         ("ribbonSeaSurfaceSink", WaterRender.ribbonSeaSurfaceSink),
         ("ribbonMinimumRank", WaterRender.ribbonMinimumRank),
         ("ribbonMaxCrossSlope", WaterRender.ribbonMaxCrossSlope),
+        ("ribbonWaterlineLift", WaterRender.ribbonWaterlineLift),
         ("ribbonDeltaLo", WaterRender.ribbonDeltaLo),
         ("ribbonJoinCoverage", WaterRender.ribbonJoinCoverage),
     ])

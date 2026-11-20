@@ -31,6 +31,23 @@ final class CanopyTests: XCTestCase {
         return (overlays.water, overlays.forestMask)
     }
 
+    /// Zielmaske aus den Eingaben eines Frames (Look-Iteration 12: Bandkern,
+    /// Rasterwasser, nasse Wiese, Bänke, Galeriewald) — dieselbe
+    /// Zusammensetzung wie `RenderState.forestMaskBytes` vor dem Gedächtnis.
+    /// `protect` = Schutzmaske des Frames: sperrt seit Look-Iteration 14 den
+    /// Grundwald (`ForestCanopyMask.Riparian.baseBlock`).
+    private func referenceForest(_ terrain: Terrain, colors: [UInt8], surfaces: [UInt8],
+                                 bandCore: [Double], water: [UInt8], wetMeadow: [Bool],
+                                 protect: [UInt8]) -> [UInt8] {
+        let n = terrain.cfg.n, world = terrain.cfg.world
+        return ForestCanopyMask.target(
+            terrain, surfaces: surfaces, colors: colors, bandCore: bandCore, waterBytes: water,
+            wetMeadow: wetMeadow, barSand: BarMaterial.field(terrain).sand,
+            clump: ForestCanopyMask.clumpField(n: n, world: world),
+            riparianNoise: ForestCanopyMask.riparianField(n: n, world: world),
+            protect: protect).mask
+    }
+
     // MARK: - Wasser
 
     /// Kein Wald über sichtbaren Flüssen, Seen und Bändern, und auch nicht in
@@ -42,7 +59,11 @@ final class CanopyTests: XCTestCase {
         let terrain = agedWorld(c, years: 2000, seed: 1337)
         let render = RenderState(geometryMode: true)
         let (water, forest) = refresh(render, terrain)
-        let coverage = render.riverRibbonMesh.bandCoverage
+        // Bänder: ihr Wasserkörper (`RenderState.bandCore`). Seit
+        // Look-Iteration 12 steht der Galeriewald über dem fast durchsichtigen
+        // Ufer außerhalb der Wasserlinie, also innerhalb der vollen
+        // Banddeckung; den Wasserkörper samt Nachbarzelle trägt er nie.
+        let coverage = render.bandCore
         let n = terrain.cfg.n
         let river = byte01(WaterRender.protectRiverThreshold)
         let lake = byte01(WaterRender.protectLakeThreshold)
@@ -198,7 +219,7 @@ final class CanopyTests: XCTestCase {
         let withoutBands = refresh(RenderState(geometryMode: false), terrain).forest
         XCTAssertNotEqual(withoutBands, withBands, "Band-Bau muss den Wald zurücknehmen")
         // Ableitung aus denselben Quellen wie der Frame: Wald gegen die
-        // Renderer-Dieselben dieses Standes (Bänder → Wasser → Schutz).
+        // Renderer-Dieselben dieses Standes (Bänder → Wasser → Waldsperre).
         // `bandOwner` mitgegeben: Der Frame reicht das ECHTE Bau-Ergebnis
         // inklusive Eigner weiter (Abzweig-Zellen, s. `WaterFieldRenderer`),
         // die Referenz muss dasselbe Feld lesen.
@@ -208,19 +229,17 @@ final class CanopyTests: XCTestCase {
                                            bandChannelFlags: ribbons.bandChannelFlags,
                                            bandCoverage: ribbons.bandCoverage,
                                            bandOwner: ribbons.bandOwner)
-        let refProtect = WaterProtectMask.bytes(n: terrain.cfg.n,
-                                                bandCoverage: ribbons.bandCoverage,
-                                                waterBytes: refWater,
-                                                wetMeadow: waterRenderer.wetMeadow,
-                                                barSand: BarMaterial.field(terrain).sand)
-        let refSurfaces = WetMeadow.apply(
+        let refMaterial = WetMeadow.apply(
             TerrainColorRenderer.buffers(terrain, bars: BarMaterial.field(terrain)),
-            mask: waterRenderer.wetMeadow).surfaces
+            mask: waterRenderer.wetMeadow)
         XCTAssertEqual(withBands,
-                       ForestCanopyMask.bytes(terrain, surfaces: refSurfaces,
-                                              protect: refProtect,
-                                              clump: ForestCanopyMask.clumpField(
-                                                  n: terrain.cfg.n, world: terrain.cfg.world)))
+                       referenceForest(terrain, colors: refMaterial.colors, surfaces: refMaterial.surfaces,
+                                       bandCore: ribbons.bandVisibleCoverage, water: refWater,
+                                       wetMeadow: waterRenderer.wetMeadow,
+                                       protect: WaterProtectMask.bytes(
+                                           n: terrain.cfg.n, bandCoverage: ribbons.bandCoverage,
+                                           waterBytes: refWater, wetMeadow: waterRenderer.wetMeadow,
+                                           barSand: BarMaterial.field(terrain).sand)))
     }
 
     /// Pinselstrich (über `BrushTool`, wie die Brücke): nach dem Render-Takt
@@ -255,10 +274,9 @@ final class CanopyTests: XCTestCase {
 
         XCTAssertNotEqual(before, after.forestMask, "Pinselstrich muss den Wald verändern")
         XCTAssertEqual(after.forestMask,
-                       ForestCanopyMask.bytes(terrain, surfaces: after.surfaces,
-                                              protect: after.protectMask,
-                                              clump: ForestCanopyMask.clumpField(
-                                                  n: terrain.cfg.n, world: terrain.cfg.world)),
+                       referenceForest(terrain, colors: after.colors, surfaces: after.surfaces,
+                                       bandCore: render.bandCore, water: after.water,
+                                       wetMeadow: render.wetMeadowMask, protect: after.protectMask),
                        "Der Wald folgt nicht dem Material und der Schutzmaske seines Frames")
     }
 
@@ -430,6 +448,47 @@ final class CanopyTests: XCTestCase {
     /// Die `canopy_*`-Zahlen selbst (Spiegel, default-freie Deklaration,
     /// nichts am Register vorbei) prüft `CalibrationRegistryTests`; hier
     /// bleibt, WIE der Terrain-Shader das Dach baut.
+    /// Der Bandkern der Waldsperre (`RiverRibbonRenderer.bandVisibleCoverage`)
+    /// rechnet die sichtbare Bandbreite mit demselben Fenster wie
+    /// `water.gdshader` (`visible = smoothstep(lo, hi, …presence…)`); ändert
+    /// sich das Fenster dort, stünde der Wald über Wasser oder zu weit weg.
+    func testBandCoreUsesTheShaderVisibilityWindow() throws {
+        let shader = try RepoSource.probe("game/shaders/water.gdshader")
+        assertContains(shader, "smoothstep(\(glsl(WaterRender.ribbonVisibleLo)), \(glsl(WaterRender.ribbonVisibleHi)), mix(presence",
+                       hint: "Fenster in water.gdshader und WaterRender.ribbonVisibleLo/Hi gemeinsam ändern")
+        // Der Lade-Vergleich in `game/tests/canopy.gd` klammert die Reichweite
+        // des Galeriewalds um abweichende Uferzellen aus.
+        let canopyTest = try RepoSource.probe("game/tests/canopy.gd")
+        assertContains(canopyTest, "RIPARIAN_REACH := \(CanopyRender.riparianReachCells)",
+                       hint: "game/tests/canopy.gd mit CanopyRender.riparianReachCells mitziehen")
+        XCTAssertEqual(WaterRender.ribbonVisibleWidth(0), 0)
+        XCTAssertEqual(WaterRender.ribbonVisibleWidth(1), 1)
+    }
+
+    /// Galeriewald: an Wasser auf magerer Wiese steht Wald, weit weg nicht.
+    func testRiparianForestLinesTheWater() {
+        let n = 96
+        let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
+        var state = terrain.state
+        state.h = [Double](repeating: terrain.cfg.sea + 0.2, count: n * n)
+        terrain.restore(state)
+        var surfaces = [UInt8](repeating: 0, count: n * n * 4)
+        for k in 0..<(n * n) { surfaces[k * 4] = 15 }   // magere Wiese, sonst kein Wald
+        var core = [Double](repeating: 0, count: n * n)
+        for j in 0..<n { core[j * n + 48] = 1 }          // gerader Lauf in Spalte 48
+        let flat = [Float](repeating: 0, count: n * n)
+        let noise = [Float](repeating: 0.6, count: n * n)  // keine Lücke
+        let out = ForestCanopyMask.target(
+            terrain, surfaces: surfaces, colors: [UInt8](repeating: 0, count: n * n * 4),
+            bandCore: core, waterBytes: [], wetMeadow: [], barSand: [],
+            clump: flat, riparianNoise: noise).mask
+        for j in 4..<(n - 4) {
+            for i in 47...49 { XCTAssertEqual(out[j * n + i], 0, "kein Wald am Wasser (\(i), \(j))") }
+            XCTAssertEqual(out[j * n + 51], 255, "Galeriewald am Ufer (51, \(j))")
+            XCTAssertEqual(out[j * n + 10], 0, "kein Wald fern vom Wasser (10, \(j))")
+        }
+    }
+
     func testTerrainShaderBuildsTheCanopyFromTheMask() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform sampler2D forest_tex",

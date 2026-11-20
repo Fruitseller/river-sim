@@ -508,7 +508,14 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Bauergebnis für den Raster-Deckel (`bandChannelFlags`/`bandCoverage`, dazu
   `bandOwner`: welches Fluss-Band je Zelle deckt) reist im selben Wert statt
   als impliziter Nebenkanal. Ein Zubringer läuft bis in das Band seines
-  Hauptlaufs (`WaterRender.ribbonJoin*`). Seit dem Befund zu Punkt 50
+  Hauptlaufs (`WaterRender.ribbonJoin*`). Seit dem Look-Hill-Climber
+  (Nr. 13/14) liegt das Band nie über dem Gelände: die Kanten folgen dem
+  Gelände nach unten (`WaterRender.ribbonWaterline*`, Wächter
+  `SimCoreTests/RibbonFloatTests.swift`), und jeder Vertex trägt
+  Lauf-Größen (`RibbonMesh.flows`, Frame-Schlüssel `ribbon_flows`: Kolk ↔
+  Riffel, Weißwasser, Gefälle, Breite; Wächter
+  `SimCoreTests/RibbonFlowTests.swift`), aus denen `water.gdshader`
+  Tiefenfarbe, Strömungsstriche und Schaum entlang des Laufs baut. Seit dem Befund zu Punkt 50
   hält er die Übergänge der Gürtel-Kopplung in SIM-Jahren: neue Arme wachsen
   ein (`RiverChannel.born`, das Geburtsjahr je Knoten, das nur der Render
   liest; dazu bisher unsichtbare Strecken, die die Kopplung sichtbar macht),
@@ -529,7 +536,10 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   zustandslos; `RenderState` verwirft sie mit der Schutzmaske und dem
   Material-Cache und hält ihr Gedächtnis in Sim-Jahren (#167,
   `ForestCanopyMask.regrow`: Wald weicht Wasser sofort, wächst über
-  `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`),
+  `CanopyRender.regrowYears` nach; Wächter: `SimCoreTests/CanopyTests.swift`).
+  Entlang von Flussbändern und Seen steht ein lückiger Galeriewald
+  (`CanopyRender.riparian*`, Look-Hill-Climber Nr. 12–14), der Grundwald
+  hält weiter die volle Schutzmaske ein,
 - `CoastMaterial`, `WetMeadow`, `SedimentPlume` (Issue #174, Paket C):
   Strand und Felsküste (Sand im A-Kanal der Makrofarbe, Fels in den
   Materialgewichten), je KÜSTENPUNKT aus dem Zusammenhang statt aus Höhe und

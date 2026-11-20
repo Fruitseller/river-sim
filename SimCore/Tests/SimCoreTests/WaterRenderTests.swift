@@ -540,14 +540,15 @@ final class WaterRenderTests: XCTestCase {
                 hint: "\(name): Wasserkörper tritt mit Fresnel hinter die Spiegelung zurück")
             XCTAssertFalse(shader.contains("sky_reflect"),
                 "\(name): keine Himmelsfarbe in der Albedo (Godot spiegelt die Umgebung selbst)")
+            // Look-Iteration 14: Schaum macht die Fläche matt, fließendes
+            // Binnenwasser spiegelt mit `waterRiverSpecular` schwächer.
             XCTAssertTrue(shader.contains("ROUGHNESS = water_roughness;")
-                          || shader.contains("mix(land_roughness, water_roughness, wet)")
+                          || shader.contains("mix(land_roughness, mix(water_roughness, 0.7, foam), wet)")
                           || shader.contains("mix(water_roughness, 0.55, still)"),
                 "\(name): Rauheit liest WaterRender.waterRoughness")
             XCTAssertTrue(shader.contains("SPECULAR = water_specular;")
-                          || shader.contains("mix(0.5, water_specular, wet)")
-                          || shader.contains("mix(0.4, water_specular, wet)"),
-                "\(name): Specular liest WaterRender.waterSpecular")
+                          || shader.contains("mix(water_specular, water_river_specular,"),
+                "\(name): Specular liest WaterRender.waterSpecular/waterRiverSpecular")
         }
         // Flüsse und Seen lassen ihr lokales Bett durchscheinen. Das offene Meer
         // bleibt opak, weil sonst bei flacher Kamera die rechteckige Unterseite

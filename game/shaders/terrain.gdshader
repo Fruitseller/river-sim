@@ -146,6 +146,18 @@ uniform vec3 water_shallow_color;
 uniform vec3 water_deep_color;
 uniform vec3 water_flow_shimmer_color;
 uniform vec3 water_bed_color;
+// Lauf-Wechsel des Raster-Wassers (Look-Iteration 14, wie CUSTOM0 der
+// Bänder): Riffel und Weißwasser aus dem Längsgefälle der Rinnensohle
+// (`world_slope`), Seen spiegeln die Wolken.
+uniform float water_raster_steep_lo;
+uniform float water_raster_steep_hi;
+uniform vec3 water_riffle_color;
+uniform float water_riffle_depth;
+uniform vec3 water_foam_color;
+uniform float water_foam_amount;
+uniform float water_river_specular;
+uniform float water_cloud_reflection;
+uniform vec3 water_lake_color;
 // Sand-Material (Issue #174 C2, auch Strand aus C): WO Sand liegt, sagen
 // SimRender.BarMaterial und CoastMaterial (A-Kanal von color_tex, max beider);
 // wie er aussieht, diese Werte.
@@ -1237,9 +1249,11 @@ void fragment() {
 
 	float dry = 1.0 - calib_window(water_pond_contour_lo, water_pond_contour_hi, pond);
 	float shore = calib_window(water_shore_lo, water_shore_hi, max(stream, lake_gate)) * (1.0 - wet) * dry;
-	vec3 shore_col = mix(vec3(0.38, 0.34, 0.28), vec3(0.48, 0.42, 0.34), breakup);
-	terr = mix(terr, shore_col, shore * 0.55);
-	terr *= 1.0 - shore * 0.28;
+	// Ufersaum feucht und beschattet statt beige (Look-Iteration 12): bis
+	// hierher malte der Saum einen grau-beigen Streifen um jedes Band, der
+	// Lauf las sich in der Totalen als Straße. Er dunkelt jetzt nur ab, wie
+	// der Schatten der Ufergehölze, und liegt auch über dem Kronendach.
+	terr = mix(terr, vec3(0.045, 0.085, 0.035), shore * 0.8);
 	land_roughness = mix(land_roughness, 0.36, shore * 0.55);
 
 	// Pixel-Ausblendung der Kräuselung wie im Ozean (unter Pixelgröße bleibt
@@ -1266,7 +1280,11 @@ void fragment() {
 		// dunkle Zellblöcke in breite Läufe. Das Fenster liest R wie
 		// `water_river_mask_*` und kommt deshalb wie dieses aus WaterRender.
 		float depth = clamp(max(lake_depth, calib_window(water_river_depth_lo, water_river_depth_hi, stream)), 0.0, 1.0);
-		float speed = riverMask >= lakeMask ? 1.0 : 0.25;
+		float flowing = riverMask >= lakeMask ? 1.0 : 0.0;
+		// Gefällestufe der Rinnensohle: dort seicht, hell und schäumend.
+		float steep = calib_window(water_raster_steep_lo, water_raster_steep_hi, world_slope) * flowing;
+		depth *= mix(1.0, water_riffle_depth, steep);
+		float speed = mix(0.25, 1.0 + steep, flowing);
 		vec2 d1 = normalize(length(dir) > 0.05 ? dir : vec2(0.7, 0.7));
 		float ripple_fade = 1.0 - smoothstep(50.0 * ws, 160.0 * ws, view_dist);
 		// Kräuselung als Rauschen mit Fließkarte (zwei Phasen, gegeneinander
@@ -1287,7 +1305,7 @@ void fragment() {
 		float r0 = vnoise(rp0), r1 = vnoise(rp1);
 		vec2 g0 = vec2(vnoise(rp0 + vec2(re, 0.0)) - r0, vnoise(rp0 + vec2(0.0, re)) - r0) / re;
 		vec2 g1 = vec2(vnoise(rp1 + vec2(re, 0.0)) - r1, vnoise(rp1 + vec2(0.0, re)) - r1) / re;
-		float amp = mix(0.015, 0.05, depth) * ripple_fade * ripple_px;
+		float amp = mix(0.015, 0.05, max(depth, steep)) * ripple_fade * ripple_px;
 		amp *= riverMask >= lakeMask ? 1.0 : 0.45;
 		vec2 grad = (g0 * w0 + g1 * (1.0 - w0)) * amp * 2.0;
 		vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
@@ -1295,6 +1313,9 @@ void fragment() {
 		NORMAL = normalize(mix(NORMAL, water_n_vs, wet));
 
 		vec3 water = mix(water_shallow_color, water_deep_color, depth);
+		// Seen: ruhig und zur Mitte tiefblau statt petrolgrün wie die Läufe —
+		// sonst lasen sich See und Fluss als dasselbe Band.
+		water = mix(water, water_lake_color, (1.0 - flowing) * smoothstep(0.2, 0.9, depth));
 		// Bett: überwiegend die gemeinsame Bett-Farbe (WaterRender.waterBedColor),
 		// nur ein Rest Gelände. Das volle Gelände trug sein Erosions-Detail ins
 		// Wasser — Höhenlinien-Moiré und Ringe auf Seen und breiten Läufen.
@@ -1310,11 +1331,11 @@ void fragment() {
 			water += flow * water_flow_shimmer_color;
 		}
 
-		float edge = wet * (1.0 - wet) * 4.0;
-		float foam_n = vnoise(wp * 7.0 - dir * u_time * 2.5 + vec2(0.0, u_time * 0.4));
-		// Schaum-Schwellen: eigene Optik-Zahl — numerisch zufällig gleich dem
-		// Deckkraft-Paar (water_opacity_*), KEINE WaterRender-Konstante.
-		float foam = smoothstep(0.55, 0.95, edge * (0.45 + 0.75 * foam_n)) * ripple_fade;
+		// Weißwasser nur an Gefällestufen (nicht mehr als Saum an jeder
+		// Uferlinie), fleckig über eine Schwelle auf demselben Rauschen.
+		float foam_n = vnoise(wp * 4.0 - d1 * u_time * 1.5);
+		float foam = smoothstep(1.0 - 0.55 * steep, 1.06 - 0.55 * steep, foam_n) * steep * water_foam_amount;
+		water = mix(water, water_riffle_color, steep * smoothstep(0.3, 0.7, foam_n));
 		vec3 water_final = mix(bed, water, opacity);
 		// Spiegelung statt Farbe (Befund #174 „See milchig"): den Himmel spiegelt
 		// Godot selbst (SPECULAR/ROUGHNESS gegen die Umgebung). Der Wasserkörper
@@ -1323,12 +1344,19 @@ void fragment() {
 		// Himmelsfarbe IN DIE ALBEDO; die Sonne beleuchtete sie wie Farbe, und
 		// bei flachem Blick lag das Wasser als heller, kontrastloser Film da.
 		water_final *= 1.0 - fresnel;
-		// Schaum nur als Hauch und nur in fließendem Wasser: mit 0.45 auf jeder
-		// Uferlinie zog er einen weißen Umriss um jeden Lauf und jeden See.
-		water_final = mix(water_final, vec3(0.88, 0.92, 0.94), foam * (riverMask >= lakeMask ? 0.12 : 0.0));
+		water_final = mix(water_final, water_foam_color, foam);
 		albedo = mix(terr, water_final, wet);
-		roughness = mix(land_roughness, water_roughness, wet);
-		specular = mix(0.5, water_specular, wet);
+		roughness = mix(land_roughness, mix(water_roughness, 0.7, foam), wet);
+		// Fließendes Wasser spiegelt den Himmel schwächer (wie die Bänder).
+		specular = mix(0.5, mix(water_specular, water_river_specular, flowing * (1.0 - foam)), wet);
+		// Seen spiegeln die Wolken (wie die Altarme in water.gdshader).
+		vec3 view_ws = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
+		vec3 refl = reflect(-view_ws, water_n_ws);
+		vec3 lake_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		float cloud_hit = refl.y > 0.05 && clouds_enabled
+			? cloud_cover(lake_pos.xz + refl.xz * (cloud_height - lake_pos.y) / refl.y, u_time) : 0.0;
+		EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * water_cloud_reflection * lakeMask * (1.0 - flowing)
+			* (0.35 + 0.65 * fresnel);
 	}
 	ALBEDO = albedo;
 	ROUGHNESS = roughness;

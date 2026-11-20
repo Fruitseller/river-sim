@@ -2188,8 +2188,12 @@ func _upload_ribbon_mesh(frame: Dictionary) -> void:
 		# UV2.x = Typ (Fluss/Delta/Altarm, Issue #34) — der Shader färbt danach
 		# und schaltet für Altarme die Strömung ab.
 		arrays[Mesh.ARRAY_TEX_UV2] = frame["ribbon_uv2s"]
+		# CUSTOM0 = Lauf-Größen (Riffel, Weißwasser, Gefälle, Breite; Look-
+		# Iteration 14, RiverRibbonRenderer.flowAttributes).
+		arrays[Mesh.ARRAY_CUSTOM0] = frame["ribbon_flows"]
 		arrays[Mesh.ARRAY_INDEX] = frame["ribbon_indices"]
-		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {},
+			Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
 
 # ---------------------------------------------------------------- Kamera & Eingabe
 

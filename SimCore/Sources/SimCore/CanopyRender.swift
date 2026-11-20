@@ -106,6 +106,98 @@ public enum CanopyRender {
     public static let shoreLo = 0.012
     public static let shoreHi = 0.03
 
+    // MARK: Auwald (Look-Iteration 12, Hill-Climber Problem 1)
+
+    /// Abstand zum Wasser (Chebyshev, Zellen), innerhalb dessen kein Wald
+    /// steht. Die Schutzmaske (`WaterRender.protectSeamCells` 2) bleibt für
+    /// die Render-Verschiebung; für das Kronendach reicht eine Zelle: genau
+    /// der Filterabstand der linear gelesenen Textur (Wächter
+    /// `testNoForestOverRiversLakesOrBands`). Mit zwei Zellen plus
+    /// Lichtungs-Rauschen lag jeder Lauf in einem kahlen Korridor, der sich
+    /// in der Totalen als Straße las; in den Referenzbildern steht Gehölz bis
+    /// ans Ufer.
+    public static let waterSeamCells = 1
+
+    /// Kern eines Bands für das Kronendach
+    /// (`RiverRibbonRenderer.bandVisibleCoverage`): die sichtbare Wasserbreite
+    /// (`1 − WaterRender.ribbonWaterline` der sichtbaren Halbbreite) minus
+    /// diese Zellen, mindestens die Zelle der Zentrumslinie. Zusammen mit
+    /// `waterSeamCells` setzt die Maske so eine Zelle außerhalb der
+    /// Wasserlinie an, bei jeder Bandbreite. Außerhalb der Wasserlinie malt
+    /// das Band den dunklen Ufersaum (`WaterRender.ribbonBankOpacity`), unter
+    /// dem der Wald als beschattetes Ufergehölz liegt; bisher sperrte die
+    /// volle Banddeckung plus zwei Zellen den Wald, und die Wiese dahinter
+    /// lag als blasser Korridor um jeden Lauf.
+    public static let bandCoreInsetCells = 1.0
+
+    /// Galeriewald: entlang von Flüssen und Seen steht ein Gehölzband, auch
+    /// wo die Vegetation sonst Wiese trägt. Seine Breite in Zellen ab dem
+    /// Wasser schwankt mit dem Auwald-Rauschen zwischen `riparianWidthLo`
+    /// und `riparianWidthHi` (Zelle ≈ 16 m: 80–220 m; schmaler blieb der
+    /// von der Sim gerodete Mäandergürtel als blasser Streifen neben dem
+    /// Gehölzband stehen), wo das Rauschen unter
+    /// `riparianGapLo … riparianGapHi` fällt, reißt es ab (Lücken). Weiter
+    /// als `riparianReachCells` misst die Abstandskarte nicht.
+    ///
+    /// Look-Iteration 13: 3–7 statt 5–14 Zellen (Reichweite 8 statt 16),
+    /// Lücken ab 0,30/0,38 statt 0,22/0,30. Mit 2–6 und 0,38/0,46 (rund die
+    /// Hälfte des Ufers frei) urteilte der Bewerter fast nur GLEICH zu keep4
+    /// (A 1 B 5 GLEICH 9), mit 3–7 A 2 B 8 GLEICH 5.
+    /// Das breite, fast geschlossene Band fraß in `diorama` und `tal` die
+    /// Lichtungen und Grasrücken des Wald-Stands auf (Bewerter Nr. 12:
+    /// „Baumkugeln gleichmäßig über nahezu alle Hänge").
+    ///
+    /// Look-Iteration 14: 2,5–5 statt 3–7, Lücken ab 0,34/0,42 statt
+    /// 0,30/0,38, und nur noch an Bändern und Seen
+    /// (`WaterProtectMask.canopyGuard`): in `tal` war die Talmitte gegen
+    /// keep4 zugewachsen.
+    public static let riparianWidthLo = 2.5
+    public static let riparianWidthHi = 5.0
+    public static let riparianReachCells = 6
+    /// Frequenz des Auwald-Rauschens in 1/Welteinheit (0.8 ≈ 125 m
+    /// Grundwellenlänge, 8 Zellen): Lücken und Breitenwechsel im Abstand
+    /// weniger Flussbreiten, kein gleichmäßiger Saum. Mittel ≈ 0,47.
+    public static let riparianFrequency = 0.8
+    public static let riparianGapLo = 0.34
+    public static let riparianGapHi = 0.42
+    /// Stärke des Galeriewalds vor der Klemme auf 0 … 1: über 1, damit die
+    /// Maske im Kern des Bands auch bei voller Breite und weichem Rauschen
+    /// sättigt. Der Shader setzt eine Krone erst ab `crownMid` plus bis zu
+    /// `crownSpread` × 1,5 (lichte Bestände: ~0,95); mit 1,0 lag die Maske am
+    /// Ufer bei 0,6–0,9 und zeigte Wiese statt Kronen (Debug-Aufnahme der
+    /// Maske gegen das Bild, Seed 1337, Jahr 20.000).
+    public static let riparianDensity = 1.5
+    /// Kein Galeriewald auf Fels (Fels-Gewicht, G-Kanal von `surfaces`);
+    /// Strand und junge Bank sperrt das Sandgewicht (A-Kanal der Makrofarbe)
+    /// ab `riparianSandLo … Hi`. Gemessen (Produktion, Seed 1337, Jahr
+    /// 20.000, Zellen 2–5 vom Wasser ohne Wald): mit 0,15/0,40 sperrte der
+    /// Fels ein Drittel davon, meist Schotter im Talboden; 0,45/0,75 lässt
+    /// Wände und Schutt frei, nicht aber den Talboden (0,30/0,60 sperrte
+    /// noch ein Fünftel).
+    public static let riparianRockLo = 0.45
+    public static let riparianRockHi = 0.75
+    /// Ufersaum des Galeriewalds zum Meer (Höhe über dem Meeresspiegel,
+    /// Sim-Einheit), flacher als `shoreLo/Hi`: an Mündungen liegen die
+    /// Ebenen kaum über dem Meer; mit 0,002/0,010 fiel ein Viertel der
+    /// ufernahen Zellen ohne Wald dort heraus, mit 0,0005/0,003 noch ein
+    /// Zehntel. Den Strand sperrt das Sandgewicht.
+    public static let riparianShoreLo = 0.0005
+    public static let riparianShoreHi = 0.003
+    /// Sandgewicht, ab dem der Galeriewald ausdünnt, und ab dem er fehlt:
+    /// dieselbe Schwelle wie die Bank-Sperre (`WaterRender.barProtectSand`
+    /// 0,25), darunter liegt nur der auslaufende Rand einer Bank. Mit
+    /// 0,05/0,20 sperrte der Rand ein Fünftel der ufernahen Zellen.
+    public static let riparianSandLo = 0.15
+    public static let riparianSandHi = 0.30
+    /// Wand-Gate des Galeriewalds (Weltsteigung wie `wallSlopeLo/Hi`):
+    /// `Terrain.macroSlope` mittelt über ±2 Zellen und schließt am Ufer das
+    /// eingetiefte Gerinne ein; gemessen (Produktion, Seed 1337, Jahr
+    /// 23.000) fiel so knapp die Hälfte der Zellen 2–3 vom Wasser ohne Wald
+    /// unter das Wand-Gate. 2,4 ≈ 67°, 3,2 ≈ 73°: Uferböschungen tragen
+    /// Gehölz, echte Wände bleiben frei.
+    public static let riparianWallSlopeLo = 2.4
+    public static let riparianWallSlopeHi = 3.2
+
     /// Gedächtnis der Waldmaske (Issue #167, `ForestCanopyMask.regrow`):
     /// Zeitkonstante in Sim-Jahren, mit der der Wald nachwächst, wo Wasser
     /// sich zurückgezogen hat. Kommt Wasser, ist er sofort weg.
@@ -121,6 +213,16 @@ public enum CanopyRender {
     /// Tickets: höchstens die Hälfte von heute (≤ 0,32 %). Bei 60 J/s sind
     /// 800 J. gut 13 s Zeitraffer. (Vor #168, mit mehr Wald: 0,91 % → 0,40 %.)
     public static let regrowYears = 800.0
+    /// Nachwachsen des Auwalds (Look-Iteration 12): innerhalb der
+    /// Galeriewald-Reichweite (`riparianWidthHi` + 1 Zellen vom Wasser)
+    /// wächst der Wald über diese Zeitkonstante statt `regrowYears` nach
+    /// (Weichholzaue: Weiden und Erlen besiedeln verlassenes Gleithang-Land in
+    /// Jahrzehnten). Mit 800 J. lag hinter jedem wandernden Bogen ein kahler
+    /// Streifen frisch verlassenen Landes — in der Waldmaske des ersten
+    /// Frames stand der Galeriewald, im Zeitraffer nach 20.000 J. nicht.
+    /// Der Rest des Landes behält `regrowYears` (Unruhe-Ziel aus #167).
+    public static let riparianRegrowYears = 150.0
+
     /// Zeitkonstante in Sim-Jahren, mit der der Wald dort weicht, wo er im
     /// Ziel verschwindet, OHNE dass Wasser kommt (Schutzmaske leer): vor
     /// allem unter einem frisch eingesetzten Arm, dessen Bett die Sim sofort

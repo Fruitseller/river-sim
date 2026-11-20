@@ -32,6 +32,11 @@ public struct RibbonMesh: Equatable {
     public var colors: [SIMD4<Float>]
     public var uvs: [SIMD2<Float>]
     public var uv2s: [SIMD2<Float>]
+    /// Lauf-Größen je Vertex (Look-Iteration 14, `CUSTOM0` in `water.gdshader`):
+    /// x = Riffel (0 Kolk … 1 Riffel), y = Weißwasser (0 … 1),
+    /// z = Gefälle (0 … 1 über `WaterRender.ribbonSlopeLo/Hi`),
+    /// w = gemalte Bandbreite (Welt). Herleitung: `RiverRibbonRenderer.flowAttributes`.
+    public var flows: [SIMD4<Float>]
     public var indices: [Int32]
     public var stripStarts: [Int32]
     /// Je Kanal-Index: hat der Build tatsächlich ein Band emittiert?
@@ -46,6 +51,7 @@ public struct RibbonMesh: Equatable {
 
     public init(vertices: [SIMD3<Float>] = [], colors: [SIMD4<Float>] = [],
                 uvs: [SIMD2<Float>] = [], uv2s: [SIMD2<Float>] = [],
+                flows: [SIMD4<Float>] = [],
                 indices: [Int32] = [], stripStarts: [Int32] = [],
                 bandChannelFlags: [Bool] = [], bandCoverage: [Double] = [],
                 bandOwner: [Int32] = []) {
@@ -53,6 +59,7 @@ public struct RibbonMesh: Equatable {
         self.colors = colors
         self.uvs = uvs
         self.uv2s = uv2s
+        self.flows = flows
         self.indices = indices
         self.stripStarts = stripStarts
         self.bandChannelFlags = bandChannelFlags
@@ -165,6 +172,16 @@ public final class RiverRibbonRenderer {
     /// abreißende Läufe („keine durchgehenden Adern"): erst Band, dann eine
     /// trockene Rinne, wo weder Band noch Raster malte.
     public var bandCoverage: [Double] { mesh.bandCoverage }
+    /// Je Zelle die Deckkraft der Bänder, deren WASSERKÖRPER sie deckt
+    /// (Look-Iteration 12, Auwald): sichtbare Wasserbreite minus
+    /// `CanopyRender.bandCoreInsetCells`, mindestens die Zelle der
+    /// Zentrumslinie. `water.gdshader` zeichnet ein Band mit Deckkraft p nur
+    /// über den Anteil `WaterRender.ribbonVisibleWidth(p)` seiner Breite, und
+    /// davon nur innerhalb der Wasserlinie Wasser; `bandCoverage` meldet
+    /// dagegen die volle Breite plus eine halbe Zelle. Das Kronendach endet
+    /// (mit `CanopyRender.waterSeamCells` Saum) an dieser Deckung und steht
+    /// damit bis an den Wasserkörper.
+    public private(set) var bandVisibleCoverage: [Double] = []
     /// Fluss-Band je Zelle des letzten Baus (s. `RibbonMesh.bandOwner`).
     public var bandOwner: [Int32] { mesh.bandOwner }
 
@@ -284,6 +301,7 @@ public final class RiverRibbonRenderer {
         mesh.colors.removeAll(keepingCapacity: true)
         mesh.uvs.removeAll(keepingCapacity: true)
         mesh.uv2s.removeAll(keepingCapacity: true)
+        mesh.flows.removeAll(keepingCapacity: true)
         mesh.indices.removeAll(keepingCapacity: true)
         mesh.stripStarts.removeAll(keepingCapacity: true)
         let n = terrain.cfg.n
@@ -297,6 +315,7 @@ public final class RiverRibbonRenderer {
               terrain.waterLevel.count == cnt,
               terrain.streamMap.count == cnt else {
             mesh.bandCoverage = []
+            bandVisibleCoverage = []
             return mesh
         }
         // Die Deckung des vorigen Baus bleibt für die Übergänge stehen.
@@ -313,6 +332,14 @@ public final class RiverRibbonRenderer {
             }
         }
         stampOwner = -1
+        if bandVisibleCoverage.count != cnt {
+            bandVisibleCoverage = [Double](repeating: 0, count: cnt)
+        } else {
+            bandVisibleCoverage.withUnsafeMutableBufferPointer {
+                guard let base = $0.baseAddress else { return }
+                base.update(repeating: 0, count: cnt)
+            }
+        }
         if mesh.bandCoverage.count != cnt {
             mesh.bandCoverage = [Double](repeating: 0, count: cnt)
         } else {
@@ -371,6 +398,7 @@ public final class RiverRibbonRenderer {
         let orders = terrain.strahlerOrders(minCells: terrain.cfg.meanderMinCells)
         guard orders.count == cnt else {
             mesh.bandCoverage = []
+            bandVisibleCoverage = []
             return mesh
         }
 
@@ -1137,8 +1165,10 @@ public final class RiverRibbonRenderer {
         // Kanälen auf demselben Bett.
         var samples = samples
         var occludedMature: [Int] = []
+        var occlusion = [Double](repeating: 0, count: samples.count)
         for a in samples.indices {
             let occ = bilinearGrid(mesh.bandCoverage, samples[a].x, samples[a].z, n: n)
+            occlusion[a] = occ
             let before = samples[a].alpha
             samples[a].alpha *= 1 - smoothstep(WaterRender.ribbonOcclusionLo,
                                                WaterRender.ribbonOcclusionHi, occ)
@@ -1201,6 +1231,10 @@ public final class RiverRibbonRenderer {
             let len = (arc[a + 1] - arc[a]) / cs
             halfWidthCells[a] = min(halfWidthCells[a], halfWidthCells[a + 1] + widthSlope * len)
         }
+        let flows = RiverRibbonRenderer.flowAttributes(
+            samples, halfWidthCells: halfWidthCells, arc: arc, occlusion: occlusion,
+            cellSize: cs, flowing: !still && kind == WaterRender.ribbonKindRiver,
+            height: { bilinearGrid(h, $0, $1, n: n) })
         let base = mesh.vertices.count
         mesh.stripStarts.append(Int32(base))
         // Vorgänger-Stützpunkt für den Deckungs-Stempel: gestempelt wird das
@@ -1254,9 +1288,60 @@ public final class RiverRibbonRenderer {
                                          renderGrid: renderGrid) * hscale
             let yR = renderSurfaceHeight(h, s.x + edgeGX, s.z + edgeGZ, n: n,
                                          renderGrid: renderGrid) * hscale
-            let yMin = yCenter - crossTol, yMax = yCenter + crossTol
-            var yLeftD = min(yMax, max(yMin, yL)) + lift
-            var yRightD = min(yMax, max(yMin, yR)) + lift
+            // Look-Iteration 13 (Issue #233): Das Band schwebt nicht. Bisher
+            // lag jede Kante auf IHREM Gelände plus `lift` (0,35 Welt-Y, über
+            // zwei Zellbreiten) und war nach unten auf `yCenter − crossTol`
+            // geklemmt: auf flachem Talboden und an abfallenden Ufern stand
+            // die Wasserlinie gemessen im Mittel 0,34 über dem Gelände
+            // (`RibbonFloatTests`, Produktion 98 % der Punkte), die Platte
+            // schwebte, und nur der deckende dunkle Saum verbarg es.
+            // Jetzt ist `lift` nur noch die Obergrenze des Wasserspiegels
+            // über der Mitte (`level`, das Bett im Gerinne liegt so tief
+            // darunter, s. `Terrain.channelCarve`). An der Wasserlinie
+            // (`ribbonWaterlineReach`) liegt das Wasser höchstens
+            // `ribbonWaterlineLift` über dem Gelände; die Kanten setzen die
+            // Querlinie durch beide Wasserlinien-Punkte fort und liegen nie
+            // höher als ihr eigenes Gelände (bzw. das Wasserlinien-Ziel).
+            // Senken darf sich das Band, heben nicht: tiefer liegt es im
+            // Gelände und wird verdeckt, höher schwebte es.
+            let level = yCenter + lift
+            let reach = max(WaterRender.ribbonWaterlineReachMin,
+                            WaterRender.ribbonWaterlineReach * WaterRender.ribbonVisibleWidth(s.alpha))
+            let wlLift = WaterRender.ribbonWaterlineLift
+            // Die Wasserlinie wandert mit dem Ufer-Rauschen zwischen
+            // `reach · ribbonWaterlineInner` und `reach`: je Seite zählt das
+            // tiefste Gelände dieser Spanne.
+            var gL = Double.infinity, gR = Double.infinity
+            for f in [WaterRender.ribbonWaterlineInner, 0.5 * (1 + WaterRender.ribbonWaterlineInner), 1.0] {
+                let r = reach * f
+                gL = min(gL, renderSurfaceHeight(h, s.x - edgeGX * r, s.z - edgeGZ * r, n: n,
+                                                 renderGrid: renderGrid) * hscale)
+                gR = min(gR, renderSurfaceHeight(h, s.x + edgeGX * r, s.z + edgeGZ * r, n: n,
+                                                 renderGrid: renderGrid) * hscale)
+            }
+            var wL = min(level, gL + wlLift), wR = min(level, gR + wlLift)
+            // Das Band hat quer nur zwei Vertices: zwischen den Wasserlinien
+            // ist die Fläche eine Gerade. Steht flaches Gelände in der Mitte
+            // höher (Talboden ohne eingetieftes Bett), stachen kleine
+            // Geländeinseln durchs Wasser (Look-Iteration 14). Die Gerade
+            // hebt sich dann um höchstens `ribbonCenterRaiseMax` an.
+            do {
+                let mid0 = (wL + wR) * 0.5, k0 = (wR - wL) / (2 * reach)
+                var need = 0.0
+                for f in [-0.6, -0.3, 0.0, 0.3, 0.6] {
+                    let r = reach * f
+                    let g = renderSurfaceHeight(h, s.x + edgeGX * r, s.z + edgeGZ * r, n: n,
+                                                renderGrid: renderGrid) * hscale
+                    need = max(need, g + WaterRender.ribbonCenterClearance - (mid0 + k0 * r))
+                }
+                // Nie über den Wasserspiegel der Mitte (`level`).
+                let raise = max(0, min(need, WaterRender.ribbonCenterRaiseMax, level - max(wL, wR)))
+                wL += raise; wR += raise
+            }
+            let mid = (wL + wR) * 0.5, k = (wR - wL) / (2 * reach)
+            let yMax = yCenter + crossTol + lift
+            var yLeftD = min(yMax, mid - k, max(wL, yL + wlLift))
+            var yRightD = min(yMax, mid + k, max(wR, yR + wlLift))
             if let surface = s.surface {
                 // Auf Wasser liegt das Band FLACH auf dem Spiegel — beide Kanten
                 // auf derselben Höhe, sonst kippte es am Ufer aus der Fläche.
@@ -1292,9 +1377,20 @@ public final class RiverRibbonRenderer {
                 let mouthUnder = s.seaMouth && yCenter <= terrain.cfg.sea * hscale
                 if onSea && (kind == WaterRender.ribbonKindDelta || mouthUnder) {
                     yLeftD = y; yRightD = y
-                } else {
+                } else if onSea {
                     yLeftD = max(yLeftD, y)
                     yRightD = max(yRightD, y)
+                } else {
+                    // See: nur so weit auf den Spiegel, wie der Terrain-Shader
+                    // das Gelände selbst dorthin hebt (`geometryLift*`, dort
+                    // `calib_window` = smoothstep auf die Spiegeltiefe). Auf
+                    // seichten Spiegeln (0,003–0,015 Sim-H.) hob er nicht, das
+                    // Band lag aber voll auf dem Spiegel und schwebte bis 0,2
+                    // Welt-Y über dem Grund (Look-Iteration 13, `RibbonFloatTests`).
+                    let w = smoothstep(WaterRender.geometryLiftLo, WaterRender.geometryLiftHi,
+                                       surface - yCenter / hscale)
+                    yLeftD += w * max(0, y - yLeftD)
+                    yRightD += w * max(0, y - yRightD)
                 }
             }
             let yLeft = Float(yLeftD), yRight = Float(yRightD)
@@ -1335,12 +1431,98 @@ public final class RiverRibbonRenderer {
             // UV2.y = Bogenstärke (Tiefenfarbe nach Querprofil, Issue #174 C2).
             let kindUV = SIMD2(Float(kind), Float(max(-1, min(1, s.bend))))
             mesh.uv2s.append(kindUV); mesh.uv2s.append(kindUV)
+            mesh.flows.append(flows[a]); mesh.flows.append(flows[a])
             if a > 0 {
                 let v = Int32(base + (a - 1) * 2)
                 mesh.indices.append(v); mesh.indices.append(v + 2); mesh.indices.append(v + 1)
                 mesh.indices.append(v + 1); mesh.indices.append(v + 2); mesh.indices.append(v + 3)
             }
         }
+    }
+
+    /// Lauf-Größen je Stützpunkt für `water.gdshader` (Look-Iteration 14,
+    /// `RibbonMesh.flows`): woraus das Wasser entlang und quer zum Lauf
+    /// wechselt, aus der Geometrie des Laufs statt aus gleichmäßigem Rauschen.
+    ///
+    /// - **Riffel** (x, 0 Kolk … 1 Riffel): Kolke liegen im Bogenscheitel,
+    ///   Riffel (Furten) im Übergang zwischen zwei Bögen — dort ist die
+    ///   Bogenstärke klein (`ribbonRiffleBendLo/Hi`). Auf geraden Strecken
+    ///   ohne Bogen in der Nähe wechseln Kolk und Riffel im Abstand von
+    ///   `ribbonRiffleSpacingWidths` Bandbreiten (Leopold-Wolman: 5–7
+    ///   Gerinnebreiten). Steile Strecken sind Riffel.
+    /// - **Weißwasser** (y): Gefällestufen (`ribbonWhiteSlopeLo/Hi`),
+    ///   Engstellen (Halbbreite schrumpft gegen den Lauf oberhalb,
+    ///   `ribbonConstrictionLo/Hi`) und Zusammenflüsse (das Ende eines
+    ///   Zubringers, das unter dem Hauptlauf ausblendet). Den Außenbogen
+    ///   färbt der Shader selbst aus der Bogenstärke.
+    /// - **Gefälle** (z): Sim-Höhe je Zelle entlang der Zentrumslinie, über
+    ///   ±`ribbonSlopeWindowCells` gemittelt, normiert über
+    ///   `ribbonSlopeLo/Hi`; treibt Kräuselung und Strömungstempo.
+    /// - **Breite** (w): gemalte Bandbreite in Welteinheiten.
+    ///
+    /// Stillwasser, Delta-Arme und Meeresmündungen (`flowing == false`):
+    /// alles 0 bis auf die Breite.
+    private static func flowAttributes(_ samples: [RibbonSample], halfWidthCells: [Double],
+                               arc: [Double], occlusion: [Double], cellSize cs: Double,
+                               flowing: Bool,
+                               height: (Double, Double) -> Double) -> [SIMD4<Float>] {
+        let m = samples.count
+        var out = [SIMD4<Float>](repeating: .zero, count: m)
+        guard m > 0 else { return out }
+        for a in 0..<m { out[a].w = Float(2 * halfWidthCells[a] * cs) }
+        guard flowing, m >= 2 else { return out }
+        let hs = samples.map { height($0.x, $0.z) }
+        // Fenster in Welt-Bogenlänge.
+        func window(_ a: Int, _ reach: Double) -> (lo: Int, hi: Int) {
+            var lo = a, hi = a
+            while lo > 0, arc[a] - arc[lo - 1] <= reach { lo -= 1 }
+            while hi < m - 1, arc[hi + 1] - arc[a] <= reach { hi += 1 }
+            return (lo, hi)
+        }
+        let slopeReach = WaterRender.ribbonSlopeWindowCells * cs
+        var phase = 0.0
+        for a in 0..<m {
+            let hw = halfWidthCells[a]
+            let width = max(2 * hw, WaterRender.ribbonRiffleMinWidthCells) * cs
+            // Gefälle (Sim-Höhe je Zelle), richtungsfrei.
+            let (lo, hi) = window(a, slopeReach)
+            let run = (arc[hi] - arc[lo]) / cs
+            let slope = run > 1e-6 ? abs(hs[lo] - hs[hi]) / run : 0
+            let steep = smoothstep(WaterRender.ribbonSlopeLo, WaterRender.ribbonSlopeHi, slope)
+            // Riffel aus dem Bogen: klein im Scheitel, groß im Übergang.
+            let bendAbs = abs(samples[a].bend)
+            let riffleBend = 1 - smoothstep(WaterRender.ribbonRiffleBendLo,
+                                            WaterRender.ribbonRiffleBendHi, bendAbs)
+            // Liegt ein Bogen in Reichweite? Sonst trägt die Abfolge im
+            // Abstand mehrerer Bandbreiten (gerade Strecke).
+            let spacing = WaterRender.ribbonRiffleSpacingWidths * width
+            if a > 0 { phase += (arc[a] - arc[a - 1]) / spacing }
+            let (blo, bhi) = window(a, 0.5 * spacing)
+            var bendNear = 0.0
+            for b in blo...bhi { bendNear = max(bendNear, abs(samples[b].bend)) }
+            let bendy = smoothstep(WaterRender.ribbonRiffleBendLo,
+                                   WaterRender.ribbonRiffleBendHi, bendNear)
+            let alternation = 0.5 + 0.5 * sin(2 * Double.pi * phase)
+            var riffle = bendy * riffleBend + (1 - bendy) * alternation
+            riffle += (1 - riffle) * steep * WaterRender.ribbonRiffleSteepShare
+            // Weißwasser: Stufe, Engstelle, Zusammenfluss.
+            let white = smoothstep(WaterRender.ribbonWhiteSlopeLo, WaterRender.ribbonWhiteSlopeHi, slope)
+            let (ulo, _) = window(a, 2 * width)
+            var upstream = 0.0
+            for b in ulo...a { upstream += halfWidthCells[b] }
+            upstream /= Double(a - ulo + 1)
+            let narrowing = upstream > 1e-6 ? max(0, (upstream - hw) / upstream) : 0
+            let constriction = smoothstep(WaterRender.ribbonConstrictionLo,
+                                          WaterRender.ribbonConstrictionHi, narrowing)
+            let confluence = smoothstep(WaterRender.ribbonConfluenceLo,
+                                        WaterRender.ribbonConfluenceHi, occlusion[a])
+            let whitewater = max(white, max(constriction, confluence) * WaterRender.ribbonWhiteRiffleShare,
+                                 riffle * steep * WaterRender.ribbonWhiteRiffleShare)
+            out[a].x = Float(clamp01(riffle))
+            out[a].y = Float(clamp01(whitewater))
+            out[a].z = Float(steep)
+        }
+        return out
     }
 
     /// Krümmungsradius (Zellen) durch drei Stützpunkte — Menger-Krümmung.
@@ -1412,11 +1594,14 @@ public final class RiverRibbonRenderer {
         // Exklusivitätsprüfung) kostete den Band-Bau gemessen ~5 ms.
         let stampMature = mature && matureCoverage.count == n * n
         let owner = stampOwner
+        let hasVisible = bandVisibleCoverage.count == n * n
         mesh.bandCoverage.withUnsafeMutableBufferPointer { cb in
         owners.withUnsafeMutableBufferPointer { ob in
         matureCoverage.withUnsafeMutableBufferPointer { mb in
+        bandVisibleCoverage.withUnsafeMutableBufferPointer { vb in
             guard let pc = cb.baseAddress, let po = ob.baseAddress else { return }
             let pm = mb.baseAddress
+            let pv = hasVisible ? vb.baseAddress : nil
             for j in j0...j1 {
                 for i in i0...i1 {
                     // Fußpunkt auf der Strecke (geklemmt: die Nähte sind Kappen).
@@ -1427,17 +1612,25 @@ public final class RiverRibbonRenderer {
                     if openEnd && tRaw > 1 + overhang { continue }
                     let t = clamp01(tRaw)
                     let ex = px - dx * t, ez = pz - dz * t
-                    let hw = hw0 + (hw1 - hw0) * t + 0.5
-                    if ex * ex + ez * ez > hw * hw { continue }
+                    let hwRaw = hw0 + (hw1 - hw0) * t
+                    let hw = hwRaw + 0.5
+                    let e2 = ex * ex + ez * ez
+                    if e2 > hw * hw { continue }
                     let value = clamp01(fromAlpha + (toAlpha - fromAlpha) * t)
                     let k = j * n + i
                     if pc[k] < value { pc[k] = value; po[k] = owner }
+                    if let pv, pv[k] < value {
+                        let hv = max(hwRaw * WaterRender.ribbonVisibleWidth(value)
+                                     * (1 - WaterRender.ribbonWaterline)
+                                     - CanopyRender.bandCoreInsetCells, 0.5)
+                        if e2 <= hv * hv { pv[k] = value }
+                    }
                     // Ausgewachsen deckt jedes sichtbare Stück voll: auch ein
                     // schwach deckender Bach war schon Fluss.
                     if stampMature, value > 0 { pm![k] = 1 }
                 }
             }
-        }}}
+        }}}}
     }
 
     /// Delta-Fächer an einer Mündung: bis zu drei Distributär-Arme über den
