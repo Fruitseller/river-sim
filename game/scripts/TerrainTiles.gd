@@ -3,8 +3,10 @@ extends Node3D
 ##
 ## Jede Kachel ist eine eigene MeshInstance3D mit eigener AABB, damit Godot im
 ## Hauptpass und in jeder Schattenkaskade nur zeichnet, was im Frustum liegt.
-## Vorher schaltete `extra_cull_margin = 1000` das Culling ab, und die ganze
-## Insel lief durch den Hauptpass und alle vier Kaskaden.
+## Vorher schaltete `extra_cull_margin = 1000` das Culling ab. Gemessen sind
+## die Kacheln leistungsneutral (±0,7 ms, docs/perf-measurements.md § V): Die
+## Bildzeit folgt den Pixeln, nicht den Vertices. Sie sind die Struktur für
+## Objekte je Kachel (#236) und dichtere Kacheln nahe der Kamera (#238).
 ##
 ## Vertrag mit dem Rest (gilt für jede Kachel, damit Shader, Bänder und
 ## Raycast nichts von den Kacheln wissen müssen):
@@ -14,7 +16,7 @@ extends Node3D
 ## - Bei Dichte 1 liegen die Vertices genau auf den Punkten des Render-Gitters
 ##   (`grid` Punkte je Seite, Abstand world_size / (grid − 1)), und jedes Quad
 ##   ist entlang der Anti-Diagonale geteilt wie Godots PlaneMesh. Die sichtbare
-##   Fläche ist damit bit-gleich zur alten, und die Bänder, die ihre Höhen von
+##   Fläche ist damit dieselbe wie vorher, und die Bänder, die ihre Höhen von
 ##   genau dieser Fläche nehmen (`sim.setRenderGrid`,
 ##   `RenderSupport.renderSurfaceHeight`), liegen weiter richtig.
 ## - Benachbarte Kacheln teilen ihre Randpunkte: keine Risse.
@@ -28,8 +30,10 @@ extends Node3D
 
 ## Gitterabstände je Kachelseite. 64 ergibt bei 720 Punkten 12 × 12 Kacheln;
 ## die letzte Reihe ist schmaler (719 = 11 · 64 + 15). Kleiner heißt feineres
-## Culling, aber mehr Zeichenaufrufe (je Kachel einer im Hauptpass und einer
-## je Kaskade, in der sie liegt).
+## Culling, aber mehr Zeichenaufrufe (je Kachel einer im Tiefen-Vorpass, einer
+## im Hauptpass und einer je Kaskade, in der sie liegt); in der Totalen kosten
+## die 144 Kacheln gemessen rund 0,4 ms. 64 statt 128, damit #238 die Dichte
+## nahe der Kamera in kleinen Schritten heben kann.
 const TILE_QUADS := 64
 var tile_quads := TILE_QUADS
 const MAX_DENSITY := 4
@@ -80,6 +84,7 @@ func tile_index(tx: int, tz: int) -> int:
 
 ## Gitterbereich einer Kachel: [x0, x1] × [z0, z1] in Render-Gitter-Punkten,
 ## beide Enden eingeschlossen (Nachbarn teilen den Rand).
+@warning_ignore("integer_division")
 func tile_range(tile: int) -> Rect2i:
 	var tx := tile % tiles_per_side
 	var tz := tile / tiles_per_side
