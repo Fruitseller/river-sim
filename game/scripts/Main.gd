@@ -738,6 +738,7 @@ func _setup_relief() -> void:
 	relief_mat.set_shader_parameter("grid_n", float(N))
 	relief_mat.set_shader_parameter("hscale", hscale)
 	relief_mat.set_shader_parameter("sea_level", sea)
+	relief_mat.set_shader_parameter("world_size", world_size)
 	var calib := apply_calibration(sim, "relief", [relief_mat, terrain_mat])
 	relief_height_code = calib["relief_height_code"]
 	relief_geometry_age = calib["relief_geometry_age"]

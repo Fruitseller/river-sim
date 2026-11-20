@@ -153,17 +153,23 @@ final class RenderContractTests: XCTestCase {
                        + " Liste der geprüften Stellen mitziehen")
         // Back-Pass der Verschiebung: Main.gd setzt denselben Uniform, der
         // Shader wendet ihn genau einmal an (Höhenzuschlag in Welteinheiten)
-        // und rechnet damit den Gratdeckel in Sim-Höhe um.
+        // und rechnet damit den Gratdeckel in Sim-Höhe, die Steigung der
+        // Felsrippen in Weltsteigung und die Höhe der Felsbänke in Welt-Höhe
+        // um (beides Look-Iteration 7).
         assertContains(main, "relief_mat.set_shader_parameter(\"hscale\", hscale)",
                        hint: "Back-Pass bekommt die Überhöhung aus Main.gd hscale")
         let bake = try RepoSource.probe("game/shaders/relief_bake.gdshader")
         assertContains(bake, "uniform float hscale;",
                        hint: "Back-Pass deklariert die Überhöhung default-frei")
-        assertContains(bake, "relief = vec4((det.x + ridge) * hscale,",
+        assertContains(bake, "relief = vec4((det.x + rib.x + ridge) * hscale,",
                        hint: "Überhöhung wird im Back-Pass unskaliert angewandt")
         assertContains(bake, "float cap = relief_ridge_cap / hscale;",
                        hint: "Gratdeckel steht in Welteinheiten (ReliefRender.ridgeCap)")
-        XCTAssertEqual(bake.count(ofIdentifier: "hscale"), 3,
+        assertContains(bake, "float wslope = length(slope) * hscale / max(world_size, 1e-6);",
+                       hint: "Felsrippen wachsen mit der WELTsteigung (ReliefRender.ribSlopeLo/Hi)")
+        assertContains(bake, "float bp = fract(h * hscale / max(relief_bench_spacing, 1e-6)",
+                       hint: "Felsbänke stehen in Welt-Höhe (ReliefRender.benchSpacing)")
+        XCTAssertEqual(bake.count(ofIdentifier: "hscale"), 5,
                        "Neue oder entfernte `hscale`-Anwendung im Back-Pass")
     }
 

@@ -247,4 +247,33 @@ public enum MaterialRender {
     /// Streifen in Fließrichtung (Shader).
     public static let moraineLo = 0.30
     public static let moraineHi = 0.80
+
+    // MARK: Look-Iteration 7 (Befund „glatte Knete", Schnee als Kappe)
+
+    /// Schnee folgt der Form: wie stark Rinnen (`cavity` < 0) Schnee halten
+    /// und Rippen ihn abgeben, und die Weltsteigung JE PIXEL (samt
+    /// Render-Verschiebung), ab der er abgleitet, und ab der die Flanke aper
+    /// ist. Ergänzt `snowShedSlopeLo/Hi` (je Zelle, CPU) um die Form unter der
+    /// Zellgröße: Rippen und Felsbänke. Freigegebener Schnee wird Fels.
+    public static let snowCavity = 0.7
+    public static let snowSlopeLo = 1.3
+    public static let snowSlopeHi = 2.4
+
+    /// Stärke des Rauschens an der Schneegrenze (zwei Skalen, ~6 und ~1 Welt-
+    /// einheit): eine ausgefranste Grenze statt einer geschlossenen Kappe.
+    public static let snowBreakup = 0.8
+
+    /// Ausfransen der Grenze Fels ↔ Bewuchs: Verschiebung des Felsanteils
+    /// durch Rauschen und Form (Rippen Fels, Rinnen Gras), danach zur Kante
+    /// geschärft. 0 hieße der weiche Verlauf von vorher.
+    public static let rockFray = 0.6
+
+    /// Felsköpfe auf Grashängen: Weltsteigung JE PIXEL, ab der auf Rippen
+    /// Fels aus dem Gras tritt, und ab der das voll gilt, sowie der höchste
+    /// Anteil. Dazu kahle Schuttstreifen in den Rinnen derselben Hänge
+    /// (Anteil am Bewuchs). Referenz f: Rippen und Köpfe statt Knete.
+    public static let outcrop = 0.85
+    public static let outcropSlopeLo = 0.7
+    public static let outcropSlopeHi = 1.4
+    public static let screeStreak = 0.5
 }

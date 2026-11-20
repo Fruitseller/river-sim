@@ -33,10 +33,14 @@ public enum ReliefRender {
 
     /// Skala in UV: 0.006 ≈ 4 Sim-Zellen Wellenlänge der größten feinen Rinne.
     public static let detailScale = 0.006
-    /// Albedo-Abdunklung in den Rinnenböden.
-    public static let detailShade = 0.20
-    /// Anteil der Normal-Perturbation.
-    public static let detailNormal = 1.0
+    /// Albedo-Abdunklung in den Rinnenböden. 0.20 bis Look-Iteration 7; seit
+    /// das Detail je Pixel nur noch zwei statt drei Oktaven rechnet
+    /// (Bildzeit), gleichen Abdunklung und Normalen-Anteil die fehlende
+    /// feinste Oktave aus (Bewerter: „kräftigere Reliefschattierung" am
+    /// Stand mit drei Oktaven).
+    public static let detailShade = 0.26
+    /// Anteil der Normal-Perturbation (1.0 bis Look-Iteration 7, s. o.).
+    public static let detailNormal = 1.35
 
     /// Gratschärfung: Faktor auf den positiven Teil von „Höhe minus Ringmittel".
     /// Nur Kuppen und Grate werden angehoben, Mulden bleiben, wo sie sind;
@@ -67,11 +71,14 @@ public enum ReliefRender {
     public static let sharpenRadiusCells = 2.5
 
     /// Kodierung der Backtextur: Kanal = Wert × Code + 0.5, damit kein Kanal
-    /// negativ wird. Höhe in Welteinheiten (± 2 Einheiten darstellbar) …
-    public static let heightCode = 0.25
+    /// negativ wird. Höhe in Welteinheiten (± 2,5 Einheiten darstellbar;
+    /// bis Look-Iteration 7 ± 2 mit 0.25, die Felsrippen brauchen den Platz,
+    /// s. `testHeightCodeCoversTheDisplacement`) …
+    public static let heightCode = 0.2
 
-    /// … und Steigung dh/duv (± 25 darstellbar).
-    public static let slopeCode = 0.02
+    /// … und Steigung dh/duv (± 33 darstellbar; vorher ± 25 mit 0.02, die
+    /// Felsrippen steilen die Flanken zusätzlich auf).
+    public static let slopeCode = 0.015
 
     /// Hell-Dunkel der Rinnen (−) und Rippen (+) auf freien Flächen: Rinnenböden
     /// bis 42 % dunkler, Rippen bis 18 % heller. Erst das macht große
@@ -84,4 +91,42 @@ public enum ReliefRender {
     /// geklemmt wird.
     public static let cavityGullyGain = 1.6
     public static let cavityRidgeGain = 25.0
+
+    // MARK: Felsrippen (Look-Iteration 7)
+
+    /// Zweite, feinere Rinnenschar im Back-Pass (dieselbe runevision-Funktion
+    /// wie die grobe Verschiebung): Skala in UV (0.011 ≈ 8 Sim-Zellen ≈ 120 m
+    /// Wellenlänge der größten Rippe) und Stärke relativ zur Skala. Befund des
+    /// blinden Bewerters am Stand vor Iteration 7: „glatte Knetlandschaft ohne
+    /// Felsstruktur". Das feine Pixel-Detail (`detailScale`) blendet mit der
+    /// Kameradistanz aus und fehlt deshalb in Tal- und Diorama-Ansicht; die
+    /// gebackene Schar kostet je Bild nichts und trägt in jede Entfernung.
+    public static let ribScale = 0.011
+    public static let ribStrength = 1.5
+
+    /// Weltsteigung (dy/dx mit `RenderContract.heightScale`), ab der die
+    /// Rippen zunehmen, und ab der sie voll stehen. Darunter (Grashänge) nur
+    /// der Anteil `ribFloor`: Hangrippen statt glatter Kissen, aber keine
+    /// Felswand auf der Wiese.
+    public static let ribSlopeLo = 0.8
+    public static let ribSlopeHi = 1.8
+    public static let ribFloor = 0.5
+
+    /// Wie stark die Rippen in den Hell-Dunkel-Kanal (A) eingehen: Rinnenböden
+    /// dunkel, Rippen hell, damit die Schar auch als Ton aus der Ferne trägt
+    /// und Schnee in den Rinnen liegen bleibt (Material-Shader).
+    public static let cavityRibGain = 2.5
+
+    /// Felsbänke im Back-Pass: Abstand der groben Schichtstufen in Welt-Höhe
+    /// (0,8 ≈ 80 m), wie stark die Steigung an der Stufenstirn zu- und auf der
+    /// Bank abnimmt (relativ zur Hangneigung), und wie stark die Stirn im
+    /// Hell-Dunkel-Kanal abdunkelt. Grob genug, um in der Tal-Ansicht als
+    /// Hell-Dunkel aus dem Licht zu tragen; die feinen Klüfte des
+    /// Terrain-Shaders bleiben für die Nahsicht. Nur auf Steilflanken (wie die
+    /// Rippen über `ribSlopeLo/Hi`, ohne den Grashang-Anteil `ribFloor`).
+    /// Je Pixel im Terrain-Shader gerechnet kostete dasselbe gemessen
+    /// Bildzeit (Zeitraffer-A/B, Look-Iteration 7).
+    public static let benchSpacing = 0.8
+    public static let benchRelief = 0.9
+    public static let cavityBenchGain = 0.6
 }

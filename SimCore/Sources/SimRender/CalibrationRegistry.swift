@@ -195,6 +195,15 @@ public enum CalibrationRegistry {
         ("relief_detail_scale", ReliefRender.detailScale),
         ("relief_detail_shade", ReliefRender.detailShade),
         ("relief_detail_normal", ReliefRender.detailNormal),
+        ("relief_rib_scale", ReliefRender.ribScale),
+        ("relief_rib_strength", ReliefRender.ribStrength),
+        ("relief_rib_slope_lo", ReliefRender.ribSlopeLo),
+        ("relief_rib_slope_hi", ReliefRender.ribSlopeHi),
+        ("relief_rib_floor", ReliefRender.ribFloor),
+        ("relief_cavity_rib_gain", ReliefRender.cavityRibGain),
+        ("relief_bench_spacing", ReliefRender.benchSpacing),
+        ("relief_bench_relief", ReliefRender.benchRelief),
+        ("relief_cavity_bench_gain", ReliefRender.cavityBenchGain),
     ])
 
     // MARK: canopy — Kronendach und Wiese (#152/#168)
@@ -242,6 +251,15 @@ public enum CalibrationRegistry {
         ("material_crevasse_slope_hi", MaterialRender.crevasseSlopeHi),
         ("material_moraine_lo", MaterialRender.moraineLo),
         ("material_moraine_hi", MaterialRender.moraineHi),
+        ("material_snow_cavity", MaterialRender.snowCavity),
+        ("material_snow_slope_lo", MaterialRender.snowSlopeLo),
+        ("material_snow_slope_hi", MaterialRender.snowSlopeHi),
+        ("material_snow_breakup", MaterialRender.snowBreakup),
+        ("material_rock_fray", MaterialRender.rockFray),
+        ("material_outcrop", MaterialRender.outcrop),
+        ("material_outcrop_slope_lo", MaterialRender.outcropSlopeLo),
+        ("material_outcrop_slope_hi", MaterialRender.outcropSlopeHi),
+        ("material_scree_streak", MaterialRender.screeStreak),
     ])
 
     // MARK: contract — Render-Vertrag, den GDScript selbst rechnet (#51)

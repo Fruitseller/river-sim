@@ -32,6 +32,19 @@ uniform float relief_slope_code;
 uniform float relief_cavity_gully_gain;
 uniform float relief_cavity_ridge_gain;
 uniform float relief_ridge_cap;
+// Felsrippen (Look-Iteration 7): dieselbe Rinnenfunktion eine Skala feiner,
+// nach der Steilheit gewichtet. Weltsteigung braucht die Kartengröße.
+uniform float world_size;
+uniform float relief_rib_scale;
+uniform float relief_rib_strength;
+uniform float relief_rib_slope_lo;
+uniform float relief_rib_slope_hi;
+uniform float relief_rib_floor;
+uniform float relief_cavity_rib_gain;
+// Felsbänke (Look-Iteration 7): Schichtstufen auf Steilflanken.
+uniform float relief_bench_spacing;
+uniform float relief_bench_relief;
+uniform float relief_cavity_bench_gain;
 
 #include "res://shaders/protect.gdshaderinc"
 
@@ -66,14 +79,41 @@ void fragment() {
 		float fade_target = clamp((h - sea_level) / 0.6 * 2.0 - 1.0, -1.0, 1.0);
 		float mag;
 		vec4 det = erosion_detail_at(uv, slope, fade_target, relief_scale,
-		                             relief_strength, mag);
+		                             relief_strength, 3, mag);
 		float e = texel;
 		vec2 ridge_slope = vec2(ridge_at(uv + vec2(e, 0.0)) - ridge_at(uv - vec2(e, 0.0)),
 		                        ridge_at(uv + vec2(0.0, e)) - ridge_at(uv - vec2(0.0, e)))
 		                 / (2.0 * e);
 		float ridge = ridge_at(uv);
-		relief = vec4((det.x + ridge) * hscale, det.yz + ridge_slope,
-		              clamp(det.x / mag * relief_cavity_gully_gain + ridge * relief_cavity_ridge_gain, -1.0, 1.0)) * w;
+		// Felsrippen (Look-Iteration 7): eine zweite, feinere Rinnenschar
+		// (~120 m statt ~2,5 km), die auf Steilflanken voll und auf sanften
+		// Grashängen nur zu `relief_rib_floor` steht. Sie zerlegt glatte Wände
+		// in Rippen und Runsen mit echtem Licht und Schatten und trägt, anders
+		// als das feine Pixel-Detail, bis in die Übersicht. Versetzt
+		// abgetastet, damit sie nicht in Phase mit der groben Schar liegt.
+		float wslope = length(slope) * hscale / max(world_size, 1e-6);
+		float steep = mix(relief_rib_floor, 1.0,
+		                  smoothstep(relief_rib_slope_lo, max(relief_rib_slope_hi, relief_rib_slope_lo + 1e-6), wslope));
+		float rib_mag;
+		vec4 rib = erosion_detail_at(uv + vec2(0.37, 0.61), slope, fade_target, relief_rib_scale,
+		                             relief_rib_strength, 3, rib_mag);
+		rib.xyz *= steep;
+		// Felsbänke (Look-Iteration 7): Schichtstufen im Abstand
+		// `relief_bench_spacing` (Welt-Höhe), gewellt mit den Rippen. Jede
+		// Stufe ist eine kurze, steile, beschattete Stirn über einer flacheren
+		// Bank: die Steigung wird dort größer, hier kleiner (Mittel über eine
+		// Stufe ≈ 0, keine Höhenänderung), die Stirn dunkelt über den
+		// Hell-Dunkel-Kanal ab. Nur auf Steilflanken (`steep` ohne den
+		// Grashang-Anteil). Je Pixel im Terrain-Shader kostete dasselbe Bildzeit.
+		float bench_w = clamp((steep - relief_rib_floor) / max(1.0 - relief_rib_floor, 1e-6), 0.0, 1.0);
+		float bp = fract(h * hscale / max(relief_bench_spacing, 1e-6) + rib.x / rib_mag * 0.35
+		                 + det.x / mag * 0.25);
+		float riser = smoothstep(0.70, 0.86, bp) * (1.0 - smoothstep(0.94, 1.0, bp));
+		vec2 bench_slope = slope * (riser * 4.0 - 0.75) * relief_bench_relief * bench_w;
+		relief = vec4((det.x + rib.x + ridge) * hscale, det.yz + rib.yz + ridge_slope + bench_slope,
+		              clamp(det.x / mag * relief_cavity_gully_gain + rib.x / rib_mag * relief_cavity_rib_gain
+		                    + ridge * relief_cavity_ridge_gain - riser * bench_w * relief_cavity_bench_gain,
+		                    -1.0, 1.0)) * w;
 	}
 	COLOR = vec4(relief.x * relief_height_code + 0.5, relief.yz * relief_slope_code + 0.5,
 	             relief.w * 0.5 + 0.5);

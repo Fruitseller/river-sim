@@ -25,6 +25,11 @@ final class ReliefUniformsTests: XCTestCase {
             "relief_scale", "relief_strength", "relief_sharpen", "relief_sharpen_radius",
             "relief_ridge_cap", "relief_height_code", "relief_slope_code",
             "relief_cavity_gully_gain", "relief_cavity_ridge_gain",
+            // Felsrippen (Look-Iteration 7).
+            "relief_rib_scale", "relief_rib_strength", "relief_rib_slope_lo",
+            "relief_rib_slope_hi", "relief_rib_floor", "relief_cavity_rib_gain",
+            // Felsbänke (Look-Iteration 7, aus dem Terrain-Shader hierher).
+            "relief_bench_spacing", "relief_bench_relief", "relief_cavity_bench_gain",
         ],
         "game/shaders/terrain.gdshader": [
             "relief_height_code", "relief_slope_code",
@@ -36,12 +41,14 @@ final class ReliefUniformsTests: XCTestCase {
 
     /// Die Kodierung muss die größte vorkommende Verschiebung abbilden: die
     /// Rinnen bleiben unter `strength · scale · hscale` (Summe der Oktaven
-    /// < 2 × erste Oktave), die Grate unter ihrem Deckel `ridgeCap` (tanh).
+    /// < 2 × erste Oktave), ebenso die Felsrippen (Look-Iteration 7), die
+    /// Grate unter ihrem Deckel `ridgeCap` (tanh).
     /// Der Kanal ist 0…1 mit Mitte 0.5, also ± 0.5 / heightCode Einheiten.
     func testHeightCodeCoversTheDisplacement() {
         let gullies = 2.0 * ReliefRender.strength * ReliefRender.scale * RenderContract.heightScale
+        let ribs = 2.0 * ReliefRender.ribStrength * ReliefRender.ribScale * RenderContract.heightScale
         let range = 0.5 / ReliefRender.heightCode
-        XCTAssertGreaterThan(range, gullies + ReliefRender.ridgeCap,
+        XCTAssertGreaterThan(range, gullies + ribs + ReliefRender.ridgeCap,
                              "Höhenkodierung schneidet die Verschiebung ab")
     }
 

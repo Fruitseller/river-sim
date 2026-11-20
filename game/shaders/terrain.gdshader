@@ -227,6 +227,16 @@ uniform float material_crevasse_slope_lo;
 uniform float material_crevasse_slope_hi;
 uniform float material_moraine_lo;
 uniform float material_moraine_hi;
+// Look-Iteration 7: Schnee nach der Form, ausfransende Felsgrenze, Felsköpfe.
+uniform float material_snow_cavity;
+uniform float material_snow_slope_lo;
+uniform float material_snow_slope_hi;
+uniform float material_snow_breakup;
+uniform float material_rock_fray;
+uniform float material_outcrop;
+uniform float material_outcrop_slope_lo;
+uniform float material_outcrop_slope_hi;
+uniform float material_scree_streak;
 
 varying float v_forest;
 // Bestands-Rauschen des Kronendachs (x ~180 m, y ~770 m): so grob, dass es
@@ -328,7 +338,9 @@ float lake_gate_at(vec2 uv) {
 // Verschiebung nutzen kann, statt den MPL-Code zu kopieren. Das max() hält
 // die Editor-Vorschau ohne SimNode (Null-Uniform) total, keine Kalibrierung.
 vec4 erosion_detail(vec2 p, vec2 slope, float fade_target_in, out float out_mag) {
-	return erosion_detail_at(p, slope, fade_target_in, max(relief_detail_scale, 1e-4), detail_strength, out_mag);
+	// Zwei Oktaven statt drei (Look-Iteration 7): die feinste (~17 m) lag
+	// unter den gebackenen Felsrippen und kostete je Pixel Bildzeit.
+	return erosion_detail_at(p, slope, fade_target_in, max(relief_detail_scale, 1e-4), detail_strength, 2, out_mag);
 }
 
 // Render-Verschiebung aus der Backtextur (Kodierung: relief_bake.gdshader).
@@ -917,6 +929,52 @@ void fragment() {
 		scree += slid;
 		float bare_rest = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
 		rock += min(bare_rest, rock * clamp(cavity, 0.0, 1.0) * material_ridge_rock_gain);
+		// Look-Iteration 7, EIN Block für drei Umverteilungen (gemeinsame
+		// Rausch- und Formterme). Befund „glatte Knete", Schnee als Kappe:
+		//  - Schnee folgt der Form. Er bleibt in Rinnen (`cavity` < 0) und auf
+		//    flachen Schultern liegen, gleitet von Rippen, Graten und je Pixel
+		//    steilen Flanken (Steigung samt Render-Verschiebung, also auch von
+		//    den Felsrippen des Bakes) ab; die Grenze franst über zwei
+		//    Rauschskalen aus und wird zur Kante geschärft statt als weicher
+		//    Verlauf auszulaufen. Was der Schnee freigibt, ist aperer Fels.
+		//  - Fels gegen Bewuchs franst aus (Rippen Fels, Rinnen Gras) und wird
+		//    zur Kante geschärft, statt weich zu verlaufen. Summe unverändert.
+		//  - Felsköpfe und Schuttstreifen auf steilen Grashängen (Referenz f):
+		//    auf Rippen tritt Fels aus dem Gras, in den Rinnen ziehen kahle
+		//    Schuttstreifen; beides nimmt nur vom Bewuchs und vom freien Grund.
+		// Früh im Material, vor allen Rausch- und Farbtermen, und nur mit dem
+		// schon vorhandenen `breakup` als Rauschen: später, wo die Farben
+		// leben, kostete derselbe Block gemessen ~1 ms je Bild (Registerdruck),
+		// auch unausgeführt. Klüftung und Körnung laufen weiter nur auf dem
+		// Fels- und Schuttanteil der Zelle (`rock_cell`, `scree_cell`). Die
+		// Felsbänke derselben Iteration rechnet der Relief-Bake.
+		float rock_cell = rock;
+		float scree_cell = scree;
+		float n_mix = (breakup - 0.5) * 1.8;
+		if (cold > 0.002) {
+			float lie = cold * 1.45 + n_mix * material_snow_breakup - cavity * material_snow_cavity
+			          - calib_window(material_snow_slope_lo, material_snow_slope_hi, world_slope);
+			float cold_lie = smoothstep(0.30, 0.62, lie);
+			rock += max(cold - cold_lie, 0.0);
+			cold = cold_lie;
+		}
+		float pair = rock + vegetation;
+		if (pair > 0.02 && rock > 0.005) {
+			float t = rock / pair + (n_mix + cavity * 0.5) * material_rock_fray;
+			rock = pair * smoothstep(0.25, 0.75, t);
+			vegetation = pair - rock;
+		}
+		float steep_g = calib_window(material_outcrop_slope_lo, material_outcrop_slope_hi, world_slope);
+		if (steep_g > 0.0) {
+			float free_g = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
+			float crag = steep_g * material_outcrop * smoothstep(0.15, 0.55, cavity + n_mix * 0.35);
+			float streak = steep_g * material_scree_streak * smoothstep(0.25, 0.7, -cavity + n_mix * 0.2);
+			rock += (vegetation + free_g) * crag;
+			vegetation *= 1.0 - crag;
+			scree += vegetation * streak;
+			vegetation *= 1.0 - streak;
+		}
+
 		// `material_fade` blendet NUR das Feingran aus: es aliast in der Distanz und
 		// liegt dort unter einem Pixel. Die GROSSEN Terme (tri_large, top_large)
 		// tragen die Makro-Variation der Grundfarben und laufen bis zum Horizont
@@ -965,13 +1023,14 @@ void fragment() {
 		vec3 ground_color = mix(dry_grass, stony, smoothstep(veg_alt_lo, veg_alt_hi, hval));
 		ground_color = mix(ground_color, lush_color, valley * 0.7);
 
-		// Die echte Lithologie steuert die Helligkeit der Schichtflächen. Harte
-		// Bänder sind dunkler, feinkörniger und rauer; weiche Bänder verwittern hell. Das
-		// Korn wird über `material_fade` auf seinen neutralen Mittelwert 0.5 gezogen,
-		// nicht am Gate hart auf ihn gesetzt: sonst stünde am Fade-Ende eine Kante
-		// von bis zu 11 % Helligkeit quer durch die Felsflächen.
-		float strata_phase = abs(fract(material_pos.y * 1.65 + tri_large * 1.8) - 0.5) * 2.0;
-		float strata_edge = smoothstep(0.72, 0.96, strata_phase);
+		// Die echte Lithologie steuert die Helligkeit des Felses: harte Bänder
+		// dunkler, weiche verwittern hell. Bis Look-Iteration 7 nur an feinen,
+		// stückweisen Schichtkanten (Abstand 0,6); die Schichtung tragen jetzt
+		// die gröberen Felsbänke des Relief-Bakes, hier bleibt nur der Ton
+		// (der Wegfall von Phase und Rauschen hält die Bildzeit). Das Korn wird
+		// über `material_fade` auf seinen neutralen Mittelwert 0.5 gezogen,
+		// nicht am Gate hart auf ihn gesetzt: sonst stünde am Fade-Ende eine
+		// Kante von bis zu 11 % Helligkeit quer durch die Felsflächen.
 		float lith_contrast = mix(1.09, 0.82, lith * 0.5 + 0.5);
 		// Dunkelgrauer Fels mit Klüftung (#174 D): Runsen in Fallrichtung, Fugen,
 		// Blockton. Im Review zu PR #177 dunkler und kontrastreicher gestellt
@@ -985,20 +1044,17 @@ void fragment() {
 		float tone = 0.0;
 		float joints = 0.0;
 		vec3 rock_bump = vec3(0.0);
-		if (material_enabled && rock > 0.01) {
+		if (material_enabled && rock_cell > 0.01) {
 			joints = rock_joints(material_pos, n_ws, cavity, px_mat, tone, rock_bump);
-			// Schichtkanten nur stückweise: über die ganze Wand durchgezogen
-			// stünden sie als gleichmäßige Höhenlinien da.
-			strata_edge *= smoothstep(0.35, 0.70, vnoise(material_pos.xz * 0.9 + vec2(4.0, 21.0)));
 		}
-		vec3 rock_color = mix(vec3(0.07, 0.076, 0.086), vec3(0.14, 0.145, 0.15), smoothstep(0.30, 0.70, tri_large))
+		vec3 rock_color = mix(vec3(0.06, 0.064, 0.072), vec3(0.16, 0.158, 0.155), smoothstep(0.30, 0.70, tri_large))
 		                * mix(0.82, 1.10, mix(0.5, tri_grain, material_fade))
-		                * mix(1.0, lith_contrast, strata_edge * rock)
+		                * mix(1.0, lith_contrast, 0.5 * rock)
 		                * (1.0 + tone * 0.10)
 		                * (1.0 - joints * material_joint_depth);
 		// Schutthalde: heller als die Wand, grob gekörnt.
 		float grain = 0.0;
-		if (material_enabled && scree > 0.01) {
+		if (material_enabled && scree_cell > 0.01) {
 			grain = scree_grain(material_pos.xz, px_mat);
 		}
 		vec3 scree_color = vec3(0.22, 0.215, 0.20) * mix(0.90, 1.06, tri_large) * (1.0 + grain * 0.16);
@@ -1052,7 +1108,10 @@ void fragment() {
 		          / max(0.001, soil_w + cover_w);
 		// Die Makrokarte bewahrt Salzkrusten, Gletschereis und Biom-Farbverschiebung,
 		// ohne wieder als alleinige, weichgefilterte Oberfläche sichtbar zu werden.
-		terr = mix(terr, macro_color, 0.28);
+		// Auf Fels nur halb so viel (Look-Iteration 7): die Makrokarte trägt
+		// dort den weichgefilterten Zellton und verputzte Rippen und Bänke;
+		// Felsköpfe auf Grashängen nahmen sonst deren Grün an.
+		terr = mix(terr, macro_color, 0.28 * (1.0 - 0.6 * rock));
 		float salt_hint = smoothstep(0.48, 0.72, macro_color.r)
 		                * smoothstep(0.04, 0.12, macro_color.r - macro_color.b)
 		                * (1.0 - cold) * (1.0 - vegetation);
@@ -1088,6 +1147,13 @@ void fragment() {
 		terr *= 0.96 + 0.08 * breakup;
 		// Rinnenböden dunkler, Rippen heller (grobe Verschiebung, #153).
 		terr *= 1.0 + (cavity < 0.0 ? cavity * relief_shade_dark : cavity * relief_shade_light);
+		// Ton nach der Form (Look-Iteration 7): auf Gras trockene, gelbliche
+		// Rippen und satte, dunkle Rinnen statt eines gleichförmigen Tons; auf
+		// Fels zusätzlicher Hell-Dunkel-Kontrast zwischen Rippe und Runse.
+		float green_w = (1.0 - rock - scree) * (1.0 - cold);
+		terr = mix(terr, terr * vec3(1.16, 1.10, 0.78), clamp(cavity, 0.0, 1.0) * 0.8 * green_w);
+		terr = mix(terr, terr * vec3(0.72, 0.88, 0.66), clamp(-cavity, 0.0, 1.0) * 0.8 * green_w);
+		terr *= 1.0 + cavity * 0.45 * rock;
 
 		land_roughness = mix(0.90, 0.68, rock);
 		land_roughness = mix(land_roughness, 0.95, scree);
