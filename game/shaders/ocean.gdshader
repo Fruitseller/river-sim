@@ -38,6 +38,7 @@ uniform float water_ocean_surf_scale;
 uniform float water_ocean_surf_drift;
 uniform float water_ocean_surf_noise_lo;
 uniform float water_ocean_surf_noise_hi;
+uniform float water_ocean_surf_plume_cut;
 uniform float water_ocean_surf_slope_lo;
 uniform float water_ocean_surf_slope_hi;
 uniform float water_ocean_wave_frequency;
@@ -201,8 +202,10 @@ void fragment() {
 	                 calib_window(0.0, water_ocean_mid_depth, depth));
 	water = mix(water, water_ocean_deep_color, calib_window(water_ocean_mid_depth, 1.0, depth));
 	// Außerhalb des Sim-Quadrats gibt es keine Mündung: dort keine Abgriffe.
+	float plume = 0.0;
 	if (inside_terrain) {
-		water = mix(water, water_ocean_plume_color, sediment_plume(p) * water_ocean_plume_opacity);
+		plume = sediment_plume(p);
+		water = mix(water, water_ocean_plume_color, plume * water_ocean_plume_opacity);
 	}
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
@@ -212,13 +215,19 @@ void fragment() {
 	// Schaum auf der Oberfläche und bleibt davon unberührt.
 	water *= 1.0 - fresnel;
 
-	// Brandung: schmaler, von Rauschen gebrochener Saum direkt an der Küste.
+	// Brandung: schmaler, von Rauschen gebrochener Strich an der Wasserlinie.
+	// Die Tiefe des Saums misst die SCHARFE Wassersäule (bilinear, dieselbe
+	// Höhe wie die Küstenlinie), nicht den geglätteten Schelf: sonst lag der
+	// Saum als Schleier vor der Küste (Hill-Climber Nr. 8).
 	// Gekoppelt an die Geländeneigung: auf flachen Sandbänken, Rinnen und Lagunen
 	// schäumt das Wasser nicht flächig, sondern nur am Hang zur Wasserlinie (#174).
-	float surf = (1.0 - calib_window(0.0, water_ocean_surf_depth, depth))
+	// Vor Mündungen (Sedimentfahne) bricht keine Welle.
+	float line_depth = clamp((sea_level - h) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0);
+	float surf = (1.0 - calib_window(0.0, water_ocean_surf_depth, line_depth))
 	           * calib_window(water_ocean_surf_slope_lo, water_ocean_surf_slope_hi, shelf_slope);
 	surf *= calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi,
 	                     noise2(p * water_ocean_surf_scale + vec2(u_time * water_ocean_surf_drift, 0.0)));
+	surf *= clamp(1.0 - plume * water_ocean_surf_plume_cut, 0.0, 1.0);
 	water = mix(water, water_ocean_surf_color, surf * water_ocean_surf_strength);
 
 	water *= cloud_light(vec3(p.x, NODE_POSITION_WORLD.y, p.y), u_time);

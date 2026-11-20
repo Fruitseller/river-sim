@@ -1224,14 +1224,21 @@ public enum WaterRender {
     /// Wassertiefe (Sim-Höheneinheiten unter `seaLevel`), ab der das Meer voll
     /// tief gefärbt ist. 0.06 ≈ 1,4 Welteinheiten ≈ 140 m.
     public static let oceanDepthSpan = 0.06
-    /// Farbe über dem flachen Schelf direkt an der Küste (türkis).
-    public static let oceanShallowColor = (r: 0.09, g: 0.27, b: 0.27)
-    /// Farbe am Knick zwischen Schelf und Hang …
-    public static let oceanMidColor = (r: 0.030, g: 0.125, b: 0.165)
-    /// … und im tiefen Wasser sowie außerhalb des Sim-Quadrats (dunkelblau).
-    public static let oceanDeepColor = (r: 0.012, g: 0.050, b: 0.082)
-    /// Lage des Knicks auf der normierten Tiefe 0…1.
-    public static let oceanMidDepth = 0.25
+    /// Farbe über dem flachen Schelf direkt an der Küste: kräftiges Türkis.
+    /// Hill-Climber Nr. 8 (Problem 4, Referenz d/e): vorher 0,09/0,27/0,27,
+    /// das las sich unter Himmelsspiegelung als verwaschener Graugrün-Hof.
+    public static let oceanShallowColor = (r: 0.02, g: 0.36, b: 0.34)
+    /// Farbe am Knick zwischen Schelf und Hang (gesättigtes Petrol) …
+    /// (vorher 0,030/0,125/0,165)
+    public static let oceanMidColor = (r: 0.006, g: 0.090, b: 0.150)
+    /// … und im tiefen Wasser sowie außerhalb des Sim-Quadrats: sattes,
+    /// dunkles Blau statt Graublau (vorher 0,012/0,050/0,082).
+    public static let oceanDeepColor = (r: 0.003, g: 0.022, b: 0.080)
+    /// Lage des Knicks auf der normierten Tiefe 0…1. Vorher 0,25: der
+    /// Türkis-Anteil reichte bis weit über den verrauschten Schelf und lag
+    /// dort als wolkiger Hof. Mit 0,17 bleibt der helle Verlauf am küstennahen
+    /// Strandprofil (`Terrain.wavePass`), das der Küstenlinie folgt.
+    public static let oceanMidDepth = 0.17
     /// Breite des Brandungssaums auf der normierten Tiefe (nur der äußerste
     /// Küstenrand). Vorher 0,045 (Wassersäule 0,0027): auf den seichten
     /// Delta-Flächen (Barrenfuß bis `deltaTopset` unter dem Meer, Rinnen
@@ -1239,19 +1246,32 @@ public enum WaterRender {
     /// statt eines Saums an der Wasserlinie (Bögen § Delta). 0,02 (0,0012):
     /// an offener Küste fällt der Grund ohnehin binnen einer Zelle durch das
     /// Fenster, der Saum dort bleibt.
-    public static let oceanSurfDepth = 0.02
+    ///
+    /// Hill-Climber Nr. 8: Die Tiefe des Saums misst seitdem die SCHARFE
+    /// Wassersäule (bilineare Höhe wie die Küstenlinie), nicht den geglätteten
+    /// Schelf; sonst wanderte der Saum als Schleier vor die Küste. 0,05 der
+    /// Spanne (0,003) ≈ eine Zelle Küstenrampe: ein schmaler Strich an der
+    /// Wasserlinie.
+    public static let oceanSurfDepth = 0.05
     /// Untergrenze der Küstenneigung (dh/dp in Welteinheiten) für Brandung:
     /// darunter (flache Sandbarren, Seichtwasser, Lagunen) bricht keine Welle.
     public static let oceanSurfSlopeLo = 0.003
     /// Obergrenze der Küstenneigung: ab hier schäumt die Brandung voll.
     public static let oceanSurfSlopeHi = 0.008
     /// Farbe der Brandung …
-    public static let oceanSurfColor = (r: 0.80, g: 0.85, b: 0.86)
-    /// … und ihr höchster Anteil an der Wasserfarbe.
-    public static let oceanSurfStrength = 0.55
+    /// (Nr. 8: weiß statt grau, vorher 0,80/0,85/0,86) …
+    public static let oceanSurfColor = (r: 0.92, g: 0.95, b: 0.96)
+    /// … und ihr höchster Anteil an der Wasserfarbe (vorher 0,55, las sich
+    /// in der Übersicht nicht als Brandung).
+    public static let oceanSurfStrength = 0.9
     /// Rausch-Fenster, das den Saum bricht (nur Rauschwerte darüber schäumen).
-    public static let oceanSurfNoiseLo = 0.35
-    public static let oceanSurfNoiseHi = 0.75
+    /// Nr. 8: vorher 0,35…0,75, der Saum zerfiel in Einzelflecken; jetzt eine
+    /// Linie mit Lücken.
+    public static let oceanSurfNoiseLo = 0.30
+    public static let oceanSurfNoiseHi = 0.55
+    /// Vor Mündungen bricht keine Brandung: die Sedimentfahne (`plume`,
+    /// Dichte 0…1) löscht den Saum mit diesem Faktor (Nr. 8).
+    public static let oceanSurfPlumeCut = 3.0
     /// Rausch-Frequenz der Brechung (je Welteinheit) …
     public static let oceanSurfScale = 3.1
     /// … und ihre Drift (Rausch-Zellen je Sekunde).
@@ -1346,7 +1366,9 @@ public enum WaterRender {
     public static let coastReachCells = 3
     /// Breitester Strand (Zellen): Pocket-Strände und Mündungsstrände. Die
     /// Breite schwankt zwischen 0 und diesem Wert. 5 Zellen ≈ 78 m.
-    public static let beachMaxWidthCells = 5.0
+    /// Hill-Climber Nr. 8: vorher 5 (≈ 78 m), las sich als breite Kleckse;
+    /// 3 ließ gerade, offene Küste fast ohne Strand (`CoastMaterialTests`).
+    public static let beachMaxWidthCells = 4.0
     /// Radius (Zellen) des Fensters für das Rückland-Relief …
     public static let beachReliefRadiusCells = 8
     /// … Rückland-Relief (Sim-Höhe über der Küstenzelle), bis zu dem die
@@ -1417,10 +1439,12 @@ public enum WaterRender {
     public static let cliffExposedBoost = 0.3
     /// Höhe über dem Meeresspiegel (Sim-Einheiten), bis zu der eine flache
     /// Küstenzelle voll Sand ist …
-    public static let beachHeightLo = 0.008
+    /// Hill-Climber Nr. 8: vorher 0,008…0,018; die Terrassen dahinter lagen
+    /// als breite, aufgesetzte Sandpolster da.
+    public static let beachHeightLo = 0.005
     /// … und ab der sie kein Sand mehr ist. Muss innerhalb des Wellenbands
     /// `SimConfig.waveBand` liegen (Wächter: `CoastMaterialTests`).
-    public static let beachHeightHi = 0.018
+    public static let beachHeightHi = 0.011
     /// Delta-Inseln (Issue #174, Punkt 26): flaches Land bis zu dieser Höhe
     /// über dem Meer, das nirgends an höheres Land grenzt, ist eine
     /// Mündungsbarre (`Terrain.deltaDeposit`, Scheitel `deltaTopset` 0,0015)
@@ -1451,6 +1475,12 @@ public enum WaterRender {
     public static let beachSlopeLo = 0.0042
     /// … und ab der sie kein Sand mehr ist.
     public static let beachSlopeHi = 0.0058
+    /// Höhe über dem Meer, bis zu der das Steigungsfenster oben NICHT gilt
+    /// (Übergang bis zum Doppelten): die Küstenrampe direkt an der
+    /// Wasserlinie trägt den nassen Sand eines Strands, sonst begann der
+    /// Strand erst hinter einem Grünstreifen (Hill-Climber Nr. 8). Felsküste
+    /// bleibt davon unberührt: ihr Küstenpunkt hat Strandbreite 0.
+    public static let beachWaterlineHeight = 0.003
     /// Makro-Steigung, ab der eine Küstenzelle Felsküste wird …
     public static let cliffCoastSlopeLo = 0.006
     /// … und ab der sie voll Fels ist. Die Fenster von Strand und Fels
@@ -1702,6 +1732,22 @@ public enum WaterRender {
     public static let barSandWetColor = (r: 0.52, g: 0.48, b: 0.40)
     /// s. `barSandColor`.
     public static let barRoughness = 0.86
+
+    /// Strand an der Meeresküste (Hill-Climber Nr. 8, Problem 4): direkt an
+    /// der Wasserlinie nasser, dunkler Sand, dahinter heller trockener. Gilt
+    /// im Terrain-Shader nur bis `beachHeightHi` über dem Meer; Bänke im
+    /// Binnenland behalten `barSand*` (Mischung über Rauschen).
+    public static let beachDryColor = (r: 0.80, g: 0.74, b: 0.60)
+    /// s. `beachDryColor`.
+    public static let beachWetColor = (r: 0.33, g: 0.32, b: 0.26)
+    /// Höhe über dem Meer (Sim-Einheiten), bis zu der der Sand nass ist; der
+    /// Übergang läuft bis zum Doppelten. ≈ eine Zelle Küstenrampe.
+    public static let beachWetHeight = 0.0008
+    /// Rückkante des Strands: das (bilinear weiche) Sandgewicht wird über
+    /// dieses Fenster zu einer klaren Kante geschärft, nur im Strandband.
+    public static let beachEdgeLo = 0.35
+    /// s. `beachEdgeLo`.
+    public static let beachEdgeHi = 0.55
 
     /// Tiefenfarbe im Band nach dem Querprofil (Vorlage E): `UV2.y` trägt die
     /// signierte Bogenstärke (`MeanderState.bendStrength`, −1 … +1). Am

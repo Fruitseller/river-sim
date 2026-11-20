@@ -107,6 +107,7 @@ public enum CalibrationRegistry {
         ("water_ocean_surf_drift", WaterRender.oceanSurfDrift),
         ("water_ocean_surf_noise_lo", WaterRender.oceanSurfNoiseLo),
         ("water_ocean_surf_noise_hi", WaterRender.oceanSurfNoiseHi),
+        ("water_ocean_surf_plume_cut", WaterRender.oceanSurfPlumeCut),
         ("water_ocean_wave_frequency", WaterRender.oceanWaveFrequency),
         ("water_ocean_wave_amplitude", WaterRender.oceanWaveAmplitude),
         ("water_ocean_wave_lacunarity", WaterRender.oceanWaveLacunarity),
@@ -123,6 +124,11 @@ public enum CalibrationRegistry {
         ("water_ribbon_bend_depth", WaterRender.ribbonBendDepth),
         ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),
         ("water_bar_roughness", WaterRender.barRoughness),
+        // Meeresstrand (terrain.gdshader, Hill-Climber Nr. 8).
+        ("water_beach_wet_height", WaterRender.beachWetHeight),
+        ("water_beach_height_hi", WaterRender.beachHeightHi),
+        ("water_beach_edge_lo", WaterRender.beachEdgeLo),
+        ("water_beach_edge_hi", WaterRender.beachEdgeHi),
         // Querprofil und Oberfläche des Bands (Befund #174).
         ("water_ribbon_waterline", WaterRender.ribbonWaterline),
         ("water_ribbon_waterline_jitter", WaterRender.ribbonWaterlineJitter),
@@ -150,6 +156,8 @@ public enum CalibrationRegistry {
         ("water_ribbon_shoal_color", WaterRender.ribbonShoalColor),
         ("water_bar_sand_color", WaterRender.barSandColor),
         ("water_bar_sand_wet_color", WaterRender.barSandWetColor),
+        ("water_beach_dry_color", WaterRender.beachDryColor),
+        ("water_beach_wet_color", WaterRender.beachWetColor),
         ("water_ribbon_bank_color", WaterRender.ribbonBankColor),
         ("water_bed_color", WaterRender.waterBedColor),
     ])

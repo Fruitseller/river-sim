@@ -629,8 +629,14 @@ final class WaterRenderTests: XCTestCase {
             "calib_window(water_ocean_mid_depth, 1.0, depth)",
             hint: "Rampe mittel → tief liest WaterRender.oceanMidDepth")
         assertContains(ocean,
-            "1.0 - calib_window(0.0, water_ocean_surf_depth, depth)",
+            "1.0 - calib_window(0.0, water_ocean_surf_depth, line_depth)",
             hint: "Brandungssaum liest WaterRender.oceanSurfDepth")
+        assertContains(ocean,
+            "clamp((sea_level - h) / max(water_ocean_depth_span, 1e-6), 0.0, 1.0)",
+            hint: "Saum misst die scharfe Wassersäule an der Küstenlinie (Hill-Climber Nr. 8)")
+        assertContains(ocean,
+            "clamp(1.0 - plume * water_ocean_surf_plume_cut, 0.0, 1.0)",
+            hint: "Vor Mündungen keine Brandung (WaterRender.oceanSurfPlumeCut)")
         assertContains(ocean,
             "calib_window(water_ocean_surf_noise_lo, water_ocean_surf_noise_hi,",
             hint: "Brechung des Saums liest WaterRender.oceanSurfNoise*")
