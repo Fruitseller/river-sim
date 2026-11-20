@@ -112,3 +112,59 @@ Vergleichsstand: Stand nach Nr. 8 (`.tools/look/keep3/`).
 | --- | --- | --- | --- | --- |
 | 9 | Tiefere, wärmere Sonne (38° → 30°, Energie 2,4), kühleres Umgebungslicht, AgX-Kontrast 1,38, Sättigung 1,12, weniger Nebel, blauerer Himmel; nur `Lighting.gd` | Implementer: A 0 B 10 GLEICH 5. Orchestrator, 5 Läufe: A 2 B 8 GLEICH 5 | verworfen | Zusammen A 2 B 18 GLEICH 10: es fehlt an B. `diorama` und `tal` je zur Hälfte GLEICH, Licht und Dunst kommen in der Totalen kaum an; in `nah` decken fast schwarze Schlagschatten ganze Hänge zu, Wiesen gelboliv. Schranken grün (661 Tests, Hash unverändert, Bildrate 18,0/19,1 gegen 18,0/19,1 ms). Zweitbewerter Gemini nicht verfügbar (Antigravity 1.4.5 läuft nicht mit dieser T3-Version). |
 | 10 | Wie Nr. 9 (Sonne 30°, warm, Energie 2,4), dazu: Schatten über kühleres Himmelslicht geöffnet (Umgebungslicht 0,48, Himmelsanteil 0,80), AgX-Kontrast 1,45, Sättigung 1,15, Himmel oben tiefer blau mit hellerem Horizont, satteres Grün für Wiese, Talboden, Bewuchs und Trockenrasen (Literale in `terrain.gdshader`) | Orchestrator, 5 Läufe gegen Nr. 8: A 0 B 13 GLEICH 2. Implementer, zwei Läufe: A 1 B 11 GLEICH 3 und A 1 B 10 GLEICH 4 | **behalten** | `tal` 5 B, `diorama` 4 B, `nah` 4 B: „durch die kräftigere, gerichtete Beleuchtung und die tieferen Schatten deutlich plastischer“. Verworfener Zwischenstand: offene Schatten plus dichter Dunst las der Bewerter als „flauer und milchiger“ (A 4 B 5 GLEICH 6), er belohnt Kontrast. Schranken: 661 Tests und Hash vom Orchestrator nachgefahren, Vertragstests grün (`pickaxe_repro` wie gehabt), Bildrate 18,0/19,1 gegen 18,0/19,1 ms. Offen: Dunst trägt weiter kaum zur Tiefenstaffelung bei. |
+
+## Problem 1, Wiederprüfung auf dem neuen Stand
+
+Vergleichsstand: Stand nach Nr. 10 (`.tools/look/keep4/`).
+
+| Nr. | Hypothese | Urteil | Ergebnis | Kernsatz |
+| --- | --- | --- | --- | --- |
+| 11 | Wasser-Stand Nr. 5 (PR #230) von Hand auf den Stand mit Wald, Fels, Küste und Licht portiert und nachgezogen: Böschung im Bake neben Rippen und Bänken, scharfe Uferlinie, Tiefenverlauf, Kies am Gleithang; Böschung hebt im Wasser-Kern nie an, Bake mit 60 statt 180 Abgriffen je Pixel | Implementer, Endstand, zwei Läufe: A 2 B 5 GLEICH 8 und A 3 B 8 GLEICH 4, zusammen A 5 B 13 GLEICH 12. Zwischenstände A 4 B 4 GLEICH 7, A 11 B 3 GLEICH 1, A 7 B 3 GLEICH 4, A 3 B 6 GLEICH 6 | verworfen | `nah` 9 B von 10, `diorama` und `tal` überwiegend GLEICH oder A: „blassgraue, trocken wirkende Rinnen“ gegen „breiter, blauer und als Wasser im Bett lesbar“. Das ist ein echter Fehler: Mit der Böschung verschwinden in der Totalen schmale Läufe und ein Hochtalsee oder werden von Landstreifen überdeckt (mit `bankLift` 0 sind sie wieder da); Ursache nicht gefunden. Schmalere Sandbänke las der Bewerter als „Bänder ohne Ufersaum“. Schranken grün (661 Tests, Hash unverändert, Bildrate 18,0/19,1 → 18,0/19,3 ms). Patch: `.tools/look/it11/patch.diff`. |
+
+### Befund zu Problem 1 nach sechs Versuchen
+
+Problem 1 gilt für diesen Kletterer als **nicht erreichbar**. Begründung:
+
+- Sechs Versuche, davon einer strukturell (Nr. 4, echte Tiefe) und einer auf
+  dem verbesserten Stand (Nr. 11); Zweitmeinungen von zwei Herstellern liegen
+  vor (GLM, DeepSeek). Die Nahsicht gewinnt jedes Mal (4 bis 5 von 5), die
+  Totalen nie.
+- Der Grund ist nicht mehr nur Bewerter-Rauschen: Die Böschung im Relief-Bake
+  setzt an der Schutzmaske an, und bei Läufen von ein bis zwei Zellen Breite
+  deckt das angehobene Land das Wasser zu. Was in `nah` als Bett liest,
+  löscht in `diorama` und `tal` schmale Läufe.
+- Ein Ansatz, der trägt, braucht eine Böschung aus der Band-Geometrie selbst
+  (Querschnitt je Lauf mit bekannter Breite) statt aus der Zellmaske, und
+  wahrscheinlich breitere sichtbare Läufe in der Totalen. Das berührt die
+  Band-Geometrie und die Übergabe Band ↔ Raster und ist ein eigenes Vorhaben.
+
+PR #230 trägt denselben Fehler in der Totalen und bleibt als Anschauung für
+die Nahsicht offen.
+
+## Abschluss (2026-11-20)
+
+Behalten: Nr. 6 (Wald), Nr. 7 (Fels, Hänge, Schnee), Nr. 8 (Küste), Nr. 10
+(Licht). Verworfen: Nr. 1 bis 5 und 11 (Wasser), Nr. 9 (Licht, erster Anlauf).
+
+| Prüfung | Ergebnis |
+| --- | --- |
+| Endstand gegen Ausgangsstand 705db55, `judge.sh`, 5 Läufe | A 0 B 15 GLEICH 0, `B_BEHALTEN` |
+| Zweitbewerter Gemini 4 Hydrogen | nicht gelaufen: Antigravity 1.4.5 läuft nicht mit der aktuellen T3-Version |
+| SimCore-Pflichtsuite | 661 Tests, 79 übersprungen, 0 Fehler |
+| Godot-Vertragstests | smoke, river_ribbons, water_geometry, water_uniforms, lighting, relief, canopy, ui_layout, water_gpu_tail grün; `pickaxe_repro` rot (`FAIL_INFILL 0.0069 → 0.0067`), am Ausgangsstand ebenso |
+| `simperf --hash` | `95cf93ca1b40985c`, unverändert |
+| Bildrate (Zeitraffer-A/B, 3456×2104, je Iteration gegen den Stand davor) | 19,2/20,5 → 18,0/19,1 ms Mittel/p95 über alle vier Iterationen |
+
+Kontaktbögen (Ausgangsstand, Endstand, Referenz): `docs/look-hillclimb/kontaktbogen-{diorama,tal,nah}.jpg`.
+
+Offen:
+
+- Wasser im Gelände (s. Befund oben).
+- Gemini-Urteil Endstand gegen Ausgangsstand nachholen.
+- `pickaxe_repro` ist auf main rot und gehört in ein eigenes Issue.
+- Küste: trockene Sandflächen auf Terrassen hinter dem Strand; dunkles Meer
+  ohne Türkis an tiefen Mündungsrinnen.
+- Licht: Dunst trägt kaum zur Tiefenstaffelung; `diorama` gewinnt am wenigsten.
+- Wald: Kronen in der Nahsicht weiter als runde Noppen lesbar („Ballon-Bäume“).
+- Der Prüfpunkt nach fünf behaltenen Iterationen (Zweitmeinung zum Diff) ist
+  nicht erreicht worden, es sind vier.
