@@ -982,8 +982,12 @@ void fragment() {
 		if (cold > 0.002) {
 			float lie = cold * 1.45 + n_mix * material_snow_breakup - cavity * material_snow_cavity
 			          - calib_window(material_snow_slope_lo, material_snow_slope_hi, world_slope);
+			// Nur der SCHNEE-Anteil rutscht: `cold` trägt Schnee und Eis, und
+			// `ice_w` unten entsteht aus dem Ergebnis. Blankes Gletschereis
+			// (`ice_share` 1) bliebe sonst an Rippen und Steilflanken als Fels
+			// stehen, ohne Spalten und Eisrauheit (PR-Review #232).
 			float cold_lie = mix(cold, smoothstep(0.30, 0.62, lie),
-			                     calib_window(0.002, material_redistribute_fade, cold));
+			                     calib_window(0.002, material_redistribute_fade, cold) * (1.0 - ice_share));
 			rock += max(cold - cold_lie, 0.0);
 			cold = cold_lie;
 		}

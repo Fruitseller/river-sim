@@ -37,6 +37,9 @@ shots=(
 )
 for s in "${shots[@]}"; do
   IFS='|' read -r name _ cam <<<"$s"
+  # Altes Bild weg: sonst speist ein fehlgeschlagener Lauf in einem
+  # wiederverwendeten Ordner still die Aufnahme vom letzten Mal ein.
+  rm -f "$out/$name.png" "$out/$name.jpg"
   if (( hintergrund )); then
     envs=()
     for kv in RS_SEED=1337 RS_STEP=20000 $cam "RS_SHOT=$out/$name.png"; do envs+=(--env "$kv"); done

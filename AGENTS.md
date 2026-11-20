@@ -364,9 +364,9 @@ Die Entscheidung fällt deshalb der HOST, auf dem die Agenten laufen:
   wäre ein Build-Verbot reine Wartezeit; die Messreihe dazu steht in
   `docs/build-invalidation-measurements.md`.
 - **Merge-Gate bleibt CI, in beiden Regimen:** `test` UND `godot-contract`
-  müssen grün sein; der Auto-Merger (river-sim-watch.sh) prüft beide, nicht
-  nur `test`. Ein grüner lokaler Lauf ist ein Vorab-Filter, kein Ersatz für
-  die Pflicht-Checks.
+  müssen grün sein. Gemergt wird von Hand; einen Auto-Merger gibt es nicht.
+  Ein grüner lokaler Lauf ist ein Vorab-Filter, kein Ersatz für die
+  Pflicht-Checks.
 - Die SimCore-Suite ist überall erlaubt (leicht, <2 GB).
 
 ## Architektur
