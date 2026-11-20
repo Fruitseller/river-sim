@@ -584,11 +584,18 @@ final class WaterRenderTests: XCTestCase {
 
     func testOceanDepthWindowsStayInOrder() {
         // Die Tiefe ist (sea_level − h) / oceanDepthSpan, geklemmt auf 0…1.
-        // Brandungssaum < Knick seicht→mittel < volle Tiefe: der Saum liegt
-        // nur am äußersten Küstenrand, nicht über dem ganzen Schelf.
+        // Der Saum liegt an der Wasserlinie, die Brecher enden vor dem
+        // Übergang in mitteltiefes Wasser.
         XCTAssertGreaterThan(WaterRender.oceanDepthSpan, 0)
         XCTAssertGreaterThan(WaterRender.oceanSurfDepth, 0)
-        XCTAssertLessThan(WaterRender.oceanSurfDepth, WaterRender.oceanMidDepth)
+        XCTAssertLessThan(WaterRender.oceanSurfDepth, WaterRender.oceanBreakerDepth)
+        XCTAssertLessThanOrEqual(WaterRender.oceanBreakerDepth, WaterRender.oceanMidDepth)
+        XCTAssertGreaterThan(WaterRender.oceanBreakerWidth, 0)
+        XCTAssertLessThan(2 * WaterRender.oceanBreakerWidth, WaterRender.oceanBreakerSpacing,
+                          "Zwischen den Wellenkämmen bleibt offenes Wasser")
+        XCTAssertTrue((0...1).contains(WaterRender.oceanBreakerStrength))
+        XCTAssertTrue((0...1).contains(WaterRender.oceanShoalDepthVariation),
+                      "Die Schlieren lassen die Schelftiefe positiv")
         XCTAssertLessThan(WaterRender.oceanMidDepth, 1)
         XCTAssertGreaterThan(WaterRender.oceanSurfStrength, 0)
         XCTAssertLessThanOrEqual(WaterRender.oceanSurfStrength, 1)

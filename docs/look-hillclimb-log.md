@@ -176,11 +176,12 @@ Vergleichsstand: Stand nach Nr. 14 (`.tools/look/keep5/`).
 | Nr. | Hypothese | Urteil | Ergebnis | Kernsatz |
 | --- | --- | --- | --- | --- |
 | 15 | Wasser-Reste: gruppierte, kürzere Schaumfahnen; feuchter Boden und fleckiger Kies statt grauem Ring um Raster-Seen; ruhiger Himmelsverlauf auf Seen; stärkerer Himmelsreflex in der Totalen (verworfen, bevor abgegeben) | Implementer, 10 Läufe: A 4 B 3 GLEICH 23 (`diorama` 0/0, `tal` 1/0, `nah` 3/3) | verworfen | Der Bewerter sieht den Unterschied nicht (23 GLEICH). In `nah` hebt sich beides auf: „klar abgesetzte Gischtflecken“ gegen „harte, zackige Weißsplitter“ und eine Wasserfläche, die „stärker mit der Wiese verschwimmt“ (weiches See-Ufer). Schranken grün (667 Tests, Hash unverändert, 17,83 → 17,86 ms). Patch: `.tools/look/it15/patch.diff`. |
+| 16 | Küste wie in der Referenz: zwei vorgelagerte, unterbrochene Brecher, breiterer Schelf mit Sedimentschlieren, Strand läuft früher ins Gras aus, Mündungsfahne reicht weiter über den Schelf | Implementer, 10 Läufe: A 3 B 10 GLEICH 17 (`nah` 1/0, verworfen). Orchestrator, zweimal 10 Läufe: A 2 B 14 GLEICH 14 und A 1 B 16 GLEICH 13 (beide `B_BEHALTEN`). Gepoolt über 90 Urteile: A 6 B 40 GLEICH 44, `diorama` 3/15, `tal` 2/23, `nah` 1/2 | **behalten** | „eine breite, abgestufte Brandungszone mit Schaumkämmen, mehreren Wellenlinien und türkisem Flachwasser mit Tiefenverlauf“. `nah` zeigt die Küste nur am Bildrand und ist fast durchweg GLEICH; die eine A-Stimme dort kippte den ersten Lauf, deshalb zwei weitere Läufe und die Regel auf den Pool angewandt (B − A ≥ 1/3, A ≤ 1/5, keine Aufnahme mit mehr A als B). Schranken grün (667 Tests, Hash unverändert, 17,87 → 17,83 ms). Rest: tiefe Mündungsrinnen enden weiter hart im Meer, einzelne helle Terrassen bleiben. |
 
 ## Abschluss (2026-11-20)
 
 Behalten: Nr. 6 (Wald), Nr. 7 (Fels, Hänge, Schnee), Nr. 8 (Küste), Nr. 10
-(Licht), Nr. 14 (Wasser, mit Nr. 12 und 13). Verworfen: Nr. 1 bis 5 und 11
+(Licht), Nr. 14 (Wasser, mit Nr. 12 und 13), Nr. 16 (Küste, zweiter Schritt). Verworfen: Nr. 1 bis 5 und 11
 (Wasser), Nr. 9 (Licht, erster Anlauf). Die Tabelle darunter ist der Stand
 vor Nr. 14; die Zahlen am Endstand mit Wasser stehen bei Nr. 14.
 
