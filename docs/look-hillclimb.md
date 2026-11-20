@@ -10,12 +10,16 @@ blind zwei Stände gegen die Referenz.
 
 ```sh
 scripts/look/shots.sh <ordner> [game-ordner]     # 3 Aufnahmen: diorama, tal, nah (~1 min)
-scripts/look/judge.sh <A-ordner> <B-ordner> [3]  # blinder Paarvergleich (~30 s)
+scripts/look/judge.sh <A-ordner> <B-ordner> [10] # blinder Paarvergleich, 10 Läufe je Aufnahme (~3 min)
 ```
 
 `judge.sh` würfelt je Urteil, welcher Stand X und welcher Y ist, erlaubt
 „GLEICH“ und druckt am Ende `ENTSCHEIDUNG B_BEHALTEN` oder
-`ENTSCHEIDUNG VERWERFEN`.
+`ENTSCHEIDUNG VERWERFEN`. Fehlt auch nur ein Urteil (Bewerter abgestürzt,
+keine exakte letzte Zeile `URTEIL: …`), endet es mit `ENTSCHEIDUNG
+UNVOLLSTAENDIG` und Exit 2: Das ist weder Behalten noch Verwerfen, der
+Vergleich wird neu gefahren (Rohausgaben im genannten Ordner prüfen).
+Fehlende Urteile zählen nie als Freigabe.
 
 ### Regel (seit 2026-11-20, vom Eigner gelockert)
 
@@ -91,8 +95,10 @@ Aufnahme dauerte dann 16 min statt 20 s, der Bildraten-A/B wird unbrauchbar.
      AGENTS.md (`scripts/timelapse-timing.sh "$ALT/game" game`, maximiert),
    - Wasser liegt nirgends sichtbar über dem Gelände (von Auge in `nah`;
      ein automatischer Wächter dafür fehlt noch).
-4. `scripts/look/shots.sh neu` und `scripts/look/judge.sh "$ALT/shots" neu`.
+4. `scripts/look/shots.sh neu` und `scripts/look/judge.sh "$ALT/shots" neu 10`
+   (absolute Pfade; 10 Läufe je Aufnahme = die 30 Urteile der Regel).
 5. `B_BEHALTEN` → committen (Nachricht nennt das Urteil `A x B y GLEICH z`).
+   `UNVOLLSTAENDIG` → Vergleich neu fahren, nichts entscheiden.
    `VERWERFEN` → zurücksetzen, Begründungen der Urteile lesen, nächste
    Hypothese.
 6. Drei verworfene Iterationen am selben Problem: nicht weiter an Reglern

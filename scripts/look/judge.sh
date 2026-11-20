@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Blinder Paarvergleich zweier Aufnahme-Sätze gegen die Referenzen.
 #
-#   scripts/look/judge.sh <A-ordner> <B-ordner> [läufe je aufnahme, Standard 3]
+#   scripts/look/judge.sh <A-ordner> <B-ordner> [läufe je aufnahme, Standard 10]
 #
 # Je Aufnahme und Lauf bekommt der Bewerter (Standard: DeepSeek V4.1 Flash
 # über opencode, kostenlos; s. judge_one) Referenz, X und Y; welcher Satz X ist, wird je Lauf
 # zufällig gewürfelt. Ausgabe: je Urteil eine Zeile, am Ende
 # `ERGEBNIS A <a> B <b> GLEICH <g> VON <n>` und `ENTSCHEIDUNG B_BEHALTEN`
-# bzw. `ENTSCHEIDUNG VERWERFEN`.
+# bzw. `ENTSCHEIDUNG VERWERFEN`; fehlt ein Urteil, `ENTSCHEIDUNG
+# UNVOLLSTAENDIG` mit Exit 2 (nie eine Freigabe: neu fahren).
 #
 # Entscheidungsregel (seit 2026-11-20, s. docs/look-hillclimb.md § Regel):
 # B (der neue Stand) wird behalten, wenn B − A mindestens 1/3 aller Urteile
@@ -20,7 +21,7 @@
 # Weitere Bewerter (Panel): LOOK_JUDGES="deepseek codex", s. judge_one.
 # GLM 5.3 sieht keine Bilder und taugt deshalb nicht als Bewerter.
 set -euo pipefail
-a=${1:?A-Ordner fehlt}; b=${2:?B-Ordner fehlt}; runs=${3:-3}
+a=${1:?A-Ordner fehlt}; b=${2:?B-Ordner fehlt}; runs=${3:-10}
 root=$(cd "$(dirname "$0")/../.." && pwd)
 refs=$root/docs/references/zielbild
 work=$(mktemp -d "${TMPDIR:-/tmp}/look-judge.XXXXXX")
