@@ -51,6 +51,7 @@ final class WaterUniformsTests: XCTestCase {
         "water_ocean_surf_depth", "water_ocean_surf_strength",
         "water_ocean_surf_scale", "water_ocean_surf_drift",
         "water_ocean_surf_noise_lo", "water_ocean_surf_noise_hi",
+        "water_ocean_surf_plume_cut",
         "water_ocean_wave_frequency", "water_ocean_wave_amplitude",
         "water_ocean_wave_lacunarity", "water_ocean_wave_gain",
         "water_ocean_wave_fade_lo", "water_ocean_wave_fade_hi",
@@ -68,8 +69,16 @@ final class WaterUniformsTests: XCTestCase {
     /// Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
     private static let bendScalars = ["water_ribbon_bend_depth", "water_ribbon_shoal_mix"]
     private static let bendColors = ["water_ribbon_shoal_color"]
-    private static let barScalars = ["water_bar_roughness"]
-    private static let barColors = ["water_bar_sand_color", "water_bar_sand_wet_color"]
+    private static let barScalars = [
+        "water_bar_roughness",
+        // Meeresstrand (Hill-Climber Nr. 8).
+        "water_beach_wet_height", "water_beach_height_hi",
+        "water_beach_edge_lo", "water_beach_edge_hi",
+    ]
+    private static let barColors = [
+        "water_bar_sand_color", "water_bar_sand_wet_color",
+        "water_beach_dry_color", "water_beach_wet_color",
+    ]
     /// Querprofil und Oberfläche des Bands (Befund #174): Wasserlinie, nasses
     /// Ufer, Kräuselung. Die Oktaven-Folge und Pixel-Ausblendung der Kräuselung
     /// teilt das Band mit dem Ozean.

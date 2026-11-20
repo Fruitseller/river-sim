@@ -152,6 +152,15 @@ uniform vec3 water_bed_color;
 uniform vec3 water_bar_sand_color;
 uniform vec3 water_bar_sand_wet_color;
 uniform float water_bar_roughness;
+// Meeresstrand (Hill-Climber Nr. 8): nasser Sand an der Wasserlinie, heller
+// trockener dahinter, klare Rückkante. Gilt nur bis water_beach_height_hi
+// über dem Meer; Bänke im Binnenland behalten die Farben oben.
+uniform vec3 water_beach_dry_color;
+uniform vec3 water_beach_wet_color;
+uniform float water_beach_wet_height;
+uniform float water_beach_height_hi;
+uniform float water_beach_edge_lo;
+uniform float water_beach_edge_hi;
 
 // Render-Verschiebung (#153). Der Schalter ist keine Kalibrier-Zahl: ohne
 // SimNode (Editor-Vorschau) ist keine Backtextur gebunden, und eine schwarze
@@ -1169,8 +1178,18 @@ void fragment() {
 		// (SimCore.WaterRender).
 		float sand = macro_rgba.a;
 		if (sand > 0.002) {
-			vec3 sand_col = mix(water_bar_sand_wet_color, water_bar_sand_color, breakup)
-			              * mix(0.94, 1.06, top_grain * material_fade);
+			float shore = hval - sea_level;
+			vec3 sand_col = mix(water_bar_sand_wet_color, water_bar_sand_color, breakup);
+			if (shore < water_beach_height_hi) {
+				// Rückkante scharf; an der Wasserlinie dagegen fällt das Gewicht
+				// bilinear zur Meereszelle (A = 0) ab, dort bis ans Wasser voll.
+				float dry = smoothstep(water_beach_wet_height, 2.0 * water_beach_wet_height + 1e-6, shore);
+				sand = mix(smoothstep(0.0, water_beach_edge_lo, sand),
+				           smoothstep(water_beach_edge_lo, max(water_beach_edge_hi, water_beach_edge_lo + 1e-6), sand),
+				           dry);
+				sand_col = mix(water_beach_wet_color, water_beach_dry_color, dry);
+			}
+			sand_col *= mix(0.94, 1.06, top_grain * material_fade);
 			terr = mix(terr, sand_col, sand);
 			land_roughness = mix(land_roughness, water_bar_roughness, sand);
 		}

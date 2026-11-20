@@ -435,8 +435,15 @@ public enum CoastMaterial {
     @inline(__always)
     public static func sand(reach: Float, slope: Double, height: Double) -> Double {
         guard height > 0, reach > 0 else { return 0 }
-        return Double(reach)
-            * (1 - smoothstep(WaterRender.beachSlopeLo, WaterRender.beachSlopeHi, slope))
+        // Die Wasserlinie selbst (Küstenrampe des Wellen-Talus) ist steiler als
+        // das Steigungsfenster; ohne Ausnahme lag der Sand als abgesetzte
+        // Polster HINTER einem grünen Streifen am Wasser (Hill-Climber Nr. 8).
+        // Bis `beachWaterlineHeight` über dem Meer zählt die Steigung nicht:
+        // dort liegt der nasse Sand.
+        let flat = max(1 - smoothstep(WaterRender.beachSlopeLo, WaterRender.beachSlopeHi, slope),
+                       1 - smoothstep(WaterRender.beachWaterlineHeight,
+                                      2 * WaterRender.beachWaterlineHeight, height))
+        return Double(reach) * flat
             * (1 - smoothstep(WaterRender.beachHeightLo, WaterRender.beachHeightHi, height))
     }
 
