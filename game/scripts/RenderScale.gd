@@ -26,16 +26,22 @@ const SCALE := {"performance": 0.5, "balanced": 0.67, "quality": 1.0}
 static func scale_for(quality: String) -> float:
 	return SCALE.get(quality, SCALE["balanced"])
 
-## Verfahren für den laufenden Grafiktreiber.
+## Verfahren für den laufenden Grafiktreiber. FSR gibt es nur auf den
+## RenderingDevice-Treibern; Kompatibilität (OpenGL) und `--headless`
+## skalieren bilinear (sonst warnt Godot und fällt selbst darauf zurück).
 static func mode_for(driver: String) -> Viewport.Scaling3DMode:
-	if driver == "metal":
-		return Viewport.SCALING_3D_MODE_METALFX_SPATIAL
-	return Viewport.SCALING_3D_MODE_FSR
+	match driver:
+		"metal":
+			return Viewport.SCALING_3D_MODE_METALFX_SPATIAL
+		"vulkan", "d3d12":
+			return Viewport.SCALING_3D_MODE_FSR
+	return Viewport.SCALING_3D_MODE_BILINEAR
 
 static func apply(vp: Viewport, quality: String) -> void:
 	var scale := scale_for(quality)
-	if OS.has_environment("RS_RENDER_SCALE"):
-		scale = clampf(float(OS.get_environment("RS_RENDER_SCALE")), 0.25, 1.0)
+	var env_scale := OS.get_environment("RS_RENDER_SCALE").replace(",", ".")
+	if env_scale.is_valid_float():
+		scale = clampf(env_scale.to_float(), 0.25, 1.0)
 	var mode := mode_for(RenderingServer.get_current_rendering_driver_name())
 	match OS.get_environment("RS_SCALING"):
 		"bilinear":

@@ -60,8 +60,8 @@ func build(world: float, grid_points: int, mat: Material, aabb_y_lo: float, aabb
 	for mi in instances:
 		mi.queue_free()
 	instances.clear()
-	if OS.has_environment("RS_TILE_QUADS"): # A/B ohne Umbau
-		tile_quads = maxi(8, int(OS.get_environment("RS_TILE_QUADS")))
+	if OS.get_environment("RS_TILE_QUADS").is_valid_int(): # A/B ohne Umbau
+		tile_quads = maxi(8, OS.get_environment("RS_TILE_QUADS").to_int())
 	tiles_per_side = ceili(float(grid - 1) / tile_quads)
 	tile_density.resize(tiles_per_side * tiles_per_side)
 	tile_density.fill(1)
