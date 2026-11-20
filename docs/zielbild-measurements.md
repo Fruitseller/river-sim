@@ -2124,6 +2124,11 @@ Dieser Eingriff ändert deren Form und die Sim-Physik nicht.
 
 ### Zerlegung im selben Prozess
 
+(Nachtrag #237: die Rausch-Klüftung ist durch gescannte Materialien ersetzt,
+`CliffsDiagnostic` und `CliffsTiming` sind mit ihr entfernt; der Befund
+unten bleibt als Geschichte stehen, Stand und Kontaktbögen in
+`docs/look/c-materials/`.)
+
 `CliffsDiagnostic.tscn` erbt die echte Anwendung über die Flusstal-Bühne.
 Welt und Kamera bleiben fest, Wasser und Wolken stehen auf Phase 1,0.
 Je Zustand werden 60 Bilder gezeichnet, dann wird der Viewport gespeichert.
