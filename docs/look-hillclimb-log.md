@@ -180,6 +180,8 @@ Vergleichsstand: Stand nach Nr. 14 (`.tools/look/keep5/`).
 
 | 17 | Atmosphäre staffelt die Tiefe: drei Wolken-Höhenschichten mit gemeinsamem Dichtefeld für Körper und Schatten, tiefe Schwaden, wärmeres Direktlicht, Meeresglanz und Horizontblende | Implementer, 10 Läufe: A 4 B 7 GLEICH 19 (`diorama` 1/5, `tal` 2/2, `nah` 1/0) | verworfen | Nur `diorama` gewinnt („warmes Streiflicht, Dunst in den Tälern, Glitzern auf dem Wasser“). In `tal` ist der Himmel ein zu schmales Band, in `nah` las eine Stimme wieder „einen milchigen Dunstschleier“. Zweite Verwerfung am Licht nach Nr. 9: Dunst kostet beim Bewerter Kontrast. Schranken grün (667 Tests, 17,79 → 17,76 ms). Patch: `.tools/look/it17/patch-orch.diff`. |
 
+| 18 | Wald sieht aus wie Wald: spitze Kronen in Hanglagen, rundliche im Tiefland, streuende Größe, matte Farbe mit dunkler Basis und hellen Spitzen, gelbgrüne Akzente, ausfransende Ränder | Implementer, 10 Läufe: A 2 B 8 GLEICH 20. Orchestrator, 10 Läufe: A 3 B 9 GLEICH 18 (`diorama` 1/0). Gepoolt über 60: A 5 B 17 GLEICH 38 | verworfen | Die Richtung stimmt (`nah` 0/7, `tal` 4/10), aber zwei Drittel der Urteile sehen keinen Unterschied, `diorama` gar keinen. Im Bild bleiben es Schuppen statt Noppen: Das Kronendach je Pixel im Terrain-Shader kann keine Baum-Silhouette gegen den Hintergrund zeichnen. Eine echte Lösung bräuchte Geometrie (Instanzbäume sind seit #152 bewusst abgeschafft) und ist ein eigenes Vorhaben. Bildrate laut Implementer bis 3,7 % schlechter, Messung verrauscht. Patch: `.tools/look/it18/patch-orch.diff`. |
+
 ## Abschluss (2026-11-20)
 
 Behalten: Nr. 6 (Wald), Nr. 7 (Fels, Hänge, Schnee), Nr. 8 (Küste), Nr. 10
