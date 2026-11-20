@@ -5,6 +5,8 @@ extends Node3D
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const Lighting = preload("res://scripts/Lighting.gd")
+const TerrainTiles = preload("res://scripts/TerrainTiles.gd")
+const RenderScale = preload("res://scripts/RenderScale.gd")
 # Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
 # das volle Sim-Gitter (`terrain_grid_for`).
 const PERFORMANCE_TERRAIN_GRID := 256
@@ -46,7 +48,9 @@ var terrain_grid: int
 var render_quality := "balanced"
 var pick_radius_cap := 0.5 # effektive Spitzhacken-Breite (aus SimNode, für die Pinselkuppel)
 
-var terrain_mi: MeshInstance3D
+## Terrain in Kacheln (#235, scripts/TerrainTiles.gd): eine MeshInstance3D je
+## Kachel, `terrain_mat` auf allen.
+var terrain_tiles: Node3D
 var water_mi: MeshInstance3D
 # Pinselkuppel (s. BRUSH_FALLOFF_POWER): Linien-Mesh, nur bei Änderung neu
 # gebaut (`brush_key`: Treffer, Radius, Profil, Flächen-Stand).
@@ -773,6 +777,8 @@ func _setup_scene() -> void:
 	var env := WorldEnvironment.new()
 	env.environment = Lighting.make_environment(render_quality, sea * hscale)
 	add_child(env)
+	# Render-Skalierung je Qualitätsstufe (#235, scripts/RenderScale.gd).
+	RenderScale.apply(get_viewport(), render_quality)
 
 	var sun := DirectionalLight3D.new()
 	add_child(sun)
@@ -784,13 +790,6 @@ func _setup_scene() -> void:
 	add_child(cam)
 	_update_camera()
 
-	terrain_mi = MeshInstance3D.new()
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(world_size, world_size)
-	pm.subdivide_width = terrain_grid - 2
-	pm.subdivide_depth = terrain_grid - 2
-	terrain_mi.mesh = pm
-	terrain_mi.extra_cull_margin = 1000.0 # Displacement sprengt die Plan-AABB
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
 	terrain_mat.set_shader_parameter("hscale", hscale)
@@ -799,10 +798,15 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("sea_level", sea)
 	terrain_mat.set_shader_parameter("detail_enabled", render_quality != "performance")
 	terrain_mat.set_shader_parameter("material_enabled", render_quality != "performance")
-	terrain_mi.material_override = terrain_mat
-	add_child(terrain_mi)
 	_setup_relief()
 	_setup_canopy()
+	# Höhenbereich der Kachel-AABBs: Sim-Höhe 0…1 mal hscale, dazu die
+	# Render-Verschiebung (±0,5 / relief_height_code) und das Kronendach.
+	var lift := 0.5 / maxf(relief_height_code, 1e-3) + float(canopy_calib["canopy_height"]) + 0.5
+	terrain_tiles = TerrainTiles.new()
+	terrain_tiles.name = "TerrainTiles"
+	add_child(terrain_tiles)
+	terrain_tiles.build(world_size, terrain_grid, terrain_mat, -lift, hscale + lift)
 	# Material-Kalibrierung (#174 D); die Gewichte kommen mit jedem
 	# Overlay-Frame (`cover`, `surface`).
 	apply_calibration(sim, "material", [terrain_mat])
