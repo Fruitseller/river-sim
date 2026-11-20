@@ -1,0 +1,191 @@
+extends Node3D
+## Terrain in Kacheln (#235): ersetzt das eine PlaneMesh über die ganze Insel.
+##
+## Jede Kachel ist eine eigene MeshInstance3D mit eigener AABB, damit Godot im
+## Hauptpass und in jeder Schattenkaskade nur zeichnet, was im Frustum liegt.
+## Vorher schaltete `extra_cull_margin = 1000` das Culling ab, und die ganze
+## Insel lief durch den Hauptpass und alle vier Kaskaden.
+##
+## Vertrag mit dem Rest (gilt für jede Kachel, damit Shader, Bänder und
+## Raycast nichts von den Kacheln wissen müssen):
+## - Vertices liegen in WELTkoordinaten (die Instanz steht im Ursprung). Der
+##   Terrain-Vertex-Shader leitet seine UV wie bisher aus `VERTEX.xz` ab
+##   (`world_uv`), er sieht keinen Unterschied zum PlaneMesh.
+## - Bei Dichte 1 liegen die Vertices genau auf den Punkten des Render-Gitters
+##   (`grid` Punkte je Seite, Abstand world_size / (grid − 1)), und jedes Quad
+##   ist entlang der Anti-Diagonale geteilt wie Godots PlaneMesh. Die sichtbare
+##   Fläche ist damit bit-gleich zur alten, und die Bänder, die ihre Höhen von
+##   genau dieser Fläche nehmen (`sim.setRenderGrid`,
+##   `RenderSupport.renderSurfaceHeight`), liegen weiter richtig.
+## - Benachbarte Kacheln teilen ihre Randpunkte: keine Risse.
+##
+## Vorbereitung für #238 (Gelände-Verfeinerung): `set_density(tile, d)` baut
+## eine Kachel mit d Vertices je Gitterabstand neu (d = 1, 2 oder 4). Die
+## Randpunkte einer dichteren Kachel enthalten alle Punkte der Nachbarn; damit
+## an der Grenze keine T-Fugen entstehen, muss der Verfeinerer am Rand auf die
+## gröbere Nachbarfläche zurückfallen (Verschiebung am Rand null). Dichte > 1
+## bricht den Bänder-Vertrag oben und gehört deshalb zur Verfeinerung selbst.
+
+## Gitterabstände je Kachelseite. 64 ergibt bei 720 Punkten 12 × 12 Kacheln;
+## die letzte Reihe ist schmaler (719 = 11 · 64 + 15). Kleiner heißt feineres
+## Culling, aber mehr Zeichenaufrufe (je Kachel einer im Hauptpass und einer
+## je Kaskade, in der sie liegt).
+const TILE_QUADS := 64
+const MAX_DENSITY := 4
+
+var world_size := 0.0
+var grid := 0
+var tiles_per_side := 0
+var tile_density: PackedInt32Array = []
+var instances: Array[MeshInstance3D] = []
+## Schattenwerfer mit gröberem Gitter (je Kachel eine Instanz, nur Schatten),
+## leer, solange `shadow_stride` 1 ist: dann wirft die sichtbare Kachel selbst.
+var shadow_instances: Array[MeshInstance3D] = []
+var shadow_stride := 1
+var material: Material
+## Höhenbereich der AABB in Welt-Y. Konservativ über die ganze Welt statt je
+## Kachel: Gecullt wird vor allem nach x/z, und eine zu flache AABB ließe eine
+## sichtbare Kachel verschwinden.
+var y_lo := -2.0
+var y_hi := 40.0
+
+## Kacheln für ein Render-Gitter mit `grid_points` Punkten je Seite bauen.
+func build(world: float, grid_points: int, mat: Material, aabb_y_lo: float, aabb_y_hi: float,
+		shadow_every := 1) -> void:
+	world_size = world
+	grid = grid_points
+	material = mat
+	y_lo = aabb_y_lo
+	y_hi = aabb_y_hi
+	shadow_stride = maxi(1, shadow_every)
+	if OS.has_environment("RS_SHADOW_STRIDE"): # A/B ohne Umbau
+		shadow_stride = maxi(1, int(OS.get_environment("RS_SHADOW_STRIDE")))
+	for mi in instances + shadow_instances:
+		mi.queue_free()
+	instances.clear()
+	shadow_instances.clear()
+	tiles_per_side = ceili(float(grid - 1) / TILE_QUADS)
+	tile_density.resize(tiles_per_side * tiles_per_side)
+	tile_density.fill(1)
+	for tz in tiles_per_side:
+		for tx in tiles_per_side:
+			var mi := MeshInstance3D.new()
+			mi.name = "Tile_%d_%d" % [tx, tz]
+			mi.material_override = material
+			add_child(mi)
+			instances.append(mi)
+			_rebuild(tz * tiles_per_side + tx)
+			if shadow_stride > 1:
+				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				var sh := MeshInstance3D.new()
+				sh.name = "TileShadow_%d_%d" % [tx, tz]
+				sh.material_override = material
+				sh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+				sh.mesh = _grid_mesh(tz * tiles_per_side + tx, 1, shadow_stride)
+				add_child(sh)
+				shadow_instances.append(sh)
+
+## Zahl der Kacheln.
+func tile_count() -> int:
+	return instances.size()
+
+## Kachel-Index aus Kachel-Koordinaten.
+func tile_index(tx: int, tz: int) -> int:
+	return tz * tiles_per_side + tx
+
+## Gitterbereich einer Kachel: [x0, x1] × [z0, z1] in Render-Gitter-Punkten,
+## beide Enden eingeschlossen (Nachbarn teilen den Rand).
+func tile_range(tile: int) -> Rect2i:
+	var tx := tile % tiles_per_side
+	var tz := tile / tiles_per_side
+	var x0 := tx * TILE_QUADS
+	var z0 := tz * TILE_QUADS
+	var x1 := mini(x0 + TILE_QUADS, grid - 1)
+	var z1 := mini(z0 + TILE_QUADS, grid - 1)
+	return Rect2i(x0, z0, x1 - x0, z1 - z0)
+
+## Vertex-Dichte einer Kachel (1, 2 oder 4 Vertices je Gitterabstand).
+func set_density(tile: int, density: int) -> void:
+	density = clampi(density, 1, MAX_DENSITY)
+	if tile_density[tile] == density:
+		return
+	tile_density[tile] = density
+	_rebuild(tile)
+
+func density(tile: int) -> int:
+	return tile_density[tile]
+
+## Welt-AABB einer Kachel (die Instanz steht im Ursprung).
+func tile_aabb(tile: int) -> AABB:
+	var r := tile_range(tile)
+	var step := world_size / float(grid - 1)
+	var half := world_size * 0.5
+	return AABB(Vector3(-half + r.position.x * step, y_lo, -half + r.position.y * step),
+		Vector3(r.size.x * step, y_hi - y_lo, r.size.y * step))
+
+func _rebuild(tile: int) -> void:
+	instances[tile].mesh = _grid_mesh(tile, tile_density[tile], 1)
+
+## Gitter-Mesh einer Kachel: `d` Vertices je Gitterabstand, oder nur jeder
+## `stride`-te Gitterpunkt (Schattenwerfer; der Kachelrand bleibt dabei auf
+## dem letzten Punkt, damit die gröberen Kacheln dicht aneinander liegen).
+func _grid_mesh(tile: int, d: int, stride: int) -> ArrayMesh:
+	var r := tile_range(tile)
+	var cell := world_size / float(grid - 1)
+	var half := world_size * 0.5
+	var xs := _axis(r.position.x, r.size.x, d, stride)
+	var zs := _axis(r.position.y, r.size.y, d, stride)
+	var w := xs.size() - 1
+	var h := zs.size() - 1
+	var verts := PackedVector3Array()
+	verts.resize((w + 1) * (h + 1))
+	var k := 0
+	for j in h + 1:
+		var z := -half + zs[j] * cell
+		for i in w + 1:
+			verts[k] = Vector3(-half + xs[i] * cell, 0.0, z)
+			k += 1
+	var idx := PackedInt32Array()
+	idx.resize(w * h * 6)
+	k = 0
+	for j in range(1, h + 1):
+		var prevrow := (j - 1) * (w + 1)
+		var thisrow := j * (w + 1)
+		for i in range(1, w + 1):
+			# Wie PlaneMesh: Teilung entlang der Anti-Diagonale (prevrow+i ↔
+			# thisrow+i−1), s. RenderSupport.renderSurfaceHeight.
+			idx[k] = prevrow + i - 1
+			idx[k + 1] = prevrow + i
+			idx[k + 2] = thisrow + i - 1
+			idx[k + 3] = prevrow + i
+			idx[k + 4] = thisrow + i
+			idx[k + 5] = thisrow + i - 1
+			k += 6
+	var normals := PackedVector3Array()
+	normals.resize(verts.size())
+	normals.fill(Vector3.UP)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.custom_aabb = tile_aabb(tile)
+	return mesh
+
+## Gitterkoordinaten (in Render-Gitter-Abständen, auch gebrochen) entlang
+## einer Kachelachse ab `start` über `quads` Abstände. Der letzte Punkt ist
+## immer genau `start + quads`: Nachbarn teilen ihn exakt.
+static func _axis(start: int, quads: int, d: int, stride: int) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	if stride > 1:
+		var q := 0
+		while q < quads:
+			out.append(start + q)
+			q += stride
+	else:
+		for q in quads * d:
+			out.append(start + float(q) / d)
+	out.append(start + quads)
+	return out
