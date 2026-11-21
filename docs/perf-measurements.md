@@ -2523,3 +2523,47 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+## Separable Tschebyschow-Dilatation und fusionierte Dispersal-Reduktion in `updateVegetation` (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.updateVegClass` und `Terrain.updateVegetation` ([`Terrain.swift`](../SimCore/Sources/SimCore/Terrain.swift)):
+- **Separable 7×7-Tschebyschow-Dilatation statt 3× `dilateDamped` (`updateVegClass`):** Drei Runden `dilateDamped` (`max(src[k], 0.65 * max(8 Nachbarn))`) auf einer binären Quellmaske `{0, 1}` erzeugen für jeden Gitterpunkt exakt `0.65^max(|dx|, |dy|)` für Abstand `d ≤ 3` und `0.0` darüber (`w1 = 0.65`, `w2 = 0.65 * w1`, `w3 = 0.65 * w2`, gleiche Multiplikationsreihenfolge).
+  - Pass 1 verschmilzt die Wasser-Quellmaske mit einem horizontalen Vor-/Rückwärts-1D-Abstandsscan in einem zeilenlokalen `UInt8`-Puffer plus 5-wertiger Lookup-Tabelle und schreibt einmal nach `vegScratch` (Zeilen ohne Wasserzelle nullen ohne Rückwärtsscan).
+  - Pass 2 reduziert 7 Zeilen vertikal (`r0`, `rm1..rm3`, `rp1..rp3`; innere Zeilen `3 ≤ j < nn - 3` ohne Randprüfungen) in einem linearen Durchgang nach `riparian`. Die bisherige Hilfsfunktion `dilateDamped` entfällt.
+  - Pass 3 schreibt `vegClass[k]` nur noch bei Klassenänderung (`if pcls[k] != cls`).
+- **5-Zeilen-Maximum und Nullzell-Schreibvermeidung (`updateVegetation`):**
+  - Im vertikalen Dispersal-Pass (`dr == 2`, innere Zeilen `2 ≤ j < nn - 2`) werden die 5 Quellzeilen in einem Durchgang links-assoziativ reduziert (`max(max(max(max(r0[i], r1[i]), r2[i]), r3[i]), r4[i])`), statt pro Zeile 4× Zwischenwerte in `vegScratch` zu lesen und zu schreiben.
+  - In der Hauptschleife entfallen Schreibzugriffe auf unveränderte Nullzellen (`if pveg[k] != 0` im Flut-Absterbepfad und `if target != 0 || pveg[k] != 0` in der Relaxation).
+
+### Gemessen
+
+Rahmen der Messreihe:
+- **Maschine:** Linux `6.12.113+deb13-amd64 x86_64`, 4 vCPUs (`AMD EPYC-Genoa Processor`), Swift `6.3.3` (`x86_64-unknown-linux-gnu`), Release-Build mit `-Xswiftc -swift-version -Xswiftc 5`.
+- **Konfiguration:** `SimConfig.production` (`n = 720`, `world = 112.4789`), Seed `1337`, Einlauf `100 × 100.0` Jahre, Messung `30` Schritte à `dt = 100.0` (`simperf --repeat 3`).
+- **Aggregationsregel:** Gesamtwert je Lauf = Minimum der 3 Blöcke (`--repeat 3`); Pass-Wert `updateVegetation` = Eintrag im letzten Block desselben Laufs (30 Aufrufe); Auswertung über 3 verschränkte A/B-Paare mit abwechselnder Reihenfolge (`Basis ↔ Opt`).
+- **Anteil am Sim-Schritt:** `updateVegetation` sinkt von median `5,1 %` (`7,65 ms`) auf median `3,4 %` (`5,33 ms`).
+
+| Paar (Reihenfolge) | Stand | Block 1 / 2 / 3 (ms/Schritt) | Schritt-Min | Pass `updateVegetation` | Δ Pass |
+| --- | --- | --- | --- | --- | --- |
+| Paar 1 (Basis → Opt) | Basis (`a243e25`) | `151,2 / 176,6 / 153,8` | `151,2` | `7,94 ms` (`5,2 %`) | — |
+| Paar 1 (Basis → Opt) | Opt | `164,5 / 166,5 / 156,7` | `156,7` | `5,33 ms` (`3,4 %`) | `−2,61 ms` (`−32,9 %`) |
+| Paar 2 (Opt → Basis) | Opt | `148,3 / 157,2 / 168,2` | `148,3` | `6,01 ms` (`3,6 %`) | `−1,63 ms` (`−21,3 %`) |
+| Paar 2 (Opt → Basis) | Basis (`a243e25`) | `155,4 / 151,7 / 153,2` | `151,7` | `7,64 ms` (`5,0 %`) | — |
+| Paar 3 (Basis → Opt) | Basis (`a243e25`) | `160,9 / 164,8 / 148,5` | `148,5` | `7,65 ms` (`5,1 %`) | — |
+| Paar 3 (Basis → Opt) | Opt | `157,6 / 160,3 / 151,7` | `151,7` | `5,13 ms` (`3,4 %`) | `−2,52 ms` (`−32,9 %`) |
+
+- **Pass `updateVegetation`:** Median `7,65 → 5,33 ms/Schritt`, gepaartes Delta über alle 3 Paare Median **`−2,52 ms/Schritt` (`−32,9 %` im letzten Block; Spanne `−1,63` bis `−2,61 ms`)**.
+- **Gesamtschritt-Einordnung:** Auf der 4-Kern-VM schwanken die großen Pässe (`priorityFlood` `34,76–38,64 ms`, `belt.parallel` `29,95–35,87 ms`) zwischen Blöcken und Prozessen um `±5–10 %` (bis ~25 ms innerhalb desselben Laufs). Die Pass-Einsparung von `~2,5 ms` (`~1,7 %` von ~151 ms) geht deshalb in den Gesamt-Blockminima im Rauschen unter (Median Schritt-Minimum `151,2 → 151,7 ms`).
+
+### Bit-Identität
+
+Fingerprints (`simperf --hash`, Pro-Maschine-Vergleich auf `x86_64-unknown-linux-gnu`) vor und nach der Änderung für alle vier Seed-/Zeitschritt-Konfigurationen exakt identisch:
+
+| Seed / Konfiguration | Basis (`a243e25`) | Opt | Status |
+| --- | --- | --- | --- |
+| Seed 1337, dt = 100 | `d83b629fa79aa144` | `d83b629fa79aa144` | bit-identisch |
+| Seed 42, dt = 100 | `86d6a5cc13ce2a92` | `86d6a5cc13ce2a92` | bit-identisch |
+| Seed 20, dt = 100 | `876aee34771e364d` | `876aee34771e364d` | bit-identisch |
+| Seed 1337, dt = 15 | `33303214b99a9487` | `33303214b99a9487` | bit-identisch |

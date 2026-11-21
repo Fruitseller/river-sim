@@ -2423,15 +2423,24 @@ public final class Terrain {
                 let prow = rb.baseAddress!, psc = sb.baseAddress!
                 parallel(nn) { jLo, jHi in
                     for j in jLo..<jHi {
-                        let jStart = max(0, j - dr)
-                        let jEnd = min(nn - 1, j + dr)
                         let dst = psc + j * nn
-                        let src0 = prow + jStart * nn
-                        for i in 0..<nn { dst[i] = src0[i] }
-                        for rj in (jStart + 1)...jEnd {
-                            let src = prow + rj * nn
+                        if dr == 2 && j >= 2 && j < nn - 2 {
+                            let r0 = prow + (j - 2) * nn, r1 = prow + (j - 1) * nn
+                            let r2 = prow + j * nn
+                            let r3 = prow + (j + 1) * nn, r4 = prow + (j + 2) * nn
                             for i in 0..<nn {
-                                dst[i] = max(dst[i], src[i])
+                                dst[i] = max(max(max(max(r0[i], r1[i]), r2[i]), r3[i]), r4[i])
+                            }
+                        } else {
+                            let jStart = max(0, j - dr)
+                            let jEnd = min(nn - 1, j + dr)
+                            let src0 = prow + jStart * nn
+                            for i in 0..<nn { dst[i] = src0[i] }
+                            for rj in (jStart + 1)...jEnd {
+                                let src = prow + rj * nn
+                                for i in 0..<nn {
+                                    dst[i] = max(dst[i], src[i])
+                                }
                             }
                         }
                     }
@@ -2462,7 +2471,7 @@ public final class Terrain {
                     // statt Relaxation. Auwald steht am tiefsten und säuft
                     // zuerst ab, dann Wald — emergent aus der Topografie.
                     if phf[k] - ph[k] > killDepth {
-                        pveg[k] -= pveg[k] * fKill
+                        if pveg[k] != 0 { pveg[k] -= pveg[k] * fKill }
                         continue
                     }
                     var target = 0.0
@@ -2495,7 +2504,9 @@ public final class Terrain {
                             target *= max(0, 1 - disturbSuppress * pdist[k])
                         }
                     }
-                    pveg[k] += (target - pveg[k]) * f
+                    if target != 0 || pveg[k] != 0 {
+                        pveg[k] += (target - pveg[k]) * f
+                    }
                 }
             }
             }
@@ -2537,27 +2548,108 @@ public final class Terrain {
     /// ausschließlich seinen eigenen Index → parallel bit-identisch.
     private func updateVegClass() {
         let nn = n, sea = cfg.sea, cnt = cfg.count
+        guard nn > 0, cnt == nn * nn else { return }
         let cellArea = cfg.cellSize * cfg.cellSize
         let minA = cfg.braidMinCells * cellArea
-        // Pass 1: Wasser-Quellmaske → riparian.
+        // PERF: Drei Runden 3×3-Max-Dilatation (Abfall 0,65 je Ring) auf einer
+        // binären Quellmaske {0, 1} entsprechen bit-identisch einem separablen
+        // 7×7-Tschebyschow-Abstandsfilter (0,65^max(|dx|, |dy|) für d ≤ 3).
+        // Pass 1 verschmilzt Quellmaske und horizontale 1D-Distanz nach vegScratch,
+        // Pass 2 reduziert 7 Zeilen linear und vektorisierbar nach riparian.
+        let w1 = 0.65
+        let w2 = 0.65 * w1
+        let w3 = 0.65 * w2
+        if vegScratch.count != cnt { vegScratch = .init(repeating: 0, count: cnt) }
         h.withUnsafeBufferPointer { hb in
         hf.withUnsafeBufferPointer { hfb in
         area.withUnsafeBufferPointer { ab in
-        riparian.withUnsafeMutableBufferPointer { rb in
+        vegScratch.withUnsafeMutableBufferPointer { sb in
             let ph = hb.baseAddress!, phf = hfb.baseAddress!
-            let pa = ab.baseAddress!, prip = rb.baseAddress!
-            parallel(cnt) { lo, hi in
-                for k in lo..<hi {
-                    let water = phf[k] > sea
-                        && (pa[k] >= minA || phf[k] - ph[k] > 0.02)
-                    prip[k] = water ? 1.0 : 0.0
-                }
+            let pa = ab.baseAddress!, psc = sb.baseAddress!
+            parallel(nn) { jLo, jHi in
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: nn) { distBuf in
+                withUnsafeTemporaryAllocation(of: Double.self, capacity: 5) { lutBuf in
+                    let pdist = distBuf.baseAddress!, lut = lutBuf.baseAddress!
+                    lut[0] = 1.0; lut[1] = w1; lut[2] = w2; lut[3] = w3; lut[4] = 0.0
+                    for j in jLo..<jHi {
+                        let row = j * nn
+                        var d = 4
+                        var anyWater = false
+                        for i in 0..<nn {
+                            let k = row + i
+                            let water = phf[k] > sea && (pa[k] >= minA || phf[k] - ph[k] > 0.02)
+                            if water {
+                                d = 0
+                                anyWater = true
+                            } else if d < 4 {
+                                d += 1
+                            }
+                            pdist[i] = UInt8(d)
+                        }
+                        let dst = psc + row
+                        if !anyWater {
+                            dst.update(repeating: 0, count: nn)
+                            continue
+                        }
+                        d = 4
+                        for i in stride(from: nn - 1, through: 0, by: -1) {
+                            let f = Int(pdist[i])
+                            d = f == 0 ? 0 : (d < 4 ? d + 1 : 4)
+                            dst[i] = lut[f < d ? f : d]
+                        }
+                    }
+                }}
             }
         }}}}
-        // Pass 2: 3 Dilatationsrunden (riparian ↔ vegScratch).
-        for _ in 0..<3 {
-            dilateDamped(from: riparian, to: &vegScratch)
-            swap(&riparian, &vegScratch)
+        vegScratch.withUnsafeBufferPointer { sb in
+        riparian.withUnsafeMutableBufferPointer { rb in
+            let psc = sb.baseAddress!, prip = rb.baseAddress!
+            parallel(nn) { jLo, jHi in
+                for j in jLo..<jHi {
+                    let dst = prip + j * nn
+                    let r0 = psc + j * nn
+                    if j >= 3 && j < nn - 3 {
+                        let rm1 = psc + (j - 1) * nn, rp1 = psc + (j + 1) * nn
+                        let rm2 = psc + (j - 2) * nn, rp2 = psc + (j + 2) * nn
+                        let rm3 = psc + (j - 3) * nn, rp3 = psc + (j + 3) * nn
+                        for i in 0..<nn {
+                            let a1 = min(w1, max(rm1[i], rp1[i]))
+                            let a2 = min(w2, max(rm2[i], rp2[i]))
+                            let a3 = min(w3, max(rm3[i], rp3[i]))
+                            dst[i] = max(r0[i], max(a1, max(a2, a3)))
+                        }
+                    } else {
+                        for i in 0..<nn {
+                            var m = r0[i]
+                            if j >= 1 { m = max(m, min(w1, psc[(j - 1) * nn + i])) }
+                            if j + 1 < nn { m = max(m, min(w1, psc[(j + 1) * nn + i])) }
+                            if j >= 2 { m = max(m, min(w2, psc[(j - 2) * nn + i])) }
+                            if j + 2 < nn { m = max(m, min(w2, psc[(j + 2) * nn + i])) }
+                            if j >= 3 { m = max(m, min(w3, psc[(j - 3) * nn + i])) }
+                            if j + 3 < nn { m = max(m, min(w3, psc[(j + 3) * nn + i])) }
+                            dst[i] = m
+                        }
+                    }
+                }
+            }
+        }}
+        // Kompatibilität zu Null-Dispersalradius mit positiver Stärke:
+        // `updateVegetation` überspringt bei `dr == 0` den eigenen
+        // Dispersal-Pass (`dr > 0`), liest aber weiterhin `vegScratch` als
+        // Samen-Druck. Die frühere 3-Runden-Swap-Dilatation hinterließ dort die
+        // 2. Runde (5×5-Tschebyschow-Abfall: Werte ≥ w2 bzw. 0 ab Abstand 3).
+        if cfg.vegDispersalStrength > 0
+            && max(0, Int(cfg.vegDispersalRadius.rounded())) == 0 {
+            riparian.withUnsafeBufferPointer { rb in
+            vegScratch.withUnsafeMutableBufferPointer { sb in
+                let prip = rb.baseAddress!, psc = sb.baseAddress!
+                parallel(cnt) { lo, hi in
+                    for k in lo..<hi {
+                        let v = prip[k]
+                        psc[k] = v >= w2 ? v : 0
+                    }
+                }
+            }}
         }
         // Pass 3: Klassen. Der 2er-Rand bleibt kahl (wie in updateVegetation,
         // die dort auch kein veg aufbaut).
@@ -2609,67 +2701,11 @@ public final class Terrain {
                             cls = 1
                         }
                     }
-                    pcls[k] = cls
+                    if pcls[k] != cls { pcls[k] = cls }
                 }
             }
             }
         }}}}}
-    }
-
-    /// Eine gedämpfte 3×3-Max-Dilatationsrunde: dst[k] = max(src[k],
-    /// 0.65·max(8 Nachbarn)). Liest nur src, schreibt nur dst[k] →
-    /// zeilenparallel bit-identisch. Innere Zellen ohne Randprüfungen
-    /// entrollt für Vektorisierung.
-    private func dilateDamped(from src: [Double], to dst: inout [Double]) {
-        let nn = n
-        src.withUnsafeBufferPointer { sb in
-        dst.withUnsafeMutableBufferPointer { db in
-            let ps = sb.baseAddress!, pd = db.baseAddress!
-            parallel(nn) { jLo, jHi in
-                for j in jLo..<jHi {
-                    let row = j * nn
-                    if j > 0 && j < nn - 1 {
-                        // Linke Randzelle (i = 0)
-                        let kLeft = row
-                        let mLeft = max(ps[kLeft - nn], max(ps[kLeft - nn + 1],
-                                    max(ps[kLeft + 1],
-                                    max(ps[kLeft + nn], ps[kLeft + nn + 1]))))
-                        pd[kLeft] = max(ps[kLeft], 0.65 * mLeft)
-
-                        // Innere Zellen: 8 feste Nachbarn ohne Randprüfungen
-                        for i in 1..<(nn - 1) {
-                            let k = row + i
-                            let m = max(ps[k - nn - 1], max(ps[k - nn], max(ps[k - nn + 1],
-                                    max(ps[k - 1],                      max(ps[k + 1],
-                                    max(ps[k + nn - 1], max(ps[k + nn], ps[k + nn + 1])))))))
-                            pd[k] = max(ps[k], 0.65 * m)
-                        }
-
-                        // Rechte Randzelle (i = nn - 1)
-                        let kRight = row + nn - 1
-                        let mRight = max(ps[kRight - nn - 1], max(ps[kRight - nn],
-                                     max(ps[kRight - 1],
-                                     max(ps[kRight + nn - 1], ps[kRight + nn]))))
-                        pd[kRight] = max(ps[kRight], 0.65 * mRight)
-                    } else {
-                        // Randzeilen (j = 0 und j = nn - 1)
-                        for i in 0..<nn {
-                            let k = row + i
-                            var m = 0.0
-                            if i > 0 && j > 0 { m = max(m, ps[k - nn - 1]) }
-                            if j > 0 { m = max(m, ps[k - nn]) }
-                            if i < nn - 1 && j > 0 { m = max(m, ps[k - nn + 1]) }
-                            if i > 0 { m = max(m, ps[k - 1]) }
-                            if i < nn - 1 { m = max(m, ps[k + 1]) }
-                            if i > 0 && j < nn - 1 { m = max(m, ps[k + nn - 1]) }
-                            if j < nn - 1 { m = max(m, ps[k + nn]) }
-                            if i < nn - 1 && j < nn - 1 { m = max(m, ps[k + nn + 1]) }
-                            pd[k] = max(ps[k], 0.65 * m)
-                        }
-                    }
-                }
-            }
-        }}
     }
 
     // MARK: - Priority-Flood + Entwässerung (D8)
