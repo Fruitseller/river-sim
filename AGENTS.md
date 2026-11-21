@@ -202,6 +202,8 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/canopy.gd
 "$GODOT" --headless --path game --script res://tests/ui_layout.gd
 "$GODOT" --headless --path game --script res://tests/terrain_tiles.gd  # ohne GDExtension
+"$GODOT" --headless --path game --script res://tests/amplify.gd       # headless nur der Teil ohne GPU
+"$GODOT" --path game --script res://tests/amplify.gd                  # mit Fenster: Bindung und Stabilität der Verfeinerung
 "$GODOT" --headless --path game --script res://tests/water_gpu_tail.gd  # GPU-Teil überspringt ohne Rendering-Device
 GODOT_TEST_RENDER=1 scripts/godot-test.sh res://tests/water_gpu_tail.gd WATER_GPU_TAIL_OK  # mit Renderer (lokal Desktop, CI xvfb + llvmpipe)
 "$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
@@ -215,7 +217,7 @@ grüner Lauf nichts über den lokalen Stand.
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
 Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK`,
-`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`, `TERRAIN_TILES_OK`, `WATER_GPU_TAIL_OK`), nicht der
+`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`, `TERRAIN_TILES_OK`, `AMPLIFY_OK`, `WATER_GPU_TAIL_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
@@ -315,7 +317,11 @@ Glas-Panels weg (A/B im selben Build, Kosten: `docs/zielbild-measurements.md`
 Mauszeiger (Aufnahmen der Kuppel ohne Maus). In eigenen Dateien stehen
 `RS_RENDER_SCALE` und `RS_SCALING` (`RenderScale.gd`, s. o.) sowie
 `RS_TILE_QUADS` (Kachelgröße) in `TerrainTiles.gd`, alle für A/B im selben
-Build. Getrennt davon
+Build. Gelände-Verfeinerung (#238):
+`RS_AMPLIFY=0` nimmt den alten Back-Pass (A/B im selben Build),
+`RS_AMPLIFY_DETAIL=1` lässt den Erosionsfilter je Pixel an,
+`RS_AMPLIFY_DEBUG=<1…6>` malt Abweichung bzw. Karten aufs Gelände,
+`RS_AMPLIFY_PARAMS=<JSON>` überschreibt Werte aus `TerrainAmplifier.params`. Getrennt davon
 steht `RS_REPRO_YEARS`: es gehört nicht zu `Main.gd`, sondern kürzt den langen
 Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `baseline`, `prototype` ist mit #174 D entfernt; `RS_STUDY_MODE`
@@ -338,7 +344,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd`, `terrain_tiles.gd`, `water_gpu_tail.gd` (mit Renderer über xvfb + llvmpipe) (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd`, `terrain_tiles.gd`, `amplify.gd` (dort ohne GPU-Teil), `water_gpu_tail.gd` (mit Renderer über xvfb + llvmpipe) (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
@@ -448,7 +454,20 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    `SimCore.ReliefRender` über die Brücke, Wächter
    `tests/relief.gd`); der Terrain-Shader liest sie nur, Pinselkuppel und
    Kameraziel liegen auf der verschobenen Fläche, der Pinsel wirkt auf die
-   Sim-Zelle darunter. Das Kronendach (Issue #152) zeichnet der
+   Sim-Zelle darunter. Wo ein `RenderingDevice` da ist (Forward+, nicht
+   `performance`), liefert seit #238 die Gelände-Verfeinerung diese Textur
+   statt des Back-Passes: `scripts/TerrainAmplifier.gd` treibt
+   Compute-Shader (`shaders/amplify/*.glsl`, zur Laufzeit übersetzt, der
+   Ordner trägt `.gdignore`), die die Sim-Höhe in Zweierschritten auf 2880²
+   hochskalieren und nacherodieren (Vorbild Schott u. a. 2024, MIT), dazu
+   Karten für Abtrag, Ablagerung, Abfluss und Schutt (`amplify_tex`,
+   `shaders/amplify.gdshaderinc`). Nur Darstellung, nichts geht in die Sim
+   zurück; ihre Werte stehen als Konstanten in `TerrainAmplifier.params`,
+   nicht im Kalibrier-Register. Der Erosionsfilter je Pixel
+   (`detail_enabled`) ist mit Verfeinerung aus. Bindung an die Sim (Schranke,
+   Schutzmaske, Küste, Wasserspiegel, Mittel), Stabilität und Kosten:
+   `docs/look/d-amplify/README.md`, Wächter `tests/amplify.gd` (GPU-Teil nur
+   mit Fenster). Das Kronendach (Issue #152) zeichnet der
    Terrain-Shader je Pixel; WO Wald steht, kommt als Waldmaske aus
    `SimRender.ForestCanopyMask` (Kalibrierung `SimCore.CanopyRender`, Wächter
    `SimCoreTests/CanopyTests.swift` und `tests/canopy.gd`). Das Dach hebt

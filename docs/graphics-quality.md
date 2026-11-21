@@ -1573,3 +1573,16 @@ MetalFX Spatial 0,67).
 Gate): A 5 · B 5 · GLEICH 20. `tal` 0:3 für den Endstand („Felsflanken zeigen
 Riffelung und Schattierung statt glatter Tan-Flächen“), `nah` 1:0, `diorama`
 4:2 gegen ihn, begründet mit dem Talnebel.
+## Gelände-Verfeinerung auf der GPU (#238)
+
+Seit November 2026 liefert, wo ein `RenderingDevice` da ist, die
+Gelände-Verfeinerung die Render-Verschiebung: Compute-Shader rechnen aus der
+Sim-Höhe eine Fläche in vierfacher Auflösung (2880²) und Karten für Abtrag,
+Ablagerung, Abfluss und Schutt (`game/scripts/TerrainAmplifier.gd`,
+`game/shaders/amplify/`). Sie schreibt in den Vertrag der Backtextur aus dem
+Abschnitt „Render-Verschiebung von Rinnen und Graten“ oben, Terrain-Shader,
+Pinselkuppel, Raycast und Kameraziel lesen unverändert. Der Back-Pass
+(`relief_bake.gdshader`) bleibt der Rückfall für den Compatibility-Renderer,
+headless und die Stufe `performance`; der Erosionsfilter je Pixel entfällt
+mit Verfeinerung. Aufbau, Bindung an die Sim, Stabilität, Kosten und Bilder:
+[docs/look/d-amplify/README.md](look/d-amplify/README.md).
