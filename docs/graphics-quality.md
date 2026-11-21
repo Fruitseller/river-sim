@@ -1142,7 +1142,7 @@ die Nahsicht, Zeitraffer 60 J./s, Fahrt zurück:
 `scripts/look/tree-flight.sh <ausgabe.mp4>` (Ablauf in
 `game/studies/trees/TreeFlight.gd`). Bild-zu-Bild-Differenz im Zeitraffer
 (Mittel der Graustufen-Differenz bei 432 px Breite): mit Bäumen Median 0,48,
-p95 1,26; derselbe Ablauf mit `RS_NO_TREES` 0,46 und 1,10. Die periodischen
+p95 1,27; derselbe Ablauf mit `RS_NO_TREES` 0,46 und 1,10. Die periodischen
 Spitzen (alle 8 Bilder) kommen in beiden von den Flussbändern; während der
 Fahrten keine Spitze über dem 2,5-Fachen des Medians.
 
