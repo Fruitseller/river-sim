@@ -6394,9 +6394,10 @@ public final class Terrain {
     /// alle Läufe über den bestehenden `BeltSchedule` disjunkt parallel laufen —
     /// bit-identisch zur seriellen Reihenfolge.
     private func beltStampBatch(_ items: [(ch: RiverChannel, part: Int)], dt: Double,
-                                ageAtEnd: Double, lockHere: Bool, buffers: BeltStampBuffers) {
+                                ageAtEnd: Double, lockHere: Bool, buffers: BeltStampBuffers,
+                                forceSerial: Bool = false) {
         guard !items.isEmpty else { return }
-        if items.count == 1 || Terrain.coreCount <= 1 {
+        if forceSerial || items.count == 1 || Terrain.coreCount <= 1 {
             for item in items {
                 _ = beltStampChannel(item.ch, dt: dt, part: item.part, ageAtEnd: ageAtEnd,
                                      lockHere: lockHere, buffers: buffers)
@@ -6432,10 +6433,14 @@ public final class Terrain {
                 radius = max(0.5 * w + 0.5, (0.5 + barW) * w) + 2.0
             }
             guard radius.isFinite else { canParallel = false; break }
+            // Stempel-Chargen haben keine Migrations-Teilschritte: `maxSubsteps = 0`
+            // kennzeichnet das Feld als nicht belegt (`BeltSchedule` liest nur die
+            // AABB; ein versehentlicher Einsatz in `parallelBeltRuns` fällt dort an
+            // `precondition(nsub <= maxSubsteps)` sofort auf).
             footprints.append(MeanderState.BeltFootprint(
                 minX: loX - radius, maxX: hiX + radius,
                 minZ: loZ - radius, maxZ: hiZ + radius,
-                maxSubsteps: ch.nodes.count))
+                maxSubsteps: 0))
         }
         guard canParallel else {
             for item in items {
@@ -6460,6 +6465,35 @@ public final class Terrain {
             }
         }
     }
+
+    /// Test-Haken (`BeltParallelTests`): führt `beltStampBatch` wahlweise seriell
+    /// oder über den parallelen `BeltSchedule`-Pfad auf den offenen Roh-Puffern aus.
+    func beltStampBatchForTests(_ items: [(ch: RiverChannel, part: Int)], dt: Double,
+                                ageAtEnd: Double = 0, lockHere: Bool = false,
+                                serial: Bool = false) {
+        if lockHere && dropletGateBuf.count != cfg.count {
+            dropletGateBuf = [Bool](repeating: false, count: cfg.count)
+        }
+        hf.withUnsafeBufferPointer { hfb in
+        veg.withUnsafeMutableBufferPointer { vb in
+        isChannel.withUnsafeMutableBufferPointer { icb in
+        inBelt.withUnsafeMutableBufferPointer { ibb in
+        barAge.withUnsafeMutableBufferPointer { bab in
+        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
+        withBed { bed in
+            let buffers = BeltStampBuffers(bed: bed, hf: hfb.baseAddress!, veg: vb.baseAddress!,
+                                           channel: icb.baseAddress!, belt: ibb.baseAddress!, age: bab.baseAddress!,
+                                           lock: glb.count == cfg.count ? glb.baseAddress : nil)
+            beltStampBatch(items, dt: dt, ageAtEnd: ageAtEnd, lockHere: lockHere,
+                           buffers: buffers, forceSerial: serial)
+        }}}}}}}
+    }
+
+    /// Kopie der Gürtel-Arbeitsmaske (`inBelt`) für Bit-Identitäts-Wächter.
+    func inBeltForTests() -> [Bool] { inBelt }
+
+    /// Kopie der Tropfen-Sperrmaske (`dropletGateBuf`) für Bit-Identitäts-Wächter.
+    func dropletGateForTests() -> [Bool] { dropletGateBuf }
 
     private func beltFinishProfile(dt: Double) {
         let cs = cfg.cellSize
