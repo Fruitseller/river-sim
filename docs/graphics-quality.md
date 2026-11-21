@@ -1538,7 +1538,9 @@ dichter als davor (Tiefenstaffelung). Verworfen: Lage auf dem MITTEL der
 Umgebung (auf breiten Talböden lag sie im Boden, Nebel nur als Saum an den
 Flanken); beleuchtete Lage (las sich im Talschatten als brauner Schmutz);
 volle Deckung bis 0,85 (flutete die Täler, Flüsse verschwanden darunter,
-der Fehler der Look-Iterationen 9 und 17).
+der Fehler der Look-Iterationen 9 und 17). Deckkraft auf Land 0,4: mit 0,65 urteilte der
+Bewerter in `diorama` 5:1 gegen den Nebel („milchiger, graubrauner
+Dunstschleier“), mit 0,4 noch 4:2; Abnahme am Bild durch den Eigner.
 
 **Leistung** (Zeitraffer, Flusstal-Bühne, `balanced`, maximiert 3456×2104,
 M4 Max, interleaved alt/neu nach `scripts/timelapse-timing.sh`, Mittel / p95):
@@ -1556,3 +1558,14 @@ Die Scans selbst sind billiger als die Rausch-Klüftung, die sie ersetzen
 Der Rest in der Detail-Kamera ist Tiefenschärfe und Nebel. Die verbindliche
 Messung gegen das Budget kommt nach dem Rebase auf #235 (Render-Skalierung:
 dann laufen Material und Bokeh auf 0,45 der Pixel).
+
+**Tiefenschärfe mit MetalFX (#235).** Auf `look-a-budget` (1039909) mit
+diesem Zweig obendrauf (Konflikt nur an den `preload`-Zeilen in `Main.gd`):
+Fokusband und Unschärfe wie nativ, keine Säume am Wasser
+(`docs/look/c-materials/ausschnitt-nah-metalfx.jpg`, links nativ, rechts
+MetalFX Spatial 0,67).
+
+**Bewerter** (`scripts/look/judge.sh`, Endstand gegen vorher, 30 Urteile, kein
+Gate): A 5 · B 5 · GLEICH 20. `tal` 0:3 für den Endstand („Felsflanken zeigen
+Riffelung und Schattierung statt glatter Tan-Flächen“), `nah` 1:0, `diorama`
+4:2 gegen ihn, begründet mit dem Talnebel.

@@ -43,7 +43,7 @@ const float ABOVE_SEA = 0.55;       // Lage über dem Meer
 const float LAYER_STEP = 0.35;      // Abstand der Lagen
 const float THICK_FULL = 1.8;       // Luftschicht für volle Deckung (weiche Kante)
 const float SEA_OPACITY = 0.35;     // über dem Meer nur ein Hauch
-const float LAND_OPACITY = 0.65;
+const float LAND_OPACITY = 0.4;
 const float SMOOTH_TEXELS = 11.0;   // Abstand der Taps (±22 Zellen)
 
 // Halbe Kantenlänge der Lage relativ zur Welt (ValleyFog: 1,6 × world_size);
