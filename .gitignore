@@ -24,3 +24,6 @@ scratch_*.png
 
 # Claude-Code-Worktrees (temporär, für parallele Agents)
 .claude/worktrees/
+
+# Python-Bytecode der Look-Skripte
+__pycache__/

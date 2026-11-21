@@ -5,6 +5,7 @@ extends Node3D
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const Lighting = preload("res://scripts/Lighting.gd")
+const TerrainAmplifier = preload("res://scripts/TerrainAmplifier.gd")
 # Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
 # das volle Sim-Gitter (`terrain_grid_for`).
 const PERFORMANCE_TERRAIN_GRID := 256
@@ -323,6 +324,28 @@ var relief_geometry_age := 0.0  # Sim-Jahre bis zur vollen Verformung
 var relief_lift_cache: PackedFloat32Array
 var relief_bake_frame := -1  # Frame des noch nicht zurückgelesenen Auftrags
 var relief_bakes := 0  # Zähler für den Wächter: nur Terrain-Updates backen
+# Gelände-Verfeinerung (#238): mit RenderingDevice liefert sie `relief_tex`
+# statt des Back-Passes (TerrainAmplifier.gd, Einhängepunkte: `_amplify`,
+# `_adopt_amplified`). `null` = Back-Pass (Compatibility-Renderer, headless,
+# Stufe `performance`, `RS_AMPLIFY=0` für A/B im selben Build).
+var amplifier: TerrainAmplifier
+var amp_filled: PackedByteArray   # Seespiegel und Schutzmaske des letzten
+var amp_protect: PackedByteArray  # Overlay-Frames, bis der Verfeinerer sie holt
+# Über diese Zeit verteilt der Verfeinerer einen Auftrag. Im Zeitraffer zwei
+# Stände je Sekunde: die Feinstruktur muss dem Sim-Takt (vier je Sekunde)
+# nicht folgen, sie blendet ohnehin, und die Kosten halbieren sich. Unter dem
+# Pinsel schneller, dort zählt, wie bald die Form dem Strich folgt.
+const AMPLIFY_TIMELAPSE_SECONDS := 0.5
+const AMPLIFY_STROKE_SECONDS := 0.2
+# Blende zum neuen Stand des Verfeinerers. Kürzer als die Zeit, über die der
+# nächste Auftrag rechnet: der darf sein Ausgabe-Ziel erst beschreiben, wenn
+# die Blende durch ist, und soll darauf nicht warten müssen. Eine Blende so
+# lang wie der vorige Auftrag schaukelte sich auf (jeder Auftrag wartete auf
+# die Blende des vorigen und wurde dadurch selbst länger).
+const AMPLIFY_FADE_SECONDS := 0.4
+# Dauer der Blende zum neuen Stand der Verschiebung (`relief_mix`): ein
+# Sim-Takt, mit Verfeinerer `AMPLIFY_FADE_SECONDS`.
+var relief_fade_seconds := SIM_TICK_SECONDS
 # Kameraziel auf die sichtbare Fläche nachziehen, sobald die erste
 # Verschiebung zurückgelesen ist (RS_TARGET).
 var cam_target_on_surface := false
@@ -742,6 +765,8 @@ func _setup_relief() -> void:
 	var calib := apply_calibration(sim, "relief", [relief_mat, terrain_mat])
 	relief_height_code = calib["relief_height_code"]
 	relief_geometry_age = calib["relief_geometry_age"]
+	if _setup_amplifier(calib["relief_slope_code"]):
+		return
 	for i in 2:
 		var vp := SubViewport.new()
 		vp.size = Vector2i(size, size)
@@ -760,6 +785,38 @@ func _setup_relief() -> void:
 	terrain_mat.set_shader_parameter("relief_prev_tex", relief_vp.get_texture())
 	terrain_mat.set_shader_parameter("bake_blend", 1.0)
 	terrain_mat.set_shader_parameter("relief_enabled", true)
+
+## Gelände-Verfeinerung (#238) statt des Back-Passes, wo ein RenderingDevice
+## da ist. `relief_enabled` setzt erst der erste fertige Stand
+## (`_adopt_amplified`); bis dahin liest der Terrain-Shader keine Verschiebung.
+func _setup_amplifier(slope_code: float) -> bool:
+	if render_quality == "performance" or OS.get_environment("RS_AMPLIFY") == "0" \
+			or not TerrainAmplifier.available():
+		return false
+	var amp := TerrainAmplifier.new()
+	var pond: float = calibration(sim, "water")["water_pond_contour_lo"]
+	if not amp.setup(N, world_size, hscale, sea, pond, relief_height_code, slope_code):
+		amp.free_resources()
+		return false
+	amplifier = amp
+	# Zum Abstimmen ohne Neustart-Umbau: einzelne Werte überschreiben
+	# (JSON wie `TerrainAmplifier.params`).
+	if OS.has_environment("RS_AMPLIFY_PARAMS"):
+		var over: Variant = JSON.parse_string(OS.get_environment("RS_AMPLIFY_PARAMS"))
+		if over is Dictionary:
+			for key in over:
+				amp.params[key] = over[key]
+	# Der Erosionsfilter je Pixel (`erosion_detail`) entfällt: seine Rinnen
+	# liefert jetzt die Verfeinerung als Form. `RS_AMPLIFY_DETAIL=1` lässt ihn
+	# für den Vergleich an.
+	if OS.get_environment("RS_AMPLIFY_DETAIL") != "1":
+		terrain_mat.set_shader_parameter("detail_enabled", false)
+	# Das Netz liest die feine Fläche auf der Mip-Stufe seines Vertexabstands.
+	terrain_mat.set_shader_parameter("amplify_vertex_lod",
+		log(float(N * TerrainAmplifier.FACTOR) / float(terrain_grid)) / log(2.0))
+	if OS.has_environment("RS_AMPLIFY_DEBUG"):
+		terrain_mat.set_shader_parameter("amplify_debug", int(OS.get_environment("RS_AMPLIFY_DEBUG")))
+	return true
 
 ## Kronendach (#152): Kalibrierung aufs Terrain-Material, die Waldmaske kommt
 ## mit jedem Overlay-Frame (`_update_forest_mask`).
@@ -1530,6 +1587,8 @@ func _load_world(path: String = SAVE_PATH) -> void:
 		if mat != null:
 			mat.set_shader_parameter("sea_level", sea)
 	water_mi.position.y = sea * hscale
+	if amplifier != null:
+		amplifier.sea = sea  # Küstensaum der Verfeinerung
 	_after_sim(FRAME_SETTLED) # Wasser-Blend 1.0 → kein Überblenden aus der alten Welt
 	_refresh_debug()
 	_set_status("Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear())))
@@ -1658,6 +1717,7 @@ func _process(delta: float) -> void:
 	# Hintergrund-Schritt zählen als Aktivität.
 	var idle: bool = year_rate == 0.0 and not _jumping and not sculpting \
 		and not sim.stepInFlight() \
+		and not (amplifier != null and (amplifier.busy() or relief_mix < 1.0)) \
 		and Time.get_ticks_msec() - last_activity_msec > IDLE_FPS_DELAY_MSEC
 	if idle:
 		Engine.max_fps = IDLE_FPS_CAP
@@ -1678,8 +1738,11 @@ func _process(delta: float) -> void:
 
 	u_time += delta * (2.5 if year_rate > 0.0 else 0.7)
 	if relief_mix < 1.0:
-		relief_mix = minf(relief_mix + delta / SIM_TICK_SECONDS, 1.0)
+		relief_mix = minf(relief_mix + delta / relief_fade_seconds, 1.0)
 		terrain_mat.set_shader_parameter("bake_blend", relief_mix)
+	if amplifier != null and amplifier.advance(relief_mix >= 1.0, delta,
+			AMPLIFY_TIMELAPSE_SECONDS if amplifier.running_fade() else AMPLIFY_STROKE_SECONDS):
+		_adopt_amplified(amplifier.published_fade)
 	height_fade.advance(delta)
 	overlay_fade.advance(delta)
 	ribbon_fade.advance(delta)
@@ -2007,6 +2070,8 @@ func _upload_overlays(frame: Dictionary) -> void:
 	# Schutz- und Waldmaske gehören zusammen: der Wald endet an der Schutzmaske
 	# desselben Frames (in SimRender fallen beide gemeinsam, `dropMasks`).
 	_update_protect_mask(frame["protect"])
+	amp_filled = frame["filled"]
+	amp_protect = frame["protect"]
 	_update_forest_mask(frame["forest"])
 	_update_plume(frame["plume"])
 
@@ -2075,6 +2140,9 @@ func _update_forest_mask(bytes: PackedByteArray) -> void:
 ## (Band-Bau im selben Takt), backt das neue Ziel erneut, und die Blende läuft
 ## weiter, statt zurück auf den alten Stand zu springen.
 func _bake_relief() -> void:
+	if amplifier != null:
+		_amplify()
+		return
 	if relief_vp == null or height_field._tex == null or protect_tex == null:
 		return
 	relief_mat.set_shader_parameter("height_tex", height_field._tex)
@@ -2090,6 +2158,39 @@ func _bake_relief() -> void:
 	relief_bake_frame = Engine.get_frames_drawn()
 	relief_bakes += 1
 
+## Gelände-Verfeinerung (#238) anstoßen, einmal je Terrain-Update wie der
+## Back-Pass. Im Zeitraffer, unter dem Pinsel und in den Zwischenschritten
+## eines Sprungs verteilt der Verfeinerer die Arbeit über mehrere Bilder
+## (`_process` ruft `advance`), der fertige Stand blendet im Zeitraffer ein
+## (`AMPLIFY_FADE_SECONDS`). Sprung-Ende, Laden und Neugenerieren rechnen
+## sofort. Seespiegel und Schutzmaske reisen nur mit,
+## wenn ein Overlay-Frame neue gebracht hat.
+func _amplify() -> void:
+	if shown_heights.is_empty() or (amp_protect.is_empty() and not amplifier.has_inputs()):
+		return
+	var fade := _timelapse_fading()
+	var spread := fade or sculpting or (_jumping and _frame_trigger != FRAME_SETTLED)
+	amplifier.submit(shown_heights, amp_filled, amp_protect, not spread, fade)
+	amp_filled = PackedByteArray()
+	amp_protect = PackedByteArray()
+	relief_bakes += 1
+	if not spread:
+		_adopt_amplified(false)
+
+## Der Verfeinerer hat einen Stand fertig: Texturen tauschen, Blende starten.
+func _adopt_amplified(fade: bool) -> void:
+	terrain_mat.set_shader_parameter("relief_tex", amplifier.relief_texture())
+	terrain_mat.set_shader_parameter("relief_prev_tex", amplifier.previous_relief_texture())
+	terrain_mat.set_shader_parameter("amplify_tex", amplifier.maps_texture())
+	terrain_mat.set_shader_parameter("amplify_prev_tex", amplifier.previous_maps_texture())
+	terrain_mat.set_shader_parameter("amplify_enabled", true)
+	terrain_mat.set_shader_parameter("relief_enabled", true)
+	# Der allererste Stand hat keinen Vorgänger, aus dem er einblenden könnte.
+	relief_mix = 0.0 if fade and amplifier.published > 1 else 1.0
+	relief_fade_seconds = AMPLIFY_FADE_SECONDS
+	terrain_mat.set_shader_parameter("bake_blend", relief_mix)
+	relief_bake_frame = Engine.get_frames_drawn()
+
 ## Holt den Höhenzuschlag der zuletzt gebackenen Verschiebung auf die CPU,
 ## verkleinert aufs Sim-Gitter (gleiche Indizierung wie `h_cache`). Lesbar erst
 ## NACH dem gezeichneten Back-Frame. Während eines Strichs backt jeder Frame
@@ -2102,6 +2203,13 @@ func _relief_cpu() -> void:
 	if sculpting or relief_bake_frame < 0 or Engine.get_frames_drawn() <= relief_bake_frame:
 		return
 	relief_bake_frame = -1
+	if amplifier != null:
+		# Dieselben Werte, die der Vertex-Shader liest (Mip-Stufe des Sim-Gitters).
+		var lift := amplifier.read_cell_lift()
+		if not lift.is_empty():
+			relief_lift_cache = lift
+			surface_version += 1
+		return
 	var img := relief_vp.get_texture().get_image()
 	if img == null or img.is_empty():
 		return
@@ -2281,6 +2389,17 @@ func _input(_event: InputEvent) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_SIZE_CHANGED or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
 		_wake_render_loop()
+
+## Die Texturen des Verfeinerers gehören dem RenderingDevice, nicht Godots
+## Ressourcenverwaltung: von Hand freigeben.
+func _exit_tree() -> void:
+	if amplifier != null:
+		for param in ["relief_tex", "relief_prev_tex", "amplify_tex", "amplify_prev_tex"]:
+			terrain_mat.set_shader_parameter(param, null)
+		terrain_mat.set_shader_parameter("relief_enabled", false)
+		terrain_mat.set_shader_parameter("amplify_enabled", false)
+		amplifier.free_resources()
+		amplifier = null
 
 func _wake_render_loop() -> void:
 	last_activity_msec = Time.get_ticks_msec()

@@ -179,11 +179,11 @@ uniform float water_beach_edge_hi;
 // SimNode (Editor-Vorschau) ist keine Backtextur gebunden, und eine schwarze
 // Textur dekodierte zu −2 Einheiten Höhe.
 uniform bool relief_enabled = false;
-uniform sampler2D relief_tex : filter_linear, repeat_disable;
+uniform sampler2D relief_tex : filter_linear_mipmap_anisotropic, repeat_disable;
 // Vorheriger Back-Stand und Blende dorthin (`bake_blend`, Main.gd `_bake_relief`): im
 // Zeitraffer gleitet die Verschiebung über einen Sim-Takt, statt zu springen.
 // Die Kodierung ist linear, gemischt wird also direkt auf den Kanälen.
-uniform sampler2D relief_prev_tex : filter_linear, repeat_disable;
+uniform sampler2D relief_prev_tex : filter_linear_mipmap_anisotropic, repeat_disable;
 uniform float bake_blend = 1.0;
 // Kalibrierung über die Brücke (SimCore.ReliefRender), default-frei.
 uniform float relief_height_code;
@@ -367,11 +367,15 @@ vec4 erosion_detail(vec2 p, vec2 slope, float fade_target_in, out float out_mag)
 	return erosion_detail_at(p, slope, fade_target_in, max(relief_detail_scale, 1e-4), detail_strength, 2, out_mag);
 }
 
-// Render-Verschiebung aus der Backtextur (Kodierung: relief_bake.gdshader).
-vec4 relief_sample(vec2 uv) {
-	vec4 cur = textureLod(relief_tex, uv, 0.0);
+#include "res://shaders/amplify.gdshaderinc"
+
+// Render-Verschiebung aus der Backtextur (Kodierung: relief_bake.gdshader),
+// auf fester Mip-Stufe. Die Backtextur des SubViewports hat nur Stufe 0, die
+// Fläche der Gelände-Verfeinerung (#238) eine Kette.
+vec4 relief_sample(vec2 uv, float lod) {
+	vec4 cur = textureLod(relief_tex, uv, lod);
 	if (bake_blend < 1.0) {
-		cur = mix(textureLod(relief_prev_tex, uv, 0.0), cur, bake_blend);
+		cur = mix(textureLod(relief_prev_tex, uv, lod), cur, bake_blend);
 	}
 	return cur;
 }
@@ -382,14 +386,23 @@ float relief_lift(vec2 uv) {
 	if (!relief_enabled) {
 		return 0.0;
 	}
-	return (relief_sample(uv).r - 0.5) / max(relief_height_code, 1e-6)
+	return (relief_sample(uv, amplify_vertex_lod).r - 0.5) / max(relief_height_code, 1e-6)
 	     * smoothstep(0.0, relief_geometry_age, sim_year);
 }
 
 // Pixel-Stufe: EIN Abgriff der Backtextur je Pixel für Steigung und Rinnen
 // (vorher zwei, Review zu #174). Ohne Verschiebung neutral (0.5 = kein Zuschlag).
+// Mit impliziter Mip-Stufe: die 2880²-Fläche der Verfeinerung (#238) flimmerte
+// in der Ferne sonst. Nur im gleichförmigen Kontrollfluss rufen.
 vec4 relief_pixel(vec2 uv) {
-	return relief_enabled ? relief_sample(uv) : vec4(0.5);
+	if (!relief_enabled) {
+		return vec4(0.5);
+	}
+	vec4 cur = texture(relief_tex, uv);
+	if (bake_blend < 1.0) {
+		cur = mix(texture(relief_prev_tex, uv), cur, bake_blend);
+	}
+	return cur;
 }
 
 // … Steigungszuschlag dh/duv je Pixel (Detail unabhängig von der Mesh-Dichte) …
@@ -873,6 +886,7 @@ void fragment() {
 	vec2 canopy_tilt;
 	canopy(wp, hval, px_wp, f_grad, canopy_col, canopy_amount, canopy_tilt);
 	vec4 relief = relief_pixel(v_uv);
+	vec4 amp_maps = amplify_maps(v_uv, bake_blend);
 
 	// Grobe Steigung aus dem Sim-Gitter. Sie bestimmt die Form, während die
 	// Material-Normale darunter nur Licht im Zentimetermaßstab bricht.
@@ -1014,6 +1028,10 @@ void fragment() {
 			vegetation *= 1.0 - crag;
 			scree += vegetation * streak;
 			vegetation *= 1.0 - streak;
+		}
+		// Karten der Gelände-Verfeinerung (#238): Schutt, frischer Fels.
+		if (amplify_enabled) {
+			amplify_material(amp_maps, steep_g, vegetation, rock, scree);
 		}
 
 		// `material_fade` blendet NUR das Feingran aus: es aliast in der Distanz und
@@ -1390,6 +1408,11 @@ void fragment() {
 	ROUGHNESS = roughness;
 	METALLIC = 0.0;
 	SPECULAR = specular;
+	if (amplify_debug > 0) {
+		ALBEDO = amplify_debug_color(amp_maps, relief.r);
+		ROUGHNESS = 1.0;
+		SPECULAR = 0.0;
+	}
 	// Wolkenschatten auf der GERENDERTEN Oberfläche: Weltposition aus dem
 	// view-space VERTEX (INV_VIEW_MATRIX), nicht die Sim-Höhe — Seespiegel-
 	// Anhebung, Relief-Verschiebung und Kronendach heben die sichtbare
