@@ -553,6 +553,10 @@ const BRUSH_GRID_HALO_PX := 0.75
 ## dort, nicht als Overrides im Code (Wächter: SimCoreTests/UiContractTests).
 const UI_THEME := "res://ui/glass_theme.tres"
 const UiIcon = preload("res://scripts/UiIcon.gd")
+## Wald aus Einzelbäumen (#236); ohne RenderingDevice (Compatibility,
+## headless) oder mit `RS_NO_TREES` das Kronendach von #152.
+const ForestTrees = preload("res://scripts/ForestTrees.gd")
+var forest_trees: Node3D
 const UI_MARGIN := 16.0
 ## Weichzeichner hinter den Glas-Panels (#174 E): ein Shader (Material eines
 ## ColorRect hinter jedem Panel), dessen Radius und Eckenradius aus dem Theme
@@ -770,6 +774,11 @@ func _setup_relief() -> void:
 func _setup_canopy() -> void:
 	canopy_calib = apply_calibration(sim, "canopy", [terrain_mat])
 	terrain_mat.set_shader_parameter("canopy_enabled", true)
+	if not OS.has_environment("RS_NO_TREES") and ForestTrees.available():
+		forest_trees = ForestTrees.new()
+		add_child(forest_trees)
+		forest_trees.setup(terrain_mat, cam, world_size, N, hscale)
+		terrain_mat.set_shader_parameter("tree_instances", true)
 
 func _setup_scene() -> void:
 	# Licht und Atmosphäre (#151): feste Welt-Sonne, Werte und Qualitätsstufen
@@ -2467,7 +2476,8 @@ func _surface_y(gx: float, gz: float) -> float:
 ## bilinear wie die übrigen Höhen hier. Die Maske wird erst beim ersten
 ## Raycast nach einem Upload in Floats gewandelt.
 func _forest_lift_at(gx: float, gz: float) -> float:
-	if forest_img == null:
+	# Mit Einzelbäumen (#236) hebt das Dach nicht: Kuppel und Ziel am Boden.
+	if forest_img == null or forest_trees != null:
 		return 0.0
 	if forest_lift_cache.is_empty():
 		var img: Image = forest_img.duplicate()
