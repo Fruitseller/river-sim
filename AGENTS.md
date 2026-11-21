@@ -534,6 +534,21 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   verlassene versiegen als eingefrorener Vor-Kopplungs-Stand
   (`WaterRender.ribbonGrowYears`/`ribbonGhostYears`, Wächter:
   `SimCoreTests/TimelapseTransitionTests.swift`),
+- `RiverCorridor` (Look E, Issue #239): Ufer und Bett UNTER den Fluss-Bändern
+  als eigenes Mesh (`RibbonMesh.corridor`, Frame-Schlüssel `corridor_*`, dazu
+  je Band-Vertex `ribbon_profile` = `CUSTOM1`), gebaut in `emitRibbon` aus
+  derselben Breite und Wasserfläche wie das Band: Querprofil mit Fuß und
+  Uferkante auf dem Gelände, Böschung (Prallhang steil, Gleithang flach mit
+  Kiesbank), Bett aus Breite und Riffel (`CorridorProfile`). Das Gelände wird
+  NICHT abgesenkt: Korridor (`corridor.gdshader`) und Band schreiben als Tiefe
+  die ihres Strahls auf dem Deckel (`lid`, höchste Geländehöhe im Querschnitt),
+  Licht über `LIGHT_VERTEX` am Deckel (`corridor_common.gdshaderinc`, dort auch
+  die Mindestbreite in der Totalen). Die sichtbare Geländehöhe am Ufer fragt
+  der Korridor nur über `BankSurface` (Naht zur verfeinerten Fläche aus #238).
+  Godot-Seite: `game/scripts/RiverCorridor.gd`. Wächter:
+  `SimCoreTests/RiverCorridorTests.swift` (Bett unter der Uferkante, Wasser nie
+  über dem Ufer, kein Gelände über dem Deckel, Fuß auf dem Gelände) und
+  `tests/river_ribbons.gd` (Marshalling),
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie plus Bodenbedeckung (Schutthalde, blankes
   Gletschereis, Rohboden, Talboden-Wiese, Issue #174 D) in einem gemeinsamen

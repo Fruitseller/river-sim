@@ -250,6 +250,17 @@ final class SimNode: Node {
             out[Variant("ribbon_flows")] = ribbonFlows(world.ribbons).toVariant()
             out[Variant("ribbon_indices")] = PackedInt32Array(world.ribbons.indices).toVariant()
             out[Variant("ribbon_strip_starts")] = PackedInt32Array(world.ribbons.stripStarts).toVariant()
+            // Korridor (Look E, #239): `ribbon_profile` je Band-Vertex (CUSTOM1),
+            // Ufer und Bett als eigenes Mesh in `corridor_*`.
+            out[Variant("ribbon_profile")] = flatten4(world.ribbons.profile).toVariant()
+            let c = world.ribbons.corridor
+            out[Variant("corridor_verts")] = PackedVector3Array(c.vertices.map { Vector3(x: $0.x, y: $0.y, z: $0.z) }).toVariant()
+            out[Variant("corridor_normals")] = PackedVector3Array(c.normals.map { Vector3(x: $0.x, y: $0.y, z: $0.z) }).toVariant()
+            out[Variant("corridor_colors")] = PackedColorArray(c.colors.map { Color(r: $0.x, g: $0.y, b: $0.z, a: $0.w) }).toVariant()
+            out[Variant("corridor_uvs")] = PackedVector2Array(c.uvs.map { Vector2(x: $0.x, y: $0.y) }).toVariant()
+            out[Variant("corridor_uv2s")] = PackedVector2Array(c.uv2s.map { Vector2(x: $0.x, y: $0.y) }).toVariant()
+            out[Variant("corridor_custom")] = flatten4(c.custom).toVariant()
+            out[Variant("corridor_indices")] = PackedInt32Array(c.indices).toVariant()
         }
         return out
     }
@@ -268,9 +279,13 @@ final class SimNode: Node {
     }
     /// Lauf-Größen (`RibbonMesh.flows`) flach als RGBA-Float für `CUSTOM0`.
     private static func ribbonFlows(_ mesh: RibbonMesh) -> PackedFloat32Array {
+        flatten4(mesh.flows)
+    }
+    /// SIMD4-Puffer flach als RGBA-Float für `CUSTOM*`.
+    private static func flatten4(_ values: [SIMD4<Float>]) -> PackedFloat32Array {
         var flat: [Float] = []
-        flat.reserveCapacity(mesh.flows.count * 4)
-        for f in mesh.flows { flat.append(f.x); flat.append(f.y); flat.append(f.z); flat.append(f.w) }
+        flat.reserveCapacity(values.count * 4)
+        for f in values { flat.append(f.x); flat.append(f.y); flat.append(f.z); flat.append(f.w) }
         return PackedFloat32Array(flat)
     }
 

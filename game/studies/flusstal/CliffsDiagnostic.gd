@@ -62,7 +62,7 @@ func _cliff_probe() -> void:
 func _process(delta: float) -> void:
 	super._process(delta)
 	u_time = 1.0
-	for mat in [terrain_mat, ocean_mat, river_mat, river_prev_mat]:
+	for mat in [terrain_mat, ocean_mat, river_mat, river_prev_mat] + _corridor_mats():
 		if mat != null:
 			mat.set_shader_parameter("u_time", u_time)
 	for mat in Lighting.cloud_body_materials(cloud_bodies):
@@ -83,3 +83,8 @@ func _study_drawn() -> void:
 		get_tree().quit()
 	else:
 		_cliff_probe()
+
+
+## Ufer und Bett (Look E, #239) laufen mit derselben Zeit wie die Bänder.
+func _corridor_mats() -> Array:
+	return [] if corridor == null else [corridor.mat, corridor.prev_mat]
