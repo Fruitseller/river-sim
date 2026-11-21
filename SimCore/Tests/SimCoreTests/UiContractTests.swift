@@ -137,8 +137,11 @@ final class UiContractTests: XCTestCase {
                        hint: "CUSTOM0 trägt den anderen Endpunkt als RGBA-Float")
         assertContains(main, "bmat.next_pass = bmat_visible",
                        hint: "Erst der verdeckte Pass, darüber der sichtbare")
-        assertContains(main, "m.set_shader_parameter(\"px_scale\", DisplayServer.screen_get_scale())",
-                       hint: "Pixelbreiten in logischen Pixeln (Retina)")
+        // Mal dem Render-Skalierungsfaktor (#235): VIEWPORT_SIZE ist im
+        // 3D-Shader die skalierte Auflösung, ohne den Faktor würden die
+        // Bänder in `balanced` um 1/0,67 breiter.
+        assertContains(main, "m.set_shader_parameter(\"px_scale\", DisplayServer.screen_get_scale() * get_viewport().scaling_3d_scale)",
+                       hint: "Pixelbreiten in logischen Pixeln (Retina), mal Render-Skalierung")
 
         let body = try RepoSource.probe("game/shaders/brush_dome.gdshaderinc")
         for channel in ["UV.y", "UV2.x", "CUSTOM0.w", "COLOR.rgb"] {

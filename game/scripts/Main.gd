@@ -893,8 +893,7 @@ func _setup_scene() -> void:
 		m.render_priority = Material.RENDER_PRIORITY_MAX
 		# VIEWPORT_SIZE ist im 3D-Shader die SKALIERTE Renderauflösung
 		# (RenderScale): mit dem Faktor bleiben die Linien gleich breit.
-		m.set_shader_parameter("px_scale", DisplayServer.screen_get_scale()
-			* get_viewport().scaling_3d_scale)
+		m.set_shader_parameter("px_scale", DisplayServer.screen_get_scale() * get_viewport().scaling_3d_scale)
 	brush_mi.material_override = bmat
 	brush_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	brush_mi.visible = false
