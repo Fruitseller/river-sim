@@ -2523,3 +2523,40 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+---
+
+## XIII. Statische Mäandergürtel-Stempel parallel über `BeltSchedule` (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.swift`:
+- **`Terrain.beltStampBatch`:** Paralleler Stempel-Durchlauf für statische (nicht migrierende) Lauf-Chargen über den bestehenden Abhängigkeitsgraphen `BeltSchedule` (`DispatchQueue.concurrentPerform`). Ohne Migration schrumpft der Footprint-Radius je Lauf auf die lokale Kanal-/Bankbreite (`max(0.5·w + 0.5, (0.5 + barW)·w) + 2`, für steile Strecken `part == 2` nur `2.0` Zellen), sodass die allermeisten Läufe disjunkt parallel gestempelt werden. Überlappende Paare behalten über `BeltSchedule` exakt ihre serielle Index-Reihenfolge (`i < j`), sodass alle Felder bit-identisch bleiben.
+- **`beltStamp(dt:only:ageAtEnd:)`:** Der Einzelkanal-Pfad (`only != nil`) bleibt unverändert; der `only == nil`-Pfad (`belt.fixedStamp`) sammelt alle zu stempelnden Läufe und ruft `beltStampBatch` auf.
+- **`beltFinishProfile(dt:)`:** Ersetzt die serielle `beltStamp(dt:only:ageAtEnd:)`-Schleife am Ende von `step()` (`belt.finishProfile`), öffnet die Roh-Puffer einmal statt je Lauf und stempelt alle migrierenden Läufe über `beltStampBatch` parallel.
+
+### Gemessen
+
+Rahmen der Messreihe:
+- **Maschine:** Linux x86_64 (`6.12.113+deb13-amd64`), 4 Kerne, Swift 6.3.3 (Nightly-VM; absolute Werte sind maschinenspezifisch).
+- **Konfiguration:** `SimConfig.production` (n = 720, world = 112,4789), Seed 1337, Einlauf 100 × 100 Jahre, 30 Messschritte à dt = 100 (`simperf --repeat 3`).
+- **Aggregationsregel:** Kennzahl je Lauf ist das Block-Minimum aus `--repeat 3`; die Pass-Zeilen stammen aus Block 3 desselben Laufs. Verschränkte A/B-Messung (3 Paare, Kandidat → Basis, jeweils ein Prozess nacheinander bei Load < 1,3).
+- **Anteil am Sim-Schritt (Baseline):** `belt.fixedStamp` ~3,1–3,4 % (4,26–4,80 ms) und `belt.finishProfile` ~1,5–1,7 % (2,06–2,47 ms), zusammen ~4,6–5,1 % (~6,3–7,3 ms/Schritt).
+
+| Paar | Basis Blöcke 1/2/3 (Min) | Kandidat Blöcke 1/2/3 (Min) | Δ Min gesamt | `belt.fixedStamp` Basis → Kand. | `belt.finishProfile` Basis → Kand. | `belt.parallel` Basis → Kand. |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 158,1 / 153,1 / 142,1 (**142,1**) | 138,7 / 148,7 / 145,6 (**138,7**) | −3,4 ms (−2,4 %) | 4,60 → 3,10 (−1,50 / −32,6 %) | 2,16 → 1,32 (−0,84 / −38,9 %) | 29,30 → 28,72 |
+| 2 | 141,3 / 149,2 / 138,2 (**138,2**) | 131,2 / 140,6 / 145,5 (**131,2**) | −7,0 ms (−5,1 %) | 4,26 → 3,06 (−1,20 / −28,2 %) | 2,06 → 1,74 (−0,32 / −15,5 %) | 28,45 → 29,93 |
+| 3 | 143,4 / 161,3 / 153,8 (**143,4**) | 129,3 / 135,0 / 134,3 (**129,3**) | −14,1 ms (−9,8 %) | 4,80 → 2,87 (−1,93 / −40,2 %) | 2,47 → 1,18 (−1,29 / −52,2 %) | 29,52 → 27,50 |
+
+- **Median über die 3 Paare:** Gesamtschritt-Minimum **142,1 → 131,2 ms/Schritt** (−10,9 ms / −7,7 %); `belt.fixedStamp` **4,60 → 3,06 ms** (−1,54 ms / −33,5 %); `belt.finishProfile` **2,16 → 1,32 ms** (−0,84 ms / −38,9 %); Summe beider Pässe **6,76 → 4,38 ms** (−2,38 ms / −35,2 %).
+- Der Gewinn zeigt sich in jedem der drei Paare sowohl im Gesamtschritt-Minimum als auch in beiden geänderten Pässen.
+- **Unabhängige Gegenmessung (Orchestrator, HEAD nach den Fix-Runden, 4 verschränkte Paare, Load 1,4–3,1):** `belt.fixedStamp` **4,72 → 3,31 ms** (−30 %) und `belt.finishProfile` **2,26 → 1,38 ms** (−39 %), auf Pass-Ebene in 8 von 8 Läufen schneller (Summe −2,3 ms/Schritt ≈ −1,6 % Schrittzeit). Die **Gesamtzeit** war dort nur in 3 von 4 Paaren niedriger (Block-Minima-Median 144,7 → 142,1 ms, −1,8 %): Der Pass-Gewinn liegt in der Größenordnung der Block-zu-Block-Streuung dieser VM (±5 %), die oben genannten −7,7 % Gesamtgewinn sind also nicht in jeder Sitzung reproduzierbar. Belastbar ist der Pass-Gewinn.
+
+### Bit-Identität
+
+- **Direkter Beleg (`BeltParallelTests.testBeltStampBatchParallelMatchesSerialBitIdentically`):** Vergleicht `beltStampBatch` seriell gegen den parallelen `BeltSchedule`-Pfad bitweise auf allen geschriebenen Roh-Puffern (`h`, `sed`, `rock`, `hf`, `veg`, `isChannel`, `inBelt`, `barAge`, `dropletGate`) für `part` 0, 1 und 2 (mit und ohne `lockHere`), inklusive überlappender und knapp an der Disjunktheitsgrenze (`2 · radius`) platzierter Kanalpaare, deterministischer Zell-im-Footprint-Prüfung je Einzellauf und Nachweis tatsächlicher Multi-Thread-Ausführung über `BeltStampBatchTrace`.
+  - *Einschränkung:* Der Wächter prüft nur die im Test konstruierten synthetischen Kanal-Geometrien, Breiten/Abflüsse und Geländeformen — er ist keine vollständige mathematische Radius-Beweisführung über beliebige Konfigurationen oder Parameterkombinationen (und der parallele Bit-Vergleich selbst pinnt Nebenläufigkeitsfehler nur im Rahmen des Laufzeit-Timings der gewählten Paare; die deterministische Footprint-Prüfung deckt die getesteten Geometrien ohne Timing-Abhängigkeit ab).
+- **Produktions-Gegenprobe (`simperf --hash`, n = 720, world = 112,4789, Seed 1337, Warmup 100 × 100, 30 × 100):** Belegt für sich allein noch nicht die Bit-Neutralität des Umbaus (vgl. oben „Bit-Identität — und warum `simperf --hash` allein sie nicht belegt"), bestätigt aber, dass der Produktionslauf unverändert bleibt:
+  - Basis (`0783abf`): `d83b629fa79aa144`
+  - Kandidat: `d83b629fa79aa144` (bit-identisch)
