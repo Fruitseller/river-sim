@@ -281,7 +281,9 @@ Welt anfahren, statt fester `RS_TARGET`/`RS_DIST`/`RS_YAW`),
 seit dem Renderloop-Abschalten bedeutet `RS_FPS avg` hier die
 Prozess-Iterationsrate unter dem `max_fps`-Deckel, nicht mehr gerenderte
 Frames — ältere Leerlauf-Messreihen sind damit nicht 1:1 vergleichbar),
-`RS_FLATTEN`, `RS_NO_MEANDER_PAINT`, `RS_RATE` (Zeitraffer gleich beim Start in
+`RS_FLATTEN`, `RS_NO_MEANDER_PAINT`, `RS_NO_TREES` (Kronendach statt
+Einzelbäume, A/B im selben Build; `RS_TREE_STATS` druckt die Baumzahlen,
+beide in `ForestTrees.gd`/`Main.gd`), `RS_RATE` (Zeitraffer gleich beim Start in
 diesem Tempo, J./Sek.; für Bildschirmvideos der Übergänge, s.
 `docs/zielbild-measurements.md` § Übergänge im Zeitraffer),
 `RS_WATER_STAMP` (Issues #31/#34: zurück auf den alten Raster-Stempel-Pfad statt
@@ -428,8 +430,15 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    der Vertex-Shader nach der geglätteten Maske an
    (`CanopyRender.liftSmoothTexels`); `Main._forest_lift_at` rechnet
    dasselbe für Raycast, Pinselkuppel und Kameraziel nach (Wächter
-   `tests/canopy.gd`, Bestandsrand). Instanzbäume gibt es seitdem nicht
-   mehr. `water_field_blur.gdshader` und
+   `tests/canopy.gd`, Bestandsrand). Seit #236 stehen darauf Einzelbäume
+   (`scripts/ForestTrees.gd`): ein Compute-Pass (`shaders/tree_place.glsl`)
+   platziert sie jedes Bild aus Waldmaske, Höhe und Verschiebung in
+   indirekte MultiMeshes (`shaders/tree.gdshader`, Formen aus
+   `scripts/TreeMesh.gd`), Größe als Kartensymbol nach Kameraabstand; das
+   Dach hebt dann nicht an und malt keine Kronen (`tree_instances`), Kuppel
+   und Kameraziel liegen am Boden. Ohne RenderingDevice (Compatibility,
+   headless, CI) bleibt es beim Kronendach (Begründung und Messung:
+   `docs/graphics-quality.md` § Einzelbäume). `water_field_blur.gdshader` und
    `water_field_ewma.gdshader` sind die abschaltbare GPU-Fassung der
    Schwanzstufen des Wasserfelds (s. `RS_WATER_GPU`); sie enthalten bewusst
    keine Kalibrier-Zahl — alle Schwellen bleiben im Vertrag

@@ -208,6 +208,9 @@ uniform sampler2D forest_tex : filter_linear, repeat_disable, hint_default_black
 // gedrosselten Overlays; geteilt sprang der Wald an jedem Takt ohne neue Maske
 // auf den alten Stand zurück und glitt wieder vor (#170).
 uniform sampler2D forest_prev_tex : filter_linear, repeat_disable, hint_default_black;
+// Einzelbäume (#236, ForestTrees.gd): Dach ohne Anhebung und ohne gemalte
+// Kronen, nur noch Waldboden. Schalter, keine Kalibrier-Zahl.
+uniform bool tree_instances = false;
 // Kalibrierung über die Brücke (SimCore.CanopyRender), default-frei.
 uniform float canopy_cell;
 uniform float canopy_height;
@@ -656,6 +659,9 @@ void canopy(vec2 wp, float h, float px, vec2 f_grad, out vec3 col, out float amo
 	}
 	// Ab etwa einer Krone je Pixel nur noch der Mittelwert: kein Flimmern.
 	float detail = 1.0 - calib_window(canopy_detail_lo, canopy_detail_hi, px / max(canopy_cell, 1e-6));
+	if (tree_instances) {
+		detail = 0.0;
+	}
 	// Nur Mittelwert und Maske unter dem Deckungs-Fenster: der Wald deckt
 	// hier nichts (exakt, ohne Kronen ist `fw` gleich `f`). Der lichte Saum
 	// ist seit Look-Iteration 6 breit, ohne den Ausstieg kostete er Bildzeit.
@@ -828,6 +834,9 @@ void vertex() {
 		lift_f = min(v_forest, sm * 0.25);
 	}
 	float v_lift = calib_window(canopy_lift_lo, canopy_lift_hi, lift_f);
+	if (tree_instances) {
+		v_lift = 0.0;
+	}
 	VERTEX.y += v_lift * canopy_height;
 	float texel = 1.0 / grid_n;
 	float hL = height_at(uv - vec2(texel, 0.0));

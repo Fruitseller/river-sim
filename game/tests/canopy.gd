@@ -8,8 +8,10 @@ extends SceneTree
 ##    Terrain-Shader default-frei deklariert und auf dem Material gesetzt;
 ##  - die Waldmaske liegt als Textur am Material und folgt Pinselstrich,
 ##    Neugenerieren und Laden (die Pfade von Main, nicht nur die Brücke);
-##  - es gibt keine Instanzbäume mehr;
-##  - Pinselring und Kameraziel liegen auf dem Dach (sichtbare Fläche);
+##  - Einzelbäume (#236) nur mit RenderingDevice (headless: Kronendach), das
+##    Dach hebt dann nicht mehr an; `RS_NO_TREES` zeigt das Kronendach;
+##  - Pinselring und Kameraziel liegen auf der sichtbaren Fläche (mit Bäumen
+##    auf dem Boden, ohne auf dem Dach);
 ##  - Materialverteilung (#174 D): jede `material_*`-Zahl kommt über die Brücke
 ##    (SimCore.MaterialRender), ist default-frei deklariert und gesetzt, die
 ##    Bodenbedeckung liegt in Gittergröße am Material und folgt dem Pinsel.
@@ -56,7 +58,7 @@ func _process(_delta: float) -> bool:
 	done = true
 	_check_uniforms(main)
 	_check_material(main)
-	_check_no_instance_trees(main)
+	_check_tree_instances(main)
 	_check_visible_surface(main)
 	_check_brush(main)
 	_check_regenerate_and_load(main)
@@ -121,11 +123,22 @@ func _check_material(main: Node) -> void:
 	var cover: PackedByteArray = _frame(main.sim)["cover"]
 	_check(cover.size() == main.N * main.N * 4, "Bodenbedeckung ist RGBA8 in Gittergröße")
 
-func _check_no_instance_trees(main: Node) -> void:
-	for child in main.get_children():
-		_check(not (child is MultiMeshInstance3D), "Instanzbäume sind durch das Kronendach ersetzt")
+## Einzelbäume (#236) gibt es genau dann, wenn ein RenderingDevice da ist
+## (der Compute-Pass braucht es) und `RS_NO_TREES` fehlt; headless, also in
+## CI, bleibt das Kronendach von #152. Mit Bäumen weiß der Terrain-Shader davon
+## (`tree_instances`: keine Anhebung, keine gemalten Kronen), und es gibt die
+## vier Listen (Nadel-, Laubbaum nah, fern, Schatten).
+func _check_tree_instances(main: Node) -> void:
+	var want: bool = Main.ForestTrees.available() and not OS.has_environment("RS_NO_TREES")
+	var trees: Node3D = main.forest_trees
+	_check((trees != null) == want, "Einzelbäume genau mit RenderingDevice (erwartet %s)" % want)
+	_check((main.terrain_mat.get_shader_parameter("tree_instances") == true) == want,
+		"Terrain-Shader weiß von den Bäumen genau dann, wenn es sie gibt")
+	if trees != null:
+		_check(trees.lists.size() == 4, "vier Baumlisten (%d)" % trees.lists.size())
 
-## Pinselring und Kameraziel liegen auf dem Dach: Sim-Höhe plus Dachhöhe an
+## Pinselring und Kameraziel liegen auf der sichtbaren Fläche: Sim-Höhe plus
+## Dachhöhe (mit Einzelbäumen null) an
 ## einer Zelle mit geschlossenem Wald (ohne Verschiebung, die prüft relief.gd).
 ## Am Bestandsrand hebt der Terrain-Vertex-Shader nach der geglätteten Maske
 ## (`canopy_lift_smooth_texels`) und damit weniger; dort muss die sichtbare
@@ -159,12 +172,12 @@ func _check_visible_surface(main: Node) -> void:
 	var gx := float(cell % n) + 0.5
 	var gz := float(cell / n) + 0.5
 	var sim_y: float = main._sample_h(gx, gz) * main.hscale
-	var height: float = main.canopy_calib["canopy_height"]
+	var height: float = 0.0 if main.forest_trees != null else main.canopy_calib["canopy_height"]
 	_check(absf(main._surface_y(gx, gz) - (sim_y + height)) < 1e-4,
-		"Sichtbare Fläche liegt auf dem Dach (%.3f, Sim %.3f)" % [main._surface_y(gx, gz), sim_y])
+		"Sichtbare Fläche liegt auf Dach bzw. Boden (%.3f, Sim %.3f)" % [main._surface_y(gx, gz), sim_y])
 	main.cam_target = Vector3(gx * main.step - main.half, 0.0, gz * main.step - main.half)
 	main.cam_target.y = main._surface_y_at(main.cam_target)
-	_check(absf(main.cam_target.y - (sim_y + height)) < 1e-4, "Kameraziel liegt auf dem Dach")
+	_check(absf(main.cam_target.y - (sim_y + height)) < 1e-4, "Kameraziel liegt auf der sichtbaren Fläche")
 	_check_canopy_edge(main, forest)
 
 ## Bestandsrand: ein Gitterpunkt mit voller Maske, dessen geglättete Maske
@@ -189,6 +202,8 @@ func _check_canopy_edge(main: Node, forest: PackedByteArray) -> void:
 			var expect := smoothstep(lo, calib["canopy_lift_hi"], minf(1.0, sm * 0.25)) * height
 			if expect > height * 0.5:
 				continue
+			if main.forest_trees != null:
+				expect = 0.0  # mit Einzelbäumen hebt das Dach nirgends
 			var gx := float(i)
 			var gz := float(j)
 			var sim_y: float = main._sample_h(gx, gz) * main.hscale
