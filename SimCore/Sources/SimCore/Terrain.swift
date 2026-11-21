@@ -6438,6 +6438,15 @@ public final class Terrain {
             if z < loZ { loZ = z }; if z > hiZ { hiZ = z }
         }
         let radius: Double
+        // INVARIANTE: Der Radius trägt die Korrektheitslast für Schreib- UND
+        // Lesezugriffe. Der `+2`-Zellen-Aufschlag deckt den bilinearen
+        // Nachbarschafts-Halo (≤ 1 Zelle) sowie Rundung ab; alle Lesezugriffe von
+        // `beltStampChannel` (`blocked()` auf `hf`/`h`, Sohlen-Scan bis `±0.5·b`,
+        // Sill-Cut-`phf`, `Terrain.bilinear` über die vier Nachbarn) müssen
+        // innerhalb `±radius` bleiben. Wer eine Abfrage außerhalb ergänzt
+        // (z. B. einen Blick über die Bankkante hinaus), erzeugt eine Race, die
+        // weder der Bit-Vergleich noch die Zell-im-Footprint-Prüfung zuverlässig
+        // sieht — dann gehört der Radius mit angepasst.
         if part == 2 {
             // Nur steile Strecken (Linien-Carve + bilineare Knoten-Abfrage): <= 2 Zellen.
             radius = 2.0
