@@ -5,6 +5,7 @@ extends Node3D
 ## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const Lighting = preload("res://scripts/Lighting.gd")
+const Atmosphere = preload("res://scripts/Atmosphere.gd")
 # Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
 # das volle Sim-Gitter (`terrain_grid_for`).
 const PERFORMANCE_TERRAIN_GRID := 256
@@ -347,6 +348,7 @@ var cloud_mats: Array[ShaderMaterial] = []
 
 # Kamera-Orbit
 var cam: Camera3D
+var atmosphere: Atmosphere # Tilt-Shift (#237)
 var cam_yaw := 0.7
 var cam_pitch := 0.85
 var cam_dist := 135.0
@@ -782,6 +784,7 @@ func _setup_scene() -> void:
 	cam.far = 1000.0
 	cam.fov = 55.0
 	add_child(cam)
+	atmosphere = Atmosphere.new(cam, render_quality)
 	_update_camera()
 
 	terrain_mi = MeshInstance3D.new()
@@ -793,6 +796,9 @@ func _setup_scene() -> void:
 	terrain_mi.extra_cull_margin = 1000.0 # Displacement sprengt die Plan-AABB
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
+	# Scan-Materialien (#237, game/assets/materials/MANIFEST.md).
+	terrain_mat.set_shader_parameter("scan_albedo", load("res://assets/materials/scan_albedo.png"))
+	terrain_mat.set_shader_parameter("scan_normal", load("res://assets/materials/scan_normal.png"))
 	terrain_mat.set_shader_parameter("hscale", hscale)
 	terrain_mat.set_shader_parameter("world_size", world_size)
 	terrain_mat.set_shader_parameter("grid_n", float(N))
@@ -872,6 +878,11 @@ func _setup_scene() -> void:
 	cloud_mats.assign(water_mats)
 	cloud_mats.append_array(Lighting.cloud_body_materials(cloud_bodies))
 	Lighting.apply_clouds(cloud_mats, render_quality)
+	add_child(atmosphere.make_valley_fog(render_quality, world_size, hscale, N, sea * hscale))
+	for mat in atmosphere.fog_materials():
+		height_field.mirror_to(mat)
+	for mat in Lighting.cloud_body_materials(cloud_bodies):
+		mat.render_priority = Atmosphere.CLOUD_PRIORITY
 
 	# Pinselkuppel: Bildschirm-Bänder (s. brush_dome.gdshaderinc). Erst der
 	# verdeckte Teil gedämpft ohne Tiefentest, darüber der sichtbare. Die
@@ -2202,6 +2213,10 @@ func _update_camera() -> void:
 	var offset := Vector3(sin(cam_yaw) * cp, sin(cam_pitch), cos(cam_yaw) * cp) * cam_dist
 	cam.position = cam_target + offset
 	cam.look_at(cam_target, Vector3.UP)
+	if atmosphere != null:
+		# Scharf bleibt der Pinselpunkt, sonst das Ziel in der Bildmitte.
+		var focus := brush_mi.position if brush_mi != null and brush_mi.visible else cam_target
+		atmosphere.update(cam, focus, cam_dist, cam_pitch, get_process_delta_time(), u_time)
 
 func _unhandled_input(event: InputEvent) -> void:
 	last_activity_msec = Time.get_ticks_msec()

@@ -236,15 +236,7 @@ uniform float conifer_hi;
 // die Fenster laufen über calib_window, die Abstände über max().
 uniform float material_ridge_rock_gain;
 uniform float material_gully_scree_share;
-uniform float material_joint_spacing;
-uniform float material_joint_stretch;
-uniform float material_joint_turn_cos;
-uniform float material_joint_turn_sin;
-uniform float material_joint_depth;
-uniform float material_joint_gully_gain;
 uniform float material_rock_relief_gain;
-uniform float material_joint_relief;
-uniform float material_scree_grain;
 uniform float material_crevasse_spacing;
 uniform float material_crevasse_slope_lo;
 uniform float material_crevasse_slope_hi;
@@ -430,24 +422,6 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.5 + 0.5;
 }
 
-// Dasselbe Wertrauschen mit analytischer Ableitung: (Wert 0 … 1, d/dp.x,
-// d/dp.y), aus denselben vier Zellwerten. Die Felsrunsen bekommen daraus ihre
-// Normale, ohne das Rauschen ein zweites Mal abzufragen.
-vec3 vnoise_d(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	vec2 u = f * f * (3.0 - 2.0 * f);
-	vec2 du = 6.0 * f * (1.0 - f);
-	float a = vhash(i);
-	float b = vhash(i + vec2(1.0, 0.0));
-	float c = vhash(i + vec2(0.0, 1.0));
-	float d = vhash(i + vec2(1.0, 1.0));
-	float k4 = a - b - c + d;
-	float v = a + (b - a) * u.x + (c - a) * u.y + k4 * u.x * u.y;
-	vec2 g = du * vec2(b - a + k4 * u.y, c - a + k4 * u.x);
-	return vec3(v * 0.5 + 0.5, g * 0.5);
-}
-
 // Materialrauschen in Weltkoordinaten. Die triplanare Mischung hält die Körnung
 // auf Steilwänden rund statt die Draufsicht senkrecht über den Fels zu ziehen.
 float fbm(vec2 p) {
@@ -475,135 +449,6 @@ float triplanar_fbm(vec3 p, vec3 n) {
 	if (weight.y > 0.0) { sum += fbm(p.xz) * weight.y; }
 	if (weight.z > 0.0) { sum += fbm(p.xy) * weight.z; }
 	return sum / max(weight.x + weight.y + weight.z, 1e-4);
-}
-
-// Klüftung einer Projektionsebene (#174 D, überarbeitet im Review zu PR #177).
-// `q` in Kluftabständen, q.x quer zur Fallrichtung, q.y entlang; `k` streckt
-// das Muster entlang q.y. Drei Anteile, alle aus Rauschen statt aus `fract`,
-// damit kein Gitter entsteht (die erste Fassung legte zwei gerade
-// Kluftscharen in die Waagerechte; auf Wänden standen sie als gleichmäßiges
-// Rautennetz, das sich wie ein Drahtgitter las):
-//  - Runsen: dunkle Tonstreifen in Fallrichtung, Breite aus dem Rauschen;
-//  - Fugen: Isolinien eines verzerrten Rauschens, nur stellenweise offen,
-//    Breite mit dem Blockton und mit `couple` (Rinne/Rippe) moduliert;
-//  - Schichtfugen quer zur Fallrichtung, kurz und gestückelt.
-// `crack_detail` blendet die feinen Fugen vor den breiteren Runsen aus.
-// Die Formzahlen hier sind Optik wie die Farben unten; die Kalibrierung
-// (Abstand, Streckung, Tiefe, Rinnen-Kopplung) kommt über die Brücke.
-// `aa` ist die Fugenbreite eines Pixels im Linienmaß (analytisch statt
-// fwidth: der Aufrufer verzweigt je Pixel, Ableitungen wären dort undefiniert).
-float rock_joint_face(vec2 q, float k, float couple, float crack_detail, float aa,
-                      out float tone, out vec2 grad) {
-	float ay = q.y / k;
-	float wx = q.x + (vnoise(vec2(q.x * 0.35, ay * 0.35 + 3.1)) - 0.5) * 1.6;
-	vec3 s0 = vnoise_d(vec2(wx * 0.5 + 2.0, ay * 0.5));
-	// Gekreuzte Oktaven statt paralleler Rauschachsen: die frühere fünffache
-	// Streckung zog selbst triplanare Klüfte zu senkrechten Vorhängen. Die
-	// Ableitung geht mit der transponierten Drehung zurück in die Wandebene.
-	mat2 turn = mat2(vec2(material_joint_turn_cos, material_joint_turn_sin),
-	                 vec2(-material_joint_turn_sin, material_joint_turn_cos));
-	vec3 s1 = vnoise_d(turn * vec2(wx * 1.3 + 9.0, ay * 1.3));
-	s1.yz = s1.yz * turn;
-	float st = s0.x * 0.65 + s1.x * 0.35;
-	float streak = smoothstep(0.48, 0.78, st);
-	// Gefälle der Runsen in Kluftabständen (q.x, q.y), für die Normale: die
-	// Verzerrung `wx` geht als Näherung nicht ein, sie verschiebt nur.
-	float ts = clamp((st - 0.48) / 0.30, 0.0, 1.0);
-	vec2 dst = s0.yz * (0.5 * 0.65) + s1.yz * (1.3 * 0.35);
-	grad = 6.0 * ts * (1.0 - ts) / 0.30 * vec2(dst.x, dst.y / k);
-	tone = vnoise(q * 0.5 + vec2(13.0, 7.0));
-	float fine = 0.0;
-	// Fugen und Schichtfugen nur, solange sie nicht ausgeblendet sind: fünf
-	// der neun Rauschabfragen je Projektion (Review zu #174).
-	if (crack_detail > 0.0) {
-		// Feine Grate zwischen den Runsen (~9 m), nur als Form: scharf am
-		// Kamm (Höhe ½·(1 − |2n − 1|), ein halber Runsen-Hub), damit die
-		// Wand in Rippen und Kanten bricht.
-		vec3 s2 = vnoise_d(turn * vec2(wx * 3.3 + 5.0, ay * 3.3));
-		s2.yz = s2.yz * turn;
-		grad += sign(s2.x - 0.5) * s2.yz * 3.3 * vec2(1.0, 1.0 / k) * crack_detail;
-		float r = 1.0 - abs(vnoise(vec2(wx, ay)) * 2.0 - 1.0); // 1 auf der Fuge
-		float width = (0.02 + 0.10 * smoothstep(0.3, 0.8, tone)) * couple;
-		float gate = smoothstep(0.5, 0.7, vnoise(vec2(q.x * 0.4 + 3.3, ay * 1.5 + 8.0)));
-		float crack = smoothstep(1.0 - width - aa, 1.0, r) * gate;
-		float bx = q.x / k + (vnoise(q * 0.3 + vec2(7.7, 0.0)) - 0.5) * 0.8;
-		float rb = 1.0 - abs(vnoise(vec2(bx, q.y * 0.8 + 11.0)) * 2.0 - 1.0);
-		float bed = smoothstep(0.93 - aa, 1.0, rb) * smoothstep(0.45, 0.75, vnoise(q * 0.5 + vec2(1.3, 2.9)));
-		fine = max(crack, bed * 0.7) * crack_detail;
-	}
-	tone = tone * 2.0 - 1.0;
-	return streak * 0.6 + fine;
-}
-
-// Klüftung (#174 D): triplanar auf die Wände gelegt. Auf den beiden
-// Wandebenen läuft q.y senkrecht, die Runsen stehen also in Fallrichtung und
-// sind um `material_joint_stretch` gestreckt; die Draufsicht (flache
-// Felsrippen) bleibt ungestreckt. `cavity` (Relief-Bake #153, −1 Rinne … +1
-// Rippe) koppelt das Muster an die Form: in Rinnen breiter und tiefer, auf
-// Rippen schwächer. Die Stärke schwankt zusätzlich großflächig, ganze
-// Wandpartien bleiben fast glatt. Liefert die Abdunklung (0 … 1) und einen
-// Blockton (−1 … 1); ab etwa einem Kluftabstand je Pixel gehen beide in ihren
-// Mittelwert über, statt zu flimmern. `px` ist die Pixelgröße in
-// Welteinheiten (`length(fwidth(material_pos))`, oben in fragment() bestimmt:
-// hier, hinter der Felsverzweigung je Pixel, wären Ableitungen undefiniert).
-// `bump` (Befund #174 „Fels glatt"): die Runsen sind auch FORM, nicht nur
-// Ton — Rinnen der Tiefe `material_joint_relief` (in Kluftabständen) als
-// tangentiale Neigung der Normale, aus der analytischen Ableitung des
-// Runsen-Rauschens. Die Sonne zeichnet damit Grate hell und Rinnen dunkel.
-float rock_joints(vec3 p, vec3 n, float cavity, float px, out float tone, out vec3 bump) {
-	float spacing = max(material_joint_spacing, 1e-4);
-	vec3 q = p / spacing;
-	float k = max(material_joint_stretch, 1.0);
-	float couple = clamp(1.0 - cavity * material_joint_gully_gain, 0.2, 2.0);
-	float fw = px / spacing;
-	float detail = 1.0 - smoothstep(0.5, 1.2, fw);
-	float crack_detail = 1.0 - smoothstep(0.08, 0.3, fw);
-	vec3 w = pow(abs(n), vec3(4.0));
-	w /= max(w.x + w.y + w.z, 1e-4);
-	float j = 0.0;
-	tone = 0.0;
-	// Rauschen steigt um höchstens ~1,5 je Einheit, die Fugen (1 − |2n − 1|)
-	// also um ~3: so breit ist ein Pixel im Linienmaß.
-	float aa = fw * 3.0;
-	float t;
-	vec2 g;
-	bump = vec3(0.0);
-	if (detail > 0.0) {
-		// Projektionen unter 2 % Gewicht entfallen (Kosten nur auf Fels).
-		// Das Gefälle jeder Ebene geht entlang ihrer beiden Achsen in die Welt.
-		if (w.x > 0.02) {
-			j += w.x * rock_joint_face(q.zy, k, couple, crack_detail, aa, t, g);
-			tone += w.x * t; bump += w.x * vec3(0.0, g.y, g.x);
-		}
-		if (w.z > 0.02) {
-			j += w.z * rock_joint_face(q.xy, k, couple, crack_detail, aa, t, g);
-			tone += w.z * t; bump += w.z * vec3(g.x, g.y, 0.0);
-		}
-		if (w.y > 0.02) {
-			j += w.y * rock_joint_face(q.xz, 1.0, couple, crack_detail, aa, t, g);
-			tone += w.y * t; bump += w.y * vec3(g.x, 0.0, g.y);
-		}
-	}
-	float strength = (0.35 + 0.65 * smoothstep(0.25, 0.75, vnoise(q.xz * 0.13 + vec2(19.0, 4.0))))
-	               * min(couple, 1.4);
-	tone *= detail;
-	// Runsen sind Rinnen: die Normale kippt zur Runse hin (Höhe = −Runse).
-	// Das Gefälle steht in Kluftabständen je Kluftabstand, also direkt als
-	// Neigung; tangential gemacht, damit die Normale nur kippt.
-	bump = (bump - n * dot(bump, n)) * material_joint_relief * strength * detail;
-	// 0.11 ≈ Flächenmittel des Musters (bei cavity 0), damit die Ferne nicht
-	// heller wird als die Nähe; die Rinnen-Kopplung bleibt dort erhalten.
-	return mix(0.11 * min(couple, 1.4), min(j * strength, 1.0), detail);
-}
-
-// Körnung der Halden: Blöcke von `material_scree_grain`, zwei Oktaven,
-// mit der Pixelgröße `px` (Welteinheiten, s. `rock_joints`) ausgeblendet
-// (−1 … 1, Mittel 0).
-float scree_grain(vec2 p, float px) {
-	float grain = max(material_scree_grain, 1e-4);
-	vec2 q = p / grain;
-	float detail = 1.0 - smoothstep(0.3, 1.0, px / grain);
-	return ((vnoise(q) - 0.5) * 1.4 + (vnoise(q * 2.7 + vec2(4.0, 1.0)) - 0.5) * 0.6) * detail;
 }
 
 // Gletscherspalten quer zur Fließrichtung `fall` (Einheitsvektor bergab),
@@ -772,6 +617,8 @@ void canopy(vec2 wp, float h, float px, vec2 f_grad, out vec3 col, out float amo
 #endif
 // Wolkenschatten (#151): gemeinsame Funktion mit Ozean und Bändern.
 #include "res://shaders/clouds.gdshaderinc"
+// Scan-Materialien für Fels, Schutt, Kies und Sand (#237).
+#include "res://shaders/scan_material.gdshaderinc"
 
 void vertex() {
 	vec2 uv = world_uv(VERTEX);
@@ -855,6 +702,10 @@ void fragment() {
 	                         wp.y - world_size * 0.5);
 	float px_wp = length(fwidth(wp));
 	float px_mat = length(fwidth(material_pos));
+	// Ableitungen der Weltposition für die Scan-Abfragen (textureGrad hinter
+	// den Verzweigungen je Pixel, s. scan_material.gdshaderinc).
+	vec3 dpdx = dFdx(material_pos);
+	vec3 dpdy = dFdy(material_pos);
 	// Gradient der Waldmaske in Welt-xz, ebenfalls hier vor jeder
 	// Verzweigung: aus den Bildschirm-Ableitungen von Maske und Position
 	// (2×2-System). Das Kronendach schätzt damit die Maske an jeder
@@ -910,6 +761,9 @@ void fragment() {
 		// Runsen und Rippen mit echtem Licht und dunklen Rinnenböden statt
 		// einer glatt verputzten Wand (Befund #174).
 		flow_gain *= mix(1.0, material_rock_relief_gain, clamp(surface.g, 0.0, 1.0));
+		// Auf steilen Wänden (#237) zogen diese Rinnen senkrechte Streifen in
+		// Fallrichtung; dort trägt die Scan-Normale das Detail.
+		flow_gain *= 1.0 - 0.75 * smoothstep(1.2, 2.4, world_slope);
 		det_slope = det.yz * dfade * relief_detail_normal * flow_gain;
 		det_shade = det.x / det_mag * dfade * flow_gain;
 		det_ridge = det.w * dfade;
@@ -924,6 +778,7 @@ void fragment() {
 	// hier kontinuierlich in Weltkoordinaten und bleiben damit unabhängig vom
 	// Render-Gitter.
 	vec4 cover = cover_at(v_uv); // vor der Verzweigung: implizite Mip-Stufe
+	vec3 amp_maps = scan_amplify_at(v_uv);
 	// UNGESTÖRTE Makro-Normale sichern, bevor Runsen und Mikro-Normale sie
 	// verändern: das Kronendach neigt seine Kronen gegen sie, ohne
 	// Mikro-Rauschen (Review zu #121).
@@ -954,6 +809,14 @@ void fragment() {
 		scree += slid;
 		float bare_rest = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
 		rock += min(bare_rest, rock * clamp(cavity, 0.0, 1.0) * material_ridge_rock_gain);
+		// Karten der Verfeinerung (#238, scan_material.gdshaderinc), ohne D schwarz.
+		float amp_slid = rock * amp_maps.g * SCAN_AMPLIFY_SCREE;
+		rock -= amp_slid;
+		scree += amp_slid;
+		float amp_bare = amp_maps.r * SCAN_AMPLIFY_ROCK * (1.0 - cold);
+		float amp_free = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
+		rock += amp_bare * (amp_free + vegetation * 0.5);
+		vegetation *= 1.0 - amp_bare * 0.5;
 		// Look-Iteration 7, EIN Block für drei Umverteilungen (gemeinsame
 		// Rausch- und Formterme). Befund „glatte Knete", Schnee als Kappe:
 		//  - Schnee folgt der Form. Er bleibt in Rinnen (`cavity` < 0) und auf
@@ -1027,14 +890,12 @@ void fragment() {
 		                    : 0.0;
 		float tri_large = 0.5;
 		float top_large = 0.5;
-		float tri_grain = 0.5;
 		float top_grain = 0.5;
 		float wind_snow = 0.5;
 		if (material_enabled) {
 			tri_large = triplanar_fbm(material_pos * 0.19, n_ws);
 			top_large = fbm(wp * 0.16);
 			if (material_fade > 0.002) {
-				tri_grain = triplanar_fbm(material_pos * 0.82 + vec3(7.0, 13.0, 3.0), n_ws);
 				top_grain = fbm(wp * 0.72 + vec2(31.0, 11.0));
 				wind_snow = fbm(wp * vec2(0.25, 0.55) + vec2(4.0, 19.0));
 			}
@@ -1062,7 +923,7 @@ void fragment() {
 		               * mix(0.92, 1.08, top_grain * material_fade);
 		vec3 stony = vec3(0.17, 0.167, 0.16)
 		           * mix(0.86, 1.10, tri_large)
-		           * mix(0.90, 1.10, mix(0.5, tri_grain, material_fade));
+		           * mix(0.90, 1.10, mix(0.5, top_grain, material_fade));
 		vec3 ground_color = mix(dry_grass, stony, smoothstep(veg_alt_lo, veg_alt_hi, hval));
 		ground_color = mix(ground_color, lush_color, valley * 0.7);
 
@@ -1084,23 +945,59 @@ void fragment() {
 		// unter der warmen Sonne also hellbeige (Befund #174 „Fels zu hell").
 		// Jetzt 0,07–0,15 (Bildschirm 0,29–0,42) und leicht kühl gegen die
 		// warme Sonne; die Form tragen die Runsen (`rock_bump`).
-		float tone = 0.0;
-		float joints = 0.0;
+		// Scan-Fels (#237): großer Maßstab gebankter Fels, darin der zerklüftete
+		// im kleinen Maßstab (zwei Maßstäbe gegen sichtbares Kacheln, zwei
+		// Gesteine für Abwechslung), dazu Schichtbänder nach Höhe. Ersetzt die
+		// Rausch-Klüftung von #174 D. Die Lithologie mischt hart und weich.
 		vec3 rock_bump = vec3(0.0);
+		vec3 rock_scan = vec3(1.0);
+		float rock_rough = 0.68;
+		float rock_h = 0.5;
+		vec3 sw = scan_weights(n_ws);
 		if (material_enabled && rock_cell > 0.01) {
-			joints = rock_joints(material_pos, n_ws, cavity, px_mat, tone, rock_bump);
+			ScanSample big = scan_triplanar(SCAN_ROCK_BEDDED, material_pos, sw, dpdx, dpdy, SCAN_ROCK_TILE);
+			rock_scan = big.albedo;
+			rock_bump = big.bump;
+			rock_rough = big.rough;
+			rock_h = big.height;
+			float detail_w = (1.0 - smoothstep(0.004, 0.012, px_mat)) * (0.55 - 0.25 * lith);
+			if (detail_w > 0.02) {
+				ScanSample fine = scan_triplanar(SCAN_ROCK_JOINTED, material_pos, sw, dpdx, dpdy, SCAN_ROCK_DETAIL_TILE);
+				rock_scan *= mix(vec3(1.0), fine.albedo, detail_w);
+				rock_bump += fine.bump * detail_w;
+				rock_h = mix(rock_h, fine.height, detail_w * 0.5);
+			}
+			// Schichtung nur auf Wänden (Draufsicht-Gewicht klein).
+			float wall = 1.0 - sw.y;
+			float bed_joint;
+			float strata = scan_strata(material_pos, lith, px_mat, bed_joint) * wall;
+			bed_joint *= wall;
+			rock_scan *= (1.0 + strata * SCAN_STRATA_TONE) * (1.0 - bed_joint * 0.35);
+			// Bankfuge als Stufe: die Unterkante liegt im Schatten.
+			rock_bump = rock_bump * SCAN_ROCK_NORMAL + vec3(0.0, -bed_joint * 0.8, 0.0);
+			rock_bump -= n_ws * dot(rock_bump, n_ws);
 		}
 		vec3 rock_color = mix(vec3(0.06, 0.064, 0.072), vec3(0.16, 0.158, 0.155), smoothstep(0.30, 0.70, tri_large))
-		                * mix(0.82, 1.10, mix(0.5, tri_grain, material_fade))
 		                * mix(1.0, lith_contrast, 0.5 * rock)
-		                * (1.0 + tone * 0.10)
-		                * (1.0 - joints * material_joint_depth);
-		// Schutthalde: heller als die Wand, grob gekörnt.
-		float grain = 0.0;
+		                * rock_scan;
+		// Schutthalde: heller als die Wand, Scan-Schutt.
+		vec3 scree_scan = vec3(1.0);
+		vec3 scree_bump = vec3(0.0);
 		if (material_enabled && scree_cell > 0.01) {
-			grain = scree_grain(material_pos.xz, px_mat);
+			ScanSample sc = scan_triplanar(SCAN_SCREE, material_pos, sw, dpdx, dpdy, SCAN_SCREE_TILE);
+			scree_scan = sc.albedo;
+			scree_bump = sc.bump * SCAN_GROUND_NORMAL;
+			scree_bump -= n_ws * dot(scree_bump, n_ws);
+			// Übergang Fels ↔ Schutt nach Höhe: der Schutt füllt die Senken
+			// der Wand, statt linear über ihr zu liegen.
+			float rs = rock + scree;
+			if (rock > 0.01 && rs > 0.02) {
+				float t = scan_height_blend(rock_h, sc.height, scree / rs, 3.0);
+				rock = rs * (1.0 - t);
+				scree = rs * t;
+			}
 		}
-		vec3 scree_color = vec3(0.22, 0.215, 0.20) * mix(0.90, 1.06, tri_large) * (1.0 + grain * 0.16);
+		vec3 scree_color = vec3(0.22, 0.215, 0.20) * mix(0.90, 1.06, tri_large) * scree_scan;
 
 		// Schnee und Gletscher: im Zehrgebiet blankes, bläuliches Eis mit Spalten
 		// und Moränen, darüber Firn wie Schnee.
@@ -1121,7 +1018,7 @@ void fragment() {
 			vec2 side = vec2(-fall.y, fall.x);
 			float medial = smoothstep(0.62, 0.80, vnoise(vec2(dot(wp, side) * 1.3, dot(wp, fall) * 0.12)));
 			float moraine = clamp(margin + medial * 0.6, 0.0, 1.0) * ice_share;
-			cold_color = mix(cold_color, vec3(0.30, 0.29, 0.27) * mix(0.85, 1.1, tri_grain), moraine * 0.85);
+			cold_color = mix(cold_color, vec3(0.30, 0.29, 0.27) * mix(0.85, 1.1, top_grain), moraine * 0.85);
 		}
 
 		// Die CPU liefert die Gewichte schon hierarchisch abgeschwächt
@@ -1167,8 +1064,8 @@ void fragment() {
 		if (hval <= sea_level) {
 			terr = macro_color;
 		}
-		// Runsen als Form (s. `rock_joints`), mit dem Felsanteil.
-		n_ws = normalize(n_ws + rock_bump * rock);
+		// Scan-Normale als Form, mit dem Fels- bzw. Schuttanteil.
+		n_ws = normalize(n_ws + rock_bump * rock + scree_bump * scree);
 		// Mikro-Normale aus drei Weltachsen. Ein einfacher Noise-Sample pro Achse
 		// genügt hier; drei weitere vollständige triplanare FBMs kosteten pro Pixel
 		// 27 unnötige Noise-Auswertungen.
@@ -1178,11 +1075,12 @@ void fragment() {
 			                  vnoise(micro_pos.yz + vec2(23.0, 3.0)),
 			                  vnoise(micro_pos.xz + vec2(13.0, 31.0))) - vec3(0.5);
 			micro -= n_ws * dot(micro, n_ws);
-			float micro_strength = mix(0.055, 0.13, rock + scree) * mix(1.0, 0.45, cold);
+			float micro_strength = mix(0.055, 0.02, rock + scree) * mix(1.0, 0.45, cold);
 			n_ws = normalize(n_ws + micro * micro_strength * material_fade);
 		}
 		terr *= 1.0 + min(det_shade, 0.0) * relief_detail_shade
 		      + max(det_shade, 0.0) * relief_detail_shade * 0.3;
+		terr *= 1.0 - amp_maps.b * SCAN_AMPLIFY_WET;
 		float crease = clamp(-det_ridge, 0.0, 1.0);
 		float moist = crease * (1.0 - smoothstep(veg_alt_lo, veg_alt_hi, hval));
 		terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0),
@@ -1198,12 +1096,12 @@ void fragment() {
 		terr = mix(terr, terr * vec3(0.72, 0.88, 0.66), clamp(-cavity, 0.0, 1.0) * 0.8 * green_w);
 		terr *= 1.0 + cavity * 0.45 * rock;
 
-		land_roughness = mix(0.90, 0.68, rock);
+		land_roughness = mix(0.90, rock_rough, rock);
 		land_roughness = mix(land_roughness, 0.95, scree);
 		land_roughness = mix(land_roughness, 0.84, vegetation);
 		land_roughness = mix(land_roughness, 0.78, cold);
 		land_roughness = mix(land_roughness, 0.34, ice_w);
-		land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
+		land_roughness += (top_grain - 0.5) * 0.08 * material_fade;
 		// Sand (#174 C/C2), EIN Block für beide Quellen: Strand (flache Küste in
 		// Reichweite der Brandung, bis an die Wasserlinie; SimRender.CoastMaterial)
 		// und frische Gleithang-Bänke mit Scroll-Rippen (SimRender.BarMaterial).
@@ -1229,9 +1127,22 @@ void fragment() {
 				sand = mix(sand, beach_sand, beach);
 				sand_col = mix(sand_col, mix(water_beach_wet_color, water_beach_dry_color, dry), beach);
 			}
-			sand_col *= mix(0.94, 1.06, top_grain * material_fade);
+			// Scan (#237): Strand als Sand, Flussbank als Kies, von oben.
+			ScanSample sa;
+			sa.albedo = vec3(1.0); sa.bump = vec3(0.0); sa.rough = 0.0; sa.height = 0.5;
+			if (material_enabled) {
+				sa = scan_top(SCAN_SAND, wp, dpdx, dpdy, SCAN_SAND_TILE);
+			}
+			if (material_enabled && beach < 0.98) {
+				ScanSample gr = scan_top(SCAN_GRAVEL, wp, dpdx, dpdy, SCAN_GRAVEL_TILE);
+				float t = scan_height_blend(gr.height, sa.height, beach, 3.0);
+				sa.albedo = mix(gr.albedo, sa.albedo, t);
+				sa.bump = mix(gr.bump, sa.bump, t);
+			}
+			sand_col *= sa.albedo;
 			terr = mix(terr, sand_col, sand);
 			land_roughness = mix(land_roughness, water_bar_roughness, sand);
+			n_ws = normalize(n_ws + (sa.bump - n_ws * dot(sa.bump, n_ws)) * SCAN_GROUND_NORMAL * sand);
 		}
 	}
 	// Ufersaum, Wasser und Meer trägt die Waldmaske schon nicht.

@@ -322,13 +322,6 @@ final class MaterialTests: XCTestCase {
 
     // MARK: - Uniform-Weg (Struktur)
 
-    /// Die Richtungsänderung darf die Kluftabstände nicht zusätzlich skalieren.
-    func testJointTurnIsOrthogonal() {
-        XCTAssertEqual(MaterialRender.jointTurnCos * MaterialRender.jointTurnCos
-                       + MaterialRender.jointTurnSin * MaterialRender.jointTurnSin,
-                       1.0, accuracy: 1e-12, "Kluft-Drehung ist orthogonal")
-    }
-
     /// Die `material_*`-Zahlen selbst (Spiegel, default-freie Deklaration,
     /// nichts am Register vorbei) prüft `CalibrationRegistryTests`; hier
     /// bleibt, woher der Terrain-Shader die Verteilung nimmt.
@@ -340,29 +333,31 @@ final class MaterialTests: XCTestCase {
                        "Die PBR-Materialien der Studie sind durch #174 D ersetzt")
     }
 
-    /// Review zu PR #177: die Klüftung darf kein regelmäßiges Liniennetz sein.
-    /// Die erste Fassung lag als `fract`-Gitter in der Waagerechten
-    /// (`material_pos.xz`) und stand auf den Wänden als Drahtgitter da. Jetzt
-    /// triplanar mit Fallrichtung, aus Rauschen und an Rinnen/Rippen
-    /// gekoppelt; die Strukturprobe hält das fest, das Bild prüft der Mensch.
-    func testRockJointsAreNoRegularLattice() throws {
+    /// #237: Fels, Schutt, Kies und Sand kommen aus gescannten Materialien
+    /// (Textur-Arrays, triplanar auf Wänden), nicht mehr aus Rausch-Klüftung.
+    /// Die Rausch-Klüftung von #174 D (Review PR #177: kein `fract`-Gitter)
+    /// ist ersetzt; ihre senkrechten Runsen in Fallrichtung waren der Befund
+    /// „senkrechte Streifen“. Gepinnt wird, dass der Terrain-Shader das Include
+    /// bindet, Fels und Schutt triplanar abfragt und die Scan-Normale als Form
+    /// übernimmt; das Bild prüft der Mensch.
+    func testRockAndScreeComeFromTheScans() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
-        assertContains(shader,
-                       "joints = rock_joints(material_pos, n_ws, cavity, px_mat, tone, rock_bump);",
-                       hint: "Klüftung bekommt Weltposition, Normale, Relief-Rinnen und Pixelgröße")
-        assertContains(shader, "n_ws = normalize(n_ws + rock_bump * rock);",
-                       hint: "Runsen sind Form: sie kippen die Normale (Befund #174 „Fels glatt\")")
-        let bodies = try shader.captures(
-            pattern: "float rock_joint(?:_face|s)\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\}")
-        XCTAssertEqual(bodies.count, 2, "rock_joint_face und rock_joints gefunden")
-        for body in bodies {
-            XCTAssertFalse(body.contains("fract("), "Klüftung ohne periodisches fract-Gitter")
-            XCTAssertFalse(body.contains("floor("), "Klüftung ohne Zellraster")
-        }
-        XCTAssertTrue(bodies.joined().contains("material_joint_stretch"),
-                      "Runsen in Fallrichtung gestreckt")
-        XCTAssertTrue(bodies.joined().contains("material_joint_gully_gain"),
-                      "Klüftung an Rinnen/Rippen gekoppelt")
+        // Präprozessor-Zeilen stehen nicht in der Code-Sicht der Probe.
+        XCTAssertTrue(try RepoSource.file("game/shaders/terrain.gdshader")
+                        .contains("\n#include \"res://shaders/scan_material.gdshaderinc\"\n"),
+                      "Scan-Materialien als eigenes Include (#237)")
+        assertContains(shader, "scan_triplanar(SCAN_ROCK_BEDDED, material_pos,",
+                       hint: "Fels triplanar aus dem Scan")
+        assertContains(shader, "scan_triplanar(SCAN_SCREE, material_pos,",
+                       hint: "Schutt aus dem Scan")
+        assertContains(shader, "n_ws = normalize(n_ws + rock_bump * rock + scree_bump * scree);",
+                       hint: "Die Scan-Normale ist Form: sie kippt die Normale")
+        XCTAssertFalse(shader.contains("rock_joints("), "Rausch-Klüftung ist durch die Scans ersetzt")
+        let include = try RepoSource.file("game/shaders/scan_material.gdshaderinc")
+        XCTAssertTrue(include.contains("uniform sampler2DArray scan_albedo"),
+                      "Scans als Texture2DArray")
+        XCTAssertFalse(include.contains("texture(scan_"),
+                       "Scan-Abfragen nur über textureGrad (laufen hinter Verzweigungen je Pixel)")
     }
 
     /// Review zu #174: zwei Fallen, die Fels, Schutt, Spalten und Kräuselung

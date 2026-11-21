@@ -8,3 +8,11 @@ License 2.0 (https://mozilla.org/MPL/2.0/):
   (GLSL port of the same filter, used by game/shaders/terrain.gdshader)
 - docs/references/runevision-erosion/shader_buffer_Buffer_A.glsl
   (original GLSL, copyright (c) 2025 Rune Skovbo Johansen)
+
+Third-party assets in the public domain (CC0 1.0 Universal, no attribution
+required; listed for provenance):
+
+- game/assets/materials/scan_albedo.png, game/assets/materials/scan_normal.png
+  (packed by scripts/look/pack_scan_materials.py from CC0 scans by Poly Haven,
+  https://polyhaven.com, and ambientCG, https://ambientcg.com; sources and
+  SHA-256 in game/assets/materials/MANIFEST.md)
