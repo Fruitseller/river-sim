@@ -1122,13 +1122,14 @@ Schattenbäume, im Diorama 2.000, 700, 16.500 und 19.000).
 **Leistung.** Vorläufig auf `origin/main` ohne #235 gemessen, M4 Max,
 `balanced`, maximiert auf dem eingebauten Bildschirm (Viewport 3456×2104),
 `scripts/timelapse-timing.sh` interleaved alt ↔ neu, je 3 Läufe, Zeitraffer
-60 J./s, Median über die Läufe, 21. November 2026:
+60 J./s, Median über die Läufe, 21. November 2026, Endfassung dieses Stands
+(in `nah` lief bei einem Lauf von neu ein fremdes Godot mit):
 
 | Kamera | alt Mittel / p95 | neu Mittel / p95 |
 | --- | ---: | ---: |
-| `nah` (17,10; 16; 0; 0,55) | 18,5 / 19,8 ms | 18,6 / 19,9 ms |
-| `tal` (Matrix `detail`: −12,−25; 42; 0,7; 0,85) | 18,0 / 19,2 ms | 17,8 / 18,8 ms |
-| `diorama` (0,0; 150; 0; 0,62) | 13,0 / 14,5 ms | 12,9 / 13,8 ms |
+| `nah` (17,10; 16; 0; 0,55) | 18,4 / 19,6 ms | 18,5 / 19,4 ms |
+| `tal` (Matrix `detail`: −12,−25; 42; 0,7; 0,85) | 17,9 / 19,0 ms | 17,8 / 18,7 ms |
+| `diorama` (0,0; 150; 0; 0,62) | 13,0 / 14,1 ms | 13,0 / 13,9 ms |
 
 Der Unterschied liegt im Rauschen; bei 3456×2104 ist `nah` laut #235
 GPU-gebunden, zusätzliche GPU-Arbeit wäre also zu sehen. Das Budget von
