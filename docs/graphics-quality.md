@@ -1337,3 +1337,17 @@ Nachmessung auf dem Endstand stehen in `docs/zielbild-measurements.md`
 
 **Offene Bildpunkte** (großer See bei flachem Blick milchig, Fels hell und
 glatt gegenüber den Vorlagen) und die offenen Sim-Reste: `docs/zielbild-measurements.md` § „Vorher/Nachher-Bögen" und `ROADMAP.md` § Offene Punkte.
+
+## Gelände-Verfeinerung auf der GPU (#238)
+
+Seit November 2026 liefert, wo ein `RenderingDevice` da ist, die
+Gelände-Verfeinerung die Render-Verschiebung: Compute-Shader rechnen aus der
+Sim-Höhe eine Fläche in vierfacher Auflösung (2880²) und Karten für Abtrag,
+Ablagerung, Abfluss und Schutt (`game/scripts/TerrainAmplifier.gd`,
+`game/shaders/amplify/`). Sie schreibt in den Vertrag der Backtextur aus dem
+Abschnitt „Render-Verschiebung von Rinnen und Graten“ oben, Terrain-Shader,
+Pinselkuppel, Raycast und Kameraziel lesen unverändert. Der Back-Pass
+(`relief_bake.gdshader`) bleibt der Rückfall für den Compatibility-Renderer,
+headless und die Stufe `performance`; der Erosionsfilter je Pixel entfällt
+mit Verfeinerung. Aufbau, Bindung an die Sim, Stabilität, Kosten und Bilder:
+[docs/look/d-amplify/README.md](look/d-amplify/README.md).
