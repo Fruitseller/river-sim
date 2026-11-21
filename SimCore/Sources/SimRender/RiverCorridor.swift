@@ -116,6 +116,15 @@ enum CorridorProfile {
     /// Gelände (gemessen n = 384: 45 % gehobene Kanten ohne Suche).
     static let edgeSearchCells = 2.5
     static let edgeSearchStep = 0.25
+    /// Der Fuß bleibt innerhalb der Schutzmaske (`WaterProtectMask`: Band-
+    /// Deckung bis Halbbreite + 0,5 plus `WaterRender.protectSeamCells` Saum),
+    /// mit diesem Abstand (Zellen) davor. Dort ist das Gelände unverschoben
+    /// (kein Relief, und Strang D sagt für die verfeinerte Fläche dort exakt
+    /// null Abweichung zu, #238). `BankSurface` gilt damit am ganzen Korridor.
+    static let maskMarginCells = 0.25
+    static func maxReachCells(halfWidthCells hw: Double) -> Double {
+        hw + 0.5 + Double(WaterRender.protectSeamCells) - maskMarginCells
+    }
     /// Deckel über der höchsten Geländehöhe im Querschnitt (Welt-Y).
     static let lidClearance = 0.02
 
@@ -172,19 +181,20 @@ enum CorridorProfile {
             let g = gamma(side)
             let bar = max(0, -g)
             let shore = ww * (shoreFraction + shoreBendShift * g)
-            var edge = ww + bankBase * (1 - bankBendShare * g)
+            let reach = maxReachCells(halfWidthCells: hw)
+            var edge = min(ww + bankBase * (1 - bankBendShare * g), reach - vis * footCells)
             let shoreY = water(side * shore)
             var ground = surface(side * edge)
             if vis > 0, ground < shoreY + freeboard {
                 var d = edgeSearchStep
-                while d <= edgeSearchCells + 1e-9 {
+                while d <= edgeSearchCells + 1e-9, edge + d * vis + vis * leveeFootCells <= reach {
                     let g2 = surface(side * (edge + d * vis))
                     if g2 >= shoreY + freeboard { edge += d * vis; ground = g2; break }
                     d += edgeSearchStep
                 }
             }
             let top = max(ground, shoreY + freeboard)
-            let footAt = edge + vis * (top > ground + 1e-9 ? leveeFootCells : footCells)
+            let footAt = min(edge + vis * (top > ground + 1e-9 ? leveeFootCells : footCells), reach)
             let footY = surface(side * footAt)
             // Böschung: am Prallhang steil (der Abfall liegt nah am Wasser,
             // oben eine Schulter), am Gleithang flach (Kiesbank).

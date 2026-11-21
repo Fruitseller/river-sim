@@ -29,6 +29,16 @@ final class RiverCorridorTests: XCTestCase {
         XCTAssertGreaterThan(s.bar[k - 1 - top - 1], 0.5, "Kiesbank am Gleithang")
         XCTAssertEqual(s.bar[top + 1], 0, "kein Kies am Prallhang")
         XCTAssertGreaterThanOrEqual(s.lid, 1.05 + CorridorProfile.lidClearance - 1e-12)
+        // Der Fuß liegt in der Schutzmaske (Naht zur verfeinerten Fläche, #238).
+        for c in [0, k - 1] {
+            XCTAssertLessThanOrEqual(abs(s.offsets[c]), CorridorProfile.maxReachCells(halfWidthCells: 2) + 1e-9)
+        }
+        let wideBar = CorridorProfile.section(halfWidthCells: 3.2, visible: 1, waterLeft: 1, waterRight: 1,
+                                              bend: 1, riffle: 0, cellSize: cs, surface: flat(0.9))
+        for c in [0, k - 1] {
+            XCTAssertLessThanOrEqual(abs(wideBar.offsets[c]), CorridorProfile.maxReachCells(halfWidthCells: 3.2) + 1e-9,
+                                     "Ufersuche und Uferwall bleiben in der Schutzmaske")
+        }
         // Breiter = tiefer, Furt = flacher, unsichtbar = flach.
         let wide = CorridorProfile.section(halfWidthCells: 3, visible: 1, waterLeft: 1, waterRight: 1,
                                            bend: 0, riffle: 0, cellSize: cs, surface: flat(1.05))
@@ -63,7 +73,7 @@ final class RiverCorridorTests: XCTestCase {
         let size = Int(ProcessInfo.processInfo.environment["RS_CORRIDOR_N"] ?? "384") ?? 384
         let t = agedWorld(renderConfig(n: size), years: 4000)
         let render = RenderState(geometryMode: true)
-        _ = frameOverlays(render, t)
+        let overlays = frameOverlays(render, t)
         let mesh = render.riverRibbonMesh
         let c = mesh.corridor
         let k = CorridorProfile.columns, top = CorridorProfile.topColumn, sh = CorridorProfile.shoreColumn
@@ -78,7 +88,7 @@ final class RiverCorridorTests: XCTestCase {
 
         let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world / 2
         let bank = BankSurface(h: t.h, n: n, renderGrid: n, hscale: RenderContract.heightScale)
-        var sections = 0, bedAbove = 0, waterAbove = 0, pierced = 0, lifted = 0
+        var sections = 0, bedAbove = 0, waterAbove = 0, pierced = 0, lifted = 0, outsideMask = 0
         var maxPierce = 0.0
         for start in stride(from: 0, to: c.vertices.count, by: k) {
             guard c.colors[start].w > 0.05 else { continue }   // sichtbare Querschnitte
@@ -102,8 +112,12 @@ final class RiverCorridorTests: XCTestCase {
             // gezählt werden die Uferkanten, die als Uferwall darüber stehen.
             for e in [start, start + k - 1] {
                 let v = c.vertices[e]
-                let g = bank.height((Double(v.x) + half) / cs, (Double(v.z) + half) / cs)
-                XCTAssertEqual(Double(v.y), g, accuracy: 1e-4, "Korridor-Fuß nicht auf dem Gelände")
+                let gx = (Double(v.x) + half) / cs, gz = (Double(v.z) + half) / cs
+                XCTAssertEqual(Double(v.y), bank.height(gx, gz), accuracy: 1e-4, "Korridor-Fuß nicht auf dem Gelände")
+                // Naht zur verfeinerten Fläche (#238): der Fuß liegt in der
+                // Schutzmaske, dort ist das Gelände unverschoben.
+                let ci = min(max(Int(gx.rounded()), 0), n - 1), cj = min(max(Int(gz.rounded()), 0), n - 1)
+                if overlays.protectMask[cj * n + ci] == 0 { outsideMask += 1 }
             }
             for e in [start + top, start + k - 1 - top] {
                 let v = c.vertices[e]
@@ -117,11 +131,12 @@ final class RiverCorridorTests: XCTestCase {
               + "ribbonVerts=\(mesh.vertices.count) presence>0=\(mesh.profile.filter { $0.x > 0 }.count) "
               + "n=\(n) cs=\(cs)")
         print("corridor sections=\(sections) bedAbove=\(bedAbove) waterAbove=\(waterAbove) "
-              + "pierced=\(pierced) maxPierce=\(maxPierce) liftedEdges=\(lifted)")
+              + "pierced=\(pierced) maxPierce=\(maxPierce) liftedEdges=\(lifted) outsideMask=\(outsideMask)")
         XCTAssertGreaterThan(sections, 200)
         XCTAssertEqual(bedAbove, 0, "Bett über der Uferkante")
         XCTAssertEqual(waterAbove, 0, "Wasser über dem Ufer")
         XCTAssertEqual(pierced, 0, "Gelände oder Korridor über dem Deckel")
+        XCTAssertEqual(outsideMask, 0, "Korridor-Fuß außerhalb der Schutzmaske (Naht zu #238)")
         // Die Wasserfläche des Bands liegt unter dem Deckel ihres Stützpunkts.
         for (v, p) in zip(mesh.vertices, mesh.profile) where p.x > 0 {
             XCTAssertLessThanOrEqual(v.y, p.y + 1e-5, "Wasserfläche über dem Deckel")
