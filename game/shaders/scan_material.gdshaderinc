@@ -33,6 +33,12 @@ const float SCAN_AMPLIFY_ROCK = 0.6;   // Abtrag → Fels aus Grund und Bewuchs
 const float SCAN_AMPLIFY_SCREE = 0.7;  // Ablagerung → Fels wird Schutt
 const float SCAN_AMPLIFY_WET = 0.35;   // Abfluss → Abdunklung
 
+// Karten aus #238, auf 0 … 1 geklemmt (HDR-Karten dürfen keine negativen
+// Gewichte erzeugen).
+vec3 scan_amplify_at(vec2 uv) {
+	return clamp(texture(amplify_maps, uv).rgb, vec3(0.0), vec3(1.0));
+}
+
 const float SCAN_ROCK_BEDDED = 0.0; // Fels mit Bankung (Sediment)
 const float SCAN_ROCK_JOINTED = 1.0; // Fels zerklüftet, blockig
 const float SCAN_SCREE = 2.0;        // Schutt, eckig
@@ -58,7 +64,7 @@ const float SCAN_GROUND_NORMAL = 0.7;
 // Schichtung: Bänder nach Höhe (Welt-Y), großflächig verbogen, in Ton und
 // Normale; Abstand in Welteinheiten.
 const float SCAN_STRATA_SPACING = 0.35;
-const float SCAN_STRATA_WARP = 0.55;
+const float SCAN_STRATA_WARP = 0.25;
 const float SCAN_STRATA_TONE = 0.45;
 
 struct ScanSample {
@@ -83,7 +89,10 @@ void scan_fetch(float layer, vec2 uv, vec2 gx, vec2 gy, float w, inout vec4 alb,
 }
 
 // Triplanar in einem Maßstab. Die Tangenten-Normale geht je Ebene entlang
-// ihrer beiden Achsen in die Welt (wie die frühere Klüftung).
+// ihrer beiden Achsen in die Welt. Auf den Wänden läuft v gegen Welt-Y
+// (Bildzeilen zählen nach unten), damit der Scan aufrecht steht: Bankung
+// und Überhänge liegen dann richtig herum. OpenGL-Normalen zeigen mit Grün
+// bildaufwärts, also nach +Y an der Wand und nach −Z in der Draufsicht.
 ScanSample scan_triplanar(float layer, vec3 p, vec3 w, vec3 dpdx, vec3 dpdy, float tile) {
 	float s = 1.0 / tile;
 	vec4 a = vec4(0.0);
@@ -91,13 +100,15 @@ ScanSample scan_triplanar(float layer, vec3 p, vec3 w, vec3 dpdx, vec3 dpdy, flo
 	float rough = 0.0;
 	if (w.x > 0.0) {
 		vec4 al = vec4(0.0), nr = vec4(0.0);
-		scan_fetch(layer, p.zy * s, dpdx.zy * s, dpdy.zy * s, 1.0, al, nr);
+		vec2 f = vec2(1.0, -1.0) * s;
+		scan_fetch(layer, p.zy * f, dpdx.zy * f, dpdy.zy * f, 1.0, al, nr);
 		vec2 t = nr.rg * 2.0 - 1.0;
 		a += al * w.x; bump += vec3(0.0, t.y, t.x) * w.x; rough += nr.b * w.x;
 	}
 	if (w.z > 0.0) {
 		vec4 al = vec4(0.0), nr = vec4(0.0);
-		scan_fetch(layer, p.xy * s, dpdx.xy * s, dpdy.xy * s, 1.0, al, nr);
+		vec2 f = vec2(1.0, -1.0) * s;
+		scan_fetch(layer, p.xy * f, dpdx.xy * f, dpdy.xy * f, 1.0, al, nr);
 		vec2 t = nr.rg * 2.0 - 1.0;
 		a += al * w.z; bump += vec3(t.x, t.y, 0.0) * w.z; rough += nr.b * w.z;
 	}
@@ -105,7 +116,7 @@ ScanSample scan_triplanar(float layer, vec3 p, vec3 w, vec3 dpdx, vec3 dpdy, flo
 		vec4 al = vec4(0.0), nr = vec4(0.0);
 		scan_fetch(layer, p.xz * s, dpdx.xz * s, dpdy.xz * s, 1.0, al, nr);
 		vec2 t = nr.rg * 2.0 - 1.0;
-		a += al * w.y; bump += vec3(t.x, 0.0, t.y) * w.y; rough += nr.b * w.y;
+		a += al * w.y; bump += vec3(t.x, 0.0, -t.y) * w.y; rough += nr.b * w.y;
 	}
 	ScanSample r;
 	r.albedo = a.rgb / SCAN_ALBEDO_MEAN;
@@ -124,17 +135,19 @@ ScanSample scan_top(float layer, vec2 xz, vec3 dpdx, vec3 dpdy, float tile) {
 	ScanSample r;
 	r.albedo = al.rgb / SCAN_ALBEDO_MEAN;
 	r.height = al.a;
-	r.bump = vec3(t.x, 0.0, t.y);
+	r.bump = vec3(t.x, 0.0, -t.y);
 	r.rough = nr.b;
 	return r;
 }
 
 // Übergang nach Höhe zweier Materialien (Höhe aus dem Scan): bei Gewicht
-// `t` von B gewinnt, wer höher steht; `contrast` schärft die Kante.
+// `t` von B gewinnt, wer höher steht; `contrast` schärft die Kante. An den
+// Enden exakt (t = 0 → 0, t = 1 → 1), dazwischen stetig: die Höhe
+// verschiebt nur die Mitte (Faktor 4t(1 − t)), sonst sprang ein Gewicht von
+// 1 % an einem Höhenunterschied auf die Hälfte (Review Gemini, PR #237).
 float scan_height_blend(float ha, float hb, float t, float contrast) {
-	float a = ha + (1.0 - t) * 1.0;
-	float b = hb + t * 1.0;
-	return clamp((b - a) * contrast + 0.5, 0.0, 1.0);
+	float shift = (hb - ha) * 2.0 * t * (1.0 - t);
+	return clamp((t - 0.5 + shift) * contrast + 0.5, 0.0, 1.0);
 }
 
 // Schichtung: Ton je Bank (−1 … 1) und Bankfuge (0 … 1), aus Welt-Y, großflächig

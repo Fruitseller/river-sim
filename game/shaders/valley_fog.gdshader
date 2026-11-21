@@ -46,6 +46,11 @@ const float SEA_OPACITY = 0.35;     // über dem Meer nur ein Hauch
 const float LAND_OPACITY = 0.65;
 const float SMOOTH_TEXELS = 11.0;   // Abstand der Taps (±22 Zellen)
 
+// Halbe Kantenlänge der Lage relativ zur Welt (ValleyFog: 1,6 × world_size);
+// davor läuft der Meeresdunst aus, statt als Rechteck zu enden.
+const float EDGE_FADE_LO = 0.55;
+const float EDGE_FADE_HI = 0.78;
+
 varying vec3 v_world;
 varying float v_sea; // 1 über dem Meer
 
@@ -76,8 +81,10 @@ void vertex() {
 	float texel = SMOOTH_TEXELS / max(grid_n, 2.0);
 	for (int j = -2; j <= 2; j++) {
 		for (int i = -2; i <= 2; i++) {
-			vec2 q = clamp(uv + vec2(float(i), float(j)) * texel, vec2(0.0), vec2(1.0));
-			lo = min(lo, max(textureLod(height_tex, q, 0.0).r * hscale, sea_y));
+			vec2 t = uv + vec2(float(i), float(j)) * texel;
+			vec2 q = clamp(t, vec2(0.0), vec2(1.0));
+			float in_map = step(0.0, t.x) * step(t.x, 1.0) * step(0.0, t.y) * step(t.y, 1.0);
+			lo = min(lo, max(textureLod(height_tex, q, 0.0).r * hscale * in_map, sea_y));
 		}
 	}
 	float land = smoothstep(sea_y + 0.05, sea_y + 0.6, lo);
@@ -93,7 +100,10 @@ void fragment() {
 		discard;
 	}
 	vec2 uv = world_uv(v_world.xz);
-	float ground = max(textureLod(height_tex, clamp(uv, vec2(0.0), vec2(1.0)), 0.0).r * hscale, sea_y);
+	// Außerhalb der Karte offenes Meer (wie ocean.gdshader), nicht der
+	// Randtexel der Höhenkarte.
+	float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+	float ground = max(textureLod(height_tex, clamp(uv, vec2(0.0), vec2(1.0)), 0.0).r * hscale * inside, sea_y);
 	float thick = v_world.y - ground;
 	float cover = smoothstep(0.0, THICK_FULL * (1.0 + fog_layer), thick);
 	cover *= cover;
@@ -108,7 +118,10 @@ void fragment() {
 	// Nahe der Kamera aus (sonst stünde der Nebel als Fläche vor dem Bild).
 	float d = length(VERTEX);
 	float near = smoothstep(6.0, 22.0, d);
-	near *= mix(0.35, 1.0, smoothstep(fog_ref_dist * 0.75, fog_ref_dist * 1.35, d));
+	float ref = max(fog_ref_dist, 1.0);
+	near *= mix(0.35, 1.0, smoothstep(ref * 0.75, ref * 1.35, d));
+	float edge = max(abs(v_world.x), abs(v_world.z)) / max(world_size, 1e-4);
+	near *= 1.0 - smoothstep(EDGE_FADE_LO, EDGE_FADE_HI, edge);
 	ALPHA = cover * wisps * opacity * fog_strength * near;
 	ALBEDO = fog_color;
 }

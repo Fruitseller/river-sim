@@ -40,10 +40,13 @@ static func make_camera_attributes(quality: String) -> CameraAttributesPractical
 	a.dof_blur_near_enabled = enabled(quality)
 	a.dof_blur_far_enabled = enabled(quality)
 	if enabled(quality):
+		# Billigste Form: Box-Bokeh, niedrige Qualität, ohne Jitter. Hexagon
+		# in mittlerer Qualität mit Jitter kostete gemessen 3,2 ms je Bild bei
+		# 3456×2104 (Zeitraffer, Detail-Kamera, docs/look/c-materials/).
 		RenderingServer.camera_attributes_set_dof_blur_bokeh_shape(
-			RenderingServer.DOF_BOKEH_HEXAGON)
+			RenderingServer.DOF_BOKEH_BOX)
 		RenderingServer.camera_attributes_set_dof_blur_quality(
-			RenderingServer.DOF_BLUR_QUALITY_MEDIUM, true)
+			RenderingServer.DOF_BLUR_QUALITY_LOW, false)
 	return a
 
 ## Zielwerte der Tiefenschärfe für Fokusabstand `focus` (Kamera → Fokuspunkt),
@@ -65,11 +68,16 @@ static func dof_for(focus: float, cam_dist: float, pitch: float) -> Dictionary:
 ## Meer). Stärke nach Kameraabstand: in der Nahsicht aus, damit `nah` keinen
 ## Kontrast verliert (Look-Iterationen 9 und 17 verloren mit Dunst überall).
 const FOG_LAYERS := 2
-const FOG_GRID := 160
+const FOG_GRID := 96
 const FOG_DIST_LO := 18.0
 const FOG_DIST_HI := 60.0
 ## Sonnenfarbe, aufgehellt: der Nebel streut das warme Licht.
 const FOG_COLOR := Color(1.05, 1.0, 0.92)
+## Zeichenreihenfolge der transparenten Flächen: Nebel nach den Flussbändern
+## (Priorität 0), Wolkenkörper über den Kämmen danach (Main.gd hebt sie auf
+## CLOUD_PRIORITY), die Pinselkuppel zuletzt (RENDER_PRIORITY_MAX).
+const FOG_PRIORITY := 1
+const CLOUD_PRIORITY := 2
 
 var attrs: CameraAttributesPractical
 var fog: Node3D
@@ -102,7 +110,7 @@ func make_valley_fog(quality: String, world_size: float, hscale: float, grid_n: 
 		mat.shader = shader
 		# Nach den Flussbändern (ebenfalls transparent) zeichnen: sonst lägen
 		# die Bänder auf dem Nebel statt darunter.
-		mat.render_priority = 1
+		mat.render_priority = FOG_PRIORITY
 		mat.set_shader_parameter("world_size", world_size)
 		mat.set_shader_parameter("grid_n", float(grid_n))
 		mat.set_shader_parameter("hscale", hscale)
@@ -120,23 +128,24 @@ func make_valley_fog(quality: String, world_size: float, hscale: float, grid_n: 
 func fog_materials() -> Array[ShaderMaterial]:
 	return _fog_mats
 
-## Je Bild aus Main._update_camera: `focus_point` auf der sichtbaren Fläche.
+## Je Bild aus Main._update_camera: `focus_point` auf der sichtbaren Fläche,
+## `u_time` die Shader-Uhr von Main (steht im Leerlauf, läuft im Zeitraffer
+## schneller, ist in Aufnahmen gepinnt) wie für Wasser und Wolken.
 func update(cam: Camera3D, focus_point: Vector3, cam_dist: float, pitch: float,
-		delta: float) -> void:
-	if fog != null and fog.visible:
-		var strength := smoothstep(FOG_DIST_LO, FOG_DIST_HI, cam_dist)
-		var t := Time.get_ticks_msec() * 0.001
-		for mat in _fog_mats:
-			mat.set_shader_parameter("fog_strength", strength)
-			mat.set_shader_parameter("u_time", t)
-			mat.set_shader_parameter("fog_ref_dist", cam.global_position.distance_to(focus_point))
-	if not attrs.dof_blur_far_enabled:
-		return
+		delta: float, u_time: float) -> void:
 	var f := cam.global_position.distance_to(focus_point)
 	if _focus < 0.0 or delta <= 0.0:
 		_focus = f
 	else:
 		_focus = lerpf(_focus, f, 1.0 - exp(-delta / FOCUS_SMOOTH_SECONDS))
+	if fog != null and fog.visible:
+		var strength := smoothstep(FOG_DIST_LO, FOG_DIST_HI, cam_dist)
+		for mat in _fog_mats:
+			mat.set_shader_parameter("fog_strength", strength)
+			mat.set_shader_parameter("u_time", u_time)
+			mat.set_shader_parameter("fog_ref_dist", _focus)
+	if not attrs.dof_blur_far_enabled:
+		return
 	var d := dof_for(_focus, cam_dist, pitch)
 	attrs.dof_blur_near_distance = d["near"]
 	attrs.dof_blur_near_transition = d["near_transition"]

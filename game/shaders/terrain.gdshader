@@ -425,24 +425,6 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.5 + 0.5;
 }
 
-// Dasselbe Wertrauschen mit analytischer Ableitung: (Wert 0 … 1, d/dp.x,
-// d/dp.y), aus denselben vier Zellwerten. Die Felsrunsen bekommen daraus ihre
-// Normale, ohne das Rauschen ein zweites Mal abzufragen.
-vec3 vnoise_d(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	vec2 u = f * f * (3.0 - 2.0 * f);
-	vec2 du = 6.0 * f * (1.0 - f);
-	float a = vhash(i);
-	float b = vhash(i + vec2(1.0, 0.0));
-	float c = vhash(i + vec2(0.0, 1.0));
-	float d = vhash(i + vec2(1.0, 1.0));
-	float k4 = a - b - c + d;
-	float v = a + (b - a) * u.x + (c - a) * u.y + k4 * u.x * u.y;
-	vec2 g = du * vec2(b - a + k4 * u.y, c - a + k4 * u.x);
-	return vec3(v * 0.5 + 0.5, g * 0.5);
-}
-
 // Materialrauschen in Weltkoordinaten. Die triplanare Mischung hält die Körnung
 // auf Steilwänden rund statt die Draufsicht senkrecht über den Fels zu ziehen.
 float fbm(vec2 p) {
@@ -805,7 +787,7 @@ void fragment() {
 	// hier kontinuierlich in Weltkoordinaten und bleiben damit unabhängig vom
 	// Render-Gitter.
 	vec4 cover = cover_at(v_uv); // vor der Verzweigung: implizite Mip-Stufe
-	vec3 amp = texture(amplify_maps, v_uv).rgb;
+	vec3 amp_maps = scan_amplify_at(v_uv);
 	// UNGESTÖRTE Makro-Normale sichern, bevor Runsen und Mikro-Normale sie
 	// verändern: das Kronendach neigt seine Kronen gegen sie, ohne
 	// Mikro-Rauschen (Review zu #121).
@@ -837,10 +819,10 @@ void fragment() {
 		float bare_rest = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
 		rock += min(bare_rest, rock * clamp(cavity, 0.0, 1.0) * material_ridge_rock_gain);
 		// Karten der Verfeinerung (#238, scan_material.gdshaderinc), ohne D schwarz.
-		float amp_slid = rock * amp.g * SCAN_AMPLIFY_SCREE;
+		float amp_slid = rock * amp_maps.g * SCAN_AMPLIFY_SCREE;
 		rock -= amp_slid;
 		scree += amp_slid;
-		float amp_bare = amp.r * SCAN_AMPLIFY_ROCK * (1.0 - cold);
+		float amp_bare = amp_maps.r * SCAN_AMPLIFY_ROCK * (1.0 - cold);
 		float amp_free = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
 		rock += amp_bare * (amp_free + vegetation * 0.5);
 		vegetation *= 1.0 - amp_bare * 0.5;
@@ -917,14 +899,12 @@ void fragment() {
 		                    : 0.0;
 		float tri_large = 0.5;
 		float top_large = 0.5;
-		float tri_grain = 0.5;
 		float top_grain = 0.5;
 		float wind_snow = 0.5;
 		if (material_enabled) {
 			tri_large = triplanar_fbm(material_pos * 0.19, n_ws);
 			top_large = fbm(wp * 0.16);
 			if (material_fade > 0.002) {
-				tri_grain = triplanar_fbm(material_pos * 0.82 + vec3(7.0, 13.0, 3.0), n_ws);
 				top_grain = fbm(wp * 0.72 + vec2(31.0, 11.0));
 				wind_snow = fbm(wp * vec2(0.25, 0.55) + vec2(4.0, 19.0));
 			}
@@ -952,7 +932,7 @@ void fragment() {
 		               * mix(0.92, 1.08, top_grain * material_fade);
 		vec3 stony = vec3(0.17, 0.167, 0.16)
 		           * mix(0.86, 1.10, tri_large)
-		           * mix(0.90, 1.10, mix(0.5, tri_grain, material_fade));
+		           * mix(0.90, 1.10, mix(0.5, top_grain, material_fade));
 		vec3 ground_color = mix(dry_grass, stony, smoothstep(veg_alt_lo, veg_alt_hi, hval));
 		ground_color = mix(ground_color, lush_color, valley * 0.7);
 
@@ -1047,7 +1027,7 @@ void fragment() {
 			vec2 side = vec2(-fall.y, fall.x);
 			float medial = smoothstep(0.62, 0.80, vnoise(vec2(dot(wp, side) * 1.3, dot(wp, fall) * 0.12)));
 			float moraine = clamp(margin + medial * 0.6, 0.0, 1.0) * ice_share;
-			cold_color = mix(cold_color, vec3(0.30, 0.29, 0.27) * mix(0.85, 1.1, tri_grain), moraine * 0.85);
+			cold_color = mix(cold_color, vec3(0.30, 0.29, 0.27) * mix(0.85, 1.1, top_grain), moraine * 0.85);
 		}
 
 		// Die CPU liefert die Gewichte schon hierarchisch abgeschwächt
@@ -1094,8 +1074,7 @@ void fragment() {
 			terr = macro_color;
 		}
 		// Scan-Normale als Form, mit dem Fels- bzw. Schuttanteil.
-		n_ws = normalize(n_ws + rock_bump * rock);
-		n_ws = normalize(n_ws + scree_bump * scree);
+		n_ws = normalize(n_ws + rock_bump * rock + scree_bump * scree);
 		// Mikro-Normale aus drei Weltachsen. Ein einfacher Noise-Sample pro Achse
 		// genügt hier; drei weitere vollständige triplanare FBMs kosteten pro Pixel
 		// 27 unnötige Noise-Auswertungen.
@@ -1110,7 +1089,7 @@ void fragment() {
 		}
 		terr *= 1.0 + min(det_shade, 0.0) * relief_detail_shade
 		      + max(det_shade, 0.0) * relief_detail_shade * 0.3;
-		terr *= 1.0 - amp.b * SCAN_AMPLIFY_WET;
+		terr *= 1.0 - amp_maps.b * SCAN_AMPLIFY_WET;
 		float crease = clamp(-det_ridge, 0.0, 1.0);
 		float moist = crease * (1.0 - smoothstep(veg_alt_lo, veg_alt_hi, hval));
 		terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0),
@@ -1131,7 +1110,7 @@ void fragment() {
 		land_roughness = mix(land_roughness, 0.84, vegetation);
 		land_roughness = mix(land_roughness, 0.78, cold);
 		land_roughness = mix(land_roughness, 0.34, ice_w);
-		land_roughness += (tri_grain - 0.5) * 0.08 * material_fade;
+		land_roughness += (top_grain - 0.5) * 0.08 * material_fade;
 		// Sand (#174 C/C2), EIN Block für beide Quellen: Strand (flache Küste in
 		// Reichweite der Brandung, bis an die Wasserlinie; SimRender.CoastMaterial)
 		// und frische Gleithang-Bänke mit Scroll-Rippen (SimRender.BarMaterial).
@@ -1158,8 +1137,12 @@ void fragment() {
 				sand_col = mix(sand_col, mix(water_beach_wet_color, water_beach_dry_color, dry), beach);
 			}
 			// Scan (#237): Strand als Sand, Flussbank als Kies, von oben.
-			ScanSample sa = scan_top(SCAN_SAND, wp, dpdx, dpdy, SCAN_SAND_TILE);
-			if (beach < 0.98) {
+			ScanSample sa;
+			sa.albedo = vec3(1.0); sa.bump = vec3(0.0); sa.rough = 0.0; sa.height = 0.5;
+			if (material_enabled) {
+				sa = scan_top(SCAN_SAND, wp, dpdx, dpdy, SCAN_SAND_TILE);
+			}
+			if (material_enabled && beach < 0.98) {
 				ScanSample gr = scan_top(SCAN_GRAVEL, wp, dpdx, dpdy, SCAN_GRAVEL_TILE);
 				float t = scan_height_blend(gr.height, sa.height, beach, 3.0);
 				sa.albedo = mix(gr.albedo, sa.albedo, t);
