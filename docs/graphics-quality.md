@@ -867,13 +867,20 @@ Studie keinen Hebel mehr.
   grüner als nach demselben Zeitraum im Zeitraffer. Der Pinsel setzt das
   Gedächtnis der ganzen Karte zurück, nicht nur unter dem Strich: nach einem
   Strich stehen alle nachwachsenden Auengürtel sofort wieder voll.
-- **Pinsel und Kamera.** Pinselring und Kameraziel liegen auf dem Dach
+- **Verschiebung im selben Bild.** Tauscht Main die Backtextur der
+Verschiebung (`_bake_relief`), rendert die neue erst nach dem Pass. Der Pass
+liest in diesem Bild deshalb den zuletzt gerenderten Stand
+(`relief_prev_tex`), sonst sprängen die Bäume beim Pinseln um einen
+veralteten Bake. Bei angehaltenem Renderloop (Leerlauf) läuft kein Pass.
+
+**Pinsel und Kamera.** Pinselring und Kameraziel liegen auf dem Dach
   (`_surface_y` addiert den Dachzuschlag), der Pinsel ändert weiter die
   Sim-Zelle darunter.
 - **Physik unverändert:** `simperf --hash` vorher und nachher
   `c5f16bebbb66a860` (M4 Max).
 
-**Instanzbäume entfallen ganz,** samt Auswahl „Vegetation" und Taste V
+**Instanzbäume entfallen ganz** (seit #236 wieder zurück, s.
+[Einzelbäume](#einzelbäume-236)), samt Auswahl „Vegetation" und Taste V
 (`TreeInstanceRenderer`, `treeInstanceBuffer`, `game/tests/tree_count.gd`,
 `HeightBands.bearsTrees`). Begründung aus der Matrix: Im richtigen Maßstab
 ist ein Baum 0,11 Einheiten breit, in der nächsten Matrixkamera (`grazing`,
@@ -1005,6 +1012,138 @@ overview, detail, grazing, backlight, coast, snow; `balanced`, maximiert
 [Seed 20](screenshots/graphics-quality/canopy-meadow-matrix-seed20.jpg).
 Leistung nicht neu gemessen: Die Maske kostet dasselbe, der Shader rechnet je
 Pixel eine Gewichtung mehr.
+
+## Einzelbäume (#236)
+
+Stand 21. November 2026. Der Wald besteht wieder aus Bäumen mit Stamm,
+Silhouette und eigenem Schatten. Das nimmt die Entscheidung aus #152 zurück
+(Abschnitt oben: „Instanzbäume entfallen ganz"). Deren Begründung stimmte für
+maßstäbliche Bäume; die Vorbilder `d` bis `f` überhöhen ihre Bäume aber in
+der Übersicht um ein Mehrfaches, und genau das tut jetzt das Kartensymbol.
+
+**Was wo steht.**
+- `game/scripts/ForestTrees.gd`: Knoten unter Main, legt einmal vier
+  indirekte MultiMeshes an und startet jedes Bild den Platzierungs-Pass.
+- `game/shaders/tree_place.glsl`: Compute-Shader, platziert die Bäume.
+- `game/shaders/tree.gdshader`: zeichnet sie (Form, Farbe, Gegenlicht).
+- `game/scripts/TreeMesh.gd`: die Baumformen, im Code erzeugt, kein Asset.
+- Einhängepunkte: `Main._setup_canopy` (anlegen, `tree_instances` am
+  Terrain-Material), `Main._forest_lift_at` (ohne Dach-Anhebung), im
+  Terrain-Shader `tree_instances` (keine Anhebung, keine gemalten Kronen,
+  übrig bleibt der dunkle Waldboden aus dem Fern-Mittelwert des Dachs).
+
+**Platzierung auf der GPU.** Jedes Bild geht `tree_place.glsl` ein festes,
+verwackeltes Gitter je Stufe um die Kamera ab. Je Gitterpunkt: Zufall aus
+einem Ganzzahl-Hash, Höhe und Render-Verschiebung aus denselben Texturen und
+Blenden wie `terrain.gdshader` (`height_tex`, `relief_tex`, je mit Vorgänger),
+Waldmaske `forest_tex` mit Vorgänger. Ein Baum steht, wo die Maske unter
+seiner ganzen Krone (Mitte, acht Randpunkte, vier auf halbem Weg: so
+überspannt auch ein überhöhter Baum keinen schmalen Fluss und keine Wand)
+seine eigene Schwelle übertrifft, und wächst über ein Fenster von 0,15 weich mit. Was steht und im
+Kamera-Frustum liegt, schreibt der Pass per `atomicAdd` in den Instanzpuffer
+eines von vier MultiMeshes und am Ende die Zahl in deren Kommando-Puffer
+(`RenderingServer.multimesh_allocate_data(…, use_indirect = true)`):
+
+| Liste | Form | Dreiecke | wofür |
+| --- | --- | ---: | --- |
+| Nadelbaum nah | Drehkörper, 4 Etagen, Astspitzen | 190 | im Bild, Abstand < 45 (je Baum ±15 %) |
+| Laubbaum nah | 6 Laubbüschel (Ikosaeder) | 490 | ebenso |
+| fern | Mischform grob | 54 | im Bild, weiter weg |
+| Schatten | Mischform grob, nur Schattenkarte | 54 | Abstand < 400, Frustum + 3 Einheiten |
+
+Die CPU schreibt keinen Transform. Sie lädt im Zeitraffer weiter nur die
+Waldmaske hoch und gibt dem Pass Kamera, Frustum und Blenden (224 Byte).
+Wald weicht Wasser und wächst nach, wie die Maske es vorgibt
+(`ForestCanopyMask.regrow`); die Bäume folgen mit der Overlay-Blende weich.
+
+**Kartensymbol.** Die Baumgröße wächst mit dem Abstand d zur Kamera:
+k(d) = 1,2 · (d / 16)^0,64, mindestens 1, höchstens 12. In `nah` (Abstand
+16) etwa maßstäblich (Baum ≈ 22 m hoch), im Diorama (≈ 150) gut fünffach.
+Damit der Wald nicht zuwächst, dünnt er mit 1/k^1,7 aus: Jeder Baum hat einen
+Rang und schrumpft weg, sobald Rang · k^1,7 gegen 1 geht (Fenster 0,7 … 1).
+Mit dem Exponenten 2 bliebe die Deckung genau gleich; 1,7 lässt die Kronen in
+der Ferne leicht überlappen, der Wald wirkt geschlossen. Die Ränge sind auf
+sieben Stufen verteilt (Stufe L: [2^−(L+1), 2^−L), Gitterabstand
+0,1 · 2^((L+1)/2)); eine Stufe wird nur in ihrem Fenster um die Kamera
+abgegangen, außerhalb zeigt sie keinen Baum. Weil die Größe stetig mit dem
+Abstand wächst und die Ausdünnung je Baum weich ist, gibt es keine Ringe,
+zwischen denen etwas springt. Der Formwechsel nah ↔ grob liegt je Baum
+gestreut zwischen 38 und 52 Einheiten; dort ist ein Baum rund 20 Bildpunkte
+hoch.
+
+**Arten.** Nadelbaum-Anteil wie im Kronendach (Höhenband `conifer_lo/hi`
+plus zwei Bestands-Rauschskalen), um 0,2 zum Nadelbaum verschoben, weil die
+Vorbilder `e` und `f` viel Nadelwald zeigen. Laubfarbe mit gelbgrünen
+Inseln, Größe 0,75 … 1,2 und Helligkeit ±25 % je Baum.
+
+**Drei Ringe aus dem Ticket, wie umgesetzt.** Nah echte Bäume (190 bzw. 490
+Dreiecke), in der Mitte und Ferne die grobe Mischform (54 Dreiecke, opak,
+ohne Alpha) statt Impostoren: bei 20 Bildpunkten trägt sie die Silhouette,
+kostet kaum mehr als zwei Dreiecke mit Alpha-Test und sortiert nicht. Das
+Kronendach bleibt als Waldboden unter allem, auch in der Ferne.
+
+**Schatten.** Nur die Schatten-Liste wirft Schatten, die sichtbaren Bäume
+nicht. So zeichnet jede Kaskade einen Baum mit 54 statt bis zu 490
+Dreiecken, und Werfer knapp außerhalb des Bilds sind trotzdem dabei.
+
+**Verworfen: Kacheln mit festen Instanzen** (erster Wurf, wie im Ticket
+beschrieben). MultiMesh je Kachel und Stufe, Standort und Größe im
+Vertex-Shader aus `INSTANCE_ID`, Kacheln ohne Wald per Hintergrund-Thread
+ausgeblendet. Gemessen bei 3456×2104 `balanced`, interleaved, je 3 Läufe:
+`nah` 19,0 → 68,2 ms Mittel, `tal` 18,6 → 50,0, `diorama` 13,5 → 25,5.
+Der Zähler sagte warum: im Hauptpass von `nah` 42 Mio. Primitive für rund
+20.000 sichtbare Bäume, mit Schatten 134 Mio. Jede Instanz läuft durch den
+Vertex-Shader, auch wenn ihr Baum ausgedünnt ist oder auf Wiese stünde, und
+jede Kaskade zeichnet sie noch einmal. Feinere Stufen, kleinere Kacheln,
+engere AABBs und ein grobes Schattenmodell brachten `nah` nur auf 41 ms. Der
+Compute-Pass verwirft diese Bäume, bevor gezeichnet wird.
+
+**Verschiebung im selben Bild.** Tauscht Main die Backtextur der
+Verschiebung (`_bake_relief`), rendert die neue erst nach dem Pass. Der Pass
+liest in diesem Bild deshalb den zuletzt gerenderten Stand
+(`relief_prev_tex`), sonst sprängen die Bäume beim Pinseln um einen
+veralteten Bake. Bei angehaltenem Renderloop (Leerlauf) läuft kein Pass.
+
+**Pinsel und Kamera.** Mit Bäumen hebt das Dach nicht mehr an; Pinselkuppel,
+Raycast und Kameraziel liegen auf dem Boden (`_forest_lift_at` = 0), die
+Bäume stehen durch die Kuppel hindurch.
+
+**Ohne RenderingDevice** (Compatibility-Renderer, headless, also auch alle
+Godot-Vertragstests in CI) gibt es keine Einzelbäume; Main zeigt dann das
+Kronendach von #152 wie bisher. `RS_NO_TREES` erzwingt das für A/B im selben
+Build. Diagnose: `RS_TREE_STATS=1` druckt alle 30 Bilder die Baumzahlen je
+Liste (in `nah` rund 4.000 Nadel-, 6.500 Laub-, 3.700 ferne und 18.000
+Schattenbäume, im Diorama 2.000, 700, 16.500 und 19.000).
+
+**Leistung.** Vorläufig auf `origin/main` ohne #235 gemessen, M4 Max,
+`balanced`, maximiert auf dem eingebauten Bildschirm (Viewport 3456×2104),
+`scripts/timelapse-timing.sh` interleaved alt ↔ neu, je 3 Läufe, Zeitraffer
+60 J./s, Median über die Läufe, 21. November 2026:
+
+| Kamera | alt Mittel / p95 | neu Mittel / p95 |
+| --- | ---: | ---: |
+| `nah` (17,10; 16; 0; 0,55) | 18,5 / 19,8 ms | 18,6 / 19,9 ms |
+| `tal` (Matrix `detail`: −12,−25; 42; 0,7; 0,85) | 18,0 / 19,2 ms | 17,8 / 18,8 ms |
+| `diorama` (0,0; 150; 0; 0,62) | 13,0 / 14,5 ms | 12,9 / 13,8 ms |
+
+Der Unterschied liegt im Rauschen; bei 3456×2104 ist `nah` laut #235
+GPU-gebunden, zusätzliche GPU-Arbeit wäre also zu sehen. Das Budget von
+33,3 ms p95 hält mit Abstand. Die verbindliche Messung folgt auf #235.
+
+**Bilder.** Kontaktbögen vorher | nachher | Vorbild:
+[Diorama](look/b-trees/kontaktbogen-diorama.jpg),
+[Tal](look/b-trees/kontaktbogen-tal.jpg),
+[Nah](look/b-trees/kontaktbogen-nah.jpg); Ausschnitte in voller Auflösung
+vorher | nachher: [Nah](look/b-trees/ausschnitt-nah.jpg),
+[Diorama](look/b-trees/ausschnitt-diorama.jpg). Kamerafahrt vom Diorama in
+die Nahsicht, Zeitraffer 60 J./s, Fahrt zurück:
+[Video](look/b-trees/kamerafahrt-zeitraffer.mp4), aufgenommen mit
+`scripts/look/tree-flight.sh <ausgabe.mp4>` (Ablauf in
+`game/studies/trees/TreeFlight.gd`). Bild-zu-Bild-Differenz im Zeitraffer
+(Mittel der Graustufen-Differenz bei 432 px Breite): mit Bäumen Median 0,48,
+p95 1,26; derselbe Ablauf mit `RS_NO_TREES` 0,46 und 1,10. Die periodischen
+Spitzen (alle 8 Bilder) kommen in beiden von den Flussbändern; während der
+Fahrten keine Spitze über dem 2,5-Fachen des Medians.
 
 ## Zeitraffer-Überblenden (#172)
 
