@@ -881,6 +881,8 @@ func _setup_scene() -> void:
 	add_child(atmosphere.make_valley_fog(render_quality, world_size, hscale, N, sea * hscale))
 	for mat in atmosphere.fog_materials():
 		height_field.mirror_to(mat)
+	for mat in Lighting.cloud_body_materials(cloud_bodies):
+		mat.render_priority = Atmosphere.CLOUD_PRIORITY
 
 	# Pinselkuppel: Bildschirm-Bänder (s. brush_dome.gdshaderinc). Erst der
 	# verdeckte Teil gedämpft ohne Tiefentest, darüber der sichtbare. Die
@@ -2214,7 +2216,7 @@ func _update_camera() -> void:
 	if atmosphere != null:
 		# Scharf bleibt der Pinselpunkt, sonst das Ziel in der Bildmitte.
 		var focus := brush_mi.position if brush_mi != null and brush_mi.visible else cam_target
-		atmosphere.update(cam, focus, cam_dist, cam_pitch, get_process_delta_time())
+		atmosphere.update(cam, focus, cam_dist, cam_pitch, get_process_delta_time(), u_time)
 
 func _unhandled_input(event: InputEvent) -> void:
 	last_activity_msec = Time.get_ticks_msec()

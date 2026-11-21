@@ -350,7 +350,7 @@ final class MaterialTests: XCTestCase {
                        hint: "Fels triplanar aus dem Scan")
         assertContains(shader, "scan_triplanar(SCAN_SCREE, material_pos,",
                        hint: "Schutt aus dem Scan")
-        assertContains(shader, "n_ws = normalize(n_ws + rock_bump * rock);",
+        assertContains(shader, "n_ws = normalize(n_ws + rock_bump * rock + scree_bump * scree);",
                        hint: "Die Scan-Normale ist Form: sie kippt die Normale")
         XCTAssertFalse(shader.contains("rock_joints("), "Rausch-Klüftung ist durch die Scans ersetzt")
         let include = try RepoSource.file("game/shaders/scan_material.gdshaderinc")
