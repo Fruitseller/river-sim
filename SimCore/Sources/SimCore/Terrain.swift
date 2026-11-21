@@ -6471,7 +6471,9 @@ public final class Terrain {
     /// (`belt.fixedStamp`, `belt.finishProfile`): ohne Migration schrumpft der
     /// Stempel-Radius auf die lokale Kanal-/Bankbreite (≈ 2–12 Zellen), sodass fast
     /// alle Läufe über den bestehenden `BeltSchedule` disjunkt parallel laufen —
-    /// bit-identisch zur seriellen Reihenfolge.
+    /// bit-identisch zur seriellen Reihenfolge. Bei aktiver Kopplung speist
+    /// `beltStamp` hier zusätzlich die steilen Strecken wandernder Läufe als
+    /// `part == 2` ein (nur Linien-Carve, daher `radius = 2,0`).
     private func beltStampBatch(_ items: [(ch: RiverChannel, part: Int)], dt: Double,
                                 ageAtEnd: Double, lockHere: Bool, buffers: BeltStampBuffers,
                                 forceSerial: Bool = false,
