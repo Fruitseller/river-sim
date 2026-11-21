@@ -2645,7 +2645,57 @@ Reichweite bleiben, wie sie sind.
 
 ### V.5 Abnahme: alt gegen neu, interleaved
 
-ABNAHME_TABELLE
+Flusstal-Bühne (`RS_STUDY_MODE=still|orbit|simulation`, je Lauf 10 s
+Bildabstände nach 2 s Vorlauf, Zeitraffer 60 J./s), alt = origin/main
+`0783abf` (nativ, PlaneMesh), neu = dieser Zweig (64er-Kacheln, MetalFX
+Spatial 0,67). Je Kamera und Betrieb drei Runden, A und B abwechselnd, die
+Reihenfolge je Runde gedreht. Je Lauf die GPU-Sperre; Läufe, in denen
+trotzdem ein fremdes Godot lief, sind gestrichen (daher teils 2 statt 3).
+Wert = Median über die Läufe, in ms.
+
+| Viewport | Kamera | Betrieb | alt Mittel | neu Mittel | Δ Mittel | alt p95 | neu p95 | Läufe alt/neu |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3456×2104 | `diorama` | Standbild | 18,5 | 11,9 | -36 % | 19,4 | 12,0 | 2/3 |
+| 3456×2104 | `diorama` | Kamerafahrt | 18,6 | 12,1 | -35 % | 18,8 | 12,2 | 3/3 |
+| 3456×2104 | `diorama` | Zeitraffer | 19,5 | 12,7 | -35 % | 21,2 | 14,2 | 3/3 |
+| 3456×2104 | `tal` | Standbild | 13,8 | 8,6 | -37 % | 13,8 | 8,7 | 3/2 |
+| 3456×2104 | `tal` | Kamerafahrt | 13,1 | 8,4 | -36 % | 13,6 | 8,6 | 3/3 |
+| 3456×2104 | `tal` | Zeitraffer | 15,2 | 9,6 | -37 % | 16,9 | 10,0 | 3/2 |
+| 3456×2104 | `nah` | Standbild | 16,9 | 10,1 | -40 % | 16,9 | 10,1 | 3/3 |
+| 3456×2104 | `nah` | Kamerafahrt | 17,6 | 10,3 | -41 % | 18,1 | 10,5 | 2/3 |
+| 3456×2104 | `nah` | Zeitraffer | 18,4 | 11,1 | -40 % | 19,8 | 12,1 | 2/3 |
+| 6016×3260 | `diorama` | Standbild | 39,3 | 23,0 | -41 % | 40,1 | 23,4 | 3/3 |
+| 6016×3260 | `diorama` | Kamerafahrt | 40,3 | 23,4 | -42 % | 41,1 | 23,8 | 3/3 |
+| 6016×3260 | `diorama` | Zeitraffer | 41,4 | 24,3 | -41 % | 48,2 | 26,0 | 3/3 |
+| 6016×3260 | `tal` | Standbild | 30,5 | 17,3 | -43 % | 31,2 | 17,7 | 3/3 |
+| 6016×3260 | `tal` | Kamerafahrt | 29,5 | 16,7 | -43 % | 30,4 | 17,3 | 3/3 |
+| 6016×3260 | `tal` | Zeitraffer | 33,2 | 19,0 | -43 % | 39,7 | 20,7 | 3/3 |
+| 6016×3260 | `nah` | Standbild | 38,9 | 21,2 | -46 % | 39,7 | 21,5 | 3/2 |
+| 6016×3260 | `nah` | Kamerafahrt | 40,4 | 21,9 | -46 % | 41,7 | 22,5 | 3/3 |
+| 6016×3260 | `nah` | Zeitraffer | 42,1 | 23,0 | -45 % | 48,4 | 24,5 | 3/3 |
+
+Ziele des Issues: `nah` und `tal` mindestens −40 %, `diorama` mindestens
+−25 %. Bei 6016×3260 alle erreicht. Bei 3456×2104 erreicht `nah` −40 % knapp
+und `diorama` −35 %; **`tal` verfehlt mit −36 bis −37 %**. Ursache: Beim
+kleineren Fenster ist der auflösungsunabhängige Anteil größer. In `tal`
+bleiben rund 5 ms, die nicht mit den Pixeln fallen (Sonnenschatten in den
+8192er-Atlas, Vertexarbeit, CPU-Seite je Bild); die Skalierung trifft nur
+den Rest. Budget 33,3 ms p95 bei 3456×2104 in `balanced`: neu höchstens
+14,2 ms p95 (vorher 21,2).
+
+
+Hebel, die `tal` bei 3456×2104 über die Schwelle brächten, im selben
+Prozess auf dem neuen Stand gemessen (Lauf mit zwei fremden Godots, nur die
+Unterschiede sind belastbar): Schattenatlas 4096 statt 8192 −0,25 ms,
+Schattenreichweite 150 statt 420 Einheiten −0,2 ms, beides −0,6 ms,
+Skalierung 0,6 statt 0,67 −1,0 ms. Alle drei ändern das Bild (Schattenschärfe
+bzw. Weichheit) und sind deshalb nicht übernommen; das entscheidet der Eigner
+am Bild.
+
+Bildvergleich: `scripts/look/judge.sh` vorher gegen nachher, 10 Läufe je
+Aufnahme: A 1, B 0, GLEICH 29 von 30. Das Abnahmeziel „kein sichtbarer
+Unterschied" ist damit auch aus Sicht des Bewerters erfüllt (seine Regel
+verlangt für „behalten" eine Verbesserung und meldet deshalb VERWERFEN).
 
 Bilder: `docs/look/a-budget/kontaktbogen-*.jpg` (vorher | nachher | Vorbild)
 und `ausschnitt-*.jpg` (1:1-Ausschnitt bei 6016×3260).
