@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import SimCore
 
@@ -111,23 +112,30 @@ final class BeltParallelTests: XCTestCase {
 
     /// Stempel-Charge über den parallelen `BeltSchedule`-Pfad muss bit-identisch
     /// zur seriellen Schleife stempeln — sowohl für eng überlappende und
-    /// radius-nahe Kanalpaare als auch für weit getrennte parallele Läufe
-    /// (`part` 0, 1 und 2, mit und ohne `lockHere`).
-    func testBeltStampBatchParallelMatchesSerialBitIdentically() {
+    /// radius-nahe Kanalpaare als auch für knapp über der Disjunktheitsgrenze
+    /// liegende parallele Läufe (`part` 0, 1 und 2, mit und ohne `lockHere`).
+    /// Zusätzlich prüft der Test deterministisch je Einzellauf, dass alle
+    /// geänderten Zellen im berechneten `BeltFootprint` liegen, und belegt über
+    /// `BeltStampBatchTrace`, dass der parallele Zweig tatsächlich über mehrere
+    /// Arbeiter/Threads lief.
+    func testBeltStampBatchParallelMatchesSerialBitIdentically() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.activeProcessorCount <= 1,
+                      "beltStampBatch fällt bei activeProcessorCount <= 1 in die serielle Schleife")
+
         var cfg = SimConfig.production
         cfg.n = 192
         cfg.world = SimConfig.production.world * (Double(cfg.n) / Double(SimConfig.production.n))
-        let nn = cfg.n, count = cfg.count
+        let nn = cfg.n, count = cfg.count, maxCoord = Double(nn - 1)
 
         // Synthetisches Gelände: sanftes Talgefälle mit seitlicher Welligkeit
-        // (damit Außenkurven abtragen und Gleithang-Bänke bis `(0.5 + barW)·w`
-        // ablagern) sowie eine steile Rampe ab z >= 150 für `part == 2`.
+        // (damit Außenkurven abtragen und Gleithang-Bänke bis `(0.5 + barW)·b`
+        // ablagern) sowie eine steile Rampe ab z >= 152 für `part == 2`.
         var h = [Double](repeating: 0, count: count)
         for j in 0..<nn {
             for i in 0..<nn {
                 let x = Double(i), z = Double(j)
                 let base: Double
-                if j >= 150 {
+                if j >= 152 {
                     base = 0.85 - x * 0.0045
                 } else {
                     base = 0.35 - x * 0.00004 + 0.004 * sin(z * 0.35 + x * 0.07)
@@ -149,37 +157,124 @@ final class BeltParallelTests: XCTestCase {
         baseState.isChannel = [Bool](repeating: false, count: count)
         baseState.barAge = [Double](repeating: -1, count: count)
 
-        func makeChannel(x0: Double, z0: Double, amp: Double, phase: Double,
-                         steps: Int = 70, dx: Double = 1.4, q0: Double = 5000, dq: Double = 90) -> RiverChannel {
+        func makeChannelAtLoZ(x0: Double, loZ: Double, amp: Double, freq: Double = 0.18, phase: Double,
+                              steps: Int = 70, dx: Double = 1.4, q0: Double = 5000, dq: Double = 90) -> RiverChannel {
+            let rawZ = (0..<steps).map { amp * sin(Double($0) * freq + phase) }
+            let minRawZ = rawZ.min() ?? 0
+            let shiftZ = loZ - minRawZ
             let nodes = (0..<steps).map { i in
-                MeanderNode(x: x0 + Double(i) * dx, z: z0 + amp * sin(Double(i) * 0.18 + phase))
+                MeanderNode(x: x0 + Double(i) * dx, z: rawZ[i] + shiftZ)
             }
             let q = (0..<steps).map { q0 + Double($0) * dq }
             return RiverChannel(nodes: nodes, discharge: q)
         }
+        func hiZ(_ ch: RiverChannel) -> Double { ch.nodes.map(\.z).max() ?? 0 }
 
-        // Kanal-Satz:
-        // - Paar (0, 1): eng überlappende Mäander (z = 36 vs. z = 40), teilen sich
-        //   Schreibzellen und fordern strikte Reihenfolge im `BeltSchedule`.
-        // - Paar (2, 3): dicht am Footprint-Radius (z = 74 vs. z = 84), prüfen
-        //   Abdeckung des seitlichen Lese-/Schreibfensters `(0.5 + barW)·w + 2`.
-        // - Läufe (4, 5): weit getrennt (z = 114 und z = 136), laufen echt parallel.
-        // - Paar (6, 7): steile Strecken (`part == 2`, z = 164 vs. z = 165.4),
-        //   überlappend innerhalb `radius = 2.0` plus getrennter Lauf (8) bei z = 180.
+        // Exakter Stempel-Radius aus derselben Formel wie `Terrain.beltStampFootprint`:
+        // Mit `meanderBarWidths = 0.75` und gekappter Breite `b = 2 · 3.2 = 6.4` Zellen
+        // ergibt sich `w = 6.4 · 1.001 ≈ 6.4064` und `flatRadius = (0.5 + 0.75)·w + 2 ≈ 10.008` Zellen
+        // (für `part == 2`: `steepRadius = 2.0` Zellen). Zwei horizontale Läufe mit gleichem
+        // Radius überlappen in ihren Footprints genau dann, wenn `loZ_b - hiZ_a <= 2 · radius`.
+        let sampleMaxQ = 5000.0 + 69.0 * 90.0
+        let sampleW = MeanderState.beltWidthCells(discharge: sampleMaxQ, config: cfg) * 1.001
+        let flatRadius = max(0.5 * sampleW + 0.5, (0.5 + cfg.meanderBarWidths) * sampleW) + 2.0
+        let coreReach = 0.5 * MeanderState.beltWidthCells(discharge: sampleMaxQ, config: cfg) + 0.5
+        let steepRadius = 2.0
+
+        // Kanal-Satz, Abstände sichtbar aus `flatRadius` / `steepRadius` abgeleitet:
+        // - Paar (0, 1): Abstand `< flatRadius` (`0.4 · flatRadius`), teilen sich direkt
+        //   Bett- und Bank-Schreibzellen → `BeltSchedule` muss strikt serialisieren.
+        // - Paar (2, 3): Abstand knapp UNTER `2 · flatRadius` (`2 · flatRadius − 1.0`) →
+        //   Footprints überlappen um ~1 Zelle → `BeltSchedule` serialisiert 3 nach 2.
+        // - Paar (4, 5): Abstand knapp ÜBER `2 · flatRadius` (`2 · flatRadius + 0.5`) →
+        //   Footprints sind um 0,5 Zellen disjunkt → laufen gleichzeitig im `BeltSchedule`,
+        //   während seitliche Gleithang-Ablagen bis `(0.5 + barW)·b` ins Schreibfenster greifen.
+        // - Paar (6, 7) + Lauf (8) (`part == 2`, `steepRadius = 2.0`): (6, 7) knapp unter
+        //   `2 · steepRadius` (überlappend), (7, 8) knapp über `2 · steepRadius` (disjunkt).
+        let ch0 = makeChannelAtLoZ(x0: 18, loZ: 16.0, amp: 2.5, phase: 0.0, q0: 6500, dq: 120)
+        let ch1 = makeChannelAtLoZ(x0: 20, loZ: hiZ(ch0) + 0.4 * flatRadius, amp: 2.5, phase: 0.9, q0: 5500, dq: 110)
+        let ch2 = makeChannelAtLoZ(x0: 22, loZ: hiZ(ch1) + 2 * flatRadius + 4.0, amp: 1.5, freq: 0.24, phase: 0.4, q0: 5000, dq: 90)
+        let ch3 = makeChannelAtLoZ(x0: 22, loZ: hiZ(ch2) + 2 * flatRadius - 1.0, amp: 1.5, freq: 0.24, phase: 2.1, q0: 5000, dq: 90)
+        let ch4 = makeChannelAtLoZ(x0: 24, loZ: hiZ(ch3) + 2 * flatRadius + 4.0, amp: 1.2, freq: 0.30, phase: 1.2, q0: 5000, dq: 90)
+        let ch5 = makeChannelAtLoZ(x0: 24, loZ: hiZ(ch4) + 2 * flatRadius + 0.5, amp: 1.2, freq: 0.30, phase: 0.3, q0: 5000, dq: 90)
+        let ch6 = makeChannelAtLoZ(x0: 16, loZ: 160.0, amp: 1.0, phase: 0.0, steps: 60, q0: 3200, dq: 50)
+        let ch7 = makeChannelAtLoZ(x0: 16, loZ: hiZ(ch6) + 2 * steepRadius - 1.0, amp: 1.0, phase: 0.7, steps: 60, q0: 3200, dq: 50)
+        let ch8 = makeChannelAtLoZ(x0: 16, loZ: hiZ(ch7) + 2 * steepRadius + 0.5, amp: 1.0, phase: 0.2, steps: 60, q0: 2800, dq: 40)
+
         let items: [(ch: RiverChannel, part: Int)] = [
-            (makeChannel(x0: 18, z0: 36, amp: 5.5, phase: 0.0, q0: 6500, dq: 120), 0),
-            (makeChannel(x0: 20, z0: 40, amp: 5.0, phase: 0.9, q0: 5500, dq: 110), 0),
-            (makeChannel(x0: 22, z0: 74, amp: 4.5, phase: 0.4, q0: 4800, dq: 90), 0),
-            (makeChannel(x0: 22, z0: 84, amp: 4.5, phase: 2.1, q0: 4800, dq: 90), 1),
-            (makeChannel(x0: 24, z0: 114, amp: 5.0, phase: 1.2, q0: 6000, dq: 100), 1),
-            (makeChannel(x0: 24, z0: 136, amp: 4.0, phase: 0.3, q0: 5200, dq: 80), 0),
-            (makeChannel(x0: 16, z0: 164, amp: 1.2, phase: 0.0, steps: 60, q0: 3200, dq: 50), 2),
-            (makeChannel(x0: 16, z0: 165.4, amp: 1.2, phase: 0.7, steps: 60, q0: 3200, dq: 50), 2),
-            (makeChannel(x0: 16, z0: 180, amp: 1.0, phase: 0.2, steps: 60, q0: 2800, dq: 40), 2),
+            (ch0, 0), (ch1, 0),
+            (ch2, 0), (ch3, 1),
+            (ch4, 1), (ch5, 0),
+            (ch6, 2), (ch7, 2), (ch8, 2),
         ]
 
-        // Mehrfache Wiederholung (mit und ohne `lockHere`) erhöht die Chance,
-        // ein echtes Datenrennen bei zu knappem Radius durch Thread-Jitter aufzudecken.
+        // Footprint-Beziehungen explizit prüfen (damit der Kanal-Satz garantiert die Grenze trifft):
+        let footprints = try items.map { item in
+            try XCTUnwrap(Terrain.beltStampFootprint(item.ch, part: item.part, config: cfg, maxCoord: maxCoord))
+        }
+        XCTAssertTrue(footprints[0].overlaps(footprints[1]), "Paar (0, 1) muss überlappen (gemeinsame Schreibzellen)")
+        XCTAssertFalse(footprints[1].overlaps(footprints[2]), "Paar (1, 2) muss disjunkt sein")
+        XCTAssertTrue(footprints[2].overlaps(footprints[3]), "Paar (2, 3) muss knapp unter 2·flatRadius überlappen")
+        XCTAssertFalse(footprints[3].overlaps(footprints[4]), "Paar (3, 4) muss disjunkt sein")
+        XCTAssertFalse(footprints[4].overlaps(footprints[5]), "Paar (4, 5) muss knapp über 2·flatRadius disjunkt sein")
+        XCTAssertTrue(footprints[6].overlaps(footprints[7]), "Steiles Paar (6, 7) muss knapp unter 2·steepRadius überlappen")
+        XCTAssertFalse(footprints[7].overlaps(footprints[8]), "Steiles Paar (7, 8) muss knapp über 2·steepRadius disjunkt sein")
+
+        // Deterministische Footprint-Prüfung (unabhängig von Thread-Timing): jeden Lauf
+        // einzeln von `baseState` stempeln und prüfen, dass JEDE veränderte Zelle innerhalb
+        // seines `BeltFootprint` liegt; zusätzlich nachweisen, dass (0, 1) echte gemeinsame
+        // Schreibzellen haben und das Grenzpaar (4, 5) seitliche Ablagen über `0.5·b + 0.5`
+        // hinaus ins Bank-Fenster `(0.5 + barW)·b` schreibt.
+        var touchedPerItem: [Set<Int>] = []
+        touchedPerItem.reserveCapacity(items.count)
+        var boundaryPairReachedBarZone = false
+        for (idx, item) in items.enumerated() {
+            let solo = Terrain(config: cfg, seed: 42)
+            solo.restore(baseState)
+            solo.beltStampBatchForTests([item], dt: 100, ageAtEnd: 0, lockHere: true, serial: true)
+            let fp = footprints[idx]
+            let inBeltSolo = solo.inBeltForTests()
+            let gateSolo = solo.dropletGateForTests()
+            var touched: Set<Int> = []
+            for k in 0..<count {
+                let changed = solo.h[k].bitPattern != baseState.h[k].bitPattern
+                    || solo.sed[k].bitPattern != baseState.sed[k].bitPattern
+                    || solo.rock[k].bitPattern != baseState.rock[k].bitPattern
+                    || solo.veg[k].bitPattern != baseState.veg[k].bitPattern
+                    || solo.isChannel[k] != baseState.isChannel[k]
+                    || inBeltSolo[k]
+                    || solo.barAge[k].bitPattern != baseState.barAge[k].bitPattern
+                    || gateSolo[k]
+                guard changed else { continue }
+                touched.insert(k)
+                let cx = Double(k % nn), cz = Double(k / nn)
+                XCTAssertTrue(cx >= fp.minX && cx <= fp.maxX && cz >= fp.minZ && cz <= fp.maxZ,
+                              "Lauf \(idx): geänderte Zelle (\(Int(cx)), \(Int(cz))) liegt außerhalb des Footprints [\(fp.minX)...\(fp.maxX)] × [\(fp.minZ)...\(fp.maxZ)]")
+                if (idx == 4 || idx == 5) && solo.barAge[k] >= 0 {
+                    var minDistSq = Double.infinity
+                    for p in item.ch.nodes {
+                        let dx = cx - p.x, dz = cz - p.z
+                        let d2 = dx * dx + dz * dz
+                        if d2 < minDistSq { minDistSq = d2 }
+                    }
+                    if minDistSq.squareRoot() > coreReach {
+                        boundaryPairReachedBarZone = true
+                    }
+                }
+            }
+            XCTAssertFalse(touched.isEmpty, "Lauf \(idx) muss mindestens eine Zelle verändern")
+            touchedPerItem.append(touched)
+        }
+        XCTAssertFalse(touchedPerItem[0].isDisjoint(with: touchedPerItem[1]),
+                       "Paar (0, 1) muss echte gemeinsame Schreibzellen besitzen")
+        XCTAssertTrue(boundaryPairReachedBarZone,
+                      "Disjunktes Grenzpaar (4, 5) muss seitliche Gleithang-Ablagen jenseits der halben Kanalbreite (0.5·b + 0.5) auslösen")
+
+        // Mehrfache Wiederholung (mit und ohne `lockHere`) für den Bit-Vergleich seriell
+        // gegen den parallelen `BeltSchedule`-Pfad; Spur belegt echte Parallelität.
+        var peakConcurrent = 0
+        var maxWorkerSlots = 0
+        var maxDistinctThreads = 0
         for lockHere in [false, true] {
             for round in 0..<4 {
                 let serial = Terrain(config: cfg, seed: 42)
@@ -188,8 +283,15 @@ final class BeltParallelTests: XCTestCase {
                 parallel.restore(baseState)
 
                 let ageAtEnd = Double(round) * 12.5
-                serial.beltStampBatchForTests(items, dt: 100, ageAtEnd: ageAtEnd, lockHere: lockHere, serial: true)
-                parallel.beltStampBatchForTests(items, dt: 100, ageAtEnd: ageAtEnd, lockHere: lockHere, serial: false)
+                let serialTrace = serial.beltStampBatchForTests(items, dt: 100, ageAtEnd: ageAtEnd, lockHere: lockHere, serial: true)
+                let parallelTrace = parallel.beltStampBatchForTests(items, dt: 100, ageAtEnd: ageAtEnd, lockHere: lockHere, serial: false)
+
+                XCTAssertFalse(serialTrace.usedSchedule, "Serielle Referenz darf BeltSchedule nicht betreten")
+                XCTAssertTrue(parallelTrace.usedSchedule, "Paralleler Lauf muss den BeltSchedule-Zweig betreten")
+                XCTAssertEqual(parallelTrace.itemsScheduled, items.count, "Alle Läufe müssen über BeltSchedule.take() verteilt werden")
+                peakConcurrent = max(peakConcurrent, parallelTrace.maxConcurrent)
+                maxWorkerSlots = max(maxWorkerSlots, parallelTrace.workerSlots.count)
+                maxDistinctThreads = max(maxDistinctThreads, parallelTrace.threadIds.count)
 
                 // Gegenprobe gegen leere/unveränderte Puffer: alle Ziel-Felder
                 // müssen tatsächlich vom Stempel berührt worden sein.
@@ -221,6 +323,9 @@ final class BeltParallelTests: XCTestCase {
                 }
             }
         }
+        XCTAssertGreaterThan(maxWorkerSlots, 1, "BeltSchedule muss Arbeit an mehr als einen Arbeiter-Slot verteilen")
+        XCTAssertGreaterThan(maxDistinctThreads, 1, "BeltSchedule muss Arbeit an mehr als einen Thread verteilen")
+        XCTAssertGreaterThan(peakConcurrent, 1, "Mindestens zwei disjunkte Stempel müssen gleichzeitig gelaufen sein")
     }
 
     /// Konservative Lauf-Fenster: jede der beiden geklemmten Verschiebungen

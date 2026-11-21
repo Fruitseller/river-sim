@@ -2554,6 +2554,8 @@ Rahmen der Messreihe:
 
 ### Bit-Identität
 
-`simperf --hash` (n = 720, world = 112,4789, Seed 1337, Warmup 100 × 100, 30 × 100):
-- Basis (`0783abf`): `d83b629fa79aa144`
-- Kandidat: `d83b629fa79aa144` (bit-identisch)
+- **Direkter Beleg (`BeltParallelTests.testBeltStampBatchParallelMatchesSerialBitIdentically`):** Vergleicht `beltStampBatch` seriell gegen den parallelen `BeltSchedule`-Pfad bitweise auf allen geschriebenen Roh-Puffern (`h`, `sed`, `rock`, `hf`, `veg`, `isChannel`, `inBelt`, `barAge`, `dropletGate`) für `part` 0, 1 und 2 (mit und ohne `lockHere`), inklusive überlappender und knapp an der Disjunktheitsgrenze (`2 · radius`) platzierter Kanalpaare, deterministischer Zell-im-Footprint-Prüfung je Einzellauf und Nachweis tatsächlicher Multi-Thread-Ausführung über `BeltStampBatchTrace`.
+  - *Einschränkung:* Der Wächter prüft nur die im Test konstruierten synthetischen Kanal-Geometrien, Breiten/Abflüsse und Geländeformen — er ist keine vollständige mathematische Radius-Beweisführung über beliebige Konfigurationen oder Parameterkombinationen (und der parallele Bit-Vergleich selbst pinnt Nebenläufigkeitsfehler nur im Rahmen des Laufzeit-Timings der gewählten Paare; die deterministische Footprint-Prüfung deckt die getesteten Geometrien ohne Timing-Abhängigkeit ab).
+- **Produktions-Gegenprobe (`simperf --hash`, n = 720, world = 112,4789, Seed 1337, Warmup 100 × 100, 30 × 100):** Belegt für sich allein noch nicht die Bit-Neutralität des Umbaus (vgl. oben „Bit-Identität — und warum `simperf --hash` allein sie nicht belegt"), bestätigt aber, dass der Produktionslauf unverändert bleibt:
+  - Basis (`0783abf`): `d83b629fa79aa144`
+  - Kandidat: `d83b629fa79aa144` (bit-identisch)

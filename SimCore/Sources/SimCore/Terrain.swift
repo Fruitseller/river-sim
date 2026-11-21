@@ -6388,6 +6388,76 @@ public final class Terrain {
         }}}}}}}
     }
 
+    /// Diagnose-Spur für Test-Läufe von `beltStampBatch` (im Produktionspfad `nil`).
+    /// Alle veränderlichen Felder werden ausschließlich unter `lock` gelesen und geschrieben.
+    final class BeltStampBatchTrace: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var usedSchedule = false
+        private(set) var itemsScheduled = 0
+        private(set) var workerSlots: Set<Int> = []
+        private(set) var threadIds: Set<ObjectIdentifier> = []
+        private var inFlight = 0
+        private(set) var maxConcurrent = 0
+
+        fileprivate func markScheduled() {
+            lock.lock()
+            usedSchedule = true
+            lock.unlock()
+        }
+
+        fileprivate func begin(worker: Int) {
+            let tid = ObjectIdentifier(Thread.current)
+            lock.lock()
+            itemsScheduled += 1
+            workerSlots.insert(worker)
+            threadIds.insert(tid)
+            inFlight += 1
+            if inFlight > maxConcurrent { maxConcurrent = inFlight }
+            lock.unlock()
+        }
+
+        fileprivate func end() {
+            lock.lock()
+            inFlight -= 1
+            lock.unlock()
+        }
+    }
+
+    /// Konservativer Footprint eines statischen Stempellaufs (`beltStampBatch`).
+    /// `nil` bei nicht-endlichen oder außerhalb des Gitters liegenden Koordinaten.
+    static func beltStampFootprint(_ ch: RiverChannel, part: Int, config cfg: SimConfig,
+                                   maxCoord: Double) -> MeanderState.BeltFootprint? {
+        var loX = Double.infinity, hiX = -Double.infinity
+        var loZ = Double.infinity, hiZ = -Double.infinity
+        for p in ch.nodes {
+            let x = p.x, z = p.z
+            if !x.isFinite || !z.isFinite || x < 0 || z < 0 || x > maxCoord || z > maxCoord {
+                return nil
+            }
+            if x < loX { loX = x }; if x > hiX { hiX = x }
+            if z < loZ { loZ = z }; if z > hiZ { hiZ = z }
+        }
+        let radius: Double
+        if part == 2 {
+            // Nur steile Strecken (Linien-Carve + bilineare Knoten-Abfrage): <= 2 Zellen.
+            radius = 2.0
+        } else {
+            var maxQ = 0.0
+            for q in ch.discharge where q > maxQ { maxQ = q }
+            let w = MeanderState.beltWidthCells(discharge: maxQ, config: cfg) * 1.001
+            radius = max(0.5 * w + 0.5, (0.5 + cfg.meanderBarWidths) * w) + 2.0
+        }
+        guard radius.isFinite else { return nil }
+        // Stempel-Chargen haben keine Migrations-Teilschritte: `maxSubsteps = 0`
+        // kennzeichnet das Feld als nicht belegt (`BeltSchedule` liest nur die
+        // AABB; ein versehentlicher Einsatz in `parallelBeltRuns` fällt dort an
+        // `precondition(nsub <= maxSubsteps)` sofort auf).
+        return MeanderState.BeltFootprint(
+            minX: loX - radius, maxX: hiX + radius,
+            minZ: loZ - radius, maxZ: hiZ + radius,
+            maxSubsteps: 0)
+    }
+
     /// Paralleler Stempel-Durchlauf für statische (nicht wandernde) Lauf-Chargen
     /// (`belt.fixedStamp`, `belt.finishProfile`): ohne Migration schrumpft der
     /// Stempel-Radius auf die lokale Kanal-/Bankbreite (≈ 2–12 Zellen), sodass fast
@@ -6395,7 +6465,8 @@ public final class Terrain {
     /// bit-identisch zur seriellen Reihenfolge.
     private func beltStampBatch(_ items: [(ch: RiverChannel, part: Int)], dt: Double,
                                 ageAtEnd: Double, lockHere: Bool, buffers: BeltStampBuffers,
-                                forceSerial: Bool = false) {
+                                forceSerial: Bool = false,
+                                trace: BeltStampBatchTrace? = nil) {
         guard !items.isEmpty else { return }
         if forceSerial || items.count == 1 || Terrain.coreCount <= 1 {
             for item in items {
@@ -6405,42 +6476,14 @@ public final class Terrain {
             return
         }
         let maxCoord = Double(n - 1)
-        let barW = cfg.meanderBarWidths
         var footprints: [MeanderState.BeltFootprint] = []
         footprints.reserveCapacity(items.count)
         var canParallel = true
         for item in items {
-            let ch = item.ch
-            var loX = Double.infinity, hiX = -Double.infinity
-            var loZ = Double.infinity, hiZ = -Double.infinity
-            for p in ch.nodes {
-                let x = p.x, z = p.z
-                if !x.isFinite || !z.isFinite || x < 0 || z < 0 || x > maxCoord || z > maxCoord {
-                    canParallel = false; break
-                }
-                if x < loX { loX = x }; if x > hiX { hiX = x }
-                if z < loZ { loZ = z }; if z > hiZ { hiZ = z }
+            guard let fp = Terrain.beltStampFootprint(item.ch, part: item.part, config: cfg, maxCoord: maxCoord) else {
+                canParallel = false; break
             }
-            if !canParallel { break }
-            let radius: Double
-            if item.part == 2 {
-                // Nur steile Strecken (Linien-Carve + bilineare Knoten-Abfrage): <= 2 Zellen.
-                radius = 2.0
-            } else {
-                var maxQ = 0.0
-                for q in ch.discharge where q > maxQ { maxQ = q }
-                let w = MeanderState.beltWidthCells(discharge: maxQ, config: cfg) * 1.001
-                radius = max(0.5 * w + 0.5, (0.5 + barW) * w) + 2.0
-            }
-            guard radius.isFinite else { canParallel = false; break }
-            // Stempel-Chargen haben keine Migrations-Teilschritte: `maxSubsteps = 0`
-            // kennzeichnet das Feld als nicht belegt (`BeltSchedule` liest nur die
-            // AABB; ein versehentlicher Einsatz in `parallelBeltRuns` fällt dort an
-            // `precondition(nsub <= maxSubsteps)` sofort auf).
-            footprints.append(MeanderState.BeltFootprint(
-                minX: loX - radius, maxX: hiX + radius,
-                minZ: loZ - radius, maxZ: hiZ + radius,
-                maxSubsteps: 0))
+            footprints.append(fp)
         }
         guard canParallel else {
             for item in items {
@@ -6450,6 +6493,7 @@ public final class Terrain {
             return
         }
         let schedule = BeltSchedule(footprints)
+        trace?.markScheduled()
         let work: (Int) -> Void = { idx in
             let item = items[idx]
             _ = self.beltStampChannel(item.ch, dt: dt, part: item.part, ageAtEnd: ageAtEnd,
@@ -6458,9 +6502,11 @@ public final class Terrain {
         // Swift 6 (Issue #201): wie in `parallelBeltRuns` sichert `BeltSchedule`
         // disjunkte Lese-/Schreibfenster aller gleichzeitig laufenden Stempel.
         nonisolated(unsafe) let unsafeWork = work
-        DispatchQueue.concurrentPerform(iterations: min(Terrain.coreCount, items.count)) { _ in
+        DispatchQueue.concurrentPerform(iterations: min(Terrain.coreCount, items.count)) { worker in
             while let idx = schedule.take() {
+                trace?.begin(worker: worker)
                 unsafeWork(idx)
+                trace?.end()
                 schedule.finish(idx)
             }
         }
@@ -6468,9 +6514,11 @@ public final class Terrain {
 
     /// Test-Haken (`BeltParallelTests`): führt `beltStampBatch` wahlweise seriell
     /// oder über den parallelen `BeltSchedule`-Pfad auf den offenen Roh-Puffern aus.
+    @discardableResult
     func beltStampBatchForTests(_ items: [(ch: RiverChannel, part: Int)], dt: Double,
                                 ageAtEnd: Double = 0, lockHere: Bool = false,
-                                serial: Bool = false) {
+                                serial: Bool = false) -> BeltStampBatchTrace {
+        let trace = BeltStampBatchTrace()
         if lockHere && dropletGateBuf.count != cfg.count {
             dropletGateBuf = [Bool](repeating: false, count: cfg.count)
         }
@@ -6485,8 +6533,9 @@ public final class Terrain {
                                            channel: icb.baseAddress!, belt: ibb.baseAddress!, age: bab.baseAddress!,
                                            lock: glb.count == cfg.count ? glb.baseAddress : nil)
             beltStampBatch(items, dt: dt, ageAtEnd: ageAtEnd, lockHere: lockHere,
-                           buffers: buffers, forceSerial: serial)
+                           buffers: buffers, forceSerial: serial, trace: trace)
         }}}}}}}
+        return trace
     }
 
     /// Kopie der Gürtel-Arbeitsmaske (`inBelt`) für Bit-Identitäts-Wächter.
