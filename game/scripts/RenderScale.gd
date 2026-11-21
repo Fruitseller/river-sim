@@ -1,0 +1,56 @@
+extends RefCounted
+## Render-Skalierung je Qualitätsstufe (#235): die 3D-Szene rendert mit
+## weniger Pixeln und wird auf die Fenstergröße hochskaliert; die Bedienung
+## (2D) bleibt nativ.
+##
+## Warum: Die Bildzeit folgt den Pixeln, nicht der Vertexzahl. Gemessen am
+## alten Stand, 6016×3260, je Kamera im selben Prozess umgeschaltet
+## (docs/perf-measurements.md § V): halbe Auflösung je Achse sparte 20 bis
+## 24 ms von 31 bis 41 ms, ein Viertel der Terrain-Vertices nur 3 bis 6 ms.
+##
+## Verfahren: auf dem Mac MetalFX Spatial (Godot ≥ 4.4, nur Metal-Treiber),
+## sonst FSR 1.0. Beide sind räumlich, sie brauchen keine Bewegungsvektoren.
+## MetalFX Temporal kostete gemessen genauso viel (22,3 statt 22,4 ms in
+## `nah` bei 6016×3260) und brächte also keine Zeit. Dazu verschiebt das
+## Gelände seine Vertices aus Texturen, die im Zeitraffer gleiten, und dafür
+## kennt Godot keine Bewegungsvektoren: Schlieren wären zu erwarten. Deshalb
+## räumlich; im Bild geprüft ist Temporal nicht.
+## MSAA bleibt an und wirkt auf der kleineren Auflösung.
+##
+## A/B ohne Umbau: `RS_RENDER_SCALE=<0,25…1>` setzt den Faktor,
+## `RS_SCALING=bilinear|fsr|metalfx` das Verfahren.
+
+## Anteil je Achse. `quality` rendert nativ wie bisher.
+const SCALE := {"performance": 0.5, "balanced": 0.67, "quality": 1.0}
+
+static func scale_for(quality: String) -> float:
+	return SCALE.get(quality, SCALE["balanced"])
+
+## Verfahren für den laufenden Grafiktreiber. FSR gibt es nur auf den
+## RenderingDevice-Treibern; Kompatibilität (OpenGL) und `--headless`
+## skalieren bilinear (sonst warnt Godot und fällt selbst darauf zurück).
+static func mode_for(driver: String) -> Viewport.Scaling3DMode:
+	match driver:
+		"metal":
+			return Viewport.SCALING_3D_MODE_METALFX_SPATIAL
+		"vulkan", "d3d12":
+			return Viewport.SCALING_3D_MODE_FSR
+	return Viewport.SCALING_3D_MODE_BILINEAR
+
+static func apply(vp: Viewport, quality: String) -> void:
+	var scale := scale_for(quality)
+	var env_scale := OS.get_environment("RS_RENDER_SCALE").replace(",", ".")
+	if env_scale.is_valid_float():
+		scale = clampf(env_scale.to_float(), 0.25, 1.0)
+	var mode := mode_for(RenderingServer.get_current_rendering_driver_name())
+	match OS.get_environment("RS_SCALING"):
+		"bilinear":
+			mode = Viewport.SCALING_3D_MODE_BILINEAR
+		"fsr":
+			mode = Viewport.SCALING_3D_MODE_FSR
+		"metalfx":
+			mode = Viewport.SCALING_3D_MODE_METALFX_SPATIAL
+	if scale >= 1.0:
+		mode = Viewport.SCALING_3D_MODE_BILINEAR # nativ: kein Hochskalierer
+	vp.scaling_3d_mode = mode
+	vp.scaling_3d_scale = scale

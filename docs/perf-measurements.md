@@ -2523,3 +2523,179 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+## V. Bildzeit-Budget: Render-Skalierung und Terrain-Kacheln (November 2026, Issue #235)
+
+Frage des Issues: Wohin geht die Bildzeit, und wie viel davon lässt sich für
+die Look-Vorhaben #236 bis #239 freiräumen? Ausgangsannahme aus
+`docs/graphics-quality.md` § Leistung (Oktober): „Die Kosten folgen der
+Vertexzahl." Diese Annahme gilt für den heutigen Stand **nicht mehr**.
+
+Maschine: M4 Max (Referenz-Mac), Godot 4.7.2, Metal. Welt Seed 1337, Jahr
+20.000, `balanced`. Kameras wie `scripts/look/shots.sh`: `diorama`
+(`RS_CAMERA=diorama`), `tal` (`RS_CAMERA=valley`), `nah` (`RS_TARGET=17,10`,
+`RS_PITCH=0.55`, `RS_YAW=0`, `RS_DIST=16`). Fenster maximiert: externer
+6K-Bildschirm 6016×3260, eingebauter Bildschirm (`--screen 1`) 3456×2104.
+Vsync und Bildraten-Deckel aus, gemessen wird der Abstand gezeichneter Bilder.
+Parallel liefen vier weitere Look-Stränge auf derselben Maschine; jeder Lauf
+hielt die gemeinsame GPU-Sperre und wartete, bis kein fremdes Godot mehr lief.
+Läufe, in die trotzdem ein fremdes Godot startete, sind verworfen (die ersten
+`nah`-Zahlen mit 290 bis 370 ms je Bild stammten daher).
+
+### V.1 Zerlegung: wohin die Bildzeit geht
+
+Werkzeug: `game/studies/budget/BudgetProbe.tscn`. Die Bühne schaltet im
+SELBEN Prozess blockweise zwischen Zuständen um (120 Bilder je Block, die
+ersten 20 zählen nicht, Reihenfolge je Runde gedreht, Runde 0 wärmt nur),
+Wert je Zustand = Median der Block-Mediane. GPU-Zeitstempel je Pass liefert
+Godot unter Metal nicht (`viewport_get_measured_render_time_gpu` ist 0), die
+Zerlegung entsteht deshalb durch Abschalten.
+
+```sh
+RS_SEED=1337 RS_STEP=20000 RS_CAMERA=valley \
+  RS_PROBE_STATES=base,noshadow,scale50,grid360,noterrain RS_PROBE_ROUNDS=4 \
+  "$GODOT" --path game --maximized res://studies/budget/BudgetProbe.tscn
+```
+
+Alter Stand (origin/main `0783abf`), 6016×3260, Bildabstand Median in ms:
+
+| Zustand | `diorama` | `tal` | `nah` |
+| --- | ---: | ---: | ---: |
+| alles an | 40,8 | 31,5 | 41,6 |
+| ohne Sonnenschatten | 37,4 | 29,2 | |
+| halbe Auflösung je Achse (bilinear) | 16,6 | 11,6 | |
+| Render-Gitter 360 statt 720 (¼ der Vertices) | 34,8 | 28,3 | |
+| ohne Terrain | 16,7 | 11,6 | |
+| ohne SSAO | | | 31,1 |
+| ohne MSAA | | | 30,7 |
+| ohne Material-Schicht (`material_enabled`) | | | 30,8 |
+| ohne Erosionsdetail (`detail_enabled`) | | | 32,5 |
+| ohne Kronendach / Wolkenkörper / Meer / Bänder | | | 42,9 / 42,1 / 41,5 / 42,5 |
+
+Gelesen: Ein Viertel der Vertices spart 3 bis 6 ms, die halbe Auflösung 20
+bis 24 ms. Die Bildzeit ist zu rund drei Vierteln pixelgebunden. In `nah`
+kosten SSAO, MSAA, Material und Erosionsdetail je rund 10 ms, Wasser, Wolken
+und Kronendach je unter 1 ms. Die Oktober-Messreihe (720 / 1080 / 1440 =
+16,1 / 23,7 / 32,3 ms) maß das Gitter NACH OBEN, auf einem Stand mit
+leichterem Fragment-Shader; nach unten ist das Gitter heute kein Hebel.
+
+### V.2 Render-Skalierung
+
+`nah`, Kachel-Stand, im selben Prozess umgeschaltet:
+
+| Verfahren | 6016×3260 | 3456×2104 |
+| --- | ---: | ---: |
+| nativ | 40,7 | 18,8 |
+| MetalFX Spatial 0,67 | 22,4 | 11,3 |
+| MetalFX Temporal 0,67 | 22,3 | |
+| FSR 1.0 0,67 | 22,7 | |
+| MetalFX Spatial 0,60 | | 9,5 |
+| MetalFX Spatial 0,50 | 16,6 | |
+| nativ ohne SSAO | | 13,9 |
+
+`diorama`, alter Stand (PlaneMesh) im selben Prozess, 6016×3260: nativ 40,6,
+bilinear 0,67 22,7, MetalFX Spatial 0,67 23,8 ms (MetalFX kostet gegenüber
+bilinear rund 1 ms). 3456×2104: 18,5 / 11,2 / 11,6 ms.
+
+Gewählt: MetalFX Spatial (sonst FSR 1.0) mit 0,67 in `balanced`, 0,5 in
+`performance`, nativ in `quality` (`game/scripts/RenderScale.gd`). Temporal
+spart nichts zusätzlich und hätte für die aus Texturen verschobenen Vertices
+keine Bewegungsvektoren; es ist im Bild nicht geprüft. MSAA 2× bleibt an und
+wirkt auf der kleineren Auflösung.
+
+### V.3 Terrain-Kacheln
+
+`game/scripts/TerrainTiles.gd` ersetzt das eine PlaneMesh durch 12 × 12
+Kacheln zu 64 Gitterabständen, je mit eigener AABB (vorher schaltete
+`extra_cull_margin = 1000` das Culling ab). Flächen-Vertrag wie vorher: ein
+Vertex je Render-Gitterpunkt, Teilung entlang der Anti-Diagonale; die Godot-
+Verträge (`water_geometry.gd`, `river_ribbons.gd`, `relief.gd`, `canopy.gd`)
+bleiben grün, die Bilder unterscheiden sich nicht.
+
+Gemessen im SELBEN Prozess gegen das alte PlaneMesh (3456×2104, nativ, ms):
+
+| Zustand | `diorama` | `tal` | `nah` |
+| --- | ---: | ---: | ---: |
+| PlaneMesh (alt) | 18,9 | 15,1 | 18,3 |
+| eine Kachel (720 Abstände) | 18,8 | 14,9 | 18,6 |
+| 64er-Kacheln | 19,3 | 14,8 | 18,5 |
+| 128er-Kacheln | | 14,4 | 18,5 |
+
+Die Kacheln sind leistungsneutral (±0,7 ms). Culling spart wenig, weil die
+Vertexarbeit klein ist; in der Totalen kosten die 144 Kacheln × 6 Pässe
+(Tiefen-Vorpass, Hauptpass, vier Kaskaden) dafür rund 0,4 ms. Sie bleiben
+als Struktur für #236 (Bäume je Kachel) und #238 (Vertexdichte je Kachel bis
+4×, `set_density`).
+
+Ein gemessener Fehler unterwegs: Die erste Fassung legte die Dreiecke von −z
+nach +z an. Dieselbe Geometrie war damit in `diorama` 0,9 ms langsamer als
+das PlaneMesh (im selben Prozess: PlaneMesh 19,0, als ArrayMesh 19,0, Kachel
+19,9, Kachel mit umgekehrter Dreiecks-Reihenfolge 19,1; AABB, UV/Tangenten
+und Vertex-Reihenfolge ohne Wirkung). Die Kacheln zeichnen ihre Dreiecke
+deshalb in der Reihenfolge des PlaneMesh.
+
+### V.4 Schatten
+
+Gröbere Schattenwerfer (eigene Kachel-Instanzen nur für den Schatten, jeder
+zweite Gitterpunkt, `cast_shadow = SHADOWS_ONLY`): 6016×3260, im selben
+Prozess, `diorama` 41,4 → 41,1 ms, `tal` 30,5 → 30,2 ms. Die Sonnenschatten
+kosten insgesamt nur 2,3 bis 3,3 ms (ohne Schatten 38,1 bzw. 28,2 ms), und
+davon ist der Werfer-Pass der kleinere Teil. Verworfen; Kaskaden und
+Reichweite bleiben, wie sie sind.
+
+### V.5 Abnahme: alt gegen neu, interleaved
+
+Flusstal-Bühne (`RS_STUDY_MODE=still|orbit|simulation`, je Lauf 10 s
+Bildabstände nach 2 s Vorlauf, Zeitraffer 60 J./s), alt = origin/main
+`0783abf` (nativ, PlaneMesh), neu = dieser Zweig (64er-Kacheln, MetalFX
+Spatial 0,67). Je Kamera und Betrieb drei Runden, A und B abwechselnd, die
+Reihenfolge je Runde gedreht. Je Lauf die GPU-Sperre; Läufe, in denen
+trotzdem ein fremdes Godot lief, sind gestrichen (daher teils 2 statt 3).
+Wert = Median über die Läufe, in ms.
+
+| Viewport | Kamera | Betrieb | alt Mittel | neu Mittel | Δ Mittel | alt p95 | neu p95 | Läufe alt/neu |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3456×2104 | `diorama` | Standbild | 18,5 | 11,9 | -36 % | 19,4 | 12,0 | 2/3 |
+| 3456×2104 | `diorama` | Kamerafahrt | 18,6 | 12,1 | -35 % | 18,8 | 12,2 | 3/3 |
+| 3456×2104 | `diorama` | Zeitraffer | 19,5 | 12,7 | -35 % | 21,2 | 14,2 | 3/3 |
+| 3456×2104 | `tal` | Standbild | 13,8 | 8,6 | -37 % | 13,8 | 8,7 | 3/2 |
+| 3456×2104 | `tal` | Kamerafahrt | 13,1 | 8,4 | -36 % | 13,6 | 8,6 | 3/3 |
+| 3456×2104 | `tal` | Zeitraffer | 15,2 | 9,6 | -37 % | 16,9 | 10,0 | 3/2 |
+| 3456×2104 | `nah` | Standbild | 16,9 | 10,1 | -40 % | 16,9 | 10,1 | 3/3 |
+| 3456×2104 | `nah` | Kamerafahrt | 17,6 | 10,3 | -41 % | 18,1 | 10,5 | 2/3 |
+| 3456×2104 | `nah` | Zeitraffer | 18,4 | 11,1 | -40 % | 19,8 | 12,1 | 2/3 |
+| 6016×3260 | `diorama` | Standbild | 39,3 | 23,0 | -41 % | 40,1 | 23,4 | 3/3 |
+| 6016×3260 | `diorama` | Kamerafahrt | 40,3 | 23,4 | -42 % | 41,1 | 23,8 | 3/3 |
+| 6016×3260 | `diorama` | Zeitraffer | 41,4 | 24,3 | -41 % | 48,2 | 26,0 | 3/3 |
+| 6016×3260 | `tal` | Standbild | 30,5 | 17,3 | -43 % | 31,2 | 17,7 | 3/3 |
+| 6016×3260 | `tal` | Kamerafahrt | 29,5 | 16,7 | -43 % | 30,4 | 17,3 | 3/3 |
+| 6016×3260 | `tal` | Zeitraffer | 33,2 | 19,0 | -43 % | 39,7 | 20,7 | 3/3 |
+| 6016×3260 | `nah` | Standbild | 38,9 | 21,2 | -46 % | 39,7 | 21,5 | 3/2 |
+| 6016×3260 | `nah` | Kamerafahrt | 40,4 | 21,9 | -46 % | 41,7 | 22,5 | 3/3 |
+| 6016×3260 | `nah` | Zeitraffer | 42,1 | 23,0 | -45 % | 48,4 | 24,5 | 3/3 |
+
+Ziele des Issues: `nah` und `tal` mindestens −40 %, `diorama` mindestens
+−25 %. Bei 6016×3260 alle erreicht. Bei 3456×2104 erreicht `nah` −40 % knapp
+und `diorama` −35 %; **`tal` verfehlt mit −36 bis −37 %**. Ursache: Beim
+kleineren Fenster ist der auflösungsunabhängige Anteil größer. In `tal`
+bleiben rund 5 ms, die nicht mit den Pixeln fallen (Sonnenschatten in den
+8192er-Atlas, Vertexarbeit, CPU-Seite je Bild); die Skalierung trifft nur
+den Rest. Budget 33,3 ms p95 bei 3456×2104 in `balanced`: neu höchstens
+14,2 ms p95 (vorher 21,2).
+
+
+Hebel, die `tal` bei 3456×2104 über die Schwelle brächten, im selben
+Prozess auf dem neuen Stand gemessen (Lauf mit zwei fremden Godots, nur die
+Unterschiede sind belastbar): Schattenatlas 4096 statt 8192 −0,25 ms,
+Schattenreichweite 150 statt 420 Einheiten −0,2 ms, beides −0,6 ms,
+Skalierung 0,6 statt 0,67 −1,0 ms. Alle drei ändern das Bild (Schattenschärfe
+bzw. Weichheit) und sind deshalb nicht übernommen; das entscheidet der Eigner
+am Bild.
+
+Bildvergleich: `scripts/look/judge.sh` vorher gegen nachher, 10 Läufe je
+Aufnahme: A 1, B 0, GLEICH 29 von 30. Das Abnahmeziel „kein sichtbarer
+Unterschied" ist damit auch aus Sicht des Bewerters erfüllt (seine Regel
+verlangt für „behalten" eine Verbesserung und meldet deshalb VERWERFEN).
+
+Bilder: `docs/look/a-budget/kontaktbogen-*.jpg` (vorher | nachher | Vorbild)
+und `ausschnitt-*.jpg` (1:1-Ausschnitt bei 6016×3260).

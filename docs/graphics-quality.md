@@ -220,7 +220,11 @@ Woher die Mehrkosten kommen (gemessen):
 | Filter pro Vertex statt gebacken, 1440er-Gitter | 35,6 |
 | nur `canopy` / nur `light` / nur `frame` (384er-Gitter; `frame` seit #155 nicht mehr schaltbar, Wert historisch) | 10,0 / 10,7 / 11,7 |
 
-Die Kosten folgen der Vertexzahl. Die Hebel `canopy`, `light` und `frame` sind
+Die Kosten folgen der Vertexzahl. (Nachtrag #235, November 2026: Das galt
+für diesen Stand und für dichtere Gitter. Auf dem Stand nach #174 und dem
+Look-Hill-Climber ist die Bildzeit zu rund drei Vierteln pixelgebunden, ein
+Viertel der Vertices spart nur 3 bis 6 ms von 31 bis 41 ms bei 6016×3260;
+Messreihe `docs/perf-measurements.md` § V.) Die Hebel `canopy`, `light` und `frame` sind
 im Vergleich billig.
 
 Bis Issue #154 rasterte die Studie je Fluss-Rebuild jedes Band-Dreieck in
