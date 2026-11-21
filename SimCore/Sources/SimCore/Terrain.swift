@@ -6368,24 +6368,118 @@ public final class Terrain {
         let buffers = BeltStampBuffers(bed: bed, hf: hfb.baseAddress!, veg: vb.baseAddress!,
                                        channel: icb.baseAddress!, belt: ibb.baseAddress!, age: bab.baseAddress!,
                                        lock: glb.count == cfg.count ? glb.baseAddress : nil)
-        var geometry: BeltGeometry?
-        // Mit Kopplung (#187) stempelt der Teilschritt eines wandernden Laufs
-        // nur dessen FLACHE Knoten (Mobilität > 0); seine steilen Strecken
-        // bekommen wie die festen Läufe einen Linien-Carve über den ganzen
-        // Schritt (`only == nil`). Seit die wandernden Läufe die ganzen Flüsse
-        // von der Quelle bis zur Mündung sind, stempelte jeder Teilschritt
-        // sonst den ganzen Gebirgsabschnitt mit (gemessen belt.stamp 3,8 →
-        // 8,0 ms je Schritt).
         let split = cfg.meanderBeltCoupling
-        let channelRange = only.map { $0..<($0 + 1) } ?? meander.channels.indices
-        for ci in channelRange {
+        if let ci = only {
             let ch = meander.channels[ci]
-            guard only != nil || split || !MeanderState.migrates(ch, cfg) else { continue }
-            let part = !split ? 0 : (only != nil ? 1 : (MeanderState.migrates(ch, cfg) ? 2 : 0))
-            geometry = beltStampChannel(ch, dt: dt, part: part, ageAtEnd: ageAtEnd,
-                                        lockHere: split && only != nil, buffers: buffers)
+            let part = split ? 1 : 0
+            return beltStampChannel(ch, dt: dt, part: part, ageAtEnd: ageAtEnd,
+                                    lockHere: split, buffers: buffers)
         }
-        return geometry
+        var items: [(ch: RiverChannel, part: Int)] = []
+        items.reserveCapacity(meander.channels.count)
+        for ch in meander.channels {
+            let mob = MeanderState.migrates(ch, cfg)
+            guard split || !mob else { continue }
+            guard ch.nodes.count >= 3 else { continue }
+            items.append((ch, !split ? 0 : (mob ? 2 : 0)))
+        }
+        beltStampBatch(items, dt: dt, ageAtEnd: ageAtEnd, lockHere: false, buffers: buffers)
+        return nil
+        }}}}}}}
+    }
+
+    /// Paralleler Stempel-Durchlauf für statische (nicht wandernde) Lauf-Chargen
+    /// (`belt.fixedStamp`, `belt.finishProfile`): ohne Migration schrumpft der
+    /// Stempel-Radius auf die lokale Kanal-/Bankbreite (≈ 2–12 Zellen), sodass fast
+    /// alle Läufe über den bestehenden `BeltSchedule` disjunkt parallel laufen —
+    /// bit-identisch zur seriellen Reihenfolge.
+    private func beltStampBatch(_ items: [(ch: RiverChannel, part: Int)], dt: Double,
+                                ageAtEnd: Double, lockHere: Bool, buffers: BeltStampBuffers) {
+        guard !items.isEmpty else { return }
+        if items.count == 1 || Terrain.coreCount <= 1 {
+            for item in items {
+                _ = beltStampChannel(item.ch, dt: dt, part: item.part, ageAtEnd: ageAtEnd,
+                                     lockHere: lockHere, buffers: buffers)
+            }
+            return
+        }
+        let maxCoord = Double(n - 1)
+        let barW = cfg.meanderBarWidths
+        var footprints: [MeanderState.BeltFootprint] = []
+        footprints.reserveCapacity(items.count)
+        var canParallel = true
+        for item in items {
+            let ch = item.ch
+            var loX = Double.infinity, hiX = -Double.infinity
+            var loZ = Double.infinity, hiZ = -Double.infinity
+            for p in ch.nodes {
+                let x = p.x, z = p.z
+                if !x.isFinite || !z.isFinite || x < 0 || z < 0 || x > maxCoord || z > maxCoord {
+                    canParallel = false; break
+                }
+                if x < loX { loX = x }; if x > hiX { hiX = x }
+                if z < loZ { loZ = z }; if z > hiZ { hiZ = z }
+            }
+            if !canParallel { break }
+            let radius: Double
+            if item.part == 2 {
+                // Nur steile Strecken (Linien-Carve + bilineare Knoten-Abfrage): <= 2 Zellen.
+                radius = 2.0
+            } else {
+                var maxQ = 0.0
+                for q in ch.discharge where q > maxQ { maxQ = q }
+                let w = MeanderState.beltWidthCells(discharge: maxQ, config: cfg) * 1.001
+                radius = max(0.5 * w + 0.5, (0.5 + barW) * w) + 2.0
+            }
+            guard radius.isFinite else { canParallel = false; break }
+            footprints.append(MeanderState.BeltFootprint(
+                minX: loX - radius, maxX: hiX + radius,
+                minZ: loZ - radius, maxZ: hiZ + radius,
+                maxSubsteps: ch.nodes.count))
+        }
+        guard canParallel else {
+            for item in items {
+                _ = beltStampChannel(item.ch, dt: dt, part: item.part, ageAtEnd: ageAtEnd,
+                                     lockHere: lockHere, buffers: buffers)
+            }
+            return
+        }
+        let schedule = BeltSchedule(footprints)
+        let work: (Int) -> Void = { idx in
+            let item = items[idx]
+            _ = self.beltStampChannel(item.ch, dt: dt, part: item.part, ageAtEnd: ageAtEnd,
+                                      lockHere: lockHere, buffers: buffers)
+        }
+        // Swift 6 (Issue #201): wie in `parallelBeltRuns` sichert `BeltSchedule`
+        // disjunkte Lese-/Schreibfenster aller gleichzeitig laufenden Stempel.
+        nonisolated(unsafe) let unsafeWork = work
+        DispatchQueue.concurrentPerform(iterations: min(Terrain.coreCount, items.count)) { _ in
+            while let idx = schedule.take() {
+                unsafeWork(idx)
+                schedule.finish(idx)
+            }
+        }
+    }
+
+    private func beltFinishProfile(dt: Double) {
+        let cs = cfg.cellSize
+        guard cs > 0, cs.isFinite else { return }
+        var items: [(ch: RiverChannel, part: Int)] = []
+        for ch in meander.channels where MeanderState.migrates(ch, cfg) && ch.nodes.count >= 3 {
+            items.append((ch, 1))
+        }
+        guard !items.isEmpty else { return }
+        hf.withUnsafeBufferPointer { hfb in
+        veg.withUnsafeMutableBufferPointer { vb in
+        isChannel.withUnsafeMutableBufferPointer { icb in
+        inBelt.withUnsafeMutableBufferPointer { ibb in
+        barAge.withUnsafeMutableBufferPointer { bab in
+        dropletGateBuf.withUnsafeMutableBufferPointer { glb in
+        withBed { bed in
+            let buffers = BeltStampBuffers(bed: bed, hf: hfb.baseAddress!, veg: vb.baseAddress!,
+                                           channel: icb.baseAddress!, belt: ibb.baseAddress!, age: bab.baseAddress!,
+                                           lock: glb.count == cfg.count ? glb.baseAddress : nil)
+            beltStampBatch(items, dt: dt, ageAtEnd: 0, lockHere: true, buffers: buffers)
         }}}}}}}
     }
 
@@ -7328,9 +7422,7 @@ public final class Terrain {
             // großen Schritt viel mehr Profil verschwinden als im Zeitraffer.
             // Die erste Hälfte steckt in den Migrations-Teilschritten oben.
             mark("belt.finishProfile")
-            for ci in meander.channels.indices where MeanderState.migrates(meander.channels[ci], cfg) {
-                beltStamp(dt: 0.5 * dt, only: ci, ageAtEnd: 0)
-            }
+            beltFinishProfile(dt: 0.5 * dt)
         }
         // Klima-Vertikale (Issue #33) am Schrittende: Temperatur liest die FINALEN
         // Höhen, und die Schneebilanz muss vor `updateVegetation` stehen — dort
