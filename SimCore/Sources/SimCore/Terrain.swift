@@ -3411,6 +3411,24 @@ public final class Terrain {
 
     // MARK: - Braiding (zellulärer Bänke-Bau, Murray & Paola 1994)
 
+    /// Vorab berechnete Parameter einer aktiven Braid-Zelle (`st == 2`)
+    /// für den seriellen Fracht-Durchlauf in `braidPass`.
+    private struct BraidActive {
+        var k: Int32
+        var cnt: Int32
+        var qcTot: Double
+        var vegDamp: Double
+        var maxScour: Double
+    }
+
+    /// Scheiben-Puffer für Pass 1b → Pass 2: aktive Zellen plus skalar gebundene
+    /// Routen-Arrays (`nbK`, `nbQc`) nur für tatsächlich existierende Empfänger.
+    private struct BraidChunk {
+        var cells: [BraidActive] = []
+        var nbK: [Int32] = []
+        var nbQc: [Double] = []
+    }
+
     /// Baut Mittelbänke und Fäden auf den großen Läufen — die Verflechtung
     /// (braiding). Minimal-Rezept nach Murray & Paola (Nature 371): (a) Wasser,
     /// das sich lateral aufteilen kann (unser MFD-Feld), plus (b) Bedload-Transport
@@ -3435,7 +3453,7 @@ public final class Terrain {
         let cellArea = cfg.cellSize * cfg.cellSize
         // cellSize 0 (keine definierte Schrittweite): keine Kapazität ohne Zellfläche,
         // sonst Division durch 0 und NaN-Vergiftung im Frachtpuffer qs.
-        guard cellArea > 0, cellArea.isFinite else { return }
+        guard cellArea > 0, cellArea.isFinite, cfg.count > 0 else { return }
         let minA = cfg.braidMinCells * cellArea
         let mB = cfg.braidExponent
         let kb = cfg.braidCapacity * dt
@@ -3443,18 +3461,19 @@ public final class Terrain {
         let sea = cfg.sea, nn = n, cnt = cfg.count
         let barHeight = cfg.braidBarHeight, deltaCeiling = cfg.braidDeltaCeiling
         fill(&qs, 0)
-        // PERF (Runde 7): Der Pass läuft über ALLE Zellen (der Reihe nach durch
-        // `order`), auch wenn nur wenige ein Braid-Reach sind — der active-Test
-        // zahlte seine vier verstreuten Lesezugriffe (areaMFD/hf/h ×2) 518k-fach
-        // je Schritt. Er lässt sich VORAB und PARALLEL entscheiden, weil seine
-        // Operanden bei der Zelle `k` bis zu k's eigenem Besuch unverändert
-        // bleiben: `hf` und `areaMFD` schreibt der Pass gar nicht, und `h[k]`
-        // ändert sich ausschließlich im Funnel von k's EIGENem Besuch
-        // (`erodeCell`/`depositCell` schreiben nur die Zelle `k` selbst, s.
-        // Bed-Funnel) — die serialisierten Besuche laufen also auf exakt den
-        // Pass-Startwerten. Bit-identisch: der Test selbst, seine
-        // Operanden und die Reihenfolge der Zweige sind unverändert.
+        // PERF: Alle Eingangsgrößen der aktiven Zellen (`hf`, `areaMFD`, `h[k]`,
+        // `h[nb]`, `veg`, `vegClass`) bleiben bis zum eigenen Besuch unverändert:
+        // `hf`/`areaMFD`/`veg*` schreibt der Pass nicht, `erodeCell`/`depositCell`
+        // schreiben nur die besuchte Zelle selbst, und jeder tiefere Nachbar `nb`
+        // (`phf[nb] < phf[k]`) liegt in `order` rückwärts strikt hinter `k`.
+        // Pass 1 sammelt deshalb die wenigen aktiven Zellen (~3–4 % des Gitters)
+        // in `order`-Reihenfolge parallel je Scheibe und berechnet MFD-Nachbarn,
+        // `powFast`/`pow`-Kapazitäten, `vegDamp` (Roh-Puffer statt Property) und
+        // Scour-Grenze vorab. Inaktive Landzellen (`st == 1`) schreiben weder `qs`
+        // noch beeinflussen sie frühere Zellen — nur tatsächlich belieferte werden
+        // in `touchedSt1` gesammelt und am Ende abgelagert. Bit-identisch.
         if braidStatus.count != cnt { braidStatus = .init(repeating: 0, count: cnt) }
+        // Pass 1a (linear über k): Status-Maske ohne False Sharing aufbauen.
         hf.withUnsafeBufferPointer { hfb in
         areaMFD.withUnsafeBufferPointer { amb in
         h.withUnsafeBufferPointer { hb in
@@ -3463,7 +3482,8 @@ public final class Terrain {
             let pst = stb.baseAddress!
             parallel(cnt) { lo, hi in
                 for k in lo..<hi {
-                    if phf[k] <= sea {
+                    let hfk = phf[k]
+                    if hfk <= sea {
                         pst[k] = 0
                         continue
                     }
@@ -3472,144 +3492,207 @@ public final class Terrain {
                     // Tiefere Ponds/Seen NICHT: Bänke-Bau dort macht die
                     // Becken-Böden rau um die See-Render-Schwelle (0.03) herum
                     // → sichtbares Speckle statt Verflechtung.
-                    let active = pamf[k] >= minA && ph0[k] > sea
-                              && phf[k] - ph0[k] < 0.015
-                    pst[k] = active ? 2 : 1
+                    let hk = ph0[k]
+                    pst[k] = (pamf[k] >= minA && hk > sea && hfk - hk < 0.015) ? 2 : 1
                 }
             }
         }}}}
-        // PERF (Issue #43): die Nachbar-Puffer des aktiven Zweigs als temporäre
-        // Roh-Allokation, `h`/`sed`/`rock` über `withBed`: dieselbe Roh-Puffer-
-        // Sicht, die auch der Funnel `erodeCell`/`depositCell` bekommt (er
-        // trägt das Gletscher-Gate, AGENTS.md).
+        // Pass 1b (parallel in `order`-Reihenfolge rückwärts, rein lesend auf `pst`):
+        // nur die ~3–4 % aktiven Zellen werden berechnet und kompaktiert.
+        let chunks = min(cnt, max(1, Terrain.coreCount * 4))
+        var activeChunks = [BraidChunk](repeating: BraidChunk(), count: chunks)
+        let fastMod = UInt64.max / UInt64(nn) &+ 1
+        let lastRow = cnt - nn
         order.withUnsafeBufferPointer { ob in
-        qs.withUnsafeMutableBufferPointer { qb in
+        hf.withUnsafeBufferPointer { hfb in
         areaMFD.withUnsafeBufferPointer { amb in
+        h.withUnsafeBufferPointer { hb in
+        veg.withUnsafeBufferPointer { vb in
+        vegClass.withUnsafeBufferPointer { vcb in
+        vegTypeFactor.withUnsafeBufferPointer { tfb in
+        braidStatus.withUnsafeBufferPointer { stb in
+        activeChunks.withUnsafeMutableBufferPointer { acb in
+            let pord = ob.baseAddress!, phf = hfb.baseAddress!, pamf = amb.baseAddress!
+            let ph0 = hb.baseAddress!, pveg = vb.baseAddress!, pcls = vcb.baseAddress!
+            let ptf = tfb.baseAddress!, pst = stb.baseAddress!, pach = acb.baseAddress!
+            parallel(chunks) { cLo, cHi in
+                withUnsafeTemporaryAllocation(of: Int32.self, capacity: 8) { nbKBuf in
+                withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbSBuf in
+                withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbWBuf in
+                let pNbK = nbKBuf.baseAddress!, pNbS = nbSBuf.baseAddress!, pNbW = nbWBuf.baseAddress!
+                for ch in cLo..<cHi {
+                    let lo = cnt * ch / chunks, hi = cnt * (ch + 1) / chunks
+                    var localCells: [BraidActive] = []
+                    var localNbK: [Int32] = []
+                    var localNbQc: [Double] = []
+                    for t in lo..<hi {
+                        let k = Int(pord[cnt - 1 - t])
+                        if pst[k] != 2 { continue }
+                        if localCells.isEmpty {
+                            localCells.reserveCapacity(1024)
+                            localNbK.reserveCapacity(4096)
+                            localNbQc.reserveCapacity(4096)
+                        }
+                        let hfk = phf[k]
+                        let hk = ph0[k]
+                        let amf = pamf[k]
+                        var nbCnt = 0
+                        var sMax = 0.0
+                        @inline(__always) func considerOrth(_ nb: Int) {
+                            let d = hfk - phf[nb]
+                            if d > 0 { pNbK[nbCnt] = Int32(nb); pNbS[nbCnt] = d; sMax = max(sMax, d); nbCnt += 1 }
+                        }
+                        @inline(__always) func considerDiag(_ nb: Int) {
+                            let d = hfk - phf[nb]
+                            if d <= 0 { return }
+                            let s = d / sqrt2
+                            if s > 0 { pNbK[nbCnt] = Int32(nb); pNbS[nbCnt] = s; sMax = max(sMax, s); nbCnt += 1 }
+                        }
+                        let i = Int((fastMod &* UInt64(k)).multipliedFullWidth(by: UInt64(nn)).high)
+                        if i > 0 && i < nn - 1 && k >= nn && k < lastRow {
+                            considerDiag(k - nn - 1); considerOrth(k - nn); considerDiag(k - nn + 1)
+                            considerOrth(k - 1);                            considerOrth(k + 1)
+                            considerDiag(k + nn - 1); considerOrth(k + nn); considerDiag(k + nn + 1)
+                        } else {
+                            let j = k / nn
+                            for dj in -1...1 {
+                                for di in -1...1 {
+                                    if di == 0 && dj == 0 { continue }
+                                    let ni = i + di, nj = j + dj
+                                    if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
+                                    if di != 0 && dj != 0 {
+                                        considerDiag(nj * nn + ni)
+                                    } else {
+                                        considerOrth(nj * nn + ni)
+                                    }
+                                }
+                            }
+                        }
+                        let p = mfdLocalExponent(a: amf, sMax: sMax, pond: hfk - hk)
+                        var wsum = 0.0
+                        for u in 0..<nbCnt { pNbW[u] = powFast(pNbS[u], p); wsum += pNbW[u] }
+                        if nbCnt == 0 || wsum <= 0 {
+                            localCells.append(BraidActive(
+                                k: Int32(k), cnt: 0, qcTot: 0, vegDamp: 0, maxScour: 0))
+                            continue
+                        }
+                        // Kapazität je Route: qcᵢ = Kb·dt · Q·Sᵢ · fᵢ^m  (Q in Zell-Einheiten).
+                        // Die Super-Linearität liegt bewusst auf der lateralen PARTITION fᵢ
+                        // (nicht auf dem absoluten Q, das über das Netz 3 Dekaden spannt): für
+                        // festes Q trägt EIN Faden (f=1) mehr als zwei halbe (2·0.5^m ≈ 0.35) —
+                        // die Konzentrations-Instabilität, die Fäden schärft. Und wo der Lauf
+                        // sich aufspreizt (viele kleine fᵢ → Σfᵢ^m ≪ 1) KOLLABIERT die
+                        // Kapazität → Deposition genau in den breiten, flachen Reaches → Bänke.
+                        let kq = kb * (amf / cellArea)
+                        var qcTot = 0.0
+                        var lowest = hk
+                        for u in 0..<nbCnt {
+                            let nb = pNbK[u]
+                            let qc = kq * pNbS[u] * pow(pNbW[u] / wsum, mB)
+                            localNbK.append(nb)
+                            localNbQc.append(qc)
+                            qcTot += qc
+                            lowest = min(lowest, ph0[Int(nb)])
+                        }
+                        let vDamp = max(0, 1 - 0.6 * ptf[Int(pcls[k])] * pveg[k])
+                        // Der SCOUR-Deckel bleibt bewusst bei festen 0.5 je Schritt und
+                        // wird NICHT auf `stepCapFraction` umgestellt (Issue #2 nennt
+                        // die DEPOSITIONS-Deckel; dies ist die Erosionsseite; s.
+                        // docs/dt-invariance-measurements.md §5).
+                        let maxScour = max(0, hk - lowest) * 0.5
+                        localCells.append(BraidActive(
+                            k: Int32(k), cnt: Int32(nbCnt),
+                            qcTot: qcTot, vegDamp: vDamp, maxScour: maxScour))
+                    }
+                    pach[ch] = BraidChunk(cells: localCells, nbK: localNbK, nbQc: localNbQc)
+                }
+                }}}
+            }
+        }}}}}}}}}
+        // Pass 2 (seriell in exakter `order`-Reihenfolge rückwärts): nur aktive Zellen.
+        var touchedSt1: [Int32] = []
+        touchedSt1.reserveCapacity(4096)
+        qs.withUnsafeMutableBufferPointer { qb in
         hf.withUnsafeBufferPointer { hfb in
         floodParent.withUnsafeBufferPointer { fpb in
         braidStatus.withUnsafeBufferPointer { stb in
-        withUnsafeTemporaryAllocation(of: Int.self, capacity: 8) { nbK in
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbW in
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbS in
-        withUnsafeTemporaryAllocation(of: Double.self, capacity: 8) { nbQc in
-        let pord = ob.baseAddress!, pqs = qb.baseAddress!, pamf = amb.baseAddress!
-        let phf = hfb.baseAddress!, pfp = fpb.baseAddress!
-        let pst = stb.baseAddress!
+        let pqs = qb.baseAddress!, phf = hfb.baseAddress!
+        let pfp = fpb.baseAddress!, pst = stb.baseAddress!
         withBed { bed in
-        var oi = cfg.count - 1
-        while oi >= 0 {
-            let k = Int(pord[oi]); oi -= 1
-            let st = pst[k]
-            if st == 0 { continue }
-            let qin = pqs[k]
-            if st == 1 {
-                // Kein Braid-Reach: Fracht landet hier ab (Delta/Seerand), Überschuss
-                // über den Stauraum hinaus gilt als exportiert (wie transportLimited).
-                //
-                // Depositions-Deckel als GEOMETRISCHE OBERGRENZE über dem
-                // Wasserspiegel statt als Zugabe JE SCHRITT (Issue #2). Vorher
-                // stand hier `max(0, hf−h) + 0.005` — das `max` INNEN, der
-                // Aufschlag also über dem aktuellen h statt über dem Spiegel:
-                // sobald die Schüttung den Spiegel erreicht hatte, durfte jeder
-                // weitere Schritt nochmal 0.005 draufsetzen, der Uferaufbau
-                // wuchs mit der SCHRITTZAHL statt mit der Zeit. Als Obergrenze
-                // `hf + braidDeltaCeiling` addiert er sich nicht mehr auf:
-                // viele kleine Schritte laufen gegen dieselbe Kante wie ein
-                // großer. Warum die Höhe 0.05 und nicht `braidBarHeight` ist —
-                // und was bei zu engem Deckel kippt — steht im Kalibrier-Logbuch
-                // bei `SimConfig.braidDeltaCeiling`.
-                if qin > 0 {
-                    let ceil = max(0, phf[k] + deltaCeiling - bed.h[k])
-                    depositCell(k, min(qin, ceil), bed)
-                }
-                continue
-            }
-            // MFD-Empfänger, Gewichte und Gefälle (identisch zu computeMFDArea,
-            // inkl. abfluss-abhängigem Exponent — die Fracht folgt dem Wasser).
-            let j = k / nn, i = k - j * nn
-            var cnt = 0
-            var sMax = 0.0
-            @inline(__always) func consider(_ nb: Int, _ dist: Double) {
-                let d = phf[k] - phf[nb]
-                if d <= 0 { return }
-                let s = d / dist
-                if s > 0 {
-                    nbK[cnt] = nb; nbS[cnt] = s; sMax = max(sMax, s)
-                    cnt += 1
-                }
-            }
-            if i > 0 && i < nn - 1 && j > 0 && j < nn - 1 {
-                consider(k - nn - 1, sqrt2); consider(k - nn, 1.0); consider(k - nn + 1, sqrt2)
-                consider(k - 1, 1.0);                               consider(k + 1, 1.0)
-                consider(k + nn - 1, sqrt2); consider(k + nn, 1.0); consider(k + nn + 1, sqrt2)
-            } else {
-                for dj in -1...1 {
-                    for di in -1...1 {
-                        if di == 0 && dj == 0 { continue }
-                        let ni = i + di, nj = j + dj
-                        if ni < 0 || ni >= nn || nj < 0 || nj >= nn { continue }
-                        let nb = nj * nn + ni
-                        consider(nb, (di != 0 && dj != 0) ? sqrt2 : 1.0)
+        for ch in 0..<chunks {
+            activeChunks[ch].cells.withUnsafeBufferPointer { ab in
+            activeChunks[ch].nbK.withUnsafeBufferPointer { kb in
+            activeChunks[ch].nbQc.withUnsafeBufferPointer { qcb in
+                guard let pa = ab.baseAddress else { return }
+                let m = ab.count
+                let pNbK = kb.baseAddress
+                let pNbQc = qcb.baseAddress
+                var routeOff = 0
+                for idx in 0..<m {
+                    let e = pa[idx]
+                    let k = Int(e.k)
+                    let qin = pqs[k]
+                    let nbCnt = Int(e.cnt)
+                    if nbCnt == 0 {
+                        // Seespiegel-Fläche: Fracht sedimentiert im See (bis Spiegel), Rest
+                        // wandert über den Überlauf weiter.
+                        let dep = min(qin, max(0, phf[k] - bed.h[k]))
+                        depositCell(k, dep, bed)
+                        let fp = Int(pfp[k])
+                        if fp >= 0 {
+                            let nbSt = pst[fp]
+                            if nbSt != 0 {
+                                let add = qin - dep
+                                if nbSt == 1 && pqs[fp] == 0 && add > 0 { touchedSt1.append(Int32(fp)) }
+                                pqs[fp] += add
+                            }
+                        }
+                        continue
                     }
+                    let qcTot = e.qcTot
+                    var qout = qin
+                    if qin > qcTot {
+                        // Überlast → Bank bauen: bis knapp über den Wasserspiegel (Insel!).
+                        let dep = min(qin - qcTot, max(0, phf[k] + barHeight - bed.h[k]))
+                        depositCell(k, dep, bed)
+                        qout -= dep
+                    } else {
+                        // Unterlast → Faden scourt (Vegetation bremst, nie unter den
+                        // tiefsten Empfänger — halber Weg wie transportLimited).
+                        let want = (qcTot - qin) * e.vegDamp
+                        let er = erodeCell(k, min(want, e.maxScour), bed)
+                        qout += er
+                    }
+                    // Fracht folgt der Kapazität (∝ qcᵢ): der starke Faden trägt sie weiter.
+                    let routeEnd = routeOff + nbCnt
+                    if qout > 0 && qcTot > 1e-30, let pNbK, let pNbQc {
+                        for u in routeOff..<routeEnd {
+                            let nb = Int(pNbK[u])
+                            let nbSt = pst[nb]
+                            if nbSt == 0 { continue }
+                            let add = qout * (pNbQc[u] / qcTot)
+                            if nbSt == 1 && pqs[nb] == 0 && add > 0 { touchedSt1.append(Int32(nb)) }
+                            pqs[nb] += add
+                        }
+                    }
+                    routeOff = routeEnd
                 }
-            }
-            let p = mfdLocalExponent(a: pamf[k], sMax: sMax, pond: phf[k] - bed.h[k])
-            var wsum = 0.0
-            for t in 0..<cnt { nbW[t] = powFast(nbS[t], p); wsum += nbW[t] }
-            if cnt == 0 || wsum <= 0 {
-                // Seespiegel-Fläche: Fracht sedimentiert im See (bis Spiegel), Rest
-                // wandert über den Überlauf weiter.
-                let dep = min(qin, max(0, phf[k] - bed.h[k]))
-                depositCell(k, dep, bed)
-                let fp = pfp[k]
-                if fp >= 0 { pqs[Int(fp)] += qin - dep }
-                continue
-            }
-            // Kapazität je Route: qcᵢ = Kb·dt · Q·Sᵢ · fᵢ^m  (Q in Zell-Einheiten).
-            // Die Super-Linearität liegt bewusst auf der lateralen PARTITION fᵢ
-            // (nicht auf dem absoluten Q, das über das Netz 3 Dekaden spannt): für
-            // festes Q trägt EIN Faden (f=1) mehr als zwei halbe (2·0.5^m ≈ 0.35) —
-            // die Konzentrations-Instabilität, die Fäden schärft. Und wo der Lauf
-            // sich aufspreizt (viele kleine fᵢ → Σfᵢ^m ≪ 1) KOLLABIERT die
-            // Kapazität → Deposition genau in den breiten, flachen Reaches → Bänke.
-            let q = pamf[k] / cellArea
-            var qcTot = 0.0
-            for t in 0..<cnt {
-                nbQc[t] = kb * q * nbS[t] * pow(nbW[t] / wsum, mB)
-                qcTot += nbQc[t]
-            }
-            var qout = qin
-            if qin > qcTot {
-                // Überlast → Bank bauen: bis knapp über den Wasserspiegel (Insel!).
-                let dep = min(qin - qcTot, max(0, phf[k] + barHeight - bed.h[k]))
-                depositCell(k, dep, bed)
-                qout -= dep
-            } else {
-                // Unterlast → Faden scourt (Vegetation bremst, nie unter den
-                // tiefsten Empfänger — halber Weg wie transportLimited).
-                var lowest = bed.h[k]
-                for t in 0..<cnt { lowest = min(lowest, bed.h[nbK[t]]) }
-                // Der SCOUR-Deckel bleibt bewusst bei festen 0.5 je Schritt und
-                // wird NICHT auf `stepCapFraction` umgestellt (Issue #2 nennt
-                // die DEPOSITIONS-Deckel; dies ist die Erosionsseite): mit der
-                // Rate darf ein 200-Jahr-Schritt 0.75 statt 0.5 der lokalen
-                // Differenz ausräumen, und der Braid-Scour gräbt damit den
-                // Boden der abflusslosen Becken tiefer — gemessen fiel die
-                // trockengefallene, verkrustete Playa-Fläche von >100 auf 35
-                // Zellen und die #11-Wächter `testDriedBedIsRenderedAsPlaya`
-                // und `testBasinLevelIsRateLimited` kippten. Damit bleibt hier
-                // eine bekannte (kleine) Schrittweiten-Abhängigkeit stehen;
-                // sie ist in docs/dt-invariance-measurements.md §5 vermerkt.
-                let want = (qcTot - qin) * vegDamp(k)
-                let er = erodeCell(k, min(want, max(0, bed.h[k] - lowest) * 0.5), bed)
-                qout += er
-            }
-            // Fracht folgt der Kapazität (∝ qcᵢ): der starke Faden trägt sie weiter.
-            if qout > 0 && qcTot > 1e-30 {
-                for t in 0..<cnt { pqs[nbK[t]] += qout * (nbQc[t] / qcTot) }
+            }}}
+        }
+        // Pass 3: Inaktive Landzellen (`st == 1`), die Fracht erhalten haben —
+        // gegenseitig unabhängig und strikt nach allen sie speisenden aktiven Zellen.
+        // Depositions-Deckel als GEOMETRISCHE OBERGRENZE über dem Wasserspiegel
+        // (`hf + braidDeltaCeiling`, Issue #2; Kalibrier-Logbuch in Config.swift).
+        for k32 in touchedSt1 {
+            let k = Int(k32)
+            let qin = pqs[k]
+            if qin > 0 {
+                let ceil = max(0, phf[k] + deltaCeiling - bed.h[k])
+                depositCell(k, min(qin, ceil), bed)
             }
         }
-        }}}}}}}}}}}
+        }
+        }}}}
     }
 
     // MARK: - Transport-limitierte Fluss-Erosion (SPACE-artig) — TESTPFAD
