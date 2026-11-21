@@ -1481,3 +1481,78 @@ Nachmessung auf dem Endstand stehen in `docs/zielbild-measurements.md`
 
 **Offene Bildpunkte** (großer See bei flachem Blick milchig, Fels hell und
 glatt gegenüber den Vorlagen) und die offenen Sim-Reste: `docs/zielbild-measurements.md` § „Vorher/Nachher-Bögen" und `ROADMAP.md` § Offene Punkte.
+
+## Scan-Materialien, Tilt-Shift und Talnebel (#237)
+
+Look-Strang C. Reine Darstellung: `simperf --hash` vor und nach dem Umbau
+`95cf93ca1b40985c` (M4 Max, Produktions-Config), SimCore-Pflichtsuite grün.
+Kontaktbögen vorher | nachher | Vorbild: `docs/look/c-materials/`.
+
+**Material.** Fels, Schutt, Kies und Sand kommen aus fünf gescannten
+CC0-PBR-Sätzen (Poly Haven, ambientCG; Herkunft und SHA-256 in
+`game/assets/materials/MANIFEST.md`, `NOTICE`), gepackt zu zwei
+`Texture2DArray` mit je 1024² (`scripts/look/pack_scan_materials.py`, 25 MB im
+Repo): Albedo samt Höhe im Alpha, Normale samt Rauheit. Der Packer normiert
+die mittlere Helligkeit jeder Albedo auf 0,18 linear und entsättigt sie zur
+Hälfte; die Grundfarben bleiben im Shader (Fels dunkelgrau wie seit #174 D).
+Das Include `game/shaders/scan_material.gdshaderinc` fragt triplanar über
+`textureGrad` ab (die Aufrufer verzweigen je Pixel, Ableitungen kommen einmal
+aus `fragment()`):
+
+| Material | Scan | Kachel (Welt) | Projektion |
+| --- | --- | ---: | --- |
+| Fels groß | `dark_rock_02` (Bänke und Klüfte) | 160 m | triplanar, Potenz 6 |
+| Fels Detail | `Rock030` (zerklüftet) | 28 m | triplanar, nur nah (Pixel < 1,2 m) |
+| Schutt | `Rocks006` | 55 m | triplanar |
+| Kies (Flussbank) | `ganges_river_pebbles` | 30 m | Draufsicht |
+| Sand (Strand) | `aerial_beach_02` | 45 m | Draufsicht |
+
+Dazu Schichtbänder nach Welt-Y (35 m Abstand, leicht verbogen, Ton je Bank
+und gestückelte Bankfugen mit Schattenstufe), nur auf Wänden. Übergänge
+Fels ↔ Schutt und Kies ↔ Sand laufen nach der Scan-Höhe statt linear. Ersetzt
+ist die Rausch-Klüftung aus #174 D (`rock_joints`, `scree_grain`, die
+Kalibrierung `material_joint_*` und `material_scree_grain`, die Studien
+`CliffsDiagnostic`/`CliffsTiming`) und das triplanare Feingran `tri_grain`
+(trägt jetzt `top_grain`). Auf steilen Wänden ist das Erosions-Rinnendetail
+um bis zu 75 % zurückgenommen: es zog die senkrechten Streifen. WO Fels,
+Schutt und Sand liegen, rechnet unverändert `TerrainColorRenderer`.
+
+Eingang für #238: `amplify_maps` (R Abtrag, G Ablagerung, B Abfluss),
+ungebunden schwarz und damit wirkungslos; Belegung im Include und in #237.
+
+**Tilt-Shift.** `game/scripts/Atmosphere.gd` setzt `CameraAttributesPractical`
+mit Nah- und Fern-Unschärfe um den Fokuspunkt: Pinselkuppel, wenn sichtbar,
+sonst das Kameraziel (geglättet über 0,15 s). Scharfe Schicht ±16 % (flach)
+bis ±32 % (steil) des Fokusabstands, Unschärfe 0,025 (Nahsicht) bis 0,08
+(Totale) nach Kameraabstand. Box-Bokeh, niedrige Qualität, ohne Jitter: die
+erste Fassung (Hexagon, mittel, Jitter) kostete gemessen 3,2 ms je Bild.
+In `performance` aus.
+
+**Talnebel.** `game/shaders/valley_fog.gdshader`: zwei unbeleuchtete,
+transparente Lagen, je 1,2 Welteinheiten über dem tiefsten Gelände im Umkreis
+von ±22 Zellen (über dem Meer 0,55 über dem Spiegel), sichtbar, wo das
+Gelände darunter liegt, in Schwaden gebrochen, in Sonnenfarbe. Stärke nach
+Kameraabstand (aus unter 18, voll ab 60 Einheiten): `nah` bleibt klar, `tal`
+bekommt einen Hauch, das Diorama Schwaden in den Tälern; hinter dem Fokus
+dichter als davor (Tiefenstaffelung). Verworfen: Lage auf dem MITTEL der
+Umgebung (auf breiten Talböden lag sie im Boden, Nebel nur als Saum an den
+Flanken); beleuchtete Lage (las sich im Talschatten als brauner Schmutz);
+volle Deckung bis 0,85 (flutete die Täler, Flüsse verschwanden darunter,
+der Fehler der Look-Iterationen 9 und 17).
+
+**Leistung** (Zeitraffer, Flusstal-Bühne, `balanced`, maximiert 3456×2104,
+M4 Max, interleaved alt/neu nach `scripts/timelapse-timing.sh`, Mittel / p95):
+
+| Stand | Kamera | Läufe | alt | neu |
+| --- | --- | ---: | --- | --- |
+| erste Fassung | Detail (42) | 6 | 18,0 / 19,1 ms | 20,7 / 22,2 ms |
+| erste Fassung | nah (16) | 6 | 18,7 / 19,8 ms | 21,5 / 22,9 ms |
+| Zerlegung erste Fassung | Detail | 4 | 18,7 / 20,5 ms | voll 21,5 / 24,0; ohne Tiefenschärfe 18,3 / 19,9; ohne Nebel 20,5 / 22,8 ms |
+| Endstand | Detail (42) | 6 (B: 3 ohne fremdes Godot) | 18,8 / 20,7 ms | 19,5 / 22,4 ms |
+| Endstand | nah (16) | 6 (4) | 18,8 / 21,2 ms | 18,7 / 20,8 ms |
+
+Die Scans selbst sind billiger als die Rausch-Klüftung, die sie ersetzen
+(ohne Tiefenschärfe lag die erste Fassung samt Nebel unter dem alten Stand).
+Der Rest in der Detail-Kamera ist Tiefenschärfe und Nebel. Die verbindliche
+Messung gegen das Budget kommt nach dem Rebase auf #235 (Render-Skalierung:
+dann laufen Material und Bokeh auf 0,45 der Pixel).

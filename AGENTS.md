@@ -423,11 +423,17 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    `scripts/Lighting.gd` ein (feste Welt-Sonne, Issue #151, Wächter
    `tests/lighting.gd`); dieselbe Rauschquelle zeichnet seit #174 D die
    Wolkenkörper über dem Kamm (`cloud_body.gdshader`, in `performance` aus),
-   die Schatten fallen entlang der Sonne von deren Basis. WO Fels, Schutthalden,
+   die Schatten fallen entlang der Sonne von deren Basis. Tiefenschärfe als
+   Tilt-Shift (Fokus auf Pinselpunkt bzw. Kameraziel) und Talnebel als eigene
+   transparente Lagen stellt `scripts/Atmosphere.gd` ein (Shader
+   `valley_fog.gdshader`, #237). WO Fels, Schutthalden,
    Gletschereis, Rohboden und Talboden-Wiese liegen, rechnet
    `SimRender.TerrainColorRenderer` (Kalibrierung `SimCore.MaterialRender`,
    Wächter `SimCoreTests/MaterialTests.swift` und `tests/canopy.gd`); der
-   Terrain-Shader baut daraus nur Klüftung, Körnung, Spalten und Moränen,
+   Terrain-Shader baut daraus nur das Aussehen: Fels, Schutt, Kies und Sand
+   aus gescannten CC0-Materialien (`shaders/scan_material.gdshaderinc`,
+   Texture2DArray, Herkunft `assets/materials/MANIFEST.md`, #237), Spalten
+   und Moränen,
    und verteilt je Pixel nach der Form um (Look-Hill-Climber Nr. 7): Schnee
    hält sich in Rinnen und gleitet von Rippen und Steilflanken ab (wird
    Fels), die Grenze Fels ↔ Bewuchs franst nach Rauschen und Form aus;
