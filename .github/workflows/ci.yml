@@ -237,6 +237,13 @@ jobs:
       - name: Terrain-Kacheln (Issue #235)
         run: |
           scripts/godot-test.sh res://tests/terrain_tiles.gd TERRAIN_TILES_OK
+      # Gelände-Verfeinerung (Issue #238): rechnet auf dem RenderingDevice,
+      # das es auf dem Runner nicht gibt. Hier läuft deshalb nur der Teil
+      # ohne GPU (Main bleibt beim Back-Pass); Bindung und Stabilität prüft
+      # der Test lokal mit Fenster (Kopf von tests/amplify.gd).
+      - name: Gelände-Verfeinerung (Issue #238)
+        run: |
+          scripts/godot-test.sh res://tests/amplify.gd AMPLIFY_OK
 
       # GPU-Wasser-Schwanz (Issue #95): der EINZIGE Vertragstest, der einen
       # Renderer braucht (SubViewport-Readbacks; alle anderen laufen headless).
