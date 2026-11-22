@@ -42,14 +42,18 @@ static func apply(vp: Viewport, quality: String) -> void:
 	var env_scale := OS.get_environment("RS_RENDER_SCALE").replace(",", ".")
 	if env_scale.is_valid_float():
 		scale = clampf(env_scale.to_float(), 0.25, 1.0)
-	var mode := mode_for(RenderingServer.get_current_rendering_driver_name())
-	match OS.get_environment("RS_SCALING"):
-		"bilinear":
-			mode = Viewport.SCALING_3D_MODE_BILINEAR
-		"fsr":
-			mode = Viewport.SCALING_3D_MODE_FSR
-		"metalfx":
-			mode = Viewport.SCALING_3D_MODE_METALFX_SPATIAL
+	var driver := RenderingServer.get_current_rendering_driver_name()
+	var mode := mode_for(driver)
+	# Override nur, wenn der Treiber das Verfahren kann; sonst fiele Godot still
+	# auf bilinear zurück, und die Messung stünde unter dem falschen Namen.
+	var wanted := OS.get_environment("RS_SCALING")
+	var supported := {"bilinear": true, "fsr": driver in ["vulkan", "d3d12"], "metalfx": driver == "metal"}
+	if supported.has(wanted):
+		if supported[wanted]:
+			mode = {"bilinear": Viewport.SCALING_3D_MODE_BILINEAR, "fsr": Viewport.SCALING_3D_MODE_FSR,
+				"metalfx": Viewport.SCALING_3D_MODE_METALFX_SPATIAL}[wanted]
+		else:
+			push_warning("RS_SCALING=%s gibt es auf dem Treiber '%s' nicht, bleibe beim Standard" % [wanted, driver])
 	if scale >= 1.0:
 		mode = Viewport.SCALING_3D_MODE_BILINEAR # nativ: kein Hochskalierer
 	vp.scaling_3d_mode = mode

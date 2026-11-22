@@ -35,7 +35,13 @@ extends Node3D
 ## die 144 Kacheln gemessen rund 0,4 ms. 64 statt 128, damit #238 die Dichte
 ## nahe der Kamera in kleinen Schritten heben kann.
 const TILE_QUADS := 64
+## Gitterabstände dieser Instanz. Die Umgebung (`RS_TILE_QUADS`, A/B ohne
+## Umbau) wirkt nur beim Anlegen; wer danach selbst setzt, gewinnt.
 var tile_quads := TILE_QUADS
+
+func _init() -> void:
+	if OS.get_environment("RS_TILE_QUADS").is_valid_int():
+		tile_quads = maxi(8, OS.get_environment("RS_TILE_QUADS").to_int())
 const MAX_DENSITY := 4
 
 var world_size := 0.0
@@ -60,8 +66,6 @@ func build(world: float, grid_points: int, mat: Material, aabb_y_lo: float, aabb
 	for mi in instances:
 		mi.queue_free()
 	instances.clear()
-	if OS.get_environment("RS_TILE_QUADS").is_valid_int(): # A/B ohne Umbau
-		tile_quads = maxi(8, OS.get_environment("RS_TILE_QUADS").to_int())
 	tiles_per_side = ceili(float(grid - 1) / tile_quads)
 	tile_density.resize(tiles_per_side * tiles_per_side)
 	tile_density.fill(1)

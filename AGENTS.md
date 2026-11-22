@@ -201,6 +201,7 @@ GODOT="$(scripts/fetch-godot.sh)"
 "$GODOT" --headless --path game --script res://tests/relief.gd
 "$GODOT" --headless --path game --script res://tests/canopy.gd
 "$GODOT" --headless --path game --script res://tests/ui_layout.gd
+"$GODOT" --headless --path game --script res://tests/terrain_tiles.gd  # ohne GDExtension
 "$GODOT" --headless --path game --script res://tests/water_gpu_tail.gd  # GPU-Teil überspringt ohne Rendering-Device
 GODOT_TEST_RENDER=1 scripts/godot-test.sh res://tests/water_gpu_tail.gd WATER_GPU_TAIL_OK  # mit Renderer (lokal Desktop, CI xvfb + llvmpipe)
 "$GODOT" --headless --path game --script res://tests/water_rings.gd   # 106.000 Jahre, langsam
@@ -214,7 +215,7 @@ grüner Lauf nichts über den lokalen Stand.
 In CI laufen die Vertragstests nicht direkt, sondern über
 `scripts/godot-test.sh <res://…gd> <ERFOLGSMARKE>`. Gewertet wird die
 Erfolgsmarke des Skripts (`SMOKE_OK`, `WATER_GEOMETRY_OK`, `RIVER_RIBBONS_OK`,
-`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`, `WATER_GPU_TAIL_OK`), nicht der
+`WATER_UNIFORMS_OK`, `BUILD_STAMP_PARITY_OK`, `GRAPHICS_STUDY_OK`, `LIGHTING_OK`, `RELIEF_OK`, `CANOPY_OK`, `UI_LAYOUT_OK`, `TERRAIN_TILES_OK`, `WATER_GPU_TAIL_OK`), nicht der
 Exit-Code der Engine: Godot 4.7.1 reißt auf dem Runner sporadisch beim
 HERUNTERFAHREN ab (Exit 139, Issue #61) — beim Import und seit 2026-08-27 auch
 NACH einem bestandenen Vertragstest. Marke fehlt heißt weiterhin rot, ein
@@ -335,7 +336,7 @@ des langsameren Jobs, nicht die Summe:
 | Job | Prüft | Lokal reproduzieren |
 | --- | --- | --- |
 | `test` | Sim-Kern: die SimCore-Pflichtsuite (ohne `RS_MEASURE`) | `swift test -c release --package-path SimCore …` |
-| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd`, `water_gpu_tail.gd` (mit Renderer über xvfb + llvmpipe) (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
+| `godot-contract` | Godot-Vertrag: GDExtension-Build (release), Projekt-Import, Build-Stempel-Parität, `smoke.gd`, `water_geometry.gd`, `river_ribbons.gd`, `water_uniforms.gd`, `graphics_study.gd`, `lighting.gd`, `relief.gd`, `canopy.gd`, `ui_layout.gd`, `terrain_tiles.gd`, `water_gpu_tail.gd` (mit Renderer über xvfb + llvmpipe) (alle über `scripts/godot-test.sh`, s. o.) | `scripts/build.sh release` + die `"$GODOT" --headless`-Zeilen oben |
 
 Beide Jobs richten die Toolchain über dieselbe lokale Composite-Action ein
 (`.github/actions/swift-toolchain`). Die Einrichtung ist nicht generisch (feste
@@ -408,7 +409,7 @@ Drei Schichten, bewusst getrennt (Begründung: `PLAN.md` §1):
    derzeit 4.7.2): `Main.gd` (Textur-Update, UI, Kamera, Input; das Terrain
    zeichnet `scripts/TerrainTiles.gd` als 64er-Kacheln mit eigener AABB, deren
    Dreiecke denselben Flächen-Vertrag wie das frühere PlaneMesh einhalten,
-   Issue #235; die Render-Skalierung setzt `scripts/RenderScale.gd`; das Aussehen der
+   Issue #235, Wächter `tests/terrain_tiles.gd`; die Render-Skalierung setzt `scripts/RenderScale.gd`; das Aussehen der
    Bedienung steht in EINEM Theme, `ui/glass_theme.tres` (samt Radius und
    Abdunklung des Weichzeichners hinter den Panels; Shader
    `ui/glass_blur.gdshader`), die Werkzeug- und

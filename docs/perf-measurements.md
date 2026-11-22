@@ -2610,7 +2610,9 @@ Kacheln zu 64 Gitterabständen, je mit eigener AABB (vorher schaltete
 `extra_cull_margin = 1000` das Culling ab). Flächen-Vertrag wie vorher: ein
 Vertex je Render-Gitterpunkt, Teilung entlang der Anti-Diagonale; die Godot-
 Verträge (`water_geometry.gd`, `river_ribbons.gd`, `relief.gd`, `canopy.gd`)
-bleiben grün, die Bilder unterscheiden sich nicht.
+bleiben grün, die Bilder unterscheiden sich nicht. Den Flächen-Vertrag selbst
+(dieselbe Dreiecksmenge wie das PlaneMesh, keine Lücke, AABB deckt alle
+Vertices auch bei Dichte 2 und 4) prüft `game/tests/terrain_tiles.gd`.
 
 Gemessen im SELBEN Prozess gegen das alte PlaneMesh (3456×2104, nativ, ms):
 

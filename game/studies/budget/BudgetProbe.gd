@@ -55,6 +55,16 @@ func _ready() -> void:
 	probe_terrain = get("terrain_mi") if get("terrain_mi") != null else get("terrain_tiles")
 	if probe_terrain is MeshInstance3D:
 		probe_mesh_full = probe_terrain.mesh
+	else:
+		# Neuer Stand (Kacheln): die Diagnose-Zustände für das alte PlaneMesh
+		# schalten hier nichts um und würden trotzdem eine Zahl unter ihrem
+		# Namen liefern. Deshalb laut abbrechen statt still mitzählen.
+		for st in probe_states:
+			for only_old in ["grid360", "tiles", "am", "rev", "tight"]:
+				if st.contains(only_old):
+					push_error("Zustand '%s' gibt es nur im alten Stand (PlaneMesh)" % st)
+					get_tree().quit(1)
+					return
 	active_fps_cap = 0
 	var vp := get_viewport()
 	probe_defaults = {"mode": vp.scaling_3d_mode, "scale": vp.scaling_3d_scale, "msaa": vp.msaa_3d}

@@ -234,6 +234,10 @@ jobs:
         run: |
           scripts/godot-test.sh res://tests/ui_layout.gd UI_LAYOUT_OK
 
+      - name: Terrain-Kacheln (Issue #235)
+        run: |
+          scripts/godot-test.sh res://tests/terrain_tiles.gd TERRAIN_TILES_OK
+
       # GPU-Wasser-Schwanz (Issue #95): der EINZIGE Vertragstest, der einen
       # Renderer braucht (SubViewport-Readbacks; alle anderen laufen headless).
       # xvfb + Mesa-llvmpipe stellen auf dem Runner ein Software-GL-Device;
