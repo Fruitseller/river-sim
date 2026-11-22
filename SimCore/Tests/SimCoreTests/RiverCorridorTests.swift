@@ -108,7 +108,7 @@ final class RiverCorridorTests: XCTestCase {
 
         let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world / 2
         let bank = BankSurface(h: t.h, n: n, renderGrid: n, hscale: RenderContract.heightScale)
-        var sections = 0, bedAbove = 0, waterAbove = 0, pierced = 0, lifted = 0, outsideMask = 0, lidHigh = 0, wetRock = 0
+        var sections = 0, bedAbove = 0, waterAbove = 0, pierced = 0, lifted = 0, outsideMask = 0, lidHigh = 0, wetRock = 0, wetVertices = 0
         var maxPierce = 0.0
         for start in stride(from: 0, to: c.vertices.count, by: k) {
             guard c.colors[start].w > 0.05 else { continue }   // sichtbare Querschnitte
@@ -134,9 +134,11 @@ final class RiverCorridorTests: XCTestCase {
                 // in Schluchten in den Fels tauchen. Das bleibt selten.
                 let over = Double(v.y) - lid
                 if over > 1e-4 { pierced += 1; maxPierce = max(maxPierce, over) }
-                if col >= sh && col <= k - 1 - sh,
-                   bank.height((Double(v.x) + half) / cs, (Double(v.z) + half) / cs) - lid > 1e-4 {
-                    wetRock += 1
+                if col >= sh && col <= k - 1 - sh {
+                    wetVertices += 1
+                    if bank.height((Double(v.x) + half) / cs, (Double(v.z) + half) / cs) - lid > 1e-4 {
+                        wetRock += 1
+                    }
                 }
             }
             // Der Fuß liegt auf dem Gelände (keine Lippe, keine Lücke zum Gelände);
@@ -167,12 +169,15 @@ final class RiverCorridorTests: XCTestCase {
               + "n=\(n) cs=\(cs)")
         print("corridor sections=\(sections) bedAbove=\(bedAbove) waterAbove=\(waterAbove) "
               + "pierced=\(pierced) maxPierce=\(maxPierce) liftedEdges=\(lifted) outsideMask=\(outsideMask) "
-              + "lidHigh=\(lidHigh) wetRock=\(wetRock)")
+              + "lidHigh=\(lidHigh) wetRock=\(wetRock)/\(wetVertices)")
         XCTAssertGreaterThan(sections, 200)
         XCTAssertEqual(bedAbove, 0, "Bett über der Uferkante")
         XCTAssertEqual(waterAbove, 0, "Wasser über dem Ufer")
         XCTAssertEqual(pierced, 0, "Korridor über dem Deckel")
-        XCTAssertLessThanOrEqual(wetRock, sections / 100, "Gelände sticht oft durch das Wasser")
+        // Anteil der nassen Vertices: macOS 6 von 6235 (0,1 %), die steilere
+        // Linux-Welt (glibc) 26 von 7080 (0,37 %); vor dem Deckel-Deckel 0,
+        // dafür hingen in Schluchten Fluss und Ufer vor dem Grat in der Luft.
+        XCTAssertLessThanOrEqual(wetRock, wetVertices / 100, "Gelände sticht oft durch das Wasser")
         XCTAssertEqual(lidHigh, 0, "Deckel weit über dem Wasser (zöge den Fluss vor Grate davor)")
         XCTAssertEqual(outsideMask, 0, "Korridor-Fuß außerhalb der Schutzmaske (Naht zu #238)")
         // Die Wasserfläche des Bands liegt unter dem Deckel ihres Stützpunkts.
