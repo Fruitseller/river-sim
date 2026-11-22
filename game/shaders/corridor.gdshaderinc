@@ -144,7 +144,8 @@ void fragment() {
 	float rim = clamp(WET_RIM_SHARE * v_water_half, WET_RIM_MIN, WET_RIM_MAX);
 	float wet = (1.0 - smoothstep(0.0, rim, abs(v_off) - shore))
 		* (1.0 - smoothstep(0.5 * WET_RIM_HEIGHT, WET_RIM_HEIGHT, above));
-	bank *= mix(1.0, 0.6, wet);
+	// 0,75 statt 0,6: der dunkle Saum las sich als Konturring (Gremium 3, 2e).
+	bank *= mix(1.0, 0.75, wet);
 
 	// Bett unter Wasser: das gemeinsame Bett (water_bed_color), im
 	// Flachwasser am Gleithang Kies. Den Wasserkörper malt das Band darüber

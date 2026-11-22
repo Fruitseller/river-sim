@@ -635,6 +635,10 @@ public final class WaterFieldRenderer {
         for (chIndex, ch) in (noMeanderPaint ? [] : terrain.meander.channels).enumerated() {
             let nodes = ch.nodes
             if nodes.count < 2 { continue }
+            // Wie das Band: ohne das lange Endsegment zum Anschluss im
+            // Hauptlauf (`renderNodeCount`), sonst lag der Saum als gerade
+            // dunkle Linie quer über der Wiese.
+            let m = renderNodeCount(nodes)
             // Kanäle mit unvollständigem/nicht-endlichem Abfluss oder extremen Koordinaten
             // überspringen, um OOB-Traps und Double-to-Int-Konvertierungsfehler zu verhindern (analog RiverRibbonRenderer).
             guard ch.discharge.count >= nodes.count else { continue }
@@ -656,7 +660,7 @@ public final class WaterFieldRenderer {
             let hasBand = geometryMode
                 && (chIndex < bandChannelFlags.count ? bandChannelFlags[chIndex] : true)
             if geometryMode && !hasBand { continue }
-            for i in 0..<(nodes.count - 1) {
+            for i in 0..<(m - 1) {
                 let ax = nodes[i].x, az = nodes[i].z, bx = nodes[i + 1].x, bz = nodes[i + 1].z
                 let q = 0.5 * (ch.discharge[i] + ch.discharge[i + 1])   // Abfluss (Zellen) am Segment
                 // Render-Gate wie beim Abfluss-Feld: Mäander-ENTITÄTEN existieren ab
@@ -689,13 +693,13 @@ public final class WaterFieldRenderer {
             // dem Band die sprenklige Textur-Version des Laufs. Ohne Band gibt
             // es nichts zu überlappen — der Stempel endet wie vor #34.
             if hasBand {
-                let last = nodes[nodes.count - 1]
-                let q = ch.discharge[nodes.count - 1]
+                let last = nodes[m - 1]
+                let q = ch.discharge[m - 1]
                 if q >= creek {
                     let rad = Int((ribbonHalfWidthCells(q, cfg: terrain.cfg)
                                    + WaterRender.ribbonHaloMarginCells).rounded())
                     var previousX = last.x, previousZ = last.z
-                    let prior = nodes[max(0, nodes.count - 2)]
+                    let prior = nodes[max(0, m - 2)]
                     for point in mouthPath(terrain, fromX: last.x, fromZ: last.z,
                                            dirX: last.x - prior.x, dirZ: last.z - prior.z) {
                         var dirX = point.x - previousX, dirZ = point.z - previousZ

@@ -162,7 +162,12 @@ final class RibbonFloatTests: XCTestCase {
         // die Platte liegt weit über beiden Schranken.
         XCTAssertLessThanOrEqual(Double(s.floating), 0.05 * Double(s.edgePoints),
                                  "Wasserlinie schwebt über dem Gelände (Issue #233)")
-        XCTAssertLessThanOrEqual(Double(s.over[0.15] ?? 0), 0.005 * Double(s.edgePoints),
+        // 1 % statt 0,5 % (Gremium 3, Befund 3): kurze Kolke im Gerinne
+        // blenden das Band nicht mehr aus (`ribbonPondBridgeSamples`), dort
+        // deckt der Korridor; am Kolkrand stehen damit einzelne sichtbare
+        // Wasserlinien-Punkte bis 0,23 über dem Gelände (macOS 6 von 1056,
+        // ohne Überbrückung 0). Die Platte vor #233 lag bei 65 %.
+        XCTAssertLessThanOrEqual(Double(s.over[0.15] ?? 0), 0.01 * Double(s.edgePoints),
                                  "Wasserlinie steht als Platte über dem Gelände (Issue #233)")
         // Bis zum Review Neon Nr. 6: 25 %. Ein Zehntel lässt beiden Welten
         // Luft und fängt ein Band, das in größeren Teilen ins Gelände sinkt.

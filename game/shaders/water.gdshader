@@ -327,6 +327,10 @@ void fragment() {
 		wet = mix(wet, wet_c, corridor);
 		profile = mix(profile, profile_c, corridor);
 	}
+	// Riffel und Schaum über die Breite als Plateau, nicht als Dreieck: das
+	// Querprofil hat in der Laufmitte einen Knick, mit ihm gewichtet lag ein
+	// heller Grat auf der Mittellinie (Gremium 3, Befund 2c).
+	float plateau = smoothstep(0.0, 0.35, profile);
 	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea) * (1.0 - corridor);
 
 	// Tiefe ∝ Strahler-Rang (Hierarchie: große Läufe tief, Bäche seicht), zur
@@ -422,7 +426,7 @@ void fragment() {
 	float near_w = 1.0 - smoothstep(0.3, 1.0, footprint * water_foam_scale * 8.0);
 	float streak = mix(streak_far, streak_near, near_w);
 	// Riffel: belüftete, hellere Oberfläche, entlang der Striche gebrochen.
-	water_final = mix(water_final, water_riffle_color, riffle * mix(0.4, 1.0, smoothstep(0.3, 0.7, streak)) * profile);
+	water_final = mix(water_final, water_riffle_color, riffle * mix(0.4, 1.0, smoothstep(0.3, 0.7, streak)) * plateau);
 	// Gleithang: Kiesbank nur als schmale, unterbrochene Kante an der
 	// Wasserlinie (über den ganzen Lauf gezogen las sie sich als heller Saum).
 	float shoal_gate = smoothstep(0.55, 0.75, ribbon_noise(vec2(q.x * 4.0, q.y * 2.0) + 31.0));
@@ -433,12 +437,14 @@ void fragment() {
 	// ein breites Fenster auf Streifen UND einem runden Rauschen: die frühere
 	// Schwelle (0,05 breit auf dem längs gestreckten Wertrauschen, dazu
 	// Schaum an jedem Außenbogen) schnitt dessen Zellen als weiße Rechtecke
-	// aus, „Fahrbahnmarkierungen" (Gremium, Befund 3).
+	// aus, „Fahrbahnmarkierungen" (Gremium, Befund 3). Gremium 3, Befund 5:
+	// das Fenster (0,25 breit, ab Antrieb 0,15) deckte bei vollem Antrieb die
+	// halbe Fläche; jetzt schmaler, später und erst bei kräftigem Antrieb.
 	float foam_drive = clamp(whitewater + 0.5 * riffle * (1.0 - 0.5 * depth), 0.0, 1.0);
 	float blob = ribbon_noise(vec2(q.x * 2.5, q.y) * water_foam_scale * 0.5 + 17.0);
 	float foam_n = streak * 0.55 + blob * 0.45;
-	float foam = smoothstep(0.78 - 0.3 * foam_drive, 1.03 - 0.3 * foam_drive, foam_n)
-		* smoothstep(0.15, 0.6, foam_drive) * profile * water_foam_amount * mix(0.6, 1.0, near_w);
+	float foam = smoothstep(0.84 - 0.2 * foam_drive, 1.0 - 0.2 * foam_drive, foam_n)
+		* smoothstep(0.3, 0.85, foam_drive) * plateau * water_foam_amount * mix(0.6, 1.0, near_w);
 	water_final = mix(water_final, water_ocean_shallow_color, in_sea * (1.0 - presence * 0.5));
 	water_final *= 1.0 - fresnel;
 	water_final = mix(water_final, water_foam_color, clamp(foam, 0.0, 1.0));

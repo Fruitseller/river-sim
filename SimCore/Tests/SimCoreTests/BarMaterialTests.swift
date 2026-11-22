@@ -66,11 +66,14 @@ final class BarMaterialTests: XCTestCase {
     func testFreshBarIsSandAndOldBarIsNot() {
         let n = 64, line = 16
         let t = flatWorld(n: n, channelRow: line) { i, j in
-            guard j > line + 3, j < 50, (6..<58).contains(i) else { return -1 }
+            guard j >= line, j < 50, (6..<58).contains(i) else { return -1 }
             return i < 32 ? 0 : 20_000
         }
         let f = BarMaterial.field(t)
-        let bank = row(line, plus: 0.8)
+        // Gremium 3, Befund 2a: Sand ab der Wasserlinie, auf gerader Strecke
+        // nur mit halber Reichweite — eine Zelle neben der Mitte liegt noch
+        // innerhalb der Wasserlinie.
+        let bank = line + 1
         XCTAssertEqual(f.sand[bank * n + 20], 1, accuracy: 1e-6, "junge Bank am Gerinne = voller Sand")
         XCTAssertEqual(f.sand[bank * n + 45], 0, "alte Bank trägt keinen Sand mehr")
         XCTAssertEqual(f.sand[row(line, plus: 3) * n + 20], 0,
@@ -100,7 +103,9 @@ final class BarMaterialTests: XCTestCase {
 
     /// Befund #174 („Sandwüste“): ist das GANZE Innere einer Schlinge junge
     /// Bank (der Gürtel hat es eben überstrichen), liegt Sand trotzdem nur als
-    /// Streifen am Gerinne: höchstens eine Kanalbreite je Ufer und Lauflänge.
+    /// Streifen am Gerinne. Seit Gremium 3 (Befund 2a, „Fluss im Fluss“) ab
+    /// der Wasserlinie gemessen: auf gerader Strecke höchstens ein schmaler
+    /// Saum, nie mehr als eine Fünftel-Kanalbreite je Ufer.
     func testSandStaysAStripAlongTheChannel() {
         let n = 96, line = 48
         // Bank überall außer im Gerinne selbst (dort setzt der Stempel −1).
@@ -111,10 +116,10 @@ final class BarMaterialTests: XCTestCase {
         var sandArea = 0.0
         for j in 0..<n { for i in 20..<76 { sandArea += Double(f.sand[j * n + i]) } }
         let perSide = sandArea / (2 * 56 * channelWidth)
-        XCTAssertGreaterThan(perSide, 0.4, "am Gerinne liegt eine Sandbank")
-        XCTAssertLessThanOrEqual(perSide, 1.0,
-                                 "Sand je Ufer und Lauflänge höchstens eine Kanalbreite (\(perSide))")
-        for j in 0..<n where abs(Double(j - line)) > WaterRender.barSandReachHi * channelWidth + 0.5 {
+        XCTAssertLessThanOrEqual(perSide, 0.2,
+                                 "Sand je Ufer und Lauflänge höchstens eine Fünftel-Kanalbreite (\(perSide))")
+        let outer = (WaterRender.barSandWaterlineWidths + WaterRender.barSandReachHi) * channelWidth + 0.5
+        for j in 0..<n where abs(Double(j - line)) > outer {
             XCTAssertEqual(f.sand[j * n + 40], 0, "kein Sand \(j - line) Zellen vom Gerinne")
         }
         // Dahinter: Pionier-Grün statt Trockenrasen, ohne Sand.
@@ -122,6 +127,38 @@ final class BarMaterialTests: XCTestCase {
         XCTAssertEqual(f.sand[behind], 0)
         XCTAssertGreaterThan(Double(f.vegShift[behind]), 0.5 * WaterRender.barPioneerVeg,
                              "junge Bank hinter dem Sand liest grüner")
+    }
+
+    /// Gremium 3, Befund 2a: Sand liegt am Gleithang (Innenufer), nicht am
+    /// Prallhang, und nicht symmetrisch um das Wasser.
+    func testSandLiesOnTheInnerBankOnly() {
+        let n = 96, cx = 48.0, cz = 48.0, radius = 22.0
+        let t = flatWorld(n: n) { _, _ in 0 }
+        var s = t.state
+        // Linksbogen (gegen den Uhrzeigersinn in x/z): Gleithang zur Mitte.
+        let nodes = (0..<60).map { a -> MeanderNode in
+            let phi = -0.8 * Double.pi + 1.6 * Double.pi * Double(a) / 59
+            return MeanderNode(x: cx + radius * cos(phi), z: cz + radius * sin(phi))
+        }
+        let q = 20 * t.cfg.renderMinCells
+        s.meanderChannels = [RiverChannel(nodes: nodes, discharge: nodes.map { _ in q })]
+        t.restore(s)
+        let bend = MeanderState.bendStrength(t.meander.channels[0], config: t.cfg,
+                                             heightAt: { _ in t.cfg.sea + 0.08 })
+        XCTAssertGreaterThan(bend[30], WaterRender.barSandInnerShare, "Aufbau: kräftiger Linksbogen")
+        let f = BarMaterial.field(t)
+        var inner = 0.0, outer = 0.0
+        for j in 0..<n {
+            for i in 0..<n {
+                let r = ((Double(i) - cx) * (Double(i) - cx) + (Double(j) - cz) * (Double(j) - cz)).squareRoot()
+                // Unter dem Wasser (bis zur Wasserlinie) deckt das Band.
+                guard abs(r - radius) > WaterRender.barSandWaterlineWidths * channelWidth + 0.5 else { continue }
+                let sand = Double(f.sand[j * n + i])
+                if r < radius { inner += sand } else { outer += sand }
+            }
+        }
+        XCTAssertGreaterThan(inner, 20, "am Gleithang liegt eine Sandbank")
+        XCTAssertLessThan(outer, 0.05 * inner, "am Prallhang kein Sand (innen \(inner), außen \(outer))")
     }
 
     /// Scroll-Rippen sind leise Bewuchs-Bänder, nie helle Sandringe: auf
@@ -178,20 +215,20 @@ final class BarMaterialTests: XCTestCase {
     func testPioneerGreenStaysOffTheSand() {
         let n = 64, line = 16
         let t = flatWorld(n: n, channelRow: line) { i, j in
-            (6..<58).contains(i) && j >= self.row(line, plus: 0.6) && j <= self.row(line, plus: 1.0) ? 0 : -1
+            (6..<58).contains(i) && j >= line + 1 && j <= line + 3 ? 0 : -1
         }
         let f = BarMaterial.field(t)
-        let k = row(line, plus: 0.8) * n + 30
+        let k = (line + 2) * n + 30
         XCTAssertEqual(f.sand[k], 1, accuracy: 1e-6, "Aufbau: volle Sandbank")
         XCTAssertEqual(f.vegShift[k], 0, accuracy: 1e-6, "auf dem Sand kein Pionier-Grün")
     }
 
     func testSandEntersMaterialWeights() {
         let n = 64
-        let bar = flatWorld(n: n, channelRow: 10) { i, j in (14..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
+        let bar = flatWorld(n: n, channelRow: 10) { i, j in (9..<14).contains(j) && (10..<30).contains(i) ? 0 : -1 }
         let none = flatWorld(n: n, channelRow: 10) { _, _ in -1 }
         let a = TerrainColorRenderer.buffers(bar), b = TerrainColorRenderer.buffers(none)
-        let k = 15 * n + 20
+        let k = 11 * n + 20
         XCTAssertGreaterThan(a.colors[k * 4 + 3], 200, "Sand im A-Kanal der Makrofarbe")
         XCTAssertEqual(b.colors[k * 4 + 3], 0)
         XCTAssertLessThan(a.surfaces[k * 4], b.surfaces[k * 4] / 4 + 1,
@@ -230,13 +267,13 @@ final class BarMaterialTests: XCTestCase {
 
     func testFreshBarsAreProtectedFromForest() {
         let n = 64
-        let t = flatWorld(n: n, channelRow: 6) { i, j in (10..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
+        let t = flatWorld(n: n, channelRow: 6) { i, j in (6..<20).contains(j) && (10..<30).contains(i) ? 0 : -1 }
         let overlays = frameOverlays(RenderState(geometryMode: true), t)
         let mask = overlays.protectMask
         let forest = overlays.forestMask
-        // Bank innerhalb `barSandReachLo` Kanalbreiten (Look-Iteration 12:
-        // offener Sand nur noch direkt am Gerinne, s. dort).
-        for j in 10..<row(6, plus: WaterRender.barSandReachLo) {
+        // Bank mit vollem Sand: auf gerader Strecke bis knapp über die
+        // Wasserlinie (Gremium 3, Befund 2a, s. `barSandReachLo`).
+        for j in 7...8 {
             for i in 11..<29 {
                 XCTAssertEqual(mask[j * n + i], 255, "frische Bank (\(i),\(j)) ist geschützt")
                 XCTAssertEqual(forest[j * n + i], 0, "kein Wald auf frischer Bank")
