@@ -674,8 +674,12 @@ public final class RiverRibbonRenderer {
                     }
                 }
             }
-            if junctionRank < WaterRender.ribbonMinimumRank,
-               !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
+            // Der Anschluss hebt nur Läufe, die selbst schon Strahler 2
+            // erreichen (`ribbonJunctionOwnRank`): Kleinstarme kamen sonst als
+            // Fäden über die Schwelle (Gremium 4, Befund 2c).
+            let ownRank = rank[lo...hi].max() ?? 0
+            if ownRank < WaterRender.ribbonMinimumRank,
+               junctionRank < WaterRender.ribbonMinimumRank || ownRank < WaterRender.ribbonJunctionOwnRank { continue }
             // Das Laufende liegt im Anschluss: dort gilt dessen Rang (Vertrag
             // `river_ribbons.gd`: jedes Fluss-Band trägt seinen Anschluss).
             rank[hi] = max(rank[hi], junctionRank)
@@ -1238,7 +1242,11 @@ public final class RiverRibbonRenderer {
     /// schon darin liegt; nil, wenn binnen `ribbonJoinSearchCells` kein Band
     /// kommt (dann läuft das Band spitz aus).
     private func bandJoinPath(fromX: Double, fromZ: Double, terrain: Terrain) -> [(x: Double, z: Double)]? {
-        RiverRibbonRenderer.joinPath(fromX: fromX, fromZ: fromZ, coverage: mesh.bandCoverage, terrain: terrain)
+        // Bis ins sichtbare Wasser des Hauptlaufs (s. Verdeckung in `emitRibbon`).
+        RiverRibbonRenderer.joinPath(fromX: fromX, fromZ: fromZ,
+                                     coverage: bandVisibleCoverage.count == mesh.bandCoverage.count
+                                         ? bandVisibleCoverage : mesh.bandCoverage,
+                                     terrain: terrain)
     }
 
     /// s. `bandJoinPath`; statisch, damit der Wächter es mit einer
@@ -1256,7 +1264,19 @@ public final class RiverRibbonRenderer {
             guard r >= 0, r < cnt, terrain.h[r] > terrain.cfg.sea else { return nil }
             k = r
             path.append((Double(k % n), Double(k / n)))
-            if cover[k] >= WaterRender.ribbonJoinCoverage { return smoothedChain(path, fromX: fromX, fromZ: fromZ) }
+            if cover[k] >= WaterRender.ribbonJoinCoverage {
+                // Noch `ribbonJoinOverlapCells` Zellen ins Wasser hinein: dort
+                // blendet der Zubringer unter dem Hauptlauf aus; endete er an
+                // dessen Wasserlinie, lief die Blende auf einer Zelle ab
+                // (stumpfes Ende, Linux-Welt, `BarMaterialTests`).
+                for _ in 0..<WaterRender.ribbonJoinOverlapCells {
+                    let r2 = Int(terrain.receiver[k])
+                    guard r2 >= 0, r2 < cnt, terrain.h[r2] > terrain.cfg.sea else { break }
+                    k = r2
+                    path.append((Double(k % n), Double(k / n)))
+                }
+                return smoothedChain(path, fromX: fromX, fromZ: fromZ)
+            }
         }
         return nil
     }
@@ -1296,10 +1316,19 @@ public final class RiverRibbonRenderer {
         // Kanälen auf demselben Bett.
         let originalSamples = samples
         var samples = samples
+        let occluder = bandVisibleCoverage.count == n * n ? bandVisibleCoverage : mesh.bandCoverage
         var occludedMature: [Int] = []
         var occlusion = [Double](repeating: 0, count: samples.count)
         for a in samples.indices {
-            let occ = bilinearGrid(mesh.bandCoverage, samples[a].x, samples[a].z, n: n)
+            // Verdeckt wird vom SICHTBAREN Wasser früherer Bänder, nicht von
+            // ihrer Deckung (Halbbreite + ½ Zelle): mit Korridor endet das
+            // Wasser bei ~0,65 Halbbreiten, und ein Zubringer blendete 1–2
+            // Zellen vor dem Hauptlauf aus (Gremium 4, Befund 5).
+            // Über der Böschung des früheren Bands (Deckung ohne Wasser) nur
+            // halb (`ribbonBankOcclusion`): der Zubringer läuft dort blasser bis
+            // ans Wasser, statt auf einer Zelle stumpf zu enden.
+            let occ = max(bilinearGrid(occluder, samples[a].x, samples[a].z, n: n),
+                          WaterRender.ribbonBankOcclusion * bilinearGrid(mesh.bandCoverage, samples[a].x, samples[a].z, n: n))
             occlusion[a] = occ
             let before = samples[a].alpha
             samples[a].alpha *= 1 - smoothstep(WaterRender.ribbonOcclusionLo,

@@ -91,7 +91,10 @@ final class RiverContinuityTests: XCTestCase {
         for j in 0..<n { for i in 30...34 { cov[j * n + i] = 1 } }   // Hauptlauf quer bei x = 30…34
         let path = try XCTUnwrap(RiverRibbonRenderer.joinPath(fromX: 25, fromZ: 30, coverage: cov, terrain: t),
                                  "Zubringer findet den Hauptlauf 5 Zellen stromab nicht")
-        XCTAssertEqual(path.last.map { Int($0.x) }, 30, "endet nicht am Ufer des Hauptlaufs: \(path)")
+        // Seit Gremium 4 (Befund 5) zwei Zellen ins Wasser des Hauptlaufs hinein
+        // (`ribbonJoinOverlapCells`): dort blendet der Zubringer aus.
+        XCTAssertEqual(path.last.map { Int($0.x) }, 30 + WaterRender.ribbonJoinOverlapCells,
+                       "endet nicht im Hauptlauf: \(path)")
         XCTAssertNil(RiverRibbonRenderer.joinPath(fromX: 10, fromZ: 30, coverage: cov, terrain: t),
                      "Hauptlauf 20 Zellen entfernt gilt als erreichbar")
         XCTAssertEqual(RiverRibbonRenderer.joinPath(fromX: 31, fromZ: 30, coverage: cov, terrain: t)?.count, 0)
