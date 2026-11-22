@@ -603,7 +603,8 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Godot-Seite: `game/scripts/RiverCorridor.gd`. Wächter:
   `SimCoreTests/RiverCorridorTests.swift` (Bett unter der Uferkante, Wasser nie
   über dem Ufer, kein Korridor über dem Deckel, Deckel nah am Wasser, Gelände
-  durch das Wasser selten und flach, Fuß auf dem Gelände) und
+  durch das Wasser selten (Schluchtsohle, die Höhe ist ungebunden), Flussmitte
+  frei, Fuß auf dem Gelände) und
   `tests/river_ribbons.gd` (Marshalling),
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie plus Bodenbedeckung (Schutthalde, blankes
