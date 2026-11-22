@@ -287,13 +287,16 @@ func read_cell_lift() -> PackedFloat32Array:
 
 ## Rohdaten für Debug-Ansicht und Wächter: "offset" (RG16F, fein: r Abweichung
 ## in Welteinheiten, g Maske), "maps" (RGBA8, fein), "relief" (RGBA16F, fein),
-## "mean" (R32F, n²), "height" (RG32F, fein), "flux" (RGBA16F, fein).
+## "mean" (R32F, n²: Zellmittel der rohen Abweichung aus mean.glsl),
+## "correction" (R32F, n²: das Korrekturfeld daraus, mean_solve.glsl),
+## "height" (RG32F, fein), "flux" (RGBA16F, fein).
 func read_raw(what: String) -> PackedByteArray:
 	match what:
 		"offset": return rd.texture_get_data(_offset, 0)
 		"maps": return rd.texture_get_data(_maps_mips[_front][0], 0)
 		"relief": return rd.texture_get_data(_relief_mips[_front][0], 0)
-		"mean": return rd.texture_get_data(_correction, 0)
+		"mean": return rd.texture_get_data(_mean, 0)
+		"correction": return rd.texture_get_data(_correction, 0)
 		"height": return rd.texture_get_data(_height[1][int(params["steps_2"]) % 2], 0)
 		"flux": return rd.texture_get_data(_flux[1][int(params["steps_2"]) % 2], 0)
 	return PackedByteArray()

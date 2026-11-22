@@ -125,6 +125,8 @@ func _check_amplifier() -> void:
 	amp.submit(heights, filled, protect, true)
 	var first := amp.read_cell_lift()
 	var first_fine := amp.read_raw("offset")
+	var first_relief := amp.read_raw("relief")
+	var first_maps := amp.read_raw("maps")
 	_check_binding(n, heights.to_float32_array(), filled.to_float32_array(), protect, pond,
 		first, first_fine, amp.params, code)
 
@@ -141,7 +143,9 @@ func _check_amplifier() -> void:
 		amp.advance(true, 0.02, 0.3)
 		rounds += 1
 	_check(rounds > 3, "Der verteilte Auftrag läuft über mehrere Bilder (%d)" % rounds)
-	_check(amp.read_raw("offset") == first_fine, "Verteilt gerechnet gibt dasselbe wie in einem Zug")
+	_check(amp.read_raw("offset") == first_fine and amp.read_raw("relief") == first_relief
+		and amp.read_raw("maps") == first_maps and amp.read_cell_lift() == first,
+		"Verteilt gerechnet gibt dasselbe wie in einem Zug (Abweichung, Fläche, Karten)")
 
 	# Kleine Änderung ein, kleine aus; außerhalb der festen Reichweite nichts.
 	var h := heights.to_float32_array()
@@ -153,6 +157,18 @@ func _check_amplifier() -> void:
 			h[j * n + i] += NUDGE * (1.0 if (i + j) % 2 == 0 else -1.0)
 	amp.submit(h.to_byte_array(), filled, protect, true)
 	var nudged := amp.read_cell_lift()
+	# Auch am feinen Feld: die Zeilen ganz außerhalb der Reichweite sind
+	# Byte für Byte dieselben (RG16F, vier Bytes je Texel).
+	var nudged_fine := amp.read_raw("offset")
+	var fine_n := n * TerrainAmplifier.FACTOR
+	var row_bytes := fine_n * 4
+	var top := (cz - radius - REACH_CELLS) * TerrainAmplifier.FACTOR * row_bytes
+	var bottom := (cz + radius + REACH_CELLS + 1) * TerrainAmplifier.FACTOR * row_bytes
+	_check(top > 0 and bottom < nudged_fine.size()
+		and nudged_fine.slice(0, top) == first_fine.slice(0, top)
+		and nudged_fine.slice(bottom) == first_fine.slice(bottom),
+		"Außerhalb der Reichweite ist auch das feine Feld bit-gleich")
+	_check(nudged_fine != first_fine, "Die Störung kommt im feinen Feld an")
 	var worst := 0.0
 	var far := 0
 	for j in n:

@@ -61,7 +61,7 @@ func _process(_delta: float) -> bool:
 		times.append({"submit_ms": (t1 - t0) / 1000.0, "total_ms": (t2 - t0) / 1000.0})
 		for what in write.split(",", false):
 			var ext: String = {"offset": "rg16f", "maps": "rgba", "relief": "rgba16f",
-				"mean": "f32", "height": "rg32f", "flux": "rgba16f"}[what]
+				"mean": "f32", "correction": "f32", "height": "rg32f", "flux": "rgba16f"}[what]
 			var f := FileAccess.open(out.path_join("%s_%02d.%s" % [what, t, ext]), FileAccess.WRITE)
 			f.store_buffer(amp.read_raw(what))
 			f.close()

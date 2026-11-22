@@ -1,6 +1,14 @@
-// Nächste Stufe: Zustand auf doppelte Auflösung. Höhe bikubisch, Abfluss und
-// Sediment bilinear und halbiert (zwei feine Texel teilen sich den Querschnitt
-// eines groben), Begleitfeld bilinear, Härte neu aus der Position.
+// Nächste Stufe: Zustand auf doppelte Auflösung. Höhe bikubisch, Begleitfeld
+// bilinear, Härte neu aus der Position.
+//
+// Abfluss und Sediment bilinear und HALBIERT, nicht geviertelt: beides ist
+// ein Durchfluss durch das Texel, keine Fläche, die sich auf die vier Kinder
+// aufteilt. Was durch ein grobes Texel fließt, fließt durch zwei feine
+// nebeneinander (halber Querschnitt je Texel) und dann durch die zwei
+// dahinter noch einmal. Probe am gleichmäßig geneigten Hang: k grobe Texel
+// hangabwärts trägt jedes 4·k (Eigenfläche 4), an derselben Stelle liegen
+// 2·k feine Texel oberhalb, jedes feine trägt also 2·k. Mit einem Viertel
+// begänne die feine Stufe mit dem halben Abfluss.
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 0) uniform sampler2D src_height;
 layout(set = 0, binding = 1) uniform sampler2D src_flux;    // linear

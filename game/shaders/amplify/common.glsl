@@ -6,7 +6,8 @@
 //  - Höhe (RG32F): r Höhe in Welteinheiten (Sim-Höhe × Überhöhung), g die
 //    Höhe einen Schritt davor. Aus g rechnet step.glsl die Abfluss-Anteile,
 //    passend zur Normierung im Fluss-Feld (s. dort).
-//  - Fluss (RGBA16F): r Abfluss (Einzugsfläche in Texeln der feinsten Stufe),
+//  - Fluss (RGBA16F): r Abfluss DURCH das Texel (die Einzugsfläche oberhalb,
+//    gezählt in Texeln der feinsten Stufe; ein Durchfluss, s. refine.glsl),
 //    g Kehrwert der Abfluss-Normierung zu den Höhen in Höhe.g, b Sediment in
 //    Transport, a Gefälle der Sim-Fläche an dieser Stelle (fest je Auftrag).
 // Begleitfeld (RGBA16F): r abgetragen, g abgelagert, b Schutt (thermisch
