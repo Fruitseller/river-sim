@@ -8,7 +8,8 @@ import XCTest
 /// der Deckel (`lid`, Tiefe des Korridors im Bild) liegt über dem Korridor und
 /// über dem Gelände im Querschnitt, gekappt auf Wasserspiegel +
 /// `lidMaxAboveWater` (Schluchtwände ragen darüber und verdecken den Korridor;
-/// durch das Wasser selbst nur selten, die Flussmitte bleibt frei; die Höhe
+/// durch das Wasser selbst nur selten, in der Flussmitte (Thalweg) höchstens in
+/// 0,2 % der Querschnitte; die Höhe
 /// eines Durchstoßes ist die Wandhöhe und bewusst ungebunden).
 final class RiverCorridorTests: XCTestCase {
 

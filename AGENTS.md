@@ -604,7 +604,7 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   `SimCoreTests/RiverCorridorTests.swift` (Bett unter der Uferkante, Wasser nie
   über dem Ufer, kein Korridor über dem Deckel, Deckel nah am Wasser, Gelände
   durch das Wasser selten (Schluchtsohle, die Höhe ist ungebunden), Flussmitte
-  frei, Fuß auf dem Gelände) und
+  (Thalweg) höchstens in 0,2 % der Querschnitte, Fuß auf dem Gelände) und
   `tests/river_ribbons.gd` (Marshalling),
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie plus Bodenbedeckung (Schutthalde, blankes
