@@ -134,3 +134,101 @@ erst ab Antrieb 0,3), Raster-Weißwasser erst an echten Stufen
   kleinen Läufen (Detail 7 unten).
 - Bank-Sand: die Reichweite hängt an der Bogenstärke der Sim, auf schwach
   gekrümmten Läufen bleibt kaum Sand.
+
+# Runde 4 (Gremium 4: Gemini 5,5 · DeepSeek 6 · Fable 5)
+
+Kontaktbögen dieser Runde vergleichen den Stand von Runde 3 (links) mit
+Runde 4 (rechts): `uebersicht-r4.jpg`, `details-1-4-r4.jpg`,
+`details-5-8-r4.jpg`; `ausschnitte-r4.jpg` in voller Auflösung: Außenbogen
+Detail 8 (Sägezahn) und Gefällestrecke Detail 2 (Glanz, Faden).
+
+## Befund 1: „Viadukt“/Sägezahn — behoben
+
+Der Verdacht der Gutachter (Tiefe 0 am Fuß zählte als 26 % unter Wasser)
+stimmte, war aber nicht die Ursache: mit dem trockenen Korridor ganz aus
+und ohne Band blieben die Zähne stehen. Sie kamen aus der **Deckel-Tiefe
+des Betts**: `corridor_lid_point` begrenzt den Weg zum Deckelpunkt auf
+`CORRIDOR_LID_REACH × (Deckel − Punkt)`. Ein 0,18 tiefer Bett-Vertex zog
+damit seinen Deckelpunkt viermal so weit zur Kamera wie der Ufer-Vertex
+daneben; die Tiefe läuft zwischen Vertices linear, und das Bett gewann
+gegen die Uferwand des Geländes nur dreieckweise — im Takt der
+Querschnitte. Jetzt misst die Reichweite am Wasserspiegel über dem Bett
+(`corridor_clip_ref`, `ref_y` = Bett + Tiefe): Bett, Uferlinie und Band
+ziehen gleich weit. Die Tiefe-0-Schwelle (`submerged` ab 0,0005 statt
+−0,002) ist trotzdem korrigiert.
+
+## Befund 2: Splitter, Fäden
+
+- (a) An Land blendet das Band mit derselben Rampe wie seine Breite auch
+  in der Deckkraft aus (`sea_alpha` = `visible`); vorher ab 0,25 deckend.
+- (b) Ufer und Bett erst ab Band-Deckkraft 0,35…0,85
+  (`CORRIDOR_PRESENCE_LO/HI`, vorher 0,02…0,25): einwachsende und
+  versiegende Arme tragen keine Böschung mehr.
+- (c) Der Rang des Anschlusses hebt nur Läufe, die selbst Strahler 2
+  erreichen (`ribbonJunctionOwnRank`).
+
+## Befund 3/4: zwei Wässer, helle Innenrinne
+
+- Mit Korridor deckt das Band 0,86 (Riffel) bis 0,96 (Kolk) statt der
+  Raster-Rampe 0,55…0,95 über der Querlage; die Kiesbank-Tönung nur noch
+  bis 6 % des Querprofils ab der Wasserlinie (vorher 15 %), Kies im Bett
+  gedämpft (× 0,5 statt × 0,8).
+- Seefarbe noch näher am Tiefwasser (`waterLakeColor`
+  0,011/0,064/0,084). Raster-See und Band teilen sich die Fläche weiter
+  nicht sauber (s. Folgepunkte).
+
+## Befund 5: Zubringer enden vor dem Hauptlauf
+
+Verdeckt wird jetzt vom sichtbaren Wasser früherer Bänder
+(`bandVisibleCoverage`); über deren Böschung nur zu 55 %
+(`ribbonBankOcclusion`). Der D8-Anschluss läuft bis ins sichtbare Wasser
+und zwei Zellen weiter (`ribbonJoinOverlapCells`); ohne die zwei Zellen
+endete das Band auf einer Zelle stumpf (Linux-Wächter
+`testRibbonEndsTaperToAPointAndKeepAContinuousWidth`).
+
+## Befund 6: ausgebrannte Weißflächen
+
+Kräuselung an Gefälle/Riffel × (1 + 0,5) statt × (1 + 1,5), Glanz dort
+× (1 − 0,5 · Gefälle); Glitzern × 1,2 statt × 3; Wolkenspiegelung × 0,65
+(Band und Raster-See). Ein Versuch mit höherer Rauheit (0,3) an
+Gefällestrecken verbreiterte den Glanz zur Fläche und ist verworfen.
+
+## Befund 10: Bank-Sand
+
+`barSandColor` 0,58/0,54/0,45 (vorher 0,70/0,65/0,54), nass 0,45/0,42/0,35.
+
+## Linux-CI (Run 45067325739)
+
+`CoastMaterialTests.testCoastWeightsAreDeterministic` („gealterte Welt
+ohne einen einzigen Strand“) mit dem CI-Image in Docker reproduziert. Die
+n = 96-Testwelt trägt auf keiner Plattform Strand (gemessen für acht
+Seeds; Säume erst ab n = 256); den „irgendein Sand“ lieferte immer die
+Bank, und seit Runde 3 blieb auf Linux keiner. Nach Pin-Doktrin ist der
+Bank-Zustand gepinnt (jede Zelle junge Bank), keine Schranke gesenkt.
+Volle Suite im CI-Image: 680 Tests, 0 Fehler.
+
+## Nicht angefasst
+
+Befund 7 (Dreiecks-Löcher an Zusammenflüssen, `fadeCorridorsInForeignWater`),
+8 (Gelände schneidet Bögen, `fadeUphill` in leerer Rinne), 9 (Wand und
+heller Hof an Teichen, `geometryLift`), 10 (Bäume auf der Kiesbank, Wasser
+im Schatten): Folgepunkte, zusammen mit dem Raster-See neben Bändern
+(Befund 3, Variante „Raster neben Korridor sperren“).
+
+## Messung Runde 4
+
+- SimCore-Suite: 680 Tests, 0 Fehler auf macOS und im Linux-CI-Image.
+- Godot-Vertragstests headless: alle Marken, kein `FAIL:`.
+- `simperf --hash`: 95cf93ca1b40985c, unverändert.
+- Bildzeit gegen `origin/main` (0749f9d), `scripts/timelapse-timing.sh`
+  interleaved, 4 Runden je Stand, Flusstal-Bühne (Seed 1337, Jahr 20.000,
+  Kamera `detail`), maximiert 3456×2104, diesmal ohne fremdes Godot.
+  Median Mittel / p95:
+
+  | Stufe | `origin/main` | Runde 4 |
+  | --- | --- | --- |
+  | `balanced` (0,67, MetalFX) | 11,10 / 12,10 ms | 10,94 / 11,89 ms |
+  | `quality` (1,0) | 17,73 / 20,17 ms | 16,96 / 19,31 ms |
+
+  Kein Mehraufwand; eher etwas schneller (Korridor erst ab höherer
+  Deckkraft, weniger Fäden), innerhalb von ±0,8 ms.
