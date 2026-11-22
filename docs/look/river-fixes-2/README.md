@@ -232,3 +232,84 @@ im Schatten): Folgepunkte, zusammen mit dem Raster-See neben Bändern
 
   Kein Mehraufwand; eher etwas schneller (Korridor erst ab höherer
   Deckkraft, weniger Fäden), innerhalb von ±0,8 ms.
+
+# Runde 5 (Gremium 4 auf 0eff30d: Gemini 6 · DeepSeek 6 · Fable 5)
+
+Kontaktbögen links Runde 4, rechts Runde 5: `uebersicht-r5.jpg`,
+`details-1-4-r5.jpg`, `details-5-8-r5.jpg`; `ausschnitte-r5.jpg` (volle
+Auflösung): Querprofil Detail 3, Glanz Detail 8, Zusammenfluss Detail 6.
+
+## A1: Farbe quer über das Band — behoben
+
+Mit Korridor hat das Band kein eigenes Querprofil mehr: Tiefe ohne
+Rand-Abflachung und ohne Bogen-Verschiebung (`water_ribbon_bend_depth`
+wirkt nur noch ohne Korridor), nur die tiefere Hälfte der Farbrampe
+(Flachwasser nahe am Tiefwasser), Riffel-Tönung über die ganze Breite (halb
+so stark), Kiesbank-Tönung aus; direkt an der Wasserlinie 25 % dunkler statt
+heller. Die Tiefe wechselt nur entlang (Rang, Riffel/Kolk); das Profil
+trägt das Bett darunter.
+
+## A2: Band über Raster-Tümpel — behoben
+
+Ein kleiner Tümpel (< `wetMeadowMaxCells`), durch den ein Band läuft,
+blieb als Raster-See neben dem Band stehen. Jetzt wird jeder kleine Tümpel
+nasse Wiese (`isWetMeadow` ohne Band-Ausnahme), und das Band behandelt ihn
+als Land: es folgt dem Gelände (das der Terrain-Shader dort nicht auf den
+Spiegel hebt) und blendet nicht aus (`RiverRibbonRenderer.pondClasses`,
+Spiegel aus `waterLevel` wie im Wasserfeld). Große Seen bleiben Raster.
+Der breite Raster-Saum neben Korridor-Bändern bleibt (Folgepunkt).
+
+## B: Lauf verschwindet / stumpfe Enden — teilweise
+
+- Korridor-Enden laufen über 8 statt 4 Querschnitte aus.
+- Verworfen: `fadeUphill` auf einem Median-Profil (±3 Stützpunkte). Im Bild
+  blieb der Lauf in der Talrinne sichtbar, aber auf der Linux-Welt hob es
+  Bänder auf ansteigendem Gelände wieder ein (schwebende Wasserlinien
+  4,4 % → 5,5 %, „Fels über dem Deckel“ 3 → 5). Folgepunkt.
+
+## C: Zusammenflüsse — behoben
+
+`fadeCorridorsInForeignWater` löscht keine Dreiecke mehr. Jeder Vertex
+trägt den Anteil eigenes Ufer (Korridor-Farbe B; der Rang dort wurde nie
+gelesen), der Shader blendet weich aus und schreibt Deckel-Tiefe nur über
+der Hälfte. Das grüne Dreiecksloch in Detail 6 ist bis auf einen kleinen
+Keil geschlossen.
+
+## D: Glanz — behoben
+
+Band und Raster-Teiche: Specular bei flachem Blick × (1 − 0,6 · Fresnel)
+und dort, wo die Normale die Sonne ins Auge spiegelt, × (1 − 0,7 · R⁶)
+(Highlight-Kompression; Teiche lesen die Sonnenrichtung aus
+`cloud_sun_shift`). Glitzerpunkte kleiner (Radius 0,04–0,12 der Zelle)
+und nur in 45 % der Zellen.
+
+## Wächter
+
+- `WaterRendererTests.testPondAtABandCorridorStaysWater` →
+  `…BecomesWetMeadow` (neuer Vertrag A2).
+- `WaterRendererTests.testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater`:
+  kleine Tümpel zählen nicht als tiefes Raster-Wasser unter dem Band (das
+  Raster malt sie nicht).
+- Quelltext-Wächter `testShadersReadBendAndSand`,
+  `testAllWaterShadersShareTheSameWater`: Literale bleiben, der Korridor
+  verändert `outward` und `depth` davor.
+
+## Messung Runde 5
+
+- SimCore-Suite: 680 Tests, 0 Fehler auf macOS und im Linux-CI-Image.
+- Godot-Vertragstests headless: alle Marken, kein `FAIL:`.
+- `simperf --hash`: 95cf93ca1b40985c, unverändert.
+- Bildzeit gegen `origin/main`, interleaved, 4 Runden, kein fremdes Godot,
+  maximiert 3456×2104, Median Mittel / p95:
+
+  | Stufe | `origin/main` | Runde 5 |
+  | --- | --- | --- |
+  | `balanced` (0,67, MetalFX) | 11,30 / 12,53 ms | 11,08 / 12,17 ms |
+  | `quality` (1,0) | 17,96 / 20,31 ms | 17,54 / 19,75 ms |
+
+## Offen
+
+B (Talrinne, Krümmungs-Einschnürung, Erdwand-Stirn), E (Uferwand und
+Kaskaden-Klecks am See), F (heller Ring um Raster-Tümpel), G (Wasser im
+Schatten heller), Raster-Saum neben Korridor-Bändern, Keil am
+Zusammenfluss Detail 6.
