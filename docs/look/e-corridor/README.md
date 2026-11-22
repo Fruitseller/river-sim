@@ -39,7 +39,7 @@ Stand 2026-11-21, Zweig `look-e-corridor` auf `origin/main` (0783abf).
 `SimCoreTests/RiverCorridorTests.swift`: Bett unter beiden Uferkanten, Wasser
 nie über dem Ufer, kein Korridor über dem Deckel, Deckel höchstens
 `lidMaxAboveWater` über dem Wasser (Schlucht), Gelände im nassen Teil höchstens
-in 1 % der Querschnitte über dem Deckel (wie auf `main` an Schluchtwänden), Fuß
+in 1 % der nassen Vertices über dem Deckel (wie auf `main` an Schluchtwänden), Fuß
 auf dem Gelände (oder unter der Wand) und in der Schutzmaske, Band ohne Korridor
 mit unverschobener Tiefe. `tests/river_ribbons.gd`: Korridor-Puffer vollständig und stimmig.
 Bestehende Band-Wächter, alle Godot-Vertragstests und die SimCore-Suite
