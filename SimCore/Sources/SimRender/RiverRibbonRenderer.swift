@@ -50,7 +50,8 @@ public struct RibbonMesh: Equatable {
     public var bandOwner: [Int32]
     /// Korridor je Vertex der Wasserfläche (Look E, #239, `CUSTOM1` in
     /// `water.gdshader`): x = Korridor-Anteil 0 … 1 (1 = Ufer und Bett liegen
-    /// als Geometrie darunter, das Band zeichnet nur noch die Oberfläche),
+    /// als Geometrie darunter, das Band deckt den Wasserkörper bis zu deren
+    /// Uferlinie mit der gemeinsamen Deckkraft-Rampe),
     /// y = Deckel-Höhe (Welt-Y, s. `RiverCorridor`), z = Halbbreite des
     /// Wassers (Welt), w = reserviert (0).
     /// Ohne Korridor ist y die eigene Höhe des Vertex: die Tiefe bleibt dann
@@ -1533,7 +1534,12 @@ public final class RiverRibbonRenderer {
                 // Deckel (früher `pres ×`) lag im Auslauf vor Tümpeln einer
                 // Kaskade tiefer — das Bett gewann dort den Tiefentest gegen
                 // das Wasser (Querbalken, Gremium, Befund 2).
-                let half = Float(section.waterHalfWidthCells * cs)
+                // Wasser-Halbbreite OHNE den Auslauf der Korridor-Enden
+                // (`CorridorSections.endRamp`): der rampt nur Ufer und Bett. Mit
+                // ihm lief auch das Wasser jedes Bands an beiden Enden auf null
+                // aus, an einem Zubringer genau dort, wo das Raster sein Wasser
+                // schon für das Band zurückgenommen hat (Review #247).
+                let half = Float(inp.hw * max(0, min(1, inp.visible)) * cs)
                 let lidShare = min(1, pres / CorridorSections.lidPresence)
                 for (k, own) in [inp.waterLeft, inp.waterRight].enumerated() {
                     mesh.profile[profileBase + 2 * a + k] =
