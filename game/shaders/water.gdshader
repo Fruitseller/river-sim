@@ -112,7 +112,6 @@ uniform float water_riffle_depth;
 uniform vec3 water_foam_color;
 uniform float water_foam_amount;
 uniform float water_foam_scale;
-uniform float water_foam_outer;
 uniform float water_river_specular;
 uniform float water_cloud_reflection;
 uniform float water_ribbon_shoal_mix;
@@ -416,7 +415,7 @@ void fragment() {
 	// Nah: zwei Rauschfelder multipliziert, das zweite quer sehr fein —
 	// schmale, abreißende Striche statt runder Flecken.
 	float streak_near = sqrt(ribbon_noise(vec2(q.x * 1.2 - u_time * speed, q.y * 2.4) * water_foam_scale + 9.1)
-		* ribbon_noise(vec2(q.x * 0.6 - u_time * speed, q.y * 8.0) * water_foam_scale + 4.4));
+		* ribbon_noise(vec2(q.x * 0.6 - u_time * speed, q.y * 4.0) * water_foam_scale + 4.4));
 	float near_w = 1.0 - smoothstep(0.3, 1.0, footprint * water_foam_scale * 8.0);
 	float streak = mix(streak_far, streak_near, near_w);
 	// Riffel: belüftete, hellere Oberfläche, entlang der Striche gebrochen.
@@ -426,14 +425,17 @@ void fragment() {
 	float shoal_gate = smoothstep(0.55, 0.75, ribbon_noise(vec2(q.x * 4.0, q.y * 2.0) + 31.0));
 	water_final = mix(water_final, water_ribbon_shoal_color,
 		water_ribbon_shoal_mix * max(-outward, 0.0) * shoal_gate * (1.0 - smoothstep(0.0, 0.15, profile)));
-	// Weißwasser: Schaumfahnen in Fließrichtung an Stufen, Engstellen und
-	// Zusammenflüssen (CUSTOM0.y), dazu am Außenbogen. Fleckig über eine
-	// Schwelle auf den Strömungsstreifen; in der Ferne gröbere Flecken,
-	// damit sie bei 8–10 px Laufbreite als Akzent stehen bleiben.
-	float outer = smoothstep(0.3, 1.0, outward) * smoothstep(0.3, 0.9, abs(v_bend)) * running;
-	float foam_drive = clamp(whitewater + water_foam_outer * outer + 0.5 * riffle * (1.0 - 0.5 * depth), 0.0, 1.0);
-	float foam = smoothstep(0.8 - 0.4 * foam_drive, 0.85 - 0.4 * foam_drive, streak)
-		* smoothstep(0.0, 0.3, foam_drive) * profile * water_foam_amount * mix(0.6, 1.0, near_w);
+	// Weißwasser: Schaumfahnen in Fließrichtung nur, wo die Lauf-Größen es
+	// sagen (CUSTOM0: Stufen, Engstellen, Zusammenflüsse, Riffel). Weich über
+	// ein breites Fenster auf Streifen UND einem runden Rauschen: die frühere
+	// Schwelle (0,05 breit auf dem längs gestreckten Wertrauschen, dazu
+	// Schaum an jedem Außenbogen) schnitt dessen Zellen als weiße Rechtecke
+	// aus, „Fahrbahnmarkierungen" (Gremium, Befund 3).
+	float foam_drive = clamp(whitewater + 0.5 * riffle * (1.0 - 0.5 * depth), 0.0, 1.0);
+	float blob = ribbon_noise(vec2(q.x * 2.5, q.y) * water_foam_scale * 0.5 + 17.0);
+	float foam_n = streak * 0.55 + blob * 0.45;
+	float foam = smoothstep(0.78 - 0.3 * foam_drive, 1.03 - 0.3 * foam_drive, foam_n)
+		* smoothstep(0.15, 0.6, foam_drive) * profile * water_foam_amount * mix(0.6, 1.0, near_w);
 	water_final = mix(water_final, water_ocean_shallow_color, in_sea * (1.0 - presence * 0.5));
 	water_final *= 1.0 - fresnel;
 	water_final = mix(water_final, water_foam_color, clamp(foam, 0.0, 1.0));
@@ -444,11 +446,20 @@ void fragment() {
 	// Sonnenglitzern: Facetten in der Größe des Bildpunkts, die die Sonne ins
 	// Auge spiegeln. In der Totalen das stärkste Signal für Wasser.
 	vec3 view_g = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
-	vec2 cell = floor(v_world.xz / max(footprint * 1.5, 0.004));
-	vec2 jit = vec2(ribbon_hash(cell + floor(u_time * 3.0)), ribbon_hash(cell.yx + 17.0 + floor(u_time * 3.0))) - 0.5;
+	// Zellgröße in Zweierpotenzen der Pixelgröße (sonst sprang die Zellgrenze
+	// mit der Pixelgröße je Bildpunkt), und je Zelle nur ein runder Punkt um
+	// eine zufällige Stelle: bis hierher leuchtete die GANZE Zelle, das las
+	// sich als blockige Quadrate (Gremium, Befund 3).
+	float g_size = exp2(ceil(log2(max(footprint * 2.0, 0.004))));
+	vec2 g_pos = v_world.xz / g_size;
+	vec2 cell = floor(g_pos);
+	float g_tick = floor(u_time * 3.0);
+	vec2 jit = vec2(ribbon_hash(cell + g_tick), ribbon_hash(cell.yx + 17.0 + g_tick)) - 0.5;
+	vec2 g_ctr = vec2(ribbon_hash(cell + 41.0 + g_tick), ribbon_hash(cell.yx + 73.0 + g_tick)) * 0.5 + 0.25;
+	float g_dot = 1.0 - smoothstep(0.1, 0.3, length(fract(g_pos) - g_ctr));
 	vec3 n_glint = normalize(water_n_ws + vec3(jit.x, 0.0, jit.y) * 0.5);
 	float glint = pow(max(dot(reflect(-view_g, n_glint), normalize(corridor_sun_dir)), 0.0), 900.0)
-		* wet * (1.0 - still) * (1.0 - foam) * smoothstep(0.005, 0.05, footprint);
+		* g_dot * wet * (1.0 - still) * (1.0 - foam) * smoothstep(0.005, 0.05, footprint);
 	NORMAL = normalize(mix(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0), water_n_vs, wet));
 	float lake = lake_mask_at(guv);
 	// Erst ganz zuletzt blendet der schmale Rest aus. Im Meer blendet die
@@ -490,5 +501,5 @@ void fragment() {
 	float cloud_hit = clouds_enabled && cloud_w > 0.0 && refl.y > 0.05 && v_world.y < cloud_height
 		? cloud_cover(v_world.xz + refl.xz * (cloud_height - v_world.y) / refl.y, u_time) : 0.0;
 	EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel)
-		+ vec3(1.0, 0.92, 0.78) * glint * 6.0;
+		+ vec3(1.0, 0.92, 0.78) * glint * 3.0;
 }

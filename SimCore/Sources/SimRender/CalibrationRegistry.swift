@@ -133,7 +133,6 @@ public enum CalibrationRegistry {
         ("water_raster_steep_hi", WaterRender.rasterSteepHi),
         ("water_foam_amount", WaterRender.waterFoamAmount),
         ("water_foam_scale", WaterRender.waterFoamScale),
-        ("water_foam_outer", WaterRender.waterFoamOuter),
         ("water_river_specular", WaterRender.waterRiverSpecular),
         ("water_cloud_reflection", WaterRender.waterCloudReflection),
         ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),

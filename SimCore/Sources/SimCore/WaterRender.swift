@@ -1944,8 +1944,6 @@ public enum WaterRender {
     /// `ribbonRippleStretch` gestreckt). In der Ferne trägt ein Viertel davon
     /// (gröbere Flecken, die bei 8–10 px Laufbreite stehen bleiben).
     public static let waterFoamScale = 6.0
-    /// Weißwasser am Außenbogen (Prallhang), relativ zu `flows.y`.
-    public static let waterFoamOuter = 0.5
     /// Specular des FLIESSENDEN Wassers (Godot F0 = 0,16 · s²): weniger
     /// Himmel über dem Wasserkörper. Stillwasser behält `waterSpecular`.
     public static let waterRiverSpecular = 0.25
