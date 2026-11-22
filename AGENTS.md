@@ -598,7 +598,12 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   gekappt auf Wasserspiegel + `CorridorProfile.lidMaxAboveWater`: in Schluchten
   verdeckt die Wand den Korridor, statt dass er vor den Grat gezogen wird),
   Licht über `LIGHT_VERTEX` am Deckel (`corridor_common.gdshaderinc`, dort auch
-  die Mindestbreite in der Totalen). Die sichtbare Geländehöhe am Ufer fragt
+  die Mindestbreite in der Totalen). Tiefe schreibt nur das trockene Ufer;
+  das Bett unter Wasser zeichnet `corridor_wet.gdshader` ohne Tiefe, das Band
+  deckt es mit der gemeinsamen Deckkraft-Rampe und endet an der Uferlinie des
+  Korridors (`WaterRender.corridorShore*`, Register `water_corridor_shore*`;
+  Befunde und Bilder: `docs/look/river-fixes/README.md`). Die sichtbare
+  Geländehöhe am Ufer fragt
   der Korridor nur über `BankSurface` (Naht zur verfeinerten Fläche aus #238).
   Godot-Seite: `game/scripts/RiverCorridor.gd`. Wächter:
   `SimCoreTests/RiverCorridorTests.swift` (Bett unter der Uferkante, Wasser nie
