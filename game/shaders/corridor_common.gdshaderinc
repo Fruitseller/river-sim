@@ -34,7 +34,7 @@ const float CORRIDOR_MIN_WATER_PX = 5.0;   // Wasserbreite in der Totalen, Bildp
 const float CORRIDOR_MAX_WIDEN = 3.5;      // höchstens so viel breiter als echt
 const float CORRIDOR_DEPTH_KEEP = 0.08;    // Anteil der wahren Tiefe hinter dem Deckel …
 const float CORRIDOR_DEPTH_KEEP_MAX = 0.008; // … höchstens so weit unter dem Deckel (Welt-Y, < Abstand/2)
-const float CORRIDOR_LID_REACH = 6.0;      // Deckelpunkt höchstens (Deckel − Punkt) × so weit vor dem Punkt
+const float CORRIDOR_LID_REACH = 3.0;      // Deckelpunkt höchstens (Deckel − Punkt) × so weit vor dem Punkt
 const float CORRIDOR_LID_CLEAR = 0.02;     // = CorridorProfile.lidClearance
 
 vec2 corridor_grid_uv(vec2 xz) {

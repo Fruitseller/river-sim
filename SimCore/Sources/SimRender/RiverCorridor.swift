@@ -127,6 +127,12 @@ enum CorridorProfile {
     }
     /// Deckel über der höchsten Geländehöhe im Querschnitt (Welt-Y).
     static let lidClearance = 0.02
+    /// Höchstens so weit (Welt-Y) liegt der Deckel über dem Wasserspiegel.
+    /// In einer Schlucht stieg die Uferkante sonst die Felswand hoch und der
+    /// Deckel mit ihr; die Deckel-Tiefe zog Band und Böschung dann vor den
+    /// Grat davor (frei hängende Fluss- und Wandstücke, Befund zu #240). Was
+    /// über dem Deckel liegt, ist echtes Gelände und verdeckt den Korridor.
+    static let lidMaxAboveWater = 0.12
 
     /// Ein Querschnitt: Spalten-Lage (Zellen, signiert, links negativ),
     /// Höhe (Welt-Y), Tiefe unter Wasser (Welt-Y) und Gleithang-Anteil.
@@ -209,6 +215,26 @@ enum CorridorProfile {
         for e in left { put(e.0, e.1, e.2) }
         put(thalweg, water(thalweg) - depth, 0)
         for e in right { put(e.0, e.1, e.2) }
+        // Deckel: höchste Geländehöhe und höchste Korridor-Höhe im Querschnitt,
+        // auch zwischen den Spalten (die Ufersuche lässt bis 2,5 Zellen
+        // Abstand), aber höchstens `lidMaxAboveWater` über dem Wasser. Ufer,
+        // die höher hinauf reichen (Schluchtwand), enden unter dem Deckel:
+        // darüber zeigt das Gelände selbst die Wand.
+        // Gedeckelt über dem SICHTBAREN Spiegel (an den Uferlinien), nicht über
+        // den Bandkanten: die liegen bei Querneigung höher und gehören unter
+        // die Böschung.
+        let waterTop = max(water(s.offsets[shoreColumn]), water(s.offsets[columns - 1 - shoreColumn]))
+        var lid = max(waterLeft, waterRight)
+        for k in 0..<columns {
+            lid = max(lid, s.heights[k], surface(s.offsets[k]))
+            if k > 0 { lid = max(lid, surface(0.5 * (s.offsets[k - 1] + s.offsets[k]))) }
+        }
+        lid = min(lid, waterTop + lidMaxAboveWater)
+        s.lid = lid + lidClearance
+        for k in 0..<columns where s.heights[k] > lid {
+            s.heights[k] = lid
+            s.depths[k] = water(s.offsets[k]) - lid
+        }
         // Bett überall unter BEIDEN Uferkanten (Querneigung der Wasserfläche).
         let lowTop = min(s.heights[topColumn], s.heights[columns - 1 - topColumn]) - freeboard
         for k in (shoreColumn + 1)..<(columns - 1 - shoreColumn) where s.heights[k] > lowTop {
@@ -223,14 +249,6 @@ enum CorridorProfile {
         }
         // Monotone Lage erzwingen (bei winziger Breite fallen Spalten zusammen).
         for k in 1..<columns { s.offsets[k] = max(s.offsets[k], s.offsets[k - 1]) }
-        // Deckel: höchste Geländehöhe und höchste Korridor-Höhe im Querschnitt,
-        // auch zwischen den Spalten (die Ufersuche lässt bis 2,5 Zellen Abstand).
-        var lid = max(waterLeft, waterRight)
-        for k in 0..<columns {
-            lid = max(lid, s.heights[k], surface(s.offsets[k]))
-            if k > 0 { lid = max(lid, surface(0.5 * (s.offsets[k - 1] + s.offsets[k]))) }
-        }
-        s.lid = lid + lidClearance
         return s
     }
 }

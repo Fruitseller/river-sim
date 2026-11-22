@@ -1458,7 +1458,7 @@ public final class RiverRibbonRenderer {
                 // Review #240). `section.lid` liegt über beiden Kanten.
                 let half = Float(section.waterHalfWidthCells * cs)
                 for own in [yLeftD, yRightD] {
-                    mesh.profile.append(SIMD4(Float(pres), Float(own + pres * (section.lid - own)), half, 0))
+                    mesh.profile.append(SIMD4(Float(pres), Float(own + pres * max(0, section.lid - own)), half, 0))
                 }
             } else {
                 for own in [yLeft, yRight] {
