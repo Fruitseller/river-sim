@@ -5975,7 +5975,7 @@ public final class Terrain {
 
     /// Verkorkt die Altarme ab Index `from` — der Gürtel erkennt neue Altarme
     /// am Index, nicht am Alter 0: sie tragen seit #187 ihr Alter am Schrittende.
-    private func plugOxbows(from: Int) {
+    func plugOxbows(from: Int) {
         guard from < meander.oxbows.count else { return }
         plugOxbows(indices: Array(from..<meander.oxbows.count))
     }
@@ -6145,13 +6145,19 @@ public final class Terrain {
     /// Achsen- und Diagonal-Hülle (8-DOP: `x`, `z`, `x+z`, `x−z`). Konvex,
     /// umschließt also jede konvexe Hülle (Diffusion, Cutoffs, Resample) und
     /// schneidet bei diagonalen Flüssen die leeren Ecken des Rechtecks ab.
-    private struct BeltHull {
+    struct BeltHull {
         let minX: Double, maxX: Double, minZ: Double, maxZ: Double
         let minU: Double, maxU: Double, minV: Double, maxV: Double
 
         @inline(__always) func overlaps(_ o: BeltHull) -> Bool {
             minX <= o.maxX && o.minX <= maxX && minZ <= o.maxZ && o.minZ <= maxZ
                 && minU <= o.maxU && o.minU <= maxU && minV <= o.maxV && o.minV <= maxV
+        }
+
+        @inline(__always) func contains(x: Double, z: Double) -> Bool {
+            let u = x + z, v = x - z
+            return x >= minX && x <= maxX && z >= minZ && z <= maxZ
+                && u >= minU && u <= maxU && v >= minV && v <= maxV
         }
 
         static func from(nodes: [MeanderNode], range: Range<Int>, padAxis: Double, padDiag: Double,
@@ -6180,14 +6186,25 @@ public final class Terrain {
     /// Lese-Abstand (`3,5` Talwand) von den unbewegten Oberlauf-Segmenten.
     /// Konflikt besteht nur bei Schreib/Lese- oder Schreib/Schreib-Überlappung —
     /// reine Lese/Lese-Überlappungen laufen parallel.
-    private struct BeltRWFootprint {
+    struct BeltRWFootprint {
         let fp: MeanderState.BeltFootprint
         let writeHulls: [BeltHull]
         let readHulls: [BeltHull]
 
+        func containsWrite(x: Double, z: Double) -> Bool {
+            writeHulls.contains { $0.contains(x: x, z: z) }
+        }
+
+        func containsRead(x: Double, z: Double) -> Bool {
+            readHulls.contains { $0.contains(x: x, z: z) }
+        }
+
         func conflicts(with other: BeltRWFootprint) -> Bool {
             guard fp.overlaps(other.fp) else { return false }
-            for wh in writeHulls { for rh in other.readHulls where wh.overlaps(rh) { return true } }
+            for wh in writeHulls {
+                for ow in other.writeHulls where wh.overlaps(ow) { return true }
+                for rh in other.readHulls where wh.overlaps(rh) { return true }
+            }
             for rh in readHulls { for wh in other.writeHulls where rh.overlaps(wh) { return true } }
             return false
         }
@@ -6502,9 +6519,12 @@ public final class Terrain {
     ///   Schrittweite. Eine bestehende Bank verjüngt sich, wenn die Ablage mehr
     ///   als 0,2 Tiefen Lücke bis zur Oberkante schließt.
     @discardableResult
-    private func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) -> BeltGeometry? {
+    func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) -> BeltGeometry? {
         let cs = cfg.cellSize
         guard cs > 0, cs.isFinite else { return nil }
+        if cfg.meanderBeltCoupling && only != nil && dropletGateBuf.count != cfg.count {
+            dropletGateBuf = .init(repeating: false, count: cfg.count)
+        }
         return hf.withUnsafeBufferPointer { hfb in
         veg.withUnsafeMutableBufferPointer { vb in
         isChannel.withUnsafeMutableBufferPointer { icb in

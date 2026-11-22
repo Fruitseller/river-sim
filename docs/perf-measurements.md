@@ -2548,7 +2548,7 @@ Rahmen: Linux-VM (4 vCPUs, AMD EPYC-Genoa), `SimConfig.production` (`n = 720`, `
 | 2 (Opt → Basis) | 140,4 / 145,5 / 161,4 (**140,4**) | 147,6 / 149,2 / 136,6 (**136,6**) | **−3,8 ms (−2,7 %)** | 32,31 → **21,84 ms** (−32,4 %) | 0,56 → 0,57 ms |
 | 3 (Basis → Opt) | 141,8 / 147,7 / 154,9 (**141,8**) | 149,8 / 147,7 / 135,7 (**135,7**) | **−6,1 ms (−4,3 %)** | 32,18 → **21,74 ms** (−32,4 %) | 0,54 → 0,53 ms |
 
-- **`belt.parallel`:** sinkt in allen drei Paaren stabil um **8,32 bis 10,47 ms/Schritt** (**−29,7 % bis −32,4 %**, Anteil von 19,8–20,8 % auf 14,9–16,0 % des Schritts) bei vernachlässigbarer Planungszeit (`belt.schedule` 0,53–0,83 ms).
+- **`belt.parallel`:** sinkt in allen drei Paaren stabil um **8,32 bis 10,47 ms/Schritt** (**−29,7 % bis −32,4 %**, Anteil von 19,8–23,0 % auf 14,9–16,0 % des Schritts) bei vernachlässigbarer Planungszeit (`belt.schedule` 0,53–0,83 ms).
 - **Gesamtschritt-Minimum:** sinkt in allen drei Paaren um **3,8 bis 9,0 ms/Schritt** (Median **141,4 → 135,7 ms**, **−5,7 ms / −4,0 %**). Einzelne gestörte Blöcke der geteilten VM streuen weiterhin bis ~15 ms (z. B. Basis Paar 2 Block 3 mit 161,4 ms).
 
 ### Bit-Identität
