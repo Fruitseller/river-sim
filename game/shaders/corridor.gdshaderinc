@@ -90,7 +90,8 @@ void vertex() {
 	VERTEX = p;
 	v_world = p;
 	v_lid = lid;
-	POSITION = corridor_clip(p, lid, cam, VIEW_MATRIX, PROJECTION_MATRIX);
+	// Reichweite des Deckelpunkts am Wasserspiegel über dem Bett (s. corridor_common).
+	POSITION = corridor_clip_ref(p, lid, cam, VIEW_MATRIX, PROJECTION_MATRIX, p.y + max(CUSTOM0.x, 0.0));
 	v_depth = CUSTOM0.x;
 	v_alpha = COLOR.a;
 	v_bend = UV2.x;
@@ -152,9 +153,16 @@ void fragment() {
 	// mit der gemeinsamen Deckkraft-Rampe; der frühere eigene Beer-Lambert
 	// hier färbte den Thalweg fast schwarz und den Rand hell.
 	float d = max(v_depth, 0.0);
-	vec3 shallow_bed = mix(water_bed_color, gravel * 0.8, bar);
+	// Kies unter Wasser gedämpft (0,5 statt 0,8): hell durchscheinend las er
+	// sich als zweite, innere Rinne (Gremium 4, Befund 4).
+	vec3 shallow_bed = mix(water_bed_color, gravel * 0.5, bar);
 	vec3 under = mix(shallow_bed, water_bed_color, smoothstep(0.0, BED_SHALLOW, d)) * mix(0.85, 1.05, pebble);
-	float submerged = smoothstep(-0.002, 0.004, v_depth);
+	// Ab Tiefe 0, nicht schon darunter: trockene Spalten tragen Tiefe ≤ 0
+	// (CorridorProfile), ein Fuß unter dem Wasserspiegel genau 0. Mit
+	// smoothstep(−0,002, …) war er dort zu 26 % „unter Wasser“ und zeichnete
+	// die Außenflanke des Uferwalls deckend in Bettfarbe mit Deckel-Tiefe:
+	// der Sägezahn am Außenbogen (Gremium 3/4, Befund 1).
+	float submerged = smoothstep(0.0005, 0.004, v_depth);
 	vec3 col = mix(bank, under, submerged);
 	col *= cloud_light(v_world, u_time);
 
@@ -168,7 +176,10 @@ void fragment() {
 	NORMAL = normalize(mat3(VIEW_MATRIX) * n2);
 
 	float a = clamp(v_alpha, 0.0, 1.0);
-	float presence = smoothstep(0.02, 0.25, a);
+	// Ufer und Bett erst bei fast voller Sichtbarkeit (Gremium 4, Befund 2b):
+	// einwachsende und versiegende Arme bekamen sonst schon als dünner Faden
+	// eine Böschung samt Erd-Wand.
+	float presence = smoothstep(CORRIDOR_PRESENCE_LO, CORRIDOR_PRESENCE_HI, a);
 	float edge = 1.0 - smoothstep(1.0 - EDGE_FADE, 1.0, across);
 	// Über Wasser deckt der Korridor nur, wo er etwas zeigt: Wand am
 	// Prallhang, nasser Saum. Sonst scheint das Gelände durch (es liegt dort
@@ -195,5 +206,5 @@ void fragment() {
 	ALPHA = alpha;
 
 	vec3 cam = CAMERA_POSITION_WORLD;
-	LIGHT_VERTEX = (VIEW_MATRIX * vec4(corridor_lid_point(v_world, v_lid, cam), 1.0)).xyz;
+	LIGHT_VERTEX = (VIEW_MATRIX * vec4(corridor_lid_point_ref(v_world, v_lid, cam, v_world.y + max(v_depth, 0.0)), 1.0)).xyz;
 }

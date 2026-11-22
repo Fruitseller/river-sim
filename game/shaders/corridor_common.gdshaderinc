@@ -36,6 +36,8 @@ const float CORRIDOR_DEPTH_KEEP = 0.08;    // Anteil der wahren Tiefe hinter dem
 const float CORRIDOR_DEPTH_KEEP_MAX = 0.008; // … höchstens so weit unter dem Deckel (Welt-Y, < Abstand/2)
 const float CORRIDOR_LID_REACH = 3.0;      // Deckelpunkt höchstens (Deckel − Punkt) × so weit vor dem Punkt
 const float CORRIDOR_LID_CLEAR = 0.02;     // = CorridorProfile.lidClearance
+const float CORRIDOR_PRESENCE_LO = 0.35;  // Korridor blendet ab dieser Band-Deckkraft ein …
+const float CORRIDOR_PRESENCE_HI = 0.85;  // … voll ab dieser
 
 vec2 corridor_grid_uv(vec2 xz) {
 	float n = max(grid_n, 2.0);
@@ -78,14 +80,26 @@ float corridor_widened_offset(float off, float water_half, float f) {
 // Deckel ≤ Wasser + 0,12 bleibt der Weg damit unter ~1 Welteinheit (Bett
 // 0,2 tief), auch an hohen Ufern. Preis: bei sehr flachem Blick verliert das
 // Bett früher gegen Gelände knapp davor.
-vec3 corridor_lid_point(vec3 p, float lid, vec3 cam) {
+//
+// `ref_y` ist die Höhe, an der die Reichweite gemessen wird: für das Bett
+// unter Wasser der Wasserspiegel darüber (Gremium 4, Befund 1). Mit der
+// eigenen Höhe zog ein 0,18 tiefer Bett-Vertex seinen Deckelpunkt viermal so
+// weit zur Kamera wie der Ufer-Vertex daneben; die Tiefe läuft zwischen
+// Vertices linear, und das Bett gewann gegen die Uferwand nur dreieckweise —
+// ein Sägezahn im Takt der Querschnitte am Außenbogen. Mit dem Spiegel ziehen
+// Bett, Uferlinie und Band (dessen Vertex liegt AUF dem Spiegel) gleich weit.
+vec3 corridor_lid_point_ref(vec3 p, float lid, vec3 cam, float ref_y) {
 	vec3 d = p - cam;
 	if (cam.y > lid && p.y < lid && abs(d.y) > 1e-6) {
 		float t = (lid - cam.y) / d.y;                       // 0 … 1 vom Auge zum Punkt
-		float reach = CORRIDOR_LID_REACH * (lid - p.y) / max(length(d), 1e-6);
+		float reach = CORRIDOR_LID_REACH * max(lid - max(ref_y, p.y), 0.0) / max(length(d), 1e-6);
 		return cam + d * max(t, 1.0 - reach);
 	}
 	return p;
+}
+
+vec3 corridor_lid_point(vec3 p, float lid, vec3 cam) {
+	return corridor_lid_point_ref(p, lid, cam, p.y);
 }
 
 // Clip-Position des Weltpunkts `p` mit der Tiefe des Deckel-Punkts (Rest
@@ -94,9 +108,9 @@ vec3 corridor_lid_point(vec3 p, float lid, vec3 cam) {
 // gilt in jeder Clip-Konvention (auch gl_compatibility). Zwischen den
 // Vertices läuft die Tiefe linear im Bild statt exakt; der Deckel hat dafür
 // Abstand.
-vec4 corridor_clip(vec3 p, float lid, vec3 cam, mat4 view, mat4 proj) {
+vec4 corridor_clip_ref(vec3 p, float lid, vec3 cam, mat4 view, mat4 proj, float ref_y) {
 	vec4 clip = proj * (view * vec4(p, 1.0));
-	vec3 pl = corridor_lid_point(p, lid, cam);
+	vec3 pl = corridor_lid_point_ref(p, lid, cam, ref_y);
 	// Rest der wahren Tiefe: hält die Reihenfolge der Korridor-Flächen, aber
 	// nie mehr als CORRIDOR_DEPTH_KEEP_MAX unter den Deckel (sonst verlöre ein
 	// tiefes Bett gegen Gelände knapp unter dem Deckel, Review Neon Nr. 1).
@@ -111,4 +125,8 @@ vec4 corridor_clip(vec3 p, float lid, vec3 cam, mat4 view, mat4 proj) {
 	vec3 q = mix(pl, p, off / below);
 	vec4 lid_clip = proj * (view * vec4(q, 1.0));
 	return vec4(clip.xy, lid_clip.z / lid_clip.w * clip.w, clip.w);
+}
+
+vec4 corridor_clip(vec3 p, float lid, vec3 cam, mat4 view, mat4 proj) {
+	return corridor_clip_ref(p, lid, cam, view, proj, p.y);
 }

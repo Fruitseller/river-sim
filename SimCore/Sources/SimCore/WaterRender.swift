@@ -618,6 +618,10 @@ public enum WaterRender {
     public static let ribbonJoinSearchCells = 8
     /// Ab dieser Deckung des früheren Bands ist der Zubringer angekommen.
     public static let ribbonJoinCoverage = 0.5
+    /// So viele Zellen läuft der Zubringer über die erste Zelle im sichtbaren
+    /// Wasser des Hauptlaufs hinaus (Gremium 4, Befund 5): dort blendet er
+    /// unter dessen Wasser aus, nicht schon an der Wasserlinie.
+    public static let ribbonJoinOverlapCells = 2
     /// Endsegment eines Laufs, ab dem der Render es nicht mehr zeichnet
     /// (Zellen, `renderNodeCount` in SimRender): der letzte Knoten eines
     /// Zubringers ist sein Anschluss im Hauptlauf und bleibt stehen, wenn der
@@ -630,6 +634,16 @@ public enum WaterRender {
     /// Seed 7, Jahr 20.000: Läufe mit drei Lagen übereinander (Z-Form),
     /// Wenden bis 173°; echte Mäanderbögen wenden je Knoten um wenige Grad.
     public static let ribbonHairpinCos = -0.5
+    /// Eigener Rang (Strahler/`ribbonRankDivisor`), ab dem der Rang des
+    /// Anschlusses einen Lauf über `ribbonMinimumRank` hebt: Strahler 2.
+    /// Kleinstarme (Strahler 1) blieben sonst als Fäden stehen (Gremium 4).
+    public static let ribbonJunctionOwnRank = 2.0 / ribbonRankDivisor
+    /// Anteil der Deckung eines früheren Bands, der außerhalb seines
+    /// sichtbaren Wassers (Böschung, Halbbreite + ½ Zelle) verdeckt: der
+    /// Zubringer blendet dort auf gut die Hälfte ab und erst im Wasser ganz
+    /// aus (Gremium 4, Befund 5; voll verdeckt endete er 1–2 Zellen davor,
+    /// gar nicht verdeckt stumpf auf einer Zelle).
+    public static let ribbonBankOcclusion = 0.55
     /// Längste nasse Strecke eines Sees (Stützpunkte à ~0,5 Zellen), die ein
     /// Band mit Land auf beiden Seiten als Gerinne überbrückt: Kolke im
     /// Lauf, keine Seen (Gremium 3, Befund 3).
@@ -1766,9 +1780,12 @@ public enum WaterRender {
     /// Makrofarbe trägt `max(Strand, Bank)` und unterscheidet die Quellen
     /// nicht. Der Strand hatte vorher fest (0,56|0,51|0,41)…(0,68|0,62|0,50)
     /// und Rauheit 0,88 im Shader, also nur wenige Hundertstel daneben.
-    public static let barSandColor = (r: 0.70, g: 0.65, b: 0.54)
+    ///
+    /// Gremium 4, Befund 10: 0,58/0,54/0,45 statt 0,70/0,65/0,54 — kreidig hell
+    /// las sich der Sand als Fremdkörper neben Wiese und Wasser.
+    public static let barSandColor = (r: 0.58, g: 0.54, b: 0.45)
     /// s. `barSandColor`.
-    public static let barSandWetColor = (r: 0.52, g: 0.48, b: 0.40)
+    public static let barSandWetColor = (r: 0.45, g: 0.42, b: 0.35)
     /// s. `barSandColor`.
     public static let barRoughness = 0.86
 
@@ -1991,7 +2008,11 @@ public enum WaterRender {
     ///
     /// Gremium 3, Befund 2b: näher am Lauf (vorher 0,008/0,040/0,095): das
     /// stehende Raster-Wasser las sich als anderes Wasser als das Band daneben.
-    public static let waterLakeColor = (r: 0.010, g: 0.055, b: 0.085)
+    ///
+    /// Gremium 4, Befund 3: noch näher an `waterDeepColor` (vorher
+    /// 0,010/0,055/0,085): der Raster-See neben einem Band las sich als
+    /// anderes Wasser.
+    public static let waterLakeColor = (r: 0.011, g: 0.064, b: 0.084)
     /// Wolkenspiegelung auf Stillwasser (Seen, Altarme): Helligkeit der
     /// gespiegelten Wolkendeckung.
     public static let waterCloudReflection = 0.6

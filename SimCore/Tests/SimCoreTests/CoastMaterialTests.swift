@@ -415,13 +415,20 @@ final class CoastMaterialTests: XCTestCase {
 
     func testCoastWeightsAreDeterministic() {
         let terrain = agedWorld(renderConfig(n: 96), years: 2000)
+        // Nicht leer: irgendein Sand genügt. Auf dem groben Testgitter (Zelle
+        // 1,37 statt 0,156 Welteinheiten) trägt diese Welt keinen Strand
+        // (gemessen Gremium 3: 0 Zellen auf macOS und Linux, auch für sieben
+        // weitere Seeds; erst ab n = 256 erscheinen Säume). Den Sand lieferte
+        // stets die Bank im Mäandergürtel; seit sie ab der Wasserlinie und nur
+        // am Gleithang zählt (`BarMaterial.lineDistance`), blieben auf Linux 0,
+        // auf macOS 13 Zellen. Gepinnt ist deshalb der Bank-Zustand: jede Zelle
+        // junge Bank (Pin-Doktrin, `TestCalibration.swift`).
+        var pinned = terrain.state
+        pinned.barAge = [Double](repeating: 0, count: terrain.cfg.n * terrain.cfg.n)
+        terrain.restore(pinned)
         let a = TerrainColorRenderer.buffers(terrain), b = TerrainColorRenderer.buffers(terrain)
         XCTAssertEqual(a.colors, b.colors)
         XCTAssertEqual(a.surfaces, b.surfaces)
-        // Nicht leer: irgendein Sand genügt. Auf dem groben Testgitter (Zelle
-        // 1,37 statt 0,156 Welteinheiten) bleiben die weichen Strandsäume (#174)
-        // meist unter halber Stärke: gemessen Mac max. 143 (4 Zellen
-        // über 128), Linux max. 73 (keine), Zellen mit Sand 70 bzw. 37.
         XCTAssertTrue(stride(from: 3, to: a.colors.count, by: 4).contains { a.colors[$0] > 0 },
                       "gealterte Welt ohne einen einzigen Strand")
     }

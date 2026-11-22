@@ -1320,7 +1320,8 @@ void fragment() {
 		float cloud_w = water_cloud_reflection * lakeMask * (1.0 - flowing);
 		float cloud_hit = clouds_enabled && cloud_w > 0.0 && refl.y > 0.05 && lake_pos.y < cloud_height
 			? cloud_cover(lake_pos.xz + refl.xz * (cloud_height - lake_pos.y) / refl.y, u_time) : 0.0;
-		EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel);
+		// × 0,65 wie im Band (Gremium 4, Befund 6: Wolkenspiegelung als Eisfläche).
+		EMISSION = vec3(0.9, 0.93, 0.97) * 0.65 * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel);
 	}
 	ALBEDO = albedo;
 	ROUGHNESS = roughness;
