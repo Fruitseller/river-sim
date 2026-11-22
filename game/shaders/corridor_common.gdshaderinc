@@ -100,8 +100,15 @@ vec4 corridor_clip(vec3 p, float lid, vec3 cam, mat4 view, mat4 proj) {
 	// Rest der wahren Tiefe: hält die Reihenfolge der Korridor-Flächen, aber
 	// nie mehr als CORRIDOR_DEPTH_KEEP_MAX unter den Deckel (sonst verlöre ein
 	// tiefes Bett gegen Gelände knapp unter dem Deckel, Review Neon Nr. 1).
-	float keep = min(CORRIDOR_DEPTH_KEEP, CORRIDOR_DEPTH_KEEP_MAX / max(pl.y - p.y, 1e-6));
-	vec3 q = mix(pl, p, keep);
+	// Sättigend statt gekappt: ein hartes min() legte alles, was mehr als
+	// KEEP_MAX / KEEP (0,1) unter dem Deckel liegt, auf DIESELBE Tiefe —
+	// Wasserfläche und Bett darunter kämpften im Tiefentest, das Band riss
+	// in Querstreifen auf (Gremium, Befund 2). Die Exponential-Form bleibt
+	// streng monoton und für flache Lagen gleich KEEP × Tiefe. (Das Bett unter
+	// Wasser schreibt seit dem Gremium gar keine Tiefe mehr, corridor_wet.)
+	float below = max(pl.y - p.y, 1e-6);
+	float off = CORRIDOR_DEPTH_KEEP_MAX * (1.0 - exp(-CORRIDOR_DEPTH_KEEP * below / CORRIDOR_DEPTH_KEEP_MAX));
+	vec3 q = mix(pl, p, off / below);
 	vec4 lid_clip = proj * (view * vec4(q, 1.0));
 	return vec4(clip.xy, lid_clip.z / lid_clip.w * clip.w, clip.w);
 }

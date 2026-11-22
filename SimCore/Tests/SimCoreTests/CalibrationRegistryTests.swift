@@ -28,6 +28,8 @@ final class CalibrationRegistryTests: XCTestCase {
         "game/shaders/water.gdshader",
         "game/shaders/ocean.gdshader",
         "game/shaders/relief_bake.gdshader",
+        // Ufer und Bett des Korridors: Bettfarbe und Uferlinie (Gremium, Befund 1).
+        "game/shaders/corridor.gdshaderinc",
     ]
 
     private static func color(_ c: (r: Double, g: Double, b: Double)) -> Value {
@@ -108,6 +110,8 @@ final class CalibrationRegistryTests: XCTestCase {
             "water_ribbon_waterline": .scalar(WaterRender.ribbonWaterline),
             "water_ribbon_waterline_jitter": .scalar(WaterRender.ribbonWaterlineJitter),
             "water_ribbon_waterline_scale": .scalar(WaterRender.ribbonWaterlineScale),
+            "water_corridor_shore": .scalar(WaterRender.corridorShoreFraction),
+            "water_corridor_shore_bend": .scalar(WaterRender.corridorShoreBendShift),
             "water_ribbon_bank_opacity": .scalar(WaterRender.ribbonBankOpacity),
             "water_ribbon_ripple_frequency": .scalar(WaterRender.ribbonRippleFrequency),
             "water_ribbon_ripple_amplitude": .scalar(WaterRender.ribbonRippleAmplitude),
@@ -325,6 +329,8 @@ final class CalibrationRegistryTests: XCTestCase {
                        hint: "Main.gd wendet eine Gruppe generisch auf Materialien an")
         assertContains(main, "apply_calibration(sim, \"water\", water_mats)",
                        hint: "alle Wasser-Materialien werden kalibriert")
+        assertContains(main, "apply_calibration(sim, \"water\", corridor.materials())",
+                       hint: "Ufer und Bett des Korridors teilen Bettfarbe und Uferlinie")
         assertContains(main, "apply_calibration(sim, \"relief\", [relief_mat, terrain_mat])",
                        hint: "Back-Pass und Terrain bekommen die Relief-Gruppe")
         assertContains(main, "apply_calibration(sim, \"canopy\", [terrain_mat])",

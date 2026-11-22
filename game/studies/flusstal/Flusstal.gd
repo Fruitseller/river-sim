@@ -320,4 +320,4 @@ func _study_drawn() -> void:
 
 ## Ufer und Bett (Look E, #239) laufen mit derselben Zeit wie die Bänder.
 func _corridor_mats() -> Array:
-	return [] if corridor == null else [corridor.mat, corridor.prev_mat]
+	return [] if corridor == null else corridor.materials()

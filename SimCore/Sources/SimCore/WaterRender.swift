@@ -1804,6 +1804,18 @@ public enum WaterRender {
     /// mindestens `ribbonWaterlineReachMin` (sonst kippte die Querlinie
     /// aus zwei eng benachbarten Punkten beliebig steil).
     public static let ribbonWaterlineReach = 1 - ribbonWaterline + ribbonWaterlineJitter
+    /// Uferlinie des Korridors (Look E, #239): Anteil der sichtbaren
+    /// Wasser-Halbbreite, an dem das Wasser die Böschung trifft, auf gerader
+    /// Strecke. Gleich der Wasserlinie des Bands ohne Korridor.
+    /// EINE Quelle für drei Leser: `CorridorProfile.section` (Geometrie),
+    /// `water.gdshader` (das Band endet genau dort) und
+    /// `corridor.gdshaderinc` (nasser Saum ab dort). Bis zum Gremium
+    /// (Befund 1) endete das Band mit Korridor erst bei 92 % der Bandbreite,
+    /// das Wasser lag als zweiter Lauf über der trockenen Böschung.
+    public static let corridorShoreFraction = 1 - ribbonWaterline
+    /// Verschiebung der Uferlinie im Bogen (Anteil der Wasser-Halbbreite ×
+    /// Bogenstärke): am Prallhang nach außen, am Gleithang nach innen.
+    public static let corridorShoreBendShift = 0.18
     /// s. `ribbonWaterlineReach`.
     public static let ribbonWaterlineReachMin = 0.3
     /// Innerste Wasserlinie als Anteil von `ribbonWaterlineReach`:

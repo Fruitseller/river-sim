@@ -148,6 +148,8 @@ public enum CalibrationRegistry {
         ("water_ribbon_waterline", WaterRender.ribbonWaterline),
         ("water_ribbon_waterline_jitter", WaterRender.ribbonWaterlineJitter),
         ("water_ribbon_waterline_scale", WaterRender.ribbonWaterlineScale),
+        ("water_corridor_shore", WaterRender.corridorShoreFraction),
+        ("water_corridor_shore_bend", WaterRender.corridorShoreBendShift),
         ("water_ribbon_bank_opacity", WaterRender.ribbonBankOpacity),
         ("water_ribbon_ripple_frequency", WaterRender.ribbonRippleFrequency),
         ("water_ribbon_ripple_amplitude", WaterRender.ribbonRippleAmplitude),

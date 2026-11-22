@@ -134,6 +134,16 @@ public final class RiverRibbonRenderer {
     /// Kanal, dessen Band `stampCoverage` gerade stempelt (−1 = keins), und
     /// der Arbeitspuffer für `RibbonMesh.bandOwner`.
     private var stampOwner: Int32 = -1
+    /// Korridor-Bänder dieses Baus (Vertex-Bereich je Band) und das Wasser
+    /// jedes Bands als Kreise, für `fadeCorridorsInForeignWater`.
+    struct CorridorBand { var owner: Int32; var start: Int; var end: Int }
+    struct CorridorWater { var owner: Int32; var x: Double; var z: Double; var r: Double }
+    private var corridorBands: [CorridorBand] = []
+    private var corridorWater: [CorridorWater] = []
+    private var corridorBandCount: Int32 = 0
+    /// Bis zu zwei Bänder je Zelle, deren Wasser sie deckt (−1 = keins).
+    private var waterOwnerA: [Int32] = []
+    private var waterOwnerB: [Int32] = []
     private var owners: [Int32] = []
     /// Die Fluss-Bänder des letzten Baus (Stützpunkte vor der Verdeckung), aus
     /// denen eine Kopplung die versiegenden Arme nimmt.
@@ -319,6 +329,9 @@ public final class RiverRibbonRenderer {
         mesh.flows.removeAll(keepingCapacity: true)
         mesh.profile.removeAll(keepingCapacity: true)
         mesh.corridor.removeAll()
+        corridorBands.removeAll(keepingCapacity: true)
+        corridorWater.removeAll(keepingCapacity: true)
+        corridorBandCount = 0
         mesh.indices.removeAll(keepingCapacity: true)
         mesh.stripStarts.removeAll(keepingCapacity: true)
         let n = terrain.cfg.n
@@ -937,6 +950,7 @@ public final class RiverRibbonRenderer {
             }
         }
         inTransition = growing || !ghosts.isEmpty
+        fadeCorridorsInForeignWater(n: n, cellSize: terrain.cfg.cellSize, worldHalf: terrain.cfg.world / 2)
         swap(&mesh.bandOwner, &owners)
         return mesh
     }
@@ -1202,6 +1216,7 @@ public final class RiverRibbonRenderer {
         // Zwei halbtransparente Bänder addierten sich sonst zu dunklen
         // Blöcken und Stößen an Zusammenflüssen, Delta-Fächern und Stummel-
         // Kanälen auf demselben Bett.
+        let originalSamples = samples
         var samples = samples
         var occludedMature: [Int] = []
         var occlusion = [Double](repeating: 0, count: samples.count)
@@ -1283,6 +1298,11 @@ public final class RiverRibbonRenderer {
         let presence = RiverRibbonRenderer.corridorPresence(samples.map { $0.surface == nil }, on: corridorOn)
         let bank = BankSurface(h: h, n: n, renderGrid: renderGrid, hscale: hscale)
         var corridor = CorridorBandBuilder()
+        // Querschnitte entstehen erst nach dem Lauf über alle Stützpunkte
+        // (`CorridorSections`: längs geglättet); bis dahin hält die Schleife
+        // nur ihre Eingaben und Platzhalter im Profil des Bands.
+        var corridorInputs: [CorridorSections.Input] = []
+        let profileBase = mesh.profile.count
         // Vorgänger-Stützpunkt für den Deckungs-Stempel: gestempelt wird das
         // SEGMENT, nicht der Punkt (s. `stampCoverage`), und dafür braucht es
         // die bereits GEDECKELTE Halbbreite der vorigen Runde.
@@ -1441,25 +1461,12 @@ public final class RiverRibbonRenderer {
             }
             let yLeft = Float(yLeftD), yRight = Float(yRightD)
             if corridorOn {
-                let pres = presence[a]
-                let sx = s.x, sz = s.z, ptx = tx, ptz = tz
-                let section = CorridorProfile.section(
-                    halfWidthCells: hwCells,
-                    visible: WaterRender.ribbonVisibleWidth(s.alpha * pres),
-                    waterLeft: yLeftD, waterRight: yRightD, bend: s.bend,
-                    riffle: Double(flows[a].x), cellSize: cs,
-                    surface: { c in bank.height(sx - ptz * c, sz + ptx * c) })
-                corridor.samples.append(.init(x: s.x, z: s.z, tx: tx, tz: tz, section: section,
-                                              alpha: s.alpha * pres, rank: s.rank,
-                                              bend: s.bend, arc: arc[a]))
-                // Deckel nur mit Korridor: über Wasser (Mündung, Meer) bleibt
-                // JEDE Kante auf ihrer eigenen Höhe (Review Neon Nr. 9; mit dem
-                // Maximum beider Kanten hob die tiefere Kante ihre Tiefe an,
-                // Review #240). `section.lid` liegt über beiden Kanten.
-                let half = Float(section.waterHalfWidthCells * cs)
-                for own in [yLeftD, yRightD] {
-                    mesh.profile.append(SIMD4(Float(pres), Float(own + pres * max(0, section.lid - own)), half, 0))
-                }
+                corridorInputs.append(.init(hw: hwCells,
+                                            visible: WaterRender.ribbonVisibleWidth(s.alpha * presence[a]),
+                                            waterLeft: yLeftD, waterRight: yRightD,
+                                            bend: s.bend, riffle: Double(flows[a].x),
+                                            x: s.x, z: s.z, tx: tx, tz: tz))
+                mesh.profile.append(.zero); mesh.profile.append(.zero)   // s. unten
             } else {
                 for own in [yLeft, yRight] {
                     mesh.profile.append(SIMD4<Float>(0, own, Float(hwCells * cs), 0))
@@ -1510,8 +1517,115 @@ public final class RiverRibbonRenderer {
             }
         }
         if corridorOn {
+            let sections = CorridorSections.build(corridorInputs, cellSize: cs, bank: bank)
+            let lids = CorridorBandBuilder.meshLids(sections.map(\.lid), arc: arc)
+            for a in 0..<sections.count {
+                let section = sections[a], inp = corridorInputs[a], pres = presence[a]
+                corridor.samples.append(.init(x: inp.x, z: inp.z, tx: inp.tx, tz: inp.tz, section: section,
+                                              alpha: samples[a].alpha * pres, rank: samples[a].rank,
+                                              bend: samples[a].bend, arc: arc[a]))
+                // Deckel nur mit Korridor: über Wasser (Mündung, Meer) bleibt
+                // JEDE Kante auf ihrer eigenen Höhe (Review Neon Nr. 9; mit dem
+                // Maximum beider Kanten hob die tiefere Kante ihre Tiefe an,
+                // Review #240). `section.lid` liegt über beiden Kanten.
+                // Den VOLLEN Deckel trägt das Band, sobald es Korridor gibt: der
+                // Korridor rechnet immer mit dem vollen, und ein anteiliger
+                // Deckel (früher `pres ×`) lag im Auslauf vor Tümpeln einer
+                // Kaskade tiefer — das Bett gewann dort den Tiefentest gegen
+                // das Wasser (Querbalken, Gremium, Befund 2).
+                let half = Float(section.waterHalfWidthCells * cs)
+                let lidShare = min(1, pres / CorridorSections.lidPresence)
+                for (k, own) in [inp.waterLeft, inp.waterRight].enumerated() {
+                    mesh.profile[profileBase + 2 * a + k] =
+                        SIMD4(Float(pres), Float(own + lidShare * max(0, lids[a] - own)), half, 0)
+                }
+            }
+            let start = mesh.corridor.vertices.count
             corridor.emit(into: &mesh.corridor, cellSize: cs, worldHalf: half)
+            corridorBands.append(.init(owner: corridorBandCount, start: start,
+                                       end: mesh.corridor.vertices.count))
+            // Wasser dieses Bands VOR der Verdeckung durch frühere Bänder: wo
+            // ein Zubringer mündet, öffnet sich das Ufer des Hauptlaufs.
+            for a in 0..<min(originalSamples.count, halfWidthCells.count) {
+                let r = halfWidthCells[a] * WaterRender.ribbonVisibleWidth(originalSamples[a].alpha)
+                    * CorridorProfile.shoreFraction
+                guard r > 0 else { continue }
+                corridorWater.append(.init(owner: corridorBandCount, x: originalSamples[a].x,
+                                           z: originalSamples[a].z, r: r))
+            }
+            corridorBandCount += 1
         }
+    }
+
+    /// Ufer und Bett eines Bands blenden aus, wo sie im Wasser eines ANDEREN
+    /// Bands liegen (Gremium, Befund 2): jedes Band baut seinen Korridor
+    /// allein, und am Zusammenfluss schrieb die Böschung des Zubringers mit
+    /// Deckel-Tiefe über das Wasser des Hauptlaufs, die des Hauptlaufs quer
+    /// über die Mündung des Zubringers (Dämme, Querwände), und ein
+    /// versiegender Arm, der im heutigen Lauf liegt, legte seine Böschungen
+    /// als Querbalken über dessen Wasser. Zwei Regeln:
+    ///  - Wasser eines FRÜHER gebauten Bands (Hauptläufe vor Zubringern,
+    ///    versiegende Arme zuletzt) hat Vorrang: dort weicht jeder Teil.
+    ///  - Wasser eines später gebauten Bands öffnet nur das trockene Ufer und
+    ///    nur außerhalb des eigenen Wassers: die Mündung des Zubringers.
+    /// Gelesen wird das Wasser VOR der Verdeckung (`emitRibbon`), sonst bliebe
+    /// das Ufer des Hauptlaufs vor jeder Mündung stehen.
+    private func fadeCorridorsInForeignWater(n: Int, cellSize cs: Double, worldHalf half: Double) {
+        guard corridorBandCount > 1, cs > 0 else { return }
+        let cnt = n * n
+        if waterOwnerA.count != cnt {
+            waterOwnerA = [Int32](repeating: -1, count: cnt)
+            waterOwnerB = [Int32](repeating: -1, count: cnt)
+        } else {
+            for k in 0..<cnt { waterOwnerA[k] = -1; waterOwnerB[k] = -1 }
+        }
+        for w in corridorWater {
+            let i0 = max(0, Int((w.x - w.r).rounded(.down))), i1 = min(n - 1, Int((w.x + w.r).rounded(.up)))
+            let j0 = max(0, Int((w.z - w.r).rounded(.down))), j1 = min(n - 1, Int((w.z + w.r).rounded(.up)))
+            guard i0 <= i1, j0 <= j1 else { continue }
+            for j in j0...j1 {
+                for i in i0...i1 {
+                    let dx = Double(i) - w.x, dz = Double(j) - w.z
+                    guard dx * dx + dz * dz <= w.r * w.r else { continue }
+                    let k = j * n + i
+                    if waterOwnerA[k] < 0 { waterOwnerA[k] = w.owner }
+                    else if waterOwnerA[k] != w.owner && waterOwnerB[k] < 0 { waterOwnerB[k] = w.owner }
+                }
+            }
+        }
+        var gone = [Bool](repeating: false, count: mesh.corridor.vertices.count)
+        var anyGone = false
+        for band in corridorBands where band.end > band.start {
+            for v in band.start..<band.end {
+                let p = mesh.corridor.vertices[v]
+                let i = Int(((Double(p.x) + half) / cs).rounded()), j = Int(((Double(p.z) + half) / cs).rounded())
+                guard i >= 0, i < n, j >= 0, j < n else { continue }
+                // Slot A hält das zuerst gebaute Band der Zelle (gestempelt
+                // wird in Bau-Reihenfolge), B das erste andere.
+                let a = waterOwnerA[j * n + i], b = waterOwnerB[j * n + i]
+                let own = a == band.owner || b == band.owner
+                let earlier = a >= 0 && a < band.owner
+                let foreign = (a >= 0 && a != band.owner) || (b >= 0 && b != band.owner)
+                let dry = mesh.corridor.custom[v].x <= 0
+                if earlier || (foreign && !own && dry) {
+                    mesh.corridor.colors[v].w = 0
+                    gone[v] = true
+                    anyGone = true
+                }
+            }
+        }
+        // Ein Dreieck mit einem ausgeblendeten Vertex fällt ganz weg: über die
+        // Fläche interpoliert bliebe die Deckkraft sonst über null, und der
+        // Korridor schriebe dort weiter Deckel-Tiefe vor das fremde Wasser.
+        guard anyGone else { return }
+        var kept: [Int32] = []
+        kept.reserveCapacity(mesh.corridor.indices.count)
+        let idx = mesh.corridor.indices
+        for t in stride(from: 0, to: idx.count - 2, by: 3)
+        where !gone[Int(idx[t])] && !gone[Int(idx[t + 1])] && !gone[Int(idx[t + 2])] {
+            kept.append(idx[t]); kept.append(idx[t + 1]); kept.append(idx[t + 2])
+        }
+        mesh.corridor.indices = kept
     }
 
     /// Lauf-Größen je Stützpunkt für `water.gdshader` (Look-Iteration 14,

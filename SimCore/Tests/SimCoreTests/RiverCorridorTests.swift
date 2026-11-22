@@ -105,6 +105,39 @@ final class RiverCorridorTests: XCTestCase {
         }
     }
 
+    /// Gremium, Befund 2: die Ufersuche je Stützpunkt sprang; ein einzelner
+    /// Sprung verschwindet in der Längs-Glättung, ein stetiger Verlauf bleibt.
+    func testEdgeSmoothingRemovesSingleJumps() {
+        var v = [Double](repeating: 1.0, count: 12)
+        v[6] = 3.5
+        let s = CorridorSections.smoothEdges(v)
+        XCTAssertEqual(s[6], 1.0, accuracy: 1e-12, "einzelner Sprung der Ufersuche bleibt stehen")
+        let ramp = (0..<12).map { Double($0) * 0.1 }
+        let r = CorridorSections.smoothEdges(ramp)
+        for a in 4..<8 { XCTAssertEqual(r[a], ramp[a], accuracy: 1e-12, "Rampe verfälscht (\(a))") }
+    }
+
+    /// Gremium, Befund 2: im Innenbogen überschlugen sich die Querschnitte.
+    /// Die Grenze deckelt die Reichweite der Innenseite, lässt aber immer
+    /// Platz für Böschung und Fuß jenseits der Uferlinie.
+    func testInnerBendReachIsLimited() {
+        let cs = 0.156
+        let free = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1, waterRight: 1,
+                                           bend: 0, riffle: 0, cellSize: cs, surface: flat(0.9))
+        let capped = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1, waterRight: 1,
+                                             bend: 0, riffle: 0, cellSize: cs, reachLimit: (.infinity, 2.0),
+                                             surface: flat(0.9))
+        let k = CorridorProfile.columns, sh = CorridorProfile.shoreColumn
+        XCTAssertGreaterThan(free.offsets[k - 1], 2.0, "Testaufbau: freie Reichweite über der Grenze")
+        XCTAssertLessThanOrEqual(capped.offsets[k - 1], 2.0 + 1e-9, "Innenseite über die Grenze")
+        XCTAssertEqual(capped.offsets[0], free.offsets[0], accuracy: 1e-12, "Außenseite verändert")
+        let tight = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1, waterRight: 1,
+                                            bend: 0, riffle: 0, cellSize: cs, reachLimit: (.infinity, 0.1),
+                                            surface: flat(0.9))
+        XCTAssertGreaterThan(tight.offsets[k - 1], tight.offsets[k - 1 - sh], "kein Platz mehr für das Ufer")
+        for c in 1..<k { XCTAssertGreaterThanOrEqual(tight.offsets[c], tight.offsets[c - 1], "Querschnitt gefaltet") }
+    }
+
     /// Pflicht-Wächter auf der gealterten Render-Testwelt: Mesh konsistent,
     /// Bett unter der Uferkante, Wasser nie über dem Ufer, kein Gelände über
     /// dem Deckel (sonst stäche es durch Bett und Wasserfläche).
@@ -228,5 +261,19 @@ final class RiverCorridorTests: XCTestCase {
             // eigene Höhe des Vertex (Review #240).
             if p.x == 0 { XCTAssertEqual(v.y, p.y, accuracy: 1e-6, "Band ohne Korridor mit fremdem Deckel") }
         }
+        // Gremium, Befund 2: Band und Korridor tragen DENSELBEN Deckel. Ein
+        // Band mit eigenem Deckel an den Zwischen-Stützpunkten lag je
+        // zweitem Quad hinter dem Bett. Jeder sichtbare Querschnitt findet
+        // seinen Deckel im Profil des Bands wieder (Band-Vertices, die den
+        // vollen Deckel tragen: Korridor-Anteil ab `lidPresence`).
+        var lidPairs = 0
+        for start in stride(from: 0, to: c.vertices.count, by: k) where c.colors[start].w > 0.5 {
+            let lid = c.custom[start].y
+            if mesh.profile.contains(where: { Double($0.x) >= CorridorSections.lidPresence && abs($0.y - lid) < 1e-5 }) { lidPairs += 1 }
+        }
+        let fullSections = stride(from: 0, to: c.vertices.count, by: k).filter { c.colors[$0].w > 0.5 }.count
+        XCTAssertGreaterThan(fullSections, 0)
+        XCTAssertGreaterThanOrEqual(Double(lidPairs), 0.99 * Double(fullSections),
+                                    "Band trägt nicht den Deckel des Korridors (\(lidPairs)/\(fullSections))")
     }
 }
