@@ -787,7 +787,6 @@ void fragment() {
 	// hier kontinuierlich in Weltkoordinaten und bleiben damit unabhängig vom
 	// Render-Gitter.
 	vec4 cover = cover_at(v_uv); // vor der Verzweigung: implizite Mip-Stufe
-	vec3 amp_maps = scan_amplify_at(v_uv);
 	// UNGESTÖRTE Makro-Normale sichern, bevor Runsen und Mikro-Normale sie
 	// verändern: das Kronendach neigt seine Kronen gegen sie, ohne
 	// Mikro-Rauschen (Review zu #121).
@@ -818,14 +817,6 @@ void fragment() {
 		scree += slid;
 		float bare_rest = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
 		rock += min(bare_rest, rock * clamp(cavity, 0.0, 1.0) * material_ridge_rock_gain);
-		// Karten der Verfeinerung (#238, scan_material.gdshaderinc), ohne D schwarz.
-		float amp_slid = rock * amp_maps.g * SCAN_AMPLIFY_SCREE;
-		rock -= amp_slid;
-		scree += amp_slid;
-		float amp_bare = amp_maps.r * SCAN_AMPLIFY_ROCK * (1.0 - cold);
-		float amp_free = max(0.0, 1.0 - (vegetation + rock + cold + scree + raw));
-		rock += amp_bare * (amp_free + vegetation * 0.5);
-		vegetation *= 1.0 - amp_bare * 0.5;
 		// Look-Iteration 7, EIN Block für drei Umverteilungen (gemeinsame
 		// Rausch- und Formterme). Befund „glatte Knete", Schnee als Kappe:
 		//  - Schnee folgt der Form. Er bleibt in Rinnen (`cavity` < 0) und auf
@@ -1089,7 +1080,6 @@ void fragment() {
 		}
 		terr *= 1.0 + min(det_shade, 0.0) * relief_detail_shade
 		      + max(det_shade, 0.0) * relief_detail_shade * 0.3;
-		terr *= 1.0 - amp_maps.b * SCAN_AMPLIFY_WET;
 		float crease = clamp(-det_ridge, 0.0, 1.0);
 		float moist = crease * (1.0 - smoothstep(veg_alt_lo, veg_alt_hi, hval));
 		terr = mix(terr, terr * vec3(0.60, 0.70, 0.58) + vec3(0.0, 0.02, 0.0),

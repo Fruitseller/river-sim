@@ -1517,8 +1517,12 @@ Kalibrierung `material_joint_*` und `material_scree_grain`, die Studien
 um bis zu 75 % zurückgenommen: es zog die senkrechten Streifen. WO Fels,
 Schutt und Sand liegen, rechnet unverändert `TerrainColorRenderer`.
 
-Eingang für #238: `amplify_maps` (R Abtrag, G Ablagerung, B Abfluss),
-ungebunden schwarz und damit wirkungslos; Belegung im Include und in #237.
+Zusammenspiel mit #238 (Gelände-Verfeinerung): die Karten für Abtrag,
+Ablagerung und Schutt (`amplify_tex`) verschieben in D's
+`amplify_material` die Gewichte innerhalb der Zelle; die Scans hier
+zeigen nur, wie Fels, Schutt, Kies und Sand dann aussehen. Ein eigener
+Karten-Eingang in diesem Strang (`amplify_maps`, erste Fassung) ist
+entfernt: er kollidierte im Namen mit D und hätte doppelt umverteilt.
 
 **Tilt-Shift.** `game/scripts/Atmosphere.gd` setzt `CameraAttributesPractical`
 mit Nah- und Fern-Unschärfe um den Fokuspunkt: Pinselkuppel, wenn sichtbar,

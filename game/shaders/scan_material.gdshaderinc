@@ -21,23 +21,11 @@
 uniform sampler2DArray scan_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2DArray scan_normal : filter_linear_mipmap_anisotropic, repeat_enable;
 
-// Eingang für die Verfeinerung aus #238 (Strang D): Karten der GPU-Erosion
-// in derselben Welt-UV wie height_tex. R Abtrag, G Ablagerung, B Abfluss,
-// je 0 … 1; A frei. Ungebunden schwarz: das Material sieht aus wie ohne D.
-// Wirkung (scan_amplify): Abtrag legt Fels frei und lässt ihn zerklüftet
-// erscheinen, Ablagerung macht aus Fels Schutt, Abfluss dunkelt Rinnen
-// feucht ab. Die Verteilung aus TerrainColorRenderer bleibt die Grundlage,
-// die Karten verschieben nur innerhalb der Zelle (wie der Relief-Bake).
-uniform sampler2D amplify_maps : filter_linear, repeat_disable, hint_default_black;
-const float SCAN_AMPLIFY_ROCK = 0.6;   // Abtrag → Fels aus Grund und Bewuchs
-const float SCAN_AMPLIFY_SCREE = 0.7;  // Ablagerung → Fels wird Schutt
-const float SCAN_AMPLIFY_WET = 0.35;   // Abfluss → Abdunklung
-
-// Karten aus #238, auf 0 … 1 geklemmt (HDR-Karten dürfen keine negativen
-// Gewichte erzeugen).
-vec3 scan_amplify_at(vec2 uv) {
-	return clamp(texture(amplify_maps, uv).rgb, vec3(0.0), vec3(1.0));
-}
+// Zusammenspiel mit der Gelände-Verfeinerung (#238, Strang D): WO Schutt
+// und frischer Fels innerhalb der Zelle liegen, verschiebt D aus seinen
+// Karten (`amplify_tex`, `amplify_material` in amplify.gdshaderinc), WIE sie
+// aussehen, entscheidet dieses Include. Es liest die Karten deshalb nicht
+// selbst; beide verteilten sonst doppelt um.
 
 const float SCAN_ROCK_BEDDED = 0.0; // Fels mit Bankung (Sediment)
 const float SCAN_ROCK_JOINTED = 1.0; // Fels zerklüftet, blockig
