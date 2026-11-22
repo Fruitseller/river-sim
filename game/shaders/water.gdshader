@@ -19,9 +19,10 @@
 //           bleibt die Tiefe unverschoben), z Wasser-Halbbreite (Welt),
 //           w reserviert (0).
 //           Mit Korridor liegen Ufer und Bett als eigene Geometrie darunter
-//           (corridor.gdshader) und malen auch den Wasserkörper nach der
-//           Tiefe des Profils (Beer-Lambert); das Band zeichnet dann nur noch
-//           die Oberfläche: Spiegelung, Kräuselung, Strömung, Schaum, Glitzern.
+//           (corridor.gdshader, corridor_wet.gdshader); das Band deckt den
+//           Wasserkörper bis zu deren Uferlinie mit der gemeinsamen
+//           Deckkraft-Rampe (`body`/`opacity` unten), das Bett darunter malt
+//           kein eigenes Wasser mehr.
 // Farben/Glanz sind DIESELBEN wie im Feld-Wasser des Terrain-Shaders, damit
 // Band-Wasser und Textur-Zubringer als EIN Wasser lesen: Wasserfarben, Fresnel,
 // Rauheit/Specular und der Strömungs-Schimmer kommen als water_*-Uniforms über
@@ -313,12 +314,14 @@ void fragment() {
 	// Uferlinie des Korridors lag bei 65 %: ein Wasserfilm über der trockenen
 	// Böschung, der Lauf las sich als Fluss im Fluss (Gremium, Befund 1).
 	float corridor = clamp(v_profile.x, 0.0, 1.0);
+	// Ableitung VOR dem Zweig: `corridor` ist interpoliert und nicht
+	// quad-uniform (Auslauf zum See/Meer), fwidth darin wäre undefiniert.
+	float off_w = abs(UV.x * 2.0 - 1.0) * 0.5 * band_width;
+	float aa_w = max(fwidth(off_w), 1e-5);
 	if (corridor > 0.0) {
 		float side = UV.x < 0.5 ? -1.0 : 1.0;
 		float shore_w = max(v_profile.z, 1e-5)
 			* (water_corridor_shore - water_corridor_shore_bend * side * clamp(v_bend, -1.0, 1.0));
-		float off_w = abs(UV.x * 2.0 - 1.0) * 0.5 * band_width;
-		float aa_w = max(fwidth(off_w), 1e-5);
 		float wet_c = 1.0 - smoothstep(shore_w - aa_w, shore_w + aa_w, off_w);
 		float profile_c = clamp(1.0 - off_w / max(shore_w, 1e-5), 0.0, 1.0);
 		wet = mix(wet, wet_c, corridor);

@@ -156,6 +156,15 @@ final class RiverCorridorTests: XCTestCase {
         XCTAssertGreaterThan(mesh.profile.filter { $0.x == 0 }.count, 0,
                              "Testwelt ohne Band ohne Korridor — Wächter wäre leer")
         XCTAssertGreaterThan(c.vertices.count, 50 * k, "Testwelt trägt zu wenig Korridor")
+        // Das Wasser des Bands läuft an den Korridor-Enden nicht mit dem
+        // Auslauf von Ufer und Bett aus (Review #247): mit Korridor trägt jeder
+        // Band-Vertex eine Wasser-Halbbreite.
+        // Gezählt werden deutlich sichtbare Band-Vertices; wo das Band selbst
+        // ausgeblendet ist, ist auch die Halbbreite null (`ribbonVisibleWidth`).
+        let drained = mesh.profile.indices.filter {
+            mesh.profile[$0].x > 0.5 && mesh.colors[$0].w > 0.5 && mesh.profile[$0].z <= 0
+        }.count
+        XCTAssertEqual(drained, 0, "Band-Wasser läuft am Korridor-Ende auf null aus")
         XCTAssertEqual(c.vertices.count % k, 0)
         for arr in [c.normals.count, c.colors.count, c.uvs.count, c.uv2s.count, c.custom.count] {
             XCTAssertEqual(arr, c.vertices.count, "Korridor-Puffer gleich lang")
