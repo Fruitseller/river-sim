@@ -15,13 +15,17 @@ Stand 2026-11-21, Zweig `look-e-corridor` auf `origin/main` (0783abf).
   Stützpunkte aus.
 - **Gelände ersetzt, nicht abgesenkt.** Korridor und Band setzen im
   Vertex-Shader die Tiefe ihres Sehstrahls auf einem Deckel (höchste
-  Geländehöhe im Querschnitt + 0,02), `game/shaders/corridor_common.gdshaderinc`.
+  Geländehöhe im Querschnitt, gekappt auf Wasserspiegel + 0,12, dazu + 0,02),
+  `game/shaders/corridor_common.gdshaderinc`.
   Das Bett gewinnt so gegen das Gelände darüber, Hügel davor verdecken es
   weiter. Der Deckel liegt höchstens 0,12 über dem sichtbaren Wasserspiegel
   (`lidMaxAboveWater`): in Schluchten stieg er sonst mit der Felswand, und
   Band und Böschung hingen vor dem Grat davor in der Luft
   (`schlucht-deckel.jpg`). Ufer, die höher reichen, enden unter dem Deckel,
-  die Wand zeigt das Gelände selbst. Licht und Schatten am Deckelpunkt (`LIGHT_VERTEX`). Die Naht liegt
+  die Wand zeigt das Gelände selbst. Mit der Kappung ist auch die Reichweite
+  des Deckelpunkts bei flachem Blick halbiert (`CORRIDOR_LID_REACH` 6 → 3):
+  sie gehört zur Kappung; bei sehr flachem Blick verliert das Bett damit
+  früher gegen Gelände knapp davor. Licht und Schatten am Deckelpunkt (`LIGHT_VERTEX`). Die Naht liegt
   auf dem Umriss des Meshes, nicht auf dem Zellgitter.
 - **Wasser**: Körperfarbe im Korridor nach Beer-Lambert aus der Profiltiefe
   (kein Tiefenpuffer). Das Band zeichnet darüber nur die Oberfläche:
@@ -39,7 +43,9 @@ Stand 2026-11-21, Zweig `look-e-corridor` auf `origin/main` (0783abf).
 `SimCoreTests/RiverCorridorTests.swift`: Bett unter beiden Uferkanten, Wasser
 nie über dem Ufer, kein Korridor über dem Deckel, Deckel höchstens
 `lidMaxAboveWater` über dem Wasser (Schlucht), Gelände im nassen Teil höchstens
-in 1 % der nassen Vertices über dem Deckel (wie auf `main` an Schluchtwänden), Fuß
+in 1 % der nassen Vertices über dem Deckel (Schluchtwand, wie auf `main`;
+bewusst lockerer als 1 % der Querschnitte, Linux misst 0,37 %), Flussmitte
+(Thalweg) höchstens in 0,2 % der Querschnitte (macOS 0, Linux 1 von 1416), Fuß
 auf dem Gelände (oder unter der Wand) und in der Schutzmaske, Band ohne Korridor
 mit unverschobener Tiefe. `tests/river_ribbons.gd`: Korridor-Puffer vollständig und stimmig.
 Bestehende Band-Wächter, alle Godot-Vertragstests und die SimCore-Suite

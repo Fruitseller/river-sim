@@ -5,8 +5,10 @@ import XCTest
 /// Fluss als Korridor (Look E, Issue #239): Querprofil und Korridor-Mesh unter
 /// den Flussbändern. Die Verträge mit `corridor.gdshaderinc` und
 /// `water.gdshader`: Bett unter der Uferkante, Wasser nie über dem Ufer, und
-/// der Deckel (`lid`, Tiefe des Korridors im Bild) liegt über allem Gelände im
-/// Querschnitt — sonst stäche Gelände durch Bett und Wasserfläche.
+/// der Deckel (`lid`, Tiefe des Korridors im Bild) liegt über dem Korridor und
+/// über dem Gelände im Querschnitt, gekappt auf Wasserspiegel +
+/// `lidMaxAboveWater` (Schluchtwände ragen darüber und verdecken den Korridor;
+/// durch das Wasser selbst nur selten und flach).
 final class RiverCorridorTests: XCTestCase {
 
     private func flat(_ y: Double) -> (Double) -> Double { { _ in y } }
@@ -84,6 +86,21 @@ final class RiverCorridorTests: XCTestCase {
         }
         XCTAssertGreaterThanOrEqual(s.heights[CorridorProfile.topColumn], s.heights[sh] + CorridorProfile.freeboard - 1e-12,
                                     "Wasser über dem Ufer")
+        // Die Kappung hält das Ufer nur über dem Wasser, solange sie über dem
+        // Freibord liegt (Review #240).
+        XCTAssertGreaterThan(CorridorProfile.lidMaxAboveWater, CorridorProfile.freeboard)
+        // Wand schon ab der Uferlinie: die gekappte Uferkante bleibt über dem
+        // Wasser, die Uferlinie selbst liegt auf ihm (Tiefe 0, nie gekappt).
+        let steep: (Double) -> Double = { c in 1.0 + 4 * max(0, abs(c) - 1.0) }
+        let w = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1.0, waterRight: 1.0,
+                                        bend: 0.6, riffle: 0, cellSize: 0.156, surface: steep)
+        let top = CorridorProfile.topColumn
+        for (t, shore) in [(top, sh), (k - 1 - top, k - 1 - sh)] {
+            XCTAssertEqual(w.depths[shore], 0, accuracy: 1e-12, "Uferlinie nicht auf dem Wasser")
+            XCTAssertGreaterThanOrEqual(w.heights[t], w.heights[shore] + CorridorProfile.freeboard - 1e-12,
+                                        "Wand ab der Uferlinie: Wasser über dem Ufer")
+            XCTAssertLessThanOrEqual(w.heights[t], w.lid - CorridorProfile.lidClearance + 1e-12)
+        }
     }
 
     /// Pflicht-Wächter auf der gealterten Render-Testwelt: Mesh konsistent,
@@ -98,6 +115,11 @@ final class RiverCorridorTests: XCTestCase {
         let c = mesh.corridor
         let k = CorridorProfile.columns, top = CorridorProfile.topColumn, sh = CorridorProfile.shoreColumn
         XCTAssertEqual(mesh.profile.count, mesh.vertices.count, "ribbon_profile je Band-Vertex")
+        // Beide Fälle müssen in der Testwelt vorkommen, sonst läuft ein Teil
+        // der Wächter unten leer (Review #240).
+        XCTAssertGreaterThan(mesh.profile.filter { $0.x > 0 }.count, 0, "Testwelt ohne Korridor")
+        XCTAssertGreaterThan(mesh.profile.filter { $0.x == 0 }.count, 0,
+                             "Testwelt ohne Band ohne Korridor — Wächter wäre leer")
         XCTAssertGreaterThan(c.vertices.count, 50 * k, "Testwelt trägt zu wenig Korridor")
         XCTAssertEqual(c.vertices.count % k, 0)
         for arr in [c.normals.count, c.colors.count, c.uvs.count, c.uv2s.count, c.custom.count] {
@@ -109,6 +131,7 @@ final class RiverCorridorTests: XCTestCase {
         let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world / 2
         let bank = BankSurface(h: t.h, n: n, renderGrid: n, hscale: RenderContract.heightScale)
         var sections = 0, bedAbove = 0, waterAbove = 0, pierced = 0, lifted = 0, outsideMask = 0, lidHigh = 0, wetRock = 0, wetVertices = 0
+        var maxWetRockOver = 0.0, maxBedRockOver = 0.0, thalwegRock = 0
         var maxPierce = 0.0
         for start in stride(from: 0, to: c.vertices.count, by: k) {
             guard c.colors[start].w > 0.05 else { continue }   // sichtbare Querschnitte
@@ -136,9 +159,13 @@ final class RiverCorridorTests: XCTestCase {
                 if over > 1e-4 { pierced += 1; maxPierce = max(maxPierce, over) }
                 if col >= sh && col <= k - 1 - sh {
                     wetVertices += 1
-                    if bank.height((Double(v.x) + half) / cs, (Double(v.z) + half) / cs) - lid > 1e-4 {
-                        wetRock += 1
-                    }
+                    let rock = bank.height((Double(v.x) + half) / cs, (Double(v.z) + half) / cs) - lid
+                    if rock > 1e-4 { wetRock += 1 }
+                    maxWetRockOver = max(maxWetRockOver, rock)
+                    // Zwischen den Uferlinien (Bett, Thalweg) wäre Fels mitten
+                    // im Fluss; an den Uferlinien ist es die Schluchtwand.
+                    if col > sh && col < k - 1 - sh { maxBedRockOver = max(maxBedRockOver, rock) }
+                    if col == k / 2, rock > 1e-4 { thalwegRock += 1 }
                 }
             }
             // Der Fuß liegt auf dem Gelände (keine Lippe, keine Lücke zum Gelände);
@@ -169,15 +196,27 @@ final class RiverCorridorTests: XCTestCase {
               + "n=\(n) cs=\(cs)")
         print("corridor sections=\(sections) bedAbove=\(bedAbove) waterAbove=\(waterAbove) "
               + "pierced=\(pierced) maxPierce=\(maxPierce) liftedEdges=\(lifted) outsideMask=\(outsideMask) "
-              + "lidHigh=\(lidHigh) wetRock=\(wetRock)/\(wetVertices)")
+              + "lidHigh=\(lidHigh) wetRock=\(wetRock)/\(wetVertices) maxWetRockOver=\(maxWetRockOver) "
+              + "maxBedRockOver=\(maxBedRockOver) thalwegRock=\(thalwegRock)")
         XCTAssertGreaterThan(sections, 200)
         XCTAssertEqual(bedAbove, 0, "Bett über der Uferkante")
         XCTAssertEqual(waterAbove, 0, "Wasser über dem Ufer")
         XCTAssertEqual(pierced, 0, "Korridor über dem Deckel")
-        // Anteil der nassen Vertices: macOS 6 von 6235 (0,1 %), die steilere
-        // Linux-Welt (glibc) 26 von 7080 (0,37 %); vor dem Deckel-Deckel 0,
-        // dafür hingen in Schluchten Fluss und Ufer vor dem Grat in der Luft.
+        // Gelände über dem gekappten Deckel im nassen Teil ist die
+        // Schluchtwand bzw. -sohle, die schmaler als das Band ist; auf `main`
+        // tauchen die Bandkanten dort ebenso in den Fels (`ribbonMaxCrossSlope`).
+        // Gemessen (Testwelt n = 384): macOS 6 von 6235 nassen Vertices
+        // (0,1 %), bis 0,28 über dem Deckel, in den Bett-Spalten 0; die
+        // steilere Linux-Welt (glibc) 26 von 7080 (0,37 %), bis 1,10 an den
+        // Uferlinien und 0,48 in den Bett-Spalten. Die Schranke ist 1 % der
+        // nassen Vertices und damit bewusst lockerer als die erste Fassung
+        // (1 % der Querschnitte ≙ 0,2 % der nassen Vertices), die auf Linux
+        // kippte. Die Höhe des Durchstoßes bindet der Wächter nicht: an der
+        // Wand ist sie die Wandhöhe. Streng bleibt die Flussmitte (Thalweg):
+        // macOS 0, Linux 1 von 1416 Querschnitten (Zentrumslinie neben der
+        // Rinne, dort liegt auch das Band auf `main` im Gelände).
         XCTAssertLessThanOrEqual(wetRock, wetVertices / 100, "Gelände sticht oft durch das Wasser")
+        XCTAssertLessThanOrEqual(thalwegRock, sections / 500, "Fels in der Flussmitte über dem Deckel")
         XCTAssertEqual(lidHigh, 0, "Deckel weit über dem Wasser (zöge den Fluss vor Grate davor)")
         XCTAssertEqual(outsideMask, 0, "Korridor-Fuß außerhalb der Schutzmaske (Naht zu #238)")
         // Die Wasserfläche des Bands liegt unter dem Deckel ihres Stützpunkts.

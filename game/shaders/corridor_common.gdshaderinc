@@ -10,8 +10,8 @@
 // 1. DECKEL-TIEFE: Ufer und Bett liegen unter der sichtbaren Geländefläche.
 //    Statt das Gelände abzusenken (dessen Naht läge auf dem Zellgitter),
 //    schreiben Korridor und Wasser als Tiefe die ihres Strahls auf dem Deckel
-//    (`lid`, RiverCorridor.swift: höchste Geländehöhe im Querschnitt +
-//    Abstand). Gegen das Gelände darunter gewinnen sie, Hügel davor verdecken
+//    (`lid`, RiverCorridor.swift: höchste Geländehöhe im Querschnitt, gekappt
+//    auf Wasserspiegel + `lidMaxAboveWater`, + Abstand). Gegen das Gelände darunter gewinnen sie, Hügel davor verdecken
 //    sie. Ein Rest `CORRIDOR_DEPTH_KEEP` der wahren Tiefe hält die Reihenfolge
 //    der Korridor-Flächen untereinander (Wasser vor Bett, nahes Ufer vor dem
 //    fernen). Licht und Schatten liest der Korridor am Deckelpunkt
@@ -74,6 +74,10 @@ float corridor_widened_offset(float off, float water_half, float f) {
 // vor dem Fluss, und der Korridor gewänne gegen Hügel davor: der Weg zum
 // Deckelpunkt ist auf `CORRIDOR_LID_REACH` × (Deckel − Punkt) begrenzt. Dort
 // verliert das Bett eher gegen das Gelände, als dass es durch Berge scheint.
+// 3 statt 6 gehört zur Deckel-Kappung (Schlucht-Befund zu #240): mit dem
+// Deckel ≤ Wasser + 0,12 bleibt der Weg damit unter ~1 Welteinheit (Bett
+// 0,2 tief), auch an hohen Ufern. Preis: bei sehr flachem Blick verliert das
+// Bett früher gegen Gelände knapp davor.
 vec3 corridor_lid_point(vec3 p, float lid, vec3 cam) {
 	vec3 d = p - cam;
 	if (cam.y > lid && p.y < lid && abs(d.y) > 1e-6) {

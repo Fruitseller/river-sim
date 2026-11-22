@@ -594,13 +594,16 @@ Dirty-Snapshots), liest das Terrain und ändert es nie:
   Uferkante auf dem Gelände, Böschung (Prallhang steil, Gleithang flach mit
   Kiesbank), Bett aus Breite und Riffel (`CorridorProfile`). Das Gelände wird
   NICHT abgesenkt: Korridor (`corridor.gdshader`) und Band schreiben als Tiefe
-  die ihres Strahls auf dem Deckel (`lid`, höchste Geländehöhe im Querschnitt),
+  die ihres Strahls auf dem Deckel (`lid`, höchste Geländehöhe im Querschnitt,
+  gekappt auf Wasserspiegel + `CorridorProfile.lidMaxAboveWater`: in Schluchten
+  verdeckt die Wand den Korridor, statt dass er vor den Grat gezogen wird),
   Licht über `LIGHT_VERTEX` am Deckel (`corridor_common.gdshaderinc`, dort auch
   die Mindestbreite in der Totalen). Die sichtbare Geländehöhe am Ufer fragt
   der Korridor nur über `BankSurface` (Naht zur verfeinerten Fläche aus #238).
   Godot-Seite: `game/scripts/RiverCorridor.gd`. Wächter:
   `SimCoreTests/RiverCorridorTests.swift` (Bett unter der Uferkante, Wasser nie
-  über dem Ufer, kein Gelände über dem Deckel, Fuß auf dem Gelände) und
+  über dem Ufer, kein Korridor über dem Deckel, Deckel nah am Wasser, Gelände
+  durch das Wasser selten und flach, Fuß auf dem Gelände) und
   `tests/river_ribbons.gd` (Marshalling),
 - `TerrainColorRenderer`: Makrofarbe + Materialgewichte für Biom, Fels,
   Schnee/Eis und Lithologie plus Bodenbedeckung (Schutthalde, blankes

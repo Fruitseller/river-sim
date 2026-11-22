@@ -12,9 +12,12 @@ import SimCore
 ///
 /// Das Gelände im Korridor wird ERSETZT, nicht überdeckt, und zwar ohne das
 /// Gelände anzufassen: der Korridor-Shader (`game/shaders/corridor.gdshaderinc`)
-/// schreibt als Tiefe die seines Strahls auf dem DECKEL (`lid`, je Querschnitt
-/// die höchste sichtbare Geländehöhe im Korridor plus `lidClearance`) statt
-/// seiner wahren Tiefe. Damit gewinnt das tiefer liegende Bett den Tiefentest
+/// schreibt als Tiefe die seines Strahls auf dem DECKEL statt seiner wahren
+/// Tiefe. Der Deckel (`lid`) ist je Querschnitt die höchste sichtbare
+/// Geländehöhe im Korridor, GEKAPPT auf den sichtbaren Wasserspiegel plus
+/// `CorridorProfile.lidMaxAboveWater`, plus `lidClearance`. Die Kappung ist
+/// Absicht (Schluchten, s. dort): Gelände über dem Deckel verdeckt den
+/// Korridor, statt dass der Korridor vor Grate gezogen wird. Damit gewinnt das tiefer liegende Bett den Tiefentest
 /// gegen das Gelände darüber, Hügel VOR dem Fluss verdecken ihn weiter. Die
 /// Reihenfolge der Korridor-Flächen untereinander bleibt erhalten (ein kleiner
 /// Anteil der wahren Tiefe, s. dort). Die Naht liegt damit genau auf der
@@ -132,6 +135,8 @@ enum CorridorProfile {
     /// Deckel mit ihr; die Deckel-Tiefe zog Band und Böschung dann vor den
     /// Grat davor (frei hängende Fluss- und Wandstücke, Befund zu #240). Was
     /// über dem Deckel liegt, ist echtes Gelände und verdeckt den Korridor.
+    /// Muss über `freeboard` bleiben: die gekappte Uferkante liegt dann noch
+    /// über dem Wasser (Wächter `testCanyonKeepsTheLidNearTheWater`).
     static let lidMaxAboveWater = 0.12
 
     /// Ein Querschnitt: Spalten-Lage (Zellen, signiert, links negativ),
