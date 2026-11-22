@@ -52,7 +52,9 @@ public struct RibbonMesh: Equatable {
     /// `water.gdshader`): x = Korridor-Anteil 0 … 1 (1 = Ufer und Bett liegen
     /// als Geometrie darunter, das Band zeichnet nur noch die Oberfläche),
     /// y = Deckel-Höhe (Welt-Y, s. `RiverCorridor`), z = Halbbreite des
-    /// Wassers (Welt), w = Thalweg-Tiefe (Welt-Y).
+    /// Wassers (Welt), w = reserviert (0).
+    /// Ohne Korridor ist y die eigene Höhe des Vertex: die Tiefe bleibt dann
+    /// unverschoben (`corridor_clip`).
     public var profile: [SIMD4<Float>]
     /// Ufer und Bett unter den Fluss-Bändern (Look E, #239).
     public var corridor: RiverCorridorMesh
@@ -1450,16 +1452,18 @@ public final class RiverRibbonRenderer {
                 corridor.samples.append(.init(x: s.x, z: s.z, tx: tx, tz: tz, section: section,
                                               alpha: s.alpha * pres, rank: s.rank,
                                               bend: s.bend, arc: arc[a]))
-                // Deckel nur mit Korridor: über Wasser (Mündung, Meer) bleibt das
-                // Band auf seiner eigenen Höhe (Review Neon Nr. 9).
-                let ownTop = max(yLeftD, yRightD)
-                let p = SIMD4(Float(pres), Float(ownTop + pres * (section.lid - ownTop)),
-                              Float(section.waterHalfWidthCells * cs),
-                              Float(section.depths[CorridorProfile.columns / 2]))
-                mesh.profile.append(p); mesh.profile.append(p)
+                // Deckel nur mit Korridor: über Wasser (Mündung, Meer) bleibt
+                // JEDE Kante auf ihrer eigenen Höhe (Review Neon Nr. 9; mit dem
+                // Maximum beider Kanten hob die tiefere Kante ihre Tiefe an,
+                // Review #240). `section.lid` liegt über beiden Kanten.
+                let half = Float(section.waterHalfWidthCells * cs)
+                for own in [yLeftD, yRightD] {
+                    mesh.profile.append(SIMD4(Float(pres), Float(own + pres * (section.lid - own)), half, 0))
+                }
             } else {
-                let p = SIMD4<Float>(0, max(yLeft, yRight), Float(hwCells * cs), 0)
-                mesh.profile.append(p); mesh.profile.append(p)
+                for own in [yLeft, yRight] {
+                    mesh.profile.append(SIMD4<Float>(0, own, Float(hwCells * cs), 0))
+                }
             }
             // Deckung dieses Bandstücks ins gemeinsame Feld: dieselbe Fläche,
             // die gleich als Quad entsteht (Halbbreite in Zellen), mit dem

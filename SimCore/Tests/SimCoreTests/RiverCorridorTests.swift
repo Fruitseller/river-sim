@@ -138,8 +138,11 @@ final class RiverCorridorTests: XCTestCase {
         XCTAssertEqual(pierced, 0, "Gelände oder Korridor über dem Deckel")
         XCTAssertEqual(outsideMask, 0, "Korridor-Fuß außerhalb der Schutzmaske (Naht zu #238)")
         // Die Wasserfläche des Bands liegt unter dem Deckel ihres Stützpunkts.
-        for (v, p) in zip(mesh.vertices, mesh.profile) where p.x > 0 {
+        for (v, p) in zip(mesh.vertices, mesh.profile) {
             XCTAssertLessThanOrEqual(v.y, p.y + 1e-5, "Wasserfläche über dem Deckel")
+            // Ohne Korridor bleibt die Tiefe des Bands unverschoben: Deckel =
+            // eigene Höhe des Vertex (Review #240).
+            if p.x == 0 { XCTAssertEqual(v.y, p.y, accuracy: 1e-6, "Band ohne Korridor mit fremdem Deckel") }
         }
     }
 }

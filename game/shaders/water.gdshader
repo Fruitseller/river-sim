@@ -15,7 +15,9 @@
 //           Riffel hell und bewegt, Schaum an Stufen, Engstellen,
 //           Zusammenflüssen) statt als einfarbige Folie zu liegen.
 //   CUSTOM1 = Korridor (Look E, #239, RibbonMesh.profile): x Anteil 0 … 1,
-//           y Deckel-Höhe, z Wasser-Halbbreite (Welt), w Thalweg-Tiefe.
+//           y Deckel-Höhe (ohne Korridor die eigene Höhe des Vertex, dann
+//           bleibt die Tiefe unverschoben), z Wasser-Halbbreite (Welt),
+//           w reserviert (0).
 //           Mit Korridor liegen Ufer und Bett als eigene Geometrie darunter
 //           (corridor.gdshader) und malen auch den Wasserkörper nach der
 //           Tiefe des Profils (Beer-Lambert); das Band zeichnet dann nur noch
