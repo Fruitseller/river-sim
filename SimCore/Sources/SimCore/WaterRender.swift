@@ -1354,8 +1354,14 @@ public enum WaterRender {
     /// Wird ein Tümpel als nasse Wiese gemalt? Nur ohne Band-Korridor
     /// (`banded`); den Fluss-Kanal seiner Zellen regelt weiter `streamGate`.
     @inline(__always)
+    ///
+    /// Gremium 5, Befund A2: auch mit Band. Ein Tümpel, durch den ein
+    /// Korridor-Band läuft, blieb bis hierher als Raster-See neben dem Band
+    /// stehen (zwei Wasserflächen mit Naht); jetzt wird er ganz nasse Wiese,
+    /// und das Band blendet über ihm nicht aus
+    /// (`RiverRibbonRenderer.smallPondCells`).
     public static func isWetMeadow(pondCells: Int, banded: Bool) -> Bool {
-        !banded && pondCells < wetMeadowMaxCells
+        pondCells < wetMeadowMaxCells
     }
 
     /// Vegetationsgewicht (R-Kanal der Materialgewichte), auf das eine nasse

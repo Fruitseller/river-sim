@@ -186,6 +186,7 @@ final class WaterRendererTests: XCTestCase {
       "Gebautes RibbonMesh meldet keine gemalte Deckung")
 
     var deepestRiverAlpha: Float = 0
+    let smallPond = RiverRibbonRenderer.smallPondCells(terrain)
     var mouthGaps = 0
     var riverCount = 0
     var deltaCount = 0
@@ -216,7 +217,9 @@ final class WaterRendererTests: XCTestCase {
 
       for vertex in stride(from: start, to: end, by: 2) {
         let cell = cellIndex(mesh.vertices[vertex], mesh.vertices[vertex + 1], terrain)
-        if pondDepth(terrain, cell) >= WaterRender.lakeRawWetDepth {
+        // Kleine Tümpel malt das Raster nicht (nasse Wiese, auch am Band seit
+        // Gremium 5, Befund A2); dort trägt das Band das Wasser allein.
+        if pondDepth(terrain, cell) >= WaterRender.lakeRawWetDepth, !smallPond[cell] {
           deepestRiverAlpha = max(deepestRiverAlpha, mesh.colors[vertex].w)
         }
       }
@@ -1024,15 +1027,20 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertFalse(field.wetMeadow.contains(true))
   }
 
-  func testPondAtABandCorridorStaysWater() {
-    // Die Übergabe Band ↔ Raster darf keine Lücke bekommen: ein Tümpel am
-    // Korridor eines gebauten Bands bleibt, wie er ist.
+  func testPondAtABandCorridorBecomesWetMeadow() {
+    // Gremium 5, Befund A2: ein kleiner Tümpel am Korridor eines gebauten
+    // Bands blieb als Raster-See neben dem Band stehen — zwei Wasserflächen
+    // mit Naht. Jetzt wird er nasse Wiese wie jeder kleine Tümpel; die
+    // Übergabe bekommt keine Lücke, weil das Band über kleinen Tümpeln nicht
+    // mehr ausblendet (`RiverRibbonRenderer.smallPondCells`).
     let terrain = pondWorld(side: 8, withBand: true)
     let n = terrain.cfg.n
     let (bytes, field) = waterBytes(terrain, banded: true)
     let center = 12 * n + 12
-    XCTAssertGreaterThan(bytes[center * 4 + 1], 0, "Tümpel am Band bleibt Wasser")
-    XCTAssertFalse(field.wetMeadow[center])
+    XCTAssertEqual(bytes[center * 4 + 1], 0, "Tümpel am Band trägt kein See-Gate")
+    XCTAssertTrue(field.wetMeadow[center])
+    XCTAssertTrue(RiverRibbonRenderer.smallPondCells(terrain)[center],
+                  "das Band sieht denselben Tümpel als klein")
   }
 
   func testWetMeadowReachesMaterialAndProtectMask() {

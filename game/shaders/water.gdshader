@@ -180,7 +180,14 @@ const float SHOAL_REACH = 0.06;
 const float STEEP_RIPPLE_GAIN = 0.5; // Kräuselung an Gefälle/Riffel (vorher 1,5)
 const float STEEP_SPECULAR = 0.5;   // Glanz an Gefällestrecken × (1 − dies × Gefälle)
 const float CLOUD_WHITE = 0.65;     // Helligkeit der gespiegelten Wolken (Anteil von Weiß 0,9)
-const float GLINT_GAIN = 1.2;       // Emission des Sonnenglitzerns    // Kiesbank-Tönung nur so weit ab der Wasserlinie (Anteil Querprofil)
+const float GLINT_GAIN = 1.2;       // Emission des Sonnenglitzerns
+const float GLINT_RARITY = 0.55;    // Anteil der Glitzer-Zellen ohne Punkt
+const float GRAZING_SPEC_CUT = 0.6; // Glanz bei flachem Blick × (1 − dies × Fresnel)
+const float SUN_HIT_POWER = 6.0;    // Breite des gedämpften Sonnenreflexes …
+const float SUN_HIT_CUT = 0.7;      // … und wie stark er gedämpft wird
+const float RIFFLE_TINT_C = 0.5;    // Riffel-Tönung mit Korridor (über die ganze Breite)
+const float EDGE_DARK = 0.25;       // Wasserlinie mit Korridor so viel dunkler …
+const float EDGE_REACH = 0.12;      // … über diesen Anteil des Querprofils    // Kiesbank-Tönung nur so weit ab der Wasserlinie (Anteil Querprofil)
 
 // Wertrauschen wie im Ozean-Shader (Hash-Konstanten sind keine Kalibrierung).
 float ribbon_hash(vec2 p) {
@@ -348,7 +355,11 @@ void fragment() {
 	// durchlaufender Tiefenverlauf (und erst recht ein heller Flachwasser-
 	// Saum) las sich als Rohr mit dunkler Mittellinie. Die Asymmetrie
 	// Prallhang/Gleithang trägt das Bogenprofil darunter.
-	float depth = clamp(0.35 + v_rank * 1.5, 0.0, 1.0) * mix(0.7, 1.0, smoothstep(0.0, 0.45, profile));
+	// Mit Korridor ohne Querprofil (Gremium 5, Befund A1): jede Farbstufe
+	// QUER zum Lauf las sich als zweiter Fluss. Die Tiefe wechselt dort nur
+	// mit Rang und Lauf-Größen (entlang), das Bett darunter trägt das Profil.
+	float depth = clamp(0.35 + v_rank * 1.5, 0.0, 1.0)
+		* mix(mix(0.7, 1.0, smoothstep(0.0, 0.45, profile)), 1.0, corridor);
 	// Delta-Arme liegen auf dem Ablagerungskörper: per Definition Flachwasser.
 	depth = mix(depth, depth * 0.35, delta);
 	// Lauf-Größen (CUSTOM0) nur im fließenden Wasser.
@@ -362,7 +373,12 @@ void fragment() {
 	// Querprofil im Bogen (Issue #174 C2, Spiegel: WaterRender.ribbonOutward):
 	// +1 am Prallhang (Kolk, tief), −1 am Gleithang (Bank, seicht).
 	float outward = -(UV.x * 2.0 - 1.0) * clamp(v_bend, -1.0, 1.0);
+	// Mit Korridor ohne Bogen-Querprofil (A1): das Bett darunter trägt es.
+	outward *= 1.0 - corridor;
 	depth = clamp(depth + water_ribbon_bend_depth * outward, 0.0, 1.0);
+	// Mit Korridor nur die tiefere Hälfte der Farbrampe: Flachwasser nahe am
+	// Tiefwasser (die volle Rampe ist 2,5-mal heller am seichten Ende).
+	depth = mix(depth, 0.5 + 0.5 * depth, corridor);
 
 	vec3 water = mix(water_shallow_color, water_deep_color, depth);
 	// Delta: sedimentbeladene Fahne über der Seefläche — heller und wärmer als
@@ -435,12 +451,17 @@ void fragment() {
 	float near_w = 1.0 - smoothstep(0.3, 1.0, footprint * water_foam_scale * 8.0);
 	float streak = mix(streak_far, streak_near, near_w);
 	// Riffel: belüftete, hellere Oberfläche, entlang der Striche gebrochen.
-	water_final = mix(water_final, water_riffle_color, riffle * mix(0.4, 1.0, smoothstep(0.3, 0.7, streak)) * plateau);
+	// Mit Korridor über die ganze Breite (Plateau ergab eine helle Innenbahn).
+	water_final = mix(water_final, water_riffle_color,
+		riffle * mix(0.4, 1.0, smoothstep(0.3, 0.7, streak)) * mix(plateau, 1.0, corridor) * mix(1.0, RIFFLE_TINT_C, corridor));
 	// Gleithang: Kiesbank nur als schmale, unterbrochene Kante an der
 	// Wasserlinie (über den ganzen Lauf gezogen las sie sich als heller Saum).
 	float shoal_gate = smoothstep(0.55, 0.75, ribbon_noise(vec2(q.x * 4.0, q.y * 2.0) + 31.0));
 	water_final = mix(water_final, water_ribbon_shoal_color,
-		water_ribbon_shoal_mix * max(-outward, 0.0) * shoal_gate * (1.0 - smoothstep(0.0, SHOAL_REACH, profile)));
+		water_ribbon_shoal_mix * max(-outward, 0.0) * shoal_gate * (1.0 - smoothstep(0.0, SHOAL_REACH, profile))
+		* (1.0 - corridor));
+	// Direkt an der Wasserlinie dunkler und nasser statt heller (A1).
+	water_final *= 1.0 - EDGE_DARK * corridor * (1.0 - smoothstep(0.0, EDGE_REACH, profile));
 	// Weißwasser: Schaumfahnen in Fließrichtung nur, wo die Lauf-Größen es
 	// sagen (CUSTOM0: Stufen, Engstellen, Zusammenflüsse, Riffel). Weich über
 	// ein breites Fenster auf Streifen UND einem runden Rauschen: die frühere
@@ -474,7 +495,9 @@ void fragment() {
 	float g_tick = floor(u_time * 3.0);
 	vec2 jit = vec2(ribbon_hash(cell + g_tick), ribbon_hash(cell.yx + 17.0 + g_tick)) - 0.5;
 	vec2 g_ctr = vec2(ribbon_hash(cell + 41.0 + g_tick), ribbon_hash(cell.yx + 73.0 + g_tick)) * 0.5 + 0.25;
-	float g_dot = 1.0 - smoothstep(0.1, 0.3, length(fract(g_pos) - g_ctr));
+	// Kleiner und seltener (Gremium 5, Befund D: Perlenschnur weißer Tupfen).
+	float g_dot = (1.0 - smoothstep(0.04, 0.12, length(fract(g_pos) - g_ctr)))
+		* step(GLINT_RARITY, ribbon_hash(cell * 1.7 + 5.0 + g_tick));
 	vec3 n_glint = normalize(water_n_ws + vec3(jit.x, 0.0, jit.y) * 0.5);
 	float glint = pow(max(dot(reflect(-view_g, n_glint), normalize(corridor_sun_dir)), 0.0), 900.0)
 		* g_dot * wet * (1.0 - still) * (1.0 - foam) * smoothstep(0.005, 0.05, footprint);
@@ -517,7 +540,13 @@ void fragment() {
 	// Gremium 4, Befund 6: an Gefällestrecken kippte die starke Kräuselung
 	// die Normalen zur Sonne, der Lauf brannte als Chromfläche aus.
 	spec *= 1.0 - STEEP_SPECULAR * steep;
-	SPECULAR = mix(0.4, spec, wet);
+	// Glanz bei flachem Blick begrenzt (Gremium 5, Befund D): Godots
+	// Fresnel-Rand f90 hängt an F0 = 0,16·Specular², auf flachen Strecken
+	// lag der Lauf sonst als silberne Folie da.
+	// Highlight-Kompression: wo die Normale die Sonne genau ins Auge
+	// spiegelt, sinkt der Glanz (silberne Folie auf flachen Bögen, Befund D).
+	float sun_hit = pow(max(dot(reflect(-view_g, water_n_ws), normalize(corridor_sun_dir)), 0.0), SUN_HIT_POWER);
+	SPECULAR = mix(0.4, spec, wet) * (1.0 - GRAZING_SPEC_CUT * fresnel) * (1.0 - SUN_HIT_CUT * sun_hit);
 	// Stillwasser spiegelt die Wolken: Strahl am Wasserspiegel auf die
 	// Wolkenbasis, deren Deckung als heller Fleck (Licht, nicht Farbe; der
 	// Weißton ist eine Optik-Zahl wie im Terrain-Shader).

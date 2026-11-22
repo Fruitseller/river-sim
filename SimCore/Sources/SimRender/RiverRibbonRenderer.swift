@@ -145,6 +145,9 @@ public final class RiverRibbonRenderer {
     /// Bis zu zwei Bänder je Zelle, deren Wasser sie deckt (−1 = keins).
     private var waterOwnerA: [Int32] = []
     private var waterOwnerB: [Int32] = []
+    /// Stehendes Wasser je Zelle (`pondClasses`, je Bau): 0 keins, 1 kleiner
+    /// Tümpel, 2 See.
+    private var pondClass: [UInt8] = []
     private var owners: [Int32] = []
     /// Die Fluss-Bänder des letzten Baus (Stützpunkte vor der Verdeckung), aus
     /// denen eine Kopplung die versiegenden Arme nimmt.
@@ -431,6 +434,7 @@ public final class RiverRibbonRenderer {
         // Knoten-Cutoff; ein Cache nur nach Mäander-Struktur wäre fachlich alt.
         // Die Allokationsrate deckelt Main.gd gemeinsam für Echtzeit/_jump auf 1 Hz.
         let orders = terrain.strahlerOrders(minCells: terrain.cfg.meanderMinCells)
+        pondClass = RiverRibbonRenderer.pondClasses(terrain)
         guard orders.count == cnt else {
             mesh.bandCoverage = []
             bandVisibleCoverage = []
@@ -926,7 +930,7 @@ public final class RiverRibbonRenderer {
             // (Stummel-Kanäle neben dem Hauptlauf), lagen bis zu vier
             // identische Fächer übereinander und malten einen dunklen Block
             // (Seed 1337, Jahr 230.000).
-            if let mouthIndex = samples.firstIndex(where: { $0.surface != nil }),
+            if let mouthIndex = samples.firstIndex(where: { $0.surface != nil && !$0.bridged }),
                mouthIndex > 0,
                !fanMouths.contains(where: {
                    let dx = $0.x - samples[mouthIndex].x, dz = $0.z - samples[mouthIndex].z
@@ -1166,10 +1170,35 @@ public final class RiverRibbonRenderer {
             guard let s0 = samples[a].surface, s0 > sea else { a += 1; continue }
             var b = a
             while b + 1 < samples.count, let s1 = samples[b + 1].surface, s1 > sea { b += 1 }
-            if a > 0, b + 1 < samples.count, samples[a - 1].surface == nil, samples[b + 1].surface == nil,
-               b - a + 1 <= WaterRender.ribbonPondBridgeSamples {
+            // Kleine Tümpel (< `wetMeadowMaxCells`) gelten immer als Land
+            // (Gremium 5, Befund A2): das Wasserfeld malt sie nicht als See,
+            // sondern als nasse Wiese, auch wenn ein Band hindurchläuft.
+            // Die Strecke berührt einen kleinen Tümpel und keinen großen See.
+            // Zellen am seichten Saum (Spiegel, aber Säule unter
+            // `lakeRawWetDepth`) zählen zu keinem von beiden.
+            var touchesSmall = false, touchesLake = false
+            if pondClass.count == n * n {
+                for c in a...b {
+                    let ci = min(max(Int(samples[c].x.rounded()), 0), n - 1)
+                    let cj = min(max(Int(samples[c].z.rounded()), 0), n - 1)
+                    switch pondClass[cj * n + ci] {
+                    case 1: touchesSmall = true
+                    case 2: touchesLake = true
+                    default: break
+                    }
+                }
+            }
+            let inSmallPond = touchesSmall && !touchesLake
+            let between = a > 0 && b + 1 < samples.count && samples[a - 1].surface == nil
+                && samples[b + 1].surface == nil
+            if inSmallPond || (between && b - a + 1 <= WaterRender.ribbonPondBridgeSamples) {
                 for c in a...b {
                     samples[c].bridged = true
+                    // Im kleinen Tümpel hebt der Terrain-Shader das Gelände
+                    // nicht auf den Spiegel (nasse Wiese, kein See-Gate): das
+                    // Band folgt dort dem Gelände, sonst schwebte es um die
+                    // Tümpeltiefe (`RibbonFloatTests`).
+                    if inSmallPond { samples[c].surface = nil }
                     fade[c] = 1
                 }
             }
@@ -1705,8 +1734,6 @@ public final class RiverRibbonRenderer {
                 }
             }
         }
-        var gone = [Bool](repeating: false, count: mesh.corridor.vertices.count)
-        var anyGone = false
         for band in corridorBands where band.end > band.start {
             for v in band.start..<band.end {
                 let p = mesh.corridor.vertices[v]
@@ -1720,24 +1747,56 @@ public final class RiverRibbonRenderer {
                 let foreign = (a >= 0 && a != band.owner) || (b >= 0 && b != band.owner)
                 let dry = mesh.corridor.custom[v].x <= 0
                 if earlier || (foreign && !own && dry) {
-                    mesh.corridor.colors[v].w = 0
-                    gone[v] = true
-                    anyGone = true
+                    mesh.corridor.colors[v].z = 0
                 }
             }
         }
-        // Ein Dreieck mit einem ausgeblendeten Vertex fällt ganz weg: über die
-        // Fläche interpoliert bliebe die Deckkraft sonst über null, und der
-        // Korridor schriebe dort weiter Deckel-Tiefe vor das fremde Wasser.
-        guard anyGone else { return }
-        var kept: [Int32] = []
-        kept.reserveCapacity(mesh.corridor.indices.count)
-        let idx = mesh.corridor.indices
-        for t in stride(from: 0, to: idx.count - 2, by: 3)
-        where !gone[Int(idx[t])] && !gone[Int(idx[t + 1])] && !gone[Int(idx[t + 2])] {
-            kept.append(idx[t]); kept.append(idx[t + 1]); kept.append(idx[t + 2])
+        // Gremium 4/5, Befund C: bis hierher fiel jedes Dreieck mit einem
+        // ausgeblendeten Vertex ganz weg — zellgerundete grüne Dreieckslöcher
+        // im Wasser am Zusammenfluss. Jetzt bleibt die Geometrie, der Vertex
+        // trägt den Anteil eigenes Ufer (Farbe B = 0); der Korridor-Shader
+        // blendet über die Fläche weich aus und schreibt Deckel-Tiefe nur, wo
+        // der Anteil über der Hälfte liegt (sonst läge sie vor dem fremden
+        // Wasser).
+    }
+
+    /// Zellen stehenden Wassers in Komponenten unter
+    /// `WaterRender.wetMeadowMaxCells` Zellen — dieselbe Definition wie
+    /// `rawWet` im Wasserfeld (gefüllte Oberfläche über dem Meer, Säule über
+    /// `lakeRawWetDepth`, keine Lagune), dort werden sie nasse Wiese.
+    static func smallPondCells(_ terrain: Terrain) -> [Bool] {
+        pondClasses(terrain).map { $0 == 1 }
+    }
+
+    /// Je Zelle 0 (kein stehendes Wasser), 1 (kleiner Tümpel, s. oben), 2 (See).
+    static func pondClasses(_ terrain: Terrain) -> [UInt8] {
+        let n = terrain.cfg.n, cnt = n * n
+        // Spiegel wie im Wasserfeld: der ratenbegrenzte `waterLevel`, nicht `hf`.
+        let h = terrain.h, hf = terrain.waterLevel, sea = terrain.cfg.sea
+        guard h.count == cnt, hf.count == cnt else { return [] }
+        var wet = [Bool](repeating: false, count: cnt)
+        for k in 0..<cnt {
+            let lagoon = h[k] <= sea && hf[k] - sea < WaterRender.lagoonMaxRise
+            wet[k] = hf[k] > sea && hf[k] - h[k] > WaterRender.lakeRawWetDepth && !lagoon
         }
-        mesh.corridor.indices = kept
+        var out = [UInt8](repeating: 0, count: cnt)
+        var seen = [Bool](repeating: false, count: cnt)
+        var comp: [Int] = [], stack: [Int] = []
+        for start in 0..<cnt where wet[start] && !seen[start] {
+            comp.removeAll(keepingCapacity: true); stack.removeAll(keepingCapacity: true)
+            stack.append(start); seen[start] = true
+            while let k = stack.popLast() {
+                comp.append(k)
+                let i = k % n, j = k / n
+                if i > 0 && wet[k - 1] && !seen[k - 1] { seen[k - 1] = true; stack.append(k - 1) }
+                if i < n - 1 && wet[k + 1] && !seen[k + 1] { seen[k + 1] = true; stack.append(k + 1) }
+                if j > 0 && wet[k - n] && !seen[k - n] { seen[k - n] = true; stack.append(k - n) }
+                if j < n - 1 && wet[k + n] && !seen[k + n] { seen[k + n] = true; stack.append(k + n) }
+            }
+            let cls: UInt8 = comp.count < WaterRender.wetMeadowMaxCells ? 1 : 2
+            for k in comp { out[k] = cls }
+        }
+        return out
     }
 
     /// Lauf-Größen je Stützpunkt für `water.gdshader` (Look-Iteration 14,

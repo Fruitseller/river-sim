@@ -5,7 +5,8 @@
 // Tiefe — sonst verdeckte der ausblendende Stand den neuen).
 //
 // Vertex-Vertrag (RiverCorridorMesh, SimNode `corridor_*`):
-//   COLOR.rg = Band-Tangente (·0,5 + 0,5), COLOR.b = Rang/6, COLOR.a = Deckkraft
+//   COLOR.rg = Band-Tangente (·0,5 + 0,5), COLOR.b = Anteil eigenes Ufer (0 im
+//   Wasser eines anderen Bands), COLOR.a = Deckkraft
 //   UV.x = Querlage −1 … +1 (Uferkante links … rechts), UV.y = Bogenlänge (Welt)
 //   UV2.x = signierte Bogenstärke, UV2.y = Gleithang-Anteil (Kiesbank)
 //   CUSTOM0 = (Tiefe unter Wasser, Deckel-Höhe, Querversatz, Wasser-Halbbreite),
@@ -50,6 +51,7 @@ varying vec3 v_world;
 varying float v_lid;
 varying float v_depth;
 varying float v_alpha;
+varying float v_own;
 varying float v_bend;
 varying float v_bar;
 varying vec2 v_dir;
@@ -94,6 +96,7 @@ void vertex() {
 	POSITION = corridor_clip_ref(p, lid, cam, VIEW_MATRIX, PROJECTION_MATRIX, p.y + max(CUSTOM0.x, 0.0));
 	v_depth = CUSTOM0.x;
 	v_alpha = COLOR.a;
+	v_own = COLOR.b;
 	v_bend = UV2.x;
 	v_bar = UV2.y;
 	v_dir = t;
@@ -194,8 +197,13 @@ void fragment() {
 	// Unsichtbares schreibt keine Tiefe: sonst schnitte der einblendende
 	// Stand (Blende 0) das ausblendende Wasser ab (Review Neon Nr. 4).
 	// Der aktuelle Stand teilt sich in Ufer (mit Tiefe) und Bett (ohne).
+	// Im Wasser eines anderen Bands weich aus (Zusammenfluss, Befund C).
+	float own = smoothstep(0.25, 0.75, v_own);
+	alpha *= own;
 #ifdef CORRIDOR_DRY
-	alpha *= step(submerged, 0.5);
+	// Deckel-Tiefe nur auf der eigenen Hälfte: sonst läge sie vor dem
+	// fremden Wasser, das danach gegen sie getestet wird.
+	alpha *= step(submerged, 0.5) * step(0.5, v_own);
 #endif
 #ifdef CORRIDOR_WET
 	alpha *= step(0.5, submerged);

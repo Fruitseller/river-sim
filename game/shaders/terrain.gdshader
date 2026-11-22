@@ -1310,7 +1310,15 @@ void fragment() {
 		albedo = mix(terr, water_final, wet);
 		roughness = mix(land_roughness, mix(water_roughness, 0.7, foam), wet);
 		// Fließendes Wasser spiegelt den Himmel schwächer (wie die Bänder).
-		specular = mix(0.5, mix(water_specular, water_river_specular, flowing * (1.0 - foam)), wet);
+		// Wie das Band: Glanz bei flachem Blick begrenzt (Gremium 5, Befund D:
+		// Teiche als silberne Folie).
+		// Sonnenreflex komprimiert wie im Band; die Richtung zur Sonne steckt
+		// in `cloud_sun_shift` (= Sonne.xz / Sonne.y, Lighting.apply_clouds).
+		vec3 sun_w = normalize(vec3(cloud_sun_shift.x, 1.0, cloud_sun_shift.y));
+		vec3 view_sw = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
+		float sun_hit = pow(max(dot(reflect(-view_sw, water_n_ws), sun_w), 0.0), 6.0);
+		specular = mix(0.5, mix(water_specular, water_river_specular, flowing * (1.0 - foam))
+			* (1.0 - 0.6 * fresnel) * (1.0 - 0.7 * sun_hit), wet);
 		// Seen spiegeln die Wolken (wie die Altarme in water.gdshader).
 		vec3 view_ws = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
 		vec3 refl = reflect(-view_ws, water_n_ws);

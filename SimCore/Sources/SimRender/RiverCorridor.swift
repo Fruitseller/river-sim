@@ -297,7 +297,9 @@ enum CorridorSections {
     /// Tangenten-Abstand (Stützpunkte je Seite) für die Krümmung.
     static let curvatureSpan = 2
     /// Auslauf an beiden Bandenden (Stützpunkte).
-    static let endRampSamples = 4.0
+    // 8 statt 4 (Gremium 5, Befund B): Ufer und Bett endeten mit einer
+    // Erdwand quer zum Lauf, während das Band noch breit war.
+    static let endRampSamples = 8.0
     /// Ab diesem Korridor-Anteil trägt das Band den vollen Deckel; darunter
     /// ist der Korridor schmaler als sichtbar (`ribbonVisibleLo`).
     static let lidPresence = WaterRender.ribbonVisibleLo
@@ -482,8 +484,11 @@ struct CorridorBandBuilder {
                 let p = pos[a * k + c]
                 mesh.vertices.append(SIMD3(Float(p.x), Float(p.y), Float(p.z)))
                 mesh.normals.append(SIMD3(Float(nrm.x), Float(nrm.y), Float(nrm.z)))
+                // B = Anteil eigenes Ufer (1; 0 im Wasser eines anderen Bands,
+                // `RiverRibbonRenderer.fadeCorridorsInForeignWater`). Den Rang
+                // las der Korridor-Shader nie.
                 mesh.colors.append(SIMD4(Float(s.tx * 0.5 + 0.5), Float(s.tz * 0.5 + 0.5),
-                                         Float(clamp01(s.rank)), Float(clamp01(s.alpha))))
+                                         1, Float(clamp01(s.alpha))))
                 let off = s.section.offsets[c]
                 mesh.uvs.append(SIMD2(Float(max(-1, min(1, off / (off < 0 ? edgeL : edgeR)))), Float(s.arc)))
                 mesh.uv2s.append(SIMD2(Float(max(-1, min(1, s.bend))), Float(s.section.bar[c])))
