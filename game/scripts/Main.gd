@@ -1755,8 +1755,12 @@ func _process(delta: float) -> void:
 		return
 	# Leerlauf-Drossel (s. IDLE_FPS_CAP): nur wenn wirklich nichts passiert —
 	# Zeitraffer, Sprung, Sculpting und ein noch nicht abgeholter
-	# Hintergrund-Schritt zählen als Aktivität.
+	# Hintergrund-Schritt zählen als Aktivität. Eine autonome Aufnahme
+	# (RS_SHOT) ebenfalls: sonst schaltete der Leerlauf den Renderloop vor dem
+	# Aufnahme-Frame ab, und Bild-Pässe wie die Baum-Platzierung
+	# (ForestTrees) liefen nie — Aufnahmen zeigten das Kronendach statt Bäume.
 	var idle: bool = year_rate == 0.0 and not _jumping and not sculpting \
+		and not OS.has_environment("RS_SHOT") \
 		and not sim.stepInFlight() \
 		and not (amplifier != null and (amplifier.busy() or relief_mix < 1.0)) \
 		and Time.get_ticks_msec() - last_activity_msec > IDLE_FPS_DELAY_MSEC
