@@ -2523,3 +2523,35 @@ vollständig reproduziert; nativ gelten wegen der System-libm andere Werte
 | Seed 1337, dt = 15 | `764c3535772abcdd` == `764c3535772abcdd` | `61eaae22717a0004` == `61eaae22717a0004` |
 | Seed 42, dt = 100 | `758727b1ae0866a8` == `758727b1ae0866a8` | `d47d5fce7d71d14d` == `d47d5fce7d71d14d` |
 | Seed 20, dt = 100 | `629eb937b51dfe81` == `629eb937b51dfe81` | `68048e685236dd61` == `68048e685236dd61` |
+
+---
+
+## XIII. Mäandergürtel parallel: engere Lese-/Schreib-Hüllen (8-DOP) und Kritischer-Pfad-Planung (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+In `Terrain.parallelBeltRuns` und `Terrain.BeltSchedule` (`SimCore/Sources/SimCore/Terrain.swift`):
+
+1. **Getrennte, geländeunabhängige Lese- und Schreib-Hüllen (`BeltRWFootprint`, 8-DOP `BeltHull`):** Bisher erzeugte jeder wandernde Lauf ein einzelnes achsenparalleles Rechteck (`MeanderState.BeltFootprint`) über alle Knoten — einschließlich der unbewegten Oberläufe (`discharge < meanderBeltMinCells`) — mit dem gemeinsamen Worst-Case-Radius `substeps · spacing + 3,5 · maxWidth + 2`. Dadurch überlappten sich am zentralen Gebirgskamm fast alle großen Läufe und bildeten eine weitgehend serielle Kette (~90 % kritischer Pfad, effektiv ~1,1 Kerne auf 4 Kernen).
+   - **Trennung beweglich vs. unbewegt:** Knoten mit `discharge < meanderBeltMinCells` migrieren, stören und diffundieren nicht (`r = erod = a = 0`); sie werden in überlappenden 16-Knoten-Segment-Hüllen mit engem lokalem Cutoff-/Stempel-Radius erfasst statt mit dem globalen Migrationsradius.
+   - **Exakte Störungs-Schranke:** `perturb` bewegt je Teilschritt höchstens `min(0,5·spacing, amp·√(rate·dt_sub)·maxW·√(3·cnt))`, summiert über `nsub ≤ maxSubsteps` also `amp·√(rate·dt·maxSubsteps)·maxW·√(3·cnt)` statt pauschal `0,5·spacing·maxSubsteps`.
+   - **Getrennte Schreib-/Lese-Abstände und 8-DOP:** Schreiben reicht nur bis `max(0,5·w + 0,5, (0,5 + barW)·w) + 2` (nicht `3,5·w` der Talwand-Leseabfrage); 8-DOP (`x`, `z`, `x+z`, `x−z`) umschließt die konvexe Hülle vollständig und schneidet leere Rechteck-Ecken diagonaler Flüsse ab. Ein Konflikt besteht nur bei Schreib/Lese- oder Schreib/Schreib-Überlappung — reine Lese/Lese-Überlappungen laufen parallel.
+2. **Kritischer-Pfad-Priorität in `BeltSchedule`:** Statt LIFO (`ready.popLast()`) startet `take()` den bereiten Lauf mit dem höchsten Rest-Pfadgewicht (`maxSubsteps · Knoten + max(Nachfolger)`). Die bestehende Signatur `BeltSchedule(_ footprints:)` bleibt unverändert.
+
+### Gemessen
+
+Rahmen: Linux-VM (4 vCPUs, AMD EPYC-Genoa), `SimConfig.production` (`n = 720`, `world = 112.4789`), Seed 1337, Einlauf `100 × 100` Jahre, Messung `30 × 100` Jahre, verschränkte A/B-Messung in einer Sitzung (3 Paare mit wechselnder Reihenfolge A/B, B/A, A/B, je `--repeat 3`). Kennzahl ist das Block-Minimum aus `--repeat 3`; die Pass-Werte stammen jeweils aus der Pass-Tabelle des dritten Blocks.
+
+| Paar (Reihenfolge) | Basis Blöcke 1/2/3 (Min) | Opt Blöcke 1/2/3 (Min) | Δ Min | `belt.parallel` Basis → Opt | `belt.schedule` Basis → Opt |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 (Basis → Opt) | 144,9 / 141,4 / 141,5 (**141,4**) | 137,6 / 144,3 / 132,4 (**132,4**) | **−9,0 ms (−6,4 %)** | 28,04 → **19,72 ms** (−29,7 %) | 0,49 → 0,83 ms |
+| 2 (Opt → Basis) | 140,4 / 145,5 / 161,4 (**140,4**) | 147,6 / 149,2 / 136,6 (**136,6**) | **−3,8 ms (−2,7 %)** | 32,31 → **21,84 ms** (−32,4 %) | 0,56 → 0,57 ms |
+| 3 (Basis → Opt) | 141,8 / 147,7 / 154,9 (**141,8**) | 149,8 / 147,7 / 135,7 (**135,7**) | **−6,1 ms (−4,3 %)** | 32,18 → **21,74 ms** (−32,4 %) | 0,54 → 0,53 ms |
+
+- **`belt.parallel`:** sinkt in allen drei Paaren stabil um **8,32 bis 10,47 ms/Schritt** (**−29,7 % bis −32,4 %**, Anteil von 19,8–23,0 % auf 14,9–16,0 % des Schritts) bei vernachlässigbarer Planungszeit (`belt.schedule` 0,53–0,83 ms).
+- **Gesamtschritt-Minimum:** sinkt in allen drei Paaren um **3,8 bis 9,0 ms/Schritt** (Median **141,4 → 135,7 ms**, **−5,7 ms / −4,0 %**). Einzelne gestörte Blöcke der geteilten VM streuen weiterhin bis ~15 ms (z. B. Basis Paar 2 Block 3 mit 161,4 ms).
+
+### Bit-Identität
+
+`simperf --hash` wurde auf derselben Maschine vor und nach der Änderung für vier Konfigurationen geprüft (Seed 1337/dt=100, Seed 42/dt=100, Seed 20/dt=100, Seed 1337/dt=15): alle vier Fingerprints sind exakt bit-identisch.
+

@@ -5975,7 +5975,7 @@ public final class Terrain {
 
     /// Verkorkt die Altarme ab Index `from` — der Gürtel erkennt neue Altarme
     /// am Index, nicht am Alter 0: sie tragen seit #187 ihr Alter am Schrittende.
-    private func plugOxbows(from: Int) {
+    func plugOxbows(from: Int) {
         guard from < meander.oxbows.count else { return }
         plugOxbows(indices: Array(from..<meander.oxbows.count))
     }
@@ -6142,15 +6142,154 @@ public final class Terrain {
         if meander.channels.isEmpty { seedMeander() }
     }
 
+    /// Achsen- und Diagonal-Hülle (8-DOP: `x`, `z`, `x+z`, `x−z`). Konvex,
+    /// umschließt also jede konvexe Hülle (Diffusion, Cutoffs, Resample) und
+    /// schneidet bei diagonalen Flüssen die leeren Ecken des Rechtecks ab.
+    struct BeltHull {
+        let minX: Double, maxX: Double, minZ: Double, maxZ: Double
+        let minU: Double, maxU: Double, minV: Double, maxV: Double
+
+        @inline(__always) func overlaps(_ o: BeltHull) -> Bool {
+            minX <= o.maxX && o.minX <= maxX && minZ <= o.maxZ && o.minZ <= maxZ
+                && minU <= o.maxU && o.minU <= maxU && minV <= o.maxV && o.minV <= maxV
+        }
+
+        @inline(__always) func contains(x: Double, z: Double) -> Bool {
+            let u = x + z, v = x - z
+            return x >= minX && x <= maxX && z >= minZ && z <= maxZ
+                && u >= minU && u <= maxU && v >= minV && v <= maxV
+        }
+
+        static func from(nodes: [MeanderNode], range: Range<Int>, padAxis: Double, padDiag: Double,
+                         clamp fp: MeanderState.BeltFootprint) -> BeltHull {
+            var minX = Double.infinity, maxX = -Double.infinity
+            var minZ = Double.infinity, maxZ = -Double.infinity
+            var minU = Double.infinity, maxU = -Double.infinity
+            var minV = Double.infinity, maxV = -Double.infinity
+            for i in range {
+                let x = nodes[i].x, z = nodes[i].z, u = x + z, v = x - z
+                if x < minX { minX = x }; if x > maxX { maxX = x }
+                if z < minZ { minZ = z }; if z > maxZ { maxZ = z }
+                if u < minU { minU = u }; if u > maxU { maxU = u }
+                if v < minV { minV = v }; if v > maxV { maxV = v }
+            }
+            return BeltHull(minX: max(fp.minX, minX - padAxis), maxX: min(fp.maxX, maxX + padAxis),
+                            minZ: max(fp.minZ, minZ - padAxis), maxZ: min(fp.maxZ, maxZ + padAxis),
+                            minU: minU - padDiag, maxU: maxU + padDiag,
+                            minV: minV - padDiag, maxV: maxV + padDiag)
+        }
+    }
+
+    /// Geländeunabhängige Lese- und Schreib-Hüllen eines wandernden Laufs (8-DOP):
+    /// trennt den bewegten Abschnitt (`discharge >= meanderBeltMinCells`) mit
+    /// exakter Störungs-Schranke und getrenntem Schreib- (`0,5 + barW`) vs.
+    /// Lese-Abstand (`3,5` Talwand) von den unbewegten Oberlauf-Segmenten.
+    /// Konflikt besteht nur bei Schreib/Lese- oder Schreib/Schreib-Überlappung —
+    /// reine Lese/Lese-Überlappungen laufen parallel.
+    struct BeltRWFootprint {
+        let fp: MeanderState.BeltFootprint
+        let writeHulls: [BeltHull]
+        let readHulls: [BeltHull]
+
+        func containsWrite(x: Double, z: Double) -> Bool {
+            writeHulls.contains { $0.contains(x: x, z: z) }
+        }
+
+        func containsRead(x: Double, z: Double) -> Bool {
+            readHulls.contains { $0.contains(x: x, z: z) }
+        }
+
+        func conflicts(with other: BeltRWFootprint) -> Bool {
+            guard fp.overlaps(other.fp) else { return false }
+            for wh in writeHulls {
+                for ow in other.writeHulls where wh.overlaps(ow) { return true }
+                for rh in other.readHulls where wh.overlaps(rh) { return true }
+            }
+            for rh in readHulls { for wh in other.writeHulls where rh.overlaps(wh) { return true } }
+            return false
+        }
+
+        static func build(channel ch: RiverChannel, dt: Double,
+                          footprint fp: MeanderState.BeltFootprint, config cfg: SimConfig) -> BeltRWFootprint {
+            let nodes = ch.nodes, dis = ch.discharge, c = nodes.count
+            guard dis.count == c else {
+                let full = BeltHull(minX: fp.minX, maxX: fp.maxX, minZ: fp.minZ, maxZ: fp.maxZ,
+                                    minU: fp.minX + fp.minZ, maxU: fp.maxX + fp.maxZ,
+                                    minV: fp.minX - fp.maxZ, maxV: fp.maxX - fp.minZ)
+                return BeltRWFootprint(fp: fp, writeHulls: [full], readHulls: [full])
+            }
+            let sqrt2 = 2.0.squareRoot(), sp = max(1e-6, cfg.meanderNodeSpacing)
+            let minQ = cfg.meanderBeltMinCells, chuteQ = cfg.meanderChuteMinCells
+            let barReach = 0.5 + max(0, cfg.meanderBarWidths), readReach = max(3.5, barReach)
+            var firstMob = c, lastMob = -1
+            for i in 0..<c where dis[i] >= minQ {
+                if i < firstMob { firstMob = i }
+                lastMob = i
+            }
+            // ±1 Nachbarknoten gehören zu Segmenten, über die `resample` Abfluss interpoliert.
+            if firstMob <= lastMob { firstMob = max(0, firstMob - 1); lastMob = min(c - 1, lastMob + 1) }
+            var writeHulls: [BeltHull] = [], readHulls: [BeltHull] = []
+            var maxStaticCut = 0.0
+            func addStaticRange(_ start: Int, _ end: Int) {
+                var i = start
+                while i < end {
+                    let hi = min(end, i + 17)
+                    var maxW = 0.0, maxCut = cfg.meanderNeckDist
+                    for k in i..<hi {
+                        let w = MeanderState.beltWidthCells(discharge: dis[k], config: cfg)
+                        if w > maxW { maxW = w }
+                        let neck = max(cfg.meanderNeckDist, cfg.meanderBeltNeckWidths * w)
+                        let chute = dis[k] >= chuteQ ? cfg.meanderChuteWidths * w : 0
+                        maxCut = max(maxCut, max(neck, chute))
+                    }
+                    if maxCut > maxStaticCut { maxStaticCut = maxCut }
+                    maxW *= 1.001
+                    let euclid = 0.5 * maxCut * 1.001 + max(0.5 * maxW + 0.5, barReach * maxW)
+                    let hull = BeltHull.from(nodes: nodes, range: i..<hi,
+                                             padAxis: euclid + 2, padDiag: sqrt2 * euclid + 4, clamp: fp)
+                    writeHulls.append(hull); readHulls.append(hull)
+                    if hi == end { break }
+                    i += 16
+                }
+            }
+            if firstMob <= lastMob {
+                if firstMob > 0 { addStaticRange(0, firstMob + 1) }
+                if lastMob + 1 < c { addStaticRange(lastMob, c) }
+                var maxW = 0.0
+                for i in firstMob...lastMob {
+                    maxW = max(maxW, MeanderState.beltWidthCells(discharge: dis[i], config: cfg))
+                }
+                maxW *= 1.001
+                let sub = Double(fp.maxSubsteps), migDist = sub * 0.5 * sp
+                let krMax = max(1, Int((0.5 * maxW / sp).rounded()))
+                let pertDist = min(migDist, max(0, cfg.meanderBeltNoise)
+                                   * (max(0, cfg.meanderBeltRate) * dt * sub).squareRoot()
+                                   * maxW * (3.0 * Double(2 * krMax + 1)).squareRoot())
+                let moveDist = (migDist + pertDist + maxStaticCut) * 1.001
+                let wE = moveDist + max(0.5 * maxW + 0.5, barReach * maxW)
+                let rE = moveDist + max(0.5 * maxW + 0.5, readReach * maxW)
+                writeHulls.append(BeltHull.from(nodes: nodes, range: firstMob..<(lastMob + 1),
+                                                padAxis: wE + 2, padDiag: sqrt2 * wE + 4, clamp: fp))
+                readHulls.append(BeltHull.from(nodes: nodes, range: firstMob..<(lastMob + 1),
+                                               padAxis: rE + 2, padDiag: sqrt2 * rE + 4, clamp: fp))
+            } else {
+                addStaticRange(0, c)
+            }
+            return BeltRWFootprint(fp: fp, writeHulls: writeHulls, readHulls: readHulls)
+        }
+    }
+
     private final class BeltRun {
         let channel: Int
         let state = MeanderState()
         let footprint: MeanderState.BeltFootprint
+        let rw: BeltRWFootprint
         var substeps = 0
 
-        init(channel: Int, line: RiverChannel, footprint: MeanderState.BeltFootprint) {
+        init(channel: Int, line: RiverChannel, footprint: MeanderState.BeltFootprint, rw: BeltRWFootprint) {
             self.channel = channel
             self.footprint = footprint
+            self.rw = rw
             state.channels = [line]
         }
     }
@@ -6169,29 +6308,50 @@ public final class Terrain {
         private let condition = NSCondition()
         private var waiting: [Int]
         private let successors: [[Int]]
+        private let priority: [Int]
         private var ready: [Int]
         private var remaining: Int
 
-        init(_ footprints: [MeanderState.BeltFootprint]) {
-            var waiting = [Int](repeating: 0, count: footprints.count)
-            var successors = [[Int]](repeating: [], count: footprints.count)
-            for j in footprints.indices {
-                for i in 0..<j where footprints[i].overlaps(footprints[j]) {
+        convenience init(_ footprints: [MeanderState.BeltFootprint]) {
+            self.init(count: footprints.count,
+                      weights: footprints.map(\.maxSubsteps),
+                      conflicts: { footprints[$0].overlaps(footprints[$1]) })
+        }
+
+        init(count: Int, weights: [Int], conflicts: (Int, Int) -> Bool) {
+            var waiting = [Int](repeating: 0, count: count)
+            var successors = [[Int]](repeating: [], count: count)
+            for j in 0..<count {
+                for i in 0..<j where conflicts(i, j) {
                     waiting[j] += 1
                     successors[i].append(j)
                 }
             }
+            // Kritischer-Pfad-Priorität: Läufe auf der längsten Kette zuerst starten.
+            var priority = [Int](repeating: 0, count: count)
+            for i in stride(from: count - 1, through: 0, by: -1) {
+                var bestSucc = 0
+                for j in successors[i] where priority[j] > bestSucc { bestSucc = priority[j] }
+                priority[i] = max(1, weights[i]) + bestSucc
+            }
             self.waiting = waiting
             self.successors = successors
+            self.priority = priority
             self.ready = waiting.indices.filter { waiting[$0] == 0 }
-            self.remaining = footprints.count
+            self.remaining = count
         }
 
         func take() -> Int? {
             condition.lock()
             defer { condition.unlock() }
             while ready.isEmpty && remaining > 0 { condition.wait() }
-            return ready.popLast()
+            guard !ready.isEmpty else { return nil }
+            var bestPos = 0, bestPri = priority[ready[0]]
+            for p in 1..<ready.count {
+                let pri = priority[ready[p]]
+                if pri > bestPri { bestPri = pri; bestPos = p }
+            }
+            return ready.remove(at: bestPos)
         }
 
         func finish(_ index: Int) {
@@ -6215,10 +6375,14 @@ public final class Terrain {
         mark("belt.schedule")
         var runs: [BeltRun] = []
         for ci in mobile {
-            guard let footprint = meander.beltFootprint(meander.channels[ci], dt: dt, config: cfg) else { return nil }
-            runs.append(BeltRun(channel: ci, line: meander.channels[ci], footprint: footprint))
+            let ch = meander.channels[ci]
+            guard let footprint = meander.beltFootprint(ch, dt: dt, config: cfg) else { return nil }
+            let rw = BeltRWFootprint.build(channel: ch, dt: dt, footprint: footprint, config: cfg)
+            runs.append(BeltRun(channel: ci, line: ch, footprint: footprint, rw: rw))
         }
-        let schedule = BeltSchedule(runs.map(\.footprint))
+        let schedule = BeltSchedule(count: runs.count,
+                                    weights: runs.map { $0.footprint.maxSubsteps * $0.state.channels[0].nodes.count },
+                                    conflicts: { runs[$0].rw.conflicts(with: runs[$1].rw) })
         mark("belt.parallel")
         let nn = n, maxc = Double(n - 1), config = cfg, time = years
         hf.withUnsafeBufferPointer { hfb in
@@ -6355,9 +6519,12 @@ public final class Terrain {
     ///   Schrittweite. Eine bestehende Bank verjüngt sich, wenn die Ablage mehr
     ///   als 0,2 Tiefen Lücke bis zur Oberkante schließt.
     @discardableResult
-    private func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) -> BeltGeometry? {
+    func beltStamp(dt: Double, only: Int?, ageAtEnd: Double) -> BeltGeometry? {
         let cs = cfg.cellSize
         guard cs > 0, cs.isFinite else { return nil }
+        if cfg.meanderBeltCoupling && only != nil && dropletGateBuf.count != cfg.count {
+            dropletGateBuf = .init(repeating: false, count: cfg.count)
+        }
         return hf.withUnsafeBufferPointer { hfb in
         veg.withUnsafeMutableBufferPointer { vb in
         isChannel.withUnsafeMutableBufferPointer { icb in
