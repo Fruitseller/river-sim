@@ -134,6 +134,11 @@ uniform float water_ocean_wave_fade_lo;
 uniform float water_ocean_wave_fade_hi;
 uniform float water_ocean_depth_span;
 uniform vec3 water_ocean_shallow_color;
+// Uferlinie des Korridors (Look E, #239) als Anteil der Wasser-Halbbreite und
+// ihre Verschiebung im Bogen, dieselben Zahlen wie CorridorProfile.section:
+// das Band endet GENAU dort, wo die Böschung aus dem Wasser steigt.
+uniform float water_corridor_shore;
+uniform float water_corridor_shore_bend;
 
 #include "res://shaders/corridor_common.gdshaderinc"
 
@@ -302,12 +307,25 @@ void fragment() {
 	float line = water_ribbon_waterline
 		+ (ribbon_noise(v_world.xz * water_ribbon_waterline_scale) - 0.5) * 2.0 * water_ribbon_waterline_jitter;
 	float wet = smoothstep(line - aa, line + aa, across);
-	// Mit Korridor reicht das Wasser bis fast an die Bandkante; die Uferlinie
-	// zeichnet dann die Böschung darunter, die es verdeckt (Deckel-Tiefe).
-	float corridor = clamp(v_profile.x, 0.0, 1.0);
-	wet = mix(wet, smoothstep(0.0, 0.08, across), corridor);
-	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea) * (1.0 - corridor);
 	float profile = calib_window(line, 1.0, across); // 0 Wasserlinie … 1 Mitte
+	// Mit Korridor endet das Wasser an SEINER Uferlinie (CorridorProfile:
+	// je Seite Anteil der Wasser-Halbbreite, im Bogen am Prallhang außen, am
+	// Gleithang innen). Bis hierher reichte es bis 92 % der Bandbreite, die
+	// Uferlinie des Korridors lag bei 65 %: ein Wasserfilm über der trockenen
+	// Böschung, der Lauf las sich als Fluss im Fluss (Gremium, Befund 1).
+	float corridor = clamp(v_profile.x, 0.0, 1.0);
+	if (corridor > 0.0) {
+		float side = UV.x < 0.5 ? -1.0 : 1.0;
+		float shore_w = max(v_profile.z, 1e-5)
+			* (water_corridor_shore - water_corridor_shore_bend * side * clamp(v_bend, -1.0, 1.0));
+		float off_w = abs(UV.x * 2.0 - 1.0) * 0.5 * band_width;
+		float aa_w = max(fwidth(off_w), 1e-5);
+		float wet_c = 1.0 - smoothstep(shore_w - aa_w, shore_w + aa_w, off_w);
+		float profile_c = clamp(1.0 - off_w / max(shore_w, 1e-5), 0.0, 1.0);
+		wet = mix(wet, wet_c, corridor);
+		profile = mix(profile, profile_c, corridor);
+	}
+	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea) * (1.0 - corridor);
 
 	// Tiefe ∝ Strahler-Rang (Hierarchie: große Läufe tief, Bäche seicht), zur
 	// Wasserlinie hin seicht (Querprofil eines echten Gerinnes).
@@ -385,7 +403,11 @@ void fragment() {
 	// Raster-Wasser im Terrain-Shader, dort über dem echten Gelände). Am
 	// Gleithang zusätzlich die Bank — nur im Saum an der Wasserlinie: über die
 	// halbe Bandbreite gezogen lag sie als milchiger Schleier auf dem Fluss.
-	vec3 water_final = mix(water_bed_color, water, mix(water_opacity_shallow, water_opacity_deep, depth));
+	// Mit Korridor liegt das Bett als Geometrie darunter und scheint über die
+	// Deckkraft des Bands durch (ALPHA unten); ohne ihn mischt das Band die
+	// Bettfarbe selbst. Beides ist dieselbe Rampe wie beim Raster-Wasser.
+	float opacity = mix(water_opacity_shallow, water_opacity_deep, depth);
+	vec3 water_final = mix(water, mix(water_bed_color, water, opacity), 1.0 - corridor);
 	// Strömungsstriche: quer fein, längs gestreckt. Nah die feine Schar, in
 	// der Ferne gröbere Flecken (Zellen ≥ 1 px quer). Die Faktoren sind
 	// Optik-Zahlen dieses Shaders (Seitenverhältnis der Striche), die
@@ -432,12 +454,17 @@ void fragment() {
 	// Erst ganz zuletzt blendet der schmale Rest aus. Im Meer blendet die
 	// Deckkraft linear mit presence auf 0 aus (#174), an Land schrumpft die Breite.
 	float sea_alpha = mix(smoothstep(0.0, 0.25, presence), presence, in_sea);
-	// Mit Korridor deckt das Band nur als Oberfläche: der Körper kommt aus
-	// dem Profil darunter, sichtbar bleiben Spiegelung, Riffel und Schaum.
-	float surface_alpha = clamp(0.1 + 0.7 * fresnel + 0.25 * riffle + foam, 0.0, 1.0);
-	float body = mix(1.0, surface_alpha, corridor);
+	// Mit Korridor deckt das Band nach der gemeinsamen Deckkraft-Rampe
+	// (seicht lässt es das Bett durchscheinen); Spiegelung und Schaum decken
+	// voll. Bis hierher deckte es nur als dünner Film (0,1 + Fresnel), der
+	// Wasserkörper kam aus einem eigenen Beer-Lambert im Korridor: fast
+	// schwarzer Kern, heller Rand, ein anderes Wasser als Seen und Zubringer.
+	float body = mix(1.0, clamp(max(opacity, fresnel) + foam, 0.0, 1.0), corridor);
+	// Die See-Maske gilt nur ohne Korridor: mit ihm liegt Ufer und Bett über
+	// dem Gelände (Deckel-Tiefe), der Raster-See des Terrain-Shaders ist
+	// verdeckt, und das Band fehlte über jedem Tümpel im Gerinne (Querbalken).
 	ALPHA = ribbon_fade_alpha(sea_alpha * max(wet * body, bank * water_ribbon_bank_opacity)
-		* (1.0 - lake * (1.0 - delta)));
+		* (1.0 - lake * (1.0 - delta) * (1.0 - corridor)));
 	vec3 cam_w = CAMERA_POSITION_WORLD;
 	LIGHT_VERTEX = (VIEW_MATRIX * vec4(corridor_lid_point(v_world, v_profile.y, cam_w), 1.0)).xyz;
 	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt

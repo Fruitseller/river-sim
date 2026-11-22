@@ -91,10 +91,11 @@ enum CorridorProfile {
     /// Uferlinie (Wasser trifft Böschung) als Anteil der sichtbaren
     /// Wasser-Halbbreite auf gerader Strecke; im Bogen wandert sie am Prallhang
     /// nach außen, am Gleithang nach innen (`shoreBendShift`), dort liegt die
-    /// Kiesbank. 0,65 ist die Wasserlinie des Band-Shaders
-    /// (`WaterRender.ribbonWaterline` = 0,35 von außen).
-    static let shoreFraction = 1 - WaterRender.ribbonWaterline
-    static let shoreBendShift = 0.18
+    /// Kiesbank. Beide Zahlen liest auch das Band (`water.gdshader` endet
+    /// genau hier) und der nasse Saum (`corridor.gdshaderinc`), deshalb im
+    /// Kalibrier-Register.
+    static let shoreFraction = WaterRender.corridorShoreFraction
+    static let shoreBendShift = WaterRender.corridorShoreBendShift
     /// Thalweg-Versatz zum Prallhang (Anteil der Wasser-Halbbreite × Bogen).
     static let thalwegShift = 0.4
     /// Böschung jenseits der Band-Halbbreite (Zellen): Grundmaß plus Anteil der
@@ -157,9 +158,16 @@ enum CorridorProfile {
     ///   Bandkanten; dazwischen ist sie eine Gerade.
     /// - `bend`: signierte Bogenstärke (`RibbonMesh.uv2s.y`), + = Prallhang links.
     /// - `surface(c)`: sichtbare Geländehöhe am Querversatz c (Zellen).
+    /// - `edges`: Lage der Uferkante je Seite (links, rechts; Zellen, ohne
+    ///   Vorzeichen). Ohne Angabe sucht der Querschnitt sie selbst; die
+    ///   Band-Fassung (`CorridorSections`) gibt die längs geglättete Suche vor.
+    /// - `reachLimit`: höchste Reichweite je Seite (Zellen) zusätzlich zur
+    ///   Schutzmaske, im Innenbogen der Krümmungsradius.
     static func section(halfWidthCells hw: Double, visible: Double,
                         waterLeft: Double, waterRight: Double,
                         bend: Double, riffle: Double, cellSize cs: Double,
+                        edges: (Double, Double)? = nil,
+                        reachLimit: (Double, Double) = (.infinity, .infinity),
                         surface: (Double) -> Double) -> Section {
         var s = Section()
         let vis = max(0, min(1, visible))
@@ -192,11 +200,16 @@ enum CorridorProfile {
             let g = gamma(side)
             let bar = max(0, -g)
             let shore = ww * (shoreFraction + shoreBendShift * g)
-            let reach = maxReachCells(halfWidthCells: hw)
+            // Die Innenbogen-Grenze lässt immer Platz für Böschung und Fuß
+            // jenseits der Uferlinie: das Wasser selbst ist das Band.
+            let limit = max(side < 0 ? reachLimit.0 : reachLimit.1, shore + vis * (footCells + 0.1))
+            let reach = min(maxReachCells(halfWidthCells: hw), limit)
             var edge = min(ww + bankBase * (1 - bankBendShare * g), reach - vis * footCells)
             let shoreY = water(side * shore)
+            if let edges { edge = min(side < 0 ? edges.0 : edges.1, reach - vis * footCells) }
+            edge = max(edge, min(shore, reach - vis * footCells))
             var ground = surface(side * edge)
-            if vis > 0, ground < shoreY + freeboard {
+            if edges == nil, vis > 0, ground < shoreY + freeboard {
                 var d = edgeSearchStep
                 while d <= edgeSearchCells + 1e-9, edge + d * vis + vis * leveeFootCells <= reach {
                     let g2 = surface(side * (edge + d * vis))
@@ -258,6 +271,128 @@ enum CorridorProfile {
     }
 }
 
+/// Querschnitte EINES Bands, längs zusammen gerechnet (Gremium, Befund 2).
+/// Je Stützpunkt allein entstanden Splitter, Falten und Querwände:
+///  - die Ufersuche sprang von Stützpunkt zu Stützpunkt um bis zu 2,5 Zellen
+///    (spitze helle Dreiecke über Wiese und Wasser): die gefundene Kante wird
+///    längs geglättet (Median, dann Kastenmittel);
+///  - im Innenbogen reichte die Böschung über den Krümmungsradius hinaus, die
+///    Querschnitte überschlugen sich (90°-Kerben, Falten): die Reichweite der
+///    Innenseite ist am Radius gedeckelt (`innerReachShare`);
+///  - an den Bandenden fiel das Profil abrupt auf null (stumpfe, rechteckige
+///    Enden, Dämme am Zusammenfluss): es läuft über `endRampSamples` aus.
+enum CorridorSections {
+    struct Input {
+        var hw: Double, visible: Double
+        var waterLeft: Double, waterRight: Double
+        var bend: Double, riffle: Double
+        var x: Double, z: Double          // Gitter
+        var tx: Double, tz: Double        // Tangente (Einheit)
+    }
+    /// Fenster der Kanten-Glättung in Stützpunkten (~0,5 Zellen Abstand).
+    static let edgeMedianRadius = 2
+    static let edgeMeanRadius = 2
+    /// Innenseite höchstens dieser Anteil des Krümmungsradius.
+    static let innerReachShare = 0.85
+    /// Tangenten-Abstand (Stützpunkte je Seite) für die Krümmung.
+    static let curvatureSpan = 2
+    /// Auslauf an beiden Bandenden (Stützpunkte).
+    static let endRampSamples = 4.0
+    /// Ab diesem Korridor-Anteil trägt das Band den vollen Deckel; darunter
+    /// ist der Korridor schmaler als sichtbar (`ribbonVisibleLo`).
+    static let lidPresence = WaterRender.ribbonVisibleLo
+
+    /// Sichtbarer Anteil mit Auslauf an den Enden.
+    static func endRamp(_ a: Int, count m: Int) -> Double {
+        smoothstep(0, endRampSamples, Double(min(a, m - 1 - a)))
+    }
+
+    static func build(_ inputs: [Input], cellSize cs: Double, bank: BankSurface) -> [CorridorProfile.Section] {
+        let m = inputs.count
+        guard m > 0 else { return [] }
+        func surface(_ i: Input) -> (Double) -> Double {
+            { c in bank.height(i.x - i.tz * c, i.z + i.tx * c) }
+        }
+        // Krümmungsradius (Zellen) je Stützpunkt und Innenseite.
+        var limits = [(Double, Double)](repeating: (.infinity, .infinity), count: m)
+        if m >= 3 {
+            var radius = [Double](repeating: .infinity, count: m)
+            var inner = [Double](repeating: 0, count: m)
+            for a in 0..<m {
+                let a0 = max(0, a - curvatureSpan), a1 = min(m - 1, a + curvatureSpan)
+                guard a1 > a0 else { continue }
+                let t0 = inputs[a0], t1 = inputs[a1]
+                let cross = t0.tx * t1.tz - t0.tz * t1.tx
+                let dot = t0.tx * t1.tx + t0.tz * t1.tz
+                var len = 0.0
+                for b in a0..<a1 {
+                    let dx = inputs[b + 1].x - inputs[b].x, dz = inputs[b + 1].z - inputs[b].z
+                    len += (dx * dx + dz * dz).squareRoot()
+                }
+                let angle = abs(atan2(cross, dot))
+                guard angle > 1e-6 else { continue }
+                radius[a] = len / angle
+                // cross > 0: die Tangente dreht zur positiven Querlage
+                // (rechts, `(-tz, tx)`), dort liegt der Mittelpunkt.
+                inner[a] = cross > 0 ? 1 : -1
+            }
+            for a in 0..<m where radius[a] < .infinity {
+                var r = radius[a]
+                for b in max(0, a - curvatureSpan)...min(m - 1, a + curvatureSpan) { r = min(r, radius[b]) }
+                let cap = innerReachShare * r
+                limits[a] = inner[a] > 0 ? (.infinity, cap) : (cap, .infinity)
+            }
+        }
+        // Erster Durchgang: Kanten aus der Suche je Stützpunkt.
+        var vis = [Double](repeating: 0, count: m)
+        var left = [Double](repeating: 0, count: m), right = [Double](repeating: 0, count: m)
+        for a in 0..<m {
+            let i = inputs[a]
+            vis[a] = i.visible * endRamp(a, count: m)
+            let s = CorridorProfile.section(halfWidthCells: i.hw, visible: vis[a],
+                                            waterLeft: i.waterLeft, waterRight: i.waterRight,
+                                            bend: i.bend, riffle: i.riffle, cellSize: cs,
+                                            reachLimit: limits[a], surface: surface(i))
+            left[a] = abs(s.offsets[CorridorProfile.topColumn])
+            right[a] = abs(s.offsets[CorridorProfile.columns - 1 - CorridorProfile.topColumn])
+        }
+        left = smoothEdges(left); right = smoothEdges(right)
+        // Zweiter Durchgang mit den geglätteten Kanten.
+        var out: [CorridorProfile.Section] = []
+        out.reserveCapacity(m)
+        for a in 0..<m {
+            let i = inputs[a]
+            out.append(CorridorProfile.section(halfWidthCells: i.hw, visible: vis[a],
+                                               waterLeft: i.waterLeft, waterRight: i.waterRight,
+                                               bend: i.bend, riffle: i.riffle, cellSize: cs,
+                                               edges: (left[a], right[a]), reachLimit: limits[a],
+                                               surface: surface(i)))
+        }
+        return out
+    }
+
+    /// Median gegen einzelne Sprünge der Suche, danach Kastenmittel.
+    static func smoothEdges(_ v: [Double]) -> [Double] {
+        let m = v.count
+        guard m > 2 else { return v }
+        var med = v
+        var window: [Double] = []
+        for a in 0..<m {
+            window.removeAll(keepingCapacity: true)
+            for b in max(0, a - edgeMedianRadius)...min(m - 1, a + edgeMedianRadius) { window.append(v[b]) }
+            window.sort()
+            med[a] = window[window.count / 2]
+        }
+        var out = med
+        for a in 0..<m {
+            var sum = 0.0, cnt = 0.0
+            for b in max(0, a - edgeMeanRadius)...min(m - 1, a + edgeMeanRadius) { sum += med[b]; cnt += 1 }
+            out[a] = sum / cnt
+        }
+        return out
+    }
+}
+
 /// Baut den Korridor eines Bands aus denselben Größen, die `emitRibbon` für
 /// die Wasserfläche nutzt.
 struct CorridorBandBuilder {
@@ -278,13 +413,42 @@ struct CorridorBandBuilder {
     /// Hauptthread bei jedem Stützpunkt).
     static let sampleStride = 2
 
+    /// Die Stützpunkte, die einen Querschnitt bekommen (jeder
+    /// `sampleStride`-te und der letzte).
+    static func strideIndices(count: Int) -> [Int] {
+        guard count > 0 else { return [] }
+        var out = Array(stride(from: 0, to: count, by: sampleStride))
+        if (count - 1) % sampleStride != 0 { out.append(count - 1) }
+        return out
+    }
+
+    /// Deckel je Band-Stützpunkt, wie ihn das Korridor-Mesh dort hat: an den
+    /// Querschnitten der eigene, dazwischen linear nach Bogenlänge. Das Band
+    /// trägt denselben Deckel: in der Deckel-Tiefe liegen Band und Ufer nur
+    /// Millimeter auseinander, ein Band mit dem eigenen Deckel eines
+    /// Zwischenpunkts lag je zweitem Quad hinter dem Korridor (Querstreifen
+    /// ohne Wasser, Gremium, Befund 2; das Bett unter Wasser schreibt seitdem
+    /// zusätzlich keine Tiefe mehr, `corridor_wet.gdshader`).
+    static func meshLids(_ lids: [Double], arc: [Double]) -> [Double] {
+        let idx = strideIndices(count: lids.count)
+        var out = lids
+        guard idx.count >= 2 else { return out }
+        for s in 1..<idx.count {
+            let a0 = idx[s - 1], a1 = idx[s]
+            guard a1 - a0 > 1 else { continue }
+            let span = max(arc[a1] - arc[a0], 1e-12)
+            for a in (a0 + 1)..<a1 {
+                let t = (arc[a] - arc[a0]) / span
+                out[a] = lids[a0] + (lids[a1] - lids[a0]) * t
+            }
+        }
+        return out
+    }
+
     func emit(into mesh: inout RiverCorridorMesh, cellSize cs: Double, worldHalf half: Double) {
         let all = samples
         guard all.count >= 2 else { return }
-        var samples: [Sample] = []
-        samples.reserveCapacity(all.count / Self.sampleStride + 2)
-        for a in stride(from: 0, to: all.count, by: Self.sampleStride) { samples.append(all[a]) }
-        if (all.count - 1) % Self.sampleStride != 0 { samples.append(all[all.count - 1]) }
+        let samples = Self.strideIndices(count: all.count).map { all[$0] }
         let m = samples.count
         guard m >= 2 else { return }
         let k = CorridorProfile.columns

@@ -1,5 +1,6 @@
 // Ufer und Bett des Fluss-Korridors (Look E, Issue #239). Eingebunden von
-// corridor.gdshader (aktueller Band-Stand, schreibt Tiefe) und
+// corridor.gdshader (aktueller Band-Stand, trockenes Ufer, schreibt Tiefe),
+// corridor_wet.gdshader (aktueller Stand, Bett unter Wasser, ohne Tiefe) und
 // corridor_outgoing.gdshader (voriger Stand in der Zeitraffer-Blende, ohne
 // Tiefe — sonst verdeckte der ausblendende Stand den neuen).
 //
@@ -23,16 +24,25 @@ uniform float overlay_blend = 1.0;
 uniform float world_size = 100.0;
 uniform float grid_n = 256.0;
 
+// Wasser-Kalibrierung über die Brücke (Main.apply_calibration, Gruppe
+// `water`), default-frei wie in water.gdshader: das Bett unter dem Band ist
+// DASSELBE Bett wie unter Raster-Wasser und Seen (water_bed_color), die
+// Uferlinie dieselbe, an der das Band endet (CorridorProfile).
+uniform vec3 water_bed_color;
+uniform float water_corridor_shore;
+uniform float water_corridor_shore_bend;
+
 #include "res://shaders/corridor_common.gdshaderinc"
 #include "res://shaders/clouds.gdshaderinc"
 
 // Geschmackswerte des Korridors.
 const vec3 BANK_SOIL = vec3(0.24, 0.18, 0.12);      // Böschung, Prallhang (Erde)
-const vec3 BANK_GRAVEL = vec3(0.60, 0.56, 0.47);    // Kiesbank am Gleithang
-const vec3 BED_COLOR = vec3(0.40, 0.37, 0.29);      // Bett unter Wasser
-const vec3 WATER_INSCATTER = vec3(0.014, 0.055, 0.072); // Wasserkörper, tief (Petrol, Look-Iteration 14)
-const vec3 WATER_ABSORB = vec3(34.0, 14.0, 10.0);     // Beer-Lambert je Welt-Einheit Tiefe
-const float WET_RIM = 0.008;                        // nasser Saum über der Wasserlinie (Welt-Y; flache Ufer steigen kaum)
+const vec3 BANK_GRAVEL = vec3(0.60, 0.56, 0.47);    // Kies im Flachwasser am Gleithang
+const float WET_RIM_SHARE = 0.25;                   // nasser Saum jenseits der Uferlinie (Anteil der Wasser-Halbbreite) …
+const float WET_RIM_MIN = 0.012;                    // … mindestens (Welt) …
+const float WET_RIM_MAX = 0.05;                     // … höchstens (Welt)
+const float WET_RIM_HEIGHT = 0.03;                  // … und nur bis so hoch über dem Wasser (Welt-Y)
+const float BED_SHALLOW = 0.03;                     // bis zu dieser Tiefe scheint der Kies durch (Welt-Y)
 const float EDGE_FADE = 0.2;                        // Uferkante blendet ins Gelände (Anteil Querlage)
 const float FADE_CAP = 0.98;
 
@@ -43,6 +53,8 @@ varying float v_alpha;
 varying float v_bend;
 varying float v_bar;
 varying vec2 v_dir;
+varying float v_off;
+varying float v_water_half;
 
 float cor_hash(vec2 p) {
 	p = fract(p * vec2(123.34, 345.45));
@@ -84,6 +96,8 @@ void vertex() {
 	v_bend = UV2.x;
 	v_bar = UV2.y;
 	v_dir = t;
+	v_off = CUSTOM0.z;
+	v_water_half = CUSTOM0.w;
 }
 
 void fragment() {
@@ -101,9 +115,11 @@ void fragment() {
 	float steep = 1.0 - n_ws.y;
 
 	// Ufer: Grundton ist das Gelände daneben (bewachsenes Ufer), darauf
-	// Erde, wo die Böschung steil ist (Prallhang), und Kies auf der flachen
-	// Bank am Gleithang, fleckig entlang des Laufs. Direkt über der
-	// Wasserlinie ein nasser, dunkler Saum.
+	// Erde, wo die Böschung steil ist (Prallhang). Die trockene Bank am
+	// Gleithang malt der Korridor NICHT mehr selbst: dort zeigt das Gelände
+	// seinen Sand (SimRender.BarMaterial); beide zusammen lagen als zwei
+	// helle Bänder nebeneinander (Gremium, Befund 1). Direkt an der
+	// Uferlinie ein schmaler nasser, dunkler Saum.
 	float pebble = cor_noise(v_world.xz * 55.0) * 0.6 + cor_noise(v_world.xz * 140.0) * 0.4;
 	vec3 gravel = BANK_GRAVEL * mix(0.8, 1.12, pebble);
 	vec3 soil = BANK_SOIL * mix(0.8, 1.1, cor_noise(v_world.xz * 30.0));
@@ -119,17 +135,24 @@ void fragment() {
 	float cut = smoothstep(0.2, 0.55, steep) * (1.0 - top * 0.5) * facing_in;
 	vec3 bank = terrain_col * mix(1.0, 0.72, 1.0 - top);
 	bank = mix(bank, soil, cut);
-	bank = mix(bank, gravel, bar);
-	float wet = 1.0 - smoothstep(0.0, WET_RIM, above);
+	// Nasser Saum über den QUERVERSATZ zur Uferlinie (dieselbe wie im Band),
+	// nicht als Höhenfenster: auf flacher Aue steigt das Ufer kaum, ein
+	// Höhenfenster deckte dort die ganze Böschung (README Look E, verworfen).
+	float side = sign(v_off);
+	float shore = v_water_half
+		* (water_corridor_shore - water_corridor_shore_bend * side * clamp(v_bend, -1.0, 1.0));
+	float rim = clamp(WET_RIM_SHARE * v_water_half, WET_RIM_MIN, WET_RIM_MAX);
+	float wet = (1.0 - smoothstep(0.0, rim, abs(v_off) - shore))
+		* (1.0 - smoothstep(0.5 * WET_RIM_HEIGHT, WET_RIM_HEIGHT, above));
 	bank *= mix(1.0, 0.6, wet);
 
-	// Bett unter Wasser: Beer-Lambert aus der Tiefe des Profils, schräger
-	// Blick verlängert den Weg durchs Wasser.
+	// Bett unter Wasser: das gemeinsame Bett (water_bed_color), im
+	// Flachwasser am Gleithang Kies. Den Wasserkörper malt das Band darüber
+	// mit der gemeinsamen Deckkraft-Rampe; der frühere eigene Beer-Lambert
+	// hier färbte den Thalweg fast schwarz und den Rand hell.
 	float d = max(v_depth, 0.0);
-	float ndv = clamp(dot(normalize(VIEW), mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0)), 0.25, 1.0);
-	vec3 trans = exp(-WATER_ABSORB * d / ndv);
-	vec3 bed = mix(BED_COLOR, gravel * 0.8, bar) * mix(0.85, 1.05, pebble);
-	vec3 under = bed * trans + WATER_INSCATTER * (1.0 - trans);
+	vec3 shallow_bed = mix(water_bed_color, gravel * 0.8, bar);
+	vec3 under = mix(shallow_bed, water_bed_color, smoothstep(0.0, BED_SHALLOW, d)) * mix(0.85, 1.05, pebble);
 	float submerged = smoothstep(-0.002, 0.004, v_depth);
 	vec3 col = mix(bank, under, submerged);
 	col *= cloud_light(v_world, u_time);
@@ -147,10 +170,10 @@ void fragment() {
 	float presence = smoothstep(0.02, 0.25, a);
 	float edge = 1.0 - smoothstep(1.0 - EDGE_FADE, 1.0, across);
 	// Über Wasser deckt der Korridor nur, wo er etwas zeigt: Wand am
-	// Prallhang, Kies am Gleithang, nasser Saum. Sonst scheint das Gelände
-	// durch (es liegt dort ohnehin fast auf der Böschung); die Makrofarbe
+	// Prallhang, nasser Saum. Sonst scheint das Gelände durch (es liegt dort
+	// ohnehin fast auf der Böschung, samt Sand der Bank); die Makrofarbe
 	// allein ist nicht das fertig schattierte Gelände und las sich grau.
-	float shows = max(max(cut, bar), wet * 0.85);
+	float shows = max(cut, wet * 0.85);
 	float alpha = presence * edge * mix(shows, 1.0, submerged);
 	float share = ribbon_outgoing ? 1.0 - ribbon_blend : ribbon_blend;
 	if (share < 1.0) {
@@ -158,6 +181,13 @@ void fragment() {
 	}
 	// Unsichtbares schreibt keine Tiefe: sonst schnitte der einblendende
 	// Stand (Blende 0) das ausblendende Wasser ab (Review Neon Nr. 4).
+	// Der aktuelle Stand teilt sich in Ufer (mit Tiefe) und Bett (ohne).
+#ifdef CORRIDOR_DRY
+	alpha *= step(submerged, 0.5);
+#endif
+#ifdef CORRIDOR_WET
+	alpha *= step(0.5, submerged);
+#endif
 	if (alpha < 0.01) {
 		discard;
 	}

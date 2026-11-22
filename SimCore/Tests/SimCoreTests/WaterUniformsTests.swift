@@ -123,6 +123,9 @@ final class WaterUniformsTests: XCTestCase {
     private static let runColors = ["water_riffle_color", "water_foam_color"]
     /// Nur das Band: Schaum-Muster und Weißwasser am Ufer.
     private static let ribbonFoamScalars = ["water_foam_scale", "water_foam_outer"]
+    /// Uferlinie des Korridors: das Band endet dort, der Korridor setzt dort
+    /// seinen nassen Saum an (Gremium, Befund 1).
+    private static let corridorShoreScalars = ["water_corridor_shore", "water_corridor_shore_bend"]
     /// Nur das Raster: Fließen an Steilstrecken und Seefarbe.
     private static let rasterRunScalars = ["water_raster_steep_lo", "water_raster_steep_hi"]
     private static let rasterRunColors = ["water_lake_color"]
@@ -132,7 +135,8 @@ final class WaterUniformsTests: XCTestCase {
             + wallScalars + runScalars + rasterRunScalars,
         "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars
             + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars
-            + runScalars + ribbonFoamScalars + ["water_ocean_depth_span"],
+            + runScalars + ribbonFoamScalars + corridorShoreScalars + ["water_ocean_depth_span"],
+        "game/shaders/corridor.gdshaderinc": corridorShoreScalars,
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
@@ -142,6 +146,8 @@ final class WaterUniformsTests: XCTestCase {
             + runColors + rasterRunColors,
         "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors + profileColors
             + ["water_bed_color"] + runColors + ["water_ocean_shallow_color"],
+        // Das Bett unter dem Band ist dasselbe wie unter dem Raster-Wasser.
+        "game/shaders/corridor.gdshaderinc": ["water_bed_color"],
         // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
         // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
         // bleibt die Optik (Fresnel, Rauheit, Specular, oben).

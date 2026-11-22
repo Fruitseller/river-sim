@@ -954,13 +954,16 @@ func _setup_scene() -> void:
 		water_mats.append(river_mat)
 		water_mats.append(river_prev_mat)
 	apply_calibration(sim, "water", water_mats)
+	if corridor != null:
+		# Bettfarbe und Uferlinie teilt der Korridor mit dem Band darüber.
+		apply_calibration(sim, "water", corridor.materials())
 	# Wolkenkörper über dem Kamm (#174 D) teilen Rauschen und Basis mit den
 	# Wolkenschatten; `cloud_mats` sind alle Materialien, die beides lesen.
 	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, hscale, N)
 	add_child(cloud_bodies)
 	cloud_mats.assign(water_mats)
 	if corridor != null:
-		cloud_mats.append_array([corridor.mat, corridor.prev_mat])
+		cloud_mats.append_array(corridor.materials())
 	cloud_mats.append_array(Lighting.cloud_body_materials(cloud_bodies))
 	Lighting.apply_clouds(cloud_mats, render_quality)
 	add_child(atmosphere.make_valley_fog(render_quality, world_size, hscale, N, sea * hscale))
