@@ -97,7 +97,6 @@ final class CalibrationRegistryTests: XCTestCase {
             "water_raster_steep_hi": .scalar(WaterRender.rasterSteepHi),
             "water_foam_amount": .scalar(WaterRender.waterFoamAmount),
             "water_foam_scale": .scalar(WaterRender.waterFoamScale),
-            "water_foam_outer": .scalar(WaterRender.waterFoamOuter),
             "water_river_specular": .scalar(WaterRender.waterRiverSpecular),
             "water_cloud_reflection": .scalar(WaterRender.waterCloudReflection),
             "water_ribbon_shoal_mix": .scalar(WaterRender.ribbonShoalMix),

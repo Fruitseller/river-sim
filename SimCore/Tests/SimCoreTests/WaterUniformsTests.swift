@@ -121,8 +121,9 @@ final class WaterUniformsTests: XCTestCase {
         "water_cloud_reflection",
     ]
     private static let runColors = ["water_riffle_color", "water_foam_color"]
-    /// Nur das Band: Schaum-Muster und Weißwasser am Ufer.
-    private static let ribbonFoamScalars = ["water_foam_scale", "water_foam_outer"]
+    /// Nur das Band: Schaum-Muster (Weißwasser nur aus den Lauf-Größen, seit
+    /// dem Gremium kein eigener Außenbogen-Schaum mehr, Befund 3).
+    private static let ribbonFoamScalars = ["water_foam_scale"]
     /// Uferlinie des Korridors: das Band endet dort, der Korridor setzt dort
     /// seinen nassen Saum an (Gremium, Befund 1).
     private static let corridorShoreScalars = ["water_corridor_shore", "water_corridor_shore_bend"]
