@@ -109,7 +109,20 @@ erst ab Antrieb 0,3), Raster-Weißwasser erst an echten Stufen
 - SimCore-Suite: 681 Tests, 0 Fehler (macOS, M4 Max).
 - Godot-Vertragstests headless: alle Marken, kein `FAIL:`.
 - `simperf --hash`: 95cf93ca1b40985c vorher und nachher.
-- Bildzeit: s. PR (`scripts/timelapse-timing.sh`, interleaved).
+- Bildzeit: `scripts/timelapse-timing.sh`, interleaved alt/neu, 4 Runden je
+  Stand, Flusstal-Bühne im Zeitraffer (Seed 1337, Jahr 20.000, Kamera
+  `detail`), maximiert 3456×2104. `balanced` rendert mit 0,67 je Achse
+  (MetalFX), `quality` nativ. OHNE `RS_TIMING_EXCLUSIVE`: eine andere
+  Sitzung startete laufend ein headless Godot (Import, keine GPU), in fast
+  allen Läufen 1–2 fremde Godots. Median über die Runden, Mittel / p95:
+
+  | Stufe | vorher | nachher |
+  | --- | --- | --- |
+  | `balanced` (0,67) | 11,73 / 13,50 ms | 11,68 / 13,56 ms |
+  | `quality` (1,0) | 18,06 / 20,58 ms | 17,49 / 19,93 ms |
+
+  Kein messbarer Unterschied (Streuung je Stand ±0,6–0,8 ms); der Render
+  rechnet nur auf der CPU etwas anders, die Shader sind gleich teuer.
 
 ## Folgepunkte
 
