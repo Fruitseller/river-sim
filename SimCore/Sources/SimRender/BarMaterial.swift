@@ -7,9 +7,10 @@ import SimCore
 /// Reine Render-Ableitung aus dem Sim-Zustand von Paket B, zustandslos, ändert
 /// das Terrain nie (Muster wie `ForestCanopyMask`):
 ///  1. **Sand** nur auf der JUNGEN Gleithang-Bank direkt am Gerinne: jung
-///     nach `Terrain.barAge` (`WaterRender.barSandYearsLo/Hi`) UND nah an der
-///     aktuellen Zentrumslinie (`barSandReachLo/Hi`, in Kanalbreiten). Was der
-///     Lauf früher überstrichen hat, ist Aue, kein Sand.
+///     nach `Terrain.barAge` (`WaterRender.barSandYearsLo/Hi`) UND nah am
+///     Gleithang-Ufer der aktuellen Zentrumslinie (`barSandReachLo/Hi`, in
+///     Kanalbreiten ab der Wasserlinie, s. `lineDistance`). Was der Lauf
+///     früher überstrichen hat, ist Aue, kein Sand.
 ///  2. **Pionier-Grün** dahinter: die Sim setzt den Bewuchs beim Stempeln auf
 ///     0 und lässt ihn über Jahrhunderte nachwachsen; die junge Bank liest
 ///     deshalb über `barPioneer` grüner, statt als kahler Trockenrasen.
@@ -130,38 +131,55 @@ public enum BarMaterial {
         return out
     }
 
-    /// Abstand jeder BANK-Zelle (`barAge` ≥ 0) zur nächsten AKTUELLEN
-    /// Zentrumslinie in örtlichen Kanalbreiten (Breite aus dem Abfluss,
-    /// `MeanderState.beltWidthCells`, dieselbe Kurve wie Bett und Band).
+    /// Wirksamer Abstand jeder BANK-Zelle (`barAge` ≥ 0) zum Gleithang-Ufer
+    /// der nächsten AKTUELLEN Zentrumslinie, in örtlichen Kanalbreiten (Breite
+    /// aus dem Abfluss, `MeanderState.beltWidthCells`, dieselbe Kurve wie Bett
+    /// und Band). Gremium 3, Befund 2a: bis hierher zählte der Abstand ab der
+    /// Zentrumslinie und auf BEIDEN Seiten; der Sand lag als 3,7-mal so breiter
+    /// heller Streifen symmetrisch um das Wasser („Fluss im Fluss“). Jetzt:
+    ///  - gemessen ab der Wasserlinie (`WaterRender.barSandWaterlineWidths`,
+    ///    dort endet das Band am Korridor-Ufer), ≤ 0 im Wasser;
+    ///  - geteilt durch den Innenbogen-Anteil der Seite
+    ///    (`WaterRender.barSandInnerShare`, Bogenstärke der Sim wie im
+    ///    Querprofil des Bands): am Gleithang voll, auf gerader Strecke halb,
+    ///    am Prallhang kein Sand.
     /// Gemessen bis `reachWidths`, sonst `.infinity`. Punkt-Strecke-Abstand je
-    /// Knotenpaar, Breite gemittelt. Parallel über Zeilenbereiche: jede
-    /// Strecke liegt in den Zeilenbändern, die ihr Kasten berührt, und jeder
-    /// Bereich schreibt nur seine Zeilen (Minimum, reihenfolgeunabhängig).
+    /// Knotenpaar, Breite und Bogenstärke gemittelt. Parallel über
+    /// Zeilenbereiche: jede Strecke liegt in den Zeilenbändern, die ihr Kasten
+    /// berührt, und jeder Bereich schreibt nur seine Zeilen (Minimum,
+    /// reihenfolgeunabhängig).
     static func lineDistance(_ terrain: Terrain, barAge: [Double], reachWidths: Double) -> [Float] {
         let n = terrain.cfg.n, cnt = n * n
         var dist = [Float](repeating: .infinity, count: cnt)
         guard reachWidths > 0, barAge.count == cnt else { return dist }
-        struct Segment { var ax, az, sx, sz, invL2, invB2: Double; var x0, x1, z0, z1: Int }
+        struct Segment { var ax, az, sx, sz, invL2, invL, b, bend: Double; var x0, x1, z0, z1: Int }
         var segments: [Segment] = []
+        let edge = WaterRender.barSandWaterlineWidths
+        let h = terrain.h
         for ch in terrain.meander.channels where ch.nodes.count >= 2 && ch.discharge.count >= ch.nodes.count {
             let nodes = ch.nodes
+            let bend = MeanderState.bendStrength(ch, config: terrain.cfg,
+                                                 heightAt: { bilinearGrid(h, $0.x, $0.z, n: n) })
             var wA = MeanderState.beltWidthCells(discharge: ch.discharge[0], config: terrain.cfg)
-            for s in 0..<(nodes.count - 1) {
+            // Bis zum Anschluss wie das Band (`renderNodeCount`).
+            for s in 0..<(renderNodeCount(nodes) - 1) {
                 let wB = MeanderState.beltWidthCells(discharge: ch.discharge[s + 1], config: terrain.cfg)
                 defer { wA = wB }
                 let a = nodes[s], e = nodes[s + 1]
                 guard a.x.isFinite, a.z.isFinite, e.x.isFinite, e.z.isFinite,
                       abs(a.x) < 1e9, abs(a.z) < 1e9, abs(e.x) < 1e9, abs(e.z) < 1e9 else { continue }
                 let b = max(1e-6, 0.5 * (wA + wB))
-                let r = reachWidths * b
+                let r = (edge + reachWidths) * b
                 let x0 = max(0, Int((min(a.x, e.x) - r).rounded(.down)))
                 let x1 = min(n - 1, Int((max(a.x, e.x) + r).rounded(.up)))
                 let z0 = max(0, Int((min(a.z, e.z) - r).rounded(.down)))
                 let z1 = min(n - 1, Int((max(a.z, e.z) + r).rounded(.up)))
                 guard x0 <= x1, z0 <= z1 else { continue }
                 let sx = e.x - a.x, sz = e.z - a.z
+                let l2 = max(1e-12, sx * sx + sz * sz)
+                let beta = s + 1 < bend.count ? 0.5 * (bend[s] + bend[s + 1]) : 0
                 segments.append(Segment(ax: a.x, az: a.z, sx: sx, sz: sz,
-                                        invL2: 1 / max(1e-12, sx * sx + sz * sz), invB2: 1 / (b * b),
+                                        invL2: 1 / l2, invL: 1 / l2.squareRoot(), b: b, bend: beta,
                                         x0: x0, x1: x1, z0: z0, z1: z1))
             }
         }
@@ -172,7 +190,7 @@ public enum BarMaterial {
         for (si, sg) in segments.enumerated() {
             for bi in (sg.z0 / band)...(sg.z1 / band) { buckets[bi].append(Int32(si)) }
         }
-        let reach2 = reachWidths * reachWidths
+        let shareLo = -WaterRender.barSandInnerShare, shareHi = WaterRender.barSandInnerShare
         barAge.withUnsafeBufferPointer { ab in
         dist.withUnsafeMutableBufferPointer { db in
             let pa = ab.baseAddress!, pd = db.baseAddress!
@@ -191,11 +209,18 @@ public enum BarMaterial {
                                 let px = Double(i) - sg.ax
                                 let u = max(0, min(1, (px * sg.sx + pz * sg.sz) * sg.invL2))
                                 let dx = px - u * sg.sx, dz = pz - u * sg.sz
-                                let d2 = (dx * dx + dz * dz) * sg.invB2
-                                if d2 <= reach2 {
-                                    let d = Float(d2.squareRoot())
-                                    if d < pd[k] { pd[k] = d }
+                                let beyond = (dx * dx + dz * dz).squareRoot() / sg.b - edge
+                                var d = beyond
+                                if beyond > 0 {
+                                    // Querlage: + rechts der Laufrichtung, `(-tz, tx)`
+                                    // wie Band und Korridor; Gleithang, wo sie das
+                                    // Vorzeichen der Bogenstärke trägt.
+                                    let side = (pz * sg.sx - px * sg.sz) * sg.invL
+                                    let inner = smoothstep(shareLo, shareHi, side >= 0 ? sg.bend : -sg.bend)
+                                    guard inner > 1e-3 else { continue }
+                                    d = beyond / inner
                                 }
+                                if d <= reachWidths, Float(d) < pd[k] { pd[k] = Float(d) }
                             }
                         }
                     }

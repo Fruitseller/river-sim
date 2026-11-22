@@ -208,6 +208,53 @@ func oxbowNodeRange(count: Int) -> ClosedRange<Int>? {
     return first...last
 }
 
+/// Knotenzahl eines Mäanderlaufs, die der Render zeichnet (Gremium 3,
+/// Befund 1, „gläserne Klingen"): der LETZTE Knoten eines Zubringers ist
+/// sein Anschluss im Hauptlauf (Seed 7, Jahr 20.000: 150 von 401 Läufen).
+/// Wandert der Zubringer, bleibt der Anschluss stehen, und das letzte Segment
+/// wird lang (bis 12 Zellen, Knotenabstand sonst ~1,5) und läuft schräg oder
+/// sogar zurück über den eigenen Lauf. Das Band faltete sich dort über sich
+/// selbst (Catmull-Rom überschwingt zusätzlich), das Wasserfeld stempelte
+/// den Saum als gerade Linie quer über die Wiese. Gezeichnet wird nur bis
+/// vor das erste Endsegment über `WaterRender.ribbonJunctionJumpCells`; den
+/// Rest übernimmt die Mündung (`mouthPath`) bzw. der Anschluss ans Band des
+/// Hauptlaufs entlang der D8-Kette (`RiverRibbonRenderer.joinPath`).
+func renderNodeCount(_ nodes: [MeanderNode]) -> Int {
+    var m = nodes.count
+    let limit = WaterRender.ribbonJunctionJumpCells * WaterRender.ribbonJunctionJumpCells
+    while m > 2 {
+        let dx = nodes[m - 1].x - nodes[m - 2].x, dz = nodes[m - 1].z - nodes[m - 2].z
+        guard dx * dx + dz * dz > limit else { break }
+        m -= 1
+    }
+    return m
+}
+
+/// Knoten-Indizes `0..<count` ohne Haarnadeln (Gremium 3, Befund 3): ein
+/// innerer Knoten, an dem die Linie um mehr als `WaterRender.ribbonHairpinCos`
+/// wendet, fällt weg, so lange, bis keiner mehr wendet. Aus einem Z (vor,
+/// zurück, vor) wird so ein Lauf; Anfang und Ende bleiben.
+func hairpinFreeIndices(_ nodes: [MeanderNode], count: Int) -> [Int] {
+    var keep = Array(0..<min(count, nodes.count))
+    var changed = true
+    while changed && keep.count > 2 {
+        changed = false
+        var a = 1
+        while a < keep.count - 1 && keep.count > 2 {
+            let p0 = nodes[keep[a - 1]], p1 = nodes[keep[a]], p2 = nodes[keep[a + 1]]
+            let ux = p1.x - p0.x, uz = p1.z - p0.z, vx = p2.x - p1.x, vz = p2.z - p1.z
+            let lu = (ux * ux + uz * uz).squareRoot(), lv = (vx * vx + vz * vz).squareRoot()
+            if lu < 1e-9 || lv < 1e-9 || (ux * vx + uz * vz) / (lu * lv) < WaterRender.ribbonHairpinCos {
+                keep.remove(at: a)
+                changed = true
+            } else {
+                a += 1
+            }
+        }
+    }
+    return keep
+}
+
 /// Halbbreite (Zellen) aus dem Abfluss `q` (Zellen Einzugsgebiet), bezogen
 /// auf die Render-Schwelle der Config. Kurve und Grenzen:
 /// `WaterRender.ribbonHalfWidthCells`.

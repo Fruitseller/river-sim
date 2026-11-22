@@ -1207,8 +1207,11 @@ void fragment() {
 	// hierher malte der Saum einen grau-beigen Streifen um jedes Band, der
 	// Lauf las sich in der Totalen als Straße. Er dunkelt jetzt nur ab, wie
 	// der Schatten der Ufergehölze, und liegt auch über dem Kronendach.
-	terr = mix(terr, vec3(0.045, 0.085, 0.035), shore * 0.8);
-	land_roughness = mix(land_roughness, 0.36, shore * 0.55);
+	// Gremium 3, Befund 2d/2e: mit 0,8 und Glanz (0,55) lag der Saum als
+	// breiter dunkler, glänzender Konturring um jedes Gewässer und schien
+	// neben dem Korridor durch; jetzt nur ein Hauch.
+	terr = mix(terr, vec3(0.045, 0.085, 0.035), shore * 0.45);
+	land_roughness = mix(land_roughness, 0.36, shore * 0.25);
 
 	// Pixel-Ausblendung der Kräuselung wie im Ozean (unter Pixelgröße bleibt
 	// die Fläche ruhig), aus der Pixelgröße oben: der Wasser-Block darunter
@@ -1273,7 +1276,9 @@ void fragment() {
 		// Bett: überwiegend die gemeinsame Bett-Farbe (WaterRender.waterBedColor),
 		// nur ein Rest Gelände. Das volle Gelände trug sein Erosions-Detail ins
 		// Wasser — Höhenlinien-Moiré und Ringe auf Seen und breiten Läufen.
-		vec3 bed = mix(terr * 0.55, water_bed_color, 0.75 * wet);
+		// Gremium 3, Befund 2b: mit 25 % hellem Gelände lag ein heller
+		// Bett-Ring an jeder Raster-Wasserlinie, den das Band nicht hat.
+		vec3 bed = mix(terr * 0.4, water_bed_color, 0.92 * wet);
 		float opacity = mix(water_opacity_shallow, water_opacity_deep, depth);
 		float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 		float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
@@ -1288,7 +1293,10 @@ void fragment() {
 		// Weißwasser nur an Gefällestufen (nicht mehr als Saum an jeder
 		// Uferlinie), fleckig über eine Schwelle auf demselben Rauschen.
 		float foam_n = vnoise(wp * 4.0 - d1 * u_time * 1.5);
-		float foam = smoothstep(1.0 - 0.55 * steep, 1.06 - 0.55 * steep, foam_n) * steep * water_foam_amount;
+		// Gremium 3, Befund 5: an Zellstufen sprang `steep` auch im Flachen
+		// an und malte weiße Flecken; Schaum erst an echten Stufen.
+		float foam = smoothstep(1.0 - 0.4 * steep, 1.06 - 0.4 * steep, foam_n)
+			* smoothstep(0.4, 1.0, steep) * water_foam_amount;
 		water = mix(water, water_riffle_color, steep * smoothstep(0.3, 0.7, foam_n));
 		vec3 water_final = mix(bed, water, opacity);
 		// Spiegelung statt Farbe (Befund #174 „See milchig"): den Himmel spiegelt

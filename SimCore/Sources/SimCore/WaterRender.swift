@@ -618,6 +618,22 @@ public enum WaterRender {
     public static let ribbonJoinSearchCells = 8
     /// Ab dieser Deckung des früheren Bands ist der Zubringer angekommen.
     public static let ribbonJoinCoverage = 0.5
+    /// Endsegment eines Laufs, ab dem der Render es nicht mehr zeichnet
+    /// (Zellen, `renderNodeCount` in SimRender): der letzte Knoten eines
+    /// Zubringers ist sein Anschluss im Hauptlauf und bleibt stehen, wenn der
+    /// Lauf wandert. Knotenabstand sonst ~1,5 Zellen (`meanderNodeSpacing`),
+    /// das Doppelte trennt beides (Seed 7, Jahr 20.000: 168 Endsegmente über
+    /// 3 Zellen, bis 12,4).
+    public static let ribbonJunctionJumpCells = 3.0
+    /// Wende eines Knotens, ab der der Render ihn weglässt (Kosinus des
+    /// Winkels zwischen ankommendem und abgehendem Segment): −0,5 = 120°.
+    /// Seed 7, Jahr 20.000: Läufe mit drei Lagen übereinander (Z-Form),
+    /// Wenden bis 173°; echte Mäanderbögen wenden je Knoten um wenige Grad.
+    public static let ribbonHairpinCos = -0.5
+    /// Längste nasse Strecke eines Sees (Stützpunkte à ~0,5 Zellen), die ein
+    /// Band mit Land auf beiden Seiten als Gerinne überbrückt: Kolke im
+    /// Lauf, keine Seen (Gremium 3, Befund 3).
+    public static let ribbonPondBridgeSamples = 8
 
 
     /// Raster-Wasser an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305,
@@ -1194,7 +1210,10 @@ public enum WaterRender {
     /// das las sich im Licht als Schwimmbad-Blau).
     ///
     /// Look-Iteration 14: Petrol statt Schieferblau (vorher 0,010/0,050/0,085).
-    public static let waterDeepColor = (r: 0.006, g: 0.050, b: 0.062)
+    ///
+    /// Gremium 3, Befund 6: in der Totalen lasen sich die Läufe dunkel und
+    /// matt wie Asphalt (vorher 0,006/0,050/0,062); eine Spur heller.
+    public static let waterDeepColor = (r: 0.011, g: 0.068, b: 0.080)
     /// Schlick-Näherung: `pow(1 − n·v, fresnelExponent)`. Um diesen Anteil
     /// tritt der Wasserkörper hinter Godots Spiegelung zurück.
     public static let fresnelExponent = 5.0
@@ -1561,9 +1580,10 @@ public enum WaterRender {
     ///    `barSandYearsHi` Jahren nach der letzten Ablagerung. Das Raster der
     ///    Sim ist der Gürtel-Teilschritt im 100-Jahr-Schritt; darunter lässt
     ///    sich „jung“ nicht auflösen.
-    ///  - **Nähe** zur AKTUELLEN Zentrumslinie (`barSandReachLo/Hi`, in
-    ///    örtlichen Kanalbreiten, Bandkante bei 0,5): ein Streifen von etwa
-    ///    einer Kanalbreite neben dem Band.
+    ///  - **Nähe** zum Gleithang-Ufer der AKTUELLEN Zentrumslinie
+    ///    (`barSandReachLo/Hi`, in örtlichen Kanalbreiten ab der Wasserlinie
+    ///    `barSandWaterlineWidths`, geteilt durch den Innenbogen-Anteil
+    ///    `barSandInnerShare`, s. `SimRender.BarMaterial.lineDistance`).
     ///
     /// Befund #174 („sieht komisch aus“, Seed 1337, Jahr 2.305): mit dem
     /// Alters-Horizont allein (800/3000, `ac5a85b`, kalibriert in Jahr 20.000)
@@ -1588,9 +1608,25 @@ public enum WaterRender {
     /// Look-Iteration 12 (Auwald): 0,8/1,2 statt 1,0/1,5 — offener Sand nur
     /// noch an der Bank direkt am Gerinne, dahinter rasch Grün und Gehölz;
     /// mit dem breiteren Sand lag jeder Mäander in einem hellen Korridor.
-    public static let barSandReachLo = 0.8
+    ///
+    /// Gremium 3, Befund 2a („Fluss im Fluss“): 0,8/1,2 zählten ab der
+    /// ZENTRUMSLINIE und auf beiden Seiten; der Sand lag als heller Streifen
+    /// von 3,7-facher Wasserbreite symmetrisch um den Lauf und las sich als
+    /// zweites, breiteres Flussbett. Jetzt ab der Wasserlinie und nur am
+    /// Gleithang voll: 0,15/0,45 Kanalbreiten (eine schmale Bank, im starken
+    /// Bogen bis ~0,8 Breiten ab der Mitte, auf gerader Strecke die Hälfte,
+    /// am Prallhang keine).
+    public static let barSandReachLo = 0.15
     /// s. `barSandYearsLo`.
-    public static let barSandReachHi = 1.2
+    public static let barSandReachHi = 0.45
+    /// Wasserlinie in Kanalbreiten ab der Zentrumslinie: dort endet das Band
+    /// am Korridor-Ufer (`corridorShoreFraction` der Halbbreite).
+    public static let barSandWaterlineWidths = 0.5 * corridorShoreFraction
+    /// Innenbogen-Anteil einer Seite: `smoothstep(−x, x, ±Bogenstärke)`,
+    /// + am Gleithang. Ab Bogenstärke 0,25 voller Sand, gerade Strecke halb,
+    /// Prallhang ab 0,25 kein Sand (die Bogenstärke der Sim, dieselbe wie im
+    /// Querprofil des Bands, `water_ribbon_bend_depth`).
+    public static let barSandInnerShare = 0.25
 
     /// Sprenkel-Filter: Sand bleibt nur, wo von den 8 Nachbarn mindestens
     /// `barSandNeighboursLo` selbst Sand tragen (voll ab `…Hi`). Feste Läufe
@@ -1946,10 +1982,16 @@ public enum WaterRender {
     public static let waterFoamScale = 6.0
     /// Specular des FLIESSENDEN Wassers (Godot F0 = 0,16 · s²): weniger
     /// Himmel über dem Wasserkörper. Stillwasser behält `waterSpecular`.
-    public static let waterRiverSpecular = 0.25
+    ///
+    /// Gremium 3, Befund 6: 0,32 statt 0,25 — etwas mehr Himmel, damit der
+    /// Lauf in der Totalen nicht matt wie Asphalt liegt.
+    public static let waterRiverSpecular = 0.32
     /// Tiefe eines Sees (Raster-Wasser, linear): blauer und dunkler als der
     /// petrolgrüne Lauf, damit See und Fluss sich unterscheiden (Referenz f).
-    public static let waterLakeColor = (r: 0.008, g: 0.040, b: 0.095)
+    ///
+    /// Gremium 3, Befund 2b: näher am Lauf (vorher 0,008/0,040/0,095): das
+    /// stehende Raster-Wasser las sich als anderes Wasser als das Band daneben.
+    public static let waterLakeColor = (r: 0.010, g: 0.055, b: 0.085)
     /// Wolkenspiegelung auf Stillwasser (Seen, Altarme): Helligkeit der
     /// gespiegelten Wolkendeckung.
     public static let waterCloudReflection = 0.6

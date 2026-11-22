@@ -237,6 +237,10 @@ public final class RiverRibbonRenderer {
         /// Wasserspiegel (Sim-Höhe), auf dem das Band aufliegt; `nil` = das Band
         /// folgt dem GELÄNDE und jede Kante bekommt ihre eigene lokale Höhe.
         var surface: Double?
+        /// Überbrückter Kolk im Gerinne (`applyWaterHandover`): das Band liegt
+        /// weiter auf dem Spiegel, blendet aber nicht aus, und der Korridor
+        /// läuft durch (`corridorPresence` zählt ihn als Land).
+        var bridged = false
         /// Signierte Bogenstärke (−1 … +1, `MeanderState.bendStrength`) → UV2.y:
         /// Tiefenfarbe nach Querprofil. 0 = symmetrisch (Delta-Arm, Altarm).
         var bend: Double = 0
@@ -449,20 +453,32 @@ public final class RiverRibbonRenderer {
         for chIndex in order {
             let ch = channels[chIndex]
             let nodes = ch.nodes
-            let m = nodes.count
-            if m < 2 { continue }
+            // Ohne das lange Endsegment zum Anschluss im Hauptlauf (Gremium 3,
+            // Befund 1): dort faltete sich das Band über sich selbst.
+            let mTrim = renderNodeCount(nodes)
+            if mTrim < 2 { continue }
             // Kanäle mit unvollständigem/nicht-endlichem Abfluss oder extremen Koordinaten
             // überspringen, um OOB-Traps und Double-to-Int-Konvertierungsfehler zu verhindern.
-            guard ch.discharge.count >= m, ch.born.isEmpty || ch.born.count >= m else { continue }
+            guard ch.discharge.count >= mTrim, ch.born.isEmpty || ch.born.count >= mTrim else { continue }
             guard !nodes.contains(where: {
                 !$0.x.isFinite || !$0.z.isFinite || abs($0.x) > 1e9 || abs($0.z) > 1e9
             }) else { continue }
-            guard !ch.discharge.prefix(m).contains(where: { !$0.isFinite || abs($0) > 1e9 }) else { continue }
+            guard !ch.discharge.prefix(mTrim).contains(where: { !$0.isFinite || abs($0) > 1e9 }) else { continue }
             // Bogenstärke je Knoten aus der Gürtel-Geometrie der Sim (dieselbe
             // Größe, mit der `beltStamp` den Kolk nach außen legt).
             let hgridBend = terrain.h
             let nodeBend = MeanderState.bendStrength(ch, config: terrain.cfg,
                                                      heightAt: { bilinearGrid(hgridBend, $0.x, $0.z, n: n) })
+            // Haarnadeln der Zentrumslinie (Gremium 3, Befund 3): die Sim lässt
+            // Knoten stehen, an denen die Linie fast auf sich selbst
+            // zurückläuft (Wende über `ribbonHairpinCos`); das Band lag dort in
+            // drei Lagen übereinander und faltete sich („zerknittert“). Der
+            // Render zeichnet ohne diese Knoten.
+            let keep = hairpinFreeIndices(nodes, count: mTrim)
+            let rNodes = keep.map { nodes[$0] }, rQ = keep.map { ch.discharge[$0] }
+            let rBend = keep.map { $0 < nodeBend.count ? nodeBend[$0] : 0 }, rBorn = keep.map { ch.bornAt($0) }
+            let m = keep.count
+            if m < 2 { continue }
             // Catmull-Rom-Subdivision der Zentrumslinie; Abfluss linear je Segment.
             var px: [Double] = [], pz: [Double] = [], pq: [Double] = [], pb: [Double] = []
             var pBorn: [Double] = []
@@ -470,8 +486,8 @@ public final class RiverRibbonRenderer {
             pz.reserveCapacity(m * subdivisions)
             pq.reserveCapacity(m * subdivisions)
             for i in 0..<(m - 1) {
-                let p0 = nodes[max(i - 1, 0)], p1 = nodes[i]
-                let p2 = nodes[i + 1], p3 = nodes[min(i + 2, m - 1)]
+                let p0 = rNodes[max(i - 1, 0)], p1 = rNodes[i]
+                let p2 = rNodes[i + 1], p3 = rNodes[min(i + 2, m - 1)]
                 for s in 0..<subdivisions {
                     let t = Double(s) / Double(subdivisions)
                     let t2 = t * t, t3 = t2 * t
@@ -481,16 +497,16 @@ public final class RiverRibbonRenderer {
                     pz.append(0.5 * (2 * p1.z + (p2.z - p0.z) * t
                         + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2
                         + (3 * p1.z - p0.z - 3 * p2.z + p3.z) * t3))
-                    pq.append(ch.discharge[i] + (ch.discharge[i + 1] - ch.discharge[i]) * t)
-                    pb.append(nodeBend[i] + (nodeBend[i + 1] - nodeBend[i]) * t)
+                    pq.append(rQ[i] + (rQ[i + 1] - rQ[i]) * t)
+                    pb.append(rBend[i] + (rBend[i + 1] - rBend[i]) * t)
                     // Geburtsjahr wie `MeanderState.resample`: linear, neben −∞
                     // das des näheren Knotens.
-                    let b0 = ch.bornAt(i), b1 = ch.bornAt(i + 1)
+                    let b0 = rBorn[i], b1 = rBorn[i + 1]
                     pBorn.append(b0.isFinite && b1.isFinite ? b0 + (b1 - b0) * t : (t < 0.5 ? b0 : b1))
                 }
             }
-            px.append(nodes[m - 1].x); pz.append(nodes[m - 1].z); pq.append(ch.discharge[m - 1])
-            pb.append(nodeBend[m - 1]); pBorn.append(ch.bornAt(m - 1))
+            px.append(rNodes[m - 1].x); pz.append(rNodes[m - 1].z); pq.append(rQ[m - 1])
+            pb.append(rBend[m - 1]); pBorn.append(rBorn[m - 1])
             let cnt = px.count
             // Deckkraft: Abfluss-Rampe je Sample (fein auslaufen statt harter
             // renderMinCells-Kante) × Stream-Map-Kohärenz des ganzen Kanals
@@ -643,7 +659,26 @@ public final class RiverRibbonRenderer {
             // Kartografische Hierarchie: nur Zentrumslinien, die wenigstens
             // Strahler 3 erreichen (Historie und Messung: `ribbonMinimumRank`).
             // Der feine Oberlauf DESSELBEN Bands bleibt vollständig erhalten.
-            if !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
+            // Der Anschluss im Hauptlauf (`renderNodeCount` schneidet ihn ab)
+            // zählt weiter mit: bis dahin trug er bei vielen Zubringern den
+            // Rang (Seed 7, Jahr 20.000: 46 von 86 Bändern, darunter Läufe mit
+            // 3000 Zellen Abfluss, fielen sonst ans Raster zurück).
+            var junctionRank = 0.0
+            for k in mTrim..<nodes.count where nodes[k].x.isFinite && nodes[k].z.isFinite {
+                let ci = min(max(Int(nodes[k].x.rounded()), 0), n - 1)
+                let cj = min(max(Int(nodes[k].z.rounded()), 0), n - 1)
+                for oj in max(0, cj - 1)...min(n - 1, cj + 1) {
+                    for oi in max(0, ci - 1)...min(n - 1, ci + 1) {
+                        junctionRank = max(junctionRank,
+                                           clamp01(Double(orders[oj * n + oi]) / WaterRender.ribbonRankDivisor))
+                    }
+                }
+            }
+            if junctionRank < WaterRender.ribbonMinimumRank,
+               !rank[lo...hi].contains(where: { $0 >= WaterRender.ribbonMinimumRank }) { continue }
+            // Das Laufende liegt im Anschluss: dort gilt dessen Rang (Vertrag
+            // `river_ribbons.gd`: jedes Fluss-Band trägt seinen Anschluss).
+            rank[hi] = max(rank[hi], junctionRank)
             // Für die Tiefenfarbe fällt der Rang stromab nie: die Strahler-
             // Ordnung eines Laufs wächst nur an Zusammenflüssen. Der 3×3-
             // Stützsaum oben überbrückt nur einen Zellversatz zwischen
@@ -1112,6 +1147,30 @@ public final class RiverRibbonRenderer {
                 ? RiverRibbonRenderer.seaHandoverFade(submergedCells: submergedCells)
                 : RiverRibbonRenderer.lakeHandoverFade(pond: lakePond)
         }
+        // Kleine Tümpel IM Gerinne (Gremium 3, Befund 3): kreuzte ein Lauf
+        // einen Kolk von ein, zwei Zellen, wechselten seine Stützpunkte
+        // zwischen Spiegel und Land; Korridor und Deckkraft gingen je
+        // Stützpunkt an und aus, und am Zusammenfluss lag ein Knäuel aus
+        // Bett- und Uferstücken. Kurze nasse Strecken eines Sees mit Land auf
+        // beiden Seiten (`WaterRender.ribbonPondBridgeSamples`) gelten als
+        // Land für Deckkraft und Korridor: der Korridor deckt den Tümpel. Die
+        // Höhe bleibt die des Spiegels (auf den Gelände-Höhen schwebte die
+        // Wasserlinie an Segmentmitten, `RibbonFloatTests`, und `fadeUphill`
+        // läse den Kolkgrund als Senke, hinter der alles „bergauf“ läuft).
+        var a = 0
+        while a < samples.count {
+            guard let s0 = samples[a].surface, s0 > sea else { a += 1; continue }
+            var b = a
+            while b + 1 < samples.count, let s1 = samples[b + 1].surface, s1 > sea { b += 1 }
+            if a > 0, b + 1 < samples.count, samples[a - 1].surface == nil, samples[b + 1].surface == nil,
+               b - a + 1 <= WaterRender.ribbonPondBridgeSamples {
+                for c in a...b {
+                    samples[c].bridged = true
+                    fade[c] = 1
+                }
+            }
+            a = b + 1
+        }
         // Läuft die Zentrumslinie an einer SEE-Uferlinie entlang, wechseln die
         // Stützpunkte zwischen nass und trocken, und die Übergabe sprang je
         // halbe Zelle zwischen voll und blass: helle und dunkle Querstreifen
@@ -1197,9 +1256,27 @@ public final class RiverRibbonRenderer {
             guard r >= 0, r < cnt, terrain.h[r] > terrain.cfg.sea else { return nil }
             k = r
             path.append((Double(k % n), Double(k / n)))
-            if cover[k] >= WaterRender.ribbonJoinCoverage { return path }
+            if cover[k] >= WaterRender.ribbonJoinCoverage { return smoothedChain(path, fromX: fromX, fromZ: fromZ) }
         }
         return nil
+    }
+
+    /// Die D8-Kette zickzackt in 45°-Schritten; am Knick faltete der
+    /// Krümmungs-Deckel das Band zu Splittern (Gremium 3, Befund 1). Drei
+    /// Durchgänge 1/4–1/2–1/4 wie in `mouthPath`, Laufende und letztes
+    /// Kettenglied bleiben fest.
+    static func smoothedChain(_ path: [(x: Double, z: Double)], fromX: Double,
+                              fromZ: Double) -> [(x: Double, z: Double)] {
+        guard path.count >= 2 else { return path }
+        var smooth = [(x: fromX, z: fromZ)] + path
+        for _ in 0..<3 {
+            let raw = smooth
+            for a in 1..<(raw.count - 1) {
+                smooth[a].x = 0.5 * raw[a].x + 0.25 * (raw[a - 1].x + raw[a + 1].x)
+                smooth[a].z = 0.5 * raw[a].z + 0.25 * (raw[a - 1].z + raw[a + 1].z)
+            }
+        }
+        return Array(smooth.dropFirst())
     }
 
     private func emitRibbon(_ samples: [RibbonSample], _ terrain: Terrain,
@@ -1296,7 +1373,7 @@ public final class RiverRibbonRenderer {
         // Wasser (See, Meer, Mündungs-Kette) liegt das Band flach auf dem
         // Spiegel; dorthin läuft der Korridor über wenige Stützpunkte aus.
         let corridorOn = kind == WaterRender.ribbonKindRiver && !still
-        let presence = RiverRibbonRenderer.corridorPresence(samples.map { $0.surface == nil }, on: corridorOn)
+        let presence = RiverRibbonRenderer.corridorPresence(samples.map { $0.surface == nil || $0.bridged }, on: corridorOn)
         let bank = BankSurface(h: h, n: n, renderGrid: renderGrid, hscale: hscale)
         var corridor = CorridorBandBuilder()
         // Querschnitte entstehen erst nach dem Lauf über alle Stützpunkte

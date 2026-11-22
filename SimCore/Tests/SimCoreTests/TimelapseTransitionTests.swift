@@ -164,10 +164,20 @@ final class TimelapseTransitionTests: XCTestCase {
             r.build(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
             return (coverage(r.bandCoverage, t.meander.channels[ci], range, n: n), r.bandCoverage)
         }
-        let fresh = grown(age: 0).0
+        let (fresh, freshCov) = grown(age: 0)
         let half = grown(age: 0.5 * WaterRender.ribbonGrowYears).0
         let (done, doneCov) = grown(age: WaterRender.ribbonGrowYears + 1)
-        XCTAssertLessThan(fresh, 0.15 * full, "frisch eingesetzt schon fast voll: \(fresh) von \(full)")
+        // Gemessen im Kern des Stücks (zwei Knoten ≈ 3 Zellen vor jedem Ende):
+        // an den Enden reicht der Übergang der ausgewachsenen Nachbarn
+        // (Breiten- und Deckkraft-Rampe) hinein. Seit Gremium 3 (Befund 3)
+        // zeichnet der Render ohne Haarnadel-Knoten (`hairpinFreeIndices`);
+        // der Nachbar schnürt sich davor nicht mehr ein, die Rampe reicht
+        // tiefer (Seed 1337: an den Enden 1,6 von 2,2, im Kern 0,66 von 9,0).
+        let core = (range.lowerBound + 2)..<(range.upperBound - 2)
+        let freshCore = coverage(freshCov, t.meander.channels[ci], core, n: n)
+        let fullCore = coverage(reference.bandCoverage, ch0, core, n: n)
+        XCTAssertLessThan(freshCore, 0.15 * fullCore,
+                          "frisch eingesetzt schon fast voll: \(freshCore) von \(fullCore)")
         XCTAssertGreaterThan(half, fresh, "wächst nicht")
         XCTAssertLessThan(half, done, "wächst nicht weiter")
         XCTAssertEqual(doneCov, reference.bandCoverage, "ausgewachsen nicht gleich dem Lauf ohne Geburtsjahr")
