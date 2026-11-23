@@ -30,7 +30,7 @@ Fertig, wenn jede `id` aus `blocks.json` genau einmal in einer `decisions.json` 
 
 ## 3. Entscheidungen in ADRs
 
-Vorher die `decision`-Blöcke selbst gegenlesen: jede muss die drei Fragen aus CLASSIFY.md mit Ja beantworten (schwer rückgängig, überraschend, echte Abwägung). Was durchfällt, wird `tautology` und stirbt mit dem Kommentar. Ein Lauf ergibt meist kein bis drei ADRs; das erste Audit machte aus 5804 Blöcken 26. Viel mehr heißt: zu großzügig eingeordnet.
+Vorher die `decision`-Blöcke selbst gegenlesen: jede muss die drei Fragen aus CLASSIFY.md mit Ja beantworten (schwer rückgängig, überraschend, echte Abwägung). Was durchfällt, wird `tautology` und stirbt mit dem Kommentar. Ein Lauf ergibt meist kein bis drei ADRs; das erste Audit machte aus 5804 Blöcken 13. Viel mehr heißt: zu großzügig eingeordnet.
 
 Für jede verbliebene Entscheidung:
 

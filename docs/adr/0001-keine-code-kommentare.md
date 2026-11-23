@@ -5,7 +5,7 @@ Der Code trug rund 22.000 Kommentarzeilen, fast ein Drittel aller Zeilen. Ein Au
 Was ein Kommentar sagen wollte, geht an eine von vier Stellen oder nirgendwohin:
 
 - Erklärt er nur den Code, wird der Code deutlicher: ein besserer Name, eine kleinere Funktion, ein benannter Wert.
-- Ist er eine Entscheidung, die schwer rückgängig zu machen ist, ohne Kontext überrascht und aus einer echten Abwägung kam (alle drei), wird er ein ADR in `docs/adr/`. Das ist die Ausnahme: aus den 5804 Blöcken des Audits wurden 26 ADRs.
+- Ist er eine Entscheidung, die schwer rückgängig zu machen ist, ohne Kontext überrascht und aus einer echten Abwägung kam (alle drei), wird er ein ADR in `docs/adr/`. Das ist die Ausnahme: aus den 5804 Blöcken des Audits wurden 13 ADRs.
 - Hält er eine Messung oder einen verworfenen Wert fest, gehört das in die Messreihe `docs/*-measurements.md`, nicht in ein ADR je Konstante.
 - Entschuldigt er einen Notbehelf, wird daraus ein Issue, das den Notbehelf beseitigt (#250–#284).
 

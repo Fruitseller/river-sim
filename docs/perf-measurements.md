@@ -206,7 +206,7 @@ Das ist eine Hochrechnung, keine Messung; die 90-ms-Marke des Issues wird sie
 vermutlich knapp verfehlen.
 
 Pass für Pass, jeweils in der Sitzung gemessen, in der die Änderung entstand
-(Grundsatz: [ADR 0009](adr/0009-roh-puffer.md)):
+(Grundsatz: [ADR 0004](adr/0004-performance-bit-identisch.md)):
 
 | Pass | vorher | nachher | Mittel |
 |---|---:|---:|---|
@@ -2700,3 +2700,36 @@ verlangt für „behalten" eine Verbesserung und meldet deshalb VERWERFEN).
 
 Bilder: `docs/look/a-budget/kontaktbogen-*.jpg` (vorher | nachher | Vorbild)
 und `ausschnitt-*.jpg` (1:1-Ausschnitt bei 6016×3260).
+
+---
+
+## Einzelfälle der Roh-Puffer-Umstellung
+
+Was die Pass-Tabellen in §C, §I und §S nicht festhalten: die Invarianten und
+Profilbefunde, auf denen einzelne bit-identische Umstellungen beruhen. Der
+Grundsatz steht in [ADR 0004](adr/0004-performance-bit-identisch.md).
+
+* **`outletIncision`, Diagonale aus der Index-Differenz.** Spart zwei
+  Integer-Divisionen je Zelle (692k Zellen je Schritt). Invariante: der
+  Empfänger ist immer einer der 8 Nachbarn (`computeReceiversAndArea` vergibt
+  nur Nachbarn, der Rückfall `floodParent` ist ebenfalls ein Nachbar). Für
+  8-Nachbarn gilt |k − r| ∈ {1, n−1, n, n+1}, genau n±1 sind diagonal;
+  ergebnis-identisch zu `i != ri && j != rj`. Wer Empfänger außerhalb der
+  Nachbarschaft zulässt, bricht diese Rechnung. Inaktive Zellen (Meer, See)
+  bekommen keine vorab gerechnete Potenz.
+* **`wavePass`** verschiebt Material zum Nachbarn, ist nicht per Zelle
+  unabhängig und bleibt seriell; er läuft aber bei großem dt vielfach (ein
+  Teilschritt je 100 Jahre), deshalb lohnt der Roh-Puffer trotzdem.
+* **`applyUplift`** ist rein per Zelle und läuft zeilenweise parallel; als
+  Property-Schleife steckte fast alles im Exklusivitäts-Enforcement auf
+  `h`/`rock`/`upliftBase`.
+* **`fillShallowPonds`.** Der Suchlauf tastet alle 692k Zellen ab; rund ein
+  Drittel des Passes steckte in der Swift-Laufzeit. Der BFS-Schritt ist als
+  lokales `push` ausgeschrieben.
+* **`migrateMeander`.** `h`, `area`, `veg` und `vegClass` ändern sich in der
+  Migration nicht; 28k Knoten × 25 Streifenzellen ≈ 700k Zugriffe je Schritt.
+  `Terrain.bilinear` und `riparianVeg` nehmen deshalb Roh-Zeiger, eine Formel
+  für Höhe und Einzugsgebiet.
+* **`fillOxbows`.** Das Literal `[k-1, k+1, k-n, k+n]` war eine
+  Array-Allokation je Altarm-Knoten, der Pass steckte zu zwei Dritteln in der
+  Laufzeit; jetzt eine ausgeschriebene `max`-Kette in derselben Reihenfolge.

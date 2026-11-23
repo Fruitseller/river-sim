@@ -2,8 +2,8 @@
 
 Rohdaten zur Kalibrierung von `Terrain.updateIce` und der `SimConfig.ice*`-Regler.
 Modellwahl und Primärquellen: `docs/research-climate-cryosphere.md` §4/§5.
-Kalibrier-Logbuch je Regler: `SimCore/Sources/SimCore/Config.swift`,
-Abschnitt „Gletscher".
+Modellentscheidung: ADR zu `Terrain.updateIce`; Begründung je Regler:
+§ Kalibrierwerte am Ende.
 
 Alle Läufe mit Seed 1337, Produktionspfad (`hydraulicEnabled`), `dt = 500` Jahre,
 sofern nicht anders vermerkt. Die Wächter, die diese Zahlen erzeugen bzw. pinnen,
@@ -920,7 +920,7 @@ nicht der Gletscher.
   eisfreien Welt (Seed 1337 bei −2: 8,5 / 5,4 % gegen 8,7 / 5,5 %). Der Versatz greift
   also nur das Eis an.
 
-**Gewählt: `iceFirnTemp = −2 °C`** (Logbuch bei `SimConfig.iceFirnTemp`). Zufuhr
+**Gewählt: `iceFirnTemp = −2 °C`**. Zufuhr
 und Schliff des Eises bleiben bei den Werten von #35 (`iceFirnPerSnowYear`
 1e-3, `iceErodeK` 1e-4), die Nachjustierung war nicht nötig.
 
@@ -1303,3 +1303,53 @@ FMA-Zuschnitt: auch der eisfreie Referenzarm wanderte, b 1,186 → 1,131) kippte
 +0,116, bei 50k +0,027 / +0,028 / +0,293 / −0,082 / −0,077 (n ≈ 50). Die Schranke
 gilt deshalb bei 30k (+0,1) und bei 50k nur als „keine starke Umkehr“ (> −0,15);
 die Produktion prüft `testProductionGlaciersCarveTroughs` gepoolt.
+
+---
+
+## Kalibrierwerte
+
+Begründung je Regler, soweit sie nicht schon in den Abschnitten oben steht.
+Die Modellwahl (Flux-Modell, linearer Transport, Eis als Auflage über dem Bett)
+steht im ADR zu `Terrain.updateIce`.
+
+* **`iceFirnPerSnowYear` 1e-3**: Umrechnung Schneevorrat (abstraktes SWE) →
+  Eiszufuhr (Höhe), die zweite freie Maßstabs-Entscheidung neben H_ref.
+  Angesetzt am Firn→Eis-Umsatz (Sockel `snow/snowTurnoverYears = snow · 0,002`)
+  mal dem Anteil, der Gletschereis wird: Faktor 0,5, die andere Hälfte bleibt
+  Sublimation und Windverfrachtung. Sweep und Wahl: §B.
+* **`iceTurnoverYears` 4000**: Sockel 1/τ in μ, hält die Dicke bei Dauerfrost
+  beschränkt (Sublimation/Kalben), acht mal träger als die Schneedecke. Deckelt
+  nur den entarteten Fall ohne Gefälle (§B). Gegen 1000 gemessen (n = 384, 50k):
+  mit 1000 zehrt der Sockel die Zunge zusätzlich auf, Eis fällt auf 0,29 % der
+  Landfläche, V→U verrauscht (Δb +0,03 … +0,84 ohne Trend); mit 4000 Δb
+  +0,22 … +0,30 über den Lauf, Eis 0,45 %. Preis: Konstruktionsgrenze 4,0 statt
+  1,0 Höheneinheiten, deshalb prüft `testLongRunIceStaysBounded` zusätzlich
+  eine empirische Schranke.
+* **`iceMeltPerKYear` 0,001** je K über 0 °C: Ratenkonstante aus demselben
+  dt-Grund wie beim Schnee; setzt die Reichweite der Zunge (Eis lebt unter der
+  Gleichgewichtslinie noch 1/(c·T) Jahre). 60× träger als Schnee ist keine
+  Aussage über Gradtagsfaktoren (real schmilzt Eis schneller, DDF 5–8 gegen
+  3–5, Hock 2003), sondern Folge der Vorrats-Lesart: eine 400-m-Zunge trägt ein
+  Vielfaches des Wassers einer Schneedecke. Sweep: §C.
+* **`iceFlowK` 3,0**: auf n = 640 kalibriert, in `updateIce` mit (n−1)²
+  skaliert, dieselbe Konvention wie `hillDiffusion`; 250× `hillDiffusion`.
+  Nach oben begrenzt die Rechenzeit (§E); über 3,0 kauft doppelte Rechenzeit
+  nur 20 % mehr Reichweite (§B).
+* **`iceFlowSubCap` 0,25**: maximale Transport-Zahl eines Teilschritts,
+  `nSub = ⌈kappa·max(wMax, 2·I_max)·dt / cap⌉`, Konstruktion wie die 0,2 der
+  Hangdiffusion; 0,25 ist der klassische explizite Deckel des 5-Punkt-Sterns.
+  Die zweite Kennzahl `kappa·I ≤ cap/2` und ihre Konvergenz: §L.
+* **`iceFlowMoveFraction` 0,5**: harte Positivitäts-Grenze je Teilschritt.
+  Bindet im regulären Lauf nicht (die Sub-Taktung hält ≤ 0,25), nur wenn sich
+  die Oberfläche während der Teilschritte versteilt (Spieler-Eingriff).
+  Notbremse wie `meltRunoffCapPerRain`, kein Physik-Regler.
+* **`iceMinThickness` 0,002** (≙ 8 m bei H_ref 4000 m): ab dieser Dicke gilt
+  eine Zelle als vergletschert, kommt in `Terrain.underIce`, und das Gate des
+  Bett-Funnels greift. Hält den Gletschersaum schmal, sonst wanderte die Maske
+  mit dem exponentiellen Ausläufer der Bilanz ins Tal. Dieselbe Schwelle gatet
+  Eis-Transport und Abrasion in `iceFlowSubStep` (§K). Die Bilanz bleibt
+  ungegatet, damit ein Schneefeld über die Schwelle wachsen kann.
+* **`iceCoverRef` 0,01**: Deckung = I/(I + ref) wie `snowCoverRef`; gegen eine
+  Gleichgewichtsdicke ~0,05 ist die Zunge über ihre Länge als Eis lesbar und
+  blendet erst am Rand aus. Reiner Render-Parameter (`Terrain.iceCover`,
+  `SimRender.TerrainColorRenderer`).

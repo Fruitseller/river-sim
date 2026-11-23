@@ -465,6 +465,6 @@ Rückfall, wenn das Klima abgeschaltet ist (dann ist alles bit-identisch zu heut
 Code-Bezüge: `SimCore/Sources/SimCore/Terrain.swift` (`computeRain`,
 `updateVegetation`, `updateHeightBands`, `step`),
 `SimCore/Sources/SimCore/HeightBands.swift`,
-`SimCore/Sources/SimCore/Config.swift` (Kalibrier-Logbuch),
+`SimCore/Sources/SimCore/Config.swift` (Stellschrauben),
 `SimCore/Sources/SimCore/WorldSnapshot.swift` (Feldinventar),
 `Extension/Sources/RiverSimGD/SimNode.swift` (`terrainColorBytes`).

@@ -2,8 +2,8 @@
 
 Belegt den Becken-Wasserhaushalt aus `Terrain.capEndorheicBasins`: ein
 geschlossenes Becken füllt sich nur so weit, wie sein **Zufluss** die
-**Verdunstung über der Seefläche** trägt. Kalibrier-Logbuch mit den gewählten
-Werten: `SimConfig.endorheicEvaporation` … `endorheicSaltMinDepth`.
+**Verdunstung über der Seefläche** trägt. Die gewählten Werte stehen in
+`SimConfig.endorheicEvaporation` … `endorheicSaltMinDepth`.
 Reproduzieren: `RS_MEASURE=1 swift test -c release --package-path SimCore
 --filter <Diagnose>` (die Messreihen sind
 `XCTSkip`-geschützte Tests in `Tests/SimCoreTests/EndorheicEvaporation.swift`,

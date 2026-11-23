@@ -78,6 +78,11 @@ Hier ändert sich der Eingang viermal je Sekunde. Daraus folgt alles Weitere:
   2,2 und 0,9 Zellen) moduliert den Abtrag. Es entscheidet, wo auf einer
   glatten Wand eine Rinne entsteht, und zwar an festem Ort statt nach dem
   Takt-Rauschen der Sim.
+  Längere Wellen (zuerst 12, 4,3 und 1,5 Zellen) ließen große Wände glatt:
+  was breiter ist als das Fenster des Mittels, zieht die Bindung wieder ab.
+- **Kartenmaß des Abtrags 0,5 Welteinheiten.** Der Abtrag summiert sich am
+  Hang auf 30 bis 60 m; mit kleinerem Maß war die Karte auf allem Land weiß
+  und trug keine Form mehr.
 
 ## Bindung an die Sim
 

@@ -2,8 +2,7 @@
 
 Räumlich variable Erodierbarkeit statt eines global konstanten `kRock`. Diese Datei
 hält fest, **was gemessen wurde**, **wie** gemessen wurde und **was offen bleibt**.
-Die Kalibrier-Begründung je Konstante steht wie üblich im Logbuch in
-`SimCore/Sources/SimCore/Config.swift` (Abschnitt „Lithologie"); die Wächter stehen in
+Die Wächter stehen in
 `SimCore/Tests/SimCoreTests/Lithology.swift`.
 
 ## A. Mechanik

@@ -1,0 +1,23 @@
+# Abflussgewicht aus Regen und Schmelze als renormierte Umverteilung
+
+Seit #9 (kalibriert in #10) startet die Akkumulation beider Netze je Zelle mit `cellArea · Gewicht`, und die Tropfen starten nach demselben Gewicht; aus `area` wird Abfluss statt Fläche (Q = ∫ P dA, die Standard-Lesart von A^m in der Stream-Power).
+
+Entscheidung: das Gewicht ist normiert, `rain / Landmittel(rain)` auf Land, 1,0 über See. Damit gilt Σ Gewicht über Land = Zahl der Landzellen, der Gesamtabfluss bleibt der der ungewichteten Akkumulation, und das Gewicht wirkt als reine Umverteilung Lee → Luv. Seit #36 speist auch die Schmelze dasselbe Gewicht (`flowWeight`), roh `rain + m/snowAccumPerYear` mit `m = snowMeltPerKYear · max(0, T) · S`, und wird wieder auf das Landmittel 1 renormiert (`meltRunoffNormalized = true`): die Schmelze verteilt den Abfluss in schneegespeiste Einzugsgebiete um. Umverteilt ist damit der Abflusskoeffizient, nicht der Niederschlag; die Gesamtwassermenge der Insel bleibt eine kalibrierte Größe. Alle Abfluss-Konsumenten lesen `flowWeight`, nie `rain` direkt.
+
+Gemessen (n = 832, Produktionspfad, Seeds 1337/7/99): `totalOutletArea/Zellzahl` = 1,0000 an wie aus, Anteil der Tropfen-Starts auf Land = Anteil der Landzellen auf 4 Stellen. Kein in Zellen kalibriertes Gate und keine Erosionsrate musste nachgezogen werden (`docs/rain-weighted-flow-measurements.md` §E/§F), mit Schmelze ebenso (`docs/melt-runoff-measurements.md`). Das Landmittel driftet über den Lauf (0,357 → 0,443 über 50k Jahre); die Normierung teilt das heraus, der Gesamtabfluss bleibt konstant statt mit der abflachenden Insel um +24 % zu wachsen.
+
+Die Umrechnung über `snowAccumPerYear` kehrt die Akkumulation um: eine Zelle, die ihren Festniederschlag wieder abschmilzt, bekommt `rain · f_schnee` zurück, im eingeschwungenen Zustand kann sich das Gewicht höchstens verdoppeln (wichtig für die Ablehnungs-Stichprobe der Tropfen-Starts). Der Sockel 1/`snowTurnoverYears` zählt nicht, Sublimation und Firn→Eis fließen nicht ab.
+
+`meltRunoffCapPerRain` 1,0 deckelt den Schmelzbeitrag am normierten und am rohen Gewicht auf das Vielfache des lokalen Niederschlags. Im normalen Lauf bindet er nie; er bindet, wenn der Spieler eine beschneite Kuppe abträgt (Temperatur sofort auf Tieflandwert, Schnee noch auf altem Vorrat, roher Schmelzterm für einen Schritt bis zum 330-fachen des Regens, die Annahmequote der Tropfen-Stichprobe fiele auf ~0).
+
+Verworfen:
+1. Rohes `rain` als Gewicht (Stand #9) und Gates/Raten neu kalibrieren: der nötige Faktor ist das Landmittel des Regens und weder auflösungs- noch seed-fest (Seed 1337: 0,563 bei n = 192, 0,357 bei n = 832; bei n = 832 über Seeds 0,357 / 0,544 / 0,488). Mit dem auf Seed 1337 passenden Render-Gate lagen die Kanalzellen gegen den ungewichteten Arm bei −13,6 / +18,5 / +5,8 %, normiert bei −6,3 / −3,1 / −6,1 %.
+2. Normierung auf einen festen Zahlenwert (z. B. 0,40): dieselbe Auflösungs-/Seed-Bindung, nur unsichtbar.
+3. `computeRain` weltmaßstäblich machen: zieht Vegetation, Biom-Färbung und Auwald-Klassen mit (alle lesen `rain` roh) und löst die Seed-Abhängigkeit nicht. Bleibt als eigenständige Verbesserung offen.
+4. Die #9-Kompensationen nach der Normierung: `renderMinCells` ~114 hebt die gemalten Läufe um gut die Hälfte, `hydraulicPerYear` × 1,4 ist Zusatz-Erosion ohne Nutzen, `outletErode` 4,2e-5 entfernt die Kanalzellen vom ungewichteten Referenzarm. Die Gates selbst blieben über 50k Jahre im Band ±10 %.
+5. Schmelze als Zusatzwasser (`meltRunoffNormalized = false`): `totalOutletArea/Zellzahl` 1,0078 … 1,0175 statt 1,0000, Preis wäre die volle Kalibrier-Kaskade mit seed- und auflösungsabhängigem Faktor bei null Gewinn (Abfluss schneegespeist/schneefrei 0,965 gegen 0,959 renormiert).
+6. Einlagerung des Festniederschlags (`meltRunoffWithholdSolid` 1,0): ohne Eistransport verliert die Dauerfrostzone ihren Abfluss an einen Speicher ohne Ausgang, die Kammlinien-Quellflüsse trocknen aus (Verhältnis 0,765 gegen 0,959 renormiert). Bleibt als Stellschraube (Default 0).
+
+Folgen: `rainWeightedFlow` und `meltRunoffNormalized = false` bleiben als messbare Referenzarme, obwohl die Produktion sie nie umschaltet: die ungewichtete Akkumulation (bit-identisch zu vor #9) zeigt, dass die Luv-Richtung aus dem Regen kommt und nicht aus der Insel-Geometrie.
+
+Betrifft: `SimConfig.rainWeightedFlow`, `SimConfig.meltRunoffEnabled`, `SimConfig.meltRunoffNormalized`, `SimConfig.meltRunoffWithholdSolid`, `SimConfig.meltRunoffCapPerRain`, `Terrain.updateRainWeight`, `Terrain.updateRunoffWeight`, `Terrain.flowWeight`, `Terrain.seedFlowAccumulator`, `Terrain.computeRain`, `Hydraulic.erode`

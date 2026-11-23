@@ -1,8 +1,8 @@
 # Klima-Vertikale: Messreihen (Issue #33)
 
 Rohdaten zur Kalibrierung von Temperaturfeld und Schneedecke. Modellherleitung
-und Primärquellen: `docs/research-climate-cryosphere.md`. Kalibrier-Logbuch:
-`SimConfig.climateEnabled` ff. Wächter: `SimCoreTests/ClimateSnow.swift` und
+und Primärquellen: `docs/research-climate-cryosphere.md`. Modellentscheidung:
+ADR zu `SimConfig.climateEnabled`; Werte je Konstante: § Kalibrierwerte am Ende. Wächter: `SimCoreTests/ClimateSnow.swift` und
 `SimCoreTests/HeightBandTests.swift`.
 
 Alle Läufe Produktionspfad (`SimConfig()`-Defaults, nur `n` gesenkt, wo die
@@ -232,3 +232,48 @@ gemacht, nicht halb.
   (`docs/research-climate-cryosphere.md` §2.2). Ein echter Jahresgang stünde im
   ROADMAP-Backlog („Klima-Jahreszeiten") und würde diese Kalibrierung neu
   aufmachen.
+
+---
+
+## Kalibrierwerte
+
+Begründung je Konstante, soweit sie nicht schon in den Abschnitten oben steht.
+Den Maßstab (H_ref, `climateLapseRate`) und die Relaxationsform der Bilanz
+entscheidet das ADR zu `SimConfig.climateEnabled`.
+
+* **`climateSeaLevelTemp` 11 °C.** Aus der Anschluss-Bedingung an den alten
+  Perzentil-Schnee (§1); das ist der einzige Punkt, an dem die alte
+  Kalibrierung noch durchschlägt, und nur als Startwert. 11 °C Jahresmittel
+  passt zu einer kühl-maritimen Insel (grob Südnorwegen/Nordschottland) und zur
+  Verdunstungs-Kalibrierung (κ = 1,25 ≙ E ≈ 1,08·P).
+* **`snowFreezeTemp` −1 / `snowRainTemp` +3 °C.** Doppelschwellen-Rampe der
+  Niederschlagsphase (Kienzle 2008, USACE) statt harter Kante, die eine
+  Sprungkante ins Feld schnitte. 50-%-Punkt bei +1 °C = Nordhemisphären-Mittel
+  aus Jennings et al. 2018 (17,8 Mio. Beobachtungen; 95 % der Stationen zwischen
+  −0,4 und +2,4 °C).
+* **`snowAccumPerYear` 0,002** legt mit `snowTurnoverYears` die Einheit des
+  Schneefelds fest: bei Dauerfrost ist μ = 1/τ₀ und S* = 0,002 · 500 · rain =
+  rain; SWE 1,0 heißt „voll ausgebildete Dauerschneedecke am feuchtesten
+  Standort". Eine absolute Kalibrierung in mm w.e. gibt es bewusst nicht, auch
+  `rain` ist eine abstrakte Feuchte (0,18 … 1,0).
+* **`snowTurnoverYears` 500**, der additive Sockel 1/τ₀ in μ, mit drei Aufgaben:
+  (1) er hält S* beschränkt (sonst ginge S* an der Frostgrenze mit μ → 0 gegen
+  unendlich, Schneetürme in 200k-Welten); (2) physikalisch Sublimation und
+  Windverfrachtung, die auch bei Dauerfrost abtragen (auf antarktischen
+  Blaueisfeldern der einzige Ablationsterm); (3) Anschlusspunkt fürs Eis (#35):
+  was oberhalb der Gleichgewichtslinie abfließt, ist real die
+  Firn→Eis-Umwandlung. 500 Jahre = Antwortzeit eines Dauerschneefelds,
+  Größenordnung der übrigen trägen Relaxationen (`endorheicResponseYears` 500).
+* **`snowMeltPerKYear` 0,06** je K über 0 °C: degree-day-Modell (Hock 2003) in
+  Relaxationsform, als Ratenkonstante statt fester Schmelzmenge. Über der
+  Frostgrenze gilt S*/S*(ΔT=0) = 1/(1 + c·τ₀·ΔT); Sweep und Wahl in §2.
+* **`snowCoverRef` 0,10.** Deckung = S/(S + ref), dieselbe Bauform wie die
+  Stream-Map (eine harte SWE-Schwelle wäre eine Kante, eine lineare Rampe
+  bräuchte ein zweites Maximum). Bei S* ≈ rain ≤ 1,0 kommen die Gipfel auf ~0,9,
+  gewollt „fast ganz weiß" statt Volltonfläche.
+* **`snowBandCoverStart` 0,5.** Ab dieser Deckung zählt eine Zelle fürs
+  Höhenband als beschneit und damit für die Waldgrenze. Die Färbung liest das
+  Feld je Zelle; die Waldgrenze bleibt eine HÖHE (`HeightBands`-Vertrag, reist
+  im Spielstand, geht an den Shader), wird aber aus dem Feld zurückgerechnet
+  (gemessener Landanteil über der Schwelle → Höhenquantil).
+* **`snowBandCoverFull` 0,8**: §3.

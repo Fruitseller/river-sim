@@ -2020,8 +2020,7 @@ Die Kernlänge beträgt 0,85 statt 1,0 Kanalbreiten, die Migrationsrate bleibt
 0,03. Kern 0,9 mit geteilter Profil-Relaxation erreichte 225/240 bei dt 100
 und 206/240 bei dt 1000; Linux verfehlte dabei den unveränderten Auen-Wächter
 mit 0,001579. Nachbarwerte von Rate und Kern brachten keinen konsistenten
-Gewinn auf beiden Plattformen. Die Logbuch-Kommentare der Config halten
-diese Versuche fest. Die Produktions-Auen-Schranke wurde nicht gepinnt.
+Gewinn auf beiden Plattformen. Die Produktions-Auen-Schranke wurde nicht gepinnt.
 
 Ein instrumentierter Lauf misst zusätzlich verlorene explizite Bewegung am
 CFL-Deckel: bei dt 15/100/1000 sind es 0,0010/0,0876/1,1263 % der angeforderten
@@ -2310,7 +2309,7 @@ im Bild ein natürliches, gelapptes Delta (Vorlage
 Delta-Arm-Bänder an Meeresmündungen unter der opaken Meeresebene
 (`docs/river-belt-render-measurements.md` §D), und die Sim baute keinen
 Ablagerungskörper, auf dem Arme hätten liegen können. Jetzt baut sie ihn
-(`Terrain.deltaDeposit`, Kalibrier-Logbuch `SimConfig.deltaTrapFraction`
+(`Terrain.deltaDeposit`, `SimConfig.deltaTrapFraction`
 ff.). Mit dem Delta kamen drei Befunde an Küste und Mündung dazu, die im
 selben Bild stehen (§ Render).
 

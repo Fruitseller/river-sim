@@ -1108,6 +1108,21 @@ liest in diesem Bild deshalb den zuletzt gerenderten Stand
 (`relief_prev_tex`), sonst sprängen die Bäume beim Pinseln um einen
 veralteten Bake. Bei angehaltenem Renderloop (Leerlauf) läuft kein Pass.
 
+**Thread- und Reihenfolge-Regeln.** `_rd` und die Compute-Ressourcen werden
+nur auf dem Render-Thread benutzt; die MultiMesh-RIDs erfasst `setup` einmal,
+weil `_exit_tree` `lists` auf dem Haupt-Thread leert. Erst
+`multimesh_allocate_data`, dann das Mesh setzen: erst dann füllt Godot den
+Kommando-Puffer (`[Indexzahl, Instanzen, 0, 0, 0]`, gemessen mit 4.7.2). Bei
+angehaltenem Renderloop liefe ein Pass ins nie abgeschickte Bild, die Aufträge
+sammelten sich. Der alte Uniform-Satz wird sofort freigegeben; er fiele sonst
+erst mit dem Shader, und das Ping-Pong der Verschiebung erzeugt mehrmals je
+Sekunde einen neuen. Ein Mesh trägt beide Arten (`VERTEX`/`NORMAL` Nadelbaum,
+`CUSTOM0`/`CUSTOM1` Laubbaum, gleiche Topologie), `tree.gdshader` mischt je
+Instanz nach dem Nadelbaum-Anteil, damit sich ein Baum an der wandernden
+Baumgrenze verwandelt statt umzuspringen. Die Hilfsfunktionen des Mesh-Baus
+(`TreeMesh.gd`) laufen über `Array` statt `PackedVector3Array`, weil
+Packed-Arrays als Kopie übergeben würden.
+
 **Pinsel und Kamera.** Mit Bäumen hebt das Dach nicht mehr an; Pinselkuppel,
 Raycast und Kameraziel liegen auf dem Boden (`_forest_lift_at` = 0), die
 Bäume stehen durch die Kuppel hindurch.

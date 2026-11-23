@@ -48,7 +48,7 @@ Vegetations-Obergrenze 0.68 lag über 99.99 % aller Landzellen.
 
 ## 2. Gewählte Perzentile
 
-Siehe `SimConfig` (Kalibrier-Logbuch am Wert). Kurzfassung:
+Kurzfassung (Einzelwerte: § Kalibrierwerte):
 
 | Band | Perzentil | Vorher absolut | Absicht |
 |------|-----------|----------------|---------|
@@ -176,3 +176,30 @@ zehntausenden Zellen). Bei der Generierung sind das 0.1864 gegen die alten 0.18
 Landschaft, statt als fixe Höhe stehen zu bleiben. Mit dieser Variante sind
 beide #12-Wächter wieder grün (τ=500 0.003246 gegen τ=0 0.006120;
 Referenzarm 1.0643, Wirkarm 1.1720).
+
+## Kalibrierwerte
+
+Ergänzungen zu §2 und §5, die nicht als Messung, sondern als Vertrag der
+Bänder an `HeightBands` hängen. Die Entscheidung (Quantile statt absoluter
+Höhen, Schnee aus dem Schneefeld) steht im ADR zu `HeightBands`.
+
+* **Schneefreies Klima.** Ein Schneeanteil 0 ist gültig (warme Welt, flach
+  erodierte Insel). Dann liefert das Quantil p = 1 die Mitte des höchsten
+  besetzten Histogramm-Bins (Breite 0,000488, `Terrain.landHeightQuantiles`);
+  `snowStart` liegt deshalb 2·`bandMinRampWidth` (0,008) darüber, damit
+  `snowAmount` auf ganz Land exakt 0 ist.
+* **Reihenfolge der Perzentile.** Die Config darf sie in jeder Reihenfolge
+  setzen: `landHeightQuantiles` will sie aufsteigend (ein Histogramm-Durchlauf),
+  deshalb wird sortiert und zurückverteilt, statt still auf `legacyAbsolute` zu
+  kippen.
+* **`bandMinRampWidth`.** Jede Rampe bekommt mindestens diese Breite; eine
+  spiegelglatte Insel hätte sonst identische Quantile, also eine
+  Sprungfunktion.
+* **`legacyAbsolute` als Rückfall** greift bei weniger als 20 Landzellen
+  (frisch geflutete Welt, synthetische Testfelder); als Pin hält er Literale und
+  die Rampenbreite als Wert 0,18 (§5, Nachtrag).
+* **Schnee-Perzentile seit #33.** `bandSnowPercentile`/`bandSnowFullPercentile`
+  sind nur noch der Rückfall für `climateEnabled = false`, bit-identisch zu vor
+  #33. Mit Klima sind die Slots 4/5 das Komplement des gemessenen beschneiten
+  Landanteils (1,5 % beschneit → Quantil p98,5); Wächter
+  `HeightBandTests.testSnowZoneFollowsTheClimateNotAFixedLandFraction`.

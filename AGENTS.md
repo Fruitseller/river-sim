@@ -67,7 +67,7 @@ swift test -c release --package-path SimCore \
       "cd /src && swift test -c release --package-path SimCore --scratch-path /build"
   ```
   Kippt ein Mechanik-Wächter nur dort, wird nach der Pin-Doktrin unten
-  (§ Konfiguration, [ADR 0024](docs/adr/0024-pin-doktrin.md)) gepinnt, nicht die Schranke gesenkt.
+  (§ Konfiguration, [ADR 0006](docs/adr/0006-konfigurationsebenen.md)) gepinnt, nicht die Schranke gesenkt.
 
 **Mess- und Sweep-Läufe gehören NICHT in die Pflichtsuite** (Issue #52). Jede
 Testmethode, deren Name auf `Diagnostic` endet, druckt nur die Tabellen für
@@ -105,7 +105,7 @@ außerdem nur `--hash`-Werte untereinander: der Harness fährt die
 Produktions-Config, aber bewusst nicht deren Einlauf (`settleYears` 0 plus
 `--warmup` statt der 3000 Jahre aus `SimNode.generationSettleYears`), eine Welt
 aus der Brücke trägt also nie denselben Wert — Begründung in
-[ADR 0025](docs/adr/0025-simperf-harness.md) und `docs/perf-measurements.md` §A. Die Pass-Tabelle
+[ADR 0006](docs/adr/0006-konfigurationsebenen.md) und `docs/perf-measurements.md` §A. Die Pass-Tabelle
 kommt aus `SimProfile` (Marken in `step()`, standardmäßig aus). Messprotokoll,
 Vorher/Nachher und die gemessenen Fehlschläge: `docs/perf-measurements.md`.
 Ältere Messreihen dort stehen auf der Paarung davor und werden mit BEIDEN
@@ -160,7 +160,7 @@ Der Pin wird **nur bewusst und in einem eigenen Commit** angehoben:
 
 ```sh
 git ls-remote --tags https://github.com/migueldeicaza/SwiftGodot   # Zielversion wählen
-# Extension/Package.swift: exact: "<neue Version>" — docs/adr/0026-swiftgodot-pin.md mitpflegen
+# Extension/Package.swift: exact: "<neue Version>" — docs/adr/0014-pins.md mitpflegen
 swift package resolve --package-path Extension        # Package.resolved neu schreiben
 git diff Extension/Package.resolved                  # Revisionen prüfen, auch transitive
 "$(git rev-parse --show-toplevel)"/scripts/build.sh release   # Voll-Neubau erwarten
@@ -763,8 +763,8 @@ Seit Issue #36 koppelt das Klima über **einen** Weg in die Erosion: die
 Schmelze speist das Abfluss-Gewicht (`Terrain.flowWeight` = Regen + Ablation,
 gebaut in `updateRunoffWeight` am Ende von `computeRain`, also innerhalb von
 `computeFlow`, aus dem Schneefeld vom Schrittende davor). Begründung:
-[ADR 0015](docs/adr/0015-klima-schnee.md) und
-[ADR 0016](docs/adr/0016-abflussgewicht.md).
+[ADR 0008](docs/adr/0008-klima-und-hoehenzonen.md) und
+[ADR 0009](docs/adr/0009-abflussgewicht.md).
 
 Der **Gletscher** (Issue #35, `updateIce`) ist der zweite Weg und bringt sein
 eigenes Erosionsgesetz mit (Flux-Modell `E = K·q^m·S`, nicht Stream-Power auf
@@ -790,7 +790,7 @@ Wie `isChannel` gilt: **leeres Feld heißt aus**,
 und ohne Eis wird es auch geleert; eine eisfreie Welt rechnet damit
 bit-identisch zum Stand vor #35. Das Eis liegt **nicht** in `h` (eigene
 Auflage über dem Bett), die Entwässerung läuft also unverändert auf dem Bett.
-Modellwahl: [ADR 0017](docs/adr/0017-gletscher-modell.md), Messreihe
+Modellwahl: [ADR 0010](docs/adr/0010-gletscher-modell.md), Messreihe
 `docs/glacier-measurements.md`.
 
 **Alle drei Abfluss-Konsumenten lesen `flowWeight`** und nie `rain`/`rainWeight`
@@ -918,7 +918,7 @@ nicht hat.)
 Wert, den ein `Terrain` bekommt, und trägt die große Mehrheit der Stellschrauben
 direkt. Messreihen und verworfene Werte stehen in `docs/*-measurements.md`,
 die Grundsatzentscheidungen zum Modell als ADR (Abschnitt „Sim-Modell" in
-`docs/adr/README.md`). Wer einen Wert ändert, trägt die Messung dort nach.
+`docs/adr/README.md`). Wer einen Wert ändert, trägt die Messung in der Messreihe nach.
 
 Zwei Gruppen sind bewusst NICHT in `Config.swift` deklariert, sondern neben ihrem
 Code; sie hängen als Feld in `SimConfig` und reisen damit vollständig im
@@ -961,7 +961,7 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   Großform: Mechanik-Wächter, deren Testaufbau Becken, Playas oder Schlingen der
   alten Seed-1337-Welt braucht, pinnen `rangeLandform` über
   `calibrationRangeLandform` (`TestCalibration.swift`, Issue #174; Begründung
-  [ADR 0024](docs/adr/0024-pin-doktrin.md)).
+  [ADR 0006](docs/adr/0006-konfigurationsebenen.md)).
 
 ## Arbeitsweise in diesem Projekt
 
@@ -1015,7 +1015,7 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
      womit der Braid-Scour die Böden der abflusslosen Becken tiefer gräbt; die
      Playa-Fläche fiel gemessen von >100 auf 35 Zellen und die #11-Wächter
      `testDriedBedIsRenderedAsPlaya`/`testBasinLevelIsRateLimited` kippten
-     (`docs/dt-invariance-measurements.md` §6, [ADR 0006](docs/adr/0006-braiding.md),
+     (`docs/dt-invariance-measurements.md` §6, [ADR 0005](docs/adr/0005-dt-invarianz.md),
      Issue #275).
 - Masse-Erhaltung gilt **nicht** (detachment-limited Stream-Power trägt Material aus);
   die Invariante ist beschränktes Relief / Fließgleichgewicht; Wächter:
