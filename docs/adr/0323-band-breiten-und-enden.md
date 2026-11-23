@@ -1,9 +1,0 @@
-# Bänder: Breite, Enden und Hierarchie
-
-Die Bandbreite folgt w ∝ √Q (Leopold/Maddock, Issue #51): am Referenz-Abfluss (280 Zellen) genau die Stempel-Optik (Halbbreite 0,8), darüber breiter, darunter schmaler, vierfacher Abfluss = doppelte Breite, mit Boden und Deckel. Die Quergefälle-Klemme der Kanten (`ribbonMaxCrossSlope = 0,4`): quer zur Fließrichtung steht eine Wasserfläche praktisch eben, steilere Kanten sind Schluchtwände, keine Ufer.
-
-Der Nass-Halo im Wasserfeld wird um die Band-Halbbreite plus Rand (`ribbonHaloMarginCells = 1`) gestempelt; ohne Rand endete er an der Bandkante und das Band stand auf einer harten Farbkante statt in einem Ufer (Rückbau-Ursache f3556c8). An der Mündung verliert der Strom seine Tiefe, nicht sein Wasser: Delta-Arme haben eine Mindest-Halbbreite (1,5) und laufen zur Front hin schmaler aus, ohne auf 0 zu fallen. Die Quelle blendet länger ein, als das Ende ausblendet: ein Oberlauf soll wachsen, ein Ende nur die Kante brechen. Ein Zubringer, der in das Band eines größeren Laufs mündet (`ribbonJoinSearchCells`), endet in diesem; ein Ende ohne Mündung läuft spitz aus (Taper bis Deckkraft 0).
-
-Hierarchie: Strahler 3 rein, Strahler 2 raus (`ribbonRankDivisor = 6`, von 4/3 gesenkt; Begründung und Messung bei `ribbonMinimumRank`). Eine gerade noch zugelassene Schleife muss nach dem Trimmen der Hals-Enden noch einen Bogen haben (`oxbowMinimumNodes > 2 · oxbowMaximumTrimmedNodes`), sonst emittieren Geometrie und Stempel nichts und der Filter wäre wirkungslos.
-
-Betrifft: `WaterRender.ribbonHalfWidthCells`, `WaterRender.ribbonMaxCrossSlope`, `WaterRender.ribbonHaloMarginCells`, `WaterRender.deltaArmMinHalfWidthCells`, `WaterRender.ribbonSourceTaperCells`, `WaterRender.ribbonTailTaperCells`, `WaterRender.ribbonJoinSearchCells`, `WaterRender.ribbonRankDivisor`, `WaterRender.oxbowMinimumNodes`, `WaterRenderTests`, `WaterRendererTests`

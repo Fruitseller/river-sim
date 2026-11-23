@@ -1,9 +1,0 @@
-# Feines Erosionsdetail: runevision-Filter je Pixel, an echten Abfluss gebunden
-
-Das feine Detail rechnet je Pixel Sub-Grid-Erosionsrinnen auf die Sim-Höhe (runevision „Advanced Terrain Erosion Filter“, Phacelle-Noise entlang des lokalen Gefälles, „stacked faded gullies“, MPL-2.0, Port in `erosion_filter.gdshaderinc`): Normalen-Störung, Rinnen-Schattierung und Ridge-Map. Rein kosmetisch, mit der Kameradistanz ausgeblendet (Aliasing, Kosten). Das Include hat keine Uniforms; die Skala ist ein Parameter, damit die Flusstal-Studie dieselbe Funktion grob als echte Verschiebung nutzen kann, statt den MPL-Code zu kopieren. Stärke = Höhenamplitude relativ zur Skala (wie im Original); Skala, Schattierung und Normalen-Anteil kommen aus SimCore.ReliefRender (`relief_detail_*`).
-
-- Bindung an den Abfluss (R8 `flow_tex`, `WaterFieldRenderer.flowDetailField`: log-normierte MFD-Abflussdichte unterhalb der Wasser-Sichtbarkeitsschwelle): bündelt die Rinnen in echten Abflussbahnen. Ohne sie degeneriert der Layer auf gealterten, gleichförmig flachen Hängen zu einem Tapeten-Muster (PR #106). Stärke-Fenster `WaterRender.flowDetailGainLo/Hi` (0,3 … 1,8).
-- Zwei Oktaven statt drei (Look-Iteration 7): die feinste (~17 m) lag unter den gebackenen Felsrippen und kostete je Pixel Bildzeit. Die Oktavenzahl als Parameter ist eine Änderung dieses Projekts gegenüber dem Original (dort 3).
-- Fels trägt die Rinnen schärfer (`MaterialRender.rockReliefGain`, Befund #174: Runsen statt verputzter Wand). Auf steilen Wänden (#237) zogen die Rinnen senkrechte Streifen in Fallrichtung; dort wird das Detail zurückgenommen, die Scan-Normale trägt es.
-
-Betrifft: `game/shaders/erosion_filter.gdshaderinc` (`erosion_detail_at`), `game/shaders/terrain.gdshader` (`erosion_detail`, `flow_tex`), `SimRender.WaterFieldRenderer`, `SimCore.ReliefRender`, `WaterRender.flowDetailGainLo`

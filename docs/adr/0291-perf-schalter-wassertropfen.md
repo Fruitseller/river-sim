@@ -1,9 +1,0 @@
-# `hydraulicSkipWaterSpawns` ist nicht verhaltensneutral: beide Richtungen gepinnt
-
-Die Produktions-Config schaltet `hydraulicSkipWaterSpawns` an (`SimConfig.production`, bis #97 `SimNode.productionConfig()`). AGENTS.md sagte pauschal Verhaltensgleichheit der Perf-Schalter zu, belegt war sie nur für `meanderSpatialCutoffIndex`. Der A/B (#90) hat die Zusage widerlegt: der Schalter verwirft einen Tropfen mit Startzelle unter dem Meeresspiegel (`Hydraulic.erode`, `h[start] <= seaLevel`) ganz; ohne ihn erodiert derselbe Tropfen Schelf und Meeresboden (nur im tiefen Wasser, `hf − h > poolDepth`, stirbt er wirkungslos). Schon der Stream-Map-Spin-up der Generierung reicht das durch, über das Abflussfeld erreicht es sofort das Land.
-
-Gemessen (n = 256, world = 130, Seed 1337, 2026-08-31): nach der Generierung 29 881 von 65 536 Zellen mit anderem `h` (11 392 Land, max |Δh| 0.085), nach 5 000 Jahren alle. Eine andere Welt-Realisierung mit gleichwertigem Charakter: meanLand relativ 2.8e-5 (Generierung) bis 4.4e-4 (10 000 Jahre), Landzellenzahl ≤ 1.5e-3.
-
-Der Test pinnt beide Richtungen: Fingerprints verschieden, Charakter gleich (Schranke 0.005, eine Größenordnung über der Messung und weit unter einem echten Etat-Fehler; der Tropfen-Etat auf Land ist die Kalibrier-Basis, Logbuch zu #10), mit Absolutboden, weil eine relative Toleranz bei `meanA` → 0 zu `accuracy: 0` degenerierte. Er wird nicht zu einem Gleichheits-Test aufgeweicht, solange der Schalter Tropfen verwirft. Wird der Fingerprint-Vergleich gleich, ist der Schalter neutral geworden: dann auf Gleichheit umstellen und die Korrekturen in AGENTS.md und `Config.swift` zurücknehmen. Laufzeit unter einer Sekunde (n = 256, release), weit unter dem Budget in `docs/ci-measurements.md`.
-
-Betrifft: `SimConfig.hydraulicSkipWaterSpawns`, `SimConfig.production`, `Hydraulic.erode`, `PerfFlagAB`

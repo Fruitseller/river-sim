@@ -11,10 +11,10 @@ Regeln für Schritt 2 von `/delete-comment`, für den ganzen Lauf oder für ein 
 - `tautology`: wiederholt, was der Code schon sagt: Namen, Typen, offensichtlicher Ablauf, Abschnittsmarken wie `// MARK: - Utility`, Doc-Kommentare, die die Signatur nacherzählen.
 - `stale`: nennt Code, Werte, Dateien, Issues oder Verhalten, die es nicht mehr gibt oder die nicht mehr zum Code passen. Prüfen: das genannte Symbol, die Datei, den Wert im Repo suchen.
 - `excuse`: deckt einen Notbehelf: gibt eine Umgehung, Abkürzung, Doppelung, ein „vorerst" belassenes Literal, eine bekannte Ungenauigkeit, ein „TODO" oder einen Wächter zu, der einen Fehler überklebt; eine gepinnte Kopie, die aus einer Quelle kommen müsste. Die Behebung ist echte Arbeit, die jemand tun sollte.
-- `decision`: hält eine wichtige, nicht offensichtliche Entscheidung fest, die ein späterer Leser braucht: warum dieser Wert oder Weg (mit Messwerten, verworfenen Alternativen, Issue-Nummern, Verweisen auf `docs/*-measurements.md`), Verträge zwischen Schichten, Reihenfolge-Zwänge, Argumente zu Determinismus und Nebenläufigkeit, physikalische Bedeutung oder Einheit, die der Name nicht trägt.
+- `decision`: hält eine Entscheidung fest, die alle drei Fragen mit Ja beantwortet: (1) schwer rückgängig zu machen (Kalibrier-Kaskade, Spielstand-Format, Schichtgrenze, Determinismus, Abhängigkeit mit Lock-in), (2) ohne Kontext überraschend, ein fähiger Maintainer würde es „reparieren“, (3) Ergebnis einer echten Abwägung mit verworfener Alternative. Typisch: Architektur und Schichtgrenzen, bewusste Abweichung vom naheliegenden Weg, Invarianten wie Bett-Funnel oder D8/MFD-Trennung, Modellwahl, Versions-Pins.
 - `keep`: NUR für einen funktionalen Kommentar (eine Direktive, die ein Werkzeug liest, oder eine rechtlich nötige Lizenz- oder Herkunftsangabe). Mit Grund. Fast nie.
 
-`decision` streng vergeben: die meisten Zeilen-Notizen sind Tautologie. Ein langer Absatz ist nicht automatisch eine Entscheidung; die Frage ist, ob ein fähiger Maintainer es ohne den Text falsch machen oder zurückbauen würde. Ist ein Block Entscheidung UND Notbehelf, gilt `excuse`, und der Entscheidungsteil geht trotzdem ins ADR (`adr` setzen).
+`decision` ist die Ausnahme. Das erste Audit fand in 5804 Blöcken 26 Entscheidungen; ein Paket mit mehr als einer Handvoll ist falsch eingeordnet. KEINE Entscheidung und damit `tautology` sind: warum eine einzelne Konstante diesen Wert hat (die Messreihe gehört nach `docs/*-measurements.md`; steht sie dort nicht, im `why` vermerken), was ein Test prüft oder wie er aufgebaut ist, Bedienung eines Skripts, alles, was `AGENTS.md`, `PLAN.md` oder `docs/` schon sagen, und eine Abwägung, die man ohne Folgekosten umdrehen könnte. Ein langer Absatz mit Zahlen ist nicht automatisch eine Entscheidung. Im Zweifel `tautology`. Ist ein Block Entscheidung UND Notbehelf, gilt `excuse`, und der Entscheidungsteil geht trotzdem ins ADR (`adr` setzen).
 
 ## Ausgabe (alles in `$S/out/<PART>/`)
 
@@ -22,7 +22,7 @@ Regeln für Schritt 2 von `/delete-comment`, für den ganzen Lauf oder für ein 
    `{"id": "...", "category": "...", "adr": "<slug oder null>", "issue": "<schlüssel oder null>", "why": "<≤12 Wörter>"}`.
    Jede `id` genau einmal; `adr` ist bei jeder `decision` gesetzt.
 
-2. `adr/<slug>.md`: ADR-Entwürfe auf Deutsch, Slug in ASCII-Kleinbuchstaben mit Bindestrichen, mit Paketnamen davor (`config-gletscher-erosion.md`). Nach Entscheidung gruppieren, nicht eine Datei je Kommentar: zusammengehörige Blöcke (oft über Code, Config und Tests verteilt) werden ein ADR. Format:
+2. `adr/<slug>.md`: ADR-Entwürfe auf Deutsch, Slug in ASCII-Kleinbuchstaben mit Bindestrichen. Erst `docs/adr/README.md` lesen: gehört die Entscheidung zu einem bestehenden ADR, ist der Entwurf ein Nachtrag dazu (Slug = Dateiname des ADR ohne Nummer). Eine Datei je Entscheidung, nie je Kommentar; zusammengehörige Blöcke (oft über Code, Config und Tests verteilt) werden ein ADR. 10–40 Zeilen. Format:
 
    ```md
    # <Kurzer Titel der Entscheidung>
@@ -34,7 +34,7 @@ Regeln für Schritt 2 von `/delete-comment`, für den ganzen Lauf oder für ein 
    Betrifft: `Symbol.name`, `andere/Datei.swift` (Funktion oder Konstante, keine Zeilennummern)
    ```
 
-   Die Substanz verschieben, nicht wegfassen: Zahlen, Messwerte, verworfene Werte mit Grund, Issue-Verweise (#123) und Doku-Verweise (`docs/…`) bleiben. Prosa straffen, Tautologisches weglassen, keine Zeilennummern. Was im Kommentar veraltet war, steht im ADR in der richtigen Fassung.
+   Ins ADR gehören Kontext, Entscheidung, Grund und die verworfenen Alternativen, die sonst jemand wieder vorschlägt, mit den Zahlen, die sie tragen, dazu Issue- und Doku-Verweise. Nicht hinein: wie der Code funktioniert, Aufruferlisten, Testbeschreibungen, Kalibrier-Notizen je Konstante. Keine Zeilennummern. Was im Kommentar veraltet war, steht im ADR in der richtigen Fassung.
 
 3. `excuses.json`: Issue-Entwürfe auf Deutsch:
    `{"key": "<kurzer-schlüssel>", "ids": [...], "title": "...", "body": "..."}`.

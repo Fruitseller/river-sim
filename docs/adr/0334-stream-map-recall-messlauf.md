@@ -1,7 +1,0 @@
-# Messlauf zur Stream-Map der großen Läufe
-
-Die Stream-Map (`Terrain.streamMap`, EWMA der reife-gewichteten Tropfen-Besuche) steuert über `WaterRender.trackMask` die Raster-Läufe. Der Wächter `testStreamMapMarksAndPersists` pinnt die alte Großform und misst dort Recall > 0,4; auf der neuen Form (n = 256) nur 0,15 (Issue #174, Befund „Stream-Map trackt die großen Läufe schlechter", `docs/zielbild-measurements.md`). Der Messlauf `StreamMapRecallDiagnostics` (hinter `RS_MEASURE`) klärt auf dem Produktionsgitter, wie groß das Problem ist, wo es sitzt (Flachland gegen Gebirge, Abfluss-Fenster) und ob es sichtbar ist, also nicht von Band, Abfluss-Vertrauen (`WaterRender.ribbonTrust`) oder See gedeckt.
-
-Methode: Gegenprobe derselben Welt mit anderer Stream-Map: „Orakel" = 1 auf jeder D8-Zelle ≥ creek (perfektes Tracking), „null" = leere Stream-Map (nur Abfluss-Vertrauen und Band tragen). Liegt „aktuell" nahe am Orakel, kostet die Stream-Map nichts; nahe an „null", trägt sie nichts bei. Gezählt wird die sichtbare Lücke statt der Zell-Lücke: D8-Pfad und Zentrumslinie liegen im Gürtel mehrere Zellen auseinander, ein Band 3 Zellen neben dem Pfad ist der Fluss; gemessen wird der Anteil der Hauptlauf-Zellen ohne gemalte Zelle in 4/8 Zellen Umkreis und die längste solche Strecke. Schalter: `RS_SEEDS` (Standard 1337,42,20), `RS_CHECKPOINTS` (Standard 0,5000,20000 Jahre nach der Generierung).
-
-Betrifft: `StreamMapRecallDiagnostics`, `Terrain.streamMap`, `WaterRender.trackMask`, `RiverDynamicsTests.testStreamMapMarksAndPersists`

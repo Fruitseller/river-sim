@@ -206,8 +206,7 @@ Das ist eine Hochrechnung, keine Messung; die 90-ms-Marke des Issues wird sie
 vermutlich knapp verfehlen.
 
 Pass für Pass, jeweils in der Sitzung gemessen, in der die Änderung entstand
-(Details und Begründung standen als Kommentar am jeweiligen Pass in
-`Terrain.swift`, seit ADR 0001 in [ADR 0070](adr/0070-roh-puffer-perf.md)):
+(Grundsatz: [ADR 0009](adr/0009-roh-puffer.md)):
 
 | Pass | vorher | nachher | Mittel |
 |---|---:|---:|---|

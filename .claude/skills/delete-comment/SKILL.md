@@ -30,12 +30,14 @@ Fertig, wenn jede `id` aus `blocks.json` genau einmal in einer `decisions.json` 
 
 ## 3. Entscheidungen in ADRs
 
-Für jede `decision`-Gruppe:
+Vorher die `decision`-Blöcke selbst gegenlesen: jede muss die drei Fragen aus CLASSIFY.md mit Ja beantworten (schwer rückgängig, überraschend, echte Abwägung). Was durchfällt, wird `tautology` und stirbt mit dem Kommentar. Ein Lauf ergibt meist kein bis drei ADRs; das erste Audit machte aus 5804 Blöcken 26. Viel mehr heißt: zu großzügig eingeordnet.
 
-1. `grep -rl '<Symbol>' docs/adr/` — gibt es schon ein ADR zu dieser Entscheidung, ergänzt du dort.
+Für jede verbliebene Entscheidung:
+
+1. `docs/adr/README.md` lesen und `grep -rl '<Symbol>' docs/adr/` — gibt es schon ein ADR zu dieser Entscheidung, ergänzt du dort.
 2. Sonst neues ADR `docs/adr/NNNN-slug.md`, nächste freie Nummer, Format wie in `docs/adr/README.md` beschrieben, und eine Zeile im passenden Abschnitt der README.
 
-Den Inhalt verschieben, nicht zusammenfassen: Messwerte, verworfene Werte mit Grund, Issue- und Doku-Verweise bleiben erhalten. Keine Zeilennummern.
+Ins ADR gehören Entscheidung, Grund und die verworfenen Alternativen mit ihren Zahlen, nicht die Beschreibung des Codes. Keine Zeilennummern.
 
 ## 4. Notbehelfe als Issues
 
@@ -59,4 +61,4 @@ python3 scripts/comments.py check
 - Geänderte GDScript-Dateien: `"$GODOT" --headless --path game --check-only --script res://<datei>` meldet Parse-Fehler (z. B. ein Block, der nur aus einem Kommentar bestand).
 - `AGENTS.md`, `docs/` und `ROADMAP.md` nach Verweisen wie „Begründung am Code" oder „s. Kopf von X" auf gelöschte Kommentare durchsuchen und auf das ADR umbiegen.
 
-Fertig, wenn `check` grün ist, die Baseline gesunken ist und die Suite so grün ist wie vorher.
+Fertig, wenn `check` grün ist, die Baseline gesunken ist, die Suite so grün ist wie vorher und du die Zahl neuer ADRs nennen und je ADR begründen kannst.
