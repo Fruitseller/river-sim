@@ -4,16 +4,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Messreihe zu Issue #174, Paket C (Fluss, Delta, Küste sichtbar machen):
-/// Größenverteilung der Raster-Wasserkomponenten (Tümpel-Teppich), Lage und
-/// Steigung der Küstenzellen (Strand gegen Felsküste) und die Mündungen, die
-/// eine Sedimentfahne bekommen. Tabellen: `docs/river-coast-render-measurements.md`.
-///
-///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         --filter testRiverCoastRenderDiagnostic
-///
-/// `RS_SEED` beschränkt auf einen Seed. Laufzeit ~2 min (3 × 100.000 Jahre bei
-/// n = 720, 1000er-Schritte).
 final class RiverCoastRenderTests: XCTestCase {
 
     func testRiverCoastRenderDiagnostic() throws {
@@ -35,8 +25,6 @@ final class RiverCoastRenderTests: XCTestCase {
             }
         }
     }
-
-    // MARK: §A Wasserkomponenten
 
     private func measureComponents(_ t: Terrain) {
         let render = builtRibbons(t)
@@ -64,7 +52,6 @@ final class RiverCoastRenderTests: XCTestCase {
             banded += cell { $0.banded }
         }
         print(line); print(sep); print(free); print(hidden); print(banded)
-        // Sichtbares Raster-Fluss-Wasser (R ≥ riverMaskLo) nach Komponenten.
         let n = t.cfg.n
         let lo = byte01(WaterRender.riverMaskLo)
         var vis = [Bool](repeating: false, count: n * n)
@@ -104,8 +91,6 @@ final class RiverCoastRenderTests: XCTestCase {
         print("nasse Wiese bei wetMeadowMaxCells = \(WaterRender.wetMeadowMaxCells): \(meadow) Zellen")
     }
 
-    // MARK: §B Küste
-
     private func measureCoast(_ t: Terrain) {
         let n = t.cfg.n, sea = t.cfg.sea
         let dist = CoastMaterial.seaDistance(t)
@@ -141,8 +126,6 @@ final class RiverCoastRenderTests: XCTestCase {
               + "Fels ≥ 0,5 an der Küste: \(cliff) Zellen")
     }
 
-    // MARK: §C Mündungen
-
     private func measureMouths(_ t: Terrain) {
         let mouths = SedimentPlume.mouths(t)
         let sorted = mouths.sorted { $0.dischargeCells > $1.dischargeCells }
@@ -156,10 +139,6 @@ final class RiverCoastRenderTests: XCTestCase {
         }
     }
 
-    // MARK: §D Kosten der neuen CPU-Pässe
-
-    /// Median über 15 Läufe je Pass (ms). Nur die Zusatzkosten von #174 C;
-    /// `TerrainColorRenderer.buffers` enthält `seaDistance` bereits.
     private func measureCost(_ t: Terrain) {
         func median(_ body: () -> Void) -> Double {
             var times: [Double] = []

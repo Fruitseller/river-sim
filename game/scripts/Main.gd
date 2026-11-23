@@ -1,48 +1,20 @@
 extends Node3D
-## river-sim — Godot-Frontend (M2).
-## Der Simulationskern (Erosion/Flüsse/Tektonik) lebt in der GDExtension `SimNode`
-## (Swift/SimCore, headless getestet). Dieses Skript macht nur Rendering, Kamera,
-## Eingabe und Zeitsteuerung — die Physik-Logik wird NICHT hier dupliziert.
 
 const Lighting = preload("res://scripts/Lighting.gd")
 const TerrainTiles = preload("res://scripts/TerrainTiles.gd")
 const RenderScale = preload("res://scripts/RenderScale.gd")
 const Atmosphere = preload("res://scripts/Atmosphere.gd")
 const TerrainAmplifier = preload("res://scripts/TerrainAmplifier.gd")
-# Ufer und Bett unter den Bändern (Look E, #239).
 const RiverCorridor = preload("res://scripts/RiverCorridor.gd")
 var corridor: RiverCorridor
-# Render-Gitter der billigsten Stufe; `balanced` und `quality` zeigen seit #153
-# das volle Sim-Gitter (`terrain_grid_for`).
 const PERFORMANCE_TERRAIN_GRID := 256
-# Back-Auflösung der Render-Verschiebung in Vielfachen des Sim-Gitters: die
-# Pixel-Stufe liest Steigung und Rinnen aus der doppelt so feinen Textur, damit
-# ihr Detail nicht an der Mesh-Dichte hängt (Flusstal-Studie #116).
 const RELIEF_BAKE_FACTOR := 2
 
-# Kosmetische Sub-Grid-Rinnen des Terrain-Shaders. Die Physik altert von einer
-# scharfen zu einer runden Landschaft; eine konstante Detailstärke überzeichnete
-# dadurch Jahr 0 und ließ 100k im Vergleich leer aussehen. Der Renderkontrast
-# läuft in der Gegenrichtung und hält beide Zustände als dieselbe Welt lesbar,
-# ohne Sim-Höhen, Wasser oder Spielstände zu verändern.
-#
-# Kalibrierung per A/B-Screenshot (maximiert, RS_STEP=100000, Seed 1337):
-# Die Stärke ist NICHT der Hebel für „alt wirkt leer": bei 0.70 wurde aus dem
-# Detail-Layer ein sichtbar repetitives Tapeten-Muster (Nutzer-Abnahme
-# 2026-09-02), weil die gealterte Welt gleichförmig flache Hänge hat und
-# `erosion_detail` die Wellen-Richtung auf die lokale Steigung normiert —
-# überall gleiche Frequenz und Amplitude. Am jungen Ende ist der Layer
-# ohnehin fast unsichtbar (die ECHTEN Pre-Erosions-Rinnen der Generierung
-# dominieren, A/B mit detail_enabled=false ununterscheidbar).
 const TERRAIN_DETAIL_YOUNG := 0.16
 const TERRAIN_DETAIL_OLD := 0.42
 const TERRAIN_DETAIL_AGE_YEARS := 100000.0
 
 var sim: Object
-# Höhen-Skalierung fürs Mesh: RenderContract.heightScale, kommt in `_ready`
-# über die Brücke (Gruppe `contract`, Issue #213). Bis dahin stand sie hier als
-# kopiertes Literal; nur der `hscale`-Default in terrain.gdshader bleibt als
-# Kopie für die Editor-Vorschau ohne SimNode.
 var hscale := 0.0
 var N: int
 var world_size: float
@@ -51,87 +23,34 @@ var step: float
 var sea: float
 var terrain_grid: int
 var render_quality := "balanced"
-var pick_radius_cap := 0.5 # effektive Spitzhacken-Breite (aus SimNode, für die Pinselkuppel)
+var pick_radius_cap := 0.5
 
-## Terrain in Kacheln (#235, scripts/TerrainTiles.gd): eine MeshInstance3D je
-## Kachel, `terrain_mat` auf allen.
 var terrain_tiles: Node3D
 var water_mi: MeshInstance3D
-# Pinselkuppel (s. BRUSH_FALLOFF_POWER): Linien-Mesh, nur bei Änderung neu
-# gebaut (`brush_key`: Treffer, Radius, Profil, Flächen-Stand).
 var brush_mi: MeshInstance3D
 var brush_mesh := ArrayMesh.new()
 var brush_key := []
-# Zählt jede Änderung der sichtbaren Fläche (Höhe, Verschiebung, Kronendach).
 var surface_version := 0
 
-# Wasser-Geometrie (Issues #31/#34): Mäander, Delta-Distributäre und Altarme als
-# Band-Geometrie aus SimNode.buildRiverRibbons statt Textur-Stempel. Seit #34 der
-# STANDARD; `RS_WATER_STAMP` schaltet für den A/B-Vergleich auf den alten
-# Raster-Stempel-Pfad zurück (ohne Rebuild, SimNode liest dieselbe Variable).
-# Wann neu gebaut wird (Dirty-Vertrag, 1-Hz-Deckel), entscheidet RenderState.frame.
 var river_ribbons := true
 var river_mi: MeshInstance3D
 var river_mesh := ArrayMesh.new()
 var river_mat: ShaderMaterial
-# Zeitraffer-Überblende der Bänder (#174): der vorige Band-Bau bleibt als
-# zweites Mesh stehen und löst sich über `ribbon_fade` in den neuen auf, statt
-# im Takt der Band-Bauten (~1 s) zu springen; die beiden Stände teilen sich
-# die optische Dicke, Begründung in water.gdshader (`ribbon_blend`). Die Dauer ist
-# der Band-Deckel selbst (RenderState.ribbonRebuildSeconds): im Zeitraffer
-# liegen zwei Bauten nie dichter, die Blende endet also immer vor dem nächsten
-# Bau, und kein halb aufgelöster Stand wird verworfen.
 const RIBBON_FADE_SECONDS := 1.0
 var river_prev_mi: MeshInstance3D
 var river_prev_mesh := ArrayMesh.new()
 var river_prev_mat: ShaderMaterial
-# Pinsel-Strich: die HÖHE folgt jedem Frame (heightsBytes ≈ 0,2 ms), die teure
-# Aufbereitung dahinter nur in diesem Takt. Gemessen je Aufruf (n = 832, M4 Max):
-# recomputeFlow 41 ms + waterFieldBytes 17 ms + buildRiverRibbons 10 ms samt
-# 315k-Index-Mesh-Upload — pro Frame gerechnet sind das ~14 FPS, und genau das
-# war der gemeldete Lag beim Arbeiten mit den Werkzeugen (RS_QUALITY=quality).
-# 0,15 s hält den Strich flüssig und die Flüsse trotzdem sichtbar mitlaufend;
-# beim Loslassen zieht `_finish_stroke()` einmal alles vollständig nach, damit der
-# fertige Strich nie mit einem halb alten Flussnetz stehen bleibt.
-# Der Takt blieb bei 0,15 s; seit Aug 2026 verteilt sich der Nachzug stattdessen
-# auf ZWEI Frames (Flussnetz / Uploads) — Aufschlüsselung und Messwerkzeug am
-# Aufruf in `_process`.
-# Takt des Zeitraffer-Sim-Schritts. Ein Schritt kostet FAST FIX ~40 ms, egal wie
-# viele Jahre er trägt: computeFlow (priorityFlood 23 ms + computeMFDArea 11 ms +
-# Empfängerwahl 3 ms) hängt an der Gittergröße, nicht an dt. Der Takt ist damit
-# direkt Framerate: GEMESSEN (n = 832, RS_QUALITY=quality, RS_FPS, M4 Max)
-# 0,15 s → 38,8 FPS · 0,25 s → 44,3 FPS · 0,35 s → 48,1 FPS. Bezahlt wird das
-# mit gröberen Sprüngen je Update (bei 60 J/s trägt ein Schritt 15 statt 9
-# Jahre) — dt-invariant ist das Ergebnis ohnehin, sichtbar ist nur, wie fein die
-# Landschaft zwischen zwei Updates gleitet; die Wasser-Blend (0.15, s. u.)
-# überbrückt es. 0,25 s ist die Wahl des Nutzers (+14 % FPS); 0,35 s wäre
-# nochmal +10 %, ist aber nicht auf sein Zeitraffer-GEFÜHL geprüft worden —
-# gemessen sind hier nur die Bildraten.
 const SIM_TICK_SECONDS := 0.25
 const SCULPT_REFRESH_SECONDS := 0.15
 
-# Auslöser eines Render-Frames (Issue #94) == SimRender.FrameTrigger. WAS ein
-# Frame liefert, in welcher Reihenfolge (Bänder vor dem Wasserfeld) und wie es
-# gedrosselt wird (Overlays 0,30 s, Bänder 1 Hz, Wasser-Blend 0.15, Rebuild-
-# Schwellen), steht in RenderState.frame; hier wird nur hochgeladen.
-const FRAME_SETTLED := 0     # Start, Neu, Laden, Sprung-Ende, Strich-Ende
-const FRAME_JUMP_CHUNK := 1  # ein Chunk eines Zeitsprungs
-const FRAME_TIMELAPSE := 2   # ein Zeitraffer-Takt
-const FRAME_STROKE := 3      # Nachzug während eines Pinselstrichs
+const FRAME_SETTLED := 0
+const FRAME_JUMP_CHUNK := 1
+const FRAME_TIMELAPSE := 2
+const FRAME_STROKE := 3
 
-# Terrain wird per Textur-Displacement gerendert: statisches Gitter, Höhen-,
-# Makrofarben-, Material- und Wasserfelder werden nur hochgeladen.
 var terrain_mat: ShaderMaterial
 var ocean_mat: ShaderMaterial
 
-## Ein Feld → EINE Shader-Textur: legt Image/ImageTexture beim ersten Upload an
-## (und hängt sie an ihren Shader-Parameter), danach nur noch `set_data` +
-## `update`. Ersetzt fünf wortgleiche Blöcke (Issue #53) — der Unterschied waren
-## nur Name und Pixelformat.
-##
-## `keeps_previous` (#172): vor jedem Upload wandert der alte Stand nach
-## `<param>_prev`, über den der Terrain-Shader im Zeitraffer hinüberblendet
-## (s. `Crossfade`).
 class FieldTexture:
 	var _param: StringName
 	var _prev_param: StringName
@@ -147,10 +66,6 @@ class FieldTexture:
 		if keeps_previous:
 			_prev_param = StringName(String(param).replace("_tex", "_prev_tex"))
 
-	## Bindet denselben GPU-Texturzustand an weitere Shader. Die Höhenkarte
-	## schneidet damit auch die Ozeanplatte ab, ohne einen zweiten Image-Upload;
-	## die Bänder lesen Höhe, Seespiegel und Wasserfeld, um dort auszublenden,
-	## wo der Terrain-Shader einen See malt.
 	func mirror_to(mat: ShaderMaterial) -> void:
 		_mirror_mats.append(mat)
 		if _tex != null:
@@ -166,9 +81,6 @@ class FieldTexture:
 			for mirror in _mirror_mats:
 				_bind(mirror)
 		elif _prev_tex != null:
-			# Der neue Stand bekommt ein EIGENES Image: der alte bleibt damit
-			# unverändert, auch wenn der Renderer die Bytes erst später liest
-			# (separater Render-Thread).
 			_prev_tex.update(_img)
 			_img = Image.create_from_data(n, n, false, _format, bytes)
 			_tex.update(_img)
@@ -181,18 +93,9 @@ class FieldTexture:
 		if _prev_tex != null:
 			mat.set_shader_parameter(_prev_param, _prev_tex)
 
-## Überblende vom Vorgängerstand zum neuen (#172), als Shader-Parameter
-## (`height_blend`, `overlay_blend`). JEDE Blende gehört zu GENAU einem
-## Upload-Takt: eine geteilte Blende über zwei Takte ließ den Wald an jedem
-## Takt ohne neue Maske zurückspringen (#170). Jeder Upload startet neu und
-## dauert so lange wie der Abstand zum vorigen: bei gleichmäßigem Takt
-## gleitet die Fläche damit ohne Halt von Stand zu Stand, statt erst zu
-## springen und dann zu stehen. Ohne `fade` (Pinsel, Sprung, Laden) gilt der
-## neue Stand sofort.
-## `fixed_seconds` > 0: feste Dauer statt des Abstands (Bänder, s. `ribbon_fade`).
 class Crossfade:
 	const MIN_SECONDS := 0.1
-	const MAX_SECONDS := 0.6  # nach einer Pause nicht ewig blenden
+	const MAX_SECONDS := 0.6
 	var _param: StringName
 	var _mats: Array[ShaderMaterial] = []
 	var mix := 1.0
@@ -226,216 +129,92 @@ class Crossfade:
 			mat.set_shader_parameter(_param, mix)
 
 var height_field := FieldTexture.new("height_tex", Image.FORMAT_RF, true)
-# gefüllte Oberfläche (Seespiegel) → echte horizontale Seeflächen
 var hf_field := FieldTexture.new("hf_tex", Image.FORMAT_RF, true)
 var color_field := FieldTexture.new("color_tex", Image.FORMAT_RGBA8, true)
 var surface_field := FieldTexture.new("surface_tex", Image.FORMAT_RGBA8, true)
-# Bodenbedeckung (#174 D): Schutthalde, Gletschereis, Rohboden, Talboden.
 var cover_field := FieldTexture.new("cover_tex", Image.FORMAT_RGBA8, true)
-# Raster-Wasser blendet seit #174 ebenfalls im Overlay-Takt (`water_at` im
-# Terrain-Shader); die EWMA (`water_blend`) glättet nur von Upload zu Upload.
 var water_field := FieldTexture.new("water_tex", Image.FORMAT_RGBA8, true)
-# Abfluss-Dichte fürs Shader-Detail: bündelt die kosmetischen Erosionsrinnen in
-# echten Abflussbahnen statt als uniformes Muster (WaterRender.flowDetailIntensity).
 var flow_field := FieldTexture.new("flow_tex", Image.FORMAT_R8, true)
-# Zeitraffer-Überblenden (#172): die Höhe im Sim-Takt, alles Gedrosselte
-# (Farbe, Material, Rinnen-Detail, Seespiegel, Wald, Raster-Wasser,
-# Sedimentfahne) im Overlay-Takt.
 var height_fade := Crossfade.new(&"height_blend")
-# Auslöser des Frames, der gerade hochlädt (s. `_timelapse_fading`).
 var _frame_trigger := FRAME_SETTLED
 var overlay_fade := Crossfade.new(&"overlay_blend")
-# Dritter Takt: die Bänder (s. RIBBON_FADE_SECONDS).
 var ribbon_fade := Crossfade.new(&"ribbon_blend", RIBBON_FADE_SECONDS)
 
-# GPU-Schwanzstufen des Raster-Wasserfelds (siehe shaders/water_field_*.gdshader).
-# Die Aufbereitung des Felds bleibt in der Extension — ihre zwei teuren Stufen
-# sind sequenzielle Graph-Algorithmen (Kontinuitäts-Kette entlang der
-# D8-Empfänger, Flood-Fill der Wasser-Komponenten) und passen in kein
-# Pixel-Programm. Was hierher wandert, ist der SCHWANZ: räumlicher Blur,
-# zeitliche EWMA, Quantisierung. GEMESSEN auf der CPU (n = 832, M4 Max):
-# blurMax(sd,1) 1,36 ms + blurMax(lk,2) 2,52 ms + EWMA/Packen 0,44 ms = 4,3 ms
-# der 14,4 ms des Passes. Mehr ist ohne Readback mitten in der Kette nicht zu
-# holen, und ein Readback je Tick kostet mehr als er spart.
-#
-# Kette: CPU-Rohfeld → Blur-Pässe mit den Kanal-Masken aus SimRender
-# (WaterTailPlan: erst R+G, dann nur G) → EWMA-Ping-Pong → water_tex.
-# Pass-Zahl, Masken und Priming sind seit #95 Daten aus SimRender über die
-# Brücke — Main.gd hält keine eigene Kalibrierzahl der Kette mehr.
-# Alle Viewports laufen mit UPDATE_ONCE genau einmal pro Textur-Update;
-# auf UPDATE_ALWAYS wäre die EWMA-Rate an die Bildrate gekoppelt und die
-# Framerate-Unabhängigkeit (AGENTS.md) verletzt.
-#
-# STANDARDMÄSSIG AUS, und zwar aus Messgründen, nicht aus Vorsicht:
-# in situ spart der Schnitt 14,8 → 13,0 ms (1,8 ms je Aufruf, nicht die 4,3 ms,
-# die ein Standalone-Benchmark der Schwanzstufen vorhergesagt hatte), und im
-# Zeitraffer laufen die Overlays nur alle ~0,5 s. Die Bildraten-Gegenprobe
-# (RS_FPS, interleaved, n = 832, balanced, M4 Max) fand deshalb NICHTS:
-# GPU 67,9 / 71,2 gegen CPU 69,3 / 68,4 — die Streuung innerhalb einer Variante
-# ist größer als der Unterschied. Dafür bekommt die GPU drei zusätzliche
-# 832²-Pässe und 22 MB Targets, und die war beim Zeitraffer nicht der
-# Leerlaufende Teil (s. ACTIVE_FPS_CAP).
-#
-# Der Pfad bleibt drin, weil er auf einer Maschine mit schwacher CPU und freier
-# GPU gewinnen KANN (Kandidat: die iPad-Frage) — und weil er belegt geprüft ist:
-# Bildvergleich gegen den CPU-Pfad 1,09 von 255 mittlerer Abweichung, und seit
-# #95 der Vertragstest tests/water_gpu_tail.gd (CPU gegen GPU Zelle für Zelle,
-# plus Framerate-Unabhängigkeits-Beleg).
-# RS_WATER_GPU=1 schaltet ihn ein — A/B im selben Build, wie RS_WATER_STAMP
-# für Geometrie ↔ Raster.
 var water_gpu := false
-# Die Kette selbst (Viewports, Materialien, Priming-Zustand) lebt in
-# WaterGpuTail.gd — EINE Implementierung, die Main UND der Vertragstest fahren.
 const WaterGpuTailScript = preload("res://scripts/WaterGpuTail.gd")
 var water_gpu_tail: WaterGpuTailScript
 var debug_difference_field := FieldTexture.new("debug_difference_tex", Image.FORMAT_RGBA8)
 
-# Nur die CPU-Höhen braucht GDScript: Raycasts lesen daraus, alle anderen
-# Renderfelder bleiben im nativen SimNode und vermeiden große FFI-Kopien.
-# LAZY gezogen (Issue #53): die Höhen-TEXTUR kommt als rohe Bytes direkt aus
-# SimNode, dieses Array braucht nur der Raycast — im Zeitraffer ohne Eingriff
-# also gar nicht. Quelle ist der zuletzt HOCHGELADENE Stand (`shown_heights`),
-# nicht die Sim: im Zeitraffer rechnet die schon am nächsten Schritt
-# (`sim.beginStep`), der Raycast trifft aber, was man sieht, und wartet nie.
 var h_cache: PackedFloat32Array
 var h_cache_dirty := true
-# Zuletzt hochgeladene Höhen (R32F-Rohbytes) und ihr Sim-Jahr: der Stand, den
-# Bild, Jahresanzeige, Raycast und Pinselkuppel zeigen.
 var shown_heights: PackedByteArray
 var shown_year := 0.0
 
-# Hintergrund-Schritt (docs/perf-measurements.md §L): im Zeitraffer rechnet
-# SimNode Sim-Schritt und Frame-Aufbereitung auf einem eigenen Thread
-# (`sim.beginStep`), `_process` holt das Ergebnis ab, sobald es fertig ist
-# (`sim.stepReady`), und lädt nur noch hoch. Die Regeln je Pfad stehen an
-# `_settle_sim`. Gemessen wird die Hauptthread-Zeit des Hochladens
-# (`last_apply_usec`, je abgeholtem Schritt; Auswertung in der Flusstal-Bühne).
 var last_apply_usec := 0
 var step_applies := 0
 
-# Render-Verschiebung von Rinnen und Graten (#153): ein Float-SubViewport backt
-# sie einmal je Terrain-Update (`_bake_relief`), der Terrain-Shader liest nur.
-# Pinselkuppel und Kameraziel liegen auf der SICHTBAREN Fläche; dafür liest
-# `_relief_cpu` die Backtextur zurück, lazy und nie während eines Strichs (der
-# Rückweg ist ein GPU-Sync, gemessen 22 ms bei n = 720, M4 Max).
-# `relief_lift_cache` ist der kodierte Höhenzuschlag auf dem Sim-Gitter
-# (Dekodierung in `_surface_y`), leer = keine Verschiebung bekannt.
-# Zwei Back-Ziele im Wechsel: im Zeitraffer blendet der Terrain-Shader über
-# einen Sim-Takt vom alten zum neuen Stand (`relief_mix`), statt viermal je
-# Sekunde zu springen; sonst (Pinsel, Sprung, Laden) gilt der neue sofort.
 var relief_vps: Array[SubViewport] = []
-var relief_vp: SubViewport  # das Ziel mit dem neuesten Stand
+var relief_vp: SubViewport
 var relief_mix := 1.0
 var relief_mat: ShaderMaterial
 var relief_height_code := 0.0
-var relief_geometry_age := 0.0  # Sim-Jahre bis zur vollen Verformung
+var relief_geometry_age := 0.0
 var relief_lift_cache: PackedFloat32Array
-var relief_bake_frame := -1  # Frame des noch nicht zurückgelesenen Auftrags
-var relief_bakes := 0  # Zähler für den Wächter: nur Terrain-Updates backen
-# Gelände-Verfeinerung (#238): mit RenderingDevice liefert sie `relief_tex`
-# statt des Back-Passes (TerrainAmplifier.gd, Einhängepunkte: `_amplify`,
-# `_adopt_amplified`). `null` = Back-Pass (Compatibility-Renderer, headless,
-# Stufe `performance`, `RS_AMPLIFY=0` für A/B im selben Build).
+var relief_bake_frame := -1
+var relief_bakes := 0
 var amplifier: TerrainAmplifier
-var amp_filled: PackedByteArray   # Seespiegel und Schutzmaske des letzten
-var amp_protect: PackedByteArray  # Overlay-Frames, bis der Verfeinerer sie holt
-# Über diese Zeit verteilt der Verfeinerer einen Auftrag. Im Zeitraffer zwei
-# Stände je Sekunde: die Feinstruktur muss dem Sim-Takt (vier je Sekunde)
-# nicht folgen, sie blendet ohnehin, und die Kosten halbieren sich. Unter dem
-# Pinsel schneller, dort zählt, wie bald die Form dem Strich folgt.
+var amp_filled: PackedByteArray
+var amp_protect: PackedByteArray
 const AMPLIFY_TIMELAPSE_SECONDS := 0.5
 const AMPLIFY_STROKE_SECONDS := 0.2
-# Blende zum neuen Stand des Verfeinerers. Kürzer als die Zeit, über die der
-# nächste Auftrag rechnet: der darf sein Ausgabe-Ziel erst beschreiben, wenn
-# die Blende durch ist, und soll darauf nicht warten müssen. Eine Blende so
-# lang wie der vorige Auftrag schaukelte sich auf (jeder Auftrag wartete auf
-# die Blende des vorigen und wurde dadurch selbst länger).
 const AMPLIFY_FADE_SECONDS := 0.4
-# Dauer der Blende zum neuen Stand der Verschiebung (`relief_mix`): ein
-# Sim-Takt, mit Verfeinerer `AMPLIFY_FADE_SECONDS`.
 var relief_fade_seconds := SIM_TICK_SECONDS
-# Kameraziel auf die sichtbare Fläche nachziehen, sobald die erste
-# Verschiebung zurückgelesen ist (RS_TARGET).
 var cam_target_on_surface := false
-# Schutzmaske (#154): endet die Verschiebung an Wasser.
 var protect_tex: ImageTexture
-# Kronendach (#152): Waldmaske aus SimRender (R8). `forest_lift_cache` ist die
-# Maske als Float auf dem Sim-Gitter für den Raycast, lazy aus `forest_img`
-# (leer = veraltet).
 var forest_tex: ImageTexture
 var forest_prev_tex: ImageTexture
 var forest_img: Image
-# Quellen der Sedimentfahnen (#174 C): RF mit Mip-Kette, nur am Ozean-Material.
 var plume_tex: ImageTexture
 var plume_prev_tex: ImageTexture
 var plume_img: Image
 var forest_lift_cache: PackedFloat32Array
 var canopy_calib := {}
-# Wolkenkörper (#174 D, Lighting.make_cloud_bodies) und alle Materialien mit
-# Wolkenschatten oder -körper.
 var cloud_bodies: Node3D
 var cloud_mats: Array[ShaderMaterial] = []
 
-# Kamera-Orbit
 var cam: Camera3D
-var atmosphere: Atmosphere # Tilt-Shift (#237)
+var atmosphere: Atmosphere
 var cam_yaw := 0.7
 var cam_pitch := 0.85
 var cam_dist := 135.0
 var cam_target := Vector3.ZERO
 var orbiting := false
-const PAN_SPEED_FACTOR := 0.4 # WASD-Geschwindigkeit relativ zur Zoom-Distanz
+const PAN_SPEED_FACTOR := 0.4
 
-# Leerlauf-Drossel (GPU): auch pausiert und ohne Eingabe zeichnet Godot die
-# Szene sonst weiter (Wasser-Schimmer, Schatten, Retina-Viewport). Nach
-# IDLE_FPS_DELAY_MSEC ohne Aktivität wird der Renderloop ganz abgeschaltet;
-# die Spiellogik und Eingaben laufen laut Godot-Vertrag weiter. Jede Eingabe
-# weckt ihn vor dem nächsten sichtbaren Frame wieder auf. Der FPS-Deckel bleibt
-# als Rückfall und für die letzten aktiven Frames vor der Frist bestehen.
 const IDLE_FPS_CAP := 30
 const IDLE_FPS_DELAY_MSEC := 3000
 var last_activity_msec := 0
 var render_loop_suspended := false
 
-# Aktiv-Deckel (GPU): auch WÄHREND Zeitraffer und Sculpting ist die Bildrate
-# nicht die Rate, mit der sich etwas ändert. Ein Sim-Tick kommt alle
-# SIM_TICK_SECONDS (0,25 s), die Wasser-Blend gleitet über ~2 s; dazwischen
-# unterscheiden sich die Bilder nur im Schimmer (u_time). Ungedeckelt zeichnete
-# Godot in dieser Zeit mit voller Display-Rate — auf einem 120-Hz-Panel ~30
-# Bilder je Tick, von denen 29 praktisch dasselbe zeigen. Das war reine
-# Lüfterlast, keine sichtbare Flüssigkeit.
-#
-# 60 liegt bewusst ÜBER der gemessenen Zeitraffer-Rate bei RS_QUALITY=quality
-# (38,8–48,1 FPS, s. SIM_TICK_SECONDS): dort deckelt der Wert nichts, die Sim
-# ist das Limit. Er greift in `balanced`/`performance`, beim Kamerafahren und in
-# den ersten 3 s einer Pause, bevor IDLE_FPS_CAP übernimmt.
 const ACTIVE_FPS_CAP := 60
-# RS_FPS misst die Rate, die der Renderer HERGIBT — ein Deckel würde dort die
-# Zahl messen, die er selbst setzt. Deshalb hebt die Messung ihn auf (_ready).
 var active_fps_cap := ACTIVE_FPS_CAP
 
-# Zeit & Eingabe
-var year_rate := 0.0          # Jahre/Sekunde
+var year_rate := 0.0
 var rebuild_timer := 0.0
-var pending_years := 0.0     # über das Render-Intervall akkumulierte Sim-Jahre
+var pending_years := 0.0
 var sculpting := false
 var sculpt_refresh_timer := 0.0
-var sculpt_refresh_pending := false  # Teil 2 des Nachzugs steht aus (s. _process)
-var pick_last := Vector2.INF  # Spitzhacke: Position des letzten Hiebs im Strich (INF = noch keiner)
+var sculpt_refresh_pending := false
+var pick_last := Vector2.INF
 var brush_radius := 10.0
 var brush_strength := 1.0
-var current_tool := 0         # Index in TOOLS (die Tabelle hält den Brush-Modus)
-var flatten_target := 0.0     # Zielhöhe fürs Einebnen — beim Strich-Beginn gesampelt
-var last_rate := 30.0         # für Leertaste: Pause ↔ letztes Tempo
+var current_tool := 0
+var flatten_target := 0.0
+var last_rate := 30.0
 var u_time := 0.0
 var year_label: Label
-# Start-Seed == RenderContract.defaultSeed (SimCore): dieselbe Zahl baut das
-# erste Terrain in der GDExtension, sonst zeigte die Anzeige einen anderen Seed
-# als die sichtbare Welt (Issue #51).
 var sim_seed := 1337
 
-# Entwicklungsdiagnose: Referenzvergleich macht sichtbar, ob Relief durch
-# Abtragung nur freigelegt oder durch Hebung/Ablagerung tatsächlich aufgebaut wird.
 var debug_stats_label: Label
 var debug_warning_label: Label
 var debug_legend_label: Label
@@ -460,13 +239,12 @@ const DBG_UPLIFT := 12
 const DBG_RELIEF_TARGET := 13
 const DBG_REFERENCE_YEAR := 14
 const DBG_INVALID := 15
-const DBG_RELIEF_SIGNAL := 16   # robustes Regelsignal des Servo-Bodens (p95 − Median der Landhöhen)
-const DBG_RIDGE_CURVATURE := 17 # mittlere Grat-Krümmung: stark negativ = jung/spitz, → 0 = alt/rund
-const DBG_RELIEF_LOW := 18      # Talseitenrelief (Median − p05) — Gegenprobe zum Regelsignal
+const DBG_RELIEF_SIGNAL := 16
+const DBG_RIDGE_CURVATURE := 17
+const DBG_RELIEF_LOW := 18
 const DEBUG_STATS_COUNT := 19
 const DEBUG_REFRESH_SECONDS := 1.0
 
-# UI-Referenzen (Toggle-Zustände & Slider-Wertanzeigen)
 var hud: Control
 var rate_label: Label
 var seed_label: Label
@@ -475,37 +253,15 @@ var play_button: Button
 var tool_buttons: Array[Button] = []
 var debug_panel: Control
 var camera_tween: Tween
-var rs_camera := -1 # RS_CAMERA: Preset-Index, folgt der Fenstergröße bis zur ersten Eingabe
+var rs_camera := -1
 var radius_value: Label
 var strength_value: Label
 var radius_slider: HSlider
 
-# --- Speichern/Laden (Issue #8) ---------------------------------------------
-## EIN fester Speicherplatz statt Dateidialog: das Spiel führt genau eine Welt,
-## und eine Welt ist groß (n=832 → ~109 MB, das ganze Zustands-Inventar). Mehrere
-## Slots/Namen sind eine eigene UI-Frage (ROADMAP), nicht Teil von #8.
 const SAVE_PATH := "user://saves/welt.rsworld"
 var world_status_label: Label
 var world_dialog: AcceptDialog
 
-## Werkzeug-Vertrag (Issue #53): EINE Tabelle für Beschriftung, Brush-Modus und
-## Verhalten. `mode` ist der Rohwert von `BrushTool` in SimCore (#79) — über die
-## Brücke geht nur diese Zahl, also müssen beide Reihenfolgen übereinstimmen
-## (Wächter: SimCoreTests/ToolContractTests.swift). Die Taste ist die
-## Tabellen-Position (1…N), nicht noch eine dritte Kopie.
-##
-## Pflichtfeld neben `name` und `mode`:
-##   icon            — Name des gezeichneten Icons (scripts/UiIcon.gd, #174)
-## Optionale Felder, jedes ersetzt eine vorher verstreute Magie-Zahl:
-##   shift           — Werkzeug, auf das Shift umschaltet (Anheben ↔ Absenken)
-##   samples_target  — braucht die Geländehöhe am Strich-Beginn (Einebnen)
-##   stroke_spacing  — zeichnet EINZELHIEBE entlang des Strichs, Abstand in Zellen
-##                     (Spitzhacke: auf der Stelle verharren gräbt nicht tiefer)
-##   strength_factor — Faktor auf die Pinselstärke (Spitzhacke schlägt kräftiger)
-##   radius_capped   — echte Breite ist auf `pick_radius_cap` gedeckelt (Kuppel)
-##   falloff_power   — Exponent p des Pinselgewichts (1 − d²)^p für die Kuppel,
-##                     Standard BRUSH_FALLOFF_POWER (s. dort)
-## Neues Werkzeug = eine Zeile hier plus ein `case` in BrushTool.
 const TOOLS := [
 	{"icon": "raise", "name": "Anheben", "mode": 0, "shift": 1},
 	{"icon": "lower", "name": "Absenken", "mode": 1, "shift": 0},
@@ -515,60 +271,24 @@ const TOOLS := [
 	{"icon": "pickaxe", "name": "Spitzhacke", "mode": 5, "stroke_spacing": 1.5,
 		"strength_factor": 1.5, "radius_capped": true, "falloff_power": 4},
 ]
-## Zeitraffer-Stufen in Jahren je Sekunde. ▶ spielt die zuletzt gewählte,
-## ⏩ schaltet reihum eine weiter (nach der schnellsten wieder die langsamste).
 const SPEEDS := [10.0, 30.0, 60.0]
 const JUMPS := [["+100 J.", 100.0], ["+1.000 J.", 1000.0],
 	["+10.000 J.", 10000.0], ["+100.000 J.", 100000.0]]
 
-## Kamera-Presets der Vorlagen (Issue #174, Paket E), Tasten F1–F3 in
-## Tabellen-Reihenfolge: Diorama = ganze Insel schräg (Vorlage C), Tal = Blick
-## über die Aue bis zum Horizont (B), Nah = Schrägsicht auf Hang, Fluss und
-## Küste (A). Die Tasten-Presets sind ADAPTIV, einmal beim Drücken für die
-## laufende Welt gerechnet (`camera_preset_view`):
-##  - Diorama (`fill`): Landzellen mittig im Bild, in der knapperen Richtung
-##    bis `fill` (`frame_land`, aus FOV und Seitenverhältnis); Yaw bleibt.
-##  - Tal und Nah (`upstream`): Ziel = Zelle des größten Laufs, `upstream`
-##    Welteinheiten oberhalb seiner Küstenmündung, Kamera auf der Meerseite
-##    der Mündung mit Blick talaufwärts (`river_view`). Das Ziel ist damit
-##    immer eine Landzelle, nie das offene Meer. Verdeckt Gelände die
-##    Sichtlinie (Talbiegung, Kamera im Hang), steigt der Pitch, bis sie frei
-##    ist (`_clear_pitch`).
-## Pitch (alle) und Distanz (Tal, Nah) sind dieselben wie bei den
-## Matrix-Kameras gleicher `id`; die Matrix (scripts/graphics-matrix.sh) hält
-## dagegen feste Ziele und Distanzen je Seed, damit Abnahmebilder
-## reproduzierbar bleiben (Wächter:
-## GraphicsMatrixTests.testCameraPresetsMatchTheMatrix).
 const CAMERA_PRESETS := [
 	{"id": "diorama", "name": "Diorama", "fill": 0.85, "pitch": 0.62},
 	{"id": "valley", "name": "Tal", "dist": 30.0, "pitch": 0.40, "upstream": 12.0},
 	{"id": "close", "name": "Nah", "dist": 22.0, "pitch": 0.52, "upstream": 4.0},
 ]
 const CAMERA_PRESET_SECONDS := 0.6
-## Kleinster Kamera-Abstand (Zoom und Presets). Bis #174 standen hier 30
-## Einheiten als Zahl an jeder Zoom-Stelle; „Tal" und „Nah" (Vorlagen B, A)
-## brauchen näher heran: aus 60 zeigte „Tal" die ganze Insel, das Tal war klein.
 const CAM_DIST_MIN := 20.0
 
-## Pinsel als Gitterkuppel (#174, Paket E) statt des flachen Rings: die Kuppel
-## ist die sichtbare Fläche (Sim-Höhe plus Verschiebung #153 plus Kronendach),
-## angehoben um das Gewichtsprofil des Pinsels w(d) = (1 − d²)^p, d = Abstand
-## zum Zentrum / Radius. p = 2 ist das Gewicht ALLER Werkzeuge
-## (Terrain.forEachBrushCell), die Spitzhacke quadriert es (p = 4,
-## Terrain.pickaxe, Feld `falloff_power`). Wächter:
-## ToolContractTests.testBrushDomeFollowsTheBrushFalloff (Profil gegen die
-## gemessene Wirkung von Anheben und Spitzhacke).
 const BRUSH_FALLOFF_POWER := 2.0
-const BRUSH_DOME_HEIGHT := 0.5   # Scheitelhöhe relativ zum Radius, rein visuell
-const BRUSH_DOME_LIFT := 0.08    # Abstand über der Fläche gegen Z-Fighting
-const BRUSH_DOME_RINGS := 5      # Breitenkreise, der äußerste ist der Rand
+const BRUSH_DOME_HEIGHT := 0.5
+const BRUSH_DOME_LIFT := 0.08
+const BRUSH_DOME_RINGS := 5
 const BRUSH_DOME_MERIDIANS := 12
-## Segmente je Breitenkreis. 96 statt 48: der Rand liegt auf der Fläche, und
-## eine Sehne über 2πr/48 tauchte bei r = 10 alle ~8 Zellen ins Gelände.
 const BRUSH_DOME_SEGMENTS := 96
-## Aussehen (shaders/brush_dome.gdshaderinc): Linien als Bänder in logischen
-## Bildschirm-Pixeln, heller Kern in der Akzentfarbe des Glas-Themes, dunkler
-## Halo je Seite. Der Rand trägt, das Gitter zeigt nur die Wölbung.
 const BRUSH_RIM_COLOR := Color(0.85, 0.97, 1.0, 1.0)
 const BRUSH_RIM_WIDTH_PX := 3.0
 const BRUSH_RIM_HALO_PX := 1.5
@@ -576,22 +296,11 @@ const BRUSH_GRID_COLOR := Color(0.78, 0.94, 1.0, 0.6)
 const BRUSH_GRID_WIDTH_PX := 1.5
 const BRUSH_GRID_HALO_PX := 0.75
 
-## Gemeinsames Glas-Theme aller Bedienelemente (#174): Farben, Rahmen,
-## Schriftgrößen und die Typ-Varianten (`TitleLabel`, `ToolButton`, …) stehen
-## dort, nicht als Overrides im Code (Wächter: SimCoreTests/UiContractTests).
 const UI_THEME := "res://ui/glass_theme.tres"
 const UiIcon = preload("res://scripts/UiIcon.gd")
-## Wald aus Einzelbäumen (#236); ohne RenderingDevice (Compatibility,
-## headless) oder mit `RS_NO_TREES` das Kronendach von #152.
 const ForestTrees = preload("res://scripts/ForestTrees.gd")
 var forest_trees: Node3D
 const UI_MARGIN := 16.0
-## Weichzeichner hinter den Glas-Panels (#174 E): ein Shader (Material eines
-## ColorRect hinter jedem Panel), dessen Radius und Eckenradius aus dem Theme
-## kommen (`_glass_material`). `RS_UI_BLUR=0` lässt ihn weg (A/B im selben
-## Build, Messung: docs/zielbild-measurements.md). Die Rechtecke stehen in der
-## Gruppe `GLASS_BACKDROP_GROUP`, damit die Messbühne sie zur Laufzeit
-## umschalten kann.
 const GLASS_BLUR_SHADER := "res://ui/glass_blur.gdshader"
 const GLASS_BACKDROP_GROUP := &"glass_backdrop"
 var glass_material: ShaderMaterial
@@ -603,45 +312,33 @@ func _ready() -> void:
 	sim = ClassDB.instantiate("SimNode")
 	add_child(sim)
 	hscale = calibration(sim, "contract")["heightScale"]
-	if OS.has_environment("RS_SEED"): # für Screenshot-Vergleiche verschiedener Terrains
+	if OS.has_environment("RS_SEED"):
 		sim_seed = int(OS.get_environment("RS_SEED"))
 		sim.generate(sim_seed)
 	N = sim.gridSize()
 	world_size = sim.worldSize()
-	cam_dist = world_size * 1.35 # Start-Zoom skaliert mit der Weltgröße
-	if OS.has_environment("RS_DIST"): # Kamera-Distanz für Zoom-Screenshots
+	cam_dist = world_size * 1.35
+	if OS.has_environment("RS_DIST"):
 		cam_dist = float(OS.get_environment("RS_DIST"))
 	sea = sim.seaLevel()
 	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	half = world_size / 2.0
 	step = world_size / float(N - 1)
-	# Die Simulation bleibt immer bei N×N. Nur das GPU-Displacement nutzt eine
-	# adaptive Tessellation; per-pixel-Normalen und Heightmap bleiben unverändert.
 	render_quality = OS.get_environment("RS_QUALITY").to_lower()
 	if render_quality.is_empty():
 		render_quality = "balanced"
 	if OS.has_environment("RS_FPS"):
-		active_fps_cap = 0  # s. ACTIVE_FPS_CAP
+		active_fps_cap = 0
 	var requested_grid := terrain_grid_for(render_quality, N)
 	if OS.has_environment("RS_RENDER_GRID"):
 		requested_grid = int(OS.get_environment("RS_RENDER_GRID"))
 	terrain_grid = clampi(requested_grid, 64, N)
-	# Die Band-Geometrie sampelt ihre Höhen von der SICHTBAREN Oberfläche
-	# dieses Gitters (SimNode.setRenderGrid) — auf Sim-Höhen versank sie an
-	# Steilstrecken im gröberen Mesh und ragte als blaue Zacken heraus.
 	sim.setRenderGrid(terrain_grid)
-	# A/B ohne Rebuild: SimNode liest dieselbe Env-Variable. Gesetzt = alter
-	# Raster-Stempel (Mäander/Altarme ins Wasserfeld, keine Band-Geometrie).
 	river_ribbons = not OS.has_environment("RS_WATER_STAMP")
-	# Kamera für reproduzierbare A/B-Screenshots: Blickpunkt in WELT-Koordinaten
-	# ("x,z") und Orbit-Winkel. Ohne sie zeigt jeder Lauf die Kartenmitte — für
-	# eine Mündung/ein Delta ist das der falsche Ausschnitt.
 	if OS.has_environment("RS_TARGET"):
 		var parts := OS.get_environment("RS_TARGET").split(",")
 		if parts.size() == 2:
 			cam_target = Vector3(float(parts[0]), 0.0, float(parts[1]))
-	# Pinselkuppel im Screenshot (RS_BRUSH=<Radius>, Welteinheiten wie der
-	# Regler): steht dann in der Bildmitte, auch unter RS_SHOT.
 	if OS.has_environment("RS_BRUSH"):
 		brush_radius = float(OS.get_environment("RS_BRUSH"))
 	if OS.has_environment("RS_YAW"):
@@ -652,13 +349,9 @@ func _ready() -> void:
 	_setup_scene()
 	_setup_ui()
 	sim.captureDebugReference()
-	if OS.has_environment("RS_DEBUG_DIFF"): # automatisierte Diagnose-Screenshots
+	if OS.has_environment("RS_DEBUG_DIFF"):
 		_set_debug_difference(true)
-	# REIHENFOLGE: erst einebnen, dann simulieren — nur so ist der Repro aus
-	# Issue #26 (großflächige Einebnung, dann Zeitraffer) überhaupt abbildbar.
-	if OS.has_environment("RS_FLATTEN"): # Debug: exakt flache Fläche
-		# Gekachelt über die GANZE Karte mit den UI-Grenzwerten (Radius 30,
-		# Stärke 3) — derselbe Aufbau wie `FlattenRegeneration` im SimCore-Test.
+	if OS.has_environment("RS_FLATTEN"):
 		var fr := 30.0
 		var fstep := maxf(1.0, fr / (world_size / float(N - 1)) * 0.5)
 		var last := float(N - 1)
@@ -671,53 +364,40 @@ func _ready() -> void:
 					gx += fstep
 				gz += fstep
 		sim.recomputeFlow()
-		# Bei diesem Repro interessiert nur die Entwicklung AB der flachen Fläche.
 		sim.captureDebugReference()
-	if OS.has_environment("RS_STEP"): # für Screenshots: erodiertes Terrain zeigen
+	if OS.has_environment("RS_STEP"):
 		var total := float(OS.get_environment("RS_STEP"))
 		var done := 0.0
 		var chunk := 1000.0
 		if OS.has_environment("RS_STEP_CHUNK"):
 			chunk = maxf(1.0, float(OS.get_environment("RS_STEP_CHUNK")))
-		while done < total: # in Schritten wie der Zeitraffer (repräsentativ)
+		while done < total:
 			sim.step(chunk)
 			done += chunk
 	sim.recomputeFlow()
 	_invalidate_h_cache()
 	if OS.has_environment("RS_TARGET"):
-		# Blickpunkt auf die GELÄNDEHÖHE heben: mit y = 0 zielt die Kamera unter
-		# die Landschaft, und der Ausschnitt zeigt Himmel statt Mündung.
 		cam_target.y = _surface_y_at(cam_target)
 		cam_target_on_surface = true
 		_update_camera()
-	_render_frame(FRAME_SETTLED) # zeigt auch das Jahr (Höhen-Upload)
-	if OS.has_environment("RS_CAMERA"): # Tasten-Preset per id, für Screenshots
+	_render_frame(FRAME_SETTLED)
+	if OS.has_environment("RS_CAMERA"):
 		var id := OS.get_environment("RS_CAMERA")
 		for c in CAMERA_PRESETS.size():
 			if CAMERA_PRESETS[c]["id"] == id:
 				rs_camera = c
 		if rs_camera >= 0:
 			_apply_camera_preset(rs_camera, false)
-			# Das Diorama rahmt nach dem Seitenverhältnis. Auf dem Referenz-Mac
-			# hat das Fenster mit `--maximized` schon in _ready die Endgröße
-			# (gemessen 3456×2104); greift das Maximieren auf einer anderen
-			# Plattform später, folgt das Preset bis zur ersten Eingabe jeder
-			# Größenänderung. RS_SHOT zeigt so dasselbe wie F1–F3.
 			get_viewport().size_changed.connect(func():
 				if rs_camera >= 0:
 					_apply_camera_preset(rs_camera, false))
 	_refresh_debug()
-	if OS.has_environment("RS_RATE"): # Zeitraffer gleich an (Videoaufnahmen der Übergänge)
+	if OS.has_environment("RS_RATE"):
 		_set_rate(maxf(0.0, float(OS.get_environment("RS_RATE"))))
 		print("RS_RATE ", year_rate)
 	if OS.has_environment("RS_DIAG"):
 		_diag()
 
-## Render-Gitter je Qualitätsstufe (#153). Erst das Sim-Gitter trägt die
-## Silhouette der Render-Verschiebung; ein doppelt so dichtes Gitter kostete in
-## der Studie doppelt so viel ohne sichtbaren Gewinn (die Dreiecke liegen in der
-## Übersicht unter einem Pixel), Normalen und Rinnen kommen ohnehin aus der
-## feineren Backtextur. Messreihe: docs/graphics-quality.md, Abschnitt #153.
 static func terrain_grid_for(quality: String, n: int) -> int:
 	return PERFORMANCE_TERRAIN_GRID if quality == "performance" else n
 
@@ -740,23 +420,12 @@ func _diag() -> void:
 	var t_terr := (Time.get_ticks_usec() - t0) / 10000.0
 	print("DIAG PERF terrain_texupload_ms=", t_terr)
 
-# ---------------------------------------------------------------- Szene / UI
-
-## Kalibrier-Register über die Brücke (Issue #213): Name → Wert EINER Gruppe
-## (`water`, `water_contract`, `relief`, `canopy`, `material`, `contract`) aus
-## SimRender.CalibrationRegistry; die Zahlen stehen in den SimCore-Verträgen.
-## Statisch, damit die Godot-Wächter dieselbe Funktion headless benutzen.
 static func calibration(sim_node: Object, group: String) -> Dictionary:
 	var calib: Dictionary = sim_node.calibration(group)
 	if calib.is_empty():
 		push_error("Kalibrier-Gruppe '%s' fehlt in der Brücke" % group)
 	return calib
 
-## Setzt jeden Wert einer Uniform-Gruppe als gleichnamige Shader-Uniform auf
-## jedes Material. Einen undeklarierten Namen ignoriert Godot; welcher Shader
-## was deklariert, prüfen SimCoreTests/CalibrationRegistryTests.swift und die
-## Godot-Wächter (water_uniforms.gd, relief.gd, canopy.gd). Gibt die Gruppe
-## zurück, für Werte, die GDScript selbst braucht.
 static func apply_calibration(sim_node: Object, group: String, mats: Array[ShaderMaterial]) -> Dictionary:
 	var calib := calibration(sim_node, group)
 	for mat in mats:
@@ -764,9 +433,6 @@ static func apply_calibration(sim_node: Object, group: String, mats: Array[Shade
 			mat.set_shader_parameter(name, calib[name])
 	return calib
 
-## Back-Pass der Render-Verschiebung (#153): ein Float-SubViewport in
-## RELIEF_BAKE_FACTOR-facher Sim-Auflösung, der nur nach einem Terrain-Update
-## einmal zeichnet (UPDATE_ONCE, `_bake_relief`).
 func _setup_relief() -> void:
 	var size := N * RELIEF_BAKE_FACTOR
 	relief_mat = ShaderMaterial.new()
@@ -784,7 +450,6 @@ func _setup_relief() -> void:
 		var vp := SubViewport.new()
 		vp.size = Vector2i(size, size)
 		vp.use_hdr_2d = true
-		# Transparent, sonst verwirft der Viewport den Alpha-Kanal (Rinnen/Rippen).
 		vp.transparent_bg = true
 		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 		var rect := ColorRect.new()
@@ -799,9 +464,6 @@ func _setup_relief() -> void:
 	terrain_mat.set_shader_parameter("bake_blend", 1.0)
 	terrain_mat.set_shader_parameter("relief_enabled", true)
 
-## Gelände-Verfeinerung (#238) statt des Back-Passes, wo ein RenderingDevice
-## da ist. `relief_enabled` setzt erst der erste fertige Stand
-## (`_adopt_amplified`); bis dahin liest der Terrain-Shader keine Verschiebung.
 func _setup_amplifier(slope_code: float) -> bool:
 	if render_quality == "performance" or OS.get_environment("RS_AMPLIFY") == "0" \
 			or not TerrainAmplifier.available():
@@ -812,27 +474,19 @@ func _setup_amplifier(slope_code: float) -> bool:
 		amp.free_resources()
 		return false
 	amplifier = amp
-	# Zum Abstimmen ohne Neustart-Umbau: einzelne Werte überschreiben
-	# (JSON wie `TerrainAmplifier.params`).
 	if OS.has_environment("RS_AMPLIFY_PARAMS"):
 		var over: Variant = JSON.parse_string(OS.get_environment("RS_AMPLIFY_PARAMS"))
 		if over is Dictionary:
 			for key in over:
 				amp.params[key] = over[key]
-	# Der Erosionsfilter je Pixel (`erosion_detail`) entfällt: seine Rinnen
-	# liefert jetzt die Verfeinerung als Form. `RS_AMPLIFY_DETAIL=1` lässt ihn
-	# für den Vergleich an.
 	if OS.get_environment("RS_AMPLIFY_DETAIL") != "1":
 		terrain_mat.set_shader_parameter("detail_enabled", false)
-	# Das Netz liest die feine Fläche auf der Mip-Stufe seines Vertexabstands.
 	terrain_mat.set_shader_parameter("amplify_vertex_lod",
 		log(float(N * TerrainAmplifier.FACTOR) / float(terrain_grid)) / log(2.0))
 	if OS.has_environment("RS_AMPLIFY_DEBUG"):
 		terrain_mat.set_shader_parameter("amplify_debug", int(OS.get_environment("RS_AMPLIFY_DEBUG")))
 	return true
 
-## Kronendach (#152): Kalibrierung aufs Terrain-Material, die Waldmaske kommt
-## mit jedem Overlay-Frame (`_update_forest_mask`).
 func _setup_canopy() -> void:
 	canopy_calib = apply_calibration(sim, "canopy", [terrain_mat])
 	terrain_mat.set_shader_parameter("canopy_enabled", true)
@@ -843,12 +497,9 @@ func _setup_canopy() -> void:
 		terrain_mat.set_shader_parameter("tree_instances", true)
 
 func _setup_scene() -> void:
-	# Licht und Atmosphäre (#151): feste Welt-Sonne, Werte und Qualitätsstufen
-	# stehen in Lighting.gd.
 	var env := WorldEnvironment.new()
 	env.environment = Lighting.make_environment(render_quality, sea * hscale)
 	add_child(env)
-	# Render-Skalierung je Qualitätsstufe (#235, scripts/RenderScale.gd).
 	RenderScale.apply(get_viewport(), render_quality)
 
 	var sun := DirectionalLight3D.new()
@@ -864,7 +515,6 @@ func _setup_scene() -> void:
 
 	terrain_mat = ShaderMaterial.new()
 	terrain_mat.shader = load("res://shaders/terrain.gdshader")
-	# Scan-Materialien (#237, game/assets/materials/MANIFEST.md).
 	terrain_mat.set_shader_parameter("scan_albedo", load("res://assets/materials/scan_albedo.png"))
 	terrain_mat.set_shader_parameter("scan_normal", load("res://assets/materials/scan_normal.png"))
 	terrain_mat.set_shader_parameter("hscale", hscale)
@@ -875,16 +525,11 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("material_enabled", render_quality != "performance")
 	_setup_relief()
 	_setup_canopy()
-	# Höhenbereich der Kachel-AABBs: der ganze Sim-Bereich (Config.swift,
-	# −0,3 … 1,4; der Pinsel reicht bis an beide Enden) mal hscale, dazu die
-	# Render-Verschiebung (±0,5 / relief_height_code) und das Kronendach.
 	var lift := 0.5 / maxf(relief_height_code, 1e-3) + float(canopy_calib["canopy_height"]) + 0.5
 	terrain_tiles = TerrainTiles.new()
 	terrain_tiles.name = "TerrainTiles"
 	add_child(terrain_tiles)
 	terrain_tiles.build(world_size, terrain_grid, terrain_mat, -0.3 * hscale - lift, 1.4 * hscale + lift)
-	# Material-Kalibrierung (#174 D); die Gewichte kommen mit jedem
-	# Overlay-Frame (`cover`, `surface`).
 	apply_calibration(sim, "material", [terrain_mat])
 
 	if OS.has_environment("RS_WATER_GPU"):
@@ -895,8 +540,6 @@ func _setup_scene() -> void:
 
 	water_mi = MeshInstance3D.new()
 	var wp := PlaneMesh.new()
-	# Der Rand liegt selbst bei maximalem Zoom/Pan hinter `cam.far`; sichtbar
-	# bleibt nur die Wasseroberfläche, keine quadratische Modellplatte.
 	wp.size = Vector2(cam.far * 3.0, cam.far * 3.0)
 	water_mi.mesh = wp
 	ocean_mat = ShaderMaterial.new()
@@ -913,9 +556,6 @@ func _setup_scene() -> void:
 	water_mi.position.y = sea * hscale
 	add_child(water_mi)
 
-	# Wasser-Geometrie (außer im RS_WATER_STAMP-Modus): ein MeshInstance3D, dessen
-	# ArrayMesh _upload_ribbon_mesh aus den SimNode-Puffern füllt, und eines für
-	# den vorigen Stand, der im Zeitraffer ausblendet (`ribbon_fade`).
 	if river_ribbons:
 		river_mi = _make_river_instance(river_mesh, false)
 		river_mat = river_mi.material_override as ShaderMaterial
@@ -924,10 +564,6 @@ func _setup_scene() -> void:
 		river_prev_mi.visible = false
 		ribbon_fade.bind(river_mat)
 		ribbon_fade.bind(river_prev_mat)
-		# EINE Seite malt: über einem Raster-See blendet das Band per Pixel
-		# mit derselben See-Maske aus, mit der terrain.gdshader den See malt —
-		# dafür liest es dieselben Felder mit denselben Blenden. Beide
-		# Band-Generationen der Zeitraffer-Blende brauchen sie.
 		for mat in [river_mat, river_prev_mat]:
 			height_field.mirror_to(mat)
 			hf_field.mirror_to(mat)
@@ -947,18 +583,13 @@ func _setup_scene() -> void:
 			overlay_fade.bind(mat)
 			ribbon_fade.bind(mat)
 
-	# Wasser-Kalibrierung aus SimCore (Issue #91) auf alle Wasser-Materialien;
-	# das Band-Material fehlt im RS_WATER_STAMP-Modus.
 	var water_mats: Array[ShaderMaterial] = [terrain_mat, ocean_mat]
 	if river_mat != null:
 		water_mats.append(river_mat)
 		water_mats.append(river_prev_mat)
 	apply_calibration(sim, "water", water_mats)
 	if corridor != null:
-		# Bettfarbe und Uferlinie teilt der Korridor mit dem Band darüber.
 		apply_calibration(sim, "water", corridor.materials())
-	# Wolkenkörper über dem Kamm (#174 D) teilen Rauschen und Basis mit den
-	# Wolkenschatten; `cloud_mats` sind alle Materialien, die beides lesen.
 	cloud_bodies = Lighting.make_cloud_bodies(render_quality, world_size, hscale, N)
 	add_child(cloud_bodies)
 	cloud_mats.assign(water_mats)
@@ -972,10 +603,6 @@ func _setup_scene() -> void:
 	for mat in Lighting.cloud_body_materials(cloud_bodies):
 		mat.render_priority = Atmosphere.CLOUD_PRIORITY
 
-	# Pinselkuppel: Bildschirm-Bänder (s. brush_dome.gdshaderinc). Erst der
-	# verdeckte Teil gedämpft ohne Tiefentest, darüber der sichtbare. Die
-	# Priorität legt beide hinter alle übrigen transparenten Flächen (Wasser,
-	# Meer, Wolken), sonst überdeckten die den gedämpften Teil.
 	brush_mi = MeshInstance3D.new()
 	brush_mi.mesh = brush_mesh
 	var bmat := ShaderMaterial.new()
@@ -985,25 +612,14 @@ func _setup_scene() -> void:
 	bmat.next_pass = bmat_visible
 	for m: ShaderMaterial in [bmat, bmat_visible]:
 		m.render_priority = Material.RENDER_PRIORITY_MAX
-		# VIEWPORT_SIZE ist im 3D-Shader die SKALIERTE Renderauflösung
-		# (RenderScale): mit dem Faktor bleiben die Linien gleich breit.
 		m.set_shader_parameter("px_scale", DisplayServer.screen_get_scale() * get_viewport().scaling_3d_scale)
 	brush_mi.material_override = bmat
 	brush_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	brush_mi.visible = false
 	add_child(brush_mi)
 
-## Bedienung nach Vorlage B/C (Issue #174, Paket E): vier Ecken auf einer
-## Vollbild-Ebene, die selbst keine Maus fängt (Klicks daneben formen das
-## Gelände). Oben links Titel, Jahr und Tempo, darunter die Werkzeugpalette;
-## oben rechts die Zeitsprünge; unten rechts Diagnose, Welt und Kamera; unten
-## Mitte die Tastenhilfe. Aussehen nur über das Theme (UI_THEME).
 func _setup_ui() -> void:
 	var layer := CanvasLayer.new()
-	# Autonome Screenshots (RS_SHOT) zeigen die LANDSCHAFT: die Bedienleiste
-	# verdeckt sonst die halbe linke Bildhälfte, und genau dort liegen in der
-	# A/B-Serie die Mündungen. Die Diagnosewerte stehen ohnehin im Log.
-	# RS_SHOT_UI behält sie für Aufnahmen der Bedienung selbst.
 	layer.visible = not OS.has_environment("RS_SHOT") or OS.has_environment("RS_SHOT_UI")
 	add_child(layer)
 	var ui_theme: Theme = load(UI_THEME)
@@ -1015,7 +631,6 @@ func _setup_ui() -> void:
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(hud)
 
-	# --- oben links: Titel, Jahr, Tempo; darunter die Werkzeugpalette
 	var top_left := _corner(Control.PRESET_TOP_LEFT)
 	var head := _panel(top_left)
 	_label(head, "river-sim", &"TitleLabel")
@@ -1057,7 +672,6 @@ func _setup_ui() -> void:
 	strength_value = _slider_value_label
 	_refresh_slider_labels()
 
-	# --- oben rechts: Zeitsprung-Leiste
 	var jumps := _panel(_corner(Control.PRESET_TOP_RIGHT))
 	_label(jumps, "ZEITSPRUNG", &"SectionLabel")
 	var jump_row := HBoxContainer.new()
@@ -1068,10 +682,9 @@ func _setup_ui() -> void:
 		b.pressed.connect(func(): _jump(yrs))
 		jump_row.add_child(b)
 
-	# --- unten rechts: Diagnose (aufklappbar), Welt, Kamera, Seed
 	var bottom_right := _corner(Control.PRESET_BOTTOM_RIGHT)
 	var debug_vb := _panel(bottom_right)
-	debug_panel = debug_vb.get_parent().get_parent() # Rahmen (s. _panel), nicht nur das Glas
+	debug_panel = debug_vb.get_parent().get_parent()
 	debug_panel.visible = false
 	_label(debug_vb, "DIAGNOSE", &"SectionLabel")
 	debug_stats_label = _label(debug_vb, "", &"StatsLabel")
@@ -1131,9 +744,6 @@ func _setup_ui() -> void:
 	seed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_update_seed()
 
-	# --- unten Mitte: Tastenhilfe, ohne Panel. Schmal umbrochen, damit sie
-	# auch im kleinen Standardfenster (1152 × 648) zwischen Werkzeugpalette und
-	# Welt-Karte passt.
 	var hint := _label(_corner(Control.PRESET_CENTER_BOTTOM),
 		"Links: formen (Shift kehrt um) · Rechts: drehen · WASD: bewegen · +/−: Zoom · "
 		+ "1–6: Werkzeug · [ ]: Radius · Leertaste: Pause · F1–F3: Kamera · "
@@ -1142,9 +752,6 @@ func _setup_ui() -> void:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.custom_minimum_size = Vector2(400, 0)
 
-	# Fehlerdialog: Speichern/Laden kann echt scheitern (alte Formatversion,
-	# beschädigte oder fremde Datei, volle Platte). Die Meldung kommt wörtlich aus
-	# SimCore (`SnapshotError`) — kein zweiter Text, der auseinanderlaufen kann.
 	world_dialog = AcceptDialog.new()
 	world_dialog.title = "Welt"
 	world_dialog.dialog_autowrap = true
@@ -1152,14 +759,8 @@ func _setup_ui() -> void:
 	layer.add_child(world_dialog)
 	_set_rate(year_rate)
 
-# --- UI-Helfer -------------------------------------------------------------
+var _slider_value_label: Label
 
-var _slider_value_label: Label # letzte von _mk_slider erzeugte Wertanzeige
-
-## Spalte an einem Bildschirmrand (Ecke oder unten Mitte), UI_MARGIN vom Rand.
-## Sie wächst vom Rand weg und schrumpft wieder, wenn ein Teil ausgeblendet
-## wird (`_fit_corner`); sonst bliebe nach dem Zuklappen der Diagnose ein
-## leerer Streifen stehen.
 func _corner(preset: int) -> VBoxContainer:
 	var c := VBoxContainer.new()
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1185,7 +786,6 @@ func _corner(preset: int) -> VBoxContainer:
 	c.minimum_size_changed.connect(_fit_corner.bind(c))
 	return c
 
-## Hält die Ecken-Spalte genau so groß wie ihren Inhalt, an der Ecke verankert.
 func _fit_corner(c: Control) -> void:
 	var m := c.get_combined_minimum_size()
 	if c.grow_horizontal == Control.GROW_DIRECTION_BOTH:
@@ -1200,10 +800,6 @@ func _fit_corner(c: Control) -> void:
 	else:
 		c.offset_bottom = c.offset_top + m.y
 
-## Material des Weichzeichners (Shader: ui/glass_blur.gdshader). Alle Werte
-## kommen aus dem Theme: Radius und Abdunklung aus `GlassBackdrop/…`, der
-## Eckenradius aus dem Glas-Panel selbst, damit Weichzeichner und Panel
-## dieselbe Form haben, ohne sie an zwei Stellen zu führen.
 func _glass_material(ui_theme: Theme) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
 	m.shader = load(GLASS_BLUR_SHADER)
@@ -1213,11 +809,6 @@ func _glass_material(ui_theme: Theme) -> ShaderMaterial:
 	m.set_shader_parameter("corner_px", float(glass.corner_radius_top_left))
 	return m
 
-## Glas-Panel mit senkrechter Spalte; gibt die Spalte zurück. Ein leerer
-## Rahmen (`GlassFrame`) legt den Weichzeichner und das Panel (Stil aus dem
-## Theme) deckungsgleich übereinander: der Weichzeichner zuerst, das Glas
-## darüber. Ein StyleBox kann den Hintergrund nicht verwischen, ein Material
-## gälte für Rand und Schatten mit; deshalb zwei Ebenen.
 func _panel(parent: Control) -> VBoxContainer:
 	var frame := PanelContainer.new()
 	frame.theme_type_variation = &"GlassFrame"
@@ -1234,7 +825,6 @@ func _panel(parent: Control) -> VBoxContainer:
 	panel.add_child(vb)
 	return vb
 
-## Statuszeile der Welt-Karte; leer belegt sie keinen Platz.
 func _set_status(text: String) -> void:
 	world_status_label.text = text
 	world_status_label.visible = not text.is_empty()
@@ -1247,7 +837,6 @@ func _label(parent: Control, text: String, variation: StringName) -> Label:
 	parent.add_child(l)
 	return l
 
-## Knopf mit gezeichnetem Icon statt Text (Tempo-Leiste).
 func _icon_button(parent: Control, icon_id: String, tip: String, toggle: bool) -> Button:
 	var b := _mk_button("", toggle, null)
 	b.custom_minimum_size = Vector2(46, 40)
@@ -1266,7 +855,6 @@ func _mk_button(text: String, toggle: bool, group: ButtonGroup) -> Button:
 	b.toggle_mode = toggle
 	if group:
 		b.button_group = group
-	# Kein Fokus: Leertaste soll Pause togglen, nie den zuletzt geklickten Button.
 	b.focus_mode = Control.FOCUS_NONE
 	return b
 
@@ -1305,7 +893,6 @@ func _set_rate(rate: float) -> void:
 	year_rate = rate
 	if rate > 0.0:
 		last_rate = rate
-	# Toggle-Zustand der Tempo-Buttons nachziehen (auch bei Leertaste/Code-Aufruf).
 	if pause_button == null:
 		return
 	pause_button.set_pressed_no_signal(rate == 0.0)
@@ -1315,18 +902,13 @@ func _set_rate(rate: float) -> void:
 	else:
 		rate_label.text = "PAUSE (weiter mit %s J./Sek.)" % _fmt(int(last_rate))
 
-## ⏩: nächste Zeitraffer-Stufe (SPEEDS), nach der schnellsten wieder die
-## langsamste. Aus der Pause heraus zählt das zuletzt gespielte Tempo.
 func _faster() -> void:
 	var from := year_rate if year_rate > 0.0 else last_rate
 	var i := SPEEDS.find(from)
 	_set_rate(SPEEDS[(i + 1) % SPEEDS.size()])
 
-## Kamera-Preset aus CAMERA_PRESETS anfahren (F1–F3 oder Knopf). Weich über
-## CAMERA_PRESET_SECONDS, `animate = false` springt (Tests, RS_CAMERA).
 func _apply_camera_preset(index: int, animate := true) -> void:
 	var v := camera_preset_view(index)
-	# Yaw über den kürzeren Bogen anfahren, nicht einmal um die Insel herum.
 	var yaw: float = cam_yaw + wrapf(v["yaw"] - cam_yaw, -PI, PI)
 	if camera_tween != null:
 		camera_tween.kill()
@@ -1345,10 +927,8 @@ func _apply_camera_preset(index: int, animate := true) -> void:
 	camera_tween.tween_property(self, "cam_yaw", yaw, CAMERA_PRESET_SECONDS)
 	camera_tween.tween_property(self, "cam_target", v["target"], CAMERA_PRESET_SECONDS)
 
-## Ansicht eines Presets für die laufende Welt: {target, dist, pitch, yaw}.
-## Ohne Land (Diorama) bzw. ohne Lauf (Tal, Nah) bleiben Blickpunkt und Yaw.
 func camera_preset_view(index: int) -> Dictionary:
-	_settle_sim() # Abfluss und Empfänger kommen aus der Sim selbst
+	_settle_sim()
 	var p: Dictionary = CAMERA_PRESETS[index]
 	_ensure_h_cache()
 	var target := Vector3(cam_target.x, 0.0, cam_target.z)
@@ -1358,8 +938,6 @@ func camera_preset_view(index: int) -> Dictionary:
 		var f := frame_land(h_cache, N, sea, world_size, cam_yaw, p["pitch"], cam.fov,
 			vp.x / maxf(vp.y, 1.0), p["fill"], hscale)
 		if not f.is_empty():
-			# Drehpunkt auf die Fläche in der Bildmitte legen; Auge, Blickrichtung
-			# und Rahmen bleiben. Orbit und Zoom wirken dann auf das, was man sieht.
 			var cp := cos(float(p["pitch"]))
 			var back := Vector3(sin(cam_yaw) * cp, sin(float(p["pitch"])), cos(cam_yaw) * cp)
 			var eye: Vector3 = f["target"] + back * float(f["dist"])
@@ -1378,20 +956,11 @@ func camera_preset_view(index: int) -> Dictionary:
 	view["pitch"] = _clear_pitch(target, view["yaw"], view["pitch"], view["dist"])
 	return view
 
-## Kleinster Pitch ab `pitch` (Schritte 0,05, höchstens 1,3), bei dem Auge und
-## Sichtlinie zum Ziel frei sind (`sight_block`). Ohne Hindernis bleibt
-## `pitch` unverändert.
 func _clear_pitch(target: Vector3, yaw: float, pitch: float, dist: float) -> float:
 	while pitch < 1.3 and sight_block(target, yaw, pitch, dist) >= 0.0:
 		pitch += 0.05
 	return pitch
 
-## Erster verdeckter Anteil t der Sichtlinie Ziel → Auge (−1 = frei), 24
-## Proben ab t = 0,25: die nahe Umgebung des Ziels (Ufer, Kronendach am
-## Fluss) ist das, worauf die Kamera blickt, kein Hindernis davor. Luft über
-## der sichtbaren Fläche wächst bis 1 Einheit am Auge. Außerhalb des Gitters
-## liegt nur das Meer (sonst zöge die Rand-Klemme von `_sample_grid` das
-## Randgelände endlos weiter).
 func sight_block(target: Vector3, yaw: float, pitch: float, dist: float) -> float:
 	var cp := cos(pitch)
 	var eye := target + Vector3(sin(yaw) * cp, sin(pitch), cos(yaw) * cp) * dist
@@ -1404,21 +973,6 @@ func sight_block(target: Vector3, yaw: float, pitch: float, dist: float) -> floa
 			return t
 	return -1.0
 
-## Diorama-Rahmen: Kamera mit Blickrichtung `yaw`/`pitch`, die die Landzellen
-## (Raster `n/180`) MITTIG zeigt und in der knapperen Bildrichtung genau bis
-## `fill` füllt. Bis zum Folgebefund zu #176 stand das Ziel auf der Mitte der
-## Land-Box: in Schrägsicht projiziert die nahe Kante größer als die ferne,
-## die Insel saß unten und füllte nur ~60 % der Höhe (unten 0,84, oben 0,38).
-## Rechnung je Bildrichtung in der Ebene (Querachse, Rückachse b), Punkte als
-## (x, y) = (p·u, p·b) bzw. (p·r, p·b), Auge (c, D), Kegel-Steigung k: ein
-## Punkt liegt in der Kante, wenn ±(x − c) ≤ k·(D − y), d. h. a±(k) =
-## max(±x + k·y) ≤ ±c + k·D. Beide Kanten knapp: D(k) = (a+ + a−)/(2k),
-## c(k) = (a+ − a−)/2. Die Richtung mit dem größeren D(k_voll) begrenzt; die
-## andere sucht per Bisektion das k mit D(k) = D und ist damit ebenfalls
-## mittig. a± laufen nur über die konvexe Hülle (`Geometry2D.convex_hull`).
-## k_voll = fill·tan(fov/2) (vertikal, Godot KEEP_HEIGHT), horizontal mal
-## `aspect`. Ziel (Orbit-Drehpunkt) ist der Punkt der Bildachse in der Tiefe
-## der Inselmitte, `dist` sein Abstand zum Auge. Leer ohne Land.
 static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: float,
 		yaw: float, pitch: float, fov_deg: float, aspect: float, fill: float,
 		height_scale: float) -> Dictionary:
@@ -1462,7 +1016,6 @@ static func frame_land(h: PackedFloat32Array, n: int, sea_level: float, world: f
 	var dist := (eye - center).dot(back)
 	return {"target": eye - back * dist, "dist": dist, "land_box": Rect2(lo, hi - lo)}
 
-## (c, D) der knappen Kanten mit Steigung k für Punkte (x, y), s. frame_land.
 static func _edge_fit(pts: PackedVector2Array, k: float) -> Vector2:
 	var a_pos := -INF
 	var a_neg := -INF
@@ -1471,7 +1024,6 @@ static func _edge_fit(pts: PackedVector2Array, k: float) -> Vector2:
 		a_neg = maxf(a_neg, -q.x + k * q.y)
 	return Vector2((a_pos - a_neg) * 0.5, (a_pos + a_neg) / (2.0 * k))
 
-## (c, D) mit vorgegebener Tiefe D ≥ D(k_max): Bisektion über k, D(k) fällt in k.
 static func _edge_fit_at(pts: PackedVector2Array, depth: float, k_max: float) -> Vector2:
 	var k_lo := 0.0
 	var k_hi := k_max
@@ -1483,12 +1035,6 @@ static func _edge_fit_at(pts: PackedVector2Array, depth: float, k_max: float) ->
 			k_hi = k
 	return Vector2(_edge_fit(pts, k_hi).x, depth)
 
-## Größter Lauf für Tal und Nah, auf dem D8-Netz (`flowArea`/`receivers`):
-## Landzelle mit dem größten Einzugsgebiet, abwärts bis zur letzten Landzelle
-## (Mündung; an der Küste oder, ohne Randabstand, am Kartenrand), von dort je Schritt zum Zufluss mit dem größten Einzugsgebiet,
-## bis `upstream` Welteinheiten gelaufen sind oder die Quelle erreicht ist.
-## Yaw stellt die Kamera auf die Mündungsseite (Blick talaufwärts). Ziel und
-## Mündung sind Landzellen (h > Meeresspiegel). Leer ohne Land.
 static func river_view(h: PackedFloat32Array, area: PackedFloat32Array,
 		receivers: PackedInt32Array, n: int, sea_level: float, world: float,
 		upstream: float) -> Dictionary:
@@ -1531,38 +1077,27 @@ static func river_view(h: PackedFloat32Array, area: PackedFloat32Array,
 		return Vector2((k % n) * cell - world * 0.5, (k / n) * cell - world * 0.5)
 	var target: Vector2 = at.call(cur)
 	var seaward: Vector2 = at.call(mouth) - target
-	if seaward.length() < cell: # Lauf zu kurz: von der Kartenmitte nach außen
+	if seaward.length() < cell:
 		seaward = at.call(mouth)
 	return {"target": Vector3(target.x, 0.0, target.y), "yaw": atan2(seaward.x, seaward.y),
 		"mouth": mouth, "cell": cur}
 
-## Seed der laufenden Welt. Eine geladene Welt trägt ihren Seed nicht über die
-## Brücke; die Anzeige sagt dann das, statt den alten Seed stehen zu lassen.
 func _update_seed(loaded := false) -> void:
 	seed_label.text = "SEED: geladene Welt" if loaded else "SEED: %s" % _fmt(sim_seed)
 
-# ---------------------------------------------------------------- Zeit
-
 var _jumping := false
 func _jump(years: float) -> void:
-	if _jumping: # Doppelklicks während eines laufenden Sprungs schlucken
+	if _jumping:
 		return
 	_jumping = true
-	# In Zeitraffer-großen Chunks steppen und zwischendurch rendern: bei
-	# +100.000 J. fräße EIN step() sonst ~1 Minute ohne jedes Feedback —
-	# so sieht man die Welt im Schnelldurchlauf altern.
 	var done := 0.0
 	while done < years:
 		var chunk := minf(2000.0, years - done)
-		# Zwischen zwei Chunks läuft `_process`, und der Zeitraffer darf dort
-		# einen Hintergrund-Schritt begonnen haben.
 		_settle_sim()
 		sim.step(chunk)
 		done += chunk
 		_after_sim(FRAME_JUMP_CHUNK)
 		await get_tree().process_frame
-	# Der Band-Deckel darf den sichtbaren Endzustand nicht bis zum nächsten
-	# Zeitraffer-Tick verzögern (der Sprung endet typischerweise pausiert).
 	_after_sim(FRAME_SETTLED)
 	_jumping = false
 
@@ -1574,16 +1109,10 @@ func _regen() -> void:
 	_after_sim(FRAME_SETTLED)
 	_update_seed()
 
-# ------------------------------------------------- Speichern / Laden (Issue #8)
-
-## Schreibt die laufende Welt. SimNode arbeitet auf BETRIEBSSYSTEM-Pfaden (SimCore
-## kennt Godots `user://` nicht), deshalb `globalize_path`.
 func _save_world() -> void:
-	if _jumping: # mitten in einem Zeitsprung ist der Zustand noch in Bewegung
+	if _jumping:
 		_set_status("Zeitsprung läuft — später speichern")
 		return
-	# Gespeichert wird der Stand, den man sieht: erst den laufenden
-	# Zeitraffer-Schritt abholen und zeigen.
 	_settle_sim()
 	var abs_path := ProjectSettings.globalize_path(SAVE_PATH)
 	var err: String = sim.saveWorld(abs_path)
@@ -1594,12 +1123,8 @@ func _save_world() -> void:
 	_set_status("Gespeichert: Jahr %s · %.1f MB" % [
 		_fmt(int(sim.currentYear())), mb])
 
-## Holt die gespeicherte Welt zurück. Danach ist der Zustand vollständig (der
-## Seespiegel kommt aus der Datei und schwingt NICHT ein, Issue #8) — es genügt,
-## die Texturen neu zu ziehen; ein Sim-Schritt ist ausdrücklich nicht nötig.
-## `path` überschreiben nur Tests, damit sie den Spielstand nicht antasten.
 func _load_world(path: String = SAVE_PATH) -> void:
-	if _jumping: # der laufende Sprung würde sofort auf die geladene Welt steppen
+	if _jumping:
 		_set_status("Zeitsprung läuft — später laden")
 		return
 	if not FileAccess.file_exists(path):
@@ -1607,22 +1132,17 @@ func _load_world(path: String = SAVE_PATH) -> void:
 			"Unter %s liegt noch keine Welt. Erst speichern (F5)." % path)
 		return
 	var abs_path := ProjectSettings.globalize_path(path)
-	# Geometrie-Prüfung VOR dem Laden, solange die laufende Welt noch steht.
 	var mismatch := _world_geometry_mismatch(
 		sim.worldFileGridSize(abs_path), sim.worldFileWorldSize(abs_path))
 	if not mismatch.is_empty():
 		_show_world_error("Welt nicht darstellbar", mismatch)
 		return
-	# Ein laufender Zeitraffer-Schritt käme sonst NACH der geladenen Welt an.
 	_settle_sim()
 	var err: String = sim.loadWorld(abs_path)
 	if not err.is_empty():
 		_show_world_error("Laden fehlgeschlagen", err)
 		return
-	# Pausieren: nach dem Laden soll die zurückgeholte Welt stehen, nicht sofort
-	# im zuletzt eingestellten Tempo weiterlaufen.
 	_set_rate(0.0)
-	# Konstanten, die aus der Datei-Config kommen können, nachziehen.
 	sea = sim.seaLevel()
 	pick_radius_cap = sim.pickaxeMaxRadiusWorld()
 	terrain_mat.set_shader_parameter("sea_level", sea)
@@ -1632,33 +1152,12 @@ func _load_world(path: String = SAVE_PATH) -> void:
 			mat.set_shader_parameter("sea_level", sea)
 	water_mi.position.y = sea * hscale
 	if amplifier != null:
-		amplifier.sea = sea  # Küstensaum der Verfeinerung
-	_after_sim(FRAME_SETTLED) # Wasser-Blend 1.0 → kein Überblenden aus der alten Welt
+		amplifier.sea = sea
+	_after_sim(FRAME_SETTLED)
 	_refresh_debug()
 	_set_status("Geladen: Jahr %s · pausiert" % _fmt(int(sim.currentYear())))
 	_update_seed(true)
 
-## Passt die GEOMETRIE einer Welt-Datei zu dieser Sitzung? Rückgabe: leerer
-## String = ja, sonst der Grund als fertige Meldung.
-##
-## Diese Sitzung ist in `_ready` auf EINE Geometrie festgelegt: Höhen-/Farb-/
-## Wasser-Texturen und `h_cache` haben N × N Einträge, Mesh-Größe und
-## -Tessellation, Kamera-Distanz, Wasserebene, Pinselkuppel und die
-## Welt→Zelle-Umrechnung von Raycast/Werkzeugen (`half`, `step`)
-## hängen an `world_size`. Beides muss deshalb geprüft werden — `n` allein
-## genügt NICHT: bei gleicher Auflösung, aber anderer Weltgröße liefe die
-## geladene Simulation in anderen Weltkoordinaten als Darstellung und Pinsel
-## (Zellgröße = world/(n−1)). Dass `n` und `world` in diesem Projekt nur
-## zusammen geändert werden, ist eine Konvention für den QUELLCODE; eine
-## Datei kann trotzdem jede Kombination mitbringen (die Datei-Config ist beim
-## Laden autoritativ, s. `WorldSnapshot`).
-##
-## Ablehnen statt umbauen ist die bewusste Entscheidung: die abhängigen Render-
-## und Interaktionsstrukturen komplett neu aufzubauen wäre ein zweiter, nur bei
-## fremden Dateien überhaupt erreichbarer Aufbaupfad neben `_setup_scene` —
-## mehr Code und mehr Bruchfläche als der Fall wert ist (Dokumentation:
-## docs/world-save-format.md). −1 heißt „nicht lesbar"; die passende Meldung
-## dazu liefert dann `loadWorld` selbst.
 func _world_geometry_mismatch(file_grid: int, file_world: float) -> String:
 	if file_grid > 0 and file_grid != N:
 		return ("Diese Welt hat die Gitterauflösung %d × %d, die laufende Sitzung "
@@ -1678,7 +1177,7 @@ func _show_world_error(title: String, message: String) -> void:
 	world_dialog.popup_centered(Vector2i(560, 0))
 
 func _capture_debug_reference() -> void:
-	_settle_sim() # Vergleichspunkt = der Stand, den man sieht
+	_settle_sim()
 	sim.captureDebugReference()
 	_refresh_debug()
 
@@ -1690,31 +1189,13 @@ func _set_debug_difference(enabled: bool) -> void:
 		_refresh_debug()
 
 func _after_sim(trigger: int) -> void:
-	_render_frame(trigger) # Höhen-Cache und Jahresanzeige zieht der Höhen-Upload nach
+	_render_frame(trigger)
 	debug_dirty = true
 
-## Wartet einen unterwegs befindlichen Hintergrund-Schritt ab (`sim.beginStep`)
-## und lädt sein Ergebnis hoch. Pflicht vor allem, was die Welt ändert oder ihren
-## aktuellen Stand liest: Zeitsprung, Neu, Laden, Speichern, Diagnose,
-## Kamera-Presets, Nachzug des Pinsels und jeder synchrone Frame
-## (`_render_frame`). Der Pinselstrich selbst wartet nicht: solange ein Schritt
-## rechnet, setzt er in `_process` aus. Raycast, Pinselkuppel und Jahresanzeige
-## brauchen die Sim gar nicht, sie lesen den gezeigten Stand (`shown_heights`,
-## `shown_year`).
-##
-## Die Brücke allein wäre nicht genug: sie wartet den Job zwar selbst ab, bevor
-## irgendein Aufruf die Welt anfasst (kein gleichzeitiger Zugriff, s.
-## SimNode.terrain), lässt sein Ergebnis aber liegen. Käme es erst danach an,
-## überschriebe ein älterer Stand den neueren (etwa die Höhe eines
-## Pinselstrichs), und Bänder und Wasser, die RenderState für sichtbar hält,
-## hätte Godot nie bekommen. Im Zeitraffer selbst wartet niemand: dort holt
-## `_process` nur fertige Schritte ab.
 func _settle_sim() -> void:
 	if sim.stepInFlight():
 		_apply_step(sim.finishStep())
 
-## Lädt das Ergebnis eines Hintergrund-Schritts hoch (Frame-Dictionary wie
-## `renderFrame`, Auslöser im Schlüssel `trigger`).
 func _apply_step(frame: Dictionary) -> void:
 	if frame.is_empty():
 		return
@@ -1729,22 +1210,16 @@ func _apply_step(frame: Dictionary) -> void:
 var _shot_frame := 0
 var _fps_accum := 0.0
 
-## Ein Werkzeugstrich besitzt die Höhen, bis die Maustaste losgelassen wird.
-## Sonst arbeitet der globale Sim-Schritt bei 60 J/s gleichzeitig gegen Brush,
-## Höhen-Upload und Fluss-Nachzug. Das gewählte Tempo bleibt dabei unverändert;
-## der nächste Prozess-Frame nach dem Loslassen setzt den Zeitraffer fort.
 static func _simulation_should_step(rate: float, tool_active: bool) -> bool:
 	return rate > 0.0 and not tool_active
 
 func _process(delta: float) -> void:
-	# Selbst-Screenshot für autonome visuelle Verifikation (nur mit RS_SHOT-Env).
 	if OS.has_environment("RS_SHOT"):
 		_shot_frame += 1
 		if _shot_frame == 45:
 			var img := get_viewport().get_texture().get_image()
 			img.save_png(OS.get_environment("RS_SHOT"))
 			get_tree().quit()
-	# FPS-Messung im Zeitraffer (nur mit RS_FPS-Env).
 	if OS.has_environment("RS_FPS"):
 		if not OS.has_environment("RS_IDLE"): year_rate = 60.0
 		_shot_frame += 1
@@ -1756,12 +1231,6 @@ func _process(delta: float) -> void:
 
 	if sim == null:
 		return
-	# Leerlauf-Drossel (s. IDLE_FPS_CAP): nur wenn wirklich nichts passiert —
-	# Zeitraffer, Sprung, Sculpting und ein noch nicht abgeholter
-	# Hintergrund-Schritt zählen als Aktivität. Eine autonome Aufnahme
-	# (RS_SHOT) ebenfalls: sonst schaltete der Leerlauf den Renderloop vor dem
-	# Aufnahme-Frame ab, und Bild-Pässe wie die Baum-Platzierung
-	# (ForestTrees) liefen nie — Aufnahmen zeigten das Kronendach statt Bäume.
 	var idle: bool = year_rate == 0.0 and not _jumping and not sculpting \
 		and not OS.has_environment("RS_SHOT") \
 		and not sim.stepInFlight() \
@@ -1778,9 +1247,6 @@ func _process(delta: float) -> void:
 		else:
 			RenderingServer.render_loop_enabled = true
 
-	# Ohne Bild gibt es auch keine unsichtbaren Shader-, Kamera- oder Raycast-
-	# Aktualisierungen. Eingaben laufen im Engine-Loop weiter und wecken Main
-	# über `_input`; danach setzt der nächste Prozess-Frame hier normal fort.
 	if idle:
 		return
 
@@ -1801,7 +1267,6 @@ func _process(delta: float) -> void:
 	if river_mat:
 		river_mat.set_shader_parameter("u_time", u_time)
 		river_prev_mat.set_shader_parameter("u_time", u_time)
-		# Ausgeblendet: der vorige Stand kostet keine Vertex-Arbeit mehr.
 		river_prev_mi.visible = ribbon_fade.mix < 1.0
 		corridor.advance(u_time, ribbon_fade.mix, float(get_viewport().size.y),
 			[river_mat, river_prev_mat])
@@ -1809,48 +1274,25 @@ func _process(delta: float) -> void:
 		mat.set_shader_parameter("u_time", u_time)
 	if debug_dirty:
 		debug_refresh_timer += delta
-		# Die Kennzahlen lesen die Sim: nie auf einen laufenden
-		# Hintergrund-Schritt warten, sondern den nächsten Frame ohne nehmen.
 		if debug_refresh_timer >= DEBUG_REFRESH_SECONDS and not sim.stepInFlight():
 			_refresh_debug()
 
-	# Hintergrund-Schritt abholen, sobald er fertig ist; `stepReady` blockiert
-	# nie. Der Hauptthread lädt nur hoch (docs/perf-measurements.md §L).
 	if sim.stepReady():
 		_apply_step(sim.finishStep())
 	if _simulation_should_step(year_rate, sculpting):
-		# Jahre über das Render-Intervall AKKUMULIEREN und nur EINMAL pro Render
-		# steppen — statt jeden Frame (die Sim-Schritte enthalten mehrere O(n²)-
-		# Pässe: computeFlow, outletIncision, Hangdiffusion, wave). Zwischen zwei
-		# Renders ~9 Schritte à 1 Jahr wären 9× diese Pässe für dasselbe Ergebnis;
-		# ein Schritt à 9 Jahre ist gleichwertig und ~9× billiger.
 		pending_years += year_rate * delta
 		rebuild_timer += delta
-		# Ein Schritt zur Zeit: rechnet der vorige noch (oder wartet er aufs
-		# Abholen), beginnt der nächste später, die Jahre sammeln sich weiter.
 		if rebuild_timer > SIM_TICK_SECONDS and not sim.stepInFlight():
 			rebuild_timer = 0.0
-			# Jahre/Schritt deckeln → hält jeden Schritt billig (keine Todesspirale).
 			var years := minf(pending_years, 240.0)
 			pending_years = 0.0
-			# Schritt UND Frame-Aufbereitung im Hintergrund (SimNode.beginStep):
-			# Höhe jeden Takt, Overlays gedrosselt und das Wasser weich
-			# geblendet (kein Springen zwischen den diskreten D8-Netzen) —
-			# Werte und Begründung in RenderState. Bis zum Abholen zeichnet der
-			# Hauptthread ungestört weiter.
 			sim.beginStep(years, FRAME_TIMELAPSE, _now())
 
-	# Der Strich ändert die Welt. Rechnet beim Drücken noch ein
-	# Zeitraffer-Schritt, setzt der Strich aus, bis oben das Abholen ihn
-	# hochgeladen hat (höchstens die Dauer eines Schritts), statt auf ihn zu
-	# warten; neue Schritte beginnen während des Strichs nicht.
 	if sculpting and not sim.stepInFlight():
 		var hit := _raycast_terrain()
 		if hit != Vector3.INF:
 			var gx := (hit.x + half) / step
 			var gz := (hit.z + half) / step
-			# Shift kehrt Anheben/Absenken um — welches Werkzeug das Gegenstück
-			# ist, sagt die Tabelle (`shift`), nicht eine Zahl hier.
 			var tool: Dictionary = TOOLS[current_tool]
 			if Input.is_key_pressed(KEY_SHIFT):
 				tool = TOOLS[tool.get("shift", current_tool)]
@@ -1858,10 +1300,6 @@ func _process(delta: float) -> void:
 			var strength: float = brush_strength * tool.get("strength_factor", 1.0)
 			var spacing: float = tool.get("stroke_spacing", 0.0)
 			if spacing > 0.0:
-				# Kerben ZEICHNEN — ein Hieb pro neu überstrichener Position, das
-				# Segment zum letzten Hieb wird lückenlos aufgefüllt (Abstand ≈
-				# halbe Hieb-Breite). Auf der Stelle verharren gräbt NICHT tiefer
-				# (kein Dauerbohren).
 				var p := Vector2(gx, gz)
 				if pick_last == Vector2.INF:
 					sim.brush(mode, gx, gz, brush_radius, strength, 0.0)
@@ -1871,34 +1309,13 @@ func _process(delta: float) -> void:
 						pick_last += (p - pick_last).normalized() * spacing
 						sim.brush(mode, pick_last.x, pick_last.y, brush_radius, strength, 0.0)
 			else:
-				# Framerate-unabhängig: Wirkung ∝ Zeit statt ∝ Frames (60-FPS-
-				# Referenz; delta-Deckel hält Ruckler-Frames von Riesen-Hieben ab).
 				sim.brush(mode, gx, gz, brush_radius, strength * minf(delta, 0.05) * 60.0,
 					flatten_target)
 			_invalidate_h_cache()
 			debug_dirty = true
-			# Höhe sofort (billig): der Strich muss dem Zeiger ohne Verzögerung
-			# folgen. Flussnetz, Overlays und Bänder laufen im gedrosselten Takt
-			# nach (s. SCULPT_REFRESH_SECONDS).
 			_upload_heights(sim.heightsBytes(), sim.currentYear())
 			_bake_relief()
 			sculpt_refresh_timer += delta
-			# Nachzug auf ZWEI Frames verteilt. GEMESSEN je Aufruf (n = 832,
-			# M4 Max, Aug 2026, res://tests/sculpt_cost.gd):
-			#   Teil 1  recomputeFlow        34,6 ms
-			#   Teil 2  waterFieldBytes      14,4 ms
-			#           terrainColor/Surface  0,9 ms je, filled-/heightsBytes 0,15
-			#           buildRiverRibbons    11,6 ms — aber höchstens 1×/s,
-			#                                s. RenderState.ribbonRebuildSeconds
-			# In EINEM Frame waren das 51 ms (mit Band-Rebuild 63) alle 0,15 s —
-			# genau das Stocken unter dem Pinsel. Getrennt bleibt die
-			# Gesamtarbeit gleich, die schlechteste Frame-Zeit sinkt auf die
-			# 35 ms von Teil 1, und das Wasserfeld hängt einen Frame hinter der
-			# Höhe: unsichtbar. Weiter zerlegen bringt nichts — recomputeFlow
-			# allein dominiert und ist von hier aus nicht teilbar (es ist EIN
-			# globaler Pass; ein lokaler Inkrement-Update wäre SimCore-Arbeit).
-			# Der Takt selbst bleibt bei SCULPT_REFRESH_SECONDS — der ist auf das
-			# Strich-GEFÜHL kalibriert, nicht auf die Frame-Zeit.
 			if sculpt_refresh_pending:
 				sculpt_refresh_pending = false
 				_refresh_stroke_upload()
@@ -1911,38 +1328,27 @@ func _process(delta: float) -> void:
 	if cam_target_on_surface:
 		_relief_cpu()
 		if not relief_lift_cache.is_empty():
-			# RS_TARGET: das Ziel lag bisher auf der Sim-Fläche.
 			cam_target_on_surface = false
 			cam_target.y = _surface_y_at(cam_target)
 	_update_brush()
 	_update_camera()
 
-## Teil 1 des Nachzugs (teuer, ~35 ms): das Flussnetz reagiert auf den Eingriff.
 func _refresh_stroke_flow() -> void:
 	_settle_sim()
 	sim.recomputeFlow()
 	_invalidate_h_cache()
 
-## Teil 2 des Nachzugs (~17 ms): Bänder nachziehen (Sculpting droppt gestörte
-## Kanäle → Struktur-Delta), Overlays hochladen.
 func _refresh_stroke_upload() -> void:
 	_render_frame(FRAME_STROKE)
 
-## Strich beendet: einmal vollständig nachziehen (Flussnetz, Bänder, Overlays,
-## Bäume) in einem Zug, damit der fertige Eingriff nie mit einem halb alten
-## Flussnetz stehen bleibt (der gedrosselte Takt kann mitten im Intervall
-## aufgehört haben).
 func _finish_stroke() -> void:
 	sculpt_refresh_timer = 0.0
-	sculpt_refresh_pending = false  # der vollständige Nachzug erledigt Teil 2 mit
+	sculpt_refresh_pending = false
 	_refresh_stroke_flow()
 	_render_frame(FRAME_SETTLED)
 	debug_dirty = true
 
 func _update_camera_pan(delta: float) -> void:
-	# Bewegung bleibt auf der Terrain-Ebene und folgt der Blickrichtung statt den
-	# Weltachsen. Die Zoom-abhängige Geschwindigkeit hält sie in Nah- und Fernsicht
-	# gleich gut kontrollierbar.
 	var move := Vector2(
 		float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
 		float(Input.is_key_pressed(KEY_W)) - float(Input.is_key_pressed(KEY_S)))
@@ -1962,7 +1368,7 @@ func _update_year() -> void:
 		year_label.text = "JAHR %s" % _fmt(int(shown_year))
 
 func _refresh_debug() -> void:
-	_settle_sim() # Kennzahlen und Δ-Karte gelten für den gezeigten Stand
+	_settle_sim()
 	_update_debug_ui()
 	if debug_difference_enabled:
 		_update_debug_difference_texture()
@@ -1977,8 +1383,6 @@ func _update_debug_ui() -> void:
 		push_warning("Unerwartetes Diagnoseformat: %d statt %d Werte" % [stats.size(), DEBUG_STATS_COUNT])
 		return
 	debug_difference_scale = clampf(maxf(stats[DBG_MAX_REMOVED], stats[DBG_MAX_ADDED]), 0.005, 0.25)
-	# Gratkrümmung ist die Alterungs-Kennzahl: stark negativ = junge spitze Grate,
-	# gegen 0 = alt/rund (SimCore: Terrain.ridgeCurvature).
 	debug_stats_label.text = (
 		"Höhe  min %.3f  Ø %.3f  max %.3f\n" % [stats[DBG_MIN], stats[DBG_MEAN], stats[DBG_MAX]]
 		+ "Relief %.3f (hoch %.3f / tal %.3f)  Δmax %+.3f  ΔØ %+.3f\n" % [
@@ -1993,9 +1397,6 @@ func _update_debug_ui() -> void:
 		debug_warning_label.text = "⚠ %d ungültige Höhenwerte (Magenta)" % int(stats[DBG_INVALID])
 		debug_warning_label.theme_type_variation = &"AlertLabel"
 	elif stats[DBG_SERVO] > stats[DBG_UPLIFT]:
-		# Der Servo ist nur noch UNTERGRENZE: er übernimmt erst, wenn die
-		# abklingende Hebung U(t) das Relief nicht mehr über dem Ziel hält.
-		# Regelsignal ist p95 − Median der Landhöhen, nicht max − min.
 		debug_warning_label.text = "⚠ Relief-Untergrenze aktiv: +%.5f / 100 J.\nReliefsignal hoch %.3f / tal %.3f / Ziel %.3f (Hebung U(t) %.5f)" % [
 			stats[DBG_SERVO], stats[DBG_RELIEF_SIGNAL], stats[DBG_RELIEF_LOW],
 			stats[DBG_RELIEF_TARGET], stats[DBG_UPLIFT]]
@@ -2015,40 +1416,25 @@ func _fmt(v: int) -> String:
 			out = "." + out
 	return out
 
-# ---------------------------------------------------------------- Felder
-
-## Markiert die CPU-Höhen als veraltet. Gezogen werden sie erst, wenn ein
-## Raycast sie braucht (`_sample_h`) — die Textur liest SimNode direkt.
 func _invalidate_h_cache() -> void:
 	h_cache_dirty = true
 	surface_version += 1
 
 func _ensure_h_cache() -> void:
 	if h_cache_dirty:
-		# Der zuletzt hochgeladene Stand (s. `shown_heights`); vor dem ersten
-		# Upload, im Aufbau, gibt es nur die Sim selbst.
 		h_cache = sim.heights() if shown_heights.is_empty() \
 			else shown_heights.to_float32_array()
 		h_cache_dirty = false
 
-# ---------------------------------------------------------------- Terrain-Textur
-
-## Ein synchroner Render-Frame (Issue #94): die Puffer des Frames aus
-## RenderState.frame holen und hochladen. WAS der Frame liefert und in welcher
-## Reihenfolge es entsteht, entscheidet SimRender. Im Zeitraffer kommt derselbe
-## Frame aus dem Hintergrund-Schritt (`_apply_step`).
 func _render_frame(trigger: int) -> void:
 	_settle_sim()
 	_frame_trigger = trigger
 	_apply_frame(sim.renderFrame(trigger, _now()))
 	_frame_trigger = FRAME_SETTLED
 
-## Uhr der Frame-Drosseln (Sekunden, monoton).
 func _now() -> float:
 	return Time.get_ticks_msec() / 1000.0
 
-## Lädt hoch, was ein Frame mitbringt (Schlüssel: SimNode.packFrame); fehlende
-## Schlüssel = unverändert. Mit der Höhe backt die Verschiebung neu.
 func _apply_frame(frame: Dictionary) -> void:
 	if frame.has("heights"):
 		_upload_heights(frame["heights"], frame["year"])
@@ -2059,10 +1445,6 @@ func _apply_frame(frame: Dictionary) -> void:
 	if frame.has("heights"):
 		_bake_relief()
 
-## Höhen (R32F) hochladen — billig (~0,2 ms), läuft auch jeden Pinsel-Frame.
-## Alle Puffer kommen als ROHE Bytes aus SimNode (Issue #53): `heights()` +
-## `to_byte_array()` kostete je Update eine zusätzliche ~2,7-MB-Kopie.
-## `year` ist das Sim-Jahr DIESER Höhen; zusammen sind sie der gezeigte Stand.
 func _upload_heights(bytes: PackedByteArray, year: float) -> void:
 	height_fade.start(_now(), _timelapse_fading())
 	height_field.upload(terrain_mat, N, bytes)
@@ -2070,65 +1452,42 @@ func _upload_heights(bytes: PackedByteArray, year: float) -> void:
 	shown_year = year
 	_invalidate_h_cache()
 	_update_year()
-	# Die Wolkenkörper erscheinen nur über dem Kamm und lesen dafür die Höhe.
 	for mat in Lighting.cloud_body_materials(cloud_bodies):
 		mat.set_shader_parameter("height_tex", height_field._tex)
 	terrain_mat.set_shader_parameter("detail_strength", terrain_detail_strength(year))
 	terrain_mat.set_shader_parameter("sim_year", year)
 
-## Im Zeitraffer gleiten die Texturen von Stand zu Stand (#172); Pinsel,
-## Sprung, Laden und Neugenerieren zeigen den neuen Stand sofort. Geblendet
-## wird nur ein Zeitraffer-TAKT (`_frame_trigger`), nicht schon ein laufender
-## Zeitraffer: Neugenerieren pausiert ihn nicht, und die neue Welt glitt sonst
-## aus der alten herein.
 func _timelapse_fading() -> bool:
 	return _frame_trigger == FRAME_TIMELAPSE and year_rate > 0.0 \
 		and not sculpting and not _jumping
 
-## Alles außer der Höhe: im Zeitraffer gedrosselt (RenderState.frame).
 func _upload_overlays(frame: Dictionary) -> void:
 	overlay_fade.start(_now(), _timelapse_fading())
-	# Seespiegel-Feld (hf): der Vertex-Shader hebt See-Zellen auf diese Höhe →
-	# Seen liegen als horizontale Flächen im Becken statt den Hang anzumalen.
 	hf_field.upload(terrain_mat, N, frame["filled"])
 
-	# Höhenbänder (Issue #4) an den Shader durchreichen: die Vegetations-Grenzen
-	# sind Perzentile der aktuellen Landhöhen und wandern mit der alternden
-	# Landschaft — der Shader darf dafür keine eigenen absoluten Werte halten.
 	var bands: PackedFloat32Array = frame["bands"]
 	if bands.size() >= 2:
 		terrain_mat.set_shader_parameter("veg_alt_lo", bands[0])
 		terrain_mat.set_shader_parameter("veg_alt_hi", bands[1])
 	if bands.size() >= 8:
-		# Nadelbaum-Anteil des Kronendachs (#152, HeightBands.coniferShare).
 		terrain_mat.set_shader_parameter("conifer_lo", bands[6])
 		terrain_mat.set_shader_parameter("conifer_hi", bands[7])
-		# Wolkenbasis knapp über dem Kamm (#174 D): rockStart/rockFull.
 		Lighting.place_clouds(cloud_mats, bands[2] * hscale, bands[3] * hscale, cloud_bodies)
 
-	# Makrofarbe und Materialgewichte kommen aus EINER Swift-Auswertung.
 	color_field.upload(terrain_mat, N, frame["color"])
 	surface_field.upload(terrain_mat, N, frame["surface"])
 	cover_field.upload(terrain_mat, N, frame["cover"])
 	flow_field.upload(terrain_mat, N, frame["flow"])
-	# Wasser-Feld (Flüsse/Seen/Altarme): im Zeitraffer zeitlich geglättet
-	# (`water_blend` < 1), sonst der frische Stand.
 	if water_gpu:
 		_update_water_gpu(frame["water"], frame["water_blend"])
 	else:
 		water_field.upload(terrain_mat, N, frame["water"])
-	# Schutz- und Waldmaske gehören zusammen: der Wald endet an der Schutzmaske
-	# desselben Frames (in SimRender fallen beide gemeinsam, `dropMasks`).
 	_update_protect_mask(frame["protect"])
 	amp_filled = frame["filled"]
 	amp_protect = frame["protect"]
 	_update_forest_mask(frame["forest"])
 	_update_plume(frame["plume"])
 
-## Schutzmaske (#154): godot-freie Render-Ableitung aus SimRender
-## (sichtbares Rasterwasser + gebaute Flussbänder + Saum von
-## `WaterRender.protectSeamCells` Zellen), binär als R8. Entsteht im Frame NACH
-## Bändern und Wasser; hier nur Kopieren und Hochladen.
 func _update_protect_mask(bytes: PackedByteArray) -> void:
 	var img := _protect_mask(bytes)
 	if protect_tex == null:
@@ -2139,11 +1498,6 @@ func _update_protect_mask(bytes: PackedByteArray) -> void:
 func _protect_mask(bytes: PackedByteArray) -> Image:
 	return Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
 
-## Sedimentfahnen (#174 C): fertige Trübungsdichte aus SimRender.SedimentPlume,
-## küstennah ab der Mündung. Die Mip-Kette zeichnet sie leicht weich:
-## ocean.gdshader liest eine niedrige Stufe. Der alte Stand wandert nach
-## `plume_prev_tex`, im Zeitraffer blendet die Overlay-Blende hinüber (#174):
-## die Weichzeichnung allein glättete den Sprung nicht.
 func _update_plume(bytes: PackedByteArray) -> void:
 	if ocean_mat == null:
 		return
@@ -2159,14 +1513,6 @@ func _update_plume(bytes: PackedByteArray) -> void:
 	plume_prev_tex.update(previous)
 	plume_tex.update(plume_img)
 
-## Waldmaske des Kronendachs (#152): SimRender.ForestCanopyMask aus
-## Materialgewichten, Steigung und Schutzmaske, kommt mit dem Frame.
-## Hier nur Hochladen; den Raycast-Zuschlag rechnet `_forest_lift_at` lazy.
-## Der alte Stand wandert nach `forest_prev_tex`: im Zeitraffer blendet der
-## Terrain-Shader mit der Overlay-Blende (`overlay_fade`, #172) hinüber, wie
-## Farbe und Material. NICHT mit `bake_blend`: die Verschiebung backt jeden
-## Sim-Takt, die Maske kommt nur mit den Overlays; geteilt sprang der Wald an
-## jedem Takt ohne neue Maske auf den alten Stand zurück (#170).
 func _update_forest_mask(bytes: PackedByteArray) -> void:
 	var previous := forest_img
 	forest_img = Image.create_from_data(N, N, false, Image.FORMAT_R8, bytes)
@@ -2181,14 +1527,6 @@ func _update_forest_mask(bytes: PackedByteArray) -> void:
 	forest_prev_tex.update(previous)
 	forest_tex.update(forest_img)
 
-## Render-Verschiebung neu backen (#153), einmal je Terrain-Update: der
-## Back-Pass zeichnet genau einen Frame, danach steht die Textur bis zum
-## nächsten Update. Kein Update, kein Back-Pass — der Zeitraffer bleibt damit
-## ruhig, und das Standbild kostet nur das Lesen der Textur.
-## Im Zeitraffer backt das andere Ziel, und der Terrain-Shader blendet über
-## einen Sim-Takt hinüber. Kommt mitten in der Blende ein zweiter Auftrag
-## (Band-Bau im selben Takt), backt das neue Ziel erneut, und die Blende läuft
-## weiter, statt zurück auf den alten Stand zu springen.
 func _bake_relief() -> void:
 	if amplifier != null:
 		_amplify()
@@ -2208,13 +1546,6 @@ func _bake_relief() -> void:
 	relief_bake_frame = Engine.get_frames_drawn()
 	relief_bakes += 1
 
-## Gelände-Verfeinerung (#238) anstoßen, einmal je Terrain-Update wie der
-## Back-Pass. Im Zeitraffer, unter dem Pinsel und in den Zwischenschritten
-## eines Sprungs verteilt der Verfeinerer die Arbeit über mehrere Bilder
-## (`_process` ruft `advance`), der fertige Stand blendet im Zeitraffer ein
-## (`AMPLIFY_FADE_SECONDS`). Sprung-Ende, Laden und Neugenerieren rechnen
-## sofort. Seespiegel und Schutzmaske reisen nur mit,
-## wenn ein Overlay-Frame neue gebracht hat.
 func _amplify() -> void:
 	if shown_heights.is_empty() or (amp_protect.is_empty() and not amplifier.has_inputs()):
 		return
@@ -2227,7 +1558,6 @@ func _amplify() -> void:
 	if not spread:
 		_adopt_amplified(false)
 
-## Der Verfeinerer hat einen Stand fertig: Texturen tauschen, Blende starten.
 func _adopt_amplified(fade: bool) -> void:
 	terrain_mat.set_shader_parameter("relief_tex", amplifier.relief_texture())
 	terrain_mat.set_shader_parameter("relief_prev_tex", amplifier.previous_relief_texture())
@@ -2235,26 +1565,16 @@ func _adopt_amplified(fade: bool) -> void:
 	terrain_mat.set_shader_parameter("amplify_prev_tex", amplifier.previous_maps_texture())
 	terrain_mat.set_shader_parameter("amplify_enabled", true)
 	terrain_mat.set_shader_parameter("relief_enabled", true)
-	# Der allererste Stand hat keinen Vorgänger, aus dem er einblenden könnte.
 	relief_mix = 0.0 if fade and amplifier.published > 1 else 1.0
 	relief_fade_seconds = AMPLIFY_FADE_SECONDS
 	terrain_mat.set_shader_parameter("bake_blend", relief_mix)
 	relief_bake_frame = Engine.get_frames_drawn()
 
-## Holt den Höhenzuschlag der zuletzt gebackenen Verschiebung auf die CPU,
-## verkleinert aufs Sim-Gitter (gleiche Indizierung wie `h_cache`). Lesbar erst
-## NACH dem gezeichneten Back-Frame. Während eines Strichs backt jeder Frame
-## neu; dort bleibt der Stand vom Strich-Beginn stehen (die Sim-Höhe darunter
-## ist immer aktuell), gelesen wird erst nach dem Loslassen. Im Zeitraffer
-## braucht niemand die Fläche, also wird auch nichts gelesen. Headless
-## (Dummy-Renderer) bleibt der Puffer leer; die sichtbare Fläche ist dann die
-## Sim-Fläche.
 func _relief_cpu() -> void:
 	if sculpting or relief_bake_frame < 0 or Engine.get_frames_drawn() <= relief_bake_frame:
 		return
 	relief_bake_frame = -1
 	if amplifier != null:
-		# Dieselben Werte, die der Vertex-Shader liest (Mip-Stufe des Sim-Gitters).
 		var lift := amplifier.read_cell_lift()
 		if not lift.is_empty():
 			relief_lift_cache = lift
@@ -2265,34 +1585,22 @@ func _relief_cpu() -> void:
 		return
 	img.convert(Image.FORMAT_RF)
 	img.resize(N, N, Image.INTERPOLATE_BILINEAR)
-	# Kodiert (Kanal = Höhe × Code + 0.5), dekodiert wird in `_surface_y`.
 	relief_lift_cache = img.get_data().to_float32_array()
 	surface_version += 1
 
-## Alterungsabhängige Stärke der rein kosmetischen Shader-Rinnen. Smoothstep
-## vermeidet einen sichtbaren Knick am Anfang und bei 100k; danach bleibt der
-## alte Zustand stabil, statt immer kontrastreicher zu werden.
 static func terrain_detail_strength(years: float) -> float:
 	var age := clampf(years / TERRAIN_DETAIL_AGE_YEARS, 0.0, 1.0)
 	age = age * age * (3.0 - 2.0 * age)
 	return lerpf(TERRAIN_DETAIL_YOUNG, TERRAIN_DETAIL_OLD, age)
 
-## Baut die GPU-Kette des Wasserfelds auf (s. `water_gpu`): die Kette selbst —
-## Viewports, Materialien, Pass-Plan aus der Brücke — lebt in WaterGpuTail.gd,
-## hier bleibt nur das Einhängen in die Szene.
 func _setup_water_gpu() -> void:
 	water_gpu_tail = WaterGpuTailScript.new()
 	add_child(water_gpu_tail)
 	water_gpu_tail.setup(sim, N)
 
-## Ein Durchlauf der GPU-Kette; die Verdrahtung der beiden Ping-Pong-Ziele in
-## die Wasser-Shader bleibt hier, weil sie Main gehört (welche Materialien das
-## Feld lesen, weiß die Kette nicht).
 func _update_water_gpu(raw: PackedByteArray, blend: float) -> void:
 	water_gpu_tail.update(raw, blend)
 	terrain_mat.set_shader_parameter("water_tex", water_gpu_tail.current_texture())
-	# Vorgängerstand für `overlay_blend` (#174): das andere Ping-Pong-Ziel, das
-	# erst der NÄCHSTE Durchlauf wieder beschreibt.
 	terrain_mat.set_shader_parameter("water_prev_tex", water_gpu_tail.previous_texture())
 	for band_mat in [river_mat, river_prev_mat]:
 		if band_mat != null:
@@ -2303,9 +1611,6 @@ func _update_debug_difference_texture() -> void:
 	debug_difference_field.upload(terrain_mat, N,
 		sim.heightDifferenceBytes(debug_difference_scale))
 
-
-## Ein Band-Mesh mit eigenem Material: `outgoing` = der vorige Stand, der im
-## Zeitraffer ausblendet (water.gdshader `ribbon_outgoing`).
 func _make_river_instance(mesh: ArrayMesh, outgoing: bool) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
@@ -2313,15 +1618,11 @@ func _make_river_instance(mesh: ArrayMesh, outgoing: bool) -> MeshInstance3D:
 	mat.shader = load("res://shaders/water.gdshader")
 	mat.set_shader_parameter("ribbon_outgoing", outgoing)
 	mi.material_override = mat
-	mi.extra_cull_margin = 1000.0 # Geometrie ändert sich laufend
+	mi.extra_cull_margin = 1000.0
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
 	return mi
 
-## Fluss-Ribbons aus dem letzten Band-Bau des Frames ins Mesh. Die Schutzmaske
-## dazu bringt derselbe Frame mit. Im Zeitraffer wandert das bisherige Mesh
-## ins ausblendende (`river_prev_mi`), der neue Stand löst es über
-## `ribbon_fade` ab; Pinsel, Sprung, Laden und Neugenerieren zeigen ihn sofort.
 func _upload_ribbon_mesh(frame: Dictionary) -> void:
 	var fade := _timelapse_fading()
 	if fade:
@@ -2331,11 +1632,8 @@ func _upload_ribbon_mesh(frame: Dictionary) -> void:
 		river_mi.mesh = river_mesh
 		river_prev_mi.mesh = river_prev_mesh
 	ribbon_fade.start(_now(), fade)
-	# Sofort, nicht erst im nächsten `_process`: sonst fehlte für ein Bild der
-	# alte Stand, während der neue noch bei Blende 0 steht (kein Band).
 	river_prev_mi.visible = fade
 	river_mesh.clear_surfaces()
-	# Das Mesh reist im Frame (SimNode.packFrame), schon als Packed-Arrays.
 	var verts: PackedVector3Array = frame.get("ribbon_verts", PackedVector3Array())
 	if verts.size() >= 3:
 		var arrays := []
@@ -2343,13 +1641,8 @@ func _upload_ribbon_mesh(frame: Dictionary) -> void:
 		arrays[Mesh.ARRAY_VERTEX] = verts
 		arrays[Mesh.ARRAY_COLOR] = frame["ribbon_colors"]
 		arrays[Mesh.ARRAY_TEX_UV] = frame["ribbon_uvs"]
-		# UV2.x = Typ (Fluss/Delta/Altarm, Issue #34) — der Shader färbt danach
-		# und schaltet für Altarme die Strömung ab.
 		arrays[Mesh.ARRAY_TEX_UV2] = frame["ribbon_uv2s"]
-		# CUSTOM0 = Lauf-Größen (Riffel, Weißwasser, Gefälle, Breite; Look-
-		# Iteration 14, RiverRibbonRenderer.flowAttributes).
 		arrays[Mesh.ARRAY_CUSTOM0] = frame["ribbon_flows"]
-		# CUSTOM1 = Korridor je Vertex (Look E, #239, RibbonMesh.profile).
 		arrays[Mesh.ARRAY_CUSTOM1] = frame["ribbon_profile"]
 		arrays[Mesh.ARRAY_INDEX] = frame["ribbon_indices"]
 		river_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {},
@@ -2357,33 +1650,29 @@ func _upload_ribbon_mesh(frame: Dictionary) -> void:
 			| (Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT))
 	corridor.upload(frame, fade)
 
-# ---------------------------------------------------------------- Kamera & Eingabe
-
 func _update_camera() -> void:
 	var cp := cos(cam_pitch)
 	var offset := Vector3(sin(cam_yaw) * cp, sin(cam_pitch), cos(cam_yaw) * cp) * cam_dist
 	cam.position = cam_target + offset
 	cam.look_at(cam_target, Vector3.UP)
 	if atmosphere != null:
-		# Scharf bleibt der Pinselpunkt, sonst das Ziel in der Bildmitte.
 		var focus := brush_mi.position if brush_mi != null and brush_mi.visible else cam_target
 		atmosphere.update(cam, focus, cam_dist, cam_pitch, get_process_delta_time(), u_time)
 
 func _unhandled_input(event: InputEvent) -> void:
 	last_activity_msec = Time.get_ticks_msec()
 	if not event is InputEventMouseMotion:
-		rs_camera = -1 # ab jetzt führt der Spieler die Kamera (s. RS_CAMERA)
+		rs_camera = -1
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
 				var was_sculpting := sculpting
 				sculpting = event.pressed
 				if not event.pressed:
-					pick_last = Vector2.INF # Strich beendet → nächster Klick beginnt neu
+					pick_last = Vector2.INF
 					if was_sculpting:
 						_finish_stroke()
 				if event.pressed and TOOLS[current_tool].get("samples_target", false):
-					# Einebnen: Zielhöhe = Terrainhöhe am Strich-Beginn
 					var hit := _raycast_terrain()
 					if hit != Vector3.INF:
 						flatten_target = _sample_h((hit.x + half) / step, (hit.z + half) / step)
@@ -2396,60 +1685,42 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and orbiting:
 		cam_yaw -= event.relative.x * 0.005
 		cam_pitch = clamp(cam_pitch + event.relative.y * 0.005, 0.15, 1.5)
-	# Zoom ohne Maus: Trackpad-Zwei-Finger-Wisch …
 	elif event is InputEventPanGesture:
 		cam_dist = clamp(cam_dist + event.delta.y * 6.0, CAM_DIST_MIN, world_size * 4.0)
-	# … Pinch-Geste …
 	elif event is InputEventMagnifyGesture:
 		cam_dist = clamp(cam_dist / event.factor, CAM_DIST_MIN, world_size * 4.0)
-	# … und +/− auf der Tastatur.
 	elif event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD:
 				cam_dist = max(CAM_DIST_MIN, cam_dist - 12.0)
 			KEY_MINUS, KEY_KP_SUBTRACT:
 				cam_dist = min(world_size * 4.0, cam_dist + 12.0)
-			KEY_SPACE: # Pause ↔ letztes Tempo
+			KEY_SPACE:
 				_set_rate(0.0 if year_rate > 0.0 else last_rate)
 			KEY_BRACKETLEFT:
 				radius_slider.value = max(radius_slider.min_value, brush_radius - 2.0)
 			KEY_BRACKETRIGHT:
 				radius_slider.value = min(radius_slider.max_value, brush_radius + 2.0)
-			KEY_F5: # Welt speichern (Issue #8)
+			KEY_F5:
 				_save_world()
-			KEY_F9: # Welt laden
+			KEY_F9:
 				_load_world()
 			_:
-				# Werkzeug-Tasten 1…N in Tabellen-Reihenfolge (Issue #53): ein
-				# neues Werkzeug braucht hier keine eigene Zeile mehr.
 				var t: int = event.keycode - KEY_1
 				if t >= 0 and t < TOOLS.size():
 					current_tool = t
-					# Über den Setter, nicht set_pressed_no_signal: nur er löst den
-					# vorher aktiven Knopf der ButtonGroup (sonst leuchteten zwei).
 					tool_buttons[t].button_pressed = true
-				# Kamera-Presets ebenso: F1…F3 in Tabellen-Reihenfolge.
 				var c: int = event.keycode - KEY_F1
 				if c >= 0 and c < CAMERA_PRESETS.size():
 					_apply_camera_preset(c)
 
-## Auch von Controls konsumierte Ereignisse müssen den Renderer wecken. Nur in
-## `_unhandled_input` käme etwa ein Klick auf „10 J/s" hier nie an, solange das
-## letzte Pausebild eingefroren ist.
 func _input(_event: InputEvent) -> void:
 	_wake_render_loop()
 
-## Fensterleisten-Aktionen — Maximieren, Wiederherstellen, Resize am Rand —
-## erzeugen KEIN InputEvent. Ohne eigenen Weckruf bliebe das eingefrorene
-## Pausebild danach skaliert im neuen Fenster stehen, ausgerechnet beim
-## Maximieren fürs Messprozedere (s. AGENTS.md, Fenstergröße ist Teil des
-## Tests). Größen- und Fokuswechsel wecken den Renderloop deshalb selbst.
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_SIZE_CHANGED or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
 		_wake_render_loop()
 
-## Die Texturen des Verfeinerers gehören dem RenderingDevice, nicht Godots
-## Ressourcenverwaltung: von Hand freigeben.
 func _exit_tree() -> void:
 	if amplifier != null:
 		for param in ["relief_tex", "relief_prev_tex", "amplify_tex", "amplify_prev_tex"]:
@@ -2466,19 +1737,15 @@ func _wake_render_loop() -> void:
 		RenderingServer.render_loop_enabled = true
 
 func _update_brush() -> void:
-	# Autonome Screenshots zeigen keinen Pinsel, außer RS_BRUSH verlangt ihn:
-	# dann steht die Kuppel in der Bildmitte statt am Mauszeiger.
 	var fixed := OS.has_environment("RS_BRUSH")
 	if OS.has_environment("RS_SHOT") and not fixed:
 		brush_mi.visible = false
 		return
-	# Im Screenshot läuft meist der Zeitraffer; RS_BRUSH zeigt sie trotzdem.
 	if sculpting or year_rate == 0.0 or fixed:
 		var hit := _raycast_at(get_viewport().get_visible_rect().size * 0.5) \
 			if fixed else _raycast_terrain()
 		if hit != Vector3.INF:
 			var tool: Dictionary = TOOLS[current_tool]
-			# Spitzhacke: die Kuppel zeigt die echte (gedeckelte) Hieb-Breite.
 			var r := minf(brush_radius, pick_radius_cap) \
 				if tool.get("radius_capped", false) else brush_radius
 			var power: float = tool.get("falloff_power", BRUSH_FALLOFF_POWER)
@@ -2494,26 +1761,18 @@ func _update_brush() -> void:
 			return
 	brush_mi.visible = false
 
-## Gewicht des Pinsels im Abstand `d` (Anteil am Radius): (1 − d²)^p wie in
-## Terrain.forEachBrushCell (p = 2) und Terrain.pickaxe (p = 4).
 static func brush_weight(d: float, power: float) -> float:
 	if d >= 1.0:
 		return 0.0
 	return pow(1.0 - d * d, power)
 
-## Linienpaare der Gitterkuppel um `center` (Koordinaten relativ zu `center`)
-## samt Vertex-Farben und Breiten (Kern, Halo in px): BRUSH_DOME_RINGS
-## Breitenkreise bei d = k / RINGS (der äußerste ist der Rand) und
-## BRUSH_DOME_MERIDIANS Meridiane vom Rand zum Scheitel. Jeder Punkt liegt auf
-## der sichtbaren Fläche plus BRUSH_DOME_LIFT plus Profil
-## r · BRUSH_DOME_HEIGHT · w(d). Gezeichnet wird daraus `brush_bands`.
 func brush_dome(center: Vector3, radius: float, power: float) -> Array:
 	var verts := PackedVector3Array()
 	var colors := PackedColorArray()
 	var widths := PackedVector2Array()
 	var rim_w := Vector2(BRUSH_RIM_WIDTH_PX, BRUSH_RIM_HALO_PX)
 	var grid_w := Vector2(BRUSH_GRID_WIDTH_PX, BRUSH_GRID_HALO_PX)
-	for k in range(BRUSH_DOME_RINGS, 0, -1):  # erst der Rand: Punkt 0 liegt auf ihm
+	for k in range(BRUSH_DOME_RINGS, 0, -1):
 		var d := float(k) / BRUSH_DOME_RINGS
 		var rim := k == BRUSH_DOME_RINGS
 		var color := BRUSH_RIM_COLOR if rim else BRUSH_GRID_COLOR
@@ -2537,11 +1796,6 @@ func brush_dome(center: Vector3, radius: float, power: float) -> Array:
 			prev = p
 	return [verts, colors, widths]
 
-## Mesh-Arrays (PRIMITIVE_TRIANGLES, CUSTOM0 als RGBA-Float) aus den
-## Linienpaaren von `brush_dome`: je Paar ein Band aus vier Ecken, das
-## shaders/brush_dome.gdshaderinc in Bildschirm-Pixeln aufspannt (Belegung der
-## Kanäle dort). Ecken 0/1 sitzen auf dem Anfang, 2/3 auf dem Ende; das Ende
-## sieht den Anfang als „anderen" Punkt, also dreht CUSTOM0.w seine Normale.
 static func brush_bands(lines: Array) -> Array:
 	var src: PackedVector3Array = lines[0]
 	var src_colors: PackedColorArray = lines[1]
@@ -2586,14 +1840,9 @@ func _dome_point(center: Vector3, radius: float, power: float, d: float, a: floa
 func _raycast_terrain() -> Vector3:
 	return _raycast_at(get_viewport().get_mouse_position())
 
-## Treffer der sichtbaren Fläche unter einem Bildschirmpunkt.
 func _raycast_at(screen_pos: Vector2) -> Vector3:
 	return _raycast_surface(cam.project_ray_origin(screen_pos), cam.project_ray_normal(screen_pos))
 
-## Heightfield-Raymarch gegen die SICHTBARE Fläche (Sim-Höhe plus
-## Render-Verschiebung, #153): Pinselkuppel und Strich-Beginn liegen auf dem, was
-## man sieht. Der Pinsel selbst wirkt weiter auf die Sim-Zelle unter dem
-## Treffer (x/z des Treffers → Gitterposition).
 func _raycast_surface(ro: Vector3, rd: Vector3) -> Vector3:
 	_relief_cpu()
 	var prev_t := 0.0
@@ -2617,14 +1866,10 @@ func _raycast_surface(ro: Vector3, rd: Vector3) -> Vector3:
 		t += 0.8
 	return Vector3.INF
 
-## Sim-Höhe (0…1) an einer Gitterposition.
 func _sample_h(gx: float, gz: float) -> float:
 	_ensure_h_cache()
 	return _sample_grid(h_cache, gx, gz)
 
-## Sichtbare Höhe (Welt-Y): Sim-Höhe plus Render-Verschiebung (#153) plus
-## Kronendach (#152). Seen tragen beides nicht (Schutzmaske), dort bleibt es
-## die Sim-Höhe.
 func _surface_y(gx: float, gz: float) -> float:
 	var y := _sample_h(gx, gz) * hscale
 	if not relief_lift_cache.is_empty():
@@ -2632,12 +1877,7 @@ func _surface_y(gx: float, gz: float) -> float:
 			* relief_geometry_fade(shown_year, relief_geometry_age)
 	return y + _forest_lift_at(gx, gz)
 
-## Dachzuschlag in Welt-Y wie im Terrain-Vertex-Shader: je Gitterpunkt die
-## Anhebung aus der geglätteten Maske (`_canopy_vertex_lift`), dazwischen
-## bilinear wie die übrigen Höhen hier. Die Maske wird erst beim ersten
-## Raycast nach einem Upload in Floats gewandelt.
 func _forest_lift_at(gx: float, gz: float) -> float:
-	# Mit Einzelbäumen (#236) hebt das Dach nicht: Kuppel und Ziel am Boden.
 	if forest_img == null or forest_trees != null:
 		return 0.0
 	if forest_lift_cache.is_empty():
@@ -2654,12 +1894,6 @@ func _forest_lift_at(gx: float, gz: float) -> float:
 		+ _canopy_vertex_lift(xi + 1, zi + 1) * fx * fz
 	return lift * canopy_calib["canopy_height"]
 
-## Anhebe-Anteil (0…1) am Gitterpunkt (i, j), Spiegel des Terrain-Vertex-
-## Shaders (`lift_f`): unter `canopy_lift_lo` hebt nichts, sonst das Minimum
-## aus eigener Maske und dem Mittel der vier diagonalen Abgriffe im Abstand
-## `canopy_lift_smooth_texels` (Review Neon Nr. 2: vorher fehlte die
-## Glättung, am Bestandsrand schwebten Kuppel und Raycast-Treffer um die
-## volle Dachhöhe über dem Bild).
 func _canopy_vertex_lift(i: int, j: int) -> float:
 	var lo: float = canopy_calib["canopy_lift_lo"]
 	var f := forest_lift_cache[j * N + i]
@@ -2672,16 +1906,12 @@ func _canopy_vertex_lift(i: int, j: int) -> float:
 		+ _sample_grid(forest_lift_cache, i - o, j + o)
 	return smoothstep(lo, canopy_calib["canopy_lift_hi"], minf(f, sm * 0.25))
 
-## Anteil der echten Verformung nach Geländealter, wie im Terrain-Shader
-## (`relief_lift`): auf jungem Relief nur Schattierung, ab `age` voll.
 static func relief_geometry_fade(year: float, age: float) -> float:
 	return smoothstep(0.0, age, year)
 
-## Sichtbare Höhe unter einem Weltpunkt (nur x/z zählen).
 func _surface_y_at(p: Vector3) -> float:
 	return _surface_y((p.x + half) / step, (p.z + half) / step)
 
-## Bilinear auf einem n×n-Feld, row-major wie die Sim-Felder.
 func _sample_grid(field: PackedFloat32Array, gx: float, gz: float) -> float:
 	var xi := clampi(int(floor(gx)), 0, N - 2)
 	var yi := clampi(int(floor(gz)), 0, N - 2)

@@ -1,0 +1,11 @@
+# Framerate-Unabhängigkeit: Relaxationsform, Tropfen-Übertrag, Rate vor Sättigung
+
+Echtzeit-Zeitraffer (winziges dt je Frame) und +10.000-Jahre-Sprünge müssen dasselbe Ergebnis liefern.
+
+`Terrain.relaxFraction(dt:tau:)` = `1 − e^(−dt/τ)` ist die einzige Quelle für alle Relaxations- und Verlandungsraten (Seespiegel, Salzkruste, Beckenbilanz, Pfützen, Altarme, Vegetation, Stream-Map, Regeneration). Der Rest teleskopiert exakt, `(1 − f(dt₁))·(1 − f(dt₂)) = 1 − f(dt₁ + dt₂)`; die früher verwendete linear gedeckelte Form `min(1, dt/τ)` tat das nicht und sättigte bei großen Schritten. Bewusst ohne Prüfung von `tau`: die Aufrufer bewachen ihre Zeitkonstante selbst (meist `guard τ > 0`), ein Deckel hier verschöbe ihr dokumentiertes Randverhalten. Wächter `RelaxationTests`.
+
+Tropfenzahl (Issue #2): sie ist eine Rate (`hydraulicPerYear` · Fläche · dt). Bei Frame-Schritten unter einem halben Jahr ist der Sollwert < 1, und `max(1, …)` hätte daraus dauerhaft aufgerundete Erosion gemacht. Der angebrochene Tropfen wird in `dropCarry` mitgenommen; über die Zeit ist die Zahl exakt ∝ Simulationszeit. Jeder Tropfen zieht seinen Startpunkt aus einem eigenen, aus seiner laufenden Nummer `dropsEmitted` abgeleiteten Strom (`Hydraulic.dropRNG`). Vorher lief der Strom über einen Schrittzähler: leere Frame-Schritte schoben ihn weiter, und ein großer Sprung zog alle Tropfen aus einem Strom, die Zahl war dt-invariant, die Tropfen selbst nicht.
+
+Stream-Map (zeitgemittelte Tropfenpfade, Render-Maske und Rückkopplung in die Tropfen: weniger Verdunstung auf etablierten Läufen): gemittelt wird die lineare Besuchsrate (`streamRate`, Besuche/Jahr, Erwartungswert unabhängig von der Schrittweite); die Sättigung auf 0..1 kommt erst danach. Sättigung vor der Mittelung machte die Map dt-abhängig (ein Einzelbesuch saturierte bei kleinen Schritten sofort, Zufallspfade so hell wie Flüsse). Die Sättigung ist rational, `rate/(rate + r0)`, statt `1 − exp(−rate/r0)`: gleiche Form (0.5 bei r0, gegen 1 darüber), ohne 409k `exp`-Aufrufe je Schritt.
+
+Betrifft: `Terrain.relaxFraction`, `Terrain.dropCarry`, `Terrain.dropsEmitted`, `Terrain.streamMap`, `Terrain.streamRate`, `Terrain.deriveStreamMap`, `Hydraulic.dropRNG`

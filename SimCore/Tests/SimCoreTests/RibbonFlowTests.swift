@@ -2,13 +2,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Lauf-Größen der Flussbänder (Look-Iteration 14, `RibbonMesh.flows`):
-/// Kolk ↔ Riffel, Weißwasser, Gefälle und Breite je Vertex.
 final class RibbonFlowTests: XCTestCase {
 
-    /// Pflicht-Wächter: der Kanal ist vollständig, im Wertebereich, auf
-    /// Stillwasser und Delta-Armen still, und auf Flüssen wechselt er
-    /// tatsächlich (kein einheitliches Band).
     func testRibbonFlowAttributesVaryAlongRivers() {
         let t = agedWorld(renderConfig(n: 192), years: 2000)
         let mesh = builtRibbons(t).mesh
@@ -22,9 +17,6 @@ final class RibbonFlowTests: XCTestCase {
             for v in lo..<hi {
                 let f = mesh.flows[v]
                 for c in 0..<3 { XCTAssert((0...1).contains(f[c]), "flows[\(v)][\(c)] = \(f[c])") }
-                // Breite (w) = gemalte Bandbreite, also der Abstand des
-                // Kantenpaars; `water.gdshader` skaliert die Kräuselung quer
-                // damit (Review Neon Nr. 7/8).
                 let pair = v - (v - lo) % 2
                 let dx = mesh.vertices[pair].x - mesh.vertices[pair + 1].x
                 let dz = mesh.vertices[pair].z - mesh.vertices[pair + 1].z
@@ -43,20 +35,13 @@ final class RibbonFlowTests: XCTestCase {
         XCTAssertGreaterThan(poolsLow, riffles.count / 10, "kaum Kolke")
         let white = whites.filter { $0 > 0.3 }.count
         XCTAssertGreaterThan(white, 0, "nirgends Weißwasser")
-        // Die Hälfte statt eines Drittels: die steilere Linux-Welt (glibc-libm)
-        // trägt auf 402 von rund 1200 Fluss-Vertices Weißwasser, zu Recht
-        // (Gefällestufen). Ein Saum über ganze Läufe läge nahe 100 %.
         XCTAssertLessThan(white, whites.count / 2, "Weißwasser ist kein Saum über ganze Läufe")
-        // Gefälle (z): wechselt entlang der Läufe, nicht überall gleich.
         let steep = slopes.filter { $0 > 0.5 }.count, flat = slopes.filter { $0 < 0.1 }.count
         print("Gefälle: \(steep) steil (> 0,5), \(flat) flach (< 0,1) von \(slopes.count)")
         XCTAssertGreaterThan(steep, 0, "nirgends Gefälle")
         XCTAssertGreaterThan(flat, 0, "überall Gefälle")
     }
 
-    /// `water.gdshader` liest die Breite aus dem Kanal statt sie je Pixel aus
-    /// Bildschirm-Ableitungen zu schätzen (Review Neon Nr. 8: der Kanal war
-    /// tot).
     func testWaterShaderReadsTheBandWidthFromTheFlowChannel() throws {
         let shader = try RepoSource.probe("game/shaders/water.gdshader")
         assertContains(shader, "float band_width = max(v_flow.w, 0.0);",
@@ -65,7 +50,6 @@ final class RibbonFlowTests: XCTestCase {
                        "keine Jacobi-Schätzung der Bandbreite je Pixel mehr")
     }
 
-    /// Messlauf: Verteilung der Lauf-Größen auf der Produktionswelt.
     func testRibbonFlowProductionDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
@@ -88,8 +72,6 @@ final class RibbonFlowTests: XCTestCase {
         where Double(mesh.uv2s[v].x) == WaterRender.ribbonKindRiver && mesh.colors[v].w > 0.25 {
             for c in 0..<4 { comp[c].append(mesh.flows[v][c]) }
         }
-        // Rohes Längsgefälle entlang der Zentrumslinien (Sim-Höhe je Zelle),
-        // für die Fenster `ribbonSlopeLo/Hi` und `ribbonWhiteSlopeLo/Hi`.
         var raw: [Double] = []
         let n = t.cfg.n
         for ch in t.meander.channels where ch.nodes.count > 8 {

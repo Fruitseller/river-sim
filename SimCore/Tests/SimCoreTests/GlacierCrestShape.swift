@@ -1,18 +1,7 @@
 import XCTest
 @testable import SimCore
 
-/// Kammform unter dem Gletscher (Issue #174, `docs/glacier-measurements.md`
-/// § „Offener Befund: der stabile Transport macht den Kamm zur Tafel"):
-/// Höhen-Perzentile, Anteil flacher Zellen und Zackigkeit der obersten 5 % des
-/// Landes, Gipfelzahl, Eiszellen — Produktion, 20.000 Jahre.
-///
-///     RS_MEASURE=1 RS_VARIANTS="base;erode=1.25e-4" RS_DTS=100,1000 \
-///         swift test … --filter testGlacierCrestShapeDiagnostic
-///
-/// `RS_OLD=1` misst zusätzlich gespeicherte Welten aus `/tmp/rs-cache`.
 final class GlacierCrestShape: XCTestCase {
-    /// Druckt die Kennzahlen und gibt die drei Abnahme-Größen zurück: flacher
-    /// Anteil der obersten 5 % des Landes, Zackigkeit, Eisfläche als Landanteil.
     @discardableResult
     func stats(_ t: Terrain, _ label: String) -> (flat: Double, jag: Double, iceShare: Double) {
         let n = t.cfg.n, sea = t.cfg.sea
@@ -52,8 +41,6 @@ final class GlacierCrestShape: XCTestCase {
                          100 * Double(flatPit) / Double(flatHigh), pitDepth / Double(max(1, flatPit)),
                          flatSed / Double(flatHigh)))
         }
-        // Gipfel: lokale Maxima im 9×9-Fenster über p97; Zackigkeit: mittlere
-        // |h − Mittel 9×9| über den Zellen über p95.
         let p97 = p(0.97)
         var peaks = 0, jag = 0.0, jagN = 0
         for j in 4..<(n-4) { for i in 4..<(n-4) {
@@ -71,8 +58,6 @@ final class GlacierCrestShape: XCTestCase {
         print(String(format: "MESA %@ | max %.4f p99 %.4f p95 %.4f p50 %.4f | top5%%: flach(<0,15) %.1f %%, unter Eis %.1f %% | Eiszellen %d (%.2f %% des Landes)",
                      label, land.last!, p(0.99), hi, p(0.5), 100*Double(flatHigh)/Double(high), 100*Double(iceHigh)/Double(high), iceCells,
                      100 * Double(iceCells) / Double(land.count)))
-        // Höhenverteilung über der Firn-Grenze: Zellen je 0,01-Klasse ab 0,6, Maximum,
-        // Anteil des Landes über der Grenze (die Kennzahl „keine harte Decke").
         do {
             let firnL = Glacier.firnLine(t.cfg)
             var hist = [Int](repeating: 0, count: 31)
@@ -82,8 +67,6 @@ final class GlacierCrestShape: XCTestCase {
             for b in 0..<31 where hist[b] > 0 { line += String(format: " %.2f:%d", 0.6 + Double(b) * 0.01, hist[b]) }
             print(String(format: "HOEHE %@ | max %.4f | Land über Firn %.2f %% |%@", label, land.last!, 100 * Double(over) / Double(land.count), line))
         }
-        // Wände: Anteil der Zellen über 0,55 mit Weltsteigung > 1,8 / > 2,5 (Bett), und
-        // wie viele davon am Eisrand liegen (Eis oder Eis im Umkreis 3).
         do {
             let ss = 2 * RenderContract.heightScale / t.cfg.cellSize
             var hiN = 0, w18 = 0, w25 = 0, edge = 0
@@ -105,8 +88,6 @@ final class GlacierCrestShape: XCTestCase {
             print(String(format: "WAND %@ | über 0,55: %d Zellen, Steigung >1,8: %.1f %%, >2,5: %.1f %% (davon am Eisrand ≤3: %.0f %%)",
                          label, hiN, 100*Double(w18)/Double(max(1,hiN)), 100*Double(w25)/Double(max(1,hiN)), 100*Double(edge)/Double(max(1,w25))))
         }
-        // Tafel (Seed 20, Fenster x 200–290, z 355–380 bei n = 720): Bett-Spannweite
-        // und längster Lauf (entlang x) mit Höhensprung < 0,0015 über 0,6.
         if n == 720 {
             var hmax = 0.0, run = 0, best = 0, aboveFirn = 0, plateau = 0
             let firnL = Glacier.firnLine(t.cfg)
@@ -131,8 +112,6 @@ final class GlacierCrestShape: XCTestCase {
             }
             print(String(format: "TAFEL %@ | Fenster max h %.4f | längster flacher Lauf %d Zellen | Zellen über Firn-Grenze %d, auf 0,625…0,640 %d | %@", label, hmax, best, aboveFirn, plateau, rowSpan))
         }
-        // Schnee im Bild liest `Terrain.snowCover` (Schneefeld, nicht Eis): Landanteile
-        // mit sichtbarer Decke (> 0.05) und in der Rampe (> `snowBandCoverStart`).
         var vis = 0, ramp = 0
         for k in 0..<(n * n) where t.h[k] > sea {
             let cov = t.snowCover(k)
@@ -146,23 +125,12 @@ final class GlacierCrestShape: XCTestCase {
                 Double(iceCells) / Double(max(1, land.count)))
     }
 
-    /// Anteil des Landes über der Firn-Grenze des Eises
-    /// (`sea + (T₀ − iceFirnTemp)/Γ`).
     func firnShare(_ t: Terrain) -> Double {
         let c = t.cfg, firn = Glacier.firnLine(c)
         let land = t.h.filter { $0 > c.sea }.count
         return Double(t.h.filter { $0 > firn }.count) / Double(max(1, land))
     }
 
-    /// **Wächter der Produktions-Kalibrierung** (Issue #174, Nachkalibrierung der
-    /// Firn-Grenze, `docs/glacier-measurements.md` §L): auf der Produktions-Welt
-    /// (Seed 1337, Einlauf der Brücke, dt 1000 wie der `RS_STEP`-Vorlauf) liegt
-    /// bei der Generierung wieder etwa der Landanteil von #35 über der Grenze, und
-    /// 20.000 Jahre später trägt der Kamm Kar- und Talgletscher statt einer
-    /// Eiskappe. Gemessen: 1,23 % über der Grenze, Eis 1,39 % des Landes, flach
-    /// 2,7 % der obersten 5 % (mit 11 °C: 5,2 % / 4,1 % / 10,3 %, die Kappe).
-    /// Schranken mit reichlich Luft: der Wächter trennt die beiden Zustände, er
-    /// ist kein Präzisionsmaß.
     func testProductionCrestCarriesGlaciersNotACap() {
         let t = Terrain(config: .production, seed: 1337, settleYears: SimConfig.productionSettleYears)
         let share = firnShare(t)
@@ -175,16 +143,6 @@ final class GlacierCrestShape: XCTestCase {
         XCTAssertLessThan(m.iceShare, 0.03, "Eis als Kappe statt als Kar- und Talgletscher")
         XCTAssertLessThan(m.flat, 0.06, "die Gipfelzone ist zur Tafel geworden")
     }
-    /// **Wächter: Gipfel über der Firn-Grenze bleiben stehen** (Issue #174,
-    /// Lawinen-Abgang des Firns, `docs/glacier-measurements.md` §M): ohne den
-    /// Abgang steht auf jedem Gipfel über der Grenze Firn, das Eis schleift ihn
-    /// bis knapp darunter, und das Gelände staut sich dort zu Tafeln
-    /// (Seed 1337: Maximum 0,670 statt 0,752 des eisfreien Arms, harte Decke bei
-    /// 0,65; Seed 20: 0,660 statt 0,727). Mit dem Abgang liegen beide Seeds beim
-    /// eisfreien Arm (0,7525 / 0,7273). Gemessen wird gegen den eisfreien Arm
-    /// derselben Welt (`iceEnabled = false`): Maximum und Landanteil über der
-    /// Grenze. Produktion, 20 × 1000 Jahre; Schranken trennen die beiden
-    /// Zustände (ohne Abgang 86 / 88 % und 31 / 27 %), sie sind kein Präzisionsmaß.
     func testProductionPeaksStandAboveTheFirnLine() {
         for seed: UInt32 in [1337, 20] {
             var free = SimConfig.production; free.iceEnabled = false
@@ -206,12 +164,6 @@ final class GlacierCrestShape: XCTestCase {
                                  "seed \(seed): die Gipfel stehen, aber es gibt kein Eis mehr")
         }
     }
-    /// Profil quer über den Kamm (Issue #174, §M): in der Welt OHNE Abgang den
-    /// längsten flachen Lauf über 0,6 suchen (die Tafel) und an dessen Mitte die
-    /// Höhe quer dazu (entlang z) in drei Armen drucken: ohne Abgang, mit Abgang,
-    /// eisfrei — Bett-Höhe, Eis und Weltsteigung je dritte Zelle.
-    ///
-    ///     RS_MEASURE=1 RS_SEEDS=1337 swift test … --filter testCrestProfileDiagnostic
     func testCrestProfileDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment

@@ -1,37 +1,9 @@
 #!/usr/bin/env bash
-# Build-Stempel der GDExtension: berechnet ihn aus dem Quellstand, liest ihn aus
-# der gebauten Library und vergleicht beides.
-#
-# Zweck: Godot lädt die Library aus game/bin/ und merkt NICHT, wenn sie älter ist
-# als der Quellstand — der Smoke-Test scheiterte real mit "Nonexistent function
-# brush", weil die .so vor dem brush-Commit gebaut war. scripts/build.sh brennt den
-# Stempel in die Library ein (Generated/BuildStamp.swift), scripts/start.sh und
-# game/tests/smoke.gd brechen bei Abweichung mit dem Rebuild-Befehl ab.
-#
-# Aufrufe:
-#   build-stamp.sh             Stempel des Arbeitsverzeichnisses (nur Hash, stdout)
-#   build-stamp.sh --library   in game/bin/libRiverSimGD.* eingebrannter Stempel
-#   build-stamp.sh --check     beide vergleichen; Exit 1 + Meldung bei Abweichung
-#
-# Verfahren (muss mit game/scripts/BuildStamp.gd BYTEGLEICH übereinstimmen):
-#   1. Alle regulären Dateien unter Extension/Sources und SimCore/Sources sammeln,
-#      außer dem generierten Stempel selbst (sonst hängt der Hash von sich ab).
-#   2. Pfade relativ zur Repo-Wurzel, in Byte-Reihenfolge sortiert (LC_ALL=C).
-#   3. Manifest-Zeile je Datei: "<sha256>  <relpfad>\n" (zwei Leerzeichen, wie sha256sum).
-#   4. Stempel = sha256 des Manifests.
-# Nur Inhalt und Pfad zählen, nicht die mtime — ein `touch` ohne inhaltliche
-# Änderung löst also keinen falschen Alarm aus, ein `git checkout` eines anderen
-# Stands sehr wohl.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Verzeichnisse, deren Inhalt in die Library kompiliert wird.
 STAMP_ROOTS=(Extension/Sources SimCore/Sources)
-# Der generierte Stempel selbst ist ausgenommen (siehe Punkt 1).
 STAMP_GENERATED_DIR="Extension/Sources/RiverSimGD/Generated"
-# Marker + Hash stehen in der generierten Swift-Datei in EINEM String-Literal und
-# landen damit lesbar in der .so/.dylib — so ist der eingebrannte Stempel ohne
-# Godot-Start greifbar.
 STAMP_MARKER="RIVERSIM_BUILD_STAMP"
 REBUILD_HINT='"$(git rev-parse --show-toplevel)"/scripts/build.sh release'
 
@@ -44,7 +16,6 @@ source_stamp() {
 		sha256sum | cut -d' ' -f1
 }
 
-# Pfad der gebauten Extension-Library, oder leer wenn keine da ist.
 library_path() {
 	local candidate
 	for candidate in game/bin/libRiverSimGD.so game/bin/libRiverSimGD.dylib; do
@@ -56,18 +27,10 @@ library_path() {
 	return 0
 }
 
-# Eingebrannten Stempel aus der Library lesen. Leere Ausgabe = kein Stempel drin
-# (Library fehlt oder wurde vor dieser Prüfung gebaut) — für den Aufrufer
-# gleichbedeutend mit "veraltet".
 library_stamp() {
 	local lib
 	lib="$(library_path)"
 	[[ -n "$lib" ]] || return 0
-	# -a: die Library ist binär; grep soll sie trotzdem als Text durchsuchen.
-	# `|| true`: kein Treffer ist hier ein regulärer Fall (Library ohne Stempel) und
-	# muss als leere Ausgabe mit Exit 0 durchgehen. Ohne das bricht `set -e -o
-	# pipefail` schon an der Zuweisung `have="$(library_stamp)"` ab — dann fehlten
-	# genau in diesem Fall Meldung und Rebuild-Hinweis.
 	{ grep -ao "$STAMP_MARKER:[0-9a-f]\{64\}" "$lib" 2>/dev/null || true; } |
 		cut -d: -f2 | LC_ALL=C sort -u | head -1
 }

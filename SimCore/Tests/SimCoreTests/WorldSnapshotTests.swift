@@ -1,18 +1,7 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter des Welt-Speicherformats (Issue #8). Die stärkste Abnahme-Invariante
-/// ist **Determinismus**: ein geladener Zustand muss bit-identisch weiterlaufen
-/// wie eine durchgehend simulierte Welt. Fehlt ein Feld im Inventar
-/// (`TerrainState` in Terrain.swift), divergieren die beiden Läufe — genau das
-/// prüft `testRoundTripContinuesBitIdentically`.
-///
-/// Verglichen wird über die Feldtabellen aus `WorldSnapshot` selbst, nicht über
-/// eine zweite Liste hier: ein neu aufgenommenes Feld ist damit automatisch Teil
-/// des Wächters.
 final class WorldSnapshotTests: XCTestCase {
-    /// Zwischen zwei Topologie-Prüfungen speichern, danach über mehrere
-    /// 1000-Jahr-Marken hinweg bit-gleich weiterlaufen.
     func testSnapshotKeepsThePartialBeltCouplingClock() throws {
         var c = renderConfig(n: 128)
         c.meanderBeltMinCells = 100
@@ -27,17 +16,9 @@ final class WorldSnapshotTests: XCTestCase {
         }
     }
 
-
-    /// Produktionsphysik in Testauflösung. Bewusst ALLE Zustands-tragenden
-    /// Systeme an (Mäander, Braiding, Lithologie, Regen-Gewichtung, Becken-
-    /// Wasserhaushalt) — jedes davon führt eigenen Zustand, und nur wenn er
-    /// mitreist, bleibt der Weiterlauf identisch.
     private func cfg(n: Int = 256) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
-        // Mäandergürtel (#174) auch auf dem groben Testgitter aktiv: sonst
-        // erreicht kein Lauf den Mindestabfluss, und `barAge` reiste nur als
-        // Feld voller −1 mit.
         c.meanderBeltMinCells = 100
         return c
     }
@@ -47,8 +28,6 @@ final class WorldSnapshotTests: XCTestCase {
             .appendingPathComponent("\(name)-\(UUID().uuidString).\(WorldSnapshot.fileExtension)")
             .path
     }
-
-    // MARK: - Vergleichs-Helfer
 
     private func assertBitEqual(_ a: [Double], _ b: [Double], _ name: String,
                                 _ ctx: String, file: StaticString = #filePath,
@@ -66,8 +45,6 @@ final class WorldSnapshotTests: XCTestCase {
         }
     }
 
-    /// Vergleicht ZWEI Zustände vollständig — alle Felder des Inventars plus
-    /// Zähler, Höhenbänder und Mäander-Zustand.
     private func assertSameState(_ a: TerrainState, _ b: TerrainState, _ ctx: String,
                                  file: StaticString = #filePath, line: UInt = #line) {
         for f in WorldSnapshot.doubleFields {
@@ -119,40 +96,28 @@ final class WorldSnapshotTests: XCTestCase {
         assertBitEqual(a.oxbowAge, b.oxbowAge, "oxbowAge", ctx, file: file, line: line)
     }
 
-    /// Bringt eine Welt in einen „gebrauchten" Zustand: gealtert, mit
-    /// Spieler-Eingriff (Störungs-/Regenerations-Zustand aus #26) und noch
-    /// offener Regeneration.
     private func usedWorld(_ config: SimConfig, seed: UInt32) -> Terrain {
         let t = Terrain(config: config, seed: seed)
         t.step(dtYears: 300)
         t.step(dtYears: 300)
-        // Eingriff mitten in die Insel: setzt disturb/regenPending und wirft den
-        // Mäander-Zustand der alten Landschaft dort weg.
         let mid = Double(config.n / 2)
         t.pickaxe(gx: mid, gz: mid, radiusWorld: 8, strength: 2)
         t.flatten(gx: mid * 0.6, gz: mid * 1.2, radiusWorld: 10,
                   targetHeight: config.sea + 0.25, strength: 2)
         t.computeFlow()
         t.snapWaterLevel()
-        t.step(dtYears: 200) // Regeneration angebrochen, aber nicht abgeschlossen
+        t.step(dtYears: 200)
         return t
     }
-
-    // MARK: - Abnahmepunkt 3: Round-Trip läuft bit-identisch weiter
 
     func testRoundTripContinuesBitIdentically() throws {
         let config = cfg()
         let t = usedWorld(config, seed: 4711)
 
-        // Der Test wäre wertlos, wenn die interessanten Zustände leer wären.
         XCTAssertTrue(t.disturb.contains { $0 > 0 }, "Störungszustand (#26) ist leer")
         XCTAssertFalse(t.meander.channels.isEmpty, "keine Mäander-Zentrumslinien")
         XCTAssertTrue(t.streamMap.contains { $0 > 0.01 }, "Stream-Map ist leer")
         XCTAssertTrue(t.sed.contains { $0 > 0 }, "kein Sediment")
-        // Klima-Vertikale (Issue #33): die Schneedecke ist ein RATENBEGRENZTER
-        // Zustand wie `waterLevel` — sie muss beladen mitreisen, sonst schwingt
-        // sie nach dem Laden über Jahrhunderte ein. Ohne diese Vorbedingung wäre
-        // der Feldvergleich unten für `snow` stumm (leeres oder konstantes Feld).
         XCTAssertTrue(t.snow.contains { $0 > 0.01 }, "Schneefeld ist leer")
         XCTAssertNotEqual(t.snow.min(), t.snow.max(), "Schneefeld ist konstant")
         XCTAssertNotEqual(t.temperature.min(), t.temperature.max(),
@@ -168,13 +133,9 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertGreaterThan(size, 0)
 
         let loaded = try WorldSnapshot.read(from: path)
-        // 1) Der geladene Zustand IST der gespeicherte (feldweise, bit-genau).
         assertSameState(before, loaded.state, "direkt nach dem Laden")
         XCTAssertEqual(loaded.cfg, config, "Config muss mitreisen")
 
-        // 2) Und er läuft identisch weiter — mit ungleichen Schrittweiten, damit
-        //    auch die dt-abhängigen Gedächtnis-Pfade (EWMA, Regeneration,
-        //    Bilanz-Spiegel) durchlaufen.
         for dt in [150.0, 40.0, 700.0] {
             t.step(dtYears: dt)
             loaded.step(dtYears: dt)
@@ -183,16 +144,9 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertEqual(t.years, loaded.years)
     }
 
-    /// Eigener Round-Trip für die **Mäander-Historie** (Abnahmepunkt 3 nennt sie
-    /// ausdrücklich): der Produktionspfad braucht bei Testauflösung sehr lange
-    /// bis zum ersten Cutoff (gemessen: 60 Läufe, 0 Altarme nach 800 Jahren bei
-    /// n=256). Deshalb dieselbe gepinnte Kopplungs-Config wie die
-    /// Mäander-Kernwächter (`meanderCfg()` in SimCoreTests: schnellere Migration,
-    /// engerer Hals, Grid-Erosion statt Tropfen) — hier zählt nicht die
-    /// Kalibrierung, sondern dass Altarme MIT ALTER mitreisen und weiter altern.
     func testMeanderHistorySurvivesRoundTrip() throws {
         var config = cfg(n: 96)
-        config.meanderBelt = calibrationMeanderBelt  // Altarm-Geschichte der Mechanik vor #174
+        config.meanderBelt = calibrationMeanderBelt
         config.hydraulicEnabled = false
         config.meanderMigration = 5.0e-5
         config.meanderNeckDist = 1.2
@@ -208,8 +162,6 @@ final class WorldSnapshotTests: XCTestCase {
         while t.meander.oxbows.count < 2 && guardN < 260 { t.step(dtYears: 500); guardN += 1 }
         XCTAssertGreaterThanOrEqual(t.meander.oxbows.count, 2,
                                     "Testaufbau: zu wenige Altarme entstanden")
-        // Zwei Schritte weiter: das Altarm-ALTER wird erst im nächsten
-        // Migrationsschritt hochgezählt, und es soll mit in die Datei.
         t.step(dtYears: 500)
         t.step(dtYears: 500)
         XCTAssertTrue(t.meander.oxbowAge.contains { $0 > 0 }, "Testaufbau: Altarme ohne Alter")
@@ -228,9 +180,6 @@ final class WorldSnapshotTests: XCTestCase {
         assertSameState(t.state, loaded.state, "Mäander-Historie nach 4 Schritten")
     }
 
-    /// Zweiter Round-Trip aus dem geladenen Zustand: eine Welt darf beliebig oft
-    /// gespeichert und geladen werden, ohne zu driften (Datei → Datei ist
-    /// byte-identisch).
     func testSaveLoadSaveIsByteIdentical() throws {
         let t = usedWorld(cfg(n: 128), seed: 99)
         let first = try WorldSnapshot.encode(t)
@@ -239,18 +188,9 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertEqual(first, second, "Speichern → Laden → Speichern muss byte-identisch sein")
     }
 
-    // MARK: - Abnahmepunkt 5: Seespiegel ist sofort korrekt
-
-    /// Der Darstellungs-Seespiegel `waterLevel` folgt `hf` nur ratenbegrenzt und
-    /// ist damit ECHTER Zustand. Würde er beim Laden fehlen (0) oder auf `hf`
-    /// geschnappt, sprängen die Seeflächen im ersten Frame bzw. schwängen über
-    /// hunderte Jahre ein. Geprüft wird beides: der Pegel selbst UND dass sein
-    /// Abstand zu `hf` (das Gedächtnis) erhalten bleibt.
     func testWaterLevelIsImmediatelyCorrectAfterLoad() throws {
         let config = cfg()
         let t = Terrain(config: config, seed: 1337)
-        // Frisch nach der Generierung ist waterLevel == hf; ein Schritt mit
-        // Auslass-Inzision zieht sie auseinander (genau das ist der Zustand).
         t.step(dtYears: 500)
         let gapBefore = zip(t.waterLevel, t.hf).map { abs($0 - $1) }.max() ?? 0
         XCTAssertGreaterThan(gapBefore, 0, "Testaufbau: waterLevel liegt nicht hinter hf")
@@ -264,19 +204,13 @@ final class WorldSnapshotTests: XCTestCase {
         assertBitEqual(t.hf, loaded.hf, "hf", "nach dem Laden")
         let gapAfter = zip(loaded.waterLevel, loaded.hf).map { abs($0 - $1) }.max() ?? 0
         XCTAssertEqual(gapBefore, gapAfter, "Seespiegel-Gedächtnis verändert")
-        // Auch der Bilanz-Spiegel abflussloser Becken (Issue #11) ist ein
-        // ratenbegrenzter Zustand — er darf beim Laden nicht neu einschwingen.
         assertBitEqual(t.state.lakeBalance, loaded.state.lakeBalance, "lakeBalance",
                        "nach dem Laden")
     }
 
-    // MARK: - Abnahmepunkt 2: Version und Integrität
-
     func testOlderFormatVersionIsRejected() throws {
         let t = Terrain(config: cfg(n: 96), seed: 7)
         var data = try WorldSnapshot.encode(t)
-        // Version im Kopf auf 0 (= „ältere Version") setzen. Die Prüfsumme im Kopf
-        // bleibt gültig, damit der Test wirklich die VERSION prüft.
         data.replaceSubrange(8..<12, with: [0, 0, 0, 0])
         let path = tempPath("oldversion")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -291,13 +225,9 @@ final class WorldSnapshotTests: XCTestCase {
             XCTAssertEqual(expected, WorldSnapshot.version)
             XCTAssertTrue("\(error)".contains("Version"), "Meldung nennt die Version nicht")
         }
-        // Die Vorprüfung meldet dasselbe, ohne die Nutzdaten zu lesen.
         XCTAssertThrowsError(try WorldSnapshot.peekVersion(at: path))
     }
 
-    /// Vorprüfung ohne Vollladen: Version und Config stehen am Dateianfang, damit
-    /// ein Frontend entscheiden kann, ob es die Welt darstellen kann (`Main.gd`
-    /// prüft so die Gitterauflösung, bevor es die laufende Welt ersetzt).
     func testPeekReadsHeaderWithoutLoadingFields() throws {
         var config = cfg(n: 96)
         config.outletErode = 4.25e-5
@@ -310,13 +240,10 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertEqual(try WorldSnapshot.peekConfig(at: path), config)
     }
 
-    /// `peekConfig` darf bei gefälschten oder korrupten Config-Längen (größer als die
-    /// im Kopf deklarierte Nutzdatenlänge) keine Riesenpuffer anfordern, sondern wirft `truncated`.
     func testPeekConfigGuardsCorruptedOrOversizedConfigLength() throws {
         let t = Terrain(config: cfg(n: 96), seed: 7)
         var data = try WorldSnapshot.encode(t)
-        // Config-Länge (Offset 28..32) auf einen Wert setzen, der payloadLength überschreitet.
-        let badLengthBytes: [UInt8] = [0xFF, 0xFF, 0xFF, 0x7F] // 0x7FFF_FFFF
+        let badLengthBytes: [UInt8] = [0xFF, 0xFF, 0xFF, 0x7F]
         data.replaceSubrange(28..<32, with: badLengthBytes)
 
         let path = tempPath("badconfiglen")
@@ -363,7 +290,6 @@ final class WorldSnapshotTests: XCTestCase {
         let t = Terrain(config: cfg(n: 96), seed: 7)
         let data = try WorldSnapshot.encode(t)
 
-        // Abgebrochen geschrieben (halbe Datei).
         XCTAssertThrowsError(try WorldSnapshot.decode(data[0..<(data.count / 2)])) { error in
             guard case SnapshotError.truncated = error else {
                 XCTFail("erwartet truncated, bekam \(error)")
@@ -371,7 +297,6 @@ final class WorldSnapshotTests: XCTestCase {
             }
         }
 
-        // Korrupte Nutzdatenlänge (UInt64.max): darf nicht trappen, sondern wirft truncated.
         var corruptLength = data
         let maxLenBytes: [UInt8] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
         corruptLength.replaceSubrange(12..<20, with: maxLenBytes)
@@ -382,7 +307,6 @@ final class WorldSnapshotTests: XCTestCase {
             }
         }
 
-        // Ein gekipptes Bit mitten in den Feldern.
         var flipped = data
         let mid = flipped.startIndex + flipped.count / 2
         flipped[mid] ^= 0x01
@@ -394,18 +318,12 @@ final class WorldSnapshotTests: XCTestCase {
         }
     }
 
-    // MARK: - Abnahmepunkt 4: Config und Seed reisen mit
-
-    /// Eine Welt mit ABWEICHENDER Config lädt reproduzierbar: die Datei-Config
-    /// ist autoritativ (s. `WorldSnapshot`-Doku), auch wenn sie von
-    /// `SimConfig()` abweicht — inklusive der Feld-Inventar-Kanten, die
-    /// abgeschaltete Physik erzeugt (leere Lithologie-/Regen-Gewichts-Felder).
     func testDeviatingConfigAndSeedTravelWithTheWorld() throws {
         var config = cfg(n: 128)
-        config.world = 40                  // cellSize weicht bewusst vom Default ab
-        config.lithologyEnabled = false    // → lithHardness/lithErodeK/… bleiben leer
-        config.rainWeightedFlow = false    // → rainWeight bleibt leer
-        config.climateEnabled = false      // → temperature/snow/ice bleiben leer (#33)
+        config.world = 40
+        config.lithologyEnabled = false
+        config.rainWeightedFlow = false
+        config.climateEnabled = false
         config.meanderEnabled = false
         config.braidingEnabled = false
         config.outletErode = 7.5e-5
@@ -435,21 +353,16 @@ final class WorldSnapshotTests: XCTestCase {
         XCTAssertTrue(a.state.temperature.isEmpty && a.state.snow.isEmpty
                       && a.state.ice.isEmpty, "leeres Kryo-Feld kam nicht leer zurück")
 
-        // Reproduzierbar: zwei Ladungen derselben Datei laufen identisch weiter.
         a.step(dtYears: 400)
         b.step(dtYears: 400)
         assertSameState(a.state, b.state, "zwei Ladungen derselben Welt")
-        // …und identisch zur durchgehend simulierten Welt.
         t.step(dtYears: 400)
         assertSameState(t.state, a.state, "geladen gegen durchgehend simuliert")
     }
 
-    /// Die Config-Serialisierung ist Codable-synthetisiert; dieser Wächter zeigt,
-    /// dass dabei kein Feld verloren geht und `Double` bit-genau überlebt
-    /// (binäres Plist speichert IEEE-754, nicht Dezimaltext).
     func testConfigSurvivesEncodingExactly() throws {
         var config = SimConfig()
-        config.kRock = 1.0 / 3.0            // nicht binär darstellbare Dezimalzahl
+        config.kRock = 1.0 / 3.0
         config.hydraulic.evaporate = .pi / 100
         config.preErodeParams.rounding = (0.1, 1e-17, -0.25, 2.0)
         config.preErodeParams.assumedSlope = (0.7, 1.0 / 7.0)
@@ -463,14 +376,6 @@ final class WorldSnapshotTests: XCTestCase {
                        config.preErodeParams.rounding.1.bitPattern)
     }
 
-    /// Der Schwellen-Schnitt (`meanderBeltSillCutDepths`, #187) reist als
-    /// NICHT-OPTIONALES Feld in der synthetisierten Config-Kodierung: eine
-    /// Datei ohne den Schlüssel ist nicht dekodierbar. Der Versions-Sprung auf
-    /// 12 lehnt Dateien vor diesem Feld vorher ab (klare Meldung statt
-    /// Plist-Fehler); dieser Wächter beweist die andere Richtung — die
-    /// Dekodierung selbst liefert keinen stillen Default, sollte das Feld
-    /// je zu `decodeIfPresent` verweichlicht werden (Review-Befund zu #222:
-    /// derselbe Fall gilt für jedes frühere Config-Feld ab Version 4).
     func testConfigWithoutTheSillCutKeyDoesNotDecode() throws {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
@@ -487,28 +392,7 @@ final class WorldSnapshotTests: XCTestCase {
         }
     }
 
-    /// Vollständigkeits-Wächter für die HANDGESCHRIEBENE Serialisierung der
-    /// Pre-Erosions-Parameter (`ErosionFilter.Params`, Extension am Ende von
-    /// `WorldSnapshot.swift`). Sie ist die einzige Stelle im Config-Graphen ohne
-    /// Codable-Synthese und listet ihre zwölf Felder VIERMAL von Hand auf
-    /// (CodingKeys, `init(from:)`, `encode(to:)`, `==`).
-    ///
-    /// Ein dort vergessenes Feld reist still nicht mit UND entschärft
-    /// `testConfigSurvivesEncodingExactly`: dessen `XCTAssertEqual(back, config)`
-    /// delegiert für diesen Teilbaum an genau dieses `==`. Beide Hälften prüft
-    /// dieser Wächter deshalb gemeinsam — je Feld eine Störung, die
-    ///
-    /// 1. `==` sehen muss (sonst fehlt das Feld im Vergleich) und
-    /// 2. den Round-Trip überleben muss (sonst fehlt es in
-    ///    CodingKeys/`init(from:)`/`encode(to:)`).
-    ///
-    /// Die Störtabelle selbst wird gegen `Mirror` gespiegelt: ein neu
-    /// hinzugefügtes Feld ohne Eintrag macht den Test rot, statt ungedeckt zu
-    /// bleiben — dieselbe Bauform wie
-    /// `FingerprintTests.testEveryStoredPropertyIsAccountedFor`.
     func testEveryPreErosionParameterIsSerialisedAndCompared() throws {
-        // Die Tupel-Felder werden VOLLSTÄNDIG ersetzt: eine Störung nur der
-        // ersten Komponente bliebe blind für eine halb geschriebene Tupel-Zeile.
         let disturbances: [(field: String, apply: (inout ErosionFilter.Params) -> Void)] = [
             ("strength", { $0.strength = 0.37 }),
             ("gullyWeight", { $0.gullyWeight = 0.41 }),
@@ -551,26 +435,15 @@ final class WorldSnapshotTests: XCTestCase {
         }
     }
 
-    /// Die Datei bleibt auch für eine Welt ohne jeden Eingriff kompakt: Felder,
-    /// die überall denselben Wert tragen (`disturb`, `regenPending` …), werden
-    /// als EIN Wert gespeichert. Kein Rundungs-Kompromiss — nur weniger Bytes.
     func testConstantFieldsAreStoredCompactly() throws {
         let config = cfg(n: 128)
         let t = Terrain(config: config, seed: 3)
         let size = try WorldSnapshot.encode(t).count
         let cells = config.count
-        // Messwert für docs/world-save-format.md (Hochrechnung auf n=832).
         print(String(format: "[SNAPSHOT] n=%d: %d Byte = %.1f Byte/Zelle "
                      + "→ n=832 ≈ %.0f MB",
                      config.n, size, Double(size) / Double(cells),
                      Double(size) / Double(cells) * 832 * 832 / (1024 * 1024)))
-        // 26 Double-Felder + 3 Int32 + 2 UInt8 + 2 Bool wären roh 224 Byte/Zelle;
-        // die konstanten Felder (mind. disturb, regenPending, ice) müssen fehlen.
-        // Gemessen 181,8 Byte/Zelle (Version 3, mit den Kryo-Feldern aus #33;
-        // Version 2 lag bei 165,8 — `temperature` und `snow` kommen roh dazu,
-        // `ice` ist konstant 0 und kostet 5 Byte). Die 210 fangen den Totalausfall
-        // der Verdichtung; für den Verlust EINZELNER Felder ist der Korridor zu
-        // grob, dafür ist der Messwert im Log da.
         XCTAssertLessThan(size, cells * 210, "konstante Felder wurden nicht verdichtet")
         XCTAssertGreaterThan(size, cells * 120, "verdächtig klein — fehlen Felder?")
     }

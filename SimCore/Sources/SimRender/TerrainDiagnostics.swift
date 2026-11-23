@@ -1,41 +1,17 @@
 import Foundation
 import SimCore
 
-/// Entwicklungs-Diagnose des Geländes (Issue #53 aus `SimNode` ausgelagert):
-/// Kennzahlen-Vertrag für die Anzeige und die Differenz-Karte gegen einen
-/// gesetzten Vergleichspunkt.
-///
-/// Der Vergleichspunkt ist der einzige Zustand hier — er macht sichtbar, ob
-/// Relief durch Abtragung nur freigelegt oder durch Hebung/Ablagerung wirklich
-/// aufgebaut wird. Die REGEL-Formeln (Relief-Signal, Servo, Gratkrümmung)
-/// kommen aus SimCore selbst: die Anzeige darf sie nicht duplizieren, sonst
-/// zeigt sie etwas anderes als wirkt.
 public final class TerrainDiagnostics {
     public init() {}
-
 
     private var referenceHeights: [Double] = []
     private var referenceYear = 0.0
 
-    /// Setzt den Vergleichspunkt auf den aktuellen Zustand. Das ist besonders
-    /// nach manuellem Einebnen nützlich: danach zeigt die Differenzkarte
-    /// ausschließlich, was die Simulation selbst auf- oder abgebaut hat.
     public func capture(_ terrain: Terrain) {
         referenceHeights = terrain.h
         referenceYear = terrain.years
     }
 
-    /// Kompakter Diagnosevertrag für GDScript (alles Float32, damit kein Dictionary-
-    /// Marshalling im Renderpfad anfällt):
-    /// min, mean, max, Landrelief, deltaMean, deltaMax, Volumen unter Referenz,
-    /// Volumen über Referenz, Nettovolumen, maxAbtrag, maxAufbau, Relief-Servo/100 J.,
-    /// abklingende Hebung U(t)/100 J., Reliefziel, Referenzjahr, ungültige Zellen,
-    /// robustes Relief-Signal (das REGELSIGNAL des Servo-Bodens, p95 − Median),
-    /// mittlere Grat-Krümmung (Alterungs-Kennzahl: negativ = spitz, → 0 = rund),
-    /// Talseitenrelief (Median − p05, die Gegenprobe zum Regelsignal).
-    ///
-    /// Die Indizes dieser Reihenfolge stehen als `DBG_*` in `Main.gd`, ihre Zahl
-    /// als `DEBUG_STATS_COUNT`; Wächter: `SimCoreTests/DiagStatsContractTests.swift`.
     public func stats(_ terrain: Terrain) -> [Float] {
         let h = terrain.h
         guard !h.isEmpty else { return [] }
@@ -77,23 +53,8 @@ public final class TerrainDiagnostics {
         let divisor = Double(max(1, valid))
         let cellArea = terrain.cfg.cellSize * terrain.cfg.cellSize
         let relief = terrain.landRelief()
-        // Regelsignal, Talseiten-Gegenprobe und Servo-Wert kommen aus SimCore
-        // selbst — die Anzeige darf die Formeln nicht duplizieren, sonst zeigt sie
-        // etwas anderes als wirkt.
-        //
-        // Alle drei hängen am SELBEN Quantil-Tripel der Landhöhen (p05, Median,
-        // p95), deshalb EIN Histogramm-Pass statt drei: `landReliefRobust()`,
-        // `landReliefLow()` und `reliefServoRate()` zählten je einen eigenen und
-        // warfen die andere Hälfte weg — dieselbe Verteilung dreimal für dieselbe
-        // Anzeige, gemessen ~1.4 ms je Pass bei n = 832 (`Terrain.updateHeightBands`).
-        // `Terrain.landHeightQuantiles` ist genau für diesen Fall gebaut; die
-        // angezeigten Werte sind unverändert.
         let halves = Terrain.landHeightQuantiles(heights: h, sea: terrain.cfg.sea)
         let reliefSignal = halves.high
-        // Talseiten-Gegenprobe (Issue #26): das Regelsignal ist die HOCHseite
-        // (p95 − Median). Nach einer großflächigen Einebnung bleibt sie lange
-        // bei ~0, während sich die Fläche längst nach UNTEN differenziert —
-        // ohne die zweite Hälfte liest die Diagnose das als „keine Erholung".
         let reliefLow = halves.low
         let servo = terrain.reliefServoRate(reliefSignal: reliefSignal)
         return [
@@ -107,21 +68,16 @@ public final class TerrainDiagnostics {
         ]
     }
 
-    /// Blau = unter der Referenz, hellgrau = unverändert, Rot = darüber. `scale`
-    /// ist die Höhenänderung, bei der die Farbe voll gesättigt ist.
     public func differenceBytes(_ terrain: Terrain, scale: Double) -> [UInt8] {
         let h = terrain.h
         guard !h.isEmpty else { return [] }
         if referenceHeights.count != h.count { capture(terrain) }
         let reference = referenceHeights
-        // Konstante zuerst: max(x, y) = y >= x ? y : x — bei scale = NaN greift so
-        // der sichere Default statt dass NaN durchwischt.
         let safeScale = max(1e-9, scale)
         var out = [UInt8](repeating: 255, count: h.count * 4)
         h.withUnsafeBufferPointer { hb in
         reference.withUnsafeBufferPointer { rb in
         out.withUnsafeMutableBufferPointer { ob in
-            // Bei fehlender Pufferadresse defensiv abbrechen statt per Force-Unwrap zu trappen.
             guard let ph = hb.baseAddress, let pref = rb.baseAddress, let pout = ob.baseAddress else { return }
             parallelChunks(h.count) { lo, hi in
                 for k in lo..<hi {
@@ -132,7 +88,7 @@ public final class TerrainDiagnostics {
                     let neutral = 0.78
                     let r: Double, g: Double, b: Double
                     if !delta.isFinite {
-                        (r, g, b) = (1.0, 0.0, 1.0) // Magenta = ungültiger Höhenwert
+                        (r, g, b) = (1.0, 0.0, 1.0)
                     } else if delta >= 0 {
                         (r, g, b) = (neutral + 0.17 * amount,
                                      neutral - 0.55 * amount,

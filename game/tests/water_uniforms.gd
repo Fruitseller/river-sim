@@ -1,18 +1,4 @@
 extends SceneTree
-## Headless-Wächter für den Uniform-Kanal der Wasser-Kalibrierung (#91/#92):
-##   godot --headless --path game --script res://tests/water_uniforms.gd
-##
-## Der Contract-Schritt verspricht: jede `water_*`-Uniform, die ein Shader
-## deklariert, bekommt ihren Wert AUSSCHLIESSLICH über die Brücke — keine
-## bleibt still auf ihrem Default stehen, und keine trägt einen Literal-Default
-## (das wäre wieder die Kopie der Kalibrierung, die #92 abschafft). Geprüft:
-##  - die Brücke liefert die Tabelle konsistent (Namen ↔ Werte, eindeutig),
-##  - jede deklarierte `water_*`-Uniform steht in der Tabelle und ist
-##    default-frei deklariert,
-##  - jeder Tabellenwert ist in mindestens einem Shader deklariert,
-##  - Main.apply_calibration (Gruppe `water`, Issue #213) setzt jeden deklarierten Namen wirklich
-##    (get_shader_parameter liefert den Brückenwert, nicht null).
-## Exit-Code != 0 bei Fehler.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
@@ -47,19 +33,12 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Gruppe `water` des Kalibrier-Registers: Skalare als float, Farben als
-	# Vector3. Ein doppelter Name überschriebe sich im Dictionary still; die
-	# Eindeutigkeit prüft deshalb CalibrationRegistryTests auf der Swift-Seite.
 	var bridge := Main.calibration(sim, "water")
 	var colors := bridge.values().filter(func(v: Variant) -> bool: return v is Vector3).size()
 	print("scalars=", bridge.size() - colors, " colors=", colors)
 	if bridge.size() == colors or colors == 0:
 		_fail("Brücken-Gruppe water ohne Skalare oder Farben")
 
-	# Deklarationen aus den echten Shader-Quelltexten. Zeilenanker genügt hier:
-	# die strengere, kommentarbereinigte Sicht hält SimCoreTests (SourceProbe).
-	# Der Typ wird BREIT gematcht und dann geprüft: eine künftige
-	# `uniform vec2 water_*` soll laut scheitern, nicht still am Wächter vorbei.
 	var decl_re := RegEx.new()
 	decl_re.compile("(?m)^uniform\\s+([A-Za-z0-9_]+)\\s+(water_[A-Za-z0-9_]+)([^;]*);")
 	var declared_anywhere := {}
@@ -74,7 +53,7 @@ func _run() -> void:
 			var name := m.get_string(2)
 			var rest := m.get_string(3)
 			if kind.begins_with("sampler"):
-				continue # Texturen (water_tex) sind keine Kalibrier-Werte.
+				continue
 			if kind != "float" and kind != "vec3":
 				_fail("%s: %s hat Typ %s — die Brücke kennt nur float und vec3"
 					% [path, name, kind])
@@ -93,8 +72,6 @@ func _run() -> void:
 				_fail("%s: %s trägt einen Literal-Default — der Wert reist über "
 					% [path, name] + "die Brücke, ein Default wäre eine Kopie (#92)")
 
-		# Anwendung auf ein echtes Material mit diesem Shader: jede deklarierte
-		# Uniform muss danach gesetzt sein (nicht null) und den Brückenwert tragen.
 		var mat := ShaderMaterial.new()
 		mat.shader = load(path)
 		Main.apply_calibration(sim, "water", [mat])

@@ -1,17 +1,4 @@
 extends SceneTree
-## Fährt den Gelände-Verfeinerer (#238) über eine Folge aus
-## `tools/amplify_dump.gd` und schreibt seine Ausgabe als Rohdateien, für
-## Bildvergleich, Stabilitätsmessung und Kosten.
-## Braucht ein RenderingDevice, also ein Fenster (nicht `--headless`):
-##
-##   AMPLIFY_DUMP=/abs/dump AMPLIFY_OUT=/abs/aus godot --path game \
-##     --script res://tools/amplify_run.gd
-##
-## `AMPLIFY_PARAMS` (JSON) überschreibt einzelne Werte aus
-## `TerrainAmplifier.params`, `AMPLIFY_TICKS` begrenzt die Takte,
-## `AMPLIFY_WRITE` wählt die Felder (Standard `offset,maps`).
-## Je Takt `t`: `offset_<t>.rg16f` (fein: r Abweichung in Welteinheiten,
-## g Maske), `maps_<t>.rgba` (fein), dazu `run.json` mit den Zeiten.
 
 const TerrainAmplifier = preload("res://scripts/TerrainAmplifier.gd")
 
@@ -34,8 +21,6 @@ func _process(_delta: float) -> bool:
 		var over: Dictionary = JSON.parse_string(OS.get_environment("AMPLIFY_PARAMS"))
 		for key in over:
 			amp.params[key] = over[key]
-	# Tümpeltiefe und Codes aus dem Dump (WaterRender.pondContourLo,
-	# ReliefRender.heightCode und slopeCode); ältere Dumps tragen sie nicht.
 	if not amp.setup(int(meta["n"]), meta["world_size"], meta["hscale"], meta["sea_level"],
 			meta.get("pond", 0.003), meta.get("height_code", 0.2), meta.get("slope_code", 0.015)):
 		print("FAIL: Verfeinerer nicht eingerichtet")
@@ -55,7 +40,6 @@ func _process(_delta: float) -> bool:
 		var t0 := Time.get_ticks_usec()
 		amp.submit(heights, filled, protect, true)
 		var t1 := Time.get_ticks_usec()
-		# Der Rückweg wartet auf die GPU: Zeit bis hier = Kosten des Auftrags.
 		var lift := amp.read_cell_lift()
 		var t2 := Time.get_ticks_usec()
 		times.append({"submit_ms": (t1 - t0) / 1000.0, "total_ms": (t2 - t0) / 1000.0})

@@ -3,25 +3,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter des Raster-Flusses im Mäandergürtel (Befund #174, Seed 1337 /
-/// Jahr 2.305, `RS_TARGET="13.8,6.8"`): breite, blockige Wasserflächen quer
-/// durch die Schlingen und runde blaue Punkte neben den Bändern. Messreihe:
-/// `docs/zielbild-measurements.md` § Raster-Abkürzungen im Mäandergürtel.
 final class RasterBeltTests: XCTestCase {
 
-    /// Eine gealterte Welt mit Gürtel, Bänken und Bändern, einmal gebaut. Das
-    /// Wasserfeld als `deferTail`-Ausgabe: die Kanäle VOR Blur und EWMA, also
-    /// genau das, was die Regeln entscheiden (der Blur verbreitert danach
-    /// jeden Lauf um eine Zelle, auch auf eine Nachbar-Bank).
-    ///
-    /// Direkt am `RiverRibbonRenderer` (Issue #214): die Fixture braucht nur
-    /// den Band-Bau, keine Reihenfolge. Dazu die Abzweig-Marken des Felds
-    /// (`waterDeparture`): die Bank-Regel im Renderer stellt Abzweige frei,
-    /// und der Bank-Wächter unten prüft dieselbe Unterscheidung nach.
-    ///
-    /// `nonisolated(unsafe)` (Issue #201): `Terrain`/`RibbonMesh` sind nicht
-    /// `Sendable`, die Fixture wird EINMAL gebaut und danach nur gelesen —
-    /// XCTest ruft die Testmethoden einer Klasse seriell auf.
     nonisolated(unsafe) private static let world: (terrain: Terrain, mesh: RibbonMesh,
                                                    water: [UInt8], departure: [Double]) = {
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
@@ -37,9 +20,6 @@ final class RasterBeltTests: XCTestCase {
         water[k * 4] >= byte01(WaterRender.riverMaskLo)
     }
 
-    /// Das Kohärenz-Gate gilt auch im Band-Korridor; nur der Saum ist davon
-    /// ausgenommen. Vorher standen Ein- bis Drei-Zell-Flecken des D8-Rasters
-    /// neben der Bandkante (Seed 1337, Jahr 2.305: 150 Flecken, 479 Zellen).
     func testNoRasterSpeckleInBandCorridors() {
         let (terrain, _, water, _) = Self.world
         let n = terrain.cfg.n
@@ -50,8 +30,6 @@ final class RasterBeltTests: XCTestCase {
             while let k = stack.popLast() {
                 cells += 1
                 let i = k % n, j = k / n
-                // Ein Zubringer, der in einen See mündet, zählt mit dessen
-                // Fläche zur Komponente des Gates (s. `WaterFieldRenderer`).
                 for (ok, nb) in [(true, k), (i > 0, k - 1), (i < n - 1, k + 1), (j > 0, k - n), (j < n - 1, k + n)]
                 where ok && terrain.waterLevel[nb] > terrain.cfg.sea
                     && terrain.waterLevel[nb] - terrain.h[nb] > WaterRender.lakeRawWetDepth { lake = true }
@@ -64,17 +42,6 @@ final class RasterBeltTests: XCTestCase {
             "sichtbare Raster-Flecken unter dem Kohärenz-Gate: \(small.count) (Zellen \(small.prefix(12)))")
     }
 
-    /// Auf einer Gleithang-Bank neben einem Band, das denselben Fluss trägt,
-    /// malt das Raster nur den Saum: dort ist das Band der Fluss, der D8-Lauf
-    /// nimmt nur die Abkürzung über die Bank. Abzweige (`waterDeparture > 0`)
-    /// sind davon ausgenommen: Der Lauf kehrt nicht zum Band zurück, er ist
-    /// keine Abkürzung, sondern echtes Avulsions-Wasser, das der Renderer
-    /// bewusst malt (WaterFieldRenderer, „Ein Abzweig kehrt nicht zum Band
-    /// zurück") — dieselbe Unterscheidung, die die Bank-Schranke dort trifft.
-    /// Mit dem Schwellen-Schnitt (#187) kreuzt auf der Linux-Realisierung
-    /// dieser Welt ein Abzweig (Patch aus 39 Zellen, Einzugsgebiet 528–1285
-    /// Zellen, Mac: kein Abzweig) die Bank; die Abkürzungs-Regel selbst bleibt
-    /// scharf.
     func testRasterLeavesBarsNextToTheirBand() {
         let (terrain, mesh, water, departure) = Self.world
         let n = terrain.cfg.n
@@ -94,8 +61,6 @@ final class RasterBeltTests: XCTestCase {
         for k in 0..<(n * n) where terrain.barAge[k] >= 0 {
             bars += 1
             guard visible(water, k) else { continue }
-            // Abzweig: kein Wasser DESSEN Band, das hier nebenliegt — die
-            // Abkürzung über die Bank ist es gerade nicht.
             guard departure[k] == 0 else { continue }
             let i = k % n, j = k / n
             var near = 0.0

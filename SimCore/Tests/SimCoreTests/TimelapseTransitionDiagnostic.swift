@@ -3,26 +3,19 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Ausgelieferte Render-Änderungen bei 60 und 30 J/s, ohne Kamera/GPU.
-/// Aufruf: RS_MEASURE=1 swift test -c release --package-path SimCore
-/// --filter testTimelapseTransitionDiagnostic
 final class TimelapseTransitionDiagnostics: XCTestCase {
     func testTimelapseTransitionDiagnostic() throws {
         try skipUnlessMeasuring()
         let world = Terrain(config: .production, seed: 1337,
                             settleYears: SimConfig.productionSettleYears)
         while world.years < 20_000 { world.step(dtYears: 1000) }
-        // Main._ready ruft nach RS_STEP ebenfalls recomputeFlow auf.
         world.recomputeFlowAfterEdit()
         let initial = world.state
-        // Feste Landmaske am Messbeginn: Uferwanderung ändert den Nenner nicht.
         let land = world.h.indices.filter { world.h[$0] > world.cfg.sea }
         print("TRANSITION seed=1337 n=\(world.cfg.n) world=\(world.cfg.world) land=\(land.count) settle=\(SimConfig.productionSettleYears) coupling=\(world.cfg.meanderBeltCouplingYears)")
         print("Schwellen: Höhe 0.02 Welt-Y / heightScale=\(0.02 / RenderContract.heightScale) Sim-Höhe; Band >=\(WaterRender.protectBandThreshold); Wald >0.25; Raster max(|ΔR|,|ΔG|)>32/255; Farbe RGB-MAE/255. B/A des Wassers kodieren Richtung, A der Farbe Sand, keine Farbkanäle.")
         print("Alle Flächen in % der festen Landmaske. hL1=Σ|Δh|*heightScale/Landzahl (Welt-Y je Landzelle), RGB in %. Gehaltene Ebenen zählen als 0; Bau/Upload zusätzlich markiert. Keine Höhen-Interpolation/Shader-Messung.")
 
-        // Bestehende Pass-Marken belegen den tatsächlichen Kopplungs-Aufruf;
-        // keine nachgebaute Taktformel und kein zusätzlicher Produktions-Haken.
         let wasEnabled = SimProfile.enabled
         let oldHook = SimProfile.onPassEnd
         SimProfile.enabled = true
@@ -34,7 +27,7 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
             let t = Terrain(allocating: .production, seed: 1337)
             t.restore(initial)
             let render = RenderState(geometryMode: true)
-            render.renderGrid = t.cfg.n // balanced/quality, wie Main.terrain_grid_for
+            render.renderGrid = t.cfg.n
             render.invalidate(t, .replaced)
             let start = render.frame(t, .settled, now: 0)
             var shown = try XCTUnwrap(start.overlays)
@@ -48,8 +41,6 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
             }
             print("\nTRANSITION rate=\(rate) dt=\(rate * 0.25) tick=0.25 overlay=\(RenderState.overlayIntervalSeconds) ribbon=\(RenderState.ribbonRebuildSeconds)")
             print("Jahr | Kopplung-am-Anfang | Bau Upload | Avulsion neugetrasst eingesetzt Neck Chute | hZellen h% hSumSim hL1 | Band+% Band-% | Wald% Raster% RGB%")
-            // Der letzte Schritt bleibt vollständig (22505 statt 22500), damit
-            // auch am Ende derselbe 15-/7.5-Jahr-Takt gilt.
             while t.years < 22_500 {
                 let yearBefore = t.years
                 let avulsions = t.meander.avulsions, retraced = t.meander.retraced
@@ -71,7 +62,7 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
                                         chute: t.meander.chuteCutoffs - chute)
                 var added = 0, removed = 0, forest = 0, water = 0, rgb = 0
                 var bandMass = 0.0
-                var split = [0.0, 0.0, 0.0, 0.0]   // neu+, bestehend+, bestehend−, weg−
+                var split = [0.0, 0.0, 0.0, 0.0]
                 let freshCoverage = frame.ribbonsRebuilt ? render.riverRibbonMesh.bandCoverage : coverage
                 for k in land {
                     let dh = abs(t.h[k] - heights[k])
@@ -142,8 +133,6 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
         let events = rows.indices.filter { rows[$0].couplingYear != nil }
         let windows = Set(events.flatMap { Array($0...min($0 + 3, rows.count - 1)) })
         let normal = rows.indices.filter { !windows.contains($0) }
-        // BandΣ% = Σ|Δ Deckung| (gewichtet: ein dünnes, einwachsendes Band
-        // zählt mit seiner Deckkraft, nicht als voll gedeckte Zelle).
         let names = ["h%", "hL1", "Band+%", "Band-%", "Wald%", "Raster%", "RGB%", "BandΣ%"]
         let allMedian = names.indices.map { j in median(normal.map { rows[$0].metrics[j] }) }
         let uncoupled = rows.filter { $0.couplingYear == nil }
@@ -174,8 +163,6 @@ final class TimelapseTransitionDiagnostics: XCTestCase {
             print("Maximum Kopplung + 3: \(values(peaks))")
             print("Faktor gegen aktiven Normal-Median: \(values(names.indices.map { peaks[$0] / activeMedian[$0] }))")
         }
-        // Ausreißer außerhalb der Kopplungsfenster je Ebene; bei Null-Median
-        // liefert die absolute Unterkante sinnvolle, explizite Kandidaten.
         for j in names.indices {
             let floor = j == 1 ? 0.0001 : 0.01
             let limit = max(floor, 5 * activeMedian[j])

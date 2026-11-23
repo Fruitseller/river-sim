@@ -1,15 +1,4 @@
 extends "res://scripts/Main.gd"
-## Kamerafahrt und Zeitraffer für die Abnahme der Einzelbäume (#236): ein
-## fester Ablauf, der durch alle Stufen und Symbolgrößen des Walds fährt
-## (`scripts/look/tree-flight.sh` nimmt ihn mit `--write-movie` auf). Kein
-## Produktionsweg.
-##
-##   0 … 2 s    Diorama, Stand
-##   2 … 14 s   Fahrt vom Diorama in die Nahsicht (`nah` aus shots.sh)
-##  14 … 16 s   Stand
-##  16 … 28 s   Zeitraffer 60 J./s in der Nahsicht
-##  28 … 36 s   Zeitraffer weiter, Fahrt zurück auf die Talsicht
-##  36 s        Ende
 
 const NEAR_TARGET := Vector2(17.0, 10.0)
 const NEAR_DIST := 16.0
@@ -31,7 +20,7 @@ func _ready() -> void:
 	flight_near = {"dist": NEAR_DIST, "pitch": NEAR_PITCH, "yaw": 0.0, "target": t}
 
 func _process(delta: float) -> void:
-	last_activity_msec = Time.get_ticks_msec()  # Renderloop nie anhalten
+	last_activity_msec = Time.get_ticks_msec()
 	flight_t += delta
 	if flight_t < 2.0:
 		_flight_view(flight_from, flight_near, 0.0)
@@ -49,7 +38,6 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 	super._process(delta)
 
-## Abstand logarithmisch, alles andere linear: die Fahrt wirkt gleichmäßig.
 func _flight_view(a: Dictionary, b: Dictionary, s: float) -> void:
 	cam_dist = exp(lerpf(log(a["dist"]), log(b["dist"]), s))
 	cam_pitch = lerpf(a["pitch"], b["pitch"], s)

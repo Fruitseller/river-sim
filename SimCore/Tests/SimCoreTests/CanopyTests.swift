@@ -4,26 +4,12 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für das Kronendach (Issue #152).
-///
-/// WO Wald steht, rechnet `SimRender.ForestCanopyMask` auf der CPU; das ist
-/// hier ausführbar geprüft:
-///  - kein Wald über Rasterwasser, Seen und Flussbändern (auch nicht im
-///    Filterabstand einer Zelle, den die lineare Textur verschmiert),
-///  - kein Wald in Wänden, auf Schnee/Eis und im Ufersaum über dem Meer,
-///  - gleiche Welt ergibt dieselbe Waldverteilung,
-///  - Pinselstrich, Neugenerieren und Laden hinterlassen keinen veralteten Wald.
-/// WIE er aussieht, rechnet der Terrain-Shader; davon ist headless nur die
-/// STRUKTUR des Uniform-Wegs prüfbar (Muster `ReliefUniformsTests`).
 final class CanopyTests: XCTestCase {
 
     private func aged(years: Double = 2000, seed: UInt32 = 1337) -> Terrain {
         agedWorld(renderConfig(n: 192), years: years, seed: seed)
     }
 
-    /// Der Render-Takt aus `Main.gd` — seit Issue #214 über den Frame: Bänder,
-    /// Wasserfeld, Schutz- und Waldmaske entstehen gemeinsam und in dieser
-    /// Reihenfolge (vorher stand sie hier von Hand).
     @discardableResult
     private func refresh(_ render: RenderState, _ terrain: Terrain)
         -> (water: [UInt8], forest: [UInt8]) {
@@ -31,11 +17,6 @@ final class CanopyTests: XCTestCase {
         return (overlays.water, overlays.forestMask)
     }
 
-    /// Zielmaske aus den Eingaben eines Frames (Look-Iteration 12: Bandkern,
-    /// Rasterwasser, nasse Wiese, Bänke, Galeriewald) — dieselbe
-    /// Zusammensetzung wie `RenderState.forestMaskBytes` vor dem Gedächtnis.
-    /// `protect` = Schutzmaske des Frames: sperrt seit Look-Iteration 14 den
-    /// Grundwald (`ForestCanopyMask.Riparian.baseBlock`).
     private func referenceForest(_ terrain: Terrain, colors: [UInt8], surfaces: [UInt8],
                                  bandCore: [Double], water: [UInt8], wetMeadow: [Bool],
                                  protect: [UInt8]) -> [UInt8] {
@@ -48,10 +29,6 @@ final class CanopyTests: XCTestCase {
             protect: protect).mask
     }
 
-    // MARK: - Wasser
-
-    /// Kein Wald über sichtbaren Flüssen, Seen und Bändern, und auch nicht in
-    /// der Nachbarzelle: der Shader liest die Maske linear gefiltert.
     func testNoForestOverRiversLakesOrBands() {
         var c = renderConfig(n: 192)
         c.meanderBeltKernelWidths = calibrationBeltRenderKernelWidths
@@ -59,10 +36,6 @@ final class CanopyTests: XCTestCase {
         let terrain = agedWorld(c, years: 2000, seed: 1337)
         let render = RenderState(geometryMode: true)
         let (water, forest) = refresh(render, terrain)
-        // Bänder: ihr Wasserkörper (`RenderState.bandCore`). Seit
-        // Look-Iteration 12 steht der Galeriewald über dem fast durchsichtigen
-        // Ufer außerhalb der Wasserlinie, also innerhalb der vollen
-        // Banddeckung; den Wasserkörper samt Nachbarzelle trägt er nie.
         let coverage = render.bandCore
         let n = terrain.cfg.n
         let river = byte01(WaterRender.protectRiverThreshold)
@@ -90,13 +63,8 @@ final class CanopyTests: XCTestCase {
         XCTAssertGreaterThan(rivers, 0, "Testwelt braucht sichtbare Raster-Flüsse")
         XCTAssertGreaterThan(lakes, 0, "Testwelt braucht sichtbare Seen")
         XCTAssertGreaterThan(bands, 0, "Testwelt braucht Flussbänder")
-        // Seit #168 (Schwellen damals 0,35/0,55, seit #174 0,40/0,60) trägt die Testwelt 2013 geschlossene
-        // Waldzellen (5,5 % aller Zellen); die alte Grenze n²/20 (1843) ließ
-        // kaum Luft. n²/40 verlangt weiter über 900 geschlossene Waldzellen.
         XCTAssertGreaterThan(forest.filter { $0 == 255 }.count, n * n / 40,
                              "Testwelt braucht geschlossenen Wald, sonst prüft der Test nichts")
-        // Bänder: gegen die tatsächlich GEMALTE Wasserfläche, nicht gegen den
-        // Bandkern, aus dem die Maske selbst entsteht (Review Neon Nr. 1).
         let s = CanopyWaterline.measure(terrain, mesh: render.riverRibbonMesh, forest: forest)
         print(CanopyWaterline.report(s))
         XCTAssertGreaterThan(s.points, 2000, "Testwelt trägt zu wenig Bandwasser für eine Aussage")
@@ -104,15 +72,10 @@ final class CanopyTests: XCTestCase {
                        "Wald im sichtbaren Bandwasser (inkl. Wasserlinien-Rauschen); erster Punkt \(s.first.map { "(\($0.0), \($0.1))" } ?? "-")")
     }
 
-    // MARK: - Gelände
-
-    /// Volle Vegetation überall; der Wald fehlt genau in der Wand, auf Schnee
-    /// und im Ufersaum. Synthetisch, damit jede Schwelle allein wirkt.
     func testNoForestOnWallsSnowOrShore() {
         let n = 96
         let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
         let sea = terrain.cfg.sea
-        // Höhe je Zelle für eine Weltsteigung `s` in x-Richtung.
         let perCell = terrain.cfg.world / Double(n) / RenderContract.heightScale
         var state = terrain.state
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
@@ -121,10 +84,10 @@ final class CanopyTests: XCTestCase {
                 let k = j * n + i
                 surfaces[k * 4] = 255
                 switch i {
-                case ..<24:  state.h[k] = sea + 0.2                                  // Ebene
-                case ..<48:  state.h[k] = sea + 0.2 + Double(i - 24) * perCell * 2.5 // Wand
-                case ..<72:  state.h[k] = sea + 0.2; surfaces[k * 4 + 2] = 255        // Schnee
-                default:     state.h[k] = sea + CanopyRender.shoreLo * 0.5            // Ufersaum
+                case ..<24:  state.h[k] = sea + 0.2
+                case ..<48:  state.h[k] = sea + 0.2 + Double(i - 24) * perCell * 2.5
+                case ..<72:  state.h[k] = sea + 0.2; surfaces[k * 4 + 2] = 255
+                default:     state.h[k] = sea + CanopyRender.shoreLo * 0.5
                 }
             }
         }
@@ -132,7 +95,6 @@ final class CanopyTests: XCTestCase {
         let forest = ForestCanopyMask.bytes(terrain, surfaces: surfaces,
                                             protect: [UInt8](repeating: 0, count: n * n),
                                             clump: [Float](repeating: 0, count: n * n))
-        // Die Randzeilen tragen keinen Makro-Stencil (±2 Zellen); dort ist sonst Meer.
         for j in 2..<(n - 2) {
             for i in [4, 20] { XCTAssertEqual(forest[j * n + i], 255, "Ebene trägt Wald (\(i), \(j))") }
             for i in [30, 40, 60, 66, 80, 90] {
@@ -141,10 +103,6 @@ final class CanopyTests: XCTestCase {
         }
     }
 
-    /// Nur dichte Vegetation wird geschlossener Wald (Issue #168, seit
-    /// Look-Iteration 6 mit lichtem Saum): magere Vegetation (0,1) bleibt
-    /// Wiese, mittlere (0,3) trägt lichten Wald, ab 0,7 steht geschlossener
-    /// Bestand. Ebene, ohne Rauschen.
     func testOnlyDenseVegetationBecomesForest() {
         let n = 32
         let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
@@ -166,10 +124,6 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(forest(vegetation: 0.7), 255, "Dichte Vegetation ist geschlossener Wald")
     }
 
-    /// Große Lichtungen (Look-Iteration 6, `CanopyRender.clearing*`): auch
-    /// Vegetation am Deckel (0,78, das Tiefland) bekommt Lücken (Maske unter
-    /// der Hälfte), statt als geschlossener Teppich zu stehen, aber die
-    /// Lichtungen bleiben die Ausnahme. Gemessen auf dem Lichtungs-Rauschen der Produktionswelt.
     func testClearingsCutIntoDenseVegetation() {
         let cfg = SimConfig.production
         let clump = ForestCanopyMask.clumpField(n: cfg.n, world: cfg.world)
@@ -182,9 +136,6 @@ final class CanopyTests: XCTestCase {
         XCTAssertLessThan(share, 0.2, "Lichtungen dürfen den Bestand nicht auflösen")
     }
 
-    /// Ohne Schrittweite (`cellSize == 0`: `world <= 0` oder nicht-endlich)
-    /// wäre die Weltsteigung ±inf/NaN und der Wald still falsch; die Maske
-    /// bleibt leer wie bei jeder anderen unpassenden Eingabe.
     func testNoForestWithoutCellSpacing() {
         let n = 32
         var veg = [UInt8](repeating: 0, count: n * n * 4)
@@ -208,28 +159,17 @@ final class CanopyTests: XCTestCase {
         }
     }
 
-    // MARK: - Determinismus und Invalidierung
-
     func testSameWorldYieldsIdenticalForest() {
         let a = refresh(RenderState(geometryMode: true), aged(seed: 42)).forest
         let b = refresh(RenderState(geometryMode: true), aged(seed: 42)).forest
         XCTAssertEqual(a, b, "Gleiche Welt muss dieselbe Waldverteilung liefern")
     }
 
-    /// Der Wald folgt beiden Quellen der Schutzmaske: dem Band-Bau ebenso wie
-    /// dem Wasser-Upload. Seit Issue #214 über den Frame: der Zustand MIT
-    /// Bändern (`geometryMode` wahr) gegen denselben Stand im Raster-Stempel-
-    /// Modus (`RS_WATER_STAMP`, keine Bänder) — zwei Frames, derselbe Takt.
     func testForestFollowsTheProtectMask() {
         let terrain = aged()
         let withBands = refresh(RenderState(geometryMode: true), terrain).forest
         let withoutBands = refresh(RenderState(geometryMode: false), terrain).forest
         XCTAssertNotEqual(withoutBands, withBands, "Band-Bau muss den Wald zurücknehmen")
-        // Ableitung aus denselben Quellen wie der Frame: Wald gegen die
-        // Renderer-Dieselben dieses Standes (Bänder → Wasser → Waldsperre).
-        // `bandOwner` mitgegeben: Der Frame reicht das ECHTE Bau-Ergebnis
-        // inklusive Eigner weiter (Abzweig-Zellen, s. `WaterFieldRenderer`),
-        // die Referenz muss dasselbe Feld lesen.
         let ribbons = builtRibbons(terrain)
         let waterRenderer = WaterFieldRenderer()
         let refWater = waterRenderer.bytes(terrain, blend: 1.0, geometryMode: true,
@@ -249,18 +189,6 @@ final class CanopyTests: XCTestCase {
                                            barSand: BarMaterial.field(terrain).sand)))
     }
 
-    /// Pinselstrich (über `BrushTool`, wie die Brücke): nach dem Render-Takt
-    /// steht der Wald genau dort, wo Terrain, Material und Schutzmaske des
-    /// FRAMES ihn hinlegen — aus nichts Gecachtem. Vorher läuft die Sim, damit
-    /// das Gedächtnis der Waldmaske (#167) etwas hält, das der Pinsel
-    /// verwerfen muss.
-    ///
-    /// Bewusst KEIN Vergleich gegen einen frischen Render-Zustand (wie bei der
-    /// Schutzmaske, s. dort): der Frame deckelt den Band-Neubau an der
-    /// Zentrumslinien-Bewegung, ein Pinsel bewegt die Linien nicht — die
-    /// Bänder des gebrauchteren Zustands sind legitim andere. Statt dessen die
-    /// Neuberechnung aus den Eingaben DES Frames; `.edited` leert das
-    /// Gedächtnis, `regrow` übernimmt also genau dieses Ziel.
     func testBrushStrokeLeavesNoStaleForest() {
         let terrain = aged()
         let render = RenderState(geometryMode: true)
@@ -318,10 +246,6 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(after, refresh(RenderState(geometryMode: true), loaded).forest)
     }
 
-    // MARK: - Gedächtnis (Issue #167)
-
-    /// Ein großer Schritt ergibt dasselbe wie viele kleine (AGENTS.md
-    /// § Framerate-Unabhängigkeit), und zwar die exponentielle Relaxation.
     func testRegrowthIsDtInvariant() {
         let target: [UInt8] = [255, 200, 128, 60]
         let start: [Float] = [0, 0.1, 0.3, 0.2]
@@ -343,8 +267,6 @@ final class CanopyTests: XCTestCase {
         }
     }
 
-    /// Kommt Wasser (oder geht die Vegetation zurück), ist der Wald sofort weg,
-    /// auch ohne verstrichene Sim-Zeit.
     func testForestVanishesAtOnce() {
         let target: [UInt8] = [0, 40, 255]
         var memory: [Float] = [1, 1, 1]
@@ -354,11 +276,6 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(memory, target.map { Float($0) / 255 })
     }
 
-    /// Im Render-Takt: nach einem Sim-Schritt steht über sichtbarem Wasser
-    /// kein Wald mehr als in der frischen Maske; ohne Wasser höchstens der
-    /// Rest des Rückzugs über die Schrittdauer (`CanopyRender.retreatYears`,
-    /// Befund Punkt 50). Wo er zurückkommt, wächst er erst nach. Gleiche
-    /// Abfolge ergibt dieselben Bytes.
     func testForestRegrowsOverSimYears() {
         let dt = 200.0
         func run() -> (memory: [UInt8], fresh: [UInt8], wet: [Bool]) {
@@ -377,7 +294,6 @@ final class CanopyTests: XCTestCase {
             return (memory, refresh(RenderState(geometryMode: true), terrain).forest, wet)
         }
         let (memory, fresh, wet) = run()
-        // Rest des Rückzugs nach `dt` (plus eine Byte-Rundung).
         let rest = UInt8(min(255, (255 * (1 - Terrain.relaxFraction(dt: dt, tau: CanopyRender.retreatYears))).rounded(.up) + 1))
         var regrowing = 0, retreating = 0
         for k in fresh.indices {
@@ -394,9 +310,6 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(run().memory, memory, "Gleiche Abfolge muss dieselbe Waldmaske liefern")
     }
 
-    /// Nicht-positive sowie nicht-endliche Zeitschritte (dtYears <= 0, NaN, ±inf)
-    /// dürfen das Gedächtnis nicht vergiften und führen zu keinem Nachwachsen;
-    /// sofortiger Rückgang bei Wasser bleibt intakt und leere Puffer trappen nicht.
     func testRegrowthHandlesNonPositiveAndNonFiniteDtSafely() {
         let target: [UInt8] = [0, 100, 200]
         let initialMemory: [Float] = [0.5, 0.2, 0.1]
@@ -406,27 +319,21 @@ final class CanopyTests: XCTestCase {
             var memory = initialMemory
             let out = ForestCanopyMask.regrow(&memory, toward: target, dtYears: badDt, tau: tau)
 
-            // Index 0: target 0 <= memory 0.5 -> sofortiger Rückgang auf Ziel
             XCTAssertEqual(out[0], 0, "Wasser muss Wald sofort vernichten bei dt = \(badDt)")
             XCTAssertEqual(memory[0], 0, "Gedächtnis muss sofort auf 0 fallen bei dt = \(badDt)")
 
-            // Nicht-positive oder ungültige dt: kein Nachwachsen, altes Gedächtnis bleibt
             XCTAssertEqual(memory[1], initialMemory[1], "Gedächtnis darf nicht verändert werden bei dt = \(badDt)")
             XCTAssertEqual(memory[2], initialMemory[2], "Gedächtnis darf nicht verändert werden bei dt = \(badDt)")
             XCTAssertEqual(out[1], 51)
             XCTAssertEqual(out[2], 26)
         }
 
-        // Leere Puffer dürfen nicht trappen (nil-baseAddress Guard)
         var empty: [Float] = []
         let emptyOut = ForestCanopyMask.regrow(&empty, toward: [], dtYears: 100, tau: tau)
         XCTAssertEqual(emptyOut, [])
         XCTAssertEqual(empty, [])
     }
 
-    /// Nicht-positive sowie nicht-endliche Zeitkonstanten (tau <= 0, NaN)
-    /// führen defensiv zu sofortiger Relaxation auf das Ziel (rise = 1);
-    /// tau = +inf führt zu keinem Nachwachsen (verschwindende Rate).
     func testRegrowthHandlesNonPositiveAndNonFiniteTauSafely() {
         let target: [UInt8] = [0, 100, 200]
         let initialMemory: [Float] = [0.5, 0.2, 0.1]
@@ -439,7 +346,6 @@ final class CanopyTests: XCTestCase {
             XCTAssertEqual(memory, target.map { Float($0) / 255 }, "Gedächtnis muss sofort Ziel erreichen bei tau = \(badTau)")
         }
 
-        // tau = +inf: Zeitkonstante unendlich -> kein Nachwachsen
         var memInf = initialMemory
         let outInf = ForestCanopyMask.regrow(&memInf, toward: target, dtYears: 100.0, tau: Double.infinity)
         XCTAssertEqual(outInf[0], 0)
@@ -450,15 +356,6 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(outInf[2], 26)
     }
 
-    // MARK: - Uniform-Weg (Struktur)
-
-    /// Die `canopy_*`-Zahlen selbst (Spiegel, default-freie Deklaration,
-    /// nichts am Register vorbei) prüft `CalibrationRegistryTests`; hier
-    /// bleibt, WIE der Terrain-Shader das Dach baut.
-    /// Der Bandkern der Waldsperre (`RiverRibbonRenderer.bandVisibleCoverage`)
-    /// rechnet die sichtbare Bandbreite mit demselben Fenster wie
-    /// `water.gdshader` (`visible = smoothstep(lo, hi, …presence…)`); ändert
-    /// sich das Fenster dort, stünde der Wald über Wasser oder zu weit weg.
     func testBandCoreUsesTheShaderVisibilityWindow() throws {
         let shader = try RepoSource.probe("game/shaders/water.gdshader")
         assertContains(shader, "smoothstep(\(glsl(WaterRender.ribbonVisibleLo)), \(glsl(WaterRender.ribbonVisibleHi)), mix(presence",
@@ -467,7 +364,6 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(WaterRender.ribbonVisibleWidth(1), 1)
     }
 
-    /// Galeriewald: an Wasser auf magerer Wiese steht Wald, weit weg nicht.
     func testRiparianForestLinesTheWater() {
         let n = 96
         let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
@@ -475,11 +371,11 @@ final class CanopyTests: XCTestCase {
         state.h = [Double](repeating: terrain.cfg.sea + 0.2, count: n * n)
         terrain.restore(state)
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
-        for k in 0..<(n * n) { surfaces[k * 4] = 15 }   // magere Wiese, sonst kein Wald
+        for k in 0..<(n * n) { surfaces[k * 4] = 15 }
         var core = [Double](repeating: 0, count: n * n)
-        for j in 0..<n { core[j * n + 48] = 1 }          // gerader Lauf in Spalte 48
+        for j in 0..<n { core[j * n + 48] = 1 }
         let flat = [Float](repeating: 0, count: n * n)
-        let noise = [Float](repeating: 0.6, count: n * n)  // keine Lücke
+        let noise = [Float](repeating: 0.6, count: n * n)
         let out = ForestCanopyMask.target(
             terrain, surfaces: surfaces, colors: [UInt8](repeating: 0, count: n * n * 4),
             bandCore: core, waterBytes: [], wetMeadow: [], barSand: [],
@@ -491,9 +387,6 @@ final class CanopyTests: XCTestCase {
         }
     }
 
-    /// Auwald wächst schneller nach (`fast`/`fastTau`,
-    /// `CanopyRender.riparianRegrowYears`): exponentielle Relaxation je Zelle
-    /// mit der eigenen Zeitkonstante, dt-invariant (Review Neon Nr. 7).
     func testRiparianCellsRegrowOverTheFastTau() {
         let target: [UInt8] = [255, 255]
         let fast = [true, false]
@@ -505,22 +398,16 @@ final class CanopyTests: XCTestCase {
         XCTAssertEqual(Double(memory[0]), Terrain.relaxFraction(dt: dt, tau: fastTau), accuracy: 1e-6)
         XCTAssertEqual(Double(memory[1]), Terrain.relaxFraction(dt: dt, tau: tau), accuracy: 1e-6)
         XCTAssertGreaterThan(out[0], out[1])
-        // Zwei halbe Schritte = ein ganzer (Framerate-Unabhängigkeit).
         var split: [Float] = [0, 0]
         _ = ForestCanopyMask.regrow(&split, toward: target, dtYears: dt / 2, tau: tau, fast: fast, fastTau: fastTau)
         _ = ForestCanopyMask.regrow(&split, toward: target, dtYears: dt / 2, tau: tau, fast: fast, fastTau: fastTau)
         XCTAssertEqual(split[0], memory[0], accuracy: 1e-5)
         XCTAssertEqual(split[1], memory[1], accuracy: 1e-5)
-        // Ohne `fast` (leer) gilt überall `tau`.
         var plain: [Float] = [0, 0]
         _ = ForestCanopyMask.regrow(&plain, toward: target, dtYears: dt, tau: tau)
         XCTAssertEqual(plain[0], memory[1])
     }
 
-    /// `Riparian.baseBlock` (Look-Iteration 14): die Schutzmaske sperrt den
-    /// GRUNDWALD, nicht den Galeriewald. Volle Vegetation überall, ein
-    /// gesperrter Streifen um den Lauf: darin steht nur das Gehölzband am
-    /// Wasser, außerhalb der Grundwald (Review Neon Nr. 7).
     func testProtectMaskBlocksTheBaseForestButNotTheRiparianBand() {
         let n = 96
         let terrain = Terrain(config: renderConfig(n: n), seed: 1337)
@@ -528,7 +415,7 @@ final class CanopyTests: XCTestCase {
         state.h = [Double](repeating: terrain.cfg.sea + 0.2, count: n * n)
         terrain.restore(state)
         var surfaces = [UInt8](repeating: 0, count: n * n * 4)
-        for k in 0..<(n * n) { surfaces[k * 4] = 255 }   // überall Wald
+        for k in 0..<(n * n) { surfaces[k * 4] = 255 }
         var core = [Double](repeating: 0, count: n * n)
         var protect = [UInt8](repeating: 0, count: n * n)
         for j in 0..<n {
@@ -547,9 +434,6 @@ final class CanopyTests: XCTestCase {
         }
     }
 
-    /// `canopyGuard` (Look-Iteration 14): der Galeriewald (`distance`) misst
-    /// nur Bänder und Seen; um Raster-Zubringer und nasse Wiese sperrt der
-    /// volle Saum der Schutzmaske, ohne Galeriewald (Review Neon Nr. 7).
     func testCanopyGuardSeparatesBandsAndLakesFromRasterStreams() {
         let n = 64
         var band = [Double](repeating: 0, count: n * n)
@@ -558,22 +442,20 @@ final class CanopyTests: XCTestCase {
         let riverByte = byte01(WaterRender.protectRiverThreshold)
         let lakeByte = byte01(WaterRender.protectLakeThreshold)
         for j in 0..<n {
-            band[j * n + 10] = 1                       // Band in Spalte 10
-            water[(j * n + 30) * 4] = riverByte        // Raster-Zubringer in Spalte 30
-            water[(j * n + 50) * 4 + 1] = lakeByte     // See-Ufer in Spalte 50
+            band[j * n + 10] = 1
+            water[(j * n + 30) * 4] = riverByte
+            water[(j * n + 50) * 4 + 1] = lakeByte
         }
-        meadow[20 * n + 40] = true                     // nasser Tümpel
+        meadow[20 * n + 40] = true
         let guardMask = WaterProtectMask.canopyGuard(n: n, bandCoverage: band, waterBytes: water,
                                                      wetMeadow: meadow)
         let j = 32
-        // Band und See: Abstand gezählt, Sperre nur `waterSeamCells`.
         XCTAssertEqual(guardMask.distance[j * n + 10], 0)
         XCTAssertEqual(Int(guardMask.distance[j * n + 13]), 3)
         XCTAssertEqual(guardMask.distance[j * n + 50], 0)
         XCTAssertEqual(Int(guardMask.distance[j * n + 47]), 3)
         XCTAssertEqual(guardMask.blocked[j * n + 10 + CanopyRender.waterSeamCells], 255)
         XCTAssertEqual(guardMask.blocked[j * n + 11 + CanopyRender.waterSeamCells], 0)
-        // Raster-Zubringer und Tümpel: kein Galeriewald-Abstand, voller Saum.
         XCTAssertEqual(guardMask.distance[j * n + 30], 255)
         XCTAssertEqual(guardMask.distance[20 * n + 40], 255)
         XCTAssertEqual(guardMask.blocked[j * n + 30 + WaterRender.protectSeamCells], 255)
@@ -594,8 +476,6 @@ final class CanopyTests: XCTestCase {
 
     func testBridgeAndMainCarryTheCanopy() throws {
         let bridge = try RepoSource.extensionSources()
-        // Die Waldmaske reist im Frame (Issue #214), die `canopy_*`-Zahlen über
-        // das Kalibrier-Register (#213) — Einzel-Callables gibt es keine mehr.
         assertContains(bridge, "out[Variant(\"forest\")]",
                        hint: "Die Waldmaske kommt mit den Overlays des Frames")
         assertContains(bridge, "func calibration",
@@ -603,26 +483,12 @@ final class CanopyTests: XCTestCase {
         XCTAssertFalse(bridge.contains("treeInstanceBuffer"),
                        "Instanzbäume sind seit #152 durch das Kronendach ersetzt")
         let main = try RepoSource.probe("game/scripts/Main.gd")
-        // Die Waldmaske kommt seit #94 mit dem Frame (`RenderFrameTests`).
         for needle in ["frame[\"forest\"]", "apply_calibration(sim, \"canopy\", [terrain_mat])"] {
             assertContains(main, needle, hint: "Main.gd liest Kronendach und Waldmaske über die Brücke")
         }
     }
 }
 
-/// Wald im sichtbaren Bandwasser (Review Neon Nr. 1): misst die Waldmaske,
-/// wie der Terrain-Shader sie an jedem Punkt der GEMALTEN Wasserfläche eines
-/// Bands sieht.
-///
-/// Sichtbares Wasser: `water.gdshader` malt Wasser für
-/// |2u − 1| ≤ (1 − `ribbonWaterline` + `ribbonWaterlineJitter`) ·
-/// visible(alpha) — die äußerste Lage der verrauschten Wasserlinie. Die
-/// Waldmaske liest der Terrain-Vertex-Shader je Gitterpunkt (`forest_tex`
-/// an der Texelmitte, Gitterpunkt = Sim-Zelle bei `renderGrid == n`), über
-/// das Dreieck interpoliert: Wald an einem Punkt heißt, die interpolierte
-/// Maske übersteigt die Schwelle, ab der `canopy()` überhaupt etwas tut
-/// (0,002). Dreiecke wie Godots PlaneMesh (Anti-Diagonale, s.
-/// `renderSurfaceHeight`).
 enum CanopyWaterline {
     struct Summary {
         var points = 0

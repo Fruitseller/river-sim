@@ -1,32 +1,10 @@
 extends SceneTree
-## Headless-Wächter für die Wasser-Geometrie (Issue #34) — GPU-frei ausführbar:
-##   godot --headless --path game --script res://tests/water_geometry.gd
-##
-## Prüft die Zusagen, die #34 dem Renderpfad gibt:
-##  - MÜNDUNG geschlossen: jedes Fluss-Band, dessen Lauf binnen weniger Zellen
-##    Wasser erreicht, endet IM Wasser — kein Spalt zwischen Band und Uferkontur.
-##  - KEIN doppeltes Wasser: wo der Raster-See-Kanal malt (Wassersäule über
-##    `rawWet` = 0.03), ist das Fluss-Band bereits ausgeblendet.
-##  - DELTAS: an Mündungen mit flachem Ablagerungskörper entstehen
-##    Distributär-Arme (Typ 0.5), an Steilufern nicht.
-##  - ALTARME: existieren als eigene Bänder (Typ 1.0) mit Stillwasser-Kodierung
-##    (Richtung exakt 0) und Alters-Fade unter der Maximal-Deckkraft.
-##  - Physik-Neutralität + Determinismus des Geometrie-Baus.
-##
-## Zahlen werden mitgedruckt (Messprotokoll: docs/geometry-water-measurements.md).
-## Exit-Code != 0 bei Fehler.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 
-# Rohwerte von FrameTrigger (Main.gd FRAME_*; der Unicode-Vertrag dazu pinnt
-# SimCoreTests/RenderFrameTests.testMainUsesTheFrameTriggerValues).
 const FRAME_SETTLED := 0
 
-# Vertragswerte aus SimCore/WaterRender.swift (dort begründet) — seit Issue #92
-# über die Brücke geholt (Gruppe `water_contract` des Kalibrier-Registers,
-# Issue #213) statt als eigene Konstanten kopiert; die Paarung Name ↔
-# Konstante pinnt SimCoreTests/CalibrationRegistryTests.swift ausführbar.
 var kind_river: float
 var kind_delta: float
 var kind_oxbow: float
@@ -67,26 +45,7 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Ohne Überschreibung ist dieser Lauf der WÄCHTER (feste Welt, feste
-	# Erwartungen). Mit RS_SEED/RS_STEP ist er ein MESSLAUF über eine andere Welt:
-	# dann bleiben die Invarianten (kein Spalt, kein doppeltes Wasser, Stillwasser-
-	# Kodierung) scharf, aber die Existenz-Zusagen entfallen — ob eine bestimmte
-	# Welt gerade Altarme trägt, ist Physik, keine Render-Eigenschaft (Seed 907
-	# hat nach 60.000 Jahren keinen einzigen wassergefüllten Altarm mehr).
 	var strict := true
-	# Der Wächter prüft den ERSTEN Zustand ab Jahr 20.000 (jedes Jahrtausend bis
-	# 80.000), der Altarm- UND Delta-Bänder trägt, statt eines festen Jahres.
-	# Bis Issue #174 stand hier fest 30.000 J., gemessen auf der damaligen Welt
-	# (Seed 1337: 15.000 → 0, 20.000 → 0, 25.000 → 4, 30.000 → 4, 40.000 → 1
-	# Altarm-Bänder). Ob eine Welt zu einem bestimmten Jahr gerade einen jungen
-	# Altarm trägt, ist Physik: mit der Großform aus #174 und der System-libm des
-	# CI-Runners (Linux) traf 30.000 J. eine Lücke. Die Zusage bleibt — Altarme
-	# und Deltas entstehen, und ihre Bänder halten alle Invarianten unten —,
-	# nur ohne festes Datum. Jedes Jahrtausend, nicht jedes fünfte: ein Altarm-
-	# Band braucht offenes Wasser im eigenen Bogen, und auf der neuen Welt sind
-	# gleichzeitig nur 0–4 junge Altarme wassergefüllt (gemessen Seed 1337,
-	# Jahre 20.000–80.000 in 5.000er-Schritten, macOS) — im 5.000er-Raster
-	# traf der Linux-Runner keinen.
 	var years := 80000.0
 	if OS.has_environment("RS_STEP"):
 		years = float(OS.get_environment("RS_STEP"))
@@ -94,11 +53,6 @@ func _run() -> void:
 	if OS.has_environment("RS_SEED"):
 		sim.generate(int(OS.get_environment("RS_SEED")))
 		strict = false
-	# Der letzte Frame mit frischem Band-Bau: seit #214 gibt es keinen
-	# Einzelschritt mehr — die Bänder kommen aus dem Frame (`renderFrame`,
-	# FRAME_SETTLED wie Main.gd am Ende eines Sprungs). Ohne Knoten-Bewegung
-	# baut der Frame nicht neu; der Mesh-Stand der Schleife bleibt dann der
-	# aktuelle, die Geometrie prüft er gegen die frisch gelesenen Felder.
 	var now := 0.0
 	var banded: Dictionary = {}
 	var y := 0.0
@@ -152,13 +106,9 @@ func _run() -> void:
 	var sea: float = sim.seaLevel()
 	var cs := world / float(n - 1)
 	var h: PackedFloat32Array = sim.heights()
-	# Seespiegel aus dem JÜNGSTEN Frame (der post-loop-Frame liefert ihn immer);
-	# das Band-Mesh darf älter sein — ohne Bewegung über der Schwelle baut der
-	# Frame nicht neu, und bis zu dieser Schwelle ist die Geometrie standgleich.
 	var wl: PackedFloat32Array = (frame["filled"] as PackedByteArray).to_float32_array()
 	var rec: PackedInt32Array = sim.receivers()
 
-	# --- Zählung je Typ + Deckkraft im vom Raster gemalten Tiefwasser ---------
 	var strip_kind := {kind_river: 0, kind_delta: 0, kind_oxbow: 0}
 	var deep_river_alpha := 0.0
 	var oxbow_alpha_max := 0.0
@@ -179,15 +129,12 @@ func _run() -> void:
 				deep_river_alpha = maxf(deep_river_alpha, cols[a].a)
 			if kind == kind_oxbow:
 				oxbow_alpha_max = maxf(oxbow_alpha_max, cols[a].a)
-				# Stillwasser-Kodierung: Richtung exakt 0 (COLOR.rg == 0.5).
 				if absf(cols[a].r - 0.5) > 0.002 or absf(cols[a].g - 0.5) > 0.002:
 					oxbow_still = false
 	print("frame_ms=", build_ms, " verts=", verts.size(), " bänder=", strip_kind)
 	print("max_alpha_fluss_im_rasterwasser=", deep_river_alpha,
 		" oxbow_alpha_max=", oxbow_alpha_max)
 
-	# Das Raster malt ab 0.03 Wassersäule (rawWet). Dort MUSS das Band weg sein,
-	# sonst liegen zwei Wasserflächen übereinander.
 	if deep_river_alpha > 0.02:
 		push_error("FAIL: Fluss-Band deckt noch im Raster-Seewasser (alpha=%f)"
 			% deep_river_alpha)
@@ -210,7 +157,6 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# --- Mündungen: kein Spalt ------------------------------------------------
 	var closed := 0
 	var joined := 0
 	var gaps := 0
@@ -224,18 +170,9 @@ func _run() -> void:
 		if _is_water(h, wl, sea, k):
 			closed += 1
 			continue
-		# Zusammenfluss (`WaterRender.ribbonJoin*`, Befund 2026-10-18): ein
-		# Zubringer ohne Wasser in Reichweite läuft bis IN das Band seines
-		# Hauptlaufs und blendet darunter aus. Sein Ende liegt dann im anderen
-		# Band, nicht vor einer Wasserfläche; die Mündung prüft das Band des
-		# Hauptlaufs selbst. Ohne diese Ausnahme zählte das als Spalt (macOS,
-		# Seed 1337 Jahr 20.000: Zubringer endet bei Zelle 78,510 in einem
-		# Hauptlauf, das Meer 14 Zellen stromab).
 		if _inside_other_river(verts, cols, uv2s, starts, s, (verts[last] + verts[last + 1]) * 0.5, cs):
 			joined += 1
 			continue
-		# Trockenes Ende ist nur erlaubt, wenn in Reichweite gar kein Wasser liegt
-		# (der Lauf versickert im Land) — sonst fehlt die Mündung.
 		var c := k
 		for _i in mouth_search_cells:
 			var r := rec[c]
@@ -252,27 +189,9 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# --- Determinismus des Geometrie-Baus ------------------------------------
-	# Seit Issue #214 gibt es keinen Einzelschritt-Bau mehr, den ein Skript
-	# zweimal erzwingen könnte: ohne Bewegung baut der Frame nicht neu. Der
-	# Determinismus-Nachweis (zweiter Bau == erster Bau) ist auf XCTest
-	# umgezogen: SimCoreTests/RenderStateTests baut denselben Stand zweimal
-	# direkt am `RiverRibbonRenderer`.
-
 	print("WATER_GEOMETRY_OK")
 	quit(0)
 
-## Liegt `point` in einem ANDEREN, zu mindestens `ribbonJoinCoverage` deckenden
-## Fluss-Band als `own`? Spiegelbild von `RiverRibbonRenderer.stampCoverage` und
-## `joinPath`: geprüft wird das Bandsegment zwischen zwei Kantenpaaren mit linear
-## interpolierter Halbbreite und Deckkraft sowie halber Zelle Längsüberhang an
-## offenen Bandenden. QUER gilt `hw + cs` statt des `hw + halbe Zelle` von
-## `stampCoverage`: der Helfer fragt den exakten Punkt des Bandendes ab,
-## `stampCoverage` urteilt über ZELLMITTEN — die ganze Zelle deckelt den Versatz
-## zwischen Endpunkt und der Mitte seiner Zelle (quer bis ~0,7 Zellen).
-## Unsichtbare Quellenanfänge (Halbbreite 0, Alpha 0) und
-## schwach deckende Ausläufer (< `ribbonJoinCoverage`) zählen nicht als
-## Zusammenfluss.
 func _inside_other_river(verts: PackedVector3Array, cols: PackedColorArray,
 		uv2s: PackedVector2Array, starts: PackedInt32Array, own: int,
 		point: Vector3, cs: float) -> bool:
@@ -308,30 +227,16 @@ func _inside_other_river(verts: PackedVector3Array, cols: PackedColorArray,
 				return true
 	return false
 
-## Gezielter Selbsttest für `_inside_other_river`: transparente Quellenanfänge,
-## schwach deckende Segmente (< `ribbonJoinCoverage`), degenerierte Nullbreiten
-## und Punkte hinter dem offenen Bandende dürfen die Spaltprüfung nicht
-## überspringen; ein deckendes Fremdsegment (>= `ribbonJoinCoverage`) schon.
 func _check_inside_other_river_guard() -> bool:
 	var cs := 2.0
 	var verts := PackedVector3Array([
-		# Strip 0 (own): voll deckend am Ursprung — muss als eigenes Band ignoriert werden.
 		Vector3(0.0, 0.0, -2.0), Vector3(0.0, 0.0, 2.0),
 		Vector3(4.0, 0.0, -2.0), Vector3(4.0, 0.0, 2.0),
-		# Strip 1: fremdes Fluss-Band, aber schwach deckend (unter ribbonJoinCoverage).
 		Vector3(0.0, 0.0, -2.0), Vector3(0.0, 0.0, 2.0),
 		Vector3(4.0, 0.0, -2.0), Vector3(4.0, 0.0, 2.0),
-		# Strip 2: fremdes Fluss-Band mit Quellenanfang (Halbbreite 0, Alpha 0 bei
-		# x=6) und voll deckendem Segment ab x=14..18. Der Quellenpunkt liegt
-		# 4 Zellen (8 Welt-Einheiten) vor der Naht des gedeckten Segments und
-		# damit außerhalb dessen Überhang (hw + cs) — läge er näher, nähme ihn
-		# der Naht-Fußabdruck des gedeckten Nachbarn an, obwohl dort nichts
-		# gemalt wird (CI-Befund zu 935bcf8), und der Fall prüfte nicht den
-		# Quellenanfang.
 		Vector3(6.0, 0.0, 0.0), Vector3(6.0, 0.0, 0.0),
 		Vector3(14.0, 0.0, -2.0), Vector3(14.0, 0.0, 2.0),
 		Vector3(18.0, 0.0, -2.0), Vector3(18.0, 0.0, 2.0),
-		# Strip 3: fremdes Band mit Deckkraft 1, aber degenerierter Halbbreite 0 bei x=30..34.
 		Vector3(30.0, 0.0, 0.0), Vector3(30.0, 0.0, 0.0),
 		Vector3(34.0, 0.0, 0.0), Vector3(34.0, 0.0, 0.0),
 	])
@@ -370,15 +275,12 @@ func _check_inside_other_river_guard() -> bool:
 		return false
 	return true
 
-## Zellindex unter der MITTE eines Kantenpaars (die Zentrumslinie des Bands).
 func _cell_of(left: Vector3, right: Vector3, world: float, cs: float, n: int) -> int:
 	var mid := (left + right) * 0.5
 	var gx: int = clampi(int(round((mid.x + world * 0.5) / cs)), 0, n - 1)
 	var gz: int = clampi(int(round((mid.z + world * 0.5) / cs)), 0, n - 1)
 	return gz * n + gx
 
-## Wassersäule über der Zelle (Meer und See sind zwei verschiedene Flächen —
-## dieselbe Fallunterscheidung wie openWaterSurface in RenderSupport.swift).
 func _pond(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) -> float:
 	if h[k] <= sea:
 		return sea - h[k]
@@ -386,20 +288,9 @@ func _pond(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) ->
 		return wl[k] - h[k]
 	return 0.0
 
-# Wasserfläche = Ozean-Ebene ODER Raster-See. Die Ozean-Ebene deckt jede Zelle
-# unter `sea` (ocean.gdshader verwirft nur über `sea`), die Kontur-Schwelle
-# gilt für den Raster-See. Seit die Bänder ab der Wasserlinie ausblenden (#174,
-# Küsten-Feinschliff), endet ein Band auf den ersten, kaum überfluteten
-# Meereszellen; mit der See-Schwelle auch fürs Meer zählte das als Spalt
-# (Linux-Runner, Seed 1337 Jahr 20.000: Bandende auf sea − 0,0002, die Schwelle
-# erst drei Zellen weiter).
 func _is_water(h: PackedFloat32Array, wl: PackedFloat32Array, sea: float, k: int) -> bool:
 	return h[k] < sea or _pond(h, wl, sea, k) > pond_contour_lo
 
-
-# Trägt der letzte Band-Bau mindestens ein Band dieses Typs? Seit #214 aus
-# dem Frame (die Einzelschritt-Callables sind weg); ein Frame ohne „ribbons"
-# hat nicht neu gebaut und sagt nichts.
 func _has_kind(frame: Dictionary, kind: float) -> bool:
 	if not frame.has("ribbons"):
 		return false

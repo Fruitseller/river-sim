@@ -4,20 +4,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter der geomorphologischen Materialverteilung (Issue #174, Paket D).
-///
-/// WO Fels, Schutthalde, Gletschereis, Rohboden und Talboden-Wiese liegen,
-/// rechnet `SimRender.TerrainColorRenderer` auf der CPU; das ist hier
-/// ausführbar geprüft:
-///  - die Gewichte summieren sich auf höchstens 1 (der Shader mischt sie als
-///    Gewichtssumme, der Rest ist Grund),
-///  - Fels sitzt auf steilen, konvexen Formen, Halden in Hohlformen unter Fels,
-///  - blankes Eis nur im Zehrgebiet, darüber Firn (liest sich als Schnee),
-///  - brauner Rohboden nur, wo der Pinsel gestört hat,
-///  - Talboden-Wiese auf flachem Tiefland, nicht am Hang.
-/// WIE es aussieht, rechnet der Terrain-Shader; davon ist headless nur die
-/// STRUKTUR des Uniform-Wegs prüfbar (Muster `CanopyTests`).
-/// Flächenanteile auf den Matrix-Welten: `testMaterialCoverageDiagnostic`.
 final class MaterialTests: XCTestCase {
 
     private func aged(years: Double = 2000, seed: UInt32 = 1337) -> Terrain {
@@ -28,10 +14,6 @@ final class MaterialTests: XCTestCase {
         Double(buffer[k * 4 + channel]) / 255
     }
 
-    // MARK: - Gewichte
-
-    /// Vegetation + Fels + Kälte + Halde + Rohboden ≤ 1 je Zelle (bis auf die
-    /// Byte-Rundung), auch nach einem Pinselstrich, der Rohboden erzeugt.
     func testWeightsNeverExceedOne() {
         let terrain = aged()
         let n = terrain.cfg.n
@@ -46,8 +28,6 @@ final class MaterialTests: XCTestCase {
         }
         XCTAssertLessThanOrEqual(worst, 1 + 5.0 / 255, "Materialgewichte summieren sich über 1")
 
-        // Nasse Wiese (`WetMeadow`) hebt die Vegetation auf jeder Maskenzelle;
-        // die Summe darf dabei nicht über 1 steigen (Review zu #174 C).
         let wet = WetMeadow.apply(b, mask: [Bool](repeating: true, count: n * n))
         var worstWet = 0.0
         for k in 0..<(n * n) {
@@ -58,16 +38,8 @@ final class MaterialTests: XCTestCase {
         XCTAssertLessThanOrEqual(worstWet, 1 + 5.0 / 255, "Gewichte auf nasser Wiese summieren sich über 1")
     }
 
-    /// Vier Zellen, jede mit einem anderen Mischungsfall unter nasser Wiese:
-    /// Halde, Rohboden samt Bewuchs und Sand, Kälte mit Fels und Halde, reiner
-    /// Sand. Vegetation geht auf `wetMeadowVegetation`, die übrigen Gewichte
-    /// (Fels, Halde, Rohboden, Sand) teilen sich PROPORTIONAL, was neben Kälte
-    /// und Vegetation bleibt; vorher blieben Halde, Rohboden und Sand stehen
-    /// (Summe bis ~1,85).
     func testWetMeadowScalesTheOtherWeightsProportionally() {
         func bytes(_ values: Double...) -> [UInt8] { values.map { byte01($0) } }
-        // je Zelle RGBA; colors A = Sand, surfaces = (Vegetation, Fels, Kälte, Härte),
-        // covers = (Halde, Eis, Rohboden, Talboden).
         let colors = bytes(0.3, 0.3, 0.3, 0,   0.3, 0.3, 0.3, 0.5,   0.3, 0.3, 0.3, 0,   0.3, 0.3, 0.3, 1)
         let surfaces = bytes(0, 0, 0, 0.5,   0.2, 0, 0, 0.5,   0.1, 0.3, 0.4, 0.5,   0, 0, 0, 0.5)
         let covers = bytes(0.9, 0, 0, 0,   0, 0, 0.6, 0,   0.2, 0, 0, 0,   0, 0, 0, 0)
@@ -86,18 +58,13 @@ final class MaterialTests: XCTestCase {
             XCTAssertLessThanOrEqual(veg + rock + cold + scree + raw + sand, 1 + tol,
                                      "Summe samt Sand, Zelle \(k)")
         }
-        // Zelle 1: Rohboden und Sand behalten ihr Verhältnis (0,6 : 0,5).
         XCTAssertEqual(weight(out.covers, 1, 2) / weight(out.colors, 1, 3), 0.6 / 0.5, accuracy: 0.05,
                        "übrige Gewichte werden proportional skaliert")
-        // Zelle 3: reiner Sand weicht der Wiese bis auf den Rest.
         XCTAssertLessThan(weight(out.colors, 3, 3), 1 - WaterRender.wetMeadowVegetation + 2.0 / 255)
-        // Zelle 2: Fels und Halde schrumpfen anteilig, verschwinden aber nicht.
         XCTAssertGreaterThan(weight(out.surfaces, 2, 1), 0)
         XCTAssertGreaterThan(weight(out.covers, 2, 0), 0)
     }
 
-    /// Gleiche Welt, gleiche Puffer (der Pass läuft parallel über disjunkte
-    /// Zeilen und muss bit-identisch zur sequenziellen Schleife sein).
     func testSameWorldYieldsIdenticalCovers() {
         let a = TerrainColorRenderer.buffers(aged())
         let b = TerrainColorRenderer.buffers(aged())
@@ -111,11 +78,6 @@ final class MaterialTests: XCTestCase {
         XCTAssertEqual(frameOverlays(RenderState(geometryMode: true), empty).covers, [UInt8]())
     }
 
-    // MARK: - Fels und Halde
-
-    /// Fels wächst mit der Steigung und bricht auf Graten früher durch als in
-    /// Rinnen; die Halde braucht Fels in Reichweite, eine Hohlform und eine
-    /// Steigung im Schüttwinkel.
     func testRockPrefersSteepConvexAndScreeConcaveBelowRock() {
         let mid = (MaterialRender.rockSlopeLo + MaterialRender.rockSlopeHi) / 2
         XCTAssertEqual(TerrainColorRenderer.rockTarget(worldSlope: 0.2, convexity: 0), 0)
@@ -137,8 +99,6 @@ final class MaterialTests: XCTestCase {
                        "Keine Halde auf flachem Boden")
     }
 
-    /// Auf einer gealterten Welt liegt der Fels im Mittel steiler und
-    /// konvexer als Halde und Bewuchs, und jede Halde hat Fels in Reichweite.
     func testAgedWorldPutsRockOnSteepRidgesAndScreeBelow() {
         let terrain = aged()
         let n = terrain.cfg.n
@@ -174,18 +134,10 @@ final class MaterialTests: XCTestCase {
         XCTAssertLessThan(mean(scree, \.1), 0, "Halden liegen in Hohlformen")
     }
 
-    // MARK: - Schnee und Gletscher
-
-    /// Weltsteigung einer Zelle wie im Renderer (`macroSlope` × 2·Überhöhung/Zelle).
     private func worldSlope(_ t: Terrain, _ k: Int) -> Double {
         Terrain.macroSlope(t.h, k, t.cfg.n) * 2 * RenderContract.heightScale / t.cfg.cellSize
     }
 
-    /// Blankes Eis nur im Zehrgebiet (wärmer als die Eis-Firn-Grenze, Testwelt
-    /// bei 0 °C), darüber Firn; ohne Eis keines. Die Kältedeckung (B von
-    /// `surfaces`) bleibt in allen drei Fällen voll — Wald und Kronendach sehen
-    /// Schnee und Eis gleich. Auf FLACHEN Zellen: an Steilflanken gleitet der
-    /// Schnee im Bild ab (`testSteepFacesShedSnowAndIce`).
     func testBareIceOnlyBelowTheEquilibriumLine() {
         let terrain = aged()
         let n = terrain.cfg.n
@@ -212,9 +164,6 @@ final class MaterialTests: XCTestCase {
         }
     }
 
-    /// Steilflanken halten im Bild weder Schnee noch (steiler) Eis: dieselbe
-    /// Schnee- bzw. Eismenge deckt an einer Wand jenseits der Schwellen nichts,
-    /// auf flachem Grund voll; dazwischen fällt die Deckung monoton.
     func testSteepFacesShedSnowAndIce() {
         let terrain = aged()
         let n = terrain.cfg.n
@@ -242,10 +191,6 @@ final class MaterialTests: XCTestCase {
         XCTAssertLessThan(MaterialRender.iceShedSlopeLo, MaterialRender.iceShedSlopeHi)
     }
 
-    // MARK: - Rohboden
-
-    /// Ohne Eingriff gibt es keinen Rohboden; ein Pinselstrich legt ihn frei,
-    /// und er klingt mit der Regeneration der Sim wieder ab.
     func testRawSoilOnlyOnDisturbedGround() {
         let terrain = aged()
         let n = terrain.cfg.n
@@ -266,13 +211,9 @@ final class MaterialTests: XCTestCase {
                           "Rohboden wächst wieder zu")
     }
 
-    // MARK: - Talboden
-
-    /// Talboden-Wiese nur auf flachem Tiefland: flach unter dem Nadelwald-Band
-    /// ja, steil oder hoch nein.
     func testValleyMeadowOnFlatLowlandOnly() {
         var config = renderConfig(n: 64)
-        config.world = 10 // Zellgröße wie in Produktion (~0,156)
+        config.world = 10
         let terrain = Terrain(config: config, seed: 1337)
         let n = terrain.cfg.n
         let bands = terrain.heightBands
@@ -284,9 +225,9 @@ final class MaterialTests: XCTestCase {
             for i in 0..<n {
                 let k = j * n + i
                 switch i {
-                case ..<20: state.h[k] = low                                       // Talboden
-                case ..<40: state.h[k] = low + Double(i - 20) * perCell * 1.5       // Hang
-                default:    state.h[k] = high                                      // Hochfläche
+                case ..<20: state.h[k] = low
+                case ..<40: state.h[k] = low + Double(i - 20) * perCell * 1.5
+                default:    state.h[k] = high
                 }
             }
         }
@@ -299,11 +240,6 @@ final class MaterialTests: XCTestCase {
         }
     }
 
-    // MARK: - Kalibrier-Vertrag (CPU)
-
-    /// Review zu #174: Bewuchs-Deckel und Mineral-Tönung standen als Literale
-    /// im `TerrainColorRenderer` (der Deckel sogar doppelt). Sie liegen im
-    /// Vertrag `MaterialRender`; der Renderer liest sie von dort.
     func testRendererReadsItsMaterialCalibrationFromTheContract() throws {
         XCTAssertEqual(MaterialRender.vegAmountMax, 0.78, "Wert unverändert gegenüber den Literalen")
         XCTAssertEqual(MaterialRender.mineralTint.r, 0.13)
@@ -320,11 +256,6 @@ final class MaterialTests: XCTestCase {
         XCTAssertEqual(source.count(of: "MaterialRender.mineralTint"), 1)
     }
 
-    // MARK: - Uniform-Weg (Struktur)
-
-    /// Die `material_*`-Zahlen selbst (Spiegel, default-freie Deklaration,
-    /// nichts am Register vorbei) prüft `CalibrationRegistryTests`; hier
-    /// bleibt, woher der Terrain-Shader die Verteilung nimmt.
     func testTerrainShaderTakesTheDistributionFromTheCover() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform sampler2D cover_tex",
@@ -333,16 +264,8 @@ final class MaterialTests: XCTestCase {
                        "Die PBR-Materialien der Studie sind durch #174 D ersetzt")
     }
 
-    /// #237: Fels, Schutt, Kies und Sand kommen aus gescannten Materialien
-    /// (Textur-Arrays, triplanar auf Wänden), nicht mehr aus Rausch-Klüftung.
-    /// Die Rausch-Klüftung von #174 D (Review PR #177: kein `fract`-Gitter)
-    /// ist ersetzt; ihre senkrechten Runsen in Fallrichtung waren der Befund
-    /// „senkrechte Streifen“. Gepinnt wird, dass der Terrain-Shader das Include
-    /// bindet, Fels und Schutt triplanar abfragt und die Scan-Normale als Form
-    /// übernimmt; das Bild prüft der Mensch.
     func testRockAndScreeComeFromTheScans() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
-        // Präprozessor-Zeilen stehen nicht in der Code-Sicht der Probe.
         XCTAssertTrue(try RepoSource.file("game/shaders/terrain.gdshader")
                         .contains("\n#include \"res://shaders/scan_material.gdshaderinc\"\n"),
                       "Scan-Materialien als eigenes Include (#237)")
@@ -360,18 +283,6 @@ final class MaterialTests: XCTestCase {
                        "Scan-Abfragen nur über textureGrad (laufen hinter Verzweigungen je Pixel)")
     }
 
-    /// Review zu #174: zwei Fallen, die Fels, Schutt, Spalten und Kräuselung
-    /// still glätteten bzw. undefiniert machten.
-    ///  - Das Wertrauschen hasht über `vhash`, das den Zellindex ZUERST auf
-    ///    [0, 17) faltet. Über `ehash` (Float-Produkt x·y·(x+y) auf dem rohen
-    ///    Index) erstarrte es ab einigen Dutzend Zellen vom Ursprung:
-    ///    Schutt-Körnung bei `material_pos / 0.05` auf großen Teilen der Karte
-    ///    konstant, Spalten und Riffel als Gitter. Ein Ganzzahl-Hash wäre
-    ///    ebenso genau, kostete aber gemessen +2,5 ms je Bild.
-    ///  - Ableitungen nur im gleichförmigen Kontrollfluss: `fwidth` steht
-    ///    genau zweimal oben in fragment(); Klüftung, Körnung, Spalten und
-    ///    Kronen laufen hinter Verzweigungen je Pixel und bekommen die
-    ///    Pixelgröße übergeben.
     func testNoiseHashAndDerivativesStayDefined() throws {
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         let vnoise = try shader.captures(pattern: "float vnoise\\(vec2 p\\) \\{([\\s\\S]*?)\\n\\}")
@@ -398,10 +309,6 @@ final class MaterialTests: XCTestCase {
         }
     }
 
-    /// Wolkenkörper und Wolkenschatten teilen EINE Rauschquelle (#174 D): der
-    /// Körper-Shader bindet das gemeinsame Include und rechnet seine Deckung
-    /// mit derselben Funktion wie der Schatten, alle drei Schatten-Shader
-    /// übergeben die Weltposition samt Höhe (Projektion entlang der Sonne).
     func testCloudBodiesShareTheShadowNoise() throws {
         let body = try RepoSource.file("game/shaders/cloud_body.gdshader")
         XCTAssertTrue(body.contains("\n#include \"res://shaders/clouds.gdshaderinc\"\n"),

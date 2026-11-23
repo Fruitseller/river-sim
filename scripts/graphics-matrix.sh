@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Reproduzierbare Abnahmematrix für Landschaftsqualität (Issue #150, Spec #156, Parent #117).
-# Startet für eine Variante alle Vergleichswelten und Kameraperspektiven.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -11,17 +9,13 @@ mode="${3:-shot}"
 case "$variant" in baseline) ;; *) echo "Variante: baseline (prototype ist mit #174 D entfernt)" >&2; exit 2;; esac
 case "$mode" in shot|timing|all|list) ;; *) echo "Modus: shot|timing|all|list" >&2; exit 2;; esac
 
-# Optionale Filter über Umgebungsvariablen
 filter_seed="${RS_MATRIX_SEED:-}"
 filter_year="${RS_MATRIX_YEAR:-}"
 filter_camera="${RS_MATRIX_CAMERA:-}"
 filter_yaws="${RS_MATRIX_YAWS:-}"
 dry_run="${RS_MATRIX_DRY_RUN:-0}"
-# Qualitätsstufe der Messläufe (#151 misst je Stufe); Aufnahmen bleiben balanced.
 quality="${RS_MATRIX_QUALITY:-balanced}"
 
-# Matrix-Definition. Ohne assoziative Arrays: macOS liefert bash 3.2 (die
-# Zielmaschine ist ein Mac), `declare -A` brach dort mit Syntaxfehler ab.
 seeds=(1337 42 20)
 seed_name() {
   case "$1" in
@@ -40,10 +34,6 @@ year_label() {
   esac
 }
 
-# Kameras je Seed: "ziel;distanz;yaw;pitch". Die Sonne ist seit #151 eine feste
-# Welt-Sonne (game/scripts/Lighting.gd, Azimut -50°); `backlight` blickt mit
-# Yaw = Azimut + 180° (130° = 2.269 rad) genau gegen sie. Spiegel der Tabelle:
-# SimCoreTests/GraphicsMatrixTests.swift.
 camera_cfg() {
   case "$1:$2" in
     1337:overview|42:overview|20:overview) echo "0,0;151.846515;0.7;0.85" ;;
@@ -62,14 +52,6 @@ camera_cfg() {
     20:backlight)   echo "-8,10;46.0;2.269;0.85" ;;
     20:coast)       echo "30,-28;48.0;0.8;0.85" ;;
     20:snow)        echo "-10,14;40.0;0.6;0.70" ;;
-    # Vorlagen-Kameras (Issue #174): diorama = Vorlage C, valley = B, close = A.
-    # Hier stehen FESTE Werte je Seed (Ziel, Distanz, Yaw), damit Abnahmebilder
-    # reproduzierbar bleiben. Die Tasten-Presets F1–F3 in game/scripts/Main.gd
-    # (CAMERA_PRESETS) sind dagegen ADAPTIV: Diorama rahmt die Landfläche,
-    # Tal/Nah zielen auf den größten Lauf. Gemeinsam ist nur der Pitch (alle)
-    # und die Distanz (valley, close); Wächter:
-    # GraphicsMatrixTests.testCameraPresetsMatchTheMatrix. Die adaptive Ansicht
-    # zeigt `RS_CAMERA=<id>` beim Start von Main (statt RS_TARGET/RS_DIST/RS_YAW).
     1337:diorama|42:diorama|20:diorama) echo "0,0;115.0;0.7;0.62" ;;
     1337:valley)    echo "-12,-25;30.0;0.7;0.40" ;;
     1337:close)     echo "-36,-32;22.0;0.9;0.52" ;;
@@ -107,8 +89,6 @@ run_shot() {
   IFS=';' read -r target dist yaw pitch <<< "$cfg"
 
   local out_base="$output_dir/seed${s}_${ylabel}_${c}"
-  # Blickrichtungs-Serie (#151): RS_MATRIX_YAWS="0.7,2.27,…" rendert dieselbe
-  # Kamera aus mehreren Richtungen, Dateiname mit Yaw-Suffix.
   if [[ -n "$matrix_yaw" ]]; then
     yaw="$matrix_yaw"
     out_base="${out_base}_yaw${yaw}"
@@ -126,8 +106,6 @@ run_shot() {
   export RS_TARGET="$target" RS_DIST="$dist" RS_YAW="$yaw" RS_PITCH="$pitch"
   export RS_STUDY_VARIANT="$variant" RS_STUDY_MODE="shot" RS_STUDY_OUTPUT="$out_base"
 
-  # Gewertet wird das Bild, nicht der Exit-Code (Absturz beim Herunterfahren,
-  # Issue #61); sonst bräche ein Abschluss-Absturz die restliche Matrix ab.
   rm -f "${out_base}.png"
   { scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn || true; }
   if [[ ! -s "${out_base}.png" ]]; then
@@ -138,8 +116,6 @@ run_shot() {
 
 run_timing() {
   local s="$1" y="$2" ylabel="$3" timing_mode="$4"
-  # Timing-Messung auf der Hauptansicht `detail`, mit RS_MATRIX_CAMERA auf
-  # einer anderen Kamera der Tabelle.
   local cfg
   cfg="$(camera_cfg "$s" "${filter_camera:-detail}")"
   local target dist yaw pitch
@@ -157,11 +133,6 @@ run_timing() {
   export RS_TARGET="$target" RS_DIST="$dist" RS_YAW="$yaw" RS_PITCH="$pitch"
   export RS_STUDY_VARIANT="$variant" RS_STUDY_MODE="$timing_mode" RS_STUDY_OUTPUT=""
 
-  # Ergebnis als Datei neben den Aufnahmen (Spec #156): eine JSON-Zeile je Lauf
-  # mit Viewport, Qualitätsstufe und Render-Gitter; der Dateiname trägt Welt,
-  # Stadium, Kamera, Stufe und Betrieb. Die Konsolenausgabe bleibt sichtbar.
-  # Gewertet wird die Zeile, nicht der Exit-Code: Godot reißt beim
-  # Herunterfahren sporadisch ab (Issue #61), die Messung steht dann schon da.
   local out="$output_dir/timing/seed${s}_${ylabel}_${filter_camera:-detail}_${quality}_${timing_mode}.json"
   mkdir -p "$output_dir/timing"
   { scripts/start.sh --maximized res://studies/flusstal/Flusstal.tscn || true; } | tee /dev/stderr \
@@ -174,7 +145,6 @@ run_timing() {
   echo "    Messung: $out"
 }
 
-# 1. Bilderzeugung (shot)
 if [[ "$mode" == "shot" || "$mode" == "all" ]]; then
   echo "Starte Matrix-Bildgenerierung (Variante: $variant)..."
   for s in "${seeds[@]}"; do
@@ -202,7 +172,6 @@ if [[ "$mode" == "shot" || "$mode" == "all" ]]; then
   echo "Bildgenerierung abgeschlossen. Zielordner: $output_dir"
 fi
 
-# 2. Timing-Messung (still, orbit, simulation)
 if [[ "$mode" == "timing" || "$mode" == "all" ]]; then
   echo "Starte Matrix-Timingmessungen (Variante: $variant)..."
   for s in "${seeds[@]}"; do

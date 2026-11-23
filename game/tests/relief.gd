@@ -1,32 +1,10 @@
 extends SceneTree
-## Headless-Wächter der Render-Verschiebung von Rinnen und Graten (#153):
-##   godot --headless --path game --script res://tests/relief.gd
-##
-## Geprüft wird das äußere Verhalten an den Vertragsgrenzen, nicht das Muster:
-##  - Back-Pass und Terrain-Shader kompilieren; jede `relief_*`-Zahl kommt über
-##    die Brücke (SimCore.ReliefRender), ist default-frei deklariert und wird
-##    auf beiden Materialien gesetzt;
-##  - Main backt die Verschiebung nur bei Terrain-Updates: im Standbild nie,
-##    im Zeitraffer mit jedem Sim-Schritt und dort weich übergeblendet, beim
-##    Pinsel sofort;
-##  - Pinselkuppel und Kameraziel liegen auf der SICHTBAREN Fläche (Sim-Höhe plus
-##    Verschiebung), der Pinsel ändert die Sim-Zelle unter dem Treffer;
-##  - die echte Verformung blendet mit dem Geländealter ein: auf junger Welt
-##    liegt die sichtbare Fläche auf der Sim-Höhe;
-##  - der Zeitraffer rechnet im Hintergrund (docs/perf-measurements.md §L): ein
-##    Strich, der währenddessen beginnt, wartet nicht auf den Schritt.
-## Der Dummy-Renderer zeichnet den Back-Pass nicht; für die Flächen-Prüfung
-## bekommt Main deshalb eine bekannte Verschiebung (+1 Einheit) gesetzt.
-## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 const SHADERS := ["res://shaders/relief_bake.gdshader", "res://shaders/terrain.gdshader"]
-const LIFT := 1.0  # gesetzte Verschiebung in Welteinheiten
+const LIFT := 1.0
 
-## Main mit festem, SCHRÄGEM Zeigerstrahl auf `ray_xz`: senkrecht fiele der
-## Treffer mit und ohne Verschiebung auf dieselbe Zelle, schräg nicht. Alles
-## andere (Raymarch, Ring, Pinsel) ist der echte Produktionspfad.
 const RAY_DIR := Vector3(0.45, -1.0, 0.3)
 class FixedRayMain extends "res://scripts/Main.gd":
 	var ray_xz := Vector2.ZERO
@@ -51,7 +29,7 @@ func _initialize() -> void:
 	_check_shaders(probe)
 	probe.free()
 	main = FixedRayMain.new()
-	root.add_child(main) # _ready im ersten Frame: Welt, Szene, erster Back-Auftrag
+	root.add_child(main)
 
 func _process(_delta: float) -> bool:
 	if done or main == null or not main.is_node_ready():
@@ -69,9 +47,6 @@ func _process(_delta: float) -> bool:
 	quit(0)
 	return true
 
-## Ein Strich, der beginnt, während ein Hintergrund-Schritt rechnet
-## (docs/perf-measurements.md §L), wartet nicht auf ihn: er setzt aus, bis der
-## Schritt abgeholt und hochgeladen ist, und malt dann auf dem neuen Stand.
 func _check_stroke_never_waits(main: Node) -> void:
 	main.year_rate = 0.0
 	main._settle_sim()
@@ -85,15 +60,13 @@ func _check_stroke_never_waits(main: Node) -> void:
 		"Der Pinsel wartet nicht auf den Hintergrund-Schritt")
 	while main.sim.stepInFlight() and not main.sim.stepReady():
 		OS.delay_msec(1)
-	main._process(0.05) # holt ab, dann malt der Strich
+	main._process(0.05)
 	main.sculpting = false
 	_check(main.shown_year == year + 15.0 and not main.sim.stepInFlight(),
 		"Der Schritt ist abgeholt, bevor der Strich weitermalt (Jahr %s → %s)"
 			% [year, main.shown_year])
 	_check(main.sim.stepWaitMilliseconds() == waited, "Auch das Abholen wartet nicht")
 
-## Neugenerieren mitten im Zeitraffer zeigt die neue Welt sofort, statt sie
-## aus der alten einzublenden (Review #173). Zuletzt: es tauscht die Welt.
 func _check_regen_does_not_fade(main: Node) -> void:
 	main.year_rate = 60.0
 	main._regen()
@@ -131,8 +104,6 @@ func _check_shaders(sim: Object) -> void:
 	for name in calib:
 		_check(declared_anywhere.has(name), "Brückenwert %s wird von keinem Shader gelesen" % name)
 
-## Standbild ohne Terrain-Update backt nicht; jeder Sim-Schritt im Zeitraffer
-## backt (Höhen-Upload), höchstens doppelt (zusätzlich ein Band-Bau).
 func _check_bake_cadence(main: Node) -> void:
 	_check(main.relief_bakes > 0, "Der Aufbau backt die erste Verschiebung")
 	_check(main.terrain_mat.get_shader_parameter("relief_enabled") == true,
@@ -140,7 +111,7 @@ func _check_bake_cadence(main: Node) -> void:
 	var before: int = main.relief_bakes
 	main.year_rate = 0.0
 	for i in 40:
-		main.last_activity_msec = Time.get_ticks_msec() # kein Leerlauf-Abkürzen
+		main.last_activity_msec = Time.get_ticks_msec()
 		main._process(0.02)
 	_check(main.relief_bakes == before, "Standbild darf nicht neu backen (%d → %d)"
 		% [before, main.relief_bakes])
@@ -158,24 +129,16 @@ func _check_bake_cadence(main: Node) -> void:
 		faded = faded or main.relief_mix < 1.0
 		height_faded = height_faded or main.height_fade.mix < 1.0
 		overlay_faded = overlay_faded or main.overlay_fade.mix < 1.0
-		# Der Schritt rechnet im Hintergrund (SimNode.beginStep): echte Zeit
-		# vergehen lassen, bis er fertig ist; der nächste Frame holt ihn ab.
 		while main.sim.stepInFlight() and not main.sim.stepReady():
 			OS.delay_msec(1)
-	# Ein noch liegender Schritt wird abgeholt, bevor der Test die Sim direkt fragt.
 	var y_last: float = main.shown_year
 	main._settle_sim()
 	if main.shown_year != y_last:
 		ticks += 1
-	# Die Overlay-Drossel läuft auf der echten Uhr (0,30 s); die kurzen
-	# Test-Frames schaffen das nicht sicher. Ein Frame MIT Overlays während
-	# des Zeitraffers muss die Overlay-Blende starten.
 	main._frame_trigger = main.FRAME_TIMELAPSE
 	main._apply_frame(main.sim.renderFrame(main.FRAME_SETTLED, main._now()))
 	main._frame_trigger = main.FRAME_SETTLED
 	overlay_faded = overlay_faded or main.overlay_fade.mix < 1.0
-	# Bänder (#174): ein Band-Bau im Zeitraffer blendet über die eigene Blende,
-	# der alte Stand bleibt sichtbar, bis sie endet.
 	main._frame_trigger = main.FRAME_TIMELAPSE
 	main._apply_frame({"ribbons": true})
 	main._frame_trigger = main.FRAME_SETTLED
@@ -183,7 +146,6 @@ func _check_bake_cadence(main: Node) -> void:
 		"Band-Bau im Zeitraffer blendet über, der alte Stand bleibt sichtbar")
 	main.year_rate = 0.0
 	_check(faded, "Zeitraffer blendet die Verschiebung über, statt zu springen")
-	# #172: Höhe und Overlays gleiten ebenso, jede mit ihrer eigenen Blende.
 	_check(height_faded, "Zeitraffer blendet die Höhe über")
 	_check(overlay_faded, "Zeitraffer blendet Farbe, Material und Wald über")
 	for i in 20:
@@ -196,7 +158,7 @@ func _check_bake_cadence(main: Node) -> void:
 			"%s endet auf dem neuen Stand" % param)
 	_check(main.ocean_mat.get_shader_parameter("height_blend") == 1.0,
 		"Das Meer blendet die Höhe mit dem Terrain")
-	for i in 40: # zusammen mit den 20 Frames oben länger als RIBBON_FADE_SECONDS
+	for i in 40:
 		main.last_activity_msec = Time.get_ticks_msec()
 		main._process(0.02)
 	_check(main.ribbon_fade.mix == 1.0 and not main.river_prev_mi.visible
@@ -208,9 +170,7 @@ func _check_bake_cadence(main: Node) -> void:
 		"Je Sim-Schritt ein Back-Pass (Schritte %d, Back-Pässe %d)" % [ticks, bakes])
 
 func _check_visible_surface(main: Node) -> void:
-	# Nur die Verschiebung: das Kronendach auf der Fläche prüft canopy.gd.
 	main.forest_img = null
-	# Bekannte Verschiebung statt des (headless nicht gezeichneten) Back-Passes.
 	var code: float = main.relief_height_code
 	_check(code > 0.0, "Höhen-Code der Backtextur kommt über die Brücke")
 	var field := PackedFloat32Array()
@@ -219,7 +179,6 @@ func _check_visible_surface(main: Node) -> void:
 	main.relief_lift_cache = field
 	main.relief_bake_frame = -1
 
-	# Trockene Landzelle mit Abstand zum Rand.
 	var h: PackedFloat32Array = main.sim.heights()
 	var n: int = main.N
 	var cell := -1
@@ -241,7 +200,6 @@ func _check_visible_surface(main: Node) -> void:
 	main.ray_xz = Vector2(x, z)
 	main.ray_y = sim_y
 
-	# Junge Welt (wenige hundert Jahre): Verformung noch nicht eingeblendet.
 	var year: float = main.sim.currentYear()
 	_check(main.relief_geometry_age > 0.0 and year < 0.05 * main.relief_geometry_age,
 		"Testwelt ist jung (Jahr %.0f, volle Verformung ab %.0f)" % [year, main.relief_geometry_age])
@@ -251,7 +209,6 @@ func _check_visible_surface(main: Node) -> void:
 	_check(young != Vector3.INF and absf(young.y - main._sample_h((young.x + main.half) / main.step,
 		(young.z + main.half) / main.step) * main.hscale) < 0.05,
 		"Junge Welt: Treffer auf der Sim-Höhe, nicht auf der Verformung")
-	# Ab hier wie auf alter Welt: volle Verformung.
 	main.relief_geometry_age = 1e-3
 
 	var hit: Vector3 = main._raycast_terrain()
@@ -264,7 +221,6 @@ func _check_visible_surface(main: Node) -> void:
 	_check(absf(hit.y - (hit_sim_y + LIFT)) < 0.05,
 		"Treffer auf der sichtbaren Fläche: y %.3f, erwartet %.3f (Sim %.3f)"
 		% [hit.y, hit_sim_y + LIFT, hit_sim_y])
-	# Gegenprobe ohne Verschiebung: der schräge Strahl trifft dann woanders.
 	main.relief_lift_cache = PackedFloat32Array()
 	var bare: Vector3 = main._raycast_terrain()
 	main.relief_lift_cache = field
@@ -272,8 +228,6 @@ func _check_visible_surface(main: Node) -> void:
 		"Schräger Strahl muss die Verschiebung sehen (Treffer ohne/mit %s / %s)" % [bare, hit])
 	var hit_cell := roundi(hit_gz) * n + roundi(hit_gx)
 
-	# Pinselkuppel folgt dem Treffer (Standbild, kein Strich), ihr Rand liegt
-	# auf der verschobenen Fläche, nicht auf der Sim-Höhe (#174).
 	main.last_activity_msec = Time.get_ticks_msec()
 	main._process(0.02)
 	_check(main.brush_mi.visible, "Pinselkuppel sichtbar im Standbild")
@@ -285,19 +239,17 @@ func _check_visible_surface(main: Node) -> void:
 	_check(absf(rim.y - (rim_sim_y + LIFT + Main.BRUSH_DOME_LIFT)) < 0.05,
 		"Kuppelrand liegt auf der verschobenen Fläche (y %.3f, Sim %.3f)" % [rim.y, rim_sim_y])
 
-	# Kameraziel (RS_TARGET-Pfad) auf der sichtbaren Fläche.
 	main.cam_target = Vector3(x, 0.0, z)
 	main.cam_target_on_surface = true
 	main._process(0.02)
 	_check(not main.cam_target_on_surface and absf(main.cam_target.y - (sim_y + LIFT)) < 0.05,
 		"Kameraziel liegt auf der sichtbaren Fläche (y %.3f)" % main.cam_target.y)
 
-	# Der Pinsel (Anheben) wirkt auf die Sim-Zelle unter dem Treffer.
-	var far := ((roundi(hit_gz) + n / 2) % n) * n + roundi(hit_gx)  # weit außerhalb jedes Pinselradius
+	var far := ((roundi(hit_gz) + n / 2) % n) * n + roundi(hit_gx)
 	var h_far: float = h[far]
 	main.current_tool = 0
 	main.sculpting = true
-	main.year_rate = 60.0  # auch bei laufendem Zeitraffer: der Strich blendet nicht
+	main.year_rate = 60.0
 	main._process(0.05)
 	main.year_rate = 0.0
 	_check(main.relief_mix == 1.0, "Pinsel backt ohne Blende")

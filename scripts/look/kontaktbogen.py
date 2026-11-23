@@ -23,7 +23,6 @@ def fit(path, height=None):
     im = Image.open(path).convert("RGB")
     im = im.resize((WIDTH, round(im.height * WIDTH / im.width)), Image.LANCZOS)
     if height is not None and im.height != height:
-        # Vorbild mittig auf die Höhe der Spielbilder bringen.
         if im.height > height:
             top = (im.height - height) // 2
             im = im.crop((0, top, WIDTH, top + height))

@@ -1,0 +1,9 @@
+# Flussbänder schweben nicht: gemessen an der Wasserlinie gegen das gerenderte Gelände
+
+Issue #233 (Look-Hill-Climber Nr. 13): Flussbänder schwebten als Platte über dem Gelände. Der Wächter misst je Band-Dreieck die Höhe der Bandfläche gegen die gerenderte Geländehöhe darunter: `renderSurfaceHeight` der Sim-Höhe × `heightScale`, über Seen so weit zum Spiegel gehoben wie im Terrain-Vertex-Shader (mal See-Gate). Die Relief-Verschiebung fehlt bewusst, weil `relief_bake.gdshader` sie mit `1 − Schutzmaske` gewichtet und die Schutzmaske jedes Band samt `protectSeamCells` Saum deckt. Das Kronendach hebt das Gelände nur an und fehlt ebenso.
+
+Gemessen wird an der Wasserlinie (`water.gdshader`: sichtbar für |2u − 1| ≤ (1 − `ribbonWaterline`) · visible(alpha)): liegt die Wasserfläche dort über dem Gelände, sieht man darunter Gelände. In der Bandmitte darf Wasser über dem Bett stehen; dort zählt nur, ob es unter dem Gelände verschwindet. Toleranz an der Kante: 0,08 Welt-Y, die halbe Höhe einer Zellbreite (Zelle 0,156); Mitte gilt als versunken ab 0,02. Das See-Gate aus dem Wasserfeld desselben Frames ist Pflicht (Review Neon Nr. 6): ohne Gate hob die Messung kleine Tümpel an, über denen das Bild nicht hebt.
+
+Schranken über beide Welt-Realisierungen (System-libm), gemessen mit See-Gate: macOS 0,9 % über 0,08, nichts über 0,15, 1,1 % versunkene Mitten; die steilere Linux-Welt (glibc) 4,0 % über 0,08 (meist Segmentmitten über rauem Gelände, Mittel −0,07), 2 von 2654 Punkten über 0,15, 1,8 % versunkene Mitten (ohne Gate 3,5 % schwebend). Vor dem Fix schwebten 64,9 % mit Mittel 0,34. Schranke schwebend 5 %; versunkene Mitten 10 % (bis Review Neon Nr. 6: 25 %), das lässt beiden Welten Luft und fängt ein Band, das in größeren Teilen ins Gelände sinkt.
+
+Betrifft: `RibbonFloat.measure`, `RibbonFloat.floatTolerance`, `WaterRender.ribbonWaterline`, `game/shaders/water.gdshader`, `RibbonFloatTests.testRibbonWaterlineDoesNotFloat`

@@ -1,9 +1,4 @@
 extends SceneTree
-## Headless-Smoke-Test der GDExtension — GPU-frei ausführbar mit:
-##   godot --headless --path game --script res://tests/smoke.gd
-## Prüft: Library aktuell (Build-Stempel), SimNode registriert, Felder haben n*n
-## Einträge, step() verändert das Terrain, Jahr läuft, der Pinsel hebt an.
-## Exit-Code != 0 bei Fehler.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 
@@ -18,11 +13,6 @@ func _process(_delta: float) -> bool:
 
 func _run() -> void:
 	if not ClassDB.class_exists("SimNode"):
-		# Häufigste Ursache in einem frischen Arbeitsverzeichnis: Godot lädt
-		# GDExtensions NUR aus `.godot/extension_list.cfg`, und die entsteht erst
-		# beim Projekt-Import. `game/.godot/` ist gitignoriert, also fehlt sie in
-		# jedem neuen Klon/Worktree — die Library selbst ist dann völlig in
-		# Ordnung. Ohne diesen Hinweis zeigt die Meldung auf die falsche Stelle.
 		if not FileAccess.file_exists("res://.godot/extension_list.cfg"):
 			push_error("FAIL: Projekt nicht importiert (res://.godot/extension_list.cfg "
 				+ "fehlt) — GDExtension wurde nie geladen. Einmalig ausführen: "
@@ -33,9 +23,6 @@ func _run() -> void:
 		return
 	var sim: Object = ClassDB.instantiate("SimNode")
 
-	# Zuerst prüfen, ob die geladene Library zum Quellstand passt: alles danach
-	# testet sonst eine alte .so, und Fehlschläge sind dann irreführend
-	# (historisch: "Nonexistent function brush" nach vergessenem Rebuild).
 	if not BuildStamp.check(sim):
 		quit(1)
 		return
@@ -48,11 +35,7 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Render-Vertrag: Makrofarbe und Materialgewichte sind je ein RGBA8-Texel
-	# pro Sim-Zelle. Ein fehlender Kanal würde erst als schwarzes Terrain auf der
-	# GPU auffallen; deshalb Größe und tatsächliches Materialsignal hier prüfen.
-	# Seit Issue #214 über den Frame (derselbe Weg wie Main.gd).
-	var frame: Dictionary = sim.renderFrame(0, 1.0)  # FRAME_SETTLED
+	var frame: Dictionary = sim.renderFrame(0, 1.0)
 	var color_bytes: PackedByteArray = frame["color"]
 	var surface_bytes: PackedByteArray = frame["surface"]
 	if color_bytes.size() != n * n * 4 or surface_bytes.size() != n * n * 4:
@@ -80,15 +63,10 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Welt-Formung über das Werkzeug: Zentrum anheben. Seit Issue #214 gibt es
-	# keinen eigenen sculpt-Callable mehr (das Spiel hebt über den Pinsel);
-	# Modus 0 (`BrushTool.raise`) fährt auf Swift-Seite denselben
-	# `terrain.sculpt(dir: 1)`-Weg. Das Verhalten von sculpt selbst pins
-	# WorldSessionTests headless an der Sitzung.
 	var before: PackedFloat32Array = sim.heights()
 	var c := (n / 2) * n + (n / 2)
 	for k in range(50):
-		sim.brush(0, float(n) / 2.0, float(n) / 2.0, 12.0, 1.0, 0.0)  # Heben
+		sim.brush(0, float(n) / 2.0, float(n) / 2.0, 12.0, 1.0, 0.0)
 	sim.recomputeFlow()
 	var after: PackedFloat32Array = sim.heights()
 	print("sculpt_delta_center=", after[c] - before[c])
@@ -97,12 +75,10 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Brush-Werkzeuge (Modi siehe SimNode.brush): Spitzhacke senkt, Einebnen
-	# zieht zur Zielhöhe, Glätten reduziert die lokale Rauheit.
 	var cx := float(n) / 2.0
 	before = sim.heights()
 	for k in range(30):
-		sim.brush(5, cx, cx, 8.0, 1.0, 0.0) # Spitzhacke
+		sim.brush(5, cx, cx, 8.0, 1.0, 0.0)
 	after = sim.heights()
 	print("pickaxe_delta_center=", after[c] - before[c])
 	if after[c] - before[c] >= 0.0:
@@ -112,7 +88,7 @@ func _run() -> void:
 
 	var target := after[c] + 0.1
 	for k in range(200):
-		sim.brush(3, cx, cx, 8.0, 2.0, target) # Einebnen
+		sim.brush(3, cx, cx, 8.0, 2.0, target)
 	after = sim.heights()
 	print("flatten_dist_to_target=", absf(after[c] - target))
 	if absf(after[c] - target) > 0.02:
@@ -121,11 +97,11 @@ func _run() -> void:
 		return
 
 	for k in range(20):
-		sim.brush(4, cx, cx, 10.0, 1.0, 0.0) # Aufrauen
+		sim.brush(4, cx, cx, 10.0, 1.0, 0.0)
 	var rough: PackedFloat32Array = sim.heights()
 	var vr_before := _local_roughness(rough, n, c)
 	for k in range(60):
-		sim.brush(2, cx, cx, 10.0, 2.0, 0.0) # Glätten
+		sim.brush(2, cx, cx, 10.0, 2.0, 0.0)
 	var smoothed: PackedFloat32Array = sim.heights()
 	var vr_after := _local_roughness(smoothed, n, c)
 	print("roughness_before=", vr_before, " after_smooth=", vr_after)
@@ -134,10 +110,6 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Speichern/Laden über die Brücke (Issue #8). Die Bit-Identität des
-	# Weiterlaufs prüft SimCore (`WorldSnapshotTests`); hier geht es um den
-	# GDExtension-Vertrag: Datei entsteht, Zustand kommt zurück, eine Datei mit
-	# fremder Formatversion wird ABGELEHNT, ohne die laufende Welt anzutasten.
 	var save_path := "user://tests/smoke.%s" % sim.worldFileExtension()
 	var abs_save := ProjectSettings.globalize_path(save_path)
 	var saved_year: float = sim.currentYear()
@@ -154,8 +126,6 @@ func _run() -> void:
 		push_error("FAIL: Welt-Datei fehlt")
 		quit(1)
 		return
-	# Die Vorprüfung der Geometrie liest Kopf + Config, nicht die Felder — beide
-	# Werte müssen zur laufenden Welt passen.
 	if sim.worldFileGridSize(abs_save) != n:
 		push_error("FAIL: Gitterauflösung der Datei stimmt nicht")
 		quit(1)
@@ -174,7 +144,7 @@ func _run() -> void:
 		quit(1)
 		return
 
-	sim.step(500.0) # Welt verändern, damit das Laden etwas zurückholen MUSS
+	sim.step(500.0)
 	var load_err: String = sim.loadWorld(abs_save)
 	if not load_err.is_empty():
 		push_error("FAIL: loadWorld: %s" % load_err)
@@ -187,8 +157,6 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# Datei auf eine andere Formatversion umbiegen (Byte 8..11 = 0) → muss
-	# abgelehnt werden, statt falsch geladen zu werden.
 	var raw := FileAccess.get_file_as_bytes(save_path)
 	for i in range(8, 12):
 		raw[i] = 0
@@ -212,12 +180,6 @@ func _run() -> void:
 	print("SMOKE_OK")
 	quit(0)
 
-## Prüft die Geometrie-Sperre der UI (`Main.gd._world_geometry_mismatch`): eine
-## Welt-Datei darf nur geladen werden, wenn AUFLÖSUNG UND WELTGRÖSSE zur
-## laufenden Sitzung passen — sonst liefe die Simulation in anderen
-## Weltkoordinaten als Darstellung, Kamera und Werkzeuge. Die Funktion ist reine
-## Entscheidungslogik und deshalb ohne Szene/Renderer prüfbar: das Skript wird
-## instanziiert, aber nie in den Baum gehängt (kein `_ready`).
 func _check_geometry_guard(n: int, world: float) -> bool:
 	var main: Node = load("res://scripts/Main.gd").new()
 	main.N = n
@@ -232,7 +194,6 @@ func _check_geometry_guard(n: int, world: float) -> bool:
 	if (main._world_geometry_mismatch(n, world * 0.5) as String).is_empty():
 		push_error("FAIL: abweichende Weltgröße wurde NICHT abgelehnt")
 		ok = false
-	# −1 = Datei nicht lesbar: die Sperre schweigt, die Meldung kommt aus loadWorld.
 	if not (main._world_geometry_mismatch(-1, -1.0) as String).is_empty():
 		push_error("FAIL: unlesbare Datei sollte die Geometrie-Sperre nicht auslösen")
 		ok = false
@@ -240,9 +201,6 @@ func _check_geometry_guard(n: int, world: float) -> bool:
 	main.free()
 	return ok
 
-## Während eines Werkzeugstrichs darf der globale Sim-Schritt nicht dieselben
-## Höhen gleichzeitig weiterentwickeln. Das gewählte Tempo bleibt erhalten und
-## läuft nach dem Loslassen weiter; nur die periodischen Schritte setzen aus.
 func _check_sculpt_owns_clock() -> bool:
 	var main: Node = load("res://scripts/Main.gd").new()
 	var ok := true
@@ -259,29 +217,12 @@ func _check_sculpt_owns_clock() -> bool:
 	main.free()
 	return ok
 
-## Hintergrund-Schritt über die Brücke (docs/perf-measurements.md §L):
-##  - ohne Job gibt `finishStep` nichts;
-##  - ein Aufruf, der die Welt braucht, wartet den laufenden Job ab und LÄSST
-##    dessen Ergebnis liegen (der Aufrufer muss es noch hochladen);
-##  - ein zweiter Start, solange einer unterwegs ist, startet nichts;
-##  - das Frame-Dictionary trägt Auslöser, Jahr und Höhen;
-##  - Determinismus durch die Brücke: derselbe Schritt synchron (nach dem
-##    Laden derselben Welt) ergibt dieselben Höhen, Seespiegel und dasselbe
-##    Wasser. Die vollen Frames vergleicht SimCore (`BackgroundJobTests`).
-##  - Beide Seiten starten nach `loadWorld`: `.replaced` beendet die Band-
-##    Übergänge (Geisterarme, Einwachsen) — sonst erbte der Hintergrund-Schritt
-##    Übergänge aus der Historie der Sitzung, die synchrone Gegenprobe nach
-##    dem Laden nicht mehr hat. Die Übergänge selbst pins
-##    `TimelapseTransitionTests` headless.
-## Lädt am Ende die Welt aus `abs_save` zurück, der Aufrufer prüft danach das Laden.
 func _check_background_step(sim: Object, abs_save: String) -> bool:
-	const SETTLED := 0  # FRAME_SETTLED: Wasser ohne Überblenden, vergleichbar
+	const SETTLED := 0
 	var ok := true
 	if sim.stepInFlight() or not (sim.finishStep() as Dictionary).is_empty():
 		push_error("FAIL: ohne beginStep ist ein Schritt unterwegs")
 		ok = false
-	# Auf den GESPEICHERTEN Stand zurücksetzen: beide Seiten vergleichen dann
-	# denselben Schritt ab demselben Welt- UND Render-Zustand (s. Doc oben).
 	var reset: String = sim.loadWorld(abs_save)
 	if not reset.is_empty():
 		push_error("FAIL: loadWorld: %s" % reset)
@@ -291,7 +232,7 @@ func _check_background_step(sim: Object, abs_save: String) -> bool:
 	if not sim.stepInFlight():
 		push_error("FAIL: beginStep startet keinen Schritt")
 		return false
-	var live: PackedFloat32Array = sim.heights() # wartet den Job ab
+	var live: PackedFloat32Array = sim.heights()
 	if not sim.stepInFlight():
 		push_error("FAIL: ein wartender Aufruf hat das Ergebnis verworfen")
 		ok = false
@@ -313,7 +254,6 @@ func _check_background_step(sim: Object, abs_save: String) -> bool:
 	if (frame["heights"] as PackedByteArray) != live.to_byte_array():
 		push_error("FAIL: Frame-Höhen ≠ Sim-Höhen nach dem Schritt")
 		ok = false
-	# Gegenprobe synchron, ab derselben Welt.
 	var err: String = sim.loadWorld(abs_save)
 	if not err.is_empty():
 		push_error("FAIL: loadWorld: %s" % err)
@@ -331,14 +271,12 @@ func _check_background_step(sim: Object, abs_save: String) -> bool:
 	print("background_step_ok=", ok)
 	return ok
 
-## Summe der Höhen — kompakter Vergleichswert für „derselbe Zustand".
 func _height_sum(h: PackedFloat32Array) -> float:
 	var s := 0.0
 	for v in h:
 		s += v
 	return s
 
-## Mittlere absolute Nachbar-Differenz in einem 9×9-Fenster um Zelle c.
 func _local_roughness(h: PackedFloat32Array, n: int, c: int) -> float:
 	var ci := c % n
 	var cj := c / n

@@ -4,16 +4,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Messreihe zum Küsten-Befund aus Issue #174 (Strand-Ring und Sedimentfahnen):
-/// wie verteilt sich Sand an der Küste, wie weit reichen die Fahnen. Tabellen:
-/// `docs/river-coast-render-measurements.md` §E ff.
-///
-///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         --filter testCoastShapeDiagnostic
-///
-/// `RS_SEED` beschränkt auf einen Seed, `RS_YEAR` setzt das Alter (Standard
-/// 20.000), `RS_CACHE` den Welt-Cache (Standard `/tmp/river-sim-coast-cache`),
-/// `RS_MAP` einen Ordner für Küstenkarten (PPM).
 final class CoastShapeTests: XCTestCase {
 
     private let env = ProcessInfo.processInfo.environment
@@ -28,8 +18,6 @@ final class CoastShapeTests: XCTestCase {
         return t
     }
 
-    /// Druckt und hängt die Zeile an `RS_OUT` an (die Konsole des Testläufers
-    /// verschluckt Ausgaben, wenn der Lauf schnell endet).
     private func emit(_ line: String) {
         print(line)
         guard let path = env["RS_OUT"] else { return }
@@ -51,9 +39,6 @@ final class CoastShapeTests: XCTestCase {
         }
     }
 
-    // MARK: Küstenkennzahlen
-
-    /// Küstenlinie: Landzellen mit Chebyshev-Abstand 1 zum Meer.
     static func coastline(_ t: Terrain) -> [Int] {
         let n = t.cfg.n, dist = CoastMaterial.seaDistance(t)
         var out: [Int] = []
@@ -61,7 +46,6 @@ final class CoastShapeTests: XCTestCase {
         return out
     }
 
-    /// Höchste Höhe über der Zelle in einem Fenster (Radius `r`).
     static func backshore(_ t: Terrain, _ k: Int, radius r: Int) -> Double {
         let n = t.cfg.n, i0 = k % n, j0 = k / n
         var m = t.h[k]
@@ -71,7 +55,6 @@ final class CoastShapeTests: XCTestCase {
         return m - t.h[k]
     }
 
-    /// Meeresanteil im Fenster (Radius `r`).
     static func seaFraction(_ t: Terrain, _ k: Int, radius r: Int) -> Double {
         let n = t.cfg.n, i0 = k % n, j0 = k / n
         var sea = 0, all = 0
@@ -91,7 +74,6 @@ final class CoastShapeTests: XCTestCase {
             .joined(separator: " / ")
     }
 
-    /// 8er-Komponenten über `mask` (nur Küstenzellen) — Größen absteigend.
     static func components(_ cells: [Int], n: Int) -> [Int] {
         var inSet = Set(cells), sizes: [Int] = []
         while let s = inSet.first {
@@ -116,8 +98,6 @@ final class CoastShapeTests: XCTestCase {
         let coast = Self.coastline(t)
         let sandAt: (Int) -> Bool = { buffers.colors[$0 * 4 + 3] >= 128 }
         let rockAt: (Int) -> Bool = { buffers.surfaces[$0 * 4 + 1] >= 128 }
-        // Altes Modell (vor §E): Sand, sobald die Zelle in Reichweite der Brandung
-        // flach und niedrig liegt — nur Höhe und lokale Steigung.
         let legacySand = coast.filter { k in
             let slope = Terrain.macroSlope(t.h, k, n)
             return (1 - smoothstep(WaterRender.beachSlopeLo, WaterRender.beachSlopeHi, slope))
@@ -133,7 +113,6 @@ final class CoastShapeTests: XCTestCase {
                      coast.filter(rockAt).count, 100 * Double(coast.filter(rockAt).count) / Double(max(coast.count, 1))))
         emit("Sand-Abschnitte (8er-Komponenten der Küstenlinie): \(comps.count), größte: \(comps.prefix(6).map(String.init).joined(separator: ", ")), "
               + "größter Anteil an der Sand-Küste: \(String(format: "%.0f", 100 * Double(comps.first ?? 0) / Double(max(sandCoast.count, 1)))) %")
-        // Sandbreite je Küstenzelle: größter Abstand einer Sandzelle im 5×5-Fenster.
         var hist = [Int](repeating: 0, count: 8)
         for k in coast {
             let i0 = k % n, j0 = k / n
@@ -165,9 +144,6 @@ final class CoastShapeTests: XCTestCase {
         if let dir = env["RS_MAP"] { writeMap(t, buffers: buffers, dist: dist, to: "\(dir)/coast-\(seed).ppm") }
     }
 
-    // MARK: Kosten
-
-    /// Abstandsfeld wie vor §E (Stufen-Erweiterung, `cap` Zellen).
     private func legacySeaDistance(_ terrain: Terrain, cap capCells: Int) -> [UInt8] {
         let n = terrain.cfg.n
         let cap = UInt8(capCells)
@@ -197,7 +173,6 @@ final class CoastShapeTests: XCTestCase {
         return dist
     }
 
-    /// Median über 25 Läufe, abwechselnd (interleaved), ms.
     private func measureCost(_ t: Terrain) {
         func now() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1e6 }
         let passes: [(String, () -> Void)] = [
@@ -210,7 +185,7 @@ final class CoastShapeTests: XCTestCase {
             ("TerrainColorRenderer.buffers (neu)", { _ = TerrainColorRenderer.buffers(t) }),
         ]
         var times = [[Double]](repeating: [], count: passes.count)
-        for _ in 0..<2 { for p in passes { p.1() } }   // Aufwärmen
+        for _ in 0..<2 { for p in passes { p.1() } }
         for _ in 0..<25 {
             for (i, p) in passes.enumerated() {
                 let start = now(); p.1(); times[i].append(now() - start)
@@ -222,12 +197,6 @@ final class CoastShapeTests: XCTestCase {
         }
     }
 
-    // MARK: Kalibrier-Sweep
-
-    /// Strandanteil, Abschnitte und Felsanteil der Küstenlinie für Alternativen
-    /// von `CoastMaterial.Calibration` (nur die Formel; die Höhen- und
-    /// Steigungsfenster je Zelle kommen dazu). Zeilen: Name, Strand ≥ 1 Zelle
-    /// (% der Küstenlinie), Abschnitte, Felsküste ≥ 0,5 (%), Breiten-Histogramm 0…5.
     private func sweep(_ t: Terrain) {
         let n = t.cfg.n
         let (_, _, seeds) = CoastMaterial.shoreSeeds(t)
@@ -270,26 +239,17 @@ final class CoastShapeTests: XCTestCase {
         }
     }
 
-    // MARK: Sedimentfahnen
-
-    /// Stand VOR dem Befund „Rauchfächer" (§F): Konstanten der Fassung, die der
-    /// Shader mit Mip-Kette und Strömungs-Zug zeichnete.
     private enum Legacy {
         static let minDischarge = 2000.0, fullDischarge = 40000.0
         static let fullRelief = 0.5, reliefFloor = 0.3, offshore = 4
         static let lengthCells = 5.0 / 0.156, lod = 3.0, spread = 2.0, gain = 2.5, opacity = 0.6
     }
 
-    /// Sichtbar = Anteil der Trübungsfarbe an der Wasserfarbe ab 10 %.
     private static let visibleMix = 0.1
 
-    /// Alte Fahne, wie der Shader sie zeichnet: sechs Abgriffe stromauf, jeder
-    /// über die Mip-Stufe gemittelt (Kastenmittel um den Abgriff).
     private func legacyDensity(_ t: Terrain) -> (density: [Double], sources: [Int]) {
         let n = t.cfg.n, sea = t.cfg.sea, cellArea = t.cfg.cellSize * t.cfg.cellSize
         let h = t.h, rec = t.receiver
-        // Quellen: Mündungen mit der alten Schwelle, Fracht über das Relief
-        // (gleiche Etikettierung wie `SedimentPlume.mouths`).
         var source = [Double](repeating: 0, count: n * n)
         var sources: [Int] = []
         let relief = Dictionary(uniqueKeysWithValues: SedimentPlumeLegacy.mouths(t).map { ($0.land, $0.relief) })
@@ -299,7 +259,6 @@ final class CoastShapeTests: XCTestCase {
             let lo = Legacy.minDischarge, hi = Legacy.fullDischarge
             let discharge = min(1, max(0, log(max(q, lo) / lo) / log(hi / lo)))
             let load = Legacy.reliefFloor + (1 - Legacy.reliefFloor) * min(1, max(0, relief / Legacy.fullRelief))
-            // Quelle `offshore` Zellen in Fließrichtung ins Meer.
             let r = Int(rec[land])
             let di = r % n - land % n, dj = r / n - land / n
             var cell = r
@@ -311,7 +270,6 @@ final class CoastShapeTests: XCTestCase {
             source[cell] = max(source[cell], discharge * load)
             sources.append(cell)
         }
-        // Summenbild für Kastenmittel.
         var sat = [Double](repeating: 0, count: (n + 1) * (n + 1))
         for j in 0..<n { var row = 0.0; for i in 0..<n {
             row += source[j * n + i]; sat[(j + 1) * (n + 1) + i + 1] = sat[j * (n + 1) + i + 1] + row
@@ -339,7 +297,6 @@ final class CoastShapeTests: XCTestCase {
         return (density, sources)
     }
 
-    /// Fläche, Reichweite und Küstenabstand der sichtbaren Fahnen.
     private func plumeMetrics(_ t: Terrain, density: [Double], opacity: Double, mouths: [Int]) -> String {
         let n = t.cfg.n, sea = t.cfg.sea
         let dist = Self.landDistance(t)
@@ -349,7 +306,6 @@ final class CoastShapeTests: XCTestCase {
             area += 1
             offshoreSum += dist[k]
             offshore = max(offshore, dist[k])
-            // Zur nächsten Quelle: so weit liegt die sichtbare Zelle von ihrer Mündung.
             var nearest = Double.infinity
             for m in mouths {
                 nearest = min(nearest, Double((k % n - m % n) * (k % n - m % n) + (k / n - m / n) * (k / n - m / n)).squareRoot())
@@ -363,12 +319,10 @@ final class CoastShapeTests: XCTestCase {
                       far, offshore, area > 0 ? offshoreSum / Double(area) : 0)
     }
 
-    /// Euklidischer Abstand jeder Meereszelle zum nächsten Land (Zellen, bis 40).
     static func landDistance(_ t: Terrain) -> [Double] {
         let n = t.cfg.n, sea = t.cfg.sea
         var d = [Double](repeating: 0, count: n * n)
         let r = 40
-        // Zweistufig billig: Chebyshev-Abstand per BFS vom Land, genau genug.
         var dist = [Int](repeating: Int.max, count: n * n)
         var queue: [Int] = []
         for k in 0..<(n * n) where t.h[k] > sea { dist[k] = 0; queue.append(k) }
@@ -401,7 +355,6 @@ final class CoastShapeTests: XCTestCase {
         emit("  Mündungen (i, j, q): \(mouths.map { "(\($0.landCell % t.cfg.n), \($0.landCell / t.cfg.n), \(Int($0.dischargeCells)))" })")
     }
 
-    /// Küstenkarte: Schummerung, Meer blau, Sand gelb, Küstenfels rot.
     private func writeMap(_ t: Terrain, buffers: TerrainColorRenderer.Buffers, dist: [UInt8], to path: String) {
         let n = t.cfg.n, sea = t.cfg.sea
         let plume = SedimentPlume.field(t)
@@ -430,9 +383,6 @@ final class CoastShapeTests: XCTestCase {
     }
 }
 
-/// Alle D8-Mündungen ins Meer ohne Abflussschwelle (Landzelle + Relief des
-/// Einzugsgebiets) — die Etikettierung aus `SedimentPlume.mouths`, für den
-/// Vorher-Nachher-Vergleich der Messreihe.
 enum SedimentPlumeLegacy {
     static func mouths(_ terrain: Terrain) -> [(land: Int, relief: Double)] {
         let n = terrain.cfg.n, cnt = n * n, sea = terrain.cfg.sea

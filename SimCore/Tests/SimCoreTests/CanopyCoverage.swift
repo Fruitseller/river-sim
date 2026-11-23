@@ -4,23 +4,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Waldanteil des Kronendachs über die Matrix-Welten (Issue #168).
-///
-/// Misst, wie viel Land Wald trägt (Waldmaske ≥ 0,5), wie viel davon
-/// bewachsen ist (Vegetationsgewicht `vegW` ≥ `vegetatedFloor`, R-Kanal von
-/// `surfaces`) und wie viel bewachsenes Land ohne Wald als Wiese bleibt — für
-/// die Produktions-Schwellen und jede Kandidaten-Zeile in `candidates`.
-/// Tabelle: `docs/graphics-quality.md` § Wald und Wiese (#168).
-///
-///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         --filter testCanopyCoverageDiagnostic
-///
-/// `RS_SEED` beschränkt auf einen Seed. Laufzeit ~15 min (3 × 100.000 Jahre
-/// bei n = 720).
 final class CanopyCoverageTests: XCTestCase {
 
-    /// (Name, vegetationLo, vegetationHi, clumpGain); die erste Zeile ist die
-    /// Produktion, die zweite der Stand vor #168.
     private let candidates: [(String, Double, Double, Double)] = [
         ("Produktion", CanopyRender.vegetationLo, CanopyRender.vegetationHi, CanopyRender.clumpGain),
         ("vor #168", 0.14, 0.32, 0.45),
@@ -31,9 +16,6 @@ final class CanopyCoverageTests: XCTestCase {
         ("0,45/0,65 g0,60", 0.45, 0.65, 0.60),
     ]
 
-    /// Ab hier zählt eine Zelle als bewachsen: die Wald-Schwelle vor #168,
-    /// damit die Spalten mit der Ticket-Tabelle vergleichbar bleiben. Der
-    /// Shader tönt Wiese schon ab `CanopyRender.meadowLo` (0,08) leicht grün.
     private let vegetatedFloor = 0.14
 
     func testCanopyCoverageDiagnostic() throws {
@@ -53,8 +35,6 @@ final class CanopyCoverageTests: XCTestCase {
             for stage in stages {
                 while t.years < stage - 1e-5 { t.step(dtYears: min(1000, stage - t.years)) }
                 t.computeFlow()
-                // Ein Frame (Issue #214): Wasser, Material und Maske
-                // entstehen gemeinsam — derselbe Takt wie im Spiel.
                 let overlays = frameOverlays(RenderState(geometryMode: true), t)
                 let surfaces = overlays.surfaces
                 let protect = overlays.protectMask
@@ -90,14 +70,6 @@ final class CanopyCoverageTests: XCTestCase {
 
 extension CanopyCoverageTests {
 
-    /// Messlauf (Issue #167): warum Waldflächen im Zeitraffer springen, und was
-    /// das Gedächtnis der Waldmaske dagegen tut. Alte Produktionswelt, Seed
-    /// 1337, ab Jahr 100.000 20 Takte zu je 100 Jahren; die Maske entsteht
-    /// alle 25 Jahre wie bei 60 J/s (Overlay-Drossel 0,30 s ≈ 18 J.).
-    /// „Umkippen" = die Waldmaske kreuzt zwischen zwei Takten die 0,5, in %
-    /// der Landfläche je Takt. τ = 0 ist der Stand vor #167 (kein Gedächtnis);
-    /// die letzte Zeile rechnet ganz ohne Schutzmaske und ohne Gedächtnis,
-    /// also nur das Umkippen, das die Sim-Vegetation selbst verursacht.
     func testCanopyChurnDiagnostic() throws {
         try skipUnlessMeasuring()
         let terrain = Terrain(config: SimConfig.production, seed: 1337,
@@ -109,14 +81,6 @@ extension CanopyCoverageTests {
         let taus: [Double] = [0, 100, 200, 300, 500, 800, 1200]
         var memories = [[Float]](repeating: [], count: taus.count)
         var lastYear = terrain.years
-        /// Ein Render-Takt wie `RenderState.frame(.timelapse)`, dann je τ das
-        /// Gedächtnis über die verstrichenen Sim-Jahre. Die Reihenfolge steht
-        /// hier von Hand statt über `forestMaskBytes`, weil der Lauf mehrere τ
-        /// gegen DASSELBE Ziel vergleicht; ändert sich das Frame-Protokoll,
-        /// zieht dieser Takt mit. Die Bänder folgen dem Produktionsdeckel
-        /// (`rebuildRibbonsIfDue`): geprüft jeden dritten Takt (75 J.; bei
-        /// 60 J/s prüft der 1-Hz-Deckel jeden vierten Overlay-Upload, ≈ 72 J.),
-        /// gebaut nur ab `ribbonRebuildDelta`.
         var frames = 0
         func frame() -> [[UInt8]] {
             render.invalidate(terrain, .advanced)
@@ -136,7 +100,6 @@ extension CanopyCoverageTests {
             } + [ForestCanopyMask.bytes(terrain, surfaces: render.terrainSurfaceBytes(terrain),
                                         protect: [UInt8](repeating: 0, count: n * n), clump: clump)]
         }
-        // Einlauf: Gedächtnis und Wasser-EWMA auf den Zeitraffer einschwingen.
         for _ in 0..<80 { terrain.step(dtYears: 25); _ = frame() }
         var prev = frame()
         let rows = taus.map { String(format: "%7.0f", $0) } + ["ohne Schutzmaske"]

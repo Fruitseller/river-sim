@@ -1,70 +1,11 @@
-// Wasser-Geometrie (Issues #31/#34): Bänder entlang der Mäander-Zentrumslinien,
-// ihrer Delta-Distributäre und der abgeschnürten Altarme.
-// Vertex-Vertrag von SimNode.buildRiverRibbons:
-//   COLOR.rg = Fließrichtung (kodiert dir*0.5+0.5; genau 0 = STILLWASSER),
-//   COLOR.b = Strahler-Rang/6, COLOR.a = Deckkraft,
-//   UV.x = Quer-Position 0..1, UV.y = Bogenlänge (Welt),
-//   UV2.x = Typ (0 Fluss · 0.5 Delta-Arm · 1 Altarm) == WaterRender.ribbonKind*,
-//   UV2.y = signierte Bogenstärke −1…+1 (MeanderState.bendStrength, Issue #174
-//           C2): + = Linksbogen, Außenufer (Prallhang) bei UV.x = 0. Färbt das
-//           Querprofil außen dunkel-tief, innen hell-seicht (Vorlage E).
-//           0 = symmetrisch (Wendepunkt, Delta-Arm, Altarm).
-//   CUSTOM0 = Lauf-Größen (Look-Iteration 14, RiverRibbonRenderer.flowAttributes):
-//           x Riffel (0 Kolk … 1 Riffel), y Weißwasser, z Gefälle, w Breite (Welt).
-//           Damit wechselt der Fluss ENTLANG des Laufs (Kolk dunkel und glatt,
-//           Riffel hell und bewegt, Schaum an Stufen, Engstellen,
-//           Zusammenflüssen) statt als einfarbige Folie zu liegen.
-//   CUSTOM1 = Korridor (Look E, #239, RibbonMesh.profile): x Anteil 0 … 1,
-//           y Deckel-Höhe (ohne Korridor die eigene Höhe des Vertex, dann
-//           bleibt die Tiefe unverschoben), z Wasser-Halbbreite (Welt),
-//           w reserviert (0).
-//           Mit Korridor liegen Ufer und Bett als eigene Geometrie darunter
-//           (corridor.gdshader, corridor_wet.gdshader); das Band deckt den
-//           Wasserkörper bis zu deren Uferlinie mit der gemeinsamen
-//           Deckkraft-Rampe (`body`/`opacity` unten), das Bett darunter malt
-//           kein eigenes Wasser mehr.
-// Farben/Glanz sind DIESELBEN wie im Feld-Wasser des Terrain-Shaders, damit
-// Band-Wasser und Textur-Zubringer als EIN Wasser lesen: Wasserfarben, Fresnel,
-// Rauheit/Specular und der Strömungs-Schimmer kommen als water_*-Uniforms über
-// die Brücke (SimCore/WaterRender.swift → SimRender.CalibrationRegistry → SimNode →
-// Main.gd, Issues #91/#92) — beide Shader lesen dieselben Uniforms, der
-// Struktur-Vertrag dazu ist SimCoreTests/WaterRenderTests.swift.
-//
-// Querprofil (Befund #174 „hässlich"): das Band ist kein halbtransparenter
-// Schlauch mehr, der über die äußeren 35 % ins Gras ausfedert (las sich als
-// aufgemalter Dunst), sondern Wasser im Gelände:
-//   Bandkante → nasses Ufer (dunkler Saum, water_ribbon_bank_*)
-//   → Wasserlinie (water_ribbon_waterline, mit Rauschen versetzt, kantenscharf
-//     nach Pixelgröße geglättet)
-//   → Flachwasser über dem Bett (water_bed_color scheint durch)
-//   → tiefe Rinne in der Mitte bzw. am Prallhang.
-// Die Wasserfläche ist dabei so deckend wie die Deckkraft-Rampe des
-// Raster-Wassers (water_opacity_*: Bett ↔ Wasser, nicht Gras ↔ Wasser).
-// Kräuselung und Schimmer kommen aus strömungs-ausgerichtetem Rauschen statt
-// aus Sinus-Wellen längs der Bogenlänge: die malten gleich weite Querstreifen.
-//
-// EINE Seite malt (Befund #174, Band über dem See): wo der Terrain-Shader einen
-// Raster-See malt, blendet das Band per Pixel aus — mit DERSELBEN See-Maske
-// (Spiegel-Kontur × See-Gate aus height_tex/hf_tex/water_tex, dieselben
-// Blenden), die Main.gd an dieses Material spiegelt.
 shader_type spatial;
 render_mode cull_disabled, depth_draw_never;
 
 uniform float u_time = 0.0;
 
-// Band-Überblende im Zeitraffer (#174, Main.gd `ribbon_fade`): nach einem
-// Band-Bau zeichnen ZWEI Meshes, der vorige Stand (`ribbon_outgoing`) und der
-// neue, mit derselben Blende. Sie teilen sich die optische Dicke
-// (`ribbon_fade_alpha`, WaterRender.ribbonFadeOpacity): wo der Lauf
-// stillsteht, decken beide zusammen genau wie EIN Band, wo er gewandert ist,
-// blendet der alte Stand stetig aus und der neue ein. Weder lineares Mischen
-// (Deckkraft 0,95 → 0,72 mitten in der Blende, pulste im Takt der Band-Bauten)
-// noch ein Pixel-Los zwischen den Ständen (körnige Ufer, wo sie
-// auseinanderliegen).
 uniform float ribbon_blend = 1.0;
 uniform bool ribbon_outgoing = false;
 
-// Felder des Terrain-Shaders (Main.gd spiegelt dieselben Texturen hierher).
 uniform sampler2D height_tex : filter_linear, repeat_disable;
 uniform sampler2D hf_tex : filter_linear, repeat_disable;
 uniform sampler2D height_prev_tex : filter_linear, repeat_disable;
@@ -74,21 +15,9 @@ uniform sampler2D water_prev_tex : filter_linear, repeat_disable;
 uniform float height_blend = 1.0;
 uniform float overlay_blend = 1.0;
 uniform float world_size = 100.0;
-// Kantenlänge des Sim-Gitters (Main.gd `N`) für die texelzentrierte
-// Abbildung Welt → Textur, wie `world_uv` im Terrain-Shader.
 uniform float grid_n = 256.0;
 uniform float sea_level = 0.15;
 
-// Wasser-Kalibrierung über die Brücke (Issues #91/#92): Main.gd setzt die
-// Werte beim Aufbau aus SimRender.CalibrationRegistry. BEWUSST ohne Default — ein
-// Literal-Default wäre wieder eine Kopie der Kalibrierung (die #92 abschafft);
-// die Editor-Vorschau ohne SimNode ist damit unkalibriert (alles Null), aber
-// TOTAL: calib_window unten sichert die Typ-Fenster, max() den
-// Fresnel-Exponenten gegen die Null-Uniforms ab (smoothstep mit
-// edge0 >= edge1 und pow(0.0, 0.0) sind laut GLSL-Spec undefiniert;
-// Review zu #105).
-// Wächter: SimCoreTests/WaterUniformsTests.swift (default-frei, gelesen),
-// game/tests/water_uniforms.gd (End-to-End: jede Uniform wird gesetzt).
 uniform float water_lake_gate_lo;
 uniform float water_lake_gate_hi;
 uniform float water_pond_contour_lo;
@@ -134,25 +63,15 @@ uniform float water_ocean_wave_fade_lo;
 uniform float water_ocean_wave_fade_hi;
 uniform float water_ocean_depth_span;
 uniform vec3 water_ocean_shallow_color;
-// Uferlinie des Korridors (Look E, #239) als Anteil der Wasser-Halbbreite und
-// ihre Verschiebung im Bogen, dieselben Zahlen wie CorridorProfile.section:
-// das Band endet GENAU dort, wo die Böschung aus dem Wasser steigt.
 uniform float water_corridor_shore;
 uniform float water_corridor_shore_bend;
 
 #include "res://shaders/corridor_common.gdshaderinc"
 
-// Kalibrier-Fenster, total auch mit Null-Uniforms (Editor-Vorschau ohne
-// SimNode, s. Deklarationsblock oben) — dasselbe Epsilon wie im
-// Terrain-Shader: Mindest-Fensterbreite, keine Kalibrier-Kopie.
 float calib_window(float lo, float hi, float x) {
 	return smoothstep(lo, max(hi, lo + 1e-6), x);
 }
 
-// Deckkraft dieses Stands in der Überblende: Anteil `share` an der optischen
-// Dicke −ln(1 − a). Gedeckelt (water_ribbon_fade_cap), sonst wäre sie bei
-// a = 1 unendlich und ein allein liegender Stand spränge sofort auf voll.
-// Außerhalb der Blende (share 1) unverändert.
 float ribbon_fade_alpha(float a) {
 	float share = ribbon_outgoing ? 1.0 - ribbon_blend : ribbon_blend;
 	if (share >= 1.0) {
@@ -170,10 +89,8 @@ varying vec3 v_world;
 varying vec4 v_flow;
 varying vec4 v_profile;
 
-// Wolkenschatten (#151) laufen ohne Kante über die Bänder weiter.
 #include "res://shaders/clouds.gdshaderinc"
 
-// Wertrauschen wie im Ozean-Shader (Hash-Konstanten sind keine Kalibrierung).
 float ribbon_hash(vec2 p) {
 	p = fract(p * vec2(123.34, 345.45));
 	p += dot(p, p + 34.345);
@@ -188,21 +105,16 @@ float ribbon_noise(vec2 p) {
 	           mix(ribbon_hash(i + vec2(0.0, 1.0)), ribbon_hash(i + vec2(1.0)), u.x), u.y);
 }
 
-// Welt-xz → Texturkoordinate des Sim-Gitters, texelzentriert wie `world_uv`
-// im Terrain-Shader (Zelle k = Texel k mit Mitte (k + ½)/grid_n).
 vec2 grid_uv(vec2 xz) {
 	float n = max(grid_n, 2.0);
 	return ((xz / world_size + 0.5) * (n - 1.0) + 0.5) / n;
 }
 
-// Wasserfeld mit derselben Zeitraffer-Blende wie `water_at` im Terrain-Shader.
 float water_g_at(vec2 uv) {
 	float g = texture(water_tex, uv).g;
 	return overlay_blend < 1.0 ? mix(texture(water_prev_tex, uv).g, g, overlay_blend) : g;
 }
 
-// See-Maske GENAU wie terrain.gdshader (height_at/hf_at/pond_at/lake_gate_at):
-// was dort als See gemalt wird, malt hier niemand ein zweites Mal.
 float lake_mask_at(vec2 uv) {
 	float h = texture(height_tex, uv).r;
 	h = height_blend < 1.0 ? mix(texture(height_prev_tex, uv).r, h, height_blend) : h;
@@ -213,11 +125,6 @@ float lake_mask_at(vec2 uv) {
 		* calib_window(water_lake_gate_lo, water_lake_gate_hi, water_g_at(uv));
 }
 
-// Kräusel-Gradient in Strömungs-Koordinaten (x längs, y quer): Rausch-Oktaven,
-// längs gestreckt und stromab verschoben. Jede Oktave blendet aus, sobald ihre
-// Zellen unter die Pixelgröße fallen (Fenster und Oktaven-Folge teilt das Band
-// mit dem Ozean) — die Ferne bleibt ruhig statt zu flimmern. Versätze und
-// Differenzen-Schritt sind numerisch, keine Kalibrierung.
 vec2 ribbon_ripple_grad(vec2 q, float footprint) {
 	vec2 g = vec2(0.0);
 	float freq = water_ribbon_ripple_frequency;
@@ -243,8 +150,6 @@ void vertex() {
 	v_flow = CUSTOM0;
 	v_profile = CUSTOM1;
 	vec3 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	// Mindestbreite in der Totalen (corridor_common): nur fließende Läufe,
-	// dieselbe Formel und Breite wie der Korridor darunter.
 	float running_v = (1.0 - step(0.25, UV2.x)) * step(0.05, length(v_dir));
 	float half_band = 0.5 * max(CUSTOM0.w, 0.0);
 	float f = corridor_widen(p, max(CUSTOM1.z, 1e-4), COLOR.a * running_v * CUSTOM1.x,
@@ -262,23 +167,9 @@ void vertex() {
 }
 
 void fragment() {
-	// Typ-Gewichte aus UV2.x (0 Fluss · 0.5 Delta · 1 Altarm). Als weiche
-	// Gewichte statt if-Kaskade: die Werte kommen pro Vertex und werden über
-	// das Band interpoliert, an Bandgrenzen gibt es also keine harte Kante.
-	float still = calib_window(water_ribbon_still_lo, water_ribbon_still_hi, v_kind); // Altarm: keine Strömung
-	float delta = (1.0 - still) * calib_window(water_ribbon_delta_lo, water_ribbon_delta_hi, v_kind); // Delta-Arm
+	float still = calib_window(water_ribbon_still_lo, water_ribbon_still_hi, v_kind);
+	float delta = (1.0 - still) * calib_window(water_ribbon_delta_lo, water_ribbon_delta_hi, v_kind);
 
-	// Die Deckkraft des Vertex-Vertrags (Taper, Abfluss-Rampe, Übergaben,
-	// `fadeUphill`, #187) wirkt als SCHMALERES Band, nicht als Transparenz:
-	// ein halbdurchsichtiges Band mit scharfer Wasserlinie las sich als
-	// Glasrohr. Seit dem Review zu #174 schrumpft der GANZE Querschnitt
-	// (Ufer und Wasser): vorher wurde nur das Wasser schmaler, das nasse Ufer
-	// blieb voll breit und lag bei ausgeblendeten Bändern als leere dunkle
-	// Rinne im Gelände. Das Fenster ist eine eigene Optik-Zahl dieses
-	// Shaders, keine WaterRender-Konstante.
-	// Mündung ins Meer (#174): ab der Wasserlinie blendet das Band über wenige
-	// Zellen weich in die Meeresfarbe und Deckkraft 0 aus, statt mit gerader
-	// Kante über dem türkisen Schelf abzubrechen. Der Ufersaum (Bank) entfällt im Meer.
 	vec2 guv = grid_uv(v_world.xz);
 	float h_terrain = texture(height_tex, guv).r;
 	if (height_blend < 1.0) {
@@ -288,34 +179,17 @@ void fragment() {
 
 	float presence = clamp(v_alpha, 0.0, 1.0);
 	float visible = smoothstep(0.05, 0.75, mix(presence, 1.0, in_sea));
-	// Ableitungen VOR jedem bedingten Pfad (s. ocean.gdshader).
-	float across_band = 1.0 - abs(UV.x * 2.0 - 1.0); // 0 = Bandkante, 1 = Mitte
+	float across_band = 1.0 - abs(UV.x * 2.0 - 1.0);
 	float across = clamp((across_band - (1.0 - visible)) / max(visible, 1e-3), 0.0, 1.0);
 	float aa = max(fwidth(across_band), 1e-4) / max(visible, 1e-3);
 	float footprint = length(fwidth(v_world.xz));
-	// Bandbreite in Welteinheiten je Einheit UV.x (Review zu #174): UV.y ist
-	// schon Weltmaß (Bogenlänge), UV.x läuft quer 0 … 1. Sie kommt je
-	// Stützpunkt aus dem Band-Bau (`RibbonMesh.flows.w`, Review Neon Nr. 8);
-	// bis dahin entstand sie je Pixel als Jacobi-Spalte ∂Welt/∂UV.x aus den
-	// Bildschirm-Ableitungen — dieselbe Größe, aber je Dreieck konstant und
-	// an Dreieckskanten von den Ableitungen der Nachbarpixel verrauscht.
 	float band_width = max(v_flow.w, 0.0);
 
-	// Wasserlinie: um ein Rauschen versetzt, damit das Ufer nicht als
-	// Lineal-Kante parallel zur Zentrumslinie läuft; Glättung nach Pixelgröße
-	// (scharf in der Nähe, weich in der Übersicht, nie treppig).
 	float line = water_ribbon_waterline
 		+ (ribbon_noise(v_world.xz * water_ribbon_waterline_scale) - 0.5) * 2.0 * water_ribbon_waterline_jitter;
 	float wet = smoothstep(line - aa, line + aa, across);
-	float profile = calib_window(line, 1.0, across); // 0 Wasserlinie … 1 Mitte
-	// Mit Korridor endet das Wasser an SEINER Uferlinie (CorridorProfile:
-	// je Seite Anteil der Wasser-Halbbreite, im Bogen am Prallhang außen, am
-	// Gleithang innen). Bis hierher reichte es bis 92 % der Bandbreite, die
-	// Uferlinie des Korridors lag bei 65 %: ein Wasserfilm über der trockenen
-	// Böschung, der Lauf las sich als Fluss im Fluss (Gremium, Befund 1).
+	float profile = calib_window(line, 1.0, across);
 	float corridor = clamp(v_profile.x, 0.0, 1.0);
-	// Ableitung VOR dem Zweig: `corridor` ist interpoliert und nicht
-	// quad-uniform (Auslauf zum See/Meer), fwidth darin wäre undefiniert.
 	float off_w = abs(UV.x * 2.0 - 1.0) * 0.5 * band_width;
 	float aa_w = max(fwidth(off_w), 1e-5);
 	if (corridor > 0.0) {
@@ -329,58 +203,30 @@ void fragment() {
 	}
 	float bank = calib_window(0.0, line, across) * (1.0 - wet) * (1.0 - in_sea) * (1.0 - corridor);
 
-	// Tiefe ∝ Strahler-Rang (Hierarchie: große Läufe tief, Bäche seicht), zur
-	// Wasserlinie hin seicht (Querprofil eines echten Gerinnes).
-	// Fast gleichmäßig tief bis an die Wasserlinie: ein über die Breite
-	// durchlaufender Tiefenverlauf (und erst recht ein heller Flachwasser-
-	// Saum) las sich als Rohr mit dunkler Mittellinie. Die Asymmetrie
-	// Prallhang/Gleithang trägt das Bogenprofil darunter.
 	float depth = clamp(0.35 + v_rank * 1.5, 0.0, 1.0) * mix(0.7, 1.0, smoothstep(0.0, 0.45, profile));
-	// Delta-Arme liegen auf dem Ablagerungskörper: per Definition Flachwasser.
 	depth = mix(depth, depth * 0.35, delta);
-	// Lauf-Größen (CUSTOM0) nur im fließenden Wasser.
 	float running = (1.0 - still) * (1.0 - delta);
 	float riffle = clamp(v_flow.x, 0.0, 1.0) * running;
 	float whitewater = clamp(v_flow.y, 0.0, 1.0) * running;
 	float steep = clamp(v_flow.z, 0.0, 1.0) * running;
-	// Kolk ↔ Riffel ENTLANG des Laufs: über der Furt seicht über die ganze
-	// Breite, im Kolk die volle Tiefe.
 	depth *= mix(1.0, water_riffle_depth, riffle);
-	// Querprofil im Bogen (Issue #174 C2, Spiegel: WaterRender.ribbonOutward):
-	// +1 am Prallhang (Kolk, tief), −1 am Gleithang (Bank, seicht).
 	float outward = -(UV.x * 2.0 - 1.0) * clamp(v_bend, -1.0, 1.0);
 	depth = clamp(depth + water_ribbon_bend_depth * outward, 0.0, 1.0);
 
 	vec3 water = mix(water_shallow_color, water_deep_color, depth);
-	// Delta: sedimentbeladene Fahne über der Seefläche — heller und wärmer als
-	// das Becken, sonst läse sich der Fächer als zweite Wasserfläche statt als
-	// das, was er ist (Trübung über dem Ablagerungskörper).
 	water = mix(water, water_delta_plume_color, delta * 0.5);
-	// Altarm: stehendes, trübes Auwasser — grünlicher als der klare Lauf.
 	water = mix(water, water_oxbow_water_color, still * 0.5);
 
-	// Strömungs-Koordinaten des BANDS: x = Bogenlänge (UV.y, Welt, stromab
-	// stetig), y = Quer-Position in Weltmaß (UV.x × Bandbreite; bis zum
-	// Review zu #174 UV.x allein, die Kräuselung quer war damit auf jedem
-	// Band gleich viele Zellen breit). NICHT dot(Welt-Position, Richtung): die Richtung dreht je
-	// Stützpunkt, und das Produkt mit einer ~50 Einheiten langen Position
-	// sprang von Quad zu Quad — Querschraffur. Stillwasser hat keine Richtung
-	// und kräuselt nur schwach.
 	vec2 d1 = normalize(length(v_dir) > 0.05 ? v_dir : vec2(0.7, 0.7));
 	vec2 d2 = vec2(-d1.y, d1.x);
 	float speed = water_ribbon_ripple_speed * (1.0 - still);
 	vec2 q = vec2(UV.y * water_ribbon_ripple_stretch - u_time * speed, UV.x * band_width);
-	// Flowmap aus der Band-Tangente in zwei versetzten Phasen (Valve 2010):
-	// das Tempo wechselt entlang des Laufs (Gefälle, Riffel), eine stetige
-	// Verschiebung würde das Muster dabei zerren. Jede Phase verschiebt höchstens
-	// eine Periode weit und springt dann zurück, wenn ihr Gewicht null ist.
 	float local_speed = speed * (0.6 + 1.6 * steep + 0.6 * riffle);
 	float ph0 = fract(u_time * 0.2);
 	float ph1 = fract(ph0 + 0.5);
 	float w0 = 1.0 - abs(2.0 * ph0 - 1.0);
 	vec2 q0 = vec2(UV.y * water_ribbon_ripple_stretch - local_speed * ph0 * 5.0, UV.x * band_width);
 	vec2 q1 = vec2(UV.y * water_ribbon_ripple_stretch - local_speed * ph1 * 5.0 + 3.7, UV.x * band_width + 1.3);
-	// Nur eine der beiden Formen rechnen (Stillwasser kennt keine Strömung).
 	vec2 g_flow = running > 0.5
 		? ribbon_ripple_grad(q0, footprint) * w0 + ribbon_ripple_grad(q1, footprint) * (1.0 - w0)
 		: ribbon_ripple_grad(q, footprint);
@@ -390,50 +236,23 @@ void fragment() {
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
 
-	// Fresnel: bei flachem Blick tritt der Wasserkörper hinter die Spiegelung
-	// zurück, die Godot selbst gegen den Himmel rechnet (wie terrain.gdshader).
 	float ndv = clamp(dot(water_n_vs, VIEW), 0.0, 1.0);
 	float fresnel = pow(1.0 - ndv, max(water_fresnel_exponent, 1e-6));
 
-	// Strömungs-Schimmer stromab: lange, langsam wandernde Schlieren aus
-	// demselben Rauschen (Bewegung im Zeitraffer ablesbar, aber kein
-	// Streifenmuster). Ein Altarm hat KEINE Fließrichtung mehr.
 	float flow = (ribbon_noise(vec2(q.x * 0.35 - u_time * speed * 0.5, q.y * 2.2) * water_ribbon_ripple_frequency + 5.3) - 0.5) * 2.0;
 	water += flow * water_flow_shimmer_color * (1.0 - still);
 
-	// Flachwasser: das Bett scheint durch (dieselbe Deckkraft-Rampe wie das
-	// Raster-Wasser im Terrain-Shader, dort über dem echten Gelände). Am
-	// Gleithang zusätzlich die Bank — nur im Saum an der Wasserlinie: über die
-	// halbe Bandbreite gezogen lag sie als milchiger Schleier auf dem Fluss.
-	// Mit Korridor liegt das Bett als Geometrie darunter und scheint über die
-	// Deckkraft des Bands durch (ALPHA unten); ohne ihn mischt das Band die
-	// Bettfarbe selbst. Beides ist dieselbe Rampe wie beim Raster-Wasser.
 	float opacity = mix(water_opacity_shallow, water_opacity_deep, depth);
 	vec3 water_final = mix(water, mix(water_bed_color, water, opacity), 1.0 - corridor);
-	// Strömungsstriche: quer fein, längs gestreckt. Nah die feine Schar, in
-	// der Ferne gröbere Flecken (Zellen ≥ 1 px quer). Die Faktoren sind
-	// Optik-Zahlen dieses Shaders (Seitenverhältnis der Striche), die
-	// Grundfrequenz kommt als water_foam_scale.
 	float streak_far = ribbon_noise(vec2(q.x * 0.8 - u_time * speed * 0.8, q.y * 2.8) * water_foam_scale * 0.3 + 2.7);
-	// Nah: zwei Rauschfelder multipliziert, das zweite quer sehr fein —
-	// schmale, abreißende Striche statt runder Flecken.
 	float streak_near = sqrt(ribbon_noise(vec2(q.x * 1.2 - u_time * speed, q.y * 2.4) * water_foam_scale + 9.1)
 		* ribbon_noise(vec2(q.x * 0.6 - u_time * speed, q.y * 4.0) * water_foam_scale + 4.4));
 	float near_w = 1.0 - smoothstep(0.3, 1.0, footprint * water_foam_scale * 8.0);
 	float streak = mix(streak_far, streak_near, near_w);
-	// Riffel: belüftete, hellere Oberfläche, entlang der Striche gebrochen.
 	water_final = mix(water_final, water_riffle_color, riffle * mix(0.4, 1.0, smoothstep(0.3, 0.7, streak)) * profile);
-	// Gleithang: Kiesbank nur als schmale, unterbrochene Kante an der
-	// Wasserlinie (über den ganzen Lauf gezogen las sie sich als heller Saum).
 	float shoal_gate = smoothstep(0.55, 0.75, ribbon_noise(vec2(q.x * 4.0, q.y * 2.0) + 31.0));
 	water_final = mix(water_final, water_ribbon_shoal_color,
 		water_ribbon_shoal_mix * max(-outward, 0.0) * shoal_gate * (1.0 - smoothstep(0.0, 0.15, profile)));
-	// Weißwasser: Schaumfahnen in Fließrichtung nur, wo die Lauf-Größen es
-	// sagen (CUSTOM0: Stufen, Engstellen, Zusammenflüsse, Riffel). Weich über
-	// ein breites Fenster auf Streifen UND einem runden Rauschen: die frühere
-	// Schwelle (0,05 breit auf dem längs gestreckten Wertrauschen, dazu
-	// Schaum an jedem Außenbogen) schnitt dessen Zellen als weiße Rechtecke
-	// aus, „Fahrbahnmarkierungen" (Gremium, Befund 3).
 	float foam_drive = clamp(whitewater + 0.5 * riffle * (1.0 - 0.5 * depth), 0.0, 1.0);
 	float blob = ribbon_noise(vec2(q.x * 2.5, q.y) * water_foam_scale * 0.5 + 17.0);
 	float foam_n = streak * 0.55 + blob * 0.45;
@@ -446,13 +265,7 @@ void fragment() {
 	vec3 col = mix(water_ribbon_bank_color, water_final, wet);
 	col *= cloud_light(v_world, u_time);
 	ALBEDO = col;
-	// Sonnenglitzern: Facetten in der Größe des Bildpunkts, die die Sonne ins
-	// Auge spiegeln. In der Totalen das stärkste Signal für Wasser.
 	vec3 view_g = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
-	// Zellgröße in Zweierpotenzen der Pixelgröße (sonst sprang die Zellgrenze
-	// mit der Pixelgröße je Bildpunkt), und je Zelle nur ein runder Punkt um
-	// eine zufällige Stelle: bis hierher leuchtete die GANZE Zelle, das las
-	// sich als blockige Quadrate (Gremium, Befund 3).
 	float g_size = exp2(ceil(log2(max(footprint * 2.0, 0.004))));
 	vec2 g_pos = v_world.xz / g_size;
 	vec2 cell = floor(g_pos);
@@ -465,41 +278,19 @@ void fragment() {
 		* g_dot * wet * (1.0 - still) * (1.0 - foam) * smoothstep(0.005, 0.05, footprint);
 	NORMAL = normalize(mix(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0), water_n_vs, wet));
 	float lake = lake_mask_at(guv);
-	// Erst ganz zuletzt blendet der schmale Rest aus. Im Meer blendet die
-	// Deckkraft linear mit presence auf 0 aus (#174), an Land schrumpft die Breite.
 	float sea_alpha = mix(smoothstep(0.0, 0.25, presence), presence, in_sea);
-	// Mit Korridor deckt das Band nach der gemeinsamen Deckkraft-Rampe
-	// (seicht lässt es das Bett durchscheinen); Spiegelung und Schaum decken
-	// voll. Bis hierher deckte es nur als dünner Film (0,1 + Fresnel), der
-	// Wasserkörper kam aus einem eigenen Beer-Lambert im Korridor: fast
-	// schwarzer Kern, heller Rand, ein anderes Wasser als Seen und Zubringer.
 	float body = mix(1.0, clamp(max(opacity, fresnel) + foam, 0.0, 1.0), corridor);
-	// Die See-Maske gilt nur ohne Korridor: mit ihm liegt Ufer und Bett über
-	// dem Gelände (Deckel-Tiefe), der Raster-See des Terrain-Shaders ist
-	// verdeckt, und das Band fehlte über jedem Tümpel im Gerinne (Querbalken).
 	ALPHA = ribbon_fade_alpha(sea_alpha * max(wet * body, bank * water_ribbon_bank_opacity)
 		* (1.0 - lake * (1.0 - delta) * (1.0 - corridor)));
 	vec3 cam_w = CAMERA_POSITION_WORLD;
 	LIGHT_VERTEX = (VIEW_MATRIX * vec4(corridor_lid_point(v_world, v_profile.y, cam_w), 1.0)).xyz;
-	// Die 0.55 ist die Stillwasser-Rauheit des Altarms (nur dieser Shader kennt
-	// Stillwasser) — numerisch zufällig gleich waterOpacityShallow,
-	// KEINE WaterRender-Konstante. Das nasse Ufer glänzt matt (0.6).
 	float water_rough = mix(water_roughness, 0.55, still);
 	water_rough = mix(water_rough, 0.7, foam);
 	ROUGHNESS = mix(0.6, water_rough, wet);
-	// Fließendes Wasser spiegelt den Himmel schwächer (water_river_specular):
-	// sonst legte sich das Himmelsgrau über den Wasserkörper, der Lauf las
-	// sich als „hellblau-graue Folie" (Nr. 13). Altarme spiegeln voll.
 	float spec = mix(water_specular, water_river_specular, running * (1.0 - foam));
 	SPECULAR = mix(0.4, spec, wet);
-	// Stillwasser spiegelt die Wolken: Strahl am Wasserspiegel auf die
-	// Wolkenbasis, deren Deckung als heller Fleck (Licht, nicht Farbe; der
-	// Weißton ist eine Optik-Zahl wie im Terrain-Shader).
 	vec3 view_ws = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
 	vec3 refl = reflect(-view_ws, water_n_ws);
-	// Nur wo das Ergebnis zählt (Review Neon Nr. 9): Stillwasser, sichtbar,
-	// Wolken an, Wasserspiegel unter der Wolkenbasis (darüber spiegelte der
-	// Strahl rückwärts auf Wolken unter dem Wasser, vgl. `cloud_light`).
 	float cloud_w = still * wet * water_cloud_reflection;
 	float cloud_hit = clouds_enabled && cloud_w > 0.0 && refl.y > 0.05 && v_world.y < cloud_height
 		? cloud_cover(v_world.xz + refl.xz * (cloud_height - v_world.y) / refl.y, u_time) : 0.0;

@@ -1,25 +1,4 @@
 #!/usr/bin/env bash
-# Blinder Paarvergleich zweier Aufnahme-Sätze gegen die Referenzen.
-#
-#   scripts/look/judge.sh <A-ordner> <B-ordner> [läufe je aufnahme, Standard 10]
-#
-# Je Aufnahme und Lauf bekommt der Bewerter (Standard: DeepSeek V4.1 Flash
-# über opencode, kostenlos; s. judge_one) Referenz, X und Y; welcher Satz X ist, wird je Lauf
-# zufällig gewürfelt. Ausgabe: je Urteil eine Zeile, am Ende
-# `ERGEBNIS A <a> B <b> GLEICH <g> VON <n>` und `ENTSCHEIDUNG B_BEHALTEN`
-# bzw. `ENTSCHEIDUNG VERWERFEN`; fehlt ein Urteil, `ENTSCHEIDUNG
-# UNVOLLSTAENDIG` mit Exit 2 (nie eine Freigabe: neu fahren).
-#
-# Entscheidungsregel (seit 2026-11-20, s. docs/look-hillclimb.md § Regel):
-# B (der neue Stand) wird behalten, wenn B − A mindestens 1/3 aller Urteile
-# beträgt, A höchstens 1/5 der Urteile gewinnt UND in keiner Aufnahme mehr
-# A- als B-Stimmen stehen. Gewertet wird über 10 Läufe je Aufnahme (zwei
-# Durchgänge mit je 5 oder einer mit 10). „GLEICH“ ist erlaubt und zählt
-# nicht gegen B: mit erzwungener Wahl ging dasselbe Bild zweimal gerendert
-# (nur Subpixel-Unterschiede) gemessen 6:3 aus. Die frühere Regel (B ≥ 2/3,
-# A ≤ 1/9) verwarf gemessen auch kleine echte Verbesserungen.
-# Weitere Bewerter (Panel): LOOK_JUDGES="deepseek codex", s. judge_one.
-# GLM 5.3 sieht keine Bilder und taugt deshalb nicht als Bewerter.
 set -euo pipefail
 a=${1:?A-Ordner fehlt}; b=${2:?B-Ordner fehlt}; runs=${3:-10}
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -28,7 +7,6 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/look-judge.XXXXXX")
 meta=$(mktemp -d "${TMPDIR:-/tmp}/look-urteile.XXXXXX")
 judges=${LOOK_JUDGES:-deepseek}
 
-# name | Referenz | Zusatz für den Bewerter
 shots=(
   "diorama|d-insel-diorama-schoen.jpg|Die Referenz ist hier auch FORMZIEL: Großform der Insel, Kamm, Täler, Küste dürfen mitzählen."
   "tal|e-tal-kueste-schoen.jpg|Die Referenz zeigt hier NUR Material und Licht. Ihre Landformen sind erfunden; vergleiche KEINE Formen, Bildaufbau oder Kamera, nur wie Wasser, Ufer, Strand, Wald, Fels, Schnee, Meer und Licht dargestellt sind."
@@ -62,12 +40,7 @@ URTEIL: GLEICH
 P
 }
 
-# Der Bewerter ist ein Agent mit Shell: Er hat gemessen Verzeichnisse
-# gelistet und die Aufnahmen unter ihrem echten Pfad (…/base/…, …/it02/…)
-# geöffnet, der Vergleich war dann nicht blind. Deshalb bekommt jedes Urteil
-# einen eigenen Ordner mit neutralen Kopien (ref/x/y.jpg); die Zuordnung
-# (.a_is) und die Ausgaben liegen außerhalb davon in $meta.
-judge_one() { # judge ref x y outfile promptfile
+judge_one() {
   local d; d=$(mktemp -d "$work/j.XXXXXX")
   cp "$2" "$d/ref.jpg"; cp "$3" "$d/x.jpg"; cp "$4" "$d/y.jpg"
   set -- "$1" "$d/ref.jpg" "$d/x.jpg" "$d/y.jpg" "$5" "$6"
@@ -104,7 +77,6 @@ for p in "${jobs_[@]}"; do wait "$p" || true; done
 aw=0; bw=0; tie=0; total=0
 for f in "$meta"/*.out; do
   tag=$(basename "$f" .out)
-  # Nur eine exakt passende LETZTE Urteilszeile zählt.
   v=$(sed $'s/\x1b\\[[0-9;]*m//g' "$f" | grep -E '^[[:space:]]*URTEIL:' | tail -1 \
       | sed -nE 's/^[[:space:]]*URTEIL:[[:space:]]*(X|Y|GLEICH)[[:space:]]*$/\1/p' || true)
   [[ -n $v ]] || { echo "$tag: kein Urteil"; continue; }
@@ -115,7 +87,6 @@ for f in "$meta"/*.out; do
   echo "$tag: $w — $(grep -v 'URTEIL' "$f" | tr '\n' ' ' | cut -c1-240)"
 done >"$meta/zeilen.txt"
 cat "$meta/zeilen.txt"
-# Je Aufnahme: keine darf mehr A- als B-Stimmen tragen.
 cam_ok=1
 for s in "${shots[@]}"; do
   name=${s%%|*}
@@ -125,9 +96,6 @@ for s in "${shots[@]}"; do
   (( ca > cb )) && cam_ok=0
 done
 echo "ERGEBNIS A $aw B $bw GLEICH $tie VON $total (Rohurteile: $meta)"
-# Fehlende Urteile sind keine Freigabe: der Nenner wären sonst nur die
-# lesbaren Ausgaben, und ein Vergleich, dem eine ganze Aufnahme fehlt, könnte
-# trotzdem „behalten“ sagen.
 erwartet=$(( ${#shots[@]} * runs * $(wc -w <<<"$judges") ))
 if (( total != erwartet )); then
   echo "ENTSCHEIDUNG UNVOLLSTAENDIG ($total von $erwartet Urteilen; nicht behalten, neu fahren)"

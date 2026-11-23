@@ -1,17 +1,4 @@
 extends SceneTree
-## Nimmt den Zeitraffer in ECHTZEIT auf, Bild für Bild aus dem Fenster, für
-## den Flimmer-Nachweis der Gelände-Verfeinerung (#238):
-##
-##   RS_SEED=1337 RS_STEP=20000 RS_RATE=60 CAPTURE_OUT=/abs/ordner \
-##     CAPTURE_SECONDS=12 godot --path game --resolution 1728x1052 \
-##     --script res://tools/timelapse_capture.gd
-##
-## Godots Movie-Modus (`--write-movie`) taugt dafür nicht: er rechnet die
-## Bilder in fester Bildzeit, die Sim tickt und die Überblenden laufen aber
-## auf der echten Uhr (`Main._now`), im Film springt der Stand deshalb, statt
-## zu gleiten. Hier läuft alles wie am Bildschirm; die Aufnahme kostet nur
-## Bildrate. Schreibt `<nr>.jpg` und `stamps.txt` (Sekunden je Bild).
-## scripts/look/zeitraffer-video.sh baut daraus das Video.
 
 const Main = preload("res://scripts/Main.gd")
 const WARMUP_SECONDS := 2.0

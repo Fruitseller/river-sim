@@ -14,11 +14,6 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(first.surfaces.count, terrain.cfg.count * 4)
     XCTAssertEqual(first.colors, second.colors)
     XCTAssertEqual(first.surfaces, second.surfaces)
-    // A-Kanal = Sandgewicht als max(Strand, Bank) (Issue #174 C/C2): bis vor
-    // #174 stand dort konstant 255 („opak"), gelesen hat ihn niemand. Sand
-    // liegt nur an der Küste in Brandungs-Reichweite über dem Meer
-    // (`CoastMaterial`) oder auf einer Gleithang-Bank (`barAge` ≥ 0,
-    // `BarMaterial`); sonst bleibt der Kanal 0.
     let distance = CoastMaterial.seaDistance(terrain)
     XCTAssertTrue(
       (0..<terrain.cfg.count).allSatisfy { k in
@@ -69,8 +64,6 @@ final class SimRenderTests: XCTestCase {
     let renderer = TerrainDiagnostics()
     renderer.capture(terrain)
 
-    // Ungültige Werte setzen: stats muss DBG_INVALID (Index 15) zählen.
-    // setBedForTests erlaubt in h ausschließlich NaN ($0.isNaN), keine Unendlichkeiten.
     var h = terrain.h
     h[10] = Double.nan
     h[11] = Double.nan
@@ -79,17 +72,13 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(stats[15], 2.0, "Zwei ungültige Zellen (NaN)")
     XCTAssertTrue(stats[3].isFinite, "Landrelief muss trotz ungültiger Zellen endlich bleiben")
 
-    // NaN-Skala darf in differenceBytes nicht zu NaN/Absturz führen (wird per max(1e-9, scale) geklemmt).
     let diff = renderer.differenceBytes(terrain, scale: Double.nan)
     XCTAssertEqual(diff.count, terrain.cfg.count * 4)
-    // Zellen 10 und 11 müssen Magenta (ungültig) sein: [255, 0, 255, 255]
     let o = 10 * 4
     XCTAssertEqual(Array(diff[o..<(o + 4)]), [255, 0, 255, 255])
     let o11 = 11 * 4
     XCTAssertEqual(Array(diff[o11..<(o11 + 4)]), [255, 0, 255, 255])
 
-    // Gegenprobe für eine finite Zelle: Zelle 0 ist unverändert (hellgrau) und nicht Magenta;
-    // stats[15] bleibt bei 2.0 (wurde oben bereits auf genau 2 Zellen geprüft).
     let o0 = 0 * 4
     XCTAssertEqual(Array(diff[o0..<(o0 + 4)]), [198, 198, 198, 255])
     XCTAssertNotEqual(Array(diff[o0..<(o0 + 4)]), [255, 0, 255, 255])
@@ -110,13 +99,11 @@ final class SimRenderTests: XCTestCase {
     let refStats = renderer.stats(populated)
     XCTAssertFalse(refStats.isEmpty)
 
-    // Leeres Terrain liefert leere Puffer und überschreibt bestehenden Vergleichspunkt nicht
     XCTAssertEqual(renderer.differenceBytes(empty, scale: 0.01), [],
                    "Leeres Terrain muss leeren Differenzpuffer liefern")
     XCTAssertEqual(renderer.stats(empty), [],
                    "Leeres Terrain muss leeren Statistikpuffer liefern")
 
-    // Nach Rückkehr zur gefüllten Welt bleibt der Referenzpunkt intakt
     let diffAfter = renderer.differenceBytes(populated, scale: 0.01)
     XCTAssertEqual(diffAfter.count, populated.cfg.count * 4)
   }
@@ -148,10 +135,6 @@ final class SimRenderTests: XCTestCase {
         bandChannelFlags: [], bandCoverage: [])
     }
 
-    // Basis ohne Kanäle als Referenz: terrain.meander.channels explizit leeren,
-    // da Terrain(config:...) per seedMeander() bereits Kanäle anlegt.
-    // Übersprungene Kanäle dürfen das Wasserfeld nicht verändern
-    // (bei geometryMode: false stempeln gültige Kanäle in das Feld).
     terrain.meander.channels = []
     let bytesOhneKanal = renderWater()
     XCTAssertEqual(bytesOhneKanal.count, terrain.cfg.count * 4)
@@ -162,9 +145,6 @@ final class SimRenderTests: XCTestCase {
       MeanderNode(x: 20, z: 20)
     ]
 
-    // 1. Kanal mit unvollständigem Abflusspuffer (discharge.count < nodes.count).
-    // Gültig konstruieren (RiverChannel.init erzwingt nodes.count == discharge.count),
-    // danach discharge verkürzen, um den Renderer-Guard zu testen.
     var truncatedChannel = RiverChannel(nodes: nodes, discharge: [500.0, 500.0, 500.0])
     truncatedChannel.discharge = [500.0]
     terrain.meander.channels = [truncatedChannel]
@@ -176,7 +156,6 @@ final class SimRenderTests: XCTestCase {
     XCTAssertEqual(bytesTruncated.count, terrain.cfg.count * 4)
     XCTAssertEqual(bytesTruncated, bytesOhneKanal, "Kanal mit zu kurzem Abflusspuffer darf nicht gestempelt werden")
 
-    // 2. Kanal mit nicht-endlichem Abfluss (NaN / Unendlich)
     let nanChannel = RiverChannel(nodes: nodes, discharge: [500.0, Double.nan, 500.0])
     terrain.meander.channels = [nanChannel]
 

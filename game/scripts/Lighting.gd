@@ -1,115 +1,43 @@
 extends RefCounted
-## Licht und Atmosphäre der normalen Darstellung (Issue #151): die EINE Quelle
-## für Sonne, Himmel, Umgebungslicht, Tonemapping, Nebel und Wolkenschatten.
-## Übernommen aus dem abgenommenen Hebel `light` der Flusstal-Studie (#116,
-## docs/graphics-quality.md); Main.gd und die Studie lesen beide nur hier.
-## Wächter: game/tests/lighting.gd (CI-Marke LIGHTING_OK).
-##
-## Rein visuell: nichts hier berührt Sim-Felder oder die Wasser-Kalibrierung.
-## Die Wasser-Optik kommt weiter über die Brücke aus SimRender.CalibrationRegistry;
-## der Himmel ändert nur, was das Wasser spiegelt.
 
-## Feste Welt-Sonne (entschieden 2026-10-08): EINE Richtung, die aus allen
-## Kamerarichtungen trägt; die Schatten wandern beim Drehen nicht mit.
-## Azimut in Grad in der Kamera-Konvention von Main._update_camera (Yaw = Azimut
-## der Kameraposition um das Ziel): eine Kamera mit Yaw = Azimut hat die Sonne
-## im Rücken, Yaw = Azimut ± 180° blickt ins Gegenlicht.
-## Azimut −50° hält die Startkamera (Yaw 0.7) im Seitenlicht wie in der Studie.
 const SUN_AZIMUTH_DEG := -50.0
-## Höhe 30° (Look-Iterationen 9/10; #151 hatte 38° aus einem Vergleich von 28°,
-## 38° und 48°, docs/graphics-quality.md §Licht). Die tiefere, warme Sonne legt
-## lange Schatten in Täler und hinter Grate und modelliert das Relief auch in
-## der Totalen (Referenz d). Die Schwäche von 28° in #151, im Gegenlicht
-## schwarze Flanken, fängt heute das kühlere, offenere Himmelslicht
-## (AMBIENT_*) ab; die Energie gleicht den flacheren Einfall auf Ebenen aus.
 const SUN_ELEVATION_DEG := 30.0
 const SUN_COLOR := Color(1.0, 0.85, 0.66)
 const SUN_ENERGY := 2.4
 
-## Himmel: Horizontfarbe ist zugleich die Farbe der Luftperspektive, damit die
-## Ferne ohne Kante in den Himmel übergeht.
-## Look-Iteration 10: tiefes Blau oben, Horizont hell und klar. Nicht
-## beige: das Wasser spiegelt bei tiefer Sonne vor allem den Horizont und
-## wurde damit milchig (verworfener Zwischenstand); die Wärme der Ferne kommt
-## aus der Sonnenstreuung des Dunsts (FOG_SUN_SCATTER).
 const SKY_TOP := Color(0.14, 0.33, 0.68)
 const SKY_HORIZON := Color(0.74, 0.80, 0.87)
 const SKY_GROUND_BOTTOM := Color(0.22, 0.27, 0.32)
 
-## Umgebungslicht: Himmelslicht allein färbt Schattenseiten blau (Fels las sich
-## in der Studie als Schnee); ein Drittel neutral-warmes Licht dagegen.
-## Look-Iteration 10: kühler als in #151 (Himmelsanteil 0,65 → 0,80, neutral
-## statt warm), damit warme Sonnenseiten gegen blau-offene Schatten stehen.
-## Die Energie liegt knapp unter #151 (0,5 → 0,48): Iteration 9 (0,42) ließ die
-## langen Schatten fast schwarz zulaufen, ein Zwischenstand mit 0,55–0,62
-## machte das Bild flau und milchig (verworfen, A 4 B 5). Der neutrale Anteil
-## bleibt, sonst liest sich Fels im Schatten wieder als Schnee.
 const AMBIENT_ENERGY := 0.48
 const AMBIENT_SKY_CONTRIBUTION := 0.80
 const AMBIENT_COLOR := Color(0.56, 0.57, 0.58)
 
-## Tonemapping (Look-Iterationen 9/10): AgX entsättigt und verflacht; mehr
-## AgX-Kontrast und Sättigung nehmen den Grauschleier, ohne Schnee auszubrennen.
-## Das Wiesengrün im Terrain-Shader ist dafür etwas blauärmer (satter) gestellt.
 const TONEMAP_EXPOSURE := 0.95
 const TONEMAP_AGX_CONTRAST := 1.45
 const ADJUST_CONTRAST := 1.08
 const ADJUST_SATURATION := 1.15
 
-## Luftperspektive (exponentieller Nebel mit Himmelsanteil) und Talnebel, der
-## knapp über dem Meer in Tälern und Becken liegt.
-## Look-Iteration 9/10: dünner (0,0016 → 0,0011), damit die Übersicht nicht
-## milchig wird; die Ferne staffelt trotzdem, zur Sonne hin warm gestreut
-## (FOG_SUN_SCATTER 0,12 → 0,40). Dichterer Dunst (0,0024) machte die Totale
-## flau und verlor im Urteil.
 const FOG_DENSITY := 0.0011
 const FOG_AERIAL_PERSPECTIVE := 0.6
 const FOG_SUN_SCATTER := 0.40
-## Der Himmel selbst nimmt nur einen Teil des Dunsts an, sonst überdeckt die
-## Nebelfarbe den Blauverlauf über dem Horizont (Look-Iteration 9).
 const FOG_SKY_AFFECT := 0.35
-const VALLEY_FOG_ABOVE_SEA := 1.5 # Welteinheiten über dem Meeresspiegel
+const VALLEY_FOG_ABOVE_SEA := 1.5
 const VALLEY_FOG_DENSITY := 0.035
 
-## Wolkenschatten (game/shaders/clouds.gdshaderinc): Abdunklung im Schatten und
-## Raumfrequenz (Zellgröße ~3–4 km bei 1 Einheit ≈ 100 m).
 const CLOUD_STRENGTH := 0.24
 const CLOUD_SCALE := 0.028
-## Weiche Blende unter der Wolkenbasis (Welteinheiten ≈ 100 m): der Schatten
-## läuft dort aus, statt an der Basis hart abzuschneiden — Gipfel, die die
-## Basis durchstoßen, trügen sonst eine CLOUD_STRENGTH-Helligkeitsstufe als
-## Höhenlinie. Einige Zehntel: breiter als die Körnung der Deckung, schmaler
-## als der Ebenen-Abstand CLOUD_LAYER_STEP der Wolkenkörper.
 const CLOUD_BASE_FADE := 0.8
 
-## Wolkenkörper über dem Kamm (#174 D, game/shaders/cloud_body.gdshader).
-## Die Wolkenbasis liegt knapp über dem oberen Felsband der Welt
-## (HeightBands.rockFull, über Main.gd `place_clouds`), sichtbar sind die
-## Körper nur über Gelände zwischen rockStart und rockFull: dort steht der
-## Kamm. Gemessen auf den Matrix-Welten (#174 D, testMaterialCoverageDiagnostic):
-## rockStart 0,50, rockFull 0,57–0,59, Gipfel 0,58–0,66 Sim-Höhe, also Basis
-## bei Welt-Y ≈ 14,5; die höchsten Gipfel stechen durch.
-## Bis zum ersten Höhenband gilt FALLBACK (dieselben Werte in Welt-Y).
-const CLOUD_BASE_ABOVE_RIDGE := 0.6  # Welteinheiten über rockFull
-const CLOUD_RIDGE_FALLBACK := Vector2(12.0, 13.9)  # rockStart, rockFull in Welt-Y
-## Drei Ebenen im Abstand CLOUD_LAYER_STEP (Welteinheiten ≈ 100 m) wölben die
-## Wolke; jede deckt mit CLOUD_BODY_OPACITY.
+const CLOUD_BASE_ABOVE_RIDGE := 0.6
+const CLOUD_RIDGE_FALLBACK := Vector2(12.0, 13.9)
 const CLOUD_LAYERS := 3
 const CLOUD_LAYER_STEP := 0.45
 const CLOUD_BODY_OPACITY := 0.55
-## Tuning der Wolkenkörper (cloud_body.gdshader, Wächter game/tests/lighting.gd):
-## höhere Ebenen zeigen nur den Kern (Schwelle je Ebene um CLOUD_BODY_LIFT
-## angehoben); der Selbstschatten probiert die Dichte
-## CLOUD_BODY_SELF_SHADOW_DIST Welteinheiten zur Sonne und hellt/abdunkelt um
-## die Dichte-Differenz mal CLOUD_BODY_SELF_SHADOW_GAIN auf.
 const CLOUD_BODY_LIFT := 0.10
 const CLOUD_BODY_SELF_SHADOW_DIST := 0.9
 const CLOUD_BODY_SELF_SHADOW_GAIN := 2.5
 
-## Was die Qualitätsstufen am Licht unterscheiden, gemessen im maximierten
-## Fenster (docs/graphics-quality.md §Licht). `performance` spart Schatten-
-## Auflösung, Kaskaden und die Wolkenschatten; `balanced` und `quality` tragen
-## das abgenommene Bild der Studie.
 const QUALITY := {
 	"performance": {"shadow_atlas": 4096, "shadow_splits": 2, "clouds": false},
 	"balanced": {"shadow_atlas": 8192, "shadow_splits": 4, "clouds": true},
@@ -119,7 +47,6 @@ const QUALITY := {
 static func profile(quality: String) -> Dictionary:
 	return QUALITY.get(quality, QUALITY["balanced"])
 
-## Einheitsvektor ZUR Sonne.
 static func sun_direction() -> Vector3:
 	var az := deg_to_rad(SUN_AZIMUTH_DEG)
 	var el := deg_to_rad(SUN_ELEVATION_DEG)
@@ -127,7 +54,6 @@ static func sun_direction() -> Vector3:
 
 static func make_environment(quality: String, sea_y: float) -> Environment:
 	var e := Environment.new()
-	# Prozeduraler Himmel → Umgebungslicht UND Reflexionen fürs Wasser.
 	var sky_mat := ProceduralSkyMaterial.new()
 	sky_mat.sky_top_color = SKY_TOP
 	sky_mat.sky_horizon_color = SKY_HORIZON
@@ -166,8 +92,6 @@ static func make_environment(quality: String, sea_y: float) -> Environment:
 	e.fog_height_density = VALLEY_FOG_DENSITY
 	return e
 
-## Richtet die Sonne aus und setzt die Schatten der Qualitätsstufe. Der
-## Schattenatlas ist global (RenderingServer), deshalb gehört er hierher.
 static func configure_sun(sun: DirectionalLight3D, quality: String) -> void:
 	var p := profile(quality)
 	RenderingServer.directional_shadow_atlas_set_size(p["shadow_atlas"], true)
@@ -184,9 +108,6 @@ static func configure_sun(sun: DirectionalLight3D, quality: String) -> void:
 	sun.shadow_bias = 0.04
 	sun.shadow_normal_bias = 1.2
 
-## Wolkenschatten auf jedes übergebene Material (Terrain, Ozean, Bänder,
-## Wolkenkörper). Alle bekommen dieselben Werte, sonst hätte der Schatten am
-## Ufer eine Kante oder läge neben seiner Wolke.
 static func apply_clouds(mats: Array[ShaderMaterial], quality: String) -> void:
 	var enabled: bool = profile(quality)["clouds"]
 	var to_sun := sun_direction()
@@ -198,9 +119,6 @@ static func apply_clouds(mats: Array[ShaderMaterial], quality: String) -> void:
 		mat.set_shader_parameter("cloud_base_fade", CLOUD_BASE_FADE)
 	place_clouds(mats, CLOUD_RIDGE_FALLBACK.x, CLOUD_RIDGE_FALLBACK.y)
 
-## Wolkenbasis und Kamm-Fenster aus den Höhenbändern der Welt (Welt-Y):
-## Main.gd ruft das mit jedem Overlay-Upload, die Wolken folgen damit der
-## alternden Landschaft. Schatten und Körper lesen dieselbe Basis.
 static func place_clouds(mats: Array[ShaderMaterial], ridge_lo: float, ridge_hi: float,
 		bodies: Node3D = null) -> void:
 	var base := ridge_hi + CLOUD_BASE_ABOVE_RIDGE
@@ -216,9 +134,6 @@ static func place_clouds(mats: Array[ShaderMaterial], ridge_lo: float, ridge_hi:
 			child.material_override.set_shader_parameter("cloud_body_ridge_hi", ridge_hi)
 			i += 1
 
-## Wolkenkörper als eigener Knoten mit CLOUD_LAYERS Ebenen (#174 D). In
-## `performance` unsichtbar und ohne Zeichenaufwand; die Wolkenschatten sind
-## dort ebenfalls aus (QUALITY).
 static func make_cloud_bodies(quality: String, world_size: float, hscale: float,
 		grid_n: int) -> Node3D:
 	var root := Node3D.new()

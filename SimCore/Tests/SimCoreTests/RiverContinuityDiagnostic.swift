@@ -3,11 +3,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Messreihe zu „Wasser reißt ab" (Befund des Eigners 2026-10-18,
-/// `docs/zielbild-measurements.md` § Durchgehende Flüsse): Produktion,
-/// Jahr 2.600 und 4.000 in 1000er-Schritten wie `RS_STEP`, je Seed.
-/// Aufruf: RS_MEASURE=1 swift test -c release --package-path SimCore
-/// --filter testRiverContinuityDiagnostic
 final class RiverContinuityDiagnostics: XCTestCase {
     func testRiverContinuityDiagnostic() throws {
         try skipUnlessMeasuring()
@@ -32,9 +27,6 @@ final class RiverContinuityDiagnostics: XCTestCase {
     }
 }
 
-/// Kosten von Band-Bau und Wasserfeld (ms, Median), Produktion, Seed 1337,
-/// Jahr 4.000. Für das interleaved A/B gegen den Stand davor.
-/// Aufruf: RS_MEASURE=1 … --filter testRiverContinuityCostDiagnostic
 final class RiverContinuityCostDiagnostics: XCTestCase {
     func testRiverContinuityCostDiagnostic() throws {
         try skipUnlessMeasuring()

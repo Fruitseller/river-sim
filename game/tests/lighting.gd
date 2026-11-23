@@ -1,20 +1,4 @@
 extends SceneTree
-## Headless-Wächter für Licht und Atmosphäre (Issue #151):
-##   godot --headless --path game --script res://tests/lighting.gd
-##
-## Braucht die GDExtension nicht. Geprüft wird das äußere Verhalten von
-## scripts/Lighting.gd, der EINEN Quelle für Sonne, Atmosphäre und Wolken:
-##  - feste Welt-Sonne: das Licht fällt von oben aus der vereinbarten Richtung,
-##    unabhängig von der Kamera (Main ruft configure_sun nur beim Aufbau);
-##  - Atmosphäre: AgX, Luftperspektive, Talnebel knapp über dem Meer, Anteil
-##    neutral-warmes Umgebungslicht;
-##  - Qualitätsstufen: `performance` ist billiger als `balanced`;
-##  - Wolkenschatten: jede `cloud*`-Uniform ist in allen drei Shadern und im
-##    Wolkenkörper deklariert, default-frei (die Werte reisen nur über
-##    Lighting.gd) und wird gesetzt; die Shader kompilieren mit dem gemeinsamen
-##    Include;
-##  - Wolkenkörper (#174 D): über dem Kamm, auf der Basis der Schatten, in
-##    `performance` aus, Schatten fallen entlang der Sonne.
 
 const Lighting = preload("res://scripts/Lighting.gd")
 const SHADERS := [
@@ -25,8 +9,6 @@ const SHADERS := [
 ]
 const CLOUD_UNIFORMS := ["clouds_enabled", "cloud_strength", "cloud_scale", "cloud_height",
 	"cloud_sun_shift", "cloud_base_fade"]
-## Tuning-Werte des Wolkenkörpers (Review zu #174 D): reisen nur über
-## Lighting.gd, deklariert default-frei im Shader.
 const BODY_TUNING_UNIFORMS := ["cloud_body_lift", "cloud_body_self_shadow_dist",
 	"cloud_body_self_shadow_gain"]
 
@@ -55,7 +37,6 @@ func _check_sun() -> void:
 	_check(to_sun.y > 0.0, "Sonne muss über dem Horizont stehen")
 	var sun := DirectionalLight3D.new()
 	Lighting.configure_sun(sun, "balanced")
-	# Ein DirectionalLight3D leuchtet entlang seiner −Z-Achse.
 	var shines := -sun.basis.z
 	_check(shines.is_equal_approx(-to_sun), "Licht muss von der Sonnenrichtung her einfallen")
 	_check(sun.shadow_enabled, "Die Sonne muss Schatten werfen")
@@ -118,11 +99,6 @@ func _check_clouds() -> void:
 			_check(mats[i].get_shader_parameter("clouds_enabled") == Lighting.profile(quality)["clouds"],
 				"%s: Wolkenschatten folgen der Qualitätsstufe %s" % [SHADERS[i], quality])
 
-## Wolkenkörper (#174 D): drei Ebenen über dem Kamm, Basis = Schattenbasis,
-## in `performance` unsichtbar; der Schatten wandert gegen die Sonne. Das
-## Tuning des Körpers reist nur über Lighting.gd (default-frei deklariert,
-## gesetzt), die Deckungs-Schwelle teilt er mit dem Schatten über
-## cloud_cover_at — keine Kopie im Körper-Shader.
 func _check_cloud_bodies() -> void:
 	var body_src := FileAccess.get_file_as_string("res://shaders/cloud_body.gdshader")
 	var decl_re := RegEx.new()

@@ -4,18 +4,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Messreihe zu Issue #174 (Befund „Seen in den Mäanderschlingen"): welche
-/// Raster-Seen malt `terrain.gdshader` innerhalb und außerhalb des
-/// Mäandergürtels, wie tief sind sie (in Bankfull-Tiefen) und woher kommen
-/// sie? Tabellen: `docs/zielbild-measurements.md`
-/// § Geister-Seen im Mäandergürtel.
-///
-///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         --filter testBeltLakesDiagnostic
-///
-/// `RS_SEEDS` (Standard 1337,42), `RS_YEARS` (Standard 2300,20000),
-/// `RS_NO_BELT=1` fährt dieselbe Produktion ohne Gürtel (`meanderBelt = false`),
-/// `RS_DUMP=<Ordner>` schreibt je Stützstelle eine Karte als BMP.
 final class BeltLakeTests: XCTestCase {
 
     private var env: [String: String] { ProcessInfo.processInfo.environment }
@@ -37,12 +25,9 @@ final class BeltLakeTests: XCTestCase {
         }
     }
 
-    /// Eine gemalte See-Komponente (4er-Nachbarschaft der Pixel-Kontur auf
-    /// Zellebene: Gate ≥ `lakeGateLo` und Wassersäule über `pondContourLo`).
     struct Lake {
         var cells = 0, rawWet = 0, rawWetHf = 0, lag = 0, inBelt = 0, bar = 0, channel = 0, oxbow = 0
         var sumPond = 0.0, maxPond = 0.0, sumHf = 0.0, maxHf = 0.0
-        /// Zellen, deren Tiefen-Rampe im Shader unter 0,5 liegt (halbdurchsichtig).
         var thin = 0
         var sumI = 0, sumJ = 0
         var depthRef = 0.0
@@ -55,8 +40,6 @@ final class BeltLakeTests: XCTestCase {
         let water = field.bytes(t, blend: 1, geometryMode: true,
                                 bandChannelFlags: render.bandChannelFlags,
                                 bandCoverage: render.bandCoverage)
-        // Gürtel-Maske: Scheibe um jeden wandernden Knoten (Kanal + Bank-Streifen
-        // + 1 Breite Rand) und jeder Altarm-Knoten; Kanal-Maske: halbe Breite.
         var belt = [Bool](repeating: false, count: cnt)
         var chan = [Bool](repeating: false, count: cnt)
         var ox = [Bool](repeating: false, count: cnt)
@@ -140,8 +123,6 @@ final class BeltLakeTests: XCTestCase {
         }
     }
 
-    /// Karte als BMP (Hangschattierung, gemalte Seen blau, Spiegel über hf
-    /// magenta, Gürtel-Läufe rot, Altarme gelb, Bänke sandfarben).
     static func dumpMap(_ t: Terrain, to path: String) {
         let n = t.cfg.n, sea = t.cfg.sea
         let render = builtRibbons(t)
@@ -177,7 +158,6 @@ final class BeltLakeTests: XCTestCase {
         }
         for loop in t.meander.oxbows { for nd in loop { let i = Int(nd.x.rounded()), j = Int(nd.z.rounded())
             if i >= 0, i < n, j >= 0, j < n { put(j * n + i, 1, 0.95, 0.1) } } }
-        // BMP, Zeilen von unten, 4-Byte-Ausrichtung; Zeile j = 0 oben.
         let row = (n * 3 + 3) & ~3, size = 54 + row * n
         var d = [UInt8](repeating: 0, count: size)
         func le(_ v: Int, _ at: Int, _ bytes: Int) { for b in 0..<bytes { d[at + b] = UInt8((v >> (8 * b)) & 0xff) } }
@@ -187,12 +167,6 @@ final class BeltLakeTests: XCTestCase {
         _ = FileManager.default.createFile(atPath: path, contents: Data(d))
     }
 
-    /// Zeitreihe: wie entstehen die Geisterseen? Je 10-Jahr-Schritt die Zahl
-    /// der Gürtel-Zellen, deren hf um > 0,005 steigt bzw. fällt, und über die
-    /// Zellen mit Spiegel > hf + 0,01 im Gürtel: Anzahl, mittlere hf- und
-    /// Spiegel-Säule. `RS_SEEDS`, `RS_FROM` (Standard 2000), `RS_TO` (2600),
-    /// `RS_DT` (10), `RS_RELAX` (`meanderBeltRelaxYears`, z. B. 150 = Stand
-    /// vor der Kalibrierung #183), `RS_NO_BELT=1`.
     func testBeltLakeHistoryDiagnostic() throws {
         try skipUnlessMeasuring()
         let seeds = (env["RS_SEEDS"] ?? "1337").split(separator: ",").compactMap { UInt32($0) }
@@ -234,19 +208,12 @@ final class BeltLakeTests: XCTestCase {
         }
     }
 
-    /// Ausschnitt um einen Weltpunkt (`RS_TARGET` = "x,z", Standard 13.8,6.8;
-    /// `RS_RADIUS` Zellen, Standard 70), 5-fach vergrößert als BMP nach
-    /// `RS_DUMP`: Raster-Fluss sichtbar (R ≥ riverMaskLo) hellblau, Raster-See
-    /// dunkelblau, Band-Deckung weiß, großer D8-Lauf (Vertrauen > 0) rot,
-    /// Track-Maske > 0 grün. Dazu je Komponente des sichtbaren Raster-Flusses
-    /// Zellen, Breite und Herkunft.
     func testBeltLakeZoomDiagnostic() throws {
         try skipUnlessMeasuring()
         let seed = env["RS_SEEDS"].flatMap { UInt32($0) } ?? 1337
         let years = env["RS_YEARS"].flatMap { Double($0) } ?? 2305
         let tgt = (env["RS_TARGET"] ?? "13.8,6.8").split(separator: ",").compactMap { Double($0) }
         let rad = env["RS_RADIUS"].flatMap { Int($0) } ?? 70
-        // Zeitraffer-Takt der App: ~15 Jahre je Schritt (`Main.gd`, SIM_TICK_SECONDS).
         let dt = env["RS_DT"].flatMap { Double($0) } ?? 15
         let t = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
         while t.years < years - 1e-6 { t.step(dtYears: min(dt, years - t.years)) }
@@ -259,8 +226,6 @@ final class BeltLakeTests: XCTestCase {
                                 bandChannelFlags: render.bandChannelFlags,
                                 bandCoverage: cover)
         if env["RS_TIME"] == "1" {
-            // Kosten des Wasserfelds je Aufruf (Median über 15, ein Renderer
-            // wie in der App, `blend` des Zeitraffers).
             let field = WaterFieldRenderer()
             var ms: [Double] = []
             for _ in 0..<15 {
@@ -278,8 +243,6 @@ final class BeltLakeTests: XCTestCase {
             WaterRender.lakeMask(channel: Double(water[k * 4 + 1]) / 255, pond: t.waterLevel[k] - t.h[k])
         }
         let i0 = max(0, ci - rad), i1 = min(n - 1, ci + rad), j0 = max(0, cj - rad), j1 = min(n - 1, cj + rad)
-        // Ganze Karte: kleine sichtbare Raster-Fluss-Flecken (unter
-        // `streamGateCells`) — die runden Punkte neben den Bändern.
         do {
             var seenAll = [Bool](repeating: false, count: n * n)
             var small = 0, smallCells = 0, smallNearBand = 0
@@ -303,8 +266,6 @@ final class BeltLakeTests: XCTestCase {
             print("Ganze Karte: sichtbarer Raster-Fluss auf Bänken ohne Band: \(barRaster) Zellen")
         }
         print("\n=== Ausschnitt Seed \(seed), Jahr \(Int(t.years)), Zelle (\(ci), \(cj)) ±\(rad) ===")
-        // Abstand (Chebyshev, Zellen) zur nächsten Band-Zelle (Deckung ≥ 0,3)
-        // und zur nächsten Zentrumslinie eines Laufs OHNE Band.
         func distance(_ seeds: [Bool]) -> [Int] {
             var d = [Int](repeating: Int.max, count: n * n); var q: [Int] = []
             for k in 0..<(n * n) where seeds[k] { d[k] = 0; q.append(k) }
@@ -333,7 +294,6 @@ final class BeltLakeTests: XCTestCase {
             }
         }
         let dBand = distance(bandSeed), dLone = distance(loneLine), dLine = distance(bandLine)
-        // Komponenten sichtbaren Raster-Flusses im Ausschnitt.
         var seen = Set<Int>()
         print("| Zellen | max Breite quer (Zellen) | Track > 0 | Vertrauen > 0 | Band ≥ 0,3 | Wassersäule hf−h > 0,003 | mittl. Intensität | ≤ 3 Z. Band | ≤ 3 Z. Linie mit Band | ≤ 3 Z. Linie ohne Band | unter ausgebl. Band | max D8-Abfluss (Zellen) | auf Bank | im Gürtel-Bett | Zelle i,j |")
         print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
@@ -366,8 +326,6 @@ final class BeltLakeTests: XCTestCase {
             let width = min(rows.values.max() ?? 0, cols.values.max() ?? 0)
             print("| \(cells) | \(width) | \(track) | \(trust) | \(band) | \(pond) | \(String(format: "%.2f", sumI / Double(cells))) | \(nearBand) | \(nearBandLine) | \(nearLone) | \(faded) | \(Int(maxQ)) | \(onBar) | \(inBeltBed) | \(i),\(j) |")
         } }
-        // Band-Stützpunkte im Ausschnitt: Deckkraft je Strip (Mittel/Min/Max,
-        // Anteil unter 0,1) — warum fehlt das Band über einem Raster-Lauf?
         let mesh = render.mesh, half = ws / 2, cs = t.cfg.cellSize
         for (si, start) in mesh.stripStarts.enumerated() {
             let s0 = Int(start)
@@ -390,7 +348,6 @@ final class BeltLakeTests: XCTestCase {
                              si, Double(mesh.uv2s[s0].x), inside, sum / Double(inside), lo, hi, low))
             }
         }
-        // Gemalte See-Flecken im Ausschnitt (lakeMask > 0,05 auf Zellebene).
         print("See-Flecken: | Zellen | rawWet (> lakeRawWetDepth) | max Säule Spiegel | max Säule hf | ≤ 3 Z. Band | Zelle i,j |")
         var seenL = Set<Int>()
         for j in j0...j1 { for i in i0...i1 {
@@ -435,9 +392,7 @@ final class BeltLakeTests: XCTestCase {
             c = (c.0 * (1 - lm) + 0.05 * lm, c.1 * (1 - lm) + 0.15 * lm, c.2 * (1 - lm) + 0.6 * lm)
             let bc = k < cover.count ? min(1, cover[k]) * 0.6 : 0
             c = (c.0 * (1 - bc) + bc, c.1 * (1 - bc) + bc, c.2 * (1 - bc) + bc)
-            // Ausgeblendetes Band (Deckung unter 0,3, aber gebaut): magenta Rand.
             let faded = k < cover.count && cover[k] > WaterRender.protectBandThreshold && cover[k] < 0.3
-            // Mäander-Zentrumslinien (alle Läufe, auch ohne Band): gelb.
             let line = centerline[k]
             let tr = WaterRender.ribbonTrust(dischargeCells: t.area[k] / cellArea, referenceCells: creek) > 0
             let tm = WaterRender.trackMask(streamMap: t.streamMap[k]) > 0
@@ -453,7 +408,6 @@ final class BeltLakeTests: XCTestCase {
                 d[o + 2] = UInt8(max(0, min(255, p.0 * 255)))
             } }
         } }
-        // Band-Stützpunkte: Deckkraft < 0,1 rot, sonst schwarz (Mittelpunkt der Zelle).
         var sa = 0
         while sa + 1 < mesh.vertices.count {
             let l = mesh.vertices[sa], r = mesh.vertices[sa + 1]

@@ -1,18 +1,7 @@
 import SimCore
 
-/// Nasse Wiese statt Tümpel-Teppich (Issue #174, Paket C): die Zellen kleiner
-/// See-Komponenten, die `WaterFieldRenderer` nicht mehr als Wasserspiegel malt
-/// (`wetMeadow`), bekommen im Material dunkles Grün.
-///
-/// Eigener Schritt NACH `TerrainColorRenderer` statt darin, weil die Maske aus
-/// dem Wasserfeld kommt und nicht aus dem Terrain: `RenderState` kennt beide
-/// und wendet sie hier an. Kalibrierung: `WaterRender.wetMeadow*`. Wald und
-/// Render-Verschiebung hält die Schutzmaske von der nassen Wiese fern
-/// (`WaterProtectMask`), sonst stünde auf dem hohen Vegetationsgewicht Wald.
 public enum WetMeadow {
 
-    /// Die Materialpuffer mit nasser Wiese auf `mask` (n×n). Passt die Maske
-    /// nicht oder ist sie leer, bleiben die Puffer unverändert.
     public static func apply(_ buffers: TerrainColorRenderer.Buffers,
                              mask: [Bool]) -> TerrainColorRenderer.Buffers {
         let cnt = buffers.surfaces.count / 4
@@ -23,12 +12,6 @@ public enum WetMeadow {
         let tint = WaterRender.wetMeadowColor, mix = WaterRender.wetMeadowColorMix
         for k in 0..<cnt where mask[k] {
             let o = k * 4
-            // Hierarchie wie im TerrainColorRenderer: Kälte bleibt, Vegetation
-            // wächst unter ihr, Fels, Halde, Rohboden und Sand teilen sich,
-            // was übrig bleibt (proportional, sonst summierten sich die
-            // Gewichte bis ~1,85: nur Fels wurde gekappt).
-            // Nur geänderte Gewichte neu quantisieren: Byte → Double → Byte
-            // rundet sonst unveränderte Werte um eine Stufe ab.
             let cold = Double(surfaces[o + 2]) / 255
             let target = veg * (1 - cold)
             if target > Double(surfaces[o]) / 255 { surfaces[o] = byte01(target) }

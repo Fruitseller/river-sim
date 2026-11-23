@@ -1,37 +1,7 @@
 import SimCore
 
-/// Schutzmaske für Kronendach und Verschiebung (Issue #154, Vorbau für #117).
-///
-/// Beide Schichten dürfen Wasserflächen nicht überdecken: das Kronendach würde
-/// Bäume mitten in Flüsse und Seen pflanzen, die Verschiebung würde Ufer über
-/// Flussbänder wölben oder Talböden deformieren.
-///
-/// Die Maske vereint:
-///  1. Sichtbares Rasterwasser (Flüsse und Seen aus dem Wasserfeld).
-///  2. Tatsächliche Abdeckung der Flussbänder (`RiverRibbonRenderer.bandCoverage`),
-///     weil der Raster-Deckel (`WaterFieldRenderer`) das Rasterwasser unter
-///     Bändern entfernt.
-///  3. Die nasse Wiese (Issue #174 C, `WaterFieldRenderer.wetMeadow`): kleine
-///     Tümpel, die das Raster nicht mehr als Wasser malt. Sie tragen ein hohes
-///     Vegetationsgewicht (`WetMeadow`), auf dem sonst Wald stünde.
-///  4. Einen Saum von `WaterRender.protectSeamCells` Zellen (je Zelle ein
-///     3×3-Pass, also Chebyshev-Abstand) um alle Wasser- und Bandflächen.
-///  5. Frische Gleithang-Bänke (Issue #174 C2, `BarMaterial`): ab
-///     `WaterRender.barProtectSand` Sandgewicht kein Wald und keine
-///     Verschiebung — die Bank ist eben (bankfull) und kahl. Ohne Saum: die
-///     Bank liegt ohnehin am Lauf, ein Saum risse den Auwald dahinter weg.
-///
-/// Trockenes Land außerhalb von Wasser, Bändern, nasser Wiese, Bänken und Saum
-/// bleibt frei (0).
-/// Zustandslos: liest nur seine Eingaben, das Wasserfeld bleibt unverändert.
-/// Den Cache hält `RenderState` (wie bei `TerrainColorRenderer`).
 public enum WaterProtectMask {
 
-    /// R8-Puffer (n×n, 0 = frei, 255 = geschützt). `waterBytes` ist das
-    /// RGBA8-Wasserfeld (R = Fluss, G = See); fehlt es oder passt die Größe
-    /// nicht, schützt die Maske nur die Bänder. `wetMeadow` (n×n) schützt
-    /// zusätzlich die nasse Wiese, `barSand` (n×n, `BarMaterial.Field.sand`)
-    /// frische Bänke; leer = keine.
     public static func bytes(n: Int, bandCoverage: [Double], waterBytes: [UInt8],
                              wetMeadow: [Bool] = [], barSand: [Float] = [],
                              seamCells: Int = WaterRender.protectSeamCells) -> [UInt8] {
@@ -44,8 +14,6 @@ public enum WaterProtectMask {
         let hasWater = waterBytes.count == cnt * 4
         let hasMeadow = wetMeadow.count == cnt
 
-        // 1. Kern-Zellen: sichtbares Rasterwasser + gebaute Band-Abdeckung
-        //    + nasse Wiese.
         var mask = [UInt8](repeating: 0, count: cnt)
         mask.withUnsafeMutableBufferPointer { mb in
             let pm = mb.baseAddress!
@@ -60,14 +28,12 @@ public enum WaterProtectMask {
             }
         }
 
-        // 2. Saum: protectSeamCells Pässe einer 3×3-Max-Erweiterung.
         var temp = [UInt8](repeating: 0, count: cnt)
         for _ in 0..<max(0, seamCells) {
             dilate3x3(src: mask, dst: &temp, n: n)
             swap(&mask, &temp)
         }
 
-        // 3. Frische Bänke, nach dem Saum (ohne eigenen Saum, s. o.).
         if barSand.count == cnt {
             let limit = Float(WaterRender.barProtectSand)
             for k in 0..<cnt where barSand[k] >= limit { mask[k] = 255 }
@@ -75,19 +41,6 @@ public enum WaterProtectMask {
         return mask
     }
 
-    /// Sperre und Abstandskarte für das Kronendach (Look-Iteration 12,
-    /// Auwald): dieselben Kern-Zellen wie `bytes` (Rasterwasser, Bänder,
-    /// nasse Wiese), aber nur `CanopyRender.waterSeamCells` Zellen Saum statt
-    /// `WaterRender.protectSeamCells`. `distance` ist der Chebyshev-Abstand
-    /// zum Kern in Zellen (0 = Kern, 255 = weiter als
-    /// `CanopyRender.riparianReachCells`); `blocked` sperrt den Saum und frische
-    /// Bänke (`WaterRender.barProtectSand`) wie die Schutzmaske.
-    ///
-    /// Look-Iteration 14: `distance` (der Galeriewald) zählt nur Bänder und
-    /// Seen, nicht die Raster-Zubringer und die nasse Wiese, und um diese
-    /// sperrt wieder der volle Saum der Schutzmaske — sonst wuchs jeder Bach
-    /// im Talboden zu (Bewerter Nr. 13: Lichtungen und Grasflächen der
-    /// Talmitte fehlten).
     public static func canopyGuard(n: Int, bandCoverage: [Double], waterBytes: [UInt8],
                                    wetMeadow: [Bool] = [], barSand: [Float] = [])
         -> (blocked: [UInt8], distance: [UInt8]) {
@@ -100,10 +53,6 @@ public enum WaterProtectMask {
             for k in stride(from: 0, to: cnt * 4, by: 4) { lakeOnly[k] = 0 }
         }
         let open = bytes(n: n, bandCoverage: bandCoverage, waterBytes: lakeOnly, seamCells: 0)
-        // Raster-Zubringer und nasse Wiese: Kern ohne Bänder und Seen. Um sie
-        // bleibt die volle Schutzmasken-Sperre (`WaterRender.protectSeamCells`)
-        // wie vor Look-Iteration 12; mit nur `waterSeamCells` wuchs der
-        // Talboden zwischen den Bächen zu (Look-Iteration 14).
         var raster = full
         for k in 0..<cnt where open[k] != 0 { raster[k] = 0 }
         let rasterDistance = chebyshev(raster, reach: WaterRender.protectSeamCells, n: n)
@@ -119,8 +68,6 @@ public enum WaterProtectMask {
         return (mask, distance)
     }
 
-    /// Chebyshev-Abstand (Zellen) zum Kern `core` (≠ 0), bis `reach`;
-    /// weiter weg 255.
     private static func chebyshev(_ core: [UInt8], reach: Int, n: Int) -> [UInt8] {
         let cnt = n * n
         var core = core
@@ -136,8 +83,6 @@ public enum WaterProtectMask {
         return distance
     }
 
-    /// Je Zeile parallel: liest nur `src`, schreibt nur die eigenen Zeilen von
-    /// `dst`, damit bit-identisch zur sequenziellen Schleife.
     private static func dilate3x3(src: [UInt8], dst: inout [UInt8], n: Int) {
         src.withUnsafeBufferPointer { sb in
         dst.withUnsafeMutableBufferPointer { db in

@@ -1,23 +1,7 @@
 import Foundation
 import SimCore
 
-/// Verbreiterung kräftiger Raster-Läufe als Scheibenstempel (Issue #174,
-/// „Kästen"). Begründung, Messreihe und Kalibrierung: `WaterRender`
-/// § „Verbreiterung als Scheibe" und `docs/geometry-water-measurements.md` § H.
-///
-/// Reine Funktion über Felder (kein Zustand): jede Linienzelle mit Intensität
-/// über `widenThresholds[0]` stempelt eine Scheibe mit dem Radius
-/// `WaterRender.widenRadius(intensity:)`, verjüngt am Kopf der Linie, moduliert
-/// von Breiten-Rauschen und einem Mittelpunkts-Versatz. Das Rauschen hängt nur
-/// von der Zellposition ab (statisch, kein Flackern im Zeitraffer), das
-/// Ergebnis ist deterministisch, und geschrieben wird per Maximum: die
-/// Reihenfolge der Stempel ist gleichgültig.
 enum RiverWidening {
-    /// Glattes Gitter-Rauschen in −1…1 aus einem Ganzzahl-Hash der Gitterpunkte
-    /// (bilinear mit glatter Blende). Ein festes Render-Rauschen, unabhängig vom
-    /// Welt-Seed: gleiche Linie, gleiche Form, auch nach einem Neu-Generieren
-    /// derselben Welt. Bewusst nicht `SimplexNoise`: pro kräftiger Zelle drei
-    /// Abfragen. Die Ganzzahl-Fassung braucht dafür keine Sim-Rauschquelle.
     @inline(__always)
     private static func noise(_ x: Double, _ y: Double, _ salt: UInt32) -> Double {
         let fx = x.rounded(.down), fy = y.rounded(.down)
@@ -29,20 +13,13 @@ enum RiverWidening {
             h ^= h >> 15; h = h &* 0x2C1B3C6D
             h ^= h >> 12; h = h &* 0x297A2D39
             h ^= h >> 15
-            return Double(h) / 2147483648.0 - 1   // −1 … 1
+            return Double(h) / 2147483648.0 - 1
         }
         let a = lattice(ix, iy), b = lattice(ix &+ 1, iy)
         let c = lattice(ix, iy &+ 1), d = lattice(ix &+ 1, iy &+ 1)
         return (a + (b - a) * u) + ((c + (d - c) * u) - (a + (b - a) * u)) * v
     }
 
-    /// Schreibt die verbreiterte Fassung von `sd` nach `out` (gleiche Länge `n·n`).
-    /// `h` und `hf` sind Bett und Wasserspiegel: Wasser breitet sich nur auf Zellen
-    /// aus, deren Bett nahe am Spiegel der Linienzelle liegt (Bank-Schranke
-    /// `widenBarTolerance`, fest und symmetrisch auch bei großem Abstand).
-    /// `receiver` ist der D8-Empfänger
-    /// (−1 = Senke): er liefert, wie viele kräftige Zellen stromauf folgen, und
-    /// damit die Verjüngung am Kopf.
     static func widen(_ sd: [Double], into out: inout [Double],
                       h: [Double], hf: [Double], receiver: [Int32], n: Int) {
         let cnt = n * n
@@ -57,8 +34,6 @@ enum RiverWidening {
         let taperCells = WaterRender.widenHeadTaperCells
         let shoulder = WaterRender.widenShoulderCells
 
-        // Kräftige Zellen stromauf (höchstens `taperCells` Schritte weit): ein Lauf-
-        // Kopf hat 0, ab `taperCells` Zellen Lauf dahinter ist die Verjüngung vorbei.
         var upstream = [UInt8](repeating: 0, count: cnt)
         var strong: [Int32] = []
         strong.reserveCapacity(8192)
@@ -77,10 +52,6 @@ enum RiverWidening {
             }
         }
 
-        // Dichte kräftiger Zellen im Umkreis: eine Linie allein füllt einen kleinen
-        // Teil des Fensters, ein Flächenabfluss (viele parallele Linien) den größten.
-        // Dort schrumpft der Radius, damit die Linien als einzelne Stränge lesbar
-        // bleiben statt zu EINER dunklen Fläche zu verschmelzen.
         let crowd = WaterRender.widenCrowdCells
         var strongMask = [Bool](repeating: false, count: cnt)
         for k32 in strong { strongMask[Int(k32)] = true }
@@ -126,9 +97,6 @@ enum RiverWidening {
                         if d >= reach { continue }
                         let t = tj * n + ti
                         if t != k && abs(ph[t] - level) >= tolerance { continue }
-                        // Kern mit dem alten Gefälle je Zelle Abstand, dahinter eine
-                        // Zelle Schulter bis 0: die Kontur im Shader-Fenster liegt
-                        // dann rund einen halben Radius außerhalb des Kerns.
                         let v = d <= radius ? s - falloff * d : core * (1 - (d - radius) / shoulder)
                         if v > po[t] { po[t] = v }
                     }

@@ -1,15 +1,13 @@
-// Stufe 1 aus der Sim-Höhe: bikubisch auf doppelte Auflösung. Jede Sim-Zelle
-// wird 2×2 Texel; Texel I liegt bei Sim-Koordinate (I + 0,5)/2 − 0,5.
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 0) uniform sampler2D sim_height;
 layout(set = 0, binding = 1, rg32f) uniform writeonly image2D dst_height;
 layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D dst_flux;
 layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D dst_accum;
 layout(push_constant, std430) uniform Params {
-	vec4 size;    // xy Zielgröße, z Sim-Gitter n, w Überhöhung
-	vec4 flow;    // x Eigenfläche je Texel, y Sim-Zellweite in Welteinheiten
-	vec4 hard_freq;    // Härte-Rauschen: Frequenz je Oktave (1/Zellen)
-	vec4 hard_weight;  // und Gewicht je Oktave (Summe 1)
+	vec4 size;
+	vec4 flow;
+	vec4 hard_freq;
+	vec4 hard_weight;
 } pc;
 
 void main() {
@@ -40,8 +38,6 @@ void main() {
 		grad += vec2(wy[b] * row_dx, dwy[b] * row);
 	}
 	h *= pc.size.w;
-	// Gefälle der Sim-Fläche selbst: der thermische Abtrag lässt stehen, was
-	// die Sim so steil gebaut hat (step.glsl).
 	float sim_slope = length(grad) * pc.size.w / pc.flow.y;
 	imageStore(dst_height, p, vec4(h, h, 0.0, 0.0));
 	imageStore(dst_flux, p, vec4(pc.flow.x, 0.0, 0.0, sim_slope));

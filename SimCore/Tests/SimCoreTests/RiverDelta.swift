@@ -4,22 +4,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Messreihe zu Issue #174, Abnahmepunkt 26 („≥ 1 Delta mit ≥ 3 Distributären
-/// und Sandinseln"): warum an den großen Mündungen keine Deltaebene über dem
-/// Meeresspiegel entsteht, und ob sie es jetzt tut. Tabellen:
-/// `docs/zielbild-measurements.md` § Delta.
-///
-///     RS_MEASURE=1 RS_CACHE=/tmp/delta-welten swift test -c release --package-path SimCore \
-///         --filter testDeltaBudgetDiagnostic
-///
-/// `RS_SEEDS` (Komma-Liste), `RS_YEARS_LIST` (Komma-Liste), `RS_CACHE` (Ordner
-/// für gealterte Welten), `RS_OUT` (Ordner für Draufsicht-PPMs der Mündungen),
-/// `RS_DT` (Schrittweite der Alterung, Standard 1000 wie `RS_STEP`),
-/// `RS_DELTA` (Varianten, s. `DeltaMetrics.variantConfig`), `RS_BUDGET=1`
-/// (Pass-Bilanz über 1000 Jahre, Schrittweite `RS_BUDGET_DT`). Die Welten
-/// sind dieselben wie im Spiel (`RS_SEED` + `RS_STEP` in 1000er-Schritten):
-/// `generate` auf einem benutzten Terrain liefert seit caed8b5 die frische
-/// Welt.
 final class RiverDeltaTests: XCTestCase {
 
     private let env = ProcessInfo.processInfo.environment
@@ -70,28 +54,18 @@ final class RiverDeltaTests: XCTestCase {
     }
 }
 
-/// Kennzahlen der Mündungen und Deltas. EINE Definition je Kennzahl für die
-/// Messung und den Wächter.
 enum DeltaMetrics {
 
-    /// Ab so viel D8-Einzugsgebiet (Zellen) zählt eine Mündung als „groß".
     static let bigMouthCells = 5_000.0
-    /// Radius der Delta-Zone um die Mündung (Zellen).
     static let zoneRadius = 25
 
     struct Mouth {
-        /// Letzte Landzelle des D8-Laufs.
         let cell: Int
         let discharge: Double
-        /// Abflussrichtung (Einheitsvektor, gemittelt über die letzten Zellen).
         let dir: (x: Double, z: Double)
-        /// Zellen des Einzugsgebiets.
         let catchment: [Int]
     }
 
-    /// Produktions-Config, für Messreihen verstellt über `RS_DELTA`
-    /// („trap=0.5,dist=3,rad=1,elong=1.5,angle=1.2,gen=2,wmin=1,jit=0,top=0.0015,
-    /// min=2000"; `off` = Delta-Pass aus, also der Stand davor).
     static func variantConfig(_ env: [String: String]) -> SimConfig {
         var c = SimConfig.production
         guard let spec = env["RS_DELTA"] else { return c }
@@ -127,9 +101,6 @@ enum DeltaMetrics {
         return t
     }
 
-    /// Mündungen ins Meer (Landzelle, deren D8-Empfänger Meer ist) ab
-    /// `bigMouthCells`, absteigend nach Abfluss; Mündungen näher als
-    /// `zoneRadius` an einer größeren fallen weg.
     static func bigMouths(_ t: Terrain) -> [Mouth] {
         let n = t.cfg.n, sea = t.cfg.sea, cellArea = t.cfg.cellSize * t.cfg.cellSize
         var cands: [(Int, Double)] = []
@@ -146,7 +117,6 @@ enum DeltaMetrics {
             if picked.contains(where: { abs($0.0 % n - ci) < zoneRadius && abs($0.0 / n - cj) < zoneRadius }) { continue }
             picked.append(c)
         }
-        // Einzugsgebiete über die Empfänger-Kette (memoisiert).
         var label = [Int32](repeating: -1, count: n * n)
         for (index, c) in picked.enumerated() { label[c.0] = Int32(index) }
         var catchments = [[Int]](repeating: [], count: picked.count)
@@ -165,10 +135,8 @@ enum DeltaMetrics {
         }
         for k in 0..<(n * n) where label[k] >= 0 { catchments[Int(label[k])].append(k) }
         return picked.enumerated().map { index, c in
-            // Richtung: von 6 Zellen stromauf zur Mündung.
             var up = c.0
             for _ in 0..<6 {
-                // Zubringer mit dem größten Einzugsgebiet.
                 var best = -1, bestA = 0.0
                 let i = up % n, j = up / n
                 for dj in -1...1 { for di in -1...1 where di != 0 || dj != 0 {
@@ -189,36 +157,19 @@ enum DeltaMetrics {
     }
 
     struct Shape {
-        /// Landzellen in der Zone knapp über dem Meer.
         var plainLow = 0, plainHigh = 0
-        /// Meereszellen in der Zone nach Wassertiefe.
         var shelf005 = 0, shelf015 = 0, shelf03 = 0, deep = 0
-        /// Längsprofil h − sea entlang der Abflussrichtung, −10…+20 Zellen.
         var profile: [Double] = []
-        /// Distributäre: 1 + größte Zahl von Inseln, die ein Bogen um die
-        /// Mündung quert (k Inseln nebeneinander teilen das Wasser in k + 1
-        /// Rinnen). Ohne Insel 1 (die Mündung selbst).
         var arms = 1
-        /// Sandinseln (≥ `islandMinCells`): Zahl und Fläche in Zellen.
         var islands = 0
         var islandCells = 0
-        /// Anteil der Inselzellen, die der Render hell malt (Sand ≥ 0,5), wenn
-        /// eine Sand-Maske übergeben wurde.
         var islandSand = 0.0
-        /// Eingeschlossene Lagune: Zellen unter dem Meeresspiegel ohne
-        /// Verbindung zum Meer (`h ≤ sea < hf`) in der Delta-Zone. Das Raster
-        /// malt sie als See, dunkel neben dem Türkis des Meers.
         var lagoonCells = 0
     }
 
-    /// Radius der Delta-Zone um die Mündung (Zellen) — größer als der Baum
-    /// des Delta-Passes reicht.
     static let deltaZoneRadius = 45
-    /// Kleinste Insel, die zählt (Zellen): darunter Sprenkel, keine Sandinsel.
     static let islandMinCells = 6
 
-    /// Form der Mündung `m`. `sand`: optional je Zelle „hell gemalt"
-    /// (Render-Sand ≥ 0,5) für den Sand-Anteil der Inseln.
     static func shape(_ t: Terrain, _ m: Mouth, sand: [Bool]? = nil) -> Shape {
         let n = t.cfg.n, sea = t.cfg.sea
         var s = Shape()
@@ -242,7 +193,6 @@ enum DeltaMetrics {
             guard i >= 0, i < n, j >= 0, j < n else { continue }
             s.profile.append(t.h[j * n + i] - sea)
         }
-        // Inseln: Land in der Delta-Zone ohne Verbindung zu Land außerhalb.
         let R = deltaZoneRadius
         for dj in -R...R { for di in -R...R where di * di + dj * dj <= R * R {
             let i = mi + di, j = mj + dj
@@ -250,7 +200,7 @@ enum DeltaMetrics {
             let k = j * n + i
             if t.h[k] <= sea && t.hf[k] > sea { s.lagoonCells += 1 }
         } }
-        var label = [Int: Int]()        // Zelle → Insel-Nummer (−1 = Festland)
+        var label = [Int: Int]()
         var sizes: [Int] = []
         for dj in -R...R { for di in -R...R where di * di + dj * dj <= R * R {
             let i0 = mi + di, j0 = mj + dj
@@ -278,7 +228,6 @@ enum DeltaMetrics {
             let bright = label.filter { $0.value >= 0 && sand[$0.key] }.count
             s.islandSand = Double(bright) / Double(s.islandCells)
         }
-        // Bögen um die Mündung (seewärts ±100°): gequerte Inseln zählen.
         let base = atan2(m.dir.z, m.dir.x)
         for radius in 3...R {
             var crossed = 0, last = -3
@@ -297,12 +246,8 @@ enum DeltaMetrics {
         return s
     }
 
-    /// Mindestabfluss einer MFD-Rinne auf dem Fächer, als Anteil der Mündung
-    /// (nur Draufsicht).
     static let armMinShare = 0.05
 
-    /// Höhenänderung je Pass über `steps` Schritte, aufgeteilt nach Zone
-    /// (Meer/Land, Lage zu Beginn) und Einzugsgebiet je Mündung, plus inselweit.
     static func budget(_ t: Terrain, mouths: [Mouth], steps: Int, dt: Double) {
         let n = t.cfg.n, sea = t.cfg.sea
         let r = zoneRadius
@@ -375,9 +320,6 @@ enum DeltaMetrics {
         }
     }
 
-    /// Draufsicht einer Mündung als PPM (4 Pixel je Zelle): Meer blau nach
-    /// Tiefe, Land grün→braun nach Höhe über NN (gestreckt auf 0…0.03),
-    /// MFD-Rinnen ≥ `armMinShare` cyan, D8-Lauf ≥ 320 Zellen dunkelblau.
     static func writeMap(_ t: Terrain, _ m: Mouth, to path: String) throws {
         let n = t.cfg.n, sea = t.cfg.sea, cellArea = t.cfg.cellSize * t.cfg.cellSize
         let r = 50, scale = 4
@@ -391,7 +333,6 @@ enum DeltaMetrics {
                 let k = j * n + i
                 let d = t.h[k] - sea
                 if d <= 0 {
-                    // seicht (bis 0,005) türkis, tiefer dunkelblau
                     let x = min(1, -d / 0.005), y = min(1, max(0, (-d - 0.005) / 0.05))
                     c = (0.45 - 0.25 * x - 0.15 * y, 0.85 - 0.2 * x - 0.4 * y, 0.85 - 0.1 * x - 0.2 * y)
                 } else {

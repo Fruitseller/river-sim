@@ -1,50 +1,23 @@
 import Foundation
 
-/// Droplet-basierte Hydraulik-Erosion (Sebastian Lague / nickmcd). Anders als das
-/// Grid-Stream-Power-Modell **carvt** sie feine dendritische Rinnen: viele
-/// Wassertropfen laufen bergab, erodieren am steilen Hang (über einen Pinsel
-/// verteilt → weiche Kerben) und lagern Sediment in flacheren Abschnitten/Senken
-/// wieder ab. Deterministisch (Mulberry32-Seed) und headless-testbar.
-/// `Codable`/`Equatable`: Teil der Config im Weltformat (s. `SimConfig`).
 public struct HydraulicParams: Sendable, Codable, Equatable {
-    public var inertia = 0.05       // 0 = folgt dem Gradienten, 1 = Richtung bleibt
-    public var capacity = 4.0       // Sedimentkapazität ∝ Steigung·Speed·Wasser
-    public var minSlope = 0.01      // Mindest-Steigung für Kapazität (kein Stagnieren)
-    public var erodeRate = 0.3      // Anteil des Kapazitätsdefizits, der erodiert
-    public var depositRate = 0.3    // Anteil des Überschusses, der abgelagert wird
-    public var evaporate = 0.02     // Wasserverlust je Tropfen-Schritt
+    public var inertia = 0.05
+    public var capacity = 4.0
+    public var minSlope = 0.01
+    public var erodeRate = 0.3
+    public var depositRate = 0.3
+    public var evaporate = 0.02
     public var gravity = 4.0
-    public var maxSteps = 144       // Schritte je Tropfen. Von 64 erhöht (nickmcd: Tropfen leben bis zur Mündung): 64 starb auf halbem Weg den Hang hinunter → die Unterläufe großer Flüsse bekamen nie Tropfen (keine Tracks, kein Carven der Auen-Ebenen). 192 kostete ~25% mehr ohne sichtbaren Zugewinn.
-    public var erodeRadius = 3      // Pinsel-Radius fürs Erodieren (weiche Rinnen)
+    public var maxSteps = 144
+    public var erodeRadius = 3
     public var initialWater = 1.0
     public var initialSpeed = 1.0
-    // ---- nickmcd-Kopplung (Procedural Hydrology) ----
-    public var streamEvapDamp = 0.5 // Verdunstung ×(1−damp·stream): auf etablierten Läufen leben Tropfen länger → Flüsse verlängern/schärfen sich selbst (sein „River Sharpening", effR = evap·(1−0.2·stream) sinngemäß)
-    public var poolDepth = 0.03     // ab dieser Wassertiefe (hf−h) gilt eine Zelle als SEE (= See-Render-Schwelle): Tropfen deponiert dort sein Sediment (Delta) und läuft am Auslass weiter. Flacheres Ponding (Auen-Washes) behandeln Tropfen normal — sie sollen es CARVEN und damit entwässern, nicht überspringen (0.02 ließ Tropfen auf den Ebenen permanent teure Ketten-Sprünge machen → FPS-Einbruch)
-    public var poolSedimentKeep = 0.1 // Sediment-Anteil, der den See überlebt (nickmcd: −90% beim Drain)
-    // ---- Mäander-Kanal-Reconciliation (isChannel-Maske) ----
-    // Der Mäander-Kanal carvt sein Bett selbst (Terrain.meanderStamp), der
-    // Droplet-Pfad kannte diese Maske bisher nicht (nur der Grid-Pfad, via
-    // cfg.channelErodeDamp) — in Produktion (hydraulicEnabled) arbeiteten
-    // Kanal und Tropfen also gegeneinander. GEMESSEN (n=256, 3 Seeds, 40k+150k J.,
-    // Bett-Tiefe der Kanalzellen gegen die Aue, testChannelBedSurvivesDroplets):
-    // Nur die DEPOSITION ist der Konflikt — sie schüttet das Bett zu (14–15% der
-    // Betten lagen über ihrer Aue). Die Tropfen-EROSION im Bett zieht dagegen in
-    // dieselbe Richtung wie der Carve (sie tieft ein); ihre Dämpfung machte das
-    // Bett flacher (+0.0147→+0.0116) und die Verlandung schlimmer (8.7%→12.7%) —
-    // deshalb gibt es hier bewusst KEIN Erosions-Pendant zu channelErodeDamp.
-    public var channelDepositDamp = 0.15 // Tropfen-Deposition auf Kanalzellen. Der nicht
-                                         // abgelegte Rest bleibt in Suspension (Massenbilanz)
-                                         // → der Kanal TRANSPORTIERT das Sediment weiter,
-                                         // statt zu verlanden. 0.0 (gar keine Ablagerung) ist
-                                         // instabil: der Tropfen dumpt seine Gesamtlast am
-                                         // ersten Nicht-Kanal-Hindernis → Halden, Relief-Runaway
-                                         // (150k J.: relief 1.22, maxH 1.37). 0.15/0.10 sind
-                                         // messgleich, 0.15 hält Abstand zu dieser Kante.
+    public var streamEvapDamp = 0.5
+    public var poolDepth = 0.03
+    public var poolSedimentKeep = 0.1
+    public var channelDepositDamp = 0.15
     public init() {}
 
-    /// Prüft, ob alle Fließkomma-Parameter endlich sind (Eingangs-Wächter von
-    /// `Hydraulic.erode`).
     public var isFinite: Bool {
         inertia.isFinite && capacity.isFinite && minSlope.isFinite
             && erodeRate.isFinite && depositRate.isFinite && evaporate.isFinite
@@ -55,38 +28,8 @@ public struct HydraulicParams: Sendable, Codable, Equatable {
 }
 
 public enum Hydraulic {
-    /// Deckel der Ablehnungs-Stichprobe für abfluss-gewichtete Startpunkte
-    /// (s. `spawnPosition`): so viele NEUZIEHUNGEN sind je Tropfen erlaubt, danach
-    /// wird der letzte Vorschlag angenommen — der Aufwand je Tropfen bleibt hart
-    /// beschränkt. Die Annahmerate je Vorschlag ist Mittel(w)/max(w); mit dem auf
-    /// das Landmittel normierten Gewicht (Issue #10) ist Mittel(w) ≈ 1 und
-    /// max(w) gemessen 1.84 … 2.91 (n=832, Seeds 1337/7/99, über 50k Jahre
-    /// fallend) → 0.34 … 0.54, im Erwartungswert also 2–3 Vorschläge je Start.
-    /// Rest-Verzerrung durch den Deckel: mit dem ungünstigsten gemessenen max(w)
-    /// endet ein Start mit 0.66^24 ≈ 2·10⁻⁵ auf einem nicht angenommenen
-    /// Vorschlag — gegen die 5.6-fache Gewichtsspanne vernachlässigbar.
     static let spawnRejectionTries = 24
 
-    /// Zufallsstrom des Tropfens mit der laufenden Nummer `index` (Issue #2).
-    ///
-    /// Hier wird ein SEQUENZIELLER Generator als HASH über den Index benutzt —
-    /// und dafür muss der Index vorher richtig gemischt werden. Mulberry32 ist
-    /// darauf ausgelegt, aus einem laufenden Zustand gute FOLGEN zu liefern,
-    /// nicht darauf, aus benachbarten Startzuständen gute ERSTE Ausgaben zu
-    /// liefern. Genau das braucht der Tropfen aber: seine ersten beiden
-    /// Ausgaben sind der Startpunkt, die dritte ist der Annahme-Zug der
-    /// Ablehnungs-Stichprobe (`spawnPosition`) — sind die nicht unabhängig,
-    /// entscheidet nicht mehr das Niederschlagsgewicht über die Annahme,
-    /// sondern eine Eigenschaft des Startpunkts selbst.
-    ///
-    /// GEMESSEN, weil zuerst falsch gemacht: mit nur `index · 2654435761`
-    /// (goldener Schnitt, wie vorher für die Schrittnummer) fiel die gewichtete
-    /// Luv/Lee-Drainagedichte von ×1.14 (`main`) auf ×1.01 — die
-    /// Niederschlags-Gewichtung war praktisch wirkungslos, obwohl Randverteilung
-    /// (Chi² 67 gegen 63 df) und Serienkorrelation (lag-1 ~1e-3) der Startpunkte
-    /// unauffällig blieben. Der Fehler steckte allein in der Kopplung zwischen
-    /// Position und Annahme-Zug. Mit splitmix64-Finalizer und einem
-    /// Aufwärm-Zug steht sie bei ×1.21 (`RainWeightedFlow`-Wächter).
     @inline(__always)
     static func dropRNG(seed: UInt32, index: UInt64) -> Mulberry32 {
         var z = index &+ 0x9E37_79B9_7F4A_7C15
@@ -98,17 +41,6 @@ public enum Hydraulic {
         return r
     }
 
-    /// Zieht einen Tropfen-Startpunkt in Zellkoordinaten.
-    ///
-    /// - `weight` leer → gleichverteilt über das Grid, mit exakt ZWEI Ziehungen aus
-    ///   `rnd` (bit-identisch zum Zustand vor Issue #9).
-    /// - `weight` gesetzt (= `Terrain.flowWeight`) → Ablehnungs-Stichprobe (von Neumann):
-    ///   Vorschlag gleichverteilt, angenommen mit Wahrscheinlichkeit
-    ///   `weight[k] / weightMax` → die Startdichte ist ∝ Abfluss, ohne dass
-    ///   eine 700k-Zellen-Verteilungstabelle je Charge gebaut werden muss.
-    ///   Zellen mit Maximalgewicht werden OHNE Ziehung angenommen — dadurch ist ein
-    ///   konstantes Gewichtsfeld bit-identisch zum ungewichteten Fall (Wächter:
-    ///   `testUniformRainWeightIsBitIdentical`).
     static func spawnPosition(_ rnd: inout Mulberry32, n: Int,
                               weight: [Double], weightMax: Double) -> (x: Double, y: Double) {
         weight.withUnsafeBufferPointer {
@@ -124,8 +56,8 @@ public enum Hydraulic {
         var tries = 0
         while true {
             let w = weight[Int(py) * n + Int(px)]
-            if w >= weightMax { break }              // Maximum → immer angenommen
-            if rnd.next() * weightMax <= w { break } // angenommen
+            if w >= weightMax { break }
+            if rnd.next() * weightMax <= w { break }
             if tries >= spawnRejectionTries { break }
             tries += 1
             px = rnd.next() * Double(n - 1)
@@ -134,77 +66,6 @@ public enum Hydraulic {
         return (px, py)
     }
 
-    /// Führt `count` Tropfen aus und modifiziert `h`/`rock`/`sed` massenkonsistent
-    /// (h = rock + sed). `seed` steuert die (deterministischen) Startpositionen.
-    ///
-    /// nickmcd-Kopplung (Procedural Hydrology), alle optional:
-    /// - `track`: besuchte Zellen werden markiert → `Terrain.streamMap`
-    ///   (zeitgemittelte Partikel-Pfade = seine Stream-Map).
-    /// - `stream`: etablierte Läufe (0..1) senken die Verdunstung → Tropfen leben
-    ///   dort länger, Flüsse schärfen/verlängern sich selbst (River Sharpening).
-    /// - `hf`/`receiver`: Tropfen, der in einen See läuft (hf−h > poolDepth),
-    ///   deponiert sein Sediment als DELTA am Eintritt, springt der Empfänger-
-    ///   Kette entlang zum See-Auslass und läuft dort mit 10% Sediment weiter
-    ///   (sein Descend→Flood→Drain-Zyklus, ohne den See selbst zu carven).
-    /// - `channel`: Mäander-Kanalzellen (Terrain.isChannel). Dort ist die Tropfen-
-    ///   DEPOSITION gedämpft (channelDepositDamp) — das Bett gehört dem Kanal-Carve
-    ///   und darf nicht zugeschüttet werden. Leeres Array = Verhalten wie ohne Maske
-    ///   (bit-identisch).
-    /// - `flowWeight`: normiertes ABFLUSS-Gewicht (Terrain.flowWeight, Issue #9/#10).
-    ///   Die Startpunkte werden damit gewichtet (s. `spawnPosition`) — wo mehr
-    ///   abfließt, starten auch mehr Tropfen. Seit Issue #36 ist das Regen PLUS
-    ///   Schmelze und deshalb ausdrücklich NICHT `Terrain.rainWeight`: die
-    ///   Tropfen-Starts sind einer der drei Abfluss-Konsumenten, die alle aus
-    ///   derselben Quelle lesen müssen (AGENTS.md). Ohne Schmelzwasser liefert
-    ///   `flowWeight` das Regen-Gewicht unverändert zurück, der Wert ist dann
-    ///   also derselbe wie vor #36. Über See trägt das Feld den neutralen Wert
-    ///   1.0, damit `seaLevel` (verworfene Ozean-Starts) denselben Anteil
-    ///   verwirft wie ungewichtet und der Tropfen-Etat auf Land unverändert
-    ///   bleibt. Leeres Array = gleichverteilte Starts wie bisher
-    ///   (bit-identisch).
-    /// - `depositDamp`: per-Zelle-Faktor der Tropfen-DEPOSITION (Issue #108,
-    ///   gebaut in `Terrain.buildDepositDamp` aus dem D8-Abfluss). Er ist die
-    ///   dendritische Verallgemeinerung von `channel`/`channelDepositDamp`: dort
-    ///   wo viel abfließt, TRÄGT der Fluss seine Fracht weiter, statt sein Bett
-    ///   auf Umgebungsniveau zuzuschütten. Wirksam ist der STÄRKERE der beiden
-    ///   Dämpfer (Minimum) — nicht ihr Produkt: das Produkt liefe auf den
-    ///   Mäanderbetten (hoher Abfluss UND Maske) in Richtung 0, und 0 ist als
-    ///   instabil belegt (s. `channelDepositDamp`). Leeres Array = kein
-    ///   Dämpfer (bit-identisch).
-    /// - `bedLocked`: gesperrtes Bett. Bis #187 hieß der Parameter `underIce`:
-    ///   die Vergletscherungs-Maske (Terrain.underIce, Issue #35); seit dem
-    ///   Mäandergürtel (#174) trägt er zusätzlich das Gürtelbett
-    ///   (`Terrain.beltDropletGate`, Begründung dort). Auf
-    ///   diesen Zellen rührt der Tropfen das BETT nicht an — weder erodierend
-    ///   (unter einem Gletscher gibt es keinen fluvialen Abtrag) noch ablagernd
-    ///   (Schutt auf einer Eisoberfläche ist kein Sediment im Bett): seit
-    ///   Issue #96 schreibt die Schleife beides über den Bett-Funnel-Kern
-    ///   (`Terrain.Bed.erode`/`deposit`), und die Maske ist deren Gate. Der nicht
-    ///   abgelegte Anteil bleibt wie bei der Kanalmaske in Suspension und
-    ///   erreicht das Bett erst hinter der Zunge — physisch genau der
-    ///   Sander/Schwemmfächer am Gletschertor. Leeres Array = Verhalten wie ohne
-    ///   Maske (bit-identisch).
-    /// - `erodibility`: relative Gesteins-Erodierbarkeit (Terrain.lithErodeK,
-    ///   Issue #12; 1 = Referenzgestein). Skaliert den FELS-Anteil jedes Abtrags
-    ///   (s. `dig`) — das lockere Sediment darüber erodiert unverändert. Leeres
-    ///   Array = uniformes Gestein wie bisher (bit-identisch).
-    /// - `firstDrop`: laufende Nummer des ERSTEN Tropfens dieser Charge im
-    ///   fortlaufenden Tropfen-Strom des Terrains (`Terrain.dropsEmitted`).
-    ///   Dann zieht jeder Tropfen seinen Startpunkt aus einem EIGENEN, aus
-    ///   seiner Nummer abgeleiteten Strom (s. `dropRNG`) — Tropfen Nr. j ist
-    ///   damit derselbe Tropfen, egal ob er als Einzelner in einem Frame-Schritt
-    ///   fällt oder als einer von 360 in einem +10.000-Jahre-Sprung (Issue #2,
-    ///   Wächter `DtInvariance.testDropletStreamIsChunkingInvariant`).
-    ///
-    ///   `nil` = EINMAL-CHARGE: alle Tropfen kommen aus einem Strom ab `seed`,
-    ///   wie vor Issue #2. Das ist der richtige Modus für Chargen, die gar keine
-    ///   Zeit abbilden und deren Größe fest ist — den Stream-Map-Spin-up der
-    ///   Generierung (`Terrain.spinUpStreamMap`). Er behält damit exakt seine
-    ///   kalibrierte Realisierung: die erzeugte Welt hängt an dieser Charge, und
-    ///   sie hat kein dt-Problem, das zu beheben wäre.
-    ///
-    /// Nicht-endliche Skalare (`floor`, `seaLevel`) oder Parameter (`p`) verwerfen
-    /// die Charge defensiv als No-op.
     public static func erode(h: inout [Double], rock: inout [Double], sed: inout [Double],
                               n: Int, count: Int, seed: UInt32, floor: Double,
                               p: HydraulicParams,
@@ -222,10 +83,6 @@ public enum Hydraulic {
               h.count == n * n,
               rock.count == n * n,
               sed.count == n * n else { return }
-        // Erosions-Pinsel einmal vorberechnen: Offsets + normierte Gewichte im Radius.
-        // Nicht-positive Radien (r <= 0) erodieren defensiv punktuell an der
-        // Tropfenposition (1 Zelle), um ungültige Bereiche (-r...r) und Divisionen
-        // durch Null (0/0 = NaN) zu verhindern.
         var bx: [Int] = [], byv: [Int] = [], bw: [Double] = []
         let r = p.erodeRadius
         if r <= 0 {
@@ -243,8 +100,6 @@ public enum Hydraulic {
             for i in bw.indices { bw[i] /= wsum }
         }
 
-        // Optionale Puffer aktivieren, wenn ihre Länge exakt zur Zellzahl passt
-        // (verhindert Out-of-Bounds-Zugriffe bei fehlerhaften Puffergrößen).
         let chanOn = channel.count == h.count
         let ddOn = depositDamp.count == h.count
         let lithOn = erodibility.count == h.count
@@ -255,10 +110,6 @@ public enum Hydraulic {
         let streamOn = stream.count == h.count
         let flowOn = flowWeight.count == h.count
 
-        // PERF: `Array.max()` nimmt den generischen Sequence-Pfad (Iterator plus
-        // Closure je Element) und tastet hier 692k Zellen ab. Die
-        // Roh-Puffer-Schleife vergleicht in derselben Reihenfolge und liefert
-        // denselben Wert.
         let flowMax: Double = !flowOn ? 0 : flowWeight.withUnsafeBufferPointer { rb in
             guard let pw = rb.baseAddress, rb.count > 0 else { return 0 }
             var m = pw[0]
@@ -288,10 +139,6 @@ public enum Hydraulic {
             let pstream = stmb.baseAddress, pflow = flowOn ? fwb.baseAddress : nil
             let pbx = bxb.baseAddress!, pby = byb.baseAddress!, pbw = bwb.baseAddress!
             let brushCount = bx.count
-            // Bett-Funnel-Kern (Issue #96): dieselbe Regel wie beim Terrain
-            // (`Bed.erode`/`Bed.deposit`), aber mit der STÄRKEREN Sperr-Maske
-            // des Tropfenpfads — `bedLocked` ist Eis ∪ Gürtelbett
-            // (`beltDropletGate`), nicht nur die Gletscher-Maske.
             let bed = Terrain.Bed(h: ph, sed: psed, rock: prock,
                                   locked: iceOn ? pice! : nil)
 
@@ -303,11 +150,8 @@ public enum Hydraulic {
                     if d > s { d = s + (d - s) * f }
                 }
                 let room = ph[k] - floor
-                if room <= 0 { return 0 } // schon am Tiefseeboden
-                if d > room { d = room }  // nicht unter den Boden graben
-                // Bett-Regel (erst Sediment, dann Fels) UND Sperr-Gate: der
-                // Funnel-Kern (Issue #96), mit der strengeren Maske des
-                // Tropfenpfads (Eis ∪ Gürtelbett, `bedLocked`).
+                if room <= 0 { return 0 }
+                if d > room { d = room }
                 return bed.erode(k, d)
             }
 
@@ -315,11 +159,6 @@ public enum Hydraulic {
                 var f = 1.0
                 if chanOn && pchan![k] { f = p.channelDepositDamp }
                 if ddOn && pdd![k] < f { f = pdd![k] }
-                // Ablage über den Funnel-Kern (Issue #96): gesperrte Zellen
-                // (Eis ∪ Gürtelbett) nehmen nichts an — `Bed.deposit` liefert 0,
-                // der nicht abgelegte Rest bleibt in Suspension und erreicht
-                // das Bett erst hinter der Sperre (physisch: der Sander am
-                // Gletschertor). Bis #96 stand das Gate hier ausgeschrieben.
                 if f >= 1 { return amount - bed.deposit(k, amount) }
                 return amount - bed.deposit(k, amount * f)
             }
@@ -376,11 +215,6 @@ public enum Hydraulic {
                     dirX = dirX * p.inertia - gradX * (1 - p.inertia)
                     dirY = dirY * p.inertia - gradY * (1 - p.inertia)
                     let len = (dirX * dirX + dirY * dirY).squareRoot()
-                    // Beide Abbrüche sind so formuliert, dass ein NaN sie auslöst
-                    // (jeder Vergleich mit NaN ist falsch): ohne das lief ein NaN bis
-                    // zum `Int(px)` im nächsten Schritt und brach dort ab (Trap).
-                    // Für endliche Werte gleichwertig zur vorigen Form, ohne
-                    // zusätzliche Prüfung je Schritt.
                     guard len >= 1e-9 else { break }
                     dirX /= len; dirY /= len
                     let npx = px + dirX, npy = py + dirY

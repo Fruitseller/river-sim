@@ -1,23 +1,8 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter für `RenderContract` (Issue #51): die Zahlen, die Godot-Schicht,
-/// GDExtension und Shader gemeinsam annehmen müssen.
-///
-/// Warum hier und warum als Textvergleich: `game/scripts/Main.gd` und die
-/// Shader sind headless nicht ausführbar, ihr Quelltext aber lesbar (s.
-/// `RepoSource`). Genau in dieser Lücke ist die Drift entstanden, die dieser
-/// Vertrag beendet — der Shader-Default von `hscale` stand auf 26.0, während
-/// `Main.gd` mit 24.0 rechnete.
 final class RenderContractTests: XCTestCase {
 
-    /// Ein FPS-Deckel reicht im Pausezustand nicht: Auch 30 Retina-Frames pro
-    /// Sekunde lasten die GPU aus, obwohl sich die Welt nicht ändert. Nach der
-    /// Leerlauffrist muss Main deshalb den Renderloop ganz abschalten und ihn
-    /// bei der nächsten Eingabe wieder einschalten. Fensterleisten-Aktionen
-    /// (Maximieren, Resize) erzeugen kein InputEvent und brauchen einen eigenen
-    /// Weckruf — sonst steht das eingefrorene Pausebild skaliert im neuen
-    /// Fenster, ausgerechnet beim Maximieren fürs Messprozedere (AGENTS.md).
     func testPausedIdleDisablesRenderLoop() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "RenderingServer.render_loop_enabled = false",
@@ -29,11 +14,6 @@ final class RenderContractTests: XCTestCase {
         assertContains(main, "NOTIFICATION_WM_WINDOW_FOCUS_IN",
                        hint: "Fokuswechsel weckt den Renderloop (kein InputEvent)")
 
-        // Der Leerlauf-Ausstieg: whitespace-tolerant statt an exakte Tabs
-        // gebunden (eine kosmetische Umformatierung ist kein Vertragsbruch)
-        // — und POSITIONIERT: er muss NACH dem Renderloop-Umschalter stehen
-        // (sonst würde nie suspendiert) und VOR dem Sim-Schritt (sonst
-        // steppte die Pause weiter, nur unsichtbar).
         let code = main.code
         let exit = code.range(of: #"if idle:\s+return"#, options: .regularExpression)
         XCTAssertNotNil(exit,
@@ -50,19 +30,12 @@ final class RenderContractTests: XCTestCase {
         }
     }
 
-    /// Der Brush lädt seine Höhe sofort hoch und zieht das globale Flussnetz
-    /// selbst nach. Ein paralleler `sim.step` würde dieselben Zellen davor
-    /// weiterentwickeln und bei 60 J/s Wirkung und Hauptthreadzeit streitig
-    /// machen. Die Tempowahl bleibt stehen; nur aktive Striche sperren Schritte.
     func testSculptingOwnsTheSimulationClock() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "if _simulation_should_step(year_rate, sculpting):",
                        hint: "Zeitraffer tritt während eines Werkzeugstrichs zurück")
     }
 
-    /// Die zusätzlichen Shader-Rinnen gleichen den SICHTBAREN Alterungskontrast
-    /// aus, ohne die Sim-Höhen nachträglich umzuschreiben: jung schwächer als der
-    /// frühere konstante Wert 0.30, alt stärker, dazwischen glatt und gedeckelt.
     func testTerrainDetailCounterbalancesVisualAging() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
@@ -72,8 +45,6 @@ final class RenderContractTests: XCTestCase {
                        hint: "100k behält sichtbare Reliefstruktur")
         assertContains(main, "const TERRAIN_DETAIL_AGE_YEARS := 100000.0",
                        hint: "Rampe endet am größten UI-Zeitsprung")
-        // Das Alter der hochgeladenen Höhen, nicht das der Sim: im Zeitraffer
-        // rechnet die schon am nächsten Schritt (perf-measurements §L).
         assertContains(main, "func _upload_heights(bytes: PackedByteArray, year: float) -> void:",
                        hint: "Der Höhen-Upload kennt das Jahr seiner Höhen")
         assertContains(main,
@@ -85,12 +56,6 @@ final class RenderContractTests: XCTestCase {
                        hint: "Editor- und Jahr-0-Default stimmen überein")
     }
 
-    /// Der Detail-Layer allein degeneriert auf der gealterten Welt zu einem
-    /// uniformen Tapeten-Muster (Nutzer-Abnahme 2026-09-02): prozedurales Noise
-    /// bindet an keine echte Geländestruktur. Seit PR #106 bündelt die
-    /// Abfluss-Textur (`flow_tex`, R8 aus `WaterFieldRenderer.flowDetailField`)
-    /// die Rinnen dort, wo Wasser wirklich abfließt; das Stärke-Fenster des
-    /// Shaders muss dem Kalibrier-Vertrag in `WaterRender` folgen.
     func testTerrainDetailFollowsRealDischarge() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
@@ -104,58 +69,28 @@ final class RenderContractTests: XCTestCase {
                        "mix(\(glsl(WaterRender.flowDetailGainLo)), "
                        + "\(glsl(WaterRender.flowDetailGainHi)), flow_at(v_uv))",
                        hint: "Stärke-Fenster == WaterRender.flowDetailGainLo/Hi")
-        // Das Feld selbst reist seit Issue #214 ausschließlich im Frame
-        // (`flow`-Schlüssel) — dass die Brücke ihn setzt und Main.gd ihn
-        // liest, pinnt RenderFrameTests.testMainUsesTheFrameTriggerValues.
     }
 
     func testHeightScaleIsTheSameInEveryLayer() throws {
         XCTAssertEqual(RenderContract.heightScale, 24.0)
         let main = try RepoSource.probe("game/scripts/Main.gd")
-        // Main.gd führt die Zahl seit #213 nicht mehr als Literal, sondern holt
-        // sie über die Brücke (`CalibrationRegistryTests`); hier bleibt, dass
-        // derselbe Wert als Uniform ankommt.
         assertContains(main, "terrain_mat.set_shader_parameter(\"hscale\", hscale)",
                        hint: "Shader-Uniform der Überhöhung == Main.gd hscale (Brücke)")
         let shader = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(shader, "uniform float hscale = \(glsl(RenderContract.heightScale));",
                        hint: "Shader-Default der Überhöhung == RenderContract.heightScale")
-        // Nicht nur die DEKLARATION pinnen, sondern jede ANWENDUNG: ein
-        // zusätzlicher Faktor am Displacement (`* hscale * 1.08`) oder eine
-        // eigene Konstante in den Normalen ließe den Vertrag grün und das
-        // gerenderte Terrain trotzdem von `hscale` abweichen — genau die
-        // Drift-Klasse, die #51 beendet. Die vier Zeilen sind alle Stellen, die
-        // den Uniform lesen: Vertex-Höhe, Vertex-/Pixel-Normale und die
-        // Welt-Y-Koordinate der triplanaren Materialschichten. Die
-        // Render-Verschiebung (#153) addiert sich zur Vertex-Höhe UNSKALIERT:
-        // sie liegt schon in Welteinheiten vor, die Überhöhung wendet der
-        // Back-Pass genau einmal an (unten).
         for use in ["VERTEX.y = mix(hraw, hfv, lift) * hscale + relief_lift(uv) * (1.0 - lift);",
-                    // Vertex-Normale mit demselben Vorzeichen wie die Pixel-Normale
-                    // (hU bei +z): Godots Schatten-Normal-Bias liest sie
-                    // (Review zu #174, vorher `-(hD - hU)`).
                     "NORMAL = normalize(vec3(-(hR - hL) * hscale, 2.0 * sw, -(hU - hD) * hscale));",
                     "vec3 n_ws = normalize(vec3(-s_uv.x * hscale / world_size, 1.0,"
                         + " -s_uv.y * hscale / world_size));",
                     "vec3 material_pos = vec3(wp.x - world_size * 0.5, hval * hscale,",
-                    // Weltsteigung der Gletscherspalten (#174 D) und des
-                    // Raster-Wassers an Wänden, dieselbe Umrechnung wie die
-                    // Pixel-Normale.
                     "float world_slope = length(coarse_slope) * hscale / world_size;"] {
             assertContains(shader, use,
                            hint: "Überhöhung wird unskaliert angewandt (keine Zusatzfaktoren)")
         }
-        // Und keine weitere, ungeprüfte Anwendung: 1 Deklaration + 1 Vertex-Höhe
-        // + 2 Vertex-Normale + 2 Pixel-Normale + 1 Materialkoordinate
-        // + 1 Spalten-Steigung = 8.
         XCTAssertEqual(shader.count(of: "hscale"), 8,
                        "Neue oder entfernte `hscale`-Anwendung im Terrain-Shader —"
                        + " Liste der geprüften Stellen mitziehen")
-        // Back-Pass der Verschiebung: Main.gd setzt denselben Uniform, der
-        // Shader wendet ihn genau einmal an (Höhenzuschlag in Welteinheiten)
-        // und rechnet damit den Gratdeckel in Sim-Höhe, die Steigung der
-        // Felsrippen in Weltsteigung und die Höhe der Felsbänke in Welt-Höhe
-        // um (beides Look-Iteration 7).
         assertContains(main, "relief_mat.set_shader_parameter(\"hscale\", hscale)",
                        hint: "Back-Pass bekommt die Überhöhung aus Main.gd hscale")
         let bake = try RepoSource.probe("game/shaders/relief_bake.gdshader")
@@ -174,19 +109,11 @@ final class RenderContractTests: XCTestCase {
     }
 
     func testRiverLiftIsTheSameInEveryLayer() throws {
-        // Die Godot-Wächter holen den Wert seit #213 über die Brücke (Gruppe
-        // `contract`, `CalibrationRegistryTests`), Main.gd braucht ihn nicht.
         XCTAssertEqual(RenderContract.riverLift, 0.35)
-        // Über Wasser gilt der Land-Lift NICHT — die beiden Wasser-Versätze
-        // müssen deutlich kleiner bleiben, sonst wäre die Sonderbehandlung
-        // wirkungslos (das Band schwebte als Platte über der Fläche).
         XCTAssertLessThan(WaterRender.ribbonLakeSurfaceLift, RenderContract.riverLift)
         XCTAssertLessThan(abs(WaterRender.ribbonSeaSurfaceSink), RenderContract.riverLift)
     }
 
-    /// Godot 4 nennt den Alpha-Tiefenpass `depth_prepass_alpha`. Der ähnlich
-    /// klingende Vulkan-Begriff `depth_draw_alpha_prepass` kompiliert nicht und
-    /// ließ den neuen Ozean erst beim Start der echten Szene ausfallen.
     func testOceanUsesAValidAlphaDepthPrepass() throws {
         let ocean = try RepoSource.probe("game/shaders/ocean.gdshader")
         assertContains(ocean,
@@ -194,9 +121,6 @@ final class RenderContractTests: XCTestCase {
                        hint: "Ozean-Shader verwendet Godot-4-Rendermodus")
     }
 
-    /// Das Ozean-Mesh reicht über die Kamera-Sichtweite und zeichnet innerhalb
-    /// der Terrainfläche nur über Meeresboden. Sonst sieht eine flache Kamera
-    /// gleichzeitig seine quadratische Kante und die Platte unter dem Land.
     func testOceanClipsItsPlaneBelowLand() throws {
         let ocean = try RepoSource.probe("game/shaders/ocean.gdshader")
         let main = try RepoSource.probe("game/scripts/Main.gd")
@@ -228,10 +152,6 @@ final class RenderContractTests: XCTestCase {
                        hint: "Erstes Terrain der GDExtension == RenderContract.defaultSeed")
     }
 
-    /// Der Produktions-Einlauf der Generierung (PR #106,
-    /// `Terrain.generate(seed:settleYears:)`) muss auf BEIDEN Brücken-Wegen
-    /// hängen — Start-Terrain und „Neues Terrain"-Knopf. Fehlte er auf einem,
-    /// bekämen Spieler zwei verschiedene Welt-Klassen aus demselben Seed.
     func testBothBridgeGeneratePathsSettle() throws {
         let bridge = try RepoSource.extensionSources()
         assertContains(bridge, "settleYears: SimConfig.productionSettleYears",
@@ -240,14 +160,6 @@ final class RenderContractTests: XCTestCase {
                        "Beide generate-Wege der Brücke (Init + @Callable) laufen ein")
     }
 
-    /// Die Produktions-Config ist EIN benannter Wert in SimCore (Issue #97) —
-    /// die Brücke liest ihn, statt ihn nachzubauen. Vorher stand dieselbe
-    /// Zwei-Zeilen-Abweichung in sechs handgepflegten Kopien; die Brücke war
-    /// die einzige davon, die headless nicht ausführbar ist, also die einzige,
-    /// die still driften konnte. Genau deshalb prüft dieser Wächter ihren
-    /// Quelltext auch auf die ABWESENHEIT einer eigenen Fassung: ein neuer
-    /// `config.hydraulicSkipWaterSpawns = …` in der Brücke wäre sonst wieder
-    /// unbemerkt.
     func testBridgeReadsTheOneProductionConfig() throws {
         let bridge = try RepoSource.extensionSources()
         assertContains(bridge, "config: SimConfig.production",
@@ -264,11 +176,6 @@ final class RenderContractTests: XCTestCase {
                        + "SimConfig.productionSettleYears")
     }
 
-    /// Die Gegenseite desselben Vertrags, ausführbar: `production` ist genau
-    /// `SimConfig()` plus die zwei Laufzeit-Schalter. Rutscht eine dritte
-    /// Abweichung hinein, fährt die Produktion eine andere Physik als jede
-    /// Kalibrierung und jeder Test — und die Kopfzeile des Mess-Harness
-    /// behauptet weiter, sie zu spiegeln.
     func testProductionConfigIsTheDefaultsPlusTheTwoPerformanceFlags() {
         var expected = SimConfig()
         expected.hydraulicSkipWaterSpawns = true
@@ -293,14 +200,6 @@ final class RenderContractTests: XCTestCase {
         XCTAssertEqual(nonDefault.world, 130)
     }
 
-    /// SimCore-Quellen dürfen keine alten Bezeichner auf die entfernten
-    /// Brücken-Properties führen (`SimNode.generationSettleYears`,
-    /// `SimNode.productionConfig`).
-    ///
-    /// Der Wächter prüft bewusst den Rohtext inkl. Doc-Kommentaren (`RepoSource.file`
-    /// statt `SourceProbe.code`): genau ein veralteter Kommentar in `Terrain.generate`
-    /// war der erste Drift-Fall dieses PRs. Historische Verweise in Tests werden nicht
-    /// erfasst, weil nur die SimCore-Quellen und der Mess-Harness geprüft werden.
     func testNoStaleSimNodeConfigReferencesInSimCore() throws {
         for path in ["SimCore/Sources/SimCore/Terrain.swift",
                      "SimCore/Sources/SimCore/Config.swift",
@@ -313,9 +212,6 @@ final class RenderContractTests: XCTestCase {
         }
     }
 
-    /// Der Default des `Terrain`-Initialisierers ist die dritte Kopie derselben
-    /// Zahl — und die einzige, die sich hier AUSFÜHREN lässt: gleicher Seed →
-    /// bit-gleiches Feld (Determinismus-Invariante des Projekts).
     func testTerrainDefaultSeedMatchesTheContract() {
         var cfg = SimConfig()
         cfg.n = 96; cfg.world = calibrationWorld

@@ -1,22 +1,6 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter für den WERKZEUG-Vertrag zwischen Game-Layer und `BrushTool`
-/// (Issues #53, #79).
-///
-/// Über die Brücke geht nur eine ZAHL (`SimNode.brush(mode:)`). Die Bedeutung
-/// dieser Zahl steht zwangsläufig doppelt — als `case` von `BrushTool` (seit #79
-/// in SimCore) und als `"mode"` in der Werkzeug-Tabelle von `Main.gd`. Die
-/// GDScript-Seite ist headless nicht ausführbar und bleibt Text-Match (dasselbe
-/// Verfahren wie bei den Render-Verträgen, s. `RepoSource`); die Swift-Seite ist
-/// seit dem Umzug AUSFÜHRBAR: das Routing jedes `case` wird als Wirkung auf
-/// einem echten Terrain geprüft, nicht mehr per Quelltext-Parsing des `switch`.
-///
-/// Was die Tests verhindern: eine Zeile in der Tabelle ohne `case` — vorher fiel
-/// der `switch` auf `default: break`, das Werkzeug malte einfach nichts, und im
-/// Spiel sah das wie ein Physik-Bug aus — und ein `case`, das auf die falsche
-/// Terrain-Operation zeigt oder ihre Argumente vertauscht (dieselbe
-/// Failure-Mode, nur eine Zeile weiter).
 final class ToolContractTests: XCTestCase {
 
     func testBrushToolCasesMatchTheGameToolTable() throws {
@@ -28,20 +12,10 @@ final class ToolContractTests: XCTestCase {
                        "Werkzeug-Tabelle (Main.gd) und BrushTool (SimCore) sind "
                        + "auseinandergelaufen: \(tableModes) gegen "
                        + "\(BrushTool.allCases.map(\.rawValue))")
-        // Die Zahl IST der Rohwert der Aufzählung: lückenlos ab 0, in derselben
-        // Reihenfolge. Sonst müsste der Game-Layer die Zuordnung kennen, und
-        // genau das soll die Tabelle abschaffen.
         XCTAssertEqual(tableModes, Array(0..<tableModes.count),
                        "Werkzeug-Modi müssen lückenlos ab 0 in Tabellen-Reihenfolge stehen")
     }
 
-    /// Die Pinselkuppel in `Main.gd` (Issue #174, Paket E) zeigt die Form der
-    /// Wirkung: ihr Profil ist (1 − d²)^p mit p = 2 für alle Werkzeuge und p = 4
-    /// für die Spitzhacke. Die GDScript-Seite ist Text, die Swift-Seite wird
-    /// GEMESSEN: Δh je Zelle geteilt durch Δh im Zentrum muss genau dieses
-    /// Profil sein. Ändert jemand das Gewicht in `Terrain.forEachBrushCell`
-    /// oder die Spitze der Spitzhacke, zeigte die Kuppel sonst still eine
-    /// falsche Form.
     func testBrushDomeFollowsTheBrushFalloff() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "const BRUSH_FALLOFF_POWER := 2.0",
@@ -72,33 +46,18 @@ final class ToolContractTests: XCTestCase {
         assertProfile(.pickaxe, cells: Terrain.pickaxeMaxCells, power: 4, sign: -1)
     }
 
-    // MARK: - Verhaltens-Tests (die zweite Hälfte des Vertrags, Issue #79)
-    //
-    // Die ZAHL stimmt, aber tut ihr `case` auch das Gemeinte? Früher las das ein
-    // Quelltext-Parser aus dem `switch`; der sah vertauschte Argumente nicht und
-    // brach bei jeder Umformung ohne Verhaltensänderung. Jetzt läuft jedes
-    // Werkzeug auf einem echten Terrain und seine charakteristische WIRKUNG wird
-    // geprüft — auf seed-gleichen Terrains, damit nur das Werkzeug den
-    // Unterschied macht.
-
-    /// Klein genug für flinke Terrain-Bauten (jeder Test generiert frisch),
-    /// groß genug, dass der 6-Zellen-Pinsel samt Außenrand aufs Gitter passt.
     private let n = 64
 
     private var cfg: SimConfig {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld; return c
     }
 
-    /// Frisches Terrain mit fixem Seed; zwei Aufrufe liefern bit-gleiche Welten
-    /// (Determinismus-Invariante), also ist jede Differenz die Werkzeug-Wirkung.
     private func makeTerrain() -> Terrain { Terrain(config: cfg, seed: 7) }
 
-    /// Strich-Zentrum in Gitterkoordinaten und Pinselradius in Welteinheiten.
     private var gx: Double { Double(n) / 2 }
     private var gz: Double { Double(n) / 2 }
-    private var radius: Double { 6 * cfg.cellSize }   // 6 Zellen
+    private var radius: Double { 6 * cfg.cellSize }
 
-    /// Wendet `tool` auf ein frisches Terrain an und liefert (vorher, nachher).
     private func heights(after tool: BrushTool, strength: Double = 1.0,
                          target: Double = 0.0, radiusWorld: Double? = nil)
         -> (before: [Double], after: [Double]) {
@@ -111,15 +70,10 @@ final class ToolContractTests: XCTestCase {
 
     private var centerIndex: Int { Int(gz) * n + Int(gx) }
 
-    /// Rauheit im Pinselkreis dieses Strichs (geteilter Helfer, `BrushTestSupport.swift`).
     private func brushRoughness(_ h: [Double]) -> Double {
         roughness(h, center: (gx, gz), radiusWorld: radius, cfg: cfg)
     }
 
-    /// Heben und Senken sind DERSELBE Aufruf mit gespiegeltem `dir`: ein Helfer,
-    /// zwei Tests — `sign` ist die erwartete Wirkrichtung auf Höhe UND Tektonik
-    /// (die Kopplung unterscheidet `sculpt` von jedem anderen Werkzeug und pinnt
-    /// das `dir`-Vorzeichen).
     private func assertSculpt(_ tool: BrushTool, sign: Double,
                               file: StaticString = #filePath, line: UInt = #line) {
         let t = makeTerrain()
@@ -150,16 +104,10 @@ final class ToolContractTests: XCTestCase {
     }
 
     func testFlattenPullsTowardTheGivenTarget() throws {
-        // Ziele RELATIV zum Gelände statt absoluter Höhen: der Test überlebt so
-        // eine Rekalibrierung der Höhenskala. Ziel über dem Zentrum hebt, Ziel
-        // darunter senkt — das unterscheidet Einebnen von Glätten und beweist,
-        // dass `target` ankommt.
         let h0 = makeTerrain().h[centerIndex]
         let high = heights(after: .flatten, target: h0 + 0.5)
         XCTAssertGreaterThan(high.after[centerIndex], h0,
                              "Einebnen mit hohem Ziel muss Richtung Ziel heben")
-        // Zwei Ziele, zwei Ergebnisse: ein hartkodiertes oder mit `strength`
-        // vertauschtes Ziel fällt hier auf.
         let low = heights(after: .flatten, target: h0 - 0.5)
         XCTAssertLessThan(low.after[centerIndex], high.after[centerIndex],
                           "Verschiedene Ziele müssen verschieden einebnen")
@@ -168,9 +116,6 @@ final class ToolContractTests: XCTestCase {
     }
 
     func testRoughenAddsReliefInBothDirections() throws {
-        // Erst glätten, dann aufrauen: auf der geglätteten Fläche muss das
-        // fraktale Rauschen die Rauheit wieder HEBEN (Gegenrichtung zu smooth)
-        // und dabei in beide Richtungen auslenken (kein reines Heben/Senken).
         let t = makeTerrain()
         BrushTool.smooth.apply(to: t, gx: gx, gz: gz, radiusWorld: radius,
                                strength: 1, target: 0)
@@ -190,24 +135,12 @@ final class ToolContractTests: XCTestCase {
         XCTAssertLessThan(pickaxe.after[centerIndex] - pickaxe.before[centerIndex],
                           lower.after[centerIndex] - lower.before[centerIndex],
                           "Die Spitzhacke muss bei gleicher Stärke tiefer schlagen als Absenken")
-        // Der Radius-Deckel (Terrain.pickaxeMaxCells): auch ein riesiger Pinsel
-        // reißt keinen Krater — außerhalb des Deckel-Radius bleibt alles stehen,
-        // und zwar in JEDER Gitterrichtung (Review-Finding PR #85: die frühere
-        // Ein-Index-Prüfung sah nur die horizontale Achse).
         let wide = heights(after: .pickaxe, radiusWorld: Double(n) * cfg.cellSize)
         assertUntouchedOutside(wide.after, before: wide.before, center: (gx, gz),
                                radiusWorld: Terrain.pickaxeMaxCells * cfg.cellSize,
                                cfg: cfg)
     }
 
-    /// Sechs Werkzeuge, sechs verschiedene Wirkungen: kein `case` darf still auf
-    /// die Operation eines anderen zeigen (z. B. Glätten ruft Aufrauen — die
-    /// Failure-Mode, für die früher der Switch-Parser da war).
-    ///
-    /// BEWUSST redundant zu den Einzeltests oben: die pinnen je Werkzeug eine
-    /// charakteristische Wirkung, dieser Vergleich schließt die Lücke dazwischen
-    /// (zwei Cases auf DERSELBEN Operation erfüllen unter Umständen beide
-    /// Einzel-Zusicherungen und fallen erst hier auf).
     func testEachToolLeavesADistinctFootprint() throws {
         let results = BrushTool.allCases.map { tool in
             heights(after: tool, strength: 1, target: 1.2).after
@@ -221,10 +154,6 @@ final class ToolContractTests: XCTestCase {
         }
     }
 
-    /// Nicht-endliche Pinsel-Parameter (NaN oder Unendlich bei Koordinaten, Radius,
-    /// Stärke oder Zielhöhe) sowie riesige endliche Werte dürfen nicht zu Abstürzen
-    /// (z. B. Double-zu-Int-Trap) oder ungültigen Zuständen führen; das Terrain bleibt
-    /// unangetastet.
     func testBrushToolsHandleNonFiniteInputsWithoutCrashing() throws {
         let nonFiniteValues = [Double.nan, Double.infinity, -Double.infinity, 1e300]
         for tool in BrushTool.allCases {
@@ -255,9 +184,6 @@ final class ToolContractTests: XCTestCase {
         }
     }
 
-    /// Direkte Pinsel-Methoden auf `Terrain` weisen nicht-endliche Argumente
-    /// und riesige endliche Werte ebenfalls sicher ab und belassen Höhen und
-    /// Tektonik unverändert.
     func testTerrainBrushMethodsHandleNonFiniteInputsDirectly() throws {
         let nonFiniteValues = [Double.nan, Double.infinity, -Double.infinity, 1e300]
         for bad in nonFiniteValues {
@@ -297,9 +223,6 @@ final class ToolContractTests: XCTestCase {
         }
     }
 
-    /// Negativer oder Null-`strength` wird in `smooth` und `flatten` auf einen
-    /// Pull von 0 geklemmt (No-op); das Terrain bleibt unverändert (keine
-    /// Rauheitsverstärkung oder Wegbewegen vom Ziel).
     func testSmoothAndFlattenWithNonPositiveStrengthAreNoOps() throws {
         let h0Center = makeTerrain().h[centerIndex]
         for nonPositive in [-1.0, -0.001, 0.0] {
@@ -324,17 +247,11 @@ final class ToolContractTests: XCTestCase {
         }
     }
 
-    /// Pinselstriche mit inaktiven Parametern (Richtung 0, Stärke <= 0 bei Spitzhacke/Rauheit,
-    /// oder nicht-positiver Radius bei Glätten/Einebnen) sind echte No-ops: weder Höhen
-    /// noch Tektonik werden berührt.
-    /// (Hinweis: Stärke-Fälle `strength <= 0` für `smooth` und `flatten` werden bereits
-    /// in `testSmoothAndFlattenWithNonPositiveStrengthAreNoOps` abgedeckt.)
     func testBrushToolsWithInactiveParametersAreStrictNoOps() throws {
         let t = makeTerrain()
         let h0 = t.h
         let u0 = t.upliftBase
 
-        // smooth und flatten mit nicht-positivem Radius
         for badRadius in [0.0, -1.0, -10.0] {
             t.smooth(gx: gx, gz: gz, radiusWorld: badRadius, strength: 1.0)
             t.flatten(gx: gx, gz: gz, radiusWorld: badRadius, targetHeight: 0.5, strength: 1.0)
@@ -342,17 +259,14 @@ final class ToolContractTests: XCTestCase {
         XCTAssertEqual(t.h, h0, "Pinsel mit radiusWorld <= 0 darf Terrain.h nicht verändern")
         XCTAssertEqual(t.upliftBase, u0, "Pinsel mit radiusWorld <= 0 darf upliftBase nicht verändern")
 
-        // sculpt mit dir == 0 oder strength == 0
         t.sculpt(gx: gx, gz: gz, radiusWorld: radius, dir: 0, strength: 1.0)
         t.sculpt(gx: gx, gz: gz, radiusWorld: radius, dir: 1, strength: 0.0)
         XCTAssertEqual(t.h, h0, "sculpt mit dir == 0 oder strength == 0 darf Terrain.h nicht verändern")
         XCTAssertEqual(t.upliftBase, u0, "sculpt mit dir == 0 oder strength == 0 darf upliftBase nicht verändern")
 
-        // roughen mit strength == 0
         t.roughen(gx: gx, gz: gz, radiusWorld: radius, strength: 0.0)
         XCTAssertEqual(t.h, h0, "roughen mit strength == 0 darf Terrain.h nicht verändern")
 
-        // pickaxe mit strength <= 0
         for nonPositive in [0.0, -0.5, -1.0] {
             t.pickaxe(gx: gx, gz: gz, radiusWorld: radius, strength: nonPositive)
         }
@@ -360,5 +274,4 @@ final class ToolContractTests: XCTestCase {
         XCTAssertEqual(t.upliftBase, u0, "pickaxe mit strength <= 0 darf upliftBase nicht verändern")
     }
 }
-
 

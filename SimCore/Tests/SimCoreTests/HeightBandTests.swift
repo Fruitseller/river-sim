@@ -1,24 +1,8 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter für die perzentil-gekoppelten Höhenbänder (Issue #4): Schnee-,
-/// Hochfels- und Vegetationsgrenze folgen der AKTUELLEN Landhöhenverteilung,
-/// statt als absolute Werte aus dem erreichbaren Höhenband herauszualtern.
-///
-/// Gemessen wird auf Produktions-Defaults (nur `n` gesenkt, wo die Laufzeit es
-/// verlangt); die Produktionsauflösung n=832 läuft in
-/// `testSnowZoneFollowsTheClimateNotAFixedLandFraction`. Rohdaten:
-/// `docs/height-band-measurements.md`.
-///
-/// **Stand Issue #33:** der SCHNEE ist kein Perzentil mehr — seine Grenze wird
-/// aus dem Schneefeld (Massenbilanz aus Temperatur und Niederschlag)
-/// zurückgerechnet. Die Wächter hier sind entsprechend umgeschrieben: sie prüfen
-/// jetzt, dass die Schneegrenze dem KLIMA folgt und NICHT der Höhenverteilung,
-/// während Vegetation/Fels/Nadelband unverändert perzentil-gekoppelt bleiben.
-/// Messreihen dazu: `docs/climate-snow-measurements.md`.
 final class HeightBandTests: XCTestCase {
 
-    /// Anteil der Landzellen mit Schnee-Anteil > 0 bzw. voll weiß.
     private func snowFractions(_ t: Terrain) -> (ramp: Double, full: Double) {
         let b = t.heightBands
         var land = 0, ramp = 0, full = 0
@@ -32,32 +16,8 @@ final class HeightBandTests: XCTestCase {
         return (Double(ramp) / Double(land), Double(full) / Double(land))
     }
 
-    /// **Abnahmekriterium 3 von Issue #33 — bewusst umgeschriebener Wächter.**
-    ///
-    /// Bis #33 hieß die Zusicherung hier: „die Schneezone ist nie leer und bleibt
-    /// in einem engen FLÄCHENBAND" (Rampe/voll gemessen 0.0151/0.0015 bei Jahr 0
-    /// und 0.0149/0.0015 nach 30k — per Konstruktion konstant, weil
-    /// `bandSnowPercentile` einen Flächenanteil festschreibt). Genau das ist
-    /// jetzt FALSCH: die Schneegrenze kommt aus der Massenbilanz, also aus einer
-    /// Temperatur — und eine Temperatur ist eine HÖHE, keine Fläche. Die
-    /// umgekehrte Zusicherung ist die richtige:
-    ///
-    /// 1. `snowStart` bleibt über den Lauf praktisch KONSTANT (klima-gepinnt),
-    /// 2. der Flächenanteil SCHRUMPFT dafür, während die Insel abgetragen wird.
-    ///
-    /// Gemessen (n=832, Seed 1337, Produktionspfad; Rampe = Landanteil mit
-    /// Schnee-Anteil > 0, Rohdaten `docs/climate-snow-measurements.md` §3):
-    ///   Jahr 0  Rampe 0.0139  snowStart 0.5721  maxH 0.7457  T(Gipfel) −4.49 °C
-    ///   10k     0.0115        0.5716            0.6726       −2.59 °C
-    ///   30k     0.0090        0.5716            0.6359       −1.63 °C
-    /// Die 0-°C-Isotherme liegt rechnerisch bei `sea + T₀/Γ` = 0.5730 — genau
-    /// dort, wo `snowStart` steht.
     func testSnowZoneFollowsTheClimateNotAFixedLandFraction() {
         var c = SimConfig(); c.n = 832; c.world = calibrationWorld
-        // Ohne Lawinen-Abgang: mit ihm bleiben die Gipfel über der Firn-Grenze
-        // stehen (Maximum nach 30k Jahren 0.726 statt unter 0.70), die
-        // Vorbedingung „Insel trägt ab" und die Schranke unten sind an den
-        // Stand davor gemessen (`TestCalibration`).
         c.pinIceBeforeAvalanche()
         let t = Terrain(config: c, seed: 1337)
         let atGen = snowFractions(t)
@@ -70,45 +30,19 @@ final class HeightBandTests: XCTestCase {
                      + "· maxH %.4f", atGen.ramp, at30k.ramp, startGen, start30k,
                      t.maxHeight()))
 
-        // 1) Die Grenze ist eine Temperatur, also eine Höhe: sie darf über 30k
-        //    Jahre praktisch nicht wandern (die Rest-Bewegung ist die
-        //    Histogramm-Quantisierung von 0.000488 plus die Luv/Lee-Streuung der
-        //    Akkumulation). Die Schranke ist bewusst eng — vor #33 fiel
-        //    `snowStart` im selben Lauf um über 0.01.
         XCTAssertEqual(start30k, startGen, accuracy: 0.005,
             "Schneegrenze ist nicht klima-gepinnt (\(startGen) → \(start30k))")
         let isotherm = c.sea + c.climateSeaLevelTemp / c.climateLapseRate
         XCTAssertEqual(startGen, isotherm, accuracy: 0.02,
             "Schneegrenze liegt nicht auf der 0-°C-Isotherme (\(startGen) gegen \(isotherm))")
 
-        // 2) Dafür schrumpft die FLÄCHE, während die Gipfel abgetragen werden —
-        //    das ist die Ablösung des fixen Landanteils.
         XCTAssertLessThan(t.maxHeight(), 0.70, "Vorbedingung: Insel trägt nicht ab")
-        // Schranke 0.90 (vorher 0.85): gemessen 0.864 (0.0610 → 0.0527). Seit der
-        // Entkopplung der Eis-Firn-Grenze (#174, `iceFirnTemp`) schleift das Eis
-        // den Gipfel nicht mehr so früh unter die Isotherme, die Fläche schrumpft
-        // dadurch etwas weniger — kein fester Landanteil (der wäre 1.0).
         XCTAssertLessThan(at30k.ramp, atGen.ramp * 0.90,
             "Schneefläche folgt der abtragenden Insel nicht (\(atGen.ramp) → \(at30k.ramp))")
-        // …und verschwindet dabei nicht: die Gipfel bleiben über der Isotherme.
         XCTAssertGreaterThan(at30k.ramp, 0.002,
             "Schneezone nach 30k Jahren praktisch leer: \(at30k.ramp)")
     }
 
-    /// Die PERZENTIL-Bänder ziehen mit: sinkt das Terrain über einen langen Lauf,
-    /// sinkt die Vegetationsgrenze mit — genau das, was absolute Schwellen nicht
-    /// können. Nachgemessen (n=160, Seed 1337, 60k Jahre, Stand #33):
-    /// vegFull 0.4945 → 0.4378, während maxH von 0.6864 auf 0.5762 fällt. (Die
-    /// Trajektorie in docs/height-band-measurements.md stammt aus der #4-Zeit
-    /// und liegt bei 0.4383 / 0.5807 — die Differenz ist die Physik-Entwicklung
-    /// seit #11/#12/#13, nicht das Klima: das koppelt in keinen Pass, Wächter
-    /// `ClimateSnow.testDisabledClimateIsBitIdenticalPhysics`.)
-    ///
-    /// **Der Schnee macht das seit Issue #33 bewusst NICHT mit** und ist deshalb
-    /// die Gegenprobe im selben Test: seine Grenze ist eine Temperatur und bleibt
-    /// stehen, wo sie ist — die Zone dünnt stattdessen aus. Vor #33 wanderte
-    /// `snowStart` hier von 0.5658 auf 0.5072 mit, weil sie ein Perzentil war;
-    /// jetzt gemessen 0.5702 → 0.5687.
     func testBandsFollowFlatteningTerrain() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
@@ -122,17 +56,11 @@ final class HeightBandTests: XCTestCase {
         XCTAssertLessThan(t.maxHeight(), max0, "Vorbedingung: Terrain flacht ab")
         XCTAssertLessThan(b1.vegFull, b0.vegFull,
             "Vegetationsgrenze folgt nicht (\(b0.vegFull) → \(b1.vegFull))")
-        // Gegenprobe: die Klima-Grenze wandert nicht mit. Entweder sie steht
-        // (Gipfel noch über der Isotherme) oder die Zone ist leer und das Band
-        // liegt sauber ÜBER dem Land — beides ist „folgt dem Klima, nicht der
-        // Verteilung", und beides schließt ein Mitwandern nach unten aus.
         XCTAssertGreaterThanOrEqual(b1.snowStart, b0.snowStart - 0.005,
             "Schneegrenze wandert mit dem Terrain statt mit dem Klima "
             + "(\(b0.snowStart) → \(b1.snowStart))")
     }
 
-    /// Ordnung und Wohlgeformtheit der Bänder: monoton und mit echter Rampenbreite
-    /// (sonst harte Farbkante statt Verlauf).
     func testBandsAreWellOrdered() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
@@ -143,18 +71,13 @@ final class HeightBandTests: XCTestCase {
         XCTAssertLessThan(b.snowStart, b.snowFull)
         XCTAssertGreaterThanOrEqual(b.vegNone - b.vegFull, c.bandMinRampWidth)
         XCTAssertGreaterThanOrEqual(b.snowFull - b.snowStart, c.bandMinRampWidth)
-        // Schnee liegt über dem Beginn der Fels-Graurampe (Fels → Firn → Schnee).
         XCTAssertGreaterThan(b.snowStart, b.rockStart)
-        // Ausgewertete Rampen: unten 0, oben 1.
         XCTAssertEqual(b.snowAmount(b.snowStart), 0)
         XCTAssertEqual(b.snowAmount(b.snowFull), 1, accuracy: 1e-12)
         XCTAssertEqual(b.vegetationAltitudeFactor(b.vegFull), 1)
         XCTAssertEqual(b.vegetationAltitudeFactor(b.vegNone), 0, accuracy: 1e-12)
     }
 
-    /// Entartete Eingaben dürfen keine Sprungfunktion und keine NaN erzeugen:
-    /// ohne auswertbares Land greift der Rückfall, ein spiegelglattes Plateau
-    /// bekommt Mindest-Rampenbreiten.
     func testDegenerateFields() {
         var c = SimConfig(); c.n = 64; c.world = calibrationWorld
         let flooded = HeightBands.fromLandHeights([Double](repeating: c.sea - 0.1, count: 100), cfg: c)
@@ -166,14 +89,10 @@ final class HeightBandTests: XCTestCase {
         XCTAssertTrue(plateau.vegetationAltitudeFactor(c.sea + 0.3).isFinite)
     }
 
-    /// **Schneefreies Klima** (Issue #33): ein Landanteil von 0 ist ein gültiger
-    /// Zustand — warme Welt oder flach erodierte Insel. Das Band muss dann
-    /// vollständig ÜBER dem Land liegen, sonst wären ausgerechnet die Gipfel
-    /// weiß, obwohl das Klima keinen Schnee trägt.
     func testEmptySnowFieldPutsTheBandAboveTheLand() {
         var c = SimConfig(); c.n = 64; c.world = calibrationWorld
         var heights = [Double](repeating: c.sea - 0.1, count: 4000)
-        for k in 0..<2000 { heights[k] = c.sea + 0.1 + Double(k) * 0.0002 } // bis 0.65
+        for k in 0..<2000 { heights[k] = c.sea + 0.1 + Double(k) * 0.0002 }
         let maxLand = heights.max()!
         let bands = HeightBands.fromLandHeights(heights, cfg: c, snowFractions: (0, 0))
         XCTAssertGreaterThan(bands.snowStart, maxLand,
@@ -183,7 +102,6 @@ final class HeightBandTests: XCTestCase {
             XCTAssertEqual(bands.snowAmount(v), 0, "Land trägt Schnee ohne Schneefeld")
         }
 
-        // Gegenprobe: mit Schnee schneidet das Band genau den gemessenen Anteil ab.
         let snowy = HeightBands.fromLandHeights(heights, cfg: c, snowFractions: (0.10, 0.02))
         let above = heights.filter { $0 > snowy.snowStart }.count
         let land = heights.filter { $0 > c.sea }.count
@@ -191,28 +109,20 @@ final class HeightBandTests: XCTestCase {
                        "Band schneidet nicht den gemessenen Landanteil ab")
     }
 
-    /// Die Perzentile kommen aus DERSELBEN Quantil-Funktion wie das Relief-Signal
-    /// (`Terrain.landHeightQuantiles`) — und die liefert nach dem Umbau exakt das,
-    /// was `landReliefRobust` vorher selbst gerechnet hat.
     func testQuantileSourceMatchesReliefSignal() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 1337)
         let q = Terrain.landHeightQuantiles(heights: t.h, sea: c.sea, probs: [0.5, 0.95])
         XCTAssertNotNil(q)
         XCTAssertEqual(q![1] - q![0], t.landReliefRobust(), accuracy: 0)
-        // Aufsteigende Perzentile → aufsteigende Quantile, ein Durchlauf für alle.
         let many = Terrain.landHeightQuantiles(heights: t.h, sea: c.sea,
                                                probs: [0.1, 0.5, 0.9, 0.99])!
         XCTAssertEqual(many, many.sorted())
     }
 
-    /// Ungültige oder nicht-endliche Höhenwerte (NaN, ±inf) dürfen nicht zu
-    /// fehlerhafter Voll-Bedeckung (1.0 für Schnee/Fels) oder unbeschränktem
-    /// Vegetationsfaktor führen.
     func testHeightBandEvaluationWithNonFiniteHeights() {
         let b = HeightBands.legacyAbsolute
 
-        // Endliche Grenzwerte: Identität an den Rampen-Enden
         XCTAssertEqual(b.rockAmount(b.rockStart), 0)
         XCTAssertEqual(b.rockAmount(b.rockFull), 1)
         XCTAssertEqual(b.snowAmount(b.snowStart), 0)
@@ -220,13 +130,11 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(b.vegetationAltitudeFactor(b.vegFull), 1)
         XCTAssertEqual(b.vegetationAltitudeFactor(b.vegNone), 0, accuracy: 1e-12)
 
-        // NaN-Sicherheit: Konstante zuerst in min(1, max(0, ...)) faltet NaN auf 0
         XCTAssertEqual(b.rockAmount(Double.nan), 0, "NaN-Höhe darf keinen Fels ausweisen")
         XCTAssertEqual(b.snowAmount(Double.nan), 0, "NaN-Höhe darf keinen Schnee ausweisen")
         XCTAssertEqual(b.vegetationAltitudeFactor(Double.nan), 0, "NaN-Höhe darf keine Vegetation tragen")
         XCTAssertEqual(b.coniferShare(Double.nan), 0.1, "NaN-Höhe muss auf die Untergrenze fallen")
 
-        // Unendlichkeiten
         XCTAssertEqual(b.rockAmount(Double.infinity), 1)
         XCTAssertEqual(b.rockAmount(-Double.infinity), 0)
         XCTAssertEqual(b.snowAmount(Double.infinity), 1)
@@ -237,21 +145,16 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(b.coniferShare(-Double.infinity), 0.1)
     }
 
-    /// Nicht-endliche (NaN, ±inf) oder extrem große Höhenwerte dürfen bei der
-    /// Quantilberechnung weder zu Speicherzugriffsfehlern noch zu fatalen
-    /// Int-Konvertierungsabbrüchen führen.
     func testLandHeightQuantilesHandlesNonFiniteAndExtremeHeights() {
         let sea = 0.2
-        var heights = [Double](repeating: 0.1, count: 50) // Meer
+        var heights = [Double](repeating: 0.1, count: 50)
         for i in 0..<30 {
-            heights.append(sea + 0.05 + Double(i) * 0.02) // Land (30 Zellen > sea)
+            heights.append(sea + 0.05 + Double(i) * 0.02)
         }
 
-        // Reguläre Quantile
         let baseline = Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: [0.5, 0.95])
         XCTAssertNotNil(baseline)
 
-        // Nicht-endliche Werte hinzufügen
         var noisy = heights
         noisy.append(Double.nan)
         noisy.append(Double.infinity)
@@ -261,15 +164,13 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(quantilesNoisy, baseline,
                        "Nicht-endliche Werte müssen ignoriert werden und dürfen das Quantil nicht verzerren")
 
-        // Extrem große endliche Werte (>= sea + span und jenseits normaler Int-Bereiche)
         var extreme = heights
-        extreme.append(100.0) // weit über sea + 2.0 (span)
+        extreme.append(100.0)
         extreme.append(1e12)
         extreme.append(1e300)
         let quantilesExtreme = Terrain.landHeightQuantiles(heights: extreme, sea: sea, probs: [0.5, 0.95])
         XCTAssertNotNil(quantilesExtreme, "Extreme Werte dürfen nicht zum Int-Trap führen")
 
-        // Ungültige Parameter (nicht-endlicher Meeresspiegel oder ungültige Wahrscheinlichkeiten)
         XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: Double.nan, probs: [0.5]))
         XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: Double.infinity, probs: [0.5]))
         XCTAssertNil(Terrain.landHeightQuantiles(heights: heights, sea: sea, probs: []))
@@ -280,7 +181,6 @@ final class HeightBandTests: XCTestCase {
                      "Nicht-aufsteigende Wahrscheinlichkeiten müssen abgelehnt werden")
     }
 
-    /// landRelief ignoriert nicht-endliche Werte und liefert auf leeren Terrains defensiv 0.
     func testLandReliefHandlesNonFiniteHeightsAndEmptyTerrain() {
         var c = SimConfig()
         c.n = 16
@@ -289,9 +189,6 @@ final class HeightBandTests: XCTestCase {
         let reliefBefore = t.landRelief()
         XCTAssertGreaterThan(reliefBefore, 0)
 
-        // Nicht-endliche Werte einstreuen. setBedForTests erlaubt in h ausschließlich
-        // NaN ($0.isNaN), da ±inf die Konsistenz-Precondition `abs(h - (rock + sed)) < 1e-12`
-        // verletzen würde. landRelief ignoriert NaN (Guard h[k].isFinite) ebenso wie ±inf.
         var h = t.h
         h[0] = Double.nan
         h[1] = Double.nan
@@ -303,11 +200,10 @@ final class HeightBandTests: XCTestCase {
         XCTAssertGreaterThan(reliefAfter, 0)
 
         var emptyConfig = renderConfig(n: 0)
-        emptyConfig.world = 0 // Negative cellSize bei n = 0 (world / (n - 1)) vermeiden
+        emptyConfig.world = 0
         let empty = Terrain(allocating: emptyConfig, seed: 1337)
         XCTAssertEqual(empty.landRelief(), 0, "Leeres Terrain muss Relief 0 liefern")
 
-        // Differenzüberlauf bei extremen, endlichen Werten (hi - lo > greatestFiniteMagnitude)
         var extremeConfig = SimConfig()
         extremeConfig.n = 16
         extremeConfig.world = calibrationWorld
@@ -326,8 +222,6 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(reliefExtreme, Double.greatestFiniteMagnitude)
     }
 
-    /// ridgeCurvature, totalOutletArea, landCellCount und receiverAgreement ignorieren nicht-endliche Werte
-    /// und liefern auf leeren/kleinen Terrains oder bei ungültigen Parametern/Mismatches defensiv 0 bzw. 1.
     func testDiagnosticMetricsHandleNonFiniteValuesAndEmptyTerrain() {
         var c = SimConfig()
         c.n = 16
@@ -336,14 +230,6 @@ final class HeightBandTests: XCTestCase {
         let curvBefore = t.ridgeCurvature()
         XCTAssertTrue(curvBefore.isFinite)
 
-        // Nicht-endliche Werte in h einstreuen (NaN und ±inf via restore).
-        // NaN auf Index 20 (j=1, i=4): die Vorläuferzellen 17–19 (j=1) lesen
-        // dabei h[1] (+inf) und h[2] (−inf) als obere Nachbarn, BEVOR der
-        // Zentrums-Guard an Zelle 20 das NaN verwirft — Zentrums- UND
-        // Nachbar-Guard sind je echt getroffen. NaN auf 17 würde die
-        // ±inf-Nachbarn kurzzuschließen (Zelle verlässt die Schleife im
-        // Zentrums-Guard, bevor Nachbarn gelesen werden); Randzellen (Index
-        // 0–15 und letzte Reihe) besucht die Schleife nie.
         var state = t.state
         state.h[20] = Double.nan
         state.h[1] = Double.infinity
@@ -353,12 +239,10 @@ final class HeightBandTests: XCTestCase {
         let curvAfter = t.ridgeCurvature()
         XCTAssertTrue(curvAfter.isFinite, "ridgeCurvature muss trotz nicht-endlicher Höhen endlich bleiben")
 
-        // Ungültige Parameter für ridgeCurvature
         XCTAssertEqual(t.ridgeCurvature(maxAreaCells: 0), 0)
         XCTAssertEqual(t.ridgeCurvature(maxAreaCells: -1), 0)
         XCTAssertEqual(t.ridgeCurvature(maxAreaCells: Double.nan), 0)
 
-        // Leeres Terrain (n = 0)
         var emptyConfig = renderConfig(n: 0)
         emptyConfig.world = 0
         let empty = Terrain(allocating: emptyConfig, seed: 1337)
@@ -367,7 +251,6 @@ final class HeightBandTests: XCTestCase {
         XCTAssertEqual(empty.landCellCount(), 0, "Leeres Terrain muss landCellCount 0 liefern")
         XCTAssertEqual(empty.receiverAgreement(with: []), 1, "Leeres Terrain muss receiverAgreement 1 liefern")
 
-        // Kleine Terrains (n = 1 und n = 2) dürfen nicht mit Range-Traps abbrechen
         var c1 = renderConfig(n: 1)
         c1.world = 0
         let t1 = Terrain(allocating: c1, seed: 1337)
@@ -378,7 +261,6 @@ final class HeightBandTests: XCTestCase {
         let t2 = Terrain(allocating: c2, seed: 1337)
         XCTAssertEqual(t2.ridgeCurvature(), 0, "Terrain mit n = 2 darf nicht trappen")
 
-        // Puffer-Mismatch in totalOutletArea, landCellCount und receiverAgreement
         var mismatchState = t.state
         mismatchState.receiver = [1, 2]
         mismatchState.hf = [1.0]

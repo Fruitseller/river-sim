@@ -1,44 +1,15 @@
 import Foundation
 import SimCore
 
-/// Sedimentfahnen der großen Flüsse im Meer (Issue #174, Paket C): die
-/// Trübungsdichte 0…1 je Meereszelle, wie `ocean.gdshader` sie zeichnet.
-///
-/// Die Fahne entsteht HIER und nicht im Shader. Vorher legte der Shader eine
-/// einzelne Quellzelle je Mündung über eine Mip-Kette aus und zog sie entlang
-/// einer festen Strömung auf: die Fahne wurde mit jeder Stufe breiter und las
-/// sich aus der Ferne als brauner Rauchfächer, der unabhängig von der Küste ins
-/// offene Meer reichte. Jetzt läuft die Trübung als Pfad über die Meereszellen
-/// KÜSTENNAH ab der Mündung: ein schmales Band an der Küste entlang
-/// (`WaterRender.plumeBandCells`), das mit der Pfadlänge abklingt. Der Shader
-/// liest die fertige Dichte nur noch (eine Abfrage, leicht weichgezeichnet).
-///
-/// Die Küstenströmung bevorzugt eine Richtung (`WaterRender.plumeUpstreamPenalty`,
-/// dieselbe Drift wie die Ozean-Wellen): stromauf klingt die Fahne schneller
-/// ab als stromab. Wo die Küste quer zur Strömung läuft, reicht sie symmetrisch
-/// nach beiden Seiten.
-///
-/// Zustandslos, liest das Terrain und ändert es nie. Den Cache hält
-/// `RenderState`. Kalibrierung und Begründung (Fracht-Stellvertreter):
-/// `WaterRender` § Sedimentfahne. Wächter: `SimCoreTests/SedimentPlumeTests.swift`.
 public enum SedimentPlume {
 
-    /// Eine Mündung ins Meer.
     public struct Mouth: Equatable {
-        /// Letzte Landzelle des Laufs.
         public let landCell: Int
-        /// Erste Meereszelle hinter der Mündung (D8-Empfänger der Landzelle):
-        /// dort beginnt die Fahne.
         public let seaCell: Int
-        /// Einzugsgebiet der Mündung in Zellen (D8, wie die Erosion).
         public let dischargeCells: Double
-        /// Höchster Punkt des Einzugsgebiets über dem Meer (Sim-Höhe).
         public let relief: Double
     }
 
-    /// Alle Mündungen ins Meer ab `WaterRender.plumeMinDischargeCells`:
-    /// Landzellen, deren D8-Empfänger eine Meereszelle ist (`h ≤ sea`). Jeder
-    /// D8-Lauf erreicht das Meer in genau einer solchen Zelle.
     public static func mouths(_ terrain: Terrain) -> [Mouth] {
         let n = terrain.cfg.n, cnt = n * n
         let h = terrain.h, rec = terrain.receiver, area = terrain.area
@@ -47,8 +18,6 @@ public enum SedimentPlume {
               cellArea > 0, cellArea.isFinite else { return [] }
         let sea = terrain.cfg.sea
 
-        // Mündungs-Etikett je Landzelle über die Empfänger-Kette (memoisiert,
-        // damit O(n²) insgesamt): −1 = noch offen, −2 = endet nicht im Meer.
         var label = [Int32](repeating: -1, count: cnt)
         var mouthCells: [Int] = []
         var relief: [Double] = []
@@ -57,8 +26,6 @@ public enum SedimentPlume {
             path.removeAll(keepingCapacity: true)
             var k = start
             var result: Int32 = -2
-            // Höchstens `cnt` Schritte: eine kaputte Empfänger-Kette (Zyklus)
-            // endet als „nicht im Meer" statt in einer Endlosschleife.
             for _ in 0..<cnt {
                 if label[k] != -1 { result = label[k]; break }
                 path.append(k)
@@ -88,8 +55,6 @@ public enum SedimentPlume {
         return out
     }
 
-    /// Stärke 0…1 einer Fahne: Abfluss-Gewicht (log-Rampe) × Fracht-Gewicht
-    /// (Relief, mit Boden).
     @inline(__always)
     public static func strength(_ mouth: Mouth) -> Double {
         let lo = WaterRender.plumeMinDischargeCells, hi = WaterRender.plumeFullDischargeCells
@@ -99,8 +64,6 @@ public enum SedimentPlume {
         return discharge * load
     }
 
-    /// n×n-Dichtefeld (row-major, Float32 für die Textur des Ozean-Shaders):
-    /// 0 außerhalb der Fahnen. Überlappen zwei Fahnen, zählt die dichtere.
     public static func field(_ terrain: Terrain) -> [Float] {
         let n = terrain.cfg.n
         guard n > 0 else { return [] }
@@ -111,10 +74,6 @@ public enum SedimentPlume {
         return out
     }
 
-    /// Streut die Trübung einer Mündung: kürzester Pfad (Kosten wachsen mit der
-    /// Schrittlänge und stromauf) über Meereszellen, die höchstens
-    /// `plumeBandCells` vom Land liegen; Dichte = Stärke · e^(−Kosten/Abklinglänge),
-    /// zum Rand des Streifens hin ausgeblendet.
     static func spread(_ mouth: Mouth, strength: Double, _ terrain: Terrain,
                        into out: inout [Float]) {
         let n = terrain.cfg.n, sea = terrain.cfg.sea
@@ -129,12 +88,9 @@ public enum SedimentPlume {
         let si = mouth.seaCell % n, sj = mouth.seaCell / n
         let i0 = si - half, j0 = sj - half
 
-        // Küstenströmung als Einheitsvektor (Welt-x = Spalte, Welt-z = Zeile).
         let dx = WaterRender.oceanWaveDriftX, dz = WaterRender.oceanWaveDriftZ
         let dn = max((dx * dx + dz * dz).squareRoot(), 1e-9)
         let cx = dx / dn, cz = dz / dn
-        // Acht Schritte mit Länge und Strömungs-Aufschlag: stromab 1×, quer
-        // 1 + p/2, stromauf 1 + p.
         var steps: [(di: Int, dj: Int, cost: Double)] = []
         for dj in -1...1 { for di in -1...1 where di != 0 || dj != 0 {
             let len = (Double(di * di + dj * dj)).squareRoot()
@@ -143,8 +99,6 @@ public enum SedimentPlume {
         } }
 
         var cost = [Double](repeating: .infinity, count: size * size)
-        // Abstand zum nächsten Land (Zellen, euklidisch), je Fensterzelle
-        // einmal bestimmt; −1 = noch nicht.
         var landDistance = [Float](repeating: -1, count: size * size)
         func distanceToLand(_ gi: Int, _ gj: Int, local: Int) -> Double {
             if landDistance[local] >= 0 { return Double(landDistance[local]) }

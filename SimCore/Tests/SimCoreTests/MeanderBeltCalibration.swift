@@ -1,29 +1,11 @@
 import XCTest
 @testable import SimCore
 
-// Kalibrier-Werkzeuge des Mäandergürtels (Issue #174, Paket B), alle hinter
-// RS_MEASURE. Befunde und Messreihen: docs/zielbild-measurements.md § Paket B.
-//
-// - testBeltVariantsDiagnostic: Produktionswelt bis Jahr 20.000 mit
-//   Parameter-Varianten, Kennzahlen über alle Mäanderläufe
-//   (`ZielbildMetrics.beltAll`). RS_SEED, RS_VARIANT="brake=2,avw=4,…",
-//   RS_YEARS.
-// - testBeltKernelDiagnostic: Migration OHNE Gelände (drei gerade Läufe mit
-//   Rauschen) — die Wellenlängen-Wahl des Kerns isoliert, ohne Kopplung ans
-//   Gelände. Dieselben Varianten-Schlüssel, dazu RS_PNG (Bild der Läufe).
-// - testBeltRiverViewDiagnostic: Karten (PPM) der Produktionswelt bei Jahr
-//   2.000/10.000/20.000 (RS_SHOTS) nach RS_OUT: Kanal blau, Bank gelb, Altarm
-//   magenta (unter `WaterRender.oxbowMinimumNodes` Knoten cyan), wandernde
-//   Läufe rot; dazu die Linien als Text (.txt) für vergrößerte Ausschnitte.
-//   RS_SEED, RS_VARIANT.
-// - testOxbowOriginDiagnostic: Größe und Herkunft jedes neuen Altarms.
 final class MeanderBeltCalibration: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
     private func config() -> SimConfig { Self.variantConfig() }
 
-    /// Produktions-Config mit den Varianten aus RS_VARIANT (auch gelesen von
-    /// `ZielbildBaseline.testZielbildMeanderTimeMeanDiagnostic`).
     static func variantConfig() -> SimConfig {
         var c = SimConfig.production
         for kv in (ProcessInfo.processInfo.environment["RS_VARIANT"] ?? "").split(separator: ",") where kv.contains("=") {
@@ -74,8 +56,6 @@ final class MeanderBeltCalibration: XCTestCase {
         let t = Terrain(config: config(), seed: seed, settleYears: SimConfig.productionSettleYears)
         var swept = [Bool](repeating: false, count: t.cfg.count)
         let every = env["RS_EVERY"].flatMap { Double($0) }
-        // Mittel über die Stützstellen ab der Hälfte des Laufs, alle 2000 Jahre:
-        // ein Einzelzeitpunkt ist chaotisch.
         var avg = [Double](repeating: 0, count: 9), nAvg = 0.0, nLam = 0.0, nAsym = 0.0, nRaw = 0.0, nRawA = 0.0
         while t.years < years - 1e-6 {
             t.step(dtYears: 1000); ZielbildMetrics.markSwept(t, &swept)
@@ -114,7 +94,6 @@ final class MeanderBeltCalibration: XCTestCase {
                     if t.waterLevel[k] - t.h[k] > WaterRender.pondContourLo { wlW += 1 }
                     depth += t.hf[k] - t.h[k]
                 }
-                // Umgebung: Ring 5 Zellen um den Mittelknoten
                 let mid = ox[ox.count / 2]
                 for a in stride(from: 0.0, to: 2 * .pi, by: 0.3) {
                     let hh = t.h.withUnsafeBufferPointer { Terrain.bilinear($0.baseAddress!, n, mid.x + 5 * cos(a), mid.z + 5 * sin(a)) }
@@ -139,9 +118,6 @@ final class MeanderBeltCalibration: XCTestCase {
                      t.meander.chuteCutoffs, t.beltSubsteps))
     }
 
-    /// Trennt Kern und Kopplung: die wandernden Läufe einer Produktionswelt
-    /// (Jahr RS_START, Standard 3000) laufen OHNE Stempel weiter, einmal auf dem
-    /// eingefrorenen Gelände, einmal auf einer Ebene. RS_YEARS Jahre.
     func testBeltIsolationDiagnostic() throws {
         try skipUnlessMeasuring()
         let seed = env["RS_SEED"].flatMap { UInt32($0) } ?? 1337
@@ -207,15 +183,11 @@ final class MeanderBeltCalibration: XCTestCase {
         }
     }
 
-    /// Querprofile an den schärfsten Bögen der wandernden Läufe: Höhe relativ
-    /// zur Sohle in Kanaltiefen D, von innen (−) nach außen (+) in Halbbreiten.
     private func profiles(_ t: Terrain) {
         let c = t.cfg, n = c.n
         t.h.withUnsafeBufferPointer { hb in
             let ph = hb.baseAddress!
             let hAt: (MeanderNode) -> Double = { Terrain.bilinear(ph, n, $0.x, $0.z) }
-            // Mittleres Profil über die Bögen der Asymmetrie-Messung (Lauf-Abschnitt
-            // wie `beltAll`, |geglättete Krümmung| über dem Median), in D.
             var acc = [Double](repeating: 0, count: 9), cnt = 0.0
             for ch in t.meander.channels {
                 guard let reach = ZielbildMetrics.lowlandReach(t, ch), reach.count >= 40 else { continue }
@@ -264,7 +236,6 @@ final class MeanderBeltCalibration: XCTestCase {
         }
     }
 
-    /// Je Lauf im Gürtel-Mittel: Halbwellen (Amplitude in Breiten, Sehne in Breiten).
     private func waves(_ t: Terrain) {
         let c = t.cfg
         for ch in t.meander.channels {
@@ -294,11 +265,8 @@ final class MeanderBeltCalibration: XCTestCase {
         }
     }
 
-    /// Je wandernder Lauf: wie viel davon mobil ist und was die Rate bremst.
     private func detail(_ t: Terrain) {
         let c = t.cfg, n = c.n
-        // Längsgefälle der mobilen Knoten in Kanaltiefen je Kanalbreite:
-        // (1 − mob) · meanderFlatSlope / meanderBeltDepthPerWidth.
         var drops: [Double] = []
         t.h.withUnsafeBufferPointer { hb in
             let ph = hb.baseAddress!
@@ -340,14 +308,10 @@ final class MeanderBeltCalibration: XCTestCase {
         }
     }
 
-    /// Streuung der Kern-Wächter über Rausch-Seeds (RS_SEEDS="1,2,…"): Cutoffs
-    /// und Sinuosität nach 30.000 Jahren, Abstand dt 50 ↔ dt 1500 nach RS_DTYEARS.
     func testBeltKernelSpreadDiagnostic() throws {
         try skipUnlessMeasuring()
         let c = config()
         let flat: (MeanderNode) -> Double = { 0.3 - $0.x * 1e-6 }
-        // Wie `MeanderBeltTests`: der lange Lauf trägt einen Lauf unter der
-        // Chute-Schwelle (dort gibt es nur Hals-Cutoffs).
         func runs(_ seed: UInt32, long: Bool = false) -> MeanderState {
             let m = MeanderState()
             var rng = Mulberry32(seed: seed)
@@ -408,7 +372,6 @@ final class MeanderBeltCalibration: XCTestCase {
         var rng = Mulberry32(seed: 7)
         for z0 in [150.0, 360, 570] {
             var nodes: [MeanderNode] = []
-            // RS_LONGWAVE="A,λ": lange Anfangswelle (Zellen) wie die Talkurven einer D8-Trasse.
             let lw = (env["RS_LONGWAVE"] ?? "0,1").split(separator: ",").compactMap { Double($0) }
             for i in 0..<400 {
                 let x = Double(i) * 1.5
@@ -487,11 +450,6 @@ final class MeanderBeltCalibration: XCTestCase {
                      m.neckCutoffs, m.chuteCutoffs, maxSub))
     }
 
-    /// Herkunft der Altarme bis RS_YEARS: je neuem Altarm Knotenzahl, Kanalbreite
-    /// (Abfluss am Anschlussknoten des Laufs) und Bogenlänge in Breiten, als
-    /// Verteilung ab 0/15/20/30/50/100 Knoten. Zeigte vor der
-    /// Zeitmittel-Kalibrierung: die meisten Altarme waren Knicke von 3–5
-    /// Breiten Bogenlänge an voll breiten Läufen.
     func testOxbowOriginDiagnostic() throws {
         try skipUnlessMeasuring()
         let seed = env["RS_SEED"].flatMap { UInt32($0) } ?? 42
@@ -551,16 +509,12 @@ final class MeanderBeltCalibration: XCTestCase {
                 guard x >= 0, z >= 0, x < n, z < n else { return }
                 let k = z * n + x; px[3 * k] = c.0; px[3 * k + 1] = c.1; px[3 * k + 2] = c.2
             }
-            // Altarme: magenta ab `WaterRender.oxbowMinimumNodes` Knoten (der
-            // Render zeigt sie), cyan darunter (unsichtbar); verblasst ab
-            // `oxbowVisibleYears`.
             for (oi, ox) in t.meander.oxbows.enumerated() {
                 let young = t.meander.oxbowAge[oi] < WaterRender.oxbowVisibleYears
                 let col: (UInt8, UInt8, UInt8) = ox.count >= WaterRender.oxbowMinimumNodes
                     ? (young ? (255, 60, 255) : (140, 70, 140)) : (young ? (0, 255, 255) : (0, 130, 130))
                 for p in ox { put(p, col) }
             }
-            // Wandernde Läufe nach Mobilität: rot voll mobil, orange teilweise, weiß fest.
             t.h.withUnsafeBufferPointer { hb in
                 let ph = hb.baseAddress!
                 for ch in t.meander.channels where MeanderState.migrates(ch, t.cfg) && ch.nodes.count >= 3 {
@@ -572,7 +526,6 @@ final class MeanderBeltCalibration: XCTestCase {
             }
             var data = Data("P6\n\(n) \(n)\n255\n".utf8); data.append(contentsOf: px)
             try data.write(to: URL(fileURLWithPath: "\(out)/belt-\(seed)-\(Int(target)).ppm"))
-            // Linien als Text für vergrößerte Ausschnitte (Knoten unter Zellauflösung).
             var txt = ""
             for (ci, ch) in t.meander.channels.enumerated() where ch.nodes.count >= 3 {
                 let mig = MeanderState.migrates(ch, t.cfg) ? 1 : 0

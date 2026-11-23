@@ -1,0 +1,9 @@
+# Hintergrund-Schritt, Settle-Regel und der gezeigte Stand
+
+Im Zeitraffer rechnet SimNode Sim-Schritt und Frame-Aufbereitung auf einem eigenen Thread (`sim.beginStep`); `_process` holt das Ergebnis ab, sobald `sim.stepReady()` meldet (blockiert nie), und lädt nur noch hoch (`docs/perf-measurements.md` §L). Gemessen wird die Hauptthread-Zeit des Hochladens (`last_apply_usec`, Auswertung in der Flusstal-Bühne).
+
+Settle-Regel: `_settle_sim()` wartet einen laufenden Schritt ab und lädt sein Ergebnis hoch. Pflicht vor allem, was die Welt ändert oder ihren aktuellen Stand liest: Zeitsprung (auch zwischen den Chunks), Neu, Laden, Speichern, Diagnose, Kamera-Presets, Pinsel-Nachzug und jeder synchrone Frame. Die Brücke allein genügt nicht: sie wartet den Job zwar ab, bevor ein Aufruf die Welt anfasst (kein gleichzeitiger Zugriff), lässt sein Ergebnis aber liegen. Käme es erst danach an, überschriebe ein älterer Stand den neueren (etwa die Höhe eines Pinselstrichs), und Bänder und Wasser, die `RenderState` für sichtbar hält, hätte Godot nie bekommen. Im Zeitraffer selbst wartet niemand. Der Pinselstrich wartet ebenfalls nicht: solange ein Schritt rechnet, setzt er aus. Die Diagnose-Kennzahlen lesen die Sim und warten nie, sie nehmen dann den nächsten Frame.
+
+Gezeigter Stand: Raycast, Pinselkuppel und Jahresanzeige fragen die Sim gar nicht, sie lesen den zuletzt hochgeladenen Stand (`shown_heights` als R32F-Rohbytes, `shown_year`). Im Zeitraffer rechnet die Sim schon am nächsten Schritt; der Raycast trifft, was man sieht, und wartet nie. Die CPU-Höhen (`h_cache`) braucht nur der Raycast, sie werden lazy aus `shown_heights` gezogen (Issue #53); alle anderen Renderfelder bleiben im nativen SimNode und vermeiden große FFI-Kopien.
+
+Betrifft: `Main._settle_sim`, `Main._apply_step`, `Main._process`, `Main.shown_heights`, `Main.shown_year`, `Main.h_cache`, `Main._ensure_h_cache`, `SimRender.WorldSession`

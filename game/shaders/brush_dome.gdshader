@@ -1,5 +1,3 @@
-// Pinselkuppel, sichtbarer Teil (mit Tiefentest). Körper und Begründung:
-// brush_dome.gdshaderinc.
 shader_type spatial;
 render_mode unshaded, fog_disabled, blend_mix, depth_draw_never, cull_disabled, shadows_disabled;
 

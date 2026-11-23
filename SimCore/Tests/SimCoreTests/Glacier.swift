@@ -1,67 +1,25 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter + Messreihe zum **Gletscher-Pass** (Issue #35): Eisfluss, glaziale
-/// Erosion, Moränen und die Stilllegung der fluvialen Abtragspfade unter dem Eis
-/// (`Terrain.updateIce`, Kalibrier-Logbuch bei `SimConfig.iceEnabled` ff.,
-/// Modellwahl `docs/research-climate-cryosphere.md` §4/§5).
-///
-/// Die Abnahmekriterien des Tickets und ihre Wächter hier:
-/// 1. Zungen fließen talwärts → `testTongueReachesBelowTheFirnLine`
-/// 2. V→U-Kennzahl entwickelt sich → `testGlaciatedValleysWidenTowardsU`,
-///    Messreihe `testValleyShapeSeriesDiagnostic`
-/// 3. Moränen entstehen, Schichtbuchhaltung bleibt grün →
-///    `testMoraineBuildsAtTheTongue`, `testLayersStayConsistent`
-/// 4. unter Eis kein fluvialer Abtrag → `testNoFluvialErosionUnderIce`
-///    (isoliert), `testNoFluvialErosionUnderIceInProduction` (mit den
-///    Bett-Pässen Mäander und Braiding) und
-///    `testNoFluvialErosionUnderIceOnTheGridPath` (Nicht-Droplet-Zweig);
-///    die Gegenrichtung — unter der Schwelle rührt das EIS nichts an —
-///    `testThinIceNeitherFlowsNorGrinds`
-/// 5. dt-invariant, deterministisch → `testIceIsFramerateIndependent`,
-///    `testThickIceTransportIsStableForLargeSteps`, `testIceIsDeterministic`
-/// 6. abgeschaltet bit-identisch → `testDisabledIceIsBitIdentical`,
-///    `testIcelessWorldIsBitIdentical`
 final class Glacier: XCTestCase {
 
-    /// n = 384 ist die Arbeitsauflösung dieser Suite. Kleiner geht nicht: die
-    /// Gletscher hängen an der GIPFELHÖHE (nur über der Firn-Grenze h = 0.5731
-    /// entsteht Eis), und die erodiert bei kleinem n schneller weg — bei n = 192
-    /// liegt `maxH` nach 40k Jahren bei 0.585, bei n = 640 noch bei 0.624
-    /// (`docs/glacier-measurements.md` §A). n = 384 hält den Abstand zur
-    /// Firn-Grenze über 50k Jahre und ist noch schnell genug für Wächter.
     private func cfg(n: Int = 384) -> SimConfig {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld
-        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
-        c.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
-        c.iceFirnTemp = calibrationIceFirnTemp      // Firn-Grenze 0.5731 der alten Großform
-        c.deltaTrapFraction = calibrationDeltaTrapFraction  // ohne Delta-Schüttung, s. dort
+        c.rangeLandform = calibrationRangeLandform
+        c.meanderBelt = calibrationMeanderBelt
+        c.iceFirnTemp = calibrationIceFirnTemp
+        c.deltaTrapFraction = calibrationDeltaTrapFraction
 
-        c.pinIceBeforeAvalanche()  // Stand vor dem Lawinen-Abgang
+        c.pinIceBeforeAvalanche()
         return c
     }
 
-    /// Konfiguration, in der AUSSER dem Eis nichts das Gelände anfasst — der
-    /// Aufbau des Gate-Wächters. Uplift ist in der Produktion ohnehin 0
-    /// (`upliftPer100y`), der Relief-Servo greift bei diesem Relief nicht, und
-    /// `wavePass` arbeitet nur im Küstenband, während das Eis im Hochland sitzt.
     private func quietCfg(n: Int = 384) -> SimConfig {
         var c = cfg(n: n)
         c.hillDiffusion = 0
         c.meanderEnabled = false
         c.braidingEnabled = false
         c.puddleFillYears = 0
-        // Küstenerosion aus — dieselbe Begründung wie `hillDiffusion = 0` gleich
-        // darüber (s. `testNoFluvialErosionUnderIceInProduction`): `wavePass` ist
-        // kein fluvialer Pass, läuft deshalb ungegatet und schiebt Material vom
-        // NACHBARN auf die Eiszelle. Bis Issue #108 fiel das nie auf, weil kein
-        // Arm ihn in der Küstenzone auslöste; mit dem Abfluss-Dämpfer der
-        // Tropfen-Deposition (#108) liegt das Sediment ein Stück weiter
-        // flussabwärts, und im Wellenband trafen 2 vergletscherte Zellen
-        // (h − sea = 0.044/0.047 < `waveBand` 0.06, Δh 9e-6 und 2e-4). Gegenprobe
-        // gemessen: mit `waveRelax = 0` sind es 0 Zellen, mit abgeschaltetem
-        // Dämpfer ebenfalls 0 — der Wächter hat also den Wellenpass gemessen,
-        // nicht das Gate.
         c.waveRelax = 0
         return c
     }
@@ -70,19 +28,17 @@ final class Glacier: XCTestCase {
         while t.years < years { t.step(dtYears: dt) }
     }
 
-    // MARK: - Kennzahlen
-
     struct IceStats {
         var land = 0
-        var glacier = 0          // Zellen über `iceMinThickness`
-        var fraction = 0.0       // Anteil am Land
+        var glacier = 0
+        var fraction = 0.0
         var maxThick = 0.0
-        var meanThick = 0.0      // über die vergletscherten Zellen
-        var lowest = 0.0         // niedrigste Höhe mit Eis
-        var belowFirn = 0        // vergletscherte Zellen unter der Firn-Grenze
-        var reach = 0.0          // Firn-Grenze − niedrigste Eis-Höhe
-        var anyIce = 0           // Zellen mit ice > 0 (auch unter der Schwelle)
-        var rawMax = 0.0         // größte Eisdicke überhaupt
+        var meanThick = 0.0
+        var lowest = 0.0
+        var belowFirn = 0
+        var reach = 0.0
+        var anyIce = 0
+        var rawMax = 0.0
         var maxH = 0.0
 
         var line: String {
@@ -92,9 +48,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Höhe der Firn-Grenze des Eises aus der Kalibrier-Formel (`T = T₀ − Γ(h−sea)`
-    /// bei `T = iceFirnTemp`) — oberhalb davon wandelt sich Firn zu Eis
-    /// (`iceFirnColdSpan` rampt darunter).
     static func firnLine(_ c: SimConfig) -> Double {
         c.sea + (c.climateSeaLevelTemp - c.iceFirnTemp) / c.climateLapseRate
     }
@@ -124,57 +77,24 @@ final class Glacier: XCTestCase {
         return s
     }
 
-    // MARK: - V→U-Kennzahl
-
-    /// **V→U-Kennzahl eines Talquerprofils**: der Exponent `b` der Anpassung
-    /// `Δh(x) ∝ x^b` quer zur Fließrichtung, aus zwei Stützstellen
-    /// (`halfWidth/2` und `halfWidth`):
-    ///
-    ///     b = log₂( Δh(W) / Δh(W/2) )
-    ///
-    /// Ein **Kerbtal (V)** hat gerade Flanken, `Δh ∝ x` → **b = 1**. Ein
-    /// **Trogtal (U)** ist in erster Näherung parabolisch, `Δh ∝ x²` → **b = 2**.
-    /// Das ist die in der Glazialgeomorphologie übliche Kennzahl (Potenzgesetz-Fit
-    /// des Querprofils); sie braucht keine absolute Skala und ist gegen die
-    /// Talgröße invariant.
-    ///
-    /// Gemessen quer zur Fließrichtung (die Achse, entlang der das Wasser NICHT
-    /// läuft), gemittelt über beide Flanken. `nil`, wenn die Zelle keine Mulde
-    /// ist (eine der beiden Flanken steigt nicht) — dann gibt es kein Querprofil
-    /// zu vermessen.
-    ///
-    /// VERWORFEN: das Breitenverhältnis `W(2d)/W(d)` (V = 2, U = √2). Es braucht
-    /// eine absolute Tiefe `d` und einen Suchlauf bis dorthin; auf den steilen
-    /// Oberläufen, in denen die Gletscher sitzen, fand er auf einer der beiden
-    /// Seiten regelmäßig gar keinen Anstieg um `2d` → die Stichprobe brach auf
-    /// n = 1…22 zusammen (`docs/glacier-measurements.md` §D).
     static func shapeExponent(_ t: Terrain, at k: Int, halfWidth: Int = 6) -> Double? {
         let n = t.cfg.n
         let r = t.receiver[k]
         guard r >= 0, halfWidth >= 2 else { return nil }
         let i = k % n, j = k / n
         let ri = Int(r) % n, rj = Int(r) / n
-        // Quer zur Fließrichtung: die Achse, entlang der das Wasser NICHT läuft.
         let alongX = abs(ri - i) >= abs(rj - j)
-        let stepIdx = alongX ? n : 1          // quer = y, wenn der Fluss in x läuft
+        let stepIdx = alongX ? n : 1
         let limit = alongX ? min(j, n - 1 - j) : min(i, n - 1 - i)
         guard limit >= halfWidth else { return nil }
         let h0 = t.h[k]
         let half = halfWidth / 2
         let dHalf = 0.5 * (t.h[k - half * stepIdx] + t.h[k + half * stepIdx]) - h0
         let dFull = 0.5 * (t.h[k - halfWidth * stepIdx] + t.h[k + halfWidth * stepIdx]) - h0
-        // Keine Mulde (oder ein Profil, das nach außen wieder abfällt): kein Tal.
         guard dHalf > 1e-6, dFull > dHalf else { return nil }
         return log(dFull / dHalf) / log(Double(halfWidth) / Double(half))
     }
 
-
-    /// Indizes der vergletscherten Zellen (die Stichprobe der V→U-Messung).
-    /// Bewusst OHNE Einzugsgebiets-Filter: Gletscher sitzen im Oberlauf, wo die
-    /// Einzugsgebiete klein sind — ein `area`-Gate hätte die Stichprobe auf
-    /// Einzelzellen zusammengestrichen (gemessen: n = 1). Die Auswahl der
-    /// TALBÖDEN erledigt `shapeExponent` selbst: eine Zelle, die keine Mulde
-    /// ist, liefert `nil`.
     static func glacierCells(_ t: Terrain) -> [Int] {
         guard t.ice.count == t.cfg.count else { return [] }
         var out: [Int] = []
@@ -184,7 +104,6 @@ final class Glacier: XCTestCase {
         return out
     }
 
-    /// Mittlerer Formexponent über eine feste Zellen-Liste.
     static func valleyShape(_ t: Terrain, cells: [Int],
                             halfWidth: Int = 6) -> (b: Double, count: Int) {
         var sum = 0.0, cnt = 0
@@ -195,11 +114,6 @@ final class Glacier: XCTestCase {
         return (cnt == 0 ? 0 : sum / Double(cnt), cnt)
     }
 
-    /// **Gepaarter** V→U-Vergleich zweier Läufe auf denselben Zellen: gewertet
-    /// wird nur, wo BEIDE Arme ein auswertbares Profil haben. Ohne die Paarung
-    /// vergleicht man zwei verschiedene Stichproben — der eisfreie Arm hat mehr
-    /// gültige Profile, und schon dieser Unterschied verschiebt den Mittelwert
-    /// (gemessen: derselbe Referenzarm kam je nach Auswahl auf 1.496 … 2.008).
     static func pairedShape(_ a: Terrain, _ b: Terrain, cells: [Int],
                             halfWidth: Int = 6) -> (a: Double, b: Double, count: Int) {
         var sa = 0.0, sb = 0.0, cnt = 0
@@ -212,10 +126,6 @@ final class Glacier: XCTestCase {
         return (sa / Double(cnt), sb / Double(cnt), cnt)
     }
 
-    // MARK: - Messreihe (Diagnose, keine Zusicherung)
-
-    /// Wachstum und Reichweite des Eises über die Zeit — die Rohdaten für
-    /// `docs/glacier-measurements.md` §B.
     func testIceGrowthSeriesDiagnostic() throws {
         try skipUnlessMeasuring()
         let c = cfg()
@@ -227,9 +137,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Wie hoch bleibt die Insel ÜBERHAUPT? Die Firn-Grenze liegt fix bei
-    /// `h = 0.5731`; wo `maxH` darunter fällt, kann es per Konstruktion kein Eis
-    /// geben. Ohne Gletscher gerechnet (Referenzarm).
     func testPeakHeightSeriesDiagnostic() throws {
         try skipUnlessMeasuring()
         for n in [192, 256, 384, 640] {
@@ -244,7 +151,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Sweep über die Regler, die Dicke, Reichweite und Abtrag setzen.
     func testIceParameterSweepDiagnostic() throws {
         try skipUnlessMeasuring()
         for (flow, melt, firn, ero) in [(3.0, 0.0010, 1e-4, 0.0),
@@ -263,10 +169,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Sweep über die glaziale Erosionsrate — bei fixierter Eis-Masse. Die
-    /// V→U-Kennzahl wird auf DENSELBEN Talstücken auch im eisfreien Referenzarm
-    /// gemessen: nur die Differenz zeigt, was das Eis geformt hat (die absolute
-    /// Zahl hängt an Talgröße und Stichprobe).
     func testGlacialErosionSweepDiagnostic() throws {
         try skipUnlessMeasuring()
         for (firn, ero, swath) in [(1e-4, 3e-5, 2), (4e-4, 3e-5, 2), (1e-3, 3e-5, 2),
@@ -288,10 +190,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// **V→U über die ZEIT** auf einem FESTEN Zellensatz (die Zellen, die am Ende
-    /// vergletschert sind), im Eis-Arm gegen den eisfreien Referenzarm mit
-    /// demselben Seed. Erst die Differenz der beiden Verläufe trennt das Eis von
-    /// der allgemeinen Alterung. Rohdaten für `docs/glacier-measurements.md` §D.
     func testValleyShapeSeriesDiagnostic() throws {
         try skipUnlessMeasuring()
         for (turnover, ero) in [(1000.0, 1e-4), (1000.0, 3e-4), (4000.0, 1e-4)] {
@@ -300,9 +198,6 @@ final class Glacier: XCTestCase {
             var off = c; off.iceEnabled = false
             let t = Terrain(config: c, seed: 1337)
             let ref = Terrain(config: off, seed: 1337)
-            // Zellensatz EINMAL am Ende festlegen und rückwärts anwenden: dieselben
-            // Talstücke über alle Zeitpunkte (ein je Zeitpunkt neu bestimmter Satz
-            // würde Formänderung und Auswahländerung vermischen).
             let probe = Terrain(config: c, seed: 1337)
             while probe.years < 50_000 { probe.step(dtYears: 500) }
             let cells = Glacier.glacierCells(probe)
@@ -317,17 +212,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// V→U in der PRODUKTION (Issue #174, Nachkalibrierung der Firn-Grenze,
-    /// `docs/glacier-measurements.md` §L): `SimConfig.production` mit dem Einlauf
-    /// der Brücke, Eis-Arm gegen eisfreien Arm mit demselben Seed, gepaart auf
-    /// den am Ende vergletscherten Zellen. Der Pflichtwächter
-    /// (`testGlaciatedValleysWidenTowardsU`) läuft auf der gepinnten alten Welt;
-    /// diese Messung zeigt, dass die Produktions-Welt dieselbe Richtung geht.
-    /// Produktionszellen sind kleiner (0,156 statt 0,34 Welteinheiten), deshalb
-    /// mehrere Halbbreiten.
-    ///
-    ///     RS_MEASURE=1 RS_SEEDS=1337,20 RS_YEARS=10000,20000,30000 \
-    ///         swift test … --filter testGlacierProductionValleyDiagnostic
     func testGlacierProductionValleyDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
@@ -349,9 +233,6 @@ final class Glacier: XCTestCase {
                     row += String(format: " | W%d b %.3f / %.3f Δ %+.3f n %d", w, p.a, p.b, p.a - p.b, p.count)
                 }
                 print(row); flushStdout()
-                // Aufteilung der vergletscherten Zellen (Issue #174, §M): unter der
-                // Firn-Grenze (Zungen, Talgletscher), darüber (Kare, Nährgebiet)
-                // und nach Eisdicke — wo das V→U-Signal sitzt.
                 let firn = Glacier.firnLine(c)
                 let classes: [(String, (Int) -> Bool)] = [
                     ("unter Firn", { ice.h[$0] < firn }),
@@ -370,16 +251,6 @@ final class Glacier: XCTestCase {
         } }
     }
 
-    /// **Wächter: die Talgletscher der PRODUKTION schleifen einen Trog** (Issue #174,
-    /// `docs/glacier-measurements.md` §M). `testGlaciatedValleysWidenTowardsU`
-    /// misst auf der gepinnten alten Welt; hier dieselbe Kennzahl (gepaarter
-    /// Formexponent `b`, Eis-Arm gegen eisfreien Arm auf den am Ende vergletscherten
-    /// Zellen) in der Produktion, gepoolt über drei Seeds, 20.000 Jahre, dt 1000.
-    /// Mit dem Lawinen-Abgang und der alten Schleifspur (2 Zellen, auf die
-    /// Zellgröße 0,34 geeicht, in der Produktion mit 0,156 nur die halbe Breite)
-    /// war das Signal weg (Zellen unter der Firn-Grenze Δb −0,12 … 0,00 statt
-    /// +0,2); mit 4 Zellen gemessen Δb W 6 / 10 / 14 gepoolt +0,05 / +0,14 / +0,06
-    /// (Mac) bzw. +0,07 / +0,14 / +0,12 (Linux). Schranken weit darunter.
     func testProductionGlaciersCarveTroughs() {
         var weighted = [Int: Double](), counts = [Int: Int]()
         var tongues = 0.0, tongueN = 0
@@ -410,11 +281,6 @@ final class Glacier: XCTestCase {
         XCTAssertGreaterThan(tongues / Double(max(1, tongueN)), 0.05, "Zungen unter der Firn-Grenze schleifen keinen Trog")
     }
 
-    /// Verhältnis **Moräne zu glazialem Abtrag**: wie viel von dem, was das Eis
-    /// abträgt, legt es als Ausschmelz-Schutt wieder ab? Gemessen über EINEN
-    /// Schritt aus DEMSELBEN Zustand in drei Armen (nichts / nur Abtrag / nur
-    /// Moräne), damit die Differenzen genau die beiden Terme isolieren.
-    /// Rohdaten für `docs/glacier-measurements.md` §F.
     func testMoraineBudgetDiagnostic() throws {
         try skipUnlessMeasuring()
         var none = quietCfg(n: 256); none.iceErodeK = 0; none.iceMoraineK = 0
@@ -438,17 +304,11 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Rechenzeit des Gletscher-Passes: Schrittzeit mit gegen ohne Eis, für den
-    /// Frame-Fall (dt klein) und den `+10.000 Jahre`-Sprung. Rohdaten für
-    /// `docs/glacier-measurements.md` §E.
     func testIcePassCostDiagnostic() throws {
         try skipUnlessMeasuring()
         for n in [384, 640] {
             let on = cfg(n: n)
             var off = on; off.iceEnabled = false
-            // EINMAL Eis aufbauen und den Zustand danach je Messung
-            // zurückspielen (Zustands-Inventar, Issue #8) — sonst kostet der
-            // Vorlauf je Schrittweite erneut 20.000 Jahre.
             let warm = Terrain(config: on, seed: 1337)
             run(warm, to: 20_000)
             let state = warm.state
@@ -468,12 +328,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    // MARK: - Abnahme 1: die Zunge fließt talwärts
-
-    /// Es gibt Eis, es liegt UNTER der Firn-Grenze (also dort, wo es nicht
-    /// entstehen kann — es muss hingeflossen sein), und die Zunge wächst über die
-    /// Zeit. Das ist der Kern des Tickets: ohne Transport hätte das Eisfeld genau
-    /// die Form seiner Massenbilanz und läge vollständig oberhalb der Grenze.
     func testTongueReachesBelowTheFirnLine() {
         let c = cfg()
         let t = Terrain(config: c, seed: 1337)
@@ -488,32 +342,17 @@ final class Glacier: XCTestCase {
         run(t, to: 30_000)
         let late = Glacier.iceStats(t)
 
-        // AUFBAU: die Zunge wächst in die Landschaft hinein.
         XCTAssertGreaterThan(peak.belowFirn, early.belowFirn,
                              "die Zunge wächst nicht: \(early.belowFirn) → \(peak.belowFirn)")
-        // BESTAND: sie ist auch nach 30k Jahren da. Dass sie bis dahin wieder
-        // schrumpft, ist kein Fehler, sondern die alternde Insel: `maxH` sinkt
-        // (0.726 → 0.625 bei n = 384), das Nährgebiet über der Firn-Grenze wird
-        // kleiner — und die glaziale Erosion sägt zusätzlich daran (Buzzsaw,
-        // s. `SimConfig.iceErodeK`). Messreihe §B.
         XCTAssertGreaterThan(late.glacier, 200, "kaum Eis übrig")
         XCTAssertGreaterThan(late.belowFirn, 50,
                              "keine Zunge unter der Firn-Grenze \(firn) — das Eis fließt nicht")
         XCTAssertGreaterThan(late.reach, 0.02,
                              "Reichweite unter die Firn-Grenze zu klein: \(late.reach)")
-        // Und das Eis liegt nicht nur als Hauch da: die Zunge ist mächtig.
         XCTAssertGreaterThan(late.maxThick, 0.02, "das Eis bleibt hauchdünn")
     }
 
-    /// Ohne Transport (`iceFlowK = 0`) bleibt das Eis in seinem Nährgebiet: der
-    /// Gegentest zu oben, der zeigt, dass die Reichweite AM FLIESSEN hängt und
-    /// nicht an der Bilanz. Denn oberhalb der Firn-Grenze ist die Zufuhr exakt 0
-    /// (`f_kalt = clamp(−T/span, 0, 1)`), das Eis dort unten kann also nur
-    /// hingeflossen sein.
     func testWithoutFlowThereIsNoTongue() {
-        // In BEIDEN Armen ohne glaziale Erosion: sonst senkt der Abtrag das Bett
-        // unter schon liegendem Eis unter die Firn-Grenze, und der Wächter zählt
-        // eine gesunkene Zelle als geflossenes Eis (gemessen: 180 solcher Zellen).
         var flowing = cfg(n: 256); flowing.iceErodeK = 0
         var still = flowing; still.iceFlowK = 0
         let a = Terrain(config: still, seed: 1337)
@@ -522,22 +361,11 @@ final class Glacier: XCTestCase {
         XCTAssertGreaterThan(a.ice.max() ?? 0, still.iceMinThickness, "Testaufbau: gar kein Eis")
         let stillBelow = Glacier.iceStats(a).belowFirn
         let flowBelow = Glacier.iceStats(b).belowFirn
-        // Nicht exakt 0, und das ist kein Widerspruch: das BETT sinkt weiter
-        // (Hangdiffusion und Hebung sind nicht gegatet, und am dünnen Saum unter
-        // `iceMinThickness` auch die fluvialen Pässe), eine Zelle rutscht also
-        // unter die Firn-Grenze, ohne dass Eis geflossen wäre — gemessen 63 von
-        // 968. Kriterium ist deshalb der VERGLEICH, nicht die Null.
         XCTAssertGreaterThan(flowBelow, 5 * max(1, stillBelow),
                              "der Transport bringt kaum mehr Eis unter die Grenze: "
                              + "\(flowBelow) gegen \(stillBelow)")
     }
 
-    // MARK: - Abnahme 2: V→U
-
-    /// Die vergletscherten Talstücke sind nach 30k und 50k Jahren MESSBAR
-    /// parabolischer (Formexponent `b` näher an 2) als DIESELBEN Talstücke im
-    /// eisfreien Referenzlauf mit demselben Seed. Rohdaten und die Zeitreihe:
-    /// `docs/glacier-measurements.md` §D.
     func testGlaciatedValleysWidenTowardsU() {
         let c = cfg()
         var off = c; off.iceEnabled = false
@@ -548,16 +376,6 @@ final class Glacier: XCTestCase {
             let cells = Glacier.glacierCells(ice)
             let p = Glacier.pairedShape(ice, ref, cells: cells)
             XCTAssertGreaterThan(p.count, 20, "Stichprobe zu klein (\(years) J.)")
-            // Die Schranke gilt bei 30k. Bei 50k steht nur noch das Vorzeichen des
-            // Ensembles fest: dieselbe Welt mit `iceFlowK` um 1e-5 … 1e-3 (relativ)
-            // verschoben gibt Δb bei 30k +0,12 … +0,17 (fünf Läufe, n ≈ 55), bei 50k
-            // aber −0,08 … +0,29 (Mittel +0,04): ein Lauf über 50.000 Jahre ist
-            // chaotisch, und auf dem alten Testgitter bleiben ~50 auswertbare Profile.
-            // Eine Rundungsdifferenz allein (anderer Inlining-/FMA-Zuschnitt nach einer
-            // Quelltext-Änderung WEIT außerhalb des Eises: auch der eisfreie Referenzarm
-            // wandert, b 1,186 → 1,131 bei 30k) kippte die 50k-Schranke von +0,162 auf
-            // +0,027. Die Aussage „vergletscherte Täler werden U-förmiger“ prüft in der
-            // Produktion `testProductionGlaciersCarveTroughs` gepoolt über drei Seeds.
             let bound = years <= 30_000 ? 0.1 : -0.15
             XCTAssertGreaterThan(p.a, p.b + bound,
                                  "V→U bleibt aus (\(years) J.): b \(p.a) gegen \(p.b) ohne Eis")
@@ -566,29 +384,15 @@ final class Glacier: XCTestCase {
         }
     }
 
-    // MARK: - Abnahme 3: Moränen und Schichtbuchhaltung
-
-    /// Der Ausschmelz-Schutt landet dort, wo das Eis SCHMILZT — also im
-    /// Zehrgebiet und nicht unter dem Nährgebiet.
-    ///
-    /// Gemessen als Differenz zweier Arme über EINEN Schritt aus DEMSELBEN
-    /// Zustand (der zweite Arm wird über das Zustands-Inventar aus dem ersten
-    /// gefüllt). Zwei getrennt gelaufene Arme taugen dafür nicht: nach 30k Jahren
-    /// sind sie überall auseinander, und die Differenz misst dann Chaos statt
-    /// Moräne (gemessen: Summe über das Nährgebiet 1.02 statt 0).
     func testMoraineBuildsAtTheTongue() {
         var on = quietCfg(n: 256)
-        on.iceErodeK = 0                 // isoliert: nur ablagern, nicht abtragen
+        on.iceErodeK = 0
         var off = on; off.iceMoraineK = 0
         let a = Terrain(config: on, seed: 1337)
         run(a, to: 20_000)
         let b = Terrain(allocating: off, seed: 1337)
         b.restore(a.state)
         let before = a.h
-        // Die Temperatur VOR dem Schritt: `updateClimate` läuft am Schrittende
-        // auf den dann FINALEN Höhen, eine Zelle kann also zwischen Moränen-Ablage
-        // und Messung über die 0-°C-Grenze wandern (gemessen: 1.1e-4 „Schutt im
-        // Nährgebiet", der in Wahrheit im Zehrgebiet lag).
         let tempBefore = a.temperature
         a.step(dtYears: 500)
         b.step(dtYears: 500)
@@ -609,14 +413,10 @@ final class Glacier: XCTestCase {
         XCTAssertGreaterThan(warm, 0, "im Zehrgebiet entsteht keine Moräne")
         XCTAssertEqual(cold, 0, accuracy: 0,
                        "unter dem Nährgebiet (T ≤ 0) darf kein Schutt ausschmelzen")
-        // Und der Schutt liegt als SEDIMENT auf, nicht als Fels.
         XCTAssertGreaterThan(a.sed.reduce(0, +), b.sed.reduce(0, +),
                              "die Moräne wurde nicht als Sediment gebucht")
     }
 
-    /// `h == rock + sed` — die Schichtbuchhaltung, die BEIDE Eingriffe des
-    /// Gletschers respektieren müssen (Abrasion nimmt erst Sediment, dann Fels;
-    /// die Moräne legt Sediment auf).
     func testLayersStayConsistent() {
         let c = cfg(n: 256)
         let t = Terrain(config: c, seed: 1337)
@@ -631,32 +431,10 @@ final class Glacier: XCTestCase {
         XCTAssertLessThan(worst, 1e-9, "h weicht von rock+sed ab (max \(worst))")
     }
 
-    // MARK: - Abnahme 4: unter Eis kein fluvialer Abtrag
-
-    /// Der Wächter ohne die konkurrierenden Bett-Pässe: hier arbeiten NUR
-    /// Auslass-Inzision und Tropfen, die beiden Pfade, die `underIce` seit jeher
-    /// gatet. Der Arm isoliert damit genau diese zwei.
     func testNoFluvialErosionUnderIce() {
         assertNoFluvialErosionUnderIce(quietCfg())
     }
 
-    /// Derselbe Wächter mit den BETT-PÄSSEN DER PRODUKTION: `meanderEnabled`
-    /// und `braidingEnabled` stehen wie in `SimConfig()` auf `true`. Nötig, weil
-    /// `quietCfg()` beide abschaltet und der Wächter oben damit eine
-    /// Konfiguration prüft, die es in Produktion nicht gibt: `meanderStamp`
-    /// carvt sein Bett selbst und `braidPass` bewegt Bettmaterial — beide folgen
-    /// denselben Tälern, in die die Zungen vorstoßen. Ungegatet bekam dasselbe
-    /// Tal unter dem Eis weiter fluviale Kerb-Carves (gemessen 9 Zellen in EINEM
-    /// Schritt: Bett-Carve 3, laterale Ufer 6, Braid-Fracht 1 —
-    /// `docs/glacier-measurements.md` §I).
-    ///
-    /// Die Hangdiffusion bleibt dabei aus (`quietCfg`), und das ist der Punkt
-    /// des Aufbaus: Bodenkriechen ist kein fluvialer Pass, trägt aber die
-    /// Änderungen der NACHBARZELLEN auf die Eiszelle. Mit `hillDiffusion` an
-    /// weichen 852 vergletscherte Zellen ab — davon 825 allein aus
-    /// `outletErode`, das laut derselben Messreihe keine einzige Eiszelle
-    /// anfasst (§I.1). Der Wächter würde dann die Diffusion messen statt das
-    /// Gate.
     func testNoFluvialErosionUnderIceInProduction() {
         var c = quietCfg()
         c.meanderEnabled = true
@@ -664,24 +442,6 @@ final class Glacier: XCTestCase {
         assertNoFluvialErosionUnderIce(c)
     }
 
-    /// Derselbe Wächter für den **Grid-Pfad** (`hydraulicEnabled = false`), den
-    /// die isolierten Mäander- und Becken-Tests fahren: dort ersetzt
-    /// `transportLimited` die Tropfen und bewegt Bettmaterial an eigenen
-    /// Stellen (Delta am Meer, Ablagerung über Kapazität, Inzision darunter).
-    /// Ungegatet bewegte er im Messlauf JEDE vergletscherte Zelle in EINEM
-    /// Aufruf (651 von 651) — mehr als jeder andere Bett-Pass, weil er
-    /// flächendeckend über `order` läuft statt entlang der Läufe. Mit Gate: 0,
-    /// und das Eis hält doppelt so viel Fläche (1385 Zellen), weil ihm der
-    /// Grid-Pfad 20k Jahre lang nicht mehr das Bett unter der Zunge abträgt
-    /// (`docs/glacier-measurements.md` §I.2).
-    ///
-    /// Aufbau anders als bei den zwei Armen oben: der Grid-Pfad läuft in
-    /// `step()` fest mit `diffusionPass` zusammen (kappa ist dort ein Default,
-    /// kein Regler), und das Bodenkriechen würde die Änderungen der
-    /// Nachbarzellen im SELBEN Schritt auf die Eiszelle tragen — der Vergleich
-    /// zweier Arme über `step()` misst dann die Diffusion statt das Gate
-    /// (§I.1). Deshalb: einen Zustand mit Eis auslaufen lassen und den Pass
-    /// danach EINZELN aufrufen.
     func testNoFluvialErosionUnderIceOnTheGridPath() {
         var c = quietCfg()
         c.hydraulicEnabled = false
@@ -705,51 +465,25 @@ final class Glacier: XCTestCase {
                              "Testaufbau: der Grid-Pfad war nirgends aktiv")
     }
 
-    /// Zwei Arme, die sich NUR im fluvialen Abtrag unterscheiden:
-    /// * `gated` — Produktionspfad (die Gletscher-Maske gatet die fluvialen
-    ///   Bett-Pässe),
-    /// * `noFluvial` — dieselbe Config, aber jede fluviale Bett-RATE steht auf 0.
-    ///   Bewusst über die Raten und nicht über die `…Enabled`-Schalter: so laufen
-    ///   in beiden Armen dieselben Pässe mit derselben Reihenfolge, demselben
-    ///   MFD-Takt und demselben Mäander-Zustand — der einzige Unterschied ist,
-    ///   dass in `noFluvial` nichts davon `h` anfasst.
-    /// Auf den vergletscherten Zellen müssen beide BIT-IDENTISCH sein: wenn das
-    /// Gate hält, hat dort ohnehin kein fluvialer Pass gearbeitet. Zugleich muss
-    /// es abseits des Eises einen Unterschied geben — sonst prüft der Test nichts.
     private func assertNoFluvialErosionUnderIce(_ base: SimConfig,
                                                 file: StaticString = #filePath,
                                                 line: UInt = #line) {
         var gated = base
-        gated.iceErodeK = 0; gated.iceMoraineK = 0   // das Eis selbst darf `h` nicht anfassen
+        gated.iceErodeK = 0; gated.iceMoraineK = 0
         var noFluvial = gated
         noFluvial.outletErode = 0
         noFluvial.hydraulicPerYear = 0
-        // Mäander-Bett-Carve, laterale Ufer und Braid-Fracht (in `quietCfg()`
-        // ohnehin aus, in Produktion die dritte und vierte Bett-Bewegung).
-        // `braidCapacity = 0` legt `braidPass` still, OHNE `braidingEnabled` zu
-        // kippen: die Fracht `qs` bleibt überall 0, also deponiert und scourt
-        // nichts — und der MFD-Takt in `step()` bleibt derselbe wie im
-        // Vergleichsarm.
         noFluvial.meanderCarve = 0
         noFluvial.meanderBankErode = 0
         noFluvial.braidCapacity = 0
 
         let a = Terrain(config: gated, seed: 1337)
         run(a, to: 20_000)
-        // EIN Schritt aus DEMSELBEN Zustand: der Vergleichsarm wird über das
-        // Zustands-Inventar (Issue #8) aus `a` gefüllt. Zwei getrennt gelaufene
-        // Arme wären nach 20k Jahren überall auseinander und der Wächter
-        // verglichen zwei Landschaften statt zwei Physiken.
         let b = Terrain(allocating: noFluvial, seed: 1337)
         b.restore(a.state)
         let before = a.h
         a.step(dtYears: 500)
         b.step(dtYears: 500)
-        // Die MASKE DIESES SCHRITTS: `updateIce` läuft am Schrittanfang und baut
-        // sie neu, und genau diese neue Maske haben die fluvialen Pässe
-        // danach gesehen. Die Maske von VOR dem Schritt wäre veraltet — Zellen,
-        // die das Eis in diesem Schritt verlassen hat, sind zu Recht wieder
-        // fluvial (gemessen: 6 solche Zellen).
         let mask = a.underIce
         XCTAssertEqual(mask.count, gated.count, "keine Eismaske aufgebaut",
                        file: file, line: line)
@@ -772,43 +506,17 @@ final class Glacier: XCTestCase {
         XCTAssertGreaterThan(differsOffIce, 100,
                              "Testaufbau: der fluviale Abtrag war nirgends aktiv",
                              file: file, line: line)
-        // Dass sich `h` unter dem Eis trotzdem BEWEGT, ist kein Widerspruch: die
-        // Hebung bzw. der Relief-Servo (`applyUplift`) greifen flächendeckend und
-        // sind kein fluvialer Abtrag. Gemessen bewegen sie hier 4031 der
-        // vergletscherten Zellen — in BEIDEN Armen gleich, deshalb bleibt die
-        // Bit-Gleichheit oben die richtige Zusicherung.
         _ = before
     }
 
-    /// **Eine Schwelle für alles**: unterhalb `iceMinThickness` fließt kein Eis
-    /// und schleift auch keines — dieselbe Grenze, ab der `underIce` die
-    /// fluvialen Pässe wieder zulässt. Ohne diese Kopplung arbeiteten am dünnen
-    /// Saum BEIDE Erosionsgesetze gleichzeitig am selben Bett (PR-Review zu #35:
-    /// `iceFlowSubStep` gatete den Ausstrom an `ice > 0` und die Abrasion an
-    /// `i0 > 0`, während die fluvialen Gates erst über der Schwelle greifen).
-    ///
-    /// Geprüft als ÄQUIVALENZ zweier Arme über EINEN Schritt aus DEMSELBEN
-    /// Zustand: eine Schwelle oberhalb der größten Eisdicke muss dasselbe
-    /// liefern wie „Transport-Deckel 0 + `iceErodeK = 0`". Der Vergleichsarm
-    /// stellt bewusst `iceFlowMoveFraction` auf 0 statt `iceFlowK` — Letzteres
-    /// änderte über `totalK` auch die Zahl der Teilschritte, und die Bilanz
-    /// relaxierte dann in anderen Häppchen (bit-gleich wäre sie nur in exakter
-    /// Arithmetik).
-    ///
-    /// Die BILANZ läuft in beiden Armen weiter (Zufuhr, Schmelze, Moräne): ein
-    /// Schneefeld muss über die Schwelle wachsen können, sonst entstünde nie
-    /// ein Gletscher. Deshalb ist die Zusicherung „kein Transport, keine
-    /// Abrasion" und nicht „das Eis ist eingefroren".
     func testThinIceNeitherFlowsNorGrinds() {
         var base = quietCfg(n: 256)
-        base.hydraulicPerYear = 0     // nur das Eis darf `h` anfassen — sonst
-        base.outletErode = 0          // misst der Vergleich den fluvialen Abtrag
+        base.hydraulicPerYear = 0
+        base.outletErode = 0
         let t = Terrain(config: base, seed: 1337)
         run(t, to: 20_000)
         let thickest = t.ice.max() ?? 0
         XCTAssertGreaterThan(thickest, base.iceMinThickness, "Testaufbau: gar kein Eis")
-        // Der dünne Saum ist in Produktion nicht leer — sonst prüfte der Wächter
-        // eine Zone, die es gar nicht gibt.
         let rim = (0..<base.count).filter { t.ice[$0] > 0 && t.ice[$0] <= base.iceMinThickness }
         print("[SAUM] \(rim.count) Zellen mit 0 < Eis ≤ iceMinThickness, dickstes Eis \(thickest)")
         XCTAssertGreaterThan(rim.count, 0, "kein Saum unter der Schwelle im Zustand")
@@ -827,9 +535,6 @@ final class Glacier: XCTestCase {
         }
         XCTAssertEqual(iceDiff, 0, "\(iceDiff) Zellen: Eis unter der Schwelle ist geflossen")
         XCTAssertEqual(bedDiff, 0, "\(bedDiff) Zellen: Eis unter der Schwelle hat geschliffen")
-        // Gegenprobe: mit der PRODUKTIONS-Schwelle tun Transport und Abrasion in
-        // genau diesem Zustand sehr wohl etwas — der Vergleich oben ist also
-        // keine Aussage über einen stillstehenden Gletscher.
         var active = 0
         for k in 0..<base.count where c.h[k].bitPattern != a.h[k].bitPattern { active += 1 }
         print("[SCHWELLE] geflossen \(iceDiff), geschliffen \(bedDiff), "
@@ -838,33 +543,6 @@ final class Glacier: XCTestCase {
                              "Testaufbau: der Gletscher war auch über der Schwelle untätig")
     }
 
-    // MARK: - Abnahme 5: dt-Invarianz und Determinismus
-
-    /// Gleiche Simulationszeit, verschiedene Schrittweiten → dasselbe Eis UND
-    /// derselbe Gletscherschliff. Aus EINEM Zustand (Jahr 5000, volle Physik)
-    /// laufen 1000 Jahre einmal als ein Schritt (Sprung), als 10 × 100 und als
-    /// 64 × 15,625 (Zeitraffer-Takt), auf drei Seeds.
-    ///
-    /// Warum Schrittpaare statt langer Läufe (der Wächter bis Issue #174): über
-    /// 20.000 Jahre laufen zwei Schrittweiten auch ohne jeden Fehler
-    /// auseinander (Tropfen-Splitting, `docs/dt-invariance-measurements.md` §5),
-    /// und die Eismasse hängt an der Gipfelhöhe über der Firn-Grenze — sie
-    /// verstärkt jede Abweichung im Relief. Der alte Wächter musste deshalb
-    /// 15 % zulassen und lag auf seiner Welt zufällig in einem ruhigen Bereich,
-    /// während die Produktion um Faktor 2,5 auseinanderlief. EIN Abschnitt aus
-    /// demselben Zustand kann nicht chaotisch divergieren: was hier abweicht,
-    /// ist Operator-Splitting im Eis-Pfad selbst, auf jedem Seed gleichsinnig.
-    ///
-    /// Und warum `cfg` statt `quietCfg`: zwei der drei Ursachen lagen in der
-    /// Kopplung an den Rest des Schritts (die Pfützen-Verlandung füllte den
-    /// Schliff wieder auf, die Temperatur stand auf dem Schrittanfang);
-    /// `quietCfg` schaltet die Verlandung ab und hätte sie nie gesehen.
-    ///
-    /// Gemessen (`docs/glacier-measurements.md` §L, n = 256, Jahr 5000, Spanne
-    /// über die drei Arme): vor dem Fix Absenkung 51–76 %, Masse 3,2–4,7 % —
-    /// der Sprung schliff nur 25–50 % dessen, was der Zeitraffer schliff;
-    /// danach Absenkung 2,0–3,7 %, Masse 0,5–1,7 %. Die Schranken liegen
-    /// dazwischen.
     func testIceIsFramerateIndependent() {
         for seed: UInt32 in [1337, 42, 20] {
             let src = Terrain(config: cfg(n: 256), seed: seed)
@@ -888,23 +566,17 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// **Lawinen-Abgang erhält die Firn-Zufuhr** (Issue #174, §M): auf einer
-    /// steilen Rampe mit ebenem Fuß, überall kalt genug für volle Umwandlung
-    /// (gleiche Rate μ in jeder Zelle), liegt ohne Abgang die Zufuhr in der
-    /// Rampe, mit Abgang am Fuß — die GESAMTE Eismasse bleibt gleich (kein Fluss,
-    /// keine Erosion, keine Schmelze). Prüft damit Quelle −/Ziel + und die
-    /// Zurücksetzung des Scratch zwischen den Aufrufen.
     func testAvalancheMovesFirnSupplyWithoutLosingIt() {
         func massSplit(_ hi: Double) -> (ramp: Double, foot: Double) {
             var c = cfg(n: 96)
-            c.world = 0.156 * 95                       // Produktions-Zellgröße
+            c.world = 0.156 * 95
             c.iceFlowK = 0; c.iceErodeK = 0; c.iceMoraineK = 0
             c.iceAvalancheSlopeLo = 1.0; c.iceAvalancheSlopeHi = hi
             var st = Terrain(config: c, seed: 1337).state
             let nn = c.n
             for j in 0..<nn { for i in 0..<nn {
                 let k = j * nn + i
-                let bed = c.sea + 0.9 - 0.0105 * Double(min(i, 30))   // Rampe i < 30 (Weltsteigung ≈ 1,6), dann eben; Fuß bei T ≈ −4 °C
+                let bed = c.sea + 0.9 - 0.0105 * Double(min(i, 30))
                 st.h[k] = bed; st.rock[k] = bed; st.sed[k] = 0
                 st.ice[k] = 0; st.snow[k] = 0.3
             } }
@@ -923,12 +595,6 @@ final class Glacier: XCTestCase {
                        "der Abgang verliert Zufuhr: \(on) gegen \(off)")
     }
 
-    /// Schrittpaar in der PRODUKTION mit Lawinen-Abgang (der Wächter
-    /// `testIceIsFramerateIndependent` läuft auf der alten Welt ohne Abgang):
-    /// 1000 Jahre ab Jahr 5000 als 1 × 1000, 10 × 100 und 64 × 15,625.
-    /// Gemessen (Jahr 5000 und 15.000, drei Seeds): Masse 0,5 … 0,8 %, Fläche
-    /// 0,3 … 0,5 % (ohne Abgang Masse 0,5 … 1,3 %, Fläche 0,06 … 0,6 %;
-    /// `docs/glacier-measurements.md` §M).
     func testIceIsFramerateIndependentInProduction() {
         for seed: UInt32 in [1337, 20] {
             let src = Terrain(config: .production, seed: seed, settleYears: SimConfig.productionSettleYears)
@@ -942,9 +608,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Nach einem Weltwechsel müssen neue Firnquellen den Arbeitsbereich
-    /// aufspannen. Alte Scratch-Raten dürfen am kleineren oder verschobenen
-    /// Rand keinen Zufluss erzeugen. Vergleich gegen jeweils frische Puffer.
     func testIceDomainFollowsNewFirnAndReplacedWorld() {
         let c = cfg(n: 64)
         var blank = Terrain(config: c, seed: 1337).state
@@ -972,32 +635,18 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Dickes Eis auf flachem Bett: der Fall, in dem der Transport bis Issue
-    /// #174 instabil lief. Die Sub-Taktung richtete sich nur nach dem
-    /// steilsten Oberflächen-Abfall; auf einer fast ebenen Eisplatte ist der
-    /// klein, also lief EIN Teilschritt mit `kappa·I` weit über 1/4, und der
-    /// Schachbrett-Modus der Oberfläche wuchs je Teilschritt um `|1 − 8·kappa·I|`.
-    /// In der Produktion schliff das aufgeschaukelte Gefälle bei dt = 1000 im
-    /// Mittel 0,065 unter dem Eis in einem Schritt (§L).
-    ///
-    /// Aufbau ohne Welt-Realisierung: n = 64, ebenes Bett über der Firn-Grenze,
-    /// 1.0 Eis mit einem Schachbrett-Muster von ±0.001, keine Zufuhr, keine
-    /// Erosion. 2000 Jahre als EIN Aufruf gegen 20 × 100: die Felder müssen
-    /// übereinstimmen, und das Muster muss abklingen statt wachsen.
     func testThickIceTransportIsStableForLargeSteps() {
         var c = cfg(n: 64)
         c.iceErodeK = 0; c.iceMoraineK = 0
         var s = Terrain(config: c, seed: 1337).state
         let nn = c.n
-        let bed = c.sea + 0.6                         // T = −4,6 °C: keine Schmelze
+        let bed = c.sea + 0.6
         func sign(_ k: Int) -> Double { ((k % nn) + (k / nn)) % 2 == 0 ? 1 : -1 }
         for k in 0..<c.count {
             s.h[k] = bed; s.rock[k] = bed; s.sed[k] = 0
             s.ice[k] = 1.0 + 0.001 * sign(k)
             s.snow[k] = 0
         }
-        // Größte Abweichung vom Mittel: die Platte startet mit ±0.001 und muss
-        // glatter werden, nicht rauer.
         func roughness(_ t: Terrain) -> Double {
             let mean = t.ice.reduce(0, +) / Double(c.count)
             return t.ice.map { abs($0 - mean) }.max()!
@@ -1015,9 +664,6 @@ final class Glacier: XCTestCase {
         XCTAssertLessThan(worst, 1e-3, "Eisfeld hängt an der Schrittweite (max \(worst))")
     }
 
-    /// Ein Arm des Schrittweiten-Vergleichs: `span` Jahre aus DEMSELBEN Zustand
-    /// in Schritten à `dt`, danach Eismasse, vergletscherte Zellen und die
-    /// mittlere Bett-Absenkung unter dem Eis des Ausgangszustands.
     struct IceArm { var dt: Double; var mass: Double; var cells: Int; var lowering: Double }
 
     static func iceArm(from src: Terrain, seed: UInt32, dt: Double, span: Double,
@@ -1037,22 +683,11 @@ final class Glacier: XCTestCase {
                       lowering: under == 0 ? 0 : lowering / Double(under))
     }
 
-    /// Größte relative Abweichung einer Kennzahl über die Arme.
     static func spread(_ v: [Double]) -> Double {
         let lo = v.min()!, hi = v.max()!
         return (hi - lo) / max(abs(lo), abs(hi), 1e-12)
     }
 
-    /// Schrittpaar-Messung: aus EINEM Zustand 1000 Jahre als 1 × 1000,
-    /// 10 × 100 und 64 × 15,625 (Zeitraffer-Takt) — für die Wahl des Aufbaus
-    /// von `testIceIsFramerateIndependent` (`docs/glacier-measurements.md` §L).
-    ///
-    ///     RS_MEASURE=1 RS_GRID=256 RS_SEED=1337,42,20 RS_START=5000 swift test …
-    ///         --filter testIceStepPairDiagnostic
-    ///
-    /// `RS_GRID=prod` misst auf `SimConfig.production` mit Einlauf,
-    /// `RS_VARIANTS="base;hill=0;uplift=0"` wiederholt die Arme mit Ablationen
-    /// (nur die drei Arme, der Vorlauf bleibt Produktion).
     func testIceStepPairDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
@@ -1089,8 +724,6 @@ final class Glacier: XCTestCase {
         }
     }
 
-    /// Config-Variante für die Ablationen der Schrittpaar-Messung:
-    /// `hill=0,hyd=0` usw., `base` ist die unveränderte Config.
     static func variant(_ spec: String, of base: SimConfig) -> SimConfig {
         var c = base
         for kv in spec.split(separator: ",") {
@@ -1126,15 +759,6 @@ final class Glacier: XCTestCase {
         return c
     }
 
-    /// Eismasse und -fläche in der PRODUKTION (`SimConfig.production` mit dem
-    /// Einlauf der Brücke) über lange Läufe in verschiedenen Schrittweiten —
-    /// die Tabelle in `docs/glacier-measurements.md` §L.
-    ///
-    ///     RS_MEASURE=1 RS_SEED=1337 RS_DTS=15,100,1000 RS_YEARS=20000,100000 \
-    ///         swift test -c release --package-path SimCore \
-    ///         --filter testIceDtSweepDiagnostic
-    ///
-    /// Die Läufe sind unabhängig und lassen sich je Seed/dt parallel starten.
     func testIceDtSweepDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
@@ -1172,8 +796,6 @@ final class Glacier: XCTestCase {
         print("=== ENDE EIS-DT ===\n")
     }
 
-    /// `dt = 0` (Sculpt-Pfad) darf die Eisbilanz nicht um ein ULP verschieben —
-    /// dieselbe Zusicherung wie bei der Schneedecke.
     func testZeroStepLeavesIceUntouched() {
         let t = Terrain(config: cfg(n: 192), seed: 1337)
         run(t, to: 10_000)
@@ -1182,27 +804,16 @@ final class Glacier: XCTestCase {
         XCTAssertEqual(before, t.ice, "ein zeitloser Aufruf hat das Eisfeld verändert")
     }
 
-    /// Gleicher Seed → bit-gleiches Eisfeld (die getestete Invariante des
-    /// Projekts, hier für den parallelen Zwei-Phasen-Pass).
     func testIceIsDeterministic() {
         let a = Terrain(config: cfg(n: 256), seed: 1337)
         let b = Terrain(config: cfg(n: 256), seed: 1337)
         run(a, to: 20_000)
-        // Andere Schritt-STÜCKELUNG darf nicht bit-gleich sein — das prüft
-        // `testIceIsFramerateIndependent` mit Schranken. Hier dieselbe Taktung.
         run(b, to: 20_000)
         XCTAssertEqual(a.ice, b.ice, "Eisfeld nicht reproduzierbar")
         XCTAssertEqual(a.h, b.h, "Gelände nicht reproduzierbar")
         XCTAssertEqual(a.underIce, b.underIce, "Eismaske nicht reproduzierbar")
     }
 
-    // MARK: - Abnahme 6: abgeschaltet bit-identisch
-
-    /// `iceEnabled = false`: kein Eis, keine Maske — und damit fällt das
-    /// Gate des Bett-Funnels (`Terrain.Bed.erode`, seit #96 die EINE Prüfstelle
-    /// für alle Schreiber) samt dem ganzen Pass weg. Der Test prüft genau die
-    /// Vorbedingungen dieser Bit-Identität (dass `underIce` leer bleibt, ist
-    /// die Bedingung, unter der keine Bett-Schreibung mehr gegatet wird).
     func testDisabledIceIsBitIdentical() {
         var off = cfg(n: 192); off.iceEnabled = false
         let t = Terrain(config: off, seed: 1337)
@@ -1212,13 +823,9 @@ final class Glacier: XCTestCase {
         XCTAssertEqual(t.ice.max(), 0, "abgeschaltet ist das Eisfeld nicht konstant 0")
     }
 
-    /// Eine Welt, die NIE Eis bekommt (Meeresspiegel-Temperatur so hoch, dass
-    /// keine Zelle unter 0 °C liegt), rechnet mit und ohne Gletscher-Pass
-    /// BIT-IDENTISCH. Das ist der harte Aus-Wächter: er prüft den
-    /// Schnell-Ausstieg des Passes an der scharfen Kante, an der er greift.
     func testIcelessWorldIsBitIdentical() {
         var warm = cfg(n: 192)
-        warm.climateSeaLevelTemp = 40      // 0-°C-Isotherme weit über dem Gipfel
+        warm.climateSeaLevelTemp = 40
         var noIce = warm; noIce.iceEnabled = false
         let a = Terrain(config: warm, seed: 1337)
         let b = Terrain(config: noIce, seed: 1337)
@@ -1232,9 +839,6 @@ final class Glacier: XCTestCase {
         XCTAssertEqual(a.area, b.area, "area weicht ab")
     }
 
-    /// Die Färbung hat EINE Quelle (dieselbe Doktrin wie `snowCoverage`):
-    /// `SimRender.TerrainColorRenderer` ruft `Terrain.iceCoverage` über den
-    /// rohen Puffer auf, statt die Formel ein zweites Mal hinzuschreiben.
     func testIceCoverIsTheSingleSourceForColouring() {
         let c = cfg(n: 192)
         let t = Terrain(config: c, seed: 1337)
@@ -1248,22 +852,15 @@ final class Glacier: XCTestCase {
             if t.iceCover(k) > 0.5 { painted += 1 }
         }
         XCTAssertGreaterThan(painted, 20, "kein Eis, das sich vom Schnee abheben könnte")
-        // Ohne Klima ist die Eis-Deckung exakt 0 → der Renderer malt nur Schnee.
         var off = c; off.climateEnabled = false
         let cold = Terrain(config: off, seed: 1337)
         XCTAssertEqual(cold.iceCover(0), 0, "ohne Klima ist die Eis-Deckung nicht 0")
     }
 
-    // MARK: - Langzeit-Wächter
-
-    /// Über sehr lange Läufe darf weder das Eis noch das Relief entgleisen —
-    /// dieselbe Invariante wie `LongRunCollapse`, hier mit dem Gletscher an
-    /// Bord. Der Deckel für das Eis ist die Konstruktion selbst
-    /// (`iceFirnPerSnowYear · snow · iceTurnoverYears`, s. dort).
     func testLongRunIceStaysBounded() {
         let c = cfg(n: 192)
         let t = Terrain(config: c, seed: 1337)
-        let bound = c.iceFirnPerSnowYear * c.iceTurnoverYears   // snow ≤ 1.0
+        let bound = c.iceFirnPerSnowYear * c.iceTurnoverYears
         var seen = 0.0
         while t.years < 200_000 {
             t.step(dtYears: 2000)
@@ -1273,10 +870,6 @@ final class Glacier: XCTestCase {
                                      "Eisdicke über der Konstruktions-Grenze bei \(t.years) J.")
             XCTAssertFalse(maxIce.isNaN, "NaN im Eisfeld bei \(t.years) J.")
         }
-        // ZUSÄTZLICH empirisch: die Konstruktions-Grenze (4.0) ist so weit weg,
-        // dass sie ein Entgleisen erst merkte, wenn das Eis das ganze Relief
-        // überragt. Gemessen bleibt das Maximum unter 0.3 (§B) — 1.0 lässt
-        // reichlich Luft für andere Seeds und fängt trotzdem jedes Weglaufen.
         XCTAssertLessThan(seen, 2.0, "Eisdicke läuft weg (max \(seen))")
         print(String(format: "200k Jahre, n=%d: größte Eisdicke %.4f", c.n, seen))
         XCTAssertLessThan(t.landReliefRobust(), 1.0, "Relief entgleist")
@@ -1285,14 +878,6 @@ final class Glacier: XCTestCase {
         XCTAssertLessThan(worst, 1e-9, "Schichtbuchhaltung nach 200k Jahren kaputt")
     }
 
-    /// Regression: Schliff ohne Schrittweite (`cellSize == 0`, hier n = 3 mit
-    /// `world = 0`). Ohne den `cs > 0`-Guard in `iceFlowSubStep` wurde das
-    /// Gefälle `w / cs` unendlich und mit ihm die Schliff-Rate; das Bett fiel
-    /// dann um den vollen Teilschritt-Deckel. Jetzt schleift das Eis nicht:
-    /// das Bett ist bit-gleich zum Arm ganz ohne Erosion (`iceErodeK = 0`).
-    /// Ein 1×1-Gitter erreicht den Pfad nicht — am gespiegelten Rand ist das
-    /// Gefälle 0 und die Zelle eine Mulde —, deshalb n = 3. `iceEro` ist
-    /// `private`; geprüft wird seine einzige Wirkung, das Bett.
     func testIceWithoutCellSpacingDoesNotGrind() {
         func bedAfterIce(erodeK: Double) -> [Double] {
             var c = SimConfig()
@@ -1301,8 +886,6 @@ final class Glacier: XCTestCase {
             XCTAssertEqual(c.cellSize, 0.0)
             let t = Terrain(allocating: c, seed: 1)
             var s = t.state
-            // Gipfel mit Eis in der Mitte, Land ringsum, überall Frost (keine
-            // Schmelze, also keine Moräne, die das Bett ebenfalls anfasst).
             s.h = [0.5, 0.5, 0.5, 0.5, 0.8, 0.5, 0.5, 0.5, 0.5]
             s.rock = s.h
             s.sed = .init(repeating: 0, count: 9)

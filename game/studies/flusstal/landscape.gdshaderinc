@@ -1,15 +1,4 @@
-// Landschaftsschichten der Flusstal-Studie (#116), zweite Runde.
-// Eingebunden NACH den Uniforms und Noise-Helfern von terrain.gdshader und nur
-// im FLUSSTAL_STUDY-Build. Alles rein visuell, die Sim-Felder bleiben unberührt.
-//
-// Alle Hebel der zweiten Runde sind Produktion: `geometry` (grobe Rinnen und
-// geschärfte Grate als echte Verschiebung) seit #153 (terrain.gdshader,
-// relief_bake.gdshader), `canopy` (Kronendach statt Instanzbäumen) seit #152
-// (terrain.gdshader, Waldmaske aus SimRender.ForestCanopyMask). Geblieben sind
-// die Debug-Ansichten der Kalibrierung.
-
-uniform int study_debug = 0; // 1 = Schutzmaske, 2 = Waldmaske, 3 = Rinnen/Rippen
-// Schutzmaske (#154) nur für die Debug-Ansicht; Flusstal.gd bindet sie.
+uniform int study_debug = 0;
 uniform sampler2D protect_tex : filter_linear, repeat_disable;
 
 #include "res://shaders/protect.gdshaderinc"

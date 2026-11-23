@@ -2,24 +2,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-// Messläufe zum Render des Mäandergürtels (Issue #174, Paket C Teil 2), alle
-// hinter RS_MEASURE. Befunde: docs/river-belt-render-measurements.md.
-//
-// - testBarAgeDiagnostic: Verteilung des Bankalters (`Terrain.barAge`) und
-//   sein Gradient je Zelle auf der Produktionswelt — daraus Sand-Horizont und
-//   Scroll-Bar-Periode von `BarMaterial`.
-// - testBarSandExtentDiagnostic: Sandfläche aus `BarMaterial` gegen Bank- und
-//   Kanalfläche, nach Bankalter, Abstand zur Zentrumslinie und Höhe über
-//   bankfull (Befund #174 „Sandwüste in der Schlinge").
-// - testBarMeadowDiagnostic: Talboden-Wiese (A-Kanal von `covers`) auf Bank-
-//   Zellen nach Bankalter: wie viel der Aue (alte Bank) trägt sie heute, und
-//   was änderte eine zweite Quelle aus `barAge` (Review zu #174 D, § H).
-// - testMainStemBandDiagnostic: der Hauptlauf (D8, größtes Einzugsgebiet bis
-//   zur Band-Schwelle) Zelle für Zelle: wer malt ihn (Band, Raster-Fluss,
-//   See), wo bleibt eine Lücke, und warum.
-//
-// RS_SEEDS (Standard „1337,42,20" = die Matrix-Seeds), RS_YEARS (Standard
-// 20000).
 final class RiverBeltRenderDiagnostics: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
@@ -28,8 +10,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
     }
     private var years: Double { env["RS_YEARS"].flatMap { Double($0) } ?? 20_000 }
 
-    /// Produktionswelt mit Einlauf, in 100-Jahr-Schritten gealtert (wie
-    /// `simperf`, nicht in 1000ern: die Gürtel-Teilschritte hängen daran).
     static func productionWorld(seed: UInt32, years: Double) -> Terrain {
         let t = Terrain(config: SimConfig.production, seed: seed,
                         settleYears: SimConfig.productionSettleYears)
@@ -38,8 +18,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
         return t
     }
 
-    /// Talboden-Wiese auf Bank-Zellen nach Bankalter. RS_YEARS_LIST (Standard
-    /// „2300,20000"), RS_SEEDS, RS_CACHE wie `testBarSandExtentDiagnostic`.
     func testBarMeadowDiagnostic() throws {
         try skipUnlessMeasuring()
         let marks = (env["RS_YEARS_LIST"] ?? "2300,20000").split(separator: ",").compactMap { Double($0) }
@@ -83,7 +61,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
             if covers[k * 4 + 3] >= 128 { meadow[b] += 1 }
         }
         func share(_ a: Int, _ b: Int) -> String { String(format: "%.0f %%", 100 * Double(a) / Double(max(1, b))) }
-        // Warum trägt alte Bank KEINE Talboden-Wiese? Weltsteigung gegen Höhenband.
         let slopeScale = 2 * RenderContract.heightScale / (t.cfg.world / Double(n))
         let bands = t.heightBands
         var slopeBins = [0, 0, 0, 0], oldBank = 0, aboveBand = 0
@@ -150,8 +127,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
                          seed, t.years, s.cells, s.band, s.raster, s.lake, s.gap, s.longestGap,
                          s.gapRuns, s.gapWithLine, s.gapDropped, s.gapWithoutLine, s.atCap))
             let n = t.cfg.n
-            // Gegenprobe Doppelwasser: Band-Zellen ohne großen D8-Lauf in
-            // 3 Zellen Umkreis (Band neben dem echten Abfluss = Geisterlauf).
             do {
                 let cov = render.riverRibbonMesh.bandCoverage
                 let cellArea = t.cfg.cellSize * t.cfg.cellSize
@@ -169,16 +144,12 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
                 }
                 print(String(format: "  Band-Zellen %d, davon ohne D8-Lauf ≥ renderMinCells in 3 Zellen: %d (%.1f%%)",
                              bandCells, ghost, 100 * Double(ghost) / Double(max(1, bandCells))))
-                // Doppelwasser direkt (Review #181): Raster-Fluss sichtbar
-                // (Schwelle des Shaders) unter einem kräftigen Band.
                 let riverT = byte01(WaterRender.riverMaskLo)
                 var strong = 0, doubled = 0
                 for k in 0..<(n * n) where cov[k] >= 0.7 {
                     strong += 1
                     if o.water[k * 4] >= riverT { doubled += 1 }
                 }
-                // … und daneben: Raster-Fluss ohne Band, aber ein kräftiges
-                // Band in ±3 Zellen (die D8-Treppe parallel zum Band).
                 var beside = 0
                 for k in 0..<(n * n) where o.water[k * 4] >= riverT && cov[k] < WaterRender.protectBandThreshold {
                     let i = k % n, j = k / n
@@ -198,8 +169,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
             let streamMed = s.gapStream.sorted().dropFirst(s.gapStream.count / 2).first ?? 0
             print(String(format: "  Lücken ohne Linie: Linie ≤4 Zellen %d, > 8 Zellen %d | Mündungsdrittel %d, Quelldrittel %d | Stream-Map Median %.2f",
                          near, far, lower, upper, streamMed))
-            // Gates der Läufe, die den Hauptlauf berühren: Stream-Map-Stütze
-            // (Kanal-Kohärenz), Strahler-Rang, Abfluss.
             let flags = render.riverRibbonMesh.bandChannelFlags
             let orders = t.strahlerOrders(minCells: t.cfg.meanderMinCells)
             for ci in Set(s.channels).sorted() {
@@ -222,17 +191,12 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
         }
     }
 
-    /// Vorzeichen der Bogenstärke gegen das Bett der Sim: auf der Seite, die
-    /// `WaterRender.ribbonOutward` als Prallhang meldet, muss das Bett tiefer
-    /// liegen. Dazu eine Draufsicht (PPM nach RS_OUT, Standard /tmp) des
-    /// Gürtel-Materials um den Hauptlauf: Makrofarbe, Sand, Band.
     func testBeltRenderMapDiagnostic() throws {
         try skipUnlessMeasuring()
         let outDir = env["RS_OUT"] ?? "/tmp"
         for seed in seeds {
             let t = Self.productionWorld(seed: seed, years: years)
             let n = t.cfg.n
-            // 1. Querprofil-Vorzeichen über ALLE wandernden Läufe.
             var outDepth = 0.0, inDepth = 0.0, samples = 0
             for ch in t.meander.channels where ch.nodes.count >= 10 {
                 let bend = MeanderState.bendStrength(ch, config: t.cfg,
@@ -244,7 +208,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
                     guard tl > 1e-9 else { continue }
                     tx /= tl; tz /= tl
                     let w = 0.5 * MeanderState.beltWidthCells(discharge: ch.discharge[i], config: t.cfg)
-                    // UV.x = 1 liegt bei Mitte + (−tz, tx)·hw (emitRibbon).
                     let h1 = bilinearGrid(t.h, m.x - tz * 0.5 * w, m.z + tx * 0.5 * w, n: n)
                     let h0 = bilinearGrid(t.h, m.x + tz * 0.5 * w, m.z - tx * 0.5 * w, n: n)
                     let out1 = WaterRender.ribbonOutward(across: 1, bend: bend[i]) > 0
@@ -256,7 +219,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
             print(String(format: "BEND s%d J%.0f Bogen-Stützpunkte %d | Bett außen − innen (Sim-Höhe, + = außen tiefer): %+.5f",
                          seed, t.years, samples, samples > 0 ? (outDepth - inDepth) / Double(samples) : 0))
 
-            // 2. Draufsicht.
             let render = RenderState(geometryMode: true)
             guard let o = render.frame(t, .settled, now: 0).overlays else { continue }
             let cov = render.riverRibbonMesh.bandCoverage
@@ -290,16 +252,12 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
             ppm.append(contentsOf: px)
             let path = "\(outDir)/belt-render-s\(seed)-\(Int(t.years)).ppm"
             try ppm.write(to: URL(fileURLWithPath: path))
-            // Delta-Arme dieses Builds (am Meer liegen sie unter der opaken
-            // Meeresebene, sichtbar sind nur die an Seen).
             let mesh = render.riverRibbonMesh
             var deltaStrips = 0
             for st in mesh.stripStarts where mesh.uv2s[Int(st)].x == Float(WaterRender.ribbonKindDelta) {
                 deltaStrips += 1
             }
             print("DELTA s\(seed): Delta-Arm-Bänder \(deltaStrips)")
-            // Kosten auf der Produktionswelt: Gürtel-Material allein und der
-            // Material-Pass mit/ohne Gürtel, interleaved, Median über 7.
             var tField: [Double] = [], tWith: [Double] = [], tWithout: [Double] = [], tLine: [Double] = []
             for _ in 0..<7 {
                 var c = Date()
@@ -328,19 +286,13 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
         var longestGap = 0, gapRuns = 0
         var gapWithLine = 0, gapDropped = 0, gapWithoutLine = 0
         var atCap = 0.0
-        /// Läufe, deren Zentrumslinie den Hauptlauf berührt.
         var channels: [Int] = []
         var cellsSeen = 0
-        /// Lücken ohne Zentrumslinie: Abstand zur nächsten (Zellen, 99 = > 8),
-        /// Lage am Lauf (0 = Mündung, 1 = Quelle), Stream-Map dort.
         var gapLineDistance: [Int] = []
         var gapPosition: [Double] = []
         var gapStream: [Double] = []
     }
 
-    /// Der D8-Pfad des Hauptlaufs, von der Mündung (Index 0) zur Quelle: vom
-    /// Land mit dem größten Einzugsgebiet stromauf, je Zelle zum Zubringer mit
-    /// dem größten Einzugsgebiet, bis der Abfluss unter `renderMinCells` fällt.
     static func stemPath(_ t: Terrain) -> [Int] {
         let n = t.cfg.n, cellArea = t.cfg.cellSize * t.cfg.cellSize
         var start = -1, best = 0.0
@@ -362,20 +314,11 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
         return path
     }
 
-    /// Hauptlauf = D8-Pfad vom Land mit dem größten Einzugsgebiet stromauf,
-    /// je Zelle zum Zubringer mit dem größten Einzugsgebiet, bis der Abfluss
-    /// unter `renderMinCells` fällt (ab dort gibt es kein Band mehr). Gezählt
-    /// wird, ob eine Zelle als Wasser sichtbar ist: Band-Deckung ab
-    /// `protectBandThreshold`, Raster-Fluss/See ab den Schutz-Schwellen (=
-    /// Sichtbarkeit im Shader, s. `testProtectMaskReadsVisibilityFromTheShaderWindows`)
-    /// — je 3×3, weil D8-Pfad und Zentrumslinie nicht zellgenau
-    /// übereinanderliegen.
     static func mainStem(_ t: Terrain, render: RenderState, water: [UInt8]) -> StemStats {
         let n = t.cfg.n, cs = t.cfg.cellSize, cellArea = cs * cs
         let coverage = render.riverRibbonMesh.bandCoverage
         let flags = render.riverRibbonMesh.bandChannelFlags
         let path = stemPath(t)
-        // Zellen unter Zentrumslinien: welcher Lauf, ist sein Band gebaut?
         var line = [Int](repeating: -1, count: n * n)
         for (ci, ch) in t.meander.channels.enumerated() {
             for p in ch.nodes {
@@ -411,7 +354,6 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
                     if lineCh < flags.count, !flags[lineCh] { r.gapDropped += 1 }
                 } else {
                     r.gapWithoutLine += 1
-                    // Wie weit liegt die nächste Zentrumslinie, und wo am Lauf?
                     var d = 99
                     search: for rad in 2...8 {
                         for dj in -rad...rad { for di in -rad...rad {
@@ -439,13 +381,8 @@ final class RiverBeltRenderDiagnostics: XCTestCase {
     }
 }
 
-// MARK: - Sandfläche des Gürtels (Befund #174 „Sandwüste in der Schlinge")
-
 extension RiverBeltRenderDiagnostics {
 
-    /// Nächste Zentrumslinie je Zelle: Abstand in Kanalbreiten, Breite dort
-    /// und geschätztes bankfull (tiefste Sohle im Querschnitt + Kanaltiefe,
-    /// wie `Terrain.beltStamp` ohne Kolk-Schiefe). Reichweite `reach` Breiten.
     static func nearestLine(_ t: Terrain, reach: Double) -> (dist: [Double], width: [Double], zbf: [Double]) {
         let n = t.cfg.n, cnt = n * n
         var dist = [Double](repeating: .infinity, count: cnt)
@@ -496,10 +433,6 @@ extension RiverBeltRenderDiagnostics {
         return (dist, width, zbf)
     }
 
-    /// Sandfläche aus `BarMaterial` gegen Gürtel und Kanal, verteilt nach
-    /// Bankalter, Abstand zur Zentrumslinie (Kanalbreiten) und Höhe über
-    /// bankfull (Kanaltiefen). RS_YEARS_LIST (Standard „2300,20000,100000"),
-    /// RS_SEEDS; RS_CACHE = Ordner für Welt-Snapshots (spart den Lauf).
     func testBarSandExtentDiagnostic() throws {
         try skipUnlessMeasuring()
         let marks = (env["RS_YEARS_LIST"] ?? "2300,20000,100000").split(separator: ",").compactMap { Double($0) }
@@ -547,7 +480,6 @@ extension RiverBeltRenderDiagnostics {
         var byDist = [Int](repeating: 0, count: distEdges.count)
         var byH = [Int](repeating: 0, count: hEdges.count)
         var vegSum = 0.0
-        // Sim-Bewuchs auf Bank-Zellen nach Bankalter (alle Bänke, nicht nur Sand).
         var bankVeg = [Double](repeating: 0, count: ageEdges.count), bankN = [Int](repeating: 0, count: ageEdges.count)
         func bucket(_ v: Double, _ edges: [Double]) -> Int { edges.firstIndex { v < $0 } ?? edges.count - 1 }
         for k in 0..<cnt {
@@ -574,15 +506,11 @@ extension RiverBeltRenderDiagnostics {
         print("  Alter <100/<300/<800/<1500/<3000/≥3000 J. (% Sand): " + pct(byAge))
         print("  Abstand <0,5/<1/<1,5/<2/<4/<8/≥8 Breiten (% Sand): " + pct(byDist))
         print("  Höhe über bankfull <−0,5/<0/<0,5/<1/<3/≥3 Tiefen (% Sand): " + pct(byH))
-        // Junge Bank direkt am Gerinne (0,5–1,5 Breiten, jünger als 800 J.):
-        // wie viel davon trägt Sand? (Gegenprobe: der Fix darf sie nicht leeren.)
         var young = 0, youngSand = 0
         for k in 0..<cnt where t.barAge[k] >= 0 && t.barAge[k] < 800 && near.dist[k] >= 0.5 && near.dist[k] < 1.5 {
             young += 1
             if f.sand[k] > 0.5 { youngSand += 1 }
         }
-        // Gegenprobe der bankfull-Schätzung: frisch gestempelte Bank (< 100 J.)
-        // am Gerinne liegt per Stempel höchstens auf `z_bf − barTop·D`.
         var fresh: [Double] = [], sandH: [Double] = []
         for k in 0..<cnt where near.dist[k] >= 0.5 && near.dist[k] < 1.5 {
             let depth = depthK * max(near.width[k], 1e-6)
@@ -595,8 +523,6 @@ extension RiverBeltRenderDiagnostics {
         print(String(format: "  Höhe über bankfull (Tiefen D = %.5f Sim-Höhe bei Deckel-Breite), p10/p50/p90: frische Bank < 100 J. %.1f/%.1f/%.1f (%d) | Sand %.1f/%.1f/%.1f",
                      depthK * 2 * WaterRender.ribbonHalfWidthCapCells,
                      q(fresh, 0.1), q(fresh, 0.5), q(fresh, 0.9), fresh.count, q(sandH, 0.1), q(sandH, 0.5), q(sandH, 0.9)))
-        // Dichtestes Bankfenster (40×40 Zellen, Bank jünger als 3000 J.) als
-        // Blickpunkt für RS_TARGET (Weltkoordinaten).
         var bestCount = 0, bestI = 0, bestJ = 0
         for j0 in stride(from: 0, to: n - 40, by: 10) {
             for i0 in stride(from: 0, to: n - 40, by: 10) {

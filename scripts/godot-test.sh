@@ -1,41 +1,5 @@
 #!/usr/bin/env bash
-# Führt EIN Godot-Vertragsskript aus und bewertet SEINE Ausgabe statt des
-# Exit-Codes der Engine.
-#
-#   scripts/godot-test.sh res://tests/water_geometry.gd WATER_GEOMETRY_OK
-#
-# Warum nicht direkt `"$GODOT" --headless --script …`: Godot 4.7.1 reißt auf dem
-# ubuntu-22.04-Runner sporadisch beim HERUNTERFAHREN ab (Signal 11, Exit 139) —
-# also NACHDEM das Skript alle Prüfungen bestanden, seine Erfolgsmarke gedruckt
-# und quit(0) gerufen hat. Für den Import-Schritt ist das seit Issue #61
-# diagnostiziert und dokumentiert (.github/workflows/ci.yml: Abbruch in Thread 1
-# IM Godot-Binary, kein Extension-Frame, lokal nicht reproduzierbar); dort fängt
-# ihn eine Wiederholung ab. Am 2026-08-27 traf derselbe Absturz erstmals einen
-# Vertragstest: Lauf 33123585937 druckte "WATER_GEOMETRY_OK" und starb 1,4 s
-# später mit Exit 139, während DERSELBE Commit auf seinem Branch (Lauf
-# 33118130758) sauber durchlief.
-#
-# Der Vertrag ist die Erfolgsmarke, nicht der Exit-Code: jedes Skript unter
-# game/tests/ druckt sie als LETZTE Zeile vor `quit(0)` und meldet jeden
-# Fehlschlag vorher mit "FAIL: …" und `quit(1)`. Deshalb gilt hier:
-#
-#   Marke gedruckt → bestanden (bei Exit ≠ 0 zusätzlich eine laute Warnung),
-#   Marke fehlt    → rot, mit dem Exit-Code der Engine.
-#
-# Ein Absturz MITTEN im Test bleibt damit rot, ebenso jedes `quit(1)`; nur das
-# Aufräumen NACH dem bestandenen Test darf scheitern. Wiederholen statt werten
-# wäre die schwächere Antwort: es würde einen wirklich wackeligen Test verstecken
-# und den Lauf um dessen volle Laufzeit verlängern.
-#
-# Die Marke wird dabei irgendwo in der Ausgabe gesucht, nicht als letzte Zeile:
-# nach `quit(0)` schreibt die Engine noch selbst. Damit hinge die Wertung allein
-# an der Konvention „Marke erst NACH allen Prüfungen". Deshalb steht davor ein
-# zweiter Wächter: meldet das Log irgendwo einen Fehlschlag (`FAIL: …`,
-# `FAIL_PHYSICS: …`), ist der Lauf rot, auch wenn die Marke dasteht. Der
-# Vergleich ist bewusst ungeankert — die Skripte melden teils mit `print`, teils
-# über `push_error`, das Godot mit eigenem Präfix ausgibt.
 
-# Kein `set -e`: der Exit-Code der Engine wird hier ausgewertet, nicht befolgt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -46,8 +10,6 @@ fi
 SKRIPT="$1"
 MARKE="$2"
 
-# Version und Pfad NICHT doppeln: scripts/fetch-godot.sh ist die einzige Quelle
-# der Godot-Version (CI setzt $GODOT bereits daraus).
 GODOT="${GODOT:-$(scripts/fetch-godot.sh --path)}"
 if [[ ! -x "$GODOT" ]]; then
 	echo "Godot nicht gefunden: $GODOT" >&2
@@ -55,15 +17,6 @@ if [[ ! -x "$GODOT" ]]; then
 	exit 1
 fi
 
-# GODOT_TEST_RENDER=1 (Issue #95): den Vertragstest NICHT headless, sondern mit
-# echtem Renderer laufen lassen — GPU-Vertragstests (water_gpu_tail.gd) brauchen
-# ein Rendering-Device für SubViewport-Readbacks. Auf dem CI-Runner stellt xvfb
-# + Mesa-llvmpipe das Device (LIBGL_ALWAYS_SOFTWARE zwingt Software-GL); auf
-# einem Desktop (macOS/Linux mit Display) genügt der direkte Aufruf. Rendering-
-# Methode gl_compatibility: der Runner hat keinen Vulkan, und der Compatibility-
-# Renderer reicht für die canvas_item-Rechen-Shader der Kette. Ohne Device
-# überspringt der Test seinen GPU-Teil mit klarer Meldung (s. Skriptkopf) — ein
-# headless CI ohne diesen Schalter bleibt also grün statt falsch rot.
 if [[ "${GODOT_TEST_RENDER:-0}" == "1" ]]; then
 	if command -v xvfb-run >/dev/null 2>&1; then
 		RUNNER=(xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT" --path game --rendering-method gl_compatibility)
@@ -77,8 +30,6 @@ fi
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 
-# tee, damit die Ausgabe im CI-Log live sichtbar bleibt; der Exit-Code kommt aus
-# PIPESTATUS, nicht aus tee.
 "${RUNNER[@]}" --script "$SKRIPT" 2>&1 | tee "$LOG"
 RC=${PIPESTATUS[0]}
 

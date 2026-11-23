@@ -4,25 +4,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für das Render des Mäandergürtels (Issue #174, Paket C Teil 2):
-///  - `BarMaterial`: junge Bank AM GERINNE = Sand (höchstens ~1 Kanalbreite
-///    je Ufer, Befund #174 „Sandwüste“), dahinter Pionier-Grün; Scroll-
-///    Rippen folgen den Isolinien des Bankalters und blenden aus, wo sie
-///    aliasen würden; Altarme verlanden über Ried zum Vegetationsbogen, auch
-///    TROCKENE junge Altarme (ohne Wasserband) zeigen das Ried.
-///  - Sand geht in die Materialgewichte (A-Kanal der Makrofarbe, weniger
-///    Vegetation) und in die Schutzmaske (kein Wald auf frischen Bänken).
-///  - Querprofil im Band: UV2.y trägt die Bogenstärke der Sim, das
-///    Prallhang-Ufer ist das tiefe.
-///  - Abfluss-Vertrauen: ein kleiner Lauf ohne Stream-Map-Stütze bleibt
-///    unsichtbar (die Stütze filtert weiter verwaiste Linien). Im Raster
-///    füllt das Vertrauen nur die Lücken des Bands, und unter einem deckenden
-///    Band bleibt kein Raster-Wasser stehen, auch am Steilhang (Review #181).
-/// Alles reine Render-Ableitung: das Terrain bleibt bit-gleich.
 final class BarMaterialTests: XCTestCase {
 
-    /// Flaches Land knapp über dem Meer, ohne Schnee/Eis, mit einem
-    /// gesetzten Bankalter-Feld. `age(i, j)` < 0 = keine Bank.
     private func flatWorld(n: Int = 64, channelRow: Int? = nil, age: (Int, Int) -> Double,
                            oxbows: [[MeanderNode]] = [], oxbowAge: [Double] = []) -> Terrain {
         let t = Terrain(config: renderConfig(n: n), seed: 1337)
@@ -34,13 +17,11 @@ final class BarMaterialTests: XCTestCase {
         if s.snow.count == n * n { s.snow = [Double](repeating: 0, count: n * n) }
         if s.ice.count == n * n { s.ice = [Double](repeating: 0, count: n * n) }
         s.saltCrust = [Double](repeating: 0, count: n * n)
-        // Kein Abfluss, keine Läufe: Wasserfeld und Bänder bleiben leer.
         s.area = [Double](repeating: 0, count: n * n)
         s.areaMFD = [Double](repeating: 0, count: n * n)
         s.streamMap = [Double](repeating: 0, count: n * n)
         s.meanderChannels = []
         if let row = channelRow {
-            // Gerader Lauf am Breiten-Deckel (Breite `channelWidth` Zellen).
             let q = 20 * t.cfg.renderMinCells
             let nodes = stride(from: 2.0, through: Double(n - 3), by: 1.5).map { MeanderNode(x: $0, z: Double(row)) }
             s.meanderChannels = [RiverChannel(nodes: nodes, discharge: nodes.map { _ in q })]
@@ -52,13 +33,8 @@ final class BarMaterialTests: XCTestCase {
         return t
     }
 
-    // MARK: - Sand
-
-    /// Breite des Test-Laufs (Zellen): Abfluss 20 × `renderMinCells` liegt am
-    /// Breiten-Deckel.
     private var channelWidth: Double { 2 * WaterRender.ribbonHalfWidthCapCells }
 
-    /// Zeile im Abstand `widths` Kanalbreiten von der Zentrumslinie in `row`.
     private func row(_ row: Int, plus widths: Double) -> Int {
         row + Int((widths * channelWidth).rounded())
     }
@@ -98,12 +74,8 @@ final class BarMaterialTests: XCTestCase {
         }
     }
 
-    /// Befund #174 („Sandwüste“): ist das GANZE Innere einer Schlinge junge
-    /// Bank (der Gürtel hat es eben überstrichen), liegt Sand trotzdem nur als
-    /// Streifen am Gerinne: höchstens eine Kanalbreite je Ufer und Lauflänge.
     func testSandStaysAStripAlongTheChannel() {
         let n = 96, line = 48
-        // Bank überall außer im Gerinne selbst (dort setzt der Stempel −1).
         let t = flatWorld(n: n, channelRow: line) { _, j in
             Double(abs(j - line)) < 0.5 * self.channelWidth ? -1 : 0
         }
@@ -117,16 +89,12 @@ final class BarMaterialTests: XCTestCase {
         for j in 0..<n where abs(Double(j - line)) > WaterRender.barSandReachHi * channelWidth + 0.5 {
             XCTAssertEqual(f.sand[j * n + 40], 0, "kein Sand \(j - line) Zellen vom Gerinne")
         }
-        // Dahinter: Pionier-Grün statt Trockenrasen, ohne Sand.
         let behind = (row(line, plus: 2.5)) * n + 40
         XCTAssertEqual(f.sand[behind], 0)
         XCTAssertGreaterThan(Double(f.vegShift[behind]), 0.5 * WaterRender.barPioneerVeg,
                              "junge Bank hinter dem Sand liest grüner")
     }
 
-    /// Scroll-Rippen sind leise Bewuchs-Bänder, nie helle Sandringe: auf
-    /// gestaffeltem Bankalter weit vom Gerinne bleibt der Sand 0 und die
-    /// Verschiebung klein.
     func testScrollRipplesNeverPaintSand() {
         let n = 96, line = 8
         let step = 120.0
@@ -143,9 +111,6 @@ final class BarMaterialTests: XCTestCase {
         }
     }
 
-    /// Review zu #174: die Schwelle, ab der ein Nachbar im Sprenkel-Filter als
-    /// Sand zählt, stand als Literal im Filter statt beim Fenster
-    /// `barSandNeighboursLo/Hi` im Vertrag.
     func testDespeckleThresholdComesFromTheContract() throws {
         XCTAssertEqual(WaterRender.barSandNeighbourMin, 0.05, "Wert unverändert gegenüber dem Literal")
         let source = try RepoSource.probe("SimCore/Sources/SimRender/BarMaterial.swift")
@@ -160,9 +125,6 @@ final class BarMaterialTests: XCTestCase {
                        "eine einzelne frisch gestempelte Zelle ist ein Sprenkel, keine Bank")
     }
 
-    /// Review zu #174 C: das Pionier-Grün hing am ROHEN Sand vor dem Entsprenkeln.
-    /// Eine einzelne Sandzelle ohne Bank daneben verliert ihren Sand, behielt
-    /// aber auch kein Grün (`(1 − Sand_roh)` = 0) und stand als kahler Punkt da.
     func testDespeckledSandCellKeepsItsPioneerGreen() {
         let n = 64, line = 16
         let j = row(line, plus: 0.8), i = 20
@@ -174,7 +136,6 @@ final class BarMaterialTests: XCTestCase {
                        "ohne Sand liest die junge Bank als Pionier-Grün")
     }
 
-    /// Wo Sand liegt, wirkt das Grün weiter nicht (vorher wie nachher).
     func testPioneerGreenStaysOffTheSand() {
         let n = 64, line = 16
         let t = flatWorld(n: n, channelRow: line) { i, j in
@@ -200,10 +161,6 @@ final class BarMaterialTests: XCTestCase {
         XCTAssertLessThanOrEqual(sum, 256, "Gewichte summieren sich weiter auf höchstens 1")
     }
 
-    /// Review zu #174 D („Talboden-Wiese hell-saftig in der Aue, aus B"):
-    /// Bänke, deren Sand-Fenster vorbei ist, tragen Talboden-Wiese, auch wo
-    /// Steigung und Höhenband sie verfehlen. Junge Bank und Land ohne Bank
-    /// behalten den Wert aus Steigung und Höhenband.
     func testOldBarsCarryValleyMeadow() {
         let n = 64
         func ramp(_ t: Terrain) -> Terrain {
@@ -234,8 +191,6 @@ final class BarMaterialTests: XCTestCase {
         let overlays = frameOverlays(RenderState(geometryMode: true), t)
         let mask = overlays.protectMask
         let forest = overlays.forestMask
-        // Bank innerhalb `barSandReachLo` Kanalbreiten (Look-Iteration 12:
-        // offener Sand nur noch direkt am Gerinne, s. dort).
         for j in 10..<row(6, plus: WaterRender.barSandReachLo) {
             for i in 11..<29 {
                 XCTAssertEqual(mask[j * n + i], 255, "frische Bank (\(i),\(j)) ist geschützt")
@@ -245,21 +200,17 @@ final class BarMaterialTests: XCTestCase {
         XCTAssertEqual(mask[40 * n + 40], 0, "trockenes Land ohne Bank bleibt frei")
     }
 
-    // MARK: - Scroll-Bars
-
     func testScrollRipplesFollowAgeIsolines() {
         let n = 96
-        let step = 120.0  // Jahre je Zelle → Rippenabstand 400/120 ≈ 3,3 Zellen
+        let step = 120.0
         let t = flatWorld(n: n) { i, j in
             (10..<80).contains(j) && (5..<90).contains(i) ? 4000 + step * Double(i) : -1
         }
         let f = BarMaterial.field(t)
-        // Entlang einer Isolinie (gleiches i) überall dieselbe Rippe …
         for i in 20..<70 {
             let ref = f.vegShift[40 * n + i]
             for j in 20..<70 { XCTAssertEqual(f.vegShift[j * n + i], ref, accuracy: 1e-6) }
         }
-        // … quer dazu wechseln Rücken und Senke mit der Periode im Alter.
         let row = (20..<70).map { Double(f.vegShift[40 * n + $0]) }
         XCTAssertGreaterThan(row.max()!, 0.5 * WaterRender.barScrollVegGain, "Senken sind grüner")
         XCTAssertLessThan(row.min()!, -0.5 * WaterRender.barScrollVegGain, "Rücken sind magerer")
@@ -271,7 +222,6 @@ final class BarMaterialTests: XCTestCase {
     }
 
     func testScrollRipplesFadeWhereTheyWouldAlias() {
-        // Enger als `barScrollMinSpacingLo` Zellen je Periode: Rauschen, keine Rippe.
         let tight = WaterRender.barScrollPeriodYears / (WaterRender.barScrollMinSpacingLo * 0.9)
         for age in stride(from: 0.0, through: 2000, by: 37) {
             XCTAssertEqual(WaterRender.barScroll(age: age, gradientYearsPerCell: tight), 0)
@@ -282,8 +232,6 @@ final class BarMaterialTests: XCTestCase {
                                              gradientYearsPerCell: 100), 0,
                        "alte Rippen sind unter Auelehm verschwunden")
     }
-
-    // MARK: - Altarme
 
     func testOxbowLifecycleRunsReedThenArc() {
         let v = WaterRender.oxbowVisibleYears, maxAge = 25_000.0
@@ -309,7 +257,7 @@ final class BarMaterialTests: XCTestCase {
         let n = 64
         let t = flatWorld(n: n, age: { _, _ in -1 }, oxbows: [arc(n: n)], oxbowAge: [1500])
         let f = BarMaterial.field(t)
-        let k = 44 * n + 32  // Scheitel des Bogens
+        let k = 44 * n + 32
         XCTAssertGreaterThan(f.reed[k], 0.9, "trockener junger Altarm färbt als Ried")
         XCTAssertEqual(f.reed[5 * n + 5], 0)
         let colors = TerrainColorRenderer.buffers(t, bars: f).colors
@@ -318,9 +266,6 @@ final class BarMaterialTests: XCTestCase {
                           "Ried tönt die Makrofarbe")
     }
 
-    /// Review zu #174 C: ein Altarm-Knoten weiter als die Stempel-Reichweite
-    /// jenseits der Gitterkante ergab einen Bereich mit Untergrenze über der
-    /// Obergrenze und brach ab. Er stempelt nichts und stört die übrigen nicht.
     func testOxbowNodesFarOutsideTheGridAreSkippedNotTrapped() {
         let n = 64
         let beyond = Double(n) + WaterRender.oxbowHalfWidthCells + 20
@@ -350,10 +295,7 @@ final class BarMaterialTests: XCTestCase {
                        "eine jüngere Bank hat den Bogen überschüttet (nur ihr Pionier-Grün bleibt)")
     }
 
-    // MARK: - Querprofil im Band
-
     func testOutwardSideFollowsTheSimConvention() {
-        // Linksbogen (Krümmung > 0): Außenufer rechts der Fließrichtung = UV.x 0.
         XCTAssertEqual(WaterRender.ribbonOutward(across: 0, bend: 1), 1)
         XCTAssertEqual(WaterRender.ribbonOutward(across: 1, bend: 1), -1)
         XCTAssertEqual(WaterRender.ribbonOutward(across: 1, bend: -1), 1)
@@ -362,10 +304,8 @@ final class BarMaterialTests: XCTestCase {
         XCTAssertGreaterThan(WaterRender.ribbonBendShift(across: 0, bend: 0.8), 0, "außen tiefer")
         XCTAssertLessThan(WaterRender.ribbonBendShift(across: 1, bend: 0.8), 0, "innen seichter")
 
-        // Gegen die Sim: ein Linksbogen (gegen den Uhrzeigersinn in x/z) hat
-        // positive Bogenstärke.
         var cfg = SimConfig.production
-        cfg.meanderFlatSlope = 1  // jede Strecke mobil
+        cfg.meanderFlatSlope = 1
         let nodes = (0..<40).map { a -> MeanderNode in
             let phi = -Double.pi / 2 + Double.pi * Double(a) / 39
             return MeanderNode(x: 300 + 30 * cos(phi), z: 300 + 30 * sin(phi))
@@ -409,8 +349,6 @@ final class BarMaterialTests: XCTestCase {
         assertContains(terrain, "terr = mix(terr, sand_col, sand);", hint: "Bank-Material")
     }
 
-    // MARK: - Abfluss-Vertrauen und Physik
-
     func testTrustWindow() {
         let ref = 320.0
         XCTAssertEqual(WaterRender.ribbonTrust(dischargeCells: WaterRender.ribbonTrustLoReferences * ref,
@@ -433,9 +371,6 @@ final class BarMaterialTests: XCTestCase {
         }
     }
 
-    /// Gerader Lauf in Zeile `row` mit großem Abfluss (20 × `renderMinCells`,
-    /// voll im Vertrauen). `crossSlope` (Sim-Höhe je Welt-Einheit) neigt das
-    /// Gelände quer zum Lauf, `streamMap` ist die Stütze auf der Laufzeile.
     private func straightRiver(n: Int = 64, row: Int = 32, crossSlope: Double = 0,
                                streamMap: Double = 0,
                                channel: Bool = false) -> Terrain {
@@ -464,13 +399,9 @@ final class BarMaterialTests: XCTestCase {
         return t
     }
 
-    /// Review #181: das Vertrauen malte den großen Lauf im Raster AUCH dort,
-    /// wo ein Band ihn trägt — die D8-Treppe stand als zweites Wasser unter
-    /// und neben dem glatten Band. Es gilt nur noch in den Band-Lücken.
     func testTrustedRasterFillsOnlyTheBandGaps() {
         let n = 64, row = 32
         let t = straightRiver(n: n, row: row)
-        // Band über der linken Hälfte des Laufs, rechts eine Lücke.
         var cover = [Double](repeating: 0, count: n * n)
         for j in (row - 2)...(row + 2) { for i in 0..<(n / 2) { cover[j * n + i] = 1 } }
         let riverT = byte01(WaterRender.riverMaskLo)
@@ -490,11 +421,6 @@ final class BarMaterialTests: XCTestCase {
         }
     }
 
-    /// Review #181: der Raster-Deckel unter einem Band hatte eine eigene
-    /// Kaskaden-Ausnahme über die Zell-Neigung. Die sah auch das QUERgefälle
-    /// einer Talflanke und ließ das Raster unter einem voll deckenden Band
-    /// stehen (doppeltes Wasser in Zellblöcken). Die Kaskade blendet das Band
-    /// selbst aus; der Deckel folgt nur noch der Band-Deckung.
     func testRasterUnderAFullBandIsCappedOnASteepCrossSlope() {
         let n = 64, row = 32
         let steep = WaterRender.cascadeSlopeLo + 2 * WaterRender.cascadeSlopeSpan
@@ -514,12 +440,6 @@ final class BarMaterialTests: XCTestCase {
         }
     }
 
-    /// Review #181 (Kaskaden): wo die Sim einen Lauf vor einer Steilstrecke
-    /// enden lässt, malt das Raster weiter. Das Band endete dort mit voller
-    /// Breite über 2 Zellen: rechtwinklig abgeschnitten. Und auf der
-    /// Mündungs-Kette sprang die Breite zwischen Knick- und Mittelpunkten:
-    /// versetzte Blöcke. Ein Band läuft an Land jetzt spitz aus, und seine
-    /// Breite ändert sich je Zelle höchstens um `ribbonMaxHalfWidthSlope`.
     func testRibbonEndsTaperToAPointAndKeepAContinuousWidth() {
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
         let mesh = RiverRibbonRenderer().build(terrain, hscale: 24, lift: 0.35)
@@ -533,8 +453,6 @@ final class BarMaterialTests: XCTestCase {
             func mid(_ q: Int) -> SIMD3<Float> { (mesh.vertices[a + 2 * q] + mesh.vertices[a + 2 * q + 1]) * 0.5 }
             func halfWidth(_ q: Int) -> Double {
                 let w = mesh.vertices[a + 2 * q] - mesh.vertices[a + 2 * q + 1]
-                // Waagerecht: am Ufer liegen die beiden Kanten auf eigener Höhe
-                // (Land bzw. Spiegel), der Höhenversatz ist keine Breite.
                 return Double((w.x * w.x + w.z * w.z).squareRoot()) / cs / 2
             }
             func length(_ p: Int, _ q: Int) -> Double {
@@ -558,7 +476,7 @@ final class BarMaterialTests: XCTestCase {
                     if terrain.h[k] <= terrain.cfg.sea
                         || terrain.waterLevel[k] - terrain.h[k] > WaterRender.pondContourLo { wet = true }
                 }}
-                if wet { continue }   // Mündung: die Übergabe regelt die Wassersäule
+                if wet { continue }
                 landEnds += 1
                 var dist = 0.0
                 for idx in 1..<order.count {

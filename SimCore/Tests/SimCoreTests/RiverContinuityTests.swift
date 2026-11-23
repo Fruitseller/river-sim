@@ -2,18 +2,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter zum Befund des Eigners 2026-10-18 (Messreihe
-/// `docs/zielbild-measurements.md` § Durchgehende Flüsse): ein Fluss, der
-/// sichtbar weiterfließt, reißt nicht ab, und ein Zubringer endet im
-/// Hauptlauf statt als Keil davor. Kunstwelt statt gealterter Welt: welche
-/// Abzweige eine gealterte Welt trägt, hängt an der System-libm (auf dem
-/// Linux-Runner trugen die Testwelten keinen, der Wächter prüfte dort nichts).
 final class RiverContinuityTests: XCTestCase {
 
-    /// V-Tal entlang Zeile 30, Gefälle nach Osten (wie `BeltCoupling`), ab
-    /// x = 58 Meer. Die Render-Schwelle so, dass das Abfluss-Vertrauen bis zur
-    /// Küste nicht greift (3 × 950 Zellen über dem Abfluss an der Küste, rund
-    /// 2.700): ohne Abzweig malt das Raster das Tal nicht.
     private func valleyWorld() -> Terrain {
         var c = renderConfig(n: 64)
         c.renderMinCells = 950
@@ -32,10 +22,6 @@ final class RiverContinuityTests: XCTestCase {
         return t
     }
 
-    /// Lauf A folgt dem Tal bis x = 27 und biegt dann nach Zeile 40 ab (die
-    /// Linie von gestern); der D8-Lauf fließt im Tal weiter bis ins Meer.
-    /// `returns`: die Linie kehrt bei x = 50 ins Tal zurück (Abkürzung über
-    /// die Bank).
     private func rasterAlongValley(returns: Bool) -> (water: [UInt8], terrain: Terrain) {
         let t = valleyWorld()
         let n = t.cfg.n
@@ -62,10 +48,6 @@ final class RiverContinuityTests: XCTestCase {
         return (water, t)
     }
 
-    /// Verlässt der D8-Lauf ein Band und kehrt nicht zu ihm zurück, ist er
-    /// bis ins Meer Wasser. Vorher malte dort niemand: das Vertrauen schweigt
-    /// unter dem dreifachen Referenz-Abfluss, die Kette hat unter dem Band
-    /// keine Quelle.
     func testDepartureIsWaterAllTheWayToTheSea() {
         let (water, t) = rasterAlongValley(returns: false)
         let n = t.cfg.n
@@ -73,8 +55,6 @@ final class RiverContinuityTests: XCTestCase {
         XCTAssertEqual(dry, [], "Abzweig ohne Wasser bei x = \(dry)")
     }
 
-    /// Kehrt der D8-Lauf zum SELBEN Band zurück, ist er die Abkürzung über die
-    /// Bank: dort malt das Band den Fluss, das Raster nicht.
     func testShortcutBackToTheSameBandStaysDry() {
         let (water, t) = rasterAlongValley(returns: true)
         let n = t.cfg.n
@@ -82,13 +62,11 @@ final class RiverContinuityTests: XCTestCase {
         XCTAssertEqual(wet, [], "Abkürzung als Raster-Fluss bei x = \(wet)")
     }
 
-    /// Ein Lauf, der vor dem Band eines größeren endet, folgt seinem
-    /// D8-Empfänger bis in dieses Band; ohne Band in Reichweite läuft er aus.
     func testTributaryEndFollowsItsReceiverIntoTheMainBand() throws {
         let t = valleyWorld()
         let n = t.cfg.n
         var cov = [Double](repeating: 0, count: n * n)
-        for j in 0..<n { for i in 30...34 { cov[j * n + i] = 1 } }   // Hauptlauf quer bei x = 30…34
+        for j in 0..<n { for i in 30...34 { cov[j * n + i] = 1 } }
         let path = try XCTUnwrap(RiverRibbonRenderer.joinPath(fromX: 25, fromZ: 30, coverage: cov, terrain: t),
                                  "Zubringer findet den Hauptlauf 5 Zellen stromab nicht")
         XCTAssertEqual(path.last.map { Int($0.x) }, 30, "endet nicht am Ufer des Hauptlaufs: \(path)")

@@ -1,0 +1,20 @@
+# Braiding-Wächter: Multi-Seed-A/B mit gepinnter Umgebung
+
+Der Murray-&-Paola-Pass (`braidPass`) muss auf dem Produktions-Pfad Verzweigungen und Mittelbänke erzeugen, messbar mehr als ohne ihn, und das Terrain gesund halten. Die Insel-Zahl je Seed streut 0…29 und flippt unter jeder kleinen Physik-Störung (gemessen: ein Pfützen-Verlandungs-Gate kippte Seed 1337 von 9v3 auf 2v4). Ein Einzel-Seed-Vergleich prüft Trajektorien-Glück, die Seed-Summe den Pass.
+
+Messgrößen:
+- Bank-Fläche statt Bank-Zahl: die Zahl trennt eine echte Mittelbank nicht von einem stehengebliebenen Ufer-Knubbel, den der breite MFD-Lauf zufällig umschließt. Gemessen über 12 Seeds (Aug 2026): mit Pass 37 Komponenten / 113 Zellen, ohne 31 / 64; die Zahl trennte 1.19×, die Fläche 1.77× (mittlere Bank 3.05 vs. 2.06 Zellen).
+- 16 Seeds statt 3: die Differenz an−aus je Seed ist schwerschwänzig (am Regressions-Stand 4 positiv, 4 negativ, 4 ohne Inseln); mit 3 Seeds trägt ein Ausreißer das Vorzeichen, mit 12 lag die Seed-Mehrheit auf der Kante.
+- Die Seed-Abstimmung zählt Inseln (von Wasser umschlossene Bänke), nicht mehr Fläche: die Flächen-Abstimmung stand seit #11/#12 zweimal am Rand und vor dem Eis-Fix von #174 genau auf der Schranke (9:6). Der Fix (`docs/glacier-measurements.md` §L) kippte sie auf 7:7, ohne den Pass zu schwächen: Fläche 224 / 195, Inseln 97 / 65, Splits 3515 / 3058 (vorher 178 / 167, 83 / 58, 3595 / 3088); Eis auszupinnen half nicht (4:9). Inseln je Seed vorher 10:4, nachher 9:3. Gefordert ist ein Abstand von 3 Seeds; die Fläche bleibt als Summe gewacht.
+
+Eine frühere Regression saß nicht im Pass: im Arm ohne Braiding stieg die Insel-Zahl durch den Vegetations-Merge von 19 auf 31 (12 Seeds), der Braiding-Arm blieb bei 36 → 37. Ursache und Korrektur: `Terrain.updateVegClass` (Gehölz ist Ufer-, keine Bett-Klasse).
+
+Schrittweite 500 statt 1000 (Issue #2): bei dt = 1000 überlagert die Zeitintegration den A/B. Die Pfützen-Verlandung lief vor #2 als `min(0.5, dt/800)`, korrekt exponentiell sind es bei dt = 1000 aber 0.713; die Referenz verlandet damit mehr Pfützen zu umschlossenen Trockenflächen, die `braidMetrics` als Bank zählt (Bank-Fläche 94 → 212, Braiding-Arm ~180), und der Kontrast verschwand. Bei dt = 500 sind alte und neue Form fast deckungsgleich (0.5 gegen 0.465), Kontrast 284/158 bei 9:3. Kosten ~15 s. Bänke sind transient, deshalb wird alle 2k Jahre gesammelt statt als Schnappschuss.
+
+„Eingeebnet" wird über das robuste Relief (p95 − Median) geprüft, nicht über max − min, das über 16 Seeds vor allem die Gipfelhöhe misst (Seed 20250809: max − min 0.296 bei robust 0.151; Seed 31415: 0.439 bei 0.098; der alte 0.30-Wächter hatte vier Tausendstel Marge). Nach Issue #13 (abklingende Hebung) liegt das schwächste Seed (8675309) bei 0.0674; Schwelle 0.05 = ~26 % darunter und deckungsgleich mit `reliefTarget`.
+
+Gepinnte Umgebung, weil der Wächter den Pass misst, nicht Klima oder Gestein: Großform, Mäander-Mechanik und Eis vor #174 (die Seed-Mehrheit hängt am Lauf), Becken-Verdunstung aus (#11; mit ihr fällt der Kontrast von 160/81 bei 9:3 auf 124/84 bei 6:5, ohne dass der Pass schwächer wird), Lithologie aus (#12; uniform 132/119 bei 8:2, mit Lithologie 177/106 bei 7:6, Flächen-Kontrast steigt von 1.11× auf 1.67×, nur die Seed-Mehrheit reißt), Kanal-Hebel aus (#108; ihre Schwelle zählt in Zellen und dämpft auf dem 256er-Grid mit Zellgröße 0.51 eine unnatürlich große Fläche, einzelne Seeds flippen plattformabhängig). Die Wechselwirkungen Wasserhaushalt × Braiding und Lithologie × Braiding sind offen (`docs/endorheic-evaporation-measurements.md` §E, `docs/lithology-measurements.md` §E).
+
+Der früher dokumentierte Arbeitspunkt (16 Seeds, 30k J.: Fläche 160/81, Seeds 9:3, Inseln 62/33, Splits 3352/3059) ist veraltet; auf `main` messen dieselben Seeds 132/119 bei 8:2.
+
+Betrifft: `Terrain.braidPass`, `Terrain.updateVegClass`, `Terrain.mfdLocalExponent`, `RiverDynamicsTests.testBraidingBuildsBars`, `RiverDynamicsTests.braidMetrics`, `RiverDynamicsTests.braidSeeds`

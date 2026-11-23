@@ -1,27 +1,13 @@
 import Foundation
 
-/// Nicht-simulierter Erosionsfilter nach Rune Skovbo Johansen („Fast and
-/// Gorgeous Erosion Filter", https://blog.runevision.com/2026/03/fast-and-gorgeous-erosion-filter.html,
-/// Shadertoy wXcfWn — Referenz-GLSL in docs/references/runevision-erosion/).
-///
-/// Carvt verzweigte Rinnen/Grate („stacked faded gullies") in ein Höhenfeld —
-/// jeder Punkt unabhängig auswertbar, daher parallel und deterministisch. Wird
-/// EINMAL bei der Terrain-Generierung angewendet (Pre-Erosion): das Terrain
-/// startet mit fertig erodiertem Look, statt ihn über zehntausende Sim-Jahre
-/// einzucarven. Die Simulation (Droplets/Stream-Power/Mäander) arbeitet danach
-/// ganz normal auf dem vor-erodierten Feld weiter.
-///
-/// Phacelle Noise + Erosionsfilter portiert aus GLSL:
-/// Copyright (c) 2025 Rune Skovbo Johansen — Mozilla Public License v2.0
-/// (https://mozilla.org/MPL/2.0/). Portierung Swift: river-sim.
-public enum ErosionFilter {
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 Rune Skovbo Johansen (Phacelle Noise, Erosionsfilter); Swift-Portierung: river-sim
 
-    // MARK: - Utility (GLSL-Semantik)
+public enum ErosionFilter {
 
     @inline(__always) private static func fract(_ x: Double) -> Double { x - x.rounded(.down) }
     @inline(__always) private static func clamp01(_ x: Double) -> Double { min(1, max(0, x)) }
 
-    /// hash() aus dem Shadertoy-Common-Tab (deterministisch, ohne Tabellen).
     @inline(__always) private static func hash(_ x0: Double, _ y0: Double) -> (Double, Double) {
         let kx = 0.3183099, ky = 0.3678794
         let x = x0 * kx + ky
@@ -44,12 +30,6 @@ public enum ErosionFilter {
         return smoothing <= 0 ? t : 0.5 * t * t / smoothing
     }
 
-    // MARK: - Phacelle Noise
-
-    /// Streifenmuster entlang `dir` (normalisiert): interpoliert cos/sin-Paare aus
-    /// 4×4 zufällig versetzten Zellpunkten und normalisiert die Magnitude.
-    /// Rückgabe: (cos, sin, sideDirX, sideDirY) — sideDir · sin = Ableitung des cos.
-    /// Nicht-endliche Richtungs- oder Positionswerte liefern defensiv Nullen.
     @inline(__always) private static func phacelle(
         px: Double, py: Double, dirX: Double, dirY: Double,
         freq: Double, offset: Double, normalization: Double
@@ -85,27 +65,21 @@ public enum ErosionFilter {
         return (iX / mag, iY / mag, sideX, sideY)
     }
 
-    // MARK: - Filter-Parameter
-
     public struct Params: Sendable {
-        public var strength = 0.20      // Gesamtstärke (× scale = Höhen-Offset Oktave 0)
-        public var gullyWeight = 0.5    // 0 = nur Peak-Schärfung, 1 = volle Rinnen
-        public var detail = 1.5         // < groß: feine Rinnen nur an steilen Hängen
-        // rounding: (Grat-Rundung, Kerben-Rundung, Mult. Eingangsfeld, Mult. je Oktave)
+        public var strength = 0.20
+        public var gullyWeight = 0.5
+        public var detail = 1.5
         public var rounding = (0.1, 0.0, 0.1, 2.0)
-        // onset: (Eingangsfeld, je Oktave, RidgeMap-Eingang, RidgeMap je Oktave)
         public var onset = (1.25, 1.25, 2.8, 1.5)
-        // assumedSlope: (angenommene Steigung, Anteil 0..1 der Ersetzung)
         public var assumedSlope = (0.7, 1.0)
-        public var scale = 0.06         // horizontale Skala der größten Rinnen (p-Einheiten)
+        public var scale = 0.06
         public var octaves = 5
         public var lacunarity = 2.0
         public var gain = 0.5
-        public var cellScale = 0.7      // Phacelle-Zellgröße relativ zur Streifenbreite
+        public var cellScale = 0.7
         public var normalization = 0.5
         public init() {}
 
-        /// Prüft, ob alle Parameter endlich und innerhalb gültiger Wertebereiche liegen.
         public var isValid: Bool {
             strength.isFinite &&
             gullyWeight.isFinite &&
@@ -124,16 +98,6 @@ public enum ErosionFilter {
         }
     }
 
-    // MARK: - Kern (Port von ErosionFilter aus Buffer A)
-
-    /// Wertet den Filter an einem Punkt aus. `h`/`sx`/`sy` = Höhe + Steigung des
-    /// Eingangsfelds (dh/dp, p-Einheiten), `fadeTarget` ∈ [-1,1] (Tal → Gipfel).
-    /// Rückgabe: Höhen-Delta, Steigungs-Delta, Gesamt-Magnitude, RidgeMap
-    /// (-1 Kerbe … 1 Grat — dendritische Drainage-Linien bei -1).
-    ///
-    /// Nicht-endliche Koordinaten oder Steigungen, ungültige Skalierungs-Parameter
-    /// (`scale <= 0`, `cellScale <= 0`, `octaves <= 0`, unterlaufendes `scale * cellScale`)
-    /// oder nicht-endliche Filterparameter liefern defensiv Null-Deltas.
     public static func evaluate(
         px: Double, py: Double, h: Double, sx: Double, sy: Double,
         fadeTarget fadeTargetIn: Double, p: Params
@@ -163,7 +127,6 @@ public enum ErosionFilter {
         var ridgeMapCombiMask = easeOut(slopeLength * p.onset.2)
         var ridgeMapFadeTarget = fadeTarget
 
-        // Rinnen-Richtung: Mix aus echter und angenommener Steigung.
         var gsx = sx + (sx / slopeLength * p.assumedSlope.0 - sx) * p.assumedSlope.1
         var gsy = sy + (sy / slopeLength * p.assumedSlope.0 - sy) * p.assumedSlope.1
 
@@ -174,17 +137,13 @@ public enum ErosionFilter {
                               dirX: gsx / gl, dirY: gsy / gl,
                               freq: p.cellScale, offset: 0.25,
                               normalization: p.normalization)
-            // freq-Skalierung (p wurde mit freq multipliziert), Slope zeigt bergab.
             let pdx = ph.dx * -freq, pdy = ph.dy * -freq
             let sloping = abs(ph.s)
 
-            // Nicht maskierte, normalisierte Steigung für die nächsten Oktaven
-            // (gerade Rinnen: sign statt sin).
             let sgn = ph.s >= 0 ? 1.0 : -1.0
             gsx += sgn * pdx * strength * p.gullyWeight
             gsy += sgn * pdy * strength * p.gullyWeight
 
-            // Höhen-Offset + Ableitung, Richtung fadeTarget ausgefadet.
             let g = (ph.c, ph.s * pdx, ph.s * pdy)
             let fg = (fadeTarget + (g.0 * p.gullyWeight - fadeTarget) * combiMask,
                       g.1 * p.gullyWeight * combiMask,
@@ -218,19 +177,6 @@ public enum ErosionFilter {
         return (dh, dsx, dsy, magnitude, ridgeMap)
     }
 
-    // MARK: - Anwendung aufs Höhenfeld (Pre-Erosion bei der Generierung)
-
-    /// Wendet den Filter auf das n×n-Höhenfeld an (in-place). p-Koordinaten sind
-    /// UV ∈ [0,1] plus Seed-Offset (jeder Seed andere Rinnen), Steigungen numerisch
-    /// (zentrale Differenzen) aus dem UNVERÄNDERTEN Feld. Nur Land: unterhalb
-    /// `sea` faden die Rinnen aus (Küste/Meeresboden bleiben unberührt).
-    /// `heightOffset` (x: -1..1, y: 0..1 Ersetzung durch -fadeTarget) senkt das
-    /// Feld ∝ magnitude — Rinnen CARVEN dann netto, statt Grate aufzuschütten.
-    ///
-    /// Degenerierte Gitter (`n <= 1`), nicht-endliche Parameter (`sea`,
-    /// `seedOffsetX/Y`, `heightOffset`) sowie ungültige Filter-Parameter (`params.isValid == false`)
-    /// werden defensiv abgefangen (No-op). Ein Pufferlängen-Mismatch (`h.count != n * n`)
-    /// bricht per `precondition` ab.
     public static func apply(
         h: inout [Double], n: Int, sea: Double,
         seedOffsetX: Double, seedOffsetY: Double,
@@ -242,24 +188,20 @@ public enum ErosionFilter {
               heightOffset.0.isFinite, heightOffset.1.isFinite,
               params.isValid else { return }
         let count = n * n
-        let src = h // Steigungen aus dem Eingangsfeld (Filter ist punkt-unabhängig)
+        let src = h
         var peak = sea + 0.1
         for k in 0..<count {
             let v = src[k]
             if v.isFinite { peak = max(peak, v) }
         }
         let valley = sea
-        let scaleUV = Double(n - 1) * 0.5 // zentrale Differenz → dh/duv
+        let scaleUV = Double(n - 1) * 0.5
 
         var out = [Double](repeating: 0, count: count)
         out.withUnsafeMutableBufferPointer { outBuf in
             src.withUnsafeBufferPointer { s in
                 guard let outPtr = outBuf.baseAddress,
                       let sp = s.baseAddress else { return }
-                // Swift 6 (Issue #201): `peak` ist an dieser Stelle fertig
-                // berechnet und wird nur gelesen — der let-Rebind nimmt der
-                // @Sendable-Closure die var-Referenz. Die Zeiger erfassen je
-                // Zeile `j` disjunkt (Projektregel wie bei `Terrain.parallel`).
                 let peakValue = peak
                 nonisolated(unsafe) let outP = outPtr, spP = sp
                 DispatchQueue.concurrentPerform(iterations: n) { j in
@@ -267,7 +209,6 @@ public enum ErosionFilter {
                     for i in 0..<n {
                         let k = j * n + i
                         let hv = spP[k]
-                        // Küsten-Fade: Meeresboden/Strand unangetastet.
                         let landT = clamp01((hv - (sea - 0.02)) / 0.07)
                         let landFade = landT * landT * (3 - 2 * landT)
                         if landFade <= 0 { outP[k] = hv; continue }

@@ -3,8 +3,16 @@
 Leitfaden für Coding-Agents (und Menschen) in diesem Repository, werkzeug-unabhängig.
 `CLAUDE.md` ist ein Symlink auf diese Datei.
 
-Projektsprache ist **Deutsch**: Code-Kommentare, Doc-Kommentare und alle Dokumente
-(`PLAN.md`, `ROADMAP.md`, `docs/`) sind deutsch. Neue Kommentare/Dokumente ebenso.
+Projektsprache ist **Deutsch**: alle Dokumente (`PLAN.md`, `ROADMAP.md`, `docs/`,
+`docs/adr/`) sind deutsch. Neue Dokumente ebenso.
+
+**Keine Kommentare im Code** ([ADR 0001](docs/adr/0001-keine-code-kommentare.md)):
+Begründungen, Messwerte, verworfene Werte und Verträge stehen als ADR in
+`docs/adr/` (Index: `docs/adr/README.md`, Suche nach dem Symbol), ein Notbehelf
+wird ein Issue, alles andere sagt der Code selbst. `python3 scripts/comments.py
+check` (CI-Job `test`) hält die Ratsche; Altbestand baut der Skill
+`/delete-comment` ab. Verweist dieses Dokument auf eine Begründung „am Code",
+steht sie im ADR mit diesem Symbol unter `Betrifft:`.
 
 **Ausnahme: Git-Commit-Nachrichten werden auf Englisch geschrieben.** (Ältere Commits
 sind teils deutsch, das ist Altbestand, nicht die Konvention.)
@@ -59,7 +67,7 @@ swift test -c release --package-path SimCore \
       "cd /src && swift test -c release --package-path SimCore --scratch-path /build"
   ```
   Kippt ein Mechanik-Wächter nur dort, wird nach der Pin-Doktrin unten
-  (§ Konfiguration, `TestCalibration.swift`) gepinnt, nicht die Schranke gesenkt.
+  (§ Konfiguration, [ADR 0328](docs/adr/0328-pin-doktrin.md)) gepinnt, nicht die Schranke gesenkt.
 
 **Mess- und Sweep-Läufe gehören NICHT in die Pflichtsuite** (Issue #52). Jede
 Testmethode, deren Name auf `Diagnostic` endet, druckt nur die Tabellen für
@@ -73,7 +81,7 @@ RS_MEASURE=1 swift test -c release --package-path SimCore \
 Namensendung `Diagnostic` und Gate `try skipUnlessMeasuring()` gehören zusammen:
 `MeasurementGateTests` prüft **beide** Richtungen und wird rot, wenn ein Messlauf
 ungegatet in die Pflichtsuite rutscht oder ein echter Wächter still hinter dem
-Schalter verschwindet. Begründung: `SimCore/Tests/SimCoreTests/MeasurementGate.swift`,
+Schalter verschwindet. Begründung: [ADR 0289](docs/adr/0289-messlauf-gate.md),
 Laufzeiten: `docs/ci-measurements.md`.
 
 **Laufzeit messen** (Issue #43, Mess-Harness für den Sim-Schritt, headless,
@@ -97,8 +105,8 @@ der Fingerprint ist ein Pro-Maschine-Vergleich (System-libm). Vergleichbar sind
 außerdem nur `--hash`-Werte untereinander: der Harness fährt die
 Produktions-Config, aber bewusst nicht deren Einlauf (`settleYears` 0 plus
 `--warmup` statt der 3000 Jahre aus `SimNode.generationSettleYears`), eine Welt
-aus der Brücke trägt also nie denselben Wert — Begründung im Kopf von
-`SimPerf/main.swift` und in `docs/perf-measurements.md` §A. Die Pass-Tabelle
+aus der Brücke trägt also nie denselben Wert — Begründung in
+[ADR 0164](docs/adr/0164-simperf-harness.md) und `docs/perf-measurements.md` §A. Die Pass-Tabelle
 kommt aus `SimProfile` (Marken in `step()`, standardmäßig aus). Messprotokoll,
 Vorher/Nachher und die gemessenen Fehlschläge: `docs/perf-measurements.md`.
 Ältere Messreihen dort stehen auf der Paarung davor und werden mit BEIDEN
@@ -153,7 +161,7 @@ Der Pin wird **nur bewusst und in einem eigenen Commit** angehoben:
 
 ```sh
 git ls-remote --tags https://github.com/migueldeicaza/SwiftGodot   # Zielversion wählen
-# Extension/Package.swift: exact: "<neue Version>" — Kommentar dort mitpflegen
+# Extension/Package.swift: exact: "<neue Version>" — docs/adr/0167-swiftgodot-pin.md mitpflegen
 swift package resolve --package-path Extension        # Package.resolved neu schreiben
 git diff Extension/Package.resolved                  # Revisionen prüfen, auch transitive
 "$(git rev-parse --show-toplevel)"/scripts/build.sh release   # Voll-Neubau erwarten
@@ -280,7 +288,7 @@ Flusstal-Bühne im Betrieb `simulation`, maximiert; je Runde wechselt die
 Reihenfolge der Stände. `RS_TIMING_SCREEN` wählt den Bildschirm (mit externem
 Monitor am Referenz-Mac ist der eingebaute Index 1), `RS_TIMING_EXCLUSIVE=1`
 wartet vor jedem Lauf, bis kein fremdes Godot mehr die GPU teilt. Weitere
-Schalter im Kopf des Skripts.
+Schalter: [ADR 0245](docs/adr/0245-timelapse-timing.md).
 
 `RS_*`-Schalter (alle in `game/scripts/Main.gd`; `RS_WATER_STAMP` zusätzlich in
 `RenderState.swift`, `RS_NO_MEANDER_PAINT` in `WaterFieldRenderer.swift`):
@@ -327,8 +335,8 @@ Lauf von `game/tests/water_rings.gd` ab. Die Schalter der Flusstal-Bildstudie
 #116 (`RS_STUDY_VARIANT` `baseline`, `prototype` ist mit #174 D entfernt; `RS_STUDY_MODE`
 `orbit|simulation|shot|still`, `RS_STUDY_OUTPUT`, per Skript zusätzlich
 `RS_STUDY_MOVIE`; für die Kalibrierung `RS_STUDY_DEBUG`; für die Kosten der
-Bedienung `RS_STUDY_UI` `plain|glass|ab` und `RS_STUDY_ROUNDS`, s. Kopf von
-`Flusstal.gd`) liegen in
+Bedienung `RS_STUDY_UI` `plain|glass|ab` und `RS_STUDY_ROUNDS`, s.
+[ADR 0234](docs/adr/0234-flusstal-studie-und-matrix.md)) liegen in
 `game/studies/flusstal/Flusstal.gd` und werden über `scripts/graphics-study.sh`
 gesetzt; Direktstart ohne gültige Variante bricht ab. Seit #152 sind alle Hebel
 Produktion; ein gesetztes `RS_STUDY_LEVERS` bricht deshalb ebenfalls ab. Die
@@ -755,9 +763,9 @@ frischen Schneefeld ab.
 Seit Issue #36 koppelt das Klima über **einen** Weg in die Erosion: die
 Schmelze speist das Abfluss-Gewicht (`Terrain.flowWeight` = Regen + Ablation,
 gebaut in `updateRunoffWeight` am Ende von `computeRain`, also innerhalb von
-`computeFlow`, aus dem Schneefeld vom Schrittende davor). Begründung bei
-`SimConfig.climateEnabled` und
-`SimConfig.meltRunoffEnabled`.
+`computeFlow`, aus dem Schneefeld vom Schrittende davor). Begründung:
+[ADR 0018](docs/adr/0018-klima-schnee.md) und
+[ADR 0026](docs/adr/0026-schmelzabfluss.md).
 
 Der **Gletscher** (Issue #35, `updateIce`) ist der zweite Weg und bringt sein
 eigenes Erosionsgesetz mit (Flux-Modell `E = K·q^m·S`, nicht Stream-Power auf
@@ -783,7 +791,7 @@ Wie `isChannel` gilt: **leeres Feld heißt aus**,
 und ohne Eis wird es auch geleert; eine eisfreie Welt rechnet damit
 bit-identisch zum Stand vor #35. Das Eis liegt **nicht** in `h` (eigene
 Auflage über dem Bett), die Entwässerung läuft also unverändert auf dem Bett.
-Kalibrier-Logbuch: `SimConfig.iceEnabled` ff., Messreihe
+Kalibrier-Logbuch: [ADR 0014](docs/adr/0014-gletscher-modell.md) ff., Messreihe
 `docs/glacier-measurements.md`.
 
 **Alle drei Abfluss-Konsumenten lesen `flowWeight`** und nie `rain`/`rainWeight`
@@ -868,7 +876,7 @@ STRUKTUR: welche Shader-Stelle welche Uniform liest), `WaterRendererTests`
 `RenderContractTests` hält die verbleibenden Verträge zu `Main.gd`, Shader und
 `SimNode`; der `hscale`-Default im Terrain-Shader bleibt dort bewusst als
 EINZIGE gepinnte Shader-Zahl stehen (Editor-Vorschau ohne SimNode,
-Begründung am Uniform).
+[ADR 0305](docs/adr/0305-hscale-vertrag.md), Issue #269).
 Gemeinsame Quelltext-Helfer (Issue #83):
 `Tests/SimCoreTests/RepoSource.swift` (Dateizugriff) und `SourceProbe.swift`
 (DER eine Lexer + Abfragen aller Text-Wächter; gematcht wird auf der
@@ -876,7 +884,7 @@ Code-Sicht, eine auskommentierte Zeile der Gegenseite erfüllt keinen
 Vertrag). Die frühere Regel „Zahlen im Shader in Swift-Schreibweise notieren"
 trug nur die mit #92 entfallenen Zahl-Wächter; sie gilt nur noch für die
 wenigen per `glsl(_:)` gepinnten Literale (verbliebene `Main.gd`-Konstanten
-wie `RIBBON_FADE_SECONDS`, `hscale`-Default — Begründung am Helfer).
+wie `RIBBON_FADE_SECONDS`, `hscale`-Default — [ADR 0311](docs/adr/0311-quelltext-waechter.md)).
 
 **Binnenwasser rendert auf ZWEI Wegen, mit einer scharfen Grenze dazwischen**
 (Issue #34, Messprotokoll `docs/geometry-water-measurements.md`): die
@@ -909,8 +917,9 @@ nicht hat.)
 
 `SimConfig` in `SimCore/Sources/SimCore/Config.swift` ist der **eine** Konfigurations-
 Wert, den ein `Terrain` bekommt, und trägt die große Mehrheit der Stellschrauben
-direkt, jede mit ausführlicher Begründung inkl. verworfener Werte und Messwerten.
-Beim Ändern eines Werts den Kommentar mitpflegen; er ist das Kalibrier-Logbuch.
+direkt. Ihre Begründungen inkl. verworfener Werte und Messwerte stehen in den
+ADRs unter „Konfiguration und Kalibrierung" in `docs/adr/README.md`. Beim Ändern
+eines Werts das ADR mitpflegen; es ist das Kalibrier-Logbuch.
 
 Zwei Gruppen sind bewusst NICHT in `Config.swift` deklariert, sondern neben ihrem
 Code; sie hängen als Feld in `SimConfig` und reisen damit vollständig im
@@ -953,7 +962,8 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
   „aufräumend" an die Produktionswerte angleichen. Dasselbe gilt für die
   Großform: Mechanik-Wächter, deren Testaufbau Becken, Playas oder Schlingen der
   alten Seed-1337-Welt braucht, pinnen `rangeLandform` über
-  `calibrationRangeLandform` (`TestCalibration.swift`, Issue #174).
+  `calibrationRangeLandform` (`TestCalibration.swift`, Issue #174; Begründung
+  [ADR 0328](docs/adr/0328-pin-doktrin.md)).
 
 ## Arbeitsweise in diesem Projekt
 
@@ -1007,8 +1017,8 @@ Drei Konfigurations-Ebenen, die absichtlich auseinanderlaufen:
      womit der Braid-Scour die Böden der abflusslosen Becken tiefer gräbt; die
      Playa-Fläche fiel gemessen von >100 auf 35 Zellen und die #11-Wächter
      `testDriedBedIsRenderedAsPlaya`/`testBasinLevelIsRateLimited` kippten
-     (`docs/dt-invariance-measurements.md` §6). Die Begründung steht auch am
-     Code, direkt über dem Deckel.
+     (`docs/dt-invariance-measurements.md` §6, [ADR 0033](docs/adr/0033-terrain1-braiding.md),
+     Issue #275).
 - Masse-Erhaltung gilt **nicht** (detachment-limited Stream-Power trägt Material aus);
   die Invariante ist beschränktes Relief / Fließgleichgewicht; Wächter:
   `Tests/SimCoreTests/LongRunCollapse.swift`.

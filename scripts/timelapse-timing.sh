@@ -1,41 +1,4 @@
 #!/usr/bin/env bash
-# Frame-Zeiten im Zeitraffer als interleaved A/B (Messprotokoll:
-# docs/perf-measurements.md, Abschnitt L).
-#
-#   scripts/timelapse-timing.sh [SPIELORDNER …]
-#
-# Ohne Argument misst es `game/` dieses Checkouts. Mit mehreren Ordnern läuft
-# je Runde jeder Ordner einmal, die Reihenfolge wechselt von Runde zu Runde
-# (A B, B A, A B, …): so trifft eine Lastspitze anderer Prozesse beide Stände
-# gleich. Ein Vergleichsstand ist eine Kopie von `game/` samt `bin/` und
-# importiertem `.godot/` (z. B. `cp -R game /tmp/alt/game` vor dem Umbau).
-#
-# Gemessen wird mit der Flusstal-Bühne im Betrieb `simulation` (60 J./Sek. ab
-# Sekunde 2, Frame-Abstände über 10 s, `game/studies/flusstal/Flusstal.gd`),
-# maximiert, wie es AGENTS.md für Bildraten verlangt. Bewusst OHNE
-# `scripts/start.sh`: dessen Build-Stempel-Prüfung lehnt jeden Vergleichsstand
-# ab, dessen Quellen nicht die des Arbeitsverzeichnisses sind.
-#
-# Umgebung (alle optional):
-#   RS_TIMING_RUNS    Runden (Standard 5)
-#   RS_TIMING_SEED    Welt (Standard 1337)
-#   RS_TIMING_YEAR    Vorlauf in Jahren (Standard 20000)
-#   RS_TIMING_CAMERA  "ziel;distanz;yaw;pitch" (Standard: Matrix-Kamera
-#                     `detail` von Seed 1337, s. scripts/graphics-matrix.sh)
-#   RS_TIMING_QUALITY performance|balanced|quality (Standard balanced)
-#   RS_TIMING_OUT     Ergebnisordner (Standard /tmp/rs-timelapse-timing)
-#   RS_TIMING_SCREEN  Bildschirm-Index für `--screen` (Standard: Godots Wahl).
-#                     Mit externem Monitor startet Godot dort; der eingebaute
-#                     Bildschirm des Referenz-Macs ist dann z. B. Index 1
-#                     (maximiert 3456×2104). Die Viewport-Größe steht in
-#                     jeder Ergebniszeile.
-#   RS_TIMING_EXCLUSIVE=1  vor jedem Lauf warten, bis kein anderes Godot mehr
-#                     läuft (höchstens RS_TIMING_EXCLUSIVE_MAX Sekunden,
-#                     Standard 600). Ohne den Schalter steht die Zahl fremder
-#                     Godot-Prozesse (vor und nach dem Lauf, das Maximum) als
-#                     `foreign_godot` in der Ergebniszeile: zwei Godots teilen
-#                     sich die GPU, solche Läufe sind keine saubere Messung.
-#   GODOT             Godot-Binärdatei (Standard: scripts/fetch-godot.sh --path)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -63,7 +26,6 @@ for g in "${games[@]}"; do
   fi
 done
 
-# Fremde Godot-Prozesse (zwischen zwei eigenen Läufen ist jeder fremd).
 foreign_godot() { { pgrep -x Godot 2>/dev/null || true; } | wc -l | tr -d " "; }
 wait_exclusive() {
   [[ "${RS_TIMING_EXCLUSIVE:-0}" == "1" ]] || return 0
@@ -87,7 +49,6 @@ done
 for ((round = 0; round < runs; round++)); do
   order=("${!games[@]}")
   if ((round % 2 == 1)); then
-    # umgekehrte Reihenfolge in jeder zweiten Runde
     rev=()
     for ((k = ${#order[@]} - 1; k >= 0; k--)); do rev+=("${order[$k]}"); done
     order=("${rev[@]}")
@@ -110,8 +71,6 @@ for ((round = 0; round < runs; round++)); do
     fi
     foreign_after="$(foreign_godot)"
     foreign=$((foreign_before > foreign_after ? foreign_before : foreign_after))
-    # Lastmittel und fremde Godots zum Lauf mitschreiben: auf einem belasteten
-    # Rechner sind sie Teil des Ergebnisses.
     echo "$line" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["load"]=sys.argv[1]; d["foreign_godot"]=int(sys.argv[2]); print(json.dumps(d))' "$load" "$foreign" \
       >> "$out_dir/${labels[$i]}.jsonl"
     echo "    $line"

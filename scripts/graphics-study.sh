@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Reproduzierbare A/B-Studie #116. Aufruf aus beliebigem Verzeichnis.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 variant="${1:-baseline}"
@@ -20,10 +19,6 @@ if [[ "$mode" == interactive ]]; then export RS_STUDY_MODE=""; fi
 set -- --maximized
 if [[ -n "${RS_STUDY_MOVIE:-}" ]]; then
   case "$mode" in orbit|simulation) ;; *) echo "Film braucht orbit oder simulation" >&2; exit 2;; esac
-  # Die Encoder-Größe kommt aus den .movie-Viewport-Overrides in project.godot
-  # (der MovieWriter öffnet den Encoder vor dem Maximieren und ignoriert
-  # --resolution dafür, gemessen an Godot 4.7.2). --resolution setzt hier nur
-  # das Fenster-Vorabmaß, bevor --maximized greift.
   set -- "$@" --resolution 3456x2104 --write-movie "$RS_STUDY_MOVIE" --fixed-fps 30
 fi
 exec scripts/start.sh "$@" res://studies/flusstal/Flusstal.tscn

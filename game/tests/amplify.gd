@@ -1,38 +1,11 @@
 extends SceneTree
-## Vertrags-Wächter der Gelände-Verfeinerung (#238):
-##   scripts/godot-test.sh res://tests/amplify.gd AMPLIFY_OK
-##
-## Die Verfeinerung rechnet auf dem RenderingDevice. Headless, im
-## Compatibility-Renderer und damit in CI gibt es keins: dann prüft der Test
-## nur, dass Main ohne Verfeinerer beim Back-Pass bleibt, und überspringt den
-## Rest mit Meldung (wie tests/water_gpu_tail.gd). Lokal mit Fenster:
-##   "$GODOT" --path game --script res://tests/amplify.gd
-##
-## Geprüft werden die Verträge aus dem Issue, nicht das Aussehen:
-##  - Bindung an die Sim: feste Schranke, null in der Schutzmaske (Wasser,
-##    Bänder, Saum) und am Küstensaum, wo Wasser steht nie über dem Spiegel,
-##    kein großräumiges Abweichen (Fenstermittel), in der strengen Fassung
-##    bleibt das Mittel jeder Zelle erhalten.
-##  - Stabilität: gleicher Eingang gibt bit-gleichen Ausgang; eine kleine
-##    Änderung am Eingang gibt eine kleine am Ausgang und wirkt nur in fester
-##    Reichweite; verteilt über mehrere Bilder kommt dasselbe heraus wie in
-##    einem Zug.
-##  - Der Vertrag der sichtbaren Fläche: Main liest für Pinselkuppel, Raycast
-##    und Kameraziel dieselben Werte, die der Vertex-Shader liest.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 const TerrainAmplifier = preload("res://scripts/TerrainAmplifier.gd")
 
-## Störung für „kleine Änderung ein, kleine aus“ in Sim-Höhe: so groß wie
-## ein kräftiger Zeitraffer-Takt (p99 gemessen ≈ 3e-4, docs/look/d-amplify).
 const NUDGE := 2.0e-4
-## Die Antwort darf die Störung höchstens um diesen Faktor übersteigen
-## (gemessen ≈ 6 im Maximum über alle Zellen, der alte Back-Pass lag im p99
-## bei 5, docs/graphics-quality.md § Render-Verschiebung).
 const MAX_GAIN := 16.0
-## Reichweite einer Änderung in Sim-Zellen: Schritte beider Stufen, Fenster
-## des Mittels, Maske und Hochskalieren, mit Reserve. Außerhalb bit-gleich.
 const REACH_CELLS := 72
 
 var failures := 0
@@ -57,8 +30,6 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	if done or main == null or not main.is_node_ready():
 		return false
-	# Ein paar Bilder zeichnen lassen: der erste Stand soll auf dem Schirm
-	# gewesen sein, bevor der Test ihn zurückliest.
 	waited += 1
 	if waited < 4:
 		return false
@@ -83,8 +54,6 @@ func _check(value: bool, message: String) -> void:
 		failures += 1
 		print("FAIL: ", message)
 
-## Main mit Verfeinerer: die CPU-Seite der sichtbaren Fläche sind die Werte,
-## die der Vertex-Shader liest (Mip-Stufe des Netzes).
 func _check_main_contract() -> void:
 	_check(main.amplifier != null, "Mit RenderingDevice rechnet der Verfeinerer")
 	if main.amplifier == null:
@@ -101,7 +70,6 @@ func _check_main_contract() -> void:
 	var lift: PackedFloat32Array = main.amplifier.read_cell_lift()
 	_check(main.relief_lift_cache.size() == main.N * main.N and main.relief_lift_cache == lift,
 		"Pinselkuppel, Raycast und Kameraziel lesen die Fläche des Verfeinerers")
-	# Irgendwo auf dem Land liegt die sichtbare Fläche nicht auf der Sim-Höhe.
 	var moved := 0
 	for v in lift:
 		if absf(v - 0.5) > 1e-4:
@@ -130,13 +98,10 @@ func _check_amplifier() -> void:
 	_check_binding(n, heights.to_float32_array(), filled.to_float32_array(), protect, pond,
 		first, first_fine, amp.params, code)
 
-	# Gleicher Eingang, gleicher Ausgang, Bit für Bit, auch im anderen
-	# Ausgabe-Ziel.
 	amp.submit(heights, filled, protect, true)
 	_check(amp.read_raw("offset") == first_fine and amp.read_cell_lift() == first,
 		"Gleicher Eingang gibt bit-gleichen Ausgang")
 
-	# Verteilt über mehrere Bilder kommt dasselbe heraus wie in einem Zug.
 	amp.submit(heights, filled, protect, false)
 	var rounds := 0
 	while amp.busy() and rounds < 1000:
@@ -147,7 +112,6 @@ func _check_amplifier() -> void:
 		and amp.read_raw("maps") == first_maps and amp.read_cell_lift() == first,
 		"Verteilt gerechnet gibt dasselbe wie in einem Zug (Abweichung, Fläche, Karten)")
 
-	# Kleine Änderung ein, kleine aus; außerhalb der festen Reichweite nichts.
 	var h := heights.to_float32_array()
 	var cx := n / 2
 	var cz := n / 2
@@ -157,8 +121,6 @@ func _check_amplifier() -> void:
 			h[j * n + i] += NUDGE * (1.0 if (i + j) % 2 == 0 else -1.0)
 	amp.submit(h.to_byte_array(), filled, protect, true)
 	var nudged := amp.read_cell_lift()
-	# Auch am feinen Feld: die Zeilen ganz außerhalb der Reichweite sind
-	# Byte für Byte dieselben (RG16F, vier Bytes je Texel).
 	var nudged_fine := amp.read_raw("offset")
 	var fine_n := n * TerrainAmplifier.FACTOR
 	var row_bytes := fine_n * 4
@@ -184,9 +146,6 @@ func _check_amplifier() -> void:
 	_check(gain <= MAX_GAIN, "Kleine Änderung gibt kleine Änderung (Faktor %.2f)" % gain)
 	_check(far == 0, "Eine Änderung wirkt nur in fester Reichweite (%d Zellen außerhalb)" % far)
 
-	# Solange die vorige Blende läuft (`may_publish` falsch), schreibt ein
-	# Auftrag nicht ins Ausgabe-Ziel. Ein Eingang, der währenddessen kommt,
-	# wartet und wird danach gerechnet: am Ende steht sein Stand.
 	var before: int = amp.published
 	amp.submit(h.to_byte_array(), filled, protect, false)
 	for i in 400:
@@ -201,9 +160,6 @@ func _check_amplifier() -> void:
 	_check(amp.published == before + 2, "Der wartende Eingang wird nach dem laufenden gerechnet")
 	_check(amp.read_raw("offset") == first_fine, "Am Ende steht der Stand des zuletzt eingereichten Eingangs")
 
-	# Strenge Fassung: das Mittel jeder freien Zelle bleibt erhalten. Exakt
-	# nur, wo die Schranke nicht greift (sie gilt nach dem Abziehen des
-	# Mittels und geht vor): deshalb p99 eng und das Maximum weit.
 	amp.params["mean_window"] = 0.0
 	amp.submit(heights, filled, protect, true)
 	var strict := amp.read_cell_lift()
@@ -223,9 +179,6 @@ func _check_amplifier() -> void:
 			% [strict_p99, strict_worst])
 	amp.free_resources()
 
-## Bindungsregeln am fertigen Stand, an den FEINEN Texeln. `fine` ist die
-## Abweichung (RG16F: r Welteinheiten, g Maske), `lift` das kodierte
-## Zellmittel (n²).
 func _check_binding(n: int, h: PackedFloat32Array, filled: PackedFloat32Array,
 		protect: PackedByteArray, pond: float, lift: PackedFloat32Array,
 		fine: PackedByteArray, params: Dictionary, code: float) -> void:
@@ -236,7 +189,6 @@ func _check_binding(n: int, h: PackedFloat32Array, filled: PackedFloat32Array,
 	var img := Image.create_from_data(fine_n, fine_n, false, Image.FORMAT_RGH, fine)
 	img.convert(Image.FORMAT_RGF)
 	var off := img.get_data().to_float32_array()
-	# Schranke: jedes dritte Texel des ganzen Felds, und keine NaN.
 	var lo := 0.0
 	var hi := 0.0
 	var broken := 0
@@ -252,7 +204,6 @@ func _check_binding(n: int, h: PackedFloat32Array, filled: PackedFloat32Array,
 	_check(broken == 0, "Keine NaN in der Fläche (%d)" % broken)
 	_check(lo >= -down - 1e-3 and hi <= up + 1e-3, "Die Abweichung bleibt in der Schranke")
 	_check(lo < -0.01 and hi > 0.01, "Die Verfeinerung formt überhaupt (%.4f … %.4f)" % [lo, hi])
-	# Schutzmaske, Küstensaum, Wasser: alle 16 feinen Texel jeder Zelle.
 	var sea: float = main.sea
 	var shield := 0.0
 	var shield_cells := 0
@@ -300,13 +251,10 @@ func _check_binding(n: int, h: PackedFloat32Array, filled: PackedFloat32Array,
 		"In der Schutzmaske (Wasser, Bänder, Saum) ist die Abweichung auf der ganzen Zelle null (%s)" % shield)
 	_check(coast_cells > 0 and coast == 0.0, "Im Meer und am Küstensaum ist die Abweichung null (%s)" % coast)
 	_check(water == 0.0, "Wo Wasser steht, liegt die Fläche nie über dem Spiegel (%s)" % water)
-	# Kein großräumiges Abweichen: über alles freie Land gemittelt null.
 	var mean := sum / maxf(float(free), 1.0)
 	print("AMPLIFY: Mittel über %d freie Zellen %.5f Welteinheiten" % [free, mean])
 	_check(free > n and absf(mean) <= 0.01 * down, "Über das freie Land gemittelt bleibt die Sim-Höhe (%.5f)" % mean)
 
-## 1 für Landzellen, in deren Umkreis `margin` weder Schutzmaske noch Küste
-## noch stehendes Wasser liegt (dort wirkt die Verfeinerung voll), sonst 0.
 func _free_cells(n: int, h: PackedFloat32Array, filled: PackedFloat32Array,
 		protect: PackedByteArray, pond: float, margin: int) -> PackedByteArray:
 	var blocked := PackedByteArray()
@@ -314,9 +262,6 @@ func _free_cells(n: int, h: PackedFloat32Array, filled: PackedFloat32Array,
 	for k in n * n:
 		blocked[k] = 1 if protect[k] != 0 or h[k] < main.sea + 0.04 \
 			or filled[k] - h[k] >= pond * 0.5 else 0
-	# Aufweiten in zwei Achsen-Durchgängen (Quadrat mit Kantenlänge
-	# 2·margin+1). Der Vorlauf beginnt `margin` vor dem Rand, damit auch die
-	# ersten Zeilen und Spalten zählen.
 	var wide := PackedByteArray()
 	wide.resize(n * n)
 	for j in n:
