@@ -108,14 +108,22 @@ final class BarMaterialTests: XCTestCase {
     /// Saum, nie mehr als eine Fünftel-Kanalbreite je Ufer.
     func testSandStaysAStripAlongTheChannel() {
         let n = 96, line = 48
-        // Bank überall außer im Gerinne selbst (dort setzt der Stempel −1).
+        // Bank überall außer im Wasser selbst (dort setzt der Stempel −1).
+        // Das Bett endet an der Wasserlinie (`barSandWaterlineWidths`): bei
+        // voller halber Kanalbreite läge die halbe Reichweite der geraden
+        // Strecke (bis 0,55 Kanalbreiten ab der Mitte) zwischen zwei
+        // Zellreihen, und die Schranke unten prüfte nichts (Review #248).
         let t = flatWorld(n: n, channelRow: line) { _, j in
-            Double(abs(j - line)) < 0.5 * self.channelWidth ? -1 : 0
+            Double(abs(j - line)) < WaterRender.barSandWaterlineWidths * self.channelWidth ? -1 : 0
         }
         let f = BarMaterial.field(t)
         var sandArea = 0.0
         for j in 0..<n { for i in 20..<76 { sandArea += Double(f.sand[j * n + i]) } }
         let perSide = sandArea / (2 * 56 * channelWidth)
+        // Gerade Strecke: halbe Reichweite, gemessen 0,014 Kanalbreiten je
+        // Ufer (macOS); die volle Bank am Gleithang prüft
+        // `testSandLiesOnTheInnerBankOnly`.
+        XCTAssertGreaterThan(perSide, 0.005, "auch an gerader Strecke ein Saum Sand (\(perSide))")
         XCTAssertLessThanOrEqual(perSide, 0.2,
                                  "Sand je Ufer und Lauflänge höchstens eine Fünftel-Kanalbreite (\(perSide))")
         let outer = (WaterRender.barSandWaterlineWidths + WaterRender.barSandReachHi) * channelWidth + 0.5

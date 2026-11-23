@@ -74,7 +74,15 @@ final class WaterUniformsTests: XCTestCase {
     ]
 
     /// Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
-    private static let bendScalars = ["water_ribbon_bend_depth", "water_ribbon_shoal_mix"]
+    private static let bendScalars = ["water_ribbon_bend_depth", "water_ribbon_shoal_mix",
+                                      "water_ribbon_shoal_reach"]
+    /// Nur das Band: Deckkraft, Kräuselung, Glanz und Glitzern mit Korridor
+    /// (Gremium 4).
+    private static let ribbonBodyScalars = [
+        "water_ribbon_body_shallow", "water_ribbon_body_deep",
+        "water_ribbon_steep_ripple_gain", "water_ribbon_steep_specular",
+        "water_ribbon_glint_gain",
+    ]
     private static let bendColors = ["water_ribbon_shoal_color"]
     private static let barScalars = [
         "water_bar_roughness",
@@ -136,7 +144,8 @@ final class WaterUniformsTests: XCTestCase {
             + wallScalars + runScalars + rasterRunScalars,
         "game/shaders/water.gdshader": ribbonScalars + opticsScalars + opacityScalars + bendScalars
             + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars
-            + runScalars + ribbonFoamScalars + corridorShoreScalars + ["water_ocean_depth_span"],
+            + runScalars + ribbonFoamScalars + corridorShoreScalars + ribbonBodyScalars
+            + ["water_ocean_depth_span"],
         "game/shaders/corridor.gdshaderinc": corridorShoreScalars,
         // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
