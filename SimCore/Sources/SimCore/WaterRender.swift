@@ -648,6 +648,11 @@ public enum WaterRender {
     /// Band mit Land auf beiden Seiten als Gerinne überbrückt: Kolke im
     /// Lauf, keine Seen (Gremium 3, Befund 3).
     public static let ribbonPondBridgeSamples = 8
+    /// Stützpunkte (≈ 4 Zellen, wie `ribbonPondBridgeSamples`), über die das
+    /// Band am Laufende auf den Rang seines Anschlusses einblendet
+    /// (`RiverRibbonRenderer`, Review #248): an einem Stützpunkt sprang die
+    /// Tiefenfarbe als harte Stufe.
+    public static let ribbonJunctionRankRampSamples = 8
 
 
     /// Raster-Wasser an Steilwänden (Befund #174, Seed 1337 / Jahr 2.305,
@@ -1825,6 +1830,30 @@ public enum WaterRender {
     public static let ribbonShoalColor = (r: 0.46, g: 0.50, b: 0.42)
     /// Anteil der Sand-Tönung am Gleithang-Ufer bei voller Bogenstärke.
     public static let ribbonShoalMix = 0.45
+    /// Reichweite der Kiesbank-Tönung ab der Wasserlinie (Anteil des
+    /// Querprofils). Gremium 4, Befund 4: 0,06 statt 0,15, die breite
+    /// Tönung las sich als helle Innenrinne („Fluss im Fluss“).
+    public static let ribbonShoalReach = 0.06
+
+    // MARK: Band mit Korridor (Gremium 4)
+
+    /// Deckkraft des Bands mit Korridor über dem Riffel (Gremium 4, Befund
+    /// 3/4): vorher die Raster-Rampe 0,55…0,95 über der Querlage, damit
+    /// schien das Bett als zweites Wasser durch.
+    public static let ribbonBodyShallow = 0.86
+    /// … und im Kolk.
+    public static let ribbonBodyDeep = 0.96
+    /// Verstärkung der Kräuselung an Gefälle/Riffel: × (1 + dies ×
+    /// max(Riffel, Gefälle)). Gremium 4, Befund 6: 0,5 statt 1,5, die
+    /// Kräuselung brannte an Gefällestrecken zu Weißflächen aus.
+    public static let ribbonSteepRippleGain = 0.5
+    /// Glanz an Gefällestrecken × (1 − dies × Gefälle) (Gremium 4, Befund
+    /// 6). Eine höhere Rauheit (0,3) verbreiterte den Glanz zur Fläche und
+    /// ist verworfen.
+    public static let ribbonSteepSpecular = 0.5
+    /// Emission des Sonnenglitzerns im Band. Gremium 4, Befund 6: 1,2 statt
+    /// 3,0 (ausgebrannte Weißflächen).
+    public static let ribbonGlintGain = 1.2
 
     // MARK: Querprofil und Oberfläche des Bands (Befund #174 „hässlich")
     //
@@ -2015,7 +2044,12 @@ public enum WaterRender {
     public static let waterLakeColor = (r: 0.011, g: 0.064, b: 0.084)
     /// Wolkenspiegelung auf Stillwasser (Seen, Altarme): Helligkeit der
     /// gespiegelten Wolkendeckung.
-    public static let waterCloudReflection = 0.6
+    ///
+    /// Gremium 4, Befund 6: 0,39 statt 0,6 (× 0,65): die gespiegelten Wolken
+    /// lasen sich auf Band und Raster-See als Eisfläche. Stand in Runde 4 als
+    /// Faktor in beiden Shadern; der Wert geht dort linear ein, das Register
+    /// ist die eine Quelle (Review #248).
+    public static let waterCloudReflection = 0.39
 
     /// Raster-Wasser (Zubringer): Gefällestufe der Rinnensohle über die
     /// sichtbare Steigung `world_slope` (tan, mit Überhöhung) im

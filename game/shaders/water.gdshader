@@ -173,14 +173,14 @@ varying vec4 v_profile;
 // Wolkenschatten (#151) laufen ohne Kante über die Bänder weiter.
 #include "res://shaders/clouds.gdshaderinc"
 
-// Geschmackswerte des Bands mit Korridor (Gremium 4, Befund 4).
-const float BODY_SHALLOW = 0.86;   // Deckkraft über dem Riffel …
-const float BODY_DEEP = 0.96;      // … und im Kolk
-const float SHOAL_REACH = 0.06;
-const float STEEP_RIPPLE_GAIN = 0.5; // Kräuselung an Gefälle/Riffel (vorher 1,5)
-const float STEEP_SPECULAR = 0.5;   // Glanz an Gefällestrecken × (1 − dies × Gefälle)
-const float CLOUD_WHITE = 0.65;     // Helligkeit der gespiegelten Wolken (Anteil von Weiß 0,9)
-const float GLINT_GAIN = 1.2;       // Emission des Sonnenglitzerns    // Kiesbank-Tönung nur so weit ab der Wasserlinie (Anteil Querprofil)
+// Band mit Korridor (Gremium 4): Deckkraft, Kiesbank-Tönung, Kräuselung,
+// Glanz und Glitzern; Werte und Logbuch in `WaterRender`.
+uniform float water_ribbon_body_shallow;     // Deckkraft über dem Riffel …
+uniform float water_ribbon_body_deep;        // … und im Kolk
+uniform float water_ribbon_shoal_reach;      // Kiesbank-Tönung ab der Wasserlinie (Anteil Querprofil)
+uniform float water_ribbon_steep_ripple_gain; // Kräuselung an Gefälle/Riffel
+uniform float water_ribbon_steep_specular;   // Glanz an Gefällestrecken × (1 − dies × Gefälle)
+uniform float water_ribbon_glint_gain;       // Emission des Sonnenglitzerns
 
 // Wertrauschen wie im Ozean-Shader (Hash-Konstanten sind keine Kalibrierung).
 float ribbon_hash(vec2 p) {
@@ -398,7 +398,7 @@ void fragment() {
 		? ribbon_ripple_grad(q0, footprint) * w0 + ribbon_ripple_grad(q1, footprint) * (1.0 - w0)
 		: ribbon_ripple_grad(q, footprint);
 	vec2 gq = g_flow * mix(1.0, 0.4, still) * mix(0.6, 1.0, depth)
-		* (1.0 + STEEP_RIPPLE_GAIN * max(riffle, steep));
+		* (1.0 + water_ribbon_steep_ripple_gain * max(riffle, steep));
 	vec2 grad = d1 * gq.x * water_ribbon_ripple_stretch + d2 * gq.y;
 	vec3 water_n_ws = normalize(vec3(-grad.x, 1.0, -grad.y));
 	vec3 water_n_vs = normalize(mat3(VIEW_MATRIX) * water_n_ws);
@@ -440,7 +440,7 @@ void fragment() {
 	// Wasserlinie (über den ganzen Lauf gezogen las sie sich als heller Saum).
 	float shoal_gate = smoothstep(0.55, 0.75, ribbon_noise(vec2(q.x * 4.0, q.y * 2.0) + 31.0));
 	water_final = mix(water_final, water_ribbon_shoal_color,
-		water_ribbon_shoal_mix * max(-outward, 0.0) * shoal_gate * (1.0 - smoothstep(0.0, SHOAL_REACH, profile)));
+		water_ribbon_shoal_mix * max(-outward, 0.0) * shoal_gate * (1.0 - smoothstep(0.0, water_ribbon_shoal_reach, profile)));
 	// Weißwasser: Schaumfahnen in Fließrichtung nur, wo die Lauf-Größen es
 	// sagen (CUSTOM0: Stufen, Engstellen, Zusammenflüsse, Riffel). Weich über
 	// ein breites Fenster auf Streifen UND einem runden Rauschen: die frühere
@@ -495,7 +495,7 @@ void fragment() {
 	// Raster-Rampe (0,55 seicht, seicht = Rand der Querlage) schien das helle
 	// Bett als Fahrrinne mit harter Kante durch. Seicht ist hier der Riffel,
 	// nicht die Querlage.
-	float body_c = mix(BODY_SHALLOW, BODY_DEEP, mix(1.0, 1.0 - riffle, 0.6));
+	float body_c = mix(water_ribbon_body_shallow, water_ribbon_body_deep, mix(1.0, 1.0 - riffle, 0.6));
 	float body = mix(1.0, clamp(max(body_c, fresnel) + foam, 0.0, 1.0), corridor);
 	// Die See-Maske gilt nur ohne Korridor: mit ihm liegt Ufer und Bett über
 	// dem Gelände (Deckel-Tiefe), der Raster-See des Terrain-Shaders ist
@@ -516,7 +516,7 @@ void fragment() {
 	float spec = mix(water_specular, water_river_specular, running * (1.0 - foam));
 	// Gremium 4, Befund 6: an Gefällestrecken kippte die starke Kräuselung
 	// die Normalen zur Sonne, der Lauf brannte als Chromfläche aus.
-	spec *= 1.0 - STEEP_SPECULAR * steep;
+	spec *= 1.0 - water_ribbon_steep_specular * steep;
 	SPECULAR = mix(0.4, spec, wet);
 	// Stillwasser spiegelt die Wolken: Strahl am Wasserspiegel auf die
 	// Wolkenbasis, deren Deckung als heller Fleck (Licht, nicht Farbe; der
@@ -531,6 +531,6 @@ void fragment() {
 		? cloud_cover(v_world.xz + refl.xz * (cloud_height - v_world.y) / refl.y, u_time) : 0.0;
 	// Gremium 4, Befund 6: Wolkenweiß 0,9 und Glitzern × 3 sättigten zu
 	// Chrom und Eis; beide gedämpft.
-	EMISSION = vec3(0.9, 0.93, 0.97) * CLOUD_WHITE * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel)
-		+ vec3(1.0, 0.92, 0.78) * glint * GLINT_GAIN;
+	EMISSION = vec3(0.9, 0.93, 0.97) * cloud_hit * cloud_w * (0.35 + 0.65 * fresnel)
+		+ vec3(1.0, 0.92, 0.78) * glint * water_ribbon_glint_gain;
 }

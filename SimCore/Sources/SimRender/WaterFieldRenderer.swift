@@ -638,7 +638,10 @@ public final class WaterFieldRenderer {
             // Wie das Band: ohne das lange Endsegment zum Anschluss im
             // Hauptlauf (`renderNodeCount`), sonst lag der Saum als gerade
             // dunkle Linie quer über der Wiese.
-            let m = renderNodeCount(nodes)
+            // Ohne Haarnadel-Knoten wie das Band (`hairpinFreeIndices`), sonst
+            // lag der Rücklauf-Strich einer Z-Wende als Saum neben dem Band
+            // (Review #248).
+            let keep = hairpinFreeIndices(nodes, count: renderNodeCount(nodes))
             // Kanäle mit unvollständigem/nicht-endlichem Abfluss oder extremen Koordinaten
             // überspringen, um OOB-Traps und Double-to-Int-Konvertierungsfehler zu verhindern (analog RiverRibbonRenderer).
             guard ch.discharge.count >= nodes.count else { continue }
@@ -660,9 +663,10 @@ public final class WaterFieldRenderer {
             let hasBand = geometryMode
                 && (chIndex < bandChannelFlags.count ? bandChannelFlags[chIndex] : true)
             if geometryMode && !hasBand { continue }
-            for i in 0..<(m - 1) {
-                let ax = nodes[i].x, az = nodes[i].z, bx = nodes[i + 1].x, bz = nodes[i + 1].z
-                let q = 0.5 * (ch.discharge[i] + ch.discharge[i + 1])   // Abfluss (Zellen) am Segment
+            for k in 0..<(keep.count - 1) {
+                let i = keep[k], i1 = keep[k + 1]
+                let ax = nodes[i].x, az = nodes[i].z, bx = nodes[i1].x, bz = nodes[i1].z
+                let q = 0.5 * (ch.discharge[i] + ch.discharge[i1])   // Abfluss (Zellen) am Segment
                 // Render-Gate wie beim Abfluss-Feld: Mäander-ENTITÄTEN existieren ab
                 // meanderMinCells (85) und migrieren weiter, GEMALT werden Segmente
                 // erst ab der Render-Schwelle — sonst stempeln hunderte Mini-Läufe
@@ -693,13 +697,13 @@ public final class WaterFieldRenderer {
             // dem Band die sprenklige Textur-Version des Laufs. Ohne Band gibt
             // es nichts zu überlappen — der Stempel endet wie vor #34.
             if hasBand {
-                let last = nodes[m - 1]
-                let q = ch.discharge[m - 1]
+                let last = nodes[keep[keep.count - 1]]
+                let q = ch.discharge[keep[keep.count - 1]]
                 if q >= creek {
                     let rad = Int((ribbonHalfWidthCells(q, cfg: terrain.cfg)
                                    + WaterRender.ribbonHaloMarginCells).rounded())
                     var previousX = last.x, previousZ = last.z
-                    let prior = nodes[max(0, m - 2)]
+                    let prior = nodes[keep[max(0, keep.count - 2)]]
                     for point in mouthPath(terrain, fromX: last.x, fromZ: last.z,
                                            dirX: last.x - prior.x, dirZ: last.z - prior.z) {
                         var dirX = point.x - previousX, dirZ = point.z - previousZ

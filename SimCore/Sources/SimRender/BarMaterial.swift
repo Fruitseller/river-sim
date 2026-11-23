@@ -161,11 +161,15 @@ public enum BarMaterial {
             let bend = MeanderState.bendStrength(ch, config: terrain.cfg,
                                                  heightAt: { bilinearGrid(h, $0.x, $0.z, n: n) })
             var wA = MeanderState.beltWidthCells(discharge: ch.discharge[0], config: terrain.cfg)
-            // Bis zum Anschluss wie das Band (`renderNodeCount`).
-            for s in 0..<(renderNodeCount(nodes) - 1) {
-                let wB = MeanderState.beltWidthCells(discharge: ch.discharge[s + 1], config: terrain.cfg)
+            // Dieselben Knoten wie das Band: bis zum Anschluss
+            // (`renderNodeCount`) und ohne Haarnadeln (`hairpinFreeIndices`),
+            // an denen die Bogenstärke extrem ist (Review #248).
+            let keep = hairpinFreeIndices(nodes, count: renderNodeCount(nodes))
+            for k in 0..<(keep.count - 1) {
+                let s = keep[k], s1 = keep[k + 1]
+                let wB = MeanderState.beltWidthCells(discharge: ch.discharge[s1], config: terrain.cfg)
                 defer { wA = wB }
-                let a = nodes[s], e = nodes[s + 1]
+                let a = nodes[s], e = nodes[s1]
                 guard a.x.isFinite, a.z.isFinite, e.x.isFinite, e.z.isFinite,
                       abs(a.x) < 1e9, abs(a.z) < 1e9, abs(e.x) < 1e9, abs(e.z) < 1e9 else { continue }
                 let b = max(1e-6, 0.5 * (wA + wB))
@@ -177,7 +181,7 @@ public enum BarMaterial {
                 guard x0 <= x1, z0 <= z1 else { continue }
                 let sx = e.x - a.x, sz = e.z - a.z
                 let l2 = max(1e-12, sx * sx + sz * sz)
-                let beta = s + 1 < bend.count ? 0.5 * (bend[s] + bend[s + 1]) : 0
+                let beta = s1 < bend.count ? 0.5 * (bend[s] + bend[s1]) : 0
                 segments.append(Segment(ax: a.x, az: a.z, sx: sx, sz: sz,
                                         invL2: 1 / l2, invL: 1 / l2.squareRoot(), b: b, bend: beta,
                                         x0: x0, x1: x1, z0: z0, z1: z1))

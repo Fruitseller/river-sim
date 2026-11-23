@@ -136,6 +136,13 @@ public enum CalibrationRegistry {
         ("water_river_specular", WaterRender.waterRiverSpecular),
         ("water_cloud_reflection", WaterRender.waterCloudReflection),
         ("water_ribbon_shoal_mix", WaterRender.ribbonShoalMix),
+        ("water_ribbon_shoal_reach", WaterRender.ribbonShoalReach),
+        // Band mit Korridor (Gremium 4).
+        ("water_ribbon_body_shallow", WaterRender.ribbonBodyShallow),
+        ("water_ribbon_body_deep", WaterRender.ribbonBodyDeep),
+        ("water_ribbon_steep_ripple_gain", WaterRender.ribbonSteepRippleGain),
+        ("water_ribbon_steep_specular", WaterRender.ribbonSteepSpecular),
+        ("water_ribbon_glint_gain", WaterRender.ribbonGlintGain),
         ("water_bar_roughness", WaterRender.barRoughness),
         // Meeresstrand (terrain.gdshader, Hill-Climber Nr. 8).
         ("water_beach_wet_height", WaterRender.beachWetHeight),

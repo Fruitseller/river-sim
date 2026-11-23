@@ -682,7 +682,15 @@ public final class RiverRibbonRenderer {
                junctionRank < WaterRender.ribbonMinimumRank || ownRank < WaterRender.ribbonJunctionOwnRank { continue }
             // Das Laufende liegt im Anschluss: dort gilt dessen Rang (Vertrag
             // `river_ribbons.gd`: jedes Fluss-Band trägt seinen Anschluss).
-            rank[hi] = max(rank[hi], junctionRank)
+            // Eingeblendet über die letzten `ribbonJunctionRankRampSamples`
+            // Stützpunkte: an EINEM Stützpunkt malte der Shader die Tiefenfarbe
+            // des Hauptlaufs als harte Stufe über die volle Breite (Review #248,
+            // dasselbe Muster wie die „Leitersprosse“ unten).
+            let ramp = WaterRender.ribbonJunctionRankRampSamples
+            for a in max(lo, hi - ramp)...hi {
+                let t = Double(a - (hi - ramp)) / Double(ramp)
+                rank[a] = max(rank[a], rank[a] + (junctionRank - rank[a]) * t * t * (3 - 2 * t))
+            }
             // Für die Tiefenfarbe fällt der Rang stromab nie: die Strahler-
             // Ordnung eines Laufs wächst nur an Zusammenflüssen. Der 3×3-
             // Stützsaum oben überbrückt nur einen Zellversatz zwischen
