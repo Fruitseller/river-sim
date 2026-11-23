@@ -3,15 +3,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für die Quellen der Sedimentfahnen (Issue #174, Paket C):
-/// `SedimentPlume` und ihr Weg durch das Frame-Protokoll. Die Weichzeichnung
-/// selbst ist Shader-Sache (`ocean.gdshader`), Uniform-Vertrag in
-/// `WaterUniformsTests`.
 final class SedimentPlumeTests: XCTestCase {
 
-    /// Spalten `i < 6` Meer, rechts Land. In Zeile 10 läuft ein Fluss von
-    /// Spalte 20 nach links ins Meer, mit `discharge` Zellen Einzugsgebiet an
-    /// der Mündung und Höhen bis `peak`; in Zeile 20 ein zweiter, kleiner.
     private func riverWorld(discharge: Double, peak: Double, smallDischarge: Double = 500) -> Terrain {
         let config = renderConfig(n: 32)
         let n = config.n, sea = config.sea
@@ -37,9 +30,6 @@ final class SedimentPlumeTests: XCTestCase {
         return terrain
     }
 
-    /// Weites Meer (Spalten `i < 60`), rechts flaches Land, senkrechte Küste.
-    /// In Zeile 40 mündet ein großer Fluss, in Zeile 80 ein kleiner (unter
-    /// `plumeMinDischargeCells`).
     private func openCoastWorld(discharge: Double = 40_000, peak: Double = 0.65) -> Terrain {
         let config = renderConfig(n: 96)
         let n = config.n, sea = config.sea
@@ -89,9 +79,6 @@ final class SedimentPlumeTests: XCTestCase {
         }
     }
 
-    /// Küstennah und schmal: der Streifen reicht höchstens `plumeBandCells` ins
-    /// Meer; offenes Meer bleibt klar (der Rauchfächer des alten Shaders reichte
-    /// bis zu 32 Zellen hinaus).
     func testPlumeHugsTheCoastInANarrowBand() {
         let terrain = openCoastWorld()
         let n = terrain.cfg.n
@@ -99,7 +86,7 @@ final class SedimentPlumeTests: XCTestCase {
         let band = Int(WaterRender.plumeBandCells.rounded(.down))
         var widest = 0
         for j in 0..<n {
-            var offshore = 0   // größter Abstand zum Land (Zellen) einer Fahnenzelle in dieser Zeile
+            var offshore = 0
             for i in 0..<60 where field[j * n + i] > 0 { offshore = max(offshore, 60 - i) }
             XCTAssertLessThanOrEqual(offshore, band, "Zeile \(j): Fahne über das Küstenband hinaus")
             widest = max(widest, offshore)
@@ -110,8 +97,6 @@ final class SedimentPlumeTests: XCTestCase {
         } }
     }
 
-    /// Klingt schnell ab und endet: ab `plumeCutoffDecays` Abklinglängen ist
-    /// nichts mehr da; entlang der Küste nimmt die Dichte nicht zu.
     func testPlumeFadesQuicklyAndEnds() {
         let terrain = openCoastWorld()
         let n = terrain.cfg.n
@@ -133,8 +118,6 @@ final class SedimentPlumeTests: XCTestCase {
         }
     }
 
-    /// Die Fahne folgt der Küstenströmung: stromab (Welt-z, Zeilen +) reicht sie
-    /// weiter als stromauf.
     func testPlumeReachesFurtherDownstream() {
         let terrain = openCoastWorld()
         let n = terrain.cfg.n
@@ -147,8 +130,6 @@ final class SedimentPlumeTests: XCTestCase {
         XCTAssertGreaterThan(reach(1), reach(-1) + 5, "stromab weiter als stromauf")
     }
 
-    /// Sichtbare Fläche (Anteil der Trübungsfarbe ≥ 10 %) einer vollen Fahne:
-    /// der alte Fächer deckte rund 3000 Zellen (§F), hier bleibt es unter 600.
     func testVisiblePlumeAreaStaysSmall() {
         let field = SedimentPlume.field(openCoastWorld(discharge: 60_000, peak: 0.9))
         let visible = field.filter { Double($0) * WaterRender.oceanPlumeOpacity >= 0.1 }.count
@@ -177,7 +158,6 @@ final class SedimentPlumeTests: XCTestCase {
         XCTAssertEqual(overlays.plume, SedimentPlume.field(terrain))
         XCTAssertTrue(overlays.plume.contains { $0 > 0 })
 
-        // Eine ANDERE Welt ohne Mündung: der Cache darf die alte Fahne nicht zeigen.
         let dry = riverWorld(discharge: 100, peak: 0.65)
         render.invalidate(dry, .replaced)
         let next = try XCTUnwrap(render.frame(dry, .settled, now: 10).overlays)

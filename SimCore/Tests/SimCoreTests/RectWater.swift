@@ -4,17 +4,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Messreihe zu den „rechteckigen Wasserflecken" im Tiefland (Issue #174,
-/// Zielbild): langgestreckte dunkle Kästen mit geraden Kanten, die weder wie
-/// See noch wie Altarm oder Flussabschnitt aussehen. Tabellen und Befund:
-/// `docs/geometry-water-measurements.md` § H.
-///
-///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         --filter testRectWaterDiagnostic
-///
-/// Die Welten werden frisch mit der Produktions-Config erzeugt und wie die
-/// Zeitraffer-Bühne in 1000-Jahr-Schritten gealtert. Keine implizit wiederverwendeten
-/// `/tmp`-Snapshots: sie könnten nach einer Physik-Änderung einen alten Stand messen.
 final class RectWaterTests: XCTestCase {
     private var lastCover: [Double] = []
 
@@ -44,12 +33,6 @@ final class RectWaterTests: XCTestCase {
         }
     }
 
-    /// Kosten der Verbreiterung: `WaterFieldRenderer.bytes` mit alter und neuer
-    /// Fassung, abwechselnd (interleaved) über mehrere Runden. Die Zeit der
-    /// GANZEN Funktion, weil das die Größe ist, die der Frame bezahlt.
-    ///
-    ///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-    ///         --filter testRectWaterCostDiagnostic
     func testRectWaterCostDiagnostic() throws {
         try skipUnlessMeasuring()
         let rounds = 40
@@ -61,7 +44,6 @@ final class RectWaterTests: XCTestCase {
             fields[0].legacyWiden = true
             fields[1].legacyWiden = false
             var samples: [[Double]] = [[], []]
-            // Aufwärmen
             for f in fields { _ = f.bytes(t, blend: 1, geometryMode: true, bandChannelFlags: mesh.bandChannelFlags, bandCoverage: mesh.bandCoverage) }
             for round in 0..<rounds {
                 let order = round % 2 == 0 ? [0, 1] : [1, 0]
@@ -93,7 +75,6 @@ final class RectWaterTests: XCTestCase {
         let h = t.h, hf = t.waterLevel
         let cell = t.cfg.cellSize, half = t.cfg.world / 2
 
-        // Draufsicht-Karte der Wasserklassen (PPM → PNG via ffmpeg).
         var rgb = [UInt8](repeating: 0, count: cnt * 3)
         var classes = [Int](repeating: 0, count: cnt)
         let riverLo = Int(WaterRender.riverMaskLo * 255)
@@ -106,23 +87,21 @@ final class RectWaterTests: XCTestCase {
             let pond = hf[k] > sea && h[k] > sea ? hf[k] - h[k] : 0
             let gate = Int(water[k * 4 + 1])
             let river = Int(water[k * 4])
-            if pond > WaterRender.pondContourLo { c = (180, 130, 60); classes[k] = 1 }          // Tümpel < Gate
-            if pond > WaterRender.pondContourLo && gate >= 90 { c = (0, 210, 255); classes[k] = 2 } // See-Kanal sichtbar
-            if field.wetMeadow[k] { c = (230, 220, 40); classes[k] = 3 }                          // nasse Wiese
-            if river >= riverLo && h[k] > sea { c = (40, 200, 60); classes[k] = 4 }               // Raster-Fluss
-            if cover[k] > 0.05 { c = (30, 60, 255); classes[k] = 5 }                              // Band
+            if pond > WaterRender.pondContourLo { c = (180, 130, 60); classes[k] = 1 }
+            if pond > WaterRender.pondContourLo && gate >= 90 { c = (0, 210, 255); classes[k] = 2 }
+            if field.wetMeadow[k] { c = (230, 220, 40); classes[k] = 3 }
+            if river >= riverLo && h[k] > sea { c = (40, 200, 60); classes[k] = 4 }
+            if cover[k] > 0.05 { c = (30, 60, 255); classes[k] = 5 }
             rgb[k * 3] = c.0; rgb[k * 3 + 1] = c.1; rgb[k * 3 + 2] = c.2
         }
         let header = "P6\n\(n) \(n)\n255\n".data(using: .ascii)!
         let ppm = header + Data(rgb)
         try? ppm.write(to: URL(fileURLWithPath: "/tmp/rw_map_\(seed)_\(legacy ? "alt" : "neu").ppm"))
 
-        // Sichtbares Rasterwasser nach den Shader-Formeln (ohne Wandschwelle):
-        // Fluss-Maske (R) bzw. See-Maske (Kontur x Gate), außerhalb der Bänder.
         func window(_ lo: Double, _ hi: Double, _ x: Double) -> Double {
             let u = min(1, max(0, (x - lo) / max(hi - lo, 1e-9))); return u * u * (3 - 2 * u)
         }
-        var cls = [UInt8](repeating: 0, count: cnt)   // 1 Fluss, 2 See
+        var cls = [UInt8](repeating: 0, count: cnt)
         for k in 0..<cnt where h[k] > sea && cover[k] < 0.3 {
             let rm = window(WaterRender.riverMaskLo, WaterRender.riverMaskHi, Double(water[k * 4]) / 255)
             let pond = hf[k] > sea ? max(0, hf[k] - h[k]) : 0
@@ -145,14 +124,11 @@ final class RectWaterTests: XCTestCase {
             }
             comps.append(c)
         }
-        // Gerade Kantenstücke: Zellkanten zwischen innen/außen, zu Läufen entlang einer
-        // Achse gruppiert; als „lang" zählt ein Lauf ab `runMin` Zellen.
         func straightFraction(_ c: Comp, runMin: Int) -> (frac: Double, longest: Int) {
             var inside = Set<Int>(c.cells)
             _ = inside.count
             func isIn(_ i: Int, _ j: Int) -> Bool { i >= 0 && i < n && j >= 0 && j < n && inside.contains(j * n + i) }
             var edges = 0, longEdges = 0, longest = 0
-            // horizontale Kanten (oben/unten), Läufe entlang i
             for dj in [-1, 1] {
                 for j in c.j0...c.j1 {
                     var run = 0
@@ -180,9 +156,6 @@ final class RectWaterTests: XCTestCase {
             inside.removeAll()
             return (edges == 0 ? 0 : Double(longEdges) / Double(edges), longest)
         }
-        // Ursache: warum steht an dieser sichtbaren Raster-Fluss-Zelle Wasser?
-        // T = Stream-Map trägt (Track-Maske >= 0.5), V = nur das Abfluss-Vertrauen
-        // (Track-Maske < 0.1, Vertrauen > 0.3), W = Rest (Verbreiterung, Kette, Blur).
         let creek = t.cfg.renderMinCells
         var causeT = 0, causeV = 0, causeW = 0
         var mfdOnly = 0
@@ -194,8 +167,6 @@ final class RectWaterTests: XCTestCase {
             if t.area[k] / (cell * cell) < creek { mfdOnly += 1 }
         }
         print("Raster-Fluss sichtbar: \(causeT + causeV + causeW) Zellen: Stream-Map \(causeT), nur Vertrauen \(causeV), Rest \(causeW); davon D8-Abfluss < renderMinCells: \(mfdOnly)")
-        // Kastenmaß: kleinstes umschließendes Rechteck über alle Drehwinkel (5°-Raster).
-        // Füllgrad = Fläche / Rechteckfläche, Streckung = lange / kurze Seite.
         func box(_ c: Comp) -> (fill: Double, elong: Double, len: Double, wid: Double) {
             var best = (area: Double.infinity, len: 0.0, wid: 0.0)
             for a in stride(from: 0.0, to: 90.0, by: 5.0) {
@@ -211,10 +182,7 @@ final class RectWaterTests: XCTestCase {
             }
             return (Double(c.cells.count) / best.area, best.len / max(best.wid, 1), best.len, best.wid)
         }
-        // Streifenmaß: für lange, schmale Komponenten die Schlängelung (Standardabweichung
-        // der Querlage der Mittellinie) und die Breitenschwankung entlang der Hauptachse.
         func strip(_ c: Comp) -> (len: Double, width: Double, wander: Double, widthCV: Double)? {
-            // Hauptachse über die Kovarianz der Zellpositionen.
             let m = Double(c.cells.count)
             var mx = 0.0, my = 0.0
             for k in c.cells { mx += Double(k % n); my += Double(k / n) }
@@ -292,7 +260,6 @@ final class RectWaterTests: XCTestCase {
             }
         }
         print("Kästen (Füllgrad >= 0,75, Streckung >= 2): \(boxLike) Komponenten, \(boxCells) Zellen")
-        // Gesamtbild: wie viel Rasterwasser trägt lange gerade Kanten?
         var longTotal = 0, cellsTotal = 0
         for c in big { cellsTotal += c.cells.count }
         let longComps = ranked.filter { $0.2 >= 0.5 }
@@ -301,8 +268,6 @@ final class RectWaterTests: XCTestCase {
         return cls
     }
 
-    /// Vergleicht die sichtbare Raster-Fläche beider Arme: was nur der alte Arm malt
-    /// (verloren) und was nur der neue (gewonnen), samt der größten Verlust-Flecken.
     private func compare(_ t: Terrain, alt: [UInt8], neu: [UInt8], cover: [Double]) {
         let n = t.cfg.n, cnt = n * n
         var lost = 0, gained = 0, both = 0, gone = 0, goneAtBand = 0
@@ -314,8 +279,6 @@ final class RectWaterTests: XCTestCase {
             return false
         }
         var mark = [Bool](repeating: false, count: cnt)
-        // „Wirklich verloren": kein sichtbares Wasser des anderen Arms in 3 Zellen Umkreis
-        // (die Verbreiterung verschiebt Ränder um ein, zwei Zellen, das ist kein Verlust).
         func near(_ other: [UInt8], _ k: Int, _ r: Int) -> Bool {
             let i = k % n, j = k / n
             for dj in max(0, j - r)...min(n - 1, j + r) {

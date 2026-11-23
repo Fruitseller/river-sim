@@ -1,0 +1,20 @@
+# Heiße Pässe auf Roh-Puffern, unveränderliche Anteile vorab und parallel
+
+Mehrere Pässe von `step()` adressierten ihre Felder je Zugriff über die Klassen-Property; jeder Zugriff zahlt dort Bounds-, COW- und Exklusivitäts-Prüfung (`swift_beginAccess`/`AccessSet::insert`). Die Pässe öffnen ihre Felder deshalb einmal als Roh-Puffer (`withUnsafe…BufferPointer`, Bett über `withBed`) und rechnen darauf, bei unveränderten Werten, Reihenfolgen und Vergleichen. Jede dieser Umstellungen ist bit-identisch zur Property-Fassung; nachweisen lässt sich das mit `simperf --hash`, und die Regel aus AGENTS.md (keine Perf-Änderung ohne Vorher/Nachher) gilt weiter.
+
+Zweiter Baustein: was sich WÄHREND eines Passes nicht ändert, wird vorab und parallel gerechnet, die serielle Schleife liest es nur nach. Erlaubt ist das nur für Größen, deren Operanden der Pass nicht schreibt, und für reine `continue`-Filter, deren Ergebnis von der Prüfreihenfolge unabhängig ist. Alles, was frisches `h` liest, bleibt im seriellen Loop.
+
+## Messwerte und Einzelfälle (Issue #43 und Folgerunden)
+
+- `outletIncision`: `pow(A, m)` je Zelle war mit ~16 ms/Schritt der größte Einzelposten (mit einer Multiplikation statt `pow` fiel der Pass von 41 auf 25 ms). `area` ändert sich im Pass nicht, nur `h`/`sed`/`rock`; deshalb Potenz, Gate und Vegetationsfaktor vorab parallel (`areaPow`, `incisionGate`, `incisionKErode`), dieselben libm-Aufrufe mit denselben Argumenten, also bit-identisch. Inaktive Zellen (Meer, See) bekommen keine Potenz.
+- `outletIncision`, Diagonale: über die Index-Differenz statt zwei i/j-Paare spart zwei Integer-Divisionen je Zelle (692k Zellen/Schritt, gemessen der größte Posten). Invariante: der Empfänger ist immer einer der 8 Nachbarn (`computeReceiversAndArea` vergibt nur Nachbarn, der Rückfall `floodParent` ist ebenfalls ein Nachbar). Für 8-Nachbarn gilt |k − r| ∈ {1, n−1, n, n+1}, genau n±1 sind diagonal. Ergebnis-identisch zu `i != ri && j != rj`. Wer Empfänger außerhalb der Nachbarschaft zulässt, bricht diese Rechnung.
+- `channelCarve` (Perf-Runde 7): `area` und `inBelt` sind die einzigen Gates mit im Pass unveränderlichen Operanden und scheiden fast alle Zellen aus; der Vorfilter (`carveStatus`) läuft vorab parallel. Meer, See-Rand und Gürtel-Flachheit lesen frisches `h` (die Ufer-Erosion schreibt fremde Zellen) und bleiben seriell.
+- `wavePass`: verschiebt Material zum Nachbarn, ist nicht per-Zelle unabhängig und bleibt seriell; läuft aber bei großem dt vielfach (ein Teilschritt je 100 Jahre). Roh-Puffer: 5,7 → 1,6 ms.
+- `applyUplift`: rein per-Zelle, zeilenweise parallel. Als Property-Schleife 27 ms/Schritt (7 %), fast alles Exclusivity-Enforcement auf `h`/`rock`/`upliftBase`.
+- `fillShallowPonds`: der Suchlauf tastet alle 692k Zellen ab; rund ein Drittel des Passes steckte in der Swift-Laufzeit. Der BFS-Schritt ist als lokales `push` ausgeschrieben.
+- `migrateMeander`: `h`, `area`, `veg`, `vegClass` ändern sich in der Migration nicht; 28k Knoten × 25 Streifenzellen ≈ 700k Zugriffe je Schritt. `Terrain.bilinear` und `riparianVeg` nehmen deshalb Roh-Zeiger, eine Formel für Höhe und Einzugsgebiet.
+- `fillOxbows`: das Literal `[k-1, k+1, k-n, k+n]` war eine Array-Allokation je Altarm-Knoten (der Pass steckte zu zwei Dritteln in der Laufzeit); ausgeschriebene `max`-Kette in derselben Reihenfolge, bit-identisch.
+- `beltStampChannel`: `Terrain.cellIndex` statt `Int(coord.rounded())`. `rounded()` ruft über die PLT glibc `round` (~20 Zyklen plus Stack-Spills je Achse); `cellIndex` (kaufmännische Rundung `gridRound` mit exakter Behandlung von `0.5.nextDown`) inlinet in Registern und ist für alle Double bit-identisch.
+- `coupleBeltToDrainage`: `segOwner`/`segPos` über Roh-Zeiger schreiben und zurücksetzen statt je Abschnittszelle `swift_beginAccess`.
+
+Betrifft: `Terrain.outletIncision`, `Terrain.channelCarve`, `Terrain.wavePass`, `Terrain.applyUplift`, `Terrain.fillShallowPonds`, `Terrain.migrateMeander`, `Terrain.bilinear`, `Terrain.riparianVeg`, `Terrain.fillOxbows`, `Terrain.beltStampChannel`, `Terrain.cellIndex`, `Terrain.coupleBeltToDrainage`, `docs/perf-measurements.md`

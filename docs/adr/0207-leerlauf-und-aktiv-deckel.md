@@ -1,0 +1,11 @@
+# Renderloop im Leerlauf aus, Bildraten-Deckel im Betrieb
+
+Leerlauf: Auch pausiert und ohne Eingabe zeichnete Godot die Szene weiter (Wasser-Schimmer, Schatten, Retina-Viewport). Nach `IDLE_FPS_DELAY_MSEC` (3 s) ohne Aktivität wird der Renderloop ganz abgeschaltet; Spiellogik und Eingaben laufen laut Godot-Vertrag weiter. Ohne Bild gibt es auch keine Shader-, Kamera- oder Raycast-Aktualisierungen. Der FPS-Deckel `IDLE_FPS_CAP` bleibt als Rückfall und für die letzten aktiven Frames vor der Frist.
+
+Was als Aktivität zählt: Zeitraffer, Sprung, Sculpting, ein noch nicht abgeholter Hintergrund-Schritt und eine autonome Aufnahme (`RS_SHOT`). Ohne Letzteres schaltete der Leerlauf den Renderloop vor dem Aufnahme-Frame ab, Bild-Pässe wie die Baum-Platzierung (`ForestTrees`) liefen nie, und Aufnahmen zeigten das Kronendach statt Bäume.
+
+Aufwecken: `_input` weckt den Renderer, nicht erst `_unhandled_input`; sonst käme etwa ein Klick auf „10 J/s“ nie an, solange das letzte Pausebild eingefroren ist. Fensterleisten-Aktionen (Maximieren, Wiederherstellen, Resize am Rand) erzeugen kein InputEvent; ohne eigenen Weckruf bliebe das Pausebild skaliert im neuen Fenster stehen, ausgerechnet beim Maximieren fürs Messprozedere. Größen- und Fokuswechsel (`NOTIFICATION_WM_SIZE_CHANGED`, `NOTIFICATION_WM_WINDOW_FOCUS_IN`) wecken deshalb selbst.
+
+Aktiv-Deckel 60: Auch während Zeitraffer und Sculpting ist die Bildrate nicht die Rate, mit der sich etwas ändert. Ein Sim-Tick kommt alle 0,25 s, die Wasser-Blend gleitet über ~2 s; dazwischen unterscheiden sich die Bilder nur im Schimmer. Ungedeckelt zeichnete Godot mit voller Display-Rate, auf einem 120-Hz-Panel ~30 Bilder je Tick, von denen 29 praktisch dasselbe zeigen: reine Lüfterlast. 60 liegt bewusst über der gemessenen Zeitraffer-Rate bei `RS_QUALITY=quality` (38,8–48,1 FPS), dort deckelt der Wert nichts, die Sim ist das Limit. Er greift in `balanced`/`performance`, beim Kamerafahren und in den ersten 3 s einer Pause. `RS_FPS` misst die Rate, die der Renderer hergibt, und hebt den Deckel deshalb auf; sonst mäße es die Zahl, die der Deckel setzt.
+
+Betrifft: `Main.IDLE_FPS_CAP`, `Main.IDLE_FPS_DELAY_MSEC`, `Main.ACTIVE_FPS_CAP`, `Main.active_fps_cap`, `Main._process`, `Main._input`, `Main._notification`, `Main._wake_render_loop`

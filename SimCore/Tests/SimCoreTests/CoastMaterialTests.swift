@@ -3,13 +3,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für Strand und Felsküste (Issue #174, Paket C): `CoastMaterial`
-/// und seine Gewichte im `TerrainColorRenderer` (Sand im A-Kanal der
-/// Makrofarbe, Fels im G-Kanal der Materialgewichte).
 final class CoastMaterialTests: XCTestCase {
 
-    /// Das Ende einer Sandbank breitet sich radial aus. Eine quadratische
-    /// Distanz gab der diagonalen Probe denselben Sand wie der Achsenprobe.
     func testSandbankEndHasARoundBeachContour() {
         var cfg = SimConfig(); cfg.n = 32
         let t = Terrain(allocating: cfg, seed: 1)
@@ -41,8 +36,6 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertEqual(thin[center], 0.4, "Schwaches Strandpotenzial bleibt schwach")
     }
 
-    /// Kleine Welt: Spalten `i < shore` flaches Meer, rechts davon Land mit der Höhe
-    /// `land(i)`.
     func testThickDeltaSedimentDoesNotTurnIntoACoastalRockCliff() {
         let sea = SimConfig().sea
         let t = coastWorld(n: 48, shore: 24) { _ in sea + 0.0015 }
@@ -66,8 +59,6 @@ final class CoastMaterialTests: XCTestCase {
         var state = terrain.state
         for j in 0..<n {
             for i in 0..<n {
-                // Flacher Schelf: ein tiefer Absturz an der Wasserlinie läse
-                // die Makro-Steigung (±2 Zellen) schon als Steilküste.
                 state.h[j * n + i] = i < shore ? config.sea - 0.002 : land(i)
             }
         }
@@ -76,14 +67,8 @@ final class CoastMaterialTests: XCTestCase {
         return terrain
     }
 
-    /// Befund #174 (Seed 42, Südküste): eine flache Uferterrasse vor einem
-    /// Berg wurde über das Rückland-Relief zur Felsküste — dunkles Geröll auf
-    /// ebenem Boden. Fels gehört an die Kliffwand, nicht auf die Terrasse;
-    /// ein Kliff direkt an der Wasserlinie bleibt Fels.
     func testFlatTerraceBelowAMountainIsNoRockCoast() {
         let sea = SimConfig().sea
-        // Terrasse 6 Zellen breit auf sea + 0,002 (Gefälle 0,0003 je Zelle),
-        // dahinter ein Hang mit 0,04 je Zelle.
         let terrace = coastWorld(n: 48, shore: 12) { i in
             i < 18 ? sea + 0.002 + 0.0003 * Double(i - 12) : sea + 0.004 + 0.04 * Double(i - 18)
         }
@@ -110,7 +95,6 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertLessThanOrEqual(WaterRender.beachSlopeHi, WaterRender.cliffCoastSlopeLo,
                                  "eine Küstenzelle ist Strand ODER Fels")
         XCTAssertGreaterThanOrEqual(WaterRender.coastReachCells, 1)
-        // Der Zusammenhang je Küstenpunkt (§E).
         XCTAssertLessThan(WaterRender.beachReliefLo, WaterRender.beachReliefHi)
         XCTAssertLessThan(WaterRender.cliffRiseLo, WaterRender.cliffRiseHi)
         XCTAssertLessThan(WaterRender.cliffFaceSlopeLo, WaterRender.cliffFaceSlopeHi)
@@ -129,8 +113,6 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertLessThan(WaterRender.beachMaxWidthCells, Double(CoastMaterial.distanceCap),
                           "der Abstandsdeckel reicht für den breitesten Strand")
         XCTAssertGreaterThanOrEqual(CoastMaterial.distanceCap, WaterRender.coastReachCells + 1)
-        // Das Rauschen allein darf einen geschützten Strand nicht löschen und
-        // eine offene Küste ohne Zufuhr nicht zum vollen Strand heben.
         let sheltered = (0...10).map { CoastMaterial.beach(relief: 0.01, rise: 0.005, openness: 0.38, supply: 0,
                                                            noise: Double($0) / 10).width }
         XCTAssertGreaterThan(sheltered.min() ?? 0, 0.5 * WaterRender.beachMaxWidthCells,
@@ -139,8 +121,6 @@ final class CoastMaterialTests: XCTestCase {
                                                          noise: Double($0) / 10).width }
         XCTAssertLessThan(exposed.max() ?? 0, 0.5 * WaterRender.beachMaxWidthCells,
                           "offene Küstenebene wird auch bei bestem Rauschen kein breiter Strand")
-        // Die Mip-Kette der Fahnen-Textur ist bei n = 720 (2^4 · 45) nur bis
-        // Stufe 4 gleichmäßig; der Shader liest nur eine niedrige Stufe.
         XCTAssertLessThanOrEqual(WaterRender.oceanPlumeLod, 4)
     }
 
@@ -160,15 +140,11 @@ final class CoastMaterialTests: XCTestCase {
         let terrain = coastWorld { _ in sea + 0.004 }
         let buffers = TerrainColorRenderer.buffers(terrain)
         let n = terrain.cfg.n, j = 16
-        // Geschützte Küstenebene: mindestens die ersten beiden Zellen sind Strand
-        // (die Breite schwankt mit dem Rauschen, ihr Minimum liegt über 2,5 Zellen).
         for i in 8...9 {
             let k = j * n + i
             XCTAssertGreaterThanOrEqual(buffers.colors[k * 4 + 3], 128, "Strand an Spalte \(i)")
             XCTAssertLessThan(buffers.surfaces[k * 4], 128, "kein Bewuchs auf dem Strand")
         }
-        // Die weiche Sandkante (`TerrainColorRenderer.softenSand`, 3×3) läuft
-        // eine Zelle über den breitesten Strand hinaus aus.
         let inland = j * n + 8 + WaterRender.coastReachCells + 3
         XCTAssertEqual(buffers.colors[inland * 4 + 3], 0, "Strand nur in Reichweite der Brandung")
         for k in 0..<(n * n) where terrain.h[k] <= sea {
@@ -176,9 +152,6 @@ final class CoastMaterialTests: XCTestCase {
         }
     }
 
-    /// Delta-Insel (Issue #174, Punkt 26): eine flache Mündungsbarre vor einer
-    /// Steilküste ist Sand, obwohl sie offen im Meer liegt; die Steilküste
-    /// daneben bleibt Fels ohne Sand.
     func testDeltaIslandIsSandEvenOnAnOpenCoast() {
         let sea = SimConfig().sea
         let terrain = coastWorld(n: 48, shore: 24) { i in sea + 0.02 * Double(i - 23) }
@@ -201,7 +174,6 @@ final class CoastMaterialTests: XCTestCase {
 
     func testSteepCoastStaysRockWithoutSand() {
         let sea = SimConfig().sea
-        // 0,02 je Zelle: macroSlope = 4 · 0,02 · 0,125 = 0,01 — steil für diese Küste.
         let terrain = coastWorld { i in sea + 0.02 * Double(i - 7) }
         let buffers = TerrainColorRenderer.buffers(terrain)
         let n = terrain.cfg.n
@@ -213,17 +185,14 @@ final class CoastMaterialTests: XCTestCase {
                           "derselbe Hang ohne Brandung bleibt beim allgemeinen Klippen-Gewicht")
     }
 
-    /// Review zu #174 C: die Felsküste füllte den Rest `1 − Vegetation − Halde −
-    /// Rohboden` und ließ dabei die Kälte aus. Unter teilweiser Schneedeckung
-    /// summierten sich die Gewichte über 1 (Shader: Gewichtssumme).
     func testCliffCoastUnderPartialSnowKeepsWeightsWithinOne() {
         let sea = SimConfig().sea
         let terrain = coastWorld { i in sea + 0.02 * Double(i - 7) }
         let n = terrain.cfg.n
         var state = terrain.state
         state.veg = [Double](repeating: 1, count: n * n)
-        state.rain = [Double](repeating: 1, count: n * n)   // ohne Regen wächst hier nichts
-        state.snow = [Double](repeating: terrain.cfg.snowCoverRef, count: n * n)   // Deckung 0,5
+        state.rain = [Double](repeating: 1, count: n * n)
+        state.snow = [Double](repeating: terrain.cfg.snowCoverRef, count: n * n)
         terrain.restore(state)
         let buffers = TerrainColorRenderer.buffers(terrain)
         var worst = 0.0, checked = 0
@@ -231,7 +200,7 @@ final class CoastMaterialTests: XCTestCase {
             let k = 16 * n + i
             let cold = Double(buffers.surfaces[k * 4 + 2]) / 255
             let rock = Double(buffers.surfaces[k * 4 + 1]) / 255
-            guard cold > 0.3, rock > 0 else { continue }   // Aufbau: Küstenfels UNTER Schnee
+            guard cold > 0.3, rock > 0 else { continue }
             checked += 1
             let sum = Double(buffers.surfaces[k * 4]) / 255 + rock + cold
                 + Double(buffers.covers[k * 4]) / 255 + Double(buffers.covers[k * 4 + 2]) / 255
@@ -241,12 +210,6 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertLessThanOrEqual(worst, 1 + 5.0 / 255, "Gewichte der Felsküste unter Schnee über 1")
     }
 
-    // MARK: - Küstenzusammenhang (Befund §E)
-
-    /// Rundinsel mit buchtiger Küste (`r(θ) = radius + bump · sin(lobes · θ)`)
-    /// und linearem Hang `slope(θ)` je Zelle landeinwärts, flachem Schelf davor.
-    /// Gemessen wird nur über Höhe und Gitter; die Zellgröße spielt für die
-    /// Küstenableitung keine Rolle.
     private func island(n: Int = 160, radius: Double = 55, bump: Double = 10, lobes: Double = 5,
                         slope: (Double) -> Double, mouths: [(theta: Double, discharge: Double)] = []) -> Terrain {
         let config = renderConfig(n: n)
@@ -266,7 +229,6 @@ final class CoastMaterialTests: XCTestCase {
             }
         }
         for m in mouths {
-            // Ein Lauf von innen zur Küste, die Mündungszelle ist die letzte Landzelle.
             let r = radius + bump * sin(lobes * m.theta)
             var previous = -1
             for step in stride(from: 20.0, through: 0.0, by: -1) {
@@ -277,7 +239,6 @@ final class CoastMaterialTests: XCTestCase {
                 state.area[k] = m.discharge * cellArea * (1 - step / 25)
                 previous = k
             }
-            // Empfänger der letzten Landzelle: die nächste Meereszelle nach außen.
             if previous >= 0 {
                 let i = Int((c + (r + 1.5) * cos(m.theta)).rounded()), j = Int((c + (r + 1.5) * sin(m.theta)).rounded())
                 state.receiver[previous] = Int32(j * n + i)
@@ -288,8 +249,6 @@ final class CoastMaterialTests: XCTestCase {
         return terrain
     }
 
-    /// Anteil der Küstenlinie (Abstand 1) mit Sand ≥ 0,5 sowie Fels ≥ 0,5,
-    /// ausgewählt über `include(θ)`.
     private func coastShares(_ terrain: Terrain, theta include: (Double) -> Bool) -> (sand: Double, rock: Double, cells: Int) {
         let n = terrain.cfg.n, c = Double(n) / 2
         let buffers = TerrainColorRenderer.buffers(terrain)
@@ -305,11 +264,7 @@ final class CoastMaterialTests: XCTestCase {
         return (Double(sand) / Double(max(cells, 1)), Double(rock) / Double(max(cells, 1)), cells)
     }
 
-    /// Steiles Rückland: kein Strand, Fels bis ans Wasser. Flache Ebene
-    /// derselben Insel (gegenüber): Strand. Das war der Befund — vorher trug
-    /// BEIDE Küste denselben Sandring.
     func testSteepFlankMeetsTheSeaWithRockAndPlainCarriesBeach() {
-        // Westhälfte (|θ| > π/2) steil, Osthälfte flach.
         let terrain = island(bump: 0, slope: { abs($0) > .pi / 2 ? 0.012 : 0.0012 })
         let steep = coastShares(terrain) { abs($0) > .pi / 2 + 0.3 }
         let plain = coastShares(terrain) { abs($0) < .pi / 2 - 0.3 }
@@ -321,8 +276,6 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertLessThan(plain.rock, 0.05)
     }
 
-    /// Strände liegen in Buchten, nicht auf Landzungen: dieselbe flache Insel mit
-    /// Buchten und Landzungen, Sand sitzt in den Buchten.
     func testBeachesSitInBaysNotOnHeadlands() {
         let terrain = island(bump: 14, lobes: 6, slope: { _ in 0.0012 })
         let n = terrain.cfg.n, c = Double(n) / 2
@@ -331,7 +284,6 @@ final class CoastMaterialTests: XCTestCase {
         var bay: [Float] = [], head: [Float] = []
         for k in 0..<(n * n) where dist[k] == 1 {
             let theta = atan2(Double(k / n) - c, Double(k % n) - c)
-            // r(θ) = radius + bump · sin(6θ): Täler (Landeinbuchtung) bei sin = −1.
             let s = sin(6 * theta)
             if s < -0.8 { bay.append(shore.beachWidth[k]) }
             if s > 0.8 { head.append(shore.beachWidth[k]) }
@@ -341,8 +293,6 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertGreaterThan(bayMean, headMean + 0.5, "Buchten tragen breiteren Strand als Landzungen")
     }
 
-    /// Strand ist unterbrochen und wechselt die Breite: ein Ring in EINEM Stück
-    /// und gleicher Breite war der Befund.
     func testBeachWidthVariesAndTheBeachIsInterrupted() {
         let terrain = island(bump: 14, lobes: 6, slope: { _ in 0.0012 })
         let n = terrain.cfg.n
@@ -358,12 +308,8 @@ final class CoastMaterialTests: XCTestCase {
                                     "mehrere getrennte Strandabschnitte")
     }
 
-    /// Flussmündungen liefern Sand: an einer sonst steilen Küste liegt nur bei
-    /// der Mündung Strand, hinter `beachSupplyReachCells` keiner.
     func testRiverMouthDeliversSandOnASteepCoast() {
         let mouthTheta = 0.5
-        // 0,0045 je Zelle: Rückland-Relief um 0,05 — an dieser Küste liegt von
-        // sich aus kein Strand (`beachReliefHi`).
         let terrain = island(bump: 0, slope: { _ in 0.0045 },
                              mouths: [(theta: mouthTheta, discharge: 5000)])
         let n = terrain.cfg.n, c = Double(n) / 2
@@ -381,8 +327,6 @@ final class CoastMaterialTests: XCTestCase {
         XCTAssertEqual(far.max() ?? 0, 0, "kein Strand an der steilen Küste fern der Mündung")
     }
 
-    /// Die Funktion hinter der Küstenableitung ist monoton: flacheres Rückland,
-    /// geschütztere Lage und mehr Zufuhr geben nie weniger Strand.
     func testBeachModelIsMonotone() {
         func width(_ relief: Double, _ openness: Double, _ supply: Double, _ noise: Double = 0.5) -> Double {
             CoastMaterial.beach(relief: relief, rise: relief, openness: openness, supply: supply, noise: noise).width
@@ -402,8 +346,6 @@ final class CoastMaterialTests: XCTestCase {
             let w = width(0.035, 0.5, q)
             XCTAssertGreaterThanOrEqual(w, previous - 1e-12, "Zufuhr \(q)"); previous = w
         }
-        // Rauschen unterbricht nur, was nicht eindeutig ist: Küstenebene in
-        // geschützter Lage behält ihren Strand, steiles Rückland bekommt keinen.
         XCTAssertGreaterThan(width(0.01, 0.38, 0, 0), 0.5 * WaterRender.beachMaxWidthCells)
         XCTAssertEqual(width(0.09, 0.45, 0, 1), 0)
         let c = CoastMaterial.beach(relief: 0.09, rise: 0.04, openness: 0.5, supply: 0, noise: 0.5)
@@ -418,10 +360,6 @@ final class CoastMaterialTests: XCTestCase {
         let a = TerrainColorRenderer.buffers(terrain), b = TerrainColorRenderer.buffers(terrain)
         XCTAssertEqual(a.colors, b.colors)
         XCTAssertEqual(a.surfaces, b.surfaces)
-        // Nicht leer: irgendein Sand genügt. Auf dem groben Testgitter (Zelle
-        // 1,37 statt 0,156 Welteinheiten) bleiben die weichen Strandsäume (#174)
-        // meist unter halber Stärke: gemessen Mac max. 143 (4 Zellen
-        // über 128), Linux max. 73 (keine), Zellen mit Sand 70 bzw. 37.
         XCTAssertTrue(stride(from: 3, to: a.colors.count, by: 4).contains { a.colors[$0] > 0 },
                       "gealterte Welt ohne einen einzigen Strand")
     }

@@ -1,35 +1,16 @@
 #!/usr/bin/env bash
-# Feste Aufnahmen für den visuellen Hill-Climber (Referenzen:
-# docs/references/zielbild/README.md § Aufgehübschte Spielbilder).
-#
-#   scripts/look/shots.sh <ausgabe-ordner> [game-ordner]
-#
-# Rendert je Kamera ein PNG (maximiert, ohne UI) und ein JPG mit 2048 px
-# Breite für den Bewerter. Seed 1337, Jahr 20.000 wie die Referenzen.
-# Der optionale game-Ordner erlaubt A/B gegen eine Kopie des alten Stands
-# (cp -R game /tmp/alt/game, mit bin/ und .godot/).
 set -euo pipefail
 out=${1:?Ausgabe-Ordner fehlt}
 root=$(cd "$(dirname "$0")/../.." && pwd)
 game=${2:-$root/game}
 godot=${GODOT:-$root/.tools/godot-macos/Godot.app/Contents/MacOS/Godot}
 mkdir -p "$out"
-# Schläft der Bildschirm, drosselt macOS das Fenster: eine Aufnahme dauerte
-# gemessen 16 min statt 20 s. Also wecken und für die Dauer wach halten.
 wach=()
 if command -v caffeinate >/dev/null; then caffeinate -u -t 3; wach=(caffeinate -d); fi
 
-# `RS_LOOK_BACKGROUND=1` startet Godot unter macOS über `open -g`, damit das
-# Fenster nicht dauerhaft vorn liegt (dazu Godot im Dock einem eigenen
-# Desktop zuweisen). Noch kein Standard, gemessen 2026-11-20: Godot holt sich
-# beim Start trotzdem kurz den Fokus (6 von 40 Stichproben über drei
-# Aufnahmen), und `nah` kommt um wenige Pixel verschoben heraus (PSNR 18
-# gegen den Direktstart, dessen Wiederholung 38 erreicht; Ursache offen).
-# A und B eines Vergleichs deshalb immer auf DEMSELBEN Weg aufnehmen.
 hintergrund=0; app=${godot%/Contents/MacOS/*}
 if [[ -n ${RS_LOOK_BACKGROUND:-} && $app == *.app ]] && command -v open >/dev/null; then hintergrund=1; fi
 
-# name | Referenz | Umgebung der Kamera
 shots=(
   "diorama|d-insel-diorama-schoen.jpg|RS_CAMERA=diorama"
   "tal|e-tal-kueste-schoen.jpg|RS_CAMERA=valley"
@@ -37,8 +18,6 @@ shots=(
 )
 for s in "${shots[@]}"; do
   IFS='|' read -r name _ cam <<<"$s"
-  # Altes Bild weg: sonst speist ein fehlgeschlagener Lauf in einem
-  # wiederverwendeten Ordner still die Aufnahme vom letzten Mal ein.
   rm -f "$out/$name.png" "$out/$name.jpg"
   if (( hintergrund )); then
     envs=()

@@ -1,157 +1,48 @@
 import Foundation
 
-/// Höhengrenzen für Vegetation, Hochfels und Schnee — abgeleitet aus **Quantilen
-/// der aktuellen Landhöhen** statt aus absoluten Höhenwerten (Issue #4). Die
-/// Grenzen selbst sind Perzentile; nur die Breite der Vegetations-Rampe ist eine
-/// Quantil-SPANNE (s. `vegNone`).
-///
-/// **Warum relativ.** Absolute Schwellen altern mit jeder Neukalibrierung aus dem
-/// erreichbaren Höhenband heraus. Gemessen (n=832, Seed 1337, Produktions-Defaults,
-/// `docs/height-band-measurements.md`): die Landhöhen enden bei maxH 0.7457 (Jahr 0)
-/// bzw. 0.6372 (30k Jahre) — die alte Schnee-Schwelle 1.05 lag also IMMER über dem
-/// höchsten Punkt der Insel (0 Zellen, zu jedem Zeitpunkt), die Graurampe ab 0.58
-/// traf 1.1 % → 0.6 % des Landes. Perzentile können das nicht passieren: die Zone
-/// ist als FLÄCHENANTEIL definiert, nicht als Höhe. Sie zieht mit der abklingenden
-/// Hebung (Issue #13) mit, ohne dass jemand die Farben nachziehen muss.
-///
-/// **Warum das die Gipfelzone auch nach oben begrenzt.** Der Anteil über
-/// `snowStart` ist per Konstruktion `1 − bandSnowPercentile` — flacht das Terrain
-/// ab, wird der Schnee nicht großflächig (kein „halbe Insel weiß"), er wandert nur
-/// auf die dann höchsten Grate. (Für den Schnee gilt das seit Issue #33 nicht
-/// mehr — s. den nächsten Absatz.)
-///
-/// **Ausnahme SCHNEE seit Issue #33.** `snowStart`/`snowFull` sind die einzigen
-/// Bänder, die NICHT mehr aus einem konfigurierten Perzentil kommen: sie werden
-/// aus dem Schneefeld (`Terrain.snow`, Massenbilanz aus Temperatur und
-/// Niederschlag) zurückgerechnet. Der Flächenanteil ist damit GEMESSEN statt
-/// gesetzt und folgt dem Klima — flacht die Insel unter die 0-°C-Isotherme ab,
-/// verschwindet die Schneezone, statt auf die dann höchsten Grate zu wandern.
-/// `bandSnowPercentile`/`bandSnowFullPercentile` sind der Rückfall für
-/// `climateEnabled = false`. Wächter:
-/// `HeightBandTests.testSnowZoneFollowsTheClimateNotAFixedLandFraction`.
-///
-/// **Eine Quelle für Sim und Färbung.** `updateVegetation` (SimCore) und die
-/// Biom-Färbung (`SimRender.TerrainColorRenderer`, bis Issue #80 in der Brücke)
-/// hielten bis Issue #4 zwei Kopien derselben Höhen-/Hang-/Feuchte-Logik mit
-/// auseinanderlaufenden Konstanten (Höhenabfall ab 0.5 bzw. 0.6, Regenfaktor
-/// 1.3 bzw. 1.2). Beide lesen jetzt `Terrain.heightBands` und
-/// `Terrain.vegetationSuitability`.
-/// `Codable`: die Bänder reisen im Spielstand mit (Issue #8) — nach dem Laden
-/// muss die Färbung sofort stimmen, ohne auf den nächsten Sim-Schritt zu warten.
 public struct HeightBands: Equatable, Sendable, Codable {
-    /// Bis hier ist die Höhe für Bewuchs voll geeignet (Perzentil `bandVegFullPercentile`).
     public var vegFull: Double
-    /// BREITE der Vegetations-Rampe, `bandVegRampSpanFactor · (p95 − p50)` —
-    /// Begründung siehe `SimConfig.bandVegRampSpanFactor`: die obere
-    /// Vegetationsgrenze lag früher bei 0.68 und damit über dem 99.99-Perzentil;
-    /// ein Perzentil, das diese Rampenbreite trifft, hinge an den obersten paar
-    /// Zellen. Die robuste Relief-Spanne (dasselbe Quantilpaar wie
-    /// `Terrain.landReliefRobust`) ist die natürliche Skala dafür und kommt aus
-    /// zehntausenden Zellen.
-    ///
-    /// Gespeichert wird die BREITE, nicht die obere Grenze: `vegetationAltitudeFactor`
-    /// teilt durch sie, und eine als Differenz gerechnete Breite ist in Double
-    /// nicht dasselbe wie der Literalwert (`0.68 − 0.5 == 0.18000000000000005`).
-    /// Genau diese eine ulp reichte, um `EndorheicEvaporation`-Wächter zu kippen
-    /// (Beckenrollen wechseln diskret, s. deren Doku) — mit der Breite als Wert
-    /// reproduziert `legacyAbsolute` die Vor-#4-Arithmetik exakt.
     public var vegRamp: Double
-    /// Ab hier wächst nichts mehr (Höhenwüste) — abgeleitet aus `vegFull + vegRamp`.
     public var vegNone: Double { vegFull + vegRamp }
-    /// Beginn der Hochlagen-Graurampe (neutral-grauer Fels).
     public var rockStart: Double
-    /// Ab hier ist der Fels voll ausgegraut.
     public var rockFull: Double
-    /// Beginn des Schnees. Seit Issue #33 **aus dem Schneefeld zurückgerechnet**
-    /// (gemessener beschneiter Landanteil → Höhenquantil), nicht mehr aus
-    /// `bandSnowPercentile` — s. `fromLandHeights(_:cfg:snowFractions:)`. Ohne
-    /// Klima bleibt es das Perzentil.
     public var snowStart: Double
-    /// Ab hier voll weiß (dieselbe Quelle wie `snowStart`).
     public var snowFull: Double
-    /// Höhenband, über das die Baum-Variante von Laub nach Nadel dreht.
     public var coniferLow: Double
     public var coniferHigh: Double
 
-    /// Die historischen ABSOLUTEN Schwellen von vor Issue #4. Zwei Rollen:
-    ///
-    /// 1. Rückfall ohne auswertbare Landverteilung (< 20 Landzellen — frisch
-    ///    geflutete Welt, synthetische Testfelder): eine wohldefinierte Antwort
-    ///    auf „es gibt kein Land zu befragen".
-    /// 2. Pin für Wächter, die an EINEM konkreten Becken/Lauf hängen
-    ///    (`SimConfig.heightBandsOverride`) — dort muss die Vegetation exakt wie
-    ///    vor #4 rechnen, deshalb sind die Werte Literale und die Rampenbreite
-    ///    ist als Wert (0.18) hinterlegt statt als Differenz (s. `vegRamp`).
     public static let legacyAbsolute = HeightBands(
         vegFull: 0.50, vegRamp: 0.18,
         rockStart: 0.58, rockFull: 0.98,
         snowStart: 1.05, snowFull: 1.13,
         coniferLow: 0.26, coniferHigh: 0.48)
 
-    /// Höhen-Eignung für Bewuchs: 1 unterhalb `vegFull`, linear auf 0 bei `vegNone`.
-    /// (Vor Issue #4: `v < 0.5 ? 1 : max(0, 1 − (v − 0.5)/0.18)` im Sim-Kern und
-    /// dieselbe Formel mit 0.6 in der Färbung.) Das bestehende `max(0, …)` faltet
-    /// NaN bereits zu 0; die obere Klemme `min(1, …)` ist rein defensiv (der
-    /// else-Zweig kann den Wert per Konstruktion nicht über 1 treiben).
     @inline(__always) public func vegetationAltitudeFactor(_ v: Double) -> Double {
         v < vegFull ? 1 : min(1, max(0, 1 - (v - vegFull) / max(1e-6, vegRamp)))
     }
 
-    /// Anteil Hochlagen-Grau (0 … 1). Konstante zuerst (`min(1, max(0, …))`),
-    /// damit ungültige Höhenwerte (NaN) sicher zu 0 gefaltet werden, statt über
-    /// `min(1, NaN)` fälschlich 1.0 (voller Fels) zu liefern.
     @inline(__always) public func rockAmount(_ v: Double) -> Double {
         min(1, max(0, (v - rockStart) / max(1e-6, rockFull - rockStart)))
     }
 
-    /// Anteil Schnee (0 … 1). Konstante zuerst (`min(1, max(0, …))`),
-    /// damit ungültige Höhenwerte (NaN) sicher zu 0 gefaltet werden, statt über
-    /// `min(1, NaN)` fälschlich 1.0 (voller Schnee) zu liefern.
     @inline(__always) public func snowAmount(_ v: Double) -> Double {
         min(1, max(0, (v - snowStart) / max(1e-6, snowFull - snowStart)))
     }
 
-    /// Wahrscheinlichkeit, dass ein Baum an dieser Höhe Nadel- statt Laubbaum ist
-    /// (0.1 … 0.9 wie vor Issue #4, nur an das Höhenband gekoppelt). Das
-    /// Kronendach (#152) rechnet dieselbe Formel je Pixel in
-    /// `game/shaders/terrain.gdshader` (`conifer_share`) aus `coniferLow/High`.
     @inline(__always) public func coniferShare(_ v: Double) -> Double {
         min(0.9, max(0.1, (v - coniferLow) / max(1e-6, coniferHigh - coniferLow)))
     }
 
-
-    /// Leitet die Bänder aus den Landhöhen ab. `nil`-Rückgabe der Quantile
-    /// (zu wenig Land) → `legacyAbsolute`.
-    ///
-    /// Zwei Sicherungen halten die Bänder auch auf entartetem Terrain benutzbar:
-    /// die Perzentile werden monoton sortiert entnommen, und jede Rampe bekommt
-    /// mindestens `cfg.bandMinRampWidth` Breite (eine spiegelglatte Insel hätte
-    /// sonst identische Quantile → Sprungfunktion statt Verlauf).
-    ///
-    /// **`snowFractions` (Issue #33)** löst den Perzentil-Schnee ab: statt
-    /// `bandSnowPercentile` kommen die beiden Schnee-Quantile aus den GEMESSENEN
-    /// Landanteilen, die das Klima gerade beschneit
-    /// (`Terrain.snowAreaFractions()`). Das Band schneidet damit exakt so viel
-    /// Fläche ab wie das Schneefeld belegt — „Schneezone = Flächenanteil X" gilt
-    /// weiter, aber X ist gemessen statt konfiguriert und folgt dem Klima.
-    /// `nil` (Klima aus) = die Perzentile von vor #33, bit-identisch.
     public static func fromLandHeights(_ heights: [Double], cfg: SimConfig,
                                        snowFractions: (ramp: Double, full: Double)? = nil)
         -> HeightBands {
-        // Feste Slot-Reihenfolge; `landHeightQuantiles` will die Perzentile
-        // AUFSTEIGEND (ein Histogramm-Durchlauf), deshalb hier sortieren und das
-        // Ergebnis zurückverteilen — so darf die Config die Perzentile in jeder
-        // Reihenfolge setzen, ohne dass die Bänder still auf `legacyAbsolute` kippen.
-        // Slots 4/5 (Schnee): mit Klima das KOMPLEMENT der gemessenen
-        // Schneeanteile — ein Anteil von 1.5 % beschneitem Land wird zum
-        // Quantil p98.5, das genau diese 1.5 % abschneidet.
         let snowP = snowFractions.map { (1 - $0.ramp, 1 - $0.full) }
             ?? (cfg.bandSnowPercentile, cfg.bandSnowFullPercentile)
         let raw = [cfg.bandVegFullPercentile, 0.5,
                    cfg.bandRockPercentile, cfg.bandRockFullPercentile,
                    snowP.0, snowP.1,
                    cfg.bandConiferLowPercentile, cfg.bandConiferHighPercentile,
-                   0.95] // Slots 1 und 8: das Quantilpaar der robusten Relief-Spanne
+                   0.95]
         let order = raw.indices.sorted { raw[$0] < raw[$1] }
         guard let sorted = Terrain.landHeightQuantiles(heights: heights, sea: cfg.sea,
                                                        probs: order.map { raw[$0] })
@@ -159,16 +50,9 @@ public struct HeightBands: Equatable, Sendable, Codable {
         var q = [Double](repeating: 0, count: raw.count)
         for (slot, original) in order.enumerated() { q[original] = sorted[slot] }
         let w = max(1e-6, cfg.bandMinRampWidth)
-        // Vegetations-Rampe: eine robuste Relief-Spanne (p95 − p50) breit.
         let reliefSpan = cfg.bandVegRampSpanFactor * (q[8] - q[1])
         var snowStart = q[4]
         if let f = snowFractions, f.ramp <= 0 {
-            // Ein SCHNEEFREIES Klima ist ein gültiger Zustand (warme Welt, flach
-            // erodierte Insel) — dann darf das Band nicht auf dem Gipfel liegen.
-            // Bei Anteil 0 liefert das Quantil p = 1 die Mitte des höchsten
-            // besetzten Histogramm-Bins (Breite 0.000488, s.
-            // `Terrain.landHeightQuantiles`); 2·`bandMinRampWidth` = 0.008 liegt
-            // sicher darüber, `snowAmount` ist damit auf ganz Land exakt 0.
             snowStart = q[4] + 2 * w
         }
         return HeightBands(vegFull: q[0], vegRamp: max(w, reliefSpan),

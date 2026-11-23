@@ -2,72 +2,40 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// „Flüsse fließen bergauf" (Issue #174, Befund des Projekteigners im
-/// Zeitraffer um Jahr 230.000): misst die Höhe der Fluss-BÄNDER, wie
-/// `RiverRibbonRenderer` sie baut, entlang des Laufs stromab.
-///
-/// Gemessen wird am fertigen `RibbonMesh` (Fluss-Streifen, `uv2.x ==
-/// ribbonKindRiver`): Höhe der Bandmitte und tiefste Stelle des
-/// Querschnitts (±Halbbreite + 1,5 Zellen). Ein ANSTIEG ist eine Strecke
-/// sichtbarer Stützpunkte, deren Bandhöhe über dem laufenden Minimum
-/// ALLER Stützpunkte stromauf liegt; seine Höhe ist das größte Übermaß darin, in
-/// Bankfull-Tiefen (`meanderBeltDepthPerWidth` · Breite) gemessen.
 enum RibbonUphill {
     struct Event {
         var channel: Int
-        /// Der Lauf beginnt schon mit Abfluss ab `renderMinCells` (Kopf liegt
-        /// an einem größeren Fluss).
         var startsBig = false
-        /// Gipfel liegt stromauf des höchsten Knotens des Laufs.
         var beforeCrest = false
         var node: Int
-        /// Gitterkoordinaten des Gipfels.
         var gx: Double, gz: Double
-        /// Größtes Übermaß der Bandhöhe über dem laufenden Minimum (Sim-Höhe).
         var excess: Double
-        /// Dasselbe in Bankfull-Tiefen des Laufs an der Stelle.
         var depths: Double
-        /// Länge der Anstiegs-Strecke in Zellen (Bogenlänge).
         var lengthCells: Double
-        /// Gelände unter der Mitte über der tiefsten Stelle des Querschnitts.
         var offBedDepths: Double
-        /// Übermaß der tiefsten Querschnitts-Stelle über ihrem eigenen
-        /// laufenden Minimum stromauf: steigt das BETT selbst an?
         var floorExcessDepths: Double
-        /// Mobilität des nächsten Knotens (0 = steile, feste Strecke).
         var mobility: Double
-        /// Kosinus zwischen Bandrichtung und D8-Abfluss der größten Zelle
-        /// im 5×5 um den Gipfel (−1 = Band läuft gegen das Gefälle).
         var d8Cos: Double
-        /// Abstand (Zellen) zur nächsten D8-Zelle mit mindestens halbem
-        /// Abfluss des Laufs.
         var d8Distance: Double
     }
 
     struct Summary {
         var strips = 0
         var visibleSamples = 0
-        /// Sichtbare Stützpunkte, unter denen die Entwässerung (größtes D8-
-        /// Einzugsgebiet im 5×5) weniger als ein Viertel des Lauf-Abflusses führt.
         var detachedSamples = 0
-        /// Bänder, deren ERSTER Knoten schon Abfluss ab `renderMinCells` trägt.
         var stripsStartingBig = 0
         var events: [Event] = []
         func count(over depths: Double) -> Int { events.filter { $0.depths > depths }.count }
         var sumDepths: Double { events.reduce(0) { $0 + $1.depths } }
         var maxDepths: Double { events.map(\.depths).max() ?? 0 }
-        /// Absolut, 1 Sim-Höhe ≈ 2400 m (`meanderBeltDepthPerWidth`).
         func count(overMeters m: Double) -> Int { events.filter { $0.excess * 2400 > m }.count }
         var sumMeters: Double { events.reduce(0) { $0 + $1.excess * 2400 } }
         var maxMeters: Double { (events.map(\.excess).max() ?? 0) * 2400 }
     }
 
     static let visibleAlpha = 0.25
-    /// Rauschgrenze: Übermaß unter einer Viertel-Tiefe zählt nicht.
     static let toleranceDepths = 0.25
 
-    /// Wie in `RibbonFloat.measure` liegt die Bandmitte bei u = 0,5
-    /// zwischen den fertigen Kanten. Nur die Überhöhung zurückrechnen.
     static func centerHeight(_ left: SIMD3<Float>, _ right: SIMD3<Float>) -> Double {
         (Double(left.y) + Double(right.y)) * 0.5 / RenderContract.heightScale
     }
@@ -143,7 +111,6 @@ enum RibbonUphill {
                 cur.offBedDepths = (hAt(gx[a], gz[a]) - fl) / depth
                 cur.floorExcessDepths = (fl - floorMin) / depth
                 cur.mobility = g.mob[ni]
-                // D8 an der Stelle.
                 let ci0 = min(max(Int(gx[a].rounded()), 0), n - 1), cj0 = min(max(Int(gz[a].rounded()), 0), n - 1)
                 var bk = cj0 * n + ci0
                 for j in max(0, cj0 - 2)...min(n - 1, cj0 + 2) {
@@ -239,12 +206,6 @@ enum RibbonUphill {
     }
 }
 
-/// Wächter: ein Fluss-Band steigt stromab nicht sichtbar an
-/// (`WaterRender.ribbonUphillFade`). Kunstwelt: eine nach Osten fallende Ebene,
-/// darauf eine Zentrumslinie entlang Zeile 24, die über einen 72 m hohen
-/// Rücken läuft (so wie eine abgekoppelte Gürtel-Linie im Zeitraffer eine
-/// Talwand hinaufläuft). Das D8-Netz darunter ist ein Strahler-3-Baum, damit
-/// das Band überhaupt emittiert wird.
 final class RibbonUphillTests: XCTestCase {
     private func ridgeWorld(ridge: Double) -> Terrain {
         let config = renderConfig(n: 64)
@@ -265,8 +226,6 @@ final class RibbonUphillTests: XCTestCase {
         }
         state.hf = state.h
         state.waterLevel = state.h
-        // Strahler-3-Baum: (8,24) und (9,23) → (9,24) [Ordnung 2];
-        // (10,22) und (11,22) → (10,23) [2]; beide → (10,24) [3]; die Zeile fließt ostwärts.
         func link(_ a: (Int, Int), _ b: (Int, Int)) {
             state.receiver[a.1 * n + a.0] = Int32(b.1 * n + b.0)
             state.area[a.1 * n + a.0] = 200 * cellArea
@@ -282,7 +241,6 @@ final class RibbonUphillTests: XCTestCase {
         return terrain
     }
 
-    /// (Gitter-x der Mitte, Geländehöhe unter der Mitte, Deckkraft) je Kantenpaar des Fluss-Bands.
     private func riverPairs(_ t: Terrain) -> [(x: Double, ground: Double, alpha: Double)] {
         let mesh = RiverRibbonRenderer().build(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
         XCTAssertEqual(mesh.bandChannelFlags, [true], "Gegenprobe: die Linie muss ein Band bekommen")
@@ -308,14 +266,10 @@ final class RibbonUphillTests: XCTestCase {
         }
         XCTAssertEqual(climbing, 0, String(format: "Band läuft sichtbar bergauf: %d Kantenpaare, bis %.4f über dem Spiegel stromauf",
                                            climbing, worst))
-        // Hinter dem Rücken liegt das Gelände wieder unter dem Lauf davor: dort
-        // ist es wieder Wasser, das Band darf nicht ganz verschwinden.
         XCTAssertTrue(pairs.contains { $0.x > 36 && $0.x < 44 && $0.alpha > 0.5 },
                       "hinter dem Rücken muss das Band wieder sichtbar sein")
     }
 
-    /// Wo das Gelände stromab fällt, wirkt die Blende nicht: vor dem Rücken ist
-    /// das Band bit-gleich zur Welt ohne Rücken.
     func testUphillFadeLeavesTheDescendingBandBitIdentical() {
         let flat = riverPairs(ridgeWorld(ridge: 0))
         let ridged = riverPairs(ridgeWorld(ridge: 0.03))
@@ -330,9 +284,6 @@ final class RibbonUphillTests: XCTestCase {
 final class RiverUphillDiagnostics: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
-    /// Produktionswelt mit Einlauf in 1000-Jahr-Schritten (wie die
-    /// Zielbild-Diagnostics), gemessen an den Jahren aus `RS_YEARS`
-    /// (Standard „20000,230000"); `RS_SEEDS` Standard „1337,42".
     func testRibbonUphillDiagnostic() throws {
         try skipUnlessMeasuring()
         let seeds = (env["RS_SEEDS"] ?? "1337,42").split(separator: ",").compactMap { UInt32($0) }
@@ -341,7 +292,6 @@ final class RiverUphillDiagnostics: XCTestCase {
             let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed, settleYears: SimConfig.productionSettleYears)
             for y in years {
                 while t.years < y - 1e-6 { t.step(dtYears: min(1000, y - t.years)) }
-                // Roh (ohne das Sicherheitsnetz `fadeUphill`) und gemalt.
                 let raw = RiverRibbonRenderer()
                 raw.fadesUphill = false
                 let rawSummary = RibbonUphill.measure(t, mesh: raw.build(t, hscale: RenderContract.heightScale,
@@ -357,9 +307,6 @@ final class RiverUphillDiagnostics: XCTestCase {
         }
     }
 
-    /// Verfolgt Läufe über die Zeit an ihrem festen Quellknoten (`RS_HEADS` =
-    /// „x,z;x,z" in Zellen, Seed `RS_SEED`): Länge, Höhe von Kopf und Ende,
-    /// Abfluss am Kopf und Anteil abgekoppelter Knoten, alle `RS_EVERY` Jahre.
     func testRibbonUphillHistoryDiagnostic() throws {
         try skipUnlessMeasuring()
         let seed = UInt32(env["RS_SEED"] ?? "1337")!
@@ -398,10 +345,6 @@ final class RiverUphillDiagnostics: XCTestCase {
         }
     }
 
-    /// Abstand der Knoten wandernder Läufe zum nächsten D8-Gerinne mit
-    /// mindestens halbem Abfluss des Knotens (Zellen, Suche bis 30): wie weit
-    /// liegt ein gesunder Mäander von seiner Rinne? `RS_YEAR`, `RS_SEED`,
-    /// `RS_VARIANT`.
     func testBeltCouplingDistanceDiagnostic() throws {
         try skipUnlessMeasuring()
         let seed = UInt32(env["RS_SEED"] ?? "1337")!
@@ -437,24 +380,16 @@ final class RiverUphillDiagnostics: XCTestCase {
         print(line)
     }
 
-    /// Welt aus dem Cache unter `RS_CACHE` (falls gesetzt), sonst frisch.
     private func world(seed: UInt32, year: Double) throws -> Terrain {
         let cache = env["RS_CACHE"].map { "\($0)/world-\(seed)-\(Int(year))-\(env["RS_VARIANT"] ?? "prod").rsw" }
         if let c = cache, FileManager.default.fileExists(atPath: c) { return try WorldSnapshot.read(from: c) }
         let t = Terrain(config: MeanderBeltCalibration.variantConfig(), seed: seed, settleYears: SimConfig.productionSettleYears)
-        // RS_DT: Schrittweite des Laufs (Standard 1000). Die Kopplung (#187)
-        // prüft am Schrittanfang; nach einem großen Schritt misst der Abstand
-        // auch die Wanderung im Schritt gegen das Abflussfeld vom Anfang.
         let dt = env["RS_DT"].flatMap(Double.init) ?? 1000
         while t.years < year - 1e-6 { t.step(dtYears: min(dt, year - t.years)) }
         if let c = cache { try WorldSnapshot.write(t, to: c) }
         return t
     }
 
-    /// Ausschnitt als PPM (`RS_OUT`), `RS_CROP` = „x0,z0,Größe" in Zellen:
-    /// Schummerung, D8-Läufe ab `renderMinCells` blau, Mäander-Linien gelb,
-    /// sichtbare Band-Stützpunkte grün (fallend) bzw. rot (über dem laufenden
-    /// Minimum). `RS_CHANNEL` druckt das Längsprofil eines Laufs.
     func testRibbonUphillMapDiagnostic() throws {
         try skipUnlessMeasuring()
         let seed = UInt32(env["RS_SEED"] ?? "1337")!
@@ -464,9 +399,6 @@ final class RiverUphillDiagnostics: XCTestCase {
         let mesh = RiverRibbonRenderer().build(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
         print(RibbonUphill.report("s\(seed)", t, RibbonUphill.measure(t, mesh: mesh), top: 20))
         if env["RS_LOCALQ"] == "1" {
-            // Gegenprobe: Abfluss je Knoten wie vor Paket B (bilinear, ohne
-            // 3×3-Maximum und laufendes Maximum) — nur für den Render, die
-            // Welt wird danach nicht weitergerechnet.
             let saved = t.meander.channels
             let area = t.area
             for ci in t.meander.channels.indices {
@@ -509,7 +441,6 @@ final class RiverUphillDiagnostics: XCTestCase {
         }}
         for ch in t.meander.channels { for p in ch.nodes { put(p.x, p.z, (230, 210, 40)) } }
         let ends = t.meander.channels.compactMap { ch in ch.nodes.first.map { ($0, ch.nodes.last!) } }
-        // Band-Stützpunkte, gefärbt nach dem Übermaß über dem laufenden Minimum.
         for (si, start) in mesh.stripStarts.enumerated() {
             let s0 = Int(start)
             let s1 = si + 1 < mesh.stripStarts.count ? Int(mesh.stripStarts[si + 1]) : mesh.vertices.count
@@ -522,7 +453,7 @@ final class RiverUphillDiagnostics: XCTestCase {
                 runMin = min(runMin, y)
                 guard Double(mesh.colors[s0 + 2 * a].w) >= RibbonUphill.visibleAlpha else { continue }
                 let gx = (Double(l.x + r.x) * 0.5 + half) / cs, gz = (Double(l.z + r.z) * 0.5 + half) / cs
-                let ex = rise / 0.0015   // ~ eine Bankfull-Tiefe bei b ≈ 4,5
+                let ex = rise / 0.0015
                 let c: (UInt8, UInt8, UInt8) = ex > 0.5 ? (255, UInt8(max(0, 200 - 20 * ex)), 0) : (0, 230, 60)
                 put(gx, gz, c, r: scale / 3)
             }

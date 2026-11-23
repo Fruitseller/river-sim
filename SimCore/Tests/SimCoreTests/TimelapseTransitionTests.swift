@@ -3,17 +3,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Übergänge im Zeitraffer (Befund Punkt 50, #174): die Kopplung Gürtel ↔ D8
-/// setzt im 1000-Jahr-Takt alle Läufe zugleich neu. Neue Arme wachsen über
-/// `WaterRender.ribbonGrowYears` ein, verlassene versiegen über
-/// `WaterRender.ribbonGhostYears`, der Wald weicht ohne Wasser über
-/// `CanopyRender.retreatYears`. Messreihe: `TimelapseTransitionDiagnostic`
-/// und `docs/zielbild-measurements.md` § Übergänge im Zeitraffer.
 final class TimelapseTransitionTests: XCTestCase {
 
-    // MARK: Geburtsjahr der Knoten (Sim-Seite, nur Metadaten)
-
-    /// Kunstwelt aus `BeltCoupling`: ein V-Tal entlang Zeile 30.
     private func valleyWorld(year: Double) -> Terrain {
         var c = renderConfig(n: 64)
         c.meanderBeltMinCells = 100
@@ -34,7 +25,6 @@ final class TimelapseTransitionTests: XCTestCase {
         return t
     }
 
-    /// Eine Linie mit Umweg über Zeile 40 (springt bei der Kopplung zurück ins Tal).
     private func detourLine(_ t: Terrain) -> RiverChannel {
         var pts: [MeanderNode] = []
         for x in 4...20 { pts.append(MeanderNode(x: Double(x), z: 30)) }
@@ -46,9 +36,6 @@ final class TimelapseTransitionTests: XCTestCase {
                                    config: t.cfg)
     }
 
-    /// Die Kopplung setzt das Geburtsjahr NUR an eingesetzten D8-Knoten
-    /// (hier: die Avulsion ins Tal); der übernommene Oberlauf bleibt „schon
-    /// immer da".
     func testCouplingStampsTheBirthYearOnInsertedNodesOnly() {
         let t = valleyWorld(year: 5000)
         t.meander.channels = [detourLine(t)]
@@ -68,8 +55,6 @@ final class TimelapseTransitionTests: XCTestCase {
         }
     }
 
-    /// Ein Lauf ohne junge Knoten trägt kein Array (Normalfall kostet nichts);
-    /// die Neuabtastung interpoliert zwischen Jahren und erzeugt neben −∞ kein NaN.
     func testBirthYearsResampleWithoutNaNAndStayEmptyWhenMature() {
         let pts = (0..<12).map { MeanderNode(x: Double($0) * 0.7, z: 3) }
         let mature = RiverChannel(nodes: pts, discharge: Array(repeating: 500, count: 12),
@@ -86,11 +71,6 @@ final class TimelapseTransitionTests: XCTestCase {
         XCTAssertTrue(out.born.contains { $0.isFinite }, "junges Stück ging verloren")
     }
 
-    /// Der Einlauf der Generierung koppelt mit und setzt danach `years` auf 0
-    /// zurück. Seine Geburtsjahre lagen damit in der Zukunft des Spieljahrs:
-    /// die eingesetzten Strecken blieben im Zeitraffer bis Jahr ~2200
-    /// unsichtbar (Bänder zerrissen, das Raster lief daneben). Nach dem
-    /// Einlauf gilt jeder Knoten als ausgewachsen.
     func testSettledWorldHasNoUnbornRibbonNodes() {
         let t = Terrain(config: .production, seed: RenderContract.defaultSeed,
                         settleYears: SimConfig.productionSettleYears)
@@ -102,8 +82,6 @@ final class TimelapseTransitionTests: XCTestCase {
         }
     }
 
-    // MARK: Einwachsen und Versiegen der Bänder
-
     private func agedTerrain() -> Terrain {
         var config = SimConfig()
         config.n = 192
@@ -113,7 +91,6 @@ final class TimelapseTransitionTests: XCTestCase {
         return agedWorld(config, years: 4000)
     }
 
-    /// Größter Lauf, der ein Band bekommt, und seine Knoten im mittleren Drittel.
     private func bandedChannel(_ t: Terrain) -> (index: Int, range: Range<Int>)? {
         let renderer = RiverRibbonRenderer()
         renderer.build(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
@@ -127,7 +104,6 @@ final class TimelapseTransitionTests: XCTestCase {
         return (ci, (c / 3)..<(2 * c / 3))
     }
 
-    /// Band-Deckung über den Zellen unter `range` (Knoten ± 1 Zelle).
     private func coverage(_ cov: [Double], _ ch: RiverChannel, _ range: Range<Int>, n: Int) -> Double {
         var cells = Set<Int>()
         for i in range {
@@ -140,10 +116,6 @@ final class TimelapseTransitionTests: XCTestCase {
         return cells.reduce(0) { $0 + cov[$1] }
     }
 
-    /// Ein frisch eingesetztes Stück wächst über Sim-Jahre von nahezu nichts
-    /// auf das ausgewachsene Band; danach ist der Bau bit-gleich zum Lauf ohne
-    /// Geburtsjahr. Lag dort schon ein ausgewachsenes Band (voriger Bau),
-    /// wächst nichts ein: kein Engpass in einem fertigen Fluss.
     func testInsertedStretchGrowsInOverSimYears() throws {
         let t = agedTerrain()
         let (ci, range) = try XCTUnwrap(bandedChannel(t), "kein Lauf mit Band")
@@ -172,20 +144,13 @@ final class TimelapseTransitionTests: XCTestCase {
         XCTAssertLessThan(half, done, "wächst nicht weiter")
         XCTAssertEqual(doneCov, reference.bandCoverage, "ausgewachsen nicht gleich dem Lauf ohne Geburtsjahr")
 
-        // Schon Fluss gewesen (der vorige Bau desselben Renderers deckte es
-        // ausgewachsen): voll, kein Engpass.
         t.restore(base)
         let warm = RiverRibbonRenderer()
         warm.build(t, hscale: RenderContract.heightScale, lift: RenderContract.riverLift)
         let (exempt, _) = grown(age: 1, after: warm)
-        // Bis auf Stützpunkte, die schon im vorigen Bau so gut wie unsichtbar
-        // waren (Kaskade, Mündungsschnitt): sie wachsen ein, ohne zu stören.
         XCTAssertEqual(exempt, full, accuracy: 0.01 * full, "Nachsetzung im fertigen Fluss schnürt ein")
     }
 
-    /// Ein Lauf, den die Kopplung entfernt, versiegt: der Bau danach zeigt
-    /// sein altes Band weiter (nur wo kein heutiges liegt) und blendet es über
-    /// `ribbonGhostYears` Sim-Jahre aus; Pinsel/Laden beenden das sofort.
     func testRemovedRunFadesOutOverSimYears() throws {
         let t = agedTerrain()
         let (ci, range) = try XCTUnwrap(bandedChannel(t), "kein Lauf mit Band")
@@ -198,7 +163,6 @@ final class TimelapseTransitionTests: XCTestCase {
         let before = coverage(render.riverRibbonMesh.bandCoverage, removed, range, n: n)
         XCTAssertGreaterThan(before, 1)
 
-        // „Kopplung": der Lauf fällt weg, ein anderer bekommt einen jungen Knoten.
         var s = t.state
         var channels = s.meanderChannels
         channels.remove(at: ci)
@@ -215,7 +179,6 @@ final class TimelapseTransitionTests: XCTestCase {
         let ghost = coverage(render.riverRibbonMesh.bandCoverage, removed, range, n: n)
         XCTAssertGreaterThan(ghost, 0.5 * before, "der entfernte Lauf verschwand sofort")
 
-        // Halb versiegt, dann ganz weg.
         s.years += 0.5 * WaterRender.ribbonGhostYears
         t.restore(s)
         render.invalidate(t, .advanced)
@@ -233,7 +196,6 @@ final class TimelapseTransitionTests: XCTestCase {
                        coverage(fresh.bandCoverage, removed, range, n: n), accuracy: 1e-9,
                        "nach dem Versiegen bleibt etwas vom alten Lauf stehen")
 
-        // Pinsel beendet einen laufenden Übergang sofort.
         let edited = RenderState(geometryMode: true)
         t.restore(base)
         edited.invalidate(t, .replaced)
@@ -246,11 +208,6 @@ final class TimelapseTransitionTests: XCTestCase {
         XCTAssertEqual(edited.ribbonGhostCount, 0, "Pinsel lässt den alten Stand versiegen statt ihn zu zeigen")
     }
 
-    // MARK: Wald-Rückzug
-
-    /// Ohne Wasser weicht der Wald über `retreatTau` (dt-invariant wie das
-    /// Nachwachsen), mit sichtbarem Wasser sofort; ohne `wet` wie vor dem
-    /// Befund sofort.
     func testForestRetreatsGraduallyUnlessWaterArrives() {
         let target: [UInt8] = [0, 0, 0]
         let wet = WetNow(bandCoverage: [CanopyRender.retreatInstantBandCoverage, 0, 0],
@@ -261,7 +218,6 @@ final class TimelapseTransitionTests: XCTestCase {
                                           tau: CanopyRender.regrowYears, wet: wet, retreatTau: tau)
         XCTAssertEqual(out[0], 0, "über Wasser bleibt Wald stehen")
         XCTAssertEqual(Double(memory[1]), exp(-1), accuracy: 1e-6, "Rückzug nicht über τ")
-        // dt-Invarianz: ein Schritt über 2τ gleich vier Schritten über τ/2.
         var once: [Float] = [1, 1, 1], many: [Float] = [1, 1, 1]
         _ = ForestCanopyMask.regrow(&once, toward: target, dtYears: 2 * tau,
                                     tau: CanopyRender.regrowYears, wet: wet, retreatTau: tau)

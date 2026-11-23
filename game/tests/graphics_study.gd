@@ -1,7 +1,4 @@
 extends SceneTree
-## Kleine Verhaltenswächter für #116, ohne Messlauf. `_check_protect_mask`
-## erzeugt einen `SimNode` und damit die Produktionswelt samt Einlauf (wie
-## `smoke.gd`; Laufzeit in docs/ci-measurements.md).
 
 var failures := 0
 
@@ -20,12 +17,6 @@ func _check(value: bool, message: String) -> void:
 		failures += 1
 		print("FAIL: ", message)
 
-## Die Schutzmaske sperrt Verschiebung und Kronendach an Wasser (#154). Ihr
-## Inhalt ist headless gepinnt (`WaterProtectMaskTests`); hier zählt der Weg
-## durch Brücke und Studie: R8 in Gittergröße, voll sichtbares Wasser gesperrt,
-## trockenes Land frei, das Wasserfeld unverändert. Seit Issue #214 kommen
-## Wasser und Maske aus EINEM Frame (`renderFrame`, FRAME_SETTLED wie Main.gd)
-## — die Maske sieht damit das Wasserfeld genau ihres Frames.
 func _check_protect_mask() -> void:
 	if not ClassDB.class_exists("SimNode"):
 		_check(false, "SimNode nicht registriert (GDExtension gebaut und importiert?)")
@@ -34,7 +25,7 @@ func _check_protect_mask() -> void:
 	var study = load("res://studies/flusstal/Flusstal.gd").new()
 	study.sim = sim
 	study.N = sim.gridSize()
-	var frame: Dictionary = sim.renderFrame(0, 1.0)  # FRAME_SETTLED
+	var frame: Dictionary = sim.renderFrame(0, 1.0)
 	var water: PackedByteArray = frame["water"]
 	var mask: Image = study._protect_mask(frame["protect"])
 	_check(mask.get_format() == Image.FORMAT_R8, "Schutzmaske muss im Format R8 vorliegen")
@@ -58,8 +49,6 @@ func _check_protect_mask() -> void:
 	study.free()
 	sim.free()
 
-## Alle Hebel sind Produktion (#151, #153, #155, #152): ein alter Aufruf mit
-## `RS_STUDY_LEVERS` scheitert laut, statt still dasselbe Bild zu liefern.
 func _check_lever_parsing() -> void:
 	var previous_levers := OS.get_environment("RS_STUDY_LEVERS")
 	var script = load("res://studies/flusstal/Flusstal.gd")
@@ -74,17 +63,9 @@ func _check_lever_parsing() -> void:
 		old.free()
 	OS.set_environment("RS_STUDY_LEVERS", previous_levers)
 
-## Die Studien-Shader werden zur Laufzeit aus den Produktionsquellen gebaut
-## (#define FLUSSTAL_STUDY vor der Quelle). Früher rutschte ein stiller
-## Include-Fehler durch, weil nichts den zusammengesetzten Code kompilierte:
-## das Material fiel auf Standard zurück und nur ein A/B-Bild hätte es gezeigt.
-## Diese Prüfung parst BEIDE Fassungen: Produktion darf die Studien-Uniforms
-## nicht kennen, die Studie muss sie liefern. Ohne Uniforms = Kompilierungsfehler.
 func _check_study_shaders() -> void:
 	var study_script = load("res://studies/flusstal/Flusstal.gd")
 	var cases := {
-		# Seit #174 D nur noch die Debug-Ansichten; die PBR-Materialien der
-		# ersten Runde sind durch die prozedurale Materialverteilung ersetzt.
 		"res://shaders/terrain.gdshader": ["study_debug"],
 	}
 	for path in cases:

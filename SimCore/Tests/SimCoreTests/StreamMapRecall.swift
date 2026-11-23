@@ -2,20 +2,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-// Messlauf zur Stream-Map der großen Läufe auf der Produktions-Config
-// (Issue #174, Befund „Stream-Map trackt die großen Läufe schlechter",
-// docs/zielbild-measurements.md). Alles hinter RS_MEASURE.
-//
-// Die Stream-Map (`Terrain.streamMap`, EWMA der reife-gewichteten
-// Tropfen-Besuche) steuert über `WaterRender.trackMask` die Raster-Läufe. Der
-// Wächter `testStreamMapMarksAndPersists` pinnt die alte Großform und misst dort
-// Recall > 0,4; auf der neuen Form (n = 256) 0,15. Hier: wie groß ist das
-// Problem auf dem Produktionsgitter, WO sitzt es (Flachland gegen Gebirge,
-// Abfluss-Fenster), und ist es SICHTBAR, also nicht von einem Band, vom
-// Abfluss-Vertrauen (`WaterRender.ribbonTrust`) oder einem See gedeckt?
-//
-// RS_SEEDS (Standard „1337,42,20"), RS_CHECKPOINTS (Jahre nach der Generierung,
-// Standard „0,5000,20000").
 final class StreamMapRecallDiagnostics: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
@@ -26,9 +12,6 @@ final class StreamMapRecallDiagnostics: XCTestCase {
         (env["RS_CHECKPOINTS"] ?? "0,5000,20000").split(separator: ",").compactMap { Double($0) }
     }
 
-    /// Zählt Zellen einer Gruppe: wie viele sind getrackt (Stream-Map über der
-    /// Schwelle des Wächters), wie viele sichtbar gemalt, und wie viele der
-    /// UNgetrackten sind trotzdem gemalt (Band, Vertrauen, See).
     struct Tally {
         var cells = 0, tracked = 0, painted = 0, untracked = 0, untrackedPainted = 0
         var streamSum = 0.0
@@ -47,9 +30,6 @@ final class StreamMapRecallDiagnostics: XCTestCase {
         }
     }
 
-    /// Gemalt = im 3×3 Band-Deckung ab `protectBandThreshold`, Raster-Fluss
-    /// oder See über den Schutz-Schwellen (dieselbe Regel wie
-    /// `RiverBeltRenderDiagnostics.mainStem`).
     static func painted(_ k: Int, n: Int, coverage: [Double], water: [UInt8], radius: Int = 1) -> Bool {
         let riverT = byte01(WaterRender.protectRiverThreshold)
         let lakeT = byte01(WaterRender.protectLakeThreshold)
@@ -98,9 +78,6 @@ final class StreamMapRecallDiagnostics: XCTestCase {
         print(String(format: "=== STREAMREC s%d J%.0f n=%d creek=%.0f | Land %d",
                      seed, t.years, n, creek, t.h.filter { $0 > sea }.count))
 
-        // 1. MFD-Läufe (die Menge, die das Raster per Track-Maske gated) und
-        //    D8-Läufe (was ein Nutzer als „Fluss" erwartet), je nach Gefälle
-        //    und Abfluss-Fenster.
         for (title, useD8) in [("MFD", false), ("D8 ", true)] {
             var byBucket = [Tally](repeating: Tally(), count: edges.count + 1)
             var byWindow = [Tally](repeating: Tally(), count: 3)
@@ -126,8 +103,6 @@ final class StreamMapRecallDiagnostics: XCTestCase {
             for (i, nm) in windowNames.enumerated() { print("    \(nm.padding(toLength: 15, withPad: " ", startingAt: 0))\(byWindow[i].line)") }
         }
 
-        // 2. Hauptlauf (D8) zur Küste: Anteil mit Stream-Map > 0,2, Lücke nach
-        //    Abfluss-Fenster und Lage (Mündungs-/Mittel-/Quelldrittel).
         let path = RiverBeltRenderDiagnostics.stemPath(t)
         var stemWindow = [Tally](repeating: Tally(), count: 3)
         var stemThird = [Tally](repeating: Tally(), count: 3)
@@ -137,8 +112,6 @@ final class StreamMapRecallDiagnostics: XCTestCase {
             stemWindow[window(q)].add(stream: t.streamMap[k], painted: p)
             stemThird[min(2, 3 * idx / max(1, path.count))].add(stream: t.streamMap[k], painted: p)
         }
-        // Warum bleibt eine Hauptlauf-Zelle ungemalt? Die Bedingungen des
-        // Rasters (`WaterFieldRenderer.bytes`) der Reihe nach nachgerechnet.
         var causes: [String: Int] = [:]
         var causesStem = 0
         var ratioByBucket = [[Double]](repeating: [], count: edges.count + 1)
@@ -176,11 +149,6 @@ final class StreamMapRecallDiagnostics: XCTestCase {
         for (i, nm) in windowNames.enumerated() { print("    Stamm \(nm.padding(toLength: 9, withPad: " ", startingAt: 0))\(stemWindow[i].line)") }
         for (i, nm) in ["Mündung", "Mitte", "Quelle"].enumerated() { print("    Stamm \(nm.padding(toLength: 9, withPad: " ", startingAt: 0))\(stemThird[i].line)") }
 
-        // 3. Gegenprobe: dieselbe Welt mit anderer Stream-Map gerendert. „Orakel"
-        //    = 1 auf jeder D8-Zelle ≥ creek (ein perfektes Tracking), „null" =
-        //    Stream-Map leer (nur Abfluss-Vertrauen und Band tragen). Wenn
-        //    „aktuell" nahe an „Orakel" liegt, kostet die Stream-Map nichts;
-        //    liegt es nahe an „null", trägt sie nichts bei.
         let original = t.state
         func variant(_ name: String, _ map: [Double]) {
             var st = original; st.streamMap = map; t.restore(st)
@@ -189,10 +157,6 @@ final class StreamMapRecallDiagnostics: XCTestCase {
             guard let ov = r.frame(t, .settled, now: 0).overlays else { return }
             let cov = r.riverRibbonMesh.bandCoverage
             let stem = RiverBeltRenderDiagnostics.mainStem(t, render: r, water: ov.water)
-            // Sichtbare Lücke statt Zell-Lücke: D8-Pfad und Zentrumslinie liegen
-            // im Gürtel mehrere Zellen auseinander, ein Band 3 Zellen neben dem
-            // Pfad IST der Fluss. Anteil der Hauptlauf-Zellen ohne gemalte
-            // Zelle in 4 / 8 Zellen Umkreis und die längste solche Strecke.
             func wide(_ radius: Int) -> (gap: Double, longest: Int) {
                 var miss = 0, run = 0, longest = 0
                 for k in path {

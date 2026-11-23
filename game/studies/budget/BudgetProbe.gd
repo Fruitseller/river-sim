@@ -1,22 +1,4 @@
 extends "res://scripts/Main.gd"
-## Messbühne für #235 (Bildzeit-Budget): Wohin geht die Bildzeit?
-## Schaltet im SELBEN Prozess blockweise zwischen Zuständen um (Reihenfolge je
-## Runde gedreht, Runde 0 wärmt nur) und misst je Bild den Abstand der
-## gezeichneten Bilder (Vsync und Bildraten-Deckel aus). Kein Produktionsweg.
-## Messreihe und Aufruf: docs/perf-measurements.md § V. GPU-Zeitstempel je
-## Pass gibt es unter Metal nicht (viewport_get_measured_render_time_gpu
-## liefert 0), deshalb Zerlegung durch Abschalten.
-##
-##   RS_PROBE_STATES  Komma-Liste der Zustände (Standard "base,noshadow").
-##                    Ein Zustand ist eine Folge von Schaltern, z. B.
-##                    "native-noshadow": noshadow, noterrain, noclouds,
-##                    noocean, noriver, nodetail, nomaterial, nocanopy,
-##                    nomsaa, nossao, nofog, native (Skalierung 1),
-##                    scale50/scale67 (bilinear), mfxs67/mfxt67/fsr167/fsr267
-##                    (Verfahren + Prozent), grid360 (halbes PlaneMesh, nur
-##                    alter Stand), tilesNN (Kacheln im alten Stand), am,
-##                    rev…, …tight (Diagnose der Dreiecks-Reihenfolge).
-##   RS_PROBE_ROUNDS  gezählte Runden (Standard 6)
 const BLOCK_FRAMES := 120
 const SKIP_FRAMES := 20
 
@@ -24,16 +6,15 @@ var probe_states: PackedStringArray
 var probe_rounds := 6
 var probe_frame := -1
 var probe_last := 0
-var probe_data := {} # "runde:zustand" -> Bildabstände (ms)
+var probe_data := {}
 var probe_sun: DirectionalLight3D
 var probe_mesh_full: Mesh
 var probe_mesh_half: Mesh
 var probe_elapsed := 0.0
 var probe_state := ""
-## Alter Stand: das eine PlaneMesh (`terrain_mi`); neuer Stand: die Kacheln.
 var probe_terrain: Node3D
 var probe_defaults := {}
-var probe_tiles := {} # Gitterabstände je Kachel -> TerrainTiles
+var probe_tiles := {}
 var probe_mesh_am: ArrayMesh
 var probe_mesh_rev: ArrayMesh
 
@@ -56,9 +37,6 @@ func _ready() -> void:
 	if probe_terrain is MeshInstance3D:
 		probe_mesh_full = probe_terrain.mesh
 	else:
-		# Neuer Stand (Kacheln): die Diagnose-Zustände für das alte PlaneMesh
-		# schalten hier nichts um und würden trotzdem eine Zahl unter ihrem
-		# Namen liefern. Deshalb laut abbrechen statt still mitzählen.
 		for st in probe_states:
 			for only_old in ["grid360", "tiles", "am", "rev", "tight"]:
 				if st.contains(only_old):
@@ -83,7 +61,6 @@ func _probe_set(state: String) -> void:
 	probe_state = state
 	var vp := get_viewport()
 	probe_sun.shadow_enabled = not state.contains("noshadow")
-	# Schatten-Reichweite "shdNNN" (Welteinheiten, sonst 420) und Atlas 4096 ("atl4k").
 	var sd := state.find("shd")
 	probe_sun.directional_shadow_max_distance = float(state.substr(sd + 3, 3).to_int()) if sd >= 0 else 420.0
 	RenderingServer.directional_shadow_atlas_set_size(4096 if state.contains("atl4k") else 8192, true)
@@ -119,11 +96,8 @@ func _probe_set(state: String) -> void:
 	if env != null:
 		env.ssao_enabled = not state.contains("nossao")
 		env.fog_enabled = not state.contains("nofog")
-	# Im alten Stand (PlaneMesh) dieselben Kacheln im SELBEN Prozess: "tilesNN"
-	# (NN Gitterabstände je Kachel), "am" = PlaneMesh als ArrayMesh.
 	if probe_mesh_full != null:
 		var tq := state.find("tiles")
-		# Schlüssel: Kachelgröße.
 		var key := state.substr(tq + 5, 3).to_int()
 		for k in probe_tiles:
 			probe_tiles[k].visible = tq >= 0 and k == key
@@ -142,7 +116,6 @@ func _probe_set(state: String) -> void:
 			probe_mesh_am = ArrayMesh.new()
 			probe_mesh_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, probe_mesh_full.get_mesh_arrays())
 	if probe_mesh_full != null and state.contains("rev") and probe_mesh_rev == null:
-		# Kachel-Mesh (eine Kachel) mit umgekehrter Vertex-Reihenfolge wie PlaneMesh.
 		var tt: Node3D = load("res://scripts/TerrainTiles.gd").new()
 		tt.tile_quads = 720
 		add_child(tt)
@@ -155,7 +128,6 @@ func _probe_set(state: String) -> void:
 			v2[i] = v[nv - 1 - i]
 		var ix: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
 		if state.contains("tri"):
-			# nur die Reihenfolge der Dreiecke umdrehen, Vertices bleiben
 			var t2 := PackedInt32Array(); t2.resize(ix.size())
 			var nt := ix.size() / 3
 			for t in nt:

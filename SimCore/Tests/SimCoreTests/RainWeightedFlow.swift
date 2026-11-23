@@ -1,59 +1,16 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter für den niederschlagsgewichteten Abfluss (Issue #9, scharf geschaltet
-/// und kalibriert in Issue #10, `cfg.rainWeightedFlow`, Default AN).
-///
-/// Drei Fragen, getrennt geprüft:
-/// 1. **AUS bleibt der Referenzarm.** Ausgeschaltet ist die Akkumulation exakt
-///    „jede Zelle trägt ihre Fläche bei" (Zustand vor #9). Der Droplet-Sampler
-///    zieht ohne Gewichtsfeld dieselben zwei Zufallszahlen wie vorher — ein
-///    KONSTANTES Gewichtsfeld rechnet deshalb bit-identisch.
-/// 2. **AN zeigt in die erwartete Richtung.** Der Wind kommt aus Westen
-///    (`computeRain`), also trägt die Luvseite (West) bei GLEICH GROSSEM
-///    Einzugsgebiet mehr Abfluss als die Lee-Seite (Ost), und die Tropfen starten
-///    dichter im Luv.
-/// 3. **AN verschiebt nur UM, es fügt nichts hinzu und nimmt nichts weg** — die
-///    Kalibrier-Entscheidung aus #10: das Gewicht ist auf das Landmittel des
-///    Regens normiert, über See neutral 1.0. Daraus folgen die drei Invarianten
-///    in `testRainWeightIsNormalizedToLandMean`,
-///    `testWeightedFlowKeepsDrainageTotal` und
-///    `testWeightedSpawnsKeepTheLandBudget` — sie sind der Grund, warum kein
-///    Zell-Gate und keine Erosionsrate nachgezogen werden musste.
-///
-/// Messreihe an/aus: `docs/rain-weighted-flow-measurements.md`
-/// (erzeugt von `testRainWeightMeasurementDiagnostic`).
 final class RainWeightedFlowTests: XCTestCase {
 
     private func cfg(n: Int, rainWeighted: Bool) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
         c.rainWeightedFlow = rainWeighted
-        // Gletscher (Issue #35) AUSGEPINNT — dieselbe Doktrin wie die Pins in
-        // `EndorheicEvaporation.cfg()`: dieser Wächter misst, was die GEWICHTUNG
-        // umverteilt, und das Eis setzt sich genau in den Weg. Schnee fällt, wo
-        // es hoch UND nass ist — also bevorzugt im LUV —, und unter dem Eis
-        // liegt der fluviale Abtrag still. Die Gletscher dünnen damit
-        // ausgerechnet die Luv-Kanäle aus, an denen die Kennzahl hängt.
-        // GEMESSEN (n=192, 6 Seeds, 20k Jahre, gepoolte Drainagedichte Luv/Lee,
-        // s. `testRainWeightLuvLeeIsSeedRobustDiagnostic`):
-        //   ohne Eis: aus 1.164 → an 1.315  (×1.130)
-        //   mit Eis:  aus 1.197 → an 1.230  (×1.027)
-        // Die RICHTUNG stimmt in der Produktion weiterhin (an > aus), aber der
-        // Hub schrumpft von +13 % auf +2.7 % und taugt dann nicht mehr als
-        // Signal-Wächter mit 5-%-Marge. Ausgepinnt misst der Test wieder die
-        // Mechanik von #9/#10 auf dem Stand, auf dem sie kalibriert wurde.
         c.iceEnabled = false
         return c
     }
 
-    /// Ungewichtete D8-Referenz-Akkumulation auf DEMSELBEN Netz: Zahl der Zellen,
-    /// die über `receiver` in `k` entwässern (inkl. der Zelle selbst).
-    ///
-    /// Topologisch über die Eingangsgrade (Kahn) statt über `hf`: das Empfänger-Netz
-    /// ist ein Wald (jede Zelle hat höchstens einen Empfänger), auf flachen
-    /// Seespiegel-Flächen sind die Füllhöhen aber GLEICH — nach `hf` sortiert wäre
-    /// die Reihenfolge dort willkürlich und die Zählung zu klein.
     private func upstreamCells(_ t: Terrain) -> [Double] {
         let cnt = t.cfg.count
         var count = [Double](repeating: 1, count: cnt)
@@ -73,21 +30,11 @@ final class RainWeightedFlowTests: XCTestCase {
         return count
     }
 
-    // MARK: - 1) Ausgeschaltet = heutiges Verhalten
-
     func testRainWeightedFlowIsOnByDefault() {
         XCTAssertTrue(SimConfig().rainWeightedFlow,
                       "Der gewichtete Abfluss ist seit #10 die Produktions-Physik")
     }
 
-    // MARK: - 1b) Die Normierung aus #10 (Basis der Rekalibrierung)
-
-    /// Das Gewicht ist `rain / Landmittel(rain)` auf Land und 1.0 über See.
-    /// Daraus folgt direkt: Σ Gewicht über Land = Zahl der Landzellen — der
-    /// Gesamtabfluss ist derselbe wie ungewichtet, der Schalter verteilt nur um.
-    /// Zusätzlich geprüft: das Landmittel des Gewichts ist AUFLÖSUNGSFREI 1.0,
-    /// während das Landmittel des rohen `rain` mit n wegläuft (0.56 → 0.36) —
-    /// genau der Grund, warum nicht das rohe Feld gewichtet.
     func testRainWeightIsNormalizedToLandMean() {
         for n in [96, 192, 320] {
             let t = Terrain(config: cfg(n: n, rainWeighted: true), seed: 1337)
@@ -108,11 +55,6 @@ final class RainWeightedFlowTests: XCTestCase {
         }
     }
 
-    /// Die Entwässerungs-Invariante gilt EINGESCHALTET unverändert: Σ der
-    /// Einzugsgebiete an allen Senken = Gesamtzellzahl. Das ist die eigentliche
-    /// Aussage der Normierung — vor #10 (rohes Gewicht) fiel dieselbe Summe auf
-    /// das Landmittel des Regens (gemessen 0.53 bei n=832) und riss damit jedes
-    /// in Zellen kalibrierte Gate mit.
     func testWeightedFlowKeepsDrainageTotal() {
         let t = Terrain(config: cfg(n: 128, rainWeighted: true), seed: 777)
         let total = Double(t.cfg.count)
@@ -120,19 +62,9 @@ final class RainWeightedFlowTests: XCTestCase {
                        "gewichtet darf die Entwässerungssumme nicht wegdriften")
     }
 
-    /// Der Tropfen-Etat auf LAND bleibt erhalten: über See trägt das Gewichtsfeld
-    /// den neutralen Wert 1.0, also fällt derselbe Anteil der Startpunkte aufs
-    /// Land wie bei gleichverteilten Starts. Das ist die Antwort auf #9 §D.3
-    /// (rohes Gewicht verlor 21–28 % der Land-Tropfen an den Ozean, weil es über
-    /// dem Meer am meisten regnet) — ohne die Tropfenzahl anzufassen.
     func testWeightedSpawnsKeepTheLandBudget() {
         let t = Terrain(config: cfg(n: 128, rainWeighted: true), seed: 1337)
         let c = t.cfg
-        // Erwartungswert über GENAU den Bereich, aus dem `spawnPosition` zieht:
-        // die Vorschläge sind gleichverteilt auf [0, n-1) × [0, n-1), die letzte
-        // Zeile/Spalte wird also nie getroffen (Randeffekt der Zellzuordnung
-        // `Int(py)*n + Int(px)`). Ohne diese Einschränkung verschiebt allein die
-        // Küstenlage des Randes den Sollwert um ~0.007.
         var wLand = 0.0, wAll = 0.0
         for j in 0..<(c.n - 1) {
             for i in 0..<(c.n - 1) {
@@ -153,13 +85,8 @@ final class RainWeightedFlowTests: XCTestCase {
         let share = Double(onLand) / Double(draws)
         print(String(format: "[RAIN] Starts auf Land=%.4f, erwartet (Gewichtsanteil)=%.4f",
                      share, landShare))
-        // 3 σ der Stichprobe (p ≈ 0.7, N = 40000) sind ~0.007.
         XCTAssertEqual(share, landShare, accuracy: 0.01,
                        "gewichtete Starts dürfen den Land-Etat nicht verschieben")
-        // Und über das GANZE Gitter gilt die Aussage exakt: der Gewichtsanteil
-        // des Landes IST der Zellanteil des Landes (Gewicht über See = 1.0 = das
-        // Landmittel). Über dem Ziehbereich oben stimmt das nur bis auf die
-        // Randzeile/-spalte, deshalb hier getrennt geprüft.
         var wLandAll = 0.0, wAllCells = 0.0
         var landCells = 0
         for k in 0..<c.count {
@@ -170,8 +97,6 @@ final class RainWeightedFlowTests: XCTestCase {
                        "der Land-Etat der Starts muss exakt der Zellanteil sein")
     }
 
-    /// Ausgeschaltet trägt jede Zelle EXAKT ihre Zellfläche bei — `area` ist also
-    /// die reine Zellzahl des Einzugsgebiets, unabhängig vom Regen.
     func testUnweightedAccumulationIsPureCellArea() {
         let t = Terrain(config: cfg(n: 96, rainWeighted: false), seed: 4242)
         let cellArea = t.cfg.cellSize * t.cfg.cellSize
@@ -185,10 +110,6 @@ final class RainWeightedFlowTests: XCTestCase {
                           "ohne Schalter muss area == Zellzahl × cellArea sein")
     }
 
-    /// Ein KONSTANTES Gewichtsfeld darf am Droplet-Pfad nichts ändern: die
-    /// Ablehnungs-Stichprobe nimmt Maximal-Gewichte ohne Ziehung an, der
-    /// Zufallsstrom bleibt also derselbe. Damit ist belegt, dass der Sampler die
-    /// Startpunkte nur UMVERTEILT und den Pfad nicht anfasst.
     func testUniformRainWeightIsBitIdentical() {
         var c = SimConfig(); c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 99)
@@ -205,15 +126,6 @@ final class RainWeightedFlowTests: XCTestCase {
         XCTAssertEqual(trk, trk2, "konstanter Regen darf die Tracks nicht verschieben")
     }
 
-    // MARK: - 2) Eingeschaltet: Luv trägt mehr Abfluss als Lee
-
-    /// Kernnachweis (Abnahmekriterium 4): bei GLEICH GROSSEM Einzugsgebiet trägt
-    /// eine Luv-Zelle (West) mehr Abfluss als eine Lee-Zelle (Ost).
-    ///
-    /// Gemessen wird der Abfluss je Einzugsgebiets-ZELLE, `area[k] / (Zellen × cellArea)`
-    /// — das ist genau der mittlere Niederschlag über dem Einzugsgebiet von `k`.
-    /// Die Normierung auf die Zellzahl macht den Vergleich unabhängig davon, dass
-    /// die West- und Osthälfte verschieden große Flüsse tragen.
     func testRainWeightedFlowFavorsLuv() {
         let t = Terrain(config: cfg(n: 128, rainWeighted: true), seed: 1337)
         let cellArea = t.cfg.cellSize * t.cfg.cellSize
@@ -221,8 +133,6 @@ final class RainWeightedFlowTests: XCTestCase {
         let n = t.cfg.n
         var luv = 0.0, luvN = 0.0, lee = 0.0, leeN = 0.0
         for k in 0..<t.cfg.count where t.hf[k] > t.cfg.sea {
-            // Nur substanzielle Läufe (≥ 30 Zellen wie in docs/river-baseline-metrics.md):
-            // Einzelzellen messen nur ihren eigenen Regen.
             guard cells[k] >= 30 else { continue }
             let perCell = t.area[k] / (cells[k] * cellArea)
             let i = k % n
@@ -234,8 +144,6 @@ final class RainWeightedFlowTests: XCTestCase {
                      luv, lee, luv / lee))
         XCTAssertGreaterThan(luv, lee * 1.10,
                              "Luv muss bei gleichem Einzugsgebiet spürbar mehr Abfluss tragen")
-        // Gegenprobe: ohne Schalter ist der Wert überall exakt 1 (reine Fläche),
-        // die Richtung kommt also wirklich aus dem Regen.
         let flat = Terrain(config: cfg(n: 128, rainWeighted: false), seed: 1337)
         let flatCells = upstreamCells(flat)
         for k in 0..<flat.cfg.count where flat.hf[k] > flat.cfg.sea && flatCells[k] >= 30 {
@@ -243,14 +151,10 @@ final class RainWeightedFlowTests: XCTestCase {
         }
     }
 
-    /// Dieselbe Richtung im MFD-Feld — die Gewichtung gilt für BEIDE Netze
-    /// (die Rollentrennung bleibt: `area` erodiert, `areaMFD` rendert/braided).
     func testRainWeightedMFDFavorsLuv() {
         let t = Terrain(config: cfg(n: 128, rainWeighted: true), seed: 1337)
         let cellArea = t.cfg.cellSize * t.cfg.cellSize
         let n = t.cfg.n
-        // MFD verteilt fraktional; als „gleich großes Einzugsgebiet" dient hier das
-        // D8-Zellmaß, das für beide Felder dieselbe Topologie beschreibt.
         let cells = upstreamCells(t)
         var luv = 0.0, luvN = 0.0, lee = 0.0, leeN = 0.0
         for k in 0..<t.cfg.count where t.hf[k] > t.cfg.sea {
@@ -265,11 +169,8 @@ final class RainWeightedFlowTests: XCTestCase {
         XCTAssertGreaterThan(luv, lee * 1.10, "auch das MFD-Feld muss dem Regen folgen")
     }
 
-    /// Die Tropfen-Startpunkte folgen dem Niederschlag: bei doppeltem Gewicht
-    /// starten (im Rahmen der Stichprobe) doppelt so viele Tropfen.
     func testRainWeightedSpawnsFollowRain() {
         let n = 64
-        // West nass (1.0), Ost halb so nass (0.5) → erwartete Aufteilung 2:1.
         var w = [Double](repeating: 0.5, count: n * n)
         for j in 0..<n { for i in 0..<(n / 2) { w[j * n + i] = 1.0 } }
         var rnd = Mulberry32(seed: 12345)
@@ -282,7 +183,6 @@ final class RainWeightedFlowTests: XCTestCase {
         print(String(format: "[RAIN] Tropfen-Starts West/Ost = %d/%d (×%.2f)", west, east, ratio))
         XCTAssertGreaterThan(ratio, 1.85, "Startpunkte folgen dem Regen nicht (erwartet ≈ 2.0)")
         XCTAssertLessThan(ratio, 2.15, "Startpunkte übergewichten den Regen")
-        // Ohne Gewichtsfeld bleibt es gleichverteilt.
         var rnd2 = Mulberry32(seed: 12345)
         var uw = 0, ue = 0
         for _ in 0..<20000 {
@@ -293,7 +193,6 @@ final class RainWeightedFlowTests: XCTestCase {
                        "ohne Gewicht müssen die Starts gleichverteilt bleiben")
     }
 
-    /// Determinismus bleibt auch eingeschaltet eine Invariante.
     func testRainWeightedFlowIsDeterministic() {
         let a = Terrain(config: cfg(n: 96, rainWeighted: true), seed: 4242)
         let b = Terrain(config: cfg(n: 96, rainWeighted: true), seed: 4242)
@@ -303,19 +202,6 @@ final class RainWeightedFlowTests: XCTestCase {
         XCTAssertEqual(a.areaMFD, b.areaMFD)
     }
 
-    // MARK: - Messung (print-only, Quelle von docs/rain-weighted-flow-measurements.md)
-
-    /// Vergleichsmessung an/aus im Stil von `docs/river-baseline-metrics.md`:
-    /// Kanalzellen, Drainagedichte Luv gegen Lee, Relief, See-Anteil.
-    /// Kein Assert außer Grund-Gesundheit — die Zahlen stehen im Dokument.
-    ///
-    /// Läuft im Alltag klein (n = 192, 20k Jahre, ~1 s). Die Tabelle in
-    /// `docs/rain-weighted-flow-measurements.md` stammt aus demselben Test mit
-    /// größerem Gitter/Horizont:
-    ///
-    ///     RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test -c release \
-    ///       --package-path SimCore \
-    ///       --filter testRainWeightMeasurementDiagnostic
     func testRainWeightMeasurementDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
@@ -343,16 +229,8 @@ final class RainWeightedFlowTests: XCTestCase {
         }
     }
 
-    /// Mehr-Seed-Gegenprobe zur Einzel-Seed-Messung oben: die Drainagedichte-
-    /// Richtung (Luv/Lee) muss über verschiedene Inselformen dieselbe sein, sonst
-    /// misst man nur die Zufallslage der Gebirge. Print-only bis auf den Vergleich
-    /// der MITTLEREN Verhältnisse.
     func testRainWeightLuvLeeIsSeedRobustDiagnostic() throws {
         try skipUnlessMeasuring()
-        // GEPOOLT statt „Mittel der Verhältnisse": kleine, trockene Seeds haben
-        // Hälften ganz ohne Kanalzellen (Seed 555: 47 bzw. 11 Kanalzellen auf der
-        // ganzen Insel) — deren Einzel-Verhältnis ist 0 bzw. undefiniert und würde
-        // ein Mittel dominieren. Gepoolt zählt jede Insel mit ihrem Gewicht.
         var chLuv = [false: 0, true: 0], chLee = [false: 0, true: 0]
         var lLuv = [false: 0, true: 0], lLee = [false: 0, true: 0]
         for seed in [UInt32(1337), 7, 99, 2024, 555, 42] {
@@ -385,20 +263,10 @@ final class RainWeightedFlowTests: XCTestCase {
         var relief = 0.0, reliefRobust = 0.0
         var lakeFrac = 0.0, largestLake = 0
         var rainLand = 0.0, rainSea = 0.0
-        /// Anteil der Landzellen an allen Zellen …
         var landShare = 0.0
-        /// … gegen den Anteil der Tropfen-STARTS, die auf Land fallen
-        /// (= Σrain über Land / Σrain gesamt). Beide sind gleich, solange die
-        /// Starts gleichverteilt sind; gewichtet sinkt der Land-Anteil, weil es
-        /// über dem Meer am meisten regnet (relevant für
-        /// `hydraulicSkipWaterSpawns` — s. Doku).
         var spawnLandShare = 0.0
     }
 
-    /// Kanalzelle = Landzelle mit `areaMFD / cellArea ≥ renderMinCells` (die
-    /// Render-Definition aus `SimRender.WaterFieldRenderer`). Drainagedichte =
-    /// Anteil der Kanalzellen an den Landzellen der jeweiligen Hälfte
-    /// (Luv = West = Wind-Seite).
     private func measure(_ t: Terrain) -> Metrics {
         let cellArea = t.cfg.cellSize * t.cfg.cellSize
         let creek = t.cfg.renderMinCells

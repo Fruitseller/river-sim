@@ -2,48 +2,24 @@ import XCTest
 @testable import SimCore
 import SimRender
 
-/// Wächter für die Render-Verschiebung von Rinnen und Graten (Issue #153).
-///
-/// Die Verschiebung ist eine GPU-Render-Ableitung: `relief_bake.gdshader`
-/// rechnet sie einmal je Terrain-Update in eine Textur, `terrain.gdshader`
-/// liest sie nur. Ausführbar ist davon headless nichts; gepinnt wird deshalb
-/// wie bei der Wasser-Kalibrierung (#92) die STRUKTUR des Uniform-Wegs:
-///   - welcher Shader welche `relief_*`-Uniform default-frei deklariert und liest,
-///   - die Kodierung deckt die Verschiebung ab,
-///   - der Terrain-Shader liest nur die Backtextur.
-/// Spiegel der Zahlen, „nichts am Register vorbei", Brücke und `Main.gd`
-/// prüft für alle Gruppen gemeinsam `CalibrationRegistryTests` (#213).
-/// Dass die Werte in Godot ankommen und Pinselring, Kameraziel und Pinsel auf
-/// der sichtbaren Fläche arbeiten, prüft End-to-End `game/tests/relief.gd`.
 final class ReliefUniformsTests: XCTestCase {
 
-    /// Welcher Shader welche Werte liest. Der Back-Pass braucht die
-    /// Form-Parameter und beide Kodierungen; der Terrain-Shader dekodiert und
-    /// schattiert nur.
     private static let expected: [String: [String]] = [
         "game/shaders/relief_bake.gdshader": [
             "relief_scale", "relief_strength", "relief_sharpen", "relief_sharpen_radius",
             "relief_ridge_cap", "relief_height_code", "relief_slope_code",
             "relief_cavity_gully_gain", "relief_cavity_ridge_gain",
-            // Felsrippen (Look-Iteration 7).
             "relief_rib_scale", "relief_rib_strength", "relief_rib_slope_lo",
             "relief_rib_slope_hi", "relief_rib_floor", "relief_cavity_rib_gain",
-            // Felsbänke (Look-Iteration 7, aus dem Terrain-Shader hierher).
             "relief_bench_spacing", "relief_bench_relief", "relief_cavity_bench_gain",
         ],
         "game/shaders/terrain.gdshader": [
             "relief_height_code", "relief_slope_code",
             "relief_shade_dark", "relief_shade_light", "relief_geometry_age",
-            // Feines Rinnen-Detail (bis zum Review zu #174 Literal-Defaults).
             "relief_detail_scale", "relief_detail_shade", "relief_detail_normal",
         ],
     ]
 
-    /// Die Kodierung muss die größte vorkommende Verschiebung abbilden: die
-    /// Rinnen bleiben unter `strength · scale · hscale` (Summe der Oktaven
-    /// < 2 × erste Oktave), ebenso die Felsrippen (Look-Iteration 7), die
-    /// Grate unter ihrem Deckel `ridgeCap` (tanh).
-    /// Der Kanal ist 0…1 mit Mitte 0.5, also ± 0.5 / heightCode Einheiten.
     func testHeightCodeCoversTheDisplacement() {
         let gullies = 2.0 * ReliefRender.strength * ReliefRender.scale * RenderContract.heightScale
         let ribs = 2.0 * ReliefRender.ribStrength * ReliefRender.ribScale * RenderContract.heightScale
@@ -64,9 +40,6 @@ final class ReliefUniformsTests: XCTestCase {
         }
     }
 
-    /// Vertex-Stufe liest die Höhe, Pixel-Stufe Steigung und Rinnen — aus der
-    /// gebackenen Textur, nie aus einer eigenen Auswertung des Filters (pro
-    /// Vertex kostete das in der Studie 35,6 ms je Bild).
     func testTerrainShaderOnlyReadsTheBake() throws {
         let terrain = try RepoSource.probe("game/shaders/terrain.gdshader")
         assertContains(terrain, "uniform sampler2D relief_tex",
@@ -75,7 +48,6 @@ final class ReliefUniformsTests: XCTestCase {
                        hint: "Seen bleiben flach auf ihrem Spiegel (Verschiebung × (1 − lift))")
         assertContains(terrain, "coarse_slope += relief_slope(relief);",
                        hint: "Pixel-Normale bekommt die Steigung der Verschiebung")
-        // EIN Abgriff je Pixel für Steigung und Rinnen (Review zu #174).
         assertContains(terrain, "vec4 relief = relief_pixel(v_uv);",
                        hint: "Pixel-Stufe liest die Backtextur einmal")
         XCTAssertEqual(terrain.count(ofIdentifier: "relief_pixel"), 2,

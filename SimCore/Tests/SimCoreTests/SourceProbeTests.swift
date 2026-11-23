@@ -1,15 +1,6 @@
 import XCTest
 
-/// Pins für die geteilte Quelltext-Probe (Issue #83).
-///
-/// Jede Sprache hat genau die Fallen, die vorher ein Wächter je eigenständig
-/// (und je anders) behandelt hat: Kommentar-Marker INNERHALB einer Zeichenkette
-/// sind kein Kommentar, eine Code-Zeile INNERHALB eines Literals ist kein Code.
-/// Beide Richtungen sind hier je Sprache gepinnt — die MeasurementGate-Tests
-/// pinnen zusätzlich die Gate-Semantik, die auf dieser Probe aufsetzt.
 final class SourceProbeTests: XCTestCase {
-
-    // MARK: Swift
 
     func testProbeSwiftStripsLineCommentsButKeepsStrings() {
         let probe = SourceProbe("let u = \"https://x\" // Kommentar", language: .swift)
@@ -56,8 +47,6 @@ final class SourceProbeTests: XCTestCase {
                        "der Kommentar-Marker im String bleibt String")
     }
 
-    // MARK: GDScript
-
     func testProbeGDScriptStripsHashCommentsButKeepsStrings() {
         let probe = SourceProbe("push_error(\"x # y\") # weg", language: .gdscript)
         XCTAssertEqual(probe.code, "push_error(\"x # y\") ",
@@ -76,8 +65,6 @@ final class SourceProbeTests: XCTestCase {
         XCTAssertTrue(probe.codeWithoutStrings.contains("DBG_REAL"))
     }
 
-    // MARK: gdshader
-
     func testProbeShaderStripsBothCommentForms() {
         let probe = SourceProbe("float a = 0.5; // x\nfloat b /* mitte */ = 1.0;",
                                 language: .gdshader)
@@ -85,13 +72,9 @@ final class SourceProbeTests: XCTestCase {
     }
 
     func testProbeShaderHasNoStrings() {
-        // GLSL kennt keine Zeichenketten: ein `"` ist ein gewöhnliches Zeichen
-        // und darf keinen String-Modus öffnen, der den Rest der Datei schluckt.
         let probe = SourceProbe("a \" b // weg\nc", language: .gdshader)
         XCTAssertEqual(probe.code, "a \" b \nc")
     }
-
-    // MARK: Abfragen laufen auf der Code-Sicht
 
     func testProbeQueriesIgnoreCommentedOutSource() throws {
         let source = "# const DBG_ALT := 0\nconst DBG_MIN := 0\nconst DBG_MAX := 1"
@@ -111,8 +94,6 @@ final class SourceProbeTests: XCTestCase {
     }
 
     func testProbeIdentifierCountIgnoresPrefixHits() {
-        // Review zu #105: `count(of:)` zählt Substrings — ein längerer Name
-        // mit gleichem Präfix erfüllte damit still den Vertrag des kürzeren.
         let probe = SourceProbe("water_lo water_lo_scaled x_water_lo water_lo",
                                 language: .gdshader)
         XCTAssertEqual(probe.count(of: "water_lo"), 4)
@@ -127,9 +108,6 @@ final class SourceProbeTests: XCTestCase {
     }
 
     func testProbeEscapedLineEndKeepsTheLineCount() {
-        // `\` am Zeilenende eines `"""`-Literals ist eine Zeilenfortsetzung —
-        // die Zeile muss auch in der String-losen Sicht gezählt werden, sonst
-        // verrutschen zeilen-verankerte Abfragen.
         let source = "let s = \"\"\"\na\\\nb\n\"\"\"\nx()"
         let probe = SourceProbe(source, language: .swift)
         XCTAssertEqual(probe.codeWithoutStrings.components(separatedBy: "\n").count,
@@ -137,8 +115,6 @@ final class SourceProbeTests: XCTestCase {
     }
 
     func testProbeRefusesOrderQueriesOnAJoinedSource() throws {
-        // Über mehrere Dateien gefügt (RepoSource.extensionSources) ist jede
-        // Vorkommens-Reihenfolge alphabetischer Sortier-Zufall — kein Vertrag.
         let joined = SourceProbe("let a = 1", language: .swift,
                                  joinedFromMultipleFiles: true)
         XCTAssertTrue(joined.contains("let a"),
@@ -146,8 +122,6 @@ final class SourceProbeTests: XCTestCase {
         XCTAssertThrowsError(try joined.captures(pattern: "let ([a-z]+)"))
         XCTAssertThrowsError(try joined.pairs(pattern: "let ([a-z]+) = ([0-9]+)"))
     }
-
-    // MARK: Testmethoden-Zerlegung (Swift, für das Mess-Gate)
 
     func testProbeSplitsTestMethodsAndClosesThemAtTheNextFunc() {
         let source = """
@@ -189,10 +163,6 @@ final class SourceProbeTests: XCTestCase {
         XCTAssertTrue(methods[0].body.contains("run()"))
     }
 
-    /// `swiftMethods()` zerlegt AUCH fremden Quelltext in Methoden — der
-    /// #93-Wächter fragt damit je `@Callable`-Methode der Brücke nach ihrer
-    /// Invalidierung. Geprüft: Attribute und Modifikatoren öffnen eine Methode,
-    /// eine gewöhnliche Zeile mit dem Teilwort `func` nicht.
     func testProbeSwiftMethodsSeeAttributedAndModifiedDeclarations() {
         let source = """
         final class Bridge {

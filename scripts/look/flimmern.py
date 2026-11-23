@@ -23,8 +23,8 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 W, H = 1728, 1052
-RATE = 12  # gemeinsamer Takt für alle Videos
-BOX = (0.12, 0.16, 0.88, 0.86)  # links, oben, rechts, unten als Bildanteil
+RATE = 12
+BOX = (0.12, 0.16, 0.88, 0.86)
 
 
 def frames(path, skip=0, step=1):

@@ -4,13 +4,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für das Frame-Protokoll (Issue #94): `RenderState.frame` liefert die
-/// Puffer eines Frames, Reihenfolge und Drosseln leben in SimRender statt in
-/// `Main.gd`.
 final class RenderFrameTests: XCTestCase {
 
-    /// Kleine Welt mit zwei Hand-Kanälen: genug für Band-Bau und Dirty-Vertrag,
-    /// ohne einen Spin-up zu bezahlen.
     private func channelWorld() -> Terrain {
         let terrain = Terrain(config: renderConfig(), seed: 1337)
         terrain.meander.channels = [
@@ -20,14 +15,7 @@ final class RenderFrameTests: XCTestCase {
         return terrain
     }
 
-    // MARK: - Reihenfolge
-
-    /// Das Bänder-Ergebnis geht ins Wasserfeld DESSELBEN Frames: bit-gleich zum
-    /// Handbau am eigenen `RiverRibbonRenderer` (Bänder, dann Wasser), und
-    /// verschieden vom Feld ohne Bänder (sonst bewiese die Gleichheit nichts).
     func testRibbonResultReachesTheWaterFieldOfTheSameFrame() throws {
-        // n = 192 und 4000 Jahre: die kleinste Paarung mit Bändern (s.
-        // `WaterProtectMaskTests`, `CanopyTests`).
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
 
         let framed = RenderState(geometryMode: true)
@@ -50,10 +38,6 @@ final class RenderFrameTests: XCTestCase {
                           "Testwelt ohne Bandwirkung — der Vergleich sagt dann nichts")
     }
 
-    /// Schutz- und Waldmaske eines Frames sehen dessen Wasser und Bänder:
-    /// bit-gleich zur Zusammensetzung aus den Renderern desselben Standes
-    /// (Bänder → Wasser → Schutz → Wald) — intern beobachtet, extern gefahren
-    /// nur der Frame (Issue #214).
     func testMasksAreBuiltFromTheSameFrame() throws {
         let terrain = agedWorld(renderConfig(n: 192), years: 4000)
         let render = RenderState(geometryMode: true)
@@ -65,11 +49,6 @@ final class RenderFrameTests: XCTestCase {
                                               wetMeadow: render.wetMeadowMask,
                                               barSand: render.barMaterial(terrain).sand))
 
-        // Wald: Zielmaske aus denselben Quellen wie im Frame — ein Gedächtnis,
-        // das noch nichts hält, nimmt das Ziel an.
-        // Seit Look-Iteration 12 endet der Wald am Wasserkörper der Bänder
-        // (`bandCore`) statt an der Schutzmaske, mit Galeriewald davor; seit
-        // Look-Iteration 14 sperrt die Schutzmaske wieder den Grundwald.
         let refMaterial = WetMeadow.apply(
             TerrainColorRenderer.buffers(terrain, bars: render.barMaterial(terrain)),
             mask: render.wetMeadowMask)
@@ -87,10 +66,6 @@ final class RenderFrameTests: XCTestCase {
                       "Testwelt ohne Wald — der Vergleich sagt dann nichts")
     }
 
-    // MARK: - Drosseln
-
-    /// Der 1-Hz-Band-Deckel unterdrückt den Rebuild und lässt ihn nach Ablauf
-    /// wieder zu; `settled` und `stroke` gehen an ihm vorbei.
     func testRibbonThrottleSuppressesAndThenAllowsTheRebuild() {
         let terrain = channelWorld()
         let render = RenderState(geometryMode: true)
@@ -111,7 +86,6 @@ final class RenderFrameTests: XCTestCase {
                       "Endstand geht am Deckel vorbei")
     }
 
-    /// Unter der Delta-Schwelle wird nicht gebaut, auch wenn der Deckel frei ist.
     func testRibbonRebuildNeedsMovementAboveTheThreshold() {
         let terrain = channelWorld()
         let render = RenderState(geometryMode: true)
@@ -120,11 +94,6 @@ final class RenderFrameTests: XCTestCase {
         XCTAssertFalse(render.frame(terrain, .settled, now: 5).ribbonsRebuilt)
     }
 
-    /// Nach einem Welt-Eingriff (`.edited`) baut der abschließende
-    /// `.settled`-Frame die Bänder auch ohne Knoten-Bewegung neu (Gelände,
-    /// Abfluss und Seespiegel gehen in die Bänder ein); `.stroke` während des
-    /// Strichs bleibt bei der Delta-Prüfung, und der Bau verbraucht den
-    /// Eingriff (Review Neon Nr. 5).
     func testSettledFrameAfterAnEditRebuildsTheRibbons() {
         let terrain = channelWorld()
         let render = RenderState(geometryMode: true)
@@ -141,13 +110,6 @@ final class RenderFrameTests: XCTestCase {
                        "Ein Sim-Schritt ohne Bewegung baut nicht")
     }
 
-    /// Ende-zu-Ende über die Sitzung (der Weg von `Main._finish_stroke` und
-    /// `Main._load_world`): nach Pinsel und Nachzug ist der Endstand derselbe,
-    /// den das Laden dieser Welt zeigt — Wald, Schutzmaske und Bänder
-    /// bit-gleich. Vor dem Fix blieb der Band-Bau des Vor-Pinsel-Stands
-    /// stehen; gemessen (n = 192, 13 Pinselorte) wichen danach 201–853
-    /// Waldzellen ab, auch fern vom Pinsel (der Nachzug rechnet Abfluss und
-    /// Seespiegel neu).
     func testFinishedStrokeMatchesTheLoadedWorld() throws {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("frame-load-\(UUID().uuidString).\(WorldSnapshot.fileExtension)").path
@@ -191,14 +153,11 @@ final class RenderFrameTests: XCTestCase {
         }
     }
 
-    /// Raster-Stempel-Modus (`RS_WATER_STAMP`): es gibt keine Bänder zu bauen.
     func testStampModeNeverBuildsRibbons() {
         let render = RenderState(geometryMode: false)
         XCTAssertFalse(render.frame(channelWorld(), .settled, now: 0).ribbonsRebuilt)
     }
 
-    /// Die Overlay-Drossel des Zeitraffers: höchstens alle 0,30 s, mit dem
-    /// kalibrierten Blend; alle anderen Auslöser laden sofort und hart.
     func testTimelapseThrottlesOverlaysAndBlendsTheWater() throws {
         let terrain = channelWorld()
         let render = RenderState(geometryMode: true)
@@ -216,9 +175,6 @@ final class RenderFrameTests: XCTestCase {
         XCTAssertEqual(settled.waterBlend, 1.0, "Endstand blendet nicht")
     }
 
-    /// GPU-Pfad: die CPU liefert das rohe Feld, der Blend reist zur GPU.
-    /// Die Referenz entsteht direkt an den Renderern (Issue #214) — dieselben
-    /// Bänder, dasselbe Wasser ohne Schwanzstufen.
     func testDeferredWaterTailHandsTheBlendToTheGPU() throws {
         let terrain = agedWorld(renderConfig(n: 96), years: 1000)
         let render = RenderState(geometryMode: true)
@@ -233,10 +189,6 @@ final class RenderFrameTests: XCTestCase {
                                                   deferTail: true))
     }
 
-    // MARK: - Vertrag mit Main.gd
-
-    /// `Main.gd` meldet den Auslöser als Zahl; die Konstanten dort müssen die
-    /// Rohwerte von `FrameTrigger` tragen. Und die Taktung liegt nicht mehr dort.
     func testMainUsesTheFrameTriggerValues() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let names: [FrameTrigger: String] = [
@@ -248,11 +200,6 @@ final class RenderFrameTests: XCTestCase {
             assertContains(main, "const \(name) := \(trigger.rawValue)",
                            hint: "FrameTrigger.\(trigger) == Main.gd \(name)")
         }
-        // Die Schlüssel des Frame-Dictionarys: was die Brücke setzt, liest Main.gd.
-        // Seit dem Hintergrund-Schritt (perf-measurements §L) trägt der Frame
-        // auch Höhe, Jahr, Seespiegel, Höhenbänder und das Band-Mesh: der
-        // Hauptthread lädt den Stand hoch, den der Job verpackt hat, und fragt
-        // die Sim dafür nicht noch einmal.
         let bridge = try RepoSource.probe("Extension/Sources/RiverSimGD/SimNode.swift")
         for key in ["trigger", "year", "heights", "water", "water_blend", "color", "surface",
                     "cover", "flow", "protect", "forest", "plume", "filled", "bands", "ribbons",
@@ -264,10 +211,6 @@ final class RenderFrameTests: XCTestCase {
                           || main.contains("frame.get(\"\(key)\""),
                           "Main.gd liest den Frame-Schlüssel \(key) nicht")
         }
-        // EINZIGE Ausnahme (Issue #214): die Band-Anfänge gehören zum Mesh
-        // (Struktur wie der Typ-Kanal), aber Main malt einen Dreiecks-Supp —
-        // die Godot-Wächter (river_ribbons, water_geometry) zählen je Band
-        // und lesen sie aus dem Frame; der Einzel-Callable dafür ist weg.
         assertContains(bridge, "out[Variant(\"ribbon_strip_starts\")]",
                        hint: "SimNode.packFrame setzt die Band-Anfänge")
         XCTAssertTrue(main.count(ofIdentifier: "ribbon_strip_starts") == 0,

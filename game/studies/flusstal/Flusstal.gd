@@ -1,24 +1,6 @@
 extends "res://scripts/Main.gd"
-## Bildstudie #116, seit Spec #156 Mess- und Referenzbühne, kein
-## Produktionsweg: die einzige Variante `baseline` IST die Anwendung (Main.gd
-## erbt alles). Die Variante `prototype` legte die nicht übernommenen
-## PBR-Materialien der ersten Runde darüber; #174 D hat sie durch die
-## prozedurale Materialverteilung ersetzt und mit ihren Texturen entfernt.
-## Geblieben sind die Debug-Ansichten der Kalibrierung (`RS_STUDY_DEBUG`).
-##
-## Alle Hebel der zweiten Runde sind Produktion und gelten in beiden
-## Varianten: `light` (tiefe Sonne, Schatten, Luftperspektive, Talnebel,
-## Wolkenschatten) seit #151 in scripts/Lighting.gd, `frame` (Ozean ohne
-## Streifen, Schelf-Farbe, Brandung) seit #155 in shaders/ocean.gdshader,
-## `geometry` (Render-Gitter in Sim-Auflösung, grobe Erosionsrinnen und
-## geschärfte Grate als echte Verschiebung) seit #153 in Main.gd und
-## shaders/relief_bake.gdshader, `canopy` (Kronendach statt Instanzbäumen)
-## seit #152 in shaders/terrain.gdshader. Die Studie dient als Mess- und
-## Vergleichsbühne (scripts/graphics-matrix.sh) und für die Debug-Ansichten
-## der Kalibrierung (`RS_STUDY_DEBUG`).
 var study_variant := OS.get_environment("RS_STUDY_VARIANT")
 var study_debug := OS.get_environment("RS_STUDY_DEBUG")
-## Studien-Fassung des Terrain-Shaders nur für die Debug-Ansichten.
 var study_enabled := not study_debug.is_empty()
 var study_mode := OS.get_environment("RS_STUDY_MODE")
 var study_output := OS.get_environment("RS_STUDY_OUTPUT")
@@ -27,34 +9,20 @@ var study_frames := 0
 var study_last_draw := 0
 var study_intervals: Array[float] = []
 var study_start_yaw := 0.0
-## Bedienung in der Messung (`RS_STUDY_UI`, Glas-Weichzeichner #174 E). Leer:
-## aus wie bisher (Punkt 47 misst die Landschaft). `plain`: Bedienung ohne
-## Weichzeichner, `glass`: mit. `ab`: alle drei Zustände (`AB_STATES`) in
-## Blöcken von `AB_BLOCK_FRAMES` Bildern im SELBEN Prozess, die Reihenfolge je
-## Runde um einen Zustand gedreht; so verteilt sich Drift (Fremdlast, Takt,
-## Wärme) gleich auf alle Zustände. Runde 0 wärmt nur (Shader, Pipelines) und
-## zählt nicht; die ersten `AB_SKIP_FRAMES` Bilder eines Blocks auch nicht.
-## `RS_STUDY_ROUNDS` setzt die Zahl gezählter Runden (Standard 8).
 var study_ui := OS.get_environment("RS_STUDY_UI")
 const AB_STATES := ["hidden", "plain", "glass"]
 const AB_BLOCK_FRAMES := 90
 const AB_SKIP_FRAMES := 12
 var ab_rounds := maxi(1, int(OS.get_environment("RS_STUDY_ROUNDS"))) if OS.has_environment("RS_STUDY_ROUNDS") else 8
 var ab_frame := 0
-var ab_blocks: Dictionary = {} # "runde:zustand" -> Array[float] (Bildintervalle in ms)
-# Hauptthread-Zeit je abgeholtem Hintergrund-Schritt (Main.last_apply_usec, ms).
+var ab_blocks: Dictionary = {}
 var study_applies := 0
 var study_apply_ms: Array[float] = []
-# Wartezeit des Hauptthreads auf Hintergrund-Schritte bei Messbeginn (ms).
 var study_wait_start := -1.0
-# Frame-Abstände der Frames, die einen Schritt hochgeladen haben (ms).
 var study_drawn_applies := 0
 var study_apply_intervals: Array[float] = []
 
 func _ready() -> void:
-	# Nur die dokumentierte Variante ist gültig: ein Tippfehler oder eine leere
-	# Umgebung landete früher still im Prototyp (Review zu #121); `prototype`
-	# gibt es seit #174 D nicht mehr und bricht ebenfalls laut ab.
 	if study_variant != "baseline":
 		push_error("RS_STUDY_VARIANT muss 'baseline' sein, ist: '" + study_variant
 			+ "' ('prototype' ist mit #174 D entfernt). Start über scripts/graphics-study.sh.")
@@ -72,7 +40,6 @@ func _ready() -> void:
 		push_error("RS_STUDY_UI muss leer, plain, glass oder ab sein, ist: '" + study_ui + "'")
 		get_tree().quit(1)
 		return
-	# Ohne Studienmodus (interaktiver Start) ist die Bedienung wie in Main da.
 	var ui_state := "glass"
 	if not study_mode.is_empty():
 		ui_state = {"": "hidden", "plain": "plain", "glass": "glass", "ab": "plain"}[study_ui]
@@ -88,8 +55,6 @@ func _ready() -> void:
 		"target": str(cam_target), "distance": cam_dist, "yaw": cam_yaw,
 		"pitch": cam_pitch, "mode": study_mode}))
 
-## `RS_STUDY_LEVERS` gibt es nicht mehr: alle Hebel sind Produktion (#152).
-## Ein alter Aufruf scheitert laut, statt still dasselbe Bild zu liefern.
 func _reject_levers() -> bool:
 	var raw := OS.get_environment("RS_STUDY_LEVERS")
 	if raw.is_empty():
@@ -97,10 +62,6 @@ func _reject_levers() -> bool:
 	push_error("RS_STUDY_LEVERS='%s': alle Hebel sind Produktion, die Studie hat keine mehr" % raw)
 	return false
 
-## Zur Laufzeit gebaute Studien-Fassung eines Produktions-Shaders: Godot 4.7
-## lehnt #include einer Datei mit shader_type ab, deshalb wird das Define vor
-## die Quelle gestellt (der Präprozessor läuft auf dem zusammengesetzten Code;
-## alle Uniform-Namen bleiben gleich, gesetzte Werte bleiben am Material).
 static func study_shader(path: String) -> Shader:
 	var shader := Shader.new()
 	shader.code = "#define FLUSSTAL_STUDY\n" + FileAccess.get_file_as_string(path)
@@ -114,7 +75,6 @@ func _setup_scene() -> void:
 	terrain_mat.set_shader_parameter("study_debug",
 		{"protect": 1, "forest": 2, "cavity": 3}.get(study_debug, 0))
 
-## Die Debug-Ansicht der Schutzmaske liest sie im Terrain-Shader.
 func _update_protect_mask(bytes: PackedByteArray) -> void:
 	super._update_protect_mask(bytes)
 	if study_enabled:
@@ -128,7 +88,6 @@ func _update_brush() -> void:
 
 func _process(delta: float) -> void:
 	if not study_mode.is_empty():
-		# Echte gerenderte Standbilder messen; Main darf den Renderloop nicht anhalten.
 		last_activity_msec = Time.get_ticks_msec()
 		study_elapsed += delta
 		if study_mode == "orbit":
@@ -144,26 +103,19 @@ func _process(delta: float) -> void:
 		if study_elapsed > 2.0:
 			study_apply_ms.append(last_apply_usec / 1000.0)
 	if study_mode == "shot":
-		# Gleiche Wasser-Animationsphase unabhängig von Shader-Kompilierzeiten.
 		u_time = 1.0
 		for mat in [terrain_mat, ocean_mat, river_mat, river_prev_mat] + _corridor_mats():
 			if mat != null:
 				mat.set_shader_parameter("u_time", u_time)
-		# Wolkenkörper mitnehmen: Main.gd takten sie selbst, hier im Shot-Modus
-		# sonst nicht — Körper und Schatten drifteten auseinander und die
-		# Aufnahmen wären nicht reproduzierbar (Review zu #174 D).
 		for mat in Lighting.cloud_body_materials(cloud_bodies):
 			mat.set_shader_parameter("u_time", u_time)
 
-## Bedienung auf einen Messzustand stellen: `hidden` (keine Bedienung), `plain`
-## (Bedienung ohne Weichzeichner) oder `glass` (mit).
 func _study_set_ui(state: String) -> void:
 	for child in get_children():
 		if child is CanvasLayer:
 			child.visible = state != "hidden"
 	get_tree().call_group(GLASS_BACKDROP_GROUP, "set_visible", state == "glass")
 
-## Zustand des Blocks `block` (0-basiert): je Runde um einen Zustand gedreht.
 @warning_ignore("integer_division")
 static func _ab_state(block: int) -> String:
 	var states := AB_STATES.size()
@@ -198,23 +150,15 @@ static func _median(values: Array) -> float:
 	sorted.sort()
 	return sorted[sorted.size() / 2]
 
-## p95 eines Blocks (wie `p95_ms` in STUDY_TIMING: Index (n − 1) · 0,95).
 static func _p95(values: Array) -> float:
 	var sorted := values.duplicate()
 	sorted.sort()
 	return sorted[int((sorted.size() - 1) * 0.95)]
 
-## Eine JSON-Zeile `STUDY_UI_AB`: je Zustand Median der Block-Mediane und der
-## Block-p95 (je Block eine Zahl, dann der Median über die Runden), dazu Mittel
-## und p95 aller Bilder gepoolt; außerdem die gepaarten Unterschiede JE RUNDE
-## (plain − hidden, glass − plain, glass − hidden) für Median UND p95 des Blocks,
-## mit Median, Minimum und Maximum über die Runden. Der gepoolte p95 verträgt
-## Fremdlast schlecht (einzelne Ausreißer-Blöcke ziehen ihn hoch); der Median
-## der gepaarten Block-Unterschiede nicht.
 func _study_report_ab() -> void:
 	var per_state := {}
-	var medians := {} # zustand -> Array[float] je Runde
-	var p95s := {} # zustand -> Array[float] je Runde
+	var medians := {}
+	var p95s := {}
 	for state in AB_STATES:
 		var pooled: Array[float] = []
 		var block_medians: Array[float] = []
@@ -269,11 +213,7 @@ func _study_drawn() -> void:
 	if not finished:
 		return
 	RenderingServer.frame_post_draw.disconnect(_study_drawn)
-	# Wartezeit IM Messfenster: vor jedem weiteren Sim-Aufruf ablesen, die
-	# warten selbst auf einen noch rechnenden Schritt.
 	var waited: float = sim.stepWaitMilliseconds() - maxf(study_wait_start, 0.0)
-	# Bei Movie-Läufen schreibt Godot selbst den Film; kein zusätzliches PNG
-	# (Review zu #121, konsistent mit dem Timing-Zweig darunter).
 	if not study_output.is_empty() and Engine.get_write_movie_path().is_empty():
 		var err := get_viewport().get_texture().get_image().save_png(study_output + ".png")
 		if err != OK:
@@ -288,14 +228,10 @@ func _study_drawn() -> void:
 			total += interval
 			if interval > 33.3:
 				over_budget += 1
-		# Hochladen der Hintergrund-Schritte (nur Betrieb `simulation`):
-		# Median und Maximum der Hauptthread-Zeit je Schritt.
 		study_apply_ms.sort()
 		var apply_median: float = study_apply_ms[study_apply_ms.size() / 2] \
 			if not study_apply_ms.is_empty() else 0.0
 		var apply_max: float = study_apply_ms.back() if not study_apply_ms.is_empty() else 0.0
-		# Die Frames mit Hochladen selbst: ihr längster Abstand ist die Frage,
-		# ob das Hochladen das Budget sprengt.
 		study_apply_intervals.sort()
 		var apply_frame_median: float = study_apply_intervals[study_apply_intervals.size() / 2] \
 			if not study_apply_intervals.is_empty() else 0.0
@@ -317,7 +253,5 @@ func _study_drawn() -> void:
 			"movie": false }))
 	get_tree().quit()
 
-
-## Ufer und Bett (Look E, #239) laufen mit derselben Zeit wie die Bänder.
 func _corridor_mats() -> Array:
 	return [] if corridor == null else corridor.materials()

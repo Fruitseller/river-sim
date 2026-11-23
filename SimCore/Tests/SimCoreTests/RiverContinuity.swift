@@ -2,36 +2,15 @@ import Foundation
 @testable import SimCore
 @testable import SimRender
 
-/// Durchgängigkeit des sichtbaren Wassers entlang der großen D8-Läufe
-/// (Befund des Eigners 2026-10-18: „der Fluss fließt durchgehend weiter, aber
-/// man sieht das Wasser nicht durchgehend"). Gemeinsam für den Wächter
-/// (`RiverContinuityTests`) und die Messreihe
-/// (`RiverContinuityDiagnostics`, `docs/zielbild-measurements.md`
-/// § Durchgehende Flüsse).
 struct RiverContinuity {
-    /// Zellen eines großen D8-Laufs ohne sichtbares Wasser in 2 Zellen, mit
-    /// sichtbarem Wasser stromauf UND stromab: das Wasser reißt mitten im
-    /// Lauf ab.
     var gapCells = 0
-    /// Zusammenhängende Lücken-Strecken entlang des D8-Laufs.
     var gapStretches = 0
     var longestGap = 0
-    /// Zellen, die das Band zu ≥ 0,5 deckt, und sichtbare Raster-Fluss-Zellen.
     var bandCells = 0
     var rasterCells = 0
-    /// Fluss-Bänder, die an Land spitz auslaufen, obwohl ihr D8-Lauf binnen
-    /// `WaterRender.ribbonJoinSearchCells` in ein anderes Band mündet: der
-    /// Zubringer endet als Keil vor dem Hauptlauf (Befund 2026-10-18, „Flüsse
-    /// kreuzen sich unnatürlich").
     var endsBeforeBand = 0
-    /// Raster-Läufe quer durch ein Band: eine sichtbare Raster-Zelle, deren
-    /// D8-Lauf ein Band betritt, es binnen 12 Zellen wieder verlässt und danach
-    /// mindestens 4 Zellen als Raster weiterläuft.
     var rasterCrossings = 0
 
-    /// Zählt `endsBeforeBand` am gebauten Mesh. Reichweite und Deckung als
-    /// Literale (= `WaterRender.ribbonJoinSearchCells`/`ribbonJoinCoverage`),
-    /// damit dieselbe Messung auch auf dem Stand vor dem Fix läuft.
     static func endsBeforeBand(_ t: Terrain, mesh: RibbonMesh) -> Int {
         let joinCells = 8, joinCoverage = 0.5
         let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world * 0.5
@@ -61,9 +40,6 @@ struct RiverContinuity {
         return count
     }
 
-    /// `water` ist das Wasserfeld VOR Blur und EWMA (`deferTail`), also das,
-    /// was die Regeln entscheiden. Sichtbar: Band ≥ 0,5, Raster-Fluss ab
-    /// `riverMaskLo`, stehendes Wasser über `lakeRawWetDepth`, Meer.
     static func measure(_ t: Terrain, bandCoverage: [Double], water: [UInt8],
                         minCells: Double = 1000) -> RiverContinuity {
         let n = t.cfg.n, cnt = n * n, sea = t.cfg.sea
@@ -88,8 +64,6 @@ struct RiverContinuity {
         }
         let rec = t.receiver
         let big = (0..<cnt).map { t.h[$0] > sea && t.area[$0] / cellArea >= minCells }
-        // Stromauf sichtbar: von hoch nach tief, jede Zelle gibt an ihren
-        // Empfänger weiter (der liegt nie höher, Priority-Flood).
         var upVisible = [Bool](repeating: false, count: cnt)
         for k in (0..<cnt).sorted(by: { t.h[$0] > t.h[$1] || (t.h[$0] == t.h[$1] && $0 < $1) }) where big[k] {
             let r = Int(rec[k])

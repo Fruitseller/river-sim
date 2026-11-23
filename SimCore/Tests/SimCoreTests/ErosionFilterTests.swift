@@ -1,11 +1,8 @@
 import XCTest
 @testable import SimCore
 
-/// Tests für den nicht-simulierten Pre-Erosionsfilter (`ErosionFilter.swift`).
 final class ErosionFilterTests: XCTestCase {
 
-    /// Determinismus: Wiederholte Aufrufe mit identischen Parametern müssen
-    /// bit-identische Deltas liefern.
     func testErosionFilterDeterminism() {
         let p = ErosionFilter.Params()
         let res1 = ErosionFilter.evaluate(px: 0.25, py: 0.75, h: 0.5, sx: 0.02, sy: -0.01,
@@ -27,8 +24,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(h1, h2, "apply muss deterministisch sein")
     }
 
-    /// Leere oder degenerierte Gitter (n <= 1) sowie nicht-endliche Meereshöhen
-    /// dürfen zu keinem Absturz führen und belassen das Höhenfeld unverändert.
     func testApplyHandlesEmptyAndDegenerateGridsSafely() {
         let p = ErosionFilter.Params()
 
@@ -50,8 +45,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(valid, before, "Unendliche Meereshöhe muss No-op sein")
     }
 
-    /// Nicht-endliche Koordinaten oder Steigungen sowie ungültige Skalierungs-
-    /// Parameter liefern defensiv Nullen statt NaN oder Division durch 0.
     func testEvaluateHandlesNonFiniteAndInvalidParametersSafely() {
         var p = ErosionFilter.Params()
 
@@ -87,7 +80,6 @@ final class ErosionFilterTests: XCTestCase {
         let negOctaves = ErosionFilter.evaluate(px: 0, py: 0, h: 0.5, sx: 0, sy: 0, fadeTarget: 0, p: p)
         XCTAssertEqual(negOctaves.dh, 0)
 
-        // scale * cellScale unterläuft auf 0 -> freq = inf darf kein NaN erzeugen
         p = ErosionFilter.Params()
         p.scale = 1e-300
         p.cellScale = 1e-300
@@ -98,7 +90,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(underflow.magnitude, 0)
         XCTAssertEqual(underflow.ridgeMap, 0)
 
-        // Nicht-endliche skalare Parameter
         p = ErosionFilter.Params()
         p.strength = .nan
         XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
@@ -123,7 +114,6 @@ final class ErosionFilterTests: XCTestCase {
         p.detail = .nan
         XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
 
-        // Nicht-endliche Tupel-Parameter
         p = ErosionFilter.Params()
         p.rounding.0 = .nan
         XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
@@ -137,11 +127,7 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01, fadeTarget: 0, p: p).dh, 0)
     }
 
-    /// Endliche, aber extreme Parameter passieren `Params.isValid` und laufen
-    /// erst in die Netze INNERHALB von `evaluate`: Stärke-Überlauf vor der
-    /// Schleife, Oktaven-Abbruch bei unendlicher Frequenz, Ausgangsprüfung.
     func testEvaluateOverflowGuardsInsideTheFilter() {
-        // strength * scale läuft auf inf über -> Null-Deltas vor der Schleife.
         var p = ErosionFilter.Params()
         p.strength = 1e308
         p.scale = 2
@@ -150,8 +136,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(strengthOverflow.dh, 0)
         XCTAssertEqual(strengthOverflow.magnitude, 0)
 
-        // freq wird nach der ersten Oktave unendlich -> Abbruch; das Ergebnis
-        // ist damit exakt das einer einzigen Oktave und bleibt endlich.
         p = ErosionFilter.Params()
         p.lacunarity = .greatestFiniteMagnitude
         XCTAssertTrue(p.isValid)
@@ -165,8 +149,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(broken.dsy, single.dsy)
         XCTAssertEqual(broken.ridgeMap, single.ridgeMap)
 
-        // strength0 bleibt endlich, die Summe über die Oktaven nicht ->
-        // die Ausgangsprüfung fällt auf Null-Deltas zurück.
         p = ErosionFilter.Params()
         p.strength = .greatestFiniteMagnitude
         p.scale = 1
@@ -179,8 +161,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(sumOverflow.ridgeMap, 0)
     }
 
-    /// NaN-Werte in fadeTarget werden über die Klemme `min(1, max(-1, ...))`
-    /// sicher auf -1 gefaltet und führen zu keinen NaN-Rückgabewerten.
     func testFadeTargetClampOrderHandlesNanSafely() {
         let p = ErosionFilter.Params()
         let result = ErosionFilter.evaluate(px: 0.5, py: 0.5, h: 0.5, sx: 0.01, sy: 0.01,
@@ -192,8 +172,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertTrue(result.ridgeMap.isFinite, "ridgeMap muss endlich sein")
     }
 
-    /// Nicht-endliche Höhenwerte im Eingangsfeld führen bei `apply` zu keinem Abbruch
-    /// und vergiften benachbarte endliche Zellen nicht (Nicht-Kontagion).
     func testApplyWithNonFiniteHeightsDoesNotTrap() {
         let n = 4
         var h = [Double](repeating: 0.5, count: n * n)
@@ -210,14 +188,11 @@ final class ErosionFilterTests: XCTestCase {
         }
     }
 
-    /// Nicht-endliche Parameter (Offsets, Höhenversatz) sowie ungültige Filter-Parameter
-    /// führen bei `apply` zu einem sicheren No-op und belassen das Höhenfeld unverändert.
     func testApplyHandlesNonFiniteParametersAndInvalidParamsSafely() {
         let n = 4
         let initial = [Double](repeating: 0.5, count: n * n)
         let validParams = ErosionFilter.Params()
 
-        // Nicht-endliche seedOffsets
         for badOffset in [Double.nan, Double.infinity, -Double.infinity] {
             var hX = initial
             ErosionFilter.apply(h: &hX, n: n, sea: 0.1, seedOffsetX: badOffset, seedOffsetY: 0, params: validParams)
@@ -228,7 +203,6 @@ final class ErosionFilterTests: XCTestCase {
             XCTAssertEqual(hY, initial, "Nicht-endliches seedOffsetY darf Höhenfeld nicht verändern")
         }
 
-        // Nicht-endliche heightOffset-Komponenten
         for badOffset in [Double.nan, Double.infinity, -Double.infinity] {
             var h0 = initial
             ErosionFilter.apply(h: &h0, n: n, sea: 0.1, seedOffsetX: 0, seedOffsetY: 0,
@@ -241,7 +215,6 @@ final class ErosionFilterTests: XCTestCase {
             XCTAssertEqual(h1, initial, "Nicht-endliches heightOffset.1 darf Höhenfeld nicht verändern")
         }
 
-        // Ungültige Filter-Parameter (params.isValid == false)
         var invalidParams = ErosionFilter.Params()
         invalidParams.octaves = 0
         var hParams = initial
@@ -261,9 +234,6 @@ final class ErosionFilterTests: XCTestCase {
         XCTAssertEqual(hParams, initial, "Ungültige params (strength NaN) müssen No-op sein")
     }
 
-    /// Quelltext-Wächter: `apply` fängt nicht-endliche Offsets und ungültige Parameter
-    /// bereits am Methodeneinstieg per `guard` ab, um die parallele Zelliteration
-    /// gar nicht erst zu starten.
     func testApplyEntryGuardsSourceContract() throws {
         let probe = try RepoSource.probe("SimCore/Sources/SimCore/ErosionFilter.swift")
         let applyMethod = try XCTUnwrap(

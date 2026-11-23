@@ -1,90 +1,27 @@
 extends RefCounted
-## Gelände-Verfeinerung auf der GPU (#238): aus der Sim-Höhe (n²) entsteht
-## eine Fläche in vierfacher Auflösung (bei n = 720 also 2880², 3,9 m je
-## Texel), dazu Karten für Abtrag, Ablagerung, Abfluss und Schutt.
-##
-## Vorbild ist Schott, Galin, Guérin, Paris, Peytavie: „Terrain Amplification
-## using Multi-scale Erosion“ (2024), Code unter MIT
-## (https://github.com/H-Schott/MultiScaleErosion, s. NOTICE): hochskalieren in
-## Zweierschritten, auf jeder Stufe nacherodieren. Die Compute-Shader liegen in
-## `res://shaders/amplify/`, was vom Vorbild abweicht, steht dort am Code.
-##
-## NUR Darstellung. Die Sim bleibt auf der CPU, nichts geht zurück. Die
-## Bit-Regel der Sim gilt hier nicht, wohl aber: gleicher Eingang, gleicher
-## Ausgang (feste Schrittzahl, Rauschen nur aus der Position).
-##
-## Ausgabe im Vertrag der bisherigen Backtextur (`relief_tex`,
-## relief_bake.gdshader): der Terrain-Shader und `Main._surface_y` lesen sie
-## unverändert. Ohne `RenderingDevice` (Compatibility-Renderer, headless, CI)
-## gibt es keinen Verfeinerer; dort backt Main weiter mit relief_bake.gdshader.
-##
-## Ablauf: `submit()` nimmt einen Sim-Stand entgegen, `advance()` rechnet je
-## Bild einen Teil der Pässe, bis der Stand fertig ist, und meldet dann
-## `true`. Wie viel je Bild, folgt aus der Zeit, über die der Aufrufer den
-## Auftrag verteilen will, nicht aus der Bildrate. Zwei Ausgabe-Ziele im Wechsel, damit der Terrain-Shader vom
-## alten zum neuen Stand blenden kann (`bake_blend`); der letzte Abschnitt
-## schreibt deshalb erst, wenn die vorige Blende durch ist (`may_publish`).
 
 const SHADER_DIR := "res://shaders/amplify/"
-## Texel je Sim-Zelle in der feinsten Stufe (zwei Verdopplungen).
 const FACTOR := 4
-## Mip-Stufen der Ausgabe: Stufe 2 ist das Sim-Gitter (dort liest der
-## Vertex-Shader des 720er-Netzes), die übrigen glätten die Ferne.
 const OUTPUT_MIPS := 7
 
-## Geschmackswerte der Verfeinerung. Stufe 1 = doppelte, Stufe 2 = vierfache
-## Sim-Auflösung. Kosten und Wirkung: docs/look/d-amplify/README.md.
 var params := {
-	# Schritte je Stufe. Jeder Schritt trägt den Abfluss ein Texel weiter;
-	# die Reichweite einer Änderung am Eingang ist damit fest begrenzt.
 	"steps_1": 48, "steps_2": 24,
-	# Stream-Power-Abtrag: Stärke je Schritt, Exponent des Abflusses.
 	"erode_1": 4.0e-4, "erode_2": 3.0e-4, "erode_m": 0.75,
-	# Verteilung des Abflusses auf tiefere Nachbarn (Gefälle^p).
 	"flow_p": 1.3,
-	# Härte des Gesteins als Rauschen aus der Position: Hub auf den Abtrag
-	# (0 = gleichförmig), Wellenlängen in Sim-Zellen und Gewichte je Oktave.
-	# Längere Wellen (zuerst 12 / 4,3 / 1,5 Zellen) ließen große Wände glatt:
-	# was breiter ist als das Fenster des Mittels, zieht die Bindung wieder ab.
 	"hard_gain": 0.95,
 	"hard_wave_a": 5.0, "hard_wave_b": 2.2, "hard_wave_c": 0.9,
 	"hard_weight_a": 0.45, "hard_weight_b": 0.35, "hard_weight_c": 0.2,
-	# Thermisch: Rate je Schritt, Schüttwinkel (tan), und nie flacher als
-	# dieses Vielfache des Gefälles der Sim-Fläche.
 	"thermal_rate": 0.04, "talus": 1.2, "talus_sim": 1.3,
-	# Gegen Riefen in Gitterbreite: Anteil des Nachbarmittels im Abfluss, den
-	# der Abtrag liest, und Hangkriechen (Ausgleich zum Nachbarmittel je Schritt).
 	"stream_blur_1": 0.15, "stream_blur_2": 0.1, "creep": 0.0,
-	# Ablagerung: Transportkraft (Welteinheiten Sediment je √Abfluss bei
-	# vollem Gefälle), Anteil des Überschusses, der je Schritt liegen bleibt,
-	# Deckel je Schritt als Anteil der Texelweite.
 	"capacity": 0.1, "deposit_rate": 0.25, "deposit_cap": 0.02,
-	# Bindung: Schranke um die Sim-Höhe in Welteinheiten, Gesamtstärke.
-	# Stärke 1 wäre der Abtrag in wahrer Tiefe (Rinnen bis in die Schranke);
-	# im Bild las das als zerfurchtes Ödland.
 	"bound_down": 0.30, "bound_up": 0.20, "strength": 0.6,
-	# An Steilwänden stärker: Stärke dort, und das Gefälle der Sim-Fläche,
-	# zwischen dem sie anwächst (wie die Felsrippen des Back-Passes,
-	# ReliefRender.ribSlopeLo/Hi).
 	"strength_steep": 1.2, "steep_lo": 0.8, "steep_hi": 1.8,
-	# Gebietsweise ruhiger: Anteil der Stärke in den ruhigen Gebieten und
-	# deren Wellenlänge in Sim-Zellen (Rauschen aus der Position).
 	"region_floor": 0.3, "region_cells": 56.0,
-	# Fenster, über das die Verfeinerung das Mittel der Sim-Höhe erhält, als
-	# σ in Sim-Zellen. 0 = streng je Zelle (dann bleiben nur Formen unter
-	# einer Zellbreite stehen, s. mean_solve.glsl).
 	"mean_window": 3.0,
-	# Tiefe (Welteinheiten), ab der eine Rinne bzw. Rippe voll zählt.
 	"cavity_depth": 0.05,
-	# Maße der Karten: Abtrag, Ablagerung, Schutt (Welteinheiten), Abfluss
-	# (Einzugsfläche in feinsten Texeln, ab der die Karte sättigt).
-	# Der Abtrag summiert sich am Hang auf 30 bis 60 m: mit kleinerem Maß war
-	# die Karte auf allem Land weiß und trug keine Form mehr.
 	"map_erosion": 0.5, "map_deposit": 0.03, "map_scree": 0.08, "map_flow": 4096.0,
 }
 
-## Höchstens dieser Anteil eines Auftrags in EINEM Bild, auch nach einem
-## Ruckler (sonst holte ein langes Bild alles auf einmal nach).
 const MAX_SHARE_PER_FRAME := 0.25
 
 var rd: RenderingDevice
@@ -100,48 +37,41 @@ var _shaders := {}
 var _pipelines := {}
 var _linear: RID
 var _nearest: RID
-var _rids: Array[RID] = []       # alles, was am Ende freigegeben wird
-var _sets := {}                  # Uniform-Sets, nach Namen
+var _rids: Array[RID] = []
+var _sets := {}
 
 var _sim_height: RID
 var _sim_filled: RID
 var _sim_protect: RID
-var _height := [[], []]          # je Stufe zwei Zustände (Ping-Pong), RG32F
-var _flux := [[], []]            # dazu Abfluss/Normierung/Sediment, RGBA16F
-var _accum: Array[RID] = []      # je Stufe
-var _mean: RID                   # Zellmittel der Abweichung
-var _correction: RID             # daraus das Korrekturfeld (mean_solve.glsl)
-var _mask: RID                   # wo die Verfeinerung wirken darf (mask.glsl)
+var _height := [[], []]
+var _flux := [[], []]
+var _accum: Array[RID] = []
+var _mean: RID
+var _correction: RID
+var _mask: RID
 var _offset: RID
-var _relief: Array[RID] = []     # zwei Ausgabe-Ziele
+var _relief: Array[RID] = []
 var _maps: Array[RID] = []
-var _relief_mips := [[], []]     # je Ziel: Ansicht je Mip-Stufe
+var _relief_mips := [[], []]
 var _maps_mips := [[], []]
 var _relief_tex: Array[Texture2DRD] = []
 var _maps_tex: Array[Texture2DRD] = []
-var _front := 0                  # Index des gültigen Ausgabe-Ziels
-var _valid := false              # ein Stand ist veröffentlicht
+var _front := 0
+var _valid := false
 
-var _queue: Array = []           # ausstehende Pässe des laufenden Auftrags
-var _pending: Array = []         # nächster Eingang, während einer rechnet
+var _queue: Array = []
+var _pending: Array = []
 var _has_inputs := false
-var _plan_cost := 0.0            # Arbeit des laufenden Auftrags (Megatexel-Schritte)
-var _allowance := 0.0            # davon noch nicht verbrauchtes Guthaben
-var _job_fade := false           # der laufende Auftrag will eingeblendet werden
-## `fade` des zuletzt fertig gewordenen Auftrags.
+var _plan_cost := 0.0
+var _allowance := 0.0
+var _job_fade := false
 var published_fade := false
-## Zähler für Wächter und Messung.
 var published := 0
 var passes_run := 0
 
 static func available() -> bool:
 	return RenderingServer.get_rendering_device() != null
 
-## Legt Shader, Pipelines und Texturen an. `false`, wenn kein
-## RenderingDevice da ist oder ein Shader nicht übersetzt.
-## `pond` ist die Wassertiefe (Sim-Höhe), ab der der Terrain-Shader einen
-## Tümpel zeigt (WaterRender.pondContourLo); die Codes sind die der
-## Backtextur (ReliefRender.heightCode, slopeCode).
 func setup(grid_n: int, world: float, height_scale: float, sea_level: float,
 		pond: float, relief_height_code: float, relief_slope_code: float) -> bool:
 	rd = RenderingServer.get_rendering_device()
@@ -194,17 +124,8 @@ func setup(grid_n: int, world: float, height_scale: float, sea_level: float,
 		_maps_tex.append(maps_tex)
 	return true
 
-## Neuer Sim-Stand. Höhe und Seespiegel als Float32-Rohbytes (n²), Schutzmaske
-## als R8; leere Felder behalten den letzten Stand. `immediate` rechnet alles
-## in diesem Bild (Laden, Neugenerieren, Sprung-Ende), sonst verteilt
-## `advance()` die Arbeit. Rechnet noch ein Auftrag, wartet der neue Eingang;
-## kommt vorher ein weiterer, ersetzt er ihn (der neueste Stand gewinnt).
-## `fade` reist mit dem Auftrag: soll sein Stand eingeblendet werden
-## (Zeitraffer)? Der Aufrufer liest es beim Fertigwerden als `published_fade`.
 func submit(heights: PackedByteArray, filled: PackedByteArray, protect: PackedByteArray,
 		immediate: bool, fade := false) -> void:
-	# Felder, die ein wartender Eingang schon trägt, nicht verlieren: sie
-	# sind noch nicht auf der GPU.
 	if not _pending.is_empty():
 		if filled.is_empty():
 			filled = _pending[1]
@@ -222,11 +143,6 @@ func submit(heights: PackedByteArray, filled: PackedByteArray, protect: PackedBy
 	else:
 		_pending = [heights, filled, protect, fade]
 
-## Rechnet einen Teil des laufenden Auftrags: so viel, dass er über `seconds`
-## verteilt fertig wird (`delta` = Dauer dieses Bilds). `may_publish`: die
-## vorige Blende ist durch, das hintere Ausgabe-Ziel darf überschrieben
-## werden. Liefert `true` in dem Bild, in dem ein neuer Stand fertig geworden
-## ist.
 func advance(may_publish: bool, delta: float, seconds: float) -> bool:
 	if _queue.is_empty():
 		return false
@@ -250,18 +166,15 @@ func advance(may_publish: bool, delta: float, seconds: float) -> bool:
 func busy() -> bool:
 	return not _queue.is_empty()
 
-## Blendet der gerade rechnende Auftrag ein? (Main wählt danach sein Tempo.)
 func running_fade() -> bool:
 	return _job_fade
 
 func has_result() -> bool:
 	return _valid
 
-## Hat schon Seespiegel und Schutzmaske bekommen.
 func has_inputs() -> bool:
 	return _has_inputs
 
-## Gültiger Stand und sein Vorgänger (zum Überblenden).
 func relief_texture() -> Texture2DRD:
 	return _relief_tex[_front]
 
@@ -274,9 +187,6 @@ func maps_texture() -> Texture2DRD:
 func previous_maps_texture() -> Texture2DRD:
 	return _maps_tex[1 - _front]
 
-## Kodierter Höhenzuschlag auf dem Sim-Gitter (n², `wert × Code + 0,5`), so
-## wie ihn der Vertex-Shader des Sim-Netzes aus Mip-Stufe 2 liest. GPU-Sync:
-## nur rufen, wenn die CPU die sichtbare Fläche braucht.
 func read_cell_lift() -> PackedFloat32Array:
 	if not _valid:
 		return PackedFloat32Array()
@@ -285,11 +195,6 @@ func read_cell_lift() -> PackedFloat32Array:
 	img.convert(Image.FORMAT_RF)
 	return img.get_data().to_float32_array()
 
-## Rohdaten für Debug-Ansicht und Wächter: "offset" (RG16F, fein: r Abweichung
-## in Welteinheiten, g Maske), "maps" (RGBA8, fein), "relief" (RGBA16F, fein),
-## "mean" (R32F, n²: Zellmittel der rohen Abweichung aus mean.glsl),
-## "correction" (R32F, n²: das Korrekturfeld daraus, mean_solve.glsl),
-## "height" (RG32F, fein), "flux" (RGBA16F, fein).
 func read_raw(what: String) -> PackedByteArray:
 	match what:
 		"offset": return rd.texture_get_data(_offset, 0)
@@ -319,8 +224,6 @@ func free_resources() -> void:
 	_rids.clear()
 	rd = null
 
-# ------------------------------------------------------------------ Auftrag
-
 func _begin(heights: PackedByteArray, filled: PackedByteArray, protect: PackedByteArray,
 		fade: bool) -> void:
 	_job_fade = fade
@@ -337,8 +240,6 @@ func _begin(heights: PackedByteArray, filled: PackedByteArray, protect: PackedBy
 		_plan_cost += job["cost"]
 	_allowance = 0.0
 
-## Die Pässe eines vollen Auftrags, in Reihenfolge. `cost` in
-## Megatexel-Schritten, `output` = schreibt ins hintere Ausgabe-Ziel.
 func _plan() -> Array:
 	var plan: Array = []
 	var s1 := n * 2
@@ -380,7 +281,6 @@ func _plan() -> Array:
 		[s2, s2, hscale, sea, p["bound_down"], p["bound_up"], p["strength"], pond_depth]
 			+ [p["strength_steep"], p["steep_lo"], p["steep_hi"], p["region_cells"],
 				p["region_floor"], n, 0, 0]))
-	# Ab hier wird das hintere Ausgabe-Ziel beschrieben.
 	var back := 1 - _front if _valid else _front
 	var enc := _pass("encode", "encode_%s_%d" % [tag, back], s2,
 		[_tex(0, _offset, _nearest), _tex(1, _flux[1][last], _nearest), _tex(2, _accum[1], _nearest),
@@ -438,8 +338,6 @@ func _run(job: Dictionary) -> void:
 	rd.compute_list_end()
 	passes_run += 1
 
-# ------------------------------------------------------------------ Bausteine
-
 func _pass(shader: String, key: String, size: int, uniforms: Array, pc: Array) -> Dictionary:
 	return {
 		"shader": shader, "key": key, "size": size, "uniforms": uniforms,
@@ -448,7 +346,6 @@ func _pass(shader: String, key: String, size: int, uniforms: Array, pc: Array) -
 		"output": false,
 	}
 
-## Uniform-Sets hängen nur an den Texturen, nicht am Auftrag: einmal anlegen.
 func _uniform_set(job: Dictionary) -> RID:
 	var key: String = job["key"]
 	if not _sets.has(key):

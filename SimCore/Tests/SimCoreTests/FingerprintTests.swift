@@ -1,29 +1,16 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter des Zustands-Fingerabdrucks (Issue #78): `TerrainState.fingerprint()`
-/// muss auf JEDES Feld des Inventars reagieren, sonst meldet `simperf --hash`
-/// bzw. `testDeterminism` „identisch", obwohl ein Refactor den Zustand
-/// verändert hat — genau die Lücke, die #78 schließt (vorher: 8 handgepflegte
-/// Felder).
-///
-/// Iteriert die Feldtabellen aus `WorldSnapshot` selbst, keine zweite Liste:
-/// ein neu ins Inventar aufgenommenes Feld ist damit automatisch mitgeprüft.
-/// Für die NICHT tabellierten Bestandteile (Skalare, Höhenbänder, Mäander)
-/// sichert `testEveryStoredPropertyIsAccountedFor` die Vollständigkeit.
 final class FingerprintTests: XCTestCase {
 
     private func makeTerrain() -> Terrain {
         var c = SimConfig()
         c.n = 96; c.world = calibrationWorld
         let t = Terrain(config: c, seed: 99)
-        // Ein Schritt, damit die Pässe möglichst viele Felder füllen; leere
-        // Felder (abgeschaltete Physik) behandelt der Feld-Helfer unten.
         t.step(dtYears: 1000)
         return t
     }
 
-    /// Kleinste mögliche Abweichung: ein Bit im Mantissen-LSB (ulp-Empfindlichkeit).
     private func ulpFlip(_ v: Double) -> Double { Double(bitPattern: v.bitPattern ^ 1) }
 
     private func assertDetects(_ name: String, base: TerrainState,
@@ -37,9 +24,6 @@ final class FingerprintTests: XCTestCase {
                           file: file, line: line)
     }
 
-    /// Ein tabelliertes Feld stören: Element 0 kippen — oder, bei abgeschalteter
-    /// Physik (leeres Feld), das Feld „anschalten": beides muss der Hasher
-    /// sehen (Längen-Präfix).
     private func assertDetectsField<T>(_ f: WorldSnapshot.FieldSpec<T>,
                                        base: TerrainState, baseline: UInt64,
                                        seed: T, flip: (T) -> T,
@@ -56,8 +40,6 @@ final class FingerprintTests: XCTestCase {
         let t = makeTerrain()
         let base = t.state
         let baseline = base.fingerprint()
-        // Der öffentliche Zugang für simperf ist genau dieser Fingerabdruck,
-        // keine eigene Rechnung.
         XCTAssertEqual(t.fingerprint(), baseline)
 
         for f in WorldSnapshot.doubleFields {
@@ -74,12 +56,8 @@ final class FingerprintTests: XCTestCase {
         }
     }
 
-    /// Die Bestandteile, die NICHT in den Feldtabellen stehen: Skalar-Block,
-    /// Höhenbänder und der Mäander-Block (dieselbe Abdeckung wie `encode()`).
     func testFingerprintCoversScalarsAndMeander() {
         var base = makeTerrain().state
-        // Für die Mäander-Proben muss es einen Lauf/Altarm mit Knoten geben;
-        // baut die Test-Config keinen, wird einer eingesetzt.
         if base.meanderChannels.first?.nodes.isEmpty != false {
             base.meanderChannels = [RiverChannel(nodes: [MeanderNode(x: 1, z: 2)],
                                                  discharge: [3])]
@@ -103,8 +81,6 @@ final class FingerprintTests: XCTestCase {
         assertDetects("meanderChannels", base: base, baseline: baseline) {
             $0.meanderChannels[0].nodes[0].x = ulpFlip($0.meanderChannels[0].nodes[0].x)
         }
-        // `discharge` GETRENNT stören: es geht als eigener Block in den Hash,
-        // eine Knoten-Störung allein beweist seine Abdeckung nicht.
         assertDetects("meanderDischarge", base: base, baseline: baseline) {
             $0.meanderChannels[0].discharge[0] = ulpFlip($0.meanderChannels[0].discharge[0])
         }
@@ -116,20 +92,11 @@ final class FingerprintTests: XCTestCase {
         }
     }
 
-    /// Vollständigkeits-Wächter für die Hand-Listen: JEDE gespeicherte
-    /// Eigenschaft von `TerrainState` ist entweder in den vier Feldtabellen
-    /// tabelliert oder hier als Skalar-/Mäander-Bestandteil benannt (beide
-    /// Gruppen gehen in `fingerprint()` UND `encode()` ein). Ein neues Feld,
-    /// das nirgends einsortiert wird, fällt damit HIER auf, statt still am
-    /// Fingerprint und am Speicherformat vorbeizulaufen — sonst überlebte die
-    /// #78-Lücke auf der untabellierten Hälfte.
     func testEveryStoredPropertyIsAccountedFor() {
         let tabled = Set(WorldSnapshot.doubleFields.map(\.name)
             + WorldSnapshot.int32Fields.map(\.name)
             + WorldSnapshot.uint8Fields.map(\.name)
             + WorldSnapshot.boolFields.map(\.name))
-        // Die nicht tabellierten Bestandteile — genau sie tragen die
-        // Hand-Listen in `encode()`, `fingerprint()` und dem Skalar-Test oben.
         let scalars: Set<String> = [
             "years", "seed", "dropsEmitted", "dropCarry", "flowStepCount", "beltCouplingCarry",
             "disturbActive", "heightBands",
@@ -142,9 +109,6 @@ final class FingerprintTests: XCTestCase {
                           + "Skalar-/Mäander-Bestandteil erfasst — Fingerprint und "
                           + "Speicherformat wären blind dafür (s. WorldSnapshot.swift)")
         }
-        // `fingerprint()` hasht die Höhenbänder strukturell (Mirror) unter der
-        // Annahme, dass ALLE gespeicherten Eigenschaften Doubles sind — ein
-        // anders typisiertes Band würde dort still übersprungen.
         for child in Mirror(reflecting: HeightBands.legacyAbsolute).children {
             XCTAssertTrue(child.value is Double,
                           "HeightBands.\(child.label ?? "?") ist kein Double — "
@@ -152,27 +116,20 @@ final class FingerprintTests: XCTestCase {
         }
     }
 
-    /// Wächter für Neu-Generierung auf gebrauchtem Terrain (Issue #174):
-    /// `Terrain.generate(seed:settleYears:)` auf einem bereits benutzten Objekt
-    /// muss exakt denselben Zustand erzeugen wie ein frisches `Terrain(...)`.
     func testGenerateOnUsedTerrainYieldsFreshWorld() {
         let cfg = SimConfig.production
         let settle = 200.0
-        // Terrain A: gebraucht mit Seed 1337 und einigen Zeitschritten
         let a = Terrain(config: cfg, seed: 1337, settleYears: settle)
         for _ in 0..<3 {
             a.step(dtYears: 100)
         }
-        // Neu-Generierung mit Seed 42 auf DEMSELBEN Objekt
         a.generate(seed: 42, settleYears: settle)
 
-        // Terrain B: frisch instanziiert mit Seed 42
         let b = Terrain(config: cfg, seed: 42, settleYears: settle)
 
         XCTAssertEqual(a.fingerprint(), b.fingerprint(),
                        "generate(seed: 42) auf gebrauchtem Terrain muss bit-identisch zu frischem Terrain sein")
 
-        // Folgeschritte müssen ebenfalls exakt bit-identisch bleiben
         for _ in 0..<3 {
             a.step(dtYears: 100)
             b.step(dtYears: 100)

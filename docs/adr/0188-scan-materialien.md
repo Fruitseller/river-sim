@@ -1,0 +1,13 @@
+# Scan-Materialien für Fels, Schutt, Kies und Sand
+
+Seit #237 kommen Fels, Schutt, Kies und Sand aus gescannten CC0-PBR-Sätzen statt aus Rausch-Oktaven (Quellen, Lizenz, Prüfsummen: `game/assets/materials/MANIFEST.md`, gepackt von `scripts/look/pack_scan_materials.py`). Sie ersetzen die Rausch-Klüftung von #174 D. WO welches Material liegt, entscheidet weiter SimRender.TerrainColorRenderer; das Include bestimmt nur das Aussehen. Die Karten der Gelände-Verfeinerung liest es bewusst nicht selbst (das macht `amplify_material`), sonst würde doppelt umverteilt.
+
+Layout: zwei Texture2DArrays mit derselben Ebenen-Reihenfolge (`SCAN_*`): `scan_albedo` RGB Albedo (sRGB, beim Packen auf mittlere lineare Helligkeit `SCAN_ALBEDO_MEAN` = 0,18 normiert, damit Albedo/Mittel Detail um 1 ist und die Grundfarbe beim Shader bleibt), A Höhe 0…1 für den Übergang nach Höhe; `scan_normal` RG Normale (OpenGL, Tangentenraum), B Rauheit. Abfragen nur über `textureGrad` (s. [ADR 0174](0174-ableitungen-und-numerik.md)).
+
+- Fels: großer Maßstab gebankter Fels (Kachel 1,6 Welteinheiten, damit eine Wand in der Nahsicht nicht kachelt), darin zerklüfteter Fels im kleinen Maßstab (zwei Maßstäbe gegen sichtbares Kacheln, zwei Gesteine für Abwechslung), dazu Schichtbänder nach Welt-Y nur auf Wänden; die Lithologie mischt hart und weich.
+- Triplanar: auf den Wänden läuft v gegen Welt-Y (Bildzeilen zählen nach unten), damit der Scan aufrecht steht und Bankung und Überhänge richtig herum liegen. OpenGL-Normalen zeigen mit Grün bildaufwärts, also nach +Y an der Wand und nach −Z in der Draufsicht.
+- Übergang nach Höhe (`scan_height_blend`): bei Gewicht t gewinnt, wer höher steht, aber an den Enden exakt (t = 0 → 0, t = 1 → 1); die Höhe verschiebt nur die Mitte (Faktor 4t(1 − t)). Sonst sprang ein Gewicht von 1 % an einem Höhenunterschied auf die Hälfte (Review Gemini, PR #237). Schutt füllt so die Senken der Wand.
+
+Felsfarbe ist LINEARE Albedo (Godot): Im Review zu PR #177 wurde sie von 0,33–0,40 auf 0,20–0,33 gesenkt, weil die Vorlagen A/B/C dunkelgrauen, schroffen Fels tragen und der hellere unter Himmelslicht beige las (Kalkstein mit 0,5–0,6 las sich in der Studie als Schnee). 0,20–0,33 sind auf dem Bildschirm aber 0,48–0,61, unter warmer Sonne hellbeige (Befund #174 „Fels zu hell“). Seitdem rund 0,06–0,16 (Bildschirm ~0,29–0,42), leicht kühl gegen die warme Sonne; die Form tragen die Scan-Normalen.
+
+Betrifft: `game/shaders/scan_material.gdshaderinc` (`scan_triplanar`, `scan_height_blend`, `SCAN_*`), `game/shaders/terrain.gdshader` (Fels-, Schutt-, Sandblock), `game/assets/materials/MANIFEST.md`

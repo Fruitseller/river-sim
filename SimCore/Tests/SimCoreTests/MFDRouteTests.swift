@@ -2,8 +2,6 @@ import XCTest
 @testable import SimCore
 
 final class MFDRouteTests: XCTestCase {
-    /// Referenz akkumuliert jede Zelle vollständig seriell. Das ungerade
-    /// Gitter prüft auch die Randzellen und ungleich große Parallelbereiche.
     func testPreparedRoutesMatchSerialAccumulationBitForBit() {
         for exponent in [4.0, 2.0, 1.3] {
             var cfg = SimConfig.production

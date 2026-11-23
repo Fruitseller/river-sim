@@ -24,11 +24,9 @@ import numpy as np
 from PIL import Image
 
 SIZE = 1024
-ALBEDO_MEAN = 0.18  # == SCAN_ALBEDO_MEAN in game/shaders/scan_material.gdshaderinc
+ALBEDO_MEAN = 0.18
 DESATURATE = 0.5
 
-# Ebene → (Quellordner, Dateimuster für Albedo, Normal-GL, Rauheit, Höhe).
-# Reihenfolge == SCAN_* in scan_material.gdshaderinc.
 def _ph(n):
     return {"albedo": [f"{n}_diff_1k.png"], "normal": [f"{n}_nor_gl_1k.png"],
             "rough": [f"{n}_rough_1k.png"], "height": [f"{n}_disp_1k.png"]}

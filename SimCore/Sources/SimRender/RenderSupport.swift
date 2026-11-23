@@ -1,26 +1,6 @@
 import Foundation
 import SimCore
 
-// Gemeinsame Werkzeuge der godot-freien Render-Aufbereitung (Issues #53/#80).
-//
-// Hier steht, was MEHRERE Render-Module brauchen — sonst hätte jedes eine
-// eigene Kopie, und die beiden Wasser-Pfade (Raster-Feld und Band-Geometrie)
-// müssen sich exakt einig sein: sie teilen die Uferlinien-Definition
-// (`openWaterSurface`), den Mündungs-Pfad (`mouthPath`) und die Band-Halbbreite.
-// Die KALIBRIER-Zahlen dahinter liegen unverändert im getesteten Vertrag
-// `SimCore.WaterRender` (Issue #51) — dieses Modul rechnet nur mit ihnen.
-
-/// Datenparallel über disjunkte Index-Bereiche — nur für Pässe, deren Zellen
-/// unabhängig sind (jede schreibt ausschließlich ihren eigenen Index): das
-/// Ergebnis ist BIT-IDENTISCH zur sequenziellen Schleife. Gleiche Idee wie
-/// `Terrain.parallel` in SimCore; die Render-Aufbereitung läuft sonst auf dem
-/// aufrufenden Thread.
-///
-/// Swift 6 (Issue #201): dieselbe zentrale `nonisolated(unsafe)`-Erfassung wie
-/// bei `Terrain.parallel` — die Aufrufer-closures arbeiten bewusst auf rohen
-/// Zeigern der Puffer, die Disjunktheit der Bereiche ist Projektregel und wird
-/// von den Bit-Identitäts-Wächtern der Renderer geprüft. Die Signatur bleibt
-/// nicht-`@Sendable`, damit die Aufrufstellen unverändert bleiben.
 private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
 @inline(__always) public func parallelChunks(_ count: Int, _ body: (Int, Int) -> Void) {
     let chunks = min(count, max(1, hostCoreCount * 4))
@@ -31,94 +11,32 @@ private let hostCoreCount = ProcessInfo.processInfo.activeProcessorCount
     }
 }
 
-/// Lineare Klemme auf das Einheitsintervall 0…1 — das Gegenstück zu `smoothstep`
-/// für lineare Verläufe und kontinuierliche Grid-Positionen.
-///
-/// Wie bei `byte01` und `smoothstep` steht die KONSTANTE in beiden Klemmen
-/// zuerst (`min(1, max(0, …))`). Swifts `min`/`max` sind als `y < x ? y : x`
-/// bzw. `y >= x ? y : x` definiert und geben bei einem NaN-Operanden den ERSTEN
-/// zurück: so fällt ein NaN in `value` auf 0 statt durch die Klemme zu wandern.
-/// Für ENDLICHE Werte ist das Ergebnis bit-identisch zur umgekehrten
-/// Schreibweise `min(max(…, 0), 1)`.
 @inline(__always)
 func clamp01(_ value: Double) -> Double {
     min(1, max(0, value))
 }
 
-/// Weiche Stufe zwischen `edge0` und `edge1` — die EINE Fassung, die ALLE
-/// Render-Rampen dieses Moduls benutzen (Kaskaden-Übergabe und Mündungs-Fade
-/// der Bänder, Klippen-Gewicht der Materialien, Abfluss-Rampe der Deckkraft).
-/// Vorher stand sie zusätzlich als privater Zwilling in `TerrainColorRenderer`
-/// und zweimal von Hand ausgeschrieben in `RiverRibbonRenderer` (Abfluss-Rampe
-/// und Kanal-Deckkraft).
-///
-/// **Vorbedingung `edge0 < edge1`** — wie bei GLSLs `smoothstep`, und hier
-/// nicht erzwungen: bei `edge0 == edge1` teilt die Rampe durch 0, bei
-/// `edge0 > edge1` läuft sie rückwärts. Die Rampen dieses Moduls halten das
-/// ein; die einzige Kante, die nicht als Literal oder `WaterRender`-Konstante
-/// dasteht, ist `cfg.renderMinCells` (Default 320) in `RiverRibbonRenderer`
-/// und `WaterFieldRenderer`. Wer sie auf 0 oder negativ setzt, verlässt den
-/// Gültigkeitsbereich dieser Funktion.
-///
-/// INNERHALB dieser Vorbedingung fällt ein NaN in `x` über `clamp01` auf 0,
-/// statt durch die ganze Rampe zu wandern. Für ENDLICHE Werte ist das Ergebnis
-/// bit-identisch zur umgekehrten Schreibweise.
 @inline(__always)
 func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
     let t = clamp01((x - edge0) / (edge1 - edge0))
     return t * t * (3 - 2 * t)
 }
 
-/// Klemmt einen 0…1-Wert auf ein Byte — die EINE Umrechnung, mit der ALLE
-/// RGBA8-Puffer dieses Moduls enden (Makrofarbe, Materialgewichte, Wasserfeld,
-/// Δ-Karte). Vorher stand sie elfmal ausgeschrieben in `WaterFieldRenderer`
-/// und `TerrainDiagnostics`, dazu ein zwölftes Mal als privater Helfer in
-/// `TerrainColorRenderer`.
-///
-/// **Warum sie TOTAL ist und die alte Schreibweise es nicht war.**
-/// `UInt8(Double)` klemmt nicht, es BRICHT AB (Trap), sobald das Argument NaN
-/// oder ±∞ ist. Die vorgeschaltete Klemme fing das nicht: Swifts `min`/`max`
-/// sind als `y < x ? y : x` bzw. `y >= x ? y : x` definiert, geben bei einem
-/// NaN-Operanden also den ERSTEN zurück. Damit ist `max(NaN, 0)` wieder NaN
-/// und `min(NaN, 1)` ebenso — `UInt8(min(max(v, 0), 1) * 255)` war für NaN
-/// genau so tödlich wie `UInt8(v * 255)`.
-///
-/// Diese Asymmetrie ist der eigentliche Merksatz: **die Reihenfolge der
-/// Operanden entscheidet.** Die Rechen-Stufen davor schreiben durchweg die
-/// KONSTANTE zuerst (`min(1, …)`, `max(0, …)`) und wischen NaN damit beiläufig
-/// auf die Konstante weg; die Byte-Zeile schrieb den WERT zuerst und reichte
-/// ihn durch. Wer eine dieser Stufen umstellt, verliert diese unbeabsichtigte
-/// Absicherung — der letzte Schritt hält jetzt unabhängig davon.
-///
-/// Dass ungültige Zahlen hier nicht als „kann nicht passieren" gelten, steht im
-/// Modul selbst: `TerrainDiagnostics` zählt sie (Index `DBG_INVALID`), malt sie
-/// in der Δ-Karte magenta, und `Main.gd` warnt darüber. Ein Abbruch der
-/// Extension wäre die schlechtere Antwort als ein sichtbar falsches Pixel.
-/// NaN wird deshalb zu 0, ±∞ zu 0 bzw. 255.
-///
-/// Für ENDLICHE Werte ist das Ergebnis bit-identisch zur alten Schreibweise;
-/// an der Darstellung ändert sich also nichts (Wächter: `RenderByteTests`).
 @inline(__always)
 func byte01(_ value: Double) -> UInt8 {
-    guard value > 0 else { return 0 }   // NaN fällt hier heraus
+    guard value > 0 else { return 0 }
     guard value < 1 else { return 255 }
     return UInt8(value * 255)
 }
 
-/// Feldwert an kontinuierlicher Grid-Position (bilinear, randgeklemmt).
 @inline(__always)
 func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Double {
-    // Bei unzureichender Gittergröße oder nicht-endlichen/übermäßigen Koordinaten
-    // defensiv abbrechen statt beim Index-Cast oder Pufferzugriff zu trappen.
     guard n >= 2, field.count >= n * n,
           gx.isFinite, gz.isFinite,
           abs(gx) < 1e9, abs(gz) < 1e9 else {
         if n == 1 && field.count >= 1 { return field[0] }
         return 0
     }
-    // Die Index-Klemme arbeitet auf Int-Gittergrenzen (0…n - 2) statt auf dem
-    // kontinuierlichen Einheitsintervall und bleibt daher bewusst eine Int-Klemme;
-    // nur die fraktionalen Interpolationsgewichte laufen über clamp01.
     let xi = min(max(Int(gx), 0), n - 2), yi = min(max(Int(gz), 0), n - 2)
     let fx = clamp01(gx - Double(xi)), fy = clamp01(gz - Double(yi))
     let k = yi * n + xi
@@ -126,17 +44,6 @@ func bilinearGrid(_ field: [Double], _ gx: Double, _ gz: Double, n: Int) -> Doub
          + field[k + n] * (1 - fx) * fy + field[k + n + 1] * fx * fy
 }
 
-/// Höhe der GERENDERTEN Oberfläche: bilinear zwischen den Render-Gitter-
-/// Vertices, die ihrerseits bilinear aus dem n²-Feld lesen (so sampelt der
-/// Terrain-Vertex-Shader). Bei `renderGrid >= n` (oder unbekannt, `<= 1`)
-/// identisch zu `bilinearGrid`.
-///
-/// Die Band-Geometrie muss der SICHTBAREN Oberfläche folgen, nicht den
-/// Sim-Höhen: auf Steilstrecken weicht das gröbere Render-Mesh um ein
-/// Vielfaches von `RenderContract.riverLift` von den Sim-Höhen ab — ein Band
-/// auf Sim-Höhen taucht dort abwechselnd unter das Mesh und ragt an
-/// Dreieckskämmen als blaue Zacken heraus (User-Screenshots, Steil-Läufe im
-/// „balanced"-Gitter 384 auf dem 832er-Feld).
 @inline(__always)
 func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
                          n: Int, renderGrid: Int) -> Double {
@@ -146,9 +53,8 @@ func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
         return bilinearGrid(field, gx, gz, n: n)
     }
     if renderGrid <= 1 || renderGrid >= n { return bilinearGrid(field, gx, gz, n: n) }
-    let s = Double(n - 1) / Double(renderGrid - 1) // Render-Vertex-Abstand in Zellen
+    let s = Double(n - 1) / Double(renderGrid - 1)
     let rx = gx / s, rz = gz / s
-    // Bewusst Int-Klemme auf Gittergrenzen (0…renderGrid - 2), kein clamp01.
     let xi = min(max(Int(rx), 0), renderGrid - 2)
     let zi = min(max(Int(rz), 0), renderGrid - 2)
     let fx = clamp01(rx - Double(xi)), fz = clamp01(rz - Double(zi))
@@ -156,25 +62,11 @@ func renderSurfaceHeight(_ field: [Double], _ gx: Double, _ gz: Double,
     let v10 = bilinearGrid(field, Double(xi + 1) * s, Double(zi) * s, n: n)
     let v01 = bilinearGrid(field, Double(xi) * s, Double(zi + 1) * s, n: n)
     let v11 = bilinearGrid(field, Double(xi + 1) * s, Double(zi + 1) * s, n: n)
-    // Innerhalb des Quads ist die sichtbare Fläche die TRIANGULIERUNG des
-    // Meshes, nicht die Bilinear-Fläche — auf steilen Quads weichen beide um
-    // den halben Quad-Twist voneinander ab, und das Band täuchte gegen die
-    // Bilinear-Annahme weiter ein/aus. Godots PlaneMesh teilt jedes Quad
-    // entlang der ANTI-Diagonale (prevrow+i → thisrow+i−1, also von (1,0)
-    // nach (0,1)): unter ihr das Dreieck (0,0)(1,0)(0,1), über ihr
-    // (1,1)(0,1)(1,0).
     return fx + fz <= 1
         ? v00 + fx * (v10 - v00) + fz * (v01 - v00)
         : v11 + (1 - fx) * (v01 - v11) + (1 - fz) * (v10 - v11)
 }
 
-/// Wasseroberfläche über einer Zelle, falls sie unter offenem Wasser liegt —
-/// `nil` = trocken. Meer und See sind zwei verschiedene Flächen: das Meer
-/// liegt als eigene Ebene auf `cfg.sea` (Priority-Flood füllt es NICHT auf,
-/// `hf == h` unter Meereshöhe), Seen tragen ihren ratenbegrenzten
-/// Darstellungs-Spiegel `waterLevel`. Die Präsenz-Schwelle ist der Fuß der
-/// Shader-Uferkontur — was der Shader nicht mehr zeichnet, ist auch für die
-/// Geometrie kein Wasser.
 @inline(__always)
 func openWaterSurface(_ k: Int, h: [Double], wl: [Double], sea: Double) -> Double? {
     guard k >= 0, k < h.count, k < wl.count else { return nil }
@@ -184,22 +76,6 @@ func openWaterSurface(_ k: Int, h: [Double], wl: [Double], sea: Double) -> Doubl
     return nil
 }
 
-/// Knoten-Indizes eines Altarms mit `count` Knoten, die gemalt bzw. gestempelt
-/// werden — `nil` = der Altarm zählt nicht. EINE Auswahl für alle drei Leser
-/// (Raster-Wasserfeld, Altarm-Bänder, Gürtel-Material): sie müssen dieselben
-/// Schleifen meinen, sonst steht Wasser ohne Ried oder Ried ohne Wasser.
-///
-/// Mindestlänge `WaterRender.oxbowMinimumNodes`; die Hals-Enden werden um
-/// `min(oxbowMaximumTrimmedNodes, max(1, count / 8))` Knoten getrimmt (die
-/// Cutoff-Enden liegen eng beieinander, beide breit gestempelt schlösse sich
-/// der Altarm zum Wasserring). Es bleiben mindestens drei Knoten. Der
-/// Alters-Fade gehört NICHT hierher: er gilt nur für das Wasser.
-///
-/// Vorher stand die Auswahl dreimal mit verschiedenen Wächtern (`first >
-/// last`, `last - first < 2`, `last - first >= 2`). Bei der Mindestlänge 20
-/// und höchstens 3 getrimmten Knoten bleiben immer mindestens 13 Knoten
-/// übrig, alle drei Wächter griffen also nie verschieden: das Verhalten ist
-/// bit-gleich (Wächter: `OxbowNodeRangeTests`).
 func oxbowNodeRange(count: Int) -> ClosedRange<Int>? {
     guard count >= WaterRender.oxbowMinimumNodes else { return nil }
     let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, count / 8))
@@ -208,37 +84,15 @@ func oxbowNodeRange(count: Int) -> ClosedRange<Int>? {
     return first...last
 }
 
-/// Halbbreite (Zellen) aus dem Abfluss `q` (Zellen Einzugsgebiet), bezogen
-/// auf die Render-Schwelle der Config. Kurve und Grenzen:
-/// `WaterRender.ribbonHalfWidthCells`.
 @inline(__always)
 func ribbonHalfWidthCells(_ q: Double, cfg: SimConfig) -> Double {
     WaterRender.ribbonHalfWidthCells(dischargeCells: q,
                                      referenceCells: cfg.renderMinCells)
 }
 
-/// Mündungs-Pfad: Zellzentren vom letzten Zentrumslinien-Knoten dem
-/// D8-Empfänger folgend, bis das Band `WaterRender.mouthOverlapCells` tief
-/// in der Wasserfläche liegt. Leer = binnen `WaterRender.mouthSearchCells`
-/// kein Wasser.
-///
-/// Die D8-Kette läuft in Zell-Schritten und zickzackt entsprechend; ein
-/// 3-Punkt-Mittel glättet sie, ohne die Endpunkte zu verschieben.
-/// Wird von BEIDEN Pfaden gebraucht: die Geometrie baut daraus ihre
-/// Mündung, das Wasserfeld stempelt denselben Korridor als Saum (sonst
-/// malte das D8-Raster unter dem verlängerten Band eine zweite Fluss-Version).
-///
-/// MEER mit Richtung (`dirX`/`dirZ` = Tangente am Laufende): erreicht der
-/// Strahl geradeaus binnen `WaterRender.mouthRayLandCells` Zellen das Meer,
-/// läuft die Mündung auf ihm (`mouthRay`). Die D8-Kette setzte am Laufende
-/// unter 30–80° an, und am Knick verengte der Krümmungs-Deckel das Band an
-/// der Wasserlinie zur Spitze (Befund #174, „Flüsse erreichen das Meer
-/// nicht", gemessen in `docs/zielbild-measurements.md` § Delta, Mündung).
 func mouthPath(_ terrain: Terrain, fromX: Double, fromZ: Double,
                dirX: Double = 0, dirZ: Double = 0) -> [(x: Double, z: Double, surface: Double?)] {
     let n = terrain.cfg.n
-    // Bei leerem Terrain oder ungültigen Eingaben defensiv abbrechen statt OOB
-    // im Empfängernetz oder beim Double-zu-Int-Cast zu trappen.
     guard n > 0, terrain.h.count >= n * n,
           terrain.receiver.count >= n * n, terrain.waterLevel.count >= n * n,
           fromX.isFinite, fromZ.isFinite,
@@ -266,18 +120,7 @@ func mouthPath(_ terrain: Terrain, fromX: Double, fromZ: Double,
         }
     }
     guard path.contains(where: { $0.surface != nil }) else { return [] }
-    // Trockene Nachzügler abschneiden: die Kette kann nach der Wasserfläche
-    // wieder über eine Nehrung/Bank laufen. Ein Band, das dort endet, hätte
-    // die Wasserfläche zwar berührt, aber nicht IN ihr aufgehört — genau der
-    // Spalt, den die Mündungs-Verlängerung schließen soll.
     while let last = path.last, last.surface == nil { path.removeLast() }
-    // MEER (Befund #174, „Flüsse erreichen das Meer nicht"): Meereszellen haben
-    // keinen D8-Empfänger, die Kette endete an der ERSTEN Meereszelle. Das
-    // Band lief damit auf den letzten zwei Zellen VOR der Wasserlinie aus
-    // (Übergabe und Enden-Taper lagen auf dem Strand), und dort lag der Sand.
-    // Unter der opaken Ozean-Ebene ist das Band unsichtbar: es läuft geradeaus
-    // weiter (Richtung vom Laufende zur ersten Meereszelle), bis es
-    // `mouthSeaCells` Zellen im Meer liegt, und blendet erst dort aus.
     if let last = path.last, let surface = last.surface, surface <= sea {
         var dx = last.x - fromX, dz = last.z - fromZ
         let dl = (dx * dx + dz * dz).squareRoot()
@@ -295,12 +138,6 @@ func mouthPath(_ terrain: Terrain, fromX: Double, fromZ: Double,
             }
         }
     }
-    // Die D8-Kette zickzackt in 45°-Schritten; ein 3-Punkt-Mittel ließ davon
-    // so viel stehen, dass der Krümmungs-Deckel des Bands
-    // (`ribbonCurvatureWidthFactor`) die Mündung auf eine Spitze verengte
-    // (Halbbreite 3,2 → 0,2 auf den letzten zwei Zellen, Seed 1337 Jahr
-    // 20.000). Drei Durchgänge mit dem Laufende als festem Anker glätten sie
-    // zu einer sanften Kurve; das letzte Kettenglied bleibt fest.
     var smooth = [(x: fromX, z: fromZ)] + path.map { (x: $0.x, z: $0.z) }
     for _ in 0..<3 {
         let raw = smooth
@@ -313,10 +150,6 @@ func mouthPath(_ terrain: Terrain, fromX: Double, fromZ: Double,
     return path
 }
 
-/// Geradeaus-Mündung ins Meer (s. `mouthPath`): Schritte von einer Zelle
-/// entlang der Laufrichtung, höchstens `mouthRayLandCells` über Land, dann
-/// bis `mouthSeaCells` Zellen im Meer. `nil`, wenn der Strahl das Meer nicht
-/// erreicht oder vorher in einen See läuft — dann gilt die D8-Kette.
 private func mouthRay(n: Int, h: [Double], wl: [Double], sea: Double, fromX: Double, fromZ: Double,
                       dirX: Double, dirZ: Double) -> [(x: Double, z: Double, surface: Double?)]? {
     let dl = (dirX * dirX + dirZ * dirZ).squareRoot()
@@ -330,10 +163,10 @@ private func mouthRay(n: Int, h: [Double], wl: [Double], sea: Double, fromX: Dou
         guard ci >= 0, ci < n, cj >= 0, cj < n else { break }
         let surface = openWaterSurface(cj * n + ci, h: h, wl: wl, sea: sea)
         if let s = surface {
-            if s > sea { return wet > 0 ? path : nil }   // See: D8-Kette
+            if s > sea { return wet > 0 ? path : nil }
             wet += 1
         } else {
-            if wet > 0 { break }                          // Bank im Meer: Ende
+            if wet > 0 { break }
             land += 1
             if land > WaterRender.mouthRayLandCells { return nil }
         }

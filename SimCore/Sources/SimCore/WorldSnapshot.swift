@@ -1,136 +1,16 @@
 import Foundation
 
-/// **Welt-Speicherformat** (Issue #8). Schreibt und liest den vollständigen
-/// Sim-Zustand (`TerrainState`, Inventar in `Terrain.swift`) plus Seed und
-/// Config in EINE versionierte Datei.
-///
-/// ## Warum ein eigenes Binärformat
-///
-/// Der Zustand besteht aus ~30 Feldern à n² `Double` (n = 832 → 692 224 Zellen,
-/// 5,5 MB je Feld; eine Welt ≈ 120 MB, gemessen 182 Byte/Zelle — vor den
-/// Kryo-Feldern aus Issue #33 waren es 109 MB / 166 Byte). Zwei harte
-/// Anforderungen bestimmen die Kodierung:
-///
-/// 1. **Bit-Genauigkeit.** Die Abnahme-Invariante ist Determinismus: ein
-///    geladener Zustand muss bit-identisch weiterlaufen. Ein einzelnes
-///    verlorenes ULP divergiert über das chaotische System messbar (dieselbe
-///    Erfahrung wie bei `powFast`). Gespeichert wird deshalb das
-///    IEEE-754-Bitmuster jedes `Double`, nicht seine Dezimaldarstellung.
-/// 2. **Größe/Zeit.** JSON braucht für dieselben Zahlen ~3× so viele Bytes und
-///    einen Parser je Zahl (120 MB → ~380 MB Text). Plist-XML
-///    genauso. Binäres Plist wäre bit-genau, verpackt aber jedes Element als
-///    eigenes Objekt — für 17 Mio. Zahlen unbrauchbar.
-///
-/// Deshalb: roher Block-Transfer der Zahlenfelder (`memcpy`-Tempo,
-/// Little-Endian) in einem selbstbeschreibenden Container. Die **Config** ist
-/// dagegen klein und ändert ihre Felder häufig — sie liegt als **binäres Plist**
-/// (Codable-synthetisiert, `Double` exakt als 8 Byte) im Container. So muss
-/// niemand beim Hinzufügen einer Stellschraube in `Config.swift` daran denken,
-/// den Serialisierer nachzuziehen; eine fehlende Stellschraube in einer alten
-/// Datei ist ein harter Dekodier-Fehler statt eines stillen Default-Werts.
-///
-/// ## Aufbau
-///
-/// ```text
-/// Kopf (28 Byte, ungeprüft lesbar — für die Versionsprüfung ohne Vollladen):
-///   [0..8)   Magic "RIVERSIM" (ASCII)
-///   [8..12)  u32 Formatversion
-///   [12..20) u64 Länge der Nutzdaten
-///   [20..28) u64 FNV-1a-64 der Nutzdaten
-/// Nutzdaten:
-///   u32 Länge + Bytes  binäres Plist der SimConfig
-///   u32 seed · f64 years · u64 dropsEmitted · f64 dropCarry
-///   f64 beltCouplingCarry · u32 flowStepCount · u8 disturbActive
-///   8 × f64            Höhenbänder (Issue #4)
-///   u32 Feldzahl, je Feld:
-///     u32 Länge + Name (ASCII) · u8 Typ (0 f64 · 1 i32 · 2 u8 · 3 bool)
-///     u8 Kodierung (0 roh · 1 konstant) · u32 Elementzahl · Nutzdaten
-///   u32 Kanalzahl, je Kanal: u32 Knotenzahl · Knoten (f64 x, f64 z) · f64 Abfluss
-///   u32 Altarmzahl, je Altarm: u32 Knotenzahl · Knoten; danach f64 Alter je Altarm
-/// ```
-///
-/// Der Kopf trägt Länge UND Prüfsumme der Nutzdaten: eine abgebrochene
-/// Speicherung (Absturz, volle Platte) fällt beim Laden auf, statt als Welt mit
-/// Müll-Feldern durchzugehen. Die **Version wird VOR der Prüfsumme geprüft**,
-/// damit eine Datei aus einer älteren Version die Meldung „falsche Version"
-/// bekommt und nicht „defekt".
-///
-/// Feldnamen reisen mit: Umbenennen/Umsortieren im Inventar ist damit ein
-/// erkennbarer Fehler und kein stiller Feldversatz.
-///
-/// ## Config-Abweichung (Abnahmepunkt 4)
-///
-/// Die Datei-Config ist **autoritativ** — eine geladene Welt läuft mit exakt der
-/// Config, mit der sie gespeichert wurde, auch wenn der Programm-Default sich
-/// seither geändert hat. Begründung: Feldlängen (`n`), Kalibrierung und
-/// Bit-Determinismus hängen zusammen; ein Mischen aus Datei- und
-/// Programm-Config wäre eine dritte, nirgends getestete Konfiguration. Wer eine
-/// alte Welt mit neuer Physik weiterlaufen lassen will, braucht dafür eine
-/// bewusste Migration, keinen stillen Merge. Folge: Änderungen an
-/// `SimConfig()`-Defaults wirken nur auf NEUE Welten.
 public enum WorldSnapshot {
-    /// Erkennungsmarke am Dateianfang.
     public static let magic: [UInt8] = Array("RIVERSIM".utf8)
 
-    /// **Formatversion.** Bei jeder Änderung an Inventar, Reihenfolge oder
-    /// Kodierung um 1 erhöhen — alte Dateien werden dann abgelehnt (es gibt
-    /// bewusst keine Aufwärts-Migration, s. Typ-Doku).
-    /// Version 3 (Issue #33): die Kryo-Felder `temperature`, `snow` und `ice`
-    /// kommen GEMEINSAM hinein — auch `ice`, das erst Issue #35 beschreibt. Weil
-    /// es keine Migration gibt, wäre jeder weitere Sprung eine zweite Runde
-    /// ungültiger Spielstände; das vollständige Inventar der Klima-Vertikalen
-    /// steht deshalb in `docs/research-climate-cryosphere.md` §6 und ist mit
-    /// diesem Sprung abgeschlossen.
-    /// Version 4 (Issue #108): die vier neuen Stellschrauben der Kanal-Hebel
-    /// (`channelFlowMinCells`/`FullCells`, `channelDiffusionDamp`,
-    /// `flowDepositDamp`, `puddleFillSkipsFlowCells`) reisen über die
-    /// synthetisierte Config-Kodierung mit. Eine Version-3-Datei hat die Schlüssel
-    /// nicht und ist damit ohnehin nicht mehr dekodierbar — der Sprung sorgt nur
-    /// dafür, dass der Nutzer die klare Versions-Meldung sieht statt eines
-    /// Plist-Fehlers.
-    /// Version 5 (Issue #174): die Großform-Stellschraube `rangeLandform`
-    /// reist über die synthetisierte Config-Kodierung mit — eine Version-4-Datei
-    /// hat den Schlüssel nicht (Begründung wie bei Version 4).
-    /// Version 6 (Issue #174, Paket B): Feld `barAge` (Alter der
-    /// Gleithang-Bänke) und die Stellschrauben des Mäandergürtels.
-    /// Version 7 (Issue #187): die Stellschrauben der Kopplung Gürtel ↔
-    /// Entwässerung (`meanderBeltCoupling` …) reisen über die synthetisierte
-    /// Config-Kodierung mit (Begründung wie bei Version 4).
-    /// Version 8 (Issue #174): die Gleichgewichtslinien-Temperatur des Eises
-    /// (`iceFirnTemp`) reist über die synthetisierte Config-Kodierung mit
-    /// (Begründung wie bei Version 4).
-    /// Version 9 (Issue #174, Delta): die Stellschrauben der Delta-Schüttung
-    /// (`deltaTrapFraction` ff.) reisen über die Config-Kodierung mit — eine
-    /// Version-8-Datei hat die Schlüssel nicht (Begründung wie bei Version 4).
-    /// Version 10 (Issue #174): Restzeit des festen Gürtel-Kopplungstakts und
-    /// Config-Schalter für die geteilte Profil-Relaxation.
-    /// Version 11 (Issue #174, Gletscher): die Stellschrauben des Lawinen-Abgangs
-    /// des Firns (`iceAvalancheSlopeLo` ff.) reisen über die Config-Kodierung mit
-    /// (Begründung wie bei Version 4).
-    /// Version 12 (Issue #187): die Stellschraube der Schwellen-Kappung im
-    /// Gürtelbett (`meanderBeltSillCutDepths`) reist über die synthetisierte
-    /// Config-Kodierung mit — eine Version-11-Datei hat den Schlüssel nicht
-    /// (Begründung wie bei Version 4).
     public static let version: UInt32 = 12
 
-    /// Übliche Dateiendung („river-sim world").
     public static let fileExtension = "rsworld"
 
     private static let headerLength = 28
 
-    /// Little-Endian ist Teil des Formats: die Zahlenfelder werden als Block
-    /// kopiert (bei 17 Mio. Werten ist elementweises Byte-Swapping kein
-    /// Nebeneffekt mehr, sondern die Laufzeit). Alle Zielplattformen (x86_64,
-    /// arm64) sind LE; auf einer Big-Endian-Maschine bricht der Zugriff
-    /// kontrolliert ab, statt Müll zu schreiben.
     private static var hostIsLittleEndian: Bool { UInt32(1).littleEndian == 1 }
 
-    // MARK: - Datei-Ebene
-
-    /// Schreibt die Welt **atomar** nach `path` (Foundation legt eine temporäre
-    /// Datei daneben und ersetzt das Ziel per `rename`): ein Absturz mitten im
-    /// Schreiben lässt den vorherigen Spielstand intakt, statt ihn zu
-    /// halbieren. Fehlende Ordner werden angelegt. Rückgabe: Dateigröße in Byte.
     @discardableResult
     public static func write(_ terrain: Terrain, to path: String) throws -> Int {
         let data = try encode(terrain)
@@ -147,9 +27,6 @@ public enum WorldSnapshot {
         return data.count
     }
 
-    /// Lädt eine Welt aus `path`. Wirft `SnapshotError` mit deutscher
-    /// Beschreibung — insbesondere `unsupportedVersion` für Dateien aus einer
-    /// anderen Formatversion.
     public static func read(from path: String) throws -> Terrain {
         let data: Data
         do {
@@ -160,8 +37,6 @@ public enum WorldSnapshot {
         return try decode(data)
     }
 
-    /// Liest NUR den Kopf (28 Byte) und gibt die Formatversion zurück — für eine
-    /// Vorprüfung, ohne über 100 MB zu laden.
     public static func peekVersion(at path: String) throws -> UInt32 {
         guard let handle = FileHandle(forReadingAtPath: path) else {
             throw SnapshotError.readFailed(path: path, reason: "Datei nicht lesbar")
@@ -172,9 +47,6 @@ public enum WorldSnapshot {
         return try readHeader(&reader).version
     }
 
-    /// Liest Kopf + Config-Block, aber KEINE Felder. Damit kann ein Frontend vor
-    /// dem Laden entscheiden, ob es diese Welt darstellen kann (die
-    /// Render-Pipeline steht je Sitzung auf einem festen `n`).
     public static func peekConfig(at path: String) throws -> SimConfig {
         guard let handle = FileHandle(forReadingAtPath: path) else {
             throw SnapshotError.readFailed(path: path, reason: "Datei nicht lesbar")
@@ -183,9 +55,6 @@ public enum WorldSnapshot {
         var head = ByteReader(handle.readData(ofLength: headerLength + 4))
         let header = try readHeader(&head)
         let rawLength = try head.u32()
-        // Schutz vor korrupten oder riesigen Config-Längen: die Config ist Teil der
-        // Nutzdaten (u32 Länge + Bytes), kann also zusammen mit den 4 Längenbytes
-        // nicht größer sein als die im Kopf deklarierte Nutzdatenlänge.
         guard let length = Int(exactly: rawLength),
               UInt64(length) + 4 <= header.payloadLength else {
             let maxSafe = UInt64(Int.max) - UInt64(headerLength + 4)
@@ -204,8 +73,6 @@ public enum WorldSnapshot {
             throw SnapshotError.configDecodingFailed(reason: "\(error)")
         }
     }
-
-    // MARK: - Kodieren
 
     public static func encode(_ terrain: Terrain) throws -> Data {
         guard hostIsLittleEndian else { throw SnapshotError.unsupportedHostByteOrder }
@@ -266,14 +133,10 @@ public enum WorldSnapshot {
         return out.data
     }
 
-    // MARK: - Dekodieren
-
     public static func decode(_ data: Data) throws -> Terrain {
         guard hostIsLittleEndian else { throw SnapshotError.unsupportedHostByteOrder }
         var reader = ByteReader(data)
         let header = try readHeader(&reader)
-        // Defensiv gegen Überlauf (UInt64.max etc.): eine ungültige oder überlange
-        // Nutzdatenlänge wirft sauber `truncated`, statt bei Int(...) zu trappen.
         guard let payloadLength = Int(exactly: header.payloadLength),
               reader.remaining >= payloadLength else {
             let maxSafe = UInt64(Int.max) - UInt64(headerLength)
@@ -335,17 +198,13 @@ public enum WorldSnapshot {
             state[keyPath: f.path] = raw.map { $0 != 0 }
         }
 
-        // `reserveCapacity` NIE direkt mit einer Zahl aus der Datei: eine
-        // gefälschte Knotenzahl würde Gigabytes anfordern, bevor der
-        // Längen-Check der Leseoperationen greift. Obergrenze ist, was im Rest
-        // der Datei überhaupt stehen kann.
         let channelCount = Int(try body.u32())
         var channels: [RiverChannel] = []
         channels.reserveCapacity(min(channelCount, body.remaining / 4))
         for _ in 0..<channelCount {
             let nodeCount = Int(try body.u32())
             var nodes: [MeanderNode] = []
-            nodes.reserveCapacity(min(nodeCount, body.remaining / 24)) // x, z, Abfluss
+            nodes.reserveCapacity(min(nodeCount, body.remaining / 24))
             for _ in 0..<nodeCount {
                 nodes.append(MeanderNode(x: try body.f64(), z: try body.f64()))
             }
@@ -360,7 +219,7 @@ public enum WorldSnapshot {
         for _ in 0..<oxbowCount {
             let nodeCount = Int(try body.u32())
             var nodes: [MeanderNode] = []
-            nodes.reserveCapacity(min(nodeCount, body.remaining / 16)) // x, z
+            nodes.reserveCapacity(min(nodeCount, body.remaining / 16))
             for _ in 0..<nodeCount {
                 nodes.append(MeanderNode(x: try body.f64(), z: try body.f64()))
             }
@@ -385,8 +244,6 @@ public enum WorldSnapshot {
     }
 
     private static func readHeader(_ reader: inout ByteReader) throws -> Header {
-        // Erst die Marke, dann die Länge: eine fremde (womöglich winzige) Datei
-        // soll „keine river-sim-Welt" heißen und nicht „unvollständig".
         guard reader.remaining >= magic.count else { throw SnapshotError.badMagic }
         let mark = try reader.take(magic.count)
         guard Array(mark) == magic else { throw SnapshotError.badMagic }
@@ -394,8 +251,6 @@ public enum WorldSnapshot {
             throw SnapshotError.truncated(expected: headerLength,
                                           found: magic.count + reader.remaining)
         }
-        // Version VOR Prüfsumme: eine Datei aus einer anderen Version soll als
-        // solche gemeldet werden, nicht als „defekt".
         let fileVersion = try reader.u32()
         guard fileVersion == version else {
             throw SnapshotError.unsupportedVersion(found: fileVersion, expected: version)
@@ -405,11 +260,6 @@ public enum WorldSnapshot {
                       checksum: try reader.u64())
     }
 
-    // MARK: - Feld-Inventar (Reihenfolge = Dateireihenfolge)
-
-    /// Ein Feld des Inventars. `mayBeEmpty` gilt für die Felder, die
-    /// abschaltbare Physik führt (leeres Array = Schalter aus) — bei allen
-    /// anderen ist eine andere Länge als `cfg.count` ein Fehler.
     struct FieldSpec<T> {
         let name: String
         let path: WritableKeyPath<TerrainState, [T]>
@@ -422,14 +272,6 @@ public enum WorldSnapshot {
         }
     }
 
-    /// Die Tests iterieren diese Tabellen (statt eine zweite Feldliste zu
-    /// führen): ein neues Feld im Inventar wird damit automatisch mitgeprüft.
-    ///
-    /// Swift 6 (Issue #201): `nonisolated(unsafe)`, weil `WritableKeyPath`
-    /// (objc-Klasse) nicht `Sendable` ist und `FieldSpec` ihn führt. Die
-    /// Tabellen sind unveränderliche `let`-Werte (String, KeyPath, Bool —
-    /// nichts davon wird hier angewendet, gelesen oder verändert); die
-    /// Markierung betrifft nur die globale Konstante, nicht die Nutzung.
     nonisolated(unsafe) static let doubleFields: [FieldSpec<Double>] = [
         .init("h", \.h), .init("rock", \.rock), .init("sed", \.sed),
         .init("upliftBase", \.upliftBase), .init("rain", \.rain),
@@ -438,7 +280,6 @@ public enum WorldSnapshot {
         .init("lithErodeK", \.lithErodeK, mayBeEmpty: true),
         .init("lithBed", \.lithBed, mayBeEmpty: true),
         .init("lithProvince", \.lithProvince, mayBeEmpty: true),
-        // Klima-Vertikale (Issue #33) — leer, wenn cfg.climateEnabled aus ist.
         .init("temperature", \.temperature, mayBeEmpty: true),
         .init("snow", \.snow, mayBeEmpty: true),
         .init("ice", \.ice, mayBeEmpty: true),
@@ -466,20 +307,10 @@ public enum WorldSnapshot {
         case f64 = 0, i32 = 1, u8 = 2, bool = 3
     }
 
-    /// Kodierung eines Feldes: `raw` = alle Elemente, `constant` = ein Element
-    /// für alle. Der Konstant-Fall ist der Normalfall für die Felder
-    /// abschaltbarer oder ruhender Physik (`disturb`, `regenPending`,
-    /// `isChannel` …) und spart je Feld 5,5 MB, ohne irgendetwas zu runden.
     fileprivate enum FieldEncoding: UInt8 {
         case raw = 0, constant = 1
     }
 
-    // MARK: - Prüfsumme
-
-    /// FNV-1a (64 bit) — erkennt abgeschnittene/verfälschte Dateien. Bewusst
-    /// keine Krypto-Hash: es geht um Datenintegrität, nicht um Manipulation.
-    /// Läuft über denselben Byte-Mixer wie der Zustands-Fingerabdruck unten —
-    /// Konstanten und Schleife existieren nur EINMAL.
     private static func fnv1a64(_ data: Data) -> UInt64 {
         var h = StateHasher()
         data.withUnsafeBytes { raw in
@@ -489,11 +320,6 @@ public enum WorldSnapshot {
     }
 }
 
-// MARK: - Zustands-Fingerabdruck (Issue #78)
-
-/// FNV-1a-Mixer über Roh-Bits. Jedes Array geht mit LÄNGEN-Präfix ein, damit
-/// „Feld leer" (abgeschaltete Physik) und „Feld verschoben" nicht kollidieren
-/// können — dieselbe Rolle wie die Feld-Header im Speicherformat oben.
 private struct StateHasher {
     var hash: UInt64 = 0xcbf2_9ce4_8422_2325
 
@@ -527,19 +353,8 @@ private struct StateHasher {
 }
 
 extension TerrainState {
-    /// Fingerabdruck des KOMPLETTEN Zustands: läuft über dieselben
-    /// Inventartabellen wie das Speicherformat (`doubleFields`/`int32Fields`/
-    /// `uint8Fields`/`boolFields`) plus den dort nicht tabellierten
-    /// Skalar- und Mäander-Block — dieselbe Abdeckung wie `encode()`. Ein neues
-    /// Feld ist damit automatisch erfasst, sobald es ins Inventar kommt;
-    /// `FingerprintTests` prüft die Abdeckung tabellen-getrieben.
-    ///
-    /// Empfindlich auf jedes einzelne ulp (Roh-Bitmuster, kein Runden). Der Wert
-    /// ist maschinen-spezifisch (System-libm): Vergleiche gelten nur auf
-    /// DERSELBEN Maschine, ein Erwartungswert gehört nicht ins Repo.
     func fingerprint() -> UInt64 {
         var f = StateHasher()
-        // Skalar-Block (Reihenfolge wie encode()).
         f.mix(UInt64(seed))
         f.mix(years)
         f.mix(dropsEmitted)
@@ -547,21 +362,14 @@ extension TerrainState {
         f.mix(beltCouplingCarry)
         f.mix(UInt64(flowStepCount))
         f.mix(UInt64(disturbActive ? 1 : 0))
-        // Höhenbänder strukturell statt als Hand-Liste (Mirror liefert die
-        // gespeicherten Eigenschaften in Deklarationsreihenfolge): eine Liste
-        // könnte ein Band doppelt führen oder vergessen, ohne dass es auffällt.
-        // Annahme „alle gespeichert als Double" sichert
-        // FingerprintTests.testEveryStoredPropertyIsAccountedFor.
         let bands = Mirror(reflecting: heightBands).children
             .compactMap { $0.value as? Double }
         f.mix(UInt64(bands.count))
         for v in bands { f.mix(v) }
-        // Feld-Inventar.
         for spec in WorldSnapshot.doubleFields { f.mix(self[keyPath: spec.path]) }
         for spec in WorldSnapshot.int32Fields { f.mix(self[keyPath: spec.path]) }
         for spec in WorldSnapshot.uint8Fields { f.mix(self[keyPath: spec.path]) }
         for spec in WorldSnapshot.boolFields { f.mix(self[keyPath: spec.path]) }
-        // Mäander-Block.
         f.mix(UInt64(meanderChannels.count))
         for ch in meanderChannels {
             f.mix(UInt64(ch.nodes.count))
@@ -579,12 +387,8 @@ extension TerrainState {
 }
 
 extension Terrain {
-    /// Öffentlicher Zugang zum Zustands-Fingerabdruck (für `simperf --hash`);
-    /// Semantik s. `TerrainState.fingerprint()`.
     public func fingerprint() -> UInt64 { state.fingerprint() }
 }
-
-// MARK: - Fehler
 
 public enum SnapshotError: Error, CustomStringConvertible {
     case unsupportedHostByteOrder
@@ -639,10 +443,6 @@ public enum SnapshotError: Error, CustomStringConvertible {
     }
 }
 
-// MARK: - Byte-Ebene
-
-/// Anhängender Schreiber. `Data` wächst amortisiert; die großen Zahlenfelder
-/// gehen als Block hinein (kein Element-Append).
 private struct ByteWriter {
     var data = Data()
 
@@ -664,7 +464,6 @@ private struct ByteWriter {
         withUnsafeBytes(of: &v) { data.append(contentsOf: $0) }
     }
 
-    /// Blocktransfer eines Zahlen-Arrays (Little-Endian-Hostspeicher).
     mutating func block<T>(_ values: [T]) {
         values.withUnsafeBufferPointer { buf in
             guard let base = buf.baseAddress else { return }
@@ -676,8 +475,6 @@ private struct ByteWriter {
 
     mutating func doubles(_ values: [Double]) { block(values) }
 
-    /// Feld mit Kopf (Name, Typ, Kodierung, Länge). Sind alle Elemente gleich,
-    /// wird nur eines geschrieben (`constant`).
     mutating func field<T: Equatable>(_ name: String, kind: WorldSnapshot.FieldKind,
                                       values: [T]) {
         string(name)
@@ -693,9 +490,6 @@ private struct ByteWriter {
         }
     }
 
-    /// Gleichheit über das Bitmuster: `Double`-Vergleich würde −0.0 und 0.0
-    /// verschmelzen (und NaN nie gleich finden) — beim Wiederherstellen soll
-    /// exakt das gespeicherte Muster zurückkommen.
     private func isConstant<T: Equatable>(_ values: [T]) -> Bool {
         if let d = values as? [Double] {
             let first = d[0].bitPattern
@@ -708,8 +502,6 @@ private struct ByteWriter {
     }
 }
 
-/// Lesender Zeiger über eine `Data`-Scheibe. Jeder Zugriff prüft die Länge —
-/// eine abgeschnittene Datei wirft, statt über den Rand zu lesen.
 private struct ByteReader {
     private let data: Data
     private var offset: Int
@@ -768,7 +560,6 @@ private struct ByteReader {
         return result
     }
 
-    /// Blocktransfer in ein frisches Array (keine Zwischenkopie je Element).
     mutating func block<T>(_ count: Int, _ type: T.Type) throws -> [T] {
         let range = try advance(count * MemoryLayout<T>.stride)
         guard count > 0 else { return [] }
@@ -783,8 +574,6 @@ private struct ByteReader {
     mutating func int32s(_ count: Int) throws -> [Int32] { try block(count, Int32.self) }
     mutating func uint8s(_ count: Int) throws -> [UInt8] { try block(count, UInt8.self) }
 
-    /// Liest ein Feld inklusive Kopf und prüft Name, Typ und Länge gegen das
-    /// Inventar (`read` liefert die Elemente der jeweiligen Breite).
     mutating func field<T, Spec>(_ spec: Spec, kind: WorldSnapshot.FieldKind, count: Int,
                                  _ read: (inout ByteReader, Int) throws -> [T]) throws -> [T]
     where Spec: FieldSpecReading {
@@ -816,8 +605,6 @@ private struct ByteReader {
     }
 }
 
-/// Nur damit der Feldleser die beiden Inventar-Angaben lesen kann, ohne den
-/// generischen `FieldSpec<T>` nach außen zu tragen.
 private protocol FieldSpecReading {
     var specName: String { get }
     var specMayBeEmpty: Bool { get }
@@ -829,34 +616,11 @@ extension WorldSnapshot.FieldSpec: FieldSpecReading {
 }
 
 private extension String {
-    /// ASCII/UTF-8-Bytes → String; unlesbare Bytes ergeben einen leeren Namen
-    /// und damit einen sauberen `fieldNameMismatch`.
     init(decoding data: Data) {
         self = String(data: data, encoding: .utf8) ?? ""
     }
 }
 
-// MARK: - Config-Serialisierung
-
-// `SimConfig`, `HydraulicParams` und `HeightBands` sind Codable-**synthetisiert**
-// (die Konformität steht bei der jeweiligen Typdeklaration, weil Swift die
-// Synthese nur in der Ursprungsdatei erzeugt): die Datei bekommt damit
-// automatisch jede neue Stellschraube aus `Config.swift`, ohne dass hier eine
-// Liste nachgezogen werden muss — eine vergessene Stellschraube wäre ein stiller
-// Determinismus-Bruch. `Equatable` ist der Wächter dafür: der Round-Trip-Test
-// vergleicht die ganze Config, nicht einzelne Felder.
-
-/// Handgeschrieben, weil `ErosionFilter.Params` Tupel führt (`rounding`,
-/// `onset`, `assumedSlope`) — Tupel sind nicht `Codable`. Sie werden als Arrays
-/// fester Länge geschrieben; eine falsche Länge ist ein Dekodier-Fehler.
-///
-/// Damit ist dies die EINZIGE Stelle im Config-Graphen ohne Synthese: die zwölf
-/// Felder stehen hier viermal von Hand (CodingKeys, `init(from:)`,
-/// `encode(to:)`, `==`). Ein dort vergessenes Feld reist nicht mit und
-/// entschärft zugleich den Config-Round-Trip-Test, dessen Vergleich für diesen
-/// Teilbaum an genau dieses `==` delegiert. Wer hier ein Feld ergänzt, ergänzt
-/// alle vier Listen; Wächter dafür:
-/// `WorldSnapshotTests.testEveryPreErosionParameterIsSerialisedAndCompared`.
 extension ErosionFilter.Params: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case strength, gullyWeight, detail, rounding, onset, assumedSlope

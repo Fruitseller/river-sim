@@ -4,20 +4,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Zeitraffer-Überblende der Flussbänder (Issue #174): die Band-Geometrie kommt
-/// höchstens einmal je `RenderState.ribbonRebuildSeconds` und wurde bis hierher
-/// HART ersetzt, während Farbe, Material, Wald und Höhe schon über ihre
-/// eigene Blende glitten (#170, #172). Seit dem Mäandergürtel (#174 B)
-/// wandern die Läufe so schnell, dass jeder Band-Bau sichtbar springt.
 final class RiverFadeTests: XCTestCase {
 
-    // MARK: - Bänder
-
-    /// Die Band-Blende dauert so lange wie der Band-Deckel: im Zeitraffer
-    /// liegen zwei Bauten nie dichter (s. `testTimelapseNeverRebuildsInsideTheFade`),
-    /// die Blende endet also vor dem nächsten Bau, und kein halb aufgelöster
-    /// Stand wird verworfen. Länger hieße genau das; kürzer hieße Stillstand
-    /// zwischen den Bauten.
     func testRibbonFadeLastsExactlyTheRebuildCap() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "const RIBBON_FADE_SECONDS := \(glsl(RenderState.ribbonRebuildSeconds))",
@@ -28,10 +16,6 @@ final class RiverFadeTests: XCTestCase {
                        hint: "Crossfade nimmt die feste Dauer statt des Upload-Abstands")
     }
 
-    /// Verhalten, auf das die Blende baut: im Zeitraffer baut `RenderState`
-    /// die Bänder nie schneller als `ribbonRebuildSeconds`, auch bei
-    /// unregelmäßigem Takt. Die Zentrumslinie wandert jeden Takt über die
-    /// Rebuild-Schwelle, gebaut wird also bei jeder fälligen Prüfung.
     func testTimelapseNeverRebuildsInsideTheFade() {
         let terrain = Terrain(config: renderConfig(), seed: 1337)
         terrain.meander.channels = [
@@ -54,10 +38,6 @@ final class RiverFadeTests: XCTestCase {
         XCTAssertGreaterThan(builds, 20, "Testlauf ohne Band-Bauten sagt nichts")
     }
 
-    /// Verdrahtung in `Main.gd`: zwei Band-Meshes, das alte wandert NUR im
-    /// Zeitraffer-Takt ins ausblendende (Pinsel, Sprung, Laden zeigen den
-    /// neuen Stand sofort), und es ist im selben Aufruf sichtbar, in dem die
-    /// Blende auf 0 springt — sonst fehlte für ein Bild jedes Band.
     func testMainHandsTheOldBandsToTheOutgoingMesh() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let body = try XCTUnwrap(try main.captures(
@@ -78,11 +58,6 @@ final class RiverFadeTests: XCTestCase {
                        hint: "Auch der alte Stand bekommt Kalibrierung und Wolken")
     }
 
-    /// Alter und neuer Stand teilen sich die optische Dicke (Befund #174,
-    /// Seed 1337 / Jahr 2.305): wo beide liegen, decken sie zusammen GENAU wie
-    /// ein Band — lineares Mischen machte stehende Läufe mitten in der Blende
-    /// durchsichtiger (0,95 → 0,72) und pulste im Band-Takt. Wo nur einer
-    /// liegt, blendet er stetig, ohne Pixel-Los: das zeichnete körnige Ufer.
     func testFadeSplitsOpticalDepthBetweenOldAndNewBands() {
         for a in [0.0, 0.3, 0.6, 0.95, 0.99, 1.0] {
             let capped = min(a, WaterRender.ribbonFadeOpacityCap)
@@ -91,13 +66,11 @@ final class RiverFadeTests: XCTestCase {
                 let new = WaterRender.ribbonFadeOpacity(alpha: a, share: t)
                 let old = WaterRender.ribbonFadeOpacity(alpha: a, share: 1 - t)
                 let both = 1 - (1 - new) * (1 - old)
-                // Innerhalb der Blende gilt der Deckel; an den Enden das Band selbst.
                 let expected = (t == 0 || t == 1) ? a : capped
                 XCTAssertEqual(both, expected, accuracy: 1e-9,
                                "übereinander: Deckkraft \(a) bei Blende \(t)")
             }
         }
-        // Allein liegend: stetig und monoton von 0 bis zur eigenen Deckkraft.
         var last = -1.0
         for k in 0...100 {
             let v = WaterRender.ribbonFadeOpacity(alpha: 1, share: Double(k) / 100)
@@ -109,7 +82,6 @@ final class RiverFadeTests: XCTestCase {
         XCTAssertEqual(WaterRender.ribbonFadeOpacity(alpha: 0.7, share: 1), 0.7, "ohne Blende unverändert")
     }
 
-    /// Der Shader rechnet dieselbe Formel, ohne Pixel-Los.
     func testWaterShaderSplitsOpticalDepthLikeWaterRender() throws {
         let shader = try RepoSource.probe("game/shaders/water.gdshader")
         assertContains(shader, "uniform float ribbon_blend = 1.0;", hint: "Band-Blende, ohne Bau voll")
@@ -120,15 +92,10 @@ final class RiverFadeTests: XCTestCase {
                        hint: "WaterRender.ribbonFadeOpacity")
         assertContains(shader, "ALPHA = ribbon_fade_alpha(", hint: "Die Blende wirkt auf die fertige Deckkraft")
         XCTAssertEqual(shader.count(ofIdentifier: "discard"), 0, "kein Pixel-Los mehr: es zeichnete körnige Ufer")
-        // Deklaration + die beiden Lesestellen in `ribbon_fade_alpha`, sonst nichts.
         XCTAssertEqual(shader.count(ofIdentifier: "ribbon_blend"), 3,
                        "ribbon_blend nur in ribbon_fade_alpha: als linearer Faktor pulsierte der Lauf")
     }
 
-    // MARK: - Sedimentfahne
-
-    /// Die Fahne kommt mit den Overlays und blendet mit ihnen (#174): die
-    /// Mip-Weichzeichnung allein glättete den Sprung nicht.
     func testPlumeFadesWithTheOverlays() throws {
         let ocean = try RepoSource.probe("game/shaders/ocean.gdshader")
         assertContains(ocean, "uniform sampler2D plume_prev_tex", hint: "Vorgängerstand der Fahne")
@@ -142,9 +109,6 @@ final class RiverFadeTests: XCTestCase {
                        hint: "Der alte Stand wandert vor dem Upload nach plume_prev_tex")
     }
 
-    // MARK: - Messlauf
-
-    /// Ein Stützpunkt eines gebauten Bands: Mitte, Halbbreite (Zellen), Alpha.
     private struct BandSample { var x: Double; var z: Double; var half: Double; var alpha: Double }
 
     private static func bandSamples(_ mesh: RibbonMesh, cfg: SimConfig) -> [BandSample] {
@@ -164,8 +128,6 @@ final class RiverFadeTests: XCTestCase {
         return out
     }
 
-    /// Abstand jedes sichtbaren Stützpunkts von `to` zum nächsten von `from`
-    /// (Zellen), gedeckelt bei `cap` (= „kein Gegenstück").
     private static func nearest(_ to: [BandSample], from: [BandSample], cap: Double) -> [Double] {
         nearestMatch(to, from: from, cap: cap).map(\.distance)
     }
@@ -200,19 +162,6 @@ final class RiverFadeTests: XCTestCase {
         return sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * q))]
     }
 
-    /// Messlauf: was springt bei 60 J/s, in welchem Takt, wie weit?
-    /// Produktionswelt Seed 1337 nach dem Einlauf, Zeitraffer-Takt wie
-    /// `Main.gd` bei 60 FPS (ein Sim-Takt alle 16 Frames = 0,267 s, 16 Jahre),
-    /// Frames über `RenderState.frame(.timelapse)` mit dieser Uhr.
-    ///
-    /// Bänder: je Band-Bau der Abstand jedes sichtbaren neuen Stützpunkts zum
-    /// nächsten des vorigen Baus (Zellen); „> Halbbreite" = die neue Bandmitte
-    /// liegt außerhalb des alten Bands, „neu"/„weg" = kein Gegenstück binnen
-    /// 8 Zellen. Raster-Wasser: Sprung der SICHTBARKEIT (Fluss-Fenster
-    /// `riverMask*`, See-Gate `lakeGate*`) je Overlay-Upload über den nassen
-    /// Zellen. Bank-Sand (A der Makrofarbe), Schutzmaske, Fahne: Änderung je
-    /// Overlay-Upload. Ob ein Kanal schon blendet, steht nicht hier, sondern in
-    /// den Quelltext-Wächtern unten und im Inventar des Commits.
     func testRiverJumpsPerUploadDiagnostic() throws {
         try skipUnlessMeasuring()
         let terrain = Terrain(config: SimConfig.production, seed: 1337,
@@ -232,7 +181,7 @@ final class RiverFadeTests: XCTestCase {
             var waterJumps: [Double] = [], waterBig = 0, waterCells = 0, waterUploads = 0
             var sandJumps: [Double] = [], protectFlips = 0, plumeChange = 0.0, plumeMass = 0.0
             let tick = 16.0 / 60.0, years = 16.0
-            for _ in 0..<(30 * 60 / 16) {   // 30 s Zeitraffer
+            for _ in 0..<(30 * 60 / 16) {
                 now += tick
                 terrain.step(dtYears: years)
                 render.invalidate(terrain, .advanced)
@@ -276,8 +225,6 @@ final class RiverFadeTests: XCTestCase {
                     if sa > 0 || sb > 0 { sandJumps.append(abs(sb - sa) / 255) }
                     if last.protectMask[k] != o.protectMask[k] { protectFlips += 1 }
                 }
-                // Fahne so, wie der Shader sie frühestens sieht: Mip-Stufe
-                // `oceanPlumeLod` mittelt 2^lod × 2^lod Zellen.
                 let block = 1 << Int(WaterRender.oceanPlumeLod)
                 func blocks(_ f: [Float]) -> [Double] {
                     let m = n / block

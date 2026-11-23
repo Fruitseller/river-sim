@@ -1,29 +1,11 @@
 extends SceneTree
-## A/B-Fingerabdruck aller Render-Puffer der GDExtension (GPU-frei):
-##   godot --headless --path game --script res://tests/render_fingerprint.gd
-##
-## Druckt SHA-256 je Puffer nach einem festen Lauf (Seed/Jahre unten). Zweck:
-## „bit-identisch zum Vorher-Stand" bei Umbauten der Render-AUFBEREITUNG ohne
-## Physik-Änderung nachweisen — vorher laufen lassen, umbauen, nachher laufen
-## lassen, Zeilen vergleichen. Keine Zusicherungen: die Hashes gelten je Maschine
-## (System-libm), nicht plattformübergreifend.
-##
-## Seit Issue #214 liest das Werkzeug ALLES aus dem Frame (`SimNode.renderFrame`):
-## die Einzelschritt-Callables der Brücke sind weg, und der Frame ist der einzige
-## Weg — derselbe, den `Main.gd` fährt. Vorher/Nachher-Vergleiche gegen die alte
-## Fassung (eigene Hand-Reihenfolge, Farben vor dem ersten Wasser-Aufruf und
-## damit ohne nasse Wiese) sind NICHT gültig: beide Seiten müssen dieselbe
-## Werkzeugfassung gegen ihren Bau laufen lassen.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 
-# Rohwerte von FrameTrigger (Main.gd FRAME_*; der Unicode-Vertrag dazu pinnt
-# SimCoreTests/RenderFrameTests.testMainUsesTheFrameTriggerValues).
 const FRAME_SETTLED := 0
 const FRAME_TIMELAPSE := 2
 
 const YEARS := 20000.0
-# Über der Overlay-Drossel (0,30 s): der zweite Frame muss durchkommen.
 const SECOND_FRAME_NOW := 1.0
 
 var done := false
@@ -52,19 +34,12 @@ func _run() -> void:
 
 	print("year=", sim.currentYear())
 	var hbytes: PackedByteArray = (sim.heights() as PackedFloat32Array).to_byte_array()
-	# Der Textur-Pfad zieht die Höhen seit Issue #53 als ROHE Bytes aus SimNode
-	# statt sie in GDScript zu konvertieren — das ist die einzige Zusicherung
-	# hier, die auch ohne Vorher-Stand greift.
 	if sim.heightsBytes() != hbytes:
 		push_error("FAIL: heightsBytes != heights().to_byte_array()")
 		quit(1)
 		return
 	_hash("heights", hbytes)
 
-	# EIN Frame liefert alle Puffer in Produktions-Reihenfolge
-	# (`RenderState.frame`): Bänder → Wasser → Farbe/Material/Deckung → Abfluss
-	# → Schutzmaske → Waldmaske → Sedimentfahnen. Der erste Frame nach dem Lauf
-	# MUSS die Bänder bauen (kein Vergleichsstand → Riesen-Delta).
 	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, 0.0)
 	if not frame.has("ribbons"):
 		push_error("FAIL: erster Frame baut keine Fluss-Bänder")
@@ -78,10 +53,6 @@ func _run() -> void:
 	_hash("flowDetailBytes", frame["flow"])
 	_hash("sedimentPlume", frame["plume"])
 
-	# Wasserfeld ein zweites Mal — der Zeitraffer-Takt mit dem kalibrierten
-	# Blend 0.15: derselbe Weg dauert die EWMA-Puffer aus dem ersten Frame
-	# fort, beide Hashes gehören zum Vertrag. Die Zeitraffer-Drossel umgeht der
-	# Werkzeuglauf über die Uhr des Aufrufers (SECOND_FRAME_NOW).
 	var second: Dictionary = sim.renderFrame(FRAME_TIMELAPSE, SECOND_FRAME_NOW)
 	if not second.has("water"):
 		push_error("FAIL: zweiter Frame trotz freier Drossel ohne Wasser")

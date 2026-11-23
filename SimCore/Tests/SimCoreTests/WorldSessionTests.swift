@@ -4,29 +4,12 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter der Welt-Sitzung (Issue #212): die Regel der Brücke, ausgeführt
-/// statt per Quelltext-Grep. Bis #212 stand sie an jeder Methode von
-/// `SimNode` und war nur in CI ausführbar geprüft.
-///
-/// - Jede Weltänderung meldet die passende `TerrainChange`, und danach liefert
-///   der Render-Zustand den frischen Stand.
-/// - Ein laufender Hintergrund-Schritt wird vor jedem Lese- und
-///   Schreibzugriff abgewartet.
-/// - Im Zeitraffer läuft höchstens ein Schritt zur Zeit.
-/// - Hintergrund-Schritte sind bit-gleich zu synchronen.
 final class WorldSessionTests: XCTestCase {
 
     private func session(seed: UInt32 = 1337) -> WorldSession<WorldFrame> {
         WorldSession(config: renderConfig(), seed: seed, render: RenderState(geometryMode: true))
     }
 
-    // MARK: - Art der Änderung
-
-    /// Je Änderungsart kommt genau die `TerrainChange` an, die das
-    /// Gedächtnis der Render-Pässe braucht (Issue #167: ein Pinsel als
-    /// `.advanced` ließe veralteten Wald stehen, ein Sim-Schritt als `.edited`
-    /// schaltete das Gedächtnis ab), und danach liefert der Material-Cache den
-    /// Stand der JETZIGEN Welt.
     func testEveryChangeReportsItsKindAndLeavesFreshMaterials() throws {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("world-session-\(UUID().uuidString).\(WorldSnapshot.fileExtension)")
@@ -34,8 +17,6 @@ final class WorldSessionTests: XCTestCase {
         _ = try WorldSnapshot.write(Terrain(config: renderConfig(), seed: 4711), to: path)
         defer { try? FileManager.default.removeItem(atPath: path) }
 
-        // `prepare` läuft VOR dem Warmlaufen des Caches: so prüft der Fall nur
-        // die Invalidierung seines eigenen Einstiegs.
         let changes: [(name: String, kind: TerrainChange,
                        prepare: (WorldSession<WorldFrame>) -> Void,
                        apply: (WorldSession<WorldFrame>) throws -> Void)] = [
@@ -52,14 +33,12 @@ final class WorldSessionTests: XCTestCase {
             }),
             ("recomputeFlow", .edited, { session in
                 session.sculpt(gx: 30, gz: 60, radiusWorld: 14, dir: -1)
-                session.step(years: 1)   // eine andere Art davor, damit `.edited` neu ankommt
+                session.step(years: 1)
             }, { $0.recomputeFlow() }),
         ]
         for (name, kind, prepare, apply) in changes {
             let world = session()
             prepare(world)
-            // Overlays MUSS der Frame liefern: ein Ersatzwert (`?? []`) ließe
-            // einen ausgebliebenen Material-Upload als grünen Test durchgehen.
             let stale = try XCTUnwrap(
                 world.renderFrame(.settled, now: 0).frame.overlays,
                 "\(name): der erste .settled-Frame muss Overlays liefern").colors
@@ -74,12 +53,6 @@ final class WorldSessionTests: XCTestCase {
         }
     }
 
-    // MARK: - Render-Zustand über die Sitzung
-
-    /// `renderGrid` ist Render-Zustand des Band-Renderers und muss über die
-    /// Sitzung erreichbar bleiben (die Brücke hält ihn nicht selbst; seit
-    /// Issue #214 liest nur die Sitzung ihn — Ersatz für den früheren
-    /// RenderState-Wächter).
     func testRenderGridIsForwardedToTheRibbonRenderer() {
         let world = session()
         XCTAssertEqual(world.renderGrid, 0, "Standard: volle Auflösung")
@@ -87,7 +60,6 @@ final class WorldSessionTests: XCTestCase {
         XCTAssertEqual(world.renderGrid, 256)
     }
 
-    /// Ein fehlgeschlagenes Laden lässt Welt und Render-Zustand stehen.
     func testFailedLoadLeavesTheWorldUntouched() {
         let world = session()
         world.step(years: 50)
@@ -97,13 +69,6 @@ final class WorldSessionTests: XCTestCase {
         XCTAssertEqual(world.lastChange, .advanced)
     }
 
-    // MARK: - Abwarten
-
-    /// Jeder Zugriff wartet einen RECHNENDEN Schritt ab und sieht danach
-    /// dessen Ergebnis. Der Job hält an einer Schranke, die erst der Zugriff
-    /// selbst öffnet, unmittelbar bevor er blockiert (`stepWillBlock`):
-    /// ohne Abwarten öffnet sie niemand, und `stepWaits` bleibt 0. Kein
-    /// Zeitfenster, also unabhängig von Scheduling und Rechnerlast.
     func testAccessWaitsForTheRunningStep() {
         let accesses: [(name: String, access: (WorldSession<WorldFrame>) -> Void)] = [
             ("year", { _ = $0.year }),
@@ -130,15 +95,7 @@ final class WorldSessionTests: XCTestCase {
         }
     }
 
-    /// Gibt der Knoten die Sitzung frei, während ein Schritt rechnet, kehrt
-    /// die Freigabe erst zurück, wenn der Schritt fertig ist: danach entlädt
-    /// Godot beim Beenden die Library, deren Code der Job ausführt. Bis #212
-    /// stand diese Schranke als `SimNode.deinit`; sie trägt nur, solange der
-    /// Job die Sitzung nicht selbst hält (Review #216). Deterministisch: der
-    /// Job hängt an einer Schranke, die der Test erst öffnet, nachdem er
-    /// gesehen hat, dass die Freigabe blockiert.
     func testReleasingTheSessionWaitsForTheRunningStep() {
-        // Die Semaphoren ordnen alle Zugriffe auf beide Kästen.
         final class Flag: @unchecked Sendable { var done = false }
         final class Owner: @unchecked Sendable { var session: WorldSession<WorldFrame>? }
         let gate = DispatchSemaphore(value: 0), released = DispatchSemaphore(value: 0)
@@ -150,8 +107,6 @@ final class WorldSessionTests: XCTestCase {
             finished.done = true
             return frame
         })
-        // Freigabe auf einem anderen Thread: der Test-Thread muss die Schranke
-        // öffnen können, während das `deinit` wartet.
         DispatchQueue.global().async {
             owner.session = nil
             released.signal()
@@ -164,10 +119,6 @@ final class WorldSessionTests: XCTestCase {
         XCTAssertNil(watched, "die Sitzung ist freigegeben")
     }
 
-    // MARK: - Ein Schritt zur Zeit
-
-    /// Solange ein Schritt unterwegs ist (auch fertig, aber nicht abgeholt),
-    /// startet `beginStep` nichts: der liegende Frame ginge sonst verloren.
     func testOnlyOneStepRunsAtATime() throws {
         let world = session()
         let before = world.year
@@ -176,7 +127,7 @@ final class WorldSessionTests: XCTestCase {
         XCTAssertTrue(world.stepInFlight)
         XCTAssertFalse(world.beginStep(years: 1000, trigger: .timelapse, now: 0) { $0 },
                        "zweiter Start, während der erste rechnet")
-        _ = world.year   // wartet ab, holt nicht ab
+        _ = world.year
         XCTAssertTrue(world.stepInFlight, "Abwarten ist kein Abholen")
         XCTAssertFalse(world.beginStep(years: 1000, trigger: .timelapse, now: 0) { $0 },
                        "zweiter Start, während der erste aufs Abholen wartet")
@@ -187,12 +138,6 @@ final class WorldSessionTests: XCTestCase {
         XCTAssertNil(world.finishStep(), "Ergebnis genau einmal")
     }
 
-    // MARK: - Determinismus
-
-    /// Dieselbe Folge von Schritten über `beginStep` ergibt bit-gleich dieselbe
-    /// Welt und dieselben Frames wie `step` + `renderFrame` — auch mit einem
-    /// Pinselstrich zwischen zwei Schritten, den `Main.gd` erst nach dem
-    /// Abholen setzt (`_settle_sim`).
     func testBackgroundStepsAreBitIdenticalToSynchronousSteps() throws {
         let sync = session(), background = session()
         for world in [sync, background] {
@@ -205,7 +150,6 @@ final class WorldSessionTests: XCTestCase {
         for (index, years) in [15.0, 15.0, 240.0, 15.0, 60.0, 15.0].enumerated() {
             now += 0.35
             if index == 3 {
-                // Pinsel zwischen zwei Schritten: erst abgeholt, dann gemalt.
                 for world in [sync, background] {
                     world.brush(.raise, gx: 48, gz: 48, radiusWorld: 4, strength: 1, target: 0)
                     world.recomputeFlow()
@@ -236,11 +180,6 @@ final class WorldSessionTests: XCTestCase {
         }
     }
 
-    // MARK: - Quelltext: die Brücke fasst nur die Sitzung an
-
-    /// Der Strukturrest der früheren Brücken-Wächter: `SimNode` hält weder
-    /// Welt noch Render-Zustand noch Job selbst und ruft die Sitzung. Abwarten
-    /// und Invalidierung prüfen die Verhaltenstests oben.
     func testBridgeTouchesOnlyTheSession() throws {
         let bridge = try RepoSource.probe("\(RepoSource.extensionDirectory)/SimNode.swift")
         for owned in ["Terrain", "RenderState", "BackgroundJob", "TerrainChange"] {

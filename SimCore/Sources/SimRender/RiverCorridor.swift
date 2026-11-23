@@ -1,45 +1,12 @@
 import Foundation
 import SimCore
 
-/// Fluss als KORRIDOR mit eigenem Bett und Ufer (Look E, Issue #239).
-///
-/// Das Band aus `RiverRibbonRenderer` ist die Wasserfläche. Darunter legt der
-/// Korridor je Stützpunkt ein Querprofil aus Geometrie: Uferkante auf
-/// Geländehöhe, Böschung, Bett. Die Breite kennt er aus dem Band selbst, nicht
-/// aus der Zellmaske — daran sind sechs Versuche im Hill-Climber gescheitert
-/// (`docs/look-hillclimb-log.md` Nr. 1–5 und 11: eine Böschung aus der
-/// Schutzmaske deckte Läufe von ein bis zwei Zellen Breite zu).
-///
-/// Das Gelände im Korridor wird ERSETZT, nicht überdeckt, und zwar ohne das
-/// Gelände anzufassen: der Korridor-Shader (`game/shaders/corridor.gdshaderinc`)
-/// schreibt als Tiefe die seines Strahls auf dem DECKEL statt seiner wahren
-/// Tiefe. Der Deckel (`lid`) ist je Querschnitt die höchste sichtbare
-/// Geländehöhe im Korridor, GEKAPPT auf den sichtbaren Wasserspiegel plus
-/// `CorridorProfile.lidMaxAboveWater`, plus `lidClearance`. Die Kappung ist
-/// Absicht (Schluchten, s. dort): Gelände über dem Deckel verdeckt den
-/// Korridor, statt dass der Korridor vor Grate gezogen wird. Damit gewinnt das tiefer liegende Bett den Tiefentest
-/// gegen das Gelände darüber, Hügel VOR dem Fluss verdecken ihn weiter. Die
-/// Reihenfolge der Korridor-Flächen untereinander bleibt erhalten (ein kleiner
-/// Anteil der wahren Tiefe, s. dort). Die Naht liegt damit genau auf der
-/// Umrisslinie des Meshes; ein Absenken der Gelände-Vertices hätte sie auf das
-/// Zellgitter gelegt.
-///
-/// Wie hoch die sichtbare Geländefläche am Ufer ist, fragt der Korridor an
-/// GENAU einer Stelle: `BankSurface`. Strang D (#238) ersetzt die Fläche später
-/// durch eine verfeinerte; dann ändert sich nur `BankSurface`.
 public struct RiverCorridorMesh: Equatable {
     public var vertices: [SIMD3<Float>] = []
     public var normals: [SIMD3<Float>] = []
-    /// rg = Band-Tangente (·0,5 + 0,5), b = Strahler-Rang/6, a = Deckkraft.
     public var colors: [SIMD4<Float>] = []
-    /// x = Querlage −1 … +1 (Uferkante links … rechts), y = Bogenlänge (Welt).
     public var uvs: [SIMD2<Float>] = []
-    /// x = signierte Bogenstärke (wie `RibbonMesh.uv2s.y`), y = Gleithang-Anteil
-    /// 0 … 1 (Kiesbank) dieses Vertex.
     public var uv2s: [SIMD2<Float>] = []
-    /// x = Tiefe unter dem Wasserspiegel (Welt-Y, negativ über Wasser),
-    /// y = Deckel-Höhe (Welt-Y), z = Querversatz zur Zentrumslinie (Welt,
-    /// signiert), w = Halbbreite des Wassers (Welt).
     public var custom: [SIMD4<Float>] = []
     public var indices: [Int32] = []
 
@@ -56,92 +23,44 @@ public struct RiverCorridorMesh: Equatable {
     }
 }
 
-/// Die EINE Stelle, die weiß, wie hoch die sichtbare Geländefläche liegt
-/// (Welt-Y). Heute die Triangulierung des Render-Gitters über der Sim-Höhe
-/// (`renderSurfaceHeight`, dieselbe Fläche, auf die das Band seine Kanten
-/// legt). Die Relief-Verschiebung fehlt bewusst: die Schutzmaske nimmt sie um
-/// jedes Band samt `WaterRender.protectSeamCells` heraus.
 struct BankSurface {
     let h: [Double]
     let n: Int
     let renderGrid: Int
     let hscale: Double
 
-    /// Gitter-Koordinaten (Zellen) → Welt-Y.
     @inline(__always)
     func height(_ gx: Double, _ gz: Double) -> Double {
         renderSurfaceHeight(h, gx, gz, n: n, renderGrid: renderGrid) * hscale
     }
 }
 
-/// Geschmackswerte und Querprofil des Korridors. Kein Kalibrier-Register
-/// (Entscheidung des Eigners zu #235–#239): die Zahlen stehen neben ihrem Code.
 enum CorridorProfile {
-    /// Spalten des Querprofils, links → rechts: Fuß, Uferkante, Böschung,
-    /// Uferlinie, Bett, Thalweg, Bett, Uferlinie, Böschung, Uferkante, Fuß.
     static let columns = 11
-    /// Spalte der linken Uferkante und der linken Uferlinie (rechts gespiegelt).
     static let topColumn = 1
     static let shoreColumn = 3
-    /// Fuß jenseits der Uferkante (Zellen): liegt immer auf dem Gelände. Steht
-    /// die Kante als Uferwall darüber, fällt sie bis zum Fuß ab; sonst ist der
-    /// Fuß nur der Saum, über den der Shader ins Gelände blendet.
     static let footCells = 0.45
     static let leveeFootCells = 0.9
-    /// Uferlinie (Wasser trifft Böschung) als Anteil der sichtbaren
-    /// Wasser-Halbbreite auf gerader Strecke; im Bogen wandert sie am Prallhang
-    /// nach außen, am Gleithang nach innen (`shoreBendShift`), dort liegt die
-    /// Kiesbank. Beide Zahlen liest auch das Band (`water.gdshader` endet
-    /// genau hier) und der nasse Saum (`corridor.gdshaderinc`), deshalb im
-    /// Kalibrier-Register.
     static let shoreFraction = WaterRender.corridorShoreFraction
     static let shoreBendShift = WaterRender.corridorShoreBendShift
-    /// Thalweg-Versatz zum Prallhang (Anteil der Wasser-Halbbreite × Bogen).
     static let thalwegShift = 0.4
-    /// Böschung jenseits der Band-Halbbreite (Zellen): Grundmaß plus Anteil der
-    /// Halbbreite. Die Uferkante liegt dort auf dem Gelände.
     static let bankBaseCells = 0.35
     static let bankWidthShare = 0.18
-    /// Am Prallhang schmaler, am Gleithang breiter (Anteil × Bogenstärke).
     static let bankBendShare = 0.6
-    /// Bett-Tiefe unter dem Wasserspiegel (Welt-Y) aus der Wasserbreite (Welt):
-    /// Breite/Tiefe ~ 4 statt der natürlichen 10–20, weil das Gelände selbst
-    /// ~ 6-fach überhöht ist. Gedeckelt, Furten (Riffel) flacher.
     static let depthBase = 0.025
     static let depthPerWidth = 0.26
     static let depthMax = 0.2
     static let riffleShallowing = 0.45
-    /// Uferkante mindestens so weit über dem Wasserspiegel (Welt-Y).
     static let freeboard = 0.006
-    /// Liegt das Gelände an der Uferkante unter dem Wasser (die
-    /// Lagrange-Zentrumslinie liegt oft eine Zelle neben der D8-Rinne), sucht
-    /// die Kante bis so weit (Zellen) nach außen nach Gelände über dem Wasser,
-    /// in `edgeSearchStep`-Schritten. Erst danach hebt sie sich über das
-    /// Gelände (gemessen n = 384: 45 % gehobene Kanten ohne Suche).
     static let edgeSearchCells = 2.5
     static let edgeSearchStep = 0.25
-    /// Der Fuß bleibt innerhalb der Schutzmaske (`WaterProtectMask`: Band-
-    /// Deckung bis Halbbreite + 0,5 plus `WaterRender.protectSeamCells` Saum),
-    /// mit diesem Abstand (Zellen) davor. Dort ist das Gelände unverschoben
-    /// (kein Relief, und Strang D sagt für die verfeinerte Fläche dort exakt
-    /// null Abweichung zu, #238). `BankSurface` gilt damit am ganzen Korridor.
     static let maskMarginCells = 0.25
     static func maxReachCells(halfWidthCells hw: Double) -> Double {
         hw + 0.5 + Double(WaterRender.protectSeamCells) - maskMarginCells
     }
-    /// Deckel über der höchsten Geländehöhe im Querschnitt (Welt-Y).
     static let lidClearance = 0.02
-    /// Höchstens so weit (Welt-Y) liegt der Deckel über dem Wasserspiegel.
-    /// In einer Schlucht stieg die Uferkante sonst die Felswand hoch und der
-    /// Deckel mit ihr; die Deckel-Tiefe zog Band und Böschung dann vor den
-    /// Grat davor (frei hängende Fluss- und Wandstücke, Befund zu #240). Was
-    /// über dem Deckel liegt, ist echtes Gelände und verdeckt den Korridor.
-    /// Muss über `freeboard` bleiben: die gekappte Uferkante liegt dann noch
-    /// über dem Wasser (Wächter `testCanyonKeepsTheLidNearTheWater`).
     static let lidMaxAboveWater = 0.12
 
-    /// Ein Querschnitt: Spalten-Lage (Zellen, signiert, links negativ),
-    /// Höhe (Welt-Y), Tiefe unter Wasser (Welt-Y) und Gleithang-Anteil.
     struct Section {
         var offsets = [Double](repeating: 0, count: columns)
         var heights = [Double](repeating: 0, count: columns)
@@ -151,18 +70,6 @@ enum CorridorProfile {
         var waterHalfWidthCells = 0.0
     }
 
-    /// Querschnitt eines Stützpunkts.
-    /// - `halfWidthCells`: Band-Halbbreite (Zellen, schon am Krümmungsradius
-    ///   gedeckelt), `visible`: sichtbarer Breiten-Anteil (`ribbonVisibleWidth`).
-    /// - `waterLeft`/`waterRight`: Höhe der Wasserfläche (des Bands) an den
-    ///   Bandkanten; dazwischen ist sie eine Gerade.
-    /// - `bend`: signierte Bogenstärke (`RibbonMesh.uv2s.y`), + = Prallhang links.
-    /// - `surface(c)`: sichtbare Geländehöhe am Querversatz c (Zellen).
-    /// - `edges`: Lage der Uferkante je Seite (links, rechts; Zellen, ohne
-    ///   Vorzeichen). Ohne Angabe sucht der Querschnitt sie selbst; die
-    ///   Band-Fassung (`CorridorSections`) gibt die längs geglättete Suche vor.
-    /// - `reachLimit`: höchste Reichweite je Seite (Zellen) zusätzlich zur
-    ///   Schutzmaske, im Innenbogen der Krümmungsradius.
     static func section(halfWidthCells hw: Double, visible: Double,
                         waterLeft: Double, waterRight: Double,
                         bend: Double, riffle: Double, cellSize cs: Double,
@@ -174,8 +81,7 @@ enum CorridorProfile {
         let ww = hw * vis
         s.waterHalfWidthCells = ww
         let beta = max(-1, min(1, bend))
-        // Prallhang: für bend > 0 links (c < 0), s. water.gdshader `outward`.
-        func gamma(_ side: Double) -> Double { -side * beta }   // + Prallhang, − Gleithang
+        func gamma(_ side: Double) -> Double { -side * beta }
         func water(_ c: Double) -> Double {
             guard hw > 1e-9 else { return 0.5 * (waterLeft + waterRight) }
             let u = max(-1, min(1, c / hw))
@@ -193,15 +99,12 @@ enum CorridorProfile {
             s.bar[col] = bar
             col += 1
         }
-        // Linke Seite außen → innen, Thalweg, rechte Seite innen → außen.
         var right: [(Double, Double, Double)] = []
         var left: [(Double, Double, Double)] = []
         for side in [-1.0, 1.0] {
             let g = gamma(side)
             let bar = max(0, -g)
             let shore = ww * (shoreFraction + shoreBendShift * g)
-            // Die Innenbogen-Grenze lässt immer Platz für Böschung und Fuß
-            // jenseits der Uferlinie: das Wasser selbst ist das Band.
             let limit = max(side < 0 ? reachLimit.0 : reachLimit.1, shore + vis * (footCells + 0.1))
             let reach = min(maxReachCells(halfWidthCells: hw), limit)
             var edge = min(ww + bankBase * (1 - bankBendShare * g), reach - vis * footCells)
@@ -220,8 +123,6 @@ enum CorridorProfile {
             let top = max(ground, shoreY + freeboard)
             let footAt = min(edge + vis * (top > ground + 1e-9 ? leveeFootCells : footCells), reach)
             let footY = surface(side * footAt)
-            // Böschung: am Prallhang steil (der Abfall liegt nah am Wasser,
-            // oben eine Schulter), am Gleithang flach (Kiesbank).
             let midAt = shore + (edge - shore) * (0.3 - 0.15 * g)
             let midY = shoreY + (top - shoreY) * (0.55 + 0.35 * g)
             let bedAt = 0.5 * (shore + side * thalweg)
@@ -233,14 +134,6 @@ enum CorridorProfile {
         for e in left { put(e.0, e.1, e.2) }
         put(thalweg, water(thalweg) - depth, 0)
         for e in right { put(e.0, e.1, e.2) }
-        // Deckel: höchste Geländehöhe und höchste Korridor-Höhe im Querschnitt,
-        // auch zwischen den Spalten (die Ufersuche lässt bis 2,5 Zellen
-        // Abstand), aber höchstens `lidMaxAboveWater` über dem Wasser. Ufer,
-        // die höher hinauf reichen (Schluchtwand), enden unter dem Deckel:
-        // darüber zeigt das Gelände selbst die Wand.
-        // Gedeckelt über dem SICHTBAREN Spiegel (an den Uferlinien), nicht über
-        // den Bandkanten: die liegen bei Querneigung höher und gehören unter
-        // die Böschung.
         let waterTop = max(water(s.offsets[shoreColumn]), water(s.offsets[columns - 1 - shoreColumn]))
         var lid = max(waterLeft, waterRight)
         for k in 0..<columns {
@@ -253,56 +146,34 @@ enum CorridorProfile {
             s.heights[k] = lid
             s.depths[k] = water(s.offsets[k]) - lid
         }
-        // Bett überall unter BEIDEN Uferkanten (Querneigung der Wasserfläche).
         let lowTop = min(s.heights[topColumn], s.heights[columns - 1 - topColumn]) - freeboard
         for k in (shoreColumn + 1)..<(columns - 1 - shoreColumn) where s.heights[k] > lowTop {
             s.heights[k] = lowTop
             s.depths[k] = water(s.offsets[k]) - lowTop
         }
-        // Jenseits der Uferlinien ist trocken: die Wasser-Ebene läuft quer
-        // weiter, aber ein Fuß auf tieferer Aue liegt nicht unter Wasser
-        // (Review Neon Nr. 6). Tiefe dort ≤ 0.
         for k in 0..<columns where k < shoreColumn || k > columns - 1 - shoreColumn {
             s.depths[k] = min(s.depths[k], 0)
         }
-        // Monotone Lage erzwingen (bei winziger Breite fallen Spalten zusammen).
         for k in 1..<columns { s.offsets[k] = max(s.offsets[k], s.offsets[k - 1]) }
         return s
     }
 }
 
-/// Querschnitte EINES Bands, längs zusammen gerechnet (Gremium, Befund 2).
-/// Je Stützpunkt allein entstanden Splitter, Falten und Querwände:
-///  - die Ufersuche sprang von Stützpunkt zu Stützpunkt um bis zu 2,5 Zellen
-///    (spitze helle Dreiecke über Wiese und Wasser): die gefundene Kante wird
-///    längs geglättet (Median, dann Kastenmittel);
-///  - im Innenbogen reichte die Böschung über den Krümmungsradius hinaus, die
-///    Querschnitte überschlugen sich (90°-Kerben, Falten): die Reichweite der
-///    Innenseite ist am Radius gedeckelt (`innerReachShare`);
-///  - an den Bandenden fiel das Profil abrupt auf null (stumpfe, rechteckige
-///    Enden, Dämme am Zusammenfluss): es läuft über `endRampSamples` aus.
 enum CorridorSections {
     struct Input {
         var hw: Double, visible: Double
         var waterLeft: Double, waterRight: Double
         var bend: Double, riffle: Double
-        var x: Double, z: Double          // Gitter
-        var tx: Double, tz: Double        // Tangente (Einheit)
+        var x: Double, z: Double
+        var tx: Double, tz: Double
     }
-    /// Fenster der Kanten-Glättung in Stützpunkten (~0,5 Zellen Abstand).
     static let edgeMedianRadius = 2
     static let edgeMeanRadius = 2
-    /// Innenseite höchstens dieser Anteil des Krümmungsradius.
     static let innerReachShare = 0.85
-    /// Tangenten-Abstand (Stützpunkte je Seite) für die Krümmung.
     static let curvatureSpan = 2
-    /// Auslauf an beiden Bandenden (Stützpunkte).
     static let endRampSamples = 4.0
-    /// Ab diesem Korridor-Anteil trägt das Band den vollen Deckel; darunter
-    /// ist der Korridor schmaler als sichtbar (`ribbonVisibleLo`).
     static let lidPresence = WaterRender.ribbonVisibleLo
 
-    /// Sichtbarer Anteil mit Auslauf an den Enden.
     static func endRamp(_ a: Int, count m: Int) -> Double {
         smoothstep(0, endRampSamples, Double(min(a, m - 1 - a)))
     }
@@ -313,7 +184,6 @@ enum CorridorSections {
         func surface(_ i: Input) -> (Double) -> Double {
             { c in bank.height(i.x - i.tz * c, i.z + i.tx * c) }
         }
-        // Krümmungsradius (Zellen) je Stützpunkt und Innenseite.
         var limits = [(Double, Double)](repeating: (.infinity, .infinity), count: m)
         if m >= 3 {
             var radius = [Double](repeating: .infinity, count: m)
@@ -332,8 +202,6 @@ enum CorridorSections {
                 let angle = abs(atan2(cross, dot))
                 guard angle > 1e-6 else { continue }
                 radius[a] = len / angle
-                // cross > 0: die Tangente dreht zur positiven Querlage
-                // (rechts, `(-tz, tx)`), dort liegt der Mittelpunkt.
                 inner[a] = cross > 0 ? 1 : -1
             }
             for a in 0..<m where radius[a] < .infinity {
@@ -343,7 +211,6 @@ enum CorridorSections {
                 limits[a] = inner[a] > 0 ? (.infinity, cap) : (cap, .infinity)
             }
         }
-        // Erster Durchgang: Kanten aus der Suche je Stützpunkt.
         var vis = [Double](repeating: 0, count: m)
         var left = [Double](repeating: 0, count: m), right = [Double](repeating: 0, count: m)
         for a in 0..<m {
@@ -357,7 +224,6 @@ enum CorridorSections {
             right[a] = abs(s.offsets[CorridorProfile.columns - 1 - CorridorProfile.topColumn])
         }
         left = smoothEdges(left); right = smoothEdges(right)
-        // Zweiter Durchgang mit den geglätteten Kanten.
         var out: [CorridorProfile.Section] = []
         out.reserveCapacity(m)
         for a in 0..<m {
@@ -371,7 +237,6 @@ enum CorridorSections {
         return out
     }
 
-    /// Median gegen einzelne Sprünge der Suche, danach Kastenmittel.
     static func smoothEdges(_ v: [Double]) -> [Double] {
         let m = v.count
         guard m > 2 else { return v }
@@ -393,12 +258,10 @@ enum CorridorSections {
     }
 }
 
-/// Baut den Korridor eines Bands aus denselben Größen, die `emitRibbon` für
-/// die Wasserfläche nutzt.
 struct CorridorBandBuilder {
     struct Sample {
-        var x: Double, z: Double          // Gitter
-        var tx: Double, tz: Double        // Tangente (Einheit)
+        var x: Double, z: Double
+        var tx: Double, tz: Double
         var section: CorridorProfile.Section
         var alpha: Double
         var rank: Double
@@ -407,14 +270,8 @@ struct CorridorBandBuilder {
     }
     var samples: [Sample] = []
 
-    /// Jeder wievielte Stützpunkt einen Querschnitt bekommt: die Band-
-    /// Stützpunkte liegen ~0,5 Zellen auseinander, das Profil braucht nur
-    /// ~1 Zelle. Halbiert Mesh und Upload (gemessen bis 29 ms je Band-Bau im
-    /// Hauptthread bei jedem Stützpunkt).
     static let sampleStride = 2
 
-    /// Die Stützpunkte, die einen Querschnitt bekommen (jeder
-    /// `sampleStride`-te und der letzte).
     static func strideIndices(count: Int) -> [Int] {
         guard count > 0 else { return [] }
         var out = Array(stride(from: 0, to: count, by: sampleStride))
@@ -422,13 +279,6 @@ struct CorridorBandBuilder {
         return out
     }
 
-    /// Deckel je Band-Stützpunkt, wie ihn das Korridor-Mesh dort hat: an den
-    /// Querschnitten der eigene, dazwischen linear nach Bogenlänge. Das Band
-    /// trägt denselben Deckel: in der Deckel-Tiefe liegen Band und Ufer nur
-    /// Millimeter auseinander, ein Band mit dem eigenen Deckel eines
-    /// Zwischenpunkts lag je zweitem Quad hinter dem Korridor (Querstreifen
-    /// ohne Wasser, Gremium, Befund 2; das Bett unter Wasser schreibt seitdem
-    /// zusätzlich keine Tiefe mehr, `corridor_wet.gdshader`).
     static func meshLids(_ lids: [Double], arc: [Double]) -> [Double] {
         let idx = strideIndices(count: lids.count)
         var out = lids
@@ -465,14 +315,11 @@ struct CorridorBandBuilder {
         for a in 0..<m {
             let s = samples[a]
             let a0 = max(0, a - 1), a1 = min(m - 1, a + 1)
-            // Querlage je Seite auf ±1 am eigenen Fuß (Review Neon Nr. 8):
-            // der Shader blendet an beiden Kanten ins Gelände.
             let edgeL = max(abs(s.section.offsets[0]), 1e-6), edgeR = max(abs(s.section.offsets[k - 1]), 1e-6)
             for c in 0..<k {
                 let c0 = max(0, c - 1), c1 = min(k - 1, c + 1)
                 let across = pos[a * k + c1] - pos[a * k + c0]
                 let along = pos[a1 * k + c] - pos[a0 * k + c]
-                // Kreuzprodukt von Hand (Linux hat kein simd_cross).
                 var nrm = SIMD3(across.y * along.z - across.z * along.y,
                                 across.z * along.x - across.x * along.z,
                                 across.x * along.y - across.y * along.x)

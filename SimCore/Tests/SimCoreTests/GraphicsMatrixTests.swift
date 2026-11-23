@@ -2,14 +2,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Abnahmematrix für Landschaftsqualität (Issue #150, Spec #156, Parent #117).
-///
-/// Definiert die standardisierten Vergleichswelten und Kamerapositionen für reproduzierbare
-/// Vorher/Nachher-Vergleiche und Abnahmemessungen zukünftiger Grafik- und Simulations-Tickets.
-///
-/// Enthält:
-/// 1. Vertragsprüfungen der Matrixdefinition (ungatet, Teil der Pflichtsuite)
-/// 2. Baseline-Metriken-Lauf der physikalischen Felder (gegatet mit RS_MEASURE=1, Namensendung Diagnostic)
 final class GraphicsMatrixTests: XCTestCase {
 
     public struct MatrixCamera {
@@ -51,13 +43,7 @@ final class GraphicsMatrixTests: XCTestCase {
 
     public static let standardYears: [Double] = [0.0, 20_000.0, 100_000.0]
 
-    /// Verbindliche Spezifikation der Vergleichswelten und Kameraperspektiven.
     public static let matrixWorlds: [MatrixWorldSpec] = [
-        // -------------------------------------------------------------
-        // Seed 1337: Flusstal Soča (Referenzwelt der Studie #116)
-        // Steiles Kerbtal, canyonartiger Hauptfluss, bewaldete Talsohle,
-        // Grate und Mündung ins Meer.
-        // -------------------------------------------------------------
         MatrixWorldSpec(
             seed: 1337,
             name: "Flusstal Soča",
@@ -100,8 +86,6 @@ final class GraphicsMatrixTests: XCTestCase {
                     distance: 48.0, yaw: 0.6, pitch: 0.75,
                     description: "Hohe Gebirgsrippe und Übergang von Fels zu Firnfeldern"
                 ),
-                // Vorlagen-Kameras (Issue #174): dieselben Distanzen und Pitches
-                // wie die Tasten-Presets in Main.gd (CAMERA_PRESETS).
                 MatrixCamera(
                     id: "diorama",
                     targetX: 0.0, targetZ: 0.0,
@@ -123,11 +107,6 @@ final class GraphicsMatrixTests: XCTestCase {
             ]
         ),
 
-        // -------------------------------------------------------------
-        // Seed 42: Binnenseen & Beckenlandschaft
-        // Dokumentiert in #121/nickmcd für dynamisch füllende und schneidende
-        // Krater- und Beckenseen, breite Verlandungszonen und Uferlinien.
-        // -------------------------------------------------------------
         MatrixWorldSpec(
             seed: 42,
             name: "Seen- und Beckenplateau",
@@ -170,8 +149,6 @@ final class GraphicsMatrixTests: XCTestCase {
                     distance: 50.0, yaw: 0.7, pitch: 0.75,
                     description: "Umgebender Krater- und Beckenrand mit kahlen Steilhängen"
                 ),
-                // Vorlagen-Kameras (Issue #174): dieselben Distanzen und Pitches
-                // wie die Tasten-Presets in Main.gd (CAMERA_PRESETS).
                 MatrixCamera(
                     id: "diorama",
                     targetX: 0.0, targetZ: 0.0,
@@ -193,11 +170,6 @@ final class GraphicsMatrixTests: XCTestCase {
             ]
         ),
 
-        // -------------------------------------------------------------
-        // Seed 20: Hochalpines Massiv & Kaltklima
-        // Dokumentiert in melt-runoff-measurements.md für maximale Spitzenhöhe
-        // (maxH 0.75), die meisten schneegespeisten Läufe (306) und glaziale Kare.
-        // -------------------------------------------------------------
         MatrixWorldSpec(
             seed: 20,
             name: "Hochalpines Massiv",
@@ -240,8 +212,6 @@ final class GraphicsMatrixTests: XCTestCase {
                     distance: 40.0, yaw: 0.6, pitch: 0.70,
                     description: "Zentraler Hochgipfel mit scharfen Graten und dauerhafter Schneedecke"
                 ),
-                // Vorlagen-Kameras (Issue #174): dieselben Distanzen und Pitches
-                // wie die Tasten-Presets in Main.gd (CAMERA_PRESETS).
                 MatrixCamera(
                     id: "diorama",
                     targetX: 0.0, targetZ: 0.0,
@@ -263,8 +233,6 @@ final class GraphicsMatrixTests: XCTestCase {
             ]
         )
     ]
-
-    // MARK: - Vertragsprüfungen (Teil der Pflichtsuite)
 
     func testMatrixContractSpecification() {
         let worlds = Self.matrixWorlds
@@ -289,7 +257,6 @@ final class GraphicsMatrixTests: XCTestCase {
                 XCTAssertFalse(cameraIds.contains(cam.id), "Kamera-ID '\(cam.id)' doppelt in Seed \(world.seed)")
                 cameraIds.insert(cam.id)
 
-                // Gültigkeit der Koordinaten und Parameter
                 XCTAssertGreaterThanOrEqual(cam.targetX, -maxCoord, "targetX außerhalb der Welt")
                 XCTAssertLessThanOrEqual(cam.targetX, maxCoord, "targetX außerhalb der Welt")
                 XCTAssertGreaterThanOrEqual(cam.targetZ, -maxCoord, "targetZ außerhalb der Welt")
@@ -309,14 +276,6 @@ final class GraphicsMatrixTests: XCTestCase {
         }
     }
 
-    /// Die drei Vorlagen-Kameras (Issue #174, Paket E) gibt es zweimal: als
-    /// Tasten-Presets in `Main.gd` (F1–F3) und als Matrix-Kameras. Der Pitch
-    /// ist bei allen dreien gleich, die Distanz bei Tal und Nah; sonst zeigt
-    /// der Abnahmebogen eine andere Ansicht als die Taste im Spiel. Ziel und
-    /// Yaw rechnen die Tasten adaptiv aus der laufenden Welt, die Matrix hält
-    /// sie je Seed fest (Reproduzierbarkeit); ebenso die Distanz des Dioramas,
-    /// die im Spiel aus der Land-Bounding-Box folgt (`fill`, s. `Main.gd`
-    /// `frame_land`, nachgemessen in `game/tests/ui_layout.gd`).
     func testCameraPresetsMatchTheMatrix() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         for id in ["diorama", "valley", "close"] {
@@ -342,7 +301,6 @@ final class GraphicsMatrixTests: XCTestCase {
                 }
             }
         }
-        // Und das Shell-Skript, das die Bilder macht, kennt dieselben Werte.
         let script = try RepoSource.file("scripts/graphics-matrix.sh")
         for world in Self.matrixWorlds {
             for cam in world.cameras where ["diorama", "valley", "close"].contains(cam.id) {
@@ -361,10 +319,6 @@ final class GraphicsMatrixTests: XCTestCase {
                       "Seen oder Mündungen müssen abgedeckt sein")
     }
 
-    // MARK: - Baseline-Messharness (gegatet mit RS_MEASURE=1)
-
-    /// Headless-Messung der physikalischen Ausgangszustände über alle Matrixwelten.
-    /// Laufzeit ca. 15 Minuten (3 Seeds über jeweils 100k Jahre bei n = 720).
     func testMatrixBaselineMetricsDiagnostic() throws {
         try skipUnlessMeasuring()
 

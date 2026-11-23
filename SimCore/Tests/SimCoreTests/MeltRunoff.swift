@@ -1,41 +1,8 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter + Messreihe zu **Schmelzwasser speist den Abfluss** (Issue #36):
-/// `Terrain.updateRunoffWeight` / `Terrain.flowWeight`, Kalibrier-Logbuch bei
-/// `SimConfig.meltRunoffEnabled` ff., Messreihen
-/// `docs/melt-runoff-measurements.md`.
-///
-/// Die Abnahmekriterien des Tickets und ihre Wächter hier:
-/// 1. Abfluss unter schneereichen Einzugsgebieten messbar erhöht →
-///    `testMeltRunoffFavorsSnowFedCatchments`, gepoolt über Seeds in
-///    `testMeltRunoffIsSeedRobustDiagnostic`
-/// 2. Renormierung vs. Zusatzwasser gemessen entschieden →
-///    `testMeltRunoffMeasurementDiagnostic` (beide Arme + der verworfene
-///    Einlagerungs-Arm), Erhaltung in `testNormalizedMeltKeepsTheDrainageTotal`
-/// 3. beide Netze und die Tropfen-Starts folgen derselben Regel →
-///    `testBothNetworksSeedFromTheSameWeight`, `testMeltShiftsDropletSpawns`
-/// 4. abgeschaltet bit-identisch → `testDisabledMeltRunoffIsBitIdentical` (Aus-Arm
-///    UND schneefreie Welt), `testWithoutClimateThereIsNoRunoffWeight`,
-///    `testUnweightedFlowIgnoresTheMelt` (der Cross-Worktree-Beleg gegen
-///    `origin/main` steht in `docs/melt-runoff-measurements.md` §F)
-/// 5. bestehende Wächter bleiben grün → `testEndorheicMechanicsSurviveMeltRunoff`
-///    (#11 inselweit) und `Lithology.testSlopeBreakSurvivesMeltRunoff` (#12);
-///    was dabei umgepinnt werden musste und warum: Messreihe §I
-///
-/// Dazu die Reichweite des Features (`testSnowyIslandScanDiagnostic`: nur alpine
-/// Inseln haben überhaupt Schmelze), der Deckel des Beitrags
-/// (`testMeltContributionIsCappedAtTheLocalRain` und, für die Kombination aus
-/// Einlagerung und Renormierung,
-/// `testMeltContributionStaysCappedWithSolidWithholding`) und die Kosten
-/// (`testRunoffWeightCostDiagnostic`).
 final class MeltRunoff: XCTestCase {
 
-    // MARK: - Konfigurationen der vier Arme
-
-    /// `aus` = Stand vor #36 (nur Regen), `A` = Renormierung (Produktion),
-    /// `B` = Zusatzwasser (Σ steigt), `C` = massenkonsistente Einlagerung
-    /// (verworfen, s. `SimConfig.meltRunoffWithholdSolid`).
     enum Arm: String, CaseIterable {
         case off = "aus", renorm = "A-renorm", extra = "B-zusatz", withhold = "C-einlag"
     }
@@ -43,7 +10,7 @@ final class MeltRunoff: XCTestCase {
     private func cfg(n: Int, arm: Arm) -> SimConfig {
         var c = SimConfig()
         c.n = n; c.world = calibrationWorld
-        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
+        c.rangeLandform = calibrationRangeLandform
         switch arm {
         case .off:      c.meltRunoffEnabled = false
         case .renorm:   break
@@ -57,12 +24,6 @@ final class MeltRunoff: XCTestCase {
         while t.years < years - 1e-6 { t.step(dtYears: dt) }
     }
 
-    // MARK: - Kennzahlen
-
-    /// Zahl der Zellen, die über `receiver` in `k` entwässern (inkl. `k`), und
-    /// dieselbe topologische Summe über ein beliebiges Feld. Kahn über die
-    /// Eingangsgrade — nach `hf` sortiert wäre die Reihenfolge auf Seespiegel-
-    /// Flächen willkürlich (dieselbe Begründung wie in `RainWeightedFlow`).
     private func upstream(_ t: Terrain, of field: [Double]) -> (cells: [Double], sum: [Double]) {
         let cnt = t.cfg.count
         var cells = [Double](repeating: 1, count: cnt)
@@ -83,36 +44,22 @@ final class MeltRunoff: XCTestCase {
         return (cells, sum)
     }
 
-    /// Schneedeckung je Zelle (0 über See) — die Klassifikation der Einzugsgebiete
-    /// muss in ALLEN Armen dieselbe Größe lesen, sonst vergleicht die Messung
-    /// zwei verschiedene Fragen. `snowCover` ist arm-unabhängig (das Schneefeld
-    /// selbst koppelt nicht an die Gewichtung zurück).
     private func coverField(_ t: Terrain) -> [Double] {
         (0..<t.cfg.count).map { t.h[$0] > t.cfg.sea ? t.snowCover($0) : 0 }
     }
 
-    /// Kennzahlen eines Zustands. `qSnowFed`/`qSnowFree` sind der Abfluss je
-    /// Einzugsgebiets-ZELLE (`area[k] / (Zellen · cellArea)`, also der mittlere
-    /// Abfluss ÜBER dem Einzugsgebiet von `k`) — getrennt nach mittlerer
-    /// Schneedeckung des Einzugsgebiets. Die Normierung auf die Zellzahl macht
-    /// den Vergleich unabhängig davon, dass Gebirgsflüsse größere Gebiete führen.
     struct Metrics {
         var channels = 0, landCells = 0
         var relief = 0.0, lakeFrac = 0.0
-        var outletTotal = 0.0          // totalOutletArea() / Zellzahl → Erhaltung
+        var outletTotal = 0.0
         var meanWeight = 0.0, maxWeight = 0.0
         var snowFedCells = 0, snowFreeCells = 0
         var qSnowFed = 0.0, qSnowFree = 0.0
-        var snowVisible = 0.0          // Landanteil mit Deckung > 0.05
+        var snowVisible = 0.0
     }
 
-    /// Einzugsgebiete ab dieser Zellzahl gelten als „Lauf" (wie in
-    /// `docs/river-baseline-metrics.md` und im Luv/Lee-Wächter von #10).
     private let minCatchment = 30.0
-    /// Mittlere Schneedeckung des Einzugsgebiets, ab der es als schneegespeist gilt …
     private let snowFedThreshold = 0.05
-    /// … und unter der es als schneefrei gilt (nicht 0, damit ein Streusel-Pixel
-    /// im Oberlauf ein sonst schneefreies Gebiet nicht aus der Referenz nimmt).
     private let snowFreeThreshold = 0.002
 
     private func measure(_ t: Terrain) -> Metrics {
@@ -161,15 +108,6 @@ final class MeltRunoff: XCTestCase {
             m.channels, m.relief, m.lakeFrac, m.snowVisible)
     }
 
-    // MARK: - Messreihe (print-only, Quelle von docs/melt-runoff-measurements.md)
-
-    /// **Die Designentscheidung**: alle vier Arme über einen Lauf, ein Seed,
-    /// mehrere Zeitmarken. Klein im Alltag (n = 192, 20.000 Jahre); die Tabellen
-    /// im Dokument stammen aus demselben Test mit größerem Gitter/Horizont:
-    ///
-    ///     RS_MEAS_N=640 RS_MEAS_YEARS=50000 swift test -c release \
-    ///       --package-path SimCore \
-    ///       --filter testMeltRunoffMeasurementDiagnostic
     func testMeltRunoffMeasurementDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
@@ -187,20 +125,11 @@ final class MeltRunoff: XCTestCase {
         }
     }
 
-    /// **Welche Inseln haben überhaupt Schnee?** Die Reichweite des Tickets ist
-    /// keine Meinung, sondern messbar: nur Inseln, deren Kämme über die
-    /// Schnee-Grenze reichen (`climateSeaLevelTemp`/`climateLapseRate`, bei
-    /// Produktionswerten ab h ≈ 0.46), bekommen einen Schmelzbeitrag. Der Scan
-    /// liefert die Seed-Auswahl für die Mehr-Seed-Messung — ein Mittel über
-    /// zufällige Seeds wäre sonst ein Mittel über meist schneefreie Inseln und
-    /// würde den Effekt kleinrechnen.
     func testSnowyIslandScanDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment
         let n = Int(env["RS_MEAS_N"] ?? "") ?? 192
         var snowy: [UInt32] = []
-        // 1…40 als unvoreingenommene Stichprobe, dazu die Standard-Seeds der
-        // übrigen Messreihen (1337/7/99/2024) — von denen sind drei schneefrei.
         for seed in (1...40).map(UInt32.init) + [1337, 99, 2024] {
             let t = Terrain(config: cfg(n: n, arm: .off), seed: seed)
             let m0 = measure(t), maxH0 = t.maxHeight()
@@ -215,18 +144,8 @@ final class MeltRunoff: XCTestCase {
         print("[#36] Scan: Inseln mit Schnee nach 20k J. = \(snowy)")
     }
 
-    /// Mehr-Seed-Gegenprobe: die RICHTUNG (schneegespeist gegen schneefrei) muss
-    /// über verschiedene Inselformen dieselbe sein, sonst misst man nur die
-    /// Zufallslage der Gebirge. Gepoolt statt „Mittel der Verhältnisse" — kleine
-    /// Inseln haben wenige schneegespeiste Läufe (dieselbe Begründung wie im
-    /// Luv/Lee-Wächter von #10).
     func testMeltRunoffIsSeedRobustDiagnostic() throws {
         try skipUnlessMeasuring()
-        // ALPINE Seeds, ausgewählt mit `testSnowyIslandScanDiagnostic` (Kämme über
-        // der Schnee-Grenze, ≥ 44 schneegespeiste Läufe nach 20k Jahren). Die
-        // Standard-Seeds der übrigen Messreihen (7/99/2024) sind bei n=192 flache,
-        // vollständig schneefreie Inseln — auf ihnen ist das Feature stumm (der
-        // Scan zeigt das) und ein Mittel über sie würde nur Rauschen mitteln.
         let seeds: [UInt32] = [1337, 2, 6, 20, 33]
         var fed = [Arm: (q: Double, n: Int)](), free = [Arm: (q: Double, n: Int)]()
         var outlet = [Arm: Double]()
@@ -252,12 +171,6 @@ final class MeltRunoff: XCTestCase {
         }
     }
 
-    // MARK: - Abnahme 1: der Abfluss unter Schneegebieten steigt
-
-    /// Kernnachweis: bei GLEICH GROSSEM Einzugsgebiet führt ein schneegespeister
-    /// Lauf mehr Abfluss als ein schneefreier — und der Sprung kommt aus der
-    /// Schmelze, nicht aus der Lage der Gebirge (der Aus-Arm ist die Gegenprobe
-    /// auf demselben Seed).
     func testMeltRunoffFavorsSnowFedCatchments() {
         var ratios = [Arm: Double]()
         for arm in [Arm.off, .renorm] {
@@ -274,12 +187,6 @@ final class MeltRunoff: XCTestCase {
                              + "Einzugsgebiete messbar heben")
     }
 
-    // MARK: - Abnahme 2: Erhaltung / Normierungs-Arm
-
-    /// Die Entwässerungs-Invariante hält im Produktions-Arm EXAKT: das Gewicht
-    /// hat auf Land wieder das Mittel 1, über See 1.0 — Σ der Einzugsgebiete an
-    /// allen Senken bleibt die Zellzahl. Das ist der Grund, warum kein in Zellen
-    /// kalibriertes Gate nachgezogen werden musste.
     func testNormalizedMeltKeepsTheDrainageTotal() {
         let t = Terrain(config: cfg(n: 128, arm: .renorm), seed: 1337)
         let total = Double(t.cfg.count)
@@ -289,11 +196,6 @@ final class MeltRunoff: XCTestCase {
             XCTAssertEqual(t.totalOutletArea(), total, accuracy: total * 1e-6,
                            "die Renormierung darf die Entwässerungssumme nicht verschieben")
         }
-        // Die Normierung selbst gilt für die Land/See-Aufteilung, die beim BAU des
-        // Gewichts galt — die Erosion des Schritts verschiebt die Küstenlinie
-        // danach um einzelne Zellen. Für die feldweise Prüfung wird das Gewicht
-        // deshalb einmal frisch gebaut (`computeFlow` ruft `computeRain`); das ist
-        // derselbe Aufruf, den der Sculpt-Pfad benutzt.
         t.computeFlow(dtYears: 0)
         var wLand = 0.0, land = 0
         for k in 0..<t.cfg.count {
@@ -307,9 +209,6 @@ final class MeltRunoff: XCTestCase {
                        "die Renormierung darf die Entwässerungssumme nicht verschieben")
     }
 
-    /// Der verworfene Arm zeigt genau das Gegenteil — und zwar messbar: als
-    /// Zusatzwasser STEIGT die Entwässerungssumme über die Zellzahl. Der Wächter
-    /// pinnt die Aussage „B ist der Arm, der die Kalibrier-Kaskade aufmacht".
     func testExtraWaterArmRaisesTheDrainageTotal() {
         let t = Terrain(config: cfg(n: 128, arm: .extra), seed: 1337)
         for _ in 0..<5 { t.step(dtYears: 1000) }
@@ -319,17 +218,7 @@ final class MeltRunoff: XCTestCase {
                             "der Zusatzwasser-Arm muss die Summe anheben (sonst ist er sinnlos)")
     }
 
-    // MARK: - Abnahme 3: eine Regel für alle drei Konsumenten
-
-    /// Der D8-Akkumulator startet je Zelle EXAKT mit `cellArea · flowWeight[k]` —
-    /// nachgerechnet über die topologische Summe des Gewichtsfelds. Damit ist
-    /// belegt, dass `area` (Erosion) die Schmelze trägt.
-    /// Für das MFD-Feld (Render/Braiding) gilt dieselbe Startwert-Regel; dort
-    /// prüft `RiverDynamicsTests.testMFDCarriesSelf` die untere Schranke, weil
-    /// MFD fraktional verteilt und deshalb keine Zellsumme ist.
     func testBothNetworksSeedFromTheSameWeight() {
-        // Alpiner Seed: auf einer schneefreien Insel wäre das Feld leer und der
-        // Test würde nur die Regen-Gewichtung von #10 nachprüfen.
         let t = Terrain(config: cfg(n: 192, arm: .renorm), seed: 1337)
         t.step(dtYears: 1000)
         XCTAssertFalse(t.runoffWeight.isEmpty, "Testaufbau: keine Schmelze im Spiel")
@@ -343,7 +232,6 @@ final class MeltRunoff: XCTestCase {
         }
         XCTAssertLessThan(maxRelErr, 1e-9,
                           "area muss die topologische Summe von flowWeight sein")
-        // Gegenprobe: mit dem REINEN Regen-Gewicht ginge die Rechnung nicht auf.
         let upRain = upstream(t, of: t.rainWeight)
         var maxRelErrRain = 0.0
         for k in 0..<t.cfg.count where upRain.sum[k] > 0 {
@@ -354,14 +242,10 @@ final class MeltRunoff: XCTestCase {
                              "Testaufbau: Schmelz- und Regen-Gewicht unterscheiden sich nicht")
     }
 
-    /// Dritter Konsument: die Tropfen-Startpunkte. Dieselbe
-    /// Ablehnungs-Stichprobe, dasselbe Feld — also starten in schneegespeisten
-    /// Zellen mehr Tropfen als mit dem reinen Regen-Gewicht.
     func testMeltShiftsDropletSpawns() {
         let t = Terrain(config: cfg(n: 128, arm: .renorm), seed: 1337)
         t.step(dtYears: 1000)
         let c = t.cfg
-        // Zielzone: Zellen, deren Abfluss-Gewicht die Schmelze angehoben hat.
         var boosted = [Bool](repeating: false, count: c.count)
         for k in 0..<c.count where t.runoffWeight[k] > t.rainWeight[k] * 1.05 { boosted[k] = true }
         XCTAssertGreaterThan(boosted.filter { $0 }.count, 50, "Testaufbau: keine Schmelzzone")
@@ -384,31 +268,11 @@ final class MeltRunoff: XCTestCase {
                              "die Tropfen-Starts folgen der Schmelze nicht")
     }
 
-    // MARK: - Abnahme 4: abgeschaltet ist bit-identisch
-
-    /// Ausgeschaltet bleibt das Feld leer, `flowWeight` IST `rainWeight`, und
-    /// beide Pfade rechnen bit-identisch zum Stand vor #36. Gegenprobe zum
-    /// Cross-Worktree-Fingerabdruck in `docs/melt-runoff-measurements.md` §F:
-    /// hier wird geprüft, dass der Aus-Arm dieselbe Welt liefert wie eine Welt,
-    /// in der es (Klima aus) gar nichts zu schmelzen gibt.
-    ///
-    /// **Der Gletscher (Issue #35) muss dafür in BEIDEN Armen aus sein.** Der
-    /// Test konstruiert den Vergleichsarm über `snowAccumPerYear = 0` — der
-    /// hat damit nicht nur keine Schmelze, sondern auch kein Nährgebiet, also
-    /// gar kein Eis, während der Aus-Arm normal vergletschert. Ohne diese Zeile
-    /// verglichen die beiden Seiten eine vergletscherte mit einer eisfreien
-    /// Welt (gemessen: Höhendifferenzen bis 0.1, dazu konstante ~1.87 in
-    /// `area` — kein Rauschen, sondern zwei verschiedene Physiken). Dass der
-    /// Gletscher-Pfad SELBST abgeschaltet bit-identisch rechnet, hält
-    /// `Glacier.testDisabledIceIsBitIdentical` / `testIcelessWorldIsBitIdentical`
-    /// fest — dieselbe Aufteilung wie bei
-    /// `ClimateSnow.testDisabledClimateIsBitIdenticalPhysics`: jede Kopplung
-    /// wird EINZELN abgeschaltet und EINZELN bewacht.
     func testDisabledMeltRunoffIsBitIdentical() {
         var a = cfg(n: 96, arm: .off)
         a.climateEnabled = true; a.iceEnabled = false
         var b = cfg(n: 96, arm: .renorm)
-        b.snowAccumPerYear = 0            // Klima an, aber es fällt nie Schnee
+        b.snowAccumPerYear = 0
         b.iceEnabled = false
         let ta = Terrain(config: a, seed: 1337), tb = Terrain(config: b, seed: 1337)
         for _ in 0..<4 { ta.step(dtYears: 1000); tb.step(dtYears: 1000) }
@@ -420,8 +284,6 @@ final class MeltRunoff: XCTestCase {
         XCTAssertEqual(ta.streamMap, tb.streamMap)
     }
 
-    /// Ohne Klima (Muster #33) gibt es kein Schneefeld — also auch kein
-    /// Schmelz-Gewicht, selbst wenn der Schalter an ist.
     func testWithoutClimateThereIsNoRunoffWeight() {
         var c = cfg(n: 96, arm: .renorm)
         c.climateEnabled = false
@@ -432,9 +294,6 @@ final class MeltRunoff: XCTestCase {
         XCTAssertEqual(t.flowWeight, t.rainWeight, "flowWeight muss zurückfallen")
     }
 
-    /// Und ohne gewichteten Abfluss (`rainWeightedFlow` aus, Referenzarm von #9)
-    /// bleibt die Akkumulation reine Zellfläche — die Schmelze darf diesen
-    /// Schalter nicht hintergehen.
     func testUnweightedFlowIgnoresTheMelt() {
         var c = cfg(n: 96, arm: .renorm)
         c.rainWeightedFlow = false
@@ -452,28 +311,17 @@ final class MeltRunoff: XCTestCase {
         XCTAssertLessThan(maxRelErr, 1e-9, "area muss reine Zellzahl bleiben")
     }
 
-    /// Der Ernstfall, für den der Deckel existiert (s.
-    /// `SimConfig.meltRunoffCapPerRain`): der Spieler trägt die schneereichste
-    /// Kuppe ab, die Temperatur springt auf Tieflandwert, der Schneevorrat steht
-    /// noch. Liefert das Terrain nach dem `SimNode.recomputeFlow`-Pfad und die
-    /// abgetragene Zelle.
     private func sculptedSnowyPeak(_ arm: Arm) -> (t: Terrain, peak: Int) {
         let t = Terrain(config: cfg(n: 192, arm: arm), seed: 1337)
         t.step(dtYears: 1000)
-        // Höchste beschneite Zelle suchen und großflächig auf Küstenniveau
-        // einebnen — genau der Sculpt-Pfad aus dem Spiel.
         var peak = 0
         for k in 0..<t.cfg.count where t.snow[k] > t.snow[peak] { peak = k }
         XCTAssertGreaterThan(t.snow[peak], 0.1, "Testaufbau: keine tragfähige Schneedecke")
         let gx = Double(peak % t.cfg.n), gz = Double(peak / t.cfg.n)
-        // Ein Strich zieht nur 18 % Richtung Ziel (s. `flatten`) — der Spieler
-        // hält den Knopf, hier sind das 40 Striche.
         for _ in 0..<40 {
             t.flatten(gx: gx, gz: gz, radiusWorld: 0.1 * t.cfg.world,
                       targetHeight: t.cfg.sea + 0.05)
         }
-        // `SimNode.recomputeFlow`-Pfad: Temperatur nachziehen (dt = 0 hält die
-        // Bilanz), dann das Abflussfeld neu bestimmen.
         t.updateClimate(dt: 0)
         t.computeFlow(dtYears: 0)
         XCTAssertGreaterThan(t.temperature[peak], 5,
@@ -482,8 +330,6 @@ final class MeltRunoff: XCTestCase {
         return (t, peak)
     }
 
-    /// Größtes Verhältnis `runoffWeight/rainWeight` über Land — die Größe, die der
-    /// Deckel beschränkt (die Tropfen-Stichprobe normiert auf das FELD-Maximum).
     private func maxWeightRatio(_ t: Terrain) -> Double {
         var maxRatio = 0.0
         for k in 0..<t.cfg.count where t.h[k] > t.cfg.sea {
@@ -492,9 +338,6 @@ final class MeltRunoff: XCTestCase {
         return maxRatio
     }
 
-    /// Der Schmelzbeitrag ist auf `meltRunoffCapPerRain · rainWeight` gedeckelt —
-    /// das Gewicht einer Zelle kann sich also höchstens verdoppeln. Geprüft am
-    /// Sculpt-Ernstfall im Produktions-Arm.
     func testMeltContributionIsCappedAtTheLocalRain() {
         let (t, peak) = sculptedSnowyPeak(.renorm)
         let maxRatio = maxWeightRatio(t)
@@ -507,21 +350,9 @@ final class MeltRunoff: XCTestCase {
                                  "der Schmelzbeitrag muss gedeckelt bleiben")
     }
 
-    /// Derselbe Ernstfall MIT Einlagerung (`meltRunoffWithholdSolid = 1`, Arm C).
-    /// Der Deckel muss auch in dieser Kombination halten: die Einlagerung senkt
-    /// das Landmittel des rohen Gewichts unter das Regenmittel, die Renormierung
-    /// hebt also alle Zellen an — ein am Roh-Wert gedeckelter Ausreißer läge nach
-    /// der Normierung trotzdem über `(1 + Deckel)·rainWeight`. Deshalb greift der
-    /// Deckel NACH der Normierung (s. `Terrain.updateRunoffWeight`).
     func testMeltContributionStaysCappedWithSolidWithholding() {
         let (t, _) = sculptedSnowyPeak(.withhold)
         XCTAssertGreaterThan(t.cfg.meltRunoffWithholdSolid, 0, "Testaufbau: keine Einlagerung")
-        // Die Skew der Normierung wird an einer UNBERÜHRTEN Zelle abgelesen: warm
-        // genug für reinen Flüssigniederschlag (keine Einlagerung) und ohne
-        // Schneevorrat (keine Schmelze) — dort ist roh = rain, das Verhältnis
-        // `runoffWeight/rainWeight` ist also exakt Regenmittel/Rohmittel. Liegt es
-        // über 1, hebt die Renormierung alle Zellen an, und der Roh-Deckel allein
-        // würde die Zusage `≤ (1 + Deckel)·rainWeight` verfehlen.
         var skew = 0.0
         for k in 0..<t.cfg.count
         where t.h[k] > t.cfg.sea && t.snow[k] == 0 && t.temperature[k] >= t.cfg.snowRainTemp {
@@ -538,21 +369,11 @@ final class MeltRunoff: XCTestCase {
                                  "der Deckel muss auch mit Einlagerung halten")
     }
 
-    // MARK: - Rückwirkung auf bestehende Wächter
-
-    /// **Der Becken-Wasserhaushalt (#11) übersteht die Schmelze** — dieselbe
-    /// Rolle, die `Lithology.testEndorheicMechanicsSurviveLithology` für #12 hat,
-    /// und aus demselben Grund: die #11-Wächter pinnen ihre Physik auf EIN
-    /// konkretes Becken (das größte von Seed 1337 bei n=256), und die Schmelze
-    /// verschiebt, welches Becken das ist (`EndorheicEvaporation.cfg`). Hier wird
-    /// deshalb INSELWEIT und über mehrere Seeds gezählt: entstehen weiter
-    /// Salzpfannen?
     func testEndorheicMechanicsSurviveMeltRunoff() {
-        var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6   // dryCfg von #11
-        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
-        var ref = c; ref.meltRunoffEnabled = false                 // Arm der #11-Wächter
+        var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6
+        c.rangeLandform = calibrationRangeLandform
+        var ref = c; ref.meltRunoffEnabled = false
 
-        /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).
         func playa(_ config: SimConfig, _ seed: UInt32) -> (bed: Int, crusted: Int, basins: Int) {
             let t = Terrain(config: config, seed: seed)
             for _ in 0..<10 { t.step(dtYears: 200) }
@@ -579,8 +400,6 @@ final class MeltRunoff: XCTestCase {
             "Schmelzwasser kostet Salzpfannen-Seeds (an \(playaOn) gegen aus \(playaOff))")
     }
 
-    // MARK: - Invarianten: Determinismus, dt, Kosten
-
     func testMeltRunoffIsDeterministic() {
         let a = Terrain(config: cfg(n: 96, arm: .renorm), seed: 4242)
         let b = Terrain(config: cfg(n: 96, arm: .renorm), seed: 4242)
@@ -591,15 +410,9 @@ final class MeltRunoff: XCTestCase {
         XCTAssertEqual(a.areaMFD, b.areaMFD)
     }
 
-    /// Das Gewichtsfeld ist eine reine Ableitung ohne eigenen Zustand: bei
-    /// gleichem `h`/`rain`/`snow` hängt es NICHT an `dt`. Geprüft am direkten
-    /// Aufruf (`computeFlow(dtYears:)` unterscheidet sich nur im Becken-Haushalt).
     func testRunoffWeightDoesNotDependOnDt() {
         let t = Terrain(config: cfg(n: 192, arm: .renorm), seed: 1337)
         t.step(dtYears: 1000)
-        // Referenz auf EINGEFRORENEM Zustand: `computeFlow` rührt `h`, `rain`,
-        // `temperature` und `snow` nicht an, nur den Becken-Wasserhaushalt (der
-        // hängt an dt) — das Gewicht muss über alle dt gleich herauskommen.
         t.computeFlow(dtYears: 0)
         let ref = t.runoffWeight
         XCTAssertFalse(ref.isEmpty, "Testaufbau: keine Schmelze im Spiel")
@@ -609,9 +422,6 @@ final class MeltRunoff: XCTestCase {
         XCTAssertEqual(t.runoffWeight, ref, "das Gewicht darf nicht an dt hängen")
     }
 
-    /// Kosten des neuen Passes je `step()` in Produktionsauflösung — gemessen
-    /// statt geschätzt (dieselbe Doktrin wie bei `updateHeightBands` und
-    /// `updateClimate`). Er hängt an `computeRain`, läuft also einmal je Schritt.
     func testRunoffWeightCostDiagnostic() throws {
         try skipUnlessMeasuring()
         var c = SimConfig(); c.n = 832; c.world = calibrationWorld

@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# Kamerafahrt + Zeitraffer der Einzelbäume (#236) als Video:
-#
-#   scripts/look/tree-flight.sh <ausgabe.mp4> [game-ordner]
-#
-# Godot schreibt mit fester Bildrate (30) ein MJPEG-AVI in Encoder-Größe
-# 3456×2104 (project.godot, .movie-Overrides); ffmpeg macht daraus H.264.
-# Ablauf: game/studies/trees/TreeFlight.gd. `RS_NO_TREES=1` nimmt denselben
-# Ablauf mit dem Kronendach von #152 auf (Vergleich).
 set -euo pipefail
 out=${1:?Ausgabe fehlt}
 root=$(cd "$(dirname "$0")/../.." && pwd)

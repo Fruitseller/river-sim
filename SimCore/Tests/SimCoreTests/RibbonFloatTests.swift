@@ -2,63 +2,28 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// „Flussbänder schweben über dem Gelände" (Issue #233, Look-Hill-Climber
-/// Nr. 13): misst je Band-Dreieck die Höhe der Bandfläche gegen die
-/// GERENDERTE Geländehöhe darunter.
-///
-/// Gerenderte Höhe = `renderSurfaceHeight` der Sim-Höhe × `heightScale`, über
-/// Seen so weit zum Spiegel gehoben wie im Terrain-Vertex-Shader. Die
-/// Relief-Verschiebung des Bakes fehlt bewusst: `relief_bake.gdshader`
-/// gewichtet sie mit `1 − Schutzmaske`, und die Schutzmaske deckt jedes Band
-/// samt `WaterRender.protectSeamCells` Saum — unter einem Band ist sie null.
-/// Das Kronendach hebt das Gelände nur an (verdeckt also höchstens Wasser,
-/// lässt es nie schweben) und fehlt ebenso.
-///
-/// Gemessen wird an der WASSERLINIE (`water.gdshader`: sichtbar ist das
-/// Wasser für |2u − 1| ≤ (1 − `ribbonWaterline`) · visible(alpha)): liegt
-/// die Wasserfläche dort über dem Gelände, sieht man unter ihrer Kante das
-/// Gelände — die Platte schwebt. In der Bandmitte darf Wasser über dem Bett
-/// stehen (dafür ist es Wasser), dort zählt umgekehrt nur, ob es unter dem
-/// Gelände verschwindet.
 enum RibbonFloat {
     struct Summary {
-        /// Gemessene Wasserlinien-Punkte (sichtbare Land-Bänder).
         var edgePoints = 0
-        /// Davon mit Überstand über `floatTolerance`.
         var floating = 0
-        /// Davon in Segmentmitten und auf Altarmen.
         var floatingMid = 0, floatingOxbow = 0
         var maxOverhang = 0.0
         var meanOverhang = 0.0
-        /// Mittelpunkte (u = 0,5), deren Wasser unter dem Gelände liegt.
         var centerPoints = 0
         var sunk = 0
-        /// Histogramm der Wasserlinien-Überstände (Welt-Y).
         var over: [Double: Int] = [:]
     }
 
-    /// Überstand an der Wasserlinie, den das Auge nicht als Schweben liest
-    /// (Welt-Y; eine Zelle ist 0,156 breit): die halbe Höhe einer
-    /// Zellbreite. Darunter liegt die Kante im Gelände.
     static let floatTolerance = 0.08
-    /// Mitte gilt als versunken, wenn das Gelände um mehr darüber liegt.
     static let sinkTolerance = 0.02
     static let visibleAlpha = 0.25
     static let bins = [0.02, 0.05, 0.08, 0.15, 0.25, 0.35]
 
-    /// `water` = RGBA8-Wasserfeld desselben Frames (G = See-Kanal): daraus
-    /// das See-Gate wie im Terrain-Shader (`lake_gate_at`). Leer = ohne Gate;
-    /// dann hebt die Fläche hier über kleinen Tümpeln mehr als im Bild, und
-    /// Schweben darüber bliebe unsichtbar (Review Neon Nr. 6) — die
-    /// Pflicht-Wächter geben es deshalb mit.
     static func measure(_ t: Terrain, mesh: RibbonMesh, water: [UInt8] = [],
                         hscale: Double = RenderContract.heightScale) -> Summary {
         let n = t.cfg.n, cs = t.cfg.cellSize, half = t.cfg.world / 2
         let sea = t.cfg.sea
         let gated = water.count == n * n * 4
-        // Gerenderte Oberfläche wie im Terrain-Vertex-Shader: Seen heben das
-        // Gelände über `geometryLift*` (smoothstep auf die Spiegeltiefe) auf
-        // ihren Spiegel, mal dem See-Gate des Rasterwassers.
         var surface = t.h
         for k in 0..<surface.count where t.waterLevel[k] > sea && t.h[k] > sea {
             let pond = t.waterLevel[k] - t.h[k]
@@ -68,8 +33,6 @@ enum RibbonFloat {
             surface[k] += WaterRender.smoothstep(WaterRender.geometryLiftLo,
                                                  WaterRender.geometryLiftHi, pond) * max(0, pond) * gate
         }
-        // Über dem Meer zählt der Punkt nicht: dort liegt das Band als
-        // Trübung unter der Meeresfläche.
         func ground(_ x: Double, _ z: Double) -> (y: Double, water: Bool) {
             let gx = (x + half) / cs, gz = (z + half) / cs
             let y = renderSurfaceHeight(surface, gx, gz, n: n, renderGrid: n)
@@ -100,7 +63,6 @@ enum RibbonFloat {
                         points += [(0.5 - du, true), (0.5 + du, true)]
                     }
                     for (u, edge) in points {
-                        // Dreiecke wie im Mesh: (L0, L1, R0) und (R0, L1, R1).
                         let p: SIMD3<Double> = u + tt <= 1
                             ? L0 + u * (R0 - L0) + tt * (L1 - L0)
                             : R1 + (1 - u) * (L1 - R1) + (1 - tt) * (R0 - R1)
@@ -142,8 +104,6 @@ enum RibbonFloat {
 
 final class RibbonFloatTests: XCTestCase {
 
-    /// Pflicht-Wächter (Issue #233): auf der gealterten Render-Testwelt liegt
-    /// die Wasserlinie der Bänder im Gelände, nicht darüber.
     func testRibbonWaterlineDoesNotFloat() {
         let t = agedWorld(renderConfig(n: 192), years: 2000)
         let render = RenderState(geometryMode: true)
@@ -151,27 +111,14 @@ final class RibbonFloatTests: XCTestCase {
         let s = RibbonFloat.measure(t, mesh: render.riverRibbonMesh, water: water)
         print(RibbonFloat.report(s, label: "n192/2000"))
         XCTAssertGreaterThan(s.edgePoints, 200, "Testwelt trägt zu wenig Bänder für eine Aussage")
-        // Schranken über BEIDE Welt-Realisierungen (System-libm), gemessen
-        // MIT See-Gate (Review Neon Nr. 6; ohne Gate hob die Messung kleine
-        // Tümpel an, über denen das Bild nicht hebt): macOS 0,9 % über 0,08,
-        // nichts über 0,15, 1,1 % versunkene Mitten; die steilere Linux-Welt
-        // (glibc) 4,0 % über 0,08 (meist Segmentmitten über rauem Gelände,
-        // Mittel −0,07: das Band liegt dort tief im Einschnitt), 2 von 2654
-        // Punkten über 0,15 und 1,8 % versunkene Mitten (ohne Gate 3,5 %
-        // schwebend). Vor dem Fix aus #233 schwebten 64,9 % mit Mittel 0,34 —
-        // die Platte liegt weit über beiden Schranken.
         XCTAssertLessThanOrEqual(Double(s.floating), 0.05 * Double(s.edgePoints),
                                  "Wasserlinie schwebt über dem Gelände (Issue #233)")
         XCTAssertLessThanOrEqual(Double(s.over[0.15] ?? 0), 0.005 * Double(s.edgePoints),
                                  "Wasserlinie steht als Platte über dem Gelände (Issue #233)")
-        // Bis zum Review Neon Nr. 6: 25 %. Ein Zehntel lässt beiden Welten
-        // Luft und fängt ein Band, das in größeren Teilen ins Gelände sinkt.
         XCTAssertLessThanOrEqual(Double(s.sunk), 0.10 * Double(s.centerPoints),
                                  "Bandmitte verschwindet unter dem Gelände")
     }
 
-    /// Messlauf auf der Produktionswelt (Seed 1337, 20.000 Jahre wie die
-    /// Aufnahmen des Hill-Climbers). RS_CACHE = Ordner für den Welt-Snapshot.
     func testRibbonFloatProductionDiagnostic() throws {
         try skipUnlessMeasuring()
         let env = ProcessInfo.processInfo.environment

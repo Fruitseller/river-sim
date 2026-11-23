@@ -1,0 +1,13 @@
+# Einzelbäume: Platzierung jedes Bild im Compute-Pass
+
+Seit #236 platziert `tree_place.glsl` jedes Bild auf der GPU die Bäume, die gerade stehen und im Bild (oder im Schattenbereich) liegen, in vier indirekte MultiMeshes (ForestTrees.gd): `conifer` und `broad` (volle Form je Art, im Bild, näher als `lod_dist`), `far` (grobe Mischform, weiter weg) und `shadow` (grobe Mischform, nur Schatten, näher als `shadow_range`). Die CPU schreibt keinen Transform, sie startet nur den Pass. Ein Durchlauf je Stufe (`level` ≥ 0) über das Fenster der Stufe um die Kamera, danach EIN Faden mit `level` < 0, der die Zähler gedeckelt auf die Kapazität in die Kommando-Puffer schreibt.
+
+Je Baum: Standort auf einem festen, verwackelten Gitter je Stufe; Höhe und Verschiebung wie das Gelände (terrain.gdshader, vertex); Kartensymbol-Größe k(d) nach Kameraabstand und Ausdünnung nach Rang; billige Abbrüche zuerst (Rang, dann Maske in der Mitte). Die Waldmaske wird unter der ganzen Krone geprüft: Mitte, acht Randpunkte und vier auf halbem Weg. Die halben fangen schmale Flüsse und Wände, über die ein großer Baum mit Rand-Abgriffen allein hinwegreichte, und die diagonalen Ecken von Schnee- und Felszellen, in die die bilineare Maske sonst hineinläuft. Der Nadelbaum-Anteil folgt dem Kronendach (`canopy()`), bewusst mit mehr Nadelbäumen (Vorbild f, e): Höhe plus zwei Bestands-Rauschskalen.
+
+Form: `tree.gdshader` mischt Nadelbaum (VERTEX/NORMAL) und Laubbaum (CUSTOM0/CUSTOM1) derselben Topologie (TreeMesh.gd) nach `INSTANCE_CUSTOM` (Nadelbaum-Anteil, Laubfarbe). Die Instanz skaliert ungleichmäßig, daher `ensure_correct_normals`. Der Formwechsel nah/fern ist je Baum gestreut, damit keine Kante im Bild entsteht.
+
+Push-Constant-Belegung (bis die Felder benannt sind, s. #265): `view` = (Auge xyz, hscale); `blends` = (height_blend, overlay_blend, bake_blend, relief an 1/0); `relief` = (relief_height_code, relief_geometry_age, sim_year, world_size); `grid` = (grid_n, conifer_lo, conifer_hi, –); `symbol` = (k_near, d_near, k_exp, k_max); `tree` = (thin_exp, tree_height, crown_reach, mask_lo); `tree2` = (mask_spread, lod_dist, shadow_range, shadow_margin); `caps` = Kapazitäten (conifer, broad, far, shadow); `planes[6]` Frustum mit Normale nach außen (xyz·p − w > 0 heißt außen); `origin`/`size` erste Gitterzelle und Größe des Fensters; `level` < 0 schließt die Zähler ab.
+
+Ohne RenderingDevice (Compatibility, headless, CI) bleibt es beim Kronendach (`docs/graphics-quality.md` § Einzelbäume).
+
+Betrifft: `game/shaders/tree_place.glsl`, `game/shaders/tree.gdshader`, `game/scripts/ForestTrees.gd`, `game/scripts/TreeMesh.gd`

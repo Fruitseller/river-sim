@@ -1,0 +1,7 @@
+# Nasse Wiese statt Tümpel-Teppich
+
+Die Übersicht zeigte in den Tälern Matten kleiner blauer Flecken (Issue #174, Paket C): Tümpel des Raster-Felds, über Bäche und Pfützen zu Komponenten verbunden, die der Komponenten-Fade (ab 50 Zellen voll) zeigt, einzeln aber zu klein, um als See zu lesen. Tümpel (Zellen stehenden Wassers über `lakeRawWetDepth`, 4er-Nachbarschaft, ohne ihre Zubringer) unter `wetMeadowMaxCells` (200) malt das Raster nicht mehr als Wasserspiegel, sondern meldet sie als nasse Wiese; `RenderState` tönt das Material dort dunkelgrün und hält Wald und Verschiebung fern (Schutzmaske). Messreihe: `docs/river-coast-render-measurements.md` §A.
+
+Ausgenommen sind Komponenten an einem Band- oder Altarm-Korridor: dort malt die Geometrie, und die Übergabe Band ↔ Raster (`lakeRawWetDepth`, Mündungs-Überlappung) darf keine Lücke bekommen. Eine kleine Komponente zählt nur dann als Raster-Rest unter einem Band, wenn das Band an ihren Zellen mindestens `remnantMinBandCoverage` (0,5) deckt. Darunter trägt das Raster das Wasser: an einer Steilstufe blendet das Band über `cascadeWeight` aus, seine Deckung läuft über kleine Werte gegen 0, und ein kleines Raster-Stück dort ist die Kaskade selbst. Ohne die Schwelle (`cover > 0`) fiel es auf den Saum zurück und wurde nasse Wiese. 0,5 = das Band malt dort mehr Wasser als das Raster (Review-Nachtrag in derselben Messreihe).
+
+Betrifft: `WaterRender.wetMeadowMaxCells`, `WaterRender.remnantMinBandCoverage`, `WaterRender.isWetMeadow`, `SimRender.WaterFieldRenderer`, `SimRender.RenderState`

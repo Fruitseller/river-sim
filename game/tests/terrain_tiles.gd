@@ -1,23 +1,9 @@
 extends SceneTree
-## Headless-Wächter für die Terrain-Kacheln (Issue #235):
-##   godot --headless --path game --script res://tests/terrain_tiles.gd
-##
-## Braucht die GDExtension nicht. Geprüft wird der Flächen-Vertrag von
-## scripts/TerrainTiles.gd, auf dem die Flussbänder stehen (sie nehmen ihre
-## Höhen von genau dieser Fläche, SimRender `renderSurfaceHeight`):
-##  - die Kacheln zusammen bilden dieselbe Dreiecksmenge wie das frühere
-##    PlaneMesh (gleiche Punkte, Teilung entlang der Anti-Diagonale), auch mit
-##    schmaler letzter Kachel;
-##  - die Zahl der Quads ist (grid − 1)², keine Lücke, keine Doppelung;
-##  - jede Kachel-AABB enthält alle ihre Vertices (sonst cullt Godot eine
-##    sichtbare Kachel), auch bei Dichte 2 und 4;
-##  - eine explizit gesetzte Kachelgröße gewinnt gegen `RS_TILE_QUADS`.
 
 const TerrainTiles = preload("res://scripts/TerrainTiles.gd")
 var failures := 0
 
 func _init() -> void:
-	# Kleine Gitter mit voller, schmaler und einzelner letzter Kachel.
 	for case in [[5, 4], [9, 4], [20, 4], [37, 8]]:
 		_check_against_plane_mesh(case[0], case[1])
 	_check_aabb_and_density()
@@ -39,9 +25,6 @@ func _build(grid: int, quads: int) -> Node3D:
 	t.build(8.0, grid, StandardMaterial3D.new(), -1.0, 1.0)
 	return t
 
-## Dreiecke als Menge sortierter Eckpunkt-Schlüssel in Gitterindizes (das
-## PlaneMesh summiert seine Positionen schrittweise auf, die Kacheln rechnen
-## sie exakt; auf Weltkoordinaten unterschieden sie sich in der 4. Stelle).
 static func _triangles(arrays: Array, out: Dictionary, grid: int) -> int:
 	var cell := 8.0 / float(grid - 1)
 	var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]

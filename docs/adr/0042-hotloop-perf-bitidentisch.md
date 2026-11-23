@@ -1,0 +1,12 @@
+# Hot-Loops auf Roh-Puffern und Rechentricks, die bit-identisch bleiben
+
+Schleifen über Klassen-Properties kosten je Zugriff Bounds-, COW- und Exklusivitätsprüfung. Gemessen (Issue #43): ein Feld per Schleife füllen kostete bei n = 832 ~9 ms je Feld und Schritt (`fill` ist jetzt ein `memset`); `clearEndorheicBasins` 36 ms/Schritt (9 % des Schritts) für drei Feld-Löschungen, die als `update(repeating:)` unter 1 ms bleiben; `capEndorheicBasins` 62 ms/Schritt (16 %), der teuerste Pass überhaupt. Deshalb laufen Hot-Loops auf Roh-Puffern. In `capEndorheicBasins` werden die Scratch-Arrays als lokale Variablen aus der Klasse genommen und am Ende zurückgegeben, so bleibt die Kapazität über Schritte erhalten, ohne dass der Hot-Loop eine Property anfasst. `priorityFlood` und `computeReceiversAndArea` nehmen für innere Zellen einen Zweig mit 8 festen Offsets ohne Randprüfung und führen den Spaltenindex mit (kein `%`/`/` je Zelle). Werte, Reihenfolgen und Vergleiche sind jeweils unverändert.
+
+Das Box-Maximum des Samendrucks in `updateVegetation` ist separabel (Maximum ist assoziativ und kommutativ, Spaltenausschnitt hängt nur an i, Zeilenausschnitt nur an j): erst zeilen-, dann spaltenweise ergibt exakt das (2dr+1)²-Fenster, mit 2·(2dr+1) statt (2dr+1)² Vergleichen (dr = 2: 10 statt 25).
+
+Rechentricks, die bit-identisch sein müssen:
+- `gridRound` ist kaufmännische Rundung bit-identisch zu `Int(c.rounded())`, aber in Registern ohne PLT-Aufruf an `round(3)`, inklusive des Grenzfalls `0.5.nextDown` und negativer Koordinaten.
+- `powFast`: die MFD-Exponenten sind Ganzzahlen (4 dendritisch, 2 dispersiv), daher Multiplikation statt `pow` im Hot-Loop von `computeFlow` (3,3 Mio. Aufrufe). Kein 0.5→sqrt-Schnellpfad: libm-`pow(x, 0.5)` weicht bei Laufzeit-Exponent in ~0,14 % der Fälle um 1 ulp von `sqrt` ab (gemessen; Literal-Tests täuschen, weil LLVM `pow(x, 0.5)` selbst zu `sqrt` faltet), und die Differenz divergiert übers chaotische System messbar. Dasselbe gilt in `outletIncision`.
+- D8-Empfänger: Vergleich mit strict `>`, der erste steilste Nachbar gewinnt; orthogonal entfällt die Division durch 1 (IEEE-754 bit-identisch), diagonal wird erst nach dem Vorzeichentest durch √2 geteilt.
+
+Betrifft: `Terrain.fill`, `Terrain.anyCell`, `Terrain.clearEndorheicBasins`, `Terrain.capEndorheicBasins`, `Terrain.priorityFlood`, `Terrain.computeReceiversAndArea`, `Terrain.updateVegetation`, `Terrain.gridRound`, `Terrain.cellIndex`, `Terrain.powFast`

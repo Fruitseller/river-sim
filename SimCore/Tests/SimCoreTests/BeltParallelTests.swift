@@ -2,7 +2,6 @@ import XCTest
 @testable import SimCore
 
 extension MeanderState {
-    /// Ebenen des Abhängigkeitsgraphen, nur für die Überlappungs-Diagnose.
     static func beltLevels(_ footprints: [BeltFootprint]) -> [[Int]] {
         guard !footprints.isEmpty else { return [] }
         var levels = [Int](repeating: 0, count: footprints.count)
@@ -23,9 +22,6 @@ final class BeltParallelTests: XCTestCase {
         }
         let schedule = Terrain.BeltSchedule(boxes)
         let lock = NSLock()
-        // Swift 6 (Issue #201): beide Mengen werden ausschließlich unter dem
-        // obigen `lock` gelesen und geschrieben — der Wächter PRÜFT hier ja
-        // gerade die Disziplin, die der Compiler nicht sehen kann.
         nonisolated(unsafe) var active: Set<Int> = [], completed: Set<Int> = []
         DispatchQueue.concurrentPerform(iterations: 4) { _ in
             while let index = schedule.take() {
@@ -109,10 +105,6 @@ final class BeltParallelTests: XCTestCase {
         }
     }
 
-    /// Konservative Lauf-Fenster: jede der beiden geklemmten Verschiebungen
-    /// trägt höchstens einen halben Knotenabstand bei; Diffusion und Resample
-    /// bleiben in der konvexen Hülle. Der Radius enthält auch Talwand-Abfragen,
-    /// Stempel und Nachbarn der Altarm-Pfropfen.
     func testBeltOverlapDiagnostic() throws {
         try skipUnlessMeasuring()
         let cfg = SimConfig.production

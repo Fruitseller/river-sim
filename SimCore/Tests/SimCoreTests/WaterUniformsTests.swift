@@ -2,27 +2,8 @@ import XCTest
 @testable import SimCore
 import SimRender
 
-/// Wächter für den Uniform-Kanal der Wasser-Kalibrierung (Issues #91/#92).
-///
-/// Contract-Schritt (#92): die Kalibrier-Werte reisen NUR noch als benannte
-/// Werte über die Brücke (Gruppe `water` im `SimRender.CalibrationRegistry`
-/// → `SimNode.calibration` → `Main.apply_calibration`, seit #213).
-/// Die Shader deklarieren gleichnamige Uniforms OHNE Default und lesen sie im
-/// Body — ein Literal-Default wäre wieder genau die Kopie, die #92 abschafft
-/// (die Editor-Vorschau ohne SimNode ist damit bewusst unkalibriert). Gepinnt
-/// wird deshalb Struktur statt Zahlen:
-///   - welcher Shader welche `water_*`-Uniform default-frei deklariert und liest,
-///   - `Main.gd` kalibriert alle drei Wasser-Materialien.
-/// Spiegel der Zahlen, „nichts am Register vorbei", Brücke und die
-/// Vertragswerte der Godot-Wächter prüft `CalibrationRegistryTests` (#213).
-/// Dass die gesetzten Werte in Godot wirklich ankommen, prüft End-to-End
-/// `game/tests/water_uniforms.gd`.
 final class WaterUniformsTests: XCTestCase {
 
-    /// Welcher Shader welche Werte konsumiert — der Verteilungs-Vertrag.
-    /// `Main.gd` setzt zwar alle Werte auf alle Wasser-Materialien (undeklarierte
-    /// Namen ignoriert Godot), aber WO ein Wert als Uniform deklariert sein muss,
-    /// entscheidet der Shader-Body, der ihn liest.
     private static let windowScalars = [
         "water_lake_gate_lo", "water_lake_gate_hi",
         "water_river_mask_lo", "water_river_mask_hi",
@@ -45,7 +26,6 @@ final class WaterUniformsTests: XCTestCase {
         "water_flow_shimmer_color",
     ]
     private static let ribbonColors = ["water_delta_plume_color", "water_oxbow_water_color"]
-    /// Offenes Meer (#155): Tiefen-Farbe über dem Schelf, Brandung, Rausch-Wellen.
     private static let oceanScalars = [
         "water_ocean_surf_slope_lo", "water_ocean_surf_slope_hi",
         "water_ocean_depth_span", "water_ocean_mid_depth",
@@ -64,7 +44,6 @@ final class WaterUniformsTests: XCTestCase {
         "water_ocean_wave_fade_lo", "water_ocean_wave_fade_hi",
         "water_ocean_wave_drift_x", "water_ocean_wave_drift_z",
         "water_ocean_wave_octave_speedup",
-        // Sedimentfahne (#174 C).
         "water_ocean_plume_lod", "water_ocean_plume_opacity",
     ]
     private static let oceanColors = [
@@ -73,12 +52,10 @@ final class WaterUniformsTests: XCTestCase {
         "water_ocean_plume_color",
     ]
 
-    /// Mäandergürtel (#174 C2): Querprofil im Band, Bank-Material im Terrain.
     private static let bendScalars = ["water_ribbon_bend_depth", "water_ribbon_shoal_mix"]
     private static let bendColors = ["water_ribbon_shoal_color"]
     private static let barScalars = [
         "water_bar_roughness",
-        // Meeresstrand (Hill-Climber Nr. 8).
         "water_beach_wet_height", "water_beach_height_hi",
         "water_beach_edge_lo", "water_beach_edge_hi", "water_beach_blend_height",
     ]
@@ -86,9 +63,6 @@ final class WaterUniformsTests: XCTestCase {
         "water_bar_sand_color", "water_bar_sand_wet_color",
         "water_beach_dry_color", "water_beach_wet_color",
     ]
-    /// Querprofil und Oberfläche des Bands (Befund #174): Wasserlinie, nasses
-    /// Ufer, Kräuselung. Die Oktaven-Folge und Pixel-Ausblendung der Kräuselung
-    /// teilt das Band mit dem Ozean.
     private static let profileScalars = [
         "water_ribbon_waterline", "water_ribbon_waterline_jitter",
         "water_ribbon_waterline_scale", "water_ribbon_bank_opacity",
@@ -96,38 +70,24 @@ final class WaterUniformsTests: XCTestCase {
         "water_ribbon_ripple_stretch", "water_ribbon_ripple_speed",
     ]
     private static let profileColors = ["water_ribbon_bank_color"]
-    /// Ozean-Werte, die das Band für seine Kräuselung mitliest.
     private static let sharedWaveScalars = [
         "water_ocean_wave_lacunarity", "water_ocean_wave_gain",
         "water_ocean_wave_fade_lo", "water_ocean_wave_fade_hi",
     ]
-    /// See-Maske des Terrain-Shaders, die das Band per Pixel nachrechnet
-    /// (EINE Seite malt über einem Raster-See).
     private static let lakeMaskScalars = [
         "water_lake_gate_lo", "water_lake_gate_hi",
         "water_pond_contour_lo", "water_pond_contour_hi",
     ]
 
-    /// Zeitraffer-Blende der Bänder (geteilte optische Dicke) und Raster an
-    /// Steilwänden (Befund #174, Seed 1337 / Jahr 2.305).
     private static let ribbonFadeScalars = ["water_ribbon_fade_cap"]
     private static let wallScalars = ["water_wall_slope_lo", "water_wall_slope_hi"]
-    /// Lauf-Optik (Look-Iteration 14): Kolk ↔ Riffel, Schaum, Glanz und
-    /// Wolken-Spiegelung — Band und Raster-Fluss lesen dieselben Werte
-    /// (Review Neon Nr. 7: fehlte hier, nur das Register prüfte „steht in
-    /// irgendeinem Shader").
     private static let runScalars = [
         "water_riffle_depth", "water_foam_amount", "water_river_specular",
         "water_cloud_reflection",
     ]
     private static let runColors = ["water_riffle_color", "water_foam_color"]
-    /// Nur das Band: Schaum-Muster (Weißwasser nur aus den Lauf-Größen, seit
-    /// dem Gremium kein eigener Außenbogen-Schaum mehr, Befund 3).
     private static let ribbonFoamScalars = ["water_foam_scale"]
-    /// Uferlinie des Korridors: das Band endet dort, der Korridor setzt dort
-    /// seinen nassen Saum an (Gremium, Befund 1).
     private static let corridorShoreScalars = ["water_corridor_shore", "water_corridor_shore_bend"]
-    /// Nur das Raster: Fließen an Steilstrecken und Seefarbe.
     private static let rasterRunScalars = ["water_raster_steep_lo", "water_raster_steep_hi"]
     private static let rasterRunColors = ["water_lake_color"]
 
@@ -138,33 +98,18 @@ final class WaterUniformsTests: XCTestCase {
             + profileScalars + sharedWaveScalars + lakeMaskScalars + ribbonFadeScalars
             + runScalars + ribbonFoamScalars + corridorShoreScalars + ["water_ocean_depth_span"],
         "game/shaders/corridor.gdshaderinc": corridorShoreScalars,
-        // Das offene Meer ist opak (ALPHA = 1.0) — keine Deckkraft-Rampe.
         "game/shaders/ocean.gdshader": opticsScalars + oceanScalars,
     ]
     private static let expectedColors: [String: [String]] = [
-        // Das Bett unter dem Wasser teilen Band und Raster-Wasser.
         "game/shaders/terrain.gdshader": opticsColors + barColors + ["water_bed_color"]
             + runColors + rasterRunColors,
         "game/shaders/water.gdshader": opticsColors + ribbonColors + bendColors + profileColors
             + ["water_bed_color"] + runColors + ["water_ocean_shallow_color"],
-        // Das Bett unter dem Band ist dasselbe wie unter dem Raster-Wasser.
         "game/shaders/corridor.gdshaderinc": ["water_bed_color"],
-        // Das Meer färbt nach der Schelf-Tiefe (#155) statt nach Seicht/Tief
-        // des Binnenwassers und trägt keinen Strömungs-Schimmer; geteilt
-        // bleibt die Optik (Fresnel, Rauheit, Specular, oben).
         "game/shaders/ocean.gdshader": oceanColors,
     ]
 
     func testShadersDeclareTheUniformsDefaultFreeAndReadThem() throws {
-        // Contract-Schritt (#92): ein Literal-Default wäre wieder eine Kopie
-        // der Kalibrierung — die Deklaration bleibt default-frei, den Wert
-        // setzt `Main.gd` aus der Brücke. Und eine deklarierte, aber nie
-        // gelesene Uniform wäre ein toter Kanal, den der End-to-End-Wächter
-        // (er prüft nur „wird gesetzt") nicht sehen kann: jeder Name muss im
-        // Quelltext deshalb mindestens zweimal stehen — Deklaration + Lesung.
-        // Gezählt wird als GANZER Bezeichner (Review zu #105): ein
-        // Substring-Zähler ließe eine Lesung von `water_shore_lo_scaled` als
-        // Lesung von `water_shore_lo` durchgehen.
         for (path, names) in Self.expectedScalars {
             let shader = try RepoSource.probe(path)
             for name in names {
@@ -185,10 +130,6 @@ final class WaterUniformsTests: XCTestCase {
         }
     }
 
-    /// Vollständig in der Gegenrichtung: jede `water_*`-Uniform, die ein
-    /// Wasser-Shader deklariert, steht oben in seiner Liste. Sonst konnte ein
-    /// Shader eine Lesung verlieren, solange irgendein anderer den Namen
-    /// trug (Review Neon Nr. 7, Look-Iteration 14).
     func testEveryDeclaredWaterUniformIsListed() throws {
         let regex = try NSRegularExpression(pattern: #"uniform\s+(?:float|vec3)\s+(water_[a-z0-9_]+)\s*;"#)
         for path in Self.expectedScalars.keys {
@@ -204,8 +145,6 @@ final class WaterUniformsTests: XCTestCase {
 
     func testMainAppliesTheCalibrationToAllWaterMaterials() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
-        // Alle drei Wasser-Materialien bekommen die Werte; das Band-Material
-        // existiert im RS_WATER_STAMP-Modus nicht.
         assertContains(main, "var water_mats: Array[ShaderMaterial] = [terrain_mat, ocean_mat]",
                        hint: "Terrain- und Ozean-Material werden kalibriert")
         assertContains(main, "water_mats.append(river_mat)",

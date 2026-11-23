@@ -1,36 +1,19 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter + Messreihe zum **Gesteinsfeld** (Issue #12): räumlich variable
-/// Erodierbarkeit und Hangdiffusivität aus einem deterministischen, seed-
-/// abhängigen Lithologie-Feld (`Terrain.buildLithologyField` /
-/// `Terrain.updateLithology`, Kalibrier-Logbuch bei `SimConfig.lithologyEnabled`).
-///
-/// Die Abnahmekriterien des Tickets und ihre Wächter hier:
-/// 1. deterministisch je Seed → `testFieldIsDeterministicPerSeed`
-/// 2. Erodierbarkeit UND Diffusivität lesen daraus → `testBothRatesReadTheField`
-/// 3. Härtekontrast hält einen Hangknick ≥ 20k Jahre →
-///    `testHardnessContrastHoldsSlopeBreak` (+ `testDiffusionContrastEffectIsMeasured`)
-/// 4. kein Einebnen/Runaway, auch im weichsten Gestein →
-///    `testSoftestRockDoesNotFlatten`
 final class Lithology: XCTestCase {
 
-    /// Produktionsphysik in Testauflösung (die reinen Performance-Schalter der
-    /// Produktion sind verhaltensneutral, s. AGENTS.md).
     private func cfg(n: Int = 192) -> SimConfig {
         var c = SimConfig(); c.n = n; c.world = calibrationWorld
-        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
-        c.meanderBelt = calibrationMeanderBelt  // Mäander-Mechanik vor #174
-        c.iceFirnTemp = calibrationIceFirnTemp  // Firn-Grenze 0.5731: die Gegenprobe braucht Eis
-        c.deltaTrapFraction = calibrationDeltaTrapFraction  // ohne Delta-Schüttung, s. dort
+        c.rangeLandform = calibrationRangeLandform
+        c.meanderBelt = calibrationMeanderBelt
+        c.iceFirnTemp = calibrationIceFirnTemp
+        c.deltaTrapFraction = calibrationDeltaTrapFraction
 
-        c.pinIceBeforeAvalanche()  // ohne Abgang: s. TestCalibration
+        c.pinIceBeforeAvalanche()
         return c
     }
 
-    /// REFERENZARM: das Feld wird gerechnet, wirkt aber auf keine Rate. Damit
-    /// partitionieren beide Arme dieselben Zellen nach derselben Härte — der
-    /// Unterschied kann nur aus der Wirkung kommen, nicht aus der Auswahl.
     private func uniformCfg(n: Int = 192) -> SimConfig {
         var c = cfg(n: n)
         c.lithContrast = 0
@@ -38,13 +21,6 @@ final class Lithology: XCTestCase {
         return c
     }
 
-    // MARK: - Kennzahlen
-
-    /// Makro-Steigung (±2 Zellen, wie Regen/Vegetation/Biom-Farbe sie lesen —
-    /// die Per-Zell-Steigung wäre nach der Pre-Erosion überall „steil").
-    /// Rechnet NICHT selbst, sondern ruft die Produktions-Quelle
-    /// `Terrain.macroSlope`; hier steht nur die Rand-Bewachung dazu (die Formel
-    /// gilt erst ab 2 Zellen Abstand vom Rand).
     private func macroSlope(_ t: Terrain, _ k: Int) -> Double {
         let n = t.cfg.n
         let i = k % n, j = k / n
@@ -52,35 +28,6 @@ final class Lithology: XCTestCase {
         return Terrain.macroSlope(t.h, k, n)
     }
 
-    /// **Hangknick-Signal**: mittlere Makro-Steigung auf HARTEN gegen WEICHE
-    /// Zellen — die geomorphologische Signatur eines lithologischen Knickpunkts
-    /// (im Fließgleichgewicht S ∝ (U/K)^(1/n): hartes Gestein trägt die steile
-    /// Stufe, weiches die flache Rampe). 1.0 = kein Zusammenhang.
-    ///
-    /// **Lokal gepaart** (Fenster von `window`² Zellen, Verhältnis je Fenster,
-    /// gepoolt mit min(hart, weich) als Gewicht). Die Paarung ist nicht Kosmetik,
-    /// sondern der Kern der Kennzahl: global gemittelt ist sie konfundiert und
-    /// zeigt auch im REFERENZARM ein Signal (gemessen n=192, Seed 1337, 20k J.:
-    /// 1.16 statt 1.00; die mittlere Abtragstiefe der „harten" gegen die
-    /// „weichen" Zellen liegt dort sogar bei 5.4). Ursache ist die
-    /// Provinz-Komponente: sie klumpt die Härteklassen räumlich, und die
-    /// Erosionsrate der Insel schwankt zwischen Küste, Luv und Lee um mehr als
-    /// den Härtekontrast. Innerhalb eines 16×16-Fensters sind Lage, Klima und
-    /// Höhenband praktisch konstant, und über hart/weich entscheidet die Lage der
-    /// Schichtebene (Fallen + Faltung) — genau der Kontakt, an dem ein
-    /// lithologischer Hangknick sitzt.
-    ///
-    /// Gepoolt wird als GEOMETRISCHES Mittel der Fenster-Verhältnisse (Mittel der
-    /// Logarithmen): das arithmetische Mittel von Quotienten ist nach oben
-    /// verzerrt, wenn der Nenner klein werden kann (Fenster, in denen eine flache
-    /// Ebene komplett in die weiche Klasse fällt) — gemessen hob das den
-    /// Referenzarm allein durch diese Verzerrung auf 1.12. Das Log-Mittel ist
-    /// symmetrisch: hart/weich getauscht liefert exakt den Kehrwert, reines
-    /// Rauschen also 1.0.
-    ///
-    /// Gezählt wird nur trockenes Land (Seeböden haben per Konstruktion Steigung
-    /// ≈ 0) und nur der Härte-Kern (|hard| > 0.33), damit die Kontaktzonen
-    /// dazwischen das Signal nicht verwässern.
     private func slopeBreakSignal(_ t: Terrain,
                                   window: Int = 16) -> (signal: Double, hardCells: Int, softCells: Int) {
         guard t.lithHardness.count == t.cfg.count else { return (1, 0, 0) }
@@ -118,10 +65,6 @@ final class Lithology: XCTestCase {
         return (exp(acc / wsum), nHard, nSoft)
     }
 
-    /// Zweite, unabhängige Lesart derselben Physik: mittlere ABTRAGSTIEFE
-    /// (h₀ − h) auf Zellen, die bei t₀ hart bzw. weich waren. < 1 heißt: das
-    /// harte Gestein wurde weniger abgetragen. Diagnose-Kennzahl für die
-    /// Messreihe (der Wächter hängt am Hangknick-Signal).
     private func lowering(_ t: Terrain, h0: [Double], hard0: [Double]) -> Double {
         var dHard = 0.0, dSoft = 0.0
         var nHard = 0, nSoft = 0
@@ -147,12 +90,6 @@ final class Lithology: XCTestCase {
         while t.years < years { t.step(dtYears: dt) }
     }
 
-    // MARK: - Abnahme 1: Determinismus
-
-    /// Gleicher Seed → gleiches Feld, anderer Seed → anderes Feld. Und: der
-    /// gesamte Zeitschritt bleibt mit dem Feld bit-identisch reproduzierbar (die
-    /// Ableitung läuft datenparallel über disjunkte Indexbereiche, s. AGENTS.md
-    /// „Determinismus ist eine getestete Invariante").
     func testFieldIsDeterministicPerSeed() {
         let c = cfg(n: 128)
         let a = Terrain(config: c, seed: 1337)
@@ -164,12 +101,9 @@ final class Lithology: XCTestCase {
         XCTAssertEqual(a.lithErodeK, b.lithErodeK, "Erodierbarkeit nicht reproduzierbar")
         XCTAssertNotEqual(a.lithHardness, other.lithHardness, "Feld hängt nicht am Seed")
 
-        // Das Feld nutzt seine Spanne wirklich aus (sonst wäre alles ein
-        // Einheitsgestein mit ±ε und die Wirkung wäre nicht messbar).
         let hi = a.lithHardness.max()!, lo = a.lithHardness.min()!
         XCTAssertGreaterThan(hi, 0.6, "kein hartes Gestein im Feld")
         XCTAssertLessThan(lo, -0.6, "kein weiches Gestein im Feld")
-        // Mittelwert nahe 0 → K hat Mittel ≈ 1, die globale Rate bleibt kalibriert.
         let mean = a.lithHardness.reduce(0, +) / Double(c.count)
         XCTAssertLessThan(abs(mean), 0.15, "Härte im Mittel verschoben (\(mean)) — globale Rate driftet")
 
@@ -178,11 +112,6 @@ final class Lithology: XCTestCase {
         XCTAssertEqual(a.lithHardness, b.lithHardness, "Feld-Fortschreibung nicht deterministisch")
     }
 
-    /// `lithContrast = 0` (Feld gerechnet, wirkungslos) muss BIT-IDENTISCH zum
-    /// abgeschalteten Feature sein. Das ist die Grundlage aller A/B-Messungen:
-    /// der Referenzarm darf sich nur durch die WIRKUNG unterscheiden, nicht durch
-    /// eine veränderte Arithmetik (dieselbe Doktrin wie
-    /// `RainWeightedFlow.testUniformRainWeightIsBitIdentical`).
     func testZeroContrastIsBitIdenticalToDisabled() {
         var off = cfg(n: 128); off.lithologyEnabled = false
         let a = Terrain(config: off, seed: 1337)
@@ -193,12 +122,6 @@ final class Lithology: XCTestCase {
         XCTAssertEqual(a.rock, b.rock, "Fels/Sediment-Bilanz weicht ab")
     }
 
-    // MARK: - Abnahme 2: beide Raten lesen das Feld
-
-    /// Getrennter Nachweis für BEIDE Kopplungen: nur `lithContrast` verändert
-    /// (Diffusion neutral) muss die Landschaft verschieben, und nur
-    /// `lithDiffusionContrast` verändert (Erodierbarkeit neutral) ebenfalls.
-    /// Damit hängt kein Kriterium an der Summe der beiden Wege.
     func testBothRatesReadTheField() {
         let base = uniformCfg(n: 128)
 
@@ -215,38 +138,6 @@ final class Lithology: XCTestCase {
         XCTAssertNotEqual(ref2.h, dif.h, "Hangdiffusivität liest das Gesteinsfeld nicht")
     }
 
-    // MARK: - Abnahme 3: der Hangknick hält 20.000 Jahre
-
-    /// Ein Härtekontrast baut einen Hangknick auf und HÄLT ihn über 20.000 Jahre,
-    /// statt wegerodiert oder wegdiffundiert zu werden: die harten Bänke tragen
-    /// messbar steilere Hänge als die weichen (Kennzahl `slopeBreakSignal`).
-    ///
-    /// Gegen den Referenzarm (Feld gerechnet, wirkungslos) gemessen — dort
-    /// partitioniert dieselbe Härte dieselben Zellen und das Verhältnis bleibt
-    /// bei 1: das Signal kommt also aus der WIRKUNG des Gesteins, nicht aus einer
-    /// Korrelation zwischen Härtefeld und Topografie.
-    ///
-    /// **Schmelzwasser (Issue #36) und Gletscher (Issue #35) ausgepinnt**, in
-    /// BEIDEN Armen. Grund ist die Kennzahl, nicht die Mechanik: die Härte enthält
-    /// die stratigraphische Schichtwelle und hängt damit per Konstruktion an `h` —
-    /// jeder Prozess, der gezielt das HOCHLAND steiler macht, hebt deshalb auch
-    /// den Referenzarm, in dem die Härte gar nicht wirkt. Genau das tun beide: die
-    /// Schmelze sitzt im Ablationssaum, das Eis noch höher. Gemessen (n=192,
-    /// Seed 1337, 20k J., `docs/glacier-measurements.md` §J):
-    ///
-    /// | | Eis aus | Eis an |
-    /// |---|---|---|
-    /// | Schmelze aus | an 1.1781 / aus 1.0282 | an 1.1423 / aus 1.0843 |
-    /// | Schmelze an | an 1.1950 / aus 1.0995 | an 1.1853 / aus 1.0710 |
-    ///
-    /// Was jeder der beiden Prozesse anhebt, ist der REFERENZARM (1.0282 → 1.0843
-    /// bzw. → 1.0995); die inhaltlichen Zusicherungen (Signal > 1.10, Abstand zum
-    /// Referenzarm > 0.06) halten in allen vier Feldern, die REINHEITS-Schranke
-    /// des Referenzarms (|aus − 1| < 0.08) nur im eis- UND schmelzfreien. Der
-    /// Wächter läuft deshalb dort (dieselbe Doktrin wie die Pins in
-    /// `EndorheicEvaporation`), und dass die Mechanik die volle
-    /// Produktionsphysik übersteht, prüft `testSlopeBreakSurvivesMeltRunoff`
-    /// daneben — der Arm mit Schmelze UND Eis.
     func testHardnessContrastHoldsSlopeBreak() {
         var onCfg = cfg(); onCfg.meltRunoffEnabled = false; onCfg.iceEnabled = false
         var offCfg = uniformCfg(); offCfg.meltRunoffEnabled = false; offCfg.iceEnabled = false
@@ -274,17 +165,6 @@ final class Lithology: XCTestCase {
             "Referenzarm zeigt selbst ein Signal (\(sOff.signal)) — die Kennzahl misst nicht die Wirkung")
     }
 
-    /// Gegenprobe zu BEIDEN Pins im Wächter darüber: unter voller
-    /// Produktionsphysik — `cfg()` ist unverändert, also mit **Schmelzwasser**
-    /// (Issue #36) UND **Gletschern** (Issue #35) — hält der Hangknick genauso
-    /// (gemessen an 1.1853 gegen aus 1.0710, 406 vergletscherte Zellen).
-    /// Geprüft werden die beiden inhaltlichen Zusicherungen; die Reinheit des
-    /// Referenzarms ist hier bewusst KEINE Zusicherung — sie ist eine Eigenschaft
-    /// der Kennzahl auf einer schnee- und eisfreien Bahn, s. die Begründung oben.
-    ///
-    /// Die Testaufbau-Prüfungen halten fest, dass dieser Arm die ausgepinnten
-    /// Prozesse wirklich fährt: sonst würde die Gegenprobe still leer laufen,
-    /// wenn ein Default kippt oder die Bahn ihr Eis verliert.
     func testSlopeBreakSurvivesMeltRunoff() {
         let on = Terrain(config: cfg(), seed: 1337)
         let off = Terrain(config: uniformCfg(), seed: 1337)
@@ -303,14 +183,6 @@ final class Lithology: XCTestCase {
             "Signal steckt im Referenzarm (an \(sOn) gegen aus \(sOff))")
     }
 
-    /// Was der DIFFUSIONS-Kontrast zum Hangknick beiträgt — gemessen, nicht
-    /// behauptet: **nichts Messbares.** Der Knick kommt aus der fluvialen Rate;
-    /// mit `lithDiffusionContrast = 0` ist das Signal bei 20k praktisch gleich
-    /// (Zahlen im Log, s. docs/lithology-measurements.md §C). Die Kopplung bleibt
-    /// trotzdem drin — sie ist Abnahmekriterium 2 des Tickets und physikalisch
-    /// Standard (härteres Gestein liefert weniger Regolith, kriecht also weniger);
-    /// dieser Wächter hält nur fest, dass der Knick NICHT an ihr hängt, damit
-    /// niemand die Behauptung nachträglich in die Doku schreibt.
     func testDiffusionContrastEffectIsMeasured() {
         var noDiff = cfg(); noDiff.lithDiffusionContrast = 0
         let full = Terrain(config: cfg(), seed: 1337)
@@ -324,16 +196,6 @@ final class Lithology: XCTestCase {
             "Hangknick hängt doch am Diffusions-Kontrast (\(sFlat)) — Doku anpassen")
     }
 
-    // MARK: - Abnahme 4: kein Einebnen, auch im weichsten Gestein
-
-    /// Derselbe Langlauf wie `LongRunCollapse`, aber mit `lithHardBias = −1`: die
-    /// Härte ist damit auf der GANZEN Karte in die weiche Hälfte verschoben. Genau
-    /// gerechnet: `hard` = Schichtwelle + Provinz − 1, geklemmt → `hard ∈ [−1, 0]`,
-    /// also **K ≥ 1.0 überall** (bis 1.6 an den weichsten Stellen) und
-    /// Diffusivität ≥ 1.0 (bis 1.45). Es gibt in diesem Arm also kein Gestein
-    /// mehr, das langsamer erodiert als das Referenzgestein — der Härtekontrast
-    /// bleibt, aber nur noch nach unten. Relief darf nicht einebnen, die Berge
-    /// nicht wachsen, der See-Anteil nicht wuchern.
     func testSoftestRockDoesNotFlatten() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld; c.lithHardBias = -1
         let t = Terrain(config: c, seed: 1337)
@@ -351,38 +213,13 @@ final class Lithology: XCTestCase {
             "See-Anteil wuchert im weichsten Gestein (\(fractionInBasins(t)))")
     }
 
-    // MARK: - Rückwirkung auf bestehende Physik
-
-    /// Die #11-Wächter (`EndorheicEvaporation`) pinnen das Gesteinsfeld AUS, weil
-    /// sie die Mechanik an EINEM konkreten Becken prüfen und die Lithologie
-    /// mitentscheidet, welches Becken das größte ist. Damit dieses Auspinnen keine
-    /// echte Regression verdeckt, prüft dieser Wächter die #11-MECHANIK genau
-    /// umgekehrt: **mit** Lithologie, über mehrere Seeds.
-    ///
-    /// Geprüft wird (a) es entstehen weiterhin Salzpfannen (trockengefallener
-    /// Beckenboden mit Kruste) und (b) der Bilanz-Spiegel bleibt ratenbegrenzt —
-    /// der ratenbegrenzte Arm springt weniger als der instantane. Die absolute
-    /// Sprung-Schwelle (0.002) bleibt bewusst dem #11-Wächter auf uniformem
-    /// Gestein: sie ist eine Eigenschaft des dort fixierten Beckens.
     func testEndorheicMechanicsSurviveLithology() {
-        var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6   // dryCfg von #11, Lithologie AN
-        c.rangeLandform = calibrationRangeLandform  // Großform vor #174
-        // Die Ratenbegrenzungs-Probe unten (`levelWalk`) ist, wie dort beschrieben,
-        // Realisierungs-Glück eines diskreten Sill-Ereignisses; der Lawinen-Abgang
-        // des Firns (#174) verschiebt über Eis und Moränen die Realisierung
-        // (Sprung 0.01117 gegen Schranke 0.01048), ohne etwas am Becken-Mechanismus
-        // zu ändern — gepinnt wie die übrigen Eis-Stellschrauben (`TestCalibration`).
+        var c = SimConfig(); c.n = 256; c.world = calibrationWorld; c.endorheicEvapRatio = 6
+        c.rangeLandform = calibrationRangeLandform
         c.pinIceBeforeAvalanche()
-        // Schwellen-Kappung des Gürtelbetts (#187): wie der Lawinen-Abgang
-        // verschiebt sie über das Gürtelbett die Realisierung dieser Welt, ohne
-        // den Becken-Mechanismus zu ändern (Sprung/Spanne 0,01008/0,01346 =
-        // 0,75 gegen Schranke 0,6 auf dem Linux-Runner, mit Pin
-        // 0,00511/0,01971 = 0,26; Mac blieb in beiden Läufen grün) —
-        // gepinnt (`calibrationMeanderBeltSillCutDepths`, Begründung dort).
         c.meanderBeltSillCutDepths = calibrationMeanderBeltSillCutDepths
-        var ref = c; ref.lithologyEnabled = false                  // derselbe Arm wie der #11-Wächter
+        var ref = c; ref.lithologyEnabled = false
 
-        /// Salzpfannen-Bilanz eines Seeds: (Krustenzellen > 0.5, > 0.9, Becken).
         func playa(_ config: SimConfig, _ seed: UInt32) -> (bed: Int, crusted: Int, basins: Int) {
             let t = Terrain(config: config, seed: seed)
             for _ in 0..<10 { t.step(dtYears: 200) }
@@ -407,33 +244,6 @@ final class Lithology: XCTestCase {
         XCTAssertGreaterThanOrEqual(playaOn, playaOff,
             "Lithologie kostet Salzpfannen-Seeds (an \(playaOn) gegen aus \(playaOff))")
 
-        // Ratenbegrenzung, gemessen wie in #11 (dort ist das Gesteinsfeld
-        // ausgepinnt — deshalb steht die Messung hier überhaupt): der
-        // Bilanz-Spiegel darf auch MIT Gestein nicht springen, sein größter
-        // Einzelsprung bleibt also klar unter der Spanne, die er insgesamt
-        // durchwandert.
-        //
-        // Der frühere Vergleich „ratenbegrenzt springt weniger als instantan"
-        // ist GESTRICHEN, weil er nachweislich nicht die Ratenbegrenzung misst
-        // (Issue #2, docs/dt-invariance-measurements.md §6):
-        //   * Verglichen wurde der größte Einzelsprung ZWEIER UNABHÄNGIGER
-        //     Läufe. Der kommt in beiden Armen von einem diskreten
-        //     Gelände-Ereignis (eine Sill bricht, der Priority-Flood pegelt das
-        //     Becken um; die flache Becken-Hypsometrie bewegt dabei hunderte
-        //     Zellen Wasserfläche). Welcher Arm das größere Ereignis erwischt,
-        //     ist Realisierungs-Glück — der Vergleich kippte in diesem Branch
-        //     unter VIER voneinander unabhängigen, je einzeln verifizierten
-        //     Änderungen.
-        //   * Auf der Mechanik-Ebene ist die Erwartung sogar umgekehrt: über
-        //     RUHIGE Schritte (Wasserfläche nahezu unverändert) bewegt sich der
-        //     ratenbegrenzte Arm MEHR als der instantane — er relaxiert
-        //     dauernd einem wandernden Ziel hinterher, während der Snap-Arm
-        //     nach seinem Sprung stillsteht. Gemessen auf BEIDEN Ständen:
-        //     `main` 0.00132 gegen 0.00056, dieser Branch 0.00046 gegen
-        //     0.00027 (Mittel 0.000070/0.000041 bzw. 0.000094/0.000043).
-        // Die Ratenbegrenzung selbst hat ihre eigenen, gepinnten Wächter in
-        // `EndorheicEvaporation` (`testBasinLevelIsRateLimited`,
-        // `testBalanceLevelIsFramerateIndependent`).
         func levelWalk(tau: Double) -> (jump: Double, span: Double) {
             var rc = c; rc.endorheicResponseYears = tau
             let t = Terrain(config: rc, seed: 1337)
@@ -455,19 +265,11 @@ final class Lithology: XCTestCase {
         print(String(format: "[#12] Lithologie × #11 Ratenbegrenzung Seed 1337 — τ=500 "
                      + "max Sprung %.5f / Spanne %.5f = %.3f",
                      limited.jump, limited.span, limited.jump / limited.span))
-        // Schranke aus der Messung beider Stände: `main` 0.00325/0.01577 = 0.206,
-        // dieser Branch 0.01221/0.02574 = 0.474 — der Absolutwert hängt daran,
-        // ob in den 200 Schritten eine Sill bricht. 0.6 fängt weiterhin ab, dass
-        // der Spiegel seine Spanne in einem Schritt durchläuft (das wäre ~1.0).
         XCTAssertLessThan(limited.jump, 0.6 * limited.span,
             "Beckenspiegel springt mit Gesteinsfeld sichtbar "
             + "(\(limited.jump) gegen Spanne \(limited.span))")
     }
 
-    /// Gegenprobe zur Weich-Grenze: mit Bias +1 liegt die Härte spiegelbildlich in
-    /// der harten Hälfte (`hard ∈ [0, 1]` → **K ≤ 1.0 überall**, bis 0.4 an den
-    /// härtesten Stellen). Die Landschaft darf dabei nicht in die andere Richtung
-    /// weglaufen (unerodierbare Insel → Relief-Runaway, Becken entwässern nie).
     func testHardestRockDoesNotRunAway() {
         var c = SimConfig(); c.n = 160; c.world = calibrationWorld; c.lithHardBias = 1
         let t = Terrain(config: c, seed: 1337)

@@ -1,22 +1,6 @@
 import Foundation
 
-/// Strahler-Ordnung auf dem D8-Empfänger-Wald (Issue #31).
-///
-/// Reine Render-/Rang-Ableitung: kein Sim-Zustand, wird NICHT persistiert
-/// (siehe Zustandsinventar in `Terrain.swift`). Das Netz ist die Menge der
-/// Zellen mit `isNetwork == true` (typisch: Einzugsgebiet über einer
-/// Kanal-Schwelle); alles außerhalb bekommt Ordnung 0 und zählt nicht als
-/// Donor. Semantik: Netz-Quelle = 1, Zusammenfluss zweier (oder mehr) Stränge
-/// gleicher Maximal-Ordnung s → s+1, sonst bleibt die Maximal-Ordnung.
-/// Randfall bewusst so belassen: eine Netz-LÜCKE (Netz → Nicht-Netz → Netz,
-/// etwa über eine Meer-Zelle) trennt die Stränge — stromab der Lücke beginnt
-/// die Ordnung wieder bei 1, der Rang „springt" nicht über Nicht-Netz-Zellen.
 public enum Strahler {
-    /// Ordnungen für alle Zellen. `receiver[k] == -1` ist Senke/Meer.
-    /// Läuft als Kahn-Topsort über den Donor-Grad — Ergebnis ist eindeutig
-    /// (unabhängig von der Abarbeitungs-Reihenfolge), also deterministisch.
-    /// Empfänger-Indizes außerhalb des Gitters (`r < 0 || r >= n`) werden
-    /// defensiv wie Senken behandelt und führen zu keinem Absturz.
     public static func orders(receiver: [Int32], isNetwork: [Bool]) -> [Int32] {
         let n = receiver.count
         guard isNetwork.count == n else {
@@ -25,8 +9,6 @@ public enum Strahler {
         }
         guard n > 0 else { return [] }
         var out = [Int32](repeating: 0, count: n)
-        // Donor-Grad nur über Netz-Zellen: Nicht-Netz-Donoren beeinflussen
-        // weder Grad noch Ordnung.
         var pending = [Int32](repeating: 0, count: n)
         for k in 0..<n where isNetwork[k] {
             let r = Int(receiver[k])
@@ -56,17 +38,6 @@ public enum Strahler {
 }
 
 extension Terrain {
-    /// Strahler-Ordnung des aktuellen D8-Netzes; Netz = Landzellen (`hf > sea`)
-    /// mit Einzugsgebiet ≥ `minCells` Zellen. Für Render-Schwellen und
-    /// Breiten-Hierarchie — ändert keinen Sim-Zustand.
-    ///
-    /// Abweichend von der Formel (`minCells <= 0` wäre sonst „alle Landzellen“)
-    /// liefert `minCells <= 0` sowie nicht-endliche Werte (`NaN`, `infinity`)
-    /// defensiv ein leeres Netz (alle Ordnungen 0).
-    /// Konfigurationen ohne definierte Schrittweite (`cellSize <= 0` bzw. nicht-endliche
-    /// Zellflächen) liefern analog ein leeres Netz (verhindert Division durch 0 und
-    /// fehlerhafte Vollnetze).
-    /// Leere Terrains und Pufferlängen-Mismatches werden ebenfalls defensiv abgefangen.
     public func strahlerOrders(minCells: Double) -> [Int32] {
         let n = area.count
         guard receiver.count == n && hf.count == n else {
@@ -78,8 +49,6 @@ extension Terrain {
             return [Int32](repeating: 0, count: n)
         }
         let cellArea = cfg.cellSize * cfg.cellSize
-        // cellSize 0 (keine definierte Schrittweite): kein Netz ohne Zellfläche,
-        // sonst area / 0 = inf >= minCells und fehlerhaftes Vollnetz.
         guard cellArea > 0, cellArea.isFinite else {
             return [Int32](repeating: 0, count: n)
         }

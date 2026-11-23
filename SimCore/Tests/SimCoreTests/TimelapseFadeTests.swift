@@ -1,18 +1,7 @@
 import XCTest
 
-/// Wächter für das Zeitraffer-Überblenden (Issue #172): jede Textur mit
-/// Vorgängerstand blendet über die Blende IHRES Uploads.
-///
-/// Zwei Takte: die Höhe kommt jeden Sim-Takt (`_upload_heights`), alles
-/// Gedrosselte mit den Overlays (`_upload_overlays`, RenderState.frame).
-/// Eine Textur an der Blende des anderen Takts springt an jedem Upload des
-/// fremden Takts auf ihren alten Stand zurück; genau so pumpte der Wald an
-/// `bake_blend` (#170). Nicht ausführbar (Shader, GDScript), deshalb als
-/// Quelltext-Probe; das Verhalten bei Pinsel, Sprung und Laden prüfen die
-/// Godot-Vertragstests.
 final class TimelapseFadeTests: XCTestCase {
 
-    /// Feld → (Lese-Helfer im Terrain-Shader, Blende, Upload-Funktion in Main.gd).
     private static let fields: [(tex: String, helper: String, blend: String, fade: String)] = [
         ("height_tex", "height_at", "height_blend", "height_fade"),
         ("hf_tex", "hf_at", "overlay_blend", "overlay_fade"),
@@ -20,7 +9,6 @@ final class TimelapseFadeTests: XCTestCase {
         ("surface_tex", "surface_at", "overlay_blend", "overlay_fade"),
         ("cover_tex", "cover_at", "overlay_blend", "overlay_fade"),
         ("flow_tex", "flow_at", "overlay_blend", "overlay_fade"),
-        // Raster-Wasser (#174): die EWMA glättet nur von Upload zu Upload.
         ("water_tex", "water_at", "overlay_blend", "overlay_fade"),
     ]
 

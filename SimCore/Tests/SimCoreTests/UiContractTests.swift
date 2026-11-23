@@ -1,14 +1,7 @@
 import XCTest
 
-/// Wächter der Bedienung (Issue #174, Paket E). `Main.gd` und `UiIcon.gd` sind
-/// headless nicht ausführbar, ihr Quelltext aber lesbar (s. `RepoSource`); das
-/// Verhalten im Spiel prüft `game/tests/ui_layout.gd` in CI.
 final class UiContractTests: XCTestCase {
 
-    /// EIN Theme statt verstreuter Overrides: vorher stand jede Farbe und
-    /// Schriftgröße als `add_theme_*_override` am einzelnen Control, und zwei
-    /// Karten derselben Leiste konnten auseinanderlaufen. Seit #174 kommt das
-    /// Aussehen aus `game/ui/glass_theme.tres`; Main wählt nur Typ-Varianten.
     func testMainStylesThroughTheSharedTheme() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         XCTAssertEqual(main.count(of: "add_theme_"), 0,
@@ -21,8 +14,6 @@ final class UiContractTests: XCTestCase {
         assertContains(main, "hud.theme = ui_theme",
                        hint: "Das Theme hängt an der Wurzel aller Bedienelemente")
 
-        // Jede Typ-Variante, die Main wählt, steht im Theme (sonst fiele sie
-        // still auf den Basistyp zurück).
         let theme = try RepoSource.file("game/ui/glass_theme.tres")
         let variations = try main.captures(pattern: "&\"([A-Za-z]+)\"")
         XCTAssertFalse(variations.isEmpty, "Main.gd wählt keine Typ-Varianten?")
@@ -32,15 +23,6 @@ final class UiContractTests: XCTestCase {
         }
     }
 
-    /// Weichzeichner hinter den Glas-Panels (Abnahmepunkt 43, Paket E). Ein
-    /// StyleBox kann den Hintergrund nicht verwischen, deshalb legt Main.gd je
-    /// Panel einen Rahmen (`GlassFrame`) mit einem Rechteck darunter, dessen
-    /// Material `game/ui/glass_blur.gdshader` den Bildschirm über die Mip-Kette
-    /// liest. Die Werte bleiben im Theme: Radius als Konstante, Eckenradius vom
-    /// Glas-Panel selbst; der Shader trägt keine Kopie (default-freie Uniforms).
-    /// Verdrahtung im Spiel und Deckung von Rechteck und Glas prüft
-    /// `game/tests/ui_layout.gd`; das Aussehen entscheidet der Projekteigner am
-    /// Bild, die Kosten stehen in `docs/zielbild-measurements.md`.
     func testGlassPanelsCarryTheBlurFromTheTheme() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         assertContains(main, "const GLASS_BLUR_SHADER := \"res://ui/glass_blur.gdshader\"",
@@ -82,9 +64,6 @@ final class UiContractTests: XCTestCase {
         }
     }
 
-    /// Jedes Werkzeug trägt ein GEZEICHNETES Icon (kein Emoji mehr), und
-    /// `UiIcon.gd` kennt jeden Namen aus der Werkzeug-Tabelle. Ein Tippfehler
-    /// ließe sonst einen leeren Knopf stehen.
     func testEveryToolHasADrawnIcon() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let icons = try main.captures(pattern: "\\{\"icon\": \"([^\"]+)\", \"name\"")
@@ -101,34 +80,18 @@ final class UiContractTests: XCTestCase {
         }
     }
 
-    /// Kamera-Presets (Issue #174): adaptiv aus der laufenden Welt (Diorama
-    /// rahmt die Landfläche, Tal/Nah zielen auf den größten Lauf), aber EINMAL
-    /// beim Drücken gerechnet, nicht je Frame. Die Rechnung (Land-Raster,
-    /// Abflussfeld über die Brücke) läuft deshalb nur über
-    /// `_apply_camera_preset`; einen weiteren Aufrufer (etwa in `_process`)
-    /// muss dieser Wächter sehen. Verhalten prüft `game/tests/ui_layout.gd`.
     func testCameraPresetsAreComputedOnPress() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
-        // Je Funktion: Definition + genau ein Aufruf.
         XCTAssertEqual(main.count(of: "camera_preset_view("), 2,
                        "camera_preset_view nur aus _apply_camera_preset aufrufen")
         XCTAssertEqual(main.count(of: "frame_land("), 2, "frame_land nur aus camera_preset_view")
         XCTAssertEqual(main.count(of: "river_view("), 2, "river_view nur aus camera_preset_view")
         XCTAssertEqual(main.count(of: "\"centered\""), 0,
                        "Diorama zielt nicht mehr fest auf die Kartenmitte, sondern auf das Land")
-        // RS_CAMERA rahmt im FERTIGEN Fenster: `--maximized` greift erst nach
-        // _ready, das Diorama hängt am Seitenverhältnis (Folgebefund #176).
         assertContains(main, "get_viewport().size_changed.connect(",
                        hint: "RS_CAMERA folgt der Fenstergröße bis zur ersten Eingabe")
     }
 
-    /// Pinselkuppel lesbar auf jedem Grund (Abnahme-Befund #174 E: „zu schwer
-    /// zu erkennen"). Vorher 1-px-GL-Linien in blassem Cyan unter Nebel und
-    /// Tonemapper. Jetzt Bänder in Bildschirm-Pixeln mit dunklem Halo, unlit,
-    /// ohne Nebel, der verdeckte Teil gedämpft sichtbar. Breiten und Farben
-    /// stehen nur in Main.gd und reisen im Mesh; der Shader liest sie von dort
-    /// statt eine Kopie zu führen. Geometrie und Bänder prüft
-    /// `game/tests/ui_layout.gd`.
     func testBrushDomeReadsOnEveryGround() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         XCTAssertEqual(main.count(of: "PRIMITIVE_LINES"), 0,
@@ -137,9 +100,6 @@ final class UiContractTests: XCTestCase {
                        hint: "CUSTOM0 trägt den anderen Endpunkt als RGBA-Float")
         assertContains(main, "bmat.next_pass = bmat_visible",
                        hint: "Erst der verdeckte Pass, darüber der sichtbare")
-        // Mal dem Render-Skalierungsfaktor (#235): VIEWPORT_SIZE ist im
-        // 3D-Shader die skalierte Auflösung, ohne den Faktor würden die
-        // Bänder in `balanced` um 1/0,67 breiter.
         assertContains(main, "m.set_shader_parameter(\"px_scale\", DisplayServer.screen_get_scale() * get_viewport().scaling_3d_scale)",
                        hint: "Pixelbreiten in logischen Pixeln (Retina), mal Render-Skalierung")
 
@@ -151,8 +111,6 @@ final class UiContractTests: XCTestCase {
 
         for (file, hidden) in [("brush_dome.gdshader", false), ("brush_dome_hidden.gdshader", true)] {
             let pass = try RepoSource.probe("game/shaders/\(file)")
-            // Roh gelesen: der Shader-Lexer kennt keine Zeichenketten und hielte
-            // das `//` in `res://` für einen Kommentar.
             XCTAssertTrue(pass.raw.contains("\n#include \"res://shaders/brush_dome.gdshaderinc\"\n"),
                           "\(file) teilt den Körper")
             for mode in ["unshaded", "fog_disabled", "depth_draw_never"] {

@@ -1,53 +1,16 @@
 extends SceneTree
-## Vertrags-Wächter für die GPU-Kette des Wasserfeld-Schwanzes (Issue #95):
-##   scripts/godot-test.sh res://tests/water_gpu_tail.gd WATER_GPU_TAIL_OK
-##
-## Der Pass-Plan der Kette (Kanal-Masken, Pass-Zahl, Priming) reist seit #95
-## als Daten aus SimRender (WaterTailPlan) über die Brücke; die Struktur-
-## Wächter dafür stehen headless in SimCoreTests/WaterTailPlanTests.swift.
-## Dieser Test hier ist die AUSFÜHRBARE Deckung der Kette:
-##  - Plausibilität der Brücken-Daten (Masken 0/1, kein toter Pass, Priming
-##    in [0,1], Pass-Zahl passt zur Masken-Tabelle).
-##  - CPU gegen GPU: dieselbe Frame-Folge (settled + Zeitraffer-Takte) durch
-##    beide Pfade, Vergleich aller vier Kanäle Zelle für Zelle — Toleranz mit
-##    Begründung an `_compare`.
-##  - Priming: der ERSTE Tick übernimmt das Feld vollständig, auch wenn die
-##    Blende klein wäre (Datum: WaterTailPlan.primeBlend über die Brücke).
-##  - Framerate-Unabhängigkeit der EWMA: dieselbe Update-Folge, verschieden
-##    viele Frames zwischen den Updates (4 gegen 10) → dasselbe Feld. Die EWMA
-##    tickt mit dem TEXTUR-Update (UPDATE_ONCE je update()), nicht mit dem
-##    Frame — auf UPDATE_ALWAYS wäre die Glättungsrate an die Bildrate
-##    gekoppelt (AGENTS.md, Framerate-Unabhängigkeit).
-##
-## Headless (Dummy-Renderer, kein Rendering-Device) läuft der Test trotzdem
-## grün: die Daten-Wächter laufen immer, der GPU-Teil überspringt mit klarer
-## Meldung. In CI stellt der Wrapper xvfb + Software-GL bereit
-## (scripts/godot-test.sh, GODOT_TEST_RENDER=1), damit der Vergleich läuft;
-## lokal geht dasselbe über `GODOT_TEST_RENDER=1 scripts/godot-test.sh …` —
-## oder direkt `"$GODOT" --path game --rendering-method gl_compatibility
-## --script res://tests/water_gpu_tail.gd`.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const WaterGpuTailScript = preload("res://scripts/WaterGpuTail.gd")
 
-# Auslöser == SimRender.FrameTrigger / Main.FRAME_*: 0 = settled (Blende 1.0,
-# wie Start/Neu/Laden), 2 = timelapse (Blende aus RenderState, 0.15). Die
-# Blende wird je Takt AUS dem Frame gelesen, nicht hier gepinnt.
 const FRAME_SETTLED := 0
 const FRAME_TIMELAPSE := 2
-# Zeitraffer-Takte: je 1000 Jahre — genug, dass die EWMA mehrere Zwischen-
-# stände mischt, wenig genug für die CI-Laufzeit (vgl. water_rings.gd).
 const TIMELAPSE_TICKS := 6
 const STEP_YEARS := 1000.0
-# Die simulierte Uhr je Takt: größer als RenderState.overlayIntervalSeconds
-# (0.30 s), damit kein Zeitraffer-Takt gedrosselt wird.
 const TICK_SECONDS := 1.0
 
-# CPU/GPU-Toleranz in 255teln, Begründung an `_compare`.
 const TOL_MAX := 4.0 / 255.0
 const TOL_MEAN := 2.0 / 255.0
-# Frame-Kadenz-Vergleich: dieselbe Kette, dieselben Updates — Abweichung darf
-# nur Readback-Rundung sein.
 const TOL_CADENCE := 1.0 / 255.0
 
 var started := false
@@ -66,19 +29,6 @@ func _fail(msg: String) -> void:
 	push_error("FAIL: " + msg)
 	failed = true
 
-## Wendet ein Update an und wartet den EXPLIZITEN Render-Abschluss ab:
-## `update()` stellt alle Kettenglieder auf UPDATE_ONCE — Godot zeichnet sie
-## beim nächsten Draw —, und `RenderingServer.frame_post_draw` feuert NACH
-## jedem abgeschlossenen Draw. Nach `idle` Abwartungen sind also mindestens
-## `idle` Draws vorbei, mehr als die Kettentiefe (2 Blur-Pässe + EWMA), selbst
-## wenn jedes Glied seinen eigenen Frame bräuchte.
-##
-## BEWUSST kein Inhalts-Diff gegen den alten Backbuffer mehr (Review zu #205):
-## Ein korrekt ausgeführtes Update kann denselben Zustand ERGEBEN wie der
-## alte Stand des Ping-Pong-Ziels (unverändertes oder quantisiert identisches
-## Feld) — der Diff hätte das als „Render nicht ausgeführt" gewertet und den
-## Test falsch rot gemacht. Der Render-Abschluss ist das semantisch richtige
-## Signal: Er sagt, DASS gezeichnet wurde, nicht, was dabei herauskam.
 func _tick(tail, raw: PackedByteArray, blend: float, idle: int) -> void:
 	tail.update(raw, blend)
 	for _i in idle:
@@ -89,10 +39,6 @@ func _run() -> void:
 		push_error("FAIL: SimNode nicht registriert (godot --headless --path game --import)")
 		_finish()
 		return
-	# Zwei frische Instanzen: Referenz (CPU-Schwanz) und Rohstoff (GPU-Pfad).
-	# Beide laufen dieselbe Frame-Folge über dieselbe Welt (Determinismus je
-	# Maschine), also ist das Feld VOR dem Schwanz bit-identisch — der
-	# Vergleich misst NUR den Unterschied der beiden Schwanz-Fassungen.
 	var sim_cpu: Object = ClassDB.instantiate("SimNode")
 	if not BuildStamp.check(sim_cpu):
 		failed = true
@@ -101,7 +47,6 @@ func _run() -> void:
 	var sim_gpu: Object = ClassDB.instantiate("SimNode")
 	n = sim_cpu.gridSize()
 
-	# --- Pass-Plan über die Brücke (Daten-Wächter, immer headless) -----------
 	var pass_count: int = sim_cpu.waterTailBlurPassCount()
 	var masks: PackedFloat32Array = sim_cpu.waterTailBlurMasks()
 	var prime_blend: float = sim_cpu.waterTailPrimeBlend()
@@ -124,7 +69,6 @@ func _run() -> void:
 		_finish()
 		return
 
-	# --- Rendering-Device? (headless = Dummy-Renderer) ----------------------
 	var has_renderer := await _probe_renderer()
 	if not has_renderer:
 		if failed:
@@ -139,7 +83,6 @@ func _run() -> void:
 		quit(0)
 		return
 
-	# --- Beide Pfade über denselben Lauf -------------------------------------
 	var cpu_frames: Array = []
 	var gpu_frames: Array = []
 	_collect_frames(sim_cpu, false, cpu_frames)
@@ -149,7 +92,6 @@ func _run() -> void:
 			% [cpu_frames.size(), gpu_frames.size()])
 		_finish()
 		return
-	# Die Blende je Takt reist auf beiden Seiten gleich (gleicher Auslöser).
 	var timelapse_blend := 0.0
 	for i in cpu_frames.size():
 		var bl: float = cpu_frames[i]["blend"]
@@ -163,7 +105,6 @@ func _run() -> void:
 		_finish()
 		return
 
-	# --- Hauptkette (Kadenz 4 abgeschlossene Draws je Update) ----------------
 	var tail := WaterGpuTailScript.new()
 	root.add_child(tail)
 	tail.setup(sim_gpu, n)
@@ -178,17 +119,11 @@ func _run() -> void:
 		_finish()
 		return
 
-	# --- CPU gegen GPU (Endzustand) -----------------------------------------
 	if not _compare(gpu_final, cpu_frames[cpu_frames.size() - 1]["water"],
 			"cpu_gpu", TOL_MAX, TOL_MEAN):
 		_finish()
 		return
 
-	# --- Priming: erster Tick übernimmt VOLL, auch mit kleiner Blende --------
-	# Referenz ist der Zustand der Hauptkette nach ihrem ersten Takt (Blende
-	# 1.0, gleiche Rohdaten). Ohne Priming stünde das Feld hier auf einem
-	# Bruchteil (bl × Feld); die Abweichung wäre landschaftsgroß, nicht
-	# rundungsbedingt.
 	var tail_prime := WaterGpuTailScript.new()
 	root.add_child(tail_prime)
 	tail_prime.setup(sim_gpu, n)
@@ -198,7 +133,6 @@ func _run() -> void:
 		_finish()
 		return
 
-	# --- Framerate-Unabhängigkeit: Kadenz 4 gegen Kadenz 10 -----------------
 	var tail_slow := WaterGpuTailScript.new()
 	root.add_child(tail_slow)
 	tail_slow.setup(sim_gpu, n)
@@ -211,9 +145,6 @@ func _run() -> void:
 
 	_finish()
 
-## Sammelt die Frame-Folge (Rohbytes + Blende) für einen Pfad. `defer` = true
-## liefert das UNGEBLURTE Feld (`setDeferWaterTail`), die Blende reist trotzdem
-## je Frame — die GPU-Kette mischt damit selbst.
 func _collect_frames(sim: Object, defer: bool, out: Array) -> void:
 	sim.setDeferWaterTail(defer)
 	var now := 1.0
@@ -225,16 +156,7 @@ func _collect_frames(sim: Object, defer: bool, out: Array) -> void:
 		frame = sim.renderFrame(FRAME_TIMELAPSE, now)
 		out.push_back({"water": frame["water"], "blend": frame["water_blend"]})
 
-## Rendert ein magentafarbenes Rechteck in einen SubViewport und liest es
-## zurück: trifft die Farbe, existiert ein Rendering-Device. Ein LEERER
-## Readback ist der Dummy-Renderer von --headless → Überspringen ist rechtens.
-## Ein NICHT leeres, aber dauerhaft schwarzes Bild wäre ein kaputter Renderer
-## → rot. UPDATE_ALWAYS statt ONCE: der Anlauf (Fenster, erster Frame, Shader
-## unter llvmpipe) braucht unbestimmt viele Frames, ein ONCE kann verstreichen,
-## bevor jemand zusieht.
 func _probe_renderer() -> bool:
-	# Produktionsform: SubViewports hängen unter einem Node (Main), nicht
-	# direkt am Fenster — hier dasselbe.
 	var host := Node.new()
 	root.add_child(host)
 	var vp := SubViewport.new()
@@ -270,8 +192,6 @@ func _probe_renderer() -> bool:
 func _state_image(tail) -> Image:
 	return tail.current_texture().get_image()
 
-## Bild als Byte-Vergleichsseite (für Bild-gegen-Bild-Vergleiche): gleiche
-## Quantisierung wie die CPU-Seite (255tel), damit `_compare` eine Form hat.
 func _image_bytes(img: Image) -> PackedByteArray:
 	var bytes := PackedByteArray()
 	bytes.resize(img.get_width() * img.get_height() * 4)
@@ -285,20 +205,6 @@ func _image_bytes(img: Image) -> PackedByteArray:
 			bytes[o + 3] = int(round(clampf(c.a, 0.0, 1.0) * 255.0))
 	return bytes
 
-## Vergleicht das GPU-Ergebnis (Bild, Werte in [0,1]) gegen die CPU-Bytes
-## (255tel) Zelle für Zelle und Kanal für Kanal. Toleranz, begründet:
-##  - `byte01` schneidet ab (UInt8(x * 255), RenderSupport.swift): bis
-##    1/255 EINSEITIG — auf beiden Seiten, denn das GPU-Rohfeld ist bereits
-##    quantisiert, die CPU quantisiert erst am Ende.
-##  - Der Rohfeld-Quantisierungsfehler bleibt unter 1/255 durch die ganze
-##    Kette: Blur ist eine Konvexkombination, max() ist monoton, die EWMA ist
-##    konvex — keiner der Schritte vergrößert den Fehler.
-##  - Half-Float-Zustand: 2^-11 relativer Anteil ≈ 0,12/255 je Schritt, über
-##    wenige Takte begrenzt.
-##  - Readback RGBA16F → Float: exakt.
-##  Summe mit Prüflast: max 4/255, im Mittel 2/255. Historisch in situ gemessen:
-##  1,09/255 mittlere Abweichung (docs/perf-measurements.md §J); dieser Test
-##  druckt seine eigenen Messwerte und hält sie unter den Schranken.
 func _compare(img: Image, cpu: PackedByteArray, label: String,
 		tol_max: float, tol_mean: float) -> bool:
 	if img.is_empty() or img.get_width() != n or img.get_height() != n:

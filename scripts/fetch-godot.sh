@@ -1,34 +1,9 @@
 #!/usr/bin/env bash
-# Holt die im Repo festgelegte Godot-Version nach .tools/ und gibt ihren Pfad aus.
-#
-# Zweck: CI (.github/workflows/ci.yml) und Arbeitsplatz benutzen DIESELBE
-# Binärdatei. Die Godot-Version ist Teil des Vertrags, den die Godot-Tests unter
-# game/tests/ prüfen — läuft CI gegen eine andere Version als der Entwickler,
-# beweist ein grüner Lauf nichts über den lokalen Stand.
-#
-# Aufrufe:
-#   fetch-godot.sh          bei Bedarf herunterladen, Prüfsumme verifizieren (auch
-#                           bei bereits vorhandener Datei), Pfad auf stdout
-#   fetch-godot.sh --path   nur den Pfad ausgeben (lädt nichts, prüft nichts)
-#
-# Fortschritt und Fehler gehen nach stderr, damit `GODOT="$(scripts/fetch-godot.sh)"`
-# sauber funktioniert.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Einzige Quelle der Godot-Version im Repo (scripts/start.sh liest sie hier über
-# `--path`). Beim Anheben: Version UND BEIDE Prüfsummen zusammen austauschen, danach
-# game/tests/ einmal komplett laufen lassen — die Tests pinnen Godot-Verhalten.
 GODOT_VERSION="4.7.2"
-# sha256 des offiziellen Release-Archivs von github.com/godotengine/godot.
-# Ohne Prüfsumme wäre der Download eine ungeprüfte Fremdbinärdatei im CI-Job.
 GODOT_SHA256="cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4"
-# sha256 der ENTPACKTEN Binärdatei (aus dem oben geprüften Archiv abgeleitet).
-# Nötig, weil der Archiv-Hash nur den Download absichert: liegt die Binärdatei
-# schon in .tools/ — im CI-Job der Normalfall, dort füllt actions/cache das
-# Verzeichnis, und der Cache-Key hängt nur am Versions-Tag —, wird gar nichts
-# heruntergeladen. Ohne diesen zweiten Hash liefen die Vertragstests dann still
-# gegen eine veraltete oder untergeschobene Binärdatei. Kostet ~0,1 s.
 GODOT_BIN_SHA256="8d106cbe6144c2dc7e881d61d2429c1a8a76e6b22ef48bd5e48dcf934953f71e"
 
 ARCHIVE="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
@@ -55,9 +30,6 @@ verify_binary() {
 	exit 1
 }
 
-# Vorhandene Binärdatei: erst prüfen, dann herausgeben. Absichtlich KEIN stiller
-# Neu-Download bei Abweichung — ein untergeschobener Cache-Eintrag soll den Lauf
-# rot machen und nicht heimlich repariert werden.
 if [[ -x "$BIN" ]]; then
 	verify_binary
 	printf '%s\n' "$BIN"
@@ -77,8 +49,6 @@ curl -fsSL --retry 3 \
 	"https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${ARCHIVE}" \
 	-o "$TMP/$ARCHIVE"
 
-# Prüfsumme VOR dem Entpacken: eine manipulierte oder abgeschnittene Datei darf
-# gar nicht erst in .tools/ landen.
 echo "${GODOT_SHA256}  $TMP/$ARCHIVE" | sha256sum -c --status || {
 	echo "FEHLER: Prüfsumme von $ARCHIVE stimmt nicht." >&2
 	echo "  erwartet: $GODOT_SHA256" >&2
@@ -89,8 +59,6 @@ echo "${GODOT_SHA256}  $TMP/$ARCHIVE" | sha256sum -c --status || {
 mkdir -p "$DEST"
 unzip -q -o "$TMP/$ARCHIVE" -d "$DEST"
 chmod +x "$BIN"
-# Hält GODOT_BIN_SHA256 ehrlich: der Hash der entpackten Datei wird auf demselben
-# Weg geprüft, auf dem er später den Cache-Restore prüft.
 verify_binary
 echo "==> Godot bereit: $BIN" >&2
 printf '%s\n' "$BIN"

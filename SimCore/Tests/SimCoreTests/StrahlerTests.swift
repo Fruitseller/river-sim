@@ -1,18 +1,9 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter für die Strahler-Ordnung auf dem D8-Netz (Issue #31).
-/// Abnahmepunkte:
-///  - Kernel: Quelle=1, gleichrangige Zusammenflüsse erhöhen (+1), ungleichrangige
-///    behalten den Maximalrang; Nicht-Netz-Zellen sind 0 und zählen nicht als Donor.
-///  - Terrain-Integration: Ordnung ist stromabwärts monoton nicht-fallend entlang
-///    `receiver` (innerhalb des Netzes) und deterministisch (gleicher Seed → bitgleich).
 final class StrahlerTests: XCTestCase {
 
-    // Handgebauter Wald: Indizes sind abstrakte Zellen, receiver[-1] = Senke.
-
     func testLinearChainIsOrderOne() {
-        // 0 → 1 → 2 → 3 → Senke
         let receiver: [Int32] = [1, 2, 3, -1]
         let net = [Bool](repeating: true, count: 4)
         let o = Strahler.orders(receiver: receiver, isNetwork: net)
@@ -20,7 +11,6 @@ final class StrahlerTests: XCTestCase {
     }
 
     func testEqualOrderJunctionIncrements() {
-        // Zwei Quellen (0,1) münden in 2; 2 → 3 → Senke.
         let receiver: [Int32] = [2, 2, 3, -1]
         let net = [Bool](repeating: true, count: 4)
         let o = Strahler.orders(receiver: receiver, isNetwork: net)
@@ -28,8 +18,6 @@ final class StrahlerTests: XCTestCase {
     }
 
     func testUnequalJunctionKeepsMax() {
-        // Ordnung-2-Strang (0,1→2→3) bekommt einen Ordnung-1-Zufluss (4) bei 3:
-        // bleibt 2. Erst der Zusammenfluss zweier 2er (5,6→3? nein) — hier nur Max-Erhalt.
         let receiver: [Int32] = [2, 2, 3, -1, 3]
         let net = [Bool](repeating: true, count: 5)
         let o = Strahler.orders(receiver: receiver, isNetwork: net)
@@ -39,7 +27,6 @@ final class StrahlerTests: XCTestCase {
     }
 
     func testTwoSecondOrdersMakeThird() {
-        // Zwei getrennte 2er-Zusammenflüsse (0,1→4) und (2,3→5) münden beide in 6.
         let receiver: [Int32] = [4, 4, 5, 5, 6, 6, -1]
         let net = [Bool](repeating: true, count: 7)
         let o = Strahler.orders(receiver: receiver, isNetwork: net)
@@ -49,9 +36,6 @@ final class StrahlerTests: XCTestCase {
     }
 
     func testNonNetworkCellsAreZeroAndDontFeed() {
-        // 0 (kein Netz) → 1 (Netz): 1 ist Quelle (Ordnung 1), 0 bleibt 0.
-        // 2,3 (kein Netz) → 4 (Netz) → 1: 4 ist Quelle, Junction 1 bleibt...
-        // 4→1 und niemand sonst → 1 hat genau einen Netz-Donor → Ordnung 1.
         let receiver: [Int32] = [1, -1, 4, 4, 1]
         let net = [false, true, false, false, true]
         let o = Strahler.orders(receiver: receiver, isNetwork: net)
@@ -61,8 +45,6 @@ final class StrahlerTests: XCTestCase {
         XCTAssertEqual(o[4], 1)
         XCTAssertEqual(o[1], 1, "einzelner Netz-Donor erhöht nicht")
     }
-
-    // ---- Terrain-Integration ----
 
     private func cfg(n: Int) -> SimConfig {
         var c = SimConfig()
@@ -103,10 +85,7 @@ final class StrahlerTests: XCTestCase {
         XCTAssertEqual(a.strahlerOrders(minCells: 12), b.strahlerOrders(minCells: 12))
     }
 
-    /// Empfänger-Indizes außerhalb des Gitters (r >= n oder r < -1) dürfen
-    /// nicht zu Speicherzugriffsfehlern führen und werden wie Senken behandelt.
     func testOrdersWithOutOfBoundsReceivers() {
-        // 0 zeigt auf 99 (außerhalb des Gitters), 1 zeigt auf 0, 2 zeigt auf -5 (ungültige negative Senke)
         let receiver: [Int32] = [99, 0, -5]
         let net = [true, true, true]
         let o = Strahler.orders(receiver: receiver, isNetwork: net)
@@ -115,25 +94,20 @@ final class StrahlerTests: XCTestCase {
         XCTAssertEqual(o[1], 1, "Quelle mit Ordnung 1")
         XCTAssertEqual(o[2], 1, "Isolierte Zelle mit Ordnung 1")
 
-        // Leere Puffer als echter Randfall liefern defensiv ein leeres Array
         let empty = Strahler.orders(receiver: [], isNetwork: [])
         XCTAssertEqual(empty, [])
 
         #if !DEBUG
-        // Mismatch der Array-Längen liefert im Release-Build defensiv Nuller statt abzustürzen
         let mismatched = Strahler.orders(receiver: [0, 1], isNetwork: [true])
         XCTAssertEqual(mismatched, [0, 0])
         #endif
     }
 
-    /// Leeres Terrain sowie nicht-endliche oder nicht-positive Schwellen (NaN, <= 0)
-    /// müssen sicher abgefangen werden.
     func testStrahlerOrdersWithEmptyTerrainAndNonFiniteOrNonPositiveMinCells() {
         let empty = Terrain(allocating: cfg(n: 0), seed: 1234)
         XCTAssertEqual(empty.strahlerOrders(minCells: 12), [], "Leeres Terrain muss leere Ordnungen liefern")
 
         let normal = Terrain(config: cfg(n: 96), seed: 1234)
-        // Nicht-endliche oder nicht-positive minCells-Werte dürfen kein fehlerhaftes Vollnetz erzeugen
         let nanOrders = normal.strahlerOrders(minCells: .nan)
         XCTAssertEqual(nanOrders.count, 96 * 96)
         XCTAssertTrue(nanOrders.allSatisfy { $0 == 0 }, "NaN-Schwelle darf kein Netz ausweisen")
@@ -148,9 +122,6 @@ final class StrahlerTests: XCTestCase {
         XCTAssertTrue(negOrders.allSatisfy { $0 == 0 }, "Negative Schwelle darf kein Netz ausweisen")
     }
 
-    /// Gitter ohne definierte Schrittweite (`cellSize == 0`, etwa bei `world <= 0`
-    /// oder 1×1-Gittern) dürfen kein fehlerhaftes Vollnetz durch Division durch 0
-    /// erzeugen, sondern liefern defensiv alle Ordnungen 0.
     func testStrahlerOrdersWithoutCellSpacingReturnsZeroOrders() {
         var c = cfg(n: 96)
         c.world = 0

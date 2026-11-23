@@ -3,18 +3,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter für den DIAGNOSE-Vertrag zwischen GDExtension und Game-Layer.
-///
-/// Über die Brücke geht ein namenloser `PackedFloat32Array`
-/// (`SimNode.debugTerrainStats` → `TerrainDiagnostics.stats`). Was an welchem
-/// Index steht, ist Konvention — und sie steht zwangsläufig doppelt: als
-/// ausführbarer `[Float]`-Puffer in `SimRender` und als `DBG_*`-Indizes plus
-/// `DEBUG_STATS_COUNT` in `Main.gd`. Der Renderer wird hier direkt ausgeführt;
-/// nur die GDScript-Tabelle bleibt ein Quelltext-Vertrag.
-///
-/// Was der Test verhindert: einen Wert im Renderer anhängen, einfügen,
-/// entfernen oder UMSTELLEN, ohne `Main.gd` mitzuziehen. Die semantische
-/// Belegung der ausführbaren Indizes prüft `SimRenderTests`.
 final class DiagStatsContractTests: XCTestCase {
   private static let expectedLayout = [
     "DBG_MIN",

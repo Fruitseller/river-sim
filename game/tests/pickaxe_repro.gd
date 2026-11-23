@@ -1,10 +1,5 @@
 extends SceneTree
-## Repro-Loop für die Spitzhacke: carvt eine Kerbe vom stärksten Fluss zur Küste
-## und prüft getrennt (a) PHYSIK: der Abfluss folgt der Kerbe (flowArea steigt),
-## (b) RENDER: das Wasser-Overlay (frame["water"]) zeigt den neuen Lauf.
-##   godot --headless --path game --script res://tests/pickaxe_repro.gd
 
-# Rohwert von FrameTrigger.settled (Main.gd FRAME_SETTLED).
 const FRAME_SETTLED := 0
 
 var done := false
@@ -24,11 +19,10 @@ func _run() -> void:
 	var cell: float = world / float(n - 1)
 	var cell_area := cell * cell
 
-	sim.step(3000.0) # Flüsse etablieren (inkl. Stream-Map)
+	sim.step(3000.0)
 	var h: PackedFloat32Array = sim.heights()
 	var area: PackedFloat32Array = sim.flowArea()
 
-	# Stärkste Fluss-Zelle im Landesinneren (Abstand zum Rand, damit die Kerbe Platz hat).
 	var best := -1
 	var best_a := 0.0
 	for j in range(80, n - 80):
@@ -45,7 +39,6 @@ func _run() -> void:
 	var bj := best / n
 	print("river_cell=(", bi, ",", bj, ") area_cells=", best_a / cell_area, " h=", h[best])
 
-	# Kerbenrichtung: zur nächsten Kante (dorthin ist die Küste am nächsten).
 	var di := 0
 	var dj := 0
 	if mini(bi, n - 1 - bi) < mini(bj, n - 1 - bj):
@@ -53,8 +46,6 @@ func _run() -> void:
 	else:
 		dj = -1 if bj < n - bj else 1
 
-	# Kerbe carven: schmaler Pinsel (≈2 Zellen), Tiefe kontrolliert per Rücklesen
-	# in mehreren Pässen — leicht bergab Richtung Küste, über Meeresniveau.
 	var trench: Array[int] = []
 	var length := 120
 	var depth_start: float = h[best] - 0.03
@@ -64,7 +55,7 @@ func _run() -> void:
 		if ti < 1 or ti >= n - 1 or tj < 1 or tj >= n - 1:
 			break
 		var k := tj * n + ti
-		if h[k] <= sea: # Küste erreicht
+		if h[k] <= sea:
 			break
 		trench.append(k)
 	for pass_i in range(24):
@@ -81,7 +72,6 @@ func _run() -> void:
 	sim.recomputeFlow()
 	print("trench_len=", trench.size())
 
-	# Höhenprofil der Kerbe nach dem Carven: Tiefe & Monotonie.
 	var h2: PackedFloat32Array = sim.heights()
 	var prof := ""
 	var non_monotone := 0
@@ -94,7 +84,6 @@ func _run() -> void:
 	print("carved_profile=", prof, " non_monotone=", non_monotone,
 		" river_h_after=", h2[best])
 
-	# Receiver-Pfad ab der Fluss-Zelle: läuft er durch die Kerbe?
 	var recv: PackedInt32Array = sim.receivers()
 	var in_band := 0
 	var walk := best
@@ -113,7 +102,6 @@ func _run() -> void:
 				break
 	print("walk_first=", path, " walk_cells_in_trench_band=", in_band)
 
-	# (a) PHYSIK: maximales Einzugsgebiet im Kerben-Band (±2 Zellen quer).
 	area = sim.flowArea()
 	var band_max := 0.0
 	for idx in range(trench.size() / 4, trench.size() * 3 / 4):
@@ -125,20 +113,8 @@ func _run() -> void:
 				band_max = maxf(band_max, area[(kj + dj2) * n + ki + di2])
 	var mid_cells := band_max / cell_area
 	print("trench_band_max_area_cells=", mid_cells)
-	var physics_ok := mid_cells > 300.0 # > renderMinCells: müsste als Fluss zählen
+	var physics_ok := mid_cells > 300.0
 
-	# (b) RENDER: sieht man das Wasser in der Kerbe? Seit Issue #34 kann es aus
-	# DREI Quellen kommen, und die Frage ist die Vereinigung — nicht eine
-	# einzelne Quelle: Fluss-Kanal (R) und See-Kanal (G) des Rasterfelds sowie
-	# die Band-Geometrie. Eine tief gekaperte Kerbe füllt sich typischerweise bis
-	# über die See-Schwelle (rawWet 0.03) — dann malt sie per Definition NICHT
-	# mehr der Fluss-Kanal (der hält sich an `hf − h ≤ 0.01`), sondern der
-	# See-Kanal. Vor #34 verdeckte der Mäander-Stempel das: er malte den Lauf
-	# zusätzlich in R. Nur auf R zu prüfen hieße also, den Stempel zu testen und
-	# nicht die Sichtbarkeit.
-	# Seit Issue #214 kommen Wasser und Bänder aus EINEM Frame (`renderFrame`,
-	# FRAME_SETTLED) — derselbe Weg wie Main.gd, inklusive der Kopplung: das
-	# Wasserfeld sieht die bandChannelFlags DIESES Baus.
 	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, 1.0)
 	var wb: PackedByteArray = frame["water"]
 	var band_cells := {}
@@ -153,7 +129,7 @@ func _run() -> void:
 	var lake_cells := 0
 	var banded := 0
 	var probe := 0
-	for idx in range(trench.size() / 4, trench.size() * 3 / 4): # mittlere Hälfte
+	for idx in range(trench.size() / 4, trench.size() * 3 / 4):
 		var k: int = trench[idx]
 		probe += 1
 		var by_river := wb[k * 4] > 40
@@ -184,8 +160,6 @@ func _run() -> void:
 		push_error("FAIL_RENDER: Fluss folgt der Kerbe, aber das Overlay zeigt ihn nicht")
 		quit(1)
 		return
-	# (c) LANGZEIT: der Fluss hält die gekaperte Rinne offen, aber übertiefte
-	# Stellen (Seen in der Kerbe) füllen sich über die Zeit mit Sediment.
 	var depth0 := _trench_pond_depth(sim, trench)
 	sim.step(1500.0)
 	var depth1 := _trench_pond_depth(sim, trench)
@@ -207,8 +181,7 @@ func _run() -> void:
 		quit(1)
 		return
 
-	# (d) DECKEL: auch mit riesigem Slider-Radius bleibt der Hieb schmal.
-	var spot_i := bi + 60 * dj # abseits der Kerbe (senkrecht versetzt)
+	var spot_i := bi + 60 * dj
 	var spot_j := bj + 60 * di
 	var h3: PackedFloat32Array = sim.heights()
 	for r in range(20):
@@ -227,9 +200,6 @@ func _run() -> void:
 	print("PICKAXE_OK")
 	quit(0)
 
-## Mittlere Wassertiefe (hf − h) über den Kerben-Zellen — misst die Übertiefung.
-## Der Seespiegel kommt aus dem Frame (`filled`, R32F-Rohbytes): seit Issue
-## #214 gibt es keinen Einzelschritt-Callable dafür mehr.
 func _trench_pond_depth(sim: Object, trench: Array[int]) -> float:
 	var hh: PackedFloat32Array = sim.heights()
 	var frame: Dictionary = sim.renderFrame(FRAME_SETTLED, 2.0)

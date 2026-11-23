@@ -1,25 +1,4 @@
 extends SceneTree
-## Headless-Wächter der Bedienung (Issue #174, Paket E):
-##   godot --headless --path game --script res://tests/ui_layout.gd
-##
-## Geprüft wird, was ohne Auge prüfbar ist; ob es aussieht wie Vorlage B/C,
-## entscheidet der Projekteigner am Bild (Abnahmebogen #174, Punkte 41–45).
-##  - Layout: oben links Titel/Jahr/Tempo und Werkzeugpalette, oben rechts die
-##    Zeitsprünge, unten rechts Diagnose/Welt/Kamera/Seed, unten Mitte die
-##    Tastenhilfe; jede Spalte UI_MARGIN von ihrem Rand, im Grundzustand
-##    überlappt keine, auch im kleinen Standardfenster; die Diagnose klappt
-##    auf und wieder zu, ohne
-##    einen leeren Streifen zu hinterlassen;
-##  - ein gemeinsames Theme, keine Overrides an einzelnen Controls;
-##  - Weichzeichner hinter jedem Glas-Panel: Rahmen, Rechteck unter dem Glas,
-##    Material mit Radius, Abdunklung und Eckenradius aus dem Theme;
-##  - jedes Werkzeug trägt sein gezeichnetes Icon, Taste 1–6 hebt den
-##    aktiven Knopf hervor; Tempo-Leiste ⏸ ▶ ⏩;
-##  - Kamera-Presets auf F1–F3 (auch weich angefahren): Diorama rahmt das
-##    Land, Tal und Nah zielen auf den größten Lauf, nie aufs Meer;
-##  - Pinselkuppel: Rand auf der Fläche, Scheitel im Profil (1 − d²)^p,
-##    gezeichnet als Bildschirm-Bänder (Rand breiter als das Gitter).
-## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
@@ -51,12 +30,8 @@ func _process(_delta: float) -> bool:
 	return false
 
 func _run() -> void:
-	# Das Headless-Fenster ist 64 × 64 Pixel groß; geprüft wird das Layout im
-	# kleinsten Fenster, das ein Spieler sieht (Godots Standardgröße). Die
-	# Spalten hängen an der Vollbild-Ebene `hud`, also genügt deren Größe.
 	main.hud.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	main.hud.size = WINDOW
-	# Layout und Anpassung der Spalten laufen verzögert (minimum_size_changed).
 	await _frames(3)
 	_check_theme()
 	_check_glass_blur()
@@ -100,8 +75,6 @@ func _check_theme() -> void:
 		_check(not c.has_theme_font_size_override("font_size"), "%s überschreibt font_size" % c.get_path())
 		_check(not c.has_theme_constant_override("separation"), "%s überschreibt separation" % c.get_path())
 		if c is PanelContainer:
-			# Der Rahmen (`GlassFrame`) zeichnet nichts; das Glas selbst ist das
-			# Panel im Rahmen.
 			var kind := "GlassFrame" if c.theme_type_variation == &"GlassFrame" else "PanelContainer"
 			_check(c.get_theme_stylebox("panel") == theme.get_stylebox("panel", kind),
 				"Panel %s nimmt die Stilbox %s des Themes" % [c.get_path(), kind])
@@ -109,9 +82,6 @@ func _check_theme() -> void:
 			_check(theme.get_type_variation_base(c.theme_type_variation) == &"Label",
 				"Label-Variante %s steht im Theme" % c.theme_type_variation)
 
-## Die vier Spalten in Bauordnung: oben links, oben rechts, unten rechts, unten Mitte.
-## Überlappung nur im Grundzustand: die aufgeklappte Diagnose ist im kleinen
-## Standardfenster höher als der freie Platz unter der Zeitsprung-Leiste.
 func _check_corners(when: String, overlap := true) -> void:
 	var vp: Vector2 = main.hud.get_rect().size
 	var cols: Array = main.hud.get_children()
@@ -134,12 +104,6 @@ func _check_corners(when: String, overlap := true) -> void:
 			_check(not overlap or not r[i].intersects(r[j]), "%s: Spalten %d und %d überlappen (%s / %s, Fenster %s)"
 				% [when, i, j, r[i], r[j], vp])
 
-## Weichzeichner hinter dem Glas (Issue #174, Paket E): jedes Panel sitzt in
-## einem Rahmen, dessen erstes Kind das Weichzeichner-Rechteck ist, darüber das
-## Glas. Form und Radius kommen aus dem Theme; das Rechteck deckt das Glas
-## exakt, fängt keine Maus und verschwindet mit seinem Rahmen (Diagnose
-## zugeklappt). Das Aussehen im Bild beurteilt der Projekteigner; headless ist
-## nur die Verdrahtung prüfbar (Renderer fehlt).
 func _check_glass_blur() -> void:
 	var theme: Theme = load(Main.UI_THEME)
 	var glass := theme.get_stylebox("panel", "PanelContainer") as StyleBoxFlat
@@ -173,8 +137,6 @@ func _check_glass_blur() -> void:
 		_check(backdrop.material == material, "%s: gemeinsames Weichzeichner-Material" % frame.get_path())
 		_check(backdrop.mouse_filter == Control.MOUSE_FILTER_IGNORE, "%s: Weichzeichner fängt keine Maus" % frame.get_path())
 		_check(backdrop.is_in_group(Main.GLASS_BACKDROP_GROUP), "%s: Weichzeichner in der Messgruppe" % frame.get_path())
-		# Ein zugeklapptes Panel wird nicht angeordnet (Größe 0); geprüft wird
-		# nach dem Aufklappen in `_check_debug_toggle`.
 		if frame.is_visible_in_tree():
 			_check_backdrop_covers(frame)
 	_check(main.debug_panel is PanelContainer and main.debug_panel.theme_type_variation == &"GlassFrame",
@@ -200,7 +162,7 @@ func _check_debug_toggle() -> void:
 	toggle.button_pressed = true
 	await _frames(3)
 	_check(main.debug_panel.visible and column.size.y > closed.y, "Diagnose klappt auf")
-	_check_backdrop_covers(main.debug_panel) # aufgeklappt: Weichzeichner deckt das Glas
+	_check_backdrop_covers(main.debug_panel)
 	_check_corners("Diagnose offen", false)
 	toggle.button_pressed = false
 	await _frames(3)
@@ -248,10 +210,6 @@ func _check_camera_presets() -> void:
 	_check(Main.CAMERA_PRESETS.size() == 3, "Drei Kamera-Presets (Diorama, Tal, Nah)")
 	var h: PackedFloat32Array = main.sim.heights()
 	var n: int = main.N
-	# Rahmen-Rechnung an einer bekannten Form: ein Landquadrat der halben
-	# Kartenbreite, Draufsicht. Zielt auf seine Mitte und braucht für die
-	# halbe Füllung doppelt so viel Abstand wie für die volle. Die Mittigkeit
-	# in Schrägsicht misst _check_diorama_fill an der echten Welt.
 	var sq := PackedFloat32Array()
 	sq.resize(101 * 101)
 	for j in 101:
@@ -262,8 +220,6 @@ func _check_camera_presets() -> void:
 	_check(not full.is_empty() and Vector2(full["target"].x, full["target"].z).length() < 0.01,
 		"Rahmen zielt auf die Mitte der Land-Box")
 	if not full.is_empty():
-		# Kante 25 Einheiten von der Mitte, halber FOV 30° → d = 25 / tan 30°
-		# (das Ziel liegt auf der Landhöhe, gemessen wird von dort).
 		_check(absf(full["dist"] - 25.0 / tan(deg_to_rad(30.0))) < 0.05,
 			"Rahmen: Land-Box füllt das Bild (dist %.2f)" % full["dist"])
 		_check(absf(half_fill["dist"] - 2.0 * full["dist"]) < 0.1,
@@ -275,7 +231,6 @@ func _check_camera_presets() -> void:
 	for c in Main.CAMERA_PRESETS.size():
 		var p: Dictionary = Main.CAMERA_PRESETS[c]
 		main._apply_camera_preset(c, false)
-		# Pitch aus der Tabelle; nur eine verdeckte Sichtlinie hebt ihn an.
 		_check(main.cam_pitch >= p["pitch"] - 1e-6 and main.cam_pitch < 1.3 + 1e-6,
 			"Preset %s setzt den Pitch (%.2f)" % [p["id"], main.cam_pitch])
 		var t: Vector3 = main.cam_target
@@ -295,11 +250,7 @@ func _check_camera_presets() -> void:
 		var mouth: int = r["mouth"]
 		var mi := mouth % n
 		var mj := mouth / n
-		# Auslass = Küste ODER Kartenrand: ohne Randabstand (#175) läuft der
-		# größte Lauf mancher Welt über den Rand ab (so die CI-Welt).
 		var outlet := mi == 0 or mj == 0 or mi == n - 1 or mj == n - 1
-		# Empfänger liegen im D8-Netz auch diagonal im Meer. Die vier
-		# Seiten-Nachbarn allein verwarfen dessen gültige Küstenzellen.
 		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 				Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]:
 			var i: int = clampi(mi + d.x, 0, n - 1)
@@ -313,13 +264,10 @@ func _check_camera_presets() -> void:
 			"Preset %s: Kamera steht auf der Mündungsseite" % p["id"])
 		var eye: Vector3 = main.cam.position
 		_check(eye.y > main._surface_y_at(eye), "Preset %s: Kamera über dem Gelände" % p["id"])
-		# Schräg talaufwärts, nicht senkrecht von oben: die Sichtlinie ist in
-		# den Prüfwelten frei (auf der CI-Welt mündet der Lauf am Kartenrand;
-		# draußen liegt nur Meer, kein geklemmtes Randgelände).
 		_check(main.cam_pitch < p["pitch"] + 0.3,
 			"Preset %s bleibt schräg (pitch %.2f)" % [p["id"], main.cam_pitch])
 		var blocked: float = main.sight_block(t, main.cam_yaw, p["pitch"], main.cam_dist)
-		if blocked >= 0.0: # Protokoll: wo die Sichtlinie bei Tabellen-Pitch anstößt
+		if blocked >= 0.0:
 			var cpp := cos(float(p["pitch"]))
 			var eye0: Vector3 = t + Vector3(sin(main.cam_yaw) * cpp, sin(float(p["pitch"])),
 				cos(main.cam_yaw) * cpp) * main.cam_dist
@@ -328,7 +276,6 @@ func _check_camera_presets() -> void:
 				% [p["id"], blocked, hit.x, hit.z, hit.y, main._surface_y_at(hit), t.y])
 		print("UI_CAMERA_PRESET %s target (%.1f, %.1f) yaw %.2f pitch %.2f mouth (%.1f, %.1f)"
 			% [p["id"], t.x, t.z, main.cam_yaw, main.cam_pitch, mouth_pos.x, mouth_pos.y])
-	# Taste: F2 fährt „Tal" weich an; nach der Fahrt steht die Kamera dort.
 	var want: Dictionary = main.camera_preset_view(1)
 	main._apply_camera_preset(0, false)
 	var key := InputEventKey.new()
@@ -343,12 +290,9 @@ func _check_camera_presets() -> void:
 		and is_zero_approx(wrapf(main.cam_yaw - want["yaw"], -PI, PI)),
 		"F2 endet auf dem Preset Tal (dist %.2f, pitch %.2f)" % [main.cam_dist, main.cam_pitch])
 
-## Diorama: nachgemessen mit Godots eigener Projektion. Die Landzellen reichen
-## in der knapperen Bildrichtung bis `fill` (sofern die Distanz nicht am
-## Zoom-Deckel hängt), alle liegen vor der Kamera und im Bild.
 func _check_diorama_fill(p: Dictionary, h: PackedFloat32Array, n: int) -> void:
 	var vp: Vector2 = main.get_viewport().get_visible_rect().size
-	var lo := Vector2(INF, INF) # Bildkoordinaten −1…1, y nach unten
+	var lo := Vector2(INF, INF)
 	var hi := Vector2(-INF, -INF)
 	var behind := 0
 	for j in range(0, n, 4):
@@ -368,15 +312,12 @@ func _check_diorama_fill(p: Dictionary, h: PackedFloat32Array, n: int) -> void:
 	_check(behind == 0, "Diorama: alles Land vor der Kamera (%d dahinter)" % behind)
 	_check(absf(reach - p["fill"]) < 0.02 or (capped and reach < 1.0),
 		"Diorama: Land füllt das Bild zu %.2f (Soll %.2f, dist %.1f)" % [reach, p["fill"], main.cam_dist])
-	# Mittig: in Schrägsicht ist die nahe Kante größer als die ferne, ein Ziel
-	# auf der Mitte der Land-Box ließ die Insel unten sitzen (Folgebefund #176).
 	_check(absf(lo.x + hi.x) < 0.05 and absf(lo.y + hi.y) < 0.05,
 		"Diorama: Land mittig im Bild (x %.2f…%.2f, y %.2f…%.2f)" % [lo.x, hi.x, lo.y, hi.y])
 	print("UI_CAMERA_PRESET diorama dist %.1f fill %.3f x %.2f…%.2f y %.2f…%.2f target (%.1f, %.1f)"
 		% [main.cam_dist, reach, lo.x, hi.x, lo.y, hi.y, main.cam_target.x, main.cam_target.z])
 
 func _check_brush_dome() -> void:
-	# Landzelle nahe der Mitte als Zentrum.
 	var h: PackedFloat32Array = main.sim.heights()
 	var n: int = main.N
 	var cell := -1
@@ -406,23 +347,17 @@ func _check_brush_dome() -> void:
 		"Kuppel aus Linienpaaren (%d Punkte)" % verts.size())
 	if verts.is_empty():
 		return
-	# Rand (Punkt 0, d = 1): auf der sichtbaren Fläche plus Lift.
 	var rim := verts[0] + center
 	var rim_surface: float = main._surface_y((rim.x + main.half) / main.step, (rim.z + main.half) / main.step)
 	_check(absf(rim.y - (rim_surface + Main.BRUSH_DOME_LIFT)) < 1e-3,
 		"Kuppelrand liegt auf der Fläche (y %.3f, Fläche %.3f)" % [rim.y, rim_surface])
 	_check(absf(Vector2(verts[0].x, verts[0].z).length() - radius) < 1e-3, "Rand im Pinselradius")
-	# Scheitel (letzter Punkt des letzten Meridians, d = 0): Lift + r · Höhe.
 	var apex := verts[verts.size() - 1]
 	_check(absf(apex.y - (Main.BRUSH_DOME_LIFT + radius * Main.BRUSH_DOME_HEIGHT)) < 1e-3,
 		"Scheitel trägt das volle Profil (y %.3f)" % apex.y)
-	# Profil: die Spitzhacke (p = 4) ist bei halbem Radius niedriger als p = 2.
 	_check(Main.brush_weight(0.5, 4.0) < Main.brush_weight(0.5, 2.0)
 		and is_equal_approx(Main.brush_weight(0.5, 2.0), 0.5625)
 		and Main.brush_weight(1.0, 2.0) == 0.0, "Profil (1 − d²)^p")
-	# Bänder (shaders/brush_dome.gdshaderinc): vier Ecken und zwei Dreiecke je
-	# Linienstück, die Enden verweisen aufeinander, der Rand ist breiter als das
-	# Gitter, und Godot nimmt das Format (CUSTOM0 als RGBA-Float) an.
 	var widths: PackedVector2Array = dome[2]
 	_check(widths.size() == verts.size() and widths[0].x > widths[widths.size() - 1].x,
 		"Rand breiter als das Gitter (%s / %s)" % [widths[0], widths[widths.size() - 1]])
@@ -440,6 +375,4 @@ func _check_brush_dome() -> void:
 		Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT)
 	_check(mesh.get_surface_count() == 1 and mesh.surface_get_array_len(0) == band_verts.size(),
 		"Godot nimmt das Band-Mesh an")
-	# Keine Leistungsbehauptung, nur das Protokoll: Kosten eines Kuppel-Baus
-	# auf diesem Rechner (gebaut wird nur bei Änderung, s. Main.brush_key).
 	print("UI_BRUSH_DOME_US ", dome_us)

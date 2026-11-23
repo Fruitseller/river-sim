@@ -3,13 +3,8 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter der EINEN Altarm-Knotenauswahl (`oxbowNodeRange`, Review zu #174 C).
-/// Raster-Wasserfeld, Altarm-Bänder und Gürtel-Material müssen dieselben
-/// Schleifen meinen; die Auswahl stand dreimal mit verschiedenen Wächtern.
 final class OxbowNodeRangeTests: XCTestCase {
 
-    /// Die drei alten Fassungen, wörtlich nachgebaut (Mindestlänge, Trimmung,
-    /// dann je Leser ein anderer Wächter).
     private func legacy(count: Int, guardRange: (Int, Int) -> Bool) -> ClosedRange<Int>? {
         guard count >= WaterRender.oxbowMinimumNodes else { return nil }
         let trim = min(WaterRender.oxbowMaximumTrimmedNodes, max(1, count / 8))
@@ -18,8 +13,6 @@ final class OxbowNodeRangeTests: XCTestCase {
         return first...last
     }
 
-    /// Bit-gleiches Verhalten: für JEDE Knotenzahl dieselbe Auswahl wie die
-    /// drei alten Wege, und die drei waren einander schon gleich.
     func testHelperMatchesAllThreeLegacySelections() {
         for count in 0...400 {
             let water = legacy(count: count) { first, last in first <= last }
@@ -44,7 +37,6 @@ final class OxbowNodeRangeTests: XCTestCase {
         }
     }
 
-    /// Alle drei Leser benutzen den Helfer und tragen keine eigene Trimmung mehr.
     func testAllThreeReadersUseTheSharedSelection() throws {
         for file in ["WaterFieldRenderer", "RiverRibbonRenderer", "BarMaterial"] {
             let source = try RepoSource.probe("SimCore/Sources/SimRender/\(file).swift")

@@ -4,20 +4,6 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Materialverteilung über die Matrix-Welten (Issue #174, Paket D).
-///
-/// Misst je Welt und Stadium die Standortwerte, an denen `MaterialRender`
-/// kalibriert ist (Weltsteigung, Konvexität, Schnee- und Eisdeckung), und die
-/// Flächenanteile der Materialien, die `TerrainColorRenderer` daraus macht —
-/// vorher (Stand vor #174 D, `LegacyTerrainColor`) und nachher —, dazu den
-/// Waldanteil (#168: höchstens ~22 % des Landes) und die Laufzeit des
-/// Material-Passes als interleavtes A/B (alt, neu, alt, neu …; Median).
-/// Tabelle: `docs/graphics-quality.md` § Material, Schnee, Wolken (#174 D).
-///
-///     RS_MEASURE=1 swift test -c release --package-path SimCore \
-///         --filter testMaterialCoverageDiagnostic
-///
-/// `RS_SEED` beschränkt auf einen Seed, `RS_YEARS` (Komma-Liste) die Stadien.
 final class MaterialCoverageTests: XCTestCase {
 
     func testMaterialCoverageDiagnostic() throws {
@@ -44,8 +30,6 @@ final class MaterialCoverageTests: XCTestCase {
     private func report(_ t: Terrain, seed: UInt32) {
         let n = t.cfg.n
         let h = t.h
-        // Ein Frame (Issue #214): Wasser, Material und Masken entstehen
-        // gemeinsam — derselbe Takt wie im Spiel.
         let overlays = frameOverlays(RenderState(geometryMode: true), t)
         let surfaces = overlays.surfaces
         let covers = overlays.covers
@@ -88,7 +72,6 @@ final class MaterialCoverageTests: XCTestCase {
                      share { snowOn && Terrain.snowCoverage(swe: t.snow[$0], ref: t.cfg.snowCoverRef) >= 0.3 },
                      share(iced), share { iced($0) && tempOn && t.temperature[$0] > 0 }))
         let w = { (buf: [UInt8], k: Int, c: Int) in Double(buf[k * 4 + c]) / 255 }
-        // Grund = was nach Vegetation, Fels, Kälte, Halde und Rohboden bleibt.
         let ground = { (k: Int) in
             1 - w(surfaces, k, 0) - w(surfaces, k, 1) - w(surfaces, k, 2) - w(covers, k, 0) - w(covers, k, 2)
         }
@@ -104,7 +87,6 @@ final class MaterialCoverageTests: XCTestCase {
                      share { w(covers, $0, 2) >= 0.3 }, share { w(covers, $0, 3) >= 0.5 },
                      share { ground($0) >= 0.5 }, share { w(surfaces, $0, 0) >= 0.14 },
                      share { forest[$0] >= 128 }))
-        // Interleavtes A/B: alt und neu abwechselnd, je 9 Läufe, Median.
         var old: [Double] = [], new: [Double] = []
         for _ in 0..<9 {
             var start = DispatchTime.now().uptimeNanoseconds
@@ -121,9 +103,6 @@ final class MaterialCoverageTests: XCTestCase {
     }
 }
 
-/// Stand von `TerrainColorRenderer.buffers` vor #174 D (Commit 55323b5), nur
-/// für den Vorher-Vergleich und das Laufzeit-A/B im Messlauf oben. Nur die
-/// Puffer, die es damals gab; nicht pflegen, nicht anderswo benutzen.
 enum LegacyTerrainColor {
     static func buffers(_ terrain: Terrain) -> (colors: [UInt8], surfaces: [UInt8]) {
         let n = terrain.cfg.n

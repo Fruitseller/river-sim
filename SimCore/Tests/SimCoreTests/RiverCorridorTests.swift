@@ -2,21 +2,10 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Fluss als Korridor (Look E, Issue #239): Querprofil und Korridor-Mesh unter
-/// den Flussbändern. Die Verträge mit `corridor.gdshaderinc` und
-/// `water.gdshader`: Bett unter der Uferkante, Wasser nie über dem Ufer, und
-/// der Deckel (`lid`, Tiefe des Korridors im Bild) liegt über dem Korridor und
-/// über dem Gelände im Querschnitt, gekappt auf Wasserspiegel +
-/// `lidMaxAboveWater` (Schluchtwände ragen darüber und verdecken den Korridor;
-/// durch das Wasser selbst nur selten, in der Flussmitte (Thalweg) höchstens in
-/// 0,2 % der Querschnitte; die Höhe
-/// eines Durchstoßes ist die Wandhöhe und bewusst ungebunden).
 final class RiverCorridorTests: XCTestCase {
 
     private func flat(_ y: Double) -> (Double) -> Double { { _ in y } }
 
-    /// Querprofil auf ebenem Gelände: Uferkante auf Geländehöhe, Bett darunter,
-    /// im Bogen Thalweg am Prallhang und breite Bank am Gleithang.
     func testSectionShape() {
         let cs = 0.156
         let s = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1.0, waterRight: 1.0,
@@ -28,12 +17,10 @@ final class RiverCorridorTests: XCTestCase {
         for c in (top + 1)..<(k - 1 - top) { XCTAssertLessThan(s.heights[c], 1.05, "Spalte \(c) über der Uferkante") }
         let thalweg = (0..<k).min { s.heights[$0] < s.heights[$1] }!
         XCTAssertLessThan(s.offsets[thalweg], 0, "bend > 0: Prallhang links, Thalweg dorthin versetzt")
-        // Uferlinie: am Gleithang (rechts) näher zur Mitte.
         XCTAssertGreaterThan(-s.offsets[sh], s.offsets[k - 1 - sh], "Gleithang trägt die breitere Bank")
         XCTAssertGreaterThan(s.bar[k - 1 - top - 1], 0.5, "Kiesbank am Gleithang")
         XCTAssertEqual(s.bar[top + 1], 0, "kein Kies am Prallhang")
         XCTAssertGreaterThanOrEqual(s.lid, 1.05 + CorridorProfile.lidClearance - 1e-12)
-        // Der Fuß liegt in der Schutzmaske (Naht zur verfeinerten Fläche, #238).
         for c in [0, k - 1] {
             XCTAssertLessThanOrEqual(abs(s.offsets[c]), CorridorProfile.maxReachCells(halfWidthCells: 2) + 1e-9)
         }
@@ -43,7 +30,6 @@ final class RiverCorridorTests: XCTestCase {
             XCTAssertLessThanOrEqual(abs(wideBar.offsets[c]), CorridorProfile.maxReachCells(halfWidthCells: 3.2) + 1e-9,
                                      "Ufersuche und Uferwall bleiben in der Schutzmaske")
         }
-        // Breiter = tiefer, Furt = flacher, unsichtbar = flach.
         let wide = CorridorProfile.section(halfWidthCells: 3, visible: 1, waterLeft: 1, waterRight: 1,
                                            bend: 0, riffle: 0, cellSize: cs, surface: flat(1.05))
         let narrow = CorridorProfile.section(halfWidthCells: 0.5, visible: 1, waterLeft: 1, waterRight: 1,
@@ -58,8 +44,6 @@ final class RiverCorridorTests: XCTestCase {
         XCTAssertEqual(gone.offsets[0], gone.offsets[k - 1], accuracy: 1e-12, "unsichtbar: Breite null")
     }
 
-    /// Liegt das Gelände am Ufer UNTER dem Wasser (Damm, Querneigung), hebt
-    /// sich die Uferkante über den Wasserspiegel: Wasser steht nie über dem Ufer.
     func testWaterNeverAboveTheBankInSection() {
         let s = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1.0, waterRight: 1.1,
                                         bend: -0.5, riffle: 0, cellSize: 0.156, surface: flat(0.9))
@@ -70,13 +54,8 @@ final class RiverCorridorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(s.lid, 1.1, "Deckel über dem Wasser")
     }
 
-    /// Schlucht (Befund zu #240): Ufer, die eine Felswand hochstiegen, hoben
-    /// den Deckel und zogen Band und Böschung vor den Grat davor. Der Deckel
-    /// bleibt knapp über dem Wasser, der Korridor endet darunter, die Wand
-    /// zeigt das Gelände selbst.
     func testCanyonKeepsTheLidNearTheWater() {
         let k = CorridorProfile.columns, sh = CorridorProfile.shoreColumn
-        // Sohle 1,0 in der Mitte, Wände steigen ab 1,5 Zellen um 1 je Zelle.
         let wall: (Double) -> Double = { c in 1.0 + max(0, abs(c) - 1.5) }
         let s = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1.0, waterRight: 1.0,
                                         bend: 0, riffle: 0, cellSize: 0.156, surface: wall)
@@ -88,11 +67,7 @@ final class RiverCorridorTests: XCTestCase {
         }
         XCTAssertGreaterThanOrEqual(s.heights[CorridorProfile.topColumn], s.heights[sh] + CorridorProfile.freeboard - 1e-12,
                                     "Wasser über dem Ufer")
-        // Die Kappung hält das Ufer nur über dem Wasser, solange sie über dem
-        // Freibord liegt (Review #240).
         XCTAssertGreaterThan(CorridorProfile.lidMaxAboveWater, CorridorProfile.freeboard)
-        // Wand schon ab der Uferlinie: die gekappte Uferkante bleibt über dem
-        // Wasser, die Uferlinie selbst liegt auf ihm (Tiefe 0, nie gekappt).
         let steep: (Double) -> Double = { c in 1.0 + 4 * max(0, abs(c) - 1.0) }
         let w = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1.0, waterRight: 1.0,
                                         bend: 0.6, riffle: 0, cellSize: 0.156, surface: steep)
@@ -105,8 +80,6 @@ final class RiverCorridorTests: XCTestCase {
         }
     }
 
-    /// Gremium, Befund 2: die Ufersuche je Stützpunkt sprang; ein einzelner
-    /// Sprung verschwindet in der Längs-Glättung, ein stetiger Verlauf bleibt.
     func testEdgeSmoothingRemovesSingleJumps() {
         var v = [Double](repeating: 1.0, count: 12)
         v[6] = 3.5
@@ -117,9 +90,6 @@ final class RiverCorridorTests: XCTestCase {
         for a in 4..<8 { XCTAssertEqual(r[a], ramp[a], accuracy: 1e-12, "Rampe verfälscht (\(a))") }
     }
 
-    /// Gremium, Befund 2: im Innenbogen überschlugen sich die Querschnitte.
-    /// Die Grenze deckelt die Reichweite der Innenseite, lässt aber immer
-    /// Platz für Böschung und Fuß jenseits der Uferlinie.
     func testInnerBendReachIsLimited() {
         let cs = 0.156
         let free = CorridorProfile.section(halfWidthCells: 2, visible: 1, waterLeft: 1, waterRight: 1,
@@ -138,9 +108,6 @@ final class RiverCorridorTests: XCTestCase {
         for c in 1..<k { XCTAssertGreaterThanOrEqual(tight.offsets[c], tight.offsets[c - 1], "Querschnitt gefaltet") }
     }
 
-    /// Pflicht-Wächter auf der gealterten Render-Testwelt: Mesh konsistent,
-    /// Bett unter der Uferkante, Wasser nie über dem Ufer, kein Gelände über
-    /// dem Deckel (sonst stäche es durch Bett und Wasserfläche).
     func testCorridorOnAgedWorld() {
         let size = Int(ProcessInfo.processInfo.environment["RS_CORRIDOR_N"] ?? "384") ?? 384
         let t = agedWorld(renderConfig(n: size), years: 4000)
@@ -150,17 +117,10 @@ final class RiverCorridorTests: XCTestCase {
         let c = mesh.corridor
         let k = CorridorProfile.columns, top = CorridorProfile.topColumn, sh = CorridorProfile.shoreColumn
         XCTAssertEqual(mesh.profile.count, mesh.vertices.count, "ribbon_profile je Band-Vertex")
-        // Beide Fälle müssen in der Testwelt vorkommen, sonst läuft ein Teil
-        // der Wächter unten leer (Review #240).
         XCTAssertGreaterThan(mesh.profile.filter { $0.x > 0 }.count, 0, "Testwelt ohne Korridor")
         XCTAssertGreaterThan(mesh.profile.filter { $0.x == 0 }.count, 0,
                              "Testwelt ohne Band ohne Korridor — Wächter wäre leer")
         XCTAssertGreaterThan(c.vertices.count, 50 * k, "Testwelt trägt zu wenig Korridor")
-        // Das Wasser des Bands läuft an den Korridor-Enden nicht mit dem
-        // Auslauf von Ufer und Bett aus (Review #247): mit Korridor trägt jeder
-        // Band-Vertex eine Wasser-Halbbreite.
-        // Gezählt werden deutlich sichtbare Band-Vertices; wo das Band selbst
-        // ausgeblendet ist, ist auch die Halbbreite null (`ribbonVisibleWidth`).
         let drained = mesh.profile.indices.filter {
             mesh.profile[$0].x > 0.5 && mesh.colors[$0].w > 0.5 && mesh.profile[$0].z <= 0
         }.count
@@ -178,27 +138,21 @@ final class RiverCorridorTests: XCTestCase {
         var maxWetRockOver = 0.0, maxBedRockOver = 0.0, thalwegRock = 0
         var maxPierce = 0.0
         for start in stride(from: 0, to: c.vertices.count, by: k) {
-            guard c.colors[start].w > 0.05 else { continue }   // sichtbare Querschnitte
+            guard c.colors[start].w > 0.05 else { continue }
             sections += 1
             let topL = Double(c.vertices[start + top].y), topR = Double(c.vertices[start + k - 1 - top].y)
             for col in (sh + 1)..<(k - 1 - sh) {
                 if Double(c.vertices[start + col].y) > min(topL, topR) + 1e-5 { bedAbove += 1 }
             }
-            // Wasserspiegel an den Uferlinien gegen die eigene Uferkante.
             let wL = Double(c.vertices[start + sh].y + c.custom[start + sh].x)
             let wR = Double(c.vertices[start + k - 1 - sh].y + c.custom[start + k - 1 - sh].x)
             if wL > topL + 1e-5 || wR > topR + 1e-5 { waterAbove += 1 }
             let lid = Double(c.custom[start].y)
-            // Deckel knapp über dem Wasser (Befund zu #240: Schluchtwände).
             let waterTop = max(Double(c.vertices[start + sh].y + c.custom[start + sh].x),
                                Double(c.vertices[start + k - 1 - sh].y + c.custom[start + k - 1 - sh].x))
             if lid > waterTop + CorridorProfile.lidMaxAboveWater + CorridorProfile.lidClearance + 1e-4 { lidHigh += 1 }
             for col in 0..<k {
                 let v = c.vertices[start + col]
-                // Kein Korridor über dem Deckel. Gelände darf darüber liegen
-                // (Schluchtwand, sie verdeckt den Korridor); im nassen Teil
-                // stäche es durch das Wasser — wie auf `main`, wo die Bandkanten
-                // in Schluchten in den Fels tauchen. Das bleibt selten.
                 let over = Double(v.y) - lid
                 if over > 1e-4 { pierced += 1; maxPierce = max(maxPierce, over) }
                 if col >= sh && col <= k - 1 - sh {
@@ -206,24 +160,16 @@ final class RiverCorridorTests: XCTestCase {
                     let rock = bank.height((Double(v.x) + half) / cs, (Double(v.z) + half) / cs) - lid
                     if rock > 1e-4 { wetRock += 1 }
                     maxWetRockOver = max(maxWetRockOver, rock)
-                    // Zwischen den Uferlinien (Bett, Thalweg) wäre Fels mitten
-                    // im Fluss; an den Uferlinien ist es die Schluchtwand.
                     if col > sh && col < k - 1 - sh { maxBedRockOver = max(maxBedRockOver, rock) }
                     if col == k / 2, rock > 1e-4 { thalwegRock += 1 }
                 }
             }
-            // Der Fuß liegt auf dem Gelände (keine Lippe, keine Lücke zum Gelände);
-            // gezählt werden die Uferkanten, die als Uferwall darüber stehen.
             for e in [start, start + k - 1] {
                 let v = c.vertices[e]
                 let gx = (Double(v.x) + half) / cs, gz = (Double(v.z) + half) / cs
-                // Liegt das Gelände über dem Deckel (Schluchtwand), endet der
-                // Fuß darunter und die Wand verdeckt ihn.
                 let lidTop = Double(c.custom[start].y) - CorridorProfile.lidClearance
                 XCTAssertEqual(Double(v.y), min(bank.height(gx, gz), lidTop), accuracy: 1e-4,
                                "Korridor-Fuß nicht auf dem Gelände")
-                // Naht zur verfeinerten Fläche (#238): der Fuß liegt in der
-                // Schutzmaske, dort ist das Gelände unverschoben.
                 let ci = min(max(Int(gx.rounded()), 0), n - 1), cj = min(max(Int(gz.rounded()), 0), n - 1)
                 if overlays.protectMask[cj * n + ci] == 0 { outsideMask += 1 }
             }
@@ -246,35 +192,14 @@ final class RiverCorridorTests: XCTestCase {
         XCTAssertEqual(bedAbove, 0, "Bett über der Uferkante")
         XCTAssertEqual(waterAbove, 0, "Wasser über dem Ufer")
         XCTAssertEqual(pierced, 0, "Korridor über dem Deckel")
-        // Gelände über dem gekappten Deckel im nassen Teil ist die
-        // Schluchtwand bzw. -sohle, die schmaler als das Band ist; auf `main`
-        // tauchen die Bandkanten dort ebenso in den Fels (`ribbonMaxCrossSlope`).
-        // Gemessen (Testwelt n = 384): macOS 6 von 6235 nassen Vertices
-        // (0,1 %), bis 0,28 über dem Deckel, in den Bett-Spalten 0; die
-        // steilere Linux-Welt (glibc) 26 von 7080 (0,37 %), bis 1,10 an den
-        // Uferlinien und 0,48 in den Bett-Spalten. Die Schranke ist 1 % der
-        // nassen Vertices und damit bewusst lockerer als die erste Fassung
-        // (1 % der Querschnitte ≙ 0,2 % der nassen Vertices), die auf Linux
-        // kippte. Die Höhe des Durchstoßes bindet der Wächter nicht: an der
-        // Wand ist sie die Wandhöhe. Streng bleibt die Flussmitte (Thalweg):
-        // macOS 0, Linux 1 von 1416 Querschnitten (Zentrumslinie neben der
-        // Rinne, dort liegt auch das Band auf `main` im Gelände).
         XCTAssertLessThanOrEqual(wetRock, wetVertices / 100, "Gelände sticht oft durch das Wasser")
         XCTAssertLessThanOrEqual(thalwegRock, sections / 500, "Fels in der Flussmitte über dem Deckel")
         XCTAssertEqual(lidHigh, 0, "Deckel weit über dem Wasser (zöge den Fluss vor Grate davor)")
         XCTAssertEqual(outsideMask, 0, "Korridor-Fuß außerhalb der Schutzmaske (Naht zu #238)")
-        // Die Wasserfläche des Bands liegt unter dem Deckel ihres Stützpunkts.
         for (v, p) in zip(mesh.vertices, mesh.profile) {
             XCTAssertLessThanOrEqual(v.y, p.y + 1e-5, "Wasserfläche über dem Deckel")
-            // Ohne Korridor bleibt die Tiefe des Bands unverschoben: Deckel =
-            // eigene Höhe des Vertex (Review #240).
             if p.x == 0 { XCTAssertEqual(v.y, p.y, accuracy: 1e-6, "Band ohne Korridor mit fremdem Deckel") }
         }
-        // Gremium, Befund 2: Band und Korridor tragen DENSELBEN Deckel. Ein
-        // Band mit eigenem Deckel an den Zwischen-Stützpunkten lag je
-        // zweitem Quad hinter dem Bett. Jeder sichtbare Querschnitt findet
-        // seinen Deckel im Profil des Bands wieder (Band-Vertices, die den
-        // vollen Deckel tragen: Korridor-Anteil ab `lidPresence`).
         var lidPairs = 0
         for start in stride(from: 0, to: c.vertices.count, by: k) where c.colors[start].w > 0.5 {
             let lid = c.custom[start].y

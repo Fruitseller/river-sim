@@ -1,25 +1,14 @@
-// Nächste Stufe: Zustand auf doppelte Auflösung. Höhe bikubisch, Begleitfeld
-// bilinear, Härte neu aus der Position.
-//
-// Abfluss und Sediment bilinear und HALBIERT, nicht geviertelt: beides ist
-// ein Durchfluss durch das Texel, keine Fläche, die sich auf die vier Kinder
-// aufteilt. Was durch ein grobes Texel fließt, fließt durch zwei feine
-// nebeneinander (halber Querschnitt je Texel) und dann durch die zwei
-// dahinter noch einmal. Probe am gleichmäßig geneigten Hang: k grobe Texel
-// hangabwärts trägt jedes 4·k (Eigenfläche 4), an derselben Stelle liegen
-// 2·k feine Texel oberhalb, jedes feine trägt also 2·k. Mit einem Viertel
-// begänne die feine Stufe mit dem halben Abfluss.
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 0) uniform sampler2D src_height;
-layout(set = 0, binding = 1) uniform sampler2D src_flux;    // linear
-layout(set = 0, binding = 2) uniform sampler2D src_accum;   // linear
+layout(set = 0, binding = 1) uniform sampler2D src_flux;
+layout(set = 0, binding = 2) uniform sampler2D src_accum;
 layout(set = 0, binding = 3, rg32f) uniform writeonly image2D dst_height;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D dst_flux;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D dst_accum;
 layout(push_constant, std430) uniform Params {
-	vec4 size;    // xy Zielgröße, z Texel je Sim-Zelle (Ziel)
-	vec4 hard_freq;    // Härte-Rauschen: Frequenz je Oktave (1/Zellen)
-	vec4 hard_weight;  // und Gewicht je Oktave (Summe 1)
+	vec4 size;
+	vec4 hard_freq;
+	vec4 hard_weight;
 } pc;
 
 void main() {
@@ -48,8 +37,6 @@ void main() {
 	vec4 a = textureLod(src_accum, uv, 0.0);
 	vec2 cell = (vec2(p) + 0.5) / pc.size.z - 0.5;
 	imageStore(dst_height, p, vec4(h, h, 0.0, 0.0));
-	// Normierung null: der erste Schritt der Stufe verteilt noch nichts und
-	// rechnet sie neu.
 	imageStore(dst_flux, p, vec4(s.r * 0.5, 0.0, s.b * 0.5, s.a));
 	imageStore(dst_accum, p, vec4(a.rgb, hardness_at(cell, pc.hard_freq.xyz, pc.hard_weight.xyz)));
 }

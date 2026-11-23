@@ -4,23 +4,7 @@ import XCTest
 @testable import SimCore
 @testable import SimRender
 
-/// Wächter des Hintergrund-Schritts (Zeitraffer ohne Warten,
-/// `docs/perf-measurements.md` §L): `WorldSession.beginStep` rechnet
-/// Sim-Schritt und Frame-Aufbereitung auf einem eigenen Thread, `Main.gd` holt
-/// das Ergebnis ab.
-///
-/// Zwei Prüfungen hier:
-/// - `BackgroundJob` (die ganze Nebenläufigkeit, godot-frei): Vertrag
-///   ausgeführt — ein Job zur Zeit, Ergebnis genau einmal, `isReady`
-///   blockiert nie, `wait` macht die Schreibzugriffe des Jobs sichtbar;
-/// - die unausführbare Gegenseite als Quelltext: `Main.gd` holt vor jedem
-///   Weltzugriff einen laufenden Schritt ab und wartet im Zeitraffer nie.
-///
-/// Abwarten, Ein-Schritt-zur-Zeit und Bit-Gleichheit im Hintergrund prüft seit
-/// Issue #212 `WorldSessionTests` ausgeführt an der Sitzung.
 final class BackgroundJobTests: XCTestCase {
-
-    // MARK: - Vertrag von BackgroundJob
 
     func testResultIsTakenExactlyOnce() {
         let job = BackgroundJob<Int>(label: "test.once")
@@ -33,9 +17,6 @@ final class BackgroundJobTests: XCTestCase {
         XCTAssertNil(job.take())
     }
 
-    /// Ein fertiges, nicht abgeholtes Ergebnis blockiert den nächsten Start:
-    /// sonst ginge sein Frame verloren (und mit ihm ein Band-Bau, den der
-    /// Render-Zustand schon für ausgeliefert hält).
     func testStartRefusesWhileAJobIsPending() {
         let job = BackgroundJob<Int>(label: "test.refuse")
         let gate = DispatchSemaphore(value: 0)
@@ -50,8 +31,6 @@ final class BackgroundJobTests: XCTestCase {
         XCTAssertEqual(job.take(), 4)
     }
 
-    /// `isReady` ist die Abfrage des Zeitraffers je Frame: sie darf nie auf
-    /// einen rechnenden Job warten. Gezählt wird nur echtes Warten.
     func testReadinessNeverBlocksAndOnlyRealWaitsCount() {
         let job = BackgroundJob<Int>(label: "test.ready")
         job.wait()
@@ -72,9 +51,6 @@ final class BackgroundJobTests: XCTestCase {
         XCTAssertEqual(job.take(), 7)
     }
 
-    /// Der Job läuft NICHT auf dem Aufrufer-Thread, und nach `wait` sieht der
-    /// Aufrufer alles, was er geschrieben hat (Gruppe und Sperre sind die
-    /// Barrieren; ohne sie wäre `terrain` nach dem Abholen ein Datenrennen).
     func testWaitPublishesTheJobsWrites() {
         final class Box { var values = [Int](repeating: 0, count: 4096); var thread = "" }
         let box = Box()
@@ -91,15 +67,6 @@ final class BackgroundJobTests: XCTestCase {
         XCTAssertNotNil(job.take())
     }
 
-    // MARK: - Determinismus
-
-    // MARK: - Quelltext: Main.gd
-
-    /// `Main.gd`: der Zeitraffer beginnt Schritte im Hintergrund und holt sie
-    /// nur ab, wenn sie fertig sind — kein synchroner Schritt, kein synchroner
-    /// Frame in `_process`. Und JEDE Funktion, die die Welt ändert oder ihren
-    /// aktuellen Stand liest, holt vorher einen laufenden Schritt ab
-    /// (`_settle_sim`); sonst käme sein älterer Stand NACH dem neueren an.
     func testMainNeverWaitsInTheTimelapseAndSettlesBeforeTouchingTheWorld() throws {
         let main = try RepoSource.probe("game/scripts/Main.gd")
         let functions = Self.gdFunctions(main.code)
@@ -120,22 +87,15 @@ final class BackgroundJobTests: XCTestCase {
                       && settle.contains("_apply_step(sim.finishStep())"),
                       "_settle_sim wartet ab UND lädt hoch")
 
-        // Aufrufe, die die Welt ändern oder ihren aktuellen Stand lesen.
-        // (`sim.sculpt` ist mit Issue #214 aus der Brücke gefallen — das Spiel
-        // hebt über den Pinsel; die Sitzung hält `sculpt` für die Wächter.)
         let worldCalls = ["sim.step(", "sim.brush(", "sim.generate(", "sim.loadWorld(",
                           "sim.saveWorld(", "sim.recomputeFlow(", "sim.captureDebugReference(",
                           "sim.renderFrame(", "sim.flowArea(", "sim.receivers(",
                           "sim.debugTerrainStats(", "sim.heightDifferenceBytes("]
-        // Ohne eigenes Abholen, mit Grund: vor dem ersten Frame gibt es keinen
-        // Schritt; die Diagnose-Helfer ruft nur `_refresh_debug`, das abholt.
         let exempt: [String: String] = [
             "_ready": "Aufbau, vor dem ersten _process",
             "_update_debug_ui": "nur aus _refresh_debug",
             "_update_debug_difference_texture": "nur aus _refresh_debug",
         ]
-        // `_process` wartet auch für den Pinsel nicht: solange ein Schritt
-        // rechnet, setzt der Strich aus (das Abholen oben lädt ihn hoch).
         let guards: [String: String] = ["_process": "if sculpting and not sim.stepInFlight():"]
         for (name, body) in functions where exempt[name] == nil {
             guard let first = worldCalls.compactMap({ body.range(of: $0)?.lowerBound }).min() else {
@@ -154,7 +114,6 @@ final class BackgroundJobTests: XCTestCase {
         }
     }
 
-    /// GDScript-Funktionen der obersten Ebene: Name → Körper (Code-Sicht).
     private static func gdFunctions(_ code: String) -> [String: String] {
         var result: [String: String] = [:]
         var current: String?
@@ -168,7 +127,6 @@ final class BackgroundJobTests: XCTestCase {
                 current = String(name)
                 body = ""
             } else if !line.isEmpty, !line.hasPrefix("\t"), !line.hasPrefix(" "), current != nil {
-                // Klassen-Ebene (var, const, class …): die Funktion ist zu Ende.
                 result[current!] = body
                 current = nil
             }

@@ -1,23 +1,4 @@
 extends SceneTree
-## Parität der beiden Build-Stempel-Verfahren (Issue #52) — GPU-frei ausführbar:
-##   godot --headless --path game --script res://tests/build_stamp_parity.gd
-##
-## `scripts/build-stamp.sh` (Shell, brennt den Stempel beim Bauen ein) und
-## `game/scripts/BuildStamp.gd` (GDScript, prüft ihn beim Start) berechnen
-## DENSELBEN Hash auf ZWEI Wegen. AGENTS.md verlangt, dass beide bytegleich
-## bleiben — bislang war das eine Review-Zusage. Driften sie auseinander, ist
-## die Folge nicht „Test rot", sondern: jeder Start meldet fälschlich eine
-## veraltete Library, oder — schlimmer — eine WIRKLICH veraltete Library fällt
-## nicht mehr auf.
-##
-## Braucht die GDExtension NICHT: der Vergleich läuft rein auf dem Quellbaum.
-## Damit hat er auch dann noch Aussagekraft, wenn der Extension-Build scheitert.
-##
-## Sinnvoll erst NACH `scripts/build.sh`: dann existiert
-## `Extension/Sources/RiverSimGD/Generated/BuildStamp.swift`, und der Vergleich
-## deckt zusätzlich ab, dass beide Seiten dieselbe Datei ausnehmen.
-##
-## Exit-Code != 0 bei Abweichung.
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 
@@ -37,9 +18,6 @@ func _run() -> void:
 		_fail("scripts/build-stamp.sh nicht gefunden (erwartet: %s)" % script)
 		return
 
-	# Die Shell-Seite selbst ausführen statt ihren Wert durchzureichen: nur so
-	# vergleicht der Test die beiden VERFAHREN und nicht zwei Aufrufe desselben.
-	# build-stamp.sh setzt sein Arbeitsverzeichnis selbst (`cd $(dirname $0)/..`).
 	var out: Array = []
 	var code := OS.execute(script, ["--source"], out, true)
 	if code != 0:
@@ -64,9 +42,6 @@ func _run() -> void:
 		return
 
 	print("Build-Stempel-Parität Shell <-> GDScript")
-	# Erfolgsmarke als LETZTE Zeile vor quit(0), wortwörtlich und ohne
-	# Leerzeichen — genau wie SMOKE_OK/WATER_GEOMETRY_OK/RIVER_RIBBONS_OK:
-	# scripts/godot-test.sh wertet in CI diese Marke, nicht den Exit-Code.
 	print("BUILD_STAMP_PARITY_OK")
 	quit(0)
 

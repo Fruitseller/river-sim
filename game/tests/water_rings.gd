@@ -1,8 +1,4 @@
 extends SceneTree
-## Regression: synthetische Altarm-Overlays dürfen keine geschlossenen blauen
-## Ringe mit trockener Mitte erzeugen. Prüft den öffentlichen Render-Pfad —
-## seit Issue #214 den Frame (`SimNode.renderFrame`, FRAME_SETTLED wie Main.gd)
-## — beim deterministischen Standard-Seed.
 
 const YEARS := 106_000
 const LAKE_CHANNEL := 1
@@ -37,7 +33,7 @@ func _initialize() -> void:
 func _count_enclosed_holes(water: PackedByteArray, n: int) -> int:
 	var count := n * n
 	var state := PackedByteArray()
-	state.resize(count) # 0 = trocken/unbesucht, 1 = Wasser, 2 = trocken/besucht
+	state.resize(count)
 	for k in range(count):
 		state[k] = 1 if water[k * 4 + LAKE_CHANNEL] > VISIBLE_THRESHOLD else 0
 	var queue := PackedInt32Array()

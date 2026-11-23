@@ -1,21 +1,5 @@
 #[compute]
 #version 450
-// Platzierung der Einzelbäume (#236), jedes Bild auf der GPU. Schreibt nur
-// die Bäume, die gerade stehen und im Bild (oder im Schattenbereich) liegen,
-// in vier indirekte MultiMeshes (game/scripts/ForestTrees.gd):
-//   conifer — Nadelbaum in voller Form, im Bild, näher als `lod_dist`
-//   broad   — Laubbaum in voller Form, ebenso
-//   far     — grobe Mischform, im Bild, weiter weg
-//   shadow  — grobe Mischform, nur Schatten, näher als `shadow_range`
-// Je Baum: Standort auf einem festen, verwackelten Gitter je Stufe; Höhe und
-// Verschiebung wie das Gelände (terrain.gdshader, vertex()); Kartensymbol
-// k(d) und Ausdünnung nach Rang; Waldmaske unter der ganzen Krone; Art nach
-// Höhe und Bestands-Rauschen. Was hier nicht steht, rechnet nichts: die CPU
-// schreibt keinen Transform, sie startet nur diesen Pass.
-//
-// Ein Durchlauf je Stufe (push constant `level` ≥ 0) über das Fenster der
-// Stufe um die Kamera; danach EIN Faden mit `level` < 0, der die Zähler in
-// die Kommando-Puffer der MultiMeshes schreibt (gedeckelt auf die Kapazität).
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -35,24 +19,24 @@ layout(set = 0, binding = 12, std430) restrict buffer BroadCmd { uint c[5]; } br
 layout(set = 0, binding = 13, std430) restrict buffer FarCmd { uint c[5]; } far_cmd;
 layout(set = 0, binding = 14, std430) restrict buffer ShadowCmd { uint c[5]; } shadow_cmd;
 layout(set = 0, binding = 15, std140) uniform Params {
-	vec4 view;     // xyz Auge, w hscale
-	vec4 blends;   // height_blend, overlay_blend, bake_blend, relief an (1/0)
-	vec4 relief;   // relief_height_code, relief_geometry_age, sim_year, world_size
-	vec4 grid;     // grid_n, conifer_lo, conifer_hi, –
-	vec4 symbol;   // k_near, d_near, k_exp, k_max
-	vec4 tree;     // thin_exp, tree_height, crown_reach, mask_lo
-	vec4 tree2;    // mask_spread, lod_dist, shadow_range, shadow_margin
-	vec4 caps;     // conifer, broad, far, shadow (Instanzen)
-	vec4 planes[6]; // Frustum, Normale nach außen: xyz·p − w > 0 heißt außen
+	vec4 view;
+	vec4 blends;
+	vec4 relief;
+	vec4 grid;
+	vec4 symbol;
+	vec4 tree;
+	vec4 tree2;
+	vec4 caps;
+	vec4 planes[6];
 } p;
 
 layout(push_constant, std430) uniform Level {
-	ivec2 origin;  // erste Gitterzelle des Fensters
-	ivec2 size;    // Fenstergröße in Zellen
+	ivec2 origin;
+	ivec2 size;
 	float spacing;
 	float rank_lo;
 	float rank_hi;
-	int level;     // < 0: Zähler abschließen
+	int level;
 } lv;
 
 vec2 world_uv(vec2 xz) {
@@ -70,7 +54,6 @@ float forest_at(vec2 uv) {
 	return p.blends.y < 1.0 ? mix(textureLod(forest_prev_tex, uv, 0.0).r, f, p.blends.y) : f;
 }
 
-// Wie terrain.gdshader `relief_lift`.
 float relief_lift(vec2 uv) {
 	if (p.blends.w < 0.5) {
 		return 0.0;
@@ -82,7 +65,6 @@ float relief_lift(vec2 uv) {
 	return (cur.r - 0.5) / max(p.relief.x, 1e-6) * smoothstep(0.0, p.relief.y, p.relief.z);
 }
 
-// pcg3d (Jarzynski & Olano 2020), vier Werte 0 … 1.
 vec4 hash4(ivec2 c, uint salt) {
 	uvec3 v = uvec3(uvec2(c + ivec2(65536)), salt);
 	v = v * 1664525u + 1013904223u;
@@ -93,7 +75,6 @@ vec4 hash4(ivec2 c, uint salt) {
 	return vec4(vec3(v), float(w)) / 4294967295.0;
 }
 
-// Wertrauschen wie im Terrain-Shader (`vnoise`), für Bestände.
 float vhash(vec2 c) {
 	const vec2 k = vec2(0.3183099, 0.3678794);
 	vec2 x = fract(c * k) * 17.0 + k.yx;
@@ -111,7 +92,6 @@ float vnoise(vec2 q) {
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 0.5 + 0.5;
 }
 
-// Kugel gegen das Frustum, `grow` weitet es (Schattenwerfer außerhalb).
 bool in_frustum(vec3 c, float r, float grow) {
 	for (int i = 0; i < 6; i++) {
 		if (dot(p.planes[i].xyz, c) - p.planes[i].w > r + grow) {
@@ -121,8 +101,6 @@ bool in_frustum(vec3 c, float r, float grow) {
 	return true;
 }
 
-// Instanz: 3×4-Transform zeilenweise (Godots MultiMesh-Format), dann
-// INSTANCE_CUSTOM (Nadelbaum-Anteil, Laubfarbe).
 void write_con(uint i, vec4 r0, vec4 r1, vec4 r2, vec4 cu) {
 	con_buf.v[i * 4u] = r0; con_buf.v[i * 4u + 1u] = r1;
 	con_buf.v[i * 4u + 2u] = r2; con_buf.v[i * 4u + 3u] = cu;
@@ -164,7 +142,6 @@ void main() {
 	if (any(lessThanEqual(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) {
 		return;
 	}
-	// Billige Abbrüche zuerst: Rang (eine Höhe), dann die Maske in der Mitte.
 	float hraw = height_at(uv);
 	vec3 base = vec3(xz.x, hraw * p.view.w, xz.y);
 	float d = max(distance(p.view.xyz, base), 1e-3);
@@ -181,11 +158,6 @@ void main() {
 	}
 	vec4 r2 = hash4(g, salt + 1u);
 	float s = mix(0.75, 1.2, r2.x);
-	// Maske unter der ganzen Krone: Mitte, acht Punkte am Rand und vier auf
-	// halbem Weg. Die halben fangen schmale Flüsse und Wände, über die ein
-	// großer Baum mit Rand-Abgriffen allein hinwegreichte; die diagonalen
-	// Ecken von Schnee- und Fels-Zellen, in die die bilineare Maske sonst
-	// hineinläuft.
 	float reach = p.tree.z * k * s / world;
 	const vec2 dirs[8] = vec2[8](vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
 		vec2(0.7071, 0.7071), vec2(-0.7071, 0.7071), vec2(0.7071, -0.7071), vec2(-0.7071, -0.7071));
@@ -201,8 +173,6 @@ void main() {
 	}
 	base.y += relief_lift(uv);
 
-	// Nadelbaum-Anteil wie im Kronendach (`canopy()`), mit mehr Nadelbäumen
-	// (Vorbild f, e): Höhe plus zwei Bestands-Rauschskalen.
 	vec2 swp = xz + world * 0.5;
 	float stand = vnoise(swp * 0.55 + vec2(3.7, 11.3));
 	float region = vnoise(swp * 0.13 + vec2(19.1, 5.4));
@@ -214,7 +184,6 @@ void main() {
 	vec3 conif = vec3(0.024, 0.058, 0.034);
 	vec3 tint = mix(decid, conif, con) * mix(0.75, 1.25, r2.w);
 
-	// Nadelbäume schlanker und höher, Breite je Baum gestreut.
 	float h = p.tree.y * size * k * mix(1.0, 1.15, con);
 	float w = h * mix(0.85, 1.15, fract(r.w * 7.0)) * mix(1.0, 0.85, con);
 	float a = r2.z * 6.2831853;
@@ -228,9 +197,6 @@ void main() {
 	vec3 centre = base + vec3(0.0, h * 0.5, 0.0);
 	float radius = h * 0.7;
 	if (in_frustum(centre, radius, 0.0)) {
-		// Formwechsel je Baum gestreut, keine Kante im Bild.
-		// Nah die eigene Form je Art (die Mischform nur für Grob und
-		// Schatten); der Formwechsel je Baum gestreut, keine Kante im Bild.
 		if (d < p.tree2.y * mix(0.85, 1.15, fract(r.z * 13.0))) {
 			if (con >= 0.5) {
 				uint i = atomicAdd(counts.n[0], 1u);

@@ -1,57 +1,20 @@
 import Foundation
 import SimCore
 
-/// Material des Mäandergürtels (Issue #174, Paket C Teil 2): Sand- und
-/// Kiesbänke, Scroll-Bars und die Verlandung der Altarme, je Zelle.
-///
-/// Reine Render-Ableitung aus dem Sim-Zustand von Paket B, zustandslos, ändert
-/// das Terrain nie (Muster wie `ForestCanopyMask`):
-///  1. **Sand** nur auf der JUNGEN Gleithang-Bank direkt am Gerinne: jung
-///     nach `Terrain.barAge` (`WaterRender.barSandYearsLo/Hi`) UND nah an der
-///     aktuellen Zentrumslinie (`barSandReachLo/Hi`, in Kanalbreiten). Was der
-///     Lauf früher überstrichen hat, ist Aue, kein Sand.
-///  2. **Pionier-Grün** dahinter: die Sim setzt den Bewuchs beim Stempeln auf
-///     0 und lässt ihn über Jahrhunderte nachwachsen; die junge Bank liest
-///     deshalb über `barPioneer` grüner, statt als kahler Trockenrasen.
-///  3. **Scroll-Bars** als leise Rippen im Bewuchs über den Isolinien des
-///     Bankalters (jede Isolinie ist eine frühere Lage des Gleithangs). Die
-///     Höhe kann sie auf diesem Gitter nicht tragen; Senken sind grüner,
-///     Rücken magerer — nie heller Sand. Wo die Rippen enger als
-///     `barScrollMinSpacingLo` Zellen stünden, blenden sie aus (Aliasing).
-///  4. **Altarme** färben über ihr Alter (`MeanderState.oxbowAge`): Ried in
-///     der feuchten Senke, später ein Vegetationsbogen. Das Wasserband blendet
-///     darüber wie bisher über `WaterRender.oxbowVisibleYears` aus.
-///
-/// Leser: `TerrainColorRenderer` (Materialgewichte, Sand im A-Kanal der
-/// Makrofarbe) und `WaterProtectMask` (kein Wald, keine Verschiebung auf
-/// frischen Bänken). Den Cache hält `RenderState`. Kalibrierung:
-/// `SimCore.WaterRender` § Mäandergürtel im Render; Wächter:
-/// `SimCoreTests/BarMaterialTests.swift`.
 public enum BarMaterial {
 
-    /// `Sendable` (Issue #201): reiner Wert-Puffer (nur `[Float]`-Felder), die
-    /// `empty`-Konstante ist globales `let`. Öffentliche Structs bekommen keine
-    /// implizite Konformität, hier ist sie vollständig geprüft.
     public struct Field: Equatable, Sendable {
-        /// Sandgewicht 0 … 1 (junge Bank am Gerinne).
         public var sand: [Float]
-        /// Verschiebung des Vegetationsgewichts (−1 … +1): Pionier-Grün auf
-        /// junger Bank, Rippen-Senken und alte Altarm-Bögen grüner,
-        /// Rippen-Rücken magerer.
         public var vegShift: [Float]
-        /// Ried-Gewicht 0 … 1 (verlandender Altarm): Makrofarbe olivbraun.
         public var reed: [Float]
 
         public static let empty = Field(sand: [], vegShift: [], reed: [])
 
-        /// Passt das Feld zu einem n×n-Gitter?
         public func fits(_ count: Int) -> Bool {
             sand.count == count && vegShift.count == count && reed.count == count
         }
     }
 
-    /// Feld für das ganze Gitter. Ohne Bank-Zustand (`barAge` leer oder
-    /// falsch lang) bleiben Sand und Rippen 0; Altarme wirken trotzdem.
     public static func field(_ terrain: Terrain) -> Field {
         let n = terrain.cfg.n
         let cnt = n * n
@@ -80,10 +43,6 @@ public enum BarMaterial {
                                 age: a, gradientYearsPerCell: ageGradient(pa, i, j, n))
                             let s = WaterRender.barSand(age: a, lineDistanceWidths: Double(pn[k]))
                             ps[k] = Float(s)
-                            // Hinter dem Sand: Pionier-Grün auf der jungen Bank,
-                            // die Scroll-Rippen als leise Bewuchs-Bänder
-                            // (Senke +, Rücken −). Hier noch OHNE den Sand-
-                            // Abzug: er folgt nach dem Entsprenkeln (s. unten).
                             pv[k] = Float(WaterRender.barPioneer(age: a)
                                           + WaterRender.barScrollVegGain * ripple)
                         }
@@ -94,19 +53,12 @@ public enum BarMaterial {
 
         if hasBars {
             sand = despeckle(sand, n: n)
-            // Auf Sand wirkt weder Pionier-Grün noch Rippe — auf dem Sand, der
-            // NACH dem Entsprenkeln bleibt. Mit dem rohen Sand gerechnet verlor
-            // eine entfernte Sandzelle ihren Sand UND ihr Grün (kahler Punkt).
             for k in 0..<cnt { vegShift[k] *= 1 - sand[k] }
         }
         stampOxbows(terrain, n: n, barAge: hasBars ? age : [], vegShift: &vegShift, reed: &reed)
         return Field(sand: sand, vegShift: vegShift, reed: reed)
     }
 
-    /// Einzelne Sandzellen ohne Bank daneben (feste Läufe stempeln je Schritt
-    /// einzelne Zellen frisch) sind keine Bank, sondern Sprenkel quer über die
-    /// Aue — auf der Draufsicht als Pünktchen sichtbar. Sand bleibt nur, wo
-    /// genug der 8 Nachbarn selbst Sand tragen (`barSandNeighbours*`).
     private static func despeckle(_ sand: [Float], n: Int) -> [Float] {
         var out = sand
         let lo = WaterRender.barSandNeighboursLo, hi = WaterRender.barSandNeighboursHi
@@ -130,13 +82,6 @@ public enum BarMaterial {
         return out
     }
 
-    /// Abstand jeder BANK-Zelle (`barAge` ≥ 0) zur nächsten AKTUELLEN
-    /// Zentrumslinie in örtlichen Kanalbreiten (Breite aus dem Abfluss,
-    /// `MeanderState.beltWidthCells`, dieselbe Kurve wie Bett und Band).
-    /// Gemessen bis `reachWidths`, sonst `.infinity`. Punkt-Strecke-Abstand je
-    /// Knotenpaar, Breite gemittelt. Parallel über Zeilenbereiche: jede
-    /// Strecke liegt in den Zeilenbändern, die ihr Kasten berührt, und jeder
-    /// Bereich schreibt nur seine Zeilen (Minimum, reihenfolgeunabhängig).
     static func lineDistance(_ terrain: Terrain, barAge: [Double], reachWidths: Double) -> [Float] {
         let n = terrain.cfg.n, cnt = n * n
         var dist = [Float](repeating: .infinity, count: cnt)
@@ -166,7 +111,6 @@ public enum BarMaterial {
             }
         }
         guard !segments.isEmpty else { return dist }
-        // Zeilenbänder → Strecken, deren Kasten sie berührt.
         let band = 8
         var buckets = [[Int32]](repeating: [], count: (n + band - 1) / band)
         for (si, sg) in segments.enumerated() {
@@ -205,8 +149,6 @@ public enum BarMaterial {
         return dist
     }
 
-    /// Betrag des Altersgradienten (Jahre je Zelle) über die Nachbarn, die
-    /// selbst Bank sind; 0, wo keine Nachbarbank da ist.
     @inline(__always)
     private static func ageGradient(_ pa: UnsafePointer<Double>, _ i: Int, _ j: Int, _ n: Int) -> Double {
         let k = j * n + i
@@ -222,11 +164,6 @@ public enum BarMaterial {
         return (gx * gx + gz * gz).squareRoot()
     }
 
-    /// Ried und Vegetationsbogen der Altarme. Dieselben Schleifen wie das
-    /// Wasserband (`oxbowMinimumNodes`, Trimmung der Hals-Enden), gestempelt
-    /// über die Bandbreite (`oxbowHalfWidthCells`). Je Zelle zählt der JÜNGSTE
-    /// Altarm; eine jüngere Bank (`barAge` kleiner als das Altarm-Alter) hat
-    /// den Bogen überschüttet und gewinnt.
     private static func stampOxbows(_ terrain: Terrain, n: Int, barAge: [Double],
                                     vegShift: inout [Float], reed: inout [Float]) {
         let oxbows = terrain.meander.oxbows, ages = terrain.meander.oxbowAge
@@ -243,9 +180,6 @@ public enum BarMaterial {
                 let node = loop[nodeIndex]
                 guard node.x.isFinite, node.z.isFinite, abs(node.x) < 1e9, abs(node.z) < 1e9 else { continue }
                 let ci = Int(node.x.rounded()), cj = Int(node.z.rounded())
-                // Ein Knoten weiter als `reach` jenseits des Gitters stempelt
-                // nichts (Untergrenze über Obergrenze wäre ein Abbruch,
-                // wie bei `WaterFieldRenderer.stampCorridor`).
                 let jLo = max(0, cj - reach), jHi = min(n - 1, max(0, cj + reach))
                 let iLo = max(0, ci - reach), iHi = min(n - 1, max(0, ci + reach))
                 guard jLo <= jHi, iLo <= iHi else { continue }

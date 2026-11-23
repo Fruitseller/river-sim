@@ -2,38 +2,18 @@ import XCTest
 
 @testable import SimRender
 
-/// Wächter für `smoothstep` und `clamp01` (`SimRender/RenderSupport.swift`) —
-/// die gemeinsamen Klemmen und Rampen für das Render-Modul (Kaskaden-Übergabe
-/// und Mündungs-Fade der Bänder, Klippen-Gewicht der Materialien, Abfluss-Rampe,
-/// Kanal-Deckkraft, Bilinear-Gewichte und Meeresgrund-Rampe).
-///
-/// Dieselben zwei Zusagen wie bei `byte01` (s. `RenderByteTests`): an der
-/// DARSTELLUNG ändert sich nichts (bit-identisch zu den Fassungen, die sie
-/// ersetzt hat), und ein NaN in `x` fällt auf 0, statt durch die Rampe zu
-/// wandern. Reiner Rechen-Wächter, kein Terrain — Mikrosekunden, gehört also in
-/// die Pflichtsuite.
 final class RenderRampTests: XCTestCase {
 
-    /// Die Schreibweise, die vor der Vereinheitlichung von Hand in
-    /// `RiverRibbonRenderer` und als privater Zwilling in
-    /// `TerrainColorRenderer` stand. Bewusst hier dupliziert: sie ist die
-    /// Referenz, gegen die `smoothstep` bit-identisch sein muss — und der
-    /// einzige Ort, an dem sie noch stehen darf.
     private func legacySmoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
         let t = min(max((x - edge0) / (edge1 - edge0), 0), 1)
         return t * t * (3 - 2 * t)
     }
 
-    /// Die frühere Klemme `min(max(x, 0), 1)` mit dem Wert zuerst, wie sie vor
-    /// `clamp01` in `RenderSupport.swift`, `TerrainColorRenderer` und
-    /// `RiverRibbonRenderer` stand.
     private func legacyClamp01(_ x: Double) -> Double {
         min(max(x, 0), 1)
     }
 
     func testSmoothstepMatchesTheHandwrittenRampForFiniteValues() {
-        // Echte Kanten-Paarungen aus dem Modul plus ein Raster quer über und
-        // über beide Kanten hinaus: eine verschobene Klemme fiele hier auf.
         let edges: [(Double, Double)] = [(0, 1), (0.004, 0.026), (0.35, 0.65), (0, 320)]
         for (e0, e1) in edges {
             let span = e1 - e0
@@ -45,10 +25,6 @@ final class RenderRampTests: XCTestCase {
         }
     }
 
-    /// Der Unterschied zur alten Schreibweise, der KEINE Darstellungsänderung
-    /// ist: die Klemme steht mit der Konstanten zuerst, wischt NaN also weg
-    /// (`min`/`max` liefern bei NaN den ERSTEN Operanden). Die alte Fassung
-    /// reichte es durch die ganze Rampe.
     func testSmoothstepWipesNaNInsteadOfPassingItThrough() {
         XCTAssertEqual(smoothstep(0, 1, Double.nan), 0)
         XCTAssertTrue(legacySmoothstep(0, 1, Double.nan).isNaN,

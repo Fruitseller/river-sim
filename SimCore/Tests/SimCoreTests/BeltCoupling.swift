@@ -1,13 +1,7 @@
 import XCTest
 @testable import SimCore
 
-/// Wächter der Kopplung Mäandergürtel ↔ D8-Entwässerung (Issue #187,
-/// `Terrain.coupleBeltToDrainage`). Messreihe: docs/zielbild-measurements.md
-/// § Gürtel und Entwässerung: Avulsion (#187).
 final class BeltCouplingTests: XCTestCase {
-    /// Die erste Prüfung liegt bei Jahr 0, die folgenden höchstens einen
-    /// kleinen Aufruf hinter der gemeinsamen 1000-Jahr-Marke. Ein Abzählen
-    /// bis zum SchrittENDE würde dt 100 um 900 Jahre gegen dt 1000 verschieben.
     func testCouplingClockUsesYearsAndKeepsTheRemainder() {
         for dt in [15.0, 100, 1000] {
             let t = Terrain(allocating: renderConfig(n: 8), seed: 1)
@@ -59,8 +53,6 @@ final class BeltCouplingTests: XCTestCase {
         }
     }
 
-    /// Kunstwelt: ein V-Tal entlang Zeile 30, nach Osten fallend. Jede Zelle
-    /// entwässert ins Tal, das Tal nach Osten an den Rand — EIN Fluss.
     private func valleyWorld(_ configure: (inout SimConfig) -> Void = { _ in }) -> Terrain {
         var c = renderConfig(n: 64)
         c.meanderBeltMinCells = 100
@@ -80,10 +72,6 @@ final class BeltCouplingTests: XCTestCase {
         return t
     }
 
-    /// Eine Linie, die dem Tal bis x = 20 folgt, dann bis x = 50 auf Zeile 40
-    /// ausweicht (zehn Zellen neben dem Fluss, länger als
-    /// `meanderBeltAbandonMinWidths`) und danach zurückkehrt — mit einem
-    /// geerbten, viel zu großen Abfluss.
     private func detourLine(_ t: Terrain) -> RiverChannel {
         var pts: [MeanderNode] = []
         for x in 4...20 { pts.append(MeanderNode(x: Double(x), z: 30)) }
@@ -95,9 +83,6 @@ final class BeltCouplingTests: XCTestCase {
                                    config: t.cfg)
     }
 
-    /// Avulsion: das abgekoppelte Stück wird durch den D8-Weg ersetzt, das
-    /// verlassene Gerinne wird Altarm, und der Abfluss kommt aus dem D8-Netz,
-    /// nicht aus dem geerbten Wert. Der gekoppelte Oberlauf bleibt, wo er war.
     func testDetachedStretchAvulsesIntoTheDrainage() {
         let t = valleyWorld { $0.meanderBeltAvulsionYears = 0 }
         let line = detourLine(t)
@@ -110,26 +95,17 @@ final class BeltCouplingTests: XCTestCase {
         guard let main = t.meander.channels.max(by: { ($0.discharge.last ?? 0) < ($1.discharge.last ?? 0) }) else {
             return XCTFail("kein Lauf")
         }
-        // Im Tal heißt: innerhalb der Kopplungs-Reichweite (halbe Breite plus
-        // Spielraum) — die Rampe am Absprung liegt darin und bleibt.
         let off = main.nodes.filter { $0.x > 6 && $0.x < 60 }.map { abs($0.z - 30) }.max() ?? .infinity
         let reach = 0.5 * MeanderState.beltWidthCells(discharge: main.discharge.max()!, config: t.cfg)
             + t.cfg.meanderBeltCouplingSlackCells
         XCTAssertLessThanOrEqual(off, reach, "Lauf liegt nicht im Tal (größter Abstand \(off) Zellen)")
-        // Kein Erben: der Abfluss ist das Einzugsgebiet unter dem Lauf.
         let maxArea = t.area.max()! / cellArea
         XCTAssertLessThanOrEqual(main.discharge.max()!, maxArea * 1.0001, "Abfluss geerbt statt aus D8")
-        // Der gekoppelte Oberlauf bleibt an seiner Stelle (bis auf das
-        // Neu-Abtasten an der Ecke vor dem Absprung).
         let upper = main.nodes.filter { $0.x > 5 && $0.x < 17 }
         XCTAssertFalse(upper.isEmpty)
         XCTAssertTrue(upper.allSatisfy { abs($0.z - 30) < 1e-6 }, "gekoppelter Oberlauf verschoben: \(upper.filter { abs($0.z - 30) >= 1e-6 })")
     }
 
-    /// Avulsion ist ein Ereignis mit Rate 1/τ (`meanderBeltAvulsionYears`):
-    /// eine Abkopplung, die nur einen kurzen Schritt besteht, springt bei sehr
-    /// großem τ nicht — die Linie behält ihren Umweg, ihr Abfluss kommt
-    /// trotzdem aus D8 und nicht aus dem geerbten Wert.
     func testAvulsionIsARateNotATrigger() {
         let t = valleyWorld { $0.meanderBeltAvulsionYears = 1e12 }
         t.meander.channels = [detourLine(t)]
@@ -160,24 +136,17 @@ final class BeltCouplingTests: XCTestCase {
                           "Kopplung glättet die Bögen mit jeder Prüfung: \(values)")
     }
 
-    /// Eine Linie ganz ohne D8-Wasser darunter verschwindet; der Fluss bekommt
-    /// seine Linie aus dem D8-Netz (auch nach einem Pinselstrich, der die alte
-    /// Linie löscht, Review #187).
     func testRiverWithoutLineIsRetraced() {
         let t = valleyWorld()
         t.meander.channels = [RiverChannel(nodes: (4...60).map { MeanderNode(x: Double($0), z: 50) },
                                            discharge: Array(repeating: 50_000, count: 57))]
         t.coupleBeltForTests(dt: 100)
-        // (Am Ostrand läuft ein echter D8-Lauf den Gitterrand entlang zum Tal.)
         let stray = t.meander.channels.filter { $0.nodes.contains { $0.z > 45 && $0.x > 10 && $0.x < 55 } }
         XCTAssertTrue(stray.isEmpty, "Linie ohne Fluss überlebt: \(stray.map { "\($0.nodes.first!)…\($0.nodes.last!) Q \($0.discharge.last!)" })")
         XCTAssertTrue(t.meander.channels.contains { ch in
             ch.nodes.count > 20 && ch.nodes.allSatisfy { abs($0.z - 30) < 1.0 } }, "Talfluss ohne Linie")
     }
 
-    /// Ein Pinselstrich darf das Wieder-Trassieren nicht bis zum nächsten
-    /// 1000-Jahr-Termin verzögern. Der echte Schritt muss nach dem Verwerfen
-    /// gestörter Linien noch im selben Aufruf neu koppeln.
     func testDisturbedLineForcesCouplingBeforeTheNextTick() {
         let t = valleyWorld()
         t.coupleBeltForTests(dt: 1000)
@@ -195,18 +164,12 @@ final class BeltCouplingTests: XCTestCase {
                              "Pinselstrich wartet auf den nächsten regulären Kopplungstermin")
     }
 
-    /// Gürtel mit wandernden Läufen auf kleinem Gitter (`meanderBeltMinCells`
-    /// = 100, wie `WorldSnapshotTests`): `testDeterminism` (n = 96) hat keinen
-    /// wandernden Lauf und bewacht den Gürtel nicht (Review #187).
     private func beltConfig() -> SimConfig {
         var c = renderConfig(n: 128)
         c.meanderBeltMinCells = 100
         return c
     }
 
-    /// Sechs Seeds und gemeinsame Stützstellen: einzelne Realisierungen auf
-    /// dem groben Gitter streuen mit der System-libm. Die Ersetzungszahl muss
-    /// Jahre zählen; das Sinuositäts-Mittel darf dabei nicht auseinanderlaufen.
     func testBeltStatisticsAreStepSizeIndependent() {
         var means: [Double] = []
         var replacements: [Int] = []
@@ -247,10 +210,6 @@ final class BeltCouplingTests: XCTestCase {
         XCTAssertEqual(a.fingerprint(), b.fingerprint(), "Gürtel nicht deterministisch")
     }
 
-    /// Alter je Teilschritt (Review #187): nach EINEM 1000-Jahr-Schritt tragen
-    /// die neuen Bänke ihr Alter am Schrittende (0 … 1000), nicht alle 0 — und
-    /// die Verteilung gleicht der aus zehn 100-Jahr-Schritten. Vorher lagen
-    /// gemessen alle 9971 neuen Bankzellen bei exakt 0.
     func testBarAgesFollowTheSubsteps() {
         func youngAges(_ dt: Double) -> [Double] {
             let t = Terrain(config: beltConfig(), seed: 1337)
@@ -271,9 +230,6 @@ final class BeltCouplingTests: XCTestCase {
     }
 }
 
-// Kopplung Mäandergürtel ↔ D8-Entwässerung (Issue #187). Messläufe hinter
-// RS_MEASURE; Befunde: docs/zielbild-measurements.md § Gürtel und
-// Entwässerung: Avulsion (#187).
 final class BeltCouplingDiagnostics: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
@@ -300,11 +256,6 @@ final class BeltCouplingDiagnostics: XCTestCase {
         #endif
     }
 
-    /// Produktionsgitter und Produktionswerte bei allen drei Takten: jedes
-    /// Zeitmittel über die Matrix-Seeds muss dieselben Punkte 9–13 erfüllen.
-    /// Der kleine Pflicht-Wächter oben prüft die Takt-Mechanik; dieser Lauf
-    /// bewacht auch Änderungen der Produktions-Kalibrierung und bleibt wegen
-    /// der neun 20k-Welten hinter RS_MEASURE.
     func testBeltProductionDtAcceptanceDiagnostic() throws {
         try skipUnlessMeasuring()
         let dts: [Double] = env["RS_DT"].flatMap { Double($0) }.map { [$0] } ?? [15, 100, 1000]
@@ -339,9 +290,6 @@ final class BeltCouplingDiagnostics: XCTestCase {
         }
     }
 
-    /// Welcher Pass ändert das Querprofil zwischen Stempel und Schrittende?
-    /// Gleiche Stützstellen wie im ersten Zeitmittel-Fenster, fester Tiefland-
-    /// Ausschnitt je Schritt. So bleibt die Auswahl der Läufe vergleichbar.
     func testBeltProfilePassesDiagnostic() throws {
         try skipUnlessMeasuring()
         let dt = Double(env["RS_DT"] ?? "1000")!
@@ -375,8 +323,6 @@ final class BeltCouplingDiagnostics: XCTestCase {
         }
     }
 
-    /// Prüft, ob der Stempel das am Schrittanfang trockene Bett durch seinen
-    /// eigenen Abtrag für einen See hält (`hf` bleibt während des Stempels fest).
     func testBeltFalseLakeGateDiagnostic() throws {
         try skipUnlessMeasuring()
         let dt = Double(env["RS_DT"] ?? "1000")!
@@ -404,15 +350,9 @@ final class BeltCouplingDiagnostics: XCTestCase {
         print("[BELT-SEE] dt \(dt), Schritte \(steps), frisch gesperrt \(falseWet) von \(channel), Spitze \(peak)")
     }
 
-    /// `TerrainAging.testAgingTrajectoryOver100k` (n = 160, Großform vor #174)
-    /// mit Varianten (`RS_VARIANT`, Schlüssel wie `MeanderBeltCalibration`,
-    /// `RS_SEED`): robustes Relief in Jahr 0 / 50.000 / 100.000 und jeder neue
-    /// Höchststand des Gipfels mit Ort (so fand sich der Schutthügel am Ende
-    /// gesperrter Gürtelbetten, docs/zielbild-measurements.md § Avulsion).
     func testAgingTrajectoryVariantsDiagnostic() throws {
         try skipUnlessMeasuring()
         let c = MeanderBeltCalibration.variantConfig()
-        // Nur die Varianten-Schlüssel übernehmen, Basis wie der Wächter.
         var base = SimConfig(); base.n = 160; base.world = calibrationWorld
         base.rangeLandform = calibrationRangeLandform
         base.meanderBeltCoupling = c.meanderBeltCoupling
@@ -447,10 +387,6 @@ final class BeltCouplingDiagnostics: XCTestCase {
                      t.meander.channels.count, t.meander.channels.filter { MeanderState.migrates($0, t.cfg) }.count))
     }
 
-    /// Verlauf je Schritt: Zahl der Läufe, Knoten, wandernde Läufe, Ereignisse
-    /// der Kopplung. RS_SEED, RS_YEARS (Standard 20.000), RS_DT (1000),
-    /// RS_EVERY (Druck-Abstand, 1000), RS_VARIANT; RS_SEGLOG=<Jahr> druckt ab
-    /// diesem Jahr den Aufbau der Läufe wandernder Größe (`beltCouplingLog`).
     func testBeltCouplingHistoryDiagnostic() throws {
         try skipUnlessMeasuring()
         let seed = UInt32(env["RS_SEED"] ?? "1337")!

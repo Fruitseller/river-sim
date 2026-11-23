@@ -1,40 +1,16 @@
 extends SceneTree
-## Headless-Wächter des Kronendachs (#152):
-##   godot --headless --path game --script res://tests/canopy.gd
-##
-## Wo Wald steht, ist headless in SimCoreTests/CanopyTests.swift gepinnt; hier
-## zählt der Weg durch Brücke, Main und Shader:
-##  - jede `canopy_*`-Zahl kommt über die Brücke (SimCore.CanopyRender), ist im
-##    Terrain-Shader default-frei deklariert und auf dem Material gesetzt;
-##  - die Waldmaske liegt als Textur am Material und folgt Pinselstrich,
-##    Neugenerieren und Laden (die Pfade von Main, nicht nur die Brücke);
-##  - Einzelbäume (#236) nur mit RenderingDevice (headless: Kronendach), das
-##    Dach hebt dann nicht mehr an; `RS_NO_TREES` zeigt das Kronendach;
-##  - Pinselring und Kameraziel liegen auf der sichtbaren Fläche (mit Bäumen
-##    auf dem Boden, ohne auf dem Dach);
-##  - Materialverteilung (#174 D): jede `material_*`-Zahl kommt über die Brücke
-##    (SimCore.MaterialRender), ist default-frei deklariert und gesetzt, die
-##    Bodenbedeckung liegt in Gittergröße am Material und folgt dem Pinsel.
-## Erzeugt einen `SimNode` samt Produktionswelt (Laufzeit wie `smoke.gd`).
 
 const BuildStamp = preload("res://scripts/BuildStamp.gd")
 const Main = preload("res://scripts/Main.gd")
 const SHADER := "res://shaders/terrain.gdshader"
 
-# Rohwert von FrameTrigger.settled (Main.gd FRAME_SETTLED).
 const FRAME_SETTLED := 0
 
 var failures := 0
 var main: Node
 var done := false
-# Monotone Uhr für die Probe-Frames (SETTLED ist ungedrosselt, die Uhr läuft
-# trotzdem weiter, damit kein Deckel je zuschlägt).
 var frame_clock := 0.0
 
-## Ein frischer Render-Frame über die Brücke (Issue #214): die Masken und die
-## Bodenbedeckung kommen aus dem Frame — derselbe Weg, den Main.gd fährt. Ohne
-## Weltänderung zwischen Mains letztem Upload und diesem Frame sind die Puffer
-## bit-gleich zu dem, was Main hochgeladen hat.
 func _frame(sim: Object) -> Dictionary:
 	frame_clock += 1.0
 	return sim.renderFrame(FRAME_SETTLED, frame_clock)
@@ -98,8 +74,6 @@ func _check_uniforms(main: Node) -> void:
 	_check(tex != null and tex.get_width() == main.N and tex.get_height() == main.N,
 		"Waldmaske liegt in Gittergröße am Material")
 
-## Materialverteilung (#174 D): Kalibrierung über die Brücke, default-frei
-## im Terrain-Shader, gesetzt; die Bodenbedeckung kommt mit dem Frame.
 func _check_material(main: Node) -> void:
 	var calib: Dictionary = Main.calibration(main.sim, "material")
 	_check(not calib.is_empty(), "Brücke liefert die Material-Tabelle")
@@ -123,11 +97,6 @@ func _check_material(main: Node) -> void:
 	var cover: PackedByteArray = _frame(main.sim)["cover"]
 	_check(cover.size() == main.N * main.N * 4, "Bodenbedeckung ist RGBA8 in Gittergröße")
 
-## Einzelbäume (#236) gibt es genau dann, wenn ein RenderingDevice da ist
-## (der Compute-Pass braucht es) und `RS_NO_TREES` fehlt; headless, also in
-## CI, bleibt das Kronendach von #152. Mit Bäumen weiß der Terrain-Shader davon
-## (`tree_instances`: keine Anhebung, keine gemalten Kronen), und es gibt die
-## vier Listen (Nadel-, Laubbaum nah, fern, Schatten).
 func _check_tree_instances(main: Node) -> void:
 	var want: bool = Main.ForestTrees.available() and not OS.has_environment("RS_NO_TREES")
 	var trees: Node3D = main.forest_trees
@@ -137,19 +106,11 @@ func _check_tree_instances(main: Node) -> void:
 	if trees != null:
 		_check(trees.lists.size() == 4, "vier Baumlisten (%d)" % trees.lists.size())
 
-## Pinselring und Kameraziel liegen auf der sichtbaren Fläche: Sim-Höhe plus
-## Dachhöhe (mit Einzelbäumen null) an
-## einer Zelle mit geschlossenem Wald (ohne Verschiebung, die prüft relief.gd).
-## Am Bestandsrand hebt der Terrain-Vertex-Shader nach der geglätteten Maske
-## (`canopy_lift_smooth_texels`) und damit weniger; dort muss die sichtbare
-## Fläche genauso tief liegen (Review Neon Nr. 2).
 func _check_visible_surface(main: Node) -> void:
 	main.relief_lift_cache = PackedFloat32Array()
 	main.relief_bake_frame = -1
 	var forest: PackedByteArray = _frame(main.sim)["forest"]
 	var n: int = main.N
-	# Innen: 6×6 geschlossener Wald um das Quad (i … i+1, j … j+1), so reicht
-	# auch die Glättung beider Ecken nur über Wald.
 	var cell := -1
 	for j in range(3, n - 4):
 		for i in range(3, n - 4):
@@ -180,10 +141,6 @@ func _check_visible_surface(main: Node) -> void:
 	_check(absf(main.cam_target.y - (sim_y + height)) < 1e-4, "Kameraziel liegt auf der sichtbaren Fläche")
 	_check_canopy_edge(main, forest)
 
-## Bestandsrand: ein Gitterpunkt mit voller Maske, dessen geglättete Maske
-## unter `canopy_lift_lo` fällt. Der Terrain-Vertex-Shader hebt ihn nicht
-## (`lift_f = min(v_forest, sm * 0.25)`); hier unabhängig davon nachgerechnet
-## aus der Maske des Frames.
 func _check_canopy_edge(main: Node, forest: PackedByteArray) -> void:
 	var n: int = main.N
 	var calib: Dictionary = main.canopy_calib
@@ -203,7 +160,7 @@ func _check_canopy_edge(main: Node, forest: PackedByteArray) -> void:
 			if expect > height * 0.5:
 				continue
 			if main.forest_trees != null:
-				expect = 0.0  # mit Einzelbäumen hebt das Dach nirgends
+				expect = 0.0
 			var gx := float(i)
 			var gz := float(j)
 			var sim_y: float = main._sample_h(gx, gz) * main.hscale
@@ -229,17 +186,12 @@ func _bilinear_mask(forest: PackedByteArray, n: int, gx: float, gz: float) -> fl
 	return (forest[k] * (1 - fx) * (1 - fz) + forest[k + 1] * fx * (1 - fz)
 		+ forest[k + n] * (1 - fx) * fz + forest[k + n + 1] * fx * fz) / 255.0
 
-## Der Dummy-Renderer liest Texturen nicht zurück; geprüft wird das Bild, das
-## Main zuletzt hochgeladen hat (`forest_img`), und dass die Textur dieselbe
-## bleibt.
 func _check_uploaded(main: Node, tex: Texture2D, what: String) -> void:
 	_check(main.forest_img.get_data() == _frame(main.sim)["forest"],
 		"%s: hochgeladen ist die aktuelle Waldmaske" % what)
 	_check(main.terrain_mat.get_shader_parameter("forest_tex") == tex,
 		"%s: das Material liest weiter die aktualisierte Waldtextur" % what)
 
-## Pinselstrich über Mains Strich-Ende: eine Waldzelle unter den Meeresspiegel
-## eingeebnet trägt danach keinen Wald mehr.
 func _check_brush(main: Node) -> void:
 	var tex: Texture2D = main.forest_tex
 	var forest: PackedByteArray = main.forest_img.get_data()
@@ -256,7 +208,7 @@ func _check_brush(main: Node) -> void:
 		return
 	var gx := float(cell % n)
 	var gz := float(cell / n)
-	for _r in 6:  # Einebnen nähert sich dem Ziel, ein Hieb reicht nicht
+	for _r in 6:
 		main.sim.brush(3, gx, gz, 4.0, 3.0, main.sea - 0.05)
 	main._finish_stroke()
 	_check(main.forest_img.get_data()[cell] == 0,
@@ -266,16 +218,6 @@ func _check_brush(main: Node) -> void:
 	_check(main.cover_field._img.get_data() == _frame(main.sim)["cover"],
 		"Pinselstrich: hochgeladen ist die aktuelle Bodenbedeckung (#174 D)")
 
-## Neugenerieren tauscht den Wald, Laden holt den gespeicherten zurück —
-## bit-gleich. Der Render-Zustand des Rasterwassers reist zwar nicht im
-## Spielstand (EWMA, s. AGENTS.md), aber jeder Weltwechsel endet in einem
-## `settled`-Frame mit Blend 1,0, der ihn vollständig überschreibt. Bis zum
-## Review Neon Nr. 5 wich der Wald hier ab (Mac 1, Linux 9 Zellen), und der
-## Test klammerte Ufer aus und duldete einen Anteil: Ursache war nicht das
-## Gedächtnis der Waldmaske (der Test lässt keine Zeit laufen), sondern dass
-## der Endstand des Pinselstrichs die Bänder des Vor-Pinsel-Stands behielt
-## (`RenderState.rebuildRibbonsIfDue`, Wächter
-## `RenderFrameTests.testFinishedStrokeMatchesTheLoadedWorld`).
 func _check_regenerate_and_load(main: Node) -> void:
 	var tex: Texture2D = main.forest_tex
 	var path := "user://tests/canopy.%s" % main.sim.worldFileExtension()

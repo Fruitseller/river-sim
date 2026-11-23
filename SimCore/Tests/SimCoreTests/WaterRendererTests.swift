@@ -9,8 +9,8 @@ final class WaterRendererTests: XCTestCase {
     if !productionGrid {
       config.n = 192
       config.world = calibrationWorld
-      config.rangeLandform = calibrationRangeLandform  // Großform vor #174
-      config.meanderBelt = calibrationMeanderBelt      // Mäander-Mechanik vor #174
+      config.rangeLandform = calibrationRangeLandform
+      config.meanderBelt = calibrationMeanderBelt
     }
     return agedWorld(config, years: years)
   }
@@ -66,17 +66,6 @@ final class WaterRendererTests: XCTestCase {
         let rightZ = (Double(right.z) + half) / cellSize
         let centerHeight = bilinear(terrain.h, centerX, centerZ, n: terrain.cfg.n) * 24
         let crossTolerance = Double(width) * 0.5 * WaterRender.ribbonMaxCrossSlope
-        // Land-Kante (Look-Iteration 13, Issue #233): nie über der
-        // Wand-Grenze (Zentrum + Querneigung + `lift`) und nie zugleich über
-        // dem eigenen Gelände + `ribbonWaterlineLift` UND dem Wasserlinien-
-        // Ziel: tiefstes Gelände über der Spanne der verrauschten Wasserlinie
-        // + `ribbonWaterlineLift` + höchstens `ribbonCenterRaiseMax`, aber
-        // nie über dem Wasserspiegel der Mitte (Zentrum + `lift`). Bis zum
-        // Review Neon Nr. 6 stand hier statt des Ziels der Spiegel der Mitte
-        // allein — auf ebenem Talboden durfte die Kante damit wieder die
-        // alte Platte (Gelände + 0,35) tragen. Senken darf sie sich, heben
-        // nicht; ob die Wasserlinie dazwischen schwebt und ob die Bandmitte
-        // versinkt, misst `RibbonFloatTests`.
         let alpha = Double(first.colors[vertex].w)
         let reach = max(WaterRender.ribbonWaterlineReachMin,
                         WaterRender.ribbonWaterlineReach * WaterRender.ribbonVisibleWidth(alpha))
@@ -91,15 +80,10 @@ final class WaterRendererTests: XCTestCase {
         }
         func landEdgeExcess(_ x: Double, _ z: Double, _ y: Double) -> Double {
           let ground = bilinear(terrain.h, x, z, n: terrain.cfg.n) * 24
-          // Über seichtem See hebt das Band nur anteilig zum Spiegel (wie der
-          // Terrain-Shader, `geometryLift*`): höchstens bis Spiegel + Hauch.
           let ci = min(max(Int(centerX.rounded()), 0), terrain.cfg.n - 1)
           let cj = min(max(Int(centerZ.rounded()), 0), terrain.cfg.n - 1)
           let lake = terrain.waterLevel[cj * terrain.cfg.n + ci] * 24 + WaterRender.ribbonLakeSurfaceLift
           let wall = y - max(centerHeight + crossTolerance + 0.35, lake)
-          // Look-Iteration 14: die Gerade zwischen den Wasserlinien hebt sich
-          // um bis zu `ribbonCenterRaiseMax`, wenn Gelände in der Bandmitte
-          // sonst durchs Wasser stäche.
           let target = min(centerHeight + 0.35,
                            waterlineGround(x, z) + WaterRender.ribbonWaterlineLift
                              + WaterRender.ribbonCenterRaiseMax)
@@ -108,10 +92,6 @@ final class WaterRendererTests: XCTestCase {
         }
         let leftExcess = landEdgeExcess(leftX, leftZ, Double(left.y))
         let rightExcess = landEdgeExcess(rightX, rightZ, Double(right.y))
-        // JE KANTE Gelände oder Spiegel (Befund #174): ein Stützpunkt auf
-        // Wasser liegt nie unter seiner Land-Höhe (Maximum aus beiden, s.
-        // `emitRibbon`), im flachen Ufersaum trägt deshalb eine Kante das
-        // Gelände und die andere den Spiegel.
         let leftWaterError = waterSurfaceError(
           terrain, gridX: centerX, gridZ: centerZ, renderedY: Double(left.y))
         let rightWaterError = waterSurfaceError(
@@ -157,20 +137,10 @@ final class WaterRendererTests: XCTestCase {
   }
 
   func testBuiltBandsAndRasterHandOverWithoutGapOrDoubleWater() {
-    // Der Übergabe-Vertrag braucht junge Altarme im Bild. Die Seed-1337-Welt
-    // mit der Großform aus #174 hat in Jahr 30.000 keinen offenen (auf dem
-    // Linux-Runner, System-libm), mit dem Gürtel ebenso wenig (wenige Cutoffs,
-    // Abnahmepunkt 13 offen) — geprüft wird hier die Übergabe Band ↔ Raster,
-    // nicht die Mäander-Physik.
     var config = SimConfig()
     config.rangeLandform = calibrationRangeLandform
     config.meanderBelt = calibrationMeanderBelt
-    // Ohne Lawinen-Abgang des Firns (#174): er verschiebt die Realisierung, und der
-    // Wächter braucht in Jahr 30.000 junge Altarme (`TestCalibration`).
     config.pinIceBeforeAvalanche()
-    // Delta-Schüttung (#174, Punkt 26) aus, aus demselben Grund: mit ihr
-    // trug diese Realisierung in Jahr 30.000 keinen jungen Altarm (erste
-    // Fassung des Passes).
     config.deltaTrapFraction = calibrationDeltaTrapFraction
     let terrain = agedWorld(config, years: 30_000)
     let ribbons = RiverRibbonRenderer()
@@ -224,11 +194,6 @@ final class WaterRendererTests: XCTestCase {
       let last = end - 2
       var cell = cellIndex(mesh.vertices[last], mesh.vertices[last + 1], terrain)
       if pondDepth(terrain, cell) > WaterRender.pondContourLo { continue }
-      // Ein Zubringer, der in das Band eines größeren Laufs mündet
-      // (`WaterRender.ribbonJoinSearchCells`), endet in diesem, und das andere
-      // Band trägt das Wasser weiter. Ein Ende ohne Mündung läuft dagegen
-      // spitz aus (Enden-Taper bis Deckkraft 0): dort deckt kein Band die
-      // Endzelle zu `ribbonJoinCoverage`.
       if mesh.bandCoverage[cell] >= WaterRender.ribbonJoinCoverage { continue }
       for _ in 0..<WaterRender.mouthSearchCells {
         let receiver = terrain.receiver[cell]
@@ -246,20 +211,6 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertLessThanOrEqual(
       oxbowMaximumAlpha,
       Float(WaterRender.oxbowMaximumOpacity + 0.001))
-    // Schranke 0.045 (Issue #108): die beiden Regeln der Übergabe lesen die
-    // Wassersäule unterschiedlich — der Raster-Pfad ZELLWEISE (`rawWet[k]`,
-    // Schwelle `lakeRawWetDepth`), der Band-Fade BILINEAR am Stützpunkt
-    // (`lakeHandoverFade`, bewusst so: nearest-cell sprang an den Zellkanten um
-    // bis zu 0.5 Deckkraft, s. Kommentar dort). An der Uferkante weichen sie
-    // deshalb um einen Rest voneinander ab, und genau den deckelt diese Zahl.
-    // Mit den tieferen Betten aus #108 ist der Pond-Gradient über eine Zelle
-    // steiler und der Rest wuchs von ≤ 0.02 auf gemessen 0.024..0.032 — ein einzelner
-    // Stützpunkt mit ~3 % Deckkraft, kein doppeltes Wasser. Die Obergrenze 0.045
-    // deckelt diesen Übergangs-Rest mit Sicherheitsabstand (wie ein ECHTER Bruch
-    // aussieht, ist in derselben Runde gemessen: der nicht ausgelieferte
-    // Pfützen-Ausschluss in Flussbetten ließ stehendes Wasser im Bett stehen und
-    // trieb diesen Wert auf 0.243). Weniger Rest-Deckkraft ist zulässig.
-    // Die Bett-Inzision prüft ChannelIncision getrennt über die Terrain-Höhen.
     XCTAssertLessThanOrEqual(
       deepestRiverAlpha, 0.045,
       "Band und Raster malen tiefes Wasser doppelt")
@@ -346,21 +297,14 @@ final class WaterRendererTests: XCTestCase {
     return 0
   }
 
-  /// Abfluss-Feld fürs Shader-Detail (PR #106): die kosmetischen Rinnen des
-  /// Terrain-Shaders bündeln sich in ECHTEN Abflussbahnen; ohne die Bindung
-  /// degenerierte der Layer auf der gealterten Welt zu einem uniformen
-  /// Tapeten-Muster. Hier das Kalibrier-Verhalten plus die Feld-Eigenschaften.
   func testFlowDetailFieldFollowsRealDischarge() {
     let creek = SimConfig().renderMinCells
     let floor = WaterRender.flowDetailFloorCells
-    // 0 unter dem Floor (Einzelzellen-Abfluss ist Rauschen) …
     XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: 0, creekCells: creek), 0)
     XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: floor, creekCells: creek), 0)
-    // … monoton dazwischen …
     let mid = WaterRender.flowDetailIntensity(dischargeCells: 30, creekCells: creek)
     XCTAssertGreaterThan(mid, 0)
     XCTAssertLessThan(mid, WaterRender.flowDetailIntensity(dischargeCells: 100, creekCells: creek))
-    // … und gesättigt ab der Render-Schwelle (dort malt das sichtbare Wasser).
     XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: creek, creekCells: creek), 1)
     XCTAssertEqual(WaterRender.flowDetailIntensity(dischargeCells: creek * 50, creekCells: creek), 1)
 
@@ -382,10 +326,6 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertEqual(field, renderer.flowDetailField(terrain), "deterministisch pro Zustand")
   }
 
-  /// Prüft, dass `WaterFieldRenderer.bytes` deterministisch auswertet — sowohl
-  /// für den normalen EWMA-Pfad, den ungefilterten Pfad (`deferTail: true`) als
-  /// auch den Legacy-Stempelmodus (`geometryMode: false`), und pinnt den Inhalt
-  /// über eine Gegenprobe (Normal vs. deferTail sowie sequenzielle Referenz).
   func testWaterFieldBytesIsDeterministicAndSupportsDeferTail() {
     let terrain = agedTerrain(years: 4000)
     let renderer = WaterFieldRenderer()
@@ -413,9 +353,6 @@ final class WaterRendererTests: XCTestCase {
         bandChannelFlags: [], bandCoverage: [], deferTail: true),
       "deferTail-Pfad muss deterministisch sein")
 
-    // Finding 1: Abdeckungslücke für den Legacy-Pfad (geometryMode == false) schließen.
-    // Genau diese Schleife (u. a. Altarm-Overlay) wurde parallelisiert und muss
-    // bit-deterministisch sein.
     let legacyFirst = renderer.bytes(
       terrain, blend: 1.0, geometryMode: false,
       bandChannelFlags: [], bandCoverage: [])
@@ -426,17 +363,6 @@ final class WaterRendererTests: XCTestCase {
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(legacyFirst, legacySecond, "Legacy-Pfad (geometryMode: false) muss bit-deterministisch sein")
 
-    // Finding 2: Gegenprobe auf Inhalt — Regressionen der Parallelisierung
-    // (z. B. fehlerhafte Chunk-Grenzen, doppelt oder gar nicht geschriebene Zellen)
-    // pinnen, anstatt nur Doppel-Läufe gegen sich selbst zu vergleichen.
-    //
-    // 1. Normal- vs deferTail-Pfad:
-    //    - Die Richtungsvektoren (Kanäle 2 & 3) werden bei blend == 1.0 weder durch EWMA
-    //      noch durch Blur verändert und müssen an jeder Zelle bit-identisch sein.
-    //    - Der Normal-Pfad wendet blurMax auf Fluss (Kanal 0) und See (Kanal 1) an;
-    //      dadurch muss an jeder Zelle normal >= deferred gelten.
-    //    - Durch die Weichzeichnung müssen an den Gewässerrändern Zellen existieren,
-    //      an denen der Normal-Pfad echt größer als der ungefilterte Pfad ist.
     XCTAssertNotEqual(
       normalFirst, deferred,
       "deferTail-Pfad (ungefiltert) muss sich vom normalen Pfad (geblurrt) unterscheiden")
@@ -482,9 +408,6 @@ final class WaterRendererTests: XCTestCase {
       if normRiver > defRiver { blurExpandedRiver = true }
       if normLake > defLake { blurExpandedLake = true }
 
-      // 2. Sequenzielle Referenzschleife: Wo kein Wasser vorliegt (Fluss == 0 und See == 0),
-      //    ist kein Stempel aktiv (mstamp == false). Hier muss die gepackte Richtung exakt
-      //    der D8-Nachbardifferenz zu terrain.receiver entsprechen.
       if defRiver == 0 && defLake == 0 {
         let r = terrain.receiver[k]
         let expectedDx = r >= 0 ? Double(Int(r) % n - k % n) : 0.0
@@ -529,7 +452,6 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertEqual(renderer.maxDelta(empty), 1e9)
     XCTAssertTrue(mouthPath(empty, fromX: 0, fromZ: 0).isEmpty)
 
-    // Auch über RenderState absichern
     let ribbons = RiverRibbonRenderer()
     ribbons.build(empty, hscale: 24, lift: 0.35)
     XCTAssertTrue(ribbons.mesh.vertices.isEmpty)
@@ -547,9 +469,7 @@ final class WaterRendererTests: XCTestCase {
     let singleField = [42.0]
     XCTAssertEqual(bilinearGrid(singleField, 0, 0, n: 1), 42.0)
 
-    // 2x2-Gitter: [10, 20, 30, 40]
     let field = [10.0, 20.0, 30.0, 40.0]
-    // Mitte (0.5, 0.5) -> Bilinear-Mittelwert 25.0
     XCTAssertEqual(bilinearGrid(field, 0.5, 0.5, n: 2), 25.0)
     XCTAssertEqual(renderSurfaceHeight(field, 0.5, 0.5, n: 2, renderGrid: 2), 25.0)
 
@@ -562,12 +482,6 @@ final class WaterRendererTests: XCTestCase {
     }
   }
 
-  // MARK: Mündung ins Meer (Befund #174, „Flüsse erreichen das Meer nicht")
-
-  /// Meereszellen haben keinen D8-Empfänger: die Kette endete an der ersten
-  /// Meereszelle, und Übergabe und Enden-Taper lagen auf dem Strand davor.
-  /// Mit Laufrichtung läuft die Mündung geradeaus `mouthSeaCells` Zellen ins
-  /// Meer.
   func testSeaMouthRunsStraightUnderTheSeaPlane() {
     let config = renderConfig(n: 48)
     let n = config.n, sea = config.sea
@@ -576,7 +490,6 @@ final class WaterRendererTests: XCTestCase {
     for j in 0..<n {
       for i in 0..<n {
         let k = j * n + i
-        // Meer westlich von Spalte 20, Land steigt nach Osten.
         state.h[k] = i < 20 ? sea - 0.004 : sea + 0.0005 * Double(i - 19)
         state.receiver[k] = i < 20 ? -1 : Int32(k - 1)
       }
@@ -588,28 +501,10 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertEqual(Double(wet.count), WaterRender.mouthSeaCells, "Mündung endet vor der Ozean-Ebene")
     XCTAssertTrue(path.allSatisfy { abs($0.z - 24) < 1e-9 }, "Mündung läuft nicht geradeaus")
     XCTAssertLessThanOrEqual(path.last!.x, 20 - WaterRender.mouthSeaCells + 1e-9)
-    // Ohne Richtung (Wasserfeld-Altpfad): D8-Kette bis zur ersten
-    // Meereszelle, dann geradeaus weiter.
     let d8 = mouthPath(terrain, fromX: 24, fromZ: 24)
     XCTAssertEqual(Double(d8.filter { $0.surface != nil }.count), WaterRender.mouthSeaCells)
   }
 
-  /// End-to-End auf der Produktionswelt: jedes Fluss-Band, das ins Meer
-  /// läuft, ist an seiner letzten Landstelle (Wasserlinie) noch voll deckend
-  /// und voll breit. Vorher lag dort die Übergabe (Deckkraft 0,3–0,6) und der
-  /// Krümmungs-Deckel verengte das Band auf eine Spitze (Halbbreite 3,2 →
-  /// 0,2–1,9; Seed 1337, Jahr 20.000, `docs/zielbild-measurements.md` § Delta,
-  /// Mündung).
-  ///
-  /// Gezählt wird über DREI Seeds zusammen (1337, 42, 20): die Zählung je Welt
-  /// hängt an der Realisierung — ein Band, das an der Wasserlinie in eine echte
-  /// Biegung läuft, folgt dort dem Krümmungs-Deckel und ist schmaler; bei einer
-  /// einzelnen Welt reichte schon eine solche Mündung, um die Schranke „keine
-  /// Spitze“ zu reißen (Seed 1337 mit dem Lawinen-Abgang des Firns, #174:
-  /// Band 5 mit Halbbreite 0,57 von 3,20). Der Wächter soll den RENDER-Fehler
-  /// fangen (Übergabe-Deckkraft, Spitze an JEDER Mündung), nicht die
-  /// Mündungsgeometrie einer Realisierung: die nicht vollen Mündungen gepoolt,
-  /// eine Spitze darf an keiner auftreten.
   func testRiverBandsReachTheSeaAtFullWidthAndOpacity() {
     var checked = 0
     var failures: [String] = [], spikes: [String] = []
@@ -621,31 +516,13 @@ final class WaterRendererTests: XCTestCase {
       spikes += r.spikes.map { "Seed \(seed) \($0)" }
     }
     XCTAssertGreaterThanOrEqual(checked, 15, "Aufbau: zu wenige Mündungen ins Meer")
-    // Einzelne Mündungen dürfen an der Wasserlinie biegen (Krümmungs-Deckel)
-    // oder unter einem früher gebauten Band ausblenden (Überdeckung); die große
-    // Mehrheit taucht voll ins Meer, zur Spitze wird keine. Gemessen über die
-    // drei Seeds (Mündungen / nicht voll / spitz) auf 694d31e: Mac 30 / 1 / 0,
-    // Linux 32 / 2 / 0; vor den Mündungs-Korrekturen (Deckkraft-Halt, rechter
-    // Winkel an der Kette) lag jede dritte bis zweite Mündung darunter.
     XCTAssertLessThanOrEqual(Double(failures.count), 0.2 * Double(checked),
                              "Band endet vor der Wasserlinie: \(failures)")
     XCTAssertTrue(spikes.isEmpty, "Band läuft an der Wasserlinie spitz aus: \(spikes)")
   }
 
-  /// Mündungen der Produktionswelt eines Seeds (Jahr 4000): geprüfte Mündungen
-  /// ins Meer, solche mit Deckkraft < 90 % oder Halbbreite < 50 % von stromauf,
-  /// und davon die spitzen (< 25 %).
   private func mouthBands(seed: UInt32) -> (checked: Int, failures: [String], spikes: [String]) {
     var config = SimConfig.production
-    // Schwellen-Kappung des Gürtelbetts gepinnt
-    // (`calibrationMeanderBeltSillCutDepths`): dieser Wächter zielt auf die
-    // RENDER-Übergabe an der Wasserlinie (Deckkraft-Halt, Breite, See-
-    // Übergabe), nicht auf die Mündungsgeometrie einer Realisierung. Die
-    // Kappung (#187) verschiebt, welche Mündung am Übergang zur Mündungs-
-    // Kette biegt (Seed 42, Linux: eine Mündung auf 24 % Halbbreite bei
-    // voller Deckkraft von 1,00; am Mac biegt dieselbe Mündung nicht, 100 %).
-    // Die Render-Paarung bleibt die ausgelieferte; gepinnt ist nur die
-    // Physik-Realisierung, wie bei den übrigen Gürtel-Stellschrauben.
     config.meanderBeltSillCutDepths = calibrationMeanderBeltSillCutDepths
     let terrain = Terrain(config: config, seed: seed,
                           settleYears: SimConfig.productionSettleYears)
@@ -669,21 +546,14 @@ final class WaterRendererTests: XCTestCase {
     for s in 0..<(starts.count - 1) {
       let lo = starts[s], hi = starts[s + 1]
       guard hi - lo >= 24, mesh.uv2s[lo].x == Float(WaterRender.ribbonKindRiver) else { continue }
-      guard terrain.h[cell(hi - 2)] <= sea else { continue }        // endet nicht im Meer
-      // Letzte Landstelle vor dem Meer: wie im Renderer (Schnitt an der
-      // Wasserlinie) der Übergang ins Meer von der QUELLE her. Rückwärts vom
-      // Bandende fand die Suche bei einer Linie, die ein Stück über den Schelf
-      // läuft, eine einzelne Inselzelle im Meer statt der Wasserlinie (Linux,
-      // Seed 1337: Halbbreite 0,31 an einem Knick über einer Inselzelle).
+      guard terrain.h[cell(hi - 2)] <= sea else { continue }
       guard let firstSea = stride(from: lo, to: hi, by: 2).first(where: { terrain.h[cell($0)] <= sea })
       else { continue }
       let v = firstSea - 2
       guard v - 20 >= lo else { continue }
       let upstream = stride(from: v - 20, to: v, by: 2).map { halfWidth($0) }.max() ?? 0
       let upstreamAlpha = stride(from: v - 20, to: v, by: 2).map { Double(mesh.colors[$0].w) }.max() ?? 0
-      guard upstream > 1, upstreamAlpha > 0.5 else { continue }      // kein sichtbarer Hauptlauf
-      // Mündung über einen Seespiegel (Lagune, nachlaufender `waterLevel`):
-      // dort gilt die See-Übergabe nach der Wassersäule, nicht diese.
+      guard upstream > 1, upstreamAlpha > 0.5 else { continue }
       let apron = stride(from: max(lo, v - 6), through: v, by: 2).contains {
         let c = cell($0)
         return terrain.waterLevel[c] - terrain.h[c] > WaterRender.pondContourLo
@@ -691,8 +561,6 @@ final class WaterRendererTests: XCTestCase {
       if apron { continue }
       checked += 1
       let alpha = Double(mesh.colors[v].w), width = halfWidth(v)
-      // Deckkraft wie stromauf; die Breite darf an einer echten Biegung an der
-      // Wasserlinie dem Krümmungs-Deckel folgen, aber nicht zur Spitze werden.
       if alpha < 0.9 * upstreamAlpha || width < 0.5 * upstream {
         failures.append(String(format: "Band %d: Deckkraft %.2f von %.2f, Halbbreite %.2f von %.2f",
                                s, alpha, upstreamAlpha, width, upstream))
@@ -704,8 +572,6 @@ final class WaterRendererTests: XCTestCase {
     return (checked, failures, spikes)
   }
 
-  /// Rinne durch den Strand: über dem Gerinne einer Mündung liegt kein Sand,
-  /// daneben schon.
   func testBeachIsClearedOverTheRiverBedAtTheMouth() {
     let config = renderConfig(n: 48)
     let n = config.n, sea = config.sea
@@ -736,13 +602,11 @@ final class WaterRendererTests: XCTestCase {
       XCTAssertTrue(mouthPath(terrain, fromX: 5, fromZ: bad).isEmpty)
     }
 
-    // Ungültiger Empfängerindex außerhalb des Gitters
     terrain.setReceiverForTests(at: 0, to: 999_999)
     XCTAssertTrue(mouthPath(terrain, fromX: 0, fromZ: 0).isEmpty)
     terrain.setReceiverForTests(at: 0, to: -5)
     XCTAssertTrue(mouthPath(terrain, fromX: 0, fromZ: 0).isEmpty)
 
-    // openWaterSurface mit ungültigen Indizes
     XCTAssertNil(openWaterSurface(-1, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
     XCTAssertNil(openWaterSurface(terrain.h.count + 10, h: terrain.h, wl: terrain.waterLevel, sea: terrain.cfg.sea))
   }
@@ -750,7 +614,6 @@ final class WaterRendererTests: XCTestCase {
   func testRiverRibbonRendererHandlesBufferMismatchAndCorruptedNodes() {
     let renderer = RiverRibbonRenderer()
 
-    // 1. Puffergrößen-Mismatch liefert defensiv leeres Mesh statt OOB-Crash
     let baseTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
     var mismatchState = baseTerrain.state
     mismatchState.h = [1.0, 2.0]
@@ -768,7 +631,6 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertTrue(meshWl.vertices.isEmpty, "Mismatch in waterLevel muss leeres Mesh liefern")
     XCTAssertTrue(meshWl.bandCoverage.isEmpty)
 
-    // 2. Kanäle mit nicht-endlichen Koordinaten (NaN, ±inf) überspringen statt Int-Cast-Trap
     let nanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
     let badChannel = RiverChannel(
       nodes: [MeanderNode(x: Double.nan, z: 0), MeanderNode(x: 10, z: 10)],
@@ -778,7 +640,6 @@ final class WaterRendererTests: XCTestCase {
     let nanMesh = renderer.build(nanTerrain, hscale: 24, lift: 0.35)
     XCTAssertTrue(nanMesh.vertices.isEmpty, "Kanal mit NaN-Knoten muss sicher übersprungen werden")
 
-    // 3. Altarme mit nicht-endlichen Koordinaten überspringen
     let oxbowTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
     var oxbowNodes = (0..<24).map { MeanderNode(x: Double($0 % 16), z: Double($0 % 16)) }
     oxbowNodes[5] = MeanderNode(x: Double.infinity, z: 0)
@@ -791,7 +652,6 @@ final class WaterRendererTests: XCTestCase {
   func testWaterFieldRendererHandlesReceiverOutOfBoundsAndCorruptedNodes() {
     let renderer = WaterFieldRenderer()
 
-    // 1. Ungültige Empfängerindizes außerhalb des Gitters (r >= cnt oder r < 0)
     let testTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
     var state = testTerrain.state
     state.streamMap = [Double](repeating: 0.5, count: 16 * 16)
@@ -823,7 +683,6 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertEqual(bytesNormal[2], 127, "Neutraler X-Flussrichtungs-Kanal")
     XCTAssertEqual(bytesNormal[3], 127, "Neutraler Z-Flussrichtungs-Kanal")
 
-    // 2. Kanäle mit nicht-endlichen Koordinaten (NaN, ±inf) überspringen statt Int-Cast-Trap
     let nanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
     let badChannel = RiverChannel(
       nodes: [MeanderNode(x: Double.nan, z: 0), MeanderNode(x: 10, z: 10)],
@@ -835,8 +694,6 @@ final class WaterRendererTests: XCTestCase {
       bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytesNan.count, nanTerrain.cfg.count * 4)
 
-    // Byteweiser Vergleich gegen Terrain ohne Kanäle: zeigt, dass der korrupte Kanal
-    // nachweislich übersprungen und nicht (z. B. geklemmt) gestempelt wurde.
     let cleanTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
     let bytesClean = WaterFieldRenderer().bytes(
       cleanTerrain, blend: 1.0, geometryMode: false,
@@ -845,7 +702,6 @@ final class WaterRendererTests: XCTestCase {
       bytesNan, bytesClean,
       "Kanal mit nicht-endlichen Koordinaten darf nachweislich nicht gestempelt werden")
 
-    // 3. Altarme mit nicht-endlichen Koordinaten überspringen statt Int-Cast-Trap
     let oxbowTerrain = Terrain(allocating: renderConfig(n: 16), seed: 1337)
     var oxState = oxbowTerrain.state
     oxState.h = [Double](repeating: 0.5, count: 16 * 16)
@@ -862,15 +718,11 @@ final class WaterRendererTests: XCTestCase {
       bandChannelFlags: [], bandCoverage: [], deferTail: true)
     XCTAssertEqual(bytesOxbowDeferred.count, oxbowTerrain.cfg.count * 4)
 
-    // Nachbarknoten 4 (4, 4) und 6 (6, 6) müssen im G-Kanal (See/Altarm) gestempelt sein
-    // (pinnt die continue-Semantik: Schleife bricht bei inf nicht ab).
     let cell4 = 4 * 16 + 4
     let cell6 = 6 * 16 + 6
     XCTAssertGreaterThan(bytesOxbowDeferred[cell4 * 4 + 1], 0, "Knoten 4 vor inf-Knoten muss gestempelt werden")
     XCTAssertGreaterThan(bytesOxbowDeferred[cell6 * 4 + 1], 0, "Knoten 6 nach inf-Knoten muss gestempelt werden")
 
-    // Der inf-Knoten selbst darf weder an seiner ursprünglichen Position (5, 5)
-    // noch an einer geklemmten Randposition (15, 0) gestempelt worden sein.
     let cell5 = 5 * 16 + 5
     let cellClamp = 0 * 16 + 15
     XCTAssertEqual(bytesOxbowDeferred[cell5 * 4 + 1], 0, "inf-Knoten-Zelle darf ungestempelt bleiben")
@@ -885,10 +737,6 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertEqual(bytesOxbow[cellClamp * 4 + 1], 0)
   }
 
-  /// Regression: ohne Schrittweite (`cellSize == 0`) gibt `emitRibbon` kein
-  /// Band aus. Ohne den `cellSize > 0`-Guard entstanden Kanten-Offsets aus
-  /// `0 / 0 = NaN`. Gegenprobe im selben Aufbau mit `world > 0`: derselbe
-  /// Altarm wird sehr wohl gebaut, das leere Mesh liegt also am Guard.
   func testRibbonWithoutCellSpacingEmitsNothing() {
     func oxbowMesh(world: Double) -> RibbonMesh {
       var config = renderConfig(n: 16)
@@ -910,10 +758,6 @@ final class WaterRendererTests: XCTestCase {
     XCTAssertTrue(mesh.stripStarts.isEmpty)
   }
 
-  /// Regression: ohne definierte Schrittweite (`cellSize == 0`, etwa bei `world <= 0`)
-  /// erzeugt `WaterFieldRenderer` weder Fluss-Intensität im R-Kanal des Wasserfelds
-  /// noch Voll-Aussteuerung (255) im Flow-Detail-Feld durch ungesicherte Division
-  /// durch 0 (`pa[k] / cellArea = +infinity`).
   func testWaterFieldWithoutCellSpacingEmitsNoRiverFlow() {
     var config = renderConfig(n: 16)
     config.world = 0
@@ -921,20 +765,18 @@ final class WaterRendererTests: XCTestCase {
     let terrain = Terrain(allocating: config, seed: 1337)
     var state = terrain.state
     state.h = [Double](repeating: config.sea + 0.5, count: 16 * 16)
-    state.waterLevel = state.h // trocken, kein See
+    state.waterLevel = state.h
     state.areaMFD = [Double](repeating: 50_000.0, count: 16 * 16)
     state.streamMap = [Double](repeating: 1.0, count: 16 * 16)
     terrain.restore(state)
 
     let renderer = WaterFieldRenderer()
 
-    // 1. flowDetailField muss komplett 0 sein (ohne Zellfläche kein Abfluss-Detail)
     let detail = renderer.flowDetailField(terrain)
     XCTAssertEqual(detail.count, 16 * 16)
     XCTAssertTrue(detail.allSatisfy { $0 == 0 },
                   "Ohne Schrittweite darf kein Flow-Detail ausgesteuert werden")
 
-    // 2. bytes() darf im R-Kanal (Fluss-Intensität) keine Flussbänder zeichnen
     let bytes = renderer.bytes(terrain, blend: 1.0, geometryMode: false,
                                bandChannelFlags: [], bandCoverage: [])
     XCTAssertEqual(bytes.count, 16 * 16 * 4)
@@ -943,7 +785,6 @@ final class WaterRendererTests: XCTestCase {
                      "Ohne Schrittweite darf im R-Kanal kein Fluss gezeichnet werden")
     }
 
-    // Gegenprobe mit gültiger Weltgröße: Derselbe Zustand steuert Fluss-Intensität aus
     var normalConfig = renderConfig(n: 16)
     normalConfig.world = calibrationWorld
     let normalTerrain = Terrain(allocating: normalConfig, seed: 1337)
@@ -959,10 +800,6 @@ final class WaterRendererTests: XCTestCase {
                   "Gegenprobe: Mit gültiger Schrittweite muss Fluss im R-Kanal gezeichnet werden")
   }
 
-  // MARK: Nasse Wiese statt Tümpel-Teppich (Issue #174, Paket C)
-
-  /// Land auf 0,3 mit einem quadratischen Tümpel (`side`² Zellen, 0,05 tief)
-  /// ab Zelle (8, 8); optional ein Band-Kanal entlang Zeile 6 direkt daneben.
   private func pondWorld(side: Int, withBand: Bool) -> Terrain {
     let config = renderConfig(n: 48)
     let n = config.n
@@ -1000,8 +837,6 @@ final class WaterRendererTests: XCTestCase {
   }
 
   func testSmallPondIsPaintedAsWetMeadowNotAsWater() {
-    // 8 × 8 = 64 Zellen: über dem Komponenten-Fade (voll ab 50), unter der
-    // Wiesen-Schwelle — vor #174 ein sichtbarer Tümpel.
     XCTAssertGreaterThan(64, Int(WaterRender.componentFadeHiCells))
     XCTAssertLessThan(64, WaterRender.wetMeadowMaxCells)
     let terrain = pondWorld(side: 8, withBand: false)
@@ -1025,8 +860,6 @@ final class WaterRendererTests: XCTestCase {
   }
 
   func testPondAtABandCorridorStaysWater() {
-    // Die Übergabe Band ↔ Raster darf keine Lücke bekommen: ein Tümpel am
-    // Korridor eines gebauten Bands bleibt, wie er ist.
     let terrain = pondWorld(side: 8, withBand: true)
     let n = terrain.cfg.n
     let (bytes, field) = waterBytes(terrain, banded: true)
@@ -1039,7 +872,6 @@ final class WaterRendererTests: XCTestCase {
     let terrain = pondWorld(side: 8, withBand: false)
     let n = terrain.cfg.n
     let center = 12 * n + 12
-    // Ohne nasse Wiese (Referenz direkt am Renderer, kein Wasser gelaufen):
     let dry = WetMeadow.apply(TerrainColorRenderer.buffers(terrain, bars: BarMaterial.field(terrain)),
                              mask: []).surfaces
     let overlays = frameOverlays(RenderState(geometryMode: true), terrain)

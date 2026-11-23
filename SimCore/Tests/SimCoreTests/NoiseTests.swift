@@ -1,10 +1,8 @@
 import XCTest
 @testable import SimCore
 
-/// Tests für den Pseudozufallsgenerator `Mulberry32` und `SimplexNoise` (`Noise.swift`).
 final class NoiseTests: XCTestCase {
 
-    /// Mulberry32 muss bei gleichem Seed bit-identische Sequenzen im Intervall [0, 1) erzeugen.
     func testMulberry32Determinism() {
         var rng1 = Mulberry32(seed: 42)
         var rng2 = Mulberry32(seed: 42)
@@ -28,8 +26,6 @@ final class NoiseTests: XCTestCase {
         XCTAssertNotEqual(values1, diffValues, "Unterschiedliche Seeds müssen sich unterscheiden")
     }
 
-    /// SimplexNoise liefert bei gleichem Seed deterministische Werte.
-    /// fBm und ridged müssen im Intervall [0, 1] liegen.
     func testSimplexNoiseDeterminismAndRange() {
         let noise1 = SimplexNoise(seed: 1234)
         let noise2 = SimplexNoise(seed: 1234)
@@ -55,9 +51,6 @@ final class NoiseTests: XCTestCase {
         }
     }
 
-    /// Nicht-endliche (NaN, ±inf) oder extrem große Koordinaten dürfen nicht
-    /// zu Speicherzugriffsfehlern oder Int-Konvertierungsabbrüchen führen,
-    /// sondern werden sicher auf 0 gefaltet.
     func testSimplexNoiseNonFiniteAndOutOfBoundsSafety() {
         let noise = SimplexNoise(seed: 999)
 
@@ -67,11 +60,9 @@ final class NoiseTests: XCTestCase {
         XCTAssertEqual(noise.value(0.0, -Double.infinity), 0.0)
         XCTAssertEqual(noise.value(Double.nan, Double.infinity), 0.0)
 
-        // Extrem große Koordinaten jenseits des Definitionsbereichs
         XCTAssertEqual(noise.value(1e12, 0.0), 0.0)
         XCTAssertEqual(noise.value(0.0, -1e12), 0.0)
 
-        // Auch über fBm01 müssen NaN-Koordinaten sicher zu neutralem Wert führen
         let fbmNan = noise.fbm01(Double.nan, 0.0, octaves: 4)
         XCTAssertEqual(fbmNan, 0.5)
 
@@ -79,21 +70,16 @@ final class NoiseTests: XCTestCase {
         XCTAssertEqual(fbmInf, 0.5)
     }
 
-    /// Nicht-positive Oktaven (octaves <= 0) oder nicht-endliche Parameter
-    /// dürfen keine Division durch Null (0/0 = NaN) auslösen.
     func testFractalNoiseWithNonPositiveOctavesAndNonFiniteParams() {
         let noise = SimplexNoise(seed: 555)
 
-        // fbm01 liefert bei octaves <= 0 defensiv den neutralen Mittelwert 0.5
         XCTAssertEqual(noise.fbm01(1.0, 2.0, octaves: 0), 0.5)
         XCTAssertEqual(noise.fbm01(1.0, 2.0, octaves: -3), 0.5)
 
-        // ridged01 liefert bei octaves <= 0 oder ungültigen Parametern defensiv 0.0
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: 0), 0.0)
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: -2), 0.0)
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: 3, lacunarity: Double.nan), 0.0)
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: 3, gain: Double.infinity), 0.0)
-        // Negative gain-Werte können norm auf <= 0 drücken; guard norm > 0 fängt dies defensiv ab
         XCTAssertEqual(noise.ridged01(1.0, 2.0, octaves: 2, gain: -1.0), 0.0)
     }
 }

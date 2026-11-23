@@ -1,11 +1,5 @@
-// Phacelle-Noise + Erosionsfilter als gemeinsames Include: der Terrain-Shader
-// nutzt es für das feine Detail, die Flusstal-Studie (#116) zusätzlich in
-// einem Back-Pass für die grobe Verschiebung. Keine Uniforms, nur Funktionen.
-// ---------------------------------------------------------------------------
-// Phacelle-Noise + Erosionsfilter — portiert aus „Advanced Terrain Erosion
-// Filter", Copyright (c) 2025 Rune Skovbo Johansen, Mozilla Public License 2.0
-// (https://mozilla.org/MPL/2.0/). Referenz: docs/references/runevision-erosion/.
-// ---------------------------------------------------------------------------
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 Rune Skovbo Johansen (Phacelle Noise, Erosionsfilter); GLSL-Portierung: river-sim
 
 vec2 ehash(vec2 x) {
 	const vec2 k = vec2(0.3183099, 0.3678794);
@@ -27,16 +21,10 @@ float pow_inv(float t, float power) {
 	return 1.0 - pow(1.0 - clamp(t, 0.0, 1.0), power);
 }
 
-// normalize() auf dem Null-Vektor ist undefiniert (GPU: NaN) — auf EXAKT flachem
-// Terrain (Einebnen-Werkzeug, Floor-Clamp) wurde daraus eine schwarze Fläche.
-// Degenerierte Richtungen bekommen einen festen Ersatz; die Detail-Masken blenden
-// bei Steigung ≈ 0 ohnehin auf null, der Ersatzwert ist also unsichtbar.
 vec2 safe_dir(vec2 v) {
 	return dot(v, v) > 1e-14 ? v * inversesqrt(dot(v, v)) : vec2(0.7071, 0.7071);
 }
 
-// Streifenmuster entlang normDir: cos/sin-Paare aus 4×4 zufällig versetzten
-// Zellen interpoliert + normalisiert. Rückgabe: (cos, sin, sideDir).
 vec4 phacelle_noise(vec2 p, vec2 norm_dir, float freq, float offset, float normalization) {
 	vec2 side_dir = norm_dir.yx * vec2(-1.0, 1.0) * freq * 6.2831853;
 	offset *= 6.2831853;
@@ -59,12 +47,6 @@ vec4 phacelle_noise(vec2 p, vec2 norm_dir, float freq, float offset, float norma
 	return vec4(interp / mag, side_dir);
 }
 
-// Erosions-Detail: `octaves` Oktaven „stacked faded gullies" auf dem
-// Sim-Höhenfeld (Original: 3; die Oktavenzahl als Parameter ist eine Änderung
-// dieses Projekts, Look-Iteration 7: der Terrain-Shader rechnet je Pixel nur
-// noch 2, die feinste trägt seitdem der Relief-Bake mit seinen Felsrippen).
-// slope = dh/duv des groben Felds. Rückgabe: (dh, dsx, dsy, ridgeMap); die
-// Magnitude landet in out_mag (zum Normieren der Schattierung).
 vec4 erosion_detail_at(vec2 p, vec2 slope, float fade_target_in, float scale,
                        float strength_rel, int octaves, out float out_mag) {
 	const float GULLY_WEIGHT = 0.5;
@@ -77,7 +59,7 @@ vec4 erosion_detail_at(vec2 p, vec2 slope, float fade_target_in, float scale,
 
 	float strength = strength_rel * scale;
 	float fade_target = clamp(fade_target_in, -1.0, 1.0);
-	vec3 hs = vec3(0.0); // Delta-Akkumulator (Höhe, Steigung)
+	vec3 hs = vec3(0.0);
 	float freq = 1.0 / (scale * CELL_SCALE);
 	float slope_len = max(length(slope), 1e-10);
 	float magnitude = 1e-9;

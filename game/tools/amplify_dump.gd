@@ -1,18 +1,4 @@
 extends SceneTree
-## Schreibt eine Zeitraffer-Folge echter Sim-Daten als Rohdateien, für die
-## Offline-Entwicklung und den Stabilitätsnachweis des Gelände-Verfeinerers
-## (#238). Läuft headless, die Sim rechnet auf der CPU:
-##
-##   RS_SEED=1337 RS_STEP=20000 AMPLIFY_DUMP=/abs/ordner AMPLIFY_TICKS=12 \
-##     AMPLIFY_TICK_YEARS=15 godot --headless --path game \
-##     --script res://tools/amplify_dump.gd
-##
-## Je Takt `t`: `heights_<t>.f32` (n², Float32, Sim-Höhe 0…1),
-## `filled_<t>.f32` (Seespiegel), `protect_<t>.u8` (Schutzmaske),
-## `flow_<t>.u8`, `surface_<t>.rgba`, `cover_<t>.rgba`, `water_<t>.rgba`,
-## dazu einmal `meta.json` (n, Weltgröße, Überhöhung, Meeresspiegel).
-## Takt 0 ist der eingeschwungene Stand (FRAME_SETTLED), danach
-## Zeitraffer-Takte wie in `Main._process`.
 
 const Main = preload("res://scripts/Main.gd")
 
@@ -40,7 +26,6 @@ func _process(_delta: float) -> bool:
 		"n": main.N, "world_size": main.world_size, "hscale": main.hscale,
 		"sea_level": main.sea, "ticks": ticks, "tick_years": years,
 		"year": sim.currentYear(),
-		# Was der Verfeinerer aus dem Kalibrier-Register braucht.
 		"pond": Main.calibration(sim, "water")["water_pond_contour_lo"],
 		"height_code": Main.calibration(sim, "relief")["relief_height_code"],
 		"slope_code": Main.calibration(sim, "relief")["relief_slope_code"],
@@ -48,8 +33,6 @@ func _process(_delta: float) -> bool:
 	var f := FileAccess.open(out.path_join("meta.json"), FileAccess.WRITE)
 	f.store_string(JSON.stringify(meta))
 	f.close()
-	# Die Overlay-Drossel (0,30 s) läuft über die Uhr des Aufrufers: je Takt
-	# eine Sekunde, dann bringt jeder Frame alle Overlays mit.
 	var now := 1000.0
 	_write(out, 0, sim.renderFrame(main.FRAME_SETTLED, now))
 	for t in range(1, ticks + 1):
