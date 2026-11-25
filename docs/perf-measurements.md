@@ -2701,3 +2701,57 @@ verlangt für „behalten" eine Verbesserung und meldet deshalb VERWERFEN).
 
 Bilder: `docs/look/a-budget/kontaktbogen-*.jpg` (vorher | nachher | Vorbild)
 und `ausschnitt-*.jpg` (1:1-Ausschnitt bei 6016×3260).
+
+## XIII. Becken-Suchlauf in `capEndorheicBasins`: Kandidaten parallel vorab (November 2026) — bit-identisch
+
+### Was geändert wurde
+
+`Terrain.capEndorheicBasins` sucht die abflusslosen Becken mit einem
+sequenziellen Lauf über alle 518.400 Zellen (`!pseen && hf > sea && hf > h`).
+Getroffen werden dabei je Schritt nur rund 4.400 Beckenzellen in rund 900
+Becken. Eine vorübergehende Instrumentierung (Marken im Pass, nicht
+eingecheckt) teilte den Pass so auf: Memsets 0,4 ms, Suchlauf samt
+Becken-Flutfüllung 2,6 ms, davon der Deckel-Zweig (1–2 gedeckelte Becken in
+manchen Schritten) höchstens 1 ms. Den Rest kostete die reine Abtastung.
+
+Das Prädikat `hf > sea && hf > h` wird jetzt blockweise parallel vorab
+ausgewertet (64 Blöcke, je Block eine aufsteigende Kandidatenliste), die
+sequenzielle Schleife besucht dieselben Kandidaten in derselben
+aufsteigenden Reihenfolge und prüft `pseen` wie bisher erst beim Besuch.
+Bit-identisch, weil der Schleifenkörper `hf` nur an Zellen des gerade
+gefundenen Beckens schreibt und diese zu dem Zeitpunkt schon `pseen` sind.
+Für jede noch ungesehene Zelle gilt das vorab berechnete Prädikat also
+unverändert, und `h` und `sea` ändern sich im Pass nicht.
+
+Nach der Änderung (gleiche Instrumentierung): Vorfilter 0,34 ms, verbleibende
+Schleife 0,94 ms (Flutfüllung und Deckel-Zweig), Memsets 0,28 ms.
+
+### Gemessen
+
+Linux-VM (4 Kerne, 7,8 GB RAM), Produktions-Config aus `SimConfig.production`
+(n = 720, world = 112,4789), Seed 1337, Einlauf 100 × 100 Jahre, 30
+Messschritte à dt = 100, je Lauf `--repeat 3`; Pass-Wert aus der Tabelle des
+letzten Blocks. Sechs Läufe verschränkt (alt, neu, neu, alt, alt, neu):
+
+| Lauf | Stand | Blöcke (ms/Schritt) | `capEndorheicBasins` |
+| --- | --- | --- | --- |
+| 1 | alt | 145,6 / 163,8 / 154,6 | 2,44 ms |
+| 2 | neu | 154,9 / 168,6 / 156,6 | 1,70 ms |
+| 3 | neu | 170,0 / 164,4 / 170,2 | 2,07 ms |
+| 4 | alt | 177,2 / 174,2 / 159,6 | 2,95 ms |
+| 5 | alt | 163,4 / 163,6 / 160,9 | 2,48 ms |
+| 6 | neu | 154,7 / 158,7 / 167,3 | 1,71 ms |
+
+Pass-Median alt 2,48 ms, neu 1,71 ms: **−0,77 ms/Schritt (−31 %)**, jeder
+neue Lauf liegt unter jedem alten. Das ist rund 0,5 % des Sim-Schritts und
+damit kleiner als die Streuung der Gesamtschritt-Blöcke auf der VM (±10 ms),
+in den Blöcken also nicht sichtbar. Auf dem M4-Max-Referenz-Mac ist die
+sequenzielle Abtastung vermutlich billiger (vgl. § XII), der Gewinn dort
+entsprechend kleiner.
+
+### Bit-Identität
+
+`simperf --hash` vor == nach auf Seed 1337 (dt = 100 und dt = 15), Seed 42 und
+Seed 20 (Pro-Maschine-Vergleich, Werte nicht im Repo). Der Deckel-Zweig, der
+`hf` umschreibt, läuft in diesem Messlauf in mehreren Schritten mit, ist also
+vom Hash gedeckt.

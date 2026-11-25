@@ -3048,7 +3048,34 @@ public final class Terrain {
             pend.update(repeating: .none, count: cnt)
             pplaya.update(repeating: false, count: cnt)
             pinflow.update(repeating: 0, count: cnt)
-            for s in 0..<cnt where !pseen[s] && phf[s] > sea && phf[s] > ph[s] {
+            // PERF: Der Suchlauf über alle Zellen trifft nur wenige Tausend
+            // Beckenzellen und kostete sequenziell den Großteil des Passes
+            // (gemessen ~2,3 ms je Schritt bei n = 720). Das Prädikat
+            // `phf > sea && phf > h` wird deshalb blockweise parallel vorab
+            // ausgewertet; die Schleife darunter besucht dieselben Kandidaten in
+            // derselben aufsteigenden Reihenfolge. Bit-identisch, weil der
+            // Schleifenkörper `phf` nur an Zellen des gerade gefundenen Beckens
+            // schreibt, und die sind zu dem Zeitpunkt schon `pseen` — für jede
+            // noch ungesehene Zelle gilt das vorab berechnete Prädikat also
+            // unverändert. `h` und `sea` ändern sich im Pass nicht.
+            let blocks = min(cnt, 64)
+            var candidates = [[Int32]](repeating: [], count: blocks)
+            candidates.withUnsafeMutableBufferPointer { cb in
+                let pc = cb.baseAddress!
+                parallel(blocks) { lo, hi in
+                    for b in lo..<hi {
+                        var list: [Int32] = []
+                        for s in (cnt * b / blocks)..<(cnt * (b + 1) / blocks)
+                        where phf[s] > sea && phf[s] > ph[s] {
+                            list.append(Int32(s))
+                        }
+                        pc[b] = list
+                    }
+                }
+            }
+            for list in candidates {
+            for ss in list where !pseen[Int(ss)] {
+                let s = Int(ss)
                 let sill = phf[s] // Priority-Flood füllt die Senke flach auf ihr Sill-Niveau
                 cells.removeAll(keepingCapacity: true)
                 cells.append(Int32(s))
@@ -3141,6 +3168,7 @@ public final class Terrain {
                         ppos[Int(c)] = Int32(slot)
                     }
                 }}
+            }
             }
         }}}}}}}}}
         return capped
